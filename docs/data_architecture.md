@@ -244,7 +244,7 @@ network.
 | `earnings_calendar` | D26 (#304): writer `module_earnings_radar/inputs/earnings_calendar.py` (UW calendar, the trading days of the next four weeks, premarket and afterhours), task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); source `uw`; first write per session wins. Read by the Earnings Fetch since #372 E5a (`module_earnings_radar/stored_inputs.calendar_items`, the newest session inside `MAX_LAG` 1): a covered `(earnings_date, report_session)` pair is rebuilt from `item` and UW is called for the pairs the sweep did not reach, and always for today's and the next trading day's pairs. Key `(session_date, earnings_date, ticker, report_session)`. `session_date DATE`, `earnings_date DATE`, `ticker`, `report_session`, `sector`, `full_name`, `marketcap DOUBLE`, `expected_move_perc DOUBLE`, `street_mean_est DOUBLE`, `pre_earnings_close DOUBLE`, `post_earnings_close DOUBLE`, `report_time`, `item JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `macro_series` | D27 (#305, FRED part): writer `module_earnings_radar/inputs/macro.py` (DGS2/5/10/20/30, T10Y2Y, T10YIE, DCOILWTICO; 8 FRED calls), task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); source `fred`, `session_date` the NY session on or before `obs_date`; first write of an observation wins. Read by Earnings R6 from #372 E5d until the ties to the old store were cut; R6 now reads the market store's own FRED row (`module_earnings_radar/store_reads.dgs10_map`, the need `macro.dgs10`: the newest 80 observations while the newest is at most 4 trading sessions old, and no FRED call at all; 4 and not 3 since the live measurement of 30 Oct 2026 showed an ordinary lag of 2, FRED publishing one business day late). Still read by the Financials DCF as its risk-free rate (`module_financials/run._stored_risk_free`, the newest DGS10 row while it is at most 14 days old; older or none, the 4% default, labelled on the board; Financials review S2). Key `(series_id, obs_date, source)`. `series_id`, `obs_date DATE`, `source`, `value DOUBLE`, `frequency`, `proxy_for`, `session_date DATE`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `vol_index_daily` | D28 (#305, Cboe part; #371): writer `module_earnings_radar/inputs/vol_index.py`, task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); Cboe's public daily-price CSV per symbol (VIX, VIX9D, VIX3M, VIX6M, VIX1Y, VVIX, OVX; 7 calls, `source` `cboe`) plus MOVE from yfinance (`^MOVE`, 1 call, `source` `yfinance`); the newest 60 rows per symbol a night, a symbol's first run keeping its whole file (`FIRST_RUN_LIMIT` = None); `session_date` the row's own trading date as served, `operator` NULL; first write of a key wins. Read by SPX Gamma from D28 until PR 3; SPX Gamma no longer reads it (it reads the VIX family from the market store's `market_series`, the newest observation on or before the day inside 3 sessions, and asks yfinance for it never). `module_earnings_radar/stored_inputs.vol_index_rows` was the last reader of the table and is gone with it: nothing reads this table now. The Earnings board itself reads neither series (R6 is the 10Y-yield-beta veto); the sweep writes them for SPX Gamma. Rotation reads neither: its macro series come from `market_series` since PR 9 (MOVE and wheat from its `yahoo` source). Key `(symbol, session_date, source)`. `symbol`, `session_date DATE`, `source`, `open DOUBLE`, `high DOUBLE`, `low DOUBLE`, `close DOUBLE`, `operator`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
-| `cftc_cot` | D29 (#305, CFTC part; #371): writer `module_earnings_radar/inputs/cftc_cot.py`, task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); CFTC Socrata Traders-in-Financial-Futures, the newest 4 rows of the E-mini S&P 500 (1 call, `source` `cftc`), parsed by `core/providers/cftc.py::map_row`; `report_type` `TFF`, `market` `E-MINI S&P 500`, `release_date` the report date + 3 days unless the source states one, `session_date` the New York session on or before `report_date`, `raw_row` the source row; first write per report wins. Read by SPX Gamma from D29 until PR 3; SPX Gamma no longer reads it (it reads the E-mini TFF report from the market store's `market_series`, `cftc:tff:13874A:*`, the newest report released on or before the day inside 10 sessions, its weekly change computed as this report minus the previous one, decision A5, and never asks CFTC live). `module_earnings_radar/stored_inputs.cot_row` was the last reader of the table and is gone with it: nothing reads this table now. The Earnings board itself reads neither series. Key `(report_type, market, report_date)`. `report_type`, `market`, `report_date DATE`, `release_date DATE`, `open_interest DOUBLE`, `asset_mgr_long DOUBLE`, `asset_mgr_short DOUBLE`, `asset_mgr_change_long DOUBLE`, `lev_money_long DOUBLE`, `lev_money_short DOUBLE`, `lev_money_change_long DOUBLE`, `dealer_long DOUBLE`, `dealer_short DOUBLE`, `dealer_change_long DOUBLE`, `raw_row JSON`, `session_date DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
+| `cftc_cot` | D29 (#305, CFTC part; #371): writer `module_earnings_radar/inputs/cftc_cot.py`, task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); CFTC Socrata Traders-in-Financial-Futures, the newest 4 rows of the E-mini S&P 500 (1 call, `source` `cftc`), parsed by `core/providers/cftc.py::map_row`; `report_type` `TFF`, `market` `E-MINI S&P 500`, `release_date` the report date + 3 days unless the source states one, `session_date` the New York session on or before `report_date`, `raw_row` the source row; first write per report wins. Read by SPX Gamma from D29 until PR 3; SPX Gamma no longer reads it (it reads the E-mini TFF report from the market store's `market_series`, `cftc:tff:13874A:*`, the newest report released on or before the day inside 10 sessions, its weekly change computed as this report minus the previous one, decision A5 (None, shown "n/a (gap)", when the two newest reports are not 5 to 9 days apart (#228)), and never asks CFTC live). `module_earnings_radar/stored_inputs.cot_row` was the last reader of the table and is gone with it: nothing reads this table now. The Earnings board itself reads neither series. Key `(report_type, market, report_date)`. `report_type`, `market`, `report_date DATE`, `release_date DATE`, `open_interest DOUBLE`, `asset_mgr_long DOUBLE`, `asset_mgr_short DOUBLE`, `asset_mgr_change_long DOUBLE`, `lev_money_long DOUBLE`, `lev_money_short DOUBLE`, `lev_money_change_long DOUBLE`, `dealer_long DOUBLE`, `dealer_short DOUBLE`, `dealer_change_long DOUBLE`, `raw_row JSON`, `session_date DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `economic_calendar` | D37 (#307): writer `module_earnings_radar/inputs/economic.py` (UW economic calendar, this week and next, 1 call), task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); `event_ts` UW's UTC time as epoch seconds; first write per session wins. Read by Earnings R6 since #372 E5d (`module_earnings_radar/stored_inputs.rate_event_overlap`): an FOMC, or a report whose text names CPI, inside the report date ±1 trading day vetoes an extreme yield beta whose t-stat is at least 2; the event's day is its New York date, the newest session whose own rows span the window answers (the writer keeps every session's sweep, so a moved release keeps its old date in the older ones), and a window no one session spans gives `None` (no veto). Key `(session_date, event_ts, event, type)`. `session_date DATE`, `event_ts DOUBLE`, `event`, `type`, `forecast`, `prev`, `reported_period`, `raw_row JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `source_checks` | Key `(dataset, source, key)`. `dataset`, `source`, `key`, `checked_at DOUBLE`, `run_id`; the generic per-key "last checked" stamp (rule A); `core/quotes.py` (#294): `quote_snapshot`/`yfinance`/`__rate_limited__` = Phase B's last stop on Yahoo's rate limit; the price watermarks moved to `price_checks` (#156) | raw | none |
 | `price_checks` | Key `(dataset, source, key)`, the shape of `source_checks`; writer `core/prices.py` (#156), in the chunk's transaction: `price_actions`/`yfinance` = per-ticker actions watermark; `price_bars_daily`/`yfinance_max` = fill marker | prices | none |
@@ -285,8 +285,9 @@ date; no table or board does its own `date.today()` or UTC-date cut.
 - `to_session_date(value)` is the read helper for old run-time columns (epoch, ISO text, `date`): a value with a time
   goes through `session_for`, a date-only value becomes the latest session on or before it. Naive text is read as New
   York time. `provenance.session_of` is the never-raising wrapper for labels.
-- Rule C: the holiday table stays 2025-2028 and raises outside it. Sessions before 2025 come from the stored price
-  bars (D01 / D03 fill), not from this module. Early-close days count as full days (conservative).
+- Rule C: the holiday table runs 1993-2028 and raises outside it. 1993-2024 (#348) equals CRSP's trading dates
+  (`crsp_a_stock.dsi`) exactly, every year. Sessions before 1993 come from the stored price bars, not from this
+  module; the D01 / D03 fill (`core/prices.py`, `CALENDAR_START`) still keeps its pre-2025 rows on SPY's dates. Early-close days count as full days (conservative).
 - Not in this slice: Rotation's weekend and holiday rows (wave 5, with #182) and migrating old tables.
 - Open items, kept out of this slice so no board display changes: `provenance._day` still reads epoch as the UTC
   date; the move to `provenance.session_of` happens in wave 5 (#182, Rotation and Co-movement), because it changes
@@ -649,7 +650,10 @@ worker thread writes while Flask request threads read. So:
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
   expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
   `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 50 min limit) and its backup
-  RC-Build-Backup daily 04:30 (`rcdata backup`, unit `life-rc-builder-backup`, 30 min limit), PR 2;
+  RC-Build-Backup daily 04:30 (`rcdata backup`, unit `life-rc-builder-backup`, 30 min limit), PR 2, plus
+  Monday to Friday 06:30 (the SPX Gamma Fetch RC-SPX-Gamma-Fetch, #291: `module_spx_gamma --nightly`, the
+  latest complete session's raw day with all expiries, only once its Cboe SPX close is stored and outside the US
+  session, else exit 3; no catch-up);
   `core/automations.py`: the Relatedness and Value Chain rows are 30 min apart.
 
 ### Full-refresh vs. incremental tables
@@ -777,11 +781,11 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `ticker_themes` | `ticker`, `theme_id`, `theme`, `level`, `theme_run_id`, `fetched_at DOUBLE` (#127; NULL on older rows is unknown, never 0) | — |
 | `fundamentals_scores` / `swing_scores` | per-ticker metric columns (see MANIFEST) | — |
 | `fundamentals_gates` / `swing_gates` | `ticker`, `gate`, `rule_id`, `passed`, `actual`, `unit` | — |
-| `relatedness_profiles` | `ticker`, `cik`, `model`, `prompt_version`, `fetched_at`, `cache_key`, `status` | — |
+| `relatedness_profiles` | `ticker`, `cik`, `model`, `prompt_version`, `fetched_at`, `cache_key`, `status`, `attempts`, `provider` (the writer, #360: `evren` / `deepseek` / `grok`; nullable, added by `ALTER TABLE ADD COLUMN`, no schema bump) | — |
 | `relatedness_attributes` | `ticker`, `field`, `value` (TEXT holding a JSON list), `value_num` | — |
 | `relatedness_scores` | `ticker`, `peer`, `score` | — |
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `relatedness_theme_etfs` | `theme_id` (run id is its prefix), `level`, `parent_id`, `label`, `size` / `tag`, `rank` / `ticker`, `weight` / `etf`, `overlap`, `rank` | — |
-| `theme_runs` | `id`, `created_at`, `k_fine`, `k_medium`, `k_coarse`, `jaccard`, `is_current`, `session_date DATE`, `run_at DOUBLE` (schema 11) | — |
+| `theme_runs` | `id`, `created_at`, `k_fine`, `k_medium`, `k_coarse`, `jaccard`, `is_current`, `session_date DATE`, `run_at DOUBLE` (schema 11); the five nullable validation numbers `val_peer_recall_25`, `val_hand_precision_10`, `val_gics_purity`, `val_etf_recall_medium`, `val_seed_ari` (all `DOUBLE`, #341, `module_relatedness/validation/`; added by `ALTER TABLE ADD COLUMN`, no schema bump; `val_peer_recall_25` = ETF-set mean, denominator `min(25, n-1)`) | — |
 | `llm_cache` | `cache_key`, `ticker`, `cik`, `model`, `thinking`, `effort`, `prompt_version`, `input_hash`, `fetched_at`, `status` | `response` |
 | `job_runs` | `run_id`, `job_id`, `module`, `lane`, `trigger`, `source`, `pid`, `registry_name`, `queued_at DOUBLE`, `started_at DOUBLE`, `finished_at DOUBLE`, `status` (`queued`/`running`/`done`/`error`/`cancelled`/`lost`, the `app/jobs.py` vocabulary), `error`, `message` | `params`, `counts` |
 | `run_registry` | `key`, `value` | — |
@@ -842,7 +846,7 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `identity_conflicts` | `ticker`, `kind`, `field`, `side_a`, `side_b`, `note`, `first_seen`, `last_seen` (key `(ticker, kind, field)`) | — |
 | `identity_source_cache` | `source`, `ticker`, `fetched_at`, `status`, `security_type`, `security_type2`, `sector`, `industry`, `sub_industry`, `cik`, `sic`, `is_etf BOOLEAN`, `forms` (comma-joined), `shell_closed BOOLEAN` (key `(source, ticker)`; last GOOD answer per source — a failed or skipped source never overwrites it, `core/identity/cache.py`) | `payload` (rest of the source row) |
 | `identity_runs` | `run_id`, `started_at`, `finished_at`, `status` | `sources` (per-source status/counts/error), `counts` |
-| `board_settings` | `board`, `key`, `value DOUBLE`, `updated_at` (key `(board, key)`; only user overrides — defaults are read from the board's config, and a Save is one transaction and a Reset deletes the board's rows in one statement, serialized by a lock; every save, drop and Reset is kept in `board_settings_changes`, a Reset as one change (#306); `core/board_settings.py`, issue #40; read by Co-movement (`module_comovement/settings.py`) and by Swing for its screen/score thresholds (`module_swing_potential/settings.py`, #384 SW-S4), whose stored overrides also feed the forecast ledger's model version) | — |
+| `board_settings` | `board`, `key`, `value DOUBLE`, `updated_at`, `value_text TEXT` (a text setting, #360: Relatedness' `WRITER` / `WRITER_MODEL`; a row fills `value` or `value_text`; nullable, added by `ALTER TABLE ADD COLUMN`, no schema bump) (key `(board, key)`; only user overrides — defaults are read from the board's config, and a Save is one transaction and a Reset deletes the board's rows in one statement, serialized by a lock; every save, drop and Reset is kept in `board_settings_changes`, a Reset as one change (#306); `core/board_settings.py`, issue #40; read by Co-movement (`module_comovement/settings.py`) and by Swing for its screen/score thresholds (`module_swing_potential/settings.py`, #384 SW-S4), whose stored overrides also feed the forecast ledger's model version) | — |
 | `watchlist` | `ticker` (one row per pinned ticker until PR 4; unwritten since, the stock watch list in `ops.sqlite` replaced it) | — |
 | `migration_manifest` | `dataset`, `migrated_at`, `schema_version`, `source_count`, `source_bytes`, `source_hash`, `verify` | — |
 | `store_meta` | `key`, `value` | — |
@@ -938,7 +942,7 @@ old table names, the routes and the Settings cards come in later PRs.
 **The first board on it: SPX Gamma (PR 3, D7).** `module_spx_gamma/store_reads.py` is the board's one reader (D4:
 no SQL of its own, no kept connection; a missing day is a "not stored" marker, never an exception or a provider call).
 Since #330 it reads through the needs layer, `needs.ask(need, as_of=day)` over `market.spx_expiry_strike`,
-`market.vix`, `market.cot` and `market.spx_close` (its `READS`). VIX and COT are judged against the day rendered, not
+`market.vix`, `market.cot`, `market.cot_release` and `market.spx_close` (its `READS`). VIX and COT are judged against the day rendered, not
 the newest session, with the catalog's lag limits; the closes and the 0-1 DTE slice keep their own rules, and a day
 the calendar's holiday table does not cover keeps its rows with the lag left undecided: the 0-1 DTE dollar OI gamma per strike (`call_gamma_oi + put_gamma_oi` over the
 expiries 0 and 1 DTE of `spx_gamma_expiry_strike`; a day whose session has not closed reads the previous session's
@@ -947,8 +951,10 @@ snapshot kept to the expiries from the day on, decision A3; that is the day's 0 
 SF2) for the $10B pin and $200M squeeze tests (review S4; a day without the slice has neither a pin flag nor a squeeze
 trigger, avo 28 Oct 2026); the
 VIX family (`VIX`, `VIX9D`, `VIX3M`, `VIX6M`, `VIX1Y`, `VVIX`: the newest observation on or before the day, inside
-3 sessions); the E-mini TFF report (`cftc:tff:13874A:*`: the newest report released, Tuesday + 3 days (an approximation of CFTC's schedule: a holiday week or a shutdown moves the release later, so a past day's render may count a report released a little early), on or before
-the day, inside 10 sessions; the ask ends 3 days before the day, so an unreleased report is never judged; the weekly change is this report minus the previous one, decision A5); and Cboe's
+3 sessions); the E-mini TFF report (`cftc:tff:13874A:*`: the newest report released on or before
+the day, inside 10 sessions, on CFTC's own release day from the stored schedule (`CFTC_COT_RELEASE_LAG`, #227: days
+from each report to its release, keyed on the report's Tuesday, fetched weekly); a report the schedule does not cover
+counts as released on Tuesday + 3 days, an estimate the label marks with "~"; an unreleased report is never judged; the weekly change is this report minus the previous one, decision A5; None, shown "n/a (gap)", when the two newest reports are not 5 to 9 days apart (#228)); and Cboe's
 `SPX` closes for the 8-week window (one column: no open, high, low or volume, decision A6). The job of an accepted
 Fetch queues `uw/spot_expiry_strike` and `market_series` with `requested_by` `spx_gamma` (`ops.enqueue_once`) and
 renders at once with what is stored.
@@ -964,12 +970,15 @@ renders at once with what is stored.
 
 **Build memory.** The one read-write connection of a build (`serving.build`) is opened with DuckDB's `memory_limit`
 from `RC_DUCKDB_MEMORY_LIMIT` (a DuckDB size such as `5GB`; default `5GB`) and `threads` from `RC_DUCKDB_THREADS`
-(default `3`); an empty or invalid value keeps the default. Over the limit DuckDB spills to `<build file>.tmp`
-rather than growing: without it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed the
-first `prices/serving` build on #319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server).
+(default `3`); an empty or invalid value keeps the default. Over the limit DuckDB spills rather than growing: without
+it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed the first `prices/serving` build on
+#319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server). The spill goes to
+`<MARKET_RAW_DIR>/build_tmp/<build file>.tmp` (`serving.spill_dir`, the HDD), never beside the live files on the SSD
+(#372: request 71 spilled 47 GB there), and DuckDB removes it when the build closes. `max_temp_directory_size` comes
+from `RC_DUCKDB_MAX_TEMP` (default `200GB`): past it the build fails instead of filling the disk.
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
-file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `3`), is described under
+file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `4`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it; and the options
@@ -978,7 +987,7 @@ data, `options` (serving schema version `1`), under "The options data" last. The
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`) and `market_series` (key series id, observation date,
 source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance). `session_date` comes from
-`core/calendar.py` and is empty outside its 2025-2028 table (its rule C: no second calendar). The previous file
+`core/calendar.py` and is empty outside its 1993-2028 table (its rule C: no second calendar). The previous file
 stays as `<kind>.prev.duckdb`.
 
 **The swap rule.** A kind is built as a new file `<kind>.<build_id>.duckdb`, from Parquet only (no network), and
@@ -1058,7 +1067,8 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 **Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
 the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 300,
 ishares 150, vanguard 50, nasdaq 50, invesco 50 (one request per fund file; ssga and ishares serve both
-`funds/index_holdings` and `funds/etf_holdings`, 21 and 9 files a run, and every retry attempt is counted); yfinance 5,000, shared by three stores
+`funds/index_holdings` and `funds/etf_holdings`, 21 and 9 files a run, and every retry attempt is counted), ark 50
+(ARKQ's holdings CSV, asked only on a day UW holds nothing for it, #339); yfinance 5,000, shared by three stores
 (working numbers avo has not set): the prices store's float lookups (PR 7, 3,000), the fundamentals layer's
 weekly analyst estimates (PR 12, 2,000, one request per ticker) and the market store's `yahoo` source (PR 9, no
 share of its own: one whole-history read per symbol, MOVE and wheat, and as-of day); the ownership store's (PR 16, working numbers too;
@@ -1066,7 +1076,7 @@ its SEC filings count under sec): finra 2,000 (pages of 5,000 rows), nasdaqtrade
 threshold file per market and day); ibkr 1,050, shared by two stores (working numbers): 50 for one download of
 IBKR's public short-stock file a run (PR 16) and 1,000 for the options data's IV year through the gateway (PR 18,
 one historical request per list name, once); the
-fundamentals layer's (PR 12, working numbers): alphavantage 25 (its free tier);
+fundamentals layer's (PR 12, working numbers): alphavantage 25 (its free tier, shared with the spine's `alphavantage/listing_status`, two requests a run, #346);
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
 nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
 is a source failure and the others go on), and the counter is written every 25 calls, at the end, and on SIGTERM (systemd's stop, turned into a clean exit) or Ctrl-C; a keyless call is counted when it is sent, a UW call when its answer arrives (the UW client's observer), so a UW request cut off by a stop is not counted. Only the
@@ -1157,8 +1167,10 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
 | `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), under 25 requests a minute | `stg_figi` |
 | `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
-| `funds/etf_holdings` | daily | the SPDR workbooks of the 11 sector funds and XBI/XOP/XME/KRE/XHB/XRT/KIE, the iShares `latest-holdings.csv` of SOXX/IBB/ITA/ITB/IGV/IAK, and UW `/etfs/<t>/holdings` whole (no top-10 cap) for the 14 themes whose issuer has no keyless file | none: serves `etf_holdings` itself |
-| `spine/security` | daily | none: builds the served tables from the staging tables | the four tables below except `fund` and `etf_holdings` |
+| `funds/etf_holdings` | daily | the SPDR workbooks of the 11 sector funds and XBI/XOP/XME/KRE/XHB/XRT/KIE, the iShares `latest-holdings.csv` of SOXX/IBB/ITA/ITB/IGV/IAK, and UW `/etfs/<t>/holdings` whole (no top-10 cap) for the 14 themes; on a day UW holds nothing for ARKQ, ARK's own holdings CSV (`ark-ARKQ.csv`, #339; AIRR, SKYY, WCLD and ROBO have no machine-readable issuer file) | none: serves `etf_holdings` itself |
+| `alphavantage/listing_status` | daily, keyed (builder service) | Alpha Vantage `LISTING_STATUS` (CSV, every US listing: `assetType` `ETF` or `Stock`, `ipoDate`), plus one `state=delisted` call whose non-CSV answer is one open `no_rows` build issue (resolved when it answers a list), never a failed run (#346); an active list under 3,000 ETF rows or under 80% of the last snapshot's fails and is not kept; a failed run is due again on the next New York day, not every hourly pass (`due.DAY_CAPPED`, the 25 a day it shares with the calendar), unless the day's raw file is held (a rerun then costs no call); the key is never stored or logged | `stg_av_listing` (the newest snapshot) |
+| `sec/ncen` | monthly; every run (Fetch or backfill) holds the last 4 published quarters (a 404 is not yet, the walk goes one quarter further back; a held quarter is never asked again; one held but not typed is typed) | `www.sec.gov/files/dera/data/form-n-cen-data-sets/<YYYY>q<N>_ncen.zip`: `FUND_REPORTED_INFO.tsv` joined to `SECURITY_EXCHANGE.tsv` on `FUND_ID` (the series' name, ticker, fund-type flags, average net assets), `SUBMISSION.tsv` for each filing's CIK and dates (#346) | `stg_ncen` (each series' newest filing, every held quarter), `stg_ncen_filer` (every filer's CIK) |
+| `spine/security` | daily | none: builds the served tables from the staging tables | the tables below except `fund` and `etf_holdings` |
 
 The sources load their Parquet into TEMP tables of the build connection (never stored in the file), and all
 but one stop there; `sec/company_tickers_mf` also serves `fund` from its own staging, because nothing derives
@@ -1187,7 +1199,7 @@ own mark: a panel header that says `cli` is recorded as `panel:cli`.
 the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
 steps, and a first attempt that failed is not retried every hour.
 
-**Served tables** (`spine` serving schema version `3`). Periods are `valid_from` inclusive, `valid_to` exclusive
+**Served tables** (`spine` serving schema version `4`). Periods are `valid_from` inclusive, `valid_to` exclusive
 (Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
 
 | Table | Rows |
@@ -1196,6 +1208,7 @@ steps, and a first attempt that failed is not retried every hour.
 | `security_history` | the SEC file's `cik`, `name`, `exchange` per ticker over the stored snapshots; Compustat's identifier history of the linked securities |
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
+| `etf` | the ETF universe, one row per ticker (#346): Alpha Vantage's active `assetType=ETF` rows ∪ N-CEN's `IS_ETF=Y` series ∪ `security`'s `etp` rows, `source` `both` / `av` / `ncen` / `etp`. Every one is stored: no threshold and no `active` column (a board's thresholds are its settings, applied at read time). `is_etn` by a name rule (ETN, ETRACS, a dated note, a bank issuer's name), never for a row N-CEN calls an ETF: flagged, kept, not counted as ETFs. `is_cef` for a row the spine types `cef` (Alpha Vantage lists some closed-end funds as `ETF`, e.g. DHY; avo, 1 Nov 2026): flagged, kept, not counted as ETFs. From the series' newest N-CEN: `is_index`, `is_lev_inverse` (`IS_MULTI_INVERSE_INDEX`, or true by a name rule: 2x-5x, -1x, ProShares Ultra/Short, inverse, leveraged, a daily long/short/bull/bear fund), `is_money_market`, `is_fund_of_funds` (NULL, not false, for a row N-CEN does not hold) and `aum` (`DAILY_AVG_NET_ASSETS`, else `MONTHLY_AVG_NET_ASSETS`: an average over the filing's fiscal year, not a point-in-time AUM; `aum_as_of` that year's end); `inception` from AV's `ipoDate`; `is_option_income` by a name rule (option income, covered call, buffer, autocallable, defined or target outcome; premium income, buy-write, put-write, option strategy, managed floor, defined or structured protection); `asset_class` `commodity` for an `etp` row that is no note and whose CIK files no N-CEN at all (a 1933-Act trust: GLD, SLV, USO; a UIT such as SPY files one as an S-6 registrant), applied only once `sec/ncen` holds four quarters; `sector_name` for the 11 sector SPDRs (`core/rotation_reference.py`). Still NULL: `focus`, `country`, `adv_usd_20d`, `expense_ratio` and every other `asset_class` (later PRs). Built by `spine/security` (`rcdata/build/spine/etf.py`), after `security` |
 | `etf_holdings` | every holding of each ETF of `funds/etf_holdings`, per day: `as_of`, `etf`, `provider`, `ticker`, `cusip`, `name`, `weight` (the relatedness peer sets' source) |
 | `fund` | one per share class of the newest SEC fund file: `cik`, `series_id`, `class_id`, the normalised `ticker` and the file's `ticker_raw`, `is_etf` with the `is_etf_source` that decided it, and the file's provenance. `security`'s counterpart: an ETF is a series of a trust, so it has no row of its own in the equity file (the ETF rule, and the two exceptions, below). The kind's only source-owned served table, so `base.shrink_scope` relaxes it for `allow_shrink` on `sec/company_tickers_mf` alone: an empty `fund` refuses the swap for every spine dataset until that one is run |
 
@@ -1211,9 +1224,10 @@ every filter — the error to weigh when the second signal (the ticker trading o
 the N-CEN ETF field) is chosen. A symbol that does not parse (`(NWAGX)`, `n/a`, the empty string) is dropped and counted in the
 run's note.
 
-**The ETF universe is `fund` plus `security`'s `etp` rows.** SPY is a unit investment trust and GLD a commodity
-trust: neither has a series and a class, so neither is in the fund file. Both are rows of the equity file (GLD,
-SLV and USO are its `etp` rows). A reader after the whole ETF universe reads both tables, never `fund` alone.
+**The ETF universe is `etf`** (#346). Before it, a reader took `fund` plus `security`'s `etp` rows: SPY is a unit
+investment trust and GLD a commodity trust, so neither has a series and a class in the fund file, and both are rows
+of the equity file (GLD, SLV and USO are its `etp` rows). `etf` carries those `etp` rows itself, so a reader after
+the ETF universe reads `etf`, never `fund` alone.
 
 **Tier rule v2** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
 (`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.
@@ -1275,7 +1289,7 @@ only through `rcdata.read`.
 | `sec/cover_shares` | daily | The SEC daily master index (10-K, 10-Q, 20-F, 40-F and their -T forms of the last 7 days), each filer's submissions file, the filing's inline-XBRL instance: `dei:EntityCommonStockSharesOutstanding` per class member | `stg_sec_cover` |
 | `yfinance/float` | daily | Yahoo `floatShares` (`yfinance` `get_info`), 400 Tier A names a run, 1.5 s apart, stopped by a 401 or 429 | `stg_yahoo_float` |
 | `uw/total_float` | daily | Unusual Whales `/short_screener` `total_float`, every Tier A name (the client's batching) | `stg_uw_float` |
-| `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1984 on the US exchanges and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025, `comp.sec_split` and the CRSP link `crsp.ccmxpf_lnkhist` whole | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_link`, `stg_wrds_revisions` |
+| `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1993 on the US exchanges and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025 (stocks and ETFs, from 1993), `comp.sec_split` whole; no CCM link (`wrds_history.PERMNO_LINK`) | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_revisions` |
 | `prices/serving` | daily | none: builds the served tables from the staging tables | the tables below |
 
 **The universe.** The bars ask the live spine's Tier A and B (`prices.DEFAULT_TIERS`; 5,655 + 2,015 = 7,670 names
@@ -1303,7 +1317,7 @@ day) and records `scope ignored: ...` on its check row rather than fetching some
 
 **The security id** (`rcdata/build/prices/__init__.py`, `security_id`): `<gvkey>:<iid>` when the spine links the name
 to Compustat, else `figi:<composite FIGI>`, else `cik:<CIK>:<TICKER>`, else `sym:<TICKER>`; a WRDS bar with no spine
-row keeps `<gvkey>:<iid>` (a CRSP one with no link `permno:<PERMNO>`). A source row stores its provider's facts and the
+row keeps `<gvkey>:<iid>`. A CRSP PERMNO takes, with no CCM link, the spine security of its CUSIP (CRSP's 8 characters against the spine's first 8), else of its ticker on CRSP's last day when no other PERMNO had it, else the Compustat `<gvkey>:<iid>` of its CUSIP, else `permno:<PERMNO>` (`wrds_history.PERMNO_LINK`, with its measured coverage). A source row stores its provider's facts and the
 id of its fetch day; the build resolves each row against the live spine on (ticker, CIK), so a spine change re-keys
 the history at the next build without a refetch.
 
@@ -1317,13 +1331,14 @@ are stored **nominal**; the factors are applied on read.
 
 | Table | Rows |
 |---|---|
-| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Alpaca's, then WRDS's where Alpaca has none (CRSP where it links to the Compustat security, else Compustat; only USD rows), and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
+| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Alpaca's, then WRDS's where Alpaca has none (CRSP where it is the same security, else Compustat; only USD rows), and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
 | `corporate_action` | Alpaca's actions of the store's securities (resolved to the security that traded under the action's symbol nearest its date, else the spine's ticker) and Compustat's splits and dividends where Alpaca has none of that kind that day; `ratio` new over old shares, `amount` per share, `applied` and `not_applied_why` |
 | `adj_factor` | per security, the periods between two ex-dates and their `split_factor` (the product of `1 / ratio` of every later split and stock dividend) and `tr_factor` (that, times `1 - amount / close before the ex-date` of every later cash dividend, the close at most 7 days before) |
 | `shares_class` | `outstanding` per class from the SEC covers (an unlisted class keyed `class:<CIK>:<member>`, and so is an ADR issuer's count of ordinary shares), `float` from Yahoo and from UW |
 | `security_symbol` | the symbols a security traded under and when |
 | `market_cap_daily` | close times shares per security and session (the bar's own shares, else a WRDS source's of that session, else the newest cover on or before it moved over the splits between); `issuer_market_cap` sums the issuer's listed classes, each at its newest cap at most 14 days old (a class with no bar that session still counts); the bars' scope asks every listed class a cover names for a Tier A issuer, under `class:<CIK>:<member>` when the spine lacks it (BRK-A) |
 | `price_revision` | the values a later read replaced: Alpaca's re-read and the monthly WRDS refresh, with `revised_at` and `revised_by` |
+| `crsp_unadjusted` | the view's helper, no dataset's own table: one row per security with a CRSP bar in the history, `unadjusted_before` its first Alpaca session where no Compustat record reaches it (NULL where one does); `price_bars_daily` leaves out its CRSP bars before that day |
 | `wrds_price_diff` | the WRDS difference report, one row per comparison: CRSP against Compustat and each against Alpaca on the closes of the sessions both have, and each WRDS source's own day return (Compustat's `prccd / ajexdi * trfd` over the previous session's, CRSP's `dlyret`) against the store's on consecutive sessions; a difference over 1 bp counts; on the `wrds/prices` Settings card |
 
 **The bridge (D4).** Views under the old `.store/prices.duckdb` names with the old columns: `price_bars_daily`
@@ -1331,7 +1346,16 @@ are stored **nominal**; the factors are applied on read.
 applies no split a second time), `price_actions` (splits and dividends, the amount in today's share basis) and
 `index_levels_daily` (`^GSPC`).
 
-**Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `tier_a_no_bar`,
+**Unadjusted history (review S1 of #353):** a CRSP bar of a security no Compustat record reaches (named otherwise
+than `gvkey:iid`, and no `GVKEY_ALIAS` joins a Compustat `gvkey:iid` of its CUSIP to it), dated before its first
+Alpaca bar, has no split or dividend applied. It stays in `price_bar_daily` (nominal) and is left out of
+`price_bars_daily`; the build note counts those bars. The build writes the per-security cut-off once
+(`crsp_unadjusted`, one row per security with a CRSP bar), so a read of the view does not group every bar. A ticker
+link (rule 3) needs, for a spine `gvkey:iid` with a CUSIP, a Compustat row of it on CRSP's last day, and for an ETF
+an inception day on or before it (review M1).
+
+**Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `crsp_ticker_link` (the CRSP
+PERMNO linked to a spine security, no ETF, by ticker alone: one issue per security, its PERMNO named), `tier_a_no_bar`,
 `tier_a_no_shares`, `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
 days, with no split), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
 more than half a cent on each of Alpaca's cent-rounded adjusted closes, the exact bound, where that is larger: about
@@ -1557,7 +1581,7 @@ at once `rcdata.read.statements_many(ciks, annual_years, quarters)`, `rcdata.rea
 `rcdata.read.filing_items(ciks, form, since)`, `rcdata.read.filing_texts(ciks, item)` and
 `rcdata.read.customer_shares(ciks, benchmark)`. Every row carries its provenance and `status`, the newest check of
 the dataset its own row came from (a segment row from Compustat reads `wrds/segments`' check, one from the annual
-report `sec/filings`'), or `never_checked`.
+report `sec/filings`'), or `never_checked`, or `status_unknown` when `ops.sqlite` cannot be read (#228).
 
 **The boards on the layer (G6, build plan PR 13-15 and 20).** `core/fundamentals_layer.py` rebuilds the old
 `edgar_financials` record shape from `fundamental_fact`, so a board keeps its rules and reads current rows. The

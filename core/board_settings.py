@@ -39,8 +39,8 @@ class SettingsError(ValueError):
 @dataclass(frozen=True)
 class Setting:
     key: str
-    kind: str                                   # "int" | "float"
-    default: Callable[[], float]                # read from config at call time
+    kind: str                                   # "int" | "float" | "text" (``value_text``, #360)
+    default: Callable[[], float | str]          # read from config at call time
     lo: float | None = None
     hi: float | None = None
     choices: Callable[[], tuple] | None = None  # closed set (overrides lo/hi)
@@ -240,11 +240,23 @@ def _universe_rules(v: dict) -> list[str]:
     return []
 
 
+def _rel_specs() -> dict[str, Setting]:
+    from RevenueChaser.module_relatedness import settings
+    return settings.specs()
+
+
+def _rel_rules(v: dict) -> list[str]:
+    from RevenueChaser.module_relatedness import settings
+    return settings.rules(v)
+
+
 SPEC: dict[str, tuple[Callable[[], dict[str, Setting]], Callable[[dict], list[str]]]] = {
     "module_comovement": (_comov_specs, _comov_rules),
     "module_fundamentals": (_fund_specs, _no_rules),
     "module_swing_potential": (_swing_specs, _swing_rules),
     "module_settings": (_universe_specs, _universe_rules),
+    # The profile writer (#360): two text settings, the pair and the credential checked by the rules.
+    "module_relatedness": (_rel_specs, _rel_rules),
 }
 
 
@@ -259,7 +271,9 @@ def _specs(board: str) -> dict[str, Setting]:
 
 
 def _coerce(spec: Setting, raw):
-    """Number of the spec's kind, or ``None`` when ``raw`` is not one."""
+    """Value of the spec's kind (a number, or a stripped string for ``text``), or ``None`` when ``raw`` is not one."""
+    if spec.kind == "text":
+        return raw.strip() if isinstance(raw, str) and raw.strip() else None
     if isinstance(raw, bool) or raw is None:
         return None
     try:
@@ -273,12 +287,17 @@ def _coerce(spec: Setting, raw):
     return f
 
 
-def _stored(board: str) -> dict[str, float]:
+def _stored(board: str) -> dict[str, float | str]:
     try:
-        rows = rawstore.query(f"SELECT key, value FROM {TABLE} WHERE board = ?", [board])
+        rows = rawstore.query(f"SELECT key, value, value_text FROM {TABLE} WHERE board = ?", [board])
     except Exception:  # noqa: BLE001 - table absent on a fresh / pre-#40 store
         return {}
-    return {r["key"]: r["value"] for r in rows if r.get("value") is not None}
+    out = {}
+    for r in rows:
+        v = r.get("value_text") if r.get("value_text") is not None else r.get("value")
+        if v is not None:
+            out[r["key"]] = v
+    return out
 
 
 def _typed(spec: Setting, value):
@@ -369,7 +388,7 @@ def validate(board: str, changes: dict) -> list[str]:
             continue
         v = _coerce(spec, raw)
         if v is None:
-            kind = "a whole number" if spec.kind == "int" else "a number"
+            kind = {"int": "a whole number", "text": "a text"}.get(spec.kind, "a number")
             msgs.append(f"{key} must be {kind} {_range_text(spec)}; got {raw!r}")
             continue
         if spec.choices is not None:
@@ -403,7 +422,9 @@ def save(board: str, changes: dict) -> dict:
         if v == specs[key].default():
             drop.append(key)
         else:
-            rows.append({"board": board, "key": key, "value": float(v), "updated_at": now})
+            text = specs[key].kind == "text"
+            rows.append({"board": board, "key": key, "value": None if text else float(v),
+                         "value_text": v if text else None, "updated_at": now})
 
     def _write(tx):
         if rows:

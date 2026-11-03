@@ -1,11 +1,14 @@
-"""``wrds/prices``: the price history from WRDS, Compustat's ``comp.secd`` from 1984 and CRSP's ``crsp.dsf_v2`` to 2025,
-with Compustat's splits (``comp.sec_split``) and dividends (``comp.sec_divid``) and CRSP's link to Compustat
-(``crsp.ccmxpf_lnkhist``).
+"""``wrds/prices``: the price history from WRDS, Compustat's ``comp.secd`` and CRSP's ``crsp.dsf_v2`` from 1993 (CRSP
+to 2025), with Compustat's splits (``comp.sec_split``) and dividends (``comp.sec_divid``).
 
-**Not run against the real source.** Built against the tables as Compustat and CRSP document them; the column
-names are not read from WRDS here (no cloud thread logs in), so a column the store needs that comes back empty for a
-whole answer is a ``wrds_column_empty`` run issue, and the first attended run is the check. The long history run is
-Phase 8 (avo, 27 Oct 2026); this PR ships the code.
+**CRSP is the history** (avo, 1 Nov 2026): stocks and ETFs from 1993-01-29 (SPY's first day) to 2025-12-31; Alpaca
+keeps only its daily fetch. The CRSP column names were read from WRDS's ``information_schema`` on homesrv (1 Nov
+2026); Compustat's are as documented. A column the store needs that comes back empty for a whole answer is a
+``wrds_column_empty`` run issue.
+
+**No CCM link.** Homesrv's subscription refuses ``crsp_a_ccm`` (run of 30 Oct 2026), so CRSP's rows reach a
+security through ``PERMNO_LINK`` at serving time, from columns every ``dsf_v2`` row carries (``hdrcusip``,
+``cusip``, ``ticker``); see there for the rule and its measured coverage.
 
 **Attended**, like the spine's WRDS datasets (``spine/wrds.py``): never due, run only from the CLI on the server
 (``python -m RevenueChaser.rcdata.build backfill wrds/prices``), on the one WRDS worker of the process (one login,
@@ -14,11 +17,19 @@ reaches the cap stops, keeps and serves the years it has, and the next backfill 
 
 **What is asked.** One query per table and calendar year (``year_sql``): ``comp.secd`` on the US exchanges
 (``exchg`` 11, 12, 14: NYSE, NYSE American, Nasdaq) and ``comp.sec_divid`` from ``START_YEAR``, ``crsp.dsf_v2``
-from ``START_YEAR`` to ``CRSP_LAST_YEAR``; ``comp.sec_split`` and the CRSP link whole (``SNAPSHOT_SQL``). A
-**backfill** asks the snapshots first (the links and splits the years need), then the years newest first and,
+(every share type, ETFs included) from ``START_YEAR`` to ``CRSP_LAST_YEAR``; ``comp.sec_split`` whole. A
+**backfill** asks the snapshot first (the splits the years need), then the years newest first and,
 within a year, the three tables; **a partition that exists is skipped** with no query, and a raw file that exists
 is typed again rather than asked again (a run killed between the two). The **monthly run** (``fetch``) asks the
 last ``REFRESH_YEARS`` years of each table again, and the snapshots when the newest is ``SNAPSHOT_DAYS`` old.
+
+**The chunk and cap math** (measured 1 Nov 2026): ``dsf_v2`` holds 1.69M-2.54M rows a year from 1993 to 2025 (66M in
+all, the most in 2025, 11,397 PERMNOs); a year of ``comp.secd`` (2024: 38 MB gzip) took about five minutes to ask on
+30 Oct, and WRDS's ``statement_timeout`` is two days, so a year is the chunk. (The 30 Oct "Query interrupted", 31.5
+minutes in, came after the run's last raw file: DuckDB's interrupt in the serving build, which the ASOF factor join
+fixed, not WRDS.) A backfill from 1993 to 2025 is 33 years of three tables, 99 calls, plus the columns query once a
+run and the split snapshot when due: two to three days of the 50-call ``wrds`` cap, each day going on from the first
+missing partition.
 
 **Raw**: ``raw/wrds/prices/<table>/year=<Y>/<as_of>.jsonl.gz`` (a snapshot: ``raw/wrds/prices/<table>/
 <as_of>.jsonl.gz``), each with the worker's ``.meta.json`` sidecar. **Parquet**: ``parquet/wrds/prices/<table>/
@@ -26,8 +37,7 @@ year=<Y>/part-0.parquet`` (a snapshot: ``.../snapshot=<as_of>/part-0.parquet``);
 and first keeps every bar value it replaces or drops (``secd`` and ``dsf``: open, high, low, close, volume) in
 ``parquet/wrds/prices/revisions/<table>/year=<Y>/part-<run_id>.parquet`` (``price_revision`` in the served file).
 
-**Without CRSP.** A subscription that holds Compustat but not CRSP (homesrv's: run 32 on 30 Oct 2026 was refused
-``crsp.ccmxpf_lnkhist`` with "permission denied for schema crsp_a_ccm") answers a CRSP query with PostgreSQL's
+**Without CRSP.** A subscription that holds Compustat but not CRSP answers a CRSP query with PostgreSQL's
 ``InsufficientPrivilege`` (``spine/wrds.PermissionRefused``). The run then skips CRSP: the refusal is a
 ``wrds_no_access`` issue keyed by the schema and a run note, every later CRSP query of the run is skipped unasked,
 and the history is Compustat's (``secd`` bars with ``cshoc`` shares, so the caps; ``sec_divid``; ``sec_split``). No
@@ -35,16 +45,23 @@ file is left for the refused query, so the next backfill asks it once again and 
 picked up. The CRSP rows of ``wrds_price_diff`` then count no session. A refused Compustat table, and every other
 error, still fails the run.
 
-**The columns first.** The first query of a run that asks anything is ``information_schema.columns`` for the five
+**The columns first.** The first query of a run that asks anything is ``information_schema.columns`` for the four
 tables (``fundamentals/wrds_fund.catalog``, the columns this login can read; one ``wrds`` call, the same login, so no
 second Duo): a Compustat table the login cannot read, or a column a query names that WRDS lacks (``ASKED_COLUMNS``,
 ``exchg`` among them), fails the run before any data is asked; a CRSP table missing from it, or a CRSP column it
 lacks, is skipped as above.
 
-**Served** by ``prices/serving``: the bars (``COMP_BARS``, ``CRSP_BARS``; CRSP first where linked, an Alpaca bar
-always winning its session), the actions (``ACTIONS_SQL``; an Alpaca action of the same kind and day winning), the
-revisions, and the difference report ``wrds_price_diff`` (``COMPARISONS``). Compustat's own adjusted return is
-``COMP_RETURN``: ``prccd / ajexdi * trfd`` over the previous session's.
+**Served** by ``prices/serving``: the bars (``COMP_BARS``, ``CRSP_BARS``; CRSP first where it is the same security,
+an Alpaca bar always winning its session), the actions (``ACTIONS_SQL``; an Alpaca action of the same kind and day
+winning), the revisions, and the difference report ``wrds_price_diff`` (``COMPARISONS``). Compustat's own adjusted
+return is ``COMP_RETURN``: ``prccd / ajexdi * trfd`` over the previous session's.
+
+**Adjustment.** A served bar is nominal, CRSP's (``abs(dlyprc)``: a negative price is CRSP's bid/ask midpoint) as
+Alpaca's raw bar, and the factors are applied on read from ``corporate_action``. Before Alpaca's action window the
+only actions are Compustat's, keyed ``gvkey:iid`` or a security's ``GVKEY_ALIAS`` (an ETF the spine names by FIGI
+whose CUSIP Compustat holds). A security no Compustat record reaches has no split or dividend applied to its CRSP
+history, so ``prices/serving`` keeps those bars out of the adjusted view (``crsp_unadjusted``). ``dlycumfacpr`` and
+``dlyorddivamt`` are stored for that.
 """
 from __future__ import annotations
 
@@ -62,7 +79,7 @@ from . import KIND, stage
 
 NAME = "wrds/prices"
 COMPUSTAT, CRSP = "wrds/compustat", "wrds/crsp"          # the bar sources in ``price_bar_daily``
-START_YEAR = 1984
+START_YEAR = 1993                                        # CRSP's SPY starts 1993-01-29
 CRSP_LAST_YEAR = 2025                                    # the CRSP subscription's last year
 REFRESH_YEARS = 2
 SNAPSHOT_DAYS = 30
@@ -74,13 +91,17 @@ PROVENANCE = [("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TE
 SECD = [("gvkey", "TEXT"), ("iid", "TEXT"), ("datadate", "DATE"), ("tic", "TEXT"), ("cusip", "TEXT"),
         ("curcdd", "TEXT"), ("prccd", "DOUBLE"), ("prcod", "DOUBLE"), ("prchd", "DOUBLE"), ("prcld", "DOUBLE"),
         ("cshtrd", "DOUBLE"), ("cshoc", "DOUBLE"), ("ajexdi", "DOUBLE"), ("trfd", "DOUBLE"), ("exchg", "INTEGER")]
+# ``hdrcusip`` (8 characters, the PERMNO's newest CUSIP), ``cusip`` (the date's) and ``ticker`` (the date's) feed
+# ``PERMNO_LINK``; ``dlycumfacpr`` / ``dlycumfacshr`` (CRSP's cumulative price and share factors) and
+# ``dlyorddivamt`` (the ordinary dividend going ex that day) are kept, not served yet: they let CRSP's own splits
+# and dividends be read later without asking 33 years again.
 DSF = [("permno", "TEXT"), ("dlycaldt", "DATE"), ("dlyprc", "DOUBLE"), ("dlyopen", "DOUBLE"), ("dlyhigh", "DOUBLE"),
-       ("dlylow", "DOUBLE"), ("dlyvol", "DOUBLE"), ("dlyret", "DOUBLE"), ("shrout", "DOUBLE")]
+       ("dlylow", "DOUBLE"), ("dlyvol", "DOUBLE"), ("dlyret", "DOUBLE"), ("shrout", "DOUBLE"), ("hdrcusip", "TEXT"),
+       ("cusip", "TEXT"), ("ticker", "TEXT"), ("dlycumfacpr", "DOUBLE"), ("dlycumfacshr", "DOUBLE"),
+       ("dlyorddivamt", "DOUBLE")]
 DIVID = [("gvkey", "TEXT"), ("iid", "TEXT"), ("datadate", "DATE"), ("div", "DOUBLE"), ("divd", "DOUBLE"),
          ("divsp", "DOUBLE"), ("curcddv", "TEXT"), ("paydate", "DATE"), ("recorddate", "DATE")]
 SPLIT = [("gvkey", "TEXT"), ("iid", "TEXT"), ("datadate", "DATE"), ("split", "DOUBLE")]
-LINK = [("gvkey", "TEXT"), ("iid", "TEXT"), ("permno", "TEXT"), ("linktype", "TEXT"), ("linkprim", "TEXT"),
-        ("linkdt", "DATE"), ("linkenddt", "DATE")]
 REVISION = [("source", "TEXT"), ("security_key", "TEXT"), ("session_date", "DATE"), ("symbol", "TEXT"),
             ("open", "DOUBLE"), ("high", "DOUBLE"), ("low", "DOUBLE"), ("close", "DOUBLE"), ("volume", "DOUBLE"),
             ("fetched_at", "DOUBLE"), ("run_id", "TEXT"), ("revised_at", "DOUBLE"), ("revised_by", "TEXT")]
@@ -98,33 +119,26 @@ TABLES: dict[str, dict] = {
              "bar": (COMPUSTAT, "gvkey || ':' || iid", "replace(upper(tic), '.', '-')", "prcod", "prchd", "prcld",
                      "prccd", "cshtrd")},
     "dsf": {"wrds": "crsp.dsf_v2", "schema": DSF, "key": ["permno", "dlycaldt"], "date": "dlycaldt",
-            "last_year": CRSP_LAST_YEAR, "needed": ("dlyprc", "dlyret", "shrout"),
-            "sql": ("SELECT permno, dlycaldt, dlyprc, dlyopen, dlyhigh, dlylow, dlyvol, dlyret, shrout "
-                    "FROM crsp.dsf_v2 WHERE {range}"),
+            "last_year": CRSP_LAST_YEAR, "needed": ("dlyprc", "dlyret", "shrout", "hdrcusip", "ticker"),
+            "sql": ("SELECT " + ", ".join(c for c, _ in DSF) + " FROM crsp.dsf_v2 WHERE {range}"),
             "bar": (CRSP, "permno", "CAST(NULL AS TEXT)", "dlyopen", "dlyhigh", "dlylow", "abs(dlyprc)", "dlyvol")},
     "sec_divid": {"wrds": "comp.sec_divid", "schema": DIVID, "key": ["gvkey", "iid", "datadate"], "date": "datadate",
                   "last_year": None, "needed": ("divd",), "sql": "SELECT * FROM comp.sec_divid WHERE {range}"},
     "sec_split": {"wrds": "comp.sec_split", "schema": SPLIT, "key": ["gvkey", "iid", "datadate"], "date": None,
                   "needed": ("split",), "sql": "SELECT * FROM comp.sec_split"},
-    "link": {"wrds": "crsp.ccmxpf_lnkhist", "schema": LINK, "key": ["gvkey", "iid", "permno", "linkdt"], "date": None,
-             "needed": ("permno",),
-             "sql": ("SELECT gvkey, liid AS iid, lpermno AS permno, linktype, linkprim, linkdt, linkenddt "
-                     "FROM crsp.ccmxpf_lnkhist WHERE linktype IN ('LU', 'LC') AND linkprim IN ('P', 'C') "
-                     "AND lpermno IS NOT NULL")},
 }
 YEARLY = ("secd", "dsf", "sec_divid")
-SNAPSHOTS = ("sec_split", "link")
-# CRSP's tables: a subscription without CRSP (or without CCM, the link) answers them with a permission refusal,
-# and the history is then Compustat's alone (``_skip_crsp``).
-CRSP_TABLES = ("dsf", "link")
+SNAPSHOTS = ("sec_split",)
+# CRSP's table: a subscription without CRSP answers it with a permission refusal, and the history is then
+# Compustat's alone (``_skip_crsp``).
+CRSP_TABLES = ("dsf",)
 # The WRDS columns each query names (its SELECT list and filters), checked against ``information_schema.columns``
 # before any data is asked (``_check_columns``): a name WRDS does not have fails the run on that one query, not on a
 # data query after the Duo push.
 ASKED_COLUMNS = {"secd": [c for c, _ in SECD], "dsf": [c for c, _ in DSF],
-                 "sec_divid": ["gvkey", "iid", "datadate", "divd"], "sec_split": [c for c, _ in SPLIT],
-                 "link": ["gvkey", "liid", "lpermno", "linktype", "linkprim", "linkdt", "linkenddt"]}
+                 "sec_divid": ["gvkey", "iid", "datadate", "divd"], "sec_split": [c for c, _ in SPLIT]}
 STAGING = {"secd": "stg_wrds_secd", "dsf": "stg_wrds_dsf", "sec_divid": "stg_wrds_divid",
-           "sec_split": "stg_wrds_split", "link": "stg_wrds_link"}
+           "sec_split": "stg_wrds_split"}
 
 # Compustat's adjusted price and its day return (WRDS: total return = (prccd / ajexdi * trfd) over the previous
 # day's, minus 1), over a window ``w`` of one security by date.
@@ -201,7 +215,7 @@ class WrdsPrices:
     providers = (wrds.PROVIDER,)
     tables = ("price_bar_daily", "corporate_action", "price_revision", "wrds_price_diff")
     cadence = "monthly"
-    attended = True
+    attended = property(lambda self: base.wrds_attended())   # RC_WRDS_UNATTENDED=1: the builder runs it
     backfill_needs_from = False
     starts_by_hand = True
 
@@ -415,25 +429,77 @@ class WrdsPrices:
 
 # ── The served history (read by ``prices/serving``, over the staging tables above) ───────────────────────────
 
-# CRSP's rows with the Compustat security of their date (a primary link first); an unlinked one keeps its PERMNO.
-_LINKED = """
-    SELECT d.*, l.gvkey, l.iid FROM stg_wrds_dsf d
-    LEFT JOIN stg_wrds_link l ON l.permno = d.permno AND d.dlycaldt >= coalesce(l.linkdt, DATE '0001-01-01')
-         AND (l.linkenddt IS NULL OR d.dlycaldt <= l.linkenddt)
-    QUALIFY row_number() OVER (PARTITION BY d.permno, d.dlycaldt ORDER BY l.linkprim = 'P' DESC NULLS LAST,
-                                                                          l.gvkey NULLS LAST) = 1"""
+# The security of each CRSP PERMNO, without CCM (``serving`` makes it the temp table ``_permno_link``, over
+# ``stg_wrds_dsf``, the spine's ``stg_spine`` and ``stg_wrds_secd``). A PERMNO is one security for its whole life,
+# so the whole PERMNO links to one security, by the first rule that matches:
+#   1. ``hdrcusip``: its header CUSIP (8 characters) is the first 8 of a spine security's 9-character CUSIP;
+#   2. ``cusip``: any CUSIP it carried on a staged day is (a CUSIP changed since);
+#   3. ``ticker``: its ticker on its newest staged row (NULL if that row has none) is a spine ticker, when that row is on
+#      CRSP's newest staged day (still listed: a delisted PERMNO's old ticker is often someone else's today) and no other
+#      PERMNO had that ticker that day (CRSP names both Berkshire classes ``BRK``); and the spine row existed then: it
+#      has no CUSIP to contradict, or Compustat holds its ``gvkey:iid`` on that day, and an ETF's ``etf.inception`` is
+#      on or before it (review M1 of #353: a 2026 listing that took a delisted name's ticker gets none of its history).
+#      This is how ETFs link: the spine holds no CUSIP for them;
+#   4. ``compustat``: as 2 against a Compustat security's CUSIP in ``comp.secd`` (a delisted name, off the spine).
+# Then one PERMNO per security (the best rule, then the newest PERMNO), so two never fill one security's day.
+# An unlinked PERMNO keeps ``permno:<PERMNO>``; it links at the next build once the spine holds it (no new query).
+# Measured 1 Nov 2026 (homesrv spine, CRSP's 2025-12-31): Tier A 5,006 of 5,655 linked (88.5 %; common 93.3 %, the
+# rest mostly listed after 2025, which CRSP does not hold yet), 4,572 by CUSIP and 434 by ticker; Tier B 567 of 2,015
+# (ETPs 113 of 206, all by ticker, the rest ETNs CRSP does not carry or 2026 listings; CEFs 98 %; preferreds, units
+# and warrants are not in CRSP). Of the 6,702 PERMNOs trading on 2010-12-31: 2,499 link to today's spine (2,448 of
+# the 3,159 still listed at 2025's end; 610 of the rest are ETFs the spine does not hold), and at least 2,339 of the
+# 3,543 since delisted have a Compustat CUSIP on a US exchange.
+# shortcut: one security per PERMNO and the reverse; a security that changed PERMNO keeps only its newest one's
+# history, measure ``permno:`` rows with a spine ticker once the full history is built.
+PERMNO_LINK = """
+    WITH p AS (SELECT permno, max(dlycaldt) AS last, arg_max_null(ticker, dlycaldt) AS ticker,
+                      left(arg_max_null(hdrcusip, dlycaldt), 8) AS hdrcusip FROM stg_wrds_dsf GROUP BY permno),
+    c AS (SELECT DISTINCT permno, left(cusip, 8) AS cusip FROM stg_wrds_dsf WHERE cusip IS NOT NULL),
+    newest AS (SELECT * FROM p WHERE last = (SELECT max(last) FROM p)),
+    alone AS (SELECT ticker FROM newest GROUP BY ticker HAVING count(*) = 1),
+    s AS (SELECT security_id, ticker, left(cusip, 8) AS c8, coalesce(is_etf, false) AS is_etf, inception
+          FROM stg_spine),
+    comp AS (SELECT DISTINCT gvkey || ':' || iid AS security_id, left(cusip, 8) AS c8 FROM stg_wrds_secd
+             WHERE cusip IS NOT NULL),
+    cand AS (
+        SELECT p.permno, s.security_id, 1 AS rule, 'hdrcusip' AS how FROM p JOIN s ON s.c8 = p.hdrcusip
+        UNION ALL SELECT c.permno, s.security_id, 2, 'cusip' FROM c JOIN s ON s.c8 = c.cusip
+        UNION ALL SELECT n.permno, s.security_id, 3, 'ticker' FROM newest n JOIN alone USING (ticker)
+                  JOIN s ON s.ticker = n.ticker
+                  WHERE (s.c8 IS NULL OR EXISTS (SELECT 1 FROM stg_wrds_secd d WHERE d.datadate = n.last
+                                                 AND d.gvkey || ':' || d.iid = s.security_id))
+                    AND (NOT s.is_etf OR coalesce(s.inception <= n.last, false))   -- no inception day: no link
+        UNION ALL SELECT c.permno, m.security_id, 4, 'compustat' FROM c JOIN comp m ON m.c8 = c.cusip),
+    best AS (SELECT cand.*, p.last FROM cand JOIN p USING (permno)
+             QUALIFY row_number() OVER (PARTITION BY permno ORDER BY rule, security_id) = 1)
+    SELECT permno, security_id, how FROM best
+    QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY rule, last DESC, permno) = 1"""
+
+# Compustat's ``gvkey:iid`` of a PERMNO whose own link is a security the spine names otherwise (``figi:``, ``cik:``,
+# ``sym:``: the ETFs), when the PERMNO's CUSIP matches it and the spine holds no such ``gvkey:iid``. Its Compustat bars,
+# actions and revisions are served as that security's, so one fund is one security (review S2 of #353; ``serving``
+# makes it the temp table ``_gvkey_alias`` after ``_permno_link``). One security per ``gvkey:iid``.
+GVKEY_ALIAS = """
+    WITH c AS (SELECT DISTINCT permno, left(cusip, 8) AS c8 FROM stg_wrds_dsf WHERE cusip IS NOT NULL),
+    comp AS (SELECT DISTINCT gvkey || ':' || iid AS gid, left(cusip, 8) AS c8 FROM stg_wrds_secd WHERE cusip IS NOT NULL)
+    SELECT m.gid, l.security_id FROM _permno_link l JOIN c USING (permno) JOIN comp m USING (c8)
+    WHERE (l.security_id LIKE 'figi:%' OR l.security_id LIKE 'cik:%' OR l.security_id LIKE 'sym:%')
+      AND m.gid NOT IN (SELECT security_id FROM stg_spine WHERE security_id IS NOT NULL)
+      AND m.gid NOT IN (SELECT security_id FROM _permno_link)        -- another PERMNO's own rule-4 security
+    QUALIFY row_number() OVER (PARTITION BY m.gid ORDER BY l.security_id) = 1"""
 
 # Every history bar of both sources (``PRICE_BAR``'s columns, then the source's own day return and the previous
 # session it is over): ``prices/serving`` serves one per session (CRSP first) and compares them all.
 CRSP_BARS = f"""
-    SELECT coalesce(gvkey || ':' || iid, 'permno:' || permno) AS security_id, dlycaldt AS session_date,
+    SELECT coalesce(l.security_id, 'permno:' || d.permno) AS security_id, dlycaldt AS session_date,
            CAST(NULL AS TEXT) AS symbol, CAST(NULL AS TEXT) AS cik, dlyopen AS open, dlyhigh AS high, dlylow AS low,
            abs(dlyprc) AS close, dlyvol AS volume, CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count,
            shrout * {CRSP_SHARES_UNIT} AS shares_outstanding, '{CRSP}' AS source, source_as_of, fetched_at, run_id,
            dlyret AS own_return, 1 AS priority
-    FROM ({_LINKED}) WHERE dlyprc IS NOT NULL AND dlyprc <> 0"""
+    FROM stg_wrds_dsf d LEFT JOIN _permno_link l USING (permno) WHERE dlyprc IS NOT NULL AND dlyprc <> 0"""
 COMP_BARS = f"""
-    SELECT gvkey || ':' || iid AS security_id, datadate AS session_date, replace(upper(tic), '.', '-') AS symbol,
+    SELECT coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = gvkey || ':' || iid), gvkey || ':' || iid)
+               AS security_id, datadate AS session_date, replace(upper(tic), '.', '-') AS symbol,
            CAST(NULL AS TEXT) AS cik, prcod AS open, prchd AS high, prcld AS low, prccd AS close, cshtrd AS volume,
            CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count, cshoc AS shares_outstanding,
            '{COMPUSTAT}' AS source, source_as_of, fetched_at, run_id, {COMP_RETURN} AS own_return, 2 AS priority
@@ -441,7 +507,7 @@ COMP_BARS = f"""
     WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate)"""
 
 # Compustat's splits and dividends in the shape of ``_act`` (the Alpaca actions' columns, by name).
-ACTIONS_SQL = f"""
+_ACTIONS = f"""
     SELECT gvkey || ':' || iid AS security_id, 'wrds:split:' || gvkey || ':' || iid || ':' || CAST(datadate AS TEXT) AS action_id,
            CASE WHEN split < 1 THEN 'reverse_split' ELSE 'forward_split' END AS action_type, datadate AS ex_date,
            datadate AS eff, 1.0 AS old_rate, split AS new_rate, CAST(NULL AS DOUBLE) AS rate, false AS special,
@@ -458,15 +524,17 @@ ACTIONS_SQL = f"""
            datadate, NULL, NULL, divsp, true, coalesce(curcddv, 'USD'), recorddate, paydate, '{NAME}', source_as_of,
            fetched_at, run_id
     FROM stg_wrds_divid WHERE divsp > 0"""
+# The actions served: a ``gvkey:iid`` that ``_gvkey_alias`` names is its security's (review S2 of #353).
+ACTIONS_SQL = f"""
+    SELECT coalesce(a.security_id, w.security_id) AS security_id, w.* EXCLUDE (security_id)
+    FROM ({_ACTIONS}) w LEFT JOIN _gvkey_alias a ON a.gid = w.security_id"""
 
-# The revisions of the history bars, keyed on the security of their date.
+# The revisions of the history bars, keyed on their security (a CRSP one through ``_permno_link``).
 REVISIONS_SQL = f"""
     SELECT CASE WHEN r.source = '{CRSP}' THEN coalesce(
-               (SELECT l.gvkey || ':' || l.iid FROM stg_wrds_link l WHERE l.permno = r.security_key
-                AND r.session_date >= coalesce(l.linkdt, DATE '0001-01-01')
-                AND (l.linkenddt IS NULL OR r.session_date <= l.linkenddt)
-                ORDER BY l.linkprim = 'P' DESC LIMIT 1), 'permno:' || r.security_key)
-           ELSE r.security_key END AS security_id, r.session_date, r.symbol, r.open, r.high, r.low, r.close, r.volume,
+               (SELECT l.security_id FROM _permno_link l WHERE l.permno = r.security_key), 'permno:' || r.security_key)
+           ELSE coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = r.security_key), r.security_key)
+           END AS security_id, r.session_date, r.symbol, r.open, r.high, r.low, r.close, r.volume,
            r.source, r.fetched_at, r.run_id, r.revised_at, r.revised_by
     FROM stg_wrds_revisions r"""
 

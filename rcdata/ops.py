@@ -35,7 +35,9 @@ from __future__ import annotations
 import atexit
 import functools
 import json
+import logging
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -545,8 +547,26 @@ def calls_today(provider: str) -> int:
 
 # ── The read log ───────────────────────────────────────────────────────────────────────────────────────────────
 
+#: A ``python -m <package>`` run starts from ``__main__.py``; its read-log name is its package's, or this word.
+_MAIN_NAMES = {"build": "builder"}
+
+
 def _process_name() -> str:
-    return os.getenv("RC_PROCESS_NAME") or Path(sys.argv[0] or "python").stem or "python"
+    """``RC_PROCESS_NAME``, else the script's name; a ``__main__.py`` is named after its package (#331).
+
+    Without that, the builder, the backup CLI and every board run as ``python -m`` all counted under ``__main__``.
+    Both separators are split, because the live machine is Windows.
+    """
+    env = os.getenv("RC_PROCESS_NAME")
+    if env:
+        return env
+    parts = [p for p in re.split(r"[\\/]", sys.argv[0] or "") if p]
+    if not parts:
+        return "python"
+    stem = parts[-1].rsplit(".", 1)[0] if "." in parts[-1] else parts[-1]
+    if stem == "__main__" and len(parts) > 1:
+        return _MAIN_NAMES.get(parts[-2], parts[-2])
+    return stem or "python"
 
 
 class ReadLog:
@@ -565,7 +585,10 @@ class ReadLog:
             self._counts[key] = self._counts.get(key, 0) + 1
             due = self._clock() - self._last >= READ_LOG_FLUSH_S
         if due:
-            self.flush()
+            try:
+                self.flush()
+            except Exception as exc:  # noqa: BLE001 - #228 item 5: a failed flush never fails the read
+                logging.getLogger(__name__).warning("read log flush failed, kept for the next one: %s", exc)
 
     def flush(self) -> None:
         with self._lock:
@@ -573,7 +596,14 @@ class ReadLog:
             self._last = self._clock()
         if not counts:
             return
-        _add_reads(self.process or _process_name(), [(day, table, n) for (day, table), n in counts.items()])
+        try:
+            _add_reads(self.process or _process_name(), [(day, table, n) for (day, table), n in counts.items()])
+        except Exception:
+            # Review S1 (#356): the counts go back, so the next flush retries them; the retirement count reads them.
+            with self._lock:
+                for key, n in counts.items():
+                    self._counts[key] = self._counts.get(key, 0) + n
+            raise
 
 
 @_routed
@@ -591,8 +621,8 @@ read_log = ReadLog()
 def _flush_at_exit() -> None:
     try:
         read_log.flush()
-    except Exception:  # noqa: BLE001 - a lost minute of read counts is not worth a traceback at exit
-        pass
+    except Exception as exc:  # noqa: BLE001 - no traceback at exit, but say so: kept counts can span many minutes
+        logging.getLogger(__name__).warning("read log flush at exit failed, counts lost: %s", exc)
 
 
 atexit.register(_flush_at_exit)
@@ -729,6 +759,17 @@ def recent_checks(dataset: str, limit: int = 20) -> list[dict]:
 
 
 @_routed
+def read_latest_check(dataset: str) -> dict | None:
+    """``latest_check`` for a reader: the same row, without creating the file or a table (#336).
+
+    ``latest_check`` opens through ``_open``, which ensures the file; that is right for the builder, which writes it
+    anyway, and wrong for a page render (F7 A). ``read.dataset_status`` and the boards' status reads use this one.
+    """
+    rows = _select("SELECT * FROM dataset_check WHERE dataset = ? ORDER BY id DESC LIMIT 1", (dataset,))
+    return rows[0] if rows else None
+
+
+@_routed
 def latest_unskipped_check(dataset: str) -> dict | None:
     """The newest ``dataset_check`` row of ``dataset`` that is not ``skipped``, however many skips came after it."""
     rows = _select("SELECT * FROM dataset_check WHERE dataset = ? AND result != 'skipped' ORDER BY id DESC LIMIT 1",
@@ -807,6 +848,23 @@ def reads_since(first_day: str, tables) -> dict[str, int]:
                    f"({', '.join('?' * len(names))}) GROUP BY table_name", (first_day, *names))
     got = {r["table_name"]: int(r["n"]) for r in rows}
     return {t: got.get(t, 0) for t in names}
+
+
+#: The prefix ``rcdata.needs`` counts a need under in ``read_log``, beside the table name (``serve.ask``/``summary``).
+NEED_READ_PREFIX = "need:"
+
+
+@_routed
+def need_reads(first_day: str) -> list[dict]:
+    """``[{need, process, day, reads}]``: every ``need:<name>`` row of ``read_log`` since ``first_day``.
+
+    The Settings Needs tab's request log (#331). Day granularity, because that is what the log holds; the table rows
+    beside them are left out, and the name comes back without its prefix. Never creates the file.
+    """
+    rows = _select("SELECT table_name, process, day, reads FROM read_log WHERE day >= ? AND table_name LIKE 'need:%' "
+                   "ORDER BY table_name, process, day", (first_day,))
+    return [{"need": r["table_name"][len(NEED_READ_PREFIX):], "process": r["process"], "day": r["day"],
+             "reads": int(r["reads"])} for r in rows]
 
 
 @_routed

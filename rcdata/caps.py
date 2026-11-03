@@ -22,6 +22,8 @@ DAY_CAPS: dict[str, int] = {
     # few runs of both datasets with every attempt spent (working numbers, not avo's).
     "ssga": 300,
     "ishares": 150,
+    # ARK's holdings CSV (#339): one request a run for ARKQ, and only on a day UW holds nothing for it.
+    "ark": 50,
     "vanguard": 50,
     "nasdaq": 50,
     "invesco": 50,
@@ -38,8 +40,9 @@ DAY_CAPS: dict[str, int] = {
     # IBKR, shared by two stores (working numbers): the ownership store's short-stock file (PR 16, 50) and the options
     # data's IV year through the gateway (PR 18, ``ibkr_iv.DAY_CALLS``, one historical request per list name, once).
     "ibkr": 50 + 1_000,
-    # The fundamentals layer's (PR 12; working numbers): Alpha Vantage's free tier allows 25 requests a day. Its
-    # yfinance estimates share "yfinance" above.
+    # Alpha Vantage's free tier allows 25 requests a day, shared by the fundamentals layer's earnings calendar (PR 12,
+    # one request a run) and the spine's listing status (#346, two a run: active and delisted). The fundamentals
+    # layer's yfinance estimates share "yfinance" above.
     "alphavantage": 25,
 }
 

@@ -77,3 +77,15 @@ def test_the_read_log_counts_the_need_name(monkeypatch):
     monkeypatch.setattr(ops.read_log, "bump", seen.append)
     needs.summary("identity.universe")
     assert seen[0] == "need:identity.universe"
+
+
+@pytest.mark.usefixtures("spine_built")
+def test_count_false_leaves_the_need_out_of_the_read_log(monkeypatch):
+    """The Settings Needs tab asks every need's summary on each render (#331): counting those under ``need:<name>``
+    would bury the requests the tab exists to show. The table read itself is still counted, as every read is."""
+    seen: list[str] = []
+    monkeypatch.setattr(ops.read_log, "bump", seen.append)
+    s = needs.summary("identity.universe", count=False)
+    assert s["need"] == "identity.universe"
+    assert not [t for t in seen if t.startswith("need:")]
+    assert "security" in seen

@@ -1,8 +1,8 @@
 """SPX Gamma reads the market store through the needs layer, judged against the board's own day (#330).
 
 ``test_store_reads.py`` keeps its assertions unchanged: the same numbers on the same fixture store. These pin the new
-path: each of the four readers asks ``needs.ask(need, as_of=day, ...)``; the COT ask ends ``RELEASE_DAYS`` before the
-day, so only released reports are judged; and the lag limits are the catalog's, read on every call.
+path: each of the four readers asks ``needs.ask(need, as_of=day, ...)``; the COT ask ends on the day and keeps only the
+reports released by it (#227); and the lag limits are the catalog's, read on every call.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def asks(monkeypatch):
 def test_every_reader_asks_its_need_judged_from_the_boards_day(rcdata_market, asks):
     day = fx.FRIDAY
     store_reads.read_day(day)
-    assert {need for need, _, _ in asks} == {"market.vix", "market.cot", "market.spx_close",
+    assert {need for need, _, _ in asks} == {"market.vix", "market.cot", "market.cot_release", "market.spx_close",
                                              "market.spx_expiry_strike"}
     assert all(as_of == day for _, as_of, _ in asks), asks
 
@@ -53,11 +53,14 @@ def test_a_past_day_not_yet_closed_asks_the_previous_session_judged_from_the_day
     assert sessions == [(date(2026, 10, 27), date(2026, 10, 27)), (date(2026, 10, 26), date(2026, 10, 27))]
 
 
-def test_the_cot_ask_ends_release_days_before_the_day_so_only_released_reports_are_judged(rcdata_market, asks):
+def test_the_cot_asks_end_on_the_day_and_only_released_reports_are_judged(rcdata_market, asks):
+    """#227: the 20 Oct report is in the window on Thu 22 Oct but not released (no schedule row: Fri 23 Oct)."""
     day = date(2026, 10, 22)
-    store_reads.cot_tff(day)
-    (_, as_of, params), = [a for a in asks if a[0] == "market.cot"]
-    assert as_of == day and params["end"] == day - timedelta(days=store_reads.RELEASE_DAYS)
+    out = store_reads.cot_tff(day)
+    for need in ("market.cot", "market.cot_release"):
+        (_, as_of, params), = [a for a in asks if a[0] == need]
+        assert as_of == day and params["end"] == day
+    assert out["payload"]["report_date"] == "2026-10-13"
 
 
 def test_the_board_names_no_series_id_and_calls_no_reader_of_its_own():
@@ -115,16 +118,16 @@ def test_the_boards_caret_map_covers_exactly_the_series_the_vix_need_names():
 
 # ── review of 1e1b250 (#334): days outside the calendar's holiday table keep their data ──
 
-HISTORY_DAY = date(2024, 10, 25)      # a Friday the UW history pull covers; the holiday table starts in 2025
+HISTORY_DAY = date(1992, 10, 23)      # a Friday before the holiday table (1993-2028) starts
 
 
 @pytest.fixture
 def a_2024_store(monkeypatch):
-    """Readers answering rows for 25 Oct 2024 (and the 2029 day), as a store built from Cboe's 1975- file would."""
+    """Readers answering rows for 23 Oct 1992 (and the 2029 day), as a store built from Cboe's 1975- file would."""
     from RevenueChaser.rcdata import read
 
     def series(series_ids=(), start=None, end=None, prefix=None):
-        days = [d for d in (date(2024, 10, 24), HISTORY_DAY, date(2029, 3, 1), date(2029, 3, 2))
+        days = [d for d in (date(1992, 10, 22), HISTORY_DAY, date(2029, 3, 1), date(2029, 3, 2))
                 if (start is None or d >= start) and (end is None or d <= end)]
         return [{"series_id": "SPX", "obs_date": d, "value": 5800.0 + d.day, "close": None, "status": "changed",
                  "source": "cboe", "source_as_of": d} for d in days]
@@ -145,23 +148,23 @@ def test_spx_closes_of_a_day_outside_the_holiday_table_are_kept(day):
 
 
 @pytest.mark.usefixtures("a_2024_store")
-def test_the_0_1_dte_slice_of_a_2024_day_is_kept():
+def test_the_0_1_dte_slice_of_a_day_outside_the_table_is_kept():
     out = store_reads.zero_one_dte_dollars(HISTORY_DAY)
     assert out["stored"] is True and out["dollars"] == {5800.0: 8e8}, out["label"]
 
 
 @pytest.mark.usefixtures("a_2024_store")
-def test_history_mode_finds_the_stored_close_of_a_2024_day():
+def test_history_mode_finds_the_stored_close_of_a_day_outside_the_table():
     """The history pull reads its spot from the stored close; without it the day is skipped_no_close."""
     from RevenueChaser.module_spx_gamma import snapshot
-    assert snapshot._stored_close(snapshot.stored_spx_candles, "SPX", HISTORY_DAY.isoformat()) == 5800.0 + 25
+    assert snapshot._stored_close(snapshot.stored_spx_candles, "SPX", HISTORY_DAY.isoformat()) == 5800.0 + HISTORY_DAY.day
 
 
 @pytest.mark.usefixtures("a_2024_store")
 def test_vix_and_cot_outside_the_table_stay_not_stored_with_no_reason_as_before():
     """The lag cannot be counted, so the two readers that judge it say "not stored", as _sessions_after did."""
-    assert store_reads.vix_family(HISTORY_DAY)["label"] == "VIX family not stored for 2024-10-25"
-    assert store_reads.cot_tff(HISTORY_DAY)["label"] == "CFTC COT not stored for 2024-10-25"
+    assert store_reads.vix_family(HISTORY_DAY)["label"] == f"VIX family not stored for {HISTORY_DAY.isoformat()}"
+    assert store_reads.cot_tff(HISTORY_DAY)["label"] == f"CFTC COT not stored for {HISTORY_DAY.isoformat()}"
 
 
 def test_a_failed_row_read_is_read_failed_and_does_not_retry_the_previous_session(rcdata_market, monkeypatch):

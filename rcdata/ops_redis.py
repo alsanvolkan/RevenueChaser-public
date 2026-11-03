@@ -351,6 +351,9 @@ def latest_check(dataset: str) -> dict | None:
     return next(iter(_checks_newest_first(dataset)), None)
 
 
+read_latest_check = latest_check
+
+
 def recent_checks(dataset: str, limit: int = 20) -> list[dict]:
     limit = int(limit)
     return _fetch("dataset_check", _client().zrevrange(_key("dataset_check", "ds", dataset), 0, limit - 1)) \
@@ -501,6 +504,14 @@ def reads_since(first_day: str, tables) -> dict[str, int]:
         if r["day"] >= first_day and r["table_name"] in names:
             got[r["table_name"]] = got.get(r["table_name"], 0) + r["reads"]
     return {t: got.get(t, 0) for t in names}
+
+
+def need_reads(first_day: str) -> list[dict]:
+    p = ops.NEED_READ_PREFIX
+    rows = sorted((r for r in _all("read_log") if r["day"] >= first_day and r["table_name"].startswith(p)),
+                  key=lambda r: (r["table_name"], r["process"], r["day"]))
+    return [{"need": r["table_name"][len(p):], "process": r["process"], "day": r["day"], "reads": int(r["reads"])}
+            for r in rows]
 
 
 # ── Watch lists and the schedule ───────────────────────────────────────────────────────────────────────────────

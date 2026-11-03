@@ -57,7 +57,7 @@ def _script() -> dict:
     ops.count_calls("uw", 1, failures=1, http_429=1)
     ops.count_calls("fred", 4)
     log = ops.ReadLog(process="parity")
-    for t in ("market_series", "market_series", "macro_series"):
+    for t in ("market_series", "market_series", "macro_series", "need:prices.bars"):
         log.bump(t)
     log.flush()
     out["watch"] = [ops.watch_add("option", "nvda", by="avo", note="earnings"), ops.watch_add("option", "NVDA", by="x"),
@@ -72,6 +72,8 @@ def _script() -> dict:
     today = ops._today()
     out["reads"] = {
         "latest_check": ops.latest_check("market_series"), "none": ops.latest_check("nothing"),
+        "read_latest": [ops.read_latest_check("market_series"), ops.read_latest_check("nothing")],
+        "need_reads": ops.need_reads("2000-01-01"),
         "recent": ops.recent_checks("market_series", 2), "unskipped": ops.latest_unskipped_check("market_series"),
         "good": ops.latest_good_check("market_series"), "good_none": ops.latest_good_check("prices/serving"),
         "open": ops.open_issues("prices/serving", 3), "open_all": ops.open_issues("market_series"),

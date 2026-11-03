@@ -27,7 +27,7 @@ def _route(path: str) -> bytes | None:
     files = {"/treasury/": "treasury_2026.csv", "/cboe/VVIX_History.csv": "VVIX_History.csv", "/cboe/": "VIX_History.csv",
              "/fred": "fred_DGS10.json", "/cftc/udgc-27he.json": "cftc_tff.json",
              "/cftc/72hh-3qpy.json": "cftc_disagg.json", "/fed/": "fomc.htm", "/bls/": "bls.ics",
-             "/yahoo/": "yahoo_history_MOVE.json"}
+             "/cftcschedule/": "cftc_release_schedule.htm", "/yahoo/": "yahoo_history_MOVE.json"}
     for prefix, name in files.items():
         if path.startswith(prefix):
             return (FIXTURES / name).read_bytes()
@@ -76,7 +76,7 @@ def cli_env(tmp_path, mock_server):
         "RC_MARKET_RAW_COPY_DIR": "", "RAW_STORE_BACKUP_DIR": str(tmp_path / "backups"),
         "RC_TREASURY_BASE": f"{base}/treasury", "RC_CBOE_BASE": f"{base}/cboe", "RC_FRED_BASE": f"{base}/fred",
         "RC_CFTC_BASE": f"{base}/cftc/udgc-27he.json", "RC_FED_BASE": f"{base}/fed", "RC_BLS_BASE": f"{base}/bls",
-        "RC_YAHOO_BASE": f"{base}/yahoo",
+        "RC_CFTC_SCHEDULE_BASE": f"{base}/cftcschedule", "RC_YAHOO_BASE": f"{base}/yahoo",
         "FRED_API_KEY": "cli-test-key", "UNUSUAL_WHALES_API_KEY": "",
     })
     return env
@@ -102,7 +102,7 @@ def test_the_builder_cli_builds_market_series_and_a_second_run_calls_nothing(cli
     con = duckdb.connect(str(market), read_only=True)
     try:
         assert con.execute("SELECT kind, version FROM serving_schema_version").fetchall() == [("market", 1)]
-        assert con.execute("SELECT count(DISTINCT source) FROM market_series").fetchone()[0] == 7
+        assert con.execute("SELECT count(DISTINCT source) FROM market_series").fetchone()[0] == 8
     finally:
         con.close()
     ops = sqlite3.connect(tmp_path / "market" / "ops.sqlite")

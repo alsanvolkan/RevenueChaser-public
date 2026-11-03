@@ -89,7 +89,7 @@ def _record_history(snapshot: dict, asof_date: str, path: Path | None = None) ->
 
 
 def _is_session(d) -> bool:
-    """NYSE session test; outside the calendar table (2025-2028) only weekends are known."""
+    """NYSE session test; outside the calendar table (1993-2028) only weekends are known."""
     try:
         return is_trading_day(d)
     except ValueError:

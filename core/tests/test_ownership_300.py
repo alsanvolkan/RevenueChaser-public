@@ -288,7 +288,7 @@ def test_inside_one_session_uw_wins_and_a_newer_session_still_beats_it(rawstore_
 def test_the_session_is_the_rows_own_column_the_one_the_ranking_used(rawstore_tmp_db):
     """The write already mapped ``run_at`` through ``session_of``, so the read takes that column and does not
     re-derive a session: ranking and display then answer by the same rule, and a ``run_at`` the holiday table
-    cannot place (``session_for`` raises outside 2025-2028) cannot silently drop the date."""
+    cannot place (``session_for`` raises outside 1993-2028) cannot silently drop the date."""
     _seed("AAA", ownership.YFINANCE, 0.31, SATURDAY, session=date(2026, 10, 1))
     (row,) = ownership.latest_institutional(["AAA"]).values()
     assert (row["session"], row["session_label"]) == (date(2026, 10, 1), "2026-10-01")

@@ -20,6 +20,14 @@ from RevenueChaser.module_relatedness import __main__ as cli
 from RevenueChaser.module_relatedness import config, engine, store, themes
 from RevenueChaser.module_relatedness.tests.test_themes import _profiles4 as _profiles
 
+
+@pytest.fixture(autouse=True)
+def _deepseek_board(monkeypatch):
+    """These CLI runs are DeepSeek's: the board's writer is DeepSeek here (#360 made EVREN the default)."""
+    from RevenueChaser.core.providers import deepseek as _ds
+    from RevenueChaser.module_relatedness import settings as rel_settings
+    monkeypatch.setattr(rel_settings, "writer", lambda: ("deepseek", _ds.MODEL))
+
 SMALL, STRAY = "SMALL", "STRAY"
 
 

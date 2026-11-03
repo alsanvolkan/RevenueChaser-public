@@ -119,7 +119,7 @@ class WrdsFund:
     providers = (PROVIDER,)
     tables: tuple[str, ...] = ()
     cadence = "monthly"
-    attended = True
+    attended = property(lambda self: base.wrds_attended())   # RC_WRDS_UNATTENDED=1: the builder runs it
     backfill_needs_from = False
     starts_by_hand = True
 

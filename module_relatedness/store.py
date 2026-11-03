@@ -28,11 +28,6 @@ def prompt_hash(system: str, user: str) -> str:
     return hashlib.sha256((system + "\n\n" + user).encode("utf-8")).hexdigest()
 
 
-# Writers other than the mode's own (DeepSeek) whose profile at the current prompt version is current for every run
-# (#388, avo 2026-10-16 "grok kullan direk"): a Grok profile is not redone by the DeepSeek nightly, and back.
-ALT_WRITERS = frozenset({"grok"})
-
-
 # The filing a profile was read from (build plan PR 20, G6): the company, the accession, the form and the day filed.
 SOURCE_KEYS = ("cik", "accession", "form", "filed")
 
@@ -64,10 +59,16 @@ def profile_source(cache_key_value) -> dict | None:
     return dict(src) if isinstance(src, dict) else None
 
 
-def mode_stamp() -> dict:
+def mode_stamp(writer: tuple[str, str] | None = None) -> dict:
+    """The mode a current profile matches. ``writer`` is ``(provider, model)`` (#360; default DeepSeek and its
+    ``MODEL``): a DeepSeek mode is the stamp it always was; another writer's names its provider and sends no
+    thinking knob."""
     from RevenueChaser.core.providers import deepseek
-    return {"model": deepseek.MODEL, "thinking": bool(config.THINKING),
-            "effort": config.REASONING_EFFORT, "prompt_version": PROMPT_VERSION}
+    provider, model = writer or ("deepseek", deepseek.MODEL)
+    if provider == "deepseek":
+        return {"model": model, "thinking": bool(config.THINKING),
+                "effort": config.REASONING_EFFORT, "prompt_version": PROMPT_VERSION}
+    return {"provider": provider, "model": model, "thinking": False, "effort": "", "prompt_version": PROMPT_VERSION}
 
 
 def get_mode() -> dict | None:
@@ -90,7 +91,7 @@ def set_mode(mode: dict) -> None:
 
 def save_profile(ticker: str, cik, profile: dict, cache_key_value: str,
                  model: str, prompt_version: str = PROMPT_VERSION,
-                 status: str = "ok", attempts: int = 0) -> None:
+                 status: str = "ok", attempts: int = 0, provider: str = "deepseek") -> None:
     t = ticker.upper()
     rows = [{"ticker": t, "field": f,
              "value": json.dumps(profile.get(f) or [], ensure_ascii=False),
@@ -104,7 +105,7 @@ def save_profile(ticker: str, cik, profile: dict, cache_key_value: str,
             "ticker": t, "cik": str(cik or ""), "model": model,
             "prompt_version": prompt_version, "fetched_at": time.time(),
             "cache_key": cache_key_value, "status": status,
-            "attempts": attempts}])
+            "attempts": attempts, "provider": provider}])
         tx.write_rows("relatedness_attributes", rows)
 
     rawstore.atomic(_write)
@@ -171,28 +172,40 @@ def input_hash(cache_key_value) -> str | None:
 def is_stale(meta: dict, mode: dict) -> bool:
     """True when a stored profile was made under a different mode than ``mode``.
 
-    The prompt version decides for every writer: a v1 profile is stale whoever wrote it and whoever runs. A DeepSeek
-    profile (no ``provider`` in its key) must also match the mode's model, thinking and effort, as before. A profile
-    of an alternative writer (``ALT_WRITERS``: Grok, #388) at the current prompt version is current: its model is
-    Grok's (and ``RC_GROK_MODEL`` may differ between the shell that ran Grok and the scheduled DeepSeek task), so a
-    model check would make the nightly DeepSeek run redo every Grok profile.
+    One writer per board (#360, replacing #388's "a Grok profile is current for the DeepSeek nightly"): the board
+    chooses one provider and model, so a profile is current only when its key names the same provider (none =
+    DeepSeek), the same model and the current prompt version; a DeepSeek one must also match thinking and effort,
+    as before. A profile of another writer is stale, stays out of the peer matrix (``other_writer_tickers``) and is
+    redone by the next run.
     """
     k = _key_mode(meta.get("cache_key") or "")
     if k is None:
         return True
     if k.get("prompt_version") != mode.get("prompt_version"):
         return True
-    if k.get("provider") in ALT_WRITERS:
-        return False
+    if (k.get("provider") or "deepseek") != (mode.get("provider") or "deepseek"):
+        return True
     return (k.get("model") != (mode.get("model") or "")
             or bool(k.get("thinking")) != bool(mode.get("thinking"))
             or k.get("effort") != (mode.get("effort") or "")
             or k.get("prompt_version") != mode.get("prompt_version"))
 
 
-def stale_tickers(tickers: list[str] | None = None) -> set[str]:
-    """Tickers whose non-empty profile predates the current mode (kept, badged)."""
-    mode = mode_stamp()
+def key_writer(cache_key_value) -> tuple[str, str] | None:
+    """``(provider, model)`` a stored profile's key names (no provider = DeepSeek), or None for an unreadable key."""
+    k = _key_mode(cache_key_value or "")
+    return None if k is None else (k.get("provider") or "deepseek", k.get("model") or "")
+
+
+def other_writer_tickers(tickers: list[str] | None, writer: tuple[str, str]) -> set[str]:
+    """Tickers whose usable profile another writer made (#360): kept in the store, left out of the peer matrix."""
+    return {t for t, meta in profile_meta(tickers).items()
+            if meta["status"] == "ok" and key_writer(meta.get("cache_key")) not in (None, tuple(writer))}
+
+
+def stale_tickers(tickers: list[str] | None = None, writer: tuple[str, str] | None = None) -> set[str]:
+    """Tickers whose non-empty profile predates the current mode of ``writer`` (kept, badged)."""
+    mode = mode_stamp(writer)
     out = set()
     for t, meta in profile_meta(tickers).items():
         if meta["status"] == "ok" and is_stale(meta, mode):

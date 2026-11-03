@@ -1,12 +1,22 @@
 """Relatedness off-peak boundary, $ cap, and CLI (no HTTP)."""
 from __future__ import annotations
 
+import pytest
+
 from datetime import datetime, timezone
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.providers import deepseek
 from RevenueChaser.module_relatedness import config
 from RevenueChaser.module_relatedness import engine
+
+
+@pytest.fixture(autouse=True)
+def _deepseek_board(monkeypatch):
+    """These CLI runs are DeepSeek's: the board's writer is DeepSeek here (#360 made EVREN the default)."""
+    from RevenueChaser.core.providers import deepseek as _ds
+    from RevenueChaser.module_relatedness import settings as rel_settings
+    monkeypatch.setattr(rel_settings, "writer", lambda: ("deepseek", _ds.MODEL))
 
 
 def _seed_filings(n):

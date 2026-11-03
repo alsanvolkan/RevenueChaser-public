@@ -127,7 +127,7 @@ Reference dictionaries (never pruned): `sec_company_tickers` + `sec_company_sic`
 | Value Chain precision | P >= 0.70 on a labeled 50; max 40 edges/ticker; Refresh <= 30 s |
 | Zip SIC coverage floor | >= 90% |
 | DF threshold / synonyms | `max_df 0.5`; `module_relatedness/themes.py:82` |
-| `theme_runs` | `id, created_at, k_fine, k_medium, k_coarse, jaccard, is_current` |
+| `theme_runs` | `id, created_at, k_fine, k_medium, k_coarse, jaccard, is_current`, plus the five v2 validation numbers `val_*` (#341) |
 | Pending TTL | 6 h |
 | Job mutex | host-level file lock (crawler, 13F, guidance) |
 | Cache key | structured (sorted keys), `input_hash` over exact prompt bytes |

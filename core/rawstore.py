@@ -1175,6 +1175,9 @@ MANIFEST: dict[str, dict] = {
             "status TEXT",
             # LLM tries that ended in an empty profile (retried up to 3 runs).
             "attempts INTEGER",
+            # The writer's provider beside its model (#360: evren / deepseek / grok). Nullable, added by
+            # ``_reconcile_table`` (ALTER TABLE ADD COLUMN), no schema bump.
+            "provider TEXT",
         ],
         "kind": "tabular",
         "write": "upsert",
@@ -1212,6 +1215,11 @@ MANIFEST: dict[str, dict] = {
             "id TEXT PRIMARY KEY", "created_at TEXT", "k_fine INTEGER",
             "k_medium INTEGER", "k_coarse INTEGER", "jaccard DOUBLE",
             "is_current INTEGER", "session_date DATE", "run_at DOUBLE",
+            # Relatedness v2 Step 0 (#341, avo 1 Nov 2026): the run's validation numbers
+            # (module_relatedness/validation/metrics.py, THEME_RUNS_COLUMNS). Nullable; added to an existing
+            # store by ``_reconcile_table`` (ALTER TABLE ADD COLUMN) on the first store call, no schema bump.
+            "val_peer_recall_25 DOUBLE", "val_hand_precision_10 DOUBLE", "val_gics_purity DOUBLE",
+            "val_etf_recall_medium DOUBLE", "val_seed_ari DOUBLE",
         ],
         "kind": "tabular",
         "write": "upsert",
@@ -1679,13 +1687,14 @@ MANIFEST: dict[str, dict] = {
     },
     # Per-board editable settings (issue #40, schema v6). Only values a user
     # OVERRODE are stored; a default is read from the board's config at call time
-    # and Reset deletes the rows (core/board_settings.py). ``value`` is numeric:
-    # every editable setting today is an int or a float.
+    # and Reset deletes the rows (core/board_settings.py). ``value`` holds an int or a float setting and
+    # ``value_text`` a text one (Relatedness' profile writer, #360, avo 2 Nov 2026); a row fills exactly one of
+    # them. Nullable, added to an existing store by ``_reconcile_table`` (ALTER TABLE ADD COLUMN), no schema bump.
     "board_settings": {
         "history_mode": "change_history",
         "key": ["board", "key"],
         "columns": [
-            "board TEXT", "key TEXT", "value DOUBLE", "updated_at TEXT",
+            "board TEXT", "key TEXT", "value DOUBLE", "updated_at TEXT", "value_text TEXT",
             "PRIMARY KEY (board, key)",
         ],
         "kind": "tabular",
@@ -1972,7 +1981,7 @@ CHANGES: dict[str, dict] = {
                               "carry": ["payload"], "fetched_at": "fetched_at", "rename": {"status": "row_status"}},
     "index_constituents": {"track": []},                             # membership per slug
     "watchlist": {"track": [], "source": "manual"},                  # membership (06 D36)
-    "board_settings": {"track": ["value"], "source": "manual"},     # updated_at is a save stamp, not a change
+    "board_settings": {"track": ["value", "value_text"], "source": "manual"},     # updated_at is a save stamp, not a change
     # Provider entities that change in place (06 D32, D33). Their writers (#186-#192, #190) upsert the current row,
     # as the v8 entries say; a slipped date or a new approval is recorded here, so neither table changes key.
     "catalyst_events": {"track": ["ticker", "event_date", "date_precision", "kind", "title", "source_url",
@@ -3445,7 +3454,7 @@ def _session_of(run_at: float):
     from RevenueChaser.core import calendar
     try:
         return calendar.session_for(run_at).session_date
-    except ValueError:      # outside the holiday table (2025-2028): the row keeps run_at, valid_from is unknown
+    except ValueError:      # outside the holiday table (1993-2028): the row keeps run_at, valid_from is unknown
         return None
 
 

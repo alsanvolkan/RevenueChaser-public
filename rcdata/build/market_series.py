@@ -1,7 +1,7 @@
 """``market_series``: the market-wide series in one serving table, keyed ``(series_id, obs_date, source)``.
 
 Sources (``rcdata/build/sources/``): Treasury par yields, Cboe index files, FRED, CFTC COT (keyed on contract code),
-FOMC meeting dates, CPI release dates and Yahoo's daily chart for MOVE and wheat (PR 9). Each source writes raw files under ``raw/<source>/<dataset>/`` with a
+FOMC meeting dates, CPI release dates, CFTC's COT release schedule (#227) and Yahoo's daily chart for MOVE and wheat (PR 9). Each source writes raw files under ``raw/<source>/<dataset>/`` with a
 ``<name>.meta.json`` beside each (the as-of date, the fetch time, the run id and the URL without its query; written
 first, so the raw file itself stays the resume marker), and the rows go to
 ``parquet/<source>/<dataset>/year=<YYYY>/part-0.parquet``, merged by key, the newest fetch winning a key. Nothing is
@@ -11,7 +11,7 @@ A source that fails is a build issue and the others go on; its earlier Parquet s
 served. All sources failing is a failed run.
 
 ``session_date`` is the New York session on or before ``obs_date`` from ``core/calendar.py``, and empty outside its
-2025-2028 table (the calendar's rule C).
+1993-2028 table (the calendar's rule C).
 """
 from __future__ import annotations
 
@@ -23,11 +23,11 @@ import duckdb
 
 from ...core import calendar
 from . import base
-from .sources import bls, cboe, cftc, fed, fred, treasury, yahoo
+from .sources import bls, cboe, cftc, cftc_schedule, fed, fred, treasury, yahoo
 
 NAME = "market_series"
 TABLE = "market_series"
-SOURCES = (treasury, cboe, fred, cftc, fed, bls, yahoo)
+SOURCES = (treasury, cboe, fred, cftc, cftc_schedule, fed, bls, yahoo)
 SCHEMA = [("series_id", "TEXT"), ("obs_date", "DATE"), ("source", "TEXT"), ("value", "DOUBLE"),
           ("open", "DOUBLE"), ("high", "DOUBLE"), ("low", "DOUBLE"), ("close", "DOUBLE"), ("frequency", "TEXT"),
           ("session_date", "DATE"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
