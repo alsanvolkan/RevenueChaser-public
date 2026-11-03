@@ -13,7 +13,7 @@ on homesrv first (`duckdb.connect(path, read_only=True)` with `RC_STORE_AUTO_ENS
 | History span | 1993-01-29 onwards | 1983-12-30 onwards (*homesrv*: Compustat's earliest priced day), plus the Arca listings (exchg 17, 21) | `backfill wrds/prices --dry-run`: queries and expected rows |
 | Newest served session | Alpaca's (yesterday) | Compustat's newest `datadate` (*homesrv*: 2026-10-30 on 3 Nov) | `max(datadate)` of the newest `secd` partition |
 | `tier_a_no_bar` | against Alpaca's newest session | against the newest served session | the count of Tier A names without a Compustat row on that day |
-| Securities only CRSP holds (`permno:`, FIGI or CIK names Compustat does not price) | served from CRSP | not served: *homesrv*, 11,173 of the 18,947 security ids served from `wrds/crsp` today have no Compustat series (decision 7) | `SELECT count(DISTINCT security_id) FROM price_bar_daily WHERE source = 'wrds/crsp'` today |
+| Securities only CRSP holds (`permno:`, FIGI or CIK names Compustat does not price) | served from CRSP | still served from CRSP, with CRSP's own splits (decision 7: *homesrv*, 11,173 of the 18,947 security ids served from `wrds/crsp` today have no Compustat series) | `SELECT count(DISTINCT security_id) FROM price_bar_daily WHERE source = 'wrds/crsp'` today |
 | Universe with a Compustat bar (*homesrv*, priced `comp.secd` row in the last 20 sessions) | — | Tier A 5,454 of 5,655 (96.45 %; 9 history only, 192 with no gvkey/iid/CUSIP link); Tier B 1,532 of 2,015 (76.03 %; 1 history only, 482 unlinked: 205 ETPs, 157 SPACs, 70 warrants, 37 preferreds, 13 units); 9 linked names priced only on exchg 17/19/21 | `tier_a_no_bar` after the first build |
 | `market_cap_daily.shares_source` | CRSP `shrout` 1993-2025, covers on Alpaca days | Compustat `cshoc` on most days | `shares_source` counts by year |
 | `adj_factor` rows, adjusted closes | splits from Alpaca and `comp.sec_split`, dividends from `comp.sec_divid` | plus `ajexdi` changes; dividends from the `secd` row first | count of securities with a new split or dividend row |
@@ -64,5 +64,8 @@ ver" (the "4" is decision 7 below).
    587,399 / 257,131.
 6. **The link** stays the 8-character `hdrcusip`/`cusip`/`ticker` rule (`PERMNO_LINK`); the dated
    `stksecurityinfohist.cusip9` link is the next PR.
-7. **The CRSP-only securities:** 11,173 security ids lose their bars at the switch (the row above); keep them off,
-   or serve CRSP for securities Compustat never priced.
+7. **The CRSP-only securities: decided, CRSP serves them** (avo's "4 CRSP ver"). A security with no priced
+   Compustat row under its id or alias keeps every CRSP bar (`wrds_history.CRSP_ONLY_DAYS`, the `crsp_only`
+   fallback), linked or not, and CRSP's own `dlycumfacpr` splits are its applied splits (`CRSP_OWN_SPLITS`). A
+   security with any Compustat series keeps the Compustat-primary rule. A FIGI, CIK or symbol id among them stays out
+   of the adjusted view, as before this PR (review S1 of #353: no dividend reaches it).

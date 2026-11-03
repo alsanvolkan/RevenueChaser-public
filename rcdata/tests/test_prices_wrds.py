@@ -477,12 +477,12 @@ def test_the_build_note_counts_the_crsp_link_by_rule_and_the_unlinked_permnos(fa
 
 
 @pytest.mark.parametrize("dividend", [False, True])
-def test_crsp_history_compustat_does_not_price_is_not_served(monkeypatch, dividend):
-    """Step 2 of the Compustat-primary plan (master plan of 2 Nov 2026, item 2): CRSP is a fallback for an empty
-    ``trfd`` day and a delisted name's final days only. FLG (spine: FIGI, no gvkey, no CUSIP), BRK-B (a gvkey:iid
-    security Compustat does not price here) and GAPX (``cik:``, Compustat holds it under the alias 077777:01 on one
-    day) link their PERMNOs as before (review S1/S4 of #353), but no CRSP-only day of theirs is served, nominal or
-    adjusted; GAPX keeps its one Compustat bar."""
+def test_crsp_history_of_a_security_compustat_never_priced_is_served(monkeypatch, dividend):
+    """avo's decision 7 on the switch plan (3 Nov 2026 ~11:20 Amsterdam, "4 CRSP ver"): a security Compustat never
+    priced keeps its CRSP bars. FLG (spine: FIGI, no gvkey, no CUSIP) and BRK-B (a gvkey:iid security Compustat does
+    not price here) are CRSP's alone: served, with CRSP's own dlycumfacpr split applied (no Compustat split reaches
+    them); FLG stays out of the adjusted view (review S1 of #353: no dividend reaches it). GAPX has one Compustat bar
+    (the alias 077777:01), so the Compustat-primary rule holds for it: no CRSP-only day of it is served."""
     data = _data()
     data["crsp.dsf_v2"] += [{**r, "permno": "66666", "hdrcusip": "45454545", "cusip": "45454545", "ticker": "GAPX"}
                             for r in _crsp_rows()]
@@ -501,11 +501,16 @@ def test_crsp_history_compustat_does_not_price_is_not_served(monkeypatch, divide
     assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
     base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
     flg = "figi:BBG000BWBX65"
-    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE source = ?", [wrds_history.CRSP])[0]["n"] == 0
+    crsp = {r["security_id"]: r["n"] for r in _q("SELECT security_id, count(*) AS n FROM price_bar_daily "
+                                                 "WHERE source = ? GROUP BY ALL", [wrds_history.CRSP])}
+    assert crsp == {flg: len(JUNE), "072726:02": len(JUNE)}
     counts = {r["ticker"]: r["n"] for r in _q(
         "SELECT ticker, count(*) AS n FROM price_bars_daily WHERE session_date < '2026-01-01' GROUP BY ALL")}
-    assert counts.get("FLG", 0) == 0 and counts.get("BRK-B", 0) == 0
+    assert counts.get("FLG", 0) == 0 and counts["BRK-B"] == len(JUNE)
     assert counts["GAPX"] == 1 and counts["AAPL"] == len(JUNE)
+    brk = {str(r["session_date"]): r["close"] for r in _q(
+        "SELECT session_date, close FROM price_bars_daily WHERE ticker = 'BRK-B' AND session_date < '2026-01-01'")}
+    assert brk[JUNE[1]] == pytest.approx(202.1 / 2), "CRSP's own 2-for-1 of 4 Jun adjusts its CRSP-only history"
     links = {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
              if i["kind"] == "crsp_ticker_link"}
     assert set(links) == {flg, "cik:4000001:GAPX", "072726:02"}, links      # BRK-B: the spine holds no CUSIP
@@ -545,7 +550,8 @@ def test_crsp_rows_reach_their_securities_without_ccm(fake):
     _build()
     spy = _q("SELECT security_id, close, source FROM price_bar_daily WHERE session_date = '2025-06-06' "
              "AND source = ?", [wrds_history.CRSP])
-    assert spy == []        # SPY's CRSP-only day is no fallback day; AAPL's is Compustat's (step 2 of the plan)
+    # SPY, which Compustat never priced here, keeps its CRSP bar (avo's decision 7); AAPL's day is Compustat's
+    assert [(r["security_id"], r["close"]) for r in spy] == [("001000:01", 590.0)]
     old = _q("SELECT close, source FROM price_bar_daily WHERE security_id = ? AND session_date = '2024-03-01'",
              [OLDCO])
     assert old == [{"close": 5.0, "source": wrds_history.COMPUSTAT}]       # Compustat first (priority 1)

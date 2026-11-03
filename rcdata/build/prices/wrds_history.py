@@ -664,7 +664,17 @@ DELIST_BARS = f"""
 # The CRSP days served (``serving`` makes it the temp table ``_crsp_fallback`` after ``_gvkey_alias``): a delisted
 # security's final days (``delisted_final_days``) only, and its delisting day's bar (``DELIST_BARS``). A day Compustat prices without ``trfd`` is Compustat's
 # (``COMP_RETURN``): the coordinator's measurement of 3 Nov 2026 dropped the "empty trfd -> CRSP dlyret" step.
-CRSP_FALLBACK = delisted_final_days()
+# avo's decision 7 on the switch plan (3 Nov 2026 ~11:20 Amsterdam, "4 CRSP ver"): a security Compustat never priced
+# (no priced comp.secd row under its id or alias; homesrv: 11,173 of the 18,947 ids CRSP served) keeps its CRSP
+# bars, every day of them, linked or not. A security with any Compustat series keeps the Compustat-primary rule.
+CRSP_ONLY_DAYS = """
+    SELECT d.permno, d.dlycaldt AS session_date, 'crsp_only' AS why
+    FROM stg_wrds_dsf d LEFT JOIN _permno_link l USING (permno)
+    WHERE coalesce(l.security_id, 'permno:' || d.permno) NOT IN (
+        SELECT coalesce(a.security_id, g.gid)
+        FROM (SELECT DISTINCT gvkey || ':' || iid AS gid FROM stg_wrds_secd WHERE prccd > 0) g
+        LEFT JOIN _gvkey_alias a ON a.gid = g.gid)"""
+CRSP_FALLBACK = f"{delisted_final_days()} UNION ALL {CRSP_ONLY_DAYS}"
 
 # The splits CRSP's cumulative price factor carries (Order 4 of the 2 Nov 2026 master plan: on homesrv 1,167 open
 # ``price_gap_no_action`` issues sat on a split ``dlycumfacpr`` records and ``corporate_action`` lacked, 22 of them
@@ -676,8 +686,10 @@ CRSP_FALLBACK = delisted_final_days()
 # it explains is not a ``price_gap_no_action``. In ``_act``'s shape (``serving`` reads it after ``_permno_link``).
 # The direction is checked on WRDS (homesrv, 3 Nov 2026): AAPL's dlycumfacpr is 4.0 on 2020-08-28 and 1.0 on
 # 2020-08-31, as its ajexdi.
-CRSP_SPLITS = f"""
-    SELECT l.security_id, 'wrds:crspsplit:' || x.permno || ':' || CAST(x.dlycaldt AS TEXT) AS action_id,
+# Every CRSP split, keyed on its PERMNO's security (``permno:<PERMNO>`` unlinked); ``CRSP_SPLITS`` is the
+# identifier-linked cross-check, ``CRSP_OWN_SPLITS`` the applied splits of a security Compustat never priced.
+_CRSP_SPLIT_ROWS = f"""
+    SELECT coalesce(l.security_id, 'permno:' || x.permno) AS security_id, 'wrds:crspsplit:' || x.permno || ':' || CAST(x.dlycaldt AS TEXT) AS action_id,
            CASE WHEN ratio < 1 THEN 'reverse_split' ELSE 'forward_split' END AS action_type, x.dlycaldt AS ex_date,
            x.dlycaldt AS eff, 1.0 AS old_rate, ratio AS new_rate, CAST(NULL AS DOUBLE) AS rate, false AS special,
            CAST(NULL AS TEXT) AS currency, CAST(NULL AS DATE) AS record_date, CAST(NULL AS DATE) AS payable_date,
@@ -688,8 +700,12 @@ CRSP_SPLITS = f"""
             AND permno IN (SELECT permno FROM stg_wrds_dsf WHERE dlycumfacpr > 0 GROUP BY permno
                            HAVING min(dlycumfacpr) <> max(dlycumfacpr))
           WINDOW w AS (PARTITION BY permno ORDER BY dlycaldt)) x
-    JOIN _permno_link l USING (permno)
-    WHERE {LINKED_BY_ID} AND x.prev_run = x.run_id AND abs(ln(ratio)) > 1e-6"""
+    LEFT JOIN _permno_link l USING (permno)
+    WHERE x.prev_run = x.run_id AND abs(ln(ratio)) > 1e-6"""
+CRSP_SPLITS = f"{_CRSP_SPLIT_ROWS} AND {LINKED_BY_ID}"
+# avo's decision 7 (3 Nov 2026 ~11:20 Amsterdam, "4 CRSP ver"): a security CRSP serves alone has no Compustat split,
+# so CRSP's own are its splits (``serving`` applies them for its ``crsp_only`` securities).
+CRSP_OWN_SPLITS = _CRSP_SPLIT_ROWS
 
 # Compustat's ``gvkey:iid`` of a PERMNO whose own link is a security the spine names otherwise (``figi:``, ``cik:``,
 # ``sym:``: the ETFs), when the PERMNO's CUSIP matches it and the spine holds no such ``gvkey:iid``. Its Compustat bars,

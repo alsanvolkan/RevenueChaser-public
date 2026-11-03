@@ -98,15 +98,20 @@ def _crsp(permno, day, close, cusip, ticker):
 
 
 def test_a_crsp_bar_of_a_day_compustat_does_not_price_is_not_served(monkeypatch):
+    """A security Compustat prices keeps the Compustat-primary rule: a day only CRSP has is not served (AAPL's 9 Jun,
+    its PERMNO still listed); SPY, which Compustat never priced here, keeps its CRSP bar (avo's decision 7)."""
     data = _data()
-    data["crsp.dsf_v2"] += [_crsp("84398", "2025-06-06", 590.0, "78462F10", "SPY")]     # linked, CRSP only
+    data["crsp.dsf_v2"] += [_crsp("84398", "2025-06-06", 590.0, "78462F10", "SPY"),            # CRSP's alone
+                            {**_data()["crsp.dsf_v2"][4], "dlycaldt": "2025-06-09", "dlyprc": 101.0}]   # AAPL
     for r in data["comp.secd"]:
         if r["gvkey"] == "001690" and r["datadate"] == JUNE[2]:
             r["cshoc"] = None                                 # a Compustat day without shares, trfd present
     _serve(monkeypatch, data)
-    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE source = ?", [wrds_history.CRSP])[0]["n"] == 0
-    assert not _q("SELECT 1 FROM market_cap_daily WHERE shares_source = ?", [wrds_history.CRSP]), \
-        "no fallback day, so CRSP's shares size no cap either"
+    # SPY's row is not on CRSP's newest day (AAPL's 9 Jun), so its PERMNO stays unlinked: still CRSP's alone, served
+    assert [r["security_id"] for r in _q("SELECT security_id FROM price_bar_daily WHERE source = ?",
+                                         [wrds_history.CRSP])] == ["permno:84398"]
+    assert not _q("SELECT 1 FROM market_cap_daily WHERE shares_source = ? AND security_id = ?",
+                  [wrds_history.CRSP, AAPL]), "no fallback day of AAPL, so CRSP's shares size none of its caps"
 
 
 def test_a_day_compustat_prices_without_trfd_is_compustats_bar_with_a_flagged_price_only_return(monkeypatch):

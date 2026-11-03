@@ -422,6 +422,12 @@ class PricesServing:
                               AND {ACTION_KIND.format(a='p')} = {ACTION_KIND.format(a='w')})""")
         # CRSP's splits are the cross-check (Order 4; the WRDS access inventory of 3 Nov 2026 prefers Compustat's
         # daily splits): one no Alpaca or Compustat split of the security is near is kept aside, never applied.
+        # A security CRSP serves alone (avo's decision 7) takes CRSP's own splits: no Compustat split reaches it.
+        con.execute(f"""INSERT INTO _act BY NAME SELECT w.* FROM ({wrds_history.CRSP_OWN_SPLITS}) w
+            WHERE w.security_id IN (SELECT DISTINCT security_id FROM _hist_all WHERE fallback = 'crsp_only')
+              AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id
+                              AND {ACTION_KIND.format(a='p')} = 'split'
+                              AND abs(date_diff('day', p.ex_date, w.ex_date)) <= {SPLIT_SAME_DAYS})""")
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _crsp_only_split AS SELECT w.* FROM ({wrds_history.CRSP_SPLITS}) w
             WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
               AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id
