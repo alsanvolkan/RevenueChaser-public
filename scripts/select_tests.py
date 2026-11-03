@@ -16,7 +16,7 @@ FULL (the whole unit and e2e suite) when:
   - a changed non-Markdown file is named by no Python file;
   - any Python file does not parse (no graph);
   - a change reaches the root conftest (its fixtures run in every test);
-  - code changed and no test was selected.
+  - a changed non-Markdown file reaches no test (checked per file, so a tested file beside it cannot hide it).
 
 A change that reaches any other conftest selects every test below that conftest's folder: its fixtures run there
 whatever the test imports. The e2e conftest starts the dashboard, so most changes select every e2e test.
@@ -159,17 +159,16 @@ def select(changed: list[str], root: Path = REPO) -> Selection:
             return Selection("FULL", f"{rel} is gone (deleted or renamed)")
         if not rel.endswith(".py") and _FIXTURE_DIRS & set(rel.split("/")[:-1]):
             return Selection("FULL", f"{rel} is a test fixture")
-    seeds: set[str] = set()
+    seeds_of: dict[str, set[str]] = {}
     for rel in changed:
-        if rel.endswith(".py"):
-            seeds.add(rel)
-            continue
-        named = _named_by(rel, _texts(root))
-        if not named and not rel.endswith(".md"):
+        seeds_of[rel] = {rel} if rel.endswith(".py") else _named_by(rel, _texts(root))
+        if not seeds_of[rel] and not rel.endswith(".md"):
             return Selection("FULL", f"{rel} is named by no Python file")
-        seeds |= named
     try:
-        reached = _reach(seeds, root)
+        reached = _reach(set().union(*seeds_of.values()), root)
+        for rel, seeds in seeds_of.items():
+            if not rel.endswith(".md") and not any(_is_test(r) or r.endswith("conftest.py") for r in _reach(seeds, root)):
+                return Selection("FULL", f"{rel} changed and no test reaches it")
     except (SyntaxError, UnicodeDecodeError, ValueError) as exc:
         return Selection("FULL", f"import graph failed: {exc}")
     if "conftest.py" in reached:
@@ -177,8 +176,6 @@ def select(changed: list[str], root: Path = REPO) -> Selection:
     under = tuple(c.removesuffix("conftest.py") for c in reached if c.endswith("/conftest.py"))
     tests = sorted({r for r in reached if _is_test(r)} | {t for t in all_tests(root) if t.startswith(under)} if under
                    else {r for r in reached if _is_test(r)})
-    if not tests and any(not c.endswith(".md") for c in changed):
-        return Selection("FULL", "code changed and no test reaches it")
     return Selection("SELECTIVE", f"{len(tests)} test files reach {len(changed)} changed files",
                      tests, [t for t in tests if t.startswith(E2E_DIR)])
 

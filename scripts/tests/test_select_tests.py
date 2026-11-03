@@ -125,6 +125,8 @@ def test_code_no_test_reaches_runs_the_full_suite(tmp_path):
     })
     assert mod.select(["pkg/a.py"], root=root).unit == ["pkg/tests/test_a.py"]
     assert mod.select(["pkg/lonely.py"], root=root).mode == "FULL"
+    # Per changed file (review of #383): a tested file beside it does not hide it.
+    assert mod.select(["pkg/a.py", "pkg/lonely.py"], root=root).mode == "FULL"
 
 
 def test_a_file_that_does_not_parse_runs_the_full_suite(tmp_path):
