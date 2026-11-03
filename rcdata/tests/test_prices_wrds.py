@@ -62,6 +62,10 @@ def _crsp_rows():
 def _data():
     secd = [_secd("001690", "01", d, "AAPL", c, a, t, 7.5e9 if a == 2 else 15e9)
             for d, c, a, t in zip(JUNE, COMP_CLOSE, AJEXDI, TRFD)]
+    # The week before: no cshoc, so those sessions' caps are the cover's; trfd steps by the 0.26 dividend on the 23rd.
+    secd += [{**_secd("001690", "01", d, "AAPL", c, 1.0, t), "cshoc": None}
+             for d, c, t in (("2026-10-21", 199.5, 1.0113 / 1.0013), ("2026-10-22", 200.0, 1.0113 / 1.0013),
+                             ("2026-10-23", 199.9, 1.0113))]
     secd += [_secd("001690", "01", "2026-10-26", "AAPL", 201.0, 1.0, 1.0113),
              _secd("001690", "01", "2026-10-27", "AAPL", 202.5, 1.0, 1.0113),
              _secd("099999", "01", "2024-03-01", "OLD.A", 5.0, exchg=11, cusip="680000101"),
@@ -222,7 +226,7 @@ def test_the_backfill_stops_at_the_wrds_day_cap_and_serves_the_years_it_has(fake
     assert row["result"] == "changed", row
     assert len(conn.queries) == 4 and "day cap" in row["note"]   # the columns, the snapshot, 2026's secd and divid
     served = _q("SELECT security_id, count(*) AS n FROM price_bar_daily GROUP BY ALL")
-    assert {(r["security_id"], r["n"]) for r in served} == {(AAPL, 2)}
+    assert {(r["security_id"], r["n"]) for r in served} == {(AAPL, 5)}
 
 
 
@@ -377,7 +381,7 @@ def _build():
     assert _backfill()["result"] == "changed"
     assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
     row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
-    assert row["result"] == "changed", row
+    assert row["result"] != "failed", row
 
 
 @pytest.fixture
@@ -386,7 +390,7 @@ def built(fake):
     return fake
 
 
-def test_history_bars_compustat_first_and_alpaca_wins_its_sessions(built):
+def test_history_bars_compustat_first_and_never_alpacas(built):
     june = _q("SELECT * FROM price_bar_daily WHERE security_id = ? AND session_date < '2026-01-01' "
               "ORDER BY session_date", [AAPL])
     assert [str(r["session_date"]) for r in june] == JUNE
@@ -395,7 +399,8 @@ def test_history_bars_compustat_first_and_alpaca_wins_its_sessions(built):
     assert june[0]["shares_outstanding"] == 7_500_000_000 and june[2]["shares_outstanding"] == 15_000_000_000
     october = _q("SELECT session_date, close, source FROM price_bar_daily WHERE security_id = ? "
                  "AND session_date >= '2026-10-26' ORDER BY session_date", [AAPL])
-    assert [(r["close"], r["source"]) for r in october] == [(201.0, bars.NAME), (202.0, bars.NAME)]
+    assert [(r["close"], r["source"]) for r in october] == [(201.0, wrds_history.COMPUSTAT),
+                                                            (202.5, wrds_history.COMPUSTAT)]
     old = _q("SELECT * FROM price_bar_daily WHERE security_id = ? ORDER BY session_date", [OLDCO])
     assert [(r["close"], r["symbol"], r["source"]) for r in old] == [(5.0, "OLD-A", wrds_history.COMPUSTAT),
                                                                      (5.1, "OLD-A", wrds_history.COMPUSTAT)]
@@ -439,23 +444,6 @@ def test_a_crsp_bar_without_shares_takes_compustats_shares_of_that_session(monke
              "AND session_date = '2025-06-02'", [AAPL])
     assert cap == [{"market_cap": pytest.approx(200.0 * 7.5e9), "shares": 7.5e9,
                     "shares_source": wrds_history.COMPUSTAT}]
-    wrds.reset()
-
-
-def test_a_compustat_tic_on_a_session_alpaca_won_never_names_the_security(monkeypatch):
-    """Review of #364: Compustat writes a security's current ``tic`` on every past session, so its bars that lost to
-    Alpaca's would pull a new ticker's start back in time and could make an old one the "now" symbol. Only the
-    sessions whose winner has no symbol (CRSP's) take a history bar's symbol."""
-    data = _data()
-    data["comp.secd"] += [_secd("001690", "01", "2026-10-21", "ZZZZ", 199.0)]   # an Alpaca session of AAPL
-    conn = FakeWrds(data)
-    monkeypatch.setattr(wrds, "_factory", lambda: conn)
-    wrds.reset()
-    assert base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
-    assert _backfill()["result"] == "changed"                    # as live: Alpaca's bars first, then the WRDS history
-    assert "ZZZZ" not in {r["symbol"] for r in _q("SELECT symbol FROM security_symbol WHERE security_id = ?", [AAPL])}
-    assert _q("SELECT DISTINCT ticker FROM price_bars_daily WHERE session_date >= '2026-10-21' "
-              "AND ticker IN ('AAPL', 'ZZZZ')") == [{"ticker": "AAPL"}]
     wrds.reset()
 
 
@@ -604,7 +592,7 @@ def test_the_difference_report_counts_close_and_return_differences(built):
     assert (crsp_comp["sessions"], crsp_comp["close_differs"]) == (5, 1)
     assert crsp_comp["max_close_diff"] == pytest.approx(0.1 / 202.0)
     comp_alp = report["compustat_vs_alpaca"]
-    assert (comp_alp["sessions"], comp_alp["close_differs"]) == (2, 1)
+    assert (comp_alp["sessions"], comp_alp["close_differs"]) == (5, 1)
     for source in ("compustat_returns", "crsp_returns"):
         assert report[source]["sessions"] >= 4 and report[source]["return_differs"] == 0, report[source]
     assert report["crsp_vs_alpaca"]["sessions"] == 0
@@ -733,7 +721,7 @@ def test_a_crsp_permission_refusal_skips_crsp_once_and_serves_compustat(refusing
     assert set(report) == set(wrds_history.COMPARISONS)
     assert {n: report[n]["sessions"] for n in ("crsp_vs_compustat", "crsp_vs_alpaca", "crsp_returns")} == {
         "crsp_vs_compustat": 0, "crsp_vs_alpaca": 0, "crsp_returns": 0}
-    assert report["compustat_vs_alpaca"]["sessions"] == 2
+    assert report["compustat_vs_alpaca"]["sessions"] == 5
 
 
 def test_the_next_backfill_asks_the_refused_crsp_year_again_and_nothing_compustat_holds(refusing):

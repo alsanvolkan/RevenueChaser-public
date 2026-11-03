@@ -1,5 +1,9 @@
 """``alpaca/bars``: Alpaca's daily bars of the scope, the last ``WINDOW`` sessions read again every run.
 
+**Alpaca is the tester** (master plan of 2 Nov 2026, item 3): its bars are never served. The daily run (a request
+that names nothing) asks only the names of the scope ``tester.select`` finds at risk; ``prices/serving`` compares
+their bars with Compustat's (and CRSP's) and writes issues.
+
 **One run** (``as_of``, default the latest complete New York session) asks ``/v2/stocks/bars`` for the scope
 (``prices.scope``), ``CHUNK`` symbols a request, twice: ``adjustment=raw`` (the prices as traded, which the store
 keeps) and ``adjustment=all`` (Alpaca's split and dividend adjusted closes, which only check ours). The raw window is
@@ -33,7 +37,7 @@ import duckdb
 from ....core import calendar
 from .. import base
 from ..sources import alpaca
-from . import DEFAULT_TIERS, KIND, alpaca_symbol, scope, stage
+from . import DEFAULT_TIERS, KIND, alpaca_symbol, scope, stage, tester
 
 NAME = "alpaca/bars"
 WINDOW = 5
@@ -124,6 +128,11 @@ class AlpacaBars:
         if not ctx.scope and not any(n.get("tier") in DEFAULT_TIERS for n in names):
             raise base.SourceError("the spine holds no name of the asked tiers (spine.duckdb not built?): "
                                    "nothing to ask")
+        if not ctx.scope:
+            names, note = tester.select(names, as_of)
+            ctx.notes.append(note)
+            if not names:
+                raise base.NothingInScope(f"{note}: nothing to ask")
         folder = raw_dir(as_of)
         have = sorted(folder.glob("*.json.gz")) if folder.is_dir() else []
         covered = {(payload["adjustment"], n["symbol"]) for payload in map(base.read_raw_json, have)
@@ -288,8 +297,9 @@ class AlpacaBars:
         return {}
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
-        cols = ["security_id", "session_date", "open", "high", "low", "close", "volume"]
-        added, removed = stage.compare_live(con, "price_bar_daily", cols, f"source = '{NAME}'")
+        # No served table is this dataset's (the tester's bars feed issues only): the run changed what it staged.
+        added = stage.count(con, "stg_alpaca_bars", f"run_id = '{ctx.run_id}'")
+        removed = 0
         p = ctx.pending.get(NAME) or {}
         as_of = p.get("as_of") or (ctx.as_of or self.default_as_of()).isoformat()
         coverage = round(p["with_bar"] / p["asked"], 4) if p.get("asked") else None

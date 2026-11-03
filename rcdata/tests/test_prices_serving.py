@@ -1,6 +1,10 @@
 """``prices/serving``: the served tables of ``prices.duckdb`` from the sources' staging, through the builder, with
 Alpaca mocked at the HTTP boundary and the share and float sources' Parquet written as their datasets write it.
 
+The bars are served from Compustat's ``comp.secd`` (the one primary source): ``built`` seeds the week's raw closes as
+``secd`` partitions (``prices_fixture.seed_secd``), and Alpaca, the tester, answers the same closes. FLG and GAPX
+carry a gvkey here, so Compustat reaches them.
+
 The fixture week (27 Oct 2026 is a Tuesday): AAPL goes ex a 0.26 dividend on the 23rd, FLG does a 1-for-3 reverse
 split on the 22nd (Flagstar's of July 2024, moved into the calendar's years), GAPX triples on the 22nd with no
 action, SPY's Alpaca-adjusted day return on the 26th is 5 bp off its raw one (an action Alpaca knows and the store
@@ -15,9 +19,9 @@ import pytest
 from RevenueChaser.core import calendar
 from RevenueChaser.rcdata import ops, serving
 from RevenueChaser.rcdata.build import base
-from RevenueChaser.rcdata.build.prices import actions, bars, cover_shares, floats, serving as prices_serving
+from RevenueChaser.rcdata.build.prices import actions, bars, cover_shares, floats, serving as prices_serving, wrds_history
 
-from .prices_fixture import ALPHABET, SPINE, BarsAnswer, bar, write_spine
+from .prices_fixture import ALPHABET, SPINE, BarsAnswer, bar, seed_secd, write_spine
 
 DAYS = [date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22), date(2026, 10, 23), date(2026, 10, 26),
         date(2026, 10, 27)]
@@ -47,7 +51,11 @@ ACTIONS = {
     "forward_splits": [{"id": "fs-9", "symbol": "ZZZZ", "old_rate": 1, "new_rate": 2, "process_date": "2026-10-21",
                         "ex_date": "2026-10-21"}],
 }
-AAPL, FLG, GAPX, SPY = "001690:01", "figi:BBG000BWBX65", "cik:4000001:GAPX", "001000:01"
+AAPL, FLG, GAPX, SPY = "001690:01", "091007:01", "040001:01", "001000:01"
+GVKEYS = {"FLG": ("091007", "01"), "GAPX": ("040001", "01")}
+WEEK_SPINE = [{**r, "gvkey": GVKEYS[r["ticker"]][0], "iid": GVKEYS[r["ticker"]][1]} if r["ticker"] in GVKEYS else r
+              for r in SPINE + ALPHABET]
+SECURITY = {r["ticker"]: f"{r['gvkey']}:{r['iid']}" for r in WEEK_SPINE}
 
 
 @pytest.fixture(autouse=True)
@@ -59,15 +67,21 @@ def env(monkeypatch, http_mock):
     monkeypatch.setattr("RevenueChaser.rcdata.build.prices.ROTATION", ())
     monkeypatch.setattr("RevenueChaser.rcdata.build.prices.BENCHMARKS", ("SPY",))
     monkeypatch.setattr("RevenueChaser.rcdata.read.watched", lambda kind: set())
-    write_spine(SPINE + ALPHABET)
+    write_spine(WEEK_SPINE)
+    # Alpaca, the tester, asks every name of the week: the risk selection is ``test_prices_compustat_primary``'s.
+    monkeypatch.setattr("RevenueChaser.rcdata.build.prices.tester.select", lambda names, as_of: (names, "every name"))
     http_mock.add("/v2/stocks/bars", BarsAnswer({
         "raw": {s: [bar(d, c) for d, c in zip(DAYS, cs)] for s, cs in RAW.items()},
         "all": {s: [bar(d, c) for d, c in zip(DAYS, cs)] for s, cs in ALL.items()}}))
     http_mock.add("/v1/corporate-actions", {"corporate_actions": ACTIONS, "next_page_token": None})
 
 
-def _shares_and_floats():
+def _shares_and_floats(raw=None, skip=(), extra=None):
+    """The week's sources besides Alpaca: Compustat's bars (``raw``'s closes, the week's by default, no bar on a
+    ``skip`` ``(symbol, session)``; ``extra``: more ``seed_secd`` series), the SPX level, covers and floats."""
     from RevenueChaser.rcdata.build import market_series
+    seed_secd({**{SECURITY[s.replace(".", "-")]: (s, [(d, c) for d, c in zip(DAYS, cs) if (s, d) not in skip])
+                  for s, cs in (raw or RAW).items()}, **(extra or {})})
     from RevenueChaser.rcdata.build.sources import cboe
     base.upsert_partition([{"series_id": "SPX", "obs_date": d, "source": "cboe", "value": v, "frequency": "daily",
                             "session_date": d, "source_as_of": date(2026, 10, 27), "fetched_at": 1.0, "run_id": "cboe"}
@@ -123,10 +137,11 @@ def _issues() -> dict[str, set[str]]:
 def test_the_bars_are_served_nominal_keyed_on_the_security(built):
     assert built["coverage"] == 1.0 and built["source_as_of"] == "2026-10-27"
     rows = _q("SELECT * FROM price_bar_daily WHERE security_id = ? ORDER BY session_date", [AAPL])
-    assert [r["session_date"] for r in rows] == DAYS[1:]
-    assert [r["close"] for r in rows] == RAW["AAPL"][1:] and rows[0]["symbol"] == "AAPL"
-    assert {r["source"] for r in rows} == {bars.NAME}
-    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE source = 'alpaca/bars'")[0]["n"] == 7 * 5
+    assert [r["session_date"] for r in rows] == DAYS                      # Compustat's week, not Alpaca's window
+    assert [r["close"] for r in rows] == RAW["AAPL"] and rows[0]["symbol"] == "AAPL"
+    assert {r["source"] for r in rows} == {wrds_history.COMPUSTAT}
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE source = 'alpaca/bars'")[0]["n"] == 0
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE source = ?", [wrds_history.COMPUSTAT])[0]["n"] == 7 * 6
     assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = 'index:SPX'")[0]["n"] == 2
     version = _q("SELECT kind, version FROM serving_schema_version")[0]
     assert (version["kind"], version["version"]) == ("prices", 1)
@@ -181,7 +196,7 @@ def test_the_one_basis_point_rule_allows_for_alpacas_cent_rounded_adjusted_close
               "all": {**ALL, "BRK.B": brk, "GOOGL": googl, "GOOG": goog_all}}
     http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer(
         {k: {s: [bar(d, c) for d, c in zip(DAYS, cs)] for s, cs in v.items()} for k, v in series.items()}), 200, {}))
-    _shares_and_floats()
+    _shares_and_floats(series["raw"])
     base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
     base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
     ours = raw[5] / raw[4] - 1
@@ -240,13 +255,13 @@ def test_an_adrs_cover_count_is_ordinary_shares_so_it_gives_no_market_cap(http_m
     # cover fact whose context has no date (``as_of`` None) is named too, not a failed build (the delta review's
     # should 2).
     tsm = {"ticker": "TSM", "cik": "1046179", "name": "TAIWAN SEMICONDUCTOR MANUFACTURING CO LTD", "exchange": "NYSE",
-           "tier": "A", "security_type": "adr", "gvkey": None, "iid": None, "composite_figi": None}
+           "tier": "A", "security_type": "adr", "gvkey": "099001", "iid": "01", "composite_figi": None}
     serving.live_path("spine").unlink()
-    write_spine(SPINE + ALPHABET + [tsm])
+    write_spine(WEEK_SPINE + [tsm])
     series = {"raw": {**RAW, "TSM": [300.0] * 6}, "all": {**ALL, "TSM": [300.0] * 6}}
     http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer(
         {k: {s: [bar(d, c) for d, c in zip(DAYS, cs)] for s, cs in v.items()} for k, v in series.items()}), 200, {}))
-    _shares_and_floats()
+    _shares_and_floats(extra={"099001:01": ("TSM", [(d, 300.0) for d in DAYS])})
     base.upsert_partition([{"cik": "1046179", "accession": "0001046179-26-000010", "form": "20-F",
                             "filed": date(2026, 4, 15), "period_end": date(2025, 12, 31), "class_member": "",
                             "symbol": symbol, "shares": 25_930_000_000, "as_of": as_of,
@@ -254,8 +269,8 @@ def test_an_adrs_cover_count_is_ordinary_shares_so_it_gives_no_market_cap(http_m
                           cover_shares.SCHEMA, cover_shares.KEY, cover_shares.partition_path(2026))
     base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
     base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
-    sid = "cik:1046179:TSM"
-    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = ?", [sid])[0]["n"] == 5
+    sid = "099001:01"
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = ?", [sid])[0]["n"] == 6
     assert _q("SELECT count(*) AS n FROM market_cap_daily WHERE security_id = ?", [sid])[0]["n"] == 0
     held = _q("SELECT security_id, value FROM shares_class WHERE cik = '1046179'")
     assert held == [{"security_id": "class:1046179:common", "value": 25_930_000_000}]
@@ -277,7 +292,7 @@ def test_the_issuer_cap_counts_each_class_at_its_newest_cap_within_the_window(ht
     # GOOGL at GOOGL's own cap. A class's newest cap within ISSUER_WITHIN_DAYS of the session counts instead.
     monkeypatch.setattr(prices_serving, "ISSUER_WITHIN_DAYS", within)
     _bars_answer(http_mock, RAW, ALL, skip={("GOOG", DAYS[-1])})
-    _shares_and_floats()
+    _shares_and_floats(skip={("GOOG", DAYS[-1])})
     base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
     base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
     cap = {(r["security_id"], r["session_date"]): r for r in _q("SELECT * FROM market_cap_daily")}
@@ -291,11 +306,11 @@ def test_the_issuer_cap_counts_each_class_at_its_newest_cap_within_the_window(ht
 
 def test_a_listed_class_the_spine_lacks_gets_bars_and_counts_in_the_issuer_cap(http_mock):
     # The server's sample: BRK-B's cap was 0.658 of Yahoo's, because the spine has no BRK-A (cover_class_unmapped
-    # 1067983:BRK.A), so the A class had no bar and no cap. The cover's listed classes of a Tier A issuer join the
-    # bars' scope under their class id.
+    # 1067983:BRK.A), so the A class had no bar and no cap. Compustat holds the A class (072726:01, its own shares),
+    # and the gvkey it shares with the spine's BRK-B makes it the same issuer's.
     _bars_answer(http_mock, {**RAW, "BRK.A": [720_000.0 + i for i in range(6)]},
                  {**ALL, "BRK.A": [720_000.0 + i for i in range(6)]})
-    _shares_and_floats()
+    _shares_and_floats(extra={"072726:01": ("BRK.A", [(d, 720_000.0 + i) for i, d in enumerate(DAYS)], 540_000)})
     a, b = "us-gaap:CommonClassAMember", "us-gaap:CommonClassBMember"
     base.upsert_partition([{"cik": "1067983", "accession": "0001067983-26-000040", "form": "10-Q",
                             "filed": date(2026, 8, 3), "period_end": date(2026, 6, 30), "class_member": m,
@@ -305,7 +320,7 @@ def test_a_listed_class_the_spine_lacks_gets_bars_and_counts_in_the_issuer_cap(h
                           cover_shares.SCHEMA, cover_shares.KEY, cover_shares.partition_path(2026))
     base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})
     base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
-    brk_a = f"class:1067983:{a}"
+    brk_a = "072726:01"
     cap = {(r["security_id"], r["session_date"]): r for r in _q("SELECT * FROM market_cap_daily")}
     assert cap[(brk_a, DAYS[-1])]["market_cap"] == pytest.approx(720_005.0 * 540_000)
     assert cap[("072726:02", DAYS[-1])]["issuer_market_cap"] == pytest.approx(
@@ -346,7 +361,7 @@ def test_the_bridge_views_keep_the_old_columns(built):
     old = _q("SELECT * FROM price_bars_daily WHERE ticker = 'FLG' ORDER BY session_date")
     assert list(old[0]) == ["ticker", "session_date", "open", "high", "low", "close", "adj_close", "volume",
                             "split_ratio", "adj_source", "source", "fetched_at", "run_id", "run_at"]
-    assert old[0]["close"] == pytest.approx(12.1 * 3) and old[1]["close"] == 36.6      # split-adjusted to today
+    assert old[1]["close"] == pytest.approx(12.1 * 3) and old[2]["close"] == 36.6      # split-adjusted to today
     assert old[0]["volume"] == pytest.approx(1_000_000 / 3)
     built_at = _q("SELECT built_at FROM serving_schema_version")[0]["built_at"]
     assert {r["fetched_at"] for r in old} == {built_at}                    # so the old reader applies no split again

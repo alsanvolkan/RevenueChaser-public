@@ -160,3 +160,60 @@ def test_the_delisted_rule_is_one_function_with_its_pending_measurement_named():
 def _secd_row(gvkey, day, tic, close, cusip, trfd=1.0):
     from .test_prices_wrds import _secd
     return _secd(gvkey, "01", day, tic, close, trfd=trfd, cusip=cusip)
+
+
+# ── Step 3: Alpaca is the tester, never a served bar ───────────────────────────────────────────────────────────
+
+def test_no_alpaca_bar_is_served_and_compustat_serves_the_newest_sessions(built):
+    assert {r["source"] for r in _q("SELECT DISTINCT source FROM price_bar_daily")} <= {
+        wrds_history.COMPUSTAT, wrds_history.CRSP, "market_series/cboe"}
+    october = _q("SELECT session_date, close, source FROM price_bar_daily WHERE security_id = ? "
+                 "AND session_date >= '2026-10-01' ORDER BY session_date", [AAPL])
+    assert [(str(r["session_date"]), r["close"]) for r in october] == [
+        ("2026-10-21", 199.5), ("2026-10-22", 200.0), ("2026-10-23", 199.9), ("2026-10-26", 201.0),
+        ("2026-10-27", 202.5)]
+    assert {r["source"] for r in october} == {wrds_history.COMPUSTAT}
+
+
+def test_the_daily_alpaca_run_asks_only_the_names_at_risk(fake, http_mock):
+    from urllib.parse import parse_qs, urlparse
+
+    from RevenueChaser.rcdata.build import base
+    from RevenueChaser.rcdata.build.prices import actions, bars
+    assert _backfill()["result"] == "changed"
+    assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
+    row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    asked = {s for r in http_mock.calls("/v2/stocks/bars")
+             for s in parse_qs(urlparse(str(r.url)).query)["symbols"][0].split(",")}
+    assert asked == {"AAPL"}, "AAPL alone: its Compustat dividend went ex on 23 Oct"
+    assert "Alpaca tester: 1 of 5 names at risk (1 dividend)" in row["note"]
+
+
+def test_the_tester_flags_a_history_close_alpaca_disagrees_with(built):
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    issues = {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
+              if i["kind"] == "alpaca_close_differs"}
+    assert issues == {f"{AAPL}:2026-10-27:{wrds_history.COMPUSTAT}": "compustat 202.5000, alpaca 202.0000"}
+
+
+def test_the_risk_set_names_each_reason(monkeypatch):
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving, stage, tester
+    from .test_prices_wrds import _secd
+
+    def rows(gvkey, closes, **kw):
+        days = ["2026-10-21", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27"]
+        return [{**_secd(gvkey, "01", d, gvkey, c, **{k: (v[i] if isinstance(v, list) else v) for k, v in kw.items()}),
+                 "datadate": date.fromisoformat(d), "source_as_of": date(2026, 10, 27), "fetched_at": 1.0,
+                 "run_id": "r"} for i, (d, c) in enumerate(zip(days, closes))]
+    secd = (rows("000001", [10] * 5) + rows("000002", [10] * 5, trfd=[1, 1, None, 1, 1])
+            + rows("000003", [20, 20, 10, 10, 10], ajexdi=[2, 2, 1, 1, 1]) + rows("000004", [10] * 5, exchg=[14, 14, 11, 11, 11])
+            + rows("000005", [4.0] * 5))
+    stage.write_rows(secd, wrds_history.SECD + wrds_history.PROVENANCE, wrds_history.partition_path("secd", 2026))
+    ops.sync_issues(prices_serving.NAME, prices_serving.ISSUE_KINDS,
+                    [("price_gap_no_action", "000006:01:2026-10-22", "x3.000, no split")])
+    assert tester.at_risk(date(2026, 10, 27)) == {
+        "000002:01": ["trfd_empty"], "000003:01": ["split"], "000004:01": ["exchange_move"],
+        "000005:01": ["low_price"], "000006:01": ["price_gap"]}
+

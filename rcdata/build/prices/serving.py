@@ -3,7 +3,7 @@
 **Tables** (``prices.duckdb``, serving schema version 1), every one keyed on the security id (``prices.security_id``):
 
 - ``price_bar_daily``: one bar per security and New York session, **nominal** (the prices as traded that day):
-  Alpaca's daily bars, then the WRDS history where Alpaca has no bar (``wrds/prices``: Compustat first, priority 1;
+  the WRDS history (Alpaca's bars are the tester's, ``prices.tester``, and never served) (``wrds/prices``: Compustat first, priority 1;
   CRSP only on its fallback days, ``wrds_history.CRSP_FALLBACK``: a day Compustat prices without ``trfd`` and a
   delisted security's final days, through a CUSIP link of ``wrds_history.PERMNO_LINK``), and the S&P 500 index level from the market store's
   Cboe file (``index:SPX``, the close only);
@@ -111,8 +111,11 @@ ISSUE_KINDS = {
     "tier_a_no_shares": "a Tier A name with no shares, so no market cap, on the newest session (key: the security id)",
     "price_gap_no_action": ("the split-adjusted close moved by GAP_FACTOR or more with no split that day "
                             "(key: security:session)"),
-    "adjustment_differs": ("our total-return day return is more than 1 bp from the source's own, or more than the "
-                           "rounding of its cent-rounded closes where that is larger (key: security:session)"),
+    "adjustment_differs": ("a served bar's total-return day return is more than 1 bp from Alpaca's adjusted one, or "
+                           "more than the rounding of its cent-rounded closes where that is larger (the tester, "
+                           "key: security:session)"),
+    "alpaca_close_differs": ("a history bar's close (Compustat's, or CRSP's) is more than 1 bp and half a cent from "
+                             "Alpaca's close of the session (the tester, key: security:session:source)"),
     "dividend_not_applied": "a cash dividend the factors could not use (key: the action id)",
     "action_not_applied": "a spin-off, unit split or rights distribution the factors do not apply (key: the action id)",
     "cover_class_unmapped": "a cover class whose trading symbol is no spine ticker of its CIK (key: CIK:symbol)",
@@ -325,10 +328,8 @@ class PricesServing:
         counts = {}
         cols = ", ".join(c for c, _ in PRICE_BAR)
         # Alpaca's bar wins its session; of the history bars, Compustat's (priority 1) before CRSP's.
-        bars_sql = (f"SELECT {cols} FROM _alp UNION ALL SELECT * FROM ({_index_levels(con)}) UNION ALL "
-                    f"SELECT {cols} FROM (SELECT * FROM _hist_all h WHERE {HIST_FIRST.format(where='WHERE ' + HIST_SERVED)} "
-                    "AND NOT EXISTS (SELECT 1 FROM _alp a "
-                    "WHERE a.security_id = h.security_id AND a.session_date = h.session_date))")
+        bars_sql = (f"SELECT * FROM ({_index_levels(con)}) UNION ALL "
+                    f"SELECT {cols} FROM (SELECT * FROM _hist_all h WHERE {HIST_FIRST.format(where='WHERE ' + HIST_SERVED)})")
         counts["price_bar_daily"] = _create(con, "price_bar_daily", bars_sql)
         fallback = con.execute(f"SELECT h.fallback, count(*) FROM price_bar_daily b JOIN _hist_all h USING "
                                f"(security_id, session_date, source) WHERE b.source = '{wrds_history.CRSP}' "
@@ -571,7 +572,7 @@ class PricesServing:
     @staticmethod
     def _issues(con: duckdb.DuckDBPyConnection, have: dict[str, int]) -> list[tuple[str, str, str]]:
         found: list[tuple[str, str, str]] = []
-        newest = con.execute(f"SELECT max(session_date) FROM price_bar_daily WHERE source = '{ALPACA_BARS}'"
+        newest = con.execute("SELECT max(session_date) FROM price_bar_daily WHERE security_id NOT LIKE 'index:%'"
                              ).fetchone()[0]
         if newest is not None:
             for sid, ticker in con.execute(
@@ -611,11 +612,19 @@ class PricesServing:
         for sid, day, ours, theirs in con.execute(f"""
                 SELECT r.security_id, r.session_date, r.tr_close / r.prev_tr - 1, a.all_return
                 FROM _ret r JOIN _alp a ON a.security_id = r.security_id AND a.session_date = r.session_date
-                WHERE r.source = '{ALPACA_BARS}' AND r.prev_tr > 0 AND a.all_return IS NOT NULL
+                WHERE r.prev_tr > 0 AND a.all_return IS NOT NULL
                   AND date_diff('day', r.prev_day, r.session_date) <= 5
                   AND abs((r.tr_close / r.prev_tr - 1) - a.all_return) > greatest({TOLERANCE}, {allowance})
                 ORDER BY 1, 2""").fetchall():
             found.append(("adjustment_differs", f"{sid}:{day}", f"ours {ours:.6f}, alpaca {theirs:.6f}"))
+        # The tester's close check: every history bar of a session Alpaca has, either source.
+        for sid, day, source, close, alp in con.execute(f"""
+                SELECT h.security_id, h.session_date, h.source, h.close, a.close FROM _hist_all h
+                JOIN _alp a ON a.security_id = h.security_id AND a.session_date = h.session_date
+                WHERE a.close > 0 AND abs(h.close - a.close) > greatest({TOLERANCE} * a.close, {HALF_CENT})
+                ORDER BY 1, 2, 3""").fetchall():
+            found.append(("alpaca_close_differs", f"{sid}:{day}:{source}",
+                          f"{source.split('/')[-1]} {close:.4f}, alpaca {alp:.4f}"))
         newest_of = ("SELECT security_id, value FROM shares_class WHERE measure = '{m}' AND source = '{s}' "
                      "QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY as_of DESC, fetched_at DESC) = 1")
         for sid, fl, out in con.execute(f"""
@@ -714,9 +723,16 @@ MARKET_CAP_SQL = f"""
          h AS (SELECT security_id, session_date, arg_min(shares_outstanding, priority) AS shares_outstanding,
                       arg_min(source, priority) AS source FROM _hist_all
                WHERE shares_outstanding > 0 AND {HIST_SERVED} GROUP BY security_id, session_date),
+         -- A Compustat class the spine lacks (BRK-A) is its issuer's through the gvkey of the classes it holds.
+         gv AS (SELECT gvkey, any_value(cik) AS cik FROM stg_spine WHERE nullif(gvkey, '') IS NOT NULL
+               AND cik IS NOT NULL GROUP BY gvkey HAVING count(DISTINCT cik) = 1),
+         sec AS (SELECT DISTINCT security_id, cik FROM stg_spine
+                 UNION ALL
+                 SELECT DISTINCT d.gvkey || ':' || d.iid, gv.cik FROM stg_wrds_secd d JOIN gv USING (gvkey)
+                 WHERE d.gvkey || ':' || d.iid NOT IN (SELECT security_id FROM stg_spine WHERE security_id IS NOT NULL)),
          b AS (SELECT b.*, coalesce(s.cik, b.cik) AS issuer, h.shares_outstanding AS hist_shares,
                       h.source AS hist_source FROM price_bar_daily b
-               LEFT JOIN (SELECT DISTINCT security_id, cik FROM stg_spine) s USING (security_id)
+               LEFT JOIN sec s USING (security_id)
                LEFT JOIN h ON h.security_id = b.security_id AND h.session_date = b.session_date
                WHERE b.security_id NOT LIKE 'index:%' AND b.close IS NOT NULL),
          -- The bar's own shares, else a WRDS source's of that session (an Alpaca bar Compustat also has), else the
