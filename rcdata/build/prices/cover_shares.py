@@ -11,8 +11,9 @@ B) is kept, unlisted. A fact with any other dimension (``dei:LegalEntityAxis``, 
 weekday of the ``LOOKBACK`` days before ``as_of`` and takes the ``FORMS`` filings of Tier A CIKs. Until every Tier A
 CIK has one filing, a run also fills ``FILL_PER_RUN`` CIKs that have none (by CIK), with the newest ``FORMS`` filing
 their submissions file names. Each filing needs its submissions file (``data.sec.gov``; the primary document's name
-and whether it is inline XBRL) and the instance: two requests, through the box's shared SEC bucket, or ``SEC_INTERVAL_S``
-apart when it cannot be used (``sec_throttle.FALLBACK_RATE``, a fifth of the SEC's 10), and through the box's shared SEC bucket (``core/sec_throttle.py``), with the builder's User-Agent.
+and whether it is inline XBRL) and the instance: two requests, through the box's shared SEC bucket
+(``core/sec_throttle.py``), or ``SEC_INTERVAL_S`` apart when it cannot be used (``sec_throttle.FALLBACK_RATE``, this
+process's share of the SEC's 10), with the builder's User-Agent.
 
 **Raw**: ``raw/sec/daily_index/master.<YYYYMMDD>.idx.gz`` (a ``.missing`` marker for a day with no index, two days
 past, and only when EDGAR's closure explains it: ``base.MissingStreak``), and ``raw/sec/cover_shares/cik=<CIK>/<accession>.json.gz``, the cover facts only (an instance runs to
