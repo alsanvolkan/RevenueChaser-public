@@ -15,11 +15,11 @@ FULL (the whole unit and e2e suite) when:
   - a changed non-Markdown file is gone (deleted or renamed: its importers are not in the graph);
   - a changed non-Markdown file is named by no Python file;
   - any Python file does not parse (no graph);
+  - a change reaches the root conftest (its fixtures run in every test);
   - code changed and no test was selected.
 
-shortcut: the modules the autouse fixtures in the conftests import are not edges to every test. Every selected
-test runs those fixtures anyway, so a break there shows in any selection; a change reaching only them selects
-nothing and runs FULL by the last rule.
+A change that reaches any other conftest selects every test below that conftest's folder: its fixtures run there
+whatever the test imports. The e2e conftest starts the dashboard, so most changes select every e2e test.
 
 Usage: ``python scripts/select_tests.py BASE_REF [--full REASON]`` diffs against the merge-base with BASE_REF
 and prints the selection as JSON; under GitHub Actions it also writes the job outputs and the step summary.
@@ -169,20 +169,35 @@ def select(changed: list[str], root: Path = REPO) -> Selection:
             return Selection("FULL", f"{rel} is named by no Python file")
         seeds |= named
     try:
-        importers = _graph(root)
+        reached = _reach(seeds, root)
     except (SyntaxError, UnicodeDecodeError, ValueError) as exc:
         return Selection("FULL", f"import graph failed: {exc}")
+    if "conftest.py" in reached:
+        return Selection("FULL", "the change reaches the root conftest.py")
+    under = tuple(c.removesuffix("conftest.py") for c in reached if c.endswith("/conftest.py"))
+    tests = sorted({r for r in reached if _is_test(r)} | {t for t in all_tests(root) if t.startswith(under)} if under
+                   else {r for r in reached if _is_test(r)})
+    if not tests and any(not c.endswith(".md") for c in changed):
+        return Selection("FULL", "code changed and no test reaches it")
+    return Selection("SELECTIVE", f"{len(tests)} test files reach {len(changed)} changed files",
+                     tests, [t for t in tests if t.startswith(E2E_DIR)])
+
+
+def _reach(seeds: set[str], root: Path) -> set[str]:
+    """``seeds`` and every file that imports one of them, directly or transitively."""
+    importers = _graph(root)
     reached, todo = set(seeds), list(seeds)
     while todo:
         for nxt in importers.get(_module(todo.pop()), ()):
             if nxt not in reached:
                 reached.add(nxt)
                 todo.append(nxt)
-    tests = sorted(r for r in reached if _is_test(r))
-    if not tests and any(not c.endswith(".md") for c in changed):
-        return Selection("FULL", "code changed and no test reaches it")
-    return Selection("SELECTIVE", f"{len(tests)} test files reach {len(changed)} changed files",
-                     tests, [t for t in tests if t.startswith(E2E_DIR)])
+    return reached
+
+
+def reached_tests(changed_py: list[str], root: Path = REPO) -> list[str]:
+    """The test files that import any of ``changed_py`` by the graph alone (no conftest or FULL rules)."""
+    return sorted(r for r in _reach(set(changed_py), root) if _is_test(r))
 
 
 def changed_files(base: str, root: Path = REPO) -> list[str]:

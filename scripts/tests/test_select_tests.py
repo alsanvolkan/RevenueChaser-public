@@ -16,19 +16,49 @@ from RevenueChaser.scripts import select_tests as mod
 _REPO = Path(__file__).resolve().parents[2]
 
 
-def test_rcdata_ops_selects_the_e2e_tests_that_broke_on_pr_381():
+def _runs(sel, test: str) -> bool:
+    return sel.mode == "FULL" or test in sel.unit
+
+
+def test_rcdata_ops_reaches_the_e2e_tests_that_broke_on_pr_381():
     """PR #381 changed rcdata/ops.py and these three e2e tests failed; none of them imports ops directly."""
-    sel = mod.select(["rcdata/ops.py"])
-    assert sel.mode == "SELECTIVE", sel.reason
+    reached = mod.reached_tests(["rcdata/ops.py"])
     for name in ("test_settings_newdata.py", "test_spx_gamma_rcdata.py", "test_watchlist_pair.py"):
-        assert f"module_testing/e2e/{name}" in sel.e2e, name
+        assert f"module_testing/e2e/{name}" in reached, name
+    assert mod.select(["rcdata/ops.py"]).mode == "FULL"  # the root conftest imports ops
+
+
+def test_an_e2e_test_that_reaches_the_app_only_through_the_dashboard_fixture_is_selected():
+    """test_board_oipd imports opd_math only; the board code runs in the dashboard the e2e conftest starts."""
+    sel = mod.select(["module_oipd/report.py"])
+    assert _runs(sel, "module_testing/e2e/test_board_oipd.py"), sel.reason
+    assert "module_testing/e2e/test_board_oipd.py" in sel.e2e or sel.mode == "FULL"
+
+
+def test_a_change_reaching_a_conftest_selects_every_test_below_it(tmp_path):
+    root = _mini_repo(tmp_path, {
+        "pkg/__init__.py": "", "pkg/fix.py": "", "pkg/other.py": "",
+        "pkg/tests/conftest.py": "from RevenueChaser.pkg import fix\n",
+        "pkg/tests/test_x.py": "", "pkg/tests/deep/test_y.py": "from RevenueChaser.pkg import other\n",
+        "pkg2/tests/test_z.py": "",
+    })
+    sel = mod.select(["pkg/fix.py"], root=root)
+    assert (sel.mode, sel.unit) == ("SELECTIVE", ["pkg/tests/deep/test_y.py", "pkg/tests/test_x.py"])
+
+
+def test_a_change_reaching_the_root_conftest_runs_the_full_suite(tmp_path):
+    root = _mini_repo(tmp_path, {
+        "conftest.py": "def f():\n    from RevenueChaser.pkg import a\n",
+        "pkg/__init__.py": "", "pkg/a.py": "", "pkg/tests/test_a.py": "from RevenueChaser.pkg import a\n",
+    })
+    assert mod.select(["pkg/a.py"], root=root).mode == "FULL"
 
 
 def test_a_narrow_change_runs_fewer_tests_than_the_full_suite():
-    sel = mod.select(["module_sector_rotation/etf_holdings.py"])
+    sel = mod.select(["module_relatedness/naming.py"])
     assert sel.mode == "SELECTIVE", sel.reason
-    assert "module_sector_rotation/tests/test_etf_holdings.py" in sel.unit
-    assert len(sel.unit) < len(mod.all_tests(_REPO)) / 2
+    assert "module_relatedness/tests/test_naming.py" in sel.unit
+    assert len(sel.unit) < len(mod.all_tests(_REPO)) / 10
 
 
 @pytest.mark.parametrize("doc, reader", [
@@ -38,9 +68,7 @@ def test_a_narrow_change_runs_fewer_tests_than_the_full_suite():
     ("docs/data_architecture.md", "core/tests/test_store_schema_refuse.py"),
 ])
 def test_a_doc_a_test_reads_selects_that_test(doc, reader):
-    sel = mod.select([doc])
-    assert sel.mode == "SELECTIVE", sel.reason
-    assert reader in sel.unit
+    assert _runs(mod.select([doc]), reader)
 
 
 def test_a_markdown_file_nothing_reads_selects_nothing(tmp_path):
