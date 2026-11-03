@@ -227,6 +227,31 @@ def test_the_merge_gate_check_is_green_only_for_a_full_run_that_passed():
         assert subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True).returncode == code, plan
 
 
+def _gate_script() -> str:
+    wf = (_REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    gate = wf.split("\n  merge-gate:\n", 1)[1]
+    return "\n".join(line[10:] for line in gate.split("run: |\n", 1)[1].splitlines() if line.startswith(" " * 10))
+
+
+@pytest.mark.parametrize("earlier, code", [("success", 0), ("failure", 1), ("cancelled", 1), ("", 1)])
+def test_a_label_other_than_full_ci_keeps_the_heads_earlier_gate_result(tmp_path, earlier, code):
+    """Review of #383: a triage label after a green FULL run must not turn the head's merge-gate red.
+
+    The run such a label starts tests nothing, so its gate repeats the latest completed merge-gate on the same head
+    (none yet: it fails, as before).
+    """
+    wf = (_REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    gate = wf.split("\n  merge-gate:\n", 1)[1]
+    assert "checks: read" in gate.split("steps:", 1)[0]
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "gh").write_text(f"#!/bin/sh\necho '{earlier}'\n")
+    (fake / "gh").chmod(0o755)
+    env = {**os.environ, "PATH": f"{fake}:{os.environ['PATH']}", "OTHER_LABEL": "true",
+           "PLAN": "skipped", "MODE": "", "UNIT": "skipped", "E2E": "skipped", "SHA": "abc", "REPO": "o/r"}
+    assert subprocess.run(["bash", "-e", "-c", _gate_script()], env=env, capture_output=True).returncode == code
+
+
 def test_any_selector_error_falls_back_to_full(monkeypatch, capsys):
     """Review of #383: an unexpected error must not fail the plan job, which would leave the push with no test run."""
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
