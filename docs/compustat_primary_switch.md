@@ -38,7 +38,7 @@ on homesrv first (`duckdb.connect(path, read_only=True)` with `RC_STORE_AUTO_ENS
 avo, 3 Nov 2026 ~11:20 Amsterdam: "1 evet, 2 evet, 3-Alpaca test eşikleri: bunu acikla nerede kullaniyoruz? 4 CRSP
 ver" (the "4" is decision 7 below).
 
-1. **Daily Compustat: decided, yes.** `wrds/prices`'s own cadence is now daily (six queries a day); with Alpaca no
+1. **Daily Compustat: decided, yes.** `wrds/prices`'s own cadence is now daily (five WRDS queries a day: the columns, then secd and sec_divid of the last two years; seven on the day the two snapshots are due, every 30 days; CRSP's final years are not re-asked); with Alpaca no
    longer served the newest served session is Compustat's. A `dataset_schedule` row on homesrv still overrides it:
    remove one that says monthly.
 2. **Freshness label: decided, yes.** `read.DATASET_OF_TABLE` names `wrds/prices` as the source of

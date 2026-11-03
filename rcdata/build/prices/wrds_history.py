@@ -310,7 +310,7 @@ class WrdsPrices:
     providers = (wrds.PROVIDER,)
     tables = ("price_bar_daily", "corporate_action", "price_revision", "wrds_price_diff")
     # Daily since Compustat is the one served source (avo, 3 Nov 2026 ~11:20 Amsterdam, decision 1: "1 evet"): the
-    # refresh of the last two years, six queries a day. Attended unless RC_WRDS_UNATTENDED=1.
+    # refresh of the last two years, five queries a day (seven with the snapshots). Attended unless RC_WRDS_UNATTENDED=1.
     cadence = "daily"
     attended = property(lambda self: base.wrds_attended())   # RC_WRDS_UNATTENDED=1: the builder runs it
     backfill_needs_from = False
@@ -332,7 +332,11 @@ class WrdsPrices:
         """The (table, year) pairs to ask, newest year first, the three tables within a year."""
         lo = {t: years(t, as_of, first) for t in YEARLY}
         if refresh:
-            lo = {t: ys[-REFRESH_YEARS:] for t, ys in lo.items()}
+            # A table past its last year (CRSP, annual) is final until the next release: its refresh asks a year only
+            # while its partition is missing (delta review SHOULD 1 of #382: two needless dsf queries a day).
+            frozen = {t for t in lo if TABLES[t]["last_year"] and TABLES[t]["last_year"] < as_of.year}
+            lo = {t: [y for y in ys[-REFRESH_YEARS:] if t not in frozen or not partition_path(t, y).is_file()]
+                  for t, ys in lo.items()}
         every = sorted({y for ys in lo.values() for y in ys}, reverse=True)
         return [(t, y) for y in every for t in YEARLY if y in lo[t]]
 

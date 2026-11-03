@@ -660,3 +660,16 @@ def test_a_secd_partition_in_the_old_format_without_its_raw_file_is_asked_again(
     conn.queries.clear()
     _backfill()
     assert _asked_tables(conn) == ["comp.secd 2025"]
+
+
+def test_the_daily_refresh_asks_no_crsp_year_that_cannot_change():
+    """Delta review SHOULD 1 of #382: CRSP is annual (CRSP_LAST_YEAR); its years are final until the next release, so
+    the daily refresh asks only Compustat's last two years: the columns plus four queries, not six. A CRSP year whose
+    partition is missing is still asked (a new release)."""
+    for y in (2024, 2025):
+        wrds_history.partition_path("dsf", y).parent.mkdir(parents=True, exist_ok=True)
+        wrds_history.partition_path("dsf", y).write_bytes(b"")
+    plan = wrds_history.WrdsPrices._plan(date(2026, 11, 3), None, refresh=True)
+    assert plan == [("secd", 2026), ("sec_divid", 2026), ("secd", 2025), ("sec_divid", 2025)]
+    wrds_history.partition_path("dsf", 2025).unlink()
+    assert ("dsf", 2025) in wrds_history.WrdsPrices._plan(date(2026, 11, 3), None, refresh=True)

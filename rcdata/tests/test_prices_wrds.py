@@ -622,7 +622,7 @@ def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
     assert row["result"] == "changed", row
     assert _asked(conn) == ["information_schema.columns",                    # a new day: the columns again
                             "comp.sec_split", "crsp_a_stock.stkdelists", "comp.secd 2026", "comp.sec_divid 2026",
-                            "comp.secd 2025", "crsp.dsf_v2 2025", "comp.sec_divid 2025", "crsp.dsf_v2 2024"]
+                            "comp.secd 2025", "comp.sec_divid 2025"]          # CRSP's years are final (to 2025)
     revs = _q("SELECT * FROM price_revision WHERE source = ?", [wrds_history.COMPUSTAT])
     assert [(r["security_id"], str(r["session_date"]), r["close"]) for r in revs] == [(AAPL, "2025-06-03", 202.0)]
     assert revs[0]["revised_by"] == ops.latest_check(wrds_history.NAME)["run_id"]
