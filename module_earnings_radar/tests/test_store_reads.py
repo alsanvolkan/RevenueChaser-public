@@ -1,7 +1,7 @@
 """The Earnings board's one reader of the market store: the 10-year yield series (need ``macro.dgs10``)."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -65,7 +65,10 @@ def _pipeline():
     return EarningsPipeline(["AAPL"], uw=object(), cal_meta={})
 
 
-def test_the_run_warms_the_yield_series_from_the_market_store():
+def test_the_run_warms_the_yield_series_from_the_market_store(monkeypatch):
+    # The pipeline measures freshness against the latest complete session: pin the clock to the evening of LAST, or
+    # the series turns stale a week later (it went red on 2 Nov 2026 after 16:00 New York).
+    monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 26, 22, 0, tzinfo=timezone.utc))
     serve(_series(LAST, 5))
     p = _pipeline()
     assert p._warm_dgs10()[LAST.isoformat()] == pytest.approx(4.0)
