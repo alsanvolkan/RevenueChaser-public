@@ -44,7 +44,8 @@ RATE = 8
 # The processes that can ask SEC at the same time on the box. When this bucket cannot be used each paces itself at
 # its share of the ceiling (``FALLBACK_RATE``), so all of them falling back together stay under it. A new SEC caller
 # that runs as its own process belongs on this list.
-SEC_PROCESSES = ("RC-Build", "the dashboard", "RC-ValueChain-Sync", "RC-Relatedness-OffPeak", "RC-Screeners-Daily")
+SEC_PROCESSES = ("RC-Build", "the dashboard", "RC-ValueChain-Sync", "RC-Relatedness-OffPeak", "RC-Screeners-Daily",
+                 "RC-Daily-Bars")
 FALLBACK_RATE = LIMIT / len(SEC_PROCESSES)
 
 # How long to wait for the OS lock before giving the caller the in-process fallback.

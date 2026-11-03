@@ -1437,7 +1437,7 @@ days) reads the forms only and asks nothing of the sets. On
 real data (28 Oct 2026) a set took about 30 seconds: 01jun2026-31aug2026 holds 9,900 13F-HR and 13F-HR/A with 3.8
 million holdings. Filings from 2025-01-01 make Q4 2024 the first quarter served, so Q1 2025 has its flows. SEC
 requests share `core/sec_throttle.py`'s bucket (8 a second) with every other SEC caller; when it cannot be used each
-of the five SEC processes (`sec_throttle.SEC_PROCESSES`) spaces itself at 2 a second, so together they stay at 10.
+of the SEC processes (`sec_throttle.SEC_PROCESSES`, six) spaces itself at its share, so together they stay at 10.
 
 **The 13F totals** (`ownership/serve`; the rules in `rcdata/build/ownership/serve.py`): per filer and report period
 the amendment walk (`NEW HOLDINGS` adds, any other amendment replaces); long equity only; each CUSIP named through the
