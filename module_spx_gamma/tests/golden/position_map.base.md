@@ -209,14 +209,14 @@ CFTC COT data unavailable.
 
 ## Scenario Set
 
-| Scenario | Range | P | R:R | Expectancy E | Trade |
-|---|---|---|---|---|---|
-| Consolidation | 7,821 – 7,920 | 0.45 | n/a | n/a | Theta-weighted (directionless) |
-| Upside | 7,920 – 8,000 | 0.25 | 0.8050719533058276 | -0.5487320116735431 | Directional long |
-| Downside | 7,731 – 7,821 | 0.3 | 0.9057059474690561 | -0.42828821575928316 | Directional short |
+| Scenario | Range | P | Asymmetry | Trade |
+|---|---|---|---|---|
+| Consolidation | 7,500 – 7,821 | 0.35 | n/a | Theta-weighted (directionless) |
+| Upside | 7,821 – 8,000 | 0.3 | 0.56 | Directional long |
+| Downside | 7,400 – 7,500 | 0.35 | 0.31 | Directional short |
 
 
-Probabilities are heuristic, derived from the gamma regime and positioning; they are NOT calibrated forecasts. Bands derive from this week's levels only (gamma flip / call wall / put support), with the same intuitive offsets as the reference report. The Brier scorecard below tracks how honest these probabilities turn out to be.
+Bands derive from this week's levels only — spot below the gamma flip (negative gamma): the consolidation ceiling is the flip and the upside band is the flip taken back up to the charm pin. Probabilities are the reference report's own: heuristic, derived from the gamma regime and positioning, and NOT calibrated forecasts. Asymmetry is band geometry (distance from the trigger to the band edge over the distance to the invalidation level), not a success probability; expected value is deliberately not computed, because the probabilities behind it are fixed and uncalibrated. Scenario rules follow the 2026-10-30 report. The Brier scorecard below tracks how honest these probabilities turn out to be.
 
 
 ## Iron Butterfly — Pin Harvest
