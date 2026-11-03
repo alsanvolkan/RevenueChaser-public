@@ -13,7 +13,8 @@ FULL (the whole unit and e2e suite) when:
   - a changed file is a conftest, requirements, pytest/setup config, a workflow, or this selector;
   - a changed non-Python file sits in a tests/fixtures/e2e folder (fixtures are read by glob, not by name);
   - a changed non-Markdown file is gone (deleted or renamed: its importers are not in the graph);
-  - a changed non-Markdown file is named by no Python file;
+  - a changed non-Markdown file is named by no Python file, or shares its file name with another file
+    (a name matches only whole: "a.js" is not named by "data.json");
   - any Python file does not parse (no graph);
   - a change reaches the root conftest (its fixtures run in every test);
   - a changed non-Markdown file reaches no test (checked per file, so a tested file beside it cannot hide it).
@@ -29,8 +30,10 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
@@ -122,13 +125,20 @@ def _graph(root: Path) -> dict[str, set[str]]:
     return importers
 
 
-def _named_by(rel: str, texts: dict[str, str]) -> set[str]:
-    """The Python files that name ``rel``, directly or through non-Markdown files that name it."""
+def _named_by(rel: str, texts: dict[str, str]) -> set[str] | None:
+    """The Python files that name ``rel``, directly or through non-Markdown files that name it.
+
+    None when a basename on the way belongs to two files: which one a reader opens cannot be told from the name.
+    """
+    bases = Counter(r.rsplit("/", 1)[-1] for r in texts)
     found, seen, todo = set(), {rel}, [rel]
     while todo:
         base = todo.pop().rsplit("/", 1)[-1]
+        if bases[base] > 1 and not base.endswith(".md"):  # README.md is everywhere; a doc is matched by name
+            return None
+        name = re.compile(rf"(?<![\w.-]){re.escape(base)}(?![\w-])")
         for other, text in texts.items():
-            if other in seen or base not in text:
+            if other in seen or base not in text or not name.search(text):
                 continue
             seen.add(other)
             if other.endswith(".py"):
@@ -162,6 +172,8 @@ def select(changed: list[str], root: Path = REPO) -> Selection:
     seeds_of: dict[str, set[str]] = {}
     for rel in changed:
         seeds_of[rel] = {rel} if rel.endswith(".py") else _named_by(rel, _texts(root))
+        if seeds_of[rel] is None:
+            return Selection("FULL", f"{rel} shares its file name with another file")
         if not seeds_of[rel] and not rel.endswith(".md"):
             return Selection("FULL", f"{rel} is named by no Python file")
     try:

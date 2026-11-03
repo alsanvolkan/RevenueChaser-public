@@ -74,7 +74,7 @@ def test_a_doc_a_test_reads_selects_that_test(doc, reader):
 
 
 def test_a_markdown_file_nothing_reads_selects_nothing(tmp_path):
-    root = _mini_repo(tmp_path, {"pkg/a.py": "", "pkg/tests/test_a.py": "", "docs/notes.md": "x"})
+    root = _mini_repo(tmp_path, {"pkg/a.py": "", "pkg/tests/test_a.py": "", "docs/notes.md": "x", "pkg/notes.md": "y"})
     sel = mod.select(["docs/notes.md"], root=root)
     assert (sel.mode, sel.unit, sel.e2e) == ("SELECTIVE", [], [])
 
@@ -108,6 +108,25 @@ def test_a_data_file_maps_to_the_tests_reaching_a_module_that_names_it(tmp_path)
     assert mod.select(["pkg/data/table.csv"], root=root).unit == ["pkg/tests/test_a.py"]
     assert mod.select(["templates/base.html"], root=root).unit == ["pkg/tests/test_b.py"]
     assert mod.select(["pkg/data/orphan.csv"], root=root).mode == "FULL"
+
+
+def test_a_basename_matches_only_as_a_whole_file_name(tmp_path):
+    """Review of #383: a substring match let "a.js" be named by "data.json"."""
+    root = _mini_repo(tmp_path, {
+        "pkg/__init__.py": "", "pkg/b.py": 'P = "data.json"\n', "pkg/tests/test_b.py": "from RevenueChaser.pkg import b\n",
+        "static/a.js": "", "pkg/data.json": "{}",
+    })
+    assert mod.select(["static/a.js"], root=root).mode == "FULL"
+    assert mod.select(["pkg/data.json"], root=root).unit == ["pkg/tests/test_b.py"]
+
+
+def test_a_basename_two_files_share_runs_the_full_suite(tmp_path):
+    """Which of the two a Python file reads cannot be told from the name."""
+    root = _mini_repo(tmp_path, {
+        "pkg/__init__.py": "", "pkg/b.py": 'P = "index.html"\n', "pkg/tests/test_b.py": "from RevenueChaser.pkg import b\n",
+        "one/index.html": "", "two/index.html": "",
+    })
+    assert mod.select(["one/index.html"], root=root).mode == "FULL"
 
 
 def _mini_repo(tmp_path, files: dict[str, str]) -> Path:
