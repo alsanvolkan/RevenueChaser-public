@@ -81,10 +81,6 @@ def test_run_pacer_is_one_per_provider_and_run_with_its_official_window():
 
 def test_each_provider_paces_at_its_official_window():
     from RevenueChaser.core import sec_throttle
-    from RevenueChaser.core.providers import openfigi, sec_edgar
-    from RevenueChaser.rcdata.build.ownership import sec
-    from RevenueChaser.rcdata.build.prices import cover_shares
-    from RevenueChaser.rcdata.build.fundamentals import common
     from RevenueChaser.rcdata.build.sources import alpaca
     ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
     assert sec_throttle.LIMIT == caps.WINDOWS["sec"][0]     # the SEC paths: see the fallback test below

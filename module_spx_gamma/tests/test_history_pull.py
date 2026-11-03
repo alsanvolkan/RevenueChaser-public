@@ -417,3 +417,22 @@ def test_a_run_past_its_deadline_says_so_in_its_counts(tmp_path):
         _pull(tmp_path, Recorder())
     [report] = _reports(tmp_path)
     assert report["stop_reason"] == "deadline"
+
+
+def test_the_pull_counts_its_calls_against_uw_s_day_cap(tmp_path):
+    """Review of #380: the pull's UW calls go into ``provider_calls_daily``, the counter the builder's cap reads."""
+    from RevenueChaser.rcdata import ops
+    before = ops.calls_today("uw")
+    counts = _pull(tmp_path, Recorder())
+    assert ops.calls_today("uw") - before == counts["calls"] == 1 + 3 * snap.HISTORY_CALLS_PER_SESSION
+
+
+def test_the_pull_is_held_to_what_is_left_of_uw_s_day(tmp_path):
+    from RevenueChaser.rcdata import caps, ops
+    ops.count_calls("uw", caps.DAY_CAPS["uw"] - ops.calls_today("uw") - 1)     # one call left today
+    uw = Recorder()
+    counts = _pull(tmp_path, uw, max_calls=500)
+    assert counts["max_calls"] == 1 and len(uw.calls) <= 1 and counts["stop_reason"] == "max_calls"
+    ops.count_calls("uw", 1)
+    with pytest.raises(hp.HistoryPullRefused, match="day cap"):
+        _pull(tmp_path, Recorder())
