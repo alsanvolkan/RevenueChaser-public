@@ -64,7 +64,10 @@ def at_risk(as_of: date) -> dict[str, list[str]]:
             rows += con.execute(f"""
                 SELECT DISTINCT gvkey || ':' || iid, 'exchange_move'
                 FROM read_parquet([{', '.join(base.sql_path(p) for p in idhist)}], union_by_name = true)
-                WHERE item = 'EXCHG' AND efffrom BETWEEN ? AND ?""", [lo, as_of]).fetchall()
+                WHERE item = 'EXCHG'
+                -- a period after the first one: a security's first listing is no move
+                QUALIFY efffrom BETWEEN ? AND ? AND efffrom > min(efffrom) OVER (PARTITION BY gvkey, iid)""",
+                                [lo, as_of]).fetchall()
         live = serving.live_path("prices")
         if live.exists():
             con.execute(f"ATTACH {base.sql_path(live)} AS live_prices (READ_ONLY)")

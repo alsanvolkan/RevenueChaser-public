@@ -288,8 +288,15 @@ def test_the_risk_set_names_each_reason(monkeypatch):
     stage.write_rows([{"gvkey": "000004", "iid": "01", "item": "EXCHG", "itemvalue": "11",
                        "efffrom": date(2026, 10, 23), "effthru": None, "source_as_of": date(2026, 10, 27),
                        "fetched_at": 1.0, "run_id": "s"},
+                      {"gvkey": "000004", "iid": "01", "item": "EXCHG", "itemvalue": "14",
+                       "efffrom": date(2001, 1, 2), "effthru": date(2026, 10, 22), "source_as_of": date(2026, 10, 27),
+                       "fetched_at": 1.0, "run_id": "s"},
                       {"gvkey": "000001", "iid": "01", "item": "EXCHG", "itemvalue": "14",
                        "efffrom": date(2001, 1, 2), "effthru": None, "source_as_of": date(2026, 10, 27),
+                       "fetched_at": 1.0, "run_id": "s"},
+                      # a first listing inside the window is no move (delta review NIT of #382)
+                      {"gvkey": "000008", "iid": "01", "item": "EXCHG", "itemvalue": "14",
+                       "efffrom": date(2026, 10, 23), "effthru": None, "source_as_of": date(2026, 10, 27),
                        "fetched_at": 1.0, "run_id": "s"}],
                      spine_wrds.IDHIST + spine_wrds.PROVENANCE,
                      spine_wrds.parquet_dir("wrds/sec_idhist") / "snapshot=2026-10-27" / "sec_idhist.parquet")
@@ -479,11 +486,14 @@ SECD_CASES = [
     ("D", "2010-06-01", 11),
     # E: Nasdaq to 2009-12-31, NYSE from 2010-01-04 with no end; today's code 19 (secd and sec_idhist disagree)
     ("E", "2010-01-04", 19), ("E", "2012-06-01", 19),
+    # G: OTC to 2004-12-31, a gap, NYSE from 2005-03-01; today's code 14
+    ("G", "2005-01-10", 14),
 ]
 IDHIST_CASES = [("A", 11, "1998-01-02", "2019-12-31"), ("A", 19, "2020-01-01", None),
                 ("B", 19, "1998-01-02", "2014-12-31"), ("B", 14, "2015-01-01", None),
                 ("D", 11, "2000-01-03", "2005-12-30"),
-                ("E", 14, "1998-01-02", "2009-12-31"), ("E", 11, "2010-01-04", None)]
+                ("E", 14, "1998-01-02", "2009-12-31"), ("E", 11, "2010-01-04", None),
+                ("G", 19, "1998-01-02", "2004-12-31"), ("G", 11, "2005-03-01", None)]
 
 
 def test_a_day_is_listed_by_its_own_exchange_and_before_1998_by_the_first_known_one():
@@ -500,6 +510,7 @@ def test_a_day_is_listed_by_its_own_exchange_and_before_1998_by_the_first_known_
         ("D", "2010-06-01"): True,      # after its history ends: today's code
         ("E", "2010-01-04"): True,      # the first day of its NYSE period, not the day after
         ("E", "2012-06-01"): True,      # an open-ended period holds every day after it starts
+        ("G", "2005-01-10"): False,     # a gap between two periods: the previous period's exchange (OTC), not today's
     }
 
 
@@ -511,7 +522,7 @@ def test_the_rule_against_todays_code_on_the_fixture():
     dropped = sorted(k for k in got if today[k] and not got[k])
     assert added == [("A", "1990-06-01"), ("A", "2019-12-31"),                     # 2 securities, 4 rows gained
                      ("E", "2010-01-04"), ("E", "2012-06-01")]
-    assert dropped == [("B", "1995-06-01"), ("B", "2014-12-31")]                   # 1 security, 2 rows lost
+    assert dropped == [("B", "1995-06-01"), ("B", "2014-12-31"), ("G", "2005-01-10")]   # 2 securities, 3 rows lost
 
 
 def test_the_secd_pull_reaches_securities_listed_once_whatever_their_code_today():
@@ -542,7 +553,8 @@ def test_a_security_on_otc_today_keeps_the_bars_of_its_listed_days(monkeypatch):
     _serve(monkeypatch, data)
     got = [str(r["session_date"]) for r in _q("SELECT session_date FROM price_bar_daily "
                                               "WHERE security_id = '055555:01' ORDER BY 1")]
-    assert got == ["2024-03-01"]               # on NYSE to 3 Mar (the delta's end), OTC from 5 Mar; 4 Mar in a gap
+    # on NYSE to 3 Mar (the delta's end), OTC from 5 Mar; 4 Mar, a gap, keeps the previous period's NYSE
+    assert got == ["2024-03-01", "2024-03-04"]
 
 
 def test_a_stock_dividend_alpaca_knows_and_compustats_ajexdi_step_the_same_day_apply_once(monkeypatch, http_mock):

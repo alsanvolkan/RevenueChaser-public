@@ -356,11 +356,13 @@ class PricesServing:
         moved = con.execute("SELECT count(*) FILTER (WHERE listed AND NOT listed_today), count(DISTINCT gvkey || iid) "
                             "FILTER (WHERE listed AND NOT listed_today), count(*) FILTER (WHERE listed_today AND NOT "
                             "listed), count(DISTINCT gvkey || iid) FILTER (WHERE listed_today AND NOT listed) "
-                            "FROM _secd_listed WHERE prccd > 0").fetchone()
+                            "FROM _secd_listed WHERE prccd > 0 AND coalesce(upper(curcdd), 'USD') = 'USD' "
+                            "AND datadate <= getvariable('rc_build_date')").fetchone()
         if any(moved):
             ctx.notes.append(f"exchange history: {moved[0]} secd rows of {moved[1]} securities listed that day though "
                              f"not today, {moved[2]} rows of {moved[3]} listed today though not that day")
         basis = con.execute(f"SELECT return_basis, count(*) FROM _hist_all WHERE source = '{wrds_history.COMPUSTAT}' "
+                            "AND return_basis IS NOT NULL "
                             "GROUP BY ALL ORDER BY 1").fetchall()
         if basis:
             ctx.notes.append("Compustat day returns by rule: " + ", ".join(f"{n} {b}" for b, n in basis))

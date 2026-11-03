@@ -731,13 +731,15 @@ COMP_BARS = f"""
 # ``secd.exchg`` is the security's current code, so the day's exchange comes from ``comp.sec_idhist``'s EXCHG
 # periods (``stg_wrds_exchg``, the spine's ``wrds/sec_idhist`` snapshot, from 1998; avo, 3 Nov 2026: "Evet kurali
 # uygula"):
-#   1. the period holding the day, ``efffrom`` <= day <= ``effthru`` (open-ended when ``effthru`` is NULL);
+#   1. the period holding the day, ``efffrom`` <= day <= ``effthru`` (open-ended when ``effthru`` is NULL), or a day
+#      in a gap between two periods: the previous period's exchange (it has not been reported as changed yet);
 #   2. a day before the security's first period (1983-1997, before sec_idhist starts): its first known exchange;
 #   3. else (no history, or a day after its last period ended): today's code.
 # shortcut: a name that moved exchange before 1998 and ended before 1998 has no sec_idhist row, so today's code (its
 # last exchange) decides its whole history; a pre-1998 move of a name that lived on is read as its 1998 exchange.
 SECD_LISTED = f"""
-    SELECT s.*, coalesce(CASE WHEN s.datadate <= coalesce(e.effthru, DATE '9999-12-31') THEN e.exchg END,
+    SELECT s.*, coalesce(CASE WHEN s.datadate <= coalesce(e.effthru, DATE '9999-12-31')
+                                OR s.datadate < f.last_from THEN e.exchg END,
                          CASE WHEN e.efffrom IS NULL THEN f.first_exchg END, s.exchg)
                 IN ({_EXCHG}) AS listed,
            s.exchg IN ({_EXCHG}) AS listed_today,
@@ -747,7 +749,8 @@ SECD_LISTED = f"""
     LEFT JOIN (SELECT gvkey, iid, datadate, sum(coalesce(divd, div, 0) + coalesce(divsp, 0)) AS amount
                FROM stg_wrds_divid GROUP BY ALL) v ON v.gvkey = s.gvkey AND v.iid = s.iid AND v.datadate = s.datadate
     ASOF LEFT JOIN stg_wrds_exchg e ON e.gvkey = s.gvkey AND e.iid = s.iid AND s.datadate >= e.efffrom
-    LEFT JOIN (SELECT gvkey, iid, arg_min(exchg, efffrom) AS first_exchg FROM stg_wrds_exchg GROUP BY ALL) f
+    LEFT JOIN (SELECT gvkey, iid, arg_min(exchg, efffrom) AS first_exchg, max(efffrom) AS last_from
+               FROM stg_wrds_exchg GROUP BY ALL) f
         ON f.gvkey = s.gvkey AND f.iid = s.iid"""
 EXCHG_STAGE = [("gvkey", "TEXT"), ("iid", "TEXT"), ("exchg", "INTEGER"), ("efffrom", "DATE"), ("effthru", "DATE")]
 

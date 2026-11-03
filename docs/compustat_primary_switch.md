@@ -46,8 +46,10 @@ on homesrv first (`duckdb.connect(path, read_only=True)` with `RC_STORE_AUTO_ENS
    securities carry more than one `exchg`; `sec_idhist` has 013657:02 on NYSE (11) until 2013-02-10 and on Nasdaq (14)
    from 2013-02-11, while secd shows 14 on 2013-02-05..08. avo, 3 Nov 2026 ~09:50 Amsterdam: "Evet kurali uygula".
    The rule (`wrds_history.SECD_LISTED`): a secd row is served when the security was on 11, 12, 14, 17 or 21 **that
-   day** by `comp.sec_idhist`'s EXCHG period holding it; before its first period (1983-1997, sec_idhist starts in
-   1998) by its first known exchange; with no history, or after its last period ended, by today's code. The secd pull
+   day** by `comp.sec_idhist`'s EXCHG period holding it, or, on a day in a gap between two periods, by the previous
+   period's exchange (the change is not reported yet; the delta review of #382 asked for the rule); before its first
+   period (1983-1997, sec_idhist starts in 1998) by its first known exchange; with no history, or after its last
+   period ended, by today's code (then the newest word on its exchange). The secd pull
    widens to every security `sec_idhist` ever lists on those exchanges, whatever its code today (a name now on OTC
    keeps its listed years); the periods come from the spine's `wrds/sec_idhist` snapshot, no new query. On the
    fixtures (not real data) the rule adds 2 securities and 4 rows against today's-code filter and drops 1 security
