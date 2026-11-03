@@ -20,6 +20,8 @@ name: tests
 #   - the label `full-ci` on the PR makes every run FULL, starting with the one the label itself triggers.
 #     A label stays on the PR, so every later push is FULL too: the head that merges has a FULL run.
 #   - a push to `main` and a manual dispatch are always FULL.
+#   A run tests the PR merged into `main` as it was when the run started; if `main` moves on, the FULL run is not
+#   repeated by itself (as before this change). Push, or re-add the label, to test the new merge.
 # The merge gate is the `merge-gate` check: green only when this head's run was FULL and unit and e2e passed; a
 # SELECTIVE run fails it on purpose. No check is required by a ruleset.
 on:
@@ -136,6 +138,7 @@ jobs:
         run: |
           if [ "$MODE" = FULL ]; then exec python -m pytest -q -n auto --dist loadfile -p no:cacheprovider -rfE; fi
           if [ -z "$FILES" ]; then echo "SELECTIVE: no unit test file reaches this change"; exit 0; fi
+          set -f  # $FILES is split on spaces on purpose; no glob expansion
           python -m pytest -q -n auto --dist loadfile -p no:cacheprovider -rfE $FILES || [ $? -eq 5 ]
 
   e2e:
@@ -181,6 +184,7 @@ jobs:
         run: |
           if [ "$MODE" = FULL ]; then exec python -m pytest module_testing/e2e -q -m e2e -n 4 --dist loadgroup -p no:cacheprovider -rfE; fi
           if [ -z "$FILES" ]; then echo "SELECTIVE: no e2e test file reaches this change"; exit 0; fi
+          set -f  # $FILES is split on spaces on purpose; no glob expansion
           python -m pytest -q -m e2e -n 4 --dist loadgroup -p no:cacheprovider -rfE $FILES || [ $? -eq 5 ]
 
   merge-gate:
