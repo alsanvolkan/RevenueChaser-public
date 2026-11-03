@@ -205,9 +205,13 @@ def test_the_merge_gate_check_is_green_only_for_a_full_run_that_passed():
     wf = (_REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     gate = wf.split("\n  merge-gate:\n", 1)[1]
     assert "needs: [plan, unit, e2e]" in gate
-    assert "if: always() && needs.plan.result == 'success'" in gate
+    # Delta review of #383: a skipped check counts as passed, so the gate runs (and fails) when plan did not succeed.
+    assert "\n    if: always()\n" in gate
     script = "\n".join(line[10:] for line in gate.split("run: |\n", 1)[1].splitlines() if line.startswith(" " * 10))
-    for (mode, unit, e2e), code in {("FULL", "success", "success"): 0, ("SELECTIVE", "success", "success"): 1,
-                                    ("FULL", "success", "failure"): 1, ("FULL", "cancelled", "success"): 1}.items():
-        env = {**os.environ, "MODE": mode, "UNIT": unit, "E2E": e2e}
-        assert subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True).returncode == code, mode
+    for (plan, mode, unit, e2e), code in {
+        ("success", "FULL", "success", "success"): 0, ("success", "SELECTIVE", "success", "success"): 1,
+        ("success", "FULL", "success", "failure"): 1, ("success", "FULL", "cancelled", "success"): 1,
+        ("skipped", "", "skipped", "skipped"): 1, ("failure", "", "skipped", "skipped"): 1,
+    }.items():
+        env = {**os.environ, "PLAN": plan, "MODE": mode, "UNIT": unit, "E2E": e2e}
+        assert subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True).returncode == code, plan

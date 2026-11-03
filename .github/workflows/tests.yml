@@ -27,7 +27,7 @@ name: tests
 on:
   pull_request:
     branches: [main]
-    # `labeled` is here for `full-ci`; any other label starts a run whose jobs all skip.
+    # `labeled` is here for `full-ci`; any other label starts a run that tests nothing and fails merge-gate.
     types: [opened, synchronize, reopened, labeled]
     paths:
       - "**"
@@ -190,16 +190,20 @@ jobs:
   merge-gate:
     # The one check that means "merge-ready": green only for a FULL run whose unit and e2e both passed.
     # A SELECTIVE run fails here on purpose, so an all-green unlabelled PR does not read as gated.
+    # always(): a skipped check counts as passed, so when plan failed or a label other than full-ci started
+    # this run, the gate runs and fails. Re-add full-ci (or push) for a FULL run after such a label.
     needs: [plan, unit, e2e]
-    if: always() && needs.plan.result == 'success'
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: FULL run green?
         env:
+          PLAN: ${{ needs.plan.result }}
           MODE: ${{ needs.plan.outputs.mode }}
           UNIT: ${{ needs.unit.result }}
           E2E: ${{ needs.e2e.result }}
         run: |
+          if [ "$PLAN" != success ]; then echo "::error::plan $PLAN: this run tested nothing (a label other than full-ci, or plan failed)."; exit 1; fi
           if [ "$MODE" != FULL ]; then echo "::error::SELECTIVE run: not a merge gate. Label the PR full-ci for a FULL run on this head."; exit 1; fi
           [ "$UNIT" = success ] && [ "$E2E" = success ] || { echo "::error::FULL run: unit=$UNIT, e2e=$E2E"; exit 1; }
