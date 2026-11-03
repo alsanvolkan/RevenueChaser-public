@@ -225,3 +225,18 @@ def test_the_merge_gate_check_is_green_only_for_a_full_run_that_passed():
     }.items():
         env = {**os.environ, "PLAN": plan, "MODE": mode, "UNIT": unit, "E2E": e2e}
         assert subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True).returncode == code, plan
+
+
+def test_any_selector_error_falls_back_to_full(monkeypatch, capsys):
+    """Review of #383: an unexpected error must not fail the plan job, which would leave the push with no test run."""
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setattr(mod, "changed_files", lambda base: ["pkg/a.py"])
+
+    def boom(changed):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(mod, "select", boom)
+    assert mod.main(["origin/main"]) == 0
+    out = capsys.readouterr().out
+    assert '"mode": "FULL"' in out and "RecursionError" in out

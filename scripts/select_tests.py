@@ -16,6 +16,7 @@ FULL (the whole unit and e2e suite) when:
   - a changed non-Markdown file is named by no Python file, or shares its file name with another file
     (a name matches only whole: "a.js" is not named by "data.json");
   - any Python file does not parse (no graph);
+  - the selector itself fails in any other way (git, an unexpected error);
   - a change reaches the root conftest (its fixtures run in every test);
   - a changed non-Markdown file reaches no test (checked per file, so a tested file beside it cannot hide it).
 
@@ -241,6 +242,8 @@ def main(argv: list[str]) -> int:
             sel = select(changed)
         except (subprocess.CalledProcessError, OSError) as exc:
             sel = Selection("FULL", f"git diff against {base} failed: {exc}")
+        except Exception as exc:  # noqa: BLE001 - any selector bug must run FULL, never leave the push untested
+            sel = Selection("FULL", f"selector failed: {exc!r}")
     print(json.dumps(sel.__dict__, indent=1))
     _github(sel, changed)
     return 0
