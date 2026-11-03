@@ -285,7 +285,7 @@ PROVIDERS: dict[str, ProviderWords] = {
                               "2,000 an hour per IP (owner-marked avo 2026-11-02; Yahoo publishes none)"),
     "alphavantage": ProviderWords("Alpha Vantage", "the earnings calendar, the listing status (ETF list)",
                                   "one request a run (calendar) · two (listing status)", "25 a day (free tier)"),
-    "openfigi": ProviderWords("OpenFIGI", "the FIGI of each CUSIP", "250 a minute · up to 100 CUSIPs a request",
+    "openfigi": ProviderWords("OpenFIGI", "the FIGI of each CUSIP", "250 a minute per key, shared with the dashboard · up to 100 CUSIPs a request",
                               "keyed: mapping 250 a minute, search 20 a minute"),
     "fred": ProviderWords("FRED", "DGS10 and the macro series", "110 a minute (politeness)", "none published"),
     "finra": ProviderWords("FINRA", "short interest", "1,200 a minute · 5,000 rows a page",

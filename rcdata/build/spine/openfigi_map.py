@@ -3,7 +3,8 @@
 ``POST <RC_OPENFIGI_BASE>/v3/mapping`` with up to 100 jobs ``{"idType": "ID_CUSIP", "idValue": <cusip>, "exchCode":
 "US"}`` (the US composite listing, as ``core/providers/openfigi.py`` asks; a CINS is asked as ``ID_CINS``, ``id_type``),
 the key in the ``X-OPENFIGI-APIKEY`` header (``OPENFIGI_API_KEY``, through ``core.credentials``; never logged). Requests
-are paced at OpenFIGI's keyed mapping window, 250 a minute (``caps.WINDOWS``), at most ``MAX_REQUESTS`` a run. No
+take tokens of the box-wide OpenFIGI bucket the dashboard's mapping shares (``core/providers/openfigi.pace``: the
+key's 250 a minute, ``caps.WINDOWS``), half the window when it cannot be used, at most ``MAX_REQUESTS`` a run. No
 key: the run fails and asks nothing.
 
 Which CUSIPs: the CUSIPs of the active Compustat securities (``secstat`` A) whose CIK is in the newest SEC file,
@@ -27,6 +28,7 @@ import duckdb
 
 from ....core import calendar, credentials
 from ....core.providers import openfigi as figi_client
+from ... import caps
 from .. import base
 from . import KIND, stage
 
@@ -42,6 +44,23 @@ SCHEMA = [("cusip", "TEXT"), ("status", "TEXT"), ("ticker", "TEXT"), ("figi", "T
           ("security_type2", "TEXT"), ("market_sector", "TEXT"), ("security_description", "TEXT"),
           ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 META_SUFFIX = ".meta.json"
+
+
+class _KeyPacer:
+    """A token of the key's box-wide bucket before each request (every attempt, ``base.http_post``); this run's half
+    of the window when the bucket cannot be used."""
+
+    def __init__(self, ctx: base.RunContext):
+        limit, window = caps.WINDOWS[PROVIDER]
+        self._fallback = base.Pacer(limit // 2, window, clock=ctx.clock, sleep=ctx.sleep)
+
+    def wait(self) -> None:
+        if not figi_client.pace():
+            self._fallback.wait()
+
+
+def key_pacer(ctx: base.RunContext) -> _KeyPacer:
+    return _KeyPacer(ctx)
 
 
 def raw_dir() -> Path:
@@ -168,7 +187,7 @@ class OpenFigiMap:
         todo = [c for c in wanted_cusips() if c not in done]
         folder = raw_dir() / as_of.isoformat()
         n = len(list(folder.glob("batch-*.json.gz"))) if folder.is_dir() else 0
-        pacer = base.run_pacer(ctx, PROVIDER)
+        pacer = key_pacer(ctx)
         url = figi_client.base_url() + figi_client.ENDPOINT
         headers = {"Content-Type": "application/json", "X-OPENFIGI-APIKEY": key}
         sent = 0

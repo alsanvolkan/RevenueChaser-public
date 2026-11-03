@@ -88,7 +88,6 @@ def test_each_provider_paces_at_its_official_window():
     from RevenueChaser.rcdata.build.sources import alpaca
     ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
     assert sec_throttle.LIMIT == caps.WINDOWS["sec"][0]     # the SEC paths: see the fallback test below
-    assert openfigi.REQUEST_GAP_S == caps.WINDOWS["openfigi"][1] / caps.WINDOWS["openfigi"][0]
     a = alpaca.pacer(ctx)
     assert (a.limit, a.window_s) == caps.WINDOWS["alpaca"]
 
@@ -160,3 +159,35 @@ def test_every_sec_fallback_takes_half_the_limit_so_two_processes_stay_under_it(
     assert sec.PER_SECOND <= sec_throttle.FALLBACK_RATE
     for interval in (sec_edgar._THROTTLE_INTERVAL, cover_shares.SEC_INTERVAL_S, common.SEC_INTERVAL_S):
         assert 1 / interval <= sec_throttle.FALLBACK_RATE + 1e-9
+
+
+def test_openfigi_shares_one_bucket_per_key_inside_its_window():
+    """Review of #380, finding 3: the builder and the dashboard map CUSIPs on one key. Both take tokens of one box-wide
+    bucket whose burst plus a minute's refill fits the 250, and each falls back to half the window."""
+    from RevenueChaser.core.providers import openfigi
+    limit, window = caps.WINDOWS["openfigi"]
+    assert openfigi.BUCKET_BURST + openfigi.BUCKET_RATE * window <= limit
+    assert 2 * (window / openfigi.REQUEST_GAP_S) <= limit
+
+
+def test_the_shared_bucket_serves_another_name_with_its_own_rate(monkeypatch):
+    from RevenueChaser.core import sec_throttle
+    slept = []
+    monkeypatch.setattr(sec_throttle.time, "sleep", slept.append)
+    assert all(sec_throttle.shared_pace(".test_bucket.json", rate=1.0, burst=2.0) for _ in range(3))
+    assert len(slept) == 1 and 0.9 < slept[0] <= 1.0          # two from the burst, the third waits a token
+    assert sec_throttle.bucket_path(".test_bucket.json").exists()
+
+
+def test_every_openfigi_map_request_takes_a_token_of_the_key_bucket(monkeypatch):
+    from RevenueChaser.core.providers import openfigi
+    from RevenueChaser.rcdata.build.spine import openfigi_map
+    tokens = []
+    monkeypatch.setattr(openfigi, "pace", lambda: tokens.append(1) or True)
+    ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
+    pacer = openfigi_map.key_pacer(ctx)
+    pacer.wait()
+    pacer.wait()
+    assert tokens == [1, 1]
+    monkeypatch.setattr(openfigi, "pace", lambda: False)
+    assert pacer._fallback.limit == caps.WINDOWS["openfigi"][0] // 2

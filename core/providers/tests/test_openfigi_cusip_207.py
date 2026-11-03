@@ -87,6 +87,7 @@ class TestRequestShape:
         assert fake.calls[0]["url"] == "http://127.0.0.1:9/figi/v3/mapping"
 
     def test_100_jobs_per_request_and_a_gap_between_requests(self, monkeypatch, sleeps):
+        monkeypatch.setattr(openfigi, "pace", lambda: False)            # the bucket falls back: the own gap
         fake = _use(monkeypatch, _Fake(_all_known))
         cusips = [f"{i:09d}" for i in range(250)]
         res = openfigi.map_cusips(cusips, key=KEY)
@@ -230,3 +231,12 @@ class TestHealth:
         h = health.health()
         assert h["provider"] == "openfigi" and h["calls"] == 2 and h["failed"] == 1
         assert h["failures"] == [{"endpoint": "/v3/mapping", "error": "HTTP 429"}]
+
+
+def test_every_request_takes_a_token_of_the_shared_key_bucket(monkeypatch):
+    """Review of #380, finding 3: the dashboard's mapping spends from the same box-wide bucket as the builder."""
+    fake = _use(monkeypatch, _Fake(_all_known))
+    tokens = []
+    monkeypatch.setattr(openfigi, "pace", lambda: tokens.append(1) or True)
+    openfigi.map_cusips([f"{i:09d}" for i in range(250)], key=KEY)
+    assert len(tokens) == len(fake.calls) == 3

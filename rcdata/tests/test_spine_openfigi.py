@@ -145,8 +145,9 @@ def test_no_key_fails_and_asks_nothing(env, monkeypatch):
     assert row["result"] == "failed" and "OPENFIGI_API_KEY" in row["note"] and _jobs(env) == []
 
 
-def test_requests_are_paced_at_250_a_minute_and_hold_100_jobs(env, monkeypatch):
-    monkeypatch.setitem(caps.WINDOWS, "openfigi", (25, 60.0))     # the window, made small enough to fill
+def test_without_the_key_bucket_a_run_keeps_half_the_window_and_holds_100_jobs(env, monkeypatch):
+    monkeypatch.setattr(of.figi_client, "pace", lambda: False)    # the shared bucket cannot be used
+    monkeypatch.setitem(caps.WINDOWS, "openfigi", (50, 60.0))     # the window, made small enough to fill: 25 a run
     many = [f"{i:08d}{i % 10}" for i in range(2600)]       # 26 requests of 100
     monkeypatch.setattr(of, "wanted_cusips", lambda: many)
     now, slept = [0.0], []
