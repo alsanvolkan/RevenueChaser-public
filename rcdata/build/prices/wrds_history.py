@@ -269,9 +269,24 @@ def _current(table: str, year: int, raw: Path) -> bool:
 
 
 def _stale(table: str, year: int) -> bool:
-    """A partition that exists from a raw answer that is not ``_current``."""
+    """A partition that exists from a raw answer that is not ``_current``, or a ``comp.secd`` partition whose own
+    columns lack one of today's query (written before ``SECD_ADDED``): a partition copied without its raw file, or
+    whose raw file is gone, says its format itself (coordinator B's dry run on homesrv, 3 Nov 2026)."""
+    part = partition_path(table, year)
+    if not part.is_file():
+        return False
+    if table == "secd" and not {c for c, _ in SECD} <= _columns(part):
+        return True
     raws = sorted(raw_dir(table, year).glob(f"*{RAW_SUFFIX}"))
-    return partition_path(table, year).is_file() and bool(raws) and not _current(table, year, raws[-1])
+    return bool(raws) and not _current(table, year, raws[-1])
+
+
+def _columns(path: Path) -> set[str]:
+    con = duckdb.connect()
+    try:
+        return {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet({base.sql_path(path)})").fetchall()}
+    finally:
+        con.close()
 
 
 def _rows(path: Path) -> int:

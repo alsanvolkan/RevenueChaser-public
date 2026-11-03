@@ -638,3 +638,25 @@ def test_decision_1_compustat_is_asked_daily():
 def test_decision_2_the_served_bars_status_follows_compustat():
     from RevenueChaser.rcdata import read
     assert read.DATASET_OF_TABLE["price_bar_daily"] == wrds_history.NAME
+
+
+def test_a_secd_partition_in_the_old_format_without_its_raw_file_is_asked_again(fake):
+    """Coordinator B's dry run on homesrv's scratch copy (3 Nov 2026 12:26 Amsterdam): the 2010-2026 secd partitions
+    copied from live carry neither the new exchanges nor the seven dividend columns, and no raw file beside them, so
+    the backfill took them as present (``_stale`` read only the raw sidecar). The partition's own columns now say it."""
+    import duckdb as _duckdb
+
+    from RevenueChaser.rcdata.build import base
+    conn, _ = fake
+    assert _backfill()["result"] == "changed"
+    part = wrds_history.partition_path("secd", 2025)
+    old = [c for c, _ in wrds_history.SECD + wrds_history.PROVENANCE if c not in wrds_history.SECD_ADDED]
+    con = _duckdb.connect()
+    con.execute(f"CREATE TABLE t AS SELECT {', '.join(old)} FROM read_parquet({base.sql_path(part)})")
+    base.write_parquet(con, "SELECT * FROM t", part)                    # the old format, in place
+    con.close()
+    for raw in wrds_history.raw_dir("secd", 2025).glob("*"):
+        raw.unlink()                                                    # and no raw answer beside it
+    conn.queries.clear()
+    _backfill()
+    assert _asked_tables(conn) == ["comp.secd 2025"]
