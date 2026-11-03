@@ -79,3 +79,5 @@ ver" (the "4" is decision 7 below).
    fallback), linked or not, and CRSP's own `dlycumfacpr` splits are its applied splits (`CRSP_OWN_SPLITS`). A
    security with any Compustat series keeps the Compustat-primary rule. A FIGI, CIK or symbol id among them stays out
    of the adjusted view, as before this PR (review S1 of #353: no dividend reaches it).
+   A delisted one among them takes no `stkdelists` delisting-day bar and no `delret` check: that rule hangs on a
+   last Compustat day (not a regression; CRSP's own priced last days are served).

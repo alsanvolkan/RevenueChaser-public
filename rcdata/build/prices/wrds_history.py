@@ -626,8 +626,9 @@ PERMNO_LINK = """
 # ── CRSP, the narrow fallback (master plan of 2 Nov 2026, item 2) ─────────────────────────────────────────────
 # A CRSP bar is served only on a day of ``CRSP_FALLBACK``; every other CRSP row stays in ``_hist_all`` for the
 # difference report and is never a served bar. The served CRSP bars are exactly the fallback rows (``source`` =
-# ``wrds/crsp``; the build note counts them per reason). Only a PERMNO linked by an identifier counts (rules
-# ``hdrcusip``, ``cusip``, ``compustat`` of ``PERMNO_LINK``), never one linked by ticker alone. CRSP also stays the
+# ``wrds/crsp``; the build note counts them per reason). A delisted name's final days count only for a PERMNO linked
+# by an identifier (rules ``hdrcusip``, ``cusip``, ``compustat`` of ``PERMNO_LINK``), never by ticker alone; a
+# security Compustat never priced keeps every CRSP day, linked or not (``CRSP_ONLY_DAYS``). CRSP also stays the
 # cross-check of every Compustat bar (``wrds_price_diff``).
 LINKED_BY_ID = "l.how <> 'ticker'"
 # The Compustat security of a ``comp.secd`` row, as ``COMP_BARS`` keys it.
@@ -656,7 +657,8 @@ def delisted_final_days() -> str:
     price but a return Compustat cannot give (30 of 30). CRSP's ``stkdelists`` names the delisting day, its price
     and its return (``delret``), so the final days are the dsf_v2 days after Compustat's last priced day up to the
     delisting day, and the delisting day's own bar is ``DELIST_BARS``' where dsf_v2 has no price that day. A security
-    Compustat never priced has no final days here (its history is CRSP's alone and is not served)."""
+    Compustat never priced has no final days here: its whole history is CRSP's (``CRSP_ONLY_DAYS``), and it takes no
+    ``stkdelists`` delisting bar and no ``delret`` check (``_delisted`` hangs on a last Compustat day)."""
     return f"""
     SELECT d.permno, d.dlycaldt AS session_date, 'delisted' AS why
     FROM stg_wrds_dsf d JOIN _delisted x USING (permno)
