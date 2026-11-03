@@ -164,12 +164,18 @@ def test_compustats_secd_dividend_is_the_action_and_sec_divid_only_its_fallback(
         "sec_divid's dividend stays where secd has none that day"
 
 
-def test_a_future_dated_compustat_row_is_never_served(monkeypatch):
+def test_a_secd_row_after_the_build_date_is_never_served(monkeypatch):
+    """Review SHOULD 1-2 of #382: the cut is the build's own date (the fixture's clock: the 27 Oct 2026 session), not
+    the wall clock, so a rebuild for a past day serves nothing later and the test does not rot with the calendar."""
+    from datetime import timedelta
+
     from .test_prices_wrds import _secd
+    build_day = date(2026, 10, 27)
     data = _data()
-    data["comp.secd"] += [_secd("001690", "01", "2026-12-15", "AAPL", 300.0)]   # in the asked year, after today
+    data["comp.secd"] += [_secd("001690", "01", (build_day + timedelta(days=d)).isoformat(), "AAPL", 300.0)
+                          for d in (1, 30)]                            # the next day, and a month on: both later
     _serve(monkeypatch, data)
-    assert not _q("SELECT 1 FROM price_bar_daily WHERE session_date > '2026-11-30'")
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE session_date > ?", [build_day])
 
 
 def test_a_crsp_bar_never_replaces_compustats_on_an_empty_trfd_day(monkeypatch):

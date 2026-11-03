@@ -716,9 +716,10 @@ COMP_BARS = f"""
            CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count, cshoc AS shares_outstanding,
            '{COMPUSTAT}' AS source, source_as_of, fetched_at, run_id, {COMP_RETURN} AS own_return,
            {COMP_RETURN_BASIS} AS return_basis, 1 AS priority, CAST(NULL AS TEXT) AS fallback
-    -- secd holds rows of events to come (to 2027): a bar is a priced day up to today only.
+    -- secd holds rows of events to come (to 2027): a bar is a priced day up to the build's date only (``serving`` sets
+    -- ``rc_build_date``; unset, as in a test of this SQL alone, nothing is cut).
     FROM _secd_listed WHERE listed AND coalesce(upper(curcdd), 'USD') = 'USD' AND prccd > 0
-      AND datadate <= current_date
+      AND datadate <= coalesce(getvariable('rc_build_date'), DATE '9999-12-31')
     WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate)"""
 
 # Each ``comp.secd`` row with ``listed``: whether the security was on one of ``COMPUSTAT_EXCHG`` that day

@@ -328,6 +328,10 @@ class PricesServing:
             if not n:
                 found.append(("source_never_run", ds, f"{ds} has no rows in this build"))
         _spine(con)
+        # The serving build's own date, the latest complete New York session, cuts the history's future rows (review
+        # SHOULD 2 of #382): not DuckDB's UTC wall clock, and not the as-of of the dataset that started the build (a
+        # backfill to a past day must not cut the later history).
+        con.execute(f"SET VARIABLE rc_build_date = DATE '{self.default_as_of().isoformat()}'")
         con.execute(BUILD_SQL.format(bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
                                      comp=wrds_history.COMP_BARS, link=wrds_history.PERMNO_LINK,
                                      alias=wrds_history.GVKEY_ALIAS, fallback=wrds_history.CRSP_FALLBACK,
