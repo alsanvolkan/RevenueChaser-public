@@ -23,8 +23,7 @@ def client():
 
 
 def _rows() -> list[dict]:
-    with ops.connect() as con:
-        return [dict(r) for r in con.execute("SELECT * FROM build_requests ORDER BY id")]
+    return ops.rows("build_requests")
 
 
 def test_a_request_enqueues_with_the_panel_header_as_requested_by(client):

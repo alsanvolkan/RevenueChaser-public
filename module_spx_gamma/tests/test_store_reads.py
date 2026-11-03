@@ -249,8 +249,8 @@ def test_a_skipped_run_after_a_build_keeps_the_built_status_and_says_skipped(rcd
 
 def test_only_skipped_checks_read_as_never_built(rcdata_market):
     from RevenueChaser.rcdata import ops
-    with ops.connect() as con:
-        con.execute("DELETE FROM dataset_check WHERE dataset = 'uw/spot_expiry_strike'")
+    ops.put_rows("dataset_check", [{**r, "result": "skipped"} for r in ops.rows("dataset_check")    # none built
+                                   if r["dataset"] == "uw/spot_expiry_strike"])
     ops.record_check("uw/spot_expiry_strike", "skipped", note="paused by avo")
     zod = store_reads.zero_one_dte_dollars(fx.LAST)
     assert zod["status"] == read.NEVER_CHECKED and "last run skipped (paused by avo)" in zod["label"]

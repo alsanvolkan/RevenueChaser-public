@@ -1,0 +1,182 @@
+"""``rcdata/ops.py`` on Redis (master plan Order 3): the same functions, the same rows, kept in Redis.
+
+These need a Redis at ``RC_REDIS_URL`` (CI starts one as a service). Every other ops test runs on whichever backend
+is configured; the parity test here runs one script on both and holds Redis to what SQLite answers.
+"""
+from __future__ import annotations
+
+import os
+import threading
+
+import pytest
+
+from RevenueChaser.core import config
+from RevenueChaser.rcdata import ops
+
+pytestmark = pytest.mark.skipif(not os.getenv("RC_REDIS_URL"), reason="needs a Redis at RC_REDIS_URL (CI runs one)")
+
+# Wall-clock columns: two runs never write the same instant, so the parity test compares everything else.
+_TIME_COLUMNS = {"requested_at", "started_at", "ended_at", "finished_at", "added_at", "at", "paused_at", "sampled_at",
+                 "host"}
+
+
+def _drop_times(value):
+    if isinstance(value, dict):
+        return {k: _drop_times(v) for k, v in value.items() if k not in _TIME_COLUMNS}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_drop_times(v) for v in value)
+    return value
+
+
+def _script() -> dict:
+    """Every write ops has, then every read; what each read answered and every table's rows."""
+    out: dict = {}
+    a = ops.enqueue("market_series", {"x": 1}, by="settings")
+    out["once"] = [ops.enqueue_once("prices/serving", None, by="cli"), ops.enqueue_once("prices/serving", None, by="cli")]
+    ops.enqueue("wrds/sec_idhist", None, by="settings")
+    out["claimed"] = ops.next_request(skip=("wrds/sec_idhist",))
+    ops.finish_request(a, "done", note="ok")
+    out["claimed2"] = ops.next_request(only=("prices/serving",), by="cli")
+    out["queued"] = [ops.queued("wrds/sec_idhist"), ops.queued("wrds/sec_idhist", by="cli"), ops.queued("nope")]
+    ops.record_check("market_series", "changed", source_as_of="2026-10-26", rows=10, added=10, removed=0,
+                     coverage=1.0, calls=3, run_id="r1", note="first")
+    ops.record_check("market_series", "unchanged", rows=10, coverage=0.5, run_id="r2")
+    ops.record_check("market_series", "skipped", note="paused")
+    ops.record_check("prices/serving", "failed", note="boom", checked_on="2026-10-01")
+    ops.record_issue("market_series", "parse", "fred:DGS2", "bad row", run_id="r1")
+    out["sync1"] = ops.sync_issues("prices/serving", ["price_gap_no_action", "stale"],
+                                   [("price_gap_no_action", f"T{i}", f"d{i}") for i in range(5)]
+                                   + [("stale", "X", None)], run_id="r3")
+    out["sync2"] = ops.sync_issues("prices/serving", ["price_gap_no_action"],
+                                   [("price_gap_no_action", f"T{i}", "new detail") for i in range(2, 7)])
+    ops.start_run("r1", "market_series", "cli", {"once": True})
+    ops.finish_run("r1", "ok")
+    ops.start_run("r2", "prices/serving", "hourly")
+    ops.sample_uw_headers({"x-uw-daily-req-count": "355", "x-uw-req-per-minute-remaining": "9", "other": "no"}, "r2")
+    ops.count_calls("uw", 2)
+    ops.count_calls("uw", 1, failures=1, http_429=1)
+    ops.count_calls("fred", 4)
+    log = ops.ReadLog(process="parity")
+    for t in ("market_series", "market_series", "macro_series"):
+        log.bump(t)
+    log.flush()
+    out["watch"] = [ops.watch_add("option", "nvda", by="avo", note="earnings"), ops.watch_add("option", "NVDA", by="x"),
+                    ops.watch_toggle("stock", "aapl", by="board"), ops.watch_toggle("stock", "AAPL", by="board"),
+                    ops.watch_toggle("stock", "msft", by="board"), ops.watch_remove("option", "NVDA", by="avo"),
+                    ops.watch_remove("option", "NVDA", by="avo"), ops.watch_replace("option", ["spy", "QQQ", ""], by="r")]
+    ops.schedule_set("market_series", "daily", "2026-10-28")
+    ops.schedule_pause("market_series", by="avo")
+    ops.schedule_pause("prices/serving", by="avo")
+    ops.schedule_resume("prices/serving")
+    out["fail_orphans"] = ops.fail_orphans()
+    today = ops._today()
+    out["reads"] = {
+        "latest_check": ops.latest_check("market_series"), "none": ops.latest_check("nothing"),
+        "recent": ops.recent_checks("market_series", 2), "unskipped": ops.latest_unskipped_check("market_series"),
+        "good": ops.latest_good_check("market_series"), "good_none": ops.latest_good_check("prices/serving"),
+        "open": ops.open_issues("prices/serving", 3), "open_all": ops.open_issues("market_series"),
+        "kinds": ops.open_issue_kinds("prices/serving"), "ever": [ops.ever_built("market_series"),
+                                                                   ops.ever_built("prices/serving")],
+        "read_queue": ops.read_queue(1), "queue_view": ops.queue_view(5),
+        "schedule": [ops.read_schedule("market_series"), ops.schedule_get("prices/serving"), ops.schedule_get("x")],
+        "calls": [ops.calls_by_day("2000-01-01", today), ops.calls_today("uw"), ops.calls_today("nope")],
+        "uw": ops.latest_uw_sample(), "reads": ops.reads_since("2000-01-01", ["market_series", "macro_series", "x"]),
+        "last_run": ops.last_builder_run(), "watch": [ops.watch_count("option"), ops.watch_count("stock"),
+                                                      ops.watch_list("option"), ops.watch_list("stock"),
+                                                      ops.watch_rows("stock"), ops.watch_last_change() is not None],
+        "schema": ops.schema_version(),
+    }
+    out["tables"] = {t: ops.rows(t) for t in ops.TABLES if t != "ops_schema"}
+    return out
+
+
+def test_both_backends_answer_the_same_script_with_the_same_rows(monkeypatch, tmp_path):
+    on_redis = _script()
+    assert ops.backend() == "redis" and not ops.ops_path().exists()
+    monkeypatch.delenv(ops.REDIS_URL_ENV)
+    monkeypatch.setattr(config, "MARKET_DIR", tmp_path / "sqlite_market")
+    assert ops.backend() == "sqlite"
+    on_sqlite = _script()
+    assert ops.ops_path().exists()
+    for key in on_sqlite:
+        assert _drop_times(on_redis[key]) == _drop_times(on_sqlite[key]), key
+    assert on_redis["tables"]["build_issues"]                       # the script did write rows
+
+
+def test_rows_keep_their_types_and_column_order():
+    ops.record_check("d", "changed", rows=3, coverage=1, run_id="r")
+    [row] = ops.rows("dataset_check")
+    assert list(row) == ["id", *ops.CHECK_FIELDS]
+    assert row["rows"] == 3 and isinstance(row["coverage"], float) and row["note"] is None
+
+
+def test_each_market_root_is_its_own_namespace(monkeypatch, tmp_path):
+    ops.enqueue("a", None, by="cli")
+    ops.watch_add("stock", "AAPL", by="avo")
+    monkeypatch.setattr(config, "MARKET_DIR", tmp_path / "other")
+    assert ops.read_queue()["active"] == [] and ops.watch_list("stock") == []
+
+
+def test_two_racing_enqueue_once_calls_queue_one_request():
+    got: list = []
+    barrier = threading.Barrier(8)
+
+    def click():
+        barrier.wait()
+        got.append(ops.enqueue_once("prices/serving", None, by="page"))
+    threads = [threading.Thread(target=click) for _ in range(8)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert len([g for g in got if g is not None]) == 1
+    assert len(ops.rows("build_requests")) == 1
+
+
+def test_racing_counters_and_toggles_lose_nothing():
+    barrier = threading.Barrier(6)
+
+    def work():
+        barrier.wait()
+        for _ in range(10):
+            ops.count_calls("uw", 1)
+            ops.watch_toggle("stock", "NVDA", by="race")
+    threads = [threading.Thread(target=work) for _ in range(6)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert ops.calls_today("uw") == 60
+    actions = [r["action"] for r in ops.rows("watchlist_stock_changes")]
+    assert len(actions) == 60 and actions == ["add", "remove"] * 30      # each flip in turn, none lost
+    assert ops.watch_list("stock") == []
+
+
+def test_ids_keep_counting_after_rows_are_copied_in():
+    ops.put_rows("build_requests", [{"id": 41, "dataset": "old", "requested_at": 1.0, "requested_by": "x",
+                                     "status": "done"}])
+    assert ops.enqueue("new", None, by="cli") == 42
+    assert [r["dataset"] for r in ops.read_queue()["finished"]] == ["old"]
+
+
+def test_a_newer_schema_stamp_is_refused():
+    ops.ensure()
+    assert ops.schema_version() == ops.OPS_SCHEMA_VERSION
+    from RevenueChaser.rcdata import ops_redis
+    ops_redis._client().set(ops_redis._key("ops_schema"), ops.OPS_SCHEMA_VERSION + 1)
+    ops_redis._ENSURED.clear()
+    with pytest.raises(ops.OpsSchemaTooNew):
+        ops.enqueue("a", None, by="cli")
+
+
+def test_the_reads_never_write_a_key():
+    from RevenueChaser.rcdata import ops_redis
+    ops.read_queue(), ops.open_issues("x"), ops.watch_rows("stock"), ops.schema_version(), ops.latest_check("x")
+    assert list(ops_redis._client().scan_iter(match=ops_redis._key("*"))) == []
+
+
+def test_sync_issues_keeps_open_rows_and_resolves_only_its_kinds_at_scale():
+    found = [("price_gap_no_action", f"T{i:05d}", "missing") for i in range(3000)]
+    assert ops.sync_issues("prices/serving", ["price_gap_no_action"], found) == (3000, 0)
+    ops.record_issue("prices/serving", "other_kind", "Z", None)
+    assert ops.sync_issues("prices/serving", ["price_gap_no_action"], found[:2990]) == (0, 10)
+    n, newest = ops.open_issues("prices/serving", 2)
+    assert n == 2991 and [r["kind"] for r in newest] == ["other_kind", "price_gap_no_action"]
+    assert ops.open_issue_kinds("prices/serving") == [{"kind": "price_gap_no_action", "count": 2990},
+                                                      {"kind": "other_kind", "count": 1}]

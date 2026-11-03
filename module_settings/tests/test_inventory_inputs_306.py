@@ -20,9 +20,7 @@ def _day(epoch: float) -> str:
 
 
 def _last_watch_change() -> float:
-    with ops.connect() as con:
-        return max(con.execute(f"SELECT max(at) FROM watchlist_{k}_changes").fetchone()[0] or 0
-                   for k in ops.WATCH_KINDS)
+    return max((r["at"] for k in ops.WATCH_KINDS for r in ops.rows(f"watchlist_{k}_changes")), default=0)
 
 
 def test_inputs_row_on_an_empty_store_and_no_ops_file(rawstore_tmp_db):

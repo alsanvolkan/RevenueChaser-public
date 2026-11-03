@@ -23,9 +23,8 @@ def test_a_dataset_whose_provider_is_at_its_cap_is_skipped_before_any_call(http_
     assert http_mock.requests == []
     assert row["result"] == "skipped" and row["calls"] == 0
     assert row["note"] == f"day cap reached: uw {caps.DAY_CAPS['uw']}/{caps.DAY_CAPS['uw']}"
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (rid,)).fetchone()[0] == "skipped"
-        assert con.execute("SELECT status FROM job_runs2").fetchone()[0] == "skipped"
+    assert [r["status"] for r in ops.rows("build_requests") if r["id"] == rid] == ["skipped"]
+    assert [r["status"] for r in ops.rows("job_runs2")] == ["skipped"]
 
 
 def test_one_call_under_the_cap_still_runs(http_mock):
@@ -69,9 +68,8 @@ def test_fred_at_its_cap_does_not_skip_the_keyless_sources(market):
     row = _series()
     assert row["result"] == "changed" and market.calls("fred.test") == []
     assert market.calls("cboe.test") and "fred" in row["note"]
-    with ops.connect() as con:
-        detail = con.execute("SELECT detail FROM build_issues WHERE kind = 'source_failed' AND key = 'fred'").fetchone()
-    assert "day cap reached" in detail[0]
+    detail = next(r["detail"] for r in ops.rows("build_issues") if r["kind"] == "source_failed" and r["key"] == "fred")
+    assert "day cap reached" in detail
 
 
 def test_the_cap_is_checked_before_every_call_not_only_at_the_start(market, monkeypatch):
@@ -95,8 +93,7 @@ def test_the_counter_is_written_during_the_run_and_survives_a_kill(market, monke
         _series()
     assert ops.calls_today("cboe") == len(cboe.SYMBOLS) and ops.calls_today("fred") == 13
     assert any(a[0] == "cboe" and a[1] == 5 for a in written), "the counter is written every 5 calls"
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM job_runs2").fetchone()[0] == "killed"
+    assert [r["status"] for r in ops.rows("job_runs2")] == ["killed"]
 
 
 def test_a_uw_backfill_stops_at_the_cap_and_keeps_what_it_has(http_mock, monkeypatch):

@@ -114,8 +114,7 @@ def test_sync_issues_adds_new_keeps_open_and_resolves_what_is_gone():
     assert n == 2 and sorted((r["kind"], r["key"]) for r in rows) == [("no_cusip", "ETN"), ("no_cusip", "MSFT")]
     msft = [r for r in rows if r["key"] == "MSFT"][0]
     assert msft["run_id"] == "r1"                         # kept, not a second row
-    with ops.connect() as con:
-        gone = con.execute("SELECT resolved_on FROM build_issues WHERE key = 'HEI'").fetchone()[0]
+    gone = next(r["resolved_on"] for r in ops.rows("build_issues") if r["key"] == "HEI")
     assert gone is not None
 
 

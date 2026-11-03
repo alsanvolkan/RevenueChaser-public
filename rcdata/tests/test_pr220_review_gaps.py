@@ -195,8 +195,7 @@ def test_n1_a_few_unreadable_stamps_in_a_good_answer_are_kept_with_one_issue(htt
     http_mock.add("expiry-strike", body, headers=UW_HEADERS)
     row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
     assert row["result"] == "changed" and row["rows"] == 391
-    with ops.connect() as con:
-        issues = con.execute("SELECT kind, detail FROM build_issues").fetchall()
+    issues = [(r["kind"], r["detail"]) for r in ops.rows("build_issues")]
     assert [k for k, _ in issues] == ["unreadable_time"] and "2 rows" in issues[0][1]
 
 

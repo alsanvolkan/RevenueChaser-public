@@ -39,7 +39,6 @@ import argparse
 import contextlib
 import logging
 import signal
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -148,9 +147,10 @@ def _run_queue(dataset: str | None, once: bool, *, skip=(), only=None, by=None,
     while True:
         try:
             req = ops.next_request(dataset, skip=skip, only=only, by=by)
-        except sqlite3.OperationalError as e:
-            # ops.sqlite held past busy_timeout (a long backup, a stuck writer): wait and ask again, never die.
-            print(f"ops.sqlite busy: {e}; retrying", file=sys.stderr, flush=True)
+        except ops.BUSY_ERRORS as e:
+            # ops.sqlite held past busy_timeout (a long backup, a stuck writer), or Redis not answering: wait and ask
+            # again, never die.
+            print(f"ops store busy: {e}; retrying", file=sys.stderr, flush=True)
             worst = 1
             time.sleep(POLL_S)
             continue
@@ -161,14 +161,14 @@ def _run_queue(dataset: str | None, once: bool, *, skip=(), only=None, by=None,
             continue
         try:
             row = base.run_request(req, attended_ok=attended_ok)
-        except sqlite3.OperationalError as e:
-            # The run could not write its rows (ops.sqlite locked past busy_timeout): the request is failed when the
-            # file lets us, and the loop goes on with the next one.
-            print(f"{req['dataset']}: ops.sqlite busy during the run: {e}", file=sys.stderr, flush=True)
+        except ops.BUSY_ERRORS as e:
+            # The run could not write its rows (ops.sqlite locked past busy_timeout, Redis not answering): the
+            # request is failed when the store lets us, and the loop goes on with the next one.
+            print(f"{req['dataset']}: ops store busy during the run: {e}", file=sys.stderr, flush=True)
             worst = 1
             try:
-                ops.finish_request(req["id"], "failed", note=f"ops.sqlite busy: {e}"[:300])
-            except sqlite3.OperationalError:
+                ops.finish_request(req["id"], "failed", note=f"ops store busy: {e}"[:300])
+            except ops.BUSY_ERRORS:
                 pass                     # still running in the file; the next builder start fails it (S2)
             time.sleep(POLL_S)
             continue

@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import functools
 import logging
-import sqlite3
 from datetime import date, timedelta
 
 from RevenueChaser.core import calendar
@@ -182,7 +181,7 @@ def _expiry_strike(session: date, day: date) -> tuple[list[dict], str | None, st
     """
     try:
         ans = needs.ask("market.spx_expiry_strike", as_of=day, session_date=session, min_dte=0, max_dte=1)
-    except sqlite3.Error as exc:
+    except ops.STORE_ERRORS as exc:                       # sqlite3.Error, and Redis's when ops is on Redis
         if serving.live_path(needs.NEEDS["market.spx_expiry_strike"].kind).exists():
             raise
         return [], None, f"status unknown, {_failed(exc)}"

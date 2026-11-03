@@ -24,7 +24,6 @@ already has a request queued or running gets no second one, whoever queued the f
 """
 from __future__ import annotations
 
-import sqlite3
 from datetime import date
 
 from ...core import calendar
@@ -97,9 +96,10 @@ def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None
             continue
         try:
             rid = ops.enqueue_once(name, None, by=REQUESTED_BY)
-        except sqlite3.OperationalError as e:
-            # ops.sqlite held past busy_timeout (as in _run_queue): this dataset waits for the next pass.
-            out.append((name, f"due ({why}), not queued: ops.sqlite busy: {e}"[:300], None, True))
+        except ops.BUSY_ERRORS as e:
+            # ops.sqlite held past busy_timeout, or Redis not answering (as in _run_queue): this dataset waits for
+            # the next pass.
+            out.append((name, f"due ({why}), not queued: ops store busy: {e}"[:300], None, True))
             continue
         out.append((name, f"due ({why}), " + (f"queued as request {rid}" if rid else "already queued or running"),
                     rid, False))

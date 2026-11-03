@@ -1,4 +1,10 @@
-"""``ops.sqlite``: the market store's operational state, and every SQL statement that touches it (D6).
+"""The market store's operational state (D6): ``ops.sqlite``, or Redis when ``RC_REDIS_URL`` is set (Order 3).
+
+**Two backends, one surface.** With ``RC_REDIS_URL`` set, every public function here reads and writes Redis
+(``rcdata/ops_redis.py``: the same tables as rows, the same answers, kept by the Redis container's AOF). Unset, they
+use ``ops.sqlite`` as described below. The switch is the environment, read on every call, so going back is unsetting
+the variable and restarting: the file is never written while Redis is on. ``ops.sqlite`` stays only as that rollback
+path until it is retired; ``rcdata/ops_copy.py`` copies it into Redis once.
 
 SQLite in WAL mode, beside the serving files (``config.MARKET_DIR``), because several processes use it at once: the
 dashboard enqueues build requests and reads the check rows, the builder takes requests and writes runs, checks and
@@ -27,6 +33,7 @@ stamped by a newer version.
 from __future__ import annotations
 
 import atexit
+import functools
 import json
 import os
 import sqlite3
@@ -56,6 +63,8 @@ UW_MINUTE_REMAINING_HEADER = "x-uw-req-per-minute-remaining"
 UW_MINUTE_RESET_HEADER = "x-uw-req-per-minute-reset"
 UW_TOKEN_LIMIT_HEADER = "x-uw-token-req-limit"
 READ_LOG_FLUSH_S = 60.0
+# The Redis that holds this state instead of ops.sqlite (redis://host:port/db). Unset: ops.sqlite.
+REDIS_URL_ENV = "RC_REDIS_URL"
 
 _DDL = {
     "ops_schema": "CREATE TABLE IF NOT EXISTS ops_schema (version INTEGER NOT NULL, applied_at REAL NOT NULL)",
@@ -104,6 +113,36 @@ _INDEXES = (
 
 class OpsSchemaTooNew(RuntimeError):
     """ops.sqlite was stamped by a newer rcdata: this checkout must not write to it."""
+
+
+def backend() -> str:
+    """``"redis"`` while ``RC_REDIS_URL`` is set, else ``"sqlite"``; read on every call, like ``ops_path``."""
+    return "redis" if os.getenv(REDIS_URL_ENV, "").strip() else "sqlite"
+
+
+def _routed(fn):
+    """Run ``fn``'s namesake in ``ops_redis`` while the Redis backend is on: same name, same arguments, same answer."""
+    @functools.wraps(fn)
+    def call(*args, **kwargs):
+        if backend() == "redis":
+            from . import ops_redis
+            return getattr(ops_redis, fn.__name__)(*args, **kwargs)
+        return fn(*args, **kwargs)
+    return call
+
+
+def _store_errors() -> tuple[type[BaseException], ...]:
+    try:
+        import redis
+    except ImportError:                                   # SQLite only: redis-py is not needed to run on the file
+        return ()
+    return (redis.RedisError,)
+
+
+# What a caller catches for "the ops store could not answer now" (locked past busy_timeout, Redis unreachable or
+# timed out), and for any ops store error.
+BUSY_ERRORS: tuple[type[BaseException], ...] = (sqlite3.OperationalError, *_store_errors())
+STORE_ERRORS: tuple[type[BaseException], ...] = (sqlite3.Error, *_store_errors())
 
 
 def ops_path() -> Path:
@@ -168,6 +207,7 @@ def _upgrade_to_2(con: sqlite3.Connection) -> None:
 _UPGRADES: dict[int, Callable[[sqlite3.Connection], None]] = {2: _upgrade_to_2}
 
 
+@_routed
 def ensure(path: Path | None = None) -> None:
     """Create every table (idempotent) and stamp ``ops_schema``; raise ``OpsSchemaTooNew`` on a newer stamp.
 
@@ -215,6 +255,7 @@ def _json(value: Any) -> str | None:
 
 # ── The request queue ──────────────────────────────────────────────────────────────────────────────────────────
 
+@_routed
 def enqueue(dataset: str, params: dict | None = None, *, by: str) -> int:
     """Queue one build of ``dataset``; returns the request id. The only write a page ever makes (F7 A)."""
     with _open() as con:
@@ -223,6 +264,7 @@ def enqueue(dataset: str, params: dict | None = None, *, by: str) -> int:
         return int(cur.lastrowid)
 
 
+@_routed
 def enqueue_once(dataset: str, params: dict | None = None, *, by: str) -> int | None:
     """Queue one build of ``dataset`` unless one is already queued or running; the request id, or None.
 
@@ -238,6 +280,7 @@ def enqueue_once(dataset: str, params: dict | None = None, *, by: str) -> int | 
         return int(cur.lastrowid)
 
 
+@_routed
 def queue_view(finished: int = 20) -> dict:
     """``{"active": queued and running rows, oldest first; "finished": the newest ``finished`` others}``."""
     with _open() as con:
@@ -255,6 +298,7 @@ def _request(row: sqlite3.Row | None) -> dict | None:
     return out
 
 
+@_routed
 def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
                  only: Iterable[str] | None = None, by: str | None = None) -> dict | None:
     """Take the oldest queued request (of ``dataset``, when given) and mark it running; None when none is queued.
@@ -298,6 +342,7 @@ def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
         return _request(con.execute("SELECT * FROM build_requests WHERE id = ?", (row[0],)).fetchone())
 
 
+@_routed
 def queued(dataset: str, *, by: str | None = None) -> bool:
     """True while ``dataset`` has a request waiting; with ``by``, one that requester queued."""
     sql = "SELECT count(*) FROM build_requests WHERE status = 'queued' AND dataset = ?"
@@ -309,6 +354,7 @@ def queued(dataset: str, *, by: str | None = None) -> bool:
         return con.execute(sql, args).fetchone()[0] > 0
 
 
+@_routed
 def finish_request(request_id: int, status: str, note: str | None = None) -> None:
     if status not in REQUEST_STATUSES:
         raise ValueError(f"unknown request status {status!r}")
@@ -326,6 +372,7 @@ def _builder_alive(pid: int | None) -> bool:
     return pid in rawstore._peer_pids(Path(config.MARKET_DIR) / FILE_NAME)
 
 
+@_routed
 def fail_orphans() -> tuple[int, int]:
     """Reclaim every request and run a dead builder left running: ``(requests, runs)`` failed.
 
@@ -373,6 +420,7 @@ CHECK_FIELDS = ("dataset", "checked_on", "result", "source_as_of", "rows", "adde
                 "next_check_due", "run_id", "note")
 
 
+@_routed
 def record_check(dataset: str, result: str, *, source_as_of: str | None = None, rows: int | None = None,
                  added: int | None = None, removed: int | None = None, coverage: float | None = None,
                  calls: int | None = None, next_check_due: str | None = None, run_id: str | None = None,
@@ -388,6 +436,7 @@ def record_check(dataset: str, result: str, *, source_as_of: str | None = None, 
         return int(cur.lastrowid)
 
 
+@_routed
 def latest_check(dataset: str) -> dict | None:
     """The newest ``dataset_check`` row of ``dataset`` (by insertion), or None."""
     with _open() as con:
@@ -396,6 +445,7 @@ def latest_check(dataset: str) -> dict | None:
     return dict(row) if row else None
 
 
+@_routed
 def record_issue(dataset: str, kind: str, key: str | None, detail: str | None, run_id: str | None = None) -> int:
     with _open() as con:
         cur = con.execute("INSERT INTO build_issues (dataset, found_on, kind, key, detail, run_id) "
@@ -403,6 +453,7 @@ def record_issue(dataset: str, kind: str, key: str | None, detail: str | None, r
         return int(cur.lastrowid)
 
 
+@_routed
 def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[int, int]:
     """Make the open ``build_issues`` of ``dataset`` and ``kinds`` the rows ``found`` (``(kind, key, detail)``).
 
@@ -432,6 +483,7 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
     return len(new), len(gone)
 
 
+@_routed
 def start_run(run_id: str, dataset: str, trigger: str, params: dict | None = None) -> None:
     import socket
     with _open() as con:
@@ -440,6 +492,7 @@ def start_run(run_id: str, dataset: str, trigger: str, params: dict | None = Non
                     (run_id, dataset, trigger, os.getpid(), socket.gethostname(), time.time(), _json(params)))
 
 
+@_routed
 def finish_run(run_id: str, status: str, error: str | None = None) -> None:
     with _open() as con:
         con.execute("UPDATE job_runs2 SET status = ?, finished_at = ?, error = ? WHERE run_id = ?",
@@ -464,15 +517,15 @@ def sample_uw_headers(headers, run_id: str | None = None) -> bool:
     from . import caps                              # caps reads ops: imported here, not at module level
     count, cap = _int(kept.get(UW_DAILY_COUNT_HEADER)), caps.cap_for("uw")
     left = cap - count if (cap is not None and count is not None) else None
-    with _open() as con:
-        con.execute("INSERT OR REPLACE INTO uw_remaining (sampled_at, run_id, daily_req_count, daily_cap, "
-                    "daily_remaining_computed, per_minute_remaining, per_minute_reset_ms, token_req_limit, "
-                    "raw_headers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (time.time(), run_id, count, cap, left, _int(kept.get(UW_MINUTE_REMAINING_HEADER)),
-                     _int(kept.get(UW_MINUTE_RESET_HEADER)), _int(kept.get(UW_TOKEN_LIMIT_HEADER)), _json(kept)))
+    put_rows("uw_remaining", [{
+        "sampled_at": time.time(), "run_id": run_id, "daily_req_count": count, "daily_cap": cap,
+        "daily_remaining_computed": left, "per_minute_remaining": _int(kept.get(UW_MINUTE_REMAINING_HEADER)),
+        "per_minute_reset_ms": _int(kept.get(UW_MINUTE_RESET_HEADER)),
+        "token_req_limit": _int(kept.get(UW_TOKEN_LIMIT_HEADER)), "raw_headers": _json(kept)}])
     return True
 
 
+@_routed
 def count_calls(provider: str, n: int = 1, failures: int = 0, http_429: int = 0) -> None:
     """Add to ``provider``'s counter for today (New York day)."""
     with _open() as con:
@@ -482,6 +535,7 @@ def count_calls(provider: str, n: int = 1, failures: int = 0, http_429: int = 0)
                     "http_429 = http_429 + excluded.http_429", (provider, _today(), n, failures, http_429))
 
 
+@_routed
 def calls_today(provider: str) -> int:
     with _open() as con:
         row = con.execute("SELECT calls FROM provider_calls_daily WHERE provider = ? AND ny_day = ?",
@@ -519,11 +573,16 @@ class ReadLog:
             self._last = self._clock()
         if not counts:
             return
-        process = self.process or _process_name()
-        with _open() as con, _tx(con):
-            con.executemany("INSERT INTO read_log (day, process, table_name, reads) VALUES (?, ?, ?, ?) "
-                            "ON CONFLICT (day, process, table_name) DO UPDATE SET reads = reads + excluded.reads",
-                            [(day, process, table, n) for (day, table), n in counts.items()])
+        _add_reads(self.process or _process_name(), [(day, table, n) for (day, table), n in counts.items()])
+
+
+@_routed
+def _add_reads(process: str, counts: list[tuple[str, str, int]]) -> None:
+    """Add ``(day, table, reads)`` to ``read_log`` for ``process``, in one transaction."""
+    with _open() as con, _tx(con):
+        con.executemany("INSERT INTO read_log (day, process, table_name, reads) VALUES (?, ?, ?, ?) "
+                        "ON CONFLICT (day, process, table_name) DO UPDATE SET reads = reads + excluded.reads",
+                        [(day, process, table, n) for day, table, n in counts])
 
 
 read_log = ReadLog()
@@ -561,6 +620,7 @@ def _watch_write(con: sqlite3.Connection, kind: str, ticker: str, action: str, b
     return True
 
 
+@_routed
 def watch_add(kind: str, ticker: str, *, by: str, note: str | None = None) -> bool:
     """Add ``ticker`` (upper-cased) to a watch list and its history; False when it was already there."""
     kind, ticker = _watch_kind(kind), ticker.strip().upper()
@@ -568,12 +628,14 @@ def watch_add(kind: str, ticker: str, *, by: str, note: str | None = None) -> bo
         return _watch_write(con, kind, ticker, "add", by, note)
 
 
+@_routed
 def watch_remove(kind: str, ticker: str, *, by: str) -> bool:
     kind, ticker = _watch_kind(kind), ticker.strip().upper()
     with _open() as con, _tx(con):
         return _watch_write(con, kind, ticker, "remove", by, None)
 
 
+@_routed
 def watch_toggle(kind: str, ticker: str, *, by: str) -> bool:
     """Add ``ticker`` when it is not on the list, else remove it; whether it is on the list now.
 
@@ -587,6 +649,7 @@ def watch_toggle(kind: str, ticker: str, *, by: str) -> bool:
         return not there
 
 
+@_routed
 def watch_replace(kind: str, tickers, *, by: str) -> tuple[int, int]:
     """Make the list exactly ``tickers`` in one transaction; ``(added, removed)``, each with its history row."""
     kind = _watch_kind(kind)
@@ -600,11 +663,13 @@ def watch_replace(kind: str, tickers, *, by: str) -> tuple[int, int]:
     return len(want - have), len(have - want)
 
 
+@_routed
 def watch_list(kind: str) -> list[str]:
     with _open() as con:
         return [r[0] for r in con.execute(f"SELECT ticker FROM watchlist_{_watch_kind(kind)} ORDER BY ticker")]
 
 
+@_routed
 def schedule_set(dataset: str, cadence: str, next_due: str | None) -> None:
     with _open() as con:
         con.execute("INSERT INTO dataset_schedule (dataset, cadence, next_due) VALUES (?, ?, ?) "
@@ -612,6 +677,7 @@ def schedule_set(dataset: str, cadence: str, next_due: str | None) -> None:
                     (dataset, cadence, next_due))
 
 
+@_routed
 def schedule_pause(dataset: str, *, by: str) -> None:
     with _open() as con:
         con.execute("INSERT INTO dataset_schedule (dataset, paused_at, paused_by) VALUES (?, ?, ?) "
@@ -619,11 +685,13 @@ def schedule_pause(dataset: str, *, by: str) -> None:
                     (dataset, time.time(), by))
 
 
+@_routed
 def schedule_resume(dataset: str) -> None:
     with _open() as con:
         con.execute("UPDATE dataset_schedule SET paused_at = NULL, paused_by = NULL WHERE dataset = ?", (dataset,))
 
 
+@_routed
 def schedule_get(dataset: str) -> dict | None:
     with _open() as con:
         row = con.execute("SELECT * FROM dataset_schedule WHERE dataset = ?", (dataset,)).fetchone()
@@ -648,16 +716,19 @@ def _select(sql: str, args: tuple = ()) -> list[dict]:
             raise
 
 
+@_routed
 def schema_version() -> int | None:
     rows = _select("SELECT max(version) AS v FROM ops_schema")
     return rows[0]["v"] if rows else None
 
 
+@_routed
 def recent_checks(dataset: str, limit: int = 20) -> list[dict]:
     """The newest ``limit`` ``dataset_check`` rows of ``dataset``, newest first."""
     return _select("SELECT * FROM dataset_check WHERE dataset = ? ORDER BY id DESC LIMIT ?", (dataset, int(limit)))
 
 
+@_routed
 def latest_unskipped_check(dataset: str) -> dict | None:
     """The newest ``dataset_check`` row of ``dataset`` that is not ``skipped``, however many skips came after it."""
     rows = _select("SELECT * FROM dataset_check WHERE dataset = ? AND result != 'skipped' ORDER BY id DESC LIMIT 1",
@@ -665,6 +736,7 @@ def latest_unskipped_check(dataset: str) -> dict | None:
     return rows[0] if rows else None
 
 
+@_routed
 def latest_good_check(dataset: str) -> dict | None:
     """The newest ``changed`` or ``unchanged`` ``dataset_check`` row of ``dataset``: the last run that built."""
     rows = _select("SELECT * FROM dataset_check WHERE dataset = ? AND result IN ('changed', 'unchanged') "
@@ -672,6 +744,7 @@ def latest_good_check(dataset: str) -> dict | None:
     return rows[0] if rows else None
 
 
+@_routed
 def open_issues(dataset: str, limit: int = 20) -> tuple[int, list[dict]]:
     """``(count, newest rows)`` of the unresolved ``build_issues`` of ``dataset``."""
     n = _select("SELECT count(*) AS n FROM build_issues WHERE dataset = ? AND resolved_on IS NULL", (dataset,))
@@ -680,18 +753,21 @@ def open_issues(dataset: str, limit: int = 20) -> tuple[int, list[dict]]:
     return (n[0]["n"] if n else 0), rows
 
 
+@_routed
 def ever_built(dataset: str) -> bool:
     """True once ``dataset`` has a ``changed`` or ``unchanged`` check (it has built at least once)."""
     return bool(_select("SELECT 1 AS one FROM dataset_check WHERE dataset = ? AND result IN ('changed', 'unchanged') "
                         "LIMIT 1", (dataset,)))
 
 
+@_routed
 def open_issue_kinds(dataset: str) -> list[dict]:
     """``[{kind, count}]`` of the unresolved ``build_issues`` of ``dataset``, the most first."""
     return _select("SELECT kind, count(*) AS count FROM build_issues WHERE dataset = ? AND resolved_on IS NULL "
                    "GROUP BY kind ORDER BY count(*) DESC, kind", (dataset,))
 
 
+@_routed
 def read_queue(finished: int = 20) -> dict:
     """``queue_view`` for a reader: the same rows, without creating the file."""
     active = _select("SELECT * FROM build_requests WHERE status IN ('queued','running') ORDER BY id")
@@ -700,17 +776,20 @@ def read_queue(finished: int = 20) -> dict:
     return {"active": [_request(r) for r in active], "finished": [_request(r) for r in done]}
 
 
+@_routed
 def read_schedule(dataset: str) -> dict | None:
     rows = _select("SELECT * FROM dataset_schedule WHERE dataset = ?", (dataset,))
     return rows[0] if rows else None
 
 
+@_routed
 def calls_by_day(first_day: str, last_day: str) -> list[dict]:
     """``provider_calls_daily`` rows with ``first_day <= ny_day <= last_day``."""
     return _select("SELECT * FROM provider_calls_daily WHERE ny_day BETWEEN ? AND ? ORDER BY provider, ny_day",
                    (first_day, last_day))
 
 
+@_routed
 def latest_uw_sample() -> dict | None:
     rows = _select("SELECT sampled_at, run_id, daily_req_count, daily_cap, daily_remaining_computed, "
                    "per_minute_remaining, token_req_limit FROM uw_remaining "
@@ -718,6 +797,7 @@ def latest_uw_sample() -> dict | None:
     return rows[0] if rows else None
 
 
+@_routed
 def reads_since(first_day: str, tables) -> dict[str, int]:
     """Reads of each of ``tables`` in ``read_log`` since ``first_day`` (every process together)."""
     names = list(tables)
@@ -729,17 +809,20 @@ def reads_since(first_day: str, tables) -> dict[str, int]:
     return {t: got.get(t, 0) for t in names}
 
 
+@_routed
 def last_builder_run() -> dict | None:
     rows = _select("SELECT run_id, dataset, trigger, pid, started_at, finished_at, status, error FROM job_runs2 "
                    "ORDER BY started_at DESC LIMIT 1")
     return rows[0] if rows else None
 
 
+@_routed
 def watch_count(kind: str) -> int:
     rows = _select(f"SELECT count(*) AS n FROM watchlist_{_watch_kind(kind)}")
     return rows[0]["n"] if rows else 0
 
 
+@_routed
 def watch_last_change() -> float | None:
     """The newest add or remove on either watch list (epoch seconds), or None; never creates the file."""
     rows = _select(" UNION ALL ".join(f"SELECT max(at) AS at FROM watchlist_{k}_changes" for k in WATCH_KINDS))
@@ -747,6 +830,40 @@ def watch_last_change() -> float | None:
     return max(stamps) if stamps else None
 
 
+@_routed
 def watch_rows(kind: str) -> list[dict]:
     """The rows of one watch list, by ticker: ``ticker``, ``added_at`` (epoch seconds), ``added_by``, ``note``."""
     return _select(f"SELECT ticker, added_at, added_by, note FROM watchlist_{_watch_kind(kind)} ORDER BY ticker")
+
+
+# ── Whole tables, either backend (the one-time copy, the backup and the tests) ─────────────────────────────────
+
+def _primary_key(table: str) -> list[str]:
+    with closing(sqlite3.connect(":memory:")) as con:
+        con.execute(_DDL[table])
+        cols = sorted((r[5], r[1]) for r in con.execute(f"PRAGMA table_info({table})") if r[5])
+    return [c for _, c in cols]
+
+
+@_routed
+def rows(table: str) -> list[dict]:
+    """Every row of ``table`` (one of ``TABLES``), each a dict in column order, by primary key; [] without a file."""
+    if table not in _DDL:
+        raise ValueError(f"unknown ops table {table!r}")
+    return _select(f"SELECT * FROM {table} ORDER BY {', '.join(_primary_key(table))}")
+
+
+@_routed
+def put_rows(table: str, new_rows: Iterable[dict]) -> int:
+    """Write ``new_rows`` as given (ids included), replacing a row with the same primary key; how many were written.
+
+    For copying rows between backends and for tests that set a row up; the functions above are how the app writes.
+    """
+    if table not in _DDL:
+        raise ValueError(f"unknown ops table {table!r}")
+    new_rows = list(new_rows)
+    with _open() as con, _tx(con):
+        for row in new_rows:
+            con.execute(f"INSERT OR REPLACE INTO {table} ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
+                        tuple(row.values()))
+    return len(new_rows)
