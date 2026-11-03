@@ -186,7 +186,9 @@ COMP_ADJ = "prccd / ajexdi * trfd"
 # non-ex-dividend days with ``trfd`` empty, as the formula does on its rows, 97.66 %; 6,437 of 17,058 securities have
 # no ``trfd`` on any day, the non-payers). So a day without ``trfd`` on either side is read as ``trfd`` = 1, and the
 # day's own cash distribution (``COMP_DIV``, the secd row's) is added to the numerator, in the day's share basis.
-COMP_DIV = "(coalesce(divd, div, 0) + coalesce(divsp, 0))"
+# The secd row's own distribution; ``div_day`` (``SECD_LISTED``) is it, else comp.sec_divid's of that day.
+SECD_DIV = "(coalesce(divd, div, 0) + coalesce(divsp, 0))"
+COMP_DIV = "div_day"
 _TRFD_BOTH = "trfd IS NOT NULL AND lag(trfd) OVER w IS NOT NULL"
 COMP_RETURN = (f"CASE WHEN lag(run_id) OVER w = run_id THEN CASE WHEN {_TRFD_BOTH} "
                f"THEN ({COMP_ADJ}) / lag({COMP_ADJ}) OVER w - 1 "
@@ -194,8 +196,9 @@ COMP_RETURN = (f"CASE WHEN lag(run_id) OVER w = run_id THEN CASE WHEN {_TRFD_BOT
 # Which rule made the row's return: ``trfd``, ``price_dividend`` (no trfd, a distribution added) or ``price_only``.
 # shortcut: a dividend day without trfd is flagged, not checked; avo is deciding whether to fill the trfd gap otherwise
 # (the hook is ``COMP_DIV``).
-COMP_RETURN_BASIS = (f"CASE WHEN {_TRFD_BOTH} OR lag(run_id) OVER w IS NULL THEN 'trfd' "
-                     f"WHEN {COMP_DIV} > 0 THEN 'price_dividend' ELSE 'price_only' END")
+# A row with no return (the first of a security or of an answer) has no basis (review SHOULD 4 of #382).
+COMP_RETURN_BASIS = (f"CASE WHEN lag(run_id) OVER w = run_id THEN CASE WHEN {_TRFD_BOTH} THEN 'trfd' "
+                     f"WHEN {COMP_DIV} > 0 THEN 'price_dividend' ELSE 'price_only' END END")
 
 # The rows of the difference report (``wrds_price_diff``), one per comparison and build.
 # ``crsp_delisting_returns``: the store's return on each served delisting day against ``stkdelists``' ``delret``.
@@ -736,8 +739,12 @@ SECD_LISTED = f"""
     SELECT s.*, coalesce(CASE WHEN s.datadate <= coalesce(e.effthru, DATE '9999-12-31') THEN e.exchg END,
                          CASE WHEN e.efffrom IS NULL THEN f.first_exchg END, s.exchg)
                 IN ({_EXCHG}) AS listed,
-           s.exchg IN ({_EXCHG}) AS listed_today
+           s.exchg IN ({_EXCHG}) AS listed_today,
+           -- the day's cash distribution: the row's own, else comp.sec_divid's (review SHOULD 4 of #382)
+           CASE WHEN {SECD_DIV} > 0 THEN {SECD_DIV} ELSE coalesce(v.amount, 0) END AS div_day
     FROM stg_wrds_secd s
+    LEFT JOIN (SELECT gvkey, iid, datadate, sum(coalesce(divd, div, 0) + coalesce(divsp, 0)) AS amount
+               FROM stg_wrds_divid GROUP BY ALL) v ON v.gvkey = s.gvkey AND v.iid = s.iid AND v.datadate = s.datadate
     ASOF LEFT JOIN stg_wrds_exchg e ON e.gvkey = s.gvkey AND e.iid = s.iid AND s.datadate >= e.efffrom
     LEFT JOIN (SELECT gvkey, iid, arg_min(exchg, efffrom) AS first_exchg FROM stg_wrds_exchg GROUP BY ALL) f
         ON f.gvkey = s.gvkey AND f.iid = s.iid"""

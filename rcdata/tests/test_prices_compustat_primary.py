@@ -82,7 +82,8 @@ def test_an_ajexdi_or_return_step_between_two_answers_is_neither_a_split_nor_a_r
                      ("2025-01-03", 51.0, 0.5, "new")])
     got = con.execute(f"SELECT ex_date, new_rate FROM ({wrds_history.AJEXDI_SPLITS})").fetchall()
     assert got == [(date(2025, 1, 3), 2.0)]                  # the in-answer step only
-    ret = [r[0] for r in con.execute(f"SELECT {wrds_history.COMP_RETURN} FROM stg_wrds_secd "
+    ret = [r[0] for r in con.execute(f"SELECT {wrds_history.COMP_RETURN} FROM (SELECT *, {wrds_history.SECD_DIV} "
+                                     "AS div_day FROM stg_wrds_secd) "
                                      "WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate) "
                                      "ORDER BY datadate").fetchall()]
     assert ret[1] is None and ret[2] == pytest.approx(51.0 / 0.5 / (101.0 / 1.0) - 1)
@@ -128,7 +129,8 @@ def _div_con(rows):
     con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, datadate DATE, prccd DOUBLE, ajexdi DOUBLE, "
                 "trfd DOUBLE, div DOUBLE, divd DOUBLE, divsp DOUBLE, run_id TEXT)")
     con.executemany("INSERT INTO stg_wrds_secd VALUES ('001690', '01', ?, ?, ?, ?, NULL, ?, ?, 'r')", rows)
-    return con.execute(f"SELECT {wrds_history.COMP_RETURN}, {wrds_history.COMP_RETURN_BASIS} FROM stg_wrds_secd "
+    return con.execute(f"SELECT {wrds_history.COMP_RETURN}, {wrds_history.COMP_RETURN_BASIS} FROM (SELECT *, "
+                       f"{wrds_history.SECD_DIV} AS div_day FROM stg_wrds_secd) "
                        "WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate) ORDER BY datadate").fetchall()
 
 
@@ -136,7 +138,7 @@ def test_the_return_rule_trfd_else_price_plus_the_days_cash_distribution():
     got = _div_con([("2025-06-02", 100.0, 1.0, 1.0, None, None), ("2025-06-03", 101.0, 1.0, 1.01, None, None),
                     ("2025-06-04", 100.0, 1.0, None, None, None), ("2025-06-05", 99.0, 1.0, None, 0.5, None),
                     ("2025-06-06", 49.0, 0.5, None, None, 0.25)])
-    assert got[0] == (None, "trfd")
+    assert got[0] == (None, None)                            # no return, no basis
     assert got[1][0] == pytest.approx(101.0 * 1.01 / 100.0 - 1) and got[1][1] == "trfd"
     assert got[2][0] == pytest.approx(100.0 / 101.0 - 1) and got[2][1] == "price_only"
     assert got[3][0] == pytest.approx((99.0 + 0.5) / 100.0 - 1) and got[3][1] == "price_dividend"
@@ -457,6 +459,10 @@ def _listed(secd, idhist):
     con.executemany("INSERT INTO stg_wrds_secd VALUES (?, '01', ?, ?)", secd)
     con.execute("CREATE TABLE stg_wrds_exchg (gvkey TEXT, iid TEXT, exchg INTEGER, efffrom DATE, effthru DATE)")
     con.executemany("INSERT INTO stg_wrds_exchg VALUES (?, '01', ?, ?, ?)", idhist)
+    con.execute("ALTER TABLE stg_wrds_secd ADD COLUMN div DOUBLE; ALTER TABLE stg_wrds_secd ADD COLUMN divd DOUBLE; "
+                "ALTER TABLE stg_wrds_secd ADD COLUMN divsp DOUBLE")
+    con.execute("CREATE TABLE stg_wrds_divid (gvkey TEXT, iid TEXT, datadate DATE, div DOUBLE, divd DOUBLE, "
+                "divsp DOUBLE)")
     return {(g, str(d)): bool(x) for g, d, x in con.execute(
         f"SELECT gvkey, datadate, listed FROM ({wrds_history.SECD_LISTED})").fetchall()}
 
@@ -554,3 +560,27 @@ def test_a_stock_dividend_alpaca_knows_and_compustats_ajexdi_step_the_same_day_a
     applied = _q("SELECT source_id, action FROM corporate_action WHERE security_id = ? AND ex_date = '2026-10-22' "
                  "AND applied", [AAPL])
     assert len(applied) == 1, applied
+
+
+def _listed_returns(secd, divid):
+    """COMP_RETURN and COMP_RETURN_BASIS over ``SECD_LISTED`` (the build's ``_secd_listed``): ``secd`` rows
+    ``(day, prccd, trfd)`` of one security and answer, ``divid`` its comp.sec_divid rows ``(day, divd)``."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, datadate DATE, prccd DOUBLE, ajexdi DOUBLE, "
+                "trfd DOUBLE, div DOUBLE, divd DOUBLE, divsp DOUBLE, exchg INTEGER, run_id TEXT)")
+    con.executemany("INSERT INTO stg_wrds_secd VALUES ('001690', '01', ?, ?, 1.0, ?, NULL, NULL, NULL, 14, 'r')", secd)
+    con.execute("CREATE TABLE stg_wrds_exchg (gvkey TEXT, iid TEXT, exchg INTEGER, efffrom DATE, effthru DATE)")
+    con.execute("CREATE TABLE stg_wrds_divid (gvkey TEXT, iid TEXT, datadate DATE, div DOUBLE, divd DOUBLE, "
+                "divsp DOUBLE)")
+    con.executemany("INSERT INTO stg_wrds_divid VALUES ('001690', '01', ?, NULL, ?, NULL)", divid)
+    return con.execute(f"SELECT {wrds_history.COMP_RETURN}, {wrds_history.COMP_RETURN_BASIS} "
+                       f"FROM ({wrds_history.SECD_LISTED}) WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate) "
+                       "ORDER BY datadate").fetchall()
+
+
+def test_a_dividend_only_sec_divid_holds_flags_its_day_and_is_in_its_return():
+    """Review SHOULD 4 of #382: the flag and the return read the secd row's dividend only; sec_divid's, its fallback,
+    left a dividend day without trfd counted as price_only. The first row, with no return, has no basis either."""
+    got = _listed_returns([("2025-06-02", 100.0, None), ("2025-06-03", 99.0, None)], [("2025-06-03", 0.5)])
+    assert got[0] == (None, None)
+    assert got[1][0] == pytest.approx((99.0 + 0.5) / 100.0 - 1) and got[1][1] == "price_dividend"

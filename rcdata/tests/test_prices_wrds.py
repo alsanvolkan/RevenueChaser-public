@@ -348,7 +348,10 @@ def test_compustat_bars_of_a_permnos_gvkey_join_the_security_its_crsp_bars_won()
     con.execute(f"CREATE TEMP TABLE _permno_link AS {wrds_history.PERMNO_LINK}")
     con.execute(f"CREATE TEMP TABLE _gvkey_alias AS {wrds_history.GVKEY_ALIAS}")
     con.execute("CREATE TABLE stg_wrds_exchg (gvkey TEXT, iid TEXT, exchg INTEGER, efffrom DATE, effthru DATE)")
+    con.execute("CREATE TABLE stg_wrds_divid (gvkey TEXT, iid TEXT, datadate DATE, div DOUBLE, divd DOUBLE, "
+                "divsp DOUBLE)")
     con.execute(f"CREATE TEMP TABLE _secd_listed AS {wrds_history.SECD_LISTED}")
+    con.execute("DROP TABLE stg_wrds_divid")                          # the actions below create their own
     got = sorted(con.execute(f"SELECT security_id, symbol FROM ({wrds_history.COMP_BARS})").fetchall())
     assert got == [("001690:01", "AAPL"), ("figi:BBG000BDTBL9", "SPY")], "SPY's Compustat bar is the FIGI's own"
     con.execute("CREATE TABLE stg_wrds_split (gvkey TEXT, iid TEXT, datadate DATE, split DOUBLE, source_as_of DATE, "
@@ -370,7 +373,8 @@ def test_compustat_adjusted_return_is_the_true_total_return_within_1bp():
                 "run_id TEXT, div DOUBLE, divd DOUBLE, divsp DOUBLE)")
     for d, c, a, t in zip(JUNE, COMP_CLOSE, AJEXDI, TRFD):
         con.execute("INSERT INTO s VALUES ('001690', '01', ?, ?, ?, ?, 'r1', NULL, NULL, NULL)", [d, c, a, t])
-    got = [r[0] for r in con.execute(f"SELECT {wrds_history.COMP_RETURN} AS r FROM s "
+    got = [r[0] for r in con.execute(f"SELECT {wrds_history.COMP_RETURN} AS r FROM (SELECT *, "
+                                     f"{wrds_history.SECD_DIV} AS div_day FROM s) "
                                      "WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate) ORDER BY datadate").fetchall()]
     # The economic return: the close plus the dividend over the previous close, both in one share basis.
     want = [None, 202.0 / 200.0 - 1, 101.5 / (202.0 / 2) - 1, (100.0 + 1.0) / 101.5 - 1, 100.5 / 100.0 - 1]
