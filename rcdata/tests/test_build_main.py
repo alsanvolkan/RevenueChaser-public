@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+import redis
+
 from RevenueChaser.rcdata import ops, serving
 from RevenueChaser.rcdata.build import DATASETS
 from RevenueChaser.rcdata.build import __main__ as cli
+
+
+def _request(rid: int) -> dict:
+    return next(r for r in ops.rows("build_requests") if r["id"] == rid)
 
 
 def _nothing_due() -> None:
@@ -19,24 +26,25 @@ def test_s2_requests_and_runs_left_running_by_a_dead_builder_are_failed_at_start
     rid = ops.enqueue("market_series", None, by="test")
     assert ops.next_request()["id"] == rid                 # a builder took it ...
     ops.start_run("dead-run", "market_series", "queue")     # ... and died mid-run
-    with ops.connect() as con:                              # as another process
-        con.execute("UPDATE job_runs2 SET pid = 999999 WHERE run_id = 'dead-run'")
+    [run] = ops.rows("job_runs2")                           # as another process
+    ops.put_rows("job_runs2", [{**run, "pid": 999999}])
     _nothing_due()
     assert cli.main(["run", "--once"]) == 0
-    with ops.connect() as con:
-        req = con.execute("SELECT status, note FROM build_requests WHERE id = ?", (rid,)).fetchone()
-        run = con.execute("SELECT status, error FROM job_runs2 WHERE run_id = 'dead-run'").fetchone()
+    req = _request(rid)
+    [run] = [r for r in ops.rows("job_runs2") if r["run_id"] == "dead-run"]
     assert req["status"] == "failed" and "builder died" in req["note"]
     assert run["status"] == "failed" and "builder died" in run["error"]
 
 
-def test_s2_the_run_loop_outlives_a_locked_ops_file(monkeypatch):
+@pytest.mark.parametrize("busy", [sqlite3.OperationalError, redis.ConnectionError])
+def test_s2_the_run_loop_outlives_a_locked_ops_file(busy, monkeypatch):
+    """A locked ops.sqlite, or a Redis that does not answer (Order 3): wait and ask again, never die."""
     calls = []
 
     def flaky(dataset=None, **kw):
         calls.append(dataset)
         if len(calls) == 1:
-            raise sqlite3.OperationalError("database is locked")
+            raise busy("database is locked")
         return None
     monkeypatch.setattr(ops, "next_request", flaky)
     monkeypatch.setattr(cli, "POLL_S", 0)
@@ -60,15 +68,14 @@ def test_s4_build_files_a_dead_builder_left_are_swept_at_start():
     assert not stale[0].exists() and (d / "market.duckdb").exists()
 
 
-def test_n2_an_operational_error_inside_a_run_does_not_end_the_loop(monkeypatch):
+@pytest.mark.parametrize("busy", [sqlite3.OperationalError, redis.TimeoutError])
+def test_n2_an_operational_error_inside_a_run_does_not_end_the_loop(busy, monkeypatch):
     ops.enqueue("market_series", None, by="test")
     from RevenueChaser.rcdata.build import base
-    monkeypatch.setattr(base, "run_request",
-                        lambda req, **kw: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    monkeypatch.setattr(base, "run_request", lambda req, **kw: (_ for _ in ()).throw(busy("locked")))
     monkeypatch.setattr(cli, "POLL_S", 0)
     assert cli._run_queue(None, once=True) == 1
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM build_requests").fetchone()[0] == "failed"
+    assert [r["status"] for r in ops.rows("build_requests")] == ["failed"]
 
 
 def test_n2_a_database_error_at_the_end_of_a_run_is_failed_not_killed(monkeypatch):
@@ -77,8 +84,7 @@ def test_n2_a_database_error_at_the_end_of_a_run_is_failed_not_killed(monkeypatc
     monkeypatch.setattr(ops, "record_check", lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
     with pytest.raises(sqlite3.OperationalError):
         base.run_request({"dataset": "nope", "params": {}})
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM job_runs2").fetchone()[0] == "failed"
+    assert [r["status"] for r in ops.rows("job_runs2")] == ["failed"]
 
 
 def test_n3_allow_shrink_reaches_the_request(monkeypatch):
@@ -151,8 +157,7 @@ def test_the_hourly_pass_leaves_an_attended_request_in_the_queue(monkeypatch):
     _nothing_due()
     assert cli.main(["run", "--once"]) == 0
     assert ran == []
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (rid,)).fetchone()[0] == "queued"
+    assert _request(rid)["status"] == "queued"
 
 
 def test_the_attended_runner_drains_the_attended_requests_only(monkeypatch):
@@ -163,8 +168,7 @@ def test_the_attended_runner_drains_the_attended_requests_only(monkeypatch):
     ops.enqueue("wrds/sec_idhist", None, by="settings")
     assert cli.main(["attended"]) == 0
     assert ran == [("wrds/sec_idhist", "settings", True)]
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (plain,)).fetchone()[0] == "queued"
+    assert _request(plain)["status"] == "queued"
 
 
 def test_the_attended_runner_says_so_when_nothing_is_queued(monkeypatch, capsys):
@@ -181,8 +185,7 @@ def test_the_attended_runner_refuses_a_runner_with_nobody_at_it(monkeypatch, cap
     ops.enqueue("wrds/sec_idhist", None, by="settings")
     assert cli.main(["attended"]) == 3
     assert "terminal" in capsys.readouterr().err
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM build_requests").fetchone()[0] == "queued"
+    assert [r["status"] for r in ops.rows("build_requests")] == ["queued"]
 
 
 def test_a_named_dataset_runs_only_the_cli_s_own_request(monkeypatch):
@@ -194,8 +197,7 @@ def test_a_named_dataset_runs_only_the_cli_s_own_request(monkeypatch):
     assert cli.main(["run", "--once", "--dataset", "wrds/sec_idhist", "--wait", "0"]) == 0
     assert cli.main(["backfill", "wrds/sec_idhist", "--wait", "0"]) == 0
     assert [r[1] for r in ran] == ["cli", "cli"]            # twice its own, never the page's
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (theirs,)).fetchone()[0] == "queued"
+    assert _request(theirs)["status"] == "queued"
 
 
 def test_a_named_dataset_that_is_not_attended_still_drains_the_queue(monkeypatch):

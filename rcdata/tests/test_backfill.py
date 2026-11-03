@@ -122,8 +122,7 @@ def test_n1_one_unusable_answer_is_quarantined_and_the_backfill_goes_on(http_moc
     raw = uw.raw_path(DAYS[2])
     assert not raw.exists() and len(list(raw.parent.glob(raw.name + ".*.rejected"))) == 1
     from RevenueChaser.rcdata import ops
-    with ops.connect() as con:
-        kinds = [r[0] for r in con.execute("SELECT kind FROM build_issues WHERE key = '2026-10-21' ORDER BY id")]
+    kinds = [r["kind"] for r in ops.rows("build_issues") if r["key"] == "2026-10-21"]
     assert kinds == ["bad_row", "type_failed"], "one issue for the rows, one for the day"
 
     bad.clear()

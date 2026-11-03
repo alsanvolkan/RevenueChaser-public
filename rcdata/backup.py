@@ -2,8 +2,13 @@
 
 Into ``<RAW_STORE_BACKUP_DIR>/market/`` (an empty ``RAW_STORE_BACKUP_DIR`` is refused: log, exit 2, nothing written):
 
-- ``ops_<UTC stamp>.sqlite``: SQLite's online backup API, so a copy taken while the dashboard or the builder writes
-  is consistent; checked with ``PRAGMA integrity_check`` and the row count of every table against the source.
+- ``ops_<UTC stamp>.sqlite``: the ops state. On ``ops.sqlite``, SQLite's online backup API, so a copy taken while the
+  dashboard or the builder writes is consistent; checked with ``PRAGMA integrity_check`` and the row count of every
+  table against the source. On Redis (``RC_REDIS_URL``, master plan Order 3), a snapshot of every table read by one Lua
+  script (one moment, whatever else writes), written into a new ops.sqlite and checked row for row
+  against the snapshot. The same file format either way, so a Redis backup restores with
+  ``python -m RevenueChaser.rcdata.ops_copy --sqlite <copy>`` (into an empty namespace) or serves the SQLite backend
+  as it is. The Redis container's own AOF is its durability, not this backup.
 - ``<kind>_<UTC stamp>.duckdb`` for each serving file: copied from one open handle of the live file (a swap during
   the copy cannot mix two builds), written as ``.tmp``, verified — row count and ``sum(hash(row))`` of every table
   against the source (``scripts/backup_store.py``'s fingerprint) — and only then renamed. A swap between the copy
@@ -114,6 +119,8 @@ def _online_backup(source: sqlite3.Connection, target: sqlite3.Connection) -> No
 
 
 def _backup_ops(out: Path, manifest: _Manifest) -> Path | None:
+    if ops.backend() == "redis":
+        return _backup_ops_redis(out, manifest)
     src = ops.ops_path()
     if not src.exists():
         return None
@@ -145,6 +152,39 @@ def _backup_ops(out: Path, manifest: _Manifest) -> Path | None:
         raise
     os.replace(tmp, dest)
     manifest.add(dest, tables=got)
+    manifest.save()
+    _prune(out, "ops_*.sqlite", manifest)
+    return dest
+
+
+def _backup_ops_redis(out: Path, manifest: _Manifest) -> Path | None:
+    from . import ops_copy, ops_redis
+    if ops.schema_version() is None:                    # nothing written to this namespace yet
+        return None
+    taken = ops_redis.snapshot()
+    dest = out / f"ops_{_stamp()}.sqlite"
+    tmp = dest.with_name(dest.name + ".tmp")
+    try:
+        ops.ensure.__wrapped__(tmp)                     # the SQLite tables and stamp, whatever the backend
+        with ops.connect(tmp) as con:
+            for table, rows in taken.items():
+                for row in rows:
+                    con.execute(f"INSERT INTO {table} ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
+                                tuple(row.values()))
+            con.execute("PRAGMA journal_mode = DELETE")     # one self-contained file
+        got = _sqlite_counts(tmp)
+        con = ops_copy._open_read_only(tmp)
+        try:
+            differ = [t for t, rows in taken.items() if ops_copy._table_rows(con, t) != rows]
+        finally:
+            con.close()
+        if differ:
+            raise BackupFailed(f"{dest.name}: rows of {differ} differ from the Redis snapshot")
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, dest)
+    manifest.add(dest, tables=got, source="redis")
     manifest.save()
     _prune(out, "ops_*.sqlite", manifest)
     return dest
@@ -292,7 +332,8 @@ def _create_empty_stores(*, apply: bool) -> int:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m RevenueChaser.rcdata")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("backup", help="verified copies of ops.sqlite and the serving files, then the raw copy")
+    sub.add_parser("backup", help="verified copies of the ops state (ops.sqlite or Redis) and the serving files, "
+                                  "then the raw copy")
     empty = sub.add_parser("create-empty-stores",
                            help="create a serving file with its tables and no rows for every kind that has none; "
                                 "an existing file is never touched. Says what it would do unless --apply is given")

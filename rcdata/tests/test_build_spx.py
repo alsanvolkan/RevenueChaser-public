@@ -74,10 +74,9 @@ def test_a_day_whose_raw_file_exists_makes_no_call(http_mock):
 def test_uw_remaining_and_the_call_counter_are_written(http_mock):
     http_mock.add("expiry-strike", uw_fixture.body(), headers=UW_HEADERS)
     _daily()
-    with ops.connect() as con:
-        sample = con.execute("SELECT daily_req_count, daily_remaining_computed FROM uw_remaining").fetchall()
-        calls = con.execute("SELECT provider, calls, failures, http_429 FROM provider_calls_daily").fetchall()
-        run = con.execute("SELECT dataset, status FROM job_runs2").fetchall()
+    sample = [(r["daily_req_count"], r["daily_remaining_computed"]) for r in ops.rows("uw_remaining")]
+    calls = [(r["provider"], r["calls"], r["failures"], r["http_429"]) for r in ops.rows("provider_calls_daily")]
+    run = [(r["dataset"], r["status"]) for r in ops.rows("job_runs2")]
     assert [tuple(s) for s in sample] == [(355, 150_000 - 355)]
     assert [tuple(c) for c in calls] == [("uw", 1, 0, 0)]
     assert [tuple(r) for r in run] == [(uw.NAME, "ok")]
@@ -87,9 +86,9 @@ def test_a_429_counts_in_http_429_and_the_run_fails_without_a_serving_file(http_
     http_mock.add("expiry-strike", {"error": "slow down"}, status=429, headers={"Retry-After": "1"})
     row = _daily()
     assert row["result"] == "failed" and "HTTP 429" in row["note"]
-    with ops.connect() as con:
-        calls = con.execute("SELECT calls, failures, http_429 FROM provider_calls_daily WHERE provider='uw'").fetchone()
-    assert tuple(calls) == (unusual_whales.MAX_ATTEMPTS, 1, unusual_whales.MAX_ATTEMPTS)
+    [calls] = [(r["calls"], r["failures"], r["http_429"]) for r in ops.rows("provider_calls_daily")
+               if r["provider"] == "uw"]
+    assert calls == (unusual_whales.MAX_ATTEMPTS, 1, unusual_whales.MAX_ATTEMPTS)
     assert not serving.live_path("market").exists()
 
 
@@ -151,8 +150,7 @@ def test_rows_of_another_day_inside_a_good_answer_are_dropped_with_an_issue(http
     http_mock.add("expiry-strike", body, headers=UW_HEADERS)
     row = _daily()
     assert row["rows"] == 390
-    with ops.connect() as con:
-        kinds = [r[0] for r in con.execute("SELECT kind FROM build_issues")]
+    kinds = [r["kind"] for r in ops.rows("build_issues")]
     assert kinds == ["wrong_session"]
 
 
@@ -221,6 +219,5 @@ def test_g3_an_answer_that_never_ends_fails_at_the_page_ceiling_and_is_not_kept(
     assert row["result"] == "failed" and "page ceiling" in row["note"]
     assert len(http_mock.calls("expiry-strike")) == uw.MAX_PAGES
     assert not uw.raw_path(date(2026, 10, 26)).exists()
-    with ops.connect() as con:
-        assert [r[0] for r in con.execute("SELECT kind FROM build_issues")] == ["truncated"]
+    assert [r["kind"] for r in ops.rows("build_issues")] == ["truncated"]
     assert parse_qs(http_mock.calls("expiry-strike")[0].url.query.decode())["limit"] == ["500"]

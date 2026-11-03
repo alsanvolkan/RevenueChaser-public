@@ -57,6 +57,17 @@ jobs:
     # The unit tier is ~11.3k tests. Serial it took 1 h 56 on a 4-core box; `-n auto` below should cut that,
     # but the limit stays generous so a slow runner fails on a real error, not on the clock.
     timeout-minutes: 240
+    # The ops state runs on Redis here (master plan Order 3): RC_REDIS_URL switches rcdata/ops.py to it, and the root
+    # conftest lets the tests reach that one address. The same image as docker-compose.yml.
+    services:
+      redis:
+        image: redis:7.2.6-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      RC_REDIS_URL: redis://127.0.0.1:6379/0
     steps:
       # The code imports itself as `RevenueChaser.*`, so the checkout directory
       # must carry that name (pytest puts its parent on sys.path).
@@ -83,6 +94,17 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    # The ops state runs on Redis here (master plan Order 3): RC_REDIS_URL switches rcdata/ops.py to it, and the root
+    # conftest lets the tests reach that one address. The same image as docker-compose.yml.
+    services:
+      redis:
+        image: redis:7.2.6-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      RC_REDIS_URL: redis://127.0.0.1:6379/0
     steps:
       - uses: actions/checkout@v5
         with:

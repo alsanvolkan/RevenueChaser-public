@@ -19,9 +19,7 @@ def client():
 
 
 def _actions(ticker: str) -> list[str]:
-    with ops.connect() as con:
-        return [r[0] for r in con.execute("SELECT action FROM watchlist_stock_changes WHERE ticker = ? ORDER BY id",
-                                          (ticker,))]
+    return [r["action"] for r in ops.rows("watchlist_stock_changes") if r["ticker"] == ticker]
 
 
 def test_off_then_on_in_one_session_keeps_both_rows(client):

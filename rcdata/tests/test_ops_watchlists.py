@@ -44,7 +44,7 @@ def _cols(con, table):
     return [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
 
 
-def test_a_new_file_is_version_2_with_the_history_id_and_note():
+def test_a_new_file_is_version_2_with_the_history_id_and_note(sqlite_ops):
     ops.ensure()
     with ops.connect() as con:
         assert [r[0] for r in con.execute("SELECT version FROM ops_schema")] == [2]
@@ -53,7 +53,7 @@ def test_a_new_file_is_version_2_with_the_history_id_and_note():
             assert _cols(con, f"watchlist_{k}") == ["ticker", "added_at", "added_by", "note"]
 
 
-def test_a_v1_file_is_upgraded_in_place_and_keeps_every_row_in_written_order():
+def test_a_v1_file_is_upgraded_in_place_and_keeps_every_row_in_written_order(sqlite_ops):
     path = ops.ops_path()
     _v1_file(path)
     ops.ensure(path)
@@ -72,7 +72,7 @@ def test_a_v1_file_is_upgraded_in_place_and_keeps_every_row_in_written_order():
     assert ops.watch_toggle("option", "NVDA", by="leaps") is True    # the upgraded file takes writes
 
 
-def test_a_failed_upgrade_leaves_the_v1_file_as_it_was(monkeypatch):
+def test_a_failed_upgrade_leaves_the_v1_file_as_it_was(sqlite_ops, monkeypatch):
     path = ops.ops_path()
     _v1_file(path)
 
@@ -88,7 +88,7 @@ def test_a_failed_upgrade_leaves_the_v1_file_as_it_was(monkeypatch):
         assert _cols(con, "watchlist_option_changes") == ["ticker", "action", "at", "by"]
 
 
-def test_a_file_stamped_newer_than_2_is_refused_and_not_touched():
+def test_a_file_stamped_newer_than_2_is_refused_and_not_touched(sqlite_ops):
     path = ops.ops_path()
     ops.ensure(path)
     with ops.connect(path) as con:
@@ -102,9 +102,8 @@ def test_toggle_flips_and_writes_one_history_row_per_flip_with_the_board():
     assert ops.watch_toggle("option", "NVDA", by="sec_13f") is False
     assert ops.watch_toggle("option", "NVDA", by="settings") is True
     assert ops.watch_list("option") == ["NVDA"] and ops.watch_list("stock") == []
-    with ops.connect() as con:
-        hist = [tuple(r) for r in con.execute("SELECT ticker, action, by FROM watchlist_option_changes ORDER BY id")]
-        row = dict(con.execute("SELECT * FROM watchlist_option").fetchone())
+    hist = [(r["ticker"], r["action"], r["by"]) for r in ops.rows("watchlist_option_changes")]
+    [row] = ops.rows("watchlist_option")
     assert hist == [("NVDA", "add", "leaps"), ("NVDA", "remove", "sec_13f"), ("NVDA", "add", "settings")]
     assert row["added_by"] == "settings" and row["added_at"] <= time.time()
     with pytest.raises(ValueError):
@@ -113,8 +112,7 @@ def test_toggle_flips_and_writes_one_history_row_per_flip_with_the_board():
 
 def test_add_keeps_the_note_on_the_row_and_its_history():
     ops.watch_add("stock", "aapl", by="settings", note="earnings in May")
-    with ops.connect() as con:
-        assert con.execute("SELECT note FROM watchlist_stock_changes").fetchone()[0] == "earnings in May"
+    assert [r["note"] for r in ops.rows("watchlist_stock_changes")] == ["earnings in May"]
     assert ops.watch_rows("stock")[0]["note"] == "earnings in May"
 
 
@@ -134,8 +132,7 @@ def test_read_watchlists_returns_both_lists_by_ticker_and_counts_its_reads():
                                 "added_by": "sec_13f", "note": None}
     assert read.watched("option") == {"NVDA"}
     ops.read_log.flush()
-    with ops.connect() as con:
-        n = dict(con.execute("SELECT table_name, reads FROM read_log").fetchall())
+    n = {r["table_name"]: r["reads"] for r in ops.rows("read_log")}
     assert n == {"watchlist_option": 2, "watchlist_stock": 1}
 
 
@@ -170,7 +167,7 @@ def _stamp_down(path):
         con.execute("DELETE FROM ops_schema WHERE version = 2")
 
 
-def test_v1_code_refuses_the_v2_file_until_it_is_stamped_down_and_then_runs_on_it():
+def test_v1_code_refuses_the_v2_file_until_it_is_stamped_down_and_then_runs_on_it(sqlite_ops):
     path = ops.ops_path()
     ops.watch_add("stock", "MSFT", by="leaps", note="pinned")
     ops.count_calls("uw", 7)
@@ -181,7 +178,7 @@ def test_v1_code_refuses_the_v2_file_until_it_is_stamped_down_and_then_runs_on_i
     assert ops.calls_today("uw") == 7                     # the day-cap counter survives the rollback
 
 
-def test_redeploying_v2_after_a_stamp_down_keeps_the_history_its_ids_and_notes():
+def test_redeploying_v2_after_a_stamp_down_keeps_the_history_its_ids_and_notes(sqlite_ops):
     path = ops.ops_path()
     ops.watch_add("stock", "MSFT", by="leaps", note="pinned")
     ops.watch_remove("stock", "MSFT", by="settings")
@@ -214,8 +211,7 @@ def test_concurrent_whole_list_replaces_raise_nothing_and_the_history_replays_to
     for t in threads:
         t.join(60)
     assert not errors, errors[:2]
-    with ops.connect() as con:
-        state = {}
-        for t, action in con.execute("SELECT ticker, action FROM watchlist_stock_changes ORDER BY id"):
-            state[t] = action == "add"
+    state = {}
+    for r in ops.rows("watchlist_stock_changes"):
+        state[r["ticker"]] = r["action"] == "add"
     assert {t for t, on in state.items() if on} == set(ops.watch_list("stock"))

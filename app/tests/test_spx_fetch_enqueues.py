@@ -61,9 +61,7 @@ def _client():
 
 def _requests() -> list[tuple]:
     ops.ensure()
-    with ops.connect() as con:
-        return [tuple(r) for r in con.execute(
-            "SELECT dataset, requested_by, status FROM build_requests ORDER BY id").fetchall()]
+    return [(r["dataset"], r["requested_by"], r["status"]) for r in ops.rows("build_requests")]
 
 
 def test_a_fetch_queues_one_request_per_dataset_and_runs_the_board_job(ran):

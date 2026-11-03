@@ -11,7 +11,6 @@ These replace ``test_phone_shell``'s ``module_settings`` cases (red on main sinc
 from __future__ import annotations
 
 import os
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -21,7 +20,7 @@ import pytest
 from RevenueChaser.core.reporting_common import THEME_TOKENS
 
 from .harness.cdp_browser import Page, find_chrome
-from .harness.shared import running_dashboard
+from .harness.shared import ops_rows, running_dashboard
 
 _APP = "module_settings"
 PHONE = (390, 844)
@@ -60,15 +59,7 @@ def browser(chrome):
 
 
 def _requests(market) -> list[dict]:
-    path = Path(market["RC_MARKET_DIR"]) / "ops.sqlite"
-    if not path.exists():
-        return []
-    con = sqlite3.connect(str(path))
-    con.row_factory = sqlite3.Row
-    try:
-        return [dict(r) for r in con.execute("SELECT * FROM build_requests ORDER BY id")]
-    finally:
-        con.close()
+    return ops_rows(market["RC_MARKET_DIR"], "build_requests")
 
 
 def _open_board(browser, dashboard, scheme="dark"):

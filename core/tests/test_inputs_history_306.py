@@ -27,9 +27,8 @@ def _changes(name: str, where: str = "TRUE", params: list | None = None) -> list
 # (one add / remove row per flip, ordered by ``id``); the guarantees these tests pin are the same.
 def _stock_history(ticker: str | None = None) -> list[tuple]:
     from RevenueChaser.rcdata import ops
-    with ops.connect() as con:
-        rows = con.execute("SELECT ticker, action FROM watchlist_stock_changes ORDER BY id").fetchall()
-    return [tuple(r) for r in rows if ticker is None or r[0] == ticker]
+    return [(r["ticker"], r["action"]) for r in ops.rows("watchlist_stock_changes")
+            if ticker is None or r["ticker"] == ticker]
 
 
 def _stock_history_equals_list() -> bool:

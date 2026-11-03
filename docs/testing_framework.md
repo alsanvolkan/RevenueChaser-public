@@ -76,9 +76,13 @@ That enforcement matters because **credentials are always present at run time**:
 `.env`, and `core/config.py` calls `load_dotenv()` at import, so `os.environ` is populated the moment
 any package module loads. Nothing else stops a stray live call.
 
-**One carve-out, and only one.** When `RC_E2E=1` the socket guard permits **loopback**
-(`127.0.0.1`) so the end-to-end tier can run its local mock provider server. Everything that is not
-loopback still fails loudly — an e2e test reaching the real internet is as much a bug as a unit test
+**Two carve-outs, and only two.** When `RC_E2E=1` the socket guard permits **loopback**
+(`127.0.0.1`) so the end-to-end tier can run its local mock provider server. And when `RC_REDIS_URL`
+is set, both tiers may reach **that one host and port**: the ops state's Redis (master plan Order 3),
+a local service CI starts beside each job, not the internet. Every ops test then runs on Redis; unset,
+on `ops.sqlite`, and the Redis-only tests (`rcdata/tests/test_ops_redis.py`, `test_ops_copy.py`, the
+Redis backup tests) are skipped. A test about the SQLite file itself takes the `sqlite_ops` fixture.
+Everything else still fails loudly — an e2e test reaching the real internet is as much a bug as a unit test
 doing it. The `--live` tier is the single deliberate exception, and it is opt-in twice over
 (`./app.sh test-e2e-live`).
 

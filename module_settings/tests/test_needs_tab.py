@@ -118,10 +118,8 @@ def test_an_unreadable_log_is_one_line_and_the_catalog_still_renders():
 
 def test_the_default_build_reads_the_real_log_and_does_not_count_its_own_summaries(monkeypatch):
     """No seams: ``ops.need_reads`` against a fixture ops file, and ``needs.summary(count=False)``."""
-    ops.ensure()
-    with ops.connect() as con:
-        con.execute("INSERT INTO read_log (day, process, table_name, reads) VALUES ('2026-11-01', 'dashboard', "
-                    "'need:prices.bars', 4)")
+    ops.put_rows("read_log", [{"day": "2026-11-01", "process": "dashboard", "table_name": "need:prices.bars",
+                               "reads": 4}])
     bumped: list[str] = []
     monkeypatch.setattr(ops.read_log, "bump", bumped.append)
     m = needs_tab.build(today=TODAY)

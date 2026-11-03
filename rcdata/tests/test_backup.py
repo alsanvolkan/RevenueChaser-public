@@ -111,7 +111,7 @@ def test_no_copy_dir_skips_the_raw_copy_with_a_warning(backup_dir, caplog):
     assert "RC_MARKET_RAW_COPY_DIR" in caplog.text
 
 
-def test_s3_a_write_landing_during_the_ops_backup_does_not_fail_it(backup_dir, monkeypatch):
+def test_s3_a_write_landing_during_the_ops_backup_does_not_fail_it(sqlite_ops, backup_dir, monkeypatch):
     """The counts and the online backup are one read transaction: a write landing between them is in neither."""
     ops.enqueue("market_series", None, by="test")
     real = backup._online_backup
@@ -137,3 +137,43 @@ def test_s3_a_failed_ops_backup_does_not_block_the_market_copy(backup_dir, monke
     monkeypatch.setattr(backup, "_backup_ops", broken)
     assert backup.main(["backup"]) == 1
     assert len(list((backup_dir / "market").glob("market_*.duckdb"))) == 1
+
+
+# ── On Redis (master plan Order 3): a consistent snapshot, kept as an ops.sqlite ───────────────────────────────
+
+_on_redis = pytest.mark.skipif(not os.getenv("RC_REDIS_URL"), reason="needs a Redis at RC_REDIS_URL (CI runs one)")
+
+
+def _fill() -> None:
+    ops.enqueue("market_series", {"x": 1}, by="test")
+    ops.sync_issues("prices/serving", ["price_gap_no_action"], [("price_gap_no_action", "SPY", "price missing")])
+    ops.watch_add("stock", "AAPL", by="avo", note="pinned")
+    ops.count_calls("uw", 3)
+
+
+@_on_redis
+def test_on_redis_the_ops_backup_is_an_ops_sqlite_holding_every_row(backup_dir):
+    _fill()
+    summary = backup.run_backup()
+    assert summary["ops"].name.startswith("ops_") and summary["ops"].suffix == ".sqlite"
+    from RevenueChaser.rcdata import ops_copy
+    con = ops_copy._open_read_only(summary["ops"])
+    try:
+        for table in ops_copy.COPIED:
+            assert ops_copy._table_rows(con, table) == ops.rows(table), table
+        assert con.execute("SELECT max(version) FROM ops_schema").fetchone()[0] == ops.OPS_SCHEMA_VERSION
+    finally:
+        con.close()
+    manifest = json.loads((backup_dir / "market" / backup.MANIFEST_NAME).read_text())
+    assert manifest["files"][summary["ops"].name]["tables"]["build_issues"] == 1
+
+
+@_on_redis
+def test_on_redis_the_backup_restores_with_the_one_time_copy(backup_dir, monkeypatch, tmp_path):
+    _fill()
+    taken = backup.run_backup()["ops"]
+    want = {t: ops.rows(t) for t in ops.TABLES if t != "ops_schema"}
+    monkeypatch.setattr(config, "MARKET_DIR", tmp_path / "restored")          # an empty namespace
+    from RevenueChaser.rcdata import ops_copy
+    assert ops_copy.main(["--sqlite", str(taken)]) == 0
+    assert {t: ops.rows(t) for t in want} == want
