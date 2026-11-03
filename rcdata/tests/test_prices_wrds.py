@@ -89,6 +89,7 @@ COLUMNS = {
     ("crsp", "dsf_v2"): [c for c, _ in wrds_history.DSF],
     ("comp", "sec_divid"): [c for c, _ in wrds_history.DIVID],
     ("comp", "sec_split"): [c for c, _ in wrds_history.SPLIT],
+    ("crsp_a_stock", "stkdelists"): ["permno", "delistingdt", "deldtprc", "delret"],
 }
 
 
@@ -195,11 +196,11 @@ def test_a_backfill_asks_each_table_and_year_once_and_skips_a_partition_that_exi
     row = _backfill()
     assert row["result"] == "changed", row
     assert _asked(conn) == ["information_schema.columns",                          # the columns, checked first,
-                            "comp.sec_split",                                      # the snapshot (no CCM link),
+                            "comp.sec_split", "crsp_a_stock.stkdelists",           # the snapshots (no CCM link),
                             "comp.secd 2026", "comp.sec_divid 2026",                # then the newest year first
                             "comp.secd 2025", "crsp.dsf_v2 2025", "comp.sec_divid 2025",
                             "comp.secd 2024", "crsp.dsf_v2 2024", "comp.sec_divid 2024"]
-    assert logins == [1] and ops.calls_today("wrds") == 10
+    assert logins == [1] and ops.calls_today("wrds") == 11
     conn.queries.clear()
     assert _backfill()["result"] in ("changed", "unchanged") and conn.queries == []     # every partition exists
     secd_2024 = wrds_history.partition_path("secd", 2024)
@@ -608,7 +609,7 @@ def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
                             "params": {"as_of": "2026-11-27"}})
     assert row["result"] == "changed", row
     assert _asked(conn) == ["information_schema.columns",                    # a new day: the columns again
-                            "comp.sec_split", "comp.secd 2026", "comp.sec_divid 2026",
+                            "comp.sec_split", "crsp_a_stock.stkdelists", "comp.secd 2026", "comp.sec_divid 2026",
                             "comp.secd 2025", "crsp.dsf_v2 2025", "comp.sec_divid 2025", "crsp.dsf_v2 2024"]
     revs = _q("SELECT * FROM price_revision WHERE source = ?", [wrds_history.COMPUSTAT])
     assert [(r["security_id"], str(r["session_date"]), r["close"]) for r in revs] == [(AAPL, "2025-06-03", 202.0)]
@@ -695,7 +696,7 @@ def test_a_crsp_permission_refusal_skips_crsp_once_and_serves_compustat(refusing
     row = _backfill()
     assert row["result"] == "changed", row
     # CRSP is refused once; its later years are then never asked in this run (no query per year, no loop).
-    assert _asked(conn) == ["information_schema.columns", "comp.sec_split",
+    assert _asked(conn) == ["information_schema.columns", "comp.sec_split", "crsp_a_stock.stkdelists",
                             "comp.secd 2026", "comp.sec_divid 2026",
                             "comp.secd 2025", "crsp.dsf_v2 2025", "comp.sec_divid 2025",
                             "comp.secd 2024", "comp.sec_divid 2024"]

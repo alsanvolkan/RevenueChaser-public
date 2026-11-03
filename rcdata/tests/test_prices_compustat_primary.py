@@ -182,31 +182,42 @@ def test_a_crsp_bar_never_replaces_compustats_on_an_empty_trfd_day(monkeypatch):
     assert got == [{"close": 50.0, "source": wrds_history.COMPUSTAT}]
 
 
-def test_a_delisted_securitys_final_crsp_days_after_compustats_last_are_served(monkeypatch):
-    """OLDCO (Compustat to 4 Mar 2024, linked by CUSIP) trades on CRSP two more days and is gone before CRSP's newest
-    day: those two are served from CRSP, a day past ``DELISTED_WINDOW_DAYS`` is not. AAPL's PERMNO is still listed on CRSP's newest day, so a day Compustat lacks
-    is not a delisted fallback."""
+DELIST = "crsp_a_stock.stkdelists"
+
+
+def test_a_delisted_securitys_crsp_days_up_to_its_delisting_day_are_served(monkeypatch):
+    """OLDCO (Compustat to 4 Mar 2024, linked by CUSIP) trades on CRSP one more day; CRSP's ``stkdelists`` delists it
+    on 6 Mar at 3.0 with a delisting return (coordinator, 3 Nov 2026: CRSP's last day is one trading day after
+    Compustat's in 25 of 30 sampled ended PERMNOs, and that last dsf_v2 row has no price). The days up to the
+    delisting day are CRSP's; the delisting day's bar is ``stkdelists``' price; a later dsf_v2 row is not served. AAPL
+    has no delisting row, so a day Compustat lacks is no fallback."""
     data = _data()
     data["crsp.dsf_v2"] += [_crsp("50000", d, c, "68000010", "OLDA")
                             for d, c in (("2024-03-01", 5.0), ("2024-03-04", 5.1), ("2024-03-05", 4.0),
-                                         ("2024-03-06", 3.0), ("2024-05-01", 2.0))]   # the last: past the window
-    # AAPL's Compustat ends on 5 Jun 2025 here, its PERMNO still trades on CRSP's newest day (6 Jun).
+                                         ("2024-05-01", 2.0))]                       # the last: after its delisting
+    data["crsp.dsf_v2"] += [{**_crsp("50000", "2024-03-06", None, "68000010", "OLDA"), "dlyret": -0.25}]
+    data[DELIST] = [{"permno": "50000", "delistingdt": "2024-03-06", "deldtprc": 3.0, "delret": -0.25}]
     data["comp.secd"] = [r for r in data["comp.secd"]
                          if not (r["gvkey"] == "001690" and (r["datadate"] == JUNE[4] or r["datadate"] > "2026"))]
     _serve(monkeypatch, data)
     old = _q("SELECT session_date, close, source FROM price_bar_daily WHERE security_id = '099999:01' "
              "ORDER BY session_date")
-    assert [(str(r["session_date"]), r["source"]) for r in old] == [
-        ("2024-03-01", wrds_history.COMPUSTAT), ("2024-03-04", wrds_history.COMPUSTAT),
-        ("2024-03-05", wrds_history.CRSP), ("2024-03-06", wrds_history.CRSP)]
+    assert [(str(r["session_date"]), r["close"], r["source"]) for r in old] == [
+        ("2024-03-01", 5.0, wrds_history.COMPUSTAT), ("2024-03-04", 5.1, wrds_history.COMPUSTAT),
+        ("2024-03-05", 4.0, wrds_history.CRSP), ("2024-03-06", 3.0, wrds_history.CRSP)]
     assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = ? AND session_date = ?", [AAPL, JUNE[4]])
+    report = {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")}
+    assert report["crsp_delisting_returns"]["sessions"] == 1          # 3.0 / 4.0 - 1 = delret: no difference
+    assert report["crsp_delisting_returns"]["return_differs"] == 0
 
 
-def test_the_delisted_rule_is_one_function_with_its_pending_measurement_named():
+def test_the_delisted_rule_is_one_function_over_crsps_delisting_table():
     import inspect
-    src = inspect.getsource(wrds_history.delisted_final_days)
-    assert "TODO" in src and "measurement" in src
-    assert "stg_wrds_dsf" in wrds_history.delisted_final_days()
+    assert "TODO" not in inspect.getsource(wrds_history.delisted_final_days)     # the measurement is in
+    assert "_delisted" in wrds_history.delisted_final_days() and "stg_wrds_delist" in wrds_history.DELISTED
+    sql = wrds_history.TABLES["stkdelists"]["sql"]
+    assert sql == "SELECT permno, delistingdt, deldtprc, delret FROM crsp_a_stock.stkdelists"
+    assert "stkdelists" in wrds_history.CRSP_TABLES
 
 
 def _secd_row(gvkey, day, tic, close, cusip, trfd=1.0):
@@ -383,3 +394,24 @@ def test_a_trfd_day_after_a_day_without_trfd_is_read_without_trfd():
     """trfd on one side only is no ratio of two factors: the day is read as price (plus its distribution)."""
     got = _div_con([("2025-06-02", 100.0, 1.0, None, None, None), ("2025-06-03", 101.0, 1.0, 1.5, None, None)])
     assert got[1][0] == pytest.approx(101.0 / 100.0 - 1) and got[1][1] == "price_only"
+
+
+def _delisted(monkeypatch, dsf_days, delisting):
+    data = _data()
+    data["crsp.dsf_v2"] += [_crsp("50000", d, c, "68000010", "OLDA") for d, c in dsf_days]
+    data[DELIST] = [{"permno": "50000", "delistingdt": delisting[0], "deldtprc": delisting[1], "delret": -0.1}]
+    _serve(monkeypatch, data)
+    return (_q("SELECT session_date, close, source FROM price_bar_daily WHERE security_id = '099999:01' "
+               "ORDER BY session_date"), {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")})
+
+
+def test_a_delisting_on_compustats_last_day_keeps_compustats_bar_and_checks_delret(monkeypatch):
+    bars_, report = _delisted(monkeypatch, [("2024-03-01", 5.0), ("2024-03-04", 5.1)], ("2024-03-04", 4.59))
+    assert {r["source"] for r in bars_} == {wrds_history.COMPUSTAT}
+    assert report["crsp_delisting_returns"]["sessions"] == 1
+    assert report["crsp_delisting_returns"]["return_differs"] == 1, "Compustat's 5.1/5.0 is not delret's -10 %"
+
+
+def test_a_priced_dsf_row_on_the_delisting_day_is_that_days_bar(monkeypatch):
+    bars_, _ = _delisted(monkeypatch, [("2024-03-04", 5.1), ("2024-03-05", 3.5)], ("2024-03-05", 3.0))
+    assert [(str(r["session_date"]), r["close"]) for r in bars_][-1] == ("2024-03-05", 3.5)

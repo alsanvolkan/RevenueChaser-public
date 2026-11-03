@@ -278,9 +278,10 @@ CREATE OR REPLACE TEMP TABLE _act AS
     SELECT best.security_id, a.*, '{actions}' AS source FROM a JOIN best USING (action_id);
 CREATE OR REPLACE TEMP TABLE _permno_link AS {link};
 CREATE OR REPLACE TEMP TABLE _gvkey_alias AS {alias};
+CREATE OR REPLACE TEMP TABLE _delisted AS {delisted};
 CREATE OR REPLACE TEMP TABLE _crsp_fallback AS {fallback};
 CREATE OR REPLACE TEMP TABLE _hist_all AS
-    SELECT * FROM ({crsp}) UNION ALL BY NAME SELECT * FROM ({comp});
+    SELECT * FROM ({crsp}) UNION ALL BY NAME SELECT * FROM ({comp}) UNION ALL BY NAME SELECT * FROM ({delist});
 """
 # The kind of an action for "the same action on the same day" (a split and a reverse split are one kind).
 ACTION_KIND = ("CASE WHEN {a}.action_type IN ('forward_split', 'reverse_split') THEN 'split' "
@@ -325,7 +326,8 @@ class PricesServing:
         _spine(con)
         con.execute(BUILD_SQL.format(bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
                                      comp=wrds_history.COMP_BARS, link=wrds_history.PERMNO_LINK,
-                                     alias=wrds_history.GVKEY_ALIAS, fallback=wrds_history.CRSP_FALLBACK))
+                                     alias=wrds_history.GVKEY_ALIAS, fallback=wrds_history.CRSP_FALLBACK,
+                                     delist=wrds_history.DELIST_BARS, delisted=wrds_history.DELISTED))
         self._link_note(ctx, con, found)
         counts = {}
         cols = ", ".join(c for c, _ in PRICE_BAR)
@@ -506,7 +508,7 @@ class PricesServing:
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _hret AS
             WITH d AS (SELECT security_id, ex_date, sum(amount) AS amount FROM corporate_action
                        WHERE applied AND action = 'cash_dividend' GROUP BY ALL),
-            x AS (SELECT h.source, h.security_id, h.session_date, h.own_return,
+            x AS (SELECT h.source, h.security_id, h.session_date, h.own_return, h.return_basis,
                          h.close * coalesce(a.split_factor, 1) AS sc,
                          coalesce(d.amount, 0) * coalesce(a.split_factor, 1) AS dv
                   FROM _hist_all h {factor_join('a', 'h.security_id', 'h.session_date')}
@@ -514,7 +516,7 @@ class PricesServing:
             y AS (SELECT *, lag(sc) OVER w AS prev_sc, lag(session_date) OVER w AS prev_day FROM x
                   WINDOW w AS (PARTITION BY source, security_id ORDER BY session_date))
             -- The economic day return: the close plus the dividend over the previous close, in one share basis.
-            SELECT source, security_id, session_date, own_return, (sc + dv) / prev_sc - 1 AS ours FROM y
+            SELECT source, security_id, session_date, own_return, return_basis, (sc + dv) / prev_sc - 1 AS ours FROM y
             WHERE prev_sc > 0 AND own_return IS NOT NULL AND date_diff('day', prev_day, session_date) <= 7""")
         side = {"crsp": f"SELECT security_id, session_date, close FROM _hist_all WHERE source = '{wrds_history.CRSP}'",
                 "compustat": ("SELECT security_id, session_date, close FROM _hist_all "
@@ -528,12 +530,26 @@ class PricesServing:
                 "FROM ({x}) x JOIN ({y}) y USING (security_id, session_date) WHERE y.close > 0")
         own = ("SELECT '{name}', count(DISTINCT security_id), count(*), CAST(NULL AS INTEGER), CAST(NULL AS DOUBLE), "
                f"count(*) FILTER (WHERE abs(ours - own_return) > {TOLERANCE}), max(abs(ours - own_return)), "
-               "min(session_date), max(session_date) FROM _hret WHERE source = '{source}'")
+               "min(session_date), max(session_date) FROM _hret WHERE source = '{source}' AND {basis}")
         parts = []
+        # The store's total-return day return on each delisting day, whichever source served it, against delret.
+        delisting = f"""SELECT 'crsp_delisting_returns', count(DISTINCT x.security_id), count(*), CAST(NULL AS INTEGER),
+                CAST(NULL AS DOUBLE), count(*) FILTER (WHERE abs(r.ours - x.delret) > {TOLERANCE}),
+                max(abs(r.ours - x.delret)), min(x.delistingdt), max(x.delistingdt)
+            FROM _delisted x JOIN (
+                SELECT security_id, session_date, tc / lag(tc) OVER w - 1 AS ours
+                FROM (SELECT b.security_id, b.session_date, b.close * coalesce(a.tr_factor, 1) AS tc
+                      FROM price_bar_daily b {factor_join('a', 'b.security_id', 'b.session_date')}
+                      WHERE b.security_id IN (SELECT security_id FROM _delisted) AND b.close > 0)
+                WINDOW w AS (PARTITION BY security_id ORDER BY session_date)) r
+                ON r.security_id = x.security_id AND r.session_date = x.delistingdt
+            WHERE x.delret IS NOT NULL AND r.ours IS NOT NULL"""
         for name in wrds_history.COMPARISONS:
-            if name.endswith("_returns"):
+            if name == "crsp_delisting_returns":
+                parts.append(delisting)
+            elif name.endswith("_returns"):
                 source = wrds_history.CRSP if name.startswith("crsp") else wrds_history.COMPUSTAT
-                parts.append(own.format(name=name, source=source))
+                parts.append(own.format(name=name, source=source, basis="return_basis IS DISTINCT FROM 'delret'"))
             else:
                 x, y = name.split("_vs_")
                 parts.append(pair.format(name=name, x=side[x], y=side[y]))

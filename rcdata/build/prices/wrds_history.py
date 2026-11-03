@@ -118,6 +118,10 @@ DSF = [("permno", "TEXT"), ("dlycaldt", "DATE"), ("dlyprc", "DOUBLE"), ("dlyopen
 DIVID = [("gvkey", "TEXT"), ("iid", "TEXT"), ("datadate", "DATE"), ("div", "DOUBLE"), ("divd", "DOUBLE"),
          ("divsp", "DOUBLE"), ("curcddv", "TEXT"), ("paydate", "DATE"), ("recorddate", "DATE")]
 SPLIT = [("gvkey", "TEXT"), ("iid", "TEXT"), ("datadate", "DATE"), ("split", "DOUBLE")]
+# CRSP's delisting table (CIZ; the coordinator's WRDS access inventory, 3 Nov 2026: 29,833 rows, 1926-02-24 to
+# 2025-12-30): the delisting day, its price and its return. The legacy dsedelist ends 2024-12-31 and is not asked;
+# the *type code columns are not asked either (no comment defines their values).
+DELIST = [("permno", "TEXT"), ("delistingdt", "DATE"), ("deldtprc", "DOUBLE"), ("delret", "DOUBLE")]
 REVISION = [("source", "TEXT"), ("security_key", "TEXT"), ("session_date", "DATE"), ("symbol", "TEXT"),
             ("open", "DOUBLE"), ("high", "DOUBLE"), ("low", "DOUBLE"), ("close", "DOUBLE"), ("volume", "DOUBLE"),
             ("fetched_at", "DOUBLE"), ("run_id", "TEXT"), ("revised_at", "DOUBLE"), ("revised_by", "TEXT")]
@@ -144,19 +148,23 @@ TABLES: dict[str, dict] = {
                   "sql": "SELECT " + ", ".join(c for c, _ in DIVID) + " FROM comp.sec_divid WHERE {range}"},
     "sec_split": {"wrds": "comp.sec_split", "schema": SPLIT, "key": ["gvkey", "iid", "datadate"], "date": None,
                   "needed": ("split",), "sql": "SELECT " + ", ".join(c for c, _ in SPLIT) + " FROM comp.sec_split"},
+    "stkdelists": {"wrds": "crsp_a_stock.stkdelists", "schema": DELIST, "key": ["permno", "delistingdt"],
+                   "date": None, "needed": ("delistingdt",),
+                   "sql": "SELECT " + ", ".join(c for c, _ in DELIST) + " FROM crsp_a_stock.stkdelists"},
 }
 YEARLY = ("secd", "dsf", "sec_divid")
-SNAPSHOTS = ("sec_split",)
+SNAPSHOTS = ("sec_split", "stkdelists")
 # CRSP's table: a subscription without CRSP answers it with a permission refusal, and the history is then
 # Compustat's alone (``_skip_crsp``).
-CRSP_TABLES = ("dsf",)
+CRSP_TABLES = ("dsf", "stkdelists")
 # The WRDS columns each query names (its SELECT list and filters), checked against ``information_schema.columns``
 # before any data is asked (``_check_columns``): a name WRDS does not have fails the run on that one query, not on a
 # data query after the Duo push.
 ASKED_COLUMNS = {"secd": [c for c, _ in SECD], "dsf": [c for c, _ in DSF],
-                 "sec_divid": [c for c, _ in DIVID], "sec_split": [c for c, _ in SPLIT]}
+                 "sec_divid": [c for c, _ in DIVID], "sec_split": [c for c, _ in SPLIT],
+                 "stkdelists": [c for c, _ in DELIST]}
 STAGING = {"secd": "stg_wrds_secd", "dsf": "stg_wrds_dsf", "sec_divid": "stg_wrds_divid",
-           "sec_split": "stg_wrds_split"}
+           "sec_split": "stg_wrds_split", "stkdelists": "stg_wrds_delist"}
 
 # Compustat's adjusted price and its day return (WRDS: total return = (prccd / ajexdi * trfd) over the previous
 # day's, minus 1), over a window ``w`` of one security by date. Measured on homesrv against CRSP's ``dlyret`` on
@@ -181,7 +189,9 @@ COMP_RETURN_BASIS = (f"CASE WHEN {_TRFD_BOTH} OR lag(run_id) OVER w IS NULL THEN
                      f"WHEN {COMP_DIV} > 0 THEN 'price_dividend' ELSE 'price_only' END")
 
 # The rows of the difference report (``wrds_price_diff``), one per comparison and build.
-COMPARISONS = ("crsp_vs_compustat", "compustat_vs_alpaca", "crsp_vs_alpaca", "compustat_returns", "crsp_returns")
+# ``crsp_delisting_returns``: the store's return on each served delisting day against ``stkdelists``' ``delret``.
+COMPARISONS = ("crsp_vs_compustat", "compustat_vs_alpaca", "crsp_vs_alpaca", "compustat_returns", "crsp_returns",
+               "crsp_delisting_returns")
 
 
 def years(table: str, as_of: date, first: int | None = None) -> list[int]:
@@ -576,31 +586,55 @@ LINKED_BY_ID = "l.how <> 'ticker'"
 # The Compustat security of a ``comp.secd`` row, as ``COMP_BARS`` keys it.
 _COMP_ID = ("coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = s.gvkey || ':' || s.iid), "
             "s.gvkey || ':' || s.iid)")
-# Placeholder for ``delisted_final_days`` until the coordinator's measurement is in (see its TODO).
-DELISTED_WINDOW_DAYS = 31
+# A delisted security: an identifier-linked PERMNO with a ``stkdelists`` row whose delisting day is on or after its
+# security's last priced ``comp.secd`` day (on it in 5 of the 30 sampled: Compustat's bar serves that day, and its
+# ``delret`` is still checked).
+# ``serving`` makes it the temp table ``_delisted`` after ``_gvkey_alias``.
+DELISTED = f"""
+    SELECT x.permno, l.security_id, x.delistingdt, x.deldtprc, x.delret, c.last AS comp_last
+    FROM stg_wrds_delist x JOIN _permno_link l USING (permno)
+    -- the last priced day per gvkey:iid first (a hash aggregate), then the alias: not a lookup per secd row
+    JOIN (SELECT coalesce(a.security_id, g.gid) AS security_id, max(g.last) AS last
+          FROM (SELECT gvkey || ':' || iid AS gid, max(datadate) AS last FROM stg_wrds_secd WHERE prccd > 0
+                GROUP BY gvkey, iid) g LEFT JOIN _gvkey_alias a ON a.gid = g.gid GROUP BY 1) c
+        ON c.security_id = l.security_id
+    WHERE {LINKED_BY_ID} AND x.delistingdt >= c.last"""
 
 
-def delisted_final_days(window_days: int = DELISTED_WINDOW_DAYS) -> str:
+def delisted_final_days() -> str:
     """The CRSP days of a delisted security that Compustat does not price: ``(permno, session_date, why)``.
 
-    A PERMNO is delisted when its last ``dsf_v2`` day is before CRSP's newest staged day; its final days are those
-    after its security's last priced ``comp.secd`` day, at most ``window_days`` calendar days after it. A security
+    The coordinator's measurement (homesrv, 3 Nov 2026; 30 random of 4,422 CUSIP-matched ended PERMNOs): CRSP's last
+    day is one trading day after Compustat's last in 25 of 30 (the same day in 5), and that last dsf_v2 row has no
+    price but a return Compustat cannot give (30 of 30). CRSP's ``stkdelists`` names the delisting day, its price
+    and its return (``delret``), so the final days are the dsf_v2 days after Compustat's last priced day up to the
+    delisting day, and the delisting day's own bar is ``DELIST_BARS``' where dsf_v2 has no price that day. A security
     Compustat never priced has no final days here (its history is CRSP's alone and is not served)."""
-    # TODO(coordinator): the delisted-names measurement is pending. Its final numbers set how many days after
-    # Compustat's last priced day are CRSP's (``window_days`` is a placeholder) and whether dsf_v2's final
-    # ``dlyret`` carries the delisting return to serve; until then this rule serves the bars as they are.
     return f"""
     SELECT d.permno, d.dlycaldt AS session_date, 'delisted' AS why
-    FROM stg_wrds_dsf d JOIN _permno_link l USING (permno)
-    JOIN (SELECT permno, max(dlycaldt) AS last FROM stg_wrds_dsf GROUP BY permno) p USING (permno)
-    JOIN (SELECT {_COMP_ID} AS security_id, max(datadate) AS last FROM stg_wrds_secd s WHERE prccd > 0 GROUP BY 1) c
-        ON c.security_id = l.security_id
-    WHERE {LINKED_BY_ID} AND p.last < (SELECT max(dlycaldt) FROM stg_wrds_dsf)
-      AND d.dlycaldt > c.last AND d.dlycaldt <= c.last + INTERVAL {int(window_days)} DAY"""
+    FROM stg_wrds_dsf d JOIN _delisted x USING (permno)
+    WHERE d.dlycaldt > x.comp_last AND d.dlycaldt <= x.delistingdt"""
+
+
+# The delisting day's bar from ``stkdelists`` (close ``abs(deldtprc)``), priority 3: it serves the day only where
+# neither Compustat (1) nor a priced dsf_v2 row (2) has one; ``serving`` adds it to ``_hist_all`` as a CRSP fallback
+# row. One with no delisting price has no bar. ``delret`` is checked against the store's return of the delisting day
+# (``wrds_price_diff``'s ``crsp_delisting_returns``), whichever source served that day.
+# shortcut: the store has no return column, so ``delret`` is a cross-check, not a served value; a served return column
+# is a schema change and its own PR.
+DELIST_BARS = f"""
+    SELECT x.security_id, x.delistingdt AS session_date, CAST(NULL AS TEXT) AS symbol, CAST(NULL AS TEXT) AS cik,
+           CAST(NULL AS DOUBLE) AS open, CAST(NULL AS DOUBLE) AS high, CAST(NULL AS DOUBLE) AS low,
+           abs(x.deldtprc) AS close, CAST(NULL AS DOUBLE) AS volume, CAST(NULL AS DOUBLE) AS vwap,
+           CAST(NULL AS BIGINT) AS trade_count, CAST(NULL AS DOUBLE) AS shares_outstanding, '{CRSP}' AS source,
+           d.source_as_of, d.fetched_at, d.run_id, x.delret AS own_return, 'delret' AS return_basis, 3 AS priority,
+           'delisting_day' AS fallback
+    FROM _delisted x JOIN stg_wrds_delist d ON d.permno = x.permno AND d.delistingdt = x.delistingdt
+    WHERE x.deldtprc IS NOT NULL AND x.deldtprc <> 0"""
 
 
 # The CRSP days served (``serving`` makes it the temp table ``_crsp_fallback`` after ``_gvkey_alias``): a delisted
-# security's final days (``delisted_final_days``) only. A day Compustat prices without ``trfd`` is Compustat's
+# security's final days (``delisted_final_days``) only, and its delisting day's bar (``DELIST_BARS``). A day Compustat prices without ``trfd`` is Compustat's
 # (``COMP_RETURN``): the coordinator's measurement of 3 Nov 2026 dropped the "empty trfd -> CRSP dlyret" step.
 CRSP_FALLBACK = delisted_final_days()
 
