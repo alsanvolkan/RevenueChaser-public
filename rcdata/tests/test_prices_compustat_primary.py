@@ -584,3 +584,25 @@ def test_a_dividend_only_sec_divid_holds_flags_its_day_and_is_in_its_return():
     got = _listed_returns([("2025-06-02", 100.0, None), ("2025-06-03", 99.0, None)], [("2025-06-03", 0.5)])
     assert got[0] == (None, None)
     assert got[1][0] == pytest.approx((99.0 + 0.5) / 100.0 - 1) and got[1][1] == "price_dividend"
+
+
+def test_a_sec_split_on_the_previous_session_is_its_own_split_not_the_ajexdi_step():
+    """Review of #382 (a surviving mutant): the dedupe window is (previous session, the day]; a comp.sec_split of the
+    previous session is that day's own split, so the next day's ajexdi step is still one."""
+    con = _secd_con([("2025-01-02", 100.0, 2.0, "r"), ("2025-01-03", 51.0, 1.0, "r")])
+    con.execute("INSERT INTO stg_wrds_split VALUES ('001690', '01', '2025-01-02', 2.0)")
+    got = con.execute(f"SELECT ex_date FROM ({wrds_history.AJEXDI_SPLITS})").fetchall()
+    assert got == [(date(2025, 1, 3),)]
+
+
+@pytest.mark.parametrize("comp_day, crsp_only", [("2025-06-07", False), ("2025-06-08", True)])
+def test_a_crsp_split_within_split_same_days_of_compustats_is_the_same_split(monkeypatch, comp_day, crsp_only):
+    """Review of #382 (a surviving mutant, SPLIT_SAME_DAYS 3 -> 0): Compustat dates the split 3 days after CRSP's
+    step (the same split) or 4 days (another one: CRSP's is then a split_only_crsp issue)."""
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    data = _split_unknown_to_compustat(_data())
+    data["comp.sec_split"] = [{"gvkey": "001690", "iid": "01", "datadate": comp_day, "split": 2.0}]
+    _serve(monkeypatch, data)
+    kinds = {i["key"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1] if i["kind"] == "split_only_crsp"}
+    assert (f"{AAPL}:{JUNE[2]}" in kinds) is crsp_only
