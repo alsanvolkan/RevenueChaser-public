@@ -142,16 +142,18 @@ def test_the_yahoo_market_series_waits_for_the_yfinance_window(yf_waits, tmp_pat
 
 # ── Review of PR #380: the box as a whole stays inside each shared limit ─────────────────────────────────────────
 
-def test_every_sec_fallback_takes_half_the_limit_so_two_processes_stay_under_it():
-    """The dashboard and the builder both ask SEC. When the shared bucket cannot be used each paces itself alone,
-    so each in-process spacing is at most half of the SEC's 10 a second."""
+def test_every_sec_fallback_takes_its_share_so_every_sec_process_together_stays_under_it():
+    """Review rounds 1 and 2 of #380: five processes can ask SEC at once (the builder, the dashboard, and the
+    RC-ValueChain-Sync, RC-Relatedness-OffPeak and RC-Screeners-Daily automations). When the shared bucket cannot be
+    used each paces itself alone, so each in-process spacing is at most a fifth of the SEC's 10 a second."""
     from RevenueChaser.core import sec_throttle
     from RevenueChaser.core.providers import sec_edgar
     from RevenueChaser.rcdata.build.fundamentals import common
     from RevenueChaser.rcdata.build.ownership import sec
     from RevenueChaser.rcdata.build.prices import cover_shares
     assert sec_throttle.LIMIT == caps.WINDOWS["sec"][0]
-    assert 2 * sec_throttle.FALLBACK_RATE <= sec_throttle.LIMIT
+    assert len(sec_throttle.SEC_PROCESSES) == 5
+    assert 5 * sec_throttle.FALLBACK_RATE <= sec_throttle.LIMIT
     assert sec.PER_SECOND <= sec_throttle.FALLBACK_RATE
     for interval in (sec_edgar._THROTTLE_INTERVAL, cover_shares.SEC_INTERVAL_S, common.SEC_INTERVAL_S):
         assert 1 / interval <= sec_throttle.FALLBACK_RATE + 1e-9
@@ -187,3 +189,24 @@ def test_every_openfigi_map_request_takes_a_token_of_the_key_bucket(monkeypatch)
     assert tokens == [1, 1]
     monkeypatch.setattr(openfigi, "pace", lambda: False)
     assert pacer._fallback.limit == caps.WINDOWS["openfigi"][0] // 2
+
+
+def test_the_builder_s_sec_paths_space_themselves_only_when_the_bucket_falls_back():
+    """On the bucket a path sends at the bucket's pace (8 a second for the box); its own spacing is the fallback."""
+    from RevenueChaser.core import sec_throttle
+    from RevenueChaser.rcdata.build.fundamentals import common
+    from RevenueChaser.rcdata.build.ownership import sec
+    for shared, spaced in ((lambda: True, False), (lambda: False, True)):
+        now, slept = [0.0], []
+
+        def sleep(s):
+            slept.append(s)
+            now[0] += s
+        ctx = base.RunContext(run_id="r", dataset="d", clock=lambda: now[0], sleep=sleep)
+        for pacer in (sec.Pacer(ctx, shared=shared),
+                      common.Spacing(common.SEC_INTERVAL_S, ctx.clock, ctx.sleep, shared=shared)):
+            slept.clear()
+            for _ in range(3):
+                pacer.wait()
+            assert bool(slept) is spaced, (pacer, shared())
+            assert all(s <= 1 / sec_throttle.FALLBACK_RATE + 1e-9 for s in slept)

@@ -275,7 +275,7 @@ class ProviderWords:
 #: CI, so the screen never shows a bare id.
 PROVIDERS: dict[str, ProviderWords] = {
     "sec": ProviderWords("SEC", "the ticker file, company facts, filings, 13F, Form 4, 13D/G, fails to deliver, N-CEN",
-                         "one shared bucket, 8 a second, for every SEC caller · 5 a second each when it falls back",
+                         "one shared bucket, 8 a second, for every SEC caller · 2 a second per process when it falls back",
                          "10 a second per User-Agent (fair access)"),
     "uw": ProviderWords("Unusual Whales", "options, SPX, float, financials", "a budget a run · each endpoint's own page size",
                         "100,000 a day (owner-marked avo 2026-11-02)"),

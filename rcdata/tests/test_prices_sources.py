@@ -234,14 +234,14 @@ def test_a_stored_filing_is_never_asked_again(http_mock, monkeypatch):
     assert "submissions/CIK0001067983.json" in " ".join(asked)            # the fill moves on
 
 
-def test_sec_requests_are_spaced_at_most_five_a_second(http_mock, monkeypatch):
+def test_without_the_bucket_sec_requests_are_spaced_at_the_fallback_share(http_mock, monkeypatch):
     monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 2)
-    monkeypatch.setattr("RevenueChaser.core.sec_throttle.pace", lambda: True)
+    monkeypatch.setattr("RevenueChaser.core.sec_throttle.pace", lambda: False)
     _sec_routes(http_mock)
     sleeps = []
     cover_shares.DATASET.fetch(_ctx(cover_shares.NAME, sleeps=sleeps), TUE)
     n = len(http_mock.requests)
-    assert n > 5 and len(sleeps) == n - 1 and min(sleeps) >= 0.2 - 1e-9    # at most 5 a second (half the SEC's 10), every gap
+    assert n > 5 and len(sleeps) == n - 1 and min(sleeps) >= cover_shares.SEC_INTERVAL_S - 1e-9    # every gap
 
 
 def test_cover_facts_of_an_instance():

@@ -90,7 +90,7 @@ def test_the_sec_pacer_keeps_its_requests_apart():
         now[0] += s
 
     ctx = base.RunContext(run_id="r", dataset="d", clock=lambda: now[0], sleep=sleep)
-    pacer = sec.Pacer(ctx, shared=lambda: True)
+    pacer = sec.Pacer(ctx, shared=lambda: False)           # the bucket falls back: the run's own spacing
     times = []
     for _ in range(10):
         pacer.wait()

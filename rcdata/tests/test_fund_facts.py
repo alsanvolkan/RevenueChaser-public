@@ -200,7 +200,8 @@ def test_the_backfill_reads_every_tier_a_company_once_and_serves_its_facts(sec):
     assert len(sec.calls("companyfacts")) == 4                         # resumable: nobody is read twice
 
 
-def test_requests_to_the_sec_are_spaced_at_most_five_a_second(sec):
+def test_without_the_bucket_requests_to_the_sec_are_spaced_at_the_fallback_share(sec, monkeypatch):
+    monkeypatch.setattr(companyfacts.common.sec_throttle, "pace", lambda: False)
     _answers(sec)
     slept = []
     fx.run(companyfacts.NAME, mode="backfill", to="2026-10-28", sleep=slept.append, clock=lambda: 100.0)

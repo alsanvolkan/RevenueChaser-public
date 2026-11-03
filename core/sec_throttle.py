@@ -41,9 +41,11 @@ logger = logging.getLogger(__name__)
 LIMIT = 10
 # The sustained rate. The only knob; the burst is derived from the ceiling (see ``_burst``).
 RATE = 8
-# Each process's own pace when this bucket cannot be used: two processes ask SEC on the box (the dashboard and the
-# builder), so each falling back at half the ceiling keeps the box under it.
-FALLBACK_RATE = LIMIT / 2
+# The processes that can ask SEC at the same time on the box. When this bucket cannot be used each paces itself at
+# its share of the ceiling (``FALLBACK_RATE``), so all of them falling back together stay under it. A new SEC caller
+# that runs as its own process belongs on this list.
+SEC_PROCESSES = ("RC-Build", "the dashboard", "RC-ValueChain-Sync", "RC-Relatedness-OffPeak", "RC-Screeners-Daily")
+FALLBACK_RATE = LIMIT / len(SEC_PROCESSES)
 
 # How long to wait for the OS lock before giving the caller the in-process fallback.
 # A live critical section is a read and a write; anything longer means the lock is stuck.
@@ -72,6 +74,15 @@ def _log_once(kind: str, message: str, *args) -> None:
 def _burst(rate: float) -> float:
     """Tokens a full bucket holds: what the ceiling leaves above the sustained rate (at least 1)."""
     return max(1.0, float(LIMIT) - float(rate))
+
+
+def _owner(path: Path) -> str:
+    """Who owns the bucket file, for the fallback warning: a file another user created (``sudo``) refuses this one."""
+    try:
+        st = path.stat()
+    except OSError:
+        return "no file"
+    return f"uid {st.st_uid}, mode {st.st_mode & 0o777:o}"
 
 
 def bucket_path(name: str = _NAME) -> Path:
@@ -146,7 +157,7 @@ def _reserve(now: float, name: str = _NAME, rate: float | None = None, burst: fl
     path = bucket_path() if name == _NAME else bucket_path(name)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_CREAT | os.O_RDWR)
+        fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o660)   # the box's users of the bucket share its group
     except OSError:
         return None
     try:
@@ -178,8 +189,8 @@ def pace() -> bool:
         with _GUARD:
             wait = _reserve(time.monotonic())
         if wait is None:
-            _log_once("fallback", "SEC pacing: the shared bucket %s cannot be used; this process paces itself "
-                      "(in-process, %g/s)", bucket_path(), FALLBACK_RATE)
+            _log_once("fallback", "SEC pacing: the shared bucket %s (%s) cannot be used; this process paces itself "
+                      "(in-process, %g/s)", bucket_path(), _owner(bucket_path()), FALLBACK_RATE)
             return False
         _log_once("shared", "SEC pacing: shared bucket %s (rate %s/s, burst %s)", bucket_path(), RATE, _burst(RATE))
         if wait > 0:
@@ -207,4 +218,4 @@ def shared_pace(name: str, rate: float, burst: float) -> bool:
         return False
 
 
-__all__ = ["FALLBACK_RATE", "LIMIT", "RATE", "bucket_path", "pace", "shared_pace"]
+__all__ = ["FALLBACK_RATE", "SEC_PROCESSES", "LIMIT", "RATE", "bucket_path", "pace", "shared_pace"]

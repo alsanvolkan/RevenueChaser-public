@@ -7,8 +7,8 @@ fetch asks nothing and the build serves empty tables.
 
 **The SEC.** Every SEC request carries ``RC_SEC_USER_AGENT`` ("Name email", the SEC's rule) when it is set, else the
 builder's own User-Agent with ``RC_HTTP_CONTACT``; each request takes a token of ``core/sec_throttle.py``'s
-box-wide bucket (every SEC caller's, 8 a second against the SEC's 10, ``caps.WINDOWS``) and is spaced ``SEC_INTERVAL_S``
-apart, 5 a second: half the 10, this process's share when the bucket cannot be used.
+box-wide bucket (every SEC caller's, 8 a second against the SEC's 10, ``caps.WINDOWS``); when it cannot be used the
+requests are spaced ``SEC_INTERVAL_S`` apart, this process's share (``sec_throttle.FALLBACK_RATE``).
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from . import KIND
 
 SEC = "sec"
 SEC_UA_ENV = "RC_SEC_USER_AGENT"
-SEC_INTERVAL_S = 1 / sec_throttle.FALLBACK_RATE   # 5/s: half the SEC's 10/s, the share if the bucket falls back
+SEC_INTERVAL_S = 1 / sec_throttle.FALLBACK_RATE   # this process's share of the SEC's 10/s if the bucket falls back
 META_SUFFIX = ".meta.json"
 _DIGITS = re.compile(r"^\d{1,10}$")
 
@@ -60,8 +60,8 @@ def norm_cik(value) -> str | None:
 
 
 class Spacing:
-    """At least ``interval`` seconds between two calls: ``wait()`` before each one sleeps the rest of the gap, then
-    takes one token of ``shared`` when it is given (the box-wide SEC bucket)."""
+    """One token of ``shared`` (the box-wide SEC bucket) before each call when it is given and can be used; otherwise
+    at least ``interval`` seconds between two calls."""
 
     def __init__(self, interval: float, clock: Callable[[], float], sleep: Callable[[float], Any],
                  shared: Callable[[], Any] | None = None):
@@ -69,12 +69,11 @@ class Spacing:
         self._last: float | None = None
 
     def wait(self) -> None:
-        if self._last is not None:
+        on_bucket = self._shared is not None and self._shared()
+        if not on_bucket and self._last is not None:
             gap = self.interval - (self._clock() - self._last)
             if gap > 0:
                 self._sleep(gap)
-        if self._shared is not None:
-            self._shared()
         self._last = self._clock()
 
 
