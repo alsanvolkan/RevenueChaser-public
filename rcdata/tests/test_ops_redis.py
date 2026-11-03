@@ -182,3 +182,55 @@ def test_sync_issues_keeps_open_rows_and_resolves_only_its_kinds_at_scale():
     assert n == 2991 and [r["kind"] for r in newest] == ["other_kind", "price_gap_no_action"]
     assert ops.open_issue_kinds("prices/serving") == [{"kind": "price_gap_no_action", "count": 2990},
                                                       {"kind": "other_kind", "count": 1}]
+
+
+def test_a_step_that_keeps_conflicting_gives_up_as_a_busy_store(monkeypatch):
+    """Review S1: the optimistic retry is bounded, with a backoff; then WatchError, which callers treat as busy."""
+    from RevenueChaser.rcdata import ops_redis
+    monkeypatch.setattr(ops_redis, "_backoff", lambda attempt: None)     # no sleeping in the test
+    tries = []
+
+    def always_raced():
+        tries.append(1)
+        ops_redis._client().incr(ops_redis._key("read_log", "v"))       # another writer, every time
+        return None, lambda p: p.ping()
+    with pytest.raises(ops.BUSY_ERRORS):
+        ops_redis._transaction(["read_log"], always_raced)
+    assert len(tries) == ops_redis.MAX_ATTEMPTS
+
+
+def test_the_backoff_grows_and_has_jitter():
+    from RevenueChaser.rcdata import ops_redis
+    waits = [ops_redis._backoff_s(a) for a in range(ops_redis.MAX_ATTEMPTS)]
+    assert all(0 < w <= ops_redis.BACKOFF_MAX_S for w in waits)
+    assert max(waits[-5:]) > max(waits[:2])
+    assert len({ops_redis._backoff_s(5) for _ in range(20)}) > 1          # jitter: two racing writers do not lock-step
+
+
+def test_the_snapshot_finishes_under_a_steady_writer():
+    """Review S1: 3,000 check rows and a writer every 20 ms; a WATCHed read never finished (106 tries in 15 s)."""
+    import time
+    from RevenueChaser.rcdata import ops_redis
+    ops.put_rows("dataset_check", [{"id": i, "dataset": "d", "checked_on": "2026-11-02", "result": "changed"}
+                                   for i in range(1, 3001)])
+    stop = threading.Event()
+
+    def writer():
+        while not stop.is_set():
+            ops.count_calls("uw", 1)
+            ops.enqueue("x", None, by="writer")
+            time.sleep(0.02)
+    t = threading.Thread(target=writer)
+    t.start()
+    try:
+        time.sleep(0.1)
+        t0 = time.monotonic()
+        taken = ops_redis.snapshot()
+        took = time.monotonic() - t0
+    finally:
+        stop.set()
+        t.join()
+    assert took < 5 and len(taken["dataset_check"]) == 3000
+    ids = [r["id"] for r in taken["build_requests"]]
+    assert ids == list(range(1, len(ids) + 1))                          # one moment: no request missing in between
+    assert taken["provider_calls_daily"][0]["calls"] == len(ids)         # and the counter of that same moment

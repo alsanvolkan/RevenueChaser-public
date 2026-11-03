@@ -1038,7 +1038,8 @@ same answers. The Redis is the `redis` service of the root `docker-compose.yml`:
 market root; each row is a hash `<ns>:<table>:row:<primary key>` (NULL is a missing field, the column types are the
 SQLite DDL's), each table a sorted set of its keys, with the lookups the reads need (the active queue, each
 dataset's checks, the open issues per dataset and kind). What SQLite did in one `BEGIN IMMEDIATE` transaction is a
-`WATCH` of the tables touched, the reads, and one `MULTI`/`EXEC` that runs again when someone else wrote meanwhile.
+`WATCH` of the tables touched, the reads, and one `MULTI`/`EXEC` that runs again when someone else wrote meanwhile
+(at most 25 times, with a jittered backoff; then the store reads as busy).
 A caller that waits on a busy store catches `ops.BUSY_ERRORS` (a locked file, a Redis that does not answer).
 `python -m RevenueChaser.rcdata.ops_copy` copies `ops.sqlite` into an empty namespace once: read-only on the file,
 `--dry-run` counts per table and per open issue kind, a namespace with keys is refused unless `--force`, every row is
@@ -1146,7 +1147,7 @@ anyway (PR #222).
 
 **Backup.** `python -m RevenueChaser.rcdata backup` writes under `<RAW_STORE_BACKUP_DIR>/market/` and refuses an empty
 `RAW_STORE_BACKUP_DIR` (exit 2, nothing written): the ops state as `ops_<stamp>.sqlite` (on `ops.sqlite`, through
-SQLite's online backup API; on Redis, a snapshot of every table read under one `WATCH`, written into a new ops file
+SQLite's online backup API; on Redis, a snapshot of every table read by one Lua script, so at one moment (0.31 s for 30,000 issue rows), written into a new ops file
 and compared with it row for row, so it restores with `ops_copy --sqlite <copy>`), each serving file
 copied and verified by row count and `sum(hash(row))` per table before its rename, the sha256 of every copy in
 `.manifest.json`, the newest 5 kept per kind. Then the raw files of the last 35 days go to `RC_MARKET_RAW_COPY_DIR`

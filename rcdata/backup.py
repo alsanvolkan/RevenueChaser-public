@@ -4,8 +4,8 @@ Into ``<RAW_STORE_BACKUP_DIR>/market/`` (an empty ``RAW_STORE_BACKUP_DIR`` is re
 
 - ``ops_<UTC stamp>.sqlite``: the ops state. On ``ops.sqlite``, SQLite's online backup API, so a copy taken while the
   dashboard or the builder writes is consistent; checked with ``PRAGMA integrity_check`` and the row count of every
-  table against the source. On Redis (``RC_REDIS_URL``, master plan Order 3), a snapshot of every table read under one
-  ``WATCH`` (read again if anything was written meanwhile), written into a new ops.sqlite and checked row for row
+  table against the source. On Redis (``RC_REDIS_URL``, master plan Order 3), a snapshot of every table read by one Lua
+  script (one moment, whatever else writes), written into a new ops.sqlite and checked row for row
   against the snapshot. The same file format either way, so a Redis backup restores with
   ``python -m RevenueChaser.rcdata.ops_copy --sqlite <copy>`` (into an empty namespace) or serves the SQLite backend
   as it is. The Redis container's own AOF is its durability, not this backup.

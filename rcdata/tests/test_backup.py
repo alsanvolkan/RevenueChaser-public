@@ -177,26 +177,3 @@ def test_on_redis_the_backup_restores_with_the_one_time_copy(backup_dir, monkeyp
     from RevenueChaser.rcdata import ops_copy
     assert ops_copy.main(["--sqlite", str(taken)]) == 0
     assert {t: ops.rows(t) for t in want} == want
-
-
-@_on_redis
-def test_on_redis_a_write_during_the_snapshot_takes_it_again(backup_dir, monkeypatch):
-    """The snapshot WATCHes every table: a write between its reads makes it read again, never a mixed copy."""
-    _fill()
-    from RevenueChaser.rcdata import ops_redis
-    real, raced = ops_redis._all, []
-
-    def write_once(table):
-        if not raced:
-            raced.append(table)
-            ops.enqueue("market_series", None, by="a writer racing the backup")
-        return real(table)
-    monkeypatch.setattr(ops_redis, "_all", write_once)
-    summary = backup.run_backup()
-    from RevenueChaser.rcdata import ops_copy
-    con = ops_copy._open_read_only(summary["ops"])
-    try:
-        assert len(ops_copy._table_rows(con, "build_requests")) == 2
-    finally:
-        con.close()
-    assert raced
