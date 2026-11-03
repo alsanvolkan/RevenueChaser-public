@@ -44,8 +44,8 @@ def _no_sleep(monkeypatch):
 
 
 class TestThrottle:
-    def test_interval_is_at_most_ten_per_second(self):
-        assert se._THROTTLE_INTERVAL <= 0.10
+    def test_the_fallback_interval_is_half_the_ten_a_second(self):
+        assert se._THROTTLE_INTERVAL == 1 / se.sec_throttle.FALLBACK_RATE == 0.2
 
     def test_second_call_sleeps(self, _no_sleep, monkeypatch):
         # The shared bucket absorbs a burst without sleeping. This test is the fallback:

@@ -38,6 +38,9 @@ logger = logging.getLogger(__name__)
 LIMIT = 10
 # The sustained rate. The only knob; the burst is derived from the ceiling (see ``_burst``).
 RATE = 8
+# Each process's own pace when this bucket cannot be used: two processes ask SEC on the box (the dashboard and the
+# builder), so each falling back at half the ceiling keeps the box under it.
+FALLBACK_RATE = LIMIT / 2
 
 # How long to wait for the OS lock before giving the caller the in-process fallback.
 # A live critical section is a read and a write; anything longer means the lock is stuck.
@@ -173,7 +176,7 @@ def pace() -> bool:
             wait = _reserve(time.monotonic())
         if wait is None:
             _log_once("fallback", "SEC pacing: the shared bucket %s cannot be used; this process paces itself "
-                      "(in-process, %d/s)", bucket_path(), LIMIT)
+                      "(in-process, %g/s)", bucket_path(), FALLBACK_RATE)
             return False
         _log_once("shared", "SEC pacing: shared bucket %s (rate %s/s, burst %s)", bucket_path(), RATE, _burst(RATE))
         if wait > 0:
@@ -184,4 +187,4 @@ def pace() -> bool:
         return False
 
 
-__all__ = ["LIMIT", "RATE", "bucket_path", "pace"]
+__all__ = ["FALLBACK_RATE", "LIMIT", "RATE", "bucket_path", "pace"]

@@ -87,11 +87,7 @@ def test_each_provider_paces_at_its_official_window():
     from RevenueChaser.rcdata.build.fundamentals import common
     from RevenueChaser.rcdata.build.sources import alpaca
     ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
-    per_s, _ = caps.WINDOWS["sec"]
-    assert sec.PER_SECOND == per_s and sec_throttle.LIMIT == per_s
-    assert sec_edgar._THROTTLE_INTERVAL == 1 / per_s
-    assert cover_shares.SEC_INTERVAL_S == 1 / per_s
-    assert 1 / common.SEC_INTERVAL_S <= per_s           # a margin, stated next to the number
+    assert sec_throttle.LIMIT == caps.WINDOWS["sec"][0]     # the SEC paths: see the fallback test below
     assert openfigi.REQUEST_GAP_S == caps.WINDOWS["openfigi"][1] / caps.WINDOWS["openfigi"][0]
     a = alpaca.pacer(ctx)
     assert (a.limit, a.window_s) == caps.WINDOWS["alpaca"]
@@ -147,3 +143,20 @@ def test_the_yahoo_market_series_waits_for_the_yfinance_window(yf_waits, tmp_pat
     ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
     yahoo.fetch(ctx, date(2026, 10, 27), download=lambda symbol: [["2026-10-27", 1.0, 1.0, 1.0, 1.0]])
     assert len(yf_waits) == len(yahoo.SYMBOLS)
+
+
+# ── Review of PR #380: the box as a whole stays inside each shared limit ─────────────────────────────────────────
+
+def test_every_sec_fallback_takes_half_the_limit_so_two_processes_stay_under_it():
+    """The dashboard and the builder both ask SEC. When the shared bucket cannot be used each paces itself alone,
+    so each in-process spacing is at most half of the SEC's 10 a second."""
+    from RevenueChaser.core import sec_throttle
+    from RevenueChaser.core.providers import sec_edgar
+    from RevenueChaser.rcdata.build.fundamentals import common
+    from RevenueChaser.rcdata.build.ownership import sec
+    from RevenueChaser.rcdata.build.prices import cover_shares
+    assert sec_throttle.LIMIT == caps.WINDOWS["sec"][0]
+    assert 2 * sec_throttle.FALLBACK_RATE <= sec_throttle.LIMIT
+    assert sec.PER_SECOND <= sec_throttle.FALLBACK_RATE
+    for interval in (sec_edgar._THROTTLE_INTERVAL, cover_shares.SEC_INTERVAL_S, common.SEC_INTERVAL_S):
+        assert 1 / interval <= sec_throttle.FALLBACK_RATE + 1e-9
