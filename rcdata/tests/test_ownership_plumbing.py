@@ -11,9 +11,11 @@ def test_ownership_is_a_serving_kind_of_version_1():
     assert serving.live_path("ownership").name == "ownership.duckdb"
 
 
-def test_the_ownership_providers_have_a_day_cap():
+def test_the_ownership_providers_have_no_day_cap():
+    """None of them publishes a day quota (master plan Order 5, rule 3): SEC and FINRA have a window, the rest none."""
     for provider in ("sec", "finra", "nasdaqtrader", "nyse", "ibkr"):
-        assert caps.cap_for(provider), provider
+        assert caps.cap_for(provider) is None, provider
+    assert caps.WINDOWS["sec"] == (10, 1.0) and caps.WINDOWS["finra"] == (1_200, 60.0)
 
 
 def test_the_ownership_datasets_build_in_order_and_start_by_hand():

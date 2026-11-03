@@ -1,7 +1,9 @@
 """OpenFIGI adapter: security type per ticker (``POST /v3/mapping``).
 
 Works without a key (<= 10 jobs per request, 25 requests a minute) and faster with
-``OPENFIGI_API_KEY`` (<= 100 jobs per request, 25 requests per 6 s). The key is read through
+``OPENFIGI_API_KEY`` (<= 100 jobs per request, 250 requests a minute per key). The key's window is shared with the
+builder's ``openfigi/map`` and the dashboard's CUSIP mapping, so every keyed request takes a token of the one
+box-wide bucket (``core/providers/openfigi.pace``), and half the window when that cannot be used. The key is read through
 :mod:`core.credentials` and sent only in the ``X-OPENFIGI-APIKEY`` header. Base URL:
 ``RC_OPENFIGI_BASE`` (default ``https://api.openfigi.com``).
 
@@ -21,12 +23,12 @@ from typing import Callable, Iterable
 import httpx
 
 from ... import credentials
+from ...providers import openfigi as figi_client
 from . import SourceResult, base_url, fail, now_iso, redact
 
 SOURCE = "openfigi"
 BATCH_KEYED = 100
 BATCH_KEYLESS = 10
-_GAP_KEYED = 0.3        # 25 requests / 6 s
 _GAP_KEYLESS = 2.5      # 25 requests / minute
 _MAX_ATTEMPTS = 8
 _LOW_REMAINING = 5
@@ -78,17 +80,19 @@ def security_types(tickers: Iterable[str], sleep: Callable[[float], None] = time
     if key:
         headers["X-OPENFIGI-APIKEY"] = key
     batch = BATCH_KEYED if key else BATCH_KEYLESS
-    gap = _GAP_KEYED if key else _GAP_KEYLESS
     url = f"{base_url('OPENFIGI', 'https://api.openfigi.com')}/v3/mapping"
     rows: list[dict] = []
     try:
         for n, i in enumerate(range(0, len(todo), batch)):
             chunk = todo[i:i + batch]
-            if n:
-                sleep(gap)
             jobs = [{"idType": "TICKER", "idValue": figi_symbol(t), "exchCode": "US"} for t in chunk]
             resp = None
-            for _attempt in range(_MAX_ATTEMPTS):
+            for attempt in range(_MAX_ATTEMPTS):
+                if key:                       # every attempt spends from the key's shared window
+                    if not figi_client.pace() and (n or attempt):
+                        sleep(figi_client.REQUEST_GAP_S)
+                elif n and not attempt:
+                    sleep(_GAP_KEYLESS)
                 resp = httpx.post(url, json=jobs, headers=headers, timeout=90)
                 if resp.status_code != 429:
                     break

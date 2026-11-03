@@ -28,14 +28,20 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
-from RevenueChaser.core import credentials
+from RevenueChaser.core import credentials, sec_throttle
 from RevenueChaser.core.providers.result import ProviderHealth
 
 PROVIDER = "openfigi"
 ENDPOINT = "/v3/mapping"
 DEFAULT_BASE = "https://api.openfigi.com"
 JOBS_PER_REQUEST = 100      # with a key
-REQUEST_GAP_S = 0.25        # 25 requests / 6 s with a key = one per 0.24 s
+# Keyed /v3/mapping allows 250 requests in a 60 s window (rcdata/caps.py WINDOWS), per key, and the builder's
+# ``openfigi/map`` uses the same key: both take tokens of one box-wide bucket (``pace``), whose burst plus a minute's
+# refill is 240, 10 under the 250 (OpenFIGI counts arrivals, and network latency can bunch them). When it cannot be
+# used, each process keeps to half the window (``REQUEST_GAP_S``, 125 a minute).
+BUCKET, BUCKET_BURST = ".openfigi_throttle.json", 5
+BUCKET_RATE = 235 / 60.0
+REQUEST_GAP_S = 0.48
 MAX_REQUESTS = 400          # per run, avo's cap for #207 (typed 2026-10-14, B6)
 MAX_ATTEMPTS = 8            # per batch: the first request and up to 7 retries after a 429
 _LOW_REMAINING = 5          # wait out the window when fewer requests than this remain in it
@@ -44,6 +50,11 @@ PRESENT, ABSENT = "present", "absent"
 # OpenFIGI's suffix -> the app's; the inverse of the identity adapter's ``_SUFFIXES`` (units, warrants). Any other
 # class separator is a slash there and a dash here.
 _SUFFIXES = (("/U", "-UN"), ("/WS", "-WT"))
+
+
+def pace() -> bool:
+    """One token of the box-wide OpenFIGI bucket (the key's 250 a minute); False when it cannot be used."""
+    return sec_throttle.shared_pace(BUCKET, BUCKET_RATE, BUCKET_BURST)
 
 
 def _sleep(seconds: float) -> None:
@@ -153,7 +164,7 @@ def map_cusips(cusips: Iterable[str], *, key: str | None = None, max_requests: i
         for attempt in range(MAX_ATTEMPTS):
             if res.requests >= max_requests:
                 return _stop(i, f"stopped at the cap of {max_requests} OpenFIGI requests")
-            if res.requests:
+            if not pace() and res.requests:
                 _sleep(REQUEST_GAP_S)
             res.requests += 1
             try:

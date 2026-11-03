@@ -26,7 +26,7 @@ def test_every_fundamentals_dataset_starts_by_hand_and_the_served_tables_build_l
 
 
 def test_the_day_caps_name_the_new_providers():
-    assert caps.DAY_CAPS["alphavantage"] == 25 and caps.DAY_CAPS["yfinance"] > 0 and caps.DAY_CAPS["sec"] == 40_000
+    assert caps.DAY_CAPS["alphavantage"] == 25 and "yfinance" not in caps.DAY_CAPS and "sec" not in caps.DAY_CAPS
 
 
 def test_the_alpha_vantage_key_is_declared_by_name_only():

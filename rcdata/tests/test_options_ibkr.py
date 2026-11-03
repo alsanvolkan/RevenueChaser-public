@@ -137,9 +137,8 @@ def test_requests_are_paced_at_six_a_minute(gateway):
     assert sum(slept) >= 60.0, "the seventh request waits for the first one's minute to pass"
 
 
-def test_the_ibkr_day_cap_leaves_the_iv_year_room_beside_the_short_stock_file(gateway):
-    """The ownership store (PR 16) capped provider ``ibkr`` at 50 for its one short-stock download a run. The IV year
-    counts under the same name, so a 60-name list stopped at 50 for the day; the cap is now the two shares' sum."""
+def test_a_60_name_list_gets_every_iv_year_in_one_run(gateway):
+    """IBKR publishes no day quota (master plan Order 5, rule 3), so ``ibkr`` has no day cap and 60 names are 61 calls."""
     from RevenueChaser.rcdata import caps
     for i in range(60):
         ops.watch_add("option", f"N{i}", by="test")
@@ -149,7 +148,7 @@ def test_the_ibkr_day_cap_leaves_the_iv_year_room_beside_the_short_stock_file(ga
         now[0] += s
     row = base.run_request({"dataset": ibkr_iv.NAME, "params": {}}, sleep=sleep, clock=lambda: now[0])
     assert row["calls"] == 61 and row["coverage"] == 1.0
-    assert caps.cap_for("ibkr") == 50 + ibkr_iv.DAY_CALLS
+    assert caps.cap_for("ibkr") is None
 
 
 def test_no_data_for_a_name_is_kept_once_with_an_issue(gateway):
