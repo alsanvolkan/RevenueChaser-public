@@ -409,6 +409,9 @@ def test_a_delisted_compustat_security_whose_sessions_crsp_all_wins_keeps_its_sy
     (a delisted PERMNO's ticker can be another listing's today), so the symbol must come from Compustat's bars that
     lost, or the security leaves ``security_symbol`` and every bar of it leaves ``price_bars_daily``."""
     data = _data()
+    for r in data["comp.secd"]:
+        if r["gvkey"] == "099999":
+            r["trfd"] = None                 # no Compustat return on either day: CRSP's fallback bar serves them
     data["crsp.dsf_v2"] += [{**_crsp_rows()[0], "permno": "50000", "dlycaldt": d, "dlyprc": c, "dlyopen": c,
                              "dlyhigh": c, "dlylow": c, "dlyret": None, "hdrcusip": "68000010", "cusip": "68000010",
                              "ticker": "OLDA"} for d, c in (("2024-03-01", 5.0), ("2024-03-04", 5.1))]
@@ -417,7 +420,7 @@ def test_a_delisted_compustat_security_whose_sessions_crsp_all_wins_keeps_its_sy
     wrds.reset()
     assert _backfill()["result"] == "changed"
     assert {r["source"] for r in _q("SELECT source FROM price_bar_daily WHERE security_id = ?", [OLDCO])} == {
-        wrds_history.COMPUSTAT}, "Compustat wins both sessions"
+        wrds_history.CRSP}, "CRSP wins both sessions"
     assert [r["symbol"] for r in _q("SELECT symbol FROM security_symbol WHERE security_id = ?", [OLDCO])] == ["OLD-A"]
     assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'OLD-A'")[0]["n"] == 2
     wrds.reset()
@@ -480,14 +483,12 @@ def test_the_build_note_counts_the_crsp_link_by_rule_and_the_unlinked_permnos(fa
 
 
 @pytest.mark.parametrize("dividend", [False, True])
-def test_crsp_history_of_a_security_without_a_compustat_record_stays_out_of_the_adjusted_view(monkeypatch, dividend):
-    """Review S1 of #353: FLG (spine: FIGI, no gvkey, no CUSIP) links its PERMNO by ticker, and before its Alpaca
-    window no split or dividend reaches it. Its CRSP bars stay served as they are (nominal ``price_bar_daily``) but
-    not in ``price_bars_daily``, whose closes are split- and dividend-adjusted, and the note counts them.
-
-    The #353 delta review, SHOULD 2 and 3: GAPX (``cik:``) links its PERMNO by ticker too, but Compustat holds it
-    under a gvkey:iid of its CUSIP (the alias). Compustat's actions reach it, so its CRSP history stays in the view,
-    with a Compustat dividend or with none (a trust that never pays out)."""
+def test_crsp_history_compustat_does_not_price_is_not_served(monkeypatch, dividend):
+    """Step 2 of the Compustat-primary plan (master plan of 2 Nov 2026, item 2): CRSP is a fallback for an empty
+    ``trfd`` day and a delisted name's final days only. FLG (spine: FIGI, no gvkey, no CUSIP), BRK-B (a gvkey:iid
+    security Compustat does not price here) and GAPX (``cik:``, Compustat holds it under the alias 077777:01 on one
+    day) link their PERMNOs as before (review S1/S4 of #353), but no CRSP-only day of theirs is served, nominal or
+    adjusted; GAPX keeps its one Compustat bar."""
     data = _data()
     data["crsp.dsf_v2"] += [{**r, "permno": "66666", "hdrcusip": "45454545", "cusip": "45454545", "ticker": "GAPX"}
                             for r in _crsp_rows()]
@@ -498,25 +499,19 @@ def test_crsp_history_of_a_security_without_a_compustat_record_stays_out_of_the_
     data["crsp.dsf_v2"] += [{**r, "permno": "77777", "hdrcusip": "99999999", "cusip": "99999999", "ticker": "FLG"}
                             for r in _crsp_rows()]
     data["crsp.dsf_v2"] += [{**r, "permno": "88888", "hdrcusip": "88888888", "cusip": "88888888", "ticker": "BRK-B"}
-                            for r in _crsp_rows()]          # a gvkey:iid security, no Compustat action either
+                            for r in _crsp_rows()]
     conn = FakeWrds(data)
     monkeypatch.setattr(wrds, "_factory", lambda: conn)
     wrds.reset()
     assert _backfill()["result"] == "changed"
     assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
-    row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
     flg = "figi:BBG000BWBX65"
-    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = ? AND source = ?",
-              [flg, wrds_history.CRSP])[0]["n"] == len(JUNE)
-    assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'FLG' AND session_date < '2026-01-01'"
-              )[0]["n"] == 0
-    assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'AAPL' AND session_date < '2026-01-01'"
-              )[0]["n"] == len(JUNE), "a gvkey security's CRSP history stays: Compustat's actions reach it"
-    assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'BRK-B' AND session_date < '2026-01-01'"
-              )[0]["n"] == len(JUNE), "so does one whose Compustat record holds no action"
-    assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'GAPX' AND session_date < '2026-01-01'"
-              )[0]["n"] == len(JUNE), "and an aliased cik: security's: Compustat's actions reach it as well"
-    assert f"{len(JUNE)} CRSP bars of 1 security without a Compustat record kept out of price_bars_daily" in row["note"]
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE source = ?", [wrds_history.CRSP])[0]["n"] == 0
+    counts = {r["ticker"]: r["n"] for r in _q(
+        "SELECT ticker, count(*) AS n FROM price_bars_daily WHERE session_date < '2026-01-01' GROUP BY ALL")}
+    assert counts.get("FLG", 0) == 0 and counts.get("BRK-B", 0) == 0
+    assert counts["GAPX"] == 1 and counts["AAPL"] == len(JUNE)
     links = {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
              if i["kind"] == "crsp_ticker_link"}
     assert set(links) == {flg, "cik:4000001:GAPX", "072726:02"}, links      # BRK-B: the spine holds no CUSIP
@@ -556,7 +551,7 @@ def test_crsp_rows_reach_their_securities_without_ccm(fake):
     _build()
     spy = _q("SELECT security_id, close, source FROM price_bar_daily WHERE session_date = '2025-06-06' "
              "AND source = ?", [wrds_history.CRSP])
-    assert {(r["security_id"], r["close"]) for r in spy} == {("001000:01", 590.0)}   # AAPL's is Compustat's
+    assert spy == []        # SPY's CRSP-only day is no fallback day; AAPL's is Compustat's (step 2 of the plan)
     old = _q("SELECT close, source FROM price_bar_daily WHERE security_id = ? AND session_date = '2024-03-01'",
              [OLDCO])
     assert old == [{"close": 5.0, "source": wrds_history.COMPUSTAT}]       # Compustat first (priority 1)

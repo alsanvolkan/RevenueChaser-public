@@ -3,8 +3,9 @@
 **Tables** (``prices.duckdb``, serving schema version 1), every one keyed on the security id (``prices.security_id``):
 
 - ``price_bar_daily``: one bar per security and New York session, **nominal** (the prices as traded that day):
-  Alpaca's daily bars, then the WRDS history where Alpaca has no bar (``wrds/prices``: Compustat first, priority 1,
-  then CRSP where it is the same security, through ``wrds_history.PERMNO_LINK``), and the S&P 500 index level from the market store's
+  Alpaca's daily bars, then the WRDS history where Alpaca has no bar (``wrds/prices``: Compustat first, priority 1;
+  CRSP only on its fallback days, ``wrds_history.CRSP_FALLBACK``: a day Compustat prices without ``trfd`` and a
+  delisted security's final days, through a CUSIP link of ``wrds_history.PERMNO_LINK``), and the S&P 500 index level from the market store's
   Cboe file (``index:SPX``, the close only);
 - ``corporate_action``: Alpaca's actions of the store's securities, resolved to the security that traded under the
   action's symbol nearest its date (else the spine's current ticker), and Compustat's splits and dividends of the
@@ -158,6 +159,9 @@ KEYS = {"price_bar_daily": ("security_id", "session_date"), "market_cap_daily": 
 # as a filter on ``rowid``. A hash aggregate, not a ``row_number()`` window: the window over every security and
 # session of 2010-2025 (60.7M rows, 39.2M partitions) ran out of DuckDB's 5 GB, where this spills (#372).
 HIST_FIRST = "rowid IN (SELECT arg_min(rowid, priority) FROM _hist_all {where} GROUP BY security_id, session_date)"
+# The history rows a session may be served from: every Compustat bar, and CRSP's only on its fallback days
+# (``wrds_history.CRSP_FALLBACK``).
+HIST_SERVED = f"(source <> '{wrds_history.CRSP}' OR fallback IS NOT NULL)"
 
 # The security id of a spine row, the SQL twin of ``prices.security_id``.
 SPINE_ID = ("CASE WHEN nullif(gvkey, '') IS NOT NULL AND nullif(iid, '') IS NOT NULL THEN gvkey || ':' || iid "
@@ -269,6 +273,7 @@ CREATE OR REPLACE TEMP TABLE _act AS
     SELECT best.security_id, a.*, '{actions}' AS source FROM a JOIN best USING (action_id);
 CREATE OR REPLACE TEMP TABLE _permno_link AS {link};
 CREATE OR REPLACE TEMP TABLE _gvkey_alias AS {alias};
+CREATE OR REPLACE TEMP TABLE _crsp_fallback AS {fallback};
 CREATE OR REPLACE TEMP TABLE _hist_all AS
     SELECT * FROM ({crsp}) UNION ALL BY NAME SELECT * FROM ({comp});
 """
@@ -315,16 +320,21 @@ class PricesServing:
         _spine(con)
         con.execute(BUILD_SQL.format(bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
                                      comp=wrds_history.COMP_BARS, link=wrds_history.PERMNO_LINK,
-                                     alias=wrds_history.GVKEY_ALIAS))
+                                     alias=wrds_history.GVKEY_ALIAS, fallback=wrds_history.CRSP_FALLBACK))
         self._link_note(ctx, con, found)
         counts = {}
         cols = ", ".join(c for c, _ in PRICE_BAR)
         # Alpaca's bar wins its session; of the history bars, Compustat's (priority 1) before CRSP's.
         bars_sql = (f"SELECT {cols} FROM _alp UNION ALL SELECT * FROM ({_index_levels(con)}) UNION ALL "
-                    f"SELECT {cols} FROM (SELECT * FROM _hist_all h WHERE {HIST_FIRST.format(where='')} "
+                    f"SELECT {cols} FROM (SELECT * FROM _hist_all h WHERE {HIST_FIRST.format(where='WHERE ' + HIST_SERVED)} "
                     "AND NOT EXISTS (SELECT 1 FROM _alp a "
                     "WHERE a.security_id = h.security_id AND a.session_date = h.session_date))")
         counts["price_bar_daily"] = _create(con, "price_bar_daily", bars_sql)
+        fallback = con.execute(f"SELECT h.fallback, count(*) FROM price_bar_daily b JOIN _hist_all h USING "
+                               f"(security_id, session_date, source) WHERE b.source = '{wrds_history.CRSP}' "
+                               "GROUP BY ALL ORDER BY 1").fetchall()
+        if fallback:
+            ctx.notes.append("CRSP fallback bars served: " + ", ".join(f"{n} {why}" for why, n in fallback))
         counts["corporate_action"] = self._actions(con, found)
         counts["adj_factor"] = _create(con, "adj_factor", ADJ_SQL)
         counts["shares_class"] = self._shares(con, found)
@@ -700,8 +710,10 @@ SYMBOL_SQL = """
 MARKET_CAP_SQL = f"""
     WITH o AS (SELECT security_id, as_of, value, source FROM shares_class WHERE measure = 'outstanding'
                QUALIFY row_number() OVER (PARTITION BY security_id, as_of ORDER BY fetched_at DESC) = 1),
-         h AS (SELECT security_id, session_date, shares_outstanding, source FROM _hist_all
-               WHERE {HIST_FIRST.format(where="WHERE shares_outstanding > 0")}),
+         -- The lowest-priority servable history bar with shares, per session: one hash aggregate (#372's rule).
+         h AS (SELECT security_id, session_date, arg_min(shares_outstanding, priority) AS shares_outstanding,
+                      arg_min(source, priority) AS source FROM _hist_all
+               WHERE shares_outstanding > 0 AND {HIST_SERVED} GROUP BY security_id, session_date),
          b AS (SELECT b.*, coalesce(s.cik, b.cik) AS issuer, h.shares_outstanding AS hist_shares,
                       h.source AS hist_source FROM price_bar_daily b
                LEFT JOIN (SELECT DISTINCT security_id, cik FROM stg_spine) s USING (security_id)

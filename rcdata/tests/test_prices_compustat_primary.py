@@ -84,3 +84,79 @@ def test_an_ajexdi_or_return_step_between_two_answers_is_neither_a_split_nor_a_r
                                      "WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate) "
                                      "ORDER BY datadate").fetchall()]
     assert ret[1] is None and ret[2] == pytest.approx(51.0 / 0.5 / (101.0 / 1.0) - 1)
+
+
+# ── Step 2: CRSP only as a narrow fallback ─────────────────────────────────────────────────────────────────────
+
+def _crsp(permno, day, close, cusip, ticker):
+    return {"permno": permno, "dlycaldt": day, "dlyprc": close, "dlyopen": close, "dlyhigh": close, "dlylow": close,
+            "dlyvol": 1e4, "dlyret": 0.0, "shrout": 1e3, "hdrcusip": cusip, "cusip": cusip, "ticker": ticker,
+            "dlycumfacpr": 1.0, "dlyorddivamt": 0.0}
+
+
+def test_a_crsp_bar_of_a_day_compustat_does_not_price_is_not_served(monkeypatch):
+    data = _data()
+    data["crsp.dsf_v2"] += [_crsp("84398", "2025-06-06", 590.0, "78462F10", "SPY")]     # linked, CRSP only
+    for r in data["comp.secd"]:
+        if r["gvkey"] == "001690" and r["datadate"] == JUNE[2]:
+            r["cshoc"] = None                                 # a Compustat day without shares, trfd present
+    _serve(monkeypatch, data)
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE source = ?", [wrds_history.CRSP])[0]["n"] == 0
+    assert not _q("SELECT 1 FROM market_cap_daily WHERE shares_source = ?", [wrds_history.CRSP]), \
+        "no fallback day, so CRSP's shares size no cap either"
+
+
+def test_a_day_compustat_prices_without_trfd_is_crsps_bar_when_the_cusip_links_it(monkeypatch):
+    data = _data()
+    for r in data["comp.secd"]:
+        if r["gvkey"] == "001690" and r["datadate"] == JUNE[1]:
+            r["trfd"] = None                                  # CMG-type: Compustat has the price, no trfd
+    _serve(monkeypatch, data)
+    june = _q("SELECT session_date, close, source FROM price_bar_daily WHERE security_id = ? "
+              "AND session_date < '2026-01-01' ORDER BY session_date", [AAPL])
+    assert [(str(r["session_date"]), r["source"]) for r in june] == [
+        (JUNE[0], wrds_history.COMPUSTAT), (JUNE[1], wrds_history.CRSP), (JUNE[2], wrds_history.COMPUSTAT),
+        (JUNE[3], wrds_history.COMPUSTAT), (JUNE[4], wrds_history.COMPUSTAT)]
+    assert june[1]["close"] == 202.1
+
+
+def test_a_ticker_linked_permno_is_no_fallback_for_an_empty_trfd_day(monkeypatch):
+    data = _data()
+    # GAPX: the spine holds no CUSIP for it, so its PERMNO links by ticker; Compustat holds it under 077777:01.
+    data["comp.secd"] += [_secd_row("077777", "2025-06-06", "GAPX", 50.0, "454545459", trfd=None)]
+    data["crsp.dsf_v2"] += [_crsp("66666", "2025-06-06", 51.0, "45454545", "GAPX")]
+    _serve(monkeypatch, data)
+    got = _q("SELECT close, source FROM price_bar_daily WHERE session_date = '2025-06-06' AND close IN (50.0, 51.0)")
+    assert got == [{"close": 50.0, "source": wrds_history.COMPUSTAT}]
+
+
+def test_a_delisted_securitys_final_crsp_days_after_compustats_last_are_served(monkeypatch):
+    """OLDCO (Compustat to 4 Mar 2024, linked by CUSIP) trades on CRSP two more days and is gone before CRSP's newest
+    day: those two are served from CRSP, a day past ``DELISTED_WINDOW_DAYS`` is not. AAPL's PERMNO is still listed on CRSP's newest day, so a day Compustat lacks
+    is not a delisted fallback."""
+    data = _data()
+    data["crsp.dsf_v2"] += [_crsp("50000", d, c, "68000010", "OLDA")
+                            for d, c in (("2024-03-01", 5.0), ("2024-03-04", 5.1), ("2024-03-05", 4.0),
+                                         ("2024-03-06", 3.0), ("2024-05-01", 2.0))]   # the last: past the window
+    # AAPL's Compustat ends on 5 Jun 2025 here, its PERMNO still trades on CRSP's newest day (6 Jun).
+    data["comp.secd"] = [r for r in data["comp.secd"]
+                         if not (r["gvkey"] == "001690" and (r["datadate"] == JUNE[4] or r["datadate"] > "2026"))]
+    _serve(monkeypatch, data)
+    old = _q("SELECT session_date, close, source FROM price_bar_daily WHERE security_id = '099999:01' "
+             "ORDER BY session_date")
+    assert [(str(r["session_date"]), r["source"]) for r in old] == [
+        ("2024-03-01", wrds_history.COMPUSTAT), ("2024-03-04", wrds_history.COMPUSTAT),
+        ("2024-03-05", wrds_history.CRSP), ("2024-03-06", wrds_history.CRSP)]
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = ? AND session_date = ?", [AAPL, JUNE[4]])
+
+
+def test_the_delisted_rule_is_one_function_with_its_pending_measurement_named():
+    import inspect
+    src = inspect.getsource(wrds_history.delisted_final_days)
+    assert "TODO" in src and "measurement" in src
+    assert "stg_wrds_dsf" in wrds_history.delisted_final_days()
+
+
+def _secd_row(gvkey, day, tic, close, cusip, trfd=1.0):
+    from .test_prices_wrds import _secd
+    return _secd(gvkey, "01", day, tic, close, trfd=trfd, cusip=cusip)

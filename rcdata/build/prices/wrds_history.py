@@ -486,6 +486,51 @@ PERMNO_LINK = """
     SELECT permno, security_id, how FROM best
     QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY rule, last DESC, permno) = 1"""
 
+# ── CRSP, the narrow fallback (master plan of 2 Nov 2026, item 2) ─────────────────────────────────────────────
+# A CRSP bar is served only on a day of ``CRSP_FALLBACK``; every other CRSP row stays in ``_hist_all`` for the
+# difference report and is never a served bar. The served CRSP bars are exactly the fallback rows (``source`` =
+# ``wrds/crsp``; the build note counts them per reason). Only a PERMNO linked by an identifier counts (rules
+# ``hdrcusip``, ``cusip``, ``compustat`` of ``PERMNO_LINK``), never one linked by ticker alone.
+LINKED_BY_ID = "l.how <> 'ticker'"
+# The Compustat security of a ``comp.secd`` row, as ``COMP_BARS`` keys it.
+_COMP_ID = ("coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = s.gvkey || ':' || s.iid), "
+            "s.gvkey || ':' || s.iid)")
+# Placeholder for ``delisted_final_days`` until the coordinator's measurement is in (see its TODO).
+DELISTED_WINDOW_DAYS = 31
+
+
+def delisted_final_days(window_days: int = DELISTED_WINDOW_DAYS) -> str:
+    """The CRSP days of a delisted security that Compustat does not price: ``(permno, session_date, why)``.
+
+    A PERMNO is delisted when its last ``dsf_v2`` day is before CRSP's newest staged day; its final days are those
+    after its security's last priced ``comp.secd`` day, at most ``window_days`` calendar days after it. A security
+    Compustat never priced has no final days here (its history is CRSP's alone and is not served)."""
+    # TODO(coordinator): the delisted-names measurement is pending. Its final numbers set how many days after
+    # Compustat's last priced day are CRSP's (``window_days`` is a placeholder) and whether dsf_v2's final
+    # ``dlyret`` carries the delisting return to serve; until then this rule serves the bars as they are.
+    return f"""
+    SELECT d.permno, d.dlycaldt AS session_date, 'delisted' AS why
+    FROM stg_wrds_dsf d JOIN _permno_link l USING (permno)
+    JOIN (SELECT permno, max(dlycaldt) AS last FROM stg_wrds_dsf GROUP BY permno) p USING (permno)
+    JOIN (SELECT {_COMP_ID} AS security_id, max(datadate) AS last FROM stg_wrds_secd s WHERE prccd > 0 GROUP BY 1) c
+        ON c.security_id = l.security_id
+    WHERE {LINKED_BY_ID} AND p.last < (SELECT max(dlycaldt) FROM stg_wrds_dsf)
+      AND d.dlycaldt > c.last AND d.dlycaldt <= c.last + INTERVAL {int(window_days)} DAY"""
+
+
+# The CRSP days served (``serving`` makes it the temp table ``_crsp_fallback`` after ``_gvkey_alias``): a day
+# Compustat prices without ``trfd`` (so has no total return; CMG has none on any day), and a delisted security's final
+# days (``delisted_final_days``). One row per (permno, day): the two never meet, the first being Compustat's priced days
+# and the second after them.
+CRSP_FALLBACK = f"""
+    SELECT d.permno, d.dlycaldt AS session_date, 'trfd_empty' AS why
+    FROM stg_wrds_dsf d JOIN _permno_link l USING (permno)
+    JOIN (SELECT {_COMP_ID} AS security_id, datadate FROM stg_wrds_secd s
+          WHERE prccd > 0 AND trfd IS NULL AND coalesce(upper(curcdd), 'USD') = 'USD') e
+        ON e.security_id = l.security_id AND e.datadate = d.dlycaldt
+    WHERE {LINKED_BY_ID}
+    UNION ALL {delisted_final_days()}"""
+
 # Compustat's ``gvkey:iid`` of a PERMNO whose own link is a security the spine names otherwise (``figi:``, ``cik:``,
 # ``sym:``: the ETFs), when the PERMNO's CUSIP matches it and the spine holds no such ``gvkey:iid``. Its Compustat bars,
 # actions and revisions are served as that security's, so one fund is one security (review S2 of #353; ``serving``
@@ -506,14 +551,18 @@ CRSP_BARS = f"""
            CAST(NULL AS TEXT) AS symbol, CAST(NULL AS TEXT) AS cik, dlyopen AS open, dlyhigh AS high, dlylow AS low,
            abs(dlyprc) AS close, dlyvol AS volume, CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count,
            shrout * {CRSP_SHARES_UNIT} AS shares_outstanding, '{CRSP}' AS source, source_as_of, fetched_at, run_id,
-           dlyret AS own_return, 2 AS priority
-    FROM stg_wrds_dsf d LEFT JOIN _permno_link l USING (permno) WHERE dlyprc IS NOT NULL AND dlyprc <> 0"""
+           dlyret AS own_return, 2 AS priority, f.why AS fallback
+    FROM stg_wrds_dsf d LEFT JOIN _permno_link l USING (permno)
+    LEFT JOIN _crsp_fallback f ON f.permno = d.permno AND f.session_date = d.dlycaldt
+    WHERE dlyprc IS NOT NULL AND dlyprc <> 0"""
 COMP_BARS = f"""
     SELECT coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = gvkey || ':' || iid), gvkey || ':' || iid)
                AS security_id, datadate AS session_date, replace(upper(tic), '.', '-') AS symbol,
            CAST(NULL AS TEXT) AS cik, prcod AS open, prchd AS high, prcld AS low, prccd AS close, cshtrd AS volume,
            CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count, cshoc AS shares_outstanding,
-           '{COMPUSTAT}' AS source, source_as_of, fetched_at, run_id, {COMP_RETURN} AS own_return, 1 AS priority
+           '{COMPUSTAT}' AS source, source_as_of, fetched_at, run_id, {COMP_RETURN} AS own_return,
+           -- A day without trfd has no Compustat return: CRSP's fallback bar (priority 2) wins it where there is one.
+           CASE WHEN trfd IS NULL THEN 3 ELSE 1 END AS priority, CAST(NULL AS TEXT) AS fallback
     FROM stg_wrds_secd WHERE coalesce(upper(curcdd), 'USD') = 'USD' AND prccd > 0
     WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate)"""
 
