@@ -234,6 +234,16 @@ def test_a_stored_filing_is_never_asked_again(http_mock, monkeypatch):
     assert "submissions/CIK0001067983.json" in " ".join(asked)            # the fill moves on
 
 
+def test_on_the_bucket_sec_requests_add_no_spacing_of_their_own(http_mock, monkeypatch):
+    """Review round 2 of #380 (SF-1): the bucket paces the box; the run's own spacing is only the fallback."""
+    monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 2)
+    monkeypatch.setattr("RevenueChaser.core.sec_throttle.pace", lambda: True)
+    _sec_routes(http_mock)
+    sleeps = []
+    cover_shares.DATASET.fetch(_ctx(cover_shares.NAME, sleeps=sleeps), TUE)
+    assert len(http_mock.requests) > 5 and sleeps == []
+
+
 def test_without_the_bucket_sec_requests_are_spaced_at_the_fallback_share(http_mock, monkeypatch):
     monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 2)
     monkeypatch.setattr("RevenueChaser.core.sec_throttle.pace", lambda: False)
