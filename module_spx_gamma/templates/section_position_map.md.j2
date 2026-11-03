@@ -138,9 +138,9 @@ CFTC COT data unavailable.
 
 ## Scenario Set
 
-| Scenario | Range | P | R:R | Expectancy E | Trade |
-|---|---|---|---|---|---|
-{% for s in scenarios.scenarios %}| {{ s.name }} | {{ s.range }} | {{ s.p }} | {{ s.rr if s.rr is not none else 'n/a' }} | {{ s.expectancy if s.expectancy is not none else 'n/a' }} | {{ s.trade }} |
+| Scenario | Range | P | Asymmetry | Trade |
+|---|---|---|---|---|
+{% for s in scenarios.scenarios %}| {{ s.name }} | {{ s.range }} | {{ s.p }} | {{ "%.2f"|format(s.asymmetry) if s.asymmetry is not none else 'n/a' }} | {{ s.trade }} |
 {% endfor %}
 
 {{ scenarios.note }}

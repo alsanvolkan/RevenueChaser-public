@@ -723,33 +723,30 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
 <h2>Scenario Set</h2>
 <table class="stack">
-  <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>R:R</th><th>Expectancy E</th><th>Trade</th></tr></thead>
+  <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>Asymmetry</th><th>Trade</th></tr></thead>
   <tbody>
   
   <tr>
-    <td data-label="Scenario">Consolidation</td><td data-label="Range">7,821 – 7,920</td><td data-label="P">0.45</td>
-    <td data-label="R:R">n/a</td>
-    <td data-label="Expectancy E">n/a</td>
+    <td data-label="Scenario">Consolidation</td><td data-label="Range">7,500 – 7,821</td><td data-label="P">0.35</td>
+    <td data-label="Asymmetry">n/a</td>
     <td data-label="Trade">Theta-weighted (directionless)</td>
   </tr>
   
   <tr>
-    <td data-label="Scenario">Upside</td><td data-label="Range">7,920 – 8,000</td><td data-label="P">0.25</td>
-    <td data-label="R:R">0.8050719533058276</td>
-    <td data-label="Expectancy E">-0.5487320116735431</td>
+    <td data-label="Scenario">Upside</td><td data-label="Range">7,821 – 8,000</td><td data-label="P">0.3</td>
+    <td data-label="Asymmetry">0.56</td>
     <td data-label="Trade">Directional long</td>
   </tr>
   
   <tr>
-    <td data-label="Scenario">Downside</td><td data-label="Range">7,731 – 7,821</td><td data-label="P">0.3</td>
-    <td data-label="R:R">0.9057059474690561</td>
-    <td data-label="Expectancy E">-0.42828821575928316</td>
+    <td data-label="Scenario">Downside</td><td data-label="Range">7,400 – 7,500</td><td data-label="P">0.35</td>
+    <td data-label="Asymmetry">0.31</td>
     <td data-label="Trade">Directional short</td>
   </tr>
   
   </tbody>
 </table>
-<div class="note">Probabilities are heuristic, derived from the gamma regime and positioning; they are NOT calibrated forecasts. Bands derive from this week&#39;s levels only (gamma flip / call wall / put support), with the same intuitive offsets as the reference report. The Brier scorecard below tracks how honest these probabilities turn out to be.</div>
+<div class="note">Bands derive from this week&#39;s levels only — spot below the gamma flip (negative gamma): the consolidation ceiling is the flip and the upside band is the flip taken back up to the charm pin. Probabilities are the reference report&#39;s own: heuristic, derived from the gamma regime and positioning, and NOT calibrated forecasts. Asymmetry is band geometry (distance from the trigger to the band edge over the distance to the invalidation level), not a success probability; expected value is deliberately not computed, because the probabilities behind it are fixed and uncalibrated. Scenario rules follow the 2026-10-30 report. The Brier scorecard below tracks how honest these probabilities turn out to be.</div>
 
 <div class="box" style="margin-top:14px">
   <div class="ag-label">Volume &amp; Flow Confluence Analysis</div>
