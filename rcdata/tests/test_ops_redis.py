@@ -234,3 +234,34 @@ def test_the_snapshot_finishes_under_a_steady_writer():
     ids = [r["id"] for r in taken["build_requests"]]
     assert ids == list(range(1, len(ids) + 1))                          # one moment: no request missing in between
     assert taken["provider_calls_daily"][0]["calls"] == len(ids)         # and the counter of that same moment
+
+
+def test_an_explicit_namespace_stays_when_the_market_root_moves(monkeypatch, tmp_path):
+    """Review S2: with RC_REDIS_NAMESPACE (the server sets it) a moved or remounted root keeps its day counts."""
+    monkeypatch.setenv(ops_redis_ns_env(), "rc:ops:test-" + tmp_path.name)
+    ops.count_calls("uw", 7)
+    monkeypatch.setattr(config, "MARKET_DIR", tmp_path / "moved")
+    assert ops.calls_today("uw") == 7
+
+
+def ops_redis_ns_env() -> str:
+    from RevenueChaser.rcdata import ops_redis
+    return ops_redis.NAMESPACE_ENV
+
+
+def test_an_empty_namespace_beside_an_ops_file_with_rows_refuses_to_start(monkeypatch):
+    """Review S2: Redis switched on before the copy (or a namespace lost) must not start an empty store, whose day
+    counts read 0, while ops.sqlite still holds the state. A read answers what is there; the first write refuses."""
+    url = os.environ["RC_REDIS_URL"]
+    monkeypatch.delenv("RC_REDIS_URL")
+    ops.count_calls("uw", 5)                                   # the SQLite state of this very root
+    monkeypatch.setenv("RC_REDIS_URL", url)
+    assert ops.calls_today("uw") == 0
+    with pytest.raises(ops.OpsNotCopied, match="ops_copy"):
+        ops.count_calls("uw", 1)
+    with pytest.raises(ops.OpsNotCopied):
+        ops.ensure()
+    from RevenueChaser.rcdata import ops_copy
+    assert ops_copy.main([]) == 0                              # the copy is the way in
+    ops.count_calls("uw", 1)
+    assert ops.calls_today("uw") == 6

@@ -4,9 +4,9 @@
 Redis server is a container (``docker-compose.yml`` at the repository root) with AOF on, so a restart keeps the
 day's call counts, the queue and the open issues.
 
-**Layout.** Every key starts with the namespace ``rc:ops:<12 hex of sha1(resolved RC_MARKET_DIR)>``: one namespace per
-market root, as there was one ``ops.sqlite`` per market root (tests and the e2e dashboards isolate themselves by
-moving that root, and keep doing so). Under it, per table of ``ops.TABLES``:
+**Layout.** Every key starts with the namespace: ``RC_REDIS_NAMESPACE`` when set (the server's, ``rc:ops:live``), else
+``rc:ops:<12 hex of sha1(resolved RC_MARKET_DIR)>``, one namespace per market root, as there was one ``ops.sqlite`` per
+market root (tests and the e2e dashboards isolate themselves by moving that root, and keep doing so). Under it, per table of ``ops.TABLES``:
 
 - ``<ns>:<table>:row:<primary key>``: a hash, one field per non-NULL column (NULL is a missing field). Composite keys
   are joined with ``|``. The column types come from ``ops._DDL`` itself, so the two backends cannot drift.
@@ -78,8 +78,16 @@ def _client() -> redis.Redis:
     return client
 
 
+# The server names its namespace (review S2): a moved or remounted market root must not start an empty store.
+NAMESPACE_ENV = "RC_REDIS_NAMESPACE"
+
+
 def namespace() -> str:
-    """This market root's key prefix (see the module docstring)."""
+    """``RC_REDIS_NAMESPACE`` when set (the server's, e.g. ``rc:ops:live``), else one per market root: the tests and
+    the e2e dashboards isolate themselves by their roots (see the module docstring)."""
+    explicit = os.getenv(NAMESPACE_ENV, "").strip()
+    if explicit:
+        return explicit
     root = str(Path(config.MARKET_DIR).resolve())
     return "rc:ops:" + hashlib.sha1(root.encode("utf-8")).hexdigest()[:12]
 
@@ -213,7 +221,30 @@ def _backoff(attempt: int) -> None:
 
 def ensure(path: Path | None = None) -> None:
     """Stamp ``ops_schema`` (``path`` is the SQLite file's and means nothing here); ``OpsSchemaTooNew`` on a newer
-    stamp. Redis needs no tables, so an older stamp is brought up by writing the new one."""
+    stamp. Redis needs no tables, so an older stamp is brought up by writing the new one.
+
+    A namespace never stamped is a new store: refused (``OpsNotCopied``) while ``ops.sqlite`` of this root holds rows,
+    so switching Redis on before the copy, or losing the namespace, cannot start the day from zero."""
+    if _client().get(_key("ops_schema")) is None:
+        held = _rows_in_file(ops.ops_path())
+        if held:
+            raise ops.OpsNotCopied(f"Redis namespace {namespace()} is empty and {ops.ops_path()} holds {held} rows: "
+                                   f"copy it first (python -m RevenueChaser.rcdata.ops_copy), or unset "
+                                   f"{ops.REDIS_URL_ENV} to stay on the file")
+    _stamp()
+
+
+def _rows_in_file(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as con:
+        names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        return sum(con.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
+                   for t in ops.TABLES if t != "ops_schema" and t in names)
+
+
+def _stamp() -> None:
+    """Write this checkout's schema stamp (``ensure`` without the empty-namespace check: the copy's way in)."""
     r, k = _client(), _key("ops_schema")
     r.set(k, ops.OPS_SCHEMA_VERSION, nx=True)
     found = int(r.get(k))

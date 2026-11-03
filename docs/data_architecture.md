@@ -964,7 +964,7 @@ renders at once with what is stored.
 
 | Variable | Constant | Holds |
 |---|---|---|
-| `RC_MARKET_DIR` | `MARKET_DIR` | The serving DuckDB files and `ops.sqlite` (the server's SSD); with `RC_REDIS_URL` set, also the key of the Redis namespace the ops state lives in |
+| `RC_MARKET_DIR` | `MARKET_DIR` | The serving DuckDB files and `ops.sqlite` (the server's SSD); with `RC_REDIS_URL` set and no `RC_REDIS_NAMESPACE`, also the key of the Redis namespace the ops state lives in |
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
@@ -1034,8 +1034,11 @@ every function reads and writes Redis (`rcdata/ops_redis.py`): the same tables b
 same answers. The Redis is the `redis` service of the root `docker-compose.yml`: a container with AOF on
 (`appendonly yes`, `appendfsync everysec`, `noeviction`), bound to `127.0.0.1` only, its data in
 `RC_REDIS_DATA_DIR`, so a restart keeps the day's call counts, the queue and the open issues. Keys sit under
-`rc:ops:<12 hex of sha1 of the resolved RC_MARKET_DIR>`, one namespace per market root as there was one file per
-market root; each row is a hash `<ns>:<table>:row:<primary key>` (NULL is a missing field, the column types are the
+`RC_REDIS_NAMESPACE` (the server sets it, `rc:ops:live`, so a moved or remounted market root keeps its state); unset,
+under `rc:ops:<12 hex of sha1 of the resolved RC_MARKET_DIR>`, one namespace per market root, which is how the tests
+and the e2e dashboards keep apart. A namespace never written is refused on its first write (`ops.OpsNotCopied`) while
+the root's `ops.sqlite` still holds rows: Redis switched on before the copy, or a lost namespace, cannot start the day
+from zero calls and empty watch lists; each row is a hash `<ns>:<table>:row:<primary key>` (NULL is a missing field, the column types are the
 SQLite DDL's), each table a sorted set of its keys, with the lookups the reads need (the active queue, each
 dataset's checks, the open issues per dataset and kind). What SQLite did in one `BEGIN IMMEDIATE` transaction is a
 `WATCH` of the tables touched, the reads, and one `MULTI`/`EXEC` that runs again when someone else wrote meanwhile

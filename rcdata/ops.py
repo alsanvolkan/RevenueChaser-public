@@ -117,6 +117,11 @@ class OpsSchemaTooNew(RuntimeError):
     """ops.sqlite was stamped by a newer rcdata: this checkout must not write to it."""
 
 
+class OpsNotCopied(RuntimeError):
+    """Redis is on, its namespace was never written, and ``ops.sqlite`` beside it still holds rows: starting an empty
+    store would read today's calls as 0 and the watch lists as empty. ``rcdata.ops_copy`` is the way in."""
+
+
 def backend() -> str:
     """``"redis"`` while ``RC_REDIS_URL`` is set, else ``"sqlite"``; read on every call, like ``ops_path``."""
     return "redis" if os.getenv(REDIS_URL_ENV, "").strip() else "sqlite"

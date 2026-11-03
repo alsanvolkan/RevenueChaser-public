@@ -86,9 +86,9 @@ def main(argv: list[str] | None = None) -> int:
               flush=True)
         return 2
 
+    ops_redis._stamp()                                  # the one way into a new namespace beside a full file
     for t in COPIED:
         ops_redis.put_rows(t, source[t])
-    ops_redis.ensure()
 
     bad = 0
     for t in COPIED:
