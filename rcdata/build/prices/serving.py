@@ -3,8 +3,8 @@
 **Tables** (``prices.duckdb``, serving schema version 1), every one keyed on the security id (``prices.security_id``):
 
 - ``price_bar_daily``: one bar per security and New York session, **nominal** (the prices as traded that day):
-  Alpaca's daily bars, then the WRDS history where Alpaca has no bar (``wrds/prices``: CRSP where it is the same
-  security, through ``wrds_history.PERMNO_LINK``, else Compustat), and the S&P 500 index level from the market store's
+  Alpaca's daily bars, then the WRDS history where Alpaca has no bar (``wrds/prices``: Compustat first, priority 1,
+  then CRSP where it is the same security, through ``wrds_history.PERMNO_LINK``), and the S&P 500 index level from the market store's
   Cboe file (``index:SPX``, the close only);
 - ``corporate_action``: Alpaca's actions of the store's securities, resolved to the security that traded under the
   action's symbol nearest its date (else the spine's current ticker), and Compustat's splits and dividends of the
@@ -154,7 +154,7 @@ SCHEMAS = {"price_bar_daily": PRICE_BAR, "corporate_action": CORPORATE_ACTION, "
            "shares_class": SHARES_CLASS, "security_symbol": SECURITY_SYMBOL, "market_cap_daily": MARKET_CAP,
            "price_revision": PRICE_REVISION, "wrds_price_diff": WRDS_PRICE_DIFF, UNADJUSTED_TABLE: CRSP_UNADJUSTED}
 KEYS = {"price_bar_daily": ("security_id", "session_date"), "market_cap_daily": ("security_id", "session_date")}
-# One ``_hist_all`` row per (security, session), the lowest priority (CRSP before Compustat) of those ``where`` keeps,
+# One ``_hist_all`` row per (security, session), the lowest priority (Compustat, 1, before CRSP) of those ``where`` keeps,
 # as a filter on ``rowid``. A hash aggregate, not a ``row_number()`` window: the window over every security and
 # session of 2010-2025 (60.7M rows, 39.2M partitions) ran out of DuckDB's 5 GB, where this spills (#372).
 HIST_FIRST = "rowid IN (SELECT arg_min(rowid, priority) FROM _hist_all {where} GROUP BY security_id, session_date)"
@@ -319,7 +319,7 @@ class PricesServing:
         self._link_note(ctx, con, found)
         counts = {}
         cols = ", ".join(c for c, _ in PRICE_BAR)
-        # Alpaca's bar wins its session; of the history bars, CRSP's before Compustat's.
+        # Alpaca's bar wins its session; of the history bars, Compustat's (priority 1) before CRSP's.
         bars_sql = (f"SELECT {cols} FROM _alp UNION ALL SELECT * FROM ({_index_levels(con)}) UNION ALL "
                     f"SELECT {cols} FROM (SELECT * FROM _hist_all h WHERE {HIST_FIRST.format(where='')} "
                     "AND NOT EXISTS (SELECT 1 FROM _alp a "

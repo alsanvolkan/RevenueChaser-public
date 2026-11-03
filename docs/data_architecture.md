@@ -1269,7 +1269,7 @@ only through `rcdata.read`.
 | `sec/cover_shares` | daily | The SEC daily master index (10-K, 10-Q, 20-F, 40-F and their -T forms of the last 7 days), each filer's submissions file, the filing's inline-XBRL instance: `dei:EntityCommonStockSharesOutstanding` per class member | `stg_sec_cover` |
 | `yfinance/float` | daily | Yahoo `floatShares` (`yfinance` `get_info`), 400 Tier A names a run, 1.5 s apart, stopped by a 401 or 429 | `stg_yahoo_float` |
 | `uw/total_float` | daily | Unusual Whales `/short_screener` `total_float`, every Tier A name (the client's batching) | `stg_uw_float` |
-| `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1993 on the US exchanges and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025 (stocks and ETFs, from 1993), `comp.sec_split` whole; no CCM link (`wrds_history.PERMNO_LINK`) | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_revisions` |
+| `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1983 (its earliest priced day, 1983-12-30) on exchg 11, 12, 14, 17, 21 (the US exchanges and the Arca listings) and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025 (stocks and ETFs, from 1983), `comp.sec_split` whole; no CCM link (`wrds_history.PERMNO_LINK`) | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_revisions` |
 | `prices/serving` | daily | none: builds the served tables from the staging tables | the tables below |
 
 **The universe.** The bars ask the live spine's Tier A and B (`prices.DEFAULT_TIERS`; 5,655 + 2,015 = 7,670 names

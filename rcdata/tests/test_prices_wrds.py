@@ -170,15 +170,15 @@ def _asked(conn) -> list[str]:
 
 # ── What is asked ─────────────────────────────────────────────────────────────────────────────────────────────
 
-def test_the_history_is_asked_per_year_from_1993_on_the_us_exchanges_crsp_to_2025(monkeypatch):
+def test_the_history_is_asked_per_year_from_1983_crsp_to_2025(monkeypatch):
     monkeypatch.undo()                                   # the real START_YEAR, not the fixture's 2024
     as_of = date(2026, 10, 27)
-    assert wrds_history.years("secd", as_of) == list(range(1993, 2027))
-    assert wrds_history.years("dsf", as_of) == list(range(1993, 2026))
-    assert wrds_history.years("sec_divid", as_of)[0] == 1993
+    assert wrds_history.years("secd", as_of) == list(range(1983, 2027))
+    assert wrds_history.years("dsf", as_of) == list(range(1983, 2026))
+    assert wrds_history.years("sec_divid", as_of)[0] == 1983
     sql = wrds_history.year_sql("secd", 1993)
     assert "FROM comp.secd" in sql and "BETWEEN '1993-01-01' AND '1993-12-31'" in sql
-    assert "exchg IN (11, 12, 14)" in sql and "ajexdi" in sql and "trfd" in sql and "cshoc" in sql
+    assert "exchg IN (11, 12, 14, 17, 21)" in sql and "ajexdi" in sql and "trfd" in sql and "cshoc" in sql
     dsf = wrds_history.year_sql("dsf", 2025)
     assert "FROM crsp.dsf_v2" in dsf
     for col in ("hdrcusip", "cusip", "ticker", "dlycumfacpr", "dlycumfacshr", "dlyorddivamt"):
@@ -358,9 +358,10 @@ def test_compustat_bars_of_a_permnos_gvkey_join_the_security_its_crsp_bars_won()
 
 def test_compustat_adjusted_return_is_the_true_total_return_within_1bp():
     con = duckdb.connect()
-    con.execute("CREATE TABLE s (gvkey TEXT, iid TEXT, datadate DATE, prccd DOUBLE, ajexdi DOUBLE, trfd DOUBLE)")
+    con.execute("CREATE TABLE s (gvkey TEXT, iid TEXT, datadate DATE, prccd DOUBLE, ajexdi DOUBLE, trfd DOUBLE, "
+                "run_id TEXT)")
     for d, c, a, t in zip(JUNE, COMP_CLOSE, AJEXDI, TRFD):
-        con.execute("INSERT INTO s VALUES ('001690', '01', ?, ?, ?, ?)", [d, c, a, t])
+        con.execute("INSERT INTO s VALUES ('001690', '01', ?, ?, ?, ?, 'r1')", [d, c, a, t])
     got = [r[0] for r in con.execute(f"SELECT {wrds_history.COMP_RETURN} AS r FROM s "
                                      "WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate) ORDER BY datadate").fetchall()]
     # The economic return: the close plus the dividend over the previous close, both in one share basis.
@@ -385,12 +386,12 @@ def built(fake):
     return fake
 
 
-def test_history_bars_crsp_first_then_compustat_and_alpaca_wins_its_sessions(built):
+def test_history_bars_compustat_first_and_alpaca_wins_its_sessions(built):
     june = _q("SELECT * FROM price_bar_daily WHERE security_id = ? AND session_date < '2026-01-01' "
               "ORDER BY session_date", [AAPL])
     assert [str(r["session_date"]) for r in june] == JUNE
-    assert {r["source"] for r in june} == {wrds_history.CRSP}
-    assert june[1]["close"] == 202.1                                     # CRSP's, not Compustat's 202.0
+    assert {r["source"] for r in june} == {wrds_history.COMPUSTAT}
+    assert june[1]["close"] == 202.0                                     # Compustat's, not CRSP's 202.1
     assert june[0]["shares_outstanding"] == 7_500_000_000 and june[2]["shares_outstanding"] == 15_000_000_000
     october = _q("SELECT session_date, close, source FROM price_bar_daily WHERE security_id = ? "
                  "AND session_date >= '2026-10-26' ORDER BY session_date", [AAPL])
@@ -416,7 +417,7 @@ def test_a_delisted_compustat_security_whose_sessions_crsp_all_wins_keeps_its_sy
     wrds.reset()
     assert _backfill()["result"] == "changed"
     assert {r["source"] for r in _q("SELECT source FROM price_bar_daily WHERE security_id = ?", [OLDCO])} == {
-        wrds_history.CRSP}, "CRSP wins both sessions"
+        wrds_history.COMPUSTAT}, "Compustat wins both sessions"
     assert [r["symbol"] for r in _q("SELECT symbol FROM security_symbol WHERE security_id = ?", [OLDCO])] == ["OLD-A"]
     assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'OLD-A'")[0]["n"] == 2
     wrds.reset()
@@ -555,10 +556,10 @@ def test_crsp_rows_reach_their_securities_without_ccm(fake):
     _build()
     spy = _q("SELECT security_id, close, source FROM price_bar_daily WHERE session_date = '2025-06-06' "
              "AND source = ?", [wrds_history.CRSP])
-    assert {(r["security_id"], r["close"]) for r in spy} == {(AAPL, 100.5), ("001000:01", 590.0)}
+    assert {(r["security_id"], r["close"]) for r in spy} == {("001000:01", 590.0)}   # AAPL's is Compustat's
     old = _q("SELECT close, source FROM price_bar_daily WHERE security_id = ? AND session_date = '2024-03-01'",
              [OLDCO])
-    assert old == [{"close": 5.05, "source": wrds_history.CRSP}]           # CRSP first, as with the CCM link
+    assert old == [{"close": 5.0, "source": wrds_history.COMPUSTAT}]       # Compustat first (priority 1)
     assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id LIKE 'permno:%'")
 
 
@@ -596,9 +597,9 @@ def test_wrds_actions_feed_the_factors_and_alpaca_wins_an_action_both_know(built
     assert acts[0]["ratio"] == 2.0 and acts[1]["amount"] == 1.0 and all(a["applied"] for a in acts)
     view = {str(r["session_date"]): r for r in _q(
         "SELECT session_date, close, adj_close FROM price_bars_daily WHERE ticker = 'AAPL'")}
-    assert view["2025-06-03"]["close"] == pytest.approx(202.1 / 2)       # split-adjusted to today's shares
+    assert view["2025-06-03"]["close"] == pytest.approx(202.0 / 2)       # split-adjusted to today's shares
     tr = (1 - 1.0 / 101.5) * (1 - 0.26 / 200.0)                       # the closes before the ex-dates
-    assert view["2025-06-03"]["adj_close"] == pytest.approx(202.1 / 2 * tr)
+    assert view["2025-06-03"]["adj_close"] == pytest.approx(202.0 / 2 * tr)
 
 
 def test_the_difference_report_counts_close_and_return_differences(built):
