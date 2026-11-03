@@ -222,7 +222,8 @@ with its history row. No provider call, no DuckDB file.
   in_watchlist}` as before. `rawstore.toggle_watchlist`, `load_watchlist` and `save_watchlist` are the stock list too.
 - **`GET /api/watchlists`**: `{ok, option: [tickers], stock: [tickers]}`, what the board buttons show as pressed.
   The read itself never creates `ops.sqlite`; the read log it counts into is flushed to it once a minute, which
-  may, as for every `rcdata.read` call.
+  may, as for every `rcdata.read` call. A flush that fails keeps its counts for the next one and never fails the
+  read (#228).
 
 ### Known deviation (fixed 2026-09-30)
 
@@ -338,10 +339,13 @@ whole app at a local server:
 | `RC_TREASURY_BASE` | US Treasury daily par yield curve CSV (`rcdata/build/sources/treasury.py`) |
 | `RC_FED_BASE` | Federal Reserve site, the FOMC calendar page (`rcdata/build/sources/fed.py`) |
 | `RC_BLS_BASE` | BLS site, the release calendar `.ics` (`rcdata/build/sources/bls.py`) |
+| `RC_CFTC_SCHEDULE_BASE` | CFTC site, the COT release schedule page (`rcdata/build/sources/cftc_schedule.py`) |
 | `RC_YAHOO_BASE` | Unset in production: Yahoo is read through yfinance, which has no base URL. When set, the MOVE and wheat history is read as `<base>/<quoted symbol>.json` instead (the CLI test's loopback mock; `rcdata/build/sources/yahoo.py`) |
 | `RC_FDA_OOPD_BASE` | FDA Office of Orphan Products Development (OOPD) search |
 | `RC_DEEPSEEK_BASE` | DeepSeek chat API (`core/providers/deepseek.py`; read at call time) |
+| `RC_EVREN_BASE` | EVREN chat API, the default Relatedness writer (`core/providers/evren.py`, #360; read at call time). Default `https://evren-llmapi.ssyz.org.tr/v1`; the model is `RC_EVREN_MODEL` or the board's `WRITER_MODEL` |
 | `RC_GROK_BASE` | SuperGrok chat API, the Relatedness Grok writer (`core/providers/grok.py`, #388; read at call time). Default the Grok CLI chat proxy `https://cli-chat-proxy.grok.com/v1`. Only https on `grok.com` / `*.grok.com` or a loopback mock is accepted, so the subscription token never goes elsewhere (`api.x.ai`, the metered developer API, is refused); the model is `RC_GROK_MODEL` |
+| `RC_GROK_CLIENT_VERSION` | The `x-grok-client-version` header the Grok writer sends (`core/providers/grok.py`, #375). cli-chat-proxy answers HTTP 426 to a client below its minimum; the default `CLIENT_VERSION` is the Grok CLI release it was read from (xai-org/grok-build). Set it to the version a 426 names until the default is bumped |
 | `RC_OPENFIGI_BASE` | OpenFIGI mapping API (identity refresh; the 13F CUSIP map, `core/providers/openfigi.py`, read at call time; the spine's `openfigi/map`) |
 | `RC_NASDAQTRADER_BASE` | Nasdaq Trader symbol directory (identity refresh) |
 | `RC_FDIC_BASE` | FDIC institution list (identity refresh) |
@@ -349,6 +353,7 @@ whole app at a local server:
 | `RC_SPDR_BASE` | SPDR index-ETF holdings files (identity refresh) |
 | `RC_SSGA_BASE` | SSGA daily ETF holdings workbooks: SPY, MDY, SPSM, the spine's index membership (`rcdata/build/spine/funds.py`, read at call time) |
 | `RC_ISHARES_BASE` | iShares `latest-holdings.csv` files: IVV, IJH, IJR (`rcdata/build/spine/funds.py`) |
+| `RC_ARK_BASE` | ARK's daily holdings CSV: ARKQ, read when UW holds nothing for it (`rcdata/build/spine/etf_holdings.py`, #339) |
 | `RC_VANGUARD_BASE` | Vanguard's daily creation baskets (PCF, `etfportal.vanguard.com`): VOO, IVOO, VIOO (`rcdata/build/spine/funds.py`) |
 | `RC_NASDAQ_API_BASE` | Nasdaq's list API, the Nasdaq-100 members (`rcdata/build/spine/funds.py`) |
 | `RC_INVESCO_API_BASE` | Invesco's fund holdings API: QQQ, the second Nasdaq-100 file (`rcdata/build/spine/funds.py`) |

@@ -44,11 +44,15 @@ Grok writer (#388, avo 2026-10-16 "grok kullan direk"; manual, never scheduled):
 
 ``--provider grok`` writes through the SuperGrok subscription (``core/providers/grok.py``): no off-peak gate, the
 allowance is read before each batch of calls and a spent allowance stops the run cleanly (exit 0, pending reported).
-``--limit N`` then caps the **calls** (it never shortens the universe the board covers) and is required; ``--cap`` is
-USD and DeepSeek's only. The summary names the provider, the model, the calls (0 USD each), done, pending and stale.
+``--limit N`` caps the **calls** (it never shortens the universe the board covers); without it a free writer has no
+call cap (avo, 2 Nov 2026). ``--cap`` is USD and DeepSeek's only. The summary names the provider, the model, the calls
+(0 USD each), done, pending and stale.
 ``--grok-ping`` makes exactly one live call with the profile prompt and a run's parameters, writes nothing, and says
-whether the endpoint and model answer a usable profile. The default provider is DeepSeek, so RC-Relatedness-OffPeak
-(``--run --cap 8``) is unchanged.
+whether the endpoint and model answer a usable profile.
+
+Without ``--provider``, ``--run`` writes with the board's writer (#360, ``module_relatedness/settings.py``: EVREN by
+default, the ``--provider evren`` path; a missing ``EVREN_API_KEY`` stops before any request). RC-Relatedness-OffPeak
+runs ``--run --cap 10``: the cap counts only when the board's writer is DeepSeek.
 """
 from __future__ import annotations
 
@@ -56,9 +60,10 @@ import argparse
 import json
 
 from RevenueChaser.core import offpeak, rawstore, subscription_usage
-from RevenueChaser.core.providers import deepseek, grok
+from RevenueChaser.core.providers import deepseek, evren, grok
 
-from . import config, engine
+from . import config, engine, writers
+from . import settings as rel_settings
 
 
 # Why a run stopped that the next (off-peak) run cannot fix on its own, so the task exits 1: a rejected
@@ -113,17 +118,19 @@ def _grok_ping() -> int:
     return 0 if out["ok"] else 1
 
 
-def _grok_run(chosen, limit: int) -> int:
-    """``--run --provider grok --limit N``: the summary names the provider, the model and the calls (0 USD each)."""
-    before = grok.calls()
+def _free_run(provider: str, chosen, limit: int | None, model: str | None = None) -> int:
+    """``--run`` with EVREN or Grok (#360, #388): the summary names the provider, the model and the calls (0 USD
+    each). ``limit`` caps the calls; none by default (avo, 2 Nov 2026)."""
+    mod = engine.profiles_mod.llm(provider)
+    before = mod.calls()
     try:
-        payload = engine.run(tickers=chosen, provider="grok", max_calls=limit)
+        payload = engine.run(tickers=chosen, provider=provider, max_calls=limit, **_model_kw(model))
     except engine.AlreadyRunning as exc:
         print(json.dumps({"skipped": str(exc)}, ensure_ascii=False))
         return 1
     reason = payload.get("stopped_reason")
-    out = {"provider": "grok", "model": grok.MODEL, "calls": grok.calls() - before,
-           "cost_usd": grok.COST_USD_PER_CALL * (grok.calls() - before),
+    out = {"provider": provider, "model": model or mod.MODEL, "calls": mod.calls() - before,
+           "cost_usd": mod.COST_USD_PER_CALL * (mod.calls() - before),
            "done": payload.get("n"), "pending": payload.get("pending") or 0,
            "stale": sum(1 for c in payload.get("companies") or [] if c.get("stale"))}
     if reason:
@@ -210,26 +217,36 @@ def main(argv: list[str] | None = None) -> int:
                         "max(2, n_fine // 2)); still clamped below the realised fine count")
     p.add_argument("--nmf-max-iter", type=_max_iter, default=None, metavar="N",
                    help=f"with --rebuild-themes: the NMF iterations (default {DEFAULT_FIT.max_iter})")
-    p.add_argument("--provider", choices=("deepseek", "grok"), default="deepseek",
+    p.add_argument("--provider", choices=tuple(writers.WRITERS), default=None,
                    help="the LLM that writes profiles (--run) or theme names (--name-themes, --rebuild-themes "
-                        "--name). deepseek (default) is off-peak gated and capped by --cap USD; grok (SuperGrok "
-                        "subscription, #388) has no off-peak gate, stops at the allowance and needs --limit N, "
-                        "which then caps the calls")
+                        "--name). Without it --run uses the board's writer (Settings, #360; EVREN by default) and "
+                        "theme naming uses deepseek. deepseek is off-peak gated and capped by --cap USD; evren (no "
+                        "fee) and grok (SuperGrok subscription, #388) have no off-peak gate and no call cap unless "
+                        "--limit N (avo, 2 Nov 2026); grok also stops at the allowance")
     p.add_argument("--grok-ping", action="store_true",
                    help="one live SuperGrok call with the profile prompt; writes nothing; exit 0 when it answers a "
                         "usable profile")
     args = p.parse_args(argv)
-    grok_on = args.provider == "grok"
+    explicit = args.provider
+    # --run writes with the board's writer unless --provider names one (#360); theme naming keeps DeepSeek's default.
+    if args.run and explicit is None:
+        run_writer, run_model = rel_settings.writer()[0], rel_settings.chosen_model()
+    else:
+        run_writer, run_model = explicit or "deepseek", None
+    grok_on = run_writer == "grok"
+    if explicit == "evren" and not args.run:
+        p.error("--provider evren goes with --run only")
+    if args.run and run_writer != "deepseek":
+        if explicit and args.cap is not None:
+            p.error(f"--cap is USD and DeepSeek's only; with --provider {explicit}, --limit N caps the calls")
+        if args.limit is not None and args.limit < 1:
+            p.error("--limit N needs N >= 1: the most calls this run makes")
     if grok_on:
         if args.status or args.cutover or not (args.run or args.name_themes or args.rebuild_themes
                                                or args.grok_ping):
             p.error("--provider grok goes with --run, --name-themes or --rebuild-themes --name")
         if args.rebuild_themes and not args.name:
             p.error("--provider grok names themes: add --name to --rebuild-themes")
-        if args.run and args.cap is not None:
-            p.error("--cap is USD and DeepSeek's only; with --provider grok, --limit N caps the calls")
-        if args.run and (args.limit is None or args.limit < 1):
-            p.error("--provider grok needs --limit N (N >= 1): the most SuperGrok calls this run makes")
         if args.limit is not None and not args.run:
             p.error("--limit caps the SuperGrok calls of --run only; theme naming has no call cap")
     chosen = _selection(args)
@@ -252,8 +269,11 @@ def main(argv: list[str] | None = None) -> int:
                 "--name-themes / --cutover")
 
     if grok_on or args.grok_ping:
-        print(f"Grok (SuperGrok subscription, model {grok.MODEL}): no off-peak gate; the allowance is read before "
-              f"each batch of {grok.GATE_EVERY} calls.")
+        print(f"Grok (SuperGrok subscription, model {run_model or grok.MODEL}): no off-peak gate; the allowance is "
+              f"read before each batch of {grok.GATE_EVERY} calls.")
+    elif run_writer == "evren":
+        print(f"EVREN (model {run_model or evren.MODEL}): no fee, no off-peak gate, no call cap"
+              + (f" beyond --limit {args.limit}." if args.limit else "."))
     else:
         print(offpeak.describe())
         if not offpeak.is_off_peak() and deepseek.peak_override_active():
@@ -367,11 +387,25 @@ def main(argv: list[str] | None = None) -> int:
               "--rebuild-themes, --cutover, or --grok-ping / --provider grok")
         return 0
 
-    if grok_on:
-        return _grok_run(chosen, args.limit)
+    absent = writers.missing_text(run_writer) if run_writer == "evren" else None
+    if absent:
+        # Nothing runs without the writer's key: no SEC request, no store write (#360). Not green.
+        print(json.dumps({"provider": run_writer, "model": run_model or evren.MODEL, "calls": 0, "cost_usd": 0.0,
+                          "stopped_reason": "missing", "error": absent}, ensure_ascii=False))
+        return 1
+    if run_writer != "deepseek":
+        return _free_run(run_writer, chosen, args.limit, run_model)
+    return _deepseek_run(chosen, args.limit, args.cap, run_model)
 
+
+def _model_kw(model: str | None) -> dict:
+    """The board's model (#360) as a keyword, only when one is saved: a run without one is called as before."""
+    return {"model": model} if model else {}
+
+
+def _deepseek_run(chosen, limit, cap, model: str | None = None) -> int:
     try:
-        payload = engine.run(tickers=chosen, limit=args.limit, usd_cap=args.cap)
+        payload = engine.run(tickers=chosen, limit=limit, usd_cap=cap, **_model_kw(model))
     except engine.AlreadyRunning as exc:
         # Not green: nothing ran. (An off-peak deferral is different: it exits 0 below.)
         print(json.dumps({"skipped": str(exc)}, ensure_ascii=False))

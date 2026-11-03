@@ -199,7 +199,8 @@ def complete(system: str, user: str, *, thinking: bool = False,
              client: httpx.Client | None = None, now=None,
              ticker: str | None = None, cik=None,
              prompt_version: str | None = None,
-             validate: Callable[[str], bool] | None = None) -> str:
+             validate: Callable[[str], bool] | None = None,
+             model: str | None = None) -> str:
     """One chat completion. Cache first, then the off-peak gate, then HTTP.
 
     In thinking mode ``temperature`` is omitted (the API ignores it) and
@@ -212,7 +213,8 @@ def complete(system: str, user: str, *, thinking: bool = False,
     instead of replaying the bad answer from ``llm_cache``.
     """
     effort = (reasoning_effort or "").lower() or None
-    key = _cache_key(system, user, thinking, MODEL, effort)
+    model = model or MODEL                 # the board's model (#360), a parameter, never a module-level swap
+    key = _cache_key(system, user, thinking, model, effort)
     if use_cache:
         hit = _cache_get(key)
         if hit is not None:
@@ -227,7 +229,7 @@ def complete(system: str, user: str, *, thinking: bool = False,
             "DeepSeek API key is missing. Set DEEPSEEK_API_KEY (see core/credentials.py).")
 
     body = {
-        "model": MODEL,
+        "model": model,
         "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": user}],
         "max_tokens": max_tokens,
@@ -272,7 +274,7 @@ def complete(system: str, user: str, *, thinking: bool = False,
             if r.status_code >= 400:
                 raise DeepSeekError(f"DeepSeek HTTP {r.status_code}: {r.text[:300]}")
             return _finish(r, key, use_cache, validate, effort, thinking, ticker, cik,
-                           prompt_version)
+                           prompt_version, model)
         raise DeepSeekError("DeepSeek request failed")  # pragma: no cover - loop always returns or raises
     finally:
         if own:
@@ -280,7 +282,7 @@ def complete(system: str, user: str, *, thinking: bool = False,
 
 
 def _finish(r, key: str, use_cache: bool, validate, effort, thinking: bool, ticker, cik,
-            prompt_version) -> str:
+            prompt_version, model: str | None = None) -> str:
     """Turn a 2xx reply into the message content (and cache it when the caller accepts it)."""
     try:
         data = r.json()
@@ -302,7 +304,7 @@ def _finish(r, key: str, use_cache: bool, validate, effort, thinking: bool, tick
             logger.warning("deepseek validate hook raised %s: %s; not caching", type(exc).__name__, exc)
             cacheable = False
     if cacheable:
-        _cache_put(key, content, {"model": MODEL, "thinking": thinking,
+        _cache_put(key, content, {"model": model or MODEL, "thinking": thinking,
                                   "effort": effort, "usage": data.get("usage"),
                                   "ticker": ticker, "cik": cik,
                                   "prompt_version": prompt_version,

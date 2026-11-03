@@ -68,6 +68,13 @@ PROVIDERS: dict[str, Provider] = {
         signup_url="https://app.alpaca.markets/paper/dashboard/overview",
         required_for="the prices store's daily bars and corporate actions (with ALPACA_API_KEY_ID)",
     ),
+    "evren": Provider(
+        slug="evren",
+        label="EVREN",
+        env_var="EVREN_API_KEY",
+        signup_url="https://evren-llmapi.ssyz.org.tr",
+        required_for="the default Relatedness profile writer (core/providers/evren.py, #360; no fee)",
+    ),
     "deepseek": Provider(
         slug="deepseek",
         label="DeepSeek",
@@ -80,7 +87,8 @@ PROVIDERS: dict[str, Provider] = {
         label="Alpha Vantage",
         env_var="ALPHAVANTAGE_API_KEY",
         signup_url="https://www.alphavantage.co/support/#api-key",
-        required_for="the fundamentals layer's earnings calendar (optional; the SEC 8-K item 2.02 still dates reports)",
+        required_for=("the fundamentals layer's earnings calendar (optional; the SEC 8-K item 2.02 still dates reports) "
+                      "and the spine's listing status, the ETF list (rcdata alphavantage/listing_status)"),
     ),
     "claude_subscription": Provider(
         slug="claude_subscription",
@@ -126,9 +134,9 @@ def missing_message(slug: str) -> str:
     """Actionable message for a key that is not set at all."""
     p = PROVIDERS[slug]
     return (
-        f"{p.label} API key is missing. Set {p.env_var} in the .env file at the "
-        f"repo root, then restart the dashboard. Get a key at {p.signup_url}. "
-        f"Needed for: {p.required_for}."
+        f"{p.label} API key is missing. Set {p.env_var} in the service environment "
+        f"(on homesrv: /etc/life/secrets.env, loaded by the unit; never .env), then restart the dashboard. "
+        f"Get a key at {p.signup_url}. Needed for: {p.required_for}."
     )
 
 
@@ -140,8 +148,8 @@ def rejected_message(slug: str, status: int | None = None, detail: str = "") -> 
     return (
         f"{p.label} API key was rejected{code} — it is set but not valid "
         f"(expired, revoked, or the subscription lapsed). Renew it at "
-        f"{p.signup_url}, then update {p.env_var} in .env and restart the "
-        f"dashboard.{tail}"
+        f"{p.signup_url}, then update {p.env_var} in the service environment (on homesrv: "
+        f"/etc/life/secrets.env) and restart the dashboard.{tail}"
     )
 
 

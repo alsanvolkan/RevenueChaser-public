@@ -12,6 +12,14 @@ from RevenueChaser.core.providers import deepseek
 from RevenueChaser.module_relatedness import config, engine, profiles, similarity, store
 
 
+@pytest.fixture(autouse=True)
+def _deepseek_board(monkeypatch):
+    """These CLI runs are DeepSeek's: the board's writer is DeepSeek here (#360 made EVREN the default)."""
+    from RevenueChaser.core.providers import deepseek as _ds
+    from RevenueChaser.module_relatedness import settings as rel_settings
+    monkeypatch.setattr(rel_settings, "writer", lambda: ("deepseek", _ds.MODEL))
+
+
 def _prof(**kw):
     out = {f: [] for f in config.PROFILE_FIELDS}
     out.update(kw)

@@ -4,10 +4,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
+from RevenueChaser.core.config import load_env_file
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-load_dotenv(_REPO_ROOT / "RevenueChaser" / ".env")
+load_env_file(_REPO_ROOT / "RevenueChaser" / ".env")   # writer keys never from .env (#360)
 
 # NB: no /api suffix here — callers pass paths that already carry it.
 UW_API_BASE = os.getenv("RC_UW_BASE_ROOT") or "https://api.unusualwhales.com"

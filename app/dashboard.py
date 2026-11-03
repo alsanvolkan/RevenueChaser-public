@@ -239,6 +239,8 @@ jobs.register("comovement_recompute", runners.run_comovement_recompute,
 # re-derives the Settings card alone (#384 SW-S4).
 jobs.register("settings_refresh", runners.run_settings, ["module_settings"], requires_uw=False)
 jobs.register("module_value_chain", runners.run_value_chain, ["module_value_chain"], requires_uw=False)
+# The Relatedness writer comparison (#370): one provider + model on at most 100 names, no board table written.
+jobs.register("relatedness_compare", runners.run_relatedness_compare, [], requires_uw=False, lane="long")
 jobs.register("edgar_sync", runners.run_edgar_sync, ["module_value_chain"], requires_uw=False, lane="long",
               cancellable=True)
 # no deadline: fewer than 5 recorded runs (23 Oct); set from job_runs when measured
@@ -257,7 +259,9 @@ jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True
 SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh",
                  "module_fundamentals": "settings_refresh",
                  # The control board's universe (Apply, design v28): a saved choice, re-rendered store-only.
-                 "module_settings": "settings_refresh"}
+                 "module_settings": "settings_refresh",
+                 # The Relatedness writer (#360): a saved choice shows on the Settings card; the next run uses it.
+                 "module_relatedness": "settings_refresh"}
 
 TABS = [
     {"type": "header", "label": "Research"},
@@ -688,6 +692,30 @@ def run_earnings():
     if err:
         return err
     return _submit("earnings", params)
+
+
+@app.route("/run/relatedness-compare", methods=["POST"])
+def run_relatedness_compare():
+    """Queue the writer comparison (#370): JSON ``{provider, model, tickers}``, checked before anything is queued."""
+    from RevenueChaser.module_relatedness import compare, writers
+
+    body = request.get_json(silent=True) or {}
+    provider, model, raw = body.get("provider"), body.get("model"), body.get("tickers")
+    names = [t.strip().upper() for t in raw if isinstance(t, str)] if isinstance(raw, list) else []
+    bad = isinstance(raw, list) and (len(names) != len(raw) or not all(_valid_ticker(t) for t in names))
+    names = list(dict.fromkeys(t for t in names if t))     # one run per name (review nit)
+    error = None
+    if not isinstance(provider, str) or provider not in writers.WRITERS:
+        error = f"provider must be one of {', '.join(writers.WRITERS)}"
+    elif not isinstance(model, str) or model not in writers.get(provider).models:
+        error = f"model must be one of {provider}'s: {', '.join(writers.get(provider).models)}"
+    elif bad or not names or len(names) > compare.MAX_NAMES:
+        error = f"tickers must be a list of 1 to {compare.MAX_NAMES} ticker symbols"
+    elif writers.missing_text(provider):
+        error = f"{provider} cannot run: {writers.missing_text(provider)}"
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    return _submit("relatedness_compare", {"provider": provider, "model": model, "tickers": names})
 
 
 @app.route("/run/module_leaps", methods=["POST"])

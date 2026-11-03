@@ -1930,18 +1930,36 @@ def _submissions_message(subs: dict | None) -> str:
     return text
 
 
+def run_relatedness_compare(uw=None, provider: str = "", model: str = "", tickers: list | None = None) -> None:
+    """The writer comparison (#370): ``tickers`` (at most 100) with one provider + model; no board table is written.
+    The counts are the job's message; the scores file is under ``.cache/research/360/``."""
+    from RevenueChaser.core import job_lock
+    from RevenueChaser.module_relatedness import compare
+
+    # The Relatedness Fetch's lock (PR 371 review S3): a comparison never spends beside a scheduled run.
+    with job_lock.acquire("relatedness", wait=0) as got:
+        if not got:
+            raise JobMessage("Another Relatedness run is already in progress; the comparison did not start.")
+        out = compare.run(list(tickers or []), provider=provider, model=model)
+    raise JobMessage(json.dumps(out, ensure_ascii=False))
+
+
 def run_relatedness(uw=None, no_fetch: bool = False) -> Path:
     """Run the Relatedness board (LLM business-profile similarity).
 
-    Fetch builds profiles for the pilot universe via DeepSeek (off-peak gated);
-    the ``no_fetch`` (model-only) path re-renders from the cached profiles with
-    zero network.
+    Fetch builds profiles for the pilot universe with the board's writer (Settings, #360: EVREN by default, DeepSeek
+    off-peak gated); the ``no_fetch`` (model-only) path re-renders from that writer's stored profiles with zero
+    network.
     """
     from RevenueChaser.module_relatedness import engine, report
+    from RevenueChaser.module_relatedness import settings as rel_settings
 
+    # The model is a parameter (PR 362 review S1): a Refresh and a Save beside a Fetch never change a module default.
+    provider, model = rel_settings.writer()[0], rel_settings.chosen_model()
     try:
         # One id per Fetch (jobs.py:97): its result history header (#388). A Refresh records nothing.
-        payload = engine.run(no_fetch=no_fetch, run_id=None if no_fetch else _freeze_run_id())
+        payload = engine.run(no_fetch=no_fetch, run_id=None if no_fetch else _freeze_run_id(),
+                             provider=provider, model=model)
     except engine.AlreadyRunning as exc:
         raise JobMessage(str(exc)) from exc
     _write_to(RELATEDNESS_JSON, json.dumps(payload, ensure_ascii=False, default=str))

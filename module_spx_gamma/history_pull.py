@@ -162,7 +162,7 @@ def _session_open() -> bool:
 
 
 def sessions_between(start: date, end: date) -> list[str]:
-    """NYSE sessions in ``[start, end]``, oldest first (before 2025 the calendar knows weekends only; a holiday
+    """NYSE sessions in ``[start, end]``, oldest first (before 1993 the calendar knows weekends only; a holiday
     then has no stored close and costs no request)."""
     out, d = [], start
     while d <= end:

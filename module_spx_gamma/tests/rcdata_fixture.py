@@ -93,7 +93,18 @@ def _write_spx(ctx, spx: dict[date, list[dict]]) -> None:
         uw.DATASET.to_parquet(ctx, raw)
 
 
-def _write_series(ctx, symbols, cot_reports, end: date, closes: dict[str, float] | None = None) -> None:
+def schedule_html(releases) -> str:
+    """CFTC's release schedule page in the shape ``sources.cftc_schedule`` parses: one row per month of one year."""
+    months: dict[int, list[str]] = {}
+    for d in sorted(releases):
+        months.setdefault(d.month, []).append(f"<td>{d.day:02d}</td>")
+    year = min(releases).year
+    rows = "".join(f"<tr><td>{date(year, m, 1):%B}</td>{''.join(cells)}</tr>" for m, cells in months.items())
+    return f"<h3>{year} Release Schedule</h3><table><tr><td>Month</td><td>Dates</td></tr>{rows}</table>"
+
+
+def _write_series(ctx, symbols, cot_reports, end: date, closes: dict[str, float] | None = None,
+                  releases=()) -> None:
     raws = []
     for sym in symbols:
         path = base.raw_root() / "cboe" / "index" / end.isoformat() / f"{sym}_History.csv"
@@ -103,6 +114,9 @@ def _write_series(ctx, symbols, cot_reports, end: date, closes: dict[str, float]
         path = base.raw_root() / "cftc" / "cot" / f"{report.isoformat()}.json.gz"
         doc = json.dumps({"tff": [cot_item(report, k)], "disagg": []}).encode()
         raws.append(ms.save_raw(ctx, path, doc, end, "https://cftc.test"))
+    if releases:
+        path = base.raw_root() / "cftc_schedule" / "release" / f"{end.isoformat()}.htm"
+        raws.append(ms.save_raw(ctx, path, schedule_html(releases).encode(), end, "https://cftc.test"))
     if raws:
         ms.DATASET.to_parquet_all(ctx, raws)
 
@@ -112,15 +126,15 @@ VIX_SYMBOLS = ("VIX", "VIX9D", "VIX3M", "VIX6M", "VIX1Y", "VVIX")
 
 def serve(*, spx: dict[date, list[dict]] | None = None, symbols=VIX_SYMBOLS + ("SPX",),
           cot_reports=COT_REPORTS, series_end: date = LAST, check: str | None = "changed",
-          closes: dict[str, float] | None = None) -> None:
+          closes: dict[str, float] | None = None, releases=()) -> None:
     """Build and swap in a ``market`` serving file. ``spx=None`` is the default five sessions; ``{}`` none.
-    ``closes`` (ISO day -> close) replaces the default SPX series."""
+    ``closes`` (ISO day -> close) replaces the default SPX series; ``releases`` (CFTC release days) adds a schedule."""
     spx = {s: default_rows(s) for s in SESSIONS} if spx is None else spx
     # allow_shrink: a test may serve again with fewer rows for a session it already served.
     ctx = base.RunContext(run_id=RUN_ID, dataset=uw.NAME, trigger="test", allow_shrink=True)
     _write_spx(ctx, spx)
     ctx.dataset = ms.NAME
-    _write_series(ctx, symbols, cot_reports, series_end, closes)
+    _write_series(ctx, symbols, cot_reports, series_end, closes, releases)
     base.parquet_root().mkdir(parents=True, exist_ok=True)
     base.build_kind(ctx, uw.DATASET)
     if check:

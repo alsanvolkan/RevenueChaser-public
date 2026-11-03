@@ -153,6 +153,41 @@ closed fold under it (`details#old-settings`), unchanged.
 - **Stale page:** when the page is older than 60 minutes on returning to it, a bar offers a reload.
 - **Planned reads** (a board's table read that `boards` does not declare yet) are drawn dashed and marked planned.
 
+### 2.0b The two tabs: Data and Needs (#331)
+
+A tab strip sits at the top of the page, under the provider banner: **Data** is the page as described in 2.0a and
+below (the control board, then the closed fold of the old sections), and **Needs** shows the needs layer
+(`rcdata.needs`): what a board can ask for, how fresh it is now, and how often it was asked. The strip is
+`role="tablist"`; the arrow keys move between the two tabs, the choice is remembered per viewer (`localStorage`,
+key `rc.settings.tab`), and `#needs` in the URL opens the Needs tab. With no script the Data tab shows. Showing the
+Data tab again sends a `resize`, because the flow diagram lays itself out from a width that is 0 while hidden.
+
+`module_settings/needs_tab.py` builds the model (`build`) and draws it (`render`); the styles are
+`static/needs.css`, scoped to `#needs` and `#settings-tabs`, with the control board's own light and dark tokens
+(`test_needs_tab` holds them equal to `control.css`). Three parts:
+
+1. **The catalog.** One row per need: its serving file and table, the dataset that owns writing it, its freshness
+   rule (`max_lag` and its unit, or "present or absent" for a need with no day column), the parameter it is asked
+   by, and who reads it: a solid chip is the board's own `READS`, a dashed chip a planned read
+   (`boards.PLANNED_READS`) of a board that has not declared any yet. The state is `needs.summary`, read once per
+   render: `fresh`, `stale`, `missing`, or `unreadable` when that need's summary raised. An unreadable row shows its
+   error; the other rows are unaffected.
+2. **The request log.** `ops.need_reads(first_day)`: the `read_log` rows named `need:<name>` (which `needs.ask` and
+   `needs.summary` count beside the table name), per process and New York day. The tab sums them over today, 7 and
+   30 days, busiest first, and lists the needs never asked in 30 days. A name the catalog no longer holds is shown
+   and marked. The process is what the reader wrote: `RC_PROCESS_NAME`, else its script's name. A `python -m`
+   run starts from a `__main__.py`, so it is named after its package instead (`ops._process_name`): the dashboard
+   writes `dashboard`, the builder `builder`, the backup CLI `rcdata`, a board's own run its package. Rows written
+   before that (1 Nov 2026) may say `__main__`. A process writes its counts at most once a minute and at exit. `need_reads` never creates `ops.sqlite`.
+3. **The routes.** `GET /needs`, `GET /needs/<need>` and `GET /needs/<need>?summary=1`, each with one example link.
+
+**The tab does not count itself.** It asks `needs.summary(name, count=False)`, so a render adds no `need:` read
+(the table read is still counted, as every read is); without that, each render would add one read per need under
+`dashboard` and bury the requests the log exists to show. Read-only throughout: no provider, no write, no queue.
+A failed log read is one line in its part; a failed build of the whole tab is one line in its panel, never a blank
+page. On a phone (under 600 px) each table row is a full-width card, one cell per line with its column name, and the
+tabs share the width at 44 px.
+
 ### 2.0 The "New data system" section (PR 2)
 
 The first section of the old fold (2.0a), above the old inventory (which stays until PR 21, with its drill, flow diagram and
@@ -164,7 +199,11 @@ contract below binds the page; decisions D1, D6, D9, F6, F7 A, F8 A, F10 B and t
 with no network:
 
 - `ops.sqlite` through the read helpers of `rcdata/ops.py` (D6). They never create the file or a table: no file
-  yet, or a table an older file lacks, reads as no rows.
+  yet, or a table an older file lacks, reads as no rows. A row's status (`read.dataset_status`, and SPX Gamma's
+  board status) is one of them, `ops.read_latest_check` (#336); only the builder calls `ops.latest_check`, which
+  ensures the file because the builder writes it anyway (`rcdata/tests/test_read_never_creates_ops.py`). The read
+  log a read counts into is a write of its own: it reaches the file at its once-a-minute flush (a failed flush keeps
+  its counts for the next one). A status that cannot be read is `status_unknown` on rows that are still served (#228).
 - Row counts, the newest date and the last swap from the live serving file. **The handle rule:** every read opens
   its own read-only handle with `rcdata.serving.open_read(kind)`, the path resolved at that moment, and closes it
   before `collect()` returns. No connection is cached, at module level or across requests, because DuckDB keeps
@@ -206,7 +245,7 @@ confirms Duo on the server).
 store"): Alpaca's daily bars (coverage = Tier A names with a bar on the session, target 99%; backfill = its day
 partitions), Alpaca's corporate actions, the SEC cover shares, the Yahoo and UW float, the WRDS history and
 `prices/serving`. The WRDS history card is attended (`python -m RevenueChaser.rcdata.build backfill wrds/prices`);
-its backfill progress counts the table-year partitions (`secd 1984` ...) out of those expected, and its WRDS
+its backfill progress counts the table-year partitions (`secd 1993` ...) out of those expected, and its WRDS
 difference slot shows the store's monthly report (`wrds_price_diff`): per comparison the sessions compared and how
 many differ by more than 1 bp, with the largest difference. Every other card still says "no WRDS run yet", except
 the four WRDS checks of the fundamentals layer below.
@@ -525,7 +564,7 @@ it, so without that line its old archives would never be listed. The newest copy
 
 `core/automations.py` is the one registry of the scheduled tasks RevenueChaser owns, and the one
 installer. Rows: `RC-Store-Backup` (daily 04:00, `scripts.backup_store --keep 5`),
-`RC-Relatedness-OffPeak` (12:30, `--run --cap 8`), `RC-ValueChain-Sync` (13:00, `--sync-filings`),
+`RC-Relatedness-OffPeak` (12:30, `--run --cap 10`, the board's writer, #360), `RC-ValueChain-Sync` (13:00, `--sync-filings`),
 `RC-Daily-Bars` (22:35, `scripts.daily_bars --nightly --sec-files`), `RC-Screeners-Daily` (weekdays
 23:00, after `RC-Daily-Bars`, `app.universe_cli`), `RC-Forecast-Outcomes` (daily 23:45, after
 `RC-Daily-Bars`, `scripts.forecast_outcomes --nightly`), `RC-Forecast-Baselines` (daily 23:50, after

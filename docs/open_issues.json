@@ -2908,6 +2908,68 @@
       ],
       "issue_updated_at": "2026-10-28T14:13:25Z",
       "reviewed_at": "2026-10-28"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 291,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/291",
+      "title": "SPX Gamma: real-data check of the wall test (review N3) used the provider put wall, not the board's band wall",
+      "state": "open",
+      "labels": [
+        "area:market",
+        "parked"
+      ],
+      "boards": [
+        "module_spx_gamma"
+      ],
+      "scope": "board",
+      "kind": "investigate",
+      "status": "parked",
+      "deferred_until": "",
+      "summary": "The N3 wall-rule check used the provider put wall; rerun on the board's 181-365 day band wall: 0 of 13 stored days disagree, all with spot inside the walls.",
+      "detail": {
+        "whats_wrong": "PR #289's real-data check of the two-sided wall rule (flow_signals._at_wall) used Unusual Whales' gex-levels put_wall, while the board tests levels.lower_support_band, the 181-365 day band wall (normalize.py, put_wall_band).",
+        "evidence": "1 Nov 2026 rerun on the 13 stored raw days 2026-10-14 to 2026-10-30 through normalize_snapshot(with_store_inputs(...)): the put wall is band_181_365 on all 13 (7,500 on most days; 28 Oct 7,500 vs the provider's 7,705); old and new rule agree on every day, for the put wall and the call wall.",
+        "example": "2026-10-28: spot 7,722.60 (the 27 Oct close, a raw day fetched before the close was stored), band put wall 7,500, call wall 8,100: not at a wall under either rule.",
+        "tried_or_decided": "",
+        "direction": "",
+        "next_step": "Count again once the nightly Fetch (#343, RC-SPX-Gamma-Fetch) has stored days with spot beyond a wall; the case the rules differ on is unmeasured, not disproved."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-11-01T17:04:43Z",
+      "reviewed_at": "2026-11-01"
+    },
+    {
+      "repo": "RevenueChaser-public",
+      "number": 335,
+      "url": "https://github.com/alsanvolkan/RevenueChaser-public/issues/335",
+      "title": "market.vix provider declared yfinance, built from Cboe",
+      "state": "open",
+      "labels": [
+        "bug",
+        "area:market",
+        "priority: low",
+        "parked"
+      ],
+      "boards": [
+        "module_spx_gamma"
+      ],
+      "scope": "board",
+      "kind": "bug",
+      "status": "parked",
+      "deferred_until": "",
+      "summary": "rcdata/needs/catalog.py declares market.vix with provider yfinance, but its builder reads the VIX family from Cboe; the catalog misnames the source.",
+      "detail": {
+        "whats_wrong": "Need(\"market.vix\", ..., providers=(\"yfinance\",)) in rcdata/needs/catalog.py, while the market_series builder that serves it writes source cboe (rcdata/build/market_series.py).",
+        "evidence": "Issue #335; the live market store's VIX family rows carry source cboe (raw cboe/index/<day>/VIX_History.csv, 1 Nov 2026).",
+        "example": "",
+        "tried_or_decided": "",
+        "direction": "Declare (\"cboe\",) and add a contract test that compares each market_series need's declared provider with its builder's source.",
+        "next_step": "Fix the declaration and add the contract test in one commit, tests red first."
+      },
+      "refs": [],
+      "issue_updated_at": "2026-11-01T09:56:35Z",
+      "reviewed_at": "2026-11-01"
     }
   ]
 }

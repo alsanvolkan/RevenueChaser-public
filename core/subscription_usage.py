@@ -372,6 +372,13 @@ def xai_token(now: datetime | None = None) -> str:
             raise SubscriptionUsageError(
                 f"{credentials.missing_message('grok_subscription')} Expected Hermes's login at {path}."
             ) from exc
+        from . import xai_login
+        if xai_login.is_rc_login(auth):
+            # RC's own login (#368, homesrv): refreshed here when 30 minutes or less remain.
+            try:
+                return xai_login.ensure(path, now=None if now is None else _as_utc(now).timestamp())
+            except xai_login.LoginError as exc:
+                raise SubscriptionUsageError(str(exc)) from None
         state = (auth.get("providers") or {}).get("xai-oauth") or {} if isinstance(auth, dict) else {}
         tokens = state.get("tokens") or {} if isinstance(state, dict) else {}
         token = (tokens.get("access_token") or "").strip() if isinstance(tokens, dict) else ""

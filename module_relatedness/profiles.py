@@ -50,19 +50,23 @@ class CallBudget:
             return True
 
 
-PROVIDERS = ("deepseek", "grok")
+def _writers():
+    from . import writers
+    return writers
+
+
+PROVIDERS = ("evren", "deepseek", "grok")      # module_relatedness.writers.WRITERS (#360)
 
 
 def llm(provider: str = "deepseek"):
-    """The chat client module of a profile writer: ``deepseek`` (default, off-peak gated) or ``grok`` (SuperGrok,
-    allowance gated, #388). Both expose ``complete`` (same signature) and ``MODEL``; ``complete`` is looked up at call
-    time, so a test that patches ``deepseek.complete`` still reaches the profile path."""
+    """The chat client module of a profile writer (``writers.WRITERS``: evren, deepseek, grok). Each exposes
+    ``complete`` (same signature) and ``MODEL``; ``complete`` is looked up at call time, so a test that patches
+    ``deepseek.complete`` still reaches the profile path."""
     if provider == "deepseek":
         return deepseek
-    if provider == "grok":
-        from RevenueChaser.core.providers import grok
-        return grok
-    raise ValueError(f"unknown profile writer {provider!r}; one of {', '.join(PROVIDERS)}")
+    if provider not in PROVIDERS:
+        raise ValueError(f"unknown profile writer {provider!r}; one of {', '.join(PROVIDERS)}")
+    return _writers().client(provider)
 
 
 def system_prompt(version: str | None = None) -> str:
@@ -121,7 +125,7 @@ def token_budget(thinking: bool) -> int:
 def profile_for(ticker: str, name: str, item_text: str, thinking: bool = False,
                 effort: str | None = None, max_tokens: int | None = None,
                 client=None, budget: "CallBudget | None" = None,
-                provider: str = "deepseek") -> dict:
+                provider: str = "deepseek", model: str | None = None) -> dict:
     """Call the LLM and return the parsed profile (empty fields when unusable).
 
     ``provider`` picks the writer (``llm``); the prompt, the token budget and the parse are the same for both, so a
@@ -143,11 +147,13 @@ def profile_for(ticker: str, name: str, item_text: str, thinking: bool = False,
     def _call(use_cache: bool, tokens: int) -> str:
         if budget is not None and not budget.consume():
             raise BudgetExceeded()
+        # The board's model (#360) only when one is chosen, so a caller's fake ``complete`` keeps its signature.
+        extra = {"model": model} if model else {}
         return client_mod.complete(
             system_prompt(), user, thinking=thinking, reasoning_effort=effort,
             max_tokens=tokens, json_mode=True, use_cache=use_cache, client=client,
             ticker=ticker, prompt_version=config.PROMPT_VERSION,
-            validate=lambda c: any(parse_profile(c).values()))
+            validate=lambda c: any(parse_profile(c).values()), **extra)
 
     raw = _call(True, budget_tokens)
     prof = parse_profile(raw)

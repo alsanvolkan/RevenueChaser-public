@@ -168,6 +168,26 @@ def _fundamentals_settings() -> dict:
     }
 
 
+def _relatedness_settings() -> dict:
+    """The Relatedness writer (#360): the provider and its model as selects. A provider whose credential is absent
+    is offered greyed with the variable's NAME (``writers.missing_text``), never a value."""
+    from RevenueChaser.module_relatedness import settings as rel_settings
+    from RevenueChaser.module_relatedness import writers
+    rows = {f["key"]: f for f in board_settings.describe(rel_settings.BOARD)}
+    w = rows["WRITER"]
+    w["choices"] = [[slug, writers.WRITERS[slug].label, writers.missing_text(slug)] for slug in w["choices"]]
+    w["range"] = "EVREN has no fee; DeepSeek is paid (off-peak, 10 USD a night); Grok uses the SuperGrok allowance"
+    m = rows["WRITER_MODEL"]
+    m["choices"] = [[model, f"{slug} · {model}", None] for slug, wr in writers.WRITERS.items() for model in wr.models]
+    m["range"] = "a model of the chosen writer"
+    return {
+        "board": rel_settings.BOARD,
+        "custom": any(f["overridden"] for f in rows.values()),
+        "inputs": [w, m],
+        "fine": [],
+    }
+
+
 # A board whose payload does not emit ``funnel_steps`` (or ``funnel``). The card
 # degrades by showing reads and, when a JSON payload exists, its as-of — never
 # by inventing steps or telling the user to Refresh for a funnel.
@@ -241,7 +261,7 @@ BOARD_INPUTS: list[dict] = [
     _board("module_relatedness", "Relatedness",
            ["relatedness_profiles", "relatedness_scores", "chain_filings",
             "equity_universe", "ticker_themes"],
-           lambda: _json("relatedness", "relatedness_latest.json")),
+           lambda: _json("relatedness", "relatedness_latest.json"), settings=_relatedness_settings),
     _board("module_sector_rotation", "Sector Rotation",
            ["rotation_snapshots", "etf_holdings", "equity_universe"],
            lambda: _html("sector_rotation"),

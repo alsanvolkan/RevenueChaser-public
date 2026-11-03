@@ -357,3 +357,24 @@ def test_a_need_that_names_its_own_rows_is_not_refused_an_empty_ask():
     con.close()
     assert needs.ask("macro.dgs10", series_ids=[]).rows, "the need's own keys win over an empty ask"
     assert needs.ask("market.cot", series_ids=[]).state is not None
+
+
+def test_a_market_series_need_declares_the_provider_whose_source_writes_its_series():
+    """#335: a need's ``providers`` is the provider of the builder source that writes its series, so the Settings flow
+    chart and ``/needs`` name the real provider (``market.vix`` said yfinance; its rows come from Cboe)."""
+    from RevenueChaser.rcdata.build.sources import cboe, cftc, cftc_schedule, fred, yahoo
+    writers = {**{s: cboe for s in cboe.SYMBOLS}, **{s: fred for s in fred.SERIES}, **{s: yahoo for s in yahoo.SYMBOLS},
+               cftc_schedule.SERIES: cftc_schedule}
+    provider = lambda src: getattr(src, "PROVIDER", src.SOURCE)     # noqa: E731 - Yahoo counts under yfinance
+    checked = []
+    for name, need in needs.catalog.NEEDS.items():
+        if need.table != "market_series" or not (need.filter_values or need.filter_prefix):
+            continue                                        # market.series names its series per call
+        if need.filter_prefix:
+            assert need.filter_prefix.startswith(f"{cftc.SOURCE}:"), name
+            expected = {provider(cftc)}
+        else:
+            expected = {provider(writers[s]) for s in need.filter_values}
+        assert set(need.providers) == expected, name
+        checked.append(name)
+    assert {"market.vix", "market.spx_close", "market.cot", "market.cot_release", "macro.dgs10"} <= set(checked)

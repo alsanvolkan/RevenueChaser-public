@@ -163,7 +163,7 @@ def _previous_est_trading_day(asof: str) -> str:
 
     Used to fall back when UW rejects today's date as "future in EST" (the gex
     endpoints reject a date whose America/New_York trading session has not yet
-    settled). ISO strings in, ISO strings out. ``core.calendar`` covers 2025-2028
+    settled). ISO strings in, ISO strings out. ``core.calendar`` covers 1993-2028
     and raises outside it; there the weekend-only rule is the best that is known.
     """
     from datetime import date as _date, timedelta
