@@ -86,9 +86,14 @@ COMPUSTAT, CRSP = "wrds/compustat", "wrds/crsp"          # the bar sources in ``
 # that year, so CRSP's fallback rows (``serving``) reach as far back.
 COMPUSTAT_START = date(1983, 12, 30)
 START_YEAR = COMPUSTAT_START.year
-# ``comp.secd``'s exchanges: NYSE, NYSE American, Nasdaq (11, 12, 14, the spine's ``US_EXCHG``) and 17 and 21, where
-# the Arca-listed ETFs the old filter dropped are filed (homesrv measurement, master plan item 1).
+# ``comp.secd``'s exchanges: NYSE, NYSE American, Nasdaq (11, 12, 14, the spine's ``US_EXCHG``), NYSE Arca (17) and
+# BATS BZX (21), where the ETFs the old filter dropped are filed (comp_na_daily_all.r_ex_codes, master plan item 1).
 COMPUSTAT_EXCHG = (11, 12, 14, 17, 21)
+# The added exchanges' secd rows over every year (the coordinator's WRDS access inventory, 3 Nov 2026, from
+# comp_na_daily_all.r_ex_codes and a count): the dry run prints them beside its own estimate.
+ARCA_BATS = {17: ("NYSE Arca", 7_500_000), 21: ("BATS BZX", 1_700_000)}
+# The dry run reports the years through this one apart (the history before the store's 2010-2025 partitions).
+EARLY_LAST_YEAR = 2009
 CRSP_LAST_YEAR = 2025                                    # the CRSP subscription's last year
 REFRESH_YEARS = 2
 SNAPSHOT_DAYS = 30
@@ -420,16 +425,23 @@ class WrdsPrices:
         for table in YEARLY:
             have = [_rows(p) for _, p in stage.partitions(base.parquet_root() / "wrds" / "prices" / table, "year")]
             mean[table] = sum(have) // len(have) if have else None
-        lines, total, unknown = [], 0, 0
+        lines, total, unknown, early = [], 0, 0, [0, 0]
         for table, year, why in plan:
             est = (_rows(partition_path(table, year)) if why != "missing" else mean.get(table)) if year else None
             total, unknown = total + (est or 0), unknown + (est is None)
+            if year and year <= EARLY_LAST_YEAR:
+                early = [early[0] + 1, early[1] + (est or 0)]
             lines.append(f"{TABLES[table]['wrds']} {year or 'snapshot'}: {why}, expected rows "
                          f"{'unknown' if est is None else ('>= ' if why != 'missing' else '~') + format(est, ',')}")
         queries = len(plan) + (1 if plan else 0)          # the columns query first
         cap = caps.DAY_CAPS[wrds.PROVIDER]
         lines.append(f"{NAME} dry run: {queries} queries ({-(-queries // cap)} day(s) of the {cap}-call wrds cap), "
                      f"expected rows ~{total:,}" + (f" plus {unknown} partition(s) with no estimate" if unknown else ""))
+        lines.append(f"  of which {COMPUSTAT_START.isoformat()} through {EARLY_LAST_YEAR}-12-31: {early[0]} queries, "
+                     f"expected rows ~{early[1]:,}")
+        lines.append("  exchg " + " and ".join(f"{e} ({n}) {r:,}" for e, (n, r) in ARCA_BATS.items())
+                     + " secd rows in all years (homesrv), inside the comp.secd queries above; comp.secd asks "
+                     f"{len(SECD_ADDED)} dividend columns more than before ({', '.join(SECD_ADDED)})")
         return lines
 
     def to_parquet(self, ctx: base.RunContext, raw: Path) -> list[Path]:
@@ -642,9 +654,10 @@ CRSP_FALLBACK = delisted_final_days()
 # ``price_gap_no_action`` issues sat on a split ``dlycumfacpr`` records and ``corporate_action`` lacked, 22 of them
 # Tier A). A day whose ``dlycumfacpr`` differs from the previous row's of the same answer is a split of ratio previous
 # / today's (new over old shares; the fixture's convention, the factor of the older days the larger, as ``ajexdi``),
-# keyed on the PERMNO's security when an identifier links it. ``prices/serving`` adds one only where no split of
-# another source is within ``serving.SPLIT_SAME_DAYS`` of it. In ``_act``'s shape (``serving`` reads it after
-# ``_permno_link``).
+# keyed on the PERMNO's security when an identifier links it. The cross-check only (the WRDS access inventory of
+# 3 Nov 2026 prefers Compustat's daily splits, ``comp.sec_split`` and ``ajexdi``): ``prices/serving`` applies none; one
+# no Compustat or Alpaca split is within ``serving.SPLIT_SAME_DAYS`` of is a ``split_only_crsp`` issue, and the gap
+# it explains is not a ``price_gap_no_action``. In ``_act``'s shape (``serving`` reads it after ``_permno_link``).
 # shortcut: the direction of dlycumfacpr is the fixture's, not read from WRDS here; check one known split on homesrv
 # (AAPL's 4-for-1 ex 2020-08-31) before the switch, and flip the ratio if CRSP's older factor is the smaller.
 CRSP_SPLITS = f"""

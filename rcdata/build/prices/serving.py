@@ -75,7 +75,8 @@ FLOAT_DISAGREE = 0.25
 # Yahoo's answer whose cap is cover-sourced, is an issue (AEHL in the server's sample: a count from before its
 # dilution, 400 times too small).
 SHARES_DISAGREE = 0.25
-# A CRSP split (``wrds_history.CRSP_SPLITS``) is the same split as another source's this many days from it, either way.
+# A CRSP split (``wrds_history.CRSP_SPLITS``, the cross-check) is the same split as another source's this many days
+# from it, either way.
 SPLIT_SAME_DAYS = 3
 # A dividend is applied with the close of the last bar before its ex-date, at most this many days before it.
 CLOSE_BEFORE_DAYS = 7
@@ -113,6 +114,8 @@ ISSUE_KINDS = {
     "tier_a_no_shares": "a Tier A name with no shares, so no market cap, on the newest session (key: the security id)",
     "price_gap_no_action": ("the split-adjusted close moved by GAP_FACTOR or more with no split that day "
                             "(key: security:session)"),
+    "split_only_crsp": ("CRSP's dlycumfacpr records a split no Compustat or Alpaca split is within SPLIT_SAME_DAYS of; "
+                        "not applied, the cross-check of Compustat's splits (key: security:session)"),
     "adjustment_differs": ("a served bar's total-return day return is more than 1 bp from Alpaca's adjusted one, or "
                            "more than the rounding of its cent-rounded closes where that is larger (the tester, "
                            "key: security:session)"),
@@ -398,12 +401,17 @@ class PricesServing:
             WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
               AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id AND p.ex_date = w.ex_date
                               AND {ACTION_KIND.format(a='p')} = {ACTION_KIND.format(a='w')})""")
-        # CRSP's splits (Order 4), unless Alpaca or Compustat has a split of the security near the day.
-        con.execute(f"""INSERT INTO _act BY NAME SELECT w.* FROM ({wrds_history.CRSP_SPLITS}) w
+        # CRSP's splits are the cross-check (Order 4; the WRDS access inventory of 3 Nov 2026 prefers Compustat's
+        # daily splits): one no Alpaca or Compustat split of the security is near is kept aside, never applied.
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE _crsp_only_split AS SELECT w.* FROM ({wrds_history.CRSP_SPLITS}) w
             WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
               AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id
                               AND {ACTION_KIND.format(a='p')} = 'split'
                               AND abs(date_diff('day', p.ex_date, w.ex_date)) <= {SPLIT_SAME_DAYS})""")
+        for sid, day, aid, ratio in con.execute("SELECT security_id, ex_date, action_id, new_rate "
+                                                "FROM _crsp_only_split ORDER BY 1, 2").fetchall():
+            found.append(("split_only_crsp", f"{sid}:{day}", f"PERMNO {aid.split(':')[2]}: CRSP's dlycumfacpr has a "
+                          f"split of ratio {ratio:.4f}, no Compustat or Alpaca split within {SPLIT_SAME_DAYS} days"))
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _act_typed AS
             SELECT a.*, CASE WHEN action_type IN ('forward_split', 'reverse_split') THEN 'split'
                              WHEN action_type IN ('cash_dividend', 'capital_gains_distribution') THEN 'cash_dividend'
@@ -629,6 +637,9 @@ class PricesServing:
                   AND NOT EXISTS (SELECT 1 FROM corporate_action c WHERE c.security_id = r.security_id
                                   AND c.action IN ('split', 'stock_dividend') AND c.ex_date > r.prev_day
                                   AND c.ex_date <= r.session_date)
+                  -- a split only CRSP records explains the gap: it is the split_only_crsp issue instead
+                  AND NOT EXISTS (SELECT 1 FROM _crsp_only_split c WHERE c.security_id = r.security_id
+                                  AND c.ex_date > r.prev_day AND c.ex_date <= r.session_date)
                 ORDER BY 1, 2""").fetchall():
             found.append(("price_gap_no_action", f"{sid}:{day}", f"split-adjusted close x{ratio:.3f}, no split"))
         # Alpaca's previous adjusted close is close_all / (1 + all_return). The allowance is its exact rounding

@@ -300,13 +300,18 @@ def _split_unknown_to_compustat(data):
     return data
 
 
-def test_a_split_only_crsps_factor_records_raises_no_gap_issue(monkeypatch):
+def test_a_split_only_crsps_factor_records_is_a_cross_check_issue_not_a_gap(monkeypatch):
+    """The WRDS access inventory (3 Nov 2026): Compustat's daily splits (``sec_split``, ``ajexdi``) are the source and
+    CRSP's only the cross-check. A split only ``dlycumfacpr`` records is not applied; the gap it explains is no
+    ``price_gap_no_action`` but a ``split_only_crsp`` issue, which names what Compustat lacks."""
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
     _serve(monkeypatch, _split_unknown_to_compustat(_data()))      # CRSP's dlycumfacpr: 2.0 -> 1.0 on 4 Jun
     assert f"{AAPL}:{JUNE[2]}" not in _gap_issues()
-    split = _q("SELECT ratio, applied, source_id FROM corporate_action WHERE security_id = ? AND action = 'split'",
-               [AAPL])
-    assert [(s["ratio"], s["applied"]) for s in split] == [(2.0, True)]
-    assert split[0]["source_id"] == f"wrds:crspsplit:14593:{JUNE[2]}"
+    assert not _q("SELECT 1 FROM corporate_action WHERE security_id = ? AND action = 'split'", [AAPL])
+    crsp_only = {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
+                 if i["kind"] == "split_only_crsp"}
+    assert set(crsp_only) == {f"{AAPL}:{JUNE[2]}"} and "PERMNO 14593" in crsp_only[f"{AAPL}:{JUNE[2]}"]
 
 
 def test_the_same_gap_with_no_source_of_the_split_is_still_an_issue(monkeypatch):
@@ -318,9 +323,12 @@ def test_the_same_gap_with_no_source_of_the_split_is_still_an_issue(monkeypatch)
 
 
 def test_a_split_compustat_and_crsp_both_carry_is_one_action(built):
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
     splits = _q("SELECT source_id FROM corporate_action WHERE security_id = ? AND action = 'split'", [AAPL])
     assert [s["source_id"] for s in splits] == ["wrds:split:001690:01:2025-06-04"]
     assert f"{AAPL}:{JUNE[2]}" not in _gap_issues()
+    assert not [i for i in ops.open_issues(prices_serving.NAME, limit=500)[1] if i["kind"] == "split_only_crsp"]
 
 
 def test_a_crsp_factor_step_between_two_answers_or_by_a_ticker_link_is_no_split():
@@ -372,10 +380,11 @@ def test_a_secd_year_asked_with_the_old_exchange_filter_is_asked_again(fake):
     assert conn.queries == []                                  # asked with today's filter: current again
 
 
-def test_the_dry_run_prints_the_queries_and_expected_rows_and_asks_nothing(fake, capsys):
+def test_the_dry_run_prints_the_queries_and_expected_rows_and_asks_nothing(fake, capsys, monkeypatch):
     from RevenueChaser.rcdata.build import __main__ as cli
     conn, _ = fake
     assert _backfill()["result"] == "changed"
+    monkeypatch.setattr(wrds_history, "START_YEAR", 2008)        # so 2008-2023 are missing
     _old_filter(2024)
     wrds_history.partition_path("sec_divid", 2025).unlink()
     for raw in wrds_history.raw_dir("sec_divid", 2025).glob("*"):
@@ -386,7 +395,9 @@ def test_the_dry_run_prints_the_queries_and_expected_rows_and_asks_nothing(fake,
     assert conn.queries == []
     assert "comp.secd 2024: asked with an older query (exchange filter or columns)" in out
     assert "comp.sec_divid 2025: missing" in out
-    assert "wrds/prices dry run: 3 queries" in out                 # the columns, then the two partitions
+    assert "wrds/prices dry run: 51 queries" in out   # the columns, 16 missing years of 3 tables, the two partitions
+    assert "through 2009-12-31: 6 queries" in out                 # 2008 and 2009, three tables each
+    assert "exchg 17 (NYSE Arca) 7,500,000 and 21 (BATS BZX) 1,700,000" in out
     assert "expected rows" in out
 
 
