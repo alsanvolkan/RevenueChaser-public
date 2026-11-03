@@ -307,6 +307,15 @@ def _as_entry(d: dict) -> Entry:
                  stored_status=d.get("stored_status", ""))
 
 
+def is_curated(entry: Entry | dict) -> bool:
+    """Has a human signed this entry off? ``reviewed_at`` is their mark, and the sync leaves it empty on an
+    issue it added itself, so the density bar can hold the curated entries without blocking an unattended
+    ``--write`` on 45 hand-written summaries (avo, 2026-11-03).
+    """
+    e = entry if isinstance(entry, Entry) else _as_entry(entry)
+    return bool((e.reviewed_at or "").strip())
+
+
 def thin_reasons(entry: Entry | dict) -> list[str]:
     """Why an entry fails the density bar; empty when it passes (build brief §5)."""
     e = entry if isinstance(entry, Entry) else _as_entry(entry)

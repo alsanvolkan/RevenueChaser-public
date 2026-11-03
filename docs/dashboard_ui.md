@@ -254,11 +254,15 @@ rendering), and only links under `https://github.com/alsanvolkan/` are shown.
 `python scripts/open_issues_sync.py --write` reads the open issues of the public
 repo from the GitHub API, keeps the curated fields, refreshes title/labels/updated-at,
 adds a new issue (pre-filled from its body) and drops a closed one. Run it after
-each merge round. A newly added issue arrives `scope="board"` with no `boards`,
-which the registry tests reject on purpose: the run is not finished until a human
-has named its boards and filled its fields. `--check` fails when the file and GitHub disagree;
-`--report-thin` lists the entries whose summary or detail is too thin to resume
-from, and every board-scoped entry that names no board, the state `--write` leaves a new issue in (#120). A bad or missing registry renders a message inside the group — never a
+each merge round. A newly added issue arrives `scope="repo"` with an empty
+`reviewed_at`, so it shows on the repo-scope board straight away and the registry
+tests leave it alone until a human signs it off (`open_issues.is_curated`); the
+run is finished for the panel, not for the curator. `--check` never fails on
+drift (avo, 2026-11-03): it reports what differs and how many entries still await
+curation, because the file is behind GitHub the moment an issue is opened and a
+daily red job said nothing a reader could act on. `--report-thin` is the curator's
+list: every entry whose summary or detail is too thin to resume from, including
+the ones `--write` has just added. A bad or missing registry renders a message inside the group — never a
 failed page.
 
 Do not add the group to a board's `report.py`: a board's HTML is a cached
