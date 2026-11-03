@@ -536,3 +536,21 @@ def test_a_security_on_otc_today_keeps_the_bars_of_its_listed_days(monkeypatch):
     got = [str(r["session_date"]) for r in _q("SELECT session_date FROM price_bar_daily "
                                               "WHERE security_id = '055555:01' ORDER BY 1")]
     assert got == ["2024-03-01"]               # on NYSE to 3 Mar (the delta's end), OTC from 5 Mar; 4 Mar in a gap
+
+
+def test_a_stock_dividend_alpaca_knows_and_compustats_ajexdi_step_the_same_day_apply_once(monkeypatch, http_mock):
+    """Review SHOULD 3 of #382: an ajexdi step is written as a split, an Alpaca stock dividend that day as a
+    stock_dividend; as two kinds both were applied, the day's shares adjusted twice."""
+    data = _data()
+    for r in data["comp.secd"]:
+        if r["gvkey"] == "001690" and r["datadate"] == "2026-10-21":
+            r["ajexdi"] = 2.0                                  # Compustat's step on the 22nd: a 2-for-1
+    http_mock.routes.insert(0, ("/v1/corporate-actions", {"corporate_actions": {
+        "cash_dividends": [{"id": "cd-1", "symbol": "AAPL", "rate": 0.26, "special": False, "foreign": False,
+                            "process_date": "2026-10-24", "ex_date": "2026-10-23", "currency": "USD"}],
+        "stock_dividends": [{"id": "sd-1", "symbol": "AAPL", "rate": 1.0, "process_date": "2026-10-22",
+                             "ex_date": "2026-10-22"}]}, "next_page_token": None}, 200, {}))
+    _serve(monkeypatch, data)
+    applied = _q("SELECT source_id, action FROM corporate_action WHERE security_id = ? AND ex_date = '2026-10-22' "
+                 "AND applied", [AAPL])
+    assert len(applied) == 1, applied

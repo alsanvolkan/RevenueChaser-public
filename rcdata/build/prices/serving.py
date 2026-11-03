@@ -287,8 +287,10 @@ CREATE OR REPLACE TEMP TABLE _crsp_fallback AS {fallback};
 CREATE OR REPLACE TEMP TABLE _hist_all AS
     SELECT * FROM ({crsp}) UNION ALL BY NAME SELECT * FROM ({comp}) UNION ALL BY NAME SELECT * FROM ({delist});
 """
-# The kind of an action for "the same action on the same day" (a split and a reverse split are one kind).
-ACTION_KIND = ("CASE WHEN {a}.action_type IN ('forward_split', 'reverse_split') THEN 'split' "
+# The kind of an action for "the same action on the same day": a split, a reverse split and a stock dividend are one
+# kind, each a step of the share basis (review SHOULD 3 of #382: Compustat's ajexdi step and an Alpaca stock dividend
+# of the same day were both applied).
+ACTION_KIND = ("CASE WHEN {a}.action_type IN ('forward_split', 'reverse_split', 'stock_dividend') THEN 'split' "
                "WHEN {a}.action_type IN ('cash_dividend', 'capital_gains_distribution') THEN 'cash_dividend' "
                "ELSE {a}.action_type END")
 
