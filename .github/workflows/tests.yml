@@ -20,8 +20,8 @@ name: tests
 #   - the label `full-ci` on the PR makes every run FULL, starting with the one the label itself triggers.
 #     A label stays on the PR, so every later push is FULL too: the head that merges has a FULL run.
 #   - a push to `main` and a manual dispatch are always FULL.
-# The merge gate is a green `unit (FULL)` and `e2e (FULL)` on the PR's current head. No check is required by a
-# ruleset; the coordinator reads the names.
+# The merge gate is the `merge-gate` check: green only when this head's run was FULL and unit and e2e passed; a
+# SELECTIVE run fails it on purpose. No check is required by a ruleset.
 on:
   pull_request:
     branches: [main]
@@ -182,3 +182,20 @@ jobs:
           if [ "$MODE" = FULL ]; then exec python -m pytest module_testing/e2e -q -m e2e -n 4 --dist loadgroup -p no:cacheprovider -rfE; fi
           if [ -z "$FILES" ]; then echo "SELECTIVE: no e2e test file reaches this change"; exit 0; fi
           python -m pytest -q -m e2e -n 4 --dist loadgroup -p no:cacheprovider -rfE $FILES || [ $? -eq 5 ]
+
+  merge-gate:
+    # The one check that means "merge-ready": green only for a FULL run whose unit and e2e both passed.
+    # A SELECTIVE run fails here on purpose, so an all-green unlabelled PR does not read as gated.
+    needs: [plan, unit, e2e]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: FULL run green?
+        env:
+          MODE: ${{ needs.plan.outputs.mode }}
+          UNIT: ${{ needs.unit.result }}
+          E2E: ${{ needs.e2e.result }}
+        run: |
+          if [ "$MODE" != FULL ]; then echo "::error::SELECTIVE run: not a merge gate. Label the PR full-ci for a FULL run on this head."; exit 1; fi
+          [ "$UNIT" = success ] && [ "$E2E" = success ] || { echo "::error::FULL run: unit=$UNIT, e2e=$E2E"; exit 1; }
