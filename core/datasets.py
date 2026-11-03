@@ -477,8 +477,8 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=("cftc_cot", "session_date"),
         gap_kind=GapKind.needs_decision,
         next_step=("The Commitments of Traders table is fresh but shallow: the nightly writer asks for the "
-                   "newest few weeks and the first write per report wins, so it only grows forward. #119 "
-                   "asks how deep to backfill."),
+                   "newest few weeks and the first write per report wins, so it only grows forward. "
+                   "alsanvolkan/RevenueChaser-public#119 asks how deep to backfill."),
     ),
     DatasetSpec(
         key="earnings_history", label="Earnings history",
