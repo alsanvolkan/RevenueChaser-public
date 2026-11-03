@@ -43,7 +43,15 @@ ver" (the "4" is decision 7 below).
    remove one that says monthly.
 2. **Freshness label: decided, yes.** `read.DATASET_OF_TABLE` names `wrds/prices` as the source of
    `price_bar_daily`'s status (`security_symbol` and `market_cap_daily` still follow `alpaca/bars`).
-3. **The placeholders:** the tester's `RISK_DAYS` (10) and `LOW_PRICE` ($5).
+3. **The tester's thresholds: open** (avo asked where they are used; the values stay). Both are in
+   `rcdata/build/prices/tester.py`, `at_risk()`, and decide only **which tickers the daily `alpaca/bars` run asks
+   Alpaca for**; nothing served depends on them. `RISK_DAYS` (10) is the look-back in calendar days: a ticker is
+   asked when, in the last 10 days, its `ajexdi` changed or a split went ex, a day had no `trfd`, a dividend or
+   spin-off went ex, or a new `sec_idhist` exchange period began; an open `price_gap_no_action` issue also selects
+   it. `LOW_PRICE` ($5) selects a ticker whose newest Compustat close is under $5, where a cent of rounding is a
+   large return. The selected tickers' Alpaca bars are compared with Compustat's (and CRSP's) in every serving build
+   and write `alpaca_close_differs` / `adjustment_differs` issues. Raising either asks more tickers (more Alpaca
+   calls, within `caps.WINDOWS`' 200 a minute); lowering asks fewer.
 4. **`dlycumfacpr`'s direction: checked** (*homesrv*, 3 WRDS queries): it runs as `ajexdi` does (AAPL, PERMNO 14593:
    2020-08-28 at 499.23 has 4.0 / 4.0, 2020-08-31 at 129.04 has 1.0 / 1.0), so `split_only_crsp` reads it right.
 5. **`secd.exchg` is today's exchange, not the day's: decided and built (step 10).** *homesrv*: 0 of 18,024 local
