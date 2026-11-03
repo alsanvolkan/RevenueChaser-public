@@ -68,7 +68,7 @@ def test_5_a_failed_read_log_flush_keeps_its_counts_for_the_next_one():
     """Review S1 (#356): the counts feed the retirement count, so a failed flush puts them back."""
     log = ops.ReadLog(process="test")
     with pytest.MonkeyPatch.context() as mp:        # its own patch: undoing it leaves the store roots alone
-        mp.setattr(ops, "_open", _boom)
+        mp.setattr(ops, "_add_reads", _boom)       # the write either backend makes (ops.sqlite or Redis)
         log.bump("market_series")
         with pytest.raises(RuntimeError):
             log.flush()
