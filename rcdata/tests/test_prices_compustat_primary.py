@@ -628,3 +628,8 @@ def test_decision_1_compustat_is_asked_daily():
     """With Alpaca no longer served, the newest served session is Compustat's: wrds/prices runs daily (its refresh of
     the last two years, six queries a day)."""
     assert wrds_history.DATASET.cadence == "daily"
+
+
+def test_decision_2_the_served_bars_status_follows_compustat():
+    from RevenueChaser.rcdata import read
+    assert read.DATASET_OF_TABLE["price_bar_daily"] == wrds_history.NAME

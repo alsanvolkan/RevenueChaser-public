@@ -41,8 +41,8 @@ ver" (the "4" is decision 7 below).
 1. **Daily Compustat: decided, yes.** `wrds/prices`'s own cadence is now daily (six queries a day); with Alpaca no
    longer served the newest served session is Compustat's. A `dataset_schedule` row on homesrv still overrides it:
    remove one that says monthly.
-2. **Freshness label.** `read.DATASET_OF_TABLE` still names `alpaca/bars` as the source of `price_bar_daily`'s status;
-   move it to `wrds/prices` with the cadence change, or keep it.
+2. **Freshness label: decided, yes.** `read.DATASET_OF_TABLE` names `wrds/prices` as the source of
+   `price_bar_daily`'s status (`security_symbol` and `market_cap_daily` still follow `alpaca/bars`).
 3. **The placeholders:** the tester's `RISK_DAYS` (10) and `LOW_PRICE` ($5).
 4. **`dlycumfacpr`'s direction: checked** (*homesrv*, 3 WRDS queries): it runs as `ajexdi` does (AAPL, PERMNO 14593:
    2020-08-28 at 499.23 has 4.0 / 4.0, 2020-08-31 at 129.04 has 1.0 / 1.0), so `split_only_crsp` reads it right.
