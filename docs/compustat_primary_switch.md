@@ -43,7 +43,9 @@ ver" (the "4" is decision 7 below).
    remove one that says monthly.
 2. **Freshness label: decided, yes.** `read.DATASET_OF_TABLE` names `wrds/prices` as the source of
    `price_bar_daily`'s status (`security_symbol` and `market_cap_daily` still follow `alpaca/bars`).
-3. **The tester's thresholds: open** (avo asked where they are used; the values stay). Both are in
+3. **The tester's thresholds: decided, kept** (avo, 3 Nov 2026 ~11:35 Amsterdam: "3-evet"): `RISK_DAYS` = 10 and
+   `LOW_PRICE` = $5. `LOW_PRICE` is a placeholder: after a month of tester issues it is replaced by the measured
+   price where Compustat's and Alpaca's closes part most (the `shortcut` note in `tester.py`). Both are in
    `rcdata/build/prices/tester.py`, `at_risk()`, and decide only **which tickers the daily `alpaca/bars` run asks
    Alpaca for**; nothing served depends on them. `RISK_DAYS` (10) is the look-back in calendar days: a ticker is
    asked when, in the last 10 days, its `ajexdi` changed or a split went ex, a day had no `trfd`, a dividend or
