@@ -75,6 +75,8 @@ FLOAT_DISAGREE = 0.25
 # Yahoo's answer whose cap is cover-sourced, is an issue (AEHL in the server's sample: a count from before its
 # dilution, 400 times too small).
 SHARES_DISAGREE = 0.25
+# A CRSP split (``wrds_history.CRSP_SPLITS``) is the same split as another source's this many days from it, either way.
+SPLIT_SAME_DAYS = 3
 # A dividend is applied with the close of the last bar before its ex-date, at most this many days before it.
 CLOSE_BEFORE_DAYS = 7
 # The issuer cap of a session counts each listed class at its newest cap at most this many days old (a thin class
@@ -390,6 +392,12 @@ class PricesServing:
             WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
               AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id AND p.ex_date = w.ex_date
                               AND {ACTION_KIND.format(a='p')} = {ACTION_KIND.format(a='w')})""")
+        # CRSP's splits (Order 4), unless Alpaca or Compustat has a split of the security near the day.
+        con.execute(f"""INSERT INTO _act BY NAME SELECT w.* FROM ({wrds_history.CRSP_SPLITS}) w
+            WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
+              AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id
+                              AND {ACTION_KIND.format(a='p')} = 'split'
+                              AND abs(date_diff('day', p.ex_date, w.ex_date)) <= {SPLIT_SAME_DAYS})""")
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _act_typed AS
             SELECT a.*, CASE WHEN action_type IN ('forward_split', 'reverse_split') THEN 'split'
                              WHEN action_type IN ('cash_dividend', 'capital_gains_distribution') THEN 'cash_dividend'

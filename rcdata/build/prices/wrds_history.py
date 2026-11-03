@@ -531,6 +531,30 @@ CRSP_FALLBACK = f"""
     WHERE {LINKED_BY_ID}
     UNION ALL {delisted_final_days()}"""
 
+# The splits CRSP's cumulative price factor carries (Order 4 of the 2 Nov 2026 master plan: on homesrv 1,167 open
+# ``price_gap_no_action`` issues sat on a split ``dlycumfacpr`` records and ``corporate_action`` lacked, 22 of them
+# Tier A). A day whose ``dlycumfacpr`` differs from the previous row's of the same answer is a split of ratio previous
+# / today's (new over old shares; the fixture's convention, the factor of the older days the larger, as ``ajexdi``),
+# keyed on the PERMNO's security when an identifier links it. ``prices/serving`` adds one only where no split of
+# another source is within ``serving.SPLIT_SAME_DAYS`` of it. In ``_act``'s shape (``serving`` reads it after
+# ``_permno_link``).
+# shortcut: the direction of dlycumfacpr is the fixture's, not read from WRDS here; check one known split on homesrv
+# (AAPL's 4-for-1 ex 2020-08-31) before the switch, and flip the ratio if CRSP's older factor is the smaller.
+CRSP_SPLITS = f"""
+    SELECT l.security_id, 'wrds:crspsplit:' || x.permno || ':' || CAST(x.dlycaldt AS TEXT) AS action_id,
+           CASE WHEN ratio < 1 THEN 'reverse_split' ELSE 'forward_split' END AS action_type, x.dlycaldt AS ex_date,
+           x.dlycaldt AS eff, 1.0 AS old_rate, ratio AS new_rate, CAST(NULL AS DOUBLE) AS rate, false AS special,
+           CAST(NULL AS TEXT) AS currency, CAST(NULL AS DATE) AS record_date, CAST(NULL AS DATE) AS payable_date,
+           '{NAME}' AS source, x.source_as_of, x.fetched_at, x.run_id
+    FROM (SELECT permno, dlycaldt, source_as_of, fetched_at, run_id, lag(dlycumfacpr) OVER w / dlycumfacpr AS ratio,
+                 lag(run_id) OVER w AS prev_run
+          FROM stg_wrds_dsf WHERE dlycumfacpr > 0
+            AND permno IN (SELECT permno FROM stg_wrds_dsf WHERE dlycumfacpr > 0 GROUP BY permno
+                           HAVING min(dlycumfacpr) <> max(dlycumfacpr))
+          WINDOW w AS (PARTITION BY permno ORDER BY dlycaldt)) x
+    JOIN _permno_link l USING (permno)
+    WHERE {LINKED_BY_ID} AND x.prev_run = x.run_id AND abs(ln(ratio)) > 1e-6"""
+
 # Compustat's ``gvkey:iid`` of a PERMNO whose own link is a security the spine names otherwise (``figi:``, ``cik:``,
 # ``sym:``: the ETFs), when the PERMNO's CUSIP matches it and the spine holds no such ``gvkey:iid``. Its Compustat bars,
 # actions and revisions are served as that security's, so one fund is one security (review S2 of #353; ``serving``

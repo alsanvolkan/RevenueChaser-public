@@ -217,3 +217,57 @@ def test_the_risk_set_names_each_reason(monkeypatch):
         "000002:01": ["trfd_empty"], "000003:01": ["split"], "000004:01": ["exchange_move"],
         "000005:01": ["low_price"], "000006:01": ["price_gap"]}
 
+
+# ── Step 4 (Order 4): real splits stop raising price_gap_no_action ─────────────────────────────────────────────
+# homesrv, 2 Nov 2026: 1,167 open price_gap_no_action issues sit on a split CRSP's dlycumfacpr records and
+# corporate_action lacked (22 of them Tier A). The detector (serving.py, GAP_FACTOR) counts a split from any source.
+
+def _gap_issues():
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    return {i["key"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1] if i["kind"] == "price_gap_no_action"}
+
+
+def _split_unknown_to_compustat(data):
+    """AAPL's 4 Jun 2025 split as comp.secd and comp.sec_split miss it: no split row, ajexdi flat."""
+    data["comp.sec_split"] = []
+    for r in data["comp.secd"]:
+        if r["gvkey"] == "001690" and r["datadate"] < "2026":
+            r["ajexdi"] = 1.0
+    return data
+
+
+def test_a_split_only_crsps_factor_records_raises_no_gap_issue(monkeypatch):
+    _serve(monkeypatch, _split_unknown_to_compustat(_data()))      # CRSP's dlycumfacpr: 2.0 -> 1.0 on 4 Jun
+    assert f"{AAPL}:{JUNE[2]}" not in _gap_issues()
+    split = _q("SELECT ratio, applied, source_id FROM corporate_action WHERE security_id = ? AND action = 'split'",
+               [AAPL])
+    assert [(s["ratio"], s["applied"]) for s in split] == [(2.0, True)]
+    assert split[0]["source_id"] == f"wrds:crspsplit:14593:{JUNE[2]}"
+
+
+def test_the_same_gap_with_no_source_of_the_split_is_still_an_issue(monkeypatch):
+    data = _split_unknown_to_compustat(_data())
+    for r in data["crsp.dsf_v2"]:
+        r["dlycumfacpr"] = 1.0
+    _serve(monkeypatch, data)
+    assert f"{AAPL}:{JUNE[2]}" in _gap_issues()
+
+
+def test_a_split_compustat_and_crsp_both_carry_is_one_action(built):
+    splits = _q("SELECT source_id FROM corporate_action WHERE security_id = ? AND action = 'split'", [AAPL])
+    assert [s["source_id"] for s in splits] == ["wrds:split:001690:01:2025-06-04"]
+    assert f"{AAPL}:{JUNE[2]}" not in _gap_issues()
+
+
+def test_a_crsp_factor_step_between_two_answers_or_by_a_ticker_link_is_no_split():
+    con = duckdb.connect()
+    con.execute("CREATE TABLE stg_wrds_dsf (permno TEXT, dlycaldt DATE, dlycumfacpr DOUBLE, source_as_of DATE, "
+                "fetched_at DOUBLE, run_id TEXT)")
+    con.executemany("INSERT INTO stg_wrds_dsf VALUES (?, ?, ?, NULL, NULL, ?)", [
+        ("1", "2024-12-31", 4.0, "old"), ("1", "2025-01-02", 2.0, "new"), ("1", "2025-01-03", 1.0, "new"),
+        ("2", "2025-01-02", 2.0, "new"), ("2", "2025-01-03", 1.0, "new")])
+    con.execute("CREATE TABLE _permno_link AS SELECT * FROM (VALUES ('1', 'a:01', 'hdrcusip'), "
+                "('2', 'b:01', 'ticker')) t(permno, security_id, how)")
+    got = con.execute(f"SELECT security_id, ex_date, new_rate FROM ({wrds_history.CRSP_SPLITS})").fetchall()
+    assert got == [("a:01", date(2025, 1, 3), 2.0)]
