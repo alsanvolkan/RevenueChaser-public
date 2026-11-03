@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 from pathlib import Path
 
 import pytest
 
 from .harness.cdp_browser import Page, find_chrome
-from .harness.shared import running_dashboard
+from .harness.shared import ops_rows, running_dashboard
 
 pytestmark = pytest.mark.e2e
 
@@ -66,11 +65,7 @@ def _board(tmp_path, e2e_env, market_roots, *, stored: bool):
 
 
 def _queued(ssd: Path) -> list[tuple]:
-    con = sqlite3.connect(str(ssd / "ops.sqlite"))
-    try:
-        return con.execute("SELECT dataset, requested_by, status FROM build_requests ORDER BY id").fetchall()
-    finally:
-        con.close()
+    return [(r["dataset"], r["requested_by"], r["status"]) for r in ops_rows(ssd, "build_requests")]
 
 
 def test_a_fetch_queues_the_two_datasets_and_renders_from_the_store(tmp_path, e2e_env, provider_routes,
