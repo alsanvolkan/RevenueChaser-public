@@ -393,7 +393,8 @@ def test_a_secd_year_asked_with_the_old_exchange_filter_is_asked_again(fake):
     conn.queries.clear()
     _backfill()
     assert _asked_tables(conn) == ["comp.secd 2024"]           # the columns were read today already
-    assert list(wrds_history.raw_dir("secd", 2024).glob("*.superseded")), "the old answer is kept aside"
+    kept = list(wrds_history.raw_dir("secd", 2024).glob("*.superseded-*"))
+    assert len(kept) == 2, "the old answer and its sidecar are kept aside under the run's id (review NIT of #382)"
     conn.queries.clear()
     _backfill()
     assert conn.queries == []                                  # asked with today's filter: current again

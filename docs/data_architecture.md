@@ -1408,7 +1408,7 @@ missing.
 only: `python -m RevenueChaser.rcdata.build backfill wrds/prices`. One query per table and year; a backfill asks the
 two snapshot tables, then the years newest first, skips a year partition that exists with no query (a `comp.secd`
 year asked with an older query, the exchange filter or the columns before, is asked again; its old answer is renamed
-`.superseded`, never deleted); the whole history is about 130 queries, asked in one session (WRDS publishes no query
+`.superseded-<run id>`, never deleted); the whole history is about 130 queries, asked in one session (WRDS publishes no query
 quota, so `wrds` has no day cap; a run that hits one anyway keeps and serves the years it has). The monthly run asks
 the last two years again and keeps every bar value it replaces as a revision. The long history run is Phase 8, after
 PR 21. `backfill wrds/prices --dry-run` prints each query it would ask (why, expected rows), the query count and the

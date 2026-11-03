@@ -405,9 +405,10 @@ class WrdsPrices:
                 have = [r for r in sorted(raw_dir(table, year).glob(f"*{RAW_SUFFIX}")) if _current(table, year, r)]
                 same_day = raw_dir(table, year) / f"{end.isoformat()}{RAW_SUFFIX}"
                 if not have and same_day.exists():
-                    # ``wrds._ask`` takes a file of the day as answered: an old filter's is kept aside, not reused.
+                    # ``wrds._ask`` takes a file of the day as answered: an old filter's is kept aside, not reused,
+                    # under this run's id, so a second re-ask the same day never overwrites the first one kept.
                     for f in (same_day, _meta(same_day)):
-                        f.rename(f.with_name(f.name + ".superseded"))
+                        f.rename(f.with_name(f"{f.name}.superseded-{ctx.run_id}"))
                 raw = have[-1] if have else self._ask_or_skip(ctx, table, year, end, run)
                 if raw is None:
                     continue
