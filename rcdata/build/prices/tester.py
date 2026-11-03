@@ -10,7 +10,7 @@ yapılma olasılığı olanlardan").
 - ``trfd_empty``: a priced ``comp.secd`` day without ``trfd`` (no Compustat return, CRSP's fallback day);
 - ``dividend`` / ``spin_off``: a cash dividend or a spin-off going ex in the window (``corporate_action``);
 - ``price_gap``: an open ``price_gap_no_action`` issue of ``prices/serving``;
-- ``exchange_move``: more than one ``exchg`` in the window;
+- ``exchange_move``: a ``comp.sec_idhist`` EXCHG period starting in the window (``secd.exchg`` is today's code);
 - ``low_price``: the newest ``prccd`` under ``LOW_PRICE``.
 
 A request that names tiers or tickers gets what it names, as before (#265). The run is paced and capped as every
@@ -29,6 +29,7 @@ import duckdb
 
 from ... import ops, serving
 from .. import base
+from ..spine import wrds
 from . import wrds_history
 
 RISK_DAYS = 10
@@ -54,9 +55,15 @@ def at_risk(as_of: date) -> dict[str, list[str]]:
                            WHERE datadate BETWEEN ? AND ? AND prccd > 0)
                 SELECT sid, 'trfd_empty' FROM s WHERE trfd IS NULL GROUP BY sid
                 UNION ALL SELECT sid, 'split' FROM s GROUP BY sid HAVING count(DISTINCT ajexdi) > 1
-                UNION ALL SELECT sid, 'exchange_move' FROM s GROUP BY sid HAVING count(DISTINCT exchg) > 1
                 UNION ALL SELECT sid, 'low_price' FROM s GROUP BY sid HAVING arg_max(prccd, datadate) < {LOW_PRICE}
                 """, [lo, as_of]).fetchall()
+        idhist = wrds.parquet_files("wrds/sec_idhist", "sec_idhist")
+        if idhist:
+            # secd.exchg is today's code: a move is a sec_idhist EXCHG period starting in the window.
+            rows += con.execute(f"""
+                SELECT DISTINCT gvkey || ':' || iid, 'exchange_move'
+                FROM read_parquet([{', '.join(base.sql_path(p) for p in idhist)}], union_by_name = true)
+                WHERE item = 'EXCHG' AND efffrom BETWEEN ? AND ?""", [lo, as_of]).fetchall()
         live = serving.live_path("prices")
         if live.exists():
             con.execute(f"ATTACH {base.sql_path(live)} AS live_prices (READ_ONLY)")

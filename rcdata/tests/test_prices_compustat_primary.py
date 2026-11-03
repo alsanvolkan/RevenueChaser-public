@@ -271,9 +271,20 @@ def test_the_risk_set_names_each_reason(monkeypatch):
                  "datadate": date.fromisoformat(d), "source_as_of": date(2026, 10, 27), "fetched_at": 1.0,
                  "run_id": "r"} for i, (d, c) in enumerate(zip(days, closes))]
     secd = (rows("000001", [10] * 5) + rows("000002", [10] * 5, trfd=[1, 1, None, 1, 1])
-            + rows("000003", [20, 20, 10, 10, 10], ajexdi=[2, 2, 1, 1, 1]) + rows("000004", [10] * 5, exchg=[14, 14, 11, 11, 11])
+            + rows("000003", [20, 20, 10, 10, 10], ajexdi=[2, 2, 1, 1, 1]) + rows("000004", [10] * 5)
             + rows("000005", [4.0] * 5))
     stage.write_rows(secd, wrds_history.SECD + wrds_history.PROVENANCE, wrds_history.partition_path("secd", 2026))
+    # secd.exchg is today's code: an exchange move is a sec_idhist EXCHG period starting in the window (the spine's
+    # wrds/sec_idhist snapshot).
+    from RevenueChaser.rcdata.build.spine import wrds as spine_wrds
+    stage.write_rows([{"gvkey": "000004", "iid": "01", "item": "EXCHG", "itemvalue": "11",
+                       "efffrom": date(2026, 10, 23), "effthru": None, "source_as_of": date(2026, 10, 27),
+                       "fetched_at": 1.0, "run_id": "s"},
+                      {"gvkey": "000001", "iid": "01", "item": "EXCHG", "itemvalue": "14",
+                       "efffrom": date(2001, 1, 2), "effthru": None, "source_as_of": date(2026, 10, 27),
+                       "fetched_at": 1.0, "run_id": "s"}],
+                     spine_wrds.IDHIST + spine_wrds.PROVENANCE,
+                     spine_wrds.parquet_dir("wrds/sec_idhist") / "snapshot=2026-10-27" / "sec_idhist.parquet")
     ops.sync_issues(prices_serving.NAME, prices_serving.ISSUE_KINDS,
                     [("price_gap_no_action", "000006:01:2026-10-22", "x3.000, no split")])
     assert tester.at_risk(date(2026, 10, 27)) == {
@@ -426,3 +437,96 @@ def test_a_delisting_on_compustats_last_day_keeps_compustats_bar_and_checks_delr
 def test_a_priced_dsf_row_on_the_delisting_day_is_that_days_bar(monkeypatch):
     bars_, _ = _delisted(monkeypatch, [("2024-03-04", 5.1), ("2024-03-05", 3.5)], ("2024-03-05", 3.0))
     assert [(str(r["session_date"]), r["close"]) for r in bars_][-1] == ("2024-03-05", 3.5)
+
+
+# ── Step 10: a day is listed by the exchange it had that day (comp.sec_idhist), not by today's code ───────────
+# homesrv, 3 Nov 2026 (read-only): secd.exchg is the security's current code (0 of 18,024 securities carry two), so a
+# name that moved to OTC lost all its listed years. avo, 3 Nov ~09:50 Amsterdam: "Evet kurali uygula".
+
+def _listed(secd, idhist):
+    """``wrds_history.SECD_LISTED`` over ``secd`` ``(gvkey, day, current exchg)`` and EXCHG history ``idhist``
+    ``(gvkey, exchg, efffrom, effthru)``: {(gvkey, day): listed}."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, datadate DATE, exchg INTEGER)")
+    con.executemany("INSERT INTO stg_wrds_secd VALUES (?, '01', ?, ?)", secd)
+    con.execute("CREATE TABLE stg_wrds_exchg (gvkey TEXT, iid TEXT, exchg INTEGER, efffrom DATE, effthru DATE)")
+    con.executemany("INSERT INTO stg_wrds_exchg VALUES (?, '01', ?, ?, ?)", idhist)
+    return {(g, str(d)): bool(x) for g, d, x in con.execute(
+        f"SELECT gvkey, datadate, listed FROM ({wrds_history.SECD_LISTED})").fetchall()}
+
+
+SECD_CASES = [
+    # A: on NYSE (11) to 2019-12-31, OTC (19) since; today's code 19
+    ("A", "1990-06-01", 19), ("A", "2019-12-31", 19), ("A", "2020-01-01", 19), ("A", "2020-06-01", 19),
+    # B: OTC to 2014-12-31, Nasdaq (14) since; today's code 14
+    ("B", "1995-06-01", 14), ("B", "2014-12-31", 14), ("B", "2015-01-01", 14),
+    # C: no exchange history; today's code 14
+    ("C", "1990-06-01", 14), ("C", "2020-06-01", 14),
+    # D: on NYSE 2000-2005 in the history, nothing after; today's code 11
+    ("D", "2010-06-01", 11),
+    # E: Nasdaq to 2009-12-31, NYSE from 2010-01-04 with no end; today's code 19 (secd and sec_idhist disagree)
+    ("E", "2010-01-04", 19), ("E", "2012-06-01", 19),
+]
+IDHIST_CASES = [("A", 11, "1998-01-02", "2019-12-31"), ("A", 19, "2020-01-01", None),
+                ("B", 19, "1998-01-02", "2014-12-31"), ("B", 14, "2015-01-01", None),
+                ("D", 11, "2000-01-03", "2005-12-30"),
+                ("E", 14, "1998-01-02", "2009-12-31"), ("E", 11, "2010-01-04", None)]
+
+
+def test_a_day_is_listed_by_its_own_exchange_and_before_1998_by_the_first_known_one():
+    got = _listed(SECD_CASES, IDHIST_CASES)
+    assert got == {
+        ("A", "1990-06-01"): True,      # before sec_idhist starts: its first known exchange, NYSE
+        ("A", "2019-12-31"): True,      # the last day of its NYSE period
+        ("A", "2020-01-01"): False,     # the first day on OTC
+        ("A", "2020-06-01"): False,
+        ("B", "1995-06-01"): False,     # first known exchange OTC
+        ("B", "2014-12-31"): False,
+        ("B", "2015-01-01"): True,      # the first day on Nasdaq
+        ("C", "1990-06-01"): True, ("C", "2020-06-01"): True,     # no history: today's code
+        ("D", "2010-06-01"): True,      # after its history ends: today's code
+        ("E", "2010-01-04"): True,      # the first day of its NYSE period, not the day after
+        ("E", "2012-06-01"): True,      # an open-ended period holds every day after it starts
+    }
+
+
+def test_the_rule_against_todays_code_on_the_fixture():
+    """The measurement asked for (fixture only, not real data): today's-code filter versus the dated rule."""
+    got = _listed(SECD_CASES, IDHIST_CASES)
+    today = {(g, d): x in wrds_history.COMPUSTAT_EXCHG for g, d, x in SECD_CASES}
+    added = sorted(k for k in got if got[k] and not today[k])
+    dropped = sorted(k for k in got if today[k] and not got[k])
+    assert added == [("A", "1990-06-01"), ("A", "2019-12-31"),                     # 2 securities, 4 rows gained
+                     ("E", "2010-01-04"), ("E", "2012-06-01")]
+    assert dropped == [("B", "1995-06-01"), ("B", "2014-12-31")]                   # 1 security, 2 rows lost
+
+
+def test_the_secd_pull_reaches_securities_listed_once_whatever_their_code_today():
+    sql = wrds_history.year_sql("secd", 2025)
+    assert "exchg IN (11, 12, 14, 17, 21) OR (gvkey, iid) IN (SELECT gvkey, iid FROM comp.sec_idhist" in sql
+    assert "item = 'EXCHG'" in sql and "itemvalue IN ('11', '12', '14', '17', '21')" in sql
+
+
+def test_a_security_on_otc_today_keeps_the_bars_of_its_listed_days(monkeypatch):
+    from RevenueChaser.rcdata.build.prices import stage
+    from RevenueChaser.rcdata.build.spine import wrds as spine_wrds
+    from .test_prices_wrds import _secd
+    data = _data()
+    data["comp.secd"] += [_secd("055555", "01", d, "WENT", 3.0, exchg=19, cusip="55555X109")
+                          for d in ("2024-03-01", "2024-03-04", "2024-03-05")]
+    stage.write_rows([{"gvkey": "055555", "iid": "01", "item": "EXCHG", "itemvalue": "11", "efffrom": date(1998, 1, 2),
+                       "effthru": date(2024, 3, 4), "source_as_of": date(2026, 10, 27), "fetched_at": 1.0,
+                       "run_id": "s"},
+                      {"gvkey": "055555", "iid": "01", "item": "EXCHG", "itemvalue": "19", "efffrom": date(2024, 3, 5),
+                       "effthru": None, "source_as_of": date(2026, 10, 27), "fetched_at": 1.0, "run_id": "s"}],
+                     spine_wrds.IDHIST + spine_wrds.PROVENANCE,
+                     spine_wrds.parquet_dir("wrds/sec_idhist") / "snapshot=2026-10-27" / "sec_idhist.parquet")
+    # A newer delta of the spine's sec_idhist ends the NYSE period a day earlier: the newest row of a period wins.
+    stage.write_rows([{"gvkey": "055555", "iid": "01", "item": "EXCHG", "itemvalue": "11", "efffrom": date(1998, 1, 2),
+                       "effthru": date(2024, 3, 3), "source_as_of": date(2026, 10, 28), "fetched_at": 2.0,
+                       "run_id": "d"}], spine_wrds.IDHIST + spine_wrds.PROVENANCE,
+                     spine_wrds.parquet_dir("wrds/sec_idhist") / "delta=2026-10-28" / "sec_idhist.parquet")
+    _serve(monkeypatch, data)
+    got = [str(r["session_date"]) for r in _q("SELECT session_date FROM price_bar_daily "
+                                              "WHERE security_id = '055555:01' ORDER BY 1")]
+    assert got == ["2024-03-01"]               # on NYSE to 3 Mar (the delta's end), OTC from 5 Mar; 4 Mar in a gap

@@ -42,13 +42,20 @@ on homesrv first (`duckdb.connect(path, read_only=True)` with `RC_STORE_AUTO_ENS
 3. **The placeholders:** the tester's `RISK_DAYS` (10) and `LOW_PRICE` ($5).
 4. **`dlycumfacpr`'s direction: checked** (*homesrv*, 3 WRDS queries): it runs as `ajexdi` does (AAPL, PERMNO 14593:
    2020-08-28 at 499.23 has 4.0 / 4.0, 2020-08-31 at 129.04 has 1.0 / 1.0), so `split_only_crsp` reads it right.
-5. **`secd.exchg` is today's exchange, not the day's** (*homesrv*: 0 of 18,024 local securities carry more than one
-   `exchg`; `sec_idhist` has 013657:02 on NYSE, 11, until 2013-02-10 and on Nasdaq, 14, from 2013-02-11, while secd
-   shows 14 on 2013-02-05..08). So `exchg IN (11, 12, 14, 17, 21)` keeps or drops a security's whole history by its
-   exchange now: a name that moved to OTC (19) loses all of its listed years. The dated fix is `comp.sec_idhist`
-   (EXCHG with its dates, from 1998); it is not in this PR yet (avo's call on the 1983-1997 rule and the wider
-   pull). Priced secd rows per exchg 11 / 12 / 14 / 17 / 21 (*homesrv*): 1984 402,251 / 111,631 / 284,113 / 506 / -;
-   2025 713,778 / 74,558 / 1,188,069 / 587,399 / 257,131.
+5. **`secd.exchg` is today's exchange, not the day's: decided and built (step 10).** *homesrv*: 0 of 18,024 local
+   securities carry more than one `exchg`; `sec_idhist` has 013657:02 on NYSE (11) until 2013-02-10 and on Nasdaq (14)
+   from 2013-02-11, while secd shows 14 on 2013-02-05..08. avo, 3 Nov 2026 ~09:50 Amsterdam: "Evet kurali uygula".
+   The rule (`wrds_history.SECD_LISTED`): a secd row is served when the security was on 11, 12, 14, 17 or 21 **that
+   day** by `comp.sec_idhist`'s EXCHG period holding it; before its first period (1983-1997, sec_idhist starts in
+   1998) by its first known exchange; with no history, or after its last period ended, by today's code. The secd pull
+   widens to every security `sec_idhist` ever lists on those exchanges, whatever its code today (a name now on OTC
+   keeps its listed years); the periods come from the spine's `wrds/sec_idhist` snapshot, no new query. On the
+   fixtures (not real data) the rule adds 2 securities and 4 rows against today's-code filter and drops 1 security
+   and 2 rows; the first build's note `exchange history: ...` gives the real counts. **Residual risk:** a name that
+   moved exchange before 1998 and ended before 1998 has no sec_idhist row, so its last exchange decides its whole
+   history; a pre-1998 move of a name that lived on is read as its 1998 exchange. Priced secd rows per exchg 11 / 12
+   / 14 / 17 / 21 (*homesrv*): 1984 402,251 / 111,631 / 284,113 / 506 / -; 2025 713,778 / 74,558 / 1,188,069 /
+   587,399 / 257,131.
 6. **The link** stays the 8-character `hdrcusip`/`cusip`/`ticker` rule (`PERMNO_LINK`); the dated
    `stksecurityinfohist.cusip9` link is the next PR.
 7. **The CRSP-only securities:** 11,173 security ids lose their bars at the switch (the row above); keep them off,

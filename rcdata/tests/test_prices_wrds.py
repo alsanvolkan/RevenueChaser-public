@@ -341,12 +341,14 @@ def test_compustat_bars_of_a_permnos_gvkey_join_the_security_its_crsp_bars_won()
     con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, datadate DATE, tic TEXT, cusip TEXT, curcdd TEXT, "
                 "prccd DOUBLE, prcod DOUBLE, prchd DOUBLE, prcld DOUBLE, cshtrd DOUBLE, cshoc DOUBLE, ajexdi DOUBLE, "
                 "trfd DOUBLE, curcddv TEXT, div DOUBLE, divd DOUBLE, divsp DOUBLE, source_as_of DATE, fetched_at DOUBLE, "
-                "run_id TEXT)")
+                "run_id TEXT, exchg INTEGER)")
     for gvkey, tic, cusip in (("001000", "SPY", "78462F103"), ("001690", "AAPL", "037833100")):
         con.execute("INSERT INTO stg_wrds_secd VALUES (?, '01', ?, ?, ?, 'USD', 400, 400, 401, 399, 1, 1, 1, 1, "
-                    "NULL, NULL, NULL, NULL, NULL, NULL, NULL)", [gvkey, END, tic, cusip])
+                    "NULL, NULL, NULL, NULL, NULL, NULL, NULL, 14)", [gvkey, END, tic, cusip])
     con.execute(f"CREATE TEMP TABLE _permno_link AS {wrds_history.PERMNO_LINK}")
     con.execute(f"CREATE TEMP TABLE _gvkey_alias AS {wrds_history.GVKEY_ALIAS}")
+    con.execute("CREATE TABLE stg_wrds_exchg (gvkey TEXT, iid TEXT, exchg INTEGER, efffrom DATE, effthru DATE)")
+    con.execute(f"CREATE TEMP TABLE _secd_listed AS {wrds_history.SECD_LISTED}")
     got = sorted(con.execute(f"SELECT security_id, symbol FROM ({wrds_history.COMP_BARS})").fetchall())
     assert got == [("001690:01", "AAPL"), ("figi:BBG000BDTBL9", "SPY")], "SPY's Compustat bar is the FIGI's own"
     con.execute("CREATE TABLE stg_wrds_split (gvkey TEXT, iid TEXT, datadate DATE, split DOUBLE, source_as_of DATE, "

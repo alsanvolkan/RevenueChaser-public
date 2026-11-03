@@ -139,8 +139,12 @@ _EXCHG = ", ".join(str(e) for e in COMPUSTAT_EXCHG)
 TABLES: dict[str, dict] = {
     "secd": {"wrds": "comp.secd", "schema": SECD, "key": ["gvkey", "iid", "datadate"], "date": "datadate",
              "last_year": None, "needed": ("prccd", "ajexdi", "trfd", "cshoc"),
+             # secd.exchg is today's code (homesrv, 3 Nov 2026): a security listed once on one of the exchanges
+             # (comp.sec_idhist EXCHG) is asked whatever its code now; ``SECD_LISTED`` keeps its listed days.
              "sql": ("SELECT " + ", ".join(c for c, _ in SECD) + " FROM comp.secd WHERE {range} "
-                     "AND exchg IN (" + _EXCHG + ")"),
+                     "AND (exchg IN (" + _EXCHG + ") OR (gvkey, iid) IN (SELECT gvkey, iid FROM comp.sec_idhist "
+                     "WHERE item = 'EXCHG' AND itemvalue IN (" + ", ".join(f"'{e}'" for e in COMPUSTAT_EXCHG)
+                     + ")))"),
              "bar": (COMPUSTAT, "gvkey || ':' || iid", "replace(upper(tic), '.', '-')", "prcod", "prchd", "prcld",
                      "prccd", "cshtrd")},
     "dsf": {"wrds": "crsp.dsf_v2", "schema": DSF, "key": ["permno", "dlycaldt"], "date": "dlycaldt",
@@ -509,6 +513,11 @@ class WrdsPrices:
             stage.create(con, STAGING[table], TABLES[table]["schema"] + PROVENANCE,
                          [f for _, f in stage.partitions(base.parquet_root() / "wrds" / "prices" / table, "year")],
                          added_later=SECD_ADDED if table == "secd" else ())
+        # The EXCHG periods of the spine's newest sec_idhist snapshot and its deltas, one row per period (the newest).
+        stage.create(con, "stg_wrds_exchg", EXCHG_STAGE, wrds.parquet_files("wrds/sec_idhist", "sec_idhist"),
+                     select="SELECT gvkey, iid, TRY_CAST(TRY_CAST(itemvalue AS DOUBLE) AS INTEGER) AS exchg, efffrom, "
+                            "effthru FROM {src} WHERE item = 'EXCHG' AND efffrom IS NOT NULL QUALIFY row_number() "
+                            "OVER (PARTITION BY gvkey, iid, efffrom ORDER BY fetched_at DESC) = 1")
         for table in SNAPSHOTS:
             snaps = _snapshots(table)
             stage.create(con, STAGING[table], TABLES[table]["schema"] + PROVENANCE, [snaps[-1][1]] if snaps else [])
@@ -708,8 +717,30 @@ COMP_BARS = f"""
            '{COMPUSTAT}' AS source, source_as_of, fetched_at, run_id, {COMP_RETURN} AS own_return,
            {COMP_RETURN_BASIS} AS return_basis, 1 AS priority, CAST(NULL AS TEXT) AS fallback
     -- secd holds rows of events to come (to 2027): a bar is a priced day up to today only.
-    FROM stg_wrds_secd WHERE coalesce(upper(curcdd), 'USD') = 'USD' AND prccd > 0 AND datadate <= current_date
+    FROM _secd_listed WHERE listed AND coalesce(upper(curcdd), 'USD') = 'USD' AND prccd > 0
+      AND datadate <= current_date
     WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate)"""
+
+# Each ``comp.secd`` row with ``listed``: whether the security was on one of ``COMPUSTAT_EXCHG`` that day
+# (``serving`` makes it the temp table ``_secd_listed``; ``COMP_BARS`` serves the listed rows). homesrv, 3 Nov 2026:
+# ``secd.exchg`` is the security's current code, so the day's exchange comes from ``comp.sec_idhist``'s EXCHG
+# periods (``stg_wrds_exchg``, the spine's ``wrds/sec_idhist`` snapshot, from 1998; avo, 3 Nov 2026: "Evet kurali
+# uygula"):
+#   1. the period holding the day, ``efffrom`` <= day <= ``effthru`` (open-ended when ``effthru`` is NULL);
+#   2. a day before the security's first period (1983-1997, before sec_idhist starts): its first known exchange;
+#   3. else (no history, or a day after its last period ended): today's code.
+# shortcut: a name that moved exchange before 1998 and ended before 1998 has no sec_idhist row, so today's code (its
+# last exchange) decides its whole history; a pre-1998 move of a name that lived on is read as its 1998 exchange.
+SECD_LISTED = f"""
+    SELECT s.*, coalesce(CASE WHEN s.datadate <= coalesce(e.effthru, DATE '9999-12-31') THEN e.exchg END,
+                         CASE WHEN e.efffrom IS NULL THEN f.first_exchg END, s.exchg)
+                IN ({_EXCHG}) AS listed,
+           s.exchg IN ({_EXCHG}) AS listed_today
+    FROM stg_wrds_secd s
+    ASOF LEFT JOIN stg_wrds_exchg e ON e.gvkey = s.gvkey AND e.iid = s.iid AND s.datadate >= e.efffrom
+    LEFT JOIN (SELECT gvkey, iid, arg_min(exchg, efffrom) AS first_exchg FROM stg_wrds_exchg GROUP BY ALL) f
+        ON f.gvkey = s.gvkey AND f.iid = s.iid"""
+EXCHG_STAGE = [("gvkey", "TEXT"), ("iid", "TEXT"), ("exchg", "INTEGER"), ("efffrom", "DATE"), ("effthru", "DATE")]
 
 # The splits ``ajexdi`` (Compustat's cumulative adjustment factor, adjusted price = ``prccd / ajexdi``) carries:
 # a day whose ``ajexdi`` differs from the previous row's of the same answer is a split of ratio previous / today's

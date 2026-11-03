@@ -1297,7 +1297,9 @@ only through `rcdata.read`.
 | `prices/serving` | daily | none: builds the served tables from the staging tables; the history is Compustat's (priority 1), CRSP's only on its fallback days, never Alpaca's | the tables below |
 
 **The one primary source (avo, 3 Nov 2026: the whole history and what follows from Compustat).** A served bar is
-Compustat's `comp.secd` bar, a priced day up to today, from 1983-12-30 (its earliest priced day,
+Compustat's `comp.secd` bar, a priced day up to today on which the security was on exchg 11, 12, 14, 17 or 21 by
+`comp.sec_idhist`'s dated EXCHG periods (`SECD_LISTED`; `secd.exchg` is today's code; before 1998 the first known
+exchange), from 1983-12-30 (its earliest priced day,
 `wrds_history.COMPUSTAT_START`), with its splits from `comp.sec_split` and, where that has none, from a change of
 `ajexdi` within one answer (`AJEXDI_SPLITS`), and its dividends from the secd row itself (`div`, `divd`, `divsp`;
 `comp.sec_divid` only where the row has none). Its return (`COMP_RETURN`, flagged by `COMP_RETURN_BASIS` and counted

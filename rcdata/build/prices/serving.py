@@ -281,6 +281,7 @@ CREATE OR REPLACE TEMP TABLE _act AS
     SELECT best.security_id, a.*, '{actions}' AS source FROM a JOIN best USING (action_id);
 CREATE OR REPLACE TEMP TABLE _permno_link AS {link};
 CREATE OR REPLACE TEMP TABLE _gvkey_alias AS {alias};
+CREATE OR REPLACE TEMP TABLE _secd_listed AS {listed};
 CREATE OR REPLACE TEMP TABLE _delisted AS {delisted};
 CREATE OR REPLACE TEMP TABLE _crsp_fallback AS {fallback};
 CREATE OR REPLACE TEMP TABLE _hist_all AS
@@ -330,7 +331,8 @@ class PricesServing:
         con.execute(BUILD_SQL.format(bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
                                      comp=wrds_history.COMP_BARS, link=wrds_history.PERMNO_LINK,
                                      alias=wrds_history.GVKEY_ALIAS, fallback=wrds_history.CRSP_FALLBACK,
-                                     delist=wrds_history.DELIST_BARS, delisted=wrds_history.DELISTED))
+                                     delist=wrds_history.DELIST_BARS, delisted=wrds_history.DELISTED,
+                                     listed=wrds_history.SECD_LISTED))
         self._link_note(ctx, con, found)
         counts = {}
         cols = ", ".join(c for c, _ in PRICE_BAR)
@@ -343,6 +345,14 @@ class PricesServing:
                                "GROUP BY ALL ORDER BY 1").fetchall()
         if fallback:
             ctx.notes.append("CRSP fallback bars served: " + ", ".join(f"{n} {why}" for why, n in fallback))
+        # The dated exchange rule against today's code: what it serves that today's code would not, and the reverse.
+        moved = con.execute("SELECT count(*) FILTER (WHERE listed AND NOT listed_today), count(DISTINCT gvkey || iid) "
+                            "FILTER (WHERE listed AND NOT listed_today), count(*) FILTER (WHERE listed_today AND NOT "
+                            "listed), count(DISTINCT gvkey || iid) FILTER (WHERE listed_today AND NOT listed) "
+                            "FROM _secd_listed WHERE prccd > 0").fetchone()
+        if any(moved):
+            ctx.notes.append(f"exchange history: {moved[0]} secd rows of {moved[1]} securities listed that day though "
+                             f"not today, {moved[2]} rows of {moved[3]} listed today though not that day")
         basis = con.execute(f"SELECT return_basis, count(*) FROM _hist_all WHERE source = '{wrds_history.COMPUSTAT}' "
                             "GROUP BY ALL ORDER BY 1").fetchall()
         if basis:
