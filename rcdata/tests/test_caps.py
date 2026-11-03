@@ -64,8 +64,9 @@ def _series():
     return base.run_request({"dataset": ms.NAME, "params": {"as_of": "2026-10-27"}}, sleep=lambda s: None)
 
 
-def test_fred_at_its_cap_does_not_skip_the_keyless_sources(market):
-    ops.count_calls("fred", caps.DAY_CAPS["fred"])
+def test_fred_at_its_cap_does_not_skip_the_keyless_sources(market, monkeypatch):
+    monkeypatch.setitem(caps.DAY_CAPS, "fred", 5)                 # FRED has no cap: the mechanism, on a test cap
+    ops.count_calls("fred", 5)
     row = _series()
     assert row["result"] == "changed" and market.calls("fred.test") == []
     assert market.calls("cboe.test") and "fred" in row["note"]

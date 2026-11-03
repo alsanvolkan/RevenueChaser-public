@@ -529,23 +529,33 @@ def upsert_partition(rows: list[dict], schema: list[tuple[str, str]], key: list[
 # ── Pacing ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 class Pacer:
-    """At most ``per_minute`` calls in any 60 s window: ``wait()`` before each call sleeps when the window is full."""
+    """At most ``limit`` calls in any ``window_s`` window (60 s by default; ``caps.WINDOWS`` has the providers' own):
+    ``wait()`` before each call sleeps when the window is full."""
 
-    def __init__(self, per_minute: int, clock: Callable[[], float] = time.monotonic,
+    def __init__(self, limit: int, window_s: float = 60.0, clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], Any] = time.sleep):
-        self.per_minute, self._clock, self._sleep = per_minute, clock, sleep
+        self.limit, self.window_s, self._clock, self._sleep = limit, window_s, clock, sleep
         self._sent: deque[float] = deque()
 
     def wait(self) -> None:
         while True:
             now = self._clock()
-            while self._sent and now - self._sent[0] >= 60.0:
+            while self._sent and now - self._sent[0] >= self.window_s:
                 self._sent.popleft()
-            if len(self._sent) < self.per_minute:
+            if len(self._sent) < self.limit:
                 break
             # At least a millisecond: a sleep that lands a hair short of the window edge must not spin.
-            self._sleep(max(60.0 - (now - self._sent[0]), 0.001))
+            self._sleep(max(self.window_s - (now - self._sent[0]), 0.001))
         self._sent.append(now)
+
+
+def run_pacer(ctx: RunContext, provider: str) -> Pacer:
+    """The run's one pacer of ``provider`` at its published window (``caps.WINDOWS``), shared by every dataset of the
+    run that asks that provider (``ctx.pending``)."""
+    key = f"_pacer_{provider}"
+    if key not in ctx.pending:
+        ctx.pending[key] = Pacer(*caps.WINDOWS[provider], clock=ctx.clock, sleep=ctx.sleep)
+    return ctx.pending[key]
 
 
 # ── Sessions ───────────────────────────────────────────────────────────────────────────────────────────────────

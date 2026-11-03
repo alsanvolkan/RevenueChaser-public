@@ -51,6 +51,6 @@ def test_the_planning_figure_leaves_most_of_uw_s_day_cap_to_the_other_datasets()
     cap = caps.DAY_CAPS["uw"]
     assert options.uw_calls_a_session(0) < 2_000
     assert options.uw_calls_a_session(100) < cap / 10
-    assert options.uw_calls_a_session(500) < cap / 4
+    assert options.uw_calls_a_session(500) < cap / 2       # 34,240 of 100,000: a third of the day
     assert options.uw_calls_a_session(1) - options.uw_calls_a_session(0) == options.list_name_calls(
         options.EXPIRIES_A_NAME, options.EXTRA_PAGES_A_NAME)

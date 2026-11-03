@@ -6,8 +6,8 @@ when the kind is built (no network: ``spine.duckdb`` is a local file). No spine 
 fetch asks nothing and the build serves empty tables.
 
 **The SEC.** Every SEC request carries ``RC_SEC_USER_AGENT`` ("Name email", the SEC's rule) when it is set, else the
-builder's own User-Agent with ``RC_HTTP_CONTACT``; requests are spaced ``SEC_INTERVAL_S`` apart, under 5 a second
-(the plan's limit; the SEC's own is 10), and each is counted against the ``sec`` day cap.
+builder's own User-Agent with ``RC_HTTP_CONTACT``; requests are spaced ``SEC_INTERVAL_S`` apart: 4 a second
+against the SEC's 10 (``caps.WINDOWS``), a margin of 6 for the box's other SEC callers, because this spacing does not take ``core/sec_throttle.py``'s shared bucket.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from . import KIND
 
 SEC = "sec"
 SEC_UA_ENV = "RC_SEC_USER_AGENT"
-SEC_INTERVAL_S = 0.25
+SEC_INTERVAL_S = 0.25          # official 10/s (caps.WINDOWS["sec"]); 4/s, margin 6/s for the other SEC callers
 META_SUFFIX = ".meta.json"
 _DIGITS = re.compile(r"^\d{1,10}$")
 

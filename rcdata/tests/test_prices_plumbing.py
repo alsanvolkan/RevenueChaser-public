@@ -18,6 +18,6 @@ def test_the_alpaca_key_id_and_secret_are_two_declared_names():
     assert "ALPACA_API_KEY_ID" in credentials.missing_message("alpaca")
 
 
-def test_yfinance_has_a_day_cap():
-    assert caps.cap_for("yfinance") == 3_000 + 2_000      # the float lookups and the fundamentals estimates
-    assert caps.cap_for("alpaca") == 20_000
+def test_yfinance_and_alpaca_have_a_window_not_a_day_cap():
+    assert caps.cap_for("yfinance") is None and caps.WINDOWS["yfinance"] == (2_000, 3_600.0)
+    assert caps.cap_for("alpaca") is None and caps.WINDOWS["alpaca"] == (200, 60.0)

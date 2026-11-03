@@ -46,7 +46,7 @@ MARKETS = {"nasdaq": ("nasdaqtrader", None), "nyse": ("nyse", "NYSE"), "nyse_ame
            "nyse_arca": ("nyse", "NYSE Arca")}
 RECENT_SESSIONS = 2
 DAILY_LOOKBACK = 5
-PER_MINUTE = 60
+PER_MINUTE = 60                      # politeness, not a provider limit: Nasdaq Trader and NYSE publish none
 META_SUFFIX = ".meta.json"
 SCHEMA = [("list_date", "DATE"), ("market", "TEXT"), ("symbol", "TEXT"), ("source_symbol", "TEXT"),
           ("security_name", "TEXT"), ("market_category", "TEXT"), ("threshold_flag", "TEXT"), ("rule_3210", "TEXT"),

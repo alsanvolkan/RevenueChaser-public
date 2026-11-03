@@ -7,7 +7,8 @@ reads are (the float, ``rcdata/build/prices/floats.py``): Yahoo's chart endpoint
 User-Agent (HTTP 429, measured 29 Oct 2026), and asked directly with ``range=max`` it answers monthly bars. Through
 the library (1.7.0, 29 Oct 2026) ``^MOVE`` gave 5,925 daily bars from 12 Nov 2002 and ``ZW=F`` 6,590 from
 17 Jul 2000. One request per symbol and as-of date, the whole history each time, so a daily fetch is also the
-backfill; counted under the ``yfinance`` provider (its day cap). Raw: ``raw/yahoo/history/<as-of>/<SERIES>.json``,
+backfill; counted under the ``yfinance`` provider and paced at its window (2,000 an hour, ``caps.WINDOWS``).
+Raw: ``raw/yahoo/history/<as-of>/<SERIES>.json``,
 the bars as ``[day, open, high, low, close]``. A bar is dated by the exchange's own day; a bar of a day whose session
 is not over when it was fetched is skipped (16:00 New York), and the next fetch brings it complete.
 
@@ -59,8 +60,9 @@ def fetch(ctx, as_of: date, download=None) -> list[Path]:
         path = base.raw_root() / SOURCE / DATASET_DIR / as_of.isoformat() / f"{series}.json"
         if not path.exists():
             ctx.check_cap(PROVIDER)
+            base.run_pacer(ctx, PROVIDER).wait()
             # shortcut: one history() is counted as one call, but yfinance also fetches its own cookie and crumb, so
-            # the count is a lower bound. Upgrade by counting the library's requests if the day cap ever binds.
+            # the count is a lower bound. Upgrade by counting the library's requests if the hour window ever binds.
             ctx.count(PROVIDER, calls=1)
             try:
                 bars = get(symbol)

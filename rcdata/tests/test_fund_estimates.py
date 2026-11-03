@@ -103,3 +103,16 @@ def test_failures_in_a_row_stop_the_run(yf, monkeypatch):
     check = fx.run(estimates.NAME, "2026-10-29")
     assert check["result"] == "changed" and "1 failed" in check["note"]
     assert fx.q("SELECT DISTINCT ticker FROM estimate_latest ORDER BY 1") == [("HEI",), ("ORCL",), ("TM",)]
+
+
+def test_each_estimate_request_waits_for_the_yfinance_window(yf, monkeypatch):
+    from RevenueChaser.rcdata.build import base
+    waits, real = [], base.run_pacer
+
+    def run_pacer(ctx, provider):
+        p = real(ctx, provider)
+        monkeypatch.setattr(p, "wait", lambda: waits.append(provider))
+        return p
+    monkeypatch.setattr(base, "run_pacer", run_pacer)
+    fx.run(estimates.NAME, "2026-10-28")
+    assert waits == ["yfinance"] * 4

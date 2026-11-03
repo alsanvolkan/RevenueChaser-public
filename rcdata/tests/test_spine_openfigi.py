@@ -9,7 +9,7 @@ import json
 import pytest
 
 from RevenueChaser.core.providers import sec_edgar
-from RevenueChaser.rcdata import serving
+from RevenueChaser.rcdata import caps, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.spine import openfigi_map as of, sec_tickers, wrds
 
@@ -145,7 +145,8 @@ def test_no_key_fails_and_asks_nothing(env, monkeypatch):
     assert row["result"] == "failed" and "OPENFIGI_API_KEY" in row["note"] and _jobs(env) == []
 
 
-def test_requests_are_paced_under_25_a_minute_and_hold_100_jobs(env, monkeypatch):
+def test_requests_are_paced_at_250_a_minute_and_hold_100_jobs(env, monkeypatch):
+    monkeypatch.setitem(caps.WINDOWS, "openfigi", (25, 60.0))     # the window, made small enough to fill
     many = [f"{i:08d}{i % 10}" for i in range(2600)]       # 26 requests of 100
     monkeypatch.setattr(of, "wanted_cusips", lambda: many)
     now, slept = [0.0], []

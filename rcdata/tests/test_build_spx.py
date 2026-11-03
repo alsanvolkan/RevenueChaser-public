@@ -9,7 +9,7 @@ import pytest
 
 from RevenueChaser.core import calendar
 from RevenueChaser.core.providers import unusual_whales
-from RevenueChaser.rcdata import ops, read, serving
+from RevenueChaser.rcdata import caps, ops, read, serving
 from RevenueChaser.rcdata.build import base, uw_spot_expiry_strike as uw
 
 from . import uw_fixture
@@ -78,7 +78,7 @@ def test_uw_remaining_and_the_call_counter_are_written(http_mock):
         sample = con.execute("SELECT daily_req_count, daily_remaining_computed FROM uw_remaining").fetchall()
         calls = con.execute("SELECT provider, calls, failures, http_429 FROM provider_calls_daily").fetchall()
         run = con.execute("SELECT dataset, status FROM job_runs2").fetchall()
-    assert [tuple(s) for s in sample] == [(355, 150_000 - 355)]
+    assert [tuple(s) for s in sample] == [(355, caps.DAY_CAPS["uw"] - 355)]
     assert [tuple(c) for c in calls] == [("uw", 1, 0, 0)]
     assert [tuple(r) for r in run] == [(uw.NAME, "ok")]
 

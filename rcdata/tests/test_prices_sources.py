@@ -234,14 +234,14 @@ def test_a_stored_filing_is_never_asked_again(http_mock, monkeypatch):
     assert "submissions/CIK0001067983.json" in " ".join(asked)            # the fill moves on
 
 
-def test_sec_requests_are_spaced_under_five_a_second(http_mock, monkeypatch):
+def test_sec_requests_are_spaced_at_most_ten_a_second(http_mock, monkeypatch):
     monkeypatch.setattr(cover_shares, "FILL_PER_RUN", 2)
     monkeypatch.setattr("RevenueChaser.core.sec_throttle.pace", lambda: True)
     _sec_routes(http_mock)
     sleeps = []
     cover_shares.DATASET.fetch(_ctx(cover_shares.NAME, sleeps=sleeps), TUE)
     n = len(http_mock.requests)
-    assert n > 5 and len(sleeps) == n - 1 and min(sleeps) >= 0.2           # under 5 a second, every gap
+    assert n > 5 and len(sleeps) == n - 1 and min(sleeps) >= 0.1 - 1e-9    # at most 10 a second, every gap
 
 
 def test_cover_facts_of_an_instance():
@@ -278,6 +278,20 @@ def test_yahoo_float_paced_one_and_a_half_seconds_and_stopped_on_429(monkeypatch
     assert set(rows) == {"AAPL", "BRK-B"} and rows["AAPL"]["float_shares"] == 1000.0
     assert rows["BRK-B"]["security_id"] == "072726:02" and rows["AAPL"]["source_as_of"] == TUE
     assert any("429" in n for n in ctx.notes) and ctx.calls["yfinance"][2] == 1
+
+
+def test_each_yahoo_float_lookup_waits_for_the_yfinance_window(monkeypatch):
+    waits, real = [], base.run_pacer
+
+    def run_pacer(ctx, provider):
+        p = real(ctx, provider)
+        monkeypatch.setattr(p, "wait", lambda: waits.append(provider))
+        return p
+    monkeypatch.setattr(base, "run_pacer", run_pacer)
+    monkeypatch.setattr(floats, "_lookup", lambda t: {"floatShares": 5.0})
+    ctx = _ctx(floats.YAHOO)
+    floats.YAHOO_FLOAT.fetch(ctx, TUE)
+    assert waits and waits == ["yfinance"] * ctx.calls["yfinance"][0]
 
 
 def test_yahoo_float_asks_the_never_asked_first(monkeypatch):

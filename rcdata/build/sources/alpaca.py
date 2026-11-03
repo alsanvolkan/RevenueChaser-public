@@ -15,7 +15,8 @@ no key, and the tests answer at the HTTP boundary):
   ``process_date``), ``limit`` (1-1,000), ``page_token``. Answer ``{"corporate_actions": {"forward_splits": [...],
   "reverse_splits": [...], "cash_dividends": [...], ...}, "next_page_token"}``.
 
-The free plan allows 200 requests a minute (``PER_MINUTE`` stays under it) and no SIP data of the last 15 minutes, so
+The Basic plan allows 200 historical calls a minute (``caps.WINDOWS``, paced by ``base.run_pacer``) and no SIP data of
+the last 15 minutes, so
 a query's ``end`` is never later than 16 minutes ago. ``RC_ALPACA_BASE`` redirects the host (read at call time).
 """
 from __future__ import annotations
@@ -28,7 +29,6 @@ from .. import base
 
 PROVIDER = "alpaca"
 DEFAULT_BASE = "https://data.alpaca.markets"
-PER_MINUTE = 190
 # A paged answer that never ends is cut here rather than followed forever: 100 pages of 10,000 bars is a million
 # bars, far past one chunk of 100 symbols over a few sessions.
 MAX_PAGES = 100
@@ -48,7 +48,7 @@ def headers() -> dict[str, str]:
 
 
 def pacer(ctx: base.RunContext) -> base.Pacer:
-    return base.Pacer(PER_MINUTE, clock=ctx.clock, sleep=ctx.sleep)
+    return base.run_pacer(ctx, PROVIDER)
 
 
 def get_pages(ctx: base.RunContext, path: str, params: dict, pace: base.Pacer, key: str) -> list[Any]:

@@ -109,7 +109,7 @@ def test_ndx_is_voted_by_the_nasdaq_list_and_invescos_qqq():
     assert ndx == {("nasdaq", "NDX", "https://api.nasdaq.com/api/quote/list-type/nasdaq100"),
                    ("invesco", "QQQ", "https://dng-api.invesco.com/cache/v1/accounts/en_US/shareclasses/QQQ/holdings/"
                                       "fund?idType=ticker&productType=ETF")}
-    assert caps.cap_for("invesco") == 50
+    assert caps.cap_for("invesco") is None             # no published limit: no cap (master plan Order 5, rule 3)
 
 
 def test_tickers_are_written_the_sec_way():

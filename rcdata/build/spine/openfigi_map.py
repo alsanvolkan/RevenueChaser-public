@@ -3,7 +3,7 @@
 ``POST <RC_OPENFIGI_BASE>/v3/mapping`` with up to 100 jobs ``{"idType": "ID_CUSIP", "idValue": <cusip>, "exchCode":
 "US"}`` (the US composite listing, as ``core/providers/openfigi.py`` asks; a CINS is asked as ``ID_CINS``, ``id_type``),
 the key in the ``X-OPENFIGI-APIKEY`` header (``OPENFIGI_API_KEY``, through ``core.credentials``; never logged). Requests
-are paced under 25 a minute (the plan's rule, well inside OpenFIGI's keyed limit), at most ``MAX_REQUESTS`` a run. No
+are paced at OpenFIGI's keyed mapping window, 250 a minute (``caps.WINDOWS``), at most ``MAX_REQUESTS`` a run. No
 key: the run fails and asks nothing.
 
 Which CUSIPs: the CUSIPs of the active Compustat securities (``secstat`` A) whose CIK is in the newest SEC file,
@@ -32,7 +32,6 @@ from . import KIND, stage
 
 NAME = "openfigi/map"
 PROVIDER = "openfigi"
-PER_MINUTE = 24
 JOBS_PER_REQUEST = 100
 MAX_REQUESTS = 400
 ABSENT_RETRY_DAYS = 90
@@ -169,7 +168,7 @@ class OpenFigiMap:
         todo = [c for c in wanted_cusips() if c not in done]
         folder = raw_dir() / as_of.isoformat()
         n = len(list(folder.glob("batch-*.json.gz"))) if folder.is_dir() else 0
-        pacer = base.Pacer(PER_MINUTE, clock=ctx.clock, sleep=ctx.sleep)
+        pacer = base.run_pacer(ctx, PROVIDER)
         url = figi_client.base_url() + figi_client.ENDPOINT
         headers = {"Content-Type": "application/json", "X-OPENFIGI-APIKEY": key}
         sent = 0

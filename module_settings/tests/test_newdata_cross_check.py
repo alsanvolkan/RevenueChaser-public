@@ -130,7 +130,7 @@ def test_the_prices_row_reads_the_newest_comparison_report(monkeypatch):
     row = newdata.cross_check(NOW, {}, {"wrds": 3})["fields"][0]
     assert row["as_of"] == "2026-10-31" and row["differs"] == 1
     assert "20 sessions" in row["checked"] and row["second_source"]
-    assert row["remaining"] == newdata.caps.DAY_CAPS["wrds"] - 3
+    assert row["remaining"] is None                  # WRDS publishes no day quota: no cap, nothing remaining
 
 
 def test_the_prices_row_with_no_report_says_it_has_not_run(monkeypatch):

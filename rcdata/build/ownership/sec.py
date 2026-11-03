@@ -1,7 +1,7 @@
 """SEC requests of the ownership store: paced, counted against ``sec``, with the builder's User-Agent.
 
 The SEC's fair-access rule is 10 requests a second per User-Agent, shared by ``www.sec.gov`` and ``data.sec.gov``.
-The builder spaces its own requests ``1 / PER_SECOND`` apart (4.5 a second, under half the limit) and also takes a
+The builder spaces its own requests ``1 / PER_SECOND`` apart (10 a second, ``caps.WINDOWS``) and also takes a
 token of ``core/sec_throttle.py``'s bucket, which every other SEC caller on the machine spends from (the dashboard's
 identity refresh, the filings jobs), so together they stay under the limit. On a 13F deadline day (up to 5,400
 filings, one request each) the builder needs about 20 minutes at that rate; each run stops at its time budget and
@@ -17,10 +17,11 @@ from typing import Callable
 import httpx
 
 from ....core import sec_throttle
+from ... import caps
 from .. import base
 
 PROVIDER = "sec"
-PER_SECOND = 4.5
+PER_SECOND = caps.WINDOWS["sec"][0]
 
 # The machine-wide SEC bucket (a seam: tests replace it, the bucket sleeps on the real clock).
 _shared_pace: Callable[[], bool] = sec_throttle.pace

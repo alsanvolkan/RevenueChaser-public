@@ -35,7 +35,7 @@ PROVIDER = "openfigi"
 ENDPOINT = "/v3/mapping"
 DEFAULT_BASE = "https://api.openfigi.com"
 JOBS_PER_REQUEST = 100      # with a key
-REQUEST_GAP_S = 0.25        # 25 requests / 6 s with a key = one per 0.24 s
+REQUEST_GAP_S = 0.24        # keyed /v3/mapping: 250 requests in a 60 s window (rcdata/caps.py WINDOWS)
 MAX_REQUESTS = 400          # per run, avo's cap for #207 (typed 2026-10-14, B6)
 MAX_ATTEMPTS = 8            # per batch: the first request and up to 7 retries after a 429
 _LOW_REMAINING = 5          # wait out the window when fewer requests than this remain in it

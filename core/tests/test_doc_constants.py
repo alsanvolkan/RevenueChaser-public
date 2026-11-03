@@ -250,8 +250,14 @@ def test_the_market_store_section_names_every_ops_table_root_and_cap():
     for name in ("RC_MARKET_DIR", "RC_MARKET_RAW_DIR", "RC_MARKET_RAW_COPY_DIR", "RAW_STORE_BACKUP_DIR",
                  backup.MANIFEST_NAME):
         assert name in section, name
+    flat = " ".join(section.split())
     for provider, cap in caps.DAY_CAPS.items():
-        assert f"{provider} {cap:,}" in section, provider
+        assert f"{provider} {cap:,}" in flat, provider
+    units = {1.0: "a second", 60.0: "a minute", 3_600.0: "an hour"}
+    for provider, (limit, window) in caps.WINDOWS.items():
+        if provider != "openfigi_search":
+            assert f"{provider} {limit:,} {units[window]}" in flat, provider
+    assert f"`/v3/search` {caps.WINDOWS['openfigi_search'][0]} a minute" in flat
     assert f"newest {backup.KEEP}" in section and f"{backup.RAW_COPY_DAYS} days" in section
 
 
@@ -353,7 +359,7 @@ def test_the_prices_section_states_what_the_code_owns():
     assert f"over {serving.FLOAT_OVER} times" in section and f"{serving.FLOAT_DISAGREE:.0%} apart" in section
     assert f"`comp.secd` from {wrds_history.START_YEAR}" in section
     assert f"`crsp.dsf_v2` per year to {wrds_history.CRSP_LAST_YEAR}" in section
-    assert f"({caps.DAY_CAPS['wrds']} queries" in section
+    assert "wrds" not in caps.DAY_CAPS and "`wrds` has no day cap" in section
     words = {1: "one", 2: "two", 3: "three"}
     assert f"the last {words[wrds_history.REFRESH_YEARS]} years again" in " ".join(section.split())
     assert f"{newdata.COVERAGE_TARGET['alpaca/bars']:.0%}" in section
@@ -428,7 +434,7 @@ def test_the_options_section_states_what_the_code_owns():
     assert f"after {uw.RUN_BUDGET_S // 60} minutes" in flat and f"next {uw_screener.DAYS_AHEAD} days" in flat
     assert f"`option-contracts` ({uw.PAGE_LIMIT} a page)" in flat
     assert f"{uw_screener.SCREENER_BATCH} names a call" in flat and f"{uw_screener.CALENDAR_LIMIT} a page" in flat
-    assert f"{ibkr_iv.PER_MINUTE} requests a minute" in flat and f"at most {ibkr_iv.DAY_CALLS:,} a day" in flat
+    assert f"{ibkr_iv.PER_MINUTE} requests a minute, one at a time: politeness, not a provider limit" in flat
     assert (f"A list name is {options.LIST_CALLS} calls plus {options.EXPIRY_CALLS} per expiry" in flat
             and f"an earnings-set name {options.EARNINGS_CALLS}" in flat)
     for n, words in ((0, "with SPX alone"), (100, "with 100 list names"), (500, "with 500")):

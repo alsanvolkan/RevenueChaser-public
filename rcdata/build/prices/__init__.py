@@ -11,7 +11,7 @@ last dataset of the kind, ``prices/serving``, builds the served tables and the b
   weeks back to 90 days ahead (a dividend is processed on its payable date);
 - ``sec/cover_shares`` (daily): the shares outstanding per class from the cover page of each new 10-K and 10-Q
   (the filing's XBRL), found through the SEC's daily index;
-- ``yfinance/float`` (daily, a slice): Yahoo's float, paced 1.5 s apart, stopped on a 401 or 429;
+- ``yfinance/float`` (daily, a slice): Yahoo's float, paced 1.5 s apart and 2,000 an hour, stopped on a 401 or 429;
 - ``uw/total_float`` (daily): Unusual Whales' ``total_float``, the daily check of the float;
 - ``wrds/prices`` (attended, monthly; **code only until Phase 8**): Compustat ``secd`` from 1984 and CRSP
   ``dsf_v2`` to 2025, with Compustat's dividends and splits, in ``year=`` partitions;

@@ -6,8 +6,11 @@ its raw file gets one request: daily ``OPTION_IMPLIED_VOLATILITY`` bars over ``1
 to the list later gets its year on the next run, and never a second time. A run with no name missing opens no
 connection.
 
-IBKR allows 60 historical requests in 10 minutes: the run sends at most ``PER_MINUTE`` a minute (``base.Pacer``),
-about 1.5 hours for 500 names, so a run stops starting requests after ``uw.RUN_BUDGET_S`` and the next one goes on.
+IBKR's 60 historical requests in any 10 minutes binds only bars of 30 s or less, so not these 1-day bars; the gateway's
+other rules (no identical request within 15 s, at most 6 for one contract, exchange and tick type within 2 s, 50
+open at once) are kept by one request at a time, one per name. ``PER_MINUTE`` (``base.Pacer``) is politeness, not a
+provider limit: about 1.5 hours for 500 names, so a run stops starting requests after ``uw.RUN_BUDGET_S`` and the
+next one goes on.
 The gateway on homesrv is logged in by a person (``core/ibkr_login.py`` shows whether it is up): a run with names
 missing and no gateway is a ``failed`` check, which the hourly pass retries.
 
@@ -34,10 +37,7 @@ from . import KIND, names, tables, uw
 
 NAME = "ibkr/iv_history"
 SOURCE = tables.IBKR_SOURCE
-PER_MINUTE = 6                       # 60 historical requests in 10 minutes (IBKR's pacing rule)
-# This dataset's share of the ``ibkr`` day cap (``rcdata/caps.py``, beside the short-stock file's 50): the first year of
-# a 500-name list, with room for a failed day's retries. A working number, not avo's.
-DAY_CALLS = 1_000
+PER_MINUTE = 6                       # politeness, not a provider limit (see the docstring)
 IV_DAYS = 30                         # IBKR's option implied volatility is a 30-day measure
 DURATION, BAR_SIZE, WHAT = "1 Y", "1 day", "OPTION_IMPLIED_VOLATILITY"
 # "Historical market data service: query returned no data" and "no security definition": nothing to retry for.

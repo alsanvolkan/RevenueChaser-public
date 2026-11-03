@@ -1,46 +1,31 @@
-"""Provider day caps: the builder refuses to start a dataset whose provider has reached its cap for the New York day.
+"""Provider limits, as the providers publish them (master plan Order 5, rule 3). Each number names its source.
 
-The counter is ``ops.provider_calls_daily`` (every HTTP request the builder sends, retries included). Numbers are
-avo's of 27 Oct 2026, to be tuned; a provider not listed has no cap.
+``DAY_CAPS``: the quotas published per day. The builder refuses to start a dataset whose provider has reached its cap
+for the New York day; the counter is ``ops.provider_calls_daily`` (every HTTP request the builder sends, retries
+included).
+
+``WINDOWS``: the published request windows, ``(requests, seconds)``, enforced by ``base.Pacer`` (``base.run_pacer``).
+A provider with no published limit (FRED, WRDS, the fund-file hosts, Nasdaq Trader, the NYSE threshold file, IBKR's
+short-stock file) is in neither table: no number is invented for it. A pacer some of them keep is politeness, not a
+provider limit, and is labelled so where it is set.
 """
 from __future__ import annotations
 
 from . import ops
 
 DAY_CAPS: dict[str, int] = {
-    "uw": 150_000,
-    "sec": 40_000,
-    "fred": 10_000,
-    "alpaca": 20_000,
-    # The spine's providers (PR 5; working numbers, not avo's yet): WRDS queries, OpenFIGI requests (each up to 100
-    # CUSIPs), and the fund-file hosts (one request per file and run).
-    "wrds": 50,
-    "openfigi": 1_000,
-    # ssga and ishares serve two datasets since ``funds/etf_holdings``: 3 + 18 files a run and 3 + 6, and
-    # ``http_get`` counts every attempt of its ladder of 3. One bad day is 63 and 27 calls, and a cap reached
-    # mid-list fails the rest of the funds and refuses ``funds/index_holdings`` for the day, so the cap allows a
-    # few runs of both datasets with every attempt spent (working numbers, not avo's).
-    "ssga": 300,
-    "ishares": 150,
-    "vanguard": 50,
-    "nasdaq": 50,
-    "invesco": 50,
-    # yfinance, shared by three readers (working numbers, not avo's yet): the prices store's float lookups (PR 7, 3,000,
-    # paced 1.5 s apart), the fundamentals layer's weekly analyst estimates (PR 12, 2,000, one per ticker) and
-    # market_series' yahoo source (PR 9: one whole-history read per symbol, MOVE and wheat, and as-of day).
-    "yfinance": 3_000 + 2_000,
-    # The ownership store's providers (PR 16; working numbers, not avo's yet). The SEC's filings share "sec" above.
-    # FINRA: up to 5 pages of 5,000 rows per settlement date; Nasdaq Trader and NYSE: the Reg SHO threshold lists,
-    # one file per market and day; IBKR: its public short-stock file (one FTP download a run, no account).
-    "finra": 2_000,
-    "nasdaqtrader": 500,
-    "nyse": 2_000,
-    # IBKR, shared by two stores (working numbers): the ownership store's short-stock file (PR 16, 50) and the options
-    # data's IV year through the gateway (PR 18, ``ibkr_iv.DAY_CALLS``, one historical request per list name, once).
-    "ibkr": 50 + 1_000,
-    # The fundamentals layer's (PR 12; working numbers): Alpha Vantage's free tier allows 25 requests a day. Its
-    # yfinance estimates share "yfinance" above.
-    "alphavantage": 25,
+    "uw": 100_000,  # UW API requests a day: owner-marked avo 2026-11-02
+    "alphavantage": 25,  # free tier requests a day: https://www.alphavantage.co/support/#api-key
+}
+
+WINDOWS: dict[str, tuple[int, float]] = {
+    # per User-Agent, both hosts
+    "sec": (10, 1.0),  # https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data
+    "alpaca": (200, 60.0),  # Basic plan historical calls: https://docs.alpaca.markets/us/docs/about-market-data-api
+    "openfigi": (250, 60.0),  # /v3/mapping with a key: https://www.openfigi.com/api/documentation
+    "openfigi_search": (20, 60.0),  # /v3/search with a key (no caller yet): https://www.openfigi.com/api/documentation
+    "finra": (1_200, 60.0),  # synchronous, per IP: https://developer.finra.org/docs
+    "yfinance": (2_000, 3_600.0),  # per IP, Yahoo publishes none: owner-marked avo 2026-11-02
 }
 
 

@@ -57,7 +57,7 @@ SEC_DATA_BASE = os.getenv("RC_SEC_DATA_BASE") or "https://data.sec.gov"
 # The in-process interval stays at 10/s, the fair-access ceiling, and only runs then (never on top of the shared bucket).
 _throttle_lock = threading.Lock()
 _throttle_last = [0.0]
-_THROTTLE_INTERVAL = 0.10
+_THROTTLE_INTERVAL = 0.10   # 10/s, the SEC's limit (rcdata/caps.py WINDOWS)
 _MAX_RETRIES = 4
 _RETRY_BASE = 2.0
 _RETRY_AFTER_CAP = 60.0  # a server-sent Retry-After never holds a worker longer than this

@@ -9,8 +9,8 @@ Phase 8 (avo, 27 Oct 2026); this PR ships the code.
 
 **Attended**, like the spine's WRDS datasets (``spine/wrds.py``): never due, run only from the CLI on the server
 (``python -m RevenueChaser.rcdata.build backfill wrds/prices``), on the one WRDS worker of the process (one login,
-one Duo push). Every query counts as one ``wrds`` call against the day cap (``rcdata/caps.py``); a backfill that
-reaches the cap stops, keeps and serves the years it has, and the next backfill goes on from the first missing one.
+one Duo push). Every query counts as one ``wrds`` call; WRDS publishes no quota, so ``rcdata/caps.py`` gives it no
+day cap. A backfill that reaches a cap anyway stops, keeps and serves the years it has, and the next backfill goes on from the first missing one.
 
 **What is asked.** One query per table and calendar year (``year_sql``): ``comp.secd`` on the US exchanges
 (``exchg`` 11, 12, 14: NYSE, NYSE American, Nasdaq) and ``comp.sec_divid`` from ``START_YEAR``, ``crsp.dsf_v2``
