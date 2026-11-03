@@ -129,6 +129,16 @@ def test_a_basename_two_files_share_runs_the_full_suite(tmp_path):
     assert mod.select(["one/index.html"], root=root).mode == "FULL"
 
 
+def test_two_binary_files_with_one_name_run_the_full_suite(tmp_path):
+    root = _mini_repo(tmp_path, {
+        "pkg/__init__.py": "", "pkg/b.py": 'P = "logo.png"\n', "pkg/tests/test_b.py": "from RevenueChaser.pkg import b\n",
+    })
+    for d in ("one", "two"):
+        (root / d).mkdir()
+        (root / d / "logo.png").write_bytes(b"\x89PNG\xff\xfe")
+    assert mod.select(["one/logo.png"], root=root).mode == "FULL"
+
+
 def _mini_repo(tmp_path, files: dict[str, str]) -> Path:
     for rel, text in files.items():
         p = tmp_path / rel

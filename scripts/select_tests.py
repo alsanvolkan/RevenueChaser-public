@@ -125,12 +125,12 @@ def _graph(root: Path) -> dict[str, set[str]]:
     return importers
 
 
-def _named_by(rel: str, texts: dict[str, str]) -> set[str] | None:
+def _named_by(rel: str, texts: dict[str, str], root: Path) -> set[str] | None:
     """The Python files that name ``rel``, directly or through non-Markdown files that name it.
 
     None when a basename on the way belongs to two files: which one a reader opens cannot be told from the name.
     """
-    bases = Counter(r.rsplit("/", 1)[-1] for r in texts)
+    bases = Counter(r.rsplit("/", 1)[-1] for r in _files(root))  # binary files too, not only ``texts``
     found, seen, todo = set(), {rel}, [rel]
     while todo:
         base = todo.pop().rsplit("/", 1)[-1]
@@ -171,7 +171,7 @@ def select(changed: list[str], root: Path = REPO) -> Selection:
             return Selection("FULL", f"{rel} is a test fixture")
     seeds_of: dict[str, set[str]] = {}
     for rel in changed:
-        seeds_of[rel] = {rel} if rel.endswith(".py") else _named_by(rel, _texts(root))
+        seeds_of[rel] = {rel} if rel.endswith(".py") else _named_by(rel, _texts(root), root)
         if seeds_of[rel] is None:
             return Selection("FULL", f"{rel} shares its file name with another file")
         if not seeds_of[rel] and not rel.endswith(".md"):
