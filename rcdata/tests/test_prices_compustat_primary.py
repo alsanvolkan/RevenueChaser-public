@@ -673,3 +673,24 @@ def test_the_daily_refresh_asks_no_crsp_year_that_cannot_change():
     assert plan == [("secd", 2026), ("sec_divid", 2026), ("secd", 2025), ("sec_divid", 2025)]
     wrds_history.partition_path("dsf", 2025).unlink()
     assert ("dsf", 2025) in wrds_history.WrdsPrices._plan(date(2026, 11, 3), None, refresh=True)
+
+
+def test_a_crsp_only_securitys_split_alpaca_also_knows_applies_once(monkeypatch, http_mock):
+    """Delta review SHOULD 2 of #382 (a surviving mutant): BRK-B is CRSP's alone here, so CRSP's own 2-for-1 of
+    4 Jun 2025 is its split, but Alpaca knows the same split; one of them is applied, never both."""
+    from .prices_fixture import BarsAnswer, bar
+    from .test_prices_wrds import OCT, _crsp_rows
+    monkeypatch.setattr("RevenueChaser.rcdata.build.prices.tester.select", lambda names, as_of: (names, "every name"))
+    data = _data()
+    data["crsp.dsf_v2"] += [{**r, "permno": "88888", "hdrcusip": "88888888", "cusip": "88888888", "ticker": "BRK-B"}
+                            for r in _crsp_rows()]                       # dlycumfacpr 2.0 -> 1.0 on 4 Jun
+    http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer({"raw": {"BRK.B": [bar(d, 480.0) for d in OCT]},
+                                                               "all": {"BRK.B": [bar(d, 480.0) for d in OCT]}}),
+                                200, {}))
+    http_mock.routes.insert(0, ("/v1/corporate-actions", {"corporate_actions": {"forward_splits": [
+        {"id": "fs-brk", "symbol": "BRK.B", "old_rate": 1, "new_rate": 2, "process_date": JUNE[2],
+         "ex_date": JUNE[2]}]}, "next_page_token": None}, 200, {}))
+    _serve(monkeypatch, data)
+    applied = _q("SELECT source_id FROM corporate_action WHERE security_id = '072726:02' AND action = 'split' "
+                 "AND applied")
+    assert [a["source_id"] for a in applied] == ["fs-brk"]
