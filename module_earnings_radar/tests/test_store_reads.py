@@ -65,7 +65,11 @@ def _pipeline():
     return EarningsPipeline(["AAPL"], uw=object(), cal_meta={})
 
 
-def test_the_run_warms_the_yield_series_from_the_market_store():
+def test_the_run_warms_the_yield_series_from_the_market_store(monkeypatch):
+    # The run measures freshness against the latest complete session; pinned, or the test expires as the
+    # calendar moves past LAST (it went red on 3 Nov 2026, MAX_LAG sessions after LAST).
+    from RevenueChaser.core import calendar
+    monkeypatch.setattr(calendar, "latest_complete_session", lambda *a, **k: LAST)
     serve(_series(LAST, 5))
     p = _pipeline()
     assert p._warm_dgs10()[LAST.isoformat()] == pytest.approx(4.0)
