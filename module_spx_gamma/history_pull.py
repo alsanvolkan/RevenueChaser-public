@@ -9,9 +9,12 @@ Each session is one ``fetch_snapshot(history_only=True)`` (``HISTORY_CALLS_PER_S
 ``run._backfill_history``: that one asks for every expiry's strike ladder and the live files, which suits a few
 recent days and not five hundred past ones.
 
-Nothing is known about UW's rate limit beyond the 150,000 calls a day of the plan, so the job measures instead of
-assuming: every run has a call cap (``max_calls``) and a pause between calls (``sleep_s``), and it returns what it
-sent and what came back (``counts``, stored in the run's ``job_runs`` row). It stops on the first of:
+UW's limit is 100,000 requests a day (``rcdata/caps.py``, owner-marked avo 2026-11-02), shared with the builder: a run's
+``max_calls`` is held to what is left of the New York day in ``provider_calls_daily`` (a run is refused when nothing
+is), and the run adds what it sent there every ``COUNT_EVERY`` calls, re-reading the room each time (a run that
+finds the day spent stops with ``day_cap``). Beyond that the job measures instead of assuming: every run has a call cap
+(``max_calls``) and a pause between calls (``sleep_s``), and it returns what it sent and what came back
+(``counts``, stored in the run's ``job_runs`` row). It stops on the first of:
 
 * the cap: ``max_calls`` bounds the logical calls and, when the client lets them be counted, the HTTP requests
   (the client retries a 429/5xx up to ``MAX_ATTEMPTS`` times, and UW counts requests). A session is started only
@@ -38,6 +41,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from RevenueChaser.core import calendar as nyse_calendar
+from RevenueChaser.rcdata import caps, ops
 from RevenueChaser.core import job_control
 
 from . import safe_json
@@ -50,6 +54,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_CALLS = 500          # a first run measures; raise it once the counts are known
 DEFAULT_SLEEP_S = 0.5            # pause between two calls (no published rate limit to derive it from)
 RATE_LIMIT_STREAK_STOP = 5       # = core.universe_fetch._RATE_LIMIT_STREAK_STOP
+COUNT_EVERY = 25                 # = rcdata.build.base.COUNT_FLUSH_EVERY: count the UW calls, re-read the day's room
 REJECTED_STREAK_STOP = 5
 SHAPE_SESSIONS = 20              # sessions whose dated volatility answers are described in the counts
 IV_RANK_TIMESPAN = "2y"
@@ -99,6 +104,14 @@ class _Meter:
         self.status: Counter = Counter()
         self.statuses: list[int] = []        # the current session's, in order
         self._streak_429 = 0
+        self._counted = 0                    # of ``used``, already written to ``provider_calls_daily``
+
+    def flush(self) -> None:
+        """Write the calls not counted yet to ``provider_calls_daily``, the counter the builder's day cap reads."""
+        n = self.used - self._counted
+        if n > 0:
+            ops.count_calls("uw", n)
+            self._counted += n
 
     @property
     def used(self) -> int:
@@ -118,6 +131,10 @@ class _Meter:
         self._streak_429 = self._streak_429 + 1 if status == 429 else 0
         if self._streak_429 >= RATE_LIMIT_STREAK_STOP:
             raise _Stop("rate_limit_streak")
+        if self.used - self._counted >= COUNT_EVERY:
+            self.flush()
+            if ops.calls_today("uw") >= caps.DAY_CAPS["uw"]:     # the builder spends the same day meanwhile
+                raise _Stop("day_cap")
         return res
 
 
@@ -224,6 +241,10 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
         raise ValueError("max_calls must be positive")
     if _session_open():
         raise HistoryPullRefused("the US session is open; the history pull runs outside session hours")
+    room = caps.DAY_CAPS["uw"] - ops.calls_today("uw")
+    if room <= 0:
+        raise HistoryPullRefused(f"UW's day cap of {caps.DAY_CAPS['uw']:,} calls is reached for today")
+    max_calls = min(max_calls, room)
     root = Path(data_root) if data_root else DATA_ROOT
     raw_root = root / "raw"
     raw_root.mkdir(parents=True, exist_ok=True)
@@ -300,6 +321,10 @@ def _finish(counts: dict, meter: _Meter, http, root: Path, start: str, end: str)
     counts["calls"] = meter.calls
     counts["status"] = dict(meter.status)
     counts["http_requests"] = http[0] if http else None
+    try:
+        meter.flush()                               # the rest since the last ``COUNT_EVERY``
+    except Exception:  # noqa: BLE001 - in ``finally``: never hide the run's own error
+        logger.warning("spx history pull: could not count %s UW calls in ops", meter.used, exc_info=True)
     # The dashboard holds the store while it runs, so the counts are also a file the owner can open.
     report = root / "history_pull" / f"run_{start}_{end}_{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.json"
     counts["report_file"] = str(report.relative_to(root))

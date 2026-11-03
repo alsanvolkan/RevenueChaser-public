@@ -6,7 +6,8 @@ FINRA has published (``{"availablePartitions": [{"partitions": ["2026-10-15"]}, 
 ``{"limit": 5000, "offset": n, "compareFilters": [{"compareType": "EQUAL", "fieldName": "settlementDate",
 "fieldValue": "<date>"}]}`` answers one page of that date's rows; its ``record-total`` header names the date's row
 count (22,537 for 2026-10-15), so a date is about five pages. A date whose pages do not add up to that total is
-refused, never kept short.
+refused, never kept short. Every request waits for FINRA's synchronous window, 1,200 a minute per IP
+(``caps.WINDOWS``, ``base.run_pacer``).
 
 A daily run reads the list (one call) and fetches the published dates newer than the newest one stored, at most
 ``DAILY_MAX_DATES``; the first run fetches the newest date only, and a backfill every missing date of its range (from
@@ -80,6 +81,7 @@ def stored_dates() -> list[date]:
 
 def published(ctx: base.RunContext) -> list[date]:
     """The settlement dates FINRA lists, oldest first; ``SourceError`` for an empty or malformed list."""
+    base.run_pacer(ctx, PROVIDER).wait()
     r = base.http_get(ctx, PROVIDER, base_url() + PARTITIONS, headers=HEADERS)
     try:
         groups = r.json()["availablePartitions"]
@@ -97,6 +99,7 @@ def fetch_date(ctx: base.RunContext, day: date) -> Path:
     for n in range(MAX_PAGES):
         body = {"limit": PAGE, "offset": n * PAGE, "compareFilters": [
             {"compareType": "EQUAL", "fieldName": "settlementDate", "fieldValue": day.isoformat()}]}
+        base.run_pacer(ctx, PROVIDER).wait()
         r = base.http_post(ctx, PROVIDER, base_url() + DATA, json=body, headers=HEADERS)
         try:
             page = r.json() if r.content.strip() else []

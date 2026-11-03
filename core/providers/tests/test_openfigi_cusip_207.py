@@ -87,6 +87,7 @@ class TestRequestShape:
         assert fake.calls[0]["url"] == "http://127.0.0.1:9/figi/v3/mapping"
 
     def test_100_jobs_per_request_and_a_gap_between_requests(self, monkeypatch, sleeps):
+        monkeypatch.setattr(openfigi, "pace", lambda: False)            # the bucket falls back: the own gap
         fake = _use(monkeypatch, _Fake(_all_known))
         cusips = [f"{i:09d}" for i in range(250)]
         res = openfigi.map_cusips(cusips, key=KEY)
@@ -230,3 +231,67 @@ class TestHealth:
         h = health.health()
         assert h["provider"] == "openfigi" and h["calls"] == 2 and h["failed"] == 1
         assert h["failures"] == [{"endpoint": "/v3/mapping", "error": "HTTP 429"}]
+
+
+def test_every_request_takes_a_token_of_the_shared_key_bucket(monkeypatch):
+    """Review of #380, finding 3: the dashboard's mapping spends from the same box-wide bucket as the builder."""
+    fake = _use(monkeypatch, _Fake(_all_known))
+    tokens = []
+    monkeypatch.setattr(openfigi, "pace", lambda: tokens.append(1) or True)
+    openfigi.map_cusips([f"{i:09d}" for i in range(250)], key=KEY)
+    assert len(tokens) == len(fake.calls) == 3
+
+
+_FIGI_HAMMER = r"""
+import json, sys, time
+from pathlib import Path
+from RevenueChaser.core import rawstore
+from RevenueChaser.core.providers import openfigi
+
+store, ready, go, result, duration = sys.argv[1:6]
+rawstore.DB_PATH = Path(store) / "raw.duckdb"           # the bucket file lives beside it, one folder for both
+Path(ready).write_text("ready")
+deadline = time.time() + 30
+while time.time() < deadline and not Path(go).exists():
+    time.sleep(0.01)
+end = time.monotonic() + float(duration)
+times = []
+while time.monotonic() < end:
+    ok = openfigi.pace()
+    times.append(time.monotonic() if ok else "fallback")
+    if not ok:
+        break
+Path(result).write_text(json.dumps(times))
+"""
+
+
+def test_two_processes_share_one_openfigi_bucket(tmp_path):
+    """Review round 2 of #380 (SF-4): the dashboard and the builder are two processes on one key. Two real processes
+    calling ``openfigi.pace()`` stay within one bucket's burst plus refill; a bucket per process would not."""
+    import json
+    import subprocess
+    import sys
+    from RevenueChaser.core.tests.test_sec_throttle import _child_env, _wait_for
+    go = tmp_path / "go"
+    procs, results = [], []
+    try:
+        for name in ("a", "b"):
+            ready, result = tmp_path / f"ready_{name}", tmp_path / f"{name}.json"
+            results.append((ready, result))
+            procs.append(subprocess.Popen([sys.executable, "-c", _FIGI_HAMMER, str(tmp_path), str(ready), str(go),
+                                           str(result), "1.5"], env=_child_env(),
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+        assert all(_wait_for(ready, 20) for ready, _ in results), "a child never started"
+        go.write_text("go")
+        assert all(p.wait(30) == 0 for p in procs), "a child failed"
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+    a, b = (json.loads(result.read_text()) for _, result in results)
+    assert a and b and all(isinstance(t, float) for t in a + b), "a process left the shared bucket"
+    times = sorted(a + b)
+    span = times[-1] - times[0]
+    shared = openfigi.BUCKET_BURST + openfigi.BUCKET_RATE * span + 2
+    assert len(times) <= shared, f"{len(times)} grants in {span:.2f}s, one bucket allows {shared:.1f}"

@@ -350,7 +350,7 @@ def test_a_fund_with_no_issuer_file_still_fails_alone_on_an_empty_uw_answer(env,
     assert [i["key"] for i in ops.open_issues(etf.NAME)[1]] == ["uw-WCLD.json"]
 
 
-def test_the_issuer_file_host_has_a_day_cap_and_board_words():
+def test_the_issuer_file_host_has_board_words_and_no_invented_cap():
     from RevenueChaser.rcdata import caps
     from RevenueChaser.rcdata.needs import screen
-    assert caps.DAY_CAPS["ark"] > 0 and screen.PROVIDERS["ark"].name == "ARK"
+    assert "ark" not in caps.DAY_CAPS and screen.PROVIDERS["ark"].name == "ARK"     # ARK publishes no limit (rule 3)

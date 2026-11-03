@@ -1068,23 +1068,21 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists (D2): ticker, added at, added by (the board), note; and their history, one row per add or remove with an `id` that keeps its order (version 2 added `id` and `note` to the history). The toggle routes write them (`docs/data_retrieval.md`); `rcdata.read.watchlists()` reads them |
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
 
-**Day caps** (`rcdata/caps.py`, avo's numbers, to be tuned): uw 150,000, sec 40,000, fred 10,000, alpaca 20,000;
-the spine's (PR 5, working numbers avo has not set): wrds 50 (queries), openfigi 1,000 (requests), ssga 300,
-ishares 150, vanguard 50, nasdaq 50, invesco 50 (one request per fund file; ssga and ishares serve both
-`funds/index_holdings` and `funds/etf_holdings`, 21 and 9 files a run, and every retry attempt is counted), ark 50
-(ARKQ's holdings CSV, asked only on a day UW holds nothing for it, #339); yfinance 5,000, shared by three stores
-(working numbers avo has not set): the prices store's float lookups (PR 7, 3,000), the fundamentals layer's
-weekly analyst estimates (PR 12, 2,000, one request per ticker) and the market store's `yahoo` source (PR 9, no
-share of its own: one whole-history read per symbol, MOVE and wheat, and as-of day); the ownership store's (PR 16, working numbers too;
-its SEC filings count under sec): finra 2,000 (pages of 5,000 rows), nasdaqtrader 500 and nyse 2,000 (one Reg SHO
-threshold file per market and day); ibkr 1,050, shared by two stores (working numbers): 50 for one download of
-IBKR's public short-stock file a run (PR 16) and 1,000 for the options data's IV year through the gateway (PR 18,
-one historical request per list name, once); the
-fundamentals layer's (PR 12, working numbers): alphavantage 25 (its free tier, shared with the spine's `alphavantage/listing_status`, two requests a run, #346);
+**Day caps** (`rcdata/caps.py`, master plan Order 5, rule 3: only the quotas a provider publishes per day, each with
+its source): uw 100,000 (owner-marked avo 2026-11-02), alphavantage 25 (its free tier, shared by the earnings calendar and the spine's
+`alphavantage/listing_status`, #346). **Request windows**
+(`caps.WINDOWS`, enforced by `base.Pacer`, one pacer per provider and run through `base.run_pacer`): sec 10 a second,
+alpaca 200 a minute (Basic plan, historical), openfigi 250 a minute (keyed `/v3/mapping`; `/v3/search` 20 a minute,
+no caller yet), finra 1,200 a minute (synchronous, per IP), yfinance 2,000 an hour (per IP, owner-marked avo
+2026-11-02; Yahoo publishes none). A provider with no published limit (FRED, WRDS, SSGA, iShares, Vanguard, Nasdaq,
+Invesco, ARK, Nasdaq Trader, the NYSE threshold file, IBKR's short-stock file and its gateway's 1-day bars) has no
+number here; a pacer it keeps is politeness, not a provider limit. Neither table is the provider's own meter: UW's
+`x-uw-*` headers are (`uw_remaining`).
 a dataset whose providers have all reached their cap for the New York day gets a `skipped` check row and sends
 nothing; inside a run every call checks its provider's cap first (one capped provider, FRED among the market series,
 is a source failure and the others go on), and the counter is written every 25 calls, at the end, and on SIGTERM (systemd's stop, turned into a clean exit) or Ctrl-C; a keyless call is counted when it is sent, a UW call when its answer arrives (the UW client's observer), so a UW request cut off by a stop is not counted. Only the
-builder's calls are counted: the dashboard's own UW client is not yet.
+builder's calls and the SPX history pull's (`module_spx_gamma/history_pull.py`, whose `max_calls` is held to what is
+left of UW's day) are counted: the dashboard's other UW calls are not yet.
 
 The keyless sources send one User-Agent with the contact from `RC_HTTP_CONTACT` (BLS refuses a client without
 one; a 403 names the variable in the source's failure note).
@@ -1171,7 +1169,7 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `wrds/sec_idhist` | monthly, attended | `comp.company`, `comp.security`, `comp.sec_idhist`; between snapshots only the new listed CIKs | `stg_wrds_company`, `stg_wrds_security`, `stg_wrds_idhist` |
 | `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
-| `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), under 25 requests a minute | `stg_figi` |
+| `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), 250 requests a minute per key, one box-wide bucket shared with the dashboard's mapping (125 a minute each when it cannot be used) | `stg_figi` |
 | `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
 | `funds/etf_holdings` | daily | the SPDR workbooks of the 11 sector funds and XBI/XOP/XME/KRE/XHB/XRT/KIE, the iShares `latest-holdings.csv` of SOXX/IBB/ITA/ITB/IGV/IAK, and UW `/etfs/<t>/holdings` whole (no top-10 cap) for the 14 themes; on a day UW holds nothing for ARKQ, ARK's own holdings CSV (`ark-ARKQ.csv`, #339; AIRR, SKYY, WCLD and ROBO have no machine-readable issuer file) | none: serves `etf_holdings` itself |
 | `alphavantage/listing_status` | daily, keyed (builder service) | Alpha Vantage `LISTING_STATUS` (CSV, every US listing: `assetType` `ETF` or `Stock`, `ipoDate`), plus one `state=delisted` call whose non-CSV answer is one open `no_rows` build issue (resolved when it answers a list), never a failed run (#346); an active list under 3,000 ETF rows or under 80% of the last snapshot's fails and is not kept; a failed run is due again on the next New York day, not every hourly pass (`due.DAY_CAPPED`, the 25 a day it shares with the calendar), unless the day's raw file is held (a rerun then costs no call); the key is never stored or logged | `stg_av_listing` (the newest snapshot) |
@@ -1293,7 +1291,7 @@ only through `rcdata.read`.
 | `alpaca/bars` | daily | **the tester, never served** (2 Nov 2026 master plan, item 3): Alpaca `/v2/stocks/bars`, `timeframe=1Day`, feed `sip`, `adjustment` `raw` and `all`, 100 symbols a request, the last 5 complete sessions re-read (the `all` window one session earlier); the daily run asks only the names `prices.tester` finds at risk (a split or `ajexdi` change, an empty `trfd`, a dividend or spin-off going ex, an open `price_gap_no_action`, an exchange move, a close under $5, over the last 10 days); a named request asks what it names | `stg_alpaca_bars`, `stg_alpaca_bar_revisions` |
 | `alpaca/corporate_actions` | daily | Alpaca `/v1/corporate-actions`, every symbol, processed from 14 days back to 90 days ahead (a cash dividend is processed on its payable date, weeks after it goes ex; an action is applied once its ex-date has a session, one with no ratio or amount is an issue at once) | `stg_alpaca_actions` |
 | `sec/cover_shares` | daily | The SEC daily master index (10-K, 10-Q, 20-F, 40-F and their -T forms of the last 7 days), each filer's submissions file, the filing's inline-XBRL instance: `dei:EntityCommonStockSharesOutstanding` per class member | `stg_sec_cover` |
-| `yfinance/float` | daily | Yahoo `floatShares` (`yfinance` `get_info`), 400 Tier A names a run, 1.5 s apart, stopped by a 401 or 429 | `stg_yahoo_float` |
+| `yfinance/float` | daily | Yahoo `floatShares` (`yfinance` `get_info`), 400 Tier A names a run, 1.5 s apart and 2,000 an hour, stopped by a 401 or 429 | `stg_yahoo_float` |
 | `uw/total_float` | daily | Unusual Whales `/short_screener` `total_float`, every Tier A name (the client's batching) | `stg_uw_float` |
 | `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1983 (its earliest priced day, 1983-12-30) on exchg 11, 12, 14, 17, 21 (NYSE, NYSE American, Nasdaq, NYSE Arca, BATS BZX) with the row's dividend columns, and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025 (stocks and ETFs, from 1983), `comp.sec_split` and `crsp_a_stock.stkdelists` whole; no CCM link (`wrds_history.PERMNO_LINK`) | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_revisions` |
 | `prices/serving` | daily | none: builds the served tables from the staging tables; the history is Compustat's (priority 1), CRSP's only on its fallback days, never Alpaca's | the tables below |
@@ -1407,13 +1405,12 @@ missing.
 **Attended (WRDS).** `wrds/prices` runs on the spine's WRDS worker (`RC_WRDS_PYTHON`, `WRDS_USERNAME`) from the CLI
 only: `python -m RevenueChaser.rcdata.build backfill wrds/prices`. One query per table and year; a backfill asks the
 two snapshot tables, then the years newest first, skips a year partition that exists with no query (a `comp.secd`
-year asked with the old exchange filter, 11, 12, 14, is asked again; its old answer is renamed `.superseded`, never
-deleted), and stops at
-the WRDS day cap (50 queries, a working number) serving the years it has: the whole history is about 130 queries,
-so three attended sessions at that cap, or one if avo raises it for that run. The monthly run asks the last two
-years again and keeps every bar value it replaces as a revision. The long history run is Phase 8, after PR 21.
-`backfill wrds/prices --dry-run` prints each query it would ask (why, expected rows), the query count, the days of
-the WRDS cap it takes and the expected rows, with no login. Every query names its columns (no `SELECT *`).
+year asked with an older query, the exchange filter or the columns before, is asked again; its old answer is renamed
+`.superseded`, never deleted); the whole history is about 130 queries, asked in one session (WRDS publishes no query
+quota, so `wrds` has no day cap; a run that hits one anyway keeps and serves the years it has). The monthly run asks
+the last two years again and keeps every bar value it replaces as a revision. The long history run is Phase 8, after
+PR 21. `backfill wrds/prices --dry-run` prints each query it would ask (why, expected rows), the query count and the
+expected rows, with no login. Every query names its columns (no `SELECT *`).
 
 **Reading it.** `rcdata.read.security_ids(tickers)`, `rcdata.read.bars(security_ids, start, end, basis)` (`nominal`,
 `split`: today's share basis, `total_return`: the cash dividends taken out too; each row says its basis and factors),
@@ -1468,7 +1465,8 @@ it had filled; the days the walk finished stay the walk's. A backfill shorter th
 days) reads the forms only and asks nothing of the sets. On
 real data (28 Oct 2026) a set took about 30 seconds: 01jun2026-31aug2026 holds 9,900 13F-HR and 13F-HR/A with 3.8
 million holdings. Filings from 2025-01-01 make Q4 2024 the first quarter served, so Q1 2025 has its flows. SEC
-requests are paced at 4.5 a second and share `core/sec_throttle.py`'s bucket with every other SEC caller.
+requests share `core/sec_throttle.py`'s bucket (8 a second) with every other SEC caller; when it cannot be used each
+of the SEC processes (`sec_throttle.SEC_PROCESSES`, six) spaces itself at its share, so together they stay at 10.
 
 **The 13F totals** (`ownership/serve`; the rules in `rcdata/build/ownership/serve.py`): per filer and report period
 the amendment walk (`NEW HOLDINGS` adds, any other amendment replaces); long equity only; each CUSIP named through the
@@ -1673,8 +1671,8 @@ CLI or Settings):
 - `ibkr/iv_history`: one year of IBKR's daily 30-day option implied volatility per list name, once (a name added
   later gets its year on the next run). Through `core/providers/ibkr_tws.py`, a minimal TWS socket client that sends
   only the handshake, `startApi` and `reqHistoricalData`: market data only, never an account, a position or an
-  order (`ib_async`'s connect asks for the positions, so it is not used). 6 requests a minute, under IBKR's 60 in
-  10 minutes, and at most 1,000 a day, its share of the `ibkr` day cap.
+  order (`ib_async`'s connect asks for the positions, so it is not used). 6 requests a minute, one at a time:
+  politeness, not a provider limit (IBKR's 60 in 10 minutes binds bars of 30 s or less, not these 1-day bars).
 
 The first week's raw size per list name is in each `uw/option_list` check note ("raw N KB a name"), the plan's F5
 measure. Read through `rcdata.read`: `option_chain`, `option_strikes`, `option_expiries`, `option_daily`,
@@ -1695,7 +1693,7 @@ prints) + screener pages + earnings-set names). A list name is 11 calls plus 2 p
 an earnings-set name 5; the screener one per 100 reporting names; the calendar one per day and report session plus
 one per extra 100 names. With the planning numbers (25 expiries and 5 extra pages a name, SPX 400, 2,500 reporting
 names, 150 in the earnings set: assumptions until the first week's real counts replace them) that is 1,240 calls
-with SPX alone, 7,840 with 100 list names and 34,240 with 500, against UW's day cap of 150,000 (`rcdata/caps.py`),
+with SPX alone, 7,840 with 100 list names and 34,240 with 500, against UW's day cap of 100,000 (`rcdata/caps.py`),
 which the other UW datasets share. The real count is the builder's, per request, in `provider_calls_daily`.
 
 **Raw retention.** A hook after each `options` swap (`rcdata/build/options/raw_retention.py`) removes the

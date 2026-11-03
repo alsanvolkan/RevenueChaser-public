@@ -51,8 +51,8 @@ def control_nd() -> dict:
                                                               "bytes": 9_000_000, "capped": False}}}}
     nd["tables"] = {"price_bar_daily": {"rows": 18_412_904, "newest": "2026-10-28"}}
     nd["spend"]["providers"] = [{"provider": "alphavantage", "cap": 25, "today": 18, "week": 30},
-                                {"provider": "sec", "cap": 40000, "today": 20100, "week": 30},
-                                {"provider": "uw", "cap": 150000, "today": 4512, "week": 30}]
+                                {"provider": "sec", "cap": None, "today": 20100, "week": 30},
+                                {"provider": "uw", "cap": 100000, "today": 60_000, "week": 30}]
     return nd
 
 
@@ -170,8 +170,9 @@ def test_the_fill_buttons_are_off_unless_the_server_says_so(monkeypatch):
 
 def test_the_providers_are_sorted_nearest_their_cap_first():
     rows = _build()["providers"]
-    assert [r["id"] for r in rows[:3]] == ["alphavantage", "sec", "uw"]
-    assert rows[0]["cls"] == "bad" and rows[1]["cls"] == "warn" and rows[2]["cls"] == ""
+    assert [r["id"] for r in rows[:2]] == ["alphavantage", "uw"]       # the only day caps (caps.DAY_CAPS)
+    assert rows[0]["cls"] == "bad" and rows[1]["cls"] == "warn"
+    assert all(r["cap"] is None and r["cls"] == "" for r in rows[2:])  # sec's 20,100 calls: a window, no day cap
     assert {r["id"] for r in rows} == set(screen.PROVIDERS)
     assert next(r for r in rows if r["id"] == "cboe")["cap"] is None
 

@@ -417,3 +417,65 @@ def test_a_run_past_its_deadline_says_so_in_its_counts(tmp_path):
         _pull(tmp_path, Recorder())
     [report] = _reports(tmp_path)
     assert report["stop_reason"] == "deadline"
+
+
+def test_the_pull_counts_its_calls_against_uw_s_day_cap(tmp_path):
+    """Review of #380: the pull's UW calls go into ``provider_calls_daily``, the counter the builder's cap reads."""
+    from RevenueChaser.rcdata import ops
+    before = ops.calls_today("uw")
+    counts = _pull(tmp_path, Recorder())
+    assert ops.calls_today("uw") - before == counts["calls"] == 1 + 3 * snap.HISTORY_CALLS_PER_SESSION
+
+
+def test_the_pull_is_held_to_what_is_left_of_uw_s_day(tmp_path):
+    from RevenueChaser.rcdata import caps, ops
+    ops.count_calls("uw", caps.DAY_CAPS["uw"] - ops.calls_today("uw") - 1)     # one call left today
+    uw = Recorder()
+    counts = _pull(tmp_path, uw, max_calls=500)
+    assert counts["max_calls"] == 1 and len(uw.calls) <= 1 and counts["stop_reason"] == "max_calls"
+    ops.count_calls("uw", 1)
+    with pytest.raises(hp.HistoryPullRefused, match="day cap"):
+        _pull(tmp_path, Recorder())
+
+
+def test_the_pull_counts_as_it_goes_so_a_crash_loses_at_most_a_few_calls(tmp_path):
+    """Review round 2 of #380 (SF-3): the calls are written to ``provider_calls_daily`` every ``COUNT_EVERY``, not only
+    when the run ends, so a killed dashboard (no ``finally``) leaves them counted."""
+    from RevenueChaser.rcdata import ops
+    seen = []
+
+    def handler(path, params):
+        seen.append(ops.calls_today("uw"))
+        return _ok(path, params)
+    _pull(tmp_path, Recorder(handler))
+    assert max(seen) >= hp.COUNT_EVERY and seen[hp.COUNT_EVERY + 1] >= hp.COUNT_EVERY
+
+
+def test_the_pull_stops_when_the_builder_spends_the_rest_of_the_day(tmp_path):
+    """The builder's calls land in the same counter while the pull runs: the pull re-reads the room at each count."""
+    from RevenueChaser.rcdata import caps, ops
+    ops.count_calls("uw", caps.DAY_CAPS["uw"] - ops.calls_today("uw") - 1_000)     # 1,000 left at the start
+
+    def handler(path, params):
+        ops.count_calls("uw", 100)                                                   # the builder, meanwhile
+        return _ok(path, params)
+    uw = Recorder(handler)
+    counts = _pull(tmp_path, uw)
+    assert counts["stop_reason"] == "day_cap" and len(uw.calls) <= hp.COUNT_EVERY
+
+
+def test_the_pull_is_charged_its_http_requests_retries_included():
+    """UW charges each HTTP request: a call the client retried counts every attempt (``meter.used``)."""
+    from RevenueChaser.rcdata import ops
+    requests = [0]
+
+    class Retrying:
+        def get_result(self, ep, params=None):
+            requests[0] += 2                     # one 429, then the answer
+            return FakeUW(_ok).get_result(ep, params)
+    meter = hp._Meter(Retrying(), max_calls=100, sleep_s=0, sleep=lambda s: None, requests=requests)
+    before = ops.calls_today("uw")
+    for _ in range(3):
+        meter.get_result("/stock/SPX/greek-exposure/expiry", {"date": DAYS[0]})
+    meter.flush()
+    assert ops.calls_today("uw") - before == 6 == meter.used

@@ -9,7 +9,7 @@ form (``facts.STATEMENT_FORMS``) whose accession its newest stored facts do not 
 filing by hours: an accession still missing after the re-read is ``pending`` (the run's note) and asked again by the
 next day's run, while the filing is inside the last ``sec_index.LOOKBACK_DAYS`` days. A Tier A company with no stored
 facts at all is read too, up to ``NEW_PER_RUN`` a run (a new name; the first fill is the backfill). Requests are
-spaced under 5 a second (``common.SEC_INTERVAL_S``) and counted against the ``sec`` cap.
+through the shared SEC bucket (``common.SEC_INTERVAL_S`` apart if it falls back) and counted under ``sec``.
 
 Backfill (``backfill sec/companyfacts``, no ``--from``): every Tier A company with no stored facts, resumable (a
 company read is not read again).

@@ -13,8 +13,8 @@ security through ``PERMNO_LINK`` at serving time, from columns every ``dsf_v2`` 
 
 **Attended**, like the spine's WRDS datasets (``spine/wrds.py``): never due, run only from the CLI on the server
 (``python -m RevenueChaser.rcdata.build backfill wrds/prices``), on the one WRDS worker of the process (one login,
-one Duo push). Every query counts as one ``wrds`` call against the day cap (``rcdata/caps.py``); a backfill that
-reaches the cap stops, keeps and serves the years it has, and the next backfill goes on from the first missing one.
+one Duo push). Every query counts as one ``wrds`` call; WRDS publishes no quota, so ``rcdata/caps.py`` gives it no
+day cap. A backfill that reaches a cap anyway stops, keeps and serves the years it has, and the next backfill goes on from the first missing one.
 
 **What is asked.** One query per table and calendar year (``year_sql``): ``comp.secd`` on ``COMPUSTAT_EXCHG``
 (11, 12, 14: NYSE, NYSE American, Nasdaq; 17 and 21: the Arca listings) and ``comp.sec_divid`` from ``START_YEAR``
@@ -412,7 +412,7 @@ class WrdsPrices:
 
     def dry_run(self, start: date | None, end: date) -> list[str]:
         """What ``backfill`` would ask, without a login: one line per query and a total of queries, of the ``wrds``
-        day cap's days, and of the expected rows. A missing year is expected to hold its table's mean of the years
+        day cap's days (when there is one), and of the expected rows. A missing year is expected to hold its table's mean of the years
         present; a year asked again holds at least its rows now (the new exchanges add to it)."""
         plan = [(t, None, "missing") for t in SNAPSHOTS if not _snapshots(t)]
         for table, year in self._plan(end, start.year if start else None, refresh=False):
@@ -434,8 +434,9 @@ class WrdsPrices:
             lines.append(f"{TABLES[table]['wrds']} {year or 'snapshot'}: {why}, expected rows "
                          f"{'unknown' if est is None else ('>= ' if why != 'missing' else '~') + format(est, ',')}")
         queries = len(plan) + (1 if plan else 0)          # the columns query first
-        cap = caps.DAY_CAPS[wrds.PROVIDER]
-        lines.append(f"{NAME} dry run: {queries} queries ({-(-queries // cap)} day(s) of the {cap}-call wrds cap), "
+        cap = caps.cap_for(wrds.PROVIDER)                  # None since #380: WRDS publishes no query quota
+        days = f"{-(-queries // cap)} day(s) of the {cap}-call wrds cap" if cap else "no wrds day cap"
+        lines.append(f"{NAME} dry run: {queries} queries ({days}), "
                      f"expected rows ~{total:,}" + (f" plus {unknown} partition(s) with no estimate" if unknown else ""))
         lines.append(f"  of which {COMPUSTAT_START.isoformat()} through {EARLY_LAST_YEAR}-12-31: {early[0]} queries, "
                      f"expected rows ~{early[1]:,}")
@@ -658,8 +659,8 @@ CRSP_FALLBACK = delisted_final_days()
 # 3 Nov 2026 prefers Compustat's daily splits, ``comp.sec_split`` and ``ajexdi``): ``prices/serving`` applies none; one
 # no Compustat or Alpaca split is within ``serving.SPLIT_SAME_DAYS`` of is a ``split_only_crsp`` issue, and the gap
 # it explains is not a ``price_gap_no_action``. In ``_act``'s shape (``serving`` reads it after ``_permno_link``).
-# shortcut: the direction of dlycumfacpr is the fixture's, not read from WRDS here; check one known split on homesrv
-# (AAPL's 4-for-1 ex 2020-08-31) before the switch, and flip the ratio if CRSP's older factor is the smaller.
+# The direction is checked on WRDS (homesrv, 3 Nov 2026): AAPL's dlycumfacpr is 4.0 on 2020-08-28 and 1.0 on
+# 2020-08-31, as its ajexdi.
 CRSP_SPLITS = f"""
     SELECT l.security_id, 'wrds:crspsplit:' || x.permno || ':' || CAST(x.dlycaldt AS TEXT) AS action_id,
            CASE WHEN ratio < 1 THEN 'reverse_split' ELSE 'forward_split' END AS action_type, x.dlycaldt AS ex_date,

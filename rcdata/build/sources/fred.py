@@ -2,7 +2,8 @@
 
 One JSON answer per series and as-of date (``raw/fred/series/<as-of>/<SERIES>.json``), each the whole series from
 its start (the high-yield and investment-grade OAS series serve only from 27 Oct 2023), so a daily fetch is also the
-backfill. Paced under 120 calls a minute (FRED's limit). Without a key the source is skipped with a build issue.
+backfill. Paced at ``PER_MINUTE``: politeness, not a provider limit (FRED publishes none). Without a key the source
+is skipped with a build issue.
 The key travels in the query string, which is never logged and never stored in the raw metadata.
 """
 from __future__ import annotations
@@ -17,7 +18,7 @@ from .. import base
 
 SOURCE, DATASET_DIR = "fred", "series"
 BASE = os.getenv("RC_FRED_BASE") or "https://api.stlouisfed.org/fred/series/observations"
-PER_MINUTE = 110
+PER_MINUTE = 110                     # politeness, not a provider limit: FRED publishes none
 SERIES = {
     "DGS2": "daily", "DGS5": "daily", "DGS10": "daily", "DGS20": "daily", "DGS30": "daily",
     "T10Y2Y": "daily", "T10YIE": "daily", "DCOILWTICO": "daily", "BAMLH0A0HYM2": "daily", "BAMLC0A0CM": "daily",

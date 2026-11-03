@@ -1,7 +1,8 @@
 """The float: Yahoo's ``floatShares`` (``yfinance/float``) and Unusual Whales' ``total_float`` (``uw/total_float``).
 
 **``yfinance/float``** asks Yahoo (the ``yfinance`` library, one ``Ticker.get_info`` per name) for ``SLICE`` Tier A
-names a run: the names never asked first (by ticker), then the longest ago. The lookups are ``INTERVAL_S`` apart; a
+names a run: the names never asked first (by ticker), then the longest ago. The lookups are ``INTERVAL_S`` apart
+(politeness, not a provider limit) and inside the ``yfinance`` window of 2,000 an hour (``caps.WINDOWS``, owner-marked); a
 401 or a 429 (Yahoo's refusal, or its rate limit) stops the run's lookups at once, and what was read before it is
 kept: the next run goes on from there. ``yfinance`` (1.7.0, measured 28 Oct 2026) raises nothing for a refusal: it logs
 the 401 or 429 on its ``yfinance`` logger and answers an empty info, so ``_lookup`` listens to that logger and raises
@@ -159,6 +160,7 @@ class YahooFloat:
         for n in todo:
             ctx.check_cap("yfinance")
             spacer.wait()
+            base.run_pacer(ctx, "yfinance").wait()
             ctx.count("yfinance", calls=1)
             entry = {"cik": n.get("cik"), "security_id": n["security_id"]}
             try:

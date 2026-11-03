@@ -16,7 +16,7 @@ reaches it is ``capped`` (the splitter itself labels a stopped slice it cut at t
 board's concern and not changed here), so a reader knows the text is not whole. Otherwise the splitter's ``ok`` /
 ``short`` / ``overrun`` / ``missing``, and for a proxy ``ok`` or ``short`` (under the splitter's 2,000 characters).
 
-Requests are spaced under 5 a second and counted against the ``sec`` cap. Backfill: every Tier A company with no
+Requests go through the shared SEC bucket and are counted under ``sec``. Backfill: every Tier A company with no
 filing list yet, and its two documents, resumable.
 
 Raw: ``raw/sec/filings/submissions/<cik>/<as-of>.json.gz`` (with a ``.meta.json``: the accessions it holds) and

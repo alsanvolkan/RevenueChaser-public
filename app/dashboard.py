@@ -32,6 +32,7 @@ from RevenueChaser.core.calendar import today_ny
 from RevenueChaser.core.providers.unusual_whales import UWClient
 from RevenueChaser.core.rawstore import StoreLockedError
 from RevenueChaser.core.reporting_common import payload_path
+from RevenueChaser.rcdata import caps
 from . import runners
 from . import jobs
 from . import logview
@@ -846,7 +847,7 @@ _SPX_JOBS = ("spxgamma", "spxgamma_stored", "spxgamma_history")
 # Held from an SPX route's busy check to its submit (which includes the UW key probe): the two SPX routes'
 # check-then-submit never interleave, so a Fetch and a pull posted together cannot both be queued.
 _SPX_SUBMIT_LOCK = threading.Lock()
-_SPX_HISTORY_MAX_CALLS = 150_000     # UW's daily budget: no single run may be allowed more
+_SPX_HISTORY_MAX_CALLS = caps.DAY_CAPS["uw"]     # UW's day cap: no single run may be allowed more
 _SPX_HISTORY_MAX_SLEEP_S = 60.0
 
 
@@ -875,8 +876,11 @@ def run_spxgamma_history():
             params["max_calls"] = int(raw)
         except ValueError:
             return jsonify({"ok": False, "error": "bad max_calls"}), 400
-        if not 0 < params["max_calls"] <= _SPX_HISTORY_MAX_CALLS:
-            return jsonify({"ok": False, "error": f"max_calls must be 1-{_SPX_HISTORY_MAX_CALLS}"}), 400
+        from RevenueChaser.rcdata import ops
+        room = _SPX_HISTORY_MAX_CALLS - ops.calls_today("uw")      # the builder's and earlier pulls' calls today
+        if not 0 < params["max_calls"] <= room:
+            return jsonify({"ok": False, "error": f"max_calls must be 1-{max(room, 0)} (what is left of UW's day "
+                                                  f"cap of {_SPX_HISTORY_MAX_CALLS:,})"}), 400
     raw = (request.values.get("sleep") or "").strip()
     if raw:
         try:

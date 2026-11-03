@@ -1,10 +1,12 @@
 """SEC requests of the ownership store: paced, counted against ``sec``, with the builder's User-Agent.
 
 The SEC's fair-access rule is 10 requests a second per User-Agent, shared by ``www.sec.gov`` and ``data.sec.gov``.
-The builder spaces its own requests ``1 / PER_SECOND`` apart (4.5 a second, under half the limit) and also takes a
-token of ``core/sec_throttle.py``'s bucket, which every other SEC caller on the machine spends from (the dashboard's
-identity refresh, the filings jobs), so together they stay under the limit. On a 13F deadline day (up to 5,400
-filings, one request each) the builder needs about 20 minutes at that rate; each run stops at its time budget and
+Each request takes a token of
+``core/sec_throttle.py``'s bucket (8 a second), which every other SEC caller on the machine spends from (the
+dashboard's identity refresh, the filings jobs), so together they stay under the limit. When the bucket cannot be used
+the builder spaces its own requests ``1 / PER_SECOND`` apart, its share ``sec_throttle.FALLBACK_RATE`` (the 10 split
+between the SEC processes ``sec_throttle.SEC_PROCESSES`` names). On a 13F deadline day (up to 5,400 filings, one request each) the builder
+needs about 11 minutes on the bucket; each run stops at its time budget and
 the rest waits for the next hour.
 
 The User-Agent is ``base.user_agent()`` (the contact from ``RC_HTTP_CONTACT``; the SEC refuses a client without
@@ -20,7 +22,7 @@ from ....core import sec_throttle
 from .. import base
 
 PROVIDER = "sec"
-PER_SECOND = 4.5
+PER_SECOND = sec_throttle.FALLBACK_RATE
 
 # The machine-wide SEC bucket (a seam: tests replace it, the bucket sleeps on the real clock).
 _shared_pace: Callable[[], bool] = sec_throttle.pace
@@ -32,8 +34,8 @@ def www_base() -> str:
 
 
 class Pacer:
-    """At least ``1 / PER_SECOND`` between two requests (the run's clock and sleep), then one token of the shared
-    bucket (``shared``, ``core/sec_throttle.pace`` by default)."""
+    """One token of the shared bucket (``shared``, ``core/sec_throttle.pace`` by default) before each request; when it
+    cannot be used, at least ``1 / PER_SECOND`` between two requests (the run's clock and sleep)."""
 
     def __init__(self, ctx: base.RunContext, shared: Callable[[], bool] | None = None,
                  per_second: float = PER_SECOND):
@@ -43,11 +45,10 @@ class Pacer:
         self._last: float | None = None
 
     def wait(self) -> None:
-        if self._last is not None:
+        if not (self._shared or _shared_pace)() and self._last is not None:
             gap = self.interval - (self._clock() - self._last)
             if gap > 0:
                 self._sleep(gap)
-        (self._shared or _shared_pace)()
         self._last = self._clock()
 
 

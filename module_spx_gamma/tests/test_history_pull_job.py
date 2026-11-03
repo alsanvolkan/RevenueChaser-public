@@ -65,7 +65,7 @@ def test_the_route_passes_the_cap_and_the_pause(client):
     "start=2025-03-14&end=2025-03-10",           # reversed
     "start=2025-03-10&end=2025-03-15",           # today (New York) is not a past day
     "start=2025-03-10&end=2025-03-14&max_calls=0",
-    "start=2025-03-10&end=2025-03-14&max_calls=150001",      # above UW's daily budget
+    "start=2025-03-10&end=2025-03-14&max_calls=100001",      # above UW's day cap
     "start=2025-03-10&end=2025-03-14&max_calls=lots",
     "start=2025-03-10&end=2025-03-14&sleep=-1",
     "start=2025-03-10&end=2025-03-14&sleep=61",
@@ -73,6 +73,17 @@ def test_the_route_passes_the_cap_and_the_pause(client):
 def test_the_route_refuses_bad_input(client, query):
     assert client.post(f"/run/spxgamma_history?{query}", headers=CLI).status_code == 400
     assert client.submitted == []
+
+
+def test_the_route_allows_only_what_is_left_of_uw_s_day(client):
+    """Review of #380: ``max_calls`` is held to the day cap less today's counted UW calls."""
+    from RevenueChaser.rcdata import caps, ops
+    ops.count_calls("uw", caps.DAY_CAPS["uw"] - ops.calls_today("uw") - 100)
+    assert client.post("/run/spxgamma_history?start=2025-03-10&end=2025-03-14&max_calls=101",
+                       headers=CLI).status_code == 400
+    assert client.submitted == []
+    assert client.post("/run/spxgamma_history?start=2025-03-10&end=2025-03-14&max_calls=100",
+                       headers=CLI).status_code != 400
 
 
 def test_the_route_refuses_during_the_session(client, monkeypatch):

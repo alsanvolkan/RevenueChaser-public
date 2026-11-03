@@ -5,7 +5,8 @@ One request per company (``core/providers/yfinance.get_earnings_trend``: Yahoo's
 ``0y``, ``+1y``), for its shortest ticker (HEI, not HEI-A), when its newest answer is ``WEEK_DAYS`` old or there is
 none; the companies longest without an answer first. Mapped to columns by Earnings Radar's own D14 mapping
 (``module_earnings_radar/inputs/estimates.py``: ``trend_rows``, read, not changed), so a value is the value the board
-reads today; a field Yahoo does not give, or gives as NaN, stays NULL. Counted against the ``yfinance`` cap;
+reads today; a field Yahoo does not give, or gives as NaN, stays NULL. Counted under ``yfinance`` and paced at its
+window, 2,000 an hour (``caps.WINDOWS``, shared with the run's other Yahoo readers);
 ``FAIL_STREAK`` failures in a row stop the run (Yahoo throttling or down), and a run where every request failed is a
 failed run. A company that failed is asked again by the next run.
 
@@ -94,6 +95,7 @@ class Estimates:
                 not_asked = len(due) - n
                 break
             ctx.check_cap(PROVIDER)
+            base.run_pacer(ctx, PROVIDER).wait()
             ctx.count(PROVIDER, calls=1)
             res = yf_provider.get_earnings_trend(ticker)
             if res.status != "ok":

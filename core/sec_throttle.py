@@ -20,6 +20,9 @@ equal to the rate (16 in the first second) would exceed.
 
 When the file or the lock cannot be used, ``pace`` returns False and the caller
 falls back to its in-process throttle. A pacing failure never fails the request.
+
+``shared_pace`` is the same bucket under another file, rate and burst, for another limit two processes share
+(OpenFIGI's per-key window, ``core/providers/openfigi.py``).
 """
 from __future__ import annotations
 
@@ -38,6 +41,12 @@ logger = logging.getLogger(__name__)
 LIMIT = 10
 # The sustained rate. The only knob; the burst is derived from the ceiling (see ``_burst``).
 RATE = 8
+# The processes that can ask SEC at the same time on the box. When this bucket cannot be used each paces itself at
+# its share of the ceiling (``FALLBACK_RATE``), so all of them falling back together stay under it. A new SEC caller
+# that runs as its own process belongs on this list.
+SEC_PROCESSES = ("RC-Build", "the dashboard", "RC-ValueChain-Sync", "RC-Relatedness-OffPeak", "RC-Screeners-Daily",
+                 "RC-Daily-Bars")
+FALLBACK_RATE = LIMIT / len(SEC_PROCESSES)
 
 # How long to wait for the OS lock before giving the caller the in-process fallback.
 # A live critical section is a read and a write; anything longer means the lock is stuck.
@@ -68,12 +77,21 @@ def _burst(rate: float) -> float:
     return max(1.0, float(LIMIT) - float(rate))
 
 
-def bucket_path() -> Path:
+def _owner(path: Path) -> str:
+    """Who owns the bucket file, for the fallback warning: a file another user created (``sudo``) refuses this one."""
+    try:
+        st = path.stat()
+    except OSError:
+        return "no file"
+    return f"uid {st.st_uid}, mode {st.st_mode & 0o777:o}"
+
+
+def bucket_path(name: str = _NAME) -> Path:
     """The bucket file: beside ``raw.duckdb``, so ``RC_STORE_DIR`` and the test isolation follow."""
-    return Path(rawstore.DB_PATH).parent / _NAME
+    return Path(rawstore.DB_PATH).parent / name
 
 
-def _take(state: dict, now: float, rate: float) -> tuple[float, dict]:
+def _take(state: dict, now: float, rate: float, burst: float | None = None) -> tuple[float, dict]:
     """Return ``(wait_seconds, new_state)`` after reserving one token.
 
     ``tokens`` may be negative. That is a reservation whose caller has not slept
@@ -81,7 +99,7 @@ def _take(state: dict, now: float, rate: float) -> tuple[float, dict]:
     spend the last token. ``ts`` is the host monotonic clock (comparable across
     processes on one machine), the time of this reservation — not a future time.
     """
-    burst = _burst(rate)
+    burst = _burst(rate) if burst is None else float(burst)
     tokens = state.get("tokens") if isinstance(state, dict) else None
     ts = state.get("ts") if isinstance(state, dict) else None
     trustworthy = (
@@ -133,21 +151,21 @@ def _lock_within(fd: int, seconds: float) -> bool:
         time.sleep(_LOCK_SPIN)
 
 
-def _reserve(now: float) -> float | None:
-    """Reserve one token. ``None`` means the shared bucket cannot be used."""
+def _reserve(now: float, name: str = _NAME, rate: float | None = None, burst: float | None = None) -> float | None:
+    """Reserve one token (of the SEC bucket, or ``name``'s at ``rate`` and ``burst``). ``None``: it cannot be used."""
     if not job_lock._OS_LOCK_AVAILABLE:
         return None
-    path = bucket_path()
+    path = bucket_path() if name == _NAME else bucket_path(name)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_CREAT | os.O_RDWR)
+        fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o660)   # the box's users of the bucket share its group
     except OSError:
         return None
     try:
         if not _lock_within(fd, _LOCK_WAIT):
             return None
         try:
-            wait, new_state = _take(_read_state(fd), now, float(RATE))
+            wait, new_state = _take(_read_state(fd), now, float(RATE if rate is None else rate), burst)
             _write_state(fd, new_state)
             return wait
         finally:
@@ -172,8 +190,8 @@ def pace() -> bool:
         with _GUARD:
             wait = _reserve(time.monotonic())
         if wait is None:
-            _log_once("fallback", "SEC pacing: the shared bucket %s cannot be used; this process paces itself "
-                      "(in-process, %d/s)", bucket_path(), LIMIT)
+            _log_once("fallback", "SEC pacing: the shared bucket %s (%s) cannot be used; this process paces itself "
+                      "(in-process, %g/s)", bucket_path(), _owner(bucket_path()), FALLBACK_RATE)
             return False
         _log_once("shared", "SEC pacing: shared bucket %s (rate %s/s, burst %s)", bucket_path(), RATE, _burst(RATE))
         if wait > 0:
@@ -184,4 +202,21 @@ def pace() -> bool:
         return False
 
 
-__all__ = ["LIMIT", "RATE", "bucket_path", "pace"]
+def shared_pace(name: str, rate: float, burst: float) -> bool:
+    """Wait for one token of the bucket file ``name`` (``rate`` tokens a second, at most ``burst`` held). False when it
+    cannot be used, and the caller paces itself: never raises."""
+    try:
+        with _GUARD:
+            wait = _reserve(time.monotonic(), name, rate, burst)
+        if wait is None:
+            _log_once(f"fallback {name}", "shared bucket %s cannot be used; this process paces itself", bucket_path(name))
+            return False
+        if wait > 0:
+            time.sleep(wait)
+        return True
+    except Exception:
+        _log_once(f"fallback {name}", "shared bucket %s failed; this process paces itself", name)
+        return False
+
+
+__all__ = ["FALLBACK_RATE", "SEC_PROCESSES", "LIMIT", "RATE", "bucket_path", "pace", "shared_pace"]
