@@ -73,6 +73,7 @@ from pathlib import Path
 import duckdb
 
 from ....core import calendar
+from ... import caps
 from .. import base
 from ..fundamentals import wrds_fund
 from ..spine import wrds
@@ -130,10 +131,12 @@ TABLES: dict[str, dict] = {
             "last_year": CRSP_LAST_YEAR, "needed": ("dlyprc", "dlyret", "shrout", "hdrcusip", "ticker"),
             "sql": ("SELECT " + ", ".join(c for c, _ in DSF) + " FROM crsp.dsf_v2 WHERE {range}"),
             "bar": (CRSP, "permno", "CAST(NULL AS TEXT)", "dlyopen", "dlyhigh", "dlylow", "abs(dlyprc)", "dlyvol")},
+    # Every query names its columns (never ``SELECT *``): the schema's, checked against WRDS's catalog first.
     "sec_divid": {"wrds": "comp.sec_divid", "schema": DIVID, "key": ["gvkey", "iid", "datadate"], "date": "datadate",
-                  "last_year": None, "needed": ("divd",), "sql": "SELECT * FROM comp.sec_divid WHERE {range}"},
+                  "last_year": None, "needed": ("divd",),
+                  "sql": "SELECT " + ", ".join(c for c, _ in DIVID) + " FROM comp.sec_divid WHERE {range}"},
     "sec_split": {"wrds": "comp.sec_split", "schema": SPLIT, "key": ["gvkey", "iid", "datadate"], "date": None,
-                  "needed": ("split",), "sql": "SELECT * FROM comp.sec_split"},
+                  "needed": ("split",), "sql": "SELECT " + ", ".join(c for c, _ in SPLIT) + " FROM comp.sec_split"},
 }
 YEARLY = ("secd", "dsf", "sec_divid")
 SNAPSHOTS = ("sec_split",)
@@ -144,7 +147,7 @@ CRSP_TABLES = ("dsf",)
 # before any data is asked (``_check_columns``): a name WRDS does not have fails the run on that one query, not on a
 # data query after the Duo push.
 ASKED_COLUMNS = {"secd": [c for c, _ in SECD], "dsf": [c for c, _ in DSF],
-                 "sec_divid": ["gvkey", "iid", "datadate", "divd"], "sec_split": [c for c, _ in SPLIT]}
+                 "sec_divid": [c for c, _ in DIVID], "sec_split": [c for c, _ in SPLIT]}
 STAGING = {"secd": "stg_wrds_secd", "dsf": "stg_wrds_dsf", "sec_divid": "stg_wrds_divid",
            "sec_split": "stg_wrds_split"}
 
@@ -211,6 +214,29 @@ def typed_rows(raw: Path, schema: list[tuple[str, str]]) -> str:
     cols = "{" + ", ".join(f"'{c}': 'VARCHAR'" for c, _ in schema) + "}"
     typed = ", ".join(f'{_cast(c, t)} AS "{c}"' for c, t in schema)
     return f"SELECT {typed} FROM read_json({base.sql_path(raw)}, format = 'newline_delimited', columns = {cols})"
+
+
+def _current(table: str, year: int, raw: Path) -> bool:
+    """Whether ``raw`` answers today's query of a year: a ``comp.secd`` year asked with another exchange filter (the
+    one before ``COMPUSTAT_EXCHG``) is not, so the backfill asks it again (step 5 of the 2 Nov 2026 plan). A raw file
+    without a sidecar, and every other table, counts as current."""
+    meta = _meta(raw)
+    asked = base.read_raw_json(meta).get("query") if meta.is_file() else None
+    return table != "secd" or asked is None or asked == year_sql(table, year)
+
+
+def _stale(table: str, year: int) -> bool:
+    """A partition that exists from a raw answer that is not ``_current``."""
+    raws = sorted(raw_dir(table, year).glob(f"*{RAW_SUFFIX}"))
+    return partition_path(table, year).is_file() and bool(raws) and not _current(table, year, raws[-1])
+
+
+def _rows(path: Path) -> int:
+    con = duckdb.connect()
+    try:
+        return con.execute(f"SELECT count(*) FROM read_parquet({base.sql_path(path)})").fetchone()[0]
+    finally:
+        con.close()
 
 
 def _where(raw: Path) -> tuple[str, int | None]:
@@ -331,9 +357,14 @@ class WrdsPrices:
                         self.to_parquet_all(ctx, [raw])
                         asked += 1
             for table, year in self._plan(end, start.year if start else None, refresh=False):
-                if partition_path(table, year).is_file():
+                if partition_path(table, year).is_file() and not _stale(table, year):
                     continue
-                have = sorted(raw_dir(table, year).glob(f"*{RAW_SUFFIX}"))
+                have = [r for r in sorted(raw_dir(table, year).glob(f"*{RAW_SUFFIX}")) if _current(table, year, r)]
+                same_day = raw_dir(table, year) / f"{end.isoformat()}{RAW_SUFFIX}"
+                if not have and same_day.exists():
+                    # ``wrds._ask`` takes a file of the day as answered: an old filter's is kept aside, not reused.
+                    for f in (same_day, _meta(same_day)):
+                        f.rename(f.with_name(f.name + ".superseded"))
                 raw = have[-1] if have else self._ask_or_skip(ctx, table, year, end, run)
                 if raw is None:
                     continue
@@ -342,6 +373,33 @@ class WrdsPrices:
         except base.CapReached as e:
             ctx.notes.append(f"stopped at the WRDS day cap ({e}) after {asked} partition(s); the next backfill "
                              "goes on from the first missing year")
+
+    def dry_run(self, start: date | None, end: date) -> list[str]:
+        """What ``backfill`` would ask, without a login: one line per query and a total of queries, of the ``wrds``
+        day cap's days, and of the expected rows. A missing year is expected to hold its table's mean of the years
+        present; a year asked again holds at least its rows now (the new exchanges add to it)."""
+        plan = [(t, None, "missing") for t in SNAPSHOTS if not _snapshots(t)]
+        for table, year in self._plan(end, start.year if start else None, refresh=False):
+            if _stale(table, year):
+                plan.append((table, year, "asked with an old exchange filter"))
+            elif not partition_path(table, year).is_file() and not any(
+                    _current(table, year, r) for r in raw_dir(table, year).glob(f"*{RAW_SUFFIX}")):
+                plan.append((table, year, "missing"))
+        mean = {}
+        for table in YEARLY:
+            have = [_rows(p) for _, p in stage.partitions(base.parquet_root() / "wrds" / "prices" / table, "year")]
+            mean[table] = sum(have) // len(have) if have else None
+        lines, total, unknown = [], 0, 0
+        for table, year, why in plan:
+            est = (_rows(partition_path(table, year)) if why != "missing" else mean.get(table)) if year else None
+            total, unknown = total + (est or 0), unknown + (est is None)
+            lines.append(f"{TABLES[table]['wrds']} {year or 'snapshot'}: {why}, expected rows "
+                         f"{'unknown' if est is None else ('>= ' if why != 'missing' else '~') + format(est, ',')}")
+        queries = len(plan) + (1 if plan else 0)          # the columns query first
+        cap = caps.DAY_CAPS[wrds.PROVIDER]
+        lines.append(f"{NAME} dry run: {queries} queries ({-(-queries // cap)} day(s) of the {cap}-call wrds cap), "
+                     f"expected rows ~{total:,}" + (f" plus {unknown} partition(s) with no estimate" if unknown else ""))
+        return lines
 
     def to_parquet(self, ctx: base.RunContext, raw: Path) -> list[Path]:
         return self.to_parquet_all(ctx, [raw])

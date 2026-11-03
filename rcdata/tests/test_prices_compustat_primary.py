@@ -271,3 +271,57 @@ def test_a_crsp_factor_step_between_two_answers_or_by_a_ticker_link_is_no_split(
                 "('2', 'b:01', 'ticker')) t(permno, security_id, how)")
     got = con.execute(f"SELECT security_id, ex_date, new_rate FROM ({wrds_history.CRSP_SPLITS})").fetchall()
     assert got == [("a:01", date(2025, 1, 3), 2.0)]
+
+
+# ── Step 5: the backfill of the new range, and its dry run ─────────────────────────────────────────────────────
+
+def test_no_wrds_price_query_selects_every_column():
+    for table, spec in wrds_history.TABLES.items():
+        assert "SELECT *" not in spec["sql"].upper(), table
+    assert wrds_history.ASKED_COLUMNS["sec_divid"] == [c for c, _ in wrds_history.DIVID]
+
+
+def _asked_tables(conn):
+    import re
+    return [f"{re.search(r'FROM (\w+\.\w+)', q).group(1)} {y.group(1) if (y := re.search(r'BETWEEN .(\d{4})', q)) else ''}".strip()
+            for q in conn.queries]
+
+
+def _old_filter(year):
+    """Rewrite the newest raw sidecar of a secd year as the old exchange filter asked it."""
+    from RevenueChaser.rcdata.build import base
+    meta = sorted(wrds_history.raw_dir("secd", year).glob("*.meta.json"))[-1]
+    m = base.read_raw_json(meta)
+    m["query"] = m["query"].replace("exchg IN (11, 12, 14, 17, 21)", "exchg IN (11, 12, 14)")
+    base.write_raw_json(meta, m)
+
+
+def test_a_secd_year_asked_with_the_old_exchange_filter_is_asked_again(fake):
+    conn, _ = fake
+    assert _backfill()["result"] == "changed"
+    _old_filter(2024)
+    conn.queries.clear()
+    _backfill()
+    assert _asked_tables(conn) == ["comp.secd 2024"]           # the columns were read today already
+    assert list(wrds_history.raw_dir("secd", 2024).glob("*.superseded")), "the old answer is kept aside"
+    conn.queries.clear()
+    _backfill()
+    assert conn.queries == []                                  # asked with today's filter: current again
+
+
+def test_the_dry_run_prints_the_queries_and_expected_rows_and_asks_nothing(fake, capsys):
+    from RevenueChaser.rcdata.build import __main__ as cli
+    conn, _ = fake
+    assert _backfill()["result"] == "changed"
+    _old_filter(2024)
+    wrds_history.partition_path("sec_divid", 2025).unlink()
+    for raw in wrds_history.raw_dir("sec_divid", 2025).glob("*"):
+        raw.unlink()
+    conn.queries.clear()
+    assert cli.main(["backfill", "wrds/prices", "--to", "2026-10-27", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert conn.queries == []
+    assert "comp.secd 2024: asked with an old exchange filter" in out
+    assert "comp.sec_divid 2025: missing" in out
+    assert "wrds/prices dry run: 3 queries" in out                 # the columns, then the two partitions
+    assert "expected rows" in out
