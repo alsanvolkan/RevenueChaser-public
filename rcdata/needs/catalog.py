@@ -148,6 +148,10 @@ _NEEDS = (
          ask_param="series_ids", ask_required=True, providers=("fred", "yfinance")),
     Need("market.spx_expiry_strike", "spx_expiry_strike", "spx_gamma_expiry_strike", "session_date", "expiry", 1,
          providers=("uw",)),
+    # The whole expiry chain's greek grid, the measure the board's DTE bands are written in. Same one-session
+    # window as its sibling: both are one UW snapshot of a closed session.
+    Need("market.spx_greek_expiry_strike", "spx_greek_expiry_strike", "spx_greek_expiry_strike", "session_date",
+         "expiry", 1, providers=("uw",)),
     # ── Ownership ───────────────────────────────────────────────────────────────────────────────────────────────
     Need("ownership.short_interest", "finra_short_interest", "finra_short_interest", "settlement_date", "ticker", 3,
          ask_param="tickers", normalize=TICKER, providers=("finra",)),
