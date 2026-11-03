@@ -207,3 +207,29 @@ def test_other_tickers_keep_the_plain_slash_spelling(http):
     http.add("/v3/mapping", _answer({}))
     openfigi.security_types(["BRK-B", "WFC-PA", "AAPL"], sleep=lambda s: None)
     assert sorted(j["idValue"] for j in http.calls[0]["json"]) == ["AAPL", "BRK/B", "WFC/PA"]
+
+
+def test_keyed_requests_take_a_token_of_the_key_s_shared_bucket(http, monkeypatch):
+    """Review round 2 of #380 (SF-2): the identity refresh maps on the same key as the builder's ``openfigi/map`` and
+    the dashboard's CUSIP mapping, so every keyed request (a retry too) spends from the one box-wide bucket."""
+    from RevenueChaser.core.providers import openfigi as figi_client
+    monkeypatch.setenv("OPENFIGI_API_KEY", "figi-test-key")
+    state = {"n": 0}
+
+    def handler(call):
+        state["n"] += 1
+        if state["n"] == 1:
+            return FakeResp({"error": "rate"}, 429, {"ratelimit-reset": "1"})
+        return [{"warning": "none"}] * len(call["json"])
+    http.add("/v3/mapping", handler)
+    tokens = []
+    monkeypatch.setattr(figi_client, "pace", lambda: tokens.append(1) or True)
+    sleeps = []
+    openfigi.security_types([f"T{i}" for i in range(250)], sleep=sleeps.append)
+    assert len(tokens) == len(http.calls) == 4                       # 3 batches and one retry
+    assert sleeps == [2]                                             # on the bucket: only the 429's own wait
+    monkeypatch.setattr(figi_client, "pace", lambda: False)          # the bucket falls back: half the window
+    sleeps.clear()
+    state["n"] = 1
+    openfigi.security_types([f"T{i}" for i in range(250)], sleep=sleeps.append)
+    assert sleeps == [figi_client.REQUEST_GAP_S] * 2

@@ -164,7 +164,7 @@ def test_openfigi_shares_one_bucket_per_key_inside_its_window():
     bucket whose burst plus a minute's refill fits the 250, and each falls back to half the window."""
     from RevenueChaser.core.providers import openfigi
     limit, window = caps.WINDOWS["openfigi"]
-    assert openfigi.BUCKET_BURST + openfigi.BUCKET_RATE * window <= limit
+    assert openfigi.BUCKET_BURST + openfigi.BUCKET_RATE * window <= limit - 10    # a margin for network latency
     assert 2 * (window / openfigi.REQUEST_GAP_S) <= limit
 
 

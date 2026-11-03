@@ -37,9 +37,10 @@ DEFAULT_BASE = "https://api.openfigi.com"
 JOBS_PER_REQUEST = 100      # with a key
 # Keyed /v3/mapping allows 250 requests in a 60 s window (rcdata/caps.py WINDOWS), per key, and the builder's
 # ``openfigi/map`` uses the same key: both take tokens of one box-wide bucket (``pace``), whose burst plus a minute's
-# refill is 250. When it cannot be used, each process keeps to half the window (``REQUEST_GAP_S``, 125 a minute).
-BUCKET, BUCKET_BURST = ".openfigi_throttle.json", 10
-BUCKET_RATE = (250 - BUCKET_BURST) / 60.0
+# refill is 240, 10 under the 250 (OpenFIGI counts arrivals, and network latency can bunch them). When it cannot be
+# used, each process keeps to half the window (``REQUEST_GAP_S``, 125 a minute).
+BUCKET, BUCKET_BURST = ".openfigi_throttle.json", 5
+BUCKET_RATE = 235 / 60.0
 REQUEST_GAP_S = 0.48
 MAX_REQUESTS = 400          # per run, avo's cap for #207 (typed 2026-10-14, B6)
 MAX_ATTEMPTS = 8            # per batch: the first request and up to 7 retries after a 429
