@@ -187,7 +187,8 @@ def test_sync_issues_keeps_open_rows_and_resolves_only_its_kinds_at_scale():
 def test_a_step_that_keeps_conflicting_gives_up_as_a_busy_store(monkeypatch):
     """Review S1: the optimistic retry is bounded, with a backoff; then WatchError, which callers treat as busy."""
     from RevenueChaser.rcdata import ops_redis
-    monkeypatch.setattr(ops_redis, "_backoff", lambda attempt: None)     # no sleeping in the test
+    waits: list[int] = []
+    monkeypatch.setattr(ops_redis, "_backoff", waits.append)              # counted, not slept
     tries = []
 
     def always_raced():
@@ -197,6 +198,7 @@ def test_a_step_that_keeps_conflicting_gives_up_as_a_busy_store(monkeypatch):
     with pytest.raises(ops.BUSY_ERRORS):
         ops_redis._transaction(["read_log"], always_raced)
     assert len(tries) == ops_redis.MAX_ATTEMPTS
+    assert waits == list(range(ops_redis.MAX_ATTEMPTS - 1))                # a growing pause between every two tries
 
 
 def test_the_backoff_grows_and_has_jitter():
