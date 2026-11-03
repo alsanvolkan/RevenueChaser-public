@@ -67,8 +67,23 @@ def test_a_board_scoped_entry_names_at_least_one_board(registry):
 
 
 def test_the_density_bar(registry):
+    """Every entry a human signed off on passes the bar; one the sync added is exempt until it is curated."""
     for e in registry.issues:
-        assert not open_issues.thin_reasons(e), f"#{e.number}: {open_issues.thin_reasons(e)}"
+        if open_issues.is_curated(e):
+            assert not open_issues.thin_reasons(e), f"#{e.number}: {open_issues.thin_reasons(e)}"
+
+
+def test_an_uncurated_entry_is_exempt_and_a_curated_one_is_not(registry):
+    """``reviewed_at`` is the curator's mark: the sync leaves it empty on an issue it added itself (#120), so
+    a run of ``--write`` lands without a hand-written summary for every new issue. ``thin_reasons`` still says
+    what such an entry is missing -- ``--report-thin`` is the curator's list -- but the suite holds only the
+    entries a human has signed off on.
+    """
+    import dataclasses
+    fresh = dataclasses.replace(registry.issues[0], summary="", detail={}, reviewed_at="")
+    assert not open_issues.is_curated(fresh)
+    assert open_issues.thin_reasons(fresh), "the bar still describes what the entry is missing"
+    assert open_issues.is_curated(dataclasses.replace(fresh, reviewed_at="2026-11-03"))
 
 
 @pytest.mark.parametrize("patch,expected", [
@@ -79,7 +94,7 @@ def test_the_density_bar(registry):
     ({"kind": "known-problem", "detail": {"whats_wrong": "w", "evidence": "e", "next_step": "n"}},
      "non-empty direction"),
     ({"kind": "epic", "detail": {}}, "epic needs a whats_wrong"),
-    ({"scope": "board", "boards": []}, "names no board"),          # #120: the sync's default for a new issue
+    ({"scope": "board", "boards": []}, "names no board"),          # #120: a board-scoped entry on no board
 ])
 def test_the_density_bar_catches_each_violation(registry, patch, expected):
     """The bar is code, not prose: each rule has to fail on an entry that breaks it."""

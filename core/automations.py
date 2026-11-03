@@ -233,10 +233,12 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         name="RC-Open-Issues-Check", label="Open issues registry check",
         args=("-m", "RevenueChaser.scripts.open_issues_sync", "--check"), time="09:30",
         description="Checks docs/open_issues.json against the open issues of the public repo through the GitHub API "
-                    "(read anonymously, 1-2 requests) and writes nothing, no table and no store file. Exit 1 means "
-                    "the registry is stale and the open-issues panel is missing rows; if this clone is behind "
-                    "main, git pull first (docs/open_issues.json is tracked, so --write on a stale clone sets "
-                    "up a pull conflict), otherwise python -m RevenueChaser.scripts.open_issues_sync --write.",
+                    "(read anonymously, 1-2 requests) and writes nothing, no table and no store file. It exits 0 "
+                    "whatever it finds: the log line says how far the registry is behind and how many entries "
+                    "await curation, because the file is behind GitHub the moment an issue is opened. To close the "
+                    "gap, git pull first if this clone is behind main (docs/open_issues.json is tracked, so --write "
+                    "on a stale clone sets up a pull conflict), then python -m "
+                    "RevenueChaser.scripts.open_issues_sync --write and commit the file.",
         settings=TaskSettings(restart_count=0)),
     AutomationEntry(
         name="RC-IBKR-Login-Check", label="IBKR Gateway login check",
