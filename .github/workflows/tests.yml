@@ -13,9 +13,20 @@ name: tests
 # out) and the workflow files. Order matters: a later pattern
 # overrides an earlier one. Any other file, code or data, runs CI. A skipped run leaves no check
 # on the PR: that is expected for a docs-only PR, not a missing CI.
+#
+# SELECTIVE or FULL (the check names say which: `unit (SELECTIVE)`, `e2e (FULL)`, ...):
+#   - a push to a PR runs only the test files that import a changed file, directly or transitively
+#     (scripts/select_tests.py, job `plan`); it falls back to FULL whenever that is not safe to say;
+#   - the label `full-ci` on the PR makes every run FULL, starting with the one the label itself triggers.
+#     A label stays on the PR, so every later push is FULL too: the head that merges has a FULL run.
+#   - a push to `main` and a manual dispatch are always FULL.
+# The merge gate is a green `unit (FULL)` and `e2e (FULL)` on the PR's current head. No check is required by a
+# ruleset; the coordinator reads the names.
 on:
   pull_request:
     branches: [main]
+    # `labeled` is here for `full-ci`; any other label starts a run whose jobs all skip.
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - "**"
       - "!**.md"
@@ -45,14 +56,43 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: tests-${{ github.ref }}
+  # A label other than full-ci gets its own group, so it cannot cancel a run in flight.
+  group: tests-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'full-ci' && '-other-label' || '' }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  plan:
+    if: github.event.action != 'labeled' || github.event.label.name == 'full-ci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.select.outputs.mode }}
+      unit: ${{ steps.select.outputs.unit }}
+      e2e: ${{ steps.select.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: RevenueChaser
+          # The diff is taken against the merge-base with the base branch, so it needs the history.
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - id: select
+        working-directory: RevenueChaser
+        env:
+          FULL_REASON: >-
+            ${{ github.event_name != 'pull_request' && format('{0} event', github.event_name)
+            || (contains(github.event.pull_request.labels.*.name, 'full-ci') && 'the PR is labelled full-ci' || '') }}
+          BASE: origin/${{ github.base_ref || 'main' }}
+        run: python scripts/select_tests.py "$BASE" ${FULL_REASON:+--full "$FULL_REASON"}
+
   unit:
+    needs: plan
+    name: unit (${{ needs.plan.outputs.mode }})
     runs-on: ubuntu-latest
     # The unit tier is ~11.3k tests. Serial it took 1 h 56 on a 4-core box; `-n auto` below should cut that,
     # but the limit stays generous so a slow runner fails on a real error, not on the clock.
@@ -89,9 +129,18 @@ jobs:
         # (RC_PYTEST_SCRATCH_OWNER), or the first worker to finish would delete it for the rest.
         # --dist loadfile keeps a file's tests on one worker, which the few order-sensitive files
         # assume.
-        run: python -m pytest -q -n auto --dist loadfile -p no:cacheprovider -rfE
+        # SELECTIVE passes the selected files; exit 5 (every collected test deselected by -m "not e2e") is a pass.
+        env:
+          MODE: ${{ needs.plan.outputs.mode }}
+          FILES: ${{ needs.plan.outputs.unit }}
+        run: |
+          if [ "$MODE" = FULL ]; then exec python -m pytest -q -n auto --dist loadfile -p no:cacheprovider -rfE; fi
+          if [ -z "$FILES" ]; then echo "SELECTIVE: no unit test file reaches this change"; exit 0; fi
+          python -m pytest -q -n auto --dist loadfile -p no:cacheprovider -rfE $FILES || [ $? -eq 5 ]
 
   e2e:
+    needs: plan
+    name: e2e (${{ needs.plan.outputs.mode }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
     # The ops state runs on Redis here (master plan Order 3): RC_REDIS_URL switches rcdata/ops.py to it, and the root
@@ -119,6 +168,8 @@ jobs:
         working-directory: RevenueChaser
         env:
           RC_E2E: "1"
+          MODE: ${{ needs.plan.outputs.mode }}
+          FILES: ${{ needs.plan.outputs.e2e }}
         # -n 4: each e2e test boots its own dashboard subprocess, so the tier is wall-clock bound on
         # waiting, not CPU. Workers share nothing: every dashboard gets its test's own tmp_path for
         # .store/.cache and every side root (conftest.dashboard), binds port 0 itself and reports the
@@ -127,4 +178,7 @@ jobs:
         # --dist loadgroup: tests that share one dashboard and one Fetch (harness/shared.py) carry one
         # xdist_group, so they land on one worker and the Fetch runs once; every other test is spread
         # as with the default --dist load.
-        run: python -m pytest module_testing/e2e -q -m e2e -n 4 --dist loadgroup -p no:cacheprovider -rfE
+        run: |
+          if [ "$MODE" = FULL ]; then exec python -m pytest module_testing/e2e -q -m e2e -n 4 --dist loadgroup -p no:cacheprovider -rfE; fi
+          if [ -z "$FILES" ]; then echo "SELECTIVE: no e2e test file reaches this change"; exit 0; fi
+          python -m pytest -q -m e2e -n 4 --dist loadgroup -p no:cacheprovider -rfE $FILES || [ $? -eq 5 ]

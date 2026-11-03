@@ -389,6 +389,7 @@ Worth knowing so you calibrate how much a passing suite proves.
 - **Orchestration is thin.** `app/runners.py` beyond flag-threading, `module_financials/run.py` and `cli.py`,
   `module_spx_gamma/run.py`, and `module_earnings_radar/terminal.py` have no direct tests.
 - **There is no coverage measurement.** CI (`.github/workflows/tests.yml`, #103) runs the unit suite
-  and the e2e tier on every PR and on `main`. Gaps are tracked by hand on the GitHub project
+  and the e2e tier on every PR and on `main` (on a PR only the test files that import a changed file,
+  until the `full-ci` label makes the runs FULL; see the head of `tests.yml`). Gaps are tracked by hand on the GitHub project
   issue tracker — e.g. end-to-end coverage is tracked as its own issue — not as a live
   percentage.
