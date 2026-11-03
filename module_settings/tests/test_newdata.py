@@ -160,9 +160,9 @@ def test_the_market_series_backfill_counts_partitions_per_source(roots):
 
 def test_spend_is_today_and_this_week_per_provider_against_the_caps():
     ops.count_calls("uw", 1200)
-    with ops.connect() as con:
-        con.execute("INSERT INTO provider_calls_daily (provider, ny_day, calls) VALUES ('uw', '2026-10-26', 300), "
-                    "('uw', '2026-10-25', 999), ('fred', '2026-10-27', 4)")
+    ops.put_rows("provider_calls_daily", [{"provider": p, "ny_day": d, "calls": n, "failures": 0, "http_429": 0}
+                                          for p, d, n in (("uw", "2026-10-26", 300), ("uw", "2026-10-25", 999),
+                                                          ("fred", "2026-10-27", 4))])
     ops.sample_uw_headers({"x-uw-daily-req-count": "1300", "x-uw-req-per-minute-remaining": "118",
                            "x-uw-token-req-limit": "100000000"})
     spend = newdata.collect(NOW)["spend"]
@@ -254,11 +254,9 @@ def test_a_zero_retention_is_no_retention(monkeypatch):
 
 
 def test_retirement_counts_reads_of_the_old_tables_in_the_last_14_days():
-    ops.ensure()
-    with ops.connect() as con:
-        con.executemany("INSERT INTO read_log VALUES (?, ?, ?, ?)", [
-            ("2026-10-27", "dashboard", "macro_series", 5), ("2026-10-20", "cli", "macro_series", 2),
-            ("2026-10-01", "dashboard", "macro_series", 50), ("2026-10-27", "dashboard", "market_series", 9)])
+    ops.put_rows("read_log", [dict(zip(("day", "process", "table_name", "reads"), r)) for r in [
+        ("2026-10-27", "dashboard", "macro_series", 5), ("2026-10-20", "cli", "macro_series", 2),
+        ("2026-10-01", "dashboard", "macro_series", 50), ("2026-10-27", "dashboard", "market_series", 9)]])
     rows = {r["table"]: r for r in newdata.collect(NOW)["retirement"]}
     assert rows["macro_series"]["reads_14d"] == 7
     assert rows["vol_index_daily"]["reads_14d"] == 0
@@ -370,7 +368,7 @@ def test_the_verified_running_line(roots):
     assert v["ops_schema"] == ops.OPS_SCHEMA_VERSION
 
 
-def test_an_ops_file_from_before_a_table_existed_reads_as_empty(roots):
+def test_an_ops_file_from_before_a_table_existed_reads_as_empty(sqlite_ops, roots):
     path = ops.ops_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     sqlite3.connect(str(path)).close()                    # an empty file: no tables at all

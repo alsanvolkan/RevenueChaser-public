@@ -22,14 +22,13 @@ def _taken_and_started(dataset: str, run_id: str, pid: int) -> int:
     rid = ops.enqueue(dataset, None, by="test")
     assert ops.next_request(dataset)["id"] == rid
     ops.start_run(run_id, dataset, "queue")
-    with ops.connect() as con:
-        con.execute("UPDATE job_runs2 SET pid = ? WHERE run_id = ?", (pid, run_id))
+    [run] = [r for r in ops.rows("job_runs2") if r["run_id"] == run_id]
+    ops.put_rows("job_runs2", [{**run, "pid": pid}])
     return rid
 
 
 def _request(rid: int) -> dict:
-    with ops.connect() as con:
-        return dict(con.execute("SELECT * FROM build_requests WHERE id = ?", (rid,)).fetchone())
+    return next(r for r in ops.rows("build_requests") if r["id"] == rid)
 
 
 def test_a_running_request_whose_pid_is_gone_is_reclaimed_at_builder_start(monkeypatch):
@@ -43,8 +42,7 @@ def test_a_running_request_whose_pid_is_gone_is_reclaimed_at_builder_start(monke
     assert req["note"].startswith(f"lost: pid {dead} gone")
     check = ops.latest_check("market_series")
     assert check["result"] == "failed" and check["note"].startswith(f"lost: pid {dead} gone")
-    with ops.connect() as con:
-        run = con.execute("SELECT status, error FROM job_runs2 WHERE run_id = 'dead-run'").fetchone()
+    [run] = [r for r in ops.rows("job_runs2") if r["run_id"] == "dead-run"]
     assert run["status"] == "failed" and f"lost: pid {dead} gone" in run["error"]
 
 

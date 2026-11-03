@@ -240,8 +240,7 @@ def test_fred_without_a_key_is_an_issue_and_the_rest_still_build(sources, monkey
     monkeypatch.setenv("FRED_API_KEY", "")
     row = _run()
     assert row["result"] == "changed" and sources.calls("fred.test") == []
-    with ops.connect() as con:
-        kinds = [r[0] for r in con.execute("SELECT kind FROM build_issues WHERE key = 'fred'")]
+    kinds = [r["kind"] for r in ops.rows("build_issues") if r["key"] == "fred"]
     assert kinds == ["missing_key"]
 
 
@@ -331,9 +330,8 @@ def test_a_date_past_the_calendar_table_has_no_session_date_and_one_issue(tmp_pa
     part = ms.partition_path(fed, last + 1)
     got = duckdb.connect().execute(f"SELECT DISTINCT session_date FROM read_parquet({base.sql_path(part)})").fetchall()
     assert got == [(None,)]
-    with ops.connect() as con:
-        issues = con.execute("SELECT kind, key FROM build_issues").fetchall()
-    assert [tuple(i) for i in issues] == [("outside_calendar", "fed")]
+    issues = [(r["kind"], r["key"]) for r in ops.rows("build_issues")]
+    assert issues == [("outside_calendar", "fed")]
 
 
 def test_g1_the_tff_query_asks_for_futures_only_and_the_disaggregated_one_needs_no_filter(sources):

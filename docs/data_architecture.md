@@ -964,7 +964,7 @@ renders at once with what is stored.
 
 | Variable | Constant | Holds |
 |---|---|---|
-| `RC_MARKET_DIR` | `MARKET_DIR` | The serving DuckDB files and `ops.sqlite` (the server's SSD) |
+| `RC_MARKET_DIR` | `MARKET_DIR` | The serving DuckDB files and `ops.sqlite` (the server's SSD); with `RC_REDIS_URL` set and no `RC_REDIS_NAMESPACE`, also the key of the Redis namespace the ops state lives in |
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
 | `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
@@ -1028,8 +1028,30 @@ keep one raw file per fetch with a `.meta.json`
 sidecar (as-of date, fetch time, run id, URL without its query) and Parquet per source and year, merged by key with
 the newest fetch winning a key.
 
+**The ops state: Redis or `ops.sqlite`** (master plan Order 3). `rcdata/ops.py` is the one surface; which store it
+uses is the environment, read on every call. With `RC_REDIS_URL` set (`redis://127.0.0.1:6379/0` on the server)
+every function reads and writes Redis (`rcdata/ops_redis.py`): the same tables below, the same rows and ids, the
+same answers. The Redis is the `redis` service of the root `docker-compose.yml`: a container with AOF on
+(`appendonly yes`, `appendfsync everysec`, `noeviction`), bound to `127.0.0.1` only, its data in
+`RC_REDIS_DATA_DIR`, so a restart keeps the day's call counts, the queue and the open issues. Keys sit under
+`RC_REDIS_NAMESPACE` (the server sets it, `rc:ops:live`, so a moved or remounted market root keeps its state); unset,
+under `rc:ops:<12 hex of sha1 of the resolved RC_MARKET_DIR>`, one namespace per market root, which is how the tests
+and the e2e dashboards keep apart. A namespace never written is refused on its first write (`ops.OpsNotCopied`) while
+the root's `ops.sqlite` still holds rows: Redis switched on before the copy, or a lost namespace, cannot start the day
+from zero calls and empty watch lists; each row is a hash `<ns>:<table>:row:<primary key>` (NULL is a missing field, the column types are the
+SQLite DDL's), each table a sorted set of its keys, with the lookups the reads need (the active queue, each
+dataset's checks, the open issues per dataset and kind). What SQLite did in one `BEGIN IMMEDIATE` transaction is a
+`WATCH` of the tables touched, the reads, and one `MULTI`/`EXEC` that runs again when someone else wrote meanwhile
+(at most 25 times, with a jittered backoff; then the store reads as busy).
+A caller that waits on a busy store catches `ops.BUSY_ERRORS` (a locked file, a Redis that does not answer).
+`python -m RevenueChaser.rcdata.ops_copy` copies `ops.sqlite` into an empty namespace once: read-only on the file,
+`--dry-run` counts per table and per open issue kind, a namespace with keys is refused unless `--force`, every row is
+copied (the price issues stay), and every table is compared with the file afterwards (exit 1 on a difference).
+With `RC_REDIS_URL` unset the app runs on `ops.sqlite` as below; that is the rollback, since the file is never
+written while Redis is on.
+
 **`ops.sqlite`** (SQLite WAL, `busy_timeout` 5000 ms on every open; `rcdata/ops.py` owns every statement;
-ops schema version `2`; `ensure` upgrades an older file in place, in one transaction, and refuses a file stamped
+ops schema version `2` (Redis keeps the same stamp in `<ns>:ops_schema`); `ensure` upgrades an older file in place, in one transaction, and refuses a file stamped
 newer. Rolling back to version 1 code is `DELETE FROM ops_schema WHERE version = 2` with every ops process stopped:
 version 1 runs on the version 2 tables, and the next upgrade leaves a history table that already has `id` alone):
 
@@ -1120,14 +1142,18 @@ is due. With cadence `daily` (the default, and what an unknown cadence reads as)
 market series (as-of today) on the first pass of each trading day. `weekly` and `monthly` are due 7 and 30 days after
 the last check. A check with no `next_check_due` (past the calendar's table) is due once the as-of is newer. A
 loop run (`run` without `--once`) does this once, at start. A due-step error (a due check that raised, `ops.sqlite`
-locked while queueing) is printed, the queue is still drained, and the pass exits 1. A second `--once` started while
+locked or Redis not answering while queueing) is printed, the queue is still drained, and the pass exits 1. A second `--once` started while
 one runs exits 3 on the `rcdata_build` lock before its due step. A failed or skipped check is retried every hourly
 pass with no backoff: for the SPX slice at worst about 24 runs a day, each one UW call plus its retries. A pause
 holds a dataset twice: `due.py` does not queue it, and `base.run_request` skips a request of it that was queued
 anyway (PR #222).
 
 **Backup.** `python -m RevenueChaser.rcdata backup` writes under `<RAW_STORE_BACKUP_DIR>/market/` and refuses an empty
-`RAW_STORE_BACKUP_DIR` (exit 2, nothing written): `ops.sqlite` through SQLite's online backup API, each serving file
+`RAW_STORE_BACKUP_DIR` (exit 2, nothing written): the ops state as `ops_<stamp>.sqlite` (on `ops.sqlite`, through
+SQLite's online backup API; on Redis, a snapshot of every table read by one Lua script, so at one moment (0.31 s for 30,000 issue rows), written into a new ops file
+and compared with it row for row, so it restores with `ops_copy --sqlite <copy>` into an empty namespace: over a
+damaged one, delete its keys first, `redis-cli --scan --pattern '<ns>:*' | xargs -r redis-cli del`, since `--force`
+keeps rows newer than the copy and its check then fails), each serving file
 copied and verified by row count and `sum(hash(row))` per table before its rename, the sha256 of every copy in
 `.manifest.json`, the newest 5 kept per kind. Then the raw files of the last 35 days go to `RC_MARKET_RAW_COPY_DIR`
 (rsync-like) when they total under 20 GB; over that, or with no folder set, a warning and no copy.

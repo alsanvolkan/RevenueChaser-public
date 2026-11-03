@@ -65,8 +65,7 @@ def _daily():
 
 
 def _issues() -> list[tuple]:
-    with ops.connect() as con:
-        return [tuple(r) for r in con.execute("SELECT kind, detail FROM build_issues")]
+    return [(r["kind"], r["detail"]) for r in ops.rows("build_issues")]
 
 
 def _stored() -> int:

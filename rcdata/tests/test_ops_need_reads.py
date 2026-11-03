@@ -5,9 +5,7 @@ from RevenueChaser.rcdata import ops
 
 
 def _log(rows):
-    ops.ensure()
-    with ops.connect() as con:
-        con.executemany("INSERT INTO read_log (day, process, table_name, reads) VALUES (?, ?, ?, ?)", rows)
+    ops.put_rows("read_log", [dict(zip(("day", "process", "table_name", "reads"), r)) for r in rows])
 
 
 def test_need_reads_returns_one_row_per_need_process_and_day_without_the_prefix():

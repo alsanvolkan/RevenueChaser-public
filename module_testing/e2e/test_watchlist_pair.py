@@ -8,12 +8,11 @@ the next options build takes. On a 390 px phone each button is at least 44 x 44.
 from __future__ import annotations
 
 import os
-import sqlite3
-from pathlib import Path
 
 import pytest
 
 from .harness.cdp_browser import Page, find_chrome
+from .harness.shared import ops_rows
 
 PHONE = (390, 844)
 _PAIR = 'button[data-rc-watch="{lst}"][data-ticker="NVDA"]'
@@ -37,12 +36,8 @@ def browser(chrome):
 
 
 def _history(dashboard, kind: str) -> list[tuple]:
-    path = Path(dashboard.env["RC_MARKET_DIR"]) / "ops.sqlite"
-    con = sqlite3.connect(str(path))
-    try:
-        return [tuple(r) for r in con.execute(f"SELECT ticker, action, by FROM watchlist_{kind}_changes ORDER BY id")]
-    finally:
-        con.close()
+    return [(r["ticker"], r["action"], r["by"]) for r in ops_rows(dashboard.env["RC_MARKET_DIR"],
+                                                                    f"watchlist_{kind}_changes")]
 
 
 def _sel(lst: str) -> str:

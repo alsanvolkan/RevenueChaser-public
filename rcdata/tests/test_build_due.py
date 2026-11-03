@@ -37,9 +37,7 @@ def clock(monkeypatch):
 
 
 def _queue() -> list[dict]:
-    with ops.connect() as con:
-        return [dict(r) for r in con.execute("SELECT dataset, requested_by, params, status FROM build_requests "
-                                             "ORDER BY id")]
+    return [{c: r[c] for c in ("dataset", "requested_by", "params", "status")} for r in ops.rows("build_requests")]
 
 
 def _checked(dataset: str, result: str = "changed", *, as_of: str | None = None, checked_on: str | None = None):
@@ -138,17 +136,25 @@ def test_one_dataset_whose_due_check_raises_does_not_stop_the_others(clock, monk
     assert [r["dataset"] for r in _queue()] == [MS]
 
 
-def test_a_locked_ops_file_while_queueing_one_dataset_does_not_stop_the_others(clock, monkeypatch):
+def _busy_errors():
     import sqlite3
+
+    import redis
+    return [sqlite3.OperationalError, redis.ConnectionError, redis.TimeoutError]
+
+
+@pytest.mark.parametrize("busy", _busy_errors())
+def test_a_locked_ops_file_while_queueing_one_dataset_does_not_stop_the_others(busy, clock, monkeypatch):
+    """A locked ops.sqlite, or a Redis that does not answer (Order 3), is the same: that dataset waits."""
     real = ops.enqueue_once
 
     def locked_for_uw(name, params=None, *, by):
         if name == UW:
-            raise sqlite3.OperationalError("database is locked")
+            raise busy("database is locked")
         return real(name, params, by=by)
     monkeypatch.setattr(ops, "enqueue_once", locked_for_uw)
     out = {name: (reason, rid, error) for name, reason, rid, error in due.enqueue_due()}
-    assert out[UW] == ("due (never built), not queued: ops.sqlite busy: database is locked", None, True)
+    assert out[UW] == ("due (never built), not queued: ops store busy: database is locked", None, True)
     assert out[MS][1] is not None and out[MS][2] is False
     assert [r["dataset"] for r in _queue()] == [MS]
 

@@ -37,3 +37,6 @@ openpyxl>=3.1.0
 pillow>=10.0.0
 # IANA time zones: core/calendar.py needs America/New_York (Windows has no system tz database)
 tzdata>=2024.1
+# The ops state's store when RC_REDIS_URL is set (rcdata/ops_redis.py, master plan Order 3). Pinned: the WATCH/MULTI
+# pipeline behaviour the ops transactions rely on is this client's.
+redis==7.0.1

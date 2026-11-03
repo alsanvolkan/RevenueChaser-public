@@ -1,0 +1,32 @@
+# RevenueChaser's containers (master plan, Rule 1 part B). Order 3: Redis only, the ops state's store
+# (rcdata/ops.py with RC_REDIS_URL set). Order 5 adds the door (FastAPI) and the worker at the marked place below.
+#
+#   RC_REDIS_DATA_DIR=/path/to/redis-data docker compose up -d redis
+#
+# RC_REDIS_DATA_DIR is required (no default: the data must land where the host's backups and disk plan expect it).
+# RC_REDIS_PORT defaults to 6379. The port is published on 127.0.0.1 only: nothing off the host reaches it.
+name: revenuechaser
+
+services:
+  redis:
+    image: redis:7.2.6-alpine
+    # AOF on, fsync once a second: a restart or a crash keeps the day caps, the queue and the open issues (at most
+    # the last second). A memory limit with noeviction: at the limit Redis refuses writes (the builder then sees a
+    # busy store) instead of dropping ops rows or growing until the host's OOM killer stops it. The ops state is tens
+    # of MB (25,796 open issues on 3 Nov 2026); RC_REDIS_MAXMEMORY raises the 1 GB default.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec",
+              "--maxmemory", "${RC_REDIS_MAXMEMORY:-1gb}", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:${RC_REDIS_PORT:-6379}:6379"
+    volumes:
+      - "${RC_REDIS_DATA_DIR:?set RC_REDIS_DATA_DIR to the folder that keeps Redis's AOF and snapshot}:/data"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Order 5 (not yet): the door and the worker ──────────────────────────────────────────────────────────────
+  # door:     FastAPI, depends_on: redis (service_healthy), RC_REDIS_URL=redis://redis:6379/0
+  # worker:   the queue worker, depends_on: redis (service_healthy), RC_REDIS_URL=redis://redis:6379/0
