@@ -274,9 +274,12 @@ def _checks_list(dataset: str, check: dict | None, last: dict | None, missed: in
 
 # ── Backfill progress (the Parquet folder listing) ────────────────────────────────────────────────────────────
 
-def _backfill_sessions(now: datetime) -> dict:
+def _backfill_sessions(now: datetime, spx=None) -> dict:
+    """The session walk of a per-session dataset; ``spx`` is its build module (the SPX spot grid by
+    default, the greek grid for ``_backfill_greek_sessions``). Both answer one partition per session."""
     from RevenueChaser.rcdata.build import base
-    from RevenueChaser.rcdata.build import uw_spot_expiry_strike as spx
+    if spx is None:
+        from RevenueChaser.rcdata.build import uw_spot_expiry_strike as spx
     root = spx.partition_path(spx.FIRST_SESSION).parent.parent
     have = set()
     if root.is_dir():
@@ -308,7 +311,13 @@ def _backfill_years(now: datetime) -> dict:
             "resumable": True, "calls_per_partition": None, "from_earliest": None}
 
 
-BACKFILL = {"uw/spot_expiry_strike": _backfill_sessions, "market_series": _backfill_years}
+def _backfill_greek_sessions(now: datetime) -> dict:
+    from RevenueChaser.rcdata.build import uw_greek_expiry_strike as mod
+    return _backfill_sessions(now, mod)
+
+
+BACKFILL = {"uw/spot_expiry_strike": _backfill_sessions, "uw/greek_expiry_strike": _backfill_greek_sessions,
+            "market_series": _backfill_years}
 
 
 # ── The prices store (PR 7, G2) ───────────────────────────────────────────────────────────────────────────────

@@ -8,11 +8,12 @@ The ownership store's datasets (PR 16) are their own block, added after the spin
 """
 from __future__ import annotations
 
-from . import market_series, uw_spot_expiry_strike
+from . import market_series, uw_greek_expiry_strike, uw_spot_expiry_strike
 from .ownership import finra, form4, ftd, ibkr, regsho, sched13dg, sec13f, serve as ownership_serve
 from .spine import av_listing, etf_holdings as spine_etf_holdings, funds, ncen, openfigi_map, sec_tickers, sec_tickers_mf, security, wrds
 
-DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, market_series.DATASET, sec_tickers.DATASET,
+DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, uw_greek_expiry_strike.DATASET,
+                                market_series.DATASET, sec_tickers.DATASET,
                                 sec_tickers_mf.DATASET, wrds.SEC_IDHIST, wrds.CO_HGIC, wrds.IDXCST_HIS, openfigi_map.DATASET, funds.DATASET,
                                 spine_etf_holdings.DATASET, av_listing.DATASET, ncen.DATASET, security.DATASET)}
 # The ownership store (PR 16): its sources, then ``ownership/serve``, which derives from their tables (last).
