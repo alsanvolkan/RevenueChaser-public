@@ -19,7 +19,11 @@ from RevenueChaser.rcdata import ops
 _REPO = Path(__file__).resolve().parents[2]
 
 
-def test_ensure_creates_every_table_in_wal_mode_with_the_busy_timeout():
+def _status(request_id: int) -> str:
+    return next(r["status"] for r in ops.rows("build_requests") if r["id"] == request_id)
+
+
+def test_ensure_creates_every_table_in_wal_mode_with_the_busy_timeout(sqlite_ops):
     ops.ensure()
     with ops.connect() as con:
         assert con.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -30,7 +34,7 @@ def test_ensure_creates_every_table_in_wal_mode_with_the_busy_timeout():
     assert ops.ops_path() == config.MARKET_DIR / "ops.sqlite"
 
 
-def test_a_file_is_marked_ensured_only_after_its_tables_are_committed(monkeypatch, tmp_path):
+def test_a_file_is_marked_ensured_only_after_its_tables_are_committed(sqlite_ops, monkeypatch, tmp_path):
     """CI on PR 251 (28 Oct 2026): ``ensure`` marked the file done inside its own transaction, so a thread that saw
     the mark skipped ``ensure`` and read the file before the COMMIT ("no such table: watchlist_stock")."""
     seen: list[int] = []
@@ -50,7 +54,7 @@ def test_a_file_is_marked_ensured_only_after_its_tables_are_committed(monkeypatc
     assert seen == [1]
 
 
-def test_ensure_is_idempotent_and_refuses_a_newer_schema():
+def test_ensure_is_idempotent_and_refuses_a_newer_schema(sqlite_ops):
     ops.ensure()
     ops.ensure()
     with ops.connect() as con:
@@ -69,9 +73,7 @@ def test_the_queue_is_first_in_first_out_and_marks_what_it_hands_out():
     assert ops.next_request()["id"] == b
     assert ops.next_request() is None
     ops.finish_request(a, "done", note="ok")
-    with ops.connect() as con:
-        rows = dict(con.execute("SELECT id, status FROM build_requests").fetchall())
-    assert rows == {a: "done", b: "running"}
+    assert {r["id"]: r["status"] for r in ops.rows("build_requests")} == {a: "done", b: "running"}
 
 
 def test_next_request_can_be_limited_to_one_dataset():
@@ -97,10 +99,9 @@ def test_record_issue_and_job_runs():
     ops.record_issue("market_series", "parse", "fred:DGS2", "bad row", run_id="r1")
     ops.start_run("r1", "market_series", "cli", {"once": True})
     ops.finish_run("r1", "ok")
-    with ops.connect() as con:
-        issue = con.execute("SELECT dataset, kind, key, detail, run_id, resolved_on FROM build_issues").fetchone()
-        run = con.execute("SELECT dataset, trigger, pid, status, params, finished_at FROM job_runs2").fetchone()
-    assert tuple(issue) == ("market_series", "parse", "fred:DGS2", "bad row", "r1", None)
+    [issue] = ops.rows("build_issues")
+    [run] = ops.rows("job_runs2")
+    assert tuple(issue[c] for c in ("dataset", "kind", "key", "detail", "run_id", "resolved_on")) == ("market_series", "parse", "fred:DGS2", "bad row", "r1", None)
     assert run["status"] == "ok" and run["pid"] == os.getpid() and json.loads(run["params"]) == {"once": True}
     assert run["finished_at"] is not None
 
@@ -116,9 +117,7 @@ def test_calls_today_sums_per_new_york_day(monkeypatch):
     ops.count_calls("uw", 5)
     assert ops.calls_today("uw") == 5
     assert ops.calls_today("fred") == 0
-    with ops.connect() as con:
-        rows = [tuple(r) for r in con.execute("SELECT provider, ny_day, calls, failures, http_429 "
-                                              "FROM provider_calls_daily ORDER BY ny_day")]
+    rows = [tuple(r.values()) for r in ops.rows("provider_calls_daily")]
     assert rows == [("uw", "2026-10-26", 3, 1, 1), ("uw", "2026-10-27", 5, 0, 0)]
 
 
@@ -131,16 +130,14 @@ LIVE_UW_HEADERS = {"x-uw-daily-req-count": "355", "x-uw-req-per-minute-remaining
 def test_sample_uw_headers_reads_the_daily_count_and_computes_what_is_left_under_our_cap():
     from RevenueChaser.rcdata import caps
     ops.sample_uw_headers({**LIVE_UW_HEADERS, "set-cookie": "secret"}, run_id="r1")
-    with ops.connect() as con:
-        row = con.execute("SELECT * FROM uw_remaining").fetchone()
+    [row] = ops.rows("uw_remaining")
     assert row["run_id"] == "r1" and row["daily_req_count"] == 355
     assert row["daily_cap"] == caps.DAY_CAPS["uw"] and row["daily_remaining_computed"] == caps.DAY_CAPS["uw"] - 355
     assert row["per_minute_remaining"] == 1_000_000 and row["per_minute_reset_ms"] == 60_000
     assert row["token_req_limit"] == 100_000_000           # kept as sent, never read as the daily cap
     assert json.loads(row["raw_headers"]) == LIVE_UW_HEADERS
     ops.sample_uw_headers({}, run_id="r2")      # nothing to sample: no row
-    with ops.connect() as con:
-        assert con.execute("SELECT count(*) FROM uw_remaining").fetchone()[0] == 1
+    assert len(ops.rows("uw_remaining")) == 1
 
 
 def test_watch_list_add_and_remove_write_history():
@@ -151,8 +148,7 @@ def test_watch_list_add_and_remove_write_history():
     ops.watch_remove("option", "NVDA", by="avo")
     ops.watch_remove("option", "NVDA", by="avo")         # not there: no history row
     assert ops.watch_list("option") == [] and ops.watch_list("stock") == ["AAPL"]
-    with ops.connect() as con:
-        hist = [tuple(r) for r in con.execute("SELECT ticker, action, by FROM watchlist_option_changes ORDER BY at")]
+    hist = [(r["ticker"], r["action"], r["by"]) for r in ops.rows("watchlist_option_changes")]
     assert hist == [("NVDA", "add", "avo"), ("NVDA", "remove", "avo")]
     with pytest.raises(ValueError):
         ops.watch_add("bond", "X", by="avo")
@@ -174,17 +170,14 @@ def test_read_log_counts_in_memory_and_flushes_once_a_minute():
     log = ops.ReadLog(process="test", clock=lambda: clock[0])
     log.bump("market_series")
     log.bump("market_series")
-    with ops.connect() as con:
-        assert con.execute("SELECT count(*) FROM read_log").fetchone()[0] == 0     # not yet a minute
+    assert ops.rows("read_log") == []                                                # not yet a minute
     clock[0] += 61
     log.bump("spx_gamma_expiry_strike")
-    with ops.connect() as con:
-        rows = dict(con.execute("SELECT table_name, reads FROM read_log WHERE process='test'").fetchall())
+    rows = {r["table_name"]: r["reads"] for r in ops.rows("read_log") if r["process"] == "test"}
     assert rows == {"market_series": 2, "spx_gamma_expiry_strike": 1}
     log.bump("market_series")
     log.flush()
-    with ops.connect() as con:
-        assert con.execute("SELECT reads FROM read_log WHERE table_name='market_series'").fetchone()[0] == 3
+    assert [r["reads"] for r in ops.rows("read_log") if r["table_name"] == "market_series"] == [3]
 
 
 _HOLDER = textwrap.dedent("""
@@ -205,7 +198,7 @@ def _hold_write_lock(seconds: float) -> subprocess.Popen:
     return p
 
 
-def test_a_second_process_can_read_while_another_writes():
+def test_a_second_process_can_read_while_another_writes(sqlite_ops):
     ops.ensure()
     ops.enqueue("before", None, by="cli")
     p = _hold_write_lock(1.5)
@@ -218,7 +211,7 @@ def test_a_second_process_can_read_while_another_writes():
         p.wait(timeout=30)
 
 
-def test_a_writer_waits_for_the_other_process_instead_of_failing():
+def test_a_writer_waits_for_the_other_process_instead_of_failing(sqlite_ops):
     """busy_timeout: a write while another process holds the write lock waits for it, not 'database is locked'."""
     ops.ensure()
     p = _hold_write_lock(1.0)
@@ -237,8 +230,7 @@ def test_next_request_skips_the_datasets_it_was_told_to_leave_alone():
     second = ops.enqueue("market_series", None, by="settings")
     assert ops.next_request(skip=("wrds/sec_idhist",))["id"] == second
     assert ops.next_request(skip=("wrds/sec_idhist",)) is None
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (first,)).fetchone()[0] == "queued"
+    assert _status(first) == "queued"
 
 
 def test_next_request_can_be_limited_to_the_datasets_it_was_given():
@@ -258,8 +250,7 @@ def test_an_only_with_no_name_claims_nothing():
     """A host with no attended dataset must leave every request alone, not take the whole queue."""
     rid = ops.enqueue("market_series", None, by="settings")
     assert ops.next_request(only=()) is None
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (rid,)).fetchone()[0] == "queued"
+    assert _status(rid) == "queued"
 
 
 def test_next_request_and_queued_can_be_limited_to_one_requester():
@@ -270,5 +261,4 @@ def test_next_request_and_queued_can_be_limited_to_one_requester():
     assert ops.next_request("wrds/sec_idhist", by="cli")["id"] == mine
     assert ops.next_request("wrds/sec_idhist", by="cli") is None
     assert ops.queued("wrds/sec_idhist", by="cli") is False
-    with ops.connect() as con:
-        assert con.execute("SELECT status FROM build_requests WHERE id = ?", (theirs,)).fetchone()[0] == "queued"
+    assert _status(theirs) == "queued"

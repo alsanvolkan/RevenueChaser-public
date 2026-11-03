@@ -117,3 +117,17 @@ def clear_cache_dir(cache_dir: Path) -> None:
             shutil.rmtree(child)
         else:
             child.unlink()
+
+
+def ops_rows(market_dir, table: str) -> list[dict]:
+    """``table``'s rows in the ops store of the dashboard whose market root is ``market_dir``: ``ops.sqlite`` there,
+    or its Redis namespace when ``RC_REDIS_URL`` is set (master plan Order 3). The test process reads them as the
+    dashboard writes them, through ``rcdata.ops``; no file is opened by hand."""
+    from RevenueChaser.core import config
+    from RevenueChaser.rcdata import ops
+    mp = pytest.MonkeyPatch()
+    mp.setattr(config, "MARKET_DIR", Path(market_dir))
+    try:
+        return ops.rows(table)
+    finally:
+        mp.undo()

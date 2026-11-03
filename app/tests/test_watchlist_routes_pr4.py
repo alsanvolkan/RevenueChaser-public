@@ -23,8 +23,7 @@ def client():
 
 
 def _history(kind: str) -> list[tuple]:
-    with ops.connect() as con:
-        return [tuple(r) for r in con.execute(f"SELECT ticker, action, by FROM watchlist_{kind}_changes ORDER BY id")]
+    return [(r["ticker"], r["action"], r["by"]) for r in ops.rows(f"watchlist_{kind}_changes")]
 
 
 @pytest.mark.parametrize("kind", ["option", "stock"])

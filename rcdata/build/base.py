@@ -23,7 +23,6 @@ import gzip
 import json
 import logging
 import os
-import sqlite3
 import time
 import uuid
 from collections import deque
@@ -775,7 +774,7 @@ def run_request(req: dict, *, trigger: str = "queue", attended_ok: bool = False,
         status = "killed" if isinstance(e, (KeyboardInterrupt, SystemExit)) else "failed"
         try:
             ops.finish_run(run_id, status, f"{type(e).__name__}: {e}"[:500])
-        except sqlite3.Error:
+        except ops.STORE_ERRORS:
             logger.warning("could not mark run %s %s", run_id, status, exc_info=True)
         raise
     finally:

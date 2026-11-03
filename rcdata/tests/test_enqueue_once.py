@@ -9,8 +9,7 @@ MS, UW = "market_series", "uw/spot_expiry_strike"
 
 
 def _queue() -> list[dict]:
-    with ops.connect() as con:
-        return [dict(r) for r in con.execute("SELECT dataset, status FROM build_requests ORDER BY id")]
+    return [{"dataset": r["dataset"], "status": r["status"]} for r in ops.rows("build_requests")]
 
 
 def test_enqueue_once_queues_a_dataset_only_while_none_is_queued_or_running():

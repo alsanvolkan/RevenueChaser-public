@@ -103,8 +103,7 @@ def test_each_read_is_counted_in_the_read_log(built):
     read.iv_history(["SPX"])
     read.iv_history(["SPX"])
     ops.read_log.flush()
-    with ops.connect() as con:
-        reads = dict(con.execute("SELECT table_name, reads FROM read_log WHERE process = 'test'").fetchall())
+    reads = {r["table_name"]: r["reads"] for r in ops.rows("read_log") if r["process"] == "test"}
     assert reads["option_eod"] == 1 and reads["iv_daily"] == 2
 
 
