@@ -339,10 +339,11 @@ def test_compustat_bars_of_a_permnos_gvkey_join_the_security_its_crsp_bars_won()
                 "('001690:01', 'AAPL', '037833100', false, NULL)")
     con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, datadate DATE, tic TEXT, cusip TEXT, curcdd TEXT, "
                 "prccd DOUBLE, prcod DOUBLE, prchd DOUBLE, prcld DOUBLE, cshtrd DOUBLE, cshoc DOUBLE, ajexdi DOUBLE, "
-                "trfd DOUBLE, source_as_of DATE, fetched_at DOUBLE, run_id TEXT)")
+                "trfd DOUBLE, curcddv TEXT, div DOUBLE, divd DOUBLE, divsp DOUBLE, source_as_of DATE, fetched_at DOUBLE, "
+                "run_id TEXT)")
     for gvkey, tic, cusip in (("001000", "SPY", "78462F103"), ("001690", "AAPL", "037833100")):
         con.execute("INSERT INTO stg_wrds_secd VALUES (?, '01', ?, ?, ?, 'USD', 400, 400, 401, 399, 1, 1, 1, 1, "
-                    "NULL, NULL, NULL)", [gvkey, END, tic, cusip])
+                    "NULL, NULL, NULL, NULL, NULL, NULL, NULL)", [gvkey, END, tic, cusip])
     con.execute(f"CREATE TEMP TABLE _permno_link AS {wrds_history.PERMNO_LINK}")
     con.execute(f"CREATE TEMP TABLE _gvkey_alias AS {wrds_history.GVKEY_ALIAS}")
     got = sorted(con.execute(f"SELECT security_id, symbol FROM ({wrds_history.COMP_BARS})").fetchall())
@@ -363,9 +364,9 @@ def test_compustat_bars_of_a_permnos_gvkey_join_the_security_its_crsp_bars_won()
 def test_compustat_adjusted_return_is_the_true_total_return_within_1bp():
     con = duckdb.connect()
     con.execute("CREATE TABLE s (gvkey TEXT, iid TEXT, datadate DATE, prccd DOUBLE, ajexdi DOUBLE, trfd DOUBLE, "
-                "run_id TEXT)")
+                "run_id TEXT, div DOUBLE, divd DOUBLE, divsp DOUBLE)")
     for d, c, a, t in zip(JUNE, COMP_CLOSE, AJEXDI, TRFD):
-        con.execute("INSERT INTO s VALUES ('001690', '01', ?, ?, ?, ?, 'r1')", [d, c, a, t])
+        con.execute("INSERT INTO s VALUES ('001690', '01', ?, ?, ?, ?, 'r1', NULL, NULL, NULL)", [d, c, a, t])
     got = [r[0] for r in con.execute(f"SELECT {wrds_history.COMP_RETURN} AS r FROM s "
                                      "WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate) ORDER BY datadate").fetchall()]
     # The economic return: the close plus the dividend over the previous close, both in one share basis.
@@ -412,11 +413,9 @@ def test_a_delisted_compustat_security_whose_sessions_crsp_all_wins_keeps_its_sy
     """#363 (homesrv, 2 Nov 2026: the swap refused ``security_symbol`` shrinking 10,436 to 9,856). OLD.A is
     Compustat's alone, delisted, and its PERMNO links by rule 4. CRSP wins both its sessions and carries no symbol
     (a delisted PERMNO's ticker can be another listing's today), so the symbol must come from Compustat's bars that
-    lost, or the security leaves ``security_symbol`` and every bar of it leaves ``price_bars_daily``."""
+    lost, or the security leaves ``security_symbol`` and every bar of it leaves ``price_bars_daily``. Since
+    Compustat is the primary source CRSP no longer wins a session Compustat prices; the case stays as a guard."""
     data = _data()
-    for r in data["comp.secd"]:
-        if r["gvkey"] == "099999":
-            r["trfd"] = None                 # no Compustat return on either day: CRSP's fallback bar serves them
     data["crsp.dsf_v2"] += [{**_crsp_rows()[0], "permno": "50000", "dlycaldt": d, "dlyprc": c, "dlyopen": c,
                              "dlyhigh": c, "dlylow": c, "dlyret": None, "hdrcusip": "68000010", "cusip": "68000010",
                              "ticker": "OLDA"} for d, c in (("2024-03-01", 5.0), ("2024-03-04", 5.1))]
@@ -425,7 +424,7 @@ def test_a_delisted_compustat_security_whose_sessions_crsp_all_wins_keeps_its_sy
     wrds.reset()
     assert _backfill()["result"] == "changed"
     assert {r["source"] for r in _q("SELECT source FROM price_bar_daily WHERE security_id = ?", [OLDCO])} == {
-        wrds_history.CRSP}, "CRSP wins both sessions"
+        wrds_history.COMPUSTAT}, "Compustat wins both sessions"
     assert [r["symbol"] for r in _q("SELECT symbol FROM security_symbol WHERE security_id = ?", [OLDCO])] == ["OLD-A"]
     assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'OLD-A'")[0]["n"] == 2
     wrds.reset()

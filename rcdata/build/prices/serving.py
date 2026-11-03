@@ -338,6 +338,10 @@ class PricesServing:
                                "GROUP BY ALL ORDER BY 1").fetchall()
         if fallback:
             ctx.notes.append("CRSP fallback bars served: " + ", ".join(f"{n} {why}" for why, n in fallback))
+        basis = con.execute(f"SELECT return_basis, count(*) FROM _hist_all WHERE source = '{wrds_history.COMPUSTAT}' "
+                            "GROUP BY ALL ORDER BY 1").fetchall()
+        if basis:
+            ctx.notes.append("Compustat day returns by rule: " + ", ".join(f"{n} {b}" for b, n in basis))
         counts["corporate_action"] = self._actions(con, found)
         counts["adj_factor"] = _create(con, "adj_factor", ADJ_SQL)
         counts["shares_class"] = self._shares(con, found)

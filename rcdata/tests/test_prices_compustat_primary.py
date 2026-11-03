@@ -66,8 +66,10 @@ def test_an_ajexdi_split_is_not_added_where_compustats_split_table_has_it(built)
 def _secd_con(rows):
     con = duckdb.connect()
     con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, datadate DATE, curcdd TEXT, prccd DOUBLE, "
-                "ajexdi DOUBLE, trfd DOUBLE, source_as_of DATE, fetched_at DOUBLE, run_id TEXT)")
-    con.executemany("INSERT INTO stg_wrds_secd VALUES ('001690', '01', ?, 'USD', ?, ?, 1.0, NULL, NULL, ?)", rows)
+                "ajexdi DOUBLE, trfd DOUBLE, div DOUBLE, divd DOUBLE, divsp DOUBLE, source_as_of DATE, "
+                "fetched_at DOUBLE, run_id TEXT)")
+    con.executemany("INSERT INTO stg_wrds_secd VALUES ('001690', '01', ?, 'USD', ?, ?, 1.0, NULL, NULL, NULL, NULL, "
+                    "NULL, ?)", rows)
     con.execute("CREATE TABLE stg_wrds_split (gvkey TEXT, iid TEXT, datadate DATE, split DOUBLE)")
     return con
 
@@ -106,7 +108,10 @@ def test_a_crsp_bar_of_a_day_compustat_does_not_price_is_not_served(monkeypatch)
         "no fallback day, so CRSP's shares size no cap either"
 
 
-def test_a_day_compustat_prices_without_trfd_is_crsps_bar_when_the_cusip_links_it(monkeypatch):
+def test_a_day_compustat_prices_without_trfd_is_compustats_bar_with_a_flagged_price_only_return(monkeypatch):
+    """Coordinator's homesrv measurement (3 Nov 2026, 0 WRDS queries): an empty ``trfd`` almost always means no
+    distribution that day; the price-only return matches CRSP's ``dlyret`` within 0.01 % on 97.69 % of 4,069,937
+    matched days, as the ``trfd`` formula does on its rows. So the day stays Compustat's, CUSIP link or not."""
     data = _data()
     for r in data["comp.secd"]:
         if r["gvkey"] == "001690" and r["datadate"] == JUNE[1]:
@@ -114,13 +119,60 @@ def test_a_day_compustat_prices_without_trfd_is_crsps_bar_when_the_cusip_links_i
     _serve(monkeypatch, data)
     june = _q("SELECT session_date, close, source FROM price_bar_daily WHERE security_id = ? "
               "AND session_date < '2026-01-01' ORDER BY session_date", [AAPL])
-    assert [(str(r["session_date"]), r["source"]) for r in june] == [
-        (JUNE[0], wrds_history.COMPUSTAT), (JUNE[1], wrds_history.CRSP), (JUNE[2], wrds_history.COMPUSTAT),
-        (JUNE[3], wrds_history.COMPUSTAT), (JUNE[4], wrds_history.COMPUSTAT)]
-    assert june[1]["close"] == 202.1
+    assert {r["source"] for r in june} == {wrds_history.COMPUSTAT} and june[1]["close"] == 202.0
 
 
-def test_a_ticker_linked_permno_is_no_fallback_for_an_empty_trfd_day(monkeypatch):
+def _div_con(rows):
+    """``stg_wrds_secd`` rows ``(day, prccd, ajexdi, trfd, divd, divsp)`` of one security, one answer."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE stg_wrds_secd (gvkey TEXT, iid TEXT, datadate DATE, prccd DOUBLE, ajexdi DOUBLE, "
+                "trfd DOUBLE, div DOUBLE, divd DOUBLE, divsp DOUBLE, run_id TEXT)")
+    con.executemany("INSERT INTO stg_wrds_secd VALUES ('001690', '01', ?, ?, ?, ?, NULL, ?, ?, 'r')", rows)
+    return con.execute(f"SELECT {wrds_history.COMP_RETURN}, {wrds_history.COMP_RETURN_BASIS} FROM stg_wrds_secd "
+                       "WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate) ORDER BY datadate").fetchall()
+
+
+def test_the_return_rule_trfd_else_price_plus_the_days_cash_distribution():
+    got = _div_con([("2025-06-02", 100.0, 1.0, 1.0, None, None), ("2025-06-03", 101.0, 1.0, 1.01, None, None),
+                    ("2025-06-04", 100.0, 1.0, None, None, None), ("2025-06-05", 99.0, 1.0, None, 0.5, None),
+                    ("2025-06-06", 49.0, 0.5, None, None, 0.25)])
+    assert got[0] == (None, "trfd")
+    assert got[1][0] == pytest.approx(101.0 * 1.01 / 100.0 - 1) and got[1][1] == "trfd"
+    assert got[2][0] == pytest.approx(100.0 / 101.0 - 1) and got[2][1] == "price_only"
+    assert got[3][0] == pytest.approx((99.0 + 0.5) / 100.0 - 1) and got[3][1] == "price_dividend"
+    assert got[4][0] == pytest.approx((49.0 + 0.25) / 0.5 / 99.0 - 1) and got[4][1] == "price_dividend"
+
+
+def test_the_secd_pull_names_its_dividend_columns():
+    sql = wrds_history.year_sql("secd", 2025)
+    for col in ("div", "divd", "divsp", "divrc", "cheqv", "capgn", "curcddv"):
+        assert f" {col}," in sql or f" {col} " in sql, col
+
+
+def test_compustats_secd_dividend_is_the_action_and_sec_divid_only_its_fallback(monkeypatch):
+    data = _data()
+    for r in data["comp.secd"]:
+        if r["gvkey"] == "001690" and r["datadate"] == JUNE[3]:
+            r["divd"], r["curcddv"] = 1.0, "USD"              # secd carries the 5 Jun dividend; sec_divid does too
+    data["comp.sec_divid"] += [{"gvkey": "001690", "iid": "01", "datadate": JUNE[1], "divd": 0.5, "curcddv": "USD"}]
+    _serve(monkeypatch, data)
+    divs = _q("SELECT ex_date, amount, source_id FROM corporate_action WHERE security_id = ? "
+              "AND action = 'cash_dividend' ORDER BY ex_date", [AAPL])
+    june = [d for d in divs if str(d["ex_date"]) == JUNE[3]]
+    assert [(d["amount"], d["source_id"]) for d in june] == [(1.0, f"wrds:secddiv:001690:01:{JUNE[3]}")]
+    assert [d["source_id"] for d in divs if str(d["ex_date"]) == JUNE[1]] == [f"wrds:div:001690:01:{JUNE[1]}"], \
+        "sec_divid's dividend stays where secd has none that day"
+
+
+def test_a_future_dated_compustat_row_is_never_served(monkeypatch):
+    from .test_prices_wrds import _secd
+    data = _data()
+    data["comp.secd"] += [_secd("001690", "01", "2026-12-15", "AAPL", 300.0)]   # in the asked year, after today
+    _serve(monkeypatch, data)
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE session_date > '2026-11-30'")
+
+
+def test_a_crsp_bar_never_replaces_compustats_on_an_empty_trfd_day(monkeypatch):
     data = _data()
     # GAPX: the spine holds no CUSIP for it, so its PERMNO links by ticker; Compustat holds it under 077777:01.
     data["comp.secd"] += [_secd_row("077777", "2025-06-06", "GAPX", 50.0, "454545459", trfd=None)]
@@ -321,7 +373,13 @@ def test_the_dry_run_prints_the_queries_and_expected_rows_and_asks_nothing(fake,
     assert cli.main(["backfill", "wrds/prices", "--to", "2026-10-27", "--dry-run"]) == 0
     out = capsys.readouterr().out
     assert conn.queries == []
-    assert "comp.secd 2024: asked with an old exchange filter" in out
+    assert "comp.secd 2024: asked with an older query (exchange filter or columns)" in out
     assert "comp.sec_divid 2025: missing" in out
     assert "wrds/prices dry run: 3 queries" in out                 # the columns, then the two partitions
     assert "expected rows" in out
+
+
+def test_a_trfd_day_after_a_day_without_trfd_is_read_without_trfd():
+    """trfd on one side only is no ratio of two factors: the day is read as price (plus its distribution)."""
+    got = _div_con([("2025-06-02", 100.0, 1.0, None, None, None), ("2025-06-03", 101.0, 1.0, 1.5, None, None)])
+    assert got[1][0] == pytest.approx(101.0 / 100.0 - 1) and got[1][1] == "price_only"
