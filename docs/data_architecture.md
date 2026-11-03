@@ -1264,15 +1264,29 @@ only through `rcdata.read`.
 
 | Dataset | Cadence | Source | Stages |
 |---|---|---|---|
-| `alpaca/bars` | daily | Alpaca `/v2/stocks/bars`, `timeframe=1Day`, feed `sip`, `adjustment` `raw` and `all`, 100 symbols a request, the last 5 complete sessions re-read (the `all` window one session earlier) | `stg_alpaca_bars`, `stg_alpaca_bar_revisions` |
+| `alpaca/bars` | daily | **the tester, never served** (2 Nov 2026 master plan, item 3): Alpaca `/v2/stocks/bars`, `timeframe=1Day`, feed `sip`, `adjustment` `raw` and `all`, 100 symbols a request, the last 5 complete sessions re-read (the `all` window one session earlier); the daily run asks only the names `prices.tester` finds at risk (a split or `ajexdi` change, an empty `trfd`, a dividend or spin-off going ex, an open `price_gap_no_action`, an exchange move, a close under $5, over the last 10 days); a named request asks what it names | `stg_alpaca_bars`, `stg_alpaca_bar_revisions` |
 | `alpaca/corporate_actions` | daily | Alpaca `/v1/corporate-actions`, every symbol, processed from 14 days back to 90 days ahead (a cash dividend is processed on its payable date, weeks after it goes ex; an action is applied once its ex-date has a session, one with no ratio or amount is an issue at once) | `stg_alpaca_actions` |
 | `sec/cover_shares` | daily | The SEC daily master index (10-K, 10-Q, 20-F, 40-F and their -T forms of the last 7 days), each filer's submissions file, the filing's inline-XBRL instance: `dei:EntityCommonStockSharesOutstanding` per class member | `stg_sec_cover` |
 | `yfinance/float` | daily | Yahoo `floatShares` (`yfinance` `get_info`), 400 Tier A names a run, 1.5 s apart, stopped by a 401 or 429 | `stg_yahoo_float` |
 | `uw/total_float` | daily | Unusual Whales `/short_screener` `total_float`, every Tier A name (the client's batching) | `stg_uw_float` |
 | `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1983 (its earliest priced day, 1983-12-30) on exchg 11, 12, 14, 17, 21 (the US exchanges and the Arca listings) and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025 (stocks and ETFs, from 1983), `comp.sec_split` whole; no CCM link (`wrds_history.PERMNO_LINK`) | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_revisions` |
-| `prices/serving` | daily | none: builds the served tables from the staging tables | the tables below |
+| `prices/serving` | daily | none: builds the served tables from the staging tables; the history is Compustat's (priority 1), CRSP's only on its fallback days, never Alpaca's | the tables below |
 
-**The universe.** The bars ask the live spine's Tier A and B (`prices.DEFAULT_TIERS`; 5,655 + 2,015 = 7,670 names
+**The one primary source (avo, 3 Nov 2026: the whole history and what follows from Compustat).** A served bar is
+Compustat's `comp.secd` bar, from 1983-12-30 (its earliest priced day, `wrds_history.COMPUSTAT_START`), with its
+splits from `comp.sec_split` and, where that has none, from a change of `ajexdi` within one answer
+(`AJEXDI_SPLITS`); its return is `prccd / ajexdi * trfd` over the previous session's (homesrv: p95 0.000055 % from
+CRSP's `dlyret` on dividend days, against 1.5 % for the price alone). **CRSP is a fallback** (`CRSP_FALLBACK`,
+identifier-linked PERMNOs only, every served CRSP bar is one, `source` `wrds/crsp`): a day Compustat prices without
+`trfd` (CMG has none on any day), and a delisted security's final days after its last priced Compustat day
+(`delisted_final_days`, one function; its window, `DELISTED_WINDOW_DAYS` = 31, waits for the coordinator's
+measurement). CRSP's `dlycumfacpr` steps are splits too (`CRSP_SPLITS`) where no other source has one within 3
+days, so a real split raises no `price_gap_no_action` (Order 4: 1,167 such issues on homesrv, 22 Tier A). **Alpaca
+is the tester**: its bars write `alpaca_close_differs` and `adjustment_differs` issues, compared in every serving
+build, so a session is checked again once Compustat's update brings it.
+
+**The universe.** A request that names tiers or tickers asks those (the daily run asks only the tester's names at
+risk, above). The scope the tester picks from is the live spine's Tier A and B (`prices.DEFAULT_TIERS`; 5,655 + 2,015 = 7,670 names
 on 29 Oct 2026, avo's decision of 30 Oct: the limit is A+B, with no market-cap floor), the benchmarks (SPY, DIA,
 QQQ), the rotation ETFs and the stock watch list. The acceptance "Tier A sessions complete >= 99%" is the bars
 dataset's coverage: Tier A names with a bar on the asked session over the Tier A names asked, against that real
@@ -1311,12 +1325,12 @@ are stored **nominal**; the factors are applied on read.
 
 | Table | Rows |
 |---|---|
-| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Alpaca's, then WRDS's where Alpaca has none (CRSP where it is the same security, else Compustat; only USD rows), and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
-| `corporate_action` | Alpaca's actions of the store's securities (resolved to the security that traded under the action's symbol nearest its date, else the spine's ticker) and Compustat's splits and dividends where Alpaca has none of that kind that day; `ratio` new over old shares, `amount` per share, `applied` and `not_applied_why` |
+| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Compustat's (only USD rows), CRSP's on its fallback days only, never Alpaca's, and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
+| `corporate_action` | Alpaca's actions of the store's securities (resolved to the security that traded under the action's symbol nearest its date, else the spine's ticker) and Compustat's splits (`comp.sec_split`, else an `ajexdi` change) and dividends where Alpaca has none of that kind that day, and CRSP's `dlycumfacpr` splits where no source has a split within 3 days; `ratio` new over old shares, `amount` per share, `applied` and `not_applied_why` |
 | `adj_factor` | per security, the periods between two ex-dates and their `split_factor` (the product of `1 / ratio` of every later split and stock dividend) and `tr_factor` (that, times `1 - amount / close before the ex-date` of every later cash dividend, the close at most 7 days before) |
 | `shares_class` | `outstanding` per class from the SEC covers (an unlisted class keyed `class:<CIK>:<member>`, and so is an ADR issuer's count of ordinary shares), `float` from Yahoo and from UW |
 | `security_symbol` | the symbols a security traded under and when |
-| `market_cap_daily` | close times shares per security and session (the bar's own shares, else a WRDS source's of that session, else the newest cover on or before it moved over the splits between); `issuer_market_cap` sums the issuer's listed classes, each at its newest cap at most 14 days old (a class with no bar that session still counts); the bars' scope asks every listed class a cover names for a Tier A issuer, under `class:<CIK>:<member>` when the spine lacks it (BRK-A) |
+| `market_cap_daily` | close times shares per security and session (the bar's own shares, else a WRDS source's of that session, else the newest cover on or before it moved over the splits between); `issuer_market_cap` sums the issuer's listed classes, each at its newest cap at most 14 days old (a class with no bar that session still counts); a Compustat class the spine lacks (BRK-A) is the issuer's of the spine classes that share its gvkey |
 | `price_revision` | the values a later read replaced: Alpaca's re-read and the monthly WRDS refresh, with `revised_at` and `revised_by` |
 | `crsp_unadjusted` | the view's helper, no dataset's own table: one row per security with a CRSP bar in the history, `unadjusted_before` its first Alpaca session where no Compustat record reaches it (NULL where one does); `price_bars_daily` leaves out its CRSP bars before that day |
 | `wrds_price_diff` | the WRDS difference report, one row per comparison: CRSP against Compustat and each against Alpaca on the closes of the sessions both have, and each WRDS source's own day return (Compustat's `prccd / ajexdi * trfd` over the previous session's, CRSP's `dlyret`) against the store's on consecutive sessions; a difference over 1 bp counts; on the `wrds/prices` Settings card |
@@ -1357,10 +1371,14 @@ missing.
 
 **Attended (WRDS).** `wrds/prices` runs on the spine's WRDS worker (`RC_WRDS_PYTHON`, `WRDS_USERNAME`) from the CLI
 only: `python -m RevenueChaser.rcdata.build backfill wrds/prices`. One query per table and year; a backfill asks the
-two snapshot tables, then the years newest first, skips a year partition that exists with no query, and stops at
+two snapshot tables, then the years newest first, skips a year partition that exists with no query (a `comp.secd`
+year asked with the old exchange filter, 11, 12, 14, is asked again; its old answer is renamed `.superseded`, never
+deleted), and stops at
 the WRDS day cap (50 queries, a working number) serving the years it has: the whole history is about 130 queries,
 so three attended sessions at that cap, or one if avo raises it for that run. The monthly run asks the last two
 years again and keeps every bar value it replaces as a revision. The long history run is Phase 8, after PR 21.
+`backfill wrds/prices --dry-run` prints each query it would ask (why, expected rows), the query count, the days of
+the WRDS cap it takes and the expected rows, with no login. Every query names its columns (no `SELECT *`).
 
 **Reading it.** `rcdata.read.security_ids(tickers)`, `rcdata.read.bars(security_ids, start, end, basis)` (`nominal`,
 `split`: today's share basis, `total_return`: the cash dividends taken out too; each row says its basis and factors),
