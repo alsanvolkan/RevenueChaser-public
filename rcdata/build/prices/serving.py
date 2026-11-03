@@ -3,9 +3,10 @@
 **Tables** (``prices.duckdb``, serving schema version 1), every one keyed on the security id (``prices.security_id``):
 
 - ``price_bar_daily``: one bar per security and New York session, **nominal** (the prices as traded that day):
-  the WRDS history (Alpaca's bars are the tester's, ``prices.tester``, and never served) (``wrds/prices``: Compustat first, priority 1;
-  CRSP only on its fallback days, ``wrds_history.CRSP_FALLBACK``: a day Compustat prices without ``trfd`` and a
-  delisted security's final days, through a CUSIP link of ``wrds_history.PERMNO_LINK``), and the S&P 500 index level from the market store's
+  the WRDS history (Alpaca's bars are the tester's, ``prices.tester``, and never served) (``wrds/prices``: Compustat
+  on every day it prices and lists, priority 1, a day without ``trfd`` too, its return read with ``trfd`` = 1 and
+  the day's dividend flagged; CRSP only on a delisted security's final days, ``wrds_history.CRSP_FALLBACK`` and
+  ``DELIST_BARS``, through an identifier link of ``wrds_history.PERMNO_LINK``), and the S&P 500 index level from the market store's
   Cboe file (``index:SPX``, the close only);
 - ``corporate_action``: Alpaca's actions of the store's securities, resolved to the security that traded under the
   action's symbol nearest its date (else the spine's current ticker), and Compustat's splits and dividends of the

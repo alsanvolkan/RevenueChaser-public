@@ -7,7 +7,8 @@ yapılma olasılığı olanlardan").
 
 - ``split``: ``ajexdi`` changed in Compustat's newest ``comp.secd`` rows, or the served store holds a split or stock
   dividend going ex in the window;
-- ``trfd_empty``: a priced ``comp.secd`` day without ``trfd`` (no Compustat return, CRSP's fallback day);
+- ``trfd_empty``: a priced ``comp.secd`` day without ``trfd`` (its return read with ``trfd`` = 1, a dividend day
+  flagged ``price_dividend``: the days most worth a second source);
 - ``dividend`` / ``spin_off``: a cash dividend or a spin-off going ex in the window (``corporate_action``);
 - ``price_gap``: an open ``price_gap_no_action`` issue of ``prices/serving``;
 - ``exchange_move``: a ``comp.sec_idhist`` EXCHG period starting in the window (``secd.exchg`` is today's code);
