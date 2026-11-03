@@ -35,8 +35,12 @@ on homesrv first (`duckdb.connect(path, read_only=True)` with `RC_STORE_AUTO_ENS
 
 ## Decisions only avo can make
 
-1. **Daily Compustat.** `wrds/prices` is monthly today; with Alpaca no longer served, the newest served session lags
-   up to a month unless its `dataset_schedule` cadence is set to daily (six queries a day).
+avo, 3 Nov 2026 ~11:20 Amsterdam: "1 evet, 2 evet, 3-Alpaca test eşikleri: bunu acikla nerede kullaniyoruz? 4 CRSP
+ver" (the "4" is decision 7 below).
+
+1. **Daily Compustat: decided, yes.** `wrds/prices`'s own cadence is now daily (six queries a day); with Alpaca no
+   longer served the newest served session is Compustat's. A `dataset_schedule` row on homesrv still overrides it:
+   remove one that says monthly.
 2. **Freshness label.** `read.DATASET_OF_TABLE` still names `alpaca/bars` as the source of `price_bar_daily`'s status;
    move it to `wrds/prices` with the cadence change, or keep it.
 3. **The placeholders:** the tester's `RISK_DAYS` (10) and `LOW_PRICE` ($5).

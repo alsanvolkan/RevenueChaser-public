@@ -619,3 +619,12 @@ def test_a_crsp_split_within_split_same_days_of_compustats_is_the_same_split(mon
     _serve(monkeypatch, data)
     kinds = {i["key"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1] if i["kind"] == "split_only_crsp"}
     assert (f"{AAPL}:{JUNE[2]}" in kinds) is crsp_only
+
+
+# ── avo's decisions on docs/compustat_primary_switch.md, 3 Nov 2026 ~11:20 Amsterdam ─────────────────────────────
+# "1 evet, 2 evet, 3-Alpaca test eşikleri: bunu acikla nerede kullaniyoruz? 4 CRSP ver"
+
+def test_decision_1_compustat_is_asked_daily():
+    """With Alpaca no longer served, the newest served session is Compustat's: wrds/prices runs daily (its refresh of
+    the last two years, six queries a day)."""
+    assert wrds_history.DATASET.cadence == "daily"
