@@ -11,8 +11,11 @@ services:
   redis:
     image: redis:7.2.6-alpine
     # AOF on, fsync once a second: a restart or a crash keeps the day caps, the queue and the open issues (at most
-    # the last second). noeviction: a full Redis refuses writes instead of dropping ops rows.
-    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    # the last second). A memory limit with noeviction: at the limit Redis refuses writes (the builder then sees a
+    # busy store) instead of dropping ops rows or growing until the host's OOM killer stops it. The ops state is tens
+    # of MB (25,796 open issues on 3 Nov 2026); RC_REDIS_MAXMEMORY raises the 1 GB default.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec",
+              "--maxmemory", "${RC_REDIS_MAXMEMORY:-1gb}", "--maxmemory-policy", "noeviction"]
     ports:
       - "127.0.0.1:${RC_REDIS_PORT:-6379}:6379"
     volumes:

@@ -1151,7 +1151,9 @@ anyway (PR #222).
 **Backup.** `python -m RevenueChaser.rcdata backup` writes under `<RAW_STORE_BACKUP_DIR>/market/` and refuses an empty
 `RAW_STORE_BACKUP_DIR` (exit 2, nothing written): the ops state as `ops_<stamp>.sqlite` (on `ops.sqlite`, through
 SQLite's online backup API; on Redis, a snapshot of every table read by one Lua script, so at one moment (0.31 s for 30,000 issue rows), written into a new ops file
-and compared with it row for row, so it restores with `ops_copy --sqlite <copy>`), each serving file
+and compared with it row for row, so it restores with `ops_copy --sqlite <copy>` into an empty namespace: over a
+damaged one, delete its keys first, `redis-cli --scan --pattern '<ns>:*' | xargs -r redis-cli del`, since `--force`
+keeps rows newer than the copy and its check then fails), each serving file
 copied and verified by row count and `sum(hash(row))` per table before its rename, the sha256 of every copy in
 `.manifest.json`, the newest 5 kept per kind. Then the raw files of the last 35 days go to `RC_MARKET_RAW_COPY_DIR`
 (rsync-like) when they total under 20 GB; over that, or with no folder set, a warning and no copy.

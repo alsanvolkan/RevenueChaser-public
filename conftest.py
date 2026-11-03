@@ -13,6 +13,7 @@ import os
 import shutil
 import socket
 import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -56,6 +57,11 @@ def _redirect_data_roots() -> None:
     os.environ["RAW_STORE_BACKUP_WEEKLY"] = "1"
     # The WRDS switch is forced off: a server .env with RC_WRDS_UNATTENDED=1 would make the attended tests fail (#344).
     os.environ["RC_WRDS_UNATTENDED"] = ""
+    # The ops store on Redis (master plan Order 3): never the server's named namespace (a .env with
+    # RC_REDIS_NAMESPACE=rc:ops:live would send every test write there), and a prefix of this run's own under the
+    # per-root namespaces, because a green run removes its tmp_paths and the next run reuses the same paths.
+    os.environ["RC_REDIS_NAMESPACE"] = ""
+    os.environ.setdefault("RC_REDIS_ROOT_PREFIX", f"rc:test:{uuid.uuid4().hex[:12]}")
     # rawstore applies the whole schema manifest on a process's first store
     # call (~1 s on a fresh file). Every test gets a fresh DB, so that would add
     # minutes to the suite; tests that need the manifest call

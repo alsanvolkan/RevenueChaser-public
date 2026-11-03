@@ -8,7 +8,6 @@ in this process (the root conftest only blocks *outgoing* connections); the subp
 from __future__ import annotations
 
 import os
-import sqlite3
 import subprocess
 import sys
 import threading
@@ -18,6 +17,8 @@ from pathlib import Path
 
 import duckdb
 import pytest
+
+from RevenueChaser.rcdata import ops
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REPO = Path(__file__).resolve().parents[2]
@@ -69,6 +70,8 @@ def mock_server():
 def cli_env(tmp_path, mock_server):
     base, _ = mock_server
     env = {k: v for k, v in os.environ.items() if not k.startswith(("RC_", "RAW_STORE_BACKUP"))}
+    # Review N5: the CLIs run on the ops store the tier runs on (Redis in CI), in this test's own namespace.
+    env.update({k: v for k, v in os.environ.items() if k.startswith("RC_REDIS_")})
     env.update({
         "RC_STORE_DIR": str(tmp_path / ".store"), "RC_CACHE_DIR": str(tmp_path / ".cache"),
         "RC_EDGAR_DOCS_DIR": str(tmp_path / "edgar_docs"), "RC_STORE_AUTO_ENSURE": "0",
@@ -105,10 +108,9 @@ def test_the_builder_cli_builds_market_series_and_a_second_run_calls_nothing(cli
         assert con.execute("SELECT count(DISTINCT source) FROM market_series").fetchone()[0] == 8
     finally:
         con.close()
-    ops = sqlite3.connect(tmp_path / "market" / "ops.sqlite")
-    assert ops.execute("SELECT result FROM dataset_check").fetchall() == [("changed",)]
-    assert ops.execute("SELECT dataset, status FROM job_runs2").fetchall() == [("market_series", "ok")]
-    ops.close()
+    # The CLI's market root is this test's (rcdata/tests/conftest.py), so ops reads its file or its namespace.
+    assert [r["result"] for r in ops.rows("dataset_check")] == ["changed"]
+    assert [(r["dataset"], r["status"]) for r in ops.rows("job_runs2")] == [("market_series", "ok")]
 
     r = _run(cli_env, *args)
     assert r.returncode == 0, r.stderr[-3000:]
@@ -197,9 +199,7 @@ def test_n2_a_sigterm_mid_run_still_counts_the_calls_sent(cli_env, mock_server, 
     finally:
         if p.poll() is None:
             p.kill()
-    ops = sqlite3.connect(tmp_path / "market" / "ops.sqlite")
-    calls = dict(ops.execute("SELECT provider, calls FROM provider_calls_daily").fetchall())
-    status = ops.execute("SELECT status FROM job_runs2").fetchall()
-    ops.close()
+    calls = {r["provider"]: r["calls"] for r in ops.rows("provider_calls_daily")}
+    status = [(r["status"],) for r in ops.rows("job_runs2")]
     assert calls.get("cboe") == 8 and calls.get("fred") == 13 and calls.get("bls") == 1, calls
     assert status == [("killed",)]

@@ -80,6 +80,8 @@ def _client() -> redis.Redis:
 
 # The server names its namespace (review S2): a moved or remounted market root must not start an empty store.
 NAMESPACE_ENV = "RC_REDIS_NAMESPACE"
+# The base of the per-root namespaces (default ``rc:ops``); a test session sets its own (the root conftest).
+ROOT_PREFIX_ENV = "RC_REDIS_ROOT_PREFIX"
 
 
 def namespace() -> str:
@@ -89,7 +91,8 @@ def namespace() -> str:
     if explicit:
         return explicit
     root = str(Path(config.MARKET_DIR).resolve())
-    return "rc:ops:" + hashlib.sha1(root.encode("utf-8")).hexdigest()[:12]
+    base = os.getenv(ROOT_PREFIX_ENV, "").strip() or "rc:ops"
+    return f"{base}:{hashlib.sha1(root.encode('utf-8')).hexdigest()[:12]}"
 
 
 def _key(*parts: Any) -> str:
@@ -97,7 +100,11 @@ def _key(*parts: Any) -> str:
 
 
 def _pk(table: str, row: dict) -> str:
-    return "|".join(_enc(dict(_spec(table)[0])[c], row[c]) for c in _spec(table)[1])
+    parts = [_enc(dict(_spec(table)[0])[c], row[c]) for c in _spec(table)[1]]
+    if len(parts) > 1 and any("|" in p for p in parts):
+        # Review N2: ("a|b", "c") and ("a", "b|c") would be one key, and a write would merge the two rows.
+        raise ValueError(f"{table}: a key part holds '|', the separator of composite keys: {parts}")
+    return "|".join(parts)
 
 
 def _enc(kind: type, value: Any) -> str:

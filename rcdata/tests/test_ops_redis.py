@@ -238,7 +238,8 @@ def test_the_snapshot_finishes_under_a_steady_writer():
 
 def test_an_explicit_namespace_stays_when_the_market_root_moves(monkeypatch, tmp_path):
     """Review S2: with RC_REDIS_NAMESPACE (the server sets it) a moved or remounted root keeps its day counts."""
-    monkeypatch.setenv(ops_redis_ns_env(), "rc:ops:test-" + tmp_path.name)
+    import uuid
+    monkeypatch.setenv(ops_redis_ns_env(), f"rc:ops:test-{uuid.uuid4().hex}")      # its own, every run
     ops.count_calls("uw", 7)
     monkeypatch.setattr(config, "MARKET_DIR", tmp_path / "moved")
     assert ops.calls_today("uw") == 7
@@ -265,3 +266,10 @@ def test_an_empty_namespace_beside_an_ops_file_with_rows_refuses_to_start(monkey
     assert ops_copy.main([]) == 0                              # the copy is the way in
     ops.count_calls("uw", 1)
     assert ops.calls_today("uw") == 6
+
+
+def test_a_key_part_holding_the_separator_is_refused_not_merged():
+    """Review N2: ("a|b", "c") and ("a", "b|c") would share one hash and their counts would merge silently."""
+    with pytest.raises(ValueError, match=r"\|"):
+        ops.put_rows("read_log", [{"day": "2026-11-02", "process": "a|b", "table_name": "c", "reads": 1}])
+    assert ops.rows("read_log") == []
