@@ -46,7 +46,7 @@ from ... import ops
 from .. import base
 from . import KIND, etf, stage, tier as tier_rule, views
 from .funds import NAME as FUNDS
-from .openfigi_map import NAME as OPENFIGI, PRESENT
+from .openfigi_map import FIGI_BY_CUSIP, FIGI_BY_TICKER, NAME as OPENFIGI, PRESENT
 from .sec_tickers import NAME as SEC
 from .sec_tickers_mf import NAME as SEC_MF
 from .wrds import CO_HGIC, IDXCST_HIS, INDEX_GVKEYX, SEC_IDHIST, norm_cik
@@ -89,6 +89,9 @@ ISSUE_KINDS = {
     "tier_a_no_wrds_link": "a Tier A name whose CIK finds no Compustat security",
     "tier_a_no_cusip": "a Tier A name with a Compustat link but no CUSIP",
     "tier_a_no_figi": "a Tier A CUSIP OpenFIGI has no FIGI for (asked: absent; or not asked yet)",
+    # A Tier A row with no CUSIP is asked by ticker instead (``openfigi_map.wanted_tickers``); it is this kind only
+    # once that answer is absent too.
+    "tier_a_no_figi_by_ticker": "a Tier A name with no CUSIP OpenFIGI has no FIGI for by ticker either",
     "tier_a_no_gics": "a Tier A name with a Compustat link but no current GICS",
     "figi_ticker_differs": "OpenFIGI's ticker for the CUSIP is not the SEC ticker",
     "cusip_shared": "one CUSIP linked to two SEC tickers (key: the CUSIP)",
@@ -339,6 +342,9 @@ class SpineSecurity:
         for r in sec:
             tickers_of_cik[r["cik"]] += 1
         figi = {r["cusip"]: r for r in _rows(con, "SELECT * FROM stg_figi")}
+        # The ticker lane: the answer for a name with no CUSIP, so no ``ID_CUSIP`` job could ever answer for it
+        # (``openfigi_map``, the our-universe plan of 2026-11-04 item 1).
+        figi_by_ticker = {r["asked_ticker"]: r for r in _rows(con, "SELECT * FROM stg_figi_ticker")}
         # The current GICS row of each company only; the periods are written in SQL below (should-fix 5).
         hgic: dict[str, list[dict]] = defaultdict(list)
         for g in _rows(con, "SELECT * FROM stg_wrds_hgic WHERE indthru IS NULL ORDER BY gvkey, indfrom"):
@@ -353,6 +359,11 @@ class SpineSecurity:
             cusip = str(cusip).strip().upper() if cusip else None
             f = figi.get(cusip) if cusip else None
             f_ok = f if f and f.get("status") == PRESENT else None
+            figi_src = FIGI_BY_CUSIP if f_ok else None
+            if not f_ok and not cusip:
+                by_ticker = figi_by_ticker.get(r["ticker"])
+                if by_ticker and by_ticker.get("status") == PRESENT:
+                    f_ok, figi_src = by_ticker, FIGI_BY_TICKER
             # The current GICS row is read before the type, because the SIC 6770 rule uses its sector as the
             # de-SPAC guard (``tier.shell_sector``).
             current = [g for g in hgic.get((sec_row or {}).get("gvkey"), []) if g.get("indthru") is None]
@@ -374,7 +385,7 @@ class SpineSecurity:
                 "share_class_figi": (f_ok or {}).get("share_class_figi"), "exch_code": (f_ok or {}).get("exch_code"),
                 "figi_ticker": (f_ok or {}).get("ticker"),
                 "security_description": (f_ok or {}).get("security_description"),
-                "figi_source": OPENFIGI if f_ok else None,
+                "figi_source": figi_src,
                 "gsector": (g or {}).get("gsector"), "ggroup": (g or {}).get("ggroup"), "gind": (g or {}).get("gind"),
                 "gsubind": (g or {}).get("gsubind"), "gics_from": (g or {}).get("indfrom"),
                 "gics_source": CO_HGIC.name if g else None, "sector": sector, "industry": industry,
@@ -383,7 +394,7 @@ class SpineSecurity:
             rows.append(row)
             if sec_row:
                 linked[(sec_row["gvkey"], sec_row["iid"])] = r["ticker"]
-            found += self._row_issues(row, f, wrds_on, figi_on)
+            found += self._row_issues(row, f, wrds_on, figi_on, figi_by_ticker.get(r["ticker"]))
         by_cusip: dict[str, list[str]] = defaultdict(list)
         for row in rows:
             if row["cusip"]:
@@ -432,7 +443,8 @@ class SpineSecurity:
         return counts
 
     @staticmethod
-    def _row_issues(row: dict, figi_row: dict | None, wrds_on: bool, figi_on: bool) -> list[tuple[str, str, str]]:
+    def _row_issues(row: dict, figi_row: dict | None, wrds_on: bool, figi_on: bool,
+                    ticker_row: dict | None = None) -> list[tuple[str, str, str]]:
         if row["tier"] != "A":
             return []
         t, out = row["ticker"], []
@@ -445,8 +457,12 @@ class SpineSecurity:
         if figi_on and row["cusip"] and not row["figi"]:
             state = (figi_row or {}).get("status") or "not asked yet"
             out.append(("tier_a_no_figi", t, f"CUSIP {row['cusip']}: {state}"))
+        if figi_on and not row["cusip"] and not row["figi"]:
+            state = (ticker_row or {}).get("status") or "not asked yet"
+            out.append(("tier_a_no_figi_by_ticker", t, f"TICKER {t}: {state}"))
         if row["figi_ticker"] and row["figi_ticker"] != t:
-            out.append(("figi_ticker_differs", t, f"OpenFIGI says {row['figi_ticker']} for CUSIP {row['cusip']}"))
+            asked = f"CUSIP {row['cusip']}" if row["cusip"] else f"the ticker {t}"
+            out.append(("figi_ticker_differs", t, f"OpenFIGI says {row['figi_ticker']} for {asked}"))
         return out
 
     @staticmethod

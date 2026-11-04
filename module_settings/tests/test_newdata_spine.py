@@ -52,8 +52,8 @@ def test_the_funnel_counts_the_spine_and_the_issues_come_by_kind():
     funnel = newdata.collect(NOW)["identity"]
     steps = {s["key"]: s for s in funnel["steps"]}
     assert [(s["key"], s["count"]) for s in funnel["steps"]] == [
-        ("sec", 14), ("listed", 12), ("tier_a", 10), ("cusip", 10), ("figi", 9), ("gics", 9), ("index", 7)]
-    assert steps["listed"]["out_of"] == 14 and steps["figi"]["out_of"] == 10
+        ("sec", 15), ("listed", 13), ("tier_a", 11), ("cusip", 10), ("figi", 10), ("gics", 9), ("index", 7)]
+    assert steps["listed"]["out_of"] == 15 and steps["figi"]["out_of"] == 11
     assert {d["key"]: d["count"] for d in funnel["drops"]} == {"otc": 1, "no_exchange": 1, "excluded_type": 2}
     assert funnel["indexes"] == {"sp500": 5, "sp400": 2, "sp600": 0, "ndx": 1}
     kinds = {k["kind"]: k["count"] for k in funnel["issue_kinds"]}
@@ -82,7 +82,7 @@ def test_the_page_shows_the_identity_card_and_no_longer_the_hand_built_one():
     card = html[html.index('id="nd-identity"'):]
     card = card[:card.index("</section>")]
     assert "Identity" in card and "Tier A" in card and "With a CUSIP" in card and "S&amp;P 500" in card
-    assert re.search(r"With a FIGI</span><span class=\"nd-v\">9 of 10", card)
+    assert re.search(r"With a FIGI</span><span class=\"nd-v\">10 of 11", card)
     assert "<script>x" not in html and "&lt;script&gt;x&lt;/script&gt;" in card
     assert 'id="identity-coverage"' not in html and "Identity coverage" not in html
 

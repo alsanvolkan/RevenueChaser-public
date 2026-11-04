@@ -31,7 +31,7 @@ def test_identity_of_named_tickers_any_tier():
     rows = read.identity(["wfc-pc", "MSFT", "NOPE"])
     assert [r["ticker"] for r in rows] == ["MSFT", "WFC-PC"]
     assert rows[0]["cusip"] == "594918104" and rows[1]["tier"] == "B"
-    assert len(read.identity()) == 14
+    assert len(read.identity()) == 15
 
 
 @pytest.mark.usefixtures("built")

@@ -17,6 +17,7 @@ The names and what each one tests:
 | FDX | a fund file writes it with a CUSIP only (matched by CUSIP) |
 | NVR | OpenFIGI has no FIGI for its CUSIP (``tier_a_no_figi``) |
 | WFC-PC | a preferred (the ``-P`` ticker rule): Tier B, no Compustat link |
+| SOLO | a Tier A name Compustat does not know: no link, no CUSIP, so only an OpenFIGI TICKER job can type it |
 | VYLR | a new listing Compustat's snapshot does not hold yet (the new-name query); an old, delisted company that
 left the S&P 500 in 2009 still carries Compustat tic VYLR (a reused ticker: its history must not become VYLR's) |
 
@@ -44,6 +45,7 @@ SEC_FILE = {
         [72971, "WELLS FARGO & COMPANY/MN", "WFC-PC", "NYSE"],
         [2000001, "VYLR HOLDINGS INC", "VYLR", "Nasdaq"],
         [884394, "SPDR S&P 500 ETF TRUST", "SPY", "NYSE"],
+        [3000003, "SOLO NOTES CORP", "SOLO", "Nasdaq"],
         [3000001, "SOME OTC CO", "OTCX", "OTC"],
         [3000002, "NO EXCHANGE CO", "NOEX", None],
     ],
@@ -259,16 +261,28 @@ FIGI = {
 }
 
 
+# OpenFIGI's ``TICKER`` answers, keyed by the symbol the job asks (OpenFIGI's spelling, ``figi_symbol``). Only the
+# names with no CUSIP need one: the spine asks a TICKER job for a Tier A row with no CUSIP and no FIGI.
+TICKER_FIGI = {
+    "SOLO": {"figi": "BBG0SOLO0000", "ticker": "SOLO", "securityType": "Common Stock", "exchCode": "US",
+             "compositeFIGI": "BBG0SOLO0000", "shareClassFIGI": "BBG0SOLO0SC0", "securityType2": "Common Stock",
+             "marketSector": "Equity", "name": "SOLO NOTES CORP"},
+}
+
+
 def figi_answer(request):
     """The mapping endpoint: one entry per job, ``data`` for a known code asked with its own id type, the documented
     warning otherwise. A CINS (a letter first) is found only as ``ID_CINS``: asked as ``ID_CUSIP``, OpenFIGI found
-    none of the 2,092 CINS the first live map held (homesrv, 2026-10-28); here a CUSIP is found only as ``ID_CUSIP``."""
+    none of the 2,092 CINS the first live map held (homesrv, 2026-10-28); here a CUSIP is found only as ``ID_CUSIP``.
+    A ``TICKER`` job is answered from ``TICKER_FIGI``."""
     jobs = json.loads(request.content)
 
-    def found(job) -> bool:
+    def hit(job):
+        if job.get("idType") == "TICKER":
+            return TICKER_FIGI.get(job["idValue"])
         own = "ID_CINS" if job["idValue"][:1].isalpha() else "ID_CUSIP"
-        return job["idValue"] in FIGI and job.get("idType") == own
-    out = [{"data": [FIGI[j["idValue"]]]} if found(j) else {"warning": "No identifier found."} for j in jobs]
+        return FIGI.get(job["idValue"]) if job.get("idType") == own else None
+    out = [{"data": [h]} if (h := hit(j)) else {"warning": "No identifier found."} for j in jobs]
     return 200, json.dumps(out).encode(), {"content-type": "application/json"}
 
 
