@@ -37,7 +37,7 @@ import duckdb
 from ....core import calendar
 from .. import base
 from ..sources import alpaca
-from . import DEFAULT_TIERS, KIND, alpaca_symbol, scope, stage, tester
+from . import KIND, alpaca_symbol, scope, stage, tester, universe
 
 NAME = "alpaca/bars"
 WINDOW = 5
@@ -120,13 +120,14 @@ class AlpacaBars:
         if not calendar.bars_complete(as_of, now.timestamp()):
             raise base.SourceError(f"the session of {as_of} is not complete yet (16:30 New York): not fetched")
         names = scope(want=ctx.scope)
-        # A scope that matches nothing is the request's own doing (a skipped row); the daily run finding no tiered
-        # name at all is a broken spine (a failed one). Not "any tier whatsoever": the benchmarks carry the spine's
-        # own tier, so SPY alone used to pass this and a ``tiers=["D"]`` press spent 70 symbols' calls (review F1).
+        # A scope that matches nothing is the request's own doing (a skipped row); the daily run finding no name
+        # of today's universe at all is a broken spine (a failed one). Not "any name whatsoever": the benchmarks
+        # and the watch list are asked beside the universe, so SPY alone used to pass this and a ``tiers=["D"]``
+        # press spent 70 symbols' calls (review F1).
         if not names:
             raise base.NothingInScope(f"{ctx.scope.text()} matches no name: nothing to ask")
-        if not ctx.scope and not any(n.get("tier") in DEFAULT_TIERS for n in names):
-            raise base.SourceError("the spine holds no name of the asked tiers (spine.duckdb not built?): "
+        if not ctx.scope and not any(universe.in_stock(n) for n in names):
+            raise base.SourceError("the spine holds no stock of today's universe (spine.duckdb not built?): "
                                    "nothing to ask")
         if not ctx.scope:
             names, note = tester.select(names, as_of)

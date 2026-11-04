@@ -97,9 +97,10 @@ def _crsp(permno, day, close, cusip, ticker):
             "dlycumfacpr": 1.0, "dlyorddivamt": 0.0}
 
 
-def test_a_crsp_bar_of_a_day_compustat_does_not_price_is_not_served(monkeypatch):
-    """A security Compustat prices keeps the Compustat-primary rule: a day only CRSP has is not served (AAPL's 9 Jun,
-    its PERMNO still listed); SPY, which Compustat never priced here, keeps its CRSP bar (avo's decision 7)."""
+def test_no_crsp_bar_is_served_whatever_compustat_has(monkeypatch):
+    """avo, 4 Nov 2026: CRSP is the cross-check only. A day only CRSP has is not served (AAPL's 9 Jun), and neither
+    is the whole history of a security Compustat never priced (SPY here) -- decision 7 of the 3 Nov switch plan is
+    replaced. CRSP's shares size no market cap either."""
     data = _data()
     data["crsp.dsf_v2"] += [_crsp("84398", "2025-06-06", 590.0, "78462F10", "SPY"),            # CRSP's alone
                             {**_data()["crsp.dsf_v2"][4], "dlycaldt": "2025-06-09", "dlyprc": 101.0}]   # AAPL
@@ -107,11 +108,8 @@ def test_a_crsp_bar_of_a_day_compustat_does_not_price_is_not_served(monkeypatch)
         if r["gvkey"] == "001690" and r["datadate"] == JUNE[2]:
             r["cshoc"] = None                                 # a Compustat day without shares, trfd present
     _serve(monkeypatch, data)
-    # SPY's row is not on CRSP's newest day (AAPL's 9 Jun), so its PERMNO stays unlinked: still CRSP's alone, served
-    assert [r["security_id"] for r in _q("SELECT security_id FROM price_bar_daily WHERE source = ?",
-                                         [wrds_history.CRSP])] == ["permno:84398"]
-    assert not _q("SELECT 1 FROM market_cap_daily WHERE shares_source = ? AND security_id = ?",
-                  [wrds_history.CRSP, AAPL]), "no fallback day of AAPL, so CRSP's shares size none of its caps"
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE source = ?", [wrds_history.CRSP])
+    assert not _q("SELECT 1 FROM market_cap_daily WHERE shares_source = ?", [wrds_history.CRSP])
 
 
 def test_a_day_compustat_prices_without_trfd_is_compustats_bar_with_a_flagged_price_only_return(monkeypatch):
@@ -198,39 +196,32 @@ def test_a_crsp_bar_never_replaces_compustats_on_an_empty_trfd_day(monkeypatch):
 DELIST = "crsp_a_stock.stkdelists"
 
 
-def test_a_delisted_securitys_crsp_days_up_to_its_delisting_day_are_served(monkeypatch):
-    """OLDCO (Compustat to 4 Mar 2024, linked by CUSIP) trades on CRSP one more day; CRSP's ``stkdelists`` delists it
-    on 6 Mar at 3.0 with a delisting return (coordinator, 3 Nov 2026: CRSP's last day is one trading day after
-    Compustat's in 25 of 30 sampled ended PERMNOs, and that last dsf_v2 row has no price). The days up to the
-    delisting day are CRSP's; the delisting day's bar is ``stkdelists``' price; a later dsf_v2 row is not served. AAPL
-    has no delisting row, so a day Compustat lacks is no fallback."""
+def test_crsps_delisting_table_serves_no_bar_and_a_delisted_name_is_in_no_table(monkeypatch):
+    """avo, 4 Nov 2026: the store holds today's universe, so nothing delisted is in it, and PR 382's "CRSP for
+    delisted names" step is gone. OLDCO (Compustat to 4 Mar 2024, a CUSIP-linked PERMNO, a ``stkdelists`` row with a
+    delisting price and return) gets no bar at all -- not Compustat's, not CRSP's days up to the delisting, not the
+    delisting day's own price. ``stkdelists`` is still fetched (the table is in the WRDS inventory), and nothing in
+    the serving build reads it."""
     data = _data()
     data["crsp.dsf_v2"] += [_crsp("50000", d, c, "68000010", "OLDA")
-                            for d, c in (("2024-03-01", 5.0), ("2024-03-04", 5.1), ("2024-03-05", 4.0),
-                                         ("2024-05-01", 2.0))]                       # the last: after its delisting
+                            for d, c in (("2024-03-01", 5.0), ("2024-03-04", 5.1), ("2024-03-05", 4.0))]
     data["crsp.dsf_v2"] += [{**_crsp("50000", "2024-03-06", None, "68000010", "OLDA"), "dlyret": -0.25}]
     data[DELIST] = [{"permno": "50000", "delistingdt": "2024-03-06", "deldtprc": 3.0, "delret": -0.25}]
-    data["comp.secd"] = [r for r in data["comp.secd"]
-                         if not (r["gvkey"] == "001690" and (r["datadate"] == JUNE[4] or r["datadate"] > "2026"))]
     _serve(monkeypatch, data)
-    old = _q("SELECT session_date, close, source FROM price_bar_daily WHERE security_id = '099999:01' "
-             "ORDER BY session_date")
-    assert [(str(r["session_date"]), r["close"], r["source"]) for r in old] == [
-        ("2024-03-01", 5.0, wrds_history.COMPUSTAT), ("2024-03-04", 5.1, wrds_history.COMPUSTAT),
-        ("2024-03-05", 4.0, wrds_history.CRSP), ("2024-03-06", 3.0, wrds_history.CRSP)]
-    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = ? AND session_date = ?", [AAPL, JUNE[4]])
-    report = {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")}
-    assert report["crsp_delisting_returns"]["sessions"] == 1          # 3.0 / 4.0 - 1 = delret: no difference
-    assert report["crsp_delisting_returns"]["return_differs"] == 0
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = '099999:01'")
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE source = ?", [wrds_history.CRSP])
+    assert "stkdelists" in wrds_history.CRSP_TABLES and wrds_history.TABLES["stkdelists"]["sql"] == \
+        "SELECT permno, delistingdt, deldtprc, delret FROM crsp_a_stock.stkdelists"
 
 
-def test_the_delisted_rule_is_one_function_over_crsps_delisting_table():
-    import inspect
-    assert "TODO" not in inspect.getsource(wrds_history.delisted_final_days)     # the measurement is in
-    assert "_delisted" in wrds_history.delisted_final_days() and "stg_wrds_delist" in wrds_history.DELISTED
-    sql = wrds_history.TABLES["stkdelists"]["sql"]
-    assert sql == "SELECT permno, delistingdt, deldtprc, delret FROM crsp_a_stock.stkdelists"
-    assert "stkdelists" in wrds_history.CRSP_TABLES
+def test_the_difference_report_no_longer_checks_a_delisting_return():
+    """``crsp_delisting_returns`` went with the delisted names: there is no delisting day in the store to check
+    ``delret`` against. The five comparisons that are left are the cross-check CRSP is now for."""
+    assert wrds_history.COMPARISONS == ("crsp_vs_compustat", "compustat_vs_alpaca", "crsp_vs_alpaca",
+                                        "compustat_returns", "crsp_returns")
+    assert not any(hasattr(wrds_history, name) for name in
+                   ("CRSP_FALLBACK", "CRSP_ONLY_DAYS", "DELIST_BARS", "DELISTED", "CRSP_OWN_SPLITS",
+                    "delisted_final_days")), "no CRSP serving rule is left"
 
 
 def _secd_row(gvkey, day, tic, close, cusip, trfd=1.0):
@@ -439,27 +430,6 @@ def test_a_trfd_day_after_a_day_without_trfd_is_read_without_trfd():
     assert got[1][0] == pytest.approx(101.0 / 100.0 - 1) and got[1][1] == "price_only"
 
 
-def _delisted(monkeypatch, dsf_days, delisting):
-    data = _data()
-    data["crsp.dsf_v2"] += [_crsp("50000", d, c, "68000010", "OLDA") for d, c in dsf_days]
-    data[DELIST] = [{"permno": "50000", "delistingdt": delisting[0], "deldtprc": delisting[1], "delret": -0.1}]
-    _serve(monkeypatch, data)
-    return (_q("SELECT session_date, close, source FROM price_bar_daily WHERE security_id = '099999:01' "
-               "ORDER BY session_date"), {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")})
-
-
-def test_a_delisting_on_compustats_last_day_keeps_compustats_bar_and_checks_delret(monkeypatch):
-    bars_, report = _delisted(monkeypatch, [("2024-03-01", 5.0), ("2024-03-04", 5.1)], ("2024-03-04", 4.59))
-    assert {r["source"] for r in bars_} == {wrds_history.COMPUSTAT}
-    assert report["crsp_delisting_returns"]["sessions"] == 1
-    assert report["crsp_delisting_returns"]["return_differs"] == 1, "Compustat's 5.1/5.0 is not delret's -10 %"
-
-
-def test_a_priced_dsf_row_on_the_delisting_day_is_that_days_bar(monkeypatch):
-    bars_, _ = _delisted(monkeypatch, [("2024-03-04", 5.1), ("2024-03-05", 3.5)], ("2024-03-05", 3.0))
-    assert [(str(r["session_date"]), r["close"]) for r in bars_][-1] == ("2024-03-05", 3.5)
-
-
 # ── Step 10: a day is listed by the exchange it had that day (comp.sec_idhist), not by today's code ───────────
 # homesrv, 3 Nov 2026 (read-only): secd.exchg is the security's current code (0 of 18,024 securities carry two), so a
 # name that moved to OTC lost all its listed years. avo, 3 Nov ~09:50 Amsterdam: "Evet kurali uygula".
@@ -540,9 +510,18 @@ def test_a_security_on_otc_today_keeps_the_bars_of_its_listed_days(monkeypatch):
     from RevenueChaser.rcdata.build.prices import stage
     from RevenueChaser.rcdata.build.spine import wrds as spine_wrds
     from .test_prices_wrds import _secd
+    from RevenueChaser.rcdata import serving as rc_serving
+
+    from .prices_fixture import SPINE, write_spine
     data = _data()
     data["comp.secd"] += [_secd("055555", "01", d, "WENT", 3.0, exchg=19, cusip="55555X109")
                           for d in ("2024-03-01", "2024-03-04", "2024-03-05")]
+    # The store keeps today's universe (``prices.universe``), so the name needs a spine row to have any bar at all;
+    # the rule under test is which of its days count as listed.
+    rc_serving.live_path("spine").unlink()                 # the autouse fixture wrote the plain spine
+    write_spine(SPINE + [{"ticker": "WENT", "cik": "4000009", "name": "WENT TO OTC INC", "exchange": "Nasdaq",
+                          "tier": "A", "security_type": "common", "gvkey": "055555", "iid": "01",
+                          "composite_figi": None, "cusip": "55555X109"}])
     stage.write_rows([{"gvkey": "055555", "iid": "01", "item": "EXCHG", "itemvalue": "11", "efffrom": date(1998, 1, 2),
                        "effthru": date(2024, 3, 4), "source_as_of": date(2026, 10, 27), "fetched_at": 1.0,
                        "run_id": "s"},

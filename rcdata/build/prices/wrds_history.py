@@ -53,17 +53,17 @@ second Duo): a Compustat table the login cannot read, or a column a query names 
 ``exchg`` among them), fails the run before any data is asked; a CRSP table missing from it, or a CRSP column it
 lacks, is skipped as above.
 
-**Served** by ``prices/serving``: the bars (``COMP_BARS``, ``CRSP_BARS``; Compustat first, priority 1), the actions (``ACTIONS_SQL``; an Alpaca action of the same kind and day
+**Served** by ``prices/serving``: the bars (``COMP_BARS`` only -- a ``CRSP_BARS`` row is staged for the cross-check
+and never served, avo 4 Nov 2026), the actions (``ACTIONS_SQL``; an Alpaca action of the same kind and day
 winning), the revisions, and the difference report ``wrds_price_diff`` (``COMPARISONS``). Compustat's own adjusted
 return is ``COMP_RETURN``: ``prccd / ajexdi * trfd`` over the previous session's; its splits are ``comp.sec_split``'s
 and, where that has none, a change of ``ajexdi`` (``AJEXDI_SPLITS``).
 
-**Adjustment.** A served bar is nominal, CRSP's (``abs(dlyprc)``: a negative price is CRSP's bid/ask midpoint) as
-Alpaca's raw bar, and the factors are applied on read from ``corporate_action``. Before Alpaca's action window the
-only actions are Compustat's, keyed ``gvkey:iid`` or a security's ``GVKEY_ALIAS`` (an ETF the spine names by FIGI
-whose CUSIP Compustat holds). A security no Compustat record reaches has no split or dividend applied to its CRSP
-history, so ``prices/serving`` keeps those bars out of the adjusted view (``crsp_unadjusted``). ``dlycumfacpr`` and
-``dlyorddivamt`` are stored for that.
+**Adjustment.** A served bar is nominal and the factors are applied on read from ``corporate_action``. Before
+Alpaca's action window the only actions are Compustat's, keyed ``gvkey:iid`` or a security's ``GVKEY_ALIAS`` (an ETF
+the spine names by FIGI whose CUSIP Compustat holds). A CRSP close is read ``abs(dlyprc)`` (a negative price is
+CRSP's bid/ask midpoint) for the difference report; ``dlycumfacpr`` is the split cross-check and ``dlyorddivamt``
+the dividend behind ``dlyret``.
 """
 from __future__ import annotations
 
@@ -200,10 +200,9 @@ COMP_RETURN = (f"CASE WHEN lag(run_id) OVER w = run_id THEN CASE WHEN {_TRFD_BOT
 COMP_RETURN_BASIS = (f"CASE WHEN lag(run_id) OVER w = run_id THEN CASE WHEN {_TRFD_BOTH} THEN 'trfd' "
                      f"WHEN {COMP_DIV} > 0 THEN 'price_dividend' ELSE 'price_only' END END")
 
-# The rows of the difference report (``wrds_price_diff``), one per comparison and build.
-# ``crsp_delisting_returns``: the store's return on each served delisting day against ``stkdelists``' ``delret``.
-COMPARISONS = ("crsp_vs_compustat", "compustat_vs_alpaca", "crsp_vs_alpaca", "compustat_returns", "crsp_returns",
-               "crsp_delisting_returns")
+# The rows of the difference report (``wrds_price_diff``), one per comparison and build. ``crsp_delisting_returns``
+# went with the delisted names (avo, 4 Nov 2026): the store holds no delisting day to check ``delret`` against.
+COMPARISONS = ("crsp_vs_compustat", "compustat_vs_alpaca", "crsp_vs_alpaca", "compustat_returns", "crsp_returns")
 
 
 def years(table: str, as_of: date, first: int | None = None) -> list[int]:
@@ -623,79 +622,16 @@ PERMNO_LINK = """
     SELECT permno, security_id, how FROM best
     QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY rule, last DESC, permno) = 1"""
 
-# ── CRSP, the narrow fallback (master plan of 2 Nov 2026, item 2) ─────────────────────────────────────────────
-# A CRSP bar is served only on a day of ``CRSP_FALLBACK``; every other CRSP row stays in ``_hist_all`` for the
-# difference report and is never a served bar. The served CRSP bars are exactly the fallback rows (``source`` =
-# ``wrds/crsp``; the build note counts them per reason). A delisted name's final days count only for a PERMNO linked
-# by an identifier (rules ``hdrcusip``, ``cusip``, ``compustat`` of ``PERMNO_LINK``), never by ticker alone; a
-# security Compustat never priced keeps every CRSP day, linked or not (``CRSP_ONLY_DAYS``). CRSP also stays the
-# cross-check of every Compustat bar (``wrds_price_diff``).
+# ── CRSP, the cross-check only (avo, 4 Nov 2026) ───────────────────────────────────────
+# **No CRSP row is ever served.** avo, 4 Nov 2026 (PR 382): the store holds today's universe only
+# (``prices.universe``), so nothing delisted is in it, and the earlier narrow fallback -- a delisted security's final
+# days, its ``stkdelists`` delisting bar, and the whole history of a security Compustat never priced -- has no name
+# left to serve. CRSP stays what the switch plan calls the cross-check: every CRSP bar is in ``_hist_all`` for
+# ``wrds_price_diff`` (``COMPARISONS``), and ``CRSP_SPLITS`` is the cross-check of Compustat's splits
+# (``serving``'s ``split_only_crsp`` issue). Compustat is the one source of a served bar.
+# A PERMNO linked by ticker alone is still named as an issue (``serving._link_note``), because a ticker link decides
+# which security a difference is reported against.
 LINKED_BY_ID = "l.how <> 'ticker'"
-# The Compustat security of a ``comp.secd`` row, as ``COMP_BARS`` keys it.
-_COMP_ID = ("coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = s.gvkey || ':' || s.iid), "
-            "s.gvkey || ':' || s.iid)")
-# A delisted security: an identifier-linked PERMNO with a ``stkdelists`` row whose delisting day is on or after its
-# security's last priced ``comp.secd`` day (on it in 5 of the 30 sampled: Compustat's bar serves that day, and its
-# ``delret`` is still checked).
-# ``serving`` makes it the temp table ``_delisted`` after ``_gvkey_alias``.
-DELISTED = f"""
-    SELECT x.permno, l.security_id, x.delistingdt, x.deldtprc, x.delret, c.last AS comp_last
-    FROM stg_wrds_delist x JOIN _permno_link l USING (permno)
-    -- the last priced day per gvkey:iid first (a hash aggregate), then the alias: not a lookup per secd row
-    JOIN (SELECT coalesce(a.security_id, g.gid) AS security_id, max(g.last) AS last
-          FROM (SELECT gvkey || ':' || iid AS gid, max(datadate) AS last FROM stg_wrds_secd WHERE prccd > 0
-                GROUP BY gvkey, iid) g LEFT JOIN _gvkey_alias a ON a.gid = g.gid GROUP BY 1) c
-        ON c.security_id = l.security_id
-    WHERE {LINKED_BY_ID} AND x.delistingdt >= c.last"""
-
-
-def delisted_final_days() -> str:
-    """The CRSP days of a delisted security that Compustat does not price: ``(permno, session_date, why)``.
-
-    The coordinator's measurement (homesrv, 3 Nov 2026; 30 random of 4,422 CUSIP-matched ended PERMNOs): CRSP's last
-    day is one trading day after Compustat's last in 25 of 30 (the same day in 5), and that last dsf_v2 row has no
-    price but a return Compustat cannot give (30 of 30). CRSP's ``stkdelists`` names the delisting day, its price
-    and its return (``delret``), so the final days are the dsf_v2 days after Compustat's last priced day up to the
-    delisting day, and the delisting day's own bar is ``DELIST_BARS``' where dsf_v2 has no price that day. A security
-    Compustat never priced has no final days here: its whole history is CRSP's (``CRSP_ONLY_DAYS``), and it takes no
-    ``stkdelists`` delisting bar and no ``delret`` check (``_delisted`` hangs on a last Compustat day)."""
-    return f"""
-    SELECT d.permno, d.dlycaldt AS session_date, 'delisted' AS why
-    FROM stg_wrds_dsf d JOIN _delisted x USING (permno)
-    WHERE d.dlycaldt > x.comp_last AND d.dlycaldt <= x.delistingdt"""
-
-
-# The delisting day's bar from ``stkdelists`` (close ``abs(deldtprc)``), priority 3: it serves the day only where
-# neither Compustat (1) nor a priced dsf_v2 row (2) has one; ``serving`` adds it to ``_hist_all`` as a CRSP fallback
-# row. One with no delisting price has no bar. ``delret`` is checked against the store's return of the delisting day
-# (``wrds_price_diff``'s ``crsp_delisting_returns``), whichever source served that day.
-# shortcut: the store has no return column, so ``delret`` is a cross-check, not a served value; a served return column
-# is a schema change and its own PR.
-DELIST_BARS = f"""
-    SELECT x.security_id, x.delistingdt AS session_date, CAST(NULL AS TEXT) AS symbol, CAST(NULL AS TEXT) AS cik,
-           CAST(NULL AS DOUBLE) AS open, CAST(NULL AS DOUBLE) AS high, CAST(NULL AS DOUBLE) AS low,
-           abs(x.deldtprc) AS close, CAST(NULL AS DOUBLE) AS volume, CAST(NULL AS DOUBLE) AS vwap,
-           CAST(NULL AS BIGINT) AS trade_count, CAST(NULL AS DOUBLE) AS shares_outstanding, '{CRSP}' AS source,
-           d.source_as_of, d.fetched_at, d.run_id, x.delret AS own_return, 'delret' AS return_basis, 3 AS priority,
-           'delisting_day' AS fallback
-    FROM _delisted x JOIN stg_wrds_delist d ON d.permno = x.permno AND d.delistingdt = x.delistingdt
-    WHERE x.deldtprc IS NOT NULL AND x.deldtprc <> 0"""
-
-
-# The CRSP days served (``serving`` makes it the temp table ``_crsp_fallback`` after ``_gvkey_alias``): a delisted
-# security's final days (``delisted_final_days``) only, and its delisting day's bar (``DELIST_BARS``). A day Compustat prices without ``trfd`` is Compustat's
-# (``COMP_RETURN``): the coordinator's measurement of 3 Nov 2026 dropped the "empty trfd -> CRSP dlyret" step.
-# avo's decision 7 on the switch plan (3 Nov 2026 ~11:20 Amsterdam, "4 CRSP ver"): a security Compustat never priced
-# (no priced comp.secd row under its id or alias; homesrv: 11,173 of the 18,947 ids CRSP served) keeps its CRSP
-# bars, every day of them, linked or not. A security with any Compustat series keeps the Compustat-primary rule.
-CRSP_ONLY_DAYS = """
-    SELECT d.permno, d.dlycaldt AS session_date, 'crsp_only' AS why
-    FROM stg_wrds_dsf d LEFT JOIN _permno_link l USING (permno)
-    WHERE coalesce(l.security_id, 'permno:' || d.permno) NOT IN (
-        SELECT coalesce(a.security_id, g.gid)
-        FROM (SELECT DISTINCT gvkey || ':' || iid AS gid FROM stg_wrds_secd WHERE prccd > 0) g
-        LEFT JOIN _gvkey_alias a ON a.gid = g.gid)"""
-CRSP_FALLBACK = f"{delisted_final_days()} UNION ALL {CRSP_ONLY_DAYS}"
 
 # The splits CRSP's cumulative price factor carries (Order 4 of the 2 Nov 2026 master plan: on homesrv 1,167 open
 # ``price_gap_no_action`` issues sat on a split ``dlycumfacpr`` records and ``corporate_action`` lacked, 22 of them
@@ -707,8 +643,8 @@ CRSP_FALLBACK = f"{delisted_final_days()} UNION ALL {CRSP_ONLY_DAYS}"
 # it explains is not a ``price_gap_no_action``. In ``_act``'s shape (``serving`` reads it after ``_permno_link``).
 # The direction is checked on WRDS (homesrv, 3 Nov 2026): AAPL's dlycumfacpr is 4.0 on 2020-08-28 and 1.0 on
 # 2020-08-31, as its ajexdi.
-# Every CRSP split, keyed on its PERMNO's security (``permno:<PERMNO>`` unlinked); ``CRSP_SPLITS`` is the
-# identifier-linked cross-check, ``CRSP_OWN_SPLITS`` the applied splits of a security Compustat never priced.
+# Every CRSP split, keyed on its PERMNO's security (``permno:<PERMNO>`` unlinked); ``CRSP_SPLITS``, the
+# identifier-linked ones, is the cross-check, and no CRSP split is ever applied.
 _CRSP_SPLIT_ROWS = f"""
     SELECT coalesce(l.security_id, 'permno:' || x.permno) AS security_id, 'wrds:crspsplit:' || x.permno || ':' || CAST(x.dlycaldt AS TEXT) AS action_id,
            CASE WHEN ratio < 1 THEN 'reverse_split' ELSE 'forward_split' END AS action_type, x.dlycaldt AS ex_date,
@@ -724,9 +660,6 @@ _CRSP_SPLIT_ROWS = f"""
     LEFT JOIN _permno_link l USING (permno)
     WHERE x.prev_run = x.run_id AND abs(ln(ratio)) > 1e-6"""
 CRSP_SPLITS = f"{_CRSP_SPLIT_ROWS} AND {LINKED_BY_ID}"
-# avo's decision 7 (3 Nov 2026 ~11:20 Amsterdam, "4 CRSP ver"): a security CRSP serves alone has no Compustat split,
-# so CRSP's own are its splits (``serving`` applies them for its ``crsp_only`` securities).
-CRSP_OWN_SPLITS = _CRSP_SPLIT_ROWS
 
 # Compustat's ``gvkey:iid`` of a PERMNO whose own link is a security the spine names otherwise (``figi:``, ``cik:``,
 # ``sym:``: the ETFs), when the PERMNO's CUSIP matches it and the spine holds no such ``gvkey:iid``. Its Compustat bars,
@@ -743,26 +676,30 @@ GVKEY_ALIAS = """
 
 # Every history bar of both sources (``PRICE_BAR``'s columns, then the source's own day return and the serving
 # priority): ``prices/serving`` serves one per session (Compustat first, priority 1) and compares them all.
+# The Compustat security of a ``comp.secd`` row, as ``COMP_BARS`` keys it (the alias when a fund's gvkey is one).
+_COMP_BAR_ID = ("coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = gvkey || ':' || iid), "
+                "gvkey || ':' || iid)")
 CRSP_BARS = f"""
     SELECT coalesce(l.security_id, 'permno:' || d.permno) AS security_id, dlycaldt AS session_date,
            CAST(NULL AS TEXT) AS symbol, CAST(NULL AS TEXT) AS cik, dlyopen AS open, dlyhigh AS high, dlylow AS low,
            abs(dlyprc) AS close, dlyvol AS volume, CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count,
            shrout * {CRSP_SHARES_UNIT} AS shares_outstanding, '{CRSP}' AS source, source_as_of, fetched_at, run_id,
-           dlyret AS own_return, 'dlyret' AS return_basis, 2 AS priority, f.why AS fallback
+           dlyret AS own_return, 'dlyret' AS return_basis, 2 AS priority
     FROM stg_wrds_dsf d LEFT JOIN _permno_link l USING (permno)
-    LEFT JOIN _crsp_fallback f ON f.permno = d.permno AND f.session_date = d.dlycaldt
-    WHERE dlyprc IS NOT NULL AND dlyprc <> 0"""
+    WHERE dlyprc IS NOT NULL AND dlyprc <> 0
+      AND coalesce(l.security_id, 'permno:' || d.permno) IN (SELECT security_id FROM _universe)"""
 COMP_BARS = f"""
     SELECT coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = gvkey || ':' || iid), gvkey || ':' || iid)
                AS security_id, datadate AS session_date, replace(upper(tic), '.', '-') AS symbol,
            CAST(NULL AS TEXT) AS cik, prcod AS open, prchd AS high, prcld AS low, prccd AS close, cshtrd AS volume,
            CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count, cshoc AS shares_outstanding,
            '{COMPUSTAT}' AS source, source_as_of, fetched_at, run_id, {COMP_RETURN} AS own_return,
-           {COMP_RETURN_BASIS} AS return_basis, 1 AS priority, CAST(NULL AS TEXT) AS fallback
+           {COMP_RETURN_BASIS} AS return_basis, 1 AS priority
     -- secd holds rows of events to come (to 2027): a bar is a priced day up to the build's date only (``serving`` sets
     -- ``rc_build_date``; unset, as in a test of this SQL alone, nothing is cut).
     FROM _secd_listed WHERE listed AND coalesce(upper(curcdd), 'USD') = 'USD' AND prccd > 0
       AND datadate <= coalesce(getvariable('rc_build_date'), DATE '9999-12-31')
+      AND {_COMP_BAR_ID} IN (SELECT security_id FROM _universe)
     WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate)"""
 
 # Each ``comp.secd`` row with ``listed``: whether the security was on one of ``COMPUSTAT_EXCHG`` that day

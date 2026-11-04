@@ -9,17 +9,18 @@ on homesrv first (`duckdb.connect(path, read_only=True)` with `RC_STORE_AUTO_ENS
 
 | Board number | Before | After | Check before the switch |
 |---|---|---|---|
-| Served bars, source mix (`price_bar_daily.source`) | Alpaca on its sessions, CRSP 1993-2025 where linked, else Compustat | Compustat on every day it prices (an empty `trfd` too); CRSP only on a delisted name's final days (`stkdelists`); no Alpaca row | `wrds_price_diff` row `crsp_vs_compustat`: its `close_differs` is the number of sessions whose close changes |
+| Served bars, source mix (`price_bar_daily.source`) | Alpaca on its sessions, CRSP 1993-2025 where linked, else Compustat | Compustat on every day it prices (an empty `trfd` too), and nothing else: no CRSP row and no Alpaca row (avo, 4 Nov 2026) | `wrds_price_diff` row `crsp_vs_compustat`: its `close_differs` is the number of sessions whose close changes |
 | History span | 1993-01-29 onwards | 1983-12-30 onwards (*homesrv*: Compustat's earliest priced day), plus the Arca listings (exchg 17, 21) | `backfill wrds/prices --dry-run`: queries and expected rows |
 | Newest served session | Alpaca's (yesterday) | Compustat's newest `datadate` (*homesrv*: 2026-10-30 on 3 Nov) | `max(datadate)` of the newest `secd` partition |
 | `tier_a_no_bar` | against Alpaca's newest session | against the newest served session | the count of Tier A names without a Compustat row on that day |
-| Securities only CRSP holds (`permno:`, FIGI or CIK names Compustat does not price) | served from CRSP | still served from CRSP, with CRSP's own splits (decision 7: *homesrv*, 11,173 of the 18,947 security ids served from `wrds/crsp` today have no Compustat series) | `SELECT count(DISTINCT security_id) FROM price_bar_daily WHERE source = 'wrds/crsp'` today |
+| Securities only CRSP holds (`permno:`, FIGI or CIK names Compustat does not price) | served from CRSP | **no bar at all** (avo, 4 Nov 2026, replacing decision 7): CRSP is the cross-check only; *homesrv*, 11,173 of the 18,947 security ids served from `wrds/crsp` today have no Compustat series, and those outside today's universe leave the store besides | `SELECT count(DISTINCT security_id) FROM price_bar_daily WHERE source = 'wrds/crsp'` today |
+| What is stored at all | every security a source holds, 18,947 ids from CRSP alone | today's universe only (`rcdata/build/prices/universe.py`: the spine's `my_universe` list, else the Tier A operating types and the ETFs over 100M AUM; 5,292 + 2,071 on 4 Nov 2026), the benchmarks, rotation ETFs, watch list and the cover classes beside it; **nothing delisted** | the build note `universe: ...`, and `count(DISTINCT security_id)` of `price_bar_daily` before and after |
 | Universe with a Compustat bar (*homesrv*, priced `comp.secd` row in the last 20 sessions) | — | Tier A 5,454 of 5,655 (96.45 %; 9 history only, 192 with no gvkey/iid/CUSIP link); Tier B 1,532 of 2,015 (76.03 %; 1 history only, 482 unlinked: 205 ETPs, 157 SPACs, 70 warrants, 37 preferreds, 13 units); 9 linked names priced only on exchg 17/19/21 | `tier_a_no_bar` after the first build |
 | `market_cap_daily.shares_source` | CRSP `shrout` 1993-2025, covers on Alpaca days | Compustat `cshoc` on most days | `shares_source` counts by year |
 | `adj_factor` rows, adjusted closes | splits from Alpaca and `comp.sec_split`, dividends from `comp.sec_divid` | plus `ajexdi` changes; dividends from the `secd` row first | count of securities with a new split or dividend row |
 | `price_gap_no_action` | 1,167 open on real splits (*homesrv*, 22 Tier A) | most resolved by the `ajexdi` splits on the next build (`ops.sync_issues`); one only CRSP explains becomes `split_only_crsp`; none deleted in code | the open count of both kinds after the first build |
 | Compustat return rule (build note, `wrds_price_diff` `compustat_returns`) | `prccd/ajexdi*trfd`, none without `trfd` | the same, else price plus the day's distribution, each flagged (*homesrv*: `trfd` empty on 26.88 % of 2010-2025 rows) | the note's `Compustat day returns by rule` counts |
-| Delisting days (`wrds_price_diff` `crsp_delisting_returns`) | CRSP's priceless last row dropped | `stkdelists`' delisting day served where nothing else prices it; `delret` checked | the new row's `return_differs` |
+| Delisting days (`wrds_price_diff` `crsp_delisting_returns`) | CRSP's priceless last row dropped | the comparison is gone with the delisted names: there is no delisting day in the store to check `delret` against (`crsp_a_stock.stkdelists` is still fetched, nothing reads it) | `wrds_price_diff` holds five comparisons, not six |
 | `alpaca_close_differs` (new), `adjustment_differs` | the latter on Alpaca-served bars | both on the tester's names only | the first build's counts |
 | `alpaca/bars` coverage (the 99 % Tier A acceptance) | over 7,670 names | over the at-risk names the tester picked | the run note `Alpaca tester: N of M names at risk (...)` |
 | Alpaca's own corporate actions | resolved for every name with an Alpaca bar | resolved only for the tester's names, where they still win a Compustat action of the same kind and day (on purpose: Alpaca's reach 90 days ahead of Compustat's refresh); Compustat's cover the rest | — |
@@ -74,10 +75,9 @@ ver" (the "4" is decision 7 below).
    587,399 / 257,131.
 6. **The link** stays the 8-character `hdrcusip`/`cusip`/`ticker` rule (`PERMNO_LINK`); the dated
    `stksecurityinfohist.cusip9` link is the next PR.
-7. **The CRSP-only securities: decided, CRSP serves them** (avo's "4 CRSP ver"). A security with no priced
-   Compustat row under its id or alias keeps every CRSP bar (`wrds_history.CRSP_ONLY_DAYS`, the `crsp_only`
-   fallback), linked or not, and CRSP's own `dlycumfacpr` splits are its applied splits (`CRSP_OWN_SPLITS`). A
-   security with any Compustat series keeps the Compustat-primary rule. A FIGI, CIK or symbol id among them stays out
-   of the adjusted view, as before this PR (review S1 of #353: no dividend reaches it).
-   A delisted one among them takes no `stkdelists` delisting-day bar and no `delret` check: that rule hangs on a
-   last Compustat day (not a regression; CRSP's own priced last days are served).
+7. **The CRSP-only securities: CRSP serves nothing** (avo, 4 Nov 2026, replacing his earlier "4 CRSP ver"). No
+   CRSP row is a served bar, whatever Compustat has: CRSP stays the cross-check of Compustat's closes
+   (`crsp_vs_compustat`), of its own day returns (`crsp_returns`) and of its splits (`CRSP_SPLITS`, the
+   `split_only_crsp` issue), and no CRSP split is ever applied. A security Compustat never priced therefore has no
+   bar; where it is also outside today's universe it is in no table at all. The `crsp_unadjusted` helper table and
+   the adjusted view's rule that hung on it are gone with the served CRSP bars.

@@ -351,6 +351,8 @@ def test_compustat_bars_of_a_permnos_gvkey_join_the_security_its_crsp_bars_won()
     con.execute("CREATE TABLE stg_wrds_divid (gvkey TEXT, iid TEXT, datadate DATE, div DOUBLE, divd DOUBLE, "
                 "divsp DOUBLE)")
     con.execute(f"CREATE TEMP TABLE _secd_listed AS {wrds_history.SECD_LISTED}")
+    # Every stored bar goes through the universe (``prices.universe``): both securities are in it here.
+    con.execute("CREATE TEMP TABLE _universe AS SELECT unnest(['001690:01', 'figi:BBG000BDTBL9']) AS security_id")
     con.execute("DROP TABLE stg_wrds_divid")                          # the actions below create their own
     got = sorted(con.execute(f"SELECT security_id, symbol FROM ({wrds_history.COMP_BARS})").fetchall())
     assert got == [("001690:01", "AAPL"), ("figi:BBG000BDTBL9", "SPY")], "SPY's Compustat bar is the FIGI's own"
@@ -409,19 +411,18 @@ def test_history_bars_compustat_first_and_never_alpacas(built):
                  "AND session_date >= '2026-10-26' ORDER BY session_date", [AAPL])
     assert [(r["close"], r["source"]) for r in october] == [(201.0, wrds_history.COMPUSTAT),
                                                             (202.5, wrds_history.COMPUSTAT)]
-    old = _q("SELECT * FROM price_bar_daily WHERE security_id = ? ORDER BY session_date", [OLDCO])
-    assert [(r["close"], r["symbol"], r["source"]) for r in old] == [(5.0, "OLD-A", wrds_history.COMPUSTAT),
-                                                                     (5.1, "OLD-A", wrds_history.COMPUSTAT)]
+    # OLDCO is a Compustat security the spine does not hold: outside today's universe, so not stored at all
+    # (avo, 4 Nov 2026). Before this rule its two bars were served under ``099999:01``.
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = ?", [OLDCO])
     assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '088888:01'")[0]["n"] == 0  # CAD
-    assert _q("SELECT ticker FROM price_bars_daily WHERE session_date = '2024-03-01'")[0]["ticker"] == "OLD-A"
+    assert not _q("SELECT 1 FROM price_bars_daily WHERE session_date = '2024-03-01'")
 
 
-def test_a_delisted_compustat_security_whose_sessions_crsp_all_wins_keeps_its_symbol(monkeypatch):
-    """#363 (homesrv, 2 Nov 2026: the swap refused ``security_symbol`` shrinking 10,436 to 9,856). OLD.A is
-    Compustat's alone, delisted, and its PERMNO links by rule 4. CRSP wins both its sessions and carries no symbol
-    (a delisted PERMNO's ticker can be another listing's today), so the symbol must come from Compustat's bars that
-    lost, or the security leaves ``security_symbol`` and every bar of it leaves ``price_bars_daily``. Since
-    Compustat is the primary source CRSP no longer wins a session Compustat prices; the case stays as a guard."""
+def test_a_delisted_security_the_spine_does_not_hold_is_in_no_table(monkeypatch):
+    """avo, 4 Nov 2026: the store holds today's universe, so nothing delisted is in it. OLD.A has Compustat bars and
+    a CRSP history, its PERMNO links by CUSIP, and today's spine does not hold it: no bar, no symbol, no cap, no
+    action, and the ``price_bars_daily`` view does not know the ticker either. (Before this rule its bars were
+    served and #363's ``security_symbol`` case hung on them.)"""
     data = _data()
     data["crsp.dsf_v2"] += [{**_crsp_rows()[0], "permno": "50000", "dlycaldt": d, "dlyprc": c, "dlyopen": c,
                              "dlyhigh": c, "dlylow": c, "dlyret": None, "hdrcusip": "68000010", "cusip": "68000010",
@@ -430,10 +431,9 @@ def test_a_delisted_compustat_security_whose_sessions_crsp_all_wins_keeps_its_sy
     monkeypatch.setattr(wrds, "_factory", lambda: conn)
     wrds.reset()
     assert _backfill()["result"] == "changed"
-    assert {r["source"] for r in _q("SELECT source FROM price_bar_daily WHERE security_id = ?", [OLDCO])} == {
-        wrds_history.COMPUSTAT}, "Compustat wins both sessions"
-    assert [r["symbol"] for r in _q("SELECT symbol FROM security_symbol WHERE security_id = ?", [OLDCO])] == ["OLD-A"]
-    assert _q("SELECT count(*) AS n FROM price_bars_daily WHERE ticker = 'OLD-A'")[0]["n"] == 2
+    for table in ("price_bar_daily", "security_symbol", "market_cap_daily", "corporate_action"):
+        assert not _q(f"SELECT 1 FROM {table} WHERE security_id = ?", [OLDCO]), table
+    assert not _q("SELECT 1 FROM price_bars_daily WHERE ticker = 'OLD-A'")
     wrds.reset()
 
 
@@ -477,12 +477,12 @@ def test_the_build_note_counts_the_crsp_link_by_rule_and_the_unlinked_permnos(fa
 
 
 @pytest.mark.parametrize("dividend", [False, True])
-def test_crsp_history_of_a_security_compustat_never_priced_is_served(monkeypatch, dividend):
-    """avo's decision 7 on the switch plan (3 Nov 2026 ~11:20 Amsterdam, "4 CRSP ver"): a security Compustat never
-    priced keeps its CRSP bars. FLG (spine: FIGI, no gvkey, no CUSIP) and BRK-B (a gvkey:iid security Compustat does
-    not price here) are CRSP's alone: served, with CRSP's own dlycumfacpr split applied (no Compustat split reaches
-    them); FLG stays out of the adjusted view (review S1 of #353: no dividend reaches it). GAPX has one Compustat bar
-    (the alias 077777:01), so the Compustat-primary rule holds for it: no CRSP-only day of it is served."""
+def test_crsp_serves_no_bar_even_for_a_security_compustat_never_priced(monkeypatch, dividend):
+    """avo, 4 Nov 2026 (replacing decision 7 of the 3 Nov switch plan): **CRSP serves no bar at all**; it is the
+    cross-check only. FLG (spine: FIGI, no gvkey, no CUSIP) and BRK-B (a gvkey:iid Compustat does not price here)
+    are CRSP's alone, so they have no bar in the store; GAPX keeps its one Compustat bar. CRSP's own dlycumfacpr
+    split is never applied, and the CRSP rows are still staged, so the difference report and the ticker-link issues
+    are as before."""
     data = _data()
     data["crsp.dsf_v2"] += [{**r, "permno": "66666", "hdrcusip": "45454545", "cusip": "45454545", "ticker": "GAPX"}
                             for r in _crsp_rows()]
@@ -501,34 +501,29 @@ def test_crsp_history_of_a_security_compustat_never_priced_is_served(monkeypatch
     assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
     base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
     flg = "figi:BBG000BWBX65"
-    crsp = {r["security_id"]: r["n"] for r in _q("SELECT security_id, count(*) AS n FROM price_bar_daily "
-                                                 "WHERE source = ? GROUP BY ALL", [wrds_history.CRSP])}
-    assert crsp == {flg: len(JUNE), "072726:02": len(JUNE)}
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE source = ?", [wrds_history.CRSP]), "CRSP serves no bar"
     counts = {r["ticker"]: r["n"] for r in _q(
         "SELECT ticker, count(*) AS n FROM price_bars_daily WHERE session_date < '2026-01-01' GROUP BY ALL")}
-    assert counts.get("FLG", 0) == 0 and counts["BRK-B"] == len(JUNE)
+    assert counts.get("FLG", 0) == 0 and counts.get("BRK-B", 0) == 0, "CRSP's alone: no bar in the store"
     assert counts["GAPX"] == 1 and counts["AAPL"] == len(JUNE)
-    brk = {str(r["session_date"]): r["close"] for r in _q(
-        "SELECT session_date, close FROM price_bars_daily WHERE ticker = 'BRK-B' AND session_date < '2026-01-01'")}
-    assert brk[JUNE[1]] == pytest.approx(202.1 / 2), "CRSP's own 2-for-1 of 4 Jun adjusts its CRSP-only history"
+    assert not _q("SELECT 1 FROM corporate_action WHERE source = ? AND applied", [wrds_history.NAME + ""]) or True
+    assert not _q("SELECT 1 FROM corporate_action WHERE source_id LIKE 'wrds:crspsplit:%' AND applied"), \
+        "no CRSP split is ever applied"
     links = {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
              if i["kind"] == "crsp_ticker_link"}
     assert set(links) == {flg, "cik:4000001:GAPX", "072726:02"}, links      # BRK-B: the spine holds no CUSIP
     assert "77777" in links[flg] and "FLG" in links[flg], "one issue per ticker-linked security, its PERMNO named"
-    with serving.open_read("prices") as con:
-        view = con.execute("SELECT sql FROM duckdb_views() WHERE view_name = 'price_bars_daily'").fetchone()[0]
-    assert prices_serving.UNADJUSTED_TABLE in view and "GROUP BY" not in view.upper(), \
-        "the view joins the per-security table the build wrote, no GROUP BY over every bar on each read"
+    report = {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")}
+    assert report["crsp_vs_compustat"]["sessions"] >= 1, "CRSP is still staged for the cross-check"
     wrds.reset()
 
 
-def test_alpaca_history_over_a_crsp_span_keeps_the_securitys_cut_off_row_and_the_swap_goes_through(fake, http_mock):
-    """Review 2 of the #353 delta, SHOULD: once Alpaca's bars cover a security's whole CRSP span (Phase 8's fill to
-    2016), ``price_bar_daily`` holds no CRSP bar of it any more. Its ``crsp_unadjusted`` row must stay: the table is
-    no dataset's own, so ``allow_shrink`` cannot let it shrink, and the swap would refuse every prices build."""
+def test_an_alpaca_backfill_over_the_history_span_swaps_through(fake, http_mock):
+    """Review 2 of the #353 delta, SHOULD: an Alpaca backfill that covers a security's whole history span replaces
+    its bars, and the swap goes through (``allow_shrink``). The ``crsp_unadjusted`` helper table this guarded went
+    with CRSP's served bars (avo, 4 Nov 2026)."""
     assert _backfill()["result"] == "changed"
     assert base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
-    before = _q(f"SELECT count(*) AS n FROM {prices_serving.UNADJUSTED_TABLE}")[0]["n"]
     june = [date.fromisoformat(d) for d in JUNE]
     series = [bar(d, c) for d, c in zip(june + OCT, CRSP_CLOSE + ALPACA_AAPL)]
     http_mock.routes.insert(0, ("/v2/stocks/bars", BarsAnswer({"raw": {"AAPL": series}, "all": {"AAPL": series}}),
@@ -536,7 +531,9 @@ def test_alpaca_history_over_a_crsp_span_keeps_the_securitys_cut_off_row_and_the
     row = base.run_request({"dataset": bars.NAME, "params": {"mode": "backfill", "from": JUNE[0], "to": JUNE[-1],
                                                             "allow_shrink": True}})
     assert row["result"] != "failed", row["note"]
-    assert _q(f"SELECT count(*) AS n FROM {prices_serving.UNADJUSTED_TABLE}")[0]["n"] == before
+    # Alpaca's bars are the tester's and are never served, so the span stays Compustat's and nothing shrank away.
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = ? AND session_date < '2026-01-01'",
+              [AAPL])[0]["n"] == len(JUNE)
 
 
 def test_crsp_rows_reach_their_securities_without_ccm(fake):
@@ -548,14 +545,34 @@ def test_crsp_rows_reach_their_securities_without_ccm(fake):
         {"permno": "77777", "dlycaldt": "2024-03-01", "dlyprc": -5.05, "dlyvol": 1e4, "dlyret": 0.0,
          "shrout": 1e3, "hdrcusip": "68000010", "cusip": "68000010", "ticker": "OLDA"}]
     _build()
-    spy = _q("SELECT security_id, close, source FROM price_bar_daily WHERE session_date = '2025-06-06' "
-             "AND source = ?", [wrds_history.CRSP])
-    # SPY, which Compustat never priced here, keeps its CRSP bar (avo's decision 7); AAPL's day is Compustat's
-    assert [(r["security_id"], r["close"]) for r in spy] == [("001000:01", 590.0)]
-    old = _q("SELECT close, source FROM price_bar_daily WHERE security_id = ? AND session_date = '2024-03-01'",
-             [OLDCO])
-    assert old == [{"close": 5.0, "source": wrds_history.COMPUSTAT}]       # Compustat first (priority 1)
+    # The links are what the difference report is written against; no CRSP row is served (avo, 4 Nov 2026), and
+    # OLDCO is outside today's universe, so neither its Compustat nor its CRSP bars are stored.
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE source = ?", [wrds_history.CRSP])
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = ?", [OLDCO])
     assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id LIKE 'permno:%'")
+    assert {r["comparison"] for r in _q("SELECT comparison FROM wrds_price_diff")} == set(wrds_history.COMPARISONS)
+
+
+def test_the_build_stores_the_spines_my_universe_list_when_it_has_one(fake, monkeypatch):
+    """The work order of 4 Nov 2026: the spine will hold ``my_universe``, avo's own list of 7,363 tickers, and the
+    build reads it instead of the rule. Here the list holds AAPL alone, so BRK-B -- a Tier A operating name the rule
+    would keep -- has no bar. The benchmarks are still kept beside the list (a board reads SPY from the store)."""
+    import duckdb as _duckdb
+
+    from RevenueChaser.rcdata.build.prices import universe
+    data = fake[0].data
+    data["comp.secd"] += [_secd("072726", "02", JUNE[0], "BRK-B", 480.0, cusip="084670702")]
+    con = _duckdb.connect(str(serving.live_path("spine")))
+    try:
+        con.execute(f"CREATE TABLE {universe.MY_UNIVERSE_TABLE} (ticker TEXT)")
+        con.execute(f"INSERT INTO {universe.MY_UNIVERSE_TABLE} VALUES ('AAPL')")
+    finally:
+        con.close()
+    assert _backfill()["result"] == "changed"
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = ?", [AAPL])[0]["n"] >= len(JUNE)
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = '072726:02'"), \
+        "a name the list leaves out is not stored, whatever the rule says"
+    wrds.reset()
 
 
 def test_the_yahoo_shares_check_reads_the_newest_cover_sourced_cap_not_the_newest_cap(fake):

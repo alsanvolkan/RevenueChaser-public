@@ -1307,30 +1307,42 @@ in the build note) is `prccd / ajexdi * trfd` over the previous session's (homes
 `dlyret` on dividend days, against 1.5 % for the price alone), and on a day without `trfd` the price plus that day's
 cash distribution: an empty `trfd` means no distribution (homesrv, 3 Nov 2026: `trfd` empty on 26.88 % of the priced
 rows of 2010-2025; there the price-only return matches CRSP's `dlyret` within 0.01 % on 97.69 % of 4,069,937 matched
-days, as the formula does on its rows). **CRSP is a fallback for delisted names only** (`CRSP_FALLBACK`,
-identifier-linked PERMNOs, every served CRSP bar is one, `source` `wrds/crsp`): a security with a
-`crsp_a_stock.stkdelists` delisting on or after its last priced Compustat day serves its `dsf_v2` days after that
-day up to the delisting day (`delisted_final_days`), and the delisting day's own bar is `stkdelists`' price where no
-priced row has it (`DELIST_BARS`); `wrds_price_diff`'s `crsp_delisting_returns` checks the store's return of each
-delisting day against `delret`. CRSP is otherwise the cross-check: of every Compustat close (`crsp_vs_compustat`) and
+days, as the formula does on its rows). **CRSP serves no bar at all** (avo, 4 Nov 2026): the store holds today's
+universe, so no delisted name is in it and the earlier narrow fallback — a delisted security's final `dsf_v2` days,
+its `stkdelists` delisting bar, and the whole history of a security Compustat never priced — has no name left to
+serve. `crsp_a_stock.stkdelists` is still fetched and nothing in the serving build reads it, and
+`wrds_price_diff`'s `crsp_delisting_returns` row is gone with it. CRSP is the cross-check: of every Compustat close (`crsp_vs_compustat`) and
 of the splits (`CRSP_SPLITS`, `dlycumfacpr` steps): one no Compustat or Alpaca split is within 3 days of is applied
 nowhere and is a `split_only_crsp` issue, and the gap it explains is no `price_gap_no_action` (Order 4: 1,167 such
 issues on homesrv, 22 Tier A; Compustat's `ajexdi` now carries most of those splits). **Alpaca is the tester**: its
 bars write `alpaca_close_differs` and `adjustment_differs` issues, compared in every serving build, so a session is
 checked again once Compustat's update brings it.
 
-**The universe.** A request that names tiers or tickers asks those (the daily run asks only the tester's names at
-risk, above). The scope the tester picks from is the live spine's Tier A and B (`prices.DEFAULT_TIERS`; 5,655 + 2,015 = 7,670 names
-on 29 Oct 2026, avo's decision of 30 Oct: the limit is A+B, with no market-cap floor), the benchmarks (SPY, DIA,
-QQQ), the rotation ETFs and the stock watch list. The acceptance "Tier A sessions complete >= 99%" is the bars
+**The universe** (`rcdata/build/prices/universe.py`, the one place that rule lives; avo, 4 Nov 2026). What the
+store keeps, and what the daily fetches ask for, is **today's universe**: the spine's `my_universe` table when it
+has one (avo's own list, 7,363 tickers, which the spine's build resolves from its rule files and his by-hand
+additions and removals), and until that table exists the rule itself — the Tier A names of an operating type
+(`universe.STOCK_TYPES`, the identity master's `OPERATING_TYPES`: ordinary shares, ADRs, REITs, BDCs, MLPs, royalty
+trusts, non-SEC banks; 5,292 of Tier A's 5,655 on 4 Nov 2026) and the spine's ETFs with `aum` at or over
+`universe.ETF_MIN_AUM` = 100 million (2,071; leveraged and inverse funds in, ETNs, closed-end funds and an unknown
+AUM out). A SPAC, warrant, unit, right, preferred or closed-end fund is out, and so is a Tier A name with no type
+yet. **Nothing delisted is in it**, because the list is read from the live spine. Kept beside it
+(`universe.kept_beside`): the benchmarks (SPY, DIA, QQQ), the rotation ETFs and the stock watch list, which the
+boards read from the store, and the other listed classes of a universe issuer that the SEC covers name
+(`cover_classes`, Berkshire's A shares). The serving build turns that list into the `_universe` table before
+anything else and filters Alpaca's, Compustat's and CRSP's rows through it, so nothing outside it is written. The
+whole-tier rule it replaced (`DEFAULT_TIERS = ("A", "B")`, 7,670 names, avo 30 Oct 2026) carried every SPAC,
+warrant, preferred and untyped name with it and still missed the funds the spine's `security` table does not hold.
+The acceptance "Tier A sessions complete >= 99%" is the bars
 dataset's coverage: Tier A names with a bar on the asked session over the Tier A names asked, against that real
 count; Tier B's own coverage is reported beside it and is not part of the acceptance, because an OTC or fund name
 may have no Alpaca bar.
 
 **A request's own scope (#265).** A queued request carries what it asks for, so a fill does not mean editing the
 code: `{"tiers": ["A", "B"], "names": ["KO"], "include": ["anchors"], "mode": "backfill", "from": ..., "to": ...}`.
-A request that names nothing is the daily run: `DEFAULT_TIERS`, the benchmarks and rotation ETFs, the stock watch
-list and the Tier A issuers' other listed classes. **A request that names something gets only what it names**
+A request that names nothing is the daily run: today's universe, the benchmarks and rotation ETFs, the stock watch
+list and the Tier A issuers' other listed classes. A request that names `tiers` keeps the tier reading, because
+that is what it asked for. **A request that names something gets only what it names**
 (avo's Karar 82, 30 Oct 2026): its `tiers`, its `names` (a name the spine does not hold is asked under
 `sym:<ticker>`), and whichever of the three groups it lists in `include` — `anchors` (the benchmarks and the
 rotation ETFs), `watchlist`, `cover_classes`. So `tiers=["B"]` is 2,015 names, not 2,015 plus every Tier A
@@ -1359,28 +1371,29 @@ are stored **nominal**; the factors are applied on read.
 
 | Table | Rows |
 |---|---|
-| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Compustat's (only USD rows), CRSP's on its fallback days only, never Alpaca's, and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
+| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Compustat's (only USD rows), never CRSP's and never Alpaca's, and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`) |
 | `corporate_action` | Alpaca's actions of the store's securities (resolved to the security that traded under the action's symbol nearest its date, else the spine's ticker) and Compustat's splits (`comp.sec_split`, else an `ajexdi` change) and dividends (the `comp.secd` row's, else `comp.sec_divid`'s) where Alpaca has none of that kind that day; CRSP's `dlycumfacpr` splits are a cross-check, never applied; `ratio` new over old shares, `amount` per share, `applied` and `not_applied_why` |
 | `adj_factor` | per security, the periods between two ex-dates and their `split_factor` (the product of `1 / ratio` of every later split and stock dividend) and `tr_factor` (that, times `1 - amount / close before the ex-date` of every later cash dividend, the close at most 7 days before) |
 | `shares_class` | `outstanding` per class from the SEC covers (an unlisted class keyed `class:<CIK>:<member>`, and so is an ADR issuer's count of ordinary shares), `float` from Yahoo and from UW |
 | `security_symbol` | the symbols a security traded under and when |
 | `market_cap_daily` | close times shares per security and session (the bar's own shares, else a WRDS source's of that session, else the newest cover on or before it moved over the splits between); `issuer_market_cap` sums the issuer's listed classes, each at its newest cap at most 14 days old (a class with no bar that session still counts); a Compustat class the spine lacks (BRK-A) is the issuer's of the spine classes that share its gvkey |
 | `price_revision` | the values a later read replaced: Alpaca's re-read and the monthly WRDS refresh, with `revised_at` and `revised_by` |
-| `crsp_unadjusted` | the view's helper, no dataset's own table: one row per security with a CRSP bar in the history, `unadjusted_before` its first Alpaca session where no Compustat record reaches it (NULL where one does); `price_bars_daily` leaves out its CRSP bars before that day |
-| `wrds_price_diff` | the WRDS difference report, one row per comparison: CRSP against Compustat and each against Alpaca on the closes of the sessions both have, and each WRDS source's own day return (Compustat's `COMP_RETURN`, CRSP's `dlyret`) against the store's on consecutive sessions, and the store's return of each delisting day against `stkdelists`' `delret` (`crsp_delisting_returns`); a difference over 1 bp counts; on the `wrds/prices` Settings card |
+| `wrds_price_diff` | the WRDS difference report, one row per comparison: CRSP against Compustat and each against Alpaca on the closes of the sessions both have, and each WRDS source's own day return (Compustat's `COMP_RETURN`, CRSP's `dlyret`) against the store's on consecutive sessions; a difference over 1 bp counts; on the `wrds/prices` Settings card |
 
 **The bridge (D4).** Views under the old `.store/prices.duckdb` names with the old columns: `price_bars_daily`
 (split-adjusted OHLC, `adj_close` total-return adjusted, both to today, `fetched_at` the build time so the old reader
 applies no split a second time), `price_actions` (splits and dividends, the amount in today's share basis) and
 `index_levels_daily` (`^GSPC`).
 
-**Unadjusted history (review S1 of #353):** a CRSP bar of a security no Compustat record reaches (named otherwise
-than `gvkey:iid`, and no `GVKEY_ALIAS` joins a Compustat `gvkey:iid` of its CUSIP to it), dated before its first
-Alpaca bar, has no split or dividend applied. It stays in `price_bar_daily` (nominal) and is left out of
-`price_bars_daily`; the build note counts those bars. The build writes the per-security cut-off once
-(`crsp_unadjusted`, one row per security with a CRSP bar), so a read of the view does not group every bar. A ticker
-link (rule 3) needs, for a spine `gvkey:iid` with a CUSIP, a Compustat row of it on CRSP's last day, and for an ETF
-an inception day on or before it (review M1).
+**The two big tables' key.** `price_bar_daily` and `market_cap_daily` are the only tables with a row per security
+**and** session, and DuckDB holds a `PRIMARY KEY`'s index in memory for the whole `INSERT`: the scratch build of
+3 Nov 2026 ran the 5 GB `memory_limit` out after 4 h 51 min writing `price_bar_daily`. With the store cut to
+today's universe the index fits, so **the key stays on** (avo, 4 Nov 2026) and the measured build decides;
+`RC_PRICES_NO_PRIMARY_KEY=1` writes those two without it and checks their key with one grouped query instead
+(`serving.duplicate_keys`, a `duplicate_key` build issue), so a build that still does not fit needs no code change.
+
+A CRSP ticker link (rule 3) needs, for a spine `gvkey:iid` with a CUSIP, a Compustat row of it on CRSP's last day,
+and for an ETF an inception day on or before it (review M1).
 
 **Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `crsp_ticker_link` (the CRSP
 PERMNO linked to a spine security, no ETF, by ticker alone: one issue per security, its PERMNO named), `tier_a_no_bar`,
@@ -1394,6 +1407,7 @@ close more than 1 bp and half a cent from Alpaca's close of the session; key sec
 `dividend_not_applied`, `action_not_applied` (a spin-off, unit split or rights distribution), `cover_class_unmapped`,
 `cover_adr_ordinary` (an ADR's issuer's cover counts ordinary shares, not ADSs: kept under `class:`, no cap from it),
 `float_above_outstanding` (over 1.05 times), `float_sources_disagree` (Yahoo and UW more than 25% apart),
+`duplicate_key` (a table written without its `PRIMARY KEY` holds a key value twice; key table:value),
 `shares_disagree_yahoo` (the cover shares behind a cap and Yahoo's `sharesOutstanding` more than 25% apart, on the
 newest cover-sourced cap up to Yahoo's answer: a count from before a dilution or a split; the cap stays, flagged). Run issues of
 the sources: `not_a_session`, `symbol_refused`, `action_undated`, `no_inline_xbrl`, `submissions_missing`,
