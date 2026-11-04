@@ -65,15 +65,18 @@ def test_peer_lists_hide_a_peer_with_one_shared_tag_rl3():
     assert len(scores) == 3               # the distribution keeps every non-zero pair, hidden or not
 
 
-def test_peer_lists_hide_a_peer_under_the_score_floor():
+def test_a_low_scoring_peer_with_two_shared_tags_stays():
+    """No score floor (measured 4 Nov 2026 on 93 DeepSeek profiles: a 0.10 floor took hand P@10 from 0.728 to
+    0.459, because idf lowers the cosine scale); the shared-tag rule is the only cut."""
     many = [f"p{i}" for i in range(30)]
     profs = {"X": _prof(products=many),
              "Y": _prof(products=many[:2] + [f"q{i}" for i in range(28)]),   # two shared tags of thirty
              "Z": _prof(products=many)}
     peers, _ = similarity.peer_lists(profs, 25)
     xy = similarity.score_pair(profs["X"], profs["Y"], similarity.idf(profs))[0]
-    assert 0 < xy < config.PEER_MIN_SCORE
-    assert [p["peer"] for p in peers["X"]] == ["Z"]
+    assert 0 < xy < 0.10
+    assert [p["peer"] for p in peers["X"]] == ["Z", "Y"]
+    assert config.PEER_MIN_SCORE == 0.0
 
 
 def test_percentile_is_over_the_nonzero_pairs(rawstore_tmp_db):

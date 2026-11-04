@@ -39,7 +39,7 @@ single work order.
 - EDGAR official/free only (bulk zips + per-document `.htm`); no npm/sec-api/GPL.
 - Relatedness profiles: **thinking-high**; theme naming: **thinking-low** (off-peak).
 - Relatedness peers (#395): field-weighted tags scaled by their idf over the run's profiles, cosine, top 25;
-  a peer under 0.10 or with fewer than 2 shared tags is hidden; the percentile ranks the scored (non-zero) pairs.
+  a peer with fewer than 2 shared tags is hidden (no score floor); the percentile ranks the scored (non-zero) pairs.
 - Themes: NMF, **nested** (fine ~150 -> medium = max(2, n_fine // 2), halved from the realised fine count (#433) -> coarse ~25 via agglomerative
   merge), LLM-named; replaces the taxonomy theme vocabulary; GICS untouched;
   assignment hybrid (profile weights, else lexicon, else sector fallback).

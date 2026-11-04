@@ -49,6 +49,8 @@ FIELD_WEIGHTS = {
     "keywords": 0.4,
 }
 TOP_PEERS = 25
-# A peer is shown only above this cosine and with at least this many shared tags (#395, review RL-3).
-PEER_MIN_SCORE = 0.10
+# A peer is shown only with at least this many shared tags (#395, review RL-3). No score floor: measured 4 Nov 2026
+# on 93 DeepSeek profiles, floor 0.10 -> hand P@10 0.459, 0.02 -> 0.726, none -> 0.728 / recall@25 0.799; a floor
+# hides true peers because the idf lowers the cosine scale.
+PEER_MIN_SCORE = 0.0
 PEER_MIN_SHARED = 2

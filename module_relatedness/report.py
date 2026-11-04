@@ -264,9 +264,8 @@ function init(){
         f"(see Value Chain). {n} companies · model <b>{model}</b>. <b>Fetch</b> (the off-peak run) "
         "downloads missing filings from SEC and asks the LLM for new profiles; <b>Refresh</b> rebuilds "
         "the board from the stored profiles and scores with no network call. A tag shared by many companies "
-        "weighs less than a rare one; peers with a score under "
-        f"{config.PEER_MIN_SCORE:.2f} or fewer than {config.PEER_MIN_SHARED} shared tags are hidden, and the "
-        "percentile ranks a peer among the scored (non-zero) pairs.")
+        f"weighs less than a rare one; peers with fewer than {config.PEER_MIN_SHARED} shared tags are hidden, and "
+        "the percentile ranks a peer among the scored (non-zero) pairs.")
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
