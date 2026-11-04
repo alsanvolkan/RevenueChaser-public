@@ -1260,9 +1260,10 @@ and a period's CIK is that of the snapshot its last day's lines matched. Compust
 
 **Build issues** live in `ops.sqlite` `build_issues` (D6), dataset `spine/security`, synced after each swap
 (`ops.sync_issues`: found again stays open, gone is resolved). Kinds: `source_never_run`, `tier_a_no_wrds_link`,
-`tier_a_no_cusip`, `tier_a_no_figi`, `tier_a_no_figi_by_ticker` (a Tier A name that OpenFIGI has no FIGI
-for by `TICKER` either; it fires alongside `tier_a_no_figi` when the name has a CUSIP the CUSIP lane could not
-answer for), `tier_a_no_gics`, `figi_ticker_differs`, `cusip_shared`, `cik_many_gvkeys`,
+`tier_a_no_cusip`, `tier_a_no_figi`, `tier_a_no_figi_by_ticker` (a Tier A name with no FIGI from either
+lane opens exactly one of these two, so `issues_open` never counts it twice: the name holds a CUSIP and the
+`tier_a_no_figi` message names both lanes' states, or it holds none and the `_by_ticker` kind takes it),
+`tier_a_no_gics`, `figi_ticker_differs`, `cusip_shared`, `cik_many_gvkeys`,
 `index_key_empty`, `fund_file_short`, `member_not_in_sec`, `member_not_tier_a`, `membership_files_disagree`, `membership_wrds_differs`.
 A rule needing a source that has never run is not applied; that source is one `source_never_run` row.
 `index_key_empty`: an index key with no `comp.idxcst_his` rows in a run that answered rows for another.

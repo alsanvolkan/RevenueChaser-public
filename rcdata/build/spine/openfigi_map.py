@@ -278,7 +278,7 @@ class OpenFigiMap:
         sent = 0
         for i in range(0, len(todo), JOBS_PER_REQUEST):
             if sent >= budget:
-                ctx.notes.append(f"stopped at {MAX_REQUESTS} requests; {len(todo) - i} {what} left for the next run")
+                ctx.notes.append(f"stopped at {budget} requests; {len(todo) - i} {what} left for the next run")
                 break
             chunk = todo[i:i + JOBS_PER_REQUEST]
             jobs = [job_of(v) for v in chunk]

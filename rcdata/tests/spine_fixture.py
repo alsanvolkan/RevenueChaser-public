@@ -273,7 +273,8 @@ def figi_answer(request):
     """The mapping endpoint: one entry per job, ``data`` for a known code asked with its own id type, the documented
     warning otherwise. A CINS (a letter first) is found only as ``ID_CINS``: asked as ``ID_CUSIP``, OpenFIGI found
     none of the 2,092 CINS the first live map held (homesrv, 2026-10-28); here a CUSIP is found only as ``ID_CUSIP``.
-    A ``TICKER`` job is answered from ``TICKER_FIGI``."""
+    A ``TICKER`` job is answered from ``TICKER_FIGI``, whose value may be a list when one symbol has several
+    listings (OpenFIGI answers a ``TICKER`` job with every listing it knows)."""
     jobs = json.loads(request.content)
 
     def hit(job):
@@ -281,7 +282,8 @@ def figi_answer(request):
             return TICKER_FIGI.get(job["idValue"])
         own = "ID_CINS" if job["idValue"][:1].isalpha() else "ID_CUSIP"
         return FIGI.get(job["idValue"]) if job.get("idType") == own else None
-    out = [{"data": [h]} if (h := hit(j)) else {"warning": "No identifier found."} for j in jobs]
+    out = [{"data": h if isinstance(h, list) else [h]} if (h := hit(j)) else {"warning": "No identifier found."}
+           for j in jobs]
     return 200, json.dumps(out).encode(), {"content-type": "application/json"}
 
 

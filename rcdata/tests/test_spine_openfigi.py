@@ -315,6 +315,36 @@ def test_the_ticker_is_asked_in_openfigis_spelling_and_read_back_in_ours(env, mo
         ("BRK-B", "BRK-B")]
 
 
+def test_the_us_listing_of_the_asked_symbol_is_the_one_stored(env, monkeypatch):
+    """A ``TICKER`` job answers with every listing OpenFIGI knows for the symbol, so the entry is chosen, not taken
+    first: the one whose ticker is the symbol asked AND whose ``exchCode`` is ``US``. Here the foreign listing comes
+    first and carries the same ticker, so neither 'take the first' nor 'take the first with a ticker' would do."""
+    monkeypatch.setattr(of, "wanted_tickers", lambda: ["NVR"])
+    monkeypatch.setattr(of, "wanted_cusips", lambda: [])
+    monkeypatch.setitem(fx.TICKER_FIGI, "NVR", [
+        {"figi": "BBG000FOREIGN", "ticker": "NVR", "exchCode": "LN", "securityType": "Common Stock",
+         "name": "NVR INC (LONDON)"},
+        {"figi": "BBG000BW5N90", "ticker": "NVR", "exchCode": "US", "securityType": "Common Stock",
+         "name": "NVR INC"},
+    ])
+    _run()
+    assert of._query(f"SELECT figi, exch_code FROM read_parquet({base.sql_path(of.ticker_partition())}) "
+                     "WHERE asked_ticker = 'NVR'") == [("BBG000BW5N90", "US")]
+
+
+def test_a_ticker_answer_with_no_us_listing_falls_back_to_one_with_a_ticker(env, monkeypatch):
+    """With no US listing the first entry that carries a ticker is stored, so a name is still typed rather than
+    dropped; ``exch_code`` records what it really was."""
+    monkeypatch.setattr(of, "wanted_tickers", lambda: ["NVR"])
+    monkeypatch.setattr(of, "wanted_cusips", lambda: [])
+    monkeypatch.setitem(fx.TICKER_FIGI, "NVR", [
+        {"figi": "BBG000FOREIGN", "ticker": "NVR", "exchCode": "LN", "securityType": "Common Stock"},
+    ])
+    _run()
+    assert of._query(f"SELECT figi, exch_code FROM read_parquet({base.sql_path(of.ticker_partition())}) "
+                     "WHERE asked_ticker = 'NVR'") == [("BBG000FOREIGN", "LN")]
+
+
 def test_no_spine_file_asks_no_ticker(env, monkeypatch):
     def missing(kind):
         raise serving.ServingFileMissing(kind)

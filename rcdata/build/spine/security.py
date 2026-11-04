@@ -88,10 +88,12 @@ ISSUE_KINDS = {
     "source_never_run": "a source this build needs has no data yet (key: the dataset)",
     "tier_a_no_wrds_link": "a Tier A name whose CIK finds no Compustat security",
     "tier_a_no_cusip": "a Tier A name with a Compustat link but no CUSIP",
-    "tier_a_no_figi": "a Tier A CUSIP OpenFIGI has no FIGI for (asked: absent; or not asked yet)",
+    "tier_a_no_figi": "a Tier A name with a CUSIP that OpenFIGI has no FIGI for, by CUSIP or by ticker "
+                      "(asked: absent; or not asked yet)",
     # A Tier A row with no CUSIP is asked by ticker instead (``openfigi_map.wanted_tickers``); it is this kind only
     # once that answer is absent too.
-    "tier_a_no_figi_by_ticker": "a Tier A name OpenFIGI has no FIGI for by ticker either",
+    "tier_a_no_figi_by_ticker": "a Tier A name with no CUSIP that OpenFIGI has no FIGI for by ticker "
+                                "(asked: absent; or not asked yet)",
     "tier_a_no_gics": "a Tier A name with a Compustat link but no current GICS",
     "figi_ticker_differs": "OpenFIGI's ticker for the CUSIP is not the SEC ticker",
     "cusip_shared": "one CUSIP linked to two SEC tickers (key: the CUSIP)",
@@ -317,7 +319,8 @@ class SpineSecurity:
         have = {SEC: stage.count(con, "stg_sec"), SEC_MF: stage.count(con, "stg_sec_mf"),
                 SEC_IDHIST.name: stage.count(con, "stg_wrds_company"),
                 CO_HGIC.name: stage.count(con, "stg_wrds_hgic"), IDXCST_HIS.name: stage.count(con, "stg_wrds_idx"),
-                OPENFIGI: stage.count(con, "stg_figi"), FUNDS: stage.count(con, "stg_fund_lines")}
+                OPENFIGI: stage.count(con, "stg_figi") + stage.count(con, "stg_figi_ticker"),
+                FUNDS: stage.count(con, "stg_fund_lines")}
         for ds, n in have.items():
             if not n:
                 found.append(("source_never_run", ds, f"{ds} has no rows in this build"))
@@ -454,12 +457,15 @@ class SpineSecurity:
             out.append(("tier_a_no_cusip", t, f"gvkey {row['gvkey']} iid {row['iid']} has no CUSIP"))
         if wrds_on and row["gvkey"] is not None and not row["gsubind"]:
             out.append(("tier_a_no_gics", t, f"gvkey {row['gvkey']} has no current GICS"))
-        if figi_on and row["cusip"] and not row["figi"]:
-            state = (figi_row or {}).get("status") or "not asked yet"
-            out.append(("tier_a_no_figi", t, f"CUSIP {row['cusip']}: {state}"))
+        # One issue per name, so ``issues_open`` does not count a name twice (review should-fix 5): a row with
+        # a CUSIP is the CUSIP kind's, and its message names both lanes; a row without one is the ticker kind's.
         if figi_on and not row["figi"]:
-            state = (ticker_row or {}).get("status") or "not asked yet"
-            out.append(("tier_a_no_figi_by_ticker", t, f"TICKER {t}: {state}"))
+            by_cusip = (figi_row or {}).get("status") or "not asked yet"
+            by_ticker = (ticker_row or {}).get("status") or "not asked yet"
+            if row["cusip"]:
+                out.append(("tier_a_no_figi", t, f"CUSIP {row['cusip']}: {by_cusip}; TICKER {t}: {by_ticker}"))
+            else:
+                out.append(("tier_a_no_figi_by_ticker", t, f"TICKER {t}: {by_ticker}"))
         if row["figi_ticker"] and row["figi_ticker"] != t:
             asked = f"CUSIP {row['cusip']}" if row["cusip"] else f"the ticker {t}"
             out.append(("figi_ticker_differs", t, f"OpenFIGI says {row['figi_ticker']} for {asked}"))
