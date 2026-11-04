@@ -166,19 +166,20 @@ def _tickers(rows):
 
 
 def test_the_default_scope_asks_todays_universe(spine, monkeypatch):
-    """avo, 4 Nov 2026: today's universe -- the Tier A names of an operating type, and the spine's ETFs over
+    """avo, 4 Nov 2026: today's universe -- the Tier A and Tier D names of a stored type, and the spine's ETFs over
     ``universe.ETF_MIN_AUM``. The whole-tier rule of 30 Oct 2026 (A+B, 7,670 names) carried every SPAC, warrant,
     preferred and untyped name with it, and missed the funds the spine's ``security`` table does not hold."""
     monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
     rows = prices.scope(watched=set(), etfs={"QQQ", "TQQQ"})
-    assert {"AAPL", "BRK-B", "FLG", "GAPX"} <= set(_tickers(rows)), "the Tier A operating names"
+    assert {"AAPL", "BRK-B", "FLG", "GAPX"} <= set(_tickers(rows)), "the Tier A names of a stored type"
     assert "TQQQ" in _tickers(rows), "a fund of the universe the spine's security table does not hold"
     assert "SPY" in _tickers(rows), "a benchmark is asked beside the universe"
     assert all(r.get("security_id") for r in rows), "every asked name carries the id the store keys it under"
 
 
 def test_the_default_scope_leaves_out_an_excluded_type_and_an_untyped_name(monkeypatch):
-    """A SPAC, a preferred, a warrant and a name with no type yet stay out of the store, so they are not asked."""
+    """A SPAC, a preferred, a warrant, a BDC and a name with no type yet stay out of the store, so they are not
+    asked; a Tier D name of a stored type is asked, because avo's rule keeps Tier A and Tier D alike."""
     prices_fixture.write_spine([
         {"ticker": "AAPL", "cik": "320193", "name": "Apple Inc.", "exchange": "Nasdaq", "tier": "A",
          "security_type": "common", "gvkey": None, "iid": None, "composite_figi": None},
@@ -189,12 +190,18 @@ def test_the_default_scope_leaves_out_an_excluded_type_and_an_untyped_name(monke
         {"ticker": "AMPX-WT", "cik": "4000003", "name": "Amprius warrant", "exchange": "NYSE", "tier": "B",
          "security_type": "warrant", "gvkey": None, "iid": None, "composite_figi": None},
         {"ticker": "NEWCO", "cik": "4000004", "name": "NEW LISTING INC", "exchange": "Nasdaq", "tier": "A",
-         "security_type": None, "gvkey": None, "iid": None, "composite_figi": None}])
+         "security_type": None, "gvkey": None, "iid": None, "composite_figi": None},
+        {"ticker": "MAIN", "cik": "4000005", "name": "MAIN STREET CAPITAL CORP", "exchange": "NYSE", "tier": "A",
+         "security_type": "bdc", "gvkey": None, "iid": None, "composite_figi": None},
+        {"ticker": "NOEX", "cik": "4000006", "name": "NO EXCHANGE LP", "exchange": None, "tier": "D",
+         "security_type": "mlp", "gvkey": None, "iid": None, "composite_figi": None}])
     monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
     rows = prices.scope(watched=set(), etfs=set())
     asked = set(_tickers(rows))
     assert "AAPL" in asked
+    assert "NOEX" in asked, "avo's rule keeps Tier D (no exchange in the SEC file), so an MLP there is stored"
     assert not asked & {"SPCX", "WFC-PC", "AMPX-WT", "NEWCO"}, "an excluded type or an untyped name is not stored"
+    assert "MAIN" not in asked, "a BDC operates a business but avo's rule does not store it"
 
 
 def test_a_request_can_ask_one_tier(spine, monkeypatch):

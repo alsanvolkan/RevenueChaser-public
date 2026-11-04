@@ -291,7 +291,8 @@ def _universe(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> int:
     else:
         stocks = con.execute(f"SELECT count(*) FROM stg_spine WHERE {universe.STOCK_MEMBER}").fetchone()[0]
         funds = con.execute(f"SELECT count(*) FROM stg_etf WHERE {universe.ETF_MEMBER}").fetchone()[0]
-        where = (f"{stocks} stocks (tier {universe.STOCK_TIER}, operating types) and {funds} ETFs over "
+        where = (f"{stocks} stocks (tier {'+'.join(universe.STOCK_TIERS)}, "
+                 f"{', '.join(universe.STOCK_TYPES)}) and {funds} ETFs over "
                  f"{universe.ETF_MIN_AUM:,.0f} AUM, by the rule (no {universe.MY_UNIVERSE_TABLE} list yet)")
     ctx.notes.append(f"universe: {where}, {len(beside)} benchmarks, rotation ETFs and watched names beside them, "
                      f"{n} security ids stored")

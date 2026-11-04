@@ -1324,12 +1324,16 @@ checked again once Compustat's update brings it.
 **The universe** (`rcdata/build/prices/universe.py`, the one place that rule lives; avo, 4 Nov 2026). What the
 store keeps, and what the daily fetches ask for, is **today's universe**: the spine's `my_universe` table when it
 has one (avo's own list, 7,363 tickers, which the spine's build resolves from its rule files and his by-hand
-additions and removals), and until that table exists the rule itself — the Tier A names of an operating type
-(`universe.STOCK_TYPES`, the identity master's `OPERATING_TYPES`: ordinary shares, ADRs, REITs, BDCs, MLPs, royalty
-trusts, non-SEC banks; 5,292 of Tier A's 5,655 on 4 Nov 2026) and the spine's ETFs with `aum` at or over
+additions and removals), and until that table exists the rule itself — the `universe.STOCK_TIERS` names (Tier A,
+listed on Nasdaq, NYSE or Cboe, and Tier D, no exchange in the SEC file) of a `universe.STOCK_TYPES` type (ordinary
+shares, ADRs, REITs, MLPs; 5,349 on 4 Nov 2026) and the spine's ETFs with `aum` at or over
 `universe.ETF_MIN_AUM` = 100 million (2,071; leveraged and inverse funds in, ETNs, closed-end funds and an unknown
-AUM out). A SPAC, warrant, unit, right, preferred or closed-end fund is out, and so is a Tier A name with no type
-yet. **Nothing delisted is in it**, because the list is read from the live spine. Kept beside it
+AUM out). A SPAC, warrant, unit, right, preferred or closed-end fund is out, and so are a BDC, a royalty trust, a
+non-SEC bank (each of them an operating type the identity master keeps, but not one the store keeps) and a Tier A
+name with no type yet. Tier B (a listed excluded type) and Tier C (over the counter) are out whatever the type
+says. One part of avo's approved rule is **not** in this module: he keeps an ETF whose AUM is unknown when its
+20-day average daily dollar volume is at or over 10 million, and that branch needs a one-off Alpaca price pull, so
+it arrives with the `my_universe` build. **Nothing delisted is in it**, because the list is read from the live spine. Kept beside it
 (`universe.kept_beside`): the benchmarks (SPY, DIA, QQQ), the rotation ETFs and the stock watch list, which the
 boards read from the store, and the other listed classes of a universe issuer that the SEC covers name
 (`cover_classes`, Berkshire's A shares). The serving build turns that list into the `_universe` table before

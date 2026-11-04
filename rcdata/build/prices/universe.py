@@ -2,15 +2,17 @@
 
 avo, 4 Nov 2026 (PR 382): the store holds **today's universe**, not every tier and not the whole history.
 
-- **Stocks**: a listed name (Tier A) whose type operates a business — :data:`STOCK_TYPES`, the identity master's
-  ``OPERATING_TYPES``: ordinary shares, ADRs and REITs, with the other operating types it holds beside them (BDCs,
-  MLPs, royalty trusts, non-SEC banks). A SPAC, warrant, unit, right, preferred or closed-end fund is out, and so is
-  a name with **no type yet**: Tier A keeps an untyped name (``spine.tier``, "an untyped name is never hidden"),
-  this list does not. On the live spine of 4 Nov 2026 that is 5,292 of Tier A's 5,655.
+- **Stocks**: a name on :data:`STOCK_TIERS` (Tier A, listed on Nasdaq, NYSE or Cboe, or Tier D, no exchange in the
+  SEC file) whose type is one of :data:`STOCK_TYPES` — ordinary shares, ADRs, REITs and MLPs. A SPAC, warrant, unit,
+  right, preferred or closed-end fund is out, and so are a BDC, a royalty trust, a non-SEC bank and a name with
+  **no type yet**: Tier A keeps an untyped name (``spine.tier``, "an untyped name is never hidden"), this list does
+  not. 5,349 on the live spine of 4 Nov 2026.
 - **ETFs**: a row of the spine's ``etf`` table whose ``aum`` is at or over :data:`ETF_MIN_AUM`, with notes
   (``is_etn``) and closed-end funds (``is_cef``) left out; 2,071 on that spine. A leveraged or inverse fund is in
-  (avo's words). An ETF whose AUM is unknown is out: ``aum`` is NULL for a row N-CEN does not hold, and no
-  comparison keeps a NULL.
+  (avo's words). An ETF whose AUM is unknown is out **here**: ``aum`` is NULL for a row N-CEN does not hold, and no
+  comparison keeps a NULL. avo's approved rule keeps such a fund when its 20-day average daily dollar volume is at
+  or over 10 million; that branch needs a one-off Alpaca price pull and arrives with the ``my_universe`` build, not
+  in this module, so until that table exists an unknown-AUM fund is not stored.
 - **A delisted name is never in it.** The list is read from the live spine, which holds today's listings only, so
   nothing delisted reaches the served tables at all (the reason PR 382's "CRSP for delisted names" step is gone).
 
@@ -27,12 +29,13 @@ the rule with a list he picks himself: then this module is the one file that cha
 """
 from __future__ import annotations
 
-from ....core.identity.types import OPERATING_TYPES
-
-#: The spine tier a stock of the universe is on (listed on Nasdaq, NYSE or Cboe).
-STOCK_TIER = "A"
-#: The security types the store keeps, the identity master's operating types (shared, so the two cannot drift).
-STOCK_TYPES = tuple(sorted(OPERATING_TYPES))
+#: The spine tiers a stock of the universe may be on: A (listed on Nasdaq, NYSE or Cboe) and D (no exchange in the
+#: SEC file). avo's words of 4 Nov 2026, the rule he approved for ``my_universe``.
+STOCK_TIERS = ("A", "D")
+#: The security types the store keeps (avo, 4 Nov 2026): ordinary shares, ADRs, REITs and MLPs. A BDC, a royalty
+#: trust and a non-SEC bank operate a business too, and the identity master keeps them in ``OPERATING_TYPES``, but
+#: they are not stored. Every one of these is one of the identity master's operating types, which a test pins.
+STOCK_TYPES = ("adr", "common", "mlp", "reit")
 #: The smallest average net assets (N-CEN, ``etf.aum``) an ETF is kept for: 100 million dollars.
 ETF_MIN_AUM = 100_000_000.0
 #: The spine table that holds avo's own list, one row per ticker, when it exists: then it **is** the universe.
@@ -41,8 +44,9 @@ MY_UNIVERSE_TABLE = "my_universe"
 STORED_TICKER_SQL = f"SELECT ticker FROM stg_{MY_UNIVERSE_TABLE} WHERE ticker IS NOT NULL"
 
 _TYPES_SQL = ", ".join(f"'{t}'" for t in STOCK_TYPES)
+_TIERS_SQL = ", ".join(f"'{t}'" for t in STOCK_TIERS)
 #: The stock rule over ``stg_spine``'s own columns, the SQL twin of :func:`in_stock`.
-STOCK_MEMBER = f"(tier = '{STOCK_TIER}' AND security_type IN ({_TYPES_SQL}))"
+STOCK_MEMBER = f"(tier IN ({_TIERS_SQL}) AND security_type IN ({_TYPES_SQL}))"
 #: The ETF rule over ``stg_etf``'s columns (the live spine's ``etf`` table), the SQL twin of :func:`in_etf`.
 ETF_MEMBER = f"(aum >= {ETF_MIN_AUM} AND NOT coalesce(is_etn, false) AND NOT coalesce(is_cef, false))"
 
@@ -84,7 +88,7 @@ IN_UNIVERSE = "{sid} IN (SELECT security_id FROM _universe)"
 
 def in_stock(row: dict) -> bool:
     """One spine ``security`` row is a stock of the universe."""
-    return row.get("tier") == STOCK_TIER and row.get("security_type") in STOCK_TYPES
+    return row.get("tier") in STOCK_TIERS and row.get("security_type") in STOCK_TYPES
 
 
 def in_etf(row: dict) -> bool:

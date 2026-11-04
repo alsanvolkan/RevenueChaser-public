@@ -19,20 +19,30 @@ from .prices_fixture import SPINE, write_spine
 # ── The rule itself ────────────────────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("security_type, kept", [
-    ("common", True), ("adr", True), ("reit", True), ("bdc", True), ("mlp", True), ("royalty_trust", True),
-    ("bank_nonsec", True),
+    ("common", True), ("adr", True), ("reit", True), ("mlp", True),
+    ("bdc", False), ("royalty_trust", False), ("bank_nonsec", False),
     ("spac", False), ("warrant", False), ("unit", False), ("preferred", False), ("cef", False), ("etp", False),
     (None, False), ("unknown", False), ("other", False),
 ])
-def test_only_an_operating_type_is_a_stock_of_the_universe(security_type, kept):
-    """avo, 4 Nov 2026: ordinary shares, ADRs and REITs in; SPAC, warrant, unit, preferred, closed-end fund and an
-    unknown type out. An untyped name stays in Tier A and is still out of the store."""
+def test_only_a_stored_type_is_a_stock_of_the_universe(security_type, kept):
+    """avo's approved rule of 4 Nov 2026: ordinary shares, ADRs, REITs and MLPs in. A SPAC, warrant, unit,
+    preferred, closed-end fund and an unknown type are out, and so are a BDC, a royalty trust and a non-SEC bank,
+    which operate a business but are not stored. An untyped name stays in Tier A and is still out of the store."""
     assert universe.in_stock({"tier": "A", "security_type": security_type}) is kept
 
 
-def test_a_name_that_is_not_listed_is_no_stock_of_the_universe():
-    for tier in ("B", "C", "D", None):
-        assert not universe.in_stock({"tier": tier, "security_type": "common"})
+def test_every_stored_stock_type_is_one_the_identity_master_calls_operating():
+    """The two lists may differ -- the store keeps four of the seven -- but never disagree: a type the store keeps
+    that the identity master does not call operating would be a typo, not a decision."""
+    from RevenueChaser.core.identity.types import OPERATING_TYPES
+    assert not set(universe.STOCK_TYPES) - OPERATING_TYPES
+
+
+@pytest.mark.parametrize("tier, kept", [("A", True), ("D", True), ("B", False), ("C", False), (None, False)])
+def test_the_stored_tiers_are_a_and_d(tier, kept):
+    """avo's approved rule: Tier A (listed on Nasdaq, NYSE or Cboe) or Tier D (no exchange in the SEC file). Tier B
+    is a listed excluded type and Tier C is over the counter, and neither is stored."""
+    assert universe.in_stock({"tier": tier, "security_type": "common"}) is kept
 
 
 @pytest.mark.parametrize("row, kept", [
