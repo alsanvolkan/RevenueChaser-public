@@ -117,7 +117,7 @@ When the owner wants problems or improvements collected (standing rule, all repo
 
 1. **Collect.** Open one feedback thread. The owner writes every item there; acknowledge each in one short line and fix nothing until the owner says the list is done.
 2. **Reproduce.** Reproduce each item from the code or live data before promising a fix. Cite `file:line` or a measurement.
-3. **Review.** One Fable 5.1 review of the list against the code, using the `avo-architecture-review` and `design-suite` skills. It reports findings, order and risks; it implements nothing.
+3. **Review.** Only when the owner says "Fable ile incele", never automatically: one Fable 5.1 review of the list against the code, using the `avo-architecture-review` and `design-suite` skills. It reports findings, order and risks; it implements nothing. Without that phrase, skip this step.
 4. **Plan.** Write a plan file in `/mnt/project-files/<app>/` with ordered steps, risks, and the decisions only the owner can make. Ask only those.
 5. **Build.** One branch, one pull request, one commit per step. Tests seen red first. A design mock first for anything new.
 6. **Phone friendly.** Every UI works on a phone and in light and dark: single column, full-width cards, 44 px touch targets, charts scale to their container, tables stack instead of scrolling sideways.
