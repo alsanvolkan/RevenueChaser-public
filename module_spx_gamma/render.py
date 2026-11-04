@@ -17,6 +17,7 @@ from .flow_signals import evaluate_flow_signal
 from .narrative import build_walkthrough
 from .normalize import compute_positioning_deltas
 from .relations import GLOSSARY_TR, causal_chain, greek_relations
+from .regime import change_conditions, net_delta_trend
 from .scenarios import build_scenarios
 from .summary import at_a_glance, build_summary, signal_matrix
 
@@ -572,6 +573,9 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         # ── v4 provider comparison ──
         "dte_band_walls": _dte_band_rows(snapshot),
         "flip_methods": _flip_methods(snapshot),
+        # The report's §2 and §15: both derived from this snapshot and the history already read above.
+        "regime_conditions": change_conditions(snapshot, _hist, snapshot.get("asof_date")),
+        "net_delta_trend": net_delta_trend(_hist, snapshot.get("asof_date")),
     }
 
 
