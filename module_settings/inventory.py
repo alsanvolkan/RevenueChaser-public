@@ -404,30 +404,157 @@ def _index_note() -> str:
     return f"{lists}; {change}; Nasdaq vs SEC exchange file: {nasdaq}"
 
 
+# ── The market store's prices file ────────────────────────────────────────────────────────────────────────────
+# Since build plan PR 7 the builder writes the daily bars to ``RC_MARKET_DIR/prices.duckdb``: ``price_bar_daily``,
+# keyed on the security id, with the old ``price_bars_daily`` shape served beside it as a view
+# (``rcdata/build/prices/serving.py``). The store's own ``prices.duckdb`` (``RC_STORE_DIR``) is filled only by the old
+# nightly, RC-Daily-Bars; where that does not run it is a schema stub, and a page that read only it showed no bars
+# beside 5.65M (live check, 1 Nov 2026). When the market file is built it is the file of record on this page; without
+# it the store's file is the only one and the old reads apply.
+MARKET_BARS_TABLE = "price_bar_daily"
+MARKET_BARS_VIEW = "price_bars_daily"        # the old, ticker-keyed shape
+MARKET_BARS_WRITER = "prices/serving (the market store's builder)"
+_MARKET_NOT_INDEX = "security_id NOT LIKE 'index:%'"     # index levels share the table; they are not bars
+_SOURCE_WORDS = {"alpaca": "Alpaca", "uw": "Unusual Whales", "yfinance": "yfinance", "wrds": "WRDS"}
+
+
+def _market_prices() -> dict | None:
+    """``{rows, newest, sources, built_at}`` of the market prices file; ``None`` when it is not built.
+
+    One read-only connection, closed before return (``serving.open_read``, never kept across requests). A file that
+    is there but cannot be read raises: an unreadable file must never read as an empty one. Inside one call the
+    answer, or the failure, is kept, so the row, the drill and the identity coverage ask the file once.
+    """
+    cache = getattr(_CALL, "summaries", None)
+    if cache is not None and "market_prices" in cache:
+        hit = cache["market_prices"]
+        if isinstance(hit, Exception):
+            raise _RepeatedReadError(str(hit)) from hit
+        return hit
+    from RevenueChaser.rcdata import serving
+    try:
+        try:
+            con = serving.open_read("prices")
+        except serving.ServingFileMissing:
+            out = None
+        else:
+            try:
+                rows, newest = con.execute(
+                    f"SELECT count(*), max(session_date) FROM {MARKET_BARS_TABLE} WHERE {_MARKET_NOT_INDEX}"
+                ).fetchone()
+                sources = dict(con.execute(
+                    f"SELECT source, count(*) FROM {MARKET_BARS_TABLE} WHERE {_MARKET_NOT_INDEX} "
+                    "AND session_date = ? GROUP BY source ORDER BY source", [newest]).fetchall()) if newest else {}
+                built = con.execute(f"SELECT max(built_at) FROM {serving.VERSION_TABLE}").fetchone()
+            finally:
+                con.close()
+            out = {"rows": int(rows or 0), "newest": newest, "sources": sources,
+                   "built_at": built[0] if built else None}
+    except Exception as exc:  # noqa: BLE001 - kept for the call, raised to each caller
+        if cache is not None:
+            cache["market_prices"] = exc
+        raise
+    if cache is not None:
+        cache["market_prices"] = out
+    return out
+
+
+def _market_query(sql: str, params: list) -> list[tuple]:
+    """One read of the market prices file's bridge view; the caller has already seen the file built."""
+    from RevenueChaser.rcdata import serving
+    con = serving.open_read("prices")
+    try:
+        return con.execute(sql, params).fetchall()
+    finally:
+        con.close()
+
+
+def _market_price_row(row: dict, now: datetime) -> dict | None:
+    """The "Daily price bars" row read from the market prices file, or ``None`` when that file is not built.
+
+    The registry facts ``_attach_registry`` adds afterwards (store pill, source, writer, Freshness, coverage) describe
+    the old store file, so the row carries its own in ``market`` and :func:`_overlay_market_prices` puts them back.
+    """
+    try:
+        m = _market_prices()
+    except Exception as exc:  # noqa: BLE001 - an unreadable file is said, never shown as empty
+        _record(MARKET_BARS_TABLE, "_price_bars_row", exc)
+        return dict(row, rows=None, last_date=DASH, holes=None,
+                    note=f"the market store's prices file could not be read: {str(exc)[:160]}",
+                    market={"state": "failed"})
+    if m is None:
+        return None
+    newest = m["newest"]
+    newest_txt = _fmt_date(newest) if newest is not None else None
+    out = dict(row, rows=m["rows"], last_date=newest_txt or DASH, hole_label="sessions behind latest",
+               market={"state": "ok", "newest": newest_txt})
+    built = f"; built {_fmt_date(m['built_at'])}" if m.get("built_at") is not None else ""
+    where = "market store prices.duckdb (RC_MARKET_DIR)"
+    if not m["rows"]:
+        out["note"] = f"{where} holds no bar yet{built}"
+        return out
+    from RevenueChaser.core import calendar
+    try:
+        latest = calendar.latest_complete_session(now)
+    except ValueError:
+        out["note"] = f"{where}: bars stored, but the latest complete session is unavailable (calendar error)"
+        return out
+    out["holes"] = _levels_behind(newest_txt, latest.isoformat())
+    share = ", ".join(f"{_SOURCE_WORDS.get(str(s), s)} {int(n):,}" for s, n in m["sources"].items())
+    out["note"] = (f"{where}: newest {newest_txt} vs latest complete {latest.isoformat()}"
+                   f"{'; ' + share + ' on the newest session' if share else ''}{built}")
+    return out
+
+
+def _overlay_market_prices(rows: list[dict]) -> list[dict]:
+    """Put the market file's own facts on the price row after ``_attach_registry`` described the store's file."""
+    for row in rows:
+        market = row.get("market")
+        if row.get("key") != "price_bars" or not isinstance(market, dict):
+            continue
+        row["db"], row["source"], row["writer"], row["writer_note"] = "market", "alpaca", MARKET_BARS_WRITER, None
+        row["coverage"] = {"covered": None, "expected": None, "fraction": None, "newest": market.get("newest"),
+                           "problems": [], "label": COVERAGE_NA}
+        if market.get("state") == "failed":
+            row["fresh"] = _fresh(FRESH_FAILED, QUERY_FAILED_TEXT)
+        elif market.get("newest"):
+            row["fresh"] = _fresh(FRESH_DATE, market["newest"], market["newest"])
+        else:
+            row["fresh"] = _fresh(FRESH_EMPTY, EMPTY_TEXT)
+    return rows
+
+
 def _price_bars_row(now: datetime) -> dict:
     """The "Daily price bars" row (#156): counts plus the ``prices.health_summary`` note.
 
-    A missing table or a calendar error is a note, never an exception (the ``_missing`` pattern).
+    The market store's prices file is read first (:func:`_market_price_row`); the store's own file only when the
+    market one is not built. A missing table or a calendar error is a note, never an exception (the ``_missing``
+    pattern).
     """
     default = {
         "key": "price_bars", "label": "Daily price bars",
         "tables": ["price_bars_daily", "price_actions"],
-        "rows": _count("price_bars_daily"),
-        "last_date": _max_date(("price_bars_daily", "session_date")),
+        "rows": None, "last_date": DASH,
         "holes": None, "hole_label": "behind latest session", "fetch": None,
         "note": "",
     }
+    market = _market_price_row(default, now)
+    if market is not None:
+        return market
+    default["rows"] = _count("price_bars_daily")
+    default["last_date"] = _max_date(("price_bars_daily", "session_date"))
+    no_bars = "no bars yet (the market prices file is not built, and the store file holds none)"
     from RevenueChaser.core import prices
     try:
         h = _summary("prices", prices.health_summary, now)
     except Exception as exc:  # noqa: BLE001 - a summary failure must not break the page
         _record("price_bars_daily", "_price_bars_row", exc)
-        default["note"] = "no bars yet (the attended fill has not run)"
+        default["note"] = no_bars
         return default
     rows = default["rows"]
     default["holes"] = h.get("behind")
     if not rows:
-        default["note"] = "no bars yet (the attended fill has not run)"
+        default["note"] = no_bars
         return default
     if h.get("calendar_error"):
         default["note"] = "bars stored, but the latest complete session is unavailable (calendar error)"
@@ -711,6 +838,21 @@ def _d01_presence(ticker: str) -> dict:
     this number.
     """
     empty = {"bars": 0, "newest": None}
+    # The market store's prices file first, when it is built (see ``_market_prices``).
+    try:
+        built = _market_prices() is not None
+    except Exception as exc:  # noqa: BLE001 - an unreadable file is "could not read", never no bars
+        _record(MARKET_BARS_TABLE, "_d01_presence", exc)
+        return dict(empty, error=True)
+    if built:
+        try:
+            n, newest = _market_query(
+                f"SELECT count(*), max(session_date) FROM {MARKET_BARS_VIEW} WHERE ticker = ?", [ticker])[0]
+        except Exception as exc:  # noqa: BLE001
+            _record(MARKET_BARS_VIEW, "_d01_presence", exc)
+            return dict(empty, error=True)
+        newest = _fmt_date(newest) if newest is not None else DASH
+        return {"bars": int(n or 0), "newest": None if newest == DASH else newest}
     if not _table_exists("price_bars_daily"):
         return _absent("price_bars_daily", empty)
     try:
@@ -1875,6 +2017,41 @@ def _universe_caps() -> dict[str, float] | None:
     return {r["ticker"]: r.get("market_cap") for r in rows if r.get("ticker")}
 
 
+def _bars_coverage(kept: list[str], now: datetime | None) -> tuple[int | None, str]:
+    """``(covered, state)`` of the identity input "Daily price bars, latest completed session".
+
+    The market store's prices file is read when it is built (see ``_market_prices``), the store's own file only when
+    it is not. A failed read is ``unreadable`` and recorded, never a zero; no complete session is ``unmeasured``.
+    """
+    from RevenueChaser.core import calendar, prices
+    try:
+        market = _market_prices()
+    except Exception as exc:  # noqa: BLE001
+        _record(MARKET_BARS_TABLE, "identity_coverage", exc)
+        return None, COVERAGE_UNREADABLE
+    try:
+        if market is not None:
+            try:
+                latest = calendar.latest_complete_session(now)
+            except ValueError:
+                return None, COVERAGE_UNMEASURED
+            if not market["rows"]:
+                return 0, ""                                  # the file is built and holds no bar
+            have = {r[0] for r in _market_query(
+                f"SELECT DISTINCT ticker FROM {MARKET_BARS_VIEW} WHERE session_date = ?", [latest])}
+            return sum(1 for t in kept if t in have), ""
+        summary = _summary("prices", prices.health_summary, now)
+        if summary.get("calendar_error"):
+            return None, COVERAGE_UNMEASURED                  # no complete session to count against
+        if summary.get("newest_session") is None:
+            return 0, ""                                      # no bar stored at all
+        have = _session_tickers("price_bars_daily", "prices", summary["latest_complete"])
+        return (sum(1 for t in kept if t in have), "") if have is not None else (None, COVERAGE_UNREADABLE)
+    except Exception as exc:  # noqa: BLE001
+        _record(MARKET_BARS_VIEW if market is not None else "price_bars_daily", "identity_coverage", exc)
+        return None, COVERAGE_UNREADABLE
+
+
 def _session_tickers(table: str, db: str, session) -> set[str] | None:
     """Tickers with a row on ``session`` in ``table``; ``None`` when the read failed."""
     try:
@@ -2082,7 +2259,7 @@ def identity_coverage(tickers: list[str], now: datetime | None = None,
         inputs.append(_coverage("cik", "SEC company number (CIK)", denominator,
                                 covered=sum(1 for t in kept if t in with_cik), expected=n_kept))
 
-    from RevenueChaser.core import prices, quotes
+    from RevenueChaser.core import quotes
     covered, state = None, COVERAGE_UNREADABLE
     try:
         newest = _summary("quotes", quotes.health_summary)["newest_session"]
@@ -2097,19 +2274,7 @@ def identity_coverage(tickers: list[str], now: datetime | None = None,
     inputs.append(_coverage("quotes", "Quote and market cap, newest session", denominator,
                             covered=covered, expected=n_kept, state=state))
 
-    covered, state = None, COVERAGE_UNREADABLE
-    try:
-        summary = _summary("prices", prices.health_summary, now)
-        if summary.get("calendar_error"):
-            covered, state = None, COVERAGE_UNMEASURED   # no complete session to count against
-        elif summary.get("newest_session") is None:
-            covered, state = 0, ""                        # no bar stored at all
-        else:
-            have = _session_tickers("price_bars_daily", "prices", summary["latest_complete"])
-            if have is not None:
-                covered, state = sum(1 for t in kept if t in have), ""
-    except Exception as exc:  # noqa: BLE001
-        _record("price_bars_daily", "identity_coverage", exc)
+    covered, state = _bars_coverage(kept, now)
     inputs.append(_coverage("bars", "Daily price bars, latest completed session", denominator,
                             covered=covered, expected=n_kept, state=state))
 
@@ -2372,7 +2537,7 @@ def _collect(now: datetime) -> dict:
     board_cards = boards.board_cards()
     return {
         # Worst coverage first: the rows that need a Fetch are at the top (#124).
-        "rows": sorted(_attach_registry(rows, now), key=sort_key),
+        "rows": sorted(_overlay_market_prices(_attach_registry(rows, now)), key=sort_key),
         "tickers": tickers_list,
         "boards": board_cards,
         "identity": identity,
