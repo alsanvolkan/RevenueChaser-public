@@ -644,8 +644,8 @@ worker thread writes while Flask request threads read. So:
   price bars, #380 S0), daily 23:50 (the forecast baselines RC-Forecast-Baselines, chained on the outcomes run, #25
   HR-1) and Tuesday to Saturday not before 01:30 (the Earnings inputs RC-Earnings-Inputs, chained on the
   daily price bars, E0 #372), plus daily 09:30 (the open-issues registry check RC-Open-Issues-Check, #74:
-  `scripts/open_issues_sync.py --check`, which reads the GitHub API, writes nothing and is deliberately not
-  chained on a store writer) and daily 09:15 (the IBKR Gateway login check RC-IBKR-Login-Check, #162:
+  `scripts/open_issues_sync.py --check`, which reads the GitHub API, writes nothing, exits 0 whatever it finds
+  and is deliberately not chained on a store writer) and daily 09:15 (the IBKR Gateway login check RC-IBKR-Login-Check, #162:
   `scripts/ibkr_login_check.py`, one TCP connection and the TWS API version handshake, which writes no table and
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
   expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
@@ -983,9 +983,12 @@ file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema 
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it; and the options
 data, `options` (serving schema version `1`), under "The options data" last. The market data,
-`market` (serving schema version `1`): `serving_schema_version` (one row: kind, version, build time, build id),
+`market` (serving schema version `2`): `serving_schema_version` (one row: kind, version, build time, build id),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
-`source`, `source_as_of`, `fetched_at`, `run_id`, `observed`) and `market_series` (key series id, observation date,
+`source`, `source_as_of`, `fetched_at`, `run_id`, `observed`), `spx_greek_expiry_strike` (the same key, the four
+greeks per side from `greek-exposure/strike-expiry` for every expiry of the chain, same provenance; its `dte` is
+UW's **calendar**-day count, while `spx_gamma_expiry_strike.dte` counts NYSE sessions, so the two columns are
+different measures of different endpoints and are never substituted) and `market_series` (key series id, observation date,
 source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance). `session_date` comes from
 `core/calendar.py` and is empty outside its 1993-2028 table (its rule C: no second calendar). The previous file
 stays as `<kind>.prev.duckdb`.

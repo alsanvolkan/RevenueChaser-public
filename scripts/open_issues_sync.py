@@ -6,10 +6,13 @@ The dashboard's "Open issues" group reads a checked-in file, never the network
 - ``--write`` reads the **open** issues of the public repo (paginated, pull requests filtered out), merges them with
   the registry and writes it back. The private repo is not read: its issues were migrated here and closed. The **API owns** ``title``, ``state``, ``labels`` and ``issue_updated_at``; a human
   owns ``boards``, ``scope``, ``kind``, ``status``, ``deferred_until``, ``summary``, ``detail``, ``refs`` and
-  ``reviewed_at``, and those are never overwritten. A new issue is added (``scope="board"``, no boards, kind from its
-  labels) with ``summary``/``detail`` pre-filled from its body. An issue that is no longer open is dropped — but only
+  ``reviewed_at``, and those are never overwritten. A new issue is added (``scope="repo"``, so it shows on the
+  repo-scope board rather than on none, kind from its labels, ``reviewed_at`` empty because no human has seen it)
+  with ``summary``/``detail`` pre-filled from its body. An issue that is no longer open is dropped — but only
   for a repo this run actually read.
-- ``--check`` writes nothing and exits 1 when the registry differs from the API.
+- ``--check`` writes nothing and exits 0: it reports the drift from the API and how many entries still await
+  curation. It does not fail on drift (avo, 2026-11-03) -- the registry is behind the moment an issue is opened,
+  so a failing check was red every day and said nothing a reader could act on.
 - ``--report-thin`` lists the entries below the density bar (``core.open_issues.thin_reasons``) and exits 1.
 
 Output is deterministic (sorted by ``(repo, number)``, 2-space indent, trailing newline) and a run that changes
@@ -28,7 +31,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from RevenueChaser.core import open_issues
@@ -226,7 +229,7 @@ def _canonical(entry: dict) -> dict:
     }
 
 
-def _new_entry(repo: str, issue: dict, today: str) -> dict:
+def _new_entry(repo: str, issue: dict) -> dict:
     labels = [str(label.get("name") or "") for label in (issue.get("labels") or [])
               if isinstance(label, dict)]
     number = int(issue["number"])
@@ -235,9 +238,9 @@ def _new_entry(repo: str, issue: dict, today: str) -> dict:
         "repo": repo, "number": number,
         "url": f"{open_issues.URL_PREFIX}{repo}/issues/{number}",
         "title": _title(issue), "state": "open", "labels": labels,
-        "boards": [], "scope": "board", "kind": guess_kind(labels), "status": "open",
+        "boards": [], "scope": "repo", "kind": guess_kind(labels), "status": "open",
         "summary": pre["summary"], "detail": pre["detail"], "refs": [],
-        "issue_updated_at": issue.get("updated_at") or "", "reviewed_at": today,
+        "issue_updated_at": issue.get("updated_at") or "", "reviewed_at": "",
     })
 
 
@@ -262,7 +265,7 @@ def _api_fields(issue: dict) -> dict:
     }
 
 
-def merge(existing: list[dict], fetched: dict[str, list[dict]], today: str) -> tuple[list[dict], list, list, list]:
+def merge(existing: list[dict], fetched: dict[str, list[dict]]) -> tuple[list[dict], list, list, list]:
     """``(entries, added, removed, changed)``; the API's fields win, the curated ones are kept verbatim."""
     current = {(e["repo"], e["number"]): _canonical(e) for e in existing}
     merged: dict[tuple[str, int], dict] = {}
@@ -273,7 +276,7 @@ def merge(existing: list[dict], fetched: dict[str, list[dict]], today: str) -> t
             fields = _api_fields(issue)
             old = current.get(key)
             if old is None:
-                merged[key] = _new_entry(repo, issue, today)
+                merged[key] = _new_entry(repo, issue)
                 added.append(key)
                 continue
             entry = dict(old)
@@ -327,7 +330,7 @@ def main(argv: list[str] | None = None, *, fetch=None, head_sha: str | None = No
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--write", action="store_true", help="merge the API into the registry and write it")
-    mode.add_argument("--check", action="store_true", help="exit 1 when the registry differs; write nothing")
+    mode.add_argument("--check", action="store_true", help="report the drift and the curation backlog; write nothing")
     mode.add_argument("--report-thin", action="store_true", help="list the entries below the density bar")
     parser.add_argument("--token-env", default="RC_GITHUB_TOKEN", help="variable holding the GitHub token")
     parser.add_argument("--registry", default=str(open_issues.REGISTRY_PATH), help="the registry file")
@@ -363,8 +366,7 @@ def main(argv: list[str] | None = None, *, fetch=None, head_sha: str | None = No
         print(f"open issues sync: {exc}", file=sys.stderr)
         return 2
 
-    today = date.today().isoformat()
-    entries, added, removed, changed = merge([e.as_dict() for e in registry.issues], fetched, today)
+    entries, added, removed, changed = merge([e.as_dict() for e in registry.issues], fetched)
     for label, keys in (("added", added), ("removed", removed), ("changed", changed)):
         for key in keys:
             print(f"{label}: {_describe(key)}")
@@ -381,8 +383,13 @@ def main(argv: list[str] | None = None, *, fetch=None, head_sha: str | None = No
         if added or removed or changed:
             print(f"{len(added)} added, {len(removed)} removed, {len(changed)} changed — "
                   f"run --write to update {path.name}", file=sys.stderr)
-            return 1
-        print("registry is current", file=sys.stderr)
+        else:
+            print("registry is current", file=sys.stderr)
+        awaiting = [e for e in registry.issues if not open_issues.is_curated(e)]
+        if awaiting:
+            print(f"{len(awaiting)} of {len(registry.issues)} entries await curation: "
+                  f"{', '.join(_describe(e.key) for e in awaiting[:10])}"
+                  f"{' …' if len(awaiting) > 10 else ''}", file=sys.stderr)
         return 0
 
     if not (added or removed or changed):

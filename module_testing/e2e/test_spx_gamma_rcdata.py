@@ -97,6 +97,24 @@ def test_a_fetch_queues_the_two_datasets_and_renders_from_the_store(tmp_path, e2
         assert dash.yf_calls() == []
 
 
+def test_the_rendered_scenario_set_is_the_pinned_reports_table(tmp_path, e2e_env, provider_routes, market_roots):
+    """#178: the page shows the report's asymmetry column and names the report it follows.
+
+    The unit tests pin the numbers; this one pins what reaches the page, because the columns that were wrong
+    before (R:R and a signed "Expectancy E", which the reports do not publish) were wrong in the template as much
+    as in the module.
+    """
+    _uw_routes(provider_routes)
+    with _board(tmp_path, e2e_env, market_roots, stored=True) as dash:
+        assert dash.run_job("/run/spxgamma", date=DAY).ok
+        html = dash.view(TAB).text
+        assert "Scenario Set" in html
+        assert ">Asymmetry<" in html
+        assert "Expectancy" not in html and ">R:R<" not in html, "the columns the reports dropped"
+        assert "Scenario rules follow the 2026-10-30 report." in html
+        assert "expected value is deliberately not computed" in html
+
+
 @pytest.fixture(scope="module")
 def chrome():
     path = find_chrome()

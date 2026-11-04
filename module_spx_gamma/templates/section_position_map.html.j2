@@ -578,13 +578,12 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 
 <h2>Scenario Set</h2>
 <table class="stack">
-  <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>R:R</th><th>Expectancy E</th><th>Trade</th></tr></thead>
+  <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>Asymmetry</th><th>Trade</th></tr></thead>
   <tbody>
   {% for s in scenarios.scenarios %}
   <tr>
     <td data-label="Scenario">{{ s.name }}</td><td data-label="Range">{{ s.range }}</td><td data-label="P">{{ s.p }}</td>
-    <td data-label="R:R">{{ s.rr if s.rr is not none else "n/a" }}</td>
-    <td data-label="Expectancy E">{{ s.expectancy if s.expectancy is not none else "n/a" }}</td>
+    <td data-label="Asymmetry">{{ "%.2f"|format(s.asymmetry) if s.asymmetry is not none else "n/a" }}</td>
     <td data-label="Trade">{{ s.trade }}</td>
   </tr>
   {% endfor %}

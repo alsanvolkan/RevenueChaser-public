@@ -23,6 +23,9 @@ _COMPETITOR = re.compile(r"\b(competitor[s]?|competition|compete[s]?|rival[s]?)\
 
 
 _PATTERNS = (("supplier", _SUPPLIER), ("customer", _CUSTOMER), ("competitor", _COMPETITOR))
+# A sentence that says the issuer competes names rivals, whatever other cue it holds
+# ("compete with DRAM suppliers such as Micron"), so it never gives a supplier/customer (#394).
+_COMPETE_SENTENCE = re.compile(r"\b(compet(?:e[sd]?|ing|itors?|ition)|rivals?)\b", re.I)
 
 
 def _relation(text: str, pos: int, bounds: sentences.Bounds | None = None) -> str:
@@ -34,6 +37,8 @@ def _relation(text: str, pos: int, bounds: sentences.Bounds | None = None) -> st
     sentence holding the name.
     """
     sent_lo, sent_hi = (bounds or sentences.Bounds(text)).at(pos)
+    if _COMPETE_SENTENCE.search(text, sent_lo, sent_hi):
+        return "competitor"
     lo = max(sent_lo, pos - config.MENTION_WINDOW)
     hi = min(sent_hi, pos + config.MENTION_WINDOW)
     best_name, best_dist = "other", None

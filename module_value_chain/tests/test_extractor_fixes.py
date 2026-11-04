@@ -150,12 +150,13 @@ def test_concentration_wins_over_keyword_edge(rawstore_tmp_db):
                       "accounted for 29.8% of our net sales.")}])
     edges = engine.build_edges()
     aapl = [e for e in edges if e["dst_ticker"] == "AAPL"]
-    # The keyword "supplier" guess is replaced; the share sentence has no relation
-    # verb of its own, so its keyword mention is a display-only "other" (#61).
+    # The "compete with suppliers" sentence is a competitor mention (#394), kept beside the
+    # stated edge; the share sentence has no relation verb of its own, so its keyword
+    # mention is a display-only "other" (#61).
     assert [(e["relation"], "29.8%" in e["snippet"]) for e in aapl] == [
-        ("customer", True), ("other", True)]
+        ("customer", True), ("competitor", True), ("other", True)]
     # D7 (DF57): the stated share rides on the concentration edge into chain_mentions; a keyword edge has none.
-    assert [e["share_pct"] for e in aapl] == [29.8, None]
+    assert [e["share_pct"] for e in aapl] == [29.8, None, None]
     stored = {(r["dst_ticker"], r["relation"]): r["share_pct"] for r in rawstore.get_all("chain_mentions")}
     assert stored[("AAPL", "customer")] == 29.8 and stored[("AAPL", "other")] is None
 

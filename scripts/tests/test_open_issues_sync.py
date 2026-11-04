@@ -96,7 +96,8 @@ def test_a_new_issue_is_added_from_a_status_block(tmp_path):
     api = {PUB: [_api(11, "13F: large issuers stay unmatched", body=body, labels=("bug",))]}
     assert sync.main(["--write", "--registry", str(path)], fetch=_fetch(api), head_sha="abc1234") == 0
     issue = _read(path)["issues"][0]
-    assert issue["scope"] == "board" and issue["boards"] == [] and issue["status"] == "open"
+    assert issue["scope"] == "repo" and issue["boards"] == [] and issue["status"] == "open"
+    assert issue["reviewed_at"] == "", "no human has seen it yet"
     assert issue["kind"] == "bug"
     assert issue["detail"]["whats_wrong"].startswith("The derive leaves out large well-known issuers")
     assert issue["detail"]["example"].startswith("Exxon Mobil")
@@ -135,12 +136,23 @@ def test_long_text_is_clipped_at_a_word_boundary(tmp_path):
     assert len(text) <= 900
 
 
-def test_check_reports_drift_without_writing(tmp_path):
+def test_check_reports_drift_without_writing(tmp_path, capsys):
+    """Drift is a report, not a failure (avo, 2026-11-03): the daily job had been red every day since it was
+    installed, because the registry is behind the API whenever an issue is opened.
+    """
     path = _registry(tmp_path, [_entry(11)])
     before = path.read_text(encoding="utf-8")
     api = {PUB: [_api(11, "changed title")]}
-    assert sync.main(["--check", "--registry", str(path)], fetch=_fetch(api), head_sha="abc1234") == 1
+    assert sync.main(["--check", "--registry", str(path)], fetch=_fetch(api), head_sha="abc1234") == 0
+    assert "1 changed" in capsys.readouterr().err
     assert path.read_text(encoding="utf-8") == before
+
+
+def test_check_counts_the_entries_awaiting_curation(tmp_path, capsys):
+    path = _registry(tmp_path, [_entry(11), _entry(12, reviewed_at="")])
+    api = {PUB: [_api(11, "curated title"), _api(12, "curated title")]}
+    assert sync.main(["--check", "--registry", str(path)], fetch=_fetch(api), head_sha="abc1234") == 0
+    assert "1 of 2 entries await curation" in capsys.readouterr().err
 
 
 def test_check_exits_zero_when_nothing_differs(tmp_path):
@@ -169,14 +181,16 @@ def test_report_thin_names_every_thin_entry(tmp_path, capsys):
     assert f"{PUB}#12" not in out
 
 
-def test_report_thin_names_a_freshly_synced_entry_until_its_boards_are_named(tmp_path, capsys):
-    """#120: ``--write`` adds a new issue as scope "board" with no boards, which shows on no panel."""
+def test_report_thin_names_a_freshly_synced_entry_until_it_is_curated(tmp_path, capsys):
+    """``--write`` adds a new issue as scope "repo" with no curated text, so it shows on the repo-scope board
+    (#120) and stays on the curator's list until someone writes its summary.
+    """
     path = _registry(tmp_path, [])
     assert sync.main(["--write", "--registry", str(path)], fetch=_fetch({PUB: [_api(11, "public eleven")]}),
                      head_sha="abc1234") == 0
     capsys.readouterr()
     assert sync.main(["--report-thin", "--registry", str(path)]) == 1
-    assert "names no board" in capsys.readouterr().out
+    assert "summary is 0 chars" in capsys.readouterr().out
 
 
 def test_report_thin_is_zero_when_every_entry_passes(tmp_path):
@@ -225,7 +239,7 @@ def test_check_names_an_open_issue_missing_from_the_registry_and_a_closed_one_st
     path = _registry(tmp_path, [_entry(11), _entry(22)])
     api = {PUB: [_api(11, "curated title", updated_at="2026-10-22T10:03:48Z"),
                  _api(33, "opened since the last sync")]}
-    assert sync.main(["--check", "--registry", str(path)], fetch=_fetch(api), head_sha="abc1234") == 1
+    assert sync.main(["--check", "--registry", str(path)], fetch=_fetch(api), head_sha="abc1234") == 0
     out = capsys.readouterr()
     assert f"added: {PUB}#33" in out.out, "the open issue the registry lacks is reported"
     assert f"removed: {PUB}#22" in out.out, "the closed issue still in the registry is reported"

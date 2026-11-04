@@ -24,6 +24,11 @@ from . import config
 # One benchmark at a time is enough (SPY/DIA/QQQ are collinear), but the prices store holds all three
 # (``rcdata/build/prices.BENCHMARKS``), so switching the Remove-market control stays offline.
 BENCHMARK_TICKERS = ("SPY", "DIA", "QQQ")
+# #393: the store holds no SPY or DIA bars (unit investment trusts, no symbol row), so the live board clustered raw
+# returns with ``benchmark_status`` "missing". When the asked ETF has no bar in the span, the stored S&P 500 level
+# (``index:SPX``, nominal: a level has no factor) stands in, else QQQ; the run says so (``fallback:<name>``).
+INDEX_FALLBACK = "SPX"
+ETF_FALLBACK = "QQQ"
 
 
 def _names(tickers) -> list[str]:
@@ -109,6 +114,32 @@ def sessions_held(ticker: str = "SPY") -> int:
     return len(read.bar_sessions([ticker], start=lo))
 
 
+def benchmark_fallback(ticker: str | None) -> str | None:
+    """The stand-in for benchmark ``ticker`` when the store holds no bar of it in the span (#393): ``INDEX_FALLBACK``
+    when its level is stored, else ``ETF_FALLBACK`` when its bars are, else None (the run then stays raw and says
+    "missing", as before). None too when ``ticker`` itself is held: a stored benchmark is never replaced."""
+    lo = history_start()
+    if not ticker or lo is None:
+        return None
+    held = {t for t, d in read.last_sessions([ticker, ETF_FALLBACK]).items() if _as_date(d) >= lo}
+    if ticker in held:
+        return None
+    if read.index_bars(INDEX_FALLBACK, start=lo):
+        return INDEX_FALLBACK
+    return ETF_FALLBACK if ETF_FALLBACK in held else None
+
+
+def _index_frame(start) -> pd.DataFrame:
+    """The index level as one column named ``INDEX_FALLBACK`` (sessions x 1), empty when none is stored."""
+    rows = read.index_bars(INDEX_FALLBACK, start=start)
+    if not rows:
+        return pd.DataFrame()
+    frame = pd.DataFrame({INDEX_FALLBACK: [float(r["close"]) for r in rows]},
+                         index=pd.DatetimeIndex([pd.Timestamp(r["session_date"]) for r in rows], name="ts"))
+    frame.columns.name = "ticker"
+    return frame
+
+
 def price_frame(tickers: list[str], start: str | None = None) -> pd.DataFrame:
     """Adjusted close matrix (sessions × tickers) from the prices store (``rcdata.read.ticker_bars``, total return).
 
@@ -117,21 +148,25 @@ def price_frame(tickers: list[str], start: str | None = None) -> pd.DataFrame:
     Relatedness peer market reuses it, #388). Only names with a bar appear; a NULL or NaN close is no bar.
     """
     names = _names(tickers)
-    if not names:
-        return pd.DataFrame()
     lo = history_start()
-    if lo is None:
+    if not names or lo is None:
         return pd.DataFrame()
     begin = lo if start is None else max(lo, _as_date(start))
-    bars = read.ticker_bars(names, start=begin, basis="total_return")
-    if bars.empty:
-        return pd.DataFrame()
-    bars = bars[pd.to_numeric(bars["close"], errors="coerce").notna()]
-    if bars.empty:
-        return pd.DataFrame()
-    frame = bars.pivot(index="session_date", columns="ticker", values="close").astype(float).sort_index()
-    frame.index = pd.DatetimeIndex(frame.index, name="ts")
-    frame.columns.name = "ticker"
+    # The index level (#393) is not a ticker: read apart and joined on the sessions the tickers trade.
+    want_index = INDEX_FALLBACK in names
+    names = [n for n in names if n != INDEX_FALLBACK]
+    frame = pd.DataFrame()
+    bars = read.ticker_bars(names, start=begin, basis="total_return") if names else pd.DataFrame()
+    if not bars.empty:
+        bars = bars[pd.to_numeric(bars["close"], errors="coerce").notna()]
+    if not bars.empty:
+        frame = bars.pivot(index="session_date", columns="ticker", values="close").astype(float).sort_index()
+        frame.index = pd.DatetimeIndex(frame.index, name="ts")
+    if want_index:
+        index = _index_frame(begin)
+        frame = index if frame.empty else frame.join(index, how="left")
+    if not frame.empty:
+        frame.columns.name = "ticker"
     return frame
 
 
@@ -158,4 +193,13 @@ def history_facts(tickers: list[str], flat_run: int = config.FLAT_RUN) -> dict:
     lo = history_start() if names else None
     if lo is None:
         return {"first": {}, "last": {}, "sessions": [], "flat": []}
-    return read.bar_facts(names, start=lo, flat_run=flat_run)
+    want_index = INDEX_FALLBACK in names
+    facts = read.bar_facts([n for n in names if n != INDEX_FALLBACK], start=lo, flat_run=flat_run)
+    if want_index:
+        rows = read.index_bars(INDEX_FALLBACK, start=lo)
+        if rows:
+            # Its first and last session (the stale check); the sessions stay the tickers', as ``price_frame`` joins
+            # the level onto them, and a level is never a flat printer.
+            facts["first"][INDEX_FALLBACK] = rows[0]["session_date"]
+            facts["last"][INDEX_FALLBACK] = rows[-1]["session_date"]
+    return facts

@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import safe_json
 from .config import BRIER_FILENAME, DATA_ROOT
+from .scenarios import REPORT_AS_OF
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,22 @@ CLASSES = ["Consolidation", "Upside", "Downside"]
 # Uniform 1/3 forecast against a one-hot outcome: (1 - 1/3)^2 + 2 * (1/3)^2 = 2/3.
 EQUAL_WEIGHT_REFERENCE = (1 - 1 / len(CLASSES)) ** 2 + (len(CLASSES) - 1) * (1 / len(CLASSES)) ** 2
 PROB_SUM_TOLERANCE = 0.01
+
+
+def current_rule() -> str:
+    """The scenario rule a record has to carry to count: the report ``scenarios.py`` implements."""
+    return REPORT_AS_OF
+
+
+def scored_under_current_rule(records: list[dict]) -> list[dict]:
+    """The scored records of the current rule.
+
+    A record is only comparable with records built from the same bands. The 30 Oct report moved every band edge
+    and every probability (avo, 3 Nov 2026: the scorecard restarts from zero), so records written under an earlier
+    rule keep their outcome and Brier for the audit but no longer count towards the average. A record with no
+    ``rule`` at all predates the stamp and is therefore not of this rule.
+    """
+    return [r for r in records if r.get("brier") is not None and r.get("rule") == current_rule()]
 
 
 def skill_score(average: float | None) -> float | None:
@@ -42,7 +59,7 @@ def base_rate_reference(records: list[dict]) -> float | None:
 
     shortcut: the frequencies are in-sample (the same days the average covers), which flatters the reference a
     little; upgrade to a trailing out-of-sample base rate once a few hundred days are scored."""
-    outcomes = [r.get("outcome") for r in records if r.get("brier") is not None and r.get("outcome") in CLASSES]
+    outcomes = [r.get("outcome") for r in scored_under_current_rule(records) if r.get("outcome") in CLASSES]
     if not outcomes:
         return None
     return 1.0 - sum((outcomes.count(c) / len(outcomes)) ** 2 for c in CLASSES)
@@ -121,6 +138,7 @@ def record_probs(asof_date: str, probs: dict[str, float], path: Path | None = No
         "scenario_probs": clean,
         "outcome": None,
         "brier": None,
+        "rule": current_rule(),
     })
     records.sort(key=lambda r: r["date"])
     data = {"records": records, "average": data.get("average"), "n": data.get("n", 0)}
@@ -140,7 +158,7 @@ def score_date(asof_date: str, realized: str, path: Path | None = None) -> dict:
         r["brier"] = brier(r.get("scenario_probs") or {}, realized)
         r["outcome"] = realized
         break
-    scored = [r for r in data.get("records", []) if r.get("brier") is not None]
+    scored = scored_under_current_rule(data.get("records", []))
     if scored:
         avg = sum(r["brier"] for r in scored) / len(scored)
         data["average"] = avg
@@ -186,8 +204,14 @@ def scorecard(path: Path | None = None) -> dict:
             "constant probabilities beat it whenever one outcome dominates). Recorded for audit only."
         )
         calibrated = False
+    older = [r for r in records if r.get("brier") is not None and r.get("rule") != current_rule()]
+    if older:
+        verdict += (f" {len(older)} scored day(s) of an earlier scenario rule are kept for the audit but not "
+                    f"counted: their bands and probabilities were different numbers.")
     return {
         "records": records,
+        "rule": current_rule(),
+        "retired_scored_count": len(older),
         "scored_count": n,
         "average": avg,
         "equal_weight_reference": EQUAL_WEIGHT_REFERENCE,

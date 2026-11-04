@@ -1,7 +1,9 @@
 """SPX-6a: numeric scenario bands, realized class and a pure Brier (no IO).
 
-The golden ``build_scenarios`` outputs below were captured from the implementation
-before the bands were extracted, so they pin the refactor to a byte-identical result.
+The golden rows below are derived by hand from the rule each regime's report states, not captured from the
+implementation, so they fail if the rule drifts rather than following it. `make_snapshot` closes below its flip and
+`_fractional_snapshot` above it, so the two regimes are both covered. The prose note is checked separately, by what
+it has to disclose, so its wording can change without rewriting a golden.
 """
 from __future__ import annotations
 
@@ -13,13 +15,6 @@ import pytest
 from RevenueChaser.module_spx_gamma import brier, scenarios
 from .conftest import make_snapshot
 
-NOTE = (
-    "Probabilities are heuristic, derived from the gamma regime and positioning; "
-    "they are NOT calibrated forecasts. Bands derive from this week's levels only "
-    "(gamma flip / call wall / put support), with the same intuitive offsets as the "
-    "reference report. The Brier scorecard below tracks how honest these "
-    "probabilities turn out to be."
-)
 
 
 def _fractional_snapshot() -> dict:
@@ -32,49 +27,45 @@ def _fractional_snapshot() -> dict:
     return snap
 
 
-# Golden build_scenarios output, captured before the bands were extracted.
+# Hand-derived from each regime's rule (see the module docstring for both).
 GOLDEN = [
     (
+        # spot 7,784 < flip 7,820.63 -> negative gamma: [put support, flip] / [flip, charm pin 8,000] /
+        # [put support - 100, put support], probabilities 0,35 / 0,30 / 0,35.
         make_snapshot,
         {
-            "consolidation": (7820.63, 7920.0),
-            "upside": (7920.0, 8000.0),
-            "downside": (7730.63, 7820.63),
+            "regime": scenarios.NEGATIVE_GAMMA,
+            "consolidation": (7500.0, 7820.63),
+            "upside": (7820.63, 8000.0),
+            "downside": (7400.0, 7500.0),
         },
-        {
-            "scenarios": [
-                {"name": "Consolidation", "range": "7,821 \u2013 7,920", "p": 0.45,
-                 "rr": None, "expectancy": None, "trade": "Theta-weighted (directionless)"},
-                {"name": "Upside", "range": "7,920 \u2013 8,000", "p": 0.25,
-                 "rr": 0.8050719533058276, "expectancy": -0.5487320116735431,
-                 "trade": "Directional long"},
-                {"name": "Downside", "range": "7,731 \u2013 7,821", "p": 0.3,
-                 "rr": 0.9057059474690561, "expectancy": -0.42828821575928316,
-                 "trade": "Directional short"},
-            ],
-            "note": NOTE,
-        },
+        [
+            {"name": "Consolidation", "range": "7,500 \u2013 7,821", "p": 0.35,
+             "asymmetry": None, "trade": "Theta-weighted (directionless)"},
+            {"name": "Upside", "range": "7,821 \u2013 8,000", "p": 0.30,
+             "asymmetry": 179.37 / 320.63, "trade": "Directional long"},
+            {"name": "Downside", "range": "7,400 \u2013 7,500", "p": 0.35,
+             "asymmetry": 100.0 / 320.63, "trade": "Directional short"},
+        ],
     ),
     (
+        # spot 7,815 > flip 7,811.5 -> positive gamma, the 9 Oct rule the pinned report does not replace:
+        # [flip, call wall + 20] / [call wall + 20, call wall + 100] / [flip - 90, flip], 0,45 / 0,25 / 0,30.
         _fractional_snapshot,
         {
+            "regime": scenarios.POSITIVE_GAMMA,
             "consolidation": (7811.5, 7943.25),
             "upside": (7943.25, 8023.25),
             "downside": (7721.5, 7811.5),
         },
-        {
-            "scenarios": [
-                {"name": "Consolidation", "range": "7,812 \u2013 7,943", "p": 0.45,
-                 "rr": None, "expectancy": None, "trade": "Theta-weighted (directionless)"},
-                {"name": "Upside", "range": "7,943 \u2013 8,023", "p": 0.25,
-                 "rr": 0.6072106261859582, "expectancy": -0.5981973434535104,
-                 "trade": "Directional long"},
-                {"name": "Downside", "range": "7,722 \u2013 7,812", "p": 0.3,
-                 "rr": 0.683111954459203, "expectancy": -0.495066413662239,
-                 "trade": "Directional short"},
-            ],
-            "note": NOTE,
-        },
+        [
+            {"name": "Consolidation", "range": "7,812 \u2013 7,943", "p": 0.45,
+             "asymmetry": None, "trade": "Theta-weighted (directionless)"},
+            {"name": "Upside", "range": "7,943 \u2013 8,023", "p": 0.25,
+             "asymmetry": 80.0 / 131.75, "trade": "Directional long"},
+            {"name": "Downside", "range": "7,722 \u2013 7,812", "p": 0.30,
+             "asymmetry": 90.0 / 131.75, "trade": "Directional short"},
+        ],
     ),
 ]
 
@@ -82,24 +73,42 @@ GOLDEN = [
 # ── scenario_bands ────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("make, expected_bands, expected_output", GOLDEN)
-def test_scenario_bands_are_the_numeric_edges(make, expected_bands, expected_output):
+@pytest.mark.parametrize("make, expected_bands, expected_rows", GOLDEN)
+def test_scenario_bands_are_the_numeric_edges(make, expected_bands, expected_rows):
     bands = scenarios.scenario_bands(make())
     assert bands == expected_bands
 
 
-@pytest.mark.parametrize("make, expected_bands, expected_output", GOLDEN)
-def test_bands_equal_the_numbers_build_scenarios_prints(make, expected_bands, expected_output):
+@pytest.mark.parametrize("make, expected_bands, expected_rows", GOLDEN)
+def test_bands_equal_the_numbers_build_scenarios_prints(make, expected_bands, expected_rows):
     bands = scenarios.scenario_bands(make())
     for name, key in (("Consolidation", "consolidation"), ("Upside", "upside"), ("Downside", "downside")):
         lo, hi = bands[key]
-        printed = next(s["range"] for s in expected_output["scenarios"] if s["name"] == name)
+        printed = next(r["range"] for r in expected_rows if r["name"] == name)
         assert printed == f"{lo:,.0f} \u2013 {hi:,.0f}"
 
 
-@pytest.mark.parametrize("make, expected_bands, expected_output", GOLDEN)
-def test_build_scenarios_output_is_unchanged(make, expected_bands, expected_output):
-    assert scenarios.build_scenarios(make()) == expected_output
+@pytest.mark.parametrize("make, expected_bands, expected_rows", GOLDEN)
+def test_build_scenarios_rows_follow_the_rule(make, expected_bands, expected_rows):
+    got = scenarios.build_scenarios(make())
+    assert got["regime"] == expected_bands["regime"]
+    assert got["report_as_of"] == scenarios.REPORT_AS_OF
+    assert len(got["scenarios"]) == len(expected_rows)
+    for row, want in zip(got["scenarios"], expected_rows):
+        assert row["name"] == want["name"] and row["range"] == want["range"]
+        assert row["p"] == pytest.approx(want["p"]) and row["trade"] == want["trade"]
+        if want["asymmetry"] is None:
+            assert row["asymmetry"] is None
+        else:
+            assert row["asymmetry"] == pytest.approx(want["asymmetry"])
+
+
+@pytest.mark.parametrize("make, expected_bands, expected_rows", GOLDEN)
+def test_the_note_discloses_what_it_must(make, expected_bands, expected_rows):
+    note = scenarios.build_scenarios(make())["note"]
+    assert "NOT calibrated" in note
+    assert "expected value is deliberately not computed" in note
+    assert scenarios.REPORT_AS_OF in note
 
 
 def test_build_scenarios_uses_scenario_bands(snapshot, monkeypatch):

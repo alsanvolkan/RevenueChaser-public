@@ -224,7 +224,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
     names = _company_names(tickers)
 
     def _needs_llm(t: str, current: str | None = None) -> bool:
-        """Not done: no row, stale, made from another input, or empty/no_text and not out of retries.
+        """Not done: no row, stale, made from another input, or empty/no_text/short_text and not out of retries.
 
         ``current`` is the hash of the prompt the group would be profiled from today; a stored profile made from
         another one (a new filing text or company name) is redone like a stale one (#388 D5).
@@ -238,7 +238,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
             return stale and m["attempts"] < MAX_ATTEMPTS
         if m["status"] == "empty":
             return stale or m["attempts"] < MAX_ATTEMPTS
-        return True                        # no_text / unknown: re-check (no LLM cost)
+        return True                        # no_text / short_text / unknown: re-check (no LLM cost)
 
     # The input check reads filing texts, so it runs only for the groups nothing else already sends to the LLM.
     current = _input_hashes({k: ts for k, ts in groups.items() if not any(_needs_llm(t) for t in ts)}, names)
@@ -323,13 +323,16 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
         rep = next((t for t in ts if _filing_text(t)[1]), ts[0])
         name, text = _filing_text(rep)
         name = names.get(rep) or name             # the company, not the ticker (#388 D5)
-        if not text:
+        unusable = profiles_mod.text_status(text)
+        if unusable:
+            # No filing text (``no_text``) or one under Value Chain's MIN_ITEM_CHARS (``short_text``, #313):
+            # the writer would answer from the company name alone, so nothing is sent and nothing is spent.
             for t in ts:
                 if any((have.get(t) or {}).values()):
                     continue               # keep a usable (stale) profile
                 store.save_profile(t, ciks.get(t),
                                    {f: [] for f in config.PROFILE_FIELDS},
-                                   "", w_model, status="no_text", provider=provider)
+                                   "", w_model, status=unusable, provider=provider)
             return
         user = profiles_mod.build_user(name, text)
         # The profile's own cache key (structured JSON, the mode stamp checked by
@@ -592,6 +595,7 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
     # One read of the company fields (#49): ``filter_fields`` carries name/sector/industry/market_cap already,
     # so the second ``equity_universe`` query this function used to run only risked disagreeing with it.
     extra = filter_fields(list(profiles))
+    scale = similarity.idf(profiles)       # one idf for the company weights and the peer scores (#395)
     themes = _theme_levels()
     from . import store
     sources = {t: store.profile_source(m.get("cache_key")) for t, m in store.profile_meta(list(profiles)).items()}
@@ -620,7 +624,7 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
             "stale": t in (stale or ()),
             # Build plan PR 20 (G6): the filing the profile was read from (CIK, accession, form, filed).
             "source": sources.get(t),
-            "weights": similarity.term_weights(profiles[t]),
+            "weights": similarity.term_weights(profiles[t], scale),
             "profile": profiles[t],
         })
 
@@ -631,20 +635,16 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
     peers, raw_scores = similarity.peer_lists(profiles, config.TOP_PEERS)
     arr = (np.sort(np.asarray(raw_scores, dtype="float64"))
            if raw_scores else np.zeros(0))
-    # Pairs scored is every unordered pair of profiled tickers; the omitted
-    # zero-score pairs are added back analytically (never materialised).
-    n_total = len(profiles) * (len(profiles) - 1) // 2
-    n_zero = max(0, n_total - len(arr))
-    n_pairs = n_total
+    # ``n_pairs`` is every unordered pair of profiled tickers; the percentile ranks a peer among the scored
+    # (non-zero) pairs only (#395, review RL-3): with two thirds of the pairs at zero, a 0.06 peer read as p90.
+    n_pairs = len(profiles) * (len(profiles) - 1) // 2
+    n_scored = len(arr)
     for a in peers:
         for p in peers[a]:
             p["name"] = names.get(p["peer"]) or p["peer"]
-            # Compare the unrounded score, and count the zero pairs analytically.
-            raw = p.pop("score_raw", p["score"])
-            p["percentile"] = (
-                round(100.0 * (n_zero + float(np.searchsorted(arr, raw, side="left")))
-                      / n_total, 1)
-                if n_total else 0.0)
+            raw = p.pop("score_raw", p["score"])    # compare the unrounded score
+            p["percentile"] = (round(100.0 * float(np.searchsorted(arr, raw, side="left")) / n_scored, 1)
+                               if n_scored else 0.0)
 
     # Market stats for every focal's peers, computed pair-only (never N x N).
     _attach_peer_market(peers)
@@ -671,6 +671,7 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
         "companies": companies,
         "peers": peers,
         "n_pairs": n_pairs,
+        "n_scored": n_scored,
         "thinking_compare": thinking_cmp,
         "fields": list(config.PROFILE_FIELDS),
         "universe_total": len(classification_universe(operating_only=BOARD_OPERATING_ONLY["module_relatedness"])),
@@ -796,19 +797,22 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
     if next_reset is not None:
         next_off_peak = None
 
-    # "Profiled" counts usable profiles only: empty / no_text rows are not done. One writer per board (#360): another
-    # writer's profiles stay in the store, out of the matrix, until this writer redoes them.
+    # "Profiled" counts usable profiles only: empty / no_text / short_text rows are not done. One writer per board
+    # (#360): another writer's profiles stay in the store, out of the matrix, until this writer redoes them.
     writer = (provider, model or _writer(provider)[0])
     other = store.other_writer_tickers(list(profiles), writer)
     profiles = {t: p for t, p in profiles.items() if any(p.values()) and t not in other}
     payload = _payload(profiles, {}, stale=store.stale_tickers(list(profiles), writer=writer), model=writer[1])
     payload["other_writer"] = len(other)
     payload["writer"] = {"provider": writer[0], "model": writer[1]}
-    # Pending is what a next run can still profile (#388 D4): a name whose filing has no text waits for SEC, not for
-    # DeepSeek, so it is counted apart.
-    no_text = {t for t, m in store.profile_meta(tickers).items() if m["status"] == "no_text" and t not in profiles}
+    # Pending is what a next run can still profile (#388 D4): a name whose filing has no text, or one too short to
+    # profile from (#313), waits for a better filing, not for the writer, so both are counted apart.
+    meta_now = store.profile_meta(tickers)
+    no_text = {t for t, m in meta_now.items() if m["status"] == "no_text" and t not in profiles}
+    short_text = {t for t, m in meta_now.items() if m["status"] == "short_text" and t not in profiles}
     payload["no_text"] = len(no_text)
-    payload["pending"] = max(0, len(tickers) - len(profiles) - len(no_text))
+    payload["short_text"] = len(short_text)
+    payload["pending"] = max(0, len(tickers) - len(profiles) - len(no_text) - len(short_text))
     if no_fetch:
         # A Refresh changes no profile or score, so it shows when the last Fetch ran (#388 REL-10).
         payload["as_of"] = _last_run_as_of() or payload["as_of"]
@@ -833,6 +837,7 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
             "key": "relatedness_run",
             "value": json.dumps({"as_of": payload["as_of"], "n": payload["n"],
                                  "pending": payload["pending"], "no_text": payload["no_text"],
+                                 "short_text": payload["short_text"],
                                  "next_off_peak": payload.get("next_off_peak")})}])
         _record_history(payload, len(tickers), run_id, run_at)
     _save(config.RELATEDNESS_JSON, payload)

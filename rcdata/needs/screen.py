@@ -72,6 +72,7 @@ DATASETS: dict[str, DatasetCard] = {
     'uw/option_list': DatasetCard('Options of SPX and the option list (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/option_screener': DatasetCard('Earnings options: calendar, screener and earnings set (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/spot_expiry_strike': DatasetCard('SPX expiry-strike (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
+    'uw/greek_expiry_strike': DatasetCard('SPX greek exposure by expiry and strike, whole chain (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/total_float': DatasetCard('Float check (Unusual Whales)', step=8, role='cross-check'),
     'wrds/co_hgic': DatasetCard('Compustat GICS history (WRDS)', step=5, role='fills'),
     'wrds/firm_ratio': DatasetCard('WRDS financial ratios (the debt check)', step=9, role='cross-check'),
@@ -130,6 +131,7 @@ WRITTEN_COLUMN: dict[str, str] = {
     'segment_revenue': 'document_date',
     'shares_class': 'as_of',
     'spx_gamma_expiry_strike': 'session_date',
+    'spx_greek_expiry_strike': 'session_date',
     'wrds_price_diff': 'as_of',
 }
 

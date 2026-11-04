@@ -50,6 +50,10 @@ Code, comments, commit messages, issues and docs are written in **English**.
   or a migration itself is marked `@pytest.mark.rawstore_schema_from_scratch` and gets the apply on its own file.
 - CI (`.github/workflows/tests.yml`) runs both tiers on every pull request into `main` and on `main`. The unit tier
   runs under `pytest -n auto --dist loadfile`, because a single pytest process is single-core bound.
+  A push to a PR runs only the test files that import a changed file (`scripts/select_tests.py`; check names
+  `unit (SELECTIVE)` / `e2e (SELECTIVE)`), and falls back to FULL when that is not safe to say. **The merge gate is a
+  green `merge-gate` check on the current head** (it fails on purpose for a SELECTIVE run): label the PR `full-ci` before merging, and every
+  later push stays FULL. `main` and a manual dispatch always run FULL.
 - **TDD:** watch each new test fail before implementing it, and run the tests of the modules you touched before
   pushing. Report honestly which tests you saw red first and which mutation checks you ran — "not done" is an
   acceptable answer, an implied "done" is not.
@@ -113,7 +117,7 @@ When the owner wants problems or improvements collected (standing rule, all repo
 
 1. **Collect.** Open one feedback thread. The owner writes every item there; acknowledge each in one short line and fix nothing until the owner says the list is done.
 2. **Reproduce.** Reproduce each item from the code or live data before promising a fix. Cite `file:line` or a measurement.
-3. **Review.** One Fable 5.1 review of the list against the code, using the `avo-architecture-review` and `design-suite` skills. It reports findings, order and risks; it implements nothing.
+3. **Review.** Only when the owner says "Fable ile incele", never automatically: one Fable 5.1 review of the list against the code, using the `avo-architecture-review` and `design-suite` skills. It reports findings, order and risks; it implements nothing. Without that phrase, skip this step.
 4. **Plan.** Write a plan file in `/mnt/project-files/<app>/` with ordered steps, risks, and the decisions only the owner can make. Ask only those.
 5. **Build.** One branch, one pull request, one commit per step. Tests seen red first. A design mock first for anything new.
 6. **Phone friendly.** Every UI works on a phone and in light and dark: single column, full-width cards, 44 px touch targets, charts scale to their container, tables stack instead of scrolling sideways.

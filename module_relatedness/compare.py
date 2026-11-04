@@ -64,12 +64,13 @@ def run(tickers: list[str], provider: str, model: str) -> dict:
     budget = _budget(provider)
     names = engine._company_names(tickers)
     profs: dict[str, dict] = {}
-    no_text, empty, stopped = [], [], None
+    no_text, short_text, empty, stopped = [], [], [], None
     transient = 0
     for t in tickers:
         _name, text = engine._filing_text(t)
-        if not text:
-            no_text.append(t)
+        unusable = profiles.text_status(text)        # no_text / short_text (#313): never sent to the writer
+        if unusable:
+            (no_text if unusable == "no_text" else short_text).append(t)
             continue
         try:
             prof = profiles.profile_for(t, names.get(t) or t, text, thinking=False, effort=None, budget=budget,
@@ -104,10 +105,13 @@ def run(tickers: list[str], provider: str, model: str) -> dict:
             if not profs and len(empty) >= config.GROK_UNUSABLE_STOP:
                 stopped = "unusable"                   # a wrong endpoint shape: stop before paying for every name
                 break
-    matrix = [[None if a == b or a not in profs or b not in profs else round(similarity.score_pair(profs[a], profs[b])[0], 6)
+    scale = similarity.idf(profs)                          # the board's scoring (#395)
+    matrix = [[None if a == b or a not in profs or b not in profs
+               else round(similarity.score_pair(profs[a], profs[b], scale)[0], 6)
                for b in tickers] for a in tickers]
     out = {"provider": provider, "model": model, "tickers": tickers, "matrix": matrix,
-           "usable": len(profs), "empty": empty, "no_text": no_text, "attempts": budget.calls,
+           "usable": len(profs), "empty": empty, "no_text": no_text, "short_text": short_text,
+           "attempts": budget.calls,
            "new_replies": _llm_rows(model) - cache_before, "seconds": round(time.time() - started, 1),
            "as_of": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     if stopped:

@@ -89,11 +89,11 @@ def test_the_first_fetch_on_an_old_store_writes_the_share_on_both_tables(old_sto
         "primary_doc": "http://x", "quality": "ok", "item_text": _SHARE_TEXT}])
     engine.run(no_fetch=False, tickers=["AMKR"], run_id="new")
     stored = {(r["dst_ticker"], r["relation"]): r["share_pct"] for r in rawstore.get_all("chain_mentions")}
-    assert stored == {("AAPL", "customer"): 29.8, ("AAPL", "other"): None}
+    assert stored == {("AAPL", "customer"): 29.8, ("AAPL", "competitor"): None, ("AAPL", "other"): None}
     rows = rawstore.query("SELECT dst_ticker, relation, share_pct FROM value_chain_edges_history "
                           "WHERE run_id = 'new' ORDER BY row_no", db="history")
     assert [(r["dst_ticker"], r["relation"], r["share_pct"]) for r in rows] == [
-        ("AAPL", "customer", 29.8), ("AAPL", "other", None)]
+        ("AAPL", "customer", 29.8), ("AAPL", "competitor", None), ("AAPL", "other", None)]
     assert ledger.take_notes() == [], "the history write failed"
 
 

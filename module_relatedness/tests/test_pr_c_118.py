@@ -10,6 +10,7 @@ import pytest
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.providers import deepseek
 from RevenueChaser.module_relatedness import config, engine, profiles, similarity, store
+from RevenueChaser.module_relatedness.tests.test_relatedness import long_body
 
 
 @pytest.fixture(autouse=True)
@@ -36,8 +37,8 @@ def _seed_universe(tickers):
 
 # ── C12: similarity percentile ───────────────────────────────────────────────
 def test_percentile_matches_the_bruteforce_oracle(rawstore_tmp_db):
-    """The payload percentile uses the upper triangle, zeros counted analytically,
-    and the unrounded score — so it equals ``all_scores`` + ``percentile``."""
+    """The payload percentile uses the upper triangle, the non-zero pairs only (#395) and the unrounded
+    score — so it equals ``all_scores`` + ``percentile`` over the non-zero scores."""
     profs = {
         "AAA": _prof(products=["alpha", "beta", "gamma"]),
         "BBB": _prof(products=["alpha", "beta"]),
@@ -53,8 +54,8 @@ def test_percentile_matches_the_bruteforce_oracle(rawstore_tmp_db):
     assert payload["n_pairs"] == n * (n - 1) // 2
 
     oracle = similarity.all_scores(profs)
-    dist = list(oracle.values())
-    assert len(dist) == n * (n - 1) // 2
+    assert len(oracle) == n * (n - 1) // 2
+    dist = [s for s in oracle.values() if s > 0]
 
     for focal, entries in payload["peers"].items():
         for p in entries:
@@ -89,7 +90,7 @@ def _count_complete(monkeypatch, content):
 
 def _one_group_per_ticker(monkeypatch):
     monkeypatch.setattr(engine, "_cik_for", lambda ts: {t: t for t in ts})
-    monkeypatch.setattr(engine, "_filing_text", lambda t: (t, "we make things"))
+    monkeypatch.setattr(engine, "_filing_text", lambda t: (t, long_body("we make things")))
 
 
 def test_cap_zero_makes_no_llm_calls(rawstore_tmp_db, monkeypatch):

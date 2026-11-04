@@ -235,10 +235,10 @@ def test_the_snapshot_finishes_under_a_steady_writer():
     assert took < 5 and len(taken["dataset_check"]) == 3000
     ids = [r["id"] for r in taken["build_requests"]]
     assert ids == list(range(1, len(ids) + 1))                          # one moment: no request missing in between
-    # And the counter of that same moment. The writer counts its call and then enqueues, two operations, so the one
-    # moment the snapshot reads may fall between them: the counter is then one ahead of the requests, never behind or
-    # further (CI of #382, a flaky assert of #381; reproduced by a snapshot taken between the two steps).
-    assert taken["provider_calls_daily"][0]["calls"] - len(ids) in (0, 1)
+    # The writer counts, then enqueues, in two transactions, so the snapshot may land between them: the counter
+    # of that same moment is the request count or one more (the write in flight), never less and never further
+    # (a read spread over the writer's 20 ms would drift by whole iterations). CI hit the gap: 5 == 4.
+    assert 0 <= taken["provider_calls_daily"][0]["calls"] - len(ids) <= 1
 
 
 def test_an_explicit_namespace_stays_when_the_market_root_moves(monkeypatch, tmp_path):

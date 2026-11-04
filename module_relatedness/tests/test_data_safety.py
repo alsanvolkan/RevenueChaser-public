@@ -133,7 +133,8 @@ def test_cutover_does_not_copy_legacy_keyword(rawstore_tmp_db):
 @pytest.fixture
 def _quiet(monkeypatch):
     monkeypatch.setattr(engine, "_cik_for", lambda ts: {t: "" for t in ts})
-    monkeypatch.setattr(engine, "_filing_text", lambda t: (t, "text " * 50))
+    # Long enough to profile (#313): the engine never sends a text under ``config.MIN_INPUT_CHARS``.
+    monkeypatch.setattr(engine, "_filing_text", lambda t: (t, "text " * 500))
 
 
 def _old_mode_profile(ticker, **kw):

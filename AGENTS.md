@@ -125,9 +125,12 @@ Two tiers, both required for a change to be done.
 - Tests live **next to the code they test** (`<package>/tests/test_<module>.py`).
 - **Every change adds unit tests** covering the new or edited behaviour.
 - **Every change passes the whole suite** — run the full `pytest`, not a `-k`
-  subset. Green on your own tests is not done. In Claude Code sessions, CI runs the
-  full unit and e2e suites on the PR, and builders run the tests of the packages
-  they touch (`CLAUDE.md` → Tests).
+  subset. Green on your own tests is not done. In Claude Code sessions, builders run
+  the tests of the packages they touch, and CI runs on the PR: a push runs only the
+  test files that import a changed file (`unit (SELECTIVE)` / `e2e (SELECTIVE)`, or
+  FULL when that is not safe to say), and the `full-ci` label makes every run FULL.
+  The merge gate is a green `merge-gate` check on the current head, which only a FULL
+  run gives (`CLAUDE.md` → Tests).
 - No test touches the network, today's date, or real `.store`/`.cache`.
 
 ### End-to-end — before you claim a board works

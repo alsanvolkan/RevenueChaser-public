@@ -28,9 +28,11 @@ NEVER_CHECKED = "never_checked"
 # #228 item 5: the status read failed (a locked ops.sqlite); the rows were read and are served.
 STATUS_UNKNOWN = "status_unknown"
 DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
+                    "spx_greek_expiry_strike": "uw/greek_expiry_strike",
                     "security": "spine/security", "index_membership": "funds/index_holdings",
                     "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings", "etf": "spine/security"}
-KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market", "security": "spine",
+KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market",
+                 "spx_greek_expiry_strike": "market", "security": "spine",
                  "index_membership": "spine", "fund": "spine", "etf_holdings": "spine", "etf": "spine"}
 # The ownership store (PR 16).
 DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_periods": "ownership/serve",
@@ -122,6 +124,19 @@ def spx_expiry_strike(session_date, min_dte: int = 0, max_dte: int = 1) -> list[
     sql = ("SELECT * FROM spx_gamma_expiry_strike WHERE session_date = ? AND dte BETWEEN ? AND ? "
            "ORDER BY expiry, strike")
     return _rows("spx_gamma_expiry_strike", sql, [_day(session_date), int(min_dte), int(max_dte)])
+
+
+def spx_greek_expiry_strike(session_date, min_dte: int = 0, max_dte: int = 3_650) -> list[dict]:
+    """SPX greek exposure (gex, delta, charm, vanna) by expiry and strike for one session, ``min_dte <= dte <=
+    max_dte``.
+
+    ``dte`` is UW's own **calendar**-day count, the measure the SPX Gamma board's DTE bands are written in; the
+    sibling ``spx_expiry_strike`` counts NYSE sessions, so the two columns are not interchangeable. The default
+    range is the whole chain, because the bands this feeds (0-30 … 365+ and ALL) read every expiry.
+    """
+    sql = ("SELECT * FROM spx_greek_expiry_strike WHERE session_date = ? AND dte BETWEEN ? AND ? "
+           "ORDER BY expiry, strike")
+    return _rows("spx_greek_expiry_strike", sql, [_day(session_date), int(min_dte), int(max_dte)])
 
 
 def watchlists() -> dict[str, list[dict]]:
@@ -486,6 +501,18 @@ def bar_facts(tickers: Iterable[str], start, flat_run: int) -> dict:
             "last": {r["ticker"]: r["last"] for r in rows},
             "sessions": [r["d"] for r in sessions],
             "flat": sorted(r["ticker"] for r in rows if r["flat"])}
+
+
+def index_bars(symbol: str, start=None) -> list[dict]:
+    """``{session_date, close}`` of the stored index level ``index:<symbol>`` (``index:SPX``, the Cboe S&P 500
+    close), oldest first, from ``start`` on; ``session_date`` as ``YYYY-MM-DD``. Nominal: a level has no factor and
+    no symbol row, so the by-ticker reads above never see it. ``[]`` when none is stored (Co-movement's benchmark
+    fallback, #393)."""
+    sql = ("SELECT CAST(session_date AS VARCHAR) AS session_date, close FROM price_bar_daily WHERE security_id = ? "
+           "AND close IS NOT NULL AND NOT isnan(close)")
+    params: list = [f"index:{str(symbol).strip().upper()}"]
+    sql = _bounded(sql, params, "session_date", start, None)
+    return _rows("price_bar_daily", sql + " ORDER BY session_date", params)
 
 
 # ── The ownership store (PR 16) ───────────────────────────────────────────────────────────────────────────────
