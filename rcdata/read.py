@@ -501,6 +501,18 @@ def bar_facts(tickers: Iterable[str], start, flat_run: int) -> dict:
             "flat": sorted(r["ticker"] for r in rows if r["flat"])}
 
 
+def index_bars(symbol: str, start=None) -> list[dict]:
+    """``{session_date, close}`` of the stored index level ``index:<symbol>`` (``index:SPX``, the Cboe S&P 500
+    close), oldest first, from ``start`` on; ``session_date`` as ``YYYY-MM-DD``. Nominal: a level has no factor and
+    no symbol row, so the by-ticker reads above never see it. ``[]`` when none is stored (Co-movement's benchmark
+    fallback, #393)."""
+    sql = ("SELECT CAST(session_date AS VARCHAR) AS session_date, close FROM price_bar_daily WHERE security_id = ? "
+           "AND close IS NOT NULL AND NOT isnan(close)")
+    params: list = [f"index:{str(symbol).strip().upper()}"]
+    sql = _bounded(sql, params, "session_date", start, None)
+    return _rows("price_bar_daily", sql + " ORDER BY session_date", params)
+
+
 # ── The ownership store (PR 16) ───────────────────────────────────────────────────────────────────────────────
 
 def _tickers(tickers: Iterable[str] | None) -> list[str] | None:

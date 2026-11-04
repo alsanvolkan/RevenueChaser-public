@@ -528,6 +528,58 @@ def test_load_payload_round_trips_status_and_does_not_invent_it(rawstore_tmp_db,
     assert loaded["dropped"] is None                    # unknown after reload, not "none"
 
 
+def _seed_index(ret: pd.Series, symbol: str = "SPX"):
+    """The stored S&P 500 level (``index:SPX``, the Cboe close): no symbol row, no factor."""
+    price = 100 * np.exp(ret.cumsum())
+    prices_bars.write_bars([{"ticker": symbol, "security_id": f"index:{symbol}", "symbol": symbol,
+                             "ts": ts.isoformat(), "close": float(p), "cached_at": time.time()}
+                            for ts, p in price.items()])
+
+
+def test_missing_benchmark_falls_back_to_index_level_then_qqq(rawstore_tmp_db):
+    """#393: SPY is not in the prices store, so the live board clustered raw returns. The stored S&P 500 level
+    stands in, else QQQ; the status says which, and nothing is served as the asked ETF."""
+    ret = _market_two_groups()
+    tickers = [c for c in ret.columns if c != "SPY"]
+    _seed_universe(tickers)
+    _seed_ohlc(ret.drop(columns=["SPY"]))                 # SPY never stored
+    _seed_index(ret["SPY"])                                # the index level is
+    p = engine.run(no_fetch=True, tickers=tickers, horizon=1, benchmark="spy", cuts=(2,))
+    assert p["benchmark_status"] == "fallback:SPX"
+    assert p["benchmark_applied"] is True
+    sets = sorted(sorted(m["ticker"] for m in c["members"]) for c in p["clusters"]["2"])
+    assert sets == [["A1", "A2", "A3"], ["B1", "B2", "B3"]]   # residual groups, not the market blob
+    assert "SPX" not in {m["ticker"] for c in p["clusters"]["2"] for m in c["members"]}
+    # The Fetch path (full read, persisted) says the same, and a reload keeps it applied.
+    f = engine.run(no_fetch=True, tickers=tickers, horizon=1, benchmark="spy", cuts=(2,), persist=True)
+    assert f["benchmark_status"] == "fallback:SPX"
+    loaded = engine.load_payload(f["as_of"])
+    assert loaded["benchmark_status"] == "fallback:SPX" and loaded["benchmark_applied"] is True
+    assert f["config_hash"] != engine.config_hash(
+        config.WINDOW, config.LINKAGE, (2,), 1, "spy")        # a real-SPY run's null never stands in
+    # No index level either: QQQ stands in.
+    prices_bars.clear()
+    _seed_ohlc(ret.drop(columns=["SPY"]).assign(QQQ=ret["SPY"]))
+    q = engine.run(no_fetch=True, tickers=tickers, horizon=1, benchmark="spy", cuts=(2,))
+    assert q["benchmark_status"] == "fallback:QQQ" and q["benchmark_applied"] is True
+    # Neither: raw returns, said as before.
+    prices_bars.clear()
+    _seed_ohlc(ret.drop(columns=["SPY"]))
+    r = engine.run(no_fetch=True, tickers=tickers, horizon=1, benchmark="spy", cuts=(2,))
+    assert r["benchmark_status"] == "missing" and r["benchmark_applied"] is False
+
+
+def test_stored_benchmark_is_never_replaced_by_the_fallback(rawstore_tmp_db):
+    ret = _market_two_groups()
+    tickers = [c for c in ret.columns if c != "SPY"]
+    _seed_universe(tickers)
+    _seed_ohlc(ret)
+    _seed_index(ret["SPY"] * 0.5)
+    p = engine.run(no_fetch=True, tickers=tickers, horizon=1, benchmark="spy", cuts=(2,))
+    assert p["benchmark_status"] == "applied"
+    assert p["config_hash"] == engine.config_hash(config.WINDOW, config.LINKAGE, (2,), 1, "spy")
+
+
 # ── noise gate (S8) ─────────────────────────────────────────────────────────
 def _blocky_returns(k=8, m=40, n=400, seed=99):
     """``k`` names built from one factor plus ``m`` independent ones.
@@ -947,6 +999,18 @@ def test_report_missing_benchmark_note_is_truthful():
         benchmark_applied=False, benchmark_status="missing"))
     assert "is not in the store" not in html
     assert "no usable prices" in html
+
+
+def test_report_names_the_fallback_benchmark():
+    """#393: a run that removed the market with the stored S&P 500 level says so, instead of claiming SPY."""
+    from RevenueChaser.module_comovement import report
+    html = report.render_comovement_dashboard(_report_payload(benchmark_status="fallback:SPX"))
+    assert "after removing" in html                  # residual board, not the raw one
+    assert "SPY has no usable prices" in html        # the asked ETF is absent, said as state
+    assert "S&amp;P 500 index level" in html         # what stood in
+    assert "fell back to raw returns" not in html
+    assert 'var ETF = "SPX"' in html                 # the cards' "vs SPX", not "vs SPY"
+    assert "Benchmark <b>SPX</b> is removed" in html  # the About box
 
 
 def test_report_raw_direction_is_not_called_vs_market():
