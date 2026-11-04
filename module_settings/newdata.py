@@ -114,6 +114,10 @@ STATUS_ORDER = api_screen.STATUS_ORDER
 # Coverage targets: alarm limits as proposed, to be re-checked after two weeks of real data (decision 1, 27 Oct).
 # spine/security's coverage is the share of Tier A with a CUSIP (the plan's target, >= 98%).
 # The newest-date column of each serving table.
+#: The spine's two universe tables, by the names the build gives them.
+MY_UNIVERSE = "my_universe"
+MY_UNIVERSE_CHANGES = "my_universe_changes"
+
 # The identity funnel (PR 5, D9): the indexes it counts, and the dataset whose build issues it lists.
 SPINE_INDEXES = ("sp500", "sp400", "sp600", "ndx")
 SPINE_ISSUES = "spine/security"
@@ -532,6 +536,9 @@ def _serving_facts(now: datetime | None = None) -> tuple[dict[str, dict], dict[s
             if kind == "spine" and {"security", "index_membership"} <= names:
                 funnel = _spine_counts(con)
                 funnel["universe_sets"] = _universe_sets(con)
+            if kind == "spine" and {MY_UNIVERSE, MY_UNIVERSE_CHANGES} <= names:
+                funnel = dict(funnel or {})
+                funnel["my_universe"] = _my_universe_counts(con)
             if kind == "prices" and "price_bar_daily" in names and now is not None:
                 tables["price_bar_daily"]["sessions"] = _cached_sample(
                     "price_bar_daily#sessions", now, lambda name, c=con: _session_counts(c))
@@ -566,6 +573,51 @@ def _spine_counts(con) -> dict:
     out["as_of"] = row[10].isoformat() if row[10] else None
     out["indexes"] = {s: int(per_index.get(s, 0)) for s in SPINE_INDEXES}
     return out
+
+
+def _my_universe_counts(con) -> dict:
+    """The names we keep, from the spine's ``my_universe`` and ``my_universe_changes`` (one handle, the caller's).
+
+    ``kinds`` is how many stocks and ETFs the list holds, ``rules`` how many each rule let in, and ``entered`` /
+    ``left`` what the **newest** build day in ``my_universe_changes`` did -- the changes table is append-only, so
+    the whole history is in it and only the last day is the news.
+    """
+    kinds = {str(k): int(n) for k, n in con.execute(
+        f"SELECT kind, count(*) FROM {MY_UNIVERSE} GROUP BY kind").fetchall()}
+    rules = {str(r): int(n) for r, n in con.execute(
+        f"SELECT rule, count(*) FROM {MY_UNIVERSE} GROUP BY rule ORDER BY count(*) DESC, rule").fetchall()}
+    total, as_of = con.execute(f"SELECT count(*), max(source_as_of) FROM {MY_UNIVERSE}").fetchone()
+    last = con.execute(f"SELECT max(as_of) FROM {MY_UNIVERSE_CHANGES}").fetchone()[0]
+    moved = {str(c): int(n) for c, n in con.execute(
+        f"SELECT change, count(*) FROM {MY_UNIVERSE_CHANGES} WHERE as_of = ? GROUP BY change",
+        [last]).fetchall()} if last is not None else {}
+    return {"total": int(total or 0), "kinds": kinds, "rules": rules,
+            "as_of": as_of.isoformat() if as_of else None,
+            "last_change": last.isoformat() if last else None,
+            "entered": moved.get("entered", 0), "left": moved.get("left", 0)}
+
+
+def _my_universe_card(counts: dict | None) -> dict:
+    """The "our universe" card: the counts above, avo's rules as the two files hold them, and his manual lines.
+
+    The rules and the manual lines are read from the files in this checkout, not from the store: they are what the
+    **next** build will apply, which is what the reader of this card wants to know.
+    """
+    from RevenueChaser.rcdata.build.spine import my_universe as mine
+    rules, (adds, removes) = mine.load_rules(), mine.load_manual()
+    return {**{"total": None, "kinds": {}, "rules": {}, "as_of": None, "last_change": None,
+               "entered": None, "left": None},
+            **(counts or {}),
+            "built": counts is not None,
+            "rule_text": {
+                "stocks": f"tier {' or '.join(rules.stock_tiers)}; "
+                          f"{', '.join(rules.stock_types)}",
+                "etfs": f"AUM at or over {rules.etf_aum_floor / 1e6:,.0f}M USD, or no AUM and a 20-session average "
+                        f"daily dollar volume at or over {rules.etf_adv_floor / 1e6:,.0f}M USD"
+                        + ("; no ETN" if rules.exclude_etn else "") + ("; no CEF" if rules.exclude_cef else ""),
+                "delisted": "a delisted name never enters"},
+            "manual": {"add": [{"ticker": r["ticker"], "reason": r["reason"]} for r in adds],
+                       "remove": [{"ticker": r["ticker"], "reason": r["reason"]} for r in removes]}}
 
 
 def _universe_sets(con) -> dict:
@@ -998,6 +1050,8 @@ def collect(now: datetime | None = None) -> dict:
                      "silent_minutes": _silent_minutes(last_run, now)},
         "datasets": cards,
         "identity": {**_identity(spine_counts), "universe_source": _universe_source()},
+        # The list we keep (avo, 4 Nov 2026): its counts, the rules the next build applies, what changed last.
+        "my_universe": _my_universe_card((spine_counts or {}).get("my_universe")),
         "queue": ops.read_queue(finished=20),
         "spend": spend,
         "backups": _backups(now),
