@@ -59,6 +59,19 @@ BETA_SHARE = 0.40
 # exchange membership (decision Q5), so the two never share a bare name.
 BENCHMARK_LABELS = {"off": "Off", "spy": "S&P 500", "dia": "Dow", "qqq": "Nasdaq-100"}
 BENCHMARK_ETFS = {"off": "", "spy": "SPY", "dia": "DIA", "qqq": "QQQ"}
+# #393: what stood in for a benchmark ETF the store lacks (``engine``: ``benchmark_status`` = ``fallback:<name>``).
+_FALLBACK_WHAT = {"SPX": "the S&amp;P 500 index level", "QQQ": "the Nasdaq-100 ETF"}
+
+
+def _fallback(payload: dict) -> str:
+    """The stand-in named by ``benchmark_status`` (``fallback:<name>``), else ``""``."""
+    status = str(payload.get("benchmark_status") or "")
+    return status[len("fallback:"):] if status.startswith("fallback:") else ""
+
+
+def _benchmark_used(payload: dict, benchmark: str) -> str:
+    """The series the market was removed with: the stand-in when one stood in, else the asked ETF."""
+    return _fallback(payload) or BENCHMARK_ETFS.get(benchmark) or ""
 
 # "What a group is — and is not" (the About panel). The last sentences say what
 # ``r`` is compared against, what the persistence badges mean and why a chip is
@@ -471,7 +484,7 @@ def _about(payload: dict, horizon: int, benchmark: str, applied: bool,
     ws = _html.escape(str(payload.get("window_start") or "?"))
     we = _html.escape(str(payload.get("window_end") or payload.get("prices_through") or "?"))
     oos = payload.get("oos_start")
-    etf = BENCHMARK_ETFS.get(benchmark) or ""
+    etf = _benchmark_used(payload, benchmark)
     period = _html.escape(str(src.get("period", config.OHLC_PERIOD)))
     about = (
         '<details class="about" id="about"><summary>About this data — source, dates, '
@@ -541,8 +554,14 @@ def render_comovement_dashboard(payload: dict) -> str:
     limits = f"Groups, not pairs · {n_fac_txt}membership moves week to week"
 
     etf, blabel = BENCHMARK_ETFS[benchmark], BENCHMARK_LABELS[benchmark]
+    fallback = _fallback(payload) if applied else ""
+    used = fallback or etf                     # the series the market was removed with (#393)
     # Warnings are state, not explanations: always visible (visibility of status).
     alerts = []
+    if fallback:
+        alerts.append(f"<b>{etf} has no usable prices in the store</b>, so the market was removed with "
+                      f"<b>{used}</b> ({_FALLBACK_WHAT.get(fallback, fallback)}) instead. The next "
+                      f"<b>prices build</b> adds {etf}; <b>Refresh</b> then re-clusters on it.")
     if applied and payload.get("benchmark_status") == "stale":
         w_end = _html.escape(str(payload.get("window_end")))
         p_thr = _html.escape(str(payload.get("prices_through")))
@@ -551,7 +570,7 @@ def render_comovement_dashboard(payload: dict) -> str:
                       f"The next <b>prices build</b> fills it; <b>Refresh</b> then re-clusters.")
     if applied:
         sub = (f"Groups of stocks whose returns moved together <b>after removing "
-               f"{blabel}</b> ({etf}) · {horizon}-day overlapping returns · "
+               f"{blabel}</b> ({used}) · {horizon}-day overlapping returns · "
                f"last {eff['window']} sessions")
     elif benchmark != "off":
         sub = (f"Remove market unavailable ({etf} has no usable prices) · "
@@ -584,7 +603,7 @@ def render_comovement_dashboard(payload: dict) -> str:
         "stores after each close. <b>Fetch</b> clusters them and stores a dated run; <b>Refresh</b> "
         "re-clusters the stored prices. Neither makes a network call.")
 
-    market_now = (f"Now: residual vs <b>{etf}</b>. Nasdaq-100 here is QQQ, not the "
+    market_now = (f"Now: residual vs <b>{used}</b>. Nasdaq-100 here is QQQ, not the "
                   f"<b>Nasdaq-listed</b> index filter below." if applied
                   else "Now: <b>off</b> — raw returns, market still inside the groups.")
     board_row = (
@@ -1007,7 +1026,7 @@ function init(){
                    "__APPLIED__": "true" if applied else "false",
                    "__OOS__": script_json(payload.get("oos") or {}),
                    "__META__": script_json(meta),
-                   "__ETF__": script_json(etf)})
+                   "__ETF__": script_json(used)})
 
     oos_info = control_html(
         "oos", "", "", "Out-of-sample",
