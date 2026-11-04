@@ -30,10 +30,12 @@ STATUS_UNKNOWN = "status_unknown"
 DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
                     "spx_greek_expiry_strike": "uw/greek_expiry_strike",
                     "security": "spine/security", "index_membership": "funds/index_holdings",
-                    "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings", "etf": "spine/security"}
+                    "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings", "etf": "spine/security",
+                    "my_universe": "spine/security", "my_universe_changes": "spine/security"}
 KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market",
                  "spx_greek_expiry_strike": "market", "security": "spine",
-                 "index_membership": "spine", "fund": "spine", "etf_holdings": "spine", "etf": "spine"}
+                 "index_membership": "spine", "fund": "spine", "etf_holdings": "spine", "etf": "spine",
+                 "my_universe": "spine", "my_universe_changes": "spine"}
 # The ownership store (PR 16).
 DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_periods": "ownership/serve",
                          "finra_short_interest": "finra/short_interest", "ibkr_shortable": "ibkr/shortable",
@@ -170,6 +172,32 @@ def universe(tiers: Iterable[str] = ("A",)) -> list[dict]:
         return []
     sql = f"SELECT * FROM security WHERE tier IN ({', '.join('?' * len(tiers))}) ORDER BY ticker"
     return _rows("security", sql, tiers)
+
+
+def my_universe(kinds: Iterable[str] = ()) -> list[dict]:
+    """The names we keep (``my_universe``, ``build/spine/my_universe.py``), by ticker; ``kinds`` narrows to
+    ``stock`` or ``etf``.
+
+    One row per ticker: what it is to us (``kind``, ``security_type``), the rule that let it in (``rule``,
+    ``reason``), the ETF numbers behind that rule (``aum``, ``adv_usd_20d``) and the day it entered
+    (``entered_on``). A spine file built before the table existed reads as no rows, not as an error, so a board
+    that asks early shows "nothing yet" instead of a 500.
+    """
+    wanted = [str(k).strip().lower() for k in kinds if str(k or "").strip()]
+    sql = "SELECT * FROM my_universe"
+    if wanted:
+        sql += f" WHERE kind IN ({', '.join('?' * len(wanted))})"
+    return _rows("my_universe", sql + " ORDER BY ticker", wanted, missing_table_ok=True)
+
+
+def my_universe_changes(limit: int = 200) -> list[dict]:
+    """The newest ``my_universe_changes`` rows (who entered or left, when and why), the most recent first.
+
+    The table is append-only across builds, so this is the whole history the live file holds; ``limit`` is the
+    board's page, not a window of the data.
+    """
+    return _rows("my_universe_changes", "SELECT * FROM my_universe_changes ORDER BY as_of DESC, change, ticker "
+                                        f"LIMIT {int(limit)}", [], missing_table_ok=True)
 
 
 def identity(tickers: Iterable[str] | None = None) -> list[dict]:
