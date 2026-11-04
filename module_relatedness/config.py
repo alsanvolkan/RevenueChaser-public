@@ -49,3 +49,6 @@ FIELD_WEIGHTS = {
     "keywords": 0.4,
 }
 TOP_PEERS = 25
+# A peer is shown only above this cosine and with at least this many shared tags (#395, review RL-3).
+PEER_MIN_SCORE = 0.10
+PEER_MIN_SHARED = 2
