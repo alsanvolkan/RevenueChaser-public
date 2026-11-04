@@ -17,7 +17,10 @@ as ``ID_CUSIP`` until 2026-10-28, and OpenFIGI found none of the 2,092 CINS aske
 so no ``ID_CUSIP`` job can ever answer for it and the type rules have no OpenFIGI security type to read: the live
 spine left 321 Tier A names untyped (homesrv, 4 Nov 2026). So the run also asks a ``TICKER`` job (the ticker in
 OpenFIGI's spelling, ``core.identity.sources.openfigi.figi_symbol``) for every ``TICKER_TIERS`` row of the **live**
-spine with no CUSIP and no FIGI (``wanted_tickers``). That read is the previous build's file, so a name typed by a
+spine with no FIGI (``wanted_tickers``), whether or not it has a CUSIP: a row still without a FIGI either has no CUSIP
+to ask with, or has one OpenFIGI's ``ID_CUSIP``/``ID_CINS`` jobs did not know, and a ``TICKER`` job may answer either
+way. Measured on the 2026-11-02 live spine: 321 Tier A rows have no FIGI, 192 of them with no CUSIP and 129 with
+one OpenFIGI did not answer for. That read is the previous build's file, so a name typed by a
 ticker answer drops out of the ask on the next build; with no spine file yet nothing is asked. Both lanes share the
 one ``MAX_REQUESTS`` budget and the one pacer, the CUSIPs first.
 
@@ -58,7 +61,7 @@ SCHEMA = [("cusip", "TEXT"), ("status", "TEXT"), ("ticker", "TEXT"), ("figi", "T
           ("share_class_figi", "TEXT"), ("exch_code", "TEXT"), ("name", "TEXT"), ("security_type", "TEXT"),
           ("security_type2", "TEXT"), ("market_sector", "TEXT"), ("security_description", "TEXT"),
           ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
-# The ticker lane's rows: the same answer columns, keyed by the ticker asked instead of a CUSIP (it has none).
+# The ticker lane's rows: the same answer columns, keyed by the ticker asked instead of by a CUSIP.
 TICKER_SCHEMA = [("asked_ticker", "TEXT")] + [col for col in SCHEMA if col[0] != "cusip"]
 META_SUFFIX = ".meta.json"
 # ``security.figi_source``: which job answered. The CUSIP lane keeps the plain dataset name it has always written.
@@ -148,17 +151,18 @@ def wanted_cusips() -> list[str]:
 
 
 def wanted_tickers() -> list[str]:
-    """The live spine's ``TICKER_TIERS`` tickers with no CUSIP and no FIGI: the names an ``ID_CUSIP`` job can never
-    answer for. From the served spine file (the previous build's), so there is nothing to ask before the first spine
-    build and a name a ticker answer typed is not asked again. A spine file without these columns asks nothing."""
+    """The live spine's ``TICKER_TIERS`` tickers with no FIGI: the names no ``ID_CUSIP`` job has answered for, either
+    because there is no CUSIP to ask with or because OpenFIGI did not know the one there is. From the served spine file
+    (the previous build's), so there is nothing to ask before the first spine build and a name a ticker answer typed is
+    not asked again. A spine file without these columns asks nothing."""
     try:
         con = serving.open_read(KIND)
     except serving.ServingFileMissing:
         return []
     try:
         tiers = ", ".join(f"'{t}'" for t in TICKER_TIERS)
-        rows = con.execute(f"SELECT ticker FROM security WHERE tier IN ({tiers}) AND cusip IS NULL "
-                           "AND figi IS NULL ORDER BY ticker").fetchall()
+        rows = con.execute(f"SELECT ticker FROM security WHERE tier IN ({tiers}) AND figi IS NULL "
+                           "ORDER BY ticker").fetchall()
     except duckdb.Error:
         return []
     finally:

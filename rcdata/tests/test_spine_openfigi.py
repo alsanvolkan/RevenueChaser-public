@@ -50,8 +50,9 @@ def _run(day="2026-10-27", **kw):
 
 def test_every_active_cusip_of_an_sec_cik_is_asked_once_with_the_key_in_its_header(env):
     row = _run()
-    # Every Tier A name of the fixture has a Compustat link, so the ticker lane asks nothing here.
-    assert row["result"] == "changed" and row["calls"] == 1
+    # Two requests: the CUSIP lane's one, and the ticker lane's one for the Tier A names that have no FIGI yet
+    # (the lane asks by ticker whenever the FIGI is missing, with or without a CUSIP).
+    assert row["result"] == "changed" and row["calls"] == 2
     (jobs,) = _jobs(env)
     assert set(jobs) == {s["cusip"] for s in fx.SECURITY + fx.NEW_SECURITY if s["secstat"] == "A"}
     req = _cusip_calls(env)[0]
@@ -60,7 +61,9 @@ def test_every_active_cusip_of_an_sec_cik_is_asked_once_with_the_key_in_its_head
     with serving.open_read("spine") as con:
         assert con.execute("SELECT figi, figi_ticker FROM security WHERE ticker = 'HEI-A'").fetchone() == (
             "BBG000BL3Y00", "HEI-A")
-        assert con.execute("SELECT figi FROM security WHERE ticker = 'NVR'").fetchone() == (None,)
+        # NVR's CUSIP is one OpenFIGI does not know, so the CUSIP lane leaves it empty and the ticker lane fills it.
+        assert con.execute("SELECT figi, figi_source FROM security WHERE ticker = 'NVR'").fetchone() == (
+            "BBG000BW5N90", of.FIGI_BY_TICKER)
 
 
 def test_a_second_run_asks_nothing_new(env):
@@ -163,7 +166,8 @@ def test_without_the_key_bucket_a_run_keeps_half_the_window_and_holds_100_jobs(e
         slept.append(s)
         now[0] += s
     row = _run(sleep=sleep, clock=lambda: now[0])
-    assert row["calls"] == 26 and all(len(j) == 100 for j in _jobs(env))
+    # 26 CUSIP requests of 100 jobs each, plus the ticker lane's one for the Tier A names still without a FIGI.
+    assert row["calls"] == 27 and all(len(j) == 100 for j in _jobs(env))
     assert now[0] >= 60.0                                   # the 25th request waited for the window
 
 
@@ -226,25 +230,55 @@ def _ticker_jobs(http_mock) -> list[list[tuple[str, str]]]:
             for r in http_mock.calls("figi.test")]
 
 
+def _asked_by_ticker(http_mock) -> set[str]:
+    """Every ticker asked by a ``TICKER`` job, across the run's requests."""
+    return {value for jobs in _ticker_jobs(http_mock) for _, value in jobs}
+
+
 def test_a_tier_a_name_with_no_cusip_is_asked_by_ticker_and_typed_from_that_answer(spine):
-    assert [j for j in _ticker_jobs(spine) if j] == [[(of.ID_TICKER, "NVR")]]
-    assert of._query(f"SELECT status, figi, ticker FROM read_parquet({base.sql_path(of.ticker_partition())})") == [
-        ("present", "BBG000BW5N90", "NVR")]
+    assert "NVR" in _asked_by_ticker(spine)
+    assert of._query(f"SELECT status, figi, ticker FROM read_parquet({base.sql_path(of.ticker_partition())}) "
+                     "WHERE asked_ticker = 'NVR'") == [("present", "BBG000BW5N90", "NVR")]
     with serving.open_read("spine") as con:
         assert con.execute("SELECT tier, cusip, figi, share_class_figi, figi_ticker, security_type, figi_source "
                            "FROM security WHERE ticker = 'NVR'").fetchone() == (
             "A", None, "BBG000BW5N90", "BBG001S5TNC0", "NVR", "common", of.FIGI_BY_TICKER)
-    assert of.wanted_tickers() == []                       # it has a FIGI now: never asked again
+    assert "NVR" not in of.wanted_tickers()                # it has a FIGI now: never asked again
     spine.requests.clear()
     _spine("2026-11-03")
-    assert [j for j in _ticker_jobs(spine) if j] == []
+    assert "NVR" not in _asked_by_ticker(spine)
 
 
-def test_a_name_with_a_cusip_is_never_asked_by_ticker(http_mock, monkeypatch):
-    _spine_env(http_mock, monkeypatch, unlink_nvr=False)
+def test_a_name_that_already_has_a_figi_is_never_asked_by_ticker(spine):
+    """HEI-A's CUSIP is one OpenFIGI knows, so the CUSIP lane gave it a FIGI and the ticker lane leaves it alone."""
+    with serving.open_read("spine") as con:
+        assert con.execute("SELECT figi FROM security WHERE ticker = 'HEI-A'").fetchone() == ("BBG000BL3Y00",)
+    assert "HEI-A" not in of.wanted_tickers()
+    assert "HEI-A" not in _asked_by_ticker(spine)
+
+
+def test_only_tier_a_is_asked_by_ticker(spine):
+    """``TICKER_TIERS`` is Tier A alone: those are the names the boards screen, and a ``TICKER`` job spends the key's
+    budget. SPY and WFC-PC are Tier B, OTCX Tier C and NOEX Tier D, and none of them holds a FIGI in the fixture, so
+    only the tier rule keeps them out of the ask."""
+    with serving.open_read("spine") as con:
+        others = con.execute("SELECT ticker, tier FROM security WHERE tier <> 'A' AND figi IS NULL").fetchall()
+    assert others, "the fixture must hold a non-Tier-A name with no FIGI for this test to mean anything"
+    asked = _asked_by_ticker(spine)
+    assert [t for t, _ in others if t in asked] == []
+    assert not {t for t, _ in others} & set(of.wanted_tickers())
+
+
+def test_a_cusip_openfigi_does_not_know_is_still_asked_by_ticker(http_mock, monkeypatch):
+    """The 129 Tier A names of the 2026-11-02 live spine that hold a CUSIP and still no FIGI: an 'absent'
+    ``ID_CUSIP`` answer is no answer, so the ticker lane asks those names too (measured 2026-11-04: 321 Tier A
+    rows with no FIGI, 192 without a CUSIP and 129 with one OpenFIGI did not answer for)."""
+    _spine_env(http_mock, monkeypatch, unlink_nvr=False)           # NVR keeps its Compustat link, so it has a CUSIP
     _spine()
-    assert of.wanted_tickers() == []                       # every Tier A name is linked, NVR included
-    assert [j for j in _ticker_jobs(http_mock) if j] == []
+    with serving.open_read("spine") as con:
+        row = con.execute("SELECT cusip, figi, figi_source FROM security WHERE ticker = 'NVR'").fetchone()
+    assert row == ("62944T105", "BBG000BW5N90", of.FIGI_BY_TICKER)  # the CUSIP is there; the FIGI came by ticker
+    assert "NVR" in _asked_by_ticker(http_mock)
     wrds.reset()
 
 
@@ -310,7 +344,6 @@ def test_a_ticker_openfigi_does_not_know_is_a_build_issue(http_mock, monkeypatch
     _spine_env(http_mock, monkeypatch, unlink_nvr=True)
     _spine()
     wrds.reset()
-    assert [j for j in _ticker_jobs(http_mock) if j] == [[(of.ID_TICKER, "NVR")]]
+    assert "NVR" in _asked_by_ticker(http_mock)
     issues = {(i["kind"], i["key"]) for i in ops.open_issues(security.NAME, limit=500)[1]}
     assert ("tier_a_no_figi_by_ticker", "NVR") in issues
-    assert {key for k, key in issues if k == "tier_a_no_figi_by_ticker"} == {"NVR"}

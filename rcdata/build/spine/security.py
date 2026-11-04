@@ -91,7 +91,7 @@ ISSUE_KINDS = {
     "tier_a_no_figi": "a Tier A CUSIP OpenFIGI has no FIGI for (asked: absent; or not asked yet)",
     # A Tier A row with no CUSIP is asked by ticker instead (``openfigi_map.wanted_tickers``); it is this kind only
     # once that answer is absent too.
-    "tier_a_no_figi_by_ticker": "a Tier A name with no CUSIP OpenFIGI has no FIGI for by ticker either",
+    "tier_a_no_figi_by_ticker": "a Tier A name OpenFIGI has no FIGI for by ticker either",
     "tier_a_no_gics": "a Tier A name with a Compustat link but no current GICS",
     "figi_ticker_differs": "OpenFIGI's ticker for the CUSIP is not the SEC ticker",
     "cusip_shared": "one CUSIP linked to two SEC tickers (key: the CUSIP)",
@@ -360,7 +360,7 @@ class SpineSecurity:
             f = figi.get(cusip) if cusip else None
             f_ok = f if f and f.get("status") == PRESENT else None
             figi_src = FIGI_BY_CUSIP if f_ok else None
-            if not f_ok and not cusip:
+            if not f_ok:
                 by_ticker = figi_by_ticker.get(r["ticker"])
                 if by_ticker and by_ticker.get("status") == PRESENT:
                     f_ok, figi_src = by_ticker, FIGI_BY_TICKER
@@ -457,7 +457,7 @@ class SpineSecurity:
         if figi_on and row["cusip"] and not row["figi"]:
             state = (figi_row or {}).get("status") or "not asked yet"
             out.append(("tier_a_no_figi", t, f"CUSIP {row['cusip']}: {state}"))
-        if figi_on and not row["cusip"] and not row["figi"]:
+        if figi_on and not row["figi"]:
             state = (ticker_row or {}).get("status") or "not asked yet"
             out.append(("tier_a_no_figi_by_ticker", t, f"TICKER {t}: {state}"))
         if row["figi_ticker"] and row["figi_ticker"] != t:
