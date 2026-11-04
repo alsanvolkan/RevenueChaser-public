@@ -68,11 +68,21 @@ def _seed_universe(tickers):
     } for t in tickers])
 
 
+# Item 1 texts a test seeds have to clear the profile floor (#313, ``config.MIN_INPUT_CHARS``): the engine never
+# sends a shorter one to the writer. ``long_body`` pads a distinctive sentence past it; an empty text stays empty,
+# because that is the ``no_text`` case.
+_PAD = "This annual report describes the company's business in detail. " * 40
+
+
+def long_body(text: str) -> str:
+    return f"{text} {_PAD}" if text else text
+
+
 def _seed_filings(tickers):
     rawstore.write_rows("chain_filings", [{
         "ticker": t, "cik": "1", "form": "10-K", "filed": "2026-02-01",
         "accession": "acc-" + t, "primary_doc": "http://x",
-        "item_text": "We design gpu accelerators for data center customers. " * 20,
+        "item_text": long_body("We design gpu accelerators for data center customers."),
         "quality": "ok", "fetched_at": 1.0,
     } for t in tickers])
 
