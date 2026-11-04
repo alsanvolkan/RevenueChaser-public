@@ -20,7 +20,7 @@ from RevenueChaser.core import board_settings, rawstore
 from RevenueChaser.core.providers import deepseek, evren
 from RevenueChaser.module_relatedness import __main__ as cli
 from RevenueChaser.module_relatedness import engine, settings, store, writers
-from RevenueChaser.module_relatedness.tests.test_relatedness import _seed_universe
+from RevenueChaser.module_relatedness.tests.test_relatedness import _seed_universe, long_body
 
 TICKERS = ["AAA", "BBB", "CCC"]
 EVREN_KEY = "sentinel-evren-key-360"
@@ -56,7 +56,7 @@ class _EvrenHttp:
 def _seed_filings(texts: dict[str, str]) -> None:
     rawstore.write_rows("chain_filings", [
         {"ticker": t, "cik": "", "form": "10-K", "filed": "2026-01-01", "accession": "a-" + t,
-         "primary_doc": "u", "item_text": text, "quality": "ok", "fetched_at": 1.0}
+         "primary_doc": "u", "item_text": long_body(text), "quality": "ok", "fetched_at": 1.0}
         for t, text in texts.items()])
 
 
