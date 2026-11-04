@@ -94,6 +94,8 @@ ISSUE_KINDS = {
     # once that answer is absent too.
     "tier_a_no_figi_by_ticker": "a Tier A name with no CUSIP that OpenFIGI has no FIGI for by ticker "
                                 "(asked: absent; or not asked yet)",
+    "figi_by_ticker_with_cusip": "a Tier A row whose CUSIP comes from Compustat and whose FIGI came from a TICKER "
+                                 "job: nothing checks the two name the same security",
     "tier_a_no_gics": "a Tier A name with a Compustat link but no current GICS",
     "figi_ticker_differs": "OpenFIGI's ticker for the CUSIP is not the SEC ticker",
     "cusip_shared": "one CUSIP linked to two SEC tickers (key: the CUSIP)",
@@ -466,6 +468,12 @@ class SpineSecurity:
                 out.append(("tier_a_no_figi", t, f"CUSIP {row['cusip']}: {by_cusip}; TICKER {t}: {by_ticker}"))
             else:
                 out.append(("tier_a_no_figi_by_ticker", t, f"TICKER {t}: {by_ticker}"))
+        # Review should-fix 4: the CUSIP (and the ISIN derived from it) came from Compustat while the FIGI came
+        # from a ``TICKER`` job, because OpenFIGI did not answer for that CUSIP. A reorganised issuer is exactly
+        # that case, so the row is named on the board rather than trusted silently.
+        if row["cusip"] and row["figi_source"] == FIGI_BY_TICKER:
+            out.append(("figi_by_ticker_with_cusip", t,
+                        f"CUSIP {row['cusip']} from Compustat, FIGI {row['figi']} from the ticker {t}"))
         if row["figi_ticker"] and row["figi_ticker"] != t:
             asked = f"CUSIP {row['cusip']}" if row["cusip"] else f"the ticker {t}"
             out.append(("figi_ticker_differs", t, f"OpenFIGI says {row['figi_ticker']} for {asked}"))

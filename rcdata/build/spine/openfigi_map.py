@@ -151,18 +151,23 @@ def wanted_cusips() -> list[str]:
 
 
 def wanted_tickers() -> list[str]:
-    """The live spine's ``TICKER_TIERS`` tickers with no FIGI: the names no ``ID_CUSIP`` job has answered for, either
-    because there is no CUSIP to ask with or because OpenFIGI did not know the one there is. From the served spine file
-    (the previous build's), so there is nothing to ask before the first spine build and a name a ticker answer typed is
-    not asked again. A spine file without these columns asks nothing."""
+    """The live spine's ``TICKER_TIERS`` tickers worth a ``TICKER`` job: the ones with no FIGI (no CUSIP to ask with,
+    or one OpenFIGI did not know), **and** the ones whose FIGI came from this lane, so that answer can be checked
+    again once it is older than ``ABSENT_RETRY_DAYS``. A ticker is not a stable key: a symbol can move to another
+    issuer, and ``figi_ticker_differs`` cannot catch it because the asked and answered tickers are equal. Which of
+    these is actually asked is ``_mapped_tickers``'s call — a ticker answered inside the window is not asked again,
+    so a re-ask costs the lane's 4 requests once every 90 days, not one per build.
+
+    From the served spine file (the previous build's), so nothing is asked before the first spine build. A spine file
+    without these columns asks nothing."""
     try:
         con = serving.open_read(KIND)
     except serving.ServingFileMissing:
         return []
     try:
         tiers = ", ".join(f"'{t}'" for t in TICKER_TIERS)
-        rows = con.execute(f"SELECT ticker FROM security WHERE tier IN ({tiers}) AND figi IS NULL "
-                           "ORDER BY ticker").fetchall()
+        rows = con.execute(f"SELECT ticker FROM security WHERE tier IN ({tiers}) "
+                           "AND (figi IS NULL OR figi_source = ?) ORDER BY ticker", [FIGI_BY_TICKER]).fetchall()
     except duckdb.Error:
         return []
     finally:
@@ -202,12 +207,14 @@ def _asked_today(as_of: date) -> set[str]:
 
 
 def _mapped_tickers(as_of: date) -> set[str]:
-    """Tickers the ticker map answers for: every 'present' one, and an 'absent' one inside the retry window."""
+    """Tickers the ticker map has a current answer for: any answer, 'present' or 'absent', inside the retry window.
+    Unlike a CUSIP, a 'present' ticker answer expires too (``wanted_tickers``): the symbol may belong to another
+    issuer by then, and ``upsert_partition`` replaces the row by ``asked_ticker``, so the newer answer wins."""
     if not ticker_partition().exists():
         return set()
     floor = as_of - timedelta(days=ABSENT_RETRY_DAYS)
     rows = _query(f"SELECT asked_ticker, status, source_as_of FROM read_parquet({base.sql_path(ticker_partition())})")
-    return {t for t, st, on in rows if st == PRESENT or (on is not None and on > floor)}
+    return {t for t, _st, on in rows if on is not None and on > floor}
 
 
 def _asked_tickers_today(as_of: date) -> set[str]:

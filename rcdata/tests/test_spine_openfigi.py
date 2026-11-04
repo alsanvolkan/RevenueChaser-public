@@ -230,6 +230,11 @@ def _ticker_jobs(http_mock) -> list[list[tuple[str, str]]]:
             for r in http_mock.calls("figi.test")]
 
 
+def _ticker_row(ticker: str) -> tuple:
+    return of._query(f"SELECT status, figi FROM read_parquet({base.sql_path(of.ticker_partition())}) "
+                     f"WHERE asked_ticker = '{ticker}'")[0]
+
+
 def _asked_by_ticker(http_mock) -> set[str]:
     """Every ticker asked by a ``TICKER`` job, across the run's requests."""
     return {value for jobs in _ticker_jobs(http_mock) for _, value in jobs}
@@ -243,7 +248,8 @@ def test_a_tier_a_name_with_no_cusip_is_asked_by_ticker_and_typed_from_that_answ
         assert con.execute("SELECT tier, cusip, figi, share_class_figi, figi_ticker, security_type, figi_source "
                            "FROM security WHERE ticker = 'NVR'").fetchone() == (
             "A", None, "BBG000BW5N90", "BBG001S5TNC0", "NVR", "common", of.FIGI_BY_TICKER)
-    assert "NVR" not in of.wanted_tickers()                # it has a FIGI now: never asked again
+    # It stays in scope so its answer can expire (``test_a_name_whose_figi_came_from_the_ticker_lane_stays_in_the_ask``),
+    # but inside the retry window it is not asked again.
     spine.requests.clear()
     _spine("2026-11-03")
     assert "NVR" not in _asked_by_ticker(spine)
@@ -291,7 +297,40 @@ def test_a_ticker_already_answered_is_not_asked_again_until_the_retry_window(env
     _run("2027-01-24")                                      # 89 days on: still inside the window
     assert _ticker_jobs(env) == []
     _run("2027-01-26")
-    assert _ticker_jobs(env) == [[(of.ID_TICKER, "NOPE")]]   # only the 'absent' one
+    # Both expire: unlike a CUSIP, a 'present' ticker answer is checked again once the window is past, because the
+    # symbol may belong to another issuer by then.
+    assert _ticker_jobs(env) == [[(of.ID_TICKER, "NVR"), (of.ID_TICKER, "NOPE")]]
+
+
+def test_a_present_ticker_answer_is_checked_again_after_the_retry_window(env, monkeypatch):
+    """A ticker is not a stable key: a symbol can move to another issuer, and ``figi_ticker_differs`` cannot catch
+    it because the asked and the answered ticker are equal. So a 'present' answer expires too, and the newer answer
+    replaces the row (``upsert_partition`` by ``asked_ticker``)."""
+    monkeypatch.setattr(of, "wanted_tickers", lambda: ["NVR"])
+    monkeypatch.setattr(of, "wanted_cusips", lambda: [])
+    _run()
+    assert _ticker_jobs(env) == [[(of.ID_TICKER, "NVR")]]
+    assert _ticker_row("NVR") == ("present", "BBG000BW5N90")
+    env.requests.clear()
+    _run("2027-01-24")                                      # 89 days on: still inside the window
+    assert _ticker_jobs(env) == []
+    monkeypatch.setitem(fx.TICKER_FIGI, "NVR", {"figi": "BBG000NEWOWNER", "ticker": "NVR", "exchCode": "US",
+                                                "securityType": "Common Stock", "name": "SOMEONE ELSE INC"})
+    _run("2027-01-26")                                      # 91 days on: asked again
+    assert _ticker_jobs(env) == [[(of.ID_TICKER, "NVR")]]
+    assert _ticker_row("NVR") == ("present", "BBG000NEWOWNER")
+
+
+def test_a_name_whose_figi_came_from_the_ticker_lane_stays_in_the_ask(spine):
+    """``wanted_tickers`` keeps a row this lane filled, so the answer can expire. The row has a FIGI, so the old
+    'no FIGI' rule alone would have dropped it from the ask for ever."""
+    with serving.open_read("spine") as con:
+        row = con.execute("SELECT figi, figi_source FROM security WHERE ticker = 'NVR'").fetchone()
+    assert row == ("BBG000BW5N90", of.FIGI_BY_TICKER)
+    assert "NVR" in of.wanted_tickers()                      # in scope, though it holds a FIGI
+    spine.requests.clear()
+    _spine("2026-11-03")                                     # a week on: inside the window, so not asked
+    assert "NVR" not in _asked_by_ticker(spine)
 
 
 def test_a_days_ticker_batches_already_on_disk_are_not_asked_again(env, monkeypatch):
@@ -365,6 +404,24 @@ def test_the_two_lanes_share_the_one_request_budget(env, monkeypatch):
     row = _run()
     assert row["calls"] == 1 and _ticker_jobs(env) == [[]]
     assert "100 CUSIPs left for the next run" in row["note"] and "1 tickers left for the next run" in row["note"]
+
+
+def test_a_compustat_cusip_beside_a_ticker_sourced_figi_is_a_build_issue(http_mock, monkeypatch):
+    """Review should-fix 4: for the 129 live Tier A rows whose CUSIP OpenFIGI does not know, the CUSIP (and the ISIN
+    derived from it) comes from Compustat while the FIGI comes from a ``TICKER`` job, and nothing checks the two name
+    the same security. A reorganised issuer is exactly that case, so the row is named on the board."""
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.spine import security
+    _spine_env(http_mock, monkeypatch, unlink_nvr=False)        # NVR keeps its Compustat link, so it has a CUSIP
+    _spine()
+    with serving.open_read("spine") as con:
+        assert con.execute("SELECT cusip, figi_source FROM security WHERE ticker = 'NVR'").fetchone() == (
+            "62944T105", of.FIGI_BY_TICKER)
+    issues = {(i["kind"], i["key"]) for i in ops.open_issues(security.NAME, limit=500)[1]}
+    assert ("figi_by_ticker_with_cusip", "NVR") in issues
+    # A row whose FIGI came from its own CUSIP is not one of these.
+    assert ("figi_by_ticker_with_cusip", "HEI-A") not in issues
+    wrds.reset()
 
 
 def test_a_ticker_openfigi_does_not_know_is_a_build_issue(http_mock, monkeypatch):
