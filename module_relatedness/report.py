@@ -14,6 +14,8 @@ from datetime import datetime
 
 from RevenueChaser.core.html_safe import fill, script_json
 from RevenueChaser.module_comovement import config as comov_config
+
+from . import config
 from RevenueChaser.core.reporting_common import (
     FILTERS_CSS,
     FILTERS_JS,
@@ -208,7 +210,8 @@ function peerRow(p){
     '<div class="peer-head"><span class="tk">' + rcEsc(p.peer) + '</span>' +
     (name ? '<span class="peer-name"> — ' + rcEsc(name) + '</span>' : '') + staleBadge(p.peer) + '</div>' +
     rcWatchRow(p.peer) +
-    '<div class="pct">' + Number(p.score||0).toFixed(2) + ' · p' + p.percentile + '</div>' +
+    '<div class="pct">' + Number(p.score||0).toFixed(2) + ' · p' + p.percentile +
+      (p.n_shared != null ? ' · ' + p.n_shared + ' shared' : '') + '</div>' +
     fmtMove(p) + fmtCluster(p) +
     '<div class="tags">' + tags(p.shared) + '</div>' +
     '</div>';
@@ -260,7 +263,9 @@ function init(){
         "<b>similar business</b>, not co-movement (see Co-movement) or trading links "
         f"(see Value Chain). {n} companies · model <b>{model}</b>. <b>Fetch</b> (the off-peak run) "
         "downloads missing filings from SEC and asks the LLM for new profiles; <b>Refresh</b> rebuilds "
-        "the board from the stored profiles and scores with no network call.")
+        "the board from the stored profiles and scores with no network call. A tag shared by many companies "
+        f"weighs less than a rare one; peers with fewer than {config.PEER_MIN_SHARED} shared tags are hidden, and "
+        "the percentile ranks a peer among the scored (non-zero) pairs.")
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>

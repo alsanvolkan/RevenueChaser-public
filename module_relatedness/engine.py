@@ -592,6 +592,7 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
     # One read of the company fields (#49): ``filter_fields`` carries name/sector/industry/market_cap already,
     # so the second ``equity_universe`` query this function used to run only risked disagreeing with it.
     extra = filter_fields(list(profiles))
+    scale = similarity.idf(profiles)       # one idf for the company weights and the peer scores (#395)
     themes = _theme_levels()
     from . import store
     sources = {t: store.profile_source(m.get("cache_key")) for t, m in store.profile_meta(list(profiles)).items()}
@@ -620,7 +621,7 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
             "stale": t in (stale or ()),
             # Build plan PR 20 (G6): the filing the profile was read from (CIK, accession, form, filed).
             "source": sources.get(t),
-            "weights": similarity.term_weights(profiles[t]),
+            "weights": similarity.term_weights(profiles[t], scale),
             "profile": profiles[t],
         })
 
@@ -631,20 +632,16 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
     peers, raw_scores = similarity.peer_lists(profiles, config.TOP_PEERS)
     arr = (np.sort(np.asarray(raw_scores, dtype="float64"))
            if raw_scores else np.zeros(0))
-    # Pairs scored is every unordered pair of profiled tickers; the omitted
-    # zero-score pairs are added back analytically (never materialised).
-    n_total = len(profiles) * (len(profiles) - 1) // 2
-    n_zero = max(0, n_total - len(arr))
-    n_pairs = n_total
+    # ``n_pairs`` is every unordered pair of profiled tickers; the percentile ranks a peer among the scored
+    # (non-zero) pairs only (#395, review RL-3): with two thirds of the pairs at zero, a 0.06 peer read as p90.
+    n_pairs = len(profiles) * (len(profiles) - 1) // 2
+    n_scored = len(arr)
     for a in peers:
         for p in peers[a]:
             p["name"] = names.get(p["peer"]) or p["peer"]
-            # Compare the unrounded score, and count the zero pairs analytically.
-            raw = p.pop("score_raw", p["score"])
-            p["percentile"] = (
-                round(100.0 * (n_zero + float(np.searchsorted(arr, raw, side="left")))
-                      / n_total, 1)
-                if n_total else 0.0)
+            raw = p.pop("score_raw", p["score"])    # compare the unrounded score
+            p["percentile"] = (round(100.0 * float(np.searchsorted(arr, raw, side="left")) / n_scored, 1)
+                               if n_scored else 0.0)
 
     # Market stats for every focal's peers, computed pair-only (never N x N).
     _attach_peer_market(peers)
@@ -671,6 +668,7 @@ def _payload(profiles: dict[str, dict], thinking: dict[str, dict],
         "companies": companies,
         "peers": peers,
         "n_pairs": n_pairs,
+        "n_scored": n_scored,
         "thinking_compare": thinking_cmp,
         "fields": list(config.PROFILE_FIELDS),
         "universe_total": len(classification_universe(operating_only=BOARD_OPERATING_ONLY["module_relatedness"])),

@@ -104,7 +104,9 @@ def run(tickers: list[str], provider: str, model: str) -> dict:
             if not profs and len(empty) >= config.GROK_UNUSABLE_STOP:
                 stopped = "unusable"                   # a wrong endpoint shape: stop before paying for every name
                 break
-    matrix = [[None if a == b or a not in profs or b not in profs else round(similarity.score_pair(profs[a], profs[b])[0], 6)
+    scale = similarity.idf(profs)                          # the board's scoring (#395)
+    matrix = [[None if a == b or a not in profs or b not in profs
+               else round(similarity.score_pair(profs[a], profs[b], scale)[0], 6)
                for b in tickers] for a in tickers]
     out = {"provider": provider, "model": model, "tickers": tickers, "matrix": matrix,
            "usable": len(profs), "empty": empty, "no_text": no_text, "attempts": budget.calls,
