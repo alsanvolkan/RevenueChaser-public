@@ -72,7 +72,8 @@ def config_hash(window: int, linkage: str, cuts,
                 bench_stale_sessions: int | None = None,
                 floor: float | None = None,
                 benchmark_applied: bool | None = None,
-                operating_only: bool | None = None) -> str:
+                operating_only: bool | None = None,
+                bench_fallback: str | None = None) -> str:
     """Identity of everything that changes a run's numbers.
 
     window, linkage, cuts, horizon, benchmark, MIN_OBS, OOS_HOLDOUT, WINSOR_K,
@@ -85,7 +86,9 @@ def config_hash(window: int, linkage: str, cuts,
     would use). ``benchmark_applied=False`` with a benchmark asked for is the
     raw-return fallback (no usable benchmark prices): its own hash, so its null
     and lagged test never stand in for a residual run's, nor the other way
-    round (Co-movement review N2). ``None`` reads as applied.
+    round (Co-movement review N2). ``None`` reads as applied. ``bench_fallback`` names the series that stood in for a
+    benchmark the store lacks (#393, ``ohlc.benchmark_fallback``): its own hash too, so a run on the real ETF and one on
+    the stand-in never serve each other's null or lagged test.
     """
     horizon, benchmark = _resolve(horizon, benchmark)
     eff = settings_mod.effective(window)
@@ -101,6 +104,8 @@ def config_hash(window: int, linkage: str, cuts,
         f"types={'operating' if pick(operating_only, eff.operating_only) else 'all'}"))
     if benchmark_applied is False and config.BENCHMARKS.get(benchmark):
         raw += "|returns=raw"
+    if bench_fallback:
+        raw += f"|fallback={bench_fallback}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
@@ -671,6 +676,9 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
     if eff.horizon_locked:
         horizon = 1
     bench_ticker = config.BENCHMARKS.get(benchmark)
+    # #393: an ETF the store lacks is stood in for (the S&P 500 level, else QQQ); the status names the stand-in.
+    bench_fallback = ohlc.benchmark_fallback(bench_ticker)
+    bench_ticker = bench_fallback or bench_ticker
     if tickers is None:
         tickers = ohlc.universe_tickers(operating_only=eff.operating_only)
     fetch = ohlc.fetch_bulk(tickers, no_fetch=no_fetch)
@@ -721,6 +729,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
             benchmark_status = "applied"
             if bench_stale:
                 benchmark_status = "stale"
+            if bench_fallback:
+                benchmark_status = f"fallback:{bench_fallback}"
 
     window_end = ret.index[-1].strftime("%Y-%m-%d") if len(ret) else None
     n = 0 if universe_ret.empty else int(universe_ret.shape[1])
@@ -732,7 +742,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
                             min_periods=eff.min_periods,
                             bench_stale_sessions=eff.bench_stale_sessions,
                             floor=eff.floor, benchmark_applied=benchmark_applied,
-                            operating_only=eff.operating_only)
+                            operating_only=eff.operating_only,
+                            bench_fallback=bench_fallback if benchmark_applied else None)
         stored = _stored_run(chash, prices_through, set(universe_ret.columns),
                              price_tickers)
         if stored:
@@ -775,7 +786,8 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
                         winsor_k=eff.winsor_k, min_periods=eff.min_periods,
                         bench_stale_sessions=eff.bench_stale_sessions,
                         floor=eff.floor, benchmark_applied=benchmark_applied,
-                        operating_only=eff.operating_only)
+                        operating_only=eff.operating_only,
+                        bench_fallback=bench_fallback if benchmark_applied else None)
 
     # The significance null and the lagged persistence test are Fetch-only
     # costs — NULL_PERMS + 1 extra clusterings. A Refresh reuses the last
@@ -876,6 +888,12 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         "provider_health": _provider_health(fetch),
         **_settings_keys(eff),
     }
+
+
+def benchmark_applied_status(status) -> bool:
+    """Whether a persisted ``benchmark_status`` means the market was removed: applied, stale, or a stand-in
+    (``fallback:<name>``, #393)."""
+    return status in ("applied", "stale") or str(status or "").startswith("fallback:")
 
 
 def _loads_or_empty(text) -> dict:
@@ -1016,7 +1034,7 @@ def load_payload(as_of: str | None = None, horizon: int | None = None,
         "flat_prints": None,
         "horizon": rr.get("horizon"), "benchmark": bench,
         "benchmark_status": rr.get("benchmark_status"),
-        "benchmark_applied": rr.get("benchmark_status") in ("applied", "stale"),
+        "benchmark_applied": benchmark_applied_status(rr.get("benchmark_status")),
         "prices_through": rr.get("prices_through"),
         "n_factors": rr.get("n_factors"),
         "oos": _loads_or_empty(rr.get("oos_json")),
