@@ -17,7 +17,6 @@ The names and what each one tests:
 | FDX | a fund file writes it with a CUSIP only (matched by CUSIP) |
 | NVR | OpenFIGI has no FIGI for its CUSIP (``tier_a_no_figi``) |
 | WFC-PC | a preferred (the ``-P`` ticker rule): Tier B, no Compustat link |
-| SOLO | a Tier A name Compustat does not know: no link, no CUSIP, so only an OpenFIGI TICKER job can type it |
 | VYLR | a new listing Compustat's snapshot does not hold yet (the new-name query); an old, delisted company that
 left the S&P 500 in 2009 still carries Compustat tic VYLR (a reused ticker: its history must not become VYLR's) |
 
@@ -45,7 +44,6 @@ SEC_FILE = {
         [72971, "WELLS FARGO & COMPANY/MN", "WFC-PC", "NYSE"],
         [2000001, "VYLR HOLDINGS INC", "VYLR", "Nasdaq"],
         [884394, "SPDR S&P 500 ETF TRUST", "SPY", "NYSE"],
-        [3000003, "SOLO NOTES CORP", "SOLO", "Nasdaq"],
         [3000001, "SOME OTC CO", "OTCX", "OTC"],
         [3000002, "NO EXCHANGE CO", "NOEX", None],
     ],
@@ -261,12 +259,13 @@ FIGI = {
 }
 
 
-# OpenFIGI's ``TICKER`` answers, keyed by the symbol the job asks (OpenFIGI's spelling, ``figi_symbol``). Only the
-# names with no CUSIP need one: the spine asks a TICKER job for a Tier A row with no CUSIP and no FIGI.
+# OpenFIGI's ``TICKER`` answers, keyed by the symbol the job asks (OpenFIGI's spelling, ``figi_symbol``). Only a
+# name with no CUSIP needs one: the spine asks a TICKER job for a Tier A row with no CUSIP and no FIGI. NVR is the
+# fixture's case, with its ``comp.security`` row dropped by the test so that its CIK finds no security and no CUSIP.
 TICKER_FIGI = {
-    "SOLO": {"figi": "BBG0SOLO0000", "ticker": "SOLO", "securityType": "Common Stock", "exchCode": "US",
-             "compositeFIGI": "BBG0SOLO0000", "shareClassFIGI": "BBG0SOLO0SC0", "securityType2": "Common Stock",
-             "marketSector": "Equity", "name": "SOLO NOTES CORP"},
+    "NVR": {"figi": "BBG000BW5N90", "ticker": "NVR", "securityType": "Common Stock", "exchCode": "US",
+            "compositeFIGI": "BBG000BW5N90", "shareClassFIGI": "BBG001S5TNC0", "securityType2": "Common Stock",
+            "marketSector": "Equity", "name": "NVR INC"},
 }
 
 

@@ -36,7 +36,7 @@ def env(monkeypatch, http_mock):
 
 
 def _cusip_calls(http_mock) -> list:
-    """The CUSIP lane's requests only: the run also asks a ``TICKER`` job for a Tier A name with no CUSIP (SOLO)."""
+    """The CUSIP lane's requests only (the ticker lane has ``_ticker_jobs``)."""
     return [r for r in http_mock.calls("figi.test") if json.loads(r.content)[0]["idType"] != of.ID_TICKER]
 
 
@@ -50,8 +50,8 @@ def _run(day="2026-10-27", **kw):
 
 def test_every_active_cusip_of_an_sec_cik_is_asked_once_with_the_key_in_its_header(env):
     row = _run()
-    # Two requests: one of CUSIP jobs, and the ticker lane's one job for SOLO (Tier A, no CUSIP).
-    assert row["result"] == "changed" and row["calls"] == 2
+    # Every Tier A name of the fixture has a Compustat link, so the ticker lane asks nothing here.
+    assert row["result"] == "changed" and row["calls"] == 1
     (jobs,) = _jobs(env)
     assert set(jobs) == {s["cusip"] for s in fx.SECURITY + fx.NEW_SECURITY if s["secstat"] == "A"}
     req = _cusip_calls(env)[0]
@@ -163,7 +163,7 @@ def test_without_the_key_bucket_a_run_keeps_half_the_window_and_holds_100_jobs(e
         slept.append(s)
         now[0] += s
     row = _run(sleep=sleep, clock=lambda: now[0])
-    assert row["calls"] == 27 and all(len(j) == 100 for j in _jobs(env))   # 26 CUSIP + 1 ticker (SOLO)
+    assert row["calls"] == 26 and all(len(j) == 100 for j in _jobs(env))
     assert now[0] >= 60.0                                   # the 25th request waited for the window
 
 
@@ -184,6 +184,26 @@ def test_a_job_error_is_not_stored_and_is_asked_next_run():
 
 # ── Asking by ticker: the Tier A names with no CUSIP (plan 2026-11-04, item 1) ────────────────────────────────
 
+def _spine_env(http_mock, monkeypatch, *, unlink_nvr: bool) -> None:
+    """The whole spine's sources behind the mock, set up before anything runs. With ``unlink_nvr`` NVR's
+    ``comp.security`` row is dropped, so its CIK finds no security: a Tier A name with no CUSIP, the one case an
+    ``ID_CUSIP`` job can never answer for. Its own env, not the module's, because the patch has to be in place
+    before the WRDS backfill writes its Parquet."""
+    from RevenueChaser.rcdata.build.spine import funds as fu
+    monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
+    monkeypatch.setenv("RC_OPENFIGI_BASE", "https://figi.test")
+    monkeypatch.setenv("OPENFIGI_API_KEY", KEY)
+    if unlink_nvr:
+        monkeypatch.setattr(fx, "SECURITY", [r for r in fx.SECURITY if r["tic"] != "NVR"])
+    monkeypatch.setattr(fu, "FLOOR", {"sp500": 4, "sp400": 2, "sp600": 2, "ndx": 1})
+    monkeypatch.setattr(wrds, "_factory", lambda: fx.FakeWrds())
+    wrds.reset()
+    http_mock.add("company_tickers_exchange.json", fx.SEC_FILE)
+    http_mock.add("company_tickers_mf.json", fx.SEC_MF_FILE)
+    http_mock.add("figi.test/v3/mapping", fx.figi_answer)
+    fx.add_fund_routes(http_mock)
+
+
 def _spine(day="2026-10-27"):
     """Every spine dataset in order, so the live ``security`` table is there for ``wanted_tickers``."""
     from RevenueChaser.rcdata.build.spine import funds as fu, sec_tickers_mf as mf, security
@@ -194,15 +214,11 @@ def _spine(day="2026-10-27"):
 
 
 @pytest.fixture
-def spine(env, monkeypatch):
-    from RevenueChaser.rcdata.build.spine import funds as fu
-    monkeypatch.setattr(fu, "FLOOR", {"sp500": 4, "sp400": 2, "sp600": 2, "ndx": 1})
-    from RevenueChaser.core.providers import sec_edgar as se
-    env.add("company_tickers_mf.json", fx.SEC_MF_FILE)
-    fx.add_fund_routes(env)
-    assert se.SEC_WWW_BASE == "https://sec.test"
+def spine(http_mock, monkeypatch):
+    _spine_env(http_mock, monkeypatch, unlink_nvr=True)
     _spine()
-    return env
+    yield http_mock
+    wrds.reset()
 
 
 def _ticker_jobs(http_mock) -> list[list[tuple[str, str]]]:
@@ -211,28 +227,32 @@ def _ticker_jobs(http_mock) -> list[list[tuple[str, str]]]:
 
 
 def test_a_tier_a_name_with_no_cusip_is_asked_by_ticker_and_typed_from_that_answer(spine):
-    assert [j for j in _ticker_jobs(spine) if j] == [[(of.ID_TICKER, "SOLO")]]
+    assert [j for j in _ticker_jobs(spine) if j] == [[(of.ID_TICKER, "NVR")]]
     assert of._query(f"SELECT status, figi, ticker FROM read_parquet({base.sql_path(of.ticker_partition())})") == [
-        ("present", "BBG0SOLO0000", "SOLO")]
+        ("present", "BBG000BW5N90", "NVR")]
     with serving.open_read("spine") as con:
         assert con.execute("SELECT tier, cusip, figi, share_class_figi, figi_ticker, security_type, figi_source "
-                           "FROM security WHERE ticker = 'SOLO'").fetchone() == (
-            "A", None, "BBG0SOLO0000", "BBG0SOLO0SC0", "SOLO", "common", of.FIGI_BY_TICKER)
+                           "FROM security WHERE ticker = 'NVR'").fetchone() == (
+            "A", None, "BBG000BW5N90", "BBG001S5TNC0", "NVR", "common", of.FIGI_BY_TICKER)
     assert of.wanted_tickers() == []                       # it has a FIGI now: never asked again
     spine.requests.clear()
     _spine("2026-11-03")
     assert [j for j in _ticker_jobs(spine) if j] == []
 
 
-def test_a_name_with_a_cusip_is_never_asked_by_ticker(spine):
-    assert "MSFT" not in of.wanted_tickers() and "NVR" not in of.wanted_tickers()   # NVR: a CUSIP, absent FIGI
+def test_a_name_with_a_cusip_is_never_asked_by_ticker(http_mock, monkeypatch):
+    _spine_env(http_mock, monkeypatch, unlink_nvr=False)
+    _spine()
+    assert of.wanted_tickers() == []                       # every Tier A name is linked, NVR included
+    assert [j for j in _ticker_jobs(http_mock) if j] == []
+    wrds.reset()
 
 
 def test_a_ticker_already_answered_is_not_asked_again_until_the_retry_window(env, monkeypatch):
-    monkeypatch.setattr(of, "wanted_tickers", lambda: ["SOLO", "NOPE"])
+    monkeypatch.setattr(of, "wanted_tickers", lambda: ["NVR", "NOPE"])
     monkeypatch.setattr(of, "wanted_cusips", lambda: [])
     _run()
-    assert _ticker_jobs(env) == [[(of.ID_TICKER, "SOLO"), (of.ID_TICKER, "NOPE")]]
+    assert _ticker_jobs(env) == [[(of.ID_TICKER, "NVR"), (of.ID_TICKER, "NOPE")]]
     env.requests.clear()
     _run("2027-01-24")                                      # 89 days on: still inside the window
     assert _ticker_jobs(env) == []
@@ -241,11 +261,11 @@ def test_a_ticker_already_answered_is_not_asked_again_until_the_retry_window(env
 
 
 def test_a_days_ticker_batches_already_on_disk_are_not_asked_again(env, monkeypatch):
-    monkeypatch.setattr(of, "wanted_tickers", lambda: ["SOLO"])
+    monkeypatch.setattr(of, "wanted_tickers", lambda: ["NVR"])
     monkeypatch.setattr(of, "wanted_cusips", lambda: [])
     raw = of.ticker_raw_dir() / "2026-10-27" / "batch-00000.json.gz"
     base.write_raw_json(of._meta(raw), {"as_of": "2026-10-27", "fetched_at": 1.0, "run_id": "r0", "jobs": 1})
-    base.write_raw_json(raw, {"tickers": ["SOLO"], "answers": [{"data": [fx.TICKER_FIGI["SOLO"]]}]})
+    base.write_raw_json(raw, {"tickers": ["NVR"], "answers": [{"data": [fx.TICKER_FIGI["NVR"]]}]})
     _run()
     assert _ticker_jobs(env) == []
 
@@ -269,29 +289,28 @@ def test_no_spine_file_asks_no_ticker(env, monkeypatch):
 
 
 def test_a_ticker_job_error_is_not_stored_and_is_asked_next_run():
-    assert of.ticker_answer("SOLO", {"error": "Invalid idValue"}) is None
-    assert of.ticker_answer("SOLO", {"warning": "No identifier found."}) == {"asked_ticker": "SOLO",
-                                                                            "status": "absent"}
+    assert of.ticker_answer("NVR", {"error": "Invalid idValue"}) is None
+    assert of.ticker_answer("NVR", {"warning": "No identifier found."}) == {"asked_ticker": "NVR",
+                                                                           "status": "absent"}
 
 
 def test_the_two_lanes_share_the_one_request_budget(env, monkeypatch):
     monkeypatch.setattr(of, "MAX_REQUESTS", 1)
     monkeypatch.setattr(of, "wanted_cusips", lambda: [f"{i:08d}{i % 10}" for i in range(200)])   # two requests
-    monkeypatch.setattr(of, "wanted_tickers", lambda: ["SOLO"])
+    monkeypatch.setattr(of, "wanted_tickers", lambda: ["NVR"])
     row = _run()
     assert row["calls"] == 1 and _ticker_jobs(env) == [[]]
     assert "100 CUSIPs left for the next run" in row["note"] and "1 tickers left for the next run" in row["note"]
 
 
-def test_a_ticker_openfigi_does_not_know_is_a_build_issue(env, monkeypatch):
+def test_a_ticker_openfigi_does_not_know_is_a_build_issue(http_mock, monkeypatch):
     from RevenueChaser.rcdata import ops
-    from RevenueChaser.rcdata.build.spine import funds as fu, security
-    monkeypatch.delitem(fx.TICKER_FIGI, "SOLO")                     # OpenFIGI knows it by neither CUSIP nor ticker
-    monkeypatch.setattr(fu, "FLOOR", {"sp500": 4, "sp400": 2, "sp600": 2, "ndx": 1})
-    env.add("company_tickers_mf.json", fx.SEC_MF_FILE)
-    fx.add_fund_routes(env)
+    from RevenueChaser.rcdata.build.spine import security
+    monkeypatch.delitem(fx.TICKER_FIGI, "NVR")              # OpenFIGI knows it by neither CUSIP nor ticker
+    _spine_env(http_mock, monkeypatch, unlink_nvr=True)
     _spine()
-    assert _ticker_jobs(env)[-1] == [(of.ID_TICKER, "SOLO")]
+    wrds.reset()
+    assert [j for j in _ticker_jobs(http_mock) if j] == [[(of.ID_TICKER, "NVR")]]
     issues = {(i["kind"], i["key"]) for i in ops.open_issues(security.NAME, limit=500)[1]}
-    assert ("tier_a_no_figi_by_ticker", "SOLO") in issues
-    assert not {k for k, key in issues if k == "tier_a_no_figi_by_ticker" and key != "SOLO"}
+    assert ("tier_a_no_figi_by_ticker", "NVR") in issues
+    assert {key for k, key in issues if k == "tier_a_no_figi_by_ticker"} == {"NVR"}

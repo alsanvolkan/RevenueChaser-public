@@ -346,9 +346,7 @@ def test_build_issues_name_the_plans_problems(built):
     assert ("tier_a_no_figi", "NVR") in issues                     # OpenFIGI: absent
     assert ("cik_many_gvkeys", "21175") not in issues               # CNA: the ticker match decided
     assert ("membership_wrds_differs", "sp400:HEI") in issues       # left the MidCap in Compustat, still in the files
-    assert ("tier_a_no_wrds_link", "SOLO") in issues                # SOLO: Compustat does not know its CIK
-    assert ("tier_a_no_figi_by_ticker", "SOLO") not in issues        # the TICKER job answered for it
-    assert not {k for k, _ in issues} & {"source_never_run", "tier_a_no_cusip"}
+    assert not {k for k, _ in issues} & {"source_never_run", "tier_a_no_cusip", "tier_a_no_wrds_link"}
     assert ("member_not_tier_a", "sp500:WFC") not in issues and _sec("WFC")["tier"] == "A"
 
 
