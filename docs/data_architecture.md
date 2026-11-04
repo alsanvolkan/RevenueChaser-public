@@ -156,14 +156,14 @@ sub-industries), `resolve_gics`, the industry alias table and `core/identity/gic
   (`sic`, `sic_description`, `sic_group2`, `sic_source`) is written on `security_master` for every ticker that has one,
   from caches the identity job already holds, whatever decided the sector.
 
-Schema version `12` (`_SCHEMA_VERSION` in `core/rawstore.py`; v3 added
+Schema version `13` (`_SCHEMA_VERSION` in `core/rawstore.py`; v3 added
 `industry_group` / `sub_industry`, and `equity_universe` also gained
 `industry`; v6 added the identity master tables `security_master`,
 `identity_conflicts`, `identity_source_cache` and `identity_runs`, issue #85, and `board_settings`, issue #40; v7 added
 `relatedness_profiles.attempts`, issue #114; v8 added the `job_runs` table, issue #124 PL5 (its writer is `app/jobs.py`, issue #282, see Jobs below),
 `edgar_financials.fetched_at`, issue #161, the `price_bars_daily` table, issue #156, `catalyst_events`, issue #3,
 `orphan_designations` / `orphan_lookups`, issue #190, and the shared `forecast_ledger`, issue #128 —
-manifest only, no writers yet; #164; v9 added the four SIC columns of `security_master`, issue #272; v10 added the 22 G1 tables of #292 (manifest only, no writers yet); v11 is the history redesign C: 8 `<table>_changes` tables in `raw.duckdb` (the store appends a rule-A row in the same transaction as every write to `equity_universe`, `security_master`, `identity_source_cache`, `index_constituents`, `watchlist`, `board_settings`, `catalyst_events` and `orphan_designations`; the first call seeds them), `result_runs` plus 16 run-keyed row tables in `history.duckdb` (`core/history.record_run`), the key rebuild of `price_bars_daily` (`date` becomes `session_date`) and `orphan_lookups` (key `(ticker, session_date)`), and new columns on `theme_runs` and `leaps_flow_prints`; v12 expands the 13F ingest store to non-lossy INFOTABLE rows, adds COVERPAGE/SUMMARYPAGE fields to `sec13f_submissions`, makes `sec13f_holdings` keyed on `(accession, line_no)` and adds the derive-side VALUE-units rescale (#208)). Adding manifest columns auto-migrates via
+manifest only, no writers yet; #164; v9 added the four SIC columns of `security_master`, issue #272; v10 added the 22 G1 tables of #292 (manifest only, no writers yet); v11 is the history redesign C: 8 `<table>_changes` tables in `raw.duckdb` (the store appends a rule-A row in the same transaction as every write to `equity_universe`, `security_master`, `identity_source_cache`, `index_constituents`, `watchlist`, `board_settings`, `catalyst_events` and `orphan_designations`; the first call seeds them), `result_runs` plus 16 run-keyed row tables in `history.duckdb` (`core/history.record_run`), the key rebuild of `price_bars_daily` (`date` becomes `session_date`) and `orphan_lookups` (key `(ticker, session_date)`), and new columns on `theme_runs` and `leaps_flow_prints`; v12 expands the 13F ingest store to non-lossy INFOTABLE rows, adds COVERPAGE/SUMMARYPAGE fields to `sec13f_submissions`, makes `sec13f_holdings` keyed on `(accession, line_no)` and adds the derive-side VALUE-units rescale (#208); v13 adds the nullable `relatedness_profiles.profile_json` / `label_source` (the Relatedness v2 profile, #401) and the `relatedness_embeddings` table (manifest only, its writer is Step 2)). Adding manifest columns auto-migrates via
 `ALTER TABLE ... ADD COLUMN`; the whole manifest (renames, merges, views,
 column additions, compressed-column rebuilds) is applied on each process's
 first store call — see "Schema on first use" below. `equity_universe.next_earnings_date TEXT` (Phase 1,
@@ -268,6 +268,7 @@ Computed from raw caches and persisted in `raw.duckdb`.
 | `swing_scores` / `swing_gates` | Swing Potential scan | same gate shape |
 | `company_profile` (VIEW) | `equity_universe` + `ticker_scores` / `fundamentals_scores` / `swing_scores` | one row per universe ticker; scalar joins only |
 | `relatedness_profiles` / `relatedness_attributes` / `relatedness_scores` | Relatedness LLM run | CIK-grained profiles + similarity |
+| `relatedness_embeddings` | Relatedness v2 Step 2 (#401, schema 13) | one vector per ticker and embedding model; manifest only until Step 2 lands its writer |
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `theme_runs` | NMF over Relatedness | nested fine/medium/coarse themes; pinned run in `run_registry` |
 | `leaps_flow_prints` / `leaps_daily_scores` | LEAPS flow prints + daily scores (ex-SQLite `leaps/radar.db`) | PK `id` / (ticker, date) dedup; schema-versioned |
 | `rotation_snapshots` | Rotation engine cross-section (up to 78 symbols live, 67 backfilled; D01 weekly closes since #374 M-ROT-2) | one row per ETF per session (time series; `as_of_date` is the session, #283) |
@@ -781,7 +782,8 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `ticker_themes` | `ticker`, `theme_id`, `theme`, `level`, `theme_run_id`, `fetched_at DOUBLE` (#127; NULL on older rows is unknown, never 0) | — |
 | `fundamentals_scores` / `swing_scores` | per-ticker metric columns (see MANIFEST) | — |
 | `fundamentals_gates` / `swing_gates` | `ticker`, `gate`, `rule_id`, `passed`, `actual`, `unit` | — |
-| `relatedness_profiles` | `ticker`, `cik`, `model`, `prompt_version`, `fetched_at`, `cache_key`, `status`, `attempts`, `provider` (the writer, #360: `evren` / `deepseek` / `grok`; nullable, added by `ALTER TABLE ADD COLUMN`, no schema bump) | — |
+| `relatedness_profiles` | `ticker`, `cik`, `model`, `prompt_version`, `fetched_at`, `cache_key`, `status`, `attempts`, `provider` (the writer, #360: `evren` / `deepseek` / `grok`; nullable, added by `ALTER TABLE ADD COLUMN`, no schema bump) | `profile_json` (the v3 structured profile, #401, schema 13; NULL on a v2 row), `label_source` (which chunk or table each v3 field came from, #401) |
+| `relatedness_embeddings` | `ticker`, `model`, `dim INTEGER`, `vector BLOB` (the float32 bytes of `dim` values; raw, not zlib-compressed); `PRIMARY KEY (ticker, model)` (#401, schema 13; writer: Step 2) | — |
 | `relatedness_attributes` | `ticker`, `field`, `value` (TEXT holding a JSON list), `value_num` | — |
 | `relatedness_scores` | `ticker`, `peer`, `score` | — |
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `relatedness_theme_etfs` | `theme_id` (run id is its prefix), `level`, `parent_id`, `label`, `size` / `tag`, `rank` / `ticker`, `weight` / `etf`, `overlap`, `rank` | — |

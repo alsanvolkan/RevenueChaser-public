@@ -38,7 +38,7 @@ def test_the_six_tables_declare_fetched_at_as_double_without_a_bump():
     for name in TABLES:
         decl = {d.split()[0]: d for d in rawstore.MANIFEST[name]["columns"]}
         assert decl.get("fetched_at") == "fetched_at DOUBLE", name
-    assert rawstore.schema_version() == "12"
+    assert rawstore.schema_version() == "13"
 
 
 @pytest.mark.parametrize("name,row", [
@@ -68,7 +68,7 @@ def test_an_old_row_keeps_a_null_fetched_at(isolate_rawstore, name, row):
     got = rawstore.get_all(name)
     assert len(got) == 1
     assert got[0]["fetched_at"] is None
-    assert rawstore.schema_version() == "12"
+    assert rawstore.schema_version() == "13"
 
 
 def _recent(stamp, before: float) -> None:

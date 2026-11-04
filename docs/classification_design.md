@@ -64,8 +64,8 @@ N-valued typed children:
 - `index_constituents(slug, ticker)` — reference; `index_tickers` = view.
 - `comov_*`, `chain_filings`/`chain_mentions`.
 - `relatedness_profiles(ticker, cik, model, prompt_version, fetched_at, cache_key,
-  status)` + `relatedness_attributes(ticker, field, value TEXT, value_num DOUBLE)`
-  + `relatedness_scores(ticker, peer, score)`.
+  status, profile_json, label_source)` + `relatedness_attributes(ticker, field, value TEXT, value_num DOUBLE)`
+  + `relatedness_scores(ticker, peer, score)` + `relatedness_embeddings(ticker, model, dim, vector BLOB)` (v2, #401).
 - `relatedness_themes(theme_id, level, parent_id, label, size)` +
   `relatedness_theme_tags(theme_id, tag, rank)` +
   `relatedness_theme_members(ticker, theme_id, weight)` + `theme_runs`.

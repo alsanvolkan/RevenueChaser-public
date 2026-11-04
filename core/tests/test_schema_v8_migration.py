@@ -78,8 +78,9 @@ def _migrate():
 
 
 def test_the_v8_tables_still_migrate_under_the_current_label():
-    """The v8 tables below still migrate whatever the label says; it reads 12 since the 13F v12 key (#208)."""
-    assert rawstore.schema_version() == "12"
+    """The v8 tables below still migrate whatever the label says; it reads 13 since the Relatedness v2 columns
+    (#401)."""
+    assert rawstore.schema_version() == "13"
 
 
 def test_v7_store_gains_job_runs_and_fetched_at_and_keeps_every_row(v7_store):

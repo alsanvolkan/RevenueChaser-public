@@ -52,18 +52,18 @@ class TestRefuseWrites:
     def test_refusal_off_lets_a_newer_stamp_be_written(self, isolate_rawstore, monkeypatch):
         monkeypatch.delenv("RC_STORE_SCHEMA_REFUSE", raising=False)
         rawstore.ensure_all_tables()
-        _set_stamp("raw", "13")
+        _set_stamp("raw", "14")
         rawstore.write_rows("watchlist", [{"ticker": "AAA"}])
         assert rawstore.count("watchlist") == 1
 
     def test_a_newer_stamp_refuses_the_write_and_names_the_restore(self, isolate_rawstore, monkeypatch):
         monkeypatch.setenv("RC_STORE_SCHEMA_REFUSE", "1")
         rawstore.ensure_all_tables()
-        _set_stamp("raw", "13")
+        _set_stamp("raw", "14")
         with pytest.raises(rawstore.StoreSchemaMismatch) as ei:
             rawstore.write_rows("watchlist", [{"ticker": "AAA"}])
         msg = str(ei.value)
-        assert "raw.duckdb" in msg and "13" in msg and "12" in msg
+        assert "raw.duckdb" in msg and "14" in msg and "13" in msg
         assert "python -m RevenueChaser.scripts.restore_store --latest raw" in msg
         assert str(rawstore.DB_PATH) not in msg
         assert rawstore.count("watchlist") == 0
@@ -71,16 +71,16 @@ class TestRefuseWrites:
     def test_a_read_warns_and_does_not_raise_when_refusal_is_on(self, isolate_rawstore, monkeypatch, caplog):
         monkeypatch.setenv("RC_STORE_SCHEMA_REFUSE", "1")
         rawstore.ensure_all_tables()
-        _set_stamp("raw", "13")
+        _set_stamp("raw", "14")
         with caplog.at_level("WARNING"):
             assert rawstore.get("watchlist", "ZZZ") is None
-        assert any("schema stamp" in r.getMessage() and "13" in r.getMessage() for r in caplog.records)
+        assert any("schema stamp" in r.getMessage() and "14" in r.getMessage() for r in caplog.records)
 
     def test_the_escape_lets_a_write_and_a_read_through(self, isolate_rawstore, monkeypatch, caplog):
         monkeypatch.setenv("RC_STORE_SCHEMA_REFUSE", "1")
         monkeypatch.setenv("RC_STORE_SCHEMA_OK", "1")
         rawstore.ensure_all_tables()
-        _set_stamp("raw", "13")
+        _set_stamp("raw", "14")
         rawstore.write_rows("watchlist", [{"ticker": "AAA"}])
         with caplog.at_level("WARNING"):
             assert rawstore.get("watchlist", "AAA")["ticker"] == "AAA"
@@ -96,7 +96,7 @@ class TestRefuseWrites:
             conn.execute("CREATE TABLE watchlist (ticker TEXT PRIMARY KEY)")
         rawstore.write_rows("watchlist", [{"ticker": "AAA"}])
         assert rawstore.count("watchlist") == 1
-        assert rawstore.schema_stamp("raw") == "12"
+        assert rawstore.schema_stamp("raw") == "13"
 
     def test_a_newer_file_is_not_reshaped_by_the_ensure_before_the_refusal(self, isolate_rawstore, monkeypatch):
         """Review MUST-1, real config: with auto-ensure ON the old checkout used to rename/merge/ALTER the newer
@@ -107,7 +107,7 @@ class TestRefuseWrites:
         rawstore.ensure_all_tables()
         with rawstore.connect() as conn:
             conn.execute("CREATE TABLE etf_holdings_cache (ticker TEXT)")   # a legacy name _RENAMES would move
-        _set_stamp("raw", "13")
+        _set_stamp("raw", "14")
         monkeypatch.setattr(rawstore, "_ENSURED", {})
         with pytest.raises(rawstore.StoreSchemaMismatch):
             rawstore.ensure_all_tables()
@@ -116,7 +116,7 @@ class TestRefuseWrites:
         with rawstore.connect() as conn:
             names = {r[0] for r in conn.execute("SELECT table_name FROM information_schema.tables").fetchall()}
         assert "etf_holdings_cache" in names           # the rename was not applied
-        assert rawstore.schema_stamp("raw") == "13"
+        assert rawstore.schema_stamp("raw") == "14"
 
     def test_the_other_files_are_checked_too_and_an_unreadable_stamp_is_named(self, isolate_rawstore, monkeypatch):
         monkeypatch.setenv("RC_STORE_SCHEMA_REFUSE", "1")
@@ -144,7 +144,7 @@ class TestRefuseWrites:
         rawstore.ensure_all_tables()
         rawstore.write_rows("watchlist", [{"ticker": "AAA"}])
         assert rawstore.count("watchlist") == 1
-        assert rawstore.schema_stamp("raw") == "12"
+        assert rawstore.schema_stamp("raw") == "13"
 
     def test_an_older_stamp_is_not_a_refusal(self, isolate_rawstore, monkeypatch):
         """Refuse ahead (newer or unreadable), not older or missing. Ensure upgrades older."""
@@ -156,17 +156,17 @@ class TestRefuseWrites:
         assert rawstore.schema_stamp("raw") == "11"
         rawstore._TABLE_READY.clear()
         rawstore.ensure_all_tables()
-        assert rawstore.schema_stamp("raw") == "12"
+        assert rawstore.schema_stamp("raw") == "13"
 
     def test_a_newer_stamp_refuses_only_that_file(self, isolate_rawstore, monkeypatch):
         monkeypatch.setenv("RC_STORE_SCHEMA_REFUSE", "1")
         rawstore.ensure_all_tables()
-        _set_stamp("edgar", "13")
+        _set_stamp("edgar", "14")
         rawstore.write_rows("watchlist", [{"ticker": "AAA"}])
         with pytest.raises(rawstore.StoreSchemaMismatch) as ei:
             rawstore.execute("CREATE TABLE t_probe (id INTEGER)", db="edgar")
         msg = str(ei.value)
-        assert "edgar.duckdb" in msg and "13" in msg
+        assert "edgar.duckdb" in msg and "14" in msg
         assert "python -m RevenueChaser.scripts.restore_store --latest edgar" in msg
         assert str(rawstore.edgar_db_path()) not in msg
         with pytest.raises(rawstore.StoreSchemaMismatch):

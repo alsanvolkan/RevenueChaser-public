@@ -161,7 +161,7 @@ def test_reset_db_removes_prices_only_on_a_full_reset(rawstore_tmp_db):
 
 def test_the_move_did_not_bump_the_schema_version():
     """A new file and no changed table (the #72 precedent): an old checkout ignores prices.duckdb."""
-    assert rawstore.schema_version() == "12"
+    assert rawstore.schema_version() == "13"
 
 
 # ── the one-time move out of raw.duckdb ──────────────────────────────────────

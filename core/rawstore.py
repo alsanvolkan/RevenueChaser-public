@@ -115,7 +115,7 @@ _READ_DELAYS = (0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)
 # the lock is NEVER held around the transaction/statements, so operations still
 # overlap exactly as documented (a read during a held write handle works).
 _ATTACH_LOCK = threading.Lock()
-_SCHEMA_VERSION = "12"
+_SCHEMA_VERSION = "13"
 
 
 # A manifest "column" entry is either a column definition (``name TYPE ...``) or
@@ -1178,6 +1178,24 @@ MANIFEST: dict[str, dict] = {
             # The writer's provider beside its model (#360: evren / deepseek / grok). Nullable, added by
             # ``_reconcile_table`` (ALTER TABLE ADD COLUMN), no schema bump.
             "provider TEXT",
+            # Relatedness v2 (#401, schema 13): the v3 structured profile (summary, segments, customers,
+            # suppliers, named_competitors, business_model, channel, geography, stage, keywords) and, per field,
+            # which chunk or table its value came from under the merge rule. Nullable: a v2 row reads NULL.
+            "profile_json JSON", "label_source JSON",
+        ],
+        "kind": "tabular",
+        "write": "upsert",
+        "sources": [],
+    },
+    "relatedness_embeddings": {
+        # Relatedness v2 Step 2 (#401, schema 13): one vector per ticker and embedding model, the float32 bytes of
+        # ``dim`` values (raw BLOB, not ``compress``: it is binary already). Writer arrives with Step 2.
+        "history_mode": "latest_cache",
+        "planned": True,
+        "key": ["ticker", "model"],
+        "columns": [
+            "ticker TEXT", "model TEXT", "dim INTEGER", "vector BLOB",
+            "PRIMARY KEY (ticker, model)",
         ],
         "kind": "tabular",
         "write": "upsert",

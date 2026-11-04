@@ -3,7 +3,7 @@
 A board run already summarises its provider calls into prose (``result_runs.quality_note``); this column keeps the
 same ``ProviderHealth.health()`` dict as data, so a 14-day view can read it without parsing the prose. One additive
 JSON column, ``provider_health``: nullable, no default, added to an existing store file by ``_reconcile_table``.
-``_SCHEMA_VERSION`` stays "12". Temp stores only, no network.
+``_SCHEMA_VERSION`` was not bumped for it. Temp stores only, no network.
 """
 from __future__ import annotations
 
