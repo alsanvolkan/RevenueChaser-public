@@ -91,6 +91,16 @@ Charm signals agree — sell-side lean.
 | Where it matters | $8,000 | +2.8% from spot · pin zone |
 
 
+## What Would Change the Regime
+
+| If this happens | Then |
+|---|---|
+| A daily close ABOVE 7,821 (the gamma flip) | back to positive gamma — acceleration is dampened, the upside frame opens |
+| The close stays BELOW 7,821 | negative gamma continues, so a move keeps being amplified, 7,500 the next support |
+| Net DEX falls through its 25% threshold (a -$140.75M move, to below +$422.25M) | the dealer lean behind the current frame weakens meaningfully |
+| Charm changes sign (from minus to plus) | the pin's pull at 8,000 reverses, so the close drifts the other way |
+
+
 ## SPX Option Position Map
 
 ![SPX Option Position Map](chart.png)
@@ -248,6 +258,11 @@ Alternate widths: **25 pts** (credit 24, R:R 1 : 2.18) · **50 pts** (credit 22,
 | Call Wall | 7,900 | N/A | N/A |
 | Put Support | 7,500 | N/A | N/A |
 | Gamma Magnet | 7,900 | N/A | N/A |
+
+## Net Delta — Weekly Trend
+
+No Friday close stored before this day yet, so there is no weekly trend to show.
+
 
 ## Top-10 GEX Strikes
 
