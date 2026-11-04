@@ -259,16 +259,31 @@ FIGI = {
 }
 
 
+# OpenFIGI's ``TICKER`` answers, keyed by the symbol the job asks (OpenFIGI's spelling, ``figi_symbol``). Only a
+# name with no CUSIP needs one: the spine asks a TICKER job for a Tier A row with no CUSIP and no FIGI. NVR is the
+# fixture's case, with its ``comp.security`` row dropped by the test so that its CIK finds no security and no CUSIP.
+TICKER_FIGI = {
+    "NVR": {"figi": "BBG000BW5N90", "ticker": "NVR", "securityType": "Common Stock", "exchCode": "US",
+            "compositeFIGI": "BBG000BW5N90", "shareClassFIGI": "BBG001S5TNC0", "securityType2": "Common Stock",
+            "marketSector": "Equity", "name": "NVR INC"},
+}
+
+
 def figi_answer(request):
     """The mapping endpoint: one entry per job, ``data`` for a known code asked with its own id type, the documented
     warning otherwise. A CINS (a letter first) is found only as ``ID_CINS``: asked as ``ID_CUSIP``, OpenFIGI found
-    none of the 2,092 CINS the first live map held (homesrv, 2026-10-28); here a CUSIP is found only as ``ID_CUSIP``."""
+    none of the 2,092 CINS the first live map held (homesrv, 2026-10-28); here a CUSIP is found only as ``ID_CUSIP``.
+    A ``TICKER`` job is answered from ``TICKER_FIGI``, whose value may be a list when one symbol has several
+    listings (OpenFIGI answers a ``TICKER`` job with every listing it knows)."""
     jobs = json.loads(request.content)
 
-    def found(job) -> bool:
+    def hit(job):
+        if job.get("idType") == "TICKER":
+            return TICKER_FIGI.get(job["idValue"])
         own = "ID_CINS" if job["idValue"][:1].isalpha() else "ID_CUSIP"
-        return job["idValue"] in FIGI and job.get("idType") == own
-    out = [{"data": [FIGI[j["idValue"]]]} if found(j) else {"warning": "No identifier found."} for j in jobs]
+        return FIGI.get(job["idValue"]) if job.get("idType") == own else None
+    out = [{"data": h if isinstance(h, list) else [h]} if (h := hit(j)) else {"warning": "No identifier found."}
+           for j in jobs]
     return 200, json.dumps(out).encode(), {"content-type": "application/json"}
 
 
