@@ -11,14 +11,18 @@ import re
 from bisect import bisect_right
 
 _ABBREV = r"(?<!\bInc)(?<!\bCorp)(?<!\bCo)(?<!\bLtd)(?<!\bU\.S)(?<!\bN\.V)(?<!\bS\.A)(?<!\bNo)"
-SENT_END = re.compile(_ABBREV + r"[.;]\s+(?=[A-Z(“\"])")
+# A bullet ends the sentence before it (#394): "•" / "●" anywhere, or "-" / "*" at a line
+# start followed by a space, so a hard-wrapped "-based" stays one word.
+_BULLET = r"\s*[•●]\s*|\n[ \t]*[-*][ \t]+"
+SENT_END = re.compile(_ABBREV + r"[.;]\s+(?=[A-Z(“\"])|" + _BULLET)
 
 
 def spans(text: str) -> list[tuple[int, int]]:
     """``(start, end)`` of each sentence; the end punctuation stays in the sentence."""
     out, start = [], 0
     for m in SENT_END.finditer(text):
-        out.append((start, m.start() + 1))
+        if text[start:m.start()].strip():   # a leading bullet has no sentence before it
+            out.append((start, m.start() + 1))
         start = m.end()
     out.append((start, len(text)))
     return out
