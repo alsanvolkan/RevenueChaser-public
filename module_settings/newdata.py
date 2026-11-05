@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -711,20 +712,31 @@ def _identity(counts: dict | None) -> dict:
 #: A folder walk stops after this many entries and says so: the page renders in the dashboard, and the raw tree of
 #: a dataset with one file per company per day runs to tens of thousands of files.
 STORAGE_WALK_BUDGET = 50_000
+#: And after this long, whichever comes first. An entry budget bounds the stat calls, not the time they take: on the
+#: HDD the raw tree's entries are a seek each, and on 5 Nov 2026 a 50 000-entry walk ran past ten minutes and held
+#: the single-threaded dashboard for all of it, over rc-warmup's 600 s ceiling. A walk out of time reads ``capped``,
+#: the same floor the entry budget already renders.
+STORAGE_WALK_SECONDS = 3.0
 _STORAGE_CACHE: dict[str, tuple[str, dict]] = {}
 
 
-def _folder(path: Path, budget: list[int]) -> dict:
+def _folder(path: Path, budget: list[int], deadline: float) -> dict:
     """``{"path", "files", "bytes", "capped"}`` of one folder, walked without following links; files None when the
-    folder does not exist. ``budget`` is the entries the whole storage walk may still look at, shared by every
-    folder of one render (review S3: a cap per folder let the HDD walk reach millions of stats); ``capped`` means it
-    ran out in or before this folder and the counts are a floor."""
+    folder does not exist. ``budget`` is the entries the whole storage walk may still look at and ``deadline`` the
+    ``time.monotonic()`` it must be finished by, both shared by every folder of one render (review S3: a cap per
+    folder let the HDD walk reach millions of stats); ``capped`` means it ran out of entries or of time in or before
+    this folder and the counts are a floor.
+
+    The clock is read once per folder rather than once per entry, so one folder with more entries than the budget is
+    still bounded by the budget alone."""
     if not path.is_dir():
         return {"path": str(path), "files": None, "bytes": None, "capped": False}
     files = size = 0
     stack = [path]
     while stack:
         here = stack.pop()
+        if time.monotonic() > deadline:
+            return {"path": str(path), "files": files, "bytes": size, "capped": True}
         try:
             entries = list(os.scandir(here))
         except OSError:
@@ -761,9 +773,10 @@ def _storage(now: datetime) -> dict:
             files[kind] = {"path": str(path), "bytes": path.stat().st_size}
         except OSError:
             files[kind] = {"path": str(path), "bytes": None}
-    budget = [STORAGE_WALK_BUDGET]
-    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/")), budget),
-                       "parquet": _folder(parquet_root.joinpath(*name.split("/")), budget)} for name in _datasets()}
+    budget, deadline = [STORAGE_WALK_BUDGET], time.monotonic() + STORAGE_WALK_SECONDS
+    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/")), budget, deadline),
+                       "parquet": _folder(parquet_root.joinpath(*name.split("/")), budget, deadline)}
+                for name in _datasets()}
     out = {"roots": {"raw": str(raw_root), "parquet": str(parquet_root), "ssd": str(config.MARKET_DIR)},
            "files": files, "datasets": datasets}
     _STORAGE_CACHE["storage"] = (key, out)

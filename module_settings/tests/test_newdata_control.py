@@ -164,3 +164,15 @@ def test_a_card_carries_its_last_three_checks_newest_first(market_roots):
 def test_every_served_tables_rows_and_newest_day_are_in_one_map(market_roots):
     _bars([("A1", "2026-10-28")])
     assert newdata.collect(NOW)["tables"]["price_bar_daily"] == {"rows": 1, "newest": "2026-10-28"}
+
+
+def test_the_walk_stops_when_it_runs_out_of_time_and_says_the_count_is_a_floor(market_roots, monkeypatch):
+    """5 Nov 2026: the entry budget bounds the stat calls, not the seconds they take. On the HDD a 50 000-entry walk
+    ran past ten minutes inside one page render, so the walk is bounded by the clock as well."""
+    from RevenueChaser.rcdata.build import base
+    raw = base.raw_root() / "sec" / "companyfacts"
+    raw.mkdir(parents=True)
+    (raw / "0.json.gz").write_bytes(b"z")
+    monkeypatch.setattr(newdata, "STORAGE_WALK_SECONDS", -1.0)      # out of time before the first folder
+    got = newdata.collect(NOW)["storage"]["datasets"]["sec/companyfacts"]["raw"]
+    assert got["capped"] is True and got["files"] == 0
