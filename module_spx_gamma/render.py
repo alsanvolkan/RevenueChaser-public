@@ -596,6 +596,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "week_gamma": _week_gamma(snapshot),
         "close_check": close_card(snapshot),
         "dealer_book": _dealer_book(snapshot),
+        "structures": _structures(snapshot),
         "session_flow": [{"expiry": r["expiry"], "net_gex": fmt_signed_compact(r.get("net_gex")),
                           "hedge_50pt": fmt_signed_compact(r.get("hedge_50pt")).lstrip("+"),
                           "net_charm": fmt_signed_compact(r.get("net_charm")),
@@ -632,6 +633,33 @@ def _dte_band_rows(snapshot: dict) -> list[dict]:
 _BOOK_ROWS = (("gamma", "Gamma ($ per 1 %)", True), ("gamma_down50", "Gamma, spot -50 ($ per 1 %)", True),
               ("vanna", "Vanna ($ delta per IV point)", True), ("charm", "Charm ($ delta per day)", True),
               ("vomma", "Vomma (sign)", False), ("zomma", "Zomma (sign)", False), ("speed", "Speed (sign)", False))
+
+
+def _structures(snapshot: dict) -> dict | None:
+    """A2: the report structures priced on the target Friday's quotes, formatted (points; XSP a tenth)."""
+    from .scenarios import scenario_bands
+    from .structures import build_structures
+    rows = snapshot.get("target_chain_rows") or []
+    built = build_structures(scenario_bands(snapshot), rows, rows[0].get("expiry") if rows else None)
+    if not built or not built["structures"]:
+        return None
+
+    def pts(v):
+        return "n/a" if v is None else f"{v:,.2f}"
+    out = []
+    for s in built["structures"]:
+        net = s["net"]
+        out.append({
+            "name": s["name"], "family": s["family"],
+            "legs": " / ".join(f"{'+' if l['action'] == 'BUY' else '−'}{l['type']} {l['strike']:,.0f}" for l in s["legs"]),
+            "net": "n/a" if net is None else (f"credit {net:,.2f}" if net > 0 else f"debit {-net:,.2f}"),
+            "xsp": "n/a" if s["xsp_net"] is None else f"{abs(s['xsp_net']):,.2f}",
+            "max_profit": pts(s["max_profit"]), "max_loss": pts(s["max_loss"]),
+            "breakevens": ", ".join(f"{b:,.1f}" for b in s["breakevens"]) or "n/a",
+            "reward_risk": "n/a" if s["reward_risk"] is None else f"{s['reward_risk']:.2f}",
+            "missing": ", ".join(s["missing"]),
+        })
+    return {"expiry": built["expiry"], "label": built["label"], "rows": out}
 
 
 def _dealer_book(snapshot: dict) -> dict | None:

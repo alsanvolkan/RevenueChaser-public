@@ -26,6 +26,7 @@ body{ background:var(--bg); color:var(--fg); font-family:'Segoe UI',system-ui,sa
 .header{ color:var(--muted); font-size:12px; padding-bottom:8px; border-bottom:1px solid var(--border); margin-bottom:16px; }
 .at-glance{ font-size:15px; font-weight:600; color:var(--bright); background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 16px; margin:12px 0 20px; }
 .at-glance .muted{ color:var(--muted); font-weight:400; }
+.muted{ color:var(--muted); }
 h2{ font-size:19px; margin:24px 0 8px; color:var(--bright); }
 h3{ font-size:15px; margin:16px 0 8px; color:var(--bright); }
 .chart{ margin:8px 0 16px; max-width:100%; overflow:hidden; }
@@ -671,7 +672,18 @@ the levels below stop applying and the map has to be re-read.</div>
   {% endfor %}
   </tbody>
 </table>
-<div class="note">{{ scenarios.note }}</div>{% if scenarios.get("hourly_source") %}{% set hs = scenarios.hourly_source %}
+<div class="note">{{ scenarios.note }}</div>{% if structures %}
+<details class="collapsible">
+<summary><h2 class="sum-h">Trade structures ({{ structures.expiry }})</h2></summary>
+<div class="box-inner">
+<div class="at-glance" style="margin:0 0 8px"><b>{{ structures.label }}</b></div>
+<table class="stack">
+  <thead><tr><th>Structure</th><th>Legs</th><th>Net (SPX pts)</th><th>XSP</th><th>Max profit</th><th>Max loss</th><th>Breakevens</th><th>Reward / risk</th></tr></thead>
+  <tbody>{% for r in structures.rows %}<tr><td data-label="Structure">{{ r.name }} <span class="muted">({{ r.family }})</span></td><td data-label="Legs">{{ r.legs }}</td><td data-label="Net (SPX pts)">{{ r.net }}{% if r.missing %} <span class="muted">no quote: {{ r.missing }}</span>{% endif %}</td><td data-label="XSP">{{ r.xsp }}</td><td data-label="Max profit">{{ r.max_profit }}</td><td data-label="Max loss">{{ r.max_loss }}</td><td data-label="Breakevens">{{ r.breakevens }}</td><td data-label="Reward / risk">{{ r.reward_risk }}</td></tr>{% endfor %}</tbody>
+</table>
+<div class="box-note">Strikes are this week's band edges snapped to the 25-point grid; wings 50 points beyond the short leg; the debit spreads buy at the confirm level. Mid prices at expiry payoff, before fees and slippage. The report's entry, stop and sizing rules are not applied.</div>
+</div>
+</details>{% endif %}{% if scenarios.get("hourly_source") %}{% set hs = scenarios.hourly_source %}
 <div class="note">Hourly closes from {{ hs.week_start }} ({{ hs.rows|length }} so far): UW {{ hs.source }} 30-minute bars at the report times (10:30 … 15:30 New York and the close), scaled to SPX by {{ "%.4f"|format(hs.ratio) }} (stored SPX close / SPY close of the last shared session). A proxy: the report reads IBKR's SPX hourly close.{% if hs.rows %} Last: {{ hs.rows[-1].amsterdam }} Amsterdam, {{ "{:,.1f}".format(hs.rows[-1].close) }}.{% endif %}</div>{% endif %}
 {% if flow_signal %}
 <div class="box" style="margin-top:14px">

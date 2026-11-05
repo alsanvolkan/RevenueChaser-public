@@ -202,7 +202,16 @@ CFTC COT data unavailable.
 {% for s in scenarios.scenarios %}| {{ s.name }} | {{ s.range }} | {{ s.p }} | {{ "%.2f"|format(s.asymmetry) if s.asymmetry is not none else 'n/a' }} | {{ s.trade }} |{% if scenarios.get("hourly_source") %} {{ s.get("hourly_text", "") }} |{% endif %}
 {% endfor %}
 
-{{ scenarios.note }}{% if scenarios.get("hourly_source") %}{% set hs = scenarios.hourly_source %}
+{{ scenarios.note }}{% if structures %}
+
+### Trade structures ({{ structures.expiry }})
+
+{{ structures.label }}
+
+| Structure | Legs | Net (SPX pts) | XSP | Max profit | Max loss | Breakevens | Reward / risk |
+|---|---|---|---|---|---|---|---|
+{% for r in structures.rows %}| {{ r.name }} | {{ r.legs }} | {{ r.net }} | {{ r.xsp }} | {{ r.max_profit }} | {{ r.max_loss }} | {{ r.breakevens }} | {{ r.reward_risk }} |
+{% endfor %}{% endif %}{% if scenarios.get("hourly_source") %}{% set hs = scenarios.hourly_source %}
 
 Hourly closes from {{ hs.week_start }} ({{ hs.rows|length }} so far): UW {{ hs.source }} 30-minute bars at the report times, scaled to SPX by {{ "%.4f"|format(hs.ratio) }}. A proxy: the report reads IBKR's SPX hourly close.{% endif %}
 

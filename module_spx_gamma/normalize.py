@@ -604,6 +604,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "week_gamma": week_map(strike_expiry_rows, asof_str, spot) if asof_str else None,
         "vol_calendar": week_events(raw.get("economic_calendar"), asof_str) if asof_str else [],
         "tails": tail_table([c.get("close") for c in candles], annualized_iv),
+        # A2: the target Friday's chain rows, priced into the report structures on render
+        "target_chain_rows": normalize_option_chain(raw.get("target_chain")),
         # A7: the target Friday's ATM straddle (UW quotes), the market's own expected move
         "straddle_move": straddle_move(normalize_option_chain(raw.get("target_chain")), spot),
         # A5: the target week's report-time hourly closes (UW SPY 30m scaled to SPX) for the scenario triggers
