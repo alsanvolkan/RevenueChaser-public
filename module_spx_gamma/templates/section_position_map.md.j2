@@ -83,6 +83,14 @@ Expiries through **{{ week_gamma.target }}** ({{ week_gamma.expiries }}) · week
 {% for r in session_flow %}| {{ r.expiry }} | {{ r.net_gex }} | {{ r.hedge_50pt }} | {{ r.net_charm }} | {{ r.net_vanna }} | {{ r.effect }} |
 {% endfor %}
 
+{% endif %}{% if dealer_book %}## Dealer book
+
+| Greek | (a) long calls, short puts | (b) short all |
+|---|---|---|
+{% for r in dealer_book.rows %}| {{ r.label }} | {{ r.a }} | {{ r.b }} |
+{% endfor %}
+(a) {{ dealer_book.words_a }}. (b) {{ dealer_book.words_b }}. Black-Scholes greeks from each UW contract's IV over {{ dealer_book.contracts }} contracts ({{ dealer_book.expiries }}).
+
 {% endif %}## Liquidity Layer — Dealer Flow
 
 | Band | Range | Net GEX | Hedge for a 25-pt move |

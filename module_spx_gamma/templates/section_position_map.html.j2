@@ -481,6 +481,20 @@ the levels below stop applying and the map has to be re-read.</div>
 </div>
 {% endif %}
 
+{% if dealer_book %}<details class="collapsible">
+<summary><h2 class="sum-h">Dealer book</h2></summary>
+<div class="box-inner">
+<table class="stack">
+  <thead><tr><th>Greek</th><th>(a) long calls, short puts</th><th>(b) short all</th></tr></thead>
+  <tbody>{% for r in dealer_book.rows %}<tr><td data-label="Greek">{{ r.label }}</td><td data-label="(a) long calls, short puts">{{ r.a }}</td><td data-label="(b) short all">{{ r.b }}</td></tr>{% endfor %}</tbody>
+</table>
+<div class="at-glance" style="margin:8px 0 0"><b>(a)</b> {{ dealer_book.words_a }}</div>
+<div class="at-glance" style="margin:4px 0 0"><b>(b)</b> {{ dealer_book.words_b }}</div>
+<div class="box-note">Black-Scholes greeks (r = 0) from each UW contract's IV, summed over open interest: {{ dealer_book.contracts }} contracts, expiries {{ dealer_book.expiries }}. Which assumption holds is not known; the reports show both.</div>
+</div>
+</details>
+{% endif %}
+
 <h2>Liquidity Layer — Dealer Flow</h2>
 <div class="box">
 {% if envelope_html %}<div class="chart" style="margin:0 0 12px">{{ envelope_html }}</div>{% endif %}

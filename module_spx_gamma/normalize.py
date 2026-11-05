@@ -19,6 +19,7 @@ from .chains import delta25_skew, normalize_option_chain, straddle_move
 from .engines.iron_butterfly import build_iron_butterfly
 from .engines.prediction_engine import generate_prediction_matrix
 from .expected_move import expected_move, pick_iv
+from .dealer_book import dealer_book
 from .tails import tail_table
 from .vol_calendar import week_events
 from .week_gamma import week_map
@@ -581,6 +582,10 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "expiry_distribution": expiry_rows,
         "front_expiry_share": front_expiry_share(expiry_rows, asof_str),
         "session_flow": session_hedge_flow(expiry_rows, asof_str, spot),
+        # A4: Black-Scholes book greeks over the front and target-Friday chains, under assumptions (a) and (b)
+        "dealer_book": dealer_book(normalize_option_chain(raw.get("option_chain"))
+                                   + normalize_option_chain(raw.get("target_chain")), spot, asof_str)
+        if asof_str else None,
         # A9: implied vs realized 5-session tails, from the stored closes and the 1-day ATM IV
         # A1: the week's gamma profile, turning point and zone map (expiries through the target Friday)
         "week_gamma": week_map(strike_expiry_rows, asof_str, spot) if asof_str else None,

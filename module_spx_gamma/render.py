@@ -594,6 +594,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "vol_calendar": snapshot.get("vol_calendar") or [],
         "week_gamma": _week_gamma(snapshot),
         "close_check": close_card(snapshot),
+        "dealer_book": _dealer_book(snapshot),
         "session_flow": [{"expiry": r["expiry"], "net_gex": fmt_signed_compact(r.get("net_gex")),
                           "hedge_50pt": fmt_signed_compact(r.get("hedge_50pt")).lstrip("+"),
                           "net_charm": fmt_signed_compact(r.get("net_charm")),
@@ -625,6 +626,26 @@ def _dte_band_rows(snapshot: dict) -> list[dict]:
             "call_wall_net": fmt_signed_compact(w.get("call_wall_net")),
         })
     return rows
+
+
+_BOOK_ROWS = (("gamma", "Gamma ($ per 1 %)", True), ("gamma_down50", "Gamma, spot -50 ($ per 1 %)", True),
+              ("vanna", "Vanna ($ delta per IV point)", True), ("charm", "Charm ($ delta per day)", True),
+              ("vomma", "Vomma (sign)", False), ("zomma", "Zomma (sign)", False), ("speed", "Speed (sign)", False))
+
+
+def _dealer_book(snapshot: dict) -> dict | None:
+    """A4: the book formatted, one row per greek with (a) and (b)."""
+    b = snapshot.get("dealer_book")
+    if not b:
+        return None
+
+    def cell(v, dollars):
+        if dollars:
+            return fmt_signed_compact(v)
+        return "+" if v > 0 else "-" if v < 0 else "0"
+    return {"rows": [{"label": label, "a": cell(b["a"][k], d), "b": cell(b["b"][k], d)} for k, label, d in _BOOK_ROWS],
+            "words_a": b["a"]["words"], "words_b": b["b"]["words"], "contracts": b["contracts"],
+            "expiries": ", ".join(b["expiries"])}
 
 
 def _week_gamma(snapshot: dict) -> dict | None:

@@ -134,6 +134,20 @@ Board rule (the reports name the zones but print no thresholds): negative gamma 
 | 2026-08-21 | +10.0K | 6.4K | N/A | N/A | dampens moves (positive gamma) |
 
 
+## Dealer book
+
+| Greek | (a) long calls, short puts | (b) short all |
+|---|---|---|
+| Gamma ($ per 1 %) | -849.9M | -2.8B |
+| Gamma, spot -50 ($ per 1 %) | -1.2B | -1.3B |
+| Vanna ($ delta per IV point) | +51.5M | -11.9M |
+| Charm ($ delta per day) | -514.8M | +119.5M |
+| Vomma (sign) | + | - |
+| Zomma (sign) | + | + |
+| Speed (sign) | + | - |
+
+(a) dealers amplify moves; charm sells into expiry; an IV spike grows the book's vega. (b) dealers amplify moves; charm buys into expiry; an IV spike shrinks the book's vega. Black-Scholes greeks from each UW contract's IV over 6 contracts (2026-08-14).
+
 ## Liquidity Layer — Dealer Flow
 
 | Band | Range | Net GEX | Hedge for a 25-pt move |
