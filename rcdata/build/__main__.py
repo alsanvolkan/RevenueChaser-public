@@ -212,6 +212,9 @@ def main(argv: list[str] | None = None) -> int:
     bf.add_argument("--tiers", help=scope_help)
     bf.add_argument("--names", help=scope_help)
     bf.add_argument("--include", help=group_help)
+    bf.add_argument("--dry-run", action="store_true",
+                    help="print what the backfill would ask (a dataset that has a dry run: wrds/prices) and stop: "
+                         "no login, no query, no write")
     for sp in (run, at, bf):
         sp.add_argument("--wait", type=float, default=None, metavar="SECONDS",
                         help="how long to wait for the store's writer turn before exit 3 (default: "
@@ -238,6 +241,17 @@ def main(argv: list[str] | None = None) -> int:
         need = [n for n in args.datasets if getattr(DATASETS[n], "backfill_needs_from", True)]
         if need and not args.start:
             p.error(f"--from is required for {', '.join(need)}")
+
+    if args.cmd == "backfill" and args.dry_run:
+        from datetime import date
+        for name in args.datasets:
+            ds = DATASETS[name]
+            if not hasattr(ds, "dry_run"):
+                print(f"{name}: no dry run", file=sys.stderr)
+                continue
+            end = date.fromisoformat(args.end) if args.end else ds.default_as_of()
+            print("\n".join(ds.dry_run(date.fromisoformat(args.start) if args.start else None, end)), flush=True)
+        return 0
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     # httpx logs every request URL at INFO, query string included, and FRED's key is in the query.

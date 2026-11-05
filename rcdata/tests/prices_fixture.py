@@ -120,6 +120,22 @@ ALPHABET = [
 GOOG_ACCESSION = "0001652044-26-000071"
 
 
+def seed_secd(series: dict, run_id: str = "seed") -> None:
+    """Compustat's ``comp.secd`` year partitions, as ``wrds/prices`` writes them: ``series`` maps a ``gvkey:iid`` to
+    ``(tic, [(session, close), ...])`` or ``(tic, days, cshoc)``, every row on Nasdaq with ``ajexdi`` and ``trfd`` 1
+    and no ``cshoc`` unless given (the shares then come from the covers, as before Compustat was the history)."""
+    from RevenueChaser.rcdata.build.prices import stage, wrds_history
+    rows = [{"gvkey": sid.split(":")[0], "iid": sid.split(":")[1], "datadate": d, "tic": tic, "cusip": None,
+             "curcdd": "USD", "prccd": c, "prcod": c, "prchd": c, "prcld": c, "cshtrd": 1_000_000.0,
+             "cshoc": (v[2] if len(v) > 2 else None),
+             "ajexdi": 1.0, "trfd": 1.0, "exchg": 14, "source_as_of": max(d for v in series.values() for d, _ in v[1]),
+             "fetched_at": 1.0, "run_id": run_id}
+            for sid, v in series.items() for tic, days in [v[:2]] for d, c in days]
+    for year in sorted({r["datadate"].year for r in rows}):
+        stage.write_rows([r for r in rows if r["datadate"].year == year], wrds_history.SECD + wrds_history.PROVENANCE,
+                         wrds_history.partition_path("secd", year), order="gvkey, iid, datadate")
+
+
 def master_index(lines) -> bytes:
     """``daily-index/<year>/QTR<n>/master.<YYYYMMDD>.idx``: the preamble, the header, the dashes, the rows."""
     head = ["Description:           Master Index of EDGAR Dissemination Feed",
