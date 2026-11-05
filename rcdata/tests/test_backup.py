@@ -190,7 +190,8 @@ def test_only_an_unknown_step_exits_2_and_writes_nothing(backup_dir):
 
 def test_an_empty_or_nested_subdir_exits_2_and_writes_nothing(backup_dir):
     _serve()
-    for bad in ("", " ", "market/heavy", "..", "../market", "a\\b"):
+    # "C:" is refused too (review N1): on Windows ``Path(folder) / "C:"`` resolves outside the backup folder.
+    for bad in ("", " ", "market/heavy", "..", "../market", "a\\b", "C:"):
         assert backup.main(["backup", "--subdir", bad]) == 2, bad
     assert not backup_dir.exists()
 

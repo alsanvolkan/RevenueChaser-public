@@ -270,8 +270,9 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         description="Verified nightly backup of the small files of the market store: ops.sqlite through SQLite's "
                     "online backup and the market, spine, fundamentals and options serving files, checked row by "
                     "row against the source, into RAW_STORE_BACKUP_DIR/market/ (the newest 5 kept), then the "
-                    "35-day raw copy. prices and ownership are the weekly RC-Build-Backup-Heavy run's, because the "
-                    "two of them are 3.5 GB and the 04:30 run of 5 Nov 2026 hit this 30-minute limit copying them. "
+                    "35-day raw copy. prices and ownership are the weekly RC-Build-Backup-Heavy run's: the 04:30 "
+                    "run of 5 Nov 2026 hit this 30-minute limit, and those two are 3.5 GB of the ~3.6 GB copied, so "
+                    "they are the likely cause - an inference, since the run records no per-step timing. "
                     "Writes no table.",
         settings=TaskSettings(restart_count=0, time_limit_minutes=30)),
     AutomationEntry(
@@ -281,7 +282,10 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         description="Verified weekly backup of the two large serving files, prices (2.9 GB) and ownership (661 MB), "
                     "into RAW_STORE_BACKUP_DIR/market-heavy/ (its own manifest, its own 5 newest per kind, every "
                     "copy with its sha256). Sunday 03:30 keeps it clear of the nightly light run at 04:30. Run the "
-                    "same command by hand before a deploy that touches either file. Writes no table.",
+                    "same command by hand before a deploy that touches either file. This row's unit is installed "
+                    "from the home-server repository, not from this page: installing it here too would give one "
+                    "name a user timer and a system unit, both firing at 03:30 into the same folder. Writes no "
+                    "table.",
         settings=TaskSettings(restart_count=0, time_limit_minutes=60)),
     AutomationEntry(
         name="RC-SPX-Gamma-Fetch", label="SPX Gamma Fetch (nightly)",

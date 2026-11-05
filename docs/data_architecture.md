@@ -1125,10 +1125,15 @@ systemd unit pair `life-rc-builder.service` / `.timer`. RC-Build-Backup runs `rc
 30 min limit, as `life-rc-builder-backup`; it takes the small files only
 (`--only ops,market,spine,fundamentals,options,raw --subdir market`). The two large serving files are
 RC-Build-Backup-Heavy's, weekly on Sunday at 03:30 with a 60 min limit, as `life-rc-builder-backup-heavy`
-(`--only prices,ownership --subdir market-heavy`): on 5 Nov 2026 the 04:30 run hit its 30 min limit copying
-prices (2.9 GB) and ownership (661 MB) together. Each `--subdir` keeps its own `.manifest.json`, its own
-verification and its own newest 5 per kind, and every copy carries its sha256. Run the heavy command by hand
-before a deploy that touches either file. Each pass first queues what is due (below), then takes the queued
+(`--only prices,ownership --subdir market-heavy`): on 5 Nov 2026 the 04:30 run hit its 30 min limit, and prices
+(2.9 GB) plus ownership (661 MB) are 3.5 GB of the ~3.6 GB that run copies, so they are the likely cause — an
+inference, not a measurement, because the run records no per-step timing. Each `--subdir` keeps its own
+`.manifest.json`, its own verification and its own newest 5 per kind, and every copy carries its sha256. Run the
+heavy command by hand before a deploy that touches either file. The heavy row's unit pair is installed from the
+home-server repository, not from the Settings page: installing it from both would give one unit name a user timer
+and a system unit, each firing at 03:30 into the same folder. Because `_prune` only ever looks inside the folder
+the run writes, the `prices_*` and `ownership_*` copies left in `market/` by the old single run are not pruned
+again; removing them is a deliberate step, not something a later run does. Each pass first queues what is due (below), then takes the queued
 requests in order: those, Fetch and Backfill from Settings, and the CLI's. It skips a paused dataset (`dataset_schedule.paused_at`, a `skipped: paused` check row,
 no call). At start it fails a request a dead builder left running, with `lost: pid <n> gone` and a `failed` check
 row. A request whose builder is still alive (a live `.rc-proc` marker of its pid in the market dir) is left
@@ -1166,7 +1171,9 @@ damaged one, delete its keys first, `redis-cli --scan --pattern '<ns>:*' | xargs
 keeps rows newer than the copy and its check then fails), each serving file
 copied and verified by row count and `sum(hash(row))` per table before its rename, the sha256 of every copy in
 `.manifest.json`, the newest 5 kept per kind. Then the raw files of the last 35 days go to `RC_MARKET_RAW_COPY_DIR`
-(rsync-like) when they total under 20 GB; over that, or with no folder set, a warning and no copy.
+(rsync-like) when they total under 20 GB; over that, or with no folder set, a warning and no copy. That is the bare
+command; neither scheduled run uses it bare since the light/heavy split above, which picks the steps with `--only`
+and the folder with `--subdir`.
 
 ### The identity spine (`spine.duckdb`, PR 5)
 

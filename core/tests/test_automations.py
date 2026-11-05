@@ -1028,7 +1028,8 @@ def test_every_backup_step_belongs_to_exactly_one_registry_row():
         args = list(e.args)
         if args[:3] != ["-m", "RevenueChaser.rcdata", "backup"]:
             continue
+        assert "--only" in args, f"{e.name} runs rcdata backup without --only: it would take every step"
         chosen += args[args.index("--only") + 1].split(",")
         subdirs.append(args[args.index("--subdir") + 1] if "--subdir" in args else backup.SUBDIR)
     assert sorted(chosen) == sorted(backup.STEPS), "every step belongs to exactly one backup entry"
-    assert set(subdirs) <= set(backup.SUBDIRS) and set(backup.SUBDIRS) == set(subdirs)
+    assert set(subdirs) == set(backup.SUBDIRS), "SUBDIRS is exactly the folders the registry writes"

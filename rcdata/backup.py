@@ -18,8 +18,10 @@ Into ``<RAW_STORE_BACKUP_DIR>/market/`` (an empty ``RAW_STORE_BACKUP_DIR`` is re
 
 ``--only`` picks the steps (``ops``, a serving kind, ``raw``) and ``--subdir`` the folder; without either, every
 step runs into ``market/``, as the command did before the light/heavy split of 5 Nov 2026. The nightly run takes the
-small files, a weekly one takes ``prices`` and ``ownership`` into ``market-heavy/`` (the 04:30 run of 5 Nov 2026 hit
-its 30-minute limit copying 3.5 GB of them). Each folder has its own manifest, verification and retention count.
+small files, a weekly one takes ``prices`` and ``ownership`` into ``market-heavy/``: the 04:30 run of 5 Nov 2026 hit
+its 30-minute limit, and those two are 3.5 GB of the ~3.6 GB it copies, so they are where the time most likely went
+— an inference, not a measured step, because the run records no per-step timing. Each folder has its own manifest,
+verification and retention count.
 
 Then the D3 copy: the raw files of the last ``RAW_COPY_DAYS`` (35) days (by modification time) under
 ``<MARKET_RAW_DIR>/raw/`` go to ``RC_MARKET_RAW_COPY_DIR``, rsync-like (a file whose size and mtime match is not
@@ -38,7 +40,7 @@ import sqlite3
 import sys
 import time
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from ..core import config
 from . import ops, serving
@@ -264,7 +266,10 @@ def _copy_recent_raw() -> dict | None:
 def _check_subdir(subdir: str) -> str:
     """One folder name under the backup root: never empty, never a path, never ``..``."""
     name = (subdir or "").strip()
-    if not name or name in (".", "..") or "/" in name or "\\" in name:
+    # ``PureWindowsPath`` on purpose, whatever this host is: it treats ``\\`` as a separator and ``C:`` as a drive,
+    # so one check covers a separator, a drive-relative name and a reserved form that ``Path(folder) / name`` would
+    # resolve outside the backup root on Windows (review N1). The runtime is Linux; this is belt and braces.
+    if not name or name in (".", "..") or PureWindowsPath(name).name != name:
         raise BackupRefused(f"--subdir {subdir!r} is not one folder name under the backup folder")
     return name
 
