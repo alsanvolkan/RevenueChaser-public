@@ -129,3 +129,12 @@ def test_glance_cells_read_the_days_option_figures():
     assert cells["Put/call volume"]["value"] == "1.16" and cells["Put/call volume"]["note"] == "327.0K / 283.0K"
     hist = {c["label"]: c for c in render.glance(snap, {"options_volume": True, "straddle": True})["cells"]}
     assert hist["Net premium"]["value"] == "n/a (historical)" and hist["Straddle"]["value"] == "n/a (historical)"
+
+
+def test_week_chart_spot_and_hvl_labels_sit_on_different_rows():
+    """Review of PR 460: both labels at one y ran into each other whenever the flip sat left of spot."""
+    sec = _html().split('id="h-wk"', 1)[1].split("</section>", 1)[0]
+    spot = re.search(r'<text[^>]*y="([\d.]+)"[^>]*fill="var\(--accent\)">spot ', sec)
+    hvl = re.search(r'<text[^>]*y="([\d.]+)"[^>]*fill="var\(--warn\)">', sec)
+    assert spot and hvl
+    assert abs(float(spot.group(1)) - float(hvl.group(1))) >= 12
