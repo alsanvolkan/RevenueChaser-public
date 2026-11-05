@@ -558,6 +558,17 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     })
     option_chain_rows = normalize_option_chain(raw.get("option_chain"), spot, asof_str,
                                                (raw.get("_meta") or {}).get("api_snapshot_time"))
+    # The front chain is the as-of day's 0DTE. Fetched after that day's close it is a settled series: its IVs are
+    # meaningless (real UW check 5 Nov: 558 %), so neither the pin harvest nor the dealer book may read it.
+    from .charm_pin import _expired_by
+    settled = bool(asof_str) and _expired_by(asof_str, _fetched_at((raw.get("_meta") or {}).get("api_snapshot_time")))
+    iron_butterfly_na = None
+    if settled:
+        live_rows = [r for r in option_chain_rows if (r.get("expiry") or "") > asof_str]
+        if len(live_rows) < len(option_chain_rows) and not live_rows:
+            iron_butterfly_na = (f"the {asof_str} 0DTE chain had settled when the Fetch ran, so there is no "
+                                 f"same-day pin to harvest")
+        option_chain_rows = live_rows
     iron_butterfly = build_iron_butterfly({
         "current_level": spot,
         "asof_date": asof_str,
@@ -589,6 +600,7 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "put_wall_origin": put_wall_origin,
         "charm_qualification": charm_qualification,
         "charm_pin_report": charm_pin_report,
+        "iron_butterfly_na": iron_butterfly_na,
         "vanna_peaks": vanna,
         "spot_exposures": spot_exposure_rows,
         "strike_exposures": strike_rows,
@@ -597,7 +609,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "front_expiry_share": front_expiry_share(expiry_rows, asof_str),
         "session_flow": session_hedge_flow(expiry_rows, asof_str, spot),
         # A4: Black-Scholes book greeks over the front and target-Friday chains, under assumptions (a) and (b)
-        "dealer_book": dealer_book(normalize_option_chain(raw.get("option_chain"))
+        "dealer_book": dealer_book([r for r in normalize_option_chain(raw.get("option_chain"))
+                                    if not settled or (r.get("expiry") or "") > asof_str]
                                    + normalize_option_chain(raw.get("target_chain")), spot, asof_str)
         if asof_str else None,
         # A9: implied vs realized 5-session tails, from the stored closes and the 1-day ATM IV

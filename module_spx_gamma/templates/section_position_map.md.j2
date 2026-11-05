@@ -222,7 +222,9 @@ Hourly closes from {{ hs.week_start }} ({{ hs.rows|length }} so far): UW {{ hs.s
 
 Hourly closes: n/a (historical), the SPY bars were fetched in a later session than this day.{% endif %}
 
-{% if iron_butterfly %}
+{% if iron_butterfly_na and not iron_butterfly %}Iron Butterfly n/a: {{ iron_butterfly_na }}.
+
+{% endif %}{% if iron_butterfly %}
 ## Iron Butterfly — Pin Harvest
 
 **Signal: `{{ iron_butterfly.signal.signal }}`** — {{ iron_butterfly.signal.action }}{% if iron_butterfly.signal.target %} → target {{ iron_butterfly.signal.target | fmtnum }}{% endif %}

@@ -583,6 +583,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "store_labels": store_labels(snapshot),
         "builder_line": builder_line(snapshot),
         "iron_butterfly": snapshot.get("iron_butterfly"),
+        "iron_butterfly_na": snapshot.get("iron_butterfly_na"),
         # ── v3 external panels ──
         "max_pain": _max_pain_rows(snapshot),
         "max_pain_count": _max_pain_count(snapshot),

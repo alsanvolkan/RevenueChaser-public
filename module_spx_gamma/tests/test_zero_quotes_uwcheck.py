@@ -46,3 +46,22 @@ def test_live_quotes_still_price_as_quotes():
     rows = normalize_option_chain(_chain(bid="4.0", ask="6.0"), 7568.92, "2026-11-04")
     built = build_structures(BANDS, rows, "2026-11-06")
     assert built["source"] == "quotes" and built["label"].startswith("Report structure, not advice: priced from UW quotes")
+
+
+def test_a_settled_same_day_chain_feeds_neither_the_butterfly_nor_the_book():
+    """Real UW check 5 Nov: the 4 Nov 0DTE chain, fetched after its close, gave the Iron Butterfly IVs of 558 %."""
+    from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
+    from .conftest import make_raw
+    raw = make_raw()
+    live = normalize_snapshot(raw, "2026-08-14")
+    assert live["iron_butterfly"] is not None and live.get("iron_butterfly_na") is None
+    raw["_meta"] = {"api_snapshot_time": "2026-08-15T12:00:00Z"}     # the next morning: the 14 Aug 0DTE settled
+    snap = normalize_snapshot(raw, "2026-08-14")
+    assert snap["iron_butterfly"] is None
+    assert "settled" in snap["iron_butterfly_na"] and "2026-08-14" in snap["iron_butterfly_na"]
+    book = snap["dealer_book"]
+    assert book is None or "2026-08-14" not in book["expiries"]
+    from RevenueChaser.module_spx_gamma import render
+    html, md = render.render_html(snap), render.render_markdown(snap)
+    assert "Iron Butterfly n/a: the 2026-08-14 0DTE chain had settled" in html
+    assert "Iron Butterfly n/a: the 2026-08-14 0DTE chain had settled" in md

@@ -406,7 +406,7 @@ the levels below stop applying and the map has to be re-read.</div>
 </details>
 </section>
 
-{% if structures or iron_butterfly or historical.structures %}<section class="group-open" id="g6">
+{% if structures or iron_butterfly or iron_butterfly_na or historical.structures %}<section class="group-open" id="g6">
 <div class="group-h">6 · Trade structures</div>
 {% if historical.structures %}
 <div class="note">n/a (historical): The target Friday's option chain was fetched in a later session than this day, so no structure is priced.</div>
@@ -421,7 +421,8 @@ the levels below stop applying and the map has to be re-read.</div>
 </table>
 <div class="box-note">Strikes are this week's band edges snapped to the 25-point grid; wings 50 points beyond the short leg; the debit spreads buy at the confirm level. Mid prices at expiry payoff, before fees and slippage. The report's entry, stop and sizing rules are not applied.</div>
 </div>
-</details>{% endif %}
+</details>{% endif %}{% if iron_butterfly_na and not iron_butterfly %}
+<div class="note">Iron Butterfly n/a: {{ iron_butterfly_na }}.</div>{% endif %}
 {% if iron_butterfly %}
 <style>
   .ib-panel{ margin:16px 0 20px; display:flex; flex-direction:column; gap:12px; }
