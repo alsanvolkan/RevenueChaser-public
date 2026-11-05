@@ -15,7 +15,7 @@ from .charm_pin import (
 )
 from .config import TICKER, net_sum, to_float
 from .brier import target_friday
-from .chains import delta25_skew, normalize_option_chain, straddle_move
+from .chains import delta25_skew, normalize_option_chain, parse_option_symbol, straddle_move
 from .engines.iron_butterfly import build_iron_butterfly
 from .engines.prediction_engine import generate_prediction_matrix
 from .expected_move import expected_move, pick_iv
@@ -291,7 +291,7 @@ def normalize_realized_vol(payload: dict | None) -> dict | None:
     }
 
 
-def chain_skew(raw: dict) -> dict | None:
+def chain_skew(raw: dict, settled_expiry: str | None = None) -> dict | None:
     """Skew as the reports quote it (F3): the 25-delta put IV minus the 25-delta call IV, from UW /option-contracts.
 
     0DTE comes from the front chain the snapshot already holds (``option_chain``); 1M and 3M from the chains
@@ -299,6 +299,11 @@ def chain_skew(raw: dict) -> dict | None:
     /interpolated-iv blocks as calls and puts was a guess and is retired. None when no tenor can be read.
     """
     tenors = {"0dte": raw.get("option_chain")}
+    if settled_expiry and tenors["0dte"]:
+        # the as-of day's 0DTE had settled when the Fetch ran: its IVs are no market (Fable delta S2)
+        data = tenors["0dte"].get("data") or []
+        tenors["0dte"] = {**tenors["0dte"], "data": [r for r in data if isinstance(r, dict) and (
+            (parse_option_symbol(r.get("option_symbol") or "") or {}).get("expiry") or "") > settled_expiry]}
     tenors.update({k: v for k, v in (raw.get("skew_chains") or {}).items() if k in ("1m", "3m")})
     out: dict = {"expiries": {}, "detail": {}}
     for key in ("0dte", "1m", "3m"):
@@ -534,7 +539,10 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     vol_term = normalize_vol_term(raw.get("vol_term_structure"))
     vrp = normalize_vrp(raw.get("variance_risk_premium"))
     realized_vol = normalize_realized_vol(raw.get("realized_vol"))
-    skew = chain_skew(raw)
+    from .charm_pin import _expired_by
+    _asof_early = str(asof_date)[:10] if asof_date else None
+    skew = chain_skew(raw, _asof_early if _asof_early and _expired_by(
+        _asof_early, _fetched_at((raw.get("_meta") or {}).get("api_snapshot_time"))) else None)
     vix = normalize_vix(raw.get("vix"))
     cftc = normalize_cftc(raw.get("cftc"))
     vega_flow = normalize_vega_flow(raw.get("greek_flow"))

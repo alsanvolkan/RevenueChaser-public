@@ -229,7 +229,9 @@ Hourly closes: n/a (historical), the SPY bars were fetched in a later session th
 
 **Signal: `{{ iron_butterfly.signal.signal }}`** — {{ iron_butterfly.signal.action }}{% if iron_butterfly.signal.target %} → target {{ iron_butterfly.signal.target | fmtnum }}{% endif %}
 
-Center pin: **{{ iron_butterfly.center_strike | fmtnum }}** · Wing width: **{{ iron_butterfly.wing_width | fmtnum }}** (EM {{ iron_butterfly.width_source.em_points | fmtnum }} pts @ IV {{ iron_butterfly.width_source.iv_used | fmtnum('{:,.2f}') }})
+{% if iron_butterfly.get("source") in ("model", "mixed") %}No live quotes at the Fetch: {{ "all" if iron_butterfly.source == "model" else "some" }} legs are modeled (Black-Scholes on UW's IV); a model price is not a market price.
+
+{% endif %}Center pin: **{{ iron_butterfly.center_strike | fmtnum }}** · Wing width: **{{ iron_butterfly.wing_width | fmtnum }}** (EM {{ iron_butterfly.width_source.em_points | fmtnum }} pts @ IV {{ iron_butterfly.width_source.iv_used | fmtnum('{:,.2f}') }})
 
 | Leg | Action | Type | Strike | Mid | IV | Θ /day |
 |---|---|---|---|---|---|---|

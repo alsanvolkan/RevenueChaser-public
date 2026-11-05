@@ -118,10 +118,11 @@ def _expired_by(asof_date: str, fetched_at) -> bool:
     """Whether ``asof_date``'s own expiry had settled when the rows were fetched (16:00 New York that day).
 
     Without a fetch time (a raw day written before ``_meta`` carried one) nothing is known, and the series counts as
-    before.
+    before. shortcut: the close is 16:00 on every day; on a 13:00 early close a Fetch between 13:00 and 16:00 still
+    reads the settled series, as ``chains._years_left`` and ``core.calendar.session_close`` assume too.
     """
-    if fetched_at is None:
-        return False
+    if fetched_at is None or fetched_at.tzinfo is None:
+        return False    # a naive time would be read as the machine's local clock
     from datetime import datetime
     from zoneinfo import ZoneInfo
     ny = ZoneInfo("America/New_York")

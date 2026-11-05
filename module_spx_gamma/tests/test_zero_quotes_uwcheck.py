@@ -65,3 +65,37 @@ def test_a_settled_same_day_chain_feeds_neither_the_butterfly_nor_the_book():
     html, md = render.render_html(snap), render.render_markdown(snap)
     assert "Iron Butterfly n/a: the 2026-08-14 0DTE chain had settled" in html
     assert "Iron Butterfly n/a: the 2026-08-14 0DTE chain had settled" in md
+
+
+def test_a_modeled_butterfly_says_so():
+    """Fable delta S1: a pre-open Fetch of the as-of day keeps its 0DTE, all 0/0, so the butterfly is modeled."""
+    from RevenueChaser.module_spx_gamma.engines.iron_butterfly import build_iron_butterfly
+    chain = normalize_option_chain({"data": [_uw(k, t).copy() | {"option_symbol": f"SPXW261105{t}0{k}000"}
+                                             for k in range(7400, 7750, 25) for t in ("C", "P")]},
+                                   7568.92, "2026-11-05", "2026-11-05T13:00:00Z")
+    ib = build_iron_butterfly({"current_level": 7568.92, "asof_date": "2026-11-05", "option_chain": chain,
+                               "expected_move": {"points": 50.0}, "prediction": {"active_pin": 7575.0}})
+    assert ib["source"] == "model" and {l["source"] for l in ib["legs"]} == {"modeled"}
+    from RevenueChaser.module_spx_gamma import render
+    from .conftest import make_snapshot
+    snap = make_snapshot()
+    snap["iron_butterfly"] = ib
+    assert "legs are modeled (Black-Scholes on UW's IV)" in render.render_html(snap)
+    assert "legs are modeled (Black-Scholes on UW's IV)" in render.render_markdown(snap)
+
+
+def test_a_settled_0dte_gives_no_0dte_skew():
+    """Fable delta S2: the settled same-day chain must not set the 0DTE skew cell."""
+    from RevenueChaser.module_spx_gamma.normalize import chain_skew
+    raw = {"option_chain": {"data": [{"option_symbol": "SPXW260814P07500000", "implied_volatility": "5.5",
+                                      "delta": "-0.25"},
+                                     {"option_symbol": "SPXW260814C07600000", "implied_volatility": "1.8",
+                                      "delta": "0.25"}]}}
+    assert (chain_skew(raw) or {}).get("put_bias_0dte") is not None
+    assert (chain_skew(raw, settled_expiry="2026-08-14") or {}).get("put_bias_0dte") is None
+
+
+def test_a_naive_fetch_time_is_not_trusted():
+    from datetime import datetime
+    from RevenueChaser.module_spx_gamma.charm_pin import _expired_by
+    assert _expired_by("2026-11-04", datetime(2026, 11, 5, 12, 0)) is False

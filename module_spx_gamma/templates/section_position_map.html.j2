@@ -463,7 +463,8 @@ the levels below stop applying and the map has to be re-read.</div>
     <div class="ib-metric"><span>Breakevens</span><strong>{{ iron_butterfly.lower_breakeven | fmtnum }} – {{ iron_butterfly.upper_breakeven | fmtnum }}</strong></div>
   </div>
   <div class="ib-note">
-    Wing width from expected move ({{ iron_butterfly.width_source.em_points | fmtnum }} pts @ IV {{ iron_butterfly.width_source.iv_used | fmtnum('{:,.2f}') }}) on the {{ iron_butterfly.width_source.band }} grid.
+    {% if iron_butterfly.get("source") in ("model", "mixed") %}<b>No live quotes at the Fetch: {{ "all" if iron_butterfly.source == "model" else "some" }} legs are modeled (Black-Scholes on UW's IV); a model price is not a market price.</b>
+    {% endif %}Wing width from expected move ({{ iron_butterfly.width_source.em_points | fmtnum }} pts @ IV {{ iron_butterfly.width_source.iv_used | fmtnum('{:,.2f}') }}) on the {{ iron_butterfly.width_source.band }} grid.
     {{ iron_butterfly.signal.action }}{% if iron_butterfly.signal.target %} → target {{ iron_butterfly.signal.target | fmtnum }}{% endif %}.
   </div>
   <div class="ib-legs">
