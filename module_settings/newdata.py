@@ -421,11 +421,21 @@ def _sample_hour(now: datetime) -> str:
 
 
 def _sample_key(table: str, now: datetime) -> str:
-    """The cache key: the table, the hour, and the serving file it was read from with its last write.
+    """The cache key: the table and the serving file it was read from with that file's last write -- or the hour,
+    when there is no file to key on.
 
-    The file belongs in the key for two reasons. A swap mid-hour replaces the rows, and a sample from before it is
-    then wrong rather than merely old. And the store root moves between runs (every test gets its own), so a key of
-    table and hour alone serves one test's rows to the next.
+    The file's last write is the whole key when there is one. These rows cannot change until a build swaps the
+    file, so keying on the hour as well only threw the answer away 24 times a day, and one of these reads is far
+    from cheap: ``price_bar_daily#sessions`` groups the whole of ``price_bar_daily`` and cost **6.4 s** on homesrv
+    on 5 Nov 2026, against 0.14 s for every five-row sample of every table together. Keyed on the file it is paid
+    once per prices build instead of once an hour. A swap mid-hour replaces the rows and the mtime catches it; the
+    store root also moves between runs (every test gets its own) and the path catches that.
+
+    The hour stays as the fallback. Six tables the screen samples are not in ``read.KIND_OF_TABLE``
+    (``adj_factor``, ``gics_history``, ``security_history``, ``sec13f_cusip_map``, ``sec13f_filer_period``,
+    ``sec13f_filings``) and a table whose serving file is not built yet has nothing to stat; without the hour those
+    would be cached for the life of the process. ``Refresh the example rows`` (``read_sample_now``) reads past the
+    cache either way, so no sample is ever stuck.
     """
     from RevenueChaser.rcdata import read
     kind = read.KIND_OF_TABLE.get(table.split("#")[0])      # "price_bar_daily#sessions" is that table's file
@@ -433,12 +443,14 @@ def _sample_key(table: str, now: datetime) -> str:
     try:
         stamp = path.stat().st_mtime_ns if path is not None else None
     except OSError:
-        stamp = None                           # not built yet: that is a key of its own
-    return f"{table}|{_sample_hour(now)}|{path}|{stamp}"
+        stamp = None                           # not built yet: the hour is the only thing left to key on
+    if stamp is None:
+        return f"{table}|{_sample_hour(now)}|{path}"
+    return f"{table}|{path}|{stamp}"
 
 
 def _cached_sample(table: str, now: datetime, read):
-    """``read(table)`` at most once an hour per table and serving file (A16's hourly cache)."""
+    """``read(table)`` at most once per serving file build, or once an hour for a table with no file (A16)."""
     key = _sample_key(table, now)
     hit = _SAMPLE_CACHE.get(table)
     if hit is not None and hit[0] == key:

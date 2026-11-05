@@ -22,7 +22,9 @@ NOW = datetime(2026, 10, 29, 18, 30, tzinfo=timezone.utc)
 
 # ── the hourly cache ──
 
-def test_the_sample_is_cached_by_the_hour_and_read_again_in_the_next_one():
+def test_a_table_with_no_serving_file_falls_back_to_the_hour():
+    """The fallback: nothing to stat, so the hour is the only thing that can bust the entry. Without it these
+    would be cached for the life of the process."""
     newdata.clear_sample_cache()
     reads = []
 
@@ -35,6 +37,36 @@ def test_the_sample_is_cached_by_the_hour_and_read_again_in_the_next_one():
     assert first == again and reads == ["price_bar_daily"], "one read inside the hour"
     newdata._cached_sample("price_bar_daily", NOW + timedelta(hours=1), read)
     assert reads == ["price_bar_daily", "price_bar_daily"], "read again in the next hour"
+
+
+def test_a_built_table_is_not_read_again_in_the_next_hour_only_on_a_swap(prices_store):
+    """5 Nov 2026: ``price_bar_daily#sessions`` groups the whole of ``price_bar_daily`` and cost 6.4 s on homesrv.
+    These rows cannot change until a build swaps the file, so the hour in the key only paid that 24 times a day."""
+    import time as _time
+
+    from RevenueChaser.rcdata import serving
+    newdata.clear_sample_cache()
+    reads = []
+    read = lambda t: (reads.append(t), {"columns": [], "rows": []})[1]
+    newdata._cached_sample("price_bar_daily", NOW, read)
+    newdata._cached_sample("price_bar_daily", NOW + timedelta(hours=1), read)
+    newdata._cached_sample("price_bar_daily", NOW + timedelta(days=3), read)
+    assert reads == ["price_bar_daily"], "the hour no longer busts a table whose file has not been rebuilt"
+    path = serving.live_path("prices")
+    _time.sleep(0.01)
+    path.write_bytes(path.read_bytes())        # a new mtime: the build swapped the file
+    newdata._cached_sample("price_bar_daily", NOW, read)
+    assert reads == ["price_bar_daily", "price_bar_daily"], "a swap is still read again"
+
+
+def test_every_sampled_table_without_a_serving_file_kind_is_known(prices_store):
+    """The fallback list in ``_sample_key``: if a table joins or leaves ``KIND_OF_TABLE`` this says so, because
+    whether it keeps the hour is the difference between a stale sample and a 6.4 s read every hour."""
+    from RevenueChaser.rcdata import read as rcread
+    sampled = list(newdata.DATE_COLUMN) + ["price_bar_daily#sessions"]
+    no_kind = {t for t in sampled if rcread.KIND_OF_TABLE.get(t.split("#")[0]) is None}
+    assert no_kind == {"adj_factor", "gics_history", "security_history",
+                       "sec13f_cusip_map", "sec13f_filer_period", "sec13f_filings"}
 
 
 def test_each_table_is_cached_on_its_own():
