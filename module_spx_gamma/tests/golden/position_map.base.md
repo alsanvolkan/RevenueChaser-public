@@ -205,6 +205,8 @@ What it tells you: whether options flow is protective (put-heavy) or directional
 Options volume data unavailable.
 
 
+Front-expiry share of Net GEX: **84.51%** (2026-08-14: +54.5K of +64.5K)
+
 ## Max Pain
 
 What it tells you: the strike where the most options expire worthless; a structural gravity center, NOT a directional signal.

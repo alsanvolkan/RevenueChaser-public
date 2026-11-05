@@ -18,7 +18,7 @@ from .chains import delta25_skew, normalize_option_chain
 from .engines.iron_butterfly import build_iron_butterfly
 from .engines.prediction_engine import generate_prediction_matrix
 from .expected_move import expected_move, pick_iv
-from .expiry_table import normalize_expiry_rows
+from .expiry_table import front_expiry_share, normalize_expiry_rows
 from .levels import (
     band_walls,
     cumulative_gex_crossing,
@@ -570,6 +570,7 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "strike_exposures": strike_rows,
         "strike_exposures_prev": strike_rows_prev,
         "expiry_distribution": expiry_rows,
+        "front_expiry_share": front_expiry_share(expiry_rows, asof_str),
         "matrix_gex": matrix_gex,
         "source_chip": source_chip,
         "flow_strikes": flow_rows,

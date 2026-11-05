@@ -125,14 +125,18 @@ What it tells you: whether options flow is protective (put-heavy) or directional
 Options volume data unavailable.
 {% endif %}
 
-## Max Pain
+{% if front_share %}Front-expiry share of Net GEX: **{{ front_share.share }}** ({{ front_share.expiry }}: {{ front_share.front }} of {{ front_share.total }})
+
+{% endif %}## Max Pain
 
 What it tells you: the strike where the most options expire worthless; a structural gravity center, NOT a directional signal.
 
 | Expiry | Max Pain | % from Spot |
 |---|---|---|
 {% for m in max_pain %}| {{ m.expiry }} | {{ m.max_pain }} | {{ m.distance_pct }} |
-{% endfor %}
+{% endfor %}{% if max_pain_count %}
+{{ max_pain_count.below }} below spot · {{ max_pain_count.above }} above{% if max_pain_count.at %} · {{ max_pain_count.at }} at spot{% endif %}
+{% endif %}
 ## CFTC COT — E-mini S&P 500 (TFF)
 
 What it tells you: how big players (asset managers, leveraged funds, dealers) are positioned; weekly-delayed but regular.

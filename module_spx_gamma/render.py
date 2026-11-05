@@ -128,6 +128,23 @@ def _max_pain_rows(snapshot: dict) -> list[dict]:
     return rows
 
 
+def _max_pain_count(snapshot: dict) -> dict | None:
+    """F8 (§5.2): how many expiries' max pain sit below, at and above spot."""
+    d = [r.get("distance_pct") for r in snapshot.get("max_pain", []) if r.get("distance_pct") is not None]
+    if not d:
+        return None
+    return {"below": sum(1 for x in d if x < 0), "above": sum(1 for x in d if x > 0), "at": sum(1 for x in d if x == 0)}
+
+
+def _front_share(snapshot: dict) -> dict | None:
+    """F7 (§6): the front expiry's share of the total Net GEX, formatted."""
+    s = snapshot.get("front_expiry_share") or {}
+    if s.get("share_pct") is None:
+        return None
+    return {"expiry": s["expiry"], "share": f"{s['share_pct']:.2f}%",
+            "front": fmt_signed_compact(s["front_net_gex"]), "total": fmt_signed_compact(s["total_net_gex"])}
+
+
 def _vol_term_rows(snapshot: dict) -> list[dict]:
     """Vol term structure rows (expiry + DTE + IV + implied move)."""
     rows = []
@@ -560,6 +577,8 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "iron_butterfly": snapshot.get("iron_butterfly"),
         # ── v3 external panels ──
         "max_pain": _max_pain_rows(snapshot),
+        "max_pain_count": _max_pain_count(snapshot),
+        "front_share": _front_share(snapshot),
         "iv_rank": snapshot.get("iv_rank"),
         "options_volume": snapshot.get("options_volume"),
         "vol_term": _vol_term_rows(snapshot),

@@ -561,6 +561,8 @@ the levels below stop applying and the map has to be re-read.</div>
 <div class="note">Options volume data unavailable.</div>
 {% endif %}
 
+{% if front_share %}<div class="at-glance" style="margin:8px 0 0"><span class="muted">Front-expiry share of Net GEX —</span> {{ front_share.share }} ({{ front_share.expiry }}: {{ front_share.front }} of {{ front_share.total }})</div>{% endif %}
+
 <h2>Max Pain</h2>
 {% if max_pain and historical.max_pain %}
 <div class="note">n/a (historical): Max pain was fetched in a later session than this day.</div>
@@ -572,6 +574,7 @@ the levels below stop applying and the map has to be re-read.</div>
   {% for m in max_pain %}<tr><td data-label="Expiry">{{ m.expiry }}</td><td data-label="Max Pain">{{ m.max_pain }}</td><td data-label="% from Spot">{{ m.distance_pct }}</td></tr>{% endfor %}
   </tbody>
 </table>
+{% if max_pain_count %}<div class="at-glance" style="margin:8px 0 0">{{ max_pain_count.below }} below spot · {{ max_pain_count.above }} above{% if max_pain_count.at %} · {{ max_pain_count.at }} at spot{% endif %}</div>{% endif %}
 {% else %}
 <div class="note">Max pain data unavailable.</div>
 {% endif %}
