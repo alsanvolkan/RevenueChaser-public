@@ -44,7 +44,7 @@ from ....core.gics_map import UNCLASSIFIED, canonical_sector
 from ....core.identity import isin as isin_mod
 from ... import ops
 from .. import base
-from . import KIND, etf, stage, tier as tier_rule, views
+from . import KIND, etf, my_universe, stage, tier as tier_rule, views
 from .funds import NAME as FUNDS
 from .openfigi_map import FIGI_BY_CUSIP, FIGI_BY_TICKER, NAME as OPENFIGI, PRESENT
 from .sec_tickers import NAME as SEC
@@ -52,7 +52,8 @@ from .sec_tickers_mf import NAME as SEC_MF
 from .wrds import CO_HGIC, IDXCST_HIS, INDEX_GVKEYX, SEC_IDHIST, norm_cik
 
 NAME = "spine/security"
-TABLES = ("security", "security_history", "gics_history", "index_membership", etf.TABLE)
+TABLES = ("security", "security_history", "gics_history", "index_membership", etf.TABLE,
+          my_universe.TABLE, my_universe.CHANGES)
 # Compustat ``exchg`` codes of the US exchanges the SEC file's listed rows trade on: NYSE, AMEX, Nasdaq.
 US_EXCHG = (11, 12, 14)
 # How far ahead of a fund day's SEC snapshot (the newest on or before the day) a line is looked for (delta S1): a fund
@@ -81,7 +82,8 @@ MEMBERSHIP = [("index_slug", "TEXT"), ("ticker", "TEXT"), ("cik", "TEXT"), ("gvk
               ("valid_from", "DATE"), ("valid_to", "DATE"), ("source", "TEXT"), ("files_held", "INTEGER"),
               ("files_counted", "INTEGER"), ("source_as_of", "DATE")]
 SCHEMAS = {"security": SECURITY, "security_history": HISTORY, "gics_history": GICS, "index_membership": MEMBERSHIP,
-           etf.TABLE: etf.SCHEMA}
+           etf.TABLE: etf.SCHEMA, my_universe.TABLE: my_universe.SCHEMA,
+           my_universe.CHANGES: my_universe.CHANGES_SCHEMA}
 
 # The plan's named problems, one kind each; ``key`` is the ticker unless the kind says otherwise.
 ISSUE_KINDS = {
@@ -107,6 +109,12 @@ ISSUE_KINDS = {
     "membership_files_disagree": "the fund files of an index disagree on a name today (key: index:ticker)",
     "membership_wrds_differs": ("fund-file members and Compustat's differ on the Compustat snapshot day "
                                 "(key: index:ticker)"),
+    "my_universe_etf_undecided": ("the ETFs with no AUM and no 20-session dollar volume yet, so the universe rule "
+                                  "cannot judge them: one issue naming them (key: etf)"),
+    "my_universe_manual_unknown": ("a line of the manual universe file naming a ticker the spine does not hold "
+                                   "(key: the ticker)"),
+    "my_universe_both_kinds": ("a ticker the stock rule and the ETF rule both claim; kept as the stock "
+                               "(key: the ticker)"),
 }
 
 # GICS names (the 2023 structure) of the two levels the bridge names come from.
@@ -443,6 +451,12 @@ class SpineSecurity:
         found += member_issues
         counts["index_membership"] = _create(con, "index_membership", members)
         counts[etf.TABLE] = _create(con, etf.TABLE, etf.rows(ctx, con))       # reads ``security``: after it
+        mine, changes, mine_issues = my_universe.rows(ctx, con)                # reads both of them: after both
+        found += mine_issues
+        counts[my_universe.TABLE] = _create(con, my_universe.TABLE, mine)
+        counts[my_universe.CHANGES] = _create(con, my_universe.CHANGES, changes)
+        ctx.notes.append(f"{sum(1 for r in mine if r['kind'] == my_universe.STOCK)} stocks and "
+                         f"{sum(1 for r in mine if r['kind'] == my_universe.ETF)} ETFs in {my_universe.TABLE}")
         views.create(con)
         ctx.pending[NAME] = found
         return counts

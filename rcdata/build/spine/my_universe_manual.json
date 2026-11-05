@@ -1,0 +1,6 @@
+{
+  "_": "Names avo adds to or removes from the universe by hand, over and above the rules in my_universe_rules.json. Owned by avo; changed only by a pull request. A remove wins over an add of the same ticker. A ticker neither the security nor the etf table holds is reported as a my_universe_manual_unknown build issue, never invented as a row.",
+  "version": 1,
+  "add": [],
+  "remove": []
+}

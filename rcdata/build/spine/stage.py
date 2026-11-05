@@ -64,6 +64,28 @@ def partitions(dataset_dir: Path, prefix: str, name: str = "part-0.parquet") -> 
     return sorted(out)
 
 
+def live_rows(table: str, columns: list[str]) -> list[dict] | None:
+    """``columns`` of every row of ``table`` in the **live** ``spine.duckdb``, or ``None`` when there is no live
+    file or no such table in it (a first build, or a build that predates the table).
+
+    Its own read-only connection, not the build's: a build reads the live file to say what changed since it
+    (``my_universe``'s entered and left), and the build connection may already hold an attachment of its own.
+    """
+    from ... import serving
+    live = serving.live_path(KIND)
+    if not live.exists():
+        return None
+    con = duckdb.connect(str(live), read_only=True)
+    try:
+        known = {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables()").fetchall()}
+        if table not in known:
+            return None
+        cols = ", ".join(f'"{c}"' for c in columns)
+        return [dict(zip(columns, r)) for r in con.execute(f'SELECT {cols} FROM "{table}"').fetchall()]
+    finally:
+        con.close()
+
+
 def compare_live(con: duckdb.DuckDBPyConnection, select_new: str, table: str, columns: list[str],
                  where: str = "") -> tuple[int, int]:
     """``(added, removed)``: rows of ``select_new`` (over the build connection) against ``table`` of the live

@@ -14,7 +14,9 @@ and no ``active`` column** here; a board's thresholds (AUM, dollar volume) are i
 ``MONTHLY_AVG_NET_ASSETS``, with the filing's report end as ``aum_as_of``) from the series' newest N-CEN, NULL for
 a row N-CEN does not hold (unknown, not false); ``inception`` from AV's ``ipoDate``; ``is_option_income`` by a name
 rule; ``asset_class`` only ``commodity``, by the trust rule below; ``sector_name`` for the 11 sector SPDRs. NULL
-until later PRs: ``focus``, ``country``, ``adv_usd_20d``, ``expense_ratio`` and every other ``asset_class``.
+until later PRs: ``focus``, ``country``, ``expense_ratio`` and every other ``asset_class``. ``adv_usd_20d`` is the
+20-session average daily dollar volume, read from the live ``prices.duckdb`` (:func:`adv_usd_20d`); it is what
+decides a fund N-CEN gives no AUM for in ``my_universe`` (avo, 4 Nov 2026).
 
 **The commodity rule.** An ``etp`` row of the spine that is no note, has no N-CEN series, and whose CIK filed no
 N-CEN at all is not a registered investment company: a grantor trust or commodity pool registered under the 1933
@@ -91,6 +93,52 @@ def _flag(nc: bool, value) -> bool | None:
     return bool(value) if nc else None
 
 
+#: ``adv_usd_20d`` is the average of the fund's newest :data:`ADV_SESSIONS` **stored** sessions, and only of a
+#: fund that has all of them: an average over three sessions is not the number avo's rule asks for ("son 20 günün
+#: ortalama günlük işlem hacmi", 4 Nov 2026), so a fund with fewer stays unmeasured (NULL) and the universe rule
+#: reports it undecided rather than judging it on a short window.
+ADV_SESSIONS = 20
+
+
+def adv_usd_20d(tickers: list[str]) -> dict[str, float]:
+    """``{ticker: average daily dollar volume}`` over the newest :data:`ADV_SESSIONS` stored sessions of each
+    ticker, read from the **live** ``prices.duckdb`` (read-only, its own connection).
+
+    A session's dollar volume is its VWAP times its volume, the close where there is no VWAP. The bars are matched
+    by ``symbol``, not by security id: an ETF is no row of the SEC equity file, so most of them have no spine
+    ``security_id`` to join on. Where one symbol has two securities' bars on a session (a re-used ticker) the
+    larger dollar volume is the session's. No live prices file, no ``price_bar_daily`` or no bar for a ticker:
+    the ticker is absent from the answer and its ``adv_usd_20d`` stays NULL (unknown, not zero).
+    """
+    wanted = sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+    if not wanted:
+        return {}
+    from ... import serving
+    live = serving.live_path("prices")
+    if not live.exists():
+        return {}
+    con = duckdb.connect(str(live), read_only=True)
+    try:
+        if "price_bar_daily" not in {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables()").fetchall()}:
+            return {}
+        rows = con.execute(f"""
+            WITH per_session AS (
+                SELECT upper(symbol) AS ticker, session_date,
+                       max(coalesce(vwap, close) * volume) AS dollars
+                FROM price_bar_daily
+                WHERE upper(symbol) IN ({', '.join('?' * len(wanted))})
+                  AND volume IS NOT NULL AND coalesce(vwap, close) IS NOT NULL
+                GROUP BY 1, 2),
+            newest AS (SELECT * FROM per_session
+                       QUALIFY row_number() OVER (PARTITION BY ticker ORDER BY session_date DESC)
+                               <= {ADV_SESSIONS})
+            SELECT ticker, avg(dollars) FROM newest GROUP BY ticker
+            HAVING count(*) = {ADV_SESSIONS}""", wanted).fetchall()
+    finally:
+        con.close()
+    return {str(t): float(v) for t, v in rows if v is not None}
+
+
 def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
     """Every ETF ticker's row, from the staging tables and the ``security`` table this build just created."""
     cur = con.execute(f"""
@@ -118,6 +166,7 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
     filers = {r[0] for r in con.execute(f"SELECT DISTINCT cik FROM {FILERS}").fetchall()}
     # Fewer quarters hold a fraction of the filers: "files no N-CEN" is only known over a full year (review M1).
     year_held = ncen.quarters_held() >= ncen.BACKFILL_QUARTERS
+    adv = adv_usd_20d([r["ticker"] for r in found])
     out = []
     for r in found:
         names = (r["fund_name"], r["av_name"], r["etp_name"])
@@ -135,11 +184,13 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
             "is_lev_inverse": True if is_lev_inverse(*names) else _flag(nc, r["is_multi_inverse_index"]),
             "is_money_market": _flag(nc, r["is_money_market"]), "is_option_income": is_option_income(*names),
             "is_fund_of_funds": _flag(nc, r["is_fund_of_fund"]), "inception": r["ipo_date"], "aum": aum,
-            "aum_as_of": r["report_end"] if aum is not None else None, "adv_usd_20d": None, "expense_ratio": None,
+            "aum_as_of": r["report_end"] if aum is not None else None,
+            "adv_usd_20d": adv.get(r["ticker"]), "expense_ratio": None,
             "sector_name": SECTOR_NAMES.get(r["ticker"]), "source_as_of": r["source_as_of"],
             # The newest of its sources' fetch times; run_id is the build that wrote the row (it is derived).
             "fetched_at": r["fetched_at"], "run_id": ctx.run_id})
     etns = sum(1 for r in out if r["is_etn"])
     cefs = sum(1 for r in out if r["is_cef"] and not r["is_etn"])
-    ctx.notes.append(f"{len(out)} in etf: {len(out) - etns - cefs} ETFs, {etns} ETNs flagged, {cefs} CEFs flagged")
+    ctx.notes.append(f"{len(out)} in etf: {len(out) - etns - cefs} ETFs, {etns} ETNs flagged, {cefs} CEFs flagged; "
+                     f"{len(adv)} with a {ADV_SESSIONS}-session dollar volume")
     return out

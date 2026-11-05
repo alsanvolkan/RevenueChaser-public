@@ -110,6 +110,8 @@ WRITTEN_COLUMN: dict[str, str] = {
     'iv_daily': 'session_date',
     'market_cap_daily': 'session_date',
     'market_series': 'obs_date',
+    'my_universe': 'source_as_of',
+    'my_universe_changes': 'as_of',
     'option_daily': 'session_date',
     'option_eod': 'session_date',
     'option_expiry': 'session_date',
