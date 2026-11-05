@@ -37,7 +37,7 @@ design file holds it).
 **What a purge loses for good.** The backfill cannot bring these back, so the purge decision has to
 cover them first:
 
-- the SPX Gamma raw day files (`module_spx_gamma/data/raw/<date>/`): UW serves only recent days (see
+- the SPX Gamma raw day files (`<store>/spx_gamma/raw/<date>/`; `module_spx_gamma/data/` before S4): UW serves only recent days (see
   Storage layout);
 - the UW options data observed inside its window (`option_strike`, `option_expiry`, `option_print`,
   the UW rows of `iv_daily`, `er_options`): a past evening cannot be observed again, and the raw
@@ -187,7 +187,7 @@ Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `cor
 | `edgar_docs/{cik}/{accession}.html.gz` | Raw 10-K/20-F HTML (the durable raw-document record; keyed by CIK + accession). Dir via `RC_EDGAR_DOCS_DIR` | No — durable; backed up as a tree |
 | `.cache/sec_13f/*_form13f.zip` | Downloaded SEC 13F source archives (re-downloadable from SEC) | Yes — deletable after ingest (tracked in `ingested_zips`) |
 | `.cache/` | All regenerable outputs: `*_latest.json`, `*_latest.html` (flat and nested), PNGs, timestamped archives | Yes — delete anytime; re-run regenerates |
-| `module_spx_gamma/data/` (override `SPX_GAMMA_DATA_ROOT`) | SPX Gamma data tree: the UW GEX and greek files per date under `raw/<date>/` (the board's own UW snapshot only: since PR 3 the VIX family, the CFTC COT, the 8-week SPX closes and the 0-1 DTE dollar gamma are no files of the day; `module_spx_gamma/store_reads.py` reads them from the market store, `market_series` and `spx_gamma_expiry_strike`, when the day is rendered, and a day without them says "not stored"; a raw day from before still holding `vix_family.json`, `cftc_tff.json` or `ohlc_8wk.json` has them ignored), `brier.json`, `spx_gamma_gex_history.json`, parsed files, charts and reports. Inside the repo (git-ignored `data/`), not under `.store/`. UW serves only recent days, so the raw day files cannot be fetched again | No — durable. Mirrored by the nightly backup (see Backups); #179 moves it into DuckDB later |
+| `<RC_STORE_DIR>/spx_gamma/` (override `SPX_GAMMA_DATA_ROOT`; `module_spx_gamma/data/` until S4, #38) | SPX Gamma data tree: the UW GEX and greek files per date under `raw/<date>/` (the board's own UW snapshot only: since PR 3 the VIX family, the CFTC COT, the 8-week SPX closes and the 0-1 DTE dollar gamma are no files of the day; `module_spx_gamma/store_reads.py` reads them from the market store, `market_series` and `spx_gamma_expiry_strike`, when the day is rendered, and a day without them says "not stored"; a raw day from before still holding `vix_family.json`, `cftc_tff.json` or `ohlc_8wk.json` has them ignored), `brier.json`, `spx_gamma_gex_history.json`, parsed files, charts and reports. Beside the store's DuckDB files since S4 (#38), outside the checkout: `config.resolve_data_root` reads the legacy in-repo tree only while `<store>/spx_gamma/` does not exist, and `python -m RevenueChaser.module_spx_gamma --migrate-data-root --apply` (dashboard stopped) copies it there, verified by size and SHA-256 and renamed into place in one step; the legacy tree is never deleted by it. UW serves only recent days, so the raw day files cannot be fetched again | No — durable. Mirrored by the nightly backup (see Backups); #179 moves it into DuckDB later |
 
 ## Pipeline stages
 
@@ -1785,7 +1785,7 @@ Two separate things, deliberately not conflated:
   The `history_*` weekly copies of earlier runs are no longer written (#342: history grows ~6.55 GB/yr) and this prune
   does not touch them: deleting them is the owner's own step. Log line: `weekly backup OK: <path>`, printed only in
   the run that writes a week's copy.
-- **SPX Gamma tree (#276)** — `module_spx_gamma/data/` (or `SPX_GAMMA_DATA_ROOT`) is mirrored into
+- **SPX Gamma tree (#276)** — the board's data root (`<store>/spx_gamma/`, or `SPX_GAMMA_DATA_ROOT`) is mirrored into
   `spx_gamma_mirror/` in the same backup folder, incrementally: a `stat` walk decides what changed (same size and
   an mtime within 2 s means unchanged), each copy goes through `spx_gamma_mirror/.tmp/` and is verified by size and
   SHA-256 before it replaces the mirror file, a file modified in the last 10 minutes (still being written) waits for
@@ -1864,7 +1864,7 @@ Two separate things, deliberately not conflated:
   while a RevenueChaser process uses the store, verifies the snapshot, keeps the
   current file as `<name>.duckdb.pre-restore`. `edgar_docs/` is restored by
   unzipping the chosen archive over the folder; the SPX tree by copying
-  `spx_gamma_mirror/` back over `module_spx_gamma/data` (stop the dashboard first; an earlier version of
+  `spx_gamma_mirror/` back over the board's data root (stop the dashboard first; an earlier version of
   `brier.json` or the GEX history comes from `spx_gamma_versions/`). A weekly copy is restored with
   `... restore_store --from <backup dir>\weekly --latest raw`. From the off-machine folder use the same
   commands with `--from <RAW_STORE_BACKUP_MIRROR folder>\RevenueChaser-backup` (its newest `raw_*` is at most a week

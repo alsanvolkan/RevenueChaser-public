@@ -15,13 +15,37 @@ UW_API_TOKEN = os.environ.get("UNUSUAL_WHALES_API_KEY", "") or os.environ.get("U
 UW_CLIENT_API_ID = "100001"
 TICKER = "SPX"
 
-# Module-scoped cache/export root (cached data + exported reports live under the
-# module's own subdirectory). Overridable via SPX_GAMMA_DATA_ROOT so tests never
-# touch the real tree.
-DATA_ROOT = Path(
-    os.environ.get("SPX_GAMMA_DATA_ROOT")
-    or (Path(__file__).resolve().parent / "data")
-)
+# The board's durable tree (UW raw days, brier.json, the GEX history, parsed files, charts, reports). Overridable via
+# SPX_GAMMA_DATA_ROOT so tests never touch the real tree.
+#: Where the tree lived until S4 (#38): inside the checkout, so a fresh clone or `git clean -x` lost it.
+LEGACY_DATA_ROOT = Path(__file__).resolve().parent / "data"
+#: Where it lives from S4: beside the store's DuckDB files (RC_STORE_DIR), outside the checkout.
+STORE_DATA_ROOT = Path(os.getenv("RC_STORE_DIR") or (_REPO_ROOT / "RevenueChaser" / ".store")).expanduser() / "spx_gamma"
+
+
+def _has_files(root: Path) -> bool:
+    try:
+        return root.is_dir() and any(p.is_file() for p in root.rglob("*"))
+    except OSError:
+        return False
+
+
+def resolve_data_root(override: str | None, store_root: Path = STORE_DATA_ROOT,
+                      legacy_root: Path = LEGACY_DATA_ROOT) -> Path:
+    """The data root: the override; else the store root once it exists; else the legacy tree while it still
+    holds files (a deploy before ``--migrate-data-root`` keeps reading it); else the store root.
+
+    The switch never moves a file: ``data_root_move.migrate`` copies the tree, verifies it and renames it into
+    place in one step, so a process reads one tree or the other, never a half-copied one.
+    """
+    if override:
+        return Path(override)
+    if store_root.exists() or not _has_files(legacy_root):
+        return store_root
+    return legacy_root
+
+
+DATA_ROOT = resolve_data_root(os.environ.get("SPX_GAMMA_DATA_ROOT"))
 BRIER_FILENAME = "brier.json"
 HISTORY_FILENAME = "spx_gamma_gex_history.json"
 RAW_ROOT = DATA_ROOT / "raw"
