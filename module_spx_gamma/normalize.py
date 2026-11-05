@@ -340,6 +340,51 @@ def normalize_vix(vix_payload: dict | None) -> dict | None:
     }
 
 
+def normalize_vega_flow(payload: dict | None) -> dict | None:
+    """The day's cumulative directional vega flow (§4.1), summed over UW's per-minute buckets.
+
+    ``dir_vega_flow`` is the directional half — the report's "yönlü vega akışı" — and is what it reads; the
+    undirected ``total_vega_flow`` comes along for context. This is **flow**: vega that changed hands during the
+    session, not the net vega sitting in the book, and it does not stand in for that exposure. The report reads its
+    sign and the week-on-week sign change, not the magnitude.
+    """
+    rows = (payload or {}).get("data") or []
+    directional = [to_float(r.get("dir_vega_flow")) for r in rows if isinstance(r, dict)]
+    total = [to_float(r.get("total_vega_flow")) for r in rows if isinstance(r, dict)]
+    directional = [v for v in directional if v is not None]
+    if not directional:
+        return None
+    stamps = sorted(str(r.get("timestamp")) for r in rows if isinstance(r, dict) and r.get("timestamp"))
+    return {
+        "dir_vega_flow": sum(directional),
+        "total_vega_flow": sum(v for v in total if v is not None) or None,
+        "buckets": len(directional),
+        "last_bucket": stamps[-1] if stamps else None,
+    }
+
+
+def normalize_vix_greeks(payload: dict | None) -> dict | None:
+    """The VIX index's own option book (§17): net vanna and net charm over its expiries.
+
+    Unusual Whales is the only source for these two — MenthorQ publishes VIX gamma levels but not its vanna and
+    charm — so the levels that go with them in the report are out of scope here.
+    """
+    rows = [r for r in ((payload or {}).get("data") or []) if isinstance(r, dict)]
+    if not rows:
+        return None
+    vanna = [net_sum(r.get("call_vanna"), r.get("put_vanna")) for r in rows]
+    charm = [net_sum(r.get("call_charm"), r.get("put_charm")) for r in rows]
+    vanna = [v for v in vanna if v is not None]
+    charm = [v for v in charm if v is not None]
+    if not vanna and not charm:
+        return None
+    return {
+        "net_vanna": sum(vanna) if vanna else None,
+        "net_charm": sum(charm) if charm else None,
+        "expiries": len(rows),
+    }
+
+
 def _report_day(value) -> str | None:
     """The COT report date as a plain ISO day, whatever the source spelled it as.
 
@@ -470,6 +515,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     skew = normalize_skew(raw.get("interpolated_iv"))
     vix = normalize_vix(raw.get("vix"))
     cftc = normalize_cftc(raw.get("cftc"))
+    vega_flow = normalize_vega_flow(raw.get("greek_flow"))
+    vix_greeks = normalize_vix_greeks(raw.get("vix_greeks"))
 
     # The 0-1 DTE dollar gamma per strike the pin and squeeze tests size by (review S4), read from the market store
     # by run.build_day (store_reads.zero_one_dte_dollars). Absent or not stored: no dollars, no pin flag.
@@ -526,6 +573,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "matrix_gex": matrix_gex,
         "source_chip": source_chip,
         "flow_strikes": flow_rows,
+        "vega_flow": vega_flow,
+        "vix_greeks": vix_greeks,
         "option_chain": option_chain_rows,
         "iron_butterfly": iron_butterfly,
         "expected_move": em,

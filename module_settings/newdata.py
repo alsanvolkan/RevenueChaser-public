@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -708,31 +709,48 @@ def _identity(counts: dict | None) -> dict:
 
 # ── Where the data sits (the control board's journey table) ───────────────────────────────────────────────────
 
-#: A folder walk stops after this many entries and says so: the page renders in the dashboard, and the raw tree of
-#: a dataset with one file per company per day runs to tens of thousands of files.
-STORAGE_WALK_BUDGET = 50_000
+#: The whole storage walk may take this long, and a folder that runs out says so (``capped``, drawn as ``N+ files``).
+#: The walk runs in a page render on the single-threaded dashboard, over a raw tree whose entries are an HDD seek
+#: each; on 5 Nov 2026 it ran past ten minutes, over rc-warmup's 600 s ceiling.
+#:
+#: It is spent as an equal slice per folder, not as one deadline for the render: the first dataset walked is
+#: ``uw/spot_expiry_strike``, whose raw tree is one folder per session, and a shared deadline let it eat the whole
+#: render and leave every later dataset reading a floor of nothing. A per-folder slice of time composes the way a
+#: per-folder cap on entries did not (review S3), because the folders are counted: their slices sum to this.
+#:
+#: It is a ceiling, not the operating point: a folder that does not exist returns before it touches the clock and
+#: never spends its slice, so on homesrv (38 of 86 folders exist) the walking this bounds is about 9 s. What it does
+#: not bound at all is the first ``os.scandir`` of each folder -- 26 s for those 38, measured on a loaded disk --
+#: which is the cost of walking in a render and the reason #434 takes the picture out of one.
+STORAGE_WALK_SECONDS = 20.0
 _STORAGE_CACHE: dict[str, tuple[str, dict]] = {}
 
 
-def _folder(path: Path, budget: list[int]) -> dict:
+def _folder(path: Path, seconds: float) -> dict:
     """``{"path", "files", "bytes", "capped"}`` of one folder, walked without following links; files None when the
-    folder does not exist. ``budget`` is the entries the whole storage walk may still look at, shared by every
-    folder of one render (review S3: a cap per folder let the HDD walk reach millions of stats); ``capped`` means it
-    ran out in or before this folder and the counts are a floor."""
+    folder does not exist. ``seconds`` is this folder's own share of ``STORAGE_WALK_SECONDS``, so that one slow tree
+    cannot spend the render; ``capped`` means it ran out of time and the counts are a floor.
+
+    The clock is checked per entry, and again before each ``os.scandir`` of a subfolder: an entry of the raw tree is
+    an HDD seek, so a single folder is what ran past ten minutes on 5 Nov 2026, and one ``scandir`` of a large
+    folder is itself unbounded. The first ``scandir`` of this folder is not bounded by anything -- see
+    ``STORAGE_WALK_SECONDS``."""
     if not path.is_dir():
         return {"path": str(path), "files": None, "bytes": None, "capped": False}
     files = size = 0
+    deadline = time.monotonic() + seconds
     stack = [path]
     while stack:
         here = stack.pop()
+        if here is not path and time.monotonic() > deadline:
+            return {"path": str(path), "files": files, "bytes": size, "capped": True}
         try:
             entries = list(os.scandir(here))
         except OSError:
             continue
         for e in entries:
-            if budget[0] <= 0:
+            if time.monotonic() > deadline:
                 return {"path": str(path), "files": files, "bytes": size, "capped": True}
-            budget[0] -= 1
             try:
                 if e.is_dir(follow_symlinks=False):
                     stack.append(Path(e.path))
@@ -761,9 +779,11 @@ def _storage(now: datetime) -> dict:
             files[kind] = {"path": str(path), "bytes": path.stat().st_size}
         except OSError:
             files[kind] = {"path": str(path), "bytes": None}
-    budget = [STORAGE_WALK_BUDGET]
-    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/")), budget),
-                       "parquet": _folder(parquet_root.joinpath(*name.split("/")), budget)} for name in _datasets()}
+    names = list(_datasets())
+    each = STORAGE_WALK_SECONDS / max(1, 2 * len(names))          # the two roots of every dataset
+    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/")), each),
+                       "parquet": _folder(parquet_root.joinpath(*name.split("/")), each)}
+                for name in names}
     out = {"roots": {"raw": str(raw_root), "parquet": str(parquet_root), "ssd": str(config.MARKET_DIR)},
            "files": files, "datasets": datasets}
     _STORAGE_CACHE["storage"] = (key, out)
