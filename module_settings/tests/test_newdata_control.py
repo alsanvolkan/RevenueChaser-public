@@ -7,6 +7,7 @@ serving files through ``open_read``, the folders by a bounded walk, both cached 
 """
 from __future__ import annotations
 
+import itertools
 import os
 from datetime import datetime, timezone
 
@@ -94,6 +95,15 @@ def test_the_calendar_reads_names_per_session_once_an_hour(market_roots, monkeyp
     assert calls == [1], "the second render in the same hour reads the cache"
 
 
+def test_the_calendar_counts_one_row_per_name_because_the_bars_key_says_so():
+    """``_session_counts`` counts rows, not distinct names, which is only the same number because
+    ``(security_id, session_date)`` is ``price_bar_daily``'s key. If that key ever changes, the calendar starts
+    counting bars instead of names and nothing else would say so (the DISTINCT cost 8-10 s against 2 s on the live
+    2.9 GB store, 5 Nov 2026, so it is not going back in as insurance)."""
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    assert prices_serving.KEYS["price_bar_daily"] == ("security_id", "session_date")
+
+
 def test_names_per_session_are_counted_per_tier_set_of_the_spine(market_roots):
     """Review M1: the calendar and the universe tile compare this with the picked sets, so it is counted by set, not
     over every bar in the file. A fund-only universe must not read Tier A's bars as its own."""
@@ -125,34 +135,6 @@ def test_storage_counts_each_datasets_raw_and_parquet_folders_and_the_live_file(
     assert st["roots"]["ssd"] == str(config.MARKET_DIR)
 
 
-def test_a_walk_stops_at_its_cap_and_says_the_count_is_a_floor(market_roots, monkeypatch):
-    from RevenueChaser.rcdata.build import base
-    raw = base.raw_root() / "sec" / "companyfacts"
-    raw.mkdir(parents=True)
-    for i in range(5):
-        (raw / f"{i}.json.gz").write_bytes(b"z")
-    monkeypatch.setattr(newdata, "STORAGE_WALK_BUDGET", 3)
-    got = newdata.collect(NOW)["storage"]["datasets"]["sec/companyfacts"]["raw"]
-    assert got["capped"] is True and got["files"] == 3
-
-
-def test_the_cap_is_one_budget_for_the_whole_walk_not_one_per_folder(market_roots, monkeypatch):
-    """Review S3: the walk runs on a page render, on the HDD; ~38 datasets x 2 roots x a per-folder cap was millions
-    of stat calls. One budget bounds the whole walk, and every folder past it says its count is a floor."""
-    from RevenueChaser.rcdata.build import base
-    for name in ("alpaca/bars", "sec/companyfacts", "sec/13f"):
-        for root in (base.raw_root(), base.parquet_root()):
-            folder = root.joinpath(*name.split("/"))
-            folder.mkdir(parents=True)
-            for i in range(3):
-                (folder / f"{i}.bin").write_bytes(b"z")
-    monkeypatch.setattr(newdata, "STORAGE_WALK_BUDGET", 4)
-    st = newdata.collect(NOW)["storage"]["datasets"]
-    raws = [st[n][r] for n in ("alpaca/bars", "sec/companyfacts", "sec/13f") for r in ("raw", "parquet")]
-    assert sum(r["files"] or 0 for r in raws) <= 4
-    assert sum(r["capped"] for r in raws) >= 2, "the folders past the budget say so"
-
-
 def test_a_card_carries_its_last_three_checks_newest_first(market_roots):
     for day in ("2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28"):
         ops.record_check("alpaca/bars", "changed", source_as_of=day, checked_on=day, added=5, calls=2)
@@ -164,3 +146,38 @@ def test_a_card_carries_its_last_three_checks_newest_first(market_roots):
 def test_every_served_tables_rows_and_newest_day_are_in_one_map(market_roots):
     _bars([("A1", "2026-10-28")])
     assert newdata.collect(NOW)["tables"]["price_bar_daily"] == {"rows": 1, "newest": "2026-10-28"}
+
+
+def test_the_walk_stops_when_it_runs_out_of_time_and_says_the_count_is_a_floor(market_roots, monkeypatch):
+    """5 Nov 2026: the entry budget bounds the stat calls, not the seconds they take. On the HDD a 50 000-entry walk
+    ran past ten minutes inside one page render, so the walk is bounded by the clock as well."""
+    from RevenueChaser.rcdata.build import base
+    raw = base.raw_root() / "sec" / "companyfacts"
+    raw.mkdir(parents=True)
+    (raw / "0.json.gz").write_bytes(b"z")
+    monkeypatch.setattr(newdata, "STORAGE_WALK_SECONDS", -1.0)      # out of time at the first entry
+    got = newdata.collect(NOW)["storage"]["datasets"]["sec/companyfacts"]["raw"]
+    assert got["capped"] is True and got["files"] == 0
+
+
+def test_the_time_is_a_slice_per_folder_so_one_slow_tree_does_not_starve_the_rest(market_roots, monkeypatch):
+    """The first dataset walked is ``uw/spot_expiry_strike``, one folder per session on the HDD. One deadline for the
+    whole render let it spend all of it, and every later dataset then read a floor of nothing — ``0+ files · 0 B``,
+    indistinguishable from empty. Each folder gets its own slice instead, so the last is counted like the first.
+
+    The clock is faked at 0.4 of a folder's slice per read, so each folder gets through two entries and then runs
+    out: the assertion is about the slicing, not about how fast this box's disk is."""
+    from RevenueChaser.rcdata.build import base
+    names = ("alpaca/bars", "sec/companyfacts", "sec/13f")
+    for name in names:
+        folder = base.raw_root().joinpath(*name.split("/"))
+        folder.mkdir(parents=True)
+        for i in range(6):
+            (folder / f"{i}.bin").write_bytes(b"z")
+    # The divisor is _storage's own (two roots per dataset): a change there should fail this on the count, not the clock.
+    step = 0.4 * newdata.STORAGE_WALK_SECONDS / (2 * len(newdata._datasets()))
+    ticks = itertools.count(step, step)
+    monkeypatch.setattr(newdata.time, "monotonic", lambda: next(ticks))
+    got = [newdata.collect(NOW)["storage"]["datasets"][n]["raw"] for n in names]
+    assert [f["files"] for f in got] == [2, 2, 2], "every folder gets its own slice, however late it is walked"
+    assert all(f["capped"] for f in got), "and says the count is a floor"

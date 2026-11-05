@@ -140,6 +140,7 @@ INPUTS_CAP_FLAGS = ("--max-uw-calls", "--max-fred-calls", "--max-yf-calls")
 # market store and records its own ``ops.job_runs2`` rows, so ``tables_written`` is empty: no old ``job_runs`` row.
 BUILDER_UNIT = "life-rc-builder"
 BUILDER_BACKUP_UNIT = "life-rc-builder-backup"
+BUILDER_BACKUP_HEAVY_UNIT = "life-rc-builder-backup-heavy"
 
 REGISTRY: tuple[AutomationEntry, ...] = (
     AutomationEntry(
@@ -230,17 +231,6 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                         "estimate_snapshots", "vol_index_daily", "cftc_cot"),
         settings=TaskSettings(wake_to_run=True)),
     AutomationEntry(
-        name="RC-Open-Issues-Check", label="Open issues registry check",
-        args=("-m", "RevenueChaser.scripts.open_issues_sync", "--check"), time="09:30",
-        description="Checks docs/open_issues.json against the open issues of the public repo through the GitHub API "
-                    "(read anonymously, 1-2 requests) and writes nothing, no table and no store file. It exits 0 "
-                    "whatever it finds: the log line says how far the registry is behind and how many entries "
-                    "await curation, because the file is behind GitHub the moment an issue is opened. To close the "
-                    "gap, git pull first if this clone is behind main (docs/open_issues.json is tracked, so --write "
-                    "on a stale clone sets up a pull conflict), then python -m "
-                    "RevenueChaser.scripts.open_issues_sync --write and commit the file.",
-        settings=TaskSettings(restart_count=0)),
-    AutomationEntry(
         name="RC-IBKR-Login-Check", label="IBKR Gateway login check",
         args=("-m", "RevenueChaser.scripts.ibkr_login_check"), time="09:15",
         description="Looks at whether the IBKR Gateway is still logged in: one TCP connection to the "
@@ -262,12 +252,30 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "the market store and ops.sqlite, with its own job_runs2 row per run.",
         settings=TaskSettings(restart_count=0, time_limit_minutes=50)),
     AutomationEntry(
-        name="RC-Build-Backup", label="Market-store backup",
-        args=("-m", "RevenueChaser.rcdata", "backup"), time="04:30", unit_name=BUILDER_BACKUP_UNIT,
-        description="Verified backup of the market store: ops.sqlite through SQLite's online backup and each "
-                    "serving file, checked row by row against the source, into RAW_STORE_BACKUP_DIR/market/ (the "
-                    "newest 5 kept), then the 35-day raw copy. Writes no table.",
+        name="RC-Build-Backup", label="Market-store backup (light)",
+        args=("-m", "RevenueChaser.rcdata", "backup",
+              "--only", "ops,market,spine,fundamentals,options,raw", "--subdir", "market"),
+        time="04:30", unit_name=BUILDER_BACKUP_UNIT,
+        description="Verified nightly backup of the small files of the market store: ops.sqlite through SQLite's "
+                    "online backup and the market, spine, fundamentals and options serving files, checked row by "
+                    "row against the source, into RAW_STORE_BACKUP_DIR/market/ (the newest 5 kept), then the "
+                    "35-day raw copy. prices and ownership are the weekly RC-Build-Backup-Heavy run's: the 04:30 "
+                    "run of 5 Nov 2026 hit this 30-minute limit, and those two are 3.5 GB of the ~3.6 GB copied, so "
+                    "they are the likely cause - an inference, since the run records no per-step timing. "
+                    "Writes no table.",
         settings=TaskSettings(restart_count=0, time_limit_minutes=30)),
+    AutomationEntry(
+        name="RC-Build-Backup-Heavy", label="Market-store backup (heavy, weekly)",
+        args=("-m", "RevenueChaser.rcdata", "backup", "--only", "prices,ownership", "--subdir", "market-heavy"),
+        time="03:30", days=("Sunday",), unit_name=BUILDER_BACKUP_HEAVY_UNIT,
+        description="Verified weekly backup of the two large serving files, prices (2.9 GB) and ownership (661 MB), "
+                    "into RAW_STORE_BACKUP_DIR/market-heavy/ (its own manifest, its own 5 newest per kind, every "
+                    "copy with its sha256). Sunday 03:30 keeps it clear of the nightly light run at 04:30. Run the "
+                    "same command by hand before a deploy that touches either file. This row's unit is installed "
+                    "from the home-server repository, not from this page: installing it here too would give one "
+                    "name a user timer and a system unit, both firing at 03:30 into the same folder. Writes no "
+                    "table.",
+        settings=TaskSettings(restart_count=0, time_limit_minutes=60)),
     AutomationEntry(
         name="RC-SPX-Gamma-Fetch", label="SPX Gamma Fetch (nightly)",
         args=("-m", "RevenueChaser.module_spx_gamma", "--nightly"), time="06:30", days=_WEEKDAYS,

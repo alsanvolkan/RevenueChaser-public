@@ -12,7 +12,8 @@ the list can be swapped by editing one file:
   trust, a BDC and a non-SEC bank are operating types the identity master knows and avo left out; an untyped name
   stays out until it is typed (321 of them on 4 Nov 2026), and Tier B and C never enter whatever the type says;
 - an **ETF** is an ``etf`` row that is no ETN and no CEF, with an ``aum`` at or over 100 million, or, where N-CEN
-  gives it no AUM at all, an ``adv_usd_20d`` (the 20-session average daily dollar volume, ``etf.py``) at or over
+  gives it no AUM at all, an ``adv_usd_20d`` (the 20-session average daily dollar volume of Compustat's own
+  ``comp.secd``, ``etf.adv_usd_20d``, not of the live prices store: #357) at or over
   10 million. A **known** AUM under the floor is the answer: the volume test only decides a fund N-CEN is silent
   about (SPY and DIA as unit investment trusts, GLD, SLV, IBIT and the other commodity and crypto trusts). A fund
   with neither number is **undecided**: it does not enter, and all of them together are **one**
@@ -29,10 +30,14 @@ the list can be swapped by editing one file:
 reported as ``my_universe_both_kinds``. It does not happen in a normal build (an ``etf`` row of the SEC equity
 file is typed ``etp``, so it is Tier B and no stock), which is why it is worth saying out loud when it does.
 
-**An input outage is not a rule change.** ``my_universe`` is exempt from the swap guard's shrink limit
-(``serving.SHRINKS_BY_CHOICE``), so a missing ``prices.duckdb`` would otherwise drop every fund that entered on
-its dollar volume, be accepted, and write a ``left`` row no later build can take back. :func:`_no_volume_source`
-fails the build instead, and the live file stands.
+**An input outage is not a rule change,** and it is per fund. ``my_universe`` is exempt from the swap guard's
+shrink limit (``serving.SHRINKS_BY_CHOICE``), so a fund that lost its dollar volume would otherwise be dropped,
+accepted, and written as a ``left`` row no later build can take back. ``etf.adv_usd_20d`` is NULL for *unknown*,
+never for zero, so a fund whose own number went missing is held: :func:`_hold_lost_volume` carries its live row
+forward and names every held fund in one ``my_universe_etf_volume_lost`` issue (avo's decision B, #424). A volume
+that is **present** and under the floor is the rule's answer, and that fund leaves as it always did. When no
+``etf`` row has a volume at all the source itself is gone, and :func:`_no_volume_source` fails the build rather
+than holding the whole list on yesterday's numbers.
 
 **The changes table** is append-only across builds: the live file's rows are carried forward and today's diff
 against the live ``my_universe`` is appended, so the Data settings board can show what entered and left without
@@ -72,7 +77,8 @@ ENTERED, LEFT = "entered", "left"
 #: How many tickers an issue's detail names before it says "and N more".
 MANY = 20
 #: The issue kinds this module finds; ``security.ISSUE_KINDS`` holds their wording for ``ops.sqlite``.
-ISSUES = ("my_universe_etf_undecided", "my_universe_manual_unknown", "my_universe_both_kinds")
+ISSUES = ("my_universe_etf_undecided", "my_universe_etf_volume_lost", "my_universe_manual_unknown",
+          "my_universe_both_kinds")
 
 
 @dataclass(frozen=True)
@@ -170,7 +176,7 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rules: Rules | No
     rules = rules if rules is not None else load_rules()
     adds, removes = _normalise(manual if manual is not None else load_manual())
     as_of = ctx.as_of or date.today()
-    live = stage.live_rows(TABLE, ["ticker", "kind", "rule", "entered_on"])
+    live = stage.live_rows(TABLE, [c for c, _ in SCHEMA])
     issues: list[tuple[str, str, str]] = []
     kept: dict[str, dict] = {}
     undecided: list[str] = []
@@ -185,7 +191,8 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rules: Rules | No
 
     for s in _stocks(con, rules):
         kept[s["ticker"]] = row(s, STOCK, "stock", f"tier {s['tier']}, {s['security_type']}")
-    for e in _etfs(con, rules):
+    etfs = _etfs(con, rules)
+    for e in etfs:
         aum, adv = e["aum"], e["adv_usd_20d"]
         if aum is not None:
             if aum < rules.etf_aum_floor:
@@ -205,6 +212,7 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rules: Rules | No
         kept[e["ticker"]] = row(e, ETF, rule, reason)
 
     _no_volume_source(con, live)
+    held = _hold_lost_volume(live, etfs, kept, undecided)
     # The plan's rule for a source that has never run: the rule is not applied, and the source is one
     # ``source_never_run`` issue instead of thousands of per-name ones. ``aum`` comes from N-CEN alone, so with no
     # AUM anywhere N-CEN has not answered yet and every fund is trivially "undecided" -- saying so per fund, or even
@@ -248,6 +256,7 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rules: Rules | No
             issues.append(("my_universe_manual_unknown", ticker,
                            "a manual remove naming a ticker neither security nor etf holds"))
 
+    issues.extend(_held_issue(held, kept))
     out = [kept[t] for t in sorted(kept)]
     return out, _changes(out, live, as_of, ctx.run_id), issues
 
@@ -256,8 +265,8 @@ def _no_volume_source(con: duckdb.DuckDBPyConnection, live: list[dict] | None) -
     """Refuse the build when the live list holds ``etf_adv`` names and **no** ``etf`` row has a dollar volume.
 
     ``my_universe`` is in ``serving.SHRINKS_BY_CHOICE``, so a shrink does not refuse the swap. Without this check a
-    missing or unreadable ``prices.duckdb`` (:func:`etf.adv_usd_20d` then answers nothing) would drop every fund
-    that entered on its volume, accept the swap, and write a ``left`` row that no later build can take back. An
+    missing or unreadable Compustat ``secd`` Parquet (:func:`etf.adv_usd_20d` then answers nothing) would drop every
+    fund that entered on its volume, accept the swap, and write a ``left`` row that no later build can take back. An
     input outage is not a change of the rules, so the build fails and the live file stands.
     """
     if not live or not any(r["rule"] == "etf_adv" for r in live):
@@ -267,9 +276,57 @@ def _no_volume_source(con: duckdb.DuckDBPyConnection, live: list[dict] | None) -
     if rows_total and not rows_with:
         raise ValueError(
             f"{sum(1 for r in live if r['rule'] == 'etf_adv')} names of the live {TABLE} entered on their "
-            f"20-session dollar volume and not one of the {rows_total} etf rows has one now: the prices store gave "
-            f"no volume at all (missing, unreadable or empty). Refusing to drop them; fix the source and build "
+            f"20-session dollar volume and not one of the {rows_total} etf rows has one now: Compustat's secd "
+            f"Parquet gave no volume at all (missing, unreadable or empty). Refusing to drop them; fix the source "
+            f"and build "
             f"again, or take them out of {MANUAL_FILE.name} on purpose.")
+
+
+def _hold_lost_volume(live: list[dict] | None, etfs: list[dict], kept: dict[str, dict],
+                      undecided: list[str]) -> list[str]:
+    """Carry forward, in ``kept``, every live ``etf_adv`` fund the volume rule can no longer measure, and return
+    their tickers; :func:`_held_issue` turns them into the one issue that names them (avo's decision B, #424).
+
+    :func:`_no_volume_source` only sees a source that gave **nothing**, so one fund with a volume used to mask the
+    loss of every other: IBIT is on Nasdaq and GLD, SLV, SPY and DIA are not, so an outage of the Arca partitions
+    alone passed that check and dropped the Arca funds as if the rules no longer held. ``adv_usd_20d`` is NULL for
+    unknown and never for zero (:func:`etf.adv_usd_20d`), so a NULL where the live row had a number is a missing
+    measurement, not a fund below the floor. A fund is held only where the rule would in fact have read its volume,
+    which is where N-CEN gives it **no AUM at all**: one that now has an ``aum`` under the floor is answered by that
+    AUM whatever its volume says, so it leaves and Compustat is not blamed for it. A held fund keeps its live row --
+    its own numbers, its ``entered_on`` and the ``run_id`` of the build that measured them -- and no ``left`` row is
+    written. A volume that is present and under the floor leaves as before, and so does an ``etf_aum`` name: that is
+    the AUM's story, not the volume's.
+
+    A ticker the ``etf`` table does not hold at all today is **not** held here. That is the ETF universe's own
+    source failing, a wider outage than this guard's, and holding a row whose fund the spine no longer knows would
+    keep a name alive on no evidence at all.
+    """
+    if not live:
+        return []
+    now = {e["ticker"]: (e["aum"], e["adv_usd_20d"]) for e in etfs}
+    held = sorted(r["ticker"] for r in live
+                  if r.get("rule") == "etf_adv" and r["ticker"] not in kept
+                  and r["ticker"] in now and now[r["ticker"]] == (None, None))
+    by_ticker = {r["ticker"]: r for r in live}
+    for ticker in held:
+        kept[ticker] = {c: by_ticker[ticker].get(c) for c, _ in SCHEMA}
+        if ticker in undecided:
+            undecided.remove(ticker)
+    return held
+
+
+def _held_issue(held: list[str], kept: dict[str, dict]) -> list[tuple[str, str, str]]:
+    """The one issue naming the funds :func:`_hold_lost_volume` held and the manual file did not then remove: a
+    fund avo took out by hand is gone on purpose, so the issue does not report it as held."""
+    named = [t for t in held if t in kept]
+    if not named:
+        return []
+    shown = ", ".join(named[:MANY])
+    return [("my_universe_etf_volume_lost", ETF,
+             f"{len(named)} ETFs of the live {TABLE} entered on their 20-session dollar volume and Compustat gives "
+             f"them none now, so they are held on their live numbers instead of being dropped: {shown}"
+             + (f" and {len(named) - MANY} more" if len(named) > MANY else ""))]
 
 
 def _changes(out: list[dict], live: list[dict] | None, as_of: date, run_id: str) -> list[dict]:

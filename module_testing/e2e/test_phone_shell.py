@@ -44,7 +44,7 @@ LAYOUT = r"""(function(){
   var content = document.getElementById("content");
   var frame = document.querySelector(".frame.on");
   var small = [];
-  document.querySelectorAll(".topbar button, .topbar input, .sidebar .nav-item, .sidebar .nav-header, .rc-open-issues > summary")
+  document.querySelectorAll(".topbar button, .topbar input, .sidebar .nav-item, .sidebar .nav-header")
     .forEach(function(el){ if(!shown(el)) return;
       var b = box(el.closest("label") || el);       // a labelled checkbox is tapped through its label
       if(b.h < 44 || b.w < 44) small.push((el.id || el.className || el.tagName) + " " + Math.round(b.w) + "x" + Math.round(b.h)); });
@@ -245,15 +245,13 @@ def test_a_desktop_toggles_the_theme_from_the_sidebar(dashboard, browser):
 
 
 def test_the_summaries_keep_their_arrow_on_a_phone(dashboard, browser):
-    """#190 review: the 44 px rule made "What am I looking at?", "Recorded sessions" and "Open issues" lose
-    their open/closed arrow on a phone or a touch screen."""
+    """#190 review: the 44 px rule made "What am I looking at?" and "Recorded sessions" lose their
+    open/closed arrow on a phone or a touch screen. Every ``<details>`` now lives inside the board
+    document; the shell itself carries none since the open-issues group was removed."""
     _open(browser, dashboard, PHONE, "dark", "module_settings")
-    shell = browser.eval("Array.prototype.map.call(document.querySelectorAll('details > summary'),"
-                         " function(s){ return getComputedStyle(s).display; })")
     board = browser.eval("Array.prototype.map.call(document.querySelector('.frame.on').contentDocument"
                          ".querySelectorAll('details.help > summary'), function(s){"
                          " var r = s.getBoundingClientRect(); return [getComputedStyle(s).display, r.height]; })")
-    assert shell and all(d == "list-item" for d in shell), f"shell summaries: {shell}"
     assert board and all(d == "list-item" for d, _ in board), f"board help summary: {board}"
     assert all(h >= 44 for _, h in board), f"the help summary is under 44 px: {board}"
 
