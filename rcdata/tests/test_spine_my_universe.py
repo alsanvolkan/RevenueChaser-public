@@ -174,6 +174,54 @@ def test_with_no_aum_anywhere_n_cen_has_not_run_and_no_fund_is_called_undecided(
     assert rows == {} and issues == []
 
 
+def test_an_undecided_fund_a_manual_remove_took_out_is_not_named_undecided():
+    """``my_universe_etf_undecided`` is built after the manual lines (#444): a fund avo removed by hand is gone on
+    purpose, not a fund the rule cannot judge."""
+    con = _con(etfs=[_etf("ZZZ"), _etf("XLK", aum=80_000_000_000.0)])
+    rows, _, issues = _rows(con, manual=([], [{"ticker": "ZZZ", "reason": "avo took it out"}]))
+    assert sorted(rows) == ["XLK"]
+    assert issues == []
+
+
+def test_an_undecided_fund_a_manual_add_let_in_is_not_named_undecided():
+    """The other side of the same rule: the fund is in the list, by hand, so the rule's silence is no longer news."""
+    con = _con(etfs=[_etf("ZZZ"), _etf("XLK", aum=80_000_000_000.0)])
+    rows, _, issues = _rows(con, manual=([{"ticker": "ZZZ", "reason": "avo wants it"}], []))
+    assert sorted(rows) == ["XLK", "ZZZ"] and rows["ZZZ"]["rule"] == "manual"
+    assert issues == []
+
+
+def test_the_undecided_issue_still_names_the_funds_the_manual_file_says_nothing_about():
+    con = _con(etfs=[_etf("ZZZ"), _etf("WWW"), _etf("XLK", aum=80_000_000_000.0)])
+    _, _, issues = _rows(con, manual=([], [{"ticker": "ZZZ", "reason": "avo took it out"}]))
+    kind, key, detail = issues[0]
+    assert (kind, key) == ("my_universe_etf_undecided", my_universe.ETF)
+    assert detail.startswith("1 ETFs") and "WWW" in detail and "ZZZ" not in detail
+
+
+def test_the_undecided_issue_names_the_first_twenty_funds_and_counts_the_rest():
+    """One issue, not thousands of rows, and it names at most :data:`my_universe.MANY` of them."""
+    many = [f"U{i:03d}" for i in range(my_universe.MANY + 2)]
+    con = _con(etfs=[_etf(t) for t in many] + [_etf("XLK", aum=80_000_000_000.0)])
+    _, _, issues = _rows(con)
+    detail = issues[0][2]
+    assert issues[0][0] == "my_universe_etf_undecided"
+    assert detail.endswith("and 2 more") and many[my_universe.MANY - 1] in detail
+    assert many[my_universe.MANY] not in detail
+
+
+def test_a_name_a_manual_remove_took_out_says_so_in_the_changes_table(live_my_universe):
+    """The append-only changes table told every leaver "the rules no longer hold", even one avo removed by hand,
+    which is the one case where the rules were not applied at all (#444)."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_aum", "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY", aum=80_000_000_000.0), _etf("XLK", aum=80_000_000_000.0)])
+    rows, changes, _ = _rows(con, manual=([], [{"ticker": "SPY", "reason": "avo took it out"}]))
+    assert sorted(rows) == ["XLK"]
+    gone = [c for c in changes if c["change"] == "left"]
+    assert [(c["ticker"], c["reason"]) for c in gone] == [
+        ("SPY", "taken out by hand in my_universe_manual.json: avo took it out")]
+
+
 def test_a_manual_add_enters_with_its_reason_and_the_spines_own_name():
     con = _con([_sec("MSGS", None)], [_etf("NEWE")])
     rows, _, _ = _rows(con, manual=([{"ticker": "msgs", "reason": "avo: a real stock, untyped"},

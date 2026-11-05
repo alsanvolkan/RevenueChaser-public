@@ -18,13 +18,17 @@ the list can be swapped by editing one file:
   about (SPY and DIA as unit investment trusts, GLD, SLV, IBIT and the other commodity and crypto trusts). A fund
   with neither number is **undecided**: it does not enter, and all of them together are **one**
   ``my_universe_etf_undecided`` issue that names them -- one row per fund would be thousands of rows in
-  ``ops.sqlite`` for a single input gap. Before N-CEN has answered at all (no ``aum`` anywhere) nothing is
-  reported: that is the missing source's story, not the funds';
+  ``ops.sqlite`` for a single input gap. The issue names only the funds :data:`MANUAL_FILE` says nothing about,
+  because it is built after the manual lines (#444): one avo removed is gone on purpose and one he added is in the
+  list by hand. Before N-CEN has answered at all (no ``aum`` anywhere) nothing is reported: that is the missing
+  source's story, not the funds';
 - a **delisted** name never enters, and neither source holds one: ``security`` is the SEC's current ticker and
   exchange file, ``etf`` Alpha Vantage's *active* rows, N-CEN's series and the spine's own ``etp`` rows;
 - :data:`MANUAL_FILE` (``my_universe_manual.json``) adds and removes names by hand, with a reason each. A remove
   wins over an add of the same ticker; a line naming a ticker neither table holds is a
-  ``my_universe_manual_unknown`` issue, never invented as a row.
+  ``my_universe_manual_unknown`` issue, never invented as a row. A name a remove takes out of the live list says
+  so in ``my_universe_changes``, with avo's own reason, rather than "the rules no longer hold": his line is the one
+  case where the rules were not applied at all.
 
 **Both kinds at once.** A ticker the stock rule and the ETF rule both claim is kept once, as the stock, and
 reported as ``my_universe_both_kinds``. It does not happen in a normal build (an ``etf`` row of the SEC equity
@@ -216,16 +220,6 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rules: Rules | No
 
     _no_volume_source(con, live)
     held = _hold_lost_volume(live, etfs, kept, undecided)
-    # The plan's rule for a source that has never run: the rule is not applied, and the source is one
-    # ``source_never_run`` issue instead of thousands of per-name ones. ``aum`` comes from N-CEN alone, so with no
-    # AUM anywhere N-CEN has not answered yet and every fund is trivially "undecided" -- saying so per fund, or even
-    # once, would report the missing source as a property of the funds.
-    aum_known = int(con.execute(f"SELECT count(*) FROM {etf_mod.TABLE} WHERE aum IS NOT NULL").fetchone()[0])
-    if undecided and aum_known:
-        shown = ", ".join(undecided[:MANY])
-        issues.append(("my_universe_etf_undecided", ETF,
-                       f"{len(undecided)} ETFs have no AUM in N-CEN and no 20-session dollar volume yet: {shown}"
-                       + (f" and {len(undecided) - MANY} more" if len(undecided) > MANY else "")))
 
     known = {r["ticker"]: r for r in _rows(con, "SELECT ticker, security_type, name, exchange, tier, source, "
                                                 "source_as_of, fetched_at FROM security")}
@@ -259,9 +253,11 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rules: Rules | No
             issues.append(("my_universe_manual_unknown", ticker,
                            "a manual remove naming a ticker neither security nor etf holds"))
 
+    by_hand = {r["ticker"]: r["reason"] for r in removes if r["ticker"] in removed}
+    issues.extend(_undecided_issue(con, undecided, kept, removed))
     issues.extend(_held_issue(held, kept))
     out = [kept[t] for t in sorted(kept)]
-    return out, _changes(out, live, as_of, ctx.run_id), issues
+    return out, _changes(out, live, as_of, ctx.run_id, by_hand), issues
 
 
 def _no_volume_source(con: duckdb.DuckDBPyConnection, live: list[dict] | None) -> None:
@@ -319,6 +315,31 @@ def _hold_lost_volume(live: list[dict] | None, etfs: list[dict], kept: dict[str,
     return held
 
 
+def _undecided_issue(con: duckdb.DuckDBPyConnection, undecided: list[str], kept: dict[str, dict],
+                     removed: set[str]) -> list[tuple[str, str, str]]:
+    """The one issue naming the ETFs the rule cannot judge -- no ``aum`` and no ``adv_usd_20d`` -- and that the
+    manual file says nothing about.
+
+    Built here, after the manual adds and removes, and not where ``undecided`` is collected (#444): a fund avo
+    removed by hand is gone on purpose and a fund he added is in the list by hand, so in neither case is the rule's
+    silence news. Before this the issue was built first and named both, the same asymmetry :func:`_held_issue` was
+    moved for.
+
+    **Before N-CEN has answered at all** (no ``aum`` anywhere) nothing is reported, whatever the funds look like:
+    with no AUM in the table every fund is trivially undecided, and saying so -- per fund, or even once -- would
+    report a missing source as a property of the funds. That is the source's own story, and the plan's rule for a
+    source that has never run is one ``source_never_run`` issue instead of thousands of per-name ones.
+    """
+    named = [t for t in undecided if t not in kept and t not in removed]
+    aum_known = int(con.execute(f"SELECT count(*) FROM {etf_mod.TABLE} WHERE aum IS NOT NULL").fetchone()[0])
+    if not named or not aum_known:
+        return []
+    shown = ", ".join(named[:MANY])
+    return [("my_universe_etf_undecided", ETF,
+             f"{len(named)} ETFs have no AUM in N-CEN and no 20-session dollar volume yet: {shown}"
+             + (f" and {len(named) - MANY} more" if len(named) > MANY else ""))]
+
+
 def _held_issue(held: list[str], kept: dict[str, dict]) -> list[tuple[str, str, str]]:
     """The one issue naming the funds :func:`_hold_lost_volume` held and the manual file did not then remove: a
     fund avo took out by hand is gone on purpose, so the issue does not report it as held."""
@@ -332,9 +353,23 @@ def _held_issue(held: list[str], kept: dict[str, dict]) -> list[tuple[str, str, 
              + (f" and {len(named) - MANY} more" if len(named) > MANY else ""))]
 
 
-def _changes(out: list[dict], live: list[dict] | None, as_of: date, run_id: str) -> list[dict]:
+def _left_reason(ticker: str, was: dict, by_hand: dict[str, str]) -> str:
+    """Why a name left: the manual file took it out (with avo's own reason, when he wrote one), or the rules it
+    held under no longer hold. The build cannot know more than that: the row that fed it is simply gone."""
+    if ticker in by_hand:
+        reason = (by_hand[ticker] or "").strip()
+        return f"taken out by hand in {MANUAL_FILE.name}" + (f": {reason}" if reason else "")
+    return f"the rules no longer hold (was {was['rule']})"
+
+
+def _changes(out: list[dict], live: list[dict] | None, as_of: date, run_id: str,
+             by_hand: dict[str, str]) -> list[dict]:
     """The live file's ``my_universe_changes`` rows, then today's entered and left; ``entered_on`` of a name the
-    live list already held is set back to the live row's, in ``out`` itself."""
+    live list already held is set back to the live row's, in ``out`` itself.
+
+    A name ``by_hand`` holds left because :data:`MANUAL_FILE` removed it, which is the one case where the rules were
+    not applied at all, so it says that and carries avo's reason instead of "the rules no longer hold" (#444).
+    """
     if live is None:
         return [{"ticker": r["ticker"], "kind": r["kind"], "change": ENTERED, "reason": r["reason"],
                  "as_of": as_of, "run_id": run_id} for r in out]
@@ -345,8 +380,8 @@ def _changes(out: list[dict], live: list[dict] | None, as_of: date, run_id: str)
         was = before.get(r["ticker"])
         if was is not None and was["entered_on"] is not None:
             r["entered_on"] = was["entered_on"]
-    gone = [{"ticker": t, "kind": b["kind"], "change": LEFT,
-             "reason": f"the rules no longer hold (was {b['rule']})", "as_of": as_of, "run_id": run_id}
+    gone = [{"ticker": t, "kind": b["kind"], "change": LEFT, "reason": _left_reason(t, b, by_hand),
+             "as_of": as_of, "run_id": run_id}
             for t, b in sorted(before.items()) if t not in now]
     came = [{"ticker": r["ticker"], "kind": r["kind"], "change": ENTERED, "reason": r["reason"], "as_of": as_of,
              "run_id": run_id} for r in out if r["ticker"] not in before]
