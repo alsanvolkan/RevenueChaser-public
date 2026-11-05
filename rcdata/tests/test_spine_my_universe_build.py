@@ -96,7 +96,10 @@ def test_a_fund_with_no_aum_enters_on_its_20_session_dollar_volume_and_a_thin_on
 def test_the_undecided_funds_are_build_issues_the_ops_file_keeps(built):
     built()
     kinds = {r["kind"]: r["count"] for r in ops.open_issue_kinds(security.NAME)}
-    assert kinds.get("my_universe_etf_undecided") == 4        # SPY, GLD, QYLD, NEWE
+    assert kinds.get("my_universe_etf_undecided") == 1        # one issue naming SPY, GLD, QYLD and NEWE
+    detail = next(i for i in ops.open_issues(security.NAME, limit=50)[1]
+                  if i["kind"] == "my_universe_etf_undecided")["detail"]
+    assert detail.startswith("4 ETFs") and "SPY" in detail and "NEWE" in detail
     assert set(my_universe.ISSUES) <= set(security.ISSUE_KINDS)
 
 

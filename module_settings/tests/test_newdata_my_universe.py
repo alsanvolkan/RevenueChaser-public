@@ -65,3 +65,20 @@ def test_the_manual_lines_reach_the_card_and_are_escaped(monkeypatch):
                               "remove": [{"ticker": "DMLP", "reason": "a royalty trust"}]}
     html = report._nd_my_universe(card)
     assert "<script>" not in html and "&lt;script&gt;" in html
+
+
+def test_a_counts_dict_holding_only_the_universe_counts_still_reads_as_no_spine():
+    """``_serving_facts`` puts the universe counts in the same dict as the identity funnel, so the funnel's own
+    guard cannot be "the dict is None": that would be a KeyError, a 500, where the page said the spine is not
+    built yet (review finding 6)."""
+    funnel = newdata._identity({"my_universe": {"total": 3}})
+    assert funnel["steps"] == [] and funnel["note"] == "the spine has not been built yet"
+
+
+@pytest.mark.usefixtures("built")
+def test_the_change_block_names_its_day_rather_than_claiming_the_last_build():
+    """A build that moves nothing writes no change row, so the newest change day can be older than the last
+    build. The card says which day it is (review finding 5)."""
+    text = _text(newdata.collect(NOW)["my_universe"])
+    assert "The last change to the list" in text and "Changed on the last build" not in text
+    assert " Day " in text

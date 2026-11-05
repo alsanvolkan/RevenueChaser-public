@@ -579,8 +579,9 @@ def _my_universe_counts(con) -> dict:
     """The names we keep, from the spine's ``my_universe`` and ``my_universe_changes`` (one handle, the caller's).
 
     ``kinds`` is how many stocks and ETFs the list holds, ``rules`` how many each rule let in, and ``entered`` /
-    ``left`` what the **newest** build day in ``my_universe_changes`` did -- the changes table is append-only, so
-    the whole history is in it and only the last day is the news.
+    ``left`` what happened on the newest day **that changed anything** -- the changes table is append-only and a
+    build that moved nothing writes no row, so that day may be older than the last build. The card says which day
+    it is rather than calling it the last build (review finding 5).
     """
     kinds = {str(k): int(n) for k, n in con.execute(
         f"SELECT kind, count(*) FROM {MY_UNIVERSE} GROUP BY kind").fetchall()}
@@ -684,7 +685,10 @@ def _identity(counts: dict | None) -> dict:
     issues = {"issues_open": n_issues, "issue_kinds": kinds,
               "issues": [{"kind": i["kind"], "key": i["key"], "detail": i["detail"], "found_on": i["found_on"]}
                          for i in newest]}
-    if counts is None:
+    # ``counts.get("sec")``, not ``counts is None``: ``_serving_facts`` puts the universe counts in the same dict,
+    # so a spine file holding ``my_universe`` but not ``security`` would hand this a dict with no funnel in it and
+    # every ``c[...]`` below would be a KeyError, i.e. a 500 where the page used to say the spine is not built.
+    if not counts or counts.get("sec") is None:
         return {"steps": [], "drops": [], "indexes": {}, "as_of": None, "note": "the spine has not been built yet",
                 **issues}
     c = counts

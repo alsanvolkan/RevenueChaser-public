@@ -15,7 +15,10 @@ the list can be swapped by editing one file:
   gives it no AUM at all, an ``adv_usd_20d`` (the 20-session average daily dollar volume, ``etf.py``) at or over
   10 million. A **known** AUM under the floor is the answer: the volume test only decides a fund N-CEN is silent
   about (SPY and DIA as unit investment trusts, GLD, SLV, IBIT and the other commodity and crypto trusts). A fund
-  with neither number is **undecided**: it does not enter, and it is one ``my_universe_etf_undecided`` issue;
+  with neither number is **undecided**: it does not enter, and all of them together are **one**
+  ``my_universe_etf_undecided`` issue that names them -- one row per fund would be thousands of rows in
+  ``ops.sqlite`` for a single input gap. Before N-CEN has answered at all (no ``aum`` anywhere) nothing is
+  reported: that is the missing source's story, not the funds';
 - a **delisted** name never enters, and neither source holds one: ``security`` is the SEC's current ticker and
   exchange file, ``etf`` Alpha Vantage's *active* rows, N-CEN's series and the spine's own ``etp`` rows;
 - :data:`MANUAL_FILE` (``my_universe_manual.json``) adds and removes names by hand, with a reason each. A remove
@@ -25,6 +28,11 @@ the list can be swapped by editing one file:
 **Both kinds at once.** A ticker the stock rule and the ETF rule both claim is kept once, as the stock, and
 reported as ``my_universe_both_kinds``. It does not happen in a normal build (an ``etf`` row of the SEC equity
 file is typed ``etp``, so it is Tier B and no stock), which is why it is worth saying out loud when it does.
+
+**An input outage is not a rule change.** ``my_universe`` is exempt from the swap guard's shrink limit
+(``serving.SHRINKS_BY_CHOICE``), so a missing ``prices.duckdb`` would otherwise drop every fund that entered on
+its dollar volume, be accepted, and write a ``left`` row no later build can take back. :func:`_no_volume_source`
+fails the build instead, and the live file stands.
 
 **The changes table** is append-only across builds: the live file's rows are carried forward and today's diff
 against the live ``my_universe`` is appended, so the Data settings board can show what entered and left without
@@ -61,6 +69,8 @@ CHANGES_SCHEMA = [("ticker", "TEXT"), ("kind", "TEXT"), ("change", "TEXT"), ("re
 
 STOCK, ETF = "stock", "etf"
 ENTERED, LEFT = "entered", "left"
+#: How many tickers an issue's detail names before it says "and N more".
+MANY = 20
 #: The issue kinds this module finds; ``security.ISSUE_KINDS`` holds their wording for ``ops.sqlite``.
 ISSUES = ("my_universe_etf_undecided", "my_universe_manual_unknown", "my_universe_both_kinds")
 
@@ -160,8 +170,10 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rules: Rules | No
     rules = rules if rules is not None else load_rules()
     adds, removes = _normalise(manual if manual is not None else load_manual())
     as_of = ctx.as_of or date.today()
+    live = stage.live_rows(TABLE, ["ticker", "kind", "rule", "entered_on"])
     issues: list[tuple[str, str, str]] = []
     kept: dict[str, dict] = {}
+    undecided: list[str] = []
 
     def row(src: dict, kind: str, rule: str, reason: str) -> dict:
         return {"ticker": src["ticker"], "kind": kind, "security_type": src.get("security_type") or ETF,
@@ -184,14 +196,25 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rules: Rules | No
                 continue
             rule, reason = "etf_adv", f"no AUM; 20-session dollar volume {_money(adv)}"
         else:
-            issues.append(("my_universe_etf_undecided", e["ticker"],
-                           "N-CEN gives it no AUM and it has no 20-session dollar volume yet"))
+            undecided.append(e["ticker"])
             continue
         if e["ticker"] in kept:
             issues.append(("my_universe_both_kinds", e["ticker"],
                            f"the stock rule and {rule} both claim it; kept as the stock"))
             continue
         kept[e["ticker"]] = row(e, ETF, rule, reason)
+
+    _no_volume_source(con, live)
+    # The plan's rule for a source that has never run: the rule is not applied, and the source is one
+    # ``source_never_run`` issue instead of thousands of per-name ones. ``aum`` comes from N-CEN alone, so with no
+    # AUM anywhere N-CEN has not answered yet and every fund is trivially "undecided" -- saying so per fund, or even
+    # once, would report the missing source as a property of the funds.
+    aum_known = int(con.execute(f"SELECT count(*) FROM {etf_mod.TABLE} WHERE aum IS NOT NULL").fetchone()[0])
+    if undecided and aum_known:
+        shown = ", ".join(undecided[:MANY])
+        issues.append(("my_universe_etf_undecided", ETF,
+                       f"{len(undecided)} ETFs have no AUM in N-CEN and no 20-session dollar volume yet: {shown}"
+                       + (f" and {len(undecided) - MANY} more" if len(undecided) > MANY else "")))
 
     known = {r["ticker"]: r for r in _rows(con, "SELECT ticker, security_type, name, exchange, tier, source, "
                                                 "source_as_of, fetched_at FROM security")}
@@ -204,10 +227,16 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rules: Rules | No
             continue                                            # a remove of the same ticker wins; reported below
         if ticker in kept:
             continue                                            # the rules already let it in: their row stands
-        if ticker in known:
-            kept[ticker] = row(known[ticker], STOCK, "manual", line["reason"])
-        elif ticker in known_etf:
-            kept[ticker] = row(known_etf[ticker], ETF, "manual", line["reason"])
+        sec_row, etf_row = known.get(ticker), known_etf.get(ticker)
+        # ``security`` holds every ETF of the SEC equity file as an ``etp`` Tier B row (SPY, GLD), so resolving a
+        # manual add there first would write a fund as a stock with no AUM. The stock row wins only when its type
+        # is one the stock rule itself accepts; an untyped name with no ``etf`` row is still a stock.
+        as_stock = sec_row is not None and (etf_row is None
+                                            or (sec_row.get("security_type") or "") in rules.stock_types)
+        if as_stock:
+            kept[ticker] = row(sec_row, STOCK, "manual", line["reason"])
+        elif etf_row is not None:
+            kept[ticker] = row(etf_row, ETF, "manual", line["reason"])
         else:
             issues.append(("my_universe_manual_unknown", ticker,
                            "a manual add naming a ticker neither security nor etf holds"))
@@ -220,13 +249,32 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rules: Rules | No
                            "a manual remove naming a ticker neither security nor etf holds"))
 
     out = [kept[t] for t in sorted(kept)]
-    return out, _changes(out, as_of, ctx.run_id), issues
+    return out, _changes(out, live, as_of, ctx.run_id), issues
 
 
-def _changes(out: list[dict], as_of: date, run_id: str) -> list[dict]:
+def _no_volume_source(con: duckdb.DuckDBPyConnection, live: list[dict] | None) -> None:
+    """Refuse the build when the live list holds ``etf_adv`` names and **no** ``etf`` row has a dollar volume.
+
+    ``my_universe`` is in ``serving.SHRINKS_BY_CHOICE``, so a shrink does not refuse the swap. Without this check a
+    missing or unreadable ``prices.duckdb`` (:func:`etf.adv_usd_20d` then answers nothing) would drop every fund
+    that entered on its volume, accept the swap, and write a ``left`` row that no later build can take back. An
+    input outage is not a change of the rules, so the build fails and the live file stands.
+    """
+    if not live or not any(r["rule"] == "etf_adv" for r in live):
+        return
+    rows_with, rows_total = con.execute(
+        f"SELECT count(*) FILTER (WHERE adv_usd_20d IS NOT NULL), count(*) FROM {etf_mod.TABLE}").fetchone()
+    if rows_total and not rows_with:
+        raise ValueError(
+            f"{sum(1 for r in live if r['rule'] == 'etf_adv')} names of the live {TABLE} entered on their "
+            f"20-session dollar volume and not one of the {rows_total} etf rows has one now: the prices store gave "
+            f"no volume at all (missing, unreadable or empty). Refusing to drop them; fix the source and build "
+            f"again, or take them out of {MANUAL_FILE.name} on purpose.")
+
+
+def _changes(out: list[dict], live: list[dict] | None, as_of: date, run_id: str) -> list[dict]:
     """The live file's ``my_universe_changes`` rows, then today's entered and left; ``entered_on`` of a name the
     live list already held is set back to the live row's, in ``out`` itself."""
-    live = stage.live_rows(TABLE, ["ticker", "kind", "rule", "entered_on"])
     if live is None:
         return [{"ticker": r["ticker"], "kind": r["kind"], "change": ENTERED, "reason": r["reason"],
                  "as_of": as_of, "run_id": run_id} for r in out]

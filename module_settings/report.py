@@ -2557,15 +2557,17 @@ def _nd_my_universe(u: dict | None) -> str:
     counts = (_nd_row("Stocks", _nd(kinds.get("stock") or 0)) + _nd_row("ETFs", _nd(kinds.get("etf") or 0))
               + _nd_row("On the list", _nd(u.get("total") or 0)))
     by_rule = "".join(_nd_row(ND_MY_UNIVERSE_RULES.get(k, k), _nd(n)) for k, n in by_rule_counts.items())
-    changed = (_nd_row("Entered", _nd(u.get("entered") or 0)) + _nd_row("Left", _nd(u.get("left") or 0))
-               + _nd_row("On", _nd(u.get("last_change"))))
+    # The newest day that moved anything, which a quiet build leaves where it was: the row says which day, so the
+    # card never passes last week's numbers off as today's build (review finding 5).
+    changed = (_nd_row("Day", _nd(u.get("last_change"))) + _nd_row("Entered", _nd(u.get("entered") or 0))
+               + _nd_row("Left", _nd(u.get("left") or 0)))
     return (head
             + '<div class="nd-sub">The names RevenueChaser keeps. Every store built from here on is built from this '
               f'list; the spine itself keeps every row it holds. Spine as of {_nd(u.get("as_of"))}.</div>'
             + f'<div class="nd-rows">{counts}</div>'
             + f'<details><summary>What let each name in</summary><div class="nd-rows">{by_rule}</div></details>'
             + f'<details><summary>The rules the next build applies</summary>{rules}</details>'
-            + f'<details><summary>Changed on the last build</summary><div class="nd-rows">{changed}</div></details>'
+            + f'<details><summary>The last change to the list</summary><div class="nd-rows">{changed}</div></details>'
             + by_hand + "</div>")
 
 

@@ -109,8 +109,8 @@ ISSUE_KINDS = {
     "membership_files_disagree": "the fund files of an index disagree on a name today (key: index:ticker)",
     "membership_wrds_differs": ("fund-file members and Compustat's differ on the Compustat snapshot day "
                                 "(key: index:ticker)"),
-    "my_universe_etf_undecided": ("an ETF with no AUM and no 20-session dollar volume yet, so the universe rule "
-                                  "cannot judge it (key: the ticker)"),
+    "my_universe_etf_undecided": ("the ETFs with no AUM and no 20-session dollar volume yet, so the universe rule "
+                                  "cannot judge them: one issue naming them (key: etf)"),
     "my_universe_manual_unknown": ("a line of the manual universe file naming a ticker the spine does not hold "
                                    "(key: the ticker)"),
     "my_universe_both_kinds": ("a ticker the stock rule and the ETF rule both claim; kept as the stock "

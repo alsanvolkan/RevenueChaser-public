@@ -148,11 +148,14 @@ def test_an_etn_or_a_cef_never_enters_however_large_it_is():
     assert rows == {}
 
 
-def test_an_etf_with_neither_an_aum_nor_a_volume_is_undecided_and_says_so_once():
-    con = _con(etfs=[_etf("NEWE"), _etf("XLK", aum=80_000_000_000.0)])
+def test_every_undecided_etf_is_one_issue_between_them_not_one_each():
+    """``source_never_run``'s rule: thousands of rows for one input gap is noise, so the undecided funds are one
+    issue that names them. On the live store today this would otherwise open ~4,200 rows in ops.sqlite."""
+    con = _con(etfs=[_etf("NEWE"), _etf("QYLD"), _etf("XLK", aum=80_000_000_000.0)])
     rows, _, issues = _rows(con)
     assert sorted(rows) == ["XLK"]
-    assert [(k, key) for k, key, _ in issues] == [("my_universe_etf_undecided", "NEWE")]
+    assert [(k, key) for k, key, _ in issues] == [("my_universe_etf_undecided", "etf")]
+    assert "2 ETFs" in issues[0][2] and "NEWE, QYLD" in issues[0][2]
 
 
 def test_a_leveraged_or_inverse_fund_enters_on_its_aum_like_any_other():
@@ -162,6 +165,14 @@ def test_a_leveraged_or_inverse_fund_enters_on_its_aum_like_any_other():
 
 
 # ── The manual file ──────────────────────────────────────────────────────────────────────────────────────────
+
+def test_with_no_aum_anywhere_n_cen_has_not_run_and_no_fund_is_called_undecided():
+    """``aum`` comes from N-CEN alone. Before it has answered every fund would be "undecided", which is the
+    missing source's story (``source_never_run``), not the funds'."""
+    con = _con(etfs=[_etf("SPY"), _etf("GLD"), _etf("NEWE")])
+    rows, _, issues = _rows(con)
+    assert rows == {} and issues == []
+
 
 def test_a_manual_add_enters_with_its_reason_and_the_spines_own_name():
     con = _con([_sec("MSGS", None)], [_etf("NEWE")])
@@ -192,6 +203,21 @@ def test_a_manual_line_naming_a_ticker_the_spine_does_not_hold_is_an_issue_not_a
     assert sorted(rows) == ["MSFT"]
     assert sorted((k, key) for k, key, _ in issues) == [("my_universe_manual_unknown", "GONE"),
                                                         ("my_universe_manual_unknown", "NOPE")]
+
+
+def test_a_manual_add_of_an_etf_security_also_holds_as_an_etp_row_is_the_etf():
+    """SPY is a row of the SEC equity file too, typed ``etp`` and so Tier B. Resolving a manual add against
+    ``security`` first would write it as a stock with ``security_type='etp'`` and no AUM."""
+    con = _con([_sec("SPY", "etp", tier="B")], [_etf("SPY", aum=50_000_000.0)])   # under the floor: the rules say no
+    rows, _, _ = _rows(con, manual=([{"ticker": "SPY", "reason": "avo: the benchmark"}], []))
+    assert rows["SPY"]["kind"] == "etf" and rows["SPY"]["security_type"] == "etf"
+    assert rows["SPY"]["aum"] == 50_000_000.0 and rows["SPY"]["rule"] == "manual"
+
+
+def test_a_manual_add_of_an_untyped_stock_is_still_a_stock_even_with_no_etf_row():
+    con = _con([_sec("MSGS", None)])
+    rows, _, _ = _rows(con, manual=([{"ticker": "MSGS", "reason": "avo: a real stock"}], []))
+    assert rows["MSGS"]["kind"] == "stock"
 
 
 def test_a_manual_add_of_a_name_the_rules_already_let_in_keeps_the_rules_row():
@@ -233,6 +259,24 @@ def test_the_changes_of_the_live_file_are_carried_forward_and_todays_appended(li
         ("MSFT", "entered", date(2026, 10, 1)),
         ("GONE", "left", date(2026, 11, 4)),
         ("TM", "entered", date(2026, 11, 4))]
+
+
+def test_the_build_refuses_when_the_volume_source_went_away_under_names_that_need_it(live_my_universe):
+    """``my_universe`` is exempt from the swap guard's shrink limit, so an input outage would otherwise drop every
+    ``etf_adv`` fund quietly and write a permanent ``left`` row. The build fails instead."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY"), _etf("XLK", aum=80_000_000_000.0)])     # no adv on any row: the prices file is gone
+    with pytest.raises(ValueError, match="20-session dollar volume"):
+        my_universe.rows(_ctx(), con)
+
+
+def test_a_fund_losing_only_its_own_volume_is_not_an_outage(live_my_universe):
+    """One fund dropping out while others still measure is a real change, not a missing source."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY"), _etf("GLD", adv=50_000_000.0)])
+    rows, changes, _ = _rows(con)
+    assert sorted(rows) == ["GLD"]
+    assert [(c["ticker"], c["change"]) for c in changes] == [("SPY", "left"), ("GLD", "entered")]
 
 
 def test_a_name_that_left_names_the_rule_it_held_under(live_my_universe):
