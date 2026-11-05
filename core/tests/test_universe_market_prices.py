@@ -13,8 +13,7 @@ import pytest
 
 from RevenueChaser.core import rawstore, spine_reads, universe
 from RevenueChaser.core.reporting_common import universe_provenance_html
-from RevenueChaser.core.tests.test_universe_spine_flag import (CAPS, old_store,  # noqa: F401 - the fixtures
-                                                               spine, without_my_universe)
+from RevenueChaser.core.tests.test_universe_spine_flag import CAPS, old_store, spine  # noqa: F401 - the fixtures
 from RevenueChaser.rcdata.tests.conftest import http_mock, market_roots  # noqa: F401 - market roots per test
 from RevenueChaser.rcdata.tests.test_spine_security import built  # noqa: F401 - the 10 names
 
