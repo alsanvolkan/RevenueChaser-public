@@ -10,6 +10,7 @@ from markupsafe import Markup
 from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, notice_html, provider_health_html
 
 from . import expected_move
+from .close_check import close_card
 from .brier import scorecard
 from .config import BRIER_FILENAME, HISTORY_FILENAME
 from .snapshot import HISTORY_ORIGIN
@@ -128,6 +129,23 @@ def _max_pain_rows(snapshot: dict) -> list[dict]:
     return rows
 
 
+def _max_pain_count(snapshot: dict) -> dict | None:
+    """F8 (§5.2): how many expiries' max pain sit below, at and above spot."""
+    d = [r.get("distance_pct") for r in snapshot.get("max_pain", []) if r.get("distance_pct") is not None]
+    if not d:
+        return None
+    return {"below": sum(1 for x in d if x < 0), "above": sum(1 for x in d if x > 0), "at": sum(1 for x in d if x == 0)}
+
+
+def _front_share(snapshot: dict) -> dict | None:
+    """F7 (§6): the front expiry's share of the total Net GEX, formatted."""
+    s = snapshot.get("front_expiry_share") or {}
+    if s.get("share_pct") is None:
+        return None
+    return {"expiry": s["expiry"], "share": f"{s['share_pct']:.2f}%",
+            "front": fmt_signed_compact(s["front_net_gex"]), "total": fmt_signed_compact(s["total_net_gex"])}
+
+
 def _vol_term_rows(snapshot: dict) -> list[dict]:
     """Vol term structure rows (expiry + DTE + IV + implied move)."""
     rows = []
@@ -175,9 +193,14 @@ _PANEL_FILES = {
     "options_volume": "options_volume.json",
     "max_pain": "max_pain.json",
     "vol_term": "vol_term_structure.json",
-    "skew": expected_move.IV_FILE,
+    "skew": ("option_chain.json", "skew_chain_1m.json", "skew_chain_3m.json"),   # F3: the 25-delta chains
     # the chain, and the IV its wing width is sized from (review S1)
     "iron_butterfly": ("option_chain.json", expected_move.IV_FILE),
+    "straddle": "target_chain.json",
+    "hourly_triggers": "spy_ohlc_30m.json",
+    # Fable review 5 Nov (#4): both price this day's bands or book on the chains, which are live files too
+    "structures": "target_chain.json",
+    "dealer_book": ("option_chain.json", "target_chain.json"),
 }
 
 
@@ -465,7 +488,9 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
     env = snapshot.get("gex_envelope") or {}
     relations = greek_relations(snapshot)
     chain = causal_chain(snapshot)
-    scenarios = build_scenarios(snapshot)
+    _hist_panels = _historical_panels(snapshot)
+    # A backfilled day's SPY bars are a later session's file: no hourly state for it (n/a, not "waiting")
+    scenarios = build_scenarios({**snapshot, "hourly_closes": None} if _hist_panels.get("hourly_triggers") else snapshot)
     brier = scorecard(path=Path(data_root) / BRIER_FILENAME) if data_root else scorecard()
     signal = signal_matrix(cards)
 
@@ -534,12 +559,12 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
             "absorption": {
                 "range": f"{absorption.get('lo'):,.0f}–{absorption.get('hi'):,.0f}" if absorption.get("lo") is not None else "N/A",
                 "net_gex": fmt_signed_compact(absorption.get("net_gex")),
-                "per_25pt": f"{absorption.get('per_25pt'):,.1f}" if absorption.get("per_25pt") is not None else "N/A",
+                "per_25pt": fmt_signed_compact(absorption.get("per_25pt")).lstrip("+") if absorption.get("per_25pt") is not None else "N/A",
             },
             "air_gap": {
                 "range": f"{air_gap.get('lo'):,.0f}–{air_gap.get('hi'):,.0f}" if air_gap.get("lo") is not None else "N/A",
                 "net_gex": fmt_signed_compact(air_gap.get("net_gex")),
-                "per_25pt": f"{air_gap.get('per_25pt'):,.1f}" if air_gap.get("per_25pt") is not None else "N/A",
+                "per_25pt": fmt_signed_compact(air_gap.get("per_25pt")).lstrip("+") if air_gap.get("per_25pt") is not None else "N/A",
             },
             "zero_crossing": fmt_level(env.get("zero_crossing")),
         },
@@ -558,8 +583,11 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "store_labels": store_labels(snapshot),
         "builder_line": builder_line(snapshot),
         "iron_butterfly": snapshot.get("iron_butterfly"),
+        "iron_butterfly_na": snapshot.get("iron_butterfly_na"),
         # ── v3 external panels ──
         "max_pain": _max_pain_rows(snapshot),
+        "max_pain_count": _max_pain_count(snapshot),
+        "front_share": _front_share(snapshot),
         "iv_rank": snapshot.get("iv_rank"),
         "options_volume": snapshot.get("options_volume"),
         "vol_term": _vol_term_rows(snapshot),
@@ -568,12 +596,25 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "skew": snapshot.get("skew"),
         "vix": snapshot.get("vix"),
         "vega_flow": snapshot.get("vega_flow"),
+        "straddle": snapshot.get("straddle_move"),
+        "tails": _tail_rows(snapshot),
+        "vol_calendar": snapshot.get("vol_calendar") or [],
+        "week_gamma": _week_gamma(snapshot),
+        "close_check": close_card(snapshot),
+        "dealer_book": None if _hist_panels.get("dealer_book") else _dealer_book(snapshot),
+        "structures": None if _hist_panels.get("structures") else _structures(snapshot),
+        "session_flow": [{"expiry": r["expiry"], "net_gex": fmt_signed_compact(r.get("net_gex")),
+                          "hedge_50pt": fmt_signed_compact(r.get("hedge_50pt")).lstrip("+"),
+                          "net_charm": fmt_signed_compact(r.get("net_charm")),
+                          "net_vanna": fmt_signed_compact(r.get("net_vanna")), "effect": r["effect"]}
+                         for r in snapshot.get("session_flow") or []],
         "vix_greeks": snapshot.get("vix_greeks"),
         "cftc": snapshot.get("cftc"),
         # Live panels in a backfilled day hold a later session's value: shown "n/a (historical)".
-        "historical": _historical_panels(snapshot),
+        "historical": _hist_panels,
         # ── v4 provider comparison ──
         "dte_band_walls": _dte_band_rows(snapshot),
+        "target_walls": _target_wall_row(snapshot),
         "flip_methods": _flip_methods(snapshot),
         # The report's §2 and §15: both derived from this snapshot and the history already read above.
         "regime_conditions": change_conditions(snapshot, _hist, snapshot.get("asof_date")),
@@ -593,6 +634,91 @@ def _dte_band_rows(snapshot: dict) -> list[dict]:
             "call_wall_net": fmt_signed_compact(w.get("call_wall_net")),
         })
     return rows
+
+
+_BOOK_ROWS = (("gamma", "Gamma ($ per 1 %)", True), ("gamma_down50", "Gamma, spot -50 ($ per 1 %)", True),
+              ("vanna", "Vanna ($ delta per IV point)", True), ("charm", "Charm ($ delta per day)", True),
+              ("vomma", "Vomma (sign)", False), ("zomma", "Zomma (sign)", False), ("speed", "Speed (sign)", False))
+
+
+def _structures(snapshot: dict) -> dict | None:
+    """A2: the report structures priced on the target Friday's quotes, formatted (points; XSP a tenth)."""
+    from .scenarios import scenario_bands
+    from .structures import build_structures
+    rows = snapshot.get("target_chain_rows") or []
+    built = build_structures(scenario_bands(snapshot), rows, rows[0].get("expiry") if rows else None)
+    if not built or not built["structures"]:
+        return None
+
+    def pts(v):
+        return "n/a" if v is None else f"{v:,.2f}"
+    out = []
+    for s in built["structures"]:
+        net = s["net"]
+        out.append({
+            "name": s["name"], "family": s["family"],
+            "legs": " / ".join(f"{'+' if l['action'] == 'BUY' else '−'}{l['type']} {l['strike']:,.0f}" for l in s["legs"]),
+            "net": "n/a" if net is None else (f"credit {net:,.2f}" if net > 0 else f"debit {-net:,.2f}"),
+            "xsp": "n/a" if s["xsp_net"] is None else f"{abs(s['xsp_net']):,.2f}",
+            "max_profit": pts(s["max_profit"]), "max_loss": pts(s["max_loss"]),
+            "breakevens": ", ".join(f"{b:,.1f}" for b in s["breakevens"]) or "n/a",
+            "reward_risk": "n/a" if s["reward_risk"] is None else f"{s['reward_risk']:.2f}",
+            "missing": ", ".join(s["missing"]),
+        })
+    return {"expiry": built["expiry"], "label": built["label"], "rows": out,
+            "live": any(s["net"] is not None for s in built["structures"])}
+
+
+def _dealer_book(snapshot: dict) -> dict | None:
+    """A4: the book formatted, one row per greek with (a) and (b)."""
+    b = snapshot.get("dealer_book")
+    if not b:
+        return None
+
+    def cell(v, dollars):
+        if dollars:
+            return fmt_signed_compact(v)
+        return "+" if v > 0 else "-" if v < 0 else "0"
+    return {"rows": [{"label": label, "a": cell(b["a"][k], d), "b": cell(b["b"][k], d)} for k, label, d in _BOOK_ROWS],
+            "words_a": b["a"]["words"], "words_b": b["b"]["words"], "contracts": b["contracts"],
+            "expiries": ", ".join(b["expiries"])}
+
+
+def _week_gamma(snapshot: dict) -> dict | None:
+    """A1: the week map formatted for the page."""
+    wm = snapshot.get("week_gamma")
+    if not wm:
+        return None
+    return {"target": wm["target"], "expiries": len(wm.get("expiries") or []),
+            "net_gamma": fmt_signed_compact(wm.get("net_gamma")), "turning_point": fmt_level(wm.get("turning_point")),
+            "rule": wm.get("rule"),
+            "zones": [{"kind": z["kind"], "range": f"{z['lo']:,.0f}–{z['hi']:,.0f}", "gamma": fmt_signed_compact(z["gamma"]),
+                       "share": f"{z['share_pct']:.0f}%",
+                       "tone": "red" if z["kind"] == "Air gap" else "green" if z["kind"] == "Dense block" else ""}
+                      for z in wm.get("zones") or []]}
+
+
+def _tail_rows(snapshot: dict) -> list[dict]:
+    """A9: implied vs realized 5-session tails, formatted; [] from a later session's IV."""
+    if expected_move.historical(snapshot):
+        return []
+    out = []
+    for r in snapshot.get("tails") or []:
+        real = r.get("realized") or {}
+        out.append({"move": f"±{r['move_pct']:.0f}%",
+                    "implied": f"{r['implied']:.1%}" if r.get("implied") is not None else "N/A",
+                    "realized": f"{real['freq']:.1%} ({real['hits']}/{real['windows']})" if real else "N/A"})
+    return out
+
+
+def _target_wall_row(snapshot: dict) -> dict | None:
+    """A11: the target expiry's walls, formatted like a DTE-band row."""
+    w = snapshot.get("target_expiry_walls")
+    if not w:
+        return None
+    return {"band": f"Target expiry {w['expiry']}", "put_wall": fmt_level(w.get("put_wall")),
+            "put_wall_net": fmt_signed_compact(w.get("put_wall_net")), "call_wall": fmt_level(w.get("call_wall")),
+            "call_wall_net": fmt_signed_compact(w.get("call_wall_net"))}
 
 
 def _tone(value) -> str:

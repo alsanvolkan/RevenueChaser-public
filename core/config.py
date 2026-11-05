@@ -44,8 +44,8 @@ load_env_file(BASE_DIR / ".env")
 def _root(env_var: str, default: Path | None) -> Path | None:
     override = (os.getenv(env_var) or "").strip()
     return Path(override).expanduser().resolve() if override else default
-# Durable raw data lives in one top-level folder (.store/) — the single DuckDB
-# file plus nothing else. Everything in .store is DURABLE: it is the source of
+# Durable raw data lives in one top-level folder (.store/) — the DuckDB files
+# and, since S4 (#38), the SPX Gamma tree (spx_gamma/). Everything in .store is DURABLE: it is the source of
 # truth for caches/series and must not be deleted casually. Regenerable
 # artifacts (rendered dashboards, *_latest.json/html, downloaded source zips)
 # live in .cache/ and may be cleared at any time. See docs/data_architecture.md.

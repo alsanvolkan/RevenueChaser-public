@@ -26,6 +26,7 @@ body{ background:var(--bg); color:var(--fg); font-family:'Segoe UI',system-ui,sa
 .header{ color:var(--muted); font-size:12px; padding-bottom:8px; border-bottom:1px solid var(--border); margin-bottom:16px; }
 .at-glance{ font-size:15px; font-weight:600; color:var(--bright); background:var(--card); border:1px solid var(--border); border-radius:8px; padding:8px 16px; margin:12px 0 20px; }
 .at-glance .muted{ color:var(--muted); font-weight:400; }
+.muted{ color:var(--muted); }
 h2{ font-size:19px; margin:24px 0 8px; color:var(--bright); }
 h3{ font-size:15px; margin:16px 0 8px; color:var(--bright); }
 .chart{ margin:8px 0 16px; max-width:100%; overflow:hidden; }
@@ -153,6 +154,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 .flow-green{ background:var(--pos-bg); color:var(--green); }
 .flow-red{ background:var(--neg-bg); color:var(--red); }
 .flow-flat{ background:var(--flat-bg); color:var(--muted); }
+.flow-amber{ background:var(--flat-bg); color:var(--amber); }
 /* ── predictive scenario & directional engine ── */
 .prediction-container{ margin:16px 0 20px; display:flex; flex-direction:column; gap:16px; }
 .prediction-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; }
@@ -179,6 +181,16 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 .text-green{ color:var(--green); font-weight:600; }
 .text-red{ color:var(--red); font-weight:600; }
 .text-amber{ color:var(--amber); font-weight:600; }
+/* ── reader order (Fable review §6): numbered groups, 1-6 open, 7-11 collapsed ── */
+.group-open{ margin:24px 0 8px; }
+.group-h{ font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--sky);
+  border-left:3px solid var(--sky); padding:4px 0 4px 8px; margin:0 0 8px; }
+.group-open > h2:first-of-type, .group-open > .box:first-of-type > h2:first-child{ margin-top:8px; }
+details.group{ margin:16px 0; }
+details.group > summary{ min-height:48px; }
+details.group > .box-inner h2{ font-size:15px; margin:16px 0 8px; }
+details.group details.collapsible{ margin:12px 0; background:var(--bg); }
+@media (max-width:640px){ .group-open .box, details.group{ margin-left:0; margin-right:0; } }
 /* ── tables that stack on a phone: each row becomes a block, each cell its own labelled line ── */
 @media (max-width:900px){ .grid,.relation-grid,.band-row{ grid-template-columns:1fr; } .chain{ flex-direction:column; } .chain .arrow{ transform:rotate(90deg); align-self:center; padding:4px 0; } }
 @media (max-width:640px){
@@ -228,47 +240,189 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <div class="header">{{ header.ticker }} &middot; Price {{ header.price_source }} &middot; Report date {{ header.report_date }} &middot; Sessions {{ header.sessions }} &middot; Last sync: {{ header.last_sync }}&nbsp;EOD &middot; {{ header.source }}</div>
 {{ provider_banner }}{{ quality_banner }}{% if builder_line %}<div class="note store-source">{{ builder_line }}</div>{% endif %}{{ help_block }}
 
-{% if prediction and prediction.bias %}
-<div class="prediction-container">
-  <!-- Top Hero Status Bar -->
-  <div class="prediction-hero">
-    <div class="bias-badge {{ 'bullish' if prediction.bias.startswith('BULLISH') else 'bearish' if prediction.bias.startswith('BEARISH') else 'neutral' }}">EXPECTED DIRECTION: {{ prediction.bias }}{% if prediction.confidence is not none %} ({{ prediction.confidence }}% Conf){% endif %}</div>
-    {% if prediction.active_pin is not none %}<div class="hero-metric"><span>Active Pin</span><strong>{{ prediction.active_pin | fmtnum }}{% if prediction.pin_flag == 'EXPIRING_PIN_FLIP' %}&nbsp;⚑{% endif %}</strong></div>{% endif %}
-    {% if prediction.upside_trigger is not none %}<div class="hero-metric"><span>Accel Trigger</span><strong>&gt; {{ prediction.upside_trigger | fmtnum }}</strong></div>{% endif %}
-    {% if prediction.downside_floor is not none %}<div class="hero-metric"><span>Bounce Floor</span><strong>{{ prediction.downside_floor | fmtnum }}</strong></div>{% endif %}
-  </div>{% if pin_line %}
-  <div class="note pin-source">{{ pin_line }}</div>{% endif %}
+<!-- Reader order (Fable review §6): decision first, then the frame, scenarios, map; detail collapsed below. -->
+<section class="group-open" id="g1">
+<div class="group-h">1 · Decision</div>
+<h2>Close check (22:00 Amsterdam)</h2>
+<div class="box">
+<table class="stack">
+  <thead><tr><th>Step</th><th>Reading</th></tr></thead>
+  <tbody>{% for st in close_check.steps %}<tr><td data-label="Step"><b>{{ loop.index }}. {{ st.step }}</b></td><td data-label="Reading"{% if st.state in ('stress', 'negative', 'downside') %} style="color:var(--red)"{% elif st.state in ('calm', 'positive', 'upside') %} style="color:var(--green)"{% endif %}>{{ st.reading }}</td></tr>{% endfor %}</tbody>
+</table>
+<div class="box-note">{{ close_check.note }}</div>
+</div>
+</section>
 
-  <!-- Scenario Matrix Table -->
-  <div class="overflow-x-auto">
-  <table class="scenario-table stack">
-    <thead><tr><th>Scenario</th><th>Trigger Level</th><th>Dealer Hedging Action</th><th>Target Zone</th></tr></thead>
-    <tbody>
-    {% for s in prediction.scenarios %}
-    <tr class="{{ s.class }}">
-      <td data-label="Scenario">{{ s.name }}</td><td data-label="Trigger Level">{{ s.trigger }}</td><td data-label="Dealer Hedging Action">{{ s.hedging }}</td><td data-label="Target Zone">{{ s.target }}</td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
+<section class="group-open" id="g2">
+<div class="group-h">2 · At a glance</div>
+<h2>At a Glance — Single Source of Truth</h2>
+<div class="ag-box">
+  <!-- Header + flow badge -->
+  <div class="ag-header">
+    <span class="ag-label">At a Glance — Single Source of Truth</span>
+    <span class="flow-badge {{ 'flow-' + (flow_signal.tone if flow_signal else 'flat') }}">{{ (flow_signal.label if flow_signal else 'Wall Holding') }}</span>
   </div>
-
-  <!-- OI vs Volume Divergence Status -->
-  {% if prediction.divergence %}
-  <div class="divergence-bar">
-    {% for d in prediction.divergence[:4] %}
-    <span class="status-item">
-      <strong>{{ d.strike | fmtnum }} {{ d.side }}:</strong>
-      <span class="{{ 'text-amber' if d.flag == 'WALL_DECAYING' else 'text-red' }}">{{ 'DECAYING' if d.flag == 'WALL_DECAYING' else 'FORTIFYING' }} (OI: {{ d.gex_oi | fmt_signed_compact }} | Vol: {{ d.gex_vol | fmt_signed_compact }})</span>
-    </span>
-    {% endfor %}
+  <!-- Seven columns on a desktop, two on a phone; each column is one cell: label, OI value, intraday value -->
+  <div class="ag-grid7">
+    <div class="ag-cell"><div class="ag-h">Spot</div><div class="ag-v-big">{{ header_strip.spot }}</div><div class="ag-h ag-h-vol">Intraday</div></div>
+    <div class="ag-cell"><div class="ag-h">Call Wall</div><div class="ag-v">{{ header_strip.call_wall }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol">{{ header_strip.call_wall_vol }} <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">Put Wall</div><div class="ag-v">{{ header_strip.put_support }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol">{{ header_strip.put_wall_vol }} <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">HVL / Flip</div><div class="ag-v">{{ header_strip.gamma_flip }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol">{{ header_strip.gamma_flip_vol }} <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">Magnet</div><div class="ag-v">{{ header_strip.gamma_magnet }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol ag-dash">—</div></div>
+    <div class="ag-cell"><div class="ag-h">Charm Pin</div><div class="ag-v-sm">{{ header_strip.charm }}</div><div class="ag-v-vol ag-dash">—</div></div>
+    <div class="ag-cell"><div class="ag-h">Vanna Pin</div><div class="ag-v-sm">{{ header_strip.vanna }}</div><div class="ag-v-vol ag-dash">—</div></div>
   </div>
-  {% endif %}
+  <!-- Row 2: 4 metric cards with tooltips -->
+  <div class="ag-cards4">
+    <div class="ag-gex has-tip"><div class="k">NET GEX (OI) <details class="tip"><summary aria-label="What is NET GEX (OI)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</div></details></div><div class="v {{ header_strip.net_gex_tone }}">{{ header_strip.net_gex }}</div></div>
+    <div class="ag-gex"><div class="k">DAILY Δ (1D / 1W)</div><div class="v">{{ header_strip.net_gex_delta_1d }} / {{ header_strip.net_gex_delta_1w }}</div></div>
+    <div class="ag-gex has-tip"><div class="k">MATRIX (≤45 DTE) <details class="tip"><summary aria-label="What is MATRIX (≤45 DTE)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</div></details></div><div class="v {{ header_strip.matrix_gex_tone }}">{{ header_strip.matrix_gex }}</div></div>
+    <div class="ag-gex"><div class="k">SOURCE CHIP</div><div><span class="chip {{ 'chip-pos' if header_strip.source_chip == 'POSITIVE' else ('chip-neg' if header_strip.source_chip == 'NEGATIVE' else '') }}">{{ header_strip.source_chip }}</span></div></div>
+  </div>
+  <div class="ag-note">Total book = all-expiry OI-based net GEX (macro inventory). Matrix = DTE≤45 filter — active-trading gamma that strips far-dated/LEAPS noise; the gap comes from distant tenors.</div>
+  <!-- Row 3: regime + VIX + positioning -->
+  <div class="ag-row ag-row-3">
+    <div class="ag-gex"><div class="k">Regime</div><div class="v">{{ header_strip.regime }}</div></div>
+    <div class="ag-gex"><div class="k">VIX</div><div class="v">{{ header_strip.vix }}</div></div>
+    <div class="ag-gex"><div class="k">Net DEX</div><div class="v">{{ header_strip.net_dex }}</div></div>
+    <div class="ag-gex"><div class="k">Net Vanna</div><div class="v">{{ header_strip.net_vanna }}</div></div>
+    <div class="ag-gex"><div class="k">Live Charm</div><div class="v">{{ header_strip.live_charm }}</div></div>
+  </div>
+</div>
+</section>
 
-  {% if prediction.note %}<div class="hero-note">ⓘ {{ prediction.note }}</div>{% endif %}
+<section class="group-open" id="g3">
+<div class="group-h">3 · What would change the regime</div>
+<h2>What Would Change the Regime</h2>
+<div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> the thresholds that
+would end the frame the rest of this page describes. Each row is a condition, not a forecast: if it is crossed,
+the levels below stop applying and the map has to be re-read.</div>
+{% if regime_conditions %}
+<table class="stack">
+  <thead><tr><th>If this happens</th><th>Then</th></tr></thead>
+  <tbody>
+  {% for c in regime_conditions %}
+  <tr><td data-label="If this happens">{{ c.trigger }}</td><td data-label="Then">{{ c.then }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="note">Not enough levels in this snapshot to state the regime conditions.</div>
+{% endif %}
+</section>
+
+<section class="group-open" id="g4">
+<div class="group-h">4 · Scenarios</div>
+<h2>Scenario Set</h2>
+<table class="stack">
+  <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>Asymmetry</th><th>Trade</th>{% if scenarios.get("hourly_source") %}<th>Hourly close</th>{% endif %}</tr></thead>
+  <tbody>
+  {% for s in scenarios.scenarios %}
+  <tr>
+    <td data-label="Scenario">{{ s.name }}</td><td data-label="Range">{{ s.range }}</td><td data-label="P">{{ s.p }}</td>
+    <td data-label="Asymmetry">{{ "%.2f"|format(s.asymmetry) if s.asymmetry is not none else "n/a" }}</td>
+    <td data-label="Trade">{{ s.trade }}</td>{% if scenarios.get("hourly_source") %}<td data-label="Hourly close">{{ s.get("hourly_text", "") }}</td>{% endif %}
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<div class="note">{{ scenarios.note }}</div>{% if scenarios.get("hourly_source") %}{% set hs = scenarios.hourly_source %}
+<div class="note">Hourly closes from {{ hs.week_start }} ({{ hs.rows|length }} so far): UW {{ hs.source }} 30-minute bars at the report times (10:30 … 15:30 New York and the close), scaled to SPX by {{ "%.4f"|format(hs.ratio) }} (stored SPX close / SPY close of the last shared session). A proxy: the report reads IBKR's SPX hourly close.{% if hs.rows %} Last: {{ hs.rows[-1].amsterdam }} Amsterdam, {{ "{:,.1f}".format(hs.rows[-1].close) }}.{% endif %}</div>{% endif %}{% if historical.hourly_triggers %}
+<div class="note">n/a (historical): The SPY 30-minute bars were fetched in a later session than this day, so no hourly-close state is shown.</div>{% endif %}
+
+<h2>Brier Scorecard</h2>
+<div class="at-glance">
+  <span class="muted">Scored days:</span> {{ brier.scored_count }}
+  &middot; <span class="muted">Avg Brier:</span> {{ brier.average if brier.average is not none else "—" }}
+  &middot; <span class="muted">Equal-weight ref:</span> {{ ("%.4f"|format(brier.equal_weight_reference)) if brier.equal_weight_reference is number else brier.equal_weight_reference }}
+  {%- if brier.skill_score is number %}
+  &middot; <span class="muted">Skill score:</span> {{ "%+.2f"|format(brier.skill_score) }}
+  {%- endif %}
+  {%- if brier.base_rate_reference is number %}
+  &middot; <span class="muted">Base-rate ref:</span> {{ "%.4f"|format(brier.base_rate_reference) }}
+  {%- endif %}
+</div>
+<div class="note">{{ brier.verdict }}</div>
+</section>
+
+<section class="group-open" id="g5">
+<div class="group-h">5 · Week gamma map</div>
+{% if week_gamma %}<h2>Week gamma map</h2>
+<div class="box">
+<div class="at-glance" style="margin:0 0 8px">Expiries through <b>{{ week_gamma.target }}</b> ({{ week_gamma.expiries }}) · week net gamma {{ week_gamma.net_gamma }} · <b>Turning point {{ week_gamma.turning_point }}</b></div>
+<table class="stack">
+  <thead><tr><th>Zone</th><th>Strikes</th><th>Net gamma</th><th>Share of |gamma|</th></tr></thead>
+  <tbody>{% for z in week_gamma.zones %}<tr><td data-label="Zone"{% if z.tone %} style="color:var(--{{ z.tone }})"{% endif %}>{{ z.kind }}</td><td data-label="Strikes">{{ z.range }}</td><td data-label="Net gamma">{{ z.gamma }}</td><td data-label="Share of |gamma|">{{ z.share }}</td></tr>{% endfor %}</tbody>
+</table>
+<div class="box-note">{{ week_gamma.rule }}</div>
 </div>
 {% endif %}
+<h2>SPX Option Position Map</h2>
+<div class="box">{% if chart_html %}<div class="chart chart-map">{{ chart_html }}</div>
+{% elif chart_image %}<div class="chart"><img src="{{ chart_image }}" alt="SPX Option Position Map"></div>{% endif %}</div>{% if store_labels.candles %}
+<div class="note store-source">{{ store_labels.candles }}</div>{% endif %}
 
+<h2>Net GEX Tornado — Strike Profile</h2>
+<div class="box">{% if tornado_html %}<div class="chart">{{ tornado_html }}</div>{% else %}<div class="box-note">Tornado data unavailable for this snapshot.</div>{% endif %}</div>
+
+<h2>Liquidity Layer — Dealer Flow</h2>
+<div class="box">
+{% if envelope_html %}<div class="chart" style="margin:0 0 12px">{{ envelope_html }}</div>{% endif %}
+<div class="band-row" style="margin:0">
+  <div class="band green">
+    <h3>Absorption Band <span class="sub">(positive gamma — dealers trade against the move)</span></h3>
+    <div class="big">{{ gex_envelope.absorption.range }}</div>
+    <div>Net GEX {{ gex_envelope.absorption.net_gex }} &middot; {{ gex_envelope.absorption.per_25pt }} hedge per 25 pt</div>
+  </div>
+  <div class="band red">
+    <h3>Air Gap <span class="sub">(negative gamma — dealers trade with the move)</span></h3>
+    <div class="big">{{ gex_envelope.air_gap.range }}</div>
+    <div>Net GEX {{ gex_envelope.air_gap.net_gex }} &middot; {{ gex_envelope.air_gap.per_25pt }} hedge per 25 pt</div>
+  </div>
+</div>
+<div class="at-glance" style="margin:10px 0 0"><span class="muted">Zero crossing (approx. gamma flip):</span> {{ gex_envelope.zero_crossing }}</div>
+<div class="muted" style="margin:6px 0 0">Hedge per 25 pt = band Net GEX per 1 % &times; (25 / spot &times; 100 %), the reports' formula.</div>
+</div>
+
+<details class="collapsible">
+<summary><h2 class="sum-h">DTE Band Walls</h2></summary>
+<div class="box-inner">
+<table class="stack">
+  <thead><tr><th>DTE Band</th><th>Put Wall</th><th>Put Wall Net GEX</th><th>Call Wall</th><th>Call Wall Net GEX</th></tr></thead>
+  <tbody>
+  {% for w in dte_band_walls %}
+  <tr><td data-label="DTE Band">{{ w.band }}{% if w.band == '181-365' %} <b>(Put Wall standard)</b>{% endif %}</td>
+    <td data-label="Put Wall">{{ w.put_wall }}</td><td data-label="Put Wall Net GEX">{{ w.put_wall_net }}</td>
+    <td data-label="Call Wall">{{ w.call_wall }}</td><td data-label="Call Wall Net GEX">{{ w.call_wall_net }}</td></tr>
+  {% endfor %}
+  {% if target_walls %}<tr><td data-label="DTE Band"><b>{{ target_walls.band }}</b></td>
+    <td data-label="Put Wall">{{ target_walls.put_wall }}</td><td data-label="Put Wall Net GEX">{{ target_walls.put_wall_net }}</td>
+    <td data-label="Call Wall">{{ target_walls.call_wall }}</td><td data-label="Call Wall Net GEX">{{ target_walls.call_wall_net }}</td></tr>{% endif %}
+  </tbody>
+</table>
+<div class="box-note">Put Wall (main level) is taken from the 181-365 day band. The ALL row is the all-expiry max(+net) reference (UW gex-levels put_wall).</div>
+
+</div>
+</details>
+</section>
+
+{% if structures or iron_butterfly or iron_butterfly_na or historical.structures %}<section class="group-open" id="g6">
+<div class="group-h">6 · Trade structures</div>
+{% if historical.structures %}
+<div class="note">n/a (historical): The target Friday's option chain was fetched in a later session than this day, so no structure is priced.</div>
+{% elif structures %}
+<details class="collapsible"{% if structures.get("live") %} open{% endif %}>
+<summary><h2 class="sum-h">Trade structures ({{ structures.expiry }})</h2></summary>
+<div class="box-inner">
+<div class="at-glance" style="margin:0 0 8px"><b>{{ structures.label }}</b></div>
+<table class="stack">
+  <thead><tr><th>Structure</th><th>Legs</th><th>Net (SPX pts)</th><th>XSP</th><th>Max profit</th><th>Max loss</th><th>Breakevens</th><th>Reward / risk</th></tr></thead>
+  <tbody>{% for r in structures.rows %}<tr><td data-label="Structure">{{ r.name }} <span class="muted">({{ r.family }})</span></td><td data-label="Legs">{{ r.legs }}</td><td data-label="Net (SPX pts)">{{ r.net }}{% if r.missing %} <span class="muted">no quote: {{ r.missing }}</span>{% endif %}</td><td data-label="XSP">{{ r.xsp }}</td><td data-label="Max profit">{{ r.max_profit }}</td><td data-label="Max loss">{{ r.max_loss }}</td><td data-label="Breakevens">{{ r.breakevens }}</td><td data-label="Reward / risk">{{ r.reward_risk }}</td></tr>{% endfor %}</tbody>
+</table>
+<div class="box-note">Strikes are this week's band edges snapped to the 25-point grid; wings 50 points beyond the short leg; the debit spreads buy at the confirm level. Mid prices at expiry payoff, before fees and slippage. The report's entry, stop and sizing rules are not applied.</div>
+</div>
+</details>{% endif %}{% if iron_butterfly_na and not iron_butterfly %}
+<div class="note">Iron Butterfly n/a: {{ iron_butterfly_na }}.</div>{% endif %}
 {% if iron_butterfly %}
 <style>
   .ib-panel{ margin:16px 0 20px; display:flex; flex-direction:column; gap:12px; }
@@ -309,7 +463,8 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <div class="ib-metric"><span>Breakevens</span><strong>{{ iron_butterfly.lower_breakeven | fmtnum }} – {{ iron_butterfly.upper_breakeven | fmtnum }}</strong></div>
   </div>
   <div class="ib-note">
-    Wing width from expected move ({{ iron_butterfly.width_source.em_points | fmtnum }} pts @ IV {{ iron_butterfly.width_source.iv_used | fmtnum('{:,.2f}') }}) on the {{ iron_butterfly.width_source.band }} grid.
+    {% if iron_butterfly.get("source") in ("model", "mixed") %}<b>No live quotes at the Fetch: {{ "all" if iron_butterfly.source == "model" else "some" }} legs are modeled (Black-Scholes on UW's IV); a model price is not a market price.</b>
+    {% endif %}Wing width from expected move ({{ iron_butterfly.width_source.em_points | fmtnum }} pts @ IV {{ iron_butterfly.width_source.iv_used | fmtnum('{:,.2f}') }}) on the {{ iron_butterfly.width_source.band }} grid.
     {{ iron_butterfly.signal.action }}{% if iron_butterfly.signal.target %} → target {{ iron_butterfly.signal.target | fmtnum }}{% endif %}.
   </div>
   <div class="ib-legs">
@@ -332,42 +487,11 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   {%- endif %}
 </div>
 {% endif %}
+</section>{% endif %}
 
-<h2>At a Glance — Single Source of Truth</h2>
-<div class="ag-box">
-  <!-- Header + flow badge -->
-  <div class="ag-header">
-    <span class="ag-label">At a Glance — Single Source of Truth</span>
-    <span class="flow-badge {{ 'flow-' + (flow_signal.tone if flow_signal else 'flat') }}">{{ (flow_signal.label if flow_signal else 'Wall Holding') }}</span>
-  </div>
-  <!-- Seven columns on a desktop, two on a phone; each column is one cell: label, OI value, intraday value -->
-  <div class="ag-grid7">
-    <div class="ag-cell"><div class="ag-h">Spot</div><div class="ag-v-big">{{ header_strip.spot }}</div><div class="ag-h ag-h-vol">Intraday</div></div>
-    <div class="ag-cell"><div class="ag-h">Call Wall</div><div class="ag-v">{{ header_strip.call_wall }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol">{{ header_strip.call_wall_vol }} <span class="ag-src-vol">(VOL)</span></div></div>
-    <div class="ag-cell"><div class="ag-h">Put Wall</div><div class="ag-v">{{ header_strip.put_support }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol">{{ header_strip.put_wall_vol }} <span class="ag-src-vol">(VOL)</span></div></div>
-    <div class="ag-cell"><div class="ag-h">HVL / Flip</div><div class="ag-v">{{ header_strip.gamma_flip }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol">{{ header_strip.gamma_flip_vol }} <span class="ag-src-vol">(VOL)</span></div></div>
-    <div class="ag-cell"><div class="ag-h">Magnet</div><div class="ag-v">{{ header_strip.gamma_magnet }} <span class="ag-src">(OI)</span></div><div class="ag-v-vol ag-dash">—</div></div>
-    <div class="ag-cell"><div class="ag-h">Charm Pin</div><div class="ag-v-sm">{{ header_strip.charm }}</div><div class="ag-v-vol ag-dash">—</div></div>
-    <div class="ag-cell"><div class="ag-h">Vanna Pin</div><div class="ag-v-sm">{{ header_strip.vanna }}</div><div class="ag-v-vol ag-dash">—</div></div>
-  </div>
-  <!-- Row 2: 4 metric cards with tooltips -->
-  <div class="ag-cards4">
-    <div class="ag-gex has-tip"><div class="k">NET GEX (OI) <details class="tip"><summary aria-label="What is NET GEX (OI)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</div></details></div><div class="v {{ header_strip.net_gex_tone }}">{{ header_strip.net_gex }}</div></div>
-    <div class="ag-gex"><div class="k">DAILY Δ (1D / 1W)</div><div class="v">{{ header_strip.net_gex_delta_1d }} / {{ header_strip.net_gex_delta_1w }}</div></div>
-    <div class="ag-gex has-tip"><div class="k">MATRIX (≤45 DTE) <details class="tip"><summary aria-label="What is MATRIX (≤45 DTE)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</div></details></div><div class="v {{ header_strip.matrix_gex_tone }}">{{ header_strip.matrix_gex }}</div></div>
-    <div class="ag-gex"><div class="k">SOURCE CHIP</div><div><span class="chip {{ 'chip-pos' if header_strip.source_chip == 'POSITIVE' else ('chip-neg' if header_strip.source_chip == 'NEGATIVE' else '') }}">{{ header_strip.source_chip }}</span></div></div>
-  </div>
-  <div class="ag-note">Toplam kitap = all-expiry OI-based net GEX (macro depot). Matrix = DTE≤45 filter — active-trading gamma that strips far-dated/LEAPS noise; the gap comes from distant tenors.</div>
-  <!-- Row 3: regime + VIX + positioning -->
-  <div class="ag-row ag-row-3">
-    <div class="ag-gex"><div class="k">Regime</div><div class="v">{{ header_strip.regime }}</div></div>
-    <div class="ag-gex"><div class="k">VIX</div><div class="v">{{ header_strip.vix }}</div></div>
-    <div class="ag-gex"><div class="k">Net DEX</div><div class="v">{{ header_strip.net_dex }}</div></div>
-    <div class="ag-gex"><div class="k">Net Vanna</div><div class="v">{{ header_strip.net_vanna }}</div></div>
-    <div class="ag-gex"><div class="k">Live Charm</div><div class="v">{{ header_strip.live_charm }}</div></div>
-  </div>
-</div>
-
+<details class="collapsible group" id="g7">
+<summary><h2 class="sum-h">7 · Greeks and the dealer book</h2></summary>
+<div class="box-inner">
 <h2>Summary</h2>
 <div class="grid">
 {% for card in summary %}
@@ -390,6 +514,21 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 {% endfor %}
 </div>
 
+{% if historical.dealer_book %}<div class="note">n/a (historical): The option chains behind the dealer book were fetched in a later session than this day.</div>
+{% elif dealer_book %}<details class="collapsible">
+<summary><h2 class="sum-h">Dealer book</h2></summary>
+<div class="box-inner">
+<table class="stack">
+  <thead><tr><th>Greek</th><th>(a) long calls, short puts</th><th>(b) short all</th></tr></thead>
+  <tbody>{% for r in dealer_book.rows %}<tr><td data-label="Greek">{{ r.label }}</td><td data-label="(a) long calls, short puts">{{ r.a }}</td><td data-label="(b) short all">{{ r.b }}</td></tr>{% endfor %}</tbody>
+</table>
+<div class="at-glance" style="margin:8px 0 0"><b>(a)</b> {{ dealer_book.words_a }}</div>
+<div class="at-glance" style="margin:4px 0 0"><b>(b)</b> {{ dealer_book.words_b }}</div>
+<div class="box-note">Black-Scholes greeks (r = 0) from each UW contract's IV, summed over open interest: {{ dealer_book.contracts }} contracts, expiries {{ dealer_book.expiries }}. Which assumption holds is not known; the reports show both.</div>
+</div>
+</details>
+{% endif %}
+
 <details class="collapsible">
 <summary><h2 class="sum-h">Gamma flip methods</h2></summary>
 <div class="box-inner">
@@ -404,80 +543,6 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <div class="box-note">UW does not document how it computes its gamma flip, and the open-interest and volume flips can differ. The regime follows the open-interest flip; the other rows are cross-checks and do not vote. Put Wall uses the UW 181-365 day band.</div>
 </div>
 </details>
-
-<details class="collapsible">
-<summary><h2 class="sum-h">DTE Band Walls</h2></summary>
-<div class="box-inner">
-<table class="stack">
-  <thead><tr><th>DTE Band</th><th>Put Wall</th><th>Put Wall Net GEX</th><th>Call Wall</th><th>Call Wall Net GEX</th></tr></thead>
-  <tbody>
-  {% for w in dte_band_walls %}
-  <tr><td data-label="DTE Band">{{ w.band }}{% if w.band == '181-365' %} <b>(Put Wall standard)</b>{% endif %}</td>
-    <td data-label="Put Wall">{{ w.put_wall }}</td><td data-label="Put Wall Net GEX">{{ w.put_wall_net }}</td>
-    <td data-label="Call Wall">{{ w.call_wall }}</td><td data-label="Call Wall Net GEX">{{ w.call_wall_net }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-<div class="box-note">Put Wall (main level) is taken from the 181-365 day band. The ALL row is the all-expiry max(+net) reference (UW gex-levels put_wall).</div>
-</div>
-</details>
-
-<h2>What Would Change the Regime</h2>
-<div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> the thresholds that
-would end the frame the rest of this page describes. Each row is a condition, not a forecast: if it is crossed,
-the levels below stop applying and the map has to be re-read.</div>
-{% if regime_conditions %}
-<table class="stack">
-  <thead><tr><th>If this happens</th><th>Then</th></tr></thead>
-  <tbody>
-  {% for c in regime_conditions %}
-  <tr><td data-label="If this happens">{{ c.trigger }}</td><td data-label="Then">{{ c.then }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<div class="note">Not enough levels in this snapshot to state the regime conditions.</div>
-{% endif %}
-
-<h2>SPX Option Position Map</h2>
-<div class="box">{% if chart_html %}<div class="chart chart-map">{{ chart_html }}</div>
-{% elif chart_image %}<div class="chart"><img src="{{ chart_image }}" alt="SPX Option Position Map"></div>{% endif %}</div>{% if store_labels.candles %}
-<div class="note store-source">{{ store_labels.candles }}</div>{% endif %}
-
-<h2>Net GEX Tornado — Strike Profile</h2>
-<div class="box">{% if tornado_html %}<div class="chart">{{ tornado_html }}</div>{% else %}<div class="box-note">Tornado data unavailable for this snapshot.</div>{% endif %}</div>
-
-<h2>Liquidity Layer — Dealer Flow</h2>
-<div class="box">
-{% if envelope_html %}<div class="chart" style="margin:0 0 12px">{{ envelope_html }}</div>{% endif %}
-<div class="band-row" style="margin:0">
-  <div class="band green">
-    <h3>Absorption Band <span class="sub">(positive gamma — dealers trade against the move)</span></h3>
-    <div class="big">{{ gex_envelope.absorption.range }}</div>
-    <div>Net GEX {{ gex_envelope.absorption.net_gex }} &middot; ~{{ gex_envelope.absorption.per_25pt }}/25pt</div>
-  </div>
-  <div class="band red">
-    <h3>Air Gap <span class="sub">(negative gamma — dealers trade with the move)</span></h3>
-    <div class="big">{{ gex_envelope.air_gap.range }}</div>
-    <div>Net GEX {{ gex_envelope.air_gap.net_gex }} &middot; ~{{ gex_envelope.air_gap.per_25pt }}/25pt</div>
-  </div>
-</div>
-<div class="at-glance" style="margin:10px 0 0"><span class="muted">Zero crossing (approx. gamma flip):</span> {{ gex_envelope.zero_crossing }}</div>
-</div>
-
-<h2>Cross-Signal Synthesis</h2>
-<div class="at-glance">
-  <span class="muted">Stance:</span>
-  <span class="pos-neg {{ 'pos' if signal_matrix.tone == 'green' else 'neg' if signal_matrix.tone == 'red' else '' }}">{{ signal_matrix.stance }}</span>
-  <span class="muted"> &middot; {{ signal_matrix.summary }}</span>
-</div>
-<table class="stack">
-  <thead><tr><th>Signal</th><th>Lean</th></tr></thead>
-  <tbody>
-  {% for r in signal_matrix.rows %}<tr><td data-label="Signal">{{ r.title }}</td><td data-label="Lean"><span class="pill {{ r.tone }}">{{ r.label }}</span></td></tr>
-  {% endfor %}
-  </tbody>
-</table>
 
 <details class="collapsible">
 <summary><h2 class="sum-h">Greek Relations — How They Interact</h2></summary>
@@ -498,31 +563,41 @@ the levels below stop applying and the map has to be re-read.</div>
     <div class="r-head"><span class="r-greek">{{ r.greek }}</span><span class="r-headline">{{ r.headline }}</span></div>
     <p>{{ r.english }}</p>
     {% if r.row %}<table class="stack plain"><tbody>{% for label, value, note in r.row %}<tr><td data-label="">{{ label }}</td><td data-label="">{{ value }}</td><td data-label="">{{ note }}</td></tr>{% endfor %}</tbody></table>{% endif %}
-    <div class="tr">{{ r.turkish }}</div>
   </div>
   {% endfor %}
 </div>
 
 </div>
 </details>
+</div>
+</details>
 
+<details class="collapsible group" id="g8">
+<summary><h2 class="sum-h">8 · Volatility</h2></summary>
+<div class="box-inner">
 <h2>Volatility Board</h2>
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.</div>
-{% if iv_rank or vrp or realized_vol or skew or vix or vega_flow or vix_greeks %}
+{% if iv_rank or vrp or realized_vol or skew or vix or vega_flow or vix_greeks or straddle %}
 <table class="stack">
   <thead><tr><th>Metric</th><th>Value</th><th>Meaning</th></tr></thead>
   <tbody>
   {% if vix %}<tr><td data-label="Metric">VIX family</td><td data-label="Value">
     {% if vix.vix %}VIX {{ vix.vix|round(2) }}{% endif %}{% if vix.vix9d %} · 9D {{ vix.vix9d|round(2) }}{% endif %}{% if vix.vix3m %} · 3M {{ vix.vix3m|round(2) }}{% endif %}{% if vix.vix6m %} · 6M {{ vix.vix6m|round(2) }}{% endif %}{% if vix.vix1y %} · 1Y {{ vix.vix1y|round(2) }}{% endif %}{% if vix.vvix %} · VVIX {{ vix.vvix|round(2) }}{% endif %}
     </td><td data-label="Meaning">Term structure is <b>{{ vix.term_mode or "n/a" }}</b>{% if vix.ivts %} (IVTS {{ vix.ivts|round(4) }}){% endif %}{% if vix.term_mode == 'contango' %} — short-dated calm, longer-dated more expensive (normal).{% elif vix.term_mode == 'backwardation' %} — near-term stress priced in (early warning).{% elif vix.term_mode == 'front backwardation' %} — the next 9 days priced above the month while the 3M curve still slopes up (first sign of near-term stress).{% endif %}</td></tr>{% endif %}
-  {% if vega_flow %}<tr><td data-label="Metric">Directional vega flow</td><td data-label="Value">{{ vega_flow.dir_vega_flow | fmtnum('{:+,.0f}') }}{% if vega_flow.buckets %} ({{ vega_flow.buckets }} buckets){% endif %}</td><td data-label="Meaning">Vega that changed hands today, cumulative. Its <b>sign</b> is the reading, not its size — and this is flow, not the net vega sitting in the book.</td></tr>{% endif %}
+  {% if straddle %}<tr><td data-label="Metric">Straddle expected move</td><td data-label="Value">{% if historical.straddle %}n/a (historical){% else %}±{{ straddle.points | fmtnum('{:,.1f}') }} ({{ straddle.lower | fmtnum('{:,.0f}') }} – {{ straddle.upper | fmtnum('{:,.0f}') }}){% endif %}</td><td data-label="Meaning">The {{ straddle.expiry }} at-the-money straddle at {{ straddle.strike | fmtnum('{:,.0f}') }} (UW quotes): the market's own expected move to that expiry, beside the 1-sd move.</td></tr>{% endif %}
+  {% if vega_flow %}<tr><td data-label="Metric">Directional vega flow</td><td data-label="Value">{{ vega_flow.dir_vega_flow | fmtnum('{:+,.0f}') }}{% if vega_flow.buckets %} ({{ vega_flow.buckets }} buckets){% endif %}{% if vega_flow.get('verdict') %} · <b>{{ vega_flow.verdict }}</b>{% endif %}</td><td data-label="Meaning">Vega that changed hands today, cumulative. Its <b>sign</b> is the reading, not its size — and this is flow, not the net vega sitting in the book.</td></tr>{% endif %}
   {% if vix_greeks %}<tr><td data-label="Metric">VIX option book</td><td data-label="Value">net vanna {{ vix_greeks.net_vanna | fmtnum('{:+,.0f}') }} · net charm {{ vix_greeks.net_charm | fmtnum('{:+,.0f}') }}{% if vix_greeks.expiries %} ({{ vix_greeks.expiries }} expiries){% endif %}</td><td data-label="Meaning">VIX's own dealer book. Only its vanna and charm are published by this provider, so its gamma levels are not shown.</td></tr>{% endif %}
   {% if iv_rank %}<tr><td data-label="Metric">IV Rank (1Y)</td><td data-label="Value">{{ "n/a (historical)" if historical.iv_rank else (iv_rank.iv_rank_1y | fmtnum('{:,.1f}%')) }}</td><td data-label="Meaning">Where today's IV sits vs the past year; low = cheap options.</td></tr>{% endif %}
-  {% if skew %}<tr><td data-label="Metric">Skew (Put Bias)</td><td data-label="Value">{% if historical.skew %}n/a (historical){% else %}{{ skew.put_bias_1m | fmtnum('{:.1%}') }} (1M) · {{ skew.put_bias_3m | fmtnum('{:.1%}') }} (3M){% endif %}</td><td data-label="Meaning">Cost of downside protection vs upside bets. <span style="color:var(--amber)">Derived/unverified</span> ({{ skew.note }})</td></tr>{% endif %}
+  {% if skew %}<tr><td data-label="Metric">Skew (25Δ put − call IV)</td><td data-label="Value">{% if historical.skew %}n/a (historical){% else %}{{ skew.get('put_bias_0dte') | fmtnum('{:.1%}') }} (0DTE) · {{ skew.put_bias_1m | fmtnum('{:.1%}') }} (1M) · {{ skew.put_bias_3m | fmtnum('{:.1%}') }} (3M){% endif %}</td><td data-label="Meaning">Cost of downside protection vs upside bets. {{ skew.note }}</td></tr>{% endif %}
   {% if realized_vol %}<tr><td data-label="Metric">Realized vs Implied</td><td data-label="Value">{% if historical.realized_vol %}n/a (historical){% else %}IV {{ realized_vol.implied_volatility | fmtnum('{:.1%}') }} · RV {{ realized_vol.realized_volatility | fmtnum('{:.1%}') }}{% endif %}</td><td data-label="Meaning">VRP posture: IV premium over realized = vol selling gets paid.</td></tr>{% endif %}
   {% if vrp %}<tr><td data-label="Metric">Variance Risk Premium</td><td data-label="Value">{% if historical.vrp %}n/a (historical){% else %}{{ vrp.risk_premium | fmtnum('{:.2%}') }} (rank {{ vrp.rank | fmtnum('{:,.2f}') }}){% endif %}</td><td data-label="Meaning">Compensation for holding short vol; higher = richer sellers.</td></tr>{% endif %}
   </tbody>
 </table>
+{% if tails %}<table class="stack" style="margin-top:10px">
+  <thead><tr><th>5-session move</th><th>Implied probability</th><th>Realized (stored closes)</th></tr></thead>
+  <tbody>{% for t in tails %}<tr><td data-label="5-session move">{{ t.move }}</td><td data-label="Implied probability">{{ t.implied }}</td><td data-label="Realized (stored closes)">{{ t.realized }}</td></tr>{% endfor %}</tbody>
+</table>
+<div class="box-note">Implied: normal on the 5-session log return, sigma = 1-day ATM IV x sqrt(5/252). Realized: overlapping 5-session windows of the stored closes, a small sample.</div>{% endif %}
 {% else %}
 <div class="note">Volatility data unavailable for this snapshot.</div>
 {% endif %}{% if store_labels.vix %}
@@ -541,7 +616,28 @@ the levels below stop applying and the map has to be re-read.</div>
 {% else %}
 <div class="note">Vol term structure unavailable.</div>
 {% endif %}
+</div>
+</details>
 
+<details class="collapsible group" id="g9">
+<summary><h2 class="sum-h">9 · Flow</h2></summary>
+<div class="box-inner">
+{% if session_flow %}<h2>Session hedge flow</h2>
+<div class="box">
+<table class="stack">
+  <thead><tr><th>Expiry (session)</th><th>Net gamma</th><th>Hedge per 50 pt</th><th>Net charm</th><th>Net vanna</th><th>Effect</th></tr></thead>
+  <tbody>{% for r in session_flow %}<tr><td data-label="Expiry (session)">{{ r.expiry }}</td><td data-label="Net gamma">{{ r.net_gex }}</td><td data-label="Hedge per 50 pt">{{ r.hedge_50pt }}</td><td data-label="Net charm">{{ r.net_charm }}</td><td data-label="Net vanna">{{ r.net_vanna }}</td><td data-label="Effect">{{ r.effect }}</td></tr>{% endfor %}</tbody>
+</table>
+<div class="box-note">Each session's expiring book through the target Friday (UW greek exposure by expiry). Charm sign caveat applies. Expiring open interest is not shown yet.</div>
+</div>
+{% endif %}
+
+{% if flow_signal %}
+<div class="box" style="margin-top:14px">
+  <div class="ag-label">Volume &amp; Flow Confluence Analysis</div>
+  <div class="at-glance" style="margin:8px 0 0"><span class="flow-badge {{ 'flow-' + flow_signal.tone }}">{{ flow_signal.label }}</span> <span style="color:var(--fg)">{{ flow_signal.narrative }}</span></div>
+</div>
+{% endif %}
 <h2>Options Volume &amp; P/C</h2>
 {% if options_volume and historical.options_volume %}
 <div class="note">n/a (historical): Options volume was fetched in a later session than this day.</div>
@@ -560,6 +656,68 @@ the levels below stop applying and the map has to be re-read.</div>
 <div class="note">Options volume data unavailable.</div>
 {% endif %}
 
+<h2>Cross-Signal Synthesis</h2>
+<div class="at-glance">
+  <span class="muted">Stance:</span>
+  <span class="pos-neg {{ 'pos' if signal_matrix.tone == 'green' else 'neg' if signal_matrix.tone == 'red' else '' }}">{{ signal_matrix.stance }}</span>
+  <span class="muted"> &middot; {{ signal_matrix.summary }}</span>
+</div>
+<table class="stack">
+  <thead><tr><th>Signal</th><th>Lean</th></tr></thead>
+  <tbody>
+  {% for r in signal_matrix.rows %}<tr><td data-label="Signal">{{ r.title }}</td><td data-label="Lean"><span class="pill {{ r.tone }}">{{ r.label }}</span></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if prediction and prediction.bias %}
+<div class="prediction-container">
+  <!-- Top Hero Status Bar -->
+  <div class="prediction-hero">
+    <div class="bias-badge {{ 'bullish' if prediction.bias.startswith('BULLISH') else 'bearish' if prediction.bias.startswith('BEARISH') else 'neutral' }}">EXPECTED DIRECTION: {{ prediction.bias }}{% if prediction.confidence is not none %} ({{ prediction.confidence }}% Conf){% endif %}</div>
+    {% if prediction.active_pin is not none %}<div class="hero-metric"><span>Active Pin</span><strong>{{ prediction.active_pin | fmtnum }}{% if prediction.pin_flag == 'EXPIRING_PIN_FLIP' %}&nbsp;⚑{% endif %}</strong></div>{% endif %}
+    {% if prediction.upside_trigger is not none %}<div class="hero-metric"><span>Accel Trigger</span><strong>&gt; {{ prediction.upside_trigger | fmtnum }}</strong></div>{% endif %}
+    {% if prediction.downside_floor is not none %}<div class="hero-metric"><span>Bounce Floor</span><strong>{{ prediction.downside_floor | fmtnum }}</strong></div>{% endif %}
+  </div>{% if pin_line %}
+  <div class="note pin-source">{{ pin_line }}</div>{% endif %}
+
+  <!-- Scenario Matrix Table -->
+  <div class="overflow-x-auto">
+  <table class="scenario-table stack">
+    <thead><tr><th>Scenario</th><th>Trigger Level</th><th>Dealer Hedging Action</th><th>Target Zone</th></tr></thead>
+    <tbody>
+    {% for s in prediction.scenarios %}
+    <tr class="{{ s.class }}">
+      <td data-label="Scenario">{{ s.name }}</td><td data-label="Trigger Level">{{ s.trigger }}</td><td data-label="Dealer Hedging Action">{{ s.hedging }}</td><td data-label="Target Zone">{{ s.target }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <!-- OI vs Volume Divergence Status -->
+  {% if prediction.divergence %}
+  <div class="divergence-bar">
+    {% for d in prediction.divergence[:4] %}
+    <span class="status-item">
+      <strong>{{ d.strike | fmtnum }} {{ d.side }}:</strong>
+      <span class="{{ 'text-amber' if d.flag == 'WALL_DECAYING' else 'text-red' }}">{{ 'DECAYING' if d.flag == 'WALL_DECAYING' else 'FORTIFYING' }} (OI: {{ d.gex_oi | fmt_signed_compact }} | Vol: {{ d.gex_vol | fmt_signed_compact }})</span>
+    </span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if prediction.note %}<div class="hero-note">ⓘ {{ prediction.note }}</div>{% endif %}
+</div>
+{% endif %}
+</div>
+</details>
+
+<details class="collapsible group" id="g10">
+<summary><h2 class="sum-h">10 · Positioning</h2></summary>
+<div class="box-inner">
+{% if front_share %}<div class="at-glance" style="margin:8px 0 0"><span class="muted">Front-expiry share of Net GEX —</span> {{ front_share.share }} ({{ front_share.expiry }}: {{ front_share.front }} of {{ front_share.total }})</div>{% endif %}
+
 <h2>Max Pain</h2>
 {% if max_pain and historical.max_pain %}
 <div class="note">n/a (historical): Max pain was fetched in a later session than this day.</div>
@@ -571,9 +729,21 @@ the levels below stop applying and the map has to be re-read.</div>
   {% for m in max_pain %}<tr><td data-label="Expiry">{{ m.expiry }}</td><td data-label="Max Pain">{{ m.max_pain }}</td><td data-label="% from Spot">{{ m.distance_pct }}</td></tr>{% endfor %}
   </tbody>
 </table>
+{% if max_pain_count %}<div class="at-glance" style="margin:8px 0 0">{{ max_pain_count.below }} below spot · {{ max_pain_count.above }} above{% if max_pain_count.at %} · {{ max_pain_count.at }} at spot{% endif %}</div>{% endif %}
 {% else %}
 <div class="note">Max pain data unavailable.</div>
 {% endif %}
+
+<h2>Expiry Distribution</h2>
+<table class="stack">
+  <thead><tr><th>Expiry</th><th>DTE</th><th>Band</th><th>Net GEX</th><th>Net DEX</th></tr></thead>
+  <tbody>
+  {% for e in summary_expiry %}
+  <tr><td data-label="Expiry">{{ e.expiry }}</td><td data-label="DTE">{{ e.dte }}</td><td data-label="Band">{{ e.band }}</td>
+    <td data-label="Net GEX">{{ e.net_gex }}</td><td data-label="Net DEX">{{ e.net_dex }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
 
 <h2>CFTC COT — E-mini S&amp;P 500 (TFF)</h2>
 {% if cftc %}
@@ -594,39 +764,6 @@ the levels below stop applying and the map has to be re-read.</div>
 {% else %}
 <div class="note">{{ store_notes.cftc or "CFTC COT data unavailable." }}</div>
 {% endif %}
-
-<h2>Scenario Set</h2>
-<table class="stack">
-  <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>Asymmetry</th><th>Trade</th></tr></thead>
-  <tbody>
-  {% for s in scenarios.scenarios %}
-  <tr>
-    <td data-label="Scenario">{{ s.name }}</td><td data-label="Range">{{ s.range }}</td><td data-label="P">{{ s.p }}</td>
-    <td data-label="Asymmetry">{{ "%.2f"|format(s.asymmetry) if s.asymmetry is not none else "n/a" }}</td>
-    <td data-label="Trade">{{ s.trade }}</td>
-  </tr>
-  {% endfor %}
-  </tbody>
-</table>
-<div class="note">{{ scenarios.note }}</div>
-{% if flow_signal %}
-<div class="box" style="margin-top:14px">
-  <div class="ag-label">Volume &amp; Flow Confluence Analysis</div>
-  <div class="at-glance" style="margin:8px 0 0"><span class="flow-badge {{ 'flow-' + flow_signal.tone }}">{{ flow_signal.label }}</span> <span style="color:var(--fg)">{{ flow_signal.narrative }}</span></div>
-</div>
-{% endif %}
-
-<h2>Level Migration vs Prior Snapshot</h2>
-<table class="stack">
-  <thead><tr><th>Level</th><th>This Week</th><th>Previous</th><th>Δ</th></tr></thead>
-  <tbody>
-  {% for m in migration %}
-  <tr><td data-label="Level">{{ m.level }}</td><td data-label="This Week">{{ m.now | fmtnum }}</td>
-    <td data-label="Previous">{{ m.prev | fmtnum }}</td>
-    <td data-label="Δ">{{ m.delta | fmtnum('{:+,.1f}') }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
 
 <h2>Net Delta — Weekly Trend</h2>
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> one week's hedging
@@ -649,6 +786,18 @@ Friday a week.</div>
 <div class="note">No Friday close stored before this day yet, so there is no weekly trend to show.</div>
 {% endif %}
 
+<h2>Level Migration vs Prior Snapshot</h2>
+<table class="stack">
+  <thead><tr><th>Level</th><th>This Week</th><th>Previous</th><th>Δ</th></tr></thead>
+  <tbody>
+  {% for m in migration %}
+  <tr><td data-label="Level">{{ m.level }}</td><td data-label="This Week">{{ m.now | fmtnum }}</td>
+    <td data-label="Previous">{{ m.prev | fmtnum }}</td>
+    <td data-label="Δ">{{ m.delta | fmtnum('{:+,.1f}') }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
 <h2>Top-10 GEX Strikes</h2>
 <table class="stack">
   <thead><tr><th>#</th><th>Strike</th><th>Net GEX</th><th>Gamma-Flip Side</th></tr></thead>
@@ -660,31 +809,17 @@ Friday a week.</div>
   {% endfor %}
   </tbody>
 </table>
-
-<h2>Expiry Distribution</h2>
-<table class="stack">
-  <thead><tr><th>Expiry</th><th>DTE</th><th>Band</th><th>Net GEX</th><th>Net DEX</th></tr></thead>
-  <tbody>
-  {% for e in summary_expiry %}
-  <tr><td data-label="Expiry">{{ e.expiry }}</td><td data-label="DTE">{{ e.dte }}</td><td data-label="Band">{{ e.band }}</td>
-    <td data-label="Net GEX">{{ e.net_gex }}</td><td data-label="Net DEX">{{ e.net_dex }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-
-<h2>Brier Scorecard</h2>
-<div class="at-glance">
-  <span class="muted">Scored days:</span> {{ brier.scored_count }}
-  &middot; <span class="muted">Avg Brier:</span> {{ brier.average if brier.average is not none else "—" }}
-  &middot; <span class="muted">Equal-weight ref:</span> {{ ("%.4f"|format(brier.equal_weight_reference)) if brier.equal_weight_reference is number else brier.equal_weight_reference }}
-  {%- if brier.skill_score is number %}
-  &middot; <span class="muted">Skill score:</span> {{ "%+.2f"|format(brier.skill_score) }}
-  {%- endif %}
-  {%- if brier.base_rate_reference is number %}
-  &middot; <span class="muted">Base-rate ref:</span> {{ "%.4f"|format(brier.base_rate_reference) }}
-  {%- endif %}
 </div>
-<div class="note">{{ brier.verdict }}</div>
+</details>
+
+<details class="collapsible group" id="g11">
+<summary><h2 class="sum-h">11 · Calendar and reference</h2></summary>
+<div class="box-inner">
+{% if vol_calendar %}<h3 style="margin:0 0 8px">Volatility calendar to the target Friday</h3>
+<table class="stack">
+  <thead><tr><th>When (Amsterdam)</th><th>Event</th><th>Prior</th><th>Forecast</th></tr></thead>
+  <tbody>{% for e in vol_calendar %}<tr><td data-label="When (Amsterdam)">{{ e.local }}</td><td data-label="Event">{% if e.high_impact %}<b>{{ e.event }}</b> <span class="flow-badge flow-amber">high impact</span>{% else %}{{ e.event }}{% endif %}</td><td data-label="Prior">{{ e.prev or "" }}</td><td data-label="Forecast">{{ e.forecast or "" }}</td></tr>{% endfor %}</tbody>
+</table>{% endif %}
 
 <details class="collapsible">
 <summary><h2 class="sum-h">Details</h2></summary>
@@ -730,20 +865,6 @@ Friday a week.</div>
 
 </div>
 </details>
-
-<details class="collapsible">
-<summary><h2 class="sum-h">Greek Sözlüğü &amp; İlişkiler — Türkçe</h2></summary>
-<div class="box-inner tr-block">
-  <div class="note">Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce başlıklarıyla aynı veriden türetilmiştir. Teknik sözlük:</div>
-  <dl class="tr-glossary">
-    {% for g in glossary_tr %}<dt>{{ g.greek }}</dt><dd>{{ g.def }}</dd>{% endfor %}
-  </dl>
-  <div class="note" style="margin-top:14px">Bu haftaki veriye göre greek ilişkileri:</div>
-  {% for r in relations %}
-  <div style="margin-top:10px">
-    <b class="tr-name">{{ r.greek }}</b> — <span style="color:var(--muted)">{{ r.turkish }}</span>
-  </div>
-  {% endfor %}
 </div>
 </details>
 

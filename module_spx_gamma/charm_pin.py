@@ -6,6 +6,10 @@ from .config import CHARM_PIN_DOMINANCE_RATIO, CHARM_PIN_MAX_DISTANCE_PCT, net_s
 MODE_OPEN_INTEREST = "open_interest"
 MODE_DIRECTIONALIZED_VOLUME = "directionalized_volume"
 
+# F6: the 02-06 Nov report's warning, shown wherever a summed charm sign is read as pressure.
+CHARM_SIGN_CAVEAT = ("Sign caveat: this is UW's summed charm; its sign can differ from a Black-Scholes sum over the "
+                     "same contracts (02-06 Nov report), so treat the direction as UW's, not a confirmed dealer hedge.")
+
 
 def normalize_spot_exposure_rows(payload: dict | None) -> list[dict]:
     if not payload or "data" not in payload:
@@ -108,6 +112,47 @@ def qualify_charm(rows: list[dict], spot: float | None, mode: str = MODE_OPEN_IN
         "qualification_passed": passed,
         "mode": mode,
     }
+
+
+def _expired_by(asof_date: str, fetched_at) -> bool:
+    """Whether ``asof_date``'s own expiry had settled when the rows were fetched (16:00 New York that day).
+
+    Without a fetch time (a raw day written before ``_meta`` carried one) nothing is known, and the series counts as
+    before. shortcut: the close is 16:00 on every day; on a 13:00 early close a Fetch between 13:00 and 16:00 still
+    reads the settled series, as ``chains._years_left`` and ``core.calendar.session_close`` assume too.
+    """
+    if fetched_at is None or fetched_at.tzinfo is None:
+        return False    # a naive time would be read as the machine's local clock
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    ny = ZoneInfo("America/New_York")
+    close = datetime.fromisoformat(asof_date).replace(hour=16, tzinfo=ny)
+    return fetched_at.astimezone(ny) >= close
+
+
+def report_charm_pin(strike_expiry_rows: list[dict], asof_date: str | None, fetched_at=None) -> dict:
+    """The 30 Oct report's charm pin (p.6): the strike of the largest |net charm| in the front expiry.
+
+    The front expiry is the nearest one still trading whose rows carry charm: after ``asof_date``, or ``asof_date``
+    itself only when the rows were fetched before its 16:00 New York close (``fetched_at``). A Fetch of a closed
+    session carries that day's settled 0DTE rows too; a pin read from them points at a series that no longer
+    exists (real UW check, 5 Nov 2026: 7650 from the 4 Nov expiry instead of 7750 from 5 Nov). The report adds that a
+    pin is not a confirmed attractor (2 Oct audit, p.8), so the card says so; the vol-mode ``qualify_charm`` stays
+    as a second reading. ``strike`` is None when no row carries charm.
+    """
+    empty = {"strike": None, "net_charm": None, "expiry": None,
+             "rule": "largest front-expiry net charm (30 Oct report)"}
+    rows = [r for r in strike_expiry_rows or []
+            if r.get("strike") is not None and r.get("net_charm") is not None and r.get("expiry")
+            and (asof_date is None or str(r["expiry"]) > asof_date
+                 or (str(r["expiry"]) == asof_date and not _expired_by(asof_date, fetched_at)))]
+    if not rows:
+        return empty
+    front = min(str(r["expiry"]) for r in rows)
+    top = max((r for r in rows if str(r["expiry"]) == front), key=lambda r: abs(r["net_charm"]))
+    if top["net_charm"] == 0:
+        return empty
+    return {**empty, "strike": top["strike"], "net_charm": top["net_charm"], "expiry": front}
 
 
 def vanna_peaks(rows: list[dict], mode: str = MODE_DIRECTIONALIZED_VOLUME) -> dict:

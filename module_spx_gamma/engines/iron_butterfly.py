@@ -70,6 +70,7 @@ def _price(chain: list[dict], center: float, width: float, spot: float) -> dict:
     long_call = _pick_leg(chain, hi, "C", spot)
 
     mids = [_mid(x) for x in (long_put, short_put, short_call, long_call)]
+    sources = [x.get("price_source") if x is not None else None for x in (long_put, short_put, short_call, long_call)]
     priced = all(m is not None for m in mids)
     if priced:
         net_credit = (mids[1] + mids[2]) - (mids[0] + mids[3])
@@ -89,19 +90,23 @@ def _price(chain: list[dict], center: float, width: float, spot: float) -> dict:
         {"action": "BUY", "type": "PUT", "strike": long_put["strike"] if long_put else lo,
          "target_strike": lo,
          "mid": mids[0], "iv": long_put.get("iv") if long_put else None,
-         "theta": thetas[0], "open_interest": long_put.get("open_interest") if long_put else None},
+         "theta": thetas[0], "open_interest": long_put.get("open_interest") if long_put else None,
+         "source": sources[0]},
         {"action": "SELL", "type": "PUT", "strike": short_put["strike"] if short_put else center,
          "target_strike": center,
          "mid": mids[1], "iv": short_put.get("iv") if short_put else None,
-         "theta": thetas[1], "open_interest": short_put.get("open_interest") if short_put else None},
+         "theta": thetas[1], "open_interest": short_put.get("open_interest") if short_put else None,
+         "source": sources[1]},
         {"action": "SELL", "type": "CALL", "strike": short_call["strike"] if short_call else center,
          "target_strike": center,
          "mid": mids[2], "iv": short_call.get("iv") if short_call else None,
-         "theta": thetas[2], "open_interest": short_call.get("open_interest") if short_call else None},
+         "theta": thetas[2], "open_interest": short_call.get("open_interest") if short_call else None,
+         "source": sources[2]},
         {"action": "BUY", "type": "CALL", "strike": long_call["strike"] if long_call else hi,
          "target_strike": hi,
          "mid": mids[3], "iv": long_call.get("iv") if long_call else None,
-         "theta": thetas[3], "open_interest": long_call.get("open_interest") if long_call else None},
+         "theta": thetas[3], "open_interest": long_call.get("open_interest") if long_call else None,
+         "source": sources[3]},
     ]
     for leg in legs:
         leg["strike"] = round(leg["strike"], 1)
@@ -169,6 +174,11 @@ def _one_expiry(chain: list[dict], asof) -> tuple[str | None, list[dict]]:
     return pick, [r for r in chain if r.get("expiry") == pick]
 
 
+def _source(legs: list[dict]) -> str:
+    used = {leg.get("source") for leg in legs if leg.get("mid") is not None}
+    return "model" if used == {"modeled"} else "mixed" if "modeled" in used else "quotes"
+
+
 def build_iron_butterfly(snapshot: dict) -> dict | None:
     """Executes the pin-harvest ruleset; None when chain/spot/pin are missing."""
     spot = snapshot.get("current_level")
@@ -210,6 +220,8 @@ def build_iron_butterfly(snapshot: dict) -> dict | None:
         "strategy": "Iron Butterfly",
         "expiry": expiry,
         "legs": base["legs"],
+        # a 0/0 book (outside the session) prices on Black-Scholes mids: the panel must say so (Fable delta S1)
+        "source": _source(base["legs"]),
         "net_credit": base["net_credit"],
         "max_risk": base["max_risk"],
         "max_profit": base["max_profit"],

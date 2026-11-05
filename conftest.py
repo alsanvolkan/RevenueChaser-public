@@ -295,6 +295,11 @@ def isolate_board_artifacts():
     # failed on the missing gates line (CI run 41034036608, 30 Oct 2026).
     earnings_report = importlib.import_module("RevenueChaser.module_earnings_radar.report")
     mp.setattr(earnings_report, "OUTPUT_DIR", dest / Path(earnings_report.OUTPUT_DIR).relative_to(root))
+    # The Settings board's disk picture (#434): the storage-picture job's only output, and the journey table reads
+    # it on every render. Left in the process root, one test's picture is what the next file's ``collect`` renders,
+    # and the test that asserts there is no picture yet would pass or fail on whatever ran before it.
+    newdata = importlib.import_module("RevenueChaser.module_settings.newdata")
+    mp.setattr(newdata, "STORAGE_PICTURE", dest / Path(newdata.STORAGE_PICTURE).relative_to(root))
     dest.mkdir(parents=True, exist_ok=True)     # the 13F page sits at its top, where a test may write it directly
     try:
         yield dest

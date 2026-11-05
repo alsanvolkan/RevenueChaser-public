@@ -17,7 +17,10 @@ from RevenueChaser.core.options import parse_option_symbol
 
 from .config import to_float
 
-__all__ = ["parse_option_symbol", "black_scholes_mid", "normalize_option_chain"]
+__all__ = ["parse_option_symbol", "black_scholes_mid", "normalize_option_chain", "delta25_skew", "straddle_move"]
+
+# A contract counts as "25 delta" when its |delta| is within this window; the nearest to 0.25 is taken.
+DELTA25_WINDOW = (0.15, 0.35)
 
 
 def _norm_cdf(x: float) -> float:
@@ -89,7 +92,9 @@ def normalize_option_chain(payload: dict | None, spot: float | None = None,
         ask = to_float(r.get("nbbo_ask"))
         mid = to_float(r.get("mid"))
         price_source = "quote"
-        if mid is None and bid is not None and ask is not None:
+        if mid is not None and mid <= 0:
+            mid = None       # a zero mid is no market (real UW check, 5 Nov: every contract 0/0 outside the session)
+        if mid is None and bid is not None and ask is not None and ask > 0:
             mid = (bid + ask) / 2.0
         iv = to_float(r.get("implied_volatility"))
         if mid is None and iv is not None and spot is not None:
@@ -122,3 +127,53 @@ def normalize_option_chain(payload: dict | None, spot: float | None = None,
             "volume": to_float(r.get("volume")),
         })
     return rows
+
+
+def delta25_skew(chain_rows: list[dict]) -> dict | None:
+    """The 25-delta risk reversal of the front expiry in ``chain_rows``: put IV minus call IV (F3).
+
+    Each side takes the contract whose |delta| is nearest 0.25 inside ``DELTA25_WINDOW``; None when either side has
+    no such contract with an IV. A chain that holds several expiries is read at its earliest one.
+    """
+    usable = [r for r in chain_rows or [] if r.get("expiry") and r.get("delta") is not None and r.get("iv")]
+    if not usable:
+        return None
+    front = min(r["expiry"] for r in usable)
+    lo, hi = DELTA25_WINDOW
+
+    def nearest(kind: str):
+        side = [r for r in usable if r["expiry"] == front and r.get("type") == kind and lo <= abs(r["delta"]) <= hi]
+        return min(side, key=lambda r: (abs(abs(r["delta"]) - 0.25), r["strike"])) if side else None
+
+    put, call = nearest("P"), nearest("C")
+    if put is None or call is None:
+        return None
+    return {"expiry": front, "skew": put["iv"] - call["iv"], "put_iv": put["iv"], "call_iv": call["iv"],
+            "put_strike": put["strike"], "call_strike": call["strike"],
+            "put_delta": put["delta"], "call_delta": call["delta"]}
+
+
+def straddle_move(chain_rows: list[dict], spot: float | None) -> dict | None:
+    """The at-the-money straddle of the front expiry in ``chain_rows`` as an expected move (A7).
+
+    The strike nearest ``spot`` that has a quoted call and put mid; the move is call mid + put mid. A modeled mid is
+    not a market price, so a strike without quotes on both legs is skipped. None when no strike qualifies.
+    """
+    if not spot:
+        return None
+    quoted = [r for r in chain_rows or [] if r.get("price_source") == "quote" and r.get("mid") is not None
+              and r.get("expiry")]
+    if not quoted:
+        return None
+    front = min(r["expiry"] for r in quoted)
+    legs: dict[float, dict] = {}
+    for r in quoted:
+        if r["expiry"] == front:
+            legs.setdefault(r["strike"], {})[r["type"]] = r["mid"]
+    both = [k for k, v in legs.items() if "C" in v and "P" in v]
+    if not both:
+        return None
+    k = min(both, key=lambda x: (abs(x - spot), x))
+    pts = legs[k]["C"] + legs[k]["P"]
+    return {"expiry": front, "strike": k, "call_mid": legs[k]["C"], "put_mid": legs[k]["P"], "points": pts,
+            "lower": spot - pts, "upper": spot + pts}

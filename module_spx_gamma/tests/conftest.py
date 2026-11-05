@@ -192,9 +192,9 @@ def make_raw() -> dict:
         ]},
         "strike_expiry": {
             "2026-08-14": {"data": [
-                {"expiry": "2026-08-14", "strike": "7700", "call_gex": "1", "put_gex": "-300"},
-                {"expiry": "2026-08-14", "strike": "7800", "call_gex": "350", "put_gex": "-100"},
-                {"expiry": "2026-08-14", "strike": "7900", "call_gex": "200", "put_gex": "-2"},
+                {"expiry": "2026-08-14", "strike": "7700", "call_gex": "1", "put_gex": "-300", "call_charm": "-1000000", "put_charm": "-500000"},
+                {"expiry": "2026-08-14", "strike": "7800", "call_gex": "350", "put_gex": "-100", "call_charm": "2000000", "put_charm": "1000000"},
+                {"expiry": "2026-08-14", "strike": "7900", "call_gex": "200", "put_gex": "-2", "call_charm": "-5000000", "put_charm": "-2000000"},
             ]},
         },
         "option_chain": make_option_chain(),

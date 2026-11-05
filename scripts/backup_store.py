@@ -31,7 +31,7 @@ nothing ships a backup step. This module fixes that:
   against the live store. A torn or raced copy is discarded and retried
   (bounded), never retained; a copy that opens but cannot be read (a damaged data block) counts as a
   mismatch. ``edgar_docs/`` archives are verified too (CRC of every member + member count).
-- Mirrors the SPX Gamma data tree (``module_spx_gamma/data``: the UW day files, ``brier.json``, the GEX
+- Mirrors the SPX Gamma data tree (``<store>/spx_gamma``, ``module_spx_gamma/data`` before S4: the UW day files, ``brier.json``, the GEX
   history) into ``<backup dir>/spx_gamma_mirror/`` the same way (#276). UW serves only recent days, so the
   tree cannot be fetched again; the mirror is additive too. Only new or changed files are read (a ``stat``
   walk decides), each copy goes through the mirror's own ``.tmp/`` and is verified by size and SHA-256
@@ -74,7 +74,7 @@ Usage notes:
 - A snapshot is a plain DuckDB file: restore with
   ``python -m RevenueChaser.scripts.restore_store`` (lists snapshots, verifies,
   keeps the current file aside) — see docs/data_architecture.md, Backups. The SPX Gamma tree is
-  restored by copying ``spx_gamma_mirror/`` back over ``module_spx_gamma/data``
+  restored by copying ``spx_gamma_mirror/`` back over the SPX data root (``spx_config.DATA_ROOT``)
   (or ``SPX_GAMMA_DATA_ROOT``); a weekly copy
   by ``restore_store --from <backup dir>/weekly --latest raw``.
 - ``--out`` defaults to ``%LOCALAPPDATA%\\RevenueChaser\\backups`` on Windows and
@@ -983,7 +983,7 @@ def mirror_spx_gamma(src: Path | None = None, out_dir: Path | None = None,
     files, and one modified within ``settle_s`` seconds may still be downloading and is skipped. Each
     copy is verified by size and
     SHA-256 before it replaces the mirror copy, nothing ever deleted from the mirror. ``src`` defaults
-    to the SPX module's data root (``module_spx_gamma/data``, or ``SPX_GAMMA_DATA_ROOT``). Returns None
+    to the SPX module's data root (``config.DATA_ROOT``: ``<store>/spx_gamma``, or ``SPX_GAMMA_DATA_ROOT``). Returns None
     when the tree does not exist or is empty.
 
     Two extras (avo, Q5): a ``.json`` file that is no longer valid JSON never replaces a mirror copy that

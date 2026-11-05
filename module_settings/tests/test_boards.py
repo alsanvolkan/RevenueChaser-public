@@ -130,7 +130,7 @@ def test_card_carries_the_editable_settings_block(payload_file, rawstore_tmp_db)
     assert by["WINDOW"]["choices"][0] == [21, "1m (21)"]
     # PR 2: the type filter is a two-way choice in words, off by default on Co-movement
     assert by["OPERATING_ONLY"]["value"] == 0
-    assert by["OPERATING_ONLY"]["choices"] == [[0, "Every type (Tiers A and B)"], [1, "Operating companies only"]]
+    assert by["OPERATING_ONLY"]["choices"] == [[0, "Every security type"], [1, "Operating companies only"]]
     assert "operating companies only" in by["OPERATING_ONLY"]["range"]
     assert s["derived"] == {"label": "Held-out observations needed (derived)",
                             "key": "OOS_MIN_OBS",

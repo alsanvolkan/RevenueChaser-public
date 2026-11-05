@@ -137,7 +137,17 @@ closed fold under it (`details#old-settings`), unchanged.
   file by file, then the cross-check and the queue. Health, Fetch and the flow diagram start open.
 - **Health tiles** count the dataset cards. The builder tile turns red when the builder has been
   silent for over 70 minutes; a provider's cap tile warns at 50% of its day cap and is red from 70%.
-- **What can be pressed where.** Fetch, Pause and Fill are in the Fetch section only; the Data cards show bars and
+- **Where the folder counts come from.** Every dataset's raw and Parquet folder line is the **disk picture**, not a
+  live read: the storage-picture job (`POST /run/storage-picture`, the **Take the disk picture** control at the
+  bottom of the Fetch section, where every press lives) walks the HDD trees and writes
+  `.cache/storage_picture/storage_picture_latest.json`, and the Data section's roots line reads that and says when
+  it was walked. The walk was in the render until #434, where the first `readdir` of the
+  folders that exist measured 26 s and the whole walk held the single-threaded dashboard past `rc-warmup`'s 600 s
+  ceiling. The serving file's own size beside it **is** read live: that is four stats of the SSD. Until the job has
+  run on a box the lines read "not walked yet", which is not the same as a dataset whose folder is missing
+  ("no folder yet"), and past a day the line says how old the picture is.
+- **What can be pressed where.** Fetch, Pause, Fill and **Take the disk picture** are in the Fetch section only;
+  the Data cards show bars and
   no button. A press on a tier set only drafts; **Apply** saves the universe as the Settings board's
   `UNIVERSE_SETS` and `UNIVERSE_INCLUDE` (`POST /api/settings/board/module_settings`) and fetches nothing. C and D are
   shown greyed and are never offered. The default universe (A and all of B) asks no scope: it is the daily run.
@@ -669,7 +679,8 @@ a link to where its cause is shown. A note renders with a warning mark, a positi
 link, never a button: long store-writing jobs start only from Settings. A board whose payload emits
 no funnel never asks for a Refresh to grow one, and a missing artifact reads as not rendered.
 
-The classification universe is the spine's Tiers A and B whole (PR 2, avo 30 Oct 2026): a security
+The classification universe is avo's own list, the spine's `my_universe` (avo 5 Nov 2026), and the
+spine's Tiers A and B whole where the spine holds no such list (PR 2, avo 30 Oct 2026): a security
 type is data a board filters on, not a cut of the universe. Each screening board has a type filter
 (`OPERATING_ONLY`, a setting on Co-movement, Swing and Fundamentals; `core.universe.BOARD_OPERATING_ONLY`
 holds every board's default, the set it read before PR 2). With the filter on, the board states the
