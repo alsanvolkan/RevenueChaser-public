@@ -11,16 +11,18 @@ avo, 4 Nov 2026 (PR 382): the store holds **today's universe**, not every tier a
   (``is_etn``) and closed-end funds (``is_cef``) left out; 2,071 on that spine. A leveraged or inverse fund is in
   (avo's words). An ETF whose AUM is unknown is out **here**: ``aum`` is NULL for a row N-CEN does not hold, and no
   comparison keeps a NULL. avo's approved rule keeps such a fund when its 20-day average daily dollar volume is at
-  or over 10 million; that branch needs a one-off Alpaca price pull and arrives with the ``my_universe`` build, not
-  in this module, so until that table exists an unknown-AUM fund is not stored.
+  or over 10 million; that branch is the ``my_universe`` build's (``spine/my_universe.py``), not this module's, so
+  without that table an unknown-AUM fund is not stored. The build reads the volume from the **live** prices store,
+  which holds no bar of a fund outside the universe: such a fund enters only through a list built before this
+  store went live, or by hand (review M4 of #382).
 - **A delisted name is never in it.** The list is read from the live spine, which holds today's listings only, so
   nothing delisted reaches the served tables at all (the reason PR 382's "CRSP for delisted names" step is gone).
 
 **The list avo picks himself.** When the live spine holds a ``my_universe`` table (one row per ticker), **that
 table is the universe** and the rule above is not applied: avo's hand-picked list, with the rule-based and
-by-hand additions and removals the spine's own build resolves (``MY_UNIVERSE_TABLE``; it does not exist yet, the
-work order of 4 Nov 2026 puts it after the OpenFIGI pass over the 321 untyped tickers). Both readers below check
-for it first, so nothing else in the build changes when it arrives.
+by-hand additions and removals the spine's own build resolves (``MY_UNIVERSE_TABLE``, built by
+``spine/my_universe.py`` since #417). Both readers below check for it first, so nothing else in the build changes
+when it arrives.
 
 Both sides of the build read the rule from here: :func:`in_stock` and :func:`etf_tickers` for the daily fetch scope
 (``prices.scope``), :data:`MEMBER` and :data:`UNIVERSE_SQL` for the serving build's ``_universe`` table. The raw

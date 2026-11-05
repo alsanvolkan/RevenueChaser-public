@@ -27,12 +27,31 @@ on homesrv first (`duckdb.connect(path, read_only=True)` with `RC_STORE_AUTO_ENS
 
 ## Server steps, in order
 
-1. `python -m RevenueChaser.rcdata.build backfill wrds/prices --dry-run` and read the plan.
-2. The attended backfill (one Duo push; `wrds` has no day cap since #380, so one session).
-3. One `prices/serving` build, after a store checkpoint. Every Alpaca row leaves `price_bar_daily` while the
+0. **#416 and #417 first, and one spine build on the store as it is today** (review M4 of #382). `my_universe`'s
+   volume rule for a fund N-CEN gives no AUM (GLD, SLV, IBIT and the other commodity and crypto trusts) reads the
+   **live** `prices.duckdb` (`spine/etf.adv_usd_20d`). Once this PR's store is live it holds only the universe, so
+   such a fund that is not in `my_universe` yet has no bar to measure and stays undecided for good. Built first, the
+   list takes them in from today's bars, and this PR's store then keeps them. Check before going on: the live spine
+   holds `my_universe`, how many of its rows entered on `etf_adv`, and the funds the `my_universe_etf_undecided`
+   issue names.
+1. **A rollback copy of the live `prices.duckdb`, outside `market/`, with its sha256** (review M5). The swap keeps
+   the file it replaces only as `prices.prev.duckdb`, which the next swap replaces, and `wrds/prices` now runs daily
+   (decision 1), so the file from before is gone within a day. A copy left in `market/` under another
+   `prices.*.duckdb` name is deleted by `serving.sweep_builds` at the next builder start. Copy it to the deploy
+   backups folder, compare the copy's sha256 with the live file's, and write both, with the size, in the deploy log.
+   **Rollback**, in order: idle `/api/jobs`; check out the pre-382 `main`; copy the file back to
+   `market/prices.duckdb` after its sha256 matches the log; restart the dashboard; then run one `prices/serving`
+   build on that code. The file alone is not the whole state: this PR's build synced the `prices/serving` issues
+   (`ops.sqlite`, Redis) after its swap, and the old build syncs them back.
+2. `python -m RevenueChaser.rcdata.build backfill wrds/prices --dry-run` and read the plan.
+3. The attended backfill (one Duo push; `wrds` has no day cap since #380, so one session).
+4. One `prices/serving` build, after a store checkpoint. Every Alpaca row leaves `price_bar_daily` while the
    1983-1992 years and the Arca listings join it; if the net is a shrink past `serving.MAX_SHRINK`, the swap refuses
-   it and the request needs `allow_shrink` once.
-4. Read the numbers above against the live file kept from before, then decide the switch stays.
+   it and the request needs `allow_shrink` once. The `crsp_unadjusted` table leaves the file by name
+   (`serving.RETIRED_TABLES`, review M2); any other live table missing from the build still refuses the swap.
+5. Read the numbers above against the copy from step 1, then decide the switch stays. Before it stays: every
+   `split_only_crsp` issue whose detail says the served close *jumps* is checked (the note counts them; review M6),
+   and the `universe_etf_no_bar` funds are read (review M3).
 
 ## Decisions only avo can make
 
