@@ -600,6 +600,9 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "tails": _tail_rows(snapshot),
         "vol_calendar": snapshot.get("vol_calendar") or [],
         "week_gamma": _week_gamma(snapshot),
+        "week_chart": week_chart(snapshot),
+        "glance": glance(snapshot, _hist_panels),
+        "chips": header_chips(snapshot),
         "close_check": close_card(snapshot),
         "dealer_book": None if _hist_panels.get("dealer_book") else _dealer_book(snapshot),
         "structures": None if _hist_panels.get("structures") else _structures(snapshot),
@@ -658,6 +661,7 @@ def _structures(snapshot: dict) -> dict | None:
         out.append({
             "name": s["name"], "family": s["family"],
             "legs": " / ".join(f"{'+' if l['action'] == 'BUY' else '−'}{l['type']} {l['strike']:,.0f}" for l in s["legs"]),
+            "leg_chips": _leg_chips(s["legs"]),
             "net": "n/a" if net is None else (f"credit {net:,.2f}" if net > 0 else f"debit {-net:,.2f}"),
             "xsp": "n/a" if s["xsp_net"] is None else f"{abs(s['xsp_net']):,.2f}",
             "max_profit": pts(s["max_profit"]), "max_loss": pts(s["max_loss"]),
@@ -682,6 +686,142 @@ def _dealer_book(snapshot: dict) -> dict | None:
     return {"rows": [{"label": label, "a": cell(b["a"][k], d), "b": cell(b["b"][k], d)} for k, label, d in _BOOK_ROWS],
             "words_a": b["a"]["words"], "words_b": b["b"]["words"], "contracts": b["contracts"],
             "expiries": ", ".join(b["expiries"])}
+
+
+def _leg_chips(legs: list[dict]) -> list[dict]:
+    """The structure's legs as the mock's chips: ``+7575P`` (bought) or ``−7800C`` (sold)."""
+    return [{"text": f"{'+' if l['action'] == 'BUY' else '−'}{l['strike']:.0f}{str(l['type'])[:1].upper()}",
+             "long": l["action"] == "BUY"} for l in legs]
+
+
+# The week chart's drawing box (SVG user units): about a phone's width, so 11-unit labels stay legible there.
+_WK_W, _WK_H, _WK_L, _WK_R, _WK_T, _WK_B = 360, 220, 40, 8, 16, 24
+
+
+def _nice_step(span: float) -> float:
+    """A 1/2/5 x 10^n gridline step giving three to six lines over ``span``."""
+    import math
+    if span <= 0:
+        return 1.0
+    raw = span / 4
+    mag = 10 ** math.floor(math.log10(raw))
+    return next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
+
+
+def week_chart(snapshot: dict) -> dict | None:
+    """The week gamma map as bars (mock section 5): geometry in SVG units, so the page draws it with no script.
+
+    One bar per 25-point bucket inside the zone window, green above zero and red below; a dashed spot line and the
+    flip line where they fall inside the window. A snapshot cut before the bars were stored has none: no chart.
+    """
+    wm = snapshot.get("week_gamma") or {}
+    bars = [(float(k), float(g)) for k, g in (wm.get("bars") or [])]
+    if len(bars) < 2:
+        return None
+    width = bars[1][0] - bars[0][0] if len(bars) > 1 else 25.0
+    x0, x1 = bars[0][0] - width / 2, bars[-1][0] + width * 1.5
+    vals = [g for _, g in bars]
+    hi, lo = max(max(vals), 0.0), min(min(vals), 0.0)
+    pad = (hi - lo) * 0.08 or 1.0
+    hi, lo = hi + pad, lo - (pad if lo < 0 else 0.0)
+    pw, ph = _WK_W - _WK_L - _WK_R, _WK_H - _WK_T - _WK_B
+
+    def X(v):
+        return _WK_L + (v - x0) / (x1 - x0) * pw
+
+    def Y(v):
+        return _WK_T + (hi - v) / (hi - lo) * ph
+    bw = pw / len(bars) * 0.7
+    out_bars = []
+    for k, g in bars:
+        cx = X(k + width / 2)
+        top, h = (Y(g), Y(0) - Y(g)) if g >= 0 else (Y(0), Y(g) - Y(0))
+        out_bars.append({"x": round(cx - bw / 2, 1), "y": round(top, 1), "w": round(bw, 1), "h": round(max(h, 1.0), 1),
+                         "tone": "pos" if g >= 0 else "neg", "title": f"{k:,.0f}: {fmt_signed_compact(g)}"})
+    step = _nice_step(hi - lo)
+    import math
+    grid = [{"y": round(Y(t), 1), "label": fmt_signed_compact(t).lstrip("+") if t else "0"}
+            for t in (step * i for i in range(math.ceil(lo / step), math.floor(hi / step) + 1))]
+    xstep = 100.0 if (x1 - x0) > 300 else 50.0
+    ticks = [{"x": round(X(t), 1), "label": f"{t:,.0f}"}
+             for t in (xstep * i for i in range(math.ceil(x0 / xstep), math.floor(x1 / xstep) + 1))]
+
+    def line(v, label):
+        return {"x": round(X(v), 1), "label": f"{label} {v:,.0f}"} if v is not None and x0 <= v <= x1 else None
+    spot = snapshot.get("current_level")
+    flip = (snapshot.get("levels") or {}).get("gamma_flip_all")
+    return {"w": _WK_W, "h": _WK_H, "left": _WK_L, "right": _WK_W - _WK_R, "top": _WK_T, "bottom": _WK_H - _WK_B,
+            "bars": out_bars, "grid": grid, "ticks": ticks, "spot": line(spot, "spot"), "flip": line(flip, "HVL"),
+            "label": (f"Week net gamma by strike, expiries through {wm.get('target')}, "
+                      f"{bars[0][0]:,.0f} to {bars[-1][0] + width:,.0f}")}
+
+
+def _pts(v) -> str:
+    """A signed index-point distance, one decimal: ``+394.2`` / ``−5.8``."""
+    return "" if v is None else f"{'+' if v >= 0 else '−'}{abs(v):,.1f}"
+
+
+def glance(snapshot: dict, historical: dict) -> dict:
+    """The mock's hero and its eight-cell grid (section 2): spot, its distance to the flip, then the levels and the
+    day's option figures, each with a one-line note. A panel from a later session reads n/a (historical)."""
+    spot = snapshot.get("current_level")
+    levels = snapshot.get("levels") or {}
+    flip = levels.get("gamma_flip_all")
+
+    def dist(v):
+        return _pts(v - spot) if (v is not None and spot is not None) else ""
+    rv, ivr, st, ov = (snapshot.get("realized_vol") or {}, snapshot.get("iv_rank") or {},
+                       snapshot.get("straddle_move") or {}, snapshot.get("options_volume") or {})
+    iv = rv.get("implied_volatility")
+    iv_cell = ("n/a (historical)" if historical.get("realized_vol") and iv is not None
+               else f"{iv:.1%}" if iv is not None else "n/a")
+    rank = ivr.get("iv_rank_1y")
+    rank_note = ("" if rank is None or historical.get("iv_rank") else f"IV rank {rank:,.1f}")
+    if st.get("points") is not None and not historical.get("straddle"):
+        st_cell, st_note = f"±{st['points']:,.1f}", f"{st.get('expiry', '')} at {st.get('strike', 0):,.0f}"
+    else:
+        st_cell, st_note = ("n/a (historical)" if st and historical.get("straddle") else "n/a"), ""
+    ncp, npp = ov.get("net_call_premium"), ov.get("net_put_premium")
+    hist_ov = bool(ov) and historical.get("options_volume")
+    prem = None if (ncp is None or npp is None) else ncp - npp
+    cv, pv, pc = ov.get("call_volume"), ov.get("put_volume"), ov.get("pc_ratio")
+    cells = [
+        {"label": "HVL (flip)", "value": fmt_level(flip), "note": f"UW OI · vol {fmt_level(levels.get('gamma_flip_vol'))}"},
+        {"label": "Call wall", "value": fmt_level(levels.get("upper_resistance_band")),
+         "note": dist(levels.get("upper_resistance_band"))},
+        {"label": "Put wall", "value": fmt_level(levels.get("lower_support_band")),
+         "note": dist(levels.get("lower_support_band"))},
+        {"label": "Magnet", "value": fmt_level(levels.get("equilibrium_point")), "note": "largest |GEX|"},
+        {"label": "IV30", "value": iv_cell, "note": rank_note},
+        {"label": "Straddle", "value": st_cell, "note": st_note},
+        {"label": "Net premium", "value": "n/a (historical)" if hist_ov else fmt_signed_compact(prem) if prem is not None else "n/a",
+         "note": "call − put", "tone": "" if hist_ov else _tone(prem)},
+        {"label": "Put/call volume", "value": "n/a (historical)" if hist_ov else f"{pc:.2f}" if pc is not None else "n/a",
+         "note": "" if hist_ov or cv is None or pv is None else
+         f"{fmt_signed_compact(pv).lstrip('+')} / {fmt_signed_compact(cv).lstrip('+')}"},
+    ]
+    return {"spot": fmt_level(spot) if spot is not None else "N/A",
+            "to_flip": f"{_pts(spot - flip)} to HVL" if (spot is not None and flip is not None) else "",
+            "cells": cells}
+
+
+def header_chips(snapshot: dict) -> list[dict]:
+    """The mock's chip row: the regime (spot against the flip), the source and sync day, and the target expiry."""
+    spot = snapshot.get("current_level")
+    flip = (snapshot.get("levels") or {}).get("gamma_flip_all")
+    chips = []
+    if spot is not None and flip is not None:
+        short = spot < flip
+        chips.append({"text": f"● {'Short' if short else 'Long'} gamma · spot {'<' if short else '≥'} HVL",
+                      "tone": "neg" if short else "pos"})
+    else:
+        chips.append({"text": "● Gamma regime unknown", "tone": ""})
+    chips.append({"text": f"UW · synced {_last_sync(snapshot.get('api_snapshot_time'), snapshot.get('asof_date'))}",
+                  "tone": ""})
+    target = (snapshot.get("week_gamma") or {}).get("target")
+    if target:
+        chips.append({"text": f"Target expiry {target}", "tone": ""})
+    return chips
 
 
 def _week_gamma(snapshot: dict) -> dict | None:

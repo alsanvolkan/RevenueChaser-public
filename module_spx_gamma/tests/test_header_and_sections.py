@@ -39,9 +39,11 @@ def test_a_missing_stamp_falls_back_to_the_report_date_not_to_none(stamp):
 COLLAPSED = ["Greek Relations — How They Interact", "Details", "How to read this map (Gamma)",
              "Delta Map — Walkthrough", "DTE Band Walls", "7 · Greeks and the dealer book",
              "8 · Volatility", "9 · Flow", "10 · Positioning", "11 · Calendar and reference"]
-OPEN = ["At a Glance — Single Source of Truth", "What Would Change the Regime", "Close check (22:00 Amsterdam)",
-        "Scenario Set", "Brier Scorecard", "SPX Option Position Map", "Net GEX Tornado — Strike Profile",
-        "Liquidity Layer — Dealer Flow", "Week gamma map"]
+# The mock rebuild (5 Nov 2026) keeps six cards open; the earlier board's position map, tornado and liquidity
+# layer moved into the collapsed "Position map and strike profile" card.
+COLLAPSED += ["Position map and strike profile"]
+OPEN = ["At a glance", "What would change the regime", "Close check (22:00 Amsterdam)", "Scenarios",
+        "Week gamma map", "Trade structures"]
 
 
 def _html():
@@ -51,7 +53,7 @@ def _html():
 @pytest.mark.parametrize("title", COLLAPSED)
 def test_the_reference_sections_start_collapsed(title):
     html = _html().replace("&amp;", "&")
-    m = re.search(r'<details class="collapsible[^"]*"(?P<open>[^>]*)>\s*<summary><h2[^>]*>' + re.escape(title)
+    m = re.search(r'<details class="[^"]*collapsible[^"]*"(?P<open>[^>]*)>\s*<summary><h2[^>]*>' + re.escape(title)
                   + r"</h2></summary>", html)
     assert m, f"{title} is not a <details> whose summary holds its <h2> (heading navigation must still find it)"
     assert "open" not in m.group("open"), f"{title} starts open"
@@ -60,7 +62,7 @@ def test_the_reference_sections_start_collapsed(title):
 @pytest.mark.parametrize("title", OPEN)
 def test_the_working_sections_stay_open(title):
     html = _html().replace("&amp;", "&")
-    assert f"<h2>{title}</h2>" in html, f"{title} lost its heading"
+    assert re.search(r"<h2[^>]*>" + re.escape(title) + r"(</h2>| \()", html), f"{title} lost its heading"
     assert "<summary><h2" + f">{title}</h2></summary>" not in html
 
 
@@ -87,9 +89,8 @@ def test_the_page_follows_the_reader_order_and_is_english_only():
     """The 5 Nov 2026 rebuild (Fable review §6): decision, glance, regime, scenarios, week map, structures, then the
     collapsed groups; avo: the page is English ("sayfa ingilizce olmali")."""
     html = _html()
-    marks = ["1 · Decision", "2 · At a glance", "3 · What would change the regime", "4 · Scenarios",
-             "5 · Week gamma map", "7 · Greeks and the dealer book", "8 · Volatility", "9 · Flow",
-             "10 · Positioning", "11 · Calendar and reference"]
+    marks = ['id="g1"', 'id="g2"', 'id="g3"', 'id="g4"', 'id="g5"', 'id="g6b"', "7 · Greeks and the dealer book",
+             "8 · Volatility", "9 · Flow", "10 · Positioning", "11 · Calendar and reference"]
     at = [html.find(m) for m in marks]
     assert all(i >= 0 for i in at), dict(zip(marks, at))
     assert at == sorted(at)

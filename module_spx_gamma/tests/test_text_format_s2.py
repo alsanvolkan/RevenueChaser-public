@@ -93,9 +93,9 @@ def test_iron_butterfly_from_a_later_chain_shows_the_historical_label():
     s = make_snapshot()
     s["historical_live_files"] = ["option_chain.json"]
     html = render.render_html(s)
-    panel = html.split("Iron Butterfly — Pin Harvest</h2>")[1].split("At a Glance")[0]
+    panel = html.split("Iron Butterfly — Pin Harvest</b>")[1].split("</section>")[0]
     assert "n/a (historical)" in panel
-    assert "Center (Pin)" not in panel and "ib-legs" not in panel.split("</style>")[-1]
+    assert "Center (Pin)" not in panel and "ib-legs" not in panel
 
 
 def test_the_current_day_keeps_its_live_values():
