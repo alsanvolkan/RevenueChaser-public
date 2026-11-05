@@ -17,7 +17,7 @@ from RevenueChaser.core.options import parse_option_symbol
 
 from .config import to_float
 
-__all__ = ["parse_option_symbol", "black_scholes_mid", "normalize_option_chain", "delta25_skew"]
+__all__ = ["parse_option_symbol", "black_scholes_mid", "normalize_option_chain", "delta25_skew", "straddle_move"]
 
 # A contract counts as "25 delta" when its |delta| is within this window; the nearest to 0.25 is taken.
 DELTA25_WINDOW = (0.15, 0.35)
@@ -149,3 +149,29 @@ def delta25_skew(chain_rows: list[dict]) -> dict | None:
     return {"expiry": front, "skew": put["iv"] - call["iv"], "put_iv": put["iv"], "call_iv": call["iv"],
             "put_strike": put["strike"], "call_strike": call["strike"],
             "put_delta": put["delta"], "call_delta": call["delta"]}
+
+
+def straddle_move(chain_rows: list[dict], spot: float | None) -> dict | None:
+    """The at-the-money straddle of the front expiry in ``chain_rows`` as an expected move (A7).
+
+    The strike nearest ``spot`` that has a quoted call and put mid; the move is call mid + put mid. A modeled mid is
+    not a market price, so a strike without quotes on both legs is skipped. None when no strike qualifies.
+    """
+    if not spot:
+        return None
+    quoted = [r for r in chain_rows or [] if r.get("price_source") == "quote" and r.get("mid") is not None
+              and r.get("expiry")]
+    if not quoted:
+        return None
+    front = min(r["expiry"] for r in quoted)
+    legs: dict[float, dict] = {}
+    for r in quoted:
+        if r["expiry"] == front:
+            legs.setdefault(r["strike"], {})[r["type"]] = r["mid"]
+    both = [k for k, v in legs.items() if "C" in v and "P" in v]
+    if not both:
+        return None
+    k = min(both, key=lambda x: (abs(x - spot), x))
+    pts = legs[k]["C"] + legs[k]["P"]
+    return {"expiry": front, "strike": k, "call_mid": legs[k]["C"], "put_mid": legs[k]["P"], "points": pts,
+            "lower": spot - pts, "upper": spot + pts}

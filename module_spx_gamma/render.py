@@ -195,6 +195,7 @@ _PANEL_FILES = {
     "skew": ("option_chain.json", "skew_chain_1m.json", "skew_chain_3m.json"),   # F3: the 25-delta chains
     # the chain, and the IV its wing width is sized from (review S1)
     "iron_butterfly": ("option_chain.json", expected_move.IV_FILE),
+    "straddle": "target_chain.json",
 }
 
 
@@ -587,6 +588,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "skew": snapshot.get("skew"),
         "vix": snapshot.get("vix"),
         "vega_flow": snapshot.get("vega_flow"),
+        "straddle": snapshot.get("straddle_move"),
         "vix_greeks": snapshot.get("vix_greeks"),
         "cftc": snapshot.get("cftc"),
         # Live panels in a backfilled day hold a later session's value: shown "n/a (historical)".

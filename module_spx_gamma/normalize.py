@@ -15,7 +15,7 @@ from .charm_pin import (
 )
 from .config import TICKER, net_sum, to_float
 from .brier import target_friday
-from .chains import delta25_skew, normalize_option_chain
+from .chains import delta25_skew, normalize_option_chain, straddle_move
 from .engines.iron_butterfly import build_iron_butterfly
 from .engines.prediction_engine import generate_prediction_matrix
 from .expected_move import expected_move, pick_iv
@@ -576,6 +576,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "strike_exposures_prev": strike_rows_prev,
         "expiry_distribution": expiry_rows,
         "front_expiry_share": front_expiry_share(expiry_rows, asof_str),
+        # A7: the target Friday's ATM straddle (UW quotes), the market's own expected move
+        "straddle_move": straddle_move(normalize_option_chain(raw.get("target_chain")), spot),
         "matrix_gex": matrix_gex,
         "source_chip": source_chip,
         "flow_strikes": flow_rows,

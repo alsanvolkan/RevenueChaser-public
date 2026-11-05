@@ -25,6 +25,7 @@ FILE_KEYS = {
     "variance_risk_premium": "variance_risk_premium",
     "realized_vol": "realized_vol",
     "option_chain": "option_chain",
+    "target_chain": "target_chain",
     "flow_per_strike": "flow_per_strike",
 }
 ZERO_DTE_STEM = "zero_dte_strike_expiry"

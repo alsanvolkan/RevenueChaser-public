@@ -142,7 +142,7 @@ _FILENAMES = {
 # rendered (PR 3), so they are never a later session's value.
 LIVE_FILES = frozenset(
     {_FILENAMES[n] for n, (_t, p) in BASE_ENDPOINTS.items() if "date" not in p}
-    | {"option_chain.json", "skew_chain_1m.json", "skew_chain_3m.json"}
+    | {"option_chain.json", "skew_chain_1m.json", "skew_chain_3m.json", "target_chain.json"}
 )
 
 # F3: the skew chains are read near these tenors, and only from an expiry within half a tenor of it.
@@ -568,6 +568,20 @@ def _fetch_snapshot_staged(
                 raw["skew_chains"][key] = _sc
             else:
                 warnings.append(f"skew_chain_{key}: no chain for {expiry} (skew {key} n/a)")
+
+    # 4c''. The target Friday's chain (A7 straddle, A2 priced structures): the expiry the week resolves on, when UW
+    #       lists it. Live only, best-effort.
+    raw["target_chain"] = None
+    if not history_only:
+        from .brier import target_friday
+        target = target_friday(asof_date)
+        listed = {r.get("expiry") for r in normalize_expiry_rows(raw.get("expiry_exposure"))}
+        if target in listed:
+            _tc = _call("target_chain", f"/stock/{ticker}/option-contracts", {"expiry": target}, "target_chain.json")
+            if _tc is not None and (_tc.get("data") or []):
+                raw["target_chain"] = _tc
+            else:
+                warnings.append(f"target_chain: no chain for {target} (straddle and structures n/a)")
 
     # 4d. The VIX index's own option book (§17): net vanna and net charm over its expiries. Best-effort — the
     #     panel degrades to None, and a failure here never fails an SPX snapshot.
