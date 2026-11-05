@@ -669,7 +669,8 @@ a link to where its cause is shown. A note renders with a warning mark, a positi
 link, never a button: long store-writing jobs start only from Settings. A board whose payload emits
 no funnel never asks for a Refresh to grow one, and a missing artifact reads as not rendered.
 
-The classification universe is the spine's Tiers A and B whole (PR 2, avo 30 Oct 2026): a security
+The classification universe is avo's own list, the spine's `my_universe` (avo 5 Nov 2026), and the
+spine's Tiers A and B whole where the spine holds no such list (PR 2, avo 30 Oct 2026): a security
 type is data a board filters on, not a cut of the universe. Each screening board has a type filter
 (`OPERATING_ONLY`, a setting on Co-movement, Swing and Fundamentals; `core.universe.BOARD_OPERATING_ONLY`
 holds every board's default, the set it read before PR 2). With the filter on, the board states the

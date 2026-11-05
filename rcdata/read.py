@@ -190,6 +190,28 @@ def my_universe(kinds: Iterable[str] = ()) -> list[dict]:
     return _rows("my_universe", sql + " ORDER BY ticker", wanted, missing_table_ok=True)
 
 
+def my_universe_tickers(kinds: Iterable[str] = ()) -> set[str] | None:
+    """The tickers of avo's own list, or ``None`` when the spine holds no ``my_universe`` table at all.
+
+    ``my_universe`` answers [] both for a spine built before the table existed and for a list avo has emptied, and
+    those mean opposite things: the first says "no list, apply your own rule", the second "keep nothing". Every
+    caller that has a rule of its own to fall back on asks through here instead -- the boards' universe
+    (``core/universe.py``), the companies the fundamentals build asks about
+    (``rcdata/build/fundamentals/common.universe``) and the securities the prices store keeps
+    (``rcdata/build/prices/universe.stored_tickers``) -- so one list decides all three.
+    """
+    try:
+        con = serving.open_read("spine")
+    except serving.ServingFileMissing:
+        return None
+    try:
+        if not con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = 'my_universe'").fetchone()[0]:
+            return None
+    finally:
+        con.close()
+    return {r["ticker"] for r in my_universe(kinds) if r.get("ticker")}
+
+
 def my_universe_changes(limit: int = 200) -> list[dict]:
     """The newest ``my_universe_changes`` rows (who entered or left, when and why), the most recent first.
 

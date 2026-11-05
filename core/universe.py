@@ -7,12 +7,14 @@ place the membership rule lives.
 
 The rule has two parts:
 
-* **the tier** — the spine's Tiers A and B, which is the whole limit (avo, 29 Oct
-  2026). There is no market-cap floor any more: `mc_min` defaults to 0, so every
-  tier A/B name is kept, NULL-cap names included. A caller that wants a floor of
+* **the membership** — avo's own list, the live spine's `my_universe` (avo, 5 Nov
+  2026), the same list the prices store keeps since #417; where the spine holds no
+  such table, the older rule it replaced: the spine's Tiers A and B (avo, 29 Oct
+  2026). There is no market-cap floor either way: `mc_min` defaults to 0, so every
+  member is kept, NULL-cap names included. A caller that wants a floor of
   its own still passes one (`--floor`, the Co-movement setting);
 * **the security type is data, not a cut** (avo, 30 Oct 2026, PR 2) — the universe
-  is Tiers A and B whole, funds, ETFs, SPACs, preferreds, warrants and units included.
+  is its membership whole, funds, ETFs, SPACs, preferreds, warrants and units included.
   A board that screens operating companies asks for them (`operating_only=True`): the
   names the identity master types as `identity.types.EXCLUDED_TYPES` (Identity R4,
   #87) leave that board's set at every cap. A ticker with no master row, a NULL type,
@@ -25,9 +27,9 @@ The types are read with a separate query, never a JOIN: `rawstore.query` answers
 silently empty the universe. `_security_types` is the one seam for them.
 
 **The source** (build plan PR 5; the default since PR 6): ``RC_UNIVERSE_SOURCE`` unset (or empty, or ``spine``) reads
-the identity spine through ``rcdata.read``: the members are the spine's listed names (Tier A and B, the old
-membership rule), with the spine's name, sector, industry and security type, and the same two-part rule applied to
-them; the market cap and price come from the prices store (PR 7, ``rcdata.read.latest_market``), each from the old
+the identity spine through ``rcdata.read``: the members are avo's ``my_universe`` list (the spine's listed names,
+Tier A and B, where it holds no list), with the spine's name, sector, industry and security type, and the same
+two-part rule applied to them; the market cap and price come from the prices store (PR 7, ``rcdata.read.latest_market``), each from the old
 ``equity_universe`` by ticker where the prices store has none, and ``quote`` from the old table. The index badges of
 ``filter_fields`` come from the spine's current membership (``index_registry``). Any other value (``store`` by
 convention) reads ``raw.duckdb`` as above: the escape hatch, kept until the old path is retired (plan PR 21). With
@@ -52,7 +54,13 @@ if TYPE_CHECKING:
 _UNIVERSE_TABLE = ("equity_universe" if "equity_universe" in rawstore.MANIFEST
                    else "equity_universe")
 
-# No market-cap floor (avo, 29 Oct 2026): the universe is the spine's Tiers A and B and nothing else.
+#: The tiers the old rule reads (avo, 29 Oct 2026), used when the spine holds no ``my_universe`` list.
+LISTED_TIERS = ("A", "B")
+#: Every tier, read when avo's list decides: it may name a Tier D company (no exchange in the SEC file), and the
+#: list is then the only filter.
+ALL_TIERS = ("A", "B", "C", "D")
+
+# No market-cap floor (avo, 29 Oct 2026): membership is the whole limit, and nothing else.
 # The parameter stays, so a caller can still ask for a floor of its own; 0 keeps NULL-cap names too.
 DEFAULT_MC_MIN = 0.0
 
@@ -163,12 +171,21 @@ def spine_provenance() -> dict | None:
 
 
 def _spine_universe() -> list[dict]:
-    """The spine's listed names as ``equity_universe`` rows: identity from ``rcdata.read``; market cap and price from
+    """The universe as ``equity_universe`` rows: identity from ``rcdata.read``; market cap and price from
     the prices store (``read.latest_market``), each from the old ``equity_universe`` by ticker where the prices store
     has none (NULL where neither has one); ``quote`` from the old table. The cap is the issuer's (every listed class,
-    as Yahoo's was), a fund's its own: one trust's CIK files many funds. No spine file yet: no rows."""
+    as Yahoo's was), a fund's its own: one trust's CIK files many funds. No spine file yet: no rows.
+
+    **Which names.** avo's own list when the live spine holds one (``my_universe``, the same list the prices store
+    keeps since #417): every tier it names, the list alone. Without that table -- a spine built before schema 5 --
+    the old rule, the spine's Tiers A and B whole. The list is read once a render
+    (``spine_reads.my_universe_tickers``), and every caller below goes through this function, so the boards, the
+    funnel of ``universe_counts`` and the peer ladder can never read different sets."""
     from . import spine_reads
-    ids = spine_reads.universe(("A", "B"))
+    kept = spine_reads.my_universe_tickers()
+    ids = spine_reads.universe(LISTED_TIERS if kept is None else ALL_TIERS)
+    if kept is not None:
+        ids = [r for r in ids if r["ticker"] in kept]
     if not ids:
         return []
     market = {r["ticker"]: r for r in rawstore.query(
@@ -235,7 +252,7 @@ def excluded_tickers() -> set[str]:
 
 
 def classification_universe(mc_min: float = DEFAULT_MC_MIN, *, operating_only: bool = False) -> list[str]:
-    """The universe's tickers (Tiers A and B, every type) with ``COALESCE(market_cap, 0) >= mc_min``.
+    """The universe's tickers (every member, every type) with ``COALESCE(market_cap, 0) >= mc_min``.
 
     Cap-descending. ``operating_only=True`` (a board that screens operating companies) drops the names whose
     identity-master type is excluded (``identity.types.EXCLUDED_TYPES``); untyped names stay.

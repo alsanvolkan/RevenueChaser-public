@@ -176,31 +176,15 @@ def kept_beside(watched: set[str] | None = None) -> set[str]:
     return {str(t).strip().upper() for t in (*BENCHMARKS, *ROTATION, *watched) if str(t).strip()}
 
 
-def _open_spine():
-    from ... import serving
-    try:
-        return serving.open_read("spine")
-    except serving.ServingFileMissing:
-        return None
-
-
-def _has(con, table: str) -> bool:
-    return bool(con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = ?", [table]).fetchone()[0])
-
-
 def stored_tickers() -> set[str] | None:
     """avo's own list from the live spine's ``my_universe`` table, or ``None`` when the spine has no such table
-    (then the rule above decides). A table that exists and is empty is an empty universe, not a missing one."""
-    con = _open_spine()
-    if con is None:
-        return None
-    try:
-        if not _has(con, MY_UNIVERSE_TABLE):
-            return None
-        return {str(t).strip().upper() for (t,) in
-                con.execute(f"SELECT ticker FROM {MY_UNIVERSE_TABLE} WHERE ticker IS NOT NULL").fetchall()}
-    finally:
-        con.close()
+    (then the rule above decides). A table that exists and is empty is an empty universe, not a missing one.
+
+    ``read.my_universe_tickers`` is the one reader of that distinction, shared with the boards' universe and the
+    fundamentals build; this adds only the spelling the staging SQL compares against."""
+    from ... import read
+    tickers = read.my_universe_tickers()
+    return None if tickers is None else {str(t).strip().upper() for t in tickers}
 
 
 def members(rows: list[dict], etfs: set[str] | None = None) -> set[str]:

@@ -38,7 +38,7 @@ def _comovement_params() -> list[str]:
         f"Window {eff.window} sessions",
         f"Min observations {eff.min_obs}",
         f"Out-of-sample holdout {eff.oos_holdout} sessions",
-        ("Market-cap floor none (Tiers A and B)" if not DEFAULT_MC_MIN
+        ("Market-cap floor none (every member)" if not DEFAULT_MC_MIN
          else f"Market-cap floor ${DEFAULT_MC_MIN / 1e6:,.0f}M"),
         f"Default benchmark {bench}",
         f"Default horizon {c.DEFAULT_HORIZON} day",
@@ -52,7 +52,7 @@ _INPUT_KEYS = ("WINDOW", "MIN_OBS", "OOS_HOLDOUT")
 _FINE_KEYS = ("WINSOR_K", "MIN_PERIODS", "BENCH_STALE_SESSIONS", "OPERATING_ONLY")
 
 # The type filter's two values in words (PR 2), for the cards' select.
-_TYPE_FILTER_LABELS = {0: "Every type (Tiers A and B)", 1: "Operating companies only"}
+_TYPE_FILTER_LABELS = {0: "Every security type", 1: "Operating companies only"}
 
 
 def _type_filter_field(f: dict) -> dict:
@@ -148,7 +148,7 @@ def _fundamentals_params() -> list[str]:
     return [
         f"Minimum price ${e.min_price:g}",
         f"Minimum dollar volume ${e.min_dollar_volume:,.0f} a day",
-        "Operating companies only" if e.operating_only else "Every security type (Tiers A and B)",
+        "Operating companies only" if e.operating_only else "Every security type",
     ]
 
 
