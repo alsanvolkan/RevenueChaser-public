@@ -28,6 +28,8 @@ def _clock(monkeypatch, ny: datetime) -> None:
 
 @pytest.fixture(autouse=True)
 def alpaca_env(monkeypatch):
+    # The fetch mechanics over the whole scope: the tester's risk selection is ``test_prices_compustat_primary``'s.
+    monkeypatch.setattr("RevenueChaser.rcdata.build.prices.tester.select", lambda names, as_of: (names, "every name"))
     monkeypatch.setenv("ALPACA_API_KEY_ID", "test-key-id")
     monkeypatch.setenv("ALPACA_API_SECRET_KEY", "test-secret")
     monkeypatch.setenv("RC_ALPACA_BASE", "https://alpaca.test")

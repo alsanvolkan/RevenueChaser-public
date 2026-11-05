@@ -1,0 +1,17 @@
+{
+  "_": "The universe rules, avo's own (4 Nov 2026). Owned by avo; changed only by a pull request. The module that reads this file is rcdata/build/spine/my_universe.py; nothing else holds a copy of a number here.",
+  "version": 1,
+  "decided_on": "2026-11-04",
+  "stocks": {
+    "_": "A security row of these tiers whose type is one of these. Tier A is listed on Nasdaq, NYSE or Cboe; Tier D has no exchange in the SEC file. royalty_trust, bdc and bank_nonsec are operating types the identity master knows and avo left out; an untyped name stays out until it is typed.",
+    "tiers": ["A", "D"],
+    "types": ["adr", "common", "mlp", "reit"]
+  },
+  "etfs": {
+    "_": "An etf row that is no ETN and no CEF, with an AUM at or over aum_floor_usd, or, where N-CEN gives it no AUM, a 20-session average daily dollar volume at or over adv_usd_20d_floor. A known AUM under the floor is the answer: the volume test never rescues it.",
+    "aum_floor_usd": 100000000,
+    "adv_usd_20d_floor": 10000000,
+    "exclude_etn": true,
+    "exclude_cef": true
+  }
+}

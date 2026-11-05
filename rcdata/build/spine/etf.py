@@ -14,7 +14,11 @@ and no ``active`` column** here; a board's thresholds (AUM, dollar volume) are i
 ``MONTHLY_AVG_NET_ASSETS``, with the filing's report end as ``aum_as_of``) from the series' newest N-CEN, NULL for
 a row N-CEN does not hold (unknown, not false); ``inception`` from AV's ``ipoDate``; ``is_option_income`` by a name
 rule; ``asset_class`` only ``commodity``, by the trust rule below; ``sector_name`` for the 11 sector SPDRs. NULL
-until later PRs: ``focus``, ``country``, ``adv_usd_20d``, ``expense_ratio`` and every other ``asset_class``.
+until later PRs: ``focus``, ``country``, ``expense_ratio`` and every other ``asset_class``. ``adv_usd_20d`` is the
+20-session average daily dollar volume, read from the **raw** Compustat ``comp.secd`` Parquet
+(:func:`adv_usd_20d`); it is what decides a fund N-CEN gives no AUM for in ``my_universe`` (avo, 4 Nov 2026), and
+it is measured from the raw file rather than the live ``prices.duckdb`` because that store keeps only today's
+universe (#357, avo's decision B of 5 Nov 2026).
 
 **The commodity rule.** An ``etp`` row of the spine that is no note, has no N-CEN series, and whose CIK filed no
 N-CEN at all is not a registered investment company: a grantor trust or commodity pool registered under the 1933
@@ -25,13 +29,15 @@ quarters (a fund files once a fiscal year) the rule says nothing: one quarter ho
 from __future__ import annotations
 
 import re
+from datetime import date
+from pathlib import Path
 
 import duckdb
 
 from ....core.rotation_reference import ROTATION_ETFS
 from .. import base
 from .av_listing import STAGING as AV
-from . import ncen
+from . import ncen, stage
 from .ncen import FILERS, STAGING as NCEN
 
 TABLE = "etf"
@@ -91,6 +97,84 @@ def _flag(nc: bool, value) -> bool | None:
     return bool(value) if nc else None
 
 
+#: ``adv_usd_20d`` is the average of the fund's newest :data:`ADV_SESSIONS` **priced Compustat** sessions, and only
+#: of a fund that has all of them: an average over three sessions is not the number avo's rule asks for ("son 20
+#: gunun ortalama gunluk islem hacmi", 4 Nov 2026), so a fund with fewer stays unmeasured (NULL) and the universe
+#: rule reports it undecided rather than judging it on a short window.
+ADV_SESSIONS = 20
+#: How recent (calendar days before Compustat's newest priced day) a series' own newest priced day must be for the
+#: ticker it carries there to name this fund: two weeks covers a holiday week and a late Compustat row. The twin of
+#: ``prices/universe.ETF_TIC_RECENT_DAYS`` (PR 382), which resolves a universe ETF's series the same way.
+TIC_RECENT_DAYS = 14
+#: How many of Compustat's newest year partitions the window is read from. Twenty sessions are a month, so two
+#: years cover a build in early January and a year the fetch has not refreshed yet, without scanning 33 years.
+ADV_YEARS = 2
+#: Compustat's daily security file, as ``wrds/prices`` stores it: ``parquet/wrds/prices/secd/year=<Y>/part-0.parquet``.
+SECD_DATASET = ("wrds", "prices", "secd")
+
+
+def secd_files(as_of: date | None = None) -> list[Path]:
+    """The newest :data:`ADV_YEARS` Compustat ``secd`` year partitions that exist, oldest first; a year after
+    ``as_of`` is not read at all, so a build of an earlier day reads that day's Compustat."""
+    root = base.parquet_root()
+    for part in SECD_DATASET:
+        root = root / part
+    years = [(y, f) for y, f in stage.partitions(root, "year")
+             if y.isdigit() and (as_of is None or int(y) <= as_of.year)]
+    return [f for _, f in years[-ADV_YEARS:]]
+
+
+def adv_usd_20d(tickers: list[str], as_of: date | None = None) -> dict[str, float]:
+    """``{ticker: average daily dollar volume}`` over the newest :data:`ADV_SESSIONS` priced sessions of the
+    Compustat series the ticker names, read from the **raw** ``comp.secd`` Parquet (#357, avo's decision B of
+    5 Nov 2026).
+
+    **Not from the live ``prices.duckdb``.** That store keeps only today's universe (PR 382), and a fund enters the
+    universe *on this number*: reading it there would mean a fund that is not in the store yet could never get a
+    volume, and so never enter. The raw Compustat partitions hold every fund Compustat prices, whatever our
+    universe says.
+
+    A session's dollar volume is its close (``prccd``) times its volume (``cshtrd``), the same two columns the
+    served Compustat bar carries, in US dollars only (``curcdd``); a day with no price, no volume or another
+    currency is no session. The fund's **series** is the one whose own newest priced day carries the ticker
+    (Compustat's ``tic``, its dots read as the spine's dashes) within :data:`TIC_RECENT_DAYS` of Compustat's newest
+    priced day: a series that carried the ticker long ago is a reused ticker's, not this fund's. Where two live
+    series still claim one ticker the larger average is the answer; the spine's own routing is not consulted,
+    because one live ticker is one security's and a dead series is already out by the recency rule. A fund with
+    fewer than :data:`ADV_SESSIONS` priced sessions, or no Compustat partition at all, is absent from the answer
+    and its ``adv_usd_20d`` stays NULL (unknown, not zero).
+    """
+    wanted = sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+    files = secd_files(as_of)
+    if not wanted or not files:
+        return {}
+    src = f"read_parquet([{', '.join(base.sql_path(f) for f in files)}], union_by_name = true)"
+    cutoff = "" if as_of is None else f" AND datadate <= DATE '{as_of.isoformat()}'"
+    con = duckdb.connect()
+    try:
+        rows = con.execute(f"""
+            WITH priced AS (
+                SELECT gvkey || ':' || iid AS gid, replace(upper(tic), '.', '-') AS ticker, datadate,
+                       prccd * cshtrd AS dollars
+                FROM {src}
+                WHERE prccd > 0 AND cshtrd IS NOT NULL AND tic IS NOT NULL
+                  AND coalesce(upper(curcdd), 'USD') = 'USD'{cutoff}),
+            last_day AS (SELECT gid, ticker, datadate FROM priced
+                         QUALIFY row_number() OVER (PARTITION BY gid ORDER BY datadate DESC) = 1),
+            claim AS (SELECT gid, ticker FROM last_day
+                      WHERE ticker IN ({', '.join('?' * len(wanted))})
+                        AND datadate > (SELECT max(datadate) FROM priced)
+                                       - INTERVAL {TIC_RECENT_DAYS} DAY),
+            recent AS (SELECT c.ticker, p.gid, p.dollars FROM priced p JOIN claim c USING (gid)
+                       QUALIFY row_number() OVER (PARTITION BY p.gid ORDER BY p.datadate DESC) <= {ADV_SESSIONS})
+            SELECT ticker, adv FROM (SELECT ticker, gid, avg(dollars) AS adv FROM recent GROUP BY 1, 2
+                                     HAVING count(*) = {ADV_SESSIONS})
+            QUALIFY row_number() OVER (PARTITION BY ticker ORDER BY adv DESC, gid) = 1""", wanted).fetchall()
+    finally:
+        con.close()
+    return {str(t): float(v) for t, v in rows if v is not None}
+
+
 def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
     """Every ETF ticker's row, from the staging tables and the ``security`` table this build just created."""
     cur = con.execute(f"""
@@ -118,6 +202,7 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
     filers = {r[0] for r in con.execute(f"SELECT DISTINCT cik FROM {FILERS}").fetchall()}
     # Fewer quarters hold a fraction of the filers: "files no N-CEN" is only known over a full year (review M1).
     year_held = ncen.quarters_held() >= ncen.BACKFILL_QUARTERS
+    adv = adv_usd_20d([r["ticker"] for r in found], ctx.as_of)
     out = []
     for r in found:
         names = (r["fund_name"], r["av_name"], r["etp_name"])
@@ -135,11 +220,13 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
             "is_lev_inverse": True if is_lev_inverse(*names) else _flag(nc, r["is_multi_inverse_index"]),
             "is_money_market": _flag(nc, r["is_money_market"]), "is_option_income": is_option_income(*names),
             "is_fund_of_funds": _flag(nc, r["is_fund_of_fund"]), "inception": r["ipo_date"], "aum": aum,
-            "aum_as_of": r["report_end"] if aum is not None else None, "adv_usd_20d": None, "expense_ratio": None,
+            "aum_as_of": r["report_end"] if aum is not None else None,
+            "adv_usd_20d": adv.get(r["ticker"]), "expense_ratio": None,
             "sector_name": SECTOR_NAMES.get(r["ticker"]), "source_as_of": r["source_as_of"],
             # The newest of its sources' fetch times; run_id is the build that wrote the row (it is derived).
             "fetched_at": r["fetched_at"], "run_id": ctx.run_id})
     etns = sum(1 for r in out if r["is_etn"])
     cefs = sum(1 for r in out if r["is_cef"] and not r["is_etn"])
-    ctx.notes.append(f"{len(out)} in etf: {len(out) - etns - cefs} ETFs, {etns} ETNs flagged, {cefs} CEFs flagged")
+    ctx.notes.append(f"{len(out)} in etf: {len(out) - etns - cefs} ETFs, {etns} ETNs flagged, {cefs} CEFs flagged; "
+                     f"{len(adv)} with a {ADV_SESSIONS}-session dollar volume")
     return out

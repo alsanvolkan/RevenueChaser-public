@@ -165,14 +165,43 @@ def _tickers(rows):
     return sorted(r["ticker"] for r in rows)
 
 
-def test_the_default_scope_asks_tier_a_and_tier_b(spine, monkeypatch):
-    """avo, 30 Oct 2026: the universe is A+B (7,670 names on the live spine), with no market-cap floor. Tier A alone
-    was 5,655, so the bars' daily calls grow by about a third."""
+def test_the_default_scope_asks_todays_universe(spine, monkeypatch):
+    """avo, 4 Nov 2026: today's universe -- the Tier A and Tier D names of a stored type, and the spine's ETFs over
+    ``universe.ETF_MIN_AUM``. The whole-tier rule of 30 Oct 2026 (A+B, 7,670 names) carried every SPAC, warrant,
+    preferred and untyped name with it, and missed the funds the spine's ``security`` table does not hold."""
     monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
-    rows = prices.scope(watched=set())
-    assert prices.DEFAULT_TIERS == ("A", "B")
-    assert "SPY" in _tickers(rows) and {"AAPL", "BRK-B", "FLG", "GAPX"} <= set(_tickers(rows))
+    rows = prices.scope(watched=set(), etfs={"QQQ", "TQQQ"})
+    assert {"AAPL", "BRK-B", "FLG", "GAPX"} <= set(_tickers(rows)), "the Tier A names of a stored type"
+    assert "TQQQ" in _tickers(rows), "a fund of the universe the spine's security table does not hold"
+    assert "SPY" in _tickers(rows), "a benchmark is asked beside the universe"
     assert all(r.get("security_id") for r in rows), "every asked name carries the id the store keys it under"
+
+
+def test_the_default_scope_leaves_out_an_excluded_type_and_an_untyped_name(monkeypatch):
+    """A SPAC, a preferred, a warrant, a BDC and a name with no type yet stay out of the store, so they are not
+    asked; a Tier D name of a stored type is asked, because avo's rule keeps Tier A and Tier D alike."""
+    prices_fixture.write_spine([
+        {"ticker": "AAPL", "cik": "320193", "name": "Apple Inc.", "exchange": "Nasdaq", "tier": "A",
+         "security_type": "common", "gvkey": None, "iid": None, "composite_figi": None},
+        {"ticker": "SPCX", "cik": "4000002", "name": "Churchill Capital Corp XI", "exchange": "Nasdaq", "tier": "A",
+         "security_type": "spac", "gvkey": None, "iid": None, "composite_figi": None},
+        {"ticker": "WFC-PC", "cik": "72971", "name": "WELLS FARGO PFD", "exchange": "NYSE", "tier": "B",
+         "security_type": "preferred", "gvkey": None, "iid": None, "composite_figi": None},
+        {"ticker": "AMPX-WT", "cik": "4000003", "name": "Amprius warrant", "exchange": "NYSE", "tier": "B",
+         "security_type": "warrant", "gvkey": None, "iid": None, "composite_figi": None},
+        {"ticker": "NEWCO", "cik": "4000004", "name": "NEW LISTING INC", "exchange": "Nasdaq", "tier": "A",
+         "security_type": None, "gvkey": None, "iid": None, "composite_figi": None},
+        {"ticker": "MAIN", "cik": "4000005", "name": "MAIN STREET CAPITAL CORP", "exchange": "NYSE", "tier": "A",
+         "security_type": "bdc", "gvkey": None, "iid": None, "composite_figi": None},
+        {"ticker": "NOEX", "cik": "4000006", "name": "NO EXCHANGE LP", "exchange": None, "tier": "D",
+         "security_type": "mlp", "gvkey": None, "iid": None, "composite_figi": None}])
+    monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
+    rows = prices.scope(watched=set(), etfs=set())
+    asked = set(_tickers(rows))
+    assert "AAPL" in asked
+    assert "NOEX" in asked, "avo's rule keeps Tier D (no exchange in the SEC file), so an MLP there is stored"
+    assert not asked & {"SPCX", "WFC-PC", "AMPX-WT", "NEWCO"}, "an excluded type or an untyped name is not stored"
+    assert "MAIN" not in asked, "a BDC operates a business but avo's rule does not store it"
 
 
 def test_a_request_can_ask_one_tier(spine, monkeypatch):
@@ -453,9 +482,9 @@ def test_karar_82_a_tier_fill_that_matches_nothing_is_refused_before_a_call(spin
 
 
 def test_a_spine_with_no_name_of_the_asked_tiers_is_a_failure_even_if_a_benchmark_has_a_tier(monkeypatch):
-    """The daily run's guard must count the tiers it asked for. A spine holding only names outside A+B still gives
-    the benchmarks a tier (SPY as Tier C here), so "does any name carry any tier" would pass and the run would ask
-    Alpaca for five ETFs and call that a bars run."""
+    """The daily run's guard must count the universe it asked for. A spine holding no stock of the universe still
+    gives the benchmarks a row (SPY as Tier C here), so "does any name carry any tier" would pass and the run would
+    ask Alpaca for five ETFs and call that a bars run."""
     from RevenueChaser.rcdata.build.prices import bars
 
     prices_fixture.write_spine([{"ticker": "SPY", "cik": "884394", "name": "SPDR S&P 500 ETF TRUST",
@@ -464,7 +493,7 @@ def test_a_spine_with_no_name_of_the_asked_tiers_is_a_failure_even_if_a_benchmar
     monkeypatch.setattr(prices, "cover_classes", lambda rows: [])
     monkeypatch.setattr(bars.calendar, "bars_complete", lambda day, now: True)
     ctx = base.RunContext(run_id="t", dataset=bars.NAME)
-    with pytest.raises(base.SourceError, match="no name of the asked tiers"):
+    with pytest.raises(base.SourceError, match="no stock of today's universe"):
         bars.DATASET.fetch(ctx, date(2026, 10, 28))
 
 

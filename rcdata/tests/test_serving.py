@@ -193,3 +193,31 @@ def test_b2_a_shrink_is_allowed_only_when_asked_for():
     with serving.open_read("market") as con:
         assert con.execute("SELECT count(*) FROM t").fetchone()[0] == 0
     _build_t(11)                                   # growing is always fine
+
+
+def test_a_retired_table_may_leave_the_build_and_any_other_still_may_not(monkeypatch):
+    """Review M2 of #382: PR 382 drops ``prices``' ``crsp_unadjusted`` table on purpose, and the live file still holds
+    it. The "every live table must be in the build" guard refused that build even with ``allow_shrink``; a table the
+    code retired by name (``RETIRED_TABLES``) may now leave, and any other missing table is refused as before."""
+    monkeypatch.setitem(serving.RETIRED_TABLES, "market", ("old",))
+    with serving.build("market") as b:
+        b.con.execute("CREATE TABLE t AS SELECT range AS i FROM range(10)")
+        b.con.execute("CREATE TABLE old AS SELECT range AS i FROM range(5)")
+        b.con.execute("CREATE TABLE gone AS SELECT range AS i FROM range(5)")
+        b.swap({"t": 10, "old": 5, "gone": 5})
+    with pytest.raises(serving.SwapRefused, match="table gone of the live file is missing"):
+        _build_t(10)                                   # neither old nor gone: gone is no retired table
+    with serving.build("market") as b:
+        b.con.execute("CREATE TABLE t AS SELECT range AS i FROM range(10)")
+        b.con.execute("CREATE TABLE gone AS SELECT range AS i FROM range(5)")
+        b.swap({"t": 10, "gone": 5})                   # old, the retired one, is absent: accepted
+    with serving.open_read("market") as con:
+        names = {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables()").fetchall()}
+    assert "old" not in names and {"t", "gone"} <= names
+
+
+def test_prices_retires_the_crsp_unadjusted_table_of_pr_353():
+    """PR 382 removed ``crsp_unadjusted`` (the CRSP bars no action adjusted): CRSP serves no bar any more."""
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    assert "crsp_unadjusted" in serving.RETIRED_TABLES["prices"]
+    assert not set(serving.RETIRED_TABLES["prices"]) & set(prices_serving.SCHEMAS), "a retired table is still built"

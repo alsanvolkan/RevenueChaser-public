@@ -465,6 +465,24 @@ login is what asks for credentials.
   newest session from `price_bars_daily`; `swing_ohlc` appears as the legacy cache and is not the
   price of record.
 
+### 2.9 Which prices file the board reads
+
+The daily bars live in two files. Since build plan PR 7 the builder writes them to the **market store's**
+`prices.duckdb` (`RC_MARKET_DIR`): `price_bar_daily`, keyed on the security id, with the old `price_bars_daily`
+shape served beside it as a view. The **store's own** `prices.duckdb` (`RC_STORE_DIR`) is written only by the old
+nightly, RC-Daily-Bars; where that does not run it is a schema stub. The live check of 1 Nov 2026 found exactly that:
+a 798 KB stub in the store beside 5.65M bars through 2026-10-30 in the market file, and the board showed no bars.
+
+So the "Daily price bars" row, the drill's bar count and the identity input "Daily price bars, latest completed
+session" read the **market file whenever it is built**, and the store's file only when it is not
+(`module_settings/inventory.py`, `_market_prices`). On the market file the row says so in its note (newest session
+against the latest complete one, the bars per source on the newest session, the build time), counts index levels
+out of the bars, names its store `market`, its source Alpaca and its writer `prices/serving`, and its "behind" column
+counts complete sessions the file misses. A market file that is there but cannot be read is said ("could not be read",
+Freshness "query failed"), never shown as an empty one; with neither file holding a bar the row says that the market
+file is not built and the store file holds none. Whether RC-Daily-Bars and the store's file are retired is a decision
+of its own, not made here.
+
 ---
 
 ## 3. The sections below the table

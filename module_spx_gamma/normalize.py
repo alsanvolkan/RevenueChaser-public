@@ -29,7 +29,7 @@ from .levels import (
     map_volume_levels,
 )
 from .summary import charm_live_sum, vanna_at_spot
-from .vix import vix_term_mode
+from .vix import ivts, vix_term_mode
 
 
 def normalize_strike_rows(payload: dict | None) -> list[dict]:
@@ -336,6 +336,7 @@ def normalize_vix(vix_payload: dict | None) -> dict | None:
         "vvix": to_float(tk.get("^VVIX")),
         # Re-read from the closes, so a day stored before the 9D rule shows the same mode as a new one (review N7).
         "term_mode": vix_term_mode({k: to_float(v) for k, v in tk.items()}),
+        "ivts": ivts({k: to_float(v) for k, v in tk.items()}),
     }
 
 

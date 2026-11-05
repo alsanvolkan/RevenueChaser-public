@@ -1,8 +1,9 @@
 """``wrds/prices``: the price history from WRDS, Compustat's ``comp.secd`` and CRSP's ``crsp.dsf_v2`` from 1993 (CRSP
 to 2025), with Compustat's splits (``comp.sec_split``) and dividends (``comp.sec_divid``).
 
-**CRSP is the history** (avo, 1 Nov 2026): stocks and ETFs from 1993-01-29 (SPY's first day) to 2025-12-31; Alpaca
-keeps only its daily fetch. The CRSP column names were read from WRDS's ``information_schema`` on homesrv (1 Nov
+**Compustat is the history** (master plan of 2 Nov 2026, items 1-3; avo, 3 Nov 2026: the whole history and what
+comes after from Compustat): ``comp.secd`` from its earliest priced day, 1983-12-30; CRSP (1925-12-31..2025-12-31 on
+WRDS) is a narrow fallback, and Alpaca a tester (``prices/serving``). The CRSP column names were read from WRDS's ``information_schema`` on homesrv (1 Nov
 2026); Compustat's are as documented. A column the store needs that comes back empty for a whole answer is a
 ``wrds_column_empty`` run issue.
 
@@ -15,9 +16,10 @@ security through ``PERMNO_LINK`` at serving time, from columns every ``dsf_v2`` 
 one Duo push). Every query counts as one ``wrds`` call; WRDS publishes no quota, so ``rcdata/caps.py`` gives it no
 day cap. A backfill that reaches a cap anyway stops, keeps and serves the years it has, and the next backfill goes on from the first missing one.
 
-**What is asked.** One query per table and calendar year (``year_sql``): ``comp.secd`` on the US exchanges
-(``exchg`` 11, 12, 14: NYSE, NYSE American, Nasdaq) and ``comp.sec_divid`` from ``START_YEAR``, ``crsp.dsf_v2``
-(every share type, ETFs included) from ``START_YEAR`` to ``CRSP_LAST_YEAR``; ``comp.sec_split`` whole. A
+**What is asked.** One query per table and calendar year (``year_sql``): ``comp.secd`` on ``COMPUSTAT_EXCHG``
+(11, 12, 14: NYSE, NYSE American, Nasdaq; 17 and 21: the Arca listings) and ``comp.sec_divid`` from ``START_YEAR``
+(the year of ``COMPUSTAT_START``, 1983-12-30, Compustat's earliest priced day), ``crsp.dsf_v2`` (every share type,
+ETFs included) from ``START_YEAR`` to ``CRSP_LAST_YEAR``; ``comp.sec_split`` whole. A
 **backfill** asks the snapshot first (the splits the years need), then the years newest first and,
 within a year, the three tables; **a partition that exists is skipped** with no query, and a raw file that exists
 is typed again rather than asked again (a run killed between the two). The **monthly run** (``fetch``) asks the
@@ -51,17 +53,17 @@ second Duo): a Compustat table the login cannot read, or a column a query names 
 ``exchg`` among them), fails the run before any data is asked; a CRSP table missing from it, or a CRSP column it
 lacks, is skipped as above.
 
-**Served** by ``prices/serving``: the bars (``COMP_BARS``, ``CRSP_BARS``; CRSP first where it is the same security,
-an Alpaca bar always winning its session), the actions (``ACTIONS_SQL``; an Alpaca action of the same kind and day
+**Served** by ``prices/serving``: the bars (``COMP_BARS`` only -- a ``CRSP_BARS`` row is staged for the cross-check
+and never served, avo 4 Nov 2026), the actions (``ACTIONS_SQL``; an Alpaca action of the same kind and day
 winning), the revisions, and the difference report ``wrds_price_diff`` (``COMPARISONS``). Compustat's own adjusted
-return is ``COMP_RETURN``: ``prccd / ajexdi * trfd`` over the previous session's.
+return is ``COMP_RETURN``: ``prccd / ajexdi * trfd`` over the previous session's; its splits are ``comp.sec_split``'s
+and, where that has none, a change of ``ajexdi`` (``AJEXDI_SPLITS``).
 
-**Adjustment.** A served bar is nominal, CRSP's (``abs(dlyprc)``: a negative price is CRSP's bid/ask midpoint) as
-Alpaca's raw bar, and the factors are applied on read from ``corporate_action``. Before Alpaca's action window the
-only actions are Compustat's, keyed ``gvkey:iid`` or a security's ``GVKEY_ALIAS`` (an ETF the spine names by FIGI
-whose CUSIP Compustat holds). A security no Compustat record reaches has no split or dividend applied to its CRSP
-history, so ``prices/serving`` keeps those bars out of the adjusted view (``crsp_unadjusted``). ``dlycumfacpr`` and
-``dlyorddivamt`` are stored for that.
+**Adjustment.** A served bar is nominal and the factors are applied on read from ``corporate_action``. Before
+Alpaca's action window the only actions are Compustat's, keyed ``gvkey:iid`` or a security's ``GVKEY_ALIAS`` (an ETF
+the spine names by FIGI whose CUSIP Compustat holds). A CRSP close is read ``abs(dlyprc)`` (a negative price is
+CRSP's bid/ask midpoint) for the difference report; ``dlycumfacpr`` is the split cross-check and ``dlyorddivamt``
+the dividend behind ``dlyret``.
 """
 from __future__ import annotations
 
@@ -71,15 +73,27 @@ from pathlib import Path
 import duckdb
 
 from ....core import calendar
+from ... import caps
 from .. import base
 from ..fundamentals import wrds_fund
 from ..spine import wrds
-from ..spine.security import US_EXCHG
 from . import KIND, stage
 
 NAME = "wrds/prices"
 COMPUSTAT, CRSP = "wrds/compustat", "wrds/crsp"          # the bar sources in ``price_bar_daily``
-START_YEAR = 1993                                        # CRSP's SPY starts 1993-01-29
+# Compustat is the one primary source (master plan of 2 Nov 2026, item 1): the history starts on the earliest
+# priced ``comp.secd`` day, measured on homesrv (priced rows 1983-12-30..2026-10-30), and every yearly table from
+# that year, so CRSP's fallback rows (``serving``) reach as far back.
+COMPUSTAT_START = date(1983, 12, 30)
+START_YEAR = COMPUSTAT_START.year
+# ``comp.secd``'s exchanges: NYSE, NYSE American, Nasdaq (11, 12, 14, the spine's ``US_EXCHG``), NYSE Arca (17) and
+# BATS BZX (21), where the ETFs the old filter dropped are filed (comp_na_daily_all.r_ex_codes, master plan item 1).
+COMPUSTAT_EXCHG = (11, 12, 14, 17, 21)
+# The added exchanges' secd rows over every year (the coordinator's WRDS access inventory, 3 Nov 2026, from
+# comp_na_daily_all.r_ex_codes and a count): the dry run prints them beside its own estimate.
+ARCA_BATS = {17: ("NYSE Arca", 7_500_000), 21: ("BATS BZX", 1_700_000)}
+# The dry run reports the years through this one apart (the history before the store's 2010-2025 partitions).
+EARLY_LAST_YEAR = 2009
 CRSP_LAST_YEAR = 2025                                    # the CRSP subscription's last year
 REFRESH_YEARS = 2
 SNAPSHOT_DAYS = 30
@@ -90,7 +104,14 @@ PROVENANCE = [("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TE
 
 SECD = [("gvkey", "TEXT"), ("iid", "TEXT"), ("datadate", "DATE"), ("tic", "TEXT"), ("cusip", "TEXT"),
         ("curcdd", "TEXT"), ("prccd", "DOUBLE"), ("prcod", "DOUBLE"), ("prchd", "DOUBLE"), ("prcld", "DOUBLE"),
-        ("cshtrd", "DOUBLE"), ("cshoc", "DOUBLE"), ("ajexdi", "DOUBLE"), ("trfd", "DOUBLE"), ("exchg", "INTEGER")]
+        ("cshtrd", "DOUBLE"), ("cshoc", "DOUBLE"), ("ajexdi", "DOUBLE"), ("trfd", "DOUBLE"), ("exchg", "INTEGER"),
+        # The day's distributions, on the secd row itself (the coordinator's WRDS column list, master plan Part C): one
+        # Compustat source for the dividends, ``comp.sec_divid`` only their fallback. divrc, cheqv and capgn are kept,
+        # not served: no comment defines how they combine with div/divd/divsp.
+        ("curcddv", "TEXT"), ("div", "DOUBLE"), ("divd", "DOUBLE"), ("divsp", "DOUBLE"), ("divrc", "DOUBLE"),
+        ("cheqv", "DOUBLE"), ("capgn", "DOUBLE")]
+# The secd columns a partition asked before them lacks: read as NULL until the year is asked again (``_current``).
+SECD_ADDED = ("curcddv", "div", "divd", "divsp", "divrc", "cheqv", "capgn")
 # ``hdrcusip`` (8 characters, the PERMNO's newest CUSIP), ``cusip`` (the date's) and ``ticker`` (the date's) feed
 # ``PERMNO_LINK``; ``dlycumfacpr`` / ``dlycumfacshr`` (CRSP's cumulative price and share factors) and
 # ``dlyorddivamt`` (the ordinary dividend going ex that day) are kept, not served yet: they let CRSP's own splits
@@ -102,11 +123,15 @@ DSF = [("permno", "TEXT"), ("dlycaldt", "DATE"), ("dlyprc", "DOUBLE"), ("dlyopen
 DIVID = [("gvkey", "TEXT"), ("iid", "TEXT"), ("datadate", "DATE"), ("div", "DOUBLE"), ("divd", "DOUBLE"),
          ("divsp", "DOUBLE"), ("curcddv", "TEXT"), ("paydate", "DATE"), ("recorddate", "DATE")]
 SPLIT = [("gvkey", "TEXT"), ("iid", "TEXT"), ("datadate", "DATE"), ("split", "DOUBLE")]
+# CRSP's delisting table (CIZ; the coordinator's WRDS access inventory, 3 Nov 2026: 29,833 rows, 1926-02-24 to
+# 2025-12-30): the delisting day, its price and its return. The legacy dsedelist ends 2024-12-31 and is not asked;
+# the *type code columns are not asked either (no comment defines their values).
+DELIST = [("permno", "TEXT"), ("delistingdt", "DATE"), ("deldtprc", "DOUBLE"), ("delret", "DOUBLE")]
 REVISION = [("source", "TEXT"), ("security_key", "TEXT"), ("session_date", "DATE"), ("symbol", "TEXT"),
             ("open", "DOUBLE"), ("high", "DOUBLE"), ("low", "DOUBLE"), ("close", "DOUBLE"), ("volume", "DOUBLE"),
             ("fetched_at", "DOUBLE"), ("run_id", "TEXT"), ("revised_at", "DOUBLE"), ("revised_by", "TEXT")]
 
-_EXCHG = ", ".join(str(e) for e in US_EXCHG)
+_EXCHG = ", ".join(str(e) for e in COMPUSTAT_EXCHG)
 # table -> its spec. ``date``: the column a year's query ranges over (None: asked whole, as a snapshot).
 # ``needed``: the columns the store's numbers come from (an answer with rows and none of them is a run issue).
 # ``bar``: the source label and the (security key, symbol, open, high, low, close, volume) columns of a bar
@@ -114,38 +139,69 @@ _EXCHG = ", ".join(str(e) for e in US_EXCHG)
 TABLES: dict[str, dict] = {
     "secd": {"wrds": "comp.secd", "schema": SECD, "key": ["gvkey", "iid", "datadate"], "date": "datadate",
              "last_year": None, "needed": ("prccd", "ajexdi", "trfd", "cshoc"),
-             "sql": ("SELECT gvkey, iid, datadate, tic, cusip, curcdd, prccd, prcod, prchd, prcld, cshtrd, cshoc, "
-                     "ajexdi, trfd, exchg FROM comp.secd WHERE {range} AND exchg IN (" + _EXCHG + ")"),
+             # secd.exchg is today's code (homesrv, 3 Nov 2026): a security listed once on one of the exchanges
+             # (comp.sec_idhist EXCHG) is asked whatever its code now; ``SECD_LISTED`` keeps its listed days.
+             "sql": ("SELECT " + ", ".join(c for c, _ in SECD) + " FROM comp.secd WHERE {range} "
+                     "AND (exchg IN (" + _EXCHG + ") OR (gvkey, iid) IN (SELECT gvkey, iid FROM comp.sec_idhist "
+                     "WHERE item = 'EXCHG' AND itemvalue IN (" + ", ".join(f"'{e}'" for e in COMPUSTAT_EXCHG)
+                     + ")))"),
              "bar": (COMPUSTAT, "gvkey || ':' || iid", "replace(upper(tic), '.', '-')", "prcod", "prchd", "prcld",
                      "prccd", "cshtrd")},
     "dsf": {"wrds": "crsp.dsf_v2", "schema": DSF, "key": ["permno", "dlycaldt"], "date": "dlycaldt",
             "last_year": CRSP_LAST_YEAR, "needed": ("dlyprc", "dlyret", "shrout", "hdrcusip", "ticker"),
             "sql": ("SELECT " + ", ".join(c for c, _ in DSF) + " FROM crsp.dsf_v2 WHERE {range}"),
             "bar": (CRSP, "permno", "CAST(NULL AS TEXT)", "dlyopen", "dlyhigh", "dlylow", "abs(dlyprc)", "dlyvol")},
+    # Every query names its columns (never ``SELECT *``): the schema's, checked against WRDS's catalog first.
     "sec_divid": {"wrds": "comp.sec_divid", "schema": DIVID, "key": ["gvkey", "iid", "datadate"], "date": "datadate",
-                  "last_year": None, "needed": ("divd",), "sql": "SELECT * FROM comp.sec_divid WHERE {range}"},
+                  "last_year": None, "needed": ("divd",),
+                  "sql": "SELECT " + ", ".join(c for c, _ in DIVID) + " FROM comp.sec_divid WHERE {range}"},
     "sec_split": {"wrds": "comp.sec_split", "schema": SPLIT, "key": ["gvkey", "iid", "datadate"], "date": None,
-                  "needed": ("split",), "sql": "SELECT * FROM comp.sec_split"},
+                  "needed": ("split",), "sql": "SELECT " + ", ".join(c for c, _ in SPLIT) + " FROM comp.sec_split"},
+    "stkdelists": {"wrds": "crsp_a_stock.stkdelists", "schema": DELIST, "key": ["permno", "delistingdt"],
+                   "date": None, "needed": ("delistingdt",),
+                   "sql": "SELECT " + ", ".join(c for c, _ in DELIST) + " FROM crsp_a_stock.stkdelists"},
 }
 YEARLY = ("secd", "dsf", "sec_divid")
-SNAPSHOTS = ("sec_split",)
+SNAPSHOTS = ("sec_split", "stkdelists")
 # CRSP's table: a subscription without CRSP answers it with a permission refusal, and the history is then
 # Compustat's alone (``_skip_crsp``).
-CRSP_TABLES = ("dsf",)
+CRSP_TABLES = ("dsf", "stkdelists")
 # The WRDS columns each query names (its SELECT list and filters), checked against ``information_schema.columns``
 # before any data is asked (``_check_columns``): a name WRDS does not have fails the run on that one query, not on a
 # data query after the Duo push.
 ASKED_COLUMNS = {"secd": [c for c, _ in SECD], "dsf": [c for c, _ in DSF],
-                 "sec_divid": ["gvkey", "iid", "datadate", "divd"], "sec_split": [c for c, _ in SPLIT]}
+                 "sec_divid": [c for c, _ in DIVID], "sec_split": [c for c, _ in SPLIT],
+                 "stkdelists": [c for c, _ in DELIST]}
 STAGING = {"secd": "stg_wrds_secd", "dsf": "stg_wrds_dsf", "sec_divid": "stg_wrds_divid",
-           "sec_split": "stg_wrds_split"}
+           "sec_split": "stg_wrds_split", "stkdelists": "stg_wrds_delist"}
 
 # Compustat's adjusted price and its day return (WRDS: total return = (prccd / ajexdi * trfd) over the previous
-# day's, minus 1), over a window ``w`` of one security by date.
+# day's, minus 1), over a window ``w`` of one security by date. Measured on homesrv against CRSP's ``dlyret`` on
+# dividend days: p95 difference 0.000055 %, where the price-only return misses by 1.5 % (p95). Two rows of different
+# answers (``run_id``) are not compared: a year partition keeps the ``ajexdi`` basis of the day it was asked, and the
+# monthly refresh re-asks only the newest years, so a split since shows as a step at the partition boundary.
 COMP_ADJ = "prccd / ajexdi * trfd"
-COMP_RETURN = f"({COMP_ADJ}) / lag({COMP_ADJ}) OVER w - 1"
+# An empty ``trfd`` means no distribution that day, not missing data (coordinator's homesrv measurement, 3 Nov 2026,
+# 0 WRDS queries: the price-only return matches CRSP's ``dlyret`` within 0.01 % on 97.69 % of 4,069,937 matched
+# non-ex-dividend days with ``trfd`` empty, as the formula does on its rows, 97.66 %; 6,437 of 17,058 securities have
+# no ``trfd`` on any day, the non-payers). So a day without ``trfd`` on either side is read as ``trfd`` = 1, and the
+# day's own cash distribution (``COMP_DIV``, the secd row's) is added to the numerator, in the day's share basis.
+# The secd row's own distribution; ``div_day`` (``SECD_LISTED``) is it, else comp.sec_divid's of that day.
+SECD_DIV = "(coalesce(divd, div, 0) + coalesce(divsp, 0))"
+COMP_DIV = "div_day"
+_TRFD_BOTH = "trfd IS NOT NULL AND lag(trfd) OVER w IS NOT NULL"
+COMP_RETURN = (f"CASE WHEN lag(run_id) OVER w = run_id THEN CASE WHEN {_TRFD_BOTH} "
+               f"THEN ({COMP_ADJ}) / lag({COMP_ADJ}) OVER w - 1 "
+               f"ELSE ((prccd + {COMP_DIV}) / ajexdi) / lag(prccd / ajexdi) OVER w - 1 END END")
+# Which rule made the row's return: ``trfd``, ``price_dividend`` (no trfd, a distribution added) or ``price_only``.
+# shortcut: a dividend day without trfd is flagged, not checked; avo is deciding whether to fill the trfd gap otherwise
+# (the hook is ``COMP_DIV``).
+# A row with no return (the first of a security or of an answer) has no basis (review SHOULD 4 of #382).
+COMP_RETURN_BASIS = (f"CASE WHEN lag(run_id) OVER w = run_id THEN CASE WHEN {_TRFD_BOTH} THEN 'trfd' "
+                     f"WHEN {COMP_DIV} > 0 THEN 'price_dividend' ELSE 'price_only' END END")
 
-# The rows of the difference report (``wrds_price_diff``), one per comparison and build.
+# The rows of the difference report (``wrds_price_diff``), one per comparison and build. ``crsp_delisting_returns``
+# went with the delisted names (avo, 4 Nov 2026): the store holds no delisting day to check ``delret`` against.
 COMPARISONS = ("crsp_vs_compustat", "compustat_vs_alpaca", "crsp_vs_alpaca", "compustat_returns", "crsp_returns")
 
 
@@ -202,6 +258,44 @@ def typed_rows(raw: Path, schema: list[tuple[str, str]]) -> str:
     return f"SELECT {typed} FROM read_json({base.sql_path(raw)}, format = 'newline_delimited', columns = {cols})"
 
 
+def _current(table: str, year: int, raw: Path) -> bool:
+    """Whether ``raw`` answers today's query of a year: a ``comp.secd`` year asked with another query (the exchange
+    filter before ``COMPUSTAT_EXCHG``, or the columns before ``SECD_ADDED``) is not, so the backfill asks it again
+    (step 5 of the 2 Nov 2026 plan). A raw file without a sidecar, and every other table, counts as current."""
+    meta = _meta(raw)
+    asked = base.read_raw_json(meta).get("query") if meta.is_file() else None
+    return table != "secd" or asked is None or asked == year_sql(table, year)
+
+
+def _stale(table: str, year: int) -> bool:
+    """A partition that exists from a raw answer that is not ``_current``, or a ``comp.secd`` partition whose own
+    columns lack one of today's query (written before ``SECD_ADDED``): a partition copied without its raw file, or
+    whose raw file is gone, says its format itself (coordinator B's dry run on homesrv, 3 Nov 2026)."""
+    part = partition_path(table, year)
+    if not part.is_file():
+        return False
+    if table == "secd" and not {c for c, _ in SECD} <= _columns(part):
+        return True
+    raws = sorted(raw_dir(table, year).glob(f"*{RAW_SUFFIX}"))
+    return bool(raws) and not _current(table, year, raws[-1])
+
+
+def _columns(path: Path) -> set[str]:
+    con = duckdb.connect()
+    try:
+        return {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet({base.sql_path(path)})").fetchall()}
+    finally:
+        con.close()
+
+
+def _rows(path: Path) -> int:
+    con = duckdb.connect()
+    try:
+        return con.execute(f"SELECT count(*) FROM read_parquet({base.sql_path(path)})").fetchone()[0]
+    finally:
+        con.close()
+
+
 def _where(raw: Path) -> tuple[str, int | None]:
     """``(table, year)`` of a raw file (``year`` None for a snapshot)."""
     if raw.parent.name.startswith("year="):
@@ -214,7 +308,9 @@ class WrdsPrices:
     kind = KIND
     providers = (wrds.PROVIDER,)
     tables = ("price_bar_daily", "corporate_action", "price_revision", "wrds_price_diff")
-    cadence = "monthly"
+    # Daily since Compustat is the one served source (avo, 3 Nov 2026 ~11:20 Amsterdam, decision 1: "1 evet"): the
+    # refresh of the last two years, five queries a day (seven with the snapshots). Attended unless RC_WRDS_UNATTENDED=1.
+    cadence = "daily"
     attended = property(lambda self: base.wrds_attended())   # RC_WRDS_UNATTENDED=1: the builder runs it
     backfill_needs_from = False
     starts_by_hand = True
@@ -235,7 +331,11 @@ class WrdsPrices:
         """The (table, year) pairs to ask, newest year first, the three tables within a year."""
         lo = {t: years(t, as_of, first) for t in YEARLY}
         if refresh:
-            lo = {t: ys[-REFRESH_YEARS:] for t, ys in lo.items()}
+            # A table past its last year (CRSP, annual) is final until the next release: its refresh asks a year only
+            # while its partition is missing (delta review SHOULD 1 of #382: two needless dsf queries a day).
+            frozen = {t for t in lo if TABLES[t]["last_year"] and TABLES[t]["last_year"] < as_of.year}
+            lo = {t: [y for y in ys[-REFRESH_YEARS:] if t not in frozen or not partition_path(t, y).is_file()]
+                  for t, ys in lo.items()}
         every = sorted({y for ys in lo.values() for y in ys}, reverse=True)
         return [(t, y) for y in every for t in YEARLY if y in lo[t]]
 
@@ -320,9 +420,15 @@ class WrdsPrices:
                         self.to_parquet_all(ctx, [raw])
                         asked += 1
             for table, year in self._plan(end, start.year if start else None, refresh=False):
-                if partition_path(table, year).is_file():
+                if partition_path(table, year).is_file() and not _stale(table, year):
                     continue
-                have = sorted(raw_dir(table, year).glob(f"*{RAW_SUFFIX}"))
+                have = [r for r in sorted(raw_dir(table, year).glob(f"*{RAW_SUFFIX}")) if _current(table, year, r)]
+                same_day = raw_dir(table, year) / f"{end.isoformat()}{RAW_SUFFIX}"
+                if not have and same_day.exists():
+                    # ``wrds._ask`` takes a file of the day as answered: an old filter's is kept aside, not reused,
+                    # under this run's id, so a second re-ask the same day never overwrites the first one kept.
+                    for f in (same_day, _meta(same_day)):
+                        f.rename(f.with_name(f"{f.name}.superseded-{ctx.run_id}"))
                 raw = have[-1] if have else self._ask_or_skip(ctx, table, year, end, run)
                 if raw is None:
                     continue
@@ -331,6 +437,41 @@ class WrdsPrices:
         except base.CapReached as e:
             ctx.notes.append(f"stopped at the WRDS day cap ({e}) after {asked} partition(s); the next backfill "
                              "goes on from the first missing year")
+
+    def dry_run(self, start: date | None, end: date) -> list[str]:
+        """What ``backfill`` would ask, without a login: one line per query and a total of queries, of the ``wrds``
+        day cap's days (when there is one), and of the expected rows. A missing year is expected to hold its table's mean of the years
+        present; a year asked again holds at least its rows now (the new exchanges add to it)."""
+        plan = [(t, None, "missing") for t in SNAPSHOTS if not _snapshots(t)]
+        for table, year in self._plan(end, start.year if start else None, refresh=False):
+            if _stale(table, year):
+                plan.append((table, year, "asked with an older query (exchange filter or columns)"))
+            elif not partition_path(table, year).is_file() and not any(
+                    _current(table, year, r) for r in raw_dir(table, year).glob(f"*{RAW_SUFFIX}")):
+                plan.append((table, year, "missing"))
+        mean = {}
+        for table in YEARLY:
+            have = [_rows(p) for _, p in stage.partitions(base.parquet_root() / "wrds" / "prices" / table, "year")]
+            mean[table] = sum(have) // len(have) if have else None
+        lines, total, unknown, early = [], 0, 0, [0, 0]
+        for table, year, why in plan:
+            est = (_rows(partition_path(table, year)) if why != "missing" else mean.get(table)) if year else None
+            total, unknown = total + (est or 0), unknown + (est is None)
+            if year and year <= EARLY_LAST_YEAR:
+                early = [early[0] + 1, early[1] + (est or 0)]
+            lines.append(f"{TABLES[table]['wrds']} {year or 'snapshot'}: {why}, expected rows "
+                         f"{'unknown' if est is None else ('>= ' if why != 'missing' else '~') + format(est, ',')}")
+        queries = len(plan) + (1 if plan else 0)          # the columns query first
+        cap = caps.cap_for(wrds.PROVIDER)                  # None since #380: WRDS publishes no query quota
+        days = f"{-(-queries // cap)} day(s) of the {cap}-call wrds cap" if cap else "no wrds day cap"
+        lines.append(f"{NAME} dry run: {queries} queries ({days}), "
+                     f"expected rows ~{total:,}" + (f" plus {unknown} partition(s) with no estimate" if unknown else ""))
+        lines.append(f"  of which {COMPUSTAT_START.isoformat()} through {EARLY_LAST_YEAR}-12-31: {early[0]} queries, "
+                     f"expected rows ~{early[1]:,}")
+        lines.append("  exchg " + " and ".join(f"{e} ({n}) {r:,}" for e, (n, r) in ARCA_BATS.items())
+                     + " secd rows in all years (homesrv), inside the comp.secd queries above; comp.secd asks "
+                     f"{len(SECD_ADDED)} dividend columns more than before ({', '.join(SECD_ADDED)})")
+        return lines
 
     def to_parquet(self, ctx: base.RunContext, raw: Path) -> list[Path]:
         return self.to_parquet_all(ctx, [raw])
@@ -370,7 +511,10 @@ class WrdsPrices:
     @staticmethod
     def _revisions(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, table: str, year: int, final: Path,
                    meta: dict) -> None:
-        """The bar values of the partition being replaced that the new answer changes or drops."""
+        """The bar values of the partition being replaced that the new answer changes or drops. Only a row that had a
+        price: a row without one was never a bar (Compustat writes rows ahead of their day with no price, homesrv
+        5 Nov 2026: 1,128 rows over 929 tickers, dated 2026-11-03..2026-12-31), so its real session arriving, or
+        the row going, revises nothing."""
         source, key, symbol, *ohlcv = TABLES[table]["bar"]
         keys = TABLES[table]["key"]
         on = " AND ".join(f'n."{k}" = o."{k}"' for k in keys)
@@ -384,7 +528,7 @@ class WrdsPrices:
                    o.open, o.high, o.low, o.close, o.volume, o.fetched_at, o.run_id,
                    CAST({float(meta['fetched_at'])} AS DOUBLE) AS revised_at, '{ctx.run_id}' AS revised_by
             FROM ({shape.format(t='old')}) o LEFT JOIN ({shape.format(t='new')}) n ON {on}
-            WHERE n.security_key IS NULL OR {changed}""")
+            WHERE o.close > 0 AND (n.security_key IS NULL OR {changed})""")
         n = stage.count(con, "rev")
         if n:
             base.write_parquet(con, "SELECT * FROM rev ORDER BY security_key, session_date",
@@ -394,7 +538,13 @@ class WrdsPrices:
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         for table in YEARLY:
             stage.create(con, STAGING[table], TABLES[table]["schema"] + PROVENANCE,
-                         [f for _, f in stage.partitions(base.parquet_root() / "wrds" / "prices" / table, "year")])
+                         [f for _, f in stage.partitions(base.parquet_root() / "wrds" / "prices" / table, "year")],
+                         added_later=SECD_ADDED if table == "secd" else ())
+        # The EXCHG periods of the spine's newest sec_idhist snapshot and its deltas, one row per period (the newest).
+        stage.create(con, "stg_wrds_exchg", EXCHG_STAGE, wrds.parquet_files("wrds/sec_idhist", "sec_idhist"),
+                     select="SELECT gvkey, iid, TRY_CAST(TRY_CAST(itemvalue AS DOUBLE) AS INTEGER) AS exchg, efffrom, "
+                            "effthru FROM {src} WHERE item = 'EXCHG' AND efffrom IS NOT NULL QUALIFY row_number() "
+                            "OVER (PARTITION BY gvkey, iid, efffrom ORDER BY fetched_at DESC) = 1")
         for table in SNAPSHOTS:
             snaps = _snapshots(table)
             stage.create(con, STAGING[table], TABLES[table]["schema"] + PROVENANCE, [snaps[-1][1]] if snaps else [])
@@ -475,6 +625,45 @@ PERMNO_LINK = """
     SELECT permno, security_id, how FROM best
     QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY rule, last DESC, permno) = 1"""
 
+# ── CRSP, the cross-check only (avo, 4 Nov 2026) ───────────────────────────────────────
+# **No CRSP row is ever served.** avo, 4 Nov 2026 (PR 382): the store holds today's universe only
+# (``prices.universe``), so nothing delisted is in it, and the earlier narrow fallback -- a delisted security's final
+# days, its ``stkdelists`` delisting bar, and the whole history of a security Compustat never priced -- has no name
+# left to serve. CRSP stays what the switch plan calls the cross-check: every CRSP bar is in ``_hist_all`` for
+# ``wrds_price_diff`` (``COMPARISONS``), and ``CRSP_SPLITS`` is the cross-check of Compustat's splits
+# (``serving``'s ``split_only_crsp`` issue). Compustat is the one source of a served bar.
+# A PERMNO linked by ticker alone is still named as an issue (``serving._link_note``), because a ticker link decides
+# which security a difference is reported against.
+LINKED_BY_ID = "l.how <> 'ticker'"
+
+# The splits CRSP's cumulative price factor carries (Order 4 of the 2 Nov 2026 master plan: on homesrv 1,167 open
+# ``price_gap_no_action`` issues sat on a split ``dlycumfacpr`` records and ``corporate_action`` lacked, 22 of them
+# Tier A). A day whose ``dlycumfacpr`` differs from the previous row's of the same answer is a split of ratio previous
+# / today's (new over old shares; the fixture's convention, the factor of the older days the larger, as ``ajexdi``),
+# keyed on the PERMNO's security when an identifier links it. The cross-check only (the WRDS access inventory of
+# 3 Nov 2026 prefers Compustat's daily splits, ``comp.sec_split`` and ``ajexdi``): ``prices/serving`` applies none; one
+# no Compustat or Alpaca split is within ``serving.SPLIT_SAME_DAYS`` of is a ``split_only_crsp`` issue, and the gap
+# it explains is not a ``price_gap_no_action``. In ``_act``'s shape (``serving`` reads it after ``_permno_link``).
+# The direction is checked on WRDS (homesrv, 3 Nov 2026): AAPL's dlycumfacpr is 4.0 on 2020-08-28 and 1.0 on
+# 2020-08-31, as its ajexdi.
+# Every CRSP split, keyed on its PERMNO's security (``permno:<PERMNO>`` unlinked); ``CRSP_SPLITS``, the
+# identifier-linked ones, is the cross-check, and no CRSP split is ever applied.
+_CRSP_SPLIT_ROWS = f"""
+    SELECT coalesce(l.security_id, 'permno:' || x.permno) AS security_id, 'wrds:crspsplit:' || x.permno || ':' || CAST(x.dlycaldt AS TEXT) AS action_id,
+           CASE WHEN ratio < 1 THEN 'reverse_split' ELSE 'forward_split' END AS action_type, x.dlycaldt AS ex_date,
+           x.dlycaldt AS eff, 1.0 AS old_rate, ratio AS new_rate, CAST(NULL AS DOUBLE) AS rate, false AS special,
+           CAST(NULL AS TEXT) AS currency, CAST(NULL AS DATE) AS record_date, CAST(NULL AS DATE) AS payable_date,
+           '{NAME}' AS source, x.source_as_of, x.fetched_at, x.run_id
+    FROM (SELECT permno, dlycaldt, source_as_of, fetched_at, run_id, lag(dlycumfacpr) OVER w / dlycumfacpr AS ratio,
+                 lag(run_id) OVER w AS prev_run
+          FROM stg_wrds_dsf WHERE dlycumfacpr > 0
+            AND permno IN (SELECT permno FROM stg_wrds_dsf WHERE dlycumfacpr > 0 GROUP BY permno
+                           HAVING min(dlycumfacpr) <> max(dlycumfacpr))
+          WINDOW w AS (PARTITION BY permno ORDER BY dlycaldt)) x
+    LEFT JOIN _permno_link l USING (permno)
+    WHERE x.prev_run = x.run_id AND abs(ln(ratio)) > 1e-6"""
+CRSP_SPLITS = f"{_CRSP_SPLIT_ROWS} AND {LINKED_BY_ID}"
+
 # Compustat's ``gvkey:iid`` of a PERMNO whose own link is a security the spine names otherwise (``figi:``, ``cik:``,
 # ``sym:``: the ETFs), when the PERMNO's CUSIP matches it and the spine holds no such ``gvkey:iid``. Its Compustat bars,
 # actions and revisions are served as that security's, so one fund is one security (review S2 of #353; ``serving``
@@ -488,25 +677,87 @@ GVKEY_ALIAS = """
       AND m.gid NOT IN (SELECT security_id FROM _permno_link)        -- another PERMNO's own rule-4 security
     QUALIFY row_number() OVER (PARTITION BY m.gid ORDER BY l.security_id) = 1"""
 
-# Every history bar of both sources (``PRICE_BAR``'s columns, then the source's own day return and the previous
-# session it is over): ``prices/serving`` serves one per session (CRSP first) and compares them all.
+# Every history bar of both sources (``PRICE_BAR``'s columns, then the source's own day return and the serving
+# priority): ``prices/serving`` serves one per session (Compustat first, priority 1) and compares them all.
+# The Compustat security of a ``comp.secd`` row, as ``COMP_BARS`` keys it (the alias when a fund's gvkey is one).
+_COMP_BAR_ID = ("coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = gvkey || ':' || iid), "
+                "gvkey || ':' || iid)")
 CRSP_BARS = f"""
     SELECT coalesce(l.security_id, 'permno:' || d.permno) AS security_id, dlycaldt AS session_date,
            CAST(NULL AS TEXT) AS symbol, CAST(NULL AS TEXT) AS cik, dlyopen AS open, dlyhigh AS high, dlylow AS low,
            abs(dlyprc) AS close, dlyvol AS volume, CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count,
            shrout * {CRSP_SHARES_UNIT} AS shares_outstanding, '{CRSP}' AS source, source_as_of, fetched_at, run_id,
-           dlyret AS own_return, 1 AS priority
-    FROM stg_wrds_dsf d LEFT JOIN _permno_link l USING (permno) WHERE dlyprc IS NOT NULL AND dlyprc <> 0"""
+           dlyret AS own_return, 'dlyret' AS return_basis, 2 AS priority
+    FROM stg_wrds_dsf d LEFT JOIN _permno_link l USING (permno)
+    WHERE dlyprc IS NOT NULL AND dlyprc <> 0
+      AND coalesce(l.security_id, 'permno:' || d.permno) IN (SELECT security_id FROM _universe)"""
 COMP_BARS = f"""
     SELECT coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = gvkey || ':' || iid), gvkey || ':' || iid)
                AS security_id, datadate AS session_date, replace(upper(tic), '.', '-') AS symbol,
            CAST(NULL AS TEXT) AS cik, prcod AS open, prchd AS high, prcld AS low, prccd AS close, cshtrd AS volume,
            CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count, cshoc AS shares_outstanding,
-           '{COMPUSTAT}' AS source, source_as_of, fetched_at, run_id, {COMP_RETURN} AS own_return, 2 AS priority
-    FROM stg_wrds_secd WHERE coalesce(upper(curcdd), 'USD') = 'USD' AND prccd > 0
+           '{COMPUSTAT}' AS source, source_as_of, fetched_at, run_id, {COMP_RETURN} AS own_return,
+           {COMP_RETURN_BASIS} AS return_basis, 1 AS priority
+    -- secd holds rows of events to come (to 2027): a bar is a priced day up to the build's date only (``serving`` sets
+    -- ``rc_build_date``; unset, as in a test of this SQL alone, nothing is cut).
+    FROM _secd_listed WHERE listed AND coalesce(upper(curcdd), 'USD') = 'USD' AND prccd > 0
+      AND datadate <= coalesce(getvariable('rc_build_date'), DATE '9999-12-31')
+      AND {_COMP_BAR_ID} IN (SELECT security_id FROM _universe)
     WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate)"""
 
-# Compustat's splits and dividends in the shape of ``_act`` (the Alpaca actions' columns, by name).
+# Each ``comp.secd`` row with ``listed``: whether the security was on one of ``COMPUSTAT_EXCHG`` that day
+# (``serving`` makes it the temp table ``_secd_listed``; ``COMP_BARS`` serves the listed rows). homesrv, 3 Nov 2026:
+# ``secd.exchg`` is the security's current code, so the day's exchange comes from ``comp.sec_idhist``'s EXCHG
+# periods (``stg_wrds_exchg``, the spine's ``wrds/sec_idhist`` snapshot, from 1998; avo, 3 Nov 2026: "Evet kurali
+# uygula"):
+#   1. the period holding the day, ``efffrom`` <= day <= ``effthru`` (open-ended when ``effthru`` is NULL), or a day
+#      in a gap between two periods: the previous period's exchange (it has not been reported as changed yet);
+#   2. a day before the security's first period (1983-1997, before sec_idhist starts): its first known exchange;
+#   3. else (no history, or a day after its last period ended): today's code.
+# shortcut: a name that moved exchange before 1998 and ended before 1998 has no sec_idhist row, so today's code (its
+# last exchange) decides its whole history; a pre-1998 move of a name that lived on is read as its 1998 exchange.
+SECD_LISTED = f"""
+    SELECT s.*, coalesce(CASE WHEN s.datadate <= coalesce(e.effthru, DATE '9999-12-31')
+                                OR s.datadate < f.last_from THEN e.exchg END,
+                         CASE WHEN e.efffrom IS NULL THEN f.first_exchg END, s.exchg)
+                IN ({_EXCHG}) AS listed,
+           s.exchg IN ({_EXCHG}) AS listed_today,
+           -- the day's cash distribution: the row's own, else comp.sec_divid's (review SHOULD 4 of #382)
+           CASE WHEN {SECD_DIV} > 0 THEN {SECD_DIV} ELSE coalesce(v.amount, 0) END AS div_day
+    FROM stg_wrds_secd s
+    LEFT JOIN (SELECT gvkey, iid, datadate, sum(coalesce(divd, div, 0) + coalesce(divsp, 0)) AS amount
+               FROM stg_wrds_divid GROUP BY ALL) v ON v.gvkey = s.gvkey AND v.iid = s.iid AND v.datadate = s.datadate
+    ASOF LEFT JOIN stg_wrds_exchg e ON e.gvkey = s.gvkey AND e.iid = s.iid AND s.datadate >= e.efffrom
+    LEFT JOIN (SELECT gvkey, iid, arg_min(exchg, efffrom) AS first_exchg, max(efffrom) AS last_from
+               FROM stg_wrds_exchg GROUP BY ALL) f
+        ON f.gvkey = s.gvkey AND f.iid = s.iid"""
+EXCHG_STAGE = [("gvkey", "TEXT"), ("iid", "TEXT"), ("exchg", "INTEGER"), ("efffrom", "DATE"), ("effthru", "DATE")]
+
+# The splits ``ajexdi`` (Compustat's cumulative adjustment factor, adjusted price = ``prccd / ajexdi``) carries:
+# a day whose ``ajexdi`` differs from the previous row's of the same answer is a split of ratio previous / today's
+# (new over old shares), unless ``comp.sec_split`` holds one in between. In ``_act``'s shape.
+# shortcut: a split on the first session of a year partition asked by another run than the year before it is not
+# seen here (``COMP_RETURN``'s rule); ``comp.sec_split`` and the gap issue still catch it.
+AJEXDI_SPLITS = f"""
+    SELECT gvkey || ':' || iid AS security_id,
+           'wrds:ajexdi:' || gvkey || ':' || iid || ':' || CAST(datadate AS TEXT) AS action_id,
+           CASE WHEN ratio < 1 THEN 'reverse_split' ELSE 'forward_split' END AS action_type, datadate AS ex_date,
+           datadate AS eff, 1.0 AS old_rate, ratio AS new_rate, CAST(NULL AS DOUBLE) AS rate, false AS special,
+           CAST(NULL AS TEXT) AS currency, CAST(NULL AS DATE) AS record_date, CAST(NULL AS DATE) AS payable_date,
+           '{NAME}' AS source, source_as_of, fetched_at, run_id
+    FROM (SELECT *, lag(ajexdi) OVER w / ajexdi AS ratio, lag(run_id) OVER w AS prev_run,
+                 lag(datadate) OVER w AS prev_day
+          FROM stg_wrds_secd WHERE ajexdi > 0 AND prccd > 0 AND coalesce(upper(curcdd), 'USD') = 'USD'
+            -- the window only over the securities whose ajexdi changes at all (a hash aggregate, not a sort)
+            AND (gvkey, iid) IN (SELECT (gvkey, iid) FROM stg_wrds_secd WHERE ajexdi > 0 GROUP BY gvkey, iid
+                                 HAVING min(ajexdi) <> max(ajexdi))
+          WINDOW w AS (PARTITION BY gvkey, iid ORDER BY datadate)) x
+    WHERE prev_run = run_id AND abs(ln(ratio)) > 1e-6
+      AND NOT EXISTS (SELECT 1 FROM stg_wrds_split s WHERE s.gvkey = x.gvkey AND s.iid = x.iid AND s.split > 0
+                      AND s.split <> 1 AND s.datadate > x.prev_day AND s.datadate <= x.datadate)"""
+
+# Compustat's splits (``comp.sec_split``, then ``AJEXDI_SPLITS``) and dividends in the shape of ``_act`` (the Alpaca
+# actions' columns, by name).
 _ACTIONS = f"""
     SELECT gvkey || ':' || iid AS security_id, 'wrds:split:' || gvkey || ':' || iid || ':' || CAST(datadate AS TEXT) AS action_id,
            CASE WHEN split < 1 THEN 'reverse_split' ELSE 'forward_split' END AS action_type, datadate AS ex_date,
@@ -515,15 +766,29 @@ _ACTIONS = f"""
            '{NAME}' AS source, source_as_of, fetched_at, run_id
     FROM stg_wrds_split WHERE split > 0 AND split <> 1
     UNION ALL
+    SELECT gvkey || ':' || iid, 'wrds:secddiv:' || gvkey || ':' || iid || ':' || CAST(datadate AS TEXT), 'cash_dividend',
+           datadate, datadate, NULL, NULL, coalesce(divd, div), false, coalesce(curcddv, 'USD'), NULL, NULL, '{NAME}',
+           source_as_of, fetched_at, run_id
+    FROM stg_wrds_secd WHERE coalesce(divd, div) > 0
+    UNION ALL
+    SELECT gvkey || ':' || iid, 'wrds:secddivsp:' || gvkey || ':' || iid || ':' || CAST(datadate AS TEXT),
+           'cash_dividend', datadate, datadate, NULL, NULL, divsp, true, coalesce(curcddv, 'USD'), NULL, NULL, '{NAME}',
+           source_as_of, fetched_at, run_id
+    FROM stg_wrds_secd WHERE divsp > 0
+    -- comp.sec_divid only where the secd row of that security and day carries no distribution of the kind
+    UNION ALL
     SELECT gvkey || ':' || iid, 'wrds:div:' || gvkey || ':' || iid || ':' || CAST(datadate AS TEXT), 'cash_dividend', datadate,
            datadate, NULL, NULL, coalesce(divd, div), false, coalesce(curcddv, 'USD'), recorddate, paydate, '{NAME}',
            source_as_of, fetched_at, run_id
-    FROM stg_wrds_divid WHERE coalesce(divd, div) > 0
+    FROM stg_wrds_divid v WHERE coalesce(divd, div) > 0 AND NOT EXISTS (SELECT 1 FROM stg_wrds_secd s
+        WHERE s.gvkey = v.gvkey AND s.iid = v.iid AND s.datadate = v.datadate AND coalesce(s.divd, s.div) > 0)
     UNION ALL
     SELECT gvkey || ':' || iid, 'wrds:divsp:' || gvkey || ':' || iid || ':' || CAST(datadate AS TEXT), 'cash_dividend', datadate,
            datadate, NULL, NULL, divsp, true, coalesce(curcddv, 'USD'), recorddate, paydate, '{NAME}', source_as_of,
            fetched_at, run_id
-    FROM stg_wrds_divid WHERE divsp > 0"""
+    FROM stg_wrds_divid v WHERE divsp > 0 AND NOT EXISTS (SELECT 1 FROM stg_wrds_secd s
+        WHERE s.gvkey = v.gvkey AND s.iid = v.iid AND s.datadate = v.datadate AND s.divsp > 0)
+    UNION ALL SELECT * FROM ({AJEXDI_SPLITS})"""
 # The actions served: a ``gvkey:iid`` that ``_gvkey_alias`` names is its security's (review S2 of #353).
 ACTIONS_SQL = f"""
     SELECT coalesce(a.security_id, w.security_id) AS security_id, w.* EXCLUDE (security_id)

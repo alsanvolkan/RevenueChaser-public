@@ -422,6 +422,23 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </div>
 </details>
 
+<h2>What Would Change the Regime</h2>
+<div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> the thresholds that
+would end the frame the rest of this page describes. Each row is a condition, not a forecast: if it is crossed,
+the levels below stop applying and the map has to be re-read.</div>
+{% if regime_conditions %}
+<table class="stack">
+  <thead><tr><th>If this happens</th><th>Then</th></tr></thead>
+  <tbody>
+  {% for c in regime_conditions %}
+  <tr><td data-label="If this happens">{{ c.trigger }}</td><td data-label="Then">{{ c.then }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="note">Not enough levels in this snapshot to state the regime conditions.</div>
+{% endif %}
+
 <h2>SPX Option Position Map</h2>
 <div class="box">{% if chart_html %}<div class="chart chart-map">{{ chart_html }}</div>
 {% elif chart_image %}<div class="chart"><img src="{{ chart_image }}" alt="SPX Option Position Map"></div>{% endif %}</div>{% if store_labels.candles %}
@@ -497,7 +514,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   <tbody>
   {% if vix %}<tr><td data-label="Metric">VIX family</td><td data-label="Value">
     {% if vix.vix %}VIX {{ vix.vix|round(2) }}{% endif %}{% if vix.vix9d %} · 9D {{ vix.vix9d|round(2) }}{% endif %}{% if vix.vix3m %} · 3M {{ vix.vix3m|round(2) }}{% endif %}{% if vix.vix6m %} · 6M {{ vix.vix6m|round(2) }}{% endif %}{% if vix.vix1y %} · 1Y {{ vix.vix1y|round(2) }}{% endif %}{% if vix.vvix %} · VVIX {{ vix.vvix|round(2) }}{% endif %}
-    </td><td data-label="Meaning">Term structure is <b>{{ vix.term_mode or "n/a" }}</b>{% if vix.term_mode == 'contango' %} — short-dated calm, longer-dated more expensive (normal).{% elif vix.term_mode == 'backwardation' %} — near-term stress priced in (early warning).{% elif vix.term_mode == 'front backwardation' %} — the next 9 days priced above the month while the 3M curve still slopes up (first sign of near-term stress).{% endif %}</td></tr>{% endif %}
+    </td><td data-label="Meaning">Term structure is <b>{{ vix.term_mode or "n/a" }}</b>{% if vix.ivts %} (IVTS {{ vix.ivts|round(4) }}){% endif %}{% if vix.term_mode == 'contango' %} — short-dated calm, longer-dated more expensive (normal).{% elif vix.term_mode == 'backwardation' %} — near-term stress priced in (early warning).{% elif vix.term_mode == 'front backwardation' %} — the next 9 days priced above the month while the 3M curve still slopes up (first sign of near-term stress).{% endif %}</td></tr>{% endif %}
   {% if vega_flow %}<tr><td data-label="Metric">Directional vega flow</td><td data-label="Value">{{ vega_flow.dir_vega_flow | fmtnum('{:+,.0f}') }}{% if vega_flow.buckets %} ({{ vega_flow.buckets }} buckets){% endif %}</td><td data-label="Meaning">Vega that changed hands today, cumulative. Its <b>sign</b> is the reading, not its size — and this is flow, not the net vega sitting in the book.</td></tr>{% endif %}
   {% if vix_greeks %}<tr><td data-label="Metric">VIX option book</td><td data-label="Value">net vanna {{ vix_greeks.net_vanna | fmtnum('{:+,.0f}') }} · net charm {{ vix_greeks.net_charm | fmtnum('{:+,.0f}') }}{% if vix_greeks.expiries %} ({{ vix_greeks.expiries }} expiries){% endif %}</td><td data-label="Meaning">VIX's own dealer book. Only its vanna and charm are published by this provider, so its gamma levels are not shown.</td></tr>{% endif %}
   {% if iv_rank %}<tr><td data-label="Metric">IV Rank (1Y)</td><td data-label="Value">{{ "n/a (historical)" if historical.iv_rank else (iv_rank.iv_rank_1y | fmtnum('{:,.1f}%')) }}</td><td data-label="Meaning">Where today's IV sits vs the past year; low = cheap options.</td></tr>{% endif %}
@@ -610,6 +627,27 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   {% endfor %}
   </tbody>
 </table>
+
+<h2>Net Delta — Weekly Trend</h2>
+<div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> one week's hedging
+direction can mislead; the trend only shows over consecutive weeks. This is the summed call and put delta across
+every expiry, at each Friday close.</div>
+{% if net_delta_trend.rows %}
+<table class="stack">
+  <thead><tr><th>Friday close</th><th>Call + put delta</th></tr></thead>
+  <tbody>
+  {% for r in net_delta_trend.rows %}
+  <tr><td data-label="Friday close">{{ r.date }}</td><td data-label="Call + put delta">{{ r.net_delta | fmtnum('{:,.0f}') }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<div class="note">{{ net_delta_trend.have }} of {{ net_delta_trend.want }} weekly closes stored
+{%- if net_delta_trend.direction %}; over this window the total went <b>{{ net_delta_trend.direction }}</b>{% endif %}.
+The board keeps one row per rendered day and the provider does not serve old days, so the table fills forward one
+Friday a week.</div>
+{% else %}
+<div class="note">No Friday close stored before this day yet, so there is no weekly trend to show.</div>
+{% endif %}
 
 <h2>Top-10 GEX Strikes</h2>
 <table class="stack">

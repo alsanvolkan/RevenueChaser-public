@@ -76,7 +76,7 @@ def test_a_sample_names_each_column_with_its_type_and_the_dataset_that_writes_it
     sample = {"columns": [{"name": "session_date", "type": "DATE"}, {"name": "close", "type": "DOUBLE"}],
               "rows": [["2026-10-27", 1.0]]}
     out = newdata._sample_block("price_bar_daily", sample)
-    assert out["dataset"] == "alpaca/bars"
+    assert out["dataset"] == "wrds/prices"      # Compustat writes the served bars (avo's decision 2 of #382)
     assert [c["name"] for c in out["columns"]] == ["session_date", "close"]
     assert out["rows"] == [["2026-10-27", 1.0]]
 
