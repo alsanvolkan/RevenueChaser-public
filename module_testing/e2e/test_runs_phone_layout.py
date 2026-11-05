@@ -27,8 +27,11 @@ ROWS = [{"run_id": f"r{i}", "module": name, "source": None, "trigger": trig, "st
          "finished_at": 1_792_700_061.0 + i, "duration_s": 60.0 + i,
          "error": "Traceback (most recent call last): a long error line that would not fit" if status == "error"
          else None,
-         "message": None, "params": {"args": ["-m", "RevenueChaser.scripts.nightly_inputs", "earnings",
-                                              "--max-uw-calls", "200", "--max-yf-calls", "2000"]}}
+         "message": None,
+         # #136: the Counts cell sits between Note and Params, so this row fills it too.
+         "counts": {"rows_inserted": 93714, "rows_by_source": {"uw": 5, "yfinance": 2}},
+         "params": {"args": ["-m", "RevenueChaser.scripts.nightly_inputs", "earnings",
+                             "--max-uw-calls", "200", "--max-yf-calls", "2000"]}}
         for i, (name, trig, status) in enumerate([("RC-Daily-Bars-" + "x" * 74, "scheduled", "done"),   # 88 chars
                                                   ("rotation", "manual", "error"),
                                                   ("module_leaps", None, "running")])]
@@ -190,8 +193,9 @@ ERROR = ROWS[1]["error"]
 def test_a_phone_shows_the_whole_note_and_params(browser, runs_page):
     """A touch screen never shows a ``title`` tooltip, so the clipped cell was all a phone could read."""
     m = _measure(browser, runs_page, PHONE, "dark")
-    note, params = m["cells"][5]["shown"], m["cells"][6]["shown"]
+    note, counts, params = (m["cells"][5]["shown"], m["cells"][6]["shown"], m["cells"][7]["shown"])
     assert ERROR in note, f"the phone shows only {note!r}"
+    assert "93714" in counts and "yfinance" in counts, f"the phone shows only {counts!r}"
     assert "--max-yf-calls" in params and "2000" in params, f"the phone shows only {params!r}"
 
 
