@@ -95,6 +95,15 @@ def test_the_calendar_reads_names_per_session_once_an_hour(market_roots, monkeyp
     assert calls == [1], "the second render in the same hour reads the cache"
 
 
+def test_the_calendar_counts_one_row_per_name_because_the_bars_key_says_so():
+    """``_session_counts`` counts rows, not distinct names, which is only the same number because
+    ``(security_id, session_date)`` is ``price_bar_daily``'s key. If that key ever changes, the calendar starts
+    counting bars instead of names and nothing else would say so (the DISTINCT cost 8-10 s against 2 s on the live
+    2.9 GB store, 5 Nov 2026, so it is not going back in as insurance)."""
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    assert prices_serving.KEYS["price_bar_daily"] == ("security_id", "session_date")
+
+
 def test_names_per_session_are_counted_per_tier_set_of_the_spine(market_roots):
     """Review M1: the calendar and the universe tile compare this with the picked sets, so it is counted by set, not
     over every bar in the file. A fund-only universe must not read Tier A's bars as its own."""

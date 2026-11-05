@@ -646,6 +646,13 @@ def _session_counts(con) -> dict[str, dict[str, int]]:
     The Backfill calendar and the universe tile sum the sets the universe holds, so a narrowed universe is compared
     with its own names only (review M1). The live spine is attached read-only to the caller's handle for one
     GROUP BY and detached; without a spine every bar counts as ``-``. Read once an hour with the samples.
+
+    The count is a plain ``count(*)``, not ``count(DISTINCT security_id)``: ``(security_id, session_date)`` is this
+    table's key (``build.prices.serving.KEYS``, held by its PRIMARY KEY and, when ``RC_PRICES_NO_PRIMARY_KEY=1``
+    drops that, by the ``duplicate_key`` build issue), so inside one ``(session_date, set)`` group a name appears
+    once and the DISTINCT could never change a number. It cost plenty, though: measured on the live 2.9 GB store,
+    5 Nov 2026, same 29 680 groups and same total of 39 186 044 either way -- 10.6 s and 8.0 s with the DISTINCT,
+    2.0 s and 2.2 s without it.
     """
     from RevenueChaser.rcdata.build import base
     from RevenueChaser.rcdata.build.prices import serving as prices_serving
@@ -658,12 +665,12 @@ def _session_counts(con) -> dict[str, dict[str, int]]:
                 "WITH sets AS (SELECT DISTINCT " + prices_serving.SPINE_ID + " AS security_id, "
                 f"CASE WHEN tier = 'B' AND security_type IN ({fund}) THEN 'E' WHEN tier = 'B' THEN 'R' ELSE tier END "
                 "AS s FROM rc_spine.security WHERE tier IN ('A', 'B', 'C', 'D')) "
-                "SELECT b.session_date, coalesce(sets.s, '-'), count(DISTINCT b.security_id) FROM price_bar_daily b "
+                "SELECT b.session_date, coalesce(sets.s, '-'), count(*) FROM price_bar_daily b "
                 "LEFT JOIN sets USING (security_id) GROUP BY 1, 2 ORDER BY 1, 2").fetchall()
         finally:
             con.execute("DETACH rc_spine")
     else:
-        rows = con.execute("SELECT session_date, '-', count(DISTINCT security_id) FROM price_bar_daily "
+        rows = con.execute("SELECT session_date, '-', count(*) FROM price_bar_daily "
                            "GROUP BY 1 ORDER BY 1").fetchall()
     out: dict[str, dict[str, int]] = {}
     for day, key, n in rows:
