@@ -106,3 +106,38 @@ def test_normalize_passes_the_fetch_time_to_the_pin():
     assert normalize_snapshot(raw, "2026-08-14")["charm_pin_report"]["expiry"] == "2026-08-14"
     raw["_meta"] = {"api_snapshot_time": "2026-08-15T12:00:00Z"}
     assert normalize_snapshot(raw, "2026-08-14")["charm_pin_report"]["expiry"] != "2026-08-14"
+
+
+# avo 5 Nov (option A): a pin at or below the flip leaves the upside band without a ceiling, not the whole set gone
+REAL_5_NOV = {"current_level": 7568.92,
+              "levels": {"regime_threshold": 7721.82, "upper_resistance_band": 8100.0, "lower_support_band": 7500.0},
+              "charm_pin_report": {"strike": 7700.0, "expiry": "2026-11-05"}}
+
+
+def test_a_pin_below_the_flip_keeps_two_bands_and_an_open_upside():
+    bands = scenarios.scenario_bands(REAL_5_NOV)
+    assert bands["consolidation"] == (7500.0, 7721.82) and bands["downside"] == (7400.0, 7500.0)
+    assert bands["upside"] == (7721.82, None) and "7,700" in bands["upside_na"]
+
+
+def test_the_table_prints_the_open_upside_as_n_a():
+    out = scenarios.build_scenarios(REAL_5_NOV)
+    rows = {s["name"]: s for s in out["scenarios"]}
+    assert set(rows) == {"Consolidation", "Upside", "Downside"}
+    assert rows["Upside"]["range"].startswith("above 7,722") and "n/a" in rows["Upside"]["range"]
+    assert rows["Upside"]["asymmetry"] is None and rows["Downside"]["asymmetry"] is not None
+    assert "7,700" in out["note"]
+
+
+def test_the_open_upside_reaches_brier_close_check_and_structures():
+    from RevenueChaser.module_spx_gamma import brier, close_check, structures
+    bands = scenarios.scenario_bands(REAL_5_NOV)
+    assert brier._clean_bands(bands)["upside"] == [7721.82, None]
+    assert scenarios.realized_class(bands, 7800.0) == "Upside"
+    card = close_check.close_card(REAL_5_NOV)            # was "price band n/a" on the real 4 Nov day
+    assert card["steps"][0]["reading"] == "close 7,568.92 is in Consolidation (7,500 – 7,722)"
+    chain = [{"strike": float(k), "type": t, "mid": 5.0, "price_source": "quote", "expiry": "2026-11-06"}
+             for k in range(7300, 7900, 25) for t in ("P", "C")]
+    built = structures.build_structures(bands, chain, "2026-11-06")
+    names = [s["name"] for s in built["structures"]]
+    assert "Call debit spread" not in names and "Iron condor" in names

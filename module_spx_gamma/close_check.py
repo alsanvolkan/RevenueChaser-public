@@ -39,8 +39,9 @@ def close_card(snapshot: dict) -> dict:
     cls = realized_class(bands, spot) if bands else None
     if cls:
         lo, hi = bands[cls.lower()]
+        span = f"{lo:,.0f} – {hi:,.0f}" if hi is not None else f"above {lo:,.0f}"
         steps.append({"step": "Price band", "state": cls.lower(),
-                      "reading": f"close {spot:,.2f} is in {cls} ({lo:,.0f} – {hi:,.0f})"})
+                      "reading": f"close {spot:,.2f} is in {cls} ({span})"})
     else:
         steps.append({"step": "Price band", "state": None, "reading": "price band n/a"})
 

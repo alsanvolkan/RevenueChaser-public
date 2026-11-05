@@ -82,7 +82,7 @@ def build_structures(bands: dict | None, chain, expiry: str | None) -> dict | No
         return None
     cons_lo, cons_hi = (snap_strike(v) for v in bands["consolidation"])
     down_lo, down_hi = (snap_strike(v) for v in bands["downside"])
-    up_lo, up_hi = (snap_strike(v) for v in bands["upside"])
+    up_lo, up_hi = (snap_strike(v) if v is not None else None for v in bands["upside"])
     shapes = [
         ("Iron condor", "consolidation", [(+1, "P", cons_lo - WING), (-1, "P", cons_lo),
                                           (-1, "C", cons_hi), (+1, "C", cons_hi + WING)]),
@@ -90,8 +90,9 @@ def build_structures(bands: dict | None, chain, expiry: str | None) -> dict | No
         ("Long put condor", "downside", [(+1, "P", down_hi + WING), (-1, "P", down_hi),
                                          (-1, "P", down_lo), (+1, "P", down_lo - WING)]),
         ("Put debit spread", "downside", [(+1, "P", down_hi - DEBIT_OFFSET), (-1, "P", down_lo)]),
-        ("Call debit spread", "upside", [(+1, "C", up_lo + DEBIT_OFFSET), (-1, "C", up_hi)]),
     ]
+    if up_hi is not None:   # an open upside (pin at or below the flip) has no short leg to sell
+        shapes.append(("Call debit spread", "upside", [(+1, "C", up_lo + DEBIT_OFFSET), (-1, "C", up_hi)]))
     structures = []
     for name, family, legs in shapes:
         if len({k for _s, _t, k in legs}) < len(legs) or any(

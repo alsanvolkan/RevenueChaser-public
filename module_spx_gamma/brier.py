@@ -138,6 +138,16 @@ def _clean_bands(bands: dict | None) -> dict[str, list[float]] | None:
         lo_hi = bands.get(key)
         if not lo_hi or len(lo_hi) != 2:
             return None
+        if key == "upside" and lo_hi[1] is None:
+            # an open upside (the pin at or below the flip): scoring reads only the consolidation band
+            try:
+                lo = float(lo_hi[0])
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(lo):
+                return None
+            out[key] = [lo, None]
+            continue
         try:
             lo, hi = float(lo_hi[0]), float(lo_hi[1])
         except (TypeError, ValueError):

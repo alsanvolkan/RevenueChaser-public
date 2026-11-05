@@ -89,11 +89,20 @@ def scenario_bands(snapshot: dict) -> dict | None:
     if spot < flip:
         # F2: the 30 Oct report's pin (largest front-expiry net charm), never the vol-mode "Charm Peak"
         pin = _finite((snapshot.get("charm_pin_report") or {}).get("strike"))
-        if pin is None or pin <= flip:
-            # No pin, or a pin at or below the flip, leaves the upside band without the ceiling the report gives
-            # it. The report's upside here is the flip being taken back up to the pin; inventing another ceiling
-            # would print a band from a level it does not use.
+        if pin is None:
             return None
+        if pin <= flip:
+            # A pin at or below the flip leaves the upside band without the ceiling the report gives it (the flip
+            # taken back up to the pin). Inventing another ceiling would print a band from a level the report does
+            # not use, so the upside is open (no ceiling) and the other two bands stand (avo 5 Nov, option A).
+            return {
+                "regime": NEGATIVE_GAMMA,
+                "consolidation": (put_wall, flip),
+                "upside": (flip, None),
+                "upside_na": f"the report pin {pin:,.0f} is at or below the flip {flip:,.0f}, so the upside band "
+                             f"has no ceiling today",
+                "downside": (put_wall - BELOW_FLIP_DOWNSIDE_OFFSET, put_wall),
+            }
         return {
             "regime": NEGATIVE_GAMMA,
             "consolidation": (put_wall, flip),
@@ -161,10 +170,11 @@ def build_scenarios(snapshot: dict) -> dict:
         },
         {
             "name": "Upside",
-            "range": f"{up_lo:,.0f} – {up_hi:,.0f}",
+            "range": (f"{up_lo:,.0f} – {up_hi:,.0f}" if up_hi is not None
+                      else f"above {up_lo:,.0f} (ceiling n/a)"),
             "p": p["Upside"],
             # Trigger the band's near edge, reach its far edge, invalidated at the consolidation band's far side.
-            "asymmetry": asymmetry(up_lo, up_hi, cons_lo),
+            "asymmetry": asymmetry(up_lo, up_hi, cons_lo) if up_hi is not None else None,
             "trade": "Directional long",
         },
         {
@@ -189,6 +199,8 @@ def build_scenarios(snapshot: dict) -> dict:
         f"probabilities behind it are fixed and uncalibrated. Scenario rules follow the {REPORT_AS_OF} report. "
         f"The Brier scorecard below tracks how honest these probabilities turn out to be."
     )
+    if bands.get("upside_na"):
+        note = f"Upside ceiling n/a: {bands['upside_na']}. " + note
     # A5: trigger / confirm / reset of the two directional classes over the week's hourly closes
     from .hourly import scenario_triggers
     hourly = snapshot.get("hourly_closes") or None
