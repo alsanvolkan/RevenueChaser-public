@@ -33,9 +33,12 @@ file is typed ``etp``, so it is Tier B and no stock), which is why it is worth s
 **An input outage is not a rule change,** and it is per fund. ``my_universe`` is exempt from the swap guard's
 shrink limit (``serving.SHRINKS_BY_CHOICE``), so a fund that lost its dollar volume would otherwise be dropped,
 accepted, and written as a ``left`` row no later build can take back. ``etf.adv_usd_20d`` is NULL for *unknown*,
-never for zero, so a fund whose own number went missing is held: :func:`_hold_lost_volume` carries its live row
-forward and names every held fund in one ``my_universe_etf_volume_lost`` issue (avo's decision B, #424). A volume
-that is **present** and under the floor is the rule's answer, and that fund leaves as it always did. When no
+never for zero, so a fund the volume rule can no longer measure -- no ``aum`` **and** no ``adv_usd_20d`` today, the
+case where that rule would in fact have read the volume -- is held: :func:`_hold_lost_volume` carries its live row
+forward and :func:`_held_issue` names the held funds the manual file did not then remove in one
+``my_universe_etf_volume_lost`` issue (avo's decision B, #424, and the review findings of #431). A volume that is
+**present** and under the floor is the rule's answer, and so is an ``aum`` under it, so those funds leave as they
+always did. When no
 ``etf`` row has a volume at all the source itself is gone, and :func:`_no_volume_source` fails the build rather
 than holding the whole list on yesterday's numbers.
 
