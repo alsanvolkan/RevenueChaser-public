@@ -247,18 +247,18 @@
       "kind": "epic",
       "status": "open",
       "deferred_until": "",
-      "summary": "SPX Gamma's own epic: 12 items still open, including SPX-7, which is one of the two consumers waiting on the vol inputs #6 and #7.",
+      "summary": "SPX Gamma's epic: the 5 Nov 2026 rebuild (one PR) implements the weekly reports' sections on UW data; Cboe, MenthorQ and IBKR sources are phase 2.",
       "detail": {
-        "whats_wrong": "12 of 12 tracked items in this epic are still open. The first still-open ones: alsanvolkan/RevenueChaser#24 SPX Gamma: regime vs flip, fallback dates, durable data, test pollution (G1–G20) | alsanvolkan/RevenueChaser#178 SPX Gamma S3: forecast redesign (range regime + pinning), scorer, shared forecast ledger | alsanvolkan/RevenueChaser#179 SPX Gamma S4: storage under .store/, backup, past-date view",
-        "evidence": "- D03 index_levels_daily alsanvolkan/RevenueChaser#293 (candles from ^GSPC files today)\n- D05/D06 chain + exposure: files today; alsanvolkan/RevenueChaser#179 moves them to DuckDB\n- D28/D29 vol + COT alsanvolkan/RevenueChaser#305 (also fixes DF22, the dated VIX/CFTC backfill)\n\nalsanvolkan/RevenueChaser#293 and alsanvolkan/RevenueChaser#305 replace file reads with stored series. alsanvolkan/RevenueChaser#178/#179 wait for avo's decision (tracking/core_checklist.md, 'Core sonrası').",
-        "example": "",
-        "tried_or_decided": "alsanvolkan/RevenueChaser#178, alsanvolkan/RevenueChaser#179 (see their notes above).",
-        "direction": "",
-        "next_step": "SPX-7 needs vol_index_daily to have rows, so #6 and #7 come first."
+        "whats_wrong": "The board did not follow the newest weekly report (30 Oct 2026): the charm pin, the 25-delta skew, the hedge size and the Brier scorer differed or were missing, and the week gamma map, close check, session hedge flow, dealer book, hourly triggers and priced structures did not exist.",
+        "evidence": "Fable review of 10 reports against the code (/mnt/project-files/spx_gamma/2026-11-05_reports-fable-review.md): F1-F8 fixes and A1-A11 additions.",
+        "example": "Real UW data, 4-6 Nov 2026: report charm pin 7,750; 25-delta skew of the 4 Dec chain +4.35 IV points; week turning point 7,723.",
+        "tried_or_decided": "avo 5 Nov 2026: UW first, then other sources. Data root moved out of the checkout (S4, verified copy). Option chains paged past 500 rows (#255).",
+        "direction": "Phase 2: level authority (own Cboe chain vs UW), MenthorQ, IBKR SPX hourly closes and the 22:00 print (#418).",
+        "next_step": "Real-data check on homesrv, Fable review, then avo's before/after look at the board."
       },
       "refs": [],
       "issue_updated_at": "2026-11-02T17:55:13Z",
-      "reviewed_at": "2026-10-22"
+      "reviewed_at": "2026-11-05"
     },
     {
       "repo": "RevenueChaser-public",
@@ -2226,18 +2226,18 @@
       "kind": "bug",
       "status": "open",
       "deferred_until": "",
-      "summary": "",
+      "summary": "UW client spec deviations: SPX Gamma's chains now page past 500 rows; the earnings limit and the shared client's page-1 start are still open.",
       "detail": {
-        "whats_wrong": "",
-        "evidence": "",
+        "whats_wrong": "Earnings calendar asks limit 500 (spec max 100); option_contracts_result starts at page 1 (spec: 0); flow-recent's spec label is wrong.",
+        "evidence": "SPX Gamma's option_chain.json of 30 Oct and 3 Nov were exactly 500 rows of one expiry (issue comment, 3 Nov).",
         "example": "",
-        "tried_or_decided": "",
+        "tried_or_decided": "5 Nov 2026: SPX Gamma's snapshot pages every /option-contracts call (page 0 without page, then page=1, 2, ...).",
         "direction": "",
-        "next_step": ""
+        "next_step": "Fix the earnings limit and core option_contracts_result's start page with one live check."
       },
       "refs": [],
       "issue_updated_at": "2026-10-28T21:26:43Z",
-      "reviewed_at": ""
+      "reviewed_at": "2026-11-05"
     },
     {
       "repo": "RevenueChaser-public",
