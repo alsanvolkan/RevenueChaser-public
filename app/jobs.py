@@ -595,7 +595,7 @@ def execute(job_id: str) -> None:
         if gap:
             gap["message"] = f"{exc.message} {gap['message']}"
         fields = _with_freeze_notes(gap or {"message": exc.message})
-        counts = _counts_of({"counts": getattr(exc, "counts", None)})
+        counts = _counts_of({"counts": exc.counts})
         if counts is not None:
             fields["counts"] = counts                   # #136: a runner that ends with a message, not a return
         _set(job_id, status="done", finished_at=_utc_now(), **fields)

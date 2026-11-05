@@ -3,9 +3,12 @@
 Two writers, two gaps, and this suite covers both.
 
 **The scheduled writer** (``core/automations.run_task``) wrote a literal ``"counts": None`` — the only
-occurrence of ``counts`` in that file — so no scheduled step could record counts whatever it printed. The
-step's CLI already prints one JSON result object on stdout, which ``run_task`` streams into the task's log,
-so the counts are there to be read: the row now takes the last JSON object the command printed.
+occurrence of ``counts`` in that file — so no scheduled step could record counts whatever it printed. A
+step's CLI prints its result as JSON on stdout, which ``run_task`` streams into the task's log, so the
+numbers are there to be read. What it prints is a whole *result*, though — a run id, a session date, nested
+sweep statistics, sometimes a provider name and no counts at all — so the row takes the last JSON object the
+command printed **through the same filter the dashboard side uses** (``core/run_counts.numeric``). One rule
+for one column: the alternative was the same work recording a different shape depending on who started it.
 
 **The dashboard writer** (``app/jobs.py:_counts_of``) stores a runner's returned ``counts``, and
 ``run_spxgamma_history`` proves it. But the long writers the issue names (identity, daily bars) never
@@ -21,7 +24,7 @@ import dataclasses
 import json
 
 from RevenueChaser.app import jobs
-from RevenueChaser.core import automations, rawstore
+from RevenueChaser.core import automations, rawstore, run_counts
 
 OK_JSON = '{"rows": 93714, "written": 93714, "status": {"open": 93382, "closed": 332}}'
 
@@ -89,13 +92,24 @@ def _as_task(monkeypatch, tmp_path, name: str, script) -> None:
     monkeypatch.setattr(automations, "entry", lambda n: replaced)
 
 
-def test_only_a_results_own_integer_fields_become_counts():
-    """A step's result mixes counts with diagnostics it also returns; the column takes the numbers only."""
-    from RevenueChaser.app import runners
+def test_only_the_numbers_a_result_reported_become_counts():
+    """One rule for both writers (``core/run_counts.numeric``): a step's result mixes counts with the
+    diagnostics it also returns, and only the amounts belong in the column."""
+    res = {"scope": 7, "rows_inserted": 93714, "rows_by_source": {"uw": 5, "yfinance": 2},
+           "run_id": "abc", "latest_session": "2026-11-04", "seconds": 0.5, "locked": False,
+           "overlap": {"rows": 3, "examples": []}}
 
-    res = {"scope": 7, "rows_inserted": 93714, "latest_session": "2026-11-04", "ratio": 0.5,
-           "locked": False, "overlap": {"rows": 3}}
+    assert run_counts.numeric(res) == {"scope": 7, "rows_inserted": 93714,
+                                       "rows_by_source": {"uw": 5, "yfinance": 2}}
+    assert run_counts.numeric({"latest_session": "2026-11-04"}) is None
+    assert run_counts.numeric(None) is None
 
-    assert runners.numeric_counts(res) == {"scope": 7, "rows_inserted": 93714}
-    assert runners.numeric_counts({"latest_session": "2026-11-04"}) is None
-    assert runners.numeric_counts(None) is None
+
+def test_a_flag_is_not_a_count_but_an_int_subclass_is():
+    """``locked``/``no_fetch`` are bools and must not read as amounts; an ``int`` subclass a provider or
+    pandas hands back is still a number, which ``type(v) is int`` would have dropped silently."""
+    class Counted(int):
+        pass
+
+    assert run_counts.numeric({"locked": True, "no_fetch": False}) is None
+    assert run_counts.numeric({"rows": Counted(7)}) == {"rows": 7}

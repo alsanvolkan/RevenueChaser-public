@@ -40,7 +40,7 @@ function _cells(tr){
 
 ROW = {"run_id": "r1", "module": "rotation", "source": None, "trigger": None, "status": "done",
        "queued_at": 1_792_700_000.0, "started_at": 1_792_700_001.0, "finished_at": 1_792_700_061.0,
-       "duration_s": 60.0, "error": None, "message": None, "params": {}}
+       "duration_s": 60.0, "error": None, "message": None, "params": {}, "counts": None}
 
 
 def _node(script: str, tmp_path):
@@ -85,7 +85,8 @@ def test_the_row_shows_the_stored_values_in_column_order(client, tmp_path):
     cells = _row_cells(client, tmp_path, row)
     # The stub's classList.add appends, so an empty cell reads "note-cell dash": compare the first class.
     assert [c["cls"].split(" ")[0] for c in cells] == ["when", "job", "trigger", "", "took",
-                                                       "note-cell", "params"]
+                                                       "note-cell", "params", "params"]
+    assert cells[6]["cls"].startswith("params counts"), "the counts cell comes before params (#136)"
     assert cells[1]["text"] == "RC-Daily-Bars"
     assert cells[2]["text"] == "scheduled"
     assert cells[3]["text"] == "done" and cells[3]["pill"] == "pill s-done"
@@ -115,7 +116,7 @@ def test_a_long_value_is_clipped_in_the_cell_and_whole_in_the_tooltip(client, tm
     args = ["-m", "RevenueChaser.scripts.nightly_inputs", "earnings", "--max-uw-calls", "200",
             "--max-fred-calls", "10", "--max-yf-calls", "2000"]
     cells = _row_cells(client, tmp_path, dict(ROW, params={"args": args}))
-    params = cells[6]
+    params = cells[7]
     assert params["text"].endswith("…") and len(params["text"]) == 65
     # The tooltip is the browser's JSON.stringify of the value, which for this ASCII-only blob is exactly
     # json.dumps with compact separators: the whole value, last argument included (#131 item 6).

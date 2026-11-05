@@ -13,6 +13,7 @@ Store only: the seeded table is a temp DuckDB per test, no provider is asked.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from RevenueChaser.core import ownership, rawstore
@@ -47,11 +48,19 @@ def test_an_empty_table_is_an_empty_mapping_not_a_failure(rawstore_tmp_db):
     assert ownership.sec13f_totals() == {}
 
 
-def test_no_module_of_asymmetric_growth_imports_the_13f_board():
-    """The seam itself. A scan reads rows; it does not reach into another board's engine."""
-    offenders = [f"{p.relative_to(PKG.parent)}:{n}"
-                 for p in sorted(PKG.glob("*.py"))
-                 for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
-                 if "module_sec_13f" in line]
+def test_nothing_in_asymmetric_growth_imports_the_13f_board():
+    """The seam itself, over the package **and its tests**: a scan reads rows, and nothing here reaches into
+    another board's engine. The tests are in scope because nine of them used to patch
+    ``module_sec_13f.engine.load_totals`` — a patch that intercepted nothing once the engine stopped calling
+    it, so a later test seeding totals through it would silently have got ``{}`` from the store instead.
+
+    Import lines only: a docstring that names the other board to explain where a number comes from is
+    provenance, not a dependency.
+    """
+    offenders = [f"{path.relative_to(PKG.parent)}:{n}: {line.strip()}"
+                 for path in sorted(PKG.rglob("*.py"))
+                 if path != Path(__file__).resolve()
+                 for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+                 if "module_sec_13f" in line and re.match(r"\s*(from|import)\s", line)]
 
     assert offenders == []

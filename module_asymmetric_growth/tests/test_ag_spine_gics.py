@@ -64,8 +64,6 @@ def test_hunter_skips_excluded_types(rawstore_tmp_db, monkeypatch):
     scored = []
     monkeypatch.setattr(engine, "enrich_and_score",
                         lambda t, r, nf=False, *a, **k: scored.append(t))
-    import RevenueChaser.module_sec_13f.engine as s13
-    monkeypatch.setattr(s13, "load_totals", lambda: {})
     out = engine.run_asymmetric_growth_hunter()
     assert scored == ["OPCO"]
     assert out["universe_total"] == 2
@@ -82,8 +80,6 @@ def test_no_spine_gics_counts_the_unclassified_sector(rawstore_tmp_db, monkeypat
         return engine.score_ticker(t, _fin(), _tech(), {}, spine)
 
     monkeypatch.setattr(engine, "enrich_and_score", fake_score)
-    import RevenueChaser.module_sec_13f.engine as s13
-    monkeypatch.setattr(s13, "load_totals", lambda: {})
     out = engine.run_asymmetric_growth_hunter()
     by = {c["ticker"]: c for c in out["cards"]}
     assert (by["OPCO"]["sector"], by["OPCO"]["industry"]) == ("Energy", "Oil & Gas E&P")

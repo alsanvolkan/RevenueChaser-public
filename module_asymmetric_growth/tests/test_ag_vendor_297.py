@@ -31,8 +31,6 @@ def _run(monkeypatch, tickers, no_fetch=False, run_id="job-ag"):
     rows = [{"ticker": t, "quote": dict(_QUOTE), "market_cap": 5e9} for t in tickers]
     seed_momentum(tickers)                                    # the momentum signal comes from D01 (#380 S4)
     monkeypatch.setattr(engine, "fetch_universe_stats", lambda *a, **k: (rows, {}))
-    import RevenueChaser.module_sec_13f.engine as s13
-    monkeypatch.setattr(s13, "load_totals", lambda: {})
     monkeypatch.setattr(engine._spine, "excluded_tickers", lambda: set())
     monkeypatch.setattr(engine._spine, "spine_gics", lambda *a, **k: {})
     monkeypatch.setattr(vendor_data, "_clock", lambda: COMPLETE)

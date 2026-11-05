@@ -139,8 +139,6 @@ def _seed(n: int, themed: bool = True):
 def _run(monkeypatch, tickers):
     rows = [{"ticker": t, "quote": dict(_QUOTE), "market_cap": 5e9} for t in tickers]
     monkeypatch.setattr(engine, "fetch_universe_stats", lambda *a, **k: (rows, {}))
-    import RevenueChaser.module_sec_13f.engine as s13
-    monkeypatch.setattr(s13, "load_totals", lambda: {})
     monkeypatch.setattr(engine._spine, "excluded_tickers", lambda: set())
     monkeypatch.setattr(engine._spine, "spine_gics", lambda *a, **k: {})
     return engine.run_asymmetric_growth_hunter(None, max_workers=1, no_fetch=True)

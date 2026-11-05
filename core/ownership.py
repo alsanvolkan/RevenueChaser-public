@@ -1,5 +1,9 @@
 """Ownership per session (#300, D20): the one writer of ``ownership_snapshot``.
 
+It is also the shared **reader** of the stored 13F totals (:func:`sec13f_totals`, #16), a table it does not
+write — ``module_sec_13f.engine.save_totals`` does. That read lives here so a screener whose score includes
+institutional ownership reads rows instead of importing the 13F board's engine.
+
 Two jobs store what they read, each under its own ``source``:
 
 - ``universe`` / Asymmetric Growth (``yfinance``): shares outstanding, insider % and institutional % from each fresh
