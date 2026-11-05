@@ -324,6 +324,37 @@ def test_a_row_that_does_not_read_is_rejected_and_counted_not_the_whole_set(feed
     assert [r[1] for r in _holdings("0001000001-26-000101")] == ["594918104"]
 
 
+def _managers(accession: str) -> list:
+    from RevenueChaser.rcdata.build.spine.stage import partitions
+    files = [str(f) for _, f in partitions(sec13f.DATASET.parquet_dir() / "managers", "day")]
+    if not files:
+        return []
+    con = duckdb.connect()
+    try:
+        return con.execute("SELECT kind, seq, manager_cik, name FROM read_parquet(?, union_by_name = true) "
+                           "WHERE accession = ? ORDER BY kind, seq", [files, accession]).fetchall()
+    finally:
+        con.close()
+
+
+def test_the_other_managers_a_filing_names_are_kept_with_the_sequence_a_holding_points_at(feed, http_mock):
+    """avo, 5 Nov 2026: keep OTHERMANAGER too. A holding's ``other_manager`` is a sequence inside its own filing,
+    and until now nothing said whose sequence it was: the summary page's list is kept as ``included``, the cover
+    page's (whom the filing is made on behalf of) as ``cover``."""
+    h = ox.f13_holding
+    one = ox.f13_set([
+        ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [h("MICROSOFT CORP", "594918104", 4, 10)],
+                      managers=[(2, "0000918950", "SUSQUEHANNA INVESTMENT GROUP"),
+                                (1, "0001444949", "SUSQUEHANNA ADVISORS GROUP, INC.")],
+                      on_behalf_of=[(167436, "0000932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC")])])
+    http_mock.routes.insert(0, (HREFS[0], one, 200, {}))
+    assert _backfill("2026-06-01", "2026-08-31")["result"] == "changed"
+    assert _managers("0001000001-26-000101") == [
+        ("cover", 167436, "0000932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC"),
+        ("included", 1, "0001444949", "SUSQUEHANNA ADVISORS GROUP, INC."),
+        ("included", 2, "0000918950", "SUSQUEHANNA INVESTMENT GROUP")]
+
+
 def test_the_cover_pages_period_wins_on_both_paths_and_a_cusip_placeholder_is_no_cusip(feed, http_mock):
     """13F review D2 and D3 (2026-10-30). The EDGAR path takes the period from the cover page and falls back on
     the submission header; the sets path did the opposite, so one filing could land in two quarters. And a CUSIP

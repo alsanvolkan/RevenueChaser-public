@@ -7,7 +7,8 @@ one zip per filing window: ``<ddmonyyyy>-<ddmonyyyy>_form13f.zip`` since 2024 (t
 folder than the rest). A page that links no zip is refused (its shape changed). The window is the filing dates the
 set holds.
 
-A zip holds tab-separated ``SUBMISSION``, ``COVERPAGE``, ``SUMMARYPAGE`` and ``INFOTABLE`` (others are not read),
+A zip holds tab-separated ``SUBMISSION``, ``COVERPAGE``, ``SUMMARYPAGE``, ``INFOTABLE``, ``OTHERMANAGER`` and
+``OTHERMANAGER2`` (``SIGNATURE`` and the readme are not read),
 matched by name suffix, case-insensitive (one set nests them in an upper-case folder), read with no quote character
 (names hold quotes) into a scratch DuckDB file beside the raw zip, so a set's 3.8 million holdings never sit in
 memory. Each 13F-HR and 13F-HR/A becomes the row the EDGAR path writes (``sec13f.FILINGS``, ``origin``
@@ -55,7 +56,7 @@ from . import edgar, sec
 
 INDEX_ENV = "RC_FORM13F_INDEX_URL"
 INDEX_PATH = "/data-research/sec-markets-data/form-13f-data-sets"
-MEMBERS = ("SUBMISSION", "COVERPAGE", "SUMMARYPAGE", "INFOTABLE")
+MEMBERS = ("SUBMISSION", "COVERPAGE", "SUMMARYPAGE", "INFOTABLE", "OTHERMANAGER", "OTHERMANAGER2")
 ORIGIN = "set:"
 SCRATCH = ".typing-"              # a set is typed in a folder of this prefix beside the raw zips
 MIN_WEEKDAYS = 20                 # a shorter backfill reads the forms only (a re-walk of a few days; review S6)
@@ -259,6 +260,25 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
         LEFT JOIN z_summarypage m ON trim(m.ACCESSION_NUMBER) = s.accession
         LEFT JOIN z_count k ON k.accession = s.accession""", [run_id])
 
+    # Both manager lists in one shape: the summary page's (``included``, the list a holding's ``other_manager``
+    # points into by sequence) and the cover page's (``cover``, whom this filing is made on behalf of).
+    con.execute(f"""CREATE TABLE managers AS
+        SELECT s.accession, s.cik, {period} AS period, s.filed, 'included' AS kind,
+               TRY_CAST(trim(o.SEQUENCENUMBER) AS INTEGER) AS seq,
+               nullif(trim(o.CIK), '') AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
+               nullif(trim(o.CRDNUMBER), '') AS crd_number, nullif(trim(o.SECFILENUMBER), '') AS sec_file_number,
+               nullif(trim(o.NAME), '') AS name
+        FROM z_sub s JOIN z_othermanager2 o ON trim(o.ACCESSION_NUMBER) = s.accession
+        LEFT JOIN z_coverpage c ON trim(c.ACCESSION_NUMBER) = s.accession
+        UNION ALL
+        SELECT s.accession, s.cik, {period} AS period, s.filed, 'cover' AS kind,
+               TRY_CAST(trim(o.OTHERMANAGER_SK) AS INTEGER) AS seq,
+               nullif(trim(o.CIK), '') AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
+               nullif(trim(o.CRDNUMBER), '') AS crd_number, nullif(trim(o.SECFILENUMBER), '') AS sec_file_number,
+               nullif(trim(o.NAME), '') AS name
+        FROM z_sub s JOIN z_othermanager o ON trim(o.ACCESSION_NUMBER) = s.accession
+        LEFT JOIN z_coverpage c ON trim(c.ACCESSION_NUMBER) = s.accession""")
+
     def num(col: str, typ: str = "DOUBLE") -> str:
         return f"TRY_CAST(TRY_CAST(replace(trim({col}), ',', '') AS DOUBLE) AS {typ})"
 
@@ -331,6 +351,7 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
             filed = {r[0] for r in con.execute("SELECT DISTINCT filed FROM filings").fetchall()}
             cols_f = ", ".join(f'"{c}"' for c, _ in schema["filings"])
             cols_h = ", ".join(f'"{c}"' for c, _ in schema["holdings"])
+            cols_m = ", ".join(f'"{c}"' for c, _ in schema["managers"])
             written = 0
             for day in todo:
                 if day in filed:
@@ -340,6 +361,9 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
                     base.write_parquet(con, f"SELECT {cols_h} FROM holdings WHERE filed = DATE '{day}' "
                                             "ORDER BY accession, line",
                                        feed.parquet_dir() / "holdings" / f"day={day}" / "part-0.parquet")
+                    base.write_parquet(con, f"SELECT {cols_m} FROM managers WHERE filed = DATE '{day}' "
+                                            "ORDER BY accession, kind, seq",
+                                       feed.parquet_dir() / "managers" / f"day={day}" / "part-0.parquet")
                     written += 1
                 d = feed.day_dir(day)
                 d.mkdir(parents=True, exist_ok=True)

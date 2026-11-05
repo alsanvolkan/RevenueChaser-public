@@ -53,10 +53,19 @@ HOLDINGS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed"
             ("value", "DOUBLE"), ("value_usd", "DOUBLE"), ("shares", "DOUBLE"), ("sh_type", "TEXT"),
             ("put_call", "TEXT"), ("discretion", "TEXT"), ("other_manager", "TEXT"), ("vote_sole", "BIGINT"),
             ("vote_shared", "BIGINT"), ("vote_none", "BIGINT")]
+# The managers a filing names beside the filer. Two lists, one shape (avo, 5 Nov 2026):
+# ``included`` is the summary page's - the managers whose positions this report carries, and the list a holding
+# points into: ``holdings.other_manager`` is that row's ``seq``, per filing (measured on 2023q4, where the
+# holdings of 0001728195-23-000011 marked ``2`` belong to SUSQUEHANNA SECURITIES, LLC at sequence 2).
+# ``cover`` is the cover page's - the managers this one files on behalf of; it has no holdings of its own to
+# point at, and its ``seq`` is the set's own surrogate key.
+MANAGERS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed", "DATE"), ("kind", "TEXT"),
+            ("seq", "INTEGER"), ("manager_cik", "TEXT"), ("form13f_file_number", "TEXT"), ("crd_number", "TEXT"),
+            ("sec_file_number", "TEXT"), ("name", "TEXT")]
 SERVED = FILINGS + [("source", "TEXT")]
 ORIGIN = "edgar"
-SETS_SCHEMA = {"forms": FORMS, "filings": FILINGS, "holdings": HOLDINGS, "dollars_from": DOLLARS_FROM,
-               "cusip_none": CUSIP_NONE}
+SETS_SCHEMA = {"forms": FORMS, "filings": FILINGS, "holdings": HOLDINGS, "managers": MANAGERS,
+               "dollars_from": DOLLARS_FROM, "cusip_none": CUSIP_NONE}
 
 
 def _mdy(value) -> date | None:
@@ -84,8 +93,29 @@ def status_of(report_type: str | None, holdings: int, entry_total: int | None) -
     return "ok", None
 
 
-def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
-    """One 13F submission: its filing row and its holdings."""
+def _managers(root, row: dict) -> list[dict]:
+    """The filing's other managers, both lists, in ``MANAGERS`` shape (#301 follow-up, avo 5 Nov 2026)."""
+    out = []
+    for kind, path, tag, seq_tag in (("cover", ".//coverpage/othermanagersinfo", "othermanager", None),
+                                     ("included", ".//summarypage/othermanagers2info", "othermanager2",
+                                      "sequencenumber")):
+        holder = root.find(path)
+        for n, m in enumerate(holder.iter(tag) if holder is not None else (), start=1):
+            inner = m.find("othermanager")                 # the cover list nests the fields one deeper
+            f = inner if inner is not None else m
+            out.append({"accession": row["accession"], "cik": row["cik"], "period": row["period"],
+                        "filed": row["filed"], "kind": kind,
+                        "seq": edgar.integer(edgar.text(m, seq_tag)) if seq_tag else n,
+                        "manager_cik": edgar.text(f, "cik"),
+                        "form13f_file_number": edgar.text(f, "form13ffilenumber"),
+                        "crd_number": edgar.text(f, "crdnumber"),
+                        "sec_file_number": edgar.text(f, "secfilenumber"),
+                        "name": edgar.text(f, "name")})
+    return out
+
+
+def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict], list[dict]]:
+    """One 13F submission: its filing row, its holdings and the other managers it names."""
     sub = edgar.parse_submission(text)
     f = sub["fields"]
     form = (f.get("CONFORMED SUBMISSION TYPE") or entry.get("form") or "").upper()
@@ -103,12 +133,12 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
     table = next((d for d in docs if d["xml"] and d["type"] == "INFORMATION TABLE"), None)
     if primary is None:
         row["detail"] = "no cover page XML"
-        return row, []
+        return row, [], []
     try:
         root = edgar.tree(primary["xml"])
     except ET.ParseError as e:
         row["detail"] = f"cover page XML does not parse: {e}"
-        return row, []
+        return row, [], []
     cover = root.find(".//coverpage")
     row["period"] = _mdy(edgar.text(cover, "reportcalendarorquarter")) or row["period"]
     flag = (edgar.text(cover, "isamendment") or "").lower()
@@ -123,14 +153,15 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
     row["value_total"] = edgar.number(edgar.text(summary, "tablevaluetotal"))
     omitted = (edgar.text(summary, "isconfidentialomitted") or "").lower()
     row["confidential_omitted"] = {"true": True, "false": False}.get(omitted)
+    managers = _managers(root, row)
     if row["period"] is None:
         row["detail"] = "no report period"
-        return row, []
+        return row, [], managers
     try:
         info = edgar.tree(table["xml"]) if table is not None else None
     except ET.ParseError as e:
         row["detail"] = f"information table does not parse: {e}"
-        return row, []
+        return row, [], managers
     holdings = []
     for n, it in enumerate(info.iter("infotable") if info is not None else ()):
         value = edgar.number(edgar.text(it, "value"))
@@ -151,7 +182,7 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
             "vote_none": edgar.integer(edgar.text(it, "votingauthority/none"))})
     row["holdings"] = len(holdings)
     row["status"], row["detail"] = status_of(row["report_type"], len(holdings), row["entry_total"])
-    return row, holdings
+    return row, holdings, managers
 
 
 def recent_cusips(periods: int = 2) -> set[str]:
@@ -201,16 +232,20 @@ class Sec13f(edgar.Feed):
         try:
             rows = edgar.Appender(con, "filings", FILINGS)
             held = edgar.Appender(con, "holdings", HOLDINGS)
+            mgrs = edgar.Appender(con, "managers", MANAGERS)
             for _acc, entry, text in self.filings_of(day):
-                filing, holdings = parse(text, entry, day)
+                filing, holdings, managers = parse(text, entry, day)
                 rows.add([filing])
                 held.add(holdings)
+                mgrs.add(managers)
             if not rows.total:
                 return []
             rows.flush()
             held.flush()
+            mgrs.flush()
             return [self.write_day(con, "filings", "filings", day, "accession"),
-                    self.write_day(con, "holdings", "holdings", day, "accession, line")]
+                    self.write_day(con, "holdings", "holdings", day, "accession, line"),
+                    self.write_day(con, "managers", "managers", day, "accession, kind, seq")]
         finally:
             con.close()
 
