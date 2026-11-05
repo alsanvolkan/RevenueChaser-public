@@ -650,7 +650,10 @@ worker thread writes while Flask request threads read. So:
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
   expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
   `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 50 min limit) and its backup
-  RC-Build-Backup daily 04:30 (`rcdata backup`, unit `life-rc-builder-backup`, 30 min limit), PR 2, plus
+  RC-Build-Backup daily 04:30 (`rcdata backup --only ops,market,spine,fundamentals,options,raw --subdir market`,
+  unit `life-rc-builder-backup`, 30 min limit) and the heavy half of that backup RC-Build-Backup-Heavy weekly
+  Sunday 03:30 (`rcdata backup --only prices,ownership --subdir market-heavy`,
+  unit `life-rc-builder-backup-heavy`, 60 min limit), PR 2, plus
   Monday to Friday 06:30 (the SPX Gamma Fetch RC-SPX-Gamma-Fetch, #291: `module_spx_gamma --nightly`, the
   latest complete session's raw day with all expiries, only once its Cboe SPX close is stored and outside the US
   session, else exit 3; no catch-up);
@@ -1119,7 +1122,13 @@ documented lock name has no entry.
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
 RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the
 systemd unit pair `life-rc-builder.service` / `.timer`. RC-Build-Backup runs `rcdata backup` daily at 04:30, with a
-30 min limit, as `life-rc-builder-backup`. Each pass first queues what is due (below), then takes the queued
+30 min limit, as `life-rc-builder-backup`; it takes the small files only
+(`--only ops,market,spine,fundamentals,options,raw --subdir market`). The two large serving files are
+RC-Build-Backup-Heavy's, weekly on Sunday at 03:30 with a 60 min limit, as `life-rc-builder-backup-heavy`
+(`--only prices,ownership --subdir market-heavy`): on 5 Nov 2026 the 04:30 run hit its 30 min limit copying
+prices (2.9 GB) and ownership (661 MB) together. Each `--subdir` keeps its own `.manifest.json`, its own
+verification and its own newest 5 per kind, and every copy carries its sha256. Run the heavy command by hand
+before a deploy that touches either file. Each pass first queues what is due (below), then takes the queued
 requests in order: those, Fetch and Backfill from Settings, and the CLI's. It skips a paused dataset (`dataset_schedule.paused_at`, a `skipped: paused` check row,
 no call). At start it fails a request a dead builder left running, with `lost: pid <n> gone` and a `failed` check
 row. A request whose builder is still alive (a live `.rc-proc` marker of its pid in the market dir) is left
