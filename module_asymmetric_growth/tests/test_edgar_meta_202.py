@@ -68,8 +68,6 @@ def test_a_provider_error_still_just_skips_the_ticker(monkeypatch):
 def _run(monkeypatch, rows, fake):
     monkeypatch.setattr(engine, "fetch_universe_stats", lambda *a, **k: (rows, {}))
     monkeypatch.setattr(engine, "enrich_and_score", fake)
-    import RevenueChaser.module_sec_13f.engine as s13
-    monkeypatch.setattr(s13, "load_totals", lambda: {})
     monkeypatch.setattr(engine._spine, "excluded_tickers", lambda: set())
     monkeypatch.setattr(engine._spine, "spine_gics", lambda *a, **k: {})
     return engine.run_asymmetric_growth_hunter()

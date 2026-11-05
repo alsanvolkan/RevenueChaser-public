@@ -19,8 +19,6 @@ from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 imp
 
 def _universe(monkeypatch, rows):
     monkeypatch.setattr(engine, "fetch_universe_stats", lambda *a, **k: (rows, {}))
-    import RevenueChaser.module_sec_13f.engine as s13
-    monkeypatch.setattr(s13, "load_totals", lambda: {})
     monkeypatch.setattr(engine._spine, "spine_gics", lambda *a, **k: {})
 
 

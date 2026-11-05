@@ -1,5 +1,9 @@
 """Ownership per session (#300, D20): the one writer of ``ownership_snapshot``.
 
+It is also the shared **reader** of the stored 13F totals (:func:`sec13f_totals`, #16), a table it does not
+write — ``module_sec_13f.engine.save_totals`` does. That read lives here so a screener whose score includes
+institutional ownership reads rows instead of importing the 13F board's engine.
+
 Two jobs store what they read, each under its own ``source``:
 
 - ``universe`` / Asymmetric Growth (``yfinance``): shares outstanding, insider % and institutional % from each fresh
@@ -32,6 +36,7 @@ from RevenueChaser.core import calendar, job_control, rawstore
 logger = logging.getLogger(__name__)
 
 TABLE = "ownership_snapshot"
+SEC13F_TOTALS = "sec13f_totals"
 YFINANCE = "yfinance"
 UW_INFO = "uw_info"
 FIELDS = ("shares_outstanding", "insider_pct", "institutional_pct")
@@ -147,6 +152,26 @@ def record(rows, *, run_id: str, run_at: float | None = None, fetched_at: float 
 # ``module_sec_13f/enrich.py`` applies to shares: UW was asked for that ticker on purpose, while a yfinance row is a
 # bulk screener payload whose ``.info`` can arrive empty. It only decides a tie: a newer session always wins.
 READER_ORDER = (UW_INFO, YFINANCE)
+
+
+def sec13f_totals() -> dict[str, dict]:
+    """The stored 13F per-ticker totals, ``{ticker: {period: metrics}}`` — ``sec13f_totals`` as the derive
+    wrote it, nothing recomputed and no network.
+
+    Read by the 13F board (``module_sec_13f.engine.load_totals``) and by the Asymmetric Growth scan, whose
+    institutional block is part of the score (owner, 5 Nov 2026). It lives here so the screener reads rows
+    rather than importing the 13F engine for them (#16): a table both sides read is the store's contract,
+    while an engine call makes one board's run depend on the other board's module being present.
+
+    A row whose ``entry`` is not a mapping is left out, so a malformed row costs one name its institutional
+    block instead of failing the reader.
+    """
+    out = {}
+    for r in rawstore.get_all(SEC13F_TOTALS):
+        entry = r.get("entry")
+        if isinstance(entry, dict):
+            out[r["ticker"]] = entry
+    return out
 
 
 def latest_institutional(tickers) -> dict[str, dict]:

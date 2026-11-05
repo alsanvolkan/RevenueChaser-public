@@ -33,7 +33,7 @@ from datetime import datetime, time as dtime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Callable
 
-from RevenueChaser.core import config
+from RevenueChaser.core import config, run_counts
 
 ACTIONS = ("install", "enable", "disable", "remove", "run")
 
@@ -1284,6 +1284,7 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
             fh.write(f"chain: {line}\n")
             fh.flush()
         record(status="running", started_at=epoch())
+        out_start = os.fstat(fh.fileno()).st_size      # #136: only this run's output is read for counts
         env = None
         if e.tables_written:
             from RevenueChaser.core import rawstore
@@ -1298,8 +1299,10 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
             fh.write(f"could not start: {exc}\n")
             rc = 1
         fh.flush()
+        # #136: only a table writer records a row at all, so only it pays for the log read.
+        counts = run_counts.from_log(log, out_start) if e.tables_written else None
         record(status="done" if rc == RESULT_OK else "error", finished_at=epoch(),
-               error=None if rc == RESULT_OK else f"exit {rc}", message=f"exit {rc}")
+               error=None if rc == RESULT_OK else f"exit {rc}", message=f"exit {rc}", counts=counts)
         fh.write(f"=== {stamp()} exit {rc}\n")
     return rc
 

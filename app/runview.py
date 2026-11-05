@@ -16,10 +16,11 @@ The page explains both in a footnote.
 
 ``COLUMNS`` is what the page shows, and nothing else is read: the payload travels on every poll. That leaves
 out four columns the table declares. ``pid`` and ``lane`` have writers but no reader here — a stale-run
-judgement from ``pid`` belongs to ``reconcile_lost_runs`` (#82). ``counts`` is written by ``app/jobs._record``
-only when a runner returns a counts dict (none does today) and ``core/automations.run_task`` passes none, so it
-is NULL in practice; this reader should select it in the same change that gives a runner counts.
-``registry_name`` repeats ``source`` for every row a scheduled task writes.
+judgement from ``pid`` belongs to ``reconcile_lost_runs`` (#82) — and ``registry_name`` repeats ``source``
+for every row a scheduled task writes. ``counts`` is read since #136 gave both writers one: a dashboard
+runner's returned or raised counts (``app/jobs._record``) and a scheduled step's printed ones
+(``core/automations.run_task`` through ``core/run_counts.py``). A run that reported no number has it NULL,
+which the page shows as a dash rather than a zero.
 
 Filtering happens in SQL, not on the page. A page-side filter over the newest ``limit`` rows would answer
 "when did this last fail?" with "never" as soon as ``limit`` clean runs had happened since the failure.
@@ -44,9 +45,9 @@ POLL_PATH = "/api/runs"
 # going; a stale one is closed as ``lost`` by ``app.jobs.reconcile_lost_runs`` (#82), not judged here.
 PROBLEM_STATUSES = ("error", "cancelled", "lost")
 # Read on every poll, so it holds what the page shows and no more (see the module docstring).
-COLUMNS = ("run_id", "module", "source", "trigger", "params",
+COLUMNS = ("run_id", "module", "source", "trigger", "params", "counts",
            "queued_at", "started_at", "finished_at", "status", "error", "message")
-_JSON_COLUMNS = ("params",)
+_JSON_COLUMNS = ("params", "counts")
 # A run that never started sorts on the moment it was queued, so a queued or lost job stays at the top
 # where it can be seen, instead of falling to the bottom under a NULL.
 _ORDER = "coalesce(started_at, queued_at, 0) DESC"

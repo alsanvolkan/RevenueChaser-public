@@ -14,7 +14,7 @@ from RevenueChaser.core.providers.unusual_whales import UWClient
 from RevenueChaser.core.config import OUTPUT_DIR
 from RevenueChaser.core.gics_map import UNCLASSIFIED, is_unclassified, sector_or_unclassified
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
-from RevenueChaser.core import job_control, job_lock, ledger
+from RevenueChaser.core import job_control, job_lock, ledger, run_counts
 from .jobs import JobMessage, run_id
 
 logger = logging.getLogger(__name__)
@@ -1837,7 +1837,8 @@ def run_daily_bars(uw=None, tickers: list[str] | None = None) -> None:
         raise JobMessage("Daily bars are already running; nothing started.")
     if not prices.run_ok(res):
         raise RuntimeError(prices.summary_line(res))
-    raise JobMessage(prices.summary_line(res))
+    # #136: the numbers the step already returned, for the run's ``counts`` (``core/run_counts.py``).
+    raise JobMessage(prices.summary_line(res), counts=run_counts.numeric(res))
 
 
 def run_index_lists(uw=None, first_fill: list[str] | None = None) -> None:
@@ -2076,7 +2077,10 @@ def run_identity(uw=None, limit: int | None = None) -> None:
     """
     from RevenueChaser.core.identity import refresh as identity_refresh
 
-    raise JobMessage(identity_refresh.summary(identity_refresh.refresh(limit=limit)))
+    record = identity_refresh.refresh(limit=limit)
+    # #136: the refresh record carries its own ``counts``, through the same rule as every other run's — it
+    # also holds nested breakdowns by type and by source, which are diagnostics, not amounts.
+    raise JobMessage(identity_refresh.summary(record), counts=run_counts.numeric(record.get("counts")))
 
 
 def run_settings(uw=None) -> Path:
