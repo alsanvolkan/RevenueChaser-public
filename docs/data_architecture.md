@@ -1365,7 +1365,10 @@ anything else and filters Alpaca's, Compustat's and CRSP's rows through it, so n
 universe ETF the spine cannot route to Compustat (no `security` row, or one without a `gvkey`) is found by the ticker
 its Compustat series carries on that series' newest priced day, if that day is within
 `universe.ETF_TIC_RECENT_DAYS` (14) of Compustat's newest one; a series the spine holds under another ticker stays
-out, and a stock is never linked this way (review M3 of #382: Alpaca serves no bar, so such a fund had none). The
+out, and a stock is never linked this way (review M3 of #382: Alpaca serves no bar, so such a fund had none). **One
+series per ticker** is stored, the one priced most recently, then the larger dollar volume; more than one is the
+`universe_etf_ticker_shared` issue (review D1 of #420). A fund is a ticker of the spine's `etf` table or one
+`my_universe` holds as an `etf`, and tickers compare upper case with `-` for `.` (D5, NIT 2). The
 whole-tier rule it replaced (`DEFAULT_TIERS = ("A", "B")`, 7,670 names, avo 30 Oct 2026) carried every SPAC,
 warrant, preferred and untyped name with it and still missed the funds the spine's `security` table does not hold.
 The acceptance "Tier A sessions complete >= 99%" is the bars
@@ -1434,7 +1437,9 @@ and for an ETF an inception day on or before it (review M1).
 PERMNO linked to a spine security, no ETF, by ticker alone: one issue per security, its PERMNO named), `tier_a_no_bar`
 and `tier_a_no_shares` (a Tier A name **of the stored universe** with no bar, or no market cap, on the newest served
 session: an untyped or excluded Tier A name is left out of the store on purpose), `universe_etf_no_bar` (a universe
-ETF, a ticker of the spine's `etf` table, with no bar on the newest served session; key: the ticker),
+fund, a ticker of the spine's `etf` table or an `etf` of `my_universe`, with no bar on the newest served session;
+key: the ticker), `universe_etf_ticker_shared` (more than one recent Compustat series carries a routeless universe
+fund's ticker: one is stored, the one priced most recently, then the larger dollar volume; key: the ticker),
 `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
 days, with no split), `split_only_crsp` (a split CRSP's `dlycumfacpr` records and no Compustat or Alpaca split is
 within 3 days of, between two served bars at most 7 days apart: not applied; the detail names the served close's
@@ -1443,7 +1448,9 @@ more than half a cent on each of Alpaca's cent-rounded adjusted closes, the exac
 1.5 bp at $70, 5 bp at $20, 50 bp at $2, so below a few dollars of adjusted close a dividend-sized gap hides in it;
 checked on every served bar Alpaca, the tester, has a bar for), `alpaca_close_differs` (the tester: a Compustat or CRSP
 close more than 1 bp and half a cent from Alpaca's close of the session; key security:session:source),
-`dividend_not_applied`, `action_not_applied` (a spin-off, unit split or rights distribution), `cover_class_unmapped`,
+`dividend_not_applied` (one that went ex on or before its security's first served bar adjusts no served bar:
+counted in the build note, not named; review D6 of #420), `action_not_applied` (a spin-off, unit split or
+rights distribution), `cover_class_unmapped`,
 `cover_adr_ordinary` (an ADR's issuer's cover counts ordinary shares, not ADSs: kept under `class:`, no cap from it),
 `float_above_outstanding` (over 1.05 times), `float_sources_disagree` (Yahoo and UW more than 25% apart),
 `duplicate_key` (a table written without its `PRIMARY KEY` holds a key value twice; key table:value),

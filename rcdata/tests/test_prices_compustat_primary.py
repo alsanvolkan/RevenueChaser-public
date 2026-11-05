@@ -395,6 +395,27 @@ def test_a_split_only_crsp_the_served_close_does_not_jump_across_is_named_as_no_
     assert "split_only_crsp: 1 within the served bars (0 with a served close jump" in note
 
 
+def test_a_dividend_before_the_first_served_bar_is_counted_and_one_inside_the_history_is_named(monkeypatch):
+    """Review D6 of #420: on homesrv's build 4, 7,497 of 7,514 ``dividend_not_applied`` issues were "no close before
+    the ex-date", most of them a dividend that went ex before the security's first served bar: it adjusts no served
+    bar, so it is no defect, and it buried the 17 that are. Such a dividend is counted in the note and not named; one
+    inside the served history with no close in the week before it is still named."""
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    data = _data()
+    data["comp.sec_divid"] += [{"gvkey": "001690", "iid": "01", "datadate": d, "divd": 0.5, "curcddv": "USD"}
+                               for d in ("2025-05-15", "2025-07-01")]   # before AAPL's first bar; a gap of 25 days
+    note = _serve_note(monkeypatch, data)
+    named = {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
+             if i["kind"] == "dividend_not_applied"}
+    assert list(named) == ["wrds:div:001690:01:2025-07-01"], named
+    assert "no close before the ex-date" in named["wrds:div:001690:01:2025-07-01"]
+    assert ("dividend_not_applied: 1 named, 1 more that went ex on or before its security's first served bar "
+            "(it adjusts no served bar), not named") in note
+    assert _q("SELECT applied FROM corporate_action WHERE source_id = 'wrds:div:001690:01:2025-05-15'") \
+        == [{"applied": False}], "the table still records it, unapplied"
+
+
 def test_a_split_compustat_and_crsp_both_carry_is_one_action(built):
     from RevenueChaser.rcdata import ops
     from RevenueChaser.rcdata.build.prices import serving as prices_serving

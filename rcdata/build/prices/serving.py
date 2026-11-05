@@ -109,8 +109,12 @@ ISSUE_KINDS = {
                       "security id)"),
     "tier_a_no_shares": ("a Tier A name of the stored universe with no shares, so no market cap, on the newest "
                          "session (key: the security id)"),
-    "universe_etf_no_bar": ("an ETF of the stored universe (a ticker of the spine's etf table) with no bar on the "
-                            "newest served session (key: the ticker; review M3 of #382)"),
+    "universe_etf_no_bar": ("an ETF of the stored universe (a ticker of the spine's etf table, or a fund of the "
+                            "my_universe list) with no bar on the newest served session (key: the ticker; review M3 "
+                            "of #382, D5 of #420)"),
+    "universe_etf_ticker_shared": ("more than one recent Compustat series carries the ticker of a universe fund the "
+                                   "spine cannot route; one is stored, the detail names them all (key: the ticker; "
+                                   "review D1 of #420)"),
     "price_gap_no_action": ("the split-adjusted close moved by GAP_FACTOR or more with no split that day "
                             "(key: security:session)"),
     "split_only_crsp": ("CRSP's dlycumfacpr records a split no Compustat or Alpaca split is within SPLIT_SAME_DAYS of, "
@@ -253,7 +257,7 @@ def _spine(con: duckdb.DuckDBPyConnection) -> int:
                 "gvkey TEXT, iid TEXT, composite_figi TEXT, security_id TEXT, cusip TEXT, is_etf BOOLEAN, "
                 "inception DATE)")
     con.execute("CREATE OR REPLACE TEMP TABLE stg_etf (ticker TEXT, aum DOUBLE, is_etn BOOLEAN, is_cef BOOLEAN)")
-    con.execute(f"CREATE OR REPLACE TEMP TABLE stg_{universe.MY_UNIVERSE_TABLE} (ticker TEXT)")
+    con.execute(f"CREATE OR REPLACE TEMP TABLE stg_{universe.MY_UNIVERSE_TABLE} (ticker TEXT, kind TEXT)")
     live = serving.live_path("spine")
     if not live.exists():
         return 0
@@ -271,8 +275,12 @@ def _spine(con: duckdb.DuckDBPyConnection) -> int:
         has_mine = con.execute("SELECT count(*) FROM duckdb_tables() WHERE database_name = 'live_spine' "
                                "AND table_name = ?", [universe.MY_UNIVERSE_TABLE]).fetchone()[0]
         if has_mine:
-            con.execute(f"INSERT INTO stg_{universe.MY_UNIVERSE_TABLE} SELECT ticker "
-                        f"FROM live_spine.{universe.MY_UNIVERSE_TABLE}")
+            # ``kind`` says which names are funds (review D5 of #420); a list from before #417's schema has none.
+            has_kind = con.execute("SELECT count(*) FROM duckdb_columns() WHERE database_name = 'live_spine' "
+                                   "AND table_name = ? AND column_name = 'kind'",
+                                   [universe.MY_UNIVERSE_TABLE]).fetchone()[0]
+            con.execute(f"INSERT INTO stg_{universe.MY_UNIVERSE_TABLE} SELECT ticker, "
+                        f"{'kind' if has_kind else 'NULL'} FROM live_spine.{universe.MY_UNIVERSE_TABLE}")
             con.execute("CREATE OR REPLACE TEMP TABLE _my_universe_held AS SELECT true AS held")
     finally:
         con.execute("DETACH live_spine")
@@ -291,6 +299,8 @@ def _universe(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> int:
     if beside:
         con.execute("INSERT INTO _universe_ticker SELECT unnest(?) EXCEPT SELECT ticker FROM _universe_ticker",
                     [beside])
+    con.execute(f"CREATE OR REPLACE TEMP TABLE _universe_etf AS {universe.UNIVERSE_ETF_SQL}")
+    con.execute(f"CREATE OR REPLACE TEMP TABLE _etf_tic_series AS {universe.ETF_TIC_SERIES_SQL}")
     con.execute(f"CREATE OR REPLACE TEMP TABLE _universe AS {universe.UNIVERSE_SQL}")
     n = stage.count(con, "_universe")
     if mine:
@@ -503,8 +513,10 @@ class PricesServing:
                               AND abs(date_diff('day', p.ex_date, w.ex_date)) <= {SPLIT_SAME_DAYS})""")
         # Review M6 of #382: such a split stands in for the ``price_gap_no_action`` it explains, so it carries the
         # served close's move across its ex-date, from the security's last served bar before it to its first on or
-        # after it, as the gap check reads them. A jump of GAP_FACTOR or more is a split Compustat lacks, and the
-        # served history is wrong there; a smaller move is a CRSP factor step the served bars do not show. One with
+        # after it: the same two bars the gap check pairs, but their raw closes, not its split-adjusted ones (the two
+        # ratios differ only where another split sits between those bars, NIT 1 of #420). A jump of GAP_FACTOR or
+        # more is a split Compustat lacks, and the served history is wrong there; a smaller move is a CRSP factor
+        # step the served bars do not show. One with
         # no served bar on both sides within GAP_DAYS (before Compustat's series starts, or a halt) touches no served
         # bar and explains no gap: counted in the note, not named.
         con.execute("""CREATE OR REPLACE TEMP TABLE _crsp_split_span AS
@@ -572,11 +584,26 @@ class PricesServing:
                    close_before
             FROM _act_close""")
         n = _create(con, "corporate_action", "SELECT * FROM _act_final ORDER BY security_id, ex_date, action")
-        for aid, action, sid, why_ in con.execute(
-                "SELECT source_id, action, security_id, not_applied_why FROM corporate_action "
-                "WHERE applied = false AND NOT starts_with(not_applied_why, 'not yet ex')").fetchall():
+        # A cash dividend that went ex on or before its security's first served bar adjusts no served bar (the
+        # factors move the bars before the ex-date, and there are none): the history's start, not a defect. It is
+        # counted in the note and not named, so the few that are defects are not buried (review D6 of #420: 7,497
+        # of homesrv's 7,514 were "no close before the ex-date"). The table still records it, unapplied.
+        before_history = 0
+        for aid, action, sid, why_, before in con.execute(
+                "SELECT c.source_id, c.action, c.security_id, c.not_applied_why, "
+                "coalesce(c.action = 'cash_dividend' AND c.ex_date <= f.first_day, false) FROM corporate_action c "
+                "LEFT JOIN (SELECT security_id, min(session_date) AS first_day FROM price_bar_daily GROUP BY 1) f "
+                "USING (security_id) "
+                "WHERE c.applied = false AND NOT starts_with(c.not_applied_why, 'not yet ex')").fetchall():
+            if before:
+                before_history += 1
+                continue
             kind = "dividend_not_applied" if action == "cash_dividend" else "action_not_applied"
             found.append((kind, aid, f"{sid}: {why_}"))
+        if before_history:
+            named = sum(1 for k, _, _ in found if k == "dividend_not_applied")
+            ctx.notes.append(f"dividend_not_applied: {named} named, {before_history} more that went ex on or before "
+                             "its security's first served bar (it adjusts no served bar), not named")
         return n
 
     # ── Shares ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -726,11 +753,20 @@ class PricesServing:
                 found.append(("tier_a_no_shares", sid, f"{ticker}: no shares for {newest}"))
             # A fund of the universe with no bar, by ticker: no spine id need exist (review M3 of #382).
             for (ticker,) in con.execute(
-                    "SELECT t.ticker FROM _universe_ticker t JOIN stg_etf e USING (ticker) WHERE NOT EXISTS ("
-                    "SELECT 1 FROM price_bar_daily b WHERE b.session_date = ? AND (upper(b.symbol) = t.ticker OR "
-                    "b.security_id IN (SELECT s.security_id FROM stg_spine s WHERE s.ticker = t.ticker))) "
-                    "ORDER BY 1", [newest]).fetchall():
+                    "SELECT u.ticker FROM _universe_etf u WHERE NOT EXISTS ("
+                    "SELECT 1 FROM price_bar_daily b WHERE b.session_date = ? AND ({sym} = u.tic OR "
+                    "b.security_id IN (SELECT s.security_id FROM stg_spine s WHERE {spine} = u.tic) OR "
+                    "b.security_id IN (SELECT gid FROM _etf_tic_series e WHERE e.tic = u.tic AND e.pick = 1))) "
+                    "ORDER BY 1".format(sym=universe.norm("b.symbol"), spine=universe.norm("s.ticker")),
+                    [newest]).fetchall():
                 found.append(("universe_etf_no_bar", ticker, f"{ticker}: no bar on {newest}"))
+        # Two series on one fund ticker: one is stored, the rest named (review D1 of #420).
+        for tic, picked, n, names in con.execute(
+                "SELECT tic, arg_min(gid, pick), count(*), string_agg(gid, ', ' ORDER BY pick) FROM _etf_tic_series "
+                "GROUP BY tic HAVING count(*) > 1 ORDER BY tic").fetchall():
+            found.append(("universe_etf_ticker_shared", tic, f"{tic}: {n} recent Compustat series carry the "
+                          f"ticker ({names}); stored {picked}, the one priced most recently, then the larger dollar "
+                          "volume"))
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _ret AS
             SELECT b.security_id, b.session_date, b.close * coalesce(a.split_factor, 1) AS split_close,
                    b.close * coalesce(a.tr_factor, 1) AS tr_close, b.source,

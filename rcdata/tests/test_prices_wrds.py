@@ -626,6 +626,54 @@ def test_a_universe_etf_the_spines_security_table_lacks_is_stored_under_its_comp
     wrds.reset()
 
 
+def test_two_compustat_series_on_one_fund_ticker_store_one_and_name_the_others(fake):
+    """Review D1 of #420: the ticker branch took every recent series carrying a routeless fund's ticker, so two of
+    them were both stored and ``price_bars_daily`` gave the fund two rows per session, with different closes, and no
+    check said a word (each series is its own key). One series per ticker is stored -- the one priced most recently,
+    then the larger dollar volume -- and the ticker is a ``universe_etf_ticker_shared`` issue naming them all. NIT 2:
+    a fund ticker written with a dot matches Compustat's dotted ``tic`` too."""
+    data = fake[0].data
+    days = JUNE + ["2026-10-26", "2026-10-27"]
+    data["comp.secd"] += [_secd("077777", "01", d, "GLDX", 40.0, exchg=17, cusip="77777A100") for d in days]
+    data["comp.secd"] += [_secd("078787", "01", d, "GLDX", 41.0, exchg=17, cusip="78787A100") for d in days[:-1]]
+    data["comp.secd"] += [_secd("011111", "01", d, "TWIN", 10.0, exchg=17, cusip="11111A100") for d in days]
+    data["comp.secd"] += [_secd("012121", "01", d, "TWIN", 12.0, exchg=17, cusip="12121A100") for d in days]
+    data["comp.secd"] += [_secd("013131", "01", d, "DOT.X", 30.0, exchg=17, cusip="13131A100") for d in days]
+    _spine_etf_table([("GLDX", 5e9), ("TWIN", 5e9), ("DOT.X", 5e9)])
+    assert _backfill()["result"] == "changed"
+    stored = {r["security_id"] for r in _q("SELECT DISTINCT security_id FROM price_bar_daily")}
+    assert {"077777:01", "012121:01", "013131:01"} <= stored, stored
+    assert not {"078787:01", "011111:01"} & stored, "one series per ticker"
+    doubled = _q("SELECT ticker, session_date FROM price_bars_daily WHERE ticker IN ('GLDX', 'TWIN') "
+                 "GROUP BY ALL HAVING count(*) > 1")
+    assert not doubled, doubled
+    shared = _issue_details("universe_etf_ticker_shared")
+    assert set(shared) == {"GLDX", "TWIN"}, shared
+    assert "077777:01" in shared["GLDX"] and "078787:01" in shared["GLDX"] and "stored 077777:01" in shared["GLDX"]
+    assert "stored 012121:01" in shared["TWIN"]
+    assert "DOT.X" not in _issue_details("universe_etf_no_bar")
+    wrds.reset()
+
+
+def test_a_fund_only_my_universe_holds_is_stored_and_checked(fake):
+    """Review D5 of #420: with ``my_universe`` live, a fund avo added by hand that the spine's ``etf`` table does not
+    hold is in the universe, so its Compustat series is found by ticker and a missing bar is reported, as for a fund
+    of the ``etf`` table. The list's ``kind`` column says it is a fund."""
+    data = fake[0].data
+    days = JUNE + ["2026-10-26", "2026-10-27"]
+    data["comp.secd"] += [_secd("099990", "01", d, "HNDX", 20.0, exchg=17, cusip="99990A100") for d in days]
+    con = duckdb.connect(str(serving.live_path("spine")))
+    try:
+        con.execute("CREATE TABLE my_universe (ticker TEXT, kind TEXT)")
+        con.execute("INSERT INTO my_universe VALUES ('AAPL', 'stock'), ('HNDX', 'etf'), ('HNDZ', 'etf')")
+    finally:
+        con.close()
+    assert _backfill()["result"] == "changed"
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '099990:01'")[0]["n"] == len(days)
+    assert set(_issue_details("universe_etf_no_bar")) == {"HNDZ"}
+    wrds.reset()
+
+
 def test_the_tier_a_checks_look_at_the_stored_universe_not_the_whole_tier(fake):
     """Review S1 of #382: ``tier_a_no_bar`` and ``tier_a_no_shares`` read every Tier A row, so an untyped or excluded
     Tier A name -- left out of the store on purpose -- was reported as a missing bar (27 became 253 on homesrv's
