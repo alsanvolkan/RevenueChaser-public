@@ -183,6 +183,25 @@ def _manifest(roots, files: dict):
     (out / ".manifest.json").write_text(json.dumps({"version": 1, "files": files}), encoding="utf-8")
 
 
+def _heavy_manifest(roots, files: dict):
+    out = roots / "backups" / "market-heavy"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / ".manifest.json").write_text(json.dumps({"version": 1, "files": files}), encoding="utf-8")
+
+
+def test_the_heavy_subdir_is_where_the_card_finds_the_prices_and_ownership_copies(roots):
+    """avo, 5 Nov 2026: prices and ownership are backed up weekly into market-heavy/. The card reads every folder
+    the registry writes, so a kind that moved does not read as "never backed up"."""
+    new = (NOW - timedelta(days=3)).isoformat()
+    _manifest(roots, {"ops_20261102_000000_000000.sqlite": {"at": new, "sha256": "a"}})
+    _heavy_manifest(roots, {"prices_20261101_000000_000000.duckdb": {"at": new, "sha256": "b"},
+                            "ownership_20261101_000000_000000.duckdb": {"at": new, "sha256": "c"}})
+    kinds = {k["kind"]: k for k in newdata.collect(NOW)["backups"]["kinds"]}
+    assert kinds["prices"]["age_days"] == 3 and kinds["prices"]["warn"] is False
+    assert kinds["ownership"]["age_days"] == 3 and kinds["ownership"]["warn"] is False
+    assert kinds["ops"]["age_days"] == 3 and kinds["market"]["age_days"] is None
+
+
 def test_backup_ages_and_the_35_day_warning(roots):
     old = (NOW - timedelta(days=40)).isoformat()
     new = (NOW - timedelta(days=1)).isoformat()
