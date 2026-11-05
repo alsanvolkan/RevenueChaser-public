@@ -57,7 +57,14 @@ CALLS_PER_SESSION_ESTIMATE = 55
 # A chain longer than this is not the SPX chain: refuse the day rather than send hundreds of calls. The live
 # check saw 54 and the board's own fetch has seen the same order since August.
 MAX_EXPIRIES = 120
-FIRST_SESSION = date(2025, 1, 16)                   # the sibling dataset's first served session
+# UW's own earliest date for this token, probed 5 Nov 2026: a 403 ``historic_data_access_missing`` names
+# 2023-12-07 ("API Basic and API Advanced subscriptions include up to 2 years of historical data"). This endpoint
+# serves that far back whole -- 2024-06-14 answered a 53-expiry chain and 259 strikes on its first expiry -- so the
+# history is ours to take, about 270 sessions more than the sibling's start. The sibling stays on 2025-01-16: its
+# historical answer stops at the page limit of 500 with no paging, which is what failed 168 of its days on
+# 28 Oct 2026. The window rolls forward, so these days are fetched once and then skipped (a partition is the
+# marker); a day never fetched before it ages out of the window would answer 403 and keep failing.
+FIRST_SESSION = date(2023, 12, 7)
 REJECTED_SUFFIX = ".rejected"
 # An answer with more than this share of its rows unusable (no expiry/strike, or stamped on another day) is
 # refused like an empty one; the same figure as the sibling dataset and ``serving.MAX_SHRINK``.
