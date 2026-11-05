@@ -35,8 +35,9 @@ def test_bars_nominal_split_and_total_return_apply_the_factors_on_read():
     assert split[date(2026, 10, 22)]["close"] == 36.6                     # on and after the ex-date: as traded
     assert tr[date(2026, 10, 22)]["close"] == pytest.approx(200.0 * M)
     assert tr[date(2026, 10, 23)]["close"] == 199.9
-    assert {r["status"] for r in tr.values()} == {ops.latest_check("alpaca/bars")["result"]}
-    assert {r["source"] for r in tr.values()} == {"alpaca/bars"}
+    # the bars' status follows wrds/prices (avo's decision 2, 3 Nov 2026); this week seeds its Parquet, never runs it
+    assert {r["status"] for r in tr.values()} == {read.dataset_status("wrds/prices")}
+    assert {r["source"] for r in tr.values()} == {"wrds/compustat"}       # Alpaca is the tester, never served
 
 
 @pytest.mark.usefixtures("built")

@@ -54,6 +54,12 @@ MAX_SHRINK = 0.01
 # and it must not need a request-wide ``allow_shrink`` (which would relax every other table of the kind with it).
 # The "empties" guard still applies: a universe of no names is a bug whoever edited what.
 SHRINKS_BY_CHOICE = ("my_universe",)
+# The tables a kind's code no longer builds, by kind: the live file may still hold one, and the build may leave it
+# out (its swap removes it with the old file). Any other live table missing from a build is still refused, because
+# that is a build from a partial Parquet tree. ``allow_shrink`` cannot stand in for this: the "missing" check comes
+# first, and a request-wide flag would relax every other table of the kind with it (review M2 of #382).
+#   prices: ``crsp_unadjusted`` (#353's CRSP bars no action adjusted); PR 382 serves no CRSP bar, so it is gone.
+RETIRED_TABLES: dict[str, tuple[str, ...]] = {"prices": ("crsp_unadjusted",)}
 # A table that serves only its newest sessions (``option_eod``, G8) names the first value it keeps here, in its own
 # build file (``declare_window``), so the shrink check compares the rows both files are meant to hold: a session
 # that left the window is not a loss, a session inside it that lost rows is.
@@ -268,14 +274,18 @@ def _counts(path: Path, windows: dict[str, tuple[str, str]] | None = None) -> di
 def _verify_against_live(kind: str, path: Path, relax: frozenset[str] = frozenset()) -> None:
     """Refuse a build missing a live table, or (outside ``relax``) emptying or shrinking one by over MAX_SHRINK.
 
-    A table of :data:`SHRINKS_BY_CHOICE` may shrink by any amount; it may still not empty.
+    A table of :data:`SHRINKS_BY_CHOICE` may shrink by any amount; it may still not empty. A table of
+    :data:`RETIRED_TABLES` may be missing from the build: the code no longer builds it.
     """
     live = live_path(kind)
     if not live.exists():
         return
     windows = _windows(path)
     old, new = _counts(live, windows), _counts(path, windows)
+    retired = set(RETIRED_TABLES.get(kind, ()))
     for table, before in sorted(old.items()):
+        if table not in new and table in retired:
+            continue
         if table not in new:
             raise ValueError(f"table {table} of the live file is missing from the build")
         after = new[table]
