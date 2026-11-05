@@ -1841,3 +1841,53 @@ class TestRunValueChainEmptyFetch:
         assert runners.run_value_chain(None, no_fetch=False) == runners.VALUE_CHAIN_LATEST
         self._stub(monkeypatch, tmp_path, {"fetched": 0, "cached": 7})
         assert runners.run_value_chain(None, no_fetch=True) == runners.VALUE_CHAIN_LATEST
+
+
+def test_every_route_the_control_board_names_is_served_by_the_dashboard():
+    """#434 shipped a board control for a job that had no route: the page offered "Take the disk picture" and
+    nothing answered it. There is no generic ``/run/<job>`` in this app -- every job gets its own route -- so a
+    registered job plus a button is not enough, and nothing else said so.
+
+    The page spells a route three ways, so each one is resolved through Flask's own matcher rather than by
+    comparing strings: a whole path (``/run/storage-picture``), a prefix the script appends an id to (``/api/job/``
+    -> ``/api/job/<id>``), and a path that fills a rule's parameter in (``/api/settings/board/module_settings`` ->
+    ``/api/settings/board/<board>``). A rule that exists but refuses the method still counts as served.
+    """
+    from werkzeug.exceptions import MethodNotAllowed, NotFound
+
+    from RevenueChaser.module_settings import control_render
+
+    adapter = dashboard.app.url_map.bind("127.0.0.1")
+    for name, path in control_render.ROUTES.items():
+        # A prefix is followed by however many segments its rule takes: one for ``/api/job/<id>``, two for
+        # ``/api/build/schedule/<path:dataset>/<action>``.
+        probes = [path] if not path.endswith("/") else [path + "/".join(["x"] * n) for n in (1, 2, 3)]
+        served = False
+        for probe in probes:
+            try:
+                adapter.match(probe, method="POST")
+            except MethodNotAllowed:
+                pass                                            # the rule is there, GET-only
+            except NotFound:
+                continue
+            served = True
+            break
+        assert served, f"the board names {name} -> {path}, which no route serves"
+
+
+def test_the_disk_picture_route_queues_the_job_and_refuses_a_second_one(monkeypatch):
+    """The control is the only way the picture is ever taken (#434), so the route has to enqueue, and repeated
+    presses must not fill the long lane with re-walks of the same trees."""
+    seen = []
+    monkeypatch.setattr(dashboard.jobs, "submit", lambda module, params: seen.append(module) or "stubjob")
+    with panel_test_client(dashboard.app) as client:
+        answer = client.post("/run/storage-picture")
+    assert answer.status_code == 202, answer.get_data(as_text=True)
+    assert answer.get_json()["job_id"] == "stubjob"
+    assert seen == ["storage_picture"], "the route enqueues the walk rather than doing it in the request"
+
+    monkeypatch.setattr(dashboard.jobs, "active_id", lambda modules: "running-one")
+    with panel_test_client(dashboard.app) as client:
+        refused = client.post("/run/storage-picture")
+    assert refused.status_code == 409, "repeated presses must not fill the long lane with re-walks"
+    assert refused.get_json()["job_id"] == "running-one", "and the board can follow the run already going"

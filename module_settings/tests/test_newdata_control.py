@@ -8,6 +8,7 @@ serving files through ``open_read``, the folders by a bounded walk, both cached 
 from __future__ import annotations
 
 import itertools
+import json
 import os
 from datetime import datetime, timezone
 
@@ -119,20 +120,45 @@ def test_no_prices_file_means_no_sessions(market_roots):
     assert newdata.collect(NOW)["sessions"] == {}
 
 
-def test_storage_counts_each_datasets_raw_and_parquet_folders_and_the_live_file(market_roots):
+def test_the_walk_counts_each_datasets_raw_and_parquet_folders(market_roots):
     from RevenueChaser.rcdata.build import base
     raw = base.raw_root() / "alpaca" / "bars" / "2026-10-28"
     raw.mkdir(parents=True)
     (raw / "a-1.json.gz").write_bytes(b"x" * 10)
     (raw / "a-2.json.gz").write_bytes(b"y" * 5)
-    _bars([("A1", "2026-10-28")])
-    st = newdata.collect(NOW)["storage"]
-    bars = st["datasets"]["alpaca/bars"]
+    picture = newdata.walk_storage()
+    bars = picture["datasets"]["alpaca/bars"]
     assert (bars["raw"]["files"], bars["raw"]["bytes"], bars["raw"]["capped"]) == (2, 15, False)
     assert bars["parquet"]["files"] is None, "a folder that does not exist is not an empty one"
-    assert st["files"]["prices"]["bytes"] == os.path.getsize(serving.live_path("prices"))
+    assert picture["walked_at"], "the picture says when it was taken"
+
+
+def test_the_render_stats_the_serving_files_live_and_reads_the_folders_from_the_picture(market_roots):
+    """#434: four stats of the SSD are a live number and stay in the render; the HDD walk is a picture the job
+    takes, and until it has the page must not read "no folder yet" as if it had looked."""
+    _bars([("A1", "2026-10-28")])
+    st = newdata.collect(NOW)["storage"]
+    assert st["files"]["prices"]["bytes"] == os.path.getsize(serving.live_path("prices")), "stat'ed now"
     assert st["files"]["options"]["bytes"] is None
     assert st["roots"]["ssd"] == str(config.MARKET_DIR)
+    assert (st["datasets"], st["walked_at"]) == ({}, None), "no picture here yet"
+
+    newdata.STORAGE_PICTURE.parent.mkdir(parents=True, exist_ok=True)
+    newdata.STORAGE_PICTURE.write_text(json.dumps(
+        {"datasets": {"alpaca/bars": {"raw": {"files": 7, "bytes": 70, "capped": False}}},
+         "walked_at": "2026-11-05T11:00:00+00:00"}), encoding="utf-8")
+    st = newdata.collect(NOW)["storage"]
+    assert st["datasets"]["alpaca/bars"]["raw"]["files"] == 7
+    assert st["walked_at"] == "2026-11-05T11:00:00+00:00"
+
+
+def test_a_missing_or_broken_picture_reads_as_not_walked_rather_than_as_empty_folders(market_roots):
+    """A half-written or hand-edited file must not make every dataset look like it has no folder."""
+    newdata.STORAGE_PICTURE.parent.mkdir(parents=True, exist_ok=True)
+    for bad in ("{", "[]", '{"walked_at": "2026-11-05T11:00:00+00:00"}', '{"datasets": 3}'):
+        newdata.STORAGE_PICTURE.write_text(bad, encoding="utf-8")
+        st = newdata.collect(NOW)["storage"]
+        assert (st["datasets"], st["walked_at"]) == ({}, None), bad
 
 
 def test_a_card_carries_its_last_three_checks_newest_first(market_roots):
@@ -149,24 +175,26 @@ def test_every_served_tables_rows_and_newest_day_are_in_one_map(market_roots):
 
 
 def test_the_walk_stops_when_it_runs_out_of_time_and_says_the_count_is_a_floor(market_roots, monkeypatch):
-    """5 Nov 2026: the entry budget bounds the stat calls, not the seconds they take. On the HDD a 50 000-entry walk
-    ran past ten minutes inside one page render, so the walk is bounded by the clock as well."""
+    """The ceiling is the job's now, not a render's (#434), but a pathological tree must still not hold the
+    long-jobs worker for ever."""
     from RevenueChaser.rcdata.build import base
     raw = base.raw_root() / "sec" / "companyfacts"
     raw.mkdir(parents=True)
     (raw / "0.json.gz").write_bytes(b"z")
     monkeypatch.setattr(newdata, "STORAGE_WALK_SECONDS", -1.0)      # out of time at the first entry
-    got = newdata.collect(NOW)["storage"]["datasets"]["sec/companyfacts"]["raw"]
+    got = newdata.walk_storage()["datasets"]["sec/companyfacts"]["raw"]
     assert got["capped"] is True and got["files"] == 0
 
 
-def test_the_time_is_a_slice_per_folder_so_one_slow_tree_does_not_starve_the_rest(market_roots, monkeypatch):
-    """The first dataset walked is ``uw/spot_expiry_strike``, one folder per session on the HDD. One deadline for the
-    whole render let it spend all of it, and every later dataset then read a floor of nothing — ``0+ files · 0 B``,
-    indistinguishable from empty. Each folder gets its own slice instead, so the last is counted like the first.
+def test_the_walk_shares_one_deadline_and_a_folder_past_it_says_the_count_is_a_floor(market_roots, monkeypatch):
+    """One deadline for the whole picture, not a slice per folder. #433 sliced it because the budget was a page
+    render's 20 s and the first dataset walked could spend all of it; in a job the budget is 600 s against a
+    measured 25 s walk, so rationing it only guaranteed three folders a floor for ever.
 
-    The clock is faked at 0.4 of a folder's slice per read, so each folder gets through two entries and then runs
-    out: the assertion is about the slicing, not about how fast this box's disk is."""
+    The clock is faked at a sixth of the budget per read, so whichever folder is walked first spends the whole of
+    it on its six entries and the two after it are out of time before their first entry. A slice per folder gave
+    all three the same count; one shared deadline gives one of them everything. The assertion is about that and not
+    about how fast this box's disk is, and it does not assume which folder ``_datasets()`` reaches first."""
     from RevenueChaser.rcdata.build import base
     names = ("alpaca/bars", "sec/companyfacts", "sec/13f")
     for name in names:
@@ -174,10 +202,10 @@ def test_the_time_is_a_slice_per_folder_so_one_slow_tree_does_not_starve_the_res
         folder.mkdir(parents=True)
         for i in range(6):
             (folder / f"{i}.bin").write_bytes(b"z")
-    # The divisor is _storage's own (two roots per dataset): a change there should fail this on the count, not the clock.
-    step = 0.4 * newdata.STORAGE_WALK_SECONDS / (2 * len(newdata._datasets()))
+    step = newdata.STORAGE_WALK_SECONDS / 6
     ticks = itertools.count(step, step)
     monkeypatch.setattr(newdata.time, "monotonic", lambda: next(ticks))
-    got = [newdata.collect(NOW)["storage"]["datasets"][n]["raw"] for n in names]
-    assert [f["files"] for f in got] == [2, 2, 2], "every folder gets its own slice, however late it is walked"
-    assert all(f["capped"] for f in got), "and says the count is a floor"
+    picture = newdata.walk_storage()["datasets"]
+    got = [picture[n]["raw"] for n in names]
+    assert sorted(f["files"] for f in got) == [0, 0, 6], "one shared budget, not three equal slices"
+    assert [f["capped"] for f in got].count(False) == 1, "the folder that finished says its count is exact"

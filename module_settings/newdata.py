@@ -412,7 +412,6 @@ _SAMPLE_CACHE: dict[str, tuple[str, dict | None]] = {}
 
 def clear_sample_cache() -> None:
     _SAMPLE_CACHE.clear()
-    _STORAGE_CACHE.clear()
 
 
 def _sample_hour(now: datetime) -> str:
@@ -716,27 +715,28 @@ def _identity(counts: dict | None) -> dict:
 
 # ── Where the data sits (the control board's journey table) ───────────────────────────────────────────────────
 
-#: The whole storage walk may take this long, and a folder that runs out says so (``capped``, drawn as ``N+ files``).
-#: The walk runs in a page render on the single-threaded dashboard, over a raw tree whose entries are an HDD seek
-#: each; on 5 Nov 2026 it ran past ten minutes, over rc-warmup's 600 s ceiling.
+#: ``walk_storage`` may take this long in all, and a folder that runs out says so (``capped``, drawn as
+#: ``N+ files``). It is a ceiling on the storage-picture job, not on a page render: the walk left the render in
+#: #434, because the raw tree's entries are an HDD seek each and the first ``readdir`` of the 38 folders that exist
+#: was 26 s on homesrv on 5 Nov 2026, over rc-warmup's 600 s ceiling once it was 50 000 entries deep.
 #:
-#: It is spent as an equal slice per folder, not as one deadline for the render: the first dataset walked is
-#: ``uw/spot_expiry_strike``, whose raw tree is one folder per session, and a shared deadline let it eat the whole
-#: render and leave every later dataset reading a floor of nothing. A per-folder slice of time composes the way a
-#: per-folder cap on entries did not (review S3), because the folders are counted: their slices sum to this.
-#:
-#: It is a ceiling, not the operating point: a folder that does not exist returns before it touches the clock and
-#: never spends its slice, so on homesrv (38 of 86 folders exist) the walking this bounds is about 9 s. What it does
-#: not bound at all is the first ``os.scandir`` of each folder -- 26 s for those 38, measured on a loaded disk --
-#: which is the cost of walking in a render and the reason #434 takes the picture out of one.
-STORAGE_WALK_SECONDS = 20.0
-_STORAGE_CACHE: dict[str, tuple[str, dict]] = {}
+#: One deadline for the whole walk, not a slice per folder. The slice came in with #433 because the budget was a
+#: render's 20 s and the first dataset walked (``uw/spot_expiry_strike``, one raw folder per session) could spend
+#: all of it and leave every later dataset reading a floor of nothing. Off the request thread the budget is not
+#: scarce -- 600 s against a measured 25 s walk -- so rationing it only guaranteed inaccuracy: at 86 slices of
+#: 7 s, three folders reported a floor that a shared deadline counts exactly. If a tree ever does grow past this,
+#: the later datasets read ``capped`` and the page says so, which is the #433 behaviour with 24x the room.
+STORAGE_WALK_SECONDS = 600.0
+
+#: Where the storage-picture job leaves what it walked. Regenerable, so it lives under the cache root with the
+#: boards' other artifacts; ``app.runners.run_storage_picture`` is the only writer and ``_storage`` the only reader.
+STORAGE_PICTURE = config.OUTPUT_DIR / "storage_picture" / "storage_picture_latest.json"
 
 
-def _folder(path: Path, seconds: float) -> dict:
+def _folder(path: Path, deadline: float) -> dict:
     """``{"path", "files", "bytes", "capped"}`` of one folder, walked without following links; files None when the
-    folder does not exist. ``seconds`` is this folder's own share of ``STORAGE_WALK_SECONDS``, so that one slow tree
-    cannot spend the render; ``capped`` means it ran out of time and the counts are a floor.
+    folder does not exist. ``deadline`` is the ``time.monotonic()`` the whole walk must be done by, shared by every
+    folder of one picture; ``capped`` means it ran out of time in or before this folder and the counts are a floor.
 
     The clock is checked per entry, and again before each ``os.scandir`` of a subfolder: an entry of the raw tree is
     an HDD seek, so a single folder is what ran past ten minutes on 5 Nov 2026, and one ``scandir`` of a large
@@ -745,7 +745,6 @@ def _folder(path: Path, seconds: float) -> dict:
     if not path.is_dir():
         return {"path": str(path), "files": None, "bytes": None, "capped": False}
     files = size = 0
-    deadline = time.monotonic() + seconds
     stack = [path]
     while stack:
         here = stack.pop()
@@ -769,16 +768,41 @@ def _folder(path: Path, seconds: float) -> dict:
     return {"path": str(path), "files": files, "bytes": size, "capped": False}
 
 
-def _storage(now: datetime) -> dict:
-    """Where each dataset sits, for the journey table: the live serving file of each kind (its size), and each
-    dataset's HDD raw and Parquet folders (files and bytes). Read once an hour per root, like the samples: a walk of
-    the raw tree is a picture of the disk, not a live number."""
+def walk_storage() -> dict:
+    """``{"datasets": {name: {"raw", "parquet"}}, "walked_at": iso}``: every dataset's raw and Parquet folders on
+    the HDD, walked now. The storage-picture job's work, never a page render's (#434)."""
     from RevenueChaser.rcdata.build import base
     raw_root, parquet_root = base.raw_root(), base.parquet_root()
-    key = f"{_sample_hour(now)}|{raw_root}|{config.MARKET_DIR}"
-    hit = _STORAGE_CACHE.get("storage")
-    if hit is not None and hit[0] == key:
-        return hit[1]
+    deadline = time.monotonic() + STORAGE_WALK_SECONDS
+    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/")), deadline),
+                       "parquet": _folder(parquet_root.joinpath(*name.split("/")), deadline)}
+                for name in _datasets()}
+    return {"datasets": datasets, "walked_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
+def _picture() -> dict:
+    """What the storage-picture job last wrote, or an empty picture when it has not run here yet. A bad or
+    half-written file reads as "not walked": the page says so, and the job rewrites it."""
+    try:
+        found = json.loads(STORAGE_PICTURE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"datasets": {}, "walked_at": None}
+    if not isinstance(found, dict) or not isinstance(found.get("datasets"), dict):
+        return {"datasets": {}, "walked_at": None}
+    # Only the job writes this file, so a wrong shape means a hand-edited one. The page indexes two levels down
+    # (``storage[dataset][root]["files"]``), so anything else here would be an AttributeError on a render.
+    datasets = {name: roots for name, roots in found["datasets"].items()
+                if isinstance(roots, dict) and all(isinstance(v, dict) for v in roots.values())}
+    if len(datasets) != len(found["datasets"]):
+        return {"datasets": {}, "walked_at": None}
+    return {"datasets": datasets, "walked_at": found.get("walked_at")}
+
+
+def _storage() -> dict:
+    """Where each dataset sits, for the journey table: the live serving file of each kind, stat'ed now because that
+    is four reads of the SSD and a live number, and the dataset folder counts as the storage-picture job last
+    walked them, with the ``walked_at`` the page shows. The walk itself is not a render's work (#434)."""
+    from RevenueChaser.rcdata.build import base
     files = {}
     for kind in serving.KINDS:
         path = serving.live_path(kind)
@@ -786,15 +810,10 @@ def _storage(now: datetime) -> dict:
             files[kind] = {"path": str(path), "bytes": path.stat().st_size}
         except OSError:
             files[kind] = {"path": str(path), "bytes": None}
-    names = list(_datasets())
-    each = STORAGE_WALK_SECONDS / max(1, 2 * len(names))          # the two roots of every dataset
-    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/")), each),
-                       "parquet": _folder(parquet_root.joinpath(*name.split("/")), each)}
-                for name in names}
-    out = {"roots": {"raw": str(raw_root), "parquet": str(parquet_root), "ssd": str(config.MARKET_DIR)},
-           "files": files, "datasets": datasets}
-    _STORAGE_CACHE["storage"] = (key, out)
-    return out
+    picture = _picture()
+    return {"roots": {"raw": str(base.raw_root()), "parquet": str(base.parquet_root()),
+                      "ssd": str(config.MARKET_DIR)},
+            "files": files, "datasets": picture["datasets"], "walked_at": picture["walked_at"]}
 
 
 # ── Page-level blocks ─────────────────────────────────────────────────────────────────────────────────────────
@@ -1098,7 +1117,7 @@ def collect(now: datetime | None = None) -> dict:
         # where each dataset sits, and every serving table's row count and newest day.
         "universe": (spine_counts or {}).get("universe_sets"),
         "sessions": (facts.get("price_bar_daily") or {}).get("sessions") or {},
-        "storage": _storage(now),
+        "storage": _storage(),
         "tables": {t: {"rows": f["rows"], "newest": f["newest"]} for t, f in facts.items()},
         **_watch_section(),
     }

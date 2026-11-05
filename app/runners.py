@@ -2094,6 +2094,23 @@ def run_settings(uw=None) -> Path:
         "settings", report.render_settings_dashboard(payload), "latest")
 
 
+def run_storage_picture(uw=None) -> Path:
+    """Walk the HDD raw and Parquet trees and store what is there, for the Settings board's journey table.
+
+    Store-only and disk-only (``requires_uw=False``): no network, no store write, nothing but ``readdir`` and
+    ``stat`` over regenerable trees. It runs on the long-jobs worker because that is off the request thread: the
+    walk was in the page render until #434, where the first ``readdir`` of the folders that exist measured 26 s on
+    the HDD and the whole walk ran past rc-warmup's 600 s ceiling, holding the single-threaded dashboard for all
+    of it. The board reads the file this writes and shows when it was walked.
+    """
+    from RevenueChaser.module_settings import newdata
+
+    _write_to(newdata.STORAGE_PICTURE, json.dumps(newdata.walk_storage(), indent=1, sort_keys=True))
+    # Re-render the board, or the new picture would wait for the next Refresh: the shell reloads this job's
+    # ``produces`` tab with a cache-buster, which serves the stored artifact rather than recomputing it.
+    return run_settings()
+
+
 def run_uw_interaction(uw: UWClient, **params) -> Path:
     """Run one UW Interaction (lab) tool and persist its payload under .cache/.
 

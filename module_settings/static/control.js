@@ -88,6 +88,15 @@
       }, function () { follow(btn, rid, left - 1); });
     }, 15000);
   }
+  /* #434: the disk picture is a long job now, not a side effect of rendering the board. */
+  function picture(btn) {
+    btn.disabled = true;
+    send('POST', C.routes.picture).then(function (r) {
+      btn.disabled = false;
+      if (r.status === 202) { pill(btn, 'st-q', 'queued · job ' + r.body.id); follow(btn, r.body.id, 40); }
+      else { pill(btn, 'st-f', (r.body.error || ('refused · HTTP ' + r.status))); }
+    }, function () { btn.disabled = false; pill(btn, 'st-f', 'the dashboard did not answer'); });
+  }
   function queue(btn, dataset, body) {
     btn.disabled = true;
     send('POST', C.routes.request + dataset, body).then(function (r) {
@@ -175,6 +184,7 @@
     else if (j === 'pause') pause(b);
     else if (j === 'fill') fill(b);
     else if (j === 'copy') copy(b);
+    else if (j === 'picture') picture(b);
   });
 
   /* open and close every file of the Data section */

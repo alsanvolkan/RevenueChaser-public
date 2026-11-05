@@ -465,7 +465,7 @@ def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datet
                     "runs_on_universe": fc.runs_on_universe, "color": color, "datasets": rows,
                     "health": _health_of(rows), "tables": tables, "path": live.get("path"),
                     "bytes": live.get("bytes"), "storage": storage.get("datasets") or {},
-                    "roots": storage.get("roots") or {}})
+                    "roots": storage.get("roots") or {}, "walked_at": storage.get("walked_at")})
     return out
 
 

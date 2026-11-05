@@ -4,10 +4,13 @@ Every string goes through ``html_safe.esc``; the page's own data (the flow diagr
 rides in one ``script_json`` block the script reads. The styles are ``static/control.css``, scoped to ``#ctl``, and
 the behaviour ``static/control.js``. Nothing a press does here fetches by itself: Fetch and Pause put one request in
 the builder's queue, exactly as before; Apply saves the universe; Fill and "Fill this range" stay off unless the
-server's ``RC_FILL_ENABLED`` is set (avo's word); "Refresh the example rows" reads five rows of the live file.
+server's ``RC_FILL_ENABLED`` is set (avo's word); "Refresh the example rows" reads five rows of the live file; and
+"Take the disk picture" (in Fetch, where presses live) queues the storage-picture job, which walks the HDD trees
+off the request thread (#434).
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from RevenueChaser.core import board_settings
@@ -22,9 +25,12 @@ CTL_JS = (_STATIC / "control.js").read_text(encoding="utf-8")
 #: The routes a press uses; the script reads them from the page's data, so a test sees every route in one place.
 ROUTES = {"request": "/api/build/request/", "schedule": "/api/build/schedule/", "queue": "/api/build/queue",
           "settings": "/api/settings/board/module_settings", "sample": "/api/settings/sample/",
-          "job": "/api/job/"}
+          "job": "/api/job/", "picture": "/run/storage-picture"}
 #: After this long the page says it is stale and offers a refresh (the design: "refreshes after 60 minutes").
 STALE_MINUTES = 60
+#: Past this the disk picture's line says how old it is. The walk left the render in #434, so a three-week-old
+#: picture would otherwise read exactly like this morning's.
+PICTURE_STALE_HOURS = 25
 #: The universe bar's offered sets, darkest last (the design's greens).
 SET_COLORS = ("#1f863d", "#18652e", "#10441f")
 
@@ -306,7 +312,17 @@ def _fetch(view: dict) -> str:
     return ('<details class="sec" id="sec-fetch" open><summary><h2>Fetch · every dataset, its bar, its Fill by tier '
             'set</h2><span class="secs">the universe · one bar a dataset · Fill and Backfill</span></summary>'
             '<div class="fetchwrap"><div class="ffilter" id="ffilter" hidden></div><div class="emptyst" id="ffempty" '
-            f'hidden></div>{_universe(view)}{_legend(view)}{"".join(groups)}</div></details>')
+            f'hidden></div>{_universe(view)}{_legend(view)}{"".join(groups)}{_picture_control(view)}</div></details>')
+
+
+def _picture_control(view: dict) -> str:
+    """The **Take the disk picture** press (#434). It sits in Fetch because this is where a press belongs
+    (``docs/data_health.md``: the Data section shows bars and no button), while the picture's age sits beside the
+    counts it explains, on the Data section's roots line."""
+    walked = next((f.get("walked_at") for f in view["files"]), None)
+    return ('<div class="pictrow"><span class="hm">The HDD folder counts in <b>Data, file by file</b> are a '
+            f'picture, not a live read &middot; {esc(_walked(walked))}</span>'
+            '<button type="button" class="btn" data-job="picture">Take the disk picture</button></div>')
 
 
 # ── The flow diagram ──────────────────────────────────────────────────────────────────────────────────────────
@@ -386,9 +402,26 @@ def _providers(view: dict) -> str:
 
 # ── Data, file by file ────────────────────────────────────────────────────────────────────────────────────────
 
+def _walked(at, now=None) -> str:
+    """When the storage-picture job last walked the trees (#434). The serving-file sizes beside it are read live, so
+    the page says which of the two numbers is a picture -- and how old the picture is once it is a day past, because
+    nothing refreshes it as a side effect of opening the board any more."""
+    if not at:
+        return "not walked yet"
+    try:
+        when = datetime.fromisoformat(str(at))
+    except (TypeError, ValueError):
+        return "not walked yet"
+    hours = ((now or datetime.now(timezone.utc)) - when).total_seconds() / 3600
+    return f"walked {control._clock(at)}" + (f", {hours:.0f} h ago" if hours >= PICTURE_STALE_HOURS else "")
+
+
 def _jrows(f: dict) -> tuple[str, list[str]]:
     rows, srcs = [], []
     store = f["storage"]
+    # #434: the folder counts come from the storage-picture job, not from this render. Until it has run here there
+    # is no picture at all, which is not the same thing as a dataset having no folder.
+    walked = f.get("walked_at")
     for i, d in enumerate(f["datasets"]):
         meta_pill = ('<span class="pill p-src">hand-run</span>' if d["attended"] else
                      '<span class="pill p-ok">built</span>' if d["checked_on"] else
@@ -402,7 +435,9 @@ def _jrows(f: dict) -> tuple[str, list[str]]:
         where = []
         for label, icon in (("raw", "📄"), ("parquet", "📦")):
             fo = (store.get(d["dataset"]) or {}).get(label) or {}
-            if fo.get("files") is None:
+            if walked is None:
+                meta = "not walked yet"
+            elif fo.get("files") is None:
                 meta = "no folder yet"
             else:
                 meta = (f'{fo["files"]:,}{"+" if fo.get("capped") else ""} files · {_size(fo.get("bytes"))}')
@@ -494,7 +529,8 @@ def _journey(f: dict) -> str:
         '<div class="journey"><p class="colh">The journey of this data · one line a build step · press a line, a table '
         'or a board: everything tied to it lights in all four columns, press again to drop it</p>'
         f'<p class="rootline">Roots · <code class="p">📄 {esc(roots.get("raw", ""))}</code> <code class="p">📦 '
-        f'{esc(roots.get("parquet", ""))}</code> <code class="p">⚡ {esc(roots.get("ssd", ""))}</code></p>'
+        f'{esc(roots.get("parquet", ""))}</code> <code class="p">⚡ {esc(roots.get("ssd", ""))}</code>'
+        f' · folders {esc(_walked(f.get("walked_at")))}</p>'
         '<div class="jleft"><table class="jt jt4"><colgroup><col class="c1"><col class="c2"><col class="c3">'
         '<col class="c4"></colgroup><thead><tr><th>Build step · status · role · how often</th><th>📄 HDD raw over 📦 '
         'Parquet · files and size</th><th class="ssdh">⚡ SSD live · served</th><th class="bdh">📊 Who reads it '

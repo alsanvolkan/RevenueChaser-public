@@ -238,6 +238,11 @@ jobs.register("comovement_recompute", runners.run_comovement_recompute,
 # The Swing board scores only on a Fetch (a Refresh serves the stored payload, K4), so a saved threshold
 # re-derives the Settings card alone (#384 SW-S4).
 jobs.register("settings_refresh", runners.run_settings, ["module_settings"], requires_uw=False)
+# The journey table's disk picture (#434): a readdir/stat walk of the HDD trees, so it belongs on the long worker
+# and never in a render. It re-renders the Settings board when it is done, so ``produces`` names that board and the
+# shell reloads the tab -- without it a 25 s walk is invisible and the page keeps serving its old artifact.
+jobs.register("storage_picture", runners.run_storage_picture, ["module_settings"],
+              requires_uw=False, lane="long")
 jobs.register("module_value_chain", runners.run_value_chain, ["module_value_chain"], requires_uw=False)
 # The Relatedness writer comparison (#370): one provider + model on at most 100 names, no board table written.
 jobs.register("relatedness_compare", runners.run_relatedness_compare, [], requires_uw=False, lane="long")
@@ -779,6 +784,20 @@ def run_rotation():
         # right after every Rotation Fetch so its panel is never stale (backend D3).
         jobs.submit("moneyflow", {})
     return resp
+
+
+@app.route("/run/storage-picture", methods=["POST"])
+def run_storage_picture():
+    """Walk the HDD raw and Parquet trees and store what is there (#434), for the Settings board's journey table.
+
+    The board's **Take the disk picture** control, and the only way the picture is ever taken: the walk left the
+    page render because it held the single-threaded dashboard for 26-38 s (and, before #433, past rc-warmup's
+    600 s ceiling), so nothing refreshes it as a side effect of looking at the board any more.
+    """
+    refused = _busy(("storage_picture",), "The disk picture is already queued or running.")
+    if refused:
+        return refused
+    return _submit("storage_picture", {})
 
 
 @app.route("/run/moneyflow", methods=["POST"])
