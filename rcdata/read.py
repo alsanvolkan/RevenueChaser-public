@@ -199,7 +199,12 @@ def my_universe_tickers(kinds: Iterable[str] = ()) -> set[str] | None:
     (``core/universe.py``), the companies the fundamentals build asks about
     (``rcdata/build/fundamentals/common.universe``) and the securities the prices store keeps
     (``rcdata/build/prices/universe.stored_tickers``) -- so one list decides all three.
+
+    One open, not ``my_universe``'s read after a check of its own: a board render opens the spine once per distinct
+    answer (``core/spine_reads``), and this is one of them.
     """
+    wanted = [str(k).strip().lower() for k in kinds if str(k or "").strip()]
+    ops.read_log.bump("my_universe")
     try:
         con = serving.open_read("spine")
     except serving.ServingFileMissing:
@@ -207,9 +212,12 @@ def my_universe_tickers(kinds: Iterable[str] = ()) -> set[str] | None:
     try:
         if not con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = 'my_universe'").fetchone()[0]:
             return None
+        sql = "SELECT ticker FROM my_universe WHERE ticker IS NOT NULL"
+        if wanted:
+            sql += f" AND kind IN ({', '.join('?' * len(wanted))})"
+        return {r[0] for r in con.execute(sql, wanted).fetchall()}
     finally:
         con.close()
-    return {r["ticker"] for r in my_universe(kinds) if r.get("ticker")}
 
 
 def my_universe_changes(limit: int = 200) -> list[dict]:

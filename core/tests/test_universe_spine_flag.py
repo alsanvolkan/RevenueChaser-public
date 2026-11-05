@@ -1,7 +1,11 @@
 """``core/universe.py`` and ``RC_UNIVERSE_SOURCE`` (build plan PR 5, default flipped in PR 6): unset reads the identity
 spine, membership, names, classification and types through ``rcdata.read`` and, with no prices store here, the market
 fields (cap, price, quote) from the old ``equity_universe`` (the prices store's: ``test_universe_market_prices``); any
-other value (``store``) reads ``raw.duckdb`` as before."""
+other value (``store``) reads ``raw.duckdb`` as before.
+
+Every test here is the **membership rule** that applies where the spine holds no ``my_universe`` list: Tiers A and B
+whole (PR 2, avo 30 Oct 2026). The test spine's ``spine/security`` build writes that list, so ``without_my_universe``
+drops it. The list path is ``core/tests/test_universe_my_universe.py``."""
 from __future__ import annotations
 
 import pytest
@@ -25,7 +29,7 @@ def old_store():
                                             {"ticker": "OLDONLY", "security_type": "common"}])
 
 
-def test_the_default_is_the_spine(monkeypatch, built, old_store):
+def test_the_default_is_the_spine(monkeypatch, built, without_my_universe, old_store):
     monkeypatch.delenv(universe.SOURCE_ENV, raising=False)
     assert universe.source_state() == {"requested": "spine", "effective": "spine", "reason": None, "variable": None}
     names = universe.classification_universe(0, operating_only=True)
@@ -45,7 +49,22 @@ def test_the_old_value_is_the_old_store(monkeypatch, built, old_store):
 
 
 @pytest.fixture
-def spine(monkeypatch, built, old_store):
+def without_my_universe(built):
+    """The spine as it was before schema 5: no ``my_universe`` table, so the tier rule decides."""
+    import duckdb
+
+    from RevenueChaser.core import spine_reads
+    from RevenueChaser.rcdata import serving
+    con = duckdb.connect(str(serving.live_path("spine")))
+    try:
+        con.execute("DROP TABLE IF EXISTS my_universe")
+    finally:
+        con.close()
+    spine_reads.clear()
+
+
+@pytest.fixture
+def spine(monkeypatch, built, without_my_universe, old_store):
     monkeypatch.setenv(universe.SOURCE_ENV, "spine")
     assert universe.universe_source() == "spine"
 
