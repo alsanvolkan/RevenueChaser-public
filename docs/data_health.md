@@ -270,9 +270,9 @@ the four WRDS checks of the fundamentals layer below.
 **The fundamentals layer (PR 12).** Eleven more dataset cards, one per fundamentals dataset
 (`docs/data_architecture.md`, "Fundamentals"), each with its own cadence (the SEC facts and filings, the Alpha Vantage
 calendar, UW's preliminary quarters and `fundamentals/tables` daily, the yfinance estimates weekly, the SEC's FSDS and
-the four WRDS checks monthly). The WRDS cards `wrds/fundq`, `wrds/funda`, `wrds/firm_ratio` and `wrds/segments` are
+the three WRDS checks monthly). The WRDS cards `wrds/fundq`, `wrds/funda` and `wrds/segments` are
 attended, with their own command (`python -m RevenueChaser.rcdata.build backfill wrds/fundq wrds/funda
-wrds/firm_ratio wrds/segments`), and their WRDS difference slot is the monthly difference report: the note of the
+wrds/segments`), and their WRDS difference slot is the monthly difference report: the note of the
 newest run that read WRDS (a skipped or failed run is not one), so the agreement counts against the SEC and the
 number of revisions since the snapshot before are on the card (decided 27 Oct). No coverage target is set for these
 cards yet: the coverage is shown, and the alarm limits wait for two weeks of real data, as decision 1 did.
