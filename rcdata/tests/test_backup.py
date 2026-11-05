@@ -177,3 +177,63 @@ def test_on_redis_the_backup_restores_with_the_one_time_copy(backup_dir, monkeyp
     from RevenueChaser.rcdata import ops_copy
     assert ops_copy.main(["--sqlite", str(taken)]) == 0
     assert {t: ops.rows(t) for t in want} == want
+
+
+# ── The light/heavy split (avo, 5 Nov 2026): --only picks the steps, --subdir the folder ───────────────────────
+
+
+def test_only_an_unknown_step_exits_2_and_writes_nothing(backup_dir):
+    _serve()
+    assert backup.main(["backup", "--only", "ops,market,gamma"]) == 2
+    assert not backup_dir.exists()
+
+
+def test_an_empty_or_nested_subdir_exits_2_and_writes_nothing(backup_dir):
+    _serve()
+    for bad in ("", " ", "market/heavy", "..", "../market", "a\\b"):
+        assert backup.main(["backup", "--subdir", bad]) == 2, bad
+    assert not backup_dir.exists()
+
+
+def test_only_runs_just_the_named_steps(backup_dir, tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", tmp_path / "offbox")
+    _raw("uw/spot_expiry_strike/2026-10-26/SPX.json.gz", 1)
+    _serve(5)
+    ops.ensure()
+    summary = backup.run_backup(only=["market"])
+    assert set(summary) == {"market"} and summary["market"] is not None
+    out = backup_dir / "market"
+    assert not list(out.glob("ops_*.sqlite")) and not (tmp_path / "offbox").exists()
+
+
+def test_the_raw_copy_is_a_step_of_its_own(backup_dir, tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", tmp_path / "offbox")
+    _raw("uw/spot_expiry_strike/2026-10-26/SPX.json.gz", 1)
+    _serve()
+    summary = backup.run_backup(only=["raw"])
+    assert set(summary) == {"raw_copy"} and summary["raw_copy"]["copied"] == 1
+    assert not (backup_dir / "market").exists()
+
+
+def test_a_subdir_keeps_its_own_manifest_and_its_own_retention(backup_dir):
+    _serve(2)
+    ops.ensure()
+    for _ in range(backup.KEEP + 2):
+        backup.run_backup(only=["market"], subdir="market-heavy")
+    backup.run_backup(only=["market"], subdir=backup.SUBDIR)
+    light, heavy = backup_dir / "market", backup_dir / "market-heavy"
+    assert len(list(light.glob("market_*.duckdb"))) == 1
+    assert len(list(heavy.glob("market_*.duckdb"))) == backup.KEEP
+    heavy_manifest = json.loads((heavy / backup.MANIFEST_NAME).read_text())
+    light_manifest = json.loads((light / backup.MANIFEST_NAME).read_text())
+    assert len(heavy_manifest["files"]) == backup.KEEP and len(light_manifest["files"]) == 1
+    for name, entry in heavy_manifest["files"].items():      # every copy carries its sha256
+        assert entry["sha256"] == hashlib.sha256((heavy / name).read_bytes()).hexdigest()
+
+
+def test_the_cli_passes_only_and_subdir_through(backup_dir):
+    _serve(3)
+    ops.ensure()
+    assert backup.main(["backup", "--only", "market", "--subdir", "market-heavy"]) == 0
+    assert len(list((backup_dir / "market-heavy").glob("market_*.duckdb"))) == 1
+    assert not (backup_dir / "market").exists()

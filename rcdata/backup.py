@@ -16,6 +16,11 @@ Into ``<RAW_STORE_BACKUP_DIR>/market/`` (an empty ``RAW_STORE_BACKUP_DIR`` is re
 - ``.manifest.json``: the sha256, size and table fingerprints of every copy kept. The newest ``KEEP`` (5) per kind
   stay.
 
+``--only`` picks the steps (``ops``, a serving kind, ``raw``) and ``--subdir`` the folder; without either, every
+step runs into ``market/``, as the command did before the light/heavy split of 5 Nov 2026. The nightly run takes the
+small files, a weekly one takes ``prices`` and ``ownership`` into ``market-heavy/`` (the 04:30 run of 5 Nov 2026 hit
+its 30-minute limit copying 3.5 GB of them). Each folder has its own manifest, verification and retention count.
+
 Then the D3 copy: the raw files of the last ``RAW_COPY_DAYS`` (35) days (by modification time) under
 ``<MARKET_RAW_DIR>/raw/`` go to ``RC_MARKET_RAW_COPY_DIR``, rsync-like (a file whose size and mtime match is not
 copied again; nothing is deleted there), when their total is under ``RAW_COPY_LIMIT_BYTES`` (20 GB). Measured first
@@ -44,8 +49,15 @@ KEEP = 5
 ATTEMPTS = 3
 MANIFEST_NAME = ".manifest.json"
 SUBDIR = "market"
+# The heavy run's folder (avo, 5 Nov 2026). ``SUBDIRS`` is every folder a registry entry writes into, so the Data
+# Health card knows where to look for each kind's newest copy; a test keeps the two in step.
+HEAVY_SUBDIR = "market-heavy"
+SUBDIRS = (SUBDIR, HEAVY_SUBDIR)
+RAW_STEP = "raw"
 RAW_COPY_DAYS = 35
 RAW_COPY_LIMIT_BYTES = 20 * 10**9
+# Every name ``--only`` takes: the ops state, each serving kind, and the D3 raw copy.
+STEPS = ("ops", *serving.KINDS, RAW_STEP)
 
 
 class BackupRefused(RuntimeError):
@@ -249,28 +261,62 @@ def _copy_recent_raw() -> dict | None:
     return {"files": len(files), "bytes": total, "copied": copied}
 
 
-def run_backup() -> dict:
-    """Back up ops.sqlite and every serving file, then the D3 raw copy; a summary of what was written."""
+def _check_subdir(subdir: str) -> str:
+    """One folder name under the backup root: never empty, never a path, never ``..``."""
+    name = (subdir or "").strip()
+    if not name or name in (".", "..") or "/" in name or "\\" in name:
+        raise BackupRefused(f"--subdir {subdir!r} is not one folder name under the backup folder")
+    return name
+
+
+def _check_only(only) -> tuple[str, ...]:
+    """The steps to run, in the registry's order; ``None`` is every one of them (the old behaviour)."""
+    known = STEPS
+    if only is None:
+        return known
+    names = [n.strip() for n in only] if not isinstance(only, str) else [n.strip() for n in only.split(",")]
+    names = [n for n in names if n]
+    if not names:
+        raise BackupRefused("--only was given no step name")
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        raise BackupRefused(f"--only: unknown step(s) {', '.join(unknown)}; known: {', '.join(known)}")
+    return tuple(n for n in known if n in names)            # each step once, in a fixed order
+
+
+def run_backup(only=None, subdir: str = SUBDIR) -> dict:
+    """Back up the named steps into ``<RAW_STORE_BACKUP_DIR>/<subdir>/``; a summary of what was written.
+
+    ``only`` is a list (or a comma-separated string) of ``ops``, a serving kind, or ``raw`` for the D3 raw copy;
+    ``None`` runs every one of them, which is what the command did before the light/heavy split. Each folder has its
+    own manifest, its own verification and its own retention count, because ``KEEP`` prunes inside ``out`` alone.
+    """
+    steps = _check_only(only)
+    subdir = _check_subdir(subdir)
     folder = (config.RAW_STORE_BACKUP_DIR or "").strip()
     if not folder:
         raise BackupRefused("RAW_STORE_BACKUP_DIR is empty: set it to the backup folder (there is no default)")
-    out = Path(folder) / SUBDIR
-    out.mkdir(parents=True, exist_ok=True)
-    for stale in out.glob("*.tmp"):                     # a run that was killed mid-copy
-        stale.unlink(missing_ok=True)
-    manifest = _Manifest(out)
     summary: dict = {}
     failed: list[str] = []
-    # Each file on its own: a failed (or raced) ops copy must not cost the serving files theirs, and the other way.
-    for name, step in [("ops", lambda: _backup_ops(out, manifest))] + [
-            (kind, lambda kind=kind: _backup_kind(kind, out, manifest)) for kind in serving.KINDS]:
-        try:
-            summary[name] = step()
-        except Exception as e:  # noqa: BLE001 - reported below, after every other file had its turn
-            logger.error("backup of %s failed: %s", name, e)
-            failed.append(f"{name}: {e}")
-            summary[name] = None
-    summary["raw_copy"] = _copy_recent_raw()
+    files = [s for s in steps if s != RAW_STEP]
+    if files:
+        out = Path(folder) / subdir
+        out.mkdir(parents=True, exist_ok=True)
+        for stale in out.glob("*.tmp"):                     # a run that was killed mid-copy
+            stale.unlink(missing_ok=True)
+        manifest = _Manifest(out)
+        # Each file on its own: a failed (or raced) ops copy must not cost the serving files theirs, and the other way.
+        for name in files:
+            step = ((lambda: _backup_ops(out, manifest)) if name == "ops"
+                    else (lambda name=name: _backup_kind(name, out, manifest)))
+            try:
+                summary[name] = step()
+            except Exception as e:  # noqa: BLE001 - reported below, after every other file had its turn
+                logger.error("backup of %s failed: %s", name, e)
+                failed.append(f"{name}: {e}")
+                summary[name] = None
+    if RAW_STEP in steps:
+        summary["raw_copy"] = _copy_recent_raw()
     if failed:
         raise BackupFailed("; ".join(failed))
     return summary
@@ -332,8 +378,14 @@ def _create_empty_stores(*, apply: bool) -> int:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m RevenueChaser.rcdata")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("backup", help="verified copies of the ops state (ops.sqlite or Redis) and the serving files, "
-                                  "then the raw copy")
+    bk = sub.add_parser("backup", help="verified copies of the ops state (ops.sqlite or Redis) and the serving files, "
+                                       "then the raw copy")
+    bk.add_argument("--only", default=None,
+                    help="comma-separated steps to run, out of " + ", ".join(STEPS) +
+                         " (the default runs every one of them)")
+    bk.add_argument("--subdir", default=SUBDIR,
+                    help=f"the folder under the backup folder to write into (default {SUBDIR}); each folder keeps "
+                         f"its own manifest and its own {KEEP} newest copies per kind")
     empty = sub.add_parser("create-empty-stores",
                            help="create a serving file with its tables and no rows for every kind that has none; "
                                 "an existing file is never touched. Says what it would do unless --apply is given")
@@ -345,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
-        summary = run_backup()
+        summary = run_backup(only=args.only, subdir=args.subdir)
     except BackupRefused as e:
         logger.error("backup refused: %s", e)
         return 2
