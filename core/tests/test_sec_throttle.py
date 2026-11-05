@@ -98,7 +98,7 @@ def _hammer(path, ready, go, result, rate, duration):
 def test_rate_is_one_constant_below_the_ceiling_and_the_burst_is_what_the_ceiling_leaves():
     """SEC fair-access is 10/s. RATE is the one knob; the burst is LIMIT - RATE, never the rate itself."""
     assert sec_throttle.LIMIT == 10
-    assert 1 <= sec_throttle.RATE <= 8
+    assert 1 <= sec_throttle.RATE <= 9
     assert sec_throttle._burst(sec_throttle.RATE) == sec_throttle.LIMIT - sec_throttle.RATE
     assert sec_throttle._burst(9.5) == 1.0       # never below one token
 

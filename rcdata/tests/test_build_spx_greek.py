@@ -142,6 +142,22 @@ def test_the_reader_serves_the_whole_chain_and_filters_by_band(http_mock):
     assert read.spx_greek_expiry_strike(SESSION, min_dte=0, max_dte=1)
 
 
+def test_the_two_uw_datasets_start_on_different_days_on_purpose():
+    """``greek`` reaches back to UW's own earliest date; ``spot`` must not follow it there.
+
+    The token's earliest available date is 2023-12-07 (probed 5 Nov 2026: a 403 ``historic_data_access_missing``
+    names it), and ``greek-exposure/strike-expiry`` serves that far back whole -- 2024-06-14 answered a 53-expiry
+    chain and 259 strikes on its first expiry. ``spot-exposures/expiry-strike`` has nothing there: it answers 200
+    with zero rows on every day before 2025-01-16 (measured on six of them, while the greek chain answered 53-56
+    expiries on the same days), and its historical answer also stops at the page limit of 500 with no paging,
+    which is what failed 168 days of the 28 Oct 2026 backfill. So the two constants are deliberately different,
+    and moving the sibling's back would write empty or clipped days.
+    """
+    from RevenueChaser.rcdata.build import uw_spot_expiry_strike as spot
+    assert uw.FIRST_SESSION == date(2023, 12, 7)
+    assert spot.FIRST_SESSION == date(2025, 1, 16)
+
+
 def test_two_series_on_one_expiry_date_are_summed_not_dropped(http_mock):
     """SPX (AM, standard monthly) and SPXW (PM, weekly) share the third Friday, and UW answers one row per series
     with no field to tell them apart (docs/openapi.yaml, "Greek Exposure By Strike And Expiry": only expiry,

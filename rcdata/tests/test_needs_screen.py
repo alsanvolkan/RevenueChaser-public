@@ -19,8 +19,9 @@ import pytest
 from RevenueChaser.rcdata import read
 from RevenueChaser.rcdata.needs import catalog, screen
 
+# ``earnings_reported``: the board's day is the quarter the EPS belongs to, the write's day is when UW was asked.
 DIFFER = {"index_membership", "fundamental_fact", "earnings_event", "segment_revenue", "customer_share",
-          "fundamental_revision", "sec13f_periods"}
+          "fundamental_revision", "sec13f_periods", "earnings_reported"}
 
 
 def test_every_dataset_a_need_names_has_a_card():
