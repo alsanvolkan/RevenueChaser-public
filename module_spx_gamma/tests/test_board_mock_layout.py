@@ -75,7 +75,7 @@ def test_scenarios_are_cards_with_probability_bars():
 
 def test_week_gamma_is_an_svg_bar_chart_with_spot_and_zone_tags():
     sec = _html().split('id="h-wk"', 1)[1].split("</section>", 1)[0]
-    assert '<svg class="chart"' in sec and sec.count("<rect") >= 3
+    assert '<svg class="wk-chart"' in sec and sec.count("<rect") >= 3
     assert "spot 7,784" in sec
     assert 'class="tag' in sec and "Air gap" in sec
 
