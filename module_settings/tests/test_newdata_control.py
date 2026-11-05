@@ -2,8 +2,9 @@
 
 The universe bar's sets come from the spine's ``security`` (A, the funds of B, the rest of B, C, D); the Backfill
 calendar's fill state is the number of names with a bar on each session of ``price_bar_daily``; the journey table
-says where each dataset sits (the live file's size, the HDD raw and Parquet folders). Every one is a read: the
-serving files through ``open_read``, the folders by a bounded walk, both cached by the hour.
+says where each dataset sits (the live file's size, the HDD raw and Parquet folders). The serving files are read
+through ``open_read`` on every render, their samples cached per build; the folder counts are not read here at all
+since #434 -- they are the storage-picture job's walk, which this page only reads back.
 """
 from __future__ import annotations
 

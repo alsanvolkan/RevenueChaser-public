@@ -114,6 +114,22 @@ def test_the_script_uses_only_the_routes_the_page_names():
     assert "X-RC-Panel" in js
 
 
+def test_the_disk_picture_press_follows_the_job_and_tells_the_shell():
+    """#434, and the bug this very nearly shipped: the press first used ``follow``, which reads the builder's
+    ``/api/build/queue``, where a dashboard job id can never appear -- so it read ``job undefined`` and then "the
+    queue no longer lists it", and the shell was never told, so the board never reloaded with the new picture.
+
+    A dashboard job is followed through ``/api/job/<id>`` (``settingsPoll``, AGENTS.md), and the shell starts its
+    poll from the ``rc-job-submitted`` message (``templates/dashboard.html``)."""
+    js = control_render.CTL_JS
+    press = js[js.index("function picture(btn)"):js.index("function queue(btn, dataset, body)")]
+    assert "settingsPoll(" in press, "a dashboard job is followed through /api/job/<id>"
+    assert "follow(" not in press, "never the builder's request queue"
+    assert "body.job_id" in press and "body.id" not in press, "_submit answers with job_id"
+    assert "rc-job-submitted" in js, "the shell's poll, and so the produces reload, starts from this message"
+    assert press.count("settingsPoll(") == 2, "the 409 follows the run already going (#244) instead of a second one"
+
+
 def test_no_timer_repeats_and_every_storage_access_is_guarded():
     js = control_render.CTL_JS
     assert "setInterval" not in js

@@ -322,7 +322,8 @@ def _picture_control(view: dict) -> str:
     walked = next((f.get("walked_at") for f in view["files"]), None)
     return ('<div class="pictrow"><span class="hm">The HDD folder counts in <b>Data, file by file</b> are a '
             f'picture, not a live read &middot; {esc(_walked(walked))}</span>'
-            '<button type="button" class="btn" data-job="picture">Take the disk picture</button></div>')
+            '<button type="button" class="btn" data-job="picture">Take the disk picture</button>'
+            '<span class="hm" id="picout" role="status"></span></div>')
 
 
 # ── The flow diagram ──────────────────────────────────────────────────────────────────────────────────────────
@@ -410,9 +411,12 @@ def _walked(at, now=None) -> str:
         return "not walked yet"
     try:
         when = datetime.fromisoformat(str(at))
+        hours = ((now or datetime.now(timezone.utc)) - when).total_seconds() / 3600
     except (TypeError, ValueError):
+        # Including a tz-naive stamp, which subtracts against an aware "now" with a TypeError. ``walk_storage``
+        # cannot write one, but ``_picture`` checks every other field of a file it does not trust, and an
+        # unguarded raise here would take the whole board down -- ``report`` renders this line unwrapped.
         return "not walked yet"
-    hours = ((now or datetime.now(timezone.utc)) - when).total_seconds() / 3600
     return f"walked {control._clock(at)}" + (f", {hours:.0f} h ago" if hours >= PICTURE_STALE_HOURS else "")
 
 

@@ -1891,3 +1891,23 @@ def test_the_disk_picture_route_queues_the_job_and_refuses_a_second_one(monkeypa
         refused = client.post("/run/storage-picture")
     assert refused.status_code == 409, "repeated presses must not fill the long lane with re-walks"
     assert refused.get_json()["job_id"] == "running-one", "and the board can follow the run already going"
+
+
+def test_the_disk_picture_job_says_what_it_walked(monkeypatch, tmp_path):
+    """AGENTS.md: a run says what it found. A capped folder's count is a floor, and that is the one failure that
+    quietly falsifies the journey table, so it has to reach the job's message rather than only the page."""
+    from RevenueChaser.app.jobs import JobMessage
+    from RevenueChaser.module_settings import newdata
+
+    monkeypatch.setattr(newdata, "STORAGE_PICTURE", tmp_path / "picture.json")
+    monkeypatch.setattr(runners, "run_settings", lambda *a, **k: tmp_path / "board.html")
+    monkeypatch.setattr(newdata, "walk_storage", lambda: {
+        "walked_at": "2026-11-05T12:00:00+00:00",
+        "datasets": {"a/one": {"raw": {"files": 4, "bytes": 40, "capped": False},
+                               "parquet": {"files": None, "bytes": None, "capped": False}},
+                     "b/two": {"raw": {"files": 7, "bytes": 70, "capped": True}}}})
+    with pytest.raises(JobMessage) as held:
+        runners.run_storage_picture()
+    assert "2 folders walked" in str(held.value) and "11 files" in str(held.value)
+    assert "1 folders ran out of time" in str(held.value), "a floor is not reported as a count"
+    assert json.loads((tmp_path / "picture.json").read_text())["datasets"]["a/one"]["raw"]["files"] == 4

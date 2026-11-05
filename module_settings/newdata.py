@@ -781,8 +781,11 @@ def walk_storage() -> dict:
 
 
 def _picture() -> dict:
-    """What the storage-picture job last wrote, or an empty picture when it has not run here yet. A bad or
-    half-written file reads as "not walked": the page says so, and the job rewrites it."""
+    """What the storage-picture job last wrote, or an empty picture when it has not run here yet.
+
+    The write is atomic (``write_artifact``: a temp file in the same folder, then ``os.replace``), so a half-written
+    file is not reachable. The guard is for a hand-edited or truncated one: it reads as "not walked", the page says
+    so, and the next run of the job replaces it."""
     try:
         found = json.loads(STORAGE_PICTURE.read_text(encoding="utf-8"))
     except (OSError, ValueError):

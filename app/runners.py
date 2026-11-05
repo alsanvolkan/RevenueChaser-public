@@ -2083,9 +2083,15 @@ def run_settings(uw=None) -> Path:
     """Render the Settings / Data health board from the store — no network.
 
     Store-only (``requires_uw=False``): the inventory reads ``raw.duckdb`` /
-    ``edgar.duckdb`` and needs no credentials. Runs in the ``/view`` path
-    (Refresh or first load), not the job queue, so it never raises; an empty
-    store still writes the artifact with its explicit empty state.
+    ``edgar.duckdb`` and needs no credentials. An empty store still writes the
+    artifact with its explicit empty state.
+
+    It runs in the ``/view`` path (Refresh or first load), as the
+    ``settings_refresh`` job, and from the runners that re-render the board
+    after their own work (``run_comovement_recompute``,
+    ``run_universe_caps_backfill``, ``run_storage_picture``). ``collect`` and
+    the control view carry their own errors, but the render itself does not, so
+    a caller that must not lose its own work does it before calling this.
     """
     from RevenueChaser.module_settings import inventory, report
 
@@ -2105,10 +2111,20 @@ def run_storage_picture(uw=None) -> Path:
     """
     from RevenueChaser.module_settings import newdata
 
-    _write_to(newdata.STORAGE_PICTURE, json.dumps(newdata.walk_storage(), indent=1, sort_keys=True))
+    picture = newdata.walk_storage()
+    _write_to(newdata.STORAGE_PICTURE, json.dumps(picture, indent=1, sort_keys=True))
     # Re-render the board, or the new picture would wait for the next Refresh: the shell reloads this job's
-    # ``produces`` tab with a cache-buster, which serves the stored artifact rather than recomputing it.
-    return run_settings()
+    # ``produces`` tab with a cache-buster, which serves the stored artifact rather than recomputing it. Written
+    # first, so a render that fails still leaves the picture on disk.
+    run_settings()
+    folders = [side for roots in picture["datasets"].values() for side in roots.values()]
+    walked = [f for f in folders if f.get("files") is not None]
+    capped = [f for f in walked if f.get("capped")]
+    # A run that finds nothing, or finds it only in part, says so (AGENTS.md): a capped folder's count is a floor,
+    # and that is the one failure that quietly falsifies the journey table.
+    raise JobMessage(
+        f"{len(walked)} folders walked, {sum(f['files'] for f in walked):,} files"
+        + (f" \u2014 {len(capped)} folders ran out of time, so their counts are a floor" if capped else ""))
 
 
 def run_uw_interaction(uw: UWClient, **params) -> Path:

@@ -88,14 +88,31 @@
       }, function () { follow(btn, rid, left - 1); });
     }, 15000);
   }
-  /* #434: the disk picture is a long job now, not a side effect of rendering the board. */
+  /* #434: the disk picture is a dashboard job, so it is followed through /api/job/<id> with the page's own
+     settingsPoll -- NOT through `follow`, which reads the builder's /api/build/queue, where a dashboard job id can
+     never appear. The postMessage is what starts the shell's poll, and the shell is what reloads this board when
+     the job's `produces` is done (templates/dashboard.html); without it the new picture would wait for a Refresh. */
+  function tell(jobId) {
+    try { parent.postMessage({ type: 'rc-job-submitted', job_id: jobId }, location.origin); } catch (e) { }
+  }
   function picture(btn) {
+    var out = document.getElementById('picout');
     btn.disabled = true;
+    if (out) out.textContent = 'Queued…';
     send('POST', C.routes.picture).then(function (r) {
+      var body = r.body || {};
+      if (r.status === 202 && body.job_id) { tell(body.job_id); settingsPoll(btn, out, body.job_id); return; }
+      if (out) out.textContent = body.error || ('refused · HTTP ' + r.status);
+      if (r.status === 409 && body.job_id) {   /* #244: follow the run already going, never start a second */
+        tell(body.job_id);
+        settingsPoll(btn, out, body.job_id);
+        return;
+      }
       btn.disabled = false;
-      if (r.status === 202) { pill(btn, 'st-q', 'queued · job ' + r.body.id); follow(btn, r.body.id, 40); }
-      else { pill(btn, 'st-f', (r.body.error || ('refused · HTTP ' + r.status))); }
-    }, function () { btn.disabled = false; pill(btn, 'st-f', 'the dashboard did not answer'); });
+    }, function () {
+      btn.disabled = false;
+      if (out) out.textContent = 'the dashboard did not answer';
+    });
   }
   function queue(btn, dataset, body) {
     btn.disabled = true;
