@@ -720,10 +720,11 @@ def beneficial_ownership(tickers: Iterable[str], start=None, end=None) -> list[d
 # A table several datasets write maps to None: each row's ``status`` is the newest check of its ``source``.
 DATASET_OF_TABLE.update({"fundamental_company": "fundamentals/tables", "fundamental_fact": None, "earnings_event": None, "estimate_latest": "yfinance/estimates",
                          "filing_item": "sec/filings", "segment_revenue": None, "customer_share": None,
-                         "peer_group": "fundamentals/tables", "fundamental_revision": None})
+                         "peer_group": "fundamentals/tables", "fundamental_revision": None,
+                         "earnings_reported": "uw/earnings"})
 KIND_OF_TABLE.update({t: "fundamentals" for t in ("fundamental_company", "fundamental_fact", "earnings_event", "estimate_latest",
                                                   "filing_item", "segment_revenue", "customer_share", "peer_group",
-                                                  "fundamental_revision")})
+                                                  "fundamental_revision", "earnings_reported")})
 
 
 def _cik(cik) -> str:
@@ -785,6 +786,21 @@ def statements_many(ciks: Iterable, annual_years: int, quarters: int) -> list[di
           AND ((f.period_type = 'annual' AND e.k <= ?) OR (f.period_type = 'quarterly' AND e.k <= ?))
         ORDER BY f.cik, f.period_type, f.period_end, f.field"""
     return _rows("fundamental_fact", sql, wanted + wanted + [int(annual_years), int(quarters)])
+
+
+def earnings_reported(cik=None) -> list[dict]:
+    """``earnings_reported`` rows (of ``cik``, or every company) by company and quarter: the EPS a company reported
+    as UW serves it, with UW's own consensus and surprise of that quarter.
+
+    Not the SEC's GAAP EPS, which is ``fundamental_fact``'s ``eps_diluted``. A reported EPS is usually the
+    company's adjusted figure, so the two are comparable only when the difference is stated; ``source`` is on
+    every row for that reason.
+    """
+    sql, params = "SELECT * FROM earnings_reported WHERE true", []
+    if cik is not None:
+        sql += " AND cik = ?"
+        params.append(str(cik))
+    return _rows("earnings_reported", sql + " ORDER BY cik, period_end", params, missing_table_ok=True)
 
 
 def earnings_events(cik=None, start=None, end=None) -> list[dict]:
