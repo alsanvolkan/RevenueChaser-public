@@ -1259,9 +1259,14 @@ the ETF universe reads `etf`, never `fund` alone.
 1 % shrink limit does not apply to it, because a smaller list is the intended outcome of avo editing the rules or
 removing a name by hand, and a request-wide `allow_shrink` would relax every other table of the kind with it. The
 "a table may not empty" guard still applies — a universe of no names is a bug whoever edited what. And because that
-exemption is the only swap-time guard the table had, `my_universe.py` refuses the build outright when the live list
-holds names that entered on their dollar volume and no `etf` row has one any more: a missing or unreadable
-Compustat `secd` Parquet is an input outage, not a change of the rules.
+exemption is the only swap-time guard the table had, `my_universe.py` guards the names that entered on their dollar
+volume itself, **per fund**: `adv_usd_20d` is NULL for *unknown* and never for zero, so a fund of the live list
+whose own number is NULL today is held on its live row — no `left` row — and every held fund is one
+`my_universe_etf_volume_lost` issue (avo's decision B, #424). A volume that is present and under the floor is the
+rule's answer and that fund leaves as before. When no `etf` row has a volume at all the source itself is gone and
+the build is refused outright: a missing or unreadable Compustat `secd` Parquet is an input outage, not a change of
+the rules. The check is per fund because a table-wide one masked the loss: IBIT is on Nasdaq and GLD, SLV, SPY and
+DIA are not, so IBIT's volume alone passed it while the Arca funds were dropped.
 
 **Tier rule v2** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
 (`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.
@@ -1294,7 +1299,7 @@ lane opens exactly one of these two, so `issues_open` never counts it twice: the
 from a `TICKER` job, because OpenFIGI did not answer for that CUSIP; nothing checks the two name the same
 security, so the row is named rather than trusted silently), `tier_a_no_gics`, `figi_ticker_differs`,
 `cusip_shared`, `cik_many_gvkeys`,
-`index_key_empty`, `fund_file_short`, `member_not_in_sec`, `member_not_tier_a`, `membership_files_disagree`, `membership_wrds_differs`, `my_universe_etf_undecided` (the funds with no AUM and no 20-session dollar volume yet, one issue naming them, keyed `etf`; nothing is reported before N-CEN has answered at all), `my_universe_manual_unknown` (a manual line naming a ticker the spine does not hold), `my_universe_both_kinds` (the stock rule and the ETF rule both claim a ticker; kept as the stock).
+`index_key_empty`, `fund_file_short`, `member_not_in_sec`, `member_not_tier_a`, `membership_files_disagree`, `membership_wrds_differs`, `my_universe_etf_undecided` (the funds with no AUM and no 20-session dollar volume yet, one issue naming them, keyed `etf`; nothing is reported before N-CEN has answered at all), `my_universe_etf_volume_lost` (the live list's `etf_adv` funds Compustat gives no volume for today, held on their live numbers instead of dropped, one issue naming them, keyed `etf`), `my_universe_manual_unknown` (a manual line naming a ticker the spine does not hold), `my_universe_both_kinds` (the stock rule and the ETF rule both claim a ticker; kept as the stock).
 A rule needing a source that has never run is not applied; that source is one `source_never_run` row.
 `index_key_empty`: an index key with no `comp.idxcst_his` rows in a run that answered rows for another.
 A WRDS raw value its schema cannot type (a DATE or INTEGER column) is typed to null and recorded as a `value_untyped` issue of that WRDS dataset, keyed `<table>.<column>`, with the row count; it is a one-off row of its run, not synced.
