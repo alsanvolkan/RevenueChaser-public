@@ -746,22 +746,6 @@ def run_sec_13f_latest(uw: UWClient | None = None, notice: str | None = None,
     return SEC_13F_LATEST
 
 
-def run_sec13f_check(uw=None) -> None:
-    """Ask the SEC whether a new Form 13F data set is out — downloads nothing.
-
-    Always ends with ``JobMessage`` so the board says what it found: the new
-    set(s) a Fetch would ingest, or "up to date" with the newest listed name.
-    """
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-    res = sec_13f.check_new_zips()
-    if not res["latest"]:
-        raise JobMessage("The SEC Form 13F page lists no data sets — try again later.")
-    if res["new"]:
-        names = ", ".join(res["new"])
-        raise JobMessage(f"New 13F data set(s) available: {names} — press Fetch to ingest.")
-    raise JobMessage(f"Up to date — newest SEC data set {res['latest']} is already ingested.")
-
-
 def build_sec13f_meta(uw: UWClient) -> dict:
     """Enrich the full SEC 13F universe (totals keys) with name/sector/type.
 
@@ -801,69 +785,14 @@ def _apply_universe_info(meta: dict, info: dict) -> None:
                        "type": i.get("type", "Other")}
 
 
-def _13f_map_step(run: str, run_at: float, *, first_run: bool = False) -> tuple[dict | None, str | None, dict]:
-    """The CUSIP map step (#207, D19): ``(cusip_map, note, stats)``.
-
-    Asks OpenFIGI (``core/providers/openfigi.py``, at most 400 requests) about the CUSIPs ``map_candidates`` lists
-    (held, never asked) and records the answers in ``identity_cusip``. ``cusip_map`` is the whole new map when every
-    candidate was answered: OpenFIGI's (``identity_cusip.current_map``) plus the stored legacy entries whose issuer
-    prefix OpenFIGI confirms for the same ticker and whose issue number is not 9x (``legacy_fallback``, avo's option
-    B minus 9x). The derive then uses it and, if it passes the guards, rebuilds ``cusip_ticker`` from it. ``None``
-    otherwise, with ``note`` saying why: the derive uses the stored map. A Fetch (``first_run=False``) asks only once
-    the map is seeded: the first map (about 380 requests) runs through the 13F map job (``run_sec13f_map``), after
-    the dry run on a store copy. Never raises: a provider or store failure is the note.
-    """
-    from RevenueChaser.core import identity_cusip
-    from RevenueChaser.core.providers import openfigi
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-    stats: dict = {"candidates": 0, "requests": 0, "rate_limited": 0, "answered": 0, "present": 0, "absent": 0,
-                   "job_errors": 0, "appended": 0, "legacy_kept": 0, "legacy_other_ticker": 0,
-                   "legacy_unknown_prefix": 0, "legacy_option_like": 0, "legacy_strict_dropped": 0}
-    try:
-        candidates = sec_13f.map_candidates()
-        stats["candidates"] = len(candidates)
-        if candidates:
-            if not first_run and not identity_cusip.has_rows():
-                return None, ("CUSIP map: OpenFIGI has not mapped the 13F holdings yet (#207 first run); "
-                              "the totals use the stored map."), stats
-            result = openfigi.map_cusips(candidates)
-            stats.update(requests=result.requests, rate_limited=result.rate_limited, answered=len(result.answers),
-                         present=sum(a["status"] == openfigi.PRESENT for a in result.answers.values()),
-                         absent=sum(a["status"] == openfigi.ABSENT for a in result.answers.values()),
-                         job_errors=result.job_errors)
-            if result.answers:
-                stats["appended"] = identity_cusip.record(result.answers, run_id=run, run_at=run_at)["appended"]
-            logger.info("13F CUSIP map: %s", stats)
-            if result.status == "skipped":
-                return None, (f"CUSIP map: not refreshed, {result.error}; {len(candidates)} new CUSIP(s) wait for "
-                              "it. The totals use the stored map."), stats
-            if not result.complete:
-                return None, (f"CUSIP map: incomplete, {len(result.unasked)} of {len(candidates)} new CUSIP(s) not "
-                              f"asked ({result.error}); the totals use the stored map."), stats
-        openfigi_map = identity_cusip.current_map()
-        if not openfigi_map:
-            return None, None, stats
-        cusip_map, fallback = sec_13f.legacy_fallback(openfigi_map, sec_13f.load_cusip_ticker(),
-                                                      identity_cusip.ever_mapped(), strict=sec_13f._FALLBACK_STRICT)
-        stats.update(legacy_kept=len(fallback["kept"]), legacy_other_ticker=len(fallback["other_ticker"]),
-                     legacy_unknown_prefix=len(fallback["unknown_prefix"]),
-                     legacy_option_like=len(fallback["option_like"]),
-                     legacy_strict_dropped=len(fallback["strict_dropped"]))
-        logger.info("13F CUSIP map, legacy prefix fallback: %s", {k: len(v) for k, v in fallback.items()})
-        return cusip_map, None, stats
-    except Exception as exc:  # noqa: BLE001 - the derive still runs on the stored map
-        logger.exception("13F CUSIP map step failed")
-        return None, f"CUSIP map step failed ({type(exc).__name__}: {exc}); the totals use the stored map.", stats
-
-
-def _refresh_13f_meta(uw, ingested: int) -> tuple[dict | None, str | None, UWClient | None]:
+def _refresh_13f_meta(uw) -> tuple[dict | None, str | None, UWClient | None]:
     """The UW name/sector step, best-effort: ``(provider_health, note, client)``.
 
-    The 13F job needs no UW key (the SEC data is the board), so a missing key or an
+    The 13F job needs no UW key (the store's numbers are the board), so a missing key or an
     outage only means the stored names and sectors stay as they were; ``note`` says
-    so for the board. Skipped entirely (F-1) when nothing new was ingested and the
-    stored meta already covers every ticker in the totals. A client is opened here
-    when the runner was not given one, and returned so the caller can close it.
+    so for the board. Skipped entirely (F-1) when the stored meta already covers every ticker in the totals: with
+    the ingest gone, a new quarter shows up as a ticker the meta does not cover yet.
+    A client is opened here when the runner was not given one, and returned so the caller can close it.
     """
     from RevenueChaser.module_sec_13f import engine as sec_13f
     universe = {t for t in sec_13f.load_totals() if t}
@@ -872,7 +801,7 @@ def _refresh_13f_meta(uw, ingested: int) -> tuple[dict | None, str | None, UWCli
     # placeholders; counting those would skip the retry until a new zip lands (B2).
     covered = {t for t, m in meta.items()
                if (m or {}).get("name") or not is_unclassified((m or {}).get("sector"))}
-    if not universe or (not ingested and universe <= covered):
+    if not universe or universe <= covered:
         return None, None, None
     own = None
     if uw is None:
@@ -905,19 +834,15 @@ def _sec13f_busy_message() -> str:
 
 
 def build_sec13f(uw: UWClient | None = None) -> Path:
-    """The 13F Fetch: download -> ingest (SEC) -> derive (store) -> names -> shares out -> render -> history.
+    """The 13F Fetch: names -> shares out -> render -> history.
 
-    The job needs no Unusual Whales key. The SEC stages run only when the data-set
-    page is reachable; the derive (``recompute_totals``) and the render always run,
-    and an SEC failure is raised at the end, after the board is up to date. The UW
-    name/sector step is best-effort (``_refresh_13f_meta``), and so is the UW shares
-    outstanding step (``_store_13f_shares``, #300 D20), which replaced the 13F enrichment. The shares step runs
-    before the render (#375 F2): the board's % Out reads the rows it stores.
+    The numbers themselves are the builder's since G9 (``rcdata/build/ownership``, read through
+    ``engine.load_totals``), so the Fetch asks the SEC for nothing: it refreshes what the dashboard owns. The UW
+    name/sector step is best-effort (``_refresh_13f_meta``), and so is the UW shares outstanding step
+    (``_store_13f_shares``, #300 D20). The shares step runs before the render (#375 F2): the board's % Out reads
+    the rows it stores.
 
-    One 13F job at a time (#26): the ``"sec_13f"`` lock covers this job, ``run_sec13f_rebuild`` and
-    ``run_sec13f_map``, because they all write the ``sec13f_*`` tables and the CUSIP map. A second one refuses with a
-    ``JobMessage`` and writes nothing. A cancel or a deadline stops between zips (``engine.ingest_zips``), before the
-    next zip's holdings write.
+    One 13F job at a time (#26): a second one refuses with a ``JobMessage`` and writes nothing.
     """
     with job_lock.acquire("sec_13f", wait=0) as got:
         if not got:
@@ -927,58 +852,21 @@ def build_sec13f(uw: UWClient | None = None) -> Path:
 
 def _build_sec13f(uw: UWClient | None = None) -> Path:
     """The Fetch's work, once ``build_sec13f`` holds the ``"sec_13f"`` lock."""
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-
     run, run_at = run_id(), time.time()
-    sec_error = None
-    ingested = 0
-    ingest_failed = False
-    try:
-        sec_13f.download_missing_zips()
-        zips = sorted(str(p) for p in sec_13f.SEC13F_DIR.glob("*_form13f.zip"))
-        try:
-            ingested = sec_13f.ingest_zips(zips) if zips else 0
-        except Exception:
-            ingest_failed = True  # a half-written zip: never derive from it (B1)
-            raise
-    except Exception as exc:  # noqa: BLE001 - reported below, once the board is rendered
-        logger.warning("13F SEC stage failed: %s", exc)
-        sec_error = exc
-
-    unmatched, summary, map_note = None, None, None
-    if not ingest_failed:  # a download failure alone leaves the store consistent
-        cusip_map, map_note, _stats = _13f_map_step(run, run_at)
-        try:
-            try:
-                sec_13f.recompute_totals(cusip_map)
-            except sec_13f.DeriveRefused as exc:
-                if cusip_map is None:
-                    raise
-                # A new map the guards refuse must not fail every later Fetch: derive with the stored map, say so.
-                logger.warning("13F derive with the new CUSIP map refused: %s", exc)
-                map_note = (f"CUSIP map: the new map was not applied, the derive with it was refused ({exc}) "
-                            "The totals use the stored map.")
-                sec_13f.recompute_totals()
-            unmatched, summary = _13f_unmatched()
-        except sec_13f.DeriveRefused as exc:
-            logger.warning("13F derive refused: %s", exc)
-            sec_error = sec_error or exc
+    coverage = _13f_coverage_note()
 
     health, note, own = None, None, None
     shown: dict = {}                        # what the board was rendered from, for the result history (#375)
     try:
-        health, names_note, own = _refresh_13f_meta(uw, ingested)
-        note = " ".join(n for n in (names_note, map_note, unmatched) if n) or None
+        health, names_note, own = _refresh_13f_meta(uw)
+        note = " ".join(n for n in (names_note, coverage) if n) or None
         _store_13f_shares(uw or own)        # before the render: the board's % Out reads these rows (#375 F2)
         path = _render_13f(health, note, shown)
-        _record_13f(shown, run, run_at, sec_error, names_note, unmatched, ingested,
-                    sec_13f.map_identity(sec_13f.load_cusip_ticker(), summary), map_note)
+        _record_13f(shown, run, run_at, names_note, coverage)
     finally:
         if own is not None:
             own.close()
 
-    if sec_error is not None:
-        raise sec_error
     if note:
         raise JobMessage(note)
     return path
@@ -1022,22 +910,31 @@ def _store_13f_shares(uw: UWClient | None) -> None:
             own.close()
 
 
-def _13f_unmatched() -> tuple[str | None, dict | None]:
-    """DF89: the CUSIPs the derive left out (no ticker in the stored map) as ``(one line, summary)``; store read
-    only. ``(None, None)`` when the summary fails: a coverage note must never fail the job."""
-    from RevenueChaser.module_sec_13f import engine as sec_13f
+def _13f_coverage_note() -> str | None:
+    """One line on the CUSIPs the newest stored quarter could not name, or None; store read only.
+
+    The builder records this per period (``sec13f_periods``: ``coverage``, the share of long-equity value it named
+    a ticker, and ``unmapped_cusips``), so the board says the same thing it said when the retired derive counted
+    them itself (DF89). None when the read fails: a coverage note must never fail the job.
+    """
+    from RevenueChaser.rcdata import read as rcread
     try:
-        # The note prints dollars next to the totals, so it is on the totals' scale (#208): a filer
-        # reporting in thousands is rescaled in both or the two lines disagree by 1000x.
-        cusip_ticker = sec_13f.load_cusip_ticker()
-        summary = sec_13f.unmatched_summary(cusip_ticker, sec_13f.value_scale_factors(cusip_ticker))
+        periods = rcread.periods_13f()
     except Exception as exc:  # noqa: BLE001 - a coverage note must never fail the job
-        logger.warning("13F unmatched-CUSIP summary failed: %s", exc)
-        return None, None
-    note = sec_13f.unmatched_note(summary)
-    if note:
-        logger.warning("13F derive: %s", note)
-    return note, summary
+        logger.warning("13F coverage note failed: %s", exc)
+        return None
+    if not periods:
+        return None
+    last = periods[-1]
+    unmapped, coverage = last.get("unmapped_cusips"), last.get("coverage")
+    if not unmapped:
+        return None
+    note = (f"13F {last['period']}: {unmapped:,} CUSIP(s) have no ticker, "
+            f"{(1 - coverage) * 100:.1f}% of the quarter's value is not on the board."
+            if coverage is not None else
+            f"13F {last['period']}: {unmapped:,} CUSIP(s) have no ticker.")
+    logger.warning("13F coverage: %s", note)
+    return note
 
 
 def _render_13f(health: dict | None, note: str | None, capture: dict | None = None) -> Path:
@@ -1048,96 +945,17 @@ def _render_13f(health: dict | None, note: str | None, capture: dict | None = No
         return SEC_13F_LATEST  # no totals at all: the empty board was written
 
 
-def _record_13f(shown: dict, run: str, run_at: float, sec_error: Exception | None, names_note: str | None,
-                unmatched: str | None, ingested: int, map_identity: dict | None = None,
-                map_note: str | None = None) -> None:
-    """Result history (#375): after the board file, so it holds what the board showed, with the identity of the
-    CUSIP map the totals were derived with (#207). A failure is a job note, never a failed Fetch: the board file
-    does not depend on it."""
+def _record_13f(shown: dict, run: str, run_at: float, names_note: str | None,
+                coverage: str | None) -> None:
+    """Result history (#375): after the board file, so it holds what the board showed. A failure is a job note,
+    never a failed Fetch: the board file does not depend on it."""
     from RevenueChaser.module_sec_13f import history as sec13f_history
     try:
         sec13f_history.record(shown, run_id=run, run_at=run_at,
-                              error=f"{type(sec_error).__name__}: {sec_error}" if sec_error is not None else None,
-                              names_note=names_note, unmatched=unmatched, ingested=ingested,
-                              map_identity=map_identity, map_note=map_note)
+                              names_note=names_note, unmatched=coverage)
     except Exception as exc:
         logger.exception("13F result history failed")
         ledger.add_note(f"13F result history was not recorded: {type(exc).__name__}: {exc}")
-
-
-def run_sec13f_rebuild(uw=None) -> None:
-    """Re-derive ``sec13f_totals`` from the ingested holdings — store only, zero network.
-
-    The offline path for a fix to the totals logic (or the names it matches by): no
-    download, no UW. Ends with a ``JobMessage`` saying what it rebuilt.
-
-    One 13F job at a time (#26): a refused run raises a ``JobMessage`` and writes nothing.
-    """
-    with job_lock.acquire("sec_13f", wait=0) as got:
-        if not got:
-            raise JobMessage(_sec13f_busy_message())
-        _run_sec13f_rebuild()
-
-
-def _run_sec13f_rebuild() -> None:
-    """The rebuild's work, once ``run_sec13f_rebuild`` holds the ``"sec_13f"`` lock."""
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-    totals = sec_13f.recompute_totals()  # the stored map; DeriveRefused propagates
-    if not totals:
-        raise JobMessage("No ingested 13F holdings in the store — nothing to rebuild "
-                         "(the stored totals were left alone). Press Fetch to ingest a data set.")
-    unmatched, _summary = _13f_unmatched()
-    _render_13f(None, unmatched)
-    latest = max(p for periods in totals.values() for p in periods)
-    raise JobMessage(f"Rebuilt 13F totals: {len(totals)} tickers, latest period {latest}."
-                     + (f" {unmatched}" if unmatched else ""))
-
-
-_FALLBACK_DROPS = ("legacy_other_ticker", "legacy_unknown_prefix", "legacy_option_like", "legacy_strict_dropped")
-
-
-def run_sec13f_map(uw=None) -> None:
-    """The 13F CUSIP map job (#207): the map step, then the derive with the new map, then the board.
-
-    OpenFIGI only: at most 400 requests (``core/providers/openfigi.py``), no SEC and no Unusual Whales call, no
-    download and no ingest. It is the first live map (avo's typed words, 2026-10-14: after the dry run on a store
-    copy) and the way to finish a map a Fetch left incomplete. The answers go to ``identity_cusip``; ``cusip_ticker``
-    is rebuilt from them only when the derive with the new map passes the guards (``DeriveRefused`` propagates; the
-    stored map and totals are then kept). A Fetch records the result history; this job, like the rebuild, does not.
-
-    One 13F job at a time (#26): a refused run raises a ``JobMessage`` and writes nothing.
-    """
-    with job_lock.acquire("sec_13f", wait=0) as got:
-        if not got:
-            raise JobMessage(_sec13f_busy_message())
-        _run_sec13f_map()
-
-
-def _run_sec13f_map() -> None:
-    """The map's work, once ``run_sec13f_map`` holds the ``"sec_13f"`` lock."""
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-    cusip_map, map_note, stats = _13f_map_step(run_id(), time.time(), first_run=True)
-    asked = (f"CUSIP map: {stats['answered']} of {stats['candidates']} CUSIP(s) answered in {stats['requests']} "
-             f"OpenFIGI request(s) ({stats['rate_limited']} rate-limited): {stats['present']} mapped, "
-             f"{stats['absent']} unknown to OpenFIGI, {stats['job_errors']} refused; {stats['appended']} row(s) "
-             f"appended to identity_cusip. Legacy fallback: kept {stats['legacy_kept']} legacy CUSIP(s) whose issuer "
-             f"prefix OpenFIGI confirms, dropped "
-             f"{sum(stats[k] for k in _FALLBACK_DROPS)} "
-             f"({stats['legacy_other_ticker']} prefix of another ticker, {stats['legacy_unknown_prefix']} prefix "
-             f"unknown to OpenFIGI, {stats['legacy_option_like']} option-like issue number, "
-             f"{stats['legacy_strict_dropped']} by B-strict).")
-    if map_note:
-        raise RuntimeError(f"{asked} {map_note}")
-    if cusip_map is None:
-        raise JobMessage(f"{asked} No CUSIP is mapped yet: nothing to derive with.")
-    totals = sec_13f.recompute_totals(cusip_map)  # DeriveRefused propagates: the stored map and totals stay
-    if not totals:
-        raise JobMessage(f"{asked} No ingested 13F holdings in the store: the totals were left alone.")
-    unmatched, _summary = _13f_unmatched()
-    _render_13f(None, unmatched)
-    latest = max(p for periods in totals.values() for p in periods)
-    raise JobMessage(f"{asked} Derived {len(totals)} tickers, latest period {latest}, with "
-                     f"{len(sec_13f.load_cusip_ticker())} mapped CUSIPs." + (f" {unmatched}" if unmatched else ""))
 
 
 def run_etf_holdings_sync(uw: UWClient) -> None:

@@ -160,35 +160,6 @@ class TestDashboardRoutes:
         assert jobs._RUNNERS["module_sec_13f"] is runners.build_sec13f
         assert jobs._REQUIRES_UW["module_sec_13f"] is False
 
-    def test_sec13f_rebuild_job_is_store_only(self):
-        from RevenueChaser.app import jobs, runners
-        assert jobs._RUNNERS["sec13f_rebuild"] is runners.run_sec13f_rebuild
-        assert jobs._REQUIRES_UW["sec13f_rebuild"] is False
-        assert jobs._PRODUCES["sec13f_rebuild"] == ["module_sec_13f"]
-
-    def test_sec13f_rebuild_route_and_button(self, monkeypatch):
-        import RevenueChaser.app.dashboard as d
-        seen = []
-        monkeypatch.setattr(d.jobs, "submit", lambda module, params: seen.append(module) or "stubjob")
-        c = self._client()
-        r = c.post("/run/module_sec_13f-rebuild")
-        assert r.status_code == 202 and seen == ["sec13f_rebuild"]
-        assert "btn-sec13f-rebuild" in c.get("/").get_data(as_text=True)
-
-    def test_sec13f_check_registered_no_uw(self):
-        from RevenueChaser.app import jobs
-        assert jobs._REQUIRES_UW.get("sec13f_check") is False
-
-    def test_run_sec13f_check_route_submits(self, monkeypatch):
-        import RevenueChaser.app.dashboard as d
-        seen = []
-        monkeypatch.setattr(d.jobs, "submit", lambda module, params: seen.append(module) or "stubjob")
-        c = self._client()
-        r = c.post("/run/module_sec_13f-check")
-        assert r.status_code == 202 and r.get_json()["job_id"] == "stubjob"
-        assert seen == ["sec13f_check"]
-        assert "btn-sec13f-check" in c.get("/").get_data(as_text=True)
-
     def test_run_earnings_bad_date(self):
         c = self._client()
         r = c.post("/run/earnings", data={"start": "not-a-date", "end": "not-a-date"})

@@ -7,44 +7,47 @@ in DuckDB. So the dependency that has to go is the *import*, not the input: ``en
 the 13F side present, even though the call itself only ever read one table.
 
 ``core/ownership.py`` is where the shared side lives (it already owns ``latest_institutional``, the reader
-rule Asymmetric Growth uses for the institutional share), so the stored-totals read belongs there too.
+rule Asymmetric Growth uses for the institutional share), so the stored-totals read belongs there too. Since G9
+the rows it returns are the builder's (``sec13f_ticker_period`` in ``ownership.duckdb``), not the retired
+derive's.
 
-Store only: the seeded table is a temp DuckDB per test, no provider is asked.
+Store only: the seeded serving file is a temp DuckDB per test, no provider is asked.
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-from RevenueChaser.core import ownership, rawstore
+from RevenueChaser.core import ownership
+from RevenueChaser.rcdata.tests.ownership_fixture import serve_13f
 
 PKG = Path(__file__).resolve().parent.parent
 
 
 def _entry(shares: float) -> dict:
-    return {"2026-03-31": {"holders": 10, "new_holders": 2, "exited_holders": 1,
-                           "buy_flow": 5.0, "sell_flow": 1.0, "shares": shares}}
+    """One quarter in the shape the reader returns: every metric a cell carries, the scan's among them."""
+    return {"2026-03-31": {"shares": shares, "value": shares * 10.0, "holders": 10, "top10_pct": None,
+                           "hhi": None, "new_holders": 2, "exited_holders": 1, "buy_flow": 5.0,
+                           "sell_flow": 1.0, "breadth": None, "breadth_chg": None}}
 
 
-def test_the_stored_13f_totals_are_read_through_the_shared_reader(rawstore_tmp_db):
-    rawstore.write_rows("sec13f_totals", [{"ticker": "AAA", "entry": _entry(100.0)},
-                                          {"ticker": "BBB", "entry": _entry(250.0)}])
+def test_the_served_13f_totals_are_read_through_the_shared_reader():
+    serve_13f({"AAA": _entry(100.0), "BBB": _entry(250.0)})
 
     totals = ownership.sec13f_totals()
 
     assert totals == {"AAA": _entry(100.0), "BBB": _entry(250.0)}
 
 
-def test_a_row_whose_entry_is_not_a_mapping_is_left_out_rather_than_scored(rawstore_tmp_db):
-    """The old reader skipped those silently and the scan must keep doing so: a malformed entry is a name
-    with no institutional block, never a crashed scan."""
-    rawstore.write_rows("sec13f_totals", [{"ticker": "AAA", "entry": _entry(100.0)},
-                                          {"ticker": "BAD", "entry": None}])
+def test_a_metric_the_quarter_has_no_value_for_is_none_rather_than_missing():
+    """An arriving quarter leaves columns NULL; the scan must see the key with None, never a KeyError."""
+    serve_13f({"AAA": {"2026-03-31": {"shares": 100.0}}})
 
-    assert ownership.sec13f_totals() == {"AAA": _entry(100.0)}
+    (cell,) = ownership.sec13f_totals()["AAA"].values()
+    assert cell["shares"] == 100.0 and cell["holders"] is None and cell["buy_flow"] is None
 
 
-def test_an_empty_table_is_an_empty_mapping_not_a_failure(rawstore_tmp_db):
+def test_an_empty_store_is_an_empty_mapping_not_a_failure():
     assert ownership.sec13f_totals() == {}
 
 

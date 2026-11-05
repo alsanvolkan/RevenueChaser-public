@@ -29,8 +29,14 @@ def store_file(dashboard):
 
 
 @pytest.fixture
-def locked_store(store_file):
-    """Hold the store open from this process for the duration of the test."""
+def locked_store(store_file, serve_13f_totals):
+    """Hold the store open from this process for the duration of the test.
+
+    The 13F board's numbers are the builder's since G9, so it reads ``raw.duckdb`` only for the names and the
+    snapshot inputs of the rows it is about to draw: with nothing served it renders its empty state and never
+    meets the lock. One served quarter puts it back in the same position as the other boards.
+    """
+    serve_13f_totals({"NVDA": {"2026-06-30": {"shares": 5_000_000.0, "value": 7e8, "holders": 2250}}})
     conn = duckdb.connect(str(store_file))
     try:
         yield conn

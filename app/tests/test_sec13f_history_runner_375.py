@@ -1,8 +1,8 @@
 """#375 13F writer: the 13F Fetch records the board's rows in result history. Offline, temp stores, fake UW.
 
-Fetch only (a Refresh, the dashboard's self-heal and the store-only rebuild never record); the header carries the
-job's id; the history is recorded after the board file; an SEC failure or a refused derive is the run's ``error``;
-names not refreshed make it partial; a history failure is a job note and never blocks the Fetch.
+Fetch only (a Refresh and the dashboard's self-heal never record); the header carries the job's id; the history is
+recorded after the board file; names not refreshed make it partial; a history failure is a job note and never
+blocks the Fetch. Since G9 the Fetch asks the SEC for nothing, so there is no SEC stage or derive to fail.
 """
 from __future__ import annotations
 
@@ -56,34 +56,10 @@ def test_the_shares_step_runs_before_the_board_file_and_the_history_after_it(fet
     assert order == ["shares", "board", "history"]
 
 
-def test_an_sec_failure_is_the_runs_error_and_the_job_still_fails(fetch, monkeypatch):
-    def down(*a, **k):
-        raise RuntimeError("SEC index down")
-
-    monkeypatch.setattr(sec_13f, "download_missing_zips", down)
-    with pytest.raises(RuntimeError, match="SEC index down"):
-        runners.build_sec13f(None)
-    (head,) = _headers()
-    assert head["error"] == "RuntimeError: SEC index down" and len(_rows("job-13f")) == 1
-
-
-def test_a_refused_derive_is_the_runs_error(fetch, monkeypatch):
-    sec_13f.recompute_totals()
-
-    def refuse(*a, **k):
-        raise sec_13f.DeriveRefused("orphan holdings")
-
-    monkeypatch.setattr(sec_13f, "recompute_totals", refuse)
-    with pytest.raises(sec_13f.DeriveRefused):
-        runners.build_sec13f(None)
-    (head,) = _headers()
-    assert head["error"] == "DeriveRefused: orphan holdings"
-
-
 def test_names_not_refreshed_make_the_run_partial_and_unmatched_cusips_a_warning(fetch, fake_uw, monkeypatch):  # noqa: F811
     sec_13f.save_sec13f_meta({"AAPL": {"name": "", "sector": "Unclassified"}})  # a placeholder: the UW step runs
     fake_uw.ok = (False, "UNUSUAL_WHALES_API_KEY is not set")
-    monkeypatch.setattr(runners, "_13f_unmatched", lambda: ("7 CUSIPs with no ticker are left out", None))
+    monkeypatch.setattr(runners, "_13f_coverage_note", lambda: "7 CUSIPs with no ticker are left out")
     with pytest.raises(jobs.JobMessage, match="not refreshed"):
         runners.build_sec13f(None)
     (head,) = _headers()
@@ -102,9 +78,6 @@ def test_a_history_failure_is_a_job_note_and_the_fetch_still_returns_the_board(f
                for n in ledger.take_notes())
 
 
-def test_a_refresh_and_a_rebuild_never_record(fetch):
-    sec_13f.recompute_totals()
+def test_a_refresh_never_records(fetch):
     runners.run_sec_13f_latest(None)
-    with pytest.raises(jobs.JobMessage, match="Rebuilt 13F totals"):
-        runners.run_sec13f_rebuild(None)
     assert _none_recorded()

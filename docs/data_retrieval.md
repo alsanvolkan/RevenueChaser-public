@@ -86,7 +86,7 @@ no downloaded state worth re-deriving, so they keep a "click Fetch" empty state.
 | Asymmetric Growth | `/run/module_asymmetric_growth` | `refresh_universe`, `no_fetch` | model-only |
 | Swing Potential | `/run/swing` | `refresh_universe`, `no_fetch` | model-only |
 | Fundamentals | `/run/module_fundamentals` | `refresh_universe`, `no_fetch` | model-only |
-| SEC 13F | `/run/module_sec_13f` (Fetch: download → ingest → CUSIP map → derive; no UW key needed) · `/run/module_sec_13f-rebuild` (derive only, zero network) · `/run/module_sec_13f-map` (CUSIP map → derive: OpenFIGI only, at most 400 requests, no SEC or UW call; no button, #207) | — | store |
+| SEC 13F | `/run/module_sec_13f` (Fetch: names/sectors → shares outstanding → render; no UW key needed, and no SEC call since G9 — the builder owns the numbers) | — | store |
 | LEAPS | `/run/module_leaps` | — | model-only |
 | Forwards Testing | *(none)* | — | always live from files |
 | **Universe** (header) | `/run/universe` | — | n/a — SEC member list + market data into `equity_universe`; not a tab |

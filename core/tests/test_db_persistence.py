@@ -91,31 +91,20 @@ def test_leaps_store_populated(rawstore_tmp_db):
 
 
 def test_sec13f_ingest_populated(rawstore_tmp_db):
-    import csv
-    import io
-    import zipfile
-    from RevenueChaser.module_sec_13f import engine as sf
-
-    path = rawstore.DB_PATH.parent / "q1_form13f.zip"
-    with zipfile.ZipFile(path, "w") as z:
-        buf = io.StringIO()
-        w = csv.DictWriter(buf, fieldnames=["ACCESSION_NUMBER", "CIK", "FILING_DATE",
-                                            "SUBMISSIONTYPE", "PERIODOFREPORT"], delimiter="\t")
-        w.writeheader()
-        w.writerow({"ACCESSION_NUMBER": "acc1", "CIK": "1000", "FILING_DATE": "01-MAY-2026",
-                    "SUBMISSIONTYPE": "13F-HR", "PERIODOFREPORT": "31-MAR-2026"})
-        z.writestr("SUBMISSION.tsv", buf.getvalue())
-        buf2 = io.StringIO()
-        w2 = csv.DictWriter(buf2, fieldnames=["ACCESSION_NUMBER", "NAMEOFISSUER", "CUSIP", "VALUE",
-                                              "SSHPRNAMT", "SSHPRNAMTTYPE", "PUTCALL"], delimiter="\t")
-        w2.writeheader()
-        w2.writerow({"ACCESSION_NUMBER": "acc1", "NAMEOFISSUER": "APPLE INC", "CUSIP": "111111111",
-                     "VALUE": "1000", "SSHPRNAMT": "100", "SSHPRNAMTTYPE": "SH", "PUTCALL": ""})
-        z.writestr("INFOTABLE.tsv", buf2.getvalue())
-
-    assert sf.ingest_zips([path]) == 1
+    """The 13F ingest tables have no writer since G9 (the builder keeps the filings and holdings in Parquet, and
+    ``ownership.duckdb`` serves them). They stay until G10 retires them, so what is tested is that the rows a
+    store already holds are still writable and readable — not that anything fills them."""
+    rawstore.write_rows("sec13f_submissions", [{"accession": "acc1", "cik": "1000", "period": "2026-03-31",
+                                                "filing_date": "2026-05-01", "type": "13F-HR"}])
+    rawstore.write_rows("sec13f_holdings", [{"accession": "acc1", "line_no": 1, "cusip": "111111111",
+                                             "cik": "1000", "shares": 100.0, "value": 1000.0,
+                                             "period": "2026-03-31", "sshprnamttype": "SH", "putcall": ""}])
+    rawstore.write_rows("sec13f_cusip_names", [{"cusip": "111111111", "name": "APPLE INC"}])
+    rawstore.write_rows("sec13f_ingested_zips", [{"filename": "q1_form13f.zip"}])
     assert rawstore.count("sec13f_submissions") == 1
     assert rawstore.count("sec13f_holdings") == 1
+    assert rawstore.count("sec13f_cusip_names") == 1
+    assert rawstore.count("sec13f_ingested_zips") == 1
 
 
 def test_watchlist_populated(rawstore_tmp_db):
@@ -257,18 +246,21 @@ def test_sec13f_ticker_names_populated(rawstore_tmp_db):
 
 
 def test_cusip_ticker_populated(rawstore_tmp_db):
-    from RevenueChaser.module_sec_13f import engine as sf
-    sf.save_cusip_ticker({"037833100": {"ticker": "AAPL", "source": "openfigi"}})
-    assert sf.load_cusip_ticker()["037833100"]["ticker"] == "AAPL"
+    """No writer since G9: the builder's ``sec13f_cusip_map`` names a CUSIP per period. The table stays until
+    G10, so the round trip is the test."""
+    rawstore.write_rows("cusip_ticker", [{"cusip": "037833100",
+                                          "entry": {"ticker": "AAPL", "source": "openfigi"}}])
+    (row,) = rawstore.get_all("cusip_ticker")
+    assert row["entry"]["ticker"] == "AAPL"
 
 
 def test_sec13f_totals_populated(rawstore_tmp_db):
-    from RevenueChaser.module_sec_13f import engine as sf
-    sf.save_totals({"AAPL": {"2026-03-31": {"shares": 1.0, "holders": 2}}})
-    assert sf.load_totals()["AAPL"]["2026-03-31"]["holders"] == 2
-    # full refresh: a ticker with no holdings left must not linger
-    sf.save_totals({"MSFT": {"2026-03-31": {"shares": 2.0, "holders": 1}}})
-    assert "AAPL" not in sf.load_totals()
+    """No writer since G9: the board reads ``sec13f_ticker_period`` from the ownership store. The table stays
+    until G10, so the round trip is the test."""
+    rawstore.write_rows("sec13f_totals", [{"ticker": "AAPL",
+                                           "entry": {"2026-03-31": {"shares": 1.0, "holders": 2}}}])
+    (row,) = rawstore.get_all("sec13f_totals")
+    assert row["entry"]["2026-03-31"]["holders"] == 2
 
 
 def test_etf_holdings_cache_populated(rawstore_tmp_db, monkeypatch):

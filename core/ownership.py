@@ -1,7 +1,7 @@
 """Ownership per session (#300, D20): the one writer of ``ownership_snapshot``.
 
-It is also the shared **reader** of the stored 13F totals (:func:`sec13f_totals`, #16), a table it does not
-write — ``module_sec_13f.engine.save_totals`` does. That read lives here so a screener whose score includes
+It is also the shared **reader** of the served 13F totals (:func:`sec13f_totals`, #16), which it does not
+write — the builder does (``rcdata/build/ownership``). That read lives here so a screener whose score includes
 institutional ownership reads rows instead of importing the 13F board's engine.
 
 Two jobs store what they read, each under its own ``source``:
@@ -36,7 +36,6 @@ from RevenueChaser.core import calendar, job_control, rawstore
 logger = logging.getLogger(__name__)
 
 TABLE = "ownership_snapshot"
-SEC13F_TOTALS = "sec13f_totals"
 YFINANCE = "yfinance"
 UW_INFO = "uw_info"
 FIELDS = ("shares_outstanding", "insider_pct", "institutional_pct")
@@ -154,23 +153,29 @@ def record(rows, *, run_id: str, run_at: float | None = None, fetched_at: float 
 READER_ORDER = (UW_INFO, YFINANCE)
 
 
+# The metrics a 13F cell carries, in the shape the retired derive wrote: ``rcdata/build/ownership/serve.py``
+# ``METRICS``, pinned by ``module_sec_13f/tests/test_sec13f_board_store_g9.py``.
+SEC13F_METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow",
+                  "sell_flow", "breadth", "breadth_chg")
+
+
 def sec13f_totals() -> dict[str, dict]:
-    """The stored 13F per-ticker totals, ``{ticker: {period: metrics}}`` — ``sec13f_totals`` as the derive
-    wrote it, nothing recomputed and no network.
+    """The served 13F per-ticker totals, ``{ticker: {"YYYY-MM-DD": metrics}}`` — nothing recomputed, no network.
+
+    The builder owns these numbers (``rcdata/build/ownership``, PR 16: ``sec13f_ticker_period`` in
+    ``ownership.duckdb``), and since G9 nothing else writes them: the dashboard's own derive and the
+    ``sec13f_totals`` rows it kept in ``raw.duckdb`` are gone.
 
     Read by the 13F board (``module_sec_13f.engine.load_totals``) and by the Asymmetric Growth scan, whose
     institutional block is part of the score (owner, 5 Nov 2026). It lives here so the screener reads rows
-    rather than importing the 13F engine for them (#16): a table both sides read is the store's contract,
-    while an engine call makes one board's run depend on the other board's module being present.
-
-    A row whose ``entry`` is not a mapping is left out, so a malformed row costs one name its institutional
-    block instead of failing the reader.
+    rather than importing the 13F engine for them (#16): a store both sides read is the contract, while an
+    engine call makes one board's run depend on the other board's module being present.
     """
-    out = {}
-    for r in rawstore.get_all(SEC13F_TOTALS):
-        entry = r.get("entry")
-        if isinstance(entry, dict):
-            out[r["ticker"]] = entry
+    from RevenueChaser.rcdata import read as rcread
+
+    out: dict[str, dict] = {}
+    for r in rcread.holders_13f():
+        out.setdefault(r["ticker"], {})[r["period"].isoformat()] = {m: r[m] for m in SEC13F_METRICS}
     return out
 
 

@@ -96,7 +96,11 @@ def _seed() -> None:
 
 
 def _seed_cusip_map() -> None:
-    """Two CUSIPs the store has asked about (one mapped, one empty) and one the filings hold unmapped."""
+    """Two CUSIPs the store has asked about (one mapped, one empty), and a served quarter whose builder left one
+    CUSIP without a ticker (``sec13f_periods.unmapped_cusips``, G9)."""
+    from RevenueChaser.rcdata.tests.ownership_fixture import serve_13f
+    serve_13f({"AAPL": {"2026-06-30": {"shares": 10.0, "value": 1000.0}}},
+              periods={"2026-06-30": {"unmapped_cusips": 1, "coverage": 0.6667}})
     rawstore.write_rows("identity_cusip", [
         {"cusip": "037833100", "status": "present", "ticker": "AAPL", "source": "openfigi",
          "run_at": 2.0},
@@ -106,16 +110,7 @@ def _seed_cusip_map() -> None:
     rawstore.write_rows("cusip_ticker", [
         {"cusip": "037833100", "entry": {"ticker": "AAPL", "source": "openfigi"}},
     ])
-    rawstore.write_rows("sec13f_submissions", [
-        {"accession": "acc-1", "cik": "0000000001", "period": "2026-06-30",
-         "filing_date": "2026-08-10", "type": "13F-HR", "report_type": "13F-HR"},
-    ])
-    rawstore.write_rows("sec13f_holdings", [
-        {"accession": "acc-1", "line_no": 1, "cusip": "037833100", "cik": "0000000001",
-         "shares": 10.0, "value": 1000.0, "period": "2026-06-30", "sshprnamttype": "SH"},
-        {"accession": "acc-1", "line_no": 2, "cusip": "999999999", "cik": "0000000001",
-         "shares": 5.0, "value": 500.0, "period": "2026-06-30", "sshprnamttype": "SH"},
-    ])
+
 
 
 def _coverage() -> dict:
@@ -274,15 +269,16 @@ def test_the_isin_row_is_present_at_its_true_count_including_zero(rawstore_tmp_d
     assert "CUSIP" in row["denominator"], "an ISIN is derived from a CUSIP: that is its denominator"
 
 
-def test_the_cusip_row_expands_into_mapped_asked_empty_and_never_asked(rawstore_tmp_db):
+def test_the_cusip_row_expands_into_mapped_and_empty(rawstore_tmp_db):
+    """The 'never asked' row went with the retired map step (G9): the builder names a CUSIP inside its own
+    build, so there is no queue of CUSIPs waiting to be asked about."""
     _seed()
     _seed_cusip_map()
     rows = _rows(_coverage(), "identifiers")
     assert rows["cusip_mapped"]["covered"] == 1, "one stored answer names a ticker"
     assert rows["cusip_mapped"]["expected"] == 2, "of the 2 CUSIPs the store has asked about"
     assert rows["cusip_empty"]["covered"] == 1, "asked and answered empty"
-    assert rows["cusip_never_asked"]["covered"] == 1, "held by a filing, never asked"
-    assert rows["cusip_never_asked"]["expected"] == 3, "asked plus waiting"
+    assert "cusip_never_asked" not in rows
 
 
 def test_the_two_unmatched_counts_are_labelled_apart(rawstore_tmp_db):
@@ -303,7 +299,6 @@ def test_no_cusip_map_stored_is_zero_asked_not_an_error(rawstore_tmp_db):
     rawstore.execute("DELETE FROM identity_cusip")
     rows = _rows(_coverage(), "identifiers")
     assert rows["cusip_mapped"]["covered"] == 0 and rows["cusip_mapped"]["expected"] == 0
-    assert rows["cusip_never_asked"]["covered"] == 0
 
 
 def test_a_failed_cusip_read_says_unreadable(rawstore_tmp_db, monkeypatch):
@@ -315,32 +310,17 @@ def test_a_failed_cusip_read_says_unreadable(rawstore_tmp_db, monkeypatch):
     assert rows["cusip_mapped"]["covered"] is None and rows["cusip_mapped"]["state"] == "unreadable"
 
 
-def test_a_failed_map_queue_read_never_counts_the_waiting_cusips_as_zero(rawstore_tmp_db, monkeypatch):
-    """The map answered; the 13F queue under it could not be read: that row is unreadable, not 0.
-
-    The 13F board's own count is a different read and still comes through.
-    """
+def test_a_failed_13f_period_read_says_unreadable_never_zero(rawstore_tmp_db, monkeypatch):
+    """The map answered; the served quarter under it could not be read: that row is unreadable, not 0."""
     _seed()
     _seed_cusip_map()
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-    monkeypatch.setattr(sec_13f, "map_candidates",
-                        lambda: (_ for _ in ()).throw(RuntimeError("locked")))
-    rows = _rows(_coverage(), "identifiers")
-    assert rows["cusip_never_asked"]["covered"] is None
-    assert rows["cusip_never_asked"]["state"] == "unreadable"
-    assert rows["sec13f_left_out"]["covered"] == 1, "a different read still answers"
-
-
-def test_a_failed_13f_summary_read_says_unreadable_never_zero(rawstore_tmp_db, monkeypatch):
-    _seed()
-    _seed_cusip_map()
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-    monkeypatch.setattr(sec_13f, "unmatched_summary",
+    from RevenueChaser.rcdata import read as rcread
+    monkeypatch.setattr(rcread, "periods_13f",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("locked")))
     rows = _rows(_coverage(), "identifiers")
     assert rows["sec13f_left_out"]["covered"] is None
     assert rows["sec13f_left_out"]["state"] == "unreadable"
-    assert rows["cusip_never_asked"]["covered"] == 1, "the map queue still answers"
+    assert rows["cusip_mapped"]["covered"] == 1, "a different read still answers"
 
 
 # ── cost ───────────────────────────────────────────────────────────────────
