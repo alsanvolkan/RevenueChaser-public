@@ -1,11 +1,11 @@
 """``python -m RevenueChaser.rcdata.build`` — the builder CLI.
 
-    run [--once] [--dataset X [--as-of YYYY-MM-DD] [--allow-shrink] [--tiers A,B] [--names KO,MSFT]]
+    run [--once] [--dataset X [--as-of YYYY-MM-DD] [--allow-shrink] [--no-build] [--tiers A,B] [--names KO,MSFT]]
                                         take queued requests in order (FIFO) and run each; without --dataset, every
                                         dataset that is due (``due.py``) is queued first (by "schedule", once);
                                         with --dataset, a dataset with nothing queued (or any, with --as-of) is
                                         queued first (by "cli"); --once stops when the queue is empty
-    backfill <dataset> [<dataset> ...] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-shrink]
+    backfill <dataset> [<dataset> ...] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-shrink] [--no-build]
              [--tiers A,B] [--names KO,MSFT]
                                         queue one backfill request per dataset and run them now, in the order given,
                                         in this one process (so the WRDS datasets share one login); names may be
@@ -17,6 +17,13 @@
                                         (anchors = the benchmarks and rotation ETFs, watchlist, cover_classes).
                                         A narrowed request gets only what it names (Karar 82); a dataset that
                                         cannot narrow its fetch takes the request and says so on its check row
+
+    --no-build                          fetch and stage Parquet, but do not build the serving file: the request
+                                        ends ``skipped``, the serving file is untouched, and the dataset stays due,
+                                        so the next ordinary pass builds it (the raw file it staged is the resume
+                                        marker, so that pass sends no call). For staging days of data without
+                                        holding the builder lock through a build each time. A person's switch: the
+                                        hourly pass never sets it (``due.enqueue_due`` queues no params)
 
     attended [--dataset X]              drain the queued requests of the attended datasets (WRDS: a person logs in
                                         and confirms Duo) and stop. The only runner that may take someone else's
@@ -198,6 +205,8 @@ def main(argv: list[str] | None = None) -> int:
     group_help = ("the extra groups to ask besides the tiers and names: anchors (the benchmarks and rotation "
                   "ETFs), watchlist, cover_classes. A narrowed request gets only what it names; a request that "
                   "names nothing is the daily run and gets all three (Karar 82)")
+    no_build_help = '("stage only": fetch and write Parquet, leave the serving file as it is; the request ends "skipped" and the dataset stays due, so the next ordinary pass builds it)'
+    run.add_argument("--no-build", dest="no_build", action="store_true", help="with --dataset: " + no_build_help)
     run.add_argument("--tiers", help=scope_help)
     run.add_argument("--names", help=scope_help)
     run.add_argument("--include", help=group_help)
@@ -209,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     bf.add_argument("--from", dest="start")
     bf.add_argument("--to", dest="end")
     bf.add_argument("--allow-shrink", action="store_true", help=shrink_help)
+    bf.add_argument("--no-build", dest="no_build", action="store_true", help=no_build_help)
     bf.add_argument("--tiers", help=scope_help)
     bf.add_argument("--names", help=scope_help)
     bf.add_argument("--include", help=group_help)
@@ -220,10 +230,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="how long to wait for the store's writer turn before exit 3 (default: "
                              f"{DEFAULT_WAIT_S:.0f} for a person's command, 0 for the hourly run)")
     args = p.parse_args(argv)
-    if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink or args.tiers or args.names
-                                                   or args.include):
+    if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink or args.no_build or args.tiers
+                                                   or args.names or args.include):
         # They only shape the request queued for --dataset; without it they would be dropped silently (F5).
-        p.error("--as-of, --allow-shrink, --tiers, --names and --include need --dataset")
+        p.error("--as-of, --allow-shrink, --no-build, --tiers, --names and --include need --dataset")
     scope = {k: [n.strip() for n in v.split(",") if n.strip()]
              for k, v in (("tiers", getattr(args, "tiers", None)), ("names", getattr(args, "names", None)),
                           ("include", getattr(args, "include", None))) if v}
@@ -296,7 +306,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.cmd == "backfill":
             params = {"mode": "backfill", **({"from": args.start} if args.start else {}),
                       **({"to": args.end} if args.end else {}),
-                      **({"allow_shrink": True} if args.allow_shrink else {}), **scope}
+                      **({"allow_shrink": True} if args.allow_shrink else {}),
+                      **({"no_build": True} if args.no_build else {}), **scope}
             worst = 0
             for name in args.datasets:
                 mine = _own_requests_only(name)
@@ -310,9 +321,11 @@ def main(argv: list[str] | None = None) -> int:
                 worst = max(worst, int(row["result"] == "failed"))
             return worst
         mine = _own_requests_only(args.dataset) if args.dataset else None
-        if args.dataset and (args.as_of or args.allow_shrink or scope or not ops.queued(args.dataset, by=mine)):
+        if args.dataset and (args.as_of or args.allow_shrink or args.no_build or scope
+                             or not ops.queued(args.dataset, by=mine)):
             params = {**({"as_of": args.as_of} if args.as_of else {}),
-                      **({"allow_shrink": True} if args.allow_shrink else {}), **scope}
+                      **({"allow_shrink": True} if args.allow_shrink else {}),
+                      **({"no_build": True} if args.no_build else {}), **scope}
             ops.enqueue(args.dataset, params or None, by="cli")
         due_failed = 0
         if not args.dataset:
