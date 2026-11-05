@@ -118,6 +118,11 @@ VIX_GREEKS_TICKER = "VIX"
 VIX_GREEKS_PATH = "/stock/{t}/greek-exposure/expiry"
 MANDATORY = ("gex_levels",)
 
+# /option-contracts answers at most this many rows per page (docs/openapi.yaml: "Default 500 Max 500"), and the
+# chains are paged up to this many pages (#255: an SPX 0DTE chain is thousands of contracts).
+CHAIN_PAGE_LIMIT = 500
+CHAIN_MAX_PAGES = 20
+
 # Spot-exposure strikes come back capped at this many rows per call (UW's limit).
 SPOT_EXPOSURE_LIMIT = 500
 
@@ -391,6 +396,45 @@ def _fetch_snapshot_staged(
             _persist(filename, payload)
         return payload
 
+    def _call_chain(name: str, path: str, params: dict, filename: str) -> dict | None:
+        """An /option-contracts call followed past UW's 500-row page (#255): page 0 as before (no ``page``), then
+        ``page=1, 2, ...`` with the same limit until a page is shorter. A contract on two pages means the answer
+        moved while paging; the repeat is dropped and a warning says so. The ceiling keeps the pages read so far
+        and warns, rather than loop."""
+        first = _request(name, path, params)
+        if first is None:
+            return None
+        rows = list(first.get("data") or []) if isinstance(first.get("data"), list) else []
+        sizes = [len(rows)]
+        while sizes[-1] >= CHAIN_PAGE_LIMIT:
+            if len(sizes) >= CHAIN_MAX_PAGES:
+                warnings.append(f"{name}: {CHAIN_MAX_PAGES} full pages, chain may be cut")
+                break
+            more = _request(name, path, {**params, "page": len(sizes), "limit": CHAIN_PAGE_LIMIT})
+            items = more.get("data") if isinstance(more, dict) else None
+            if not isinstance(items, list):
+                warnings.append(f"{name}: page {len(sizes)} failed, chain cut at {len(rows)} contracts")
+                break
+            sizes.append(len(items))
+            rows.extend(items)
+        seen: set = set()
+        kept = []
+        for r in rows:
+            key = r.get("option_symbol") if isinstance(r, dict) else None
+            if key is not None and key in seen:
+                continue
+            if key is not None:
+                seen.add(key)
+            kept.append(r)
+        if len(kept) < len(rows):
+            warnings.append(f"{name}: {len(rows) - len(kept)} contract(s) repeated across pages "
+                            f"(the answer moved while paging); repeats dropped")
+        payload = {**first, "data": kept}
+        if len(sizes) > 1:
+            payload["pages"] = sizes
+        _persist(filename, payload)
+        return payload
+
     # 1. Base endpoints (gex_levels mandatory)
     for name, (tmpl, base_params) in (HISTORY_ENDPOINTS if history_only else BASE_ENDPOINTS).items():
         path = tmpl.format(t=ticker)
@@ -547,11 +591,11 @@ def _fetch_snapshot_staged(
     if history_only:
         _oc = None                 # a chain is live whatever date is asked (LIVE_FILES): never in a past day
     else:
-        _oc = _call("option_chain", f"/stock/{ticker}/option-contracts",
+        _oc = _call_chain("option_chain", f"/stock/{ticker}/option-contracts",
                     {"expiry": report_date}, "option_chain.json")
         if _oc is None or not (_oc.get("data") or []):
             warnings.append("option_chain: empty for report expiry; retrying live chain")
-            _oc = _call("option_chain", f"/stock/{ticker}/option-contracts",
+            _oc = _call_chain("option_chain", f"/stock/{ticker}/option-contracts",
                         {}, "option_chain.json")
     if _oc is not None and (_oc.get("data") or []):
         raw["option_chain"] = _oc
@@ -565,7 +609,7 @@ def _fetch_snapshot_staged(
         picks = skew_expiries([r.get("expiry") for r in normalize_expiry_rows(raw.get("expiry_exposure"))],
                               asof_date)
         for key, expiry in picks.items():
-            _sc = _call(f"skew_chain_{key}", f"/stock/{ticker}/option-contracts", {"expiry": expiry},
+            _sc = _call_chain(f"skew_chain_{key}", f"/stock/{ticker}/option-contracts", {"expiry": expiry},
                         f"skew_chain_{key}.json")
             if _sc is not None and (_sc.get("data") or []):
                 raw["skew_chains"][key] = _sc
@@ -580,7 +624,7 @@ def _fetch_snapshot_staged(
         target = target_friday(asof_date)
         listed = {r.get("expiry") for r in normalize_expiry_rows(raw.get("expiry_exposure"))}
         if target in listed:
-            _tc = _call("target_chain", f"/stock/{ticker}/option-contracts", {"expiry": target}, "target_chain.json")
+            _tc = _call_chain("target_chain", f"/stock/{ticker}/option-contracts", {"expiry": target}, "target_chain.json")
             if _tc is not None and (_tc.get("data") or []):
                 raw["target_chain"] = _tc
             else:
