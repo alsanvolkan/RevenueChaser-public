@@ -281,3 +281,41 @@ def test_an_unknown_base_is_refused():
         with serving.build("market", base="incremental"):
             pass
     assert not Path(config.MARKET_DIR).exists(), "the refusal comes before any file is made"
+
+
+def test_a_live_file_without_the_build_mode_column_gets_it_in_the_copy():
+    """Why this needs no SERVING_SCHEMA_VERSION bump: a file built before the column is upgraded, not refused."""
+    live = serving.live_path("market")
+    live.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(live))
+    con.execute(f"CREATE TABLE {serving.VERSION_TABLE} (kind TEXT, version INTEGER, built_at DOUBLE, "
+                "build_id TEXT)")                                  # the four columns of before build_mode
+    con.execute(f"INSERT INTO {serving.VERSION_TABLE} VALUES ('market', ?, 0, 'old')",
+                [serving.SERVING_SCHEMA_VERSION["market"]])
+    con.execute("CREATE TABLE t AS SELECT range AS i FROM range(10)")
+    con.execute("CHECKPOINT")
+    con.close()
+    with serving.build("market", base="live") as b:
+        assert b.mode == "live", "an older live file of the same version is still copied"
+        b.con.execute("INSERT INTO t SELECT range + 10 FROM range(5)")
+        b.swap({"t": 15})
+    with serving.open_read("market") as con:
+        assert _mode(con) == "live"
+        assert con.execute("SELECT count(*) FROM t").fetchone()[0] == 15
+
+
+def test_a_copy_that_breaks_leaves_no_partial_build_file(monkeypatch):
+    """A half-copied 2.9 GB file on the live files' own SSD is what a failed copy must not leave behind."""
+    _build_t(10)
+    before = _sha(serving.live_path("market"))
+
+    def no_space(src, dst):
+        Path(dst).write_bytes(b"half a file")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(serving.shutil, "copy2", no_space)
+    with pytest.raises(OSError, match="No space"):
+        with serving.build("market", base="live"):
+            pass
+    assert _leftovers() == [], "the partial copy must go with the failure"
+    assert _sha(serving.live_path("market")) == before

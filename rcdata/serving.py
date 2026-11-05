@@ -161,8 +161,7 @@ def _remove(path: Path) -> None:
 class BuildFile:
     """One build in progress: its read-write connection, path and id. Made by :func:`build`."""
 
-    def __init__(self, kind: str, build_id: str, path: Path, con: duckdb.DuckDBPyConnection,
-                 mode: str = "fresh"):
+    def __init__(self, kind: str, build_id: str, path: Path, con: duckdb.DuckDBPyConnection, mode: str):
         self.kind, self.build_id, self.path, self.con = kind, build_id, path, con
         # What this file started as, for the datasets: under ``"live"`` their tables are already here with the
         # live rows, under ``"fresh"`` the file is empty and every table is built whole.
@@ -331,11 +330,10 @@ def _copy_live(kind: str, path: Path) -> str:
     """
     if _live_version(kind) != SERVING_SCHEMA_VERSION[kind]:
         return "fresh"
-    live = live_path(kind)
-    shutil.copy2(live, path)
-    wal = live.with_name(live.name + ".wal")
-    if wal.exists():                  # a killed builder's unfinished writes; copied so DuckDB replays them here
-        shutil.copy2(wal, path.with_name(path.name + ".wal"))
+    # No ``.wal`` to carry over: ``swap`` checkpoints and closes before its checks, ``_verify`` refuses a build file
+    # that still has one, and only the ``.duckdb`` is ever moved or linked. A ``.wal`` beside a live file would mean
+    # something outside this module held the writer, and replaying that into a build is not the safe answer.
+    shutil.copy2(live_path(kind), path)
     return "live"
 
 
@@ -366,10 +364,14 @@ def build(kind: str, base: str = "fresh") -> Iterator[BuildFile]:
     build_id = new_build_id()
     path = build_path(kind, build_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    mode = _copy_live(kind, path) if base == "live" else "fresh"
     spill = spill_dir(path)
     spill.parent.mkdir(parents=True, exist_ok=True)               # DuckDB makes only the last level
-    con = duckdb.connect(str(path), config={**build_config(), "temp_directory": str(spill)})
+    try:
+        mode = _copy_live(kind, path) if base == "live" else "fresh"
+        con = duckdb.connect(str(path), config={**build_config(), "temp_directory": str(spill)})
+    except BaseException:
+        _remove(path)      # a copy that broke mid-way is as large as the live file, on the live files' own disk
+        raise
     b = BuildFile(kind, build_id, path, con, mode)
     try:
         _stamp(con, kind, build_id, mode)
