@@ -17,10 +17,10 @@ from .charts.tornado import build_tornado_fig
 from .brier import BRIER_FILENAME
 from .config import DATA_ROOT, HISTORY_FILENAME, TICKER, UW_API_TOKEN
 from . import safe_json
-from .brier import record_probs
+from .brier import record_probs, score_pending
 from .normalize import normalize_snapshot
 from .render import render_html, render_markdown
-from .scenarios import build_scenarios
+from .scenarios import build_scenarios, scenario_bands
 from .raw_day import load_raw_day
 from .snapshot import fetch_snapshot
 from . import store_reads
@@ -158,6 +158,20 @@ def _backfill_history(root: Path, uw, ticker: str,
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _score_brier(asof_date: str, brier_path: Path) -> list[str]:
+    """Score the recorded weeks whose target Friday has closed, from the stored SPX closes (F1).
+
+    Returns the asof dates scored now; an empty list when the closes are not stored."""
+    candles = store_reads.spx_candles(asof_date)
+    closes = {r["date"]: float(r["close"]) for r in candles.get("rows") or [] if r.get("close") is not None}
+    if not closes:
+        return []
+    scored = score_pending(closes, path=brier_path)["scored"]
+    if scored:
+        logger.info("spx brier scored %d record(s): %s", len(scored), ", ".join(scored))
+    return scored
 
 
 def _load_prev_snapshot(root: Path, asof_date: str) -> dict | None:
@@ -311,9 +325,10 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
     # Brier scorecard: record this week's scenario probabilities (honest audit), Fetch only
     if record:
         try:
+            _score_brier(asof_date, brier_path)
             scenarios = build_scenarios(snapshot).get("scenarios", [])
             probs = {s["name"]: s["p"] for s in scenarios}
-            record_probs(asof_date, probs, path=brier_path)
+            record_probs(asof_date, probs, path=brier_path, bands=scenario_bands(snapshot))
         except safe_json.CorruptJsonError as exc:
             logger.error("spx brier not recorded (file kept aside): %s", exc)
         except Exception as exc:  # noqa: BLE001 — scorecard is best-effort

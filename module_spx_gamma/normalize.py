@@ -9,16 +9,24 @@ from .charm_pin import (
     MODE_DIRECTIONALIZED_VOLUME,
     MODE_OPEN_INTEREST,
     normalize_spot_exposure_rows,
+    report_charm_pin,
     qualify_charm,
     vanna_peaks,
 )
 from .config import TICKER, net_sum, to_float
-from .chains import normalize_option_chain
+from .brier import target_friday
+from .chains import delta25_skew, normalize_option_chain, parse_option_symbol, straddle_move
 from .engines.iron_butterfly import build_iron_butterfly
 from .engines.prediction_engine import generate_prediction_matrix
 from .expected_move import expected_move, pick_iv
-from .expiry_table import normalize_expiry_rows
+from .dealer_book import dealer_book
+from .hourly import hourly_closes
+from .tails import tail_table
+from .vol_calendar import week_events
+from .week_gamma import week_map
+from .expiry_table import front_expiry_share, normalize_expiry_rows, session_hedge_flow
 from .levels import (
+    expiry_walls,
     band_walls,
     cumulative_gex_crossing,
     cumulative_gex_envelope,
@@ -115,6 +123,8 @@ def normalize_strike_expiry_rows(strike_expiry_payloads: dict | list | None, aso
                 "call_gex": to_float(r.get("call_gex")),
                 "put_gex": to_float(r.get("put_gex")),
                 "net_gamma": net_sum(r.get("call_gex"), r.get("put_gex")),
+                # F2: UW's strike-expiry rows carry charm; the 30 Oct report's pin is read from them.
+                "net_charm": net_sum(r.get("call_charm"), r.get("put_charm")),
             })
     return rows
 
@@ -281,45 +291,32 @@ def normalize_realized_vol(payload: dict | None) -> dict | None:
     }
 
 
-def normalize_skew(iv_payload: dict | None) -> dict | None:
-    """Put bias (skew) derived from the interpolated-iv put/call blocks.
+def chain_skew(raw: dict, settled_expiry: str | None = None) -> dict | None:
+    """Skew as the reports quote it (F3): the 25-delta put IV minus the 25-delta call IV, from UW /option-contracts.
 
-    UW's /interpolated-iv returns two identically-tenored blocks (18 rows =
-    9 tenors x 2 blocks). We treat one as the call block and the other as the
-    put block; the put/call assignment is NOT documented by UW, so the result
-    is flagged ``derived_unverified: True``. Put bias = put block IV - call
-    block IV at the 30d and 90d tenors.
+    0DTE comes from the front chain the snapshot already holds (``option_chain``); 1M and 3M from the chains
+    ``snapshot.skew_expiries`` picked near 30 and 90 days (``skew_chains``). The old reading of UW's two
+    /interpolated-iv blocks as calls and puts was a guess and is retired. None when no tenor can be read.
     """
-    if not iv_payload or "data" not in iv_payload:
+    tenors = {"0dte": raw.get("option_chain")}
+    if settled_expiry and tenors["0dte"]:
+        # the as-of day's 0DTE had settled when the Fetch ran: its IVs are no market (Fable delta S2)
+        data = tenors["0dte"].get("data") or []
+        tenors["0dte"] = {**tenors["0dte"], "data": [r for r in data if isinstance(r, dict) and (
+            (parse_option_symbol(r.get("option_symbol") or "") or {}).get("expiry") or "") > settled_expiry]}
+    tenors.update({k: v for k, v in (raw.get("skew_chains") or {}).items() if k in ("1m", "3m")})
+    out: dict = {"expiries": {}, "detail": {}}
+    for key in ("0dte", "1m", "3m"):
+        s = delta25_skew(normalize_option_chain(tenors.get(key))) if tenors.get(key) else None
+        out[f"put_bias_{key}"] = s["skew"] if s else None
+        if s:
+            out["expiries"][key] = s["expiry"]
+            out["detail"][key] = s
+    if not out["expiries"]:
         return None
-    data = iv_payload["data"]
-    if len(data) < 2:
-        return None
-    tenors: dict[float, list[float]] = {}
-    for r in data:
-        days = to_float(r.get("days"))
-        vol = to_float(r.get("volatility"))
-        if days is None or vol is None:
-            continue
-        tenors.setdefault(days, []).append(vol)
-
-    def _pair(days):
-        v = tenors.get(days) or []
-        return (v[0], v[1]) if len(v) >= 2 else (None, None)
-
-    call30, put30 = _pair(30)
-    call90, put90 = _pair(90)
-    skew30 = (put30 - call30) if (call30 is not None and put30 is not None) else None
-    skew90 = (put90 - call90) if (call90 is not None and put90 is not None) else None
-    if skew30 is None and skew90 is None:
-        return None
-    return {
-        "put_bias_1m": skew30,
-        "put_bias_3m": skew90,
-        "derived_unverified": True,
-        "note": "Derived from UW /interpolated-iv twin blocks; the put/call block "
-                "assignment is not documented by UW and is unverified.",
-    }
+    out["note"] = ("25-delta put IV minus 25-delta call IV, per expiry, from UW /option-contracts "
+                   "(contracts nearest 0.25 |delta|).")
+    return out
 
 
 def normalize_vix(vix_payload: dict | None) -> dict | None:
@@ -337,6 +334,7 @@ def normalize_vix(vix_payload: dict | None) -> dict | None:
         # Re-read from the closes, so a day stored before the 9D rule shows the same mode as a new one (review N7).
         "term_mode": vix_term_mode({k: to_float(v) for k, v in tk.items()}),
         "ivts": ivts({k: to_float(v) for k, v in tk.items()}),
+        "history": vix_payload.get("history") or [],
     }
 
 
@@ -355,8 +353,21 @@ def normalize_vega_flow(payload: dict | None) -> dict | None:
     if not directional:
         return None
     stamps = sorted(str(r.get("timestamp")) for r in rows if isinstance(r, dict) and r.get("timestamp"))
+    # F5 (2 Oct report p.7): the side is read only when the largest minute does not carry it alone.
+    total_dir = sum(directional)
+    largest = max(directional, key=abs)
+    without = total_dir - largest
+    if total_dir == 0 or (without != 0 and (without > 0) != (total_dir > 0)) or without == 0:
+        side, verdict = None, "no side verdict"
+    else:
+        side = "buyers" if total_dir > 0 else "sellers"
+        verdict = f"vega {side} (holds without the largest minute)"
     return {
-        "dir_vega_flow": sum(directional),
+        "side": side,
+        "verdict": verdict,
+        "largest_minute": largest,
+        "without_largest": without,
+        "dir_vega_flow": total_dir,
         "total_vega_flow": sum(v for v in total if v is not None) or None,
         "buckets": len(directional),
         "last_bucket": stamps[-1] if stamps else None,
@@ -433,6 +444,18 @@ def _sum_or_none(values) -> float | None:
     return sum(vals) if vals else None
 
 
+def _fetched_at(stamp):
+    """The fetch time as an aware datetime (bars ending after it are still forming); None when absent."""
+    from datetime import datetime
+    if not stamp:
+        return None
+    try:
+        when = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo is not None else None
+
+
 def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: str = MODE_OPEN_INTEREST) -> dict:
     asof_str = asof_date.isoformat() if isinstance(asof_date, date) else asof_date
 
@@ -465,6 +488,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     # Charm Peak/Pin is always derived from Mode A (directionalized volume):
     # it reflects active intraday flow, not legacy far-OTM open interest.
     charm_qualification = qualify_charm(spot_exposure_rows, spot, MODE_DIRECTIONALIZED_VOLUME)
+    charm_pin_report = report_charm_pin(strike_expiry_rows, asof_str,
+                                        _fetched_at((raw.get("_meta") or {}).get("api_snapshot_time")))
     vanna = vanna_peaks(spot_exposure_rows, MODE_DIRECTIONALIZED_VOLUME)
 
     strike_rows = enrich_strike_gamma_dollars(normalize_strike_rows(raw.get("strike_exposure")),
@@ -500,6 +525,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         levels["lower_support_band"] = put_wall_band["put_wall"]
         put_wall_origin = "band_181_365"
     levels["put_wall_all"] = next((w["put_wall"] for w in dte_band_walls if w["band"] == "ALL"), None)
+    # A11: the walls of the expiry the week resolves on (the next Friday, as the Brier scoring)
+    target_walls = expiry_walls(all_se_rows, target_friday(asof_str) if asof_str else None, spot)
 
     iv_rows = (raw.get("interpolated_iv") or {}).get("data", [])
     annualized_iv = pick_iv(iv_rows)
@@ -512,7 +539,10 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     vol_term = normalize_vol_term(raw.get("vol_term_structure"))
     vrp = normalize_vrp(raw.get("variance_risk_premium"))
     realized_vol = normalize_realized_vol(raw.get("realized_vol"))
-    skew = normalize_skew(raw.get("interpolated_iv"))
+    from .charm_pin import _expired_by
+    _asof_early = str(asof_date)[:10] if asof_date else None
+    skew = chain_skew(raw, _asof_early if _asof_early and _expired_by(
+        _asof_early, _fetched_at((raw.get("_meta") or {}).get("api_snapshot_time"))) else None)
     vix = normalize_vix(raw.get("vix"))
     cftc = normalize_cftc(raw.get("cftc"))
     vega_flow = normalize_vega_flow(raw.get("greek_flow"))
@@ -536,6 +566,17 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     })
     option_chain_rows = normalize_option_chain(raw.get("option_chain"), spot, asof_str,
                                                (raw.get("_meta") or {}).get("api_snapshot_time"))
+    # The front chain is the as-of day's 0DTE. Fetched after that day's close it is a settled series: its IVs are
+    # meaningless (real UW check 5 Nov: 558 %), so neither the pin harvest nor the dealer book may read it.
+    from .charm_pin import _expired_by
+    settled = bool(asof_str) and _expired_by(asof_str, _fetched_at((raw.get("_meta") or {}).get("api_snapshot_time")))
+    iron_butterfly_na = None
+    if settled:
+        live_rows = [r for r in option_chain_rows if (r.get("expiry") or "") > asof_str]
+        if len(live_rows) < len(option_chain_rows) and not live_rows:
+            iron_butterfly_na = (f"the {asof_str} 0DTE chain had settled when the Fetch ran, so there is no "
+                                 f"same-day pin to harvest")
+        option_chain_rows = live_rows
     iron_butterfly = build_iron_butterfly({
         "current_level": spot,
         "asof_date": asof_str,
@@ -563,13 +604,37 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "gex_envelope": gex_envelope,
         "levels": levels,
         "dte_band_walls": dte_band_walls,
+        "target_expiry_walls": target_walls,
         "put_wall_origin": put_wall_origin,
         "charm_qualification": charm_qualification,
+        "charm_pin_report": charm_pin_report,
+        "iron_butterfly_na": iron_butterfly_na,
         "vanna_peaks": vanna,
         "spot_exposures": spot_exposure_rows,
         "strike_exposures": strike_rows,
         "strike_exposures_prev": strike_rows_prev,
         "expiry_distribution": expiry_rows,
+        "front_expiry_share": front_expiry_share(expiry_rows, asof_str),
+        "session_flow": session_hedge_flow(expiry_rows, asof_str, spot),
+        # A4: Black-Scholes book greeks over the front and target-Friday chains, under assumptions (a) and (b)
+        "dealer_book": dealer_book([r for r in normalize_option_chain(raw.get("option_chain"))
+                                    if not settled or (r.get("expiry") or "") > asof_str]
+                                   + normalize_option_chain(raw.get("target_chain")), spot, asof_str)
+        if asof_str else None,
+        # A9: implied vs realized 5-session tails, from the stored closes and the 1-day ATM IV
+        # A1: the week's gamma profile, turning point and zone map (expiries through the target Friday)
+        "week_gamma": week_map(strike_expiry_rows, asof_str, spot) if asof_str else None,
+        "vol_calendar": week_events(raw.get("economic_calendar"), asof_str) if asof_str else [],
+        "tails": tail_table([c.get("close") for c in candles], annualized_iv),
+        # A2: the target Friday's chain rows, priced into the report structures on render
+        "target_chain_rows": normalize_option_chain(raw.get("target_chain"), spot, asof_str,
+                                                    (raw.get("_meta") or {}).get("api_snapshot_time")),
+        # A7: the target Friday's ATM straddle (UW quotes), the market's own expected move
+        "straddle_move": straddle_move(normalize_option_chain(raw.get("target_chain")), spot),
+        # A5: the target week's report-time hourly closes (UW SPY 30m scaled to SPX) for the scenario triggers
+        "hourly_closes": hourly_closes(raw.get("spy_ohlc_30m"), asof_str, candles,
+                                       _fetched_at((raw.get("_meta") or {}).get("api_snapshot_time")))
+        if asof_str else None,
         "matrix_gex": matrix_gex,
         "source_chip": source_chip,
         "flow_strikes": flow_rows,

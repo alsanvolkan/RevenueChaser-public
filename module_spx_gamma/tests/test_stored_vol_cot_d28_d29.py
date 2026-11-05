@@ -21,7 +21,7 @@ def test_normalize_vix_cannot_tell_the_store_payload_from_the_live_one():
     stored = {"tickers": {f"^{s}": c for s, c in CLOSES.items()}, "term_mode": "contango", "stored": True}
     live = {"tickers": {f"^{s}": c for s, c in CLOSES.items()}, "term_mode": "contango"}
     expected = {"vix": 15.5, "vix9d": 14.25, "vix3m": 17.0, "vix6m": 18.0, "vix1y": 19.0, "vvix": 90.5,
-                "term_mode": "contango", "ivts": 15.5 / 17.0}
+                "term_mode": "contango", "ivts": 15.5 / 17.0, "history": []}
 
     assert normalize_vix(stored) == expected
     assert normalize_vix(live) == expected
