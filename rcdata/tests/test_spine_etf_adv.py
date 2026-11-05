@@ -95,6 +95,18 @@ def test_a_day_after_the_builds_date_is_not_read():
     assert etf.adv_usd_20d(["GLD"], as_of=date(2026, 11, 2)) == pytest.approx({"GLD": 2_000_000_000.0})
 
 
+def test_the_funds_exchange_code_is_not_a_filter():
+    """The funds this rule exists for are listed on NYSE Arca (``exchg`` 17: SPY, GLD, SLV, DIA) or Nasdaq (14:
+    IBIT), and ``spine/security.US_EXCHG`` keeps only 11, 12 and 14. This reader asks Compustat by **ticker** and
+    filters no exchange at all, so an Arca fund's sessions count like any other (measured on homesrv, 5 Nov 2026).
+    What the stored partitions hold is the fetch's scope, not this reader's: see ``prices/wrds_history``."""
+    put_secd(series("131855", "01", "GLD", 20, 2_000_000_000.0, exchg=17)
+             + series("200002", "01", "IBIT", 20, 3_000_000_000.0, exchg=14)
+             + series("200003", "01", "NOEX", 20, 4_000_000_000.0, exchg=None))
+    assert etf.adv_usd_20d(["GLD", "IBIT", "NOEX"]) == pytest.approx(
+        {"GLD": 2_000_000_000.0, "IBIT": 3_000_000_000.0, "NOEX": 4_000_000_000.0})
+
+
 def test_a_window_that_crosses_the_year_reads_both_partitions():
     """The window is 20 sessions, the partitions are calendar years: a build in early January reads last year's
     file too (:data:`etf.ADV_YEARS`)."""
