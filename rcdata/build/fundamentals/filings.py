@@ -40,7 +40,7 @@ from .. import base
 from . import KIND, common, ixbrl, sec_index
 
 NAME = "sec/filings"
-NEW_PER_RUN = 500
+NEW_PER_RUN = 9000
 ANNUAL_FORMS = ("10-K", "20-F", "40-F")             # newest by filing date; a 10-K first on one day
 PROXY_FORMS = ("DEF 14A",)
 CAPPED = "capped"

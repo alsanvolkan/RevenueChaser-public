@@ -36,7 +36,7 @@ from .. import base
 from . import KIND, common, facts, sec_index
 
 NAME = "sec/companyfacts"
-NEW_PER_RUN = 500
+NEW_PER_RUN = 9000
 ABSENT_DAYS = 30
 STALE_DAYS = 120
 STAGING = {"facts": "stg_sec_facts", "company": "stg_sec_company"}

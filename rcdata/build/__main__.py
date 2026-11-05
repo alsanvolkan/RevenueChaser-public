@@ -119,6 +119,34 @@ def _wait_for_turn(wait: float, said: list | None = None) -> str | None:
         time.sleep(min(WAIT_POLL_S, max(0.0, deadline - time.monotonic())))
 
 
+def _fetch_lock_names(args) -> list[str]:
+    """The ``rcdata_fetch_<dataset>`` locks a ``--no-build`` command needs, one per dataset it names."""
+    names = list(getattr(args, "datasets", None) or ([args.dataset] if getattr(args, "dataset", None) else []))
+    return [f"rcdata_fetch_{n}" for n in names]
+
+
+def _take_fetch_locks(stack: contextlib.ExitStack, locks: list[str], wait: float) -> tuple[bool, str | None]:
+    """Hold one lock per dataset for a fetch-only run: ``(True, None)``, or ``(False, why)``.
+
+    No start gate and no builder lock, because this run writes raw files and Parquet partitions and opens no
+    serving file -- the one thing ``base.idle_problem`` and ``BUILDER_LOCK`` exist to keep to a single writer. So
+    two datasets fetch side by side, and beside a running builder; only a second run of the *same* dataset waits,
+    which is what each lock's own name holds off.
+    """
+    deadline = time.monotonic() + max(0.0, wait)
+    said: list = [None]
+    while True:
+        taken = [name for name in locks if stack.enter_context(job_lock.acquire(name, wait=0))]
+        if len(taken) == len(locks):
+            return True, None
+        stack.close()                           # drop the ones taken before the next try
+        held = ", ".join(sorted(set(locks) - set(taken)))
+        if time.monotonic() >= deadline:
+            return False, f"another fetch holds {held}"
+        _say_waiting(f"another fetch holds {held}", said)
+        time.sleep(min(WAIT_POLL_S, max(0.0, deadline - time.monotonic())))
+
+
 def _take_the_turn(stack: contextlib.ExitStack, wait: float) -> tuple[bool, str | None]:
     """Hold the builder lock with nothing else on the store: ``(True, None)``, or ``(False, why)`` when the wait
     ran out.
@@ -287,19 +315,26 @@ def main(argv: list[str] | None = None) -> int:
             print("no attended request queued", file=sys.stderr)
             return 0
     wait = default_wait_s(args.cmd, getattr(args, "dataset", None)) if args.wait is None else max(0.0, args.wait)
+    fetch_only = bool(getattr(args, "no_build", False))
     with contextlib.ExitStack() as stack:
-        got, problem = _take_the_turn(stack, wait)
+        if fetch_only:
+            got, problem = _take_fetch_locks(stack, _fetch_lock_names(args), wait)
+        else:
+            got, problem = _take_the_turn(stack, wait)
         if not got:
             print(f"builder not started: {problem}", file=sys.stderr)
             return 3
-        rawstore._register_presence(Path(config.MARKET_DIR) / ops.FILE_NAME)
-        for kind in serving.KINDS:
-            for stale in serving.sweep_builds(kind):
-                print(f"removed the stale build file {stale.name}", file=sys.stderr, flush=True)
-        orphans = ops.fail_orphans()
-        if any(orphans):
-            print(f"failed {orphans[0]} request(s) and {orphans[1]} run(s) a dead builder left running",
-                  file=sys.stderr, flush=True)
+        if not fetch_only:
+            # A fetch-only run is not a builder: it must not mark a builder's presence (that would stop the real
+            # one from starting), it leaves no build file to sweep, and another builder's orphans are not its own.
+            rawstore._register_presence(Path(config.MARKET_DIR) / ops.FILE_NAME)
+            for kind in serving.KINDS:
+                for stale in serving.sweep_builds(kind):
+                    print(f"removed the stale build file {stale.name}", file=sys.stderr, flush=True)
+            orphans = ops.fail_orphans()
+            if any(orphans):
+                print(f"failed {orphans[0]} request(s) and {orphans[1]} run(s) a dead builder left running",
+                      file=sys.stderr, flush=True)
         if args.cmd == "attended":
             # A person is at this terminal (the WRDS login and Duo), so this runner may run what others queued.
             return _run_queue(args.dataset, once=True, only=base.attended_names(), attended_ok=True)
