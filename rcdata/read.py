@@ -237,7 +237,9 @@ def membership(index: str | None = None, on=None, source: str = "funds/index_hol
 # ``security_ids`` maps tickers to it). Bars are stored nominal; ``bars`` applies ``adj_factor`` on read. ``status``
 # is the newest check of the daily source each table follows.
 
-DATASET_OF_TABLE.update({"price_bar_daily": "alpaca/bars", "security_symbol": "alpaca/bars",
+# ``price_bar_daily`` follows Compustat's dataset since Alpaca is only the tester (avo, 3 Nov 2026 ~11:20 Amsterdam,
+# decision 2 of docs/compustat_primary_switch.md: "2 evet").
+DATASET_OF_TABLE.update({"price_bar_daily": "wrds/prices", "security_symbol": "alpaca/bars",
                          "market_cap_daily": "alpaca/bars", "corporate_action": "alpaca/corporate_actions",
                          "shares_class": "sec/cover_shares",
                          # The two second-source reports a cross-check reads (Karar 32-B): the monthly WRDS
