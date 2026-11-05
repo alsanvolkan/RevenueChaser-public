@@ -8,7 +8,7 @@ build serves empty tables.
 
 **The SEC.** Every SEC request carries ``RC_SEC_USER_AGENT`` ("Name email", the SEC's rule) when it is set, else the
 builder's own User-Agent with ``RC_HTTP_CONTACT``; each request takes a token of ``core/sec_throttle.py``'s
-box-wide bucket (every SEC caller's, 8 a second against the SEC's 10, ``caps.WINDOWS``); when it cannot be used the
+box-wide bucket (every SEC caller's, 9 a second against the SEC's 10, ``caps.WINDOWS``); when it cannot be used the
 requests are spaced ``SEC_INTERVAL_S`` apart, this process's share (``sec_throttle.FALLBACK_RATE``).
 """
 from __future__ import annotations
