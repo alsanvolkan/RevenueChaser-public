@@ -48,7 +48,8 @@ def control_nd() -> dict:
                      "datasets": {"alpaca/bars": {"raw": {"path": "/r/alpaca/bars", "files": 52, "bytes": 31_000_000,
                                                           "capped": False},
                                                   "parquet": {"path": "/p/alpaca/bars", "files": 52,
-                                                              "bytes": 9_000_000, "capped": False}}}}
+                                                              "bytes": 9_000_000, "capped": False}}},
+                     "walked_at": "2026-10-28T07:30:00+00:00"}
     nd["tables"] = {"price_bar_daily": {"rows": 18_412_904, "newest": "2026-10-28"}}
     nd["spend"]["providers"] = [{"provider": "alphavantage", "cap": 25, "today": 18, "week": 30},
                                 {"provider": "sec", "cap": None, "today": 20100, "week": 30},
@@ -240,3 +241,38 @@ def test_ncens_monthly_cadence_is_the_datasets_own_not_a_second_copy_on_its_card
     from RevenueChaser.module_settings import newdata as nd_mod
     assert screen.DATASETS["sec/ncen"].cadence == "daily"           # the card's default, not read for this dataset
     assert nd_mod._cadence("sec/ncen", None) == "monthly"
+
+
+# ── the journey table's three folder states (#434) ──
+
+def test_the_folder_line_tells_not_walked_from_no_folder_from_counted():
+    """#434: the counts come from the storage-picture job, so "I have not looked" is a third state. Before it, a
+    board with no picture rendered every dataset as "no folder yet" -- the same words as a dataset whose folder
+    really is missing."""
+    from RevenueChaser.module_settings import control_render
+
+    walked = control_render.render(_build())
+    assert "52 files" in walked and "not walked yet" not in walked
+
+    nd = control_nd()
+    nd["storage"] = {**nd["storage"], "datasets": {}, "walked_at": None}
+    never = control_render.render(_build(nd))
+    assert "not walked yet" in never and "no folder yet" not in never, "no picture is not an empty folder"
+
+    nd = control_nd()
+    nd["storage"] = {**nd["storage"],
+                     "datasets": {"alpaca/bars": {"raw": {"files": None, "bytes": None, "capped": False},
+                                                  "parquet": {"files": None, "bytes": None, "capped": False}}}}
+    missing = control_render.render(_build(nd))
+    assert "no folder yet" in missing, "a dataset whose folder really is missing still says so"
+
+
+def test_the_roots_line_says_when_the_picture_was_taken_and_offers_the_control():
+    from RevenueChaser.module_settings import control_render
+
+    assert control_render._walked(None) == "not walked yet"
+    fresh = control_render._walked("2026-11-05T12:00:00+00:00", datetime(2026, 11, 5, 13, 0, tzinfo=timezone.utc))
+    assert fresh.startswith("walked ") and "h ago" not in fresh, fresh
+    old = control_render._walked("2026-11-01T12:00:00+00:00", datetime(2026, 11, 5, 13, 0, tzinfo=timezone.utc))
+    assert "h ago" in old, old
+    assert control_render.ROUTES["picture"] == "/run/storage-picture"

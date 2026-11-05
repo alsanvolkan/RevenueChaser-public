@@ -212,6 +212,9 @@
 #ctl .journey{margin:10px 0 4px}
 #ctl .journey .colh{color:var(--l-dat)}
 #ctl .rootline{margin:0 0 6px;font-size:11px;color:var(--mut);display:flex;flex-wrap:wrap;gap:4px 10px}
+/* The disk-picture press (#434). Wraps to its own line on a phone, and the button keeps a 44 px target. */
+#ctl .pictrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:10px 0 0}
+#ctl .pictrow .hm{flex:1 1 14em;font-size:11px;color:var(--mut)}
 #ctl .rootline code.p{background:none;padding:0;color:var(--mut)}
 #ctl table.paths th.bdh{color:var(--l-who)}
 #ctl table.paths th.bdh .bdn{display:block;font-weight:400;font-size:10.5px;color:var(--mut);letter-spacing:0;text-transform:none;margin-top:2px;line-height:1.35}
