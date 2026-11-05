@@ -79,3 +79,30 @@ def test_charm_card_shows_the_report_pin_first():
     assert labels.index("Report pin") < labels.index("Where it matters")
     row = card["rows"][labels.index("Report pin")]
     assert row[1] == "$7,900" and "front expiry 2026-08-14" in row[2] and "not a confirmed attractor" in row[2]
+
+
+SAME_DAY = {"data": [
+    {"date": "2026-11-04", "expiry": "2026-11-04", "strike": "7650", "call_charm": -90e6, "put_charm": -9e6,
+     "call_gex": 1, "put_gex": -1, "dte": 0},
+]}
+
+
+def test_the_asof_days_own_expiry_is_dead_after_its_close():
+    """Real UW check 5 Nov: a Fetch of 4 Nov carried the 4 Nov 0DTE rows, and the pin came from that expired series
+    (7650, below the flip), so the board printed no scenario set. After the close the front is 5 Nov (7750)."""
+    from datetime import datetime, timezone
+    rows = normalize_strike_expiry_rows([SAME_DAY, UW_ROWS_2026_11_04], "2026-11-04")
+    after_close = datetime(2026, 11, 5, 12, 0, tzinfo=timezone.utc)
+    pin = charm_pin.report_charm_pin(rows, "2026-11-04", fetched_at=after_close)
+    assert pin["strike"] == 7750.0 and pin["expiry"] == "2026-11-05"
+    in_session = datetime(2026, 11, 4, 18, 0, tzinfo=timezone.utc)        # 13:00 New York, the 0DTE still trades
+    assert charm_pin.report_charm_pin(rows, "2026-11-04", fetched_at=in_session)["strike"] == 7650.0
+
+
+def test_normalize_passes_the_fetch_time_to_the_pin():
+    from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
+    from .conftest import make_raw
+    raw = make_raw()
+    assert normalize_snapshot(raw, "2026-08-14")["charm_pin_report"]["expiry"] == "2026-08-14"
+    raw["_meta"] = {"api_snapshot_time": "2026-08-15T12:00:00Z"}
+    assert normalize_snapshot(raw, "2026-08-14")["charm_pin_report"]["expiry"] != "2026-08-14"

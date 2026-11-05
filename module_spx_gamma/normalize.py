@@ -483,7 +483,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     # Charm Peak/Pin is always derived from Mode A (directionalized volume):
     # it reflects active intraday flow, not legacy far-OTM open interest.
     charm_qualification = qualify_charm(spot_exposure_rows, spot, MODE_DIRECTIONALIZED_VOLUME)
-    charm_pin_report = report_charm_pin(strike_expiry_rows, asof_str)
+    charm_pin_report = report_charm_pin(strike_expiry_rows, asof_str,
+                                        _fetched_at((raw.get("_meta") or {}).get("api_snapshot_time")))
     vanna = vanna_peaks(spot_exposure_rows, MODE_DIRECTIONALIZED_VOLUME)
 
     strike_rows = enrich_strike_gamma_dollars(normalize_strike_rows(raw.get("strike_exposure")),
