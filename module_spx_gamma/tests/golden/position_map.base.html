@@ -202,6 +202,16 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 .text-green{ color:var(--green); font-weight:600; }
 .text-red{ color:var(--red); font-weight:600; }
 .text-amber{ color:var(--amber); font-weight:600; }
+/* ── reader order (Fable review §6): numbered groups, 1-6 open, 7-11 collapsed ── */
+.group-open{ margin:24px 0 8px; }
+.group-h{ font-size:11px; font-weight:800; letter-spacing:1px; text-transform:uppercase; color:var(--sky);
+  border-left:3px solid var(--sky); padding:4px 0 4px 8px; margin:0 0 8px; }
+.group-open > h2:first-of-type, .group-open > .box:first-of-type > h2:first-child{ margin-top:8px; }
+details.group{ margin:16px 0; }
+details.group > summary{ min-height:48px; }
+details.group > .box-inner h2{ font-size:15px; margin:16px 0 8px; }
+details.group details.collapsible{ margin:12px 0; background:var(--bg); }
+@media (max-width:640px){ .group-open .box, details.group{ margin-left:0; margin-right:0; } }
 /* ── tables that stack on a phone: each row becomes a block, each cell its own labelled line ── */
 @media (max-width:900px){ .grid,.relation-grid,.band-row{ grid-template-columns:1fr; } .chain{ flex-direction:column; } .chain .arrow{ transform:rotate(90deg); align-self:center; padding:4px 0; } }
 @media (max-width:640px){
@@ -250,63 +260,201 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <body>
 <div class="header">SPX &middot; Price yfinance ^GSPC &middot; Report date 2026-08-14 &middot; Sessions 2026-08-03 → 2026-08-14 &middot; Last sync: 14 Aug&nbsp;EOD &middot; Unusual Whales API</div>
 
+<!-- Reader order (Fable review §6): decision first, then the frame, scenarios, map; detail collapsed below. -->
+<section class="group-open" id="g1">
+<div class="group-h">1 · Decision</div>
+<h2>Close check (22:00 Amsterdam)</h2>
+<div class="box">
+<table class="stack">
+  <thead><tr><th>Step</th><th>Reading</th></tr></thead>
+  <tbody><tr><td data-label="Step"><b>1. Price band</b></td><td data-label="Reading">close 7,784.00 is in Consolidation (7,500 – 7,821)</td></tr><tr><td data-label="Step"><b>2. VIX threshold</b></td><td data-label="Reading">VIX threshold n/a</td></tr><tr><td data-label="Step"><b>3. Week gamma</b></td><td data-label="Reading" style="color:var(--red)">week net gamma is negative (expiries through 2026-08-21)</td></tr></tbody>
+</table>
+<div class="box-note">VIX threshold is a substitute for the report&#39;s VIX HVL, which comes from a source the board does not use: the prior week&#39;s last VIX close plus the average one-day VIX move over the stored window (about two weeks).</div>
+</div>
+</section>
 
-<div class="prediction-container">
-  <!-- Top Hero Status Bar -->
-  <div class="prediction-hero">
-    <div class="bias-badge bearish">EXPECTED DIRECTION: BEARISH BREAKDOWN (33.3% Conf)</div>
-    <div class="hero-metric"><span>Active Pin</span><strong>7,800&nbsp;⚑</strong></div>
-    
-    <div class="hero-metric"><span>Bounce Floor</span><strong>7,650</strong></div>
+<section class="group-open" id="g2">
+<div class="group-h">2 · At a glance</div>
+<h2>At a Glance — Single Source of Truth</h2>
+<div class="ag-box">
+  <!-- Header + flow badge -->
+  <div class="ag-header">
+    <span class="ag-label">At a Glance — Single Source of Truth</span>
+    <span class="flow-badge flow-flat">No flow data</span>
   </div>
-
-  <!-- Scenario Matrix Table -->
-  <div class="overflow-x-auto">
-  <table class="scenario-table stack">
-    <thead><tr><th>Scenario</th><th>Trigger Level</th><th>Dealer Hedging Action</th><th>Target Zone</th></tr></thead>
-    <tbody>
-    
-    <tr class="row-bullish">
-      <td data-label="Scenario">Bullish Acceleration</td><td data-label="Trigger Level">Spot holds &gt; 7,900</td><td data-label="Dealer Hedging Action">Short gamma forces dealer buying into strength</td><td data-label="Target Zone">n/a</td>
-    </tr>
-    
-    <tr class="row-neutral">
-      <td data-label="Scenario">Consolidation</td><td data-label="Trigger Level">7,795 &lt; Spot &lt; 7,805</td><td data-label="Dealer Hedging Action">Positive gamma &amp; charm absorption dampens range</td><td data-label="Target Zone">7,800 Pin</td>
-    </tr>
-    
-    <tr class="row-bearish">
-      <td data-label="Scenario">Bearish Breakdown</td><td data-label="Trigger Level">n/a</td><td data-label="Dealer Hedging Action">Flipped gamma accelerates the drop through the air pocket</td><td data-label="Target Zone">7,650 (vanna floor)</td>
-    </tr>
-    
-    </tbody>
-  </table>
+  <!-- Seven columns on a desktop, two on a phone; each column is one cell: label, OI value, intraday value -->
+  <div class="ag-grid7">
+    <div class="ag-cell"><div class="ag-h">Spot</div><div class="ag-v-big">7,784</div><div class="ag-h ag-h-vol">Intraday</div></div>
+    <div class="ag-cell"><div class="ag-h">Call Wall</div><div class="ag-v">7,900 <span class="ag-src">(OI)</span></div><div class="ag-v-vol">7,715 <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">Put Wall</div><div class="ag-v">7,500 <span class="ag-src">(OI)</span></div><div class="ag-v-vol">7,705 <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">HVL / Flip</div><div class="ag-v">7,821 <span class="ag-src">(OI)</span></div><div class="ag-v-vol">7,692 <span class="ag-src-vol">(VOL)</span></div></div>
+    <div class="ag-cell"><div class="ag-h">Magnet</div><div class="ag-v">7,900 <span class="ag-src">(OI)</span></div><div class="ag-v-vol ag-dash">—</div></div>
+    <div class="ag-cell"><div class="ag-h">Charm Pin</div><div class="ag-v-sm">8,000 (-50)</div><div class="ag-v-vol ag-dash">—</div></div>
+    <div class="ag-cell"><div class="ag-h">Vanna Pin</div><div class="ag-v-sm">7,850 (+15.0M)</div><div class="ag-v-vol ag-dash">—</div></div>
   </div>
+  <!-- Row 2: 4 metric cards with tooltips -->
+  <div class="ag-cards4">
+    <div class="ag-gex has-tip"><div class="k">NET GEX (OI) <details class="tip"><summary aria-label="What is NET GEX (OI)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</div></details></div><div class="v pos">+374</div></div>
+    <div class="ag-gex"><div class="k">DAILY Δ (1D / 1W)</div><div class="v">— / —</div></div>
+    <div class="ag-gex has-tip"><div class="k">MATRIX (≤45 DTE) <details class="tip"><summary aria-label="What is MATRIX (≤45 DTE)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</div></details></div><div class="v pos">+64.5K</div></div>
+    <div class="ag-gex"><div class="k">SOURCE CHIP</div><div><span class="chip chip-neg">NEGATIVE</span></div></div>
+  </div>
+  <div class="ag-note">Total book = all-expiry OI-based net GEX (macro inventory). Matrix = DTE≤45 filter — active-trading gamma that strips far-dated/LEAPS noise; the gap comes from distant tenors.</div>
+  <!-- Row 3: regime + VIX + positioning -->
+  <div class="ag-row ag-row-3">
+    <div class="ag-gex"><div class="k">Regime</div><div class="v">Short Gamma — Amplifying</div></div>
+    <div class="ag-gex"><div class="k">VIX</div><div class="v">—</div></div>
+    <div class="ag-gex"><div class="k">Net DEX</div><div class="v">+563.0M</div></div>
+    <div class="ag-gex"><div class="k">Net Vanna</div><div class="v">+45.0M</div></div>
+    <div class="ag-gex"><div class="k">Live Charm</div><div class="v">-0.00B</div></div>
+  </div>
+</div>
+</section>
 
-  <!-- OI vs Volume Divergence Status -->
+<section class="group-open" id="g3">
+<div class="group-h">3 · What would change the regime</div>
+<h2>What Would Change the Regime</h2>
+<div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> the thresholds that
+would end the frame the rest of this page describes. Each row is a condition, not a forecast: if it is crossed,
+the levels below stop applying and the map has to be re-read.</div>
+
+<table class="stack">
+  <thead><tr><th>If this happens</th><th>Then</th></tr></thead>
+  <tbody>
   
-  <div class="divergence-bar">
-    
-    <span class="status-item">
-      <strong>7,900 above:</strong>
-      <span class="text-amber">DECAYING (OI: -400.0M | Vol: +70.0M)</span>
-    </span>
-    
-    <span class="status-item">
-      <strong>7,650 below:</strong>
-      <span class="text-red">FORTIFYING (OI: -700.0M | Vol: -10.0M)</span>
-    </span>
-    
-    <span class="status-item">
-      <strong>8,000 above:</strong>
-      <span class="text-red">FORTIFYING (OI: -1.2B | Vol: -20.0M)</span>
-    </span>
-    
-  </div>
+  <tr><td data-label="If this happens">A daily close ABOVE 7,821 (the gamma flip)</td><td data-label="Then">back to positive gamma — acceleration is dampened, the upside frame opens</td></tr>
   
+  <tr><td data-label="If this happens">The close stays BELOW 7,821</td><td data-label="Then">negative gamma continues, so a move keeps being amplified, 7,500 the next support</td></tr>
+  
+  <tr><td data-label="If this happens">Net DEX falls through its 25% threshold (a -$140.75M move, to below +$422.25M)</td><td data-label="Then">the dealer lean behind the current frame weakens meaningfully</td></tr>
+  
+  <tr><td data-label="If this happens">Charm changes sign (from minus to plus)</td><td data-label="Then">the pin&#39;s pull at 7,900 reverses, so the close drifts the other way</td></tr>
+  
+  </tbody>
+</table>
 
-  <div class="hero-note">ⓘ Directional score uses dollar spot-exposures (gamma_oi / charm_vol / vanna_vol), each term normalized to [-1,1]; the 0-1 DTE strike-expiry grid supplies pin/flip/trigger geometry. Confidence is a heuristic from S_dir margin and pin dominance/proximity — NOT a calibrated forecast.</div>
+</section>
+
+<section class="group-open" id="g4">
+<div class="group-h">4 · Scenarios</div>
+<h2>Scenario Set</h2>
+<table class="stack">
+  <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>Asymmetry</th><th>Trade</th></tr></thead>
+  <tbody>
+  
+  <tr>
+    <td data-label="Scenario">Consolidation</td><td data-label="Range">7,500 – 7,821</td><td data-label="P">0.35</td>
+    <td data-label="Asymmetry">n/a</td>
+    <td data-label="Trade">Theta-weighted (directionless)</td>
+  </tr>
+  
+  <tr>
+    <td data-label="Scenario">Upside</td><td data-label="Range">7,821 – 7,900</td><td data-label="P">0.3</td>
+    <td data-label="Asymmetry">0.25</td>
+    <td data-label="Trade">Directional long</td>
+  </tr>
+  
+  <tr>
+    <td data-label="Scenario">Downside</td><td data-label="Range">7,400 – 7,500</td><td data-label="P">0.35</td>
+    <td data-label="Asymmetry">0.31</td>
+    <td data-label="Trade">Directional short</td>
+  </tr>
+  
+  </tbody>
+</table>
+<div class="note">Bands derive from this week&#39;s levels only — spot below the gamma flip (negative gamma): the consolidation ceiling is the flip and the upside band is the flip taken back up to the charm pin. Probabilities are the reference report&#39;s own: heuristic, derived from the gamma regime and positioning, and NOT calibrated forecasts. Asymmetry is band geometry (distance from the trigger to the band edge over the distance to the invalidation level), not a success probability; expected value is deliberately not computed, because the probabilities behind it are fixed and uncalibrated. Scenario rules follow the 2026-10-30 report. The Brier scorecard below tracks how honest these probabilities turn out to be.</div>
+
+<h2>Brier Scorecard</h2>
+<div class="at-glance">
+  <span class="muted">Scored days:</span> 
+  &middot; <span class="muted">Avg Brier:</span> —
+  &middot; <span class="muted">Equal-weight ref:</span> 
+</div>
+<div class="note">No scored weeks yet</div>
+</section>
+
+<section class="group-open" id="g5">
+<div class="group-h">5 · Week gamma map</div>
+<h2>Week gamma map</h2>
+<div class="box">
+<div class="at-glance" style="margin:0 0 8px">Expiries through <b>2026-08-21</b> (3) · week net gamma -609 · <b>Turning point N/A</b></div>
+<table class="stack">
+  <thead><tr><th>Zone</th><th>Strikes</th><th>Net gamma</th><th>Share of |gamma|</th></tr></thead>
+  <tbody><tr><td data-label="Zone" style="color:var(--red)">Air gap</td><td data-label="Strikes">7,600–7,775</td><td data-label="Net gamma">-932</td><td data-label="Share of |gamma|">74%</td></tr><tr><td data-label="Zone">Braked staircase</td><td data-label="Strikes">7,800–7,925</td><td data-label="Net gamma">+323</td><td data-label="Share of |gamma|">26%</td></tr></tbody>
+</table>
+<div class="box-note">Board rule (the reports name the zones but print no thresholds): negative gamma = air gap; positive gamma = dense block at 2x or more of the window&#39;s mean |gamma|, braked staircase 0.5x-2x, half-full below 0.5x. Strikes summed in 25-point buckets, window +-5 % of spot, week = expiries through the target Friday.</div>
 </div>
 
+<h2>SPX Option Position Map</h2>
+<div class="box"><div class="chart chart-map"><div id="gex-chart"><b>chart &amp; more</b><script>var a = 1 < 2;</script></div></div>
+</div>
+
+<h2>Net GEX Tornado — Strike Profile</h2>
+<div class="box"><div class="chart"><div id="tornado"><svg><text>t &lt; 5</text></svg></div></div></div>
+
+<h2>Liquidity Layer — Dealer Flow</h2>
+<div class="box">
+<div class="chart" style="margin:0 0 12px"><div id="env"><i>envelope</i></div></div>
+<div class="band-row" style="margin:0">
+  <div class="band green">
+    <h3>Absorption Band <span class="sub">(positive gamma — dealers trade against the move)</span></h3>
+    <div class="big">7,800–8,000</div>
+    <div>Net GEX +623 &middot; 200 hedge per 25 pt</div>
+  </div>
+  <div class="band red">
+    <h3>Air Gap <span class="sub">(negative gamma — dealers trade with the move)</span></h3>
+    <div class="big">7,700–7,750</div>
+    <div>Net GEX -249 &middot; 80 hedge per 25 pt</div>
+  </div>
+</div>
+<div class="at-glance" style="margin:10px 0 0"><span class="muted">Zero crossing (approx. gamma flip):</span> 7,800</div>
+<div class="muted" style="margin:6px 0 0">Hedge per 25 pt = band Net GEX per 1 % &times; (25 / spot &times; 100 %), the reports' formula.</div>
+</div>
+
+<details class="collapsible">
+<summary><h2 class="sum-h">DTE Band Walls</h2></summary>
+<div class="box-inner">
+<table class="stack">
+  <thead><tr><th>DTE Band</th><th>Put Wall</th><th>Put Wall Net GEX</th><th>Call Wall</th><th>Call Wall Net GEX</th></tr></thead>
+  <tbody>
+  
+  <tr><td data-label="DTE Band">0-30</td>
+    <td data-label="Put Wall">7,750</td><td data-label="Put Wall Net GEX">-140</td>
+    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">-10</td></tr>
+  
+  <tr><td data-label="DTE Band">31-90</td>
+    <td data-label="Put Wall">7,750</td><td data-label="Put Wall Net GEX">+28</td>
+    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+49</td></tr>
+  
+  <tr><td data-label="DTE Band">91-180</td>
+    <td data-label="Put Wall">7,700</td><td data-label="Put Wall Net GEX">+38</td>
+    <td data-label="Call Wall">8,000</td><td data-label="Call Wall Net GEX">+19</td></tr>
+  
+  <tr><td data-label="DTE Band">181-365 <b>(Put Wall standard)</b></td>
+    <td data-label="Put Wall">7,500</td><td data-label="Put Wall Net GEX">+58</td>
+    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+9</td></tr>
+  
+  <tr><td data-label="DTE Band">365+</td>
+    <td data-label="Put Wall">N/A</td><td data-label="Put Wall Net GEX">N/A</td>
+    <td data-label="Call Wall">N/A</td><td data-label="Call Wall Net GEX">N/A</td></tr>
+  
+  <tr><td data-label="DTE Band">ALL</td>
+    <td data-label="Put Wall">7,500</td><td data-label="Put Wall Net GEX">+60</td>
+    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+48</td></tr>
+  
+  <tr><td data-label="DTE Band"><b>Target expiry 2026-08-21</b></td>
+    <td data-label="Put Wall">7,750</td><td data-label="Put Wall Net GEX">-140</td>
+    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+10</td></tr>
+  </tbody>
+</table>
+<div class="box-note">Put Wall (main level) is taken from the 181-365 day band. The ALL row is the all-expiry max(+net) reference (UW gex-levels put_wall).</div>
+
+</div>
+</details>
+</section>
+
+<section class="group-open" id="g6">
+<div class="group-h">6 · Trade structures</div>
 
 
 <style>
@@ -394,42 +542,11 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
   </div>
 </div>
 
+</section>
 
-<h2>At a Glance — Single Source of Truth</h2>
-<div class="ag-box">
-  <!-- Header + flow badge -->
-  <div class="ag-header">
-    <span class="ag-label">At a Glance — Single Source of Truth</span>
-    <span class="flow-badge flow-flat">No flow data</span>
-  </div>
-  <!-- Seven columns on a desktop, two on a phone; each column is one cell: label, OI value, intraday value -->
-  <div class="ag-grid7">
-    <div class="ag-cell"><div class="ag-h">Spot</div><div class="ag-v-big">7,784</div><div class="ag-h ag-h-vol">Intraday</div></div>
-    <div class="ag-cell"><div class="ag-h">Call Wall</div><div class="ag-v">7,900 <span class="ag-src">(OI)</span></div><div class="ag-v-vol">7,715 <span class="ag-src-vol">(VOL)</span></div></div>
-    <div class="ag-cell"><div class="ag-h">Put Wall</div><div class="ag-v">7,500 <span class="ag-src">(OI)</span></div><div class="ag-v-vol">7,705 <span class="ag-src-vol">(VOL)</span></div></div>
-    <div class="ag-cell"><div class="ag-h">HVL / Flip</div><div class="ag-v">7,821 <span class="ag-src">(OI)</span></div><div class="ag-v-vol">7,692 <span class="ag-src-vol">(VOL)</span></div></div>
-    <div class="ag-cell"><div class="ag-h">Magnet</div><div class="ag-v">7,900 <span class="ag-src">(OI)</span></div><div class="ag-v-vol ag-dash">—</div></div>
-    <div class="ag-cell"><div class="ag-h">Charm Pin</div><div class="ag-v-sm">8,000 (-50)</div><div class="ag-v-vol ag-dash">—</div></div>
-    <div class="ag-cell"><div class="ag-h">Vanna Pin</div><div class="ag-v-sm">7,850 (+15.0M)</div><div class="ag-v-vol ag-dash">—</div></div>
-  </div>
-  <!-- Row 2: 4 metric cards with tooltips -->
-  <div class="ag-cards4">
-    <div class="ag-gex has-tip"><div class="k">NET GEX (OI) <details class="tip"><summary aria-label="What is NET GEX (OI)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Total Book = all-expiry OI-based net GEX (macro inventory).</div></details></div><div class="v pos">+374</div></div>
-    <div class="ag-gex"><div class="k">DAILY Δ (1D / 1W)</div><div class="v">— / —</div></div>
-    <div class="ag-gex has-tip"><div class="k">MATRIX (≤45 DTE) <details class="tip"><summary aria-label="What is MATRIX (≤45 DTE)?"><span class="tip-i">ⓘ</span></summary><div class="ag-tip-box">Matrix = DTE≤45 filter stripping far-dated LEAPS noise.</div></details></div><div class="v pos">+64.5K</div></div>
-    <div class="ag-gex"><div class="k">SOURCE CHIP</div><div><span class="chip chip-neg">NEGATIVE</span></div></div>
-  </div>
-  <div class="ag-note">Toplam kitap = all-expiry OI-based net GEX (macro depot). Matrix = DTE≤45 filter — active-trading gamma that strips far-dated/LEAPS noise; the gap comes from distant tenors.</div>
-  <!-- Row 3: regime + VIX + positioning -->
-  <div class="ag-row ag-row-3">
-    <div class="ag-gex"><div class="k">Regime</div><div class="v">Short Gamma — Amplifying</div></div>
-    <div class="ag-gex"><div class="k">VIX</div><div class="v">—</div></div>
-    <div class="ag-gex"><div class="k">Net DEX</div><div class="v">+563.0M</div></div>
-    <div class="ag-gex"><div class="k">Net Vanna</div><div class="v">+45.0M</div></div>
-    <div class="ag-gex"><div class="k">Live Charm</div><div class="v">-0.00B</div></div>
-  </div>
-</div>
-
+<details class="collapsible group" id="g7">
+<summary><h2 class="sum-h">7 · Greeks and the dealer book</h2></summary>
+<div class="box-inner">
 <h2>Summary</h2>
 <div class="grid">
 
@@ -526,6 +643,20 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 </div>
 
 <details class="collapsible">
+<summary><h2 class="sum-h">Dealer book</h2></summary>
+<div class="box-inner">
+<table class="stack">
+  <thead><tr><th>Greek</th><th>(a) long calls, short puts</th><th>(b) short all</th></tr></thead>
+  <tbody><tr><td data-label="Greek">Gamma ($ per 1 %)</td><td data-label="(a) long calls, short puts">-849.9M</td><td data-label="(b) short all">-2.8B</td></tr><tr><td data-label="Greek">Gamma, spot -50 ($ per 1 %)</td><td data-label="(a) long calls, short puts">-1.2B</td><td data-label="(b) short all">-1.3B</td></tr><tr><td data-label="Greek">Vanna ($ delta per IV point)</td><td data-label="(a) long calls, short puts">+51.5M</td><td data-label="(b) short all">-11.9M</td></tr><tr><td data-label="Greek">Charm ($ delta per day)</td><td data-label="(a) long calls, short puts">-514.8M</td><td data-label="(b) short all">+119.5M</td></tr><tr><td data-label="Greek">Vomma (sign)</td><td data-label="(a) long calls, short puts">+</td><td data-label="(b) short all">-</td></tr><tr><td data-label="Greek">Zomma (sign)</td><td data-label="(a) long calls, short puts">+</td><td data-label="(b) short all">+</td></tr><tr><td data-label="Greek">Speed (sign)</td><td data-label="(a) long calls, short puts">+</td><td data-label="(b) short all">-</td></tr></tbody>
+</table>
+<div class="at-glance" style="margin:8px 0 0"><b>(a)</b> dealers amplify moves; charm sells into expiry; an IV spike grows the book&#39;s vega</div>
+<div class="at-glance" style="margin:4px 0 0"><b>(b)</b> dealers amplify moves; charm buys into expiry; an IV spike shrinks the book&#39;s vega</div>
+<div class="box-note">Black-Scholes greeks (r = 0) from each UW contract's IV, summed over open interest: 6 contracts, expiries 2026-08-14. Which assumption holds is not known; the reports show both.</div>
+</div>
+</details>
+
+
+<details class="collapsible">
 <summary><h2 class="sum-h">Gamma flip methods</h2></summary>
 <div class="box-inner">
 <table class="stack">
@@ -543,154 +674,6 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 <div class="box-note">UW does not document how it computes its gamma flip, and the open-interest and volume flips can differ. The regime follows the open-interest flip; the other rows are cross-checks and do not vote. Put Wall uses the UW 181-365 day band.</div>
 </div>
 </details>
-
-<details class="collapsible">
-<summary><h2 class="sum-h">DTE Band Walls</h2></summary>
-<div class="box-inner">
-<table class="stack">
-  <thead><tr><th>DTE Band</th><th>Put Wall</th><th>Put Wall Net GEX</th><th>Call Wall</th><th>Call Wall Net GEX</th></tr></thead>
-  <tbody>
-  
-  <tr><td data-label="DTE Band">0-30</td>
-    <td data-label="Put Wall">7,750</td><td data-label="Put Wall Net GEX">-140</td>
-    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">-10</td></tr>
-  
-  <tr><td data-label="DTE Band">31-90</td>
-    <td data-label="Put Wall">7,750</td><td data-label="Put Wall Net GEX">+28</td>
-    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+49</td></tr>
-  
-  <tr><td data-label="DTE Band">91-180</td>
-    <td data-label="Put Wall">7,700</td><td data-label="Put Wall Net GEX">+38</td>
-    <td data-label="Call Wall">8,000</td><td data-label="Call Wall Net GEX">+19</td></tr>
-  
-  <tr><td data-label="DTE Band">181-365 <b>(Put Wall standard)</b></td>
-    <td data-label="Put Wall">7,500</td><td data-label="Put Wall Net GEX">+58</td>
-    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+9</td></tr>
-  
-  <tr><td data-label="DTE Band">365+</td>
-    <td data-label="Put Wall">N/A</td><td data-label="Put Wall Net GEX">N/A</td>
-    <td data-label="Call Wall">N/A</td><td data-label="Call Wall Net GEX">N/A</td></tr>
-  
-  <tr><td data-label="DTE Band">ALL</td>
-    <td data-label="Put Wall">7,500</td><td data-label="Put Wall Net GEX">+60</td>
-    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+48</td></tr>
-  
-  <tr><td data-label="DTE Band"><b>Target expiry 2026-08-21</b></td>
-    <td data-label="Put Wall">7,750</td><td data-label="Put Wall Net GEX">-140</td>
-    <td data-label="Call Wall">7,900</td><td data-label="Call Wall Net GEX">+10</td></tr>
-  </tbody>
-</table>
-<div class="box-note">Put Wall (main level) is taken from the 181-365 day band. The ALL row is the all-expiry max(+net) reference (UW gex-levels put_wall).</div>
-</div>
-</details>
-
-<h2>What Would Change the Regime</h2>
-<div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> the thresholds that
-would end the frame the rest of this page describes. Each row is a condition, not a forecast: if it is crossed,
-the levels below stop applying and the map has to be re-read.</div>
-
-<table class="stack">
-  <thead><tr><th>If this happens</th><th>Then</th></tr></thead>
-  <tbody>
-  
-  <tr><td data-label="If this happens">A daily close ABOVE 7,821 (the gamma flip)</td><td data-label="Then">back to positive gamma — acceleration is dampened, the upside frame opens</td></tr>
-  
-  <tr><td data-label="If this happens">The close stays BELOW 7,821</td><td data-label="Then">negative gamma continues, so a move keeps being amplified, 7,500 the next support</td></tr>
-  
-  <tr><td data-label="If this happens">Net DEX falls through its 25% threshold (a -$140.75M move, to below +$422.25M)</td><td data-label="Then">the dealer lean behind the current frame weakens meaningfully</td></tr>
-  
-  <tr><td data-label="If this happens">Charm changes sign (from minus to plus)</td><td data-label="Then">the pin&#39;s pull at 7,900 reverses, so the close drifts the other way</td></tr>
-  
-  </tbody>
-</table>
-
-
-<h2>SPX Option Position Map</h2>
-<div class="box"><div class="chart chart-map"><div id="gex-chart"><b>chart &amp; more</b><script>var a = 1 < 2;</script></div></div>
-</div>
-
-<h2>Net GEX Tornado — Strike Profile</h2>
-<div class="box"><div class="chart"><div id="tornado"><svg><text>t &lt; 5</text></svg></div></div></div>
-
-<h2>Close check (22:00 Amsterdam)</h2>
-<div class="box">
-<table class="stack">
-  <thead><tr><th>Step</th><th>Reading</th></tr></thead>
-  <tbody><tr><td data-label="Step"><b>1. Price band</b></td><td data-label="Reading">close 7,784.00 is in Consolidation (7,500 – 7,821)</td></tr><tr><td data-label="Step"><b>2. VIX threshold</b></td><td data-label="Reading">VIX threshold n/a</td></tr><tr><td data-label="Step"><b>3. Week gamma</b></td><td data-label="Reading" style="color:var(--red)">week net gamma is negative (expiries through 2026-08-21)</td></tr></tbody>
-</table>
-<div class="box-note">VIX threshold is a substitute for the report&#39;s VIX HVL, which comes from a source the board does not use: the prior week&#39;s last VIX close plus the average one-day VIX move over the stored window (about two weeks).</div>
-</div>
-
-<h2>Week gamma map</h2>
-<div class="box">
-<div class="at-glance" style="margin:0 0 8px">Expiries through <b>2026-08-21</b> (3) · week net gamma -609 · <b>Turning point N/A</b></div>
-<table class="stack">
-  <thead><tr><th>Zone</th><th>Strikes</th><th>Net gamma</th><th>Share of |gamma|</th></tr></thead>
-  <tbody><tr><td data-label="Zone" style="color:var(--red)">Air gap</td><td data-label="Strikes">7,600–7,775</td><td data-label="Net gamma">-932</td><td data-label="Share of |gamma|">74%</td></tr><tr><td data-label="Zone">Braked staircase</td><td data-label="Strikes">7,800–7,925</td><td data-label="Net gamma">+323</td><td data-label="Share of |gamma|">26%</td></tr></tbody>
-</table>
-<div class="box-note">Board rule (the reports name the zones but print no thresholds): negative gamma = air gap; positive gamma = dense block at 2x or more of the window&#39;s mean |gamma|, braked staircase 0.5x-2x, half-full below 0.5x. Strikes summed in 25-point buckets, window +-5 % of spot, week = expiries through the target Friday.</div>
-</div>
-
-
-<h2>Session hedge flow</h2>
-<div class="box">
-<table class="stack">
-  <thead><tr><th>Expiry (session)</th><th>Net gamma</th><th>Hedge per 50 pt</th><th>Net charm</th><th>Net vanna</th><th>Effect</th></tr></thead>
-  <tbody><tr><td data-label="Expiry (session)">2026-08-14</td><td data-label="Net gamma">+54.5K</td><td data-label="Hedge per 50 pt">35.0K</td><td data-label="Net charm">N/A</td><td data-label="Net vanna">N/A</td><td data-label="Effect">dampens moves (positive gamma)</td></tr><tr><td data-label="Expiry (session)">2026-08-21</td><td data-label="Net gamma">+10.0K</td><td data-label="Hedge per 50 pt">6.4K</td><td data-label="Net charm">N/A</td><td data-label="Net vanna">N/A</td><td data-label="Effect">dampens moves (positive gamma)</td></tr></tbody>
-</table>
-<div class="box-note">Each session's expiring book through the target Friday (UW greek exposure by expiry). Charm sign caveat applies. Expiring open interest is not shown yet.</div>
-</div>
-
-
-<details class="collapsible">
-<summary><h2 class="sum-h">Dealer book</h2></summary>
-<div class="box-inner">
-<table class="stack">
-  <thead><tr><th>Greek</th><th>(a) long calls, short puts</th><th>(b) short all</th></tr></thead>
-  <tbody><tr><td data-label="Greek">Gamma ($ per 1 %)</td><td data-label="(a) long calls, short puts">-849.9M</td><td data-label="(b) short all">-2.8B</td></tr><tr><td data-label="Greek">Gamma, spot -50 ($ per 1 %)</td><td data-label="(a) long calls, short puts">-1.2B</td><td data-label="(b) short all">-1.3B</td></tr><tr><td data-label="Greek">Vanna ($ delta per IV point)</td><td data-label="(a) long calls, short puts">+51.5M</td><td data-label="(b) short all">-11.9M</td></tr><tr><td data-label="Greek">Charm ($ delta per day)</td><td data-label="(a) long calls, short puts">-514.8M</td><td data-label="(b) short all">+119.5M</td></tr><tr><td data-label="Greek">Vomma (sign)</td><td data-label="(a) long calls, short puts">+</td><td data-label="(b) short all">-</td></tr><tr><td data-label="Greek">Zomma (sign)</td><td data-label="(a) long calls, short puts">+</td><td data-label="(b) short all">+</td></tr><tr><td data-label="Greek">Speed (sign)</td><td data-label="(a) long calls, short puts">+</td><td data-label="(b) short all">-</td></tr></tbody>
-</table>
-<div class="at-glance" style="margin:8px 0 0"><b>(a)</b> dealers amplify moves; charm sells into expiry; an IV spike grows the book&#39;s vega</div>
-<div class="at-glance" style="margin:4px 0 0"><b>(b)</b> dealers amplify moves; charm buys into expiry; an IV spike shrinks the book&#39;s vega</div>
-<div class="box-note">Black-Scholes greeks (r = 0) from each UW contract's IV, summed over open interest: 6 contracts, expiries 2026-08-14. Which assumption holds is not known; the reports show both.</div>
-</div>
-</details>
-
-
-<h2>Liquidity Layer — Dealer Flow</h2>
-<div class="box">
-<div class="chart" style="margin:0 0 12px"><div id="env"><i>envelope</i></div></div>
-<div class="band-row" style="margin:0">
-  <div class="band green">
-    <h3>Absorption Band <span class="sub">(positive gamma — dealers trade against the move)</span></h3>
-    <div class="big">7,800–8,000</div>
-    <div>Net GEX +623 &middot; 200 hedge per 25 pt</div>
-  </div>
-  <div class="band red">
-    <h3>Air Gap <span class="sub">(negative gamma — dealers trade with the move)</span></h3>
-    <div class="big">7,700–7,750</div>
-    <div>Net GEX -249 &middot; 80 hedge per 25 pt</div>
-  </div>
-</div>
-<div class="at-glance" style="margin:10px 0 0"><span class="muted">Zero crossing (approx. gamma flip):</span> 7,800</div>
-<div class="muted" style="margin:6px 0 0">Hedge per 25 pt = band Net GEX per 1 % &times; (25 / spot &times; 100 %), the reports' formula.</div>
-</div>
-
-<h2>Cross-Signal Synthesis</h2>
-<div class="at-glance">
-  <span class="muted">Stance:</span>
-  <span class="pos-neg ">Divergence</span>
-  <span class="muted"> &middot; 1/3 directional signals lean bullish, 2/3 lean bearish.</span>
-</div>
-<table class="stack">
-  <thead><tr><th>Signal</th><th>Lean</th></tr></thead>
-  <tbody>
-  <tr><td data-label="Signal">Delta</td><td data-label="Lean"><span class="pill green">Bullish</span></td></tr>
-  <tr><td data-label="Signal">Gamma</td><td data-label="Lean"><span class="pill red">Amplifying</span></td></tr>
-  <tr><td data-label="Signal">Vanna</td><td data-label="Lean"><span class="pill red">Long</span></td></tr>
-  <tr><td data-label="Signal">Charm</td><td data-label="Lean"><span class="pill green">Agree</span></td></tr>
-  
-  </tbody>
-</table>
 
 <details class="collapsible">
 <summary><h2 class="sum-h">Greek Relations — How They Interact</h2></summary>
@@ -732,56 +715,54 @@ the levels below stop applying and the map has to be re-read.</div>
     <div class="r-head"><span class="r-greek">Gamma</span><span class="r-headline">Negative gamma — amplifying regime</span></div>
     <p>Spot 7,784 sits below the gamma flip 7,821 (+0.5%). Dealers trade WITH the move: they sell into weakness and buy into strength, which accelerates moves.</p>
     <table class="stack plain"><tbody><tr><td data-label="">Net dealer Γ</td><td data-label="">+$374</td><td data-label="">Short</td></tr></tbody></table>
-    <div class="tr">Fiyat 7,784, gamma flip&#39;in (7,821, +0.5%) ALTINDA. Piyasa yapıcılar hareketle AYNI YÖNDE işlem yapar: düşerken satar, çıkarken alır; bu yüzden hareket hızlanır, kırılımlar uzar.</div>
   </div>
   
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Vanna</span><span class="r-headline">Long vanna — IV spikes pressure lower</span></div>
     <p>Net vanna is +$45.00M. If IV jumps, dealer delta RISES, so dealers SELL stock to re-hedge — an IV spike adds fuel to the downside.</p>
     <table class="stack plain"><tbody><tr><td data-label="">Net Vanna</td><td data-label="">+$45.00M</td><td data-label="">Long</td></tr></tbody></table>
-    <div class="tr">Net vanna +$45.00M (pozitif). IV sıçrarsa dealer delta&#39;sı YÜKSELİR ve dealer dengelemek için STOK SATAR — vol sıçraması aşağı baskıyı büyütür.</div>
   </div>
   
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Charm</span><span class="r-headline">Negative charm — mechanical selling into the close</span></div>
     <p>Net charm is -$80. As expiry approaches, dealer delta builds; dealers mechanically SELL toward the close. Sign caveat: this is UW&#39;s summed charm; its sign can differ from a Black-Scholes sum over the same contracts (02-06 Nov report), so treat the direction as UW&#39;s, not a confirmed dealer hedge.</p>
     <table class="stack plain"><tbody><tr><td data-label="">Net Charm</td><td data-label="">-$80</td><td data-label="">Sell pressure</td></tr><tr><td data-label="">Charm Peak</td><td data-label="">$8,000</td><td data-label="">+2.8% from spot</td></tr></tbody></table>
-    <div class="tr">Net charm -$80 (negatif). Vade yaklaştıkça dealer delta&#39;sı birikir; dealer kapanışa doğru mekanik SATIŞ yapar.</div>
   </div>
   
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Delta</span><span class="r-headline">Net delta bullish lean</span></div>
     <p>Net dealer delta is +$563.00M — a bullish structural lean.</p>
     <table class="stack plain"><tbody><tr><td data-label="">Net DEX</td><td data-label="">+$563.00M</td><td data-label="">All strikes</td></tr></tbody></table>
-    <div class="tr">Net dealer delta +$563.00M — yukarı yönlü yapısal eğilim.</div>
   </div>
   
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Vol / VIX</span><span class="r-headline">Vol / VIX — unknown</span></div>
     <p>No VIX family stored for this day.</p>
     <table class="stack plain"><tbody><tr><td data-label="">VIX</td><td data-label="">N/A</td><td data-label=""></td></tr></tbody></table>
-    
   </div>
   
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Flow</span><span class="r-headline">Flow — unknown</span></div>
     <p>No flow data for this day.</p>
     <table class="stack plain"><tbody><tr><td data-label="">Dir. vega flow</td><td data-label="">N/A</td><td data-label=""></td></tr></tbody></table>
-    
   </div>
   
   <div class="relation-card">
     <div class="r-head"><span class="r-greek">Vomma</span><span class="r-headline">Vomma — vega&#39;s sensitivity to IV (2nd order)</span></div>
     <p>Vomma measures how vega itself changes as IV moves. When vega is large and Vomma is positive, an IV spike makes the book&#39;s vol exposure grow, which can force accelerated re-hedging. It is a second-order effect on top of Vanna.</p>
     <table class="stack plain"><tbody><tr><td data-label="">Order</td><td data-label="">2nd</td><td data-label="">above Vanna</td></tr></tbody></table>
-    <div class="tr">Vomma, IV değişince vega&#39;nın kendisinin ne kadar değiştiğini ölçer (2. derece). Vega büyük ve Vomma pozitifken IV sıçraması vol pozisyonunu büyütür ve dengeleme hızlanır. Vanna&#39;nın üstüne binen ikinci derece bir etkidir.</div>
   </div>
   
 </div>
 
 </div>
 </details>
+</div>
+</details>
 
+<details class="collapsible group" id="g8">
+<summary><h2 class="sum-h">8 · Volatility</h2></summary>
+<div class="box-inner">
 <h2>Volatility Board</h2>
 <div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.</div>
 
@@ -792,12 +773,113 @@ the levels below stop applying and the map has to be re-read.</div>
 
 <div class="note">Vol term structure unavailable.</div>
 
+</div>
+</details>
+
+<details class="collapsible group" id="g9">
+<summary><h2 class="sum-h">9 · Flow</h2></summary>
+<div class="box-inner">
+<h2>Session hedge flow</h2>
+<div class="box">
+<table class="stack">
+  <thead><tr><th>Expiry (session)</th><th>Net gamma</th><th>Hedge per 50 pt</th><th>Net charm</th><th>Net vanna</th><th>Effect</th></tr></thead>
+  <tbody><tr><td data-label="Expiry (session)">2026-08-14</td><td data-label="Net gamma">+54.5K</td><td data-label="Hedge per 50 pt">35.0K</td><td data-label="Net charm">N/A</td><td data-label="Net vanna">N/A</td><td data-label="Effect">dampens moves (positive gamma)</td></tr><tr><td data-label="Expiry (session)">2026-08-21</td><td data-label="Net gamma">+10.0K</td><td data-label="Hedge per 50 pt">6.4K</td><td data-label="Net charm">N/A</td><td data-label="Net vanna">N/A</td><td data-label="Effect">dampens moves (positive gamma)</td></tr></tbody>
+</table>
+<div class="box-note">Each session's expiring book through the target Friday (UW greek exposure by expiry). Charm sign caveat applies. Expiring open interest is not shown yet.</div>
+</div>
+
+
+
+<div class="box" style="margin-top:14px">
+  <div class="ag-label">Volume &amp; Flow Confluence Analysis</div>
+  <div class="at-glance" style="margin:8px 0 0"><span class="flow-badge flow-flat">No flow data</span> <span style="color:var(--fg)">No flow-per-strike data for this day.</span></div>
+</div>
 
 <h2>Options Volume &amp; P/C</h2>
 
 <div class="note">Options volume data unavailable.</div>
 
 
+<h2>Cross-Signal Synthesis</h2>
+<div class="at-glance">
+  <span class="muted">Stance:</span>
+  <span class="pos-neg ">Divergence</span>
+  <span class="muted"> &middot; 1/3 directional signals lean bullish, 2/3 lean bearish.</span>
+</div>
+<table class="stack">
+  <thead><tr><th>Signal</th><th>Lean</th></tr></thead>
+  <tbody>
+  <tr><td data-label="Signal">Delta</td><td data-label="Lean"><span class="pill green">Bullish</span></td></tr>
+  <tr><td data-label="Signal">Gamma</td><td data-label="Lean"><span class="pill red">Amplifying</span></td></tr>
+  <tr><td data-label="Signal">Vanna</td><td data-label="Lean"><span class="pill red">Long</span></td></tr>
+  <tr><td data-label="Signal">Charm</td><td data-label="Lean"><span class="pill green">Agree</span></td></tr>
+  
+  </tbody>
+</table>
+
+
+<div class="prediction-container">
+  <!-- Top Hero Status Bar -->
+  <div class="prediction-hero">
+    <div class="bias-badge bearish">EXPECTED DIRECTION: BEARISH BREAKDOWN (33.3% Conf)</div>
+    <div class="hero-metric"><span>Active Pin</span><strong>7,800&nbsp;⚑</strong></div>
+    
+    <div class="hero-metric"><span>Bounce Floor</span><strong>7,650</strong></div>
+  </div>
+
+  <!-- Scenario Matrix Table -->
+  <div class="overflow-x-auto">
+  <table class="scenario-table stack">
+    <thead><tr><th>Scenario</th><th>Trigger Level</th><th>Dealer Hedging Action</th><th>Target Zone</th></tr></thead>
+    <tbody>
+    
+    <tr class="row-bullish">
+      <td data-label="Scenario">Bullish Acceleration</td><td data-label="Trigger Level">Spot holds &gt; 7,900</td><td data-label="Dealer Hedging Action">Short gamma forces dealer buying into strength</td><td data-label="Target Zone">n/a</td>
+    </tr>
+    
+    <tr class="row-neutral">
+      <td data-label="Scenario">Consolidation</td><td data-label="Trigger Level">7,795 &lt; Spot &lt; 7,805</td><td data-label="Dealer Hedging Action">Positive gamma &amp; charm absorption dampens range</td><td data-label="Target Zone">7,800 Pin</td>
+    </tr>
+    
+    <tr class="row-bearish">
+      <td data-label="Scenario">Bearish Breakdown</td><td data-label="Trigger Level">n/a</td><td data-label="Dealer Hedging Action">Flipped gamma accelerates the drop through the air pocket</td><td data-label="Target Zone">7,650 (vanna floor)</td>
+    </tr>
+    
+    </tbody>
+  </table>
+  </div>
+
+  <!-- OI vs Volume Divergence Status -->
+  
+  <div class="divergence-bar">
+    
+    <span class="status-item">
+      <strong>7,900 above:</strong>
+      <span class="text-amber">DECAYING (OI: -400.0M | Vol: +70.0M)</span>
+    </span>
+    
+    <span class="status-item">
+      <strong>7,650 below:</strong>
+      <span class="text-red">FORTIFYING (OI: -700.0M | Vol: -10.0M)</span>
+    </span>
+    
+    <span class="status-item">
+      <strong>8,000 above:</strong>
+      <span class="text-red">FORTIFYING (OI: -1.2B | Vol: -20.0M)</span>
+    </span>
+    
+  </div>
+  
+
+  <div class="hero-note">ⓘ Directional score uses dollar spot-exposures (gamma_oi / charm_vol / vanna_vol), each term normalized to [-1,1]; the 0-1 DTE strike-expiry grid supplies pin/flip/trigger geometry. Confidence is a heuristic from S_dir margin and pin dominance/proximity — NOT a calibrated forecast.</div>
+</div>
+
+</div>
+</details>
+
+<details class="collapsible group" id="g10">
+<summary><h2 class="sum-h">10 · Positioning</h2></summary>
+<div class="box-inner">
 <div class="at-glance" style="margin:8px 0 0"><span class="muted">Front-expiry share of Net GEX —</span> 84.51% (2026-08-14: +54.5K of +64.5K)</div>
 
 <h2>Max Pain</h2>
@@ -805,42 +887,31 @@ the levels below stop applying and the map has to be re-read.</div>
 <div class="note">Max pain data unavailable.</div>
 
 
+<h2>Expiry Distribution</h2>
+<table class="stack">
+  <thead><tr><th>Expiry</th><th>DTE</th><th>Band</th><th>Net GEX</th><th>Net DEX</th></tr></thead>
+  <tbody>
+  
+  <tr><td data-label="Expiry">2026-08-14</td><td data-label="DTE">0.0</td><td data-label="Band">0DTE</td>
+    <td data-label="Net GEX">+54.5K</td><td data-label="Net DEX">+8.3M</td></tr>
+  
+  <tr><td data-label="Expiry">2026-08-21</td><td data-label="DTE">7.0</td><td data-label="Band">1–7D</td>
+    <td data-label="Net GEX">+10.0K</td><td data-label="Net DEX">+50.0M</td></tr>
+  
+  </tbody>
+</table>
+
 <h2>CFTC COT — E-mini S&amp;P 500 (TFF)</h2>
 
 <div class="note">CFTC COT data unavailable.</div>
 
 
-<h2>Scenario Set</h2>
-<table class="stack">
-  <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>Asymmetry</th><th>Trade</th></tr></thead>
-  <tbody>
-  
-  <tr>
-    <td data-label="Scenario">Consolidation</td><td data-label="Range">7,500 – 7,821</td><td data-label="P">0.35</td>
-    <td data-label="Asymmetry">n/a</td>
-    <td data-label="Trade">Theta-weighted (directionless)</td>
-  </tr>
-  
-  <tr>
-    <td data-label="Scenario">Upside</td><td data-label="Range">7,821 – 7,900</td><td data-label="P">0.3</td>
-    <td data-label="Asymmetry">0.25</td>
-    <td data-label="Trade">Directional long</td>
-  </tr>
-  
-  <tr>
-    <td data-label="Scenario">Downside</td><td data-label="Range">7,400 – 7,500</td><td data-label="P">0.35</td>
-    <td data-label="Asymmetry">0.31</td>
-    <td data-label="Trade">Directional short</td>
-  </tr>
-  
-  </tbody>
-</table>
-<div class="note">Bands derive from this week&#39;s levels only — spot below the gamma flip (negative gamma): the consolidation ceiling is the flip and the upside band is the flip taken back up to the charm pin. Probabilities are the reference report&#39;s own: heuristic, derived from the gamma regime and positioning, and NOT calibrated forecasts. Asymmetry is band geometry (distance from the trigger to the band edge over the distance to the invalidation level), not a success probability; expected value is deliberately not computed, because the probabilities behind it are fixed and uncalibrated. Scenario rules follow the 2026-10-30 report. The Brier scorecard below tracks how honest these probabilities turn out to be.</div>
+<h2>Net Delta — Weekly Trend</h2>
+<div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> one week's hedging
+direction can mislead; the trend only shows over consecutive weeks. This is the summed call and put delta across
+every expiry, at each Friday close.</div>
 
-<div class="box" style="margin-top:14px">
-  <div class="ag-label">Volume &amp; Flow Confluence Analysis</div>
-  <div class="at-glance" style="margin:8px 0 0"><span class="flow-badge flow-flat">No flow data</span> <span style="color:var(--fg)">No flow-per-strike data for this day.</span></div>
-</div>
+<div class="note">No Friday close stored before this day yet, so there is no weekly trend to show.</div>
 
 
 <h2>Level Migration vs Prior Snapshot</h2>
@@ -870,14 +941,6 @@ the levels below stop applying and the map has to be re-read.</div>
   
   </tbody>
 </table>
-
-<h2>Net Delta — Weekly Trend</h2>
-<div class="at-glance" style="margin-top:0"><span class="muted">What it tells you —</span> one week's hedging
-direction can mislead; the trend only shows over consecutive weeks. This is the summed call and put delta across
-every expiry, at each Friday close.</div>
-
-<div class="note">No Friday close stored before this day yet, so there is no weekly trend to show.</div>
-
 
 <h2>Top-10 GEX Strikes</h2>
 <table class="stack">
@@ -910,28 +973,13 @@ every expiry, at each Friday close.</div>
   
   </tbody>
 </table>
-
-<h2>Expiry Distribution</h2>
-<table class="stack">
-  <thead><tr><th>Expiry</th><th>DTE</th><th>Band</th><th>Net GEX</th><th>Net DEX</th></tr></thead>
-  <tbody>
-  
-  <tr><td data-label="Expiry">2026-08-14</td><td data-label="DTE">0.0</td><td data-label="Band">0DTE</td>
-    <td data-label="Net GEX">+54.5K</td><td data-label="Net DEX">+8.3M</td></tr>
-  
-  <tr><td data-label="Expiry">2026-08-21</td><td data-label="DTE">7.0</td><td data-label="Band">1–7D</td>
-    <td data-label="Net GEX">+10.0K</td><td data-label="Net DEX">+50.0M</td></tr>
-  
-  </tbody>
-</table>
-
-<h2>Brier Scorecard</h2>
-<div class="at-glance">
-  <span class="muted">Scored days:</span> 
-  &middot; <span class="muted">Avg Brier:</span> —
-  &middot; <span class="muted">Equal-weight ref:</span> 
 </div>
-<div class="note">No scored weeks yet</div>
+</details>
+
+<details class="collapsible group" id="g11">
+<summary><h2 class="sum-h">11 · Calendar and reference</h2></summary>
+<div class="box-inner">
+
 
 <details class="collapsible">
 <summary><h2 class="sum-h">Details</h2></summary>
@@ -988,36 +1036,6 @@ every expiry, at each Friday close.</div>
 
 </div>
 </details>
-
-<details class="collapsible">
-<summary><h2 class="sum-h">Greek Sözlüğü &amp; İlişkiler — Türkçe</h2></summary>
-<div class="box-inner tr-block">
-  <div class="note">Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce başlıklarıyla aynı veriden türetilmiştir. Teknik sözlük:</div>
-  <dl class="tr-glossary">
-    <dt>Gamma (Γ)</dt><dd>Spot fiyat 1 puan oynayınca delta&#39;nın (dealer pozisyonunun) ne kadar değiştiği. Pozitif gamma: dealer hareketi söndürür. Negatif gamma: dealer hareketi büyütür.</dd><dt>Vanna</dt><dd>IV (volatilite) değişince delta&#39;nın ne kadar değiştiği. Negatif net vanna: IV yükselirse dealer alıcı olur → düşüş yastıklanır. Pozitif: IV yükselirse dealer satıcı olur → baskı artar.</dd><dt>Charm</dt><dd>Vade yaklaştıkça delta&#39;nın kendiliğinden erimesi. Pozitif charm: kapanışa doğru mekanik alış baskısı (pin etkisi). Negatif charm: mekanik satış baskısı.</dd><dt>Vomma</dt><dd>IV değişince vega&#39;nın ne kadar değiştiği (2. derece). IV sıçrarsa vol pozisyonunun büyüyüp dengelemeyi hızlandırıp hızlandırmayacağını gösterir.</dd><dt>HVL / Gamma Flip</dt><dd>Kümülatif net GEX&#39;in işaret değiştirdiği fiyat. Üstünde pozitif gamma (sakin), altında negatif gamma (hızlı).</dd><dt>Net GEX</dt><dd>Tüm strike&#39;lardaki net gamma maruziyeti. + milyon dolar = söndürücü kütle, − = hızlandırıcı.</dd><dt>Absorpsiyon bandı</dt><dd>Kümülatif Net GEX&#39;in pozitif olduğu bölge; dealer harekete karşı işlem yapar, fiyat orada zor ilerler.</dd><dt>Hava boşluğu (air gap)</dt><dd>Kümülatif Net GEX&#39;in negatif olduğu bölge; dealer hareketle aynı yönde işlem yapar, fiyat orada hızlı akar.</dd><dt>Max Pain</dt><dd>En çok opsiyonun değersiz bittiği strike; yapısal &#39;çekim&#39; seviyesi, yön sinyali değildir. Spot&#39;tan uzaklığıyla okunur.</dd><dt>IV Rank</dt><dd>Bugünkü IV&#39;nin son 1 yıldaki konumu (%). Düşük = opsiyonlar ucuz, yüksek = pahalı.</dd><dt>Variance Risk Premium (VRP)</dt><dd>Örtük oynaklığın (IV) gerçekleşen oynaklığın (RV) üzerindeki payı; kısa vol pozisyonunun ne kadar kazandırdığı. Yüksek = vol satıcısı zengin.</dd><dt>Put/Call oranı (P/C)</dt><dd>Put hacminin call hacmine oranı. &gt;1 put-ağır akış (koruma veya yönlü aşağı bahis); tek başına yön okunmaz, premium ve Net GEX ile birlikte yorumlanır.</dd><dt>Contango / Backwardation</dt><dd>Vade yapısının yönü. Contango (kısa vade sakin, uzak vade pahalı) normaldir; backwardation (yakın vade daha pahalı) yakın stresin erken göstergesidir.</dd><dt>CFTC COT (TFF)</dt><dd>Haftalık yayınlanan büyük oyuncu pozisyonları (asset manager, leveraged funds, dealer). Gecikmeli ama düzenli; yön ölçmek için kullanılır.</dd>
-  </dl>
-  <div class="note" style="margin-top:14px">Bu haftaki veriye göre greek ilişkileri:</div>
-  
-  <div style="margin-top:10px">
-    <b class="tr-name">Gamma</b> — <span style="color:var(--muted)">Fiyat 7,784, gamma flip&#39;in (7,821, +0.5%) ALTINDA. Piyasa yapıcılar hareketle AYNI YÖNDE işlem yapar: düşerken satar, çıkarken alır; bu yüzden hareket hızlanır, kırılımlar uzar.</span>
-  </div>
-  
-  <div style="margin-top:10px">
-    <b class="tr-name">Vanna</b> — <span style="color:var(--muted)">Net vanna +$45.00M (pozitif). IV sıçrarsa dealer delta&#39;sı YÜKSELİR ve dealer dengelemek için STOK SATAR — vol sıçraması aşağı baskıyı büyütür.</span>
-  </div>
-  
-  <div style="margin-top:10px">
-    <b class="tr-name">Charm</b> — <span style="color:var(--muted)">Net charm -$80 (negatif). Vade yaklaştıkça dealer delta&#39;sı birikir; dealer kapanışa doğru mekanik SATIŞ yapar.</span>
-  </div>
-  
-  <div style="margin-top:10px">
-    <b class="tr-name">Delta</b> — <span style="color:var(--muted)">Net dealer delta +$563.00M — yukarı yönlü yapısal eğilim.</span>
-  </div>
-  
-  <div style="margin-top:10px">
-    <b class="tr-name">Vomma</b> — <span style="color:var(--muted)">Vomma, IV değişince vega&#39;nın kendisinin ne kadar değiştiğini ölçer (2. derece). Vega büyük ve Vomma pozitifken IV sıçraması vol pozisyonunu büyütür ve dengeleme hızlanır. Vanna&#39;nın üstüne binen ikinci derece bir etkidir.</span>
-  </div>
-  
 </div>
 </details>
 

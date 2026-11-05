@@ -659,7 +659,8 @@ def _structures(snapshot: dict) -> dict | None:
             "reward_risk": "n/a" if s["reward_risk"] is None else f"{s['reward_risk']:.2f}",
             "missing": ", ".join(s["missing"]),
         })
-    return {"expiry": built["expiry"], "label": built["label"], "rows": out}
+    return {"expiry": built["expiry"], "label": built["label"], "rows": out,
+            "live": any(s["net"] is not None for s in built["structures"])}
 
 
 def _dealer_book(snapshot: dict) -> dict | None:

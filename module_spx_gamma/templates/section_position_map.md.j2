@@ -123,7 +123,6 @@ Zero crossing (approx. gamma flip): **{{ gex_envelope.zero_crossing }}**
 |---|---|---|
 {% for label, value, note in r.row %}| {{ label }} | {{ value }} | {{ note }} |
 {% endfor %}
-{% if r.turkish %}> TR: {{ r.turkish }}{% endif %}
 {% endfor %}
 ## Volatility Board
 
@@ -294,15 +293,5 @@ Gamma Flip ({{ how_to_read.flip }}) — the volatility turning point:
 ## Delta Map — Walkthrough
 
 {% for p in walkthrough %}- {{ p }}
-{% endfor %}
-## Greek Sözlüğü & İlişkiler — Türkçe
-
-Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce başlıklarıyla aynı veriden türetilmiştir.
-
-{% for g in glossary_tr %}- **{{ g.greek }}**: {{ g.def }}
-{% endfor %}
-Bu haftaki veriye göre greek ilişkileri:
-
-{% for r in relations if r.turkish %}- **{{ r.greek }}** — {{ r.turkish }}
 {% endfor %}
 {{ footer }}

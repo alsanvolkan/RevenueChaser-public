@@ -186,7 +186,6 @@ Spot 7,784 sits below the gamma flip 7,821 (+0.5%). Dealers trade WITH the move:
 |---|---|---|
 | Net dealer Γ | +$374 | Short |
 
-> TR: Fiyat 7,784, gamma flip'in (7,821, +0.5%) ALTINDA. Piyasa yapıcılar hareketle AYNI YÖNDE işlem yapar: düşerken satar, çıkarken alır; bu yüzden hareket hızlanır, kırılımlar uzar.
 
 ### Vanna — Long vanna — IV spikes pressure lower
 
@@ -196,7 +195,6 @@ Net vanna is +$45.00M. If IV jumps, dealer delta RISES, so dealers SELL stock to
 |---|---|---|
 | Net Vanna | +$45.00M | Long |
 
-> TR: Net vanna +$45.00M (pozitif). IV sıçrarsa dealer delta'sı YÜKSELİR ve dealer dengelemek için STOK SATAR — vol sıçraması aşağı baskıyı büyütür.
 
 ### Charm — Negative charm — mechanical selling into the close
 
@@ -207,7 +205,6 @@ Net charm is -$80. As expiry approaches, dealer delta builds; dealers mechanical
 | Net Charm | -$80 | Sell pressure |
 | Charm Peak | $8,000 | +2.8% from spot |
 
-> TR: Net charm -$80 (negatif). Vade yaklaştıkça dealer delta'sı birikir; dealer kapanışa doğru mekanik SATIŞ yapar.
 
 ### Delta — Net delta bullish lean
 
@@ -217,7 +214,6 @@ Net dealer delta is +$563.00M — a bullish structural lean.
 |---|---|---|
 | Net DEX | +$563.00M | All strikes |
 
-> TR: Net dealer delta +$563.00M — yukarı yönlü yapısal eğilim.
 
 ### Vol / VIX — Vol / VIX — unknown
 
@@ -226,7 +222,6 @@ No VIX family stored for this day.
 | Metric | Value | Note |
 |---|---|---|
 | VIX | N/A |  |
-
 
 
 ### Flow — Flow — unknown
@@ -238,7 +233,6 @@ No flow data for this day.
 | Dir. vega flow | N/A |  |
 
 
-
 ### Vomma — Vomma — vega's sensitivity to IV (2nd order)
 
 Vomma measures how vega itself changes as IV moves. When vega is large and Vomma is positive, an IV spike makes the book's vol exposure grow, which can force accelerated re-hedging. It is a second-order effect on top of Vanna.
@@ -247,7 +241,6 @@ Vomma measures how vega itself changes as IV moves. When vega is large and Vomma
 |---|---|---|
 | Order | 2nd | above Vanna |
 
-> TR: Vomma, IV değişince vega'nın kendisinin ne kadar değiştiğini ölçer (2. derece). Vega büyük ve Vomma pozitifken IV sıçraması vol pozisyonunu büyütür ve dengeleme hızlanır. Vanna'nın üstüne binen ikinci derece bir etkidir.
 
 ## Volatility Board
 
@@ -402,32 +395,5 @@ Gamma Flip (7,821) — the volatility turning point:
 - Spot trades at 7,784. Around and just below spot, net delta concentration is relatively thin, so price can churn through this tight zone without major dealer-hedge interference.
 - The delta Call Wall sits at 7,800 (net Δ +180,000,000), heavily call-dominated; dealers are net long delta here, so rallies toward it force mechanical selling — a heavy lid that caps upside unless buying volume overwhelms it.
 - Deep liquidity pockets sit at 7,750 and 7,700; these institutional levels mix large put and call positions into sizeable net positive delta bars, so a drop toward them triggers dealer buying to rebalance — strong structural cushions below spot.
-
-## Greek Sözlüğü & İlişkiler — Türkçe
-
-Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce başlıklarıyla aynı veriden türetilmiştir.
-
-- **Gamma (Γ)**: Spot fiyat 1 puan oynayınca delta'nın (dealer pozisyonunun) ne kadar değiştiği. Pozitif gamma: dealer hareketi söndürür. Negatif gamma: dealer hareketi büyütür.
-- **Vanna**: IV (volatilite) değişince delta'nın ne kadar değiştiği. Negatif net vanna: IV yükselirse dealer alıcı olur → düşüş yastıklanır. Pozitif: IV yükselirse dealer satıcı olur → baskı artar.
-- **Charm**: Vade yaklaştıkça delta'nın kendiliğinden erimesi. Pozitif charm: kapanışa doğru mekanik alış baskısı (pin etkisi). Negatif charm: mekanik satış baskısı.
-- **Vomma**: IV değişince vega'nın ne kadar değiştiği (2. derece). IV sıçrarsa vol pozisyonunun büyüyüp dengelemeyi hızlandırıp hızlandırmayacağını gösterir.
-- **HVL / Gamma Flip**: Kümülatif net GEX'in işaret değiştirdiği fiyat. Üstünde pozitif gamma (sakin), altında negatif gamma (hızlı).
-- **Net GEX**: Tüm strike'lardaki net gamma maruziyeti. + milyon dolar = söndürücü kütle, − = hızlandırıcı.
-- **Absorpsiyon bandı**: Kümülatif Net GEX'in pozitif olduğu bölge; dealer harekete karşı işlem yapar, fiyat orada zor ilerler.
-- **Hava boşluğu (air gap)**: Kümülatif Net GEX'in negatif olduğu bölge; dealer hareketle aynı yönde işlem yapar, fiyat orada hızlı akar.
-- **Max Pain**: En çok opsiyonun değersiz bittiği strike; yapısal 'çekim' seviyesi, yön sinyali değildir. Spot'tan uzaklığıyla okunur.
-- **IV Rank**: Bugünkü IV'nin son 1 yıldaki konumu (%). Düşük = opsiyonlar ucuz, yüksek = pahalı.
-- **Variance Risk Premium (VRP)**: Örtük oynaklığın (IV) gerçekleşen oynaklığın (RV) üzerindeki payı; kısa vol pozisyonunun ne kadar kazandırdığı. Yüksek = vol satıcısı zengin.
-- **Put/Call oranı (P/C)**: Put hacminin call hacmine oranı. >1 put-ağır akış (koruma veya yönlü aşağı bahis); tek başına yön okunmaz, premium ve Net GEX ile birlikte yorumlanır.
-- **Contango / Backwardation**: Vade yapısının yönü. Contango (kısa vade sakin, uzak vade pahalı) normaldir; backwardation (yakın vade daha pahalı) yakın stresin erken göstergesidir.
-- **CFTC COT (TFF)**: Haftalık yayınlanan büyük oyuncu pozisyonları (asset manager, leveraged funds, dealer). Gecikmeli ama düzenli; yön ölçmek için kullanılır.
-
-Bu haftaki veriye göre greek ilişkileri:
-
-- **Gamma** — Fiyat 7,784, gamma flip'in (7,821, +0.5%) ALTINDA. Piyasa yapıcılar hareketle AYNI YÖNDE işlem yapar: düşerken satar, çıkarken alır; bu yüzden hareket hızlanır, kırılımlar uzar.
-- **Vanna** — Net vanna +$45.00M (pozitif). IV sıçrarsa dealer delta'sı YÜKSELİR ve dealer dengelemek için STOK SATAR — vol sıçraması aşağı baskıyı büyütür.
-- **Charm** — Net charm -$80 (negatif). Vade yaklaştıkça dealer delta'sı birikir; dealer kapanışa doğru mekanik SATIŞ yapar.
-- **Delta** — Net dealer delta +$563.00M — yukarı yönlü yapısal eğilim.
-- **Vomma** — Vomma, IV değişince vega'nın kendisinin ne kadar değiştiğini ölçer (2. derece). Vega büyük ve Vomma pozitifken IV sıçraması vol pozisyonunu büyütür ve dengeleme hızlanır. Vanna'nın üstüne binen ikinci derece bir etkidir.
 
 Source: Unusual Whales API — open-position-based option exposure model. Report date: 2026-08-14. These levels are provider-model outputs and strike aggregations, not guaranteed support/resistance, pin certainty, forecasts, or price targets. Long vanna: an IV rise raises dealer delta and forces stock selling to re-hedge — a drag during vol spikes. A flow effect, not a support guarantee.
