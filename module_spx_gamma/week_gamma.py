@@ -52,11 +52,19 @@ def bucketed(profile: list[tuple[float, float]], width: float = BUCKET) -> list[
     return sorted(out.items())
 
 
+def window_bars(profile: list[tuple[float, float]], spot: float | None,
+                width: float = BUCKET) -> list[tuple[float, float]]:
+    """The bucketed profile inside the zone window (+-5 % of spot): the bars the board draws."""
+    if not spot:
+        return []
+    return [(k, g) for k, g in bucketed(profile, width) if abs(k + width / 2 - spot) <= spot * WINDOW_PCT]
+
+
 def zones(profile: list[tuple[float, float]], spot: float | None, width: float = BUCKET) -> list[dict]:
     """Zones over the bucketed profile; each zone's range is [lo, hi) in index points."""
     if not spot:
         return []
-    win = [(k, g) for k, g in bucketed(profile, width) if abs(k + width / 2 - spot) <= spot * WINDOW_PCT]
+    win = window_bars(profile, spot, width)
     if not win:
         return []
     total_abs = sum(abs(g) for _, g in win)
@@ -85,4 +93,4 @@ def week_map(rows: list[dict], asof_date: str, spot: float | None) -> dict | Non
     crossings = cumulative_crossings(prof)
     return {"target": target, "expiries": expiries, "net_gamma": sum(g for _, g in prof),
             "turning_point": nearest_crossing(crossings, spot) if spot else (crossings[0] if crossings else None),
-            "zones": zones(prof, spot), "rule": RULE}
+            "zones": zones(prof, spot), "bars": window_bars(prof, spot), "rule": RULE}
