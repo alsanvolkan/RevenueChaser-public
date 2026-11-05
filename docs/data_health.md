@@ -163,14 +163,21 @@ closed fold under it (`details#old-settings`), unchanged.
 - **Stale page:** when the page is older than 60 minutes on returning to it, a bar offers a reload.
 - **Planned reads** (a board's table read that `boards` does not declare yet) are drawn dashed and marked planned.
 
-### 2.0b The two tabs: Data and Needs (#331)
+### 2.0b The three tabs: Data, Fetch and Needs (#331)
 
-A tab strip sits at the top of the page, under the provider banner: **Data** is the page as described in 2.0a and
-below (the control board, then the closed fold of the old sections), and **Needs** shows the needs layer
-(`rcdata.needs`): what a board can ask for, how fresh it is now, and how often it was asked. The strip is
-`role="tablist"`; the arrow keys move between the two tabs, the choice is remembered per viewer (`localStorage`,
-key `rc.settings.tab`), and `#needs` in the URL opens the Needs tab. With no script the Data tab shows. Showing the
-Data tab again sends a `resize`, because the flow diagram lays itself out from a width that is 0 while hidden.
+A tab strip sits at the top of the page, under the provider banner. **Data** is what the store holds and where it
+comes from (`control_render.render_data`: the header, Health, the flow diagram, Data file by file and the
+cross-check), with the closed fold of the old sections at its bottom. **Fetch** is what gets asked for
+(`control_render.render_fetch`: the universe strip and its legend, every dataset's bar, Providers and the queue).
+**Needs** shows the needs layer (`rcdata.needs`): what a board can ask for, how fresh it is now, and how often it
+was asked. Both board panels carry `class="ctl"`, which is what `static/control.css` is scoped to, so each is styled
+as the one board it was.
+
+The strip is `role="tablist"`; the arrow keys move between the tabs, the choice is remembered per viewer
+(`localStorage`, key `rc.settings.tab`), and `#data`, `#fetch` or `#needs` in the URL opens that tab. With no
+script the Data tab shows. A tab that becomes visible sends a `resize`, because the flow diagram lays itself out
+from a width that is 0 while hidden. A press that points into the other panel (the Cross-check button, "Fetch the
+universe") opens that tab first, through `window.RC_SETTINGS_SHOW_PANEL`.
 
 `module_settings/needs_tab.py` builds the model (`build`) and draws it (`render`); the styles are
 `static/needs.css`, scoped to `#needs` and `#settings-tabs`, with the control board's own light and dark tokens

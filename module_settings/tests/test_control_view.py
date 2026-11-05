@@ -251,19 +251,19 @@ def test_the_folder_line_tells_not_walked_from_no_folder_from_counted():
     really is missing."""
     from RevenueChaser.module_settings import control_render
 
-    walked = control_render.render(_build())
+    walked = control_render.render_data(_build())
     assert "52 files" in walked and "not walked yet" not in walked
 
     nd = control_nd()
     nd["storage"] = {**nd["storage"], "datasets": {}, "walked_at": None}
-    never = control_render.render(_build(nd))
+    never = control_render.render_data(_build(nd))
     assert "not walked yet" in never and "no folder yet" not in never, "no picture is not an empty folder"
 
     nd = control_nd()
     nd["storage"] = {**nd["storage"],
                      "datasets": {"alpaca/bars": {"raw": {"files": None, "bytes": None, "capped": False},
                                                   "parquet": {"files": None, "bytes": None, "capped": False}}}}
-    missing = control_render.render(_build(nd))
+    missing = control_render.render_data(_build(nd))
     assert "no folder yet" in missing, "a dataset whose folder really is missing still says so"
 
 

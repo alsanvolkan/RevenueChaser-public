@@ -1,7 +1,8 @@
 """The Settings / Data control board's HTML (design v28), from ``control.build``'s model.
 
 Every string goes through ``html_safe.esc``; the page's own data (the flow diagram, the calendars, the universe)
-rides in one ``script_json`` block the script reads. The styles are ``static/control.css``, scoped to ``#ctl``, and
+rides in one ``script_json`` block the script reads. The board is two tab panels (``render_data`` and
+``render_fetch``); the styles are ``static/control.css``, scoped to ``.ctl``, which both panels carry, and
 the behaviour ``static/control.js``. Nothing a press does here fetches by itself: Fetch and Pause put one request in
 the builder's queue, exactly as before; Apply saves the universe; Fill and "Fill this range" stay off unless the
 server's ``RC_FILL_ENABLED`` is set (avo's word); "Refresh the example rows" reads five rows of the live file; and
@@ -605,7 +606,7 @@ def _data(view: dict) -> str:
                      d["coverage"]["target"]) + '</div>'
             for d in f["datasets"] if d["coverage"])
         tgt = (f'<div class="cbars"><p class="tgtnote">How full each dataset\'s target is · Fetch, Fill and Backfill '
-               f'are in the Fetch section at the top</p>{targets}</div>' if targets else "")
+               f'are on the Fetch tab</p>{targets}</div>' if targets else "")
         cards.append(f'<details class="group" style="--fh:{esc(f["color"])}" data-file="{esc(f["name"])}"><summary>'
                      f'<div class="ghead"><h3>{esc(f["name"])}</h3><span class="gstep">{esc(f["steps"])}</span>{pills}'
                      f'</div></summary>{tgt}{_journey(f)}{_samples(f)}{_health_table(f)}</details>')
@@ -686,16 +687,34 @@ def client(view: dict) -> dict:
             "calendars": cals, "today": view["read_at_iso"][:10]}
 
 
-def render(view: dict) -> str:
-    """The ``<section id="ctl">`` of the page, or one line when the model could not be built."""
-    if view.get("error"):
-        return ('<section id="ctl"><div class="wrap"><h1>Settings · Data</h1><div class="errbar"><b>Could not read</b> '
-                f'· {esc(view["error"])}</div></div></section>')
-    view = {**view, "universe_summary": " + ".join(s["label"] for s in view["universe"]["sets"] if s["on"])
+def _err(view: dict) -> str:
+    """The one line a panel is when the model could not be built."""
+    return ('<section class="ctl"><div class="wrap"><h1>Settings · Data</h1><div class="errbar"><b>Could not read</b> '
+            f'· {esc(view["error"])}</div></div></section>')
+
+
+def _ready(view: dict) -> dict:
+    """``view`` with the universe summary its sections print."""
+    return {**view, "universe_summary": " + ".join(s["label"] for s in view["universe"]["sets"] if s["on"])
             + f' · {control.count(view["universe"]["size"])} names'}
-    return ('<section id="ctl" aria-label="Settings · Data control board"><div class="wrap">'
-            f'{_header(view)}{_health(view)}{_fetch(view)}{_flow(view)}{_providers(view)}{_data(view)}'
-            f'{_cross(view)}{_queue(view)}</div></section>')
+
+
+def render_data(view: dict) -> str:
+    """The Data tab's panel (#331): what the store holds, where it comes from, and what disagrees."""
+    if view.get("error"):
+        return _err(view)
+    view = _ready(view)
+    return ('<section id="ctl" class="ctl" aria-label="Settings · Data control board"><div class="wrap">'
+            f'{_header(view)}{_health(view)}{_flow(view)}{_data(view)}{_cross(view)}</div></section>')
+
+
+def render_fetch(view: dict) -> str:
+    """The Fetch tab's panel (#331): the universe, every dataset's bar, the providers and the queue."""
+    if view.get("error"):
+        return _err(view)
+    view = _ready(view)
+    return ('<section id="ctl-fetch" class="ctl" aria-label="Settings · Fetch control board"><div class="wrap">'
+            f'{_fetch(view)}{_providers(view)}{_queue(view)}</div></section>')
 
 
 def scripts(view: dict) -> str:

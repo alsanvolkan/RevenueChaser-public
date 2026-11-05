@@ -16,6 +16,9 @@ from RevenueChaser.module_settings.tests.test_control_view import NOW, control_n
 from RevenueChaser.rcdata.needs import screen
 
 SECTIONS = ("sec-health", "sec-fetch", "sec-flow", "sec-providers", "sec-data", "sec-crosscheck", "sec-queue")
+#: the sections of each tab panel (#331 step 1), in the order they are rendered
+DATA_SECTIONS = ("sec-health", "sec-flow", "sec-data", "sec-crosscheck")
+FETCH_SECTIONS = ("sec-fetch", "sec-providers", "sec-queue")
 
 
 def _page(nd=None) -> str:
@@ -35,11 +38,34 @@ def _section(html: str, sec: str) -> str:
 
 def test_the_board_is_on_top_in_the_designed_order_and_the_old_sections_fold_below():
     html = _page()
-    at = [html.index(f'id="{s}"') for s in SECTIONS]
-    assert at == sorted(at), "Health, Fetch, the flow diagram, Providers, Data, then cross-check and queue"
+    at = [html.index(f'id="{s}"') for s in DATA_SECTIONS + FETCH_SECTIONS]
+    assert at == sorted(at), "Health, the flow diagram, Data, cross-check, then Fetch, Providers and the queue"
     fold = html.index('id="old-settings"')
-    assert at[-1] < fold < html.index('id="newdata"') < html.index('id="ticker-drill"')
+    assert html.index('id="sec-crosscheck"') < fold < html.index('id="newdata"') < html.index('id="ticker-drill"')
     assert '<details class="oldfold" id="old-settings">' in html, "folded, not deleted: closed until pressed"
+
+
+def test_each_section_sits_in_one_panel_only_and_none_is_lost():
+    html = _page()
+    data = _between(html, 'id="panel-data"', 'id="panel-fetch"')
+    fetch = _between(html, 'id="panel-fetch"', 'id="needs"')
+    for sec in SECTIONS:
+        assert html.count(f'id="{sec}"') == 1, f"{sec} is rendered twice"
+    for sec in DATA_SECTIONS:
+        assert f'id="{sec}"' in data, sec
+    for sec in FETCH_SECTIONS:
+        assert f'id="{sec}"' in fetch, sec
+    assert 'id="old-settings"' in data, "the old fold stays at the bottom of Data"
+    assert 'id="universe"' in fetch, "the universe strip and its legend ride with Fetch"
+
+
+def test_the_fetch_tab_has_its_button_its_panel_and_its_hash():
+    html = _page()
+    strip = _between(html, 'id="settings-tabs"', "</nav>")
+    assert strip.index('id="tab-data"') < strip.index('id="tab-fetch"') < strip.index('id="tab-needs"')
+    assert 'role="tab" id="tab-fetch" data-tab="fetch" aria-controls="panel-fetch"' in strip
+    assert re.search(r'<div[^>]*id="panel-fetch"[^>]*role="tabpanel"[^>]*hidden', html), "Fetch starts hidden"
+    assert '"fetch": "panel-fetch"' in html, "the remembered-tab config knows the third tab"
 
 
 def test_health_fetch_and_the_flow_open_the_rest_closed():
@@ -150,7 +176,9 @@ def test_every_hostile_string_is_escaped_and_the_scripts_parse(tmp_path):
     nd["queue"]["active"][0]["note"] = H("queue_note")
     nd["universe"]["tickers"]["E"] = [H("ticker")]
     html = _page(nd)
-    ctl = _between(html, '<section id="ctl"', '<details class="oldfold"')
+    # both panels of the board: Data up to the old fold, then Fetch
+    ctl = (_between(html, '<section id="ctl"', '<details class="oldfold"')
+           + _between(html, '<section id="ctl-fetch"', 'id="needs"'))
     for tag in ("label", "reason", "kind", "detail", "note", "col", "cell", "queue_note"):
         assert f"onerror=__x(&#x27;{tag}T&#x27;)" in ctl or tag in ("ticker",), tag
     assert_inert(html)
@@ -160,15 +188,15 @@ def test_every_hostile_string_is_escaped_and_the_scripts_parse(tmp_path):
 
 def test_the_css_is_scoped_to_the_board_and_themed_both_ways():
     css = control_render.CTL_CSS
-    assert ':root[data-theme="dark"] #ctl{' in css
-    assert '@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) #ctl{' in css
+    assert ':root[data-theme="dark"] .ctl{' in css
+    assert '@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .ctl{' in css
     body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     for sel in re.findall(r"(?:^|})\s*([^{}@]+)\{", body):
         for one in sel.split(","):
             one = one.strip()
             if not one or re.match(r"^(from|to|\d+%)$", one):
                 continue
-            assert one.startswith(("#ctl", ':root[data-theme="dark"] #ctl', ':root:not([data-theme="light"]) #ctl',
+            assert one.startswith((".ctl", ':root[data-theme="dark"] .ctl', ':root:not([data-theme="light"]) .ctl',
                                    "#toast")), f"unscoped rule: {one}"
 
 

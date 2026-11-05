@@ -2962,8 +2962,9 @@ def _collect_newdata() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
-#: The page's two tabs (#331): the key a viewer's choice is remembered under, and each tab's panel id.
-SETTINGS_TABS = {"key": "rc.settings.tab", "tabs": {"data": "panel-data", "needs": "needs"}}
+#: The page's three tabs (#331): the key a viewer's choice is remembered under, and each tab's panel id.
+SETTINGS_TABS = {"key": "rc.settings.tab",
+                 "tabs": {"data": "panel-data", "fetch": "panel-fetch", "needs": "needs"}}
 
 TABS_JS = """
 (function(){
@@ -2972,7 +2973,7 @@ TABS_JS = """
   if (!tabs.length) return;
   function show(name, save) {
     if (!CFG.tabs[name]) name = 'data';
-    var dataWasHidden = document.getElementById('panel-data').hidden;
+    var panel = document.getElementById(CFG.tabs[name]), wasHidden = panel && panel.hidden;
     tabs.forEach(function (t) {
       var on = t.getAttribute('data-tab') === name;
       t.setAttribute('aria-selected', on ? 'true' : 'false');
@@ -2980,10 +2981,14 @@ TABS_JS = """
       document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
     });
     if (save) { try { localStorage.setItem(CFG.key, name); } catch (e) {} }
-    // The flow chart lays itself out from its width, which is 0 while its panel is hidden.
-    if (name === 'data' && dataWasHidden) { try { window.dispatchEvent(new Event('resize')); } catch (e) {} }
+    // The flow chart and the filters lay themselves out from their width, which is 0 while their panel is hidden.
+    if (wasHidden) { try { window.dispatchEvent(new Event('resize')); } catch (e) {} }
   }
-  function fromHash() { return location.hash === '#needs' ? 'needs' : null; }
+  // a press inside one panel that points into another one (Cross-check, the universe) switches tabs first
+  window.RC_SETTINGS_SHOW_PANEL = function (id) {
+    Object.keys(CFG.tabs).forEach(function (k) { if (CFG.tabs[k] === id) show(k, true); });
+  };
+  function fromHash() { var h = location.hash.replace('#', ''); return CFG.tabs[h] ? h : null; }
   var start = fromHash();
   if (!start) { try { start = localStorage.getItem(CFG.key); } catch (e) { start = null; } }
   show(start || 'data', false);
@@ -2998,7 +3003,7 @@ TABS_JS = """
       show(n.getAttribute('data-tab'), true);
     });
   });
-  window.addEventListener('hashchange', function () { if (fromHash()) show('needs', true); });
+  window.addEventListener('hashchange', function () { var h = fromHash(); if (h) show(h, true); });
   var w = document.querySelector('#needs .wiali'), box = document.getElementById('needs-wial');
   if (w && box) w.addEventListener('click', function () {
     box.hidden = !box.hidden;
@@ -3021,6 +3026,8 @@ def _tab_strip() -> str:
     return ('<nav id="settings-tabs" aria-label="Settings tabs"><div class="tabs" role="tablist">'
             '<button type="button" role="tab" id="tab-data" data-tab="data" aria-controls="panel-data" '
             'aria-selected="true" tabindex="0">Data</button>'
+            '<button type="button" role="tab" id="tab-fetch" data-tab="fetch" aria-controls="panel-fetch" '
+            'aria-selected="false" tabindex="-1">Fetch</button>'
             '<button type="button" role="tab" id="tab-needs" data-tab="needs" aria-controls="needs" '
             'aria-selected="false" tabindex="-1">Needs</button></div></nav>')
 
@@ -3085,7 +3092,8 @@ def render_settings_dashboard(payload: dict) -> str:
     newdata_html = _newdata_section(nd)
     # The control board (design v28) on top, from the same read; the old sections fold under it.
     view = _control_view(nd, payload)
-    control_html = control_render.render(view)
+    control_html = control_render.render_data(view)
+    fetch_html = control_render.render_fetch(view)
     control_js = control_render.scripts(view)
     needs_html = _needs_panel(payload)
 
@@ -3134,6 +3142,9 @@ def render_settings_dashboard(payload: dict) -> str:
   {flow_html}
 </div>
 </details>
+</div>
+<div id="panel-fetch" role="tabpanel" aria-labelledby="tab-fetch" hidden>
+{fetch_html}
 </div>
 <div id="needs" role="tabpanel" aria-labelledby="tab-needs" hidden>
 {needs_html}

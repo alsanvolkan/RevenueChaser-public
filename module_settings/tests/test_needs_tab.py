@@ -227,8 +227,8 @@ def _tokens(css: str, selector_start: str) -> dict[str, str]:
 def test_the_tokens_are_the_control_boards_in_light_and_dark():
     from RevenueChaser.module_settings import control_render
     ctl, nds = control_render.CTL_CSS, needs_tab.NEEDS_CSS
-    light_c, light_n = _tokens(ctl, "#ctl{"), _tokens(nds, "#needs,#settings-tabs{")
-    dark_c = _tokens(ctl, ':root[data-theme="dark"] #ctl{')
+    light_c, light_n = _tokens(ctl, ".ctl{"), _tokens(nds, "#needs,#settings-tabs{")
+    dark_c = _tokens(ctl, ':root[data-theme="dark"] .ctl{')
     dark_n = _tokens(nds, ':root[data-theme="dark"] #needs')
     auto_n = _tokens(nds, ':root:not([data-theme="light"]) #needs')
     assert light_n and dark_n
