@@ -76,6 +76,13 @@ Expiries through **{{ week_gamma.target }}** ({{ week_gamma.expiries }}) · week
 {% endfor %}
 {{ week_gamma.rule }}
 
+{% endif %}{% if session_flow %}## Session hedge flow
+
+| Expiry (session) | Net gamma | Hedge per 50 pt | Net charm | Net vanna | Effect |
+|---|---|---|---|---|---|
+{% for r in session_flow %}| {{ r.expiry }} | {{ r.net_gex }} | {{ r.hedge_50pt }} | {{ r.net_charm }} | {{ r.net_vanna }} | {{ r.effect }} |
+{% endfor %}
+
 {% endif %}## Liquidity Layer — Dealer Flow
 
 | Band | Range | Net GEX | Hedge for a 25-pt move |

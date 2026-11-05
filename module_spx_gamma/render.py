@@ -594,6 +594,11 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "vol_calendar": snapshot.get("vol_calendar") or [],
         "week_gamma": _week_gamma(snapshot),
         "close_check": close_card(snapshot),
+        "session_flow": [{"expiry": r["expiry"], "net_gex": fmt_signed_compact(r.get("net_gex")),
+                          "hedge_50pt": fmt_signed_compact(r.get("hedge_50pt")).lstrip("+"),
+                          "net_charm": fmt_signed_compact(r.get("net_charm")),
+                          "net_vanna": fmt_signed_compact(r.get("net_vanna")), "effect": r["effect"]}
+                         for r in snapshot.get("session_flow") or []],
         "vix_greeks": snapshot.get("vix_greeks"),
         "cftc": snapshot.get("cftc"),
         # Live panels in a backfilled day hold a later session's value: shown "n/a (historical)".

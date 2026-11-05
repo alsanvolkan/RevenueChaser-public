@@ -41,6 +41,34 @@ def front_expiry_share(expiry_rows: list[dict], asof_date: str | None) -> dict |
             "share_pct": front["net_gex"] / total * 100.0}
 
 
+def session_hedge_flow(expiry_rows: list[dict], asof_date: str | None, spot: float | None) -> list[dict]:
+    """A6: each session's expiring book from the board's day through the target Friday.
+
+    Net gamma, the hedge for a 50-point move (|Net GEX per 1 %| x 50 / spot x 100 %, the reports' formula), net charm
+    and net vanna, and the effect in words. Expiring open interest needs OI per expiry (phase 2).
+    """
+    if not asof_date:
+        return []
+    from .brier import target_friday
+    from .levels import hedge_for_move
+    end = target_friday(asof_date)
+    out = []
+    for r in expiry_rows or []:
+        e = r.get("expiry")
+        if not e or not (asof_date <= str(e) <= end):
+            continue
+        g, ch = r.get("net_gex"), r.get("net_charm")
+        parts = []
+        if g:
+            parts.append("dampens moves (positive gamma)" if g > 0 else "amplifies moves (negative gamma)")
+        if ch:
+            parts.append("dealers' charm buys into the close (positive charm)" if ch > 0
+                         else "dealers' charm sells into the close (negative charm)")
+        out.append({"expiry": e, "net_gex": g, "hedge_50pt": hedge_for_move(g, spot, 50.0), "net_charm": ch,
+                    "net_vanna": r.get("net_vanna"), "effect": "; ".join(parts) or "flat"})
+    return out
+
+
 def dte_band(dte: float | None) -> str:
     if dte is None:
         return ""

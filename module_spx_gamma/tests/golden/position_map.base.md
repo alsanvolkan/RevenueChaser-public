@@ -126,6 +126,14 @@ Expiries through **2026-08-21** (3) · week net gamma -609 · **Turning point N/
 
 Board rule (the reports name the zones but print no thresholds): negative gamma = air gap; positive gamma = dense block at 2x or more of the window's mean |gamma|, braked staircase 0.5x-2x, half-full below 0.5x. Strikes summed in 25-point buckets, window +-5 % of spot, week = expiries through the target Friday.
 
+## Session hedge flow
+
+| Expiry (session) | Net gamma | Hedge per 50 pt | Net charm | Net vanna | Effect |
+|---|---|---|---|---|---|
+| 2026-08-14 | +54.5K | 35.0K | N/A | N/A | dampens moves (positive gamma) |
+| 2026-08-21 | +10.0K | 6.4K | N/A | N/A | dampens moves (positive gamma) |
+
+
 ## Liquidity Layer — Dealer Flow
 
 | Band | Range | Net GEX | Hedge for a 25-pt move |
