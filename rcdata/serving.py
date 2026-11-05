@@ -310,7 +310,7 @@ def _verify_against_live(kind: str, path: Path, relax: frozenset[str] = frozense
             raise ValueError(f"{table} shrinks from {before} to {after} rows (more than {MAX_SHRINK:.0%})")
 
 
-def _live_version(kind: str) -> int | None:
+def live_version(kind: str) -> int | None:
     """The serving schema version the live ``kind`` file was built by; ``None`` when there is no file, no version
     row, or more than one (a file no build of ours finished)."""
     try:
@@ -328,7 +328,7 @@ def _copy_live(kind: str, path: Path) -> str:
     its tables are then not the ones this code builds, so only a whole build is safe. That is also what makes a
     version bump a full rebuild without any dataset asking for one.
     """
-    if _live_version(kind) != SERVING_SCHEMA_VERSION[kind]:
+    if live_version(kind) != SERVING_SCHEMA_VERSION[kind]:
         return "fresh"
     # No ``.wal`` to carry over: ``swap`` checkpoints and closes before its checks, ``_verify`` refuses a build file
     # that still has one, and only the ``.duckdb`` is ever moved or linked. A ``.wal`` beside a live file would mean
