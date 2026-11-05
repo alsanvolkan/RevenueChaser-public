@@ -765,6 +765,60 @@ def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
     assert {str(r["as_of"]) for r in report.values()} == {"2026-11-27"}
 
 
+def _placeholder(gvkey, iid, day, tic, cusip="037833100", exchg=14):
+    """A ``comp.secd`` row Compustat writes ahead of its day (homesrv, 5 Nov 2026: 1,128 rows of 929 tickers dated
+    2026-11-03..2026-12-31): the security's keys and ticker, no price and no volume."""
+    return {**_secd(gvkey, iid, day, tic, 1.0, exchg=exchg, cusip=cusip),
+            "prccd": None, "prcod": None, "prchd": None, "prcld": None, "cshtrd": None, "trfd": None, "cshoc": None}
+
+
+def test_compustats_rows_with_no_price_are_no_bar_and_never_the_newest_day(fake):
+    """A row with no price is no session: it is no bar, it does not move the newest served session (every Tier A
+    name would miss a bar on it), and the newest priced day a fund's series is measured from is a priced one. Here
+    the build's own day (27 Oct) carries placeholders only, so the newest priced day is the 26th; GLDX's series, last
+    priced on the 13th, is within 14 days of the 26th and not of the 27th."""
+    data = fake[0].data
+    data["comp.secd"] = [r for r in data["comp.secd"] if r["datadate"] != "2026-10-27"]
+    data["comp.secd"] += [_placeholder("001690", "01", d, "AAPL") for d in ("2026-10-27", "2026-11-03", "2026-12-31")]
+    data["comp.secd"] += [_secd("077777", "01", d, "GLDX", 40.0, exchg=17, cusip="77777A100")
+                          for d in JUNE + ["2026-10-13"]]
+    data["comp.secd"] += [_placeholder("077777", "01", "2026-10-27", "GLDX", cusip="77777A100", exchg=17)]
+    # A series last priced long ago under the same ticker, with a row of no price on the 20th: by its priced days it
+    # is a reused ticker's old series; by that row it would be newer than GLDX's own.
+    data["comp.secd"] += [_secd("066666", "01", "2024-03-01", "GLDX", 9.0, exchg=11, cusip="66666A100"),
+                          _placeholder("066666", "01", "2026-10-20", "GLDX", cusip="66666A100", exchg=11)]
+    _spine_etf_table([("GLDX", 5e9)])
+    assert _backfill()["result"] == "changed"
+    newest = _q("SELECT max(session_date) AS d FROM price_bar_daily WHERE security_id NOT LIKE 'index:%'")[0]["d"]
+    assert str(newest) == "2026-10-26"
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE close IS NULL OR NOT close > 0")
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '077777:01'")[0]["n"] == len(JUNE) + 1
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = '066666:01'")
+    assert not _issue_details("universe_etf_ticker_shared"), "the old series is no candidate"
+    assert AAPL not in _issue_details("tier_a_no_bar")
+    wrds.reset()
+
+
+def test_a_row_with_no_price_that_gets_one_or_goes_is_no_revision(built):
+    """The daily refresh asks the year again, so a placeholder row (no price) is replaced by the real session, or
+    dropped. It was never a served bar, so neither is a revised value: ``price_revision`` keeps only a row that had
+    a price."""
+    conn, _ = built
+    data = conn.data
+    data["comp.secd"] += [_placeholder("001690", "01", d, "AAPL") for d in ("2026-10-28", "2026-10-29")]
+    row = base.run_request({"dataset": wrds_history.NAME, "requested_by": "cli", "params": {"as_of": "2026-10-28"}})
+    assert row["result"] == "unchanged", "a row with no price adds no served row"
+    data["comp.secd"] = [r for r in data["comp.secd"] if r["datadate"] not in ("2026-10-28", "2026-10-29")]
+    data["comp.secd"] += [_secd("001690", "01", "2026-10-28", "AAPL", 203.0, 1.0, 1.0113)]
+    for r in data["comp.secd"]:
+        if r["gvkey"] == "001690" and r["datadate"] == "2026-10-26":
+            r["prccd"] = 201.5                                    # a real revision beside them
+    row = base.run_request({"dataset": wrds_history.NAME, "requested_by": "cli", "params": {"as_of": "2026-10-29"}})
+    assert row["result"] == "changed", row
+    revs = _q("SELECT security_id, session_date, close FROM price_revision WHERE source = ?", [wrds_history.COMPUSTAT])
+    assert [(r["security_id"], str(r["session_date"]), r["close"]) for r in revs] == [(AAPL, "2026-10-26", 201.0)]
+
+
 # ── The factor lookup at the WRDS history's size (homesrv, 30 Oct 2026: request 34 took 41 of its 50 minutes) ──
 
 @pytest.mark.parametrize("threshold", [0, 1000])

@@ -1402,8 +1402,10 @@ the history at the next build without a refetch.
 **Bars.** A bar is keyed on the New York session date (`core/calendar.py`; Alpaca stamps a daily bar at midnight New
 York, in UTC), and only a complete session is stored (16:30 New York or later). A row that is no session, outside the
 calendar's years, outside the asked window or fetched before its session was complete is a run issue, not a row. The
-re-read keeps every changed open, high, low, close or volume of a stored bar as a revision (`price_revision`). Bars
-are stored **nominal**; the factors are applied on read.
+re-read keeps every changed open, high, low, close or volume of a stored bar as a revision (`price_revision`). A
+Compustat row with no price (`prccd` NULL; homesrv held 1,128 such rows dated after the newest session, 5 Nov 2026) is
+no bar, no newest day and no revision when it later gets a price or goes. Bars are stored **nominal**; the factors are
+applied on read.
 
 **Served tables** (`prices` serving schema version `1`). Periods are `valid_from` inclusive, `valid_to` exclusive.
 

@@ -97,6 +97,16 @@ CLOSE_BEFORE_DAYS = 7
 ISSUER_WITHIN_DAYS = 14
 APPLIED = ("split", "stock_dividend", "cash_dividend")
 NOT_APPLIED = ("spin_off", "unit_split", "rights_distribution")
+# The actions the factors did not apply (an action announced for a later day aside), and whether each is only
+# counted: a cash dividend that went ex on or before its security's first served bar (on that bar too: the factors
+# move the bars before the ex-date, and there are none). A security with no served bar at all, and any other kind of
+# action, is named (review D6 and D7 of #420).
+UNAPPLIED_SQL = """
+    SELECT c.source_id, c.action, c.security_id, c.not_applied_why,
+           coalesce(c.action = 'cash_dividend' AND c.ex_date <= f.first_day, false) AS before_history
+    FROM corporate_action c
+    LEFT JOIN (SELECT security_id, min(session_date) AS first_day FROM price_bar_daily GROUP BY 1) f USING (security_id)
+    WHERE c.applied = false AND NOT starts_with(c.not_applied_why, 'not yet ex')"""
 
 ISSUE_KINDS = {
     "source_never_run": "a source this build needs has no data yet (key: the dataset)",
@@ -589,12 +599,7 @@ class PricesServing:
         # counted in the note and not named, so the few that are defects are not buried (review D6 of #420: 7,497
         # of homesrv's 7,514 were "no close before the ex-date"). The table still records it, unapplied.
         before_history = 0
-        for aid, action, sid, why_, before in con.execute(
-                "SELECT c.source_id, c.action, c.security_id, c.not_applied_why, "
-                "coalesce(c.action = 'cash_dividend' AND c.ex_date <= f.first_day, false) FROM corporate_action c "
-                "LEFT JOIN (SELECT security_id, min(session_date) AS first_day FROM price_bar_daily GROUP BY 1) f "
-                "USING (security_id) "
-                "WHERE c.applied = false AND NOT starts_with(c.not_applied_why, 'not yet ex')").fetchall():
+        for aid, action, sid, why_, before in con.execute(UNAPPLIED_SQL).fetchall():
             if before:
                 before_history += 1
                 continue

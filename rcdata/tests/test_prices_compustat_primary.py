@@ -416,6 +416,29 @@ def test_a_dividend_before_the_first_served_bar_is_counted_and_one_inside_the_hi
         == [{"applied": False}], "the table still records it, unapplied"
 
 
+def test_only_a_cash_dividend_ex_on_or_before_the_first_served_bar_is_counted():
+    """Review D7 of #420: the edges of the D6 rule, on the query itself. A cash dividend ex ON the first served bar is
+    counted (no bar before it to adjust); a security with no served bar is named (nothing says the dividend is before
+    its history); a spin-off before the history is named (only cash dividends are counted); an action not yet ex is
+    no row."""
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    con = duckdb.connect()
+    con.execute("CREATE TABLE price_bar_daily (security_id TEXT, session_date DATE)")
+    con.execute("INSERT INTO price_bar_daily VALUES ('S', DATE '2025-06-02'), ('S', DATE '2025-06-03')")
+    con.execute("CREATE TABLE corporate_action (source_id TEXT, action TEXT, security_id TEXT, "
+                "not_applied_why TEXT, ex_date DATE, applied BOOLEAN)")
+    con.execute("""INSERT INTO corporate_action VALUES
+        ('before', 'cash_dividend', 'S', 'no close before the ex-date', DATE '2025-05-15', false),
+        ('on_first', 'cash_dividend', 'S', 'no close before the ex-date', DATE '2025-06-02', false),
+        ('inside', 'cash_dividend', 'S', 'no close before the ex-date', DATE '2025-06-03', false),
+        ('no_bars', 'cash_dividend', 'X', 'no close before the ex-date', DATE '2025-05-15', false),
+        ('spin', 'spin_off', 'S', 'spin_off', DATE '2025-05-15', false),
+        ('later', 'cash_dividend', 'S', 'not yet ex (2026-12-01)', DATE '2026-12-01', false),
+        ('done', 'cash_dividend', 'S', NULL, DATE '2025-06-03', true)""")
+    rows = {r[0]: r[4] for r in con.execute(prices_serving.UNAPPLIED_SQL).fetchall()}
+    assert rows == {"before": True, "on_first": True, "inside": False, "no_bars": False, "spin": False}, rows
+
+
 def test_a_split_compustat_and_crsp_both_carry_is_one_action(built):
     from RevenueChaser.rcdata import ops
     from RevenueChaser.rcdata.build.prices import serving as prices_serving
