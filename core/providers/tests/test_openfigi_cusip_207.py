@@ -80,6 +80,20 @@ class TestRequestShape:
         assert call["jobs"] == [{"idType": "ID_CUSIP", "idValue": "02079K305", "exchCode": "US"}]
         assert call["headers"]["X-OPENFIGI-APIKEY"] == KEY
 
+    def test_a_cins_is_asked_as_id_cins_and_a_cusip_as_id_cusip(self, monkeypatch):
+        """#239: a CINS (a letter first) is its own OpenFIGI id type; asked as ``ID_CUSIP`` it never answers."""
+        fake = _use(monkeypatch, _Fake(_all_known))
+        openfigi.map_cusips(["G29183103", "594918104"], key=KEY)      # Eaton (a CINS), Microsoft
+        assert fake.calls[0]["jobs"] == [
+            {"idType": "ID_CINS", "idValue": "G29183103", "exchCode": "US"},
+            {"idType": "ID_CUSIP", "idValue": "594918104", "exchCode": "US"},
+        ]
+
+    def test_id_type_names_a_cins_by_its_first_character(self):
+        assert openfigi.id_type("G29183103") == openfigi.ID_CINS
+        assert openfigi.id_type("594918104") == openfigi.ID_CUSIP
+        assert openfigi.id_type("00206R102") == openfigi.ID_CUSIP     # a letter inside a CUSIP is no CINS
+
     def test_the_base_url_is_read_at_call_time(self, monkeypatch):
         fake = _use(monkeypatch, _Fake(_all_known))
         monkeypatch.setenv("RC_OPENFIGI_BASE", "http://127.0.0.1:9/figi/")
