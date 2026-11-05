@@ -704,6 +704,10 @@ def paused_problem(ds: Dataset) -> str | None:
 
 # ── One request ────────────────────────────────────────────────────────────────────────────────────────────────
 
+#: The check note of a ``--no-build`` run: the serving file was not touched, so the result is a skip, not an "ok".
+NO_BUILD_NOTE = "skipped: build skipped (--no-build); raw and Parquet staged"
+
+
 def new_run_id() -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + "-" + uuid.uuid4().hex[:8]
 
@@ -820,6 +824,12 @@ def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False
             ds.to_parquet_all(ctx, ds.fetch(ctx, ctx.as_of))
         else:
             raise ValueError(f"unknown mode {mode!r}")
+        if params.get("no_build"):
+            # "Stage only" (--no-build): the data is in raw and Parquet, the serving file is left as it is. The
+            # check row a build would have written cannot be made without one, and inventing a result value would
+            # reach due.py and ops; a skip is the truth (the serving file did not change) and leaves the dataset
+            # due, so the next ordinary pass builds it at no provider call (the raw file is the resume marker).
+            return _finish(ctx, req, {"result": "skipped", "note": NO_BUILD_NOTE}, "skipped", None)
         check = build_kind(ctx, ds)
         status = "ok"
     except NothingInScope as e:
