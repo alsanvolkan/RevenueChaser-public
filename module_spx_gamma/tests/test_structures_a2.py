@@ -37,10 +37,13 @@ def test_iron_condor_credit_and_two_breakevens():
     assert out["breakevens"] == [pytest.approx(7586.0), pytest.approx(7739.0)]
 
 
-def test_a_missing_or_modeled_leg_leaves_it_unpriced():
+def test_a_missing_leg_leaves_it_unpriced_and_a_modeled_leg_says_so():
     chain = [_row(7575, "P", 30.0), _row(7500, "P", 10.0, src="modeled")]
+    out = price_structure("x", [(+1, "P", 7575.0), (-1, "P", 7475.0)], chain)
+    assert out["net"] is None and out["missing"] == ["P 7,475"]
+    # real UW check 5 Nov: outside the session every quote is 0/0, so a modeled leg prices (the label says model)
     out = price_structure("x", [(+1, "P", 7575.0), (-1, "P", 7500.0)], chain)
-    assert out["net"] is None and out["missing"] == ["P 7,500"]
+    assert out["net"] == -20.0 and [l["source"] for l in out["legs"]] == ["quote", "modeled"]
 
 
 def test_build_structures_from_the_bands():

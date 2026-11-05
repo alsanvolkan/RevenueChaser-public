@@ -92,7 +92,9 @@ def normalize_option_chain(payload: dict | None, spot: float | None = None,
         ask = to_float(r.get("nbbo_ask"))
         mid = to_float(r.get("mid"))
         price_source = "quote"
-        if mid is None and bid is not None and ask is not None:
+        if mid is not None and mid <= 0:
+            mid = None       # a zero mid is no market (real UW check, 5 Nov: every contract 0/0 outside the session)
+        if mid is None and bid is not None and ask is not None and ask > 0:
             mid = (bid + ask) / 2.0
         iv = to_float(r.get("implied_volatility"))
         if mid is None and iv is not None and spot is not None:

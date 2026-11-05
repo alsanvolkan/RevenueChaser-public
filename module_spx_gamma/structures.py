@@ -6,8 +6,9 @@ band edges, so a reader sees what each costs on UW's quotes now. It picks no tra
 
 Strikes come from the scenario bands (``scenarios.scenario_bands``), snapped to the 25-point grid the reports use;
 a wing is ``WING`` (50 points, "the next stop") beyond its short leg. A leg prices only at its exact strike with a
-quoted mid (``chains.normalize_option_chain`` price_source "quote"): a nearest-strike fallback would price a
-different trade, and a modeled mid is not a market price. Values are SPX index points; XSP is a tenth of SPX.
+mid (``chains.normalize_option_chain``): a nearest-strike fallback would price a different trade. A quoted mid
+is used when the Fetch saw one; outside the session UW quotes 0/0, so the leg's Black-Scholes mid on UW's IV is used
+and the label says the structure is modeled, not a market price. Values are SPX index points; XSP is a tenth of SPX.
 
 Payoff at expiry is piecewise linear between strikes, so maximum profit, maximum loss and breakevens are read off
 its kinks exactly (no grid).
@@ -22,6 +23,11 @@ WING = 50.0
 #: Downside and upside debit spreads buy one grid step inside the band edge: the report's confirm level (7575).
 DEBIT_OFFSET = 25.0
 LABEL = "Report structure, not advice: priced from UW quotes (mid) on the target Friday's chain."
+#: When the Fetch saw no live quotes (outside the session UW gives 0/0), the legs are Black-Scholes prices on UW's IV.
+LABEL_MODEL = ("Report structure, not advice: no live quotes at the Fetch, so the legs are modeled (Black-Scholes "
+               "on UW's IV) on the target Friday's chain; a model price is not a market price.")
+LABEL_MIXED = ("Report structure, not advice: priced from UW quotes (mid) where quoted and modeled (Black-Scholes "
+               "on UW's IV) elsewhere; a model price is not a market price.")
 XSP_PER_SPX = 0.1
 
 
@@ -35,12 +41,14 @@ def _intrinsic(typ: str, strike: float, s: float) -> float:
 
 def price_structure(name: str, legs, chain, family: str = "") -> dict:
     """Price ``legs`` = [(+1 long / -1 short, "P"/"C", strike)] off ``chain``; net > 0 is a credit."""
-    quotes = {(r.get("type"), float(r["strike"])): r.get("mid") for r in chain or []
-              if r.get("price_source") == "quote" and r.get("mid") is not None and r.get("strike") is not None}
+    quotes = {(r.get("type"), float(r["strike"])): (r.get("mid"), r.get("price_source")) for r in chain or []
+              if r.get("price_source") in ("quote", "modeled") and r.get("mid") is not None
+              and r.get("strike") is not None}
     out_legs, missing, net = [], [], 0.0
     for sign, typ, strike in legs:
-        mid = quotes.get((typ, float(strike)))
-        out_legs.append({"action": "BUY" if sign > 0 else "SELL", "type": typ, "strike": float(strike), "mid": mid})
+        mid, source = quotes.get((typ, float(strike)), (None, None))
+        out_legs.append({"action": "BUY" if sign > 0 else "SELL", "type": typ, "strike": float(strike), "mid": mid,
+                         "source": source})
         if mid is None:
             missing.append(f"{typ} {strike:,.0f}")
         else:
@@ -99,7 +107,10 @@ def build_structures(bands: dict | None, chain, expiry: str | None) -> dict | No
                 legs[i][2] == legs[i + 1][2] for i in range(len(legs) - 1)):
             continue   # a band narrower than a grid step collapses a spread: no structure
         structures.append(price_structure(name, legs, chain, family))
-    return {"expiry": expiry, "label": LABEL, "structures": structures}
+    used = {leg["source"] for st in structures for leg in st["legs"] if leg["source"]}
+    source = "model" if used == {"modeled"} else "mixed" if "modeled" in used else "quotes"
+    label = {"model": LABEL_MODEL, "mixed": LABEL_MIXED}.get(source, LABEL)
+    return {"expiry": expiry, "label": label, "source": source, "structures": structures}
 
 
 __all__ = ["GRID", "WING", "LABEL", "snap_strike", "price_structure", "build_structures"]
