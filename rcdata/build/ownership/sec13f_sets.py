@@ -182,10 +182,8 @@ def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, 
     year's fill with it (13F review B3, 2026-10-30); the filing it belonged to says in its ``detail`` that fewer
     holdings were read than its summary counts. A set before 2023 has no ``FIGI`` column: it is added, empty (D4).
 
-    Whose rows were rejected is kept in ``z_rejected`` (member, accession, from the line's first tab field, which is
-    ``ACCESSION_NUMBER`` in all four members), because a filing that lost its cover page must not be typed as if it
-    had one (#301): ``_typed`` marks it ``unparsed`` instead of reading NULL as "no amendment type"."""
-    con.execute("CREATE TABLE z_rejected (member VARCHAR, accession VARCHAR)")
+    A rejected row is not chased back to the filing it belonged to: ``_typed`` reads the cover page's absence from
+    its own join (#301), which is the same answer without depending on the text of a line that did not read."""
     with zipfile.ZipFile(zip_path) as z:
         for table in MEMBERS:
             out = tmp / f"{table}.tsv"
@@ -199,10 +197,6 @@ def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, 
                         f"auto_detect = false, columns = {{{columns}}}, ignore_errors = true, store_rejects = true)")
             bad = con.execute("SELECT count(DISTINCT line), min(line), arg_min(error_type, line) "
                               "FROM reject_errors").fetchone()
-            # The accession of every rejected line, before the reject tables go: a line whose bytes did not read
-            # has no usable first field, and that filing simply keeps the status the rest of its row earns.
-            con.execute(f"INSERT INTO z_rejected SELECT DISTINCT '{table}', trim(split_part(csv_line, chr(9), 1)) "
-                        "FROM reject_errors WHERE nullif(trim(split_part(csv_line, chr(9), 1)), '') IS NOT NULL")
             con.execute("DROP TABLE reject_errors; DROP TABLE reject_scans")
             if bad[0]:
                 notes.append(f"13F data set {name}: {bad[0]} rows of {table}.tsv rejected (first: line {bad[1]}, "
@@ -222,10 +216,12 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
     EDGAR path writes them: the period is the cover page's, the submission header's when the cover page has none
     (13F review D2, 2026-10-30), and a CUSIP in ``cusip_none`` is none (D3).
 
-    A filing whose COVERPAGE row was rejected (``z_rejected``) is ``unparsed``, not ``ok`` with an empty cover page
-    (#301): read as ok, its NULL ``amendment_type`` makes the amendment walk treat a NEW HOLDINGS amendment as a
-    replacement and the filer's quarter becomes the amendment's few names. Its holdings are still typed, so a later
-    set that carries the row whole can replace the filing without losing them."""
+    A filing the set holds no cover page for is ``unparsed``, not ``ok`` with an empty one (#301): read as ok, its
+    NULL ``amendment_type`` makes the amendment walk treat a NEW HOLDINGS amendment as a replacement, and the
+    filer's quarter becomes the amendment's few names. The join itself answers this — a rejected cover row, a row
+    the set never carried and a row whose own accession field is the damaged one all leave ``c`` NULL — so nothing
+    has to be recovered from the text of a line that by definition did not read. Its holdings are still typed, so a
+    later set that carries the row whole can replace the filing without losing them."""
     form_list = ", ".join(f"'{f}'" for f in sorted(forms))
     none_list = ", ".join(f"'{c}'" for c in sorted(cusip_none)) or "''"
     period = f"coalesce({_day('c.REPORTCALENDARORQUARTER')}, s.period)"
@@ -257,12 +253,12 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                CASE upper(trim(m.ISCONFIDENTIALOMITTED)) WHEN 'Y' THEN true WHEN 'N' THEN false END
                    AS confidential_omitted,
                CASE WHEN {period} IS NULL THEN 'unparsed'
-                    WHEN r.accession IS NOT NULL THEN 'unparsed'
+                    WHEN c.ACCESSION_NUMBER IS NULL THEN 'unparsed'
                     WHEN upper(c.REPORTTYPE) LIKE '%NOTICE%' THEN 'notice'
                     WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
                     THEN 'unparsed' ELSE 'ok' END AS status,
                CASE WHEN {period} IS NULL THEN 'no report period'
-                    WHEN r.accession IS NOT NULL THEN 'a row of COVERPAGE.tsv did not read'
+                    WHEN c.ACCESSION_NUMBER IS NULL THEN 'no cover page in the data set'
                     WHEN upper(c.REPORTTYPE) LIKE '%NOTICE%' THEN NULL
                     WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
                     THEN 'no information table'
@@ -273,9 +269,7 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
         FROM z_sub s
         LEFT JOIN z_coverpage c ON trim(c.ACCESSION_NUMBER) = s.accession
         LEFT JOIN z_summarypage m ON trim(m.ACCESSION_NUMBER) = s.accession
-        LEFT JOIN z_count k ON k.accession = s.accession
-        LEFT JOIN (SELECT DISTINCT accession FROM z_rejected WHERE member = 'COVERPAGE') r
-               ON r.accession = s.accession""", [run_id])
+        LEFT JOIN z_count k ON k.accession = s.accession""", [run_id])
 
     def num(col: str, typ: str = "DOUBLE") -> str:
         return f"TRY_CAST(TRY_CAST(replace(trim({col}), ',', '') AS DOUBLE) AS {typ})"

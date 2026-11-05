@@ -324,37 +324,38 @@ def test_a_row_that_does_not_read_is_rejected_and_counted_not_the_whole_set(feed
     assert [r[1] for r in _holdings("0001000001-26-000101")] == ["594918104"]
 
 
-def _with_bad_cover(zip_bytes: bytes, accession: str) -> bytes:
-    """The zip with ``accession``'s COVERPAGE line carrying a byte that is not UTF-8, as a damaged set might."""
+def _without_cover(zip_bytes: bytes, accession: str) -> bytes:
+    """The zip with ``accession``'s COVERPAGE line damaged past reading, as a set with one bad row would be."""
     src, out = zipfile.ZipFile(io.BytesIO(zip_bytes)), io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for name in src.namelist():
             body = src.read(name)
             if name.rsplit("/", 1)[-1] == "COVERPAGE.tsv":
-                body = b"".join(l.replace(b"MANAGER", b"MANAGER \xc9", 1) if l.startswith(accession.encode()) else l
+                body = b"".join(b"\t".join(l.split(b"\t")[:2]) + b"\n" if l.startswith(accession.encode()) else l
                                 for l in body.splitlines(keepends=True))
             z.writestr(name, body)
     return out.getvalue()
 
 
-def test_a_filing_whose_cover_page_row_was_rejected_is_unparsed_not_an_amendment_with_no_type(feed, http_mock):
-    """#301: a rejected COVERPAGE row left ``amendment_type`` NULL, and the amendment walk reads NULL as "replace",
-    so a NEW HOLDINGS amendment replaced the filer's quarter with its few names. The filing is ``unparsed`` now, so
-    the walk leaves it out and the quarter keeps the report it had."""
+def test_a_filing_with_no_cover_page_is_unparsed_and_does_not_replace_the_filers_quarter(feed, http_mock):
+    """#301: a cover row that did not read left ``amendment_type`` NULL and the filing ``ok``; the amendment walk
+    reads NULL as "replace", so a NEW HOLDINGS amendment replaced the filer's quarter with its one name. The filing
+    is ``unparsed`` now, the walk leaves it out, and the quarter keeps the report it had."""
     h = ox.f13_holding
     one = ox.f13_set([
-        ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [h("MICROSOFT CORP", "594918104", 400_000, 1000)]),
-        ox.set_filing("0001000002-26-000105", 1000002, "14-AUG-2026", [h("WELLS FARGO", "949746101", 10_000, 200)],
+        ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [
+            h("MICROSOFT CORP", "594918104", 400_000, 1000), h("WELLS FARGO", "949746101", 10_000, 200)]),
+        ox.set_filing("0001000001-26-000109", 1000001, "14-AUG-2026", [h("EATON CORP PLC", "G29183103", 50, 5)],
                       form="13F-HR/A", amendment_type="NEW HOLDINGS", amendment_no="1", is_amendment="true")])
-    http_mock.routes.insert(0, (HREFS[0], _with_bad_cover(one, "0001000002-26-000105"), 200, {}))
+    http_mock.routes.insert(0, (HREFS[0], _without_cover(one, "0001000001-26-000109"), 200, {}))
     row = _backfill("2026-06-01", "2026-08-31")
     assert row["result"] == "changed", row["note"]
     assert "1 rows of COVERPAGE.tsv rejected" in row["note"], row["note"]
-    assert _served(f"SELECT accession, status, detail, amendment_type FROM {sec13f.TABLE} ORDER BY accession") == [
-        ("0001000001-26-000101", "ok", None, None),
-        ("0001000002-26-000105", "unparsed", "a row of COVERPAGE.tsv did not read", None)]
-    # its holdings are still typed, so a later set that carries the row whole can replace it without losing them
-    assert [r[1] for r in _holdings("0001000002-26-000105")] == ["949746101"]
+    assert _served(f"SELECT accession, status, detail FROM {sec13f.TABLE} ORDER BY accession") == [
+        ("0001000001-26-000101", "ok", None),
+        ("0001000001-26-000109", "unparsed", "no cover page in the data set")]
+    # the harm itself: the quarter is still the 13F-HR's two names, not the amendment's one
+    assert [r[1] for r in _holdings("0001000001-26-000109")] == ["G29183103"], "its holdings are still typed"
 
 
 def test_the_cover_pages_period_wins_on_both_paths_and_a_cusip_placeholder_is_no_cusip(feed, http_mock):
