@@ -575,6 +575,75 @@ def test_the_build_stores_the_spines_my_universe_list_when_it_has_one(fake, monk
     wrds.reset()
 
 
+def _spine_etf_table(rows):
+    """The live spine's ``etf`` table (schema 4+) with ``(ticker, aum)`` rows, none of them ETNs or closed-end funds."""
+    con = duckdb.connect(str(serving.live_path("spine")))
+    try:
+        con.execute("CREATE TABLE etf (ticker TEXT, aum DOUBLE, is_etn BOOLEAN, is_cef BOOLEAN, inception DATE)")
+        for ticker, aum in rows:
+            con.execute("INSERT INTO etf VALUES (?, ?, NULL, NULL, NULL)", [ticker, aum])
+    finally:
+        con.close()
+
+
+def _issue_details(kind: str) -> dict[str, str]:
+    return {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1] if i["kind"] == kind}
+
+
+def test_a_universe_etf_the_spines_security_table_lacks_is_stored_under_its_compustat_series(fake):
+    """Review M3 of #382: an ETF of the universe that only the spine's ``etf`` table holds (an Alpha Vantage or N-CEN
+    fund, no SEC equity row) used to reach ``_universe`` only through an Alpaca bar's ``sym:`` id. Alpaca serves no
+    bar any more and Compustat keys its series ``gvkey:iid``, so the fund had no bar at all. It is now found by the
+    ticker its Compustat series carries on that series' newest day, when that day is recent; a series that carried
+    the ticker long ago (a reused ticker) is someone else's and stays out."""
+    data = fake[0].data
+    days = JUNE + ["2026-10-26", "2026-10-27"]
+    data["comp.secd"] += [_secd("077777", "01", d, "GLDX", 40.0, exchg=17, cusip="77777A100") for d in days]
+    data["comp.secd"] += [_secd("066666", "01", "2024-03-01", "GLDX", 9.0, exchg=11, cusip="66666A100")]
+    # A series the spine holds under another ticker (a preferred, outside the universe) whose newest Compustat ticker
+    # happens to be a universe fund's: the spine's own row decides, so it stays out.
+    data["comp.secd"] += [_secd("055555", "01", d, "NOBAR", 25.0, exchg=11, cusip="55555A100") for d in days]
+    # SPY, a fund the spine routes by its own gvkey (001000:01): a second series carrying "SPY" is not taken. And GAPX,
+    # a stock of the universe with no gvkey in the spine: the ticker branch is for funds only, a stock's link to
+    # Compustat is the identity master's (#416), so its Compustat series by ticker is not taken either.
+    data["comp.secd"] += [_secd("001000", "01", d, "SPY", 500.0, exchg=17, cusip="78462F103") for d in days]
+    data["comp.secd"] += [_secd("044444", "01", d, "SPY", 1.0, exchg=17, cusip="44444A100") for d in days]
+    data["comp.secd"] += [_secd("033333", "01", d, "GAPX", 7.0, exchg=14, cusip="33333A100") for d in days]
+    serving.live_path("spine").unlink()
+    write_spine(SPINE + [{"ticker": "PFDZ", "cik": "4000008", "name": "PREFERRED Z", "exchange": "NYSE", "tier": "B",
+                          "security_type": "preferred", "gvkey": "055555", "iid": "01", "composite_figi": None}])
+    _spine_etf_table([("GLDX", 5e9), ("NOBAR", 5e9), ("SPY", 5e11)])
+    assert _backfill()["result"] == "changed"
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '077777:01'")[0]["n"] == len(days)
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '001000:01'")[0]["n"] == len(days)
+    for gid in ("044444:01", "033333:01"):
+        assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = ?", [gid]), gid
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = '066666:01'"), "a reused ticker's old series"
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = '055555:01'"), "the spine's own row decides"
+    # The check that would have shown the loss on every build: a universe ETF with no bar on the newest session.
+    missing = _issue_details("universe_etf_no_bar")
+    assert set(missing) == {"NOBAR"} and "2026-10-27" in missing["NOBAR"]
+    wrds.reset()
+
+
+def test_the_tier_a_checks_look_at_the_stored_universe_not_the_whole_tier(fake):
+    """Review S1 of #382: ``tier_a_no_bar`` and ``tier_a_no_shares`` read every Tier A row, so an untyped or excluded
+    Tier A name -- left out of the store on purpose -- was reported as a missing bar (27 became 253 on homesrv's
+    build 4). They read the stored universe's Tier A names now; GAPX, a universe name with no bar, is still one."""
+    extra = [{"ticker": "NEWCO", "cik": "4000004", "name": "NEW LISTING INC", "exchange": "Nasdaq", "tier": "A",
+              "security_type": None, "gvkey": None, "iid": None, "composite_figi": None},
+             {"ticker": "PFDX", "cik": "4000007", "name": "PREFERRED EXAMPLE", "exchange": "NYSE", "tier": "A",
+              "security_type": "preferred", "gvkey": None, "iid": None, "composite_figi": None}]
+    serving.live_path("spine").unlink()                # the autouse fixture's spine, written again with two more
+    write_spine(SPINE + extra)
+    assert _backfill()["result"] == "changed"
+    for kind in ("tier_a_no_bar", "tier_a_no_shares"):
+        named = {d.split(":")[0] for d in _issue_details(kind).values()}
+        assert "GAPX" in named, kind
+        assert not named & {"NEWCO", "PFDX"}, kind
+    wrds.reset()
+
+
 def test_the_yahoo_shares_check_reads_the_newest_cover_sourced_cap_not_the_newest_cap(fake):
     # The Opus delta review's nit 1: the check took the newest cap on or before Yahoo's day and only then kept it if
     # its shares were the cover's. On the 26th and 27th Alpaca's bars take Compustat's shares of the session, so the

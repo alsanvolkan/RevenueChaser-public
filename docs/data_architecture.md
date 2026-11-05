@@ -1354,7 +1354,11 @@ it arrives with the `my_universe` build. **Nothing delisted is in it**, because 
 (`universe.kept_beside`): the benchmarks (SPY, DIA, QQQ), the rotation ETFs and the stock watch list, which the
 boards read from the store, and the other listed classes of a universe issuer that the SEC covers name
 (`cover_classes`, Berkshire's A shares). The serving build turns that list into the `_universe` table before
-anything else and filters Alpaca's, Compustat's and CRSP's rows through it, so nothing outside it is written. The
+anything else and filters Alpaca's, Compustat's and CRSP's rows through it, so nothing outside it is written. A
+universe ETF the spine cannot route to Compustat (no `security` row, or one without a `gvkey`) is found by the ticker
+its Compustat series carries on that series' newest priced day, if that day is within
+`universe.ETF_TIC_RECENT_DAYS` (14) of Compustat's newest one; a series the spine holds under another ticker stays
+out, and a stock is never linked this way (review M3 of #382: Alpaca serves no bar, so such a fund had none). The
 whole-tier rule it replaced (`DEFAULT_TIERS = ("A", "B")`, 7,670 names, avo 30 Oct 2026) carried every SPAC,
 warrant, preferred and untyped name with it and still missed the funds the spine's `security` table does not hold.
 The acceptance "Tier A sessions complete >= 99%" is the bars
@@ -1420,8 +1424,11 @@ A CRSP ticker link (rule 3) needs, for a spine `gvkey:iid` with a CUSIP, a Compu
 and for an ETF an inception day on or before it (review M1).
 
 **Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `crsp_ticker_link` (the CRSP
-PERMNO linked to a spine security, no ETF, by ticker alone: one issue per security, its PERMNO named), `tier_a_no_bar`,
-`tier_a_no_shares`, `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
+PERMNO linked to a spine security, no ETF, by ticker alone: one issue per security, its PERMNO named), `tier_a_no_bar`
+and `tier_a_no_shares` (a Tier A name **of the stored universe** with no bar, or no market cap, on the newest served
+session: an untyped or excluded Tier A name is left out of the store on purpose), `universe_etf_no_bar` (a universe
+ETF, a ticker of the spine's `etf` table, with no bar on the newest served session; key: the ticker),
+`price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
 days, with no split), `split_only_crsp` (a split CRSP's `dlycumfacpr` records and no Compustat or Alpaca split is
 within 3 days of: not applied; key security:session), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
 more than half a cent on each of Alpaca's cent-rounded adjusted closes, the exact bound, where that is larger: about

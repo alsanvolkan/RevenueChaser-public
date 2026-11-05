@@ -68,7 +68,12 @@ TICKER_SQL = f"""
 #     (``sym:<ticker>``);
 #   - a class the SEC covers name under a member's CIK that the spine itself does not hold
 #     (``prices.cover_classes`` asks it). A row the spine **does** hold stays excluded: a preferred of a member
-#     issuer is out whatever its cover says.
+#     issuer is out whatever its cover says;
+#   - the Compustat series of a universe ETF the spine cannot route to Compustat (no ``security`` row, or one with no
+#     ``gvkey``): Alpaca serves no bar, so without this the fund had none at all (review M3 of #382). The series is
+#     found by the ticker it carries on its own newest priced day, and only when that day is within
+#     :data:`ETF_TIC_RECENT_DAYS` of Compustat's newest one (up to the build's date): a series that carried the ticker
+#     long ago is a reused ticker's, not this fund's. A series the spine holds under another ticker stays out.
 UNIVERSE_SQL = """
     WITH m AS (SELECT security_id, nullif(cik, '') AS cik, nullif(gvkey, '') AS gvkey FROM stg_spine
                WHERE ticker IN (SELECT ticker FROM _universe_ticker))
@@ -81,7 +86,23 @@ UNIVERSE_SQL = """
     WHERE b.ticker IN (SELECT ticker FROM _universe_ticker)
        OR (b.cik IN (SELECT cik FROM m WHERE cik IS NOT NULL)
            AND NOT EXISTS (SELECT 1 FROM stg_spine s WHERE s.ticker = b.ticker
-                           AND s.cik IS NOT DISTINCT FROM b.cik))"""
+                           AND s.cik IS NOT DISTINCT FROM b.cik))
+    UNION
+    SELECT gid FROM (
+        SELECT gvkey || ':' || iid AS gid, replace(upper(tic), '.', '-') AS tic, datadate FROM stg_wrds_secd
+        WHERE prccd > 0 AND datadate <= coalesce(getvariable('rc_build_date'), DATE '9999-12-31')
+          AND datadate > (SELECT max(datadate) FROM stg_wrds_secd WHERE prccd > 0
+                          AND datadate <= coalesce(getvariable('rc_build_date'), DATE '9999-12-31'))
+                         - INTERVAL {recent} DAY
+        QUALIFY row_number() OVER (PARTITION BY gvkey, iid ORDER BY datadate DESC) = 1) d
+    WHERE d.tic IN (SELECT t.ticker FROM _universe_ticker t JOIN stg_etf e USING (ticker)
+                    WHERE NOT EXISTS (SELECT 1 FROM stg_spine s WHERE s.ticker = t.ticker
+                                      AND nullif(s.gvkey, '') IS NOT NULL))
+      AND d.gid NOT IN (SELECT security_id FROM stg_spine WHERE security_id IS NOT NULL)"""
+#: How recent (calendar days before Compustat's newest priced day) a series' newest day must be for its ticker to
+#: name a universe ETF (``UNIVERSE_SQL``'s last branch): two weeks covers a holiday week and a late Compustat row.
+ETF_TIC_RECENT_DAYS = 14
+UNIVERSE_SQL = UNIVERSE_SQL.replace("{recent}", str(ETF_TIC_RECENT_DAYS))
 #: ``security_id IN`` the universe, the filter every stored source goes through.
 IN_UNIVERSE = "{sid} IN (SELECT security_id FROM _universe)"
 

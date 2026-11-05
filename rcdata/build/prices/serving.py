@@ -103,8 +103,12 @@ ISSUE_KINDS = {
                          "SHOULD 5 of its delta review)"),
     "duplicate_key": ("a table written without a PRIMARY KEY holds a key value twice (key: the table and the key "
                       "value; ``no_primary_key``, ``duplicate_keys``)"),
-    "tier_a_no_bar": "a Tier A name with no bar on the newest Alpaca session (key: the security id)",
-    "tier_a_no_shares": "a Tier A name with no shares, so no market cap, on the newest session (key: the security id)",
+    "tier_a_no_bar": ("a Tier A name of the stored universe with no bar on the newest served session (key: the "
+                      "security id)"),
+    "tier_a_no_shares": ("a Tier A name of the stored universe with no shares, so no market cap, on the newest "
+                         "session (key: the security id)"),
+    "universe_etf_no_bar": ("an ETF of the stored universe (a ticker of the spine's etf table) with no bar on the "
+                            "newest served session (key: the ticker; review M3 of #382)"),
     "price_gap_no_action": ("the split-adjusted close moved by GAP_FACTOR or more with no split that day "
                             "(key: security:session)"),
     "split_only_crsp": ("CRSP's dlycumfacpr records a split no Compustat or Alpaca split is within SPLIT_SAME_DAYS of; "
@@ -390,11 +394,11 @@ class PricesServing:
             if not n:
                 found.append(("source_never_run", ds, f"{ds} has no rows in this build"))
         _spine(con)
-        _universe(ctx, con)
         # The serving build's own date, the latest complete New York session, cuts the history's future rows (review
         # SHOULD 2 of #382): not DuckDB's UTC wall clock, and not the as-of of the dataset that started the build (a
-        # backfill to a past day must not cut the later history).
+        # backfill to a past day must not cut the later history). Set before ``_universe``, whose ETF branch reads it.
         con.execute(f"SET VARIABLE rc_build_date = DATE '{self.default_as_of().isoformat()}'")
+        _universe(ctx, con)
         con.execute(BUILD_SQL.format(in_universe_alp=universe.IN_UNIVERSE.format(
                                          sid="coalesce(s.security_id, b.security_id)"),
                                      bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
@@ -678,16 +682,22 @@ class PricesServing:
         newest = con.execute("SELECT max(session_date) FROM price_bar_daily WHERE security_id NOT LIKE 'index:%'"
                              ).fetchone()[0]
         if newest is not None:
-            for sid, ticker in con.execute(
-                    "SELECT s.security_id, s.ticker FROM stg_spine s WHERE s.tier = 'A' AND NOT EXISTS (SELECT 1 "
-                    "FROM price_bar_daily b WHERE b.security_id = s.security_id AND b.session_date = ?) "
-                    "ORDER BY s.security_id", [newest]).fetchall():
+            # The Tier A names the store keeps (review S1 of #382): an untyped or excluded Tier A name is left out of
+            # the store on purpose, so its missing bar is no finding.
+            tier_a = ("SELECT s.security_id, s.ticker FROM stg_spine s WHERE s.tier = 'A' "
+                      "AND s.ticker IN (SELECT ticker FROM _universe_ticker) AND NOT EXISTS (SELECT 1 FROM {t} x "
+                      "WHERE x.security_id = s.security_id AND x.session_date = ?) ORDER BY s.security_id")
+            for sid, ticker in con.execute(tier_a.format(t="price_bar_daily"), [newest]).fetchall():
                 found.append(("tier_a_no_bar", sid, f"{ticker}: no bar on {newest}"))
-            for sid, ticker in con.execute(
-                    "SELECT s.security_id, s.ticker FROM stg_spine s WHERE s.tier = 'A' AND NOT EXISTS (SELECT 1 "
-                    "FROM market_cap_daily m WHERE m.security_id = s.security_id AND m.session_date = ?) "
-                    "ORDER BY s.security_id", [newest]).fetchall():
+            for sid, ticker in con.execute(tier_a.format(t="market_cap_daily"), [newest]).fetchall():
                 found.append(("tier_a_no_shares", sid, f"{ticker}: no shares for {newest}"))
+            # A fund of the universe with no bar, by ticker: no spine id need exist (review M3 of #382).
+            for (ticker,) in con.execute(
+                    "SELECT t.ticker FROM _universe_ticker t JOIN stg_etf e USING (ticker) WHERE NOT EXISTS ("
+                    "SELECT 1 FROM price_bar_daily b WHERE b.session_date = ? AND (upper(b.symbol) = t.ticker OR "
+                    "b.security_id IN (SELECT s.security_id FROM stg_spine s WHERE s.ticker = t.ticker))) "
+                    "ORDER BY 1", [newest]).fetchall():
+                found.append(("universe_etf_no_bar", ticker, f"{ticker}: no bar on {newest}"))
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _ret AS
             SELECT b.security_id, b.session_date, b.close * coalesce(a.split_factor, 1) AS split_close,
                    b.close * coalesce(a.tr_factor, 1) AS tr_close, b.source,
