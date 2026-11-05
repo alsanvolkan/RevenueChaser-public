@@ -1,17 +1,21 @@
-"""What ``returns.winsorize_mad`` does, pinned before it was vectorised (#434 follow-up).
+"""The behaviour ``returns.winsorize_mad`` must keep now that it winsorises the whole frame in one
+pass instead of looping per name (#459).
 
-The clipping itself is not in question -- Pearson on log returns is dominated by a handful of days,
-so one +80% print would detach a name from its own group (review 4b). What this file pins is the
-exact behaviour, because the implementation changed from a per-column Python loop to one pass over
-the frame and the numbers have to come out identical: measured 36.7 s of a 97 s run on homesrv,
-5 Nov 2026, over ~5 100 names.
+What the clipping is for is tested next door (``test_comovement.py``: the spike is clipped, the body
+is kept, a flat column is left alone, NaNs stay NaNs, and a correlation broken by one print comes
+back). This file pins only what the rewrite could break, so it holds the two tests that no other
+test can fail on:
 
-The traps a vectorised form can fall into are each a test here: a column with no spread must be
-left alone rather than clipped to its own median, a NaN bound must not propagate into the data, and
-the caller's frame must not be mutated.
+- **MAD 0 on a column that is not constant.** A halted name prints flat for most of the window and
+  then gaps. Its median and its MAD are both 0, so bounds of ``median ± 0`` would clip that one real
+  move away. The ``spread`` mask is the only thing stopping that, and a *constant* column cannot
+  show it: clipping a constant to ``[med, med]`` is a no-op either way. Removing the mask leaves
+  every other winsorize test in this package green.
+- **Equality with the loop** on a frame holding every hard case at once.
 """
 import numpy as np
 import pandas as pd
+import pytest
 
 from RevenueChaser.module_comovement import returns
 
@@ -19,7 +23,7 @@ K = 5.0
 
 
 def _loop_winsorize(ret: pd.DataFrame, k: float) -> pd.DataFrame:
-    """The per-column loop this replaced, kept as the oracle for the equality test below."""
+    """The per-column loop this replaced, kept as the oracle."""
     out = ret.copy()
     for col in out.columns:
         x = out[col]
@@ -32,34 +36,20 @@ def _loop_winsorize(ret: pd.DataFrame, k: float) -> pd.DataFrame:
     return out
 
 
-def test_a_column_is_clipped_to_its_median_plus_minus_k_scaled_mad():
-    x = pd.Series([0.0, 0.01, -0.01, 0.02, -0.02, 0.80])     # one wild print
-    got = returns.winsorize_mad(pd.DataFrame({"A": x}), K)["A"]
-    med = x.median()
-    half = K * 1.4826 * float((x - med).abs().median())
-    assert got.max() <= med + half + 1e-12, "the +80% print is pulled in"
-    assert got.iloc[:5].tolist() == x.iloc[:5].tolist(), "the ordinary days are untouched"
-
-
-def test_a_column_with_no_spread_is_left_alone_not_clipped_to_its_median():
-    """MAD 0 means there is nothing to clip against. Bounds of median +- 0 would flatten the column
-    to a single value, which is the mistake a vectorised form makes if it does not exclude these."""
-    flat = pd.DataFrame({"FLAT": [0.02] * 6, "ONE": [np.nan] * 5 + [0.5]})
-    got = returns.winsorize_mad(flat, K)
-    assert got["FLAT"].tolist() == [0.02] * 6
-    assert got["ONE"].dropna().tolist() == [0.5], "a single observation has no spread either"
-
-
-def test_an_all_nan_column_survives_as_all_nan():
-    got = returns.winsorize_mad(pd.DataFrame({"GONE": [np.nan] * 4}), K)
-    assert got["GONE"].isna().all(), "a NaN bound must not become a number"
-
-
-def test_nan_days_stay_nan_and_do_not_move_the_bounds():
-    x = pd.Series([0.0, np.nan, 0.01, -0.01, np.nan, 0.60])
-    got = returns.winsorize_mad(pd.DataFrame({"A": x}), K)["A"]
-    assert got.isna().tolist() == x.isna().tolist(), "the holes stay where they were"
-    assert got.iloc[-1] < 0.60, "and the wild print is still clipped"
+@pytest.mark.parametrize("name,values", [
+    # The one that matters: flat for most of the window, then one real move. median 0, MAD 0.
+    ("halted_then_gapped", [0.0, 0.0, 0.0, 0.0, 0.0, 0.30]),
+    ("mostly_flat_both_ways", [0.0, 0.0, 0.0, 0.0, -0.25, 0.30]),
+    ("constant", [0.02] * 6),
+    ("one_observation", [np.nan] * 5 + [0.5]),
+    ("all_nan", [np.nan] * 6),
+])
+def test_a_column_with_no_spread_is_left_alone_whether_or_not_it_is_constant(name, values):
+    """MAD 0 means there is nothing to clip against, so the column is handed back as it came."""
+    got = returns.winsorize_mad(pd.DataFrame({name: values}), K)[name]
+    want = pd.Series(values, name=name)
+    assert (got.isna() == want.isna()).all(), "the holes stay where they were"
+    assert got.dropna().tolist() == want.dropna().tolist(), "and no value is moved"
 
 
 def test_the_callers_frame_is_not_mutated():
@@ -87,7 +77,10 @@ def test_it_matches_the_per_column_loop_it_replaced_on_a_frame_of_every_hard_cas
     n = 120
     frame = {f"N{i}": pd.Series(rng.normal(0, 0.02, n)) for i in range(40)}
     frame["WILD"] = pd.Series(np.r_[rng.normal(0, 0.02, n - 1), 0.9])
-    frame["FLAT"] = pd.Series([0.01] * n)
+    frame["CONSTANT"] = pd.Series([0.01] * n)
+    # MAD 0 but NOT constant: the case the mask exists for.
+    frame["HALTED"] = pd.Series([0.0] * (n - 1) + [0.30])
+    frame["HALTED_BOTH"] = pd.Series([0.0] * (n - 2) + [-0.25, 0.30])
     frame["ALLNAN"] = pd.Series([np.nan] * n)
     frame["HOLES"] = pd.Series(np.where(rng.random(n) < 0.3, np.nan, rng.normal(0, 0.03, n)))
     frame["ONEOBS"] = pd.Series([np.nan] * (n - 1) + [0.4])

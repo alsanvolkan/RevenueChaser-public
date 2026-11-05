@@ -168,9 +168,12 @@ def winsorize_mad(ret: pd.DataFrame, k: float | None = None) -> pd.DataFrame:
     med = ret.median()
     mad = (ret - med).abs().median()
     half = k * 1.4826 * mad
-    # A column with no spread (flat, one observation) or no observations at all is left alone.
-    # Its bounds become infinite rather than being dropped, so ``clip`` is a no-op there: a bound of
-    # median +- 0 would flatten the column to a single value, and a NaN bound would erase the data.
+    # The loop's ``continue`` condition, kept term for term so the numbers are the same: a column
+    # with no spread is left alone. Infinite bounds are how that is said here, because ``clip`` is a
+    # no-op against them -- a bound of median +- 0 would clip away the one real move of a name that
+    # printed flat and then gapped (MAD 0 without being constant), which is the case the mask is
+    # for. The ``isfinite`` half is belt and braces: a NaN MAD gives a NaN bound, which pandas
+    # already treats as no bound, so no test can fail on it -- it is here to mirror the loop.
     spread = np.isfinite(mad) & (mad != 0.0)
     return ret.clip(lower=(med - half).where(spread, -np.inf),
                     upper=(med + half).where(spread, np.inf), axis=1)
