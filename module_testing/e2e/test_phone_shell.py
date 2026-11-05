@@ -44,7 +44,7 @@ LAYOUT = r"""(function(){
   var content = document.getElementById("content");
   var frame = document.querySelector(".frame.on");
   var small = [];
-  document.querySelectorAll(".topbar button, .topbar input, .sidebar .nav-item, .sidebar .nav-header, .rc-open-issues > summary")
+  document.querySelectorAll(".topbar button, .topbar input, .sidebar .nav-item, .sidebar .nav-header")
     .forEach(function(el){ if(!shown(el)) return;
       var b = box(el.closest("label") || el);       // a labelled checkbox is tapped through its label
       if(b.h < 44 || b.w < 44) small.push((el.id || el.className || el.tagName) + " " + Math.round(b.w) + "x" + Math.round(b.h)); });

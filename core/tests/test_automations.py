@@ -32,7 +32,7 @@ def test_registry_names_are_stable_and_prefixed():
     assert [e.name for e in A.REGISTRY] == [
         "RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars", "RC-Screeners-Daily",
         "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Inputs",
-        "RC-Open-Issues-Check", "RC-IBKR-Login-Check", "RC-Build", "RC-Build-Backup", "RC-SPX-Gamma-Fetch"]
+        "RC-IBKR-Login-Check", "RC-Build", "RC-Build-Backup", "RC-SPX-Gamma-Fetch"]
     assert all(e.name.startswith("RC-") for e in A.REGISTRY)
 
 
@@ -139,64 +139,6 @@ def test_the_outcomes_row_cannot_chain_on_the_weekday_screeners_row():
     with pytest.raises(ValueError, match="runs weekly"):
         A.check_chain(rows)
 
-
-# --- the scheduled open-issues registry check (W5, #74) ------------------------------------------------
-
-def test_the_open_issues_check_row_is_daily_at_0930_and_not_chained():
-    """W5 (#74): the registry check is its own daily task and must never join the nightly writer chain, because
-    it reads the GitHub API and writes nothing, so it can neither need a store writer nor delay one."""
-    e = A.entry("RC-Open-Issues-Check")
-    assert (e.time, e.days, e.after) == ("09:30", (), None)
-
-
-def test_the_open_issues_check_row_writes_no_table():
-    """The check only reads the API, so it names no table (the panel shows ``writes`` from this field)."""
-    e = A.entry("RC-Open-Issues-Check")
-    assert e.tables_written == ()
-
-
-def test_the_open_issues_check_row_runs_the_existing_check_entry_point():
-    """The scheduled row runs ``scripts/open_issues_sync.py --check`` by module; renaming the script must fail
-    here instead of silently scheduling nothing."""
-    e = A.entry("RC-Open-Issues-Check")
-    assert e.args == ("-m", "RevenueChaser.scripts.open_issues_sync", "--check")
-
-
-def test_the_open_issues_check_row_renders_in_the_automations_panel_payload():
-    """The static row the Settings panel embeds carries every field its renderer reads, and reading it never
-    reaches the scheduler."""
-    f = A.FakeScheduler()
-    A.set_scheduler(f)
-    rows = A.static_rows()
-    row = next(r for r in rows if r["name"] == "RC-Open-Issues-Check")
-    assert {"name", "label", "schedule", "command", "settings", "log_path", "description",
-            "tables_written", "offpeak_gated", "default_install", "after"} <= set(row)
-    assert row["schedule"] == "daily 09:30 (local)"
-    assert row["tables_written"] == [] and row["after"] is None
-    assert row["label"] and row["description"] and row["command"] and row["log_path"]
-    assert not row["default_install"] and not row["offpeak_gated"]
-    assert "state" not in row
-    assert json.loads(json.dumps(row))["name"] == "RC-Open-Issues-Check"
-    assert f.calls == []
-
-
-def test_a_non_zero_check_exit_shows_as_a_failed_row(monkeypatch):
-    """A stale registry makes the command exit 1; the panel reads that as a red row with the run's own output in
-    its log tail, and no last success."""
-    import dataclasses
-    e = A.entry("RC-Open-Issues-Check")
-    monkeypatch.setattr(A, "_BY_NAME", {e.name: dataclasses.replace(
-        e, args=("-c", "import sys; print('registry is stale'); sys.exit(1)"))})
-    assert A.run_task(e.name) == 1
-    text = e.log_path.read_text(encoding="utf-8")
-    assert "registry is stale" in text and re.search(r"=== \S+ exit 1", text)
-    row = A.live_row(A.entry(e.name), A.FakeScheduler(tasks={e.name: A.TaskStatus(last_result=1)}))
-    assert row["result_kind"] == "red" and row["result_text"].startswith("failed")
-    assert row["last_success"] is None and row["last_success_age"] == "never"
-    assert row["log_tail"][-1].endswith("exit 1")
-
-
-# --- nightly inputs steps (C25a/K11, #383) ------------------------------------------------------------------------
 
 def _inputs_entry(**kw):
     import dataclasses
@@ -469,11 +411,11 @@ def test_install_uses_the_registry_settings():
 
 
 def test_a_row_without_restarts_installs_no_restart_settings():
-    """RC-Open-Issues-Check has ``restart_count=0``: ``-RestartCount 0`` makes Task Scheduler refuse the task
+    """RC-IBKR-Login-Check has ``restart_count=0``: ``-RestartCount 0`` makes Task Scheduler refuse the task
     (HRESULT 0x80041319, "Count" out of range), so a zero count installs without the restart pair."""
     ps = FakePS()
     w = _win(ps)
-    w.install(A.entry("RC-Open-Issues-Check"))
+    w.install(A.entry("RC-IBKR-Login-Check"))
     w.install(A.entry("RC-Store-Backup"))
     issues, backup = ps.scripts
     assert "-RestartCount" not in issues and "-RestartInterval" not in issues
@@ -871,7 +813,7 @@ def test_the_warn_thresholds_read_a_positive_number_or_keep_the_default(monkeypa
 # ── #162: the IBKR Gateway login check ──────────────────────────────────────────────────────────
 
 def test_the_ibkr_login_check_writes_no_table():
-    """Like RC-Open-Issues-Check: it records only its own file under .cache/, so it can never queue
+    """Like RC-IBKR-Login-Check: it records only its own file under .cache/, so it can never queue
     behind or hold the dashboard's single DuckDB writer."""
     entry = A.entry("RC-IBKR-Login-Check")
     assert entry.tables_written == ()

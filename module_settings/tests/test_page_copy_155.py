@@ -5,7 +5,9 @@ meets outside this project (SEC, ETF, 13F, CUSIP, CIK, FIGI, ISIN, SPX, LEAPS) s
 
 A bare ``#N`` means issue N of this repository (CLAUDE.md, "Where work happens"), so a number from
 the private tracker is written ``alsanvolkan/RevenueChaser#N``. The test keeps it simple: every
-citation in the dataset texts is qualified, or is an open issue ``docs/open_issues.json`` lists.
+citation in the dataset texts is qualified, or is one of the bare numbers pinned in ``BARE_CITATIONS``
+below. Open issues now live only on GitHub, so this suite cannot ask which numbers are open without a
+network call; pinning them keeps the guard offline and makes a new bare citation a deliberate edit.
 
 Store only: the seeded store is a temp DuckDB per store file, no provider is asked.
 """
@@ -22,7 +24,10 @@ from RevenueChaser.module_settings.tests.test_identity_coverage_124 import FIXED
 BANNED = ("OIPD", "OHLC", "D01", "COT", "NMF", "UW", "LLM", "SIC", "ATR", "RS")
 _BANNED_RE = re.compile(r"\b(" + "|".join(BANNED) + r")\b")
 _CITATION_RE = re.compile(r"(?<![\w/&])((?:[\w.-]+/[\w.-]+)?#(\d+))\b")
-_OPEN_ISSUES = Path(__file__).resolve().parents[2] / "docs" / "open_issues.json"
+# Bare ``#N`` citations the page copy is allowed to carry: issues of THIS repository, checked by hand.
+# Adding a number here says "I looked, and #N is this repo's issue"; qualifying the citation is the
+# alternative and needs no entry.
+BARE_CITATIONS = {100}      # #100 yfinance reliability and dependence
 _REGISTRY_TEXTS = ("label", "writer_note", "freshness_note", "coverage_note", "next_step")
 
 
@@ -77,7 +82,7 @@ def test_the_reviewed_labels_read_in_plain_words(rawstore_tmp_db):
 
 def test_every_issue_citation_in_the_dataset_texts_is_qualified_or_an_open_issue(rawstore_tmp_db):
     """#141: ``#87`` here is SPX, not the private tracker's Identity R4 issue the text meant."""
-    known = {int(i["number"]) for i in json.loads(_OPEN_ISSUES.read_text(encoding="utf-8"))["issues"]}
+    known = BARE_CITATIONS
     _seed()
     texts = list(_registry_texts())
     texts += [(f"row.{r['key']}.note", r.get("note") or "") for r in inventory.collect(now=FIXED)["rows"]]

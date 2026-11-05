@@ -17,7 +17,6 @@ import pytest
 
 from RevenueChaser.app import dashboard, runview
 from RevenueChaser.core.tests.board_js import DOM_STUB, function_source, inline_scripts
-from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 # createElement returns elements that remember what was appended to them, which the stub's no-op does not.
 RECORDING_DOM = r"""
@@ -205,7 +204,7 @@ def test_the_page_can_ask_for_more_than_the_newest_page(client, tmp_path):
 # ── the overlay, the half of this slice the user sees ─────────────────────────
 
 def _overlay(client, tmp_path, jobs: list[dict]) -> list[str]:
-    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
+    html = client.get("/").get_data(as_text=True)
     script = next(s for s in inline_scripts(html) if "function overlayText" in s)
     # A fixed clock, so the elapsed figures are the test's and not the day's.
     prelude = ('var _now = Date.parse("2026-10-23T10:00:00+00:00");'
@@ -302,7 +301,7 @@ def test_many_changes_during_a_poll_send_one_read(client, tmp_path):
 
 def test_the_overlay_counts_the_other_jobs_covering_the_tab(client, tmp_path):
     """#131 item 3: a Rotation Fetch also queues Money flow; the overlay named only the first job."""
-    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
+    html = client.get("/").get_data(as_text=True)
     script = next(s for s in inline_scripts(html) if "function overlayText" in s)
     prelude = ('var _now = Date.parse("2026-10-23T10:00:00+00:00");'
                "Date.now = function(){ return _now; };\n")
@@ -336,7 +335,7 @@ def test_an_answer_read_under_an_old_filter_is_not_drawn(client, tmp_path):
 def test_the_overlay_names_the_running_job_first(client, tmp_path):
     """#189 review: /api/jobs lists by queued_at, so a job queued earlier but still waiting came first and the
     overlay said "Queued…" while another job covering the tab was running."""
-    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
+    html = client.get("/").get_data(as_text=True)
     script = next(s for s in inline_scripts(html) if "function overlayText" in s)
     prelude = ('var _now = Date.parse("2026-10-23T10:00:00+00:00");'
                "Date.now = function(){ return _now; };\n")

@@ -33,6 +33,20 @@ Code, comments, commit messages, issues and docs are written in **English**.
 - Every change maps to a **GitHub issue**, attached as a sub-issue of its area epic. The issues and the board
   live in the private repository — see **Where work happens** for how to reference one.
 - Branch naming: `area/<key>/<slice>`, where `<key>` comes from the issue's `area:` label.
+- **Every issue carries a `board:*` label saying which dashboard it belongs to** (owner's decision,
+  5 Nov 2026: "herseyi github issuelarinda takip edelim"). One label per board it affects —
+  `board:sec-13f`, `board:settings`, `board:value-chain`, and so on, one per tab of
+  `app/dashboard.py` `TABS` — plus two for the work that fits no single board:
+  `board:all` (affects every data board) and `board:repo-wide` (store, serving, providers, test
+  harness). An `area:*` label says which part of the code; a `board:*` label says which screen.
+  So "what is open on the Relatedness board" is
+  `is:issue is:open label:board:relatedness` on GitHub, and nothing in this repository has to be
+  kept in step for that question to stay answerable.
+- There used to be a second copy of this mapping: a checked-in `docs/open_issues.json` that the
+  dashboard shell read and rendered as an "Open issues" group above every board. It was removed on
+  5 Nov 2026, on the owner's words ("O json kalksin ... suan openissue bilgileri dashboardlari
+  kirletiyor"): the file had to be re-synced by hand to stay true, and the group crowded the boards.
+  Do not reintroduce a registry file — the labels are the mapping now.
 
 ## Tests
 

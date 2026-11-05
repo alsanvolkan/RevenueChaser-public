@@ -167,7 +167,7 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
                      "RC-Screeners-Daily": "23:00", "RC-Forecast-Outcomes": "23:45",
                      "RC-Forecast-Baselines": "23:50",
                      "RC-Index-Lists": "10:00", "RC-Earnings-Inputs": "01:30",
-                     "RC-Open-Issues-Check": "09:30", "RC-IBKR-Login-Check": "09:15",
+                     "RC-IBKR-Login-Check": "09:15",
                      "RC-Build": "hourly at :07", "RC-Build-Backup": "04:30",
                      "RC-SPX-Gamma-Fetch": "06:30"}
     for stamp in times.values():
