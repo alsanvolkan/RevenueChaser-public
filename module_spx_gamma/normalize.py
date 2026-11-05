@@ -9,6 +9,7 @@ from .charm_pin import (
     MODE_DIRECTIONALIZED_VOLUME,
     MODE_OPEN_INTEREST,
     normalize_spot_exposure_rows,
+    report_charm_pin,
     qualify_charm,
     vanna_peaks,
 )
@@ -115,6 +116,8 @@ def normalize_strike_expiry_rows(strike_expiry_payloads: dict | list | None, aso
                 "call_gex": to_float(r.get("call_gex")),
                 "put_gex": to_float(r.get("put_gex")),
                 "net_gamma": net_sum(r.get("call_gex"), r.get("put_gex")),
+                # F2: UW's strike-expiry rows carry charm; the 30 Oct report's pin is read from them.
+                "net_charm": net_sum(r.get("call_charm"), r.get("put_charm")),
             })
     return rows
 
@@ -465,6 +468,7 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     # Charm Peak/Pin is always derived from Mode A (directionalized volume):
     # it reflects active intraday flow, not legacy far-OTM open interest.
     charm_qualification = qualify_charm(spot_exposure_rows, spot, MODE_DIRECTIONALIZED_VOLUME)
+    charm_pin_report = report_charm_pin(strike_expiry_rows, asof_str)
     vanna = vanna_peaks(spot_exposure_rows, MODE_DIRECTIONALIZED_VOLUME)
 
     strike_rows = enrich_strike_gamma_dollars(normalize_strike_rows(raw.get("strike_exposure")),
@@ -565,6 +569,7 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "dte_band_walls": dte_band_walls,
         "put_wall_origin": put_wall_origin,
         "charm_qualification": charm_qualification,
+        "charm_pin_report": charm_pin_report,
         "vanna_peaks": vanna,
         "spot_exposures": spot_exposure_rows,
         "strike_exposures": strike_rows,

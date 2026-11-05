@@ -87,7 +87,8 @@ def scenario_bands(snapshot: dict) -> dict | None:
         return None
 
     if spot < flip:
-        pin = _finite((snapshot.get("charm_qualification") or {}).get("strike"))
+        # F2: the 30 Oct report's pin (largest front-expiry net charm), never the vol-mode "Charm Peak"
+        pin = _finite((snapshot.get("charm_pin_report") or {}).get("strike"))
         if pin is None or pin <= flip:
             # No pin, or a pin at or below the flip, leaves the upside band without the ceiling the report gives
             # it. The report's upside here is the flip being taken back up to the pin; inventing another ceiling

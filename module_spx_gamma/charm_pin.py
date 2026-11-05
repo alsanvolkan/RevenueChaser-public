@@ -110,6 +110,27 @@ def qualify_charm(rows: list[dict], spot: float | None, mode: str = MODE_OPEN_IN
     }
 
 
+def report_charm_pin(strike_expiry_rows: list[dict], asof_date: str | None) -> dict:
+    """The 30 Oct report's charm pin (p.6): the strike of the largest |net charm| in the front expiry.
+
+    The front expiry is the nearest one on or after ``asof_date`` whose rows carry charm. The report adds that a
+    pin is not a confirmed attractor (2 Oct audit, p.8), so the card says so; the vol-mode ``qualify_charm`` stays
+    as a second reading. ``strike`` is None when no row carries charm.
+    """
+    empty = {"strike": None, "net_charm": None, "expiry": None,
+             "rule": "largest front-expiry net charm (30 Oct report)"}
+    rows = [r for r in strike_expiry_rows or []
+            if r.get("strike") is not None and r.get("net_charm") is not None and r.get("expiry")
+            and (asof_date is None or str(r["expiry"]) >= asof_date)]
+    if not rows:
+        return empty
+    front = min(str(r["expiry"]) for r in rows)
+    top = max((r for r in rows if str(r["expiry"]) == front), key=lambda r: abs(r["net_charm"]))
+    if top["net_charm"] == 0:
+        return empty
+    return {**empty, "strike": top["strike"], "net_charm": top["net_charm"], "expiry": front}
+
+
 def vanna_peaks(rows: list[dict], mode: str = MODE_DIRECTIONALIZED_VOLUME) -> dict:
     """Call-side and put-side vanna concentration peaks (directionalized volume).
 

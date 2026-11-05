@@ -167,7 +167,7 @@ def vanna_card(spot_exposure_rows, vanna_peaks, spot):
     return {"title": "Vanna", "tag": "VOLATILITY", "signal": signal, "narrative": narrative, "rows": rows}
 
 
-def charm_card(spot_exposure_rows, charm_qualification, spot):
+def charm_card(spot_exposure_rows, charm_qualification, spot, report_pin=None):
     live = charm_live_sum(spot_exposure_rows)
     pos_vals = [net_charm(r, MODE_OPEN_INTEREST) for r in spot_exposure_rows or []]
     pos_vals = [v for v in pos_vals if v is not None]
@@ -194,6 +194,12 @@ def charm_card(spot_exposure_rows, charm_qualification, spot):
         ("Where it matters", f"${c_strike:,.0f}" if c_strike else "N/A",
          f"{dist:+.1f}% from spot · pin zone" if dist is not None else ""),
     ]
+    rp = report_pin or {}
+    if rp.get("strike") is not None:
+        # F2: the 30 Oct report's pin (largest front-expiry net charm) leads; the vol-mode peak stays below it.
+        rows.insert(2, ("Report pin", f"${rp['strike']:,.0f}",
+                        f"front expiry {rp.get('expiry')} · net charm {_fmt_usd(rp.get('net_charm'))} · "
+                        "not a confirmed attractor"))
     # The card votes in the cross-signal matrix only when live flow and positioning agree: sell
     # pressure leans bearish, buy pressure bullish. Mixed signals carry no lean (G14).
     lean = None
@@ -218,7 +224,8 @@ def build_summary(snapshot) -> list[dict]:
         delta_card(strike_rows, spot),
         gamma_card(strike_rows, strike_rows_prev, expiry_rows, levels, spot, snapshot.get("regime_detail")),
         vanna_card(snapshot.get("spot_exposures", []), snapshot.get("vanna_peaks"), spot),
-        charm_card(snapshot.get("spot_exposures", []), snapshot.get("charm_qualification"), spot),
+        charm_card(snapshot.get("spot_exposures", []), snapshot.get("charm_qualification"), spot,
+                   snapshot.get("charm_pin_report")),
     ]
 
 

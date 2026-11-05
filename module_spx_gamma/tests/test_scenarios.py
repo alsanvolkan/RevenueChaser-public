@@ -42,7 +42,7 @@ def test_asymmetry_reproduces_the_30_oct_reports_own_worked_example():
     """
     snap = {"current_level": 7580.09,
             "levels": {"regime_threshold": 7750.0, "upper_resistance_band": 8100.0, "lower_support_band": 7500.0},
-            "charm_qualification": {"strike": 7800.0}}
+            "charm_pin_report": {"strike": 7800.0}}
     bands = scenarios.scenario_bands(snap)
     assert bands["regime"] == scenarios.NEGATIVE_GAMMA
     assert bands["consolidation"] == (7500.0, 7750.0)
@@ -58,7 +58,7 @@ def test_above_the_flip_keeps_the_9_oct_rule_and_its_probabilities():
     """The pinned report does not cover a spot above the flip, so that regime keeps the older rule."""
     snap = {"current_level": 7900.0,
             "levels": {"regime_threshold": 7770.0, "upper_resistance_band": 7920.0, "lower_support_band": 7500.0},
-            "charm_qualification": {"strike": 8000.0}}
+            "charm_pin_report": {"strike": 8000.0}}
     bands = scenarios.scenario_bands(snap)
     assert bands["regime"] == scenarios.POSITIVE_GAMMA
     assert bands["consolidation"] == (7770.0, 7940.0)      # [flip, call wall + 20]
@@ -72,7 +72,7 @@ def test_below_the_flip_without_a_charm_pin_has_no_set():
     """The upside ceiling is the pin; without it every other ceiling would be a level the report does not use."""
     snap = {"current_level": 7580.0,
             "levels": {"regime_threshold": 7750.0, "upper_resistance_band": 8100.0, "lower_support_band": 7500.0},
-            "charm_qualification": {}}
+            "charm_pin_report": {}}
     assert scenarios.scenario_bands(snap) is None
     assert scenarios.build_scenarios(snap)["scenarios"] == []
 

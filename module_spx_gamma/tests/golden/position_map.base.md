@@ -88,6 +88,7 @@ Charm signals agree — sell-side lean.
 |---|---|---|
 | Live charm | -$80 | Sell pressure |
 | Positioning | -$45.00M | Sell pressure · 100% imbalance |
+| Report pin | $7,900 | front expiry 2026-08-14 · net charm -$7.00M · not a confirmed attractor |
 | Where it matters | $8,000 | +2.8% from spot · pin zone |
 
 
@@ -98,7 +99,7 @@ Charm signals agree — sell-side lean.
 | A daily close ABOVE 7,821 (the gamma flip) | back to positive gamma — acceleration is dampened, the upside frame opens |
 | The close stays BELOW 7,821 | negative gamma continues, so a move keeps being amplified, 7,500 the next support |
 | Net DEX falls through its 25% threshold (a -$140.75M move, to below +$422.25M) | the dealer lean behind the current frame weakens meaningfully |
-| Charm changes sign (from minus to plus) | the pin's pull at 8,000 reverses, so the close drifts the other way |
+| Charm changes sign (from minus to plus) | the pin's pull at 7,900 reverses, so the close drifts the other way |
 
 
 ## SPX Option Position Map
@@ -222,7 +223,7 @@ CFTC COT data unavailable.
 | Scenario | Range | P | Asymmetry | Trade |
 |---|---|---|---|---|
 | Consolidation | 7,500 – 7,821 | 0.35 | n/a | Theta-weighted (directionless) |
-| Upside | 7,821 – 8,000 | 0.3 | 0.56 | Directional long |
+| Upside | 7,821 – 7,900 | 0.3 | 0.25 | Directional long |
 | Downside | 7,400 – 7,500 | 0.35 | 0.31 | Directional short |
 
 
