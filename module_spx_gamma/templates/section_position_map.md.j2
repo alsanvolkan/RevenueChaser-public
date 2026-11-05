@@ -96,7 +96,9 @@ Zero crossing (approx. gamma flip): **{{ gex_envelope.zero_crossing }}**
 What it tells you: whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.
 
 {% if vix %}VIX family: VIX {{ vix.vix }} · 9D {{ vix.vix9d }} · 3M {{ vix.vix3m }} · 6M {{ vix.vix6m }} · 1Y {{ vix.vix1y }} · VVIX {{ vix.vvix }} — term structure: **{{ vix.term_mode or 'n/a' }}**{% if vix.ivts %} (IVTS {{ vix.ivts|round(4) }}){% endif %}
-{% endif %}
+{% if vega_flow %}Directional vega flow (cumulative, {{ vega_flow.buckets }} buckets): {{ vega_flow.dir_vega_flow | fmtnum('{:+,.0f}') }} — flow, not the book's net vega; the sign is the reading.
+{% endif %}{% if vix_greeks %}VIX option book ({{ vix_greeks.expiries }} expiries): net vanna {{ vix_greeks.net_vanna | fmtnum('{:+,.0f}') }} · net charm {{ vix_greeks.net_charm | fmtnum('{:+,.0f}') }}
+{% endif %}{% endif %}
 {% if iv_rank %}IV Rank (1Y): **{{ iv_rank.iv_rank_1y }}%** (ATM IV {{ iv_rank.volatility }})
 {% endif %}
 {% if skew %}Skew (Put Bias): 1M **{{ skew.put_bias_1m | fmtnum('{:.1%}') }}** · 3M **{{ skew.put_bias_3m | fmtnum('{:.1%}') }}** — *(derived/unverified: {{ skew.note }})*

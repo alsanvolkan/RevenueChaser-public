@@ -105,7 +105,15 @@ BASE_ENDPOINTS = {
     "vol_term_structure": ("/stock/{t}/volatility/term-structure", {}),
     "variance_risk_premium": ("/stock/{t}/volatility/variance-risk-premium", {}),
     "realized_vol": ("/stock/{t}/volatility/realized", {}),
+    # The report's §4.1 directional vega flow: per-minute buckets of the day, summed on read. It takes a date, so
+    # a backfilled day holds its own flow and not today's.
+    "greek_flow": ("/stock/{t}/greek-flow", {"date": None}),
 }
+# The VIX index's own option book (§17). Not in the table above: that one formats one ticker, and this is a second
+# one. MenthorQ publishes VIX gamma levels but not its vanna and charm, so Unusual Whales is the only source for
+# these two and the levels are out of scope under "UW only" (avo, 3 Nov 2026).
+VIX_GREEKS_TICKER = "VIX"
+VIX_GREEKS_PATH = "/stock/{t}/greek-exposure/expiry"
 MANDATORY = ("gex_levels",)
 
 # Spot-exposure strikes come back capped at this many rows per call (UW's limit).
@@ -125,6 +133,7 @@ _FILENAMES = {
     "vol_term_structure": "vol_term_structure.json",
     "variance_risk_premium": "variance_risk_premium.json",
     "realized_vol": "realized_vol.json",
+    "greek_flow": "greek_flow.json",
 }
 
 # Files that carry the CURRENT value whatever date was asked for (no ``date`` param),
@@ -520,6 +529,17 @@ def _fetch_snapshot_staged(
         raw["option_chain"] = _oc
     elif not history_only:
         warnings.append("option_chain: no chain available (panel degraded)")
+
+    # 4d. The VIX index's own option book (§17): net vanna and net charm over its expiries. Best-effort — the
+    #     panel degrades to None, and a failure here never fails an SPX snapshot.
+    raw["vix_greeks"] = None
+    if not history_only:
+        _vg = _call("vix_greeks", VIX_GREEKS_PATH.format(t=VIX_GREEKS_TICKER),
+                    {"date": asof_date}, "vix_greeks.json")
+        if _vg is not None and (_vg.get("data") or []):
+            raw["vix_greeks"] = _vg
+        else:
+            warnings.append("vix_greeks: no VIX option book (panel degraded)")
 
     # 5. Previous-session strike exposure (for gamma vs prev close)
     prev_date = candles[-2]["date"] if len(candles) >= 2 else None

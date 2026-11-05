@@ -24,7 +24,7 @@ UW_HOST = "uw.test"
 
 # The UW requests of a Fetch of 26 Oct 2026 with the fixture's SPX closes (spot 6749 = the 26 Oct close), captured
 # on the code before PR 3 (snapshot.py at ee29e0a, its candles handed in with the same closes) and unchanged by it.
-# The count is 18 + one all-expiry strike-expiry call per expiry the expiry answer lists (two here; SPX lists dozens
+# The count is 20 + one all-expiry strike-expiry call per expiry the expiry answer lists (two here; SPX lists dozens
 # live), plus the ~10-day GEX history backfill run() starts afterwards.
 TODAYS_UW_REQUESTS = [
     ("/api/stock/SPX/gex-levels", [("date", DAY), ("source", "oi")]),
@@ -38,6 +38,7 @@ TODAYS_UW_REQUESTS = [
     ("/api/stock/SPX/volatility/term-structure", []),
     ("/api/stock/SPX/volatility/variance-risk-premium", []),
     ("/api/stock/SPX/volatility/realized", []),
+    ("/api/stock/SPX/greek-flow", [("date", DAY)]),
     ("/api/stock/SPX/flow-per-strike", [("date", DAY)]),
     ("/api/stock/SPX/spot-exposures/strike",
      [("date", DAY), ("limit", "500"), ("max_strike", "6749"), ("min_strike", "5061")]),
@@ -48,6 +49,8 @@ TODAYS_UW_REQUESTS = [
     ("/api/stock/SPX/greek-exposure/strike-expiry", [("date", DAY), ("expiry", "2026-10-27")]),
     ("/api/stock/SPX/option-contracts", [("expiry", DAY)]),
     ("/api/stock/SPX/option-contracts", []),
+    # The one call of a second ticker: the VIX index's own option book (§17 of the report).
+    ("/api/stock/VIX/greek-exposure/expiry", [("date", DAY)]),
     ("/api/stock/SPX/greek-exposure/strike", [("date", "2026-10-23")]),
 ]
 
@@ -99,7 +102,7 @@ def _uw_requests(http_mock):  # noqa: F811
 def test_the_uw_requests_of_a_fetch_are_todays(uw, http_mock, rcdata_market, tmp_path):  # noqa: F811
     snap.fetch_snapshot(uw, DAY, data_root=tmp_path / "raw", fetch_all_expiries=True)
     assert _uw_requests(http_mock) == TODAYS_UW_REQUESTS
-    assert len(TODAYS_UW_REQUESTS) == 20
+    assert len(TODAYS_UW_REQUESTS) == 22, "18 before, plus greek-flow (§4.1) and the VIX option book (§17)"
 
 
 def test_a_fetch_with_nothing_stored_asks_no_live_source_and_says_not_stored(uw, http_mock, yfinance_calls,  # noqa: F811

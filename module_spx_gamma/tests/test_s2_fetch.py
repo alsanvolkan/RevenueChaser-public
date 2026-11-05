@@ -52,7 +52,10 @@ def test_every_uw_call_goes_through_get_result_with_a_core_path(tmp_path, monkey
 
     monkeypatch.setattr(httpx, "get", _no_http)
     uw, _ = _fetch(tmp_path)
-    assert uw.paths and all(p.startswith("/stock/SPX/") for p in uw.paths)
+    # Every call is the board's own ticker, except the one VIX call: the index's own option book (§17), which is
+    # a second ticker by design and the only one.
+    assert uw.paths and all(p.startswith(("/stock/SPX/", "/stock/VIX/")) for p in uw.paths)
+    assert [p for p in uw.paths if p.startswith("/stock/VIX/")] == ["/stock/VIX/greek-exposure/expiry"]
 
 
 def test_flow_per_strike_bare_list_is_kept(tmp_path):
