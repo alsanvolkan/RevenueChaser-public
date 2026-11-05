@@ -162,16 +162,21 @@ def winsorize_mad(ret: pd.DataFrame, k: float | None = None) -> pd.DataFrame:
     k = settings_mod.effective().winsor_k if k is None else float(k)
     if ret is None or getattr(ret, "empty", True):
         return ret if ret is not None else pd.DataFrame()
-    out = ret.copy()
-    for col in out.columns:
-        x = out[col]
-        med = x.median()
-        mad = (x - med).abs().median()
-        if not np.isfinite(mad) or float(mad) == 0.0:
-            continue
-        half = k * 1.4826 * float(mad)
-        out[col] = x.clip(med - half, med + half)
-    return out
+    # One pass over the frame, not one per name: the medians, the MAD and the clip are all
+    # column-wise, and the loop this replaced cost 36.7 s of a 97 s Co-movement run on homesrv
+    # (5 Nov 2026, ~5 100 names) -- most of it pandas overhead paid 5 100 times over.
+    med = ret.median()
+    mad = (ret - med).abs().median()
+    half = k * 1.4826 * mad
+    # The loop's ``continue`` condition, kept term for term so the numbers are the same: a column
+    # with no spread is left alone. Infinite bounds are how that is said here, because ``clip`` is a
+    # no-op against them -- a bound of median +- 0 would clip away the one real move of a name that
+    # printed flat and then gapped (MAD 0 without being constant), which is the case the mask is
+    # for. The ``isfinite`` half is belt and braces: a NaN MAD gives a NaN bound, which pandas
+    # already treats as no bound, so no test can fail on it -- it is here to mirror the loop.
+    spread = np.isfinite(mad) & (mad != 0.0)
+    return ret.clip(lower=(med - half).where(spread, -np.inf),
+                    upper=(med + half).where(spread, np.inf), axis=1)
 
 
 def flat_print_names(prices: pd.DataFrame, run: int = 5,
