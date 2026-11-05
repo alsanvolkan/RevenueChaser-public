@@ -1261,8 +1261,10 @@ removing a name by hand, and a request-wide `allow_shrink` would relax every oth
 "a table may not empty" guard still applies — a universe of no names is a bug whoever edited what. And because that
 exemption is the only swap-time guard the table had, `my_universe.py` guards the names that entered on their dollar
 volume itself, **per fund**: `adv_usd_20d` is NULL for *unknown* and never for zero, so a fund of the live list
-whose own number is NULL today is held on its live row — no `left` row — and every held fund is one
-`my_universe_etf_volume_lost` issue (avo's decision B, #424). A volume that is present and under the floor is the
+that the rule can no longer measure — no `aum` **and** no `adv_usd_20d` today, the case where the rule would in
+fact have read the volume — is held on its live row, with no `left` row, and every held fund the manual file did
+not then remove is one `my_universe_etf_volume_lost` issue (avo's decision B, #424). A fund N-CEN now prices under
+the floor is answered by that AUM and leaves. A volume that is present and under the floor is the
 rule's answer and that fund leaves as before. When no `etf` row has a volume at all the source itself is gone and
 the build is refused outright: a missing or unreadable Compustat `secd` Parquet is an input outage, not a change of
 the rules. The check is per fund because a table-wide one masked the loss: IBIT is on Nasdaq and GLD, SLV, SPY and

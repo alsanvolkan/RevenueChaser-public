@@ -295,6 +295,42 @@ def test_a_held_fund_is_not_also_called_undecided(live_my_universe):
     assert [k for k, _, _ in issues] == ["my_universe_etf_volume_lost"]
 
 
+def test_a_fund_that_got_an_aum_under_the_floor_leaves_even_with_no_volume(live_my_universe):
+    """The hold is only for a fund the rule would have judged **on its volume**, and the rule reads the volume only
+    where N-CEN gives no AUM at all. A fund N-CEN now prices under the floor is answered by that AUM, whatever its
+    volume says, so it leaves and Compustat is not blamed for it (review S1 of PR 428)."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 4e10,
+                            "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY", aum=1_000_000.0), _etf("GLD", adv=50_000_000.0)])
+    rows, changes, issues = _rows(con)
+    assert sorted(rows) == ["GLD"]
+    assert ("SPY", "left") in [(c["ticker"], c["change"]) for c in changes]
+    assert issues == []
+
+
+def test_a_fund_a_manual_remove_takes_out_is_not_named_as_held(live_my_universe):
+    """A fund avo removed by hand is gone on purpose, so the issue does not report it as held (review N1)."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 4e10,
+                            "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY"), _etf("GLD", adv=50_000_000.0)])
+    rows, _, issues = _rows(con, manual=([], [{"ticker": "SPY", "reason": "avo took it out"}]))
+    assert sorted(rows) == ["GLD"]
+    assert issues == []
+
+
+def test_the_held_issue_names_the_first_twenty_funds_and_counts_the_rest(live_my_universe):
+    """One issue, not thousands of rows: it names :data:`my_universe.MANY` tickers and says how many more (N2)."""
+    many = [f"F{i:03d}" for i in range(my_universe.MANY + 3)]
+    live_my_universe(rows=[{"ticker": t, "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 4e10,
+                            "entered_on": date(2026, 10, 1)} for t in many])
+    con = _con(etfs=[_etf(t) for t in many] + [_etf("GLD", adv=50_000_000.0)])
+    rows, _, issues = _rows(con)
+    assert sorted(rows) == sorted(many + ["GLD"])
+    detail = issues[0][2]
+    assert detail.endswith("and 3 more") and many[my_universe.MANY - 1] in detail
+    assert many[my_universe.MANY] not in detail
+
+
 def test_a_fund_whose_volume_fell_under_the_floor_still_leaves(live_my_universe):
     """A number under the floor is the rule's answer, not an outage: only NULL where the live row had one is held."""
     live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 40_000_000_000.0,
