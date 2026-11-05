@@ -1,12 +1,13 @@
-"""``my_universe`` through a real ``spine/security`` build, and the ``adv_usd_20d`` it reads from the prices store.
+"""``my_universe`` through a real ``spine/security`` build, and the ``adv_usd_20d`` it reads from Compustat.
 
 The same sources as ``test_spine_etf``: the SEC equity file, Alpha Vantage's listing status and four N-CEN
-quarters. The bars are written into a served ``prices.duckdb`` before the build, because that is where the
-20-session dollar volume comes from (an ETF with no AUM in N-CEN is decided on it, avo 4 Nov 2026).
+quarters. Compustat's ``comp.secd`` partitions are written before the build, because that is where the 20-session
+dollar volume comes from (an ETF with no AUM in N-CEN is decided on it, avo 4 Nov 2026; from the raw Parquet and
+not from the live prices store since #357, avo's decision B of 5 Nov 2026).
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 import pytest
 
@@ -15,23 +16,25 @@ from RevenueChaser.rcdata import ops, serving
 from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.spine import av_listing, etf, my_universe, ncen, sec_tickers, security
 
-from . import prices_store, spine_fixture as fx
+from . import spine_fixture as fx
 from .test_spine_etf import AV, SEC_FILE
+from .test_spine_etf_adv import put_secd, series
+
+#: One Compustat series for each fund of these tests, its 20 sessions ending on the build's own day.
+GVKEYS = {"SPY": "109503", "GLD": "131855", "QYLD": "200001"}
 
 
-def _bars(ticker: str, sessions: int, dollars: float, *, close: float = 100.0) -> list[dict]:
-    """``sessions`` daily bars whose VWAP times volume is ``dollars``, the newest on 2026-11-02."""
-    day = date(2026, 11, 2)
-    return [{"ticker": ticker, "session_date": day - timedelta(days=i), "close": close, "vwap": close,
-             "volume": dollars / close, "source": "alpaca/bars", "fetched_at": 1.0} for i in range(sessions)]
+def _secd(ticker: str, sessions: int, dollars: float) -> list[dict]:
+    """``sessions`` priced Compustat days of ``ticker`` whose close times volume is ``dollars`` a day."""
+    return series(GVKEYS[ticker], "01", ticker, sessions, dollars, last=date(2026, 11, 2))
 
 
 @pytest.fixture
 def built(monkeypatch, http_mock):
-    """The spine built once, after ``bars`` (if the test asked for any) are in the live prices store."""
-    def build(bars: list[dict] | None = None):
-        if bars:
-            prices_store.put_bars(bars)
+    """The spine built once, after ``secd`` (if the test asked for any) is in Compustat's Parquet."""
+    def build(secd: list[dict] | None = None):
+        if secd:
+            put_secd(secd)
         monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
         monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
         monkeypatch.setenv("RC_ALPHAVANTAGE_BASE", "https://av.test")
@@ -80,12 +83,12 @@ def test_the_rules_pick_the_three_large_etfs_and_no_stock_of_this_fixture(built)
     assert rows["XLK"]["kind"] == "etf" and rows["XLK"]["rule"] == "etf_aum"
     assert rows["XLK"]["reason"] == "AUM 80,000.0M USD" and rows["XLK"]["aum_as_of"] == date(2026, 4, 30)
     # CCOI and LEVX are under the 100M floor; TAPR, BNKU and FNGU are notes; SPY, GLD, QYLD and NEWE have no
-    # AUM and, with no bars in this build, no dollar volume either.
+    # AUM and, with no Compustat partition in this build, no dollar volume either.
     assert not {"MSFT", "CCOI", "LEVX", "TAPR", "BNKU", "FNGU", "SPY", "GLD", "QYLD", "NEWE"} & set(rows)
 
 
 def test_a_fund_with_no_aum_enters_on_its_20_session_dollar_volume_and_a_thin_one_does_not(built):
-    built(_bars("SPY", 20, 40_000_000_000.0) + _bars("GLD", 20, 1_000_000.0) + _bars("QYLD", 5, 90_000_000.0))
+    built(_secd("SPY", 20, 40_000_000_000.0) + _secd("GLD", 20, 1_000_000.0) + _secd("QYLD", 5, 90_000_000.0))
     rows = _mine()
     assert "SPY" in rows and rows["SPY"]["rule"] == "etf_adv"
     assert rows["SPY"]["adv_usd_20d"] == pytest.approx(40_000_000_000.0)
