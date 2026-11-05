@@ -806,13 +806,18 @@ def _parse_utc(text) -> datetime | None:
 def _backups(now: datetime) -> dict:
     from RevenueChaser.rcdata import backup
     folder = (config.RAW_STORE_BACKUP_DIR or "").strip()
+    # Every folder a backup entry writes into (``backup.SUBDIRS``): since 5 Nov 2026 the nightly run takes the small
+    # files into ``market/`` and a weekly one takes prices and ownership into ``market-heavy/``. A kind is looked for
+    # in all of them, so one that moved folders does not read as never backed up.
     files: dict = {}
     if folder:
-        try:
-            files = json.loads((Path(folder) / backup.SUBDIR / backup.MANIFEST_NAME).read_text(encoding="utf-8"))
-            files = files.get("files", {}) if isinstance(files, dict) else {}
-        except (OSError, ValueError):
-            files = {}
+        for subdir in backup.SUBDIRS:
+            try:
+                found = json.loads((Path(folder) / subdir / backup.MANIFEST_NAME).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(found, dict) and isinstance(found.get("files"), dict):
+                files.update(found["files"])
     kinds = []
     for kind in ("ops", *serving.KINDS):
         stamps = [_parse_utc(v.get("at")) for name, v in files.items()

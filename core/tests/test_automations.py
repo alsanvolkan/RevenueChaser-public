@@ -32,7 +32,8 @@ def test_registry_names_are_stable_and_prefixed():
     assert [e.name for e in A.REGISTRY] == [
         "RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars", "RC-Screeners-Daily",
         "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Inputs",
-        "RC-IBKR-Login-Check", "RC-Build", "RC-Build-Backup", "RC-SPX-Gamma-Fetch"]
+        "RC-IBKR-Login-Check", "RC-Build", "RC-Build-Backup", "RC-Build-Backup-Heavy",
+        "RC-SPX-Gamma-Fetch"]
     assert all(e.name.startswith("RC-") for e in A.REGISTRY)
 
 
@@ -46,7 +47,7 @@ def test_the_index_lists_row_runs_weekly_on_saturday():
     assert not e.default_install
     assert all(x.days == () and x.schedule == f"daily {x.time} (local)" for x in A.REGISTRY
                if x.name not in (e.name, "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Forecast-Baselines",
-                                 "RC-Earnings-Inputs", "RC-Build", "RC-SPX-Gamma-Fetch"))
+                                 "RC-Earnings-Inputs", "RC-Build", "RC-Build-Backup-Heavy", "RC-SPX-Gamma-Fetch"))
 
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
@@ -860,10 +861,33 @@ def test_the_builder_row_runs_one_queue_pass_every_hour_at_07():
 
 def test_the_builder_backup_row_runs_daily_at_0430_for_at_most_30_minutes():
     e = A.entry("RC-Build-Backup")
-    assert e.args == ("-m", "RevenueChaser.rcdata", "backup")
+    assert e.args == ("-m", "RevenueChaser.rcdata", "backup",
+                      "--only", "ops,market,spine,fundamentals,options,raw", "--subdir", "market")
     assert not e.hourly and e.time == "04:30" and e.schedule == "daily 04:30 (local)"
     assert e.settings.time_limit_minutes == 30 and e.tables_written == ()
     assert e.unit_name == "life-rc-builder-backup"
+
+
+def test_the_heavy_backup_row_runs_weekly_on_sunday_into_its_own_subdir():
+    """avo, 5 Nov 2026: prices (2.9 GB) and ownership (661 MB) leave the nightly run, which hit its 30-minute
+    limit on them, for one weekly run of their own with its own folder and its own hour."""
+    from RevenueChaser.rcdata import backup
+    e = A.entry("RC-Build-Backup-Heavy")
+    assert e.args == ("-m", "RevenueChaser.rcdata", "backup",
+                      "--only", "prices,ownership", "--subdir", backup.HEAVY_SUBDIR)
+    assert (e.time, e.days) == ("03:30", ("Sunday",))
+    assert e.schedule == "weekly Sunday 03:30 (local)"
+    assert A.on_calendar(e) == "Sun *-*-* 03:30:00"
+    assert e.settings.time_limit_minutes == 60 and e.tables_written == ()
+    assert e.unit_name == "life-rc-builder-backup-heavy" == A.BUILDER_BACKUP_HEAVY_UNIT
+    assert not e.default_install and e.after is None and not e.hourly
+    light = A.entry("RC-Build-Backup")
+    assert _minutes_of(light.time) - _minutes_of(e.time) == 60, "an hour clear of the nightly light run"
+
+
+def _minutes_of(hhmm: str) -> int:
+    h, m = (int(x) for x in hhmm.split(":"))
+    return h * 60 + m
 
 
 def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
@@ -871,8 +895,10 @@ def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
     s = A.LinuxScheduler(runner=sc, python="/srv/rc/.venv/bin/python", workdir="/srv/rc", unit_dir=tmp_path / "u")
     s.install(A.entry("RC-Build"))
     s.install(A.entry("RC-Build-Backup"))
+    s.install(A.entry("RC-Build-Backup-Heavy"))
     files = sorted(p.name for p in (tmp_path / "u").iterdir())
-    assert files == ["life-rc-builder-backup.service", "life-rc-builder-backup.timer",
+    assert files == ["life-rc-builder-backup-heavy.service", "life-rc-builder-backup-heavy.timer",
+                     "life-rc-builder-backup.service", "life-rc-builder-backup.timer",
                      "life-rc-builder.service", "life-rc-builder.timer"]
     service = (tmp_path / "u" / "life-rc-builder.service").read_text(encoding="utf-8")
     timer = (tmp_path / "u" / "life-rc-builder.timer").read_text(encoding="utf-8")
@@ -883,6 +909,11 @@ def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
     backup_timer = (tmp_path / "u" / "life-rc-builder-backup.timer").read_text(encoding="utf-8")
     assert '"run" "RC-Build-Backup"' in backup_service and "TimeoutStartSec=30min" in backup_service
     assert "OnCalendar=*-*-* 04:30:00" in backup_timer and "Unit=life-rc-builder-backup.service" in backup_timer
+    heavy_service = (tmp_path / "u" / "life-rc-builder-backup-heavy.service").read_text(encoding="utf-8")
+    heavy_timer = (tmp_path / "u" / "life-rc-builder-backup-heavy.timer").read_text(encoding="utf-8")
+    assert '"run" "RC-Build-Backup-Heavy"' in heavy_service and "TimeoutStartSec=60min" in heavy_service
+    assert "OnCalendar=Sun *-*-* 03:30:00" in heavy_timer
+    assert "Unit=life-rc-builder-backup-heavy.service" in heavy_timer
     for text in (service, timer, backup_service, backup_timer):      # valid unit text: sections, key=value lines
         lines = [ln for ln in text.splitlines() if ln.strip()]
         assert lines[0] == "[Unit]"
@@ -895,7 +926,9 @@ def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
     s.remove("RC-Build")
     assert sc.calls == [["disable", "--now", "life-rc-builder.timer"], ["start", "--no-block", "life-rc-builder.service"],
                         ["disable", "--now", "life-rc-builder.timer"], ["daemon-reload"]]
-    assert sorted(p.name for p in (tmp_path / "u").iterdir()) == ["life-rc-builder-backup.service",
+    assert sorted(p.name for p in (tmp_path / "u").iterdir()) == ["life-rc-builder-backup-heavy.service",
+                                                                   "life-rc-builder-backup-heavy.timer",
+                                                                   "life-rc-builder-backup.service",
                                                                    "life-rc-builder-backup.timer"]
 
 
@@ -926,3 +959,19 @@ def test_the_spx_gamma_fetch_runs_on_weekdays_after_the_stored_close():
     assert e.tables_written == () and e.default_install is False
     assert e.settings.start_when_available is False
     assert e.schedule == "weekly Monday, Tuesday, Wednesday, Thursday, Friday 06:30 (local)"
+
+
+def test_every_backup_step_belongs_to_exactly_one_registry_row():
+    """A new serving kind has to be put in the light or the heavy run on purpose, not land in neither."""
+    from RevenueChaser.rcdata import backup
+    chosen: list[str] = []
+    subdirs: list[str] = []
+    for e in A.REGISTRY:
+        args = list(e.args)
+        if args[:3] != ["-m", "RevenueChaser.rcdata", "backup"]:
+            continue
+        assert "--only" in args, f"{e.name} runs rcdata backup without --only: it would take every step"
+        chosen += args[args.index("--only") + 1].split(",")
+        subdirs.append(args[args.index("--subdir") + 1] if "--subdir" in args else backup.SUBDIR)
+    assert sorted(chosen) == sorted(backup.STEPS), "every step belongs to exactly one backup entry"
+    assert set(subdirs) == set(backup.SUBDIRS), "SUBDIRS is exactly the folders the registry writes"
