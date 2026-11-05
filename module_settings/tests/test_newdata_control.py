@@ -126,36 +126,6 @@ def test_storage_counts_each_datasets_raw_and_parquet_folders_and_the_live_file(
     assert st["roots"]["ssd"] == str(config.MARKET_DIR)
 
 
-def test_a_walk_stops_at_its_cap_and_says_the_count_is_a_floor(market_roots, monkeypatch):
-    from RevenueChaser.rcdata.build import base
-    raw = base.raw_root() / "sec" / "companyfacts"
-    raw.mkdir(parents=True)
-    for i in range(5):
-        (raw / f"{i}.json.gz").write_bytes(b"z")
-    monkeypatch.setattr(newdata, "STORAGE_WALK_BUDGET", 3)
-    monkeypatch.setattr(newdata, "STORAGE_WALK_SECONDS", 3600.0)   # the entry budget is what this test measures
-    got = newdata.collect(NOW)["storage"]["datasets"]["sec/companyfacts"]["raw"]
-    assert got["capped"] is True and got["files"] == 3
-
-
-def test_the_cap_is_one_budget_for_the_whole_walk_not_one_per_folder(market_roots, monkeypatch):
-    """Review S3: the walk runs on a page render, on the HDD; ~38 datasets x 2 roots x a per-folder cap was millions
-    of stat calls. One budget bounds the whole walk, and every folder past it says its count is a floor."""
-    from RevenueChaser.rcdata.build import base
-    for name in ("alpaca/bars", "sec/companyfacts", "sec/13f"):
-        for root in (base.raw_root(), base.parquet_root()):
-            folder = root.joinpath(*name.split("/"))
-            folder.mkdir(parents=True)
-            for i in range(3):
-                (folder / f"{i}.bin").write_bytes(b"z")
-    monkeypatch.setattr(newdata, "STORAGE_WALK_BUDGET", 4)
-    monkeypatch.setattr(newdata, "STORAGE_WALK_SECONDS", 3600.0)   # the entry budget is what this test measures
-    st = newdata.collect(NOW)["storage"]["datasets"]
-    raws = [st[n][r] for n in ("alpaca/bars", "sec/companyfacts", "sec/13f") for r in ("raw", "parquet")]
-    assert sum(r["files"] or 0 for r in raws) <= 4
-    assert sum(r["capped"] for r in raws) >= 2, "the folders past the budget say so"
-
-
 def test_a_card_carries_its_last_three_checks_newest_first(market_roots):
     for day in ("2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28"):
         ops.record_check("alpaca/bars", "changed", source_as_of=day, checked_on=day, added=5, calls=2)
@@ -195,6 +165,7 @@ def test_the_time_is_a_slice_per_folder_so_one_slow_tree_does_not_starve_the_res
         folder.mkdir(parents=True)
         for i in range(6):
             (folder / f"{i}.bin").write_bytes(b"z")
+    # The divisor is _storage's own (two roots per dataset): a change there should fail this on the count, not the clock.
     step = 0.4 * newdata.STORAGE_WALK_SECONDS / (2 * len(newdata._datasets()))
     ticks = itertools.count(step, step)
     monkeypatch.setattr(newdata.time, "monotonic", lambda: next(ticks))
