@@ -178,6 +178,26 @@ Net dealer delta is +$563.00M — a bullish structural lean.
 
 > TR: Net dealer delta +$563.00M — yukarı yönlü yapısal eğilim.
 
+### Vol / VIX — Vol / VIX — unknown
+
+No VIX family stored for this day.
+
+| Metric | Value | Note |
+|---|---|---|
+| VIX | N/A |  |
+
+
+
+### Flow — Flow — unknown
+
+No flow data for this day.
+
+| Metric | Value | Note |
+|---|---|---|
+| Dir. vega flow | N/A |  |
+
+
+
 ### Vomma — Vomma — vega's sensitivity to IV (2nd order)
 
 Vomma measures how vega itself changes as IV moves. When vega is large and Vomma is positive, an IV spike makes the book's vol exposure grow, which can force accelerated re-hedging. It is a second-order effect on top of Vanna.
@@ -192,6 +212,13 @@ Vomma measures how vega itself changes as IV moves. When vega is large and Vomma
 
 What it tells you: whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.
 
+
+
+| 5-session move | Implied probability | Realized (stored closes) |
+|---|---|---|
+| ±2% | 6.2% | 0.0% (0/5) |
+| ±3% | 0.5% | 0.0% (0/5) |
+| ±5% | 0.0% | 0.0% (0/5) |
 
 
 

@@ -502,7 +502,7 @@ the levels below stop applying and the map has to be re-read.</div>
     <div class="r-head"><span class="r-greek">{{ r.greek }}</span><span class="r-headline">{{ r.headline }}</span></div>
     <p>{{ r.english }}</p>
     {% if r.row %}<table class="stack plain"><tbody>{% for label, value, note in r.row %}<tr><td data-label="">{{ label }}</td><td data-label="">{{ value }}</td><td data-label="">{{ note }}</td></tr>{% endfor %}</tbody></table>{% endif %}
-    <div class="tr">{{ r.turkish }}</div>
+    {% if r.turkish %}<div class="tr">{{ r.turkish }}</div>{% endif %}
   </div>
   {% endfor %}
 </div>
@@ -528,6 +528,11 @@ the levels below stop applying and the map has to be re-read.</div>
   {% if vrp %}<tr><td data-label="Metric">Variance Risk Premium</td><td data-label="Value">{% if historical.vrp %}n/a (historical){% else %}{{ vrp.risk_premium | fmtnum('{:.2%}') }} (rank {{ vrp.rank | fmtnum('{:,.2f}') }}){% endif %}</td><td data-label="Meaning">Compensation for holding short vol; higher = richer sellers.</td></tr>{% endif %}
   </tbody>
 </table>
+{% if tails %}<table class="stack" style="margin-top:10px">
+  <thead><tr><th>5-session move</th><th>Implied probability</th><th>Realized (stored closes)</th></tr></thead>
+  <tbody>{% for t in tails %}<tr><td data-label="5-session move">{{ t.move }}</td><td data-label="Implied probability">{{ t.implied }}</td><td data-label="Realized (stored closes)">{{ t.realized }}</td></tr>{% endfor %}</tbody>
+</table>
+<div class="box-note">Implied: normal on the 5-session log return, sigma = 1-day ATM IV x sqrt(5/252). Realized: overlapping 5-session windows of the stored closes, a small sample.</div>{% endif %}
 {% else %}
 <div class="note">Volatility data unavailable for this snapshot.</div>
 {% endif %}{% if store_labels.vix %}
@@ -747,7 +752,7 @@ Friday a week.</div>
     {% for g in glossary_tr %}<dt>{{ g.greek }}</dt><dd>{{ g.def }}</dd>{% endfor %}
   </dl>
   <div class="note" style="margin-top:14px">Bu haftaki veriye göre greek ilişkileri:</div>
-  {% for r in relations %}
+  {% for r in relations if r.turkish %}
   <div style="margin-top:10px">
     <b class="tr-name">{{ r.greek }}</b> — <span style="color:var(--muted)">{{ r.turkish }}</span>
   </div>

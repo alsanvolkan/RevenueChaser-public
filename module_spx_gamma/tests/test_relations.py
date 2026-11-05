@@ -5,16 +5,17 @@ from RevenueChaser.module_spx_gamma import relations
 from .conftest import make_snapshot
 
 
-def test_five_relation_cards(snapshot):
+def test_relation_cards(snapshot):
+    # A9 added the reports' vol/VIX and flow relations before Vomma (the caveat card stays last).
     cards = relations.greek_relations(snapshot)
-    assert [c["greek"] for c in cards] == ["Gamma", "Vanna", "Charm", "Delta", "Vomma"]
+    assert [c["greek"] for c in cards] == ["Gamma", "Vanna", "Charm", "Delta", "Vol / VIX", "Flow", "Vomma"]
 
 
-def test_each_card_has_en_and_tr(snapshot):
+def test_each_card_has_a_headline_and_english(snapshot):
+    # The board is English (avo, 5 Nov 2026); the Turkish line is optional and the two A9 cards carry none.
     for c in relations.greek_relations(snapshot):
         assert c["headline"]
         assert c["english"]
-        assert c["turkish"]
 
 
 def test_gamma_card_matches_regime(snapshot):

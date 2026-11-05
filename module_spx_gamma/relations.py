@@ -218,6 +218,33 @@ def greek_relations(snapshot: dict) -> list[dict]:
         "row": [("Net DEX", _fmt_usd(net_delta), "All strikes")],
     })
 
+    # ── Vol / VIX (A9: the reports' fifth relation) ──
+    vix = snapshot.get("vix") or {}
+    v_spot, v3m, mode = vix.get("vix"), vix.get("vix3m"), vix.get("term_mode")
+    if v_spot is None:
+        vol_head, vol_en = "Vol / VIX — unknown", "No VIX family stored for this day."
+    else:
+        stress = mode == "backwardation"
+        vol_head = "VIX in backwardation — vol stress feeds vanna selling" if stress else \
+            "VIX in contango — calm term structure"
+        vol_en = (f"VIX {v_spot:.2f} against VIX3M {v3m:.2f}: the term structure is in {mode}. "
+                  if v3m is not None else f"VIX {v_spot:.2f}; term structure {mode or 'n/a'}. ")
+        vol_en += ("A rising front-month VIX with negative vanna makes dealers sell into the drop."
+                   if stress else "A calm curve leaves vanna a slow tailwind; a jump with backwardation would flip it.")
+    cards.append({"greek": "Vol / VIX", "symbol": "VIX", "headline": vol_head, "english": vol_en, "turkish": "",
+                  "row": [("VIX", f"{v_spot:.2f}" if v_spot is not None else "N/A", mode or "")]})
+
+    # ── Flow (A9: the reports' sixth relation) ──
+    vf = snapshot.get("vega_flow") or {}
+    if not vf:
+        flow_head, flow_en = "Flow — unknown", "No flow data for this day."
+    else:
+        flow_head = f"Flow — {vf.get('verdict') or 'no vega-flow reading'}"
+        flow_en = ("Directional vega flow tells who paid for volatility today; it confirms the vanna reading only "
+                   "when the side holds without the largest minute.")
+    cards.append({"greek": "Flow", "symbol": "Flow", "headline": flow_head, "english": flow_en, "turkish": "",
+                  "row": [("Dir. vega flow", _fmt_usd(vf.get("dir_vega_flow")).replace("$", ""), vf.get("side") or "")]})
+
     # ── Vomma (2nd order) ──
     cards.append({
         "greek": "Vomma",

@@ -589,6 +589,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "vix": snapshot.get("vix"),
         "vega_flow": snapshot.get("vega_flow"),
         "straddle": snapshot.get("straddle_move"),
+        "tails": _tail_rows(snapshot),
         "vix_greeks": snapshot.get("vix_greeks"),
         "cftc": snapshot.get("cftc"),
         # Live panels in a backfilled day hold a later session's value: shown "n/a (historical)".
@@ -615,6 +616,19 @@ def _dte_band_rows(snapshot: dict) -> list[dict]:
             "call_wall_net": fmt_signed_compact(w.get("call_wall_net")),
         })
     return rows
+
+
+def _tail_rows(snapshot: dict) -> list[dict]:
+    """A9: implied vs realized 5-session tails, formatted; [] from a later session's IV."""
+    if expected_move.historical(snapshot):
+        return []
+    out = []
+    for r in snapshot.get("tails") or []:
+        real = r.get("realized") or {}
+        out.append({"move": f"±{r['move_pct']:.0f}%",
+                    "implied": f"{r['implied']:.1%}" if r.get("implied") is not None else "N/A",
+                    "realized": f"{real['freq']:.1%} ({real['hits']}/{real['windows']})" if real else "N/A"})
+    return out
 
 
 def _target_wall_row(snapshot: dict) -> dict | None:

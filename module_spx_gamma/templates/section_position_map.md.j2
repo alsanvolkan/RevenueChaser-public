@@ -92,7 +92,7 @@ Zero crossing (approx. gamma flip): **{{ gex_envelope.zero_crossing }}**
 |---|---|---|
 {% for label, value, note in r.row %}| {{ label }} | {{ value }} | {{ note }} |
 {% endfor %}
-> TR: {{ r.turkish }}
+{% if r.turkish %}> TR: {{ r.turkish }}{% endif %}
 {% endfor %}
 ## Volatility Board
 
@@ -103,7 +103,12 @@ What it tells you: whether implied vol is cheap or expensive, how the term struc
 {% endif %}{% if vega_flow %}Directional vega flow (cumulative, {{ vega_flow.buckets }} buckets): {{ vega_flow.dir_vega_flow | fmtnum('{:+,.0f}') }}{% if vega_flow.get('verdict') %} · **{{ vega_flow.verdict }}**{% endif %} — flow, not the book's net vega; the sign is the reading, unless the largest minute alone carries it.
 {% endif %}{% if vix_greeks %}VIX option book ({{ vix_greeks.expiries }} expiries): net vanna {{ vix_greeks.net_vanna | fmtnum('{:+,.0f}') }} · net charm {{ vix_greeks.net_charm | fmtnum('{:+,.0f}') }}
 {% endif %}{% endif %}
-{% if iv_rank %}IV Rank (1Y): **{{ iv_rank.iv_rank_1y }}%** (ATM IV {{ iv_rank.volatility }})
+{% if tails %}
+| 5-session move | Implied probability | Realized (stored closes) |
+|---|---|---|
+{% for t in tails %}| {{ t.move }} | {{ t.implied }} | {{ t.realized }} |
+{% endfor %}
+{% endif %}{% if iv_rank %}IV Rank (1Y): **{{ iv_rank.iv_rank_1y }}%** (ATM IV {{ iv_rank.volatility }})
 {% endif %}
 {% if skew %}Skew (25-delta put minus call IV): 0DTE **{{ skew.get('put_bias_0dte') | fmtnum('{:.1%}') }}** · 1M **{{ skew.put_bias_1m | fmtnum('{:.1%}') }}** · 3M **{{ skew.put_bias_3m | fmtnum('{:.1%}') }}** — *({{ skew.note }})*
 {% endif %}
@@ -251,6 +256,6 @@ Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce
 {% endfor %}
 Bu haftaki veriye göre greek ilişkileri:
 
-{% for r in relations %}- **{{ r.greek }}** — {{ r.turkish }}
+{% for r in relations if r.turkish %}- **{{ r.greek }}** — {{ r.turkish }}
 {% endfor %}
 {{ footer }}
