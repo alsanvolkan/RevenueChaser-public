@@ -175,7 +175,7 @@ _PANEL_FILES = {
     "options_volume": "options_volume.json",
     "max_pain": "max_pain.json",
     "vol_term": "vol_term_structure.json",
-    "skew": expected_move.IV_FILE,
+    "skew": ("option_chain.json", "skew_chain_1m.json", "skew_chain_3m.json"),   # F3: the 25-delta chains
     # the chain, and the IV its wing width is sized from (review S1)
     "iron_butterfly": ("option_chain.json", expected_move.IV_FILE),
 }

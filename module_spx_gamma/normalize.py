@@ -14,7 +14,7 @@ from .charm_pin import (
     vanna_peaks,
 )
 from .config import TICKER, net_sum, to_float
-from .chains import normalize_option_chain
+from .chains import delta25_skew, normalize_option_chain
 from .engines.iron_butterfly import build_iron_butterfly
 from .engines.prediction_engine import generate_prediction_matrix
 from .expected_move import expected_move, pick_iv
@@ -284,45 +284,27 @@ def normalize_realized_vol(payload: dict | None) -> dict | None:
     }
 
 
-def normalize_skew(iv_payload: dict | None) -> dict | None:
-    """Put bias (skew) derived from the interpolated-iv put/call blocks.
+def chain_skew(raw: dict) -> dict | None:
+    """Skew as the reports quote it (F3): the 25-delta put IV minus the 25-delta call IV, from UW /option-contracts.
 
-    UW's /interpolated-iv returns two identically-tenored blocks (18 rows =
-    9 tenors x 2 blocks). We treat one as the call block and the other as the
-    put block; the put/call assignment is NOT documented by UW, so the result
-    is flagged ``derived_unverified: True``. Put bias = put block IV - call
-    block IV at the 30d and 90d tenors.
+    0DTE comes from the front chain the snapshot already holds (``option_chain``); 1M and 3M from the chains
+    ``snapshot.skew_expiries`` picked near 30 and 90 days (``skew_chains``). The old reading of UW's two
+    /interpolated-iv blocks as calls and puts was a guess and is retired. None when no tenor can be read.
     """
-    if not iv_payload or "data" not in iv_payload:
+    tenors = {"0dte": raw.get("option_chain")}
+    tenors.update({k: v for k, v in (raw.get("skew_chains") or {}).items() if k in ("1m", "3m")})
+    out: dict = {"expiries": {}, "detail": {}}
+    for key in ("0dte", "1m", "3m"):
+        s = delta25_skew(normalize_option_chain(tenors.get(key))) if tenors.get(key) else None
+        out[f"put_bias_{key}"] = s["skew"] if s else None
+        if s:
+            out["expiries"][key] = s["expiry"]
+            out["detail"][key] = s
+    if not out["expiries"]:
         return None
-    data = iv_payload["data"]
-    if len(data) < 2:
-        return None
-    tenors: dict[float, list[float]] = {}
-    for r in data:
-        days = to_float(r.get("days"))
-        vol = to_float(r.get("volatility"))
-        if days is None or vol is None:
-            continue
-        tenors.setdefault(days, []).append(vol)
-
-    def _pair(days):
-        v = tenors.get(days) or []
-        return (v[0], v[1]) if len(v) >= 2 else (None, None)
-
-    call30, put30 = _pair(30)
-    call90, put90 = _pair(90)
-    skew30 = (put30 - call30) if (call30 is not None and put30 is not None) else None
-    skew90 = (put90 - call90) if (call90 is not None and put90 is not None) else None
-    if skew30 is None and skew90 is None:
-        return None
-    return {
-        "put_bias_1m": skew30,
-        "put_bias_3m": skew90,
-        "derived_unverified": True,
-        "note": "Derived from UW /interpolated-iv twin blocks; the put/call block "
-                "assignment is not documented by UW and is unverified.",
-    }
+    out["note"] = ("25-delta put IV minus 25-delta call IV, per expiry, from UW /option-contracts "
+                   "(contracts nearest 0.25 |delta|).")
+    return out
 
 
 def normalize_vix(vix_payload: dict | None) -> dict | None:
@@ -516,7 +498,7 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     vol_term = normalize_vol_term(raw.get("vol_term_structure"))
     vrp = normalize_vrp(raw.get("variance_risk_premium"))
     realized_vol = normalize_realized_vol(raw.get("realized_vol"))
-    skew = normalize_skew(raw.get("interpolated_iv"))
+    skew = chain_skew(raw)
     vix = normalize_vix(raw.get("vix"))
     cftc = normalize_cftc(raw.get("cftc"))
     vega_flow = normalize_vega_flow(raw.get("greek_flow"))

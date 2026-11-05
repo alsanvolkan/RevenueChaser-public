@@ -136,7 +136,8 @@ def test_history_mode_writes_no_live_file_and_marks_its_origin(tmp_path, uw):
     # The Fetch's LIVE_FILES less the five volatility files, which history mode asks WITH the day's date.
     dated_here = {snap._FILENAMES[n] for n in snap.HISTORY_ENDPOINTS}
     undated = snap.LIVE_FILES - dated_here
-    assert undated == {"option_chain.json", "iv_rank.json", "options_volume.json"}
+    assert undated == {"option_chain.json", "skew_chain_1m.json", "skew_chain_3m.json", "iv_rank.json",
+                       "options_volume.json"}
     assert not on_disk & undated, f"live files written into a past day: {sorted(on_disk & undated)}"
     assert not any(n.startswith("strike_expiry_") for n in on_disk), "history mode fetched the all-expiry ladder"
     assert "greek_exposure_strike_prev.json" not in on_disk

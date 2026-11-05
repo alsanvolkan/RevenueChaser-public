@@ -142,8 +142,33 @@ _FILENAMES = {
 # rendered (PR 3), so they are never a later session's value.
 LIVE_FILES = frozenset(
     {_FILENAMES[n] for n, (_t, p) in BASE_ENDPOINTS.items() if "date" not in p}
-    | {"option_chain.json"}
+    | {"option_chain.json", "skew_chain_1m.json", "skew_chain_3m.json"}
 )
+
+# F3: the skew chains are read near these tenors, and only from an expiry within half a tenor of it.
+SKEW_TENORS = {"1m": 30, "3m": 90}
+
+
+def skew_expiries(expiries, asof_date: str) -> dict[str, str]:
+    """The listed expiry nearest 30 and nearest 90 calendar days after ``asof_date``, for the 25-delta skew (F3).
+
+    An expiry further than half a tenor from its target is not used, so a short list gives no 3M reading rather
+    than a 2-week one labelled 3M.
+    """
+    from datetime import date as _d
+    base = _d.fromisoformat(asof_date)
+    days = {}
+    for e in expiries or []:
+        try:
+            days[str(e)] = (_d.fromisoformat(str(e)) - base).days
+        except ValueError:
+            continue
+    out = {}
+    for key, target in SKEW_TENORS.items():
+        near = [(abs(d - target), e) for e, d in days.items() if abs(d - target) <= target / 2]
+        if near:
+            out[key] = min(near)[1]
+    return out
 
 # History mode (the 2-year pull, D1 25 Oct 2026): only the calls that take a ``date`` (docs/openapi.yaml, the
 # "Optional Market Date" parameter). The Fetch's table above is left as it is, so the board's Fetch requests and
@@ -529,6 +554,20 @@ def _fetch_snapshot_staged(
         raw["option_chain"] = _oc
     elif not history_only:
         warnings.append("option_chain: no chain available (panel degraded)")
+
+    # 4c'. The 25-delta skew chains (F3): one /option-contracts call near 30 and one near 90 days. Live only (a chain
+    #      is today's whatever date is asked), best-effort: a tenor without a chain reads n/a.
+    raw["skew_chains"] = {}
+    if not history_only:
+        picks = skew_expiries([r.get("expiry") for r in normalize_expiry_rows(raw.get("expiry_exposure"))],
+                              asof_date)
+        for key, expiry in picks.items():
+            _sc = _call(f"skew_chain_{key}", f"/stock/{ticker}/option-contracts", {"expiry": expiry},
+                        f"skew_chain_{key}.json")
+            if _sc is not None and (_sc.get("data") or []):
+                raw["skew_chains"][key] = _sc
+            else:
+                warnings.append(f"skew_chain_{key}: no chain for {expiry} (skew {key} n/a)")
 
     # 4d. The VIX index's own option book (§17): net vanna and net charm over its expiries. Best-effort — the
     #     panel degrades to None, and a failure here never fails an SPX snapshot.

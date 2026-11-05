@@ -101,7 +101,7 @@ What it tells you: whether implied vol is cheap or expensive, how the term struc
 {% endif %}{% endif %}
 {% if iv_rank %}IV Rank (1Y): **{{ iv_rank.iv_rank_1y }}%** (ATM IV {{ iv_rank.volatility }})
 {% endif %}
-{% if skew %}Skew (Put Bias): 1M **{{ skew.put_bias_1m | fmtnum('{:.1%}') }}** · 3M **{{ skew.put_bias_3m | fmtnum('{:.1%}') }}** — *(derived/unverified: {{ skew.note }})*
+{% if skew %}Skew (25-delta put minus call IV): 0DTE **{{ skew.get('put_bias_0dte') | fmtnum('{:.1%}') }}** · 1M **{{ skew.put_bias_1m | fmtnum('{:.1%}') }}** · 3M **{{ skew.put_bias_3m | fmtnum('{:.1%}') }}** — *({{ skew.note }})*
 {% endif %}
 {% if realized_vol %}Realized vs Implied: IV **{{ realized_vol.implied_volatility | fmtnum('{:.1%}') }}** · RV **{{ realized_vol.realized_volatility | fmtnum('{:.1%}') }}**
 {% endif %}

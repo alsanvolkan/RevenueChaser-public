@@ -29,6 +29,7 @@ FILE_KEYS = {
 }
 ZERO_DTE_STEM = "zero_dte_strike_expiry"
 ALL_EXPIRY_PREFIX = "strike_expiry_"
+SKEW_CHAIN_PREFIX = "skew_chain_"
 
 
 def _read(path: Path):
@@ -57,6 +58,12 @@ def load_raw_day(day_dir) -> dict:
     raw["strike_expiry_all"] = {}
     for f in sorted(d.glob(f"{ALL_EXPIRY_PREFIX}*.json")):
         raw["strike_expiry_all"][f.stem[len(ALL_EXPIRY_PREFIX):]] = _read(f)
+    # F3: the 25-delta skew chains near 30 and 90 days
+    raw["skew_chains"] = {}
+    for key in ("1m", "3m"):
+        f = d / f"{SKEW_CHAIN_PREFIX}{key}.json"
+        if f.exists():
+            raw["skew_chains"][key] = _read(f)
     raw["_meta"] = {
         "requested_date": manifest.get("requested_date") or effective,
         "effective_date": effective,

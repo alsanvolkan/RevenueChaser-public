@@ -17,7 +17,10 @@ from RevenueChaser.core.options import parse_option_symbol
 
 from .config import to_float
 
-__all__ = ["parse_option_symbol", "black_scholes_mid", "normalize_option_chain"]
+__all__ = ["parse_option_symbol", "black_scholes_mid", "normalize_option_chain", "delta25_skew"]
+
+# A contract counts as "25 delta" when its |delta| is within this window; the nearest to 0.25 is taken.
+DELTA25_WINDOW = (0.15, 0.35)
 
 
 def _norm_cdf(x: float) -> float:
@@ -122,3 +125,27 @@ def normalize_option_chain(payload: dict | None, spot: float | None = None,
             "volume": to_float(r.get("volume")),
         })
     return rows
+
+
+def delta25_skew(chain_rows: list[dict]) -> dict | None:
+    """The 25-delta risk reversal of the front expiry in ``chain_rows``: put IV minus call IV (F3).
+
+    Each side takes the contract whose |delta| is nearest 0.25 inside ``DELTA25_WINDOW``; None when either side has
+    no such contract with an IV. A chain that holds several expiries is read at its earliest one.
+    """
+    usable = [r for r in chain_rows or [] if r.get("expiry") and r.get("delta") is not None and r.get("iv")]
+    if not usable:
+        return None
+    front = min(r["expiry"] for r in usable)
+    lo, hi = DELTA25_WINDOW
+
+    def nearest(kind: str):
+        side = [r for r in usable if r["expiry"] == front and r.get("type") == kind and lo <= abs(r["delta"]) <= hi]
+        return min(side, key=lambda r: (abs(abs(r["delta"]) - 0.25), r["strike"])) if side else None
+
+    put, call = nearest("P"), nearest("C")
+    if put is None or call is None:
+        return None
+    return {"expiry": front, "skew": put["iv"] - call["iv"], "put_iv": put["iv"], "call_iv": call["iv"],
+            "put_strike": put["strike"], "call_strike": call["strike"],
+            "put_delta": put["delta"], "call_delta": call["delta"]}
