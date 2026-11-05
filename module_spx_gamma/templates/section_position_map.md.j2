@@ -60,6 +60,12 @@ Put Wall (main level) is the 181-365 day band. The ALL row is the all-expiry ref
 
 {% if chart_image %}![SPX Option Position Map]({{ chart_image }})
 {% endif %}
+## Close check (22:00 Amsterdam)
+
+{% for st in close_check.steps %}{{ loop.index }}. **{{ st.step }}** — {{ st.reading }}
+{% endfor %}
+{{ close_check.note }}
+
 {% if week_gamma %}## Week gamma map
 
 Expiries through **{{ week_gamma.target }}** ({{ week_gamma.expiries }}) · week net gamma {{ week_gamma.net_gamma }} · **Turning point {{ week_gamma.turning_point }}**

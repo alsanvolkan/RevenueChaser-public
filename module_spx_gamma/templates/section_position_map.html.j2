@@ -451,6 +451,15 @@ the levels below stop applying and the map has to be re-read.</div>
 <h2>Net GEX Tornado — Strike Profile</h2>
 <div class="box">{% if tornado_html %}<div class="chart">{{ tornado_html }}</div>{% else %}<div class="box-note">Tornado data unavailable for this snapshot.</div>{% endif %}</div>
 
+<h2>Close check (22:00 Amsterdam)</h2>
+<div class="box">
+<table class="stack">
+  <thead><tr><th>Step</th><th>Reading</th></tr></thead>
+  <tbody>{% for st in close_check.steps %}<tr><td data-label="Step"><b>{{ loop.index }}. {{ st.step }}</b></td><td data-label="Reading"{% if st.state in ('stress', 'negative', 'downside') %} style="color:var(--red)"{% elif st.state in ('calm', 'positive', 'upside') %} style="color:var(--green)"{% endif %}>{{ st.reading }}</td></tr>{% endfor %}</tbody>
+</table>
+<div class="box-note">{{ close_check.note }}</div>
+</div>
+
 {% if week_gamma %}<h2>Week gamma map</h2>
 <div class="box">
 <div class="at-glance" style="margin:0 0 8px">Expiries through <b>{{ week_gamma.target }}</b> ({{ week_gamma.expiries }}) · week net gamma {{ week_gamma.net_gamma }} · <b>Turning point {{ week_gamma.turning_point }}</b></div>

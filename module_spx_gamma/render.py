@@ -10,6 +10,7 @@ from markupsafe import Markup
 from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, notice_html, provider_health_html
 
 from . import expected_move
+from .close_check import close_card
 from .brier import scorecard
 from .config import BRIER_FILENAME, HISTORY_FILENAME
 from .snapshot import HISTORY_ORIGIN
@@ -592,6 +593,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "tails": _tail_rows(snapshot),
         "vol_calendar": snapshot.get("vol_calendar") or [],
         "week_gamma": _week_gamma(snapshot),
+        "close_check": close_card(snapshot),
         "vix_greeks": snapshot.get("vix_greeks"),
         "cftc": snapshot.get("cftc"),
         # Live panels in a backfilled day hold a later session's value: shown "n/a (historical)".

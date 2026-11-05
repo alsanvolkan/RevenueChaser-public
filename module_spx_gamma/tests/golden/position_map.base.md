@@ -107,6 +107,14 @@ Charm signals agree — sell-side lean. Sign caveat: this is UW's summed charm; 
 
 ![SPX Option Position Map](chart.png)
 
+## Close check (22:00 Amsterdam)
+
+1. **Price band** — close 7,784.00 is in Consolidation (7,500 – 7,821)
+2. **VIX threshold** — VIX threshold n/a
+3. **Week gamma** — week net gamma is negative (expiries through 2026-08-21)
+
+VIX threshold is a substitute for the report's VIX HVL, which comes from a source the board does not use: the prior week's last VIX close plus the average one-day VIX move over the stored window (about two weeks).
+
 ## Week gamma map
 
 Expiries through **2026-08-21** (3) · week net gamma -609 · **Turning point N/A**

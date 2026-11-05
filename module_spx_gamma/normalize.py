@@ -327,6 +327,7 @@ def normalize_vix(vix_payload: dict | None) -> dict | None:
         # Re-read from the closes, so a day stored before the 9D rule shows the same mode as a new one (review N7).
         "term_mode": vix_term_mode({k: to_float(v) for k, v in tk.items()}),
         "ivts": ivts({k: to_float(v) for k, v in tk.items()}),
+        "history": vix_payload.get("history") or [],
     }
 
 
