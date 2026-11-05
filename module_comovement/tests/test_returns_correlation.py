@@ -46,7 +46,10 @@ def _assert_matches_pandas(ret: pd.DataFrame, min_periods: int) -> None:
     assert np.abs(g[both] - w[both]).max() < TOL
 
 
-@pytest.mark.parametrize("min_periods", [2, 10, 60])
+# Not min_periods=2: with uncentred sums the cancellation grows as the overlap shrinks (measured up
+# to 2.3e-08 at an overlap of two rows), so pinning TOL=1e-12 there would be a seed away from a red
+# CI the diff cannot explain. Production floors min_periods at 15/20/60 (settings.effective).
+@pytest.mark.parametrize("min_periods", [10, 60])
 def test_it_matches_pandas_corr_on_a_frame_of_every_hard_case(min_periods):
     _assert_matches_pandas(_hard_frame(), min_periods)
 
@@ -61,7 +64,11 @@ def test_the_blocks_are_stitched_in_the_right_place(block, monkeypatch):
     got = returns.correlation(ret, 2)
     _assert_matches_pandas(ret, 2)
     g = got.to_numpy()
-    assert np.allclose(g, g.T, equal_nan=True), "a correlation matrix is symmetric"
+    # Symmetric to rounding, not exactly: the two triangles come from separate dgemm calls with
+    # different accumulation orders (measured on the live frame: 28 946 cells differ, by at most
+    # 1.55e-15). Harmless, because every reader takes the upper triangle -- squareform(checks=False),
+    # cluster.mean_intra_corr and noise._null_samples all do.
+    assert np.allclose(g, g.T, equal_nan=True, atol=1e-12), "symmetric to rounding"
     assert np.allclose(np.diag(g)[~np.isnan(np.diag(g))], 1.0), "a name correlates with itself"
 
 
@@ -118,53 +125,61 @@ def test_one_column_is_its_own_diagonal():
 
 # ── the variance floor, both ways (see returns._VAR_FLOOR) ──
 
-def test_a_constant_column_is_flat_even_though_the_arithmetic_says_otherwise():
-    """``sum(x^2)/n - mean^2`` on a constant column leaves a positive residue of about 1e-16 of the
-    mean square, so a bare ``var > 0`` let a meaningless r through: measured -2.9e-09 against a
-    neighbour where pandas gives NaN. The floor is relative to the mean square, which is what makes
-    that residue recognisable as noise."""
-    base = pd.Series([0.1, -0.05, 0.2, -0.1, 0.15, -0.2])
-    ret = pd.DataFrame({"MOVES": base, "FLAT": pd.Series([0.01] * 6)})
+def test_a_constant_column_is_flat_at_a_row_count_where_the_floor_is_load_bearing():
+    """The row count is the test, and it has to be measured through this function rather than
+    reasoned about: ``sum(x^2)/n - mean^2`` leaves a residue whose SIGN depends on the row count and
+    on the order the matmuls accumulate. With the floor removed, this pair comes out NaN anyway at
+    60 and 200 rows -- the residue happens to land negative, so ``var > 0`` rejects it and the test
+    would pass either way -- and comes out as a number at 8 rows (4.2e-09) and 252 (1.8e-09). 252 is
+    a window's length, so that is the one to pin: this fails if the floor goes."""
+    rng = np.random.default_rng(1)
+    ret = pd.DataFrame({"MOVES": rng.normal(0, 0.02, 252), "FLAT": [0.01] * 252})
     got = returns.correlation(ret, 2)
     assert np.isnan(got.loc["MOVES", "FLAT"]), "a constant column correlates with nothing"
-    want = ret.corr(min_periods=2)
-    assert np.isnan(want.loc["MOVES", "FLAT"]), "which is what pandas says too"
+    assert np.isnan(ret.corr(min_periods=2).loc["MOVES", "FLAT"]), "as pandas also says"
 
 
 def test_a_tiny_but_real_variance_is_not_mistaken_for_flat():
     """The floor must not swallow a real signal. Log returns sit near zero, so even a very quiet
     name has a variance of the same order as its mean square and stays far above the floor."""
     rng = np.random.default_rng(11)
-    quiet = pd.Series(rng.normal(0, 1e-8, 80))           # sd 1e-8, mean ~0
-    other = pd.Series(rng.normal(0, 0.02, 80))
-    got = returns.correlation(pd.DataFrame({"QUIET": quiet, "OTHER": other}), 2)
-    assert not np.isnan(got.loc["QUIET", "OTHER"]), "a quiet name still has a correlation"
-    _assert_matches_pandas(pd.DataFrame({"QUIET": quiet, "OTHER": other}), 2)
+    f = pd.DataFrame({"QUIET": rng.normal(0, 1e-8, 80), "OTHER": rng.normal(0, 0.02, 80)})
+    assert not np.isnan(returns.correlation(f, 2).loc["QUIET", "OTHER"])
+    _assert_matches_pandas(f, 2)
 
 
 def test_the_floors_known_limit_is_a_column_whose_mean_dwarfs_its_spread():
-    """The documented cost of a relative floor: a series centred far from zero with a spread more
-    than ~1e6 times smaller reads as flat, where pandas still returns a number. Returns are never
-    shaped like this -- prices are -- so this pins the limit rather than defending it."""
+    """The documented cost of a relative floor, pinned rather than defended: a series centred far
+    from zero with a spread more than ~1e6 times smaller reads as flat, where pandas still returns
+    a number. Returns are never shaped like this -- price levels are, and ``log_returns`` is what
+    feeds this function.
+
+    Centring each column first would remove this, and was tried: it breaks
+    ``test_a_store_only_run_matches_the_full_read`` (#379 COM-3), because the column mean differs
+    between a windowed read and a full one and the two runs must agree byte for byte. See #469."""
     rng = np.random.default_rng(12)
-    level = pd.Series(100.0 + rng.normal(0, 1e-6, 60))   # mean 100, sd 1e-6
-    other = pd.Series(rng.normal(0, 0.02, 60))
-    got = returns.correlation(pd.DataFrame({"LEVEL": level, "OTHER": other}), 2)
-    want = pd.DataFrame({"LEVEL": level, "OTHER": other}).corr(min_periods=2)
-    assert np.isnan(got.loc["LEVEL", "OTHER"]), "the floor treats it as flat"
-    assert not np.isnan(want.loc["LEVEL", "OTHER"]), "pandas does not -- this is the known limit"
+    f = pd.DataFrame({"LEVEL": 100.0 + rng.normal(0, 1e-6, 60), "OTHER": rng.normal(0, 0.02, 60)})
+    assert np.isnan(returns.correlation(f, 2).loc["LEVEL", "OTHER"]), "the floor treats it as flat"
+    assert not np.isnan(f.corr(min_periods=2).loc["LEVEL", "OTHER"]), "pandas does not -- the limit"
 
 
 def test_no_cell_escapes_minus_one_to_one_and_a_name_correlates_with_itself_exactly():
-    """Rounding let 823 cells of the live matrix out above 1 (at most 1 + 4.4e-16) and left 1 616
-    diagonals off 1.0. ``distance_matrix`` takes ``sqrt(2(1-r))``, so r above 1 is a NaN distance --
-    harmless on the diagonal, which it zeroes, and not harmless anywhere else."""
-    base = pd.Series([0.1, -0.05, 0.2, -0.1, 0.15, -0.2, 0.07, -0.03])
-    ret = pd.DataFrame({"A": base, "SAME": base * 3.0, "ANTI": -base * 2.0, "NEAR": base + 1e-9,
-                        "FEW": pd.Series([np.nan] * 6 + [0.1, -0.1])})
+    """The clip is load-bearing, and this is the frame that proves it: two exactly proportional
+    columns over 252 rows give an OFF-DIAGONAL r of 1.0000000000000013 without it. A seed scan found
+    A scan of 400 seeds x 3 row counts x 4 ratios found 1 655 frames that do; this seed is one of
+    them, at 1.0000000000000013. ``distance_matrix`` takes ``sqrt(2(1-r))``, so an off-diagonal r above 1 is a
+    NaN distance, and ``linkage`` raises ValueError on a non-finite condensed matrix -- the board
+    dies rather than wobbles. On the diagonal it is harmless, because that function zeroes it."""
+    rng = np.random.default_rng(0)
+    base = rng.normal(0, 0.02, 252)
+    ret = pd.DataFrame({"A": base, "PROP": base * 3.0, "C": rng.normal(0, 0.02, 252),
+                        "FEW": pd.Series([np.nan] * 250 + [0.1, -0.1])})
     got = returns.correlation(ret, 4).to_numpy()
     seen = got[~np.isnan(got)]
-    assert seen.max() <= 1.0 and seen.min() >= -1.0, f"out of range: {seen.max()!r} {seen.min()!r}"
+    assert seen.max() <= 1.0 and seen.min() >= -1.0, f"out of range: {seen.max()!r}"
+    off = got.copy()
+    np.fill_diagonal(off, 0.0)
+    assert np.nanmax(off) <= 1.0, "an off-diagonal cell above 1 is a NaN distance and kills linkage"
     diag = np.diag(got)
     assert (diag[~np.isnan(diag)] == 1.0).all(), "exactly 1.0, not 1 - 2e-16"
     assert np.isnan(diag[list(ret.columns).index("FEW")]), "unless the pair is not a number at all"
