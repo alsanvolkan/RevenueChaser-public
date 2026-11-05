@@ -240,3 +240,62 @@ def test_a_request_the_builder_could_not_run_is_refused_at_the_route(client, bod
     r = client.post("/api/build/request/alpaca/bars", json=body)
     assert r.status_code == 400 and word in r.get_json()["error"]
     assert not ops.ops_path().exists() or _rows() == [], "nothing was queued"
+
+
+# ── The cadence and the hold (the Fetch section's schedule fields) ─────────────────────────────────────────────
+#
+# ``ops.schedule_set`` and ``due.py`` have read the cadence and ``next_due`` since PR 2, but nothing called the
+# setter: a dataset's frequency could only be changed by editing the code. These are the route behind the two
+# fields on the dataset card.
+
+def _sched(dataset: str = "market_series") -> dict:
+    return ops.schedule_get(dataset) or {}
+
+
+def test_the_cadence_action_sets_the_cadence_and_the_hold(client):
+    r = client.post("/api/build/schedule/market_series/cadence",
+                    json={"cadence": "weekly", "next_due": "2026-11-10"},
+                    headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 200, r.get_json()
+    row = _sched()
+    assert row.get("cadence") == "weekly" and str(row.get("next_due"))[:10] == "2026-11-10"
+    assert r.get_json()["schedule"]["cadence"] == "weekly"
+
+
+def test_a_cadence_the_builder_does_not_know_is_refused_before_the_store_is_touched(client):
+    r = client.post("/api/build/schedule/market_series/cadence", json={"cadence": "hourly"},
+                    headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 400 and "cadence" in r.get_json()["error"]
+    assert _sched().get("cadence") is None, "a refused cadence writes nothing"
+
+
+def test_a_hold_that_is_not_a_date_is_refused(client):
+    r = client.post("/api/build/schedule/market_series/cadence",
+                    json={"cadence": "daily", "next_due": "soon"}, headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 400 and "next_due" in r.get_json()["error"]
+    assert _sched().get("cadence") is None
+
+
+def test_an_empty_hold_clears_the_one_that_was_there(client):
+    client.post("/api/build/schedule/market_series/cadence",
+                json={"cadence": "monthly", "next_due": "2026-12-01"}, headers={"X-RC-Panel": "settings"})
+    r = client.post("/api/build/schedule/market_series/cadence", json={"cadence": "monthly", "next_due": ""},
+                    headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 200, r.get_json()
+    row = _sched()
+    assert row.get("cadence") == "monthly" and row.get("next_due") is None
+
+
+def test_the_cadence_action_needs_a_dataset_the_builder_knows(client):
+    r = client.post("/api/build/schedule/not/a/dataset/cadence", json={"cadence": "daily"},
+                    headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 400 and "unknown dataset" in r.get_json()["error"]
+
+
+def test_the_cadence_action_keeps_a_pause_as_it_is(client):
+    """Pause and the cadence are separate: setting a frequency must not resume a dataset a person paused."""
+    client.post("/api/build/schedule/market_series/pause", headers={"X-RC-Panel": "settings"})
+    client.post("/api/build/schedule/market_series/cadence", json={"cadence": "weekly"},
+                headers={"X-RC-Panel": "settings"})
+    row = _sched()
+    assert row.get("paused_at") is not None and row.get("cadence") == "weekly"
