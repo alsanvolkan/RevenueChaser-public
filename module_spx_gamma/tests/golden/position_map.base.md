@@ -107,6 +107,17 @@ Charm signals agree — sell-side lean. Sign caveat: this is UW's summed charm; 
 
 ![SPX Option Position Map](chart.png)
 
+## Week gamma map
+
+Expiries through **2026-08-21** (3) · week net gamma -609 · **Turning point N/A**
+
+| Zone | Strikes | Net gamma | Share of abs gamma |
+|---|---|---|---|
+| Air gap | 7,600–7,775 | -932 | 74% |
+| Braked staircase | 7,800–7,925 | +323 | 26% |
+
+Board rule (the reports name the zones but print no thresholds): negative gamma = air gap; positive gamma = dense block at 2x or more of the window's mean |gamma|, braked staircase 0.5x-2x, half-full below 0.5x. Strikes summed in 25-point buckets, window +-5 % of spot, week = expiries through the target Friday.
+
 ## Liquidity Layer — Dealer Flow
 
 | Band | Range | Net GEX | Hedge for a 25-pt move |

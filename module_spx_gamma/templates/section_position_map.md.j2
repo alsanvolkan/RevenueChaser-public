@@ -60,7 +60,17 @@ Put Wall (main level) is the 181-365 day band. The ALL row is the all-expiry ref
 
 {% if chart_image %}![SPX Option Position Map]({{ chart_image }})
 {% endif %}
-## Liquidity Layer — Dealer Flow
+{% if week_gamma %}## Week gamma map
+
+Expiries through **{{ week_gamma.target }}** ({{ week_gamma.expiries }}) · week net gamma {{ week_gamma.net_gamma }} · **Turning point {{ week_gamma.turning_point }}**
+
+| Zone | Strikes | Net gamma | Share of abs gamma |
+|---|---|---|---|
+{% for z in week_gamma.zones %}| {{ z.kind }} | {{ z.range }} | {{ z.gamma }} | {{ z.share }} |
+{% endfor %}
+{{ week_gamma.rule }}
+
+{% endif %}## Liquidity Layer — Dealer Flow
 
 | Band | Range | Net GEX | Hedge for a 25-pt move |
 |---|---|---|---|

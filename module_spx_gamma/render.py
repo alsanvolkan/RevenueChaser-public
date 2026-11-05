@@ -591,6 +591,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "straddle": snapshot.get("straddle_move"),
         "tails": _tail_rows(snapshot),
         "vol_calendar": snapshot.get("vol_calendar") or [],
+        "week_gamma": _week_gamma(snapshot),
         "vix_greeks": snapshot.get("vix_greeks"),
         "cftc": snapshot.get("cftc"),
         # Live panels in a backfilled day hold a later session's value: shown "n/a (historical)".
@@ -617,6 +618,20 @@ def _dte_band_rows(snapshot: dict) -> list[dict]:
             "call_wall_net": fmt_signed_compact(w.get("call_wall_net")),
         })
     return rows
+
+
+def _week_gamma(snapshot: dict) -> dict | None:
+    """A1: the week map formatted for the page."""
+    wm = snapshot.get("week_gamma")
+    if not wm:
+        return None
+    return {"target": wm["target"], "expiries": len(wm.get("expiries") or []),
+            "net_gamma": fmt_signed_compact(wm.get("net_gamma")), "turning_point": fmt_level(wm.get("turning_point")),
+            "rule": wm.get("rule"),
+            "zones": [{"kind": z["kind"], "range": f"{z['lo']:,.0f}–{z['hi']:,.0f}", "gamma": fmt_signed_compact(z["gamma"]),
+                       "share": f"{z['share_pct']:.0f}%",
+                       "tone": "red" if z["kind"] == "Air gap" else "green" if z["kind"] == "Dense block" else ""}
+                      for z in wm.get("zones") or []]}
 
 
 def _tail_rows(snapshot: dict) -> list[dict]:
