@@ -6,6 +6,10 @@ from .config import CHARM_PIN_DOMINANCE_RATIO, CHARM_PIN_MAX_DISTANCE_PCT, net_s
 MODE_OPEN_INTEREST = "open_interest"
 MODE_DIRECTIONALIZED_VOLUME = "directionalized_volume"
 
+# F6: the 02-06 Nov report's warning, shown wherever a summed charm sign is read as pressure.
+CHARM_SIGN_CAVEAT = ("Sign caveat: this is UW's summed charm; its sign can differ from a Black-Scholes sum over the "
+                     "same contracts (02-06 Nov report), so treat the direction as UW's, not a confirmed dealer hedge.")
+
 
 def normalize_spot_exposure_rows(payload: dict | None) -> list[dict]:
     if not payload or "data" not in payload:

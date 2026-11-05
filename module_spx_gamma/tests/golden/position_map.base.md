@@ -82,7 +82,7 @@ Long Vanna — IV spikes pressure stock lower via dealer selling.
 
 #### Charm — TIMER `Agree`
 
-Charm signals agree — sell-side lean.
+Charm signals agree — sell-side lean. Sign caveat: this is UW's summed charm; its sign can differ from a Black-Scholes sum over the same contracts (02-06 Nov report), so treat the direction as UW's, not a confirmed dealer hedge.
 
 | Metric | Value | Note |
 |---|---|---|
@@ -158,7 +158,7 @@ Net vanna is +$45.00M. If IV jumps, dealer delta RISES, so dealers SELL stock to
 
 ### Charm — Negative charm — mechanical selling into the close
 
-Net charm is -$80. As expiry approaches, dealer delta builds; dealers mechanically SELL toward the close.
+Net charm is -$80. As expiry approaches, dealer delta builds; dealers mechanically SELL toward the close. Sign caveat: this is UW's summed charm; its sign can differ from a Black-Scholes sum over the same contracts (02-06 Nov report), so treat the direction as UW's, not a confirmed dealer hedge.
 
 | Metric | Value | Note |
 |---|---|---|

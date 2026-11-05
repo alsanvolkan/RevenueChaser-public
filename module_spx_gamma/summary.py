@@ -1,7 +1,8 @@
 """Summary cards: Delta/Gamma/Vanna/Charm signals + narratives + metrics (derived from data)."""
 from __future__ import annotations
 
-from .charm_pin import MODE_DIRECTIONALIZED_VOLUME, MODE_OPEN_INTEREST, charm_direction, net_charm, net_vanna
+from .charm_pin import (CHARM_SIGN_CAVEAT, MODE_DIRECTIONALIZED_VOLUME, MODE_OPEN_INTEREST, charm_direction, net_charm,
+                        net_vanna)
 
 
 def _fmt_usd(v) -> str:
@@ -210,6 +211,7 @@ def charm_card(spot_exposure_rows, charm_qualification, spot, report_pin=None):
     else:
         signal = _sig("Mixed", "amber")
         narrative = "Mixed charm signals — low confidence in direction."
+    narrative = f"{narrative} {CHARM_SIGN_CAVEAT}"
     return {"title": "Charm", "tag": "TIMER", "signal": signal, "narrative": narrative, "rows": rows,
             "lean": lean}
 

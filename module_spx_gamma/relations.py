@@ -15,7 +15,7 @@ the data says; unavailable values degrade to "unknown".
 """
 from __future__ import annotations
 
-from .charm_pin import MODE_DIRECTIONALIZED_VOLUME, charm_direction, net_charm, net_vanna
+from .charm_pin import CHARM_SIGN_CAVEAT, MODE_DIRECTIONALIZED_VOLUME, charm_direction, net_charm, net_vanna
 
 
 def _fmt_usd(v) -> str:
@@ -184,6 +184,8 @@ def greek_relations(snapshot: dict) -> list[dict]:
             "dealer kapanışa doğru mekanik SATIŞ yapar."
         )
         charm_row = ("Net Charm", _fmt_usd(net_c), charm_direction(net_c))
+    if net_c is not None:
+        charm_en = f"{charm_en} {CHARM_SIGN_CAVEAT}"
     cq = snapshot.get("charm_qualification") or {}
     cards.append({
         "greek": "Charm",
