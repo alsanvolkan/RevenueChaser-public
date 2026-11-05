@@ -324,6 +324,39 @@ def test_a_row_that_does_not_read_is_rejected_and_counted_not_the_whole_set(feed
     assert [r[1] for r in _holdings("0001000001-26-000101")] == ["594918104"]
 
 
+def _with_bad_cover(zip_bytes: bytes, accession: str) -> bytes:
+    """The zip with ``accession``'s COVERPAGE line carrying a byte that is not UTF-8, as a damaged set might."""
+    src, out = zipfile.ZipFile(io.BytesIO(zip_bytes)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in src.namelist():
+            body = src.read(name)
+            if name.rsplit("/", 1)[-1] == "COVERPAGE.tsv":
+                body = b"".join(l.replace(b"MANAGER", b"MANAGER \xc9", 1) if l.startswith(accession.encode()) else l
+                                for l in body.splitlines(keepends=True))
+            z.writestr(name, body)
+    return out.getvalue()
+
+
+def test_a_filing_whose_cover_page_row_was_rejected_is_unparsed_not_an_amendment_with_no_type(feed, http_mock):
+    """#301: a rejected COVERPAGE row left ``amendment_type`` NULL, and the amendment walk reads NULL as "replace",
+    so a NEW HOLDINGS amendment replaced the filer's quarter with its few names. The filing is ``unparsed`` now, so
+    the walk leaves it out and the quarter keeps the report it had."""
+    h = ox.f13_holding
+    one = ox.f13_set([
+        ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [h("MICROSOFT CORP", "594918104", 400_000, 1000)]),
+        ox.set_filing("0001000002-26-000105", 1000002, "14-AUG-2026", [h("WELLS FARGO", "949746101", 10_000, 200)],
+                      form="13F-HR/A", amendment_type="NEW HOLDINGS", amendment_no="1", is_amendment="true")])
+    http_mock.routes.insert(0, (HREFS[0], _with_bad_cover(one, "0001000002-26-000105"), 200, {}))
+    row = _backfill("2026-06-01", "2026-08-31")
+    assert row["result"] == "changed", row["note"]
+    assert "1 rows of COVERPAGE.tsv rejected" in row["note"], row["note"]
+    assert _served(f"SELECT accession, status, detail, amendment_type FROM {sec13f.TABLE} ORDER BY accession") == [
+        ("0001000001-26-000101", "ok", None, None),
+        ("0001000002-26-000105", "unparsed", "a row of COVERPAGE.tsv did not read", None)]
+    # its holdings are still typed, so a later set that carries the row whole can replace it without losing them
+    assert [r[1] for r in _holdings("0001000002-26-000105")] == ["949746101"]
+
+
 def test_the_cover_pages_period_wins_on_both_paths_and_a_cusip_placeholder_is_no_cusip(feed, http_mock):
     """13F review D2 and D3 (2026-10-30). The EDGAR path takes the period from the cover page and falls back on
     the submission header; the sets path did the opposite, so one filing could land in two quarters. And a CUSIP
