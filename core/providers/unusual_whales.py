@@ -235,6 +235,14 @@ class UWClient:
             if (status == 429 or status >= 500) and not last:
                 self._backoff(attempts, _retry_after(r) if status == 429 else None)
                 continue
+            if status == 403 and "historic_data_access_missing" in (body or "").lower():
+                # Not the key: UW says this date is older than the token's window and names its earliest
+                # available date (2023-12-07 on 5 Nov 2026). ``uw/greek_expiry_strike`` starts on the moving edge
+                # of that window, so a day that ages out answers this -- and marking the key rejected off one old
+                # day would put "credentials rejected" on every board. One date's answer, not retried: the date
+                # will not get younger.
+                logger.warning(f"UW {ep}: HTTP 403 outside the historical window: {body[:200]}")
+                return self._failed_result(ep, status, "outside the historical window", attempts)
             if status in (401, 403):
                 # Credential failure: remember it and log loudly once. Silently
                 # returning {} here is what made a dead key look like an empty
