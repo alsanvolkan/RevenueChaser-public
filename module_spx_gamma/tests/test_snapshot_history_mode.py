@@ -274,4 +274,4 @@ def test_history_mode_asks_no_live_vix_or_cot_and_writes_neither(tmp_path, uw):
     assert "vix_family.json" not in manifest["files"] and "cftc_tff.json" not in manifest["files"]
     assert not (tmp_path / DAY / "vix_family.json").exists() and not (tmp_path / DAY / "cftc_tff.json").exists()
     # PR 3: neither is fetched by any mode; the render reads them from the market store for the day
-    assert set(manifest["input_sources"]) == {"vix", "cftc", "candles", "zero_one_dte"}
+    assert set(manifest["input_sources"]) == {"vix", "cftc", "candles", "zero_one_dte", "greek_grid"}

@@ -16,7 +16,7 @@ from datetime import date, timedelta
 
 from RevenueChaser.core import calendar
 from RevenueChaser.rcdata import ops
-from RevenueChaser.rcdata.build import base, market_series as ms, uw_spot_expiry_strike as uw
+from RevenueChaser.rcdata.build import base, market_series as ms, uw_greek_expiry_strike as uwg, uw_spot_expiry_strike as uw
 
 SESSIONS = (date(2026, 10, 20), date(2026, 10, 21), date(2026, 10, 22), date(2026, 10, 23), date(2026, 10, 26))
 FRIDAY = date(2026, 10, 23)
@@ -43,6 +43,42 @@ def default_rows(session: date) -> list[dict]:
     rows = [uw_row(session, session, 6430.0 + 5 * i, 1.0e8 * (1 + i % 7), -0.5e8 * (1 + i % 5)) for i in range(155)]
     rows += [uw_row(session, nxt, 6205.0 + 5 * i, 0.8e8 * (1 + i % 3), -0.6e8 * (1 + i % 4)) for i in range(239)]
     return rows
+
+
+def greek_rows(session: date, expiries=None) -> list[dict]:
+    """The whole-chain greek grid of one session (#384): the four bands the walls are read over.
+
+    One expiry per DTE band `levels.DTE_BANDS` has, so a fixture day exercises every band rather than only the
+    near ones. ``dte`` is UW's calendar-day count, as the real answer gives it.
+    """
+    if expiries is None:
+        expiries = [(session, 0), (session + timedelta(days=25), 25), (session + timedelta(days=80), 80),
+                    (session + timedelta(days=150), 150), (session + timedelta(days=300), 300),
+                    (session + timedelta(days=500), 500)]
+    rows = []
+    for expiry, dte in expiries:
+        for i in range(9):
+            strike = 6600.0 + 50 * i
+            rows.append({"date": session.isoformat(), "expiry": expiry.isoformat(), "dte": dte,
+                         "strike": f"{strike:.0f}",
+                         "call_gex": f"{1.0e7 * (1 + i % 4):.4f}", "put_gex": f"{-1.2e7 * (1 + i % 3):.4f}",
+                         "call_delta": "1.0", "put_delta": "-1.0",
+                         "call_charm": "1.0", "put_charm": "-1.0",
+                         "call_vanna": "1.0", "put_vanna": "-1.0"})
+    return rows
+
+
+def _write_greek(ctx, grid: dict[date, list[dict]]) -> None:
+    for session, rows in sorted(grid.items()):
+        by_expiry: dict[str, list[dict]] = {}
+        for r in rows:
+            by_expiry.setdefault(str(r["expiry"]), []).append(r)
+        raw = base.write_raw_json(uwg.raw_path(session), {
+            "request": {"endpoint": uwg.ENDPOINT, "chain_endpoint": uwg.CHAIN_ENDPOINT,
+                        "date": session.isoformat(), "expiries": sorted(by_expiry)},
+            "session_date": session.isoformat(), "observed": True,
+            "fetched_at": 1_761_600_000.0, "run_id": RUN_ID, "body": {"expiries": by_expiry}})
+        uwg.DATASET.to_parquet(ctx, raw)
 
 
 def _sessions(start: date, end: date) -> list[date]:
@@ -126,19 +162,23 @@ VIX_SYMBOLS = ("VIX", "VIX9D", "VIX3M", "VIX6M", "VIX1Y", "VVIX")
 
 def serve(*, spx: dict[date, list[dict]] | None = None, symbols=VIX_SYMBOLS + ("SPX",),
           cot_reports=COT_REPORTS, series_end: date = LAST, check: str | None = "changed",
-          closes: dict[str, float] | None = None, releases=()) -> None:
+          closes: dict[str, float] | None = None, releases=(),
+          greek: dict[date, list[dict]] | None = None) -> None:
     """Build and swap in a ``market`` serving file. ``spx=None`` is the default five sessions; ``{}`` none.
     ``closes`` (ISO day -> close) replaces the default SPX series; ``releases`` (CFTC release days) adds a schedule."""
     spx = {s: default_rows(s) for s in SESSIONS} if spx is None else spx
+    greek = {s: greek_rows(s) for s in SESSIONS} if greek is None else greek
     # allow_shrink: a test may serve again with fewer rows for a session it already served.
     ctx = base.RunContext(run_id=RUN_ID, dataset=uw.NAME, trigger="test", allow_shrink=True)
     _write_spx(ctx, spx)
+    ctx.dataset = uwg.NAME
+    _write_greek(ctx, greek)
     ctx.dataset = ms.NAME
     _write_series(ctx, symbols, cot_reports, series_end, closes, releases)
     base.parquet_root().mkdir(parents=True, exist_ok=True)
     base.build_kind(ctx, uw.DATASET)
     if check:
-        for name in (uw.NAME, ms.NAME):
+        for name in (uw.NAME, uwg.NAME, ms.NAME):
             ops.record_check(name, check, run_id=RUN_ID, source_as_of=series_end.isoformat())
 
 
