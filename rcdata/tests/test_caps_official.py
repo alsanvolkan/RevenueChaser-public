@@ -171,12 +171,27 @@ def test_openfigi_shares_one_bucket_per_key_inside_its_window():
 
 
 def test_the_shared_bucket_serves_another_name_with_its_own_rate(monkeypatch):
+    """Two calls come out of the burst and the third waits for a token.
+
+    How long the third waits is asserted through ``_reserve``, which takes the clock as an argument, and not
+    off ``shared_pace``, which reads ``time.monotonic`` itself: there the wait is one token's interval *minus*
+    however long the three calls took, so a lower bound on it is a bound on the host's speed. That is what
+    turned this red on a loaded runner (``0.9 < 0.8960991050000757``), 4 ms outside a bound the rule under
+    test never promised.
+    """
     from RevenueChaser.core import sec_throttle
     slept = []
     monkeypatch.setattr(sec_throttle.time, "sleep", slept.append)
     assert all(sec_throttle.shared_pace(".test_bucket.json", rate=1.0, burst=2.0) for _ in range(3))
-    assert len(slept) == 1 and 0.9 < slept[0] <= 1.0          # two from the burst, the third waits a token
+    assert len(slept) == 1 and 0 < slept[0] <= 1.0           # two from the burst, the third waits a token
     assert sec_throttle.bucket_path(".test_bucket.json").exists()
+
+    # The arithmetic, on its own bucket and a clock this test owns. Two calls at the same instant come free
+    # out of the burst, the third waits the whole interval, and a quarter of one later the fourth waits what
+    # is left of its own on top of that reservation.
+    clock = ".test_bucket_clock.json"
+    assert [sec_throttle._reserve(t, clock, 1.0, 2.0) for t in (0.0, 0.0, 0.0, 0.25)] == [
+        pytest.approx(v) for v in (0.0, 0.0, 1.0, 1.75)]
 
 
 def test_every_openfigi_map_request_takes_a_token_of_the_key_bucket(monkeypatch):
