@@ -145,7 +145,7 @@ _FILENAMES = {
 # rendered (PR 3), so they are never a later session's value.
 LIVE_FILES = frozenset(
     {_FILENAMES[n] for n, (_t, p) in BASE_ENDPOINTS.items() if "date" not in p}
-    | {"option_chain.json", "skew_chain_1m.json", "skew_chain_3m.json", "target_chain.json"}
+    | {"option_chain.json", "skew_chain_1m.json", "skew_chain_3m.json", "target_chain.json", "spy_ohlc_30m.json"}
 )
 
 # F3: the skew chains are read near these tenors, and only from an expiry within half a tenor of it.
@@ -585,6 +585,18 @@ def _fetch_snapshot_staged(
                 raw["target_chain"] = _tc
             else:
                 warnings.append(f"target_chain: no chain for {target} (straddle and structures n/a)")
+
+    # 4c'''. A5: SPY 30-minute bars for the scenario set's hourly-close triggers (UW sells no SPX index prices to
+    #        this account, G2-06; hourly.py scales SPY to SPX). Live only, best-effort.
+    raw["spy_ohlc_30m"] = None
+    if not history_only:
+        from .hourly import CANDLE_LIMIT, CANDLE_SIZE, PROXY_TICKER
+        _hb = _call("spy_ohlc_30m", f"/stock/{PROXY_TICKER}/ohlc/{CANDLE_SIZE}", {"limit": CANDLE_LIMIT},
+                    "spy_ohlc_30m.json")
+        if _hb is not None and (_hb.get("data") if isinstance(_hb, dict) else _hb):
+            raw["spy_ohlc_30m"] = _hb
+        else:
+            warnings.append("spy_ohlc_30m: no SPY bars (hourly triggers n/a)")
 
     # 4d. The VIX index's own option book (§17): net vanna and net charm over its expiries. Best-effort — the
     #     panel degrades to None, and a failure here never fails an SPX snapshot.

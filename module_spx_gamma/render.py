@@ -197,6 +197,7 @@ _PANEL_FILES = {
     # the chain, and the IV its wing width is sized from (review S1)
     "iron_butterfly": ("option_chain.json", expected_move.IV_FILE),
     "straddle": "target_chain.json",
+    "hourly_triggers": "spy_ohlc_30m.json",
 }
 
 

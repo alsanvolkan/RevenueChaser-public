@@ -197,12 +197,14 @@ CFTC COT data unavailable.
 
 ## Scenario Set
 
-| Scenario | Range | P | Asymmetry | Trade |
-|---|---|---|---|---|
-{% for s in scenarios.scenarios %}| {{ s.name }} | {{ s.range }} | {{ s.p }} | {{ "%.2f"|format(s.asymmetry) if s.asymmetry is not none else 'n/a' }} | {{ s.trade }} |
+| Scenario | Range | P | Asymmetry | Trade |{% if scenarios.get("hourly_source") %} Hourly close |{% endif %}
+|---|---|---|---|---|{% if scenarios.get("hourly_source") %}---|{% endif %}
+{% for s in scenarios.scenarios %}| {{ s.name }} | {{ s.range }} | {{ s.p }} | {{ "%.2f"|format(s.asymmetry) if s.asymmetry is not none else 'n/a' }} | {{ s.trade }} |{% if scenarios.get("hourly_source") %} {{ s.get("hourly_text", "") }} |{% endif %}
 {% endfor %}
 
-{{ scenarios.note }}
+{{ scenarios.note }}{% if scenarios.get("hourly_source") %}{% set hs = scenarios.hourly_source %}
+
+Hourly closes from {{ hs.week_start }} ({{ hs.rows|length }} so far): UW {{ hs.source }} 30-minute bars at the report times, scaled to SPX by {{ "%.4f"|format(hs.ratio) }}. A proxy: the report reads IBKR's SPX hourly close.{% endif %}
 
 {% if iron_butterfly %}
 ## Iron Butterfly — Pin Harvest

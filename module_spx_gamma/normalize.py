@@ -20,6 +20,7 @@ from .engines.iron_butterfly import build_iron_butterfly
 from .engines.prediction_engine import generate_prediction_matrix
 from .expected_move import expected_move, pick_iv
 from .dealer_book import dealer_book
+from .hourly import hourly_closes
 from .tails import tail_table
 from .vol_calendar import week_events
 from .week_gamma import week_map
@@ -438,6 +439,18 @@ def _sum_or_none(values) -> float | None:
     return sum(vals) if vals else None
 
 
+def _fetched_at(stamp):
+    """The fetch time as an aware datetime (bars ending after it are still forming); None when absent."""
+    from datetime import datetime
+    if not stamp:
+        return None
+    try:
+        when = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo is not None else None
+
+
 def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: str = MODE_OPEN_INTEREST) -> dict:
     asof_str = asof_date.isoformat() if isinstance(asof_date, date) else asof_date
 
@@ -593,6 +606,10 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "tails": tail_table([c.get("close") for c in candles], annualized_iv),
         # A7: the target Friday's ATM straddle (UW quotes), the market's own expected move
         "straddle_move": straddle_move(normalize_option_chain(raw.get("target_chain")), spot),
+        # A5: the target week's report-time hourly closes (UW SPY 30m scaled to SPX) for the scenario triggers
+        "hourly_closes": hourly_closes(raw.get("spy_ohlc_30m"), asof_str, candles,
+                                       _fetched_at((raw.get("_meta") or {}).get("api_snapshot_time")))
+        if asof_str else None,
         "matrix_gex": matrix_gex,
         "source_chip": source_chip,
         "flow_strikes": flow_rows,

@@ -660,18 +660,19 @@ the levels below stop applying and the map has to be re-read.</div>
 
 <h2>Scenario Set</h2>
 <table class="stack">
-  <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>Asymmetry</th><th>Trade</th></tr></thead>
+  <thead><tr><th>Scenario</th><th>Range</th><th>P</th><th>Asymmetry</th><th>Trade</th>{% if scenarios.get("hourly_source") %}<th>Hourly close</th>{% endif %}</tr></thead>
   <tbody>
   {% for s in scenarios.scenarios %}
   <tr>
     <td data-label="Scenario">{{ s.name }}</td><td data-label="Range">{{ s.range }}</td><td data-label="P">{{ s.p }}</td>
     <td data-label="Asymmetry">{{ "%.2f"|format(s.asymmetry) if s.asymmetry is not none else "n/a" }}</td>
-    <td data-label="Trade">{{ s.trade }}</td>
+    <td data-label="Trade">{{ s.trade }}</td>{% if scenarios.get("hourly_source") %}<td data-label="Hourly close">{{ s.get("hourly_text", "") }}</td>{% endif %}
   </tr>
   {% endfor %}
   </tbody>
 </table>
-<div class="note">{{ scenarios.note }}</div>
+<div class="note">{{ scenarios.note }}</div>{% if scenarios.get("hourly_source") %}{% set hs = scenarios.hourly_source %}
+<div class="note">Hourly closes from {{ hs.week_start }} ({{ hs.rows|length }} so far): UW {{ hs.source }} 30-minute bars at the report times (10:30 … 15:30 New York and the close), scaled to SPX by {{ "%.4f"|format(hs.ratio) }} (stored SPX close / SPY close of the last shared session). A proxy: the report reads IBKR's SPX hourly close.{% if hs.rows %} Last: {{ hs.rows[-1].amsterdam }} Amsterdam, {{ "{:,.1f}".format(hs.rows[-1].close) }}.{% endif %}</div>{% endif %}
 {% if flow_signal %}
 <div class="box" style="margin-top:14px">
   <div class="ag-label">Volume &amp; Flow Confluence Analysis</div>

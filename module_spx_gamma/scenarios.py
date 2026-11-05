@@ -189,4 +189,14 @@ def build_scenarios(snapshot: dict) -> dict:
         f"probabilities behind it are fixed and uncalibrated. Scenario rules follow the {REPORT_AS_OF} report. "
         f"The Brier scorecard below tracks how honest these probabilities turn out to be."
     )
-    return {"scenarios": scenarios, "note": note, "report_as_of": REPORT_AS_OF, "regime": regime}
+    # A5: trigger / confirm / reset of the two directional classes over the week's hourly closes
+    from .hourly import scenario_triggers
+    hourly = snapshot.get("hourly_closes") or None
+    triggers = scenario_triggers(bands, (hourly or {}).get("rows")) if hourly else None
+    from .hourly import trigger_text
+    for s in scenarios:
+        s["hourly"] = (triggers or {}).get(s["name"])
+        s["hourly_text"] = (trigger_text(s["name"], s["hourly"], hourly.get("rows")) if s["hourly"]
+                            else ("" if s["name"] == "Consolidation" or not hourly else "n/a"))
+    return {"scenarios": scenarios, "note": note, "report_as_of": REPORT_AS_OF, "regime": regime,
+            "hourly_source": hourly}
