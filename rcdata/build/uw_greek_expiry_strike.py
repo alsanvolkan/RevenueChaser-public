@@ -7,6 +7,17 @@ more call, whose answer is one row per expiry: 54 expiries on the live check of 
 2031-12-19), 14,367 strike rows in all. A day is kept only when every expiry of the chain answered, because a
 partial chain would silently narrow a DTE band.
 
+**One row per strike, both series summed.** Two option series share an expiry date -- SPX (AM-settled, the
+standard monthly) and SPXW (PM-settled, the weekly) on a third Friday -- and UW answers one row per series with
+no field to tell them apart: the answer carries ``expiry``, ``strike`` and the eight greeks, and the only things
+to ask with are ``ticker``, ``date`` and ``expiry`` (``docs/openapi.yaml``, "Greek Exposure By Strike And
+Expiry"). The exposure at that strike is the two together, so the rows are summed into one, a greek the second
+row leaves out keeping the first row's value. Measured on the live answer of 2026-11-04: 14,551 rows answered,
+12,981 strikes, and all 1,570 repeats fell on the nearest five third Fridays (2026-11-20, 2026-12-18,
+2027-01-15, 2027-02-19, 2027-03-19) -- SPXW is listed about five months out, which is why the later third
+Fridays carry one series each. Until this landed the second row was dropped, so those strikes served one
+series' exposure.
+
 ``dte`` is UW's own field and counts **calendar** days (2026-11-02 answers 3 from the 2026-10-30 session,
 2026-11-20 answers 21, 2027-10-15 answers 350). It is stored as answered, because the SPX Gamma board's bands
 (``module_spx_gamma/levels.py``, ``DTE_BANDS``: 0-30, 31-90, 91-180, 181-365, 365+) are calendar-day bands. The
@@ -155,7 +166,7 @@ class UWGreekExpiryStrike:
         doc = base.read_raw_json(raw)
         session = date.fromisoformat(doc["session_date"])
         by_expiry = (doc["body"] or {}).get("expiries") or {}
-        rows, seen, extras, bad, wrong = [], set(), set(), [], 0
+        rows, by_key, extras, bad, wrong = [], {}, set(), [], 0
         total = 0
         for items in by_expiry.values():
             for item in items or []:
@@ -174,10 +185,19 @@ class UWGreekExpiryStrike:
                     wrong += 1
                     continue
                 key = (expiry, strike)
-                if key in seen:
-                    ctx.issue("duplicate_key", f"{session} {expiry} {strike}", "second row for the key dropped")
+                kept = by_key.get(key)
+                if kept is not None:
+                    # Two option series share an expiry date -- SPX (AM, standard monthly) and SPXW (PM, weekly)
+                    # on a third Friday -- and the answer has no field to tell them apart (docs/openapi.yaml,
+                    # "Greek Exposure By Strike And Expiry": expiry, strike and the eight greeks, and only
+                    # ticker/date/expiry to ask with). The strike's exposure is the two together, so they are
+                    # summed. Measured on 2026-11-04: 1,570 of 14,551 rows, every one of them on the nearest
+                    # five third Fridays, and each was dropped before this.
+                    for f in NUMERIC_FIELDS:
+                        v = to_float(item.get(f))
+                        if v is not None:
+                            kept[f] = v if kept[f] is None else kept[f] + v
                     continue
-                seen.add(key)
                 extras |= {k for k, v in item.items()
                            if k not in NUMERIC_FIELDS and k not in _NOT_EXTRA and to_float(v) is not None}
                 dte = to_float(item.get("dte"))
@@ -186,6 +206,7 @@ class UWGreekExpiryStrike:
                        "source": "uw", "source_as_of": session, "fetched_at": doc["fetched_at"],
                        "run_id": doc["run_id"], "observed": bool(doc["observed"])}
                 row.update({f: to_float(item.get(f)) for f in NUMERIC_FIELDS})
+                by_key[key] = row
                 rows.append(row)
         if bad:                                     # one issue per answer, not one per row
             ctx.issue("bad_row", session.isoformat(),

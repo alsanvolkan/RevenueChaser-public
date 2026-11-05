@@ -987,7 +987,9 @@ data, `options` (serving schema version `1`), under "The options data" last. The
 `market` (serving schema version `2`): `serving_schema_version` (one row: kind, version, build time, build id),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`), `spx_greek_expiry_strike` (the same key, the four
-greeks per side from `greek-exposure/strike-expiry` for every expiry of the chain, same provenance; its `dte` is
+greeks per side from `greek-exposure/strike-expiry` for every expiry of the chain, same provenance; where two
+option series share an expiry date — SPX and SPXW on a third Friday — UW's two rows for the strike are summed
+into one, because its answer has no field to tell the series apart; its `dte` is
 UW's **calendar**-day count, while `spx_gamma_expiry_strike.dte` counts NYSE sessions, so the two columns are
 different measures of different endpoints and are never substituted) and `market_series` (key series id, observation date,
 source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance). `session_date` comes from
