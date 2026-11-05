@@ -189,8 +189,9 @@ routes only enqueue and read `ops.sqlite`. Each call opens its own SQLite connec
 - **`GET /api/build/queue`**: `{ok, active, finished}`. `active` holds the queued and running requests, oldest
   first; `finished` the last 20 others, newest first.
 **Stage only (`--no-build`).** `run --dataset X --no-build` and `backfill ... --no-build` fetch and write Parquet
-but do not build the serving file: the request ends `skipped` (note: `build skipped (--no-build); raw and Parquet
-staged`), the serving file is untouched, and the dataset stays due, so the next ordinary pass builds it at no
+but do not build the serving file: the request ends `skipped`, with a note that says what the fetch really staged
+(`build skipped (--no-build); 3 raw files staged`, or `nothing staged (the fetch returned no file)` when the
+dataset's provider window was closed, or `the backfill staged what it fetched` when the count cannot be taken), the serving file is untouched, and the dataset stays due, so the next ordinary pass builds it at no
 provider call — the raw file it staged is the resume marker. It is for staging days of data without holding the
 builder lock through a build each time (the fetch campaign of a kind that has never been built), or for preparing
 the data on one machine and building it on another. It is a person's switch: the hourly pass queues no params, so
