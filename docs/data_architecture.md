@@ -995,7 +995,8 @@ stays as `<kind>.prev.duckdb`.
 
 **The swap rule.** A kind is built as a new file `<kind>.<build_id>.duckdb`, from Parquet only (no network), and
 checked before it replaces anything: its `serving_schema_version` row, the row count of every table, the run's
-`dataset_check` row (a `failed` one refuses the swap), and the live file: every live table must be in the build, and
+`dataset_check` row (a `failed` one refuses the swap), and the live file: every live table must be in the build (except
+one the kind's code retired by name, `serving.RETIRED_TABLES`: `prices`' `crsp_unadjusted` since PR 382), and
 none may empty or lose more than 1% of its rows unless the request says `"allow_shrink": true` (the CLI's
 `--allow-shrink`), which relaxes only the asking dataset's own tables and the tables the kind derives from its sources
 (a dataset with no provider, such as `ownership/serve`), never another source dataset's table (`base.shrink_scope`).
