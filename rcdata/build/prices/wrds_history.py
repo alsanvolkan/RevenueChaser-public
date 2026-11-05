@@ -511,7 +511,10 @@ class WrdsPrices:
     @staticmethod
     def _revisions(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, table: str, year: int, final: Path,
                    meta: dict) -> None:
-        """The bar values of the partition being replaced that the new answer changes or drops."""
+        """The bar values of the partition being replaced that the new answer changes or drops. Only a row that had a
+        price: a row without one was never a bar (Compustat writes rows ahead of their day with no price, homesrv
+        5 Nov 2026: 1,128 rows over 929 tickers, dated 2026-11-03..2026-12-31), so its real session arriving, or
+        the row going, revises nothing."""
         source, key, symbol, *ohlcv = TABLES[table]["bar"]
         keys = TABLES[table]["key"]
         on = " AND ".join(f'n."{k}" = o."{k}"' for k in keys)
@@ -525,7 +528,7 @@ class WrdsPrices:
                    o.open, o.high, o.low, o.close, o.volume, o.fetched_at, o.run_id,
                    CAST({float(meta['fetched_at'])} AS DOUBLE) AS revised_at, '{ctx.run_id}' AS revised_by
             FROM ({shape.format(t='old')}) o LEFT JOIN ({shape.format(t='new')}) n ON {on}
-            WHERE n.security_key IS NULL OR {changed}""")
+            WHERE o.close > 0 AND (n.security_key IS NULL OR {changed})""")
         n = stage.count(con, "rev")
         if n:
             base.write_parquet(con, "SELECT * FROM rev ORDER BY security_key, session_date",

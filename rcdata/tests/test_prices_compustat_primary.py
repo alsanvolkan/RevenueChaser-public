@@ -344,6 +344,101 @@ def test_the_same_gap_with_no_source_of_the_split_is_still_an_issue(monkeypatch)
     assert f"{AAPL}:{JUNE[2]}" in _gap_issues()
 
 
+def _serve_note(monkeypatch, data) -> str:
+    """``_serve``, returning the serving build's note (the bars run carries it)."""
+    from RevenueChaser.rcdata.build import base
+    from RevenueChaser.rcdata.build.prices import actions, bars
+    monkeypatch.setattr(wrds, "_factory", lambda: FakeWrds(data))
+    wrds.reset()
+    assert _backfill()["result"] == "changed"
+    assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
+    row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    assert row["result"] != "failed", row
+    return row["note"]
+
+
+def _crsp_only_details():
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    return {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
+            if i["kind"] == "split_only_crsp"}
+
+
+def test_a_split_only_crsp_names_the_served_jump_and_one_outside_the_served_bars_is_only_counted(monkeypatch):
+    """Review M6 of #382: ``split_only_crsp`` stands in for ``price_gap_no_action``, so the one whose served close
+    jumps (Compustat lacks the split: the served history is wrong) must not hide among the cross-check's noise. The
+    issue names the served close's move across the ex-date, and the note counts the jumps. A CRSP split with no served
+    bar of the security on both sides within the gap check's window touches no served bar: counted, not named."""
+    data = _split_unknown_to_compustat(_data())
+    # CRSP's own split a year before Compustat's AAPL series starts in this fixture: 4.0 -> 2.0 on 2 May 2024.
+    data["crsp.dsf_v2"] = [{**data["crsp.dsf_v2"][0], "dlycaldt": d, "dlycumfacpr": f, "dlyret": None}
+                           for d, f in (("2024-05-01", 4.0), ("2024-05-02", 2.0))] + data["crsp.dsf_v2"]
+    note = _serve_note(monkeypatch, data)
+    crsp_only = _crsp_only_details()
+    assert set(crsp_only) == {f"{AAPL}:{JUNE[2]}"}, crsp_only
+    assert "the served close jumps x0.502 from 2025-06-03 to 2025-06-04: Compustat lacks this split" \
+        in crsp_only[f"{AAPL}:{JUNE[2]}"]
+    assert ("split_only_crsp: 1 within the served bars (1 with a served close jump of 1.9 times or more, either way: "
+            "Compustat lacks the split, check these first), 1 with no served bar on both sides within 7 days, "
+            "not named") in note
+
+
+def test_a_split_only_crsp_the_served_close_does_not_jump_across_is_named_as_no_jump(monkeypatch):
+    data = _split_unknown_to_compustat(_data())
+    for r in data["comp.secd"]:                       # Compustat's closes run on: no split in the served bars
+        if r["gvkey"] == "001690" and r["datadate"] in JUNE[:2]:
+            r["prccd"] = r["prcod"] = r["prccd"] / 2
+    note = _serve_note(monkeypatch, data)
+    detail = _crsp_only_details()[f"{AAPL}:{JUNE[2]}"]
+    assert "the served close moves x1.005 from 2025-06-03 to 2025-06-04, no jump in the served bars" in detail
+    assert "Compustat lacks" not in detail
+    assert "split_only_crsp: 1 within the served bars (0 with a served close jump" in note
+
+
+def test_a_dividend_before_the_first_served_bar_is_counted_and_one_inside_the_history_is_named(monkeypatch):
+    """Review D6 of #420: on homesrv's build 4, 7,497 of 7,514 ``dividend_not_applied`` issues were "no close before
+    the ex-date", most of them a dividend that went ex before the security's first served bar: it adjusts no served
+    bar, so it is no defect, and it buried the 17 that are. Such a dividend is counted in the note and not named; one
+    inside the served history with no close in the week before it is still named."""
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    data = _data()
+    data["comp.sec_divid"] += [{"gvkey": "001690", "iid": "01", "datadate": d, "divd": 0.5, "curcddv": "USD"}
+                               for d in ("2025-05-15", "2025-07-01")]   # before AAPL's first bar; a gap of 25 days
+    note = _serve_note(monkeypatch, data)
+    named = {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
+             if i["kind"] == "dividend_not_applied"}
+    assert list(named) == ["wrds:div:001690:01:2025-07-01"], named
+    assert "no close before the ex-date" in named["wrds:div:001690:01:2025-07-01"]
+    assert ("dividend_not_applied: 1 named, 1 more that went ex on or before its security's first served bar "
+            "(it adjusts no served bar), not named") in note
+    assert _q("SELECT applied FROM corporate_action WHERE source_id = 'wrds:div:001690:01:2025-05-15'") \
+        == [{"applied": False}], "the table still records it, unapplied"
+
+
+def test_only_a_cash_dividend_ex_on_or_before_the_first_served_bar_is_counted():
+    """Review D7 of #420: the edges of the D6 rule, on the query itself. A cash dividend ex ON the first served bar is
+    counted (no bar before it to adjust); a security with no served bar is named (nothing says the dividend is before
+    its history); a spin-off before the history is named (only cash dividends are counted); an action not yet ex is
+    no row."""
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    con = duckdb.connect()
+    con.execute("CREATE TABLE price_bar_daily (security_id TEXT, session_date DATE)")
+    con.execute("INSERT INTO price_bar_daily VALUES ('S', DATE '2025-06-02'), ('S', DATE '2025-06-03')")
+    con.execute("CREATE TABLE corporate_action (source_id TEXT, action TEXT, security_id TEXT, "
+                "not_applied_why TEXT, ex_date DATE, applied BOOLEAN)")
+    con.execute("""INSERT INTO corporate_action VALUES
+        ('before', 'cash_dividend', 'S', 'no close before the ex-date', DATE '2025-05-15', false),
+        ('on_first', 'cash_dividend', 'S', 'no close before the ex-date', DATE '2025-06-02', false),
+        ('inside', 'cash_dividend', 'S', 'no close before the ex-date', DATE '2025-06-03', false),
+        ('no_bars', 'cash_dividend', 'X', 'no close before the ex-date', DATE '2025-05-15', false),
+        ('spin', 'spin_off', 'S', 'spin_off', DATE '2025-05-15', false),
+        ('later', 'cash_dividend', 'S', 'not yet ex (2026-12-01)', DATE '2026-12-01', false),
+        ('done', 'cash_dividend', 'S', NULL, DATE '2025-06-03', true)""")
+    rows = {r[0]: r[4] for r in con.execute(prices_serving.UNAPPLIED_SQL).fetchall()}
+    assert rows == {"before": True, "on_first": True, "inside": False, "no_bars": False, "spin": False}, rows
+
+
 def test_a_split_compustat_and_crsp_both_carry_is_one_action(built):
     from RevenueChaser.rcdata import ops
     from RevenueChaser.rcdata.build.prices import serving as prices_serving

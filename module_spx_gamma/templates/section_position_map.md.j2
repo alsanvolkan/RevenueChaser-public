@@ -47,6 +47,14 @@ Put Wall (main level) is the 181-365 day band. The ALL row is the all-expiry ref
 {% for label, value, note in card.rows %}| {{ label }} | {{ value }} | {{ note }} |
 {% endfor %}
 {% endfor %}
+## What Would Change the Regime
+
+{% if regime_conditions %}| If this happens | Then |
+|---|---|
+{% for c in regime_conditions %}| {{ c.trigger }} | {{ c.then }} |
+{% endfor %}{% else %}Not enough levels in this snapshot to state the regime conditions.
+{% endif %}
+
 ## SPX Option Position Map
 
 {% if chart_image %}![SPX Option Position Map]({{ chart_image }})
@@ -87,7 +95,7 @@ Zero crossing (approx. gamma flip): **{{ gex_envelope.zero_crossing }}**
 
 What it tells you: whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.
 
-{% if vix %}VIX family: VIX {{ vix.vix }} · 9D {{ vix.vix9d }} · 3M {{ vix.vix3m }} · 6M {{ vix.vix6m }} · 1Y {{ vix.vix1y }} · VVIX {{ vix.vvix }} — term structure: **{{ vix.term_mode or 'n/a' }}**
+{% if vix %}VIX family: VIX {{ vix.vix }} · 9D {{ vix.vix9d }} · 3M {{ vix.vix3m }} · 6M {{ vix.vix6m }} · 1Y {{ vix.vix1y }} · VVIX {{ vix.vvix }} — term structure: **{{ vix.term_mode or 'n/a' }}**{% if vix.ivts %} (IVTS {{ vix.ivts|round(4) }}){% endif %}
 {% endif %}
 {% if iv_rank %}IV Rank (1Y): **{{ iv_rank.iv_rank_1y }}%** (ATM IV {{ iv_rank.volatility }})
 {% endif %}
@@ -169,6 +177,16 @@ Net credit **+{{ iron_butterfly.net_credit | fmtnum }}** · Max risk **{{ iron_b
 |---|---|---|---|
 {% for m in migration %}| {{ m.level }} | {{ m.now | fmtnum }} | {{ m.prev | fmtnum }} | {{ m.delta | fmtnum('{:+,.1f}') }} |
 {% endfor %}
+## Net Delta — Weekly Trend
+
+{% if net_delta_trend.rows %}| Friday close | Call + put delta |
+|---|---|
+{% for r in net_delta_trend.rows %}| {{ r.date }} | {{ r.net_delta | fmtnum('{:,.0f}') }} |
+{% endfor %}
+{{ net_delta_trend.have }} of {{ net_delta_trend.want }} weekly closes stored{% if net_delta_trend.direction %}; over this window the total went {{ net_delta_trend.direction }}{% endif %}. The board keeps one row per rendered day and the provider does not serve old days, so the table fills forward one Friday a week.
+{% else %}No Friday close stored before this day yet, so there is no weekly trend to show.
+{% endif %}
+
 ## Top-10 GEX Strikes
 
 | # | Strike | Net GEX | Gamma-Flip Side |

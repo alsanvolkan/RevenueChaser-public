@@ -2525,6 +2525,52 @@ def _nd_identity(f: dict | None) -> str:
             + "</details></div>")
 
 
+#: The rules' labels on the "Our universe" card, in the order the card lists them.
+ND_MY_UNIVERSE_RULES = {"stock": "Stocks, by the rules", "etf_aum": "ETFs, by AUM",
+                        "etf_adv": "ETFs, by dollar volume", "manual": "Added by hand"}
+
+
+def _nd_my_universe(u: dict | None) -> str:
+    """"Our universe": how many names we keep, what each rule let in, the rules the next build applies, avo's
+    manual lines, and what entered or left on the newest build day (avo's decisions of 4 Nov 2026).
+
+    One column of label-value rows, like every other card here, so it reads on a phone. Before the first build
+    the card still states the rules and the manual lines, because those are what the next build will apply.
+    """
+    u = u or {}
+    text = u.get("rule_text") or {}
+    manual = u.get("manual") or {}
+    lines = "".join(f'<li>{_nd(side)} {_nd(r.get("ticker"))}: {_nd(r.get("reason") or "no reason given")}</li>'
+                    for side in ("add", "remove") for r in manual.get(side) or [])
+    n_manual = len(manual.get("add") or []) + len(manual.get("remove") or [])
+    by_hand = (f'<details><summary>Added or removed by hand ({_nd(n_manual)})</summary>'
+               + (f'<ul class="nd-list">{lines}</ul>' if lines else '<div class="nd-k">None.</div>')
+               + "</details>")
+    rules = ('<div class="nd-rows">'
+             f'{_nd_row("Stocks", _nd(text.get("stocks")))}{_nd_row("ETFs", _nd(text.get("etfs")))}'
+             f'{_nd_row("Delisted", _nd(text.get("delisted")))}</div>')
+    head = '<div class="nd-card" id="nd-my-universe"><h3>Our universe</h3>'
+    if not u.get("built"):
+        return (head + '<div class="nd-k">The spine has not built the list yet. The rules the next build will '
+                       f'apply:</div>{rules}{by_hand}</div>')
+    kinds, by_rule_counts = u.get("kinds") or {}, u.get("rules") or {}
+    counts = (_nd_row("Stocks", _nd(kinds.get("stock") or 0)) + _nd_row("ETFs", _nd(kinds.get("etf") or 0))
+              + _nd_row("On the list", _nd(u.get("total") or 0)))
+    by_rule = "".join(_nd_row(ND_MY_UNIVERSE_RULES.get(k, k), _nd(n)) for k, n in by_rule_counts.items())
+    # The newest day that moved anything, which a quiet build leaves where it was: the row says which day, so the
+    # card never passes last week's numbers off as today's build (review finding 5).
+    changed = (_nd_row("Day", _nd(u.get("last_change"))) + _nd_row("Entered", _nd(u.get("entered") or 0))
+               + _nd_row("Left", _nd(u.get("left") or 0)))
+    return (head
+            + '<div class="nd-sub">The names RevenueChaser keeps. Every store built from here on is built from this '
+              f'list; the spine itself keeps every row it holds. Spine as of {_nd(u.get("as_of"))}.</div>'
+            + f'<div class="nd-rows">{counts}</div>'
+            + f'<details><summary>What let each name in</summary><div class="nd-rows">{by_rule}</div></details>'
+            + f'<details><summary>The rules the next build applies</summary>{rules}</details>'
+            + f'<details><summary>The last change to the list</summary><div class="nd-rows">{changed}</div></details>'
+            + by_hand + "</div>")
+
+
 def _nd_queue_rows(q: dict) -> str:
     def item(r: dict) -> str:
         return (f'<li>#{_nd(r.get("id"))} {_nd(r.get("dataset"))} · <b>{_nd(r.get("status"))}</b> · '
@@ -2698,6 +2744,7 @@ def _newdata_section(nd: dict | None) -> str:
         f'{ND_PAGE_STALE_MINUTES} minutes ago. Refresh it to see the store as it is now.</div>'
         f'{_nd_filters(nd.get("datasets") or [])}'
         f'{_nd_identity(nd.get("identity"))}'
+        f'{_nd_my_universe(nd.get("my_universe"))}'
         f"{cards}"
         f'<div class="nd-card" id="nd-queue"><h3>Queue</h3>{_nd_queue_rows(nd.get("queue") or {})}</div>'
         f'{_nd_spend(nd.get("spend") or {})}'

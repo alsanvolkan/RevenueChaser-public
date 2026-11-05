@@ -11,16 +11,18 @@ avo, 4 Nov 2026 (PR 382): the store holds **today's universe**, not every tier a
   (``is_etn``) and closed-end funds (``is_cef``) left out; 2,071 on that spine. A leveraged or inverse fund is in
   (avo's words). An ETF whose AUM is unknown is out **here**: ``aum`` is NULL for a row N-CEN does not hold, and no
   comparison keeps a NULL. avo's approved rule keeps such a fund when its 20-day average daily dollar volume is at
-  or over 10 million; that branch needs a one-off Alpaca price pull and arrives with the ``my_universe`` build, not
-  in this module, so until that table exists an unknown-AUM fund is not stored.
+  or over 10 million; that branch is the ``my_universe`` build's (``spine/my_universe.py``), not this module's, so
+  without that table an unknown-AUM fund is not stored. The build reads the volume from the **live** prices store,
+  which holds no bar of a fund outside the universe: such a fund enters only through a list built before this
+  store went live, or by hand (review M4 of #382).
 - **A delisted name is never in it.** The list is read from the live spine, which holds today's listings only, so
   nothing delisted reaches the served tables at all (the reason PR 382's "CRSP for delisted names" step is gone).
 
 **The list avo picks himself.** When the live spine holds a ``my_universe`` table (one row per ticker), **that
 table is the universe** and the rule above is not applied: avo's hand-picked list, with the rule-based and
-by-hand additions and removals the spine's own build resolves (``MY_UNIVERSE_TABLE``; it does not exist yet, the
-work order of 4 Nov 2026 puts it after the OpenFIGI pass over the 321 untyped tickers). Both readers below check
-for it first, so nothing else in the build changes when it arrives.
+by-hand additions and removals the spine's own build resolves (``MY_UNIVERSE_TABLE``, built by
+``spine/my_universe.py`` since #417). Both readers below check for it first, so nothing else in the build changes
+when it arrives.
 
 Both sides of the build read the rule from here: :func:`in_stock` and :func:`etf_tickers` for the daily fetch scope
 (``prices.scope``), :data:`MEMBER` and :data:`UNIVERSE_SQL` for the serving build's ``_universe`` table. The raw
@@ -68,7 +70,11 @@ TICKER_SQL = f"""
 #     (``sym:<ticker>``);
 #   - a class the SEC covers name under a member's CIK that the spine itself does not hold
 #     (``prices.cover_classes`` asks it). A row the spine **does** hold stays excluded: a preferred of a member
-#     issuer is out whatever its cover says.
+#     issuer is out whatever its cover says;
+#   - the Compustat series of a universe ETF the spine cannot route to Compustat (no ``security`` row, or one with no
+#     ``gvkey``): Alpaca serves no bar, so without this the fund had none at all (review M3 of #382). One series per
+#     ticker, the ``pick = 1`` row of :data:`ETF_TIC_SERIES_SQL`'s ``_etf_tic_series``, which ``serving._universe``
+#     builds first.
 UNIVERSE_SQL = """
     WITH m AS (SELECT security_id, nullif(cik, '') AS cik, nullif(gvkey, '') AS gvkey FROM stg_spine
                WHERE ticker IN (SELECT ticker FROM _universe_ticker))
@@ -81,7 +87,49 @@ UNIVERSE_SQL = """
     WHERE b.ticker IN (SELECT ticker FROM _universe_ticker)
        OR (b.cik IN (SELECT cik FROM m WHERE cik IS NOT NULL)
            AND NOT EXISTS (SELECT 1 FROM stg_spine s WHERE s.ticker = b.ticker
-                           AND s.cik IS NOT DISTINCT FROM b.cik))"""
+                           AND s.cik IS NOT DISTINCT FROM b.cik))
+    UNION
+    SELECT gid FROM _etf_tic_series WHERE pick = 1"""
+
+
+def norm(column: str) -> str:
+    """A ticker as the spine writes one: upper case, ``-`` for ``.`` (Compustat's ``tic`` writes ``BRK.B``)."""
+    return f"replace(upper({column}), '.', '-')"
+
+
+#: ``_universe_etf``: the funds of the universe, ``ticker`` as ``_universe_ticker`` holds it and ``tic`` in
+#: :func:`norm`'s form. A fund is a ticker of the spine's ``etf`` table, or one the ``my_universe`` list holds as
+#: ``kind = 'etf'`` (a fund avo added by hand that the ``etf`` table lacks; review D5 of #420). Both sides compared
+#: in :func:`norm`'s form (NIT 2 of #420).
+UNIVERSE_ETF_SQL = f"""
+    SELECT DISTINCT t.ticker, {norm('t.ticker')} AS tic FROM _universe_ticker t
+    WHERE {norm('t.ticker')} IN (SELECT {norm('ticker')} FROM stg_etf WHERE ticker IS NOT NULL)
+       OR {norm('t.ticker')} IN (SELECT {norm('ticker')} FROM stg_{MY_UNIVERSE_TABLE} WHERE kind = 'etf')"""
+#: How recent (calendar days before Compustat's newest priced day) a series' newest day must be for its ticker to
+#: name a universe ETF (``_etf_tic_series``): two weeks covers a holiday week and a late Compustat row.
+ETF_TIC_RECENT_DAYS = 14
+#: ``_etf_tic_series``: every Compustat series whose ticker names a universe fund the spine cannot route to Compustat
+#: (no ``security`` row, or one with no ``gvkey``), ranked per ticker. A series is named by the ticker it carries on
+#: its own newest priced day, and only when that day is within :data:`ETF_TIC_RECENT_DAYS` of Compustat's newest one
+#: up to the build's date (read once): a series that carried the ticker long ago is a reused ticker's, not this
+#: fund's. A series the spine holds under another ticker is out. **One series per ticker is stored** (``pick = 1``):
+#: the one priced most recently, then the larger dollar volume on that day, then the lower id. More than one is the
+#: ``universe_etf_ticker_shared`` issue: two stored would give the fund two rows per session in ``price_bars_daily``,
+#: each its own key, and no check would see it (review D1 of #420).
+ETF_TIC_SERIES_SQL = f"""
+    WITH newest AS (SELECT max(datadate) AS day FROM stg_wrds_secd WHERE prccd > 0
+                    AND datadate <= coalesce(getvariable('rc_build_date'), DATE '9999-12-31')),
+    routeless AS (SELECT u.tic FROM _universe_etf u WHERE NOT EXISTS (
+                      SELECT 1 FROM stg_spine s WHERE {norm('s.ticker')} = u.tic AND nullif(s.gvkey, '') IS NOT NULL)),
+    series AS (SELECT gvkey || ':' || iid AS gid, {norm('tic')} AS tic, datadate, prccd * cshtrd AS dollars
+               FROM stg_wrds_secd, newest
+               WHERE prccd > 0 AND datadate <= newest.day AND datadate > newest.day - INTERVAL {ETF_TIC_RECENT_DAYS} DAY
+               QUALIFY row_number() OVER (PARTITION BY gvkey, iid ORDER BY datadate DESC) = 1)
+    SELECT s.tic, s.gid, s.datadate, s.dollars,
+           row_number() OVER (PARTITION BY s.tic ORDER BY s.datadate DESC, s.dollars DESC NULLS LAST, s.gid) AS pick
+    FROM series s
+    WHERE s.tic IN (SELECT tic FROM routeless)
+      AND s.gid NOT IN (SELECT security_id FROM stg_spine WHERE security_id IS NOT NULL)"""
 #: ``security_id IN`` the universe, the filter every stored source goes through.
 IN_UNIVERSE = "{sid} IN (SELECT security_id FROM _universe)"
 

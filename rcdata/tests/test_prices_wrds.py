@@ -575,6 +575,123 @@ def test_the_build_stores_the_spines_my_universe_list_when_it_has_one(fake, monk
     wrds.reset()
 
 
+def _spine_etf_table(rows):
+    """The live spine's ``etf`` table (schema 4+) with ``(ticker, aum)`` rows, none of them ETNs or closed-end funds."""
+    con = duckdb.connect(str(serving.live_path("spine")))
+    try:
+        con.execute("CREATE TABLE etf (ticker TEXT, aum DOUBLE, is_etn BOOLEAN, is_cef BOOLEAN, inception DATE)")
+        for ticker, aum in rows:
+            con.execute("INSERT INTO etf VALUES (?, ?, NULL, NULL, NULL)", [ticker, aum])
+    finally:
+        con.close()
+
+
+def _issue_details(kind: str) -> dict[str, str]:
+    return {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1] if i["kind"] == kind}
+
+
+def test_a_universe_etf_the_spines_security_table_lacks_is_stored_under_its_compustat_series(fake):
+    """Review M3 of #382: an ETF of the universe that only the spine's ``etf`` table holds (an Alpha Vantage or N-CEN
+    fund, no SEC equity row) used to reach ``_universe`` only through an Alpaca bar's ``sym:`` id. Alpaca serves no
+    bar any more and Compustat keys its series ``gvkey:iid``, so the fund had no bar at all. It is now found by the
+    ticker its Compustat series carries on that series' newest day, when that day is recent; a series that carried
+    the ticker long ago (a reused ticker) is someone else's and stays out."""
+    data = fake[0].data
+    days = JUNE + ["2026-10-26", "2026-10-27"]
+    data["comp.secd"] += [_secd("077777", "01", d, "GLDX", 40.0, exchg=17, cusip="77777A100") for d in days]
+    data["comp.secd"] += [_secd("066666", "01", "2024-03-01", "GLDX", 9.0, exchg=11, cusip="66666A100")]
+    # A series the spine holds under another ticker (a preferred, outside the universe) whose newest Compustat ticker
+    # happens to be a universe fund's: the spine's own row decides, so it stays out.
+    data["comp.secd"] += [_secd("055555", "01", d, "NOBAR", 25.0, exchg=11, cusip="55555A100") for d in days]
+    # SPY, a fund the spine routes by its own gvkey (001000:01): a second series carrying "SPY" is not taken. And GAPX,
+    # a stock of the universe with no gvkey in the spine: the ticker branch is for funds only, a stock's link to
+    # Compustat is the identity master's (#416), so its Compustat series by ticker is not taken either.
+    data["comp.secd"] += [_secd("001000", "01", d, "SPY", 500.0, exchg=17, cusip="78462F103") for d in days]
+    data["comp.secd"] += [_secd("044444", "01", d, "SPY", 1.0, exchg=17, cusip="44444A100") for d in days]
+    data["comp.secd"] += [_secd("033333", "01", d, "GAPX", 7.0, exchg=14, cusip="33333A100") for d in days]
+    serving.live_path("spine").unlink()
+    write_spine(SPINE + [{"ticker": "PFDZ", "cik": "4000008", "name": "PREFERRED Z", "exchange": "NYSE", "tier": "B",
+                          "security_type": "preferred", "gvkey": "055555", "iid": "01", "composite_figi": None}])
+    _spine_etf_table([("GLDX", 5e9), ("NOBAR", 5e9), ("SPY", 5e11)])
+    assert _backfill()["result"] == "changed"
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '077777:01'")[0]["n"] == len(days)
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '001000:01'")[0]["n"] == len(days)
+    for gid in ("044444:01", "033333:01"):
+        assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = ?", [gid]), gid
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = '066666:01'"), "a reused ticker's old series"
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = '055555:01'"), "the spine's own row decides"
+    # The check that would have shown the loss on every build: a universe ETF with no bar on the newest session.
+    missing = _issue_details("universe_etf_no_bar")
+    assert set(missing) == {"NOBAR"} and "2026-10-27" in missing["NOBAR"]
+    wrds.reset()
+
+
+def test_two_compustat_series_on_one_fund_ticker_store_one_and_name_the_others(fake):
+    """Review D1 of #420: the ticker branch took every recent series carrying a routeless fund's ticker, so two of
+    them were both stored and ``price_bars_daily`` gave the fund two rows per session, with different closes, and no
+    check said a word (each series is its own key). One series per ticker is stored -- the one priced most recently,
+    then the larger dollar volume -- and the ticker is a ``universe_etf_ticker_shared`` issue naming them all. NIT 2:
+    a fund ticker written with a dot matches Compustat's dotted ``tic`` too."""
+    data = fake[0].data
+    days = JUNE + ["2026-10-26", "2026-10-27"]
+    data["comp.secd"] += [_secd("077777", "01", d, "GLDX", 40.0, exchg=17, cusip="77777A100") for d in days]
+    data["comp.secd"] += [_secd("078787", "01", d, "GLDX", 41.0, exchg=17, cusip="78787A100") for d in days[:-1]]
+    data["comp.secd"] += [_secd("011111", "01", d, "TWIN", 10.0, exchg=17, cusip="11111A100") for d in days]
+    data["comp.secd"] += [_secd("012121", "01", d, "TWIN", 12.0, exchg=17, cusip="12121A100") for d in days]
+    data["comp.secd"] += [_secd("013131", "01", d, "DOT.X", 30.0, exchg=17, cusip="13131A100") for d in days]
+    _spine_etf_table([("GLDX", 5e9), ("TWIN", 5e9), ("DOT.X", 5e9)])
+    assert _backfill()["result"] == "changed"
+    stored = {r["security_id"] for r in _q("SELECT DISTINCT security_id FROM price_bar_daily")}
+    assert {"077777:01", "012121:01", "013131:01"} <= stored, stored
+    assert not {"078787:01", "011111:01"} & stored, "one series per ticker"
+    doubled = _q("SELECT ticker, session_date FROM price_bars_daily WHERE ticker IN ('GLDX', 'TWIN') "
+                 "GROUP BY ALL HAVING count(*) > 1")
+    assert not doubled, doubled
+    shared = _issue_details("universe_etf_ticker_shared")
+    assert set(shared) == {"GLDX", "TWIN"}, shared
+    assert "077777:01" in shared["GLDX"] and "078787:01" in shared["GLDX"] and "stored 077777:01" in shared["GLDX"]
+    assert "stored 012121:01" in shared["TWIN"]
+    assert "DOT.X" not in _issue_details("universe_etf_no_bar")
+    wrds.reset()
+
+
+def test_a_fund_only_my_universe_holds_is_stored_and_checked(fake):
+    """Review D5 of #420: with ``my_universe`` live, a fund avo added by hand that the spine's ``etf`` table does not
+    hold is in the universe, so its Compustat series is found by ticker and a missing bar is reported, as for a fund
+    of the ``etf`` table. The list's ``kind`` column says it is a fund."""
+    data = fake[0].data
+    days = JUNE + ["2026-10-26", "2026-10-27"]
+    data["comp.secd"] += [_secd("099990", "01", d, "HNDX", 20.0, exchg=17, cusip="99990A100") for d in days]
+    con = duckdb.connect(str(serving.live_path("spine")))
+    try:
+        con.execute("CREATE TABLE my_universe (ticker TEXT, kind TEXT)")
+        con.execute("INSERT INTO my_universe VALUES ('AAPL', 'stock'), ('HNDX', 'etf'), ('HNDZ', 'etf')")
+    finally:
+        con.close()
+    assert _backfill()["result"] == "changed"
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '099990:01'")[0]["n"] == len(days)
+    assert set(_issue_details("universe_etf_no_bar")) == {"HNDZ"}
+    wrds.reset()
+
+
+def test_the_tier_a_checks_look_at_the_stored_universe_not_the_whole_tier(fake):
+    """Review S1 of #382: ``tier_a_no_bar`` and ``tier_a_no_shares`` read every Tier A row, so an untyped or excluded
+    Tier A name -- left out of the store on purpose -- was reported as a missing bar (27 became 253 on homesrv's
+    build 4). They read the stored universe's Tier A names now; GAPX, a universe name with no bar, is still one."""
+    extra = [{"ticker": "NEWCO", "cik": "4000004", "name": "NEW LISTING INC", "exchange": "Nasdaq", "tier": "A",
+              "security_type": None, "gvkey": None, "iid": None, "composite_figi": None},
+             {"ticker": "PFDX", "cik": "4000007", "name": "PREFERRED EXAMPLE", "exchange": "NYSE", "tier": "A",
+              "security_type": "preferred", "gvkey": None, "iid": None, "composite_figi": None}]
+    serving.live_path("spine").unlink()                # the autouse fixture's spine, written again with two more
+    write_spine(SPINE + extra)
+    assert _backfill()["result"] == "changed"
+    for kind in ("tier_a_no_bar", "tier_a_no_shares"):
+        named = {d.split(":")[0] for d in _issue_details(kind).values()}
+        assert "GAPX" in named, kind
+        assert not named & {"NEWCO", "PFDX"}, kind
+    wrds.reset()
+
+
 def test_the_yahoo_shares_check_reads_the_newest_cover_sourced_cap_not_the_newest_cap(fake):
     # The Opus delta review's nit 1: the check took the newest cap on or before Yahoo's day and only then kept it if
     # its shares were the cover's. On the 26th and 27th Alpaca's bars take Compustat's shares of the session, so the
@@ -646,6 +763,60 @@ def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
     report = {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")}
     assert report["crsp_vs_compustat"]["max_close_diff"] == pytest.approx(0.4 / 202.5)
     assert {str(r["as_of"]) for r in report.values()} == {"2026-11-27"}
+
+
+def _placeholder(gvkey, iid, day, tic, cusip="037833100", exchg=14):
+    """A ``comp.secd`` row Compustat writes ahead of its day (homesrv, 5 Nov 2026: 1,128 rows of 929 tickers dated
+    2026-11-03..2026-12-31): the security's keys and ticker, no price and no volume."""
+    return {**_secd(gvkey, iid, day, tic, 1.0, exchg=exchg, cusip=cusip),
+            "prccd": None, "prcod": None, "prchd": None, "prcld": None, "cshtrd": None, "trfd": None, "cshoc": None}
+
+
+def test_compustats_rows_with_no_price_are_no_bar_and_never_the_newest_day(fake):
+    """A row with no price is no session: it is no bar, it does not move the newest served session (every Tier A
+    name would miss a bar on it), and the newest priced day a fund's series is measured from is a priced one. Here
+    the build's own day (27 Oct) carries placeholders only, so the newest priced day is the 26th; GLDX's series, last
+    priced on the 13th, is within 14 days of the 26th and not of the 27th."""
+    data = fake[0].data
+    data["comp.secd"] = [r for r in data["comp.secd"] if r["datadate"] != "2026-10-27"]
+    data["comp.secd"] += [_placeholder("001690", "01", d, "AAPL") for d in ("2026-10-27", "2026-11-03", "2026-12-31")]
+    data["comp.secd"] += [_secd("077777", "01", d, "GLDX", 40.0, exchg=17, cusip="77777A100")
+                          for d in JUNE + ["2026-10-13"]]
+    data["comp.secd"] += [_placeholder("077777", "01", "2026-10-27", "GLDX", cusip="77777A100", exchg=17)]
+    # A series last priced long ago under the same ticker, with a row of no price on the 20th: by its priced days it
+    # is a reused ticker's old series; by that row it would be newer than GLDX's own.
+    data["comp.secd"] += [_secd("066666", "01", "2024-03-01", "GLDX", 9.0, exchg=11, cusip="66666A100"),
+                          _placeholder("066666", "01", "2026-10-20", "GLDX", cusip="66666A100", exchg=11)]
+    _spine_etf_table([("GLDX", 5e9)])
+    assert _backfill()["result"] == "changed"
+    newest = _q("SELECT max(session_date) AS d FROM price_bar_daily WHERE security_id NOT LIKE 'index:%'")[0]["d"]
+    assert str(newest) == "2026-10-26"
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE close IS NULL OR NOT close > 0")
+    assert _q("SELECT count(*) AS n FROM price_bar_daily WHERE security_id = '077777:01'")[0]["n"] == len(JUNE) + 1
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = '066666:01'")
+    assert not _issue_details("universe_etf_ticker_shared"), "the old series is no candidate"
+    assert AAPL not in _issue_details("tier_a_no_bar")
+    wrds.reset()
+
+
+def test_a_row_with_no_price_that_gets_one_or_goes_is_no_revision(built):
+    """The daily refresh asks the year again, so a placeholder row (no price) is replaced by the real session, or
+    dropped. It was never a served bar, so neither is a revised value: ``price_revision`` keeps only a row that had
+    a price."""
+    conn, _ = built
+    data = conn.data
+    data["comp.secd"] += [_placeholder("001690", "01", d, "AAPL") for d in ("2026-10-28", "2026-10-29")]
+    row = base.run_request({"dataset": wrds_history.NAME, "requested_by": "cli", "params": {"as_of": "2026-10-28"}})
+    assert row["result"] == "unchanged", "a row with no price adds no served row"
+    data["comp.secd"] = [r for r in data["comp.secd"] if r["datadate"] not in ("2026-10-28", "2026-10-29")]
+    data["comp.secd"] += [_secd("001690", "01", "2026-10-28", "AAPL", 203.0, 1.0, 1.0113)]
+    for r in data["comp.secd"]:
+        if r["gvkey"] == "001690" and r["datadate"] == "2026-10-26":
+            r["prccd"] = 201.5                                    # a real revision beside them
+    row = base.run_request({"dataset": wrds_history.NAME, "requested_by": "cli", "params": {"as_of": "2026-10-29"}})
+    assert row["result"] == "changed", row
+    revs = _q("SELECT security_id, session_date, close FROM price_revision WHERE source = ?", [wrds_history.COMPUSTAT])
+    assert [(r["security_id"], str(r["session_date"]), r["close"]) for r in revs] == [(AAPL, "2026-10-26", 201.0)]
 
 
 # ── The factor lookup at the WRDS history's size (homesrv, 30 Oct 2026: request 34 took 41 of its 50 minutes) ──

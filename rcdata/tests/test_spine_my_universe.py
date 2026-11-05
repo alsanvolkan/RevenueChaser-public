@@ -1,0 +1,289 @@
+"""``my_universe``: the list of names RevenueChaser itself keeps, and ``my_universe_changes``, who entered or left.
+
+avo's rules (4 Nov 2026, the plan ``2026-11-04_2025_rc-our-universe.md``, decisions 1-2 and 13-15):
+
+- a stock is a ``security`` row of Tier A or D whose type is common, ADR, REIT or MLP -- no royalty trust, no BDC,
+  no non-SEC bank, and nothing Tier B or C whatever its type;
+- an ETF is an ``etf`` row that is no ETN and no CEF, with an AUM at or over 100 million, or, where N-CEN gives it
+  no AUM, a 20-session average daily dollar volume at or over 10 million;
+- a delisted name never enters (neither source holds one);
+- avo's manual file adds and removes names by hand.
+"""
+from __future__ import annotations
+
+import json
+from datetime import date
+
+import duckdb
+import pytest
+
+from RevenueChaser.rcdata.build import base
+from RevenueChaser.rcdata.build.spine import etf, my_universe, security
+
+
+def _plain(schema):
+    return [(c, t.replace(" PRIMARY KEY", "")) for c, t in schema]
+
+
+def _ctx(as_of=date(2026, 11, 4)) -> base.RunContext:
+    return base.RunContext(run_id="run-test", dataset=security.NAME, as_of=as_of)
+
+
+def _con(securities=(), etfs=()) -> duckdb.DuckDBPyConnection:
+    con = duckdb.connect()
+    base.rows_table(con, "security", _plain(security.SECURITY), list(securities))
+    base.rows_table(con, "etf", _plain(etf.SCHEMA), list(etfs))
+    return con
+
+
+def _sec(ticker, security_type="common", tier="A", **kw) -> dict:
+    return {"ticker": ticker, "security_type": security_type, "tier": tier, "name": f"{ticker} Inc",
+            "exchange": "Nasdaq", "source": "sec/company_tickers_exchange", "source_as_of": date(2026, 11, 2),
+            "fetched_at": 1.0, **kw}
+
+
+def _etf(ticker, aum=None, adv=None, **kw) -> dict:
+    return {"ticker": ticker, "name": f"{ticker} ETF", "aum": aum, "aum_as_of": date(2026, 6, 30) if aum else None,
+            "adv_usd_20d": adv, "is_etn": False, "is_cef": False, "source": "both",
+            "source_as_of": date(2026, 11, 2), "fetched_at": 1.0, **kw}
+
+
+@pytest.fixture
+def live_my_universe():
+    """Write a live ``spine.duckdb`` holding ``my_universe`` and ``my_universe_changes`` rows, as a build left them."""
+    def write(rows=(), changes=()):
+        from RevenueChaser.rcdata import serving
+        path = serving.live_path("spine")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        con = duckdb.connect(str(path))
+        try:
+            base.rows_table(con, my_universe.TABLE, _plain(my_universe.SCHEMA), list(rows))
+            base.rows_table(con, my_universe.CHANGES, _plain(my_universe.CHANGES_SCHEMA), list(changes))
+        finally:
+            con.close()
+    return write
+
+
+def _rows(con, **kw):
+    rows, changes, issues = my_universe.rows(_ctx(), con, **kw)
+    return {r["ticker"]: r for r in rows}, changes, issues
+
+
+# ── The rules file and the manual file ────────────────────────────────────────────────────────────────────────
+
+def test_the_rules_file_holds_avos_numbers_and_the_module_reads_them():
+    r = my_universe.load_rules()
+    assert r.stock_tiers == ("A", "D")
+    assert r.stock_types == ("adr", "common", "mlp", "reit")
+    assert (r.etf_aum_floor, r.etf_adv_floor) == (100_000_000.0, 10_000_000.0)
+    assert r.exclude_etn is True and r.exclude_cef is True
+
+
+def test_the_manual_file_ships_empty_so_the_first_build_is_the_rules_alone():
+    adds, removes = my_universe.load_manual()
+    assert adds == [] and removes == []
+
+
+def test_a_rules_file_without_a_rule_is_refused_rather_than_defaulted(tmp_path):
+    path = tmp_path / "rules.json"
+    path.write_text(json.dumps({"stocks": {"tiers": ["A"]}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="types"):
+        my_universe.load_rules(path)
+
+
+# ── Stocks ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_tier_a_common_adr_reit_and_mlp_enter_and_a_royalty_trust_bdc_or_bank_does_not():
+    con = _con([_sec("MSFT"), _sec("TM", "adr"), _sec("O", "reit"), _sec("EPD", "mlp"),
+                _sec("DMLP", "royalty_trust"), _sec("ARCC", "bdc"), _sec("TWNO", "bank_nonsec")])
+    rows, _, _ = _rows(con)
+    assert sorted(rows) == ["EPD", "MSFT", "O", "TM"]
+    assert rows["EPD"]["kind"] == "stock" and rows["EPD"]["rule"] == "stock"
+    assert rows["TM"]["security_type"] == "adr"
+
+
+def test_tier_d_enters_and_tier_b_and_c_never_do_whatever_the_type_says():
+    con = _con([_sec("TCBI", tier="D"), _sec("OTCX", tier="C"), _sec("WFC-PC", "preferred", tier="B"),
+                _sec("SPY", "etp", tier="B"), _sec("BEEP", "common", tier="B")])
+    rows, _, _ = _rows(con)
+    assert sorted(rows) == ["TCBI"] and rows["TCBI"]["tier"] == "D"
+
+
+def test_an_untyped_tier_a_name_stays_out_until_it_is_typed():
+    con = _con([_sec("MSGS", None), _sec("UROY", "unknown"), _sec("MSFT")])
+    rows, _, _ = _rows(con)
+    assert sorted(rows) == ["MSFT"]
+
+
+# ── ETFs ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_an_etf_at_or_over_the_aum_floor_enters_and_one_under_it_does_not():
+    con = _con(etfs=[_etf("XLK", aum=80_000_000_000.0), _etf("FLOOR", aum=100_000_000.0),
+                     _etf("CCOI", aum=50_000_000.0)])
+    rows, _, _ = _rows(con)
+    assert sorted(rows) == ["FLOOR", "XLK"]
+    assert rows["XLK"]["rule"] == "etf_aum" and rows["XLK"]["kind"] == "etf"
+    assert rows["XLK"]["security_type"] == "etf" and rows["XLK"]["aum"] == 80_000_000_000.0
+
+
+def test_an_etf_with_no_aum_enters_on_a_20_session_dollar_volume_at_or_over_the_floor():
+    con = _con(etfs=[_etf("SPY", adv=40_000_000_000.0), _etf("FLOOR", adv=10_000_000.0),
+                     _etf("THIN", adv=9_999_999.0)])
+    rows, _, _ = _rows(con)
+    assert sorted(rows) == ["FLOOR", "SPY"]
+    assert rows["SPY"]["rule"] == "etf_adv" and rows["SPY"]["adv_usd_20d"] == 40_000_000_000.0
+
+
+def test_a_known_aum_under_the_floor_is_the_answer_and_the_volume_test_does_not_rescue_it():
+    con = _con(etfs=[_etf("CCOI", aum=50_000_000.0, adv=500_000_000.0)])
+    rows, _, _ = _rows(con)
+    assert rows == {}
+
+
+def test_an_etn_or_a_cef_never_enters_however_large_it_is():
+    con = _con(etfs=[_etf("TAPR", aum=5_000_000_000.0, is_etn=True),
+                     _etf("DHY", aum=5_000_000_000.0, is_cef=True),
+                     _etf("BNKU", adv=50_000_000.0, is_etn=True)])
+    rows, _, _ = _rows(con)
+    assert rows == {}
+
+
+def test_every_undecided_etf_is_one_issue_between_them_not_one_each():
+    """``source_never_run``'s rule: thousands of rows for one input gap is noise, so the undecided funds are one
+    issue that names them. On the live store today this would otherwise open ~4,200 rows in ops.sqlite."""
+    con = _con(etfs=[_etf("NEWE"), _etf("QYLD"), _etf("XLK", aum=80_000_000_000.0)])
+    rows, _, issues = _rows(con)
+    assert sorted(rows) == ["XLK"]
+    assert [(k, key) for k, key, _ in issues] == [("my_universe_etf_undecided", "etf")]
+    assert "2 ETFs" in issues[0][2] and "NEWE, QYLD" in issues[0][2]
+
+
+def test_a_leveraged_or_inverse_fund_enters_on_its_aum_like_any_other():
+    con = _con(etfs=[_etf("SOXL", aum=11_000_000_000.0, is_lev_inverse=True)])
+    rows, _, _ = _rows(con)
+    assert sorted(rows) == ["SOXL"]
+
+
+# ── The manual file ──────────────────────────────────────────────────────────────────────────────────────────
+
+def test_with_no_aum_anywhere_n_cen_has_not_run_and_no_fund_is_called_undecided():
+    """``aum`` comes from N-CEN alone. Before it has answered every fund would be "undecided", which is the
+    missing source's story (``source_never_run``), not the funds'."""
+    con = _con(etfs=[_etf("SPY"), _etf("GLD"), _etf("NEWE")])
+    rows, _, issues = _rows(con)
+    assert rows == {} and issues == []
+
+
+def test_a_manual_add_enters_with_its_reason_and_the_spines_own_name():
+    con = _con([_sec("MSGS", None)], [_etf("NEWE")])
+    rows, _, _ = _rows(con, manual=([{"ticker": "msgs", "reason": "avo: a real stock, untyped"},
+                                     {"ticker": "NEWE", "reason": "avo: new fund, watch it"}], []))
+    assert sorted(rows) == ["MSGS", "NEWE"]
+    assert rows["MSGS"]["rule"] == "manual" and rows["MSGS"]["reason"] == "avo: a real stock, untyped"
+    assert rows["MSGS"]["kind"] == "stock" and rows["MSGS"]["name"] == "MSGS Inc"
+    assert rows["NEWE"]["kind"] == "etf"
+
+
+def test_a_manual_remove_takes_a_name_the_rules_let_in():
+    con = _con([_sec("MSFT"), _sec("TM", "adr")])
+    rows, _, _ = _rows(con, manual=([], [{"ticker": "TM", "reason": "avo: not interested"}]))
+    assert sorted(rows) == ["MSFT"]
+
+
+def test_a_manual_remove_wins_over_a_manual_add_of_the_same_ticker():
+    con = _con([_sec("MSFT")])
+    rows, _, _ = _rows(con, manual=([{"ticker": "MSFT", "reason": "x"}], [{"ticker": "MSFT", "reason": "y"}]))
+    assert rows == {}
+
+
+def test_a_manual_line_naming_a_ticker_the_spine_does_not_hold_is_an_issue_not_a_row():
+    con = _con([_sec("MSFT")])
+    rows, _, issues = _rows(con, manual=([{"ticker": "NOPE", "reason": "r"}],
+                                         [{"ticker": "GONE", "reason": "r"}]))
+    assert sorted(rows) == ["MSFT"]
+    assert sorted((k, key) for k, key, _ in issues) == [("my_universe_manual_unknown", "GONE"),
+                                                        ("my_universe_manual_unknown", "NOPE")]
+
+
+def test_a_manual_add_of_an_etf_security_also_holds_as_an_etp_row_is_the_etf():
+    """SPY is a row of the SEC equity file too, typed ``etp`` and so Tier B. Resolving a manual add against
+    ``security`` first would write it as a stock with ``security_type='etp'`` and no AUM."""
+    con = _con([_sec("SPY", "etp", tier="B")], [_etf("SPY", aum=50_000_000.0)])   # under the floor: the rules say no
+    rows, _, _ = _rows(con, manual=([{"ticker": "SPY", "reason": "avo: the benchmark"}], []))
+    assert rows["SPY"]["kind"] == "etf" and rows["SPY"]["security_type"] == "etf"
+    assert rows["SPY"]["aum"] == 50_000_000.0 and rows["SPY"]["rule"] == "manual"
+
+
+def test_a_manual_add_of_an_untyped_stock_is_still_a_stock_even_with_no_etf_row():
+    con = _con([_sec("MSGS", None)])
+    rows, _, _ = _rows(con, manual=([{"ticker": "MSGS", "reason": "avo: a real stock"}], []))
+    assert rows["MSGS"]["kind"] == "stock"
+
+
+def test_a_manual_add_of_a_name_the_rules_already_let_in_keeps_the_rules_row():
+    con = _con([_sec("MSFT")])
+    rows, _, _ = _rows(con, manual=([{"ticker": "MSFT", "reason": "r"}], []))
+    assert rows["MSFT"]["rule"] == "stock"
+
+
+# ── Both kinds at once ───────────────────────────────────────────────────────────────────────────────────────
+
+def test_a_ticker_both_rules_claim_is_the_stock_once_and_an_issue():
+    con = _con([_sec("TWIN")], [_etf("TWIN", aum=500_000_000.0)])
+    rows, _, issues = _rows(con)
+    assert sorted(rows) == ["TWIN"] and rows["TWIN"]["kind"] == "stock"
+    assert [(k, key) for k, key, _ in issues] == [("my_universe_both_kinds", "TWIN")]
+
+
+# ── The changes table ────────────────────────────────────────────────────────────────────────────────────────
+
+def test_with_no_live_file_every_name_entered_today_and_nothing_left():
+    con = _con([_sec("MSFT")], [_etf("XLK", aum=80_000_000_000.0)])
+    rows, changes, _ = _rows(con)
+    assert {(c["ticker"], c["change"]) for c in changes} == {("MSFT", "entered"), ("XLK", "entered")}
+    assert {c["as_of"] for c in changes} == {date(2026, 11, 4)}
+    assert {r["entered_on"] for r in rows.values()} == {date(2026, 11, 4)}
+
+
+def test_the_changes_of_the_live_file_are_carried_forward_and_todays_appended(live_my_universe):
+    live_my_universe(rows=[{"ticker": "MSFT", "kind": "stock", "entered_on": date(2026, 10, 1)},
+                           {"ticker": "GONE", "kind": "stock", "entered_on": date(2026, 10, 1)}],
+                     changes=[{"ticker": "MSFT", "kind": "stock", "change": "entered", "reason": "stock",
+                               "as_of": date(2026, 10, 1), "run_id": "old"}])
+    con = _con([_sec("MSFT"), _sec("TM", "adr")])
+    rows, changes, _ = _rows(con)
+    assert sorted(rows) == ["MSFT", "TM"]
+    assert rows["MSFT"]["entered_on"] == date(2026, 10, 1)      # it did not enter again today
+    assert rows["TM"]["entered_on"] == date(2026, 11, 4)
+    assert [(c["ticker"], c["change"], c["as_of"]) for c in changes] == [
+        ("MSFT", "entered", date(2026, 10, 1)),
+        ("GONE", "left", date(2026, 11, 4)),
+        ("TM", "entered", date(2026, 11, 4))]
+
+
+def test_the_build_refuses_when_the_volume_source_went_away_under_names_that_need_it(live_my_universe):
+    """``my_universe`` is exempt from the swap guard's shrink limit, so an input outage would otherwise drop every
+    ``etf_adv`` fund quietly and write a permanent ``left`` row. The build fails instead."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY"), _etf("XLK", aum=80_000_000_000.0)])     # no adv on any row: the prices file is gone
+    with pytest.raises(ValueError, match="20-session dollar volume"):
+        my_universe.rows(_ctx(), con)
+
+
+def test_a_fund_losing_only_its_own_volume_is_not_an_outage(live_my_universe):
+    """One fund dropping out while others still measure is a real change, not a missing source."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY"), _etf("GLD", adv=50_000_000.0)])
+    rows, changes, _ = _rows(con)
+    assert sorted(rows) == ["GLD"]
+    assert [(c["ticker"], c["change"]) for c in changes] == [("SPY", "left"), ("GLD", "entered")]
+
+
+def test_a_name_that_left_names_the_rule_it_held_under(live_my_universe):
+    """The build cannot know why a name left (its source row is simply gone); it names the rule it held under."""
+    live_my_universe(rows=[{"ticker": "CCOI", "kind": "etf", "rule": "etf_aum", "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("CCOI", aum=50_000_000.0)])
+    rows, changes, _ = _rows(con)
+    assert rows == {}
+    assert [(c["ticker"], c["change"], c["reason"]) for c in changes] == [
+        ("CCOI", "left", "the rules no longer hold (was etf_aum)")]

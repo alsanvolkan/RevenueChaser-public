@@ -23,9 +23,10 @@ the bridge views from the staging tables:
 - ``alphavantage/listing_status`` (daily, keyed) and ``sec/ncen`` (monthly): Alpha Vantage's list of every US
   listing and the SEC's Form N-CEN data sets, the two halves of the ETF list (#346);
 - ``spine/security``: no fetch; tier rule v1 (``tier.py``), the served tables ``security``, ``security_history``,
-  ``gics_history``, ``index_membership`` and ``etf`` (the ETF universe, ``etf.py``), the views under the old
-  ``raw.duckdb`` names (D4), and the build-issue rules (``security.ISSUE_KINDS``), whose rows go to ``ops.sqlite``
-  (D6), synced once the new file is live.
+  ``gics_history``, ``index_membership``, ``etf`` (the ETF universe, ``etf.py``) and ``my_universe`` with
+  ``my_universe_changes`` (the names we keep and who entered or left, ``my_universe.py``, avo's rules of
+  4 Nov 2026), the views under the old ``raw.duckdb`` names (D4), and the build-issue rules
+  (``security.ISSUE_KINDS``), whose rows go to ``ops.sqlite`` (D6), synced once the new file is live.
 
 ``build_kind`` builds every dataset of the kind in ``DATASETS`` order, so the sources' staging tables exist when
 ``spine/security`` builds. A source that never ran has empty staging tables, never a missing one.
