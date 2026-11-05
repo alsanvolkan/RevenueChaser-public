@@ -146,7 +146,7 @@ Board rule (the reports name the zones but print no thresholds): negative gamma 
 | Zomma (sign) | + | + |
 | Speed (sign) | + | - |
 
-(a) dealers amplify moves; charm sells into expiry; an IV spike grows the book's vega. (b) dealers amplify moves; charm buys into expiry; an IV spike shrinks the book's vega. Black-Scholes greeks from each UW contract's IV over 6 contracts (2026-08-14).
+(a) dealers amplify moves; charm buys into expiry; an IV spike grows the book's vega. (b) dealers amplify moves; charm sells into expiry; an IV spike shrinks the book's vega. Black-Scholes greeks from each UW contract's IV over 6 contracts (2026-08-14).
 
 ## Liquidity Layer — Dealer Flow
 

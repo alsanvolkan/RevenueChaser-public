@@ -198,6 +198,9 @@ _PANEL_FILES = {
     "iron_butterfly": ("option_chain.json", expected_move.IV_FILE),
     "straddle": "target_chain.json",
     "hourly_triggers": "spy_ohlc_30m.json",
+    # Fable review 5 Nov (#4): both price this day's bands or book on the chains, which are live files too
+    "structures": "target_chain.json",
+    "dealer_book": ("option_chain.json", "target_chain.json"),
 }
 
 
@@ -485,7 +488,9 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
     env = snapshot.get("gex_envelope") or {}
     relations = greek_relations(snapshot)
     chain = causal_chain(snapshot)
-    scenarios = build_scenarios(snapshot)
+    _hist_panels = _historical_panels(snapshot)
+    # A backfilled day's SPY bars are a later session's file: no hourly state for it (n/a, not "waiting")
+    scenarios = build_scenarios({**snapshot, "hourly_closes": None} if _hist_panels.get("hourly_triggers") else snapshot)
     brier = scorecard(path=Path(data_root) / BRIER_FILENAME) if data_root else scorecard()
     signal = signal_matrix(cards)
 
@@ -595,8 +600,8 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "vol_calendar": snapshot.get("vol_calendar") or [],
         "week_gamma": _week_gamma(snapshot),
         "close_check": close_card(snapshot),
-        "dealer_book": _dealer_book(snapshot),
-        "structures": _structures(snapshot),
+        "dealer_book": None if _hist_panels.get("dealer_book") else _dealer_book(snapshot),
+        "structures": None if _hist_panels.get("structures") else _structures(snapshot),
         "session_flow": [{"expiry": r["expiry"], "net_gex": fmt_signed_compact(r.get("net_gex")),
                           "hedge_50pt": fmt_signed_compact(r.get("hedge_50pt")).lstrip("+"),
                           "net_charm": fmt_signed_compact(r.get("net_charm")),
@@ -605,7 +610,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "vix_greeks": snapshot.get("vix_greeks"),
         "cftc": snapshot.get("cftc"),
         # Live panels in a backfilled day hold a later session's value: shown "n/a (historical)".
-        "historical": _historical_panels(snapshot),
+        "historical": _hist_panels,
         # ── v4 provider comparison ──
         "dte_band_walls": _dte_band_rows(snapshot),
         "target_walls": _target_wall_row(snapshot),

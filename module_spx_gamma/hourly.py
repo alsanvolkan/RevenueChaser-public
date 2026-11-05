@@ -86,10 +86,11 @@ def spx_ratio(bars, candles) -> float | None:
 
 
 def _report_close(ny: datetime) -> bool:
-    """A report hourly close: 10:30 ... 15:30 New York, or the session close (16:00; 13:00 on a short day)."""
+    """A report hourly close: 10:30 ... 15:30 New York, or the 16:00 session close. (A 13:00 early close is
+    accepted by ``hourly_closes`` only when it is the day's last bar.)"""
     if ny.minute == 30 and (ny.hour, ny.minute) >= (10, 30) and ny.hour <= 15:
         return True
-    return ny.minute == 0 and ny.hour in (13, 16)
+    return ny.minute == 0 and ny.hour == 16
 
 
 def hourly_closes(payload, asof: str, candles, now: datetime | None = None) -> dict | None:
@@ -106,10 +107,14 @@ def hourly_closes(payload, asof: str, candles, now: datetime | None = None) -> d
         return None
     monday = date.fromisoformat(target_friday(asof)) - timedelta(days=4)
     last = date.fromisoformat(asof)   # a re-built past day never sees a later session's closes
+    last_of_day: dict = {}
+    for when, _c in bars:
+        last_of_day[when.astimezone(NY).date()] = when
     rows = []
     for when, close in bars:
         ny = when.astimezone(NY)
-        if ny.date() < monday or ny.date() > last or not _report_close(ny):
+        short_day_close = (ny.hour, ny.minute) == (13, 0) and last_of_day.get(ny.date()) == when
+        if ny.date() < monday or ny.date() > last or not (_report_close(ny) or short_day_close):
             continue
         if now is not None and when > now:
             continue

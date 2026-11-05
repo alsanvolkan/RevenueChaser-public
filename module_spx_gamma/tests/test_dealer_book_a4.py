@@ -73,3 +73,20 @@ def test_snapshot_and_page_carry_the_book():
     assert snap["dealer_book"]["contracts"] > 0
     html = render.render_html(snap)
     assert "Dealer book" in html and "(a) long calls, short puts" in html
+
+
+def test_charm_words_follow_the_hedge_a_positive_position_charm_sells():
+    """Review 5 Nov (Fable #2): charm is the book's own d(delta)/dt. A dealer long an OTM call loses delta as time
+    passes (charm < 0) and buys back its short hedge; a positive book charm means selling into expiry."""
+    long_otm_call = db.dealer_book([_row(7800.0, "C", 1000)], S, "2026-11-04")["a"]
+    assert long_otm_call["charm"] < 0 and "charm buys into expiry" in long_otm_call["words"]
+    short_otm_call = db.dealer_book([_row(7800.0, "C", 1000)], S, "2026-11-04")["b"]
+    assert short_otm_call["charm"] > 0 and "charm sells into expiry" in short_otm_call["words"]
+
+
+def test_a_contract_in_both_chains_is_counted_once():
+    """Fable #3: the 0DTE chain's fallback (no expiry) also holds the target Friday's contracts."""
+    row = _row(7800.0, "C", 1000)
+    once = db.dealer_book([row], S, "2026-11-04")
+    twice = db.dealer_book([row, dict(row)], S, "2026-11-04")
+    assert twice["a"]["gamma"] == pytest.approx(once["a"]["gamma"]) and twice["contracts"] == 1

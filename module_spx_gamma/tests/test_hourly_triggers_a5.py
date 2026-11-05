@@ -128,3 +128,16 @@ def test_a_bar_still_forming_is_left_out():
     out = hourly_closes({"data": bars}, "2026-11-03", [{"date": "2026-11-02", "close": 7520.0}],
                         now=datetime(2026, 11, 3, 15, 10, tzinfo=timezone.utc))
     assert [r["time"] for r in out["rows"]] == ["2026-11-02T21:00:00Z"]
+
+
+def test_the_13_00_bar_counts_only_on_a_short_day():
+    """Fable #1: 12:30-13:00 is not a report time on a full day; on a 13:00 early close it is the close."""
+    candles = [{"date": "2026-11-02", "close": 7520.0}]
+    full_day = [_bar("2026-11-02T21:00:00Z", 752.0), _bar("2026-11-03T18:00:00Z", 756.0),
+                _bar("2026-11-03T18:30:00Z", 757.0), _bar("2026-11-03T21:00:00Z", 758.0)]
+    times = [r["time"] for r in hourly_closes({"data": full_day}, "2026-11-03", candles)["rows"]]
+    assert "2026-11-03T18:00:00Z" not in times and "2026-11-03T18:30:00Z" in times
+    short_day = [_bar("2026-11-02T21:00:00Z", 752.0), _bar("2026-11-03T17:30:00Z", 756.0),
+                 _bar("2026-11-03T18:00:00Z", 757.0)]
+    times = [r["time"] for r in hourly_closes({"data": short_day}, "2026-11-03", candles)["rows"]]
+    assert times[-1] == "2026-11-03T18:00:00Z"

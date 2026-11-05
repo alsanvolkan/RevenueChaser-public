@@ -32,7 +32,7 @@ def _has_files(root: Path) -> bool:
 
 def resolve_data_root(override: str | None, store_root: Path = STORE_DATA_ROOT,
                       legacy_root: Path = LEGACY_DATA_ROOT) -> Path:
-    """The data root: the override; else the store root once it exists; else the legacy tree while it still
+    """The data root: the override; else the store root once it holds files; else the legacy tree while it still
     holds files (a deploy before ``--migrate-data-root`` keeps reading it); else the store root.
 
     The switch never moves a file: ``data_root_move.migrate`` copies the tree, verifies it and renames it into
@@ -40,7 +40,7 @@ def resolve_data_root(override: str | None, store_root: Path = STORE_DATA_ROOT,
     """
     if override:
         return Path(override)
-    if store_root.exists() or not _has_files(legacy_root):
+    if _has_files(store_root) or not _has_files(legacy_root):
         return store_root
     return legacy_root
 

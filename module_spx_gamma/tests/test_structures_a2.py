@@ -79,3 +79,21 @@ def test_page_shows_the_structures_and_the_hourly_column():
     assert "Put debit spread" in html and "Hourly close" in html and "TRIGGERED Mon 16:30" in html
     md = render.render_markdown(snap)
     assert "### Trade structures" in md and "TRIGGERED Mon 16:30" in md
+
+
+def test_a_backfilled_day_shows_no_structures_book_or_hourly_state():
+    """Fable #4: the chains and SPY bars are live files; a past day never prices on a later session's quotes."""
+    from RevenueChaser.module_spx_gamma import render
+    from RevenueChaser.module_spx_gamma.scenarios import scenario_bands
+    from .conftest import make_snapshot
+    snap = make_snapshot()
+    bands = scenario_bands(snap)
+    strikes = {snap_strike(v) + d for pair in (bands["consolidation"], bands["downside"], bands["upside"])
+               for v in pair for d in (-50, -25, 0, 25, 50)}
+    snap["target_chain_rows"] = [_row(k, t, 5.0) for k in strikes for t in ("P", "C")]
+    snap["hourly_closes"] = {"rows": [{"time": "a", "amsterdam": "Mon 16:30", "close": bands["downside"][1] - 1}],
+                             "ratio": 10.0, "week_start": "2026-11-02", "source": "SPY"}
+    snap["historical_live_files"] = ["target_chain.json", "option_chain.json", "spy_ohlc_30m.json"]
+    html = render.render_html(snap)
+    assert "Trade structures (" not in html and "<h2 class=\"sum-h\">Dealer book</h2>" not in html
+    assert "TRIGGERED" not in html and "Hourly close" not in html

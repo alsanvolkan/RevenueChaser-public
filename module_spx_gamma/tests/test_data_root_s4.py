@@ -19,7 +19,7 @@ def test_legacy_tree_is_read_until_the_store_root_exists(tmp_path):
     legacy, store = tmp_path / "legacy", tmp_path / "store" / "spx_gamma"
     _tree(legacy)
     assert resolve_data_root(None, store, legacy) == legacy
-    store.mkdir(parents=True)
+    _tree(store)                                     # the migrated tree, renamed into place with its files
     assert resolve_data_root(None, store, legacy) == store
 
 
@@ -43,3 +43,11 @@ def test_migrate_dry_run_then_verified_copy_keeps_the_legacy_tree(tmp_path):
 
 def test_nothing_to_copy(tmp_path):
     assert migrate(tmp_path / "none", tmp_path / "t", apply=True)["status"] == "nothing_to_copy"
+
+
+def test_an_empty_store_root_does_not_hide_the_legacy_tree(tmp_path):
+    """Fable #5: a bare mkdir of the new root before --migrate-data-root must not switch the board to an empty tree."""
+    legacy, store = tmp_path / "legacy", tmp_path / "store" / "spx_gamma"
+    _tree(legacy)
+    store.mkdir(parents=True)
+    assert resolve_data_root(None, store, legacy) == legacy
