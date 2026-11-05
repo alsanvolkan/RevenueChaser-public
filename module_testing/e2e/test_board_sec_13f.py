@@ -17,6 +17,8 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from . import harness
+
 TOTALS = {
     "NVDA": {"2026-03-31": {"holders": 2100, "shares": 5_000_000, "value": 700_000_000},
              "2026-06-30": {"holders": 2250, "shares": 5_400_000, "value": 780_000_000}},
@@ -258,7 +260,7 @@ class TestRowsInTheBrowser:
              f"--user-data-dir={tmp_path / 'profile'}",
              "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1",
              "--virtual-time-budget=5000", "--dump-dom", dashboard.url + "/view/module_sec_13f"],
-            capture_output=True, text=True, encoding="utf-8", timeout=90)
+            capture_output=True, text=True, encoding="utf-8", timeout=harness.CHROME_TIMEOUT_S)
         dom = out.stdout
         assert "<html" in dom.lower(), f"Chrome dumped no DOM (exit {out.returncode}): {out.stderr[-1500:]}"
         drawn = set(re.findall(r'<tr\b[^>]*\bdata-ticker="([^"]+)"', dom))
