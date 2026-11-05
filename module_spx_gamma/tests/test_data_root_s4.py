@@ -51,3 +51,22 @@ def test_an_empty_store_root_does_not_hide_the_legacy_tree(tmp_path):
     _tree(legacy)
     store.mkdir(parents=True)
     assert resolve_data_root(None, store, legacy) == legacy
+
+
+def test_migrate_copies_into_an_empty_store_root(tmp_path):
+    """Fable delta #2: an empty <store>/spx_gamma (no files) is no target: resolve reads legacy, so migrate copies."""
+    legacy, target = tmp_path / "legacy", tmp_path / "store" / "spx_gamma"
+    _tree(legacy)
+    (target / "raw").mkdir(parents=True)
+    assert migrate(legacy, target)["status"] == "dry_run"
+    assert migrate(legacy, target, apply=True)["status"] == "copied"
+    assert (target / "brier.json").exists() and resolve_data_root(None, target, legacy) == target
+
+
+def test_a_target_holding_a_file_is_still_refused(tmp_path):
+    legacy, target = tmp_path / "legacy", tmp_path / "store" / "spx_gamma"
+    _tree(legacy)
+    target.mkdir(parents=True)
+    (target / "stray.json").write_text("{}")
+    assert migrate(legacy, target, apply=True)["status"] == "target_exists"
+    assert (target / "stray.json").read_text() == "{}"

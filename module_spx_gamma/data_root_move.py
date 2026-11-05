@@ -24,11 +24,23 @@ def _sha(path: Path) -> str:
 def plan(legacy: Path, target: Path) -> dict:
     files = sorted(p for p in legacy.rglob("*") if p.is_file()) if legacy.is_dir() else []
     return {"legacy": str(legacy), "target": str(target), "files": len(files),
-            "bytes": sum(p.stat().st_size for p in files), "target_exists": target.exists()}
+            "bytes": sum(p.stat().st_size for p in files), "target_exists": _holds_files(target)}
+
+
+def _holds_files(target: Path) -> bool:
+    """A target with no file in it (a bare mkdir) is no target: ``resolve_data_root`` reads legacy then too."""
+    return target.exists() and (not target.is_dir() or any(p.is_file() for p in target.rglob("*")))
+
+
+def _remove_empty_dirs(target: Path) -> None:
+    """Remove a file-less target tree, folder by folder, with ``rmdir``: it can never remove a file."""
+    for d in sorted((p for p in target.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+        d.rmdir()
+    target.rmdir()
 
 
 def migrate(legacy: Path, target: Path, apply: bool = False) -> dict:
-    """Copy ``legacy`` to ``target``; a dry run unless ``apply``. Refuses when the target already exists."""
+    """Copy ``legacy`` to ``target``; a dry run unless ``apply``. Refuses when the target already holds a file."""
     out = plan(legacy, target)
     if out["target_exists"]:
         return {**out, "status": "target_exists"}
@@ -48,6 +60,8 @@ def migrate(legacy: Path, target: Path, apply: bool = False) -> dict:
     if bad:
         return {**out, "status": "verify_failed", "mismatched": bad[:20], "partial": str(partial)}
     target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        _remove_empty_dirs(target)   # file-less (checked above); rename needs the name free
     partial.rename(target)
     return {**out, "status": "copied", "verified": out["files"]}
 

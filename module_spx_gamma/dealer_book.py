@@ -62,19 +62,18 @@ def dealer_book(chain_rows: list[dict], spot: float | None, asof_date: str) -> d
                 "speed": 0.0} for k in ("a", "b")}
     used, expiries, seen = 0, set(), set()
     for r in chain_rows or []:
-        key = (r.get("expiry"), r.get("strike"), r.get("type"))
-        if key in seen:
-            continue    # the 0DTE fallback chain (no expiry) also holds the target Friday's contracts
-        seen.add(key)
         oi, iv, k, cp, e = r.get("open_interest"), r.get("iv"), r.get("strike"), r.get("type"), r.get("expiry")
         if not oi or not iv or not k or cp not in ("C", "P") or not e:
             continue
+        if (e, k, cp) in seen:
+            continue    # the 0DTE fallback chain (no expiry) also holds the target Friday's contracts
         days = (date.fromisoformat(e) - base).days
         years = max(days, 0.5) / 365.0
         g = bs_greeks(spot, k, years, iv, cp)
         g50 = bs_greeks(spot - DOWN_PTS, k, years, iv, cp)
         if g is None or g50 is None:
             continue
+        seen.add((e, k, cp))   # only a used row keys the dedupe, so an invalid first copy never hides a valid one
         used += 1
         expiries.add(e)
         q = oi * MULT

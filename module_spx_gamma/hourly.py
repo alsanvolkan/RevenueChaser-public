@@ -93,6 +93,19 @@ def _report_close(ny: datetime) -> bool:
     return ny.minute == 0 and ny.hour == 16
 
 
+def _session_over(ny: datetime, asof: date, now: datetime | None) -> bool:
+    """Whether a day whose last bar so far ends 13:00 NY really closed then, rather than still trading.
+
+    A full day fetched between 13:00 and the next bar's arrival also ends on its 13:00 bar. So the day must be
+    before the fetch's own day, or the fetch must come at or after 13:30 NY, when a full day's next bar exists.
+    Without a fetch time, only a day before ``asof`` is known to be over.
+    """
+    if now is None:
+        return ny.date() < asof
+    fetched = now.astimezone(NY)
+    return ny.date() < fetched.date() or fetched >= ny.replace(hour=13, minute=30)
+
+
 def hourly_closes(payload, asof: str, candles, now: datetime | None = None) -> dict | None:
     """The target week's report-time closes as SPX-equivalent levels, oldest first; None without a ratio.
 
@@ -113,7 +126,8 @@ def hourly_closes(payload, asof: str, candles, now: datetime | None = None) -> d
     rows = []
     for when, close in bars:
         ny = when.astimezone(NY)
-        short_day_close = (ny.hour, ny.minute) == (13, 0) and last_of_day.get(ny.date()) == when
+        short_day_close = ((ny.hour, ny.minute) == (13, 0) and last_of_day.get(ny.date()) == when
+                           and _session_over(ny, last, now))
         if ny.date() < monday or ny.date() > last or not (_report_close(ny) or short_day_close):
             continue
         if now is not None and when > now:

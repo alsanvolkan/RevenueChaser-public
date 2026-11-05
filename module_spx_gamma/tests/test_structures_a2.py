@@ -97,3 +97,11 @@ def test_a_backfilled_day_shows_no_structures_book_or_hourly_state():
     html = render.render_html(snap)
     assert "Trade structures (" not in html and "<h2 class=\"sum-h\">Dealer book</h2>" not in html
     assert "TRIGGERED" not in html and "Hourly close" not in html
+    # Fable delta #4: each section says why it is empty instead of vanishing
+    for words in ("target Friday's option chain was fetched in a later session",
+                  "option chains behind the dealer book were fetched in a later session",
+                  "SPY 30-minute bars were fetched in a later session"):
+        assert "n/a (historical): The " + words in html
+    md = render.render_markdown(snap)
+    assert "Trade structures: n/a (historical)" in md and "Hourly closes: n/a (historical)" in md
+    assert "n/a (historical): the option chains behind it" in md

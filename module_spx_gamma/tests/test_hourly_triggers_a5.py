@@ -139,5 +139,22 @@ def test_the_13_00_bar_counts_only_on_a_short_day():
     assert "2026-11-03T18:00:00Z" not in times and "2026-11-03T18:30:00Z" in times
     short_day = [_bar("2026-11-02T21:00:00Z", 752.0), _bar("2026-11-03T17:30:00Z", 756.0),
                  _bar("2026-11-03T18:00:00Z", 757.0)]
-    times = [r["time"] for r in hourly_closes({"data": short_day}, "2026-11-03", candles)["rows"]]
+    from datetime import datetime, timezone
+    after = datetime(2026, 11, 3, 18, 45, tzinfo=timezone.utc)      # 13:45 NY, the 13:30 bar would exist by now
+    times = [r["time"] for r in hourly_closes({"data": short_day}, "2026-11-03", candles, now=after)["rows"]]
     assert times[-1] == "2026-11-03T18:00:00Z"
+    later_day = hourly_closes({"data": short_day}, "2026-11-04", candles)["rows"]
+    assert later_day[-1]["time"] == "2026-11-03T18:00:00Z"            # a past day needs no fetch time
+
+
+def test_a_13_00_bar_fetched_before_the_next_bar_is_not_a_close():
+    """Fable delta #1: a full day fetched at 13:10 NY has the 13:00 bar as its last bar so far; it is no close."""
+    from datetime import datetime, timezone
+    candles = [{"date": "2026-11-02", "close": 7520.0}]
+    so_far = [_bar("2026-11-02T21:00:00Z", 752.0), _bar("2026-11-03T17:30:00Z", 756.0),
+              _bar("2026-11-03T18:00:00Z", 757.0)]
+    early = datetime(2026, 11, 3, 18, 10, tzinfo=timezone.utc)      # 13:10 NY
+    times = [r["time"] for r in hourly_closes({"data": so_far}, "2026-11-03", candles, now=early)["rows"]]
+    assert "2026-11-03T18:00:00Z" not in times
+    times = [r["time"] for r in hourly_closes({"data": so_far}, "2026-11-03", candles)["rows"]]
+    assert "2026-11-03T18:00:00Z" not in times                       # same day, no fetch time: not known yet

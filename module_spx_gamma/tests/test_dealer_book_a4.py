@@ -90,3 +90,11 @@ def test_a_contract_in_both_chains_is_counted_once():
     once = db.dealer_book([row], S, "2026-11-04")
     twice = db.dealer_book([row, dict(row)], S, "2026-11-04")
     assert twice["a"]["gamma"] == pytest.approx(once["a"]["gamma"]) and twice["contracts"] == 1
+
+
+def test_an_invalid_first_copy_does_not_hide_a_valid_second():
+    """Fable delta #3: the dedupe keys only rows that were used, so a later valid copy still counts."""
+    from RevenueChaser.module_spx_gamma.dealer_book import dealer_book
+    good = {"expiry": "2026-11-06", "strike": 6800.0, "type": "P", "open_interest": 1000, "iv": 0.2}
+    bad = {**good, "open_interest": 0}
+    assert dealer_book([bad, good], 6810.0, "2026-11-04")["contracts"] == dealer_book([good], 6810.0, "2026-11-04")["contracts"]

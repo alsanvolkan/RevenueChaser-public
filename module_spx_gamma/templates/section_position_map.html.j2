@@ -327,7 +327,8 @@ the levels below stop applying and the map has to be re-read.</div>
   </tbody>
 </table>
 <div class="note">{{ scenarios.note }}</div>{% if scenarios.get("hourly_source") %}{% set hs = scenarios.hourly_source %}
-<div class="note">Hourly closes from {{ hs.week_start }} ({{ hs.rows|length }} so far): UW {{ hs.source }} 30-minute bars at the report times (10:30 … 15:30 New York and the close), scaled to SPX by {{ "%.4f"|format(hs.ratio) }} (stored SPX close / SPY close of the last shared session). A proxy: the report reads IBKR's SPX hourly close.{% if hs.rows %} Last: {{ hs.rows[-1].amsterdam }} Amsterdam, {{ "{:,.1f}".format(hs.rows[-1].close) }}.{% endif %}</div>{% endif %}
+<div class="note">Hourly closes from {{ hs.week_start }} ({{ hs.rows|length }} so far): UW {{ hs.source }} 30-minute bars at the report times (10:30 … 15:30 New York and the close), scaled to SPX by {{ "%.4f"|format(hs.ratio) }} (stored SPX close / SPY close of the last shared session). A proxy: the report reads IBKR's SPX hourly close.{% if hs.rows %} Last: {{ hs.rows[-1].amsterdam }} Amsterdam, {{ "{:,.1f}".format(hs.rows[-1].close) }}.{% endif %}</div>{% endif %}{% if historical.hourly_triggers %}
+<div class="note">n/a (historical): The SPY 30-minute bars were fetched in a later session than this day, so no hourly-close state is shown.</div>{% endif %}
 
 <h2>Brier Scorecard</h2>
 <div class="at-glance">
@@ -405,9 +406,11 @@ the levels below stop applying and the map has to be re-read.</div>
 </details>
 </section>
 
-{% if structures or iron_butterfly %}<section class="group-open" id="g6">
+{% if structures or iron_butterfly or historical.structures %}<section class="group-open" id="g6">
 <div class="group-h">6 · Trade structures</div>
-{% if structures %}
+{% if historical.structures %}
+<div class="note">n/a (historical): The target Friday's option chain was fetched in a later session than this day, so no structure is priced.</div>
+{% elif structures %}
 <details class="collapsible"{% if structures.get("live") %} open{% endif %}>
 <summary><h2 class="sum-h">Trade structures ({{ structures.expiry }})</h2></summary>
 <div class="box-inner">
@@ -509,7 +512,8 @@ the levels below stop applying and the map has to be re-read.</div>
 {% endfor %}
 </div>
 
-{% if dealer_book %}<details class="collapsible">
+{% if historical.dealer_book %}<div class="note">n/a (historical): The option chains behind the dealer book were fetched in a later session than this day.</div>
+{% elif dealer_book %}<details class="collapsible">
 <summary><h2 class="sum-h">Dealer book</h2></summary>
 <div class="box-inner">
 <table class="stack">
