@@ -984,7 +984,7 @@ file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema 
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it; and the options
 data, `options` (serving schema version `1`), under "The options data" last. The market data,
-`market` (serving schema version `2`): `serving_schema_version` (one row: kind, version, build time, build id),
+`market` (serving schema version `2`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`), `spx_greek_expiry_strike` (the same key, the four
 greeks per side from `greek-exposure/strike-expiry` for every expiry of the chain, same provenance; its `dte` is
@@ -1009,6 +1009,15 @@ a missing Parquet root (the raw disk not mounted). Then the live file is hard-li
 file and leaves the live file byte-identical (test T3, `rcdata/tests/test_serving.py`). The dashboard opens a serving
 file read-only on every request (`rcdata.serving.open_read`) and never writes one; serving files are never
 compacted, they are rebuilt. Pages only enqueue requests; the builder takes them in order.
+
+**A build's base.** A build file starts either empty (`serving.build(kind)`, every table made from Parquet) or as a
+copy of the live file (`serving.build(kind, base="live")`), for a build that replaces only what changed: the rows
+already served are in the file, so a dataset can reload what is dirty instead of its whole history. The copy is a
+build file like any other — the live file is never opened read-write — so the checks above, the atomic swap, the
+`prev` rollback and the shrink guard all hold unchanged. `serving_schema_version.build_mode` records which base the
+build really got: `"live"` falls back to `"fresh"` when there is no live file yet, or it was built by another serving
+schema version, whose tables are not the ones this code builds — which is what makes a version bump a whole rebuild
+without any dataset asking for one. No dataset asks for `base="live"` yet; every kind is still built whole.
 
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.
