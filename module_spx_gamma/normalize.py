@@ -340,6 +340,29 @@ def normalize_vix(vix_payload: dict | None) -> dict | None:
     }
 
 
+def normalize_stored_greek_grid(rows: list[dict]) -> list[dict]:
+    """The stored greek grid in the shape ``levels.band_walls`` reads (#291).
+
+    The same four fields the per-expiry files give — ``expiry``, ``dte``, ``strike`` and the signed
+    ``net_gamma`` of ``call_gex + put_gex`` — so either source can feed the bands. ``dte`` is UW's own
+    calendar-day count in the store too, which is the measure the bands are written in.
+    """
+    out = []
+    for r in rows:
+        strike = to_float(r.get("strike"))
+        if strike is None:
+            continue
+        out.append({
+            "expiry": str(r.get("expiry"))[:10] if r.get("expiry") is not None else None,
+            "dte": to_float(r.get("dte")),
+            "strike": strike,
+            "call_gex": to_float(r.get("call_gex")),
+            "put_gex": to_float(r.get("put_gex")),
+            "net_gamma": net_sum(r.get("call_gex"), r.get("put_gex")),
+        })
+    return out
+
+
 def normalize_vega_flow(payload: dict | None) -> dict | None:
     """The day's cumulative directional vega flow (§4.1), summed over UW's per-minute buckets.
 
@@ -451,7 +474,17 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
     zero_payloads = list((raw.get("strike_expiry") or {}).values())
     all_payloads = list((raw.get("strike_expiry_all") or {}).values())
     strike_expiry_rows = normalize_strike_expiry_rows(zero_payloads + all_payloads, asof_str)
-    all_se_rows = [r for r in strike_expiry_rows if r.get("expiry") in (raw.get("strike_expiry_all") or {})]
+    # The DTE-band walls' grid (#291). The store holds the same endpoint's answer for the whole chain
+    # (``uw/greek_expiry_strike``, #384) and is the one source when it has the day; the day's own per-expiry files
+    # are the fallback, so a backfill gap never empties the bands. Measured on 2026-11-03 and 2026-11-04: the two
+    # give the same wall on every band, 24 values over two sessions.
+    grid = raw.get("greek_grid") if isinstance(raw.get("greek_grid"), dict) else None
+    if grid and grid.get("stored") and grid.get("rows"):
+        all_se_rows = normalize_stored_greek_grid(grid["rows"])
+        band_source = grid.get("source")
+    else:
+        all_se_rows = [r for r in strike_expiry_rows if r.get("expiry") in (raw.get("strike_expiry_all") or {})]
+        band_source = "raw day files"
     levels["zero_dte_concentration"] = intraday_concentration(strike_expiry_rows, asof_str)
     levels["zero_dte_put_concentration"] = intraday_put_concentration(strike_expiry_rows, asof_str)
     candles = normalize_candles(raw.get("ohlc"))
@@ -563,6 +596,7 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "gex_envelope": gex_envelope,
         "levels": levels,
         "dte_band_walls": dte_band_walls,
+        "dte_band_source": band_source,
         "put_wall_origin": put_wall_origin,
         "charm_qualification": charm_qualification,
         "vanna_peaks": vanna,
