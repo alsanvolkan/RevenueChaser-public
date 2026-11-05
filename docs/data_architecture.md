@@ -1370,10 +1370,10 @@ non-SEC bank (each of them an operating type the identity master keeps, but not 
 name with no type yet. Tier B (a listed excluded type) and Tier C (over the counter) are out whatever the type
 says. One part of avo's approved rule is **not** in this module: he keeps an ETF whose AUM is unknown when its
 20-day average daily dollar volume is at or over 10 million, and that branch is the `my_universe` build's
-(`spine/my_universe.py`, #417), which reads the volume from the **live** prices store (`spine/etf.adv_usd_20d`). A
-store cut to the universe holds no bar of a fund outside it, so such a fund can enter only through a `my_universe`
-built before this store went live, or by hand (review M4 of #382; the server steps of
-`docs/compustat_primary_switch.md` put #417's spine build first). **Nothing delisted is in it**, because the list is read from the live spine. Kept beside it
+(`spine/my_universe.py`, #417), which reads the volume from Compustat's **raw** `comp.secd` Parquet
+(`spine/etf.adv_usd_20d`, #421), not from this store: a store cut to the universe holds no bar of a fund outside it,
+so a new fund could never earn a volume here (review M4 of #382, avo's decision B of 5 Nov 2026). **Nothing
+delisted is in it**, because the list is read from the live spine. Kept beside it
 (`universe.kept_beside`): the benchmarks (SPY, DIA, QQQ), the rotation ETFs and the stock watch list, which the
 boards read from the store, and the other listed classes of a universe issuer that the SEC covers name
 (`cover_classes`, Berkshire's A shares). The serving build turns that list into the `_universe` table before

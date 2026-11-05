@@ -27,20 +27,21 @@ on homesrv first (`duckdb.connect(path, read_only=True)` with `RC_STORE_AUTO_ENS
 
 ## Server steps, in order
 
-0. **#416 and #417 first, and one spine build on the store as it is today** (review M4 of #382). `my_universe`'s
-   volume rule for a fund N-CEN gives no AUM (GLD, SLV, IBIT and the other commodity and crypto trusts) reads the
-   **live** `prices.duckdb` (`spine/etf.adv_usd_20d`). Once this PR's store is live it holds only the universe, so
-   such a fund that is not in `my_universe` yet has no bar to measure and stays undecided for good. Built first, the
-   list takes them in from today's bars, and this PR's store then keeps them. Check before going on: the live spine
-   holds `my_universe`, how many of its rows entered on `etf_adv`, and the funds the `my_universe_etf_undecided`
-   issue names.
+0. **#416, #417 and #421 first, and one spine build on that code** (review M4 of #382). The serving build stores
+   `my_universe` when the live spine holds it, and today's rule otherwise, so the list has to exist before this PR's
+   first build. `my_universe`'s volume rule for a fund N-CEN gives no AUM (GLD, SLV, IBIT and the other commodity
+   and crypto trusts) reads Compustat's raw `comp.secd` Parquet since #421 (`spine/etf.adv_usd_20d`), not the live
+   `prices.duckdb`, so a fund outside the universe can still be measured once this PR's store is live. Check before
+   going on: the live spine holds `my_universe`, how many of its rows entered on `etf_adv`, and the funds the
+   `my_universe_etf_undecided` issue names.
 1. **A rollback copy of the live `prices.duckdb`, outside `market/`, with its sha256** (review M5). The swap keeps
    the file it replaces only as `prices.prev.duckdb`, which the next swap replaces, and `wrds/prices` now runs daily
    (decision 1), so the file from before is gone within a day. A copy left in `market/` under another
    `prices.*.duckdb` name is deleted by `serving.sweep_builds` at the next builder start. The target is
    `$RAW_STORE_BACKUP_DIR/deploy-<date>-pr382/prices.duckdb`: the folder `rcdata backup` writes to, but **not** its
-   `market/` subfolder, where only the newest five copies per kind are kept (`backup.KEEP`) and the daily 04:30 run
-   would rotate this one out. Before copying, `df` the target and the store: the target needs the live file's size
+   `market/` or `market-heavy/` subfolder (#422: the nightly run writes the small files to `market/`, the weekly one
+   `prices` and `ownership` to `market-heavy/`), where only the newest five copies per kind are kept in each folder
+   (`backup.KEEP`) and a later run would rotate this one out. Before copying, `df` the target and the store: the target needs the live file's size
    free (2,895,130,624 bytes on 5 Nov 2026) with room to spare, and it must be another disk than the store's. No
    space or the same disk: stop, the deploy does not run without its rollback (review D3 of #420). Compare the copy's
    sha256 with the live file's, and write the path, both hashes and the size in the deploy log.
@@ -112,9 +113,9 @@ ver" (the "4" is decision 7 below).
    the adjusted view's rule that hung on it are gone with the served CRSP bars.
 8. **The funds N-CEN gives no AUM (GLD, SLV, IBIT): decided, their volume from raw Compustat** (avo, 5 Nov 2026
    ~08:34 Amsterdam, option B of three; review M4 of #382, D4 of #420). `my_universe` keeps such a fund on its
-   20-session dollar volume, which `spine/etf.adv_usd_20d` reads from the live prices store; once this PR's store is
-   live it holds no bar of a fund outside the universe, so a new one could never be measured. The volume is to be
-   read from the raw Compustat `secd` Parquet, which the universe does not cut: a spine change in its own pull
-   request, not this one. Until it lands, step 0's order is what lets today's funds in. The options not taken: keep
+   20-session dollar volume. Once this PR's store is live it holds no bar of a fund outside the universe, so a new
+   one could never be measured there; `spine/etf.adv_usd_20d` therefore reads the raw Compustat `secd` Parquet,
+   which the universe does not cut. That is #421, its own pull request, merged into `main` on 5 Nov 2026, and step 0
+   deploys it before this one. The options not taken: keep
    every unknown-AUM fund in the store as a candidate (the store outgrows the universe), or add each fund by hand in
    `my_universe_manual.json` (every new fund waits on avo).

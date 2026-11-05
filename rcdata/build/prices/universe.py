@@ -12,9 +12,9 @@ avo, 4 Nov 2026 (PR 382): the store holds **today's universe**, not every tier a
   (avo's words). An ETF whose AUM is unknown is out **here**: ``aum`` is NULL for a row N-CEN does not hold, and no
   comparison keeps a NULL. avo's approved rule keeps such a fund when its 20-day average daily dollar volume is at
   or over 10 million; that branch is the ``my_universe`` build's (``spine/my_universe.py``), not this module's, so
-  without that table an unknown-AUM fund is not stored. The build reads the volume from the **live** prices store,
-  which holds no bar of a fund outside the universe: such a fund enters only through a list built before this
-  store went live, or by hand (review M4 of #382).
+  without that table an unknown-AUM fund is not stored. That build reads the volume from Compustat's **raw**
+  ``comp.secd`` Parquet (#421), not from this store: a store cut to the universe holds no bar of a fund outside it,
+  so a new fund could never earn a volume here (review M4 of #382, avo's decision B of 5 Nov 2026).
 - **A delisted name is never in it.** The list is read from the live spine, which holds today's listings only, so
   nothing delisted reaches the served tables at all (the reason PR 382's "CRSP for delisted names" step is gone).
 
