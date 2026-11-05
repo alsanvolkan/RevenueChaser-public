@@ -340,8 +340,21 @@ def normalize_vega_flow(payload: dict | None) -> dict | None:
     if not directional:
         return None
     stamps = sorted(str(r.get("timestamp")) for r in rows if isinstance(r, dict) and r.get("timestamp"))
+    # F5 (2 Oct report p.7): the side is read only when the largest minute does not carry it alone.
+    total_dir = sum(directional)
+    largest = max(directional, key=abs)
+    without = total_dir - largest
+    if total_dir == 0 or (without != 0 and (without > 0) != (total_dir > 0)) or without == 0:
+        side, verdict = None, "no side verdict"
+    else:
+        side = "buyers" if total_dir > 0 else "sellers"
+        verdict = f"vega {side} (holds without the largest minute)"
     return {
-        "dir_vega_flow": sum(directional),
+        "side": side,
+        "verdict": verdict,
+        "largest_minute": largest,
+        "without_largest": without,
+        "dir_vega_flow": total_dir,
         "total_vega_flow": sum(v for v in total if v is not None) or None,
         "buckets": len(directional),
         "last_bucket": stamps[-1] if stamps else None,
