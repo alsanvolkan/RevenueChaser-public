@@ -22,7 +22,7 @@ from RevenueChaser.core import history, ledger
 from RevenueChaser.module_sec_13f import engine, report
 
 BOARD, TABLE = "module_sec_13f", "sec13f_metrics_history"
-# Bump when the metrics change in a way the config hash does not see (``compute_totals``' SQL, ``board_entries``'
+# Bump when the metrics change in a way the config hash does not see (``board_entries``'
 # streak / accel / % out formulas, the map's source), not a setting. 2: the name match is retired, the map is
 # OpenFIGI's (#207). 3: plus the legacy entries whose issuer prefix OpenFIGI confirms, 9x issues out (#207).
 # 4: shares out, insider % and price come from ownership_snapshot and D01, not sec13f_enrichment (#375 F2).

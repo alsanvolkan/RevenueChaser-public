@@ -196,11 +196,12 @@ def _no_cache(resp):
 # to reload when the job completes.
 jobs.register("earnings", runners.run_earnings_range, ["module_earnings_radar"])
 jobs.register("module_leaps", runners.run_leaps_latest, ["module_leaps"])  # live UW scan (Fetch)
-# 13F Fetch = download the new SEC Form 13F data set(s), ingest, derive the totals, render (backend D4).
-# The numbers are the builder's (G9): the Fetch refreshes the names/sectors and shares the dashboard owns and
-# renders the board. It needs no UW key — the names/sectors step is best-effort and opens its own client (#206).
+# 13F Fetch = refresh the names/sectors and shares outstanding the dashboard owns, render the board (backend D4).
+# The numbers are the builder's (G9), so the Fetch asks the SEC for nothing. It needs no UW key — the
+# names/sectors step is best-effort and opens its own client (#206).
 jobs.register("module_sec_13f", runners.build_sec13f, ["module_sec_13f"], requires_uw=False, lane="long",
               cancellable=True)
+# no deadline: fewer than 5 recorded runs (23 Oct); set from job_runs when measured
 jobs.register("rotation", runners.run_rotation_latest, ["module_sector_rotation"])
 jobs.register("moneyflow", runners.run_money_flow_latest, ["module_sector_rotation"])
 jobs.register("holdings", runners.run_etf_holdings_sync, ["module_sector_rotation"], lane="long")

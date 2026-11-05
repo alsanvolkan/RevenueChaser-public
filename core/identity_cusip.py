@@ -16,7 +16,7 @@ the ingested holdings and hands the answers to :func:`record`. The table is a ch
 
 The current map (:func:`current_map`) is each CUSIP's newest row when that row is 'present' with a ticker.
 ``cusip_ticker`` is rebuilt from it (``module_sec_13f/engine.py``), plus the legacy entries whose issuer prefix it
-confirms, issue numbers 90-99 left out (``engine.legacy_fallback``, avo's option B minus 9x).
+confirms, issue numbers 90-99 left out (avo's option B minus 9x; the fallback itself went with G9).
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def current_map() -> dict[str, dict]:
 
 def ever_mapped() -> set[str]:
     """CUSIPs with any 'present' row with a ticker, newest or not (read only). The 13F map's legacy prefix fallback
-    (``module_sec_13f/engine.legacy_fallback``) never revives one of them: OpenFIGI's later answer stands."""
+    never revives one of them: OpenFIGI's later answer stands."""
     return {r["cusip"] for r in rawstore.query(
         f"SELECT DISTINCT cusip FROM {TABLE} WHERE status = ? AND coalesce(ticker, '') <> ''", [PRESENT])}
 

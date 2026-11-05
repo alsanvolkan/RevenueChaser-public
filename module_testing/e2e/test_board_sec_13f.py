@@ -1,13 +1,10 @@
 """SEC 13F board, end to end.
 
-Since backend decision D4 (2026-09-30) "/run/module_sec_13f" is the real ingest:
-it reads the SEC Form 13F data-set page, downloads new zips, ingests them, re-derives the
-totals and re-renders. It needs no Unusual Whales key (#206): the names/sectors step is
-best-effort and a rejected token only leaves a note on the board. "Check for new data set"
-(``/run/module_sec_13f-check``) and Refresh stay credential-free: the check only
-reads the SEC page, and Refresh re-renders from ``sec13f_totals`` with zero
-network. The SEC page is mocked here; with no new zip listed, Fetch re-renders
-the stored totals and says so.
+Since G9 the numbers are the builder's: ``ownership.duckdb`` holds ``sec13f_ticker_period`` and
+"/run/module_sec_13f" refreshes only what the dashboard owns — the UW names/sectors and shares outstanding — then
+re-renders. It needs no Unusual Whales key (#206): the names/sectors step is best-effort and a rejected token only
+leaves a note on the board. Fetch and Refresh make no SEC call at all, so there is no data-set page to mock: both
+render whatever the ownership store holds.
 """
 from __future__ import annotations
 
@@ -28,9 +25,6 @@ TOTALS = {
 }
 
 
-SEC_PAGE = "/data-research/sec-markets-data/form-13f-data-sets"
-
-
 def _rows(dashboard) -> list:
     """The board's rows from the payload route (#429); the page itself is chrome and scripts now."""
     r = dashboard.get("/view/module_sec_13f/payload.json")
@@ -43,98 +37,90 @@ def _tickers(dashboard) -> set:
 
 
 @pytest.fixture
-def sec_page(provider_routes):
-    """The SEC data-set page, listing only sets that are too old to download."""
-    provider_routes.route(SEC_PAGE, raw=(
-        b'<a href="/files/structureddata/data/form-13f-data-sets/2024q4_form13f.zip">x</a>'),
-        content_type="text/html")
-    return provider_routes
+def serve_totals(dashboard):
+    """Write the served 13F tables, as a finished builder run leaves them (G9).
 
-
-@pytest.fixture
-def sec_page_with_new_set(provider_routes):
-    provider_routes.route(SEC_PAGE, raw=(
-        b'<a href="/files/structureddata/data/form-13f-data-sets/'
-        b'01jun2026-31aug2026_form13f.zip">x</a>'), content_type="text/html")
-    return provider_routes
-
-
-@pytest.fixture
-def seeded_totals(dashboard):
-    """Put 13F totals in the store the way an ingest would.
-
-    Seeding directly is right here: the zip ingest is a CLI path that is not
-    reachable from the dashboard, and what this board's routes actually promise
-    is "render whatever the store holds".
+    Seeding the serving file directly is right here: the build is a CLI path the dashboard never runs, and what
+    this board's routes promise is "render whatever the store holds".
     """
-    import json
-    conn = duckdb.connect(str(dashboard.store_dir / "raw.duckdb"))
-    try:
-        conn.execute('CREATE TABLE IF NOT EXISTS sec13f_totals '
-                     '("ticker" TEXT PRIMARY KEY, "entry" JSON)')
-        for ticker, entry in TOTALS.items():
-            conn.execute("INSERT OR REPLACE INTO sec13f_totals VALUES (?, ?)",
-                         [ticker, json.dumps(entry)])
-    finally:
-        conn.close()
-    return TOTALS
+    METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow",
+               "sell_flow", "breadth", "breadth_chg")
+
+    def write(totals: dict) -> dict:
+        market = Path(dashboard.env["RC_MARKET_DIR"])
+        market.mkdir(parents=True, exist_ok=True)
+        conn = duckdb.connect(str(market / "ownership.duckdb"))
+        try:
+            conn.execute("CREATE TABLE IF NOT EXISTS sec13f_ticker_period (ticker TEXT, period DATE, "
+                         + ", ".join(f"{m} DOUBLE" for m in METRICS) + ", filing_deadline DATE)")
+            for ticker, by_period in totals.items():
+                for period, cell in by_period.items():
+                    conn.execute("INSERT INTO sec13f_ticker_period (ticker, period, "
+                                 + ", ".join(METRICS) + ") VALUES (?, ?, "
+                                 + ", ".join("?" * len(METRICS)) + ")",
+                                 [ticker, period] + [cell.get(m) for m in METRICS])
+        finally:
+            conn.close()
+        return totals
+
+    return write
 
 
 @pytest.fixture
-def seeded_holdings(dashboard):
-    """One ingested quarter (two holders of NVDA, one of AMD) plus the stored CUSIP map (#207: no name match).
+def seeded_totals(serve_totals):
+    return serve_totals(TOTALS)
 
-    The zip ingest itself is not reachable from the dashboard without a download, so the
-    ingested tables are seeded; what the rebuild promises is "derive from what is stored".
 
-    Both tables are created at the v12 shape, DDL taken from ``rawstore.MANIFEST`` (#208): a
-    v11-shaped table is refused by the derive, and a table without ``(accession, line_no)``
-    only worked while the manifest's ``ALTER TABLE`` happened to run first. Named columns, so
-    a seeded row carries the period and the long-equity marker the derive filters on.
-    """
-    import json
+@pytest.fixture
+def seeded_inputs(dashboard, seeded_totals, monkeypatch):
+    """The snapshot inputs the board reads since #375 F2: NVDA's shares outstanding (UW) and insider % (yfinance) in
+    ``ownership_snapshot``, its quarter-end closes in D01 and its Short% in D10. AMD has none of them."""
+    from datetime import date
 
-    from RevenueChaser.core import rawstore
+    import RevenueChaser.core.rawstore as rawstore
+    monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    rawstore.ensure_all_tables()
 
-    conn = duckdb.connect(str(dashboard.store_dir / "raw.duckdb"))
-    try:
-        for table in ("sec13f_submissions", "sec13f_holdings"):
-            conn.execute(f'CREATE TABLE IF NOT EXISTS {table} ('
-                         + ", ".join(rawstore.MANIFEST[table]["columns"]) + ")")
-        conn.execute('CREATE TABLE IF NOT EXISTS sec13f_cusip_names ("cusip" TEXT PRIMARY KEY, '
-                     '"name_norm" TEXT, "name_raw" TEXT, "count" INTEGER)')
-        conn.execute('CREATE TABLE IF NOT EXISTS cusip_ticker '
-                     '("cusip" TEXT PRIMARY KEY, "entry" JSON)')
-        for acc, cik, shares, value in (("a1", "1000", 100, 1000), ("a2", "2000", 250, 2500)):
-            conn.execute("INSERT INTO sec13f_submissions (accession, cik, period, filing_date, type) "
-                         "VALUES (?, ?, '2026-06-30', '01-AUG-2026', '13F-HR')", [acc, cik])
-            conn.execute("INSERT INTO sec13f_holdings (accession, line_no, cusip, cik, shares, value, "
-                         "period, putcall, sshprnamttype) "
-                         "VALUES (?, 1, '67066G104', ?, ?, ?, '2026-06-30', NULL, 'SH')",
-                         [acc, cik, shares, value])
-        conn.execute("INSERT INTO sec13f_cusip_names VALUES ('67066G104', 'NVIDIA', 'NVIDIA CORP', 2)")
-        conn.execute("INSERT INTO cusip_ticker VALUES ('67066G104', ?)", [json.dumps("NVDA")])
-    finally:
-        conn.close()
+    def own(source, shares, insider):
+        return {"ticker": "NVDA", "session_date": date(2026, 10, 8), "source": source,
+                "shares_outstanding": shares, "insider_pct": insider, "institutional_pct": None,
+                "fetched_at": 0.0, "run_id": "e2e", "run_at": 0.0}
+
+    rawstore.write_rows("ownership_snapshot", [own("uw_info", 24_000_000.0, None),
+                                               own("yfinance", 30_000_000.0, 0.035)])
+    rawstore.write_rows("price_bars_daily", [
+        {"ticker": "NVDA", "session_date": date.fromisoformat(d), "open": c, "high": c, "low": c, "close": c,
+         "adj_close": None, "volume": 1.0, "split_ratio": None, "adj_source": None, "source": "uw",
+         "fetched_at": 0.0, "run_id": "e2e", "run_at": 0.0}
+        for d, c in (("2026-03-31", 100.0), ("2026-06-30", 150.0))])
+    rawstore.write_rows("short_interest", [
+        {"ticker": "NVDA", "session_date": date(2026, 10, 15), "market_date": None,
+         "short_interest": None, "si_float": 0.048, "total_float": None, "days_to_cover": None,
+         "fee_rate": None, "rebate_rate": None, "short_shares_available": None, "payload": {},
+         "source": "uw_short_screener", "fetched_at": 0.0, "run_id": "e2e", "run_at": 0.0}])
+    return dashboard
+
+
+def _payload(dashboard) -> dict:
+    r = dashboard.get("/view/module_sec_13f/payload.json")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _cells(dashboard, ticker) -> dict:
+    payload = _payload(dashboard)
+    return dict(zip(payload["cols"], next(r for r in payload["rows"] if r[0] == ticker)[3]))
 
 
 class TestCredentials:
-    """None of the 13F routes is gated on the UW token: the SEC data is the board."""
+    """Neither 13F route is gated on the UW token: the served store is the board."""
 
     def test_fetch_runs_when_the_token_is_rejected(
-            self, dashboard, dead_uw_token, sec_page, seeded_totals):
+            self, dashboard, dead_uw_token, seeded_totals):
         result = dashboard.run_job("/run/module_sec_13f")  # asserts it was accepted (HTTP 202)
         assert "not refreshed" in str(result)  # the names step said so, the job did not fail
         assert dashboard.view("module_sec_13f").status_code == 200
         assert "NVDA" in _tickers(dashboard)
-
-    def test_check_needs_no_token_and_reports_a_new_set(
-            self, dashboard, dead_uw_token, sec_page_with_new_set):
-        r = dashboard.post_fetch("/run/module_sec_13f-check")
-        assert r.status_code == 202
-        result = dashboard.run_job("/run/module_sec_13f-check")
-        assert result.ok
-        assert "01jun2026-31aug2026_form13f.zip" in str(result)
 
     def test_refresh_renders_with_a_rejected_token(
             self, dashboard, dead_uw_token, seeded_totals, clear_cache):
@@ -144,12 +130,12 @@ class TestCredentials:
 
 
 class TestRenderAndRefresh:
-    def test_fetch_renders_the_seeded_holdings(self, dashboard, sec_page, seeded_totals):
+    def test_fetch_renders_the_served_totals(self, dashboard, seeded_totals):
         assert dashboard.run_job("/run/module_sec_13f").ok
         assert dashboard.view("module_sec_13f").status_code == 200
         assert {"NVDA", "AMD"} <= _tickers(dashboard)
 
-    def test_refresh_makes_no_network_calls(self, dashboard, provider_routes, sec_page,
+    def test_refresh_makes_no_network_calls(self, dashboard, provider_routes,
                                             seeded_totals, clear_cache):
         assert dashboard.run_job("/run/module_sec_13f").ok
         clear_cache()
@@ -160,42 +146,17 @@ class TestRenderAndRefresh:
             "refresh reached the network: "
             f"{[q.path for q in provider_routes.requests()[before:]]}")
 
-    def test_refresh_still_shows_the_data(self, dashboard, sec_page, seeded_totals, clear_cache):
+    def test_refresh_still_shows_the_data(self, dashboard, seeded_totals, clear_cache):
         assert dashboard.run_job("/run/module_sec_13f").ok
         clear_cache()
         assert dashboard.view("module_sec_13f", refresh=True).status_code == 200
         assert "NVDA" in _tickers(dashboard)
 
-    def test_refresh_survives_a_restart(self, dashboard, sec_page, seeded_totals, clear_cache):
+    def test_refresh_survives_a_restart(self, dashboard, seeded_totals, clear_cache):
         assert dashboard.run_job("/run/module_sec_13f").ok
         clear_cache()
         dashboard.restart()
         assert dashboard.view("module_sec_13f", refresh=True).status_code == 200
-        assert "NVDA" in _tickers(dashboard)
-
-
-class TestRebuild:
-    """``/run/module_sec_13f-rebuild`` re-derives the totals from the store: no network."""
-
-    def test_rebuild_derives_the_totals_with_no_network_calls(
-            self, dashboard, provider_routes, sec_page, seeded_holdings):
-        before = provider_routes.request_count
-        result = dashboard.run_job("/run/module_sec_13f-rebuild")
-        assert provider_routes.request_count == before, (
-            "rebuild reached the network: "
-            f"{[q.path for q in provider_routes.requests()[before:]]}")
-        assert "Rebuilt 13F totals: 1 tickers" in str(result)
-        assert dashboard.view("module_sec_13f").status_code == 200
-        payload = dashboard.get("/view/module_sec_13f/payload.json").json()
-        nvda = dict(zip(payload["cols"], next(r for r in payload["rows"] if r[0] == "NVDA")[3]))
-        assert nvda["sh_2026-06-30"][0] == "350"  # 100 + 250 shares from the two holders
-
-    def test_rebuild_needs_no_token(self, dashboard, dead_uw_token, seeded_totals):
-        assert dashboard.post_fetch("/run/module_sec_13f-rebuild").status_code == 202
-
-    def test_nothing_ingested_leaves_the_totals(self, dashboard, seeded_totals):
-        assert "nothing to rebuild" in str(dashboard.run_job("/run/module_sec_13f-rebuild"))
-        assert dashboard.view("module_sec_13f").status_code == 200
         assert "NVDA" in _tickers(dashboard)
 
 
@@ -249,12 +210,12 @@ def _cells(dashboard, ticker) -> dict:
 class TestFilterKit:
     """#375 KF: the shared filter kit mounts on the 13F board and its rows/metadata ride the payload route."""
 
-    def test_render_includes_the_filter_bar(self, dashboard, sec_page, seeded_totals):
+    def test_render_includes_the_filter_bar(self, dashboard, seeded_totals):
         assert dashboard.run_job("/run/module_sec_13f").ok
         html = dashboard.view("module_sec_13f").text
         assert '<section class="rcf-bar" id="rc-filters"></section>' in html
 
-    def test_payload_carries_filter_fields(self, dashboard, sec_page, seeded_totals):
+    def test_payload_carries_filter_fields(self, dashboard, seeded_totals):
         assert dashboard.run_job("/run/module_sec_13f").ok
         payload = _payload(dashboard)
         assert "fields" in payload
@@ -263,18 +224,8 @@ class TestFilterKit:
             f = payload["fields"][t]
             assert set(f) >= {"ticker", "name", "index", "market_cap", "gics", "theme_ids"}
 
-    def test_off_spine_tickers_are_unclassified(self, dashboard, sec_page):
-        import json
-        conn = duckdb.connect(str(dashboard.store_dir / "raw.duckdb"))
-        try:
-            totals = {**TOTALS, "FAKE999": {"2026-06-30": {"holders": 1, "shares": 100, "value": 1000}}}
-            conn.execute('CREATE TABLE IF NOT EXISTS sec13f_totals '
-                         '("ticker" TEXT PRIMARY KEY, "entry" JSON)')
-            for ticker, entry in totals.items():
-                conn.execute("INSERT OR REPLACE INTO sec13f_totals VALUES (?, ?)",
-                             [ticker, json.dumps(entry)])
-        finally:
-            conn.close()
+    def test_off_spine_tickers_are_unclassified(self, dashboard, serve_totals):
+        serve_totals({**TOTALS, "FAKE999": {"2026-06-30": {"holders": 1, "shares": 100, "value": 1000}}})
         assert dashboard.run_job("/run/module_sec_13f").ok
         payload = _payload(dashboard)
         assert payload["fields"]["FAKE999"]["gics"][0] == "Unclassified"
@@ -300,7 +251,7 @@ class TestSnapshotInputs:
         amd = _cells(seeded_inputs, "AMD")
         assert [amd[c][0] for c in ("pct_out", "insider", "short", "price_delta")] == ["—", "—", "—", "—"]
 
-    def test_a_refresh_shows_the_numbers_the_fetch_showed(self, seeded_inputs, sec_page, clear_cache):
+    def test_a_refresh_shows_the_numbers_the_fetch_showed(self, seeded_inputs, clear_cache):
         assert seeded_inputs.run_job("/run/module_sec_13f").ok
         fetched = _payload(seeded_inputs)
         assert _cells(seeded_inputs, "NVDA")["price_delta"][1] == 50.0
@@ -324,7 +275,7 @@ def _chrome_path() -> str | None:
 
 
 class TestRowsInTheBrowser:
-    def test_the_board_draws_its_rows_and_mounts_the_kit(self, dashboard, sec_page, seeded_totals, tmp_path):
+    def test_the_board_draws_its_rows_and_mounts_the_kit(self, dashboard, seeded_totals, tmp_path):
         chrome = _chrome_path()
         if chrome is None:
             msg = "no Chrome/Chromium for the 13F browser check: set RC_CHROME"

@@ -316,14 +316,6 @@ class TestCompositeSqliteMigration:
         rows = rawstore.query("SELECT * FROM sec13f_holdings WHERE accession = 'acc1'")
         assert sorted(r["shares"] for r in rows) == [100.0, 200.0]
 
-    def test_migrated_13f_store_computes_the_same_totals(self, legacy):
-        _sec13f_db(legacy / "sec_13f" / "sec13f.db")
-        _migrate(legacy, "sec13f")
-        from RevenueChaser.module_sec_13f import engine as sf
-        totals, _factors = sf.compute_totals({"111111111": "AAPL"})
-        assert totals["AAPL"]["2026-03-31"]["shares"] == 350.0
-        assert totals["AAPL"]["2026-03-31"]["holders"] == 2
-
     def test_sec13f_db_reimport_is_a_full_refresh_not_an_append(self, legacy):
         _sec13f_db(legacy / "sec_13f" / "sec13f.db")
         _migrate(legacy, "sec13f")
