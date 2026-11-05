@@ -69,6 +69,26 @@ def _live_market(rows: int = 2) -> str:
     return hashlib.sha256(serving.live_path("market").read_bytes()).hexdigest()
 
 
+def test_the_note_says_how_many_raw_files_the_fetch_staged(stager):
+    """The first live run said "raw and Parquet staged" while its fetch had returned nothing (the dataset's
+    window was closed), which reads as a success it was not."""
+    row = base.run_request({"dataset": stager.name, "params": {"no_build": True}})
+    assert "1 raw file staged" in (row["note"] or ""), row["note"]
+
+
+def test_the_note_says_so_when_the_fetch_staged_nothing(stager, monkeypatch):
+    monkeypatch.setattr(type(stager), "fetch", lambda self, ctx, as_of: [])
+    row = base.run_request({"dataset": stager.name, "params": {"no_build": True}})
+    assert "nothing staged" in (row["note"] or ""), row["note"]
+
+
+def test_a_backfill_note_claims_no_count(stager):
+    """``backfill`` stages inside the dataset and returns nothing, so the note counts nothing either."""
+    row = base.run_request({"dataset": stager.name,
+                            "params": {"mode": "backfill", "from": "2026-10-01", "no_build": True}})
+    assert "--no-build" in (row["note"] or "") and "file" not in (row["note"] or ""), row["note"]
+
+
 def test_a_no_build_run_stages_the_data_and_leaves_the_serving_file_alone(stager):
     before = _live_market()
     row = base.run_request({"dataset": stager.name, "params": {"no_build": True}})

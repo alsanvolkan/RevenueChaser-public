@@ -705,7 +705,19 @@ def paused_problem(ds: Dataset) -> str | None:
 # ── One request ────────────────────────────────────────────────────────────────────────────────────────────────
 
 #: The check note of a ``--no-build`` run: the serving file was not touched, so the result is a skip, not an "ok".
-NO_BUILD_NOTE = "skipped: build skipped (--no-build); raw and Parquet staged"
+#: It says what the fetch really staged, because the first live run read as a success while its fetch had returned
+#: nothing (``uw/option_list`` outside its provider's window, 5 Nov 2026).
+NO_BUILD_NOTE = "skipped: build skipped (--no-build)"
+
+
+def no_build_note(staged: int | None) -> str:
+    """The ``--no-build`` check note; ``staged`` is how many raw files the fetch returned, None when it cannot be
+    counted (a backfill stages inside the dataset and returns nothing)."""
+    if staged is None:
+        return f"{NO_BUILD_NOTE}; the backfill staged what it fetched"
+    if staged == 0:
+        return f"{NO_BUILD_NOTE}; nothing staged (the fetch returned no file)"
+    return f"{NO_BUILD_NOTE}; {staged} raw file{'' if staged == 1 else 's'} staged"
 
 
 def new_run_id() -> str:
@@ -809,6 +821,7 @@ def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False
             ctx.notes.append(f"scope ignored: {ds.name} does not ask by name or tier ({ctx.scope.text()} "
                              "not applied)")
         mode = params.get("mode", "daily")
+        staged: int | None = None
         if mode == "backfill":
             if params.get("from"):
                 start = _parse_day(params["from"])
@@ -821,7 +834,9 @@ def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False
             ds.backfill(ctx, start, end)
         elif mode == "daily":
             ctx.as_of = _parse_day(params["as_of"]) if params.get("as_of") else ds.default_as_of()
-            ds.to_parquet_all(ctx, ds.fetch(ctx, ctx.as_of))
+            raws = ds.fetch(ctx, ctx.as_of)
+            staged = len(raws)
+            ds.to_parquet_all(ctx, raws)
         else:
             raise ValueError(f"unknown mode {mode!r}")
         if params.get("no_build"):
@@ -829,7 +844,7 @@ def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False
             # check row a build would have written cannot be made without one, and inventing a result value would
             # reach due.py and ops; a skip is the truth (the serving file did not change) and leaves the dataset
             # due, so the next ordinary pass builds it at no provider call (the raw file is the resume marker).
-            return _finish(ctx, req, {"result": "skipped", "note": NO_BUILD_NOTE}, "skipped", None)
+            return _finish(ctx, req, {"result": "skipped", "note": no_build_note(staged)}, "skipped", None)
         check = build_kind(ctx, ds)
         status = "ok"
     except NothingInScope as e:
