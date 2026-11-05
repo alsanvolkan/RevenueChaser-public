@@ -11,6 +11,12 @@ The swap never leaves the live name missing: the previous file is first hard-lin
 (copied where the file system has no hard links), then ``os.replace`` moves the new file over the live name in one
 step. A reader that opened the old file keeps reading it; the next ``open_read`` gets the new one.
 
+A build either starts empty (``build(kind)``, every table made from Parquet) or as a copy of the live file
+(``build(kind, base="live")``), for a build that replaces only what changed. The copy is a build file like any
+other — the live file is never opened read-write — so the checks, the atomic swap, the ``prev`` rollback and the
+shrink guard all hold unchanged. ``serving_schema_version.build_mode`` says which base the build really got:
+``"live"`` falls back to ``"fresh"`` when there is no live file or it carries another serving schema version.
+
 The dashboard and the boards open serving files with ``open_read`` only: read-only, the path resolved on every
 call, never a connection kept across requests. Serving files are never compacted; they are rebuilt (F10 B).
 """
@@ -46,6 +52,8 @@ SERVING_SCHEMA_VERSION["options"] = 1
 
 KINDS = tuple(SERVING_SCHEMA_VERSION)
 VERSION_TABLE = "serving_schema_version"
+# The base a build starts from: an empty file, or a copy of the live one (``build``).
+BUILD_MODES = ("fresh", "live")
 # A table may lose at most this share of its live rows in one build without an explicit allow_shrink. The datasets
 # only ever add or replace rows, so any real shrink is a build from a partial or missing Parquet tree.
 MAX_SHRINK = 0.01
@@ -153,8 +161,12 @@ def _remove(path: Path) -> None:
 class BuildFile:
     """One build in progress: its read-write connection, path and id. Made by :func:`build`."""
 
-    def __init__(self, kind: str, build_id: str, path: Path, con: duckdb.DuckDBPyConnection):
+    def __init__(self, kind: str, build_id: str, path: Path, con: duckdb.DuckDBPyConnection,
+                 mode: str = "fresh"):
         self.kind, self.build_id, self.path, self.con = kind, build_id, path, con
+        # What this file started as, for the datasets: under ``"live"`` their tables are already here with the
+        # live rows, under ``"fresh"`` the file is empty and every table is built whole.
+        self.mode = mode
         self.swapped = False
 
     def close(self) -> None:
@@ -299,23 +311,68 @@ def _verify_against_live(kind: str, path: Path, relax: frozenset[str] = frozense
             raise ValueError(f"{table} shrinks from {before} to {after} rows (more than {MAX_SHRINK:.0%})")
 
 
+def _live_version(kind: str) -> int | None:
+    """The serving schema version the live ``kind`` file was built by; ``None`` when there is no file, no version
+    row, or more than one (a file no build of ours finished)."""
+    try:
+        with open_read(kind) as con:
+            rows = con.execute(f"SELECT version FROM {VERSION_TABLE} WHERE kind = ?", (kind,)).fetchall()
+    except (ServingFileMissing, duckdb.Error):
+        return None
+    return int(rows[0][0]) if len(rows) == 1 else None
+
+
+def _copy_live(kind: str, path: Path) -> str:
+    """Start the build file ``path`` as a copy of the live ``kind`` file; the mode that gave.
+
+    ``"fresh"`` (nothing copied) when there is no live file, or it was built by another serving schema version:
+    its tables are then not the ones this code builds, so only a whole build is safe. That is also what makes a
+    version bump a full rebuild without any dataset asking for one.
+    """
+    if _live_version(kind) != SERVING_SCHEMA_VERSION[kind]:
+        return "fresh"
+    live = live_path(kind)
+    shutil.copy2(live, path)
+    wal = live.with_name(live.name + ".wal")
+    if wal.exists():                  # a killed builder's unfinished writes; copied so DuckDB replays them here
+        shutil.copy2(wal, path.with_name(path.name + ".wal"))
+    return "live"
+
+
+def _stamp(con: duckdb.DuckDBPyConnection, kind: str, build_id: str, mode: str) -> None:
+    """Write this build's one version row, over the row a copied live file brought with it."""
+    con.execute(f"CREATE TABLE IF NOT EXISTS {VERSION_TABLE} (kind TEXT, version INTEGER, built_at DOUBLE, "
+                "build_id TEXT, build_mode TEXT)")
+    # A live file built before this column existed: the copy keeps its four columns until the first build adds it.
+    con.execute(f"ALTER TABLE {VERSION_TABLE} ADD COLUMN IF NOT EXISTS build_mode TEXT")
+    con.execute(f"DELETE FROM {VERSION_TABLE}")
+    con.execute(f"INSERT INTO {VERSION_TABLE} (kind, version, built_at, build_id, build_mode) "
+                "VALUES (?, ?, ?, ?, ?)", (kind, SERVING_SCHEMA_VERSION[kind], time.time(), build_id, mode))
+
+
 @contextmanager
-def build(kind: str) -> Iterator[BuildFile]:
+def build(kind: str, base: str = "fresh") -> Iterator[BuildFile]:
     """A new, stamped build file of ``kind``; deleted unless ``swap`` moved it into place inside the block.
+
+    ``base="live"`` starts the file as a copy of the live one, for a build that replaces only what changed;
+    ``b.mode`` and ``serving_schema_version.build_mode`` say what it really got, which is ``"fresh"`` when there
+    was nothing to copy (:func:`_copy_live`). The live file itself is only ever read: the copy is checked and
+    swapped like any other build.
 
     The only read-write handle the builder ever opens on a serving file is this one, on its own new file.
     """
+    if base not in BUILD_MODES:
+        raise ValueError(f"unknown build base {base!r}; known: {BUILD_MODES}")
     build_id = new_build_id()
     path = build_path(kind, build_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = _copy_live(kind, path) if base == "live" else "fresh"
     spill = spill_dir(path)
     spill.parent.mkdir(parents=True, exist_ok=True)               # DuckDB makes only the last level
     con = duckdb.connect(str(path), config={**build_config(), "temp_directory": str(spill)})
-    b = BuildFile(kind, build_id, path, con)
+    b = BuildFile(kind, build_id, path, con, mode)
     try:
-        con.execute(f"CREATE TABLE {VERSION_TABLE} (kind TEXT, version INTEGER, built_at DOUBLE, build_id TEXT)")
-        con.execute(f"INSERT INTO {VERSION_TABLE} VALUES (?, ?, ?, ?)",
-                    (kind, SERVING_SCHEMA_VERSION[kind], time.time(), build_id))
+        _stamp(con, kind, build_id, mode)
         yield b
     finally:
         b.close()
