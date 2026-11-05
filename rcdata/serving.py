@@ -30,10 +30,12 @@ import duckdb
 from ..core import config
 
 # The serving schema of each kind. A change to a kind's tables bumps its number in its own PR (box rule).
-SERVING_SCHEMA_VERSION = {"market": 2, "spine": 4, "ownership": 1}
+SERVING_SCHEMA_VERSION = {"market": 2, "spine": 5, "ownership": 1}
 # spine 2: ``fund``, the SEC fund file's share classes and the ETF rule (``build/spine/sec_tickers_mf.py``).
 # spine 3: ``etf_holdings``, the rotation board's ETFs read whole (``build/spine/etf_holdings.py``).
 # spine 4: ``etf``, the ETF universe from Alpha Vantage and N-CEN (``build/spine/etf.py``, #346).
+# spine 5: ``my_universe`` and ``my_universe_changes``, the names we keep and who entered or left
+#          (``build/spine/my_universe.py``, avo's rules of 4 Nov 2026).
 
 # PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
 SERVING_SCHEMA_VERSION["prices"] = 1
@@ -47,6 +49,11 @@ VERSION_TABLE = "serving_schema_version"
 # A table may lose at most this share of its live rows in one build without an explicit allow_shrink. The datasets
 # only ever add or replace rows, so any real shrink is a build from a partial or missing Parquet tree.
 MAX_SHRINK = 0.01
+# A table whose row count is a **chosen** list and not an accumulation: ``my_universe`` is avo's rules plus his
+# manual removes, so a smaller list is the intended outcome of changing the choice, not a sign of a partial build,
+# and it must not need a request-wide ``allow_shrink`` (which would relax every other table of the kind with it).
+# The "empties" guard still applies: a universe of no names is a bug whoever edited what.
+SHRINKS_BY_CHOICE = ("my_universe",)
 # A table that serves only its newest sessions (``option_eod``, G8) names the first value it keeps here, in its own
 # build file (``declare_window``), so the shrink check compares the rows both files are meant to hold: a session
 # that left the window is not a loss, a session inside it that lost rows is.
@@ -259,7 +266,10 @@ def _counts(path: Path, windows: dict[str, tuple[str, str]] | None = None) -> di
 
 
 def _verify_against_live(kind: str, path: Path, relax: frozenset[str] = frozenset()) -> None:
-    """Refuse a build missing a live table, or (outside ``relax``) emptying or shrinking one by over MAX_SHRINK."""
+    """Refuse a build missing a live table, or (outside ``relax``) emptying or shrinking one by over MAX_SHRINK.
+
+    A table of :data:`SHRINKS_BY_CHOICE` may shrink by any amount; it may still not empty.
+    """
     live = live_path(kind)
     if not live.exists():
         return
@@ -273,6 +283,8 @@ def _verify_against_live(kind: str, path: Path, relax: frozenset[str] = frozense
             continue
         if before > 0 and after == 0:
             raise ValueError(f"{table} empties: {before} rows live, 0 in the build")
+        if table in SHRINKS_BY_CHOICE:
+            continue
         if after < before * (1 - MAX_SHRINK):
             raise ValueError(f"{table} shrinks from {before} to {after} rows (more than {MAX_SHRINK:.0%})")
 

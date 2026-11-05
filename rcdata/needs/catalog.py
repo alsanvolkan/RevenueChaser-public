@@ -100,6 +100,9 @@ _NEEDS = (
     Need("identity.universe", "universe", "security", "source_as_of", "ticker", 5, providers=("sec",)),
     Need("identity.security", "identity", "security", "source_as_of", "ticker", 5,
          ask_param="tickers", normalize=TICKER, providers=("sec",)),
+    # The list we keep (avo, 4 Nov 2026). Its own need beside ``identity.universe``: that one is still the spine's
+    # Tier A names, which the boards read today, and it is retired with them when they move over.
+    Need("identity.my_universe", "my_universe", "my_universe", "source_as_of", "ticker", 5, providers=("sec",)),
     Need("identity.membership", "membership", "index_membership", "source_as_of", "ticker", 5,
          providers=("ssga", "ishares", "vanguard", "nasdaq", "invesco")),
     # ── The prices store (serving kind ``prices``; daily bars, share counts from filings) ────────────────────────

@@ -68,7 +68,8 @@ def test_the_ten_names_tier_and_link(built):
         s = _sec(t)
         assert (s["tier"], s["security_type"], s["gvkey"], s["iid"], s["link_source"]) == (tr, typ, gvkey, iid, how), t
     assert {_sec(t)["tier"] for t in ("SPY",)} == {"B"} and _sec("OTCX")["tier"] == "C" and _sec("NOEX")["tier"] == "D"
-    assert _sec("NVR")["type_source"] == "compustat_tpci(0)"       # OpenFIGI had no answer for NVR
+    # OpenFIGI has no answer for NVR's CUSIP, so the ticker lane asks by ticker and that answer types it.
+    assert _sec("NVR")["type_source"] == "openfigi"
 
 
 def test_identifiers_and_gics_of_the_ten_names(built):
@@ -80,7 +81,9 @@ def test_identifiers_and_gics_of_the_ten_names(built):
     etn = _sec("ETN")
     assert etn["cusip"] == "G29183103" and etn["isin"] is None          # a CINS: no US ISIN is derived
     assert etn["figi"] == "BBG000BJ3PD2"                                # asked as ID_CINS
-    assert _sec("NVR")["figi"] is None and _sec("NVR")["cusip"] == "62944T105"
+    # NVR's CUSIP is there but OpenFIGI does not know it; the FIGI came from the ``TICKER`` job instead.
+    assert _sec("NVR")["figi"] == "BBG000BW5N90" and _sec("NVR")["cusip"] == "62944T105"
+    assert _sec("NVR")["figi_source"] == "openfigi/map (TICKER)"
     assert _sec("TM")["sector"] == "Consumer Cyclical"
     assert _sec("WFC-PC")["cusip"] is None
 
@@ -343,7 +346,9 @@ def test_an_index_key_with_no_constituent_rows_is_one_issue(built):
 
 def test_build_issues_name_the_plans_problems(built):
     issues = _issues()
-    assert ("tier_a_no_figi", "NVR") in issues                     # OpenFIGI: absent
+    # NVR's ``ID_CUSIP`` answer is absent, but the ticker lane found its FIGI, so neither no-FIGI issue is open.
+    assert ("tier_a_no_figi", "NVR") not in issues
+    assert ("tier_a_no_figi_by_ticker", "NVR") not in issues
     assert ("cik_many_gvkeys", "21175") not in issues               # CNA: the ticker match decided
     assert ("membership_wrds_differs", "sp400:HEI") in issues       # left the MidCap in Compustat, still in the files
     assert not {k for k, _ in issues} & {"source_never_run", "tier_a_no_cusip", "tier_a_no_wrds_link"}

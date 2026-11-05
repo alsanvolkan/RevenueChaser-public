@@ -44,15 +44,16 @@ from ....core.gics_map import UNCLASSIFIED, canonical_sector
 from ....core.identity import isin as isin_mod
 from ... import ops
 from .. import base
-from . import KIND, etf, stage, tier as tier_rule, views
+from . import KIND, etf, my_universe, stage, tier as tier_rule, views
 from .funds import NAME as FUNDS
-from .openfigi_map import NAME as OPENFIGI, PRESENT
+from .openfigi_map import FIGI_BY_CUSIP, FIGI_BY_TICKER, NAME as OPENFIGI, PRESENT
 from .sec_tickers import NAME as SEC
 from .sec_tickers_mf import NAME as SEC_MF
 from .wrds import CO_HGIC, IDXCST_HIS, INDEX_GVKEYX, SEC_IDHIST, norm_cik
 
 NAME = "spine/security"
-TABLES = ("security", "security_history", "gics_history", "index_membership", etf.TABLE)
+TABLES = ("security", "security_history", "gics_history", "index_membership", etf.TABLE,
+          my_universe.TABLE, my_universe.CHANGES)
 # Compustat ``exchg`` codes of the US exchanges the SEC file's listed rows trade on: NYSE, AMEX, Nasdaq.
 US_EXCHG = (11, 12, 14)
 # How far ahead of a fund day's SEC snapshot (the newest on or before the day) a line is looked for (delta S1): a fund
@@ -81,14 +82,22 @@ MEMBERSHIP = [("index_slug", "TEXT"), ("ticker", "TEXT"), ("cik", "TEXT"), ("gvk
               ("valid_from", "DATE"), ("valid_to", "DATE"), ("source", "TEXT"), ("files_held", "INTEGER"),
               ("files_counted", "INTEGER"), ("source_as_of", "DATE")]
 SCHEMAS = {"security": SECURITY, "security_history": HISTORY, "gics_history": GICS, "index_membership": MEMBERSHIP,
-           etf.TABLE: etf.SCHEMA}
+           etf.TABLE: etf.SCHEMA, my_universe.TABLE: my_universe.SCHEMA,
+           my_universe.CHANGES: my_universe.CHANGES_SCHEMA}
 
 # The plan's named problems, one kind each; ``key`` is the ticker unless the kind says otherwise.
 ISSUE_KINDS = {
     "source_never_run": "a source this build needs has no data yet (key: the dataset)",
     "tier_a_no_wrds_link": "a Tier A name whose CIK finds no Compustat security",
     "tier_a_no_cusip": "a Tier A name with a Compustat link but no CUSIP",
-    "tier_a_no_figi": "a Tier A CUSIP OpenFIGI has no FIGI for (asked: absent; or not asked yet)",
+    "tier_a_no_figi": "a Tier A name with a CUSIP that OpenFIGI has no FIGI for, by CUSIP or by ticker "
+                      "(asked: absent; or not asked yet)",
+    # A Tier A row with no CUSIP is asked by ticker instead (``openfigi_map.wanted_tickers``); it is this kind only
+    # once that answer is absent too.
+    "tier_a_no_figi_by_ticker": "a Tier A name with no CUSIP that OpenFIGI has no FIGI for by ticker "
+                                "(asked: absent; or not asked yet)",
+    "figi_by_ticker_with_cusip": "a Tier A row whose CUSIP comes from Compustat and whose FIGI came from a TICKER "
+                                 "job: nothing checks the two name the same security",
     "tier_a_no_gics": "a Tier A name with a Compustat link but no current GICS",
     "figi_ticker_differs": "OpenFIGI's ticker for the CUSIP is not the SEC ticker",
     "cusip_shared": "one CUSIP linked to two SEC tickers (key: the CUSIP)",
@@ -100,6 +109,12 @@ ISSUE_KINDS = {
     "membership_files_disagree": "the fund files of an index disagree on a name today (key: index:ticker)",
     "membership_wrds_differs": ("fund-file members and Compustat's differ on the Compustat snapshot day "
                                 "(key: index:ticker)"),
+    "my_universe_etf_undecided": ("the ETFs with no AUM and no 20-session dollar volume yet, so the universe rule "
+                                  "cannot judge them: one issue naming them (key: etf)"),
+    "my_universe_manual_unknown": ("a line of the manual universe file naming a ticker the spine does not hold "
+                                   "(key: the ticker)"),
+    "my_universe_both_kinds": ("a ticker the stock rule and the ETF rule both claim; kept as the stock "
+                               "(key: the ticker)"),
 }
 
 # GICS names (the 2023 structure) of the two levels the bridge names come from.
@@ -314,7 +329,8 @@ class SpineSecurity:
         have = {SEC: stage.count(con, "stg_sec"), SEC_MF: stage.count(con, "stg_sec_mf"),
                 SEC_IDHIST.name: stage.count(con, "stg_wrds_company"),
                 CO_HGIC.name: stage.count(con, "stg_wrds_hgic"), IDXCST_HIS.name: stage.count(con, "stg_wrds_idx"),
-                OPENFIGI: stage.count(con, "stg_figi"), FUNDS: stage.count(con, "stg_fund_lines")}
+                OPENFIGI: stage.count(con, "stg_figi") + stage.count(con, "stg_figi_ticker"),
+                FUNDS: stage.count(con, "stg_fund_lines")}
         for ds, n in have.items():
             if not n:
                 found.append(("source_never_run", ds, f"{ds} has no rows in this build"))
@@ -339,6 +355,9 @@ class SpineSecurity:
         for r in sec:
             tickers_of_cik[r["cik"]] += 1
         figi = {r["cusip"]: r for r in _rows(con, "SELECT * FROM stg_figi")}
+        # The ticker lane: the answer for a name with no CUSIP, so no ``ID_CUSIP`` job could ever answer for it
+        # (``openfigi_map``, the our-universe plan of 2026-11-04 item 1).
+        figi_by_ticker = {r["asked_ticker"]: r for r in _rows(con, "SELECT * FROM stg_figi_ticker")}
         # The current GICS row of each company only; the periods are written in SQL below (should-fix 5).
         hgic: dict[str, list[dict]] = defaultdict(list)
         for g in _rows(con, "SELECT * FROM stg_wrds_hgic WHERE indthru IS NULL ORDER BY gvkey, indfrom"):
@@ -353,6 +372,11 @@ class SpineSecurity:
             cusip = str(cusip).strip().upper() if cusip else None
             f = figi.get(cusip) if cusip else None
             f_ok = f if f and f.get("status") == PRESENT else None
+            figi_src = FIGI_BY_CUSIP if f_ok else None
+            if not f_ok:
+                by_ticker = figi_by_ticker.get(r["ticker"])
+                if by_ticker and by_ticker.get("status") == PRESENT:
+                    f_ok, figi_src = by_ticker, FIGI_BY_TICKER
             # The current GICS row is read before the type, because the SIC 6770 rule uses its sector as the
             # de-SPAC guard (``tier.shell_sector``).
             current = [g for g in hgic.get((sec_row or {}).get("gvkey"), []) if g.get("indthru") is None]
@@ -374,7 +398,7 @@ class SpineSecurity:
                 "share_class_figi": (f_ok or {}).get("share_class_figi"), "exch_code": (f_ok or {}).get("exch_code"),
                 "figi_ticker": (f_ok or {}).get("ticker"),
                 "security_description": (f_ok or {}).get("security_description"),
-                "figi_source": OPENFIGI if f_ok else None,
+                "figi_source": figi_src,
                 "gsector": (g or {}).get("gsector"), "ggroup": (g or {}).get("ggroup"), "gind": (g or {}).get("gind"),
                 "gsubind": (g or {}).get("gsubind"), "gics_from": (g or {}).get("indfrom"),
                 "gics_source": CO_HGIC.name if g else None, "sector": sector, "industry": industry,
@@ -383,7 +407,7 @@ class SpineSecurity:
             rows.append(row)
             if sec_row:
                 linked[(sec_row["gvkey"], sec_row["iid"])] = r["ticker"]
-            found += self._row_issues(row, f, wrds_on, figi_on)
+            found += self._row_issues(row, f, wrds_on, figi_on, figi_by_ticker.get(r["ticker"]))
         by_cusip: dict[str, list[str]] = defaultdict(list)
         for row in rows:
             if row["cusip"]:
@@ -427,12 +451,19 @@ class SpineSecurity:
         found += member_issues
         counts["index_membership"] = _create(con, "index_membership", members)
         counts[etf.TABLE] = _create(con, etf.TABLE, etf.rows(ctx, con))       # reads ``security``: after it
+        mine, changes, mine_issues = my_universe.rows(ctx, con)                # reads both of them: after both
+        found += mine_issues
+        counts[my_universe.TABLE] = _create(con, my_universe.TABLE, mine)
+        counts[my_universe.CHANGES] = _create(con, my_universe.CHANGES, changes)
+        ctx.notes.append(f"{sum(1 for r in mine if r['kind'] == my_universe.STOCK)} stocks and "
+                         f"{sum(1 for r in mine if r['kind'] == my_universe.ETF)} ETFs in {my_universe.TABLE}")
         views.create(con)
         ctx.pending[NAME] = found
         return counts
 
     @staticmethod
-    def _row_issues(row: dict, figi_row: dict | None, wrds_on: bool, figi_on: bool) -> list[tuple[str, str, str]]:
+    def _row_issues(row: dict, figi_row: dict | None, wrds_on: bool, figi_on: bool,
+                    ticker_row: dict | None = None) -> list[tuple[str, str, str]]:
         if row["tier"] != "A":
             return []
         t, out = row["ticker"], []
@@ -442,11 +473,24 @@ class SpineSecurity:
             out.append(("tier_a_no_cusip", t, f"gvkey {row['gvkey']} iid {row['iid']} has no CUSIP"))
         if wrds_on and row["gvkey"] is not None and not row["gsubind"]:
             out.append(("tier_a_no_gics", t, f"gvkey {row['gvkey']} has no current GICS"))
-        if figi_on and row["cusip"] and not row["figi"]:
-            state = (figi_row or {}).get("status") or "not asked yet"
-            out.append(("tier_a_no_figi", t, f"CUSIP {row['cusip']}: {state}"))
+        # One issue per name, so ``issues_open`` does not count a name twice (review should-fix 5): a row with
+        # a CUSIP is the CUSIP kind's, and its message names both lanes; a row without one is the ticker kind's.
+        if figi_on and not row["figi"]:
+            by_cusip = (figi_row or {}).get("status") or "not asked yet"
+            by_ticker = (ticker_row or {}).get("status") or "not asked yet"
+            if row["cusip"]:
+                out.append(("tier_a_no_figi", t, f"CUSIP {row['cusip']}: {by_cusip}; TICKER {t}: {by_ticker}"))
+            else:
+                out.append(("tier_a_no_figi_by_ticker", t, f"TICKER {t}: {by_ticker}"))
+        # Review should-fix 4: the CUSIP (and the ISIN derived from it) came from Compustat while the FIGI came
+        # from a ``TICKER`` job, because OpenFIGI did not answer for that CUSIP. A reorganised issuer is exactly
+        # that case, so the row is named on the board rather than trusted silently.
+        if row["cusip"] and row["figi_source"] == FIGI_BY_TICKER:
+            out.append(("figi_by_ticker_with_cusip", t,
+                        f"CUSIP {row['cusip']} from Compustat, FIGI {row['figi']} from the ticker {t}"))
         if row["figi_ticker"] and row["figi_ticker"] != t:
-            out.append(("figi_ticker_differs", t, f"OpenFIGI says {row['figi_ticker']} for CUSIP {row['cusip']}"))
+            asked = f"CUSIP {row['cusip']}" if row["cusip"] else f"the ticker {t}"
+            out.append(("figi_ticker_differs", t, f"OpenFIGI says {row['figi_ticker']} for {asked}"))
         return out
 
     @staticmethod
