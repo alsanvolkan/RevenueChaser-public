@@ -1,5 +1,5 @@
 /* The Settings page's tab strip (#settings-tabs) and its Needs tab (#needs), #331.
-   The tokens are the control board's own (static/control.css, #ctl), light by default and dark under the shell's
+   The tokens are the control board's own (static/control.css, .ctl), light by default and dark under the shell's
    choice: data-theme="dark", or "auto" on a dark device. test_needs_tab holds the values equal to control.css. */
 #needs,#settings-tabs{--bg:#f6f7f9; --card:#fcfcfd; --fg:#1d2430; --mut:#667085; --line:#e3e7ee;
   --acc:#0e7bd6; --acc2:#e9f3fc;

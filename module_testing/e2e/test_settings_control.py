@@ -21,11 +21,21 @@ def _open(browser, dashboard, scheme="dark"):
     browser.eval(f"document.documentElement.setAttribute('data-theme', {scheme!r})")
 
 
+def _tab(browser, name: str):
+    """Press one of the page's tabs (#331 step 1), as a viewer does, and let it lay out."""
+    browser.eval(f"document.getElementById('tab-{name}').click()")
+    browser.settle()
+
+
 def test_the_board_is_on_top_and_the_old_sections_are_folded_below(dashboard, browser):
     _open(browser, dashboard)
     order = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl details.sec'),"
                          " function(d){ return d.id + (d.open ? '+' : ''); })")
-    assert order[:5] == ["sec-health+", "sec-fetch+", "sec-flow+", "sec-providers", "sec-data"]
+    assert order == ["sec-health+", "sec-flow+", "sec-data", "sec-crosscheck"], "the Data tab"
+    fetch = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl-fetch details.sec'),"
+                         " function(d){ return d.id + (d.open ? '+' : ''); })")
+    assert fetch == ["sec-fetch+", "sec-providers", "sec-queue"], "the Fetch tab"
+    assert browser.eval("document.getElementById('panel-fetch').hidden") is True, "Data is the tab on open"
     assert browser.eval("document.getElementById('old-settings').open") is False
     assert browser.eval("document.getElementById('ctl').compareDocumentPosition("
                         "document.getElementById('newdata')) & Node.DOCUMENT_POSITION_FOLLOWING") != 0
@@ -52,11 +62,14 @@ LAYOUT = r"""(function(){
 
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])
-def test_the_board_is_one_column_on_a_phone_with_44px_targets_and_no_sideways_scroll(dashboard, browser, scheme):
+@pytest.mark.parametrize("tab,sec_id", [("data", "ctl"), ("fetch", "ctl-fetch")])
+def test_the_board_is_one_column_on_a_phone_with_44px_targets_and_no_sideways_scroll(dashboard, browser, scheme,
+                                                                                    tab, sec_id):
     _open(browser, dashboard, scheme)
-    browser.eval("document.querySelectorAll('#ctl details').forEach(function(d){ d.open = true; })")
+    _tab(browser, tab)
+    browser.eval(f"document.querySelectorAll('#{sec_id} details').forEach(function(d){{ d.open = true; }})")
     browser.settle()
-    m = browser.eval(LAYOUT)
+    m = browser.eval(LAYOUT.replace("'ctl'", f"'{sec_id}'"))
     assert m["vw"] == PHONE[0]
     assert m["docScroll"] <= m["vw"], f"the page scrolls sideways: {m['wide']}"
     assert m["secRight"] <= m["vw"] + 0.5, "the board reaches past the phone's edge"
@@ -88,6 +101,7 @@ def _saved_on(dashboard, tier: str) -> str:
 def test_a_tier_press_only_drafts_and_apply_saves_the_universe(dashboard, browser, market, provider_routes):
     before = len(provider_routes.requests())
     _open(browser, dashboard)
+    _tab(browser, "fetch")
     # This store has no spine, so every set counts 0 names and a draft of them is empty (Apply stays off): give the
     # sets sizes, as a built spine would.
     browser.eval("document.querySelectorAll('#universe .useg').forEach(function(b){ b.setAttribute('data-n', '100'); })")
@@ -106,6 +120,7 @@ def test_a_tier_press_only_drafts_and_apply_saves_the_universe(dashboard, browse
 def test_fetch_queues_one_request_and_asks_no_provider(dashboard, browser, market, provider_routes):
     before = len(provider_routes.requests())
     _open(browser, dashboard)
+    _tab(browser, "fetch")
     browser.eval("document.querySelector('#sec-fetch button[data-job=\"fetch\"][data-dataset=\"market_series\"]')"
                  ".click()")
     browser.wait_for("Array.prototype.some.call(document.querySelectorAll('#sec-fetch .jst'),"
@@ -118,8 +133,9 @@ def test_fetch_queues_one_request_and_asks_no_provider(dashboard, browser, marke
 def test_fill_and_fill_this_range_are_off_by_default(dashboard, browser, market, provider_routes):
     before = len(provider_routes.requests())
     _open(browser, dashboard)
+    _tab(browser, "fetch")
     assert browser.eval("window.CTL.fill_enabled") is False
-    fills = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl [data-job=\"fill\"]'),"
+    fills = browser.eval("Array.prototype.map.call(document.querySelectorAll('.ctl [data-job=\"fill\"]'),"
                          " function(b){ return b.disabled; })")
     assert all(fills), "a Fill cell is pressable while the server keeps fills off"
     opened = browser.eval("(function(){ var c = document.querySelector('#sec-fetch .fopen');"
