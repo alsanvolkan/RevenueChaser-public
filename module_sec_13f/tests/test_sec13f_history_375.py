@@ -13,6 +13,7 @@ import pytest
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_sec_13f import engine, history as sec13f_history, report
+from RevenueChaser.rcdata.tests.ownership_fixture import serve_13f
 
 BOARD, TABLE = "module_sec_13f", "sec13f_metrics_history"
 Q1, Q2, Q3 = "2025-12-31", "2026-03-31", "2026-06-30"
@@ -29,13 +30,18 @@ TOTALS = {"AAA": {Q1: _cell(100.0), Q2: _cell(150.0), Q3: _cell(300.0, holders=9
 META = {"AAA": {"name": "Aaa Corp", "sector": "Technology"}, "BBB": {"name": "Bbb Inc", "sector": "Energy"}}
 ENRICH = {"AAA": {"price": {Q1: 10.0, Q3: 15.0}, "shares_outstanding": 1000.0, "float_shares": 900.0,
                   "short_pct": 2.5, "insider_pct": 1.5}}
-CUSIPS = {"111111111": "aaa", "222222222": {"ticker": "AAA"}, "333333333": {"ticker": "BBB"}, "444": {"ticker": ""}}
+CUSIPS = {"AAA": ["222222222", "111111111"], "BBB": ["333333333"]}
 SHOWN = {"totals": TOTALS, "meta": META, "enrichment": ENRICH}
+
+
+@pytest.fixture(autouse=True)
+def served():
+    """The builder's tables the board and the history read (G9)."""
+    serve_13f(TOTALS, cusips=CUSIPS)
 
 
 @pytest.fixture
 def store(rawstore_tmp_db):
-    engine.save_cusip_ticker(CUSIPS)
     return rawstore_tmp_db
 
 
@@ -48,7 +54,7 @@ def _rows(run_id):
 
 
 def test_metric_rows_are_the_board_entries_in_board_order():
-    quarter, rows = sec13f_history.metric_rows(TOTALS, META, ENRICH, CUSIPS)
+    quarter, rows = sec13f_history.metric_rows(TOTALS, META, ENRICH)
     assert quarter == Q3
     _, entries = report.board_entries(TOTALS, META, ENRICH)
     assert [r["ticker"] for r in rows] == [e["ticker"] for e in entries] == ["AAA", "BBB"]
@@ -65,23 +71,22 @@ def test_metric_rows_are_the_board_entries_in_board_order():
 
 
 def test_a_ticker_missing_from_the_latest_quarter_keeps_its_last_snapshot_under_the_board_quarter():
-    _, rows = sec13f_history.metric_rows(TOTALS, META, ENRICH, CUSIPS)
+    _, rows = sec13f_history.metric_rows(TOTALS, META, ENRICH)
     bbb = rows[1]
     assert bbb["quarter"] == Q3 and bbb["shares"] == 400.0 and bbb["shares_by_quarter"][Q3] is None
     assert bbb["price"] is None and bbb["pct_out"] is None and bbb["cusips"] == ["333333333"]
 
 
-def test_cusips_by_ticker_reads_the_map_like_compute_totals():
-    assert sec13f_history.cusips_by_ticker(CUSIPS) == {"AAA": ["111111111", "222222222"], "BBB": ["333333333"]}
+def test_cusips_by_ticker_reads_the_builders_map_for_that_quarter():
+    assert sec13f_history.cusips_by_ticker(Q3) == {"AAA": ["111111111", "222222222"], "BBB": ["333333333"]}
+    assert sec13f_history.cusips_by_ticker(None) == {}
 
 
 def test_a_fetch_records_a_header_and_one_row_per_board_row(store):
-    assert sec13f_history.record(SHOWN, run_id="r1", run_at=COMPLETE, ingested=1) == {TABLE: 2}
+    assert sec13f_history.record(SHOWN, run_id="r1", run_at=COMPLETE) == {TABLE: 2}
     (head,) = _headers()
     assert head["error"] is None and head["quality_note"] is None and head["warnings"] is None
-    context = json.loads(head["context"])
-    assert context.pop("map") == engine.map_identity(engine.load_cusip_ticker())     # #207: the map the run used
-    assert context == {"quarter": Q3, "tickers": 2, "ingested": 1}
+    assert json.loads(head["context"]) == {"quarter": Q3, "tickers": 2}
     rows = _rows("r1")
     assert [r["ticker"] for r in rows] == ["AAA", "BBB"] and str(rows[0]["quarter"]) == Q3
     assert json.loads(rows[0]["cusips"]) == ["111111111", "222222222"]
@@ -91,15 +96,21 @@ def test_a_fetch_records_a_header_and_one_row_per_board_row(store):
 def test_the_header_carries_model_version_and_params(store):
     sec13f_history.record(SHOWN, run_id="r1", run_at=COMPLETE)
     (head,) = _headers()
-    assert head["model_version"] == sec13f_history.model_version() and head["model_version"].startswith("5+")   # #375 F4
+    assert head["model_version"] == sec13f_history.model_version() and head["model_version"].startswith("6+")   # G9
     assert json.loads(head["params"])["START_QUARTER"] == engine.START_QUARTER
 
 
-@pytest.mark.parametrize("name, value", [("START_QUARTER", "2024-12-31"), ("_SHRINK_RATIO", 0.4),
-                                         ("_VALUE_RATIO", 0.8), ("_UNMATCHED_RISE", 0.1)])
-def test_model_version_changes_with_a_setting(monkeypatch, name, value):
+def test_model_version_changes_with_a_setting(monkeypatch):
     before = sec13f_history.model_version()
-    monkeypatch.setattr(engine, name, value)
+    monkeypatch.setattr(engine, "START_QUARTER", "2024-12-31")
+    assert sec13f_history.model_version() != before
+
+
+def test_model_version_changes_with_the_stores_serving_schema(monkeypatch):
+    """The totals' rules are the builder's now (G9), so its schema version is what the hash watches."""
+    from RevenueChaser.rcdata import serving
+    before = sec13f_history.model_version()
+    monkeypatch.setitem(serving.SERVING_SCHEMA_VERSION, "ownership", 99)
     assert sec13f_history.model_version() != before
 
 

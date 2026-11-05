@@ -224,8 +224,6 @@ button:disabled{opacity:.5;cursor:default}
     <button id="btn-refresh" title="Re-render this tab from the store (.store/raw.duckdb) — no network calls">Refresh Tab</button>
     <button id="btn-fetch" style="display:none" title="Fetch fresh data over the network, cache it, then re-render">Fetch</button>
     <button id="btn-refresh-universe" style="display:none" title="Fetch the shared ticker universe over the network, then run the scan">Fetch Universe</button>
-    <button id="btn-sec13f-check" style="display:none" title="Ask the SEC whether a new Form 13F data set is out. Downloads nothing; press Fetch to ingest it.">Check for new data set</button>
-    <button id="btn-sec13f-rebuild" style="display:none" title="Re-derive the 13F totals from the data already ingested. Store only: no download, no network.">Rebuild totals</button>
     <div class="ctl" id="earnings-ctl">
       <button class="primary" id="btn-earnings-today" title="Load today's earnings">Load Earnings Today</button>
       <button id="btn-earnings-load" title="Fetch earnings for the selected days from UW" style="display:none">Load Selected</button>
@@ -406,10 +404,6 @@ function showTab(key){
   document.getElementById('rotation-ctl').style.display = (key==='module_sector_rotation') ? 'flex' : 'none';
   document.getElementById('spxgamma-ctl').style.display = (key==='module_spx_gamma') ? 'flex' : 'none';
   document.getElementById('quick-ctl').style.display = (key==='module_financials') ? 'flex' : 'none';
-  var uwBtn = document.getElementById('btn-sec13f-check');
-  if(uwBtn) uwBtn.style.display = (key==='module_sec_13f') ? 'inline-block' : 'none';
-  var rbBtn = document.getElementById('btn-sec13f-rebuild');
-  if(rbBtn) rbBtn.style.display = (key==='module_sec_13f') ? 'inline-block' : 'none';
   var rfBtn = document.getElementById('btn-refresh');
   // Logs and Runs are read-only views (the log files, the job_runs rows): both poll by themselves,
   // so there is nothing to refresh.
@@ -1317,17 +1311,6 @@ document.getElementById('btn-spx-fetch').addEventListener('click', function(){
   var el = document.getElementById('selected-date-display');
   var d = el ? el.dataset.date : '';
   if(d) fetchTab('/run/spxgamma', new URLSearchParams({date: d}));
-});
-
-// SEC 13F: is a new Form 13F data set out? A short job that downloads nothing and
-// answers through its job message ("New set … — press Fetch" / "Up to date").
-document.getElementById('btn-sec13f-check').addEventListener('click', function(){
-  fetchTab('/run/module_sec_13f-check', null);
-});
-
-// SEC 13F: re-derive the totals from the ingested holdings (store only, zero network).
-document.getElementById('btn-sec13f-rebuild').addEventListener('click', function(){
-  fetchTab('/run/module_sec_13f-rebuild', null);
 });
 
 function showTrail(){

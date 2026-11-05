@@ -515,3 +515,56 @@ def sched_filing(accession, form, filed, issuer, filer, xml=None) -> bytes:
     roles = [("SUBJECT COMPANY", *issuer), ("FILED BY", *filer)]
     doc = (form, "primary_doc.xml", xml) if xml is not None else (form, "sc13g.htm", None)
     return submission(accession, form, filed, roles, [doc])
+
+
+# The served tables a board reads (G9): a test that renders the 13F board writes these instead of running the
+# whole build. Only the columns a reader names are filled; the rest stay NULL, as a partial quarter's would.
+TICKER_PERIOD_DDL = (
+    "CREATE TABLE IF NOT EXISTS sec13f_ticker_period (ticker TEXT, period DATE, shares DOUBLE, value DOUBLE, "
+    "holders INTEGER, top10_pct DOUBLE, hhi DOUBLE, new_holders INTEGER, exited_holders INTEGER, "
+    "exited_confidential INTEGER, exited_no_filing INTEGER, buy_flow DOUBLE, sell_flow DOUBLE, breadth DOUBLE, "
+    "breadth_chg DOUBLE, prev_period DATE, filers INTEGER, cusips INTEGER, filing_deadline DATE, "
+    "filed_through DATE, source TEXT)")
+CUSIP_MAP_DDL = ("CREATE TABLE IF NOT EXISTS sec13f_cusip_map (cusip TEXT, period DATE, ticker TEXT, "
+                 "map_source TEXT, candidate_ticker TEXT, issuer_name TEXT, value DOUBLE, holders INTEGER)")
+PERIODS_DDL = ("CREATE TABLE IF NOT EXISTS sec13f_periods (period DATE, filers INTEGER, filings_active INTEGER, "
+               "value_total DOUBLE, value_mapped DOUBLE, coverage DOUBLE, unmapped_cusips INTEGER, "
+               "refused_value DOUBLE, rescaled_filers INTEGER, filing_deadline DATE, filed_through DATE)")
+
+_METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow",
+            "sell_flow", "breadth", "breadth_chg")
+
+
+def serve_13f(totals: dict, *, cusips: dict | None = None, periods: dict | None = None,
+              deadline=None) -> None:
+    """Write a live ``ownership.duckdb`` holding the 13F tables the board reads.
+
+    ``totals`` is the board's own shape, ``{ticker: {"YYYY-MM-DD": {metric: value}}}``; ``cusips``
+    ``{ticker: [cusip, ...]}`` for the newest period; ``periods`` ``{period: {"unmapped_cusips": n, ...}}``.
+    ``deadline`` is the filing deadline every period gets (a date, or None to leave it NULL: an arriving quarter).
+    """
+    path = serving.live_path("ownership")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(path))
+    try:
+        con.execute(TICKER_PERIOD_DDL)
+        con.execute(CUSIP_MAP_DDL)
+        con.execute(PERIODS_DDL)
+        rows = [[t, date.fromisoformat(p)] + [cell.get(m) for m in _METRICS] + [deadline]
+                for t, by_period in totals.items() for p, cell in by_period.items()]
+        if rows:
+            con.executemany(
+                "INSERT INTO sec13f_ticker_period (ticker, period, "
+                + ", ".join(_METRICS) + ", filing_deadline) VALUES (?, ?, "
+                + ", ".join("?" * len(_METRICS)) + ", ?)", rows)
+        newest = max((p for by_period in totals.values() for p in by_period), default=None)
+        if cusips and newest:
+            con.executemany(
+                "INSERT INTO sec13f_cusip_map (cusip, period, ticker, map_source) VALUES (?, ?, ?, 'spine/security')",
+                [[c, date.fromisoformat(newest), t] for t, cs in cusips.items() for c in cs])
+        for p, fields in (periods or {}).items():
+            con.execute("INSERT INTO sec13f_periods (period, unmapped_cusips, coverage, filing_deadline) "
+                        "VALUES (?, ?, ?, ?)",
+                        [date.fromisoformat(p), fields.get("unmapped_cusips"), fields.get("coverage"), deadline])
+    finally:
+        con.close()

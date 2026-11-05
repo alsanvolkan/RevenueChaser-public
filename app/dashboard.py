@@ -197,16 +197,10 @@ def _no_cache(resp):
 jobs.register("earnings", runners.run_earnings_range, ["module_earnings_radar"])
 jobs.register("module_leaps", runners.run_leaps_latest, ["module_leaps"])  # live UW scan (Fetch)
 # 13F Fetch = download the new SEC Form 13F data set(s), ingest, derive the totals, render (backend D4).
-# The SEC form-13f zips are the only trusted 13F source. The Fetch needs no UW key: the names/sectors
-# step uses the UW screener best-effort and opens its own client (#206).
+# The numbers are the builder's (G9): the Fetch refreshes the names/sectors and shares the dashboard owns and
+# renders the board. It needs no UW key — the names/sectors step is best-effort and opens its own client (#206).
 jobs.register("module_sec_13f", runners.build_sec13f, ["module_sec_13f"], requires_uw=False, lane="long",
               cancellable=True)
-# no deadline: fewer than 5 recorded runs (23 Oct); set from job_runs when measured
-# Store-only: re-derive sec13f_totals from the ingested holdings. Zero network, no UW key.
-jobs.register("sec13f_rebuild", runners.run_sec13f_rebuild, ["module_sec_13f"], requires_uw=False,
-              lane="long")
-# The CUSIP map (#207): OpenFIGI only (at most 400 requests), no SEC and no UW; then the derive with the new map.
-jobs.register("sec13f_map", runners.run_sec13f_map, ["module_sec_13f"], requires_uw=False, lane="long")
 jobs.register("rotation", runners.run_rotation_latest, ["module_sector_rotation"])
 jobs.register("moneyflow", runners.run_money_flow_latest, ["module_sector_rotation"])
 jobs.register("holdings", runners.run_etf_holdings_sync, ["module_sector_rotation"], lane="long")
@@ -229,7 +223,6 @@ jobs.register("module_fundamentals", runners.refused_during_universe(runners.run
 jobs.register("universe", runners.run_universe_job,   # + UW quote rows when a key verifies (#294)
               ["module_asymmetric_growth", "module_swing_potential", "module_fundamentals"], requires_uw=False,
               lane="long", cancellable=True)
-jobs.register("sec13f_check", runners.run_sec13f_check, [], requires_uw=False)
 jobs.register("uw", runners.run_uw_interaction, ["module_uw_interaction"])
 jobs.register("module_comovement", runners.run_comovement, ["module_comovement"], requires_uw=False)
 # Settings save / reset (#40): store-only recompute of the board, then the Settings card.
@@ -703,8 +696,7 @@ def run_leaps():
 
 @app.route("/run/module_sec_13f", methods=["POST"])
 def run_module_sec_13f():
-    refused = _busy(("module_sec_13f", "sec13f_rebuild", "sec13f_map"),
-                    "A 13F job is already queued or running.")
+    refused = _busy(("module_sec_13f",), "A 13F job is already queued or running.")
     if refused:
         return refused
     return _submit("module_sec_13f", {})
@@ -729,36 +721,6 @@ def run_uw():
     params = {k: v for k, v in request.form.items() if k in names}
     params["tool"] = tool
     return _submit("uw", params)
-
-
-@app.route("/run/module_sec_13f-check", methods=["POST"])
-def run_module_sec_13f_check():
-    """Ask the SEC whether a new Form 13F data set is out (downloads nothing).
-
-    A network call, so it is a job, not a GET view; the result comes back as the
-    job's message ("New set … — press Fetch" / "Up to date").
-    """
-    return _submit("sec13f_check", {})
-
-
-@app.route("/run/module_sec_13f-rebuild", methods=["POST"])
-def run_module_sec_13f_rebuild():
-    """Re-derive the 13F totals from the ingested holdings (store only, zero network)."""
-    refused = _busy(("module_sec_13f", "sec13f_rebuild", "sec13f_map"),
-                    "A 13F job is already queued or running.")
-    if refused:
-        return refused
-    return _submit("sec13f_rebuild", {})
-
-
-@app.route("/run/module_sec_13f-map", methods=["POST"])
-def run_module_sec_13f_map():
-    """Map the held CUSIPs through OpenFIGI, then re-derive the 13F totals (#207). No button: the PC starts it."""
-    refused = _busy(("module_sec_13f", "sec13f_rebuild", "sec13f_map"),
-                    "A 13F job is already queued or running.")
-    if refused:
-        return refused
-    return _submit("sec13f_map", {})
 
 
 @app.route("/run/rotation", methods=["POST"])

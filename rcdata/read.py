@@ -38,10 +38,12 @@ KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market",
                  "my_universe": "spine", "my_universe_changes": "spine"}
 # The ownership store (PR 16).
 DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_periods": "ownership/serve",
+                         "sec13f_cusip_map": "ownership/serve",
                          "finra_short_interest": "finra/short_interest", "ibkr_shortable": "ibkr/shortable",
                          "regsho_threshold": "regsho/threshold", "sec_ftd": "sec/ftd",
                          "insider_transactions": "sec/form4", "beneficial_ownership": "sec/13dg"})
-KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_periods", "finra_short_interest",
+KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_periods", "sec13f_cusip_map",
+                                               "finra_short_interest",
                                                "ibkr_shortable", "regsho_threshold", "sec_ftd",
                                                "insider_transactions", "beneficial_ownership")})
 
@@ -594,6 +596,22 @@ def periods_13f() -> list[dict]:
     """``sec13f_periods``: per report period its filers, value, the share of value named a ticker (``coverage``) and
     ``complete``, by period."""
     return _completed(_rows("sec13f_periods", "SELECT * FROM sec13f_periods ORDER BY period", []))
+
+
+def cusip_map_13f(periods: Iterable | None = None) -> list[dict]:
+    """``sec13f_cusip_map`` rows a ticker was named for (``period``, ``cusip``, ``ticker``, ``map_source``), of
+    ``periods`` (every period when None), by period and CUSIP. A CUSIP the spine could not name is left out: it has
+    no ticker to belong to."""
+    sql, params = "", []
+    if periods is not None:
+        days = sorted({_day(p) for p in periods})
+        if not days:
+            return []
+        sql = f" AND period IN ({', '.join('?' * len(days))})"
+        params = days
+    return _rows("sec13f_cusip_map",
+                 f"SELECT period, cusip, ticker, map_source FROM sec13f_cusip_map WHERE ticker IS NOT NULL{sql} "
+                 "ORDER BY period, cusip", params)
 
 
 def finra_short_interest(tickers: Iterable[str], start=None, end=None) -> list[dict]:

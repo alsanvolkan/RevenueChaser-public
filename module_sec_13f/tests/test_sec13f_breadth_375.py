@@ -1,113 +1,51 @@
-"""SEC 13F ownership breadth (#375 F4, Chen-Hong-Stein 2002).
+"""SEC 13F ownership breadth (#375 F4, Chen-Hong-Stein 2002) as the board and its history carry it.
 
-Breadth is the share of a quarter's 13F filers that hold the name: ``holders / filers``, as a percentage with
-four decimals (a few hundred holders against thousands of filers reads as 0.0 as a fraction). ``breadth_chg``
-is the quarter-over-quarter change in percentage points, ``None`` in the first quarter. The denominator is the
-distinct ``cik`` in ``sec13f_holdings`` for that ``period`` — the same rows the numerator is counted from — and
-a period with no filer total gives ``None``, never 0.
+Breadth is the share of a quarter's 13F filers that hold the name, ``holders / filers`` as a percentage with four
+decimals, and ``breadth_chg`` its quarter-over-quarter change in percentage points. The builder computes both
+(``rcdata/build/ownership/serve.py``, covered by ``rcdata/tests/test_ownership_serve.py``); what is tested here is
+that they reach the board's column and the history row unchanged.
 
-Offline: the store is the per-test temp DuckDB (``rawstore_tmp_db``), no SEC or UW request.
+Offline: the ownership serving file and the history store are per-test temp DuckDBs, no SEC or UW request.
 """
 from __future__ import annotations
 
 import pytest
 
 from RevenueChaser.core import history as core_history, ledger, rawstore
-from RevenueChaser.module_sec_13f import engine, history as sec13f_history, report
+from RevenueChaser.module_sec_13f import history as sec13f_history, report
+from RevenueChaser.rcdata.tests.ownership_fixture import serve_13f
 
 Q1, Q2 = "2026-03-31", "2026-06-30"
 RUN_AT = 1759701600.0        # a fixed instant after Q1/Q2 above, never "today"
-AAA, BBB, CCC = "111111111", "222222222", "333333333"
 
 
-def _filing(accession, cik, period):
-    return {"accession": accession, "cik": cik, "period": period, "filing_date": period,
-            "type": "13F-HR"}
+def _cell(holders, breadth, breadth_chg, shares=100.0):
+    return {"shares": shares, "value": shares * 10.0, "holders": holders, "new_holders": None,
+            "exited_holders": None, "top10_pct": 100.0, "hhi": 10000.0, "buy_flow": None, "sell_flow": None,
+            "breadth": breadth, "breadth_chg": breadth_chg}
 
 
-def _holding(accession, cik, period, cusip, shares, line_no=1):
-    return {"accession": accession, "line_no": line_no, "cusip": cusip, "cik": cik,
-            "shares": float(shares), "value": float(shares) * 10.0, "period": period,
-            "sshprnamttype": "SH", "putcall": ""}
+# Q1 has two filers, Q2 four, as the builder counted them: AAA 1 then 2 holders (50.0, 50.0), BBB 1 both
+# quarters (50.0, 25.0), CCC 2 then 2 (100.0, 50.0).
+TOTALS = {"AAA": {Q1: _cell(1, 50.0, None), Q2: _cell(2, 50.0, 0.0)},
+          "BBB": {Q1: _cell(1, 50.0, None, shares=50.0), Q2: _cell(1, 25.0, -25.0, shares=50.0)},
+          "CCC": {Q1: _cell(2, 100.0, None, shares=20.0), Q2: _cell(2, 50.0, -50.0, shares=20.0)}}
 
 
 @pytest.fixture
 def store(rawstore_tmp_db):
-    """Q1: two filers (c1, c2). Q2: four (c1..c4).
-
-    AAA: 1 holder in Q1, 2 in Q2 → 50.0 then 50.0. BBB: 1 holder both quarters → 50.0 then 25.0.
-    CCC: held by both Q1 filers and two of the four Q2 filers → 100.0 then 50.0.
-    """
-    rawstore.write_rows("sec13f_submissions", [
-        _filing("a1", "c1", Q1), _filing("a2", "c2", Q1),
-        _filing("b1", "c1", Q2), _filing("b2", "c2", Q2), _filing("b3", "c3", Q2), _filing("b4", "c4", Q2),
-    ])
-    rawstore.write_rows("sec13f_holdings", [
-        _holding("a1", "c1", Q1, AAA, 100, 1), _holding("a1", "c1", Q1, BBB, 50, 2),
-        _holding("a1", "c1", Q1, CCC, 10, 3),
-        _holding("a2", "c2", Q1, CCC, 10, 1),
-        _holding("b1", "c1", Q2, AAA, 100, 1), _holding("b1", "c1", Q2, BBB, 50, 2),
-        _holding("b1", "c1", Q2, CCC, 10, 3),
-        _holding("b2", "c2", Q2, AAA, 100, 1), _holding("b2", "c2", Q2, CCC, 10, 2),
-        _holding("b3", "c3", Q2, "999999999", 5, 1),   # filers of the quarter that do not hold AAA/BBB/CCC
-        _holding("b4", "c4", Q2, "999999999", 5, 1),
-    ])
-    engine.save_cusip_ticker({AAA: "AAA", BBB: {"ticker": "BBB"}, CCC: {"ticker": "CCC"}})
+    serve_13f(TOTALS)
     return rawstore_tmp_db
 
 
 def _totals():
-    totals, _factors = engine.compute_totals(engine.load_cusip_ticker())
-    return totals
-
-
-def test_breadth_is_holders_over_that_quarters_filers(store):
-    """Test 1: 2 filers in Q1 and 4 in Q2; 1→2 holders gives 50.0 and 50.0, 1→1 gives 50.0 and 25.0."""
-    totals = _totals()
-    assert totals["AAA"][Q1]["breadth"] == pytest.approx(50.0)
-    assert totals["AAA"][Q2]["breadth"] == pytest.approx(50.0)
-    assert totals["BBB"][Q1]["breadth"] == pytest.approx(50.0)
-    assert totals["BBB"][Q2]["breadth"] == pytest.approx(25.0)
-    # Four decimals: a name held by one filer of three thousand is 0.0333, not 0.0.
-    m = engine.compute_period_metrics({Q1: {"shares": 1.0, "value": 10.0, "cik": {"c1": 1.0}}}, filers={Q1: 3000})
-    assert m[Q1]["breadth"] == 0.0333
-
-
-def test_breadth_chg_is_none_in_the_first_quarter_and_points_afterwards(store):
-    """Test 2: the first quarter has no prior breadth, exactly as ``new_holders`` has none."""
-    totals = _totals()
-    assert totals["AAA"][Q1]["breadth_chg"] is None
-    assert totals["BBB"][Q1]["breadth_chg"] is None
-    assert totals["AAA"][Q2]["breadth_chg"] == pytest.approx(0.0)
-    assert totals["BBB"][Q2]["breadth_chg"] == pytest.approx(-25.0)
-
-
-def test_an_unknown_filer_total_is_none_not_zero():
-    """Test 3: a period the filer read did not cover is unknown, never 0 %."""
-    periods = {Q1: {"shares": 100.0, "value": 1000.0, "cik": {"c1": 100.0}},
-               Q2: {"shares": 100.0, "value": 1000.0, "cik": {"c1": 100.0}}}
-    m = engine.compute_period_metrics(periods, filers={Q1: 2})
-    assert m[Q1]["breadth"] == pytest.approx(50.0)
-    assert m[Q2]["breadth"] is None
-    assert m[Q2]["breadth_chg"] is None          # unknown, so no change either
-    # And no filers at all is unknown too, not a division by zero.
-    m = engine.compute_period_metrics(periods)
-    assert m[Q1]["breadth"] is None and m[Q1]["breadth_chg"] is None
-
-
-def test_the_denominator_is_per_period_never_global(store):
-    """Test 4: Q1's count must not leak into Q2. CCC is held by both Q1 filers and half the Q2 filers."""
-    totals = _totals()
-    assert totals["CCC"][Q1]["holders"] == 2
-    assert totals["CCC"][Q1]["breadth"] == pytest.approx(100.0)
-    assert totals["CCC"][Q2]["breadth"] == pytest.approx(50.0)
-    assert totals["CCC"][Q2]["breadth_chg"] == pytest.approx(-50.0)
+    return TOTALS
 
 
 def test_the_history_row_carries_both_fields(store):
     """Test 5a: ``metric_rows`` → ``record`` writes breadth and its change."""
     totals = _totals()
-    _quarter, rows = sec13f_history.metric_rows(totals, {}, {}, engine.load_cusip_ticker())
+    _quarter, rows = sec13f_history.metric_rows(totals, {}, {})
     by_ticker = {r["ticker"]: r for r in rows}
     assert by_ticker["BBB"]["breadth"] == pytest.approx(25.0)
     assert by_ticker["BBB"]["breadth_chg"] == pytest.approx(-25.0)
