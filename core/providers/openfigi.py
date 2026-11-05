@@ -1,7 +1,10 @@
-"""OpenFIGI CUSIP mapping client (#207 F1, D19): ``POST /v3/mapping`` with one ``ID_CUSIP`` job per CUSIP.
+"""OpenFIGI CUSIP mapping client (#207 F1, D19): ``POST /v3/mapping`` with one job per CUSIP.
 
-Each job is ``{"idType": "ID_CUSIP", "idValue": <cusip>, "exchCode": "US"}``: the US composite listing, the one the
-app's tickers name (the identity adapter, ``core/identity/sources/openfigi.py``, asks its TICKER jobs the same way).
+Each job is ``{"idType": <ID_CUSIP or ID_CINS>, "idValue": <cusip>, "exchCode": "US"}``: the US composite listing,
+the one the app's tickers name (the identity adapter, ``core/identity/sources/openfigi.py``, asks its TICKER jobs
+the same way). The id type is picked per code by ``id_type``: a CINS (a letter first, a non-US/Canadian issuer) is
+absent from OpenFIGI's ``ID_CUSIP`` index altogether, so asking one that way can only ever answer "not found"
+(#239).
 A request carries at most 100 jobs, and requests are spaced to stay under 25 per 6 s: the keyed limits (OpenFIGI
 documentation, read on the PC 2026-10-03). The key is ``OPENFIGI_API_KEY`` (the PC ``.env``, read through
 :mod:`core.credentials`). It is sent only in the ``X-OPENFIGI-APIKEY`` header and never logged or returned. Without
@@ -46,10 +49,26 @@ MAX_REQUESTS = 400          # per run, avo's cap for #207 (typed 2026-10-14, B6)
 MAX_ATTEMPTS = 8            # per batch: the first request and up to 7 retries after a 429
 _LOW_REMAINING = 5          # wait out the window when fewer requests than this remain in it
 PRESENT, ABSENT = "present", "absent"
+# The two OpenFIGI id types a 9-character code can be asked as; ``id_type`` picks one per code.
+ID_CUSIP, ID_CINS = "ID_CUSIP", "ID_CINS"
 
 # OpenFIGI's suffix -> the app's; the inverse of the identity adapter's ``_SUFFIXES`` (units, warrants). Any other
 # class separator is a slash there and a dash here.
 _SUFFIXES = (("/U", "-UN"), ("/WS", "-WT"))
+
+
+def id_type(code: str) -> str:
+    """OpenFIGI's ``idType`` for one code: ``ID_CINS`` for a CINS, else ``ID_CUSIP``.
+
+    A CINS (CUSIP International Numbering System) code is the CUSIP of an issuer outside the US and Canada and
+    starts with a letter naming a country or region (Eaton ``G29183103``, Linde ``G54950103``); a letter *inside*
+    the code is not one (``00206R102`` is a plain CUSIP). ``ID_CINS`` is OpenFIGI's own id type (its API
+    documentation and ``/v3/mapping/values/idType``, read 2026-10-28), and a CINS is absent from the ``ID_CUSIP``
+    index entirely: the spine's first live ``openfigi/map`` asked 2,092 CINS as ``ID_CUSIP`` and OpenFIGI answered
+    "No identifier found." for every one (homesrv, 2026-10-28). ``rcdata/build/spine/openfigi_map.py`` has picked
+    the type per code since #238; this is the same rule for the 13F map (#239).
+    """
+    return ID_CINS if str(code or "")[:1].isalpha() else ID_CUSIP
 
 
 def pace() -> bool:
@@ -159,7 +178,7 @@ def map_cusips(cusips: Iterable[str], *, key: str | None = None, max_requests: i
 
     for i in range(0, len(todo), JOBS_PER_REQUEST):
         chunk = todo[i:i + JOBS_PER_REQUEST]
-        jobs = [{"idType": "ID_CUSIP", "idValue": c, "exchCode": "US"} for c in chunk]
+        jobs = [{"idType": id_type(c), "idValue": c, "exchCode": "US"} for c in chunk]
         resp = None
         for attempt in range(MAX_ATTEMPTS):
             if res.requests >= max_requests:
