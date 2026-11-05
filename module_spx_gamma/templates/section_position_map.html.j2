@@ -416,6 +416,9 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
     <td data-label="Put Wall">{{ w.put_wall }}</td><td data-label="Put Wall Net GEX">{{ w.put_wall_net }}</td>
     <td data-label="Call Wall">{{ w.call_wall }}</td><td data-label="Call Wall Net GEX">{{ w.call_wall_net }}</td></tr>
   {% endfor %}
+  {% if target_walls %}<tr><td data-label="DTE Band"><b>{{ target_walls.band }}</b></td>
+    <td data-label="Put Wall">{{ target_walls.put_wall }}</td><td data-label="Put Wall Net GEX">{{ target_walls.put_wall_net }}</td>
+    <td data-label="Call Wall">{{ target_walls.call_wall }}</td><td data-label="Call Wall Net GEX">{{ target_walls.call_wall_net }}</td></tr>{% endif %}
   </tbody>
 </table>
 <div class="box-note">Put Wall (main level) is taken from the 181-365 day band. The ALL row is the all-expiry max(+net) reference (UW gex-levels put_wall).</div>

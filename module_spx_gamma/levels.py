@@ -87,6 +87,17 @@ def band_walls(strike_expiry_rows: list[dict], spot: float | None) -> list[dict]
     return out
 
 
+def expiry_walls(strike_expiry_rows: list[dict], expiry: str | None, spot: float | None) -> dict | None:
+    """Put and call wall of one expiry (A11), by the same rule as the DTE bands; None without rows or spot."""
+    if spot is None or not expiry:
+        return None
+    rows = [r for r in strike_expiry_rows if r.get("expiry") == expiry and r.get("strike") is not None
+            and r.get("net_gamma") is not None]
+    if not rows:
+        return None
+    return {"expiry": expiry, **_walls(rows, spot)}
+
+
 def _zero_dte(strike_expiry_rows: list[dict], asof_date: str) -> list[dict]:
     return [r for r in strike_expiry_rows if r.get("expiry") == asof_date]
 

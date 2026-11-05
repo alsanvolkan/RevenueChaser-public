@@ -29,7 +29,8 @@ UW does not document how it computes its gamma flip, and the open-interest and v
 | DTE Band | Put Wall | Put Wall Net GEX | Call Wall | Call Wall Net GEX |
 |---|---|---|---|---|
 {% for w in dte_band_walls %}| {{ w.band }}{% if w.band == '181-365' %} **(Put Wall standard)**{% endif %} | {{ w.put_wall }} | {{ w.put_wall_net }} | {{ w.call_wall }} | {{ w.call_wall_net }} |
-{% endfor %}
+{% endfor %}{% if target_walls %}| **{{ target_walls.band }}** | {{ target_walls.put_wall }} | {{ target_walls.put_wall_net }} | {{ target_walls.call_wall }} | {{ target_walls.call_wall_net }} |
+{% endif %}
 
 Put Wall (main level) is the 181-365 day band. The ALL row is the all-expiry reference.
 

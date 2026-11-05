@@ -14,12 +14,14 @@ from .charm_pin import (
     vanna_peaks,
 )
 from .config import TICKER, net_sum, to_float
+from .brier import target_friday
 from .chains import delta25_skew, normalize_option_chain
 from .engines.iron_butterfly import build_iron_butterfly
 from .engines.prediction_engine import generate_prediction_matrix
 from .expected_move import expected_move, pick_iv
 from .expiry_table import front_expiry_share, normalize_expiry_rows
 from .levels import (
+    expiry_walls,
     band_walls,
     cumulative_gex_crossing,
     cumulative_gex_envelope,
@@ -499,6 +501,8 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         levels["lower_support_band"] = put_wall_band["put_wall"]
         put_wall_origin = "band_181_365"
     levels["put_wall_all"] = next((w["put_wall"] for w in dte_band_walls if w["band"] == "ALL"), None)
+    # A11: the walls of the expiry the week resolves on (the next Friday, as the Brier scoring)
+    target_walls = expiry_walls(all_se_rows, target_friday(asof_str) if asof_str else None, spot)
 
     iv_rows = (raw.get("interpolated_iv") or {}).get("data", [])
     annualized_iv = pick_iv(iv_rows)
@@ -562,6 +566,7 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "gex_envelope": gex_envelope,
         "levels": levels,
         "dte_band_walls": dte_band_walls,
+        "target_expiry_walls": target_walls,
         "put_wall_origin": put_wall_origin,
         "charm_qualification": charm_qualification,
         "charm_pin_report": charm_pin_report,

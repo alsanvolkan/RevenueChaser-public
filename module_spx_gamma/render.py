@@ -593,6 +593,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "historical": _historical_panels(snapshot),
         # ── v4 provider comparison ──
         "dte_band_walls": _dte_band_rows(snapshot),
+        "target_walls": _target_wall_row(snapshot),
         "flip_methods": _flip_methods(snapshot),
         # The report's §2 and §15: both derived from this snapshot and the history already read above.
         "regime_conditions": change_conditions(snapshot, _hist, snapshot.get("asof_date")),
@@ -612,6 +613,16 @@ def _dte_band_rows(snapshot: dict) -> list[dict]:
             "call_wall_net": fmt_signed_compact(w.get("call_wall_net")),
         })
     return rows
+
+
+def _target_wall_row(snapshot: dict) -> dict | None:
+    """A11: the target expiry's walls, formatted like a DTE-band row."""
+    w = snapshot.get("target_expiry_walls")
+    if not w:
+        return None
+    return {"band": f"Target expiry {w['expiry']}", "put_wall": fmt_level(w.get("put_wall")),
+            "put_wall_net": fmt_signed_compact(w.get("put_wall_net")), "call_wall": fmt_level(w.get("call_wall")),
+            "call_wall_net": fmt_signed_compact(w.get("call_wall_net"))}
 
 
 def _tone(value) -> str:
