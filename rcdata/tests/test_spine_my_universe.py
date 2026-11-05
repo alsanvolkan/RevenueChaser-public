@@ -318,6 +318,19 @@ def test_a_fund_a_manual_remove_takes_out_is_not_named_as_held(live_my_universe)
     assert issues == []
 
 
+def test_the_held_issue_counts_only_the_funds_the_manual_file_left_in(live_my_universe):
+    """Two funds lose their volume and avo removes one by hand: the issue names and counts the other alone. The
+    single-fund test above cannot tell the filtered list from the whole one (#443)."""
+    live_my_universe(rows=[{"ticker": t, "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 4e10,
+                            "entered_on": date(2026, 10, 1)} for t in ("GLD", "SPY")])
+    con = _con(etfs=[_etf("GLD"), _etf("SPY"), _etf("IBIT", adv=50_000_000.0)])
+    rows, _, issues = _rows(con, manual=([], [{"ticker": "GLD", "reason": "avo took it out"}]))
+    assert sorted(rows) == ["IBIT", "SPY"]
+    kind, key, detail = issues[0]
+    assert (kind, key) == ("my_universe_etf_volume_lost", my_universe.ETF)
+    assert detail.startswith("1 ETFs") and "SPY" in detail and "GLD" not in detail
+
+
 def test_the_held_issue_names_the_first_twenty_funds_and_counts_the_rest(live_my_universe):
     """One issue, not thousands of rows: it names :data:`my_universe.MANY` tickers and says how many more (N2)."""
     many = [f"F{i:03d}" for i in range(my_universe.MANY + 3)]
