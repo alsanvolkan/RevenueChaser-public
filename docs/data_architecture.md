@@ -1334,7 +1334,11 @@ serve. `crsp_a_stock.stkdelists` is still fetched and nothing in the serving bui
 `wrds_price_diff`'s `crsp_delisting_returns` row is gone with it. CRSP is the cross-check: of every Compustat close (`crsp_vs_compustat`) and
 of the splits (`CRSP_SPLITS`, `dlycumfacpr` steps): one no Compustat or Alpaca split is within 3 days of is applied
 nowhere and is a `split_only_crsp` issue, and the gap it explains is no `price_gap_no_action` (Order 4: 1,167 such
-issues on homesrv, 22 Tier A; Compustat's `ajexdi` now carries most of those splits). **Alpaca is the tester**: its
+issues on homesrv, 22 Tier A; Compustat's `ajexdi` now carries most of those splits). Because it stands in for the gap,
+the issue names the served close's move across its ex-date, and a jump of 1.9 times or more says *Compustat lacks
+this split* (the served history is wrong there); the build note `split_only_crsp: ...` counts those first. A CRSP
+split with no served bar of the security on both sides within 7 days touches no served bar: counted in the note, not
+named (review M6 of #382: build 4 named 1,056 with no way to tell the two apart). **Alpaca is the tester**: its
 bars write `alpaca_close_differs` and `adjustment_differs` issues, compared in every serving build, so a session is
 checked again once Compustat's update brings it.
 
@@ -1430,7 +1434,8 @@ session: an untyped or excluded Tier A name is left out of the store on purpose)
 ETF, a ticker of the spine's `etf` table, with no bar on the newest served session; key: the ticker),
 `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
 days, with no split), `split_only_crsp` (a split CRSP's `dlycumfacpr` records and no Compustat or Alpaca split is
-within 3 days of: not applied; key security:session), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
+within 3 days of, between two served bars at most 7 days apart: not applied; the detail names the served close's
+move across it; key security:session), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
 more than half a cent on each of Alpaca's cent-rounded adjusted closes, the exact bound, where that is larger: about
 1.5 bp at $70, 5 bp at $20, 50 bp at $2, so below a few dollars of adjusted close a dividend-sized gap hides in it;
 checked on every served bar Alpaca, the tester, has a bar for), `alpaca_close_differs` (the tester: a Compustat or CRSP

@@ -69,6 +69,8 @@ COVER, YAHOO, UW = "sec/cover_shares", "yfinance/float", "uw/total_float"
 INDEX_SOURCE = "market_series/cboe"
 # A day whose split-adjusted close moved by this factor or more, either way, with no split that day.
 GAP_FACTOR = 1.9
+# ... measured from the security's previous served bar, at most this many days before it.
+GAP_DAYS = 7
 # The 1-bp rule: our total-return day return against the source's own adjusted one.
 TOLERANCE = 1e-4
 # Alpaca's adjusted closes come rounded to the cent, so its day return can be off by half a cent on each close
@@ -111,8 +113,10 @@ ISSUE_KINDS = {
                             "newest served session (key: the ticker; review M3 of #382)"),
     "price_gap_no_action": ("the split-adjusted close moved by GAP_FACTOR or more with no split that day "
                             "(key: security:session)"),
-    "split_only_crsp": ("CRSP's dlycumfacpr records a split no Compustat or Alpaca split is within SPLIT_SAME_DAYS of; "
-                        "not applied, the cross-check of Compustat's splits (key: security:session)"),
+    "split_only_crsp": ("CRSP's dlycumfacpr records a split no Compustat or Alpaca split is within SPLIT_SAME_DAYS of, "
+                        "between two served bars at most GAP_DAYS apart; not applied, the cross-check of Compustat's "
+                        "splits. The detail names the served close's move across it: a jump of GAP_FACTOR or more is "
+                        "a split Compustat lacks (key: security:session; review M6 of #382)"),
     "adjustment_differs": ("a served bar's total-return day return is more than 1 bp from Alpaca's adjusted one, or "
                            "more than the rounding of its cent-rounded closes where that is larger (the tester, "
                            "key: security:session)"),
@@ -426,7 +430,7 @@ class PricesServing:
                             "GROUP BY ALL ORDER BY 1").fetchall()
         if basis:
             ctx.notes.append("Compustat day returns by rule: " + ", ".join(f"{n} {b}" for b, n in basis))
-        counts["corporate_action"] = self._actions(con, found)
+        counts["corporate_action"] = self._actions(ctx, con, found)
         counts["adj_factor"] = _create(con, "adj_factor", ADJ_SQL)
         counts["shares_class"] = self._shares(con, found)
         counts["security_symbol"] = _create(con, "security_symbol", SYMBOL_SQL)
@@ -483,7 +487,7 @@ class PricesServing:
     # ── Actions ───────────────────────────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _actions(con: duckdb.DuckDBPyConnection, found: list) -> int:
+    def _actions(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, found: list) -> int:
         # Compustat's actions of the securities with bars, unless Alpaca has one of that kind that day.
         con.execute(f"""INSERT INTO _act BY NAME SELECT w.* FROM ({wrds_history.ACTIONS_SQL}) w
             WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
@@ -492,15 +496,44 @@ class PricesServing:
         # CRSP's splits are the cross-check only (Order 4; the WRDS access inventory of 3 Nov 2026 prefers
         # Compustat's daily splits, and avo's rule of 4 Nov 2026 leaves CRSP no served bar): one no Alpaca or
         # Compustat split of the security is near is kept aside and named, never applied.
-        con.execute(f"""CREATE OR REPLACE TEMP TABLE _crsp_only_split AS SELECT w.* FROM ({wrds_history.CRSP_SPLITS}) w
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE _crsp_split_near AS SELECT w.* FROM ({wrds_history.CRSP_SPLITS}) w
             WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
               AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id
                               AND {ACTION_KIND.format(a='p')} = 'split'
                               AND abs(date_diff('day', p.ex_date, w.ex_date)) <= {SPLIT_SAME_DAYS})""")
-        for sid, day, aid, ratio in con.execute("SELECT security_id, ex_date, action_id, new_rate "
-                                                "FROM _crsp_only_split ORDER BY 1, 2").fetchall():
+        # Review M6 of #382: such a split stands in for the ``price_gap_no_action`` it explains, so it carries the
+        # served close's move across its ex-date, from the security's last served bar before it to its first on or
+        # after it, as the gap check reads them. A jump of GAP_FACTOR or more is a split Compustat lacks, and the
+        # served history is wrong there; a smaller move is a CRSP factor step the served bars do not show. One with
+        # no served bar on both sides within GAP_DAYS (before Compustat's series starts, or a halt) touches no served
+        # bar and explains no gap: counted in the note, not named.
+        con.execute("""CREATE OR REPLACE TEMP TABLE _crsp_split_span AS
+            SELECT c.*, b.session_date AS day_before, b.close AS close_before_split,
+                   a.session_date AS day_after, a.close AS close_after_split
+            FROM _crsp_split_near c
+            ASOF LEFT JOIN (SELECT security_id, session_date, close FROM price_bar_daily WHERE close > 0) b
+                ON b.security_id = c.security_id AND c.ex_date > b.session_date
+            ASOF LEFT JOIN (SELECT security_id, session_date, close FROM price_bar_daily WHERE close > 0) a
+                ON a.security_id = c.security_id AND c.ex_date <= a.session_date""")
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE _crsp_only_split AS
+            SELECT *, close_after_split / close_before_split AS served_move FROM _crsp_split_span
+            WHERE date_diff('day', day_before, day_after) <= {GAP_DAYS}""")
+        jump = f"abs(ln(served_move)) >= ln({GAP_FACTOR})"
+        for sid, day, aid, ratio, move, before, after, jumps in con.execute(
+                f"SELECT security_id, ex_date, action_id, new_rate, served_move, day_before, day_after, {jump} "
+                "FROM _crsp_only_split ORDER BY 1, 2").fetchall():
+            served = (f"the served close jumps x{move:.3f} from {before} to {after}: Compustat lacks this split"
+                      if jumps else f"the served close moves x{move:.3f} from {before} to {after}, no jump in the "
+                      "served bars")
             found.append(("split_only_crsp", f"{sid}:{day}", f"PERMNO {aid.split(':')[2]}: CRSP's dlycumfacpr has a "
-                          f"split of ratio {ratio:.4f}, no Compustat or Alpaca split within {SPLIT_SAME_DAYS} days"))
+                          f"split of ratio {ratio:.4f}, no Compustat or Alpaca split within {SPLIT_SAME_DAYS} days; "
+                          f"{served}"))
+        named, jumped = con.execute(f"SELECT count(*), count(*) FILTER (WHERE {jump}) FROM _crsp_only_split").fetchone()
+        outside = con.execute("SELECT count(*) FROM _crsp_split_span").fetchone()[0] - named
+        if named or outside:
+            ctx.notes.append(f"split_only_crsp: {named} within the served bars ({jumped} with a served close jump of "
+                             f"{GAP_FACTOR} times or more, either way: Compustat lacks the split, check these first), "
+                             f"{outside} with no served bar on both sides within {GAP_DAYS} days, not named")
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _act_typed AS
             SELECT a.*, CASE WHEN action_type IN ('forward_split', 'reverse_split') THEN 'split'
                              WHEN action_type IN ('cash_dividend', 'capital_gains_distribution') THEN 'cash_dividend'
@@ -709,7 +742,7 @@ class PricesServing:
             WINDOW w AS (PARTITION BY b.security_id ORDER BY b.session_date)""")
         for sid, day, ratio in con.execute(f"""
                 SELECT r.security_id, r.session_date, r.split_close / r.prev_split FROM _ret r
-                WHERE r.prev_split > 0 AND date_diff('day', r.prev_day, r.session_date) <= 7
+                WHERE r.prev_split > 0 AND date_diff('day', r.prev_day, r.session_date) <= {GAP_DAYS}
                   AND abs(ln(r.split_close / r.prev_split)) >= ln({GAP_FACTOR})
                   AND NOT EXISTS (SELECT 1 FROM corporate_action c WHERE c.security_id = r.security_id
                                   AND c.action IN ('split', 'stock_dividend') AND c.ex_date > r.prev_day

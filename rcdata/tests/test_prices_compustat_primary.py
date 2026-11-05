@@ -344,6 +344,57 @@ def test_the_same_gap_with_no_source_of_the_split_is_still_an_issue(monkeypatch)
     assert f"{AAPL}:{JUNE[2]}" in _gap_issues()
 
 
+def _serve_note(monkeypatch, data) -> str:
+    """``_serve``, returning the serving build's note (the bars run carries it)."""
+    from RevenueChaser.rcdata.build import base
+    from RevenueChaser.rcdata.build.prices import actions, bars
+    monkeypatch.setattr(wrds, "_factory", lambda: FakeWrds(data))
+    wrds.reset()
+    assert _backfill()["result"] == "changed"
+    assert base.run_request({"dataset": actions.NAME, "params": {"as_of": "2026-10-27"}})["result"] != "failed"
+    row = base.run_request({"dataset": bars.NAME, "params": {"as_of": "2026-10-27"}})
+    assert row["result"] != "failed", row
+    return row["note"]
+
+
+def _crsp_only_details():
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.prices import serving as prices_serving
+    return {i["key"]: i["detail"] for i in ops.open_issues(prices_serving.NAME, limit=500)[1]
+            if i["kind"] == "split_only_crsp"}
+
+
+def test_a_split_only_crsp_names_the_served_jump_and_one_outside_the_served_bars_is_only_counted(monkeypatch):
+    """Review M6 of #382: ``split_only_crsp`` stands in for ``price_gap_no_action``, so the one whose served close
+    jumps (Compustat lacks the split: the served history is wrong) must not hide among the cross-check's noise. The
+    issue names the served close's move across the ex-date, and the note counts the jumps. A CRSP split with no served
+    bar of the security on both sides within the gap check's window touches no served bar: counted, not named."""
+    data = _split_unknown_to_compustat(_data())
+    # CRSP's own split a year before Compustat's AAPL series starts in this fixture: 4.0 -> 2.0 on 2 May 2024.
+    data["crsp.dsf_v2"] = [{**data["crsp.dsf_v2"][0], "dlycaldt": d, "dlycumfacpr": f, "dlyret": None}
+                           for d, f in (("2024-05-01", 4.0), ("2024-05-02", 2.0))] + data["crsp.dsf_v2"]
+    note = _serve_note(monkeypatch, data)
+    crsp_only = _crsp_only_details()
+    assert set(crsp_only) == {f"{AAPL}:{JUNE[2]}"}, crsp_only
+    assert "the served close jumps x0.502 from 2025-06-03 to 2025-06-04: Compustat lacks this split" \
+        in crsp_only[f"{AAPL}:{JUNE[2]}"]
+    assert ("split_only_crsp: 1 within the served bars (1 with a served close jump of 1.9 times or more, either way: "
+            "Compustat lacks the split, check these first), 1 with no served bar on both sides within 7 days, "
+            "not named") in note
+
+
+def test_a_split_only_crsp_the_served_close_does_not_jump_across_is_named_as_no_jump(monkeypatch):
+    data = _split_unknown_to_compustat(_data())
+    for r in data["comp.secd"]:                       # Compustat's closes run on: no split in the served bars
+        if r["gvkey"] == "001690" and r["datadate"] in JUNE[:2]:
+            r["prccd"] = r["prcod"] = r["prccd"] / 2
+    note = _serve_note(monkeypatch, data)
+    detail = _crsp_only_details()[f"{AAPL}:{JUNE[2]}"]
+    assert "the served close moves x1.005 from 2025-06-03 to 2025-06-04, no jump in the served bars" in detail
+    assert "Compustat lacks" not in detail
+    assert "split_only_crsp: 1 within the served bars (0 with a served close jump" in note
+
+
 def test_a_split_compustat_and_crsp_both_carry_is_one_action(built):
     from RevenueChaser.rcdata import ops
     from RevenueChaser.rcdata.build.prices import serving as prices_serving
