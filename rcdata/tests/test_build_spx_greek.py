@@ -147,9 +147,11 @@ def test_the_two_uw_datasets_start_on_different_days_on_purpose():
 
     The token's earliest available date is 2023-12-07 (probed 5 Nov 2026: a 403 ``historic_data_access_missing``
     names it), and ``greek-exposure/strike-expiry`` serves that far back whole -- 2024-06-14 answered a 53-expiry
-    chain and 259 strikes on its first expiry. ``spot-exposures/expiry-strike`` does not: its historical answer
-    stops at the page limit of 500 with no paging, which is what failed 168 days of the 28 Oct 2026 backfill. So
-    the two constants are deliberately different, and harmonising them would write hundreds of clipped spot days.
+    chain and 259 strikes on its first expiry. ``spot-exposures/expiry-strike`` has nothing there: it answers 200
+    with zero rows on every day before 2025-01-16 (measured on six of them, while the greek chain answered 53-56
+    expiries on the same days), and its historical answer also stops at the page limit of 500 with no paging,
+    which is what failed 168 days of the 28 Oct 2026 backfill. So the two constants are deliberately different,
+    and moving the sibling's back would write empty or clipped days.
     """
     from RevenueChaser.rcdata.build import uw_spot_expiry_strike as spot
     assert uw.FIRST_SESSION == date(2023, 12, 7)
