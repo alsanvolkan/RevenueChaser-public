@@ -407,6 +407,20 @@ def run_leaps_latest(uw: UWClient) -> Path:
     return LEAPS_LATEST
 
 
+def numeric_counts(result: dict | None) -> dict | None:
+    """#136: a result dict's own integer fields, as the run's ``counts``, or ``None`` when it has none.
+
+    A step's result usually mixes counts with diagnostics it also returns (nested overlap statistics, example
+    rows, a session date). Only this dict's own ``int`` values are taken — never a nested dict, a float or a
+    string — so the column holds numbers the step reported and nothing reconstructed from them. ``bool`` is
+    excluded although it is an ``int``: a flag is not a count.
+    """
+    if not isinstance(result, dict):
+        return None
+    counts = {k: v for k, v in result.items() if type(v) is int}
+    return counts or None
+
+
 def last_fetch_notice(board: str, *, partial: bool = False) -> str | None:
     """C24 (#383): the last Fetch's notes for a Refresh, from its result-history header (K2, ``history.last_run``).
 
@@ -1837,7 +1851,9 @@ def run_daily_bars(uw=None, tickers: list[str] | None = None) -> None:
         raise JobMessage("Daily bars are already running; nothing started.")
     if not prices.run_ok(res):
         raise RuntimeError(prices.summary_line(res))
-    raise JobMessage(prices.summary_line(res))
+    # #136: the numbers the step already returned, for the run's ``counts``. The whole result carries nested
+    # diagnostics (``overlap``, examples) that are not counts, so only its own integer fields go in.
+    raise JobMessage(prices.summary_line(res), counts=numeric_counts(res))
 
 
 def run_index_lists(uw=None, first_fill: list[str] | None = None) -> None:
@@ -2076,7 +2092,9 @@ def run_identity(uw=None, limit: int | None = None) -> None:
     """
     from RevenueChaser.core.identity import refresh as identity_refresh
 
-    raise JobMessage(identity_refresh.summary(identity_refresh.refresh(limit=limit)))
+    record = identity_refresh.refresh(limit=limit)
+    # #136: the refresh record already carries its own ``counts``; nothing is recomputed for the column.
+    raise JobMessage(identity_refresh.summary(record), counts=record.get("counts"))
 
 
 def run_settings(uw=None) -> Path:

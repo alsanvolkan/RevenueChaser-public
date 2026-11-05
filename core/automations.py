@@ -1221,6 +1221,42 @@ def _record_run(row: dict) -> None:
     rawstore.write_rows("job_runs", [row])
 
 
+_COUNTS_TAIL_BYTES = 64 * 1024     # a result object is one line; a long log's earlier output is not read
+
+
+def counts_from_log(log: Path, start: int) -> dict | None:
+    """#136: the counts a scheduled step printed, read back from the part of its log this run appended.
+
+    A step's CLI prints one JSON result object on stdout (``{"rows": ..., "written": ...}``), which
+    ``run_task`` streams straight into the log, so the numbers are already recorded as text — this reads the
+    last JSON object in ``log`` from byte ``start`` on and returns it as the row's ``counts``.
+
+    ``start`` is the log's size before the command ran, so an earlier run's result object in the same
+    appended-to log is never recorded as this run's. No JSON, or anything that is not a non-empty object:
+    ``None``, because an invented number is worse than an empty column. Never raises: the run log is
+    bookkeeping, and this is read after the command's exit code is already decided.
+    """
+    import json
+    try:
+        size = log.stat().st_size
+        with open(log, "rb") as fh:
+            fh.seek(max(start, size - _COUNTS_TAIL_BYTES))
+            text = fh.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return None
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not (line.startswith("{") and line.endswith("}")):
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and obj:
+            return obj
+    return None
+
+
 def run_task(name: str, python: str | None = None, cwd: Path | str | None = None, *,
              clock: Callable[[], datetime] | None = None, sleep: Callable[[float], None] | None = None,
              tz: tzinfo | None = None) -> int:
@@ -1284,6 +1320,7 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
             fh.write(f"chain: {line}\n")
             fh.flush()
         record(status="running", started_at=epoch())
+        out_start = os.fstat(fh.fileno()).st_size      # #136: only this run's output is read for counts
         env = None
         if e.tables_written:
             from RevenueChaser.core import rawstore
@@ -1299,7 +1336,8 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
             rc = 1
         fh.flush()
         record(status="done" if rc == RESULT_OK else "error", finished_at=epoch(),
-               error=None if rc == RESULT_OK else f"exit {rc}", message=f"exit {rc}")
+               error=None if rc == RESULT_OK else f"exit {rc}", message=f"exit {rc}",
+               counts=counts_from_log(log, out_start))
         fh.write(f"=== {stamp()} exit {rc}\n")
     return rc
 

@@ -59,10 +59,17 @@ def _utc_now() -> str:
 
 
 class JobMessage(Exception):
-    """A non-error completion signal — the job finishes "done" with an info message."""
+    """A non-error completion signal — the job finishes "done" with an info message.
 
-    def __init__(self, message: str):
+    ``counts`` (#136) is what the run did, for the Runs tab's column, and is stored exactly as
+    :func:`_counts_of` stores a returned one. It is a keyword because most of the long writers end by raising
+    this rather than returning: they have no return value to put counts in, and giving them one would change
+    what every caller of the runner's path gets back.
+    """
+
+    def __init__(self, message: str, counts: dict | None = None):
         self.message = message
+        self.counts = counts
         super().__init__(message)
 
 
@@ -587,8 +594,11 @@ def execute(job_id: str) -> None:
         gap = _gap_fields(uw)
         if gap:
             gap["message"] = f"{exc.message} {gap['message']}"
-        _set(job_id, status="done", finished_at=_utc_now(),
-             **_with_freeze_notes(gap or {"message": exc.message}))
+        fields = _with_freeze_notes(gap or {"message": exc.message})
+        counts = _counts_of({"counts": getattr(exc, "counts", None)})
+        if counts is not None:
+            fields["counts"] = counts                   # #136: a runner that ends with a message, not a return
+        _set(job_id, status="done", finished_at=_utc_now(), **fields)
     except job_control.JobStopped as exc:
         # Stopped at a checkpoint: a freeze that already ran stays visible, as for an error below.
         fields = _with_freeze_notes({})
