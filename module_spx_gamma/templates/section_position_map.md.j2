@@ -61,10 +61,12 @@ Put Wall (main level) is the 181-365 day band. The ALL row is the all-expiry ref
 {% endif %}
 ## Liquidity Layer — Dealer Flow
 
-| Band | Range | Net GEX | ~ /25pt |
+| Band | Range | Net GEX | Hedge for a 25-pt move |
 |---|---|---|---|
 | Absorption (positive gamma) | {{ gex_envelope.absorption.range }} | {{ gex_envelope.absorption.net_gex }} | {{ gex_envelope.absorption.per_25pt }} |
 | Air Gap (negative gamma) | {{ gex_envelope.air_gap.range }} | {{ gex_envelope.air_gap.net_gex }} | {{ gex_envelope.air_gap.per_25pt }} |
+
+Hedge for a 25-pt move = band Net GEX per 1 % x (25 / spot x 100 %), the reports' formula.
 
 Zero crossing (approx. gamma flip): **{{ gex_envelope.zero_crossing }}**
 

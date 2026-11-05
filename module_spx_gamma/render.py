@@ -534,12 +534,12 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
             "absorption": {
                 "range": f"{absorption.get('lo'):,.0f}–{absorption.get('hi'):,.0f}" if absorption.get("lo") is not None else "N/A",
                 "net_gex": fmt_signed_compact(absorption.get("net_gex")),
-                "per_25pt": f"{absorption.get('per_25pt'):,.1f}" if absorption.get("per_25pt") is not None else "N/A",
+                "per_25pt": fmt_signed_compact(absorption.get("per_25pt")).lstrip("+") if absorption.get("per_25pt") is not None else "N/A",
             },
             "air_gap": {
                 "range": f"{air_gap.get('lo'):,.0f}–{air_gap.get('hi'):,.0f}" if air_gap.get("lo") is not None else "N/A",
                 "net_gex": fmt_signed_compact(air_gap.get("net_gex")),
-                "per_25pt": f"{air_gap.get('per_25pt'):,.1f}" if air_gap.get("per_25pt") is not None else "N/A",
+                "per_25pt": fmt_signed_compact(air_gap.get("per_25pt")).lstrip("+") if air_gap.get("per_25pt") is not None else "N/A",
             },
             "zero_crossing": fmt_level(env.get("zero_crossing")),
         },

@@ -108,10 +108,12 @@ Charm signals agree — sell-side lean.
 
 ## Liquidity Layer — Dealer Flow
 
-| Band | Range | Net GEX | ~ /25pt |
+| Band | Range | Net GEX | Hedge for a 25-pt move |
 |---|---|---|---|
-| Absorption (positive gamma) | 7,800–8,000 | +623 | 77.9 |
-| Air Gap (negative gamma) | 7,700–7,750 | -249 | 124.5 |
+| Absorption (positive gamma) | 7,800–8,000 | +623 | 200 |
+| Air Gap (negative gamma) | 7,700–7,750 | -249 | 80 |
+
+Hedge for a 25-pt move = band Net GEX per 1 % x (25 / spot x 100 %), the reports' formula.
 
 Zero crossing (approx. gamma flip): **7,800**
 

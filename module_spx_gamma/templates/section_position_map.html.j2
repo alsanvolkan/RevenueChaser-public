@@ -454,15 +454,16 @@ the levels below stop applying and the map has to be re-read.</div>
   <div class="band green">
     <h3>Absorption Band <span class="sub">(positive gamma — dealers trade against the move)</span></h3>
     <div class="big">{{ gex_envelope.absorption.range }}</div>
-    <div>Net GEX {{ gex_envelope.absorption.net_gex }} &middot; ~{{ gex_envelope.absorption.per_25pt }}/25pt</div>
+    <div>Net GEX {{ gex_envelope.absorption.net_gex }} &middot; {{ gex_envelope.absorption.per_25pt }} hedge per 25 pt</div>
   </div>
   <div class="band red">
     <h3>Air Gap <span class="sub">(negative gamma — dealers trade with the move)</span></h3>
     <div class="big">{{ gex_envelope.air_gap.range }}</div>
-    <div>Net GEX {{ gex_envelope.air_gap.net_gex }} &middot; ~{{ gex_envelope.air_gap.per_25pt }}/25pt</div>
+    <div>Net GEX {{ gex_envelope.air_gap.net_gex }} &middot; {{ gex_envelope.air_gap.per_25pt }} hedge per 25 pt</div>
   </div>
 </div>
 <div class="at-glance" style="margin:10px 0 0"><span class="muted">Zero crossing (approx. gamma flip):</span> {{ gex_envelope.zero_crossing }}</div>
+<div class="muted" style="margin:6px 0 0">Hedge per 25 pt = band Net GEX per 1 % &times; (25 / spot &times; 100 %), the reports' formula.</div>
 </div>
 
 <h2>Cross-Signal Synthesis</h2>

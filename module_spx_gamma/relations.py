@@ -43,7 +43,7 @@ def _band_value(envelope: dict | None, kind: str) -> dict | None:
     return {
         "range": f"{band['lo']:,.0f}–{band['hi']:,.0f}",
         "net_gex": _fmt_usd(band["net_gex"]),
-        "per_25pt": f"{band['per_25pt']:,.1f}" if band.get("per_25pt") is not None else "N/A",
+        "per_25pt": _fmt_usd(band["per_25pt"]).lstrip("+") if band.get("per_25pt") is not None else "N/A",
     }
 
 
