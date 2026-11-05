@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 
-from RevenueChaser.core import job_control, prices, rawstore
+from RevenueChaser.core import job_control, ownership, prices, rawstore
 from RevenueChaser.core.config import OUTPUT_DIR
 # Sector classification lives in one place now (core.gics_map); re-exported here
 # because older import sites still read these names from this module.
@@ -406,13 +406,9 @@ def save_totals(totals: dict):
 
 
 def load_totals() -> dict:
-    rows = rawstore.get_all("sec13f_totals")
-    out = {}
-    for r in rows:
-        entry = r.get("entry")
-        if isinstance(entry, dict):
-            out[r["ticker"]] = entry
-    return out
+    """The stored per-ticker totals. One line, because the read itself is shared: Asymmetric Growth needs the
+    same rows (#16) and must not import this engine for them."""
+    return ownership.sec13f_totals()
 
 
 _NAME_DROP = {
