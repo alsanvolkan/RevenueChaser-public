@@ -39,6 +39,7 @@ TODAYS_UW_REQUESTS = [
     ("/api/stock/SPX/volatility/variance-risk-premium", []),
     ("/api/stock/SPX/volatility/realized", []),
     ("/api/stock/SPX/greek-flow", [("date", DAY)]),
+    ("/api/market/economic-calendar", []),
     ("/api/stock/SPX/flow-per-strike", [("date", DAY)]),
     ("/api/stock/SPX/spot-exposures/strike",
      [("date", DAY), ("limit", "500"), ("max_strike", "6749"), ("min_strike", "5061")]),
@@ -102,7 +103,8 @@ def _uw_requests(http_mock):  # noqa: F811
 def test_the_uw_requests_of_a_fetch_are_todays(uw, http_mock, rcdata_market, tmp_path):  # noqa: F811
     snap.fetch_snapshot(uw, DAY, data_root=tmp_path / "raw", fetch_all_expiries=True)
     assert _uw_requests(http_mock) == TODAYS_UW_REQUESTS
-    assert len(TODAYS_UW_REQUESTS) == 22, "18 before, plus greek-flow (§4.1) and the VIX option book (§17)"
+    assert len(TODAYS_UW_REQUESTS) == 23, ("18 before, plus greek-flow (§4.1), the VIX option book (§17) and the "
+                                           "economic calendar (A8); the skew and target chains need listed expiries")
 
 
 def test_a_fetch_with_nothing_stored_asks_no_live_source_and_says_not_stored(uw, http_mock, yfinance_calls,  # noqa: F811

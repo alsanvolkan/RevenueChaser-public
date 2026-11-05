@@ -153,6 +153,7 @@ details.collapsible > .box-inner > .box-note{ color:var(--muted); font-size:12px
 .flow-green{ background:var(--pos-bg); color:var(--green); }
 .flow-red{ background:var(--neg-bg); color:var(--red); }
 .flow-flat{ background:var(--flat-bg); color:var(--muted); }
+.flow-amber{ background:var(--flat-bg); color:var(--amber); }
 /* ── predictive scenario & directional engine ── */
 .prediction-container{ margin:16px 0 20px; display:flex; flex-direction:column; gap:16px; }
 .prediction-hero{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; }
@@ -528,6 +529,11 @@ the levels below stop applying and the map has to be re-read.</div>
   {% if vrp %}<tr><td data-label="Metric">Variance Risk Premium</td><td data-label="Value">{% if historical.vrp %}n/a (historical){% else %}{{ vrp.risk_premium | fmtnum('{:.2%}') }} (rank {{ vrp.rank | fmtnum('{:,.2f}') }}){% endif %}</td><td data-label="Meaning">Compensation for holding short vol; higher = richer sellers.</td></tr>{% endif %}
   </tbody>
 </table>
+{% if vol_calendar %}<h3 style="margin:14px 0 6px">Volatility calendar to the target Friday</h3>
+<table class="stack">
+  <thead><tr><th>When (Amsterdam)</th><th>Event</th><th>Prior</th><th>Forecast</th></tr></thead>
+  <tbody>{% for e in vol_calendar %}<tr><td data-label="When (Amsterdam)">{{ e.local }}</td><td data-label="Event">{% if e.high_impact %}<b>{{ e.event }}</b> <span class="flow-badge flow-amber">high impact</span>{% else %}{{ e.event }}{% endif %}</td><td data-label="Prior">{{ e.prev or "" }}</td><td data-label="Forecast">{{ e.forecast or "" }}</td></tr>{% endfor %}</tbody>
+</table>{% endif %}
 {% if tails %}<table class="stack" style="margin-top:10px">
   <thead><tr><th>5-session move</th><th>Implied probability</th><th>Realized (stored closes)</th></tr></thead>
   <tbody>{% for t in tails %}<tr><td data-label="5-session move">{{ t.move }}</td><td data-label="Implied probability">{{ t.implied }}</td><td data-label="Realized (stored closes)">{{ t.realized }}</td></tr>{% endfor %}</tbody>

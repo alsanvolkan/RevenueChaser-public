@@ -590,6 +590,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
         "vega_flow": snapshot.get("vega_flow"),
         "straddle": snapshot.get("straddle_move"),
         "tails": _tail_rows(snapshot),
+        "vol_calendar": snapshot.get("vol_calendar") or [],
         "vix_greeks": snapshot.get("vix_greeks"),
         "cftc": snapshot.get("cftc"),
         # Live panels in a backfilled day hold a later session's value: shown "n/a (historical)".

@@ -26,6 +26,9 @@ FILE_KEYS = {
     "realized_vol": "realized_vol",
     "option_chain": "option_chain",
     "target_chain": "target_chain",
+    "economic_calendar": "economic_calendar",
+    "greek_flow": "greek_flow",
+    "vix_greeks": "vix_greeks",
     "flow_per_strike": "flow_per_strike",
 }
 ZERO_DTE_STEM = "zero_dte_strike_expiry"

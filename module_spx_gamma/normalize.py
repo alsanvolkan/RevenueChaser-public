@@ -20,6 +20,7 @@ from .engines.iron_butterfly import build_iron_butterfly
 from .engines.prediction_engine import generate_prediction_matrix
 from .expected_move import expected_move, pick_iv
 from .tails import tail_table
+from .vol_calendar import week_events
 from .expiry_table import front_expiry_share, normalize_expiry_rows
 from .levels import (
     expiry_walls,
@@ -578,6 +579,7 @@ def normalize_snapshot(raw: dict, asof_date: str, ticker: str = TICKER, mode: st
         "expiry_distribution": expiry_rows,
         "front_expiry_share": front_expiry_share(expiry_rows, asof_str),
         # A9: implied vs realized 5-session tails, from the stored closes and the 1-day ATM IV
+        "vol_calendar": week_events(raw.get("economic_calendar"), asof_str) if asof_str else [],
         "tails": tail_table([c.get("close") for c in candles], annualized_iv),
         # A7: the target Friday's ATM straddle (UW quotes), the market's own expected move
         "straddle_move": straddle_move(normalize_option_chain(raw.get("target_chain")), spot),

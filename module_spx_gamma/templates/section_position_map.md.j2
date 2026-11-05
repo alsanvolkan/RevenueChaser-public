@@ -103,7 +103,12 @@ What it tells you: whether implied vol is cheap or expensive, how the term struc
 {% endif %}{% if vega_flow %}Directional vega flow (cumulative, {{ vega_flow.buckets }} buckets): {{ vega_flow.dir_vega_flow | fmtnum('{:+,.0f}') }}{% if vega_flow.get('verdict') %} · **{{ vega_flow.verdict }}**{% endif %} — flow, not the book's net vega; the sign is the reading, unless the largest minute alone carries it.
 {% endif %}{% if vix_greeks %}VIX option book ({{ vix_greeks.expiries }} expiries): net vanna {{ vix_greeks.net_vanna | fmtnum('{:+,.0f}') }} · net charm {{ vix_greeks.net_charm | fmtnum('{:+,.0f}') }}
 {% endif %}{% endif %}
-{% if tails %}
+{% if vol_calendar %}
+Volatility calendar to the target Friday (Amsterdam time):
+
+{% for e in vol_calendar %}- {{ e.local }} — {% if e.high_impact %}**{{ e.event }}** (high impact){% else %}{{ e.event }}{% endif %}
+{% endfor %}
+{% endif %}{% if tails %}
 | 5-session move | Implied probability | Realized (stored closes) |
 |---|---|---|
 {% for t in tails %}| {{ t.move }} | {{ t.implied }} | {{ t.realized }} |

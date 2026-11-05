@@ -108,6 +108,8 @@ BASE_ENDPOINTS = {
     # The report's §4.1 directional vega flow: per-minute buckets of the day, summed on read. It takes a date, so
     # a backfilled day holds its own flow and not today's.
     "greek_flow": ("/stock/{t}/greek-flow", {"date": None}),
+    # A8: the week's volatility calendar (market-wide, no ticker, no date: a live file).
+    "economic_calendar": ("/market/economic-calendar", {}),
 }
 # The VIX index's own option book (§17). Not in the table above: that one formats one ticker, and this is a second
 # one. MenthorQ publishes VIX gamma levels but not its vanna and charm, so Unusual Whales is the only source for
@@ -134,6 +136,7 @@ _FILENAMES = {
     "variance_risk_premium": "variance_risk_premium.json",
     "realized_vol": "realized_vol.json",
     "greek_flow": "greek_flow.json",
+    "economic_calendar": "economic_calendar.json",
 }
 
 # Files that carry the CURRENT value whatever date was asked for (no ``date`` param),
