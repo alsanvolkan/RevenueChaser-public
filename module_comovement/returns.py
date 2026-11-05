@@ -70,13 +70,85 @@ def residualize(ret: pd.DataFrame, market: pd.Series) -> pd.DataFrame:
     return pd.DataFrame(data, index=ret.index)
 
 
+#: A pair's variance counts as no spread below this share of its mean square. ``sum(x^2)/n - mean^2``
+#: loses its leading digits when the variance is tiny beside the mean -- a constant column leaves a
+#: residue of about 1e-16 of the mean square, positive as often as not, and ``var > 0`` then lets a
+#: meaningless r through (measured: a flat column against its neighbour gave -2.9e-09 where pandas
+#: gives NaN). Log returns sit near zero, so their variance IS their mean square and this never
+#: fires on real input; it is the degenerate columns it catches. The cost is that a column whose
+#: mean dwarfs its standard deviation by more than ~1e6 would read as flat -- not returns.
+_VAR_FLOOR = 1e-12
+
+#: Columns per block of the correlation matrix. The temporaries of one block are (block x names),
+#: not (names x names): at 5 117 names one float64 matrix is 0.20 GB and the all-at-once form keeps
+#: about ten alive, which measured +0.88 GB of peak RSS on a box whose dashboard holds the DuckDB
+#: writer. Blocked it is +0.00 GB **and** faster, because (512 x names) products stay in cache:
+#: 3.14 s against 3.73 s all at once (homesrv, 5 Nov 2026). Same reasoning as ``_PAIR_CHUNK``.
+_CORR_BLOCK = 512
+
+
 def correlation(ret: pd.DataFrame, min_periods: int | None = None) -> pd.DataFrame:
-    """Pairwise Pearson correlation of returns."""
+    """Pairwise Pearson correlation of returns, pairwise-complete as ``DataFrame.corr`` is.
+
+    Five matrix products per block of columns instead of ``ret.corr(min_periods)``, which walks the
+    pairs one at a time: **18.56 s -> 3.14 s** over 5 117 names x 252 sessions on homesrv
+    (5 Nov 2026, #459), and the whole Co-movement board was 94% CPU-bound on this and
+    ``winsorize_mad``.
+
+    Per pair the mean and the variance have to be taken on the rows where BOTH columns are finite,
+    so a single per-column mean will not do. The counts and the four sums come out of products
+    against the finite mask: with ``A`` the returns and NaN as 0, and ``M`` 1 where finite,
+    ``n = M'M`` counts the jointly finite rows and ``A'M``, ``M'A``, ``A'A``, ``(A*A)'M``,
+    ``M'(A*A)`` give the sums of x, y, xy, x^2 and y^2 over exactly those rows.
+
+    It is not bit-identical to pandas -- a different summation order moves the last bits -- but it
+    is the same answer: measured against ``ret.corr`` on the live frame, the NaN pattern is
+    identical in all 26 183 451 cells, the largest difference is 2.4e-15, and no cell differs by
+    more than 1e-12. Downstream that changes nothing anyone can see: the linkage's merge pairs and
+    cluster sizes are identical, only the merge heights move (at most 7.8e-14), and the cluster
+    membership is the same at every cut from 2 to 300 -- the board draws 20, 80 and 250.
+    """
     min_periods = (settings_mod.effective().min_periods if min_periods is None
                    else min_periods)
     if ret is None or ret.empty:
         return pd.DataFrame()
-    return ret.corr(min_periods=min_periods)
+    x = ret.to_numpy(dtype=np.float64, copy=False)
+    finite = np.isfinite(x)
+    a = np.where(finite, x, 0.0)
+    mask = finite.astype(np.float64)
+    squares = a * a
+    cols = x.shape[1]
+    out = np.empty((cols, cols), dtype=np.float64)
+    for lo in range(0, cols, _CORR_BLOCK):
+        hi = min(lo + _CORR_BLOCK, cols)
+        a_t, mask_t, sq_t = a[:, lo:hi].T, mask[:, lo:hi].T, squares[:, lo:hi].T
+        n = mask_t @ mask
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mean_x = (a_t @ mask) / n
+            mean_y = (mask_t @ a) / n
+            scale_x = (sq_t @ mask) / n                  # mean of x^2 on the jointly finite rows
+            scale_y = (mask_t @ squares) / n
+            cov = (a_t @ a) / n - mean_x * mean_y
+            var_x = scale_x - mean_x * mean_x
+            var_y = scale_y - mean_y * mean_y
+            block = cov / np.sqrt(var_x * var_y)
+        # Fewer jointly finite rows than asked for, or no spread on either side, is not a number.
+        block[(n < min_periods)
+              | ~(var_x > _VAR_FLOOR * scale_x)
+              | ~(var_y > _VAR_FLOOR * scale_y)] = np.nan
+        out[lo:hi, :] = block
+    # A correlation is in [-1, 1] and a name correlates with itself exactly, both of which the
+    # arithmetic only gets to within rounding: measured on the live frame, 823 cells came out above
+    # 1 (at most 1 + 4.4e-16) and 1 616 diagonals were not exactly 1.0. All 823 were diagonal, which
+    # ``distance_matrix`` overwrites with 0, so no distance was wrong -- but ``sqrt(2(1-r))`` on
+    # r > 1 is a NaN and 212 RuntimeWarnings, and an off-diagonal cell would land in ``linkage``,
+    # which the docstring there says cannot take NaNs. Cheaper to be exact than to rely on that.
+    np.clip(out, -1.0, 1.0, out=out)
+    diagonal = np.diag_indices_from(out)
+    # Except where the pair is not a number at all (all-NaN, or fewer rows than ``min_periods``),
+    # which pandas leaves NaN on the diagonal too.
+    out[diagonal] = np.where(np.isnan(out[diagonal]), np.nan, 1.0)
+    return pd.DataFrame(out, index=ret.columns, columns=ret.columns)
 
 
 # Pairs per vectorised block. Each (rows x pairs) float temporary is ~8 MB at ~500
