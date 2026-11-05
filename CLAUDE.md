@@ -35,8 +35,9 @@ Code, comments, commit messages, issues and docs are written in **English**.
 - Branch naming: `area/<key>/<slice>`, where `<key>` comes from the issue's `area:` label.
 - **Every issue carries a `board:*` label saying which dashboard it belongs to** (owner's decision,
   5 Nov 2026: "herseyi github issuelarinda takip edelim"). One label per board it affects —
-  `board:sec-13f`, `board:settings`, `board:value-chain`, and so on, one per tab of
-  `app/dashboard.py` `TABS` — plus two for the work that fits no single board:
+  `board:sec-13f`, `board:settings`, `board:value-chain`, and so on, one per **data board** tab
+  (every `app/dashboard.py` `TABS` tab except `logs` and `runs`) — plus two for the work that fits
+  no single board:
   `board:all` (affects every data board) and `board:repo-wide` (store, serving, providers, test
   harness). An `area:*` label says which part of the code; a `board:*` label says which screen.
   So "what is open on the Relatedness board" is

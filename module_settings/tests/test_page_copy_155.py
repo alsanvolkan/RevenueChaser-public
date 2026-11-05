@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 from RevenueChaser.core import datasets
 from RevenueChaser.module_settings import boards, inventory, report

@@ -89,8 +89,8 @@ def test_the_summary_says_how_long_the_state_has_held(on, tmp_path, capsys):
 
 
 def test_the_job_writes_no_store_file_and_no_table(on, tmp_path, monkeypatch):
-    """Like ``RC-Open-Issues-Check``: this job touches no DuckDB file, so it can never queue behind
-    or hold the dashboard's single writer."""
+    """This job touches no DuckDB file, so it can never queue behind or hold the dashboard's
+    single writer."""
     from RevenueChaser.core import rawstore
 
     def no_connect(*a, **kw):

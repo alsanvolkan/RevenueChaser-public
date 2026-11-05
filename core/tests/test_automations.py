@@ -814,8 +814,8 @@ def test_the_warn_thresholds_read_a_positive_number_or_keep_the_default(monkeypa
 # ── #162: the IBKR Gateway login check ──────────────────────────────────────────────────────────
 
 def test_the_ibkr_login_check_writes_no_table():
-    """Like RC-IBKR-Login-Check: it records only its own file under .cache/, so it can never queue
-    behind or hold the dashboard's single DuckDB writer."""
+    """It records only its own file under .cache/, so it can never queue behind or hold the
+    dashboard's single DuckDB writer."""
     entry = A.entry("RC-IBKR-Login-Check")
     assert entry.tables_written == ()
     assert entry.offpeak_gated is False
