@@ -1019,6 +1019,23 @@ build really got: `"live"` falls back to `"fresh"` when there is no live file ye
 schema version, whose tables are not the ones this code builds — which is what makes a version bump a whole rebuild
 without any dataset asking for one. No dataset asks for `base="live"` yet; every kind is still built whole.
 
+**What is dirty** (`rcdata/build/dirty.py`). A build on the live copy only pays off when it can say which rows to
+reload, so the contract for that answer sits in one module. `full_rebuild_reason(kind)` names the cases where no
+dirty set is safe and the kind must be built whole: a live file that is missing or built by another serving schema
+version (`serving.live_version`), or a dataset that declares `full_rebuild_reason(ctx)` because its source restated
+history (a WRDS monthly refresh, SEC republishing a set). `dirty.of(ds, ctx)` is one dataset's dirty set, a `Dirty`: a dataset
+declares `dirty(ctx)`, and a dataset that declares none is `dirty.ALL`, which is why every kind is still built whole
+today. A `Dirty` has two axes, because the tables have two shapes: a **cumulative** table only gains rows for new
+source days, so what is dirty is a *range* of days; a **restated** table can have an old row changed by new data, so
+what is dirty is a *key* whose whole history is rebuilt. A chosen list (`my_universe`) narrows to neither. A `Dirty`
+carrying neither axis means everything, so a dataset that forgets to narrow gets the slow, correct answer instead of
+a silently partial table; an answer of any other shape raises. The signal a `dirty` is meant to read is `changed_partitions(since)`: the Parquet files written after the live
+file's `built_at` stamp. That stamp is written when the build file opens, before any dataset reads Parquet, so a
+partition written while a long build runs is newer than the stamp and comes out dirty on the next build instead of
+being lost. The signal is the partition's mtime, which a copy or a restore can carry over from another machine; it
+becomes a manifest of (path, size, mtime) compared manifest-to-manifest before any kind relies on the dirty set for
+data correctness.
+
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.
 
