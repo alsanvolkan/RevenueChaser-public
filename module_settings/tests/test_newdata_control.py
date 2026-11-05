@@ -7,6 +7,7 @@ serving files through ``open_read``, the folders by a bounded walk, both cached 
 """
 from __future__ import annotations
 
+import itertools
 import os
 from datetime import datetime, timezone
 
@@ -132,6 +133,7 @@ def test_a_walk_stops_at_its_cap_and_says_the_count_is_a_floor(market_roots, mon
     for i in range(5):
         (raw / f"{i}.json.gz").write_bytes(b"z")
     monkeypatch.setattr(newdata, "STORAGE_WALK_BUDGET", 3)
+    monkeypatch.setattr(newdata, "STORAGE_WALK_SECONDS", 3600.0)   # the entry budget is what this test measures
     got = newdata.collect(NOW)["storage"]["datasets"]["sec/companyfacts"]["raw"]
     assert got["capped"] is True and got["files"] == 3
 
@@ -147,6 +149,7 @@ def test_the_cap_is_one_budget_for_the_whole_walk_not_one_per_folder(market_root
             for i in range(3):
                 (folder / f"{i}.bin").write_bytes(b"z")
     monkeypatch.setattr(newdata, "STORAGE_WALK_BUDGET", 4)
+    monkeypatch.setattr(newdata, "STORAGE_WALK_SECONDS", 3600.0)   # the entry budget is what this test measures
     st = newdata.collect(NOW)["storage"]["datasets"]
     raws = [st[n][r] for n in ("alpaca/bars", "sec/companyfacts", "sec/13f") for r in ("raw", "parquet")]
     assert sum(r["files"] or 0 for r in raws) <= 4
@@ -173,6 +176,28 @@ def test_the_walk_stops_when_it_runs_out_of_time_and_says_the_count_is_a_floor(m
     raw = base.raw_root() / "sec" / "companyfacts"
     raw.mkdir(parents=True)
     (raw / "0.json.gz").write_bytes(b"z")
-    monkeypatch.setattr(newdata, "STORAGE_WALK_SECONDS", -1.0)      # out of time before the first folder
+    monkeypatch.setattr(newdata, "STORAGE_WALK_SECONDS", -1.0)      # out of time at the first entry
     got = newdata.collect(NOW)["storage"]["datasets"]["sec/companyfacts"]["raw"]
     assert got["capped"] is True and got["files"] == 0
+
+
+def test_the_time_is_a_slice_per_folder_so_one_slow_tree_does_not_starve_the_rest(market_roots, monkeypatch):
+    """The first dataset walked is ``uw/spot_expiry_strike``, one folder per session on the HDD. One deadline for the
+    whole render let it spend all of it, and every later dataset then read a floor of nothing — ``0+ files · 0 B``,
+    indistinguishable from empty. Each folder gets its own slice instead, so the last is counted like the first.
+
+    The clock is faked at 0.4 of a folder's slice per read, so each folder gets through two entries and then runs
+    out: the assertion is about the slicing, not about how fast this box's disk is."""
+    from RevenueChaser.rcdata.build import base
+    names = ("alpaca/bars", "sec/companyfacts", "sec/13f")
+    for name in names:
+        folder = base.raw_root().joinpath(*name.split("/"))
+        folder.mkdir(parents=True)
+        for i in range(6):
+            (folder / f"{i}.bin").write_bytes(b"z")
+    step = 0.4 * newdata.STORAGE_WALK_SECONDS / (2 * len(newdata._datasets()))
+    ticks = itertools.count(step, step)
+    monkeypatch.setattr(newdata.time, "monotonic", lambda: next(ticks))
+    got = [newdata.collect(NOW)["storage"]["datasets"][n]["raw"] for n in names]
+    assert [f["files"] for f in got] == [2, 2, 2], "every folder gets its own slice, however late it is walked"
+    assert all(f["capped"] for f in got), "and says the count is a floor"
