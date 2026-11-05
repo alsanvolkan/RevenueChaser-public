@@ -108,3 +108,35 @@ def pytest_addoption(parser):
 @pytest.fixture(scope="session")
 def live_enabled(request) -> bool:
     return bool(request.config.getoption("--live"))
+
+@pytest.fixture
+def serve_13f_totals(dashboard):
+    """Write the 13F tables the board reads into the dashboard's ownership serving file (G9).
+
+    Seeding the serving file directly is right: the build is a CLI path the dashboard never runs, and what the
+    board's routes promise is "render whatever the store holds". Returns the writer, so a test can serve its own
+    totals; ``{ticker: {"YYYY-MM-DD": {metric: value}}}``, the board's own shape.
+    """
+    import duckdb
+
+    METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow",
+               "sell_flow", "breadth", "breadth_chg")
+
+    def write(totals: dict) -> dict:
+        market = Path(dashboard.env["RC_MARKET_DIR"])
+        market.mkdir(parents=True, exist_ok=True)
+        conn = duckdb.connect(str(market / "ownership.duckdb"))
+        try:
+            conn.execute("CREATE TABLE IF NOT EXISTS sec13f_ticker_period (ticker TEXT, period DATE, "
+                         + ", ".join(f"{m} DOUBLE" for m in METRICS) + ", filing_deadline DATE)")
+            for ticker, by_period in totals.items():
+                for period, cell in by_period.items():
+                    conn.execute("INSERT INTO sec13f_ticker_period (ticker, period, "
+                                 + ", ".join(METRICS) + ") VALUES (?, ?, "
+                                 + ", ".join("?" * len(METRICS)) + ")",
+                                 [ticker, period] + [cell.get(m) for m in METRICS])
+        finally:
+            conn.close()
+        return totals
+
+    return write

@@ -37,38 +37,8 @@ def _tickers(dashboard) -> set:
 
 
 @pytest.fixture
-def serve_totals(dashboard):
-    """Write the served 13F tables, as a finished builder run leaves them (G9).
-
-    Seeding the serving file directly is right here: the build is a CLI path the dashboard never runs, and what
-    this board's routes promise is "render whatever the store holds".
-    """
-    METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow",
-               "sell_flow", "breadth", "breadth_chg")
-
-    def write(totals: dict) -> dict:
-        market = Path(dashboard.env["RC_MARKET_DIR"])
-        market.mkdir(parents=True, exist_ok=True)
-        conn = duckdb.connect(str(market / "ownership.duckdb"))
-        try:
-            conn.execute("CREATE TABLE IF NOT EXISTS sec13f_ticker_period (ticker TEXT, period DATE, "
-                         + ", ".join(f"{m} DOUBLE" for m in METRICS) + ", filing_deadline DATE)")
-            for ticker, by_period in totals.items():
-                for period, cell in by_period.items():
-                    conn.execute("INSERT INTO sec13f_ticker_period (ticker, period, "
-                                 + ", ".join(METRICS) + ") VALUES (?, ?, "
-                                 + ", ".join("?" * len(METRICS)) + ")",
-                                 [ticker, period] + [cell.get(m) for m in METRICS])
-        finally:
-            conn.close()
-        return totals
-
-    return write
-
-
-@pytest.fixture
-def seeded_totals(serve_totals):
-    return serve_totals(TOTALS)
+def seeded_totals(serve_13f_totals):
+    return serve_13f_totals(TOTALS)
 
 
 @pytest.fixture
@@ -224,8 +194,8 @@ class TestFilterKit:
             f = payload["fields"][t]
             assert set(f) >= {"ticker", "name", "index", "market_cap", "gics", "theme_ids"}
 
-    def test_off_spine_tickers_are_unclassified(self, dashboard, serve_totals):
-        serve_totals({**TOTALS, "FAKE999": {"2026-06-30": {"holders": 1, "shares": 100, "value": 1000}}})
+    def test_off_spine_tickers_are_unclassified(self, dashboard, serve_13f_totals):
+        serve_13f_totals({**TOTALS, "FAKE999": {"2026-06-30": {"holders": 1, "shares": 100, "value": 1000}}})
         assert dashboard.run_job("/run/module_sec_13f").ok
         payload = _payload(dashboard)
         assert payload["fields"]["FAKE999"]["gics"][0] == "Unclassified"
