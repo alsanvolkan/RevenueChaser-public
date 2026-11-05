@@ -57,6 +57,23 @@ def universe(tiers=("A",)) -> list[dict]:
     return _kept("universe", tiers, lambda: read.universe(tiers=tiers))
 
 
+def my_universe_tickers(kinds=()) -> set[str] | None:
+    """``read.my_universe_tickers`` kept under the spine file's identity: one read a render, not one a board.
+
+    The answer is held as one row whose ``tickers`` is the sorted list, or None for a spine with no such table, so
+    the "no list" and "an emptied list" answers stay apart through the cache.
+    """
+    from ..rcdata import read
+    kinds = tuple(str(k) for k in kinds)
+
+    def read_once() -> list[dict]:
+        tickers = read.my_universe_tickers(kinds)
+        return [{"tickers": None if tickers is None else sorted(tickers)}]
+
+    kept = _kept("my_universe_tickers", kinds, read_once)[0]["tickers"]
+    return None if kept is None else set(kept)
+
+
 def membership(index: str | None = None) -> list[dict]:
     """Current membership (``on`` None, the fund files), as ``read.membership(index)``."""
     from ..rcdata import read

@@ -1,9 +1,10 @@
 """What the fundamentals datasets share: the Tier A companies, the SEC's User-Agent and pace, a GET that can say
 "nothing there", staging from a Parquet tree, and the comparison with the live file.
 
-**The companies** are the Tier A rows of the live spine (``rcdata.read.universe``), read when a run starts and again
-when the kind is built (no network: ``spine.duckdb`` is a local file). No spine file yet means no companies, so a
-fetch asks nothing and the build serves empty tables.
+**The companies** are avo's own list from the live spine (``my_universe``, its ``stock`` rows), or every Tier A row
+where the spine holds no such list (:func:`universe`); read when a run starts and again when the kind is built (no
+network: ``spine.duckdb`` is a local file). No spine file yet means no companies, so a fetch asks nothing and the
+build serves empty tables.
 
 **The SEC.** Every SEC request carries ``RC_SEC_USER_AGENT`` ("Name email", the SEC's rule) when it is set, else the
 builder's own User-Agent with ``RC_HTTP_CONTACT``; each request takes a token of ``core/sec_throttle.py``'s
@@ -135,10 +136,28 @@ def sec_get(ctx: base.RunContext, url: str, *, missing: Iterable[int] = (),
 
 # ── The companies ─────────────────────────────────────────────────────────────────────────────────────────────
 
+#: The tiers read when avo's list decides which companies to ask about: it may name a Tier D company (no exchange
+#: in the SEC file), and the list is then the only filter. Without a list, Tier A alone, the old rule.
+LIST_TIERS = ("A", "B", "C", "D")
+
+
 def universe() -> list[dict]:
-    """The Tier A ``security`` rows of the live spine, by ticker; [] before the first spine build."""
+    """The companies this kind asks about, as ``security`` rows of the live spine, by ticker; [] before the first
+    spine build.
+
+    avo's own list when the live spine holds one (``my_universe``, avo 5 Nov 2026): its ``kind`` ``stock`` rows,
+    the same names the boards that read ``fundamentals.duckdb`` screen (``core/universe.py``). A fund is never
+    asked about -- an ETF has no statements to ask the SEC for -- and a company the list leaves out costs no fetch.
+    Without that table, a spine built before schema 5, the old rule: every Tier A company.
+
+    Either way a row needs a CIK, because every SEC dataset of the kind is keyed by one.
+    """
     from ... import read
-    return [r for r in read.universe(("A",)) if norm_cik(r.get("cik"))]
+    kept = read.my_universe_tickers(("stock",))
+    rows = read.universe(("A",) if kept is None else LIST_TIERS)
+    if kept is not None:
+        rows = [r for r in rows if r["ticker"] in kept]
+    return [r for r in rows if norm_cik(r.get("cik"))]
 
 
 def ciks(rows: Iterable[dict]) -> list[str]:
