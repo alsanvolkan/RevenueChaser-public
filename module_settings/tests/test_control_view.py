@@ -140,7 +140,7 @@ def test_the_files_come_in_build_order_with_the_columns_of_the_code():
     bars = next(t for t in prices["tables"] if t["name"] == "price_bar_daily")
     assert bars["columns"] == [(c, str(t)) for c, t in scaffold.SCHEMA_OF_KIND["prices"]["price_bar_daily"]]
     assert bars["rows"] == 18_412_904
-    assert [d["dataset"] for d in prices["datasets"]] == ["alpaca/bars", "wrds/prices"]
+    assert [d["dataset"] for d in prices["datasets"]] == ["wrds/prices", "alpaca/bars"]
     assert prices["bytes"] == 1_200_000_000
 
 
