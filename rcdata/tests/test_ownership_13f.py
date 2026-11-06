@@ -191,7 +191,9 @@ def test_a_stretch_of_filings_the_archive_does_not_answer_for_stops_the_run(feed
     now the archive is asked for a filing it is known to hold, and this is the case where it cannot."""
     feed.add_day("2026-10-26", [(ox.idx_row(1000010 + i, f"ETA {i}", "13F-HR", "2026-10-26",
                                             f"0001000010-26-00000{i}"), None) for i in range(4)])
-    feed.filings.clear()
+    # 27 October is walked first and keeps its index, but every filing the archive is asked for is gone, so there
+    # is nothing it demonstrably holds and the 26th's cluster cannot be told from a path that answers nothing.
+    feed.not_found |= set(feed.filings)
     row = _run()
     assert row["result"] == "failed" and "did not hand over one it holds either" in row["note"]
     for i in range(3):
@@ -242,6 +244,7 @@ def test_a_path_that_hands_over_nothing_stops_the_run_even_when_it_answers_404(f
     assert "no filing it is known to hold" in row["note"]
     for a in accs:
         assert not sec13f.DATASET.filing_none(date(2026, 10, 27), a).exists(), a
+    assert not sec13f.DATASET.is_done(date(2026, 10, 27))      # and the next run asks the day again
 
 
 def test_the_probe_asks_a_filing_an_earlier_run_kept_and_stops_when_that_one_is_gone_too(feed, http_mock):
@@ -284,6 +287,84 @@ def test_an_index_answer_does_not_write_a_filing_off(feed):
     assert not sec13f.DATASET.filing_none(date(2026, 10, 26), "0001000051-26-000001").exists()
     assert complete == [], complete
     assert any("absent filing markers held back" in n for n in ctx.notes), ctx.notes
+
+
+def test_the_bucket_shaped_absence_is_written_off_too_once_the_archive_answers(feed, http_mock):
+    """The other shape, with the check passing: ``AccessDenied`` is what the bucket answers for an object it does
+    not hold, and it is also what a path refusing everything answers -- which is why the count never decided it.
+    The archive hands over one it holds, so these are absences and the walk goes on."""
+    accs = [f"0001000100-26-00000{i}" for i in range(4)]
+    feed.add_day("2026-10-26", [(ox.idx_row(1000100, "TAU FUND", "13F-HR", "2026-10-26", a), None) for a in accs])
+    row = _run()                                   # 27 October's filings still answer, so the probe passes
+    assert row["result"] != "failed", row["note"]
+    assert "handed over one it holds" in row["note"], row["note"]
+    for a in accs:
+        marker = sec13f.DATASET.filing_none(date(2026, 10, 26), a)
+        assert marker.exists(), a
+        assert marker.exists() and json.loads(marker.read_text())["status"] == 403, a
+
+
+def test_a_cluster_past_the_ceiling_stops_the_run_however_the_probe_answers(feed, http_mock):
+    """Past ``CLUSTER_MAX`` on one day, an answer about one object cannot speak for the rest: the run stops and the
+    message says what the cluster looked like. Counted over the whole day, not since the last probe -- otherwise
+    the probe's reset pushes the ceiling out of reach and tens of filings are written off on the way there."""
+    n = edgar.CLUSTER_MAX + 2
+    accs = [f"0001000060-26-{i:06d}" for i in range(n)]
+    feed.add_day("2026-10-26", [(ox.idx_row(1000060, "XI FUND", "13F-HR", "2026-10-26", a), None) for a in accs])
+    feed.not_found |= set(accs)                       # the archive still hands over 27 October's filings
+    row = _run()
+    assert row["result"] == "failed", row["note"]
+    assert f"more than {edgar.CLUSTER_MAX} on one day" in row["note"], row["note"]
+    assert f"{edgar.CLUSTER_MAX}x404" in row["note"] and "1 accession prefix" in row["note"], row["note"]
+    # Whatever the probe said on the way, no more than the probes' own flushes may have been written off.
+    written = sum(1 for a in accs if sec13f.DATASET.filing_none(date(2026, 10, 26), a).exists())
+    assert written < edgar.CLUSTER_MAX, written
+    assert not sec13f.DATASET.is_done(date(2026, 10, 26))
+
+
+def test_the_archive_is_asked_once_per_doubling_not_once_per_absence(feed, http_mock):
+    """The probe costs a request, so a day of absences must cost O(log n) of them, not one each."""
+    accs = [f"0001000070-26-00000{i}" for i in range(9)]
+    feed.add_day("2026-10-26", [(ox.idx_row(1000070, "OMICRON FUND", "13F-HR", "2026-10-26", a), None)
+                                for a in accs])
+    feed.not_found |= set(accs)
+    row = _run()
+    assert row["result"] == "changed", row["note"]
+    # 9 absences: probes at 3 and at 6 more, so two, not three and not nine.
+    assert "2 run(s) of absent filings" in row["note"], row["note"]
+
+
+def test_the_probe_falls_through_to_an_older_day_when_the_first_candidate_is_gone(feed, http_mock):
+    """Why ``_known_filing`` returns several: a candidate may itself be a filing EDGAR has since removed, which
+    would wedge the walk through its own guard."""
+    older = "0001000081-26-000001"
+    feed.add_day("2026-10-26", [(ox.idx_row(1000081, "SIGMA FUND", "13F-HR", "2026-10-26", older),
+                                 ox.f13_filing(older, 1000081, "2026-10-26",
+                                               [ox.f13_holding("NVR INC", "62944T105", 1_000, 1)], "06-30-2026"))])
+    _run()                                                     # leaves a manifest for 26 and for 27 October
+    newest = sorted(json.loads(l)["accession"]
+                    for l in (sec13f.DATASET.day_dir(date(2026, 10, 27)) / edgar.MANIFEST).read_text().splitlines()
+                    if l.strip())
+    day, accs = "2026-10-28", [f"0001000080-26-00000{i}" for i in range(4)]
+    feed.add_day(day, [(ox.idx_row(1000080, "PI FUND", "13F-HR", day, a), None) for a in accs])
+    feed.not_found |= {*accs, *newest}                         # the newest day's candidate is gone too
+    row = base.run_request({"dataset": sec13f.NAME, "params": {"as_of": "2026-10-29"}}, sleep=lambda s: None)
+    # The newest candidate is gone, an older day's filing still answers, so the absences are written off.
+    assert row["result"] != "failed", row["note"]
+    assert "handed over one it holds" in row["note"], row["note"]
+    for a in accs:
+        assert sec13f.DATASET.filing_none(date(2026, 10, 28), a).exists(), a
+
+
+def test_a_200_that_is_not_a_submission_is_not_a_filing(feed, http_mock):
+    """The index path refuses an answer that is not an index; the data path needs the same, or a host answering 200
+    with an error body for everything fills the raw store with error pages and passes the archive check with them."""
+    acc = "0001000090-26-000001"
+    feed.add_day("2026-10-26", [(ox.idx_row(1000090, "RHO FUND", "13F-HR", "2026-10-26", acc), None)])
+    feed.filings[acc] = b"<html><title>Request Rate Threshold Exceeded</title></html>"
+    row = _run()
+    assert row["result"] == "failed" and "not a full submission" in row["note"], row["note"]
+    assert not sec13f.DATASET.filing_path(date(2026, 10, 26), acc).exists()
 
 
 def test_a_day_held_at_the_end_of_a_run_is_written_once_the_archive_answers(feed, http_mock):
