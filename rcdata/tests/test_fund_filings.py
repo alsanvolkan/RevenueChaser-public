@@ -36,15 +36,24 @@ def test_the_cap_is_the_splitters():
 
 @pytest.mark.parametrize("form", ["10-K", "20-F", "DEF 14A"])
 def test_quality_is_never_ok_at_the_cap(form):
+    """The cap belongs to a slice, which runs away when its stop header is missed -- not to a whole document,
+    whose length is the filer's (avo, 5 Nov 2026: the document is kept uncut)."""
     html = fx.proxy(CAP + 50_000) if form == "DEF 14A" else fx.ten_k(CAP + 50_000)
     if form == "20-F":
         html = html.replace("Item 1. Business", "Item 4. Information on the Company").replace(
             "Item 1A. Risk Factors", "Item 4A. Unresolved Staff Comments")
-    text, quality = filings.slice_text(html, form)
-    assert len(text) == CAP and quality == "capped"
-    small, quality = filings.slice_text(fx.ten_k(5_000) if form != "DEF 14A" else fx.proxy(5_000),
-                                        "10-K" if form == "20-F" else form)
-    assert quality == "ok" and len(small) < CAP
+    by_item = {item: (text, quality) for item, text, quality in filings.document_sections(html, form)}
+    if form == "DEF 14A":
+        text, quality = by_item["proxy"]
+        assert len(text) > CAP and quality == "ok", "a proxy is kept whole"
+        return
+    whole, whole_quality = by_item["whole"]
+    assert len(whole) > CAP and whole_quality == "ok", "the document is kept whole"
+    text, quality = by_item["business"]
+    assert len(text) == CAP and quality == "capped", "a slice still stops at the cap"
+    small = {i: (x, q) for i, x, q in filings.document_sections(
+        fx.ten_k(5_000), "10-K" if form == "20-F" else form)}
+    assert small["business"][1] == "ok" and len(small["business"][0]) < CAP
 
 
 def test_the_served_table_refuses_ok_at_the_cap():
@@ -70,7 +79,11 @@ def test_the_backfill_serves_the_filing_list_its_8k_items_and_the_two_documents(
         ("2.02,9.01", "8-K", date(2025, 10, 29))]
     assert fx.q("SELECT items FROM sec_submissions WHERE accession = ?", fx.Q26) == [(None,)]
     docs = fx.q("SELECT item, form, accession, chars, quality FROM filing_item WHERE kind = 'document' ORDER BY item")
-    assert docs == [("business", "10-K", fx.K25, CAP, "capped"), ("proxy", "DEF 14A", fx.PROXY, 5_000, "ok")]
+    # ``whole`` is the document uncut (avo, 5 Nov 2026); ``market`` and ``financials`` get no row here because
+    # this fixture's 10-K has neither Item 5 nor Item 8.
+    assert docs == [("business", "10-K", fx.K25, CAP, "capped"),
+                    ("proxy", "DEF 14A", fx.PROXY, 5_000, "ok"),
+                    ("whole", "10-K", fx.K25, 210_098, "ok")]
     assert fx.q("SELECT submissions_as_of FROM fundamental_company WHERE ticker = 'MSFT'") == [(date(2026, 10, 28),)]
     assert fx.q("SELECT submissions_as_of FROM fundamental_company WHERE ticker = 'HEI'") == [(None,)]  # never read
     calls = len(sec.requests)
@@ -108,13 +121,72 @@ def test_a_filing_made_during_an_outage_longer_than_the_lookback_is_still_listed
     assert fx.q("SELECT submissions_as_of FROM fundamental_company WHERE ticker = 'MSFT'") == [(date(2026, 10, 28),)]
 
 
-def test_a_40f_filer_is_a_named_miss(sec):
+def test_an_aif_exhibit_with_no_aif_in_its_name_is_still_typed(sec):
+    """The blocker of the first review: ``stored_exhibits`` found the stored file by name, so the fallback branch's
+    pick (``ex99-1.htm``, no "aif" in it) was fetched, written to disk and never typed -- a row the owner asked
+    for, silently absent. It reads the stored index now."""
     fx.filing_routes(sec, {"1094517": fx.submissions(1094517, [
         ("0001193125-25-150000", "40-F", "2025-06-25", "2025-03-31", "tm-40f.htm", "")])})
+    sec.add("tm-40f.htm", fx.ten_k(20_000))
+    sec.add("index.json", {"directory": {"item": [
+        {"name": "tm-40f.htm", "size": "900000"},
+        {"name": "ex99-1.htm", "size": "500000"},
+        {"name": "ex99-2.htm", "size": "4000000"},
+    ]}})
+    sec.add("ex99-1.htm", fx.ten_k(9_000))
     fx.run(filings.NAME, mode="backfill", to="2026-10-28")
-    assert fx.q("SELECT quality, text FROM filing_item WHERE kind = 'document' AND cik = '1094517'") == [
-        ("form_40f", None)]
-    assert not sec.calls("tm-40f.htm")
+    rows = fx.q("SELECT item, quality FROM filing_item WHERE kind = 'document' AND cik = '1094517' ORDER BY item")
+    assert ("aif", "ok") in rows, rows
+    assert ("whole", "ok") in rows
+    assert not sec.calls("ex99-2.htm"), "the statements exhibit is not the business description"
+
+
+def test_a_40f_gets_no_business_row(sec):
+    """Value Chain's splitter knows a 10-K's Item 1 and a 20-F's Item 4, not a Canadian 40-F, so a slice of one
+    would be an arbitrary cut labelled by rules that do not apply."""
+    items = {i for i, _, _ in filings.document_sections(fx.ten_k(5_000), "40-F")}
+    assert items == {"whole"}
+
+
+def test_the_primary_document_is_never_fetched_twice_as_its_own_exhibit():
+    """``index.json`` lists the 40-F itself; a primary named like an AIF would be fetched and typed twice."""
+    listing = {"directory": {"item": [
+        {"name": "cnq-40f-aif.htm", "size": "6572360"},
+        {"name": "ex99-1aif.htm", "size": "900000"},
+    ]}}
+    assert filings.aif_exhibits(listing, "cnq-40f-aif.htm") == ["ex99-1aif.htm"]
+    assert filings.aif_exhibits(listing) == ["cnq-40f-aif.htm", "ex99-1aif.htm"], "without it, the primary wins"
+
+
+def test_an_exhibit_named_exhibit991_is_found_too():
+    """EDGAR writes the number as ``exhibit991`` as often as ``ex99-1``."""
+    for name in ("exhibit991.htm", "exhibit99-1.htm", "ex99_1.htm", "d12345dex991.htm"):
+        listing = {"directory": {"item": [{"name": name, "size": "500000"}]}}
+        assert filings.aif_exhibits(listing) == [name], name
+    assert filings.aif_exhibits({"directory": {"item": [{"name": "ex99-13.htm", "size": "9"}]}}) == []
+
+
+def test_ex99_pages_with_no_aif_among_them_are_a_named_miss():
+    """"The AIF is in the primary document" and "the AIF was missed" are not the same answer, and this is the one
+    case the code can tell apart."""
+    none_named = {"directory": {"item": [{"name": "ex99-2.htm", "size": "9"},
+                                         {"name": "ex99-3.htm", "size": "9"}]}}
+    assert filings.missed_exhibits(none_named) == 2
+    assert filings.missed_exhibits({"directory": {"item": [{"name": "ex99-1aif.htm", "size": "9"}]}}) == 0
+    assert filings.missed_exhibits({"directory": {"item": []}}) == 0
+
+
+def test_a_40f_filers_primary_document_is_read_like_any_other(sec):
+    """It was skipped whole, on the premise that a 40-F keeps its business description in an exhibit. Measured on
+    two real filings (5 Nov 2026): Canadian Natural writes everything into the primary document and Brookfield
+    files an Annual Information Form exhibit beside it, so both shapes exist and the primary is always read."""
+    fx.filing_routes(sec, {"1094517": fx.submissions(1094517, [
+        ("0001193125-25-150000", "40-F", "2025-06-25", "2025-03-31", "tm-40f.htm", "")])})
+    sec.add("tm-40f.htm", fx.ten_k(20_000))
+    sec.add("index.json", {"directory": {"item": []}})
+    fx.run(filings.NAME, mode="backfill", to="2026-10-28")
+    rows = fx.q("SELECT item, quality FROM filing_item WHERE kind = 'document' AND cik = '1094517' ORDER BY item")
+    assert ("whole", "ok") in rows and sec.calls("tm-40f.htm")
 
 
 def test_a_document_the_archive_does_not_hold_is_a_named_miss_not_a_failed_run(sec):
@@ -127,3 +199,44 @@ def test_a_document_the_archive_does_not_hold_is_a_named_miss_not_a_failed_run(s
     assert check["result"] != "failed", check["note"]
     kinds = [i["kind"] for i in ops.open_issues(filings.NAME)[1]]
     assert "document_missing" in kinds
+
+
+# ── The document kept whole, and the two sections avo asked for (5 Nov 2026) ──────────────────────────────────
+
+def test_a_section_the_filer_does_not_have_gets_no_row():
+    """No row rather than a row that says nothing: the ``whole`` row proves the document was read, so a missing
+    section is the filer's, not a gap in the fetch."""
+    items = {i for i, _, _ in filings.document_sections(fx.ten_k(5_000), "10-K")}
+    assert "whole" in items and "business" in items
+    assert "market" not in items and "financials" not in items
+
+
+def test_an_aif_exhibit_is_picked_by_name_largest_first():
+    listing = {"directory": {"item": [
+        {"name": "bn-20251231.htm", "size": "1064676"},
+        {"name": "a2025-40xfex991aif.htm", "size": "1263940"},
+        {"name": "ex991aif-small.htm", "size": "9000"},
+        {"name": "bn-20251231_htm.xml", "size": "8009950"},
+        {"name": "cover.jpg", "size": "608032"},
+    ]}}
+    assert filings.aif_exhibits(listing) == ["a2025-40xfex991aif.htm", "ex991aif-small.htm"]
+    assert filings.aif_exhibits({"directory": {"item": []}}) == []
+    assert filings.aif_exhibits({}) == []
+
+
+def test_the_statements_exhibit_is_never_mistaken_for_the_business_description():
+    """A 40-F files 99.1 (the Annual Information Form), 99.2 (the statements) and 99.3 (the MD&A), and the
+    statements are usually the largest -- so "the biggest ex99" picked the wrong one."""
+    listing = {"directory": {"item": [
+        {"name": "ex99-1aif.htm", "size": "900000"},
+        {"name": "ex99-2financialstatements.htm", "size": "4000000"},
+        {"name": "ex99-3mda.htm", "size": "2000000"},
+    ]}}
+    assert filings.aif_exhibits(listing) == ["ex99-1aif.htm"], "the name that says aif wins outright"
+    # No name says aif: only 99.1 is taken, by its number, and 99.2 and 99.3 are left alone.
+    no_aif = {"directory": {"item": [
+        {"name": "ex99-1.htm", "size": "900000"},
+        {"name": "ex99-2.htm", "size": "4000000"},
+        {"name": "ex99-13.htm", "size": "5000000"},
+    ]}}
+    assert filings.aif_exhibits(no_aif) == ["ex99-1.htm"]
