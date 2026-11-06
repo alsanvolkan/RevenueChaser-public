@@ -244,3 +244,17 @@ def test_every_pacer_a_dataset_asks_for_has_an_official_window():
                          else re.findall(rf'^{name} = "([^"]+)"', text, flags=re.M))
     assert asked, "no run_pacer call found; the pattern this test greps for has changed"
     assert asked <= set(caps.WINDOWS), sorted(asked - set(caps.WINDOWS))
+
+
+def test_no_uw_dataset_counts_its_own_calls():
+    """``RunContext.uw_client`` hangs ``_on_uw_response`` on the client, which counts every UW response, retries
+    included. A dataset that also counts its own asks doubles the number the day cap is read from: the first
+    ``uw/earnings`` fetch reported 10,608 calls for 5,304 requests (6 Nov 2026)."""
+    root = Path(caps.__file__).resolve().parents[1]
+    for path in root.rglob("*.py"):
+        if "tests" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if not re.search(r'^PROVIDER = "uw"$', text, flags=re.M):
+            continue
+        assert "ctx.count(PROVIDER, calls=" not in text, path
