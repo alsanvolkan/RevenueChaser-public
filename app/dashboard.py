@@ -1626,6 +1626,22 @@ def api_build_automation(kind: str):
     return jsonify({"ok": True, "kind": kind, "automation": ops.kind_mode_get(kind)})
 
 
+@app.route("/api/build/automation-ds/<path:dataset>", methods=["POST"])
+def api_build_automation_ds(dataset: str):
+    """#527: one source's own automation, over its file's: ``{"mode": "file|off|raw|parquet|full"}``
+    (``ops.DATASET_MODES``); ``file`` drops the row, so the file's mode holds again. 400 for an unknown dataset or
+    mode. A person's Fetch is not touched by it."""
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build import DATASETS
+    if dataset not in DATASETS:
+        return jsonify({"ok": False, "error": f"unknown dataset {dataset!r}"}), 400
+    mode = str((request.get_json(silent=True) or {}).get("mode") or "").strip()
+    if mode not in ops.DATASET_MODES:
+        return jsonify({"ok": False, "error": f"unknown mode {mode!r}; known: {', '.join(ops.DATASET_MODES)}"}), 400
+    ops.dataset_mode_set(dataset, mode, by=_requested_by())
+    return jsonify({"ok": True, "dataset": dataset, "automation": ops.dataset_mode_get(dataset)})
+
+
 @app.route("/api/build/switch/<name>", methods=["POST"])
 def api_build_switch(name: str):
     """#527: turn the board's ``fetch`` or ``backup`` switch on or off: ``{"on": true|false}``. Off records who (the

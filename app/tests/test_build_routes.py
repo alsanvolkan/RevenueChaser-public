@@ -352,3 +352,15 @@ def test_switch_turns_fetch_or_backup_off_and_on_and_refuses_anything_else(clien
     assert ops.switch_off("fetch") is None
     assert client.post("/api/build/switch/everything", json={"on": False}, headers=h).status_code == 400
     assert client.post("/api/build/switch/backup", json={}, headers=h).status_code == 400, "on must be a boolean"
+
+
+def test_a_sources_automation_is_set_or_dropped_and_refuses_an_unknown_dataset_or_mode(client):
+    """#527: a source's own automation; ``file`` goes back to the file's."""
+    h = {"X-RC-Panel": "settings"}
+    r = client.post("/api/build/automation-ds/market_series", json={"mode": "raw"}, headers=h)
+    assert r.status_code == 200 and r.get_json()["automation"]["mode"] == "raw"
+    assert ops.read_dataset_modes()["market_series"]["set_by"] == "settings"
+    assert client.post("/api/build/automation-ds/market_series", json={"mode": "file"}, headers=h).status_code == 200
+    assert ops.read_dataset_modes() == {}
+    assert client.post("/api/build/automation-ds/no/such", json={"mode": "raw"}, headers=h).status_code == 400
+    assert client.post("/api/build/automation-ds/market_series", json={"mode": "x"}, headers=h).status_code == 400

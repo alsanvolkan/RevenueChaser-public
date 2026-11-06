@@ -27,7 +27,7 @@ CTL_JS = (_STATIC / "control.js").read_text(encoding="utf-8")
 
 #: The routes a press uses; the script reads them from the page's data, so a test sees every route in one place.
 ROUTES = {"request": "/api/build/request/", "schedule": "/api/build/schedule/", "queue": "/api/build/queue",
-          "automation": "/api/build/automation/",
+          "automation": "/api/build/automation/", "automation_ds": "/api/build/automation-ds/",
           "switch": "/api/build/switch/",
           "settings": "/api/settings/board/module_settings", "sample": "/api/settings/sample/",
           "job": "/api/job/", "picture": "/run/storage-picture"}
@@ -470,6 +470,19 @@ def _local_clock(at) -> str:
     return control._local(datetime.fromtimestamp(float(at), timezone.utc)).strftime("%d %b %H:%M")
 
 
+def _ds_automation(d: dict, key: str) -> str:
+    """#527: this source's own Automated select, "as the file" by default (no row: the file's mode holds)."""
+    from RevenueChaser.rcdata import ops
+    mine = d.get("automation_own") or ops.AS_THE_FILE
+    file_mode = dict(AUTOMATION_MODES).get(d.get("automation_file") or "off", d.get("automation_file"))
+    choices = ((ops.AS_THE_FILE, f"as the file ({file_mode})"), *AUTOMATION_MODES)
+    opts = "".join(f'<option value="{m}"{" selected" if m == mine else ""}>{esc(w)}</option>' for m, w in choices)
+    return ('<div class="schedset">'
+            f'<label for="dsauto-{key}">Automated</label><select id="dsauto-{key}" data-dsauto>{opts}</select>'
+            f'<button type="button" class="btn" data-job="automation" data-dataset="{esc(d["dataset"])}">Save</button>'
+            '<span class="dim" role="status"></span></div>')
+
+
 def _sched_fields(d: dict) -> str:
     """#472, moved from the old Fetch card: how often the schedule runs the dataset and a hold until a day, sent
     together by one press (``/api/build/schedule/<ds>/cadence``), so a schedule is never half applied."""
@@ -479,7 +492,7 @@ def _sched_fields(d: dict) -> str:
     opts = "".join(f'<option value="{o}"{" selected" if o == cadence else ""}>{o}</option>'
                    for o in ("daily", "weekly", "monthly"))
     own = "" if d.get("cadence_own") else '<span class="dim">the default</span>'
-    return ('<div class="schedset">'
+    return (_ds_automation(d, key) + '<div class="schedset">'
             f'<label for="cad-{key}">How often</label><select id="cad-{key}" data-cadence>{opts}</select>{own}'
             f'<label for="hold-{key}">Hold until</label><input type="date" id="hold-{key}" data-hold'
             + (f' value="{esc(hold)}"' if hold else "") + '>'

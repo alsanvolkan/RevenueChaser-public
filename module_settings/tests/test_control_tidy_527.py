@@ -66,3 +66,21 @@ def test_the_tree_lines_keep_their_colour_on_a_light_page():
     js = control_render.TREE_JS
     assert "if (!dark()) return" in js
     assert re.search(r"svg\.dtree \.vis\{stroke-width:1\.6;opacity:\.9", control_render.CTL_CSS)
+
+
+def test_each_source_has_an_automated_select_that_defaults_to_as_the_file():
+    from RevenueChaser.module_settings.tests.test_control_view import NOW, control_nd
+    from RevenueChaser.module_settings import control
+    v = control.build(control_nd(), now=NOW, ibkr={"state": "up"}, switches=lambda: {},
+                      kind_modes=lambda: {"market": {"kind": "market", "mode": "raw"}},
+                      dataset_modes=lambda: {"market_series": {"dataset": "market_series", "mode": "full",
+                                                               "set_by": "avo", "set_at": 1.0}},
+                      timer=lambda: {"state": "on", "last": None, "next": None, "minute": 7})
+    ms = next(d for f in v["files"] for d in f["datasets"] if d["dataset"] == "market_series")
+    assert ms["automation_own"] == "full"
+    html = control_render.render_data(v)
+    box = html.split('data-dataset="market_series"', 1)[1]
+    assert 'data-dsauto' in box and '<option value="full" selected>' in box.split("</select>", 1)[0]
+    assert "as the file (raw)" in box.split("</select>", 1)[0]
+    assert '"automation_ds": "/api/build/automation-ds/"' in control_render.scripts(v) or \
+        control_render.ROUTES["automation_ds"] == "/api/build/automation-ds/"

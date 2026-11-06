@@ -497,7 +497,7 @@ def _provider_name(pid: str | None) -> str | None:
 
 
 def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime, timer: dict | None = None,
-                 mode: str = "full") -> dict:
+                 mode: str = "full", file_mode: str | None = None, own: str | None = None) -> dict:
     name = str(card["dataset"])
     meta = screen.DATASETS.get(name)
     from RevenueChaser.rcdata.build import base
@@ -538,6 +538,8 @@ def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime, 
         "backfill": card.get("backfill"), "calendar": name in CALENDARS,
         "recent": card.get("recent") or [], "samples": card.get("samples") or [],
         "cross_check": name in ("alpaca/bars", "uw/total_float", "yfinance/float"),
+        # #527: this source's own automation (None: as the file) and its file's, for the source's select
+        "automation_own": own, "automation_file": file_mode if file_mode is not None else mode,
     }
 
 
@@ -747,6 +749,11 @@ def _read_kind_modes() -> dict:
     return ops.read_kind_modes()
 
 
+def _read_dataset_modes() -> dict:
+    from RevenueChaser.rcdata import ops
+    return ops.read_dataset_modes()
+
+
 def _check_of(card: dict) -> dict | None:
     if _status_of(card) == "never":
         return None
@@ -797,10 +804,10 @@ def file_state(path, tables: list[dict], rows: list[dict]) -> dict:
 
 
 def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datetime,
-          timer: dict | None = None, modes: dict | None = None) -> list[dict]:
+          timer: dict | None = None, modes: dict | None = None, ds_modes: dict | None = None) -> list[dict]:
     """The serving files in build order, each with its dataset rows (in step order) and its tables; ``modes`` is
     ``ops.read_kind_modes()`` (a kind with no row is off)."""
-    modes = modes or {}
+    modes, ds_modes = modes or {}, ds_modes or {}
     cards = {str(c.get("dataset")): c for c in nd.get("datasets") or []}
     tables_now = nd.get("tables") or {}
     storage = nd.get("storage") or {}
@@ -808,7 +815,9 @@ def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datet
     out = []
     for kind, fc in screen.FILES.items():
         auto = modes.get(kind) or {"kind": kind, "mode": "off", "set_at": None, "set_by": None}
-        rows = [_dataset_row(cards[n], ds, kind, universe_view, now, timer, auto["mode"])
+        rows = [_dataset_row(cards[n], ds, kind, universe_view, now, timer,
+                             (ds_modes.get(n) or {}).get("mode") or auto["mode"], file_mode=auto["mode"],
+                             own=(ds_modes.get(n) or {}).get("mode"))
                 for n, ds in datasets.items() if ds.kind == kind and n in cards]
         rows.sort(key=lambda r: (r["step"], 0 if r["role"] == "first" else 1, r["dataset"]))
         schema = scaffold.SCHEMA_OF_KIND.get(kind) or {}
@@ -990,13 +999,15 @@ def _timer(reader) -> dict:
 
 def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, now: datetime | None = None,
           datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None, switches=None,
-          runs_now=None, cgroup=None, alive=None) -> dict:
+          runs_now=None, cgroup=None, alive=None, dataset_modes=None) -> dict:
     """The page's model from ``newdata.collect``'s output. ``applied`` is the saved universe
     (``board_settings.values("module_settings")["values"]``), ``ibkr`` the gateway's login state, ``datasets`` the
     builder's datasets (default: ``newdata._datasets()``). ``timer`` and ``job_runs`` are the readers of the hourly
     builder timer and of ``ops.job_runs2``, injectable so a test needs neither systemd nor a store; a reader that
     fails gives Nones, never a guess. ``kind_modes`` is the reader of each kind's automation
-    (``ops.read_kind_modes``); unreadable, every kind reads off, which is also what the builder does without a row."""
+    (``ops.read_kind_modes``); unreadable, every kind reads off, which is also what the builder does without a row.
+    ``dataset_modes`` reads each source's own (``ops.read_dataset_modes``, #527); unreadable, every source follows its
+    file."""
     from RevenueChaser.module_settings import newdata
     now = now or datetime.now(timezone.utc)
     if nd.get("error"):
@@ -1019,6 +1030,10 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
     except Exception:  # noqa: BLE001 - an unreadable ops store shows every kind off, never the board failing
         modes = {}
     try:
+        ds_modes = dataset_modes() if dataset_modes else _read_dataset_modes()
+    except Exception:  # noqa: BLE001 - an unreadable ops store shows every source "as the file"
+        ds_modes = {}
+    try:
         switch_rows = switches() if switches else _read_switches()
     except Exception:  # noqa: BLE001 - an unreadable ops store shows the switches as not known
         switch_rows = None
@@ -1029,7 +1044,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
                                alive or procs.pid_alive, now)
     except Exception:  # noqa: BLE001 - an unreadable store leaves the lines without a limit, never the board failing
         running = []
-    file_views = files(nd, datasets, uni, reads, now, timer_view, modes)
+    file_views = files(nd, datasets, uni, reads, now, timer_view, modes, ds_modes)
     control_sources.attach_pv(file_views, datasets)
     return {
         "error": None,

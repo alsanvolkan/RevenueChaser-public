@@ -712,6 +712,23 @@ def read_kind_modes() -> dict[str, dict]:
     return {r["kind"]: r for r in _all("kind_automation")}
 
 
+def dataset_mode_set(dataset: str, mode: str, *, by: str) -> None:
+    if mode == ops.AS_THE_FILE:
+        row = {"dataset": dataset}
+        _transaction(["dataset_automation"], lambda: (None, lambda p: _delete(p, "dataset_automation", row)))
+        return
+    row = {"dataset": dataset, "mode": ops._kind_mode(mode), "set_at": time.time(), "set_by": by}
+    _transaction(["dataset_automation"], lambda: (None, lambda p: _put(p, "dataset_automation", row)))
+
+
+def dataset_mode_get(dataset: str) -> dict | None:
+    return _one("dataset_automation", dataset)
+
+
+def read_dataset_modes() -> dict[str, dict]:
+    return {r["dataset"]: r for r in _all("dataset_automation")}
+
+
 # ── Whole tables ───────────────────────────────────────────────────────────────────────────────────────────────
 
 def rows(table: str) -> list[dict]:
