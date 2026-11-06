@@ -712,12 +712,34 @@ def schedule_set(dataset: str, cadence: str, next_due: str | None) -> None:
                     (dataset, cadence, next_due))
 
 
+def cancel_note(by: str, at: float) -> str:
+    """The note a request cancelled by a Pause carries: who and when (UTC, to the minute)."""
+    return f"cancelled: paused by {by} at {time.strftime('%Y-%m-%d %H:%M', time.gmtime(at))} UTC"
+
+
+def _cancel_queued(con: sqlite3.Connection, dataset: str, by: str, at: float) -> int:
+    # only ``queued`` rows: ``next_request`` claims those alone, so the builder and a cancel never hold one row
+    return con.execute("UPDATE build_requests SET status = 'skipped', ended_at = ?, note = ? "
+                       "WHERE dataset = ? AND status = 'queued'", (at, cancel_note(by, at), dataset)).rowcount
+
+
 @_routed
-def schedule_pause(dataset: str, *, by: str) -> None:
-    with _open() as con:
+def cancel_queued(dataset: str, *, by: str) -> int:
+    """Skip every queued request of ``dataset`` (``cancelled: paused by <by> at <when> UTC``); how many. A running
+    request is never touched: the running fetch stops itself at its next provider call (``base.RunContext``)."""
+    with _open() as con, _tx(con):
+        return _cancel_queued(con, dataset, by, time.time())
+
+
+@_routed
+def schedule_pause(dataset: str, *, by: str) -> int:
+    """Hold ``dataset`` and cancel its queued requests in one transaction (#492 PR (ii)); how many were cancelled."""
+    now = time.time()
+    with _open() as con, _tx(con):
         con.execute("INSERT INTO dataset_schedule (dataset, paused_at, paused_by) VALUES (?, ?, ?) "
                     "ON CONFLICT (dataset) DO UPDATE SET paused_at = excluded.paused_at, paused_by = excluded.paused_by",
-                    (dataset, time.time(), by))
+                    (dataset, now, by))
+        return _cancel_queued(con, dataset, by, now)
 
 
 @_routed

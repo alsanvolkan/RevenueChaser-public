@@ -299,3 +299,17 @@ def test_the_cadence_action_keeps_a_pause_as_it_is(client):
                 headers={"X-RC-Panel": "settings"})
     row = _sched()
     assert row.get("paused_at") is not None and row.get("cadence") == "weekly"
+
+
+def test_pause_cancels_the_queued_request_and_says_how_many(client):
+    """#492 PR (ii): a queued request of a paused dataset never runs."""
+    from RevenueChaser.rcdata import ops
+    rid = client.post("/api/build/request/market_series", headers={"X-RC-Panel": "settings"}).get_json()["id"]
+    r = client.post("/api/build/schedule/market_series/pause", headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 200 and r.get_json()["cancelled"] == 1
+    row = next(x for x in ops.rows("build_requests") if x["id"] == rid)
+    assert row["status"] == "skipped" and row["note"].startswith("cancelled: paused by settings at ")
+    again = client.post("/api/build/schedule/market_series/pause", headers={"X-RC-Panel": "settings"})
+    assert again.get_json()["cancelled"] == 0
+    assert client.post("/api/build/schedule/market_series/resume",
+                       headers={"X-RC-Panel": "settings"}).get_json()["cancelled"] == 0

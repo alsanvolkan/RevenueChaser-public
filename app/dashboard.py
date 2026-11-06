@@ -1565,7 +1565,9 @@ def api_build_queue():
 def api_build_schedule(dataset: str, action: str):
     """``pause`` / ``resume`` ``dataset``, or set its ``cadence`` and hold.
 
-    A paused dataset is skipped by the builder (a ``skipped: paused`` check row). ``cadence`` takes a JSON body
+    A paused dataset is skipped by the builder (a ``skipped: paused`` check row); ``pause`` also cancels its queued
+    requests and answers how many (``cancelled``), and a running fetch stops at its next provider call (#492 PR (ii)).
+    ``cadence`` takes a JSON body
     ``{"cadence": "daily|weekly|monthly", "next_due": "YYYY-MM-DD" | ""}``: the frequency the schedule reads
     (``due.py``) and a hold until that day, which an empty value clears. The three actions are separate, so
     setting a frequency never resumes a dataset a person paused.
@@ -1577,6 +1579,7 @@ def api_build_schedule(dataset: str, action: str):
         return jsonify({"ok": False, "error": "unknown action"}), 404
     if _build_dataset(dataset) is None:
         return jsonify({"ok": False, "error": f"unknown dataset {dataset!r}"}), 400
+    cancelled = 0
     if action == "cadence":
         body = request.get_json(silent=True) or {}
         cadence = str(body.get("cadence") or "").strip()
@@ -1591,10 +1594,11 @@ def api_build_schedule(dataset: str, action: str):
                 return jsonify({"ok": False, "error": f"next_due {hold!r} is not a YYYY-MM-DD date"}), 400
         ops.schedule_set(dataset, cadence, hold or None)
     elif action == "pause":
-        ops.schedule_pause(dataset, by=_requested_by())
+        # #492 PR (ii): the pause also cancels the queued request; a running fetch stops itself at its next call
+        cancelled = ops.schedule_pause(dataset, by=_requested_by())
     else:
         ops.schedule_resume(dataset)
-    return jsonify({"ok": True, "dataset": dataset, "schedule": ops.schedule_get(dataset)})
+    return jsonify({"ok": True, "dataset": dataset, "schedule": ops.schedule_get(dataset), "cancelled": cancelled})
 
 
 @app.route("/api/idle")

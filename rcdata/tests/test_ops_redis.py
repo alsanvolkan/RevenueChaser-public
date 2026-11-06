@@ -278,3 +278,17 @@ def test_a_key_part_holding_the_separator_is_refused_not_merged():
     with pytest.raises(ValueError, match=r"\|"):
         ops.put_rows("read_log", [{"day": "2026-11-02", "process": "a|b", "table_name": "c", "reads": 1}])
     assert ops.rows("read_log") == []
+
+
+def test_pause_cancels_the_queued_request_on_redis_too():
+    """#492 PR (ii): the same answer as SQLite's ``test_pause_cancels_the_queued_request_…``."""
+    running = ops.enqueue("market_series", None, by="settings")
+    ops.next_request()
+    q = ops.enqueue("market_series", None, by="settings")
+    other = ops.enqueue("prices/serving", None, by="settings")
+    assert ops.schedule_pause("market_series", by="avo") == 1
+    rows = {r["id"]: r for r in ops.rows("build_requests")}
+    assert [rows[i]["status"] for i in (running, q, other)] == ["running", "skipped", "queued"]
+    assert rows[q]["note"].startswith("cancelled: paused by avo at ") and rows[q]["ended_at"] is not None
+    assert ops.queue_view(5)["finished"][0]["id"] == q, "a cancelled row leaves the active list"
+    assert ops.cancel_queued("market_series", by="avo") == 0

@@ -262,3 +262,23 @@ def test_next_request_and_queued_can_be_limited_to_one_requester():
     assert ops.next_request("wrds/sec_idhist", by="cli") is None
     assert ops.queued("wrds/sec_idhist", by="cli") is False
     assert _status(theirs) == "queued"
+
+
+def test_pause_cancels_the_queued_request_and_leaves_running_and_done_rows():
+    """#492 PR (ii): Pause stops a dataset for real; its queued request is skipped with who and when."""
+    done = ops.enqueue("market_series", None, by="settings")
+    ops.next_request()
+    ops.finish_request(done, "done")
+    running = ops.enqueue("market_series", None, by="settings")
+    ops.next_request()
+    q1 = ops.enqueue("market_series", None, by="settings")
+    q2 = ops.enqueue("market_series", {"backfill_from": "2026-01-02"}, by="cli")
+    other = ops.enqueue("prices/serving", None, by="settings")
+    assert ops.schedule_pause("market_series", by="avo") == 2
+    rows = {r["id"]: r for r in ops.rows("build_requests")}
+    assert [rows[i]["status"] for i in (done, running, q1, q2, other)] == ["done", "running", "skipped", "skipped",
+                                                                           "queued"]
+    assert rows[q1]["note"].startswith("cancelled: paused by avo at ") and rows[q1]["note"].endswith(" UTC")
+    assert rows[q1]["ended_at"] is not None
+    assert ops.schedule_get("market_series")["paused_by"] == "avo"
+    assert ops.cancel_queued("market_series", by="avo") == 0, "nothing left to cancel"
