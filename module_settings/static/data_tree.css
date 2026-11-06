@@ -1,0 +1,22 @@
+/* The Build stage's extras (#492, slice C2): the example columns coloured by source, the Build table's step rows,
+   and the tree overlay that joins each source box to its step. Scoped to .ctl, light by default, dark as control.css. */
+.ctl{--pv-finra:#e6f4f1; --pv-ibkr:#fdecea; --pv-exch:#eef1fb; --pv-av:#fbf5e3; --pv-issuer:#f0f6e8;
+  --pv-macro:#f6eef6; --pv-mix:#f4f4f4}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .ctl{--pv-finra:#11292a; --pv-ibkr:#33191a;
+  --pv-exch:#1a2036; --pv-av:#2f2a14; --pv-issuer:#1d2a14; --pv-macro:#2a1a2c; --pv-mix:#1b1e22}}
+:root[data-theme="dark"] .ctl{--pv-finra:#11292a; --pv-ibkr:#33191a; --pv-exch:#1a2036; --pv-av:#2f2a14;
+  --pv-issuer:#1d2a14; --pv-macro:#2a1a2c; --pv-mix:#1b1e22}
+.ctl .pv-finra{background:var(--pv-finra)}
+.ctl .pv-ibkr{background:var(--pv-ibkr)}
+.ctl .pv-exch{background:var(--pv-exch)}
+.ctl .pv-av{background:var(--pv-av)}
+.ctl .pv-issuer{background:var(--pv-issuer)}
+.ctl .pv-macro{background:var(--pv-macro)}
+.ctl .pv-mix{background:var(--pv-mix);color:var(--mut)}
+.ctl tr.srcrow th.pv-finra{color:var(--l-ex)}
+.ctl tr.srcrow th.pv-ibkr{color:var(--bad)}
+.ctl tr.srcrow th.pv-exch{color:var(--acc)}
+.ctl tr.srcrow th.pv-av{color:var(--warn)}
+.ctl tr.srcrow th.pv-issuer{color:var(--src)}
+.ctl tr.srcrow th.pv-macro{color:var(--new)}
+.ctl tr.srcrow th.pv-mix{color:var(--mut);font-style:italic}

@@ -20,7 +20,9 @@ from RevenueChaser.module_settings import control
 from RevenueChaser.rcdata.needs import screen
 
 _STATIC = Path(__file__).resolve().parent / "static"
-CTL_CSS = (_STATIC / "control.css").read_text(encoding="utf-8")
+TREE_CSS = (_STATIC / "data_tree.css").read_text(encoding="utf-8")
+TREE_JS = (_STATIC / "data_tree.js").read_text(encoding="utf-8")
+CTL_CSS = (_STATIC / "control.css").read_text(encoding="utf-8") + "\n" + TREE_CSS
 CTL_JS = (_STATIC / "control.js").read_text(encoding="utf-8")
 
 #: The routes a press uses; the script reads them from the page's data, so a test sees every route in one place.
@@ -554,10 +556,25 @@ def _samples(f: dict) -> str:
                 continue
             seen.add(t)
             cols = s.get("columns") or []
-            head = "".join(f'<th class="pv-build">{esc(c.get("name"))}<span class="t">{esc(str(c.get("type")).lower())}'
-                           '</span></th>' for c in cols)
-            body = "".join("<tr>" + "".join(f'<td class="pv-build">{esc("" if v is None else v)}</td>' for v in r)
-                           + "</tr>" for r in s.get("rows") or [])
+            # One source key per column (#492); without it every column is the builder's and no source row is drawn.
+            pv = list(s.get("pv") or [])
+            keys = [str(pv[i]) if i < len(pv) and pv[i] else "build" for i in range(len(cols))]
+            head = "".join(f'<th class="pv-{esc(k)}">{esc(c.get("name"))}<span class="t">'
+                           f'{esc(str(c.get("type")).lower())}</span></th>' for k, c in zip(keys, cols))
+            src = ""
+            if pv and cols:
+                labels = getattr(control, "PV_LABELS", None) or {}
+                runs: list[list] = []
+                for k in keys:
+                    if runs and runs[-1][0] == k:
+                        runs[-1][1] += 1
+                    else:
+                        runs.append([k, 1])
+                src = '<tr class="srcrow">' + "".join(
+                    f'<th class="pv-{esc(k)}" colspan="{n}">{esc(labels.get(k, k))}</th>' for k, n in runs) + "</tr>"
+            body = "".join("<tr>" + "".join(
+                f'<td class="pv-{esc(keys[j] if j < len(keys) else "build")}">{esc("" if v is None else v)}</td>'
+                for j, v in enumerate(r)) + "</tr>" for r in s.get("rows") or [])
             if not s.get("built"):
                 body = (f'<tr><td colspan="{max(1, len(cols))}" class="dim">the file is not built yet: these are the '
                         'columns the code declares</td></tr>')
@@ -567,7 +584,7 @@ def _samples(f: dict) -> str:
                 f'{len(s.get("rows") or [])} rows</span></h4><div class="dsact"><button type="button" class="btn" '
                 f'data-sample-refresh="{esc(t)}">Refresh the example rows</button><span class="dim">reads 5 rows of '
                 f'<code>{esc(f["name"])}</code> · no provider call</span></div><div class="scroll"><table class="ex">'
-                f'<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{notes}</section>')
+                f'<thead>{src}<tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{notes}</section>')
     if not blocks:
         return ""
     return (f'<details class="blk b-ex b-ds"><summary>🗂 Data structure <span class="dim">{len(blocks)} tables · a few '
@@ -592,7 +609,7 @@ def _health_table(f: dict) -> str:
             'problems</span></summary><div class="scroll"><table class="stk"><thead><tr><th>Dataset</th><th>When</th>'
             '<th>Result</th><th>As-of</th><th>Rows</th><th>Calls</th><th>Note</th></tr></thead>'
             f'<tbody>{body}</tbody></table></div><p class="hint">Open problems in this file: {probs:,} · each is listed '
-            'under its dataset in the Fetch section.</p></details>')
+            'under its source box above.</p></details>')
 
 
 def _data(view: dict) -> str:
@@ -721,4 +738,4 @@ def scripts(view: dict) -> str:
     """The page's data and behaviour, one inline block (after ``ESC_JS``, which defines ``rcEsc``)."""
     if view.get("error"):
         return ""
-    return (f"window.RC_FLOW = {script_json(view['flow'])};\nwindow.CTL = {script_json(client(view))};\n{CTL_JS}")
+    return (f"window.RC_FLOW = {script_json(view['flow'])};\nwindow.CTL = {script_json(client(view))};\n{CTL_JS}\n{TREE_JS}")
