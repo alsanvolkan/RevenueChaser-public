@@ -257,14 +257,16 @@ def _universe(view: dict) -> str:
 def _legend(view: dict) -> str:
     fill = ("the Fill buttons are on (RC_FILL_ENABLED is set on this server)" if view["fill_enabled"]
             else view["fill_off_why"])
+    # #527 step 8b: one line visible, the rest behind a "?"
     return ('<div class="flegend"><span class="lg2 s-notpicked">a tier set: in the universe or not</span>'
             '<span class="lg2 s-nodata">no tier choice · no button</span>'
+            '<details class="lgq"><summary class="q" aria-label="What a Fill cell shows">?</summary>'
             f'<span class="dim">A Fill cell shows its set and whether the universe holds it. Where a dataset has days to pick (alpaca/bars), a press opens '
             f'its Backfill calendar with that set ticked, and the calendar says names, calls and nights before you '
             f'start. Fill: {esc(fill)}.</span>'
             '<div class="lgrow"><b>After a press</b> the button shows its request:<span class="lg3 st-q">queued</span>'
             '<span class="lg3 st-r">running</span><span class="lg3 st-d">done</span>'
-            '<span class="lg3 st-f">failed</span><span class="lg3 st-p">paused</span></div></div>')
+            '<span class="lg3 st-f">failed</span><span class="lg3 st-p">paused</span></div></details></div>')
 
 
 # ── Fetch: one row a dataset ──────────────────────────────────────────────────────────────────────────────────
@@ -347,6 +349,15 @@ BUTTON_LEGEND = ('One button for each dataset: <b>Fetch</b> asks for a whole run
                  'rest when this file\'s automation is raw + Parquet + DuckDB · <b>Pause</b> cancels a queued run, '
                  'stops a running one before its next provider call and holds the dataset · <b>Resume</b> lets the '
                  'hourly pass run it again')
+#: The line the button legend shows; the whole of ``BUTTON_LEGEND`` is behind its "?" (#527 step 8b).
+BUTTON_LINE = "One button for each dataset: <b>Fetch</b> · <b>Pause</b> · <b>Resume</b>"
+
+
+def _button_legend() -> str:
+    return (f'<div class="blegend">{BUTTON_LINE}<details class="lgq"><summary class="q" '
+            f'aria-label="What the buttons do">?</summary><p class="dim">{BUTTON_LEGEND}</p></details></div>')
+
+
 #: The two partial runs of a Fetch press's ▾ menu (``app/dashboard.py`` ``REQUEST_STAGES``).
 FETCH_STAGES = (("raw", "Fetch raw", "the provider's answer into HDD raw only; Parquet and DuckDB stay; the next "
                  "hourly pass builds them when this file's automation is raw + Parquet + DuckDB"),
@@ -426,9 +437,14 @@ def _one_button(d: dict, view: dict) -> str:
     menu = (f'<button type="button" class="btn fmenu" data-job="fmenu" aria-haspopup="menu" aria-expanded="false" '
             f'aria-label="Fetch only part of the run: {esc(name)}"{"" if state == "fetch" else " hidden"}>▾</button>'
             f'<span class="fmenul" role="menu" hidden>{items}</span>')
+    # #527 decision A: Pause on an idle dataset too, so the hourly pass skips it until Resume; a queued or running
+    # dataset's one button is Pause already, and a paused one's is Resume
+    idle = (f'<button type="button" class="btn sm idlep" data-job="stop" data-dataset="{esc(name)}" '
+            'title="Hold this dataset: the hourly pass skips it until Resume">Pause</button>'
+            '<span class="dim" role="status"></span>' if state == "fetch" else "")
     return (f'{pill}<span class="onewrap"><button type="button" class="{cls} one" data-job="one" data-state="{state}" '
             f'data-dataset="{esc(name)}" data-scope="{1 if d["fetch"]["honours_scope"] else 0}">{word}</button>'
-            f'{menu}</span>')
+            f'{menu}</span>{idle}')
 
 
 def _automation(f: dict, view: dict) -> str:
@@ -533,7 +549,7 @@ def _sources(f: dict, view: dict) -> str:
     orphan = (_universe(view) if f["name"] == "spine.duckdb"
               and not any(d["dataset"] == "spine/security" for d in rows) else "")
     return (f'<div class="sources fgroup" data-file="{esc(f["name"])}">{head}{state}{runs}{_automation(f, view)}'
-            f'<p class="blegend">{BUTTON_LEGEND}</p>{_legend(view)}{orphan}<div class="sgrid">{boxes}</div>'
+            f'{_button_legend()}{_legend(view)}{orphan}<div class="sgrid">{boxes}</div>'
             f'{_providers(view, sid=None)}</div>')
 
 
@@ -925,21 +941,39 @@ def _health_table(f: dict) -> str:
 
 # ── Cross-check, queue ────────────────────────────────────────────────────────────────────────────────────────
 
+def _xsource(c: dict, view: dict) -> str:
+    """The second source as the journey shows a source: its provider badge, or a grey pill when there is none."""
+    name = c.get("second_source")
+    if not name:
+        return '<span class="pill p-mut">no second source</span>'
+    pid = c.get("provider")
+    icon = (f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{esc(control.ICONS.get(pid, ""))}"/></svg>'
+            if pid in control.ICONS else "")
+    return f'<span class="srcb" style="background:{_pcolor(view, pid)}">{icon}{esc(name)}</span>'
+
+
+def _differs(n) -> str:
+    if n is None:
+        return '<span class="dim">—</span>'
+    return f'<span class="pill p-ok">0 differ</span>' if not n else f'<span class="pill p-bad">{int(n):,} differ</span>'
+
+
 def _cross(view: dict) -> str:
+    """#527 step 8b: the same badges, pills and fonts as the journey table; the short columns never wrap."""
     rows = []
     for c in view["cross_check"]:
-        rows.append(f'<tr><td data-label="Field">{esc(c.get("field"))} <code>{esc(c.get("need") or "")}</code></td>'
-                    f'<td data-label="Second source">{esc(c.get("second_source") or "no second source")}</td>'
+        rows.append(f'<tr><td data-label="Field"><b>{esc(c.get("field"))}</b> <code class="p">{esc(c.get("need") or "")}'
+                    f'</code></td><td data-label="Second source">{_xsource(c, view)}</td>'
                     f'<td data-label="Compared">{esc(c.get("checked") or "—")}</td>'
-                    f'<td data-label="Differs">{esc(c.get("differs") if c.get("differs") is not None else "—")}</td>'
+                    f'<td data-label="Differs">{_differs(c.get("differs"))}</td>'
                     f'<td data-label="Largest deviation">{esc(c.get("worst") or "—")}</td>'
-                    f'<td data-label="When">{esc(c.get("as_of") or c.get("why") or "none yet")}</td></tr>')
+                    f'<td data-label="When">{esc(c.get("as_of") or "none yet")}</td></tr>')
         if c.get("command"):
             rows.append(f'<tr><td colspan="6" class="dim">hand-run: <code>{esc(c["command"])}</code></td></tr>')
     body = "".join(rows) or '<tr><td colspan="6" class="dim">no cross-check recorded</td></tr>'
     return ('<details class="sec" id="sec-crosscheck"><summary><h2>Cross-check · first ↔ second source</h2>'
             f'<span class="secs">{len(view["cross_check"])} reports</span></summary>'
-            '<div class="group" style="border-left-color:var(--new)"><div class="scroll"><table class="stk">'
+            '<div class="group" style="border-left-color:var(--new)"><div class="scroll"><table class="stk xck">'
             '<thead><tr><th>Field</th><th>Second source</th><th>Compared</th><th>Differs</th><th>Largest deviation</th>'
             f'<th>When</th></tr></thead><tbody>{body}</tbody></table></div><p class="hint">Where a field has no second '
             'source the row says so; no source is invented. The report shown is the one that exists: this page makes '

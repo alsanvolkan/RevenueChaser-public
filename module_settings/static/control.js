@@ -1044,6 +1044,9 @@
     var w = btn.closest('.onewrap'), m = w && w.querySelector('[data-job="fmenu"]'), l = w && w.querySelector('.fmenul');
     if (m) m.hidden = st !== 'fetch';                 // the ▾ asks for a partial Fetch, so it sits only beside Fetch
     if (l && st !== 'fetch') l.hidden = true;
+    // #527: the idle Pause sits beside Fetch only; once the one button is Pause or Resume it says the same
+    var sb = btn.closest('.sbbtn'), ip = sb && sb.querySelector('.idlep');
+    if (ip) ip.hidden = st !== 'fetch';
   }
   X.setState = setState;
   /* #492 PR (ii): what a Pause did, beside the button: a queued run cancelled, or a running one stopping */

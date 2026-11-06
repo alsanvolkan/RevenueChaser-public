@@ -28,9 +28,17 @@
     m = /rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/.exec(c || '');
     return m ? [+m[1], +m[2], +m[3]] : null;
   }
+  // Lightened toward white only on a dark page: on a light page a lightened line vanished in the white gaps between
+  // the source boxes (#527), so it keeps the provider's own colour there.
+  function dark() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t) return t === 'dark';
+    return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  }
   function lighten(c) {
     var v = rgb(c);
     if (!v) return '#9fb3c8';
+    if (!dark()) return 'rgb(' + v.join(',') + ')';
     return 'rgb(' + v.map(function (x) { return Math.round(x + (255 - x) * LIGHTEN); }).join(',') + ')';
   }
   function boxColour(box) {
@@ -58,7 +66,8 @@
     g.appendChild(vis); g.appendChild(arrow(tip[0], tip[1], colour)); g.appendChild(hit);
     g._box = box; g._rows = row;
     hit.addEventListener('mouseenter', function () {
-      g.classList.add('glow'); svg.appendChild(g);
+      // the group is not moved to the top: moving the hovered node loses its mouseleave, and the glow stayed (#527)
+      unlit(svg); g.classList.add('glow');
       if (box) box.classList.add('dtree-ring');
       row.forEach(function (r) { r.classList.add('dtree-lit'); });
     });
@@ -71,9 +80,17 @@
     return g;
   }
 
+  // Drop every hover mark: a redraw removes the hovered line before its mouseleave, so the marks go with it (#527).
+  function unlit(svg) {
+    if (svg) [].forEach.call(svg.querySelectorAll('g.glow'), function (g) { g.classList.remove('glow'); });
+    [].forEach.call(document.querySelectorAll('.dtree-ring'), function (e) { e.classList.remove('dtree-ring'); });
+    [].forEach.call(document.querySelectorAll('.dtree-lit'), function (e) { e.classList.remove('dtree-lit'); });
+  }
+
   function draw(j) {
     var h = host(j); if (!h) return;
     var svg = h.querySelector(':scope > svg.dtree');
+    unlit(svg);
     if (svg) while (svg.firstChild) svg.removeChild(svg.firstChild);
     if (!shown(j) || (window.innerWidth || 1024) < PHONE) { if (svg) svg.style.display = 'none'; return; }
     if (!svg) { svg = el('svg', { 'class': 'dtree', 'aria-hidden': 'true' }); h.appendChild(svg); }
