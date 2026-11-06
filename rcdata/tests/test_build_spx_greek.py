@@ -46,14 +46,14 @@ def _second_series(rows: list[dict]) -> list[dict]:
     out = []
     for r in rows:
         twin = dict(r)
-        twin.update({f: f"{float(r[f]) * 2:.4f}" for f in uw.NUMERIC_FIELDS})
+        twin.update({f: f"{float(r[f] or 0) * 2:.4f}" for f in uw.NUMERIC_FIELDS})
         twin["put_gex"] = None
         out.append(twin)
     return out
 
 
 def _route_grid(session: date = SESSION, *, stamp=None, missing: str | None = None, not_a_list: str | None = None,
-                twice: str | None = None):
+                twice: str | None = None, thrice: bool = False):
     """One handler for every ``strike-expiry`` call: it answers the expiry the query names."""
     dte_of = dict(CHAIN)
 
@@ -65,7 +65,8 @@ def _route_grid(session: date = SESSION, *, stamp=None, missing: str | None = No
             return 200, {"data": []}, UW_HEADERS
         body = _grid_rows(expiry, dte_of[expiry], session, stamp)
         if expiry == twice:
-            body = {"data": body["data"] + _second_series(body["data"])}
+            extra = _second_series(body["data"])
+            body = {"data": body["data"] + extra + (_second_series(extra) if thrice else [])}
         return 200, body, UW_HEADERS
 
     return handler
@@ -156,6 +157,32 @@ def test_the_two_uw_datasets_start_on_different_days_on_purpose():
     from RevenueChaser.rcdata.build import uw_spot_expiry_strike as spot
     assert uw.FIRST_SESSION == date(2023, 12, 7)
     assert spot.FIRST_SESSION == date(2025, 1, 16)
+
+
+def test_a_summed_answer_says_how_many_strikes_it_merged(http_mock):
+    """The merge is routine on a third Friday, so its count belongs on the check row, not in the issue list."""
+    _wire(http_mock, twice="2026-11-20")
+    row = _daily()
+    assert f"merged {STRIKES_PER_EXPIRY} strikes" in (row["note"] or ""), row["note"]
+    assert "2026-11-20" in (row["note"] or "")
+    assert [i["kind"] for i in ops.open_issues(uw.NAME)[1]] == []
+
+
+def test_a_merge_on_an_expiry_that_is_not_a_standard_monthly_is_an_issue(http_mock):
+    """Two series share only the standard monthly date. A merge anywhere else means the answer is not what we
+    think it is -- the same strike twice for one series -- and summing it would double a real number."""
+    _wire(http_mock, twice="2026-10-27")               # a Tuesday: the two series do not share this date
+    _daily()
+    kinds = [i["kind"] for i in ops.open_issues(uw.NAME)[1]]
+    assert "unexpected_merge" in kinds, kinds
+
+
+def test_a_third_row_for_one_key_is_a_hard_issue(http_mock):
+    """Two series is two rows. A third is a shape we have never seen, and summing three is a guess."""
+    _wire(http_mock, twice="2026-11-20", thrice=True)
+    _daily()
+    kinds = [i["kind"] for i in ops.open_issues(uw.NAME)[1]]
+    assert "key_multiplicity" in kinds, kinds
 
 
 def test_two_series_on_one_expiry_date_are_summed_not_dropped(http_mock):

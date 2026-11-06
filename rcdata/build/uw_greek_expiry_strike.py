@@ -35,6 +35,7 @@ Parquet: ``parquet/uw/greek_expiry_strike/date=<YYYY-MM-DD>/part-0.parquet``. Se
 """
 from __future__ import annotations
 
+import collections
 import os
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -177,6 +178,9 @@ class UWGreekExpiryStrike:
         session = date.fromisoformat(doc["session_date"])
         by_expiry = (doc["body"] or {}).get("expiries") or {}
         rows, by_key, extras, bad, wrong = [], {}, set(), [], 0
+        merged: collections.Counter = collections.Counter()   # expected merges, by expiry
+        seen: collections.Counter = collections.Counter()      # rows per key, to catch a third one
+        odd, over = [], []
         total = 0
         for items in by_expiry.values():
             for item in items or []:
@@ -197,6 +201,21 @@ class UWGreekExpiryStrike:
                 key = (expiry, strike)
                 kept = by_key.get(key)
                 if kept is not None:
+                    seen[key] += 1
+                    if seen[key] > 2:               # two series is two rows; a third is a shape we have never
+                        over.append(f"{expiry} {strike} x{seen[key]}")   # seen (0 in 730 sessions) -- not summed
+                        continue
+                    if is_standard_monthly(expiry) is False:
+                        # Not a day the two series share. Measured over all 730 stored answers: 1,214,530
+                        # repeats, and every one outside a standard monthly -- 6,805 of them -- comes from a
+                        # single session, 2025-10-14, where nearly the whole chain answered twice (8,568 keys,
+                        # 7,867 of them with both rows substantive: expiry 2025-10-14 strike 5500 answered
+                        # 14,121,449 and 10,368,672). No other session has one. A shape that happened once and
+                        # that nothing in the answer explains is not a thing to sum: the first row stands, as it
+                        # did before the summing landed, and the session says so on its issue row.
+                        odd.append(f"{expiry} {strike}")
+                        continue
+                    merged[expiry] += 1
                     # Two option series share an expiry date -- SPX (AM, standard monthly) and SPXW (PM, weekly)
                     # on a third Friday -- and the answer has no field to tell them apart (docs/openapi.yaml,
                     # "Greek Exposure By Strike And Expiry": expiry, strike and the eight greeks, and only
@@ -217,7 +236,26 @@ class UWGreekExpiryStrike:
                        "run_id": doc["run_id"], "observed": bool(doc["observed"])}
                 row.update({f: to_float(item.get(f)) for f in NUMERIC_FIELDS})
                 by_key[key] = row
+                seen[key] = 1
                 rows.append(row)
+        if merged:                                  # routine on a standard monthly: a note, not an issue
+            ctx.notes.append(f"{session}: merged {sum(merged.values())} strikes on {len(merged)} "
+                             f"expiries ({', '.join(str(e) for e in sorted(merged))})")
+        elif any(is_standard_monthly(e) for e in (date.fromisoformat(x) for x in by_expiry)):
+            # Every one of 730 sessions merged on a standard monthly (1,663 strikes a session on average), so
+            # none at all means the second series has stopped arriving -- the bug that halved those strikes
+            # before 5 Nov 2026, and the only shape that leaves no other trace.
+            ctx.issue("missing_series", session.isoformat(),
+                      "no strike answered twice on any standard monthly expiry; the second option series "
+                      "(SPX/SPXW) may have stopped arriving")
+        if odd:
+            ctx.issue("unexpected_merge", session.isoformat(),
+                      f"{len(odd)} strikes answered twice on an expiry the two series do not share; the first "
+                      f"row stands, nothing summed: {', '.join(odd[:10])}")
+        if over:
+            ctx.issue("key_multiplicity", session.isoformat(),
+                      f"{len(over)} keys answered more than twice, which is a shape we have not seen; only the "
+                      f"first row stands: {', '.join(over[:10])}")
         if bad:                                     # one issue per answer, not one per row
             ctx.issue("bad_row", session.isoformat(),
                       f"{len(bad)} rows without a usable expiry/strike; first one's fields: {bad[0]}")
@@ -297,6 +335,24 @@ class UWGreekExpiryStrike:
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": as_of.isoformat(), "rows": rows, "added": added, "removed": removed,
                 "coverage": round(days / expected, 4) if expected else None}
+
+
+def is_standard_monthly(expiry: date) -> bool | None:
+    """Is ``expiry`` the standard monthly date, where the AM-settled series and the weekly share a day?
+
+    The third Friday, or the trading day before it when that Friday is a holiday (Good Friday 2025-04-18 ->
+    2025-04-17). None when the calendar's 1993-2028 table does not reach the date (its rule C: it raises rather
+    than guess), and a None is never treated as an answer either way.
+    """
+    fridays = [d for d in (date(expiry.year, expiry.month, day) for day in range(15, 22))
+               if d.weekday() == 4]
+    if not fridays:
+        return None
+    third = fridays[0]
+    try:
+        return expiry == (third if calendar.is_trading_day(third) else calendar.previous_trading_day(third))
+    except ValueError:
+        return None
 
 
 def _answer_day(stamp) -> date | None:
