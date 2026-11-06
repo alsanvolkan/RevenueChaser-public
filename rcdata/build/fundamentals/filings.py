@@ -29,6 +29,7 @@ Staging: ``stg_sec_filings``, ``stg_sec_documents``, ``stg_sec_segments``, ``stg
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -44,6 +45,14 @@ NEW_PER_RUN = 9000
 ANNUAL_FORMS = ("10-K", "20-F", "40-F")             # newest by filing date; a 10-K first on one day
 PROXY_FORMS = ("DEF 14A",)
 CAPPED = "capped"
+#: How many AIF exhibits of one 40-F are kept. shortcut: one filing has never been seen with more than one, so the
+#: largest is taken; upgrade the number if a filer splits its Annual Information Form across exhibits.
+_AIF_PER_FILING = 1
+#: The one item still cut at the cap: ``business`` is Value Chain's own field and its slicer caps it
+#: (``module_value_chain/splitter.py``), which is that board's rule and not changed here. Everything else this
+#: layer stores is kept entire (avo, 5 Nov 2026: "belgeyi hic kesmeyelim, hepsi kalsin") -- a slice with no stop
+#: header is labelled ``overrun`` rather than truncated, so the reader is told instead of the text being cut.
+SLICED_ITEMS = ("business",)
 STAGING = {"filings": "stg_sec_filings", "documents": "stg_sec_documents", "segments": "stg_sec_segments",
            "customers": "stg_sec_customers"}
 
@@ -89,6 +98,42 @@ def _doc_path(cik: str, accession: str) -> Path:
     return common.raw_dir(NAME) / "documents" / str(cik) / f"{accession}.html.gz"
 
 
+def _exhibit_path(cik: str, accession: str, name: str) -> Path:
+    return common.raw_dir(NAME) / "documents" / str(cik) / f"{accession}.{name}.gz"
+
+
+def index_url(cik: str, accession: str) -> str:
+    """The filing's own file listing. Only a 40-F needs it: every other form this layer reads keeps what it wants
+    in the primary document."""
+    return f"{common.sec_www()}/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/index.json"
+
+
+#: An exhibit of a 40-F whose name says it is the Annual Information Form -- the Canadian filing that carries the
+#: business description when the 40-F itself does not. Measured on two real filings (5 Nov 2026): Brookfield files
+#: it as ``a2025-40xfex991aif.htm`` while Canadian Natural writes everything into the primary document, so both
+#: shapes exist and the primary document is fetched either way.
+#: shortcut: the name is the only signal used; the index gives no reliable exhibit *type* for these. Upgrade by
+#: reading the filing's ``<CIK>-index.htm`` description column if a filer is found whose name does not say ``aif``.
+_AIF_NAME = re.compile(r"(?:aif|ex[-_]?99)", re.I)
+
+
+def stored_exhibits(cik: str, accession: str) -> list[Path]:
+    """The AIF exhibit files already fetched for one filing, largest name first; the index sidecar is not one."""
+    folder = _doc_path(cik, accession).parent
+    if not folder.is_dir():
+        return []
+    return sorted(pth for pth in folder.glob(f"{accession}.*.gz")
+                  if _AIF_NAME.search(pth.name) and not pth.name.endswith(".meta.json.gz"))
+
+
+def aif_exhibits(listing: dict) -> list[str]:
+    """The names of a 40-F's AIF exhibits in its ``index.json``, largest first; [] when it has none."""
+    items = ((listing or {}).get("directory") or {}).get("item") or []
+    found = [(int(i.get("size") or 0), str(i.get("name") or "")) for i in items
+             if str(i.get("name") or "").lower().endswith((".htm", ".html")) and _AIF_NAME.search(str(i.get("name")))]
+    return [name for _, name in sorted(found, reverse=True)]
+
+
 def _subs_raws(cik: str) -> list[Path]:
     folder = _subs_dir(cik)
     return sorted(folder.glob("*.json.gz")) if folder.is_dir() else []
@@ -131,22 +176,83 @@ def pick(rows: list[dict], forms: tuple[str, ...]) -> dict | None:
     return best
 
 
-def slice_text(html: str, form: str) -> tuple[str, str]:
-    """``(text, quality)`` of one document: the business section of an annual report, a proxy whole. Never ``ok``
-    at the cap (``capped``)."""
+_DASH = r"\-\u2010-\u2015"
+
+#: The sections of an annual report served beside the business description, each its own ``filing_item`` row
+#: (avo, 5 Nov 2026). Item 5 carries the dividend history and the monthly share-repurchase table, and Item 8 the
+#: statements **and their notes** -- where segment and major-customer concentration are written out, next to the
+#: inline XBRL figures ``ixbrl.py`` already reads.
+#: shortcut: 10-K only. A 20-F numbers its items differently (Item 5 is the operating and financial review and the
+#: statements are Item 18), so patterns for it are a guess until they are checked against real 20-F documents;
+#: upgrade by adding a ``20-F`` key here once that check is done.
+SECTIONS: dict[str, dict[str, tuple[str, str]]] = {
+    "market": {"10-K": (rf"\bitem\s*5\s*[.\:{_DASH}\s]\s*market\s+for\s+(?:the\s+)?registrant",
+                        rf"\bitem\s*6\s*[.\:{_DASH}\s]|\bitem\s*7\s*[.\:{_DASH}\s]\s*management")},
+    "financials": {"10-K": (rf"\bitem\s*8\s*[.\:{_DASH}\s]\s*(?:consolidated\s+)?financial\s+statements",
+                            rf"\bitem\s*9\s*[.\:{_DASH}\s]")},
+}
+
+
+def _longest_section(text: str, start: str, stop: str) -> tuple[str, str]:
+    """``(text, quality)`` of the longest match of ``start``: the body, not the table of contents.
+
+    The same rule the business slicer uses (``module_value_chain/splitter.slice_item``): a report's contents page
+    lists every item header, so the first match is a few dozen characters and only the longest is the section.
+    ``overrun`` when no stop header follows -- the slice ran on, and is kept but never called ``ok``.
+
+    shortcut: the longest match is the body only while the contents page lists this section's **stop** header too,
+    which stops the contents match early. Every 10-K sampled on 5 Nov 2026 had a full contents page; a filer whose
+    contents skips the stop item would have its slice start at the contents. Upgrade by preferring a match whose
+    slice holds no other section's start header, if such a filer is found.
+    """
+    start_re, stop_re = re.compile(start, re.I), re.compile(stop, re.I)
+    best, stopped = "", False
+    for m in start_re.finditer(text):
+        end_m = stop_re.search(text, m.end())
+        chunk = text[m.start():end_m.start() if end_m else len(text)]
+        if len(chunk) > len(best):
+            best, stopped = chunk, end_m is not None
+    if not best:
+        return "", "missing"
+    if not stopped:
+        # No stop header: the slice runs to the end of the document. Kept whole and never called ``ok``, so a
+        # reader knows it is more than the section -- the text is not cut to say so.
+        return best, "overrun"
+    return best, "ok" if len(best) >= min_text_chars() else "short"
+
+
+def document_sections(html: str, form: str) -> list[tuple[str, str, str]]:
+    """``(item, text, quality)`` per section this layer serves from one document.
+
+    Nothing here is cut. ``whole`` is the document's text **uncut** (avo, 5 Nov 2026: "belgeyi hic kesmeyelim, hepsi kalsin"): a 10-K
+    runs from 220,000 to 1.4 million characters and the business section is a tenth of it, so everything a later
+    reader might want -- the risk factors, the legal proceedings, the notes -- was being thrown away at the one
+    place it could be kept for free. Its quality is the length's only; the cap belongs to a slice, which can run
+    away when a stop header is missed, and not to a whole document, whose length is the filer's.
+
+    Then the slices: ``business`` as before (``splitter``, Value Chain's own rule), and ``market`` and
+    ``financials`` from :data:`SECTIONS`. A proxy is one ``proxy`` row, whole.
+    """
     from ....module_value_chain import splitter
     cap = max_text_chars()
     text = splitter.strip_html(html)
     if form in PROXY_FORMS:
-        out = text[:cap]
-        quality = CAPPED if len(text) >= cap else ("ok" if len(out) >= min_text_chars() else
-                                                   ("short" if out else "missing"))
-        return out, quality
+        return [("proxy", text, "ok" if len(text) >= min_text_chars() else ("short" if text else "missing"))]
+    out = [("whole", text, "ok" if len(text) >= min_text_chars() else ("short" if text else "missing"))]
     item, quality = splitter.slice_item(text, form)
     item = item or ""
-    if len(item) >= cap:
-        quality = CAPPED
-    return item, quality
+    out.append(("business", item, CAPPED if len(item) >= cap else quality))
+    for name, per_form in SECTIONS.items():
+        pair = per_form.get(str(form).upper())
+        if pair is None:
+            continue
+        sliced, sliced_quality = _longest_section(text, pair[0], pair[1])
+        if sliced_quality == "missing":
+            # No row rather than a row that says nothing: the ``whole`` row beside it already proves the document
+            # was read, so a section with no row is a section this filer does not have.
+            continue
+        out.append((name, sliced, sliced_quality))
+    return out
 
 
 def read_list(ctx: base.RunContext, cik: str, as_of: date) -> Path | None:
@@ -174,19 +280,53 @@ def read_documents(ctx: base.RunContext, cik: str, raw: Path, as_of: date) -> in
     fetched = 0
     for forms in (ANNUAL_FORMS, PROXY_FORMS):
         f = pick(rows, forms)
-        if f is None or f["form"] == "40-F":
+        if f is None:
             continue
         path = _doc_path(cik, f["accession"])
+        if not path.exists():
+            url = document_url(cik, f["accession"], f["primary_document"])
+            r = common.sec_get(ctx, url, missing_object=True)  # /Archives/: a missing document answers 403
+            if r is None:
+                ctx.issue("document_missing", f"{cik}:{f['accession']}",
+                          f"the archive holds no {f['primary_document']}")
+            else:
+                base.write_raw_json(common.meta_path(path), {"cik": cik, "accession": f["accession"],
+                                                             "form": f["form"], "as_of": as_of.isoformat(),
+                                                             "url": url, "fetched_at": time.time(),
+                                                             "run_id": ctx.run_id})
+                base.write_raw(path, r.content)
+                fetched += 1
+        # A 40-F may keep its business description in an Annual Information Form exhibit instead of the primary
+        # document (``aif_exhibits``), and the primary document is now read either way.
+        if f["form"] == "40-F":
+            fetched += read_exhibits(ctx, cik, f, as_of)
+    return fetched
+
+
+def read_exhibits(ctx: base.RunContext, cik: str, f: dict, as_of: date) -> int:
+    """Fetch a 40-F's AIF exhibits that are not stored yet; how many were fetched. One index request per filing."""
+    first = _exhibit_path(cik, f["accession"], "index.json")
+    if first.exists():
+        listing = base.read_raw_json(first)
+    else:
+        r = common.sec_get(ctx, index_url(cik, f["accession"]), missing_object=True)
+        if r is None:
+            ctx.issue("index_missing", f"{cik}:{f['accession']}", "the archive holds no index.json")
+            return 0
+        listing = r.json()
+        base.write_raw_json(first, listing)
+    fetched = 0
+    for name in aif_exhibits(listing)[:_AIF_PER_FILING]:
+        path = _exhibit_path(cik, f["accession"], name)
         if path.exists():
             continue
-        url = document_url(cik, f["accession"], f["primary_document"])
-        r = common.sec_get(ctx, url, missing_object=True)      # /Archives/: a missing document answers 403
+        url = document_url(cik, f["accession"], name)
+        r = common.sec_get(ctx, url, missing_object=True)
         if r is None:
-            ctx.issue("document_missing", f"{cik}:{f['accession']}",
-                      f"the archive holds no {f['primary_document']}")
+            ctx.issue("document_missing", f"{cik}:{f['accession']}:{name}", f"the archive holds no {name}")
             continue
         base.write_raw_json(common.meta_path(path), {"cik": cik, "accession": f["accession"], "form": f["form"],
-                                                     "as_of": as_of.isoformat(), "url": url,
+                                                     "exhibit": name, "as_of": as_of.isoformat(), "url": url,
                                                      "fetched_at": time.time(), "run_id": ctx.run_id})
         base.write_raw(path, r.content)
         fetched += 1
@@ -285,29 +425,36 @@ class Filings:
     def _documents(cik: str, rows: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
         """The document rows, and the annual report's segment and customer rows (its inline XBRL)."""
         out, segments, customers = [], [], []
-        for forms, item in ((ANNUAL_FORMS, "business"), (PROXY_FORMS, "proxy")):
+        for forms in (ANNUAL_FORMS, PROXY_FORMS):
             f = pick(rows, forms)
             if f is None:
                 continue
+            annual = forms is ANNUAL_FORMS
             base_row = {k: f.get(k) for k in ("cik", "accession", "form", "filing_date", "report_date",
                                                "primary_document")}
-            if f["form"] == "40-F":
-                out.append({**base_row, "item": item, "text": None, "chars": 0, "quality": "form_40f"})
-                continue
-            path = _doc_path(cik, f["accession"])
-            if not path.exists():
-                continue
-            meta = base.read_raw_json(common.meta_path(path))
-            html = base.read_raw(path).decode("utf-8", "replace")
-            text, quality = slice_text(html, f["form"])
-            stamps = {"source_as_of": date.fromisoformat(meta["as_of"]), "fetched_at": float(meta["fetched_at"]),
-                      "run_id": meta["run_id"]}
-            out.append({**base_row, "item": item, "text": text, "chars": len(text), "quality": quality, **stamps})
-            if item == "business":
-                filed = {k: base_row[k] for k in ("cik", "accession", "form", "filing_date")}
-                found_segments, found_customers = ixbrl.parse(html)
-                segments += [{**filed, **r, "segment": r["label"], **stamps} for r in found_segments]
-                customers += [{**filed, **r, **stamps} for r in found_customers]
+            paths = [_doc_path(cik, f["accession"])]
+            if annual and f["form"] == "40-F":
+                paths += stored_exhibits(cik, f["accession"])
+            for path in paths:
+                if not path.exists():
+                    continue
+                meta = base.read_raw_json(common.meta_path(path))
+                html = base.read_raw(path).decode("utf-8", "replace")
+                stamps = {"source_as_of": date.fromisoformat(meta["as_of"]),
+                          "fetched_at": float(meta["fetched_at"]), "run_id": meta["run_id"]}
+                exhibit = meta.get("exhibit")
+                for item, text, quality in document_sections(html, f["form"]):
+                    # An exhibit is the business description on its own: its whole text is the section, and the
+                    # 10-K item slices do not apply to a Canadian Annual Information Form.
+                    if exhibit and item != "whole":
+                        continue
+                    out.append({**base_row, "item": f"aif:{exhibit}" if exhibit else item, "text": text,
+                                "chars": len(text), "quality": quality, **stamps})
+                if annual and not exhibit:
+                    filed = {k: base_row[k] for k in ("cik", "accession", "form", "filing_date")}
+                    found_segments, found_customers = ixbrl.parse(html)
+                    segments += [{**filed, **r, "segment": r["label"], **stamps} for r in found_segments]
+                    customers += [{**filed, **r, **stamps} for r in found_customers]
         return out, segments, customers
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
