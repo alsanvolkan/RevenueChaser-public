@@ -124,3 +124,21 @@ def test_the_tree_css_sets_the_widths_and_keeps_paths_on_one_line():
     css = control_render.TREE_CSS
     for w in ("width:42%", "width:38%", "width:max(20%, 245px)", "font-size:9.5px", "white-space:nowrap"):
         assert w in css, w
+
+
+# ── step 2: the tree ──
+
+def test_the_tree_draws_box_lines_build_lines_and_hit_twins():
+    js = control_render.TREE_JS
+    for part in ("section.fpanel", ".dset[data-dataset", "tr.jr[data-ds]", "createElementNS", "stroke-dasharray",
+                 "pointer-events", "stroke", "--fh", "resize", "toggle", "change", "3.4", "44", "0.45"):
+        assert part in js, part
+    assert "setInterval" not in js
+
+
+def test_the_tree_css_hides_it_on_a_phone_and_lets_only_the_twins_take_the_pointer():
+    css = control_render.TREE_CSS
+    assert re.search(r"@media\(max-width:639\.98px\)\{[^}]*svg\.dtree\{display:none\}", css)
+    assert re.search(r"svg\.dtree\{[^}]*position:absolute[^}]*pointer-events:none", css)
+    assert re.search(r"svg\.dtree \.hit\{[^}]*pointer-events:stroke", css)
+    assert ".dtree-ring" in css and "2px solid" in css
