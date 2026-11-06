@@ -48,6 +48,7 @@ from pathlib import Path
 
 import duckdb
 
+from ....core import calendar
 from .. import base
 from . import common, edgar, sec, sec13f_sets
 
@@ -72,7 +73,8 @@ def _num(col: str, typ: str = "DOUBLE") -> str:
 
 def _flag(col: str) -> str:
     return (f"CASE lower(trim({col})) WHEN '1' THEN true WHEN 'true' THEN true WHEN 'y' THEN true "
-            "WHEN '0' THEN false WHEN 'false' THEN false WHEN 'n' THEN false END")
+            "WHEN 'yes' THEN true WHEN '0' THEN false WHEN 'false' THEN false WHEN 'n' THEN false "
+            "WHEN 'no' THEN false END")
 
 
 def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, forms, fetched_at: float,
@@ -94,6 +96,7 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                CAST(TRY_CAST(trim(ISSUERCIK) AS BIGINT) AS VARCHAR) AS issuer_cik,
                nullif(trim(ISSUERNAME), '') AS issuer_name,
                nullif(trim(ISSUERTRADINGSYMBOL), '') AS issuer_symbol,
+               TRY_CAST(trim(FORM4_TRANS_REPORTED) AS INTEGER) AS reported,
                {_flag(AFF) if has_aff else 'CAST(NULL AS BOOLEAN)'} AS aff10b5one
         FROM z_submission WHERE upper(trim(DOCUMENT_TYPE)) IN ({form_list})
           AND {day('FILING_DATE')} BETWEEN DATE '{first}' AND DATE '{last}'""")
@@ -104,20 +107,34 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
     if syms:
         con.executemany("INSERT INTO z_sym VALUES (?, ?)",
                         [(s, (common.norm_symbol(s) or None) if s.upper() != "NONE" else None) for s in syms])
+    # The first reporting owner is resolved once and then projected. Four independent aggregates would each skip
+    # their own NULLs -- a blank field reads as NULL here, there is no quote character -- so a first owner with no
+    # title (every Director row) would take the next owner's title. The 13F path's per-filing members use this
+    # same window shape.
     con.execute("""CREATE TABLE z_own AS
-        SELECT trim(ACCESSION_NUMBER) AS accession, CAST(count(*) AS INTEGER) AS owners,
-               CAST(TRY_CAST(arg_min(trim(RPTOWNERCIK), rowid) AS BIGINT) AS VARCHAR) AS owner_cik,
-               nullif(arg_min(trim(RPTOWNERNAME), rowid), '') AS owner_name,
-               arg_min(trim(RPTOWNER_RELATIONSHIP), rowid) AS relationship,
-               nullif(arg_min(trim(RPTOWNER_TITLE), rowid), '') AS officer_title
-        FROM z_reportingowner GROUP BY ALL""")
+        SELECT trim(ACCESSION_NUMBER) AS accession,
+               CAST(count(*) OVER (PARTITION BY trim(ACCESSION_NUMBER)) AS INTEGER) AS owners,
+               CAST(TRY_CAST(trim(RPTOWNERCIK) AS BIGINT) AS VARCHAR) AS owner_cik,
+               nullif(trim(RPTOWNERNAME), '') AS owner_name,
+               upper(trim(RPTOWNER_RELATIONSHIP)) AS relationship,
+               nullif(trim(RPTOWNER_TITLE), '') AS officer_title
+        FROM z_reportingowner
+        QUALIFY row_number() OVER (PARTITION BY trim(ACCESSION_NUMBER) ORDER BY rowid) = 1""")
+    # Finding B: the tokens are matched upper-case, and a relationship naming none of them is said out loud rather
+    # than quietly leaving all four false.
+    odd = con.execute("""SELECT count(*), min(relationship) FROM z_own WHERE relationship IS NOT NULL
+        AND NOT regexp_matches(relationship, 'DIRECTOR|OFFICER|TENPERCENTOWNER|OTHER')""").fetchone()
+    if odd[0]:
+        notes.append(f"{LABEL} data set {name}: {odd[0]} filing(s) whose reporting-owner relationship names none of "
+                     f"the four roles (first: {odd[1]!r}), so their four flags are false")
     con.execute(f"""CREATE TABLE z_head AS
         SELECT s.accession, s.form, s.filed, s.filed AS index_day, s.issuer_cik, s.issuer_name,
                s.issuer_symbol, y.symbol, o.owner_cik, o.owner_name, coalesce(o.owners, 0) AS owners,
-               contains(o.relationship, 'Director') AS is_director,
-               contains(o.relationship, 'Officer') AS is_officer, o.officer_title,
-               contains(o.relationship, 'TenPercentOwner') AS is_ten_pct,
-               contains(o.relationship, 'Other') AS is_other, s.aff10b5one,
+               s.reported,
+               contains(o.relationship, 'DIRECTOR') AS is_director,
+               contains(o.relationship, 'OFFICER') AS is_officer, o.officer_title,
+               contains(o.relationship, 'TENPERCENTOWNER') AS is_ten_pct,
+               contains(o.relationship, 'OTHER') AS is_other, s.aff10b5one,
                {fetched_at!r} AS fetched_at, ? AS run_id
         FROM z_sub s LEFT JOIN z_own o ON o.accession = s.accession
                      LEFT JOIN z_sym y ON y.raw = s.issuer_symbol""", [run_id])
@@ -138,13 +155,19 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                {day('t.EXPIRATION_DATE') if label == 'derivative' else 'CAST(NULL AS DATE)'} AS expiration_date
         FROM {table} t JOIN z_head h ON h.accession = trim(t.ACCESSION_NUMBER)""" for label, table, sk in TX)
     con.execute(f"""CREATE TABLE z_tx AS SELECT * FROM ({union})""")
-    con.execute("""CREATE TABLE rows AS
+    # ``detail`` and ``status`` from the count the submission itself reports (FORM4_TRANS_REPORTED), as the 13F
+    # path reads TABLEENTRYTOTAL: a filing whose transaction rows the loader could not read is said to be short
+    # rather than looking like a clean holdings-only Form 4. The column is blank in the older sets, so NULL there.
+    short = ("CASE WHEN h.reported IS NOT NULL AND h.reported <> {n} THEN {n} || "
+             "' transactions read, the submission says ' || h.reported END")
+    con.execute(f"""CREATE TABLE rows AS
         SELECT h.*, t.tx_table,
                CAST(row_number() OVER (PARTITION BY t.accession, t.tx_table
                                        ORDER BY TRY_CAST(trim(t.sk) AS BIGINT), t.sk) - 1 AS INTEGER) AS line,
                t.security_title, t.transaction_date, t.code, t.equity_swap, t.shares, t.price, t.acquired_disposed,
                t.shares_after, t.direct_indirect, t.exercise_price, t.underlying_title, t.underlying_shares,
-               t.expiration_date, 'ok' AS status, CAST(NULL AS VARCHAR) AS detail
+               t.expiration_date, 'ok' AS status,
+               {short.format(n='count(*) OVER (PARTITION BY t.accession)')} AS detail
         FROM z_head h JOIN z_tx t ON t.accession = h.accession
         UNION ALL BY NAME
         SELECT h.*, CAST(NULL AS VARCHAR) AS tx_table, CAST(NULL AS INTEGER) AS line,
@@ -154,12 +177,13 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                CAST(NULL AS DOUBLE) AS shares_after, CAST(NULL AS VARCHAR) AS direct_indirect,
                CAST(NULL AS DOUBLE) AS exercise_price, CAST(NULL AS VARCHAR) AS underlying_title,
                CAST(NULL AS DOUBLE) AS underlying_shares, CAST(NULL AS DATE) AS expiration_date,
-               'no_transaction' AS status, CAST(NULL AS VARCHAR) AS detail
-        FROM z_head h WHERE h.accession NOT IN (SELECT accession FROM z_tx)""")
+               CASE WHEN coalesce(h.reported, 0) <> 0 THEN 'unparsed' ELSE 'no_transaction' END AS status,
+               {short.format(n='0')} AS detail
+        FROM z_head h WHERE NOT EXISTS (SELECT 1 FROM z_tx t WHERE t.accession = h.accession)""")
 
 
 def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str, first: date, last: date,
-              schema: dict) -> int:
+              schema: dict, open_window: bool = False) -> int:
     """Type the set's filings of the weekdays ``first``..``last`` the walk has not finished, write each day's
     partition and mark it done; the days written."""
     if base.raw_only():
@@ -174,13 +198,17 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
         return 0
     root = sec13f_sets.raw_dir(SUB)
     root.mkdir(parents=True, exist_ok=True)
-    meta = zip_path.with_name(zip_path.name + ".meta.json")
+    meta = sec13f_sets._meta(zip_path)
     fetched_at = (base.read_raw_json(meta) if meta.exists() else {}).get("fetched_at")
     with tempfile.TemporaryDirectory(dir=root, prefix=sec13f_sets.SCRATCH) as tmp:
         con = duckdb.connect(str(Path(tmp) / "set.duckdb"))
         try:
             sec13f_sets._load(con, zip_path, Path(tmp), name, ctx.notes, MEMBERS, {}, LABEL)
             newest = con.execute(f"SELECT max({sec13f_sets._day('FILING_DATE')}) FROM z_submission").fetchone()[0]
+            if newest is not None and open_window:
+                # The set's quarter is still running, so the extract was cut mid-day and its newest day holds only
+                # part of that day's filings. The walk takes it.
+                newest -= timedelta(days=1)
             later = [d for d in todo if newest is None or d > newest]
             if later:
                 ctx.notes.append(f"{LABEL} data set {name}: its newest filing is {newest}; {len(later)} later days "
@@ -192,18 +220,26 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
                    ctx.notes)
             filed = {r[0] for r in con.execute("SELECT DISTINCT filed FROM rows").fetchall()}
             cols = ", ".join(f'CAST("{c}" AS {t}) AS "{c}"' for c, t in schema["rows"])
-            written = 0
+            written, blank = 0, []
             for day in todo:
-                if day in filed:
-                    base.write_parquet(con, f"SELECT {cols} FROM rows WHERE filed = DATE '{day}' "
-                                            "ORDER BY accession, tx_table, line",
-                                       feed.parquet_dir() / "rows" / f"day={day}" / "part-0.parquet")
-                    written += 1
+                if day not in filed:
+                    # Not marked: every business day carries hundreds of Forms 3, 4 and 5, so a day the set holds
+                    # none for means the set lost them (a rejected TSV row, a date that does not parse), and a
+                    # marker would seal it for good -- the walk skips a marked day. The walk reads its forms.
+                    blank.append(day)
+                    continue
+                base.write_parquet(con, f"SELECT {cols} FROM rows WHERE filed = DATE '{day}' "
+                                        "ORDER BY accession, tx_table, line",
+                                   feed.parquet_dir() / "rows" / f"day={day}" / "part-0.parquet")
+                written += 1
                 d = feed.day_dir(day)
                 d.mkdir(parents=True, exist_ok=True)
                 (d / edgar.DONE).write_text(json.dumps({"run_id": ctx.run_id, "at": time.time(),
-                                                             "origin": sec13f_sets.ORIGIN + name}),
+                                                        "origin": sec13f_sets.ORIGIN + name}),
                                             encoding="utf-8")
+            if blank:
+                ctx.notes.append(f"{LABEL} data set {name}: {len(blank)} weekday(s) it holds no filing for, "
+                                 f"left to the forms walk (first {blank[0]})")
             return written
         finally:
             con.close()
@@ -232,8 +268,8 @@ def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema:
         path, replaced = sec13f_sets.download(ctx, pacer, name, url, SUB, LABEL)
         if replaced:
             ctx.notes.append(f"{LABEL} data set {name}: changed since it was read, "
-                             f"{sec13f_sets._reopen(feed, name, first, last)} days reopened")
-        written = _fill_one(ctx, feed, path, name, lo, hi, schema)
+                             f"{sec13f_sets._reopen(feed, name, lo, hi)} days reopened")
+        written = _fill_one(ctx, feed, path, name, lo, hi, schema, open_window=last >= calendar.today_ny())
         ctx.notes.append(f"{LABEL} data set {name}: {written} days written, {lo} to {hi}")
         covered = hi if covered is None else max(covered, hi)
     return covered

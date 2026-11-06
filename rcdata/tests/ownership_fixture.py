@@ -385,12 +385,13 @@ F345_PAGE_PATH = "/data-research/sec-markets-data/insider-transactions-data-sets
 
 
 def f345_filing(accession, filed, issuer_cik, issuer_name, symbol, owners, non_derivative=(), derivative=(),
-                form="4", period=None, aff10b5one="") -> dict:
+                form="4", period=None, aff10b5one="", reported="") -> dict:
     """One filing of an Insider Transactions data set. ``owners``: ``(cik, name, relationship, title)``, the first
     the reporting owner the EDGAR path takes; dates are ``DD-MON-YYYY``."""
     return {"accession": accession, "filed": filed, "period": period or filed, "form": form,
             "issuer_cik": f"{issuer_cik:010d}", "issuer_name": issuer_name, "symbol": symbol, "owners": owners,
-            "non_derivative": list(non_derivative), "derivative": list(derivative), "aff10b5one": aff10b5one}
+            "non_derivative": list(non_derivative), "derivative": list(derivative), "aff10b5one": aff10b5one,
+            "reported": reported}
 
 
 def f345_tx(code, shares, price, ad="D", after=0, title="Common Stock", date="13-MAR-2014", swap="0",
@@ -410,7 +411,8 @@ def f345_set(filings: list[dict], folder: str | None = None, sk_from: int = 2_22
         rows["SUBMISSION"].append({"ACCESSION_NUMBER": f["accession"], "FILING_DATE": f["filed"],
                                    "PERIOD_OF_REPORT": f["period"], "DOCUMENT_TYPE": f["form"],
                                    "ISSUERCIK": f["issuer_cik"], "ISSUERNAME": f["issuer_name"],
-                                   "ISSUERTRADINGSYMBOL": f["symbol"], "AFF10B5ONE": f["aff10b5one"]})
+                                   "ISSUERTRADINGSYMBOL": f["symbol"], "AFF10B5ONE": f["aff10b5one"],
+                                   "FORM4_TRANS_REPORTED": f["reported"]})
         for cik, name, relationship, title in f["owners"]:
             rows["REPORTINGOWNER"].append({"ACCESSION_NUMBER": f["accession"], "RPTOWNERCIK": f"{cik:010d}",
                                            "RPTOWNERNAME": name, "RPTOWNER_RELATIONSHIP": relationship,

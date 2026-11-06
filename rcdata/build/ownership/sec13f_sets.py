@@ -1,5 +1,6 @@
-"""The SEC's Form 13F data sets (and, through the arguments of ``listed``, ``download``, ``raw_dir`` and
-``_load``, the shared index-read and download primitive the Insider Transactions sets use too: ``form345_sets``): how ``sec/13f`` is first filled (avo, 2026-10-28: the zips, as the old board did,
+"""The SEC's Form 13F data sets. Through the arguments of ``listed``, ``download``, ``raw_dir``, ``_member`` and
+``_load`` this is also the shared index-read, download and TSV-load primitive the Insider Transactions data sets
+use (``form345_sets``), so the defaults are the 13F ones and must stay. how ``sec/13f`` is first filled (avo, 2026-10-28: the zips, as the old board did,
 from the start of 2025); the EDGAR forms (``edgar.Feed``) follow from the newest set's last day.
 
 ``GET <RC_FORM13F_INDEX_URL>`` (default ``<www.sec.gov>/data-research/sec-markets-data/form-13f-data-sets``) links
@@ -162,13 +163,13 @@ def _reopen(feed: edgar.Feed, name: str, first: date, last: date) -> int:
     return n
 
 
-def _member(z: zipfile.ZipFile, table: str) -> str:
+def _member(z: zipfile.ZipFile, table: str, label: str = "13F") -> str:
     want = f"{table}.TSV"
     for m in z.namelist():
         up = m.upper()
         if up == want or up.endswith("/" + want):
             return m
-    raise base.SourceError(f"13F data set {Path(z.filename or '').name}: no {table}.tsv in the zip")
+    raise base.SourceError(f"{label} data set {Path(z.filename or '').name}: no {table}.tsv in the zip")
 
 
 def _header(path: Path) -> tuple[list[str], str]:
@@ -182,15 +183,17 @@ def _header(path: Path) -> tuple[list[str], str]:
 def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, notes: list[str],
           members: tuple[str, ...] = MEMBERS, add_missing: dict[str, tuple[str, ...]] | None = None,
           label: str = "13F") -> None:
-    """The set's four tables as ``z_submission``, ``z_coverpage``, ``z_summarypage``, ``z_infotable`` (text). The
-    columns are the member's own header line (no sniffing: the dialect is known). A row that does not read (a tab
-    too few or too many, a byte that is not UTF-8) is left out and counted in ``notes``, not the whole set and the
-    year's fill with it (13F review B3, 2026-10-30); the filing it belonged to says in its ``detail`` that fewer
-    holdings were read than its summary counts. A set before 2023 has no ``FIGI`` column: it is added, empty (D4)."""
+    """``members`` as ``z_<lower name>`` tables (text), for whichever data set is being read: the 13F sets' four by
+    default, the Insider Transactions sets' four when ``form345_sets`` calls it. The columns are the member's own
+    header line (no sniffing: the dialect is known). A row that does not read (a tab too few or too many, a byte
+    that is not UTF-8) is left out and counted in ``notes``, not the whole set and the year's fill with it (13F
+    review B3, 2026-10-30); the filing it belonged to says in its ``detail`` that fewer rows were read than its own
+    count. ``add_missing`` names the columns an older set may lack, added empty: ``INFOTABLE.FIGI`` before 2023 (D4)
+    for 13F, ``SUBMISSION.AFF10B5ONE`` for the insider sets."""
     with zipfile.ZipFile(zip_path) as z:
         for table in members:
             out = tmp / f"{table}.tsv"
-            with z.open(_member(z, table)) as src, open(out, "wb") as dst:
+            with z.open(_member(z, table, label)) as src, open(out, "wb") as dst:
                 shutil.copyfileobj(src, dst, 1 << 20)
             cols, ending = _header(out)
             columns = ", ".join(f"'{c}': 'VARCHAR'" for c in cols)
@@ -204,7 +207,7 @@ def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, 
             if bad[0]:
                 notes.append(f"{label} data set {name}: {bad[0]} rows of {table}.tsv rejected (first: line {bad[1]}, "
                              f"{bad[2]})")
-            for missing in (add_missing or {"INFOTABLE": ("FIGI",)}).get(table, ()):
+            for missing in ({"INFOTABLE": ("FIGI",)} if add_missing is None else add_missing).get(table, ()):
                 if missing not in cols:
                     con.execute(f"ALTER TABLE z_{table.lower()} ADD COLUMN {missing} VARCHAR")
             out.unlink()
