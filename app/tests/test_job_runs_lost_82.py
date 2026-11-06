@@ -120,6 +120,20 @@ def test_a_scheduled_name_uses_its_task_time_limit(sync_jobs, monkeypatch):
     assert rawstore.get("job_runs", "past")["status"] == "lost"
 
 
+def test_a_minutes_limit_is_the_bound_not_the_hours_default(sync_jobs, monkeypatch):
+    """#527: ``time_limit_minutes`` set means that many minutes, not ``time_limit_hours``' 4 h default."""
+    entry = A.AutomationEntry(
+        name="RC-Test-Minutes", label="t", args=("-c", "pass"), time="23:00", description="d",
+        settings=A.TaskSettings(time_limit_minutes=30))
+    monkeypatch.setattr(A, "_BY_NAME", {entry.name: entry})
+    assert jobs._run_bound_s(entry.name) == 30 * 60
+    _insert(run_id="inside", module=entry.name, pid=None, started_at=NOW - 1200)
+    _insert(run_id="past", module=entry.name, pid=None, started_at=NOW - 3600)
+    assert jobs.reconcile_lost_runs(now=NOW) == 1
+    assert rawstore.get("job_runs", "inside")["status"] == "running"
+    assert rawstore.get("job_runs", "past")["status"] == "lost"
+
+
 def test_an_alive_pid_whose_lock_start_does_not_match_is_not_that_job(sync_jobs, monkeypatch):
     """PID reuse: the number is alive, but the lock's start mark is a different process (#355)."""
     _bound_module()
