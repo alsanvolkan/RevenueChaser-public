@@ -47,6 +47,11 @@ def _script() -> dict:
     out["sync1"] = ops.sync_issues("prices/serving", ["price_gap_no_action", "stale"],
                                    [("price_gap_no_action", f"T{i}", f"d{i}") for i in range(5)]
                                    + [("stale", "X", None)], run_id="r3")
+    # One unfixed problem, recorded by two runs: resolving owes both rows, on either backend (#516).
+    ops.record_issue("funds/etf_holdings", "source_failed", "ARKQ", "first", run_id="r3")
+    ops.record_issue("funds/etf_holdings", "source_failed", "ARKQ", "again", run_id="r4")
+    out["sync_dupes"] = ops.sync_issues("funds/etf_holdings", ["source_failed"], [])
+    out["dupes_open"] = ops.open_issues("funds/etf_holdings", 0)[0]
     out["sync2"] = ops.sync_issues("prices/serving", ["price_gap_no_action"],
                                    [("price_gap_no_action", f"T{i}", "new detail") for i in range(2, 7)])
     ops.start_run("r1", "market_series", "cli", {"once": True})
@@ -278,3 +283,17 @@ def test_a_key_part_holding_the_separator_is_refused_not_merged():
     with pytest.raises(ValueError, match=r"\|"):
         ops.put_rows("read_log", [{"day": "2026-11-02", "process": "a|b", "table_name": "c", "reads": 1}])
     assert ops.rows("read_log") == []
+
+
+def test_pause_cancels_the_queued_request_on_redis_too():
+    """#492 PR (ii): the same answer as SQLite's ``test_pause_cancels_the_queued_request_…``."""
+    running = ops.enqueue("market_series", None, by="settings")
+    ops.next_request()
+    q = ops.enqueue("market_series", None, by="settings")
+    other = ops.enqueue("prices/serving", None, by="settings")
+    assert ops.schedule_pause("market_series", by="avo") == 1
+    rows = {r["id"]: r for r in ops.rows("build_requests")}
+    assert [rows[i]["status"] for i in (running, q, other)] == ["running", "skipped", "queued"]
+    assert rows[q]["note"].startswith("cancelled: paused by avo at ") and rows[q]["ended_at"] is not None
+    assert ops.queue_view(5)["finished"][0]["id"] == q, "a cancelled row leaves the active list"
+    assert ops.cancel_queued("market_series", by="avo") == 0

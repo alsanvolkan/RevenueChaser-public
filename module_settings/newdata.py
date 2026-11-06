@@ -1071,7 +1071,14 @@ def _card(dataset: str, ds, facts: dict, now: datetime, used_today: dict[str, in
                             if getattr(ds, "attended", False) else None,
         "schedule": {"paused": bool(schedule and schedule.get("paused_at") is not None),
                      "paused_by": (schedule or {}).get("paused_by"),
-                     "paused_at": _iso_utc((schedule or {}).get("paused_at"))},
+                     "paused_at": _iso_utc((schedule or {}).get("paused_at")),
+                     # The cadence and the hold the card's two fields set (``/api/build/schedule/<ds>/cadence``).
+                     # ``cadence`` is None while no one has set one; ``cadence_effective`` is what ``due.py``
+                     # reads either way (the dataset's own, else the catalog's), so the card can say which of the
+                     # two is in force.
+                     "cadence": (schedule or {}).get("cadence"),
+                     "cadence_effective": _cadence(dataset, schedule),
+                     "next_due": str((schedule or {}).get("next_due") or "")[:10] or None},
     }
 
 

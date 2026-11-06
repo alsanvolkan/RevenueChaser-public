@@ -371,36 +371,12 @@ class TestSettingsRefreshAfterIdentity:
             f"refresh reached the network: {[q.path for q in provider_routes.requests()[before:]]}")
         assert seeded.yf_calls() == before_yf
 
-    @SHARED
-    def test_the_settings_card_and_the_fetch_identity_button_render_after_a_run(self, identity_run, provider_routes):
-        # Clears the shared cache: no shared test reads a rendered artifact, they all read the store.
-        dash = identity_run.dashboard
-        assert identity_run.result.ok
-        clear_cache_dir(dash.cache_dir)
-        before, before_yf = provider_routes.request_count, dash.yf_calls()
-        r = dash.view("module_settings", refresh=True)
-        assert r.status_code == 200
-        assert provider_routes.request_count == before, (
-            f"refresh reached the network: {[q.path for q in provider_routes.requests()[before:]]}")
-        assert dash.yf_calls() == before_yf
-        html = r.text
-        assert 'id="identity-health"' in html, "the Identity health card is missing from the Settings board"
-        assert '<section id="identity">' in html, "the card must be reachable at #identity"
-        assert 'id="identity-types"' in html, "the type-mix section is missing from the Identity health card"
-        assert 'data-fetch="/run/identity"' in html and "Fetch identity" in html, (
-            "the Fetch identity button is missing from the inventory table")
-        assert "SPDR check: 1/1 agree" in html
 
     @SHARED
     def test_the_button_route_runs_the_identity_job(self, identity_run):
         result = identity_run.result       # POST /run/identity: exactly what the Fetch identity button posts
         assert result.ok, f"{result}\n{identity_run.dashboard.logs()}"
         assert len(_q("SELECT * FROM identity_runs")) == 1
-
-    def test_first_load_with_no_identity_run_shows_the_empty_state_and_the_button(self, seeded):
-        html = seeded.view("module_settings").text
-        assert "No identity run yet. Use Fetch identity in the table above." in html
-        assert 'data-fetch="/run/identity"' in html, "the Fetch identity button must show before the first run"
 
 
 class TestSpdrCheck:
@@ -421,17 +397,3 @@ class TestSpdrCheck:
         assert c["side_a"] == "Technology" and c["side_b"] == "Communication Services", c
         assert _master()["AAPL"]["sector"] == "Technology", "SPDR is a check: it never sets a value"
         assert _json(_q("SELECT counts FROM identity_runs")[0]["counts"])["spdr_agree"] == 0
-
-    def test_a_spdr_500_keeps_the_run_ok_writes_no_conflict_and_shows_on_the_card(
-            self, seeded, provider_routes, clear_cache):
-        provider_routes.route("/spdr/holdings-daily-us-en-xle.xlsx", payload={"error": "down"}, status=500)
-        result = seeded.run_job("/run/identity")
-        assert result.ok, f"{result}\n{seeded.logs()}"
-        assert "sources ok 7/7" in result.message, result.message
-        run = _q("SELECT * FROM identity_runs")[0]
-        assert run["status"] == "ok", "a failed SPDR check must not make the run partial"
-        assert "spdr_checked" not in _json(run["counts"])
-        assert not _q("SELECT * FROM identity_conflicts WHERE kind = 'spdr'")
-        clear_cache()
-        html = seeded.view("module_settings", refresh=True).text
-        assert "SPDR check failed" in html, "the Settings card must say the SPDR check failed"

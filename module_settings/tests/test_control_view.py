@@ -85,16 +85,17 @@ def test_a_collect_error_is_carried_not_raised():
     assert _build({"error": "RuntimeError: x"})["error"] == "RuntimeError: x"
 
 
-def test_the_health_strip_has_its_twelve_tiles_counted_from_the_cards():
+def test_the_health_strip_has_its_fourteen_tiles_counted_from_the_cards():
     h = _build()["health"]
     keys = [t["key"] for t in h["tiles"]]
-    assert keys == ["fresh", "late", "stale", "never", "problems", "session", "queue", "builder", "cap", "universe",
-                    "gateway", "backup"]
+    assert keys == ["fresh", "late", "stale", "never", "problems", "session", "queue", "timer", "builder", "cap",
+                    "universe", "gateway", "longest", "backup"]
     tile = {t["key"]: t for t in h["tiles"]}
     assert (tile["fresh"]["n"], tile["late"]["n"], tile["stale"]["n"], tile["never"]["n"]) == ("1", "1", "1", "2")
     assert tile["problems"]["n"] == "10"
-    assert tile["session"]["n"] == "28 Oct" and "7,422 names" in tile["session"]["label"], "every bar in the file"
-    assert tile["session"]["cls"] == "warn", "alpaca/bars is late, so the newest session is not complete"
+    assert tile["session"]["n"] == "28 Oct"
+    assert f"{tile['universe']['n']} of 7,670 names" in tile["session"]["label"], "the universe's own filled count"
+    assert tile["session"]["cls"] == "warn", "wrds/prices serves the bars and never ran, so the session is not complete"
     assert tile["cap"]["n"] == "72%" and "Alpha Vantage" in tile["cap"]["label"] and tile["cap"]["cls"] == "bad"
     assert tile["builder"]["n"] == "24 min" and tile["builder"]["cls"] == "ok"
     assert tile["queue"]["n"] == "1"
@@ -140,7 +141,7 @@ def test_the_files_come_in_build_order_with_the_columns_of_the_code():
     bars = next(t for t in prices["tables"] if t["name"] == "price_bar_daily")
     assert bars["columns"] == [(c, str(t)) for c, t in scaffold.SCHEMA_OF_KIND["prices"]["price_bar_daily"]]
     assert bars["rows"] == 18_412_904
-    assert [d["dataset"] for d in prices["datasets"]] == ["alpaca/bars", "wrds/prices"]
+    assert [d["dataset"] for d in prices["datasets"]] == ["wrds/prices", "alpaca/bars"]
     assert prices["bytes"] == 1_200_000_000
 
 

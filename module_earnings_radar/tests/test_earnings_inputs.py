@@ -287,7 +287,21 @@ def _seed_calendar(tickers_by_day):
 
 
 def _seed_13f(tickers):
-    rawstore.write_rows("sec13f_totals", [{"ticker": t, "entry": {"value": 1}} for t in tickers])
+    """The served store, which is where the sweep reads its 13F ticker set since #515."""
+    import duckdb
+
+    from RevenueChaser.rcdata import serving
+
+    path = serving.live_path("ownership")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(path))
+    try:
+        con.execute("CREATE TABLE IF NOT EXISTS sec13f_ticker_period (ticker TEXT, period DATE, shares DOUBLE, "
+                    "filing_deadline DATE)")
+        con.executemany("INSERT INTO sec13f_ticker_period (ticker, period, shares, filing_deadline) VALUES (?,?,?,?)",
+                        [[t, date(2026, 6, 30), 1.0, date(2026, 8, 14)] for t in tickers])
+    finally:
+        con.close()
 
 
 def _si_item(symbol, **kw):

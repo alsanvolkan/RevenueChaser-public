@@ -480,8 +480,13 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         marks = ", ".join("?" * len(kinds))
         open_rows = con.execute(f"SELECT id, kind, key FROM build_issues WHERE dataset = ? AND resolved_on IS NULL "
                                 f"AND kind IN ({marks})", (dataset, *kinds)).fetchall()
-        have = {(r["kind"], r["key"]): r["id"] for r in open_rows}
-        gone = [i for k, i in have.items() if k not in want]
+        # Every row of a key, not one: ``record_issue`` writes a row per run, so one unfixed problem becomes
+        # many rows with the same key (FRED's missing key left six), and keeping all but one open means the
+        # health screen never stops claiming a problem that is over.
+        have: dict[tuple, list[int]] = {}
+        for r in open_rows:
+            have.setdefault((r["kind"], r["key"]), []).append(r["id"])
+        gone = [i for k, ids in have.items() if k not in want for i in ids]
         con.executemany("UPDATE build_issues SET resolved_on = ? WHERE id = ?", [(today, i) for i in gone])
         new = [(dataset, today, k, key, detail, run_id) for (k, key), detail in sorted(want.items())
                if (k, key) not in have]
@@ -712,12 +717,34 @@ def schedule_set(dataset: str, cadence: str, next_due: str | None) -> None:
                     (dataset, cadence, next_due))
 
 
+def cancel_note(by: str, at: float) -> str:
+    """The note a request cancelled by a Pause carries: who and when (UTC, to the minute)."""
+    return f"cancelled: paused by {by} at {time.strftime('%Y-%m-%d %H:%M', time.gmtime(at))} UTC"
+
+
+def _cancel_queued(con: sqlite3.Connection, dataset: str, by: str, at: float) -> int:
+    # only ``queued`` rows: ``next_request`` claims those alone, so the builder and a cancel never hold one row
+    return con.execute("UPDATE build_requests SET status = 'skipped', ended_at = ?, note = ? "
+                       "WHERE dataset = ? AND status = 'queued'", (at, cancel_note(by, at), dataset)).rowcount
+
+
 @_routed
-def schedule_pause(dataset: str, *, by: str) -> None:
-    with _open() as con:
+def cancel_queued(dataset: str, *, by: str) -> int:
+    """Skip every queued request of ``dataset`` (``cancelled: paused by <by> at <when> UTC``); how many. A running
+    request is never touched: the running fetch stops itself at its next provider call (``base.RunContext``)."""
+    with _open() as con, _tx(con):
+        return _cancel_queued(con, dataset, by, time.time())
+
+
+@_routed
+def schedule_pause(dataset: str, *, by: str) -> int:
+    """Hold ``dataset`` and cancel its queued requests in one transaction (#492 PR (ii)); how many were cancelled."""
+    now = time.time()
+    with _open() as con, _tx(con):
         con.execute("INSERT INTO dataset_schedule (dataset, paused_at, paused_by) VALUES (?, ?, ?) "
                     "ON CONFLICT (dataset) DO UPDATE SET paused_at = excluded.paused_at, paused_by = excluded.paused_by",
-                    (dataset, time.time(), by))
+                    (dataset, now, by))
+        return _cancel_queued(con, dataset, by, now)
 
 
 @_routed

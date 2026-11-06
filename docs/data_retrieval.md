@@ -188,14 +188,54 @@ routes only enqueue and read `ops.sqlite`. Each call opens its own SQLite connec
   missing partitions).
 - **`GET /api/build/queue`**: `{ok, active, finished}`. `active` holds the queued and running requests, oldest
   first; `finished` the last 20 others, newest first.
-**Stage only (`--no-build`).** `run --dataset X --no-build` and `backfill ... --no-build` fetch and write Parquet
+**Stage only (`--no-duckdb`) and raw only (`--no-parquet`).** The builder's three steps are *fetch* (the
+provider's answer into the raw store), *Parquet* (the typed partition) and *build* (the serving DuckDB and its
+swap). Each flag names everything it drops:
+
+| flag | fetch | Parquet | serving DuckDB |
+| --- | --- | --- | --- |
+| *(none)* | yes | yes | yes |
+| `--no-duckdb` | yes | yes | no |
+| `--no-parquet` | yes | no | no (implied) |
+
+`run --dataset X --no-duckdb` and `backfill ... --no-duckdb` fetch and write Parquet
 but do not build the serving file: the request ends `skipped`, with a note that says what the fetch really staged
-(`build skipped (--no-build); 3 raw files staged`, or `nothing staged (the fetch returned no file)` when the
+(`build skipped (--no-duckdb); 3 raw files staged`, or `nothing staged (the fetch returned no file)` when the
 dataset's provider window was closed, or `the backfill staged what it fetched` when the count cannot be taken), the serving file is untouched, and the dataset stays due, so the next ordinary pass builds it at no
 provider call — the raw file it staged is the resume marker. It is for staging days of data without holding the
 builder lock through a build each time (the fetch campaign of a kind that has never been built), or for preparing
-the data on one machine and building it on another. It is a person's switch: the hourly pass queues no params, so
-the schedule can never leave a kind unbuilt.
+the data on one machine and building it on another.
+
+`--no-parquet` is the raw-only mode (#498): the fetch writes what it always writes into the raw store — the
+provider's answers and the raw markers beside them (`.none` and `.absent.json` for an answer that was refused,
+`start.json` for a walk's first day) — and no Parquet partition and no serving file. The note reads
+`build and Parquet skipped (--no-parquet); 3 raw files staged`. It **implies `--no-duckdb`**, because Parquet is
+the only input a build reads, so a build with no new partition would be a no-op that still took the builder lock.
+The daily mode skips the dataset's `to_parquet_all` call outright; a backfill converts inside the dataset, so
+there the switch is a run-scoped guard (`base.raw_only()`) that `base.write_parquet` reads — the one place a
+Parquet file is written — and that writes nothing and returns the path it did not write.
+
+**A dataset that writes a "this day is finished" marker in its conversion step skips the whole step in a raw-only
+run, not only the write.** The EDGAR feeds (`sec/13f`, `sec/form4`, `sec/sched13dg`) write the day's `.done`
+marker in `to_parquet_all` beside the typing, and `.done` is what the daily-index walk skips on, so a marker
+written without its partition would hide that day's filings from every later run (only a hand-deleted marker
+brings them back). `ownership/edgar.py` `to_parquet_all` and `ownership/sec13f_sets.py` `_fill_one` therefore
+return early when `base.raw_only()` holds: the filings and the data-set zip stay in raw, the days stay open, and
+the next ordinary run walks and types them at no provider call. A new dataset whose conversion has a side effect
+of its own does the same.
+
+For the rest, the raw file is the resume marker, so a later ordinary run (or `--no-duckdb` run) converts what is
+already on disk at no provider call. **Two datasets are the exception and should not be fetched raw-only:**
+`wrds/prices` and `wrds/fundamentals` resume from their *Parquet* snapshot, not from raw
+(`prices/wrds_history.py` `_snapshots`, `fundamentals/wrds_fund.py` `snapshots`), so a second raw-only run asks
+the snapshot query again — an attended query with a WRDS login, a Duo confirm and a query budget.
+
+`--no-build` is the old name of `--no-duckdb`, kept as a deprecated alias so a queued request and a runbook line
+keep working; a request's params accept `no_build` as well as `no_duckdb`.
+
+Both are a person's switch: the hourly pass queues no params, so
+the schedule can never leave a kind unbuilt. Both are fetch-only for the locks — one `rcdata_fetch_<dataset>`
+each, never the builder lock — so two datasets fetch side by side and beside a running builder.
 
 - **`POST /api/build/schedule/<dataset>/<pause|resume>`**: sets or clears `dataset_schedule.paused_at` /
   `paused_by`; 404 for another action.
@@ -341,6 +381,7 @@ whole app at a local server:
 | `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives; the spine's `sec/company_tickers_exchange`; the ownership store's EDGAR daily index, filings (`sec/13f`, `sec/form4`, `sec/13dg`) and fails-to-deliver files (`sec/ftd`); the fundamentals layer's SEC datasets (`rcdata/build/fundamentals/`) |
 | `RC_ALPHAVANTAGE_BASE` | Alpha Vantage, the fundamentals layer's `alphavantage/earnings_calendar` (`rcdata/build/fundamentals/earnings.py`; read at call time) |
 | `RC_FORM13F_INDEX_URL` | SEC Form 13F data-set page (zip links are resolved from it) |
+| `RC_FORM345_INDEX_URL` | SEC Insider Transactions data-set page (`sec/form4`'s first fill; same) |
 | `RC_FRED_BASE` | FRED series (also the market store's FRED source) |
 | `RC_CBOE_BASE` | Cboe daily-price index files (`module_earnings_radar/inputs/vol_index.py`, `rcdata/build/sources/cboe.py`) |
 | `RC_CFTC_BASE` | CFTC Traders in Financial Futures (also the market store's CFTC source, `rcdata/build/sources/cftc.py`) |

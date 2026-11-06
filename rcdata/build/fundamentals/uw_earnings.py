@@ -19,8 +19,9 @@ why the SEC's ``eps_diluted`` stays the only EPS in ``fundamental_fact``. The tw
 
 **Weekly, one request per company** (the pattern of ``yfinance/estimates``): a company whose newest answer is
 ``WEEK_DAYS`` old, or that has none, is asked, the longest without an answer first; ``FAIL_STREAK`` failures in a
-row stop the run (UW throttling or down) and a run where every request failed is a failed run. Paced and counted
-against the ``uw`` cap. No ``UNUSUAL_WHALES_API_KEY``: nothing is asked, a ``missing_key`` issue.
+row stop the run (UW throttling or down) and a run where every request failed is a failed run. Counted against the
+``uw`` day cap; not paced, because UW publishes no request window. No ``UNUSUAL_WHALES_API_KEY``: nothing is asked,
+a ``missing_key`` issue.
 
 Raw: ``raw/uw/earnings/<as-of>/<ticker>.json.gz`` (the resume marker). Parquet:
 ``parquet/uw/earnings/date=<as-of>/part-0.parquet``, rewritten from the day's raw files so a resumed day loses none;
@@ -145,7 +146,8 @@ class UWEarnings:
                 not_asked = len(due) - n
                 break
             ctx.check_cap(PROVIDER)
-            base.run_pacer(ctx, PROVIDER).wait()
+            # No pacer: UW publishes no request window (``caps.WINDOWS``), so there is none to keep. The day cap
+            # and the client's own 429 backoff are the limits, as for every other UW dataset.
             ctx.count(PROVIDER, calls=1)
             res = ctx.uw_client().stock_earnings_result(ticker)
             if res.status != "ok":
