@@ -365,17 +365,21 @@ def test_the_other_managers_a_filing_names_are_kept_on_both_paths_and_agree(feed
     one = ox.f13_set([
         ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [h("MICROSOFT CORP", "594918104", 4, 10)],
                       included=included, reported_by=reported_by),
-        ox.set_filing("0001000002-26-000105", 1000002, "14-AUG-2026", [h("WELLS FARGO", "949746101", 1, 2)])])
+        ox.set_filing("0001000002-26-000105", 1000002, "14-AUG-2026", [h("WELLS FARGO", "949746101", 1, 2)]),
+        ox.set_filing("0001000003-26-000107", 1000003, "14-AUG-2026", [], form="13F-NT", reported_by=reported_by)])
     http_mock.routes.insert(0, (HREFS[0], one, 200, {}))
     assert _backfill("2026-06-01", "2026-08-31")["result"] == "changed"
     rows = _managers("0001000001-26-000101")
-    assert rows == [("cover", 1, "0000932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC"),
-                    ("included", 1, "0001444949", "SUSQUEHANNA ADVISORS GROUP, INC."),
-                    ("included", 2, "0000918950", "SUSQUEHANNA INVESTMENT GROUP")]
+    # a manager's CIK is written as the filer's is, without leading zeros, so it joins to filings.cik
+    assert rows == [("cover", 1, "932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC"),
+                    ("included", 1, "1444949", "SUSQUEHANNA ADVISORS GROUP, INC."),
+                    ("included", 2, "918950", "SUSQUEHANNA INVESTMENT GROUP")]
     assert _managers("0001000002-26-000105") == [], "a filing that names none has no rows, not an empty one"
+    assert _managers("0001000003-26-000107") == [], "a filing the set does not type (a notice) has no manager rows"
 
-    # the EDGAR path types the same filing from its XML: the rows must match, seq included
+    # the EDGAR path types the same filing from its XML: the rows must match, seq included, whatever the padding
     assert _edgar_managers(included, reported_by) == rows
+    assert _edgar_managers([(q, c.lstrip("0"), n) for q, c, n in included], reported_by) == rows
 
 
 def test_the_cover_pages_period_wins_on_both_paths_and_a_cusip_placeholder_is_no_cusip(feed, http_mock):

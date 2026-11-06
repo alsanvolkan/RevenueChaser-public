@@ -280,7 +280,7 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
     con.execute("""CREATE TABLE managers AS
         SELECT f.accession, f.cik, f.period, f.filed, 'included' AS kind,
                TRY_CAST(trim(o.SEQUENCENUMBER) AS INTEGER) AS seq,
-               nullif(trim(o.CIK), '') AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
+               coalesce(CAST(TRY_CAST(trim(o.CIK) AS BIGINT) AS VARCHAR), nullif(trim(o.CIK), '')) AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
                nullif(trim(o.CRDNUMBER), '') AS crd_number, nullif(trim(o.SECFILENUMBER), '') AS sec_file_number,
                nullif(trim(o.NAME), '') AS name
         FROM filings f JOIN z_othermanager2 o ON trim(o.ACCESSION_NUMBER) = f.accession
@@ -289,7 +289,7 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                CAST(row_number() OVER (PARTITION BY f.accession
                                        ORDER BY TRY_CAST(trim(o.OTHERMANAGER_SK) AS BIGINT),
                                                 trim(o.OTHERMANAGER_SK)) AS INTEGER) AS seq,
-               nullif(trim(o.CIK), '') AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
+               coalesce(CAST(TRY_CAST(trim(o.CIK) AS BIGINT) AS VARCHAR), nullif(trim(o.CIK), '')) AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
                nullif(trim(o.CRDNUMBER), '') AS crd_number, nullif(trim(o.SECFILENUMBER), '') AS sec_file_number,
                nullif(trim(o.NAME), '') AS name
         FROM filings f JOIN z_othermanager o ON trim(o.ACCESSION_NUMBER) = f.accession""")
@@ -318,7 +318,7 @@ def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema:
     """Fill ``feed``'s days from ``start`` to ``end`` that a listed set covers; the last day covered (None when no
     set covers any). A range of fewer than ``MIN_WEEKDAYS`` weekdays asks nothing: the walk reads its forms. Every
     backfill first removes a killed run's typing folders, a short one too.
-    ``schema``: ``{"forms", "filings", "holdings", "dollars_from", "cusip_none"}`` of ``sec/13f``."""
+    ``schema``: ``{"forms", "filings", "holdings", "managers", "dollars_from", "cusip_none"}`` of ``sec/13f``."""
     _clear_scratch(ctx)
     weekdays = sum(1 for k in range((end - start).days + 1) if (start + timedelta(days=k)).weekday() < 5)
     if weekdays < MIN_WEEKDAYS:

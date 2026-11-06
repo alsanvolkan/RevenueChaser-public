@@ -96,6 +96,12 @@ def status_of(report_type: str | None, holdings: int, entry_total: int | None) -
     return "ok", None
 
 
+def _cik(value: str | None) -> str | None:
+    """A CIK without its leading zeros, as the filer's own is written, so a manager joins to ``filings.cik``; text
+    that is not a number is kept as filed (#495 review)."""
+    return str(int(value)) if value and value.isdigit() else value
+
+
 def _managers(root, row: dict) -> list[dict]:
     """The filing's other managers, both lists, in ``MANAGERS`` shape (avo, 5 Nov 2026).
 
@@ -117,7 +123,7 @@ def _managers(root, row: dict) -> list[dict]:
             out.append({"accession": row["accession"], "cik": row["cik"], "period": row["period"],
                         "filed": row["filed"], "kind": kind,
                         "seq": edgar.integer(edgar.text(m, seq_tag)) if seq_tag else n,
-                        "manager_cik": edgar.text(f, "cik"),
+                        "manager_cik": _cik(edgar.text(f, "cik")),
                         "form13f_file_number": edgar.text(f, "form13ffilenumber"),
                         "crd_number": edgar.text(f, "crdnumber"),
                         "sec_file_number": edgar.text(f, "secfilenumber"),
