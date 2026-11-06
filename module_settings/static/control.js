@@ -79,7 +79,7 @@
   /* a finished run puts the one button back on Fetch */
   function back(btn) {
     if (btn.getAttribute('data-job') !== 'one' || btn.getAttribute('data-state') !== 'pause') return;
-    btn.setAttribute('data-state', 'fetch'); btn.textContent = 'Fetch'; btn.classList.add('go');
+    if (window.CTLX.setState) window.CTLX.setState(btn, 'fetch');   // the one button's own, which brings back its ▾
   }
   function follow(btn, rid, left) {
     if (left <= 0) { back(btn); return; }   // no longer followed: the button must not hold a Pause for no run
@@ -92,6 +92,7 @@
         if (row.status === 'queued') { pill(btn, 'st-q', 'queued · ' + nth(pos) + ' in line'); follow(btn, rid, left - 1); }
         else if (row.status === 'running') { pill(btn, 'st-r', 'running'); follow(btn, rid, left - 1); }
         else if (row.status === 'done') { pill(btn, 'st-d', 'done · ' + (row.note || 'see Queue and last runs')); btn.hidden = false; back(btn); }
+        else if (row.status === 'skipped') { pill(btn, 'st-p', 'skipped · ' + (row.note || 'see Queue and last runs')); btn.hidden = false; back(btn); }
         else { pill(btn, 'st-f', row.status + ' · ' + (row.note || 'see Open problems')); btn.hidden = false; back(btn); }
       }, function () { follow(btn, rid, left - 1); });
     }, 15000);
@@ -1044,11 +1045,12 @@
     if (m) m.hidden = st !== 'fetch';                 // the ▾ asks for a partial Fetch, so it sits only beside Fetch
     if (l && st !== 'fetch') l.hidden = true;
   }
+  X.setState = setState;
   /* #492 PR (ii): what a Pause did, beside the button: a queued run cancelled, or a running one stopping */
   function paused(btn, r) {
+    // from the answer, not the page: a row the builder claimed after the page was read is stopping, not cancelled
     var pill = btn.closest('.sbbtn') && btn.closest('.sbbtn').querySelector('.lg3');
-    if (pill && /running/.test(pill.textContent)) pill.textContent = 'stopping…';
-    else if (pill) pill.textContent = r.body.cancelled ? 'cancelled' : pill.textContent;
+    if (pill) pill.textContent = r.body.cancelled ? 'cancelled' : 'stopping…';
   }
   function body(btn) {
     if (btn.getAttribute('data-scope') !== '1') return undefined;
@@ -1092,7 +1094,7 @@
     btn.disabled = true;
     X.send('POST', C.routes.schedule + ds + '/pause').then(function (r) {
       if (r.status >= 200 && r.status < 300) {
-        if (out) out.textContent = btn.getAttribute('data-status') === 'queued' ? ' cancelled' : ' stopping…';
+        if (out) out.textContent = r.body.cancelled ? ' cancelled' : ' stopping…';
         [].forEach.call(document.querySelectorAll('.ctl [data-job="one"]'), function (o) {
           if (o.getAttribute('data-dataset') === ds) setState(o, 'resume');
         });

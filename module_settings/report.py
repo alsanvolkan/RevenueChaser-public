@@ -2209,7 +2209,7 @@ ND_STATUS_ICONS = {"fresh": "●", "unchanged": "○", "late": "▲", "stale": "
 ND_WORKER_SILENT_MINUTES = 70
 #: The page never refreshes itself (A26). Past this many minutes since it was read, a ribbon says to refresh (M8).
 ND_PAGE_STALE_MINUTES = 15
-ND_NO_CANCEL = "A Pause cancels a queued request and stops a running one before its next provider call."
+ND_PAUSE_STOPS = "A Pause cancels a queued request and stops a running one before its next provider call."
 ND_BACKFILL_CONFIRM_OVER = 1000
 ND_NEXT_PASS = "the builder takes it at its next pass (hourly at :07)"
 
@@ -2356,7 +2356,7 @@ def _nd_cross_check(cross: dict | None) -> str:
             f'<h3>{esc(str(f.get("field") or ""))}</h3>'
             f'<div class="nd-rows">{"".join(body)}</div>'
             + f'<div class="nd-actions">{button}</div>'
-            + (f'<div class="nd-cost">Cost: {cost} · {left}. {esc(ND_NO_CANCEL)}</div>' if dataset else
+            + (f'<div class="nd-cost">Cost: {cost} · {left}. {esc(ND_PAUSE_STOPS)}</div>' if dataset else
                f'<div class="nd-off-why">The button is off: {_nd(f.get("cannot_queue"))}.</div>'
                + (f'<div class="nd-k">Run it there: <code>{_nd(f.get("command"))}</code></div>'
                   if f.get("command") else ""))
@@ -2413,7 +2413,7 @@ def _nd_cost_line(cost: dict | None) -> str:
         left = f"{esc(str(provider))}: no cap"
     else:
         left = f'{esc(str(provider))}: {_nd(cost.get("remaining"))} of {_nd(cost.get("cap"))} left today'
-    return f'<div class="nd-cost">Cost: {calls} · {left}. {esc(ND_NO_CANCEL)}</div>'
+    return f'<div class="nd-cost">Cost: {calls} · {left}. {esc(ND_PAUSE_STOPS)}</div>'
 
 
 def _nd_dataset_card(c: dict, *, open_: bool = False) -> str:
@@ -2770,7 +2770,7 @@ def _newdata_section(nd: dict | None) -> str:
         f'<div class="nd-sub" id="nd-watch-summary">Watch lists: {counts}</div>'
         '<div class="nd-sub">Read when this page was rendered. Fetch, Backfill and Pause / Resume only put a request '
         'in the queue; the builder runs it. Remove takes a name off a watch list. Nothing on this page writes market '
-        f'data. {esc(ND_NO_CANCEL)}</div>'
+        f'data. {esc(ND_PAUSE_STOPS)}</div>'
         # M8 (A26): the page carries the minute it was read and never refreshes itself. Past
         # ``ND_PAGE_STALE_MINUTES`` the ribbon below appears and says to refresh; the reader decides when.
         f'<div class="nd-sub" id="nd-read-at" data-nd-read-at="{esc(_nd_read_at())}">'
@@ -2901,7 +2901,7 @@ function ndSchedule(btn, action){
     btn.textContent = paused ? 'Resume' : 'Pause';
     var line = card && card.querySelector('[data-nd-sched]');
     if(line) line.innerHTML = paused ? 'paused by ' + rcEsc(s.paused_by) : 'running on its schedule';
-    ndSay(card, paused ? 'Paused: the builder skips it until Resume.' : 'Resumed.');
+    ndSay(card, paused ? 'Paused: a queued run is cancelled, a running one stops before its next call; the builder skips it until Resume.' : 'Resumed.');
   });
 }
 function ndCadence(btn){
@@ -3088,8 +3088,9 @@ _UCARDS_CSS = (".ctl .ucards{--border:var(--line);--muted:var(--mut);--neg:var(-
 DATA_HELP = help_html(
     "<b>Data</b> shows each served file (the six SSD DuckDB files) and how it is made: its sources, one box a "
     "dataset, then the Build stage from HDD raw and Parquet to the SSD file, then example rows. <b>Fetch</b> puts "
-    "one request in the builder's queue; the builder calls the provider, never this page. <b>Pause</b> holds a "
-    "dataset: the hourly pass skips it until <b>Resume</b>. <b>Health</b> holds the queue and last runs, the need "
+    "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
+    "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
+    "call and holds the dataset until <b>Resume</b>. <b>Health</b> holds the queue and last runs, the need "
     "catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
     "the backups. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
 )

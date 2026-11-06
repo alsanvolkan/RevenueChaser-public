@@ -380,13 +380,12 @@ def _one_button(d: dict, view: dict) -> str:
     else:
         state, word, pill = "fetch", "Fetch", ""
     cls = "btn go" if state == "fetch" else "btn"
-    menu = ""
-    if state == "fetch":
-        items = "".join(f'<button type="button" role="menuitem" class="btn" data-job="stage" data-stage="{k}" '
-                        f'title="{esc(why)}">{esc(label)}</button>' for k, label, why in FETCH_STAGES)
-        menu = (f'<button type="button" class="btn fmenu" data-job="fmenu" aria-haspopup="menu" aria-expanded="false" '
-                f'aria-label="Fetch only part of the run: {esc(name)}">▾</button>'
-                f'<span class="fmenul" role="menu" hidden>{items}</span>')
+    # always drawn, hidden away from Fetch, so the script can show it again after a Resume or a finished run
+    items = "".join(f'<button type="button" role="menuitem" class="btn" data-job="stage" data-stage="{k}" '
+                    f'title="{esc(why)}">{esc(label)}</button>' for k, label, why in FETCH_STAGES)
+    menu = (f'<button type="button" class="btn fmenu" data-job="fmenu" aria-haspopup="menu" aria-expanded="false" '
+            f'aria-label="Fetch only part of the run: {esc(name)}"{"" if state == "fetch" else " hidden"}>▾</button>'
+            f'<span class="fmenul" role="menu" hidden>{items}</span>')
     return (f'{pill}<span class="onewrap"><button type="button" class="{cls} one" data-job="one" data-state="{state}" '
             f'data-dataset="{esc(name)}" data-scope="{1 if d["fetch"]["honours_scope"] else 0}">{word}</button>'
             f'{menu}</span>')
