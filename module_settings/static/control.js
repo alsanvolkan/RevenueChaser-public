@@ -169,7 +169,7 @@
     } catch (e) { say('Run on the server: ' + cmd); }
   }
   function sample(btn) {
-    var t = btn.getAttribute('data-sample-refresh'), sec = btn.closest('.dsec'), note = btn.parentNode.querySelector('.dim');
+    var t = btn.getAttribute('data-sample-refresh'), sec = btn.closest('.dsec'), note = btn.parentNode.querySelector('[role="status"]');
     btn.disabled = true;
     send('GET', C.routes.sample + encodeURIComponent(t)).then(function (r) {
       btn.disabled = false;
@@ -648,6 +648,7 @@
     var f = t.getAttribute('data-f');
     if (f === 'universe') { if (cur) { cur = null; filter(null); } X.scrollTo(document.getElementById('universe')); return; }
     if (f === 'queue' || f === 'builder') { var q = document.getElementById('sec-queue'); if (q) { X.reveal(q); q.open = true; X.scrollTo(q); } return; }
+    if (f === 'backup') { var bk = document.getElementById('backups'); if (bk) { X.reveal(bk); X.scrollTo(bk); } return; }
     if (f === 'cap') { var p = document.querySelector('.ctl .fpanel:not([hidden]) details.provs'); if (p) { p.open = true; X.scrollTo(p); } return; }
     cur = cur === f ? null : f; filter(cur);
     var s = document.getElementById('ffilter'); if (cur && s) X.scrollTo(s);
@@ -1177,4 +1178,32 @@
   });
   var first = pick.querySelector('.fpb');
   if (first) select(first.getAttribute('data-file'), false);
+})();
+
+/* Q55 (avo 6 Nov 2026): both tabs are drawn for 1600 px. A wider window only scales them up, the layout unchanged;
+   a narrower one reflows as before, so a phone never gets small type. The browser's own zoom still works on top. */
+(function () {
+  'use strict';
+  function fit() {
+    var z = (document.documentElement.clientWidth || 0) / 1600;
+    [].forEach.call(document.querySelectorAll('#ctl, #needs'), function (e) { e.style.zoom = z > 1 ? String(z) : ''; });
+  }
+  fit();
+  window.addEventListener('resize', fit);
+  // a scroll bar that comes later narrows the page without a resize event
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(document.documentElement);
+  // an ⓘ in the right half of the window opens its tip leftward, so the tip never runs past the edge
+  function side(e) {
+    var i = e.target && e.target.closest && e.target.closest('.ctl .info'); if (!i) return;
+    var w = document.documentElement.clientWidth || window.innerWidth || 0, r = i.getBoundingClientRect();
+    i.classList.toggle('tipr', r.left > w / 2);
+    i.style.removeProperty('--tipx');
+    // then keep the tip inside the window, 8 px from each edge: measure it where it opens and shift it back in
+    var cs = getComputedStyle(i, '::after'), tw = parseFloat(cs.width) || 0;
+    var left = i.classList.contains('tipr') ? r.right - tw : r.left;
+    var shift = Math.max(8 - left, Math.min(0, (w - 8) - (left + tw)));
+    if (shift) i.style.setProperty('--tipx', shift + 'px');
+  }
+  document.addEventListener('mouseover', side);
+  document.addEventListener('focusin', side);
 })();

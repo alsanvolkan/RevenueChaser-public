@@ -2,7 +2,7 @@
    every source box (.dset[data-dataset]) to its own step row (tr.jr[data-ds]), in the box's provider colour lightened
    toward white; every build row gets a dashed line from each step of its file, in the file's colour, joined on a
    trunk. Each line has a wide invisible twin that takes the hover. A press goes through the journey code in
-   control.js (it sets sel / lit / fade on the rows); the tree only follows those classes. */
+   control.js (it sets sel / lit / fade on the rows); a line glows only while the pointer is on it (Q30). */
 (function () {
   'use strict';
   if (!document.querySelector || !document.createElementNS) return;
@@ -75,14 +75,25 @@
     var h = host(j); if (!h) return;
     var svg = h.querySelector(':scope > svg.dtree');
     if (svg) while (svg.firstChild) svg.removeChild(svg.firstChild);
+    // a line removed under the pointer never gets its mouseleave: drop what its hover lit, or it stays lit (Q30)
+    [].forEach.call(document.querySelectorAll('.ctl .dtree-ring, .ctl .dtree-lit'), function (e) {
+      e.classList.remove('dtree-ring'); e.classList.remove('dtree-lit');
+    });
     if (!shown(j) || (window.innerWidth || 1024) < PHONE) { if (svg) svg.style.display = 'none'; return; }
     if (!svg) { svg = el('svg', { 'class': 'dtree', 'aria-hidden': 'true' }); h.appendChild(svg); }
     svg.style.display = '';
     h.classList.add('dtree-host');
     var hr = h.getBoundingClientRect();
+    // A CSS zoom on the page (wide screens, Q55) scales the client rects but not the SVG's own units: divide it out.
+    var z = (h.offsetWidth && hr.width / h.offsetWidth) || 1;
+    function R(e) {
+      var b = e.getBoundingClientRect();
+      return { left: (b.left - sr.left) / z, right: (b.right - sr.left) / z, top: (b.top - sr.top) / z,
+               bottom: (b.bottom - sr.top) / z, height: b.height / z };
+    }
     // the gutter is the panel's own left padding, so the overlay is as wide as the panel
-    svg.setAttribute('width', String(hr.width)); svg.setAttribute('height', String(h.scrollHeight || hr.height));
-    var sr = svg.getBoundingClientRect(), ox = sr.left, oy = sr.top;
+    svg.setAttribute('width', String(hr.width / z)); svg.setAttribute('height', String(h.scrollHeight || hr.height / z));
+    var sr = svg.getBoundingClientRect(), ox = 0, oy = 0;
     var rows = [].slice.call(j.querySelectorAll('tr.jr[data-ds]')).filter(shown);
     var edge = GUTTER, steps = [];
     // Box lines: the top box gets the inner lane.
@@ -96,34 +107,25 @@
     });
     pairs.sort(function (a, b) { return a[0].getBoundingClientRect().top - b[0].getBoundingClientRect().top; });
     pairs.forEach(function (p, k) {
-      var br = p[0].getBoundingClientRect(), rr = p[1].getBoundingClientRect();
+      var br = R(p[0]), rr = R(p[1]);
       var lane = Math.max(2, LANE0 - k * LANE), bx = Math.max(lane + 6, Math.min(br.left + 14, br.right - 6) - ox);
       var by = br.bottom - oy, y = rr.top + rr.height / 2 - oy, x = Math.max(edge, rr.left - ox) + 2;
-      var d = 'M' + bx + ',' + by + 'V' + (by + 6 + k * LANE) + 'H' + lane + 'V' + y + 'H' + x;
+      // the leg runs left along the middle of the gap under the box's row, never under the next row's boxes (Q29)
+      var gap = parseFloat(getComputedStyle(p[0].parentElement).rowGap) || 16;
+      var d = 'M' + bx + ',' + by + 'V' + (by + gap / 2) + 'H' + lane + 'V' + y + 'H' + x;
       steps.push(line(svg, d, [x, y], lighten(boxColour(p[0])), false, p[0], [p[1]]));
     });
     // Build lines: every step row of the file into each build row, on a trunk.
     var fh = fileColour(j);
     rows.forEach(function (b) {
       if (!b.querySelector('.tag.r-build')) return;
-      var br = b.getBoundingClientRect(), by = br.top + br.height / 2 - oy, bx = Math.max(edge, br.left - ox) + 2;
+      var br = R(b), by = br.top + br.height / 2 - oy, bx = Math.max(edge, br.left - ox) + 2;
       rows.forEach(function (r) {
         if (r === b) return;
-        var rr = r.getBoundingClientRect(), y = rr.top + rr.height / 2 - oy + 4;
+        var rr = R(r), y = rr.top + rr.height / 2 - oy + 4;
         var d = 'M' + Math.max(edge, rr.left - ox) + ',' + y + 'H' + TRUNK + 'V' + by + 'H' + bx;
         steps.push(line(svg, d, [bx, by], fh, true, null, [r, b]));
       });
-    });
-    follow(j);
-  }
-
-  // Lit lines go to full strength and the others fade, after the journey code has set its classes.
-  function follow(j) {
-    var h = host(j), svg = h && h.querySelector(':scope > svg.dtree'); if (!svg) return;
-    var picking = j.classList.contains('picking');
-    [].forEach.call(svg.querySelectorAll('g.tl'), function (g) {
-      var lit = (g._rows || []).some(function (r) { return r.classList.contains('sel') || r.classList.contains('lit'); });
-      g.classList.toggle('on', picking && lit); g.classList.toggle('off', picking && !lit);
     });
   }
 

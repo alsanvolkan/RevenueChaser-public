@@ -63,8 +63,8 @@ def test_the_sources_head_counts_and_the_file_state_line():
     assert ">Collapse all</button>" in html and ">Open all</button>" in html
     assert ("🦆 spine.duckdb · on the disk · 9.8 MB · written 5 Nov 19:43 · 7 of 9 tables hold rows · empty: "
             "cik_map, lei") in html
-    assert "One button for each dataset: <b>Fetch</b> asks for a whole run" in html
-    assert "stops a running one before its next provider call and holds the dataset" in html
+    assert "<b>Fetch</b>: full run (raw → Parquet → DuckDB)" in html, "the legend is one line (Q19)"
+    assert "stops a running one before its next provider call and holds the dataset" in html, "its ⓘ keeps the rest"
     top = html[:html.index('class="sgrid"')]
     assert "stops" in top and "cancels" in top, "#492 PR (ii): a Pause now stops and cancels, and the legend says so"
 
@@ -137,8 +137,10 @@ def test_the_universe_sits_in_the_spine_box_with_its_new_words():
     sb5 = spine[spine.index('class="sb5"'):]
     assert 'id="universe"' in sb5
     assert "hover them, or press and hold" not in sb5
+    assert '<span class="dim">Also fetch:</span>' in sb5, "one short label (Q32)"
     assert ("A Fetch of only some tier sets also brings each group whose chip is on (a Fetch of the whole universe "
-            "brings all three anyway):") in sb5
+            "brings all three anyway).") in sb5, "the long sentence sits behind its ⓘ"
+    assert 'class="uw"' not in sb5, "a tier chip is its name and count; its words are its tip (Q31)"
     assert sb5.count('<span class="uoffl">not offered</span>') == 2
 
 
@@ -172,18 +174,21 @@ def test_the_sources_css_block_holds_the_grid_and_the_columns():
 
 # ── Health right now ─────────────────────────────────────────────────────────────────────────────────────────
 
+def _t(key, cls, group, f=None):
+    return {"key": key, "cls": cls, "n": key.upper(), "label": f"the {key} words", "filter": f, "group": group}
+
+
 def _grouped_view():
+    """Board tidy (#527, avo 6 Nov 2026): a view whose Health has two problems, one quiet group and a running job."""
     v = _view()
-    groups = {"fresh": "data", "late": "data", "stale": "data", "never": "data", "problems": "data",
-              "session": "build", "queue": "scheduled", "builder": "build", "cap": "sources", "gateway": "sources",
-              "backup": "build"}
-    for t in v["health"]["tiles"]:
-        if t["key"] in groups:
-            t["group"] = groups[t["key"]]
-    v["health"]["tiles"].append({"key": "timer", "cls": "ok", "n": "on", "label": "the hourly timer is on · next 18:05",
-                                 "filter": None, "group": "scheduled"})
-    v["health"]["tiles"].append({"key": "longest", "cls": "neu", "n": "41 min", "label": "the longest run today",
-                                 "filter": None, "group": "build"})
+    v["health"] = {**v["health"], "ok": ["1/5 fresh", "builder 24 min ago"], "timer_line": None, "unread": [],
+                   "tiles": [_t("prices", "bad", "trust", "session"), _t("stale", "ok", "trust", "stale"),
+                             _t("late", "warn", "trust", "late"), _t("builder", "ok", "builder", "builder"),
+                             _t("cap", "bad", "sources", "cap"), _t("backup", "ok", "backup", "backup")],
+                   "jobs": [{"name": "sec/13dg from 2022", "minutes": 100, "limit": None, "who": "Claude session B",
+                             "cls": "none", "pid": 1, "dataset": "sec/13dg"},
+                            {"name": "RC-Build", "minutes": 100, "limit": 120, "who": "systemd timer", "cls": "warn",
+                             "pid": 2, "dataset": None}]}
     return v
 
 
@@ -191,30 +196,33 @@ def _health(v) -> str:
     return control_render._health(v)
 
 
-def test_health_has_three_groups_side_by_side_then_data_at_full_width():
+def test_health_asks_four_questions_and_draws_only_what_needs_avo():
     html = _health(_grouped_view())
-    at = [html.index(f'data-group="{g}"') for g in ("sources", "scheduled", "build", "data")]
-    assert at == sorted(at)
-    assert '<h3 class="hgh">Sources</h3>' in html and '<h3 class="hgh">Scheduled run</h3>' in html
-    assert '<h3 class="hgh">Build</h3>' in html
-    assert '<h3 class="hgh">Data · 5 datasets</h3>' in html
+    at = [html.index(f'data-group="{g}"') for g in ("trust", "builder", "sources")]
+    assert at == sorted(at), "the questions keep their order (Q7)"
+    assert 'data-group="backup"' not in html, "a group with nothing wrong is not drawn (Q1)"
+    assert 'data-f="session"' in html and 'data-f="late"' in html and 'data-f="cap"' in html
+    assert 'data-f="stale"' not in html and 'data-f="builder"' not in html, "a healthy tile is the all-well words"
+    assert "All well" not in html
 
 
-def test_each_tile_sits_in_its_group_and_keeps_its_filter():
+def test_the_running_jobs_are_lines_under_the_builder_question():
     html = _health(_grouped_view())
+    grp = html[html.index('data-group="builder"'):html.index('data-group="sources"')]
+    assert '<li class="job none">sec/13dg from 2022 · 1 h 40 min / no limit · Claude session B</li>' in grp
+    assert '<li class="job warn">RC-Build · 1 h 40 min / 2 h 00 min · systemd timer</li>' in grp
 
-    def grp(g):
-        a = html.index(f'data-group="{g}"')
-        return html[a:html.find('data-group="', a + 1) if html.find('data-group="', a + 1) > 0 else len(html)]
-    assert 'data-f="queue"' in grp("scheduled") and "the hourly timer is on" in grp("scheduled")
-    assert 'data-f="cap"' in grp("sources") and 'data-f="builder"' in grp("build")
-    assert "the longest run today" in grp("build")
-    assert 'data-f="fresh"' in grp("data")
-    assert 'data-f="universe"' in grp("data"), "a tile with no group goes in Data"
-    for t in _grouped_view()["health"]["tiles"]:
-        if t["filter"]:
-            assert f'data-f="{t["filter"]}"' in html
-        assert f'title="{t["label"]}' in html.replace("&#x27;", "'") or t["label"].replace("'", "&#x27;") in html
+
+def test_nothing_wrong_is_one_all_well_line_and_the_grey_lines_stay():
+    v = _grouped_view()
+    v["health"].update(tiles=[t for t in v["health"]["tiles"] if t["cls"] not in ("bad", "warn")], jobs=[],
+                       timer_line="Builder timer off (on purpose) · last run 16:06, from the queue",
+                       unread=["the longest build today"])
+    html = _health(v)
+    assert '<p class="hok">All well · 1/5 fresh · builder 24 min ago</p>' in html
+    assert 'data-group="' not in html
+    assert '<p class="hline">Builder timer off (on purpose) · last run 16:06, from the queue</p>' in html
+    assert '<p class="hline">Could not read: the longest build today</p>' in html
 
 
 def test_by_file_lines_under_data():
@@ -229,9 +237,9 @@ def test_by_file_lines_under_data():
 
 
 def test_health_renders_without_the_new_fields():
-    v = control.build(control_nd(), now=NOW)
+    v = control.build(control_nd(), now=NOW, procs=lambda: [])
     html = control_render._health(v)
-    assert 'data-group="data"' in html and "Data · 5 datasets" in html
+    assert 'data-group="trust"' in html and "Can I trust today&#x27;s screen?" in html
 
 
 # ── The flow diagram and the file picker ─────────────────────────────────────────────────────────────────────
@@ -316,3 +324,11 @@ def test_the_board_is_left_aligned_and_sections_read_as_sections():
     assert re.search(r"\.ctl details\.sec>summary\{[^}]*min-height:44px", blk)
     assert ".ctl .scroll{" in blk and "overflow-x:auto" in blk
     assert "overflow-x:hidden" not in blk
+
+
+def test_an_unknown_builder_or_cap_is_never_all_well():
+    v = _grouped_view()
+    v["health"].update(tiles=[t for t in v["health"]["tiles"] if t["cls"] not in ("bad", "warn")], jobs=[],
+                       unread=["the builder's last run"], blind=True)
+    html = _health(v)
+    assert "All well" not in html and "Could not read: the builder&#x27;s last run" in html

@@ -13,6 +13,7 @@ enqueues that dataset's async job. See ``docs/data_health.md`` §2.
 from __future__ import annotations
 
 import html as _html
+import re
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -2987,7 +2988,9 @@ def _control_view(nd: dict | None, payload: dict) -> dict:
     if not nd:
         return {"error": "the new data system was not read", "read_at": datetime.now().strftime("%H:%M")}
     try:
-        return control_model.build(nd, applied=_applied_universe(), ibkr=payload.get("ibkr_login_state"))
+        view = control_model.build(nd, applied=_applied_universe(), ibkr=payload.get("ibkr_login_state"))
+        view["ibkr_href"] = _ibkr_login_href(payload.get("ibkr_login_url"))  # the top line's link (Q49)
+        return view
     except Exception as exc:  # noqa: BLE001 - one broken field is a line on the page, never a blank board
         return {"error": f"{type(exc).__name__}: {exc}"[:300], "read_at": datetime.now().strftime("%H:%M")}
 
@@ -3110,28 +3113,39 @@ def _watch_section(nd: dict | None) -> str:
             + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES) + "</section>")
 
 
+def _fold(html: str) -> str:
+    """A Health part closed until pressed (Q53): its own first ``<h2>`` becomes the fold's summary, as the Data tab's
+    sections are drawn. Empty in, empty out."""
+    m = re.search(r"<h2\b.*?</h2>", html, re.S)
+    if not m:
+        return html
+    return f'<details class="hfold"><summary>{m.group(0)}</summary>{html[:m.start()]}{html[m.end():]}</details>'
+
+
 def _health_panel(payload: dict, view: dict, nd: dict | None = None) -> str:
-    """The Health tab (#492): the Needs head, the queue, the catalog, the request log and the routes, then the ticker
-    detail, the four parts that live nowhere else (the board settings, Automations, the watch lists, the IBKR
-    cards) and the backups, in that order."""
+    """The Health tab (#492; board tidy, avo 6 Nov 2026): failed reads on top when there are any, the Needs head, the
+    queue, the catalog, Automations and the backups open; then, closed, the board inputs, the watch lists, the
+    ticker detail, the request log and the IBKR gateway's details (its state and link are the Data tab's top line,
+    Q49). The routes moved to ``docs/data_health.md`` (Q50)."""
     model = _needs_model(payload)
-    catalog, rest = needs_tab.sections(model)
+    catalog, log = needs_tab.sections(model)
     try:
         backups = _backups_card(payload.get("backups"))
     except Exception as exc:  # noqa: BLE001 - one broken card is a line, never a blank Health tab
         backups = f'<p class="warn">The backups card could not be drawn: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
-    # One ``#needs`` scope (needs.css) around the head, the queue and the Needs parts; the queue keeps its ``.ctl``.
-    moved = (_boards_section(payload.get("boards") or [], payload.get("rows") or [])
-             + _automations_section(payload.get("automations") or [])
-             + _watch_section(nd)
-             + _ibkr_login_card(payload.get("ibkr_login_url")) + _ibkr_state_card(payload.get("ibkr_login_state"))
-             # the reads that failed while the page was built: a dash above may be an error, not missing data
-             + _errors_list(payload.get("errors") or []))
+    # the reads that failed while the page was built: a dash below may be an error, not missing data (Q51)
+    errors = _errors_list(payload.get("errors") or [])
+    ibkr = _ibkr_login_card(payload.get("ibkr_login_url")) + _ibkr_state_card(payload.get("ibkr_login_state"))
+    folded = (_fold(_boards_section(payload.get("boards") or [], payload.get("rows") or [])) + _fold(_watch_section(nd))
+              + _fold(_ticker_drill(payload)) + _fold(log)
+              # the state and the link are on the Data tab's top line; the history stays here, closed
+              + (_fold(f'<h2 class="sec">IBKR gateway · details</h2>{ibkr}') if ibkr else ""))
     # One ``#needs`` frame and palette for the whole tab; the queue keeps its ``.ctl`` scope inside it.
-    return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
+    return (f'<div id="needs"><div class="wrap">{errors}{needs_tab.head(model, "Data/Health · Health")}</div>'
             f'{_queue_html(view)}'
-            f'<div class="wrap">{catalog}{rest}</div>'
-            f'<div class="wrap" id="health-more">{_ticker_drill(payload)}{moved}{backups}</div></div>')
+            f'<div class="wrap">{catalog}</div>'
+            f'<div class="wrap" id="health-more">{_automations_section(payload.get("automations") or [])}{backups}'
+            f'{folded}</div></div>')
 
 
 def _tab_strip() -> str:

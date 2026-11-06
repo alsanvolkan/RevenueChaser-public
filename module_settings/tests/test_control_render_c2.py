@@ -142,3 +142,11 @@ def test_the_tree_css_hides_it_on_a_phone_and_lets_only_the_twins_take_the_point
     assert re.search(r"svg\.dtree\{[^}]*position:absolute[^}]*pointer-events:none", css)
     assert re.search(r"svg\.dtree \.hit\{[^}]*pointer-events:stroke", css)
     assert ".dtree-ring" in css and "2px solid" in css
+
+
+def test_the_refresh_button_has_its_own_status_beside_it():
+    """#533 e2e: the status the script writes is the first .dim of the button's parent, never the heading's row count."""
+    html = control_render._samples(_file([_fund_sample()]))
+    wrap = re.search(r'<span class="dsbtn">(.*?)</span></div><div class="scroll">', html, re.S).group(1)
+    assert "data-sample-refresh=" in wrap
+    assert wrap.index('class="dim"') == wrap.index('<span class="dim" role="status"></span>') + len('<span ')

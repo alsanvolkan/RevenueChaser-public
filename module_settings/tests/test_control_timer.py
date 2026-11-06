@@ -63,7 +63,7 @@ def test_build_with_a_reader_that_raises_says_not_known():
         raise RuntimeError("systemctl gone")
     view = _build(timer=broken)
     assert view["timer"] == NONE
-    assert {t["key"]: t for t in view["health"]["tiles"]}["timer"]["n"] == "not known"
+    assert "the builder timer" in view["health"]["unread"], "the grey could-not-read line, never a guess (Q5)"
 
 
 def test_build_reads_the_scheduler_by_default(monkeypatch):

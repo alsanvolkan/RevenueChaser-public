@@ -975,3 +975,12 @@ def test_every_backup_step_belongs_to_exactly_one_registry_row():
         subdirs.append(args[args.index("--subdir") + 1] if "--subdir" in args else backup.SUBDIR)
     assert sorted(chosen) == sorted(backup.STEPS), "every step belongs to exactly one backup entry"
     assert set(subdirs) == set(backup.SUBDIRS), "SUBDIRS is exactly the folders the registry writes"
+
+
+def test_the_run_conditions_say_only_what_the_host_scheduler_has():
+    """Q52 (avo 6 Nov 2026): systemd has a catch-up and a limit; battery, wake and logon are Task Scheduler words."""
+    s = A.TaskSettings(wake_to_run=True, time_limit_minutes=120)
+    assert s.summary(windows=False) == "catches up a missed run, 120 min limit"
+    assert A.TaskSettings(start_when_available=False).summary(windows=False) == "4 h limit"
+    assert s.summary(windows=True) == ("runs on battery, wakes the PC, catches up a missed run, only when logged on, "
+                                       "120 min limit")
