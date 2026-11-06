@@ -28,6 +28,8 @@ from RevenueChaser.rcdata import caps, scaffold
 from RevenueChaser.rcdata.needs import boards as api_boards
 from RevenueChaser.rcdata.needs import catalog
 from RevenueChaser.rcdata.needs import screen
+from RevenueChaser.module_settings.control_sources import PV_LABELS  # noqa: F401 - re-exported for the render
+from RevenueChaser.module_settings import control_sources
 
 #: The page shows avo's clock (CLAUDE.md: Europe/Amsterdam).
 LOCAL = ZoneInfo("Europe/Amsterdam")
@@ -799,6 +801,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         return {"error": nd["error"], "read_at": _local(now).strftime("%H:%M")}
     datasets = datasets if datasets is not None else newdata._datasets()
     uni = universe(nd, applied)
+    uni["funnel"] = control_sources.funnel(nd)
     provider_rows = _providers(nd)
     reads = readers()
     timer_view = _timer(timer)
@@ -807,6 +810,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
     except Exception:  # noqa: BLE001 - an unreadable ops store leaves the tile "not measured yet"
         longest = None
     file_views = files(nd, datasets, uni, reads, now, timer_view)
+    control_sources.attach_pv(file_views, datasets)
     return {
         "error": None,
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
