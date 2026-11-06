@@ -20,7 +20,9 @@ from RevenueChaser.module_settings import control
 from RevenueChaser.rcdata.needs import screen
 
 _STATIC = Path(__file__).resolve().parent / "static"
-CTL_CSS = (_STATIC / "control.css").read_text(encoding="utf-8")
+TREE_CSS = (_STATIC / "data_tree.css").read_text(encoding="utf-8")
+TREE_JS = (_STATIC / "data_tree.js").read_text(encoding="utf-8")
+CTL_CSS = (_STATIC / "control.css").read_text(encoding="utf-8") + "\n" + TREE_CSS
 CTL_JS = (_STATIC / "control.js").read_text(encoding="utf-8")
 
 #: The routes a press uses; the script reads them from the page's data, so a test sees every route in one place.
@@ -627,12 +629,21 @@ def _jrows(f: dict) -> tuple[str, list[str]]:
                          f'<span class="hm">{esc(meta)}</span></span>')
         tabs = " ".join(t["name"] for t in f["tables"] if d["dataset"] in t["writers"]) or \
             " ".join(t["name"] for t in f["tables"])
+        chips = ""
+        if role == "build":
+            # One "from" chip per input step of the file, with its full name (#492).
+            chips = "".join(f'<span class="chip" data-card="{esc(o["dataset"])}"><span class="cn">{o["step"]}</span>'
+                            f'<span class="t">{esc(o["dataset"])}</span></span>'
+                            for o in f["datasets"] if o is not d and o["role"] != "build")
+            chips = f'<span class="jfrom"><span class="jfl">from</span>{chips}</span>' if chips else ""
         rows.append(
             f'<tr class="jr" tabindex="0" role="button" aria-expanded="false" aria-controls="jd-{esc(f["kind"])}-{i}" '
-            f'data-src="{esc(names)}" data-tabs="{esc(tabs)}"><td class="js"><span class="jcar" aria-hidden="true">'
-            f'</span><span class="stn">{d["step"]}</span>{icons}<b>{esc(d["label"])}</b>{meta_pill}'
+            f'data-ds="{esc(d["dataset"])}" data-src="{esc(names)}" data-tabs="{esc(tabs)}"><td class="js">'
+            f'<span class="jcar" aria-hidden="true"></span><span class="stn">{d["step"]}</span>'
+            f'<span class="jttl"><b>{esc(d["label"])}</b><span class="jsrc">{icons}</span>{chips}</span>'
+            f'<span class="jmeta">{meta_pill}'
             f'<span class="tag role r-{esc(role.replace(" ", "-"))}" title="{esc(control.ROLE_WORDS.get(role, ""))}">'
-            f'{esc(role)}</span><span class="jcad">⏱ {esc(d["cadence"] or "")}</span></td>'
+            f'{esc(role)}</span><span class="jcad">⏱ {esc(d["cadence"] or "")}</span></span></td>'
             f'<td class="jh">{"".join(where)}</td></tr>'
             f'<tr class="jd" id="jd-{esc(f["kind"])}-{i}" hidden><td colspan="2"><div class="jdg">'
             f'<div class="jdl"><span class="jk">code name</span><code>{esc(d["dataset"])}</code></div>'
@@ -694,32 +705,27 @@ def _journey(f: dict) -> str:
     rows, _ = _jrows(f)
     n = max(1, 2 * len(f["datasets"]))
     roots = f["roots"]
-    ssd = (f'<code class="p">{esc(f["path"] or f["name"])}</code>{_tchs(f)}<span class="ssz">{_size(f["bytes"])}'
-           '</span><span class="dim"> · the file is one piece: the builder builds the new one beside it and moves it '
-           'into place</span><span class="tnote">press a name to pick the table · ▸ shows its columns, from the '
-           "code's schema</span>")
-    tree = _btree(f)
+    ssd = (f'<code class="p jfile" title="{esc(f["path"] or f["name"])}">🦆 {esc(f["name"])}</code>{_tchs(f)}'
+           f'<span class="ssz">{_size(f["bytes"])}</span>')
     if not rows:
-        # A file whose datasets have no card here still has its tables and its readers.
+        # A file whose datasets have no card here still has its tables.
         rows = ('<tr class="jr"><td class="js dim">no dataset of this file is on record yet</td><td class="jh"></td>'
                 '</tr>')
         n = 1
     first, rest = rows.split("</tr>", 1)
-    rows = (first + f'<td class="ssdc" rowspan="{n}">{ssd}</td><td class="bdc" rowspan="{n}">{tree}</td></tr>'
-            + rest)
+    rows = first + f'<td class="ssdc" rowspan="{n}">{ssd}</td></tr>' + rest
+    hdd = (f'<span class="jhl">📄 HDD raw · <code class="p">{esc(roots.get("raw", ""))}</code></span>'
+           f'<span class="jhl">📦 Parquet · <code class="p">{esc(roots.get("parquet", ""))}</code></span>'
+           f'<span class="jhm">files and size · {esc(_walked(f.get("walked_at")))}</span>')
+    ssdh = f'⚡ SSD live · served<span class="jhl"><code class="p">{esc(roots.get("ssd", ""))}</code></span>'
     return (
-        '<div class="journey"><p class="colh">The journey of this data · one line a build step · press a line, a table '
-        'or a board: everything tied to it lights in all four columns, press again to drop it</p>'
-        f'<p class="rootline">Roots · <code class="p">📄 {esc(roots.get("raw", ""))}</code> <code class="p">📦 '
-        f'{esc(roots.get("parquet", ""))}</code> <code class="p">⚡ {esc(roots.get("ssd", ""))}</code>'
-        f' · folders {esc(_walked(f.get("walked_at")))}</p>'
-        '<div class="jleft"><table class="jt jt4"><colgroup><col class="c1"><col class="c2"><col class="c3">'
-        '<col class="c4"></colgroup><thead><tr><th>Build step · status · role · how often</th><th>📄 HDD raw over 📦 '
-        'Parquet · files and size</th><th class="ssdh">⚡ SSD live · served</th><th class="bdh">📊 Who reads it '
-        f'today</th></tr></thead><tbody>{rows}</tbody></table></div>'
+        '<div class="journey"><p class="colh">The journey of this data · one line a build step · press a line or a '
+        'table: everything tied to it lights, press again to drop it</p>'
+        '<div class="jleft"><table class="jt jt4 jt3"><colgroup><col class="c1"><col class="c2"><col class="c3">'
+        '</colgroup><thead><tr><th>Build step · status · role · how often</th>'
+        f'<th class="hddh">{hdd}</th><th class="ssdh">{ssdh}</th></tr></thead><tbody>{rows}</tbody></table></div>'
         f'<aside class="jpanel jnarrow"><div class="jssd"><span class="jph">⚡ SSD live · served</span>{ssd}</div>'
-        f'<div class="jbd"><span class="jph">📊 Who reads it today</span><span class="jps">file → menu group → board · '
-        f'faded = reads no table of this file · press a board to pick it</span>{tree}</div></aside></div>')
+        '</aside></div>')
 
 
 def _samples(f: dict) -> str:
@@ -731,10 +737,25 @@ def _samples(f: dict) -> str:
                 continue
             seen.add(t)
             cols = s.get("columns") or []
-            head = "".join(f'<th class="pv-build">{esc(c.get("name"))}<span class="t">{esc(str(c.get("type")).lower())}'
-                           '</span></th>' for c in cols)
-            body = "".join("<tr>" + "".join(f'<td class="pv-build">{esc("" if v is None else v)}</td>' for v in r)
-                           + "</tr>" for r in s.get("rows") or [])
+            # One source key per column (#492); without it every column is the builder's and no source row is drawn.
+            pv = list(s.get("pv") or [])
+            keys = [str(pv[i]) if i < len(pv) and pv[i] else "build" for i in range(len(cols))]
+            head = "".join(f'<th class="pv-{esc(k)}">{esc(c.get("name"))}<span class="t">'
+                           f'{esc(str(c.get("type")).lower())}</span></th>' for k, c in zip(keys, cols))
+            src = ""
+            if pv and cols:
+                labels = getattr(control, "PV_LABELS", None) or {}
+                runs: list[list] = []
+                for k in keys:
+                    if runs and runs[-1][0] == k:
+                        runs[-1][1] += 1
+                    else:
+                        runs.append([k, 1])
+                src = '<tr class="srcrow">' + "".join(
+                    f'<th class="pv-{esc(k)}" colspan="{n}">{esc(labels.get(k, k))}</th>' for k, n in runs) + "</tr>"
+            body = "".join("<tr>" + "".join(
+                f'<td class="pv-{esc(keys[j] if j < len(keys) else "build")}">{esc("" if v is None else v)}</td>'
+                for j, v in enumerate(r)) + "</tr>" for r in s.get("rows") or [])
             if not s.get("built"):
                 body = (f'<tr><td colspan="{max(1, len(cols))}" class="dim">the file is not built yet: these are the '
                         'columns the code declares</td></tr>')
@@ -744,7 +765,7 @@ def _samples(f: dict) -> str:
                 f'{len(s.get("rows") or [])} rows</span></h4><div class="dsact"><button type="button" class="btn" '
                 f'data-sample-refresh="{esc(t)}">Refresh the example rows</button><span class="dim">reads 5 rows of '
                 f'<code>{esc(f["name"])}</code> · no provider call</span></div><div class="scroll"><table class="ex">'
-                f'<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{notes}</section>')
+                f'<thead>{src}<tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{notes}</section>')
     if not blocks:
         return ""
     return (f'<details class="blk b-ex b-ds"><summary>🗂 Data structure <span class="dim">{len(blocks)} tables · a few '
@@ -769,7 +790,7 @@ def _health_table(f: dict) -> str:
             'problems</span></summary><div class="scroll"><table class="stk"><thead><tr><th>Dataset</th><th>When</th>'
             '<th>Result</th><th>As-of</th><th>Rows</th><th>Calls</th><th>Note</th></tr></thead>'
             f'<tbody>{body}</tbody></table></div><p class="hint">Open problems in this file: {probs:,} · each is listed '
-            'under its dataset in the Fetch section.</p></details>')
+            'under its source box above.</p></details>')
 
 
 # ── Cross-check, queue ────────────────────────────────────────────────────────────────────────────────────────
@@ -875,4 +896,4 @@ def scripts(view: dict) -> str:
     """The page's data and behaviour, one inline block (after ``ESC_JS``, which defines ``rcEsc``)."""
     if view.get("error"):
         return ""
-    return (f"window.RC_FLOW = {script_json(view['flow'])};\nwindow.CTL = {script_json(client(view))};\n{CTL_JS}")
+    return (f"window.RC_FLOW = {script_json(view['flow'])};\nwindow.CTL = {script_json(client(view))};\n{CTL_JS}\n{TREE_JS}")
