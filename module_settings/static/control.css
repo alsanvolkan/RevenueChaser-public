@@ -38,7 +38,7 @@
   --pv-alpaca:#132536; --pv-uw:#231b3a; --pv-yf:#2d1820; color-scheme:dark}
 .ctl *{box-sizing:border-box}
 .ctl{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body)}
-.ctl .wrap{max-width:1600px;margin:0 auto;padding-block:20px 56px;
+.ctl .wrap{max-width:1600px;margin:0;padding-block:20px 56px;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .ctl h1{font-size:25px;margin:0 0 2px;letter-spacing:-.01em;text-wrap:balance}
 .ctl .sub{color:var(--mut);font-size:13.5px;margin:0 0 16px}
@@ -1154,3 +1154,25 @@
 .ctl .wrap{max-width:var(--page-max,1280px);margin-inline:auto}
 .ctl .wrap,.ctl .fpanel,.ctl .sgrid,.ctl .sbox{box-sizing:border-box;min-width:0}
 .ctl table{max-width:100%}
+
+/* The dataset head is one line (avo 6 Nov 2026): the name gives way, Fetch / ▾ / Pause never drop below it. */
+.ctl .sb1{flex-wrap:nowrap}
+.ctl .sb1 .dsname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctl .sb1 > :not(.dsname){flex:0 0 auto}
+@media(max-width:639.98px){.ctl .sb1{flex-wrap:wrap}}
+/* How often / Hold until / Save schedule: one line, short fields never wrap (Q37); only the status gives way. */
+.ctl .schedset{flex-wrap:nowrap}
+.ctl .schedset > *{flex:0 0 auto;white-space:nowrap}
+.ctl .schedset > [role="status"]{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:639.98px){.ctl .schedset{flex-wrap:wrap}}
+
+/* Two dataset cards a row on every desktop pane; one column only at the shell's phone breakpoint (avo 6 Nov 2026,
+   "iki kutu yan yana"). The card is the same, only denser, so two fit in the 1600 px design. */
+@media(max-width:900px){.ctl .sgrid{grid-template-columns:1fr}}
+@media(min-width:901px){
+  .ctl .sgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ctl .sbox{padding:6px 8px;font-size:.92em}
+  .ctl .sbox .btn{min-height:30px;padding:0 10px;font-size:12px;border-radius:8px}
+  .ctl .sbox .schedset{gap:4px 6px;margin:4px 0;font-size:11.5px}
+  .ctl .sbox .schedset select,.ctl .sbox .schedset input{min-height:30px;padding:0 6px;border-radius:6px}
+}

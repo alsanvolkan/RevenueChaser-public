@@ -66,6 +66,13 @@ def test_build_with_a_reader_that_raises_says_not_known():
     assert {t["key"]: t for t in view["health"]["tiles"]}["timer"]["n"] == "not known"
 
 
-def test_build_reads_the_scheduler_by_default(monkeypatch):
-    monkeypatch.setattr(automations, "get_scheduler", lambda: FakeScheduler(_status("ready")))
-    assert _build()["timer"]["state"] == "on"
+def test_build_reads_the_system_unit_on_linux_and_the_scheduler_elsewhere(monkeypatch):
+    import subprocess
+    import sys
+    shown = "LoadState=loaded\nActiveState=active\nLastTriggerUSec=@1793887620\nNextElapseUSecRealtime=\n"
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout=shown))
+    monkeypatch.setattr(automations, "get_scheduler", lambda: FakeScheduler(_status("disabled")))
+    assert _build()["timer"]["state"] == "on", "#528: the system unit, not systemctl --user"
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert _build()["timer"]["state"] == "off", "Windows keeps the scheduler's own read"
