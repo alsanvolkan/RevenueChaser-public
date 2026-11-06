@@ -46,8 +46,9 @@ def test_load_totals_reads_the_ownership_store():
 
     assert sorted(totals) == ["AAPL", "MSFT"]
     assert sorted(totals["AAPL"]) == ["2026-03-31", "2026-06-30"]
-    assert totals["AAPL"]["2026-06-30"] == METRICS
-    assert totals["MSFT"] == {"2026-06-30": METRICS}
+    # ``complete`` rides with the metrics: the period's filing deadline against today (#514).
+    assert totals["AAPL"]["2026-06-30"] == {**METRICS, "complete": True}
+    assert totals["MSFT"] == {"2026-06-30": {**METRICS, "complete": True}}
 
 
 def test_load_totals_is_empty_without_a_store():

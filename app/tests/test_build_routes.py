@@ -2,6 +2,8 @@
 the one process that runs a request. Every write goes through ``_local_only`` and needs the panel header."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from RevenueChaser.core import calendar, config
@@ -240,3 +242,92 @@ def test_a_request_the_builder_could_not_run_is_refused_at_the_route(client, bod
     r = client.post("/api/build/request/alpaca/bars", json=body)
     assert r.status_code == 400 and word in r.get_json()["error"]
     assert not ops.ops_path().exists() or _rows() == [], "nothing was queued"
+
+
+# ── The cadence and the hold (the Fetch section's schedule fields) ─────────────────────────────────────────────
+#
+# ``ops.schedule_set`` and ``due.py`` have read the cadence and ``next_due`` since PR 2, but nothing called the
+# setter: a dataset's frequency could only be changed by editing the code. These are the route behind the two
+# fields on the dataset card.
+
+def _sched(dataset: str = "market_series") -> dict:
+    return ops.schedule_get(dataset) or {}
+
+
+def test_the_cadence_action_sets_the_cadence_and_the_hold(client):
+    r = client.post("/api/build/schedule/market_series/cadence",
+                    json={"cadence": "weekly", "next_due": "2026-11-10"},
+                    headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 200, r.get_json()
+    row = _sched()
+    assert row.get("cadence") == "weekly" and str(row.get("next_due"))[:10] == "2026-11-10"
+    assert r.get_json()["schedule"]["cadence"] == "weekly"
+
+
+def test_a_cadence_the_builder_does_not_know_is_refused_before_the_store_is_touched(client):
+    r = client.post("/api/build/schedule/market_series/cadence", json={"cadence": "hourly"},
+                    headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 400 and "cadence" in r.get_json()["error"]
+    assert _sched().get("cadence") is None, "a refused cadence writes nothing"
+
+
+def test_a_hold_that_is_not_a_date_is_refused(client):
+    r = client.post("/api/build/schedule/market_series/cadence",
+                    json={"cadence": "daily", "next_due": "soon"}, headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 400 and "next_due" in r.get_json()["error"]
+    assert _sched().get("cadence") is None
+
+
+def test_an_empty_hold_clears_the_one_that_was_there(client):
+    client.post("/api/build/schedule/market_series/cadence",
+                json={"cadence": "monthly", "next_due": "2026-12-01"}, headers={"X-RC-Panel": "settings"})
+    r = client.post("/api/build/schedule/market_series/cadence", json={"cadence": "monthly", "next_due": ""},
+                    headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 200, r.get_json()
+    row = _sched()
+    assert row.get("cadence") == "monthly" and row.get("next_due") is None
+
+
+def test_the_cadence_action_needs_a_dataset_the_builder_knows(client):
+    r = client.post("/api/build/schedule/not/a/dataset/cadence", json={"cadence": "daily"},
+                    headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 400 and "unknown dataset" in r.get_json()["error"]
+
+
+def test_the_cadence_action_keeps_a_pause_as_it_is(client):
+    """Pause and the cadence are separate: setting a frequency must not resume a dataset a person paused."""
+    client.post("/api/build/schedule/market_series/pause", headers={"X-RC-Panel": "settings"})
+    client.post("/api/build/schedule/market_series/cadence", json={"cadence": "weekly"},
+                headers={"X-RC-Panel": "settings"})
+    row = _sched()
+    assert row.get("paused_at") is not None and row.get("cadence") == "weekly"
+
+
+def test_pause_cancels_the_queued_request_and_says_how_many(client):
+    """#492 PR (ii): a queued request of a paused dataset never runs."""
+    from RevenueChaser.rcdata import ops
+    rid = client.post("/api/build/request/market_series", headers={"X-RC-Panel": "settings"}).get_json()["id"]
+    r = client.post("/api/build/schedule/market_series/pause", headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 200 and r.get_json()["cancelled"] == 1
+    row = next(x for x in ops.rows("build_requests") if x["id"] == rid)
+    assert row["status"] == "skipped" and row["note"].startswith("cancelled: paused by settings at ")
+    again = client.post("/api/build/schedule/market_series/pause", headers={"X-RC-Panel": "settings"})
+    assert again.get_json()["cancelled"] == 0
+    assert client.post("/api/build/schedule/market_series/resume",
+                       headers={"X-RC-Panel": "settings"}).get_json()["cancelled"] == 0
+
+
+@pytest.mark.parametrize("stage,params", [("raw", {"no_parquet": True}), ("parquet", {"no_duckdb": True}),
+                                          ("full", None)])
+def test_a_fetch_stage_becomes_the_builders_switch(client, stage, params):
+    """#492 PR (ii): Fetch raw, Fetch raw + Parquet, or the whole run."""
+    r = client.post("/api/build/request/market_series", json={"stage": stage}, headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 202, r.get_json()
+    row = next(x for x in _rows() if x["id"] == r.get_json()["id"])
+    assert (json.loads(row["params"]) if row["params"] else None) == params
+
+
+def test_an_unknown_stage_is_refused_and_queues_nothing(client):
+    r = client.post("/api/build/request/market_series", json={"stage": "duckdb-only"},
+                    headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 400 and "unknown stage" in r.get_json()["error"] and _rows() == []

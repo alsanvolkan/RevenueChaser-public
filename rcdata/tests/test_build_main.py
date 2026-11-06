@@ -154,8 +154,8 @@ def test_the_hourly_pass_leaves_an_attended_request_in_the_queue(monkeypatch):
     """A Fetch press on a WRDS dataset waits for the person's terminal; the hourly builder must not consume it."""
     ran: list = []
     monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+    _nothing_due()                                          # first: a pause now cancels what is queued (#492)
     rid = ops.enqueue("wrds/sec_idhist", None, by="settings")
-    _nothing_due()
     assert cli.main(["run", "--once"]) == 0
     assert ran == []
     assert _request(rid)["status"] == "queued"
@@ -319,8 +319,8 @@ def test_attended_with_a_dataset_says_so_when_only_another_one_is_queued(monkeyp
 
 # ── A fetch-only run is not a builder (avo, 5 Nov 2026) ───────────────────────────────────────────────────────
 
-def test_no_build_takes_a_lock_per_dataset_and_never_the_builders(monkeypatch):
-    """``--no-build`` writes raw and Parquet and opens no serving file, so it must not take the one builder lock:
+def test_no_duckdb_takes_a_lock_per_dataset_and_never_the_builders(monkeypatch):
+    """``--no-duckdb`` writes raw and Parquet and opens no serving file, so it must not take the one builder lock:
     two datasets fetch side by side, and beside a running builder."""
     ran: list = []
     monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
@@ -333,13 +333,13 @@ def test_no_build_takes_a_lock_per_dataset_and_never_the_builders(monkeypatch):
     monkeypatch.setattr(cli.job_lock, "acquire", spy)
     # A builder on the store would stop an ordinary run; a fetch-only one never asks.
     monkeypatch.setattr(cli.base, "idle_problem", lambda: pytest.fail("the gate was asked for a fetch-only run"))
-    assert cli.main(["backfill", "market_series", "sec/ftd", "--from", "2026-10-01", "--no-build"]) == 0
+    assert cli.main(["backfill", "market_series", "sec/ftd", "--from", "2026-10-01", "--no-duckdb"]) == 0
     assert taken == ["rcdata_fetch_market_series", "rcdata_fetch_sec/ftd"]
     assert cli.base.BUILDER_LOCK not in taken
     assert [r[0] for r in ran] == ["market_series", "sec/ftd"]
 
 
-def test_no_build_waits_only_for_the_same_datasets_own_fetch(monkeypatch, capsys):
+def test_no_duckdb_waits_only_for_the_same_datasets_own_fetch(monkeypatch, capsys):
     monkeypatch.setattr(cli, "WAIT_POLL_S", 0)
     tries = []
 
@@ -349,7 +349,7 @@ def test_no_build_waits_only_for_the_same_datasets_own_fetch(monkeypatch, capsys
         yield len(tries) > 1
     monkeypatch.setattr(cli.job_lock, "acquire", busy_once)
     monkeypatch.setattr(cli.base, "run_request", _fake_run([]))
-    assert cli.main(["backfill", "market_series", "--from", "2026-10-01", "--no-build"]) == 0
+    assert cli.main(["backfill", "market_series", "--from", "2026-10-01", "--no-duckdb"]) == 0
     assert "rcdata_fetch_market_series" in capsys.readouterr().err
 
 def test_a_fetch_only_lock_holds_off_nothing_and_nothing_holds_it_off():

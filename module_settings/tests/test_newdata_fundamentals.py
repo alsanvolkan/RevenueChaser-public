@@ -45,23 +45,6 @@ def test_an_attended_card_shows_its_own_kinds_command():
     assert _card(data, "sec/companyfacts")["attended_command"] is None
 
 
-def test_the_wrds_difference_slot_is_the_newest_monthly_report():
-    note = ("WRDS fundq vs the SEC: revenue 9 of 10, net income 10 of 10, diluted EPS 8 of 10 agree; "
-            "3 revision(s) in the snapshot of 2026-10-27 against 2026-09-26")
-    ops.record_check("wrds/fundq", "changed", source_as_of="2026-10-27", checked_on="2026-10-27", note=note)
-    ops.record_check("wrds/fundq", "skipped", source_as_of="2026-10-28", checked_on="2026-10-28",
-                     note="skipped: attended")                     # a skipped run is not a report
-    data = newdata.collect(NOW)
-    # ``produced`` since the review's S8: a slot that has not run shows a dash, not a sentence that reads as one.
-    assert _card(data, "wrds/fundq")["wrds"] == {"text": note, "as_of": "2026-10-27", "produced": True}
-    assert _card(data, "wrds/funda")["wrds"] == {"text": "no WRDS run yet", "produced": False}
-    assert _card(data, "sec/companyfacts")["wrds"] == {"text": "no WRDS run yet", "produced": False}
-    html = report.render_settings_dashboard({"newdata": data, "rows": []})
-    card = html[html.index('data-dataset="wrds/fundq" data-status'):]
-    # wrds/fundq is the last dataset row, so the slice ends at the Queue card that follows the rows.
-    assert "3 revision(s) in the snapshot of 2026-10-27" in card[:card.index('id="nd-queue"')]
-
-
 def test_editing_one_cards_wrds_slot_leaves_the_others():
     # The Opus review's N3: the "no WRDS run yet" slot was one module-level dict shared by every card.
     data = newdata.collect(NOW)

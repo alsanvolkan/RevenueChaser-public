@@ -39,7 +39,8 @@ ROLES = ("first", "only source", "fills", "cross-check", "build")
 
 #: The screen's card per dataset. A dataset the store knows and this map does not raises in CI.
 DATASETS: dict[str, DatasetCard] = {
-    'alpaca/bars': DatasetCard('Daily bars (Alpaca)', coverage_target=0.99, step=8, role='first'),
+    'alpaca/bars': DatasetCard('Daily bars (Alpaca, the tester: compared, never served)', coverage_target=0.99, step=8,
+                                role='cross-check'),
     'alpaca/corporate_actions': DatasetCard('Corporate actions (Alpaca)', step=8, role='first'),
     'alphavantage/listing_status': DatasetCard('Every US listing, the ETF list (Alpha Vantage)', step=1, role='first'),
     'alphavantage/earnings_calendar': DatasetCard('Earnings calendar (Alpha Vantage)', step=9, role='first'),
@@ -79,7 +80,7 @@ DATASETS: dict[str, DatasetCard] = {
     'wrds/funda': DatasetCard('Compustat annual fundamentals (WRDS, the revision check)', step=9, role='cross-check'),
     'wrds/fundq': DatasetCard('Compustat quarterly fundamentals (WRDS, the revision check)', step=9, role='cross-check'),
     'wrds/idxcst_his': DatasetCard('Compustat index constituents (WRDS, the membership check)', step=6, role='cross-check'),
-    'wrds/prices': DatasetCard('Price history and actions (WRDS: Compustat, CRSP)', step=8, role='cross-check'),
+    'wrds/prices': DatasetCard('Price history and actions (WRDS: Compustat, CRSP)', step=8, role='first'),
     'wrds/sec_idhist': DatasetCard('Compustat securities and identifier history (WRDS)', step=3, role='fills'),
     'wrds/segments': DatasetCard('Compustat segments and customers (WRDS)', step=9, role='fills'),
     'yfinance/estimates': DatasetCard('Analyst estimates (yfinance)', step=9, role='first'),

@@ -453,8 +453,11 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         r = _client()
         open_rows = _fetch("build_issues", [pk for k in kinds
                                             for pk in r.zrange(_key("build_issues", "open", dataset, "kind", k), 0, -1)])
-        have = {(row["kind"], row["key"]): row for row in open_rows if row["resolved_on"] is None}
-        gone = [{**row, "resolved_on": today} for k, row in have.items() if k not in want]
+        have: dict[tuple, list[dict]] = {}       # every row of a key, not one (see the note in ops.py)
+        for row in open_rows:
+            if row["resolved_on"] is None:
+                have.setdefault((row["kind"], row["key"]), []).append(row)
+        gone = [{**row, "resolved_on": today} for k, rows_ in have.items() if k not in want for row in rows_]
         fresh = [(k, key, detail) for (k, key), detail in sorted(want.items()) if (k, key) not in have]
         ids = _new_ids("build_issues", len(fresh)) if fresh else []
         new = [{"id": i, "dataset": dataset, "found_on": today, "kind": k, "key": key, "detail": detail,
@@ -656,9 +659,20 @@ def schedule_set(dataset: str, cadence: str, next_due: str | None) -> None:
     _schedule(dataset, lambda row: {**(row or {"dataset": dataset}), "cadence": cadence, "next_due": next_due})
 
 
-def schedule_pause(dataset: str, *, by: str) -> None:
+def cancel_queued(dataset: str, *, by: str) -> int:
+    def work():
+        now = time.time()
+        rows = [{**r, "status": "skipped", "ended_at": now, "note": ops.cancel_note(by, now)}
+                for r in _active() if r["status"] == "queued" and r["dataset"] == dataset]
+        return len(rows), (lambda p: [_put(p, "build_requests", r) for r in rows]) if rows else None
+    return _transaction(["build_requests"], work)
+
+
+def schedule_pause(dataset: str, *, by: str) -> int:
+    # the pause first, then the cancel: a request claimed in between already sees the pause at its first call
     now = time.time()
     _schedule(dataset, lambda row: {**(row or {"dataset": dataset}), "paused_at": now, "paused_by": by})
+    return cancel_queued(dataset, by=by)
 
 
 def schedule_resume(dataset: str) -> None:
