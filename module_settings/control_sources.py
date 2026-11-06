@@ -106,13 +106,13 @@ def _table_key(table: str, datasets: dict) -> str | None:
     return keys.pop()
 
 
-def columns_by_source(sample: dict, datasets: dict) -> list[str | None]:
+def columns_by_source(sample: dict, datasets: dict) -> list[str]:
     """One :data:`PV_LABELS` key per column of ``sample`` (``{"table", "columns", "rows"}``), in column order.
 
     In this order: bookkeeping is ``build``; a rule column is ``rule``; a column with a ``<x>_source`` sibling (its
     own prefix, or :data:`SIBLINGS`), and the sibling itself, take what the sibling's values in the rows name; every
     other column the table's first step (:func:`_table_key`). A sibling whose values name no source leaves its
-    columns to the table's step."""
+    columns to the table's step; a table no step is known to write gives ``mix``, never a guess."""
     names = [str(c.get("name")) for c in sample.get("columns") or []]
     rows = sample.get("rows") or []
     index = {n: i for i, n in enumerate(names)}
@@ -130,7 +130,7 @@ def columns_by_source(sample: dict, datasets: dict) -> list[str | None]:
                     for s in set(sibling_of.values())}
     table_key = None
     table_done = False
-    out: list[str | None] = []
+    out: list[str] = []
     for n in names:
         if n in BOOKKEEPING:
             out.append("build")
@@ -141,7 +141,7 @@ def columns_by_source(sample: dict, datasets: dict) -> list[str | None]:
         else:
             if not table_done:
                 table_key, table_done = _table_key(str(sample.get("table") or ""), datasets), True
-            out.append(table_key)
+            out.append(table_key or "mix")
     return out
 
 

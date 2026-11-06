@@ -4,8 +4,9 @@
 This module only arranges. Every number comes from ``collect`` (``ops.sqlite``, the serving files, the raw and Parquet
 folders); every name, step, role, cadence and word comes from ``rcdata.needs.screen``; every column from
 ``rcdata.scaffold.SCHEMA_OF_KIND``; and which board reads which table from the boards' declared reads (or their
-planned reads, drawn dashed) and the need catalog. Nothing here opens a store or calls a provider, so a render is
-pure and a test builds the whole board from a dictionary.
+planned reads, drawn dashed) and the need catalog. Nothing here calls a provider. ``build`` also reads the builder
+timer (systemd), ``ops.job_runs2``, an ``os.stat`` of each served file and ``my_universe_rules.json``, each through an
+injectable reader that fails to ``None``; the render stays pure, and a test builds the whole board from a dictionary.
 
 The page itself is ``control_render``; this is its model:
 
@@ -215,6 +216,12 @@ TILE_GROUPS = {"fresh": "data", "late": "data", "stale": "data", "never": "data"
 NO_TIMER = {"state": None, "last": None, "next": None, "minute": None}
 
 
+def bars_dataset() -> str:
+    """The dataset that serves ``price_bar_daily`` (#484: ``wrds/prices``; ``alpaca/bars`` only cross-checks it)."""
+    from RevenueChaser.rcdata import read
+    return read.DATASET_OF_TABLE["price_bar_daily"]
+
+
 def _tile(key, cls, n, label, f=None) -> dict:
     return {"key": key, "cls": cls, "n": n, "label": label, "filter": f, "group": TILE_GROUPS[key]}
 
@@ -257,7 +264,7 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
     silent = v.get("silent_minutes")
     sessions = nd.get("sessions") or {}
     newest = max(sessions) if sessions else None
-    bars = next((c for c in cards if c.get("dataset") == "alpaca/bars"), None)
+    bars = next((c for c in cards if c.get("dataset") == bars_dataset()), None)
     bars_ok = bars is not None and _status_of(bars) in ("fresh", "unchanged")
     queue = (nd.get("queue") or {}).get("active") or []
     running = sum(1 for q in queue if (q or {}).get("status") == "running")
@@ -276,7 +283,7 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
         _tile("problems", "neu", count(problems),
               f"open problems, in {count(with_problems)} of {count(total)} datasets", "problems"),
         _tile("session", "ok" if bars_ok else "warn", day_words(newest) if newest else "none",
-              (f"newest session in prices · {count(sum(sessions[newest].values()))} of {count(universe.get('size'))}"
+              (f"newest session in prices · {count(universe.get('filled'))} of {count(universe.get('size'))}"
                " names have a bar on it" if newest
                else "no session in prices yet: price_bar_daily holds no bar"), "session"),
         _tile("queue", "ops", count(len(queue)), f"{running} running, {len(queue) - running} queued", "queue"),
@@ -439,7 +446,7 @@ def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime, 
     attended = bool(card.get("attended"))
     build = bool(meta and meta.role == "build")
     tags = []
-    if name == "alpaca/bars" and status not in ("fresh", "unchanged"):
+    if name == bars_dataset() and status not in ("fresh", "unchanged"):
         tags.append("session")
     if any(p in providers for p in ("ibkr",)):
         tags.append("gateway")
@@ -465,7 +472,7 @@ def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime, 
         "since_words": since_words(card.get("schedule")),
         "backfill": card.get("backfill"), "calendar": name in CALENDARS,
         "recent": card.get("recent") or [], "samples": card.get("samples") or [],
-        "cross_check": name in ("wrds/prices", "uw/total_float", "yfinance/float"),
+        "cross_check": name in ("alpaca/bars", "uw/total_float", "yfinance/float"),
     }
 
 
@@ -515,7 +522,7 @@ def next_run_words(schedule: dict | None, check: dict | None, kind: str | None, 
     from RevenueChaser.core import calendar
     from RevenueChaser.rcdata.build import due
     schedule = schedule or {}
-    if schedule.get("paused") or schedule.get("paused_at") is not None:
+    if schedule.get("paused"):
         return "skips until Resume"
     if attended:
         return "by hand only"
@@ -550,7 +557,7 @@ def next_run_words(schedule: dict | None, check: dict | None, kind: str | None, 
 def since_words(schedule: dict | None) -> str:
     """``paused · since <Amsterdam time> by <who>`` for a paused dataset, else ``fetch on``."""
     schedule = schedule or {}
-    if not (schedule.get("paused") or schedule.get("paused_at") is not None):
+    if not schedule.get("paused"):
         return "fetch on"
     when = _when(schedule.get("paused_at"))
     at = "not recorded yet" if when is None else f"{_local(when):%a} {_local(when).day} {_local(when):%b, %H:%M}"
@@ -586,19 +593,24 @@ def _health_of(rows: list[dict]) -> dict:
 
 def file_state(path, tables: list[dict], rows: list[dict]) -> dict:
     """A served file on disk (an ``os.stat`` of ``path``), its tables with rows (the counts ``collect`` read) and its
-    datasets in the Health strip's buckets. A file not there, or no path known, is ``exists: False`` with Nones."""
-    try:
-        st = os.stat(path) if path else None
-    except OSError:
+    datasets in the Health strip's buckets. A file not there is ``exists: False``; no path known is ``exists: None``
+    (not known). A table whose rows were not counted is neither empty nor holding rows: it is ``uncounted``."""
+    if not path:
         st = None
+    else:
+        try:
+            st = os.stat(path)
+        except OSError:
+            st = None
     counts = {k: sum(1 for r in rows if r["filter"] == k) for k in ("fresh", "late", "stale", "never")}
     counts["total"] = len(rows)
-    with_rows = [t["name"] for t in tables if t.get("rows")]
-    return {"exists": st is not None, "bytes": st.st_size if st else None,
+    with_rows = [t["name"] for t in tables if (t.get("rows") or 0) > 0]
+    return {"exists": (st is not None) if path else None, "bytes": st.st_size if st else None,
             "written_at": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds")
             if st else None,
             "tables": len(tables), "tables_with_rows": len(with_rows),
-            "empty": [t["name"] for t in tables if not t.get("rows")], "counts": counts}
+            "empty": [t["name"] for t in tables if t.get("rows") == 0],
+            "uncounted": sum(1 for t in tables if t.get("rows") is None), "counts": counts}
 
 
 def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datetime,
@@ -647,7 +659,9 @@ def _cal_bars(nd: dict, universe_view: dict, providers: dict) -> dict:
     return {"dataset": "alpaca/bars", "provider": "Alpaca", "from": screen.CALENDAR_FIRST["alpaca/bars"],
             "groups": True, "names_per_session": sessions, "universe": size,
             "page": bars.LIMIT, "cap": p.get("cap"), "used": p.get("used", 0), "unit": "sessions",
-            "first": (f"Alpaca has daily bars from 2016; the store holds them from {sessions and min(sessions) or 'no day yet'}")}
+            "first": ("the days are the served price_bar_daily sessions (Compustat, wrds/prices), from "
+                      f"{sessions and min(sessions) or 'no day yet'}; Alpaca has daily bars from 2016 and is compared "
+                      "against them")}
 
 
 def _cal_spx(nd: dict, providers: dict) -> dict | None:
@@ -801,7 +815,10 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         return {"error": nd["error"], "read_at": _local(now).strftime("%H:%M")}
     datasets = datasets if datasets is not None else newdata._datasets()
     uni = universe(nd, applied)
-    uni["funnel"] = control_sources.funnel(nd)
+    try:
+        uni["funnel"] = control_sources.funnel(nd)
+    except Exception:  # noqa: BLE001 - an unreadable rules file leaves the funnel undrawn, never the board
+        uni["funnel"] = None
     provider_rows = _providers(nd)
     reads = readers()
     timer_view = _timer(timer)
@@ -816,7 +833,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
         "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, file_views=file_views),
         "timer": timer_view, "longest_build": longest,
-        "universe": uni, "scope": scope(uni), "files": file_views, "providers": provider_rows,
+        "universe": uni, "identity": nd.get("identity"), "my_universe": nd.get("my_universe"), "scope": scope(uni), "files": file_views, "providers": provider_rows,
         "flow": flow(file_views, datasets, reads, uni), "calendars": calendars(nd, uni, provider_rows),
         "cross_check": (nd.get("cross_check") or {}).get("fields") or [],
         "queue": nd.get("queue") or {"active": [], "finished": []},

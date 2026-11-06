@@ -93,8 +93,9 @@ def test_the_health_strip_has_its_fourteen_tiles_counted_from_the_cards():
     tile = {t["key"]: t for t in h["tiles"]}
     assert (tile["fresh"]["n"], tile["late"]["n"], tile["stale"]["n"], tile["never"]["n"]) == ("1", "1", "1", "2")
     assert tile["problems"]["n"] == "10"
-    assert tile["session"]["n"] == "28 Oct" and "7,422 of 7,670 names" in tile["session"]["label"], "every bar in the file"
-    assert tile["session"]["cls"] == "warn", "alpaca/bars is late, so the newest session is not complete"
+    assert tile["session"]["n"] == "28 Oct"
+    assert f"{tile['universe']['n']} of 7,670 names" in tile["session"]["label"], "the universe's own filled count"
+    assert tile["session"]["cls"] == "warn", "wrds/prices serves the bars and never ran, so the session is not complete"
     assert tile["cap"]["n"] == "72%" and "Alpha Vantage" in tile["cap"]["label"] and tile["cap"]["cls"] == "bad"
     assert tile["builder"]["n"] == "24 min" and tile["builder"]["cls"] == "ok"
     assert tile["queue"]["n"] == "1"

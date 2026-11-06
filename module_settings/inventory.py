@@ -512,7 +512,7 @@ def _overlay_market_prices(rows: list[dict]) -> list[dict]:
         market = row.get("market")
         if row.get("key") != "price_bars" or not isinstance(market, dict):
             continue
-        row["db"], row["source"], row["writer"], row["writer_note"] = "market", "alpaca", MARKET_BARS_WRITER, None
+        row["db"], row["source"], row["writer"], row["writer_note"] = "market", "wrds", MARKET_BARS_WRITER, None
         row["coverage"] = {"covered": None, "expected": None, "fraction": None, "newest": market.get("newest"),
                            "problems": [], "label": COVERAGE_NA}
         if market.get("state") == "failed":

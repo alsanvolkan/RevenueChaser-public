@@ -106,7 +106,13 @@ def test_every_sample_of_the_board_gets_its_keys():
     rows = [r for f in view["files"] for r in f["datasets"] if r["dataset"] == "alpaca/bars"]
     s = rows[0]["samples"][0]
     assert len(s["pv"]) == len(s["columns"]) and "pv" not in nd["datasets"][0]["samples"][0]
-    assert dict(zip([c["name"] for c in s["columns"]], s["pv"]))["session_date"] == "alpaca"
+    # #484: wrds/prices serves price_bar_daily; alpaca/bars only cross-checks it
+    assert dict(zip([c["name"] for c in s["columns"]], s["pv"]))["session_date"] == "wrds"
+
+
+def test_a_table_no_step_writes_is_mix_never_a_guess():
+    s = {"table": "no_such_table", "columns": [{"name": "a"}, {"name": "fetched_at"}], "rows": [["x", "t"]]}
+    assert control_sources.columns_by_source(s, {}) == ["mix", "build"]
 
 
 # ── The selection funnel ──────────────────────────────────────────────────────────────────────────────────────
