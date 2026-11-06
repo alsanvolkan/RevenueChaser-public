@@ -7,7 +7,7 @@
 (function () {
   var C = window.CTL;
   if (!C || !document.querySelector) return;
-  // the board is two panels now (Data and Fetch), so a press is caught on the page, not on one section
+  // the board's presses sit in several panels (the file panels, Health), so a press is caught on the page
   var root = document;
   if (!document.getElementById('ctl')) return;
   window.CTLX = {};
@@ -66,13 +66,20 @@
   /* what a press leaves behind: its request's state, read from the queue a few times, then left as it stands */
   function nth(n) { return n + (n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'); }
   function pill(btn, cls, text) {
-    var id = btn.getAttribute('data-jid'), old = id && root.querySelector('.jst[data-for="' + id + '"]');
+    var id = btn.getAttribute('data-jid'), old = id && root.querySelector('[data-for="' + id + '"]');
     if (old && old.remove) old.remove();
     if (!id) { id = 'j' + Math.random().toString(36).slice(2); btn.setAttribute('data-jid', id); }
     var s = document.createElement('span');
-    s.className = 'jst ' + cls; s.setAttribute('role', 'status'); s.setAttribute('data-for', id);
+    // the one button (#492) carries the slim lg3 pill; the older presses keep their .jst chip
+    s.className = (btn.getAttribute('data-job') === 'one' ? 'lg3 ' : 'jst ') + cls;
+    s.setAttribute('role', 'status'); s.setAttribute('data-for', id);
     s.textContent = text;
     btn.parentNode.insertBefore(s, btn);
+  }
+  /* a finished run puts the one button back on Fetch */
+  function back(btn) {
+    if (btn.getAttribute('data-job') !== 'one' || btn.getAttribute('data-state') !== 'pause') return;
+    btn.setAttribute('data-state', 'fetch'); btn.textContent = 'Fetch'; btn.classList.add('go');
   }
   function follow(btn, rid, left) {
     if (left <= 0) return;
@@ -84,8 +91,8 @@
         if (!row) { pill(btn, 'st-q', 'queued · the queue no longer lists it'); return; }
         if (row.status === 'queued') { pill(btn, 'st-q', 'queued · ' + nth(pos) + ' in line'); follow(btn, rid, left - 1); }
         else if (row.status === 'running') { pill(btn, 'st-r', 'running'); follow(btn, rid, left - 1); }
-        else if (row.status === 'done') { pill(btn, 'st-d', 'done · ' + (row.note || 'see Queue and last runs')); btn.hidden = false; }
-        else { pill(btn, 'st-f', row.status + ' · ' + (row.note || 'see Open problems')); btn.hidden = false; }
+        else if (row.status === 'done') { pill(btn, 'st-d', 'done · ' + (row.note || 'see Queue and last runs')); btn.hidden = false; back(btn); }
+        else { pill(btn, 'st-f', row.status + ' · ' + (row.note || 'see Open problems')); btn.hidden = false; back(btn); }
       }, function () { follow(btn, rid, left - 1); });
     }, 15000);
   }
@@ -97,7 +104,7 @@
     try { parent.postMessage({ type: 'rc-job-submitted', job_id: jobId }, location.origin); } catch (e) { }
   }
   function picture(btn) {
-    var out = document.getElementById('picout');
+    var out = btn.parentNode.querySelector('[role="status"]');   // one picture press a file panel
     btn.disabled = true;
     if (out) out.textContent = 'Queued…';
     send('POST', C.routes.picture).then(function (r) {
@@ -115,11 +122,12 @@
       if (out) out.textContent = 'the dashboard did not answer';
     });
   }
-  function queue(btn, dataset, body) {
+  function queue(btn, dataset, body, accepted) {
     btn.disabled = true;
     send('POST', C.routes.request + dataset, body).then(function (r) {
       btn.disabled = false;
       if (r.status === 202) {
+        if (accepted) accepted(r);
         pill(btn, 'st-q', 'queued · request ' + r.body.id);
         follow(btn, r.body.id, 20);
       } else {
@@ -167,8 +175,11 @@
       var s = r.body || {};
       if (r.status !== 200 || !s.ok) { if (note) note.textContent = s.error || ('could not read · HTTP ' + r.status); return; }
       var body = sec && sec.querySelector('tbody');
+      // each column keeps its source colour: the class of its head in the column-name row
+      var heads = sec ? [].slice.call(sec.querySelectorAll('thead tr:last-child th')) : [];
+      var pv = heads.map(function (h) { var m = /\bpv-[a-z]+\b/.exec(h.className || ''); return m ? m[0] : 'pv-build'; });
       if (body) body.innerHTML = (s.rows || []).map(function (row) {
-        return '<tr>' + row.map(function (v) { return '<td class="pv-build">' + rcEsc(v == null ? '' : v) + '</td>'; }).join('') + '</tr>';
+        return '<tr>' + row.map(function (v, i) { return '<td class="' + (pv[i] || 'pv-build') + '">' + rcEsc(v == null ? '' : v) + '</td>'; }).join('') + '</tr>';
       }).join('');
       if (note) note.textContent = 'read again at ' + new Date().toTimeString().slice(0, 5) + ' · ' + (s.rows || []).length + ' rows · no provider call';
     }, function () { btn.disabled = false; if (note) note.textContent = 'could not reach the dashboard'; });
@@ -182,7 +193,7 @@
     var p = el && el.closest && el.closest('[role="tabpanel"]');
     if (p && p.hidden && window.RC_SETTINGS_SHOW_PANEL) window.RC_SETTINGS_SHOW_PANEL(p.id);
   }
-  window.CTLX.scrollTo = scrollTo;
+  window.CTLX.scrollTo = scrollTo; window.CTLX.reveal = reveal;
   root.addEventListener('click', function (e) {
     var w = e.target.closest('.wiali');
     if (w) {
@@ -606,7 +617,16 @@
     return d.getAttribute('data-st') === f;
   }
   function filter(f) {
-    var ds = [].slice.call(document.querySelectorAll('.ctl .sources .sgrid > .dset')), n = 0;
+    // only the shown file panel counts; when it has no match and another panel has, that panel is shown first
+    var shown = document.querySelector('.ctl .fpanel:not([hidden])');
+    if (f && shown && ![].some.call(shown.querySelectorAll('.sgrid > .dset'), function (d) { return match(d, f); })) {
+      var other = [].filter.call(document.querySelectorAll('.ctl .fpanel'), function (p) {
+        return [].some.call(p.querySelectorAll('.sgrid > .dset'), function (d) { return match(d, f); });
+      })[0];
+      var fb = other && document.querySelector('#fpick .fpb[data-file="' + other.getAttribute('data-file') + '"]');
+      if (fb) { fb.click(); shown = other; }
+    }
+    var ds = shown ? [].slice.call(shown.querySelectorAll('.sgrid > .dset')) : [], n = 0;
     ds.forEach(function (d) { var ok = !f || match(d, f); d.hidden = !ok; if (ok) n++; });
     [].forEach.call(document.querySelectorAll('.ctl .sources .sgrid'), function (g) { g.hidden = !!f && !g.querySelector('.dset:not([hidden])'); });
     [].forEach.call(document.querySelectorAll('#sec-health .tile[data-f]'), function (t) { if (NAME[t.getAttribute('data-f')]) t.setAttribute('aria-pressed', f && t.getAttribute('data-f') === f ? 'true' : 'false'); });
@@ -623,7 +643,7 @@
     var t = e.target.closest('#sec-health .tile[data-f]'); if (!t) return;
     var f = t.getAttribute('data-f');
     if (f === 'universe') { if (cur) { cur = null; filter(null); } X.scrollTo(document.getElementById('universe')); return; }
-    if (f === 'queue' || f === 'builder') { var q = document.getElementById('sec-queue'); if (q) { q.open = true; X.scrollTo(q); } return; }
+    if (f === 'queue' || f === 'builder') { var q = document.getElementById('sec-queue'); if (q) { X.reveal(q); q.open = true; X.scrollTo(q); } return; }
     if (f === 'cap') { var p = document.querySelector('.ctl .fpanel:not([hidden]) details.provs'); if (p) { p.open = true; X.scrollTo(p); } return; }
     cur = cur === f ? null : f; filter(cur);
     var s = document.getElementById('ffilter'); if (cur && s) X.scrollTo(s);
@@ -920,40 +940,7 @@
       p.classList.toggle('flow-on', !!on);
       p.classList.toggle('flow-dim', !!L && !on);
     });
-    var names = [];
-    Object.keys(picks).forEach(function (k) {
-      Object.keys(picks[k]).forEach(function (id) { names.push(label(id)); });
-    });
-    var cards = [].slice.call(document.querySelectorAll('details.group[data-file]')), shown = 0, last = null;
-    cards.forEach(function (c) {
-      var name = c.getAttribute('data-file'), key = name === '.store' ? 'file:.store (old)' : 'file:' + name;
-      var ok = !L || !!L[key];
-      c.hidden = !ok;
-      if (names.length) c.open = false;
-      if (ok) { shown++; last = c; }
-    });
-    if (names.length && shown === 1) last.open = true;
-    var cs = document.getElementById('cardsum');
-    info();
-    if (cs) cs.textContent = names.length
-      ? 'Filtered by the flow diagram: ' + shown + ' of ' + cards.length + ' files · ' + names.join(' · ')
-      : 'every file is closed when the page loads · the flow diagram above filters this list';
-    var dsum = document.getElementById('datasum');
-    if (dsum) dsum.textContent = names.length
-      ? 'filtered by the flow diagram: ' + shown + ' of ' + cards.length + ' files · ' + names.join(' · ')
-      : cards.length + ' files · how full each dataset is, the journey of each step, who reads which table · the flow diagram filters this list';
-    var bm = document.getElementById('bdmatch'), de = document.getElementById('dataempty');
-    if (bm) {
-      bm.hidden = !names.length || !cards.length;
-      bm.innerHTML = !names.length ? '' : shown
-        ? '<b>' + shown + ' of ' + cards.length + ' files match</b> · <button type="button" class="lnk" id="bdopen">open them ↓</button> · <button type="button" class="lnk" data-clearpicks>clear the picks</button>'
-        : '<b>No file matches these picks.</b> <button type="button" class="lnk" data-clearpicks>Clear the picks</button>';
-    }
-    if (de) de.hidden = !names.length || !!shown;
-    if (names.length) {
-      var ds = document.getElementById('sec-data');
-      if (ds) ds.open = true;
-    }
+    info();   // the file panels follow the picker, not the picks (#492 C1)
   }
 
   /* item 6: a picked board says what it reads · its catalog needs, its tier set and how many names */
@@ -1028,14 +1015,6 @@
       paint();
       return;
     }
-    if (e.target.closest('#bdopen')) {
-      var ds = document.getElementById('sec-data');
-      if (!ds) return;
-      ds.open = true;
-      ds.querySelectorAll('details.group[data-file]').forEach(function (c) { if (!c.hidden) c.open = true; });
-      var first = ds.querySelector('details.group[data-file]:not([hidden])');
-      (first || ds).scrollIntoView({ block: 'start', behavior: RM() });
-    }
   });
   svg.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); hit(e); }
@@ -1067,8 +1046,8 @@
   function one(btn) {
     var ds = btn.getAttribute('data-dataset'), st = btn.getAttribute('data-state');
     if (st === 'fetch') {
-      X.queue(btn, ds, body(btn));
-      setState(btn, 'pause');
+      // Pause only once the builder took the request; a refusal leaves Fetch, with the refusal beside it
+      X.queue(btn, ds, body(btn), function () { setState(btn, 'pause'); });
       return;
     }
     var verb = st === 'pause' ? '/pause' : '/resume';
@@ -1114,7 +1093,7 @@
     });
     if (!found) return;
     [].forEach.call(document.querySelectorAll('.ctl .fpanel'), function (p) { p.hidden = p.getAttribute('data-file') !== name; });
-    if (scroll) X.scrollTo(pick);
+    if (scroll) X.scrollTo(document.querySelector('.ctl .fpanel[data-file="' + name + '"]') || pick);
   }
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;

@@ -1,9 +1,9 @@
 """The Settings / Data control board's HTML (design v28), from ``control.build``'s model.
 
 Every string goes through ``html_safe.esc``; the page's own data (the flow diagram, the calendars, the universe)
-rides in one ``script_json`` block the script reads. The board is two tab panels (``render_data`` and
-``render_fetch``); the styles are ``static/control.css``, scoped to ``.ctl``, which both panels carry, and
-the behaviour ``static/control.js``. Nothing a press does here fetches by itself: Fetch and Pause put one request in
+rides in one ``script_json`` block the script reads. The board is the Data tab's panel (``render_data``;
+``render_fetch`` is an empty alias); the styles are ``static/control.css`` and ``static/data_tree.css``, scoped to
+``.ctl``, and the behaviour ``static/control.js`` and ``static/data_tree.js``. Nothing a press does here fetches by itself: Fetch and Pause put one request in
 the builder's queue, exactly as before; Apply saves the universe; Fill and "Fill this range" stay off unless the
 server's ``RC_FILL_ENABLED`` is set (avo's word); "Refresh the example rows" reads five rows of the live file; and
 "Take the disk picture" (in Fetch, where presses live) queues the storage-picture job, which walks the HDD trees
@@ -202,8 +202,7 @@ def _universe(view: dict) -> str:
         f'and fills use</span><span class="uval">runs on <b id="uni-sum">{esc(summary)}</b></span>'
         '<span class="uact"><button type="button" class="btn go" data-job="fetch" data-dataset="spine/security">'
         f'Fetch the universe</button><span class="dim">{esc(spine_words)}</span></span></div>'
-        '<div class="ubar" role="group" aria-label="Tier sets in the universe · hover a set, or press and hold on a '
-        f'phone, for what it holds">{"".join(segs)}</div>'
+        '<div class="ubar" role="group" aria-label="Tier sets in the universe">{"".join(segs)}</div>'
         f'<p class="ulive">{live}C and D are shown for the whole picture, not offered. All tiers: {control.count(u.get("total"))} tickers on the spine'
         + (f' of {esc(control.day_words(u["as_of"]))}' if u.get("as_of") else "") + '.</p>'
         f'<div class="uinch"><span class="dim">A Fetch of only some tier sets also brings each group whose chip is on '
@@ -397,7 +396,7 @@ def _sbox(d: dict, view: dict) -> str:
     since = d.get("since_words")
     state = (f'<div class="sb2"><span class="pill {esc(d["pill"])}">{esc(word)}</span>'
              f'<span class="pill cad">⏱ {esc(d["cadence"] or "not known")}</span>'
-             f'<span class="snext">next {esc(nxt) if nxt else "not known"}</span>'
+             f'<span class="snext">{esc(_next_words(nxt))}</span>'
              f'<span class="ssince">{esc(since) if since else "since: not known"}</span></div>')
     meters = ""
     if d["coverage"]:
@@ -466,6 +465,21 @@ def _funnel(view: dict) -> str:
                if added is not None else "") + '</div>')
 
 
+#: ``next_run_words`` answers that are whole sentences, printed without the "next " prefix.
+_WHOLE_SENTENCES = ("skips until", "by hand", "next ", "due", "not before")
+
+
+def _next_words(nxt) -> str:
+    """``next <when>`` for a time ("every trading day, …", "Fri 13 Nov, …"); a whole sentence ("skips until Resume",
+    "by hand only", "next pass not known", "due · …") stands alone, after any "timer off · " it carries."""
+    if not nxt:
+        return "next: not known"
+    words = str(nxt)
+    off = "timer off · " if words.startswith("timer off · ") else ""
+    core = words[len(off):]
+    return words if core.startswith(_WHOLE_SENTENCES) else f"{off}next {core}"
+
+
 def _uni_cards(view: dict) -> str:
     """Identity and Our universe, today's two cards, side by side, when the model carries them."""
     ident, mine = view.get("identity"), view.get("my_universe")
@@ -484,7 +498,7 @@ def _picture_control(view: dict) -> str:
     return ('<div class="pictrow"><span class="hm">The HDD folder counts in <b>Data, file by file</b> are a '
             f'picture, not a live read &middot; {esc(_walked(walked))}</span>'
             '<button type="button" class="btn" data-job="picture">Take the disk picture</button>'
-            '<span class="hm" id="picout" role="status"></span></div>')
+            '<span class="hm picout" role="status"></span></div>')
 
 
 # ── The flow diagram ──────────────────────────────────────────────────────────────────────────────────────────
@@ -502,8 +516,8 @@ def _flow(view: dict) -> str:
                      + (esc(", ".join(readers)) if readers else "<b>no board yet</b>") + '</span></div>')
     return (
         '<details class="sec" id="sec-flow" open><summary><h2>Where it comes from, who fetches it, where it ends · flow '
-        'diagram</h2><span class="secs">source → plan step → SSD file → board · a press filters the Data section '
-        'below and opens it · a board says what it reads</span></summary>'
+        'diagram</h2><span class="secs">source → plan step → SSD file → board · a press lights its lines · a file '
+        'picks its panel below · a board says what it reads</span></summary>'
         '<div class="group" style="border-left-color:var(--acc)"><div class="scroll flowwrap"><svg class="flowsvg" '
         'id="flow2" viewBox="0 0 1116 900" role="group" aria-labelledby="flow2-title"></svg></div>'
         '<p class="bdmatch" id="bdmatch" aria-live="polite" hidden></p>'
@@ -634,7 +648,7 @@ def _jrows(f: dict) -> tuple[str, list[str]]:
             # One "from" chip per input step of the file, with its full name (#492).
             chips = "".join(f'<span class="chip" data-card="{esc(o["dataset"])}"><span class="cn">{o["step"]}</span>'
                             f'<span class="t">{esc(o["dataset"])}</span></span>'
-                            for o in f["datasets"] if o is not d and o["role"] != "build")
+                            for o in f["datasets"] if o is not d and o["role"] in INPUT_ROLES and not o.get("attended"))
             chips = f'<span class="jfrom"><span class="jfl">from</span>{chips}</span>' if chips else ""
         rows.append(
             f'<tr class="jr" tabindex="0" role="button" aria-expanded="false" aria-controls="jd-{esc(f["kind"])}-{i}" '
@@ -865,6 +879,10 @@ def _ready(view: dict) -> dict:
     """``view`` with the universe summary its sections print."""
     return {**view, "universe_summary": " + ".join(s["label"] for s in view["universe"]["sets"] if s["on"])
             + f' · {control.count(view["universe"]["size"])} names'}
+
+
+#: The roles whose steps feed a build row: never a cross-check ("compared, never served") or a build.
+INPUT_ROLES = ("first", "only source", "fills")
 
 
 def _panel(f: dict, view: dict, first: bool) -> str:

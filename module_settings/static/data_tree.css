@@ -45,8 +45,9 @@
 @media(max-width:760px){.ctl table.jt3 td.js{grid-template-columns:auto auto minmax(0,1fr)}
 .ctl table.jt3 .jmeta{grid-column:1 / -1;justify-content:flex-start}}
 /* The tree: an SVG overlay in a 48 px gutter left of the file panel; only the hit twins take the pointer. */
-.ctl .dtree-host{position:relative;margin-left:48px}
-.ctl svg.dtree{position:absolute;left:-48px;top:0;overflow:visible;pointer-events:none;z-index:1}
+/* the gutter is inside the panel's own padding, so every panel keeps the board's one left edge */
+.ctl section.fpanel.dtree-host{position:relative;padding-left:60px}
+.ctl svg.dtree{position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:1}
 .ctl svg.dtree .vis{stroke-width:1.4;opacity:.75;transition:opacity .15s,stroke-width .15s}
 .ctl svg.dtree .ah{opacity:.75}
 .ctl svg.dtree .hit{pointer-events:stroke;cursor:pointer}
@@ -57,4 +58,7 @@
 .ctl .dtree-ring{outline:2px solid var(--acc);outline-offset:1px}
 .ctl tr.jr.dtree-lit td{background:var(--acc2)}
 @media(max-width:639.98px){.ctl svg.dtree{display:none}
-.ctl .dtree-host{margin-left:0}}
+.ctl section.fpanel.dtree-host{padding-left:12px}
+.ctl table.jt3 td.ssdc,.ctl table.jt3 th.ssdh,.ctl table.jt3 col.c3{display:none}}
+/* the three-column table keeps its SSD column from 640 px up, so the narrow SSD aside is for phones only */
+@media(min-width:640px){.ctl .journey .jpanel.jnarrow{display:none}}

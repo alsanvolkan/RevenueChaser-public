@@ -1,4 +1,4 @@
-/* The Build stage tree (#492, slice C2): an SVG overlay in a 48 px gutter left of each file panel. A line runs from
+/* The Build stage tree (#492, slice C2): an SVG overlay in a 48 px gutter inside the left of each file panel. A line runs from
    every source box (.dset[data-dataset]) to its own step row (tr.jr[data-ds]), in the box's provider colour lightened
    toward white; every build row gets a dashed line from each step of its file, in the file's colour, joined on a
    trunk. Each line has a wide invisible twin that takes the hover. A press goes through the journey code in
@@ -80,7 +80,7 @@
     svg.style.display = '';
     h.classList.add('dtree-host');
     var hr = h.getBoundingClientRect();
-    svg.setAttribute('width', String(hr.width + GUTTER)); svg.setAttribute('height', String(h.scrollHeight || hr.height));
+    svg.setAttribute('width', String(hr.width));   // the gutter is the panel's own left padding svg.setAttribute('height', String(h.scrollHeight || hr.height));
     var sr = svg.getBoundingClientRect(), ox = sr.left, oy = sr.top;
     var rows = [].slice.call(j.querySelectorAll('tr.jr[data-ds]')).filter(shown);
     var edge = GUTTER, steps = [];
@@ -138,7 +138,9 @@
 
   document.addEventListener('click', function (e) {
     var t = e.target, box = t && t.closest && t.closest('.dset[data-dataset]');
-    if (box && !t.closest('button,a,input,select,label,summary,textarea')) {
+    // only the box head or its name picks the row; reading or selecting the box's text does not
+    var picked = window.getSelection && String(window.getSelection() || '');
+    if (box && t.closest('.sb1, .dsname') && !picked && !t.closest('button,a,input,select,label,summary,textarea')) {
       var ds = box.getAttribute('data-dataset');
       var row = [].filter.call(document.querySelectorAll('.ctl .journey tr.jr[data-ds]'), function (r) {
         return r.getAttribute('data-ds') === ds;

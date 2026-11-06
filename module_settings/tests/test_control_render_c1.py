@@ -109,7 +109,7 @@ def test_the_one_button_reads_fetch_pause_or_resume_and_no_separate_pause_is_lef
     assert 'data-state="pause" data-dataset="alpaca/bars"' in busy and ">Pause</button>" in busy
     v["queue"] = {"active": [{"id": 4, "dataset": "alpaca/bars", "status": "queued"}], "finished": []}
     assert '<span class="lg3 st-q">queued</span>' in _box(_sources(v, "prices.duckdb"), "alpaca/bars")
-    _file(v, "prices.duckdb")["datasets"][0]["paused"] = True
+    next(d for d in _file(v, "prices.duckdb")["datasets"] if d["dataset"] == "alpaca/bars")["paused"] = True
     held = _box(_sources(v, "prices.duckdb"), "alpaca/bars")
     assert 'data-state="resume"' in held and ">Resume</button>" in held
     every = "".join(_sources(v, f["name"]) for f in v["files"])
