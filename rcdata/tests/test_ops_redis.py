@@ -47,6 +47,11 @@ def _script() -> dict:
     out["sync1"] = ops.sync_issues("prices/serving", ["price_gap_no_action", "stale"],
                                    [("price_gap_no_action", f"T{i}", f"d{i}") for i in range(5)]
                                    + [("stale", "X", None)], run_id="r3")
+    # One unfixed problem, recorded by two runs: resolving owes both rows, on either backend (#516).
+    ops.record_issue("funds/etf_holdings", "source_failed", "ARKQ", "first", run_id="r3")
+    ops.record_issue("funds/etf_holdings", "source_failed", "ARKQ", "again", run_id="r4")
+    out["sync_dupes"] = ops.sync_issues("funds/etf_holdings", ["source_failed"], [])
+    out["dupes_open"] = ops.open_issues("funds/etf_holdings", 0)[0]
     out["sync2"] = ops.sync_issues("prices/serving", ["price_gap_no_action"],
                                    [("price_gap_no_action", f"T{i}", "new detail") for i in range(2, 7)])
     ops.start_run("r1", "market_series", "cli", {"once": True})
