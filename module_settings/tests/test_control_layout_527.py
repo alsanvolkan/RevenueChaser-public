@@ -3,6 +3,7 @@ columns, right-aligned, each as wide as the widest value of its file plus a litt
 never wrap (only Note does); the universe chips wrap; a table name in Data structure is a heading and its button is
 small; the disk picture press says what it does."""
 from __future__ import annotations
+import re
 
 from RevenueChaser.module_settings import control_render
 from RevenueChaser.module_settings.tests.test_control_render_c1 import _view
@@ -47,3 +48,19 @@ def test_a_data_structure_table_name_is_a_heading_and_its_button_is_small():
                                         "rows": [["SPY"]], "built": True}]
     html = control_render._samples(f)
     assert '<h3 class="dsh">' in html and 'class="btn sm" data-sample-refresh=' in html
+
+
+def test_a_source_box_keeps_its_buttons_on_the_name_line():
+    """avo 6 Nov 2026 20:19 ("kaydirdin", screenshot): two boxes side by side, one with its Fetch / ▾ / Pause on the
+    name line and one with them pushed under it. The head row never wraps on a desktop: the name gives way (it
+    shortens with an ellipsis, its full text in the title) and the buttons keep their place. A phone may wrap."""
+    css = control_render.CTL_CSS.split("kaydirdin", 1)[-1]
+    assert ".ctl .sb1{flex-wrap:nowrap}" in css
+    assert re.search(r"\.ctl \.sb1 \.dsname\{[^}]*min-width:0[^}]*text-overflow:ellipsis", css)
+    assert re.search(r"\.ctl \.sb1 \.sbbtn,\.ctl \.sb1 \.srcb\{flex:none", css)
+    assert re.search(r"@media\(max-width:760px\)\{\.ctl \.sb1\{flex-wrap:wrap\}", css)
+    assert "@media(max-width:1199px)" not in css, "avo 20:25: two boxes a row stay"
+    assert ".ctl .sgrid{container-type:inline-size;container-name:sgrid}" in css
+    assert re.search(r"@media\(min-width:761px\)\{\s*@container sgrid \(max-width:1100px\)\{\.ctl \.sgrid>\.sbox\{zoom:", css)
+    from RevenueChaser.module_settings.tests.test_control_render_c1 import _sources, _view
+    assert 'class="dsname" title="alpaca/bars">alpaca/bars</span>' in _sources(_view(), "prices.duckdb")

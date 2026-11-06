@@ -967,22 +967,54 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
 BUILDER_ENTRY = "RC-Build"
 
 
-def read_timer(scheduler=None) -> dict:
+SYSTEM_TIMER_PROPS = ("LoadState", "ActiveState", "UnitFileState", "LastTriggerUSec", "NextElapseUSecRealtime")
+
+
+def _systemctl_system(args: list[str]) -> tuple[int, str, str]:
+    """``systemctl <args>`` against the SYSTEM manager, unprivileged (``show`` needs no root), 10 s at most."""
+    import subprocess
+    p = subprocess.run(["systemctl", *args], capture_output=True, text=True, timeout=10, check=False)
+    return p.returncode, p.stdout, p.stderr
+
+
+def read_system_timer(unit: str, system=None) -> tuple[str | None, str | None, str | None]:
+    """``(state, last, next)`` of the system timer ``<unit>.timer`` (#527: on homesrv the builder is a system unit
+    installed from home-server, which the user-unit scheduler never sees). Not installed, failed, or unreadable:
+    all None."""
+    from RevenueChaser.core import automations
+    rc, out, _ = (system or _systemctl_system)(
+        ["show", "--timestamp=unix", "--property=" + ",".join(SYSTEM_TIMER_PROPS), f"{unit}.timer"])
+    if rc != 0:
+        return None, None, None
+    props = dict(line.partition("=")[::2] for line in (out or "").splitlines() if "=" in line)
+    if props.get("LoadState") != "loaded" or props.get("ActiveState") == "failed":
+        return None, None, None
+    state = "on" if props.get("ActiveState") in ("active", "activating", "reloading") else "off"
+    return (state, automations._show_value(props.get("LastTriggerUSec")),
+            automations._show_value(props.get("NextElapseUSecRealtime")))
+
+
+def read_timer(scheduler=None, system=None) -> dict:
     """The hourly builder timer (``core.automations``' ``RC-Build`` row, unit ``life-rc-builder``): ``state`` "on"
     while the timer is active, "off" when disabled; ``last`` / ``next`` its passes; ``minute`` the minute of its
-    ``OnCalendar``. Not installed, no scheduler on this host, or a read that fails: every value None."""
+    ``OnCalendar``. The scheduler answers first; when it has no row (no user unit, or no scheduler on this host)
+    the system unit of the same name is read (``system`` runs ``systemctl``, injectable). Not installed anywhere,
+    or a read that fails: every value None."""
     from RevenueChaser.core import automations
     try:
+        e = automations.entry(BUILDER_ENTRY)
+        minute = int(automations.on_calendar(e).split()[-1].split(":")[1])
         scheduler = scheduler or automations.get_scheduler()
         st = scheduler.status(BUILDER_ENTRY)
-        if st is None:
-            return dict(NO_TIMER)
-        spec = automations.on_calendar(automations.entry(BUILDER_ENTRY))
-        minute = int(spec.split()[-1].split(":")[1])
+        if st is not None:
+            return {"state": "off" if st.state == "disabled" else "on", "last": st.last_run,
+                    "next": st.next_run, "minute": minute}
+        state, last, nxt = read_system_timer(e.unit, system)
     except Exception:  # noqa: BLE001 - a timer that cannot be read is "not known", never a guess
         return dict(NO_TIMER)
-    return {"state": "off" if st.state == "disabled" else "on", "last": st.last_run, "next": st.next_run,
-            "minute": minute}
+    if state is None:
+        return dict(NO_TIMER)
+    return {"state": state, "last": last, "next": nxt, "minute": minute}
 
 
 def _timer(reader) -> dict:
