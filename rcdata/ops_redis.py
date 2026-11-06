@@ -695,6 +695,19 @@ def kind_mode_get(kind: str) -> dict | None:
     return _one("kind_automation", kind)
 
 
+def switch_set(name: str, on: bool, *, by: str) -> None:
+    row = {"name": ops._switch(name), "off_at": None if on else time.time(), "off_by": None if on else by}
+    _transaction(["switch"], lambda: (None, lambda p: _put(p, "switch", row)))
+
+
+def switch_get(name: str) -> dict | None:
+    return _one("switch", ops._switch(name))
+
+
+def read_switches() -> dict[str, dict]:
+    return {r["name"]: r for r in _all("switch")}
+
+
 def read_kind_modes() -> dict[str, dict]:
     return {r["kind"]: r for r in _all("kind_automation")}
 

@@ -996,3 +996,23 @@ def test_the_ibkr_login_check_limit_is_the_installed_unit_s_five_minutes():
     """#527: the registry said 1 h while homesrv runs ``TimeoutStartSec=5min`` (home-server
     units/life-rc-ibkr-login-check.service); the board shows the registry, so it follows the unit."""
     assert A.entry("RC-IBKR-Login-Check").settings.limit_minutes == 5
+
+
+@pytest.mark.parametrize("name,switch,runs", [
+    ("RC-ValueChain-Sync", "fetch", False), ("RC-Build", "fetch", False), ("RC-Daily-Bars", "fetch", False),
+    ("RC-Store-Backup", "fetch", True), ("RC-Build-Backup", "fetch", True), ("RC-IBKR-Login-Check", "fetch", True),
+    ("RC-Store-Backup", "backup", False), ("RC-Build-Backup-Heavy", "backup", False), ("RC-Build", "backup", True),
+])
+def test_a_switched_off_task_does_not_start_its_command(monkeypatch, name, switch, runs):
+    """#527: every RC systemd unit runs ``core.automations run <name>``, so the board's two switches are read here.
+    Fetch stops every task but the backups and the IBKR login check; backup stops only the backups. A stopped task
+    exits 0 (it is not a failed job) and says why in its log."""
+    from RevenueChaser.rcdata import ops
+    ops.switch_set(switch, False, by="avo")
+    started = []
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: started.append(a) or type("R", (), {"returncode": 0})())
+    assert A.run_task(name) == A.RESULT_OK
+    assert bool(started) is runs
+    if not runs:
+        text = A.entry(name).log_path.read_text(encoding="utf-8")
+        assert f"skipped: the {switch} switch is off (avo at " in text

@@ -233,6 +233,10 @@ class RunContext:
             if not force and self._pause_read_at is not None and now - self._pause_read_at < PAUSE_READ_EVERY_S:
                 return
             self._pause_read_at = now
+            off = ops.switch_off("fetch")          # #527: the board's fetch switch stops every run, the same way
+            if off is not None:
+                self._paused = f"stopped, {ops.switch_words('fetch', off)}"
+                raise Paused(self._paused)
             row = ops.schedule_get(self.dataset)
             if not row or row.get("paused_at") is None:
                 return
@@ -761,7 +765,11 @@ def cap_problem(ds: Dataset) -> str | None:
 
 def paused_problem(ds: Dataset) -> str | None:
     """``skipped: paused ...`` while ``ops.dataset_schedule`` holds a pause for the dataset (Settings' Pause), else
-    None. Checked before anything is fetched, so a paused dataset sends no call."""
+    None. Checked before anything is fetched, so a paused dataset sends no call. The board's fetch switch (#527)
+    holds every dataset at once and is read first."""
+    off = ops.switch_off("fetch")
+    if off is not None:
+        return f"skipped: {ops.switch_words('fetch', off)}"
     row = ops.schedule_get(ds.name)
     if not row or row.get("paused_at") is None:
         return None

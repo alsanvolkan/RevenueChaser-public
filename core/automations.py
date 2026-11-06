@@ -1231,6 +1231,34 @@ def _record_run(row: dict) -> None:
     rawstore.write_rows("job_runs", [row])
 
 
+#: The registry rows the board's backup switch stops (#527); the fetch switch stops every other row but these and
+#: ``SWITCH_EXEMPT``.
+BACKUP_TASKS = frozenset({"RC-Store-Backup", "RC-Build-Backup", "RC-Build-Backup-Heavy"})
+#: A status read, not a fetch: the top bar's IBKR state comes from it, so it runs whatever the switches say.
+SWITCH_EXEMPT = frozenset({"RC-IBKR-Login-Check"})
+
+
+def switch_for(name: str) -> str | None:
+    """Which board switch holds the task: ``"backup"``, ``"fetch"`` or None (#527)."""
+    if name in SWITCH_EXEMPT:
+        return None
+    return "backup" if name in BACKUP_TASKS else "fetch"
+
+
+def _switched_off(name: str) -> str | None:
+    """``skipped: the <switch> switch is off (<by> at <when>)`` while the task's switch is off, else None. A switch
+    that cannot be read does not stop the task: the switch is a convenience, the backup must not miss a night."""
+    switch = switch_for(name)
+    if switch is None:
+        return None
+    try:
+        from RevenueChaser.rcdata import ops
+        off = ops.switch_off(switch)
+    except Exception:  # noqa: BLE001
+        return None
+    return f"skipped: {ops.switch_words(switch, off)}" if off is not None else None
+
+
 def run_task(name: str, python: str | None = None, cwd: Path | str | None = None, *,
              clock: Callable[[], datetime] | None = None, sleep: Callable[[float], None] | None = None,
              tz: tzinfo | None = None) -> int:
@@ -1281,6 +1309,12 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
 
         fh.write(f"=== {stamp()} start {e.name}\n")
         fh.flush()
+        off = _switched_off(e.name)
+        if off is not None:
+            fh.write(off + "\n")
+            record(status="done", started_at=epoch(), finished_at=epoch(), message=off)
+            fh.write(f"=== {stamp()} exit {RESULT_OK}\n")
+            return RESULT_OK
         if e.after:
             fh.write(f"chain: waiting for {e.after} (up to {e.chain_wait_minutes} min)\n")
             fh.flush()
