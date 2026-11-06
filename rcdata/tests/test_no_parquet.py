@@ -21,7 +21,7 @@ import pytest
 from RevenueChaser.rcdata import ops, serving
 from RevenueChaser.rcdata.build import DATASETS, base, due
 from RevenueChaser.rcdata.build import __main__ as cli
-from RevenueChaser.rcdata.build.ownership import edgar, sec13f_sets
+from RevenueChaser.rcdata.build.ownership import edgar, form345_sets, sec13f_sets
 
 
 class _Stager:
@@ -278,6 +278,23 @@ def test_a_raw_only_run_does_not_mark_the_13f_data_set_days_done(monkeypatch, tm
     with base.raw_only_run():
         written = sec13f_sets._fill_one(ctx, feed, zip_path, "2026q3", date(2026, 7, 1), date(2026, 7, 31),
                                         {"forms": ("13F-HR",), "filings": (), "holdings": (), "dollars_from": None})
+    assert written == 0
+    assert not any(feed.is_done(date(2026, 7, d)) for d in range(1, 32)), "no day may be marked"
+    assert any("raw only" in n for n in ctx.notes), ctx.notes
+
+
+def test_a_raw_only_run_does_not_mark_the_insider_data_set_days_done(monkeypatch, tmp_path):
+    """``form345_sets._fill_one`` marks every day of the set's range too (#500), so the same guard has to be there:
+    2014 to today is 51 quarters, and a raw-only run without it would burn twelve years of days."""
+    feed = _Feed()
+    zip_path = tmp_path / "2026q3_form345.zip"
+    zip_path.write_bytes(b"not read: the raw-only guard returns before the zip is opened")
+    monkeypatch.setattr(sec13f_sets, "_load",
+                        lambda *a, **kw: pytest.fail("a raw-only run must not type the set"))
+    ctx = base.RunContext(run_id="r4", dataset=feed.name)
+    with base.raw_only_run():
+        written = form345_sets._fill_one(ctx, feed, zip_path, "2026q3_form345.zip", date(2026, 7, 1),
+                                         date(2026, 7, 31), {"forms": ("4",), "rows": ()})
     assert written == 0
     assert not any(feed.is_done(date(2026, 7, d)) for d in range(1, 32)), "no day may be marked"
     assert any("raw only" in n for n in ctx.notes), ctx.notes

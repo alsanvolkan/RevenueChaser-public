@@ -30,6 +30,9 @@ it. A day the walk already finished is not typed from a set, and a set published
 leaves its later days to the walk. A range of fewer than ``sec13f_sets.MIN_WEEKDAYS`` weekdays asks for nothing: a
 small repair reads the forms.
 
+Under ``--no-parquet`` (raw only) the zips are staged and nothing is typed: no day is marked, so a later ordinary
+run types them from the kept zips without asking the SEC again.
+
 Raw: ``raw/sec/form345_sets/<zip>`` with a ``.meta.json`` sidecar; each download is one paced SEC request, 10 to
 80 MB. A backfill asks again for a set it holds with ``If-Modified-Since`` (the SEC answers 304, no body): a set
 published again replaces the kept one and the days it had filled are typed again.
@@ -159,6 +162,12 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
               schema: dict) -> int:
     """Type the set's filings of the weekdays ``first``..``last`` the walk has not finished, write each day's
     partition and mark it done; the days written."""
+    if base.raw_only():
+        # Raw-only (--no-parquet, #498), as the 13F sets do it: the zip is staged in raw above, and typing it here
+        # would write the ``.done`` marker of every day in range while base.write_parquet writes no partition, so
+        # those days would never be typed again (the forms walk skips a marked day, and _reopen is the only way back).
+        ctx.notes.append(f"{LABEL} data set {name}: raw only, the zip is staged and not typed")
+        return 0
     days = [first + timedelta(days=n) for n in range((last - first).days + 1)]
     todo = [d for d in days if d.weekday() < 5 and not feed.is_done(d)]
     if not todo:
