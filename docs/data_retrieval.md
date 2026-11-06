@@ -188,14 +188,38 @@ routes only enqueue and read `ops.sqlite`. Each call opens its own SQLite connec
   missing partitions).
 - **`GET /api/build/queue`**: `{ok, active, finished}`. `active` holds the queued and running requests, oldest
   first; `finished` the last 20 others, newest first.
-**Stage only (`--no-build`).** `run --dataset X --no-build` and `backfill ... --no-build` fetch and write Parquet
+**Stage only (`--no-duckdb`) and raw only (`--no-parquet`).** The builder's three steps are *fetch* (the
+provider's answer into the raw store), *Parquet* (the typed partition) and *build* (the serving DuckDB and its
+swap). Each flag names everything it drops:
+
+| flag | fetch | Parquet | serving DuckDB |
+| --- | --- | --- | --- |
+| *(none)* | yes | yes | yes |
+| `--no-duckdb` | yes | yes | no |
+| `--no-parquet` | yes | no | no (implied) |
+
+`run --dataset X --no-duckdb` and `backfill ... --no-duckdb` fetch and write Parquet
 but do not build the serving file: the request ends `skipped`, with a note that says what the fetch really staged
-(`build skipped (--no-build); 3 raw files staged`, or `nothing staged (the fetch returned no file)` when the
+(`build skipped (--no-duckdb); 3 raw files staged`, or `nothing staged (the fetch returned no file)` when the
 dataset's provider window was closed, or `the backfill staged what it fetched` when the count cannot be taken), the serving file is untouched, and the dataset stays due, so the next ordinary pass builds it at no
 provider call — the raw file it staged is the resume marker. It is for staging days of data without holding the
 builder lock through a build each time (the fetch campaign of a kind that has never been built), or for preparing
-the data on one machine and building it on another. It is a person's switch: the hourly pass queues no params, so
-the schedule can never leave a kind unbuilt.
+the data on one machine and building it on another.
+
+`--no-parquet` is the raw-only mode (#498): the fetch writes its raw files and nothing else, and the note reads
+`build and Parquet skipped (--no-parquet); 3 raw files staged`. It **implies `--no-duckdb`**, because Parquet is
+the only input a build reads, so a build with no new partition would be a no-op that still took the builder lock.
+The daily mode skips the dataset's `to_parquet_all` call outright; a backfill converts inside the dataset, so
+there the switch is a run-scoped guard in `base.write_parquet` (the one place a Parquet file is written), which
+writes nothing and returns the path it did not write. Nothing is lost by it: the raw file is the resume marker,
+and a later ordinary run (or `--no-duckdb` run) converts what is already on disk at no provider call.
+
+`--no-build` is the old name of `--no-duckdb`, kept as a deprecated alias so a queued request and a runbook line
+keep working; a request's params accept `no_build` as well as `no_duckdb`.
+
+Both are a person's switch: the hourly pass queues no params, so
+the schedule can never leave a kind unbuilt. Both are fetch-only for the locks — one `rcdata_fetch_<dataset>`
+each, never the builder lock — so two datasets fetch side by side and beside a running builder.
 
 - **`POST /api/build/schedule/<dataset>/<pause|resume>`**: sets or clears `dataset_schedule.paused_at` /
   `paused_by`; 404 for another action.
