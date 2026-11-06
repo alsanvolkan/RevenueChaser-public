@@ -1,4 +1,4 @@
-"""The Settings page's second tab, **Needs** (#331): the catalog, the request log, the routes.
+"""The Settings page's second tab, **Needs** (#331): the catalog and the request log.
 
 The model is read from a fixture log and fixture summaries through ``build``'s seams; the render is checked for
 escaping (every string ``H(field)``), the tab strip and both panels, the phone and theme rules, and the one-need
@@ -135,37 +135,19 @@ def test_the_log_read_never_creates_the_ops_file():
     assert not ops.ops_path().exists()
 
 
-def test_every_route_example_names_a_need_in_the_catalog():
-    for r in needs_tab.ROUTES:
-        m = re.match(r"/needs(?:/([^?]+))?", r["example"])
-        assert m, r
-        if m.group(1):
-            assert m.group(1) in catalog.NEEDS, r["example"]
-    paths = [r["path"] for r in needs_tab.ROUTES]
-    assert paths == ["/needs", "/needs/<need>", "/needs/<need>?summary=1"]
-
-
-def test_the_short_interest_example_uses_the_needs_own_ask_parameter():
-    spec = catalog.NEEDS["ownership.short_interest"]
-    assert f"?{spec.ask_param}=" in needs_tab.ROUTES[1]["example"]
-
-
-# ── The render ─────────────────────────────────────────────────────────────────────────────────────────────────
-
 def _hostile_model() -> dict:
     m = _model(summarize=lambda n: {**_summary(n), "status": H("status")})
     m["catalog"][0]["error"] = H("error")
     m["catalog"][0]["state"] = "unreadable"
     hm = hostile(m)
     # ``hostile`` leaves dates, states and routes alone (the fixture's skip list); this tab shows them, so they are
-    # made hostile here by hand: the need's name, its table, its dataset, its readers, the process, the routes.
+    # made hostile here by hand: the need's name, its table, its dataset, its readers, the process.
     for r in hm["catalog"]:
         r.update(newest_day=H("newest_day"), state=H("state") if r["state"] != "unreadable" else r["state"],
                  kind=H("kind"), unit=H("unit"))
     for r in hm["log"]["rows"]:
         r["by_process"] = [{"process": H("process"), "reads": 3}]
     hm["log"].update(first_day=H("first_day"), today=H("today"))
-    hm["routes"] = [{k: H("route_" + k) for k in r} for r in hm["routes"]]
     hm["readers_error"] = H("readers_error")
     return hm
 
@@ -174,8 +156,8 @@ def test_render_escapes_every_string_of_the_tab():
     hm = _hostile_model()
     html = needs_tab.render(hm)
     assert_inert(html)
-    for tag in ("need", "table", "dataset", "declared", "planned", "error", "newest_day", "process", "route_example",
-                "route_what", "route_path", "readers_error", "ask_param", "kind"):
+    for tag in ("need", "table", "dataset", "declared", "planned", "error", "newest_day", "process",
+                "readers_error", "ask_param", "kind"):
         assert f"&lt;img src=x onerror=__x(&#x27;{tag}T&#x27;)" in html, tag
     m = _model()
     m["log"]["rows"] = []
@@ -196,7 +178,7 @@ def test_the_page_has_the_tab_strip_and_both_panels_and_stays_inert():
     data = html[html.index('id="panel-data"'):html.index('id="panel-health"')]
     assert 'id="sec-health"' in data and 'id="old-settings"' not in html and "oldfold" not in html
     health = html[html.index('id="panel-health"'):]
-    for part in ("needs-catalog", "needs-log", "needs-routes"):
+    for part in ("needs-catalog", "needs-log"):
         assert f'id="{part}"' in health, part
 
 
@@ -272,7 +254,7 @@ def test_the_board_fixture_carries_the_hostile_payload_into_the_needs_tab(tmp_pa
     assert_inert(html)
     needs = html[html.index('<div id="panel-health" role="tabpanel"'):]
     for tag in ("need", "table", "dataset", "declared", "planned", "error", "process", "ask_param",
-                "route_path", "route_what", "route_example", "readers_error"):
+                "readers_error"):
         assert f"&lt;img src=x onerror=__x(&#x27;{tag}T&#x27;)" in needs, tag
 
 
@@ -282,7 +264,7 @@ def test_the_lag_names_its_unit_and_a_need_breaks_only_after_a_dot():
     html = needs_tab.render(m)
     assert "6 sessions behind" in html and "6 days behind" in html     # prices.* in sessions, estimates in days
     assert "fundamentals.<wbr>companies" in html
-    assert re.search(r'<td class="d" data-label="Newest day">2026-10-20</td>', html)
+    assert re.search(r'<td class="d nw" data-label="Newest day">2026-10-20</td>', html)
     assert re.search(r"#needs td\.d\{white-space:nowrap\}", needs_tab.NEEDS_CSS)
 
 
@@ -328,7 +310,7 @@ def test_a_group_head_says_its_file_and_counts():
     cat = needs_tab.render(m)
     n = sum(1 for r in m["catalog"] if r["kind"] == "prices")
     head = re.search(r'<tbody class="cghead" data-file="prices">(.*?)</tbody>', cat, flags=re.S).group(1)
-    assert "▸" in head and "prices" in head
+    assert "▾" in head and "prices" in head and 'aria-expanded="true"' in head, "a group with a stale need opens"
     assert f"{n} needs · fresh {n - 1} · stale 1" in head
     assert 'colspan="7"' in head
 

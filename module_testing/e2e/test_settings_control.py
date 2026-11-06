@@ -78,6 +78,23 @@ def test_the_board_is_one_column_on_a_phone_with_44px_targets_and_no_sideways_sc
     assert m["buttons"] >= 6 and not m["small"], f"targets under 44 px: {m['small']}"
 
 
+@pytest.mark.parametrize("width", [1280, 1600, 2560])
+@pytest.mark.parametrize("tab", ["data", "health"])
+def test_no_width_scrolls_the_page_sideways_and_a_wide_one_only_scales_up(dashboard, browser, width, tab):
+    """Q54/Q55 (avo 6 Nov 2026): no horizontal scroll bar at any desktop width, every section open; past 1600 px the
+    board is the 1600 px layout scaled up, never reflowed."""
+    browser.emulate(width, 1000, scheme="dark")
+    browser.open(f"{dashboard.url}/view/{_APP}", ready="!!document.getElementById('ctl') && !!window.CTL")
+    _tab(browser, tab)
+    browser.eval("document.querySelectorAll('#ctl details, #needs details').forEach(function(d){ d.open = true; })")
+    browser.settle()
+    m = browser.eval("(function(){ var d = document.documentElement; return {vw: d.clientWidth, sw: d.scrollWidth, "
+                     "z: [document.getElementById('ctl').style.zoom, document.getElementById('needs').style.zoom]}; })()")
+    assert m["sw"] <= m["vw"], f"the page scrolls sideways at {width} px: {m}"
+    want = str(width / 1600) if width > 1600 else ""
+    assert m["z"] == [want, want], f"scale-up only past 1600 px: {m}"
+
+
 def test_the_board_follows_the_shells_theme_both_ways(dashboard, browser):
     _open(browser, dashboard, "light")
     look = "(function(){ var c = getComputedStyle(document.getElementById('ctl')); return [c.color, " \

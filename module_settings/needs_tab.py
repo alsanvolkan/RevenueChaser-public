@@ -1,4 +1,4 @@
-"""The Settings / Data health page's second tab, **Needs** (#331): the need catalog, the request log, the routes.
+"""The Settings / Data health page's second tab, **Needs** (#331): the need catalog and the request log.
 
 ``build()`` reads the model: one row per need from ``rcdata.needs.catalog`` with who reads it (the board's own
 ``READS``, or its planned reads, drawn apart) and its state now (``needs.summary``), plus the read log's
@@ -33,20 +33,6 @@ BOARD_PREFIX = "module_"
 #: serving kind (``catalog.Need.kind``, ``rcdata.read.KIND_OF_TABLE``); a need of no served file goes last.
 SERVED_FILES = ("spine", "prices", "fundamentals", "ownership", "options", "market")
 OTHER_FILE = "other"
-
-#: The routes, with one example each, so a reader can try them. The example needs are checked against the catalog
-#: by the tests, so a rename cannot leave a dead link here.
-ROUTES = (
-    {"method": "GET", "path": "/needs", "what": "The catalog as JSON: every need, its serving file, owning dataset, "
-     "freshness rule and the parameter it is asked by.", "example": "/needs"},
-    {"method": "GET", "path": "/needs/<need>", "what": "One need's rows in the envelope: state, freshness, coverage "
-     "and per-row provenance. Read-only, never a fill; at most 5,000 rows.",
-     "example": "/needs/ownership.short_interest?tickers=AAPL,MSFT"},
-    {"method": "GET", "path": "/needs/<need>?summary=1", "what": "The need's state without naming anything: rows, "
-     "keys, newest day and the last check, with a few example rows (sample=0..50).",
-     "example": "/needs/prices.bars?summary=1"},
-)
-
 
 def _summary(name: str) -> dict:
     from RevenueChaser.rcdata import needs
@@ -149,15 +135,14 @@ def build(*, today: date | None = None, summarize: Callable[[str], dict] | None 
     counts = {s: sum(1 for r in catalog_rows if r["state"] == s) for s in STATES}
     return {"read_at": datetime.now().strftime("%H:%M"), "catalog": catalog_rows, "counts": counts,
             "readers_error": readers_error,
-            "log": _log(today, [r["need"] for r in catalog_rows], read_log or ops.need_reads),
-            "routes": [dict(r) for r in ROUTES]}
+            "log": _log(today, [r["need"] for r in catalog_rows], read_log or ops.need_reads)}
 
 
 # ── Render ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 WIAL = ("<p>Every board asks the store for a <b>need</b> by name, never for a table: <code>rcdata.needs</code> "
         "answers from the serving file the catalog names and says how fresh the answer is. This tab shows the "
-        "catalog, how often each need was asked, and the routes to ask one yourself.</p>"
+        "catalog and how often each need was asked.</p>"
         "<p><b>State</b> is read now, once per render: <b>fresh</b> when the newest day is inside the need's window, "
         "<b>stale</b> when it is older, <b>missing</b> when the store holds no row, <b>unreadable</b> when the read "
         "failed (that row's error is shown; the other rows are unaffected). <b>Read by</b>: a solid chip is the "
@@ -207,7 +192,7 @@ def _catalog_row(row: dict) -> str:
              f'{" (required)" if row["ask_required"] else ""}</div>' if row["ask_param"] else
              '<div class="dim">asked with no argument</div>')
     name = f'<td class="nm" data-label="Need"><code class="need">{_need_name(row["need"])}</code>{asked}</td>'
-    state = f'<td data-label="State">{_state_cell(row)}</td>'
+    state = f'<td class="nw" data-label="State">{_state_cell(row)}</td>'
     if row["error"]:
         return (f'<tr class="unreadable" data-need="{esc(row["need"])}">{name}{state}<td class="err" colspan="5" data-label="Error">'
                 f'{esc(row["error"])}</td></tr>')
@@ -215,9 +200,9 @@ def _catalog_row(row: dict) -> str:
     served = (f'<code>{esc(row["kind"])}</code> · <code>{esc(row["table"])}</code>'
               f'<div class="dim">{esc(row["dataset"] or "several datasets")}</div>')
     return (f'<tr data-need="{esc(row["need"])}" data-state="{esc(row["state"])}">{name}{state}'
-            f'<td class="d" data-label="Newest day">{esc(row["newest_day"] or "—")}</td>'
-            f'<td class="n" data-label="Rows">{esc(_num(row["rows"]))}{keys}</td>'
-            f'<td data-label="Fresh if">{esc(_fresh_rule(row))}</td>'
+            f'<td class="d nw" data-label="Newest day">{esc(row["newest_day"] or "—")}</td>'
+            f'<td class="n nw" data-label="Rows">{esc(_num(row["rows"]))}{keys}</td>'
+            f'<td class="nw" data-label="Fresh if">{esc(_fresh_rule(row))}</td>'
             f'<td data-label="Served from">{served}</td>'
             f'<td data-label="Read by"><div class="chips">{_chips(row)}</div></td></tr>')
 
@@ -233,16 +218,19 @@ def _catalog_groups(rows: list[dict]) -> list[tuple[str, list[dict]]]:
 
 
 def _catalog_group(file: str, rows: list[dict]) -> str:
-    """One file's group: a full-width head row with its toggle, then its rows in their own ``tbody``, closed."""
+    """One file's group: a full-width head row with its toggle, then its rows in their own ``tbody``. Problems
+    first (Q47): a group with a need that is not fresh opens; an all-fresh group stays closed."""
     fresh = sum(1 for r in rows if r["state"] == "fresh")
     stale = sum(1 for r in rows if r["state"] == "stale")
     body_id = f"cg-{esc(file)}"
+    open_ = fresh < len(rows)
     return (f'<tbody class="cghead" data-file="{esc(file)}"><tr><td colspan="7">'
-            f'<button type="button" class="cgtog" aria-expanded="false" aria-controls="{body_id}">'
-            f'<span class="cgarr" aria-hidden="true">▸</span> <span class="cgfile">{esc(file)}</span> '
+            f'<button type="button" class="cgtog" aria-expanded="{"true" if open_ else "false"}" '
+            f'aria-controls="{body_id}"><span class="cgarr" aria-hidden="true">{"▾" if open_ else "▸"}</span> '
+            f'<span class="cgfile">{esc(file)}</span> '
             f'<span class="cgcount">{len(rows)} need{"" if len(rows) == 1 else "s"} · fresh {fresh} · '
             f'stale {stale}</span></button></td></tr></tbody>'
-            f'<tbody class="cbody" hidden id="{body_id}">{"".join(_catalog_row(r) for r in rows)}</tbody>')
+            f'<tbody class="cbody"{"" if open_ else " hidden"} id="{body_id}">{"".join(_catalog_row(r) for r in rows)}</tbody>')
 
 
 #: The group toggle: a press opens or closes the group's rows and flips ``aria-expanded`` and the arrow.
@@ -265,15 +253,16 @@ NEEDS_JS = """
 
 def _catalog_section(model: dict) -> str:
     c = model["counts"]
-    head = " · ".join(f'{c[s]} {s}' for s in STATES if c.get(s))
+    head = " · ".join(f'<span class="st st-{esc(s)}">{c[s]} {esc(s)}</span>' if s != "fresh" else f'{c[s]} {s}'
+                      for s in STATES if c.get(s))
     note = (f'<p class="warn">Who reads which need could not be read: {esc(model["readers_error"])}</p>'
             if model.get("readers_error") else "")
     body = "".join(_catalog_group(f, rows) for f, rows in _catalog_groups(model["catalog"]))
     return (f'<section class="part" id="needs-catalog" aria-labelledby="needs-catalog-h">'
             f'<h2 id="needs-catalog-h">The catalog <span class="secs">{len(model["catalog"])} needs · '
-            f'{esc(head)}</span></h2>{note}'
-            '<table class="stk"><thead><tr><th>Need</th><th>State</th><th>Newest day</th><th>Rows</th>'
-            '<th>Fresh if</th><th>Served from</th><th>Read by</th></tr></thead>'
+            f'{head}</span></h2>{note}'
+            '<table class="stk"><thead><tr><th>Need</th><th class="nw">State</th><th class="nw">Newest day</th>'
+            '<th class="nw">Rows</th><th class="nw">Fresh if</th><th>Served from</th><th>Read by</th></tr></thead>'
             f'{body}</table>'
             '<p class="legend"><span class="chip own">board</span> the board\'s own <code>READS</code> · '
             '<span class="chip plan">board</span> planned, not declared yet</p></section>')
@@ -317,20 +306,6 @@ def _log_section(model: dict) -> str:
             'Rows from before 1 Nov 2026 may say <code>__main__</code>. Counted per New York day.</p></section>')
 
 
-def _routes_section(model: dict) -> str:
-    cards = "".join(
-        f'<div class="route"><div class="rh"><span class="verb">{esc(r["method"])}</span> '
-        f'<code class="path">{esc(r["path"])}</code></div><p>{esc(r["what"])}</p>'
-        f'<p class="try">Try: <a href="{esc(r["example"])}" target="_blank" rel="noopener">'
-        f'<code>{esc(r["example"])}</code></a></p></div>'
-        for r in model["routes"])
-    return (f'<section class="part" id="needs-routes" aria-labelledby="needs-routes-h">'
-            f'<h2 id="needs-routes-h">The routes <span class="secs">read-only · no provider · no write</span></h2>'
-            f'<div class="routes">{cards}</div>'
-            '<p class="legend">A route read is a request like any other: it is counted in the log above.</p>'
-            '</section>')
-
-
 def head(model: dict, title: str = "Settings · Needs") -> str:
     """The tab's head line: the title, the read minute and "What am I looking at?" with its box."""
     return (f'<h1>{esc(title)}</h1>'
@@ -341,11 +316,12 @@ def head(model: dict, title: str = "Settings · Needs") -> str:
 
 
 def sections(model: dict) -> tuple[str, str]:
-    """``(catalog, log and routes)``: the tab's body in two parts, so a page can put its own part between them.
+    """``(catalog, log)``: the tab's body in two parts, so a page can put its own part between them. The routes are
+    documented in ``docs/data_health.md``, not drawn on the page (Q50).
     A model with ``error`` is one line, in the first part."""
     if model.get("error"):
         return f'<p class="warn">The Needs tab could not be read: {esc(model["error"])}</p>', ""
-    return _catalog_section(model), _log_section(model) + _routes_section(model)
+    return _catalog_section(model), _log_section(model)
 
 
 def render(model: dict) -> str:

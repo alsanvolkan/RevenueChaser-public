@@ -2263,15 +2263,20 @@ def _panel(html: str, ident: str) -> str:
 
 
 def test_the_health_panel_holds_its_parts_in_order():
-    """#492 (i): the Needs head, the queue, the catalog, the log, the routes, then Ticker detail and Backups."""
+    """#492 (i), board tidy (avo 6 Nov 2026): the Needs head, the queue, the catalog, Automations and Backups open, then
+    the folded parts; the routes are documented, not drawn (Q50)."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS))
     assert "<title>Data/Health</title>" in html
     health = _panel(html, "panel-health")
     order = ["<h1>Data/Health · Health</h1>", "What am I looking at?", 'id="sec-queue"', 'id="needs-catalog"',
-             'id="needs-log"', 'id="needs-routes"', 'id="ticker-drill"', 'id="backups"']
+             'id="backups"', 'id="ticker-drill"', 'id="needs-log"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
+    assert 'id="needs-routes"' not in health
+    for part in ('id="ticker-drill"', 'id="needs-log"'):
+        assert health.rfind('<details class="hfold">', 0, health.index(part)) > health.index('id="backups"'), \
+            f"{part} is folded, closed (Q53)"
     assert 'id="drill"' in health and 'id="ticker-combo"' in health
     data = _panel(html, "panel-data")
     assert 'id="ticker-drill"' not in data and 'id="backups"' not in data
@@ -2293,10 +2298,11 @@ def test_the_tabs_map_data_and_health_and_old_choices_land_on_them():
 
 
 def test_the_drill_keeps_its_own_search_box():
-    block = _drill_section(report.render_settings_dashboard(_payload()))
+    html = report.render_settings_dashboard(_payload())
+    block = _drill_section(html)
     assert 'id="ticker-combo"' in block and 'id="ticker-combo-list"' in block, \
         "the drill keeps its own search box"
-    assert "Ticker detail" in block
+    assert '<summary><h2 class="sec">Ticker detail</h2></summary><div id="ticker-drill">' in html, "its heading is its fold"
 
 
 def test_the_drill_says_which_boards_can_score_the_name():
@@ -2377,14 +2383,15 @@ def test_a_clean_drill_prints_no_error_note():
 
 
 def test_the_four_parts_that_live_nowhere_else_sit_in_health_above_backups():
-    """avo, 6 Nov 2026 ("A"): the board settings, Automations, the watch lists and the IBKR cards move to Health."""
+    """avo, 6 Nov 2026 ("A"): the board settings, Automations, the watch lists and the IBKR cards move to Health.
+    Board tidy (same day): failed reads first (Q51), Automations and Backups open, the rest folded below."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), automations=_autos(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/", backups=_BACKUPS,
                                                  errors=[{"table": "ibkr", "where": "x", "error": "read failed"}]))
     health = _panel(html, "panel-health")
-    marks = ['id="ticker-drill"', 'id="auto-body"', 'id="nd-watch-option"', 'id="nd-watch-stock"',
-             'id="ibkr-login-link"', 'id="errors"', 'id="backups"']
+    marks = ['id="errors"', 'id="auto-body"', 'id="backups"', 'id="nd-watch-option"', 'id="nd-watch-stock"',
+             'id="ticker-drill"', 'id="ibkr-login-link"']
     at = [health.index(m) for m in marks]
     assert at == sorted(at), marks
     assert html.count('<details class="help"><summary>What am I looking at?</summary>') == 1
