@@ -4,6 +4,8 @@ fetched once), one row per reported transaction, non-derivative and derivative, 
 one ``unparsed`` row, never dropped."""
 from __future__ import annotations
 
+import io
+import zipfile
 from datetime import date
 
 import pytest
@@ -11,7 +13,7 @@ import pytest
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base
-from RevenueChaser.rcdata.build.ownership import form4, sec
+from RevenueChaser.rcdata.build.ownership import form4, form345_sets, sec, sec13f_sets
 
 from . import ownership_fixture as ox
 
@@ -108,3 +110,42 @@ def test_the_read_api_gives_a_tickers_transactions_with_provenance(feed):
     assert {r["source"] for r in rows} == {form4.NAME} and all(r["run_id"] for r in rows)
     assert read.insider_transactions(["MSFT"], start=date(2026, 10, 28)) == []        # filed 27 Oct
     assert read.insider_transactions(["AAPL"]) == []                     # its one filing did not parse
+
+
+SETS_PAGE = "/data-research/sec-markets-data/insider-transactions-data-sets"
+SET_HREFS = ["/files/datastandardsinnovation/data/insider-transactions-data-sets/2026q3_form345.zip",
+             "/files/structureddata/data/insider-transactions-data-sets/2026q2_form345.zip",
+             "/files/structureddata/data/insider-transactions-data-sets/2013q1_form345.zip"]
+
+
+def _zip() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("SUBMISSION.tsv", "ACCESSION_NUMBER\tDOCUMENT_TYPE\n0001234567-26-000001\t4\n")
+    return buf.getvalue()
+
+
+def _backfill(start: str, end: str) -> dict:
+    return base.run_request({"dataset": form4.NAME, "params": {"mode": "backfill", "from": start, "to": end}},
+                            sleep=lambda s: None)
+
+
+def test_a_backfill_keeps_the_insider_data_sets_and_walks_only_the_days_after_them(feed, http_mock):
+    oct1 = "2026-10-01"
+    feed.add_day(oct1, [(ox.idx_row(789019, "MICROSOFT CORP", "4", oct1, "0001234567-26-000011"),
+                         ox.f4_filing("0001234567-26-000011", oct1, 789019, "MICROSOFT CORP", "MSFT", [CEO],
+                                      non_derivative=[ox.f4_transaction("S", 10, 500.0, after=49990)]))])
+    feed.install(http_mock)
+    http_mock.add(SETS_PAGE, ox.sets_page(SET_HREFS))
+    for href in SET_HREFS[:2]:
+        http_mock.add(href, _zip(), headers={"last-modified": "Mon, 14 Sep 2026 16:43:16 GMT"})
+    row = _backfill("2026-09-01", "2026-10-02")
+    assert row["result"] == "changed", row["note"]
+    asked = [str(c.url) for c in http_mock.calls("_form345.zip")]
+    assert asked == [f"https://sec.test{SET_HREFS[0]}"]            # only the set that covers the range, its own folder
+    kept = sorted(p.name for p in sec13f_sets.raw_dir(form345_sets.SUB).glob("*.zip"))
+    assert kept == ["2026q3_form345.zip"]
+    # The walk starts after the newest set's window, not at the requested first day.
+    assert [str(c.url).rsplit(".", 2)[1] for c in http_mock.calls("/daily-index/")] == ["20261002", "20261001"]
+    assert "insider transactions data sets: kept as raw up to 2026-09-30, not typed yet" in row["note"]
+    assert _served("SELECT accession FROM insider_transactions") == [("0001234567-26-000011",)]

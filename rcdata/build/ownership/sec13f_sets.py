@@ -67,13 +67,13 @@ def index_url() -> str:
     return os.getenv(INDEX_ENV) or sec.www_base() + INDEX_PATH
 
 
-def window(name: str) -> tuple[date, date] | None:
+def window(name: str, suffix: str = "_form13f") -> tuple[date, date] | None:
     """The filing dates a set holds, from its name; None for a name of neither shape."""
     low = name.lower()
-    m = re.fullmatch(r"(\d{2})([a-z]{3})(\d{4})-(\d{2})([a-z]{3})(\d{4})_form13f\.zip", low)
+    m = re.fullmatch(rf"(\d{{2}})([a-z]{{3}})(\d{{4}})-(\d{{2}})([a-z]{{3}})(\d{{4}}){re.escape(suffix)}\.zip", low)
     if m and m[2] in _MONTHS and m[5] in _MONTHS:
         return (date(int(m[3]), _MONTHS[m[2]], int(m[1])), date(int(m[6]), _MONTHS[m[5]], int(m[4])))
-    m = re.fullmatch(r"(\d{4})q([1-4])_form13f\.zip", low)
+    m = re.fullmatch(rf"(\d{{4}})q([1-4]){re.escape(suffix)}\.zip", low)
     if m:
         year, q = int(m[1]), int(m[2])
         after = date(year + 1, 1, 1) if q == 4 else date(year, 3 * q + 1, 1)
@@ -81,48 +81,49 @@ def window(name: str) -> tuple[date, date] | None:
     return None
 
 
-def parse_index(html: str, page: str) -> dict[str, str]:
+def parse_index(html: str, page: str, suffix: str = "_form13f") -> dict[str, str]:
     """``{zip name: absolute URL}`` of the page's links, each resolved against the page."""
     out = {}
-    for href in re.findall(r"""href\s*=\s*["']([^"']*?_form13f\.zip)["']""", html, flags=re.I):
+    for href in re.findall(rf"""href\s*=\s*["']([^"']*?{re.escape(suffix)}\.zip)["']""", html, flags=re.I):
         url = urljoin(page, href)
         out[url.rsplit("/", 1)[1]] = url
     return out
 
 
-def raw_dir() -> Path:
-    return base.raw_root() / "sec" / "13f_sets"
+def raw_dir(sub: str = "13f_sets") -> Path:
+    return base.raw_root() / "sec" / sub
 
 
-def raw_path(name: str) -> Path:
-    return raw_dir() / name
+def raw_path(name: str, sub: str = "13f_sets") -> Path:
+    return raw_dir(sub) / name
 
 
 def _meta(path: Path) -> Path:
     return path.with_name(path.name + ".meta.json")
 
 
-def listed(ctx: base.RunContext, pacer: sec.Pacer) -> dict[str, tuple[date, date, str]]:
+def listed(ctx: base.RunContext, pacer: sec.Pacer, page: str | None = None, suffix: str = "_form13f",
+           label: str = "13F") -> dict[str, tuple[date, date, str]]:
     """``{name: (first day, last day, URL)}`` of the sets the page links (one request)."""
-    page = index_url()
-    sets = parse_index(sec.get(ctx, pacer, page).text, page)
+    page = page or index_url()
+    sets = parse_index(sec.get(ctx, pacer, page).text, page, suffix)
     if not sets:
-        raise base.SourceError(f"13F data sets: {page} links no *_form13f.zip (its shape changed?)")
+        raise base.SourceError(f"{label} data sets: {page} links no *{suffix}.zip (its shape changed?)")
     out = {}
     for name, url in sets.items():
-        span = window(name)
+        span = window(name, suffix)
         if span is None:
-            ctx.notes.append(f"13F data set {name}: no filing window in its name, not read")
+            ctx.notes.append(f"{label} data set {name}: no filing window in its name, not read")
             continue
         out[name] = (*span, url)
     return out
 
 
-def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str) -> tuple[Path, bool]:
-    """``(the set's zip under raw/sec/13f_sets/, whether it replaced a kept one)``. A kept set is asked again with
+def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str, sub: str = "13f_sets") -> tuple[Path, bool]:
+    """``(the set's zip under raw/sec/<sub>/, whether it replaced a kept one)``. A kept set is asked again with
     ``If-Modified-Since`` its ``Last-Modified`` (one without one is kept as it is); an answer that is not a zip is
     refused and not kept."""
-    path = raw_path(name)
+    path = raw_path(name, sub)
     kept = path.exists()
     seen = (base.read_raw_json(_meta(path)) if _meta(path).exists() else {}).get("last_modified") if kept else None
     if kept and not seen:
@@ -131,7 +132,7 @@ def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str) -> tup
     if kept and (r.status_code == 304 or r.headers.get("last-modified") == seen):
         return path, False
     if not zipfile.is_zipfile(BytesIO(r.content)):
-        raise base.SourceError(f"13F data set {name}: the answer is not a zip ({len(r.content)} bytes)")
+        raise base.SourceError(f"data set {name}: the answer is not a zip ({len(r.content)} bytes)")
     base.write_raw_json(_meta(path), {"url": url, "last_modified": r.headers.get("last-modified"),
                                       "fetched_at": time.time(), "run_id": ctx.run_id, "bytes": len(r.content)})
     return base.write_raw(path, r.content), kept

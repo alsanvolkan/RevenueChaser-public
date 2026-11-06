@@ -19,14 +19,15 @@ Parquet: ``parquet/sec/form4/rows/day=<index day>/``. Served: ``insider_transact
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
 
+from ....core import calendar
 from .. import base
 from ..spine.stage import partitions
-from . import common, edgar
+from . import common, edgar, form345_sets
 
 NAME = "sec/form4"
 TABLE = "insider_transactions"
@@ -123,6 +124,14 @@ class SecForm4(edgar.Feed):
     sub = "form4"
     tables = (TABLE,)
     budget_s = BUDGET_S
+
+    def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
+        """The SEC's Insider Transactions data sets are downloaded for the days they cover (``form345_sets``, raw
+        only for now) and the forms walk takes the days after them: 2014 to today is 52 zips instead of about two
+        million filings. Until the typing lands, those days hold no rows."""
+        first = start or end
+        covered = form345_sets.fetch(ctx, first, min(end, calendar.today_ny() - timedelta(days=1)))
+        super().backfill(ctx, max(first, covered + timedelta(days=1)) if covered else first, end)
 
     def type_day(self, ctx: base.RunContext, day: date) -> list[Path]:
         con = duckdb.connect()
