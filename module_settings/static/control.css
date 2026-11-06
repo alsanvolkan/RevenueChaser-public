@@ -1082,3 +1082,6 @@
 @media(max-width:760px){.ctl .wrap{padding-left:max(8px,env(safe-area-inset-left,0px));padding-right:max(8px,env(safe-area-inset-right,0px))}
 .ctl .fpanel{padding-left:8px}
 .ctl .ubar{overflow-x:auto}}
+/* #472 schedule fields in a source box */
+.ctl .schedset{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:6px 0;font-size:12px}
+.ctl .schedset select,.ctl .schedset input{min-height:44px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);padding:0 8px;font:inherit}

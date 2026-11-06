@@ -40,3 +40,14 @@ def test_the_two_universe_cards_are_drawn_from_the_view():
     v["my_universe"] = v.get("my_universe") or {"built": False}
     html = control_render._uni_cards(v)
     assert html.startswith('<div class="ucards">') and html.count("nd-card") >= 2
+
+
+def test_a_box_sets_how_often_and_a_hold_in_one_press():
+    """#472 moved from the old Fetch card: the fields and the one Save schedule press, on the schedule route."""
+    d = next(d for d in _file(_view(), "prices.duckdb")["datasets"] if d["dataset"] == "alpaca/bars")
+    d.update(cadence_own="weekly", cadence_effective="weekly", next_due="2026-11-20")
+    html = control_render._sched_fields(d)
+    assert '<option value="weekly" selected>' in html and 'value="2026-11-20"' in html
+    assert 'data-job="cadence" data-dataset="alpaca/bars">Save schedule' in html and "the default" not in html
+    js = control_render.CTL_JS
+    assert "C.routes.schedule + ds + '/cadence'" in js and "next_due:" in js

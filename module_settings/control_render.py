@@ -375,6 +375,23 @@ def _one_button(d: dict, view: dict) -> str:
             f'data-dataset="{esc(name)}" data-scope="{1 if d["fetch"]["honours_scope"] else 0}">{word}</button>')
 
 
+def _sched_fields(d: dict) -> str:
+    """#472, moved from the old Fetch card: how often the schedule runs the dataset and a hold until a day, sent
+    together by one press (``/api/build/schedule/<ds>/cadence``), so a schedule is never half applied."""
+    cadence = str(d.get("cadence_effective") or "daily")
+    key = esc(str(d["dataset"]).replace("/", "-"))          # a dataset name carries slashes; an id must not
+    hold = d.get("next_due")
+    opts = "".join(f'<option value="{o}"{" selected" if o == cadence else ""}>{o}</option>'
+                   for o in ("daily", "weekly", "monthly"))
+    own = "" if d.get("cadence_own") else '<span class="dim">the default</span>'
+    return ('<div class="schedset">'
+            f'<label for="cad-{key}">How often</label><select id="cad-{key}" data-cadence>{opts}</select>{own}'
+            f'<label for="hold-{key}">Hold until</label><input type="date" id="hold-{key}" data-hold'
+            + (f' value="{esc(hold)}"' if hold else "") + '>'
+            f'<button type="button" class="btn" data-job="cadence" data-dataset="{esc(d["dataset"])}">Save schedule'
+            '</button><span class="dim" role="status"></span></div>')
+
+
 def _sbox(d: dict, view: dict) -> str:
     """One source box: five slots in the same place in every box (head, state, meters, counts, the rest)."""
     provs = list(d["providers"])
@@ -413,7 +430,7 @@ def _sbox(d: dict, view: dict) -> str:
         counts += (f'<span class="cnt uni-n"><span class="ck">in the universe</span>'
                    f'<b>{control.count(view["universe"]["size"])}</b></span>')
     rest = (_universe(view) if d["dataset"] == "spine/security" else "")
-    rest += (_fill_row(d, view) if d["fill"]["cells"] else "") + _problems(d) + _acts(d, pause=False)
+    rest += _sched_fields(d) + (_fill_row(d, view) if d["fill"]["cells"] else "") + _problems(d) + _acts(d, pause=False)
     return (f'<div class="dset sbox" data-st="{esc(d["filter"])}" data-prob="{d["issues_open"]}" '
             f'data-tags="{esc(" ".join(d["tags"]))}" data-dataset="{esc(d["dataset"])}" '
             f'style="border-left-color:{edge}">{head}{state}<div class="sbody">'

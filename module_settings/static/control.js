@@ -1063,6 +1063,19 @@
       } else X.say(r.body.error || ('refused · HTTP ' + r.status));
     }, function () { btn.disabled = false; X.say('could not reach the dashboard'); });
   }
+  /* #472: how often and a hold, sent together; the hourly pass reads both (due.py) */
+  function cadence(btn) {
+    var row = btn.closest('.schedset'), ds = btn.getAttribute('data-dataset');
+    var sel = row.querySelector('[data-cadence]'), hold = row.querySelector('[data-hold]'), out = row.querySelector('[role="status"]');
+    btn.disabled = true;
+    X.send('POST', C.routes.schedule + ds + '/cadence', { cadence: sel.value, next_due: hold ? hold.value : '' }).then(function (r) {
+      btn.disabled = false;
+      var s = (r.body && r.body.schedule) || {};
+      if (r.status >= 200 && r.status < 300) {
+        out.textContent = 'saved: ' + (s.cadence || sel.value) + (s.next_due ? ', held until ' + String(s.next_due).slice(0, 10) : '') + ' · the next hourly pass reads it';
+      } else out.textContent = r.body.error || ('refused · HTTP ' + r.status);
+    }, function () { btn.disabled = false; out.textContent = 'could not reach the dashboard'; });
+  }
   function fold(box, open) {
     var b = box.querySelector('.sbody'), t = box.querySelector('.sbtog');
     if (b) b.hidden = !open;
@@ -1072,6 +1085,8 @@
     if (!e.target.closest) return;
     var b = e.target.closest('.ctl [data-job="one"]');
     if (b) { if (!b.disabled) one(b); return; }
+    var c = e.target.closest('.ctl [data-job="cadence"]');
+    if (c) { if (!c.disabled) cadence(c); return; }
     var t = e.target.closest('.ctl .sbtog');
     if (t) { fold(t.closest('.sbox'), t.getAttribute('aria-expanded') !== 'true'); return; }
     var a = e.target.closest('.ctl [data-sb]');
