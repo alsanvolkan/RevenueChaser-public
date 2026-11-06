@@ -27,6 +27,8 @@ from RevenueChaser.rcdata import caps, scaffold
 from RevenueChaser.rcdata.needs import boards as api_boards
 from RevenueChaser.rcdata.needs import catalog
 from RevenueChaser.rcdata.needs import screen
+from RevenueChaser.module_settings.control_sources import PV_LABELS  # noqa: F401 - re-exported for the render
+from RevenueChaser.module_settings import control_sources
 
 #: The page shows avo's clock (CLAUDE.md: Europe/Amsterdam).
 LOCAL = ZoneInfo("Europe/Amsterdam")
@@ -603,6 +605,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
     provider_rows = _providers(nd)
     reads = readers()
     file_views = files(nd, datasets, uni, reads, now)
+    control_sources.attach_pv(file_views, datasets)
     return {
         "error": None,
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
