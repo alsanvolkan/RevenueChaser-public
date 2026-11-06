@@ -163,9 +163,25 @@ def test_a_summed_answer_says_how_many_strikes_it_merged(http_mock):
     """The merge is routine on a third Friday, so its count belongs on the check row, not in the issue list."""
     _wire(http_mock, twice="2026-11-20")
     row = _daily()
-    assert f"merged {STRIKES_PER_EXPIRY} strikes" in (row["note"] or ""), row["note"]
+    assert f"{STRIKES_PER_EXPIRY} strikes on 1 expiries" in (row["note"] or ""), row["note"]
     assert "2026-11-20" in (row["note"] or "")
     assert [i["kind"] for i in ops.open_issues(uw.NAME)[1]] == []
+
+
+def test_a_repeat_past_the_calendars_table_is_summed_but_does_not_count_as_a_monthly(http_mock):
+    """2029-12-21 and later sit on the live chain, past ``core/calendar.py``'s 1993-2028 holiday table, so
+    "standard monthly" has no answer there. Summing is still the right guess -- the near monthlies behave that
+    way -- but such a merge must not be what silences the alarm that the second series has stopped arriving."""
+    _wire(http_mock, twice="2029-12-21")
+    row = _daily()
+    assert row["result"] == "changed"
+    kinds = [i["kind"] for i in ops.open_issues(uw.NAME)[1]]
+    assert "unexpected_merge" not in kinds, kinds
+    assert "missing_series" in kinds, "a far merge is not a monthly merge"
+    with serving.open_read("market") as con:
+        summed = con.execute("SELECT call_gex FROM spx_greek_expiry_strike "
+                             "WHERE expiry = '2029-12-21' AND strike = 7000").fetchone()
+    assert summed[0] == pytest.approx(10.5 + 21.0), "summed, like a near monthly"
 
 
 def test_a_merge_on_an_expiry_that_is_not_a_standard_monthly_is_an_issue(http_mock):
