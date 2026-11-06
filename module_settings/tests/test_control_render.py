@@ -1,6 +1,6 @@
 """The control board's page (design v28): its order, what can be pressed where, escaping, theme and phone rules.
 
-The page is ``control_render.render`` on top of Settings, with the old sections folded below it."""
+The page is ``control_render.render_data`` in the Data tab; the Health tab follows (#492: the old fold is gone)."""
 from __future__ import annotations
 
 import re
@@ -31,37 +31,34 @@ def _between(html: str, start: str, end: str) -> str:
 
 def _section(html: str, sec: str) -> str:
     a = html.index(f'id="{sec}"')
-    nxt = [html.find(f'id="{s}"', a + 1) for s in SECTIONS + ("old-settings",)]
+    nxt = [html.find(f'id="{s}"', a + 1) for s in SECTIONS + ("panel-health",)]
     return html[a:min(n for n in nxt if n > a)]
 
 
-def test_the_board_is_on_top_in_the_designed_order_and_the_old_sections_fold_below():
+def test_the_board_is_in_the_designed_order_and_the_old_fold_is_gone():
     html = _page()
     at = [html.index(f'id="{s}"') for s in DATA_SECTIONS]
     assert at == sorted(at), "Health, the flow diagram, then cross-check"
-    fold = html.index('id="old-settings"')
-    assert html.index('id="sec-crosscheck"') < fold < html.index('id="newdata"') < html.index('id="ticker-drill"')
-    assert '<details class="oldfold" id="old-settings">' in html, "folded, not deleted: closed until pressed"
+    assert html.index('id="sec-crosscheck"') < html.index('id="panel-health"') < html.index('id="ticker-drill"')
+    assert 'id="old-settings"' not in html and 'class="oldfold"' not in html
 
 
 def test_each_section_sits_in_one_panel_only_and_none_is_lost():
     html = _page()
-    data = _between(html, 'id="panel-data"', 'id="panel-fetch"')
+    data = _between(html, 'id="panel-data"', 'id="panel-health"')
     for sec in SECTIONS:
         assert html.count(f'id="{sec}"') == 1, f"{sec} is rendered twice"
     for sec in DATA_SECTIONS:
         assert f'id="{sec}"' in data, sec
-    assert 'id="old-settings"' in data, "the old fold stays at the bottom of Data"
     assert html.count('id="universe"') == 1 and 'id="universe"' in data, "the universe rides in the spine's box"
 
 
-def test_the_fetch_tab_has_its_button_its_panel_and_its_hash():
+def test_two_tabs_data_and_health_and_no_fetch_tab():
     html = _page()
     strip = _between(html, 'id="settings-tabs"', "</nav>")
-    assert strip.index('id="tab-data"') < strip.index('id="tab-fetch"') < strip.index('id="tab-needs"')
-    assert 'role="tab" id="tab-fetch" data-tab="fetch" aria-controls="panel-fetch"' in strip
-    assert re.search(r'<div[^>]*id="panel-fetch"[^>]*role="tabpanel"[^>]*hidden', html), "Fetch starts hidden"
-    assert '"fetch": "panel-fetch"' in html, "the remembered-tab config knows the third tab"
+    assert strip.index('id="tab-data"') < strip.index('id="tab-health"')
+    assert 'id="tab-fetch"' not in html and 'id="panel-fetch"' not in html
+    assert re.search(r'<div[^>]*id="panel-health"[^>]*role="tabpanel"[^>]*hidden', html), "Health starts hidden"
 
 
 def test_health_fetch_and_the_flow_open_the_rest_closed():
@@ -174,9 +171,9 @@ def test_every_hostile_string_is_escaped_and_the_scripts_parse(tmp_path):
     nd["queue"]["active"][0]["note"] = H("queue_note")
     nd["universe"]["tickers"]["E"] = [H("ticker")]
     html = _page(nd)
-    # the board's one panel, up to the old fold (#492 C1: the status reason left the source box and the queue
-    # table moved to the Health tab, drawn by another slice)
-    ctl = _between(html, '<section id="ctl"', '<details class="oldfold"')
+    # the board's one panel, up to the Health tab (#492 C1: the status reason left the source box and the queue
+    # table moved to the Health tab)
+    ctl = _between(html, '<section id="ctl"', 'id="panel-health"')
     for tag in ("label", "kind", "detail", "note", "col", "cell"):
         assert f"onerror=__x(&#x27;{tag}T&#x27;)" in ctl or tag in ("ticker",), tag
     assert_inert(html)
@@ -209,7 +206,7 @@ def test_a_board_that_could_not_be_built_is_one_line_and_the_rest_of_the_page_st
     monkeypatch.setattr(control, "build", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     html = _page()
     assert "Could not read</b> · RuntimeError: boom" in html
-    assert 'id="old-settings"' in html and 'id="newdata"' in html
+    assert 'id="panel-health"' in html and 'id="ticker-drill"' in html
 
 
 def test_the_page_names_the_icons_licence():

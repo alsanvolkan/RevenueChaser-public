@@ -2374,3 +2374,17 @@ def test_the_drill_names_the_reads_that_failed():
 def test_a_clean_drill_prints_no_error_note():
     assert 'id="drill-errors"' not in _drill_rows({"name": "Micron", "presence": {}, "errors": []})
 
+
+
+def test_the_four_parts_that_live_nowhere_else_sit_in_health_above_backups():
+    """avo, 6 Nov 2026 ("A"): the board settings, Automations, the watch lists and the IBKR cards move to Health."""
+    from RevenueChaser.module_settings.tests.test_control_view import control_nd
+    html = report.render_settings_dashboard(dict(_payload(), automations=_autos(), newdata=control_nd(),
+                                                 ibkr_login_url="https://gateway.example/"))
+    health = _panel(html, "panel-health")
+    marks = ['id="ticker-drill"', 'id="auto-body"', 'id="nd-watch-stock"', 'id="nd-watch-option"',
+             'id="ibkr-login-link"', 'id="backups"']
+    at = [health.index(m) for m in marks]
+    assert at == sorted(at), marks
+    assert html.count('<details class="help"><summary>What am I looking at?</summary>') == 1
+    assert "function settingsSave" in html and "function autoInit" in html and "function ndWatchRemove" in html

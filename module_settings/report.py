@@ -3044,9 +3044,39 @@ def _queue_html(view: dict) -> str:
     return f'<section class="ctl" id="health-queue" aria-label="Queue and last runs"><div class="wrap">{inner}</div></section>'
 
 
-def _health_panel(payload: dict, view: dict) -> str:
+#: The Identity and Our universe cards now sit in the spine's source box (#492 C1): the New data system section's
+#: styles, scoped to that box instead of ``#newdata``.
+_UCARDS_CSS = ND_CSS.replace("#newdata", ".ctl .ucards")
+
+#: The page's one "What am I looking at?" box (#383), at the top of the Data tab.
+DATA_HELP = help_html(
+    "<b>Data</b> shows each served file (the six SSD DuckDB files) and how it is made: its sources, one box a "
+    "dataset, then the Build stage from HDD raw and Parquet to the SSD file, then example rows. <b>Fetch</b> puts "
+    "one request in the builder's queue; the builder calls the provider, never this page. <b>Pause</b> holds a "
+    "dataset: the hourly pass skips it until <b>Resume</b>. <b>Health</b> holds the queue and last runs, the need "
+    "catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
+    "the backups. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
+)
+
+
+def _watch_section(nd: dict | None) -> str:
+    """The two watch lists with their Remove (PR 4), moved out of the old New data system section (#492). The
+    ``#newdata`` scope keeps their styles (``ND_CSS``) and their script (``ND_JS``)."""
+    if not nd or nd.get("error"):
+        return ""
+    wl = nd.get("watchlists") or {}
+    ob = nd.get("options_build") or {}
+    counts = " · ".join(f'{esc(k)} <span data-nd-watch-count="{esc(k)}">{_nd((wl.get(k) or {}).get("count", 0))}'
+                        f'</span>' for k in ND_WATCH_TITLES)
+    return ('<section id="newdata" class="ndwatch" aria-labelledby="newdata-h"><h2 id="newdata-h">Watch lists</h2>'
+            f'<div class="nd-sub" id="nd-watch-summary">Watch lists: {counts}</div>'
+            + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES) + "</section>")
+
+
+def _health_panel(payload: dict, view: dict, nd: dict | None = None) -> str:
     """The Health tab (#492): the Needs head, the queue, the catalog, the request log and the routes, then the ticker
-    detail and the backups, in that order."""
+    detail, the four parts that live nowhere else (the board settings, Automations, the watch lists, the IBKR
+    cards) and the backups, in that order."""
     model = _needs_model(payload)
     catalog, rest = needs_tab.sections(model)
     try:
@@ -3054,10 +3084,15 @@ def _health_panel(payload: dict, view: dict) -> str:
     except Exception as exc:  # noqa: BLE001 - one broken card is a line, never a blank Health tab
         backups = f'<p class="warn">The backups card could not be drawn: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
     # One ``#needs`` scope (needs.css) around the head, the queue and the Needs parts; the queue keeps its ``.ctl``.
+    moved = (_boards_section(payload.get("boards") or [], payload.get("rows") or [])
+             + _automations_section(payload.get("automations") or [])
+             + _watch_section(nd)
+             + _ibkr_login_card(payload.get("ibkr_login_url")) + _ibkr_state_card(payload.get("ibkr_login_state")))
+    # One ``#needs`` frame and palette for the whole tab; the queue keeps its ``.ctl`` scope inside it.
     return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
             f'{_queue_html(view)}'
-            f'<div class="wrap">{catalog}{rest}</div></div>'
-            f'<div class="wrap" id="health-more">{_ticker_drill(payload)}{backups}</div>')
+            f'<div class="wrap">{catalog}{rest}</div>'
+            f'<div class="wrap" id="health-more">{_ticker_drill(payload)}{moved}{backups}</div></div>')
 
 
 def _tab_strip() -> str:
@@ -3101,7 +3136,9 @@ def render_settings_dashboard(payload: dict) -> str:
     view = _control_view(nd, payload)
     control_html = control_render.render_data(view)
     control_js = control_render.scripts(view)
-    health_html = _health_panel(payload, view)
+    health_html = _health_panel(payload, view, nd)
+    automations = payload.get("automations") or []
+    automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -3110,6 +3147,8 @@ def render_settings_dashboard(payload: dict) -> str:
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Data/Health</title>
 <style>{CSS}</style>
+<style>{ND_CSS}</style>
+<style>{_UCARDS_CSS}</style>
 <style>{control_render.CTL_CSS}</style>
 <style>{needs_tab.NEEDS_CSS}</style>
 {FILTERS_CSS}
@@ -3119,6 +3158,7 @@ def render_settings_dashboard(payload: dict) -> str:
 {provider_health_html(payload.get("provider_health"))}
 {_tab_strip()}
 <div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
+<div class="wrap helpwrap">{DATA_HELP}</div>
 {control_html}
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
@@ -3127,8 +3167,13 @@ def render_settings_dashboard(payload: dict) -> str:
 <script>{FILTERS_JS}</script>
 <script>
 var DATA = {data_json};
-{JOB_JS}
+var AUTOMATIONS = {script_json(automations)};
+var ND = {script_json(_nd_client(nd))};
+var ND_PAGE_STALE_MS = {ND_PAGE_STALE_MINUTES * 60 * 1000};
+{JS}
 {DRILL_JS}
+{automations_js}
+{ND_JS}
 </script>
 <script>
 {control_js}
