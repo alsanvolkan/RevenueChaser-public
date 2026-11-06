@@ -13,6 +13,7 @@ enqueues that dataset's async job. See ``docs/data_health.md`` §2.
 from __future__ import annotations
 
 import html as _html
+import os
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -2990,6 +2991,8 @@ def _control_view(nd: dict | None, payload: dict) -> dict:
         view = control_model.build(nd, applied=_applied_universe(), ibkr=payload.get("ibkr_login_state"))
         # #527: the top bar's gateway carries the login link the old IBKR card held
         view.setdefault("gateway", {})["login"] = _ibkr_login_href(payload.get("ibkr_login_url"))
+        # #527 step 11: the Grafana ops panel, where the builder timer's on / off button is (no host in the code)
+        view["timer_url"] = _ibkr_login_href(os.environ.get("RC_BUILDER_TIMER_URL"))
         return view
     except Exception as exc:  # noqa: BLE001 - one broken field is a line on the page, never a blank board
         return {"error": f"{type(exc).__name__}: {exc}"[:300], "read_at": datetime.now().strftime("%H:%M")}

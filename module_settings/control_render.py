@@ -121,8 +121,25 @@ def _topbar(view: dict, msg_id: str = "sw-msg") -> str:
     gate = (f'<span class="swt gw {esc(g.get("cls") or "none")}"><b>IBKR gateway: {esc(g.get("n") or "unknown")}</b>'
             f'<span class="dim">{esc((g.get("label") or "").replace("IBKR gateway · ", ""))}</span>{login}</span>')
     return (f'<div class="topbar" role="group" aria-label="Switches and the IBKR gateway">'
-            f'{_switch("fetch", "Fetch", sw.get("fetch"))}{_switch("backup", "Backup", sw.get("backup"))}{gate}'
+            f'{_switch("fetch", "Fetch", sw.get("fetch"))}{_switch("backup", "Backup", sw.get("backup"))}'
+            f'{_timer_box(view)}{gate}'
             f'<span role="status" class="dim" id="{esc(msg_id)}"></span></div>')
+
+
+def _timer_box(view: dict) -> str:
+    """#527 step 11: the hourly builder timer's state; its on / off press is the Grafana ops panel's timer button
+    (``life-ctl life-rc-builder.timer on|off``), linked from ``RC_BUILDER_TIMER_URL``. The dashboard itself runs with
+    NoNewPrivileges, so it never switches the timer."""
+    st = (view.get("timer") or {}).get("state")
+    cls = {"on": "ok", "off": "none"}.get(st, "warn")
+    word = st if st in ("on", "off") else "not known"
+    why = {"on": "the hourly pass runs on its own", "off": "nothing runs on its own; a Fetch still queues"}.get(
+        st, "its state could not be read")
+    url = view.get("timer_url")
+    link = (f'<a class="lnk" href="{esc(url)}" target="_blank" rel="noopener noreferrer">on / off in Grafana ↗</a>'
+            if url else "")
+    return (f'<span class="swt tmr {cls}"><b>Builder timer: {esc(word)}</b><span class="dim">{esc(why)}</span>'
+            f'{link}</span>')
 
 
 def topbar_health(view: dict) -> str:
