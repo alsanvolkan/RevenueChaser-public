@@ -196,7 +196,10 @@ universe") opens that tab first, through `window.RC_SETTINGS_SHOW_PANEL`.
    run starts from a `__main__.py`, so it is named after its package instead (`ops._process_name`): the dashboard
    writes `dashboard`, the builder `builder`, the backup CLI `rcdata`, a board's own run its package. Rows written
    before that (1 Nov 2026) may say `__main__`. A process writes its counts at most once a minute and at exit. `need_reads` never creates `ops.sqlite`.
-3. **The routes.** `GET /needs`, `GET /needs/<need>` and `GET /needs/<need>?summary=1`, each with one example link.
+3. **The routes** are documented here, not drawn on the tab (avo, 6 Nov 2026: the page is for running the system).
+   `GET /needs` is the catalog as JSON; `GET /needs/<need>` one need's rows in the envelope (read-only, never a fill,
+   at most 5,000 rows), e.g. `/needs/ownership.short_interest?tickers=AAPL,MSFT`; `GET /needs/<need>?summary=1` its
+   state with a few example rows (`sample=0..50`), e.g. `/needs/prices.bars?summary=1`.
 
 **The tab does not count itself.** It asks `needs.summary(name, count=False)`, so a render adds no `need:` read
 (the table read is still counted, as every read is); without that, each render would add one read per need under

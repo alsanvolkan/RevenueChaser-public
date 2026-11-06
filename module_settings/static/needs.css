@@ -54,7 +54,7 @@
 #needs .warn{background:var(--warnb);color:var(--warn);border-radius:8px;padding:8px 12px;font-size:13px;overflow-wrap:anywhere}
 #needs .empty{color:var(--mut);font-size:13.5px}
 #needs .legend{color:var(--mut);font-size:12px;margin:8px 0 0}
-#needs .part{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:4px 16px 14px;margin:0 0 16px}
+#needs .part{margin:0 0 16px}  /* flat, as the Data tab: one left edge for both tabs (Q48) */
 #needs .part>h2{margin-top:14px}
 
 #needs table{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
@@ -79,17 +79,10 @@
 #needs .never summary{cursor:pointer;color:var(--acc);font-size:13px;min-height:44px;display:flex;align-items:center}
 #needs .never p{margin:0;font-size:12.5px;line-height:1.9}
 
-#needs .routes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
-#needs .route{border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--bg);min-width:0}
-#needs .route .rh{font-size:14px}
-#needs .route .verb{font:700 11.5px var(--f-mono);color:var(--ok);background:var(--okb);padding:2px 6px;border-radius:5px}
-#needs .route p{font-size:13px;margin:8px 0 0}
-#needs .route .try a{color:var(--acc);display:inline-flex;align-items:center;min-height:44px}
-@media(max-width:900px){#needs .routes{grid-template-columns:1fr}}
 
 /* Under 600 px a table row is a full-width card, one cell per line, the column name before the value. */
 @media(max-width:600px){
-  #needs .part{padding:4px 12px 12px}
+  #needs .part{padding:0}
   #needs table.stk,#needs table.stk tbody,#needs table.stk tr,#needs table.stk td{display:block;width:auto}
   #needs table.stk thead{display:none}
   #needs table.stk tr{border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:0 0 10px;background:var(--bg)}
@@ -113,3 +106,13 @@
   #needs table.stk tbody.cghead td{border-top:2px solid var(--line)}
   #needs table.stk tbody.cbody[hidden]{display:none}
 }
+
+/* Board tidy (Q47, avo 6 Nov 2026): the Data tab's rules here too: short columns never break, a group's name leads */
+@media(min-width:601px){#needs table.stk td.nw,#needs table.stk th.nw{white-space:nowrap;width:1%}}
+#needs .cgtog .cgfile{font-size:15px;font-weight:700}
+#needs h2 .secs .st{padding:1px 7px;border-radius:6px}
+#needs details.hfold{margin:0 0 6px}
+#needs details.hfold>summary{cursor:pointer;list-style:none;min-height:44px;display:flex;align-items:center}
+#needs details.hfold>summary h2{margin:14px 0 4px;flex:1 1 auto}
+#needs details.hfold>summary h2::before{content:"▸ "}
+#needs details.hfold[open]>summary h2::before{content:"▾ "}

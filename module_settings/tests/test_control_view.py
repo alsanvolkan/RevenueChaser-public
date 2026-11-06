@@ -85,20 +85,16 @@ def test_a_collect_error_is_carried_not_raised():
     assert _build({"error": "RuntimeError: x"})["error"] == "RuntimeError: x"
 
 
-def test_the_health_strip_has_its_fourteen_tiles_counted_from_the_cards():
-    h = _build()["health"]
-    keys = [t["key"] for t in h["tiles"]]
-    assert keys == ["fresh", "late", "stale", "never", "problems", "session", "queue", "timer", "builder", "cap",
-                    "universe", "gateway", "longest", "backup"]
+def test_the_health_tiles_answer_four_questions_problems_first():
+    h = _build(procs=lambda: [])["health"]
     tile = {t["key"]: t for t in h["tiles"]}
-    assert (tile["fresh"]["n"], tile["late"]["n"], tile["stale"]["n"], tile["never"]["n"]) == ("1", "1", "1", "2")
-    assert tile["problems"]["n"] == "10"
-    assert tile["session"]["n"] == "28 Oct"
-    assert f"{tile['universe']['n']} of 7,670 names" in tile["session"]["label"], "the universe's own filled count"
-    assert tile["session"]["cls"] == "warn", "wrds/prices serves the bars and never ran, so the session is not complete"
+    assert set(tile) == {"prices", "stale", "late", "builder", "cap", "backup"}, "no run today: no longest tile"
+    ranks = [{"bad": 0, "warn": 1}.get(t["cls"], 2) for t in h["tiles"]]
+    assert ranks == sorted(ranks), "problems first (Q7)"
+    assert (tile["late"]["n"], tile["stale"]["n"]) == ("1", "1") and h["problems"] == 10
+    assert tile["prices"]["cls"] == "bad", "28 Oct is a session behind on Fri 30 Oct"
     assert tile["cap"]["n"] == "72%" and "Alpha Vantage" in tile["cap"]["label"] and tile["cap"]["cls"] == "bad"
     assert tile["builder"]["n"] == "24 min" and tile["builder"]["cls"] == "ok"
-    assert tile["queue"]["n"] == "1"
 
 
 def test_a_silent_builder_turns_its_tile_red():

@@ -1009,7 +1009,7 @@
 .ctl .srch .stn{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--fh,var(--acc));color:#fff;font-size:12px}
 .ctl .sract{margin-left:auto;display:flex;gap:6px}
 .ctl .fstate,.ctl .blegend{margin:6px 0;font-size:12.5px}
-.ctl .sgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0}
+.ctl .sgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:10px 0}
 .ctl .sgrid>.sbox:last-child:nth-child(odd){grid-column:1/-1}
 .ctl .sbox{border:1px solid var(--line);border-left:4px solid var(--mut);border-radius:10px;padding:8px 10px;margin:0;min-width:0;background:var(--card)}
 .ctl .sb1{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
@@ -1090,3 +1090,44 @@
 .ctl .onewrap .fmenu{min-width:44px;padding:0 10px}
 .ctl .onewrap .fmenul{position:absolute;right:0;top:100%;z-index:5;display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25);white-space:nowrap}
 .ctl .onewrap .fmenul[hidden]{display:none}
+
+/* Board tidy (#527, avo 6 Nov 2026): the top line, Health right now as four questions, one-line legends behind an ⓘ,
+   short columns that never break, no sideways scroll. */
+.ctl .topline{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;margin:4px 0 10px;font-size:14px}
+.ctl .topline .tl{display:inline-flex;align-items:center;gap:7px;font-weight:600}
+.ctl .topline .tl i{width:10px;height:10px;border-radius:50%;background:var(--old)}
+.ctl .topline .tl.ok i{background:var(--ok)}
+.ctl .topline .tl.warn i,.ctl .topline .tl.bad i{background:var(--bad)}
+.ctl .topline .tl.warn,.ctl .topline .tl.bad{color:var(--bad)}
+.ctl .topline a{color:inherit}
+.ctl .info{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:20px;min-height:20px;
+  color:var(--acc);cursor:help;font-style:normal;vertical-align:middle}
+.ctl .info::after{content:attr(data-tip);position:absolute;left:0;top:calc(100% + 6px);z-index:6;width:max-content;max-width:360px;
+  white-space:normal;text-align:left;font-size:12px;line-height:1.45;font-weight:400;color:var(--fg);background:var(--card);
+  border:1px solid var(--line);border-radius:8px;padding:6px 9px;box-shadow:0 4px 14px rgba(0,0,0,.18);pointer-events:none;display:none}
+.ctl .info:hover::after,.ctl .info:focus-visible::after{display:block}
+.ctl .hgrps{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.ctl .hok{margin:6px 0 0;color:var(--ok);font-weight:600}
+.ctl .hline{margin:4px 0 0;color:var(--mut);font-size:13px}
+.ctl .jobs{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:13px}
+.ctl .jobs .job{border-left:3px solid var(--old);padding:2px 8px;color:var(--mut);font-variant-numeric:tabular-nums}
+.ctl .jobs .job.ok{border-left-color:var(--ok);color:var(--fg)}
+.ctl .jobs .job.warn{border-left-color:var(--warn);color:var(--warn)}
+.ctl .jobs .job.bad{border-left-color:var(--bad);color:var(--bad)}
+.ctl .flegend .fl1{font-size:12.5px}
+.ctl .pill.p-none{background:var(--card);color:var(--mut);border:1px solid var(--line)}
+.ctl .qst{margin-right:8px}
+.ctl .qnote summary{cursor:pointer;list-style:none}
+.ctl details.b-ds .dsec{margin-top:18px}
+.ctl details.b-ds .dsact h4{margin:0;font-size:15px;font-weight:700;flex:1 1 auto}
+.ctl details.b-ds .dsact h4 .dim{font-size:12px;font-weight:400}
+/* the table head's status · role · how often sit over their own columns */
+.ctl table.jt3 .jhead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+@media(min-width:761px){
+  .ctl .btn.sm{min-height:30px;padding:0 10px;font-size:12px;border-radius:8px}
+  .ctl table.stk td.nw,.ctl table.stk th.nw{white-space:nowrap;width:1%}
+  .ctl .ubar{flex-wrap:wrap}
+  /* fixed widths from each column's longest label (hand-run · only source / cross-check · ⏱ quarterly) plus a
+     little air, so the three tags line up down the table whatever the title's length */
+  .ctl table.jt3 .jmeta{display:grid;grid-template-columns:6.6em 8.2em 7.4em;gap:6px;justify-items:end}
+}
