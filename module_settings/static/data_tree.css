@@ -20,3 +20,27 @@
 .ctl tr.srcrow th.pv-issuer{color:var(--src)}
 .ctl tr.srcrow th.pv-macro{color:var(--new)}
 .ctl tr.srcrow th.pv-mix{color:var(--mut);font-style:italic}
+/* The Build table: three columns (step · HDD raw over Parquet · SSD served); the board column is gone. */
+.ctl table.jt.jt3 col.c1{width:42%}
+.ctl table.jt.jt3 col.c2{width:38%}
+.ctl table.jt.jt3 col.c3{width:max(20%, 245px)}
+.ctl table.jt3 th .jhl{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctl table.jt3 th .jhm{display:block;font-weight:400;font-size:10px;color:var(--mut);text-transform:none;letter-spacing:0}
+.ctl table.jt3 th code.p,.ctl .jnarrow code.p{font-size:9.5px;white-space:nowrap;background:none;padding:0;color:var(--mut);text-transform:none;letter-spacing:0}
+.ctl table.jt3 td.ssdc code.jfile{font-size:11px;color:var(--fg);word-break:normal;white-space:nowrap}
+.ctl table.jt3 td.js{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:start;gap:4px 8px}
+.ctl table.jt3 td.js .stn{background:var(--fh);color:#fff}
+.ctl table.jt3 .jttl{min-width:0;display:flex;flex-direction:column;gap:3px}
+.ctl table.jt3 .jttl b{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+.ctl table.jt3 .jsrc{display:flex;flex-wrap:wrap;gap:3px}
+.ctl table.jt3 .jmeta{display:flex;flex-wrap:nowrap;justify-content:flex-end;align-items:center;gap:6px;white-space:nowrap}
+.ctl table.jt3 .jmeta .pill{min-width:0;width:auto}
+.ctl table.jt3 .jfrom{display:flex;flex-wrap:wrap;align-items:center;gap:3px 4px;font-size:10.5px}
+.ctl table.jt3 .jfrom .jfl{color:var(--mut)}
+.ctl table.jt3 .jfrom .chip{display:inline-flex;align-items:center;gap:4px;min-height:0;height:auto;width:auto;
+  padding:1px 7px 1px 2px;border-radius:6px;border:1px solid var(--line);background:var(--card);font:10.5px var(--f-mono);
+  line-height:16px;white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+.ctl table.jt3 .jfrom .chip .cn{display:inline-flex;justify-content:center;min-width:16px;border-radius:4px;
+  background:var(--fh);color:#fff;font-weight:700}
+@media(max-width:760px){.ctl table.jt3 td.js{grid-template-columns:auto auto minmax(0,1fr)}
+.ctl table.jt3 .jmeta{grid-column:1 / -1;justify-content:flex-start}}

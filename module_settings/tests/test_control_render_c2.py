@@ -62,3 +62,65 @@ def test_the_tree_files_are_loaded_into_the_page():
     assert ".ctl .pv-mix" in tree_css and ':root[data-theme="dark"] .ctl{' in tree_css
     assert "--pv-finra" in tree_css and "font-style:italic" in tree_css
     assert tree_js.strip() and tree_js in control_render.scripts(_build())
+
+
+# ── step 1: the Build table ──
+
+def _two_steps() -> dict:
+    f = _file()
+    first = f["datasets"][0]
+    build = {**first, "dataset": "spine/security", "label": "The security master", "role": "build", "step": 2,
+             "cadence": "weekly", "providers": ()}
+    f["datasets"] = [first, build]
+    return f
+
+
+def test_the_journey_has_three_columns_and_no_board_column():
+    html = control_render._journey(_two_steps())
+    assert len(re.findall(r"<col\b", html)) == 3
+    assert len(re.findall(r"<th\b", re.search(r"<thead>.*?</thead>", html).group(0))) == 3
+    for gone in ("bdh", "bdc", "jbd", "Who reads it today", "btree"):
+        assert gone not in html, gone
+    assert 'class="jpanel jnarrow"' in html, "the narrow panel keeps its SSD part"
+
+
+def test_a_step_row_has_its_parts_in_order_with_the_cadence_last():
+    html = control_render._journey(_two_steps())
+    row = re.search(r'<tr class="jr"[^>]*data-ds="alphavantage/listing_status"[^>]*>(.*?)</tr>', html).group(1)
+    cell = re.search(r'<td class="js">(.*?)</td>', row).group(1)
+    order = [cell.index(x) for x in ('class="jcar"', 'class="stn"', "Listing status of every US name, active and "
+                                     "delisted", 'class="sic', 'class="pill p-ok"', '>first<', "⏱ daily")]
+    assert order == sorted(order), order
+    assert "jst" not in cell
+    assert re.search(r'<span class="jmeta">.*<span class="jcad">⏱ daily</span></span>$', cell), cell
+
+
+def test_a_build_row_has_from_chips_with_full_names():
+    html = control_render._journey(_two_steps())
+    row = re.search(r'<tr class="jr"[^>]*data-ds="spine/security"[^>]*>(.*?)</tr>', html).group(1)
+    assert ('<span class="chip" data-card="alphavantage/listing_status"><span class="cn">1</span>'
+            '<span class="t">alphavantage/listing_status</span></span>') in row
+    first = re.search(r'<tr class="jr"[^>]*data-ds="alphavantage/listing_status"[^>]*>(.*?)</tr>', html).group(1)
+    assert 'class="chip"' not in first, "only a build row has from chips"
+
+
+def test_the_heads_carry_the_roots_and_the_rootline_is_gone():
+    html = control_render._journey(_two_steps())
+    head = re.search(r"<thead>.*?</thead>", html).group(0)
+    assert re.search(r"📄 HDD raw · <code[^>]*>/hdd/raw</code>.*📦 Parquet · <code[^>]*>/hdd/parquet</code>"
+                     r".*files and size · not walked yet", head)
+    assert re.search(r"⚡ SSD live · served.*<code[^>]*>/ssd/live</code>", head)
+    assert "rootline" not in html and "Roots ·" not in html
+    assert "🦆 fund.duckdb" in html
+
+
+def test_the_removed_sentences_are_gone():
+    html = control_render._journey(_two_steps())
+    assert "the file is one piece" not in html
+    assert "press a name to pick the table" not in html
+
+
+def test_the_tree_css_sets_the_widths_and_keeps_paths_on_one_line():
+    css = control_render.TREE_CSS
+    for w in ("width:42%", "width:38%", "width:max(20%, 245px)", "font-size:9.5px", "white-space:nowrap"):
+        assert w in css, w

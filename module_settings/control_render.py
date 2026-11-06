@@ -452,12 +452,21 @@ def _jrows(f: dict) -> tuple[str, list[str]]:
                          f'<span class="hm">{esc(meta)}</span></span>')
         tabs = " ".join(t["name"] for t in f["tables"] if d["dataset"] in t["writers"]) or \
             " ".join(t["name"] for t in f["tables"])
+        chips = ""
+        if role == "build":
+            # One "from" chip per input step of the file, with its full name (#492).
+            chips = "".join(f'<span class="chip" data-card="{esc(o["dataset"])}"><span class="cn">{o["step"]}</span>'
+                            f'<span class="t">{esc(o["dataset"])}</span></span>'
+                            for o in f["datasets"] if o is not d and o["role"] != "build")
+            chips = f'<span class="jfrom"><span class="jfl">from</span>{chips}</span>' if chips else ""
         rows.append(
             f'<tr class="jr" tabindex="0" role="button" aria-expanded="false" aria-controls="jd-{esc(f["kind"])}-{i}" '
-            f'data-src="{esc(names)}" data-tabs="{esc(tabs)}"><td class="js"><span class="jcar" aria-hidden="true">'
-            f'</span><span class="stn">{d["step"]}</span>{icons}<b>{esc(d["label"])}</b>{meta_pill}'
+            f'data-ds="{esc(d["dataset"])}" data-src="{esc(names)}" data-tabs="{esc(tabs)}"><td class="js">'
+            f'<span class="jcar" aria-hidden="true"></span><span class="stn">{d["step"]}</span>'
+            f'<span class="jttl"><b>{esc(d["label"])}</b><span class="jsrc">{icons}</span>{chips}</span>'
+            f'<span class="jmeta">{meta_pill}'
             f'<span class="tag role r-{esc(role.replace(" ", "-"))}" title="{esc(control.ROLE_WORDS.get(role, ""))}">'
-            f'{esc(role)}</span><span class="jcad">⏱ {esc(d["cadence"] or "")}</span></td>'
+            f'{esc(role)}</span><span class="jcad">⏱ {esc(d["cadence"] or "")}</span></span></td>'
             f'<td class="jh">{"".join(where)}</td></tr>'
             f'<tr class="jd" id="jd-{esc(f["kind"])}-{i}" hidden><td colspan="2"><div class="jdg">'
             f'<div class="jdl"><span class="jk">code name</span><code>{esc(d["dataset"])}</code></div>'
@@ -519,32 +528,27 @@ def _journey(f: dict) -> str:
     rows, _ = _jrows(f)
     n = max(1, 2 * len(f["datasets"]))
     roots = f["roots"]
-    ssd = (f'<code class="p">{esc(f["path"] or f["name"])}</code>{_tchs(f)}<span class="ssz">{_size(f["bytes"])}'
-           '</span><span class="dim"> · the file is one piece: the builder builds the new one beside it and moves it '
-           'into place</span><span class="tnote">press a name to pick the table · ▸ shows its columns, from the '
-           "code's schema</span>")
-    tree = _btree(f)
+    ssd = (f'<code class="p jfile" title="{esc(f["path"] or f["name"])}">🦆 {esc(f["name"])}</code>{_tchs(f)}'
+           f'<span class="ssz">{_size(f["bytes"])}</span>')
     if not rows:
-        # A file whose datasets have no card here still has its tables and its readers.
+        # A file whose datasets have no card here still has its tables.
         rows = ('<tr class="jr"><td class="js dim">no dataset of this file is on record yet</td><td class="jh"></td>'
                 '</tr>')
         n = 1
     first, rest = rows.split("</tr>", 1)
-    rows = (first + f'<td class="ssdc" rowspan="{n}">{ssd}</td><td class="bdc" rowspan="{n}">{tree}</td></tr>'
-            + rest)
+    rows = first + f'<td class="ssdc" rowspan="{n}">{ssd}</td></tr>' + rest
+    hdd = (f'<span class="jhl">📄 HDD raw · <code class="p">{esc(roots.get("raw", ""))}</code></span>'
+           f'<span class="jhl">📦 Parquet · <code class="p">{esc(roots.get("parquet", ""))}</code></span>'
+           f'<span class="jhm">files and size · {esc(_walked(f.get("walked_at")))}</span>')
+    ssdh = f'⚡ SSD live · served<span class="jhl"><code class="p">{esc(roots.get("ssd", ""))}</code></span>'
     return (
-        '<div class="journey"><p class="colh">The journey of this data · one line a build step · press a line, a table '
-        'or a board: everything tied to it lights in all four columns, press again to drop it</p>'
-        f'<p class="rootline">Roots · <code class="p">📄 {esc(roots.get("raw", ""))}</code> <code class="p">📦 '
-        f'{esc(roots.get("parquet", ""))}</code> <code class="p">⚡ {esc(roots.get("ssd", ""))}</code>'
-        f' · folders {esc(_walked(f.get("walked_at")))}</p>'
-        '<div class="jleft"><table class="jt jt4"><colgroup><col class="c1"><col class="c2"><col class="c3">'
-        '<col class="c4"></colgroup><thead><tr><th>Build step · status · role · how often</th><th>📄 HDD raw over 📦 '
-        'Parquet · files and size</th><th class="ssdh">⚡ SSD live · served</th><th class="bdh">📊 Who reads it '
-        f'today</th></tr></thead><tbody>{rows}</tbody></table></div>'
+        '<div class="journey"><p class="colh">The journey of this data · one line a build step · press a line or a '
+        'table: everything tied to it lights, press again to drop it</p>'
+        '<div class="jleft"><table class="jt jt4 jt3"><colgroup><col class="c1"><col class="c2"><col class="c3">'
+        '</colgroup><thead><tr><th>Build step · status · role · how often</th>'
+        f'<th class="hddh">{hdd}</th><th class="ssdh">{ssdh}</th></tr></thead><tbody>{rows}</tbody></table></div>'
         f'<aside class="jpanel jnarrow"><div class="jssd"><span class="jph">⚡ SSD live · served</span>{ssd}</div>'
-        f'<div class="jbd"><span class="jph">📊 Who reads it today</span><span class="jps">file → menu group → board · '
-        f'faded = reads no table of this file · press a board to pick it</span>{tree}</div></aside></div>')
+        '</aside></div>')
 
 
 def _samples(f: dict) -> str:
