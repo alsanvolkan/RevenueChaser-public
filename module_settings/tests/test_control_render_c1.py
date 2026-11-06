@@ -168,3 +168,67 @@ def test_the_sources_css_block_holds_the_grid_and_the_columns():
     assert "minmax(0,1fr) minmax(0,.9fr) max-content minmax(0,.75fr) minmax(0,1.6fr)" in blk
     assert "grid-template-columns:repeat(2,minmax(0,1fr))" in blk
     assert "@media(max-width:760px)" in blk
+
+
+# ── Health right now ─────────────────────────────────────────────────────────────────────────────────────────
+
+def _grouped_view():
+    v = _view()
+    groups = {"fresh": "data", "late": "data", "stale": "data", "never": "data", "problems": "data",
+              "session": "build", "queue": "scheduled", "builder": "build", "cap": "sources", "gateway": "sources",
+              "backup": "build"}
+    for t in v["health"]["tiles"]:
+        if t["key"] in groups:
+            t["group"] = groups[t["key"]]
+    v["health"]["tiles"].append({"key": "timer", "cls": "ok", "n": "on", "label": "the hourly timer is on · next 18:05",
+                                 "filter": None, "group": "scheduled"})
+    v["health"]["tiles"].append({"key": "longest", "cls": "neu", "n": "41 min", "label": "the longest run today",
+                                 "filter": None, "group": "build"})
+    return v
+
+
+def _health(v) -> str:
+    return control_render._health(v)
+
+
+def test_health_has_three_groups_side_by_side_then_data_at_full_width():
+    html = _health(_grouped_view())
+    at = [html.index(f'data-group="{g}"') for g in ("sources", "scheduled", "build", "data")]
+    assert at == sorted(at)
+    assert '<h3 class="hgh">Sources</h3>' in html and '<h3 class="hgh">Scheduled run</h3>' in html
+    assert '<h3 class="hgh">Build</h3>' in html
+    assert '<h3 class="hgh">Data · 5 datasets</h3>' in html
+
+
+def test_each_tile_sits_in_its_group_and_keeps_its_filter():
+    html = _health(_grouped_view())
+
+    def grp(g):
+        a = html.index(f'data-group="{g}"')
+        return html[a:html.find('data-group="', a + 1) if html.find('data-group="', a + 1) > 0 else len(html)]
+    assert 'data-f="queue"' in grp("scheduled") and "the hourly timer is on" in grp("scheduled")
+    assert 'data-f="cap"' in grp("sources") and 'data-f="builder"' in grp("build")
+    assert "the longest run today" in grp("build")
+    assert 'data-f="fresh"' in grp("data")
+    assert 'data-f="universe"' in grp("data"), "a tile with no group goes in Data"
+    for t in _grouped_view()["health"]["tiles"]:
+        if t["filter"]:
+            assert f'data-f="{t["filter"]}"' in html
+        assert f'title="{t["label"]}' in html.replace("&#x27;", "'") or t["label"].replace("'", "&#x27;") in html
+
+
+def test_by_file_lines_under_data():
+    html = _health(_grouped_view())
+    by = html[html.index('class="byfile"'):]
+    assert "1 of 6 files on the disk" in by
+    assert by.count('class="bfl"') == 6
+    assert "🦆 on the disk · 9.8 MB · written 5 Nov 19:43 · 7 of 9 tables hold rows · empty: cik_map, lei" in by
+    assert by.count("no file yet") == 5
+    assert 'data-pick="spine.duckdb"' in by
+    assert 'class="seg fresh"' in by
+
+
+def test_health_renders_without_the_new_fields():
+    v = control.build(control_nd(), now=NOW)
+    html = control_render._health(v)
+    assert 'data-group="data"' in html and "Data · 5 datasets" in html

@@ -92,21 +92,72 @@ def _header(view: dict) -> str:
             '<button type="button" class="lnk" data-reload>Refresh</button></div>')
 
 
+#: The Health groups (#492 C1): three side by side, then Data at full width.
+HEALTH_GROUPS = (("sources", "Sources"), ("scheduled", "Scheduled run"), ("build", "Build"))
+FILE_TOTAL = 6
+
+
+def _tile(t: dict) -> str:
+    title = f'{t["n"]} · {t["label"]}'
+    inner = f'<span class="n">{esc(t["n"])}</span><span class="l">{esc(t["label"])}</span>'
+    if t.get("filter"):
+        return (f'<button type="button" class="tile {esc(t["cls"])}" data-f="{esc(t["filter"])}" '
+                f'title="{esc(title)}">{inner}</button>')
+    return f'<div class="tile {esc(t["cls"])} static" title="{esc(title)}">{inner}</div>'
+
+
+def _segbar(counts) -> str:
+    """A file's fresh / late / stale / never bar, with its counts."""
+    c = counts if isinstance(counts, dict) else {}
+    total = c.get("total")
+    if not total:
+        return '<span class="segbar none" title="no dataset counted"></span><span class="segn dim">no dataset</span>'
+    segs = "".join(f'<i class="seg {k}" style="flex-grow:{int(c.get(k) or 0)}" title="{int(c.get(k) or 0)} {w}"></i>'
+                   for k, w in (("fresh", "fresh"), ("late", "late"), ("stale", "stale"), ("never", "never ran"))
+                   if c.get(k))
+    words = " · ".join(f'{int(c.get(k) or 0)} {w}' for k, w in (("fresh", "fresh"), ("late", "late"),
+                                                               ("stale", "stale"), ("never", "never ran")))
+    return f'<span class="segbar">{segs}</span><span class="segn">{esc(words)}</span>'
+
+
+def _byfile(view: dict) -> str:
+    rows = (view.get("health") or {}).get("files")
+    if rows is None:
+        rows = [{"name": f["name"], "state": f.get("state")} for f in view.get("files") or []]
+    if not rows:
+        return ""
+    on_disk = sum(1 for r in rows if isinstance(r.get("state"), dict) and r["state"].get("exists"))
+    known = any(isinstance(r.get("state"), dict) and r["state"].get("exists") is not None for r in rows)
+    head = f"{on_disk} of {FILE_TOTAL} files on the disk" if known else "files on the disk: not known"
+    lines = []
+    for r in rows:
+        st = r.get("state") if isinstance(r.get("state"), dict) else {}
+        words = _fstate_words(st or None)
+        lines.append(f'<button type="button" class="bfl" data-pick="{esc(r.get("name"))}"><span class="bfn">'
+                     f'{esc(r.get("name"))}</span>{_segbar(st.get("counts"))}<span class="bfs">'
+                     f'{"🦆 " if st.get("exists") else ""}{esc(words)}</span></button>')
+    return f'<div class="byfile"><h4 class="hgh">{esc(head)}</h4>{"".join(lines)}</div>'
+
+
 def _health(view: dict) -> str:
     h = view["health"]
-    tiles = []
+    by_group: dict[str, list[str]] = {}
     for t in h["tiles"]:
-        inner = f'<span class="n">{esc(t["n"])}</span><span class="l">{esc(t["label"])}</span>'
-        if t["filter"]:
-            tiles.append(f'<button type="button" class="tile {esc(t["cls"])}" data-f="{esc(t["filter"])}">{inner}'
-                         '</button>')
-        else:
-            tiles.append(f'<div class="tile {esc(t["cls"])} static">{inner}</div>')
+        g = t.get("group") if t.get("group") in ("sources", "scheduled", "build") else "data"
+        by_group.setdefault(g, []).append(_tile(t))
+    total = view.get("datasets_total")
+    if total is None:
+        total = sum(len(f["datasets"]) for f in view.get("files") or [])
+    top = "".join(f'<div class="hgrp" data-group="{k}"><h3 class="hgh">{w}</h3><div class="strip">'
+                  f'{"".join(by_group.get(k, [])) or """<span class="dim">no tile yet</span>"""}</div></div>'
+                  for k, w in HEALTH_GROUPS)
+    data = (f'<div class="hgrp hdata" data-group="data"><h3 class="hgh">Data · {total} datasets</h3>'
+            f'<div class="strip">{"".join(by_group.get("data", []))}</div>{_byfile(view)}</div>')
     c = h["counts"]
     summ = (f'<b class="s-ok">{c["fresh"]} fresh</b> · <b class="s-warn">{c["late"]} late</b> · '
             f'<b class="s-bad">{c["stale"]} stale</b> · {c["never"]} never ran · {h["problems"]} open problems')
     return ('<details class="sec" id="sec-health" open><summary><h2>Health right now</h2>'
-            f'<span class="secs">{summ}</span></summary><div class="strip">{"".join(tiles)}</div></details>')
+            f'<span class="secs">{summ}</span></summary><div class="hgrps">{top}</div>{data}</details>')
 
 
 # ── Fetch: the universe ───────────────────────────────────────────────────────────────────────────────────────
