@@ -873,10 +873,12 @@ def _samples(f: dict) -> str:
             notes = "".join(f'<p class="hint">{esc(n)}</p>' for n in s.get("notes") or ())
             blocks.append(
                 f'<section class="dsec" data-sample="{esc(t)}"><div class="dsact"><h4>{esc(t)}, as served '
-                f'<span class="dim">{len(s.get("rows") or [])} rows</span></h4><button type="button" class="btn sm" '
-                f'data-sample-refresh="{esc(t)}" aria-label="Refresh the example rows of {esc(t)}">↻ Refresh</button>'
+                f'<span class="dim">{len(s.get("rows") or [])} rows</span></h4>'
+                # the button's own wrapper: its status is the first .dim beside it (control.js writes the result there)
+                f'<span class="dsbtn"><button type="button" class="btn sm" data-sample-refresh="{esc(t)}" '
+                f'aria-label="Refresh the example rows of {esc(t)}">↻ Refresh</button>'
                 f'{_info("Refresh the example rows: reads 5 rows of " + f["name"] + ", no provider call.")}'
-                '<span class="dim" role="status"></span></div><div class="scroll"><table class="ex">'
+                '<span class="dim" role="status"></span></span></div><div class="scroll"><table class="ex">'
                 f'<thead>{src}<tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{notes}</section>')
     if not blocks:
         return ""

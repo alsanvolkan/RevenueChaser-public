@@ -1123,6 +1123,7 @@
 .ctl details.b-ds .dsec{margin-top:18px}
 .ctl details.b-ds .dsact h4{margin:0;font-size:15px;font-weight:700;flex:1 1 auto}
 .ctl details.b-ds .dsact h4 .dim{font-size:12px;font-weight:400}
+.ctl details.b-ds .dsbtn{display:inline-flex;align-items:center;gap:6px}
 /* the table head's status · role · how often sit over their own columns */
 .ctl table.jt3 .jhead{display:flex;justify-content:space-between;align-items:center;gap:8px}
 @media(min-width:761px){
