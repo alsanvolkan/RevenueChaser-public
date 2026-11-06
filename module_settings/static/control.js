@@ -210,11 +210,6 @@
     else if (j === 'picture') picture(b);
   });
 
-  /* open and close every file of the Data section */
-  function all(v) { [].forEach.call(root.querySelectorAll('#sec-data details.group'), function (d) { d.open = v; }); }
-  var oa = document.getElementById('openall'), ca = document.getElementById('shutall');
-  if (oa && oa.addEventListener) oa.addEventListener('click', function () { all(true); });
-  if (ca && ca.addEventListener) ca.addEventListener('click', function () { all(false); });
 })();
 
 /* The universe control (Karar 86 A). A press on a tier set or a group makes a draft; Apply saves it (the board
@@ -611,15 +606,13 @@
     return d.getAttribute('data-st') === f;
   }
   function filter(f) {
-    var ds = [].slice.call(document.querySelectorAll('#sec-fetch .fgroup > .dset')), n = 0;
+    var ds = [].slice.call(document.querySelectorAll('.ctl .sources .sgrid > .dset')), n = 0;
     ds.forEach(function (d) { var ok = !f || match(d, f); d.hidden = !ok; if (ok) n++; });
-    [].forEach.call(document.querySelectorAll('#sec-fetch .fgroup'), function (g) { g.hidden = !!f && !g.querySelector('.dset:not([hidden])'); });
-    var u = document.getElementById('universe'), lg = document.querySelector('#sec-fetch .flegend');
-    if (u) u.hidden = !!f; if (lg) lg.hidden = !!f;
+    [].forEach.call(document.querySelectorAll('.ctl .sources .sgrid'), function (g) { g.hidden = !!f && !g.querySelector('.dset:not([hidden])'); });
     [].forEach.call(document.querySelectorAll('#sec-health .tile[data-f]'), function (t) { if (NAME[t.getAttribute('data-f')]) t.setAttribute('aria-pressed', f && t.getAttribute('data-f') === f ? 'true' : 'false'); });
     if (!f) { bar.hidden = true; empty.hidden = true; return; }
     bar.hidden = false;
-    bar.innerHTML = '<span>Fetch shows the datasets <b>' + rcEsc(NAME[f]) + '</b>: ' + n + ' of ' + ds.length + ' rows</span><button type="button" class="lnk" data-ffclear>Show every dataset</button>';
+    bar.innerHTML = '<span>The sources show the datasets <b>' + rcEsc(NAME[f]) + '</b>: ' + n + ' of ' + ds.length + ' rows</span><button type="button" class="lnk" data-ffclear>Show every dataset</button>';
     empty.hidden = !!n;
     if (!n) empty.innerHTML = '<b>Nothing to show:</b> none of the ' + ds.length + ' rows matches. <button type="button" class="lnk" data-ffclear>Show every dataset</button>';
   }
@@ -631,9 +624,9 @@
     var f = t.getAttribute('data-f');
     if (f === 'universe') { if (cur) { cur = null; filter(null); } X.scrollTo(document.getElementById('universe')); return; }
     if (f === 'queue' || f === 'builder') { var q = document.getElementById('sec-queue'); if (q) { q.open = true; X.scrollTo(q); } return; }
-    if (f === 'cap') { var p = document.getElementById('sec-providers'); if (p) { p.open = true; X.scrollTo(p); } return; }
+    if (f === 'cap') { var p = document.querySelector('.ctl .fpanel:not([hidden]) details.provs'); if (p) { p.open = true; X.scrollTo(p); } return; }
     cur = cur === f ? null : f; filter(cur);
-    var s = document.getElementById('sec-fetch'); if (cur && s) { s.open = true; X.scrollTo(s); }
+    var s = document.getElementById('ffilter'); if (cur && s) X.scrollTo(s);
   });
   [].forEach.call(document.querySelectorAll('#sec-health .tile[data-f]'), function (t) { if (NAME[t.getAttribute('data-f')]) t.setAttribute('aria-pressed', 'false'); });
 })();
@@ -951,7 +944,7 @@
       : cards.length + ' files · how full each dataset is, the journey of each step, who reads which table · the flow diagram filters this list';
     var bm = document.getElementById('bdmatch'), de = document.getElementById('dataempty');
     if (bm) {
-      bm.hidden = !names.length;
+      bm.hidden = !names.length || !cards.length;
       bm.innerHTML = !names.length ? '' : shown
         ? '<b>' + shown + ' of ' + cards.length + ' files match</b> · <button type="button" class="lnk" id="bdopen">open them ↓</button> · <button type="button" class="lnk" data-clearpicks>clear the picks</button>'
         : '<b>No file matches these picks.</b> <button type="button" class="lnk" data-clearpicks>Clear the picks</button>';
@@ -982,10 +975,12 @@
     var ids = Object.keys(picks.bd);
     if (!ids.length) {
       box.className = 'bdinfo empty';
-      box.innerHTML = '<p>Press a board on the right of the diagram to see what it reads: its data needs and the files they come from.</p>';
+      box.innerHTML = '';
+      box.hidden = true;
       return;
     }
     box.className = 'bdinfo';
+    box.hidden = false;
     box.innerHTML = ids.map(function (id) {
       var n = id.slice(3), b = BI[n] || {}, fs = filesOf(n), needs = b.needs || [];
       var fch = fs.length ? fs.map(function (f) {
@@ -1050,4 +1045,86 @@
   var rt;
   window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(render, 150); });
   render();
+})();
+
+// #492 C1
+/* The Data tab's own presses (#492 C1): each source box's one button (Fetch, then Pause while its request waits or
+   runs, Resume while paused), the fold of a box and of every box, the file picker and the By-file lines. Pause holds
+   the dataset: the hourly pass skips it until Resume. */
+(function () {
+  var C = window.CTL, X = window.CTLX;
+  if (!C || !X || !document.querySelector) return;
+  function setState(btn, st) {
+    btn.setAttribute('data-state', st);
+    btn.textContent = st === 'fetch' ? 'Fetch' : st === 'pause' ? 'Pause' : 'Resume';
+    btn.classList.toggle('go', st === 'fetch');
+  }
+  function body(btn) {
+    if (btn.getAttribute('data-scope') !== '1') return undefined;
+    var a = X.applied();
+    return X.isDefault(a) ? undefined : X.scopeOf(a.on, a);
+  }
+  function one(btn) {
+    var ds = btn.getAttribute('data-dataset'), st = btn.getAttribute('data-state');
+    if (st === 'fetch') {
+      X.queue(btn, ds, body(btn));
+      setState(btn, 'pause');
+      return;
+    }
+    var verb = st === 'pause' ? '/pause' : '/resume';
+    btn.disabled = true;
+    X.send('POST', C.routes.schedule + ds + verb).then(function (r) {
+      btn.disabled = false;
+      if (r.status >= 200 && r.status < 300) {
+        setState(btn, st === 'pause' ? 'resume' : 'fetch');
+        X.say(st === 'pause' ? ds + ' is held: the hourly pass skips it until Resume' : ds + ': the hourly pass runs it again');
+      } else X.say(r.body.error || ('refused · HTTP ' + r.status));
+    }, function () { btn.disabled = false; X.say('could not reach the dashboard'); });
+  }
+  function fold(box, open) {
+    var b = box.querySelector('.sbody'), t = box.querySelector('.sbtog');
+    if (b) b.hidden = !open;
+    if (t) { t.setAttribute('aria-expanded', open ? 'true' : 'false'); t.textContent = open ? '▾' : '▸'; }
+  }
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var b = e.target.closest('.ctl [data-job="one"]');
+    if (b) { if (!b.disabled) one(b); return; }
+    var t = e.target.closest('.ctl .sbtog');
+    if (t) { fold(t.closest('.sbox'), t.getAttribute('aria-expanded') !== 'true'); return; }
+    var a = e.target.closest('.ctl [data-sb]');
+    if (a) {
+      var src = a.closest('.sources');
+      [].forEach.call(src ? src.querySelectorAll('.sbox') : [], function (x) { fold(x, a.getAttribute('data-sb') === 'open'); });
+    }
+  });
+})();
+
+/* The file picker (#492 C1): one file's panel shows at a time. A box of the picker, a file in the flow diagram or a
+   line of Health's By file selects it; By file also scrolls to it. */
+(function () {
+  var X = window.CTLX, pick = document.getElementById('fpick');
+  if (!X || !pick) return;
+  function select(name, scroll) {
+    var found = false;
+    [].forEach.call(pick.querySelectorAll('.fpb'), function (b) {
+      var on = b.getAttribute('data-file') === name;
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+      if (on) found = true;
+    });
+    if (!found) return;
+    [].forEach.call(document.querySelectorAll('.ctl .fpanel'), function (p) { p.hidden = p.getAttribute('data-file') !== name; });
+    if (scroll) X.scrollTo(pick);
+  }
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var b = e.target.closest('#fpick .fpb');
+    if (b) { select(b.getAttribute('data-file'), false); return; }
+    var l = e.target.closest('.ctl [data-pick]');
+    if (l) { select(l.getAttribute('data-pick'), true); return; }
+    var n = e.target.closest('#flow2 [data-node^="file:"]');
+    if (n) select(n.getAttribute('data-node').slice(5), false);
+  });
+  var first = pick.querySelector('.fpb');
+  if (first) select(first.getAttribute('data-file'), false);
 })();
