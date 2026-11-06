@@ -30,6 +30,7 @@ from RevenueChaser.core import rawstore
 #   orphan_lookups       the outcome table of that same #190 lookup
 #   sec13f_filers        never named in production code; docs/data_architecture.md: G1 (#292), manifest only
 #   edgar_companyfacts   same: never named in production code; G1 (#292), manifest only
+#   relatedness_embeddings  Relatedness v2 Step 2's vectors (#401, schema 13); the writer is Step 2's
 #   retired — the only writer is in the past
 #   leaps_daily_scores     only scripts/migrate_rawdata_to_duckdb.py, the legacy one-time import
 #   sec13f_edgar_backfill  same, and the backfill itself is retired (leaves the manifest at the next bump)
@@ -44,6 +45,7 @@ PLANNED = frozenset({
     "orphan_lookups",
     "sec13f_filers",
     "edgar_companyfacts",
+    "relatedness_embeddings",
 })
 RETIRED = frozenset({
     "leaps_daily_scores",
@@ -133,6 +135,8 @@ FROZEN_DDL = {
         "form": "VARCHAR", "fy": "INTEGER", "fp": "VARCHAR", "filed": "DATE", "source": "VARCHAR",
         "fetched_at": "DOUBLE", "run_id": "VARCHAR", "run_at": "DOUBLE",
     },
+    # Read the same way off a fresh v13 store (#401), before the flag was added.
+    "relatedness_embeddings": {"ticker": "VARCHAR", "model": "VARCHAR", "dim": "INTEGER", "vector": "BLOB"},
 }
 
 
