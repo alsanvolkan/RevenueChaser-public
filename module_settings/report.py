@@ -3179,6 +3179,7 @@ var ND_PAGE_STALE_MS = {ND_PAGE_STALE_MINUTES * 60 * 1000};
 <script>
 window.RC_SETTINGS_TABS = {script_json(SETTINGS_TABS)};
 {TABS_JS}
+{needs_tab.NEEDS_JS}
 </script>
 </body>
 </html>
