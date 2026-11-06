@@ -985,20 +985,18 @@ def _clock_of(value) -> str:
 
 
 def _job_for(r: dict, jobs: list[dict], used: set) -> dict | None:
-    """The live process of a running queue row: by the pid the row records, else the first unused one working on
-    its dataset."""
-    pid = r.get("pid")
-    hit = next((j for j in jobs if pid and j["pid"] == pid), None) or next(
-        (j for j in jobs if j["pid"] not in used and r.get("dataset") in (j.get("datasets") or [])), None)
+    """The live process of a running queue row: the first unused one working on its dataset. ``build_requests``
+    records no pid, so the dataset is all there is to match on (recording one is #530's job)."""
+    hit = next((j for j in jobs if j["pid"] not in used and r.get("dataset") in (j.get("datasets") or [])), None)
     if hit is not None:
         used.add(hit["pid"])
     return hit
 
 
 def _queue(view: dict) -> str:
-    """The queue (Q6/A, the five queue points): who asked for a running request (the process running it, when one
-    matches), asked and started when, for how long. Only a row whose recorded pid is known to be gone says "no live
-    process" and loses its Stop; no match is never read as "nothing runs"."""
+    """The queue (Q6/A, the five queue points): who asked (a "cli" request names the process running it, when one
+    matches by dataset), asked and started when, for how long. A queued or running row always keeps its Stop: no
+    match is never read as "nothing runs"."""
     q = view["queue"]
     jobs = (view.get("health") or {}).get("jobs") or []
     used: set = set()
@@ -1006,14 +1004,12 @@ def _queue(view: dict) -> str:
     rows = []
     for r in list(q.get("active") or []) + list(q.get("finished") or [])[:10]:
         status, who = r.get("status"), r.get("requested_by") or "—"
-        live = not r.get("pid_gone")
-        if status == "running" and live:
+        if status == "running" and who == "cli":
             j = _job_for(r, jobs, used)
             who = j["who"] if j is not None else who
         stop = (f'<button type="button" class="btn sm" data-job="stop" data-dataset="{esc(r.get("dataset"))}" '
                 f'data-status="{esc(status)}">Stop</button><span class="dim" role="status"></span>'
-                if status in ("queued", "running") and live else "")
-        word = status if live else "running · no live process"
+                if status in ("queued", "running") else "")
         when = _clock_of(r.get("requested_at"))
         started = _epoch(r.get("started_at"))
         if started is not None:
@@ -1021,7 +1017,7 @@ def _queue(view: dict) -> str:
             if status == "running":
                 when += f" · {control._hm(max(0, int((now - started) // 60)))}"
         rows.append(f'<tr><td data-label="Dataset" class="nw"><code>{esc(r.get("dataset"))}</code></td>'
-                    f'<td data-label="Status" class="nw"><span class="qst">{esc(word)}</span>{stop}</td>'
+                    f'<td data-label="Status" class="nw"><span class="qst">{esc(status)}</span>{stop}</td>'
                     f'<td data-label="Asked by" class="nw">{esc(who)}</td>'
                     f'<td data-label="Asked at" class="nw">{esc(when)}</td>'
                     f'<td data-label="Note">{_qnote(r.get("note"))}</td></tr>')

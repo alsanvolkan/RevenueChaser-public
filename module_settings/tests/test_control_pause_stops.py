@@ -59,11 +59,10 @@ def test_a_cli_row_is_matched_to_its_process_by_dataset_and_keeps_stop():
     assert ">Claude session B<" in q and 'data-job="stop" data-dataset="sec/13dg"' in q
 
 
-def test_a_recorded_pid_matches_before_the_dataset():
-    other = {**JOB, "pid": 42, "datasets": ["sec/form4"], "dataset": "sec/form4", "who": "Claude session A"}
-    q = control_render._queue(_qview([{"id": 1, "dataset": "sec/13dg", "status": "running", "requested_by": "cli",
-                                       "pid": 42}], [JOB, other]))
-    assert ">Claude session A<" in q
+def test_a_dashboard_row_keeps_who_asked_even_when_a_session_runs_its_dataset():
+    q = control_render._queue(_qview([{"id": 1, "dataset": "sec/13dg", "status": "running",
+                                       "requested_by": "dashboard"}], [JOB]))
+    assert ">dashboard<" in q and "Claude session B" not in q, "the column is who asked, not who runs"
 
 
 def test_no_matching_process_is_not_a_claim_that_none_runs():
@@ -71,12 +70,6 @@ def test_no_matching_process_is_not_a_claim_that_none_runs():
         q = control_render._queue(_qview([{"id": 1, "dataset": "sec/13dg", "status": "running",
                                            "requested_by": "cli"}], jobs, unread))
         assert "no live process" not in q and 'data-job="stop" data-dataset="sec/13dg"' in q
-
-
-def test_only_a_pid_known_gone_drops_stop():
-    q = control_render._queue(_qview([{"id": 1, "dataset": "sec/13dg", "status": "running", "requested_by": "cli",
-                                       "pid": 99, "pid_gone": True}], []))
-    assert "running · no live process" in q and 'data-job="stop"' not in q
 
 
 def test_asked_at_is_the_request_and_started_is_its_own_value():

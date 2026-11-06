@@ -319,7 +319,7 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
         _tile("cap", "none" if near is None else ("bad" if near["share"] > CAP_BAD else
                                                   "warn" if near["share"] >= CAP_WARN else "ok"),
               "—" if near is None else f"{near['share']:.0%}",
-              "no provider has a day cap" if near is None else
+              "no day cap set" if near is None else
               (f"nearest its day cap: {near['name']}, {count(near['used'])} / {count(near['cap'])} calls"
                + ("" if not others else " · then " + ", ".join(f"{p['name']} {p['share']:.0%}" for p in others))),
               "cap"),
@@ -335,8 +335,8 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
     rank = {"bad": 0, "warn": 1}
     tiles.sort(key=lambda t: rank.get(t["cls"], 2))
     # Unknown is never "all well": no builder run on record, or no day cap that can be read (#533 review).
-    blind = [w for w, missing in (("the builder's last run", silent is None), ("the day caps", near is None))
-             if missing]
+    blind = [w for w, missing in (("the builder's last run", silent is None),
+                                  ("the day caps", near is None and any(caps.DAY_CAPS.values()))) if missing]
     unread = blind + [w for w, missing in (("the builder timer", state not in ("on", "off")),
                                    ("the longest build today", longest is None),
                                    ("the running jobs", jobs is None)) if missing]
@@ -348,6 +348,8 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
         ok.append(f"builder {silent} min ago")
     if near is not None:
         ok.append(f"{near['name']} {near['share']:.0%}")
+    elif not any(caps.DAY_CAPS.values()):
+        ok.append("no day cap set")
     if newest_backup is not None:
         ok.append(f"backup {day_words(newest_backup['newest'])}")
     return {"tiles": tiles, "ok": ok, "counts": by, "problems": problems, "jobs": jobs or [],
@@ -980,39 +982,18 @@ def _jobs(reader, now: datetime) -> list[dict] | None:
     return sorted(lines, key=lambda j: -j["minutes"])
 
 
-def pid_gone(pid) -> bool:
-    """True only when ``pid`` names no process on this host (a positive check); False when it lives or cannot be
-    told."""
-    try:
-        os.kill(int(pid), 0)
-    except ProcessLookupError:
-        return True
-    except (OSError, TypeError, ValueError, OverflowError):
-        return False
-    return False
-
 
 # ── The whole board ───────────────────────────────────────────────────────────────────────────────────────────
 
-def _queue_rows(q: dict, gone) -> dict:
-    """The queue with ``pid_gone`` on a running row whose recorded pid is known to be gone (only then does the page
-    say "no live process" and leave out its Stop)."""
-    active = [{**r, "pid_gone": True} if r.get("status") == "running" and r.get("pid") and gone(r["pid"]) else r
-              for r in q.get("active") or []]
-    return {**q, "active": active}
-
-
 def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, now: datetime | None = None,
-          datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None, procs=None,
-          pids=None) -> dict:
+          datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None, procs=None) -> dict:
     """The page's model from ``newdata.collect``'s output. ``applied`` is the saved universe
     (``board_settings.values("module_settings")["values"]``), ``ibkr`` the gateway's login state, ``datasets`` the
     builder's datasets (default: ``newdata._datasets()``). ``timer`` and ``job_runs`` are the readers of the hourly
     builder timer and of ``ops.job_runs2``, injectable so a test needs neither systemd nor a store; a reader that
     fails gives Nones, never a guess. ``kind_modes`` is the reader of each kind's automation
     (``ops.read_kind_modes``); unreadable, every kind reads off, which is also what the builder does without a row.
-    ``procs`` is the reader of the running job processes (``read_procs``), ``pids`` the check that a recorded pid is
-    gone (``pid_gone``)."""
+    ``procs`` is the reader of the running job processes (``read_procs``)."""
     from RevenueChaser.module_settings import newdata
     now = now or datetime.now(timezone.utc)
     if nd.get("error"):
@@ -1036,7 +1017,6 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         modes = {}
     file_views = files(nd, datasets, uni, reads, now, timer_view, modes)
     jobs = _jobs(procs, now)
-    pids = pids or pid_gone
     control_sources.attach_pv(file_views, datasets)
     return {
         "error": None,
@@ -1047,7 +1027,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         "universe": uni, "identity": nd.get("identity"), "my_universe": nd.get("my_universe"), "scope": scope(uni), "files": file_views, "providers": provider_rows,
         "flow": flow(file_views, datasets, reads, uni), "calendars": calendars(nd, uni, provider_rows),
         "cross_check": (nd.get("cross_check") or {}).get("fields") or [],
-        "queue": _queue_rows(nd.get("queue") or {"active": [], "finished": []}, pids),
+        "queue": nd.get("queue") or {"active": [], "finished": []},
         "fill_enabled": screen.fill_enabled(), "fill_off_why": screen.FILL_OFF_WHY,
         "datasets_total": len(nd.get("datasets") or []),
     }

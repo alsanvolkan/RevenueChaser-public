@@ -1106,6 +1106,7 @@
   white-space:normal;text-align:left;font-size:12px;line-height:1.45;font-weight:400;color:var(--fg);background:var(--card);
   border:1px solid var(--line);border-radius:8px;padding:6px 9px;box-shadow:0 4px 14px rgba(0,0,0,.18);pointer-events:none;display:none}
 .ctl .info:hover::after,.ctl .info:focus-visible::after{display:block}
+.ctl .info::after{transform:translateX(var(--tipx,0px))}
 .ctl .info.tipr::after{left:auto;right:0}  /* an ⓘ in the right half opens leftward (control.js) */
 .ctl .hgrps{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
 .ctl .hok{margin:6px 0 0;color:var(--ok);font-weight:600}

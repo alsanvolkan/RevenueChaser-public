@@ -75,6 +75,13 @@ def test_no_builder_run_or_no_readable_cap_is_never_all_well():
     assert "the day caps" in h["unread"] and h["blind"]
 
 
+def test_no_day_cap_configured_is_said_not_unread(monkeypatch):
+    monkeypatch.setattr(control.caps, "DAY_CAPS", {})
+    h = control.health(control_nd(), [], {"size": 0}, None, now=NOW, jobs=[])
+    assert "the day caps" not in h["unread"] and "no day cap set" in h["ok"]
+    assert {t["key"]: t for t in h["tiles"]}["cap"]["label"] == "no day cap set"
+
+
 def test_a_bad_newest_session_fails_only_the_prices_tile(monkeypatch):
     def boom(*a):
         raise ValueError("calendar past its table")

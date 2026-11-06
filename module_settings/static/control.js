@@ -1190,10 +1190,19 @@
   }
   fit();
   window.addEventListener('resize', fit);
+  // a scroll bar that comes later narrows the page without a resize event
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(document.documentElement);
   // an ⓘ in the right half of the window opens its tip leftward, so the tip never runs past the edge
   function side(e) {
     var i = e.target && e.target.closest && e.target.closest('.ctl .info'); if (!i) return;
-    i.classList.toggle('tipr', i.getBoundingClientRect().left > (document.documentElement.clientWidth || 0) / 2);
+    var w = document.documentElement.clientWidth || window.innerWidth || 0, r = i.getBoundingClientRect();
+    i.classList.toggle('tipr', r.left > w / 2);
+    i.style.removeProperty('--tipx');
+    // then keep the tip inside the window, 8 px from each edge: measure it where it opens and shift it back in
+    var cs = getComputedStyle(i, '::after'), tw = parseFloat(cs.width) || 0;
+    var left = i.classList.contains('tipr') ? r.right - tw : r.left;
+    var shift = Math.max(8 - left, Math.min(0, (w - 8) - (left + tw)));
+    if (shift) i.style.setProperty('--tipx', shift + 'px');
   }
   document.addEventListener('mouseover', side);
   document.addEventListener('focusin', side);
