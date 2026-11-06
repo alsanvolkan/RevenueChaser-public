@@ -37,12 +37,13 @@ def _running(nd, runs, alive=lambda pid: pid in CG):
     return {r["id"]: r for r in v["running"]}, v
 
 
-def test_the_builder_unit_has_no_limit_and_a_claude_session_has_two_hours():
+def test_the_builder_unit_and_a_claude_session_each_carry_their_two_hour_limit():
+    """RC-Build's limit is 120 min since #534 (avo 6 Nov 17:01, Q56); the board reads it from the registry."""
     nd = _nd(_req(1, "sec/13f", 30), _req(2, "sec/13dg", 100))
     got, v = _running(nd, [_run(101, "sec/13f", 30), _run(202, "sec/13dg", 100)])
-    assert got[1]["who"] == "systemd life-rc-builder" and got[1]["limit_s"] is None
+    assert got[1]["who"] == "systemd life-rc-builder" and got[1]["limit_s"] == 120 * 60
     assert got[2]["who"] == "Claude session" and got[2]["limit_s"] == 2 * 3600
-    assert got[1]["line"] == "sec/13f · 30 min / no limit · systemd life-rc-builder"
+    assert got[1]["line"] == "sec/13f · 30 min / 2 h · systemd life-rc-builder"
     assert got[2]["line"] == "sec/13dg · 1 h 40 min / 2 h · Claude session"
     assert got[2]["cls"] == "warn", "past 80 % of its limit"
     alerts = {a["key"]: a for a in v["health"]["alerts"]}

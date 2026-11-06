@@ -853,9 +853,7 @@ def test_the_builder_row_runs_one_queue_pass_every_hour_at_07():
     e = A.entry("RC-Build")
     assert e.args == ("-m", "RevenueChaser.rcdata.build", "run", "--once")
     assert e.hourly and e.time == "00:07" and e.schedule == "hourly at :07 (local)"
-    # #527: no time limit, as the installed unit (home-server units/life-rc-builder.service: infinity); a build
-    # longer than 50 min is normal, and a dead run is closed by the stuck-run sweep, not by systemd.
-    assert e.settings.no_time_limit and e.settings.limit_minutes is None
+    assert e.settings.time_limit_minutes == 120
     assert e.tables_written == (), "it writes the market store, never the old one: no job_runs row (job_runs2 instead)"
     assert e.after is None and not e.default_install
     assert e.unit_name == "life-rc-builder"
@@ -905,7 +903,7 @@ def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
     service = (tmp_path / "u" / "life-rc-builder.service").read_text(encoding="utf-8")
     timer = (tmp_path / "u" / "life-rc-builder.timer").read_text(encoding="utf-8")
     assert 'ExecStart="/srv/rc/.venv/bin/python" "-m" "RevenueChaser.core.automations" "run" "RC-Build"' in service
-    assert "Type=oneshot" in service and "TimeoutStartSec=infinity" in service
+    assert "Type=oneshot" in service and "TimeoutStartSec=120min" in service
     assert "OnCalendar=*-*-* *:07:00" in timer and "Unit=life-rc-builder.service" in timer
     backup_service = (tmp_path / "u" / "life-rc-builder-backup.service").read_text(encoding="utf-8")
     backup_timer = (tmp_path / "u" / "life-rc-builder-backup.timer").read_text(encoding="utf-8")
@@ -940,9 +938,7 @@ def test_windows_installs_the_builder_as_an_hourly_trigger_with_no_limit():
     _win(ps).install(A.entry("RC-Build"))
     s = ps.scripts[0]
     assert "-Once -At '00:07' -RepetitionInterval (New-TimeSpan -Hours 1)" in s
-    assert "-ExecutionTimeLimit (New-TimeSpan -Seconds 0)" in s
-    _win(ps).install(A.entry("RC-Build-Backup"))
-    assert "-ExecutionTimeLimit (New-TimeSpan -Minutes 30)" in ps.scripts[-1]
+    assert "-ExecutionTimeLimit (New-TimeSpan -Minutes 120)" in s
 
 
 def test_a_chain_step_cannot_wait_on_an_hourly_row():

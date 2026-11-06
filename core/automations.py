@@ -256,9 +256,8 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "file as a new file and swaps it in. It does not start while a job lock is held or another "
                     "builder runs (exit 3); a request a dead builder left running is failed at start. Writes only "
                     "the market store and ops.sqlite, with its own job_runs2 row per run.",
-        # #527: no limit, as the installed unit (home-server units/life-rc-builder.service: infinity); avo 6 Nov:
-        # "50 dk çok kısa, onu geçiyoruzdur". A dead run is closed by the stuck-run sweep (app/jobs.py).
-        settings=TaskSettings(restart_count=0, no_time_limit=True)),
+        # 2 h (avo 6 Nov 2026, #527): 166 runs since 20 Oct peaked at 107 min; at 50 min one was killed (2 Nov)
+        settings=TaskSettings(restart_count=0, time_limit_minutes=120)),
     AutomationEntry(
         name="RC-Build-Backup", label="Market-store backup (light)",
         args=("-m", "RevenueChaser.rcdata", "backup",

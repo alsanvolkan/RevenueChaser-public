@@ -647,7 +647,7 @@ worker thread writes while Flask request threads read. So:
   `scripts/ibkr_login_check.py`, one TCP connection and the TWS API version handshake, which writes no table and
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
   expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
-  `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, no time limit) and its backup
+  `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 120 min limit) and its backup
   RC-Build-Backup daily 04:30 (`rcdata backup --only ops,market,spine,fundamentals,options,raw --subdir market`,
   unit `life-rc-builder-backup`, 30 min limit) and the heavy half of that backup RC-Build-Backup-Heavy weekly
   Sunday 03:30 (`rcdata backup --only prices,ownership --subdir market-heavy`,
@@ -1150,7 +1150,7 @@ what keeps a new writer from slipping past the gate; `core/tests/test_job_lock_n
 documented lock name has no entry.
 
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
-RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with no time limit, as the
+RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 120 min limit, as the
 systemd unit pair `life-rc-builder.service` / `.timer`. RC-Build-Backup runs `rcdata backup` daily at 04:30, with a
 30 min limit, as `life-rc-builder-backup`; it takes the small files only
 (`--only ops,market,spine,fundamentals,options,raw --subdir market`). The two large serving files are
