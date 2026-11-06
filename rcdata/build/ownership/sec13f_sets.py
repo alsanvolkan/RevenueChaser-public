@@ -1,4 +1,5 @@
-"""The SEC's Form 13F data sets: how ``sec/13f`` is first filled (avo, 2026-10-28: the zips, as the old board did,
+"""The SEC's Form 13F data sets (and, through the arguments of ``listed``, ``download``, ``raw_dir`` and
+``_load``, the shared index-read and download primitive the Insider Transactions sets use too: ``form345_sets``): how ``sec/13f`` is first filled (avo, 2026-10-28: the zips, as the old board did,
 from the start of 2025); the EDGAR forms (``edgar.Feed``) follow from the newest set's last day.
 
 ``GET <RC_FORM13F_INDEX_URL>`` (default ``<www.sec.gov>/data-research/sec-markets-data/form-13f-data-sets``) links
@@ -119,7 +120,8 @@ def listed(ctx: base.RunContext, pacer: sec.Pacer, page: str | None = None, suff
     return out
 
 
-def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str, sub: str = "13f_sets") -> tuple[Path, bool]:
+def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str, sub: str = "13f_sets",
+             label: str = "13F") -> tuple[Path, bool]:
     """``(the set's zip under raw/sec/<sub>/, whether it replaced a kept one)``. A kept set is asked again with
     ``If-Modified-Since`` its ``Last-Modified`` (one without one is kept as it is); an answer that is not a zip is
     refused and not kept."""
@@ -132,20 +134,21 @@ def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str, sub: s
     if kept and (r.status_code == 304 or r.headers.get("last-modified") == seen):
         return path, False
     if not zipfile.is_zipfile(BytesIO(r.content)):
-        raise base.SourceError(f"data set {name}: the answer is not a zip ({len(r.content)} bytes)")
+        raise base.SourceError(f"{label} data set {name}: the answer is not a zip ({len(r.content)} bytes)")
     base.write_raw_json(_meta(path), {"url": url, "last_modified": r.headers.get("last-modified"),
                                       "fetched_at": time.time(), "run_id": ctx.run_id, "bytes": len(r.content)})
     return base.write_raw(path, r.content), kept
 
 
-def _clear_scratch(ctx: base.RunContext) -> None:
+def _clear_scratch(ctx: base.RunContext, sub: str = "13f_sets", label: str = "13F") -> None:
     """Remove the typing folders a killed run left beside the raw zips (several GB each; ``./app.sh clean-scratch``
     does not look here). One builder process writes, so a folder found before a fill is always a dead run's."""
-    stale = sorted(raw_dir().glob(SCRATCH + "*")) if raw_dir().is_dir() else []
+    root = raw_dir(sub)
+    stale = sorted(root.glob(SCRATCH + "*")) if root.is_dir() else []
     for d in stale:
         shutil.rmtree(d, ignore_errors=True)
     if stale:
-        ctx.notes.append(f"13F data sets: {len(stale)} typing folder of a killed run removed")
+        ctx.notes.append(f"{label} data sets: {len(stale)} typing folder of a killed run removed")
 
 
 def _reopen(feed: edgar.Feed, name: str, first: date, last: date) -> int:
@@ -176,14 +179,16 @@ def _header(path: Path) -> tuple[list[str], str]:
     return [c.strip() for c in first.decode("utf-8", errors="replace").rstrip("\r\n").split("\t")], ending
 
 
-def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, notes: list[str]) -> None:
+def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, notes: list[str],
+          members: tuple[str, ...] = MEMBERS, add_missing: dict[str, tuple[str, ...]] | None = None,
+          label: str = "13F") -> None:
     """The set's four tables as ``z_submission``, ``z_coverpage``, ``z_summarypage``, ``z_infotable`` (text). The
     columns are the member's own header line (no sniffing: the dialect is known). A row that does not read (a tab
     too few or too many, a byte that is not UTF-8) is left out and counted in ``notes``, not the whole set and the
     year's fill with it (13F review B3, 2026-10-30); the filing it belonged to says in its ``detail`` that fewer
     holdings were read than its summary counts. A set before 2023 has no ``FIGI`` column: it is added, empty (D4)."""
     with zipfile.ZipFile(zip_path) as z:
-        for table in MEMBERS:
+        for table in members:
             out = tmp / f"{table}.tsv"
             with z.open(_member(z, table)) as src, open(out, "wb") as dst:
                 shutil.copyfileobj(src, dst, 1 << 20)
@@ -197,10 +202,11 @@ def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, 
                               "FROM reject_errors").fetchone()
             con.execute("DROP TABLE reject_errors; DROP TABLE reject_scans")
             if bad[0]:
-                notes.append(f"13F data set {name}: {bad[0]} rows of {table}.tsv rejected (first: line {bad[1]}, "
+                notes.append(f"{label} data set {name}: {bad[0]} rows of {table}.tsv rejected (first: line {bad[1]}, "
                              f"{bad[2]})")
-            if table == "INFOTABLE" and "FIGI" not in cols:
-                con.execute("ALTER TABLE z_infotable ADD COLUMN FIGI VARCHAR")
+            for missing in (add_missing or {"INFOTABLE": ("FIGI",)}).get(table, ()):
+                if missing not in cols:
+                    con.execute(f"ALTER TABLE z_{table.lower()} ADD COLUMN {missing} VARCHAR")
             out.unlink()
 
 

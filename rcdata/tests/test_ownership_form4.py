@@ -112,17 +112,49 @@ def test_the_read_api_gives_a_tickers_transactions_with_provenance(feed):
     assert read.insider_transactions(["AAPL"]) == []                     # its one filing did not parse
 
 
-SETS_PAGE = "/data-research/sec-markets-data/insider-transactions-data-sets"
-SET_HREFS = ["/files/datastandardsinnovation/data/insider-transactions-data-sets/2026q3_form345.zip",
-             "/files/structureddata/data/insider-transactions-data-sets/2026q2_form345.zip",
+Q3, Q4 = "2026q3_form345.zip", "2026q4_form345.zip"
+SET_HREFS = [f"/files/datastandardsinnovation/data/insider-transactions-data-sets/{Q4}",
+             f"/files/structureddata/data/insider-transactions-data-sets/{Q3}",
              "/files/structureddata/data/insider-transactions-data-sets/2013q1_form345.zip"]
+BOSS = (1234567, "DOE JANE", "Director,Officer", "Chief Executive Officer")
+HOLDER = (7654321, "BIG HOLDER LP", "TenPercentOwnerOther", "")
 
 
-def _zip() -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("SUBMISSION.tsv", "ACCESSION_NUMBER\tDOCUMENT_TYPE\n0001234567-26-000001\t4\n")
-    return buf.getvalue()
+def _q3() -> bytes:
+    return ox.f345_set([
+        ox.f345_filing("0001234567-26-000021", "15-SEP-2026", 789019, "MICROSOFT CORP", "MSFT", [BOSS, HOLDER],
+                       non_derivative=[ox.f345_tx("S", 1000, 510.25, after=50000, date="14-SEP-2026"),
+                                       ox.f345_tx("P", 300, None, ad="A", after=50300, date="14-SEP-2026")],
+                       derivative=[ox.f345_tx("M", 2000, 0, after=0, date="14-SEP-2026", exercise=100,
+                                              underlying=2000, expires="01-JAN-2030", title="Stock Option")],
+                       aff10b5one="1"),
+        # Form 3 and Form 5 are in the same set; only sec/form4's own forms are typed, but the newest filing that
+        # bounds the set's days is read across all of them, so this one carries the quarter to its end.
+        ox.f345_filing("0001234567-26-000022", "30-SEP-2026", 789019, "MICROSOFT CORP", "MSFT", [BOSS], form="3"),
+        ox.f345_filing("0007654321-26-000023", "16-SEP-2026", 14693, "BROWN FORMAN CORP", "BF.B", [HOLDER],
+                       form="4/A"),
+    ], folder="2026Q3_FORM345")
+
+
+def _q4() -> bytes:
+    """The open-window set: published while the quarter runs, so its newest filing is 2 October."""
+    return ox.f345_set([
+        ox.f345_filing("0001234567-26-000031", "02-OCT-2026", 789019, "MICROSOFT CORP", "MSFT", [BOSS],
+                       non_derivative=[ox.f345_tx("A", 5, 1.0, ad="A", after=50305, date="01-OCT-2026")]),
+    ], without=("AFF10B5ONE",))
+
+
+@pytest.fixture
+def sets(feed, http_mock):
+    http_mock.add(ox.F345_PAGE_PATH, ox.sets_page(SET_HREFS))
+    http_mock.add(SET_HREFS[0], _q4())
+    http_mock.add(SET_HREFS[1], _q3(), headers={"last-modified": "Mon, 14 Sep 2026 16:43:16 GMT"})
+    oct5 = "2026-10-05"
+    feed.add_day(oct5, [(ox.idx_row(789019, "MICROSOFT CORP", "4", oct5, "0001234567-26-000041"),
+                         ox.f4_filing("0001234567-26-000041", oct5, 789019, "MICROSOFT CORP", "MSFT", [CEO],
+                                      non_derivative=[ox.f4_transaction("S", 10, 500.0, after=49990)]))])
+    feed.install(http_mock)
+    return feed
 
 
 def _backfill(start: str, end: str) -> dict:
@@ -130,22 +162,66 @@ def _backfill(start: str, end: str) -> dict:
                             sleep=lambda s: None)
 
 
-def test_a_backfill_keeps_the_insider_data_sets_and_walks_only_the_days_after_them(feed, http_mock):
-    oct1 = "2026-10-01"
-    feed.add_day(oct1, [(ox.idx_row(789019, "MICROSOFT CORP", "4", oct1, "0001234567-26-000011"),
-                         ox.f4_filing("0001234567-26-000011", oct1, 789019, "MICROSOFT CORP", "MSFT", [CEO],
-                                      non_derivative=[ox.f4_transaction("S", 10, 500.0, after=49990)]))])
-    feed.install(http_mock)
-    http_mock.add(SETS_PAGE, ox.sets_page(SET_HREFS))
-    for href in SET_HREFS[:2]:
-        http_mock.add(href, _zip(), headers={"last-modified": "Mon, 14 Sep 2026 16:43:16 GMT"})
-    row = _backfill("2026-09-01", "2026-10-02")
+def test_the_sets_fill_their_days_and_the_forms_walk_reads_only_what_they_leave(sets, http_mock):
+    row = _backfill("2026-09-01", "2026-10-05")
     assert row["result"] == "changed", row["note"]
     asked = [str(c.url) for c in http_mock.calls("_form345.zip")]
-    assert asked == [f"https://sec.test{SET_HREFS[0]}"]            # only the set that covers the range, its own folder
-    kept = sorted(p.name for p in sec13f_sets.raw_dir(form345_sets.SUB).glob("*.zip"))
-    assert kept == ["2026q3_form345.zip"]
-    # The walk starts after the newest set's window, not at the requested first day.
-    assert [str(c.url).rsplit(".", 2)[1] for c in http_mock.calls("/daily-index/")] == ["20261002", "20261001"]
-    assert "insider transactions data sets: kept as raw up to 2026-09-30, not typed yet" in row["note"]
-    assert _served("SELECT accession FROM insider_transactions") == [("0001234567-26-000011",)]
+    assert sorted(u.rsplit("/", 1)[1] for u in asked) == [Q3, Q4]                      # not 2013q1
+    assert f"https://sec.test{SET_HREFS[0]}" in asked                   # resolved against the page, its own folder
+    assert sorted(p.name for p in sec13f_sets.raw_dir(form345_sets.SUB).glob("*.zip")) == [Q3, Q4]
+    # The open-window set holds nothing after 2 October, so 5 October is left to the walk; nothing else is asked.
+    assert [str(c.url).rsplit(".", 2)[1] for c in http_mock.calls("/daily-index/")] == ["20261005"]
+    assert form4.DATASET.first_day() == date(2026, 9, 1)
+    assert form4.DATASET.is_done(date(2026, 9, 15)) and form4.DATASET.is_done(date(2026, 10, 1))
+    assert f"{form345_sets.LABEL} data set {Q4}: its newest filing is 2026-10-02" in row["note"]
+    assert _served("SELECT accession, form, filed, issuer_cik, ticker, owner_cik, owner_name, owners, is_director, "
+                   "is_officer, officer_title, is_ten_pct, is_other, aff10b5one, tx_table, line, status "
+                   "FROM insider_transactions ORDER BY filed, accession, tx_table, line") == [
+        ("0001234567-26-000021", "4", date(2026, 9, 15), "789019", "MSFT", "1234567", "DOE JANE", 2, True, True,
+         "Chief Executive Officer", False, False, True, "derivative", 0, "ok"),
+        ("0001234567-26-000021", "4", date(2026, 9, 15), "789019", "MSFT", "1234567", "DOE JANE", 2, True, True,
+         "Chief Executive Officer", False, False, True, "non_derivative", 0, "ok"),
+        ("0001234567-26-000021", "4", date(2026, 9, 15), "789019", "MSFT", "1234567", "DOE JANE", 2, True, True,
+         "Chief Executive Officer", False, False, True, "non_derivative", 1, "ok"),
+        ("0007654321-26-000023", "4/A", date(2026, 9, 16), "14693", "BF-B", "7654321", "BIG HOLDER LP", 1, False,
+         False, None, True, True, None, None, None, "no_transaction"),
+        ("0001234567-26-000031", "4", date(2026, 10, 2), "789019", "MSFT", "1234567", "DOE JANE", 1, True, True,
+         "Chief Executive Officer", False, False, None, "non_derivative", 0, "ok"),
+        # The last one the walk typed from the form itself, where aff10b5One is a real element.
+        ("0001234567-26-000041", "4", date(2026, 10, 5), "789019", "MSFT", "1234567", "DOE JANE", 1, True, True,
+         "Chief Executive Officer", False, False, True, "non_derivative", 0, "ok")]
+    # The transaction's own values, including the price a footnote carries (blank in the set, NULL here).
+    assert _served("SELECT tx_table, line, code, transaction_date, shares, price, acquired_disposed, shares_after, "
+                   "direct_indirect, security_title, exercise_price, underlying_title, underlying_shares, "
+                   "expiration_date FROM insider_transactions WHERE accession = '0001234567-26-000021' "
+                   "ORDER BY tx_table, line") == [
+        ("derivative", 0, "M", date(2026, 9, 14), 2000.0, 0.0, "D", 0.0, "D", "Stock Option", 100.0, "Stock Option",
+         2000.0, date(2030, 1, 1)),
+        ("non_derivative", 0, "S", date(2026, 9, 14), 1000.0, 510.25, "D", 50000.0, "D", "Common Stock", None, None,
+         None, None),
+        ("non_derivative", 1, "P", date(2026, 9, 14), 300.0, None, "A", 50300.0, "D", "Common Stock", None, None,
+         None, None)]
+    assert f"no {form345_sets.AFF} column, aff10b5one is NULL for it" in row["note"]
+
+
+def test_a_short_backfill_reads_the_forms_and_asks_for_no_set(sets, http_mock):
+    row = _backfill("2026-10-01", "2026-10-05")
+    assert row["result"] in ("changed", "unchanged"), row["note"]
+    assert http_mock.calls("_form345.zip") == []
+    assert "the data sets fill a range of" in row["note"]
+
+
+def test_a_set_already_held_is_asked_again_only_if_modified(sets, http_mock):
+    _backfill("2026-09-01", "2026-10-05")
+    before = sec13f_sets.raw_path(Q3, form345_sets.SUB).stat().st_mtime_ns
+    http_mock.routes.clear()
+    http_mock.requests.clear()
+    http_mock.add(ox.F345_PAGE_PATH, ox.sets_page(SET_HREFS))
+    http_mock.add(SET_HREFS[1], b"", status=304, headers={"last-modified": "Mon, 14 Sep 2026 16:43:16 GMT"})
+    http_mock.add(SET_HREFS[0], _q4())
+    sets.install(http_mock)
+    row = _backfill("2026-09-01", "2026-10-05")
+    assert row["result"] == "unchanged", row["note"]
+    asked = [c for c in http_mock.calls(Q3)]
+    assert len(asked) == 1 and asked[0].headers["if-modified-since"] == "Mon, 14 Sep 2026 16:43:16 GMT"
+    assert sec13f_sets.raw_path(Q3, form345_sets.SUB).stat().st_mtime_ns == before

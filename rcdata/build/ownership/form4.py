@@ -46,6 +46,7 @@ ROWS = [("accession", "TEXT"), ("form", "TEXT"), ("filed", "DATE"), ("index_day"
 SERVED = ROWS[:8] + [("ticker", "TEXT"), ("ticker_source", "TEXT")] + ROWS[8:] + [("source", "TEXT")]
 TABLES = (("non_derivative", "nonderivativetable/nonderivativetransaction"),
           ("derivative", "derivativetable/derivativetransaction"))
+SETS_SCHEMA = {"forms": FORMS, "rows": ROWS}
 
 
 def _flag(raw) -> bool | None:
@@ -126,12 +127,13 @@ class SecForm4(edgar.Feed):
     budget_s = BUDGET_S
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
-        """The SEC's Insider Transactions data sets are downloaded for the days they cover (``form345_sets``, raw
-        only for now) and the forms walk takes the days after them: 2014 to today is 52 zips instead of about two
-        million filings. Until the typing lands, those days hold no rows."""
+        """The SEC's Insider Transactions data sets fill the days they cover (``form345_sets``: the first fill, 51
+        zips for 2014 to today instead of about two million filings), then the forms walk takes the range's days no
+        set covers (after the newest set)."""
         first = start or end
-        covered = form345_sets.fetch(ctx, first, min(end, calendar.today_ny() - timedelta(days=1)))
-        super().backfill(ctx, max(first, covered + timedelta(days=1)) if covered else first, end)
+        self.move_start(first)
+        form345_sets.fill(ctx, self, first, min(end, calendar.today_ny() - timedelta(days=1)), SETS_SCHEMA)
+        super().backfill(ctx, first, end)
 
     def type_day(self, ctx: base.RunContext, day: date) -> list[Path]:
         con = duckdb.connect()
