@@ -70,10 +70,10 @@ def _day_raw_held(ds) -> bool:
 def is_due(ds, mode: str = "full") -> tuple[bool, str]:
     """``(due, why)`` for dataset ``ds``, from its ``dataset_schedule`` row and its newest ``dataset_check`` row;
     ``mode`` is its kind's automation (``ops.KIND_MODES``)."""
-    if mode == "off":
-        return False, f"automation off for {ds.kind}"
     if getattr(ds, "attended", False):
         return False, ATTENDED_WHY
+    if mode == "off":                       # after attended: the Settings row reads "by hand only" first too
+        return False, f"automation off for {ds.kind}"
     if getattr(ds, "starts_by_hand", False) and not ops.ever_built(ds.name):
         return False, BY_HAND_WHY
     schedule = ops.schedule_get(ds.name) or {}
