@@ -71,13 +71,38 @@ def test_the_served_table_is_its_own_and_the_schema_says_so():
     assert "eps_reported" not in facts.FIELDS
 
 
-def test_the_endpoint_writes_a_share_class_the_way_uw_does():
+
+def _asked_paths(call):
+    """The URL paths a real :class:`UWClient` sends for ``call(client)``, read at the HTTP boundary."""
+    import httpx
+    from RevenueChaser.core.providers.unusual_whales import UWClient
+    seen: list[str] = []
+
+    def answer(request):
+        seen.append(request.url.raw_path.decode())
+        return httpx.Response(200, json=[])
+
+    client = UWClient(key="test", sleep=lambda _s: None)
+    client._client = httpx.Client(transport=httpx.MockTransport(answer))
+    call(client)
+    return seen
+
+
+def test_the_request_writes_a_share_class_the_way_uw_does():
     """UW writes a share class with a dot; the SEC's files and the spine write it with a dash. Asked with the
-    dash, UW answers 422 (BRK-A, BF-A, AKO-A, CRD-A, MOG-A, the five of 5,304 that failed on 6 Nov 2026)."""
-    from RevenueChaser.core.providers.unusual_whales import _seg
+    dash, UW answers 422 (BRK-A, BF-A, AKO-A, CRD-A, MOG-A, the five of 5,304 that failed on 6 Nov 2026).
+    Read from the request the dataset actually sends (``stock_earnings_result``), not from a helper beside it."""
+    assert _asked_paths(lambda c: c.stock_earnings_result("BRK-A")) == ["/api/stock/BRK.A/earnings"]
+    assert _asked_paths(lambda c: c.fundamentals_result("BF-A")) == ["/api/stock/BF.A/financials"]
+    assert _asked_paths(lambda c: c.stock_earnings_result("AAPL")) == ["/api/stock/AAPL/earnings"]
+    # The recorded endpoint names the same path the request asked.
     from RevenueChaser.rcdata.build.fundamentals import uw_financials
     assert uw_earnings.endpoint("BRK-A") == "/stock/BRK.A/earnings"
     assert uw_financials.endpoint("BRK-A") == "/stock/BRK.A/financials"
-    assert uw_earnings.endpoint("AAPL") == "/stock/AAPL/earnings"
-    # A segment of UW's that is not a ticker carries no dash, and the encoding guarantee is unchanged.
-    assert (_seg("afterhours"), _seg("1d"), _seg("a/b")) == ("afterhours", "1d", "a%2Fb")
+
+
+def test_the_segment_encoder_stays_a_pure_encoder():
+    """``_seg`` percent-encodes and changes no character; the UW spelling is ``uw_symbol``'s job alone."""
+    from RevenueChaser.core.providers.unusual_whales import _seg, uw_symbol
+    assert (_seg("BRK-A"), _seg("afterhours"), _seg("1d"), _seg("a/b")) == ("BRK-A", "afterhours", "1d", "a%2Fb")
+    assert (uw_symbol("BRK-A"), uw_symbol("BRK.B"), uw_symbol("AAPL")) == ("BRK.A", "BRK.B", "AAPL")
