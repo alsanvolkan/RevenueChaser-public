@@ -753,10 +753,30 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
             "boardInfo": board_info, "tableReads": table_reads, "needReader": need_reader}
 
 
-def _timer(reader) -> dict:
-    """``{"state", "last", "next", "minute"}`` from ``reader()``; all None when there is no reader or it fails."""
-    if reader is None:
+BUILDER_ENTRY = "RC-Build"
+
+
+def read_timer(scheduler=None) -> dict:
+    """The hourly builder timer (``core.automations``' ``RC-Build`` row, unit ``life-rc-builder``): ``state`` "on"
+    while the timer is active, "off" when disabled; ``last`` / ``next`` its passes; ``minute`` the minute of its
+    ``OnCalendar``. Not installed, no scheduler on this host, or a read that fails: every value None."""
+    from RevenueChaser.core import automations
+    try:
+        scheduler = scheduler or automations.get_scheduler()
+        st = scheduler.status(BUILDER_ENTRY)
+        if st is None:
+            return dict(NO_TIMER)
+        spec = automations.on_calendar(automations.entry(BUILDER_ENTRY))
+        minute = int(spec.split()[-1].split(":")[1])
+    except Exception:  # noqa: BLE001 - a timer that cannot be read is "not known", never a guess
         return dict(NO_TIMER)
+    return {"state": "off" if st.state == "disabled" else "on", "last": st.last_run, "next": st.next_run,
+            "minute": minute}
+
+
+def _timer(reader) -> dict:
+    """``{"state", "last", "next", "minute"}`` from ``reader()`` (default ``read_timer``); all None when it fails."""
+    reader = reader or read_timer
     try:
         got = reader() or {}
         return {k: got.get(k) for k in NO_TIMER}
