@@ -266,3 +266,41 @@ def test_the_script_selects_a_file_from_the_picker_the_diagram_and_by_file():
     assert "aria-selected" in blk and "fpanel" in blk
     assert "data-node^=\"file:\"" in blk or "data-node^='file:'" in blk
     assert "data-pick" in blk and "scrollTo" in blk
+
+
+# ── One Data panel ───────────────────────────────────────────────────────────────────────────────────────────
+
+def test_render_data_holds_the_parts_in_order():
+    html = control_render.render_data(_view())
+    marks = ['<h1>Data/Health · Data</h1>', 'id="sec-health"', 'id="sec-flow"', 'id="fpick"',
+             'class="fpanel" data-file="spine.duckdb"', 'id="sec-crosscheck"']
+    at = [html.index(m) for m in marks]
+    assert at == sorted(at)
+    assert "Fetch puts one request in the builder's queue; Pause holds the dataset: the hourly pass skips it until "
+    "Resume." in html
+
+
+def test_one_panel_per_file_in_plan_order_only_the_first_shown():
+    v = _view()
+    html = control_render.render_data(v)
+    panels = re.findall(r'<section class="fpanel" data-file="([^"]+)" id="fp-\w+" style="--fh:#[0-9a-f]{6}"( hidden)?>',
+                        html)
+    assert [p[0] for p in panels] == [f["name"] for f in v["files"]]
+    assert [bool(p[1]) for p in panels] == [False] + [True] * 5
+    one = html[html.index('class="fpanel" data-file="prices.duckdb"'):html.index('class="fpanel" data-file="fund')]
+    at = [one.index(m) for m in ('class="sources', 'class="journey"', 'class="pictrow"')]
+    assert at == sorted(at)
+
+
+def test_the_old_controls_are_gone_and_fetch_is_an_empty_alias():
+    html = control_render.render_data(_view())
+    assert 'id="openall"' not in html and 'id="shutall"' not in html and 'id="dataempty"' not in html
+    assert "No file matches the diagram" not in html
+    assert control_render.render_fetch(_view()) == ""
+    assert html.count('id="universe"') == 1
+    assert "WIAL" not in html and "cannot be taken back" not in control_render.WIAL
+
+
+def test_render_data_renders_without_the_new_fields():
+    html = control_render.render_data(control.build(control_nd(), now=NOW))
+    assert html.count('class="fpanel"') == 6 and 'id="fpick"' in html

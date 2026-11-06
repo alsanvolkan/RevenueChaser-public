@@ -210,11 +210,6 @@
     else if (j === 'picture') picture(b);
   });
 
-  /* open and close every file of the Data section */
-  function all(v) { [].forEach.call(root.querySelectorAll('#sec-data details.group'), function (d) { d.open = v; }); }
-  var oa = document.getElementById('openall'), ca = document.getElementById('shutall');
-  if (oa && oa.addEventListener) oa.addEventListener('click', function () { all(true); });
-  if (ca && ca.addEventListener) ca.addEventListener('click', function () { all(false); });
 })();
 
 /* The universe control (Karar 86 A). A press on a tier set or a group makes a draft; Apply saves it (the board
@@ -611,15 +606,13 @@
     return d.getAttribute('data-st') === f;
   }
   function filter(f) {
-    var ds = [].slice.call(document.querySelectorAll('#sec-fetch .fgroup > .dset')), n = 0;
+    var ds = [].slice.call(document.querySelectorAll('.ctl .sources .sgrid > .dset')), n = 0;
     ds.forEach(function (d) { var ok = !f || match(d, f); d.hidden = !ok; if (ok) n++; });
-    [].forEach.call(document.querySelectorAll('#sec-fetch .fgroup'), function (g) { g.hidden = !!f && !g.querySelector('.dset:not([hidden])'); });
-    var u = document.getElementById('universe'), lg = document.querySelector('#sec-fetch .flegend');
-    if (u) u.hidden = !!f; if (lg) lg.hidden = !!f;
+    [].forEach.call(document.querySelectorAll('.ctl .sources .sgrid'), function (g) { g.hidden = !!f && !g.querySelector('.dset:not([hidden])'); });
     [].forEach.call(document.querySelectorAll('#sec-health .tile[data-f]'), function (t) { if (NAME[t.getAttribute('data-f')]) t.setAttribute('aria-pressed', f && t.getAttribute('data-f') === f ? 'true' : 'false'); });
     if (!f) { bar.hidden = true; empty.hidden = true; return; }
     bar.hidden = false;
-    bar.innerHTML = '<span>Fetch shows the datasets <b>' + rcEsc(NAME[f]) + '</b>: ' + n + ' of ' + ds.length + ' rows</span><button type="button" class="lnk" data-ffclear>Show every dataset</button>';
+    bar.innerHTML = '<span>The sources show the datasets <b>' + rcEsc(NAME[f]) + '</b>: ' + n + ' of ' + ds.length + ' rows</span><button type="button" class="lnk" data-ffclear>Show every dataset</button>';
     empty.hidden = !!n;
     if (!n) empty.innerHTML = '<b>Nothing to show:</b> none of the ' + ds.length + ' rows matches. <button type="button" class="lnk" data-ffclear>Show every dataset</button>';
   }
@@ -631,9 +624,9 @@
     var f = t.getAttribute('data-f');
     if (f === 'universe') { if (cur) { cur = null; filter(null); } X.scrollTo(document.getElementById('universe')); return; }
     if (f === 'queue' || f === 'builder') { var q = document.getElementById('sec-queue'); if (q) { q.open = true; X.scrollTo(q); } return; }
-    if (f === 'cap') { var p = document.getElementById('sec-providers'); if (p) { p.open = true; X.scrollTo(p); } return; }
+    if (f === 'cap') { var p = document.querySelector('.ctl .fpanel:not([hidden]) details.provs'); if (p) { p.open = true; X.scrollTo(p); } return; }
     cur = cur === f ? null : f; filter(cur);
-    var s = document.getElementById('sec-fetch'); if (cur && s) { s.open = true; X.scrollTo(s); }
+    var s = document.getElementById('ffilter'); if (cur && s) X.scrollTo(s);
   });
   [].forEach.call(document.querySelectorAll('#sec-health .tile[data-f]'), function (t) { if (NAME[t.getAttribute('data-f')]) t.setAttribute('aria-pressed', 'false'); });
 })();

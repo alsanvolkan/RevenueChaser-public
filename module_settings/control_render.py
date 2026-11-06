@@ -75,14 +75,14 @@ WIAL = ("<p>This page is the control board for every dataset the system holds. I
         "<p>The numbers are read on every render: health, row counts and run history come from <code>ops.sqlite</code>; "
         "row counts, sizes and example rows come from the serving files themselves, read once an hour. A value that "
         "could not be read is written as unknown, never shown as zero.</p>"
-        "<p><b>What a press does.</b> Fetch and Pause put one request in the builder's queue (it runs at its next "
-        "pass); a queued request cannot be taken back, there is no cancel route. Apply saves the universe. Fill and "
+        "<p><b>What a press does.</b> Fetch puts one request in the builder's queue; Pause holds the dataset: the "
+        "hourly pass skips it until Resume. Apply saves the universe. Fill and "
         "&ldquo;Fill this range&rdquo; stay off until your word. Refresh the example rows reads five rows of the live "
         "file and calls no provider.</p>")
 
 
 def _header(view: dict) -> str:
-    return (f'<h1>Settings · Data</h1>'
+    return (f'<h1>Data/Health · Data</h1>'
             f'<p class="sub"><b>Read {esc(view["read_at"])}</b> (Amsterdam) · source: <code>ops.sqlite</code> + the '
             f'serving files · after {STALE_MINUTES} minutes a strip on top says the numbers are old '
             '<button class="wiali" type="button" aria-expanded="false" aria-controls="wial">What am I looking at?'
@@ -231,29 +231,6 @@ def _legend(view: dict) -> str:
 
 # ── Fetch: one row a dataset ──────────────────────────────────────────────────────────────────────────────────
 
-def _fetch_buttons(d: dict, view: dict) -> tuple[str, str]:
-    name = d["dataset"]
-    if d["attended"]:
-        return ((f'<button type="button" class="btn" data-job="copy" data-cmd="{esc(d["command"] or "")}">'
-                 'Copy the command</button><button type="button" class="btn" disabled>Fetch</button>'),
-                '<b>Fetch is off:</b> a hand-run dataset · <b>Copy the command</b> runs it in the foreground on the '
-                'server; it asks for Duo')
-    if not d["fetch"]["self"]:
-        return ('<span class="dbnote">fetched by <button type="button" class="lnk" data-goto="universe">Fetch the '
-                'universe</button> above</span>', "")
-    f = d["fetch"]
-    runs = ""
-    if f["honours_scope"] and view["scope"] is not None:
-        runs = " · runs on the universe above"
-    left = ""
-    if f["provider"] and f["cap"] is not None and f["remaining"] is not None:
-        left = f' · {control.count(f["remaining"])} of {control.count(f["cap"])} {esc(f["provider"])} calls left today'
-    return (f'<button type="button" class="btn go" data-job="fetch" data-dataset="{esc(name)}" '
-            f'data-scope="{1 if f["honours_scope"] else 0}">Fetch</button>',
-            f'<b>Fetch</b> puts one request in the queue{runs}{left} · <b>cannot be taken back:</b> a queued request '
-            'cannot be cancelled')
-
-
 def _fill_row(d: dict, view: dict) -> str:
     fill = d["fill"]
     if not fill["cells"]:
@@ -321,36 +298,6 @@ def _acts(d: dict, pause: bool = True) -> str:
     cal = (f'<div class="bfcal" id="bf-{esc(_cal_key(d["dataset"]))}" data-bf="{esc(_cal_key(d["dataset"]))}" hidden>'
            '</div>' if d["calendar"] else "")
     return f'<div class="acts">{"".join(parts)}<p class="cost">{" · ".join(cost)}</p></div>{cal}'
-
-
-def _dset(d: dict, view: dict) -> str:
-    pills = ""
-    if d["attended"]:
-        pills += '<span class="pill p-src">hand-run</span>'
-    if d["build"]:
-        pills += '<span class="pill p-new">build</span>'
-    pills += f'<span class="pill {esc(d["pill"])}">{esc(d["status_words"])}</span>'
-    counts = f'<span class="cnt"><span class="ck">rows</span><b>{control.count(d["rows"])}</b></span>'
-    if d["added"] is not None or d["removed"] is not None:
-        counts += (f'<span class="cnt"><span class="ck">last run</span><b>+{control.count(d["added"])} / '
-                   f'−{control.count(d["removed"])}</b></span>')
-    if d["dataset"] == "spine/security":
-        counts += (f'<span class="cnt uni-n"><span class="ck">in the universe</span>'
-                   f'<b>{control.count(view["universe"]["size"])}</b></span>')
-    meters = ""
-    if d["coverage"]:
-        c = d["coverage"]
-        meters += _meter("cov", c["cls"], "coverage", c["share"], c["text"], c["target"])
-    a = d["age"]
-    meters += _meter("age", a["cls"], "since the last check", a["share"], a["text"])
-    buttons, cost = _fetch_buttons(d, view)
-    return (
-        f'<div class="dset" data-st="{esc(d["filter"])}" data-prob="{d["issues_open"]}" '
-        f'data-tags="{esc(" ".join(d["tags"]))}" data-dataset="{esc(d["dataset"])}">'
-        f'<div class="dshead"><span class="dsname">{esc(d["dataset"])}</span><span class="dslabel">{esc(d["label"])}'
-        f'</span>{pills}</div><div class="dbar"><div class="dbc">{counts}</div>{meters}'
-        f'<div class="dbb">{buttons}</div>' + (f'<p class="cost">{cost}</p>' if cost else "") + '</div>'
-        f'{_fill_row(d, view)}{_problems(d)}{_acts(d)}</div>')
 
 
 # ── Stage 1: Sources, one panel a file (#492 C1) ─────────────────────────────────────────────────────────────
@@ -527,22 +474,6 @@ def _uni_cards(view: dict) -> str:
             f'{report._nd_my_universe(mine) if mine is not None else ""}</div>')
 
 
-def _fetch(view: dict) -> str:
-    groups = []
-    for f in view["files"]:
-        pills = "".join(f'<span class="pill {esc(c)}">{esc(t)}</span>' for c, t in f["health"]["pills"])
-        runs = (f'runs on <b class="runs-on">{esc(view["universe_summary"])}</b> · set by the universe at the top '
-                'of this section' if f["runs_on_universe"] else esc(f["words"]))
-        rows = "".join(_dset(d, view) for d in f["datasets"])
-        groups.append(f'<div class="fgroup" style="--fh:{esc(f["color"])}" data-file="{esc(f["name"])}">'
-                      f'<div class="fgh"><span class="fgn">{esc(f["name"])}</span><span class="gstep">'
-                      f'{esc(f["steps"])}</span>{pills}</div><p class="runs">{runs}</p>{rows}</div>')
-    return ('<details class="sec" id="sec-fetch" open><summary><h2>Fetch · every dataset, its bar, its Fill by tier '
-            'set</h2><span class="secs">the universe · one bar a dataset · Fill and Backfill</span></summary>'
-            '<div class="fetchwrap"><div class="ffilter" id="ffilter" hidden></div><div class="emptyst" id="ffempty" '
-            f'hidden></div>{_universe(view)}{_legend(view)}{"".join(groups)}{_picture_control(view)}</div></details>')
-
-
 def _picture_control(view: dict) -> str:
     """The **Take the disk picture** press (#434). It sits in Fetch because this is where a press belongs
     (``docs/data_health.md``: the Data section shows bars and no button), while the picture's age sits beside the
@@ -636,7 +567,7 @@ def _providers(view: dict, sid: str | None = "sec-providers") -> str:
     secs = f'{len(view["providers"])} providers · day cap, pace and the provider\'s rule' + (
         " · " + ", ".join(f'{p["name"]} at {p["share"]:.0%}' for p in near) if near else "")
     ident = f' id="{sid}"' if sid else ""
-    return (f'<details class="sec"{ident}><summary><h2>Providers and daily limits</h2>'
+    return (f'<details class="sec provs"{ident}><summary><h2>Providers and daily limits</h2>'
             f'<span class="secs">{esc(secs)}</span></summary><div class="group" style="border-left-color:var(--l-src)">'
             f'<p class="psrc">{PROVIDERS_SOURCE}</p>'
             '<div class="plims"><div class="plim ph" aria-hidden="true"><span>Provider</span><span>Used today against '
@@ -841,36 +772,6 @@ def _health_table(f: dict) -> str:
             'under its dataset in the Fetch section.</p></details>')
 
 
-def _data(view: dict) -> str:
-    cards = []
-    for f in view["files"]:
-        pills = "".join(f'<span class="pill {esc(c)}">{esc(t)}</span>' for c, t in f["health"]["pills"])
-        targets = "".join(
-            f'<div class="tgt"><div class="tgth"><span class="dsname">{esc(d["dataset"])}</span><span class="dslabel">'
-            f'{esc(d["label"])}</span><span class="pill {esc(d["pill"])}">{esc(d["status_words"])}</span></div>'
-            + _meter("cov", d["coverage"]["cls"], "coverage", d["coverage"]["share"], d["coverage"]["text"],
-                     d["coverage"]["target"]) + '</div>'
-            for d in f["datasets"] if d["coverage"])
-        tgt = (f'<div class="cbars"><p class="tgtnote">How full each dataset\'s target is · Fetch, Fill and Backfill '
-               f'are on the Fetch tab</p>{targets}</div>' if targets else "")
-        cards.append(f'<details class="group" style="--fh:{esc(f["color"])}" data-file="{esc(f["name"])}"><summary>'
-                     f'<div class="ghead"><h3>{esc(f["name"])}</h3><span class="gstep">{esc(f["steps"])}</span>{pills}'
-                     f'</div></summary>{tgt}{_journey(f)}{_samples(f)}{_health_table(f)}</details>')
-    return ('<details class="sec" id="sec-data"><summary><h2>Data, file by file · in build order</h2>'
-            f'<span class="secs" id="datasum">{len(view["files"])} files · how full each dataset is, the journey of '
-            'each step, who reads which table · the flow diagram filters this list</span></summary>'
-            '<div class="allctl"><button type="button" class="btn" id="openall">Open every file</button>'
-            '<button type="button" class="btn" id="shutall">Close every file</button><span class="dim" id="cardsum">'
-            'every file is closed when the page loads · the flow diagram above filters this list</span></div>'
-            '<div class="emptyst" id="dataempty" hidden><b>No file matches the diagram\'s picks.</b> <button '
-            'type="button" class="lnk" data-clearpicks>Clear the picks</button></div>'
-            '<div class="group" style="border-left-color:var(--mut)"><p class="hint">Each card\'s table is the build '
-            'order: one line per step, with its status · <span class="pill p-ok">built</span> ran against real data · '
-            '<span class="pill p-warn">tested</span> the code and tests exist, no run on record yet · <span class="pill '
-            'p-src">hand-run</span> needs a login on the server.</p></div>'
-            f'{"".join(cards)}</details>')
-
-
 # ── Cross-check, queue ────────────────────────────────────────────────────────────────────────────────────────
 
 def _cross(view: dict) -> str:
@@ -935,7 +836,7 @@ def client(view: dict) -> dict:
 
 def _err(view: dict) -> str:
     """The one line a panel is when the model could not be built."""
-    return ('<section class="ctl"><div class="wrap"><h1>Settings · Data</h1><div class="errbar"><b>Could not read</b> '
+    return ('<section class="ctl"><div class="wrap"><h1>Data/Health · Data</h1><div class="errbar"><b>Could not read</b> '
             f'· {esc(view["error"])}</div></div></section>')
 
 
@@ -945,22 +846,29 @@ def _ready(view: dict) -> dict:
             + f' · {control.count(view["universe"]["size"])} names'}
 
 
+def _panel(f: dict, view: dict, first: bool) -> str:
+    """One served file's panel: its sources, its journey, the disk picture press, its example rows and health."""
+    return (f'<section class="fpanel" data-file="{esc(f["name"])}" id="fp-{esc(f["kind"])}" '
+            f'style="--fh:{esc(f["color"])}"{"" if first else " hidden"}>'
+            f'{_sources(f, view)}{_journey(f)}{_picture_control(view)}{_samples(f)}{_health_table(f)}</section>')
+
+
 def render_data(view: dict) -> str:
-    """The Data tab's panel (#331): what the store holds, where it comes from, and what disagrees."""
+    """The Data tab's panel (#331, #492): the header, Health right now, the flow diagram, the file picker, one panel
+    a served file in plan order, then Cross-check."""
     if view.get("error"):
         return _err(view)
     view = _ready(view)
-    return ('<section id="ctl" class="ctl" aria-label="Settings · Data control board"><div class="wrap">'
-            f'{_header(view)}{_health(view)}{_flow(view)}{_data(view)}{_cross(view)}</div></section>')
+    panels = "".join(_panel(f, view, i == 0) for i, f in enumerate(view["files"]))
+    return ('<section id="ctl" class="ctl" aria-label="Data/Health · Data control board"><div class="wrap">'
+            f'{_header(view)}{_health(view)}{_flow(view)}{_picker(view)}'
+            '<div class="ffilter" id="ffilter" hidden></div><div class="emptyst" id="ffempty" hidden></div>'
+            f'<div class="fpanels">{panels}</div>{_cross(view)}</div></section>')
 
 
 def render_fetch(view: dict) -> str:
-    """The Fetch tab's panel (#331): the universe, every dataset's bar, the providers and the queue."""
-    if view.get("error"):
-        return _err(view)
-    view = _ready(view)
-    return ('<section id="ctl-fetch" class="ctl" aria-label="Settings · Fetch control board"><div class="wrap">'
-            f'{_fetch(view)}{_providers(view)}{_queue(view)}</div></section>')
+    """Kept as a thin alias while the shell still calls it: the Fetch content now lives in ``render_data``."""
+    return ""
 
 
 def scripts(view: dict) -> str:

@@ -15,10 +15,9 @@ from RevenueChaser.module_settings import control, control_render, report
 from RevenueChaser.module_settings.tests.test_control_view import NOW, control_nd
 from RevenueChaser.rcdata.needs import screen
 
-SECTIONS = ("sec-health", "sec-fetch", "sec-flow", "sec-providers", "sec-data", "sec-crosscheck", "sec-queue")
-#: the sections of each tab panel (#331 step 1), in the order they are rendered
-DATA_SECTIONS = ("sec-health", "sec-flow", "sec-data", "sec-crosscheck")
-FETCH_SECTIONS = ("sec-fetch", "sec-providers", "sec-queue")
+SECTIONS = ("sec-health", "sec-flow", "sec-crosscheck")
+#: the sections of the Data panel (#492 C1: the Fetch content moved in, one panel a file between flow and cross-check)
+DATA_SECTIONS = ("sec-health", "sec-flow", "sec-crosscheck")
 
 
 def _page(nd=None) -> str:
@@ -38,8 +37,8 @@ def _section(html: str, sec: str) -> str:
 
 def test_the_board_is_on_top_in_the_designed_order_and_the_old_sections_fold_below():
     html = _page()
-    at = [html.index(f'id="{s}"') for s in DATA_SECTIONS + FETCH_SECTIONS]
-    assert at == sorted(at), "Health, the flow diagram, Data, cross-check, then Fetch, Providers and the queue"
+    at = [html.index(f'id="{s}"') for s in DATA_SECTIONS]
+    assert at == sorted(at), "Health, the flow diagram, then cross-check"
     fold = html.index('id="old-settings"')
     assert html.index('id="sec-crosscheck"') < fold < html.index('id="newdata"') < html.index('id="ticker-drill"')
     assert '<details class="oldfold" id="old-settings">' in html, "folded, not deleted: closed until pressed"
@@ -48,15 +47,12 @@ def test_the_board_is_on_top_in_the_designed_order_and_the_old_sections_fold_bel
 def test_each_section_sits_in_one_panel_only_and_none_is_lost():
     html = _page()
     data = _between(html, 'id="panel-data"', 'id="panel-fetch"')
-    fetch = _between(html, 'id="panel-fetch"', 'id="needs"')
     for sec in SECTIONS:
         assert html.count(f'id="{sec}"') == 1, f"{sec} is rendered twice"
     for sec in DATA_SECTIONS:
         assert f'id="{sec}"' in data, sec
-    for sec in FETCH_SECTIONS:
-        assert f'id="{sec}"' in fetch, sec
     assert 'id="old-settings"' in data, "the old fold stays at the bottom of Data"
-    assert 'id="universe"' in fetch, "the universe strip and its legend ride with Fetch"
+    assert html.count('id="universe"') == 1 and 'id="universe"' in data, "the universe rides in the spine's box"
 
 
 def test_the_fetch_tab_has_its_button_its_panel_and_its_hash():
@@ -73,28 +69,30 @@ def test_health_fetch_and_the_flow_open_the_rest_closed():
     for sec in SECTIONS:
         tag = re.search(r'<details class="sec" id="' + sec + r'"( open)?>', html)
         assert tag, sec
-        assert bool(tag.group(1)) == (sec in ("sec-health", "sec-fetch", "sec-flow")), sec
+        assert bool(tag.group(1)) == (sec in ("sec-health", "sec-flow")), sec
 
 
-def test_the_data_cards_show_bars_and_no_fetch_fill_or_pause():
-    data = _section(_page(), "sec-data")
-    assert 'data-job=' not in data, "Fetch, Fill, Backfill and Pause are in the Fetch section only"
-    assert "meter cov" in data
+def _panels(html: str) -> str:
+    return _between(html, 'class="fpanels"', 'id="sec-crosscheck"')
 
 
-def test_fetch_and_pause_carry_their_dataset_and_the_scope_flag():
-    fetch = _section(_page(), "sec-fetch")
-    bars = re.search(r'<button type="button" class="btn go" data-job="fetch" data-dataset="alpaca/bars" '
-                     r'data-scope="(\d)">Fetch</button>', fetch)
+def test_the_file_panels_show_bars():
+    assert "meter cov" in _panels(_page())
+
+
+def test_the_one_button_carries_its_dataset_and_the_scope_flag():
+    fetch = _panels(_page())
+    bars = re.search(r'<button type="button" class="btn go one" data-job="one" data-state="fetch" '
+                     r'data-dataset="alpaca/bars" data-scope="(\d)">Fetch</button>', fetch)
     assert bars and bars.group(1) == "1", "alpaca/bars asks the names a scope names (honours_scope)"
-    assert 'data-job="fetch" data-dataset="sec/13f" data-scope="0"' in fetch
-    assert 'data-job="pause" data-dataset="alpaca/bars" aria-pressed="false"' in fetch
-    assert 'data-job="fetch" data-dataset="wrds/prices"' not in fetch, "a hand-run dataset has no live Fetch"
+    assert 'data-dataset="sec/13f" data-scope="0"' in fetch
+    assert 'data-job="pause"' not in fetch, "no separate Pause button is left"
+    assert 'data-dataset="wrds/prices" data-scope' not in fetch, "a hand-run dataset has no live Fetch"
     assert 'data-job="copy"' in fetch
 
 
 def test_the_fill_cells_of_a_calendar_dataset_open_its_calendar(monkeypatch):
-    fetch = _section(_page(), "sec-fetch")
+    fetch = _panels(_page())
     cells = re.findall(r'<button type="button" class="fc [^"]*fopen" data-bf="alpaca-bars" data-g="(\w)"', fetch)
     assert cells == ["A", "E", "R"]
     assert '<div class="bfcal" id="bf-alpaca-bars" data-bf="alpaca-bars" hidden></div>' in fetch
@@ -116,10 +114,10 @@ def test_a_fill_cell_without_a_calendar_is_disabled_until_the_switch(monkeypatch
     nd = control_nd()
     nd["datasets"].append({**nd["datasets"][0], "dataset": "yfinance/float", "label": "Float (Yahoo)"})
     monkeypatch.delenv(screen.FILL_ENV, raising=False)
-    off = _section(_page(nd), "sec-fetch")
+    off = _panels(_page(nd))
     assert re.search(r'data-job="fill" data-dataset="yfinance/float" data-g="A" disabled', off)
     monkeypatch.setenv(screen.FILL_ENV, "1")
-    on = _section(_page(nd), "sec-fetch")
+    on = _panels(_page(nd))
     assert re.search(r'data-job="fill" data-dataset="yfinance/float" data-g="A" aria-label', on)
 
 
@@ -176,10 +174,10 @@ def test_every_hostile_string_is_escaped_and_the_scripts_parse(tmp_path):
     nd["queue"]["active"][0]["note"] = H("queue_note")
     nd["universe"]["tickers"]["E"] = [H("ticker")]
     html = _page(nd)
-    # both panels of the board: Data up to the old fold, then Fetch
-    ctl = (_between(html, '<section id="ctl"', '<details class="oldfold"')
-           + _between(html, '<section id="ctl-fetch"', 'id="needs"'))
-    for tag in ("label", "reason", "kind", "detail", "note", "col", "cell", "queue_note"):
+    # the board's one panel, up to the old fold (#492 C1: the status reason left the source box and the queue
+    # table moved to the Health tab, drawn by another slice)
+    ctl = _between(html, '<section id="ctl"', '<details class="oldfold"')
+    for tag in ("label", "kind", "detail", "note", "col", "cell"):
         assert f"onerror=__x(&#x27;{tag}T&#x27;)" in ctl or tag in ("ticker",), tag
     assert_inert(html)
     check_page(html)
