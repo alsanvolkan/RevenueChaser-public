@@ -29,7 +29,7 @@
 
 /* ── The Needs tab ── */
 #needs *{box-sizing:border-box}
-#needs{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body);min-height:100vh}
+#needs{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body)}
 #needs .wrap{max-width:1600px;margin:0 auto;padding-block:20px 56px;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 #needs h1{font-size:25px;margin:0 0 2px;letter-spacing:-.01em;text-wrap:balance}
@@ -97,4 +97,19 @@
   #needs table.stk td.nm{font-size:14px;padding-bottom:6px}
   #needs table.stk td:not(.nm)::before{content:attr(data-label);display:block;font-size:10.5px;text-transform:uppercase;
     letter-spacing:.06em;color:var(--mut);font-weight:700}
+}
+
+/* ── The catalog's groups, one per served file (#492): a head row that reads as a section, closed by default ── */
+#needs tbody.cghead td{padding:0;border-top:2px solid var(--line);border-bottom:1px solid var(--line)}
+#needs .cgtog{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;width:100%;min-height:44px;padding:0 4px;
+  font:inherit;font-size:14px;font-weight:700;text-align:left;background:none;border:0;color:var(--fg);cursor:pointer}
+#needs .cgtog:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
+#needs .cgtog .cgarr{color:var(--acc);width:1em}
+#needs .cgtog .cgfile{font-family:var(--f-mono)}
+#needs .cgtog .cgcount{font-weight:400;color:var(--mut);font-size:12.5px}
+#needs tbody.cbody[hidden]{display:none}
+@media(max-width:600px){
+  #needs table.stk tbody.cghead,#needs table.stk tbody.cghead tr,#needs table.stk tbody.cghead td{display:block;border:0;padding:0;margin:0;background:none}
+  #needs table.stk tbody.cghead td{border-top:2px solid var(--line)}
+  #needs table.stk tbody.cbody[hidden]{display:none}
 }

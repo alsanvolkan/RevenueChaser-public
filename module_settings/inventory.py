@@ -1051,15 +1051,20 @@ def _board_fit(presence: dict) -> list[dict]:
     return out
 
 
-def _universe_tickers() -> list[dict]:
-    """``[{ticker, name}]`` for the ticker combobox — one store read, no network."""
+def _universe_tickers() -> tuple[list[dict], str | None]:
+    """``([{ticker, name}], error)`` for the ticker combobox, from the spine's ``security`` (the need
+    ``identity.universe``) through ``rcdata.read``: one read, no network, never a file opened here (#485).
+
+    ``error`` is the failed read's reason, ``None`` otherwise; an empty list with no error is a spine that holds no
+    names (or no spine yet).
+    """
+    from RevenueChaser.rcdata import read as rcread
     try:
-        rows = rawstore.query("SELECT ticker, name FROM equity_universe ORDER BY ticker")
-    except Exception as exc:  # noqa: BLE001 - recorded (F4); empty picker
-        _record("equity_universe", "_universe_tickers", exc)
-        return []
+        rows = rcread.universe()
+    except Exception as exc:  # noqa: BLE001 - said on the page in the box's place, never an empty box
+        return [], f"{type(exc).__name__}: {exc}"[:300]
     return [{"ticker": r["ticker"], "name": r.get("name") or r["ticker"]}
-            for r in rows if r.get("ticker")]
+            for r in rows if r.get("ticker")], None
 
 
 # The tables the drill's unknown-name check reads: only a failed read of one of these (or of its file's table list)
@@ -2512,12 +2517,13 @@ def _collect(now: datetime) -> dict:
         },
         _inputs_row(),
     ]
-    tickers_list = _universe_tickers()
+    tickers_list, tickers_error = _universe_tickers()
     board_cards = boards.board_cards()
     return {
         # Worst coverage first: the rows that need a Fetch are at the top (#124).
         "rows": sorted(_overlay_market_prices(_attach_registry(rows, now)), key=sort_key),
         "tickers": tickers_list,
+        "tickers_error": tickers_error,
         "boards": board_cards,
         "identity": identity,
         # Fixed registry fields only: the live state is polled from /api/automations.

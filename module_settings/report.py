@@ -153,6 +153,16 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bcard .asof{color:var(--muted);font-size:12.5px;margin-bottom:8px}
 .bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0}
 .bcard .kv b{color:var(--text);font-weight:600}
+.btiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:8px 0 10px}
+.btile{border:1px solid var(--border);border-radius:10px;padding:8px 12px;min-width:0}
+.btile .bt-h{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+.btile .bt-v{font-size:14px;font-weight:600;margin:2px 0;overflow-wrap:anywhere}
+.btile .bt-n{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.bkv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:0 0 8px;font-size:12.5px}
+.bkv dt{color:var(--muted)}
+.bkv dd{margin:0;overflow-wrap:anywhere}
+.bcard .bfoot{font-size:11.5px;margin:6px 0 0}
+@media(max-width:760px){.btiles{grid-template-columns:1fr}.bkv{grid-template-columns:1fr}}
 /* G8 (#124): a folder path shown in full, in monospace; it wraps rather than being shortened. */
 .bpath{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--text);
   background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;
@@ -2093,53 +2103,58 @@ def _backups_card(b: dict | None) -> str:
         expired_text = (f"unknown: {why}" if why else "unknown: the local backup folder could not be read")
         expired_text += "; this page makes no claim about expired files."
     delete_row = (
-        '<div class="kv" id="backup-delete-row">'
+        '<dt>Delete</dt><dd id="backup-delete-row">'
         '<button type="button" class="set-btn" id="backup-delete-expired" disabled '
         'title="Arming the delete is a separate change: it needs your typed confirmation, a fresh backup and no '
         'job running.">Delete expired backups</button> '
         '<span id="backup-delete-note">Disabled: this page only lists what the retention rule marks expired. '
-        "Arming a delete is a separate change and needs your typed confirmation.</span></div>"
+        "Arming a delete is a separate change and needs your typed confirmation.</span></dd>"
     )
     split = ""
     if loc.get("duckdb_files") is not None or loc.get("docs_zip_files") is not None:
         split = (f'{esc(_gb(loc.get("duckdb_bytes")))} in {_fmt_rows(loc.get("duckdb_files"))} .duckdb files; '
                  f'{esc(_gb(loc.get("docs_zip_bytes")))} in {_fmt_rows(loc.get("docs_zip_files"))} edgar_docs zips')
     limit = lambda part: f'warns above {part.get("limit_gb"):g} GB' if isinstance(part.get("limit_gb"), (int, float)) else ""
-    rows = [
-        f'<tr id="backup-local"><td>Local backup folder</td><td>{cell(loc)}</td>'
-        f'<td class="num">{_fmt_rows(loc.get("files"))}</td>'
-        f'<td class="note">{split}{"; " if split else ""}{esc(limit(loc))}</td></tr>',
-        f'<tr id="backup-offmachine"><td>Off-machine copy</td><td>{cell(off)}</td>'
-        f'<td class="num">{_fmt_rows(off.get("files"))}</td>'
-        f'<td class="note">what the job wrote and kept there (its manifest); {esc(limit(off))}</td></tr>',
-        f'<tr id="backup-checkpoints"><td>Off-machine checkpoints</td><td>{cell(cp)}</td>'
-        f'<td class="num">—</td><td class="note"></td></tr>',
-        f'<tr id="backup-scan"><td>Last integrity self-check</td><td>{cell(scan)}</td>'
-        f'<td class="num">{_fmt_rows(scan.get("checked"))}</td>'
-        f'<td class="note">last {esc(str(scan.get("last_day") or "never"))}; next due '
-        f'{esc(str(scan.get("next_due") or "the next backup run"))}</td></tr>',
-    ]
+
+    def tile(ident: str, label: str, value: str, note: str, note_id: str = "") -> str:
+        nid = f' id="{note_id}"' if note_id else ""
+        return (f'<div class="btile" id="{ident}"><div class="bt-h">{label}</div><div class="bt-v">{value}</div>'
+                f'<div class="bt-n"{nid}>{note}</div></div>')
+
+    files = lambda part: f' · {_fmt_rows(part.get("files"))} files' if part.get("files") is not None else ""
+    tiles = (
+        '<div class="btiles">'
+        + tile("backup-local", "Local backup folder", f'{cell(loc)}{files(loc)}',
+               f'{split}{"; " if split and limit(loc) else ""}{esc(limit(loc))}')
+        + tile("backup-offmachine", "Off-machine copy", f'{cell(off)}{files(off)}',
+               f'what the job wrote and kept there (its manifest){"; " if limit(off) else ""}{esc(limit(off))}')
+        + tile("backup-checkpoints", "Off-machine checkpoints", cell(cp), "")
+        + tile("backup-scan", "Integrity self-check",
+               f'{cell(scan)} · next {esc(str(scan.get("next_due") or "the next backup run"))}'
+               + (f' · {_fmt_rows(checked)} files' if isinstance(checked, int) else ""),
+               esc(selfcheck), "backup-selfcheck")
+        + "</div>"
+    )
     recorded = b.get("recorded_at")
-    summary = (
-        f'<div class="kv">Local backup folder: <code class="bpath" id="backup-folder">{esc(folder)}</code></div>'
-        '<div class="kv">Off-machine copy location: '
-        f'<code class="bpath" id="backup-offmachine-path">{esc(offmachine_at)}</code></div>'
-        f'<div class="kv" id="backup-retention">How long backups are kept: {esc(_retention_rule(b))}</div>'
-        f'<div class="kv" id="backup-selfcheck">Integrity self-check: {esc(selfcheck)}</div>'
-        f'<div class="kv" id="backup-expired">Expired backups, dry run: {esc(expired_text)}</div>'
+    recorded_text = str(recorded).replace("T", " ").replace("+00:00", " UTC") if recorded else "never"
+    facts = (
+        '<dl class="bkv">'
+        '<dt>Path</dt><dd><code class="bpath" id="backup-folder">'
+        f'{esc(folder)}</code> · off-machine <code class="bpath" id="backup-offmachine-path">{esc(offmachine_at)}'
+        '</code></dd>'
+        f'<dt>Keeping rule</dt><dd id="backup-retention">{esc(_retention_rule(b))}</dd>'
+        f'<dt>Would be deleted</dt><dd id="backup-expired">Dry run: {esc(expired_text)}</dd>'
         f'{delete_row}'
-        '<div class="kv" id="backup-nodelete">Nothing on this page deletes or moves a backup file: it reads the '
-        "backup job's own records and shows them.</div>"
+        f'<dt>Measured at</dt><dd id="backup-recorded">Sizes recorded {esc(recorded_text)}</dd>'
+        '</dl>'
     )
     return ('<section id="backups"><div class="bcard" id="backups-card"><h3>Backups</h3>'
-            '<div class="asof" id="backups-note">Read from the nightly backup job\'s own records in the local backup '
-            "folder (shown below), plus one read-only listing of that local folder for the expired-backup dry run; "
-            "the off-machine (Drive) copy is never read, walked or listed. The "
-            "self-check re-reads the local folder against the hashes taken when each file was copied, every 7 days "
-            "by default.</div>"
-            f'{summary}'
-            f'<div class="kv" id="backup-recorded">Sizes recorded {esc(str(recorded).replace("T", " ").replace("+00:00", " UTC") if recorded else "never")}</div>'
-            f'{_mini_table(["Backup", "Size / result", "Files", "Detail"], rows)}</div></section>')
+            f'{tiles}{facts}'
+            '<p class="asof bfoot" id="backups-note">Read from the nightly backup job\'s own records in the local backup '
+            "folder, plus one read-only listing of that folder for the dry run; the off-machine (Drive) copy is never "
+            "read, walked or listed. The self-check re-reads the local folder against the hashes taken when each file "
+            "was copied, every 7 days by default. <span id=\"backup-nodelete\">Nothing on this page deletes or moves a "
+            "backup file: it reads the backup job's own records and shows them.</span></p></div></section>")
 
 
 def _ibkr_login_href(value) -> str | None:
@@ -2925,15 +2940,6 @@ ndFilter();
 """
 
 
-#: The fold the old sections sit in, below the control board (avo, 28 Oct: not deleted, folded). Touch-sized.
-OLD_FOLD_CSS = """
-.oldfold{margin:24px 0 48px}
-.oldfold>summary{min-height:44px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;cursor:pointer;
-  padding:0 max(16px,env(safe-area-inset-left,0px));font-weight:600}
-.oldfold-sub{font-weight:400;opacity:.75;font-size:13px}
-"""
-
-
 def _applied_universe() -> dict:
     """The universe as saved (``board_settings``), or nothing when it cannot be read: the board then shows the
     default universe, which is what the builder runs anyway."""
@@ -2962,9 +2968,11 @@ def _collect_newdata() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
-#: The page's three tabs (#331): the key a viewer's choice is remembered under, and each tab's panel id.
+#: The page's two tabs (#492): the key a viewer's choice is remembered under, and each tab's panel id. ``ALIASES`` maps
+#: a choice remembered from the three-tab page (Data, Fetch, Needs) onto the tab that now holds it.
 SETTINGS_TABS = {"key": "rc.settings.tab",
-                 "tabs": {"data": "panel-data", "fetch": "panel-fetch", "needs": "needs"}}
+                 "tabs": {"data": "panel-data", "health": "panel-health"},
+                 "aliases": {"fetch": "data", "needs": "health"}}
 
 TABS_JS = """
 (function(){
@@ -2972,6 +2980,7 @@ TABS_JS = """
   var tabs = [].slice.call(document.querySelectorAll('#settings-tabs [role="tab"]'));
   if (!tabs.length) return;
   function show(name, save) {
+    if (CFG.aliases && CFG.aliases[name]) name = CFG.aliases[name];
     if (!CFG.tabs[name]) name = 'data';
     var panel = document.getElementById(CFG.tabs[name]), wasHidden = panel && panel.hidden;
     tabs.forEach(function (t) {
@@ -2988,7 +2997,10 @@ TABS_JS = """
   window.RC_SETTINGS_SHOW_PANEL = function (id) {
     Object.keys(CFG.tabs).forEach(function (k) { if (CFG.tabs[k] === id) show(k, true); });
   };
-  function fromHash() { var h = location.hash.replace('#', ''); return CFG.tabs[h] ? h : null; }
+  function fromHash() {
+    var h = location.hash.replace('#', '');
+    return CFG.tabs[h] || (CFG.aliases && CFG.aliases[h]) ? h : null;
+  }
   var start = fromHash();
   if (!start) { try { start = localStorage.getItem(CFG.key); } catch (e) { start = null; } }
   show(start || 'data', false);
@@ -3004,7 +3016,7 @@ TABS_JS = """
     });
   });
   window.addEventListener('hashchange', function () { var h = fromHash(); if (h) show(h, true); });
-  var w = document.querySelector('#needs .wiali'), box = document.getElementById('needs-wial');
+  var w = document.querySelector('#panel-health .wiali'), box = document.getElementById('needs-wial');
   if (w && box) w.addEventListener('click', function () {
     box.hidden = !box.hidden;
     w.setAttribute('aria-expanded', box.hidden ? 'false' : 'true');
@@ -3013,100 +3025,92 @@ TABS_JS = """
 """
 
 
-def _needs_panel(payload: dict) -> str:
-    """The Needs tab's body (#331); a failure anywhere in it is one line in the panel, never a blank Settings page."""
+def _needs_model(payload: dict) -> dict:
+    """The Needs model (#331); a failure anywhere in it is one line in the panel, never a blank Settings page."""
     try:
-        return needs_tab.render(needs_tab.view(payload))
+        return needs_tab.view(payload)
     except Exception as exc:  # noqa: BLE001 - the tab must never take the Settings page down
-        return needs_tab.render({"error": f"{type(exc).__name__}: {exc}"[:300],
-                                 "read_at": datetime.now().strftime("%H:%M")})
+        return {"error": f"{type(exc).__name__}: {exc}"[:300], "read_at": datetime.now().strftime("%H:%M")}
+
+
+def _queue_html(view: dict) -> str:
+    """Queue and last runs, the control board's own section (``control_render._queue``), in its ``.ctl`` scope."""
+    if view.get("error"):
+        return ""
+    try:
+        inner = control_render._queue(view)
+    except Exception as exc:  # noqa: BLE001 - one broken section is a line, never a blank Health tab
+        inner = f'<p class="warn">Queue and last runs could not be read: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
+    return f'<section class="ctl" id="health-queue" aria-label="Queue and last runs"><div class="wrap">{inner}</div></section>'
+
+
+def _health_panel(payload: dict, view: dict) -> str:
+    """The Health tab (#492): the Needs head, the queue, the catalog, the request log and the routes, then the ticker
+    detail and the backups, in that order."""
+    model = _needs_model(payload)
+    catalog, rest = needs_tab.sections(model)
+    try:
+        backups = _backups_card(payload.get("backups"))
+    except Exception as exc:  # noqa: BLE001 - one broken card is a line, never a blank Health tab
+        backups = f'<p class="warn">The backups card could not be drawn: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
+    # One ``#needs`` scope (needs.css) around the head, the queue and the Needs parts; the queue keeps its ``.ctl``.
+    return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
+            f'{_queue_html(view)}'
+            f'<div class="wrap">{catalog}{rest}</div></div>'
+            f'<div class="wrap" id="health-more">{_ticker_drill(payload)}{backups}</div>')
 
 
 def _tab_strip() -> str:
     return ('<nav id="settings-tabs" aria-label="Settings tabs"><div class="tabs" role="tablist">'
             '<button type="button" role="tab" id="tab-data" data-tab="data" aria-controls="panel-data" '
             'aria-selected="true" tabindex="0">Data</button>'
-            '<button type="button" role="tab" id="tab-fetch" data-tab="fetch" aria-controls="panel-fetch" '
-            'aria-selected="false" tabindex="-1">Fetch</button>'
-            '<button type="button" role="tab" id="tab-needs" data-tab="needs" aria-controls="needs" '
-            'aria-selected="false" tabindex="-1">Needs</button></div></nav>')
+            '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
+            'aria-selected="false" tabindex="-1">Health</button></div></nav>')
+
+
+def _ticker_drill(payload: dict) -> str:
+    """G7 (#124): the drill, with its own search box (the filter kit's combobox) and its ``id="drill"`` anchor.
+
+    #485: the names are the spine's (``inventory._universe_tickers``). An empty or failed read is one line in the
+    box's place, never an empty box.
+    """
+    error = payload.get("tickers_error")
+    if error:
+        pick = f'<p class="warn drillpick">the spine could not be read: {_html.escape(str(error))}</p>'
+    elif not payload.get("tickers"):
+        pick = '<p class="empty drillpick">the spine holds no names</p>'
+    else:
+        pick = ('<div class="frow drillpick"><span class="flbl" id="ticker-combo-label">Ticker</span>'
+                + combobox_html("ticker-combo", "ticker-combo-label", "Search ticker or name") + "</div>")
+    return ('<div id="ticker-drill">'
+            '<h2 class="sec">Ticker detail</h2>'
+            f'{pick}'
+            '<div class="drill" id="drill" hidden>'
+            '<div class="drill-grid" id="drill-body">'
+            '<div class="dempty">Pick a ticker to see its stored data.</div>'
+            "</div></div></div>")
 
 
 def render_settings_dashboard(payload: dict) -> str:
+    """The Data/Health page (#492): two tabs. Data is the control board (``control_render.render_data``); Health is
+    ``_health_panel``. The old Settings sections fold is gone; its Ticker detail and Backups moved to Health."""
     payload = payload or {}
-    rows = payload.get("rows") or []
-    generated = payload.get("generated_at")
-
-    help_block = help_html(
-        "This is an ops inventory of the local <b>.store/</b>: one row per dataset with its row count, "
-        "newest data date and known holes. <b>Source</b> is the provider the registry names, <b>Coverage</b> "
-        "is the stored rows against the population they should cover (<b>n/a</b> when there is no population "
-        "to count), and <b>Freshness</b> is what freshness the registry lets that dataset claim: its newest "
-        "date, or the words for the one thing it can say instead — <b>no time column</b> (the date lives in "
-        "a related table), <b>taken from the run log</b> (a worked-out table, dated by the job that wrote "
-        "it), <b>retired</b> or <b>store bookkeeping</b> (no claim is made), <b>no date stored yet</b> (the "
-        "table holds no rows), or <b>query failed</b> (a broken read, which is not an empty dataset). Press "
-        "a dataset's "
-        "name to open its store tables, writer and <b>Fetch</b> action. <b>Refresh</b> re-reads the store "
-        "with <b>no network</b> — it is instant and always safe. <b>Fetch</b> enqueues that "
-        "dataset's job, hits a provider and can take minutes; the row reports back when it "
-        "finishes. The ticker drill shows <b>stored</b> data only — it does not ask SEC or "
-        "Yahoo. The <b>Identity health</b> card below the table is store-only too; "
-        "<b>Fetch identity</b> is what runs the network job, and a successful run also writes "
-        "the master's sector and industry into <b>equity_universe</b>, so it changes sectors on every board."
-    )
-
-    if rows:
-        body = _table(rows, payload.get("errors") or [])
-    else:
-        body = ('<div class="empty" id="empty">The store is empty — no datasets have been '
-                "populated yet. Run a Fetch to load one.</div>")
-
     data_json = script_json(payload.get("tickers") or [])
-    # G7 (#124): avo kept the drill, below the dataset table, carrying everything. It keeps its
-    # own search box (the filter kit's combobox) and its ``id="drill"`` anchor.
-    drill = (
-        '<div id="ticker-drill">'
-        '<h2 class="sec">Ticker detail</h2>'
-        '<div class="frow drillpick"><span class="flbl" id="ticker-combo-label">Ticker</span>'
-        + combobox_html("ticker-combo", "ticker-combo-label", "Search ticker or name") + "</div>"
-        '<div class="drill" id="drill" hidden>'
-        '<div class="drill-grid" id="drill-body">'
-        '<div class="dempty">Pick a ticker to see its stored data.</div>'
-        "</div></div></div>"
-    )
-
-    identity_html = _identity_card(payload.get("identity"))
-    other_tables_html = _other_tables_section(payload.get("other_tables"))
-    backups_html = _backups_card(payload.get("backups"))
-    ibkr_login_html = _ibkr_login_card(payload.get("ibkr_login_url"))
-    ibkr_state_html = _ibkr_state_card(payload.get("ibkr_login_state"))
-    errors_html = _errors_list(payload.get("errors") or [])
-    boards_html = _boards_section(payload.get("boards") or [], rows)
-    flow_html = _flow_section(rows)
-    automations = payload.get("automations") or []
-    automations_html = _automations_section(automations)
-    automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
     # The payload's own ``newdata`` when the caller read it (tests, fixtures); else read here, per render.
     nd = payload["newdata"] if "newdata" in payload else _collect_newdata()
-    newdata_html = _newdata_section(nd)
-    # The control board (design v28) on top, from the same read; the old sections fold under it.
     view = _control_view(nd, payload)
     control_html = control_render.render_data(view)
-    fetch_html = control_render.render_fetch(view)
     control_js = control_render.scripts(view)
-    needs_html = _needs_panel(payload)
+    health_html = _health_panel(payload, view)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Settings / Data health</title>
+<title>Data/Health</title>
 <style>{CSS}</style>
-<style>{ND_CSS}</style>
 <style>{control_render.CTL_CSS}</style>
-<style>{OLD_FOLD_CSS}</style>
 <style>{needs_tab.NEEDS_CSS}</style>
 {FILTERS_CSS}
 <script>{THEME_JS}</script>
@@ -3116,50 +3120,15 @@ def render_settings_dashboard(payload: dict) -> str:
 {_tab_strip()}
 <div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
 {control_html}
-<details class="oldfold" id="old-settings">
-<summary>Old Settings sections <span class="oldfold-sub">not deleted, folded · each opens on its own</span></summary>
-<div class="wrap">
-  <div class="topbar">
-    <div>
-      <h1>Settings / Data health</h1>
-      <div class="sub">Store inventory, freshness and per-dataset Fetch</div>
-    </div>
-    <div class="sync">Last sync: {_html.escape(_friendly(generated))}</div>
-  </div>
-  {newdata_html}
-  {ibkr_login_html}
-  {help_block}
-  {_summary_tiles(rows, payload)}
-  {body}
-  {drill}
-  {other_tables_html}
-  {identity_html}
-  {ibkr_state_html}
-  {errors_html}
-  {backups_html}
-  {automations_html}
-  {boards_html}
-  {flow_html}
 </div>
-</details>
-</div>
-<div id="panel-fetch" role="tabpanel" aria-labelledby="tab-fetch" hidden>
-{fetch_html}
-</div>
-<div id="needs" role="tabpanel" aria-labelledby="tab-needs" hidden>
-{needs_html}
+<div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
+{health_html}
 </div>
 <script>{FILTERS_JS}</script>
 <script>
 var DATA = {data_json};
-var AUTOMATIONS = {script_json(automations)};
-var ND = {script_json(_nd_client(nd))};
-var ND_PAGE_STALE_MS = {ND_PAGE_STALE_MINUTES * 60 * 1000};
-{JS}
-{FLOW_JS}
+{JOB_JS}
 {DRILL_JS}
-{automations_js}
-{ND_JS}
 </script>
 <script>
 {control_js}
@@ -3167,6 +3136,7 @@ var ND_PAGE_STALE_MS = {ND_PAGE_STALE_MINUTES * 60 * 1000};
 <script>
 window.RC_SETTINGS_TABS = {script_json(SETTINGS_TABS)};
 {TABS_JS}
+{needs_tab.NEEDS_JS}
 </script>
 </body>
 </html>
