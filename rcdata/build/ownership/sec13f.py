@@ -54,11 +54,14 @@ HOLDINGS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed"
             ("put_call", "TEXT"), ("discretion", "TEXT"), ("other_manager", "TEXT"), ("vote_sole", "BIGINT"),
             ("vote_shared", "BIGINT"), ("vote_none", "BIGINT")]
 # The managers a filing names beside the filer. Two lists, one shape (avo, 5 Nov 2026):
-# ``included`` is the summary page's - the managers whose positions this report carries, and the list a holding
-# points into: ``holdings.other_manager`` is that row's ``seq``, per filing (measured on 2023q4, where the
-# holdings of 0001728195-23-000011 marked ``2`` belong to SUSQUEHANNA SECURITIES, LLC at sequence 2).
-# ``cover`` is the cover page's - the managers this one files on behalf of; it has no holdings of its own to
-# point at, and its ``seq`` is the set's own surrogate key.
+# ``included`` is the summary page's List of Other Included Managers - the managers whose holdings this report
+# carries. A holding's ``other_manager`` points into it by ``sequenceNumber`` when it is a number at all;
+# measured over 2023's days: of 2,886,468 holdings, 1,621,523 leave it empty, 1,066,142 write one integer, and
+# 198,803 write something else - a manager's name, or several separated by commas ("ASSETMARK,ENVESTNET,
+# MORNINGSTAR"). So the join is the common case, not the rule, and the column is kept as filed.
+# ``cover`` is the cover page's List of Other Managers Reporting for this Manager - filers who report this one's
+# holdings elsewhere. Nothing points at it, so its ``seq`` is only the order the filing lists them in, which is
+# all both paths can agree on (the data set's own surrogate key does not exist in the XML).
 MANAGERS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed", "DATE"), ("kind", "TEXT"),
             ("seq", "INTEGER"), ("manager_cik", "TEXT"), ("form13f_file_number", "TEXT"), ("crd_number", "TEXT"),
             ("sec_file_number", "TEXT"), ("name", "TEXT")]
@@ -94,15 +97,23 @@ def status_of(report_type: str | None, holdings: int, entry_total: int | None) -
 
 
 def _managers(root, row: dict) -> list[dict]:
-    """The filing's other managers, both lists, in ``MANAGERS`` shape (#301 follow-up, avo 5 Nov 2026)."""
+    """The filing's other managers, both lists, in ``MANAGERS`` shape (avo, 5 Nov 2026).
+
+    The two lists are shaped differently, checked against real filings on 2026-11-06: the cover page's
+    ``otherManagersInfo/otherManager`` carries ``cik``, ``form13FFileNumber`` and ``name`` directly, while the
+    summary page's ``otherManagers2Info/otherManager2`` carries ``sequenceNumber`` beside a nested
+    ``otherManager`` that holds those fields. Each kind names its own field parent rather than trying one level
+    and falling back, and the lists are read as direct children, so a future nesting cannot double a row.
+    """
     out = []
-    for kind, path, tag, seq_tag in (("cover", ".//coverpage/othermanagersinfo", "othermanager", None),
-                                     ("included", ".//summarypage/othermanagers2info", "othermanager2",
-                                      "sequencenumber")):
+    for kind, path, tag, nested, seq_tag in (
+            ("cover", ".//coverpage/othermanagersinfo", "othermanager", False, None),
+            ("included", ".//summarypage/othermanagers2info", "othermanager2", True, "sequencenumber")):
         holder = root.find(path)
-        for n, m in enumerate(holder.iter(tag) if holder is not None else (), start=1):
-            inner = m.find("othermanager")                 # the cover list nests the fields one deeper
-            f = inner if inner is not None else m
+        for n, m in enumerate(holder.findall(tag) if holder is not None else (), start=1):
+            f = m.find("othermanager") if nested else m
+            if f is None:
+                f = m
             out.append({"accession": row["accession"], "cik": row["cik"], "period": row["period"],
                         "filed": row["filed"], "kind": kind,
                         "seq": edgar.integer(edgar.text(m, seq_tag)) if seq_tag else n,

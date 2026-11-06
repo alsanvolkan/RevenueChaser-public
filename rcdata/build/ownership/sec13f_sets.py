@@ -260,24 +260,29 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
         LEFT JOIN z_summarypage m ON trim(m.ACCESSION_NUMBER) = s.accession
         LEFT JOIN z_count k ON k.accession = s.accession""", [run_id])
 
-    # Both manager lists in one shape: the summary page's (``included``, the list a holding's ``other_manager``
-    # points into by sequence) and the cover page's (``cover``, whom this filing is made on behalf of).
-    con.execute(f"""CREATE TABLE managers AS
-        SELECT s.accession, s.cik, {period} AS period, s.filed, 'included' AS kind,
+    # Both manager lists in one shape, joined to ``filings`` rather than to the submission rows: the filing has
+    # already settled the period, the form filter and the one-row-per-accession rule, so a manager row cannot
+    # belong to a filing the set did not type.
+    #
+    # ``cover``'s ``seq`` is the position in the list, not OTHERMANAGER_SK: the key is the data set's own
+    # surrogate and does not exist in the EDGAR XML, so writing it here would make the two paths disagree on
+    # every cover row. The order is the key's, which is the order the set wrote them in.
+    con.execute("""CREATE TABLE managers AS
+        SELECT f.accession, f.cik, f.period, f.filed, 'included' AS kind,
                TRY_CAST(trim(o.SEQUENCENUMBER) AS INTEGER) AS seq,
                nullif(trim(o.CIK), '') AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
                nullif(trim(o.CRDNUMBER), '') AS crd_number, nullif(trim(o.SECFILENUMBER), '') AS sec_file_number,
                nullif(trim(o.NAME), '') AS name
-        FROM z_sub s JOIN z_othermanager2 o ON trim(o.ACCESSION_NUMBER) = s.accession
-        LEFT JOIN z_coverpage c ON trim(c.ACCESSION_NUMBER) = s.accession
+        FROM filings f JOIN z_othermanager2 o ON trim(o.ACCESSION_NUMBER) = f.accession
         UNION ALL
-        SELECT s.accession, s.cik, {period} AS period, s.filed, 'cover' AS kind,
-               TRY_CAST(trim(o.OTHERMANAGER_SK) AS INTEGER) AS seq,
+        SELECT f.accession, f.cik, f.period, f.filed, 'cover' AS kind,
+               CAST(row_number() OVER (PARTITION BY f.accession
+                                       ORDER BY TRY_CAST(trim(o.OTHERMANAGER_SK) AS BIGINT),
+                                                trim(o.OTHERMANAGER_SK)) AS INTEGER) AS seq,
                nullif(trim(o.CIK), '') AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
                nullif(trim(o.CRDNUMBER), '') AS crd_number, nullif(trim(o.SECFILENUMBER), '') AS sec_file_number,
                nullif(trim(o.NAME), '') AS name
-        FROM z_sub s JOIN z_othermanager o ON trim(o.ACCESSION_NUMBER) = s.accession
-        LEFT JOIN z_coverpage c ON trim(c.ACCESSION_NUMBER) = s.accession""")
+        FROM filings f JOIN z_othermanager o ON trim(o.ACCESSION_NUMBER) = f.accession""")
 
     def num(col: str, typ: str = "DOUBLE") -> str:
         return f"TRY_CAST(TRY_CAST(replace(trim({col}), ',', '') AS DOUBLE) AS {typ})"

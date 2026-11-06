@@ -324,6 +324,22 @@ def test_a_row_that_does_not_read_is_rejected_and_counted_not_the_whole_set(feed
     assert [r[1] for r in _holdings("0001000001-26-000101")] == ["594918104"]
 
 
+def _edgar_managers(included, reported_by) -> list:
+    """The same two lists through the EDGAR path's parser, as its own XML carries them."""
+    from RevenueChaser.rcdata.build.ownership.sec13f import _managers as parse_managers
+    cover = "".join(f"<otherManager><cik>{c}</cik><form13FFileNumber>028-00002</form13FFileNumber>"
+                    f"<name>{n}</name></otherManager>" for _sk, c, n in reported_by)
+    inc = "".join(f"<otherManager2><sequenceNumber>{q}</sequenceNumber><otherManager><cik>{c}</cik>"
+                  f"<form13FFileNumber>028-00001</form13FFileNumber><name>{n}</name></otherManager>"
+                  f"</otherManager2>" for q, c, n in included)
+    xml = ("<edgarSubmission><formData>"
+           f"<coverPage><otherManagersInfo>{cover}</otherManagersInfo></coverPage>"
+           f"<summaryPage><otherManagers2Info>{inc}</otherManagers2Info></summaryPage>"
+           "</formData></edgarSubmission>")
+    rows = parse_managers(edgar.tree(xml), {"accession": "a", "cik": "c", "period": None, "filed": None})
+    return sorted((r["kind"], r["seq"], r["manager_cik"], r["name"]) for r in rows)
+
+
 def _managers(accession: str) -> list:
     from RevenueChaser.rcdata.build.spine.stage import partitions
     files = [str(f) for _, f in partitions(sec13f.DATASET.parquet_dir() / "managers", "day")]
@@ -337,22 +353,29 @@ def _managers(accession: str) -> list:
         con.close()
 
 
-def test_the_other_managers_a_filing_names_are_kept_with_the_sequence_a_holding_points_at(feed, http_mock):
-    """avo, 5 Nov 2026: keep OTHERMANAGER too. A holding's ``other_manager`` is a sequence inside its own filing,
-    and until now nothing said whose sequence it was: the summary page's list is kept as ``included``, the cover
-    page's (whom the filing is made on behalf of) as ``cover``."""
+def test_the_other_managers_a_filing_names_are_kept_on_both_paths_and_agree(feed, http_mock):
+    """avo, 5 Nov 2026: keep OTHERMANAGER too. The summary page's included managers are the list a holding's
+    ``other_manager`` points into; the cover page's are the filers who report this one's holdings. Both paths
+    must write the same rows for the same filing, so ``cover``'s seq is the position - the data set's own
+    surrogate key has no counterpart in the XML."""
     h = ox.f13_holding
+    included = [(2, "0000918950", "SUSQUEHANNA INVESTMENT GROUP"),
+                (1, "0001444949", "SUSQUEHANNA ADVISORS GROUP, INC.")]
+    reported_by = [(167436, "0000932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC")]
     one = ox.f13_set([
         ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [h("MICROSOFT CORP", "594918104", 4, 10)],
-                      managers=[(2, "0000918950", "SUSQUEHANNA INVESTMENT GROUP"),
-                                (1, "0001444949", "SUSQUEHANNA ADVISORS GROUP, INC.")],
-                      on_behalf_of=[(167436, "0000932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC")])])
+                      included=included, reported_by=reported_by),
+        ox.set_filing("0001000002-26-000105", 1000002, "14-AUG-2026", [h("WELLS FARGO", "949746101", 1, 2)])])
     http_mock.routes.insert(0, (HREFS[0], one, 200, {}))
     assert _backfill("2026-06-01", "2026-08-31")["result"] == "changed"
-    assert _managers("0001000001-26-000101") == [
-        ("cover", 167436, "0000932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC"),
-        ("included", 1, "0001444949", "SUSQUEHANNA ADVISORS GROUP, INC."),
-        ("included", 2, "0000918950", "SUSQUEHANNA INVESTMENT GROUP")]
+    rows = _managers("0001000001-26-000101")
+    assert rows == [("cover", 1, "0000932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC"),
+                    ("included", 1, "0001444949", "SUSQUEHANNA ADVISORS GROUP, INC."),
+                    ("included", 2, "0000918950", "SUSQUEHANNA INVESTMENT GROUP")]
+    assert _managers("0001000002-26-000105") == [], "a filing that names none has no rows, not an empty one"
+
+    # the EDGAR path types the same filing from its XML: the rows must match, seq included
+    assert _edgar_managers(included, reported_by) == rows
 
 
 def test_the_cover_pages_period_wins_on_both_paths_and_a_cusip_placeholder_is_no_cusip(feed, http_mock):
