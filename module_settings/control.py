@@ -9,7 +9,7 @@ pure and a test builds the whole board from a dictionary.
 
 The page itself is ``control_render``; this is its model:
 
-- ``health``: the twelve tiles of "Health right now";
+- ``health``: the fourteen tiles of "Health right now", in four groups, and the By-file lines;
 - ``universe``: the tier sets the next fetches and fills use, as applied (``core.board_settings``);
 - ``files``: the serving files in build order, each with its datasets (the Fetch section) and its tables, columns,
   readers and example rows (the Data section);
@@ -205,16 +205,51 @@ def _providers(nd: dict) -> list[dict]:
     return rows
 
 
+#: The Health strip's groups (#492): what the data holds, the sources, what is scheduled, the builds.
+TILE_GROUPS = {"fresh": "data", "late": "data", "stale": "data", "never": "data", "problems": "data",
+               "session": "data", "universe": "data", "cap": "sources", "gateway": "sources",
+               "timer": "scheduled", "builder": "scheduled", "queue": "scheduled", "longest": "build",
+               "backup": "build"}
+NO_TIMER = {"state": None, "last": None, "next": None, "minute": None}
+
+
 def _tile(key, cls, n, label, f=None) -> dict:
-    return {"key": key, "cls": cls, "n": n, "label": label, "filter": f}
+    return {"key": key, "cls": cls, "n": n, "label": label, "filter": f, "group": TILE_GROUPS[key]}
 
 
-def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -> dict:
+def longest_build(runs, now: datetime) -> dict | None:
+    """The longest finished ``job_runs2`` run (``finished_at - started_at``, epoch seconds) started on the New York
+    day of ``now``: ``{"dataset", "seconds"}``, or None when there is none."""
+    today = now.astimezone(NY).date()
+    best = None
+    for r in runs or []:
+        try:
+            start, end = float(r["started_at"]), float(r["finished_at"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if datetime.fromtimestamp(start, timezone.utc).astimezone(NY).date() != today or end < start:
+            continue
+        if best is None or end - start > best["seconds"]:
+            best = {"dataset": r.get("dataset"), "seconds": int(round(end - start))}
+    return best
+
+
+def _read_job_runs(now: datetime) -> list[dict]:
+    """The finished ``job_runs2`` rows of the last two days (a read; the file is not created when missing)."""
+    from RevenueChaser.rcdata import ops
+    return ops._select("SELECT dataset, started_at, finished_at FROM job_runs2 WHERE finished_at IS NOT NULL "
+                       "AND started_at >= ?", ((now - timedelta(days=2)).timestamp(),))
+
+
+def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *, timer: dict | None = None,
+           longest: dict | None = None, file_views: list[dict] | None = None) -> dict:
     cards = nd.get("datasets") or []
+    total = len(cards)
     by = {k: 0 for k in ("fresh", "late", "stale", "never")}
     for c in cards:
         by[STATUS_FILTER.get(_status_of(c), "never")] += 1
     problems = sum(int(c.get("issues_open") or 0) for c in cards)
+    with_problems = sum(1 for c in cards if int(c.get("issues_open") or 0))
     v = nd.get("verified") or {}
     run = v.get("builder_last_run") or {}
     silent = v.get("silent_minutes")
@@ -223,20 +258,28 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -
     bars = next((c for c in cards if c.get("dataset") == "alpaca/bars"), None)
     bars_ok = bars is not None and _status_of(bars) in ("fresh", "unchanged")
     queue = (nd.get("queue") or {}).get("active") or []
+    running = sum(1 for q in queue if (q or {}).get("status") == "running")
     near = next((p for p in providers if p["share"] is not None), None)
     others = [p for p in providers if p["share"] is not None and p is not near][:2]
     backups = [k for k in ((nd.get("backups") or {}).get("kinds") or []) if k.get("newest")]
     newest_backup = max(backups, key=lambda k: str(k["newest"]), default=None)
+    timer = timer or NO_TIMER
+    state = timer.get("state")
+    of = f"of {count(total)} datasets"
     tiles = [
-        _tile("fresh", "ok", count(by["fresh"]), "fresh datasets", "fresh"),
-        _tile("late", "warn" if by["late"] else "ok", count(by["late"]), "late", "late"),
-        _tile("stale", "bad" if by["stale"] else "ok", count(by["stale"]), "stale", "stale"),
-        _tile("never", "none", count(by["never"]), "never ran", "never"),
-        _tile("problems", "neu", count(problems), "open problems in total · build_issues, one per row", "problems"),
+        _tile("fresh", "ok", count(by["fresh"]), f"{of} fresh", "fresh"),
+        _tile("late", "warn" if by["late"] else "ok", count(by["late"]), f"{of} late", "late"),
+        _tile("stale", "bad" if by["stale"] else "ok", count(by["stale"]), f"{of} stale", "stale"),
+        _tile("never", "none", count(by["never"]), f"{of} never ran", "never"),
+        _tile("problems", "neu", count(problems),
+              f"open problems, in {count(with_problems)} of {count(total)} datasets", "problems"),
         _tile("session", "ok" if bars_ok else "warn", day_words(newest) if newest else "none",
-              (f"newest session in prices · {count(sum(sessions[newest].values()))} names have a bar on it" if newest
+              (f"newest session in prices · {count(sum(sessions[newest].values()))} of {count(universe.get('size'))}"
+               " names have a bar on it" if newest
                else "no session in prices yet: price_bar_daily holds no bar"), "session"),
-        _tile("queue", "ops", count(len(queue)), "waiting or running in the queue", "queue"),
+        _tile("queue", "ops", count(len(queue)), f"{running} running, {len(queue) - running} queued", "queue"),
+        _tile("timer", {"on": "ok", "off": "bad"}.get(state, "none"), state if state in ("on", "off") else "not known",
+              f"hourly builder timer · last pass {_clock(timer.get('last'))} · next {_clock(timer.get('next'))}"),
         _tile("builder", "none" if silent is None else ("bad" if silent > BUILDER_SILENT_MINUTES else "ok"),
               "never" if silent is None else f"{silent} min",
               ("the builder has no run on record" if silent is None else
@@ -254,6 +297,9 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -
               f"of {count(universe.get('size'))} names in the universe have a bar on the newest session"
               + ("" if universe.get("fill_enabled") else " · the Fill buttons are off"), "universe"),
         _tile("gateway", *_gateway(ibkr), "gateway"),
+        _tile("longest", "none" if longest is None else "neu",
+              "not measured yet" if longest is None else f"{round(longest['seconds'] / 60)} min",
+              "longest build today" if longest is None else f"longest build today · {longest['dataset']}"),
         _tile("backup", "none" if newest_backup is None else ("warn" if newest_backup.get("warn") else "ok"),
               "none" if newest_backup is None else day_words(newest_backup["newest"]),
               "no backup recorded" if newest_backup is None else
@@ -263,7 +309,8 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -
                f"{problems} open problems"]
     if near is not None:
         summary.append(f"{near['name']} nearest its cap ({near['share']:.0%})")
-    return {"tiles": tiles, "summary": summary, "counts": by, "problems": problems}
+    return {"tiles": tiles, "summary": summary, "counts": by, "problems": problems,
+            "files": [{"name": f["name"], "state": f["state"]} for f in file_views or []]}
 
 
 def _clock(value) -> str:
@@ -706,13 +753,26 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
             "boardInfo": board_info, "tableReads": table_reads, "needReader": need_reader}
 
 
+def _timer(reader) -> dict:
+    """``{"state", "last", "next", "minute"}`` from ``reader()``; all None when there is no reader or it fails."""
+    if reader is None:
+        return dict(NO_TIMER)
+    try:
+        got = reader() or {}
+        return {k: got.get(k) for k in NO_TIMER}
+    except Exception:  # noqa: BLE001 - a timer that cannot be read is "not known"
+        return dict(NO_TIMER)
+
+
 # ── The whole board ───────────────────────────────────────────────────────────────────────────────────────────
 
 def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, now: datetime | None = None,
-          datasets: dict | None = None) -> dict:
+          datasets: dict | None = None, timer=None, job_runs=None) -> dict:
     """The page's model from ``newdata.collect``'s output. ``applied`` is the saved universe
     (``board_settings.values("module_settings")["values"]``), ``ibkr`` the gateway's login state, ``datasets`` the
-    builder's datasets (default: ``newdata._datasets()``)."""
+    builder's datasets (default: ``newdata._datasets()``). ``timer`` and ``job_runs`` are the readers of the hourly
+    builder timer and of ``ops.job_runs2``, injectable so a test needs neither systemd nor a store; a reader that
+    fails gives Nones, never a guess."""
     from RevenueChaser.module_settings import newdata
     now = now or datetime.now(timezone.utc)
     if nd.get("error"):
@@ -721,11 +781,17 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
     uni = universe(nd, applied)
     provider_rows = _providers(nd)
     reads = readers()
-    file_views = files(nd, datasets, uni, reads, now)
+    timer_view = _timer(timer)
+    try:
+        longest = longest_build(job_runs() if job_runs else _read_job_runs(now), now)
+    except Exception:  # noqa: BLE001 - an unreadable ops store leaves the tile "not measured yet"
+        longest = None
+    file_views = files(nd, datasets, uni, reads, now, timer_view)
     return {
         "error": None,
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
-        "health": health(nd, provider_rows, uni, ibkr),
+        "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, file_views=file_views),
+        "timer": timer_view, "longest_build": longest,
         "universe": uni, "scope": scope(uni), "files": file_views, "providers": provider_rows,
         "flow": flow(file_views, datasets, reads, uni), "calendars": calendars(nd, uni, provider_rows),
         "cross_check": (nd.get("cross_check") or {}).get("fields") or [],

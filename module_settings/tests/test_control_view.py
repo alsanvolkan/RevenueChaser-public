@@ -85,15 +85,15 @@ def test_a_collect_error_is_carried_not_raised():
     assert _build({"error": "RuntimeError: x"})["error"] == "RuntimeError: x"
 
 
-def test_the_health_strip_has_its_twelve_tiles_counted_from_the_cards():
+def test_the_health_strip_has_its_fourteen_tiles_counted_from_the_cards():
     h = _build()["health"]
     keys = [t["key"] for t in h["tiles"]]
-    assert keys == ["fresh", "late", "stale", "never", "problems", "session", "queue", "builder", "cap", "universe",
-                    "gateway", "backup"]
+    assert keys == ["fresh", "late", "stale", "never", "problems", "session", "queue", "timer", "builder", "cap",
+                    "universe", "gateway", "longest", "backup"]
     tile = {t["key"]: t for t in h["tiles"]}
     assert (tile["fresh"]["n"], tile["late"]["n"], tile["stale"]["n"], tile["never"]["n"]) == ("1", "1", "1", "2")
     assert tile["problems"]["n"] == "10"
-    assert tile["session"]["n"] == "28 Oct" and "7,422 names" in tile["session"]["label"], "every bar in the file"
+    assert tile["session"]["n"] == "28 Oct" and "7,422 of 7,670 names" in tile["session"]["label"], "every bar in the file"
     assert tile["session"]["cls"] == "warn", "alpaca/bars is late, so the newest session is not complete"
     assert tile["cap"]["n"] == "72%" and "Alpha Vantage" in tile["cap"]["label"] and tile["cap"]["cls"] == "bad"
     assert tile["builder"]["n"] == "24 min" and tile["builder"]["cls"] == "ok"
