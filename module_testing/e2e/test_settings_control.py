@@ -120,11 +120,13 @@ def test_fetch_queues_one_request_and_asks_no_provider(dashboard, browser, marke
     browser.eval("document.querySelector('#fpick .fpb[data-file=\"market.duckdb\"]').click()")
     browser.eval("document.querySelector('#ctl .fpanel:not([hidden]) button[data-job=\"one\"]"
                  "[data-dataset=\"market_series\"]').click()")
-    browser.wait_for("Array.prototype.some.call(document.querySelectorAll('#ctl .fpanel:not([hidden]) .lg3'),"
-                     " function(s){ return s.textContent.indexOf('queued') === 0; })")
-    assert browser.eval("document.querySelector('#ctl .fpanel:not([hidden]) button[data-job=\"one\"]"
-                        "[data-dataset=\"market_series\"]')"
-                        ".getAttribute('data-state')") == "pause", "the one button reads Pause once queued"
+    # wait on the button itself, not on any queued pill: another dataset's queue row may show one at render
+    one = ("document.querySelector('#ctl .fpanel:not([hidden]) button[data-job=\"one\"]"
+           "[data-dataset=\"market_series\"]')")
+    browser.wait_for(one + ".getAttribute('data-state') === 'pause'")
+    pill = browser.eval("(function(){ var b = " + one + "; var p = document.querySelector('[data-for=\"' + "
+                        "b.getAttribute('data-jid') + '\"]'); return p ? p.className + ' ' + p.textContent : ''; })()")
+    assert pill.startswith("lg3 st-q queued"), pill
     rows = _requests(market)
     assert [(r["dataset"], r["status"], r["requested_by"]) for r in rows] == [("market_series", "queued", "settings")]
     assert len(provider_routes.requests()) == before, "a request is not a fetch: no provider was asked"

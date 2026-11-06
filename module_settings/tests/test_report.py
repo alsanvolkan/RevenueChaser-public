@@ -2383,7 +2383,7 @@ def test_the_four_parts_that_live_nowhere_else_sit_in_health_above_backups():
                                                  ibkr_login_url="https://gateway.example/", backups=_BACKUPS,
                                                  errors=[{"table": "ibkr", "where": "x", "error": "read failed"}]))
     health = _panel(html, "panel-health")
-    marks = ['id="ticker-drill"', 'id="auto-body"', 'id="nd-watch-stock"', 'id="nd-watch-option"',
+    marks = ['id="ticker-drill"', 'id="auto-body"', 'id="nd-watch-option"', 'id="nd-watch-stock"',
              'id="ibkr-login-link"', 'id="errors"', 'id="backups"']
     at = [health.index(m) for m in marks]
     assert at == sorted(at), marks
