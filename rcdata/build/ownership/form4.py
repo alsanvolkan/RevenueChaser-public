@@ -19,14 +19,15 @@ Parquet: ``parquet/sec/form4/rows/day=<index day>/``. Served: ``insider_transact
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
 
+from ....core import calendar
 from .. import base
 from ..spine.stage import partitions
-from . import common, edgar
+from . import common, edgar, form345_sets
 
 NAME = "sec/form4"
 TABLE = "insider_transactions"
@@ -45,6 +46,7 @@ ROWS = [("accession", "TEXT"), ("form", "TEXT"), ("filed", "DATE"), ("index_day"
 SERVED = ROWS[:8] + [("ticker", "TEXT"), ("ticker_source", "TEXT")] + ROWS[8:] + [("source", "TEXT")]
 TABLES = (("non_derivative", "nonderivativetable/nonderivativetransaction"),
           ("derivative", "derivativetable/derivativetransaction"))
+SETS_SCHEMA = {"forms": FORMS, "rows": ROWS}
 
 
 def _flag(raw) -> bool | None:
@@ -123,6 +125,15 @@ class SecForm4(edgar.Feed):
     sub = "form4"
     tables = (TABLE,)
     budget_s = BUDGET_S
+
+    def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
+        """The SEC's Insider Transactions data sets fill the days they cover (``form345_sets``: the first fill, 51
+        zips for 2014 to today instead of about two million filings), then the forms walk takes the range's days no
+        set covers (after the newest set)."""
+        first = start or end
+        self.move_start(first)
+        form345_sets.fill(ctx, self, first, min(end, calendar.today_ny() - timedelta(days=1)), SETS_SCHEMA)
+        super().backfill(ctx, first, end)
 
     def type_day(self, ctx: base.RunContext, day: date) -> list[Path]:
         con = duckdb.connect()

@@ -381,6 +381,7 @@ whole app at a local server:
 | `RC_SEC_WWW_BASE` / `RC_SEC_DATA_BASE` | SEC EDGAR + 13F archives; the spine's `sec/company_tickers_exchange`; the ownership store's EDGAR daily index, filings (`sec/13f`, `sec/form4`, `sec/13dg`) and fails-to-deliver files (`sec/ftd`); the fundamentals layer's SEC datasets (`rcdata/build/fundamentals/`) |
 | `RC_ALPHAVANTAGE_BASE` | Alpha Vantage, the fundamentals layer's `alphavantage/earnings_calendar` (`rcdata/build/fundamentals/earnings.py`; read at call time) |
 | `RC_FORM13F_INDEX_URL` | SEC Form 13F data-set page (zip links are resolved from it) |
+| `RC_FORM345_INDEX_URL` | SEC Insider Transactions data-set page (`sec/form4`'s first fill; same) |
 | `RC_FRED_BASE` | FRED series (also the market store's FRED source) |
 | `RC_CBOE_BASE` | Cboe daily-price index files (`module_earnings_radar/inputs/vol_index.py`, `rcdata/build/sources/cboe.py`) |
 | `RC_CFTC_BASE` | CFTC Traders in Financial Futures (also the market store's CFTC source, `rcdata/build/sources/cftc.py`) |
