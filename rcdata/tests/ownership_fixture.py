@@ -456,6 +456,7 @@ class Edgar:
         self.indexes: dict[str, bytes] = {}
         self.filings: dict[str, bytes] = {}
         self.missing: set[str] = set()
+        self.not_found: set[str] = set()
         self.refuse_days: set[str] = set()
         self.refuse = False
 
@@ -480,6 +481,9 @@ class Edgar:
 
     def filing(self, request):
         acc = str(request.url).rsplit("/", 1)[1][:-len(".txt")]
+        if acc in self.not_found:
+            # A plain 404: the daily index listed a filing EDGAR does not hold, which it does (#505).
+            return 404, b"<?xml version='1.0'?><Error><Code>NoSuchKey</Code></Error>", {}
         return self._answer(self.filings.get(acc))
 
     def install(self, http_mock) -> None:

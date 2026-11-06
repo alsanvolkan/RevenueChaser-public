@@ -10,7 +10,8 @@ as-of). A day with no index object (a weekend is never asked; EDGAR keeps the **
 and Veterans Day have no index although the NYSE trades) answers **403**, not 404 — see ``base.is_missing`` — and is
 marked absent (``.none``) once it is more than ``SETTLED`` old; a younger one is asked again on the next run. The
 SEC's own 403 (an undeclared User-Agent, the fair-access rate) is told apart by its body and stops the run, and so
-does a stretch of ``MISSING_RUN`` missing weekdays EDGAR was open, or that many of a day's filings in a row.
+does a stretch of ``MISSING_RUN`` missing weekdays EDGAR was open, or that many of a day's filings in a row whose
+answer is a refusal rather than a plain 404 (the index does list filings the archive does not hold).
 A marker that writes a day or a filing off is written only once the archive has answered something in the same run
 (``_Held``), so a refusal of the whole bucket leaves nothing written off and the next run asks again.
 
@@ -340,10 +341,17 @@ class Feed:
                         complete += held.flush(self)
                         continue
                     held.filings.append((day, *gone))
-                    gone_run += 1
+                    if gone[1]["status"] != 404:
+                        # Only a refusal counts towards the run. A plain 404 is EDGAR answering "no object", and
+                        # its daily index does list filings the archive does not hold -- measured 2026-11-06 on the
+                        # live site: the six SCHEDULE 13G rows of CIK 2147005 in the index of 2026-08-17 all 404,
+                        # the accession folders 404, and that CIK's submissions.json holds no filing at all. Three
+                        # of them in a row used to end a backfill at that day, and every later run died there
+                        # again. Such a filing is written off like any other absent one, once something answers.
+                        gone_run += 1
                     if gone_run >= MISSING_RUN:
-                        # The index listed them, so the archive holds them: this many in a row is the bucket
-                        # refusing, not the filings missing. Nothing is written, so the next run asks them again.
+                        # A bucket that refuses every object answers this many in a row, rather than the archive
+                        # having lost them. Nothing is written, so the next run asks them again.
                         raise base.SourceError(f"sec: {gone_run} filings of {day} in a row the archive does "
                                                f"not answer for, last {r['accession']}; the bucket may be "
                                                "refusing every request, so no filing is written off")
