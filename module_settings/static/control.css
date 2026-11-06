@@ -1154,3 +1154,11 @@
 .ctl .wrap{max-width:var(--page-max,1280px);margin-inline:auto}
 .ctl .wrap,.ctl .fpanel,.ctl .sgrid,.ctl .sbox{box-sizing:border-box;min-width:0}
 .ctl table{max-width:100%}
+/* avo 6 Nov 2026 20:19 ("kaydirdin"): a source box's head row keeps Fetch / ▾ / Pause on the name line in every box;
+   a long name shortens (its full text in the title) rather than pushing the buttons under it. A phone may wrap.
+   Two boxes a row only from 1200 px: narrower, a box is too thin for its head line (the 969 px pane avo uses). */
+@media(max-width:1199px){.ctl .sgrid{grid-template-columns:minmax(0,1fr)}.ctl .sgrid>.sbox:last-child:nth-child(odd){grid-column:auto}}
+.ctl .sb1{flex-wrap:nowrap}
+.ctl .sb1 .dsname{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ctl .sb1 .sbbtn,.ctl .sb1 .srcb{flex:none}
+@media(max-width:760px){.ctl .sb1{flex-wrap:wrap}.ctl .sb1 .dsname{white-space:normal;overflow-wrap:anywhere}}
