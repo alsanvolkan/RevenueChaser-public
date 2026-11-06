@@ -331,3 +331,12 @@ def test_an_unknown_stage_is_refused_and_queues_nothing(client):
     r = client.post("/api/build/request/market_series", json={"stage": "duckdb-only"},
                     headers={"X-RC-Panel": "settings"})
     assert r.status_code == 400 and "unknown stage" in r.get_json()["error"] and _rows() == []
+
+
+def test_automation_sets_a_kinds_mode_and_refuses_an_unknown_kind_or_mode(client):
+    r = client.post("/api/build/automation/market", json={"mode": "raw"}, headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 200 and r.get_json()["automation"]["mode"] == "raw"
+    assert ops.kind_mode_get("market")["set_by"] == "settings"
+    assert client.post("/api/build/automation/nope", json={"mode": "raw"}).status_code == 400
+    assert client.post("/api/build/automation/market", json={"mode": "everything"}).status_code == 400
+    assert ops.kind_mode("market") == "raw"

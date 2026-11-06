@@ -1088,6 +1088,17 @@
       } else out.textContent = r.body.error || ('refused · HTTP ' + r.status);
     }, function () { btn.disabled = false; out.textContent = 'could not reach the dashboard'; });
   }
+  /* what the hourly pass queues for one served file on its own (ops.kind_automation); a Fetch press is not touched */
+  function automation(btn) {
+    var row = btn.closest('.schedset'), kind = btn.getAttribute('data-kind');
+    var sel = row.querySelector('[data-automation]'), out = row.querySelector('[role="status"]');
+    btn.disabled = true;
+    X.send('POST', C.routes.automation + kind, { mode: sel.value }).then(function (r) {
+      btn.disabled = false;
+      if (r.status >= 200 && r.status < 300) out.textContent = 'saved: ' + sel.options[sel.selectedIndex].text + ' · the next hourly pass reads it';
+      else out.textContent = r.body.error || ('refused · HTTP ' + r.status);
+    }, function () { btn.disabled = false; out.textContent = 'could not reach the dashboard'; });
+  }
   /* the Health queue's Stop: the same pause as the dataset's button, said on the row */
   function stop(btn) {
     var ds = btn.getAttribute('data-dataset'), out = btn.parentNode.querySelector('[role="status"]');
@@ -1127,6 +1138,8 @@
     if (sp) { if (!sp.disabled) stop(sp); return; }
     var c = e.target.closest('.ctl [data-job="cadence"]');
     if (c) { if (!c.disabled) cadence(c); return; }
+    var au = e.target.closest('.ctl [data-job="automation"]');
+    if (au) { if (!au.disabled) automation(au); return; }
     var t = e.target.closest('.ctl .sbtog');
     if (t) { fold(t.closest('.sbox'), t.getAttribute('aria-expanded') !== 'true'); return; }
     var a = e.target.closest('.ctl [data-sb]');

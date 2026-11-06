@@ -686,6 +686,19 @@ def schedule_get(dataset: str) -> dict | None:
 read_schedule = schedule_get
 
 
+def kind_mode_set(kind: str, mode: str, *, by: str) -> None:
+    row = {"kind": kind, "mode": ops._kind_mode(mode), "set_at": time.time(), "set_by": by}
+    _transaction(["kind_automation"], lambda: (None, lambda p: _put(p, "kind_automation", row)))
+
+
+def kind_mode_get(kind: str) -> dict | None:
+    return _one("kind_automation", kind)
+
+
+def read_kind_modes() -> dict[str, dict]:
+    return {r["kind"]: r for r in _all("kind_automation")}
+
+
 # ── Whole tables ───────────────────────────────────────────────────────────────────────────────────────────────
 
 def rows(table: str) -> list[dict]:

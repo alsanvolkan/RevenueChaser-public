@@ -297,3 +297,16 @@ def test_pause_cancels_the_queued_request_on_redis_too():
     assert rows[q]["note"].startswith("cancelled: paused by avo at ") and rows[q]["ended_at"] is not None
     assert ops.queue_view(5)["finished"][0]["id"] == q, "a cancelled row leaves the active list"
     assert ops.cancel_queued("market_series", by="avo") == 0
+
+
+def test_kind_automation_on_redis_too():
+    """The same answers as SQLite's ``test_kind_automation``: no row is off, the last set wins, a bad mode writes
+    nothing."""
+    assert ops.kind_mode("market") == "off" and ops.read_kind_modes() == {}
+    ops.kind_mode_set("market", "raw", by="avo")
+    ops.kind_mode_set("market", "parquet", by="settings")
+    got = {k: (r["mode"], r["set_by"]) for k, r in ops.read_kind_modes().items()}
+    assert got == {"market": ("parquet", "settings")}
+    with pytest.raises(ValueError):
+        ops.kind_mode_set("prices", "x", by="avo")
+    assert ops.kind_mode_get("prices") is None

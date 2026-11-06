@@ -117,6 +117,7 @@ def test_the_dataset_stays_due_after_a_no_duckdb_run(stager):
     assert is_due and "skipped" in why, "the data is staged but nothing serves it yet"
 
 
+@pytest.mark.usefixtures("kinds_full")
 def test_the_hourly_pass_never_asks_for_no_duckdb(stager):
     """The switch is a person's: the schedule queues no params at all, so it cannot leave a kind unbuilt."""
     [(name, why, rid, error)] = due.enqueue_due({stager.name: stager})

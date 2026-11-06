@@ -1612,6 +1612,20 @@ def api_build_schedule(dataset: str, action: str):
     return jsonify({"ok": True, "dataset": dataset, "schedule": ops.schedule_get(dataset), "cancelled": cancelled})
 
 
+@app.route("/api/build/automation/<kind>", methods=["POST"])
+def api_build_automation(kind: str):
+    """Set what the hourly pass queues for one serving kind's due datasets: ``{"mode": "off|raw|parquet|full"}``
+    (``ops.KIND_MODES``). 400 for an unknown kind or mode. A person's Fetch is not touched by it."""
+    from RevenueChaser.rcdata import ops, serving
+    if kind not in serving.KINDS:
+        return jsonify({"ok": False, "error": f"unknown kind {kind!r}; known: {', '.join(serving.KINDS)}"}), 400
+    mode = str((request.get_json(silent=True) or {}).get("mode") or "").strip()
+    if mode not in ops.KIND_MODES:
+        return jsonify({"ok": False, "error": f"unknown mode {mode!r}; known: {', '.join(ops.KIND_MODES)}"}), 400
+    ops.kind_mode_set(kind, mode, by=_requested_by())
+    return jsonify({"ok": True, "kind": kind, "automation": ops.kind_mode_get(kind)})
+
+
 @app.route("/api/idle")
 def api_idle():
     """``{"idle": bool, "reasons": [...]}`` from ``jobs.idle()``: no dashboard job, no job lock held by anyone, no

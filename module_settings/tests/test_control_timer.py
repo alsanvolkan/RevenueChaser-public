@@ -51,7 +51,8 @@ def test_a_failed_or_missing_read_is_all_none():
 
 
 def test_build_carries_the_timer_and_the_rows_read_it():
-    view = _build(timer=lambda: control.read_timer(FakeScheduler(_status("disabled"))))
+    view = _build(timer=lambda: control.read_timer(FakeScheduler(_status("disabled"))),
+                  kind_modes=lambda: {"market": {"kind": "market", "mode": "full"}})
     assert view["timer"]["state"] == "off" and view["timer"]["minute"] == 7
     rows = {r["dataset"]: r for f in view["files"] for r in f["datasets"]}
     assert rows["market_series"]["next_words"].startswith("timer off · ")

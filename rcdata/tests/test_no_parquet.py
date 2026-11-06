@@ -204,6 +204,7 @@ def test_the_flag_needs_a_dataset_on_the_hourly_command(capsys):
     assert "need --dataset" in capsys.readouterr().err
 
 
+@pytest.mark.usefixtures("kinds_full")
 def test_the_hourly_pass_never_asks_for_raw_only(stager):
     [(name, why, rid, error)] = due.enqueue_due({stager.name: stager})
     assert rid and not error, why
