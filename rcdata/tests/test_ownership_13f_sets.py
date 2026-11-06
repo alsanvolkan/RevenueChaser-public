@@ -337,7 +337,7 @@ def _edgar_managers(included, reported_by) -> list:
            f"<summaryPage><otherManagers2Info>{inc}</otherManagers2Info></summaryPage>"
            "</formData></edgarSubmission>")
     rows = parse_managers(edgar.tree(xml), {"accession": "a", "cik": "c", "period": None, "filed": None})
-    return sorted((r["kind"], r["seq"], r["manager_cik"], r["name"]) for r in rows)
+    return sorted(((r["kind"], r["seq"], r["manager_cik"], r["name"]) for r in rows), key=lambda r: (r[0], r[1], r[3]))
 
 
 def _managers(accession: str) -> list:
@@ -348,7 +348,7 @@ def _managers(accession: str) -> list:
     con = duckdb.connect()
     try:
         return con.execute("SELECT kind, seq, manager_cik, name FROM read_parquet(?, union_by_name = true) "
-                           "WHERE accession = ? ORDER BY kind, seq", [files, accession]).fetchall()
+                           "WHERE accession = ? ORDER BY kind, seq, name", [files, accession]).fetchall()
     finally:
         con.close()
 
@@ -359,9 +359,13 @@ def test_the_other_managers_a_filing_names_are_kept_on_both_paths_and_agree(feed
     must write the same rows for the same filing, so ``cover``'s seq is the position - the data set's own
     surrogate key has no counterpart in the XML."""
     h = ox.f13_holding
+    # seq 2 given twice (a real filing lists five managers under 1 and 2), and the cover rows written out of
+    # OTHERMANAGER_SK order: the XML lists them in the key's order, measured on six real filings
     included = [(2, "0000918950", "SUSQUEHANNA INVESTMENT GROUP"),
-                (1, "0001444949", "SUSQUEHANNA ADVISORS GROUP, INC.")]
-    reported_by = [(167436, "0000932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC")]
+                (1, "0001444949", "SUSQUEHANNA ADVISORS GROUP, INC."),
+                (2, "0000918951", "SUSQUEHANNA FUND ADVISORS")]
+    reported_by = [(167437, "0000932860", "ZETA CAPITAL LLC"),
+                   (167436, "0000932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC")]
     one = ox.f13_set([
         ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [h("MICROSOFT CORP", "594918104", 4, 10)],
                       included=included, reported_by=reported_by),
@@ -372,14 +376,17 @@ def test_the_other_managers_a_filing_names_are_kept_on_both_paths_and_agree(feed
     rows = _managers("0001000001-26-000101")
     # a manager's CIK is written as the filer's is, without leading zeros, so it joins to filings.cik
     assert rows == [("cover", 1, "932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC"),
+                    ("cover", 2, "932860", "ZETA CAPITAL LLC"),
                     ("included", 1, "1444949", "SUSQUEHANNA ADVISORS GROUP, INC."),
+                    ("included", 2, "918951", "SUSQUEHANNA FUND ADVISORS"),
                     ("included", 2, "918950", "SUSQUEHANNA INVESTMENT GROUP")]
     assert _managers("0001000002-26-000105") == [], "a filing that names none has no rows, not an empty one"
     assert _managers("0001000003-26-000107") == [], "a filing the set does not type (a notice) has no manager rows"
 
     # the EDGAR path types the same filing from its XML: the rows must match, seq included, whatever the padding
-    assert _edgar_managers(included, reported_by) == rows
-    assert _edgar_managers([(q, c.lstrip("0"), n) for q, c, n in included], reported_by) == rows
+    in_xml_order = sorted(reported_by)
+    assert _edgar_managers(included, in_xml_order) == rows
+    assert _edgar_managers([(q, c.lstrip("0"), n) for q, c, n in included], in_xml_order) == rows
 
 
 def test_the_cover_pages_period_wins_on_both_paths_and_a_cusip_placeholder_is_no_cusip(feed, http_mock):

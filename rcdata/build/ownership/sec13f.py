@@ -61,7 +61,12 @@ HOLDINGS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed"
 # MORNINGSTAR"). So the join is the common case, not the rule, and the column is kept as filed.
 # ``cover`` is the cover page's List of Other Managers Reporting for this Manager - filers who report this one's
 # holdings elsewhere. Nothing points at it, so its ``seq`` is only the order the filing lists them in, which is
-# all both paths can agree on (the data set's own surrogate key does not exist in the XML).
+# all both paths can agree on (the data set's own surrogate key does not exist in the XML). Checked against six
+# real filings with three or four cover managers (2026-11-06): the XML's order is OTHERMANAGER_SK's order, not
+# the order the set's file writes the rows in, so the set path numbers them by the key.
+# ``seq`` is not unique within ``included``: a filer may give several managers one number (609 of 163,101 rows
+# over the 54 sets on homesrv; one filing lists five managers under 1 and 2), and the set carries no key that
+# says the XML's order among them. Both paths therefore write a filing's rows ordered by kind, seq, then name.
 MANAGERS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed", "DATE"), ("kind", "TEXT"),
             ("seq", "INTEGER"), ("manager_cik", "TEXT"), ("form13f_file_number", "TEXT"), ("crd_number", "TEXT"),
             ("sec_file_number", "TEXT"), ("name", "TEXT")]
@@ -99,7 +104,7 @@ def status_of(report_type: str | None, holdings: int, entry_total: int | None) -
 def _cik(value: str | None) -> str | None:
     """A CIK without its leading zeros, as the filer's own is written, so a manager joins to ``filings.cik``; text
     that is not a number is kept as filed (#495 review)."""
-    return str(int(value)) if value and value.isdigit() else value
+    return str(int(value)) if value and value.isascii() and value.isdigit() else value
 
 
 def _managers(root, row: dict) -> list[dict]:
@@ -108,8 +113,9 @@ def _managers(root, row: dict) -> list[dict]:
     The two lists are shaped differently, checked against real filings on 2026-11-06: the cover page's
     ``otherManagersInfo/otherManager`` carries ``cik``, ``form13FFileNumber`` and ``name`` directly, while the
     summary page's ``otherManagers2Info/otherManager2`` carries ``sequenceNumber`` beside a nested
-    ``otherManager`` that holds those fields. Each kind names its own field parent rather than trying one level
-    and falling back, and the lists are read as direct children, so a future nesting cannot double a row.
+    ``otherManager`` that holds those fields. Each kind names its own field parent, and the lists are read as
+    direct children, so a future nesting cannot double a row; an ``otherManager2`` without its nested element is
+    read in place and gives a row with only its ``seq``.
     """
     out = []
     for kind, path, tag, nested, seq_tag in (
@@ -262,7 +268,7 @@ class Sec13f(edgar.Feed):
             mgrs.flush()
             return [self.write_day(con, "filings", "filings", day, "accession"),
                     self.write_day(con, "holdings", "holdings", day, "accession, line"),
-                    self.write_day(con, "managers", "managers", day, "accession, kind, seq")]
+                    self.write_day(con, "managers", "managers", day, sec13f_sets.MANAGERS_ORDER)]
         finally:
             con.close()
 

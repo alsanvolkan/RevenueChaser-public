@@ -58,6 +58,8 @@ from . import edgar, sec
 
 INDEX_ENV = "RC_FORM13F_INDEX_URL"
 INDEX_PATH = "/data-research/sec-markets-data/form-13f-data-sets"
+# The order a day's ``managers`` rows are written in, on both paths: ``seq`` alone ties (``sec13f.MANAGERS``).
+MANAGERS_ORDER = "accession, kind, seq, name"
 MEMBERS = ("SUBMISSION", "COVERPAGE", "SUMMARYPAGE", "INFOTABLE", "OTHERMANAGER", "OTHERMANAGER2")
 ORIGIN = "set:"
 SCRATCH = ".typing-"              # a set is typed in a folder of this prefix beside the raw zips
@@ -383,7 +385,7 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
                                             "ORDER BY accession, line",
                                        feed.parquet_dir() / "holdings" / f"day={day}" / "part-0.parquet")
                     base.write_parquet(con, f"SELECT {cols_m} FROM managers WHERE filed = DATE '{day}' "
-                                            "ORDER BY accession, kind, seq",
+                                            f"ORDER BY {MANAGERS_ORDER}",
                                        feed.parquet_dir() / "managers" / f"day={day}" / "part-0.parquet")
                     written += 1
                 d = feed.day_dir(day)
