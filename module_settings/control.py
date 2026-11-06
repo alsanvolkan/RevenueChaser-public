@@ -293,15 +293,19 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
     timer = timer or NO_TIMER
     state = timer.get("state")
     filled, size = universe.get("filled"), universe.get("size")
-    behind = sessions_behind(newest, now)
+    try:
+        behind = sessions_behind(newest, now)
+    except Exception:  # noqa: BLE001 - a day past the calendar's table fails this tile only, never the board
+        behind = "?"
     # Red only when no name has a bar or the newest session is behind (Q9): no share threshold was measured.
     prices_bad = newest is None or filled == 0 or bool(behind)
     stale_other = by["stale"] - (1 if bars_stale else 0)
     tiles = [
         _tile("prices", "bad" if prices_bad else "neu",
-              (f"{behind} session{'s' if behind != 1 else ''} behind" if behind else day_words(newest))
-              if newest else "none",
-              (f"prices · last session {day_words(newest)} · {count(filled)} of {count(size)} names have a bar on it"
+              ("?" if behind == "?" else f"{behind} session{'s' if behind != 1 else ''} behind" if behind
+               else day_words(newest)) if newest else "none",
+              (f"prices · last session {day_words(newest)} · could not count the sessions since" if behind == "?" else
+               f"prices · last session {day_words(newest)} · {count(filled)} of {count(size)} names have a bar on it"
                if newest else "no session in prices yet: price_bar_daily holds no bar"), "session"),
         _tile("stale", "bad" if stale_other else "ok", count(stale_other),
               f"{'other ' if bars_stale else ''}datasets stale, of {count(total)}", "stale"),
@@ -330,7 +334,10 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
     # Problems first in their group (Q7); the sort is stable, so the rest keep their order.
     rank = {"bad": 0, "warn": 1}
     tiles.sort(key=lambda t: rank.get(t["cls"], 2))
-    unread = [w for w, missing in (("the builder timer", state not in ("on", "off")),
+    # Unknown is never "all well": no builder run on record, or no day cap that can be read (#533 review).
+    blind = [w for w, missing in (("the builder's last run", silent is None), ("the day caps", near is None))
+             if missing]
+    unread = blind + [w for w, missing in (("the builder timer", state not in ("on", "off")),
                                    ("the longest build today", longest is None),
                                    ("the running jobs", jobs is None)) if missing]
     # An off timer is avo's choice (Q21): one grey line, never an alarm; a silent builder is the builder tile's job.
@@ -344,7 +351,7 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
     if newest_backup is not None:
         ok.append(f"backup {day_words(newest_backup['newest'])}")
     return {"tiles": tiles, "ok": ok, "counts": by, "problems": problems, "jobs": jobs or [],
-            "timer_line": timer_line, "unread": unread,
+            "timer_line": timer_line, "unread": unread, "blind": bool(blind),
             "gateway": {**dict(zip(("cls", "n", "label"), _gateway(ibkr))),
                         "since": _clock((ibkr or {}).get("since")) if (ibkr or {}).get("since") else None},
             "files": [{"name": f["name"], "state": f["state"]} for f in file_views or []]}
@@ -848,15 +855,18 @@ def _timer(reader) -> dict:
 
 #: The RevenueChaser entry points a running job is one of (``python -m <module> ...``).
 JOB_MODULES = ("RevenueChaser.rcdata.build", "RevenueChaser.core.automations")
-#: Who started a process, by the systemd unit it runs in (``/proc/<pid>/cgroup``); any other life-rc-* is a timer.
+#: Who started a process, by the systemd unit it runs in (``/proc/<pid>/cgroup``).
 JOB_STARTERS = {"life-claude-rc-a": "Claude session A", "life-claude-rc-b": "Claude session B",
                 "life-rc-dashboard": "the dashboard"}
+#: The ``rcdata.build`` options that take a value (its argparse), so a value is never read as a dataset.
+VALUE_OPTIONS = ("--from", "--to", "--tiers", "--names", "--include", "--dataset", "--as-of", "--wait")
 
 
 def read_procs(root: str = "/proc") -> list[dict] | None:
     """Every live RevenueChaser job process on this host: ``{"pid", "argv", "unit", "started"}`` (epoch seconds).
-    A wrapper (``life-with-keys ... -- python -m ...``) is not counted, only the job itself. None when ``root``
-    cannot be read (not Linux, or no /proc): the page then says it could not tell, never "nothing runs"."""
+    ``unit`` is the innermost systemd unit of its cgroup (``.service`` or ``.scope``). A wrapper (``life-with-keys
+    ... -- python -m ...``) is not counted, only the job itself. None when ``root`` cannot be read (not Linux, or no
+    /proc): the page then says it could not tell, never "nothing runs"."""
     try:
         with open(f"{root}/stat", encoding="ascii") as fh:
             btime = next(int(line.split()[1]) for line in fh if line.startswith("btime "))
@@ -876,35 +886,71 @@ def read_procs(root: str = "/proc") -> list[dict] | None:
                 ticks = int(fh.read().rsplit(")", 1)[1].split()[19])
             with open(f"{root}/{pid}/cgroup", encoding="utf-8") as fh:
                 unit = next((seg.removesuffix(".service") for seg in fh.read().strip().split("/")[::-1]
-                             if seg.endswith(".service")), None)
+                             if seg.endswith((".service", ".scope"))), None)
         except (OSError, ValueError, IndexError):
             continue  # the process ended while it was read
         out.append({"pid": int(pid), "argv": argv[first:], "unit": unit, "started": btime + ticks / tick})
     return out
 
 
+def _option(args: list[str], name: str) -> str | None:
+    """``--name X`` or ``--name=X`` in ``args``."""
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith(name + "="):
+            return a[len(name) + 1:]
+    return None
+
+
+def job_datasets(args: list[str]) -> list[str]:
+    """The datasets a ``rcdata.build`` command works on: every positional of ``backfill`` (an option's value
+    skipped, a comma list split), or ``run --dataset X``; none for a whole pass."""
+    if args[:1] == ["backfill"]:
+        out, skip = [], False
+        for a in args[1:]:
+            if skip:
+                skip = False
+            elif a.startswith("-"):
+                skip = a in VALUE_OPTIONS
+            else:
+                out += [d for d in a.split(",") if d]
+        return out
+    one = _option(args, "--dataset") if args[:1] == ["run"] else None
+    return [d for d in (one or "").split(",") if d]
+
+
+def _starter(unit: str, entry) -> str:
+    """Who started the process: a known session or the dashboard, the systemd timer of the entry it runs, another
+    life-rc-* unit by name; anything else (a ``user@`` service, a scope) is not known."""
+    if unit in JOB_STARTERS:
+        return JOB_STARTERS[unit]
+    if entry is not None and unit in (entry.unit, "life-" + entry.name.lower()):
+        return "systemd timer"
+    return f"systemd unit {unit}" if unit.startswith("life-rc-") else "not known"
+
+
 def _job_line(p: dict, now: datetime) -> dict:
     """One running process as the page's line (Q6, Q16-Q18): ``name · elapsed / limit · who started it``."""
     from RevenueChaser.core import automations
     args = p["argv"][1:]
-    dataset = args[1] if args[:1] == ["backfill"] and len(args) > 1 else None
-    since = next((b[:4] for a, b in zip(args, args[1:]) if a == "--from"), None)
+    datasets = job_datasets(args) if p["argv"][0] == JOB_MODULES[0] else []
+    since = (_option(args, "--from") or "")[:4] or None
     entry = None
     if p["argv"][0] == JOB_MODULES[1] and args[:1] == ["run"] and len(args) > 1:
         entry = automations._BY_NAME.get(args[1])
-    elif args[:1] == ["run"]:
+    elif args[:1] == ["run"] and not datasets:
         entry = automations._BY_NAME.get("RC-Build")
-    name = (f"{dataset}{' from ' + since if since else ''}" if dataset else
+    name = (f"{', '.join(datasets)}{' from ' + since if since else ''}" if datasets else
             entry.name if entry else " ".join(args[:2]) or p["argv"][0])
-    unit = p.get("unit") or ""
-    who = JOB_STARTERS.get(unit) or ("systemd timer" if unit.startswith("life-rc-") else unit or "not known")
-    # A Claude session's backfill has no time limit anywhere today: grey, never a made-up number (Q17).
-    limit = entry.settings.limit_minutes if entry is not None and who == "systemd timer" else None
-    minutes = max(0, int((now.timestamp() - p["started"]) // 60))
+    who = _starter(p.get("unit") or "", entry)
+    # Only the entry's own timer has a limit; a Claude session's backfill has none anywhere today (Q17): grey.
+    limit = entry.settings.limit_minutes if who == "systemd timer" else None
+    minutes = max(0, int((now.timestamp() - float(p["started"])) // 60))
     cls = "none" if limit is None else ("bad" if minutes > limit else
                                         "warn" if minutes >= JOB_WARN_SHARE * limit else "ok")
-    return {"pid": p["pid"], "name": name, "dataset": dataset, "minutes": minutes, "limit": limit, "who": who,
-            "cls": cls}
+    return {"pid": p["pid"], "name": name, "dataset": datasets[0] if datasets else None, "datasets": datasets,
+            "minutes": minutes, "limit": limit, "who": who, "cls": cls}
 
 
 def _hm(minutes: int) -> str:
@@ -925,20 +971,48 @@ def _jobs(reader, now: datetime) -> list[dict] | None:
         return None
     if procs is None:
         return None
-    return sorted((_job_line(p, now) for p in procs), key=lambda j: -j["minutes"])
+    lines = []
+    for p in procs:
+        try:
+            lines.append(_job_line(p, now))
+        except Exception:  # noqa: BLE001 - one process read half-way is left out, never the whole list
+            continue
+    return sorted(lines, key=lambda j: -j["minutes"])
+
+
+def pid_gone(pid) -> bool:
+    """True only when ``pid`` names no process on this host (a positive check); False when it lives or cannot be
+    told."""
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return True
+    except (OSError, TypeError, ValueError, OverflowError):
+        return False
+    return False
 
 
 # ── The whole board ───────────────────────────────────────────────────────────────────────────────────────────
 
+def _queue_rows(q: dict, gone) -> dict:
+    """The queue with ``pid_gone`` on a running row whose recorded pid is known to be gone (only then does the page
+    say "no live process" and leave out its Stop)."""
+    active = [{**r, "pid_gone": True} if r.get("status") == "running" and r.get("pid") and gone(r["pid"]) else r
+              for r in q.get("active") or []]
+    return {**q, "active": active}
+
+
 def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, now: datetime | None = None,
-          datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None, procs=None) -> dict:
+          datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None, procs=None,
+          pids=None) -> dict:
     """The page's model from ``newdata.collect``'s output. ``applied`` is the saved universe
     (``board_settings.values("module_settings")["values"]``), ``ibkr`` the gateway's login state, ``datasets`` the
     builder's datasets (default: ``newdata._datasets()``). ``timer`` and ``job_runs`` are the readers of the hourly
     builder timer and of ``ops.job_runs2``, injectable so a test needs neither systemd nor a store; a reader that
     fails gives Nones, never a guess. ``kind_modes`` is the reader of each kind's automation
     (``ops.read_kind_modes``); unreadable, every kind reads off, which is also what the builder does without a row.
-    ``procs`` is the reader of the running job processes (``read_procs``)."""
+    ``procs`` is the reader of the running job processes (``read_procs``), ``pids`` the check that a recorded pid is
+    gone (``pid_gone``)."""
     from RevenueChaser.module_settings import newdata
     now = now or datetime.now(timezone.utc)
     if nd.get("error"):
@@ -962,6 +1036,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         modes = {}
     file_views = files(nd, datasets, uni, reads, now, timer_view, modes)
     jobs = _jobs(procs, now)
+    pids = pids or pid_gone
     control_sources.attach_pv(file_views, datasets)
     return {
         "error": None,
@@ -972,7 +1047,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         "universe": uni, "identity": nd.get("identity"), "my_universe": nd.get("my_universe"), "scope": scope(uni), "files": file_views, "providers": provider_rows,
         "flow": flow(file_views, datasets, reads, uni), "calendars": calendars(nd, uni, provider_rows),
         "cross_check": (nd.get("cross_check") or {}).get("fields") or [],
-        "queue": nd.get("queue") or {"active": [], "finished": []},
+        "queue": _queue_rows(nd.get("queue") or {"active": [], "finished": []}, pids),
         "fill_enabled": screen.fill_enabled(), "fill_off_why": screen.FILL_OFF_WHY,
         "datasets_total": len(nd.get("datasets") or []),
     }

@@ -11,7 +11,6 @@ off the request thread (#434).
 """
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -89,11 +88,6 @@ WIAL = ("<p>This page is the control board for every dataset the system holds. I
 def _info(text: str) -> str:
     """An ⓘ that shows ``text`` (plain words) on hover or focus: the long explanation behind a one-line label."""
     return f'<span class="info" tabindex="0" role="note" aria-label="{esc(text)}" data-tip="{esc(text)}">ⓘ</span>'
-
-
-def _plain(html_text: str) -> str:
-    """``html_text`` without its tags, for an ⓘ's tip."""
-    return re.sub(r"<[^>]+>", "", html_text).replace("&ldquo;", '"').replace("&rdquo;", '"').replace("&#x27;", "'")
 
 
 def _topline(view: dict) -> str:
@@ -183,7 +177,7 @@ def _health(view: dict) -> str:
         if body:
             groups.append(f'<div class="hgrp" data-group="{key}"><h3 class="hgh">{esc(question)}</h3>{body}</div>')
     ok = " · ".join(h.get("ok") or [])
-    lines = [f'<p class="hok">All well · {esc(ok)}</p>'] if not need else []
+    lines = [f'<p class="hok">All well · {esc(ok)}</p>'] if not need and not h.get("blind") else []
     if h.get("timer_line"):
         lines.append(f'<p class="hline">{esc(h["timer_line"])}</p>')
     if h.get("unread"):
@@ -944,18 +938,21 @@ def _cross(view: dict) -> str:
     for c in view["cross_check"]:
         copy = (f' <button type="button" class="btn sm" data-job="copy" data-cmd="{esc(c["command"])}">Copy the '
                 'command</button>' if c.get("command") else "")
-        note = f' {_info(c["why"])}' if c.get("why") else ""
         rows.append(f'<tr><td data-label="Field" class="nw"><b>{esc(c.get("field"))}</b> '
                     f'<code>{esc(c.get("need") or "")}</code></td>'
                     f'<td data-label="Second source" class="nw">{_source_chip(c.get("second_source"))}</td>'
-                    f'<td data-label="Result">{_cross_result(c)}{note}</td>'
+                    f'<td data-label="Result">{_cross_result(c)}</td>'
                     f'<td data-label="When" class="nw">{esc(c.get("as_of") or "—")}{copy}</td></tr>')
     body = "".join(rows) or '<tr><td colspan="4" class="dim">no cross-check recorded</td></tr>'
+    # below the table, not in a cell: a tip inside the .scroll box is clipped by its overflow
+    notes = "".join(f'<p class="hint"><b>{esc(c.get("field"))}</b> {_info(c["why"])}</p>'
+                    for c in view["cross_check"] if c.get("why"))
     return ('<details class="sec" id="sec-crosscheck"><summary><h2>Cross-check · first ↔ second source</h2>'
             f'<span class="secs">{len(view["cross_check"])} reports</span></summary>'
             '<div class="group" style="border-left-color:var(--new)"><div class="scroll"><table class="stk">'
             '<thead><tr><th class="nw">Field</th><th class="nw">Second source</th><th>Result</th><th class="nw">When</th>'
-            f'</tr></thead><tbody>{body}</tbody></table></div><p class="hint">{_info(CROSS_WHY)}</p></div></details>')
+            f'</tr></thead><tbody>{body}</tbody></table></div>{notes}<p class="hint">{_info(CROSS_WHY)}</p></div>'
+            '</details>')
 
 
 #: A queue note longer than this shows its first part; the whole note opens below it.
@@ -977,33 +974,52 @@ def _epoch(value) -> float | None:
         return None
 
 
+def _clock_of(value) -> str:
+    """A queue row's epoch time as HH:MM (Amsterdam); "—" when it is missing or not a time, so one bad value is one
+    cell."""
+    at = _epoch(value)
+    try:
+        return control._clock(datetime.fromtimestamp(at, timezone.utc).isoformat()) if at is not None else "—"
+    except (OverflowError, OSError, ValueError):
+        return "—"
+
+
+def _job_for(r: dict, jobs: list[dict], used: set) -> dict | None:
+    """The live process of a running queue row: by the pid the row records, else the first unused one working on
+    its dataset."""
+    pid = r.get("pid")
+    hit = next((j for j in jobs if pid and j["pid"] == pid), None) or next(
+        (j for j in jobs if j["pid"] not in used and r.get("dataset") in (j.get("datasets") or [])), None)
+    if hit is not None:
+        used.add(hit["pid"])
+    return hit
+
+
 def _queue(view: dict) -> str:
-    """The queue (Q6/A, the five queue points): who asked for a running request, started when and for how long; a
-    "cli" row with no live process is marked so and gets no Stop."""
+    """The queue (Q6/A, the five queue points): who asked for a running request (the process running it, when one
+    matches), asked and started when, for how long. Only a row whose recorded pid is known to be gone says "no live
+    process" and loses its Stop; no match is never read as "nothing runs"."""
     q = view["queue"]
-    jobs = (view.get("health") or {}).get("jobs")
-    readable = "the running jobs" not in ((view.get("health") or {}).get("unread") or [])
-    free = [j for j in jobs or [] if j.get("dataset")]
+    jobs = (view.get("health") or {}).get("jobs") or []
+    used: set = set()
     now = datetime.now(timezone.utc).timestamp()
     rows = []
     for r in list(q.get("active") or []) + list(q.get("finished") or [])[:10]:
         status, who = r.get("status"), r.get("requested_by") or "—"
-        live = True
-        if status == "running" and who == "cli" and readable:
-            j = next((j for j in free if j["dataset"] == r.get("dataset")), None)
-            if j is None:
-                live = False
-            else:
-                free.remove(j)
-                who = j["who"]
+        live = not r.get("pid_gone")
+        if status == "running" and live:
+            j = _job_for(r, jobs, used)
+            who = j["who"] if j is not None else who
         stop = (f'<button type="button" class="btn sm" data-job="stop" data-dataset="{esc(r.get("dataset"))}" '
                 f'data-status="{esc(status)}">Stop</button><span class="dim" role="status"></span>'
                 if status in ("queued", "running") and live else "")
         word = status if live else "running · no live process"
-        at = _epoch(r.get("started_at") or r.get("requested_at"))
-        when = control._clock(datetime.fromtimestamp(at, timezone.utc).isoformat()) if at is not None else "—"
-        if status == "running" and _epoch(r.get("started_at")) is not None:
-            when += f' · {control._hm(max(0, int((now - _epoch(r["started_at"])) // 60)))}'
+        when = _clock_of(r.get("requested_at"))
+        started = _epoch(r.get("started_at"))
+        if started is not None:
+            when += f" · started {_clock_of(started)}"
+            if status == "running":
+                when += f" · {control._hm(max(0, int((now - started) // 60)))}"
         rows.append(f'<tr><td data-label="Dataset" class="nw"><code>{esc(r.get("dataset"))}</code></td>'
                     f'<td data-label="Status" class="nw"><span class="qst">{esc(word)}</span>{stop}</td>'
                     f'<td data-label="Asked by" class="nw">{esc(who)}</td>'

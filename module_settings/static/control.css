@@ -1102,10 +1102,11 @@
 .ctl .topline a{color:inherit}
 .ctl .info{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:20px;min-height:20px;
   color:var(--acc);cursor:help;font-style:normal;vertical-align:middle}
-.ctl .info::after{content:attr(data-tip);position:absolute;left:0;top:calc(100% + 6px);z-index:6;width:max-content;max-width:360px;
+.ctl .info::after{content:attr(data-tip);position:absolute;left:0;top:calc(100% + 6px);z-index:6;width:max-content;max-width:min(360px,calc(100vw - 32px));
   white-space:normal;text-align:left;font-size:12px;line-height:1.45;font-weight:400;color:var(--fg);background:var(--card);
   border:1px solid var(--line);border-radius:8px;padding:6px 9px;box-shadow:0 4px 14px rgba(0,0,0,.18);pointer-events:none;display:none}
 .ctl .info:hover::after,.ctl .info:focus-visible::after{display:block}
+.ctl .info.tipr::after{left:auto;right:0}  /* an ⓘ in the right half opens leftward (control.js) */
 .ctl .hgrps{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
 .ctl .hok{margin:6px 0 0;color:var(--ok);font-weight:600}
 .ctl .hline{margin:4px 0 0;color:var(--mut);font-size:13px}

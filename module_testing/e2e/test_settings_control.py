@@ -91,8 +91,12 @@ def test_no_width_scrolls_the_page_sideways_and_a_wide_one_only_scales_up(dashbo
     m = browser.eval("(function(){ var d = document.documentElement; return {vw: d.clientWidth, sw: d.scrollWidth, "
                      "z: [document.getElementById('ctl').style.zoom, document.getElementById('needs').style.zoom]}; })()")
     assert m["sw"] <= m["vw"], f"the page scrolls sideways at {width} px: {m}"
-    want = str(width / 1600) if width > 1600 else ""
-    assert m["z"] == [want, want], f"scale-up only past 1600 px: {m}"
+    want = m["vw"] / 1600   # the page's own width: a scroll bar takes some of the window's
+    for z in m["z"]:
+        if want > 1:
+            assert z and abs(float(z) - want) < 0.01, f"scale-up only past 1600 px: {m}"
+        else:
+            assert z == "", f"no zoom at or under 1600 px: {m}"
 
 
 def test_the_board_follows_the_shells_theme_both_ways(dashboard, browser):

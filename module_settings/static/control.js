@@ -1190,4 +1190,11 @@
   }
   fit();
   window.addEventListener('resize', fit);
+  // an ⓘ in the right half of the window opens its tip leftward, so the tip never runs past the edge
+  function side(e) {
+    var i = e.target && e.target.closest && e.target.closest('.ctl .info'); if (!i) return;
+    i.classList.toggle('tipr', i.getBoundingClientRect().left > (document.documentElement.clientWidth || 0) / 2);
+  }
+  document.addEventListener('mouseover', side);
+  document.addEventListener('focusin', side);
 })();

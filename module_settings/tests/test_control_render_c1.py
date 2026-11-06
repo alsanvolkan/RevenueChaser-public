@@ -324,3 +324,11 @@ def test_the_board_is_left_aligned_and_sections_read_as_sections():
     assert re.search(r"\.ctl details\.sec>summary\{[^}]*min-height:44px", blk)
     assert ".ctl .scroll{" in blk and "overflow-x:auto" in blk
     assert "overflow-x:hidden" not in blk
+
+
+def test_an_unknown_builder_or_cap_is_never_all_well():
+    v = _grouped_view()
+    v["health"].update(tiles=[t for t in v["health"]["tiles"] if t["cls"] not in ("bad", "warn")], jobs=[],
+                       unread=["the builder's last run"], blind=True)
+    html = _health(v)
+    assert "All well" not in html and "Could not read: the builder&#x27;s last run" in html

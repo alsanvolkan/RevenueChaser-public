@@ -56,9 +56,32 @@ def test_an_off_timer_is_a_grey_line_and_an_unreadable_one_is_not_known():
 
 
 def test_the_all_well_words_and_the_gateway_for_the_top_line():
-    h = _build(procs=lambda: [])["health"]
-    assert h["ok"][0] == "1/5 fresh" and "builder 24 min ago" in h["ok"]
-    assert set(h["gateway"]) == {"cls", "n", "label", "since"}
+    from RevenueChaser.module_settings import control_render
+    view = _build(procs=lambda: [], ibkr={"state": "down", "since": "2026-10-30T13:20:00+00:00"})
+    h = view["health"]
+    assert h["ok"][0] == "1/5 fresh" and "builder 24 min ago" in h["ok"] and not h["blind"]
+    top = control_render._topline(view)
+    assert "IBKR gateway: logged out since 14:20" in top and 'class="tl warn"' in top
+    view = _build(procs=lambda: [], ibkr={"state": "up"})
+    assert "IBKR gateway: logged in</span>" in control_render._topline(view)
+
+
+def test_no_builder_run_or_no_readable_cap_is_never_all_well():
+    nd = control_nd()
+    nd["verified"]["silent_minutes"] = None
+    h = _build(nd, procs=lambda: [])["health"]
+    assert "the builder's last run" in h["unread"] and h["blind"]
+    h = control.health(control_nd(), [], {"size": 0}, None, now=NOW, jobs=[])   # no provider share to read
+    assert "the day caps" in h["unread"] and h["blind"]
+
+
+def test_a_bad_newest_session_fails_only_the_prices_tile(monkeypatch):
+    def boom(*a):
+        raise ValueError("calendar past its table")
+    monkeypatch.setattr(control, "sessions_behind", boom)
+    t = _tiles(_build(procs=lambda: []))
+    assert t["prices"]["cls"] == "bad" and "could not count" in t["prices"]["label"]
+    assert t["late"]["n"] == "1", "the rest of the board is drawn"
 
 
 def test_the_longest_build_today_is_measured_from_the_runs_of_the_new_york_day():
@@ -133,3 +156,47 @@ def test_an_unreadable_process_table_is_not_known_never_nothing_runs(tmp_path):
     assert control.read_procs(str(tmp_path / "absent")) is None
     h = _build(procs=lambda: None)["health"]
     assert h["jobs"] == [] and "the running jobs" in h["unread"]
+
+
+def _line(argv, unit="life-claude-rc-b", started=0.0):
+    return control._job_line({"pid": 7, "argv": argv, "unit": unit, "started": started},
+                             datetime.fromtimestamp(600, timezone.utc))
+
+
+def test_the_command_is_parsed_for_its_datasets():
+    b = "RevenueChaser.rcdata.build"
+    assert _line([b, "backfill", "--from", "2022-01-01", "sec/13dg", "--no-duckdb"])["datasets"] == ["sec/13dg"]
+    j = _line([b, "backfill", "sec/13dg,sec/form4", "alpaca/bars", "--to=2026-01-01"])
+    assert j["datasets"] == ["sec/13dg", "sec/form4", "alpaca/bars"]
+    assert _line([b, "backfill", "--from=2014-01-01", "sec/form4"])["name"] == "sec/form4 from 2014"
+    assert _line([b, "run", "--dataset", "sec/13f"])["datasets"] == ["sec/13f"]
+    assert _line([b, "run", "--dataset=sec/13f", "--once"])["datasets"] == ["sec/13f"]
+    assert _line([b, "run", "--once"])["datasets"] == []
+
+
+def test_who_started_a_job_is_named_only_when_it_is_known():
+    a, b = "RevenueChaser.core.automations", "RevenueChaser.rcdata.build"
+    assert _line([b, "backfill", "x"], unit="user@1001")["who"] == "not known"
+    assert _line([b, "backfill", "x"], unit=None)["who"] == "not known"
+    assert _line([b, "backfill", "x"], unit="life-rc-relatedness")["who"] == "systemd unit life-rc-relatedness"
+    j = _line([a, "run", "RC-Build"], unit="life-rc-builder")
+    assert j["who"] == "systemd timer" and j["limit"] is not None
+    j = _line([b, "backfill", "sec/13dg"], unit="life-rc-builder")
+    assert j["who"] == "systemd unit life-rc-builder" and j["limit"] is None, "not the RC-Build entry itself"
+
+
+def test_a_job_line_that_cannot_be_read_is_left_out_not_the_list():
+    bad = {"pid": 9, "argv": ["RevenueChaser.rcdata.build"], "unit": "x", "started": "soon"}
+    good = {"pid": 7, "argv": ["RevenueChaser.rcdata.build", "backfill", "a/b"], "unit": "x", "started": 0.0}
+    jobs = control._jobs(lambda: [bad, good], datetime.fromtimestamp(600, timezone.utc))
+    assert [j["pid"] for j in jobs] == [7]
+
+
+def test_the_cgroup_of_a_session_scope_is_read(tmp_path, monkeypatch):
+    (tmp_path / "stat").write_text("btime 1000\n")
+    _proc(tmp_path, 21, ["/usr/bin/python3", "-m", "RevenueChaser.rcdata.build", "backfill", "a/b"], "x")
+    (tmp_path / "21" / "cgroup").write_text("0::/user.slice/user-1001.slice/user@1001.service/app.slice/run-1.scope\n")
+    monkeypatch.setattr(control.os, "sysconf", lambda name: 100)
+    (p,) = control.read_procs(str(tmp_path))
+    assert p["unit"] == "run-1.scope"
+    assert control._job_line(p, datetime.fromtimestamp(2000, timezone.utc))["who"] == "not known"
