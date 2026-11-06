@@ -78,16 +78,21 @@ class TaskSettings:
             return None
         return self.time_limit_minutes if self.time_limit_minutes is not None else self.time_limit_hours * 60
 
-    def summary(self) -> str:
+    def summary(self, windows: bool | None = None) -> str:
+        """The run conditions in words. Under systemd (every host but Windows) only the catch-up (``Persistent=``)
+        and the limit (``TimeoutStartSec=``) exist, so the Task Scheduler words are left out (avo 6 Nov 2026, Q52)."""
+        limit = ("no time limit" if self.no_time_limit else
+                 f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
+                 else f"{self.time_limit_hours} h limit")
+        if not (sys.platform == "win32" if windows is None else windows):
+            return ", ".join((["catches up a missed run"] if self.start_when_available else []) + [limit])
         parts = ["runs on battery" if self.allow_on_battery else "AC power only"]
         if self.wake_to_run:
             parts.append("wakes the PC")
         if self.start_when_available:
             parts.append("catches up a missed run")
         parts.append("only when logged on" if self.run_only_when_logged_on else "logged on or not")
-        parts.append("no time limit" if self.no_time_limit else
-                     f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
-                     else f"{self.time_limit_hours} h limit")
+        parts.append(limit)
         return ", ".join(parts)
 
 

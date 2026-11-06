@@ -133,8 +133,9 @@ def _timer_box(view: dict) -> str:
     st = (view.get("timer") or {}).get("state")
     cls = {"on": "ok", "off": "none"}.get(st, "warn")
     word = st if st in ("on", "off") else "not known"
-    why = {"on": "the hourly pass runs on its own", "off": "nothing runs on its own; a Fetch still queues"}.get(
-        st, "its state could not be read")
+    ran = view.get("builder_run_at")
+    off = (f"last run {control._clock(ran)}, from the queue" if ran else "nothing runs on its own; a Fetch still queues")
+    why = {"on": "the hourly pass runs on its own", "off": off}.get(st, "its state could not be read")
     url = view.get("timer_url")
     link = (f'<a class="lnk" href="{esc(url)}" target="_blank" rel="noopener noreferrer">on / off in Grafana ↗</a>'
             if url else "")
@@ -552,10 +553,12 @@ def _sbox(d: dict, view: dict) -> str:
             f'<span class="sbbtn">{_one_button(d, view)}</span></div>')
     nxt = d.get("next_words")
     since = d.get("since_words")
+    # "automation off · Fetch only" repeats the Automated select below and "fetch on" the Fetch switch on top: only
+    # words that say something new stand on this line (avo, 6 Nov 2026)
+    nxt_html = "" if nxt == SAID_BY_THE_SELECT else f'<span class="snext">{esc(_next_words(nxt))}</span>'
+    since_html = "" if since == "fetch on" else f'<span class="ssince">{esc(since) if since else "since: not known"}</span>'
     state = (f'<div class="sb2"><span class="pill {esc(d["pill"])}">{esc(word)}</span>'
-             f'<span class="pill cad">⏱ {esc(d["cadence"] or "not known")}</span>'
-             f'<span class="snext">{esc(_next_words(nxt))}</span>'
-             f'<span class="ssince">{esc(since) if since else "since: not known"}</span></div>')
+             f'<span class="pill cad">⏱ {esc(d["cadence"] or "not known")}</span>{nxt_html}{since_html}</div>')
     meters = ""
     if d["coverage"]:
         c = d["coverage"]
@@ -628,6 +631,10 @@ def _funnel(view: dict) -> str:
 
 #: ``next_run_words`` answers that are whole sentences, printed without the "next " prefix.
 _WHOLE_SENTENCES = ("skips until", "by hand", "next ", "due", "not before")
+
+
+#: The next-run words of a kind whose automation is off: the Automated select already says it.
+SAID_BY_THE_SELECT = "automation off · Fetch only"
 
 
 def _next_words(nxt) -> str:
@@ -954,7 +961,7 @@ def _samples(f: dict) -> str:
                 f'<section class="dsec" data-sample="{esc(t)}"><h3 class="dsh"><code>{esc(t)}</code> as served '
                 f'<span class="dim">{len(s.get("rows") or [])} rows</span></h3><div class="dsact"><button type="button" '
                 f'class="btn sm" '
-                f'data-sample-refresh="{esc(t)}">Refresh the example rows</button><span class="dim">reads 5 rows of '
+                f'data-sample-refresh="{esc(t)}" aria-label="Refresh the example rows" title="Refresh the example rows">↻ Refresh</button><span class="dim">reads 5 rows of '
                 f'<code>{esc(f["name"])}</code> · no provider call</span></div><div class="scroll"><table class="ex">'
                 f'<thead>{src}<tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{notes}</section>')
     if not blocks:

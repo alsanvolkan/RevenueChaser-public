@@ -1203,3 +1203,29 @@
   var first = pick.querySelector('.fpb');
   if (first) select(first.getAttribute('data-file'), false);
 })();
+
+/* Q55 (avo 6 Nov 2026, "boyutu fixed olmali", "kutulari kucultebilirsin icindekiler ile beraber"): both tabs are laid
+   out at 1600 px and zoomed to the shell's pane, up on a wide window and down on a narrow desktop pane (avo's 4K screen
+   at 250 % gives a 969 px pane), so the layout never reflows and never scrolls sideways. Only the shell's phone breakpoint (its isNarrow()) reflows at zoom 1.
+   The browser's own zoom still works on top. */
+(function () {
+  'use strict';
+  var DESIGN = 1600;   // no lower bound (avo 20:25, "kutulari kucultebilirsin"): only the phone reflows
+  function narrow() {
+    try {
+      if (window.parent !== window && typeof window.parent.isNarrow === 'function') return window.parent.isNarrow();
+      return !!(window.matchMedia && window.matchMedia('(max-width: 900px)').matches);
+    } catch (e) { return false; }
+  }
+  function fit() {
+    var z = (document.documentElement.clientWidth || DESIGN) / DESIGN;
+    var phone = narrow(), v = phone || Math.abs(z - 1) < 0.001 ? '' : String(z);
+    [].forEach.call(document.querySelectorAll('#ctl, #needs, #settings-tabs'), function (e) { e.style.zoom = v; });
+    // the 1600 layout ignores the CSS breakpoints between the phone and 1600 px: they see the pane, not the design
+    document.documentElement.classList.toggle('z1600', !phone);
+  }
+  fit();
+  window.addEventListener('resize', fit);
+  // a scroll bar that comes later narrows the page without a resize event
+  if (window.ResizeObserver) new ResizeObserver(fit).observe(document.documentElement);
+})();

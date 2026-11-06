@@ -97,9 +97,15 @@
     svg.style.display = '';
     h.classList.add('dtree-host');
     var hr = h.getBoundingClientRect();
+    // A CSS zoom on the page (the fixed 1600 px layout, Q55) scales the client rects but not the SVG's own units.
+    var z = (h.offsetWidth && hr.width / h.offsetWidth) || 1;
+    function R(e) {
+      var b = e.getBoundingClientRect();
+      return { left: b.left / z, right: b.right / z, top: b.top / z, bottom: b.bottom / z, height: b.height / z };
+    }
     // the gutter is the panel's own left padding, so the overlay is as wide as the panel
-    svg.setAttribute('width', String(hr.width)); svg.setAttribute('height', String(h.scrollHeight || hr.height));
-    var sr = svg.getBoundingClientRect(), ox = sr.left, oy = sr.top;
+    svg.setAttribute('width', String(hr.width / z)); svg.setAttribute('height', String(h.scrollHeight || hr.height / z));
+    var sr = R(svg), ox = sr.left, oy = sr.top;
     var rows = [].slice.call(j.querySelectorAll('tr.jr[data-ds]')).filter(shown);
     var edge = GUTTER, steps = [];
     // Box lines: the top box gets the inner lane.
@@ -111,9 +117,9 @@
       });
       if (box) pairs.push([box, r]);
     });
-    pairs.sort(function (a, b) { return a[0].getBoundingClientRect().top - b[0].getBoundingClientRect().top; });
+    pairs.sort(function (a, b) { return R(a[0]).top - R(b[0]).top; });
     pairs.forEach(function (p, k) {
-      var br = p[0].getBoundingClientRect(), rr = p[1].getBoundingClientRect();
+      var br = R(p[0]), rr = R(p[1]);
       var lane = Math.max(2, LANE0 - k * LANE), bx = Math.max(lane + 6, Math.min(br.left + 14, br.right - 6) - ox);
       var by = br.bottom - oy, y = rr.top + rr.height / 2 - oy, x = Math.max(edge, rr.left - ox) + 2;
       var d = 'M' + bx + ',' + by + 'V' + (by + 6 + k * LANE) + 'H' + lane + 'V' + y + 'H' + x;
@@ -123,10 +129,10 @@
     var fh = fileColour(j);
     rows.forEach(function (b) {
       if (!b.querySelector('.tag.r-build')) return;
-      var br = b.getBoundingClientRect(), by = br.top + br.height / 2 - oy, bx = Math.max(edge, br.left - ox) + 2;
+      var br = R(b), by = br.top + br.height / 2 - oy, bx = Math.max(edge, br.left - ox) + 2;
       rows.forEach(function (r) {
         if (r === b) return;
-        var rr = r.getBoundingClientRect(), y = rr.top + rr.height / 2 - oy + 4;
+        var rr = R(r), y = rr.top + rr.height / 2 - oy + 4;
         var d = 'M' + Math.max(edge, rr.left - ox) + ',' + y + 'H' + TRUNK + 'V' + by + 'H' + bx;
         steps.push(line(svg, d, [bx, by], fh, true, null, [r, b]));
       });

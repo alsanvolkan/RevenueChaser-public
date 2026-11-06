@@ -967,22 +967,53 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
 BUILDER_ENTRY = "RC-Build"
 
 
-def read_timer(scheduler=None) -> dict:
+BUILDER_TIMER_UNIT = "life-rc-builder.timer"
+_TIMER_PROPS = ("LoadState", "ActiveState", "UnitFileState", "LastTriggerUSec", "NextElapseUSecRealtime")
+
+
+def read_timer(scheduler=None, run=None) -> dict:
     """The hourly builder timer (``core.automations``' ``RC-Build`` row, unit ``life-rc-builder``): ``state`` "on"
-    while the timer is active, "off" when disabled; ``last`` / ``next`` its passes; ``minute`` the minute of its
-    ``OnCalendar``. Not installed, no scheduler on this host, or a read that fails: every value None."""
+    while the timer is active, "off" when it is not; ``last`` / ``next`` its passes; ``minute`` the minute of its
+    ``OnCalendar``. Not installed, no scheduler on this host, or a read that fails: every value None.
+
+    On Linux the timer is a **system** unit (#528): ``automations``' scheduler asks ``systemctl --user`` and never
+    finds it, so it is read with ``systemctl show`` (no sudo for a read). ``scheduler`` (a test, or Windows) keeps the
+    scheduler's own read."""
+    import sys
     from RevenueChaser.core import automations
     try:
-        scheduler = scheduler or automations.get_scheduler()
-        st = scheduler.status(BUILDER_ENTRY)
-        if st is None:
+        if scheduler is None and (run is not None or sys.platform.startswith("linux")):
+            got = _read_system_timer(run)
+        else:
+            st = (scheduler or automations.get_scheduler()).status(BUILDER_ENTRY)
+            got = None if st is None else {"state": "off" if st.state == "disabled" else "on",
+                                           "last": st.last_run, "next": st.next_run}
+        if got is None:
             return dict(NO_TIMER)
         spec = automations.on_calendar(automations.entry(BUILDER_ENTRY))
         minute = int(spec.split()[-1].split(":")[1])
     except Exception:  # noqa: BLE001 - a timer that cannot be read is "not known", never a guess
         return dict(NO_TIMER)
-    return {"state": "off" if st.state == "disabled" else "on", "last": st.last_run, "next": st.next_run,
-            "minute": minute}
+    return {**got, "minute": minute}
+
+
+def _read_system_timer(run=None) -> dict | None:
+    """``systemctl show`` of the builder timer as ``{"state", "last", "next"}``; None when the unit is not loaded.
+    Enabled but stopped counts as off: only an active timer starts the builder."""
+    import subprocess
+    run = run or subprocess.run
+    out = run(["systemctl", "show", BUILDER_TIMER_UNIT, "--timestamp=unix", "-p", ",".join(_TIMER_PROPS)],
+              capture_output=True, text=True, timeout=10, check=True).stdout
+    props = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    if props.get("LoadState") != "loaded":
+        return None
+
+    def when(v: str | None) -> str | None:
+        v = (v or "").strip()
+        return datetime.fromtimestamp(int(v[1:]), timezone.utc).isoformat() if v.startswith("@") else None
+
+    return {"state": "on" if props.get("ActiveState") == "active" else "off",
+            "last": when(props.get("LastTriggerUSec")), "next": when(props.get("NextElapseUSecRealtime"))}
 
 
 def _timer(reader) -> dict:
@@ -1053,6 +1084,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
                          switches=switch_rows, jobs_now=running),
         "running": running,
         "timer": timer_view, "longest_build": longest,
+        "builder_run_at": ((nd.get("verified") or {}).get("builder_last_run") or {}).get("started_at"),
         "switches": switches_view(switch_rows), "gateway": dict(zip(("cls", "n", "label"), _gateway(ibkr))),
         "universe": uni, "identity": nd.get("identity"), "my_universe": nd.get("my_universe"), "scope": scope(uni), "files": file_views, "providers": provider_rows,
         "flow": flow(file_views, datasets, reads, uni), "calendars": calendars(nd, uni, provider_rows),

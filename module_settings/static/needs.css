@@ -18,7 +18,7 @@
 /* ── The tab strip ── */
 #settings-tabs{background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body);border-bottom:1px solid var(--line);
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-#settings-tabs .tabs{display:flex;gap:4px;max-width:1600px;margin:0 auto}
+#settings-tabs .tabs{display:flex;gap:4px;max-width:1600px;margin:0}
 #settings-tabs [role="tab"]{font:inherit;font-size:14px;font-weight:600;min-height:44px;min-width:44px;padding:0 18px;
   border:0;border-bottom:3px solid transparent;background:none;color:var(--mut);cursor:pointer}
 #settings-tabs [role="tab"]:hover{color:var(--fg)}
@@ -30,7 +30,7 @@
 /* ── The Needs tab ── */
 #needs *{box-sizing:border-box}
 #needs{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body)}
-#needs .wrap{max-width:1600px;margin:0 auto;padding-block:20px 56px;
+#needs .wrap{max-width:1600px;margin:0;padding-block:20px 56px;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 #needs h1{font-size:25px;margin:0 0 2px;letter-spacing:-.01em;text-wrap:balance}
 #needs .sub{color:var(--mut);font-size:13.5px;margin:0 0 16px}

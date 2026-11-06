@@ -78,6 +78,39 @@ def test_the_board_is_one_column_on_a_phone_with_44px_targets_and_no_sideways_sc
     assert m["buttons"] >= 6 and not m["small"], f"targets under 44 px: {m['small']}"
 
 
+@pytest.mark.parametrize("width", [969, 1280, 1600, 2560])
+@pytest.mark.parametrize("tab", ["data", "health"])
+def test_no_width_scrolls_the_page_sideways_and_the_1600_layout_is_zoomed_to_it(dashboard, browser, width, tab):
+    """Q54/Q55 (avo 6 Nov 2026, "boyutu fixed olmali"): no horizontal scroll bar at any desktop width, every section
+    open; the board is the 1600 px layout zoomed to the window, up or down, never reflowed."""
+    browser.emulate(width, 1000, scheme="dark")
+    browser.open(f"{dashboard.url}/view/{_APP}", ready="!!document.getElementById('ctl') && !!window.CTL")
+    _tab(browser, tab)
+    browser.eval("document.querySelectorAll('#ctl details, #needs details').forEach(function(d){ d.open = true; })")
+    browser.settle()
+    m = browser.eval("(function(){ var d = document.documentElement, vw = d.clientWidth; return {vw: vw, "
+                     "sw: d.scrollWidth, z: [document.getElementById('ctl').style.zoom, "
+                     "document.getElementById('needs').style.zoom], wide: Array.prototype.filter.call("
+                     "document.querySelectorAll('#ctl *, #needs *'), function(el){ var b = el.getBoundingClientRect();"
+                     " return b.width > 0 && b.right > vw + 0.5 && !el.closest('.scroll'); }).slice(0, 8).map("
+                     "function(el){ return el.tagName + '.' + el.className; })}; })()")
+    assert m["sw"] <= m["vw"], f"the page scrolls sideways at {width} px: {m}"
+    want = m["vw"] / 1600   # the page's own width: a scroll bar takes some of the window's
+    for z in m["z"]:
+        if abs(want - 1) < 0.001:
+            assert z == "", f"no zoom at 1600 px: {m}"
+        else:
+            assert z and abs(float(z) - want) < 0.01, f"the 1600 px layout is zoomed to the window: {m}"
+    if tab == "data":
+        tops = browser.eval("Array.prototype.filter.call(document.querySelectorAll('#ctl .sgrid > .sbox'), "
+                            "function(b){ return b.getClientRects().length; }).slice(0, 2).map("
+                            "function(b){ return Math.round(b.getBoundingClientRect().top); })")
+        assert len(tops) == 2 and tops[0] == tops[1], f"two dataset cards side by side at {width} px: {tops}"
+        cols = browser.eval("getComputedStyle(document.querySelector('#ctl .strip')).gridTemplateColumns"
+                            ".split(' ').length")
+        assert cols == 6, f"the strip keeps the 1600 layout's 6 columns at {width} px, not a narrow breakpoint's: {cols}"
+
+
 def test_the_board_follows_the_shells_theme_both_ways(dashboard, browser):
     _open(browser, dashboard, "light")
     look = "(function(){ var c = getComputedStyle(document.getElementById('ctl')); return [c.color, " \
