@@ -152,7 +152,8 @@ def test_the_old_no_build_param_still_skips_the_build(stager):
 
 
 def test_the_old_no_build_flag_queues_the_new_param(stager, monkeypatch):
-    """The CLI translates the alias once, so the queue and ``base`` see only the new name."""
+    """The CLI translates the alias once, so every check reads one name; the request carries both, because
+    ops.sqlite outlives a rollback to a builder that knows only the old one (review SHOULD 2)."""
     seen: list = []
 
     @contextlib.contextmanager
@@ -164,4 +165,4 @@ def test_the_old_no_build_flag_queues_the_new_param(stager, monkeypatch):
         "removed": 0, "calls": 0, "note": None})
     assert cli.main(["backfill", stager.name, "--from", "2026-10-01", "--no-build"]) == 0
     assert seen and seen[-1]["params"].get("no_duckdb") is True, seen
-    assert "no_build" not in seen[-1]["params"]
+    assert seen[-1]["params"].get("no_build") is True, seen[-1]["params"]

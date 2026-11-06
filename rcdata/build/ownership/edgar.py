@@ -452,6 +452,14 @@ class Feed:
         return self.to_parquet_all(ctx, [raw])
 
     def to_parquet_all(self, ctx: base.RunContext, day_dirs: list[Path]) -> list[Path]:
+        if base.raw_only():
+            # Raw-only (--no-parquet, #498): typing writes no partition (base.write_parquet), and the ``.done``
+            # marker written beside it is the walk's skip test (is_done), so a marker without a partition would
+            # hide the day's filings from every later run for good. The filings stay in raw and the day stays
+            # unmarked, so the next ordinary run walks it again and types it at no provider call.
+            days = sorted(set(day_dirs))
+            ctx.notes.append(f"{self.name}: raw only, {len(days)} day(s) staged and not typed")
+            return []
         out = []
         complete = set((ctx.pending.get(self.name) or {}).get("complete", []))
         for d in sorted(set(day_dirs)):

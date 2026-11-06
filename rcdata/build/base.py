@@ -737,15 +737,15 @@ def paused_problem(ds: Dataset) -> str | None:
 #: The check note of a ``--no-duckdb`` run: the serving file was not touched, so the result is a skip, not an "ok".
 #: It says what the fetch really staged, because the first live run read as a success while its fetch had returned
 #: nothing (``uw/option_list`` outside its provider's window, 5 Nov 2026).
-NO_BUILD_NOTE = "skipped: build skipped (--no-duckdb)"
+NO_DUCKDB_NOTE = "skipped: build skipped (--no-duckdb)"
 #: The same for a raw-only run (``--no-parquet``, #498), which skips the Parquet step as well.
 NO_PARQUET_NOTE = "skipped: build and Parquet skipped (--no-parquet)"
 
 
-def no_build_note(staged: int | None, *, raw_only: bool = False) -> str:
+def skip_note(staged: int | None, *, raw_only: bool = False) -> str:
     """The ``--no-duckdb`` / ``--no-parquet`` check note; ``staged`` is how many raw files the fetch returned, None
     when it cannot be counted (a backfill stages inside the dataset and returns nothing)."""
-    head = NO_PARQUET_NOTE if raw_only else NO_BUILD_NOTE
+    head = NO_PARQUET_NOTE if raw_only else NO_DUCKDB_NOTE
     if staged is None:
         return f"{head}; the backfill staged what it fetched"
     if staged == 0:
@@ -888,7 +888,7 @@ def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False
             # made without one, and inventing a result value would reach due.py and ops; a skip is the truth (the
             # serving file did not change) and leaves the dataset due, so the next ordinary pass builds it at no
             # provider call (the raw file is the resume marker).
-            note = no_build_note(staged, raw_only=raw_only_mode)
+            note = skip_note(staged, raw_only=raw_only_mode)
             return _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None)
         check = build_kind(ctx, ds)
         status = "ok"

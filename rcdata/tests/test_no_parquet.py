@@ -21,6 +21,7 @@ import pytest
 from RevenueChaser.rcdata import ops, serving
 from RevenueChaser.rcdata.build import DATASETS, base, due
 from RevenueChaser.rcdata.build import __main__ as cli
+from RevenueChaser.rcdata.build.ownership import edgar, sec13f_sets
 
 
 class _Stager:
@@ -208,3 +209,125 @@ def test_the_hourly_pass_never_asks_for_raw_only(stager):
     assert rid and not error, why
     req = next(r for r in ops.rows("build_requests") if r["id"] == rid)
     assert not (req["params"] or {}).get("no_parquet")
+
+
+# ── A real dataset whose conversion step also writes a resume marker (review BLOCKER 1) ───────────────────────
+
+class _Feed(edgar.Feed):
+    """The smallest ``edgar.Feed``: its ``type_day`` writes one partition through ``base.write_parquet``.
+
+    The EDGAR feeds (``sec/13f``, ``sec/form4``, ``sec/sched13dg``) write the day's ``.done`` marker in
+    ``to_parquet_all``, beside the typing, and ``.done`` is what the walk skips on. A raw-only run that wrote the
+    marker without the partition would hide that day's filings from every later run.
+    """
+
+    name = "test/feed"
+    forms = frozenset({"13F-HR"})
+    sub = "feedtest"
+    budget_s = None
+
+    def type_day(self, ctx, day):
+        con = duckdb.connect()
+        try:
+            con.execute("CREATE TABLE filings AS SELECT 1 AS i")
+            return [base.write_parquet(con, "SELECT * FROM filings",
+                                       self.parquet_dir() / "filings" / f"day={day}" / "part-0.parquet")]
+        finally:
+            con.close()
+
+
+def _feed_day(feed: _Feed, day: date) -> Path:
+    d = feed.day_dir(day)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "0000000000-26-000001.txt.gz").write_bytes(b"")
+    return d
+
+
+def test_a_raw_only_run_does_not_mark_an_edgar_day_done():
+    """Else the day is never walked again: its filings sit in raw, unreachable, and only a hand-deleted marker
+    brings them back."""
+    feed, day = _Feed(), date(2026, 10, 1)
+    _feed_day(feed, day)
+    ctx = base.RunContext(run_id="r1", dataset=feed.name)
+    ctx.pending[feed.name] = {"complete": [day], "more": False}
+    with base.raw_only_run():
+        out = feed.to_parquet_all(ctx, [feed.day_dir(day)])
+    assert out == [], out
+    assert not feed.is_done(day), "a raw-only run must leave the day open for the next walk"
+    assert not (feed.parquet_dir() / "filings" / f"day={day}").exists()
+
+
+def test_an_ordinary_run_still_marks_the_edgar_day_done():
+    feed, day = _Feed(), date(2026, 10, 2)
+    _feed_day(feed, day)
+    ctx = base.RunContext(run_id="r2", dataset=feed.name)
+    ctx.pending[feed.name] = {"complete": [day], "more": False}
+    out = feed.to_parquet_all(ctx, [feed.day_dir(day)])
+    assert feed.is_done(day) and out and out[0].is_file(), out
+
+
+def test_a_raw_only_run_does_not_mark_the_13f_data_set_days_done(monkeypatch, tmp_path):
+    """``sec13f_sets._fill_one`` marks every day of the set's range, covered or not, so a raw-only run of
+    ``backfill sec13f`` would burn the whole range."""
+    feed = _Feed()
+    zip_path = tmp_path / "set.zip"
+    zip_path.write_bytes(b"not read: the raw-only guard returns before the zip is opened")
+    monkeypatch.setattr(sec13f_sets, "_load",
+                        lambda *a, **kw: pytest.fail("a raw-only run must not type the set"))
+    ctx = base.RunContext(run_id="r3", dataset=feed.name)
+    with base.raw_only_run():
+        written = sec13f_sets._fill_one(ctx, feed, zip_path, "2026q3", date(2026, 7, 1), date(2026, 7, 31),
+                                        {"forms": ("13F-HR",), "filings": (), "holdings": (), "dollars_from": None})
+    assert written == 0
+    assert not any(feed.is_done(date(2026, 7, d)) for d in range(1, 32)), "no day may be marked"
+    assert any("raw only" in n for n in ctx.notes), ctx.notes
+
+
+# ── The request params a rollback would meet (review SHOULD 2) and the other CLI paths ────────────────────────
+
+def _queue_spy(monkeypatch):
+    seen: list = []
+
+    @contextlib.contextmanager
+    def always(name, wait=0.0, **kw):
+        yield True
+    monkeypatch.setattr(cli.job_lock, "acquire", always)
+    monkeypatch.setattr(cli.base, "run_request", lambda req, **kw: seen.append(req) or {
+        "dataset": req["dataset"], "result": "skipped", "source_as_of": None, "rows": 0, "added": 0,
+        "removed": 0, "calls": 0, "note": None})
+    return seen
+
+
+def test_a_queued_request_carries_the_old_param_name_too(stager, monkeypatch):
+    """ops.sqlite outlives a rollback: a builder from before the rename reads ``no_build`` and nothing else, and
+    without it that builder would build the serving file the person asked it not to touch."""
+    seen = _queue_spy(monkeypatch)
+    assert cli.main(["backfill", stager.name, "--from", "2026-10-01", "--no-parquet"]) == 0
+    assert seen[-1]["params"].get("no_build") is True, seen[-1]["params"]
+
+
+def test_the_run_dataset_path_queues_the_flag_too(stager, monkeypatch):
+    """``--no-parquet`` on ``run --dataset`` goes through a different params branch than ``backfill``."""
+    seen = _queue_spy(monkeypatch)
+    assert cli.main(["run", "--once", "--dataset", stager.name, "--no-parquet"]) == 0
+    params = seen[-1]["params"]
+    assert params.get("no_parquet") is True and params.get("no_duckdb") is True and params.get("no_build") is True
+
+
+def test_both_flags_together_are_raw_only(stager, monkeypatch):
+    seen = _queue_spy(monkeypatch)
+    assert cli.main(["backfill", stager.name, "--from", "2026-10-01", "--no-duckdb", "--no-parquet"]) == 0
+    assert seen[-1]["params"].get("no_parquet") is True and seen[-1]["params"].get("no_duckdb") is True
+
+
+def test_a_request_with_both_names_is_read_as_raw_only(stager):
+    """``no_build`` (the old name) beside ``no_parquet``: the raw-only reading wins, so nothing is converted."""
+    row = base.run_request({"dataset": stager.name, "params": {"no_build": True, "no_parquet": True}})
+    assert row["result"] == "skipped" and "--no-parquet" in (row["note"] or ""), row["note"]
+    assert stager.steps == ["fetch"] and stager.written == [] and stager.built == []
+
+
+def test_the_deprecated_flag_says_so_on_stderr(stager, monkeypatch, capsys):
+    _queue_spy(monkeypatch)
+    assert cli.main(["backfill", stager.name, "--from", "2026-10-01", "--no-build"]) == 0
+    assert "--no-build is deprecated" in capsys.readouterr().err
