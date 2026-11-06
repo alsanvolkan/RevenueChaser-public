@@ -232,9 +232,11 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
     filer's quarter becomes the amendment's few names. The join itself answers this — a rejected cover row, a row
     the set never carried and a row whose own accession field is the damaged one all leave ``c`` NULL — so nothing
     has to be recovered from the text of a line that by definition did not read. An original 13F-HR without one
-    stays ``ok`` (detail ``no cover page in the data set``): "replace" is the right walk for it whatever its cover
-    says, and unparsing it would drop the filer's quarter and let a later NEW HOLDINGS amendment become the whole
-    quarter — #301's harm from the other side (#482 review). A RESTATEMENT amendment without its cover page is now
+    keeps the status the rest of its row earns (its detail says ``no cover page in the data set`` when nothing
+    else is wrong with it): unparsing it would drop the filer's quarter and let a later NEW HOLDINGS amendment
+    become the whole quarter — #301's harm from the other side (#482 review). One rare path stays open: a NEW
+    HOLDINGS report filed as a plain 13F-HR (13F review B1, ``serve.active_accessions``) that also loses its cover
+    row reads as a replacement; telling it apart needs the filer's other reports, which this step does not see. A RESTATEMENT amendment without its cover page is now
     left out too, so the quarter keeps the report it restates: the conservative reading. The holdings of an
     unparsed filing are still typed and stored, not served."""
     form_list = ", ".join(f"'{f}'" for f in sorted(forms))
@@ -273,12 +275,13 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                     WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
                     THEN 'unparsed' ELSE 'ok' END AS status,
                CASE WHEN {period} IS NULL THEN 'no report period'
-                    WHEN c.ACCESSION_NUMBER IS NULL THEN 'no cover page in the data set'
+                    WHEN c.ACCESSION_NUMBER IS NULL AND ends_with(s.form, '/A') THEN 'no cover page in the data set'
                     WHEN upper(c.REPORTTYPE) LIKE '%NOTICE%' THEN NULL
                     WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
                     THEN 'no information table'
                     WHEN TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) <> coalesce(k.n, 0)
                     THEN coalesce(k.n, 0) || ' holdings read, the summary says ' || trim(m.TABLEENTRYTOTAL)
+                    WHEN c.ACCESSION_NUMBER IS NULL THEN 'no cover page in the data set'
                END AS detail,
                '{ORIGIN}{name}' AS origin, {fetched_at!r} AS fetched_at, ? AS run_id
         FROM z_sub s

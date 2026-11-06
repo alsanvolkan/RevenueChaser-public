@@ -81,10 +81,11 @@ def _served(sql: str, *args) -> list[tuple]:
 
 
 def _active() -> list[str]:
-    """The accessions the serve's amendment walk counts, over the rows it reads (``serve._held``: status ok)."""
+    """The accessions the serve's amendment walk counts, over the rows ``serve._held`` reads (status ok, grouped by
+    quarter end); its served-quarter cut is left out, which no filing here falls before."""
     from RevenueChaser.rcdata.build.ownership import serve
     return serve.active_accessions(_served(
-        f"SELECT accession, cik, period, filed, coalesce(amendment_no, 0), is_amendment, amendment_type "
+        f"SELECT accession, cik, {serve.QE} AS period, filed, coalesce(amendment_no, 0), is_amendment, amendment_type "
         f"FROM {sec13f.TABLE} WHERE status = 'ok' AND cik IS NOT NULL AND period IS NOT NULL "
         f"ORDER BY cik, 3, filed, 5, is_amendment, accession"))
 
@@ -385,6 +386,26 @@ def test_an_original_with_no_cover_page_stays_ok_and_a_new_holdings_amendment_ad
         ("0001000001-26-000101", "ok", "no cover page in the data set"),
         ("0001000001-26-000109", "ok", None)]
     assert _active() == ["0001000001-26-000101", "0001000001-26-000109"]
+
+
+def test_a_cover_less_original_keeps_the_reason_its_status_comes_from(feed, http_mock):
+    """#482 review: the detail follows the status. An original without its cover row and without its information
+    table is unparsed for the table, and says so, not "no cover page"."""
+    h = ox.f13_holding
+    one = ox.f13_set([
+        ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [h("MICROSOFT CORP", "594918104", 4, 10)])])
+    body = _without_cover(one, "0001000001-26-000101")
+    src, out = zipfile.ZipFile(io.BytesIO(body)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in src.namelist():
+            data = src.read(name)
+            if name.rsplit("/", 1)[-1] == "INFOTABLE.tsv":
+                data = data.splitlines(keepends=True)[0]
+            z.writestr(name, data)
+    http_mock.routes.insert(0, (HREFS[0], out.getvalue(), 200, {}))
+    _backfill("2026-06-01", "2026-08-31")
+    assert _served(f"SELECT accession, status, detail FROM {sec13f.TABLE}") == [
+        ("0001000001-26-000101", "unparsed", "no information table")]
 
 
 def test_the_cover_pages_period_wins_on_both_paths_and_a_cusip_placeholder_is_no_cusip(feed, http_mock):
