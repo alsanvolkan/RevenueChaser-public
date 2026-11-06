@@ -2940,15 +2940,6 @@ ndFilter();
 """
 
 
-#: The fold the old sections sit in, below the control board (avo, 28 Oct: not deleted, folded). Touch-sized.
-OLD_FOLD_CSS = """
-.oldfold{margin:24px 0 48px}
-.oldfold>summary{min-height:44px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;cursor:pointer;
-  padding:0 max(16px,env(safe-area-inset-left,0px));font-weight:600}
-.oldfold-sub{font-weight:400;opacity:.75;font-size:13px}
-"""
-
-
 def _applied_universe() -> dict:
     """The universe as saved (``board_settings``), or nothing when it cannot be read: the board then shows the
     default universe, which is what the builder runs anyway."""
@@ -2977,9 +2968,11 @@ def _collect_newdata() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
-#: The page's three tabs (#331): the key a viewer's choice is remembered under, and each tab's panel id.
+#: The page's two tabs (#492): the key a viewer's choice is remembered under, and each tab's panel id. ``ALIASES`` maps
+#: a choice remembered from the three-tab page (Data, Fetch, Needs) onto the tab that now holds it.
 SETTINGS_TABS = {"key": "rc.settings.tab",
-                 "tabs": {"data": "panel-data", "fetch": "panel-fetch", "needs": "needs"}}
+                 "tabs": {"data": "panel-data", "health": "panel-health"},
+                 "aliases": {"fetch": "data", "needs": "health"}}
 
 TABS_JS = """
 (function(){
@@ -2987,6 +2980,7 @@ TABS_JS = """
   var tabs = [].slice.call(document.querySelectorAll('#settings-tabs [role="tab"]'));
   if (!tabs.length) return;
   function show(name, save) {
+    if (CFG.aliases && CFG.aliases[name]) name = CFG.aliases[name];
     if (!CFG.tabs[name]) name = 'data';
     var panel = document.getElementById(CFG.tabs[name]), wasHidden = panel && panel.hidden;
     tabs.forEach(function (t) {
@@ -3003,7 +2997,10 @@ TABS_JS = """
   window.RC_SETTINGS_SHOW_PANEL = function (id) {
     Object.keys(CFG.tabs).forEach(function (k) { if (CFG.tabs[k] === id) show(k, true); });
   };
-  function fromHash() { var h = location.hash.replace('#', ''); return CFG.tabs[h] ? h : null; }
+  function fromHash() {
+    var h = location.hash.replace('#', '');
+    return CFG.tabs[h] || (CFG.aliases && CFG.aliases[h]) ? h : null;
+  }
   var start = fromHash();
   if (!start) { try { start = localStorage.getItem(CFG.key); } catch (e) { start = null; } }
   show(start || 'data', false);
@@ -3019,7 +3016,7 @@ TABS_JS = """
     });
   });
   window.addEventListener('hashchange', function () { var h = fromHash(); if (h) show(h, true); });
-  var w = document.querySelector('#needs .wiali'), box = document.getElementById('needs-wial');
+  var w = document.querySelector('#panel-health .wiali'), box = document.getElementById('needs-wial');
   if (w && box) w.addEventListener('click', function () {
     box.hidden = !box.hidden;
     w.setAttribute('aria-expanded', box.hidden ? 'false' : 'true');
@@ -3028,23 +3025,47 @@ TABS_JS = """
 """
 
 
-def _needs_panel(payload: dict) -> str:
-    """The Needs tab's body (#331); a failure anywhere in it is one line in the panel, never a blank Settings page."""
+def _needs_model(payload: dict) -> dict:
+    """The Needs model (#331); a failure anywhere in it is one line in the panel, never a blank Settings page."""
     try:
-        return needs_tab.render(needs_tab.view(payload))
+        return needs_tab.view(payload)
     except Exception as exc:  # noqa: BLE001 - the tab must never take the Settings page down
-        return needs_tab.render({"error": f"{type(exc).__name__}: {exc}"[:300],
-                                 "read_at": datetime.now().strftime("%H:%M")})
+        return {"error": f"{type(exc).__name__}: {exc}"[:300], "read_at": datetime.now().strftime("%H:%M")}
+
+
+def _queue_html(view: dict) -> str:
+    """Queue and last runs, the control board's own section (``control_render._queue``), in its ``.ctl`` scope."""
+    if view.get("error"):
+        return ""
+    try:
+        inner = control_render._queue(view)
+    except Exception as exc:  # noqa: BLE001 - one broken section is a line, never a blank Health tab
+        inner = f'<p class="warn">Queue and last runs could not be read: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
+    return f'<section class="ctl" id="health-queue" aria-label="Queue and last runs"><div class="wrap">{inner}</div></section>'
+
+
+def _health_panel(payload: dict, view: dict) -> str:
+    """The Health tab (#492): the Needs head, the queue, the catalog, the request log and the routes, then the ticker
+    detail and the backups, in that order."""
+    model = _needs_model(payload)
+    catalog, rest = needs_tab.sections(model)
+    try:
+        backups = _backups_card(payload.get("backups"))
+    except Exception as exc:  # noqa: BLE001 - one broken card is a line, never a blank Health tab
+        backups = f'<p class="warn">The backups card could not be drawn: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
+    # One ``#needs`` scope (needs.css) around the head, the queue and the Needs parts; the queue keeps its ``.ctl``.
+    return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
+            f'{_queue_html(view)}'
+            f'<div class="wrap">{catalog}{rest}</div></div>'
+            f'<div class="wrap" id="health-more">{_ticker_drill(payload)}{backups}</div>')
 
 
 def _tab_strip() -> str:
     return ('<nav id="settings-tabs" aria-label="Settings tabs"><div class="tabs" role="tablist">'
             '<button type="button" role="tab" id="tab-data" data-tab="data" aria-controls="panel-data" '
             'aria-selected="true" tabindex="0">Data</button>'
-            '<button type="button" role="tab" id="tab-fetch" data-tab="fetch" aria-controls="panel-fetch" '
-            'aria-selected="false" tabindex="-1">Fetch</button>'
-            '<button type="button" role="tab" id="tab-needs" data-tab="needs" aria-controls="needs" '
-            'aria-selected="false" tabindex="-1">Needs</button></div></nav>')
+            '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
+            'aria-selected="false" tabindex="-1">Health</button></div></nav>')
 
 
 def _ticker_drill(payload: dict) -> str:
@@ -3071,69 +3092,25 @@ def _ticker_drill(payload: dict) -> str:
 
 
 def render_settings_dashboard(payload: dict) -> str:
+    """The Data/Health page (#492): two tabs. Data is the control board (``control_render.render_data``); Health is
+    ``_health_panel``. The old Settings sections fold is gone; its Ticker detail and Backups moved to Health."""
     payload = payload or {}
-    rows = payload.get("rows") or []
-    generated = payload.get("generated_at")
-
-    help_block = help_html(
-        "This is an ops inventory of the local <b>.store/</b>: one row per dataset with its row count, "
-        "newest data date and known holes. <b>Source</b> is the provider the registry names, <b>Coverage</b> "
-        "is the stored rows against the population they should cover (<b>n/a</b> when there is no population "
-        "to count), and <b>Freshness</b> is what freshness the registry lets that dataset claim: its newest "
-        "date, or the words for the one thing it can say instead — <b>no time column</b> (the date lives in "
-        "a related table), <b>taken from the run log</b> (a worked-out table, dated by the job that wrote "
-        "it), <b>retired</b> or <b>store bookkeeping</b> (no claim is made), <b>no date stored yet</b> (the "
-        "table holds no rows), or <b>query failed</b> (a broken read, which is not an empty dataset). Press "
-        "a dataset's "
-        "name to open its store tables, writer and <b>Fetch</b> action. <b>Refresh</b> re-reads the store "
-        "with <b>no network</b> — it is instant and always safe. <b>Fetch</b> enqueues that "
-        "dataset's job, hits a provider and can take minutes; the row reports back when it "
-        "finishes. The ticker drill shows <b>stored</b> data only — it does not ask SEC or "
-        "Yahoo. The <b>Identity health</b> card below the table is store-only too; "
-        "<b>Fetch identity</b> is what runs the network job, and a successful run also writes "
-        "the master's sector and industry into <b>equity_universe</b>, so it changes sectors on every board."
-    )
-
-    if rows:
-        body = _table(rows, payload.get("errors") or [])
-    else:
-        body = ('<div class="empty" id="empty">The store is empty — no datasets have been '
-                "populated yet. Run a Fetch to load one.</div>")
-
     data_json = script_json(payload.get("tickers") or [])
-    drill = _ticker_drill(payload)
-
-    identity_html = _identity_card(payload.get("identity"))
-    other_tables_html = _other_tables_section(payload.get("other_tables"))
-    backups_html = _backups_card(payload.get("backups"))
-    ibkr_login_html = _ibkr_login_card(payload.get("ibkr_login_url"))
-    ibkr_state_html = _ibkr_state_card(payload.get("ibkr_login_state"))
-    errors_html = _errors_list(payload.get("errors") or [])
-    boards_html = _boards_section(payload.get("boards") or [], rows)
-    flow_html = _flow_section(rows)
-    automations = payload.get("automations") or []
-    automations_html = _automations_section(automations)
-    automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
     # The payload's own ``newdata`` when the caller read it (tests, fixtures); else read here, per render.
     nd = payload["newdata"] if "newdata" in payload else _collect_newdata()
-    newdata_html = _newdata_section(nd)
-    # The control board (design v28) on top, from the same read; the old sections fold under it.
     view = _control_view(nd, payload)
     control_html = control_render.render_data(view)
-    fetch_html = control_render.render_fetch(view)
     control_js = control_render.scripts(view)
-    needs_html = _needs_panel(payload)
+    health_html = _health_panel(payload, view)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Settings / Data health</title>
+<title>Data/Health</title>
 <style>{CSS}</style>
-<style>{ND_CSS}</style>
 <style>{control_render.CTL_CSS}</style>
-<style>{OLD_FOLD_CSS}</style>
 <style>{needs_tab.NEEDS_CSS}</style>
 {FILTERS_CSS}
 <script>{THEME_JS}</script>
@@ -3143,50 +3120,15 @@ def render_settings_dashboard(payload: dict) -> str:
 {_tab_strip()}
 <div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
 {control_html}
-<details class="oldfold" id="old-settings">
-<summary>Old Settings sections <span class="oldfold-sub">not deleted, folded · each opens on its own</span></summary>
-<div class="wrap">
-  <div class="topbar">
-    <div>
-      <h1>Settings / Data health</h1>
-      <div class="sub">Store inventory, freshness and per-dataset Fetch</div>
-    </div>
-    <div class="sync">Last sync: {_html.escape(_friendly(generated))}</div>
-  </div>
-  {newdata_html}
-  {ibkr_login_html}
-  {help_block}
-  {_summary_tiles(rows, payload)}
-  {body}
-  {drill}
-  {other_tables_html}
-  {identity_html}
-  {ibkr_state_html}
-  {errors_html}
-  {backups_html}
-  {automations_html}
-  {boards_html}
-  {flow_html}
 </div>
-</details>
-</div>
-<div id="panel-fetch" role="tabpanel" aria-labelledby="tab-fetch" hidden>
-{fetch_html}
-</div>
-<div id="needs" role="tabpanel" aria-labelledby="tab-needs" hidden>
-{needs_html}
+<div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
+{health_html}
 </div>
 <script>{FILTERS_JS}</script>
 <script>
 var DATA = {data_json};
-var AUTOMATIONS = {script_json(automations)};
-var ND = {script_json(_nd_client(nd))};
-var ND_PAGE_STALE_MS = {ND_PAGE_STALE_MINUTES * 60 * 1000};
-{JS}
-{FLOW_JS}
+{JOB_JS}
 {DRILL_JS}
-{automations_js}
-{ND_JS}
 </script>
 <script>
 {control_js}

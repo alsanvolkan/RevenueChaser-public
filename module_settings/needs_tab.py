@@ -331,16 +331,27 @@ def _routes_section(model: dict) -> str:
             '</section>')
 
 
-def render(model: dict) -> str:
-    """The tab's panel body (the ``#needs`` element's inside). A model with ``error`` is one line, never a failure."""
-    head = ('<h1>Settings · Needs</h1>'
+def head(model: dict, title: str = "Settings · Needs") -> str:
+    """The tab's head line: the title, the read minute and "What am I looking at?" with its box."""
+    return (f'<h1>{esc(title)}</h1>'
             f'<p class="sub"><b>Read {esc(model.get("read_at") or "—")}</b> · what a board can ask the store for, how '
             'fresh it is, and how often it is asked · <button type="button" class="wiali" aria-expanded="false" '
             'aria-controls="needs-wial">What am I looking at?</button></p>'
             f'<div class="wialbox" id="needs-wial" hidden>{WIAL}</div>')
+
+
+def sections(model: dict) -> tuple[str, str]:
+    """``(catalog, log and routes)``: the tab's body in two parts, so a page can put its own part between them.
+    A model with ``error`` is one line, in the first part."""
     if model.get("error"):
-        return f'<div class="wrap">{head}<p class="warn">The Needs tab could not be read: {esc(model["error"])}</p></div>'
-    return (f'<div class="wrap">{head}{_catalog_section(model)}{_log_section(model)}{_routes_section(model)}</div>')
+        return f'<p class="warn">The Needs tab could not be read: {esc(model["error"])}</p>', ""
+    return _catalog_section(model), _log_section(model) + _routes_section(model)
+
+
+def render(model: dict) -> str:
+    """The tab's panel body (the ``#needs`` element's inside). A model with ``error`` is one line, never a failure."""
+    catalog, rest = sections(model)
+    return f'<div class="wrap">{head(model)}{catalog}{rest}</div>'
 
 
 def view(payload: dict | None = None) -> dict:

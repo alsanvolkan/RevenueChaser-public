@@ -189,14 +189,15 @@ def test_the_page_has_the_tab_strip_and_both_panels_and_stays_inert():
     assert_inert(html)
     check_page(html)
     strip = html[html.index('id="settings-tabs"'):]
-    assert strip.index('role="tablist"') < strip.index('id="tab-data"') < strip.index('id="tab-needs"')
+    assert strip.index('role="tablist"') < strip.index('id="tab-data"') < strip.index('id="tab-health"')
+    assert 'id="tab-fetch"' not in html and 'id="tab-needs"' not in html and 'id="panel-fetch"' not in html
     assert re.search(r'<div[^>]*id="panel-data"[^>]*role="tabpanel"', html)
-    assert re.search(r'<div[^>]*id="needs"[^>]*role="tabpanel"[^>]*hidden', html), "Needs starts hidden"
-    data = html[html.index('id="panel-data"'):html.index('id="needs"')]
-    assert 'id="sec-health"' in data and 'id="old-settings"' in data, "the Data tab is the page as it was"
-    needs = html[html.index('id="needs"'):]
+    assert re.search(r'<div[^>]*id="panel-health"[^>]*role="tabpanel"[^>]*hidden', html), "Health starts hidden"
+    data = html[html.index('id="panel-data"'):html.index('id="panel-health"')]
+    assert 'id="sec-health"' in data and 'id="old-settings"' not in html and "oldfold" not in html
+    health = html[html.index('id="panel-health"'):]
     for part in ("needs-catalog", "needs-log", "needs-routes"):
-        assert f'id="{part}"' in needs, part
+        assert f'id="{part}"' in health, part
 
 
 def test_the_pages_scripts_parse_with_the_tab_switch(tmp_path):
@@ -206,7 +207,7 @@ def test_the_pages_scripts_parse_with_the_tab_switch(tmp_path):
 def test_the_tab_switch_is_remembered_per_viewer_and_reads_the_hash():
     html = _page(_model())
     assert "localStorage" in html and "try{" in html.replace(" ", ""), "storage wrapped in try"
-    assert "#needs" in html and "aria-selected" in html and "ArrowRight" in html
+    assert "aria-selected" in html and "ArrowRight" in html
 
 
 def test_the_page_still_renders_when_the_tab_cannot_be_built(monkeypatch):
@@ -269,7 +270,7 @@ def test_the_board_fixture_carries_the_hostile_payload_into_the_needs_tab(tmp_pa
     from RevenueChaser.core.tests.board_fixtures import BOARDS
     html = BOARDS["module_settings"].render(tmp_path, monkeypatch)
     assert_inert(html)
-    needs = html[html.index('<div id="needs" role="tabpanel"'):]
+    needs = html[html.index('<div id="panel-health" role="tabpanel"'):]
     for tag in ("need", "table", "dataset", "declared", "planned", "error", "process", "ask_param",
                 "route_path", "route_what", "route_example", "readers_error"):
         assert f"&lt;img src=x onerror=__x(&#x27;{tag}T&#x27;)" in needs, tag
