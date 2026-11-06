@@ -23,7 +23,8 @@ memory. Each 13F-HR and 13F-HR/A becomes the row the EDGAR path writes (``sec13f
 - ``ISCONFIDENTIALOMITTED`` ``Y`` / ``N`` is ``confidential_omitted``; a 13F notice (``13F-NT``) is not kept, as the
   EDGAR path does not fetch one;
 - the status is ``sec13f.status_of``'s rule, written in SQL: a 13F-HR whose report type is a notice is ``notice``, and
-  one with no holdings in ``INFOTABLE`` is ``unparsed`` unless its summary says 0 entries.
+  one with no holdings in ``INFOTABLE`` is ``unparsed`` unless its summary says 0 entries; one rule is the set's own:
+  an amendment with no cover page row is ``unparsed`` (#301), since its type cannot be read.
 
 The rows go to the EDGAR walk's own day partitions (``filings/day=<filed>``, ``holdings/day=<filed>``), and every
 weekday of the window inside the requested range, up to the set's newest filing, is marked done for that walk (a day
@@ -226,12 +227,16 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
     EDGAR path writes them: the period is the cover page's, the submission header's when the cover page has none
     (13F review D2, 2026-10-30), and a CUSIP in ``cusip_none`` is none (D3).
 
-    A filing the set holds no cover page for is ``unparsed``, not ``ok`` with an empty one (#301): read as ok, its
-    NULL ``amendment_type`` makes the amendment walk treat a NEW HOLDINGS amendment as a replacement, and the
+    An amendment the set holds no cover page for is ``unparsed``, not ``ok`` with an empty one (#301): read as ok,
+    its NULL ``amendment_type`` makes the amendment walk treat a NEW HOLDINGS amendment as a replacement, and the
     filer's quarter becomes the amendment's few names. The join itself answers this — a rejected cover row, a row
     the set never carried and a row whose own accession field is the damaged one all leave ``c`` NULL — so nothing
-    has to be recovered from the text of a line that by definition did not read. Its holdings are still typed, so a
-    later set that carries the row whole can replace the filing without losing them."""
+    has to be recovered from the text of a line that by definition did not read. An original 13F-HR without one
+    stays ``ok`` (detail ``no cover page in the data set``): "replace" is the right walk for it whatever its cover
+    says, and unparsing it would drop the filer's quarter and let a later NEW HOLDINGS amendment become the whole
+    quarter — #301's harm from the other side (#482 review). A RESTATEMENT amendment without its cover page is now
+    left out too, so the quarter keeps the report it restates: the conservative reading. The holdings of an
+    unparsed filing are still typed and stored, not served."""
     form_list = ", ".join(f"'{f}'" for f in sorted(forms))
     none_list = ", ".join(f"'{c}'" for c in sorted(cusip_none)) or "''"
     period = f"coalesce({_day('c.REPORTCALENDARORQUARTER')}, s.period)"
@@ -263,7 +268,7 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                CASE upper(trim(m.ISCONFIDENTIALOMITTED)) WHEN 'Y' THEN true WHEN 'N' THEN false END
                    AS confidential_omitted,
                CASE WHEN {period} IS NULL THEN 'unparsed'
-                    WHEN c.ACCESSION_NUMBER IS NULL THEN 'unparsed'
+                    WHEN c.ACCESSION_NUMBER IS NULL AND ends_with(s.form, '/A') THEN 'unparsed'
                     WHEN upper(c.REPORTTYPE) LIKE '%NOTICE%' THEN 'notice'
                     WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
                     THEN 'unparsed' ELSE 'ok' END AS status,
