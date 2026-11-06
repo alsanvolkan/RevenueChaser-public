@@ -4,6 +4,7 @@ time budget that stops a deadline day's run and lets the next hour go on, a day 
 once settled while a refusal fails the run, and a backfill that moves the walk's first day."""
 from __future__ import annotations
 
+import collections
 import json
 from datetime import date
 
@@ -222,23 +223,67 @@ def test_filings_edgar_lists_and_does_not_hold_are_marked_absent_and_the_walk_go
         assert marker.exists(), a
         assert json.loads(marker.read_text())["status"] == 404, a          # a later repair sweep looks for these
         assert len(http_mock.calls(a)) == 1, a                             # asked once, never again
-    assert "the archive does not hold" in row["note"] and "it still hands over one it does" in row["note"]
+    assert "1 run(s) of absent filings, and the archive handed over one it holds" in row["note"]
+    # The probe went to the data path, not to an index: exactly one filing URL was asked twice.
+    asked = collections.Counter(str(c.url) for c in http_mock.calls("/Archives/edgar/data/"))
+    assert sorted(asked.values()) == [1] * (len(asked) - 1) + [2], asked
 
 
 def test_a_path_that_hands_over_nothing_stops_the_run_even_when_it_answers_404(feed):
-    """The flip side, and the reason the count alone cannot decide: if every filing answers 404 the walk must not
-    write twelve years off as absent. The archive is asked for one it is known to hold; it does not hand it over,
-    so nothing is written."""
-    accs = [f"0001000030-26-00000{i}" for i in range(4)]
-    feed.add_day("2026-10-26", [(ox.idx_row(1000030 + i, f"KAPPA {i}", "13F-HR", "2026-10-26", a), None)
-                                for i, a in enumerate(accs)])
+    """The flip side, and why the count alone cannot decide: if the data path answers 404 for everything, the walk
+    must not write the days off as absent. It asks for a filing it is known to hold, has none to show, and stops."""
+    day, accs = "2026-10-27", [f"0001000030-26-00000{i}" for i in range(4)]
+    feed.add_day(day, [(ox.idx_row(1000030 + i, f"KAPPA {i}", "13F-HR", day, a), None)
+                       for i, a in enumerate(accs)])
     feed.not_found |= set(accs)
-    feed.filings.clear()                                   # nothing in the archive answers with an object
-    row = base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": "2026-10-26",
+    row = base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": day,
                                                                "to": "2026-10-28"}}, sleep=lambda s: None)
     assert row["result"] == "failed" and "did not hand over one it holds either" in row["note"]
+    assert "no filing it is known to hold" in row["note"]
     for a in accs:
-        assert not sec13f.DATASET.filing_none(date(2026, 10, 26), a).exists(), a
+        assert not sec13f.DATASET.filing_none(date(2026, 10, 27), a).exists(), a
+
+
+def test_the_probe_asks_a_filing_an_earlier_run_kept_and_stops_when_that_one_is_gone_too(feed, http_mock):
+    """The daily shape: a run before this one fetched filings and left a manifest, so the probe has a URL on disk
+    even when nothing has answered yet in this run. If that one is gone too, nothing is written off."""
+    _run()                                                      # leaves the manifests of 26 and 27 October
+    kept = sorted(json.loads(l)["accession"]
+                  for l in (sec13f.DATASET.day_dir(date(2026, 10, 27)) / edgar.MANIFEST).read_text().splitlines()
+                  if l.strip())
+    day, accs = "2026-10-28", [f"0001000040-26-00000{i}" for i in range(4)]
+    feed.add_day(day, [(ox.idx_row(1000040 + i, f"LAMBDA {i}", "13F-HR", day, a), None)
+                       for i, a in enumerate(accs)])
+    feed.not_found |= {*accs, *kept}                            # the kept filing has been removed as well
+    http_mock.requests.clear()
+    row = base.run_request({"dataset": sec13f.NAME, "params": {"as_of": "2026-10-29"}}, sleep=lambda s: None)
+    assert row["result"] == "failed" and "did not hand over one it holds either" in row["note"]
+    assert any(k in row["note"] for k in kept), row["note"]      # it asked the one from disk, and named it
+    assert [str(c.url).rsplit("/", 1)[1][:-4] for c in http_mock.calls("/Archives/edgar/data/")
+            if str(c.url).rsplit("/", 1)[1][:-4] in kept], "the probe never asked the filing on disk"
+    for a in accs:
+        assert not sec13f.DATASET.filing_none(date(2026, 10, 28), a).exists(), a
+
+
+def test_an_index_answer_does_not_write_a_filing_off(feed):
+    """The two paths fail apart, so the evidence is kept apart. A day with fewer absent filings than ``MISSING_RUN``
+    never reaches the check, and if the next day's *index* answer could write its filing markers, a data path that
+    answers nothing for anything would be written off a day or two at a time -- which is the disease the check
+    exists for. A filing marker waits for the data path itself, at the end of the walk too."""
+    feed.add_day("2026-10-27", [(ox.idx_row(1000050, "MU FUND", "13F-HR", "2026-10-27", "0001000050-26-000001"),
+                                 None)])
+    feed.add_day("2026-10-26", [(ox.idx_row(1000051, "NU FUND", "13F-HR", "2026-10-26", "0001000051-26-000001"),
+                                 None)])
+    feed.not_found |= {"0001000050-26-000001", "0001000051-26-000001"}
+    feed.filings.clear()                       # nothing in the archive hands an object over, on either day
+    ctx = base.RunContext(run_id="r9", dataset=sec13f.NAME)
+    complete, _partial, _more = sec13f.DATASET.walk(ctx, date(2026, 10, 26), date(2026, 10, 27),
+                                                    date(2026, 10, 28), None)
+    # Both indexes answered 200, so the walk itself is fine; neither filing may be written off by that.
+    assert not sec13f.DATASET.filing_none(date(2026, 10, 27), "0001000050-26-000001").exists()
+    assert not sec13f.DATASET.filing_none(date(2026, 10, 26), "0001000051-26-000001").exists()
+    assert complete == [], complete
+    assert any("absent filing markers held back" in n for n in ctx.notes), ctx.notes
 
 
 def test_a_day_held_at_the_end_of_a_run_is_written_once_the_archive_answers(feed, http_mock):
@@ -281,11 +326,13 @@ def test_the_last_filing_of_a_day_is_written_off_only_with_the_archive_answering
 
 def test_a_day_whose_filing_markers_are_held_is_not_finished(feed):
     """A ``.done`` would skip the day for good, so a day is finished only once its markers are written: here the
-    archive refuses the check, so the filing is neither written off nor forgotten."""
+    data path hands nothing over, so the filing is neither written off nor forgotten. It is that path, not the
+    index path, that has to answer for a filing (2026-11-06: the index answered 200 throughout while the data path
+    had lost a filer's filings)."""
     gone = "0001000009-26-000009"
-    _run()                                                       # keeps the indexes of 26 and 27 Oct
+    _run()                                                       # keeps the filings and indexes of 26 and 27 Oct
     feed.add_day("2026-10-23", [(ox.idx_row(1000009, "IOTA FUND", "13F-HR", "2026-10-23", gone), None)])
-    feed.refuse_days.add("20261027")                             # the newest kept index: what the check asks for
+    feed.filings.clear()                                         # nothing in the archive hands an object over
     base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": "2026-10-23",
                                                          "to": "2026-10-23"}}, sleep=lambda s: None)
     assert not sec13f.DATASET.filing_none(date(2026, 10, 23), gone).exists()
