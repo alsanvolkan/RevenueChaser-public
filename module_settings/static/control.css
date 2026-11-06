@@ -1061,3 +1061,11 @@
 .ctl .bfs{min-width:0}
 @media(max-width:900px){.ctl .hgrps{grid-template-columns:1fr}}
 @media(max-width:760px){.ctl .bfl{grid-template-columns:1fr 1fr}.ctl .bfs{grid-column:1/-1}}
+.ctl #fpick{display:flex;align-items:stretch;overflow-x:auto;max-width:100%;padding:4px 2px 8px;margin:12px 0}
+.ctl #fpick .fpar{align-self:center;font-size:1.5rem;margin:0 6px;color:var(--mut);flex:0 0 auto}
+.ctl #fpick .fpb{flex:1 0 140px;display:flex;flex-direction:column;gap:2px;min-height:44px;padding:8px 10px;text-align:left;
+  background:var(--card);color:var(--fg);border:1px solid var(--line);border-top:4px solid var(--fh,var(--acc));border-radius:10px;font:inherit;font-size:12px;cursor:pointer}
+.ctl #fpick .fpb[aria-selected="true"]{box-shadow:0 0 0 2px var(--fh,var(--acc));font-weight:600}
+.ctl #fpick .fpb.nofile{border-style:dashed;color:var(--mut)}
+.ctl #fpick .fpn{font-family:var(--f-mono,monospace);font-weight:700}
+.ctl #fpick .fpd,.ctl #fpick .fpl{color:var(--mut)}

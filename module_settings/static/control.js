@@ -951,7 +951,7 @@
       : cards.length + ' files · how full each dataset is, the journey of each step, who reads which table · the flow diagram filters this list';
     var bm = document.getElementById('bdmatch'), de = document.getElementById('dataempty');
     if (bm) {
-      bm.hidden = !names.length;
+      bm.hidden = !names.length || !cards.length;
       bm.innerHTML = !names.length ? '' : shown
         ? '<b>' + shown + ' of ' + cards.length + ' files match</b> · <button type="button" class="lnk" id="bdopen">open them ↓</button> · <button type="button" class="lnk" data-clearpicks>clear the picks</button>'
         : '<b>No file matches these picks.</b> <button type="button" class="lnk" data-clearpicks>Clear the picks</button>';
@@ -982,10 +982,12 @@
     var ids = Object.keys(picks.bd);
     if (!ids.length) {
       box.className = 'bdinfo empty';
-      box.innerHTML = '<p>Press a board on the right of the diagram to see what it reads: its data needs and the files they come from.</p>';
+      box.innerHTML = '';
+      box.hidden = true;
       return;
     }
     box.className = 'bdinfo';
+    box.hidden = false;
     box.innerHTML = ids.map(function (id) {
       var n = id.slice(3), b = BI[n] || {}, fs = filesOf(n), needs = b.needs || [];
       var fch = fs.length ? fs.map(function (f) {
@@ -1103,4 +1105,33 @@
       [].forEach.call(src ? src.querySelectorAll('.sbox') : [], function (x) { fold(x, a.getAttribute('data-sb') === 'open'); });
     }
   });
+})();
+
+/* The file picker (#492 C1): one file's panel shows at a time. A box of the picker, a file in the flow diagram or a
+   line of Health's By file selects it; By file also scrolls to it. */
+(function () {
+  var X = window.CTLX, pick = document.getElementById('fpick');
+  if (!X || !pick) return;
+  function select(name, scroll) {
+    var found = false;
+    [].forEach.call(pick.querySelectorAll('.fpb'), function (b) {
+      var on = b.getAttribute('data-file') === name;
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+      if (on) found = true;
+    });
+    if (!found) return;
+    [].forEach.call(document.querySelectorAll('.ctl .fpanel'), function (p) { p.hidden = p.getAttribute('data-file') !== name; });
+    if (scroll) X.scrollTo(pick);
+  }
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var b = e.target.closest('#fpick .fpb');
+    if (b) { select(b.getAttribute('data-file'), false); return; }
+    var l = e.target.closest('.ctl [data-pick]');
+    if (l) { select(l.getAttribute('data-pick'), true); return; }
+    var n = e.target.closest('#flow2 [data-node^="file:"]');
+    if (n) select(n.getAttribute('data-node').slice(5), false);
+  });
+  var first = pick.querySelector('.fpb');
+  if (first) select(first.getAttribute('data-file'), false);
 })();

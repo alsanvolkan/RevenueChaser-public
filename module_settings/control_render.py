@@ -574,19 +574,36 @@ def _flow(view: dict) -> str:
         '<div class="group" style="border-left-color:var(--acc)"><div class="scroll flowwrap"><svg class="flowsvg" '
         'id="flow2" viewBox="0 0 1116 900" role="group" aria-labelledby="flow2-title"></svg></div>'
         '<p class="bdmatch" id="bdmatch" aria-live="polite" hidden></p>'
-        '<div class="bdinfo empty" id="bdinfo" aria-live="polite"></div>'
-        '<p class="fnote">Press any box — a source, a step, a file, a table, a board — to keep only its own lines: what '
-        'feeds it and what it feeds; the rest fades and the Data section below follows. Press it again to drop it. '
-        'Several picks in one column = any of them; picks in different columns = all must hold. ▸ on a file opens its '
-        'tables. A dashed line is a board not migrated yet: what it is planned to read, not a measurement. Source '
-        'icons: Tabler Icons (MIT licence).</p>'
+        '<div class="bdinfo empty" id="bdinfo" aria-live="polite" hidden></div>'
         f'<div class="flowlegend"><b>Colour:</b>{legend}<span><i style="background:#6f7b32"></i>source</span>'
-        f'<span><i style="background:{control.BOARD_COLOR}"></i>board</span></div>'
+        f'<span><i style="background:{control.BOARD_COLOR}"></i>board</span>'
+        '<span class="dim">Source icons: Tabler Icons (MIT licence).</span></div>'
         '<div class="phoneonly"><p class="fnote">On a phone, the same data as a list instead of the diagram.</p>'
         f'{"".join(phone)}</div>'
-        '<p class="hint">The diagram is drawn from the code: each dataset\'s providers and plan step, the serving '
-        'files\' schemas, and each board\'s declared reads (solid) or planned reads (dashed) through the need '
-        'catalog.</p></div></details>')
+        '</div></details>')
+
+
+def _picker(view: dict) -> str:
+    """The file picker under the diagram: one box a served file, the first selected at load."""
+    boxes = []
+    for i, f in enumerate(view["files"]):
+        st = f.get("state") if isinstance(f.get("state"), dict) else {}
+        if st.get("exists") is False:
+            disk, cls = "no file yet", "fpb nofile"
+        elif st.get("exists"):
+            disk, cls = f'🦆 {_size(st.get("bytes"))}' if st.get("bytes") is not None else "🦆 size not known", "fpb"
+        elif f.get("bytes") is not None:
+            disk, cls = f'🦆 {_size(f["bytes"])}', "fpb"
+        else:
+            disk, cls = "size not known", "fpb"
+        n = len(f["datasets"])
+        boxes.append(f'<button type="button" role="tab" class="{cls}" data-file="{esc(f["name"])}" '
+                     f'aria-selected="{"true" if i == 0 else "false"}" aria-controls="fp-{esc(f["kind"])}" '
+                     f'style="--fh:{esc(f["color"])}"><span class="fpn">{esc(f["name"])}</span>'
+                     f'<span class="fpd">{esc(disk)}</span><span class="fpl">{n} {"line" if n == 1 else "lines"}'
+                     '</span></button>')
+    return ('<div id="fpick" role="tablist" aria-label="The served files">'
+            + '<span class="fpar" aria-hidden="true">⟶</span>'.join(boxes) + '</div>')
 
 
 # ── Providers ─────────────────────────────────────────────────────────────────────────────────────────────────

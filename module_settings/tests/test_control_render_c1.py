@@ -232,3 +232,37 @@ def test_health_renders_without_the_new_fields():
     v = control.build(control_nd(), now=NOW)
     html = control_render._health(v)
     assert 'data-group="data"' in html and "Data · 5 datasets" in html
+
+
+# ── The flow diagram and the file picker ─────────────────────────────────────────────────────────────────────
+
+def test_the_flow_loses_its_three_paragraphs_and_hides_the_board_box():
+    html = control_render._flow(control_render._ready(_view()))
+    assert "Press any box" not in html
+    assert "The diagram is drawn from the code" not in html
+    assert '<div class="bdinfo empty" id="bdinfo" aria-live="polite" hidden></div>' in html
+    assert "Tabler Icons (MIT licence)" in html, "the icons' licence stays named"
+    assert "Press a board on the right" not in control_render.CTL_JS
+
+
+def test_the_picker_has_six_boxes_with_sizes_or_no_file_yet():
+    v = _view()
+    html = control_render._picker(control_render._ready(v))
+    assert html.startswith('<div id="fpick" role="tablist"')
+    boxes = re.findall(r'<button type="button" role="tab" class="fpb[^"]*" data-file="([^"]+)"', html)
+    assert boxes == [f["name"] for f in v["files"]] and len(boxes) == 6
+    assert html.count("⟶") == 5
+    assert "🦆 9.8 MB" in html and html.count("no file yet") == 5
+    assert 'class="fpb nofile"' in html
+    assert re.search(r'data-file="spine.duckdb" aria-selected="true"', html)
+    assert html.count('aria-selected="true"') == 1
+    assert "1 lines" in html or "1 line" in html
+    assert "step" not in html.lower().replace("fpstep", "")
+
+
+def test_the_script_selects_a_file_from_the_picker_the_diagram_and_by_file():
+    js = control_render.CTL_JS
+    blk = js[js.index("// #492 C1"):]
+    assert "aria-selected" in blk and "fpanel" in blk
+    assert "data-node^=\"file:\"" in blk or "data-node^='file:'" in blk
+    assert "data-pick" in blk and "scrollTo" in blk
