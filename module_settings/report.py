@@ -153,6 +153,16 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bcard .asof{color:var(--muted);font-size:12.5px;margin-bottom:8px}
 .bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0}
 .bcard .kv b{color:var(--text);font-weight:600}
+.btiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:8px 0 10px}
+.btile{border:1px solid var(--border);border-radius:10px;padding:8px 12px;min-width:0}
+.btile .bt-h{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+.btile .bt-v{font-size:14px;font-weight:600;margin:2px 0;overflow-wrap:anywhere}
+.btile .bt-n{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.bkv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:0 0 8px;font-size:12.5px}
+.bkv dt{color:var(--muted)}
+.bkv dd{margin:0;overflow-wrap:anywhere}
+.bcard .bfoot{font-size:11.5px;margin:6px 0 0}
+@media(max-width:760px){.btiles{grid-template-columns:1fr}.bkv{grid-template-columns:1fr}}
 /* G8 (#124): a folder path shown in full, in monospace; it wraps rather than being shortened. */
 .bpath{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--text);
   background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;
@@ -2093,53 +2103,58 @@ def _backups_card(b: dict | None) -> str:
         expired_text = (f"unknown: {why}" if why else "unknown: the local backup folder could not be read")
         expired_text += "; this page makes no claim about expired files."
     delete_row = (
-        '<div class="kv" id="backup-delete-row">'
+        '<dt>Delete</dt><dd id="backup-delete-row">'
         '<button type="button" class="set-btn" id="backup-delete-expired" disabled '
         'title="Arming the delete is a separate change: it needs your typed confirmation, a fresh backup and no '
         'job running.">Delete expired backups</button> '
         '<span id="backup-delete-note">Disabled: this page only lists what the retention rule marks expired. '
-        "Arming a delete is a separate change and needs your typed confirmation.</span></div>"
+        "Arming a delete is a separate change and needs your typed confirmation.</span></dd>"
     )
     split = ""
     if loc.get("duckdb_files") is not None or loc.get("docs_zip_files") is not None:
         split = (f'{esc(_gb(loc.get("duckdb_bytes")))} in {_fmt_rows(loc.get("duckdb_files"))} .duckdb files; '
                  f'{esc(_gb(loc.get("docs_zip_bytes")))} in {_fmt_rows(loc.get("docs_zip_files"))} edgar_docs zips')
     limit = lambda part: f'warns above {part.get("limit_gb"):g} GB' if isinstance(part.get("limit_gb"), (int, float)) else ""
-    rows = [
-        f'<tr id="backup-local"><td>Local backup folder</td><td>{cell(loc)}</td>'
-        f'<td class="num">{_fmt_rows(loc.get("files"))}</td>'
-        f'<td class="note">{split}{"; " if split else ""}{esc(limit(loc))}</td></tr>',
-        f'<tr id="backup-offmachine"><td>Off-machine copy</td><td>{cell(off)}</td>'
-        f'<td class="num">{_fmt_rows(off.get("files"))}</td>'
-        f'<td class="note">what the job wrote and kept there (its manifest); {esc(limit(off))}</td></tr>',
-        f'<tr id="backup-checkpoints"><td>Off-machine checkpoints</td><td>{cell(cp)}</td>'
-        f'<td class="num">—</td><td class="note"></td></tr>',
-        f'<tr id="backup-scan"><td>Last integrity self-check</td><td>{cell(scan)}</td>'
-        f'<td class="num">{_fmt_rows(scan.get("checked"))}</td>'
-        f'<td class="note">last {esc(str(scan.get("last_day") or "never"))}; next due '
-        f'{esc(str(scan.get("next_due") or "the next backup run"))}</td></tr>',
-    ]
+
+    def tile(ident: str, label: str, value: str, note: str, note_id: str = "") -> str:
+        nid = f' id="{note_id}"' if note_id else ""
+        return (f'<div class="btile" id="{ident}"><div class="bt-h">{label}</div><div class="bt-v">{value}</div>'
+                f'<div class="bt-n"{nid}>{note}</div></div>')
+
+    files = lambda part: f' · {_fmt_rows(part.get("files"))} files' if part.get("files") is not None else ""
+    tiles = (
+        '<div class="btiles">'
+        + tile("backup-local", "Local backup folder", f'{cell(loc)}{files(loc)}',
+               f'{split}{"; " if split and limit(loc) else ""}{esc(limit(loc))}')
+        + tile("backup-offmachine", "Off-machine copy", f'{cell(off)}{files(off)}',
+               f'what the job wrote and kept there (its manifest){"; " if limit(off) else ""}{esc(limit(off))}')
+        + tile("backup-checkpoints", "Off-machine checkpoints", cell(cp), "")
+        + tile("backup-scan", "Integrity self-check",
+               f'{cell(scan)} · next {esc(str(scan.get("next_due") or "the next backup run"))}'
+               + (f' · {_fmt_rows(checked)} files' if isinstance(checked, int) else ""),
+               esc(selfcheck), "backup-selfcheck")
+        + "</div>"
+    )
     recorded = b.get("recorded_at")
-    summary = (
-        f'<div class="kv">Local backup folder: <code class="bpath" id="backup-folder">{esc(folder)}</code></div>'
-        '<div class="kv">Off-machine copy location: '
-        f'<code class="bpath" id="backup-offmachine-path">{esc(offmachine_at)}</code></div>'
-        f'<div class="kv" id="backup-retention">How long backups are kept: {esc(_retention_rule(b))}</div>'
-        f'<div class="kv" id="backup-selfcheck">Integrity self-check: {esc(selfcheck)}</div>'
-        f'<div class="kv" id="backup-expired">Expired backups, dry run: {esc(expired_text)}</div>'
+    recorded_text = str(recorded).replace("T", " ").replace("+00:00", " UTC") if recorded else "never"
+    facts = (
+        '<dl class="bkv">'
+        '<dt>Path</dt><dd><code class="bpath" id="backup-folder">'
+        f'{esc(folder)}</code> · off-machine <code class="bpath" id="backup-offmachine-path">{esc(offmachine_at)}'
+        '</code></dd>'
+        f'<dt>Keeping rule</dt><dd id="backup-retention">{esc(_retention_rule(b))}</dd>'
+        f'<dt>Would be deleted</dt><dd id="backup-expired">Dry run: {esc(expired_text)}</dd>'
         f'{delete_row}'
-        '<div class="kv" id="backup-nodelete">Nothing on this page deletes or moves a backup file: it reads the '
-        "backup job's own records and shows them.</div>"
+        f'<dt>Measured at</dt><dd id="backup-recorded">Sizes recorded {esc(recorded_text)}</dd>'
+        '</dl>'
     )
     return ('<section id="backups"><div class="bcard" id="backups-card"><h3>Backups</h3>'
-            '<div class="asof" id="backups-note">Read from the nightly backup job\'s own records in the local backup '
-            "folder (shown below), plus one read-only listing of that local folder for the expired-backup dry run; "
-            "the off-machine (Drive) copy is never read, walked or listed. The "
-            "self-check re-reads the local folder against the hashes taken when each file was copied, every 7 days "
-            "by default.</div>"
-            f'{summary}'
-            f'<div class="kv" id="backup-recorded">Sizes recorded {esc(str(recorded).replace("T", " ").replace("+00:00", " UTC") if recorded else "never")}</div>'
-            f'{_mini_table(["Backup", "Size / result", "Files", "Detail"], rows)}</div></section>')
+            f'{tiles}{facts}'
+            '<p class="asof bfoot" id="backups-note">Read from the nightly backup job\'s own records in the local backup '
+            "folder, plus one read-only listing of that folder for the dry run; the off-machine (Drive) copy is never "
+            "read, walked or listed. The self-check re-reads the local folder against the hashes taken when each file "
+            "was copied, every 7 days by default. <span id=\"backup-nodelete\">Nothing on this page deletes or moves a "
+            "backup file: it reads the backup job's own records and shows them.</span></p></div></section>")
 
 
 def _ibkr_login_href(value) -> str | None:

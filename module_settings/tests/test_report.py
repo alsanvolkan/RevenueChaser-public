@@ -1365,20 +1365,56 @@ def _backups_card(b) -> str:
     return html[html.index('id="backups"'):].split("</section>")[0] if 'id="backups"' in html else ""
 
 
+def _tile(card: str, ident: str) -> str:
+    """One tile of the Backups card, from its id up to the next tile or the key/value list under the tiles."""
+    part = card[card.index(f'id="{ident}"'):]
+    return part.split('<div class="btile"')[0].split('<dl')[0]
+
+
 def test_the_backups_card_shows_every_fact_with_its_id():
     """#309: sizes, file counts, the .duckdb / docs zip split, checkpoints, the last scan and when it was recorded."""
     card = _backups_card(_BACKUPS)
-    loc = card[card.index('id="backup-local"'):].split("</tr>")[0]
+    loc = _tile(card, "backup-local")
     assert "21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)" in loc and "3,382" in loc
     assert "9.59 GB in 21 .duckdb" in loc and "2.67 GB in 2 edgar_docs zips" in loc
     assert 'class="st-warn"' in loc
-    off = card[card.index('id="backup-offmachine"'):].split("</tr>")[0]
+    off = _tile(card, "backup-offmachine")
     assert "7.68 GB" in off and "3,375" in off and "320 GB" in off and 'class="st-ok"' in off
-    cp = card[card.index('id="backup-checkpoints"'):].split("</tr>")[0]
+    cp = _tile(card, "backup-checkpoints")
     assert "unknown" in cp and "not recorded" in cp
-    scan = card[card.index('id="backup-scan"'):].split("</tr>")[0]
+    scan = _tile(card, "backup-scan")
     assert "2026-10-16" in scan and "2 files do not match" in scan and "2026-10-17" in scan and 'class="st-bad"' in scan
     assert 'id="backup-recorded"' in card and "2026-10-16" in card[card.index('id="backup-recorded"'):]
+
+
+def test_the_compact_backups_card_keeps_every_fact_of_the_old_card():
+    """#492 (i): four tiles in a row and one key/value list under them; the facts are the old card's, all of them."""
+    import re
+    card = _backups_card(dict(_BACKUPS, offmachine_path="G:/drive", expired={"state": "ok", "count": 4,
+                                                                            "bytes": 2_000_000_000}))
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", card))
+    for fact in ("21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)", "3,382", "9.59 GB in 21 .duckdb files",
+                 "2.67 GB in 2 edgar_docs zips", "warns above 20 GB", "7.68 GB", "3,375", "warns above 320 GB",
+                 "what the job wrote and kept there (its manifest)",
+                 "unknown, not recorded: the backup job does not write that folder", "2 files do not match",
+                 "last checked 2026-10-16", "next due 2026-10-17", "3,382 files re-read against their hashes",
+                 "/b", "G:/drive", "keeps 5 daily raw", "The retention rule marks 4 files as expired, 2.00 GB in total",
+                 "nothing has been deleted", "Delete expired backups", "Disabled: this page only lists",
+                 "Sizes recorded 2026-10-16 04:05:00 UTC", "the off-machine (Drive) copy is never read",
+                 "every 7 days by default", "Nothing on this page deletes or moves a backup file"):
+        assert fact in text, fact
+    tiles = card[card.index('class="btiles"'):card.index("<dl")]
+    assert [m for m in re.findall(r'class="btile" id="([^"]+)"', tiles)] == [
+        "backup-local", "backup-offmachine", "backup-checkpoints", "backup-scan"]
+    kv = card[card.index("<dl"):card.index("</dl>")]
+    for ident in ("backup-folder", "backup-retention", "backup-expired", "backup-delete-expired", "backup-recorded"):
+        assert f'id="{ident}"' in kv, ident
+    assert kv.index("backup-folder") < kv.index("backup-retention") < kv.index("backup-expired") \
+        < kv.index("backup-delete-expired") < kv.index("backup-recorded")
+    assert card.index("</dl>") < card.index('id="backups-note"'), "the explanation is one small line at the bottom"
+    assert "<table" not in card
+    assert re.search(r"\.btiles\{[^}]*grid-template-columns:repeat\(4", report.CSS)
+    assert re.search(r"@media\(max-width:760px\)\{[^}]*\.btiles\{grid-template-columns:1fr", report.CSS)
 
 
 def test_the_backups_card_shows_unknown_for_missing_records():
@@ -1405,8 +1441,9 @@ def test_the_backups_card_escapes_its_text_and_never_takes_a_class_from_it():
 
 # ── G8 of the GUI brief (#124): where the backups are, what is kept, the last self-check ──────────
 def _backup_line(card: str, ident: str) -> str:
-    """One summary line of the Backups card, from its id to the end of its div."""
-    return card[card.index(f'id="{ident}"'):].split("</div>")[0]
+    """One line of the Backups card, from its id to the end of its element."""
+    import re
+    return re.split(r"</div>|</dd>|</span>|</p>", card[card.index(f'id="{ident}"'):])[0]
 
 
 def test_the_backups_card_shows_the_local_folder_path_in_full_and_in_monospace():
