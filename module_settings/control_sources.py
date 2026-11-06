@@ -145,6 +145,62 @@ def columns_by_source(sample: dict, datasets: dict) -> list[str | None]:
     return out
 
 
+# ── The selection funnel ──────────────────────────────────────────────────────────────────────────────────────
+
+def _usd(value: float) -> str:
+    return f"{value / 1e6:,.0f}M USD"
+
+
+def _n(value) -> int | None:
+    return None if value is None else int(value)
+
+
+def funnel(nd: dict, *, rules_path: Path | None = None) -> dict:
+    """``{"stocks": [{step, n, drops}], "etfs": [...], "added": int | None}``.
+
+    The words of each rule are read from ``my_universe_rules.json`` (or ``rules_path``) now; the counts are the
+    Identity card's steps and the Our universe card's counts, which ``newdata.collect`` already read. A step those
+    do not count (an ETN or CEF is not counted anywhere the model reads) is None."""
+    from RevenueChaser.rcdata.build.spine import my_universe as mine
+    rules = mine.load_rules(rules_path)
+    steps = {str(s.get("key")): s.get("count") for s in ((nd.get("identity") or {}).get("steps") or [])}
+    mu = nd.get("my_universe") or {}
+    built = bool(mu.get("built"))
+    kinds = mu.get("kinds") or {}
+    by_rule = mu.get("rules") or {}
+
+    def counted(mapping, *keys):
+        if not built:
+            return None
+        return sum(int(mapping.get(k) or 0) for k in keys)
+
+    fund_rows = ((nd.get("tables") or {}).get("fund") or {}).get("rows")
+    tiers = " or ".join(rules.stock_tiers)
+    types = ", ".join(rules.stock_types)
+    excluded = [w for w, on in (("ETN", rules.exclude_etn), ("CEF", rules.exclude_cef)) if on]
+    not_words = ("not an " + " or ".join(excluded)) if excluded else "ETNs and CEFs are kept"
+    etf_rule = (f"AUM at or over {_usd(rules.etf_aum_floor)}, or no AUM and a 20-session average daily dollar "
+                f"volume at or over {_usd(rules.etf_adv_floor)}")
+    stocks = [
+        {"step": "in the SEC ticker file", "n": _n(steps.get("sec")), "drops": ""},
+        {"step": "listed on Nasdaq, NYSE or Cboe", "n": _n(steps.get("listed")),
+         "drops": "over the counter, or no exchange in the file"},
+        {"step": f"tier {tiers}; {types}", "n": counted(by_rule, "stock"),
+         "drops": f"a tier other than {tiers}, or a type other than {types}"},
+        {"step": "on the list", "n": counted(kinds, "stock"), "drops": "removed by hand; added by hand join here"},
+    ]
+    etfs = [
+        {"step": "in the fund file", "n": _n(fund_rows), "drops": ""},
+        {"step": not_words, "n": None, "drops": " and ".join(excluded) if excluded else ""},
+        {"step": etf_rule, "n": counted(by_rule, "etf_aum", "etf_adv"),
+         "drops": f"a known AUM under {_usd(rules.etf_aum_floor)}, or no AUM and a volume under "
+                  f"{_usd(rules.etf_adv_floor)}"},
+        {"step": "on the list, plus the names added by rule", "n": counted(kinds, "etf"),
+         "drops": "removed by hand; added by hand join here"},
+    ]
+    return {"stocks": stocks, "etfs": etfs, "added": _n(by_rule.get("manual")) if built else None}
+
+
 def attach_pv(file_views: list[dict], datasets: dict) -> None:
     """Put ``s["pv"]`` on every example table of every dataset row. Each sample is copied first, so the dict
     ``newdata.collect`` handed over is left as it was."""

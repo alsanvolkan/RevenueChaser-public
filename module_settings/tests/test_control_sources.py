@@ -2,10 +2,12 @@
 issue #492 PR (i): every key from the code's own records, never a guess."""
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 from RevenueChaser.module_settings import control, control_sources
 from RevenueChaser.rcdata import scaffold
+from RevenueChaser.rcdata.build.spine import my_universe
 
 
 def _ds(kind, tables, providers):
@@ -105,3 +107,52 @@ def test_every_sample_of_the_board_gets_its_keys():
     s = rows[0]["samples"][0]
     assert len(s["pv"]) == len(s["columns"]) and "pv" not in nd["datasets"][0]["samples"][0]
     assert dict(zip([c["name"] for c in s["columns"]], s["pv"]))["session_date"] == "alpaca"
+
+
+# ── The selection funnel ──────────────────────────────────────────────────────────────────────────────────────
+
+def _spine_nd():
+    return {"identity": {"steps": [{"key": "sec", "count": 10430}, {"key": "listed", "count": 7670},
+                                   {"key": "tier_a", "count": 5655}]},
+            "my_universe": {"built": True, "total": 6100, "kinds": {"stock": 5200, "etf": 900},
+                            "rules": {"stock": 5190, "etf_aum": 700, "etf_adv": 195, "manual": 15}},
+            "tables": {"fund": {"rows": 28000}}}
+
+
+def test_the_funnel_counts_come_from_the_spine_counts():
+    f = control_sources.funnel(_spine_nd())
+    assert [s["n"] for s in f["stocks"]] == [10430, 7670, 5190, 5200]
+    assert [s["n"] for s in f["etfs"]] == [28000, None, 895, 900]
+    assert f["added"] == 15
+    assert all(set(s) == {"step", "n", "drops"} and isinstance(s["step"], str) and isinstance(s["drops"], str)
+               for s in f["stocks"] + f["etfs"])
+
+
+def test_without_a_spine_nothing_is_counted():
+    f = control_sources.funnel({"identity": {"steps": []}, "my_universe": {"built": False}})
+    assert all(s["n"] is None for s in f["stocks"] + f["etfs"]) and f["added"] is None
+
+
+def test_the_rule_words_follow_the_json(tmp_path):
+    doc = json.loads(my_universe.RULES_FILE.read_text(encoding="utf-8"))
+    doc["stocks"]["tiers"] = ["A"]
+    doc["stocks"]["types"] = ["common", "spac"]
+    doc["etfs"]["aum_floor_usd"] = 250_000_000
+    doc["etfs"]["adv_usd_20d_floor"] = 5_000_000
+    doc["etfs"]["exclude_cef"] = False
+    path = tmp_path / "rules.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    f = control_sources.funnel(_spine_nd(), rules_path=path)
+    assert "tier A;" in f["stocks"][2]["step"] and "common, spac" in f["stocks"][2]["step"]
+    assert "250M USD" in f["etfs"][2]["step"] and "5M USD" in f["etfs"][2]["step"]
+    assert "ETN" in f["etfs"][1]["step"] and "CEF" not in f["etfs"][1]["step"]
+    default = control_sources.funnel(_spine_nd())
+    assert "tier A or D" in default["stocks"][2]["step"] and "100M USD" in default["etfs"][2]["step"]
+
+
+def test_the_board_carries_the_funnel():
+    from RevenueChaser.module_settings.tests.test_control_view import _build, control_nd
+    nd = control_nd()
+    nd.update(_spine_nd())
+    view = _build(nd)
+    assert view["universe"]["funnel"]["stocks"][0]["n"] == 10430

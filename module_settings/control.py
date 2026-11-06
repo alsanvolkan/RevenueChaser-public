@@ -602,6 +602,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         return {"error": nd["error"], "read_at": _local(now).strftime("%H:%M")}
     datasets = datasets if datasets is not None else newdata._datasets()
     uni = universe(nd, applied)
+    uni["funnel"] = control_sources.funnel(nd)
     provider_rows = _providers(nd)
     reads = readers()
     file_views = files(nd, datasets, uni, reads, now)
