@@ -1,8 +1,10 @@
 """E0b, D10 (#296): short interest per session, for the calendar tickers and the 13F tickers.
 
 UW has no past-date short-interest call, so a night not stored is lost (#296): this sweep stores it every night.
-Ticker set: the stored calendar's tickers (nearest earnings first) and then the 13F tickers (``sec13f_totals``), all
-inside the night's UW cap (decision D10, plan §11). Sources in order (2.5-4):
+Ticker set: the stored calendar's tickers (nearest earnings first) and then the 13F tickers of the newest settled
+report period (``rcdata.read.tickers_13f``; the old store's ``sec13f_totals`` had no rows here, #515), all inside
+the night's UW cap (decision D10, plan §11) — the screener loop included, which only ever asked one chunk while the
+13F set was empty. Sources in order (2.5-4):
 
 1. UW ``/short_screener``, 100 tickers a request (``uw_short_screener``);
 2. UW ``/shorts/<t>/interest-float/v2`` for each ticker the screener did not return (``uw_interest_float``):
@@ -57,10 +59,13 @@ def yf_row(ticker: str, info: dict, ctx, fetched_at: float) -> dict | None:
 
 def ticker_sets(session: date) -> tuple[list[str], list[str]]:
     """``(calendar tickers nearest first, 13F tickers not on the calendar)``."""
+    from RevenueChaser.rcdata import read as rcread      # as every other caller imports it: at the call
+
     cal = calendar_tickers(session)
     on_cal = set(cal)
-    f13 = [r["ticker"] for r in rawstore.query("SELECT ticker FROM sec13f_totals ORDER BY ticker")
-           if r.get("ticker") and r["ticker"] not in on_cal]
+    # The served store, not the old table: on a box where only the builder ever ran that table is empty, so this
+    # sweep silently covered the calendar tickers alone (#515).
+    f13 = [t for t in rcread.tickers_13f() if t not in on_cal]
     return cal, f13
 
 
@@ -81,8 +86,16 @@ def run(ctx) -> dict:
     errors: list[str] = []
     asked = 0
 
-    for i in range(0, len(cal + f13), CHUNK):
-        chunk = (cal + f13)[i:i + CHUNK]
+    # The cap covers the screener too. It never bound while the 13F set was empty (#515: it read a table with no
+    # rows), and a full set is about 80 chunks a night where this used to be one or two.
+    all_wanted = cal + f13
+    screener_capped = 0
+    for i in range(0, len(all_wanted), CHUNK):
+        chunk = all_wanted[i:i + CHUNK]
+        if budget.left <= 0:
+            screener_capped = len(all_wanted) - i
+            errors.append(CALL_CAP)
+            break
         asked += 1
         res = uw.short_screener_result(chunk)
         if res.status == "failed":
@@ -122,7 +135,8 @@ def run(ctx) -> dict:
     for r in rows.values():
         by_source[r["source"]] = by_source.get(r["source"], 0) + 1
     missing = len(cal) + len(f13) - len(rows)
-    return outcome(asked, errors, tickers=len(cal) + len(f13), missing=missing, not_asked=not_asked,
+    return outcome(asked, errors, tickers=len(cal) + len(f13), missing=missing,
+                   not_asked=not_asked + screener_capped,
                    by_source=by_source, **nightly_inputs.record_first(TABLE, list(rows.values())))
 
 
