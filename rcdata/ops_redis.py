@@ -659,9 +659,20 @@ def schedule_set(dataset: str, cadence: str, next_due: str | None) -> None:
     _schedule(dataset, lambda row: {**(row or {"dataset": dataset}), "cadence": cadence, "next_due": next_due})
 
 
-def schedule_pause(dataset: str, *, by: str) -> None:
+def cancel_queued(dataset: str, *, by: str) -> int:
+    def work():
+        now = time.time()
+        rows = [{**r, "status": "skipped", "ended_at": now, "note": ops.cancel_note(by, now)}
+                for r in _active() if r["status"] == "queued" and r["dataset"] == dataset]
+        return len(rows), (lambda p: [_put(p, "build_requests", r) for r in rows]) if rows else None
+    return _transaction(["build_requests"], work)
+
+
+def schedule_pause(dataset: str, *, by: str) -> int:
+    # the pause first, then the cancel: a request claimed in between already sees the pause at its first call
     now = time.time()
     _schedule(dataset, lambda row: {**(row or {"dataset": dataset}), "paused_at": now, "paused_by": by})
+    return cancel_queued(dataset, by=by)
 
 
 def schedule_resume(dataset: str) -> None:

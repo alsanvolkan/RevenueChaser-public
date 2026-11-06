@@ -63,10 +63,10 @@ def test_the_sources_head_counts_and_the_file_state_line():
     assert ">Collapse all</button>" in html and ">Open all</button>" in html
     assert ("🦆 spine.duckdb · on the disk · 9.8 MB · written 5 Nov 19:43 · 7 of 9 tables hold rows · empty: "
             "cik_map, lei") in html
-    assert "One button for each dataset: <b>Fetch</b> asks for a run" in html
-    assert "holds the dataset: the hourly pass skips it" in html
+    assert "One button for each dataset: <b>Fetch</b> asks for a whole run" in html
+    assert "stops a running one before its next provider call and holds the dataset" in html
     top = html[:html.index('class="sgrid"')]
-    assert "stops" not in top and "cancels" not in top
+    assert "stops" in top and "cancels" in top, "#492 PR (ii): a Pause now stops and cancels, and the legend says so"
 
 
 def test_a_missing_file_says_no_file_yet():
@@ -276,8 +276,8 @@ def test_render_data_holds_the_parts_in_order():
              'class="fpanel" data-file="spine.duckdb"', 'id="sec-crosscheck"']
     at = [html.index(m) for m in marks]
     assert at == sorted(at)
-    assert ("Fetch puts one request in the builder's queue; Pause holds the dataset: the hourly pass skips it until "
-            "Resume.") in html
+    assert ("Pause cancels a queued request, stops a running fetch before its next provider call and holds the "
+            "dataset until Resume.") in html
 
 
 def test_one_panel_per_file_in_plan_order_only_the_first_shown():

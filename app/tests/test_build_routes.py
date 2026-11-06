@@ -2,6 +2,8 @@
 the one process that runs a request. Every write goes through ``_local_only`` and needs the panel header."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from RevenueChaser.core import calendar, config
@@ -299,3 +301,33 @@ def test_the_cadence_action_keeps_a_pause_as_it_is(client):
                 headers={"X-RC-Panel": "settings"})
     row = _sched()
     assert row.get("paused_at") is not None and row.get("cadence") == "weekly"
+
+
+def test_pause_cancels_the_queued_request_and_says_how_many(client):
+    """#492 PR (ii): a queued request of a paused dataset never runs."""
+    from RevenueChaser.rcdata import ops
+    rid = client.post("/api/build/request/market_series", headers={"X-RC-Panel": "settings"}).get_json()["id"]
+    r = client.post("/api/build/schedule/market_series/pause", headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 200 and r.get_json()["cancelled"] == 1
+    row = next(x for x in ops.rows("build_requests") if x["id"] == rid)
+    assert row["status"] == "skipped" and row["note"].startswith("cancelled: paused by settings at ")
+    again = client.post("/api/build/schedule/market_series/pause", headers={"X-RC-Panel": "settings"})
+    assert again.get_json()["cancelled"] == 0
+    assert client.post("/api/build/schedule/market_series/resume",
+                       headers={"X-RC-Panel": "settings"}).get_json()["cancelled"] == 0
+
+
+@pytest.mark.parametrize("stage,params", [("raw", {"no_parquet": True}), ("parquet", {"no_duckdb": True}),
+                                          ("full", None)])
+def test_a_fetch_stage_becomes_the_builders_switch(client, stage, params):
+    """#492 PR (ii): Fetch raw, Fetch raw + Parquet, or the whole run."""
+    r = client.post("/api/build/request/market_series", json={"stage": stage}, headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 202, r.get_json()
+    row = next(x for x in _rows() if x["id"] == r.get_json()["id"])
+    assert (json.loads(row["params"]) if row["params"] else None) == params
+
+
+def test_an_unknown_stage_is_refused_and_queues_nothing(client):
+    r = client.post("/api/build/request/market_series", json={"stage": "duckdb-only"},
+                    headers={"X-RC-Panel": "settings"})
+    assert r.status_code == 400 and "unknown stage" in r.get_json()["error"] and _rows() == []

@@ -77,8 +77,9 @@ WIAL = ("<p>This page is the control board for every dataset the system holds. I
         "<p>The numbers are read on every render: health, row counts and run history come from <code>ops.sqlite</code>; "
         "row counts, sizes and example rows come from the serving files themselves, read once an hour. A value that "
         "could not be read is written as unknown, never shown as zero.</p>"
-        "<p><b>What a press does.</b> Fetch puts one request in the builder's queue; Pause holds the dataset: the "
-        "hourly pass skips it until Resume. Apply saves the universe. Fill and "
+        "<p><b>What a press does.</b> Fetch puts one request in the builder's queue (its ▾ asks for raw only, or "
+        "raw and Parquet); Pause cancels a queued request, stops a running fetch before its next provider call and "
+        "holds the dataset until Resume. Apply saves the universe. Fill and "
         "&ldquo;Fill this range&rdquo; stay off until your word. Refresh the example rows reads five rows of the live "
         "file and calls no provider.</p>")
 
@@ -303,9 +304,17 @@ def _acts(d: dict, pause: bool = True) -> str:
 
 # ── Stage 1: Sources, one panel a file (#492 C1) ─────────────────────────────────────────────────────────────
 
-#: The one button's legend line (a Pause holds the dataset: the hourly pass skips it; it does not end a run).
-BUTTON_LEGEND = ('One button for each dataset: <b>Fetch</b> asks for a run · <b>Pause</b> (with a queued or running '
-                 'pill) holds the dataset: the hourly pass skips it · <b>Resume</b> lets the hourly pass run it again')
+#: The one button's legend line (#492 PR (ii): a Pause stops the dataset for real).
+BUTTON_LEGEND = ('One button for each dataset: <b>Fetch</b> asks for a whole run (raw, Parquet and the served DuckDB '
+                 'file); its <b>▾</b> asks for <b>Fetch raw</b> (the provider\'s answer into HDD raw only) or '
+                 '<b>Fetch raw + Parquet</b> (the served file stays as it is), and the next hourly pass builds the '
+                 'rest · <b>Pause</b> cancels a queued run, stops a running one before its next provider call and '
+                 'holds the dataset · <b>Resume</b> lets the hourly pass run it again')
+#: The two partial runs of a Fetch press's ▾ menu (``app/dashboard.py`` ``REQUEST_STAGES``).
+FETCH_STAGES = (("raw", "Fetch raw", "the provider's answer into HDD raw only; Parquet and DuckDB stay; the next "
+                 "hourly pass builds them"),
+                ("parquet", "Fetch raw + Parquet", "also stages Parquet; the served DuckDB file stays as it is "
+                 "until the next pass"))
 PROVIDERS_SOURCE = ('day caps and request windows: <code>rcdata/caps.py</code> (<code>DAY_CAPS</code>, '
                     '<code>WINDOWS</code>) · what each provider brings, our pace and its rule: '
                     '<code>rcdata/needs/screen.py</code> (<code>PROVIDERS</code>) · used today: '
@@ -371,8 +380,15 @@ def _one_button(d: dict, view: dict) -> str:
     else:
         state, word, pill = "fetch", "Fetch", ""
     cls = "btn go" if state == "fetch" else "btn"
-    return (f'{pill}<button type="button" class="{cls} one" data-job="one" data-state="{state}" '
-            f'data-dataset="{esc(name)}" data-scope="{1 if d["fetch"]["honours_scope"] else 0}">{word}</button>')
+    # always drawn, hidden away from Fetch, so the script can show it again after a Resume or a finished run
+    items = "".join(f'<button type="button" role="menuitem" class="btn" data-job="stage" data-stage="{k}" '
+                    f'title="{esc(why)}">{esc(label)}</button>' for k, label, why in FETCH_STAGES)
+    menu = (f'<button type="button" class="btn fmenu" data-job="fmenu" aria-haspopup="menu" aria-expanded="false" '
+            f'aria-label="Fetch only part of the run: {esc(name)}"{"" if state == "fetch" else " hidden"}>▾</button>'
+            f'<span class="fmenul" role="menu" hidden>{items}</span>')
+    return (f'{pill}<span class="onewrap"><button type="button" class="{cls} one" data-job="one" data-state="{state}" '
+            f'data-dataset="{esc(name)}" data-scope="{1 if d["fetch"]["honours_scope"] else 0}">{word}</button>'
+            f'{menu}</span>')
 
 
 def _sched_fields(d: dict) -> str:
@@ -855,8 +871,11 @@ def _queue(view: dict) -> str:
     q = view["queue"]
     rows = []
     for r in list(q.get("active") or []) + list(q.get("finished") or [])[:10]:
+        stop = (f' <button type="button" class="btn" data-job="stop" data-dataset="{esc(r.get("dataset"))}" '
+                f'data-status="{esc(r.get("status"))}">Stop</button><span class="dim" role="status"></span>'
+                if r.get("status") in ("queued", "running") else "")
         rows.append(f'<tr><td data-label="Dataset"><code>{esc(r.get("dataset"))}</code></td>'
-                    f'<td data-label="Status">{esc(r.get("status"))}</td>'
+                    f'<td data-label="Status">{esc(r.get("status"))}{stop}</td>'
                     f'<td data-label="Asked by">{esc(r.get("requested_by") or "—")}</td>'
                     f'<td data-label="Asked">{esc(control._clock(r.get("requested_at")) if r.get("requested_at") else "—")}'
                     f'</td><td data-label="Note">{esc(r.get("note") or "—")}</td></tr>')
@@ -866,8 +885,9 @@ def _queue(view: dict) -> str:
             f'<span class="secs">{waiting} waiting or running · the last finished requests</span></summary>'
             '<div class="group" style="border-left-color:var(--mut)"><div class="scroll"><table class="stk" '
             'id="ctl-queue"><thead><tr><th>Dataset</th><th>Status</th><th>Asked by</th><th>Asked</th><th>Note</th></tr>'
-            f'</thead><tbody>{body}</tbody></table></div><p class="hint">A queued request cannot be cancelled: the '
-            'builder runs it or skips it at its next pass.</p></div></details>')
+            f'</thead><tbody>{body}</tbody></table></div><p class="hint">Stop pauses the dataset: a queued request '
+            'is cancelled, a running fetch stops before its next provider call (the files it fetched stay), and '
+            'the hourly pass skips the dataset until Resume.</p></div></details>')
 
 
 # ── The page's data and the whole section ─────────────────────────────────────────────────────────────────────
