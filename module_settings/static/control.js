@@ -1051,3 +1051,56 @@
   window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(render, 150); });
   render();
 })();
+
+// #492 C1
+/* The Data tab's own presses (#492 C1): each source box's one button (Fetch, then Pause while its request waits or
+   runs, Resume while paused), the fold of a box and of every box, the file picker and the By-file lines. Pause holds
+   the dataset: the hourly pass skips it until Resume. */
+(function () {
+  var C = window.CTL, X = window.CTLX;
+  if (!C || !X || !document.querySelector) return;
+  function setState(btn, st) {
+    btn.setAttribute('data-state', st);
+    btn.textContent = st === 'fetch' ? 'Fetch' : st === 'pause' ? 'Pause' : 'Resume';
+    btn.classList.toggle('go', st === 'fetch');
+  }
+  function body(btn) {
+    if (btn.getAttribute('data-scope') !== '1') return undefined;
+    var a = X.applied();
+    return X.isDefault(a) ? undefined : X.scopeOf(a.on, a);
+  }
+  function one(btn) {
+    var ds = btn.getAttribute('data-dataset'), st = btn.getAttribute('data-state');
+    if (st === 'fetch') {
+      X.queue(btn, ds, body(btn));
+      setState(btn, 'pause');
+      return;
+    }
+    var verb = st === 'pause' ? '/pause' : '/resume';
+    btn.disabled = true;
+    X.send('POST', C.routes.schedule + ds + verb).then(function (r) {
+      btn.disabled = false;
+      if (r.status >= 200 && r.status < 300) {
+        setState(btn, st === 'pause' ? 'resume' : 'fetch');
+        X.say(st === 'pause' ? ds + ' is held: the hourly pass skips it until Resume' : ds + ': the hourly pass runs it again');
+      } else X.say(r.body.error || ('refused · HTTP ' + r.status));
+    }, function () { btn.disabled = false; X.say('could not reach the dashboard'); });
+  }
+  function fold(box, open) {
+    var b = box.querySelector('.sbody'), t = box.querySelector('.sbtog');
+    if (b) b.hidden = !open;
+    if (t) { t.setAttribute('aria-expanded', open ? 'true' : 'false'); t.textContent = open ? '▾' : '▸'; }
+  }
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var b = e.target.closest('.ctl [data-job="one"]');
+    if (b) { if (!b.disabled) one(b); return; }
+    var t = e.target.closest('.ctl .sbtog');
+    if (t) { fold(t.closest('.sbox'), t.getAttribute('aria-expanded') !== 'true'); return; }
+    var a = e.target.closest('.ctl [data-sb]');
+    if (a) {
+      var src = a.closest('.sources');
+      [].forEach.call(src ? src.querySelectorAll('.sbox') : [], function (x) { fold(x, a.getAttribute('data-sb') === 'open'); });
+    }
+  });
+})();

@@ -126,13 +126,14 @@ def _universe(view: dict) -> str:
                 f'data-n="{int(n)}" aria-pressed="{"true" if s["on"] else "false"}" data-on="{1 if s["on"] else 0}" '
                 f'aria-label="{esc(label)}" data-tip="{esc(s["label"] + " · " + s["words"])}" '
                 f'style="--c:{shades.get(s["key"], SET_COLORS[0])};flex-grow:{max(int(n), 1)}"><b>{esc(s["label"])}</b> '
-                f'<span class="un">{control.count(s["n"])}</span></button>')
+                f'<span class="un">{control.count(s["n"])}</span> <span class="uw">{esc(s["words"])}</span></button>')
         else:
             segs.append(
                 f'<span class="useg uoff" role="img" data-tier="{esc(s["key"])}" data-n="{int(n)}" tabindex="0" '
                 f'aria-label="{esc(label)}" data-tip="{esc(s["label"] + " · " + s["words"])}" '
                 f'style="flex-grow:{max(int(n), 1)}"><b>{esc(s["label"])}</b> <span class="un">'
-                f'{control.count(s["n"])}</span> <span class="uoffl">not offered</span></span>')
+                f'{control.count(s["n"])}</span> <span class="uoffl">not offered</span> <span class="uw">{esc(s["words"])}'
+                '</span></span>')
     inc = "".join(
         f'<button type="button" class="chipb uinc" data-inc="{esc(g["key"])}" aria-pressed="'
         f'{"true" if g["on"] else "false"}" data-on="{1 if g["on"] else 0}">{esc(g["words"])}</button>'
@@ -150,17 +151,18 @@ def _universe(view: dict) -> str:
         f'Fetch the universe</button><span class="dim">{esc(spine_words)}</span></span></div>'
         '<div class="ubar" role="group" aria-label="Tier sets in the universe · hover a set, or press and hold on a '
         f'phone, for what it holds">{"".join(segs)}</div>'
-        f'<p class="ulive">{live}C and D are shown for the whole picture, not offered: hover them, or press and hold, '
-        f'for why. All tiers: {control.count(u.get("total"))} tickers on the spine'
+        f'<p class="ulive">{live}C and D are shown for the whole picture, not offered. All tiers: {control.count(u.get("total"))} tickers on the spine'
         + (f' of {esc(control.day_words(u["as_of"]))}' if u.get("as_of") else "") + '.</p>'
-        f'<div class="uinch"><span class="dim">A narrowed press also asks for</span>{inc}</div>'
+        f'<div class="uinch"><span class="dim">A Fetch of only some tier sets also brings each group whose chip is on '
+        f'(a Fetch of the whole universe brings all three anyway):</span>{inc}</div>'
         '<div class="udraft" id="uni-draft" hidden></div>'
         '<div class="uhand"><label for="uni-names">Names by hand</label>'
         '<input id="uni-names" type="text" placeholder="e.g. TSM, ASML · comma separated" autocomplete="off">'
         '<button type="button" class="btn" id="uni-add">Add</button><span class="uhchips" id="uni-hchips"></span>'
         '<span class="dim" id="uni-handn">no names added</span></div>'
         '<p class="dim uhnote">Names typed by hand stay in this browser until Apply sends them with the next press; '
-        'they are not saved on the server.</p></div>')
+        'they are not saved on the server.</p>'
+        f'{_uni_cards(view)}{_funnel(view)}</div>')
 
 
 def _legend(view: dict) -> str:
@@ -247,7 +249,7 @@ def _problems(d: dict) -> str:
             f'· <code>build_issues</code></span></summary><ol>{items}</ol></details>')
 
 
-def _acts(d: dict) -> str:
+def _acts(d: dict, pause: bool = True) -> str:
     parts, cost = [], []
     if d["calendar"]:
         key = _cal_key(d["dataset"])
@@ -255,7 +257,7 @@ def _acts(d: dict) -> str:
                      f'aria-controls="bf-{esc(key)}">Backfill… <span class="bfc">calendar</span></button>')
         cost.append('<b>Backfill</b> the calendar picks the days and the sets; "Fill this range" stays off until '
                     'your word')
-    if not d["attended"] and d["fetch"]["self"]:
+    if pause and not d["attended"] and d["fetch"]["self"]:
         paused = d["paused"]
         parts.append(f'<button type="button" class="btn" data-job="pause" data-dataset="{esc(d["dataset"])}" '
                      f'aria-pressed="{"true" if paused else "false"}">{"Resume" if paused else "Pause"}</button>')
@@ -298,6 +300,180 @@ def _dset(d: dict, view: dict) -> str:
         f'</span>{pills}</div><div class="dbar"><div class="dbc">{counts}</div>{meters}'
         f'<div class="dbb">{buttons}</div>' + (f'<p class="cost">{cost}</p>' if cost else "") + '</div>'
         f'{_fill_row(d, view)}{_problems(d)}{_acts(d)}</div>')
+
+
+# ── Stage 1: Sources, one panel a file (#492 C1) ─────────────────────────────────────────────────────────────
+
+#: The one button's legend line (a Pause holds the dataset: the hourly pass skips it; it does not end a run).
+BUTTON_LEGEND = ('One button for each dataset: <b>Fetch</b> asks for a run · <b>Pause</b> (with a queued or running '
+                 'pill) holds the dataset: the hourly pass skips it · <b>Resume</b> lets the hourly pass run it again')
+PROVIDERS_SOURCE = ('day caps and request windows: <code>rcdata/caps.py</code> (<code>DAY_CAPS</code>, '
+                    '<code>WINDOWS</code>) · what each provider brings, our pace and its rule: '
+                    '<code>rcdata/needs/screen.py</code> (<code>PROVIDERS</code>) · used today: '
+                    '<code>ops.provider_calls_daily</code>')
+
+
+def _pcolor(view: dict, pid: str) -> str:
+    """A provider's colour, the same one its row in Providers and daily limits wears."""
+    for i, p in enumerate(view.get("providers") or []):
+        if p.get("id") == pid:
+            return control.SOURCE_COLORS[i % len(control.SOURCE_COLORS)]
+    return control.SOURCE_COLORS[0]
+
+
+def _written(at) -> str:
+    if not at:
+        return "not known"
+    d = control.day_words(at)
+    t = control._clock(at)
+    return d if t == "—" else f"{d} {t}"
+
+
+def _fstate_words(st) -> str:
+    """"on the disk · 9.8 MB · written 5 Nov 19:43 · 9 of 9 tables hold rows · empty: a, b", or "no file yet"."""
+    if not isinstance(st, dict) or st.get("exists") is None:
+        return "not known"
+    if not st.get("exists"):
+        return "no file yet"
+    size = _size(st.get("bytes")) if st.get("bytes") is not None else "size not known"
+    tables = (f'{st["tables_with_rows"]} of {st["tables"]} tables hold rows'
+              if st.get("tables") is not None and st.get("tables_with_rows") is not None
+              else "tables not counted yet")
+    empty = st.get("empty") or []
+    return (f'on the disk · {size} · written {_written(st.get("written_at"))} · {tables}'
+            + (f' · empty: {", ".join(str(e) for e in empty)}' if empty else ""))
+
+
+def _active(view: dict, name: str):
+    """The queue row holding ``name`` (queued or running), else None."""
+    for r in (view.get("queue") or {}).get("active") or []:
+        if r.get("dataset") == name and r.get("status") in ("queued", "running"):
+            return r
+    return None
+
+
+def _one_button(d: dict, view: dict) -> str:
+    """Fetch, Pause or Resume: one button a dataset, in the state the dataset is in."""
+    name = d["dataset"]
+    if d["attended"]:
+        return (f'<button type="button" class="btn" data-job="copy" data-cmd="{esc(d["command"] or "")}">'
+                'Copy the command</button><button type="button" class="btn" disabled>Fetch</button>')
+    if not d["fetch"]["self"]:
+        return ('<span class="dbnote">fetched by <button type="button" class="lnk" data-goto="universe">Fetch the '
+                'universe</button></span>')
+    act = _active(view, name)
+    if d["paused"]:
+        state, word, pill = "resume", "Resume", ""
+    elif act is not None:
+        state, word = "pause", "Pause"
+        st = act.get("status")
+        pill = f'<span class="lg3 {"st-r" if st == "running" else "st-q"}">{esc(st)}</span>'
+    else:
+        state, word, pill = "fetch", "Fetch", ""
+    cls = "btn go" if state == "fetch" else "btn"
+    return (f'{pill}<button type="button" class="{cls} one" data-job="one" data-state="{state}" '
+            f'data-dataset="{esc(name)}" data-scope="{1 if d["fetch"]["honours_scope"] else 0}">{word}</button>')
+
+
+def _sbox(d: dict, view: dict) -> str:
+    """One source box: five slots in the same place in every box (head, state, meters, counts, the rest)."""
+    provs = list(d["providers"])
+    badges = "".join(
+        f'<span class="srcb" style="background:{_pcolor(view, p)}"><svg viewBox="0 0 24 24" aria-hidden="true">'
+        f'<path d="{esc(control.ICONS.get(p, ""))}"/></svg>'
+        f'{esc(screen.PROVIDERS[p].name if p in screen.PROVIDERS else p)}</span>' for p in provs)
+    edge = _pcolor(view, provs[0]) if provs else "var(--mut)"
+    word = control.STATUS_PILL.get(d["status"], ("p-bad", d["status"]))[1]
+    tags = ""
+    if d["attended"]:
+        tags += '<span class="pill p-src">hand-run</span>'
+    if d["build"]:
+        tags += '<span class="pill p-new">build</span>'
+    head = (f'<div class="sb1"><button type="button" class="sbtog" aria-expanded="true" aria-label="Fold '
+            f'{esc(d["dataset"])}">▾</button><span class="sdot {esc(d["filter"])}" aria-hidden="true"></span>'
+            f'{badges}<span class="dsname">{esc(d["dataset"])}</span>{tags}'
+            f'<span class="sbbtn">{_one_button(d, view)}</span></div>')
+    nxt = d.get("next_words")
+    since = d.get("since_words")
+    state = (f'<div class="sb2"><span class="pill {esc(d["pill"])}">{esc(word)}</span>'
+             f'<span class="pill cad">⏱ {esc(d["cadence"] or "not known")}</span>'
+             f'<span class="snext">next {esc(nxt) if nxt else "not known"}</span>'
+             f'<span class="ssince">{esc(since) if since else "since: not known"}</span></div>')
+    meters = ""
+    if d["coverage"]:
+        c = d["coverage"]
+        meters += _meter("cov", c["cls"], "coverage", c["share"], c["text"], c["target"])
+    a = d["age"]
+    meters += _meter("age", a["cls"], "since the last check", a["share"], a["text"])
+    counts = f'<span class="cnt"><span class="ck">rows</span><b>{control.count(d["rows"])}</b></span>'
+    if d["added"] is not None or d["removed"] is not None:
+        counts += (f'<span class="cnt"><span class="ck">last run</span><b>+{control.count(d["added"])} / '
+                   f'−{control.count(d["removed"])}</b></span>')
+    if d["dataset"] == "spine/security":
+        counts += (f'<span class="cnt uni-n"><span class="ck">in the universe</span>'
+                   f'<b>{control.count(view["universe"]["size"])}</b></span>')
+    rest = (_universe(view) if d["dataset"] == "spine/security" else "")
+    rest += (_fill_row(d, view) if d["fill"]["cells"] else "") + _problems(d) + _acts(d, pause=False)
+    return (f'<div class="dset sbox" data-st="{esc(d["filter"])}" data-prob="{d["issues_open"]}" '
+            f'data-tags="{esc(" ".join(d["tags"]))}" data-dataset="{esc(d["dataset"])}" '
+            f'style="border-left-color:{edge}">{head}{state}<div class="sbody">'
+            f'<div class="sb3">{meters}</div><div class="sb4">{counts}</div><div class="sb5">{rest}</div></div></div>')
+
+
+def _sources(f: dict, view: dict) -> str:
+    """Stage 1 of a file's panel: its sources, one box a dataset, with the one button, then the providers."""
+    rows = f["datasets"]
+    by = {k: sum(1 for d in rows if d["filter"] == k) for k in ("fresh", "late", "stale", "never")}
+    head = (f'<div class="srch"><h3><span class="stn">1</span> Sources · {esc(f["name"])}</h3>'
+            f'<span class="dim">plan step {esc(str(f["steps"]).removeprefix("Steps ").removeprefix("Step "))} · {len(rows)} sources · {by["fresh"]} fresh · '
+            f'{by["late"]} late · {by["stale"]} stale · {by["never"]} never ran</span>'
+            '<span class="sract"><button type="button" class="btn" data-sb="shut">Collapse all</button>'
+            '<button type="button" class="btn" data-sb="open">Open all</button></span></div>')
+    state = f'<p class="fstate">🦆 {esc(f["name"])} · {esc(_fstate_words(f.get("state")))}</p>'
+    runs = (f'<p class="runs">runs on <b class="runs-on">{esc(view["universe_summary"])}</b> · set by the universe '
+            'in the spine/security box</p>' if f["runs_on_universe"] else f'<p class="runs">{esc(f["words"])}</p>')
+    boxes = "".join(_sbox(d, view) for d in rows) or '<p class="dim">no dataset of this file is on record yet</p>'
+    return (f'<div class="sources fgroup" data-file="{esc(f["name"])}">{head}{state}{runs}'
+            f'<p class="blegend">{BUTTON_LEGEND}</p>{_legend(view)}<div class="sgrid">{boxes}</div>'
+            f'{_providers(view, sid=None)}</div>')
+
+
+def _funnel(view: dict) -> str:
+    """How the list comes down to the stocks and ETFs we keep; nothing when the model has no funnel."""
+    fun = (view.get("universe") or {}).get("funnel")
+    if not fun:
+        return ""
+
+    def last(steps):
+        return steps[-1].get("n") if steps else None
+
+    def col(title, steps):
+        lines = "".join(
+            f'<li><span class="fw">{esc(s.get("step"))}</span><b class="fn">'
+            f'{"not counted" if s.get("n") is None else control.count(s.get("n"))}</b>'
+            f'<span class="fd">{esc(s.get("drops") or "")}</span></li>' for s in steps or [])
+        return f'<div class="fcol"><h4>{title}</h4><ol>{lines}</ol></div>'
+
+    stocks, etfs = fun.get("stocks") or [], fun.get("etfs") or []
+    n_s = last(stocks)
+    n_e = last(etfs)
+    added = fun.get("added")
+    return (f'<div class="funnel"><h4 class="funh">How the list comes down to '
+            f'{"not counted" if n_s is None else control.count(n_s)} stocks and '
+            f'{"not counted" if n_e is None else control.count(n_e)} ETFs</h4>'
+            f'<div class="fcols">{col("Stocks", stocks)}{col("ETFs", etfs)}</div>'
+            + (f'<p class="dim">added by hand: {esc(added if isinstance(added, str) else control.count(added))}</p>'
+               if added is not None else "") + '</div>')
+
+
+def _uni_cards(view: dict) -> str:
+    """Identity and Our universe, today's two cards, side by side, when the model carries them."""
+    ident, mine = view.get("identity"), view.get("my_universe")
+    if ident is None and mine is None:
+        return ""
+    from RevenueChaser.module_settings import report
+    return (f'<div class="ucards">{report._nd_identity(ident) if ident is not None else ""}'
+            f'{report._nd_my_universe(mine) if mine is not None else ""}</div>')
 
 
 def _fetch(view: dict) -> str:
@@ -364,7 +540,7 @@ def _flow(view: dict) -> str:
 
 # ── Providers ─────────────────────────────────────────────────────────────────────────────────────────────────
 
-def _providers(view: dict) -> str:
+def _providers(view: dict, sid: str | None = "sec-providers") -> str:
     rows = []
     for i, p in enumerate(view["providers"]):
         color = control.SOURCE_COLORS[i % len(control.SOURCE_COLORS)]
@@ -391,8 +567,10 @@ def _providers(view: dict) -> str:
     near = [p for p in view["providers"] if p["share"] is not None and p["share"] >= control.CAP_WARN]
     secs = f'{len(view["providers"])} providers · day cap, pace and the provider\'s rule' + (
         " · " + ", ".join(f'{p["name"]} at {p["share"]:.0%}' for p in near) if near else "")
-    return ('<details class="sec" id="sec-providers"><summary><h2>Providers and daily limits</h2>'
+    ident = f' id="{sid}"' if sid else ""
+    return (f'<details class="sec"{ident}><summary><h2>Providers and daily limits</h2>'
             f'<span class="secs">{esc(secs)}</span></summary><div class="group" style="border-left-color:var(--l-src)">'
+            f'<p class="psrc">{PROVIDERS_SOURCE}</p>'
             '<div class="plims"><div class="plim ph" aria-hidden="true"><span>Provider</span><span>Used today against '
             'our day cap</span><span>Our day cap</span><span>Our pace</span><span>Provider\'s own rule</span></div>'
             f'{"".join(rows)}</div><p class="hint">Three kinds of limit, side by side: <b>our day cap</b> '
