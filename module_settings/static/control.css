@@ -1120,3 +1120,13 @@
 .ctl .qtbl .runl{display:block;font-size:.85em;color:var(--mut)}
 .ctl .qtbl .runl.warn{color:var(--warn)}
 .ctl .qtbl details.note>summary{cursor:pointer;list-style:none}
+
+/* #527 step 8: the Data page's layout */
+.ctl table.jt3 .jmeta{display:grid;grid-template-columns:var(--jw1) var(--jw2) var(--jw3);justify-items:end;align-items:center;gap:0 6px}
+.ctl table.stk td[data-label="When"],.ctl table.stk td[data-label="Result"],.ctl table.stk td[data-label="As-of"],
+.ctl table.stk td[data-label="Rows"],.ctl table.stk td[data-label="Calls"]{white-space:nowrap}
+.ctl .ubar{flex-wrap:wrap}
+.ctl .useg{flex:1 1 auto}
+.ctl .dsec h3.dsh{font-size:1.15em;margin:14px 0 4px}
+.ctl .btn.sm{min-height:32px;padding:2px 10px;font-size:.85em}
+@media(max-width:760px){.ctl .btn.sm{min-height:44px}}

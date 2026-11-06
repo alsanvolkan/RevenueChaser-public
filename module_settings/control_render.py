@@ -591,13 +591,14 @@ def _uni_cards(view: dict) -> str:
 
 
 def _picture_control(view: dict) -> str:
-    """The **Take the disk picture** press (#434). It sits in Fetch because this is where a press belongs
+    """The **Recount folders** press (#434; named "Take the disk picture" until #527). It sits in Fetch because this is where a press belongs
     (``docs/data_health.md``: the Data section shows bars and no button), while the picture's age sits beside the
     counts it explains, on the Data section's roots line."""
     walked = next((f.get("walked_at") for f in view["files"]), None)
-    return ('<div class="pictrow"><span class="hm">The HDD folder counts in <b>Data, file by file</b> are a '
-            f'picture, not a live read &middot; {esc(_walked(walked))}</span>'
-            '<button type="button" class="btn" data-job="picture">Take the disk picture</button>'
+    return ('<div class="pictrow"><span class="hm">The HDD folder counts above are not read live &middot; last count: '
+            f'{esc(_walked(walked))}</span>'
+            '<button type="button" class="btn" data-job="picture" title="Walks the HDD raw and Parquet folders and counts '
+            'their files and bytes again (about half a minute, no provider call)">Recount folders</button>'
             '<span class="hm picout" role="status"></span></div>')
 
 
@@ -815,6 +816,20 @@ def _btree(f: dict) -> str:
             f'<ul>{"".join(groups)}</ul></div>')
 
 
+#: Characters of room beside the widest value of a journey meta column (#527: "a little bigger, easy on the eye").
+COL_PAD = 3
+
+
+def _meta_widths(f: dict) -> str:
+    """``--jw1..3`` for the journey's status / role / cadence columns: the widest value of this file plus a little,
+    so the three sit in fixed columns and never drift with the title's length (#527)."""
+    ds = f["datasets"] or [{}]
+    status = max(len("hand-run" if d.get("attended") else "built" if d.get("checked_on") else "tested") for d in ds)
+    role = max(len(str(d.get("role") or "")) for d in ds)
+    cad = max(len("⏱ " + str(d.get("cadence") or "")) for d in ds)
+    return f"--jw1:{status + COL_PAD}ch;--jw2:{role + COL_PAD}ch;--jw3:{cad + COL_PAD}ch"
+
+
 def _journey(f: dict) -> str:
     rows, _ = _jrows(f)
     n = max(1, 2 * len(f["datasets"]))
@@ -835,7 +850,7 @@ def _journey(f: dict) -> str:
     return (
         '<div class="journey"><p class="colh">The journey of this data · one line a build step · press a line or a '
         'table: everything tied to it lights, press again to drop it</p>'
-        '<div class="jleft"><table class="jt jt4 jt3"><colgroup><col class="c1"><col class="c2"><col class="c3">'
+        f'<div class="jleft"><table class="jt jt4 jt3" style="{_meta_widths(f)}"><colgroup><col class="c1"><col class="c2"><col class="c3">'
         '</colgroup><thead><tr><th>Build step · status · role · how often</th>'
         f'<th class="hddh">{hdd}</th><th class="ssdh">{ssdh}</th></tr></thead><tbody>{rows}</tbody></table></div>'
         f'<aside class="jpanel jnarrow"><div class="jssd"><span class="jph">⚡ SSD live · served</span>{ssd}</div>'
@@ -875,8 +890,9 @@ def _samples(f: dict) -> str:
                         'columns the code declares</td></tr>')
             notes = "".join(f'<p class="hint">{esc(n)}</p>' for n in s.get("notes") or ())
             blocks.append(
-                f'<section class="dsec" data-sample="{esc(t)}"><h4><code>{esc(t)}, as served</code> <span class="dim">'
-                f'{len(s.get("rows") or [])} rows</span></h4><div class="dsact"><button type="button" class="btn" '
+                f'<section class="dsec" data-sample="{esc(t)}"><h3 class="dsh"><code>{esc(t)}</code> as served '
+                f'<span class="dim">{len(s.get("rows") or [])} rows</span></h3><div class="dsact"><button type="button" '
+                f'class="btn sm" '
                 f'data-sample-refresh="{esc(t)}">Refresh the example rows</button><span class="dim">reads 5 rows of '
                 f'<code>{esc(f["name"])}</code> · no provider call</span></div><div class="scroll"><table class="ex">'
                 f'<thead>{src}<tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{notes}</section>')
