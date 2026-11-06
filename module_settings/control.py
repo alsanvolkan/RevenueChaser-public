@@ -9,7 +9,7 @@ pure and a test builds the whole board from a dictionary.
 
 The page itself is ``control_render``; this is its model:
 
-- ``health``: the twelve tiles of "Health right now";
+- ``health``: the fourteen tiles of "Health right now", in four groups, and the By-file lines;
 - ``universe``: the tier sets the next fetches and fills use, as applied (``core.board_settings``);
 - ``files``: the serving files in build order, each with its datasets (the Fetch section) and its tables, columns,
   readers and example rows (the Data section);
@@ -20,7 +20,8 @@ The page itself is ``control_render``; this is its model:
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+import os
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from RevenueChaser.rcdata import caps, scaffold
@@ -204,16 +205,51 @@ def _providers(nd: dict) -> list[dict]:
     return rows
 
 
+#: The Health strip's groups (#492): what the data holds, the sources, what is scheduled, the builds.
+TILE_GROUPS = {"fresh": "data", "late": "data", "stale": "data", "never": "data", "problems": "data",
+               "session": "data", "universe": "data", "cap": "sources", "gateway": "sources",
+               "timer": "scheduled", "builder": "scheduled", "queue": "scheduled", "longest": "build",
+               "backup": "build"}
+NO_TIMER = {"state": None, "last": None, "next": None, "minute": None}
+
+
 def _tile(key, cls, n, label, f=None) -> dict:
-    return {"key": key, "cls": cls, "n": n, "label": label, "filter": f}
+    return {"key": key, "cls": cls, "n": n, "label": label, "filter": f, "group": TILE_GROUPS[key]}
 
 
-def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -> dict:
+def longest_build(runs, now: datetime) -> dict | None:
+    """The longest finished ``job_runs2`` run (``finished_at - started_at``, epoch seconds) started on the New York
+    day of ``now``: ``{"dataset", "seconds"}``, or None when there is none."""
+    today = now.astimezone(NY).date()
+    best = None
+    for r in runs or []:
+        try:
+            start, end = float(r["started_at"]), float(r["finished_at"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if datetime.fromtimestamp(start, timezone.utc).astimezone(NY).date() != today or end < start:
+            continue
+        if best is None or end - start > best["seconds"]:
+            best = {"dataset": r.get("dataset"), "seconds": int(round(end - start))}
+    return best
+
+
+def _read_job_runs(now: datetime) -> list[dict]:
+    """The finished ``job_runs2`` rows of the last two days (a read; the file is not created when missing)."""
+    from RevenueChaser.rcdata import ops
+    return ops._select("SELECT dataset, started_at, finished_at FROM job_runs2 WHERE finished_at IS NOT NULL "
+                       "AND started_at >= ?", ((now - timedelta(days=2)).timestamp(),))
+
+
+def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *, timer: dict | None = None,
+           longest: dict | None = None, file_views: list[dict] | None = None) -> dict:
     cards = nd.get("datasets") or []
+    total = len(cards)
     by = {k: 0 for k in ("fresh", "late", "stale", "never")}
     for c in cards:
         by[STATUS_FILTER.get(_status_of(c), "never")] += 1
     problems = sum(int(c.get("issues_open") or 0) for c in cards)
+    with_problems = sum(1 for c in cards if int(c.get("issues_open") or 0))
     v = nd.get("verified") or {}
     run = v.get("builder_last_run") or {}
     silent = v.get("silent_minutes")
@@ -222,20 +258,28 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -
     bars = next((c for c in cards if c.get("dataset") == "alpaca/bars"), None)
     bars_ok = bars is not None and _status_of(bars) in ("fresh", "unchanged")
     queue = (nd.get("queue") or {}).get("active") or []
+    running = sum(1 for q in queue if (q or {}).get("status") == "running")
     near = next((p for p in providers if p["share"] is not None), None)
     others = [p for p in providers if p["share"] is not None and p is not near][:2]
     backups = [k for k in ((nd.get("backups") or {}).get("kinds") or []) if k.get("newest")]
     newest_backup = max(backups, key=lambda k: str(k["newest"]), default=None)
+    timer = timer or NO_TIMER
+    state = timer.get("state")
+    of = f"of {count(total)} datasets"
     tiles = [
-        _tile("fresh", "ok", count(by["fresh"]), "fresh datasets", "fresh"),
-        _tile("late", "warn" if by["late"] else "ok", count(by["late"]), "late", "late"),
-        _tile("stale", "bad" if by["stale"] else "ok", count(by["stale"]), "stale", "stale"),
-        _tile("never", "none", count(by["never"]), "never ran", "never"),
-        _tile("problems", "neu", count(problems), "open problems in total · build_issues, one per row", "problems"),
+        _tile("fresh", "ok", count(by["fresh"]), f"{of} fresh", "fresh"),
+        _tile("late", "warn" if by["late"] else "ok", count(by["late"]), f"{of} late", "late"),
+        _tile("stale", "bad" if by["stale"] else "ok", count(by["stale"]), f"{of} stale", "stale"),
+        _tile("never", "none", count(by["never"]), f"{of} never ran", "never"),
+        _tile("problems", "neu", count(problems),
+              f"open problems, in {count(with_problems)} of {count(total)} datasets", "problems"),
         _tile("session", "ok" if bars_ok else "warn", day_words(newest) if newest else "none",
-              (f"newest session in prices · {count(sum(sessions[newest].values()))} names have a bar on it" if newest
+              (f"newest session in prices · {count(sum(sessions[newest].values()))} of {count(universe.get('size'))}"
+               " names have a bar on it" if newest
                else "no session in prices yet: price_bar_daily holds no bar"), "session"),
-        _tile("queue", "ops", count(len(queue)), "waiting or running in the queue", "queue"),
+        _tile("queue", "ops", count(len(queue)), f"{running} running, {len(queue) - running} queued", "queue"),
+        _tile("timer", {"on": "ok", "off": "bad"}.get(state, "none"), state if state in ("on", "off") else "not known",
+              f"hourly builder timer · last pass {_clock(timer.get('last'))} · next {_clock(timer.get('next'))}"),
         _tile("builder", "none" if silent is None else ("bad" if silent > BUILDER_SILENT_MINUTES else "ok"),
               "never" if silent is None else f"{silent} min",
               ("the builder has no run on record" if silent is None else
@@ -253,6 +297,9 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -
               f"of {count(universe.get('size'))} names in the universe have a bar on the newest session"
               + ("" if universe.get("fill_enabled") else " · the Fill buttons are off"), "universe"),
         _tile("gateway", *_gateway(ibkr), "gateway"),
+        _tile("longest", "none" if longest is None else "neu",
+              "not measured yet" if longest is None else f"{round(longest['seconds'] / 60)} min",
+              "longest build today" if longest is None else f"longest build today · {longest['dataset']}"),
         _tile("backup", "none" if newest_backup is None else ("warn" if newest_backup.get("warn") else "ok"),
               "none" if newest_backup is None else day_words(newest_backup["newest"]),
               "no backup recorded" if newest_backup is None else
@@ -262,7 +309,8 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -
                f"{problems} open problems"]
     if near is not None:
         summary.append(f"{near['name']} nearest its cap ({near['share']:.0%})")
-    return {"tiles": tiles, "summary": summary, "counts": by, "problems": problems}
+    return {"tiles": tiles, "summary": summary, "counts": by, "problems": problems,
+            "files": [{"name": f["name"], "state": f["state"]} for f in file_views or []]}
 
 
 def _clock(value) -> str:
@@ -379,7 +427,7 @@ def _provider_name(pid: str | None) -> str | None:
     return screen.PROVIDERS[pid].name if pid in screen.PROVIDERS else pid
 
 
-def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime) -> dict:
+def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime, timer: dict | None = None) -> dict:
     name = str(card["dataset"])
     meta = screen.DATASETS.get(name)
     from RevenueChaser.rcdata.build import base
@@ -409,10 +457,109 @@ def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime) 
         "fill": _fill(name, ds, kind, universe_view, card),
         "issues": card.get("issues") or [], "issues_open": int(card.get("issues_open") or 0),
         "paused": bool((card.get("schedule") or {}).get("paused")),
+        "next_words": next_run_words(card.get("schedule"), _check_of(card), as_of_kind(ds), card.get("cadence"),
+                                     attended=attended, starts_by_hand=bool(getattr(ds, "starts_by_hand", False)),
+                                     timer=timer, now=now),
+        "since_words": since_words(card.get("schedule")),
         "backfill": card.get("backfill"), "calendar": name in CALENDARS,
         "recent": card.get("recent") or [], "samples": card.get("samples") or [],
         "cross_check": name in ("wrds/prices", "uw/total_float", "yfinance/float"),
     }
+
+
+# ── When the hourly pass runs a dataset next ──────────────────────────────────────────────────────────────────
+
+NY = ZoneInfo("America/New_York")
+AS_OF_KINDS = ("today_ny", "latest_complete_session")
+
+
+def as_of_kind(ds) -> str | None:
+    """Which ``core.calendar`` day a dataset's ``default_as_of`` returns, read from the code (no call is made)."""
+    code = getattr(getattr(type(ds), "default_as_of", None), "__code__", None)
+    names = code.co_names if code is not None else ()
+    return next((k for k in AS_OF_KINDS if k in names), None)
+
+
+def _when(value) -> datetime | None:
+    try:
+        when = datetime.fromisoformat(str(value)) if value else None
+    except ValueError:
+        return None
+    return None if when is None else (when if when.tzinfo else when.replace(tzinfo=timezone.utc))
+
+
+def _first_pass(at: datetime, minute: int) -> datetime:
+    """The first hourly pass (``*:<minute>``) at or after ``at``; Amsterdam and New York are whole hours apart."""
+    at = at.astimezone(timezone.utc)
+    hour = at.replace(minute=0, second=0, microsecond=0)
+    p = hour + timedelta(minutes=minute)
+    return p if p >= at else p + timedelta(hours=1)
+
+
+def _pass_words(when: datetime, *, recurring: bool = False) -> str:
+    here, there = when.astimezone(LOCAL), when.astimezone(NY)
+    clock = f"{here:%H:%M} ({there:%H:%M} New York)"
+    if recurring:
+        return f"every trading day, {clock}"
+    return f"{here:%a} {here.day} {here:%b}, {clock}"
+
+
+def next_run_words(schedule: dict | None, check: dict | None, kind: str | None, cadence: str | None, *,
+                   attended: bool, starts_by_hand: bool, timer: dict | None, now: datetime) -> str:
+    """When the hourly pass first runs a dataset, by the rules of ``rcdata.build.due.is_due``.
+
+    ``check`` is the newest check (``result``, ``checked_on``, ``next_check_due``), None when it never built; ``kind``
+    the dataset's ``as_of_kind``; ``timer`` the hourly builder timer (``view["timer"]``)."""
+    from RevenueChaser.core import calendar
+    from RevenueChaser.rcdata.build import due
+    schedule = schedule or {}
+    if schedule.get("paused") or schedule.get("paused_at") is not None:
+        return "skips until Resume"
+    if attended:
+        return "by hand only"
+    if starts_by_hand and check is None:
+        return "not before a first Fetch"
+    timer = timer or {}
+    minute = timer.get("minute")
+    if timer.get("state") not in ("on", "off") or minute is None:
+        return "next pass not known"
+    prefix = "timer off · " if timer.get("state") == "off" else ""
+    now = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    settle = (datetime.combine(date(2000, 1, 1), calendar.SESSION_CLOSE) + calendar.COMPLETE_MARGIN).time()
+    starts = settle if kind == "latest_complete_session" else time(0, 0)
+    cadence = cadence if cadence in due.CADENCES else due.DEFAULT_CADENCE
+    day = None
+    if check is not None and check.get("result") not in ("failed", "skipped"):
+        if cadence == "daily":
+            day = _day(check.get("next_check_due"))
+            if day is None:
+                at = datetime.combine(now.astimezone(NY).date(), starts, tzinfo=NY)
+                return prefix + _pass_words(_first_pass(at, minute), recurring=True)
+        else:
+            checked = _day(check.get("checked_on"))
+            day = checked + timedelta(days=due.CYCLE_DAYS[cadence]) if checked else None
+    if day is not None:
+        at = datetime.combine(day, starts, tzinfo=NY)
+        if at > now:
+            return prefix + _pass_words(_first_pass(at, minute))
+    return prefix + "due · " + _pass_words(_first_pass(now, minute))
+
+
+def since_words(schedule: dict | None) -> str:
+    """``paused · since <Amsterdam time> by <who>`` for a paused dataset, else ``fetch on``."""
+    schedule = schedule or {}
+    if not (schedule.get("paused") or schedule.get("paused_at") is not None):
+        return "fetch on"
+    when = _when(schedule.get("paused_at"))
+    at = "not recorded yet" if when is None else f"{_local(when):%a} {_local(when).day} {_local(when):%b, %H:%M}"
+    return f"paused · since {at} by {schedule.get('paused_by') or 'not recorded yet'}"
+
+
+def _check_of(card: dict) -> dict | None:
+    if _status_of(card) == "never":
+        return None
+    return {"result": card.get("last_result"), "checked_on": card.get("checked_on"),
+            "next_check_due": card.get("next_check_due"), "source_as_of": card.get("source_as_of")}
 
 
 def _health_of(rows: list[dict]) -> dict:
@@ -435,7 +582,25 @@ def _health_of(rows: list[dict]) -> dict:
     return {"fresh": fresh, "total": total, "state": state, "pills": pills}
 
 
-def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datetime) -> list[dict]:
+def file_state(path, tables: list[dict], rows: list[dict]) -> dict:
+    """A served file on disk (an ``os.stat`` of ``path``), its tables with rows (the counts ``collect`` read) and its
+    datasets in the Health strip's buckets. A file not there, or no path known, is ``exists: False`` with Nones."""
+    try:
+        st = os.stat(path) if path else None
+    except OSError:
+        st = None
+    counts = {k: sum(1 for r in rows if r["filter"] == k) for k in ("fresh", "late", "stale", "never")}
+    counts["total"] = len(rows)
+    with_rows = [t["name"] for t in tables if t.get("rows")]
+    return {"exists": st is not None, "bytes": st.st_size if st else None,
+            "written_at": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds")
+            if st else None,
+            "tables": len(tables), "tables_with_rows": len(with_rows),
+            "empty": [t["name"] for t in tables if not t.get("rows")], "counts": counts}
+
+
+def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datetime,
+          timer: dict | None = None) -> list[dict]:
     """The serving files in build order, each with its dataset rows (in step order) and its tables."""
     cards = {str(c.get("dataset")): c for c in nd.get("datasets") or []}
     tables_now = nd.get("tables") or {}
@@ -443,7 +608,7 @@ def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datet
     labels = _board_labels()
     out = []
     for kind, fc in screen.FILES.items():
-        rows = [_dataset_row(cards[n], ds, kind, universe_view, now)
+        rows = [_dataset_row(cards[n], ds, kind, universe_view, now, timer)
                 for n, ds in datasets.items() if ds.kind == kind and n in cards]
         rows.sort(key=lambda r: (r["step"], 0 if r["role"] == "first" else 1, r["dataset"]))
         schema = scaffold.SCHEMA_OF_KIND.get(kind) or {}
@@ -465,7 +630,8 @@ def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datet
                     "runs_on_universe": fc.runs_on_universe, "color": color, "datasets": rows,
                     "health": _health_of(rows), "tables": tables, "path": live.get("path"),
                     "bytes": live.get("bytes"), "storage": storage.get("datasets") or {},
-                    "roots": storage.get("roots") or {}, "walked_at": storage.get("walked_at")})
+                    "roots": storage.get("roots") or {}, "walked_at": storage.get("walked_at"),
+                    "state": file_state(live.get("path"), tables, rows)})
     return out
 
 
@@ -587,13 +753,46 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
             "boardInfo": board_info, "tableReads": table_reads, "needReader": need_reader}
 
 
+BUILDER_ENTRY = "RC-Build"
+
+
+def read_timer(scheduler=None) -> dict:
+    """The hourly builder timer (``core.automations``' ``RC-Build`` row, unit ``life-rc-builder``): ``state`` "on"
+    while the timer is active, "off" when disabled; ``last`` / ``next`` its passes; ``minute`` the minute of its
+    ``OnCalendar``. Not installed, no scheduler on this host, or a read that fails: every value None."""
+    from RevenueChaser.core import automations
+    try:
+        scheduler = scheduler or automations.get_scheduler()
+        st = scheduler.status(BUILDER_ENTRY)
+        if st is None:
+            return dict(NO_TIMER)
+        spec = automations.on_calendar(automations.entry(BUILDER_ENTRY))
+        minute = int(spec.split()[-1].split(":")[1])
+    except Exception:  # noqa: BLE001 - a timer that cannot be read is "not known", never a guess
+        return dict(NO_TIMER)
+    return {"state": "off" if st.state == "disabled" else "on", "last": st.last_run, "next": st.next_run,
+            "minute": minute}
+
+
+def _timer(reader) -> dict:
+    """``{"state", "last", "next", "minute"}`` from ``reader()`` (default ``read_timer``); all None when it fails."""
+    reader = reader or read_timer
+    try:
+        got = reader() or {}
+        return {k: got.get(k) for k in NO_TIMER}
+    except Exception:  # noqa: BLE001 - a timer that cannot be read is "not known"
+        return dict(NO_TIMER)
+
+
 # ── The whole board ───────────────────────────────────────────────────────────────────────────────────────────
 
 def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, now: datetime | None = None,
-          datasets: dict | None = None) -> dict:
+          datasets: dict | None = None, timer=None, job_runs=None) -> dict:
     """The page's model from ``newdata.collect``'s output. ``applied`` is the saved universe
     (``board_settings.values("module_settings")["values"]``), ``ibkr`` the gateway's login state, ``datasets`` the
-    builder's datasets (default: ``newdata._datasets()``)."""
+    builder's datasets (default: ``newdata._datasets()``). ``timer`` and ``job_runs`` are the readers of the hourly
+    builder timer and of ``ops.job_runs2``, injectable so a test needs neither systemd nor a store; a reader that
+    fails gives Nones, never a guess."""
     from RevenueChaser.module_settings import newdata
     now = now or datetime.now(timezone.utc)
     if nd.get("error"):
@@ -602,11 +801,17 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
     uni = universe(nd, applied)
     provider_rows = _providers(nd)
     reads = readers()
-    file_views = files(nd, datasets, uni, reads, now)
+    timer_view = _timer(timer)
+    try:
+        longest = longest_build(job_runs() if job_runs else _read_job_runs(now), now)
+    except Exception:  # noqa: BLE001 - an unreadable ops store leaves the tile "not measured yet"
+        longest = None
+    file_views = files(nd, datasets, uni, reads, now, timer_view)
     return {
         "error": None,
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
-        "health": health(nd, provider_rows, uni, ibkr),
+        "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, file_views=file_views),
+        "timer": timer_view, "longest_build": longest,
         "universe": uni, "scope": scope(uni), "files": file_views, "providers": provider_rows,
         "flow": flow(file_views, datasets, reads, uni), "calendars": calendars(nd, uni, provider_rows),
         "cross_check": (nd.get("cross_check") or {}).get("fields") or [],
