@@ -315,6 +315,12 @@ def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema:
 
 def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str, first: date, last: date,
               schema: dict) -> int:
+    if base.raw_only():
+        # Raw-only (--no-parquet, #498): the set's zip is staged in raw above, and typing it here would write the
+        # ``.done`` marker of every day in range while base.write_parquet writes no partition, so those days would
+        # never be typed again (the forms walk skips a marked day, and _reopen is the only way back).
+        ctx.notes.append(f"13F data set {name}: raw only, the zip is staged and not typed")
+        return 0
     days = [first + timedelta(days=n) for n in range((last - first).days + 1)]
     todo = [d for d in days if d.weekday() < 5 and not feed.is_done(d)]
     if not todo:

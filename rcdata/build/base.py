@@ -19,6 +19,8 @@ check row, the run row, the provider call counts and UW's rate headers. An excep
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import gzip
 import json
 import logging
@@ -478,8 +480,36 @@ def _copy(con: duckdb.DuckDBPyConnection, select: str, path: Path) -> None:
                 f"(FORMAT parquet, COMPRESSION {PARQUET_COMPRESSION}, ROW_GROUP_SIZE {PARQUET_ROW_GROUP})")
 
 
+#: True while a raw-only run (``--no-parquet``, #498) is fetching: ``write_parquet`` writes nothing, so a dataset
+#: whose ``backfill`` converts inside itself (``market_series``, the fundamentals datasets) stages raw files only.
+#: A ContextVar and not a ``RunContext`` field, because those conversions reach ``write_parquet`` without the
+#: context in hand; one run per process sets it, and ``raw_only_run`` resets it even when the run raises.
+_RAW_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("rcdata_raw_only", default=False)
+
+
+def raw_only() -> bool:
+    """Is this run raw-only (``--no-parquet``)? Read by ``write_parquet``."""
+    return _RAW_ONLY.get()
+
+
+@contextlib.contextmanager
+def raw_only_run(on: bool = True):
+    """Hold the raw-only switch for the fetch of one run (``on=False``: an ordinary run, nothing changes)."""
+    token = _RAW_ONLY.set(bool(on))
+    try:
+        yield
+    finally:
+        _RAW_ONLY.reset(token)
+
+
 def write_parquet(con: duckdb.DuckDBPyConnection, select: str, final: Path) -> Path:
-    """Write ``select`` to ``final`` through ``<final>.tmp`` and a rename, so a partition that exists is whole."""
+    """Write ``select`` to ``final`` through ``<final>.tmp`` and a rename, so a partition that exists is whole.
+
+    In a raw-only run (``--no-parquet``) nothing is written and ``final`` is returned as it is: the callers collect
+    the paths into the list their ``to_parquet_all`` returns, and in that mode the files are simply not there.
+    """
+    if raw_only():
+        return final
     final.parent.mkdir(parents=True, exist_ok=True)
     tmp = final.with_name(final.name + ".tmp")
     _copy(con, select, tmp)
@@ -704,20 +734,23 @@ def paused_problem(ds: Dataset) -> str | None:
 
 # ── One request ────────────────────────────────────────────────────────────────────────────────────────────────
 
-#: The check note of a ``--no-build`` run: the serving file was not touched, so the result is a skip, not an "ok".
+#: The check note of a ``--no-duckdb`` run: the serving file was not touched, so the result is a skip, not an "ok".
 #: It says what the fetch really staged, because the first live run read as a success while its fetch had returned
 #: nothing (``uw/option_list`` outside its provider's window, 5 Nov 2026).
-NO_BUILD_NOTE = "skipped: build skipped (--no-build)"
+NO_DUCKDB_NOTE = "skipped: build skipped (--no-duckdb)"
+#: The same for a raw-only run (``--no-parquet``, #498), which skips the Parquet step as well.
+NO_PARQUET_NOTE = "skipped: build and Parquet skipped (--no-parquet)"
 
 
-def no_build_note(staged: int | None) -> str:
-    """The ``--no-build`` check note; ``staged`` is how many raw files the fetch returned, None when it cannot be
-    counted (a backfill stages inside the dataset and returns nothing)."""
+def skip_note(staged: int | None, *, raw_only: bool = False) -> str:
+    """The ``--no-duckdb`` / ``--no-parquet`` check note; ``staged`` is how many raw files the fetch returned, None
+    when it cannot be counted (a backfill stages inside the dataset and returns nothing)."""
+    head = NO_PARQUET_NOTE if raw_only else NO_DUCKDB_NOTE
     if staged is None:
-        return f"{NO_BUILD_NOTE}; the backfill staged what it fetched"
+        return f"{head}; the backfill staged what it fetched"
     if staged == 0:
-        return f"{NO_BUILD_NOTE}; nothing staged (the fetch returned no file)"
-    return f"{NO_BUILD_NOTE}; {staged} raw file{'' if staged == 1 else 's'} staged"
+        return f"{head}; nothing staged (the fetch returned no file)"
+    return f"{head}; {staged} raw file{'' if staged == 1 else 's'} staged"
 
 
 def new_run_id() -> str:
@@ -822,29 +855,41 @@ def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False
                              "not applied)")
         mode = params.get("mode", "daily")
         staged: int | None = None
-        if mode == "backfill":
-            if params.get("from"):
-                start = _parse_day(params["from"])
-            elif getattr(ds, "backfill_needs_from", True):
-                raise ValueError(f"a backfill of {ds.name} needs a first day (--from)")
+        # The two "do not build" switches (#498). ``no_parquet`` is raw-only and implies ``no_duckdb``, because
+        # Parquet is the only input a build reads: a build with no new partition would be a no-op that still took
+        # the builder lock. ``no_build`` is the old name of ``no_duckdb``, still read so that a request queued
+        # before the rename keeps working.
+        raw_only_mode = params.get("no_parquet") is True
+        skip_build = raw_only_mode or params.get("no_duckdb") is True or params.get("no_build") is True
+        with raw_only_run(raw_only_mode):
+            if mode == "backfill":
+                if params.get("from"):
+                    start = _parse_day(params["from"])
+                elif getattr(ds, "backfill_needs_from", True):
+                    raise ValueError(f"a backfill of {ds.name} needs a first day (--from)")
+                else:
+                    start = None
+                end = _parse_day(params["to"]) if params.get("to") else ds.default_as_of()
+                ctx.as_of = end
+                # A dataset's own backfill converts inside itself, so the switch reaches it through the
+                # ``raw_only`` guard in ``write_parquet`` rather than by skipping a call here.
+                ds.backfill(ctx, start, end)
+            elif mode == "daily":
+                ctx.as_of = _parse_day(params["as_of"]) if params.get("as_of") else ds.default_as_of()
+                raws = ds.fetch(ctx, ctx.as_of)
+                staged = len(raws)
+                if not raw_only_mode:
+                    ds.to_parquet_all(ctx, raws)
             else:
-                start = None
-            end = _parse_day(params["to"]) if params.get("to") else ds.default_as_of()
-            ctx.as_of = end
-            ds.backfill(ctx, start, end)
-        elif mode == "daily":
-            ctx.as_of = _parse_day(params["as_of"]) if params.get("as_of") else ds.default_as_of()
-            raws = ds.fetch(ctx, ctx.as_of)
-            staged = len(raws)
-            ds.to_parquet_all(ctx, raws)
-        else:
-            raise ValueError(f"unknown mode {mode!r}")
-        if params.get("no_build"):
-            # "Stage only" (--no-build): the data is in raw and Parquet, the serving file is left as it is. The
-            # check row a build would have written cannot be made without one, and inventing a result value would
-            # reach due.py and ops; a skip is the truth (the serving file did not change) and leaves the dataset
-            # due, so the next ordinary pass builds it at no provider call (the raw file is the resume marker).
-            return _finish(ctx, req, {"result": "skipped", "note": no_build_note(staged)}, "skipped", None)
+                raise ValueError(f"unknown mode {mode!r}")
+        if skip_build:
+            # "Stage only" (--no-duckdb): the data is in raw and Parquet; raw-only (--no-parquet): in raw alone.
+            # Either way the serving file is left as it is. The check row a build would have written cannot be
+            # made without one, and inventing a result value would reach due.py and ops; a skip is the truth (the
+            # serving file did not change) and leaves the dataset due, so the next ordinary pass builds it at no
+            # provider call (the raw file is the resume marker).
+            note = skip_note(staged, raw_only=raw_only_mode)
+            return _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None)
         check = build_kind(ctx, ds)
         status = "ok"
     except NothingInScope as e:
