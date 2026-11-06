@@ -1092,7 +1092,8 @@
 .ctl .onewrap .fmenul[hidden]{display:none}
 
 /* #527 top bar: the fetch and backup switches and the IBKR gateway, always above Health right now */
-.ctl .topbar{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:12px 0 4px}
+.ctl .topbar{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:12px 0 4px;
+  justify-content:flex-start;border-bottom:0;padding-bottom:0}  /* the page's own .topbar (report.CSS) is a header row */
 .ctl .topbar .swt{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:44px;padding:6px 14px;
   border-radius:10px;border:1px solid var(--line);border-left-width:4px;background:var(--card);
   color:inherit;font:inherit;text-align:left}

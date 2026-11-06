@@ -226,23 +226,40 @@ def _file_of(row: dict) -> str:
     return row["kind"] if row.get("kind") in SERVED_FILES else OTHER_FILE
 
 
+#: The states that need avo (#527): a group holding one leads the catalog and opens at load, and its row leads.
+PROBLEM_STATES = ("unreadable", "missing", "stale")
+
+
+def _problem(row: dict) -> bool:
+    return row["state"] in PROBLEM_STATES or row["state"] not in STATES
+
+
 def _catalog_groups(rows: list[dict]) -> list[tuple[str, list[dict]]]:
-    """``(file, rows)`` per served file in ``SERVED_FILES`` order, then ``other``; a file with no need is left out."""
+    """``(file, rows)`` per served file, then ``other``; a file with no need is left out. #527: the groups holding a
+    stale, missing or unreadable need come first (each kind keeps ``SERVED_FILES`` order), and inside a group those
+    rows lead, in that order."""
     order = SERVED_FILES + (OTHER_FILE,)
-    return [(f, [r for r in rows if _file_of(r) == f]) for f in order if any(_file_of(r) == f for r in rows)]
+    rank = {s: i for i, s in enumerate(PROBLEM_STATES)}
+    groups = [(f, sorted((r for r in rows if _file_of(r) == f), key=lambda r: rank.get(r["state"], len(rank))))
+              for f in order if any(_file_of(r) == f for r in rows)]
+    return sorted(groups, key=lambda g: 0 if any(_problem(r) for r in g[1]) else 1)
 
 
 def _catalog_group(file: str, rows: list[dict]) -> str:
-    """One file's group: a full-width head row with its toggle, then its rows in their own ``tbody``, closed."""
-    fresh = sum(1 for r in rows if r["state"] == "fresh")
-    stale = sum(1 for r in rows if r["state"] == "stale")
+    """One file's group: a full-width head row with its toggle, then its rows in their own ``tbody``; open at load
+    only when it holds a need that needs avo (#527)."""
+    count = {s: sum(1 for r in rows if r["state"] == s) for s in STATES}
     body_id = f"cg-{esc(file)}"
-    return (f'<tbody class="cghead" data-file="{esc(file)}"><tr><td colspan="7">'
-            f'<button type="button" class="cgtog" aria-expanded="false" aria-controls="{body_id}">'
-            f'<span class="cgarr" aria-hidden="true">▸</span> <span class="cgfile">{esc(file)}</span> '
-            f'<span class="cgcount">{len(rows)} need{"" if len(rows) == 1 else "s"} · fresh {fresh} · '
-            f'stale {stale}</span></button></td></tr></tbody>'
-            f'<tbody class="cbody" hidden id="{body_id}">{"".join(_catalog_row(r) for r in rows)}</tbody>')
+    is_open = any(_problem(r) for r in rows)
+    extra = "".join(f' · {s} {count[s]}' for s in ("missing", UNREADABLE) if count[s])
+    return (f'<tbody class="cghead" data-file="{esc(file)}"{" data-bad" if is_open else ""}><tr><td colspan="7">'
+            f'<button type="button" class="cgtog" aria-expanded="{"true" if is_open else "false"}" '
+            f'aria-controls="{body_id}"><span class="cgarr" aria-hidden="true">{"▾" if is_open else "▸"}</span> '
+            f'<span class="cgfile">{esc(file)}</span> '
+            f'<span class="cgcount">{len(rows)} need{"" if len(rows) == 1 else "s"} · fresh {count["fresh"]} · '
+            f'stale {count["stale"]}{extra}</span></button></td></tr></tbody>'
+            f'<tbody class="cbody"{"" if is_open else " hidden"} id="{body_id}">'
+            f'{"".join(_catalog_row(r) for r in rows)}</tbody>')
 
 
 #: The group toggle: a press opens or closes the group's rows and flips ``aria-expanded`` and the arrow.

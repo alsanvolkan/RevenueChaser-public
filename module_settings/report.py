@@ -2987,7 +2987,10 @@ def _control_view(nd: dict | None, payload: dict) -> dict:
     if not nd:
         return {"error": "the new data system was not read", "read_at": datetime.now().strftime("%H:%M")}
     try:
-        return control_model.build(nd, applied=_applied_universe(), ibkr=payload.get("ibkr_login_state"))
+        view = control_model.build(nd, applied=_applied_universe(), ibkr=payload.get("ibkr_login_state"))
+        # #527: the top bar's gateway carries the login link the old IBKR card held
+        view.setdefault("gateway", {})["login"] = _ibkr_login_href(payload.get("ibkr_login_url"))
+        return view
     except Exception as exc:  # noqa: BLE001 - one broken field is a line on the page, never a blank board
         return {"error": f"{type(exc).__name__}: {exc}"[:300], "read_at": datetime.now().strftime("%H:%M")}
 
@@ -3084,7 +3087,8 @@ _UCARDS_CSS = (".ctl .ucards{--border:var(--line);--muted:var(--mut);--neg:var(-
                "--amber:var(--warn);--sky:var(--acc);--bright:var(--fg);--hover:var(--acc2)}\n"
                + ND_CSS[len(ND_THEME_CSS):].replace("#newdata", ".ctl .ucards"))
 
-#: The page's one "What am I looking at?" box (#383), at the top of the Data tab.
+#: The page's one "What am I looking at?" box (#383), at the top of the Data tab; #527 folded the board's own box
+#: (``control_render.WIAL``) into it, so the tab has one.
 DATA_HELP = help_html(
     "<b>Data</b> shows each served file (the six SSD DuckDB files) and how it is made: its sources, one box a "
     "dataset, then the Build stage from HDD raw and Parquet to the SSD file, then example rows. <b>Fetch</b> puts "
@@ -3093,6 +3097,7 @@ DATA_HELP = help_html(
     "call and holds the dataset until <b>Resume</b>. <b>Health</b> holds the queue and last runs, the need "
     "catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
     "the backups. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
+    + control_render.WIAL
 )
 
 
@@ -3121,17 +3126,36 @@ def _health_panel(payload: dict, view: dict, nd: dict | None = None) -> str:
     except Exception as exc:  # noqa: BLE001 - one broken card is a line, never a blank Health tab
         backups = f'<p class="warn">The backups card could not be drawn: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
     # One ``#needs`` scope (needs.css) around the head, the queue and the Needs parts; the queue keeps its ``.ctl``.
-    moved = (_boards_section(payload.get("boards") or [], payload.get("rows") or [])
+    # #527 step 9: what needs avo first (the top bar, the reads that failed, the queue, the backups, the catalog
+    # with its problem groups open), then the parts he looks things up in, then the reference parts folded. The
+    # IBKR login card is gone: its link is in the top bar.
+    moved = (_ticker_drill(payload)
              + _automations_section(payload.get("automations") or [])
-             + _watch_section(nd)
-             + _ibkr_login_card(payload.get("ibkr_login_url")) + _ibkr_state_card(payload.get("ibkr_login_state"))
-             # the reads that failed while the page was built: a dash above may be an error, not missing data
-             + _errors_list(payload.get("errors") or []))
+             + _ibkr_state_card(payload.get("ibkr_login_state"))
+             + _boards_section(payload.get("boards") or [], payload.get("rows") or [])
+             + _watch_section(nd))
     # One ``#needs`` frame and palette for the whole tab; the queue keeps its ``.ctl`` scope inside it.
+    errs = _errors_list(payload.get("errors") or [])
     return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
-            f'{_queue_html(view)}'
-            f'<div class="wrap">{catalog}{rest}</div>'
-            f'<div class="wrap" id="health-more">{_ticker_drill(payload)}{moved}{backups}</div></div>')
+            f'{control_render.topbar_health(view)}'
+            + (f'<div class="wrap">{errs}</div>' if errs else "")
+            + f'{_queue_html(view)}'
+            f'<div class="wrap">{backups}{catalog}</div>'
+            f'<div class="wrap" id="health-more">{moved}{_folded(rest)}</div></div>')
+
+
+def _folded(rest: str) -> str:
+    """#527: the request log and the routes, each closed behind its own one-line summary."""
+    out = rest
+    for part, words in (("needs-log", "The request log: which need was asked, by whom, how often"),
+                        ("needs-routes", "The routes: the read-only addresses a board asks")):
+        mark = f'<section class="part" id="{part}"'
+        if mark in out:
+            start = out.index(mark)
+            end = out.index("</section>", start) + len("</section>")
+            out = (out[:start] + f'<details class="hfold"><summary>{words}</summary>' + out[start:end] + '</details>'
+                   + out[end:])
+    return out
 
 
 def _tab_strip() -> str:

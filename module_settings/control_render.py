@@ -89,10 +89,7 @@ WIAL = ("<p>This page is the control board for every dataset the system holds. I
 def _header(view: dict) -> str:
     return (f'<h1>Data/Health · Data</h1>'
             f'<p class="sub"><b>Read {esc(view["read_at"])}</b> (Amsterdam) · source: <code>ops.sqlite</code> + the '
-            f'serving files · after {STALE_MINUTES} minutes a strip on top says the numbers are old '
-            '<button class="wiali" type="button" aria-expanded="false" aria-controls="wial">What am I looking at?'
-            '</button></p>'
-            f'<div class="wialbox" id="wial" hidden>{WIAL}</div>'
+            f'serving files · after {STALE_MINUTES} minutes a strip on top says the numbers are old</p>'
             f'<div class="stalebar" id="ctl-stale" hidden><b>Stale</b> · this page was read at {esc(view["read_at"])} · '
             '<button type="button" class="lnk" data-reload>Refresh</button></div>')
 
@@ -110,15 +107,29 @@ def _switch(name: str, label: str, st: dict | None) -> str:
             f'</b>{who}</button>')
 
 
-def _topbar(view: dict) -> str:
-    """#527: always at the top: the fetch switch, the backup switch and the IBKR gateway's state."""
+def _topbar(view: dict, msg_id: str = "sw-msg") -> str:
+    """#527: always at the top of both tabs: the fetch switch, the backup switch and the IBKR gateway's state with
+    its login link (``RC_IBKR_LOGIN_URL``; no link when it is unset). ``msg_id`` keeps each copy's status line its
+    own id."""
     sw = view.get("switches") or {}
     g = view.get("gateway") or {}
+    # the old IBKR login card's link, its id kept on the Data tab's copy (one id a page)
+    lid = ' id="ibkr-login-link"' if msg_id == "sw-msg" else ""
+    login = (f'<a class="lnk"{lid} href="{esc(g["login"])}" target="_blank" rel="noopener noreferrer" '
+             'title="Opens the IBKR gateway login screen. The address comes from RC_IBKR_LOGIN_URL; this page '
+             'makes no call to it">log in</a>' if g.get("login") else "")
     gate = (f'<span class="swt gw {esc(g.get("cls") or "none")}"><b>IBKR gateway: {esc(g.get("n") or "unknown")}</b>'
-            f'<span class="dim">{esc((g.get("label") or "").replace("IBKR gateway · ", ""))}</span></span>')
+            f'<span class="dim">{esc((g.get("label") or "").replace("IBKR gateway · ", ""))}</span>{login}</span>')
     return (f'<div class="topbar" role="group" aria-label="Switches and the IBKR gateway">'
             f'{_switch("fetch", "Fetch", sw.get("fetch"))}{_switch("backup", "Backup", sw.get("backup"))}{gate}'
-            '<span role="status" class="dim" id="sw-msg"></span></div>')
+            f'<span role="status" class="dim" id="{esc(msg_id)}"></span></div>')
+
+
+def topbar_health(view: dict) -> str:
+    """The same top bar at the head of the Health tab, in its own ``.ctl`` scope so its styles and presses work."""
+    if view.get("error"):
+        return ""
+    return f'<section class="ctl ctltop" aria-label="Switches"><div class="wrap">{_topbar(view, "sw-msg-h")}</div></section>'
 
 
 #: The Health groups (#492 C1): three side by side, then Data at full width.
@@ -1022,7 +1033,8 @@ def _queue(view: dict) -> str:
                     f'<td data-label="Note">{_note(r.get("note"))}</td></tr>')
     body = "".join(rows) or '<tr><td colspan="4" class="dim">nothing queued, nothing run yet</td></tr>'
     waiting = len(q.get("active") or [])
-    return ('<details class="sec" id="sec-queue"><summary><h2>Queue and last runs</h2>'
+    # #527: open while something waits or runs, so a running job's line is in sight; closed when the queue is empty
+    return (f'<details class="sec" id="sec-queue"{" open" if waiting else ""}><summary><h2>Queue and last runs</h2>'
             f'<span class="secs">{waiting} waiting or running · the last finished requests</span></summary>'
             '<div class="group" style="border-left-color:var(--mut)"><div class="scroll"><table class="stk qtbl" '
             'id="ctl-queue"><thead><tr><th>Dataset</th><th>Status</th><th>Asked</th><th>Note</th></tr>'

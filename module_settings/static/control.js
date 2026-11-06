@@ -196,11 +196,6 @@
   }
   window.CTLX.scrollTo = scrollTo; window.CTLX.reveal = reveal;
   root.addEventListener('click', function (e) {
-    var w = e.target.closest('#ctl .wiali');   // the Health head has its own
-    if (w) {
-      var box = document.getElementById('wial'), open = w.getAttribute('aria-expanded') === 'true';
-      w.setAttribute('aria-expanded', open ? 'false' : 'true'); if (box) box.hidden = open; return;
-    }
     if (e.target.closest('[data-reload]')) { location.reload(); return; }
     var g = e.target.closest('[data-goto]');
     if (g) {
@@ -1106,7 +1101,7 @@
   /* #527: the fetch and backup switches at the top; the page reloads so every line reads the new state */
   function switchPress(btn) {
     var nm = btn.getAttribute('data-name'), on = btn.getAttribute('data-on') === '1';
-    var out = document.getElementById('sw-msg');
+    var bar = btn.closest('.topbar'), out = bar && bar.querySelector('[role="status"]');
     btn.disabled = true;
     X.send('POST', C.routes.switch + nm, { on: !on }).then(function (r) {
       if (r.status >= 200 && r.status < 300) { location.reload(); return; }

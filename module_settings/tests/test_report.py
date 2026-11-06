@@ -2263,13 +2263,14 @@ def _panel(html: str, ident: str) -> str:
 
 
 def test_the_health_panel_holds_its_parts_in_order():
-    """#492 (i): the Needs head, the queue, the catalog, the log, the routes, then Ticker detail and Backups."""
+    """#492 (i), reordered by #527 step 9: the head, the queue, the backups and the catalog, then Ticker detail, then
+    the request log and the routes folded."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS))
     assert "<title>Data/Health</title>" in html
     health = _panel(html, "panel-health")
-    order = ["<h1>Data/Health · Health</h1>", "What am I looking at?", 'id="sec-queue"', 'id="needs-catalog"',
-             'id="needs-log"', 'id="needs-routes"', 'id="ticker-drill"', 'id="backups"']
+    order = ["<h1>Data/Health · Health</h1>", "What am I looking at?", 'id="sec-queue"', 'id="backups"',
+             'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
     assert 'id="drill"' in health and 'id="ticker-combo"' in health
@@ -2383,8 +2384,9 @@ def test_the_four_parts_that_live_nowhere_else_sit_in_health_above_backups():
                                                  ibkr_login_url="https://gateway.example/", backups=_BACKUPS,
                                                  errors=[{"table": "ibkr", "where": "x", "error": "read failed"}]))
     health = _panel(html, "panel-health")
-    marks = ['id="ticker-drill"', 'id="auto-body"', 'id="nd-watch-option"', 'id="nd-watch-stock"',
-             'id="ibkr-login-link"', 'id="errors"', 'id="backups"']
+    # #527 step 9: the reads that failed and the backups lead; the login link is in the top bar (Data tab's copy)
+    marks = ['id="errors"', 'id="backups"', 'id="ticker-drill"', 'id="auto-body"', 'id="nd-watch-option"',
+             'id="nd-watch-stock"']
     at = [health.index(m) for m in marks]
     assert at == sorted(at), marks
     assert html.count('<details class="help"><summary>What am I looking at?</summary>') == 1

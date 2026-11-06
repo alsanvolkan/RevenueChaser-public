@@ -113,3 +113,17 @@
   #needs table.stk tbody.cghead td{border-top:2px solid var(--line)}
   #needs table.stk tbody.cbody[hidden]{display:none}
 }
+
+/* #527: the short columns never wrap, Read by wraps inside its cell; a problem group's head is marked */
+#needs td[data-label="State"],#needs td[data-label="Newest day"],#needs td[data-label="Rows"],
+#needs td[data-label="Fresh if"]{white-space:nowrap}
+#needs td[data-label="Read by"]{min-width:0;max-width:320px}
+#needs td[data-label="Read by"] .chips{min-width:0}
+#needs tbody.cghead[data-bad] .cgcount{color:var(--warn)}
+#needs details.hfold{margin:14px 0;border:1px solid var(--line);border-radius:10px;padding:0 12px}
+#needs details.hfold>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600;color:var(--mut)}
+#needs details.hfold[open]>summary{color:var(--fg)}
+/* #527: the Health tab stacks several blocks; each keeps a small gap, the page keeps its top and bottom air */
+#needs > .wrap,#needs > section.ctl > .wrap{padding-block:6px}
+#needs > .wrap:first-child{padding-top:20px}
+#needs > .wrap:last-child{padding-bottom:56px}
