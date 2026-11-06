@@ -154,8 +154,8 @@ def test_the_hourly_pass_leaves_an_attended_request_in_the_queue(monkeypatch):
     """A Fetch press on a WRDS dataset waits for the person's terminal; the hourly builder must not consume it."""
     ran: list = []
     monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+    _nothing_due()                                          # first: a pause now cancels what is queued (#492)
     rid = ops.enqueue("wrds/sec_idhist", None, by="settings")
-    _nothing_due()
     assert cli.main(["run", "--once"]) == 0
     assert ran == []
     assert _request(rid)["status"] == "queued"

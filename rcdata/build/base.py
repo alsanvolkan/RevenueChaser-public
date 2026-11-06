@@ -73,6 +73,25 @@ class CapReached(SourceError):
     """A provider reached its day cap during the run: nothing more is sent to it today."""
 
 
+class Paused(BaseException):
+    """The dataset was paused while its run was going (#492 PR (ii)): the run stops before its next provider call.
+
+    A ``BaseException``, like ``KeyboardInterrupt``: several datasets catch ``SourceError`` or ``Exception`` per
+    name or per file and go on with the next one, and a pause must stop the whole run, not one name. ``_run``
+    catches it by name and ends the run ``skipped``. Limits, by design:
+
+    - a build that has started finishes, so a serving file is never half-written (the pause is read only at a
+      provider call and between the fetch and the build);
+    - a dataset with no ``check_cap`` inside its fetch (WRDS runs SQL) stops only at the fetch/build gap;
+    - the raw and Parquet files fetched before the pause stay; nothing deletes them;
+    - a request a dead builder left ``running`` is still reclaimed by ``ops.fail_orphans`` at the next start.
+    """
+
+
+#: A running fetch reads its pause at most this often (seconds of the run's own clock), not once per call.
+PAUSE_READ_EVERY_S = 5.0
+
+
 class NotIdle(RuntimeError):
     """Another job holds a job lock, or another builder runs: this run does not start."""
 
@@ -187,6 +206,8 @@ class RunContext:
     _pending: dict[str, list[int]] = field(default_factory=dict)    # counted, not yet written to ops.sqlite
     _http: httpx.Client | None = None
     _uw: Any = None
+    _pause_read_at: float | None = None                             # the clock when the pause was last read
+    _paused: str | None = None                                      # once seen, every later call stops too
 
     def count(self, provider: str, calls: int = 0, failures: int = 0, http_429: int = 0) -> None:
         for book in (self.calls, self._pending):
@@ -204,8 +225,24 @@ class RunContext:
             if calls or failures or http_429:
                 ops.count_calls(name, calls, failures=failures, http_429=http_429)
 
+    def check_pause(self, *, force: bool = False) -> None:
+        """Raise ``Paused`` when the dataset was paused since the run began. The schedule is read at most once
+        every ``PAUSE_READ_EVERY_S`` of the run's clock (``force`` reads now); a pause once seen stays seen."""
+        if self._paused is None:
+            now = self.clock()
+            if not force and self._pause_read_at is not None and now - self._pause_read_at < PAUSE_READ_EVERY_S:
+                return
+            self._pause_read_at = now
+            row = ops.schedule_get(self.dataset)
+            if not row or row.get("paused_at") is None:
+                return
+            self._paused = f"stopped, {_paused_words(row)}"
+        raise Paused(self._paused)
+
     def check_cap(self, provider: str) -> None:
-        """Raise ``CapReached`` when today's calls of ``provider``, written and pending, reached its cap."""
+        """Raise ``Paused`` when the dataset was paused during the run (``check_pause``), then ``CapReached`` when
+        today's calls of ``provider``, written and pending, reached its cap."""
+        self.check_pause()
         cap = caps.cap_for(provider)
         if cap is None:
             return
@@ -728,8 +765,12 @@ def paused_problem(ds: Dataset) -> str | None:
     row = ops.schedule_get(ds.name)
     if not row or row.get("paused_at") is None:
         return None
+    return f"skipped: {_paused_words(row)}"
+
+
+def _paused_words(row: dict) -> str:
     when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(row["paused_at"]))
-    return f"skipped: paused by {row.get('paused_by') or '?'} at {when}"
+    return f"paused by {row.get('paused_by') or '?'} at {when}"
 
 
 # ── One request ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -882,6 +923,7 @@ def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False
                     ds.to_parquet_all(ctx, raws)
             else:
                 raise ValueError(f"unknown mode {mode!r}")
+        ctx.check_pause(force=True)                 # the last stop: a build that starts runs to its end
         if skip_build:
             # "Stage only" (--no-duckdb): the data is in raw and Parquet; raw-only (--no-parquet): in raw alone.
             # Either way the serving file is left as it is. The check row a build would have written cannot be
@@ -892,6 +934,9 @@ def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False
             return _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None)
         check = build_kind(ctx, ds)
         status = "ok"
+    except Paused as e:
+        # the files fetched so far stay; the serving file was not touched
+        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None)
     except NothingInScope as e:
         return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None)
     except Exception as e:  # noqa: BLE001 - every failure becomes a failed check row, never a half-swapped file
