@@ -80,6 +80,16 @@ def _served(sql: str, *args) -> list[tuple]:
         return con.execute(sql, list(args)).fetchall()
 
 
+def _active() -> list[str]:
+    """The accessions the serve's amendment walk counts, over the rows ``serve._held`` reads (status ok, grouped by
+    quarter end); its served-quarter cut is left out, which no filing here falls before."""
+    from RevenueChaser.rcdata.build.ownership import serve
+    return serve.active_accessions(_served(
+        f"SELECT accession, cik, {serve.QE} AS period, filed, coalesce(amendment_no, 0), is_amendment, amendment_type "
+        f"FROM {sec13f.TABLE} WHERE status = 'ok' AND cik IS NOT NULL AND period IS NOT NULL "
+        f"ORDER BY cik, 3, filed, 5, is_amendment, accession"))
+
+
 def _holdings(accession: str) -> list[tuple]:
     con = duckdb.connect()
     try:
@@ -387,6 +397,80 @@ def test_the_other_managers_a_filing_names_are_kept_on_both_paths_and_agree(feed
     in_xml_order = sorted(reported_by)
     assert _edgar_managers(included, in_xml_order) == rows
     assert _edgar_managers([(q, c.lstrip("0"), n) for q, c, n in included], in_xml_order) == rows
+
+
+def _without_cover(zip_bytes: bytes, accession: str) -> bytes:
+    """The zip with ``accession``'s COVERPAGE line damaged past reading, as a set with one bad row would be."""
+    src, out = zipfile.ZipFile(io.BytesIO(zip_bytes)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in src.namelist():
+            body = src.read(name)
+            if name.rsplit("/", 1)[-1] == "COVERPAGE.tsv":
+                body = b"".join(b"\t".join(l.split(b"\t")[:2]) + b"\n" if l.startswith(accession.encode()) else l
+                                for l in body.splitlines(keepends=True))
+            z.writestr(name, body)
+    return out.getvalue()
+
+
+def test_a_filing_with_no_cover_page_is_unparsed_and_does_not_replace_the_filers_quarter(feed, http_mock):
+    """#301: a cover row that did not read left ``amendment_type`` NULL and the filing ``ok``; the amendment walk
+    reads NULL as "replace", so a NEW HOLDINGS amendment replaced the filer's quarter with its one name. The filing
+    is ``unparsed`` now, the walk leaves it out, and the quarter keeps the report it had."""
+    h = ox.f13_holding
+    one = ox.f13_set([
+        ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [
+            h("MICROSOFT CORP", "594918104", 400_000, 1000), h("WELLS FARGO", "949746101", 10_000, 200)]),
+        ox.set_filing("0001000001-26-000109", 1000001, "14-AUG-2026", [h("EATON CORP PLC", "G29183103", 50, 5)],
+                      form="13F-HR/A", amendment_type="NEW HOLDINGS", amendment_no="1", is_amendment="true")])
+    http_mock.routes.insert(0, (HREFS[0], _without_cover(one, "0001000001-26-000109"), 200, {}))
+    row = _backfill("2026-06-01", "2026-08-31")
+    assert row["result"] == "changed", row["note"]
+    assert "1 rows of COVERPAGE.tsv rejected" in row["note"], row["note"]
+    assert _served(f"SELECT accession, status, detail FROM {sec13f.TABLE} ORDER BY accession") == [
+        ("0001000001-26-000101", "ok", None),
+        ("0001000001-26-000109", "unparsed", "no cover page in the data set")]
+    # the harm itself: the quarter is still the 13F-HR, not the amendment's one name
+    assert _active() == ["0001000001-26-000101"]
+    assert [r[1] for r in _holdings("0001000001-26-000109")] == ["G29183103"], "its holdings are still typed"
+
+
+def test_an_original_with_no_cover_page_stays_ok_and_a_new_holdings_amendment_adds_to_it(feed, http_mock):
+    """#482 review: the cover row is needed only to read an amendment's type. An original 13F-HR without one is
+    replaced by the walk whatever its cover says, so it stays ``ok``; unparsing it dropped the filer's quarter and
+    let a later NEW HOLDINGS amendment become the whole quarter, #301's harm from the other side."""
+    h = ox.f13_holding
+    one = ox.f13_set([
+        ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [
+            h("MICROSOFT CORP", "594918104", 400_000, 1000), h("WELLS FARGO", "949746101", 10_000, 200)]),
+        ox.set_filing("0001000001-26-000109", 1000001, "14-AUG-2026", [h("EATON CORP PLC", "G29183103", 50, 5)],
+                      form="13F-HR/A", amendment_type="NEW HOLDINGS", amendment_no="1", is_amendment="true")])
+    http_mock.routes.insert(0, (HREFS[0], _without_cover(one, "0001000001-26-000101"), 200, {}))
+    row = _backfill("2026-06-01", "2026-08-31")
+    assert row["result"] == "changed", row["note"]
+    assert _served(f"SELECT accession, status, detail FROM {sec13f.TABLE} ORDER BY accession") == [
+        ("0001000001-26-000101", "ok", "no cover page in the data set"),
+        ("0001000001-26-000109", "ok", None)]
+    assert _active() == ["0001000001-26-000101", "0001000001-26-000109"]
+
+
+def test_a_cover_less_original_keeps_the_reason_its_status_comes_from(feed, http_mock):
+    """#482 review: the detail follows the status. An original without its cover row and without its information
+    table is unparsed for the table, and says so, not "no cover page"."""
+    h = ox.f13_holding
+    one = ox.f13_set([
+        ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [h("MICROSOFT CORP", "594918104", 4, 10)])])
+    body = _without_cover(one, "0001000001-26-000101")
+    src, out = zipfile.ZipFile(io.BytesIO(body)), io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in src.namelist():
+            data = src.read(name)
+            if name.rsplit("/", 1)[-1] == "INFOTABLE.tsv":
+                data = data.splitlines(keepends=True)[0]
+            z.writestr(name, data)
+    http_mock.routes.insert(0, (HREFS[0], out.getvalue(), 200, {}))
+    _backfill("2026-06-01", "2026-08-31")
+    assert _served(f"SELECT accession, status, detail FROM {sec13f.TABLE}") == [
+        ("0001000001-26-000101", "unparsed", "no information table")]
 
 
 def test_the_cover_pages_period_wins_on_both_paths_and_a_cusip_placeholder_is_no_cusip(feed, http_mock):
