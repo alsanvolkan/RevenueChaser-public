@@ -147,16 +147,21 @@ def test_the_guard_is_released_after_a_failed_run(stager, monkeypatch):
     assert row["result"] == "failed" and base.raw_only() is False
 
 
-def test_write_parquet_returns_the_path_it_did_not_write():
-    """Callers append the result to a list they return; in a raw-only run the file is simply not there."""
+def test_write_parquet_returns_the_path_it_did_not_write(tmp_path):
+    """Callers append the result to a list they return; in a raw-only run the file is simply not there.
+
+    The target is under ``tmp_path`` and its parent does not exist either, so the guard is also shown to skip the
+    ``mkdir`` that ``write_parquet`` does before writing.
+    """
+    final = tmp_path / "never" / "part-0.parquet"
     con = duckdb.connect()
     try:
         con.execute("CREATE TABLE t AS SELECT 1 AS i")
         with base.raw_only_run():
-            out = base.write_parquet(con, "SELECT * FROM t", Path("/nonexistent/part-0.parquet"))
+            out = base.write_parquet(con, "SELECT * FROM t", final)
     finally:
         con.close()
-    assert out == Path("/nonexistent/part-0.parquet") and not out.exists()
+    assert out == final and not out.exists() and not final.parent.exists()
 
 
 # ── The CLI ────────────────────────────────────────────────────────────────────────────────────────────────────
