@@ -304,3 +304,15 @@ def test_the_old_controls_are_gone_and_fetch_is_an_empty_alias():
 def test_render_data_renders_without_the_new_fields():
     html = control_render.render_data(control.build(control_nd(), now=NOW))
     assert html.count('class="fpanel"') == 6 and 'id="fpick"' in html
+
+
+# ── Layout ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_the_board_is_left_aligned_and_sections_read_as_sections():
+    css = control_render.CTL_CSS
+    blk = css[css.index("/* #492 C1 */"):]
+    assert re.search(r"\.ctl \.wrap\{[^}]*max-width:1280px[^}]*margin:0[;}]", blk)
+    assert re.search(r"\.ctl details\.sec>summary\{[^}]*border-bottom:2px solid", blk)
+    assert re.search(r"\.ctl details\.sec>summary\{[^}]*min-height:44px", blk)
+    assert ".ctl .scroll{" in blk and "overflow-x:auto" in blk
+    assert "overflow-x:hidden" not in blk

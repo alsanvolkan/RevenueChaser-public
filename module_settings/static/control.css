@@ -1069,3 +1069,16 @@
 .ctl #fpick .fpb.nofile{border-style:dashed;color:var(--mut)}
 .ctl #fpick .fpn{font-family:var(--f-mono,monospace);font-weight:700}
 .ctl #fpick .fpd,.ctl #fpick .fpl{color:var(--mut)}
+.ctl .wrap{max-width:1280px;margin:0;padding-left:max(12px,env(safe-area-inset-left,0px))}
+.ctl .wrap>*{max-width:100%;min-width:0}
+.ctl details.sec>summary{min-height:44px;align-items:center;padding:6px 0;border-bottom:2px solid var(--line)}
+.ctl details.sec>summary h2{font-size:13px;color:var(--fg);font-weight:800}
+.ctl details.sec[open]>summary{border-bottom-color:var(--acc)}
+.ctl .fpanel{border-left:4px solid var(--fh,var(--acc));padding-left:12px;margin:0 0 18px;min-width:0}
+.ctl .fpanel .journey,.ctl .fpanel .jleft{max-width:100%;overflow-x:auto}
+.ctl .scroll{max-width:100%;overflow-x:auto}
+.ctl .sbox .uni,.ctl .sbox .fillrow,.ctl .sbox .acts{max-width:100%;min-width:0}
+.ctl .bfl,.ctl .btn,.ctl .lnk,.ctl .fc{min-height:44px}
+@media(max-width:760px){.ctl .wrap{padding-left:max(8px,env(safe-area-inset-left,0px));padding-right:max(8px,env(safe-area-inset-right,0px))}
+.ctl .fpanel{padding-left:8px}
+.ctl .ubar{overflow-x:auto}}
