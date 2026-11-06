@@ -20,7 +20,8 @@ The page itself is ``control_render``; this is its model:
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+import os
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from RevenueChaser.rcdata import caps, scaffold
@@ -379,7 +380,7 @@ def _provider_name(pid: str | None) -> str | None:
     return screen.PROVIDERS[pid].name if pid in screen.PROVIDERS else pid
 
 
-def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime) -> dict:
+def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime, timer: dict | None = None) -> dict:
     name = str(card["dataset"])
     meta = screen.DATASETS.get(name)
     from RevenueChaser.rcdata.build import base
@@ -409,10 +410,109 @@ def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime) 
         "fill": _fill(name, ds, kind, universe_view, card),
         "issues": card.get("issues") or [], "issues_open": int(card.get("issues_open") or 0),
         "paused": bool((card.get("schedule") or {}).get("paused")),
+        "next_words": next_run_words(card.get("schedule"), _check_of(card), as_of_kind(ds), card.get("cadence"),
+                                     attended=attended, starts_by_hand=bool(getattr(ds, "starts_by_hand", False)),
+                                     timer=timer, now=now),
+        "since_words": since_words(card.get("schedule")),
         "backfill": card.get("backfill"), "calendar": name in CALENDARS,
         "recent": card.get("recent") or [], "samples": card.get("samples") or [],
         "cross_check": name in ("wrds/prices", "uw/total_float", "yfinance/float"),
     }
+
+
+# ── When the hourly pass runs a dataset next ──────────────────────────────────────────────────────────────────
+
+NY = ZoneInfo("America/New_York")
+AS_OF_KINDS = ("today_ny", "latest_complete_session")
+
+
+def as_of_kind(ds) -> str | None:
+    """Which ``core.calendar`` day a dataset's ``default_as_of`` returns, read from the code (no call is made)."""
+    code = getattr(getattr(type(ds), "default_as_of", None), "__code__", None)
+    names = code.co_names if code is not None else ()
+    return next((k for k in AS_OF_KINDS if k in names), None)
+
+
+def _when(value) -> datetime | None:
+    try:
+        when = datetime.fromisoformat(str(value)) if value else None
+    except ValueError:
+        return None
+    return None if when is None else (when if when.tzinfo else when.replace(tzinfo=timezone.utc))
+
+
+def _first_pass(at: datetime, minute: int) -> datetime:
+    """The first hourly pass (``*:<minute>``) at or after ``at``; Amsterdam and New York are whole hours apart."""
+    at = at.astimezone(timezone.utc)
+    hour = at.replace(minute=0, second=0, microsecond=0)
+    p = hour + timedelta(minutes=minute)
+    return p if p >= at else p + timedelta(hours=1)
+
+
+def _pass_words(when: datetime, *, recurring: bool = False) -> str:
+    here, there = when.astimezone(LOCAL), when.astimezone(NY)
+    clock = f"{here:%H:%M} ({there:%H:%M} New York)"
+    if recurring:
+        return f"every trading day, {clock}"
+    return f"{here:%a} {here.day} {here:%b}, {clock}"
+
+
+def next_run_words(schedule: dict | None, check: dict | None, kind: str | None, cadence: str | None, *,
+                   attended: bool, starts_by_hand: bool, timer: dict | None, now: datetime) -> str:
+    """When the hourly pass first runs a dataset, by the rules of ``rcdata.build.due.is_due``.
+
+    ``check`` is the newest check (``result``, ``checked_on``, ``next_check_due``), None when it never built; ``kind``
+    the dataset's ``as_of_kind``; ``timer`` the hourly builder timer (``view["timer"]``)."""
+    from RevenueChaser.core import calendar
+    from RevenueChaser.rcdata.build import due
+    schedule = schedule or {}
+    if schedule.get("paused") or schedule.get("paused_at") is not None:
+        return "skips until Resume"
+    if attended:
+        return "by hand only"
+    if starts_by_hand and check is None:
+        return "not before a first Fetch"
+    timer = timer or {}
+    minute = timer.get("minute")
+    if timer.get("state") not in ("on", "off") or minute is None:
+        return "next pass not known"
+    prefix = "timer off · " if timer.get("state") == "off" else ""
+    now = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    settle = (datetime.combine(date(2000, 1, 1), calendar.SESSION_CLOSE) + calendar.COMPLETE_MARGIN).time()
+    starts = settle if kind == "latest_complete_session" else time(0, 0)
+    cadence = cadence if cadence in due.CADENCES else due.DEFAULT_CADENCE
+    day = None
+    if check is not None and check.get("result") not in ("failed", "skipped"):
+        if cadence == "daily":
+            day = _day(check.get("next_check_due"))
+            if day is None:
+                at = datetime.combine(now.astimezone(NY).date(), starts, tzinfo=NY)
+                return prefix + _pass_words(_first_pass(at, minute), recurring=True)
+        else:
+            checked = _day(check.get("checked_on"))
+            day = checked + timedelta(days=due.CYCLE_DAYS[cadence]) if checked else None
+    if day is not None:
+        at = datetime.combine(day, starts, tzinfo=NY)
+        if at > now:
+            return prefix + _pass_words(_first_pass(at, minute))
+    return prefix + "due · " + _pass_words(_first_pass(now, minute))
+
+
+def since_words(schedule: dict | None) -> str:
+    """``paused · since <Amsterdam time> by <who>`` for a paused dataset, else ``fetch on``."""
+    schedule = schedule or {}
+    if not (schedule.get("paused") or schedule.get("paused_at") is not None):
+        return "fetch on"
+    when = _when(schedule.get("paused_at"))
+    at = "not recorded yet" if when is None else f"{_local(when):%a} {_local(when).day} {_local(when):%b, %H:%M}"
+    return f"paused · since {at} by {schedule.get('paused_by') or 'not recorded yet'}"
+
+
+def _check_of(card: dict) -> dict | None:
+    if _status_of(card) == "never":
+        return None
+    return {"result": card.get("last_result"), "checked_on": card.get("checked_on"),
+            "next_check_due": card.get("next_check_due"), "source_as_of": card.get("source_as_of")}
 
 
 def _health_of(rows: list[dict]) -> dict:
@@ -435,7 +535,8 @@ def _health_of(rows: list[dict]) -> dict:
     return {"fresh": fresh, "total": total, "state": state, "pills": pills}
 
 
-def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datetime) -> list[dict]:
+def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datetime,
+          timer: dict | None = None) -> list[dict]:
     """The serving files in build order, each with its dataset rows (in step order) and its tables."""
     cards = {str(c.get("dataset")): c for c in nd.get("datasets") or []}
     tables_now = nd.get("tables") or {}
@@ -443,7 +544,7 @@ def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datet
     labels = _board_labels()
     out = []
     for kind, fc in screen.FILES.items():
-        rows = [_dataset_row(cards[n], ds, kind, universe_view, now)
+        rows = [_dataset_row(cards[n], ds, kind, universe_view, now, timer)
                 for n, ds in datasets.items() if ds.kind == kind and n in cards]
         rows.sort(key=lambda r: (r["step"], 0 if r["role"] == "first" else 1, r["dataset"]))
         schema = scaffold.SCHEMA_OF_KIND.get(kind) or {}
