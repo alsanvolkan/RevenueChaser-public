@@ -27,6 +27,7 @@ CTL_JS = (_STATIC / "control.js").read_text(encoding="utf-8")
 
 #: The routes a press uses; the script reads them from the page's data, so a test sees every route in one place.
 ROUTES = {"request": "/api/build/request/", "schedule": "/api/build/schedule/", "queue": "/api/build/queue",
+          "automation": "/api/build/automation/",
           "settings": "/api/settings/board/module_settings", "sample": "/api/settings/sample/",
           "job": "/api/job/", "picture": "/run/storage-picture"}
 #: After this long the page says it is stale and offers a refresh (the design: "refreshes after 60 minutes").
@@ -308,13 +309,17 @@ def _acts(d: dict, pause: bool = True) -> str:
 BUTTON_LEGEND = ('One button for each dataset: <b>Fetch</b> asks for a whole run (raw, Parquet and the served DuckDB '
                  'file); its <b>▾</b> asks for <b>Fetch raw</b> (the provider\'s answer into HDD raw only) or '
                  '<b>Fetch raw + Parquet</b> (the served file stays as it is), and the next hourly pass builds the '
-                 'rest · <b>Pause</b> cancels a queued run, stops a running one before its next provider call and '
-                 'holds the dataset · <b>Resume</b> lets the hourly pass run it again')
+                 'rest when this file\'s automation is raw + Parquet + DuckDB · <b>Pause</b> cancels a queued run, '
+                 'stops a running one before its next provider call and holds the dataset · <b>Resume</b> lets the '
+                 'hourly pass run it again')
 #: The two partial runs of a Fetch press's ▾ menu (``app/dashboard.py`` ``REQUEST_STAGES``).
 FETCH_STAGES = (("raw", "Fetch raw", "the provider's answer into HDD raw only; Parquet and DuckDB stay; the next "
-                 "hourly pass builds them"),
+                 "hourly pass builds them when this file's automation is raw + Parquet + DuckDB"),
                 ("parquet", "Fetch raw + Parquet", "also stages Parquet; the served DuckDB file stays as it is "
-                 "until the next pass"))
+                 "until the next pass, when this file's automation is raw + Parquet + DuckDB"))
+#: The automation a served file's hourly pass runs (``ops.KIND_MODES``), as its select shows them.
+AUTOMATION_MODES = (("off", "off · Fetch only"), ("raw", "raw"), ("parquet", "raw + Parquet"),
+                    ("full", "raw + Parquet + DuckDB"))
 PROVIDERS_SOURCE = ('day caps and request windows: <code>rcdata/caps.py</code> (<code>DAY_CAPS</code>, '
                     '<code>WINDOWS</code>) · what each provider brings, our pace and its rule: '
                     '<code>rcdata/needs/screen.py</code> (<code>PROVIDERS</code>) · used today: '
@@ -389,6 +394,29 @@ def _one_button(d: dict, view: dict) -> str:
     return (f'{pill}<span class="onewrap"><button type="button" class="{cls} one" data-job="one" data-state="{state}" '
             f'data-dataset="{esc(name)}" data-scope="{1 if d["fetch"]["honours_scope"] else 0}">{word}</button>'
             f'{menu}</span>')
+
+
+def _automation(f: dict, view: dict) -> str:
+    """What the hourly pass queues on its own for this file's due datasets (``/api/build/automation/<kind>``); a
+    Fetch press is not touched by it. When and how often stay each dataset's own (its schedule below)."""
+    a = f.get("automation") or {}
+    mode, kind = a.get("mode") or "off", esc(f["kind"])
+    opts = "".join(f'<option value="{m}"{" selected" if m == mode else ""}>{esc(w)}</option>'
+                   for m, w in AUTOMATION_MODES)
+    timer = view.get("timer") or {}
+    minute = timer.get("minute")
+    when = (f'the hourly pass at :{int(minute):02d}' if minute is not None else "the hourly pass") + (
+        " · the builder timer is off, so nothing runs on its own" if timer.get("state") == "off" else "")
+    who = (f' · set by {esc(a.get("set_by") or "?")} at {esc(_local_clock(a.get("set_at")))}'
+           if a.get("set_at") else " · the default")
+    return ('<div class="schedset">'
+            f'<label for="auto-{kind}">Automated</label><select id="auto-{kind}" data-automation>{opts}</select>'
+            f'<button type="button" class="btn" data-job="automation" data-kind="{kind}">Save</button>'
+            f'<span class="dim" role="status">{esc(when)}{who}</span></div>')
+
+
+def _local_clock(at) -> str:
+    return control._local(datetime.fromtimestamp(float(at), timezone.utc)).strftime("%d %b %H:%M")
 
 
 def _sched_fields(d: dict) -> str:
@@ -469,7 +497,7 @@ def _sources(f: dict, view: dict) -> str:
     # The universe rides in the spine/security box; with no such box on record it still sits in the spine's panel.
     orphan = (_universe(view) if f["name"] == "spine.duckdb"
               and not any(d["dataset"] == "spine/security" for d in rows) else "")
-    return (f'<div class="sources fgroup" data-file="{esc(f["name"])}">{head}{state}{runs}'
+    return (f'<div class="sources fgroup" data-file="{esc(f["name"])}">{head}{state}{runs}{_automation(f, view)}'
             f'<p class="blegend">{BUTTON_LEGEND}</p>{_legend(view)}{orphan}<div class="sgrid">{boxes}</div>'
             f'{_providers(view, sid=None)}</div>')
 

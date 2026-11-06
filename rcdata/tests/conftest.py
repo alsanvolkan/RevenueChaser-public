@@ -26,6 +26,15 @@ def market_roots(tmp_path, monkeypatch):
     return ssd, hdd
 
 
+@pytest.fixture
+def kinds_full():
+    """Every serving kind's automation at raw + Parquet + DuckDB: the hourly pass these tests were written for, from
+    before a kind with no ``kind_automation`` row read as off."""
+    from RevenueChaser.rcdata import ops, serving
+    for kind in serving.KINDS:
+        ops.kind_mode_set(kind, "full", by="test")
+
+
 class HttpMock:
     """Answers every request an ``httpx`` client (or ``httpx.get``) sends, at the transport: the HTTP boundary.
 

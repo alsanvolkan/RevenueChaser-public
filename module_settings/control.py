@@ -436,7 +436,8 @@ def _provider_name(pid: str | None) -> str | None:
     return screen.PROVIDERS[pid].name if pid in screen.PROVIDERS else pid
 
 
-def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime, timer: dict | None = None) -> dict:
+def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime, timer: dict | None = None,
+                 mode: str = "full") -> dict:
     name = str(card["dataset"])
     meta = screen.DATASETS.get(name)
     from RevenueChaser.rcdata.build import base
@@ -472,7 +473,7 @@ def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime, 
         "next_due": (card.get("schedule") or {}).get("next_due"),
         "next_words": next_run_words(card.get("schedule"), _check_of(card), as_of_kind(ds), card.get("cadence"),
                                      attended=attended, starts_by_hand=bool(getattr(ds, "starts_by_hand", False)),
-                                     timer=timer, now=now),
+                                     timer=timer, now=now, mode=mode),
         "since_words": since_words(card.get("schedule")),
         "backfill": card.get("backfill"), "calendar": name in CALENDARS,
         "recent": card.get("recent") or [], "samples": card.get("samples") or [],
@@ -518,11 +519,13 @@ def _pass_words(when: datetime, *, recurring: bool = False) -> str:
 
 
 def next_run_words(schedule: dict | None, check: dict | None, kind: str | None, cadence: str | None, *,
-                   attended: bool, starts_by_hand: bool, timer: dict | None, now: datetime) -> str:
+                   attended: bool, starts_by_hand: bool, timer: dict | None, now: datetime,
+                   mode: str = "full") -> str:
     """When the hourly pass first runs a dataset, by the rules of ``rcdata.build.due.is_due``.
 
     ``check`` is the newest check (``result``, ``checked_on``, ``next_check_due``), None when it never built; ``kind``
-    the dataset's ``as_of_kind``; ``timer`` the hourly builder timer (``view["timer"]``)."""
+    the dataset's ``as_of_kind``; ``timer`` the hourly builder timer (``view["timer"]``); ``mode`` its serving kind's
+    automation (``ops.KIND_MODES``)."""
     from RevenueChaser.core import calendar
     from RevenueChaser.rcdata.build import due
     schedule = schedule or {}
@@ -530,6 +533,8 @@ def next_run_words(schedule: dict | None, check: dict | None, kind: str | None, 
         return "skips until Resume"
     if attended:
         return "by hand only"
+    if mode == "off":
+        return "automation off · Fetch only"
     if starts_by_hand and check is None:
         return "not before a first Fetch"
     timer = timer or {}
@@ -542,7 +547,7 @@ def next_run_words(schedule: dict | None, check: dict | None, kind: str | None, 
     starts = settle if kind == "latest_complete_session" else time(0, 0)
     cadence = cadence if cadence in due.CADENCES else due.DEFAULT_CADENCE
     day = None
-    if check is not None and check.get("result") not in ("failed", "skipped"):
+    if check is not None and (check.get("result") not in ("failed", "skipped") or due._stage_done(check, mode)):
         if cadence == "daily":
             day = _day(check.get("next_check_due"))
             if day is None:
@@ -569,10 +574,15 @@ def since_words(schedule: dict | None) -> str:
             "before its next provider call; the files it fetched stay")
 
 
+def _read_kind_modes() -> dict:
+    from RevenueChaser.rcdata import ops
+    return ops.read_kind_modes()
+
+
 def _check_of(card: dict) -> dict | None:
     if _status_of(card) == "never":
         return None
-    return {"result": card.get("last_result"), "checked_on": card.get("checked_on"),
+    return {"result": card.get("last_result"), "checked_on": card.get("checked_on"), "note": card.get("last_note"),
             "next_check_due": card.get("next_check_due"), "source_as_of": card.get("source_as_of")}
 
 
@@ -619,15 +629,18 @@ def file_state(path, tables: list[dict], rows: list[dict]) -> dict:
 
 
 def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datetime,
-          timer: dict | None = None) -> list[dict]:
-    """The serving files in build order, each with its dataset rows (in step order) and its tables."""
+          timer: dict | None = None, modes: dict | None = None) -> list[dict]:
+    """The serving files in build order, each with its dataset rows (in step order) and its tables; ``modes`` is
+    ``ops.read_kind_modes()`` (a kind with no row is off)."""
+    modes = modes or {}
     cards = {str(c.get("dataset")): c for c in nd.get("datasets") or []}
     tables_now = nd.get("tables") or {}
     storage = nd.get("storage") or {}
     labels = _board_labels()
     out = []
     for kind, fc in screen.FILES.items():
-        rows = [_dataset_row(cards[n], ds, kind, universe_view, now, timer)
+        auto = modes.get(kind) or {"kind": kind, "mode": "off", "set_at": None, "set_by": None}
+        rows = [_dataset_row(cards[n], ds, kind, universe_view, now, timer, auto["mode"])
                 for n, ds in datasets.items() if ds.kind == kind and n in cards]
         rows.sort(key=lambda r: (r["step"], 0 if r["role"] == "first" else 1, r["dataset"]))
         schema = scaffold.SCHEMA_OF_KIND.get(kind) or {}
@@ -646,7 +659,7 @@ def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datet
                            "writers": writers})
         live = (storage.get("files") or {}).get(kind) or {}
         out.append({"kind": kind, "name": f"{kind}.duckdb", "steps": fc.steps, "words": fc.words,
-                    "runs_on_universe": fc.runs_on_universe, "color": color, "datasets": rows,
+                    "runs_on_universe": fc.runs_on_universe, "color": color, "datasets": rows, "automation": auto,
                     "health": _health_of(rows), "tables": tables, "path": live.get("path"),
                     "bytes": live.get("bytes"), "storage": storage.get("datasets") or {},
                     "roots": storage.get("roots") or {}, "walked_at": storage.get("walked_at"),
@@ -808,12 +821,13 @@ def _timer(reader) -> dict:
 # ── The whole board ───────────────────────────────────────────────────────────────────────────────────────────
 
 def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, now: datetime | None = None,
-          datasets: dict | None = None, timer=None, job_runs=None) -> dict:
+          datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None) -> dict:
     """The page's model from ``newdata.collect``'s output. ``applied`` is the saved universe
     (``board_settings.values("module_settings")["values"]``), ``ibkr`` the gateway's login state, ``datasets`` the
     builder's datasets (default: ``newdata._datasets()``). ``timer`` and ``job_runs`` are the readers of the hourly
     builder timer and of ``ops.job_runs2``, injectable so a test needs neither systemd nor a store; a reader that
-    fails gives Nones, never a guess."""
+    fails gives Nones, never a guess. ``kind_modes`` is the reader of each kind's automation
+    (``ops.read_kind_modes``); unreadable, every kind reads off, which is also what the builder does without a row."""
     from RevenueChaser.module_settings import newdata
     now = now or datetime.now(timezone.utc)
     if nd.get("error"):
@@ -831,7 +845,11 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         longest = longest_build(job_runs() if job_runs else _read_job_runs(now), now)
     except Exception:  # noqa: BLE001 - an unreadable ops store leaves the tile "not measured yet"
         longest = None
-    file_views = files(nd, datasets, uni, reads, now, timer_view)
+    try:
+        modes = kind_modes() if kind_modes else _read_kind_modes()
+    except Exception:  # noqa: BLE001 - an unreadable ops store shows every kind off, never the board failing
+        modes = {}
+    file_views = files(nd, datasets, uni, reads, now, timer_view, modes)
     control_sources.attach_pv(file_views, datasets)
     return {
         "error": None,

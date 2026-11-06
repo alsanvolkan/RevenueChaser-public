@@ -783,6 +783,11 @@ NO_DUCKDB_NOTE = "skipped: build skipped (--no-duckdb)"
 NO_PARQUET_NOTE = "skipped: build and Parquet skipped (--no-parquet)"
 
 
+#: The params of each run stage (``ops.KIND_MODES`` but ``off``): a Fetch press's ▾ (``app/dashboard.py``) and the
+#: hourly pass's kind automation (``due.py``) queue the same request.
+STAGE_PARAMS = {"raw": {"no_parquet": True}, "parquet": {"no_duckdb": True}, "full": {}}
+
+
 def skip_note(staged: int | None, *, raw_only: bool = False) -> str:
     """The ``--no-duckdb`` / ``--no-parquet`` check note; ``staged`` is how many raw files the fetch returned, None
     when it cannot be counted (a backfill stages inside the dataset and returns nothing)."""

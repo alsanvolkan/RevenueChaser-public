@@ -1100,6 +1100,7 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `provider_calls_daily` | Calls, failures and 429s per provider and New York day |
 | `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists (D2): ticker, added at, added by (the board), note; and their history, one row per add or remove with an `id` that keeps its order (version 2 added `id` and `note` to the history). The toggle routes write them (`docs/data_retrieval.md`); `rcdata.read.watchlists()` reads them |
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
+| `kind_automation` | What the hourly pass queues for each serving kind: `off` (no row), `raw`, `parquet` or `full` (Settings, 6 Nov 2026) |
 
 **Day caps** (`rcdata/caps.py`, master plan Order 5, rule 3: only the quotas a provider publishes per day, each with
 its source): uw 100,000 (owner-marked avo 2026-11-02), alphavantage 25 (its free tier, shared by the earnings calendar and the spine's
@@ -1177,7 +1178,10 @@ in; `open_read` opens and closes per call so each request sees the file live at 
 **What is due.** `run` without `--dataset` first queues every due dataset (`rcdata/build/due.py`, requested by
 `schedule`), then drains the queue. The request goes in through `ops.enqueue_once`, whose check and insert are one
 `BEGIN IMMEDIATE`, so a dataset with a request already queued or running gets no second one and two overlapping
-passes queue it once. A paused dataset is not queued, and `dataset_schedule.next_due`, while later than today in New
+passes queue it once. A dataset whose serving kind's automation (`ops.kind_automation`, set per file on the Settings
+Data tab) is `off` — the default, no row — is not queued; `raw` and `parquet` queue the same partial run a Fetch's ▾
+asks for, and that run's own `skipped` check then counts as the run for the cadence; `full` queues the whole run. A
+person's Fetch is not touched by the setting. A paused dataset is not queued, and `dataset_schedule.next_due`, while later than today in New
 York, holds a dataset until that day. Otherwise a dataset never built, or whose last check failed or was skipped,
 is due. With cadence `daily` (the default, and what an unknown cadence reads as) it is due once its own
 `default_as_of()` reaches the last check's `next_check_due`: the SPX slice after the next session is complete, the

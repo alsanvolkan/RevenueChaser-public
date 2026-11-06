@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from RevenueChaser.module_settings import control
 from RevenueChaser.module_settings.tests.test_control_view import NOW, _build
+from RevenueChaser.rcdata.serving import KINDS
 
 ON = {"state": "on", "last": None, "next": None, "minute": 7}
 OFF = {**ON, "state": "off"}
@@ -14,9 +15,9 @@ OPEN = {"paused": False, "paused_by": None, "paused_at": None}
 
 
 def words(check=None, kind="today_ny", cadence="daily", *, schedule=OPEN, attended=False, starts_by_hand=False,
-          timer=ON, now=NOW):
+          timer=ON, now=NOW, mode="full"):
     return control.next_run_words(schedule, check, kind, cadence, attended=attended, starts_by_hand=starts_by_hand,
-                                  timer=timer, now=now)
+                                  timer=timer, now=now, mode=mode)
 
 
 def ok(**kw):
@@ -84,7 +85,8 @@ def test_since_words_say_who_paused_and_when_in_amsterdam_time():
 
 
 def test_every_dataset_row_has_next_and_since_words():
-    rows = [r for f in _build()["files"] for r in f["datasets"]]
+    rows = [r for f in _build(kind_modes=lambda: {k: {"kind": k, "mode": "full"} for k in KINDS})["files"]
+            for r in f["datasets"]]
     assert rows and all(isinstance(r["next_words"], str) and isinstance(r["since_words"], str) for r in rows)
     by = {r["dataset"]: r for r in rows}
     assert by["wrds/prices"]["next_words"] == "by hand only"
@@ -98,3 +100,26 @@ def test_the_as_of_kind_is_read_from_the_datasets_code():
     assert control.as_of_kind(ds["market_series"]) == "today_ny"
     assert control.as_of_kind(ds["alpaca/bars"]) == "latest_complete_session"
     assert control.as_of_kind(object()) is None
+
+
+def test_a_kind_whose_automation_is_off_says_so_instead_of_a_pass():
+    assert words(ok(), mode="off") == "automation off · Fetch only"
+    assert words(None, starts_by_hand=True, mode="off") == "automation off · Fetch only"
+
+
+def test_a_partial_runs_own_skip_waits_for_its_next_check_like_a_build():
+    from RevenueChaser.rcdata.build import base
+    stage = {"result": "skipped", "checked_on": "2026-10-29", "next_check_due": None,
+             "note": base.skip_note(1, raw_only=True)}
+    assert not words(stage, mode="raw").startswith("due")
+    assert words(stage, mode="full").startswith("due")
+
+
+def test_each_file_panel_carries_its_automation_and_the_page_draws_the_select():
+    from RevenueChaser.module_settings import control_render
+    modes = {"market": {"kind": "market", "mode": "raw", "set_at": 1.0, "set_by": "avo"}}
+    files = {f["kind"]: f for f in _build(kind_modes=lambda: modes)["files"]}
+    assert files["market"]["automation"]["mode"] == "raw" and files["prices"]["automation"]["mode"] == "off"
+    html = control_render._automation(files["market"], {"timer": {"minute": 7, "state": "off"}})
+    assert '<option value="raw" selected>' in html and 'data-kind="market"' in html
+    assert "set by avo" in html and "timer is off" in html

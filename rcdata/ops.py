@@ -26,6 +26,7 @@ The tables and what writes them:
   and an optional note; ``watchlist_*_changes`` is their history, one row per add or remove. The dashboard's toggle
   routes write them (PR 4); the option list is what the options build will cover besides SPX.
 - ``dataset_schedule``: cadence and pause state per dataset.
+- ``kind_automation``: what the hourly pass queues on its own for each serving kind (``KIND_MODES``); no row is off.
 
 ``ensure()`` creates the tables and stamps ``ops_schema``; it upgrades an older file in place and refuses a file
 stamped by a newer version.
@@ -55,6 +56,9 @@ FILE_NAME = "ops.sqlite"
 REQUEST_STATUSES = ("queued", "running", "done", "failed", "skipped")
 CHECK_RESULTS = ("changed", "unchanged", "failed", "skipped")
 WATCH_KINDS = ("option", "stock")
+#: What the hourly pass queues for a kind's due datasets (avo, 6 Nov 2026): nothing, a raw-only fetch, raw + Parquet,
+#: or the whole run up to the served DuckDB file. A kind with no ``kind_automation`` row is off.
+KIND_MODES = ("off", "raw", "parquet", "full")
 # The UW response headers sampled into uw_remaining: only UW's own, never a cookie or anything else the answer had.
 UW_HEADER_PREFIX = "x-uw-"
 # What a live answer carries (27 Oct 2026): x-uw-daily-req-count is today's count; the per-minute pair is a rate
@@ -103,6 +107,9 @@ _DDL = {
         at REAL NOT NULL, by TEXT, note TEXT)""" for k in WATCH_KINDS},
     "dataset_schedule": """CREATE TABLE IF NOT EXISTS dataset_schedule (
         dataset TEXT PRIMARY KEY, cadence TEXT, next_due TEXT, paused_at REAL, paused_by TEXT)""",
+    # A new table, no upgrade step: ``ensure`` makes it in an older file too, and an older checkout ignores it.
+    "kind_automation": """CREATE TABLE IF NOT EXISTS kind_automation (
+        kind TEXT PRIMARY KEY, mode TEXT NOT NULL, set_at REAL, set_by TEXT)""",
 }
 TABLES = tuple(_DDL)
 _INDEXES = (
@@ -760,6 +767,32 @@ def schedule_get(dataset: str) -> dict | None:
     return dict(row) if row else None
 
 
+def _kind_mode(mode: str) -> str:
+    if mode not in KIND_MODES:
+        raise ValueError(f"unknown mode {mode!r}; known: {', '.join(KIND_MODES)}")
+    return mode
+
+
+@_routed
+def kind_mode_set(kind: str, mode: str, *, by: str) -> None:
+    with _open() as con:
+        con.execute("INSERT INTO kind_automation (kind, mode, set_at, set_by) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT (kind) DO UPDATE SET mode = excluded.mode, set_at = excluded.set_at, "
+                    "set_by = excluded.set_by", (kind, _kind_mode(mode), time.time(), by))
+
+
+@_routed
+def kind_mode_get(kind: str) -> dict | None:
+    with _open() as con:
+        row = con.execute("SELECT * FROM kind_automation WHERE kind = ?", (kind,)).fetchone()
+    return dict(row) if row else None
+
+
+def kind_mode(kind: str) -> str:
+    """The kind's ``KIND_MODES`` value; ``off`` when it has no row."""
+    return (kind_mode_get(kind) or {}).get("mode") or "off"
+
+
 # ── Read helpers for the Settings page (PR 2) ──────────────────────────────────────────────────────────────────
 #
 # The page only reads (F7 A): these never create ops.sqlite or a table. No file yet, or a table an older file does
@@ -853,6 +886,12 @@ def read_queue(finished: int = 20) -> dict:
 def read_schedule(dataset: str) -> dict | None:
     rows = _select("SELECT * FROM dataset_schedule WHERE dataset = ?", (dataset,))
     return rows[0] if rows else None
+
+
+@_routed
+def read_kind_modes() -> dict[str, dict]:
+    """``{kind: kind_automation row}`` for a reader, without creating the file."""
+    return {r["kind"]: r for r in _select("SELECT * FROM kind_automation")}
 
 
 @_routed
