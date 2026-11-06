@@ -68,6 +68,12 @@ STATUS_FILTER = {"fresh": "fresh", "unchanged": "fresh", "late": "late", "stale"
 BUILDER_SILENT_MINUTES = 70
 #: A provider's share of its day cap: amber from half, red past this.
 CAP_WARN, CAP_BAD = 0.5, 0.7
+#: #527 (avo 6 Nov 2026): a provider is a card on the Health strip from this share of its day cap.
+CAP_ALERT = 0.8
+#: A backup older than this many days is a card.
+BACKUP_ALERT_DAYS = 1
+#: At most this many stale dataset names on the stale card; the rest read "and N more".
+STALE_NAMES = 6
 CADENCE_DAYS = {"daily": 1, "weekly": 7, "monthly": 31, "quarterly": 92}
 ROLE_WORDS = {"first": "the first source: its value is served", "only source": "the only source of this value",
               "fills": "fills what the first source leaves open", "cross-check": "compared, not served",
@@ -250,8 +256,47 @@ def _read_job_runs(now: datetime) -> list[dict]:
                        "AND started_at >= ?", ((now - timedelta(days=2)).timestamp(),))
 
 
+def alerts(nd: dict, providers: list[dict], ibkr: dict | None, switches: dict | None, newest_backup: dict | None,
+           newest_session: str | None) -> list[dict]:
+    """#527 step 5: the problem cards, worst first. Each is ``{"key", "cls", "n", "label"}``; an empty list means
+    nothing needs avo now. The fetch switch is not a card: the top bar says it."""
+    cards = nd.get("datasets") or []
+    out = []
+    bars = bars_dataset()
+    bars_card = next((c for c in cards if c.get("dataset") == bars), None)
+    if bars_card is not None and _status_of(bars_card) == "stale":
+        out.append({"key": "prices", "cls": "bad", "n": day_words(newest_session) if newest_session else "none",
+                    "label": f"prices behind · last session {newest_session or 'none'} ({bars})"})
+    stale = [str(c.get("dataset")) for c in cards if _status_of(c) == "stale" and c.get("dataset") != bars]
+    if stale:
+        more = f" and {len(stale) - STALE_NAMES} more" if len(stale) > STALE_NAMES else ""
+        out.append({"key": "stale", "cls": "bad", "n": count(len(stale)),
+                    "label": "stale: " + ", ".join(stale[:STALE_NAMES]) + more})
+    off = (switches or {}).get("backup") or {}
+    if off.get("off_at") is not None:
+        when = _local(datetime.fromtimestamp(float(off["off_at"]), timezone.utc)).strftime("%d %b %H:%M")
+        out.append({"key": "backup_off", "cls": "bad", "n": "off",
+                    "label": f"backups are off · {off.get('off_by') or '?'} {when} · no backup runs until it is on"})
+    if newest_backup is not None and (newest_backup.get("age_days") or 0) > BACKUP_ALERT_DAYS:
+        out.append({"key": "backup", "cls": "bad", "n": day_words(newest_backup["newest"]),
+                    "label": f"newest backup is {newest_backup.get('age_days')} days old ({newest_backup.get('kind')})"})
+    silent = (nd.get("verified") or {}).get("silent_minutes")
+    if silent is not None and silent > BUILDER_SILENT_MINUTES:
+        out.append({"key": "builder", "cls": "bad", "n": f"{silent} min",
+                    "label": f"the builder has not run for {silent} min (alarm past {BUILDER_SILENT_MINUTES})"})
+    if ibkr is not None and str(ibkr.get("state") or "") != "up":
+        out.append({"key": "gateway", "cls": "bad", "n": "logged out",
+                    "label": "IBKR gateway · the IV step skips until a login"})
+    for p in providers:
+        if p["share"] is not None and p["share"] >= CAP_ALERT:
+            out.append({"key": "cap", "cls": "bad" if p["share"] >= 1 else "warn", "n": f"{p['share']:.0%}",
+                        "label": f"{p['name']} at {count(p['used'])} of {count(p['cap'])} calls today"})
+            break
+    return out
+
+
 def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *, timer: dict | None = None,
-           longest: dict | None = None, file_views: list[dict] | None = None) -> dict:
+           longest: dict | None = None, file_views: list[dict] | None = None, switches: dict | None = None) -> dict:
     cards = nd.get("datasets") or []
     total = len(cards)
     by = {k: 0 for k in ("fresh", "late", "stale", "never")}
@@ -317,7 +362,16 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
                f"{problems} open problems"]
     if near is not None:
         summary.append(f"{near['name']} nearest its cap ({near['share']:.0%})")
+    if state == "off":
+        timer_words = f"builder timer off (on purpose) · last run {_clock(run.get('started_at'))}, from the queue"
+    else:
+        timer_words = f"builder timer {state or 'not known'} · next {_clock(timer.get('next'))}"
+    good = [f"{by['fresh']} fresh", f"{by['late']} late", f"{by['never']} never ran", f"{problems} open problems",
+            "builder: no run on record" if silent is None else f"builder ran {silent} min ago", timer_words]
+    if newest_backup is not None:
+        good.append(f"newest backup {day_words(newest_backup['newest'])}")
     return {"tiles": tiles, "summary": summary, "counts": by, "problems": problems,
+            "alerts": alerts(nd, providers, ibkr, switches, newest_backup, newest), "allgood": " · ".join(good),
             "files": [{"name": f["name"], "state": f["state"]} for f in file_views or []]}
 
 
@@ -879,7 +933,8 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
     return {
         "error": None,
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
-        "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, file_views=file_views),
+        "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, file_views=file_views,
+                         switches=switch_rows),
         "timer": timer_view, "longest_build": longest,
         "switches": switches_view(switch_rows), "gateway": dict(zip(("cls", "n", "label"), _gateway(ibkr))),
         "universe": uni, "identity": nd.get("identity"), "my_universe": nd.get("my_universe"), "scope": scope(uni), "files": file_views, "providers": provider_rows,

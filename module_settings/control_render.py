@@ -185,8 +185,18 @@ def _health(view: dict) -> str:
     c = h["counts"]
     summ = (f'<b class="s-ok">{c["fresh"]} fresh</b> · <b class="s-warn">{c["late"]} late</b> · '
             f'<b class="s-bad">{c["stale"]} stale</b> · {c["never"]} never ran · {h["problems"]} open problems')
+    al = h.get("alerts")
+    if al is None:                      # a view built before #527: the tiles as they were
+        return ('<details class="sec" id="sec-health" open><summary><h2>Health right now</h2>'
+                f'<span class="secs">{summ}</span></summary><div class="hgrps">{top}</div>{data}</details>')
+    cards = ("".join(f'<div class="tile {esc(a["cls"])} static alert" data-key="{esc(a["key"])}">'
+                     f'<span class="n">{esc(a["n"])}</span><span class="l">{esc(a["label"])}</span></div>' for a in al)
+             if al else '<p class="calm s-ok"><b>Nothing needs you right now.</b></p>')
     return ('<details class="sec" id="sec-health" open><summary><h2>Health right now</h2>'
-            f'<span class="secs">{summ}</span></summary><div class="hgrps">{top}</div>{data}</details>')
+            f'<span class="secs">{len(al)} to look at</span></summary>'
+            f'<div class="alerts">{cards}</div><p class="allgood"><b>All good:</b> {esc(h.get("allgood") or "")}</p>'
+            f'<details class="htiles"><summary>Every tile</summary><div class="hgrps">{top}</div>{data}</details>'
+            '</details>')
 
 
 # ── Fetch: the universe ───────────────────────────────────────────────────────────────────────────────────────

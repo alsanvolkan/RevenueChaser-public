@@ -1103,3 +1103,12 @@
 .ctl .topbar .swt.none{border-left-color:var(--mut)}
 .ctl .topbar .swt .dim{font-size:.85em}
 @media(max-width:760px){.ctl .topbar .swt{flex:1 1 100%}}
+
+/* #527 step 5: problem cards only, the rest in one line, every tile one tap away */
+.ctl .alerts{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin:8px 0}
+.ctl .allgood{color:var(--mut);margin:6px 0}
+.ctl .calm{margin:8px 0}
+.ctl details.htiles>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;color:var(--mut)}
+.ctl details.htiles>summary::before{content:"▸ ";margin-right:4px}
+.ctl details.htiles[open]>summary::before{content:"▾ "}
+@media(max-width:760px){.ctl .alerts{grid-template-columns:1fr}}
