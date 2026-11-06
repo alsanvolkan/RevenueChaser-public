@@ -8,6 +8,8 @@ import time
 
 import pytest
 
+from pathlib import Path
+
 from RevenueChaser.core import config
 from RevenueChaser.rcdata import backup, ops, serving
 
@@ -126,6 +128,22 @@ def test_s3_a_write_landing_during_the_ops_backup_does_not_fail_it(sqlite_ops, b
     con = sqlite3.connect(summary["ops"])
     assert con.execute("SELECT count(*) FROM build_requests").fetchone()[0] == 1
     con.close()
+
+
+def test_the_ops_copy_is_built_off_the_backup_folder(sqlite_ops, backup_dir, monkeypatch):
+    """SQLite writes a database page by page, and the backup folder is slow storage: only the finished file is
+    copied there (5 Nov 2026: 8m44s for a 5.8 MB ops.sqlite, and a 30-minute timeout on the 04:30 run)."""
+    ops.enqueue("market_series", None, by="test")
+    real = backup._online_backup
+    targets = []
+
+    def watch(source, target):
+        targets.append(Path(target.execute("PRAGMA database_list").fetchone()[2]))
+        real(source, target)
+    monkeypatch.setattr(backup, "_online_backup", watch)
+    copy = backup.run_backup(only="ops")["ops"]
+    assert targets and backup_dir not in targets[0].parents
+    assert copy.exists() and not list((backup_dir / "market").glob("*.tmp*"))
 
 
 def test_s3_a_failed_ops_backup_does_not_block_the_market_copy(backup_dir, monkeypatch):

@@ -260,8 +260,9 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "online backup and the market, spine, fundamentals and options serving files, checked row by "
                     "row against the source, into RAW_STORE_BACKUP_DIR/market/ (the newest 5 kept), then the "
                     "35-day raw copy. prices and ownership are the weekly RC-Build-Backup-Heavy run's: the 04:30 "
-                    "run of 5 Nov 2026 hit this 30-minute limit, and those two are 3.5 GB of the ~3.6 GB copied, so "
-                    "they are the likely cause - an inference, since the run records no per-step timing. "
+                    "run of 5 Nov 2026 hit this 30-minute limit. Measured afterwards, the cost was the ops step "
+                    "(8m44s for 5.8 MB, against 1m26s for the 3.5 GB of prices and ownership), because SQLite built "
+                    "its copy page by page on the backup disk; it is built on local storage since. "
                     "Writes no table.",
         settings=TaskSettings(restart_count=0, time_limit_minutes=30)),
     AutomationEntry(
