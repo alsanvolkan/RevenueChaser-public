@@ -276,8 +276,8 @@ def test_render_data_holds_the_parts_in_order():
              'class="fpanel" data-file="spine.duckdb"', 'id="sec-crosscheck"']
     at = [html.index(m) for m in marks]
     assert at == sorted(at)
-    assert "Fetch puts one request in the builder's queue; Pause holds the dataset: the hourly pass skips it until "
-    "Resume." in html
+    assert ("Fetch puts one request in the builder's queue; Pause holds the dataset: the hourly pass skips it until "
+            "Resume.") in html
 
 
 def test_one_panel_per_file_in_plan_order_only_the_first_shown():
