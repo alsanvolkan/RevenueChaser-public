@@ -1109,6 +1109,17 @@
       if (out) out.textContent = r.body.error || ('refused · HTTP ' + r.status);
     }, function () { btn.disabled = false; if (out) out.textContent = 'could not reach the dashboard'; });
   }
+  /* #527: the builder timer's press (life-ctl life-rc-builder.timer on|off on the server); the page reloads */
+  function timerPress(btn) {
+    var on = btn.getAttribute('data-on') === '1';
+    var bar = btn.closest('.topbar'), out = bar && bar.querySelector('[role="status"]');
+    btn.disabled = true;
+    X.send('POST', C.routes.timer, { on: !on }).then(function (r) {
+      if (r.status >= 200 && r.status < 300) { location.reload(); return; }
+      btn.disabled = false;
+      if (out) out.textContent = r.body.error || ('refused · HTTP ' + r.status);
+    }, function () { btn.disabled = false; if (out) out.textContent = 'could not reach the dashboard'; });
+  }
   /* the Health queue's Stop: the same pause as the dataset's button, said on the row */
   function stop(btn) {
     var ds = btn.getAttribute('data-dataset'), out = btn.parentNode.querySelector('[role="status"]');
@@ -1148,6 +1159,8 @@
     if (sp) { if (!sp.disabled) stop(sp); return; }
     var c = e.target.closest('.ctl [data-job="cadence"]');
     if (c) { if (!c.disabled) cadence(c); return; }
+    var tm = e.target.closest('.ctl [data-job="timer"]');
+    if (tm) { if (!tm.disabled) timerPress(tm); return; }
     var sw = e.target.closest('.ctl [data-job="switch"]');
     if (sw) { if (!sw.disabled) switchPress(sw); return; }
     var au = e.target.closest('.ctl [data-job="automation"]');

@@ -28,7 +28,7 @@ CTL_JS = (_STATIC / "control.js").read_text(encoding="utf-8")
 #: The routes a press uses; the script reads them from the page's data, so a test sees every route in one place.
 ROUTES = {"request": "/api/build/request/", "schedule": "/api/build/schedule/", "queue": "/api/build/queue",
           "automation": "/api/build/automation/", "automation_ds": "/api/build/automation-ds/",
-          "switch": "/api/build/switch/",
+          "switch": "/api/build/switch/", "timer": "/api/build/timer",
           "settings": "/api/settings/board/module_settings", "sample": "/api/settings/sample/",
           "job": "/api/job/", "picture": "/run/storage-picture"}
 #: After this long the page says it is stale and offers a refresh (the design: "refreshes after 60 minutes").
@@ -138,8 +138,12 @@ def _timer_box(view: dict) -> str:
     url = view.get("timer_url")
     link = (f'<a class="lnk" href="{esc(url)}" target="_blank" rel="noopener noreferrer">on / off in Grafana ↗</a>'
             if url else "")
+    # the press (avo chose it, 6 Nov 2026): POST /api/build/timer runs life-ctl life-rc-builder.timer on|off;
+    # no press while the state is not known, so it never guesses which way to switch
+    press = (f'<button type="button" class="btn sm" data-job="timer" data-on="{1 if st == "on" else 0}">'
+             f'{"Turn off" if st == "on" else "Turn on"}</button>' if st in ("on", "off") else "")
     return (f'<span class="swt tmr {cls}"><b>Builder timer: {esc(word)}</b><span class="dim">{esc(why)}</span>'
-            f'{link}</span>')
+            f'{press}{link}</span>')
 
 
 def topbar_health(view: dict) -> str:

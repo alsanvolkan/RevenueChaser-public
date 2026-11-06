@@ -36,3 +36,15 @@ def test_the_link_comes_from_the_variable_and_a_bad_value_shows_none(monkeypatch
     monkeypatch.setenv("RC_BUILDER_TIMER_URL", "javascript:alert(1)")
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd()))
     assert "javascript:alert" not in html and "on / off in Grafana" not in html
+
+
+def test_the_timer_box_has_a_press_that_says_what_it_does():
+    v = {"switches": {}, "gateway": {}, "timer": {"state": "off", "last": None, "next": None, "minute": 7}}
+    bar = control_render._topbar(v)
+    assert 'data-job="timer" data-on="0"' in bar and ">Turn on</button>" in bar
+    v["timer"]["state"] = "on"
+    assert 'data-job="timer" data-on="1"' in control_render._topbar(v)
+    v["timer"]["state"] = None
+    assert 'data-job="timer"' not in control_render._topbar(v), "no press while the state is not known"
+    assert control_render.ROUTES["timer"] == "/api/build/timer"
+    assert "C.routes.timer" in control_render.CTL_JS
