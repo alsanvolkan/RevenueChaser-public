@@ -157,7 +157,9 @@ def _card_js(ds: str) -> str:
 
 def _backfill_click(browser, ds: str, day: str) -> str:
     card = _card_js(ds)
-    browser.eval(f"{card}.querySelector('input.nd-date').value = {day!r}")
+    # The card holds two date inputs since the schedule fields landed (the backfill day and the hold), so the
+    # backfill day is taken by its own hook, not as "the first date input".
+    browser.eval(f"{card}.querySelector('[data-nd-from]').value = {day!r}")
     browser.eval(f"{card}.querySelector('button[data-nd-act=\"backfill\"]').click()")
     return browser.eval(f"{card}.querySelector('[data-nd-msg]').textContent")
 
