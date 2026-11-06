@@ -1,11 +1,13 @@
 """``python -m RevenueChaser.rcdata.build`` — the builder CLI.
 
-    run [--once] [--dataset X [--as-of YYYY-MM-DD] [--allow-shrink] [--no-build] [--tiers A,B] [--names KO,MSFT]]
+    run [--once] [--dataset X [--as-of YYYY-MM-DD] [--allow-shrink] [--no-duckdb] [--no-parquet]
+                  [--tiers A,B] [--names KO,MSFT]]
                                         take queued requests in order (FIFO) and run each; without --dataset, every
                                         dataset that is due (``due.py``) is queued first (by "schedule", once);
                                         with --dataset, a dataset with nothing queued (or any, with --as-of) is
                                         queued first (by "cli"); --once stops when the queue is empty
-    backfill <dataset> [<dataset> ...] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-shrink] [--no-build]
+    backfill <dataset> [<dataset> ...] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-shrink]
+             [--no-duckdb] [--no-parquet]
              [--tiers A,B] [--names KO,MSFT]
                                         queue one backfill request per dataset and run them now, in the order given,
                                         in this one process (so the WRDS datasets share one login); names may be
@@ -18,12 +20,22 @@
                                         A narrowed request gets only what it names (Karar 82); a dataset that
                                         cannot narrow its fetch takes the request and says so on its check row
 
-    --no-build                          fetch and stage Parquet, but do not build the serving file: the request
+    --no-duckdb                         fetch and stage Parquet, but do not build the serving DuckDB: the request
                                         ends ``skipped``, the serving file is untouched, and the dataset stays due,
                                         so the next ordinary pass builds it (the raw file it staged is the resume
                                         marker, so that pass sends no call). For staging days of data without
                                         holding the builder lock through a build each time. A person's switch: the
                                         hourly pass never sets it (``due.enqueue_due`` queues no params)
+    --no-parquet                        raw only: fetch the provider's answers into the raw store and stop, with
+                                        no Parquet partition and no serving file. It implies --no-duckdb, because
+                                        Parquet is the only input a build reads. For a long fetch campaign, where
+                                        the conversion is run once at the end. A dataset that writes a day's
+                                        "finished" marker in its conversion step (the EDGAR feeds, the 13F data
+                                        sets) skips that whole step, so no day is marked unconverted; the two
+                                        WRDS datasets resume from Parquet, so a raw-only run of those re-asks
+                                        their snapshot query (docs/data_retrieval.md)
+    --no-build                          the old name of --no-duckdb, kept so that a queued request and a runbook
+                                        line keep working (#498). Deprecated; it does the same thing
 
     attended [--dataset X]              drain the queued requests of the attended datasets (WRDS: a person logs in
                                         and confirms Duo) and stop. The only runner that may take someone else's
@@ -120,7 +132,8 @@ def _wait_for_turn(wait: float, said: list | None = None) -> str | None:
 
 
 def _fetch_lock_names(args) -> list[str]:
-    """The ``rcdata_fetch_<dataset>`` locks a ``--no-build`` command needs, one per dataset it names."""
+    """The ``rcdata_fetch_<dataset>`` locks a fetch-only command (``--no-duckdb`` / ``--no-parquet``) needs, one
+    per dataset it names."""
     names = list(getattr(args, "datasets", None) or ([args.dataset] if getattr(args, "dataset", None) else []))
     return [f"rcdata_fetch_{n}" for n in names]
 
@@ -233,8 +246,15 @@ def main(argv: list[str] | None = None) -> int:
     group_help = ("the extra groups to ask besides the tiers and names: anchors (the benchmarks and rotation "
                   "ETFs), watchlist, cover_classes. A narrowed request gets only what it names; a request that "
                   "names nothing is the daily run and gets all three (Karar 82)")
-    no_build_help = '("stage only": fetch and write Parquet, leave the serving file as it is; the request ends "skipped" and the dataset stays due, so the next ordinary pass builds it)'
-    run.add_argument("--no-build", dest="no_build", action="store_true", help="with --dataset: " + no_build_help)
+    no_duckdb_help = '("stage only": fetch and write Parquet, leave the serving DuckDB as it is; the request ends "skipped" and the dataset stays due, so the next ordinary pass builds it)'
+    no_parquet_help = ('("raw only": fetch into the raw store and stop, with no Parquet partition; it implies '
+                       "--no-duckdb, because Parquet is the only input a build reads)")
+    deprecated_help = "the old name of --no-duckdb, kept for queued requests and runbooks (#498); deprecated"
+    run.add_argument("--no-duckdb", dest="no_duckdb", action="store_true",
+                     help="with --dataset: " + no_duckdb_help)
+    run.add_argument("--no-parquet", dest="no_parquet", action="store_true",
+                     help="with --dataset: " + no_parquet_help)
+    run.add_argument("--no-build", dest="no_build", action="store_true", help=deprecated_help)
     run.add_argument("--tiers", help=scope_help)
     run.add_argument("--names", help=scope_help)
     run.add_argument("--include", help=group_help)
@@ -246,7 +266,9 @@ def main(argv: list[str] | None = None) -> int:
     bf.add_argument("--from", dest="start")
     bf.add_argument("--to", dest="end")
     bf.add_argument("--allow-shrink", action="store_true", help=shrink_help)
-    bf.add_argument("--no-build", dest="no_build", action="store_true", help=no_build_help)
+    bf.add_argument("--no-duckdb", dest="no_duckdb", action="store_true", help=no_duckdb_help)
+    bf.add_argument("--no-parquet", dest="no_parquet", action="store_true", help=no_parquet_help)
+    bf.add_argument("--no-build", dest="no_build", action="store_true", help=deprecated_help)
     bf.add_argument("--tiers", help=scope_help)
     bf.add_argument("--names", help=scope_help)
     bf.add_argument("--include", help=group_help)
@@ -258,10 +280,20 @@ def main(argv: list[str] | None = None) -> int:
                         help="how long to wait for the store's writer turn before exit 3 (default: "
                              f"{DEFAULT_WAIT_S:.0f} for a person's command, 0 for the hourly run)")
     args = p.parse_args(argv)
-    if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink or args.no_build or args.tiers
+    # --no-build is the deprecated alias of --no-duckdb: translate it once here, so every check below sees one
+    # name (#498). --no-parquet implies --no-duckdb (Parquet is a build's only input). A queued request still
+    # carries ``no_build`` as well as ``no_duckdb``: ops.sqlite outlives a rollback, and a builder from before the
+    # rename would otherwise read neither name and build the serving file the person asked it not to touch.
+    if getattr(args, "no_build", False) or getattr(args, "no_parquet", False):
+        args.no_duckdb = True
+    if getattr(args, "no_build", False):
+        print("--no-build is deprecated: it is --no-duckdb (fetch and Parquet, no serving build). "
+              "--no-parquet is the raw-only mode.", file=sys.stderr)
+    if args.cmd == "run" and not args.dataset and (args.as_of or args.allow_shrink or args.no_duckdb or args.tiers
                                                    or args.names or args.include):
         # They only shape the request queued for --dataset; without it they would be dropped silently (F5).
-        p.error("--as-of, --allow-shrink, --no-build, --tiers, --names and --include need --dataset")
+        p.error("--as-of, --allow-shrink, --no-duckdb, --no-parquet (and the deprecated --no-build), --tiers, "
+                "--names and --include need --dataset")
     scope = {k: [n.strip() for n in v.split(",") if n.strip()]
              for k, v in (("tiers", getattr(args, "tiers", None)), ("names", getattr(args, "names", None)),
                           ("include", getattr(args, "include", None))) if v}
@@ -315,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
             print("no attended request queued", file=sys.stderr)
             return 0
     wait = default_wait_s(args.cmd, getattr(args, "dataset", None)) if args.wait is None else max(0.0, args.wait)
-    fetch_only = bool(getattr(args, "no_build", False))
+    fetch_only = bool(getattr(args, "no_duckdb", False))
     with contextlib.ExitStack() as stack:
         if fetch_only:
             got, problem = _take_fetch_locks(stack, _fetch_lock_names(args), wait)
@@ -342,7 +374,8 @@ def main(argv: list[str] | None = None) -> int:
             params = {"mode": "backfill", **({"from": args.start} if args.start else {}),
                       **({"to": args.end} if args.end else {}),
                       **({"allow_shrink": True} if args.allow_shrink else {}),
-                      **({"no_build": True} if args.no_build else {}), **scope}
+                      **({"no_duckdb": True, "no_build": True} if args.no_duckdb else {}),
+                      **({"no_parquet": True} if args.no_parquet else {}), **scope}
             worst = 0
             for name in args.datasets:
                 mine = _own_requests_only(name)
@@ -356,11 +389,12 @@ def main(argv: list[str] | None = None) -> int:
                 worst = max(worst, int(row["result"] == "failed"))
             return worst
         mine = _own_requests_only(args.dataset) if args.dataset else None
-        if args.dataset and (args.as_of or args.allow_shrink or args.no_build or scope
+        if args.dataset and (args.as_of or args.allow_shrink or args.no_duckdb or scope
                              or not ops.queued(args.dataset, by=mine)):
             params = {**({"as_of": args.as_of} if args.as_of else {}),
                       **({"allow_shrink": True} if args.allow_shrink else {}),
-                      **({"no_build": True} if args.no_build else {}), **scope}
+                      **({"no_duckdb": True, "no_build": True} if args.no_duckdb else {}),
+                      **({"no_parquet": True} if args.no_parquet else {}), **scope}
             ops.enqueue(args.dataset, params or None, by="cli")
         due_failed = 0
         if not args.dataset:
