@@ -2251,7 +2251,7 @@ ND_CSS = ND_THEME_CSS + """
 #newdata .nd-bar>span{display:block;height:100%;background:var(--sky);max-width:100%}
 #newdata details>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--bright)}
 #newdata .nd-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-#newdata .nd-btn,#newdata .nd-date{min-height:44px;min-width:44px;border-radius:8px;font:inherit;padding:0 14px;
+#newdata .nd-btn,#newdata .nd-date,#newdata .nd-sel{min-height:44px;min-width:44px;border-radius:8px;font:inherit;padding:0 14px;
   border:1px solid var(--input-border);background:var(--input-bg);color:var(--bright);max-width:100%}
 #newdata .nd-btn{cursor:pointer;font-weight:600}
 #newdata .nd-btn.nd-primary{background:var(--primary-bg);color:var(--primary-fg);border-color:var(--primary-bg)}
@@ -2260,7 +2260,7 @@ ND_CSS = ND_THEME_CSS + """
 #newdata .nd-btn:disabled{cursor:default;background:var(--hover);color:var(--muted);border-color:var(--border)}
 /* M4 (A24-B): every target is 44 px, with one exemption written down — inside a dense table, where 44 px a row
    would push the numbers off a phone, a control may be 32 px. Nothing uses it yet. */
-#newdata .nd-dense .nd-btn,#newdata .nd-dense .nd-date,#newdata .nd-dense summary{min-height:32px;min-width:32px;
+#newdata .nd-dense .nd-btn,#newdata .nd-dense .nd-date,#newdata .nd-dense .nd-sel,#newdata .nd-dense summary{min-height:32px;min-width:32px;
   padding:0 8px}
 #newdata .nd-why{color:var(--amber);font-size:12.5px}
 #newdata .nd-cost{color:var(--muted);font-size:12.5px}
@@ -2456,12 +2456,31 @@ def _nd_dataset_card(c: dict, *, open_: bool = False) -> str:
                    'the builder fetches it whole on its next pass.</div>')
     sched = c.get("schedule") or {}
     paused = bool(sched.get("paused"))
+    cadence = str(sched.get("cadence_effective") or "daily")
+    own = sched.get("cadence") is None            # no row of its own: the dataset's (or the catalog's) default
+    hold = sched.get("next_due")
+    how_often = f"{esc(cadence)}{' (its own)' if own else ''}" + (f", held until {esc(hold)}" if hold else "")
     sched_text = (f"paused by {_nd(sched.get('paused_by'))} at {_nd(sched.get('paused_at'))}" if paused
-                  else "never queued by the schedule (attended)" if c.get("attended") else "running on its schedule")
+                  else "never queued by the schedule (attended)" if c.get("attended")
+                  else f"running on its schedule: {how_often}")
     dsa = esc(ds)
     earliest = bf.get("from_earliest")
     pause = (f'<button type="button" class="nd-btn" data-nd-act="{"resume" if paused else "pause"}" '
              f'data-dataset="{dsa}">{"Resume" if paused else "Pause"}</button>')
+    # The frequency and the hold: ``due.py`` has read both since PR 2, but nothing could set them (avo, 5 Nov
+    # 2026). One press sends both, so a reader cannot half-apply a schedule.
+    key = esc(ds.replace("/", "-"))               # a dataset name carries slashes; an id must not
+    options = "".join(f'<option value="{o}"{" selected" if o == cadence else ""}>{o}</option>'
+                      for o in ("daily", "weekly", "monthly"))
+    schedule_fields = (
+        '<div class="nd-actions nd-sched-set">'
+        f'<label class="nd-k" for="nd-cad-{key}">How often</label>'
+        f'<select class="nd-sel" id="nd-cad-{key}" data-nd-cadence data-dataset="{dsa}">{options}</select>'
+        f'<label class="nd-k" for="nd-hold-{key}">Hold until</label>'
+        f'<input type="date" class="nd-date" id="nd-hold-{key}" data-nd-hold data-dataset="{dsa}"'
+        + (f' value="{esc(hold)}"' if hold else "") + ">"
+        f'<button type="button" class="nd-btn" data-nd-act="cadence" data-dataset="{dsa}">Save schedule</button>'
+        "</div>")
     if c.get("attended"):
         # WRDS: a person logs in and confirms Duo, so the page offers no Fetch or Backfill (PR 5).
         actions = (f'<div class="nd-k">Attended (WRDS login and Duo): runs only from a terminal on the server: '
@@ -2471,7 +2490,7 @@ def _nd_dataset_card(c: dict, *, open_: bool = False) -> str:
         actions = (
             '<div class="nd-actions">'
             f'<button type="button" class="nd-btn nd-primary" data-nd-act="fetch" data-dataset="{dsa}">Fetch</button>'
-            f'<input type="date" class="nd-date" aria-label="Backfill from" data-dataset="{dsa}"'
+            f'<input type="date" class="nd-date" aria-label="Backfill from" data-nd-from data-dataset="{dsa}"'
             + (f' min="{esc(earliest)}"' if earliest else "") + ">"
             f'<button type="button" class="nd-btn" data-nd-act="backfill" data-dataset="{dsa}"'
             + ("" if bf else " disabled") + ">Backfill</button>"
@@ -2491,6 +2510,7 @@ def _nd_dataset_card(c: dict, *, open_: bool = False) -> str:
             f"{checks_html}{samples}{bf_html}"
             + _nd_row("WRDS difference", _nd_report_cell(c.get("wrds")))
             + _nd_row("Schedule", f'<span data-nd-sched>{sched_text}</span>')
+            + schedule_fields
             + actions + "</details>")
 
 
@@ -2856,7 +2876,7 @@ function ndEstimate(ds, from){
 }
 function ndBackfill(btn, confirmed){
   var ds = btn.getAttribute('data-dataset'), card = ndCard(btn);
-  var input = card && card.querySelector('input.nd-date');
+  var input = card && card.querySelector('[data-nd-from]');
   var from = input ? input.value : '';
   if(!/^\d{4}-\d{2}-\d{2}$/.test(from)){ ndSay(card, 'Pick the first day to backfill from.'); return; }
   var calls = ndEstimate(ds, from);
@@ -2882,6 +2902,18 @@ function ndSchedule(btn, action){
     var line = card && card.querySelector('[data-nd-sched]');
     if(line) line.innerHTML = paused ? 'paused by ' + rcEsc(s.paused_by) : 'running on its schedule';
     ndSay(card, paused ? 'Paused: the builder skips it until Resume.' : 'Resumed.');
+  });
+}
+function ndCadence(btn){
+  var ds = btn.getAttribute('data-dataset'), card = ndCard(btn);
+  var sel = card && card.querySelector('[data-nd-cadence]'), hold = card && card.querySelector('[data-nd-hold]');
+  if(!sel) return;
+  ndPost(btn, '/api/build/schedule/' + ndPath(ds) + '/cadence',
+         {cadence: sel.value, next_due: hold ? hold.value : ''}, function(c, d){
+    var s = d.schedule || {}, line = c && c.querySelector('[data-nd-sched]');
+    var text = rcEsc(s.cadence || sel.value) + (s.next_due ? ', held until ' + rcEsc(String(s.next_due).slice(0, 10)) : '');
+    if(line && !s.paused_at) line.innerHTML = 'running on its schedule: ' + text;
+    ndSay(c, 'Schedule saved: ' + text + '. ' + rcEsc(ND.next_pass) + '.');
   });
 }
 function ndWatchRemove(btn){
@@ -2928,6 +2960,7 @@ document.addEventListener('click', function(ev){
     if(real) ndBackfill(real, true);
   }
   else if(act === 'pause' || act === 'resume') ndSchedule(btn, act);
+  else if(act === 'cadence') ndCadence(btn);
   else if(act === 'cross') ndCross(btn);
   else if(act === 'watch-remove') ndWatchRemove(btn);
 });
