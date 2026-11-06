@@ -2,6 +2,7 @@
 builder timer's tile, the longest build today, and the By-file lines."""
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime, timezone
 
 from RevenueChaser.module_settings import control
@@ -113,6 +114,11 @@ def test_the_process_table_gives_each_job_its_name_age_limit_and_starter(tmp_pat
     _proc(tmp_path, 13, [py, "-m", "RevenueChaser.core.automations", "run", "RC-Build"], "life-rc-builder")
     _proc(tmp_path, 14, [py, "-c", "from RevenueChaser.app.dashboard import main"], "life-rc-dashboard")
     monkeypatch.setattr(control.os, "sysconf", lambda name: 100)
+    # pinned here, so the line is tested apart from RC-Build's real limit (#527 sets that in its own PR)
+    from RevenueChaser.core import automations
+    build = automations._BY_NAME["RC-Build"]
+    monkeypatch.setitem(automations._BY_NAME, "RC-Build", dataclasses.replace(
+        build, settings=dataclasses.replace(build.settings, time_limit_minutes=120)))
     procs = control.read_procs(str(tmp_path))
     assert sorted(p["pid"] for p in procs) == [12, 13], "the wrapper and the dashboard are not jobs"
     now = datetime.fromtimestamp(1001 + 100 * 60, timezone.utc)   # each started at btime + 1 s
