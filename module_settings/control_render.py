@@ -340,6 +340,7 @@ def _fstate_words(st) -> str:
               else "tables not counted yet")
     empty = st.get("empty") or []
     return (f'on the disk · {size} · written {_written(st.get("written_at"))} · {tables}'
+            + (f' · {st["uncounted"]} not counted' if st.get("uncounted") else "")
             + (f' · empty: {", ".join(str(e) for e in empty)}' if empty else ""))
 
 
@@ -432,8 +433,11 @@ def _sources(f: dict, view: dict) -> str:
     runs = (f'<p class="runs">runs on <b class="runs-on">{esc(view["universe_summary"])}</b> · set by the universe '
             'in the spine/security box</p>' if f["runs_on_universe"] else f'<p class="runs">{esc(f["words"])}</p>')
     boxes = "".join(_sbox(d, view) for d in rows) or '<p class="dim">no dataset of this file is on record yet</p>'
+    # The universe rides in the spine/security box; with no such box on record it still sits in the spine's panel.
+    orphan = (_universe(view) if f["name"] == "spine.duckdb"
+              and not any(d["dataset"] == "spine/security" for d in rows) else "")
     return (f'<div class="sources fgroup" data-file="{esc(f["name"])}">{head}{state}{runs}'
-            f'<p class="blegend">{BUTTON_LEGEND}</p>{_legend(view)}<div class="sgrid">{boxes}</div>'
+            f'<p class="blegend">{BUTTON_LEGEND}</p>{_legend(view)}{orphan}<div class="sgrid">{boxes}</div>'
             f'{_providers(view, sid=None)}</div>')
 
 
@@ -648,7 +652,7 @@ def _jrows(f: dict) -> tuple[str, list[str]]:
             # One "from" chip per input step of the file, with its full name (#492).
             chips = "".join(f'<span class="chip" data-card="{esc(o["dataset"])}"><span class="cn">{o["step"]}</span>'
                             f'<span class="t">{esc(o["dataset"])}</span></span>'
-                            for o in f["datasets"] if o is not d and o["role"] in INPUT_ROLES and not o.get("attended"))
+                            for o in f["datasets"] if o is not d and o["role"] in INPUT_ROLES)
             chips = f'<span class="jfrom"><span class="jfl">from</span>{chips}</span>' if chips else ""
         rows.append(
             f'<tr class="jr" tabindex="0" role="button" aria-expanded="false" aria-controls="jd-{esc(f["kind"])}-{i}" '
@@ -881,7 +885,8 @@ def _ready(view: dict) -> dict:
             + f' · {control.count(view["universe"]["size"])} names'}
 
 
-#: The roles whose steps feed a build row: never a cross-check ("compared, never served") or a build.
+#: The roles whose steps feed a build row, hand-run ones included: never a cross-check ("compared, never served")
+#: or a build.
 INPUT_ROLES = ("first", "only source", "fills")
 
 

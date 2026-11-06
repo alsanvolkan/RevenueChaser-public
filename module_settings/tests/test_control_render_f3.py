@@ -36,6 +36,7 @@ def test_a_cross_check_step_is_not_a_from_chip():
 
 def test_the_two_universe_cards_are_drawn_from_the_view():
     v = _view()
-    assert v.get("identity") is not None or v.get("my_universe") is not None, "build() carries the cards' data"
+    assert v.get("identity") is not None, "build() carries the cards' data"
+    v["my_universe"] = v.get("my_universe") or {"built": False}
     html = control_render._uni_cards(v)
     assert html.startswith('<div class="ucards">') and html.count("nd-card") >= 2

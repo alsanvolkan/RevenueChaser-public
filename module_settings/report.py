@@ -3045,8 +3045,11 @@ def _queue_html(view: dict) -> str:
 
 
 #: The Identity and Our universe cards now sit in the spine's source box (#492 C1): the New data system section's
-#: styles, scoped to that box instead of ``#newdata``.
-_UCARDS_CSS = ND_CSS.replace("#newdata", ".ctl .ucards")
+#: rules, scoped to that box instead of ``#newdata``, on the board's own palette (``.ctl``'s --bg, --card, --fg
+#: inherit; the names the board spells differently are bridged), never the shell's theme block.
+_UCARDS_CSS = (".ctl .ucards{--border:var(--line);--muted:var(--mut);--neg:var(--bad);--pos:var(--ok);"
+               "--amber:var(--warn);--sky:var(--acc);--bright:var(--fg);--hover:var(--acc2)}\n"
+               + ND_CSS[len(ND_THEME_CSS):].replace("#newdata", ".ctl .ucards"))
 
 #: The page's one "What am I looking at?" box (#383), at the top of the Data tab.
 DATA_HELP = help_html(
@@ -3158,7 +3161,7 @@ def render_settings_dashboard(payload: dict) -> str:
 {provider_health_html(payload.get("provider_health"))}
 {_tab_strip()}
 <div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
-<div class="wrap helpwrap">{DATA_HELP}</div>
+<div class="wrap helpwrap" style="max-width:1280px;margin:0;padding:12px 12px 0">{DATA_HELP}</div>
 {control_html}
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>

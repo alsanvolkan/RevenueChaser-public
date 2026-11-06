@@ -82,13 +82,13 @@
     btn.setAttribute('data-state', 'fetch'); btn.textContent = 'Fetch'; btn.classList.add('go');
   }
   function follow(btn, rid, left) {
-    if (left <= 0) return;
+    if (left <= 0) { back(btn); return; }   // no longer followed: the button must not hold a Pause for no run
     setTimeout(function () {
       send('GET', C.routes.queue).then(function (r) {
         var q = r.body || {}, active = q.active || [], done = q.finished || [], row = null, pos = 0;
         active.forEach(function (x, i) { if (x.id === rid) { row = x; pos = i + 1; } });
         if (!row) done.forEach(function (x) { if (x.id === rid) row = x; });
-        if (!row) { pill(btn, 'st-q', 'queued · the queue no longer lists it'); return; }
+        if (!row) { pill(btn, 'st-q', 'queued · the queue no longer lists it'); back(btn); return; }
         if (row.status === 'queued') { pill(btn, 'st-q', 'queued · ' + nth(pos) + ' in line'); follow(btn, rid, left - 1); }
         else if (row.status === 'running') { pill(btn, 'st-r', 'running'); follow(btn, rid, left - 1); }
         else if (row.status === 'done') { pill(btn, 'st-d', 'done · ' + (row.note || 'see Queue and last runs')); btn.hidden = false; back(btn); }
@@ -195,7 +195,7 @@
   }
   window.CTLX.scrollTo = scrollTo; window.CTLX.reveal = reveal;
   root.addEventListener('click', function (e) {
-    var w = e.target.closest('.wiali');
+    var w = e.target.closest('#ctl .wiali');   // the Health head has its own
     if (w) {
       var box = document.getElementById('wial'), open = w.getAttribute('aria-expanded') === 'true';
       w.setAttribute('aria-expanded', open ? 'false' : 'true'); if (box) box.hidden = open; return;
@@ -617,6 +617,9 @@
     return d.getAttribute('data-st') === f;
   }
   function filter(f) {
+    // a filter of an earlier panel leaves nothing hidden behind it
+    [].forEach.call(document.querySelectorAll('.ctl .sgrid > .dset'), function (d) { d.hidden = false; });
+    [].forEach.call(document.querySelectorAll('.ctl .sources .sgrid'), function (g) { g.hidden = false; });
     // only the shown file panel counts; when it has no match and another panel has, that panel is shown first
     var shown = document.querySelector('.ctl .fpanel:not([hidden])');
     if (f && shown && ![].some.call(shown.querySelectorAll('.sgrid > .dset'), function (d) { return match(d, f); })) {

@@ -122,7 +122,8 @@ def test_fetch_queues_one_request_and_asks_no_provider(dashboard, browser, marke
                  "[data-dataset=\"market_series\"]').click()")
     browser.wait_for("Array.prototype.some.call(document.querySelectorAll('#ctl .fpanel:not([hidden]) .lg3'),"
                      " function(s){ return s.textContent.indexOf('queued') === 0; })")
-    assert browser.eval("document.querySelector('#ctl button[data-job=\"one\"][data-dataset=\"market_series\"]')"
+    assert browser.eval("document.querySelector('#ctl .fpanel:not([hidden]) button[data-job=\"one\"]"
+                        "[data-dataset=\"market_series\"]')"
                         ".getAttribute('data-state')") == "pause", "the one button reads Pause once queued"
     rows = _requests(market)
     assert [(r["dataset"], r["status"], r["requested_by"]) for r in rows] == [("market_series", "queued", "settings")]

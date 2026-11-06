@@ -35,7 +35,7 @@ def test_every_count_carries_its_denominator():
     assert (t["never"]["n"], t["never"]["label"]) == ("2", "of 5 datasets never ran")
     assert (t["problems"]["n"], t["problems"]["label"]) == ("10", "open problems, in 2 of 5 datasets")
     assert (t["queue"]["n"], t["queue"]["label"]) == ("3", "1 running, 2 queued")
-    assert "7,422 of 7,670 names have a bar on it" in t["session"]["label"]
+    assert f"{t['universe']['n']} of 7,670 names have a bar on it" in t["session"]["label"], "the universe's filled count"
 
 
 def test_the_timer_tile_says_on_off_or_not_known_with_its_passes_in_amsterdam_time():

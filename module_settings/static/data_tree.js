@@ -80,7 +80,8 @@
     svg.style.display = '';
     h.classList.add('dtree-host');
     var hr = h.getBoundingClientRect();
-    svg.setAttribute('width', String(hr.width));   // the gutter is the panel's own left padding svg.setAttribute('height', String(h.scrollHeight || hr.height));
+    // the gutter is the panel's own left padding, so the overlay is as wide as the panel
+    svg.setAttribute('width', String(hr.width)); svg.setAttribute('height', String(h.scrollHeight || hr.height));
     var sr = svg.getBoundingClientRect(), ox = sr.left, oy = sr.top;
     var rows = [].slice.call(j.querySelectorAll('tr.jr[data-ds]')).filter(shown);
     var edge = GUTTER, steps = [];

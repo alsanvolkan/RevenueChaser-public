@@ -30,7 +30,7 @@ def test_a_missing_file_is_not_there_with_nones(tmp_path):
     s = _file(view, "prices")["state"]
     assert (s["exists"], s["bytes"], s["written_at"]) == (False, None, None)
     spine = _file(view, "spine")["state"]
-    assert (spine["exists"], spine["bytes"], spine["written_at"]) == (False, None, None), "no path known"
+    assert (spine["exists"], spine["bytes"], spine["written_at"]) == (None, None, None), "no path known: not known"
 
 
 def test_the_tables_with_rows_come_from_the_table_counts():
@@ -39,7 +39,10 @@ def test_the_tables_with_rows_come_from_the_table_counts():
     names = [t["name"] for t in f["tables"]]
     assert s["tables"] == len(names)
     assert s["tables_with_rows"] == 1
-    assert "price_bar_daily" not in s["empty"] and set(s["empty"]) == set(names) - {"price_bar_daily"}
+    assert "price_bar_daily" not in s["empty"]
+    # a table whose rows were not counted is neither empty nor holding rows
+    assert s["empty"] == [t["name"] for t in f["tables"] if t.get("rows") == 0]
+    assert s["uncounted"] == sum(1 for t in f["tables"] if t.get("rows") is None)
 
 
 def test_the_counts_bucket_the_datasets_as_the_health_strip_does():

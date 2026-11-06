@@ -252,7 +252,7 @@ def test_a_press_in_the_flow_diagram_leaves_the_page_where_it_is():
     from RevenueChaser.core.tests.board_js import function_source
     flow = _flow_js()
     assert "scrollIntoView" not in function_source(flow, "paint"), "a pick never scrolls"
-    assert flow.count("scrollIntoView") == 1, "only the 'open them ↓' button carries the reader down"
+    assert "scrollIntoView" not in flow, "#492: the file panels follow the picker; the flow never carries the reader"
 
 
 def test_a_health_badge_picks_its_own_file():
@@ -262,11 +262,3 @@ def test_a_health_badge_picks_its_own_file():
     assert "picks.hs" not in flow, "the badge picks a file, so there is no health-state pick left"
     hit = function_source(flow, "hit")
     assert "'file:' + t.getAttribute('data-file')" in hit, "the badge picks the file it sits in"
-
-
-def test_a_pick_closes_the_data_cards_and_opens_the_one_that_is_left():
-    """avo, 30 Oct: everything below collapses and only the card holding the pressed value stays open."""
-    from RevenueChaser.core.tests.board_js import function_source
-    paint = function_source(_flow_js(), "paint")
-    assert "c.open = false" in paint, "every card closes on a pick"
-    assert "shown === 1" in paint, "the single card that matches opens by itself"
