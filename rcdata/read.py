@@ -597,9 +597,19 @@ def _where(tickers: list[str] | None, day_col: str, start, end, extra: str = "")
 
 
 def _completed(rows: list[dict]) -> list[dict]:
+    """Mark each period ``complete`` when its filing deadline has passed in New York.
+
+    A period with **no** deadline counts as complete, and says so once: the flag exists so a reader can hold back
+    a quarter that is still arriving, and reading "unknown" as "arriving" would hold back a whole board over
+    missing metadata instead (#514 review). Failing open keeps the old behaviour for such a row."""
     today = calendar.today_ny()
+    unknown = 0
     for r in rows:
-        r["complete"] = r["filing_deadline"] is not None and r["filing_deadline"] < today
+        deadline = r.get("filing_deadline")
+        r["complete"] = deadline is None or deadline < today
+        unknown += deadline is None
+    if unknown:
+        logger.warning("13F: %d row(s) with no filing deadline, counted as a settled period", unknown)
     return rows
 
 
@@ -620,6 +630,27 @@ def holders_13f(tickers: Iterable[str] | None = None, periods: Iterable | None =
         params += days
     return _completed(_rows("sec13f_ticker_period",
                             f"SELECT * FROM sec13f_ticker_period{sql} ORDER BY ticker, period", params))
+
+
+def tickers_13f(period=None) -> list[str]:
+    """The tickers the 13F store holds for one report period, sorted; by default the newest **settled** one.
+
+    That default is the live universe. Every ticker of every period would reach back to 2013 and carry names
+    delisted years ago, and a caller that rotates through the list asking a provider never-stored-first would let
+    that dead tail own the rotation for good (#515 review). A caller that wants the rows and not the names uses
+    ``holders_13f``; this exists so one does not pull a quarter of a million rows to build a list of eight
+    thousand."""
+    if period is None:
+        # The newest settled period, from this table's own deadline column rather than from ``sec13f_periods``:
+        # one table, one query, and the same fail-open rule as ``_completed`` (no deadline counts as settled).
+        sql = ("SELECT DISTINCT ticker FROM sec13f_ticker_period WHERE period = "
+               "(SELECT max(period) FROM sec13f_ticker_period "
+               " WHERE filing_deadline IS NULL OR filing_deadline < ?) ORDER BY ticker")
+        params = [calendar.today_ny()]
+    else:
+        sql = "SELECT DISTINCT ticker FROM sec13f_ticker_period WHERE period = ? ORDER BY ticker"
+        params = [_day(period)]
+    return [r["ticker"] for r in _rows("sec13f_ticker_period", sql, params) if r.get("ticker")]
 
 
 def periods_13f() -> list[dict]:

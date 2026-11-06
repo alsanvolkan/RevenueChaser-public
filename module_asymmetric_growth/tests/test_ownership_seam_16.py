@@ -25,10 +25,12 @@ PKG = Path(__file__).resolve().parent.parent
 
 
 def _entry(shares: float) -> dict:
-    """One quarter in the shape the reader returns: every metric a cell carries, the scan's among them."""
+    """One quarter in the shape the reader returns: every metric a cell carries, the scan's among them, plus
+    ``complete`` — the period's filing deadline against today (#514). The fixture writes no deadline, which counts
+    as settled."""
     return {"2026-03-31": {"shares": shares, "value": shares * 10.0, "holders": 10, "top10_pct": None,
                            "hhi": None, "new_holders": 2, "exited_holders": 1, "buy_flow": 5.0,
-                           "sell_flow": 1.0, "breadth": None, "breadth_chg": None}}
+                           "sell_flow": 1.0, "breadth": None, "breadth_chg": None, "complete": True}}
 
 
 def test_the_served_13f_totals_are_read_through_the_shared_reader():
