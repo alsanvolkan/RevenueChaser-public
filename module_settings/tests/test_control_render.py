@@ -193,6 +193,7 @@ def test_the_css_is_scoped_to_the_board_and_themed_both_ways():
             one = one.strip()
             if not one or re.match(r"^(from|to|\d+%)$", one):
                 continue
+            one = re.sub(r"^:where\(html(?::not\(\.z1600\)|\.z1600)\) ", "", one)   # the 1600 layout's own scope
             assert one.startswith((".ctl", ':root[data-theme="dark"] .ctl', ':root:not([data-theme="light"]) .ctl',
                                    "#toast")), f"unscoped rule: {one}"
 

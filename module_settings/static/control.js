@@ -1219,8 +1219,10 @@
   }
   function fit() {
     var z = (document.documentElement.clientWidth || DESIGN) / DESIGN;
-    var v = narrow() || Math.abs(z - 1) < 0.001 ? '' : String(z);
+    var phone = narrow(), v = phone || Math.abs(z - 1) < 0.001 ? '' : String(z);
     [].forEach.call(document.querySelectorAll('#ctl, #needs, #settings-tabs'), function (e) { e.style.zoom = v; });
+    // the 1600 layout ignores the CSS breakpoints between the phone and 1600 px: they see the pane, not the design
+    document.documentElement.classList.toggle('z1600', !phone);
   }
   fit();
   window.addEventListener('resize', fit);

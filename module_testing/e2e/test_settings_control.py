@@ -106,6 +106,9 @@ def test_no_width_scrolls_the_page_sideways_and_the_1600_layout_is_zoomed_to_it(
                             "function(b){ return b.getClientRects().length; }).slice(0, 2).map("
                             "function(b){ return Math.round(b.getBoundingClientRect().top); })")
         assert len(tops) == 2 and tops[0] == tops[1], f"two dataset cards side by side at {width} px: {tops}"
+        cols = browser.eval("getComputedStyle(document.querySelector('#ctl .strip')).gridTemplateColumns"
+                            ".split(' ').length")
+        assert cols == 6, f"the strip keeps the 1600 layout's 6 columns at {width} px, not a narrow breakpoint's: {cols}"
 
 
 def test_the_board_follows_the_shells_theme_both_ways(dashboard, browser):

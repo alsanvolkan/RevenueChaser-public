@@ -62,7 +62,7 @@
 .ctl code.p{background:none;padding:0;font-size:11.5px;overflow-wrap:anywhere}
 .ctl .scroll{overflow-x:auto;min-width:0}
 .ctl .strip{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
-@media(max-width:1200px){.ctl .strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:1200px){:where(html:not(.z1600)) .ctl .strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:620px){.ctl .strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .ctl .tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;
   min-width:0;text-align:left;font:inherit;color:inherit;cursor:pointer}
@@ -163,19 +163,19 @@
 .ctl table.paths th.ssdh{color:var(--ssd)}
 .ctl table.paths th.cph,.ctl table.paths th.crh{color:var(--hdd)}
 .ctl table.paths td.ssdc{background:var(--okb);border-radius:8px;line-height:1.6;padding:8px 10px}
-@media(max-width:1100px){.ctl table.paths,.ctl table.paths tbody,.ctl table.paths tr,.ctl table.paths td{display:block;width:auto}
-.ctl table.paths colgroup,.ctl table.paths thead{display:none}
-.ctl table.paths tr{border-bottom:1px solid var(--line);padding:6px 0}
-.ctl table.paths td{border:0;padding:1px 0}
-.ctl table.paths td:first-child{font-weight:700}
-.ctl table.paths tr{display:flex;flex-direction:column}
-.ctl table.paths td:first-child{order:0}
-.ctl table.paths td.cr{order:1}
-.ctl table.paths td.cp{order:2}
-.ctl table.paths td.ssdc{order:3;margin:6px 0 0}
-.ctl table.paths td.ssdc::before{content:"⚡ SSD live · served";display:block;color:var(--ssd);font-weight:700}
-.ctl table.paths td.cp::before{content:"📦 Parquet · ";color:var(--mut);font-weight:600}
-.ctl table.paths td.cr::before{content:"📄 raw · ";color:var(--mut);font-weight:600}}
+@media(max-width:1100px){:where(html:not(.z1600)) .ctl table.paths,:where(html:not(.z1600)) .ctl table.paths tbody,:where(html:not(.z1600)) .ctl table.paths tr,:where(html:not(.z1600)) .ctl table.paths td{display:block;width:auto}
+:where(html:not(.z1600)) .ctl table.paths colgroup,:where(html:not(.z1600)) .ctl table.paths thead{display:none}
+:where(html:not(.z1600)) .ctl table.paths tr{border-bottom:1px solid var(--line);padding:6px 0}
+:where(html:not(.z1600)) .ctl table.paths td{border:0;padding:1px 0}
+:where(html:not(.z1600)) .ctl table.paths td:first-child{font-weight:700}
+:where(html:not(.z1600)) .ctl table.paths tr{display:flex;flex-direction:column}
+:where(html:not(.z1600)) .ctl table.paths td:first-child{order:0}
+:where(html:not(.z1600)) .ctl table.paths td.cr{order:1}
+:where(html:not(.z1600)) .ctl table.paths td.cp{order:2}
+:where(html:not(.z1600)) .ctl table.paths td.ssdc{order:3;margin:6px 0 0}
+:where(html:not(.z1600)) .ctl table.paths td.ssdc::before{content:"⚡ SSD live · served";display:block;color:var(--ssd);font-weight:700}
+:where(html:not(.z1600)) .ctl table.paths td.cp::before{content:"📦 Parquet · ";color:var(--mut);font-weight:600}
+:where(html:not(.z1600)) .ctl table.paths td.cr::before{content:"📄 raw · ";color:var(--mut);font-weight:600}}
 .ctl .tile{border-left-width:3px}
 .ctl .tile.ok{background:var(--okb);border-color:var(--line);border-left-color:var(--ok)}
 .ctl .tile.warn{background:var(--warnb);border-color:var(--line);border-left-color:var(--warn)}
@@ -224,9 +224,9 @@
 .ctl table.paths td.bdc .chips{gap:3px}
 .ctl table.paths td.bdc .bd{min-height:0;line-height:18px;font-size:10.5px;padding:0 7px}
 .ctl .journey .bdfoot{margin:6px 0 0;font-size:11.5px;color:var(--mut);line-height:1.5}
-@media(max-width:1100px){.ctl table.paths td.bdc{order:4;margin:6px 0 0}
-.ctl table.paths td.bdc .grp{flex:0 0 96px}
-.ctl table.paths td.bdc::before{content:"\1F4CA Which dashboard uses this data · dashed and faded = does not read it";display:block;color:var(--l-who);font-weight:700;margin-bottom:4px}}
+@media(max-width:1100px){:where(html:not(.z1600)) .ctl table.paths td.bdc{order:4;margin:6px 0 0}
+:where(html:not(.z1600)) .ctl table.paths td.bdc .grp{flex:0 0 96px}
+:where(html:not(.z1600)) .ctl table.paths td.bdc::before{content:"\1F4CA Which dashboard uses this data · dashed and faded = does not read it";display:block;color:var(--l-who);font-weight:700;margin-bottom:4px}}
 .ctl details.group>summary{list-style:none;cursor:pointer;display:block}
 .ctl details.group>summary::-webkit-details-marker{display:none}
 .ctl details.group>summary .ghead{margin:0}
@@ -398,9 +398,9 @@
 .ctl .meter.s-none .track{background:repeating-linear-gradient(90deg,var(--line) 0 6px,transparent 6px 10px)}
 .ctl .dbb{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
 .ctl .dbb .btn{white-space:nowrap}
-@media(max-width:1100px){.ctl .dbar{grid-template-columns:1fr 1fr}
-.ctl .dbc{grid-column:1/-1}
-.ctl .dbb{grid-column:1/-1;justify-content:flex-start}}
+@media(max-width:1100px){:where(html:not(.z1600)) .ctl .dbar{grid-template-columns:1fr 1fr}
+:where(html:not(.z1600)) .ctl .dbc{grid-column:1/-1}
+:where(html:not(.z1600)) .ctl .dbb{grid-column:1/-1;justify-content:flex-start}}
 @media(max-width:560px){.ctl .dbar{grid-template-columns:1fr}
 .ctl .dbb .btn{flex:1 1 100%}}
 .ctl details.probs{margin:6px 0 0;font-size:12.5px}
@@ -468,14 +468,14 @@
 .ctl .bfill{font-size:12px;color:var(--mut);margin:8px 0 0}
 .ctl .bfill b{color:var(--fg)}
 .ctl .oldtree{margin:10px 0 0;padding:8px 10px;border-radius:10px;background:var(--s-who);max-width:420px}
-@media(max-width:1100px){.ctl table.paths td.dsc{font-weight:400}
-.ctl .journey table.paths tbody{display:flex;flex-direction:column}
-.ctl .journey table.paths tbody tr{order:1}
-.ctl .journey table.paths tbody tr:first-child{display:contents}
-.ctl .journey table.paths tbody tr:first-child td{order:0}
-.ctl .journey table.paths tbody tr:first-child td.cp{border-bottom:1px solid var(--line);padding-bottom:6px}
-.ctl .journey table.paths tbody tr:first-child td.ssdc{order:2;margin-top:10px}
-.ctl .journey table.paths tbody tr:first-child td.bdc{order:3}}
+@media(max-width:1100px){:where(html:not(.z1600)) .ctl table.paths td.dsc{font-weight:400}
+:where(html:not(.z1600)) .ctl .journey table.paths tbody{display:flex;flex-direction:column}
+:where(html:not(.z1600)) .ctl .journey table.paths tbody tr{order:1}
+:where(html:not(.z1600)) .ctl .journey table.paths tbody tr:first-child{display:contents}
+:where(html:not(.z1600)) .ctl .journey table.paths tbody tr:first-child td{order:0}
+:where(html:not(.z1600)) .ctl .journey table.paths tbody tr:first-child td.cp{border-bottom:1px solid var(--line);padding-bottom:6px}
+:where(html:not(.z1600)) .ctl .journey table.paths tbody tr:first-child td.ssdc{order:2;margin-top:10px}
+:where(html:not(.z1600)) .ctl .journey table.paths tbody tr:first-child td.bdc{order:3}}
 @media(max-width:620px){.ctl .ubar{flex-wrap:wrap}
 .ctl .useg{flex-basis:calc(50% - 2px);min-width:0;min-height:60px}}
 .ctl .pc0{display:block;font-size:11px;color:var(--mut);margin-top:3px}
@@ -604,8 +604,8 @@
 .ctl details.tch.lit>summary{box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--fh)}
 .ctl .journey.picking .btree li.on:not(.lit){opacity:.4}
 .ctl .journey.picking .btree li.lit{color:var(--fg)}
-@media(max-width:1100px){.ctl .jgrid{grid-template-columns:1fr}
-.ctl .jpanel{position:static;display:grid;grid-template-columns:1fr 1fr}}
+@media(max-width:1100px){:where(html:not(.z1600)) .ctl .jgrid{grid-template-columns:1fr}
+:where(html:not(.z1600)) .ctl .jpanel{position:static;display:grid;grid-template-columns:1fr 1fr}}
 @media(max-width:760px){.ctl .jpanel{grid-template-columns:1fr}
 .ctl table.jt thead{display:none}
 .ctl table.jt,.ctl table.jt tbody,.ctl table.jt tr,.ctl table.jt td{display:block;width:100%}
@@ -692,7 +692,7 @@
 .ctl .jbd .btree>ul>li.tg{break-inside:avoid}
 .ctl .jbd .btree li.tg>span{margin-top:0}
 .ctl .jbd .btree>ul>li.tg+li.tg{margin-top:5px}
-@media(max-width:1100px){.ctl .jbd .btree>ul{columns:1}}
+@media(max-width:1100px){:where(html:not(.z1600)) .ctl .jbd .btree>ul{columns:1}}
 .ctl .flowsvg .flow-node .sbox,.ctl .flowsvg .flow-node .bbox{stroke:none}
 .ctl .flowsvg text.bt{fill:#fff;font:600 12px var(--f-body)}
 .ctl .flowsvg .flow-node.src.plan .sbox{fill:none;stroke:#8a9a6a;stroke-width:1.2;stroke-dasharray:3 2}
@@ -776,10 +776,11 @@
 .ctl .journey.picking table.jt4 tr.jr:not(.sel){opacity:1}
 .ctl .journey.picking table.jt4 tr.jr:not(.sel) td.js,.ctl .journey.picking table.jt4 tr.jr:not(.sel) td.jh{opacity:.5}
 @media(min-width:1101px){.ctl .jpanel.jnarrow{display:none}}
-@media(max-width:1100px){.ctl table.jt4:not(.jt3) td.ssdc,.ctl table.jt4 td.bdc,.ctl table.jt4:not(.jt3) th.ssdh,.ctl table.jt4 th.bdh,.ctl table.jt4:not(.jt3) col.c3,.ctl table.jt4 col.c4{display:none}
-.ctl table.jt4:not(.jt3) col.c1{width:52%}
-.ctl table.jt4:not(.jt3) col.c2{width:48%}
-.ctl .jpanel.jnarrow{margin-top:10px}}
+:where(html.z1600) .ctl .jpanel.jnarrow{display:none}
+@media(max-width:1100px){:where(html:not(.z1600)) .ctl table.jt4:not(.jt3) td.ssdc,:where(html:not(.z1600)) .ctl table.jt4 td.bdc,:where(html:not(.z1600)) .ctl table.jt4:not(.jt3) th.ssdh,:where(html:not(.z1600)) .ctl table.jt4 th.bdh,:where(html:not(.z1600)) .ctl table.jt4:not(.jt3) col.c3,:where(html:not(.z1600)) .ctl table.jt4 col.c4{display:none}
+:where(html:not(.z1600)) .ctl table.jt4:not(.jt3) col.c1{width:52%}
+:where(html:not(.z1600)) .ctl table.jt4:not(.jt3) col.c2{width:48%}
+:where(html:not(.z1600)) .ctl .jpanel.jnarrow{margin-top:10px}}
 .ctl .xtab{display:inline-block;color:#fff;font:600 11px/22px var(--f-mono);padding:0 8px;border-radius:5px;white-space:nowrap}
 .ctl .srcb{display:inline-flex;align-items:center;gap:5px;color:#fff;font:600 11.5px/22px var(--f-body);padding:0 8px 0 5px;border-radius:5px;white-space:nowrap;vertical-align:middle}
 .ctl .srcb svg{width:14px;height:14px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:0 0 14px}
@@ -867,7 +868,7 @@
 .ctl .useg.uoff b{font-weight:600}
 .ctl .useg.uoff .uoffl{font-size:10.5px;font-style:italic;opacity:.85}
 .ctl .useg.uoff:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
-@media(max-width:1100px){.ctl .useg.uoff .uoffl{display:none}}
+@media(max-width:1100px){:where(html:not(.z1600)) .ctl .useg.uoff .uoffl{display:none}}
 .ctl .uhd{flex-wrap:wrap}
 .ctl .uhd .uact{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
 .ctl .uhd .uact .dim{font-size:11.5px;color:var(--mut)}
@@ -987,7 +988,7 @@
 .ctl .scroll:has(>table.stk){overflow:visible}}
 @media(max-width:620px){.ctl .useg.uoff .uoffl{display:inline}}
 @media(min-width:761px){.ctl .bfgrid.l-y{grid-template-columns:repeat(auto-fill,minmax(122px,1fr))}}
-@media(max-width:1100px){.ctl .dbar .cost,.ctl .dbnote{justify-self:start;text-align:left}}
+@media(max-width:1100px){:where(html:not(.z1600)) .ctl .dbar .cost,:where(html:not(.z1600)) .ctl .dbnote{justify-self:start;text-align:left}}
 @media(max-width:760px){.ctl .dbnote .lnk,.ctl .ulive .lnk{min-height:44px}
 .ctl details.sec .legacyrow>summary{min-height:44px}}
 /* The board's own additions to the design: the named groups a narrowed press asks for, the note under the hand-typed

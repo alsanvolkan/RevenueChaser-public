@@ -139,3 +139,34 @@ def test_two_dataset_cards_a_row_on_every_desktop_pane_and_one_on_a_phone():
     assert "@media(max-width:900px){.ctl .sgrid{grid-template-columns:1fr}}" in tail
     assert ".ctl .sgrid{grid-template-columns:repeat(2,minmax(0,1fr))}" in tail
     assert ".ctl .sbox .btn{min-height:30px" in tail, "denser on a desktop; the phone keeps 44 px targets"
+
+
+def _desktop_breakpoints(css: str):
+    """Each ``@media(max-width:N)`` / ``@media(min-width:N)`` block with 901 < N <= 1600, as (kind, N, its rules)."""
+    for m in re.finditer(r"@media\s*\((max|min)-width:([\d.]+)px\)\s*\{", css):
+        n = float(m.group(2))
+        if not 901 < n <= 1600:   # 900 / 901 is the phone breakpoint, the one reflow there is
+            continue
+        j, depth = m.end(), 1
+        while depth:
+            depth += (css[j] == "{") - (css[j] == "}")
+            j += 1
+        yield m.group(1), n, re.findall(r"([^{}]+)\{[^{}]*\}", css[m.end():j - 1]), j
+
+
+def test_the_zoomed_1600_layout_takes_no_breakpoint_between_the_phone_and_1600():
+    """At a 969 px pane the page is the 1600 layout zoomed down: a breakpoint that sees the pane must not reflow it."""
+    js = _css("control.js")
+    assert "document.documentElement.classList.toggle('z1600', !phone)" in js
+    found = []
+    for name in ("control.css", "needs.css", "data_tree.css"):
+        css = _css(name)
+        for kind, n, selectors, end in _desktop_breakpoints(css):
+            for sel in (s.strip() for group in selectors for s in group.split(",")):
+                found.append((name, kind, n, sel))
+                if kind == "max":
+                    assert sel.startswith(":where(html:not(.z1600)) "), f"{name} @{kind}-width:{n}: {sel}"
+                else:
+                    twin = ":where(html.z1600) " + sel
+                    assert twin in css[end:end + 400], f"{name} @{kind}-width:{n} has no z1600 twin: {sel}"
+    assert len(found) >= 30, f"the scan found the breakpoints: {len(found)}"
