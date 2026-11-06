@@ -535,6 +535,23 @@ def _health_of(rows: list[dict]) -> dict:
     return {"fresh": fresh, "total": total, "state": state, "pills": pills}
 
 
+def file_state(path, tables: list[dict], rows: list[dict]) -> dict:
+    """A served file on disk (an ``os.stat`` of ``path``), its tables with rows (the counts ``collect`` read) and its
+    datasets in the Health strip's buckets. A file not there, or no path known, is ``exists: False`` with Nones."""
+    try:
+        st = os.stat(path) if path else None
+    except OSError:
+        st = None
+    counts = {k: sum(1 for r in rows if r["filter"] == k) for k in ("fresh", "late", "stale", "never")}
+    counts["total"] = len(rows)
+    with_rows = [t["name"] for t in tables if t.get("rows")]
+    return {"exists": st is not None, "bytes": st.st_size if st else None,
+            "written_at": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds")
+            if st else None,
+            "tables": len(tables), "tables_with_rows": len(with_rows),
+            "empty": [t["name"] for t in tables if not t.get("rows")], "counts": counts}
+
+
 def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datetime,
           timer: dict | None = None) -> list[dict]:
     """The serving files in build order, each with its dataset rows (in step order) and its tables."""
@@ -566,7 +583,8 @@ def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datet
                     "runs_on_universe": fc.runs_on_universe, "color": color, "datasets": rows,
                     "health": _health_of(rows), "tables": tables, "path": live.get("path"),
                     "bytes": live.get("bytes"), "storage": storage.get("datasets") or {},
-                    "roots": storage.get("roots") or {}, "walked_at": storage.get("walked_at")})
+                    "roots": storage.get("roots") or {}, "walked_at": storage.get("walked_at"),
+                    "state": file_state(live.get("path"), tables, rows)})
     return out
 
 
