@@ -1112,3 +1112,11 @@
 .ctl details.htiles>summary::before{content:"▸ ";margin-right:4px}
 .ctl details.htiles[open]>summary::before{content:"▾ "}
 @media(max-width:760px){.ctl .alerts{grid-template-columns:1fr}}
+
+/* #527 steps 6-7: the queue reads whole names, Stop beside the status, the limit line, a long note cut */
+.ctl .qtbl code.dsn{white-space:nowrap}
+.ctl .qtbl .stbtn{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.ctl .qtbl td[data-label="Status"],.ctl .qtbl td[data-label="Asked"]{white-space:nowrap}
+.ctl .qtbl .runl{display:block;font-size:.85em;color:var(--mut)}
+.ctl .qtbl .runl.warn{color:var(--warn)}
+.ctl .qtbl details.note>summary{cursor:pointer;list-style:none}

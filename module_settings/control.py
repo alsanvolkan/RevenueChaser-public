@@ -22,7 +22,9 @@ The page itself is ``control_render``; this is its model:
 from __future__ import annotations
 
 import os
+import re
 from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from RevenueChaser.rcdata import caps, scaffold
@@ -257,7 +259,7 @@ def _read_job_runs(now: datetime) -> list[dict]:
 
 
 def alerts(nd: dict, providers: list[dict], ibkr: dict | None, switches: dict | None, newest_backup: dict | None,
-           newest_session: str | None) -> list[dict]:
+           newest_session: str | None, running: list[dict] | None = None) -> list[dict]:
     """#527 step 5: the problem cards, worst first. Each is ``{"key", "cls", "n", "label"}``; an empty list means
     nothing needs avo now. The fetch switch is not a card: the top bar says it."""
     cards = nd.get("datasets") or []
@@ -272,6 +274,10 @@ def alerts(nd: dict, providers: list[dict], ibkr: dict | None, switches: dict | 
         more = f" and {len(stale) - STALE_NAMES} more" if len(stale) > STALE_NAMES else ""
         out.append({"key": "stale", "cls": "bad", "n": count(len(stale)),
                     "label": "stale: " + ", ".join(stale[:STALE_NAMES]) + more})
+    near_end = [r for r in running or [] if r["cls"] == "warn" or r["who"] == "Claude session"]
+    if near_end:
+        out.append({"key": "running", "cls": "warn", "n": count(len(near_end)),
+                    "label": "near its time limit or cut at 2 h: " + "; ".join(r["line"] for r in near_end)})
     off = (switches or {}).get("backup") or {}
     if off.get("off_at") is not None:
         when = _local(datetime.fromtimestamp(float(off["off_at"]), timezone.utc)).strftime("%d %b %H:%M")
@@ -296,7 +302,8 @@ def alerts(nd: dict, providers: list[dict], ibkr: dict | None, switches: dict | 
 
 
 def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *, timer: dict | None = None,
-           longest: dict | None = None, file_views: list[dict] | None = None, switches: dict | None = None) -> dict:
+           longest: dict | None = None, file_views: list[dict] | None = None, switches: dict | None = None,
+           jobs_now: list[dict] | None = None) -> dict:
     cards = nd.get("datasets") or []
     total = len(cards)
     by = {k: 0 for k in ("fresh", "late", "stale", "never")}
@@ -371,7 +378,7 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
     if newest_backup is not None:
         good.append(f"newest backup {day_words(newest_backup['newest'])}")
     return {"tiles": tiles, "summary": summary, "counts": by, "problems": problems,
-            "alerts": alerts(nd, providers, ibkr, switches, newest_backup, newest), "allgood": " · ".join(good),
+            "alerts": alerts(nd, providers, ibkr, switches, newest_backup, newest, jobs_now), "allgood": " · ".join(good),
             "files": [{"name": f["name"], "state": f["state"]} for f in file_views or []]}
 
 
@@ -625,6 +632,92 @@ def since_words(schedule: dict | None) -> str:
     at = "not recorded yet" if when is None else f"{_local(when):%a} {_local(when).day} {_local(when):%b, %H:%M}"
     return (f"paused · since {at} by {schedule.get('paused_by') or 'not recorded yet'} · a running fetch stops "
             "before its next provider call; the files it fetched stay")
+
+
+#: The cap Claude Code puts on a background command started from a session (#527): it is killed after 2 h.
+CLAUDE_SESSION_LIMIT_S = 2 * 3600
+#: The systemd unit the homesrv Claude Code session runs under; a process in it was started from a session.
+CLAUDE_UNIT = "life-claude-rc.service"
+#: A running request past this share of its limit is a card.
+RUN_ALERT = 0.8
+
+
+def _read_runs_now() -> list[dict]:
+    from RevenueChaser.rcdata import ops
+    return ops._select("SELECT * FROM job_runs2 WHERE status = 'running' AND finished_at IS NULL")
+
+
+def _read_cgroup(pid) -> str | None:
+    try:
+        return Path(f"/proc/{int(pid)}/cgroup").read_text(encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _unit_of(cgroup: str | None) -> str | None:
+    """The ``.service`` a process's cgroup names, or None."""
+    for part in reversed(re.split(r"[/\n]", cgroup or "")):
+        if part.endswith(".service"):
+            return part
+    return None
+
+
+def _unit_limit_s(unit: str) -> tuple[bool, float | None]:
+    """``(known, limit in seconds or None)`` for a ``life-rc-*`` unit, from the registry (#527 step 1 keeps it the
+    installed unit's limit)."""
+    from RevenueChaser.core import automations
+    base = unit[:-len(".service")]
+    for e in automations.REGISTRY:
+        if base in (e.unit, "life-" + e.name.lower()):
+            m = e.settings.limit_minutes
+            return True, None if m is None else m * 60.0
+    return False, None
+
+
+def duration_words(seconds) -> str:
+    s = int(seconds or 0)
+    h, m = divmod(s // 60, 60)
+    return f"{h} h {m} min" if h and m else f"{h} h" if h else f"{m} min"
+
+
+def running_jobs(active: list[dict], runs: list[dict], cgroup, alive, now: datetime) -> list[dict]:
+    """#527 step 6: one line a running request: ``name · elapsed / limit · who started it``.
+
+    A request is paired with its dataset's running ``job_runs2`` row (oldest with oldest), whose pid names the
+    process. A ``life-rc-*`` unit's limit comes from the registry, the Claude Code session's unit gives the 2 h cap,
+    any other process is "unknown" (no limit is guessed), and a pid with no process is "probably lost"."""
+    by_ds: dict[str, list[dict]] = {}
+    for r in sorted(runs or [], key=lambda r: float(r.get("started_at") or 0)):
+        by_ds.setdefault(str(r.get("dataset")), []).append(r)
+    out = []
+    for q in sorted((q for q in active or [] if q.get("status") == "running"),
+                    key=lambda q: float(q.get("started_at") or 0)):
+        ds = str(q.get("dataset"))
+        run = (by_ds.get(ds) or [None]).pop(0) if by_ds.get(ds) else None
+        start = (run or {}).get("started_at") or q.get("started_at")
+        elapsed = max(0.0, now.timestamp() - float(start)) if start else None
+        pid = (run or {}).get("pid")
+        limit, cls = None, "ok"
+        if pid is not None and not alive(pid):
+            who, cls = "process gone · probably lost", "none"
+        else:
+            unit = _unit_of(cgroup(pid)) if pid is not None else None
+            if unit == CLAUDE_UNIT:
+                who, limit = "Claude session", float(CLAUDE_SESSION_LIMIT_S)
+            elif unit and unit.startswith("life-rc-"):
+                known, limit = _unit_limit_s(unit)
+                who = f"systemd {unit[:-len('.service')]}"
+            else:
+                who = "unknown"
+        if cls != "none" and limit and elapsed is not None and elapsed >= RUN_ALERT * limit:
+            cls = "warn"
+        elif cls != "none" and limit is None:
+            cls = "none" if who == "unknown" else "ok"
+        line = (f"{ds} · {duration_words(elapsed) if elapsed is not None else '—'} / "
+                f"{duration_words(limit) if limit else 'no limit'} · {who}")
+        out.append({"id": q.get("id"), "dataset": ds, "elapsed_s": elapsed, "limit_s": limit, "who": who,
+                    "pid": pid, "cls": cls, "line": line})
+    return out
 
 
 def _read_switches() -> dict:
@@ -896,7 +989,8 @@ def _timer(reader) -> dict:
 # ── The whole board ───────────────────────────────────────────────────────────────────────────────────────────
 
 def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, now: datetime | None = None,
-          datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None, switches=None) -> dict:
+          datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None, switches=None,
+          runs_now=None, cgroup=None, alive=None) -> dict:
     """The page's model from ``newdata.collect``'s output. ``applied`` is the saved universe
     (``board_settings.values("module_settings")["values"]``), ``ibkr`` the gateway's login state, ``datasets`` the
     builder's datasets (default: ``newdata._datasets()``). ``timer`` and ``job_runs`` are the readers of the hourly
@@ -928,13 +1022,21 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         switch_rows = switches() if switches else _read_switches()
     except Exception:  # noqa: BLE001 - an unreadable ops store shows the switches as not known
         switch_rows = None
+    try:
+        from RevenueChaser.core import procs
+        running = running_jobs((nd.get("queue") or {}).get("active") or [],
+                               runs_now() if runs_now else _read_runs_now(), cgroup or _read_cgroup,
+                               alive or procs.pid_alive, now)
+    except Exception:  # noqa: BLE001 - an unreadable store leaves the lines without a limit, never the board failing
+        running = []
     file_views = files(nd, datasets, uni, reads, now, timer_view, modes)
     control_sources.attach_pv(file_views, datasets)
     return {
         "error": None,
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
         "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, file_views=file_views,
-                         switches=switch_rows),
+                         switches=switch_rows, jobs_now=running),
+        "running": running,
         "timer": timer_view, "longest_build": longest,
         "switches": switches_view(switch_rows), "gateway": dict(zip(("cls", "n", "label"), _gateway(ibkr))),
         "universe": uni, "identity": nd.get("identity"), "my_universe": nd.get("my_universe"), "scope": scope(uni), "files": file_views, "providers": provider_rows,

@@ -930,27 +930,43 @@ def _cross(view: dict) -> str:
             'no new call.</p></div></details>')
 
 
+#: A queue note longer than this is cut to one line; the whole note is one tap away.
+NOTE_CUT = 120
+
+
+def _note(text) -> str:
+    t = str(text or "—")
+    if len(t) <= NOTE_CUT:
+        return esc(t)
+    return f'<details class="note"><summary>{esc(t[:NOTE_CUT])}…</summary>{esc(t)}</details>'
+
+
 def _queue(view: dict) -> str:
     q = view["queue"]
+    lines = {r.get("id"): r for r in view.get("running") or []}
     rows = []
     for r in list(q.get("active") or []) + list(q.get("finished") or [])[:10]:
-        stop = (f' <button type="button" class="btn" data-job="stop" data-dataset="{esc(r.get("dataset"))}" '
+        stop = (f'<button type="button" class="btn" data-job="stop" data-dataset="{esc(r.get("dataset"))}" '
                 f'data-status="{esc(r.get("status"))}">Stop</button><span class="dim" role="status"></span>'
                 if r.get("status") in ("queued", "running") else "")
-        rows.append(f'<tr><td data-label="Dataset"><code>{esc(r.get("dataset"))}</code></td>'
-                    f'<td data-label="Status">{esc(r.get("status"))}{stop}</td>'
-                    f'<td data-label="Asked by">{esc(r.get("requested_by") or "—")}</td>'
-                    f'<td data-label="Asked">{esc(control._clock(r.get("requested_at")) if r.get("requested_at") else "—")}'
-                    f'</td><td data-label="Note">{esc(r.get("note") or "—")}</td></tr>')
-    body = "".join(rows) or '<tr><td colspan="5" class="dim">nothing queued, nothing run yet</td></tr>'
+        run = lines.get(r.get("id"))
+        run_line = (f'<span class="runl {esc(run.get("cls") or "")}">{esc(run["line"].split(" · ", 1)[-1])}</span>'
+                    if run else "")
+        when = control._clock(r.get("requested_at")) if r.get("requested_at") else "—"
+        rows.append(f'<tr><td data-label="Dataset"><code class="dsn">{esc(r.get("dataset"))}</code>{run_line}</td>'
+                    f'<td data-label="Status"><span class="stbtn">{esc(r.get("status"))}{stop}</span></td>'
+                    f'<td data-label="Asked">{esc(r.get("requested_by") or "—")} · {esc(when)}</td>'
+                    f'<td data-label="Note">{_note(r.get("note"))}</td></tr>')
+    body = "".join(rows) or '<tr><td colspan="4" class="dim">nothing queued, nothing run yet</td></tr>'
     waiting = len(q.get("active") or [])
     return ('<details class="sec" id="sec-queue"><summary><h2>Queue and last runs</h2>'
             f'<span class="secs">{waiting} waiting or running · the last finished requests</span></summary>'
-            '<div class="group" style="border-left-color:var(--mut)"><div class="scroll"><table class="stk" '
-            'id="ctl-queue"><thead><tr><th>Dataset</th><th>Status</th><th>Asked by</th><th>Asked</th><th>Note</th></tr>'
+            '<div class="group" style="border-left-color:var(--mut)"><div class="scroll"><table class="stk qtbl" '
+            'id="ctl-queue"><thead><tr><th>Dataset</th><th>Status</th><th>Asked</th><th>Note</th></tr>'
             f'</thead><tbody>{body}</tbody></table></div><p class="hint">Stop pauses the dataset: a queued request '
             'is cancelled, a running fetch stops before its next provider call (the files it fetched stay), and '
-            'the hourly pass skips the dataset until Resume.</p></div></details>')
+            'the hourly pass skips the dataset until Resume. A running line reads time so far / its limit · who '
+            'started it; a Claude session\'s command is cut at 2 h.</p></div></details>')
 
 
 # ── The page's data and the whole section ─────────────────────────────────────────────────────────────────────
