@@ -3032,6 +3032,29 @@ def _tab_strip() -> str:
             'aria-selected="false" tabindex="-1">Needs</button></div></nav>')
 
 
+def _ticker_drill(payload: dict) -> str:
+    """G7 (#124): the drill, with its own search box (the filter kit's combobox) and its ``id="drill"`` anchor.
+
+    #485: the names are the spine's (``inventory._universe_tickers``). An empty or failed read is one line in the
+    box's place, never an empty box.
+    """
+    error = payload.get("tickers_error")
+    if error:
+        pick = f'<p class="warn drillpick">the spine could not be read: {_html.escape(str(error))}</p>'
+    elif not payload.get("tickers"):
+        pick = '<p class="empty drillpick">the spine holds no names</p>'
+    else:
+        pick = ('<div class="frow drillpick"><span class="flbl" id="ticker-combo-label">Ticker</span>'
+                + combobox_html("ticker-combo", "ticker-combo-label", "Search ticker or name") + "</div>")
+    return ('<div id="ticker-drill">'
+            '<h2 class="sec">Ticker detail</h2>'
+            f'{pick}'
+            '<div class="drill" id="drill" hidden>'
+            '<div class="drill-grid" id="drill-body">'
+            '<div class="dempty">Pick a ticker to see its stored data.</div>'
+            "</div></div></div>")
+
+
 def render_settings_dashboard(payload: dict) -> str:
     payload = payload or {}
     rows = payload.get("rows") or []
@@ -3063,18 +3086,7 @@ def render_settings_dashboard(payload: dict) -> str:
                 "populated yet. Run a Fetch to load one.</div>")
 
     data_json = script_json(payload.get("tickers") or [])
-    # G7 (#124): avo kept the drill, below the dataset table, carrying everything. It keeps its
-    # own search box (the filter kit's combobox) and its ``id="drill"`` anchor.
-    drill = (
-        '<div id="ticker-drill">'
-        '<h2 class="sec">Ticker detail</h2>'
-        '<div class="frow drillpick"><span class="flbl" id="ticker-combo-label">Ticker</span>'
-        + combobox_html("ticker-combo", "ticker-combo-label", "Search ticker or name") + "</div>"
-        '<div class="drill" id="drill" hidden>'
-        '<div class="drill-grid" id="drill-body">'
-        '<div class="dempty">Pick a ticker to see its stored data.</div>'
-        "</div></div></div>"
-    )
+    drill = _ticker_drill(payload)
 
     identity_html = _identity_card(payload.get("identity"))
     other_tables_html = _other_tables_section(payload.get("other_tables"))
