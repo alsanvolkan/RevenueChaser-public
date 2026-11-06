@@ -453,8 +453,11 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         r = _client()
         open_rows = _fetch("build_issues", [pk for k in kinds
                                             for pk in r.zrange(_key("build_issues", "open", dataset, "kind", k), 0, -1)])
-        have = {(row["kind"], row["key"]): row for row in open_rows if row["resolved_on"] is None}
-        gone = [{**row, "resolved_on": today} for k, row in have.items() if k not in want]
+        have: dict[tuple, list[dict]] = {}       # every row of a key, not one (see the note in ops.py)
+        for row in open_rows:
+            if row["resolved_on"] is None:
+                have.setdefault((row["kind"], row["key"]), []).append(row)
+        gone = [{**row, "resolved_on": today} for k, rows_ in have.items() if k not in want for row in rows_]
         fresh = [(k, key, detail) for (k, key), detail in sorted(want.items()) if (k, key) not in have]
         ids = _new_ids("build_issues", len(fresh)) if fresh else []
         new = [{"id": i, "dataset": dataset, "found_on": today, "kind": k, "key": key, "detail": detail,

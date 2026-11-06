@@ -480,8 +480,13 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         marks = ", ".join("?" * len(kinds))
         open_rows = con.execute(f"SELECT id, kind, key FROM build_issues WHERE dataset = ? AND resolved_on IS NULL "
                                 f"AND kind IN ({marks})", (dataset, *kinds)).fetchall()
-        have = {(r["kind"], r["key"]): r["id"] for r in open_rows}
-        gone = [i for k, i in have.items() if k not in want]
+        # Every row of a key, not one: ``record_issue`` writes a row per run, so one unfixed problem becomes
+        # many rows with the same key (FRED's missing key left six), and keeping all but one open means the
+        # health screen never stops claiming a problem that is over.
+        have: dict[tuple, list[int]] = {}
+        for r in open_rows:
+            have.setdefault((r["kind"], r["key"]), []).append(r["id"])
+        gone = [i for k, ids in have.items() if k not in want for i in ids]
         con.executemany("UPDATE build_issues SET resolved_on = ? WHERE id = ?", [(today, i) for i in gone])
         new = [(dataset, today, k, key, detail, run_id) for (k, key), detail in sorted(want.items())
                if (k, key) not in have]
