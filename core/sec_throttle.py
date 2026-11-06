@@ -49,8 +49,13 @@ SEC_PROCESSES = ("RC-Build", "the dashboard", "RC-ValueChain-Sync", "RC-Relatedn
 FALLBACK_RATE = LIMIT / len(SEC_PROCESSES)
 
 # How long to wait for the OS lock before giving the caller the in-process fallback.
-# A live critical section is a read and a write; anything longer means the lock is stuck.
-_LOCK_WAIT = 0.25
+# A live critical section is a read and a write, so a peer is never the reason to wait long -- but on the first
+# real parallel SEC fetch (5-6 Nov 2026) two fetches on this bucket drove one of them into the fallback, and
+# falling back is the expensive answer: ``FALLBACK_RATE`` is the ceiling split six ways, so two fetches that both
+# fall back ask at 3.33/s together where one on the bucket asks at RATE. Waiting costs at most this long once;
+# falling back costs the rest of the run. The fallback stays what it was, the floor for a bucket that is really
+# unusable (another user's file, no OS lock on the host), not the answer to a busy second.
+_LOCK_WAIT = 2.0
 _LOCK_SPIN = 0.002
 
 # A timestamp more than this far ahead is not a clock a live peer wrote. Reset.
