@@ -69,3 +69,15 @@ def test_the_served_table_is_its_own_and_the_schema_says_so():
     # eps_reported is never a fundamental_fact field: that table is the SEC's values only.
     from RevenueChaser.rcdata.build.fundamentals import facts
     assert "eps_reported" not in facts.FIELDS
+
+
+def test_the_endpoint_writes_a_share_class_the_way_uw_does():
+    """UW writes a share class with a dot; the SEC's files and the spine write it with a dash. Asked with the
+    dash, UW answers 422 (BRK-A, BF-A, AKO-A, CRD-A, MOG-A, the five of 5,304 that failed on 6 Nov 2026)."""
+    from RevenueChaser.core.providers.unusual_whales import _seg
+    from RevenueChaser.rcdata.build.fundamentals import uw_financials
+    assert uw_earnings.endpoint("BRK-A") == "/stock/BRK.A/earnings"
+    assert uw_financials.endpoint("BRK-A") == "/stock/BRK.A/financials"
+    assert uw_earnings.endpoint("AAPL") == "/stock/AAPL/earnings"
+    # A segment of UW's that is not a ticker carries no dash, and the encoding guarantee is unchanged.
+    assert (_seg("afterhours"), _seg("1d"), _seg("a/b")) == ("afterhours", "1d", "a%2Fb")

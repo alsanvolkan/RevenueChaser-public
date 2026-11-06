@@ -147,8 +147,8 @@ class UWEarnings:
                 break
             ctx.check_cap(PROVIDER)
             # No pacer: UW publishes no request window (``caps.WINDOWS``), so there is none to keep. The day cap
-            # and the client's own 429 backoff are the limits, as for every other UW dataset.
-            ctx.count(PROVIDER, calls=1)
+            # and the client's own 429 backoff are the limits, as for every other UW dataset. The call itself is
+            # counted by ``RunContext._on_uw_response``, which sees the retries too, so it is not counted here.
             res = ctx.uw_client().stock_earnings_result(ticker)
             if res.status != "ok":
                 ctx.count(PROVIDER, failures=1)

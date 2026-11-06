@@ -56,8 +56,12 @@ _random = random.random
 
 def _seg(value) -> str:
     """One URL path segment: percent-encoded, so a ticker (or session, or candle size) can
-    never add a segment or a query string. ``BRK.B`` and ``AAPL`` come out unchanged."""
-    return quote(str(value), safe="")
+    never add a segment or a query string. ``BRK.B`` and ``AAPL`` come out unchanged.
+
+    A share class comes out the way UW writes it, with a dot: the SEC's files and the spine write ``BRK-A``,
+    and UW answers that 422. The other segments this builds -- ``afterhours``, ``premarket``, ``1d`` -- carry
+    no dash, so the translation only ever reaches a ticker."""
+    return quote(str(value).replace("-", "."), safe="")
 
 
 # Body shapes for the endpoint methods (B5): each takes a decoded body and returns what the method hands
