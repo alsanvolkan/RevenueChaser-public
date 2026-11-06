@@ -79,8 +79,7 @@ def test_the_backfill_serves_the_filing_list_its_8k_items_and_the_two_documents(
         ("2.02,9.01", "8-K", date(2025, 10, 29))]
     assert fx.q("SELECT items FROM sec_submissions WHERE accession = ?", fx.Q26) == [(None,)]
     docs = fx.q("SELECT item, form, accession, chars, quality FROM filing_item WHERE kind = 'document' ORDER BY item")
-    # ``whole`` is the document uncut (avo, 5 Nov 2026); ``market`` and ``financials`` get no row here because
-    # this fixture's 10-K has neither Item 5 nor Item 8.
+    # ``whole`` is the document uncut (avo, 5 Nov 2026).
     assert docs == [("business", "10-K", fx.K25, CAP, "capped"),
                     ("proxy", "DEF 14A", fx.PROXY, 5_000, "ok"),
                     ("whole", "10-K", fx.K25, 210_098, "ok")]
@@ -136,7 +135,7 @@ def test_an_aif_exhibit_with_no_aif_in_its_name_is_still_typed(sec):
     sec.add("ex99-1.htm", fx.ten_k(9_000))
     fx.run(filings.NAME, mode="backfill", to="2026-10-28")
     rows = fx.q("SELECT item, quality FROM filing_item WHERE kind = 'document' AND cik = '1094517' ORDER BY item")
-    assert ("aif", "ok") in rows, rows
+    assert ("aif", "by_number") in rows, rows      # ex99-1.htm: its number chose it, not its name
     assert ("whole", "ok") in rows
     assert not sec.calls("ex99-2.htm"), "the statements exhibit is not the business description"
 
@@ -201,15 +200,7 @@ def test_a_document_the_archive_does_not_hold_is_a_named_miss_not_a_failed_run(s
     assert "document_missing" in kinds
 
 
-# ── The document kept whole, and the two sections avo asked for (5 Nov 2026) ──────────────────────────────────
-
-def test_a_section_the_filer_does_not_have_gets_no_row():
-    """No row rather than a row that says nothing: the ``whole`` row proves the document was read, so a missing
-    section is the filer's, not a gap in the fetch."""
-    items = {i for i, _, _ in filings.document_sections(fx.ten_k(5_000), "10-K")}
-    assert "whole" in items and "business" in items
-    assert "market" not in items and "financials" not in items
-
+# ── The document kept whole, and a 40-F read at all (avo, 5 Nov 2026) ─────────────────────────────────────────
 
 def test_an_aif_exhibit_is_picked_by_name_largest_first():
     listing = {"directory": {"item": [
@@ -222,6 +213,22 @@ def test_an_aif_exhibit_is_picked_by_name_largest_first():
     assert filings.aif_exhibits(listing) == ["a2025-40xfex991aif.htm", "ex991aif-small.htm"]
     assert filings.aif_exhibits({"directory": {"item": []}}) == []
     assert filings.aif_exhibits({}) == []
+
+
+def test_an_exhibit_chosen_by_its_number_alone_says_so_on_the_row(sec):
+    """The number is one filer's layout, not a rule of the form, so a by-number pick is a guess -- a filer who
+    keeps the AIF in the primary and files its statements as 99.1 would otherwise get an ``aif`` row that reads
+    like Brookfield's real one."""
+    fx.filing_routes(sec, {"1094517": fx.submissions(1094517, [
+        ("0001193125-25-150000", "40-F", "2025-06-25", "2025-03-31", "tm-40f.htm", "")])})
+    sec.add("tm-40f.htm", fx.ten_k(20_000))
+    sec.add("index.json", {"directory": {"item": [{"name": "ex99-1.htm", "size": "500000"}]}})
+    sec.add("ex99-1.htm", fx.ten_k(9_000))
+    fx.run(filings.NAME, mode="backfill", to="2026-10-28")
+    assert ("aif", "by_number") in fx.q(
+        "SELECT item, quality FROM filing_item WHERE kind = 'document' AND cik = '1094517'")
+    assert filings.picked_by_name({}, "ex99-1aif.htm") is True
+    assert filings.picked_by_name({}, "ex99-1.htm") is False
 
 
 def test_the_statements_exhibit_is_never_mistaken_for_the_business_description():

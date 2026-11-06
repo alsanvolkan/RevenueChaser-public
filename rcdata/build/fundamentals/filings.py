@@ -119,7 +119,7 @@ def index_url(cik: str, accession: str) -> str:
 #: shortcut: three named limits. (1) The name is the only signal, because ``index.json`` carries no reliable
 #: exhibit *type*; upgrade by reading the filing's ``<CIK>-index.htm`` description column. (2) The 99.1/99.2/99.3
 #: order is **one filer's** layout, not a rule of the form. (3) Only ``.htm`` and ``.html`` are considered, so a
-#: filer who files the AIF as a PDF is missed (``aif_exhibits`` raises an issue when it can tell).
+#: filer who files the AIF as a PDF is missed (``read_exhibits`` raises ``aif_not_named`` when it can tell).
 _AIF_NAME = re.compile(r"aif", re.I)
 _EX_99_1 = re.compile(r"ex(?:hibit)?[-_]?99[._-]?1(?![0-9])", re.I)
 _EX_99_ANY = re.compile(r"ex(?:hibit)?[-_]?99", re.I)
@@ -150,9 +150,22 @@ def aif_exhibits(listing: dict, primary: str | None = None) -> list[str]:
     items = ((listing or {}).get("directory") or {}).get("item") or []
     pages = [(int(i.get("size") or 0), str(i.get("name") or "")) for i in items
              if str(i.get("name") or "").lower().endswith((".htm", ".html")) and str(i.get("name")) != primary]
+    return [name for _, name in sorted(_chosen(pages), reverse=True)]
+
+
+def _chosen(pages: list[tuple[int, str]]) -> list[tuple[int, str]]:
     named = [(size, name) for size, name in pages if _AIF_NAME.search(name)]
-    chosen = named or [(size, name) for size, name in pages if _EX_99_1.search(name)]
-    return [name for _, name in sorted(chosen, reverse=True)]
+    return named or [(size, name) for size, name in pages if _EX_99_1.search(name)]
+
+
+def picked_by_name(listing: dict, name: str, primary: str | None = None) -> bool:
+    """True when ``name`` was chosen because it says ``aif``, False when only its number chose it.
+
+    The number is one filer's layout and not a rule of the form, so a by-number pick is a guess: a filer who
+    keeps the Annual Information Form in the primary document and files its statements as 99.1 would get an
+    ``aif`` row that is the statements. Carried onto the row's ``quality`` so the guesses can be counted.
+    """
+    return bool(_AIF_NAME.search(name))
 
 
 def missed_exhibits(listing: dict, primary: str | None = None) -> int:
@@ -205,8 +218,6 @@ def pick(rows: list[dict], forms: tuple[str, ...]) -> dict | None:
             best, best_rank = r, rank
     return best
 
-
-_DASH = r"\-\u2010-\u2015"
 
 def document_sections(html: str, form: str) -> list[tuple[str, str, str]]:
     """``(item, text, quality)`` per section this layer serves from one document.
@@ -316,7 +327,8 @@ def read_exhibits(ctx: base.RunContext, cik: str, f: dict, as_of: date) -> int:
             ctx.issue("document_missing", f"{cik}:{f['accession']}:{name}", f"the archive holds no {name}")
             continue
         base.write_raw_json(common.meta_path(path), {"cik": cik, "accession": f["accession"], "form": f["form"],
-                                                     "exhibit": name, "as_of": as_of.isoformat(), "url": url,
+                                                     "exhibit": name, "by_name": picked_by_name(listing, name),
+                                                     "as_of": as_of.isoformat(), "url": url,
                                                      "fetched_at": time.time(), "run_id": ctx.run_id})
         base.write_raw(path, r.content)
         fetched += 1
@@ -435,6 +447,10 @@ class Filings:
                           "fetched_at": float(meta["fetched_at"]), "run_id": meta["run_id"]}
                 exhibit = meta.get("exhibit")
                 for item, text, quality in document_sections(html, f["form"]):
+                    if exhibit and meta.get("by_name") is False:
+                        # Chosen by its number alone, which is one filer's layout: say so on the row rather than
+                        # letting a guess read like Brookfield's real Annual Information Form.
+                        quality = "by_number"
                     # An exhibit is the business description on its own: its whole text is the section, and the
                     # 10-K item slices do not apply to a Canadian Annual Information Form.
                     if exhibit and item != "whole":
