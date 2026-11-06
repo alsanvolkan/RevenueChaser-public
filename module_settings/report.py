@@ -3090,7 +3090,9 @@ def _health_panel(payload: dict, view: dict, nd: dict | None = None) -> str:
     moved = (_boards_section(payload.get("boards") or [], payload.get("rows") or [])
              + _automations_section(payload.get("automations") or [])
              + _watch_section(nd)
-             + _ibkr_login_card(payload.get("ibkr_login_url")) + _ibkr_state_card(payload.get("ibkr_login_state")))
+             + _ibkr_login_card(payload.get("ibkr_login_url")) + _ibkr_state_card(payload.get("ibkr_login_state"))
+             # the reads that failed while the page was built: a dash above may be an error, not missing data
+             + _errors_list(payload.get("errors") or []))
     # One ``#needs`` frame and palette for the whole tab; the queue keeps its ``.ctl`` scope inside it.
     return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
             f'{_queue_html(view)}'

@@ -143,7 +143,7 @@ def test_the_disk_picture_press_follows_the_job_and_tells_the_shell():
     A dashboard job is followed through ``/api/job/<id>`` (``settingsPoll``, AGENTS.md), and the shell starts its
     poll from the ``rc-job-submitted`` message (``templates/dashboard.html``)."""
     js = control_render.CTL_JS
-    press = js[js.index("function picture(btn)"):js.index("function queue(btn, dataset, body)")]
+    press = js[js.index("function picture(btn)"):js.index("function queue(btn, dataset, body")]
     assert "settingsPoll(" in press, "a dashboard job is followed through /api/job/<id>"
     assert "follow(" not in press, "never the builder's request queue"
     assert "body.job_id" in press and "body.id" not in press, "_submit answers with job_id"

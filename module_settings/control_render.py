@@ -202,7 +202,7 @@ def _universe(view: dict) -> str:
         f'and fills use</span><span class="uval">runs on <b id="uni-sum">{esc(summary)}</b></span>'
         '<span class="uact"><button type="button" class="btn go" data-job="fetch" data-dataset="spine/security">'
         f'Fetch the universe</button><span class="dim">{esc(spine_words)}</span></span></div>'
-        '<div class="ubar" role="group" aria-label="Tier sets in the universe">{"".join(segs)}</div>'
+        f'<div class="ubar" role="group" aria-label="Tier sets in the universe">{"".join(segs)}</div>'
         f'<p class="ulive">{live}C and D are shown for the whole picture, not offered. All tiers: {control.count(u.get("total"))} tickers on the spine'
         + (f' of {esc(control.day_words(u["as_of"]))}' if u.get("as_of") else "") + '.</p>'
         f'<div class="uinch"><span class="dim">A Fetch of only some tier sets also brings each group whose chip is on '
