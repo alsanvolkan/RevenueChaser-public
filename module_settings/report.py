@@ -2209,7 +2209,7 @@ ND_STATUS_ICONS = {"fresh": "●", "unchanged": "○", "late": "▲", "stale": "
 ND_WORKER_SILENT_MINUTES = 70
 #: The page never refreshes itself (A26). Past this many minutes since it was read, a ribbon says to refresh (M8).
 ND_PAGE_STALE_MINUTES = 15
-ND_NO_CANCEL = "A queued request cannot be cancelled: the builder runs it or skips it."
+ND_NO_CANCEL = "A Pause cancels a queued request and stops a running one before its next provider call."
 ND_BACKFILL_CONFIRM_OVER = 1000
 ND_NEXT_PASS = "the builder takes it at its next pass (hourly at :07)"
 

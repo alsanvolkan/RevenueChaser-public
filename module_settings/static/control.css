@@ -1085,3 +1085,8 @@
 /* #472 schedule fields in a source box */
 .ctl .schedset{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin:6px 0;font-size:12px}
 .ctl .schedset select,.ctl .schedset input{min-height:44px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);padding:0 8px;font:inherit}
+/* #492 PR (ii): the Fetch ▾ menu */
+.ctl .onewrap{position:relative;display:inline-flex;gap:4px;align-items:center}
+.ctl .onewrap .fmenu{min-width:44px;padding:0 10px}
+.ctl .onewrap .fmenul{position:absolute;right:0;top:100%;z-index:5;display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25);white-space:nowrap}
+.ctl .onewrap .fmenul[hidden]{display:none}

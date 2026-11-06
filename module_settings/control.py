@@ -565,7 +565,8 @@ def since_words(schedule: dict | None) -> str:
         return "fetch on"
     when = _when(schedule.get("paused_at"))
     at = "not recorded yet" if when is None else f"{_local(when):%a} {_local(when).day} {_local(when):%b, %H:%M}"
-    return f"paused · since {at} by {schedule.get('paused_by') or 'not recorded yet'}"
+    return (f"paused · since {at} by {schedule.get('paused_by') or 'not recorded yet'} · a running fetch stops "
+            "before its next provider call; the files it fetched stay")
 
 
 def _check_of(card: dict) -> dict | None:

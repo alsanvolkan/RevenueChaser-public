@@ -76,8 +76,9 @@ def test_a_timer_that_is_off_prefixes_the_time():
 
 def test_since_words_say_who_paused_and_when_in_amsterdam_time():
     paused = {"paused": True, "paused_by": "avo", "paused_at": "2026-10-30T09:15:00+00:00"}
-    assert control.since_words(paused) == "paused · since Fri 30 Oct, 10:15 by avo"
-    assert control.since_words({**paused, "paused_at": None}) == "paused · since not recorded yet by avo"
+    tail = " · a running fetch stops before its next provider call; the files it fetched stay"   # #492 PR (ii)
+    assert control.since_words(paused) == "paused · since Fri 30 Oct, 10:15 by avo" + tail
+    assert control.since_words({**paused, "paused_at": None}) == "paused · since not recorded yet by avo" + tail
     assert control.since_words(OPEN) == "fetch on"
     assert control.since_words(None) == "fetch on"
 

@@ -1040,6 +1040,15 @@
     btn.setAttribute('data-state', st);
     btn.textContent = st === 'fetch' ? 'Fetch' : st === 'pause' ? 'Pause' : 'Resume';
     btn.classList.toggle('go', st === 'fetch');
+    var w = btn.closest('.onewrap'), m = w && w.querySelector('[data-job="fmenu"]'), l = w && w.querySelector('.fmenul');
+    if (m) m.hidden = st !== 'fetch';                 // the ▾ asks for a partial Fetch, so it sits only beside Fetch
+    if (l && st !== 'fetch') l.hidden = true;
+  }
+  /* #492 PR (ii): what a Pause did, beside the button: a queued run cancelled, or a running one stopping */
+  function paused(btn, r) {
+    var pill = btn.closest('.sbbtn') && btn.closest('.sbbtn').querySelector('.lg3');
+    if (pill && /running/.test(pill.textContent)) pill.textContent = 'stopping…';
+    else if (pill) pill.textContent = r.body.cancelled ? 'cancelled' : pill.textContent;
   }
   function body(btn) {
     if (btn.getAttribute('data-scope') !== '1') return undefined;
@@ -1059,7 +1068,8 @@
       btn.disabled = false;
       if (r.status >= 200 && r.status < 300) {
         setState(btn, st === 'pause' ? 'resume' : 'fetch');
-        X.say(st === 'pause' ? ds + ' is held: the hourly pass skips it until Resume' : ds + ': the hourly pass runs it again');
+        if (st === 'pause') paused(btn, r);
+        X.say(st === 'pause' ? ds + ' is paused: ' + (r.body.cancelled ? 'its queued run is cancelled' : 'a running fetch stops before its next provider call') + '; the hourly pass skips it until Resume' : ds + ': the hourly pass runs it again');
       } else X.say(r.body.error || ('refused · HTTP ' + r.status));
     }, function () { btn.disabled = false; X.say('could not reach the dashboard'); });
   }
@@ -1076,6 +1086,19 @@
       } else out.textContent = r.body.error || ('refused · HTTP ' + r.status);
     }, function () { btn.disabled = false; out.textContent = 'could not reach the dashboard'; });
   }
+  /* the Health queue's Stop: the same pause as the dataset's button, said on the row */
+  function stop(btn) {
+    var ds = btn.getAttribute('data-dataset'), out = btn.parentNode.querySelector('[role="status"]');
+    btn.disabled = true;
+    X.send('POST', C.routes.schedule + ds + '/pause').then(function (r) {
+      if (r.status >= 200 && r.status < 300) {
+        if (out) out.textContent = btn.getAttribute('data-status') === 'queued' ? ' cancelled' : ' stopping…';
+        [].forEach.call(document.querySelectorAll('.ctl [data-job="one"]'), function (o) {
+          if (o.getAttribute('data-dataset') === ds) setState(o, 'resume');
+        });
+      } else { btn.disabled = false; if (out) out.textContent = ' ' + (r.body.error || ('refused · HTTP ' + r.status)); }
+    }, function () { btn.disabled = false; if (out) out.textContent = ' could not reach the dashboard'; });
+  }
   function fold(box, open) {
     var b = box.querySelector('.sbody'), t = box.querySelector('.sbtog');
     if (b) b.hidden = !open;
@@ -1085,6 +1108,21 @@
     if (!e.target.closest) return;
     var b = e.target.closest('.ctl [data-job="one"]');
     if (b) { if (!b.disabled) one(b); return; }
+    var fm = e.target.closest('.ctl [data-job="fmenu"]');
+    if (fm) {
+      var list = fm.parentNode.querySelector('.fmenul'), open = fm.getAttribute('aria-expanded') !== 'true';
+      fm.setAttribute('aria-expanded', open ? 'true' : 'false'); if (list) list.hidden = !open; return;
+    }
+    var sg = e.target.closest('.ctl [data-job="stage"]');
+    if (sg) {
+      var w = sg.closest('.onewrap'), ob = w.querySelector('[data-job="one"]'), m = w.querySelector('[data-job="fmenu"]');
+      var bd = body(ob) || {}; bd.stage = sg.getAttribute('data-stage');
+      sg.parentNode.hidden = true; if (m) m.setAttribute('aria-expanded', 'false');
+      X.queue(ob, ob.getAttribute('data-dataset'), bd, function () { setState(ob, 'pause'); });
+      return;
+    }
+    var sp = e.target.closest('.ctl [data-job="stop"]');
+    if (sp) { if (!sp.disabled) stop(sp); return; }
     var c = e.target.closest('.ctl [data-job="cadence"]');
     if (c) { if (!c.disabled) cadence(c); return; }
     var t = e.target.closest('.ctl .sbtog');

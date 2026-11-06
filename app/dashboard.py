@@ -1475,6 +1475,10 @@ def _request_days(raw_from, raw_to) -> tuple[dict, str | None]:
     return out, None
 
 
+#: A Fetch press's ``stage`` and the builder params it becomes (``rcdata/build/base.py`` ``_run``).
+REQUEST_STAGES = {"raw": {"no_parquet": True}, "parquet": {"no_duckdb": True}, "full": {}}
+
+
 def _request_scope(raw_tiers, raw_names, raw_include=None) -> tuple[dict, str | None]:
     """``{"tiers": [...], "names": [...]}`` of a Fetch press (#265), checked here so the queue holds only a request
     the builder can run. A comma-separated string is accepted from the query string, a JSON body sends a list.
@@ -1540,6 +1544,13 @@ def api_build_request(dataset: str):
     if problem:
         return jsonify({"ok": False, "error": problem}), 400
     params.update(scope)
+    # #492 PR (ii): how far the run goes. "raw" fetches into HDD raw only (the builder's --no-parquet), "parquet"
+    # also stages Parquet (--no-duckdb); "full", or nothing, builds the served file too. A partial run ends
+    # skipped and leaves the dataset due, so the next ordinary pass builds the rest.
+    stage = str(given("stage") or "full").strip()
+    if stage not in REQUEST_STAGES:
+        return jsonify({"ok": False, "error": f"unknown stage {stage!r}; known: {', '.join(REQUEST_STAGES)}"}), 400
+    params.update(REQUEST_STAGES[stage])
     waits_for = None
     if attended:
         waits_for = ("a person at a terminal on the server: python -m RevenueChaser.rcdata.build attended "
