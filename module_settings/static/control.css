@@ -1147,3 +1147,8 @@
 .ctl table.xck td[data-label="Largest deviation"],.ctl table.xck td[data-label="When"]{white-space:nowrap}
 .ctl table.xck .srcb{white-space:nowrap}
 .ctl table.xck code.p{font-size:10px;color:var(--mut);background:none;padding:0}
+/* #527 step 10: one centred column on both tabs, the same width as the Health tab's (--page-max); a wider screen
+   gets margin, a phone a single column; nothing reaches past the right edge (wide parts scroll in their own box). */
+.ctl .wrap{max-width:var(--page-max,1280px);margin-inline:auto}
+.ctl .wrap,.ctl .fpanel,.ctl .sgrid,.ctl .sbox{box-sizing:border-box;min-width:0}
+.ctl table{max-width:100%}

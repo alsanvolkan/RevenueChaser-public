@@ -89,3 +89,12 @@ def test_the_health_tab_puts_what_needs_avo_first_and_folds_the_reference_parts(
     for part in ("needs-log", "needs-routes"):
         assert re.search(rf'<details class="hfold"><summary>[^<]*</summary>\s*<section class="part" id="{part}"',
                          health), part
+
+
+def test_both_tabs_share_one_centred_column():
+    """#527 step 10: one width (``--page-max``), centred, on both tabs and the help box above them."""
+    css = control_render.CTL_CSS.split("#527 step 10", 1)[-1]
+    assert ".ctl .wrap{max-width:var(--page-max,1280px);margin-inline:auto}" in css
+    assert "#needs .wrap{max-width:var(--page-max,1280px);margin-inline:auto}" in needs_tab.NEEDS_CSS
+    html = report.render_settings_dashboard(_payload())
+    assert 'class="wrap helpwrap" style="max-width:var(--page-max,1280px);margin:0 auto;' in html

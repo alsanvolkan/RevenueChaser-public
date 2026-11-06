@@ -127,3 +127,8 @@
 #needs > .wrap,#needs > section.ctl > .wrap{padding-block:6px}
 #needs > .wrap:first-child{padding-top:20px}
 #needs > .wrap:last-child{padding-bottom:56px}
+/* #527 step 10: the Data tab's column, centred */
+#needs .wrap{max-width:var(--page-max,1280px);margin-inline:auto}
+#needs .wrap{box-sizing:border-box;min-width:0}
+#needs table{max-width:100%}
+#settings-tabs .tabs{max-width:var(--page-max,1280px);margin-inline:auto;box-sizing:border-box}

@@ -3221,7 +3221,7 @@ def render_settings_dashboard(payload: dict) -> str:
 {provider_health_html(payload.get("provider_health"))}
 {_tab_strip()}
 <div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
-<div class="wrap helpwrap" style="max-width:1280px;margin:0;padding:12px 12px 0">{DATA_HELP}</div>
+<div class="wrap helpwrap" style="max-width:var(--page-max,1280px);margin:0 auto;padding:12px 12px 0">{DATA_HELP}</div>
 {control_html}
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
