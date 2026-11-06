@@ -1135,13 +1135,15 @@
 /* #527, the second Data page pass: one visible line and a "?", the idle Pause, the Cross-check in the journey's style */
 .ctl .blegend{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font-size:12px;margin:6px 0}
 .ctl .lgq{display:inline-block}
-.ctl .lgq>summary.q{list-style:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
-  border-radius:50%;border:1px solid var(--line);color:var(--mut);font-weight:700;cursor:pointer;font-size:12px;
-  position:relative}
-.ctl .lgq>summary.q::before{content:"";position:absolute;inset:-11px}
+/* the summary itself is the 44 px target; the small circle is drawn inside it */
+.ctl .lgq>summary.q{list-style:none;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;
+  color:var(--mut);font-weight:700;cursor:pointer;font-size:12px;position:relative}
+.ctl .lgq>summary.q::before{content:"";position:absolute;left:11px;top:11px;width:20px;height:20px;border-radius:50%;
+  border:1px solid var(--line)}
 .ctl .lgq>summary.q::-webkit-details-marker{display:none}
 .ctl .lgq[open]{display:block;flex-basis:100%}
-.ctl .lgq[open]>summary.q{color:var(--fg);border-color:var(--mut)}
+.ctl .lgq[open]>summary.q{color:var(--fg)}
+.ctl .lgq[open]>summary.q::before{border-color:var(--mut)}
 .ctl .btn.idlep{margin-left:4px}
 .ctl table.xck td[data-label="Compared"],.ctl table.xck td[data-label="Differs"],
 .ctl table.xck td[data-label="Largest deviation"],.ctl table.xck td[data-label="When"]{white-space:nowrap}
