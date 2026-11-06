@@ -69,9 +69,13 @@ class TaskSettings:
     restart_count: int = 2
     restart_minutes: int = 5
     time_limit_minutes: int | None = None  # set: the limit in minutes instead of ``time_limit_hours``
+    no_time_limit: bool = False    # set: no limit at all (#527); both fields above are then ignored
 
     @property
-    def limit_minutes(self) -> int:
+    def limit_minutes(self) -> int | None:
+        """The limit in minutes, or None when the task has none."""
+        if self.no_time_limit:
+            return None
         return self.time_limit_minutes if self.time_limit_minutes is not None else self.time_limit_hours * 60
 
     def summary(self) -> str:
@@ -81,7 +85,8 @@ class TaskSettings:
         if self.start_when_available:
             parts.append("catches up a missed run")
         parts.append("only when logged on" if self.run_only_when_logged_on else "logged on or not")
-        parts.append(f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
+        parts.append("no time limit" if self.no_time_limit else
+                     f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
                      else f"{self.time_limit_hours} h limit")
         return ", ".join(parts)
 
@@ -240,7 +245,8 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "(#162). It exits 0 whatever it finds: a session that expired on its weekly cycle is not "
                     "a failed job. Off until RC_IBKR_LOGIN_CHECK is set, and then it contacts nothing but "
                     "RC_IBKR_HOST:RC_IBKR_PORT (127.0.0.1:4001 by default).",
-        settings=TaskSettings(restart_count=0, time_limit_hours=1)),
+        # #527: the installed unit's limit (home-server units/life-rc-ibkr-login-check.service: 5min), not 1 h.
+        settings=TaskSettings(restart_count=0, time_limit_minutes=5)),
     AutomationEntry(
         name="RC-Build", label="Market-store builder (hourly)",
         args=("-m", "RevenueChaser.rcdata.build", "run", "--once"), time="00:07", hourly=True,
@@ -250,7 +256,9 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "file as a new file and swaps it in. It does not start while a job lock is held or another "
                     "builder runs (exit 3); a request a dead builder left running is failed at start. Writes only "
                     "the market store and ops.sqlite, with its own job_runs2 row per run.",
-        settings=TaskSettings(restart_count=0, time_limit_minutes=50)),
+        # #527: no limit, as the installed unit (home-server units/life-rc-builder.service: infinity); avo 6 Nov:
+        # "50 dk çok kısa, onu geçiyoruzdur". A dead run is closed by the stuck-run sweep (app/jobs.py).
+        settings=TaskSettings(restart_count=0, no_time_limit=True)),
     AutomationEntry(
         name="RC-Build-Backup", label="Market-store backup (light)",
         args=("-m", "RevenueChaser.rcdata", "backup",
@@ -324,7 +332,7 @@ def check_chain(entries: tuple[AutomationEntry, ...]) -> None:
                                  f"{seen[e.after].time} on the clock")
             if e.chain_wait_minutes <= 0:
                 raise ValueError(f"{e.name} must wait a positive number of minutes")
-            if e.chain_wait_minutes >= e.settings.limit_minutes:
+            if e.settings.limit_minutes is not None and e.chain_wait_minutes >= e.settings.limit_minutes:
                 raise ValueError(f"{e.name} waits {e.chain_wait_minutes} min, not less than its time limit")
         seen[e.name] = e
 
@@ -555,7 +563,8 @@ class WindowsScheduler(Scheduler):
              f"$tr = New-ScheduledTaskTrigger -Weekly -DaysOfWeek {','.join(e.days)} -At {_ps_quote(e.time)}"
              if e.days else f"$tr = New-ScheduledTaskTrigger -Daily -At {_ps_quote(e.time)}"),
             f"$s = New-ScheduledTaskSettingsSet {' '.join(flags)}"
-            + (f" -ExecutionTimeLimit (New-TimeSpan -Minutes {int(s.time_limit_minutes)})"
+            + (" -ExecutionTimeLimit (New-TimeSpan -Seconds 0)" if s.no_time_limit else
+               f" -ExecutionTimeLimit (New-TimeSpan -Minutes {int(s.time_limit_minutes)})"
                if s.time_limit_minutes is not None else
                f" -ExecutionTimeLimit (New-TimeSpan -Hours {int(s.time_limit_hours)})")
             + (f" -RestartCount {int(s.restart_count)}"
@@ -787,7 +796,8 @@ class LinuxScheduler(Scheduler):
             *(_env_line(k, v) for k, v in _unit_environment()),
             "ExecStart=" + " ".join(_exec_arg(a) for a in
                                     (self._python, "-m", "RevenueChaser.core.automations", "run", e.name)),
-            (f"TimeoutStartSec={int(s.time_limit_minutes)}min" if s.time_limit_minutes is not None
+            ("TimeoutStartSec=infinity" if s.no_time_limit else
+             f"TimeoutStartSec={int(s.time_limit_minutes)}min" if s.time_limit_minutes is not None
              else f"TimeoutStartSec={int(s.time_limit_hours)}h"),
             "",
         ])

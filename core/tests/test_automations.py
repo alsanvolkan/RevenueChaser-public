@@ -853,7 +853,9 @@ def test_the_builder_row_runs_one_queue_pass_every_hour_at_07():
     e = A.entry("RC-Build")
     assert e.args == ("-m", "RevenueChaser.rcdata.build", "run", "--once")
     assert e.hourly and e.time == "00:07" and e.schedule == "hourly at :07 (local)"
-    assert e.settings.time_limit_minutes == 50
+    # #527: no time limit, as the installed unit (home-server units/life-rc-builder.service: infinity); a build
+    # longer than 50 min is normal, and a dead run is closed by the stuck-run sweep, not by systemd.
+    assert e.settings.no_time_limit and e.settings.limit_minutes is None
     assert e.tables_written == (), "it writes the market store, never the old one: no job_runs row (job_runs2 instead)"
     assert e.after is None and not e.default_install
     assert e.unit_name == "life-rc-builder"
@@ -903,7 +905,7 @@ def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
     service = (tmp_path / "u" / "life-rc-builder.service").read_text(encoding="utf-8")
     timer = (tmp_path / "u" / "life-rc-builder.timer").read_text(encoding="utf-8")
     assert 'ExecStart="/srv/rc/.venv/bin/python" "-m" "RevenueChaser.core.automations" "run" "RC-Build"' in service
-    assert "Type=oneshot" in service and "TimeoutStartSec=50min" in service
+    assert "Type=oneshot" in service and "TimeoutStartSec=infinity" in service
     assert "OnCalendar=*-*-* *:07:00" in timer and "Unit=life-rc-builder.service" in timer
     backup_service = (tmp_path / "u" / "life-rc-builder-backup.service").read_text(encoding="utf-8")
     backup_timer = (tmp_path / "u" / "life-rc-builder-backup.timer").read_text(encoding="utf-8")
@@ -932,12 +934,15 @@ def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
                                                                    "life-rc-builder-backup.timer"]
 
 
-def test_windows_installs_the_builder_as_an_hourly_trigger_with_a_minute_limit():
+def test_windows_installs_the_builder_as_an_hourly_trigger_with_no_limit():
+    """#527: a zero ExecutionTimeLimit is Task Scheduler's "no limit"; the backup keeps its minutes."""
     ps = FakePS()
     _win(ps).install(A.entry("RC-Build"))
     s = ps.scripts[0]
     assert "-Once -At '00:07' -RepetitionInterval (New-TimeSpan -Hours 1)" in s
-    assert "-ExecutionTimeLimit (New-TimeSpan -Minutes 50)" in s
+    assert "-ExecutionTimeLimit (New-TimeSpan -Seconds 0)" in s
+    _win(ps).install(A.entry("RC-Build-Backup"))
+    assert "-ExecutionTimeLimit (New-TimeSpan -Minutes 30)" in ps.scripts[-1]
 
 
 def test_a_chain_step_cannot_wait_on_an_hourly_row():
@@ -975,3 +980,19 @@ def test_every_backup_step_belongs_to_exactly_one_registry_row():
         subdirs.append(args[args.index("--subdir") + 1] if "--subdir" in args else backup.SUBDIR)
     assert sorted(chosen) == sorted(backup.STEPS), "every step belongs to exactly one backup entry"
     assert set(subdirs) == set(backup.SUBDIRS), "SUBDIRS is exactly the folders the registry writes"
+
+
+def test_a_task_with_no_time_limit_says_so_and_installs_none():
+    """#527: ``no_time_limit`` reads "no time limit", installs ``TimeoutStartSec=infinity`` and a zero (unlimited)
+    Task Scheduler limit, and a chained task after it is not held to a limit it does not have."""
+    s = A.TaskSettings(no_time_limit=True)
+    assert s.limit_minutes is None
+    assert "no time limit" in s.summary() and "h limit" not in s.summary()
+    assert A.TaskSettings(time_limit_minutes=50).limit_minutes == 50
+    assert A.TaskSettings(time_limit_hours=2).limit_minutes == 120
+
+
+def test_the_ibkr_login_check_limit_is_the_installed_unit_s_five_minutes():
+    """#527: the registry said 1 h while homesrv runs ``TimeoutStartSec=5min`` (home-server
+    units/life-rc-ibkr-login-check.service); the board shows the registry, so it follows the unit."""
+    assert A.entry("RC-IBKR-Login-Check").settings.limit_minutes == 5

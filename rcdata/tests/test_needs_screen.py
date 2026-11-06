@@ -194,3 +194,10 @@ def test_every_provider_a_dataset_names_has_its_words():
     assert named, "no provider found at all: the search is broken"
     assert named <= set(screen.PROVIDERS), f"no words for {sorted(named - set(screen.PROVIDERS))}"
     assert all(w.name and w.what for w in screen.PROVIDERS.values())
+
+
+def test_the_sec_pace_words_state_the_bucket_rate_the_code_runs():
+    """#527: the page said "8 a second" while ``core/sec_throttle.RATE`` is 9; the words now read the constant."""
+    from RevenueChaser.core import sec_throttle
+    from RevenueChaser.rcdata.needs import screen
+    assert f"{sec_throttle.RATE} a second" in screen.PROVIDERS["sec"].pace

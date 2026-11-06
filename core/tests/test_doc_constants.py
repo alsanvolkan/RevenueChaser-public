@@ -270,7 +270,8 @@ def test_data_architecture_names_the_builder_units_and_their_times():
     for name in ("RC-Build", "RC-Build-Backup", "RC-Build-Backup-Heavy"):
         e = automations.entry(name)
         assert f"unit `{e.unit}`" in text, f"docs/data_architecture.md does not name the unit {e.unit}"
-        assert f"{e.settings.limit_minutes} min limit" in text
+        limit = e.settings.limit_minutes
+        assert (f"{limit} min limit" if limit is not None else "no time limit") in text
     assert automations.entry("RC-Build").unit == automations.BUILDER_UNIT == "life-rc-builder"
     assert automations.entry("RC-Build-Backup").unit == automations.BUILDER_BACKUP_UNIT == "life-rc-builder-backup"
     assert (automations.entry("RC-Build-Backup-Heavy").unit == automations.BUILDER_BACKUP_HEAVY_UNIT
