@@ -415,3 +415,24 @@ def test_the_data_health_frame_never_scrolls_sideways_and_centres_its_column(das
     if size[0] >= 1600:
         assert m["width"] <= 1280 + 1, f"the column grows past its width: {m['width']}"
         assert abs(m["left"] - m["right"]) <= 2, f"the column hugs a side: left {m['left']}, right {m['right']}"
+
+
+# #527 follow-up (avo 6 Nov 2026 20:13, screenshot at a wide screen: the column sits right of centre and a sideways
+# bar runs under the page): the shell around the frame must not scroll sideways either, and the frame must end at the
+# window's right edge, at any width.
+SHELL_LAYOUT = r"""(function(){
+  var de = document.documentElement, vw = de.clientWidth, f = document.querySelector('.frame.on');
+  var r = f.getBoundingClientRect();
+  var wide = Array.prototype.filter.call(document.querySelectorAll('body *'), function(el){
+    var b = el.getBoundingClientRect(); return b.width > 0 && b.right > vw + 0.5;
+  }).map(function(el){ return el.tagName + (el.id ? '#' + el.id : '') + '.' + el.className; });
+  return {vw: vw, scroll: de.scrollWidth, body: document.body.scrollWidth, frameRight: r.right, wide: wide.slice(0, 8)};
+})()"""
+
+
+@pytest.mark.parametrize("size", [(1000, 800), (1200, 800), (1920, 1080), (2560, 1400)])
+def test_the_shell_around_the_data_health_frame_never_scrolls_sideways(dashboard, browser, size):
+    _open(browser, dashboard, size, "dark", "module_settings")
+    m = browser.eval(SHELL_LAYOUT)
+    assert m["scroll"] <= m["vw"] and m["body"] <= m["vw"], f"the shell scrolls sideways: {m}"
+    assert m["frameRight"] <= m["vw"] + 0.5, f"the frame runs past the window: {m}"
