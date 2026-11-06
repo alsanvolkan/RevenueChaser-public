@@ -95,6 +95,20 @@ def test_record_check_writes_a_row_and_latest_check_reads_the_newest():
         ops.record_check("market_series", "maybe")
 
 
+def test_sync_issues_resolves_every_open_row_of_a_key_not_just_one():
+    """``record_issue`` writes a row per run, so one unfixed problem becomes many rows with the same key: FRED's
+    key was missing on homesrv for two days and left six ``missing_key``/``fred`` rows. Resolving has to close
+    all of them -- a sync that keeps one row per key open leaves the health screen claiming a problem that is
+    over, every time, for good.
+    """
+    for run in ("r1", "r2", "r3"):                      # three runs, one unfixed problem
+        ops.record_issue("market_series", "missing_key", "fred", "no key", run_id=run)
+    assert ops.open_issues("market_series", 0)[0] == 3
+    added, resolved = ops.sync_issues("market_series", ["missing_key"], [])
+    assert (added, resolved) == (0, 3)
+    assert ops.open_issues("market_series", 0)[0] == 0
+
+
 def test_record_issue_and_job_runs():
     ops.record_issue("market_series", "parse", "fred:DGS2", "bad row", run_id="r1")
     ops.start_run("r1", "market_series", "cli", {"once": True})
