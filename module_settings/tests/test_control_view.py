@@ -89,7 +89,7 @@ def test_the_health_strip_has_its_fourteen_tiles_counted_from_the_cards():
     h = _build()["health"]
     keys = [t["key"] for t in h["tiles"]]
     assert keys == ["fresh", "late", "stale", "never", "problems", "session", "queue", "timer", "builder", "cap",
-                    "universe", "gateway", "longest", "backup"]
+                    "universe", "longest", "backup"]
     tile = {t["key"]: t for t in h["tiles"]}
     assert (tile["fresh"]["n"], tile["late"]["n"], tile["stale"]["n"], tile["never"]["n"]) == ("1", "1", "1", "2")
     assert tile["problems"]["n"] == "10"

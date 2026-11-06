@@ -196,11 +196,6 @@
   }
   window.CTLX.scrollTo = scrollTo; window.CTLX.reveal = reveal;
   root.addEventListener('click', function (e) {
-    var w = e.target.closest('#ctl .wiali');   // the Health head has its own
-    if (w) {
-      var box = document.getElementById('wial'), open = w.getAttribute('aria-expanded') === 'true';
-      w.setAttribute('aria-expanded', open ? 'false' : 'true'); if (box) box.hidden = open; return;
-    }
     if (e.target.closest('[data-reload]')) { location.reload(); return; }
     var g = e.target.closest('[data-goto]');
     if (g) {
@@ -1044,6 +1039,9 @@
     var w = btn.closest('.onewrap'), m = w && w.querySelector('[data-job="fmenu"]'), l = w && w.querySelector('.fmenul');
     if (m) m.hidden = st !== 'fetch';                 // the ▾ asks for a partial Fetch, so it sits only beside Fetch
     if (l && st !== 'fetch') l.hidden = true;
+    // #527: the idle Pause sits beside Fetch only; once the one button is Pause or Resume it says the same
+    var sb = btn.closest('.sbbtn'), ip = sb && sb.querySelector('.idlep');
+    if (ip) ip.hidden = st !== 'fetch';
   }
   X.setState = setState;
   /* #492 PR (ii): what a Pause did, beside the button: a queued run cancelled, or a running one stopping */
@@ -1090,14 +1088,37 @@
   }
   /* what the hourly pass queues for one served file on its own (ops.kind_automation); a Fetch press is not touched */
   function automation(btn) {
-    var row = btn.closest('.schedset'), kind = btn.getAttribute('data-kind');
-    var sel = row.querySelector('[data-automation]'), out = row.querySelector('[role="status"]');
+    // #527: a source's own select (data-dsauto, its dataset) or the file's (data-automation, its kind)
+    var row = btn.closest('.schedset'), kind = btn.getAttribute('data-kind'), ds = btn.getAttribute('data-dataset');
+    var sel = row.querySelector(ds ? '[data-dsauto]' : '[data-automation]'), out = row.querySelector('[role="status"]');
     btn.disabled = true;
-    X.send('POST', C.routes.automation + kind, { mode: sel.value }).then(function (r) {
+    X.send('POST', ds ? C.routes.automation_ds + ds : C.routes.automation + kind, { mode: sel.value }).then(function (r) {
       btn.disabled = false;
       if (r.status >= 200 && r.status < 300) out.textContent = 'saved: ' + sel.options[sel.selectedIndex].text + ' · the next hourly pass reads it';
       else out.textContent = r.body.error || ('refused · HTTP ' + r.status);
     }, function () { btn.disabled = false; out.textContent = 'could not reach the dashboard'; });
+  }
+  /* #527: the fetch and backup switches at the top; the page reloads so every line reads the new state */
+  function switchPress(btn) {
+    var nm = btn.getAttribute('data-name'), on = btn.getAttribute('data-on') === '1';
+    var bar = btn.closest('.topbar'), out = bar && bar.querySelector('[role="status"]');
+    btn.disabled = true;
+    X.send('POST', C.routes.switch + nm, { on: !on }).then(function (r) {
+      if (r.status >= 200 && r.status < 300) { location.reload(); return; }
+      btn.disabled = false;
+      if (out) out.textContent = r.body.error || ('refused · HTTP ' + r.status);
+    }, function () { btn.disabled = false; if (out) out.textContent = 'could not reach the dashboard'; });
+  }
+  /* #527: the builder timer's press (life-ctl life-rc-builder.timer on|off on the server); the page reloads */
+  function timerPress(btn) {
+    var on = btn.getAttribute('data-on') === '1';
+    var bar = btn.closest('.topbar'), out = bar && bar.querySelector('[role="status"]');
+    btn.disabled = true;
+    X.send('POST', C.routes.timer, { on: !on }).then(function (r) {
+      if (r.status >= 200 && r.status < 300) { location.reload(); return; }
+      btn.disabled = false;
+      if (out) out.textContent = r.body.error || ('refused · HTTP ' + r.status);
+    }, function () { btn.disabled = false; if (out) out.textContent = 'could not reach the dashboard'; });
   }
   /* the Health queue's Stop: the same pause as the dataset's button, said on the row */
   function stop(btn) {
@@ -1138,6 +1159,10 @@
     if (sp) { if (!sp.disabled) stop(sp); return; }
     var c = e.target.closest('.ctl [data-job="cadence"]');
     if (c) { if (!c.disabled) cadence(c); return; }
+    var tm = e.target.closest('.ctl [data-job="timer"]');
+    if (tm) { if (!tm.disabled) timerPress(tm); return; }
+    var sw = e.target.closest('.ctl [data-job="switch"]');
+    if (sw) { if (!sw.disabled) switchPress(sw); return; }
     var au = e.target.closest('.ctl [data-job="automation"]');
     if (au) { if (!au.disabled) automation(au); return; }
     var t = e.target.closest('.ctl .sbtog');

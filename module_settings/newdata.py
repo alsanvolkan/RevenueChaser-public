@@ -980,7 +980,7 @@ def cross_check(now: datetime, facts: dict, used_today: dict[str, int]) -> dict:
     that is what makes avo's choice of A17-B safe.
     """
     newest = next(iter(_diff_rows()), None)
-    prices = {"field": "prices", "need": "prices.wrds_diff", "second_source": CROSS_SECOND_SOURCE,
+    prices = {"field": "prices", "need": "prices.wrds_diff", "second_source": CROSS_SECOND_SOURCE, "provider": "wrds",
               # Attended, so there is nothing for the button to queue; the command is shown instead.
               "dataset": None, "attended": True, "command": ATTENDED_COMMANDS.get("wrds/prices"),
               "calls": None, "remaining": _remaining("wrds", used_today), "as_of": None, "checked": None,
@@ -993,8 +993,8 @@ def cross_check(now: datetime, facts: dict, used_today: dict[str, int]) -> dict:
             "differs": newest.get("close_differs"),
             "worst": f"{worst:.3%}" if isinstance(worst, (int, float)) else None,
             "why": None})
-    rates = {"field": "interest rates", "need": "macro.dgs10", "second_source": None, "dataset": None,
-             "attended": False, "command": None, "calls": None, "remaining": None, "as_of": None,
+    rates = {"field": "interest rates", "need": "macro.dgs10", "second_source": None, "provider": None,
+             "dataset": None, "attended": False, "command": None, "calls": None, "remaining": None, "as_of": None,
              "checked": None, "differs": None, "worst": None, "why": NO_SECOND_SOURCE,
              "cannot_queue": NO_SECOND_SOURCE}
     return {"fields": [prices, rates]}

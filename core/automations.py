@@ -69,9 +69,13 @@ class TaskSettings:
     restart_count: int = 2
     restart_minutes: int = 5
     time_limit_minutes: int | None = None  # set: the limit in minutes instead of ``time_limit_hours``
+    no_time_limit: bool = False    # set: no limit at all (#527); both fields above are then ignored
 
     @property
-    def limit_minutes(self) -> int:
+    def limit_minutes(self) -> int | None:
+        """The limit in minutes, or None when the task has none."""
+        if self.no_time_limit:
+            return None
         return self.time_limit_minutes if self.time_limit_minutes is not None else self.time_limit_hours * 60
 
     def summary(self) -> str:
@@ -81,7 +85,8 @@ class TaskSettings:
         if self.start_when_available:
             parts.append("catches up a missed run")
         parts.append("only when logged on" if self.run_only_when_logged_on else "logged on or not")
-        parts.append(f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
+        parts.append("no time limit" if self.no_time_limit else
+                     f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
                      else f"{self.time_limit_hours} h limit")
         return ", ".join(parts)
 
@@ -240,7 +245,8 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "(#162). It exits 0 whatever it finds: a session that expired on its weekly cycle is not "
                     "a failed job. Off until RC_IBKR_LOGIN_CHECK is set, and then it contacts nothing but "
                     "RC_IBKR_HOST:RC_IBKR_PORT (127.0.0.1:4001 by default).",
-        settings=TaskSettings(restart_count=0, time_limit_hours=1)),
+        # #527: the installed unit's limit (home-server units/life-rc-ibkr-login-check.service: 5min), not 1 h.
+        settings=TaskSettings(restart_count=0, time_limit_minutes=5)),
     AutomationEntry(
         name="RC-Build", label="Market-store builder (hourly)",
         args=("-m", "RevenueChaser.rcdata.build", "run", "--once"), time="00:07", hourly=True,
@@ -325,7 +331,7 @@ def check_chain(entries: tuple[AutomationEntry, ...]) -> None:
                                  f"{seen[e.after].time} on the clock")
             if e.chain_wait_minutes <= 0:
                 raise ValueError(f"{e.name} must wait a positive number of minutes")
-            if e.chain_wait_minutes >= e.settings.limit_minutes:
+            if e.settings.limit_minutes is not None and e.chain_wait_minutes >= e.settings.limit_minutes:
                 raise ValueError(f"{e.name} waits {e.chain_wait_minutes} min, not less than its time limit")
         seen[e.name] = e
 
@@ -556,7 +562,8 @@ class WindowsScheduler(Scheduler):
              f"$tr = New-ScheduledTaskTrigger -Weekly -DaysOfWeek {','.join(e.days)} -At {_ps_quote(e.time)}"
              if e.days else f"$tr = New-ScheduledTaskTrigger -Daily -At {_ps_quote(e.time)}"),
             f"$s = New-ScheduledTaskSettingsSet {' '.join(flags)}"
-            + (f" -ExecutionTimeLimit (New-TimeSpan -Minutes {int(s.time_limit_minutes)})"
+            + (" -ExecutionTimeLimit (New-TimeSpan -Seconds 0)" if s.no_time_limit else
+               f" -ExecutionTimeLimit (New-TimeSpan -Minutes {int(s.time_limit_minutes)})"
                if s.time_limit_minutes is not None else
                f" -ExecutionTimeLimit (New-TimeSpan -Hours {int(s.time_limit_hours)})")
             + (f" -RestartCount {int(s.restart_count)}"
@@ -788,7 +795,8 @@ class LinuxScheduler(Scheduler):
             *(_env_line(k, v) for k, v in _unit_environment()),
             "ExecStart=" + " ".join(_exec_arg(a) for a in
                                     (self._python, "-m", "RevenueChaser.core.automations", "run", e.name)),
-            (f"TimeoutStartSec={int(s.time_limit_minutes)}min" if s.time_limit_minutes is not None
+            ("TimeoutStartSec=infinity" if s.no_time_limit else
+             f"TimeoutStartSec={int(s.time_limit_minutes)}min" if s.time_limit_minutes is not None
              else f"TimeoutStartSec={int(s.time_limit_hours)}h"),
             "",
         ])
@@ -1222,6 +1230,34 @@ def _record_run(row: dict) -> None:
     rawstore.write_rows("job_runs", [row])
 
 
+#: The registry rows the board's backup switch stops (#527); the fetch switch stops every other row but these and
+#: ``SWITCH_EXEMPT``.
+BACKUP_TASKS = frozenset({"RC-Store-Backup", "RC-Build-Backup", "RC-Build-Backup-Heavy"})
+#: A status read, not a fetch: the top bar's IBKR state comes from it, so it runs whatever the switches say.
+SWITCH_EXEMPT = frozenset({"RC-IBKR-Login-Check"})
+
+
+def switch_for(name: str) -> str | None:
+    """Which board switch holds the task: ``"backup"``, ``"fetch"`` or None (#527)."""
+    if name in SWITCH_EXEMPT:
+        return None
+    return "backup" if name in BACKUP_TASKS else "fetch"
+
+
+def _switched_off(name: str) -> str | None:
+    """``skipped: the <switch> switch is off (<by> at <when>)`` while the task's switch is off, else None. A switch
+    that cannot be read does not stop the task: the switch is a convenience, the backup must not miss a night."""
+    switch = switch_for(name)
+    if switch is None:
+        return None
+    try:
+        from RevenueChaser.rcdata import ops
+        off = ops.switch_off(switch)
+    except Exception:  # noqa: BLE001
+        return None
+    return f"skipped: {ops.switch_words(switch, off)}" if off is not None else None
+
+
 def run_task(name: str, python: str | None = None, cwd: Path | str | None = None, *,
              clock: Callable[[], datetime] | None = None, sleep: Callable[[float], None] | None = None,
              tz: tzinfo | None = None) -> int:
@@ -1272,6 +1308,12 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
 
         fh.write(f"=== {stamp()} start {e.name}\n")
         fh.flush()
+        off = _switched_off(e.name)
+        if off is not None:
+            fh.write(off + "\n")
+            record(status="done", started_at=epoch(), finished_at=epoch(), message=off)
+            fh.write(f"=== {stamp()} exit {RESULT_OK}\n")
+            return RESULT_OK
         if e.after:
             fh.write(f"chain: waiting for {e.after} (up to {e.chain_wait_minutes} min)\n")
             fh.flush()

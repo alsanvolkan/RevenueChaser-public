@@ -695,8 +695,38 @@ def kind_mode_get(kind: str) -> dict | None:
     return _one("kind_automation", kind)
 
 
+def switch_set(name: str, on: bool, *, by: str) -> None:
+    row = {"name": ops._switch(name), "off_at": None if on else time.time(), "off_by": None if on else by}
+    _transaction(["switch"], lambda: (None, lambda p: _put(p, "switch", row)))
+
+
+def switch_get(name: str) -> dict | None:
+    return _one("switch", ops._switch(name))
+
+
+def read_switches() -> dict[str, dict]:
+    return {r["name"]: r for r in _all("switch")}
+
+
 def read_kind_modes() -> dict[str, dict]:
     return {r["kind"]: r for r in _all("kind_automation")}
+
+
+def dataset_mode_set(dataset: str, mode: str, *, by: str) -> None:
+    if mode == ops.AS_THE_FILE:
+        row = {"dataset": dataset}
+        _transaction(["dataset_automation"], lambda: (None, lambda p: _delete(p, "dataset_automation", row)))
+        return
+    row = {"dataset": dataset, "mode": ops._kind_mode(mode), "set_at": time.time(), "set_by": by}
+    _transaction(["dataset_automation"], lambda: (None, lambda p: _put(p, "dataset_automation", row)))
+
+
+def dataset_mode_get(dataset: str) -> dict | None:
+    return _one("dataset_automation", dataset)
+
+
+def read_dataset_modes() -> dict[str, dict]:
+    return {r["dataset"]: r for r in _all("dataset_automation")}
 
 
 # ── Whole tables ───────────────────────────────────────────────────────────────────────────────────────────────

@@ -24,6 +24,7 @@ def test_data_architecture_names_the_current_schema_version():
 _ENV_EXTRAS = ("RC_SEC_USER_AGENT",
                "RAW_STORE_BACKUP_WARN_GB", "RAW_STORE_BACKUP_MIRROR_WARN_GB",   # #309 part 3
                "RC_ALLOWED_HOSTS", "RC_IBKR_LOGIN_URL",                         # #159 / the gateway shortcut
+               "RC_BUILDER_TIMER_URL",                                          # #527: the builder timer button
                "RC_IBKR_LOGIN_CHECK", "RC_IBKR_HOST", "RC_IBKR_PORT",           # #162
                "RC_SCHEDULER",                                                  # #158
                "RC_HTTP_CONTACT",                                               # #206, the builder's User-Agent
@@ -270,7 +271,8 @@ def test_data_architecture_names_the_builder_units_and_their_times():
     for name in ("RC-Build", "RC-Build-Backup", "RC-Build-Backup-Heavy"):
         e = automations.entry(name)
         assert f"unit `{e.unit}`" in text, f"docs/data_architecture.md does not name the unit {e.unit}"
-        assert f"{e.settings.limit_minutes} min limit" in text
+        limit = e.settings.limit_minutes
+        assert (f"{limit} min limit" if limit is not None else "no time limit") in text
     assert automations.entry("RC-Build").unit == automations.BUILDER_UNIT == "life-rc-builder"
     assert automations.entry("RC-Build-Backup").unit == automations.BUILDER_BACKUP_UNIT == "life-rc-builder-backup"
     assert (automations.entry("RC-Build-Backup-Heavy").unit == automations.BUILDER_BACKUP_HEAVY_UNIT

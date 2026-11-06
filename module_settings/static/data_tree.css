@@ -48,8 +48,8 @@
 /* the gutter is inside the panel's own padding, so every panel keeps the board's one left edge */
 .ctl section.fpanel.dtree-host{position:relative;padding-left:60px}
 .ctl svg.dtree{position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:1}
-.ctl svg.dtree .vis{stroke-width:1.4;opacity:.75;transition:opacity .15s,stroke-width .15s}
-.ctl svg.dtree .ah{opacity:.75}
+.ctl svg.dtree .vis{stroke-width:1.6;opacity:.9;transition:opacity .15s,stroke-width .15s}
+.ctl svg.dtree .ah{opacity:.9}
 .ctl svg.dtree .hit{pointer-events:stroke;cursor:pointer}
 .ctl svg.dtree g.glow .vis{stroke-width:3;opacity:1;filter:brightness(1.3) drop-shadow(0 0 3px currentColor)}
 .ctl svg.dtree g.glow .ah,.ctl svg.dtree g.on .ah{opacity:1}

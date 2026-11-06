@@ -340,3 +340,54 @@ def test_automation_sets_a_kinds_mode_and_refuses_an_unknown_kind_or_mode(client
     assert client.post("/api/build/automation/nope", json={"mode": "raw"}).status_code == 400
     assert client.post("/api/build/automation/market", json={"mode": "everything"}).status_code == 400
     assert ops.kind_mode("market") == "raw"
+
+
+def test_switch_turns_fetch_or_backup_off_and_on_and_refuses_anything_else(client):
+    """#527: the board's two switches. The panel header is who turned it off."""
+    h = {"X-RC-Panel": "settings"}
+    r = client.post("/api/build/switch/fetch", json={"on": False}, headers=h)
+    assert r.status_code == 200 and r.get_json()["switch"]["off_by"] == "settings"
+    assert ops.switch_off("fetch") is not None and ops.switch_off("backup") is None
+    assert client.post("/api/build/switch/fetch", json={"on": True}, headers=h).status_code == 200
+    assert ops.switch_off("fetch") is None
+    assert client.post("/api/build/switch/everything", json={"on": False}, headers=h).status_code == 400
+    assert client.post("/api/build/switch/backup", json={}, headers=h).status_code == 400, "on must be a boolean"
+
+
+def test_a_sources_automation_is_set_or_dropped_and_refuses_an_unknown_dataset_or_mode(client):
+    """#527: a source's own automation; ``file`` goes back to the file's."""
+    h = {"X-RC-Panel": "settings"}
+    r = client.post("/api/build/automation-ds/market_series", json={"mode": "raw"}, headers=h)
+    assert r.status_code == 200 and r.get_json()["automation"]["mode"] == "raw"
+    assert ops.read_dataset_modes()["market_series"]["set_by"] == "settings"
+    assert client.post("/api/build/automation-ds/market_series", json={"mode": "file"}, headers=h).status_code == 200
+    assert ops.read_dataset_modes() == {}
+    assert client.post("/api/build/automation-ds/no/such", json={"mode": "raw"}, headers=h).status_code == 400
+    assert client.post("/api/build/automation-ds/market_series", json={"mode": "x"}, headers=h).status_code == 400
+
+
+def test_the_builder_timer_switch_runs_only_life_ctl_on_or_off(client, monkeypatch):
+    """#527 step 11 (avo chose "Dashboard'a sudo izni"): the board's press runs exactly
+    ``sudo -n /usr/local/sbin/life-ctl life-rc-builder.timer on|off`` and nothing else; a refusal is the answer."""
+    import subprocess
+    from RevenueChaser.app import dashboard
+    seen = []
+
+    def fake_run(argv, **kw):
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "timer on\n", "")
+    monkeypatch.setattr(dashboard.subprocess, "run", fake_run)
+    h = {"X-RC-Panel": "settings"}
+    r = client.post("/api/build/timer", json={"on": True}, headers=h)
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert seen == [["sudo", "-n", "/usr/local/sbin/life-ctl", "life-rc-builder.timer", "on"]]
+    client.post("/api/build/timer", json={"on": False}, headers=h)
+    assert seen[-1][-1] == "off"
+    assert client.post("/api/build/timer", json={"on": "yes"}, headers=h).status_code == 400
+    assert len(seen) == 2, "a bad body runs nothing"
+
+    def refused(argv, **kw):
+        return subprocess.CompletedProcess(argv, 1, "", 'sudo: The "no new privileges" flag is set')
+    monkeypatch.setattr(dashboard.subprocess, "run", refused)
+    r = client.post("/api/build/timer", json={"on": True}, headers=h)
+    assert r.status_code == 502 and "no new privileges" in r.get_json()["error"]

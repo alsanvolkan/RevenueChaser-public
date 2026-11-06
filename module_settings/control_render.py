@@ -27,7 +27,8 @@ CTL_JS = (_STATIC / "control.js").read_text(encoding="utf-8")
 
 #: The routes a press uses; the script reads them from the page's data, so a test sees every route in one place.
 ROUTES = {"request": "/api/build/request/", "schedule": "/api/build/schedule/", "queue": "/api/build/queue",
-          "automation": "/api/build/automation/",
+          "automation": "/api/build/automation/", "automation_ds": "/api/build/automation-ds/",
+          "switch": "/api/build/switch/", "timer": "/api/build/timer",
           "settings": "/api/settings/board/module_settings", "sample": "/api/settings/sample/",
           "job": "/api/job/", "picture": "/run/storage-picture"}
 #: After this long the page says it is stale and offers a refresh (the design: "refreshes after 60 minutes").
@@ -88,12 +89,68 @@ WIAL = ("<p>This page is the control board for every dataset the system holds. I
 def _header(view: dict) -> str:
     return (f'<h1>Data/Health · Data</h1>'
             f'<p class="sub"><b>Read {esc(view["read_at"])}</b> (Amsterdam) · source: <code>ops.sqlite</code> + the '
-            f'serving files · after {STALE_MINUTES} minutes a strip on top says the numbers are old '
-            '<button class="wiali" type="button" aria-expanded="false" aria-controls="wial">What am I looking at?'
-            '</button></p>'
-            f'<div class="wialbox" id="wial" hidden>{WIAL}</div>'
+            f'serving files · after {STALE_MINUTES} minutes a strip on top says the numbers are old</p>'
             f'<div class="stalebar" id="ctl-stale" hidden><b>Stale</b> · this page was read at {esc(view["read_at"])} · '
             '<button type="button" class="lnk" data-reload>Refresh</button></div>')
+
+
+def _switch(name: str, label: str, st: dict | None) -> str:
+    st = st or {}
+    on = st.get("on")
+    if on is None:
+        return (f'<span class="swt none" data-name="{name}"><b>{label}: not known</b>'
+                '<span class="dim">the ops store could not be read</span></span>')
+    who = "" if on else f'<span class="dim">{esc(st.get("by") or "?")} {esc(st.get("at") or "")}</span>'
+    return (f'<button type="button" class="swt {"ok" if on else "bad"}" data-job="switch" data-name="{name}" '
+            f'data-on="{1 if on else 0}" aria-pressed="{"true" if on else "false"}" '
+            f'title="{label} switch: press to turn it {"off" if on else "on"}"><b>{label}: {"on" if on else "off"}'
+            f'</b>{who}</button>')
+
+
+def _topbar(view: dict, msg_id: str = "sw-msg") -> str:
+    """#527: always at the top of both tabs: the fetch switch, the backup switch and the IBKR gateway's state with
+    its login link (``RC_IBKR_LOGIN_URL``; no link when it is unset). ``msg_id`` keeps each copy's status line its
+    own id."""
+    sw = view.get("switches") or {}
+    g = view.get("gateway") or {}
+    # the old IBKR login card's link, its id kept on the Data tab's copy (one id a page)
+    lid = ' id="ibkr-login-link"' if msg_id == "sw-msg" else ""
+    login = (f'<a class="lnk"{lid} href="{esc(g["login"])}" target="_blank" rel="noopener noreferrer" '
+             'title="Opens the IBKR gateway login screen. The address comes from RC_IBKR_LOGIN_URL; this page '
+             'makes no call to it">log in</a>' if g.get("login") else "")
+    gate = (f'<span class="swt gw {esc(g.get("cls") or "none")}"><b>IBKR gateway: {esc(g.get("n") or "unknown")}</b>'
+            f'<span class="dim">{esc((g.get("label") or "").replace("IBKR gateway · ", ""))}</span>{login}</span>')
+    return (f'<div class="topbar" role="group" aria-label="Switches and the IBKR gateway">'
+            f'{_switch("fetch", "Fetch", sw.get("fetch"))}{_switch("backup", "Backup", sw.get("backup"))}'
+            f'{_timer_box(view)}{gate}'
+            f'<span role="status" class="dim" id="{esc(msg_id)}"></span></div>')
+
+
+def _timer_box(view: dict) -> str:
+    """#527 step 11: the hourly builder timer's state; its on / off press is the Grafana ops panel's timer button
+    (``life-ctl life-rc-builder.timer on|off``), linked from ``RC_BUILDER_TIMER_URL``. The dashboard itself runs with
+    NoNewPrivileges, so it never switches the timer."""
+    st = (view.get("timer") or {}).get("state")
+    cls = {"on": "ok", "off": "none"}.get(st, "warn")
+    word = st if st in ("on", "off") else "not known"
+    why = {"on": "the hourly pass runs on its own", "off": "nothing runs on its own; a Fetch still queues"}.get(
+        st, "its state could not be read")
+    url = view.get("timer_url")
+    link = (f'<a class="lnk" href="{esc(url)}" target="_blank" rel="noopener noreferrer">on / off in Grafana ↗</a>'
+            if url else "")
+    # the press (avo chose it, 6 Nov 2026): POST /api/build/timer runs life-ctl life-rc-builder.timer on|off;
+    # no press while the state is not known, so it never guesses which way to switch
+    press = (f'<button type="button" class="btn sm" data-job="timer" data-on="{1 if st == "on" else 0}">'
+             f'{"Turn off" if st == "on" else "Turn on"}</button>' if st in ("on", "off") else "")
+    return (f'<span class="swt tmr {cls}"><b>Builder timer: {esc(word)}</b><span class="dim">{esc(why)}</span>'
+            f'{press}{link}</span>')
+
+
+def topbar_health(view: dict) -> str:
+    """The same top bar at the head of the Health tab, in its own ``.ctl`` scope so its styles and presses work."""
+    if view.get("error"):
+        return ""
+    return f'<section class="ctl ctltop" aria-label="Switches"><div class="wrap">{_topbar(view, "sw-msg-h")}</div></section>'
 
 
 #: The Health groups (#492 C1): three side by side, then Data at full width.
@@ -160,8 +217,18 @@ def _health(view: dict) -> str:
     c = h["counts"]
     summ = (f'<b class="s-ok">{c["fresh"]} fresh</b> · <b class="s-warn">{c["late"]} late</b> · '
             f'<b class="s-bad">{c["stale"]} stale</b> · {c["never"]} never ran · {h["problems"]} open problems')
+    al = h.get("alerts")
+    if al is None:                      # a view built before #527: the tiles as they were
+        return ('<details class="sec" id="sec-health" open><summary><h2>Health right now</h2>'
+                f'<span class="secs">{summ}</span></summary><div class="hgrps">{top}</div>{data}</details>')
+    cards = ("".join(f'<div class="tile {esc(a["cls"])} static alert" data-key="{esc(a["key"])}">'
+                     f'<span class="n">{esc(a["n"])}</span><span class="l">{esc(a["label"])}</span></div>' for a in al)
+             if al else '<p class="calm s-ok"><b>Nothing needs you right now.</b></p>')
     return ('<details class="sec" id="sec-health" open><summary><h2>Health right now</h2>'
-            f'<span class="secs">{summ}</span></summary><div class="hgrps">{top}</div>{data}</details>')
+            f'<span class="secs">{len(al)} to look at</span></summary>'
+            f'<div class="alerts">{cards}</div><p class="allgood"><b>All good:</b> {esc(h.get("allgood") or "")}</p>'
+            f'<details class="htiles"><summary>Every tile</summary><div class="hgrps">{top}</div>{data}</details>'
+            '</details>')
 
 
 # ── Fetch: the universe ───────────────────────────────────────────────────────────────────────────────────────
@@ -222,14 +289,16 @@ def _universe(view: dict) -> str:
 def _legend(view: dict) -> str:
     fill = ("the Fill buttons are on (RC_FILL_ENABLED is set on this server)" if view["fill_enabled"]
             else view["fill_off_why"])
+    # #527 step 8b: one line visible, the rest behind a "?"
     return ('<div class="flegend"><span class="lg2 s-notpicked">a tier set: in the universe or not</span>'
             '<span class="lg2 s-nodata">no tier choice · no button</span>'
+            '<details class="lgq"><summary class="q" aria-label="What a Fill cell shows">?</summary>'
             f'<span class="dim">A Fill cell shows its set and whether the universe holds it. Where a dataset has days to pick (alpaca/bars), a press opens '
             f'its Backfill calendar with that set ticked, and the calendar says names, calls and nights before you '
             f'start. Fill: {esc(fill)}.</span>'
             '<div class="lgrow"><b>After a press</b> the button shows its request:<span class="lg3 st-q">queued</span>'
             '<span class="lg3 st-r">running</span><span class="lg3 st-d">done</span>'
-            '<span class="lg3 st-f">failed</span><span class="lg3 st-p">paused</span></div></div>')
+            '<span class="lg3 st-f">failed</span><span class="lg3 st-p">paused</span></div></details></div>')
 
 
 # ── Fetch: one row a dataset ──────────────────────────────────────────────────────────────────────────────────
@@ -312,6 +381,15 @@ BUTTON_LEGEND = ('One button for each dataset: <b>Fetch</b> asks for a whole run
                  'rest when this file\'s automation is raw + Parquet + DuckDB · <b>Pause</b> cancels a queued run, '
                  'stops a running one before its next provider call and holds the dataset · <b>Resume</b> lets the '
                  'hourly pass run it again')
+#: The line the button legend shows; the whole of ``BUTTON_LEGEND`` is behind its "?" (#527 step 8b).
+BUTTON_LINE = "One button for each dataset: <b>Fetch</b> · <b>Pause</b> · <b>Resume</b>"
+
+
+def _button_legend() -> str:
+    return (f'<div class="blegend">{BUTTON_LINE}<details class="lgq"><summary class="q" '
+            f'aria-label="What the buttons do">?</summary><p class="dim">{BUTTON_LEGEND}</p></details></div>')
+
+
 #: The two partial runs of a Fetch press's ▾ menu (``app/dashboard.py`` ``REQUEST_STAGES``).
 FETCH_STAGES = (("raw", "Fetch raw", "the provider's answer into HDD raw only; Parquet and DuckDB stay; the next "
                  "hourly pass builds them when this file's automation is raw + Parquet + DuckDB"),
@@ -391,9 +469,14 @@ def _one_button(d: dict, view: dict) -> str:
     menu = (f'<button type="button" class="btn fmenu" data-job="fmenu" aria-haspopup="menu" aria-expanded="false" '
             f'aria-label="Fetch only part of the run: {esc(name)}"{"" if state == "fetch" else " hidden"}>▾</button>'
             f'<span class="fmenul" role="menu" hidden>{items}</span>')
+    # #527 decision A: Pause on an idle dataset too, so the hourly pass skips it until Resume; a queued or running
+    # dataset's one button is Pause already, and a paused one's is Resume
+    idle = (f'<button type="button" class="btn sm idlep" data-job="stop" data-dataset="{esc(name)}" '
+            'title="Hold this dataset: the hourly pass skips it until Resume">Pause</button>'
+            '<span class="dim" role="status"></span>' if state == "fetch" else "")
     return (f'{pill}<span class="onewrap"><button type="button" class="{cls} one" data-job="one" data-state="{state}" '
             f'data-dataset="{esc(name)}" data-scope="{1 if d["fetch"]["honours_scope"] else 0}">{word}</button>'
-            f'{menu}</span>')
+            f'{menu}</span>{idle}')
 
 
 def _automation(f: dict, view: dict) -> str:
@@ -419,6 +502,19 @@ def _local_clock(at) -> str:
     return control._local(datetime.fromtimestamp(float(at), timezone.utc)).strftime("%d %b %H:%M")
 
 
+def _ds_automation(d: dict, key: str) -> str:
+    """#527: this source's own Automated select, "as the file" by default (no row: the file's mode holds)."""
+    from RevenueChaser.rcdata import ops
+    mine = d.get("automation_own") or ops.AS_THE_FILE
+    file_mode = dict(AUTOMATION_MODES).get(d.get("automation_file") or "off", d.get("automation_file"))
+    choices = ((ops.AS_THE_FILE, f"as the file ({file_mode})"), *AUTOMATION_MODES)
+    opts = "".join(f'<option value="{m}"{" selected" if m == mine else ""}>{esc(w)}</option>' for m, w in choices)
+    return ('<div class="schedset">'
+            f'<label for="dsauto-{key}">Automated</label><select id="dsauto-{key}" data-dsauto>{opts}</select>'
+            f'<button type="button" class="btn" data-job="automation" data-dataset="{esc(d["dataset"])}">Save</button>'
+            '<span class="dim" role="status"></span></div>')
+
+
 def _sched_fields(d: dict) -> str:
     """#472, moved from the old Fetch card: how often the schedule runs the dataset and a hold until a day, sent
     together by one press (``/api/build/schedule/<ds>/cadence``), so a schedule is never half applied."""
@@ -428,7 +524,7 @@ def _sched_fields(d: dict) -> str:
     opts = "".join(f'<option value="{o}"{" selected" if o == cadence else ""}>{o}</option>'
                    for o in ("daily", "weekly", "monthly"))
     own = "" if d.get("cadence_own") else '<span class="dim">the default</span>'
-    return ('<div class="schedset">'
+    return (_ds_automation(d, key) + '<div class="schedset">'
             f'<label for="cad-{key}">How often</label><select id="cad-{key}" data-cadence>{opts}</select>{own}'
             f'<label for="hold-{key}">Hold until</label><input type="date" id="hold-{key}" data-hold'
             + (f' value="{esc(hold)}"' if hold else "") + '>'
@@ -498,7 +594,7 @@ def _sources(f: dict, view: dict) -> str:
     orphan = (_universe(view) if f["name"] == "spine.duckdb"
               and not any(d["dataset"] == "spine/security" for d in rows) else "")
     return (f'<div class="sources fgroup" data-file="{esc(f["name"])}">{head}{state}{runs}{_automation(f, view)}'
-            f'<p class="blegend">{BUTTON_LEGEND}</p>{_legend(view)}{orphan}<div class="sgrid">{boxes}</div>'
+            f'{_button_legend()}{_legend(view)}{orphan}<div class="sgrid">{boxes}</div>'
             f'{_providers(view, sid=None)}</div>')
 
 
@@ -556,13 +652,14 @@ def _uni_cards(view: dict) -> str:
 
 
 def _picture_control(view: dict) -> str:
-    """The **Take the disk picture** press (#434). It sits in Fetch because this is where a press belongs
+    """The **Recount folders** press (#434; named "Take the disk picture" until #527). It sits in Fetch because this is where a press belongs
     (``docs/data_health.md``: the Data section shows bars and no button), while the picture's age sits beside the
     counts it explains, on the Data section's roots line."""
     walked = next((f.get("walked_at") for f in view["files"]), None)
-    return ('<div class="pictrow"><span class="hm">The HDD folder counts in <b>Data, file by file</b> are a '
-            f'picture, not a live read &middot; {esc(_walked(walked))}</span>'
-            '<button type="button" class="btn" data-job="picture">Take the disk picture</button>'
+    return ('<div class="pictrow"><span class="hm">The HDD folder counts above are not read live &middot; last count: '
+            f'{esc(_walked(walked))}</span>'
+            '<button type="button" class="btn" data-job="picture" title="Walks the HDD raw and Parquet folders and counts '
+            'their files and bytes again (about half a minute, no provider call)">Recount folders</button>'
             '<span class="hm picout" role="status"></span></div>')
 
 
@@ -780,6 +877,20 @@ def _btree(f: dict) -> str:
             f'<ul>{"".join(groups)}</ul></div>')
 
 
+#: Characters of room beside the widest value of a journey meta column (#527: "a little bigger, easy on the eye").
+COL_PAD = 3
+
+
+def _meta_widths(f: dict) -> str:
+    """``--jw1..3`` for the journey's status / role / cadence columns: the widest value of this file plus a little,
+    so the three sit in fixed columns and never drift with the title's length (#527)."""
+    ds = f["datasets"] or [{}]
+    status = max(len("hand-run" if d.get("attended") else "built" if d.get("checked_on") else "tested") for d in ds)
+    role = max(len(str(d.get("role") or "")) for d in ds)
+    cad = max(len("⏱ " + str(d.get("cadence") or "")) for d in ds)
+    return f"--jw1:{status + COL_PAD}ch;--jw2:{role + COL_PAD}ch;--jw3:{cad + COL_PAD}ch"
+
+
 def _journey(f: dict) -> str:
     rows, _ = _jrows(f)
     n = max(1, 2 * len(f["datasets"]))
@@ -800,7 +911,7 @@ def _journey(f: dict) -> str:
     return (
         '<div class="journey"><p class="colh">The journey of this data · one line a build step · press a line or a '
         'table: everything tied to it lights, press again to drop it</p>'
-        '<div class="jleft"><table class="jt jt4 jt3"><colgroup><col class="c1"><col class="c2"><col class="c3">'
+        f'<div class="jleft"><table class="jt jt4 jt3" style="{_meta_widths(f)}"><colgroup><col class="c1"><col class="c2"><col class="c3">'
         '</colgroup><thead><tr><th>Build step · status · role · how often</th>'
         f'<th class="hddh">{hdd}</th><th class="ssdh">{ssdh}</th></tr></thead><tbody>{rows}</tbody></table></div>'
         f'<aside class="jpanel jnarrow"><div class="jssd"><span class="jph">⚡ SSD live · served</span>{ssd}</div>'
@@ -840,8 +951,9 @@ def _samples(f: dict) -> str:
                         'columns the code declares</td></tr>')
             notes = "".join(f'<p class="hint">{esc(n)}</p>' for n in s.get("notes") or ())
             blocks.append(
-                f'<section class="dsec" data-sample="{esc(t)}"><h4><code>{esc(t)}, as served</code> <span class="dim">'
-                f'{len(s.get("rows") or [])} rows</span></h4><div class="dsact"><button type="button" class="btn" '
+                f'<section class="dsec" data-sample="{esc(t)}"><h3 class="dsh"><code>{esc(t)}</code> as served '
+                f'<span class="dim">{len(s.get("rows") or [])} rows</span></h3><div class="dsact"><button type="button" '
+                f'class="btn sm" '
                 f'data-sample-refresh="{esc(t)}">Refresh the example rows</button><span class="dim">reads 5 rows of '
                 f'<code>{esc(f["name"])}</code> · no provider call</span></div><div class="scroll"><table class="ex">'
                 f'<thead>{src}<tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{notes}</section>')
@@ -874,48 +986,83 @@ def _health_table(f: dict) -> str:
 
 # ── Cross-check, queue ────────────────────────────────────────────────────────────────────────────────────────
 
+def _xsource(c: dict, view: dict) -> str:
+    """The second source as the journey shows a source: its provider badge, or a grey pill when there is none."""
+    name = c.get("second_source")
+    if not name:
+        return '<span class="pill p-mut">no second source</span>'
+    pid = c.get("provider")
+    icon = (f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{esc(control.ICONS.get(pid, ""))}"/></svg>'
+            if pid in control.ICONS else "")
+    return f'<span class="srcb" style="background:{_pcolor(view, pid)}">{icon}{esc(name)}</span>'
+
+
+def _differs(n) -> str:
+    if n is None:
+        return '<span class="dim">—</span>'
+    return f'<span class="pill p-ok">0 differ</span>' if not n else f'<span class="pill p-bad">{int(n):,} differ</span>'
+
+
 def _cross(view: dict) -> str:
+    """#527 step 8b: the same badges, pills and fonts as the journey table; the short columns never wrap."""
     rows = []
     for c in view["cross_check"]:
-        rows.append(f'<tr><td data-label="Field">{esc(c.get("field"))} <code>{esc(c.get("need") or "")}</code></td>'
-                    f'<td data-label="Second source">{esc(c.get("second_source") or "no second source")}</td>'
+        rows.append(f'<tr><td data-label="Field"><b>{esc(c.get("field"))}</b> <code class="p">{esc(c.get("need") or "")}'
+                    f'</code></td><td data-label="Second source">{_xsource(c, view)}</td>'
                     f'<td data-label="Compared">{esc(c.get("checked") or "—")}</td>'
-                    f'<td data-label="Differs">{esc(c.get("differs") if c.get("differs") is not None else "—")}</td>'
+                    f'<td data-label="Differs">{_differs(c.get("differs"))}</td>'
                     f'<td data-label="Largest deviation">{esc(c.get("worst") or "—")}</td>'
-                    f'<td data-label="When">{esc(c.get("as_of") or c.get("why") or "none yet")}</td></tr>')
+                    f'<td data-label="When">{esc(c.get("as_of") or "none yet")}</td></tr>')
         if c.get("command"):
             rows.append(f'<tr><td colspan="6" class="dim">hand-run: <code>{esc(c["command"])}</code></td></tr>')
     body = "".join(rows) or '<tr><td colspan="6" class="dim">no cross-check recorded</td></tr>'
     return ('<details class="sec" id="sec-crosscheck"><summary><h2>Cross-check · first ↔ second source</h2>'
             f'<span class="secs">{len(view["cross_check"])} reports</span></summary>'
-            '<div class="group" style="border-left-color:var(--new)"><div class="scroll"><table class="stk">'
+            '<div class="group" style="border-left-color:var(--new)"><div class="scroll"><table class="stk xck">'
             '<thead><tr><th>Field</th><th>Second source</th><th>Compared</th><th>Differs</th><th>Largest deviation</th>'
             f'<th>When</th></tr></thead><tbody>{body}</tbody></table></div><p class="hint">Where a field has no second '
             'source the row says so; no source is invented. The report shown is the one that exists: this page makes '
             'no new call.</p></div></details>')
 
 
+#: A queue note longer than this is cut to one line; the whole note is one tap away.
+NOTE_CUT = 120
+
+
+def _note(text) -> str:
+    t = str(text or "—")
+    if len(t) <= NOTE_CUT:
+        return esc(t)
+    return f'<details class="note"><summary>{esc(t[:NOTE_CUT])}…</summary>{esc(t)}</details>'
+
+
 def _queue(view: dict) -> str:
     q = view["queue"]
+    lines = {r.get("id"): r for r in view.get("running") or []}
     rows = []
     for r in list(q.get("active") or []) + list(q.get("finished") or [])[:10]:
-        stop = (f' <button type="button" class="btn" data-job="stop" data-dataset="{esc(r.get("dataset"))}" '
+        stop = (f'<button type="button" class="btn" data-job="stop" data-dataset="{esc(r.get("dataset"))}" '
                 f'data-status="{esc(r.get("status"))}">Stop</button><span class="dim" role="status"></span>'
                 if r.get("status") in ("queued", "running") else "")
-        rows.append(f'<tr><td data-label="Dataset"><code>{esc(r.get("dataset"))}</code></td>'
-                    f'<td data-label="Status">{esc(r.get("status"))}{stop}</td>'
-                    f'<td data-label="Asked by">{esc(r.get("requested_by") or "—")}</td>'
-                    f'<td data-label="Asked">{esc(control._clock(r.get("requested_at")) if r.get("requested_at") else "—")}'
-                    f'</td><td data-label="Note">{esc(r.get("note") or "—")}</td></tr>')
-    body = "".join(rows) or '<tr><td colspan="5" class="dim">nothing queued, nothing run yet</td></tr>'
+        run = lines.get(r.get("id"))
+        run_line = (f'<span class="runl {esc(run.get("cls") or "")}">{esc(run["line"].split(" · ", 1)[-1])}</span>'
+                    if run else "")
+        when = control._clock(r.get("requested_at")) if r.get("requested_at") else "—"
+        rows.append(f'<tr><td data-label="Dataset"><code class="dsn">{esc(r.get("dataset"))}</code>{run_line}</td>'
+                    f'<td data-label="Status"><span class="stbtn">{esc(r.get("status"))}{stop}</span></td>'
+                    f'<td data-label="Asked">{esc(r.get("requested_by") or "—")} · {esc(when)}</td>'
+                    f'<td data-label="Note">{_note(r.get("note"))}</td></tr>')
+    body = "".join(rows) or '<tr><td colspan="4" class="dim">nothing queued, nothing run yet</td></tr>'
     waiting = len(q.get("active") or [])
-    return ('<details class="sec" id="sec-queue"><summary><h2>Queue and last runs</h2>'
+    # #527: open while something waits or runs, so a running job's line is in sight; closed when the queue is empty
+    return (f'<details class="sec" id="sec-queue"{" open" if waiting else ""}><summary><h2>Queue and last runs</h2>'
             f'<span class="secs">{waiting} waiting or running · the last finished requests</span></summary>'
-            '<div class="group" style="border-left-color:var(--mut)"><div class="scroll"><table class="stk" '
-            'id="ctl-queue"><thead><tr><th>Dataset</th><th>Status</th><th>Asked by</th><th>Asked</th><th>Note</th></tr>'
+            '<div class="group" style="border-left-color:var(--mut)"><div class="scroll"><table class="stk qtbl" '
+            'id="ctl-queue"><thead><tr><th>Dataset</th><th>Status</th><th>Asked</th><th>Note</th></tr>'
             f'</thead><tbody>{body}</tbody></table></div><p class="hint">Stop pauses the dataset: a queued request '
             'is cancelled, a running fetch stops before its next provider call (the files it fetched stay), and '
-            'the hourly pass skips the dataset until Resume.</p></div></details>')
+            'the hourly pass skips the dataset until Resume. A running line reads time so far / its limit · who '
+            'started it; a Claude session\'s command is cut at 2 h.</p></div></details>')
 
 
 # ── The page's data and the whole section ─────────────────────────────────────────────────────────────────────
@@ -970,7 +1117,7 @@ def render_data(view: dict) -> str:
     view = _ready(view)
     panels = "".join(_panel(f, view, i == 0) for i, f in enumerate(view["files"]))
     return ('<section id="ctl" class="ctl" aria-label="Data/Health · Data control board"><div class="wrap">'
-            f'{_header(view)}{_health(view)}{_flow(view)}{_picker(view)}'
+            f'{_header(view)}{_topbar(view)}{_health(view)}{_flow(view)}{_picker(view)}'
             '<div class="ffilter" id="ffilter" hidden></div><div class="emptyst" id="ffempty" hidden></div>'
             f'<div class="fpanels">{panels}</div>{_cross(view)}</div></section>')
 

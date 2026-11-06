@@ -211,3 +211,14 @@ def test_scheduled_task_that_writes_no_table_does_not_touch_the_store(monkeypatc
 def test_pid_alive_treats_an_out_of_range_pid_as_gone():
     from RevenueChaser.core import procs
     assert procs.pid_alive(2 ** 70) is False
+
+
+def test_a_scheduled_name_with_no_time_limit_uses_the_generous_bound(sync_jobs, monkeypatch):
+    entry = A.AutomationEntry(
+        name="RC-Test-Unbounded", label="t", args=("-c", "pass"), time="23:00", description="d",
+        settings=A.TaskSettings(no_time_limit=True))
+    monkeypatch.setattr(A, "_BY_NAME", {entry.name: entry})
+    _insert(run_id="five_h", module=entry.name, pid=None, started_at=NOW - 5 * 3600)
+    _insert(run_id="seven_h", module=entry.name, pid=None, started_at=NOW - 7 * 3600)
+    assert jobs.reconcile_lost_runs(now=NOW) == 1
+    assert rawstore.get("job_runs", "seven_h")["status"] == "lost"

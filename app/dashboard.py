@@ -1626,6 +1626,60 @@ def api_build_automation(kind: str):
     return jsonify({"ok": True, "kind": kind, "automation": ops.kind_mode_get(kind)})
 
 
+@app.route("/api/build/automation-ds/<path:dataset>", methods=["POST"])
+def api_build_automation_ds(dataset: str):
+    """#527: one source's own automation, over its file's: ``{"mode": "file|off|raw|parquet|full"}``
+    (``ops.DATASET_MODES``); ``file`` drops the row, so the file's mode holds again. 400 for an unknown dataset or
+    mode. A person's Fetch is not touched by it."""
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build import DATASETS
+    if dataset not in DATASETS:
+        return jsonify({"ok": False, "error": f"unknown dataset {dataset!r}"}), 400
+    mode = str((request.get_json(silent=True) or {}).get("mode") or "").strip()
+    if mode not in ops.DATASET_MODES:
+        return jsonify({"ok": False, "error": f"unknown mode {mode!r}; known: {', '.join(ops.DATASET_MODES)}"}), 400
+    ops.dataset_mode_set(dataset, mode, by=_requested_by())
+    return jsonify({"ok": True, "dataset": dataset, "automation": ops.dataset_mode_get(dataset)})
+
+
+#: #527 step 11: the one root command the board's builder timer press runs (home-server etc/sudoers.d/life-ctl
+#: grants it to ``life``; units/life-rc-dashboard.service runs without NoNewPrivileges for it).
+TIMER_CTL = ("sudo", "-n", "/usr/local/sbin/life-ctl", "life-rc-builder.timer")
+
+
+@app.route("/api/build/timer", methods=["POST"])
+def api_build_timer():
+    """#527 step 11 (avo, 6 Nov 2026): turn the hourly builder timer on or off, ``{"on": true|false}``. Runs only
+    ``TIMER_CTL`` + ``on|off``; 400 for a body without a boolean ``on``, 502 with sudo's or life-ctl's words when it
+    refuses (a unit still under NoNewPrivileges says so)."""
+    on = (request.get_json(silent=True) or {}).get("on")
+    if not isinstance(on, bool):
+        return jsonify({"ok": False, "error": "on must be true or false"}), 400
+    argv = [*TIMER_CTL, "on" if on else "off"]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]}), 502
+    if done.returncode != 0:
+        words = (done.stderr or done.stdout or f"exit {done.returncode}").strip()
+        return jsonify({"ok": False, "error": words[:300]}), 502
+    return jsonify({"ok": True, "on": on, "said": (done.stdout or "").strip()[:300]})
+
+
+@app.route("/api/build/switch/<name>", methods=["POST"])
+def api_build_switch(name: str):
+    """#527: turn the board's ``fetch`` or ``backup`` switch on or off: ``{"on": true|false}``. Off records who (the
+    panel header) and when; 400 for an unknown switch or a body without a boolean ``on``."""
+    from RevenueChaser.rcdata import ops
+    if name not in ops.SWITCHES:
+        return jsonify({"ok": False, "error": f"unknown switch {name!r}; known: {', '.join(ops.SWITCHES)}"}), 400
+    on = (request.get_json(silent=True) or {}).get("on")
+    if not isinstance(on, bool):
+        return jsonify({"ok": False, "error": "on must be true or false"}), 400
+    ops.switch_set(name, on, by=_requested_by())
+    return jsonify({"ok": True, "name": name, "switch": ops.switch_get(name)})
+
+
 @app.route("/api/idle")
 def api_idle():
     """``{"idle": bool, "reasons": [...]}`` from ``jobs.idle()``: no dashboard job, no job lock held by anyone, no

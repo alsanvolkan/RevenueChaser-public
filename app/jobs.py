@@ -365,7 +365,7 @@ def _run_bound_s(module: str | None) -> float:
             entry = automations._BY_NAME.get(module)
         except Exception:  # noqa: BLE001 - a missing registry must not stop the sweep
             entry = None
-        if entry is not None:
+        if entry is not None and entry.settings.limit_minutes is not None:
             return float(entry.settings.limit_minutes) * 60  # #527: a minutes limit counts, not only hours
     return GENEROUS_RUNNING_S
 

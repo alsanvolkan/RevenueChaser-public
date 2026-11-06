@@ -175,7 +175,7 @@ def test_the_sources_css_block_holds_the_grid_and_the_columns():
 def _grouped_view():
     v = _view()
     groups = {"fresh": "data", "late": "data", "stale": "data", "never": "data", "problems": "data",
-              "session": "build", "queue": "scheduled", "builder": "build", "cap": "sources", "gateway": "sources",
+              "session": "build", "queue": "scheduled", "builder": "build", "cap": "sources",
               "backup": "build"}
     for t in v["health"]["tiles"]:
         if t["key"] in groups:
@@ -276,8 +276,10 @@ def test_render_data_holds_the_parts_in_order():
              'class="fpanel" data-file="spine.duckdb"', 'id="sec-crosscheck"']
     at = [html.index(m) for m in marks]
     assert at == sorted(at)
+    # #527: the board's own help box folded into the page's one shared box (report.DATA_HELP)
+    from RevenueChaser.module_settings import report
     assert ("Pause cancels a queued request, stops a running fetch before its next provider call and holds the "
-            "dataset until Resume.") in html
+            "dataset until Resume.") in report.DATA_HELP
 
 
 def test_one_panel_per_file_in_plan_order_only_the_first_shown():

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from RevenueChaser.core import sec_throttle
+
 
 @dataclass(frozen=True)
 class DatasetCard:
@@ -281,7 +283,7 @@ class ProviderWords:
 #: CI, so the screen never shows a bare id.
 PROVIDERS: dict[str, ProviderWords] = {
     "sec": ProviderWords("SEC", "the ticker file, company facts, filings, 13F, Form 4, 13D/G, fails to deliver, N-CEN",
-                         "one shared bucket, 8 a second, for every SEC caller · 10 split between the SEC processes when it falls back",
+                         f"one shared bucket, {sec_throttle.RATE} a second, for every SEC caller · 10 split between the SEC processes when it falls back",
                          "10 a second per User-Agent (fair access)"),
     "uw": ProviderWords("Unusual Whales", "options, SPX, float, financials", "a budget a run · each endpoint's own page size",
                         "100,000 a day (owner-marked avo 2026-11-02)"),

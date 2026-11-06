@@ -20,7 +20,8 @@ A dataset is due (``is_due``) when nothing holds it and its last run is old enou
   for the next complete session and the market series (as-of: today) run on the first pass of each trading day.
   A check with no ``next_check_due`` (past the calendar's table) is due once the as-of is newer than the one it ran
   for, so a calendar run out does not make a dataset due every hour;
-- its kind's automation (``ops.kind_automation``, set on the Settings page) decides what the hourly pass queues:
+- its kind's automation (``ops.kind_automation``, set on the Settings page), or the dataset's own when it has one
+  (``ops.dataset_automation``, #527: the source's Automated select; "as the file" is no row), decides what the hourly pass queues:
   ``off`` (the default) queues nothing for the kind, ``raw`` / ``parquet`` queue the same partial run a Fetch's ▾
   asks for, ``full`` the whole run. Under a partial mode a check the partial run itself wrote (a ``skipped`` with
   its stage note) counts as the run for the cadence, so the hourly pass does not queue the dataset again every
@@ -125,7 +126,7 @@ def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None
     out = []
     for name in sorted(datasets):
         try:
-            mode = ops.kind_mode(datasets[name].kind)
+            mode = ops.dataset_mode(name, datasets[name].kind)   # #527: a source's own mode wins over its kind's
             due, why = is_due(datasets[name], mode)
         except Exception as e:  # noqa: BLE001 - a calendar past its table for one dataset must not stop the rest
             out.append((name, f"due check failed: {type(e).__name__}: {e}"[:300], None, True))

@@ -327,8 +327,8 @@ def test_a_group_head_says_its_file_and_counts():
     m = _model(summarize=lambda n: {**_summary(n), "state": "stale" if n == "prices.bars" else "fresh"})
     cat = needs_tab.render(m)
     n = sum(1 for r in m["catalog"] if r["kind"] == "prices")
-    head = re.search(r'<tbody class="cghead" data-file="prices">(.*?)</tbody>', cat, flags=re.S).group(1)
-    assert "▸" in head and "prices" in head
+    head = re.search(r'<tbody class="cghead" data-file="prices" data-bad>(.*?)</tbody>', cat, flags=re.S).group(1)
+    assert "▾" in head and "prices" in head, "#527: a group with a stale need is open at load"
     assert f"{n} needs · fresh {n - 1} · stale 1" in head
     assert 'colspan="7"' in head
 

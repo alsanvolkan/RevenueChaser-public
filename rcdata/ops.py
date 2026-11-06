@@ -59,6 +59,9 @@ WATCH_KINDS = ("option", "stock")
 #: What the hourly pass queues for a kind's due datasets (avo, 6 Nov 2026): nothing, a raw-only fetch, raw + Parquet,
 #: or the whole run up to the served DuckDB file. A kind with no ``kind_automation`` row is off.
 KIND_MODES = ("off", "raw", "parquet", "full")
+#: The board's two switches (#527, avo 6 Nov 2026): ``fetch`` stops every fetch and build, ``backup`` every backup.
+#: A switch with no ``switch`` row, or with ``off_at`` NULL, is on.
+SWITCHES = ("fetch", "backup")
 # The UW response headers sampled into uw_remaining: only UW's own, never a cookie or anything else the answer had.
 UW_HEADER_PREFIX = "x-uw-"
 # What a live answer carries (27 Oct 2026): x-uw-daily-req-count is today's count; the per-minute pair is a rate
@@ -110,6 +113,12 @@ _DDL = {
     # A new table, no upgrade step: ``ensure`` makes it in an older file too, and an older checkout ignores it.
     "kind_automation": """CREATE TABLE IF NOT EXISTS kind_automation (
         kind TEXT PRIMARY KEY, mode TEXT NOT NULL, set_at REAL, set_by TEXT)""",
+    # #527, a new table as kind_automation was: no upgrade step.
+    "switch": """CREATE TABLE IF NOT EXISTS switch (
+        name TEXT PRIMARY KEY, off_at REAL, off_by TEXT)""",
+    # #527: one source's own automation, over its kind's; no row follows the kind. A new table: no upgrade step.
+    "dataset_automation": """CREATE TABLE IF NOT EXISTS dataset_automation (
+        dataset TEXT PRIMARY KEY, mode TEXT NOT NULL, set_at REAL, set_by TEXT)""",
 }
 TABLES = tuple(_DDL)
 _INDEXES = (
@@ -793,6 +802,70 @@ def kind_mode(kind: str) -> str:
     return (kind_mode_get(kind) or {}).get("mode") or "off"
 
 
+#: What a source's own Automated select sets (#527): ``file`` ("as the file") drops its row, so the kind's mode
+#: holds; any ``KIND_MODES`` value holds for that source only.
+AS_THE_FILE = "file"
+DATASET_MODES = (AS_THE_FILE, *KIND_MODES)
+
+
+@_routed
+def dataset_mode_set(dataset: str, mode: str, *, by: str) -> None:
+    if mode == AS_THE_FILE:
+        with _open() as con:
+            con.execute("DELETE FROM dataset_automation WHERE dataset = ?", (dataset,))
+        return
+    with _open() as con:
+        con.execute("INSERT INTO dataset_automation (dataset, mode, set_at, set_by) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT (dataset) DO UPDATE SET mode = excluded.mode, set_at = excluded.set_at, "
+                    "set_by = excluded.set_by", (dataset, _kind_mode(mode), time.time(), by))
+
+
+@_routed
+def dataset_mode_get(dataset: str) -> dict | None:
+    with _open() as con:
+        row = con.execute("SELECT * FROM dataset_automation WHERE dataset = ?", (dataset,)).fetchone()
+    return dict(row) if row else None
+
+
+def dataset_mode(dataset: str, kind: str) -> str:
+    """What the hourly pass runs for ``dataset``: its own row's mode, else its kind's (``kind_mode``)."""
+    return (dataset_mode_get(dataset) or {}).get("mode") or kind_mode(kind)
+
+
+def _switch(name: str) -> str:
+    if name not in SWITCHES:
+        raise ValueError(f"unknown switch {name!r}; known: {', '.join(SWITCHES)}")
+    return name
+
+
+@_routed
+def switch_set(name: str, on: bool, *, by: str) -> None:
+    """Turn a board switch on (``off_at`` NULL) or off (who and when)."""
+    off_at, off_by = (None, None) if on else (time.time(), by)
+    with _open() as con:
+        con.execute("INSERT INTO switch (name, off_at, off_by) VALUES (?, ?, ?) "
+                    "ON CONFLICT (name) DO UPDATE SET off_at = excluded.off_at, off_by = excluded.off_by",
+                    (_switch(name), off_at, off_by))
+
+
+@_routed
+def switch_get(name: str) -> dict | None:
+    with _open() as con:
+        row = con.execute("SELECT * FROM switch WHERE name = ?", (_switch(name),)).fetchone()
+    return dict(row) if row else None
+
+
+def switch_off(name: str) -> dict | None:
+    """The switch's row while it is off, else None."""
+    row = switch_get(name)
+    return row if row and row.get("off_at") is not None else None
+
+
+def switch_words(name: str, row: dict) -> str:
+    when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(row["off_at"]))
+    return f"the {name} switch is off ({row.get('off_by') or '?'} at {when})"
+
+
 # ── Read helpers for the Settings page (PR 2) ──────────────────────────────────────────────────────────────────
 #
 # The page only reads (F7 A): these never create ops.sqlite or a table. No file yet, or a table an older file does
@@ -886,6 +959,18 @@ def read_queue(finished: int = 20) -> dict:
 def read_schedule(dataset: str) -> dict | None:
     rows = _select("SELECT * FROM dataset_schedule WHERE dataset = ?", (dataset,))
     return rows[0] if rows else None
+
+
+@_routed
+def read_switches() -> dict[str, dict]:
+    """``{name: switch row}`` for a reader, without creating the file."""
+    return {r["name"]: r for r in _select("SELECT * FROM switch")}
+
+
+@_routed
+def read_dataset_modes() -> dict[str, dict]:
+    """``{dataset: dataset_automation row}`` for a reader, without creating the file."""
+    return {r["dataset"]: r for r in _select("SELECT * FROM dataset_automation")}
 
 
 @_routed

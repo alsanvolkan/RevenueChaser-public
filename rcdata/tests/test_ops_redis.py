@@ -310,3 +310,18 @@ def test_kind_automation_on_redis_too():
     with pytest.raises(ValueError):
         ops.kind_mode_set("prices", "x", by="avo")
     assert ops.kind_mode_get("prices") is None
+
+
+def test_a_sources_own_automation_on_redis_too():
+    """#527: the same answers as SQLite's ``test_dataset_automation``: no row follows the kind, ``file`` drops the
+    row, a bad mode writes nothing."""
+    ops.kind_mode_set("market", "raw", by="avo")
+    assert ops.dataset_mode("market_series", "market") == "raw" and ops.read_dataset_modes() == {}
+    ops.dataset_mode_set("market_series", "off", by="avo")
+    assert ops.dataset_mode("market_series", "market") == "off"
+    assert ops.read_dataset_modes()["market_series"]["set_by"] == "avo"
+    ops.dataset_mode_set("market_series", "file", by="avo")
+    assert ops.read_dataset_modes() == {} and ops.dataset_mode_get("market_series") is None
+    with pytest.raises(ValueError):
+        ops.dataset_mode_set("market_series", "x", by="avo")
+    assert ops.read_dataset_modes() == {}
