@@ -9,7 +9,8 @@ one zip per filing window: ``<ddmonyyyy>-<ddmonyyyy>_form13f.zip`` since 2024 (t
 folder than the rest). A page that links no zip is refused (its shape changed). The window is the filing dates the
 set holds.
 
-A zip holds tab-separated ``SUBMISSION``, ``COVERPAGE``, ``SUMMARYPAGE`` and ``INFOTABLE`` (others are not read),
+A zip holds tab-separated ``SUBMISSION``, ``COVERPAGE``, ``SUMMARYPAGE``, ``INFOTABLE``, ``OTHERMANAGER`` and
+``OTHERMANAGER2`` (``SIGNATURE`` and the readme are not read),
 matched by name suffix, case-insensitive (one set nests them in an upper-case folder), read with no quote character
 (names hold quotes) into a scratch DuckDB file beside the raw zip, so a set's 3.8 million holdings never sit in
 memory. Each 13F-HR and 13F-HR/A becomes the row the EDGAR path writes (``sec13f.FILINGS``, ``origin``
@@ -58,7 +59,9 @@ from . import edgar, sec
 
 INDEX_ENV = "RC_FORM13F_INDEX_URL"
 INDEX_PATH = "/data-research/sec-markets-data/form-13f-data-sets"
-MEMBERS = ("SUBMISSION", "COVERPAGE", "SUMMARYPAGE", "INFOTABLE")
+# The order a day's ``managers`` rows are written in, on both paths: ``seq`` alone ties (``sec13f.MANAGERS``).
+MANAGERS_ORDER = "accession, kind, seq, name"
+MEMBERS = ("SUBMISSION", "COVERPAGE", "SUMMARYPAGE", "INFOTABLE", "OTHERMANAGER", "OTHERMANAGER2")
 ORIGIN = "set:"
 SCRATCH = ".typing-"              # a set is typed in a folder of this prefix beside the raw zips
 MIN_WEEKDAYS = 20                 # a shorter backfill reads the forms only (a re-walk of a few days; review S6)
@@ -289,6 +292,30 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
         LEFT JOIN z_summarypage m ON trim(m.ACCESSION_NUMBER) = s.accession
         LEFT JOIN z_count k ON k.accession = s.accession""", [run_id])
 
+    # Both manager lists in one shape, joined to ``filings`` rather than to the submission rows: the filing has
+    # already settled the period, the form filter and the one-row-per-accession rule, so a manager row cannot
+    # belong to a filing the set did not type.
+    #
+    # ``cover``'s ``seq`` is the position in the list, not OTHERMANAGER_SK: the key is the data set's own
+    # surrogate and does not exist in the EDGAR XML, so writing it here would make the two paths disagree on
+    # every cover row. The order is the key's, which is the order the set wrote them in.
+    con.execute("""CREATE TABLE managers AS
+        SELECT f.accession, f.cik, f.period, f.filed, 'included' AS kind,
+               TRY_CAST(trim(o.SEQUENCENUMBER) AS INTEGER) AS seq,
+               coalesce(CAST(TRY_CAST(trim(o.CIK) AS BIGINT) AS VARCHAR), nullif(trim(o.CIK), '')) AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
+               nullif(trim(o.CRDNUMBER), '') AS crd_number, nullif(trim(o.SECFILENUMBER), '') AS sec_file_number,
+               nullif(trim(o.NAME), '') AS name
+        FROM filings f JOIN z_othermanager2 o ON trim(o.ACCESSION_NUMBER) = f.accession
+        UNION ALL
+        SELECT f.accession, f.cik, f.period, f.filed, 'cover' AS kind,
+               CAST(row_number() OVER (PARTITION BY f.accession
+                                       ORDER BY TRY_CAST(trim(o.OTHERMANAGER_SK) AS BIGINT),
+                                                trim(o.OTHERMANAGER_SK)) AS INTEGER) AS seq,
+               coalesce(CAST(TRY_CAST(trim(o.CIK) AS BIGINT) AS VARCHAR), nullif(trim(o.CIK), '')) AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
+               nullif(trim(o.CRDNUMBER), '') AS crd_number, nullif(trim(o.SECFILENUMBER), '') AS sec_file_number,
+               nullif(trim(o.NAME), '') AS name
+        FROM filings f JOIN z_othermanager o ON trim(o.ACCESSION_NUMBER) = f.accession""")
+
     def num(col: str, typ: str = "DOUBLE") -> str:
         return f"TRY_CAST(TRY_CAST(replace(trim({col}), ',', '') AS DOUBLE) AS {typ})"
 
@@ -313,7 +340,7 @@ def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema:
     """Fill ``feed``'s days from ``start`` to ``end`` that a listed set covers; the last day covered (None when no
     set covers any). A range of fewer than ``MIN_WEEKDAYS`` weekdays asks nothing: the walk reads its forms. Every
     backfill first removes a killed run's typing folders, a short one too.
-    ``schema``: ``{"forms", "filings", "holdings", "dollars_from", "cusip_none"}`` of ``sec/13f``."""
+    ``schema``: ``{"forms", "filings", "holdings", "managers", "dollars_from", "cusip_none"}`` of ``sec/13f``."""
     _clear_scratch(ctx)
     weekdays = sum(1 for k in range((end - start).days + 1) if (start + timedelta(days=k)).weekday() < 5)
     if weekdays < MIN_WEEKDAYS:
@@ -367,6 +394,7 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
             filed = {r[0] for r in con.execute("SELECT DISTINCT filed FROM filings").fetchall()}
             cols_f = ", ".join(f'"{c}"' for c, _ in schema["filings"])
             cols_h = ", ".join(f'"{c}"' for c, _ in schema["holdings"])
+            cols_m = ", ".join(f'"{c}"' for c, _ in schema["managers"])
             written = 0
             for day in todo:
                 if day in filed:
@@ -376,6 +404,9 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
                     base.write_parquet(con, f"SELECT {cols_h} FROM holdings WHERE filed = DATE '{day}' "
                                             "ORDER BY accession, line",
                                        feed.parquet_dir() / "holdings" / f"day={day}" / "part-0.parquet")
+                    base.write_parquet(con, f"SELECT {cols_m} FROM managers WHERE filed = DATE '{day}' "
+                                            f"ORDER BY {MANAGERS_ORDER}",
+                                       feed.parquet_dir() / "managers" / f"day={day}" / "part-0.parquet")
                     written += 1
                 d = feed.day_dir(day)
                 d.mkdir(parents=True, exist_ok=True)

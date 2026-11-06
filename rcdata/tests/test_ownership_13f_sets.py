@@ -334,6 +334,71 @@ def test_a_row_that_does_not_read_is_rejected_and_counted_not_the_whole_set(feed
     assert [r[1] for r in _holdings("0001000001-26-000101")] == ["594918104"]
 
 
+def _edgar_managers(included, reported_by) -> list:
+    """The same two lists through the EDGAR path's parser, as its own XML carries them."""
+    from RevenueChaser.rcdata.build.ownership.sec13f import _managers as parse_managers
+    cover = "".join(f"<otherManager><cik>{c}</cik><form13FFileNumber>028-00002</form13FFileNumber>"
+                    f"<name>{n}</name></otherManager>" for _sk, c, n in reported_by)
+    inc = "".join(f"<otherManager2><sequenceNumber>{q}</sequenceNumber><otherManager><cik>{c}</cik>"
+                  f"<form13FFileNumber>028-00001</form13FFileNumber><name>{n}</name></otherManager>"
+                  f"</otherManager2>" for q, c, n in included)
+    xml = ("<edgarSubmission><formData>"
+           f"<coverPage><otherManagersInfo>{cover}</otherManagersInfo></coverPage>"
+           f"<summaryPage><otherManagers2Info>{inc}</otherManagers2Info></summaryPage>"
+           "</formData></edgarSubmission>")
+    rows = parse_managers(edgar.tree(xml), {"accession": "a", "cik": "c", "period": None, "filed": None})
+    return sorted(((r["kind"], r["seq"], r["manager_cik"], r["name"]) for r in rows), key=lambda r: (r[0], r[1], r[3]))
+
+
+def _managers(accession: str) -> list:
+    from RevenueChaser.rcdata.build.spine.stage import partitions
+    files = [str(f) for _, f in partitions(sec13f.DATASET.parquet_dir() / "managers", "day")]
+    if not files:
+        return []
+    con = duckdb.connect()
+    try:
+        return con.execute("SELECT kind, seq, manager_cik, name FROM read_parquet(?, union_by_name = true) "
+                           "WHERE accession = ? ORDER BY kind, seq, name", [files, accession]).fetchall()
+    finally:
+        con.close()
+
+
+def test_the_other_managers_a_filing_names_are_kept_on_both_paths_and_agree(feed, http_mock):
+    """avo, 5 Nov 2026: keep OTHERMANAGER too. The summary page's included managers are the list a holding's
+    ``other_manager`` points into; the cover page's are the filers who report this one's holdings. Both paths
+    must write the same rows for the same filing, so ``cover``'s seq is the position - the data set's own
+    surrogate key has no counterpart in the XML."""
+    h = ox.f13_holding
+    # seq 2 given twice (a real filing lists five managers under 1 and 2), and the cover rows written out of
+    # OTHERMANAGER_SK order: the XML lists them in the key's order, measured on six real filings
+    included = [(2, "0000918950", "SUSQUEHANNA INVESTMENT GROUP"),
+                (1, "0001444949", "SUSQUEHANNA ADVISORS GROUP, INC."),
+                (2, "0000918951", "SUSQUEHANNA FUND ADVISORS")]
+    reported_by = [(167437, "0000932860", "ZETA CAPITAL LLC"),
+                   (167436, "0000932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC")]
+    one = ox.f13_set([
+        ox.set_filing("0001000001-26-000101", 1000001, "31-JUL-2026", [h("MICROSOFT CORP", "594918104", 4, 10)],
+                      included=included, reported_by=reported_by),
+        ox.set_filing("0001000002-26-000105", 1000002, "14-AUG-2026", [h("WELLS FARGO", "949746101", 1, 2)]),
+        ox.set_filing("0001000003-26-000107", 1000003, "14-AUG-2026", [], form="13F-NT", reported_by=reported_by)])
+    http_mock.routes.insert(0, (HREFS[0], one, 200, {}))
+    assert _backfill("2026-06-01", "2026-08-31")["result"] == "changed"
+    rows = _managers("0001000001-26-000101")
+    # a manager's CIK is written as the filer's is, without leading zeros, so it joins to filings.cik
+    assert rows == [("cover", 1, "932859", "PARAMETRIC PORTFOLIO ASSOCIATES LLC"),
+                    ("cover", 2, "932860", "ZETA CAPITAL LLC"),
+                    ("included", 1, "1444949", "SUSQUEHANNA ADVISORS GROUP, INC."),
+                    ("included", 2, "918951", "SUSQUEHANNA FUND ADVISORS"),
+                    ("included", 2, "918950", "SUSQUEHANNA INVESTMENT GROUP")]
+    assert _managers("0001000002-26-000105") == [], "a filing that names none has no rows, not an empty one"
+    assert _managers("0001000003-26-000107") == [], "a filing the set does not type (a notice) has no manager rows"
+
+    # the EDGAR path types the same filing from its XML: the rows must match, seq included, whatever the padding
+    in_xml_order = sorted(reported_by)
+    assert _edgar_managers(included, in_xml_order) == rows
+    assert _edgar_managers([(q, c.lstrip("0"), n) for q, c, n in included], in_xml_order) == rows
+
+
 def _without_cover(zip_bytes: bytes, accession: str) -> bytes:
     """The zip with ``accession``'s COVERPAGE line damaged past reading, as a set with one bad row would be."""
     src, out = zipfile.ZipFile(io.BytesIO(zip_bytes)), io.BytesIO()
