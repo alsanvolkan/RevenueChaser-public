@@ -4,6 +4,7 @@ time budget that stops a deadline day's run and lets the next hour go on, a day 
 once settled while a refusal fails the run, and a backfill that moves the walk's first day."""
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import duckdb
@@ -183,29 +184,61 @@ def test_an_isolated_missing_day_earlier_in_the_walk_does_not_hide_a_later_stret
 
 
 def test_a_stretch_of_filings_the_archive_does_not_answer_for_stops_the_run(feed):
-    """Three listed filings in a row with no object is the bucket refusing, not three missing filings: the run stops
-    rather than marking them absent for good."""
+    """The bucket's own ``AccessDenied``, the other shape an absent filing answers with: three in a row and nothing
+    in the archive hands an object over, so the run stops rather than marking them absent for good. Until 2026-11-06
+    the count alone decided this, and a filer whose filings EDGAR had removed ended a backfill at its day for good;
+    now the archive is asked for a filing it is known to hold, and this is the case where it cannot."""
     feed.add_day("2026-10-26", [(ox.idx_row(1000010 + i, f"ETA {i}", "13F-HR", "2026-10-26",
                                             f"0001000010-26-00000{i}"), None) for i in range(4)])
+    feed.filings.clear()
     row = _run()
-    assert row["result"] == "failed" and "the archive does not answer for" in row["note"]
+    assert row["result"] == "failed" and "did not hand over one it holds either" in row["note"]
     for i in range(3):
         assert not sec13f.DATASET.filing_none(date(2026, 10, 26), f"0001000010-26-00000{i}").exists()
 
 
-def test_filings_edgar_lists_and_does_not_hold_are_marked_absent_and_the_walk_goes_on(feed):
-    """A plain 404 is EDGAR answering "no object", not the bucket refusing, so it must not stop the walk. Measured
-    2026-11-06 on the live site: the six SCHEDULE 13G rows of CIK 2147005 in the index of 2026-08-17 all 404, the
-    accession folders 404, and submissions.json for that CIK holds no filing at all. Before this, three such rows in
-    a row ended a backfill at that day, and every later run died there again."""
+def test_filings_edgar_lists_and_does_not_hold_are_marked_absent_and_the_walk_goes_on(feed, http_mock):
+    """A whole filer's filings removed from the archive must not end the walk, because the walk is newest first and
+    the day is never written off: every later run would die at the same day and the history behind it is lost.
+    Measured 2026-11-06 on the live site: all six SCHEDULE 13G rows of CIK 2147005 in the index of 2026-08-17 answer
+    404, the accession folder answers 404, and that CIK's submissions.json holds no filing at all. The archive still
+    hands over a filing of the same day in the same path, which is what tells this from a path answering nothing."""
     accs = [f"0001000020-26-00000{i}" for i in range(4)]
     feed.add_day("2026-10-26", [(ox.idx_row(1000020 + i, f"THETA {i}", "13F-HR", "2026-10-26", a), None)
                                 for i, a in enumerate(accs)])
     feed.not_found |= set(accs)
-    row = _run()
-    assert row["result"] != "failed", row["note"]
+    older = "0001000021-26-000001"
+    feed.add_day("2026-10-23", [(ox.idx_row(1000021, "IOTA FUND", "13F-HR", "2026-10-23", older),
+                                 ox.f13_filing(older, 1000021, "2026-10-23",
+                                               [ox.f13_holding("NVR INC", "62944T105", 1_000, 1)], "06-30-2026"))])
+    row = base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": "2026-10-23",
+                                                               "to": "2026-10-28"}}, sleep=lambda s: None)
+    assert row["result"] == "changed", row["note"]
+    # The day behind the cluster is reached and typed: that is the failure this guards.
+    assert sec13f.DATASET.filing_path(date(2026, 10, 23), older).exists()
+    assert sec13f.DATASET.is_done(date(2026, 10, 26)) and sec13f.DATASET.is_done(date(2026, 10, 23))
     for a in accs:
-        assert sec13f.DATASET.filing_none(date(2026, 10, 26), a).exists(), a
+        marker = sec13f.DATASET.filing_none(date(2026, 10, 26), a)
+        assert marker.exists(), a
+        assert json.loads(marker.read_text())["status"] == 404, a          # a later repair sweep looks for these
+        assert len(http_mock.calls(a)) == 1, a                             # asked once, never again
+    assert "the archive does not hold" in row["note"] and "it still hands over one it does" in row["note"]
+
+
+def test_a_path_that_hands_over_nothing_stops_the_run_even_when_it_answers_404(feed):
+    """The flip side, and the reason the count alone cannot decide: if every filing answers 404 the walk must not
+    write twelve years off as absent. The archive is asked for one it is known to hold; it does not hand it over,
+    so nothing is written."""
+    accs = [f"0001000030-26-00000{i}" for i in range(4)]
+    feed.add_day("2026-10-26", [(ox.idx_row(1000030 + i, f"KAPPA {i}", "13F-HR", "2026-10-26", a), None)
+                                for i, a in enumerate(accs)])
+    feed.not_found |= set(accs)
+    feed.filings.clear()                                   # nothing in the archive answers with an object
+    row = base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": "2026-10-26",
+                                                               "to": "2026-10-28"}}, sleep=lambda s: None)
+    assert row["result"] == "failed" and "did not hand over one it holds either" in row["note"]
+    for a in accs:
+        assert not sec13f.DATASET.filing_none(date(2026, 10, 26), a).exists(), a
 
 
 def test_a_day_held_at_the_end_of_a_run_is_written_once_the_archive_answers(feed, http_mock):

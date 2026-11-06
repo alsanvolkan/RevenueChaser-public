@@ -10,16 +10,17 @@ as-of). A day with no index object (a weekend is never asked; EDGAR keeps the **
 and Veterans Day have no index although the NYSE trades) answers **403**, not 404 — see ``base.is_missing`` — and is
 marked absent (``.none``) once it is more than ``SETTLED`` old; a younger one is asked again on the next run. The
 SEC's own 403 (an undeclared User-Agent, the fair-access rate) is told apart by its body and stops the run, and so
-does a stretch of ``MISSING_RUN`` missing weekdays EDGAR was open, or that many of a day's filings in a row whose
-answer is a refusal rather than a plain 404 (the index does list filings the archive does not hold).
+does a stretch of ``MISSING_RUN`` missing weekdays EDGAR was open. That many of a day's filings in a row with no
+object is not a refusal by itself -- the index does list filings EDGAR has removed, and a filer's are adjacent --
+so the archive is asked for a filing it is known to hold, and only its silence stops the run (``Feed._holds``).
 A marker that writes a day or a filing off is written only once the archive has answered something in the same run
 (``_Held``), so a refusal of the whole bucket leaves nothing written off and the next run asks again.
 
 **The filings.** ``GET <base>/Archives/<File Name>``: the full submission (``.txt``): the SGML header (accession, form,
 period, filed date, and each party's CIK and name under ``FILER``, ``SUBJECT COMPANY``, ``FILED BY``,
 ``REPORTING-OWNER`` or ``ISSUER``) and every document, the XML ones between ``<XML>`` and ``</XML>``. One request a
-filing, through ``sec.Pacer``. A filing the index lists but the archive does not hold (the same 403, or a 404) is
-marked (``.none``) and not asked again.
+filing, through ``sec.Pacer``. A filing the index lists but the archive does not hold (the same 403, or a 404 —
+EDGAR does remove filings it has already disseminated and indexed) is marked (``.none``) and not asked again.
 
 **The walk.** A feed walks the days from its first day (``start.json``: the run's as-of less ``FIRST_LOOKBACK`` on the
 first run, moved back by a backfill) to the day before its as-of, newest first, skipping the days it finished
@@ -74,8 +75,10 @@ def index_url(day: date) -> str:
     return sec.www_base() + INDEX_PATH.format(year=day.year, q=(day.month - 1) // 3 + 1, ymd=f"{day:%Y%m%d}")
 
 
-# A day or a filing the ``/Archives/`` bucket does not hold answers 403, not 404: ``base.is_missing`` reads the
-# answer's body, and the comment above it says why that, and not the calendar, is what decides.
+# An index day the ``/Archives/`` bucket does not hold answers 403, not 404: ``base.is_missing`` reads the answer's
+# body, and the comment above it says why that, and not the calendar, is what decides. A *filing* EDGAR has removed
+# answers a plain 404 instead (measured 2026-11-06: all six SCHEDULE 13G rows of CIK 2147005 in the index of
+# 2026-08-17), which ``is_missing`` reads the same way, so neither shape alone says whether the path still works.
 MISSING_RUN = base.MISSING_RUN   # consecutive missing weekdays EDGAR does not keep closed: a refusal, not days
 
 
@@ -307,6 +310,7 @@ class Feed:
         complete, partial, fetched = [], [], 0
         day = last
         held, unexplained = _Held(), []
+        last_ok = None                     # a filing this run fetched, to ask the archive with (see ``_holds``)
         while day >= first:
             if day.weekday() < 5 and not self.is_done(day):
                 if budget_s is not None and ctx.clock() - t0 >= budget_s:
@@ -338,23 +342,25 @@ class Feed:
                     fetched += 1
                     if gone is None:
                         gone_run = 0
+                        last_ok = self.filing_url(r)
                         complete += held.flush(self)
                         continue
                     held.filings.append((day, *gone))
-                    if gone[1]["status"] != 404:
-                        # Only a refusal counts towards the run. A plain 404 is EDGAR answering "no object", and
-                        # its daily index does list filings the archive does not hold -- measured 2026-11-06 on the
-                        # live site: the six SCHEDULE 13G rows of CIK 2147005 in the index of 2026-08-17 all 404,
-                        # the accession folders 404, and that CIK's submissions.json holds no filing at all. Three
-                        # of them in a row used to end a backfill at that day, and every later run died there
-                        # again. Such a filing is written off like any other absent one, once something answers.
-                        gone_run += 1
+                    gone_run += 1
                     if gone_run >= MISSING_RUN:
-                        # A bucket that refuses every object answers this many in a row, rather than the archive
-                        # having lost them. Nothing is written, so the next run asks them again.
-                        raise base.SourceError(f"sec: {gone_run} filings of {day} in a row the archive does "
-                                               f"not answer for, last {r['accession']}; the bucket may be "
-                                               "refusing every request, so no filing is written off")
+                        # This many in a row is either a filer whose filings EDGAR has removed -- they are adjacent,
+                        # because the index is asked in accession order -- or the data path refusing or losing
+                        # everything. The answer alone cannot tell them apart (``base.is_missing``), so the archive
+                        # is asked for a filing it is known to hold, in the same path. It hands that one over: the
+                        # absent ones are absent, and the walk goes on. It does not: nothing is written off.
+                        if self._holds(ctx, pacer, last_ok):
+                            ctx.notes.append(f"{gone_run} filings of {day} in a row the archive does not hold, "
+                                             f"last {r['accession']}; it still hands over one it does")
+                            gone_run = 0
+                        else:
+                            raise base.SourceError(f"sec: {gone_run} filings of {day} in a row the archive does "
+                                                   f"not answer for, last {r['accession']}, and it did not hand "
+                                                   "over one it holds either; no filing is written off")
                 # A day is finished once its markers are written, never before: a ``.done`` would skip it for good.
                 (held.finished if held.filings else complete).append(day)
             day -= timedelta(days=1)
@@ -402,11 +408,38 @@ class Feed:
         ctx.notes.append(f"{fetched} filings fetched; stopped at the time budget, the rest on the next run")
         return complete, partial, True
 
+    def filing_url(self, row: dict) -> str:
+        return f"{sec.www_base()}/Archives/{row['path']}"
+
+    def _known_filing(self) -> str | None:
+        """A filing URL from the newest manifest on disk, for a run whose first answers were all absent."""
+        for d in sorted((p for p in self.raw_dir().iterdir() if p.is_dir()), reverse=True)[:MISSING_RUN]:
+            man = d / MANIFEST
+            if not man.exists():
+                continue
+            for line in man.read_text(encoding="utf-8").splitlines():
+                url = json.loads(line).get("url")
+                if url:
+                    return url
+        return None
+
+    def _holds(self, ctx: base.RunContext, pacer: sec.Pacer, last_ok: str | None) -> bool:
+        """Whether the archive still hands over a filing it is known to hold. This is the one check that tells a
+        filer whose filings EDGAR removed from a path that answers nothing for anything: the answer to the absent
+        filing is the same either way. Measured 2026-11-06 on the live site, which is why it exists: all six
+        SCHEDULE 13G rows of CIK 2147005 in the index of 2026-08-17 answer 404, the accession folder answers 404,
+        and that CIK's submissions.json holds no filing at all, while a filing of the same day in the same path
+        answers 200."""
+        url = last_ok or self._known_filing()
+        if url is None:
+            return False
+        return sec.get(ctx, pacer, url, accept=(403, 404)).status_code == 200
+
     def _fetch_filing(self, ctx: base.RunContext, pacer: sec.Pacer, day: date,
                       row: dict) -> tuple[str, dict] | None:
         """Fetch one filing. None once it is written; ``(accession, payload)`` when the archive has no object for
         it, for the caller to mark absent."""
-        url = f"{sec.www_base()}/Archives/{row['path']}"
+        url = self.filing_url(row)
         r = sec.get(ctx, pacer, url, accept=(403, 404))
         acc = row["accession"]
         if base.is_missing(r):

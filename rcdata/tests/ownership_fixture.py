@@ -481,6 +481,8 @@ class Edgar:
 
     def filing(self, request):
         acc = str(request.url).rsplit("/", 1)[1][:-len(".txt")]
+        if self.refuse:
+            return self._answer(None)
         if acc in self.not_found:
             # A plain 404: the daily index listed a filing EDGAR does not hold, which it does (#505).
             return 404, b"<?xml version='1.0'?><Error><Code>NoSuchKey</Code></Error>", {}
