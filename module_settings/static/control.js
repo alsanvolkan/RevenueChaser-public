@@ -1099,6 +1099,17 @@
       else out.textContent = r.body.error || ('refused · HTTP ' + r.status);
     }, function () { btn.disabled = false; out.textContent = 'could not reach the dashboard'; });
   }
+  /* #527: the fetch and backup switches at the top; the page reloads so every line reads the new state */
+  function switchPress(btn) {
+    var nm = btn.getAttribute('data-name'), on = btn.getAttribute('data-on') === '1';
+    var out = document.getElementById('sw-msg');
+    btn.disabled = true;
+    X.send('POST', C.routes.switch + nm, { on: !on }).then(function (r) {
+      if (r.status >= 200 && r.status < 300) { location.reload(); return; }
+      btn.disabled = false;
+      if (out) out.textContent = r.body.error || ('refused · HTTP ' + r.status);
+    }, function () { btn.disabled = false; if (out) out.textContent = 'could not reach the dashboard'; });
+  }
   /* the Health queue's Stop: the same pause as the dataset's button, said on the row */
   function stop(btn) {
     var ds = btn.getAttribute('data-dataset'), out = btn.parentNode.querySelector('[role="status"]');
@@ -1138,6 +1149,8 @@
     if (sp) { if (!sp.disabled) stop(sp); return; }
     var c = e.target.closest('.ctl [data-job="cadence"]');
     if (c) { if (!c.disabled) cadence(c); return; }
+    var sw = e.target.closest('.ctl [data-job="switch"]');
+    if (sw) { if (!sw.disabled) switchPress(sw); return; }
     var au = e.target.closest('.ctl [data-job="automation"]');
     if (au) { if (!au.disabled) automation(au); return; }
     var t = e.target.closest('.ctl .sbtog');

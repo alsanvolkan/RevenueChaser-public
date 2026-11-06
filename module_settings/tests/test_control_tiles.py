@@ -8,7 +8,7 @@ from RevenueChaser.module_settings import control
 from RevenueChaser.module_settings.tests.test_control_view import NOW, _build, control_nd
 
 GROUPS = {"data": {"fresh", "late", "stale", "never", "problems", "session", "universe"},
-          "sources": {"cap", "gateway"}, "scheduled": {"timer", "builder", "queue"}, "build": {"longest", "backup"}}
+          "sources": {"cap"}, "scheduled": {"timer", "builder", "queue"}, "build": {"longest", "backup"}}
 TIMER = {"state": "on", "last": "2026-10-30T17:07:00+00:00", "next": "2026-10-30T18:07:00+00:00", "minute": 7}
 
 

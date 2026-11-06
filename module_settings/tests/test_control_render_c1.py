@@ -175,7 +175,7 @@ def test_the_sources_css_block_holds_the_grid_and_the_columns():
 def _grouped_view():
     v = _view()
     groups = {"fresh": "data", "late": "data", "stale": "data", "never": "data", "problems": "data",
-              "session": "build", "queue": "scheduled", "builder": "build", "cap": "sources", "gateway": "sources",
+              "session": "build", "queue": "scheduled", "builder": "build", "cap": "sources",
               "backup": "build"}
     for t in v["health"]["tiles"]:
         if t["key"] in groups:

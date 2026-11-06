@@ -340,3 +340,15 @@ def test_automation_sets_a_kinds_mode_and_refuses_an_unknown_kind_or_mode(client
     assert client.post("/api/build/automation/nope", json={"mode": "raw"}).status_code == 400
     assert client.post("/api/build/automation/market", json={"mode": "everything"}).status_code == 400
     assert ops.kind_mode("market") == "raw"
+
+
+def test_switch_turns_fetch_or_backup_off_and_on_and_refuses_anything_else(client):
+    """#527: the board's two switches. The panel header is who turned it off."""
+    h = {"X-RC-Panel": "settings"}
+    r = client.post("/api/build/switch/fetch", json={"on": False}, headers=h)
+    assert r.status_code == 200 and r.get_json()["switch"]["off_by"] == "settings"
+    assert ops.switch_off("fetch") is not None and ops.switch_off("backup") is None
+    assert client.post("/api/build/switch/fetch", json={"on": True}, headers=h).status_code == 200
+    assert ops.switch_off("fetch") is None
+    assert client.post("/api/build/switch/everything", json={"on": False}, headers=h).status_code == 400
+    assert client.post("/api/build/switch/backup", json={}, headers=h).status_code == 400, "on must be a boolean"

@@ -305,7 +305,6 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
         _tile("universe", "none", count(universe.get("filled")) if universe.get("filled") is not None else "—",
               f"of {count(universe.get('size'))} names in the universe have a bar on the newest session"
               + ("" if universe.get("fill_enabled") else " · the Fill buttons are off"), "universe"),
-        _tile("gateway", *_gateway(ibkr), "gateway"),
         _tile("longest", "none" if longest is None else "neu",
               "not measured yet" if longest is None else f"{round(longest['seconds'] / 60)} min",
               "longest build today" if longest is None else f"longest build today · {longest['dataset']}"),
@@ -574,6 +573,28 @@ def since_words(schedule: dict | None) -> str:
             "before its next provider call; the files it fetched stay")
 
 
+def _read_switches() -> dict:
+    from RevenueChaser.rcdata import ops
+    return ops.read_switches()
+
+
+def switches_view(rows, now: datetime | None = None) -> dict:
+    """``{name: {"on", "by", "at"}}`` for the board's two switches (#527). ``rows`` is ``ops.read_switches``'s answer,
+    or None when the store could not be read: then ``on`` is None (not known), never a guessed on."""
+    from RevenueChaser.rcdata import ops
+    out = {}
+    for name in ops.SWITCHES:
+        if rows is None:
+            out[name] = {"on": None, "by": None, "at": None}
+            continue
+        row = rows.get(name) or {}
+        off_at = row.get("off_at")
+        out[name] = ({"on": True, "by": None, "at": None} if off_at is None else
+                     {"on": False, "by": row.get("off_by"),
+                      "at": _local(datetime.fromtimestamp(float(off_at), timezone.utc)).strftime("%d %b %H:%M")})
+    return out
+
+
 def _read_kind_modes() -> dict:
     from RevenueChaser.rcdata import ops
     return ops.read_kind_modes()
@@ -821,7 +842,7 @@ def _timer(reader) -> dict:
 # ── The whole board ───────────────────────────────────────────────────────────────────────────────────────────
 
 def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, now: datetime | None = None,
-          datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None) -> dict:
+          datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None, switches=None) -> dict:
     """The page's model from ``newdata.collect``'s output. ``applied`` is the saved universe
     (``board_settings.values("module_settings")["values"]``), ``ibkr`` the gateway's login state, ``datasets`` the
     builder's datasets (default: ``newdata._datasets()``). ``timer`` and ``job_runs`` are the readers of the hourly
@@ -849,6 +870,10 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         modes = kind_modes() if kind_modes else _read_kind_modes()
     except Exception:  # noqa: BLE001 - an unreadable ops store shows every kind off, never the board failing
         modes = {}
+    try:
+        switch_rows = switches() if switches else _read_switches()
+    except Exception:  # noqa: BLE001 - an unreadable ops store shows the switches as not known
+        switch_rows = None
     file_views = files(nd, datasets, uni, reads, now, timer_view, modes)
     control_sources.attach_pv(file_views, datasets)
     return {
@@ -856,6 +881,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
         "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, file_views=file_views),
         "timer": timer_view, "longest_build": longest,
+        "switches": switches_view(switch_rows), "gateway": dict(zip(("cls", "n", "label"), _gateway(ibkr))),
         "universe": uni, "identity": nd.get("identity"), "my_universe": nd.get("my_universe"), "scope": scope(uni), "files": file_views, "providers": provider_rows,
         "flow": flow(file_views, datasets, reads, uni), "calendars": calendars(nd, uni, provider_rows),
         "cross_check": (nd.get("cross_check") or {}).get("fields") or [],

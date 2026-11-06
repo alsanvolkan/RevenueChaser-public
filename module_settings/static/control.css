@@ -1090,3 +1090,16 @@
 .ctl .onewrap .fmenu{min-width:44px;padding:0 10px}
 .ctl .onewrap .fmenul{position:absolute;right:0;top:100%;z-index:5;display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.25);white-space:nowrap}
 .ctl .onewrap .fmenul[hidden]{display:none}
+
+/* #527 top bar: the fetch and backup switches and the IBKR gateway, always above Health right now */
+.ctl .topbar{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:12px 0 4px}
+.ctl .topbar .swt{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:44px;padding:6px 14px;
+  border-radius:10px;border:1px solid var(--line);border-left-width:4px;background:var(--card);
+  color:inherit;font:inherit;text-align:left}
+.ctl .topbar button.swt{cursor:pointer}
+.ctl .topbar .swt.ok{border-left-color:var(--ok)}
+.ctl .topbar .swt.bad{border-left-color:var(--bad)}
+.ctl .topbar .swt.warn{border-left-color:var(--warn)}
+.ctl .topbar .swt.none{border-left-color:var(--mut)}
+.ctl .topbar .swt .dim{font-size:.85em}
+@media(max-width:760px){.ctl .topbar .swt{flex:1 1 100%}}

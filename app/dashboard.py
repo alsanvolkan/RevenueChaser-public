@@ -1626,6 +1626,20 @@ def api_build_automation(kind: str):
     return jsonify({"ok": True, "kind": kind, "automation": ops.kind_mode_get(kind)})
 
 
+@app.route("/api/build/switch/<name>", methods=["POST"])
+def api_build_switch(name: str):
+    """#527: turn the board's ``fetch`` or ``backup`` switch on or off: ``{"on": true|false}``. Off records who (the
+    panel header) and when; 400 for an unknown switch or a body without a boolean ``on``."""
+    from RevenueChaser.rcdata import ops
+    if name not in ops.SWITCHES:
+        return jsonify({"ok": False, "error": f"unknown switch {name!r}; known: {', '.join(ops.SWITCHES)}"}), 400
+    on = (request.get_json(silent=True) or {}).get("on")
+    if not isinstance(on, bool):
+        return jsonify({"ok": False, "error": "on must be true or false"}), 400
+    ops.switch_set(name, on, by=_requested_by())
+    return jsonify({"ok": True, "name": name, "switch": ops.switch_get(name)})
+
+
 @app.route("/api/idle")
 def api_idle():
     """``{"idle": bool, "reasons": [...]}`` from ``jobs.idle()``: no dashboard job, no job lock held by anyone, no

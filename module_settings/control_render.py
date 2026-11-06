@@ -28,6 +28,7 @@ CTL_JS = (_STATIC / "control.js").read_text(encoding="utf-8")
 #: The routes a press uses; the script reads them from the page's data, so a test sees every route in one place.
 ROUTES = {"request": "/api/build/request/", "schedule": "/api/build/schedule/", "queue": "/api/build/queue",
           "automation": "/api/build/automation/",
+          "switch": "/api/build/switch/",
           "settings": "/api/settings/board/module_settings", "sample": "/api/settings/sample/",
           "job": "/api/job/", "picture": "/run/storage-picture"}
 #: After this long the page says it is stale and offers a refresh (the design: "refreshes after 60 minutes").
@@ -94,6 +95,30 @@ def _header(view: dict) -> str:
             f'<div class="wialbox" id="wial" hidden>{WIAL}</div>'
             f'<div class="stalebar" id="ctl-stale" hidden><b>Stale</b> · this page was read at {esc(view["read_at"])} · '
             '<button type="button" class="lnk" data-reload>Refresh</button></div>')
+
+
+def _switch(name: str, label: str, st: dict | None) -> str:
+    st = st or {}
+    on = st.get("on")
+    if on is None:
+        return (f'<span class="swt none" data-name="{name}"><b>{label}: not known</b>'
+                '<span class="dim">the ops store could not be read</span></span>')
+    who = "" if on else f'<span class="dim">{esc(st.get("by") or "?")} {esc(st.get("at") or "")}</span>'
+    return (f'<button type="button" class="swt {"ok" if on else "bad"}" data-job="switch" data-name="{name}" '
+            f'data-on="{1 if on else 0}" aria-pressed="{"true" if on else "false"}" '
+            f'title="{label} switch: press to turn it {"off" if on else "on"}"><b>{label}: {"on" if on else "off"}'
+            f'</b>{who}</button>')
+
+
+def _topbar(view: dict) -> str:
+    """#527: always at the top: the fetch switch, the backup switch and the IBKR gateway's state."""
+    sw = view.get("switches") or {}
+    g = view.get("gateway") or {}
+    gate = (f'<span class="swt gw {esc(g.get("cls") or "none")}"><b>IBKR gateway: {esc(g.get("n") or "unknown")}</b>'
+            f'<span class="dim">{esc((g.get("label") or "").replace("IBKR gateway · ", ""))}</span></span>')
+    return (f'<div class="topbar" role="group" aria-label="Switches and the IBKR gateway">'
+            f'{_switch("fetch", "Fetch", sw.get("fetch"))}{_switch("backup", "Backup", sw.get("backup"))}{gate}'
+            '<span role="status" class="dim" id="sw-msg"></span></div>')
 
 
 #: The Health groups (#492 C1): three side by side, then Data at full width.
@@ -970,7 +995,7 @@ def render_data(view: dict) -> str:
     view = _ready(view)
     panels = "".join(_panel(f, view, i == 0) for i, f in enumerate(view["files"]))
     return ('<section id="ctl" class="ctl" aria-label="Data/Health · Data control board"><div class="wrap">'
-            f'{_header(view)}{_health(view)}{_flow(view)}{_picker(view)}'
+            f'{_header(view)}{_topbar(view)}{_health(view)}{_flow(view)}{_picker(view)}'
             '<div class="ffilter" id="ffilter" hidden></div><div class="emptyst" id="ffempty" hidden></div>'
             f'<div class="fpanels">{panels}</div>{_cross(view)}</div></section>')
 
