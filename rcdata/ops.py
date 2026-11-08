@@ -51,6 +51,10 @@ from ..core import calendar, config
 
 OPS_SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 5000
+#: How long a thread waits for another thread of the same process to finish its write transaction (``_tx``). The
+#: threads queue on ``_WRITE_LOCK`` and are woken when it is released, so this is patience for a stuck transaction,
+#: not a share of ``busy_timeout``, which is now only what a writer waits for another process (#522).
+THREAD_WRITE_WAIT_S = 60.0
 FILE_NAME = "ops.sqlite"
 
 REQUEST_STATUSES = ("queued", "running", "done", "failed", "skipped")
@@ -191,16 +195,32 @@ def connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         con.close()
 
 
+# One write transaction at a time per process (#522). SQLite's busy handler polls with growing sleeps (up to 100 ms)
+# and keeps no queue, so n threads of one process racing for the write lock spend their ``busy_timeout`` in idle
+# sleeps and behind each other: on a loaded box the last one ran out of it and failed with "database is locked"
+# (``test_same_ticker_concurrent_toggles``, run on main 6 Nov 2026). Threads now queue here and are woken in turn;
+# ``busy_timeout`` is left for a writer in another process (the builder against the dashboard).
+_WRITE_LOCK = threading.RLock()
+
+
 @contextmanager
 def _tx(con: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    """One write transaction, taken at once (``BEGIN IMMEDIATE``), so a read-then-write cannot race."""
-    con.execute("BEGIN IMMEDIATE")
+    """One write transaction, taken at once (``BEGIN IMMEDIATE``), so a read-then-write cannot race.
+
+    Held under ``_WRITE_LOCK``, so the threads of this process take turns instead of polling SQLite's lock."""
+    if not _WRITE_LOCK.acquire(timeout=THREAD_WRITE_WAIT_S):
+        raise sqlite3.OperationalError(
+            f"database is locked: another thread of this process held the ops write lock for {THREAD_WRITE_WAIT_S:g} s")
     try:
-        yield con
-    except BaseException:
-        con.execute("ROLLBACK")
-        raise
-    con.execute("COMMIT")
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            yield con
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        con.execute("COMMIT")
+    finally:
+        _WRITE_LOCK.release()
 
 
 _ENSURED: set[str] = set()

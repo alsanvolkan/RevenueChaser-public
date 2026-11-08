@@ -236,6 +236,44 @@ def test_a_writer_waits_for_the_other_process_instead_of_failing(sqlite_ops):
     assert ops.calls_today("uw") == 1
 
 
+def test_threads_of_one_process_queue_for_the_write_lock_instead_of_running_out_of_busy_timeout(sqlite_ops,
+                                                                                                monkeypatch):
+    """#522: n threads of one process (the dashboard's hourly pass and a panel click) writing at once.
+
+    SQLite's busy handler polls with growing sleeps and no queue, so the last of n writers waits for the n - 1 before
+    it plus its own idle sleeps, and on a loaded box (slow fsync) that runs past ``busy_timeout``: "database is
+    locked". Here each transaction is held 80 ms and the timeout is 300 ms, so the eighth writer's turn comes ~560 ms
+    in: it must wait its turn behind the others, not fail."""
+    import threading
+    ops.ensure()
+    monkeypatch.setattr(ops, "BUSY_TIMEOUT_MS", 300)
+    real = ops._watch_write
+
+    def slow(*a, **k):
+        time.sleep(0.08)                                  # a commit on a loaded disk
+        return real(*a, **k)
+
+    monkeypatch.setattr(ops, "_watch_write", slow)
+    n = 8
+    gate, results, errors = threading.Barrier(n), [], []
+
+    def run():
+        try:
+            gate.wait(10)
+            results.append(ops.watch_toggle("stock", "AAA", by="test"))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert errors == [], errors[:2]
+    assert sorted(results) == [False] * 4 + [True] * 4
+    assert ops.watch_list("stock") == []
+
+
 # ── Who may claim which request (#queueing the attended and CLI jobs) ──────────────────────────────────────────
 
 def test_next_request_skips_the_datasets_it_was_told_to_leave_alone():
