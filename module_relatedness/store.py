@@ -89,9 +89,40 @@ def set_mode(mode: dict) -> None:
                         [{"key": MODE_KEY, "value": json.dumps(mode, sort_keys=True)}])
 
 
+# ``save_profile``'s default for ``profile_json`` / ``label_source``: carry the stored value (#400).
+KEEP = object()
+JSON_COLUMNS = ("profile_json", "label_source")
+
+
+def _stored_json(tx, ticker: str) -> dict:
+    """The stored ``profile_json`` / ``label_source`` of ``ticker`` (decoded), read inside ``tx``."""
+    try:
+        row = tx.execute("SELECT profile_json, label_source FROM relatedness_profiles WHERE ticker = ?",
+                         [ticker]).fetchone()
+    except Exception:  # noqa: BLE001 - no table yet: nothing to carry
+        return {c: None for c in JSON_COLUMNS}
+    out = {}
+    for col, v in zip(JSON_COLUMNS, row or (None, None)):
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                v = None
+        out[col] = v
+    return out
+
+
 def save_profile(ticker: str, cik, profile: dict, cache_key_value: str,
                  model: str, prompt_version: str = PROMPT_VERSION,
-                 status: str = "ok", attempts: int = 0, provider: str = "deepseek") -> None:
+                 status: str = "ok", attempts: int = 0, provider: str = "deepseek",
+                 profile_json=KEEP, label_source=KEEP) -> None:
+    """Write one ticker's profile row and its attribute rows in one transaction.
+
+    ``profile_json`` / ``label_source`` (schema 13, #401) are the v3 structured profile and where each field came
+    from. Left out (``KEEP``), the stored values are carried: ``relatedness_profiles`` is an upsert that sets every
+    column from the row, so a re-save that named neither column used to set both to NULL (#400). Pass ``None`` to
+    clear them.
+    """
     t = ticker.upper()
     rows = [{"ticker": t, "field": f,
              "value": json.dumps(profile.get(f) or [], ensure_ascii=False),
@@ -101,11 +132,15 @@ def save_profile(ticker: str, cik, profile: dict, cache_key_value: str,
     # relatedness_attributes is "replace" grouped by ticker, so the write
     # clears the ticker's previous fields itself.
     def _write(tx):
+        given = {"profile_json": profile_json, "label_source": label_source}
+        if any(v is KEEP for v in given.values()):
+            kept = _stored_json(tx, t)
+            given = {c: (kept[c] if v is KEEP else v) for c, v in given.items()}
         tx.write_rows("relatedness_profiles", [{
             "ticker": t, "cik": str(cik or ""), "model": model,
             "prompt_version": prompt_version, "fetched_at": time.time(),
             "cache_key": cache_key_value, "status": status,
-            "attempts": attempts, "provider": provider}])
+            "attempts": attempts, "provider": provider, **given}])
         tx.write_rows("relatedness_attributes", rows)
 
     rawstore.atomic(_write)
