@@ -208,6 +208,27 @@ def test_a_read_the_code_makes_and_the_plan_leaves_out_is_named_with_its_functio
     assert boards.unread_plans("module_fake") == ("options.daily",)
 
 
+def test_a_needs_own_reader_is_covered_only_by_that_need_not_by_a_sibling_over_its_table(tmp_path, monkeypatch):
+    """The review's 1: ``prices.market_cap`` and ``prices.latest`` share ``market_cap_daily``, so a table match let
+    a board call ``read.latest_market`` with only ``prices.market_cap`` planned, and the diagram drew no line."""
+    pkg = tmp_path / "module_fake"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "a.py").write_text("import RevenueChaser.rcdata.read as rd\nrd.latest_market([])\n", encoding="utf-8")
+    monkeypatch.setattr(boards, "root", lambda: tmp_path)
+    monkeypatch.setattr(boards, "PLANNED_READS", {"module_fake": ("prices.market_cap",)})
+    assert ("latest_market", "market_cap_daily", ("prices.latest",)) in boards.unplanned_reads("module_fake")
+    monkeypatch.setattr(boards, "PLANNED_READS", {"module_fake": ("prices.market_cap", "prices.latest", "prices.bars",
+                                                                  "prices.security_ids")})
+    assert boards.unplanned_reads("module_fake") == ()
+
+
+def test_the_call_scan_sees_the_real_boards_reads_so_an_empty_scan_cannot_pass():
+    """The review's 2: a scan that found nothing would make the board-wide test pass on every board."""
+    assert {"changed_at", "bar_facts", "ticker_bars"} <= set(boards.read_calls("module_comovement"))
+    assert {"fundamental_companies", "filing_texts"} <= set(boards.read_calls("module_relatedness"))
+
+
 def test_every_board_not_migrated_yet_plans_every_need_its_code_reads():
     """#491: the plan is written by hand and drifted from the code (#483 found three boards with lines missing).
     Only the board's own package is scanned: a read made inside a shared ``core`` module is not counted here,

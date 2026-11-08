@@ -37,8 +37,9 @@ UNDECLARED = frozenset({
     "module_swing_potential", "module_uw_interaction", "module_value_chain",
 })
 
-#: What each board not migrated yet will read, from the catalog's need list of 29 Oct 2026
-#: (``DataPlan/2026-10-29_katalog-need-listesi.md``, its "which board reads it" column). The control board draws
+#: What each board not migrated yet will read: first from the catalog's need list of 29 Oct 2026
+#: (``DataPlan/2026-10-29_katalog-need-listesi.md``, its "which board reads it" column), since corrected from the
+#: boards' code (#489, #490, #491). The control board draws
 #: these as dashed lines, so a reader can tell a board's own declaration from the plan. An entry goes away in the
 #: PR that migrates the board, the one that adds its ``READS``. A board whose data has no need in the catalog yet
 #: is left out rather than given a need it does not read. A test compares each entry with the ``rcdata.read``
@@ -218,13 +219,27 @@ def _needs_over(table: str) -> tuple[str, ...]:
 def unplanned_reads(board: str) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
     """``(function, table, needs over that table)`` for every table the board's code reads with no planned need.
 
-    Several needs can share a table (five over ``market_series``); any one of them planned covers the read,
-    because the code cannot say which series it means without running.
+    When the function is a need's own ``reader_name``, only that need covers it. Otherwise several needs can share
+    the table (``corporate_action`` read inside ``changed_at``), and any one of them planned covers the read. A
+    reader shared by several needs (``market_series``) is covered by any of them, because the code cannot say
+    which series it means without running.
     """
     planned = set(PLANNED_READS.get(board, ()))
     tables = reader_tables()
-    return tuple((fn, table, _needs_over(table)) for fn in read_calls(board) for table in sorted(tables.get(fn, ()))
-                 if not planned & set(_needs_over(table)))
+    out = []
+    for fn in read_calls(board):
+        # A function that is a need's own reader serves that need, not any need over its table:
+        # ``read.latest_market`` is ``prices.latest``, and ``prices.market_cap`` over the same table must not
+        # cover it (the review's 1).
+        own: dict[str, set[str]] = {}
+        for n in catalog.NEEDS.values():
+            if n.reader_name == fn:
+                own.setdefault(n.table, set()).add(n.name)
+        for table in sorted(tables.get(fn, set()) | set(own)):
+            candidates = tuple(sorted(own[table])) if table in own else _needs_over(table)
+            if not planned & set(candidates):
+                out.append((fn, table, candidates))
+    return tuple(out)
 
 
 def unread_plans(board: str) -> tuple[str, ...]:
