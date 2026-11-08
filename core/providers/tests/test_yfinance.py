@@ -308,7 +308,7 @@ class _InfoOnlyTicker:
         self.statement_reads += 1
         raise AssertionError("get_info must not read a statement")
 
-    income_stmt = financials = cashflow = cash_flow = balance_sheet = balance_sheets = property(_statement)
+    income_stmt = financials = cashflow = cash_flow = balance_sheet = property(_statement)
 
 
 def test_get_info_reads_info_only_and_marks_the_payload(monkeypatch):
@@ -352,3 +352,20 @@ def test_get_financials_with_both_label_variants_counts_each_debt_once(monkeypat
     fake = _FakeTicker(income=_df({"Total Revenue": {_Y1: 100.0}}), balance=balance)
     monkeypatch.setattr("yfinance.Ticker", lambda ticker: fake)
     assert [r["total_debt"] for r in yfp.get_financials("aapl")["annual"]] == [13.0]
+
+
+class _NoStatementsTicker:
+    """A Yahoo ticker with no statements, carrying only the attribute names yfinance 1.7 really has."""
+
+    info = {}
+    income_stmt = financials = cashflow = cash_flow = balance_sheet = balancesheet = pd.DataFrame()
+
+
+def test_a_ticker_with_no_statements_counts_no_failed_read(monkeypatch):
+    """An empty statement is no failure: no fallback label may name an attribute yfinance lacks (``balance_sheets``
+    counted 4,434 of 9,010 reads as failed on the 8 Nov Asymmetric Growth Fetch)."""
+    monkeypatch.setattr("yfinance.Ticker", lambda ticker: _NoStatementsTicker())
+    yfp.reset_health()
+    out = yfp.get_financials("ABC")
+    assert out["annual"] == []
+    assert yfp.health()["failed"] == 0
