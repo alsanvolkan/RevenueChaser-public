@@ -35,6 +35,7 @@ import duckdb
 
 from ....core import calendar, credentials
 from .. import base
+from .. import dirty as dirty_set
 from . import KIND, common, facts
 
 NAME = "uw/financials"
@@ -45,6 +46,9 @@ WINDOW_DAYS = 14
 MARGIN_DAYS = 30
 MAX_PER_RUN = 300
 STAGING = "stg_uw_financials"
+# The newest read of each company, field and period, over the snapshots ``{src}``.
+LATEST = ("SELECT * FROM {src} QUALIFY row_number() OVER (PARTITION BY cik, field, period_type, period_end "
+          "ORDER BY source_as_of DESC, fetched_at DESC) = 1")
 # Served field <- the UW statement row's key (docs/openapi.yaml: Income Statement, Balance Sheet, Cash Flow Statement).
 FIELD_MAP: dict[str, dict[str, str]] = {
     "income_statements": {"revenue": "total_revenue", "cost_of_revenue": "cost_of_revenue",
@@ -217,23 +221,34 @@ class UWFinancials:
         return out
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        common.stage_glob(con, STAGING, facts.FACT, common.parquet_dir(NAME), "cik=*/*.parquet",
-                          select="SELECT * FROM {src} QUALIFY row_number() OVER (PARTITION BY cik, field, "
-                                 "period_type, period_end ORDER BY source_as_of DESC, fetched_at DESC) = 1")
+        common.stage_glob(con, STAGING, facts.FACT, common.parquet_dir(NAME), "cik=*/*.parquet", select=LATEST,
+                          ciks=common.dirty_ciks(ctx, con))
         return {}
+
+    dirty_keyed = True
+
+    def rules_state(self) -> str:
+        """Served or not (``RC_UW_PRELIMINARY``): turning it on or off changes every company's rows (#446)."""
+        return f"preliminary={enabled()}"
+
+    def dirty(self, ctx: base.RunContext):
+        """The companies whose ``cik=<cik>`` partitions changed since the live file was built (#446)."""
+        return dirty_set.keyed(ctx, self)
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         cols = ["cik", "field", "period_end", "value"]
         where = f"source = '{NAME}'"
         added, removed = common.compare_live(con, f"SELECT {', '.join(cols)} FROM fundamental_fact WHERE {where}",
-                                             "fundamental_fact", cols, where=where)
+                                             "fundamental_fact", cols, where=where,
+                                             dirty_only=common.dirty_ciks(ctx, con) is not None)
         quarters, companies = con.execute(f"SELECT count(DISTINCT (cik, period_end)), count(DISTINCT cik) "
                                           f"FROM fundamental_fact WHERE {where}").fetchone()
         ctx.notes.append(f"{quarters} preliminary quarter(s) of {companies} companies served")
-        as_of = con.execute(f"SELECT max(source_as_of) FROM {STAGING}").fetchone()[0]
+        folder = common.parquet_dir(NAME)
+        as_of = common.staged_value(ctx, con, STAGING, folder, "cik=*/*.parquet", "max(source_as_of)", LATEST)
         on = ctx.as_of or self.default_as_of()
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
-                "source_as_of": (as_of or on).isoformat(), "rows": common.count(con, STAGING), "added": added,
+                "source_as_of": (as_of or on).isoformat(), "rows": int(common.staged_value(ctx, con, STAGING, folder, "cik=*/*.parquet", "count(*)", LATEST)), "added": added,
                 "removed": removed}
 
 

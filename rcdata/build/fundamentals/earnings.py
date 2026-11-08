@@ -32,6 +32,7 @@ import duckdb
 from ....core import calendar, credentials
 from ....core.identity.sources import norm_ticker
 from .. import base
+from .. import dirty as dirty_set
 from . import KIND, common
 
 NAME = "alphavantage/earnings_calendar"
@@ -148,6 +149,10 @@ class EarningsCalendar:
             finally:
                 con.close()
         return out
+
+    def dirty(self, ctx: base.RunContext):
+        """Small and not partitioned by company: reloaded whole by every build, on the live copy too (#446)."""
+        return dirty_set.ALL
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         common.stage_glob(con, STAGING, SCHEMA, common.parquet_dir(NAME), "date=*/part-0.parquet",
