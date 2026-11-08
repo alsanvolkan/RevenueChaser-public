@@ -34,7 +34,7 @@ def _value(doc, field):
     ({"DepreciationDepletionAndAmortization": 50, "DepreciationAndAmortization": 70}, (50, False)),  # rung 1 holds
     ({"DepreciationAmortizationAndAccretionNet": 55, "DepreciationAndAmortization": 70}, (55, False)),  # rung 2
     ({"DepreciationAndAmortization": 70, "Depreciation": 40, "AmortizationOfIntangibleAssets": 20}, (70, False)),
-    ({"Depreciation": 40, "AmortizationOfIntangibleAssets": 20}, (60, True)),       # rung 4: a sum, each line once
+    ({"Depreciation": 40, "AmortizationOfIntangibleAssets": 20}, (60, False)),      # rung 4: a sum, each line once
     # Depreciation alone leaves amortization out, so it is no D&A (default chosen, change if avo prefers: 384 of
     # the 792 rung-4 filers of 6 Nov 2026 tag no AmortizationOfIntangibleAssets).
     ({"Depreciation": 40}, None),
@@ -87,3 +87,36 @@ def test_the_utility_total_never_takes_a_quarterly_pick():
     }
     quarterly = sec_edgar.extract_quarterly({"cik": 1, "entityName": "X", "facts": {"us-gaap": gaap}})
     assert {r["period"]: r["revenue"] for r in quarterly} == {"2025-03-31": 200}
+
+
+def _quarter_rows(gaap):
+    rows = facts.fact_rows({"cik": 1, "entityName": "X", "facts": {"us-gaap": gaap}}, "1")[0]
+    return {(r["field"], r["period_end"]): r for r in rows if r["period_type"] == "quarterly"}
+
+
+def test_a_rung_4_sum_of_two_reported_quarters_is_not_derived():
+    # Review of PR 545: the Fundamentals board drops a derived quarter from its TTM (module_fundamentals/pipeline.py
+    # _is_derived), and a sum of two reported 3M lines is no YTD difference.
+    q = lambda v: fx._fact(v, "2025-03-31", ACCN, FILED, "10-Q", "Q1", 2025, "2025-01-01")
+    gaap = {"Revenues": {"units": {"USD": [q(1_000)]}}, "Depreciation": {"units": {"USD": [q(10)]}},
+            "AmortizationOfIntangibleAssets": {"units": {"USD": [q(5)]}}}
+    row = _quarter_rows(gaap)[("depreciation", date(2025, 3, 31))]
+    assert (row["value"], row["derived"]) == (15, False)
+
+
+def test_a_negative_line_is_never_summed():
+    assert _value(_filer(Depreciation=40, AmortizationOfIntangibleAssets=-20), "depreciation") is None
+    assert _value(_filer(Depreciation=-40, AmortizationOfIntangibleAssets=20), "depreciation") is None
+
+
+def test_a_lower_rung_never_fills_a_period_the_extraction_called_suspect():
+    # Rung 1's Q4 (FY minus 9M) came out negative: the extraction drops it and flags depreciation_suspect, so no rung
+    # serves that quarter either.
+    k = lambda v, end, start, fp, form="10-Q": fx._fact(v, end, ACCN, FILED, form, fp, 2025, start)
+    gaap = {"Revenues": {"units": {"USD": [k(1_000, "2025-12-31", "2025-10-01", "Q4", "10-K")]}},
+            "DepreciationDepletionAndAmortization": {"units": {"USD": [
+                k(30, "2025-09-30", "2025-01-01", "Q3"), k(20, "2025-12-31", "2025-01-01", "FY", "10-K")]}},
+            "DepreciationAndAmortization": {"units": {"USD": [k(13, "2025-12-31", "2025-10-01", "Q4", "10-K")]}}}
+    assert sec_edgar.extract_quarterly({"cik": 1, "entityName": "X", "facts": {"us-gaap": gaap}})[-1].get(
+        "depreciation_suspect")
+    assert ("depreciation", date(2025, 12, 31)) not in _quarter_rows(gaap)

@@ -32,8 +32,8 @@ today. What this layer adds:
   not served.
 - **D&A in four rungs** (#271): the extraction's two (``DepreciationDepletionAndAmortization``, then
   ``DepreciationAmortizationAndAccretionNet``), else ``DepreciationAndAmortization``, else ``Depreciation`` plus
-  ``AmortizationOfIntangibleAssets`` of the same span, a ``derived`` sum (``_depreciation``). The old store's
-  records keep the first two only. ``current_assets`` / ``current_liabilities`` are served as tagged.
+  ``AmortizationOfIntangibleAssets`` of the same span (``_depreciation``; ``derived`` only when a line is a YTD
+  difference). The old store's records keep the first two only. ``current_assets`` / ``current_liabilities`` are served as tagged.
 - **EPS** (``eps_basic``, ``eps_diluted``: ``EarningsPerShareBasic`` / ``...Diluted``, else
   ``EarningsPerShareBasicAndDiluted``, unit ``USD/shares``), which the old extraction did not read: per period the
   first concept that has one, a reported quarter only (EPS is not additive, so no YTD difference).
@@ -158,7 +158,7 @@ def _rows_of(facts: dict, rec: dict, period_type: str, index: _Index, counts: di
                       "period_start": _day(starts.get(field)), "period_end": _day(end), "value": float(value),
                       "unit": unit, "accn": p[1], "filed": _day(p[0]), "form": index.form.get(p[1]),
                       "derived": field in derived}
-    da = _depreciation(out)
+    da = None if rec.get("depreciation_suspect") else _depreciation(out)
     if da:
         out["depreciation"] = da
     balance_end = rec["period"] if quarterly else ends.get("total_assets")
@@ -176,16 +176,20 @@ def _depreciation(out: dict[str, dict]) -> dict | None:
     """The D&A row when the extraction's two rungs gave none for the period (#271): rung 3
     ``DepreciationAndAmortization``, else rung 4 ``Depreciation`` + ``AmortizationOfIntangibleAssets`` of the same
     span, each line read once. ``Depreciation`` alone leaves amortization out, so it is no D&A (default chosen,
-    change if avo prefers: 384 of the 792 rung-4 filers of 6 Nov 2026 tag no amortization line)."""
+    change if avo prefers: 384 of the 792 rung-4 filers of 6 Nov 2026 tag no amortization line). A negative line is
+    never summed, and the sum is ``derived`` only when a line is (a YTD difference), so a sum of two reported
+    quarters stays in the board's TTM. The caller skips a period the extraction flagged ``depreciation_suspect``."""
     if "depreciation" in out:
         return None
     if "depreciation_and_amortization" in out:
         return {**out["depreciation_and_amortization"], "field": "depreciation"}
     dep, amort = out.get("depreciation_tangible"), out.get("amortization_intangibles")
-    if not dep or not amort or (dep["period_start"], dep["period_end"]) != (amort["period_start"], amort["period_end"]):
+    if (not dep or not amort or dep["value"] < 0 or amort["value"] < 0
+            or (dep["period_start"], dep["period_end"]) != (amort["period_start"], amort["period_end"])):
         return None
     newest = max((dep, amort), key=lambda r: (r["filed"], r["accn"]))
-    return {**newest, "field": "depreciation", "value": dep["value"] + amort["value"], "derived": True}
+    return {**newest, "field": "depreciation", "value": dep["value"] + amort["value"],
+            "derived": dep["derived"] or amort["derived"]}
 
 
 def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) -> list[dict]:
