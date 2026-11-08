@@ -157,3 +157,12 @@ def test_the_reads_of_a_board_say_whether_it_declared_them():
 def test_comovement_plans_the_corporate_actions_its_bar_reads_join():
     """#489: ``ohlc.py`` calls ``read.changed_at`` and ``read.bar_facts``, and both query ``corporate_action``."""
     assert "prices.actions" in boards.PLANNED_READS["module_comovement"]
+
+
+def test_relatedness_plans_the_universe_and_the_two_fundamentals_needs_it_reads():
+    """#490: ``engine.py`` calls ``read.fundamental_companies`` and ``read.filing_texts``, so the board has a plan
+    entry now instead of none, and the control board draws its lines."""
+    assert boards.PLANNED_READS["module_relatedness"] == (
+        "identity.universe", "fundamentals.companies", "fundamentals.filings")
+    assert boards.reads_of("module_relatedness") == {
+        "declared": False, "needs": ("identity.universe", "fundamentals.companies", "fundamentals.filings")}

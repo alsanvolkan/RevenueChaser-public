@@ -41,8 +41,7 @@ UNDECLARED = frozenset({
 #: (``DataPlan/2026-10-29_katalog-need-listesi.md``, its "which board reads it" column). The control board draws
 #: these as dashed lines, so a reader can tell a board's own declaration from the plan. An entry goes away in the
 #: PR that migrates the board, the one that adds its ``READS``. A board whose data has no need in the catalog yet
-#: is left out rather than given a need it does not read. Relatedness is not listed yet, though its code reads
-#: ``fundamentals.companies`` and ``fundamentals.filings``, both in the catalog.
+#: is left out rather than given a need it does not read.
 PLANNED_READS: dict[str, tuple[str, ...]] = {
     "module_oipd": ("macro.dgs10", "options.chain", "options.strikes", "options.expiries"),
     "module_financials": ("identity.universe", "prices.shares", "prices.market_cap", "prices.latest", "macro.dgs10",
@@ -60,6 +59,8 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
                             "fundamentals.filings", "earnings.next"),
     "module_sec_13f": ("ownership.holders_13f", "ownership.periods_13f", "prices.actions"),
     "module_leaps": ("options.daily",),
+    # #490: ``engine.py`` reads the company records and the served filing texts.
+    "module_relatedness": ("identity.universe", "fundamentals.companies", "fundamentals.filings"),
 }
 
 
