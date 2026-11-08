@@ -173,6 +173,8 @@ jobs:
           RC_E2E: "1"
           MODE: ${{ needs.plan.outputs.mode }}
           FILES: ${{ needs.plan.outputs.e2e }}
+          # module_testing/e2e/test_screenshots.py writes its PNGs here; the next step uploads them.
+          RC_SHOTS_DIR: ${{ runner.temp }}/shots
         # -n 4: each e2e test boots its own dashboard subprocess, so the tier is wall-clock bound on
         # waiting, not CPU. Workers share nothing: every dashboard gets its test's own tmp_path for
         # .store/.cache and every side root (conftest.dashboard), binds port 0 itself and reports the
@@ -186,6 +188,16 @@ jobs:
           if [ -z "$FILES" ]; then echo "SELECTIVE: no e2e test file reaches this change"; exit 0; fi
           set -f  # $FILES is split on spaces on purpose; no glob expansion
           python -m pytest -q -m e2e -n 4 --dist loadgroup -p no:cacheprovider -rfE $FILES || [ $? -eq 5 ]
+      # The Data/Health and Runs tabs at 390 px, the realme GT2 Pro, 969, 1280 and 1920 px, light and dark, on
+      # mock data: a reviewer looks at the layout without running anything. Also after a red run, to see why.
+      - name: upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: ${{ runner.temp }}/shots/
+          retention-days: 14
+          if-no-files-found: ignore
 
   merge-gate:
     # The one check that means "merge-ready": green only for a FULL run whose unit and e2e both passed.

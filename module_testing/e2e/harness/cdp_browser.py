@@ -157,17 +157,30 @@ class Page:
                 raise RuntimeError(f"no {method} within {TIMEOUT:.0f}s")
             self._events.append(json.loads(self._ws.recv()))
 
-    def emulate(self, width: int, height: int, scheme: str = "dark", scale: float = 1) -> None:
-        """A ``mobile`` viewport of exactly ``width`` CSS px, with touch, in ``scheme`` (light/dark)."""
-        mobile = width < 900
+    def emulate(self, width: int, height: int, scheme: str = "dark", scale: float = 1,
+                mobile: bool | None = None, user_agent: str | None = None) -> None:
+        """A viewport of exactly ``width`` CSS px in ``scheme`` (light/dark).
+
+        ``mobile`` (with touch) defaults to ``width < 900``; a phone held sideways is wider than that, so a
+        measured device says so itself (``emulate_device``). ``user_agent`` replaces the headless one."""
+        if mobile is None:
+            mobile = width < 900
         self.send("Emulation.setDeviceMetricsOverride", width=width, height=height,
                   deviceScaleFactor=scale, mobile=mobile)
         if mobile:
             self.send("Emulation.setTouchEmulationEnabled", enabled=True, maxTouchPoints=5)
         else:
             self.send("Emulation.setTouchEmulationEnabled", enabled=False)
+        if user_agent is not None:
+            self.send("Emulation.setUserAgentOverride", userAgent=user_agent,
+                      platform="Linux armv8l" if mobile else "")
         self.send("Emulation.setEmulatedMedia",
                   features=[{"name": "prefers-color-scheme", "value": scheme}])
+
+    def emulate_device(self, device, scheme: str = "dark") -> None:
+        """A measured phone (``harness/devices.py``): its viewport, pixel ratio, touch and user agent."""
+        self.emulate(device.width, device.height, scheme=scheme, scale=device.scale,
+                     mobile=device.mobile, user_agent=device.user_agent)
 
     def open(self, url: str, ready: str = "document.readyState === 'complete'") -> None:
         """Load ``url`` afresh, then wait until ``ready`` (a JS expression) holds and no animation runs.
