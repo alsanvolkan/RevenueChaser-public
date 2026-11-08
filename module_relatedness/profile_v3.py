@@ -1,0 +1,270 @@
+"""Relatedness profile v3 (#400, Relatedness v2 plan Step 1): one structured JSON per company.
+
+The writer reads the whole Item 1 (10-K) / Item 4 (20-F), with no ``MAX_INPUT_CHARS``, plus the filing's segment note,
+the SIC, sector and industry, and the CIK's ``chain_mentions`` as candidate counterparties, and returns one JSON object:
+
+``summary`` (one or two sentences), ``segments`` (``name``, ``share``, ``source``, ``products``, ``end_markets``),
+``customers`` (``name``, ``type``, ``share``, ``quote``), ``suppliers`` (``name``, ``type``, ``quote``),
+``named_competitors``, ``business_model``, ``channel``, ``geography``, ``stage`` and ``keywords`` (at most 15).
+
+``quote`` (the sentence a customer or supplier is named in) is read by Value Chain (#410): one extraction for both
+boards. The object is stored whole in ``relatedness_profiles.profile_json`` (schema 13, #401); the board's filters
+keep reading the attribute rows ``to_attributes`` derives from it (``config.PROFILE_FIELDS``).
+
+Every function here is pure: no store, no network.
+"""
+from __future__ import annotations
+
+import json
+import re
+
+PROMPT_VERSION = "v3"
+MAX_KEYWORDS = 15
+MAX_LIST = 30
+
+# The closed sets the prompt offers for the enum fields. A reply outside its set keeps its own short label
+# (``_label``), so a new kind of company is not forced into a wrong one; the board filters on the value as written.
+BUSINESS_MODELS = ("product", "service", "subscription", "platform", "licensing", "financial", "resource", "mixed")
+CHANNELS = ("direct", "indirect", "mixed")
+GEOGRAPHIES = ("domestic", "regional", "global")
+STAGES = ("shell", "development", "growth", "mature", "declining")
+ENUM_FIELDS = ("business_model", "channel", "geography", "stage")
+SEGMENT_SOURCES = ("table", "text")
+
+SYSTEM = (
+    "You are a financial analyst. You read a company's annual-report business description and return ONE JSON "
+    "object describing what the company actually does. Use only what the text states; never invent a name, a "
+    "number or a segment. Tags are short lowercase noun phrases (1-3 words).\n"
+    "Schema:\n"
+    "{\"summary\": \"one or two plain sentences\",\n"
+    " \"segments\": [{\"name\": str, \"share\": number or null, \"source\": \"table\" | \"text\", "
+    "\"products\": [tag], \"end_markets\": [tag]}],\n"
+    " \"customers\": [{\"name\": str, \"type\": tag, \"share\": number or null, \"quote\": str}],\n"
+    " \"suppliers\": [{\"name\": str, \"type\": tag, \"quote\": str}],\n"
+    " \"named_competitors\": [str],\n"
+    f" \"business_model\": one of {list(BUSINESS_MODELS)},\n"
+    f" \"channel\": one of {list(CHANNELS)},\n"
+    f" \"geography\": one of {list(GEOGRAPHIES)},\n"
+    f" \"stage\": one of {list(STAGES)},\n"
+    f" \"keywords\": [tag] (at most {MAX_KEYWORDS})}}\n"
+    "Rules: a segment's share is its fraction of revenue (0 to 1) when the text or a table states it, else null; "
+    "source is \"table\" only when the share comes from a segment table or note. A customer's or supplier's name is "
+    "a named company, never a category; its type says what it is (\"distributor\", \"oem\", \"government\"); its "
+    "share is the stated fraction of sales or purchases, else null; quote is the one sentence that names it, "
+    "copied as written. Candidates, when given, are names other filings link to this company: list one only when "
+    "the text names it. A blank-check company or one with no operations has stage \"shell\"."
+)
+
+
+def system_prompt(version: str | None = None) -> str:
+    """``SYSTEM`` with the prompt version appended, so a version bump misses the LLM cache (as v2's)."""
+    return f"{SYSTEM}\n\nPrompt version: {version or PROMPT_VERSION}."
+
+
+def _context_lines(context: dict | None) -> list[str]:
+    c = context or {}
+    out = []
+    for key, label in (("sic", "SIC"), ("sector", "Sector"), ("industry", "Industry")):
+        if c.get(key):
+            out.append(f"{label}: {c[key]}")
+    if c.get("segment_note"):
+        out.append(f"Segment note (same filing):\n{c['segment_note']}")
+    if c.get("candidates"):
+        out.append("Candidates (names other filings link to this company): " + "; ".join(c["candidates"]))
+    return out
+
+
+def build_user(name: str, text: str, context: dict | None = None, part: tuple[int, int] | None = None) -> str:
+    """The user prompt of one call: the company, its context and the text (one chunk of it when ``part``)."""
+    head = [f"Company: {name}", *_context_lines(context)]
+    label = "Business description (10-K Item 1 / 20-F Item 4)"
+    if part and part[1] > 1:
+        label += f", part {part[0] + 1} of {part[1]}"
+    return "\n".join(head) + f"\n\n{label}:\n{text or ''}"
+
+
+# ── parse ───────────────────────────────────────────────────────────────────
+
+def _tag(value) -> str:
+    s = re.sub(r"\s+", " ", str(value or "").strip().lower()).strip(" .,;:-")
+    return s if s and len(s) <= 60 else ""
+
+
+def _tags(values, cap: int = MAX_LIST) -> list[str]:
+    if isinstance(values, str):
+        values = re.split(r"[,;\n]", values)
+    if not isinstance(values, list):
+        return []
+    out = []
+    for v in values:
+        s = _tag(v)
+        if s and s not in out:
+            out.append(s)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def _name(value) -> str:
+    s = re.sub(r"\s+", " ", str(value or "").strip()).strip(" ,;:")
+    return s if s and len(s) <= 120 else ""
+
+
+def _text(value, cap: int = 1000) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:cap]
+
+
+def _share(value) -> float | None:
+    """A fraction 0..1; a percent (1 < x <= 100) is read as one. Anything else is None."""
+    if isinstance(value, str):
+        value = value.strip().rstrip("%").strip()
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return None
+    if x != x or x < 0:
+        return None
+    if x > 1:
+        x = x / 100.0 if x <= 100 else None
+    return None if x is None else round(x, 4)
+
+
+def _label(value) -> str:
+    return _tag(value)
+
+
+def _segments(values) -> list[dict]:
+    out, seen = [], set()
+    for s in values if isinstance(values, list) else []:
+        if not isinstance(s, dict):
+            continue
+        name = _name(s.get("name"))
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        src = _tag(s.get("source"))
+        out.append({"name": name, "share": _share(s.get("share")),
+                    "source": src if src in SEGMENT_SOURCES else "text",
+                    "products": _tags(s.get("products")), "end_markets": _tags(s.get("end_markets"))})
+    return out[:MAX_LIST]
+
+
+def _parties(values, with_share: bool) -> list[dict]:
+    out, seen = [], set()
+    for p in values if isinstance(values, list) else []:
+        if isinstance(p, str):
+            p = {"name": p}
+        if not isinstance(p, dict):
+            continue
+        name = _name(p.get("name"))
+        key = resolve_key(name)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        row = {"name": name, "type": _tag(p.get("type")), "quote": _text(p.get("quote"))}
+        if with_share:
+            row["share"] = _share(p.get("share"))
+        out.append(row)
+    return out[:MAX_LIST]
+
+
+def empty() -> dict:
+    return {"summary": "", "segments": [], "customers": [], "suppliers": [], "named_competitors": [],
+            "business_model": "", "channel": "", "geography": "", "stage": "", "keywords": []}
+
+
+def parse(raw) -> dict | None:
+    """The model's reply as a normalised v3 profile, or ``None`` when it is not one (never raises).
+
+    ``None`` means unusable: not JSON, not an object, or an object that carries nothing at all.
+    """
+    if isinstance(raw, str):
+        raw = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw.strip(), flags=re.IGNORECASE)
+    try:
+        data = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    prof = {
+        "summary": _text(data.get("summary"), 600),
+        "segments": _segments(data.get("segments")),
+        "customers": _parties(data.get("customers"), with_share=True),
+        "suppliers": _parties(data.get("suppliers"), with_share=False),
+        "named_competitors": _named(data.get("named_competitors")),
+        **{f: _label(data.get(f)) for f in ENUM_FIELDS},
+        "keywords": _tags(data.get("keywords"), MAX_KEYWORDS),
+    }
+    return prof if usable(prof) else None
+
+
+def _named(values) -> list[str]:
+    out, seen = [], set()
+    for v in values if isinstance(values, list) else []:
+        if isinstance(v, dict):
+            v = v.get("name")
+        name = _name(v)
+        key = resolve_key(name)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(name)
+    return out[:MAX_LIST]
+
+
+def usable(prof: dict | None) -> bool:
+    """True when the profile says something: a shell's (stage only) counts, an all-empty one does not."""
+    return bool(prof) and any(prof.get(k) for k in empty())
+
+
+def is_shell(prof: dict | None, sic=None) -> bool:
+    """A blank check (SIC 6770) or a profile whose stage is ``shell``: no profile, no peers, no theme (#400)."""
+    return str(sic or "").strip() == "6770" or (prof or {}).get("stage") == "shell"
+
+
+# A company suffix dropped before two names are compared ("Apple Inc." and "Apple" are one counterparty).
+_SUFFIX = re.compile(r"[\s,]+(inc|incorporated|corp|corporation|co|company|ltd|limited|plc|llc|lp|l\.p|ag|sa|s\.a|"
+                     r"nv|n\.v|se|gmbh|holdings?|group)\.?$", re.I)
+
+
+def resolve_key(name: str) -> str:
+    """The key two spellings of one company share: lower case, punctuation folded, legal suffixes dropped.
+
+    It only decides "the same name" inside one profile (the chunk merge's union). Resolving a name to a spine issuer
+    is #410's resolver."""
+    s = re.sub(r"\s+", " ", str(name or "").strip().lower())
+    s = s.replace("&", " and ")
+    prev = None
+    while prev != s:
+        prev = s
+        s = _SUFFIX.sub("", s).strip(" .,")
+    s = re.sub(r"[^\w ]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+# ── the board's attribute rows ──────────────────────────────────────────────
+
+def to_attributes(prof: dict | None) -> dict[str, list[str]]:
+    """The ``config.PROFILE_FIELDS`` lists the board filters and the current similarity read (until Step 2).
+
+    products / end_markets: the union over segments; business_model: the enum; customer_types: the customers' types;
+    value_chain_role: the channel; keywords: the keywords."""
+    p = prof or {}
+
+    def union(key):
+        out = []
+        for s in p.get("segments") or []:
+            for v in s.get(key) or []:
+                if v not in out:
+                    out.append(v)
+        return out[:MAX_LIST]
+
+    def one(v):
+        return [v] if v else []
+
+    types = []
+    for c in p.get("customers") or []:
+        if c.get("type") and c["type"] not in types:
+            types.append(c["type"])
+    return {"products": union("products"), "end_markets": union("end_markets"),
+            "business_model": one(p.get("business_model")), "customer_types": types,
+            "value_chain_role": one(p.get("channel")), "keywords": list(p.get("keywords") or [])}
