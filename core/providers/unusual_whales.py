@@ -135,6 +135,9 @@ class UWClient:
         # rate-header sampling and call counting (#206). None by default; it never changes what a call returns,
         # and an observer that raises is ignored.
         self.on_response: Optional[Callable[[str, Any], None]] = None
+        # Optional observer of every request about to be sent (``on_request(ep)``), once per attempt, so a caller
+        # can count a request that ends in a transport error too (#519 finding 3). Same contract as above.
+        self.on_request: Optional[Callable[[str], None]] = None
 
     @property
     def active(self) -> bool:
@@ -210,6 +213,11 @@ class UWClient:
         while True:
             attempts += 1
             last = attempts >= MAX_ATTEMPTS
+            if self.on_request is not None:
+                try:
+                    self.on_request(ep)
+                except Exception:  # noqa: BLE001 - an observer must never change the call's outcome
+                    logger.warning("UW on_request observer failed", exc_info=True)
             try:
                 r = self._client.get(f"{BASE}{ep}", params=params)
             except _RETRY_EXC as e:
@@ -227,7 +235,7 @@ class UWClient:
                 try:
                     self.on_response(ep, r)
                 except Exception:  # noqa: BLE001 - an observer must never change the call's outcome
-                    logger.debug("UW on_response observer failed", exc_info=True)
+                    logger.warning("UW on_response observer failed", exc_info=True)
             status = r.status_code
             if status < 400:
                 try:

@@ -18,8 +18,10 @@ why the SEC's ``eps_diluted`` stays the only EPS in ``fundamental_fact``. The tw
 ``source`` column, which is why it is on every row.
 
 **Weekly, one request per company** (the pattern of ``yfinance/estimates``): a company whose newest answer is
-``WEEK_DAYS`` old, or that has none, is asked, the longest without an answer first; ``FAIL_STREAK`` failures in a
-row stop the run (UW throttling or down) and a run where every request failed is a failed run. Counted against the
+``WEEK_DAYS`` old, or that has none, is asked, the longest without an answer first; ``FAIL_STREAK`` provider-side
+failures in a row stop the run (UW throttling or down) and a run where every request failed is a failed run. A
+request UW rejects (``rejected``: an unknown ticker) writes a raw file with no rows once a later request answers,
+so it ages like an answer; ``REJECT_STREAK`` rejected in a row stop and fail the run. Counted against the
 ``uw`` day cap; not paced, because UW publishes no request window. No ``UNUSUAL_WHALES_API_KEY``: nothing is asked,
 a ``missing_key`` issue.
 
@@ -44,6 +46,9 @@ PROVIDER = "uw"
 KEY = "unusual_whales"
 WEEK_DAYS = 7
 FAIL_STREAK = 5
+#: Rejected requests (``rejected``) in a row with no answer between that stop the run: one company's 4xx is its own,
+#: this many in a row is the path. 5 of 5,304 were rejected on 6 Nov 2026, none of them adjacent.
+REJECT_STREAK = 25
 STAGING = "stg_uw_earnings"
 #: One row per company and reported quarter: UW's three numbers as it serves them, and the day it reported.
 SCHEMA = [("cik", "TEXT"), ("ticker", "TEXT"), ("period_end", "DATE"), ("report_date", "DATE"),
@@ -80,6 +85,14 @@ def _newest(ticker: str) -> date | None:
     root = common.raw_dir(NAME)
     days = sorted(d.name for d in root.iterdir() if (d / f"{ticker}.json.gz").exists()) if root.is_dir() else []
     return date.fromisoformat(days[-1]) if days else None
+
+
+def rejected(error: dict | None) -> bool:
+    """Whether a failed UW answer is the request's own fault: a 4xx other than 401/403 (the key) and 429
+    (throttling) -- an unknown ticker, a bad parameter. The client keeps those out of its breaker for the same
+    reason (``unusual_whales.get_result``); a 5xx, a 429, a transport error or an open breaker is the provider's."""
+    status = (error or {}).get("status")
+    return isinstance(status, int) and 400 <= status < 500 and status not in (401, 403, 429)
 
 
 def companies() -> list[tuple[str, str]]:
@@ -140,7 +153,10 @@ class UWEarnings:
             if newest is None or (as_of - newest).days >= WEEK_DAYS:
                 due.append((newest or date.min, ticker, cik))
         due.sort()
-        out, failed, streak, not_asked = [], [], 0, 0
+        out, failed, streak, not_asked, answered, n_rejected = [], [], 0, 0, 0, 0
+        held: list[tuple[str, str, dict | None]] = []      # rejected, waiting for a later answer
+        lost = False                                        # REJECT_STREAK rejected in a row: the path is gone
+        earlier = list(day_dir(as_of).glob("*.json.gz"))
         for n, (_, ticker, cik) in enumerate(due):
             if streak >= FAIL_STREAK:
                 not_asked = len(due) - n
@@ -148,24 +164,46 @@ class UWEarnings:
             ctx.check_cap(PROVIDER)
             # No pacer: UW publishes no request window (``caps.WINDOWS``), so there is none to keep. The day cap
             # and the client's own 429 backoff are the limits, as for every other UW dataset. The call itself is
-            # counted by ``RunContext._on_uw_response``, which sees the retries too, so it is not counted here.
+            # counted by ``RunContext._on_uw_request``, which sees the retries too, so it is not counted here.
             res = ctx.uw_client().stock_earnings_result(ticker)
             if res.status != "ok":
                 ctx.count(PROVIDER, failures=1)
                 failed.append(ticker)
-                streak += 1
                 ctx.issue("fetch_failed", ticker, f"UW {endpoint(ticker)}: {res.error}")
+                if rejected(res.error):
+                    # The request's own fault, not an outage: it does not stop the run, and a raw file with no
+                    # rows lets the company age like any other instead of sorting first every run (#519 finding 1).
+                    # Held until a later request answers: a 4xx on every request is the path gone, not each
+                    # company's fault, and must hide nobody for a week (review of #541).
+                    held.append((ticker, cik, res.error))
+                    if len(held) >= REJECT_STREAK:
+                        not_asked = len(due) - n - 1
+                        lost = True
+                        break
+                    continue
+                streak += 1
                 continue
+            for t, c, err in held:
+                out.append(base.write_raw_json(day_dir(as_of) / f"{t}.json.gz", {
+                    "request": {"endpoint": endpoint(t)}, "ticker": t, "cik": c, "as_of": as_of.isoformat(),
+                    "fetched_at": time.time(), "run_id": ctx.run_id, "rejected": err, "body": None}))
+            n_rejected += len(held)
+            held = []
+            answered += 1
             streak = 0
             out.append(base.write_raw_json(day_dir(as_of) / f"{ticker}.json.gz", {
                 "request": {"endpoint": endpoint(ticker)}, "ticker": ticker, "cik": cik, "as_of": as_of.isoformat(),
                 "fetched_at": time.time(), "run_id": ctx.run_id, "body": res.data}))
         # The day's earlier answers too (a resumed day): its Parquet is rewritten from all of them.
         out = sorted(set(out) | set(day_dir(as_of).glob("*.json.gz")))
-        if failed and not out:
+        if lost:
+            raise base.SourceError(f"UW /earnings: {REJECT_STREAK} requests in a row rejected (first {held[0][0]}: "
+                                   f"{held[0][2]}), {not_asked} not asked; the path, not the companies")
+        if failed and not answered and not earlier:
             raise base.SourceError(f"UW /earnings: every request failed ({len(failed)}, first {failed[0]})"
                                    + (f"; {FAIL_STREAK} in a row, {not_asked} not asked" if not_asked else ""))
-        ctx.notes.append(f"{len(out)} companies read, {len(failed)} failed"
+        ctx.notes.append(f"{len(out) - n_rejected} companies read, {len(failed)} failed"
+                         + (f" ({n_rejected} rejected by UW, kept as an empty answer)" if n_rejected else "")
                          + (f"; {FAIL_STREAK} failures in a row, {not_asked} not asked" if not_asked else "")
                          + f"; {len(every) - len(due)} read within {WEEK_DAYS} days")
         return out
