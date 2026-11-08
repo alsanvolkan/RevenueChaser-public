@@ -29,6 +29,10 @@ LOG_DAYS = max(days for _, _, days in WINDOWS)
 UNREADABLE = "unreadable"
 STATES = ("fresh", "stale", "missing", UNREADABLE)
 BOARD_PREFIX = "module_"
+#: The served duckdb files, in the order the catalog groups its needs by (#492). A need's file is its table's
+#: serving kind (``catalog.Need.kind``, ``rcdata.read.KIND_OF_TABLE``); a need of no served file goes last.
+SERVED_FILES = ("spine", "prices", "fundamentals", "ownership", "options", "market")
+OTHER_FILE = "other"
 
 #: The routes, with one example each, so a reader can try them. The example needs are checked against the catalog
 #: by the tests, so a rename cannot leave a dead link here.
@@ -205,12 +209,12 @@ def _catalog_row(row: dict) -> str:
     name = f'<td class="nm" data-label="Need"><code class="need">{_need_name(row["need"])}</code>{asked}</td>'
     state = f'<td data-label="State">{_state_cell(row)}</td>'
     if row["error"]:
-        return (f'<tr class="unreadable">{name}{state}<td class="err" colspan="5" data-label="Error">'
+        return (f'<tr class="unreadable" data-need="{esc(row["need"])}">{name}{state}<td class="err" colspan="5" data-label="Error">'
                 f'{esc(row["error"])}</td></tr>')
     keys = f'<div class="dim">{esc(_num(row["keys"]))} keys</div>' if row["keys"] is not None else ""
     served = (f'<code>{esc(row["kind"])}</code> · <code>{esc(row["table"])}</code>'
               f'<div class="dim">{esc(row["dataset"] or "several datasets")}</div>')
-    return (f'<tr data-state="{esc(row["state"])}">{name}{state}'
+    return (f'<tr data-need="{esc(row["need"])}" data-state="{esc(row["state"])}">{name}{state}'
             f'<td class="d" data-label="Newest day">{esc(row["newest_day"] or "—")}</td>'
             f'<td class="n" data-label="Rows">{esc(_num(row["rows"]))}{keys}</td>'
             f'<td data-label="Fresh if">{esc(_fresh_rule(row))}</td>'
@@ -218,18 +222,76 @@ def _catalog_row(row: dict) -> str:
             f'<td data-label="Read by"><div class="chips">{_chips(row)}</div></td></tr>')
 
 
+def _file_of(row: dict) -> str:
+    return row["kind"] if row.get("kind") in SERVED_FILES else OTHER_FILE
+
+
+#: The states that need avo (#527): a group holding one leads the catalog and opens at load, and its row leads.
+PROBLEM_STATES = ("unreadable", "missing", "stale")
+
+
+def _problem(row: dict) -> bool:
+    return row["state"] in PROBLEM_STATES or row["state"] not in STATES
+
+
+def _catalog_groups(rows: list[dict]) -> list[tuple[str, list[dict]]]:
+    """``(file, rows)`` per served file, then ``other``; a file with no need is left out. #527: the groups holding a
+    stale, missing or unreadable need come first (each kind keeps ``SERVED_FILES`` order), and inside a group those
+    rows lead, in that order."""
+    order = SERVED_FILES + (OTHER_FILE,)
+    rank = {s: i for i, s in enumerate(PROBLEM_STATES)}
+    groups = [(f, sorted((r for r in rows if _file_of(r) == f), key=lambda r: rank.get(r["state"], len(rank))))
+              for f in order if any(_file_of(r) == f for r in rows)]
+    return sorted(groups, key=lambda g: 0 if any(_problem(r) for r in g[1]) else 1)
+
+
+def _catalog_group(file: str, rows: list[dict]) -> str:
+    """One file's group: a full-width head row with its toggle, then its rows in their own ``tbody``; open at load
+    only when it holds a need that needs avo (#527)."""
+    count = {s: sum(1 for r in rows if r["state"] == s) for s in STATES}
+    body_id = f"cg-{esc(file)}"
+    is_open = any(_problem(r) for r in rows)
+    extra = "".join(f' · {s} {count[s]}' for s in ("missing", UNREADABLE) if count[s])
+    return (f'<tbody class="cghead" data-file="{esc(file)}"{" data-bad" if is_open else ""}><tr><td colspan="7">'
+            f'<button type="button" class="cgtog" aria-expanded="{"true" if is_open else "false"}" '
+            f'aria-controls="{body_id}"><span class="cgarr" aria-hidden="true">{"▾" if is_open else "▸"}</span> '
+            f'<span class="cgfile">{esc(file)}</span> '
+            f'<span class="cgcount">{len(rows)} need{"" if len(rows) == 1 else "s"} · fresh {count["fresh"]} · '
+            f'stale {count["stale"]}{extra}</span></button></td></tr></tbody>'
+            f'<tbody class="cbody"{"" if is_open else " hidden"} id="{body_id}">'
+            f'{"".join(_catalog_row(r) for r in rows)}</tbody>')
+
+
+#: The group toggle: a press opens or closes the group's rows and flips ``aria-expanded`` and the arrow.
+NEEDS_JS = """
+(function(){
+  [].forEach.call(document.querySelectorAll('#needs-catalog .cgtog'), function (b) {
+    b.addEventListener('click', function () {
+      var body = document.getElementById(b.getAttribute('aria-controls'));
+      if (!body) return;
+      var open = b.getAttribute('aria-expanded') !== 'true';
+      body.hidden = !open;
+      b.setAttribute('aria-expanded', open ? 'true' : 'false');
+      var arr = b.querySelector('.cgarr');
+      if (arr) arr.textContent = open ? '▾' : '▸';
+    });
+  });
+})();
+"""
+
+
 def _catalog_section(model: dict) -> str:
     c = model["counts"]
     head = " · ".join(f'{c[s]} {s}' for s in STATES if c.get(s))
     note = (f'<p class="warn">Who reads which need could not be read: {esc(model["readers_error"])}</p>'
             if model.get("readers_error") else "")
-    body = "".join(_catalog_row(r) for r in model["catalog"])
+    body = "".join(_catalog_group(f, rows) for f, rows in _catalog_groups(model["catalog"]))
     return (f'<section class="part" id="needs-catalog" aria-labelledby="needs-catalog-h">'
             f'<h2 id="needs-catalog-h">The catalog <span class="secs">{len(model["catalog"])} needs · '
             f'{esc(head)}</span></h2>{note}'
             '<table class="stk"><thead><tr><th>Need</th><th>State</th><th>Newest day</th><th>Rows</th>'
             '<th>Fresh if</th><th>Served from</th><th>Read by</th></tr></thead>'
-            f'<tbody>{body}</tbody></table>'
+            f'{body}</table>'
             '<p class="legend"><span class="chip own">board</span> the board\'s own <code>READS</code> · '
             '<span class="chip plan">board</span> planned, not declared yet</p></section>')
 
@@ -286,16 +348,27 @@ def _routes_section(model: dict) -> str:
             '</section>')
 
 
-def render(model: dict) -> str:
-    """The tab's panel body (the ``#needs`` element's inside). A model with ``error`` is one line, never a failure."""
-    head = ('<h1>Settings · Needs</h1>'
+def head(model: dict, title: str = "Settings · Needs") -> str:
+    """The tab's head line: the title, the read minute and "What am I looking at?" with its box."""
+    return (f'<h1>{esc(title)}</h1>'
             f'<p class="sub"><b>Read {esc(model.get("read_at") or "—")}</b> · what a board can ask the store for, how '
             'fresh it is, and how often it is asked · <button type="button" class="wiali" aria-expanded="false" '
             'aria-controls="needs-wial">What am I looking at?</button></p>'
             f'<div class="wialbox" id="needs-wial" hidden>{WIAL}</div>')
+
+
+def sections(model: dict) -> tuple[str, str]:
+    """``(catalog, log and routes)``: the tab's body in two parts, so a page can put its own part between them.
+    A model with ``error`` is one line, in the first part."""
     if model.get("error"):
-        return f'<div class="wrap">{head}<p class="warn">The Needs tab could not be read: {esc(model["error"])}</p></div>'
-    return (f'<div class="wrap">{head}{_catalog_section(model)}{_log_section(model)}{_routes_section(model)}</div>')
+        return f'<p class="warn">The Needs tab could not be read: {esc(model["error"])}</p>', ""
+    return _catalog_section(model), _log_section(model) + _routes_section(model)
+
+
+def render(model: dict) -> str:
+    """The tab's panel body (the ``#needs`` element's inside). A model with ``error`` is one line, never a failure."""
+    catalog, rest = sections(model)
+    return f'<div class="wrap">{head(model)}{catalog}{rest}</div>'
 
 
 def view(payload: dict | None = None) -> dict:

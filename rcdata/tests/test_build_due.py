@@ -12,6 +12,8 @@ from RevenueChaser.rcdata import ops
 from RevenueChaser.rcdata.build import DATASETS, due
 from RevenueChaser.rcdata.build import __main__ as cli
 
+pytestmark = pytest.mark.usefixtures("kinds_full")
+
 MS, UW = "market_series", "uw/spot_expiry_strike"
 # Tue 27 Oct 2026: 11:00 New York (the session open, Monday is the latest complete one) and 18:00 (Tuesday complete).
 TUE_MORNING = datetime(2026, 10, 27, 15, 0, tzinfo=timezone.utc)

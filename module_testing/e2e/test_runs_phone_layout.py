@@ -153,6 +153,7 @@ def test_the_runs_table_stays_a_table_on_a_desktop(browser, runs_page):
 # ── Settings → Automations, the same problem one tab over ─────────────────────
 
 AUTOMATIONS = r"""(function(){
+  var tab = document.getElementById("tab-health"); if (tab) tab.click();   // #492: Automations sit in Health
   var s = document.querySelector(".auto-item>summary"), panel = s.closest(".panel");
   var btns = Array.prototype.map.call(document.querySelectorAll(".auto-btn"), function(b){
     var r = b.getBoundingClientRect(); return [b.textContent, Math.round(r.width), Math.round(r.height)];

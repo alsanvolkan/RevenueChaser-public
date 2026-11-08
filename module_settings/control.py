@@ -4,12 +4,13 @@
 This module only arranges. Every number comes from ``collect`` (``ops.sqlite``, the serving files, the raw and Parquet
 folders); every name, step, role, cadence and word comes from ``rcdata.needs.screen``; every column from
 ``rcdata.scaffold.SCHEMA_OF_KIND``; and which board reads which table from the boards' declared reads (or their
-planned reads, drawn dashed) and the need catalog. Nothing here opens a store or calls a provider, so a render is
-pure and a test builds the whole board from a dictionary.
+planned reads, drawn dashed) and the need catalog. Nothing here calls a provider. ``build`` also reads the builder
+timer (systemd), ``ops.job_runs2``, an ``os.stat`` of each served file and ``my_universe_rules.json``, each through an
+injectable reader that fails to ``None``; the render stays pure, and a test builds the whole board from a dictionary.
 
 The page itself is ``control_render``; this is its model:
 
-- ``health``: the twelve tiles of "Health right now";
+- ``health``: the fourteen tiles of "Health right now", in four groups, and the By-file lines;
 - ``universe``: the tier sets the next fetches and fills use, as applied (``core.board_settings``);
 - ``files``: the serving files in build order, each with its datasets (the Fetch section) and its tables, columns,
   readers and example rows (the Data section);
@@ -20,13 +21,18 @@ The page itself is ``control_render``; this is its model:
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+import os
+import re
+from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from RevenueChaser.rcdata import caps, scaffold
 from RevenueChaser.rcdata.needs import boards as api_boards
 from RevenueChaser.rcdata.needs import catalog
 from RevenueChaser.rcdata.needs import screen
+from RevenueChaser.module_settings.control_sources import PV_LABELS  # noqa: F401 - re-exported for the render
+from RevenueChaser.module_settings import control_sources
 
 #: The page shows avo's clock (CLAUDE.md: Europe/Amsterdam).
 LOCAL = ZoneInfo("Europe/Amsterdam")
@@ -64,6 +70,12 @@ STATUS_FILTER = {"fresh": "fresh", "unchanged": "fresh", "late": "late", "stale"
 BUILDER_SILENT_MINUTES = 70
 #: A provider's share of its day cap: amber from half, red past this.
 CAP_WARN, CAP_BAD = 0.5, 0.7
+#: #527 (avo 6 Nov 2026): a provider is a card on the Health strip from this share of its day cap.
+CAP_ALERT = 0.8
+#: A backup older than this many days is a card.
+BACKUP_ALERT_DAYS = 1
+#: At most this many stale dataset names on the stale card; the rest read "and N more".
+STALE_NAMES = 6
 CADENCE_DAYS = {"daily": 1, "weekly": 7, "monthly": 31, "quarterly": 92}
 ROLE_WORDS = {"first": "the first source: its value is served", "only source": "the only source of this value",
               "fills": "fills what the first source leaves open", "cross-check": "compared, not served",
@@ -204,38 +216,131 @@ def _providers(nd: dict) -> list[dict]:
     return rows
 
 
+#: The Health strip's groups (#492): what the data holds, the sources, what is scheduled, the builds.
+TILE_GROUPS = {"fresh": "data", "late": "data", "stale": "data", "never": "data", "problems": "data",
+               "session": "data", "universe": "data", "cap": "sources", "gateway": "sources",
+               "timer": "scheduled", "builder": "scheduled", "queue": "scheduled", "longest": "build",
+               "backup": "build"}
+NO_TIMER = {"state": None, "last": None, "next": None, "minute": None}
+
+
+def bars_dataset() -> str:
+    """The dataset that serves ``price_bar_daily`` (#484: ``wrds/prices``; ``alpaca/bars`` only cross-checks it)."""
+    from RevenueChaser.rcdata import read
+    return read.DATASET_OF_TABLE["price_bar_daily"]
+
+
 def _tile(key, cls, n, label, f=None) -> dict:
-    return {"key": key, "cls": cls, "n": n, "label": label, "filter": f}
+    return {"key": key, "cls": cls, "n": n, "label": label, "filter": f, "group": TILE_GROUPS[key]}
 
 
-def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -> dict:
+def longest_build(runs, now: datetime) -> dict | None:
+    """The longest finished ``job_runs2`` run (``finished_at - started_at``, epoch seconds) started on the New York
+    day of ``now``: ``{"dataset", "seconds"}``, or None when there is none."""
+    today = now.astimezone(NY).date()
+    best = None
+    for r in runs or []:
+        try:
+            start, end = float(r["started_at"]), float(r["finished_at"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if datetime.fromtimestamp(start, timezone.utc).astimezone(NY).date() != today or end < start:
+            continue
+        if best is None or end - start > best["seconds"]:
+            best = {"dataset": r.get("dataset"), "seconds": int(round(end - start))}
+    return best
+
+
+def _read_job_runs(now: datetime) -> list[dict]:
+    """The finished ``job_runs2`` rows of the last two days (a read; the file is not created when missing)."""
+    from RevenueChaser.rcdata import ops
+    return ops._select("SELECT dataset, started_at, finished_at FROM job_runs2 WHERE finished_at IS NOT NULL "
+                       "AND started_at >= ?", ((now - timedelta(days=2)).timestamp(),))
+
+
+def alerts(nd: dict, providers: list[dict], ibkr: dict | None, switches: dict | None, newest_backup: dict | None,
+           newest_session: str | None, running: list[dict] | None = None) -> list[dict]:
+    """#527 step 5: the problem cards, worst first. Each is ``{"key", "cls", "n", "label"}``; an empty list means
+    nothing needs avo now. The fetch switch is not a card: the top bar says it."""
     cards = nd.get("datasets") or []
+    out = []
+    bars = bars_dataset()
+    bars_card = next((c for c in cards if c.get("dataset") == bars), None)
+    if bars_card is not None and _status_of(bars_card) == "stale":
+        out.append({"key": "prices", "cls": "bad", "n": day_words(newest_session) if newest_session else "none",
+                    "label": f"prices behind · last session {newest_session or 'none'} ({bars})"})
+    stale = [str(c.get("dataset")) for c in cards if _status_of(c) == "stale" and c.get("dataset") != bars]
+    if stale:
+        more = f" and {len(stale) - STALE_NAMES} more" if len(stale) > STALE_NAMES else ""
+        out.append({"key": "stale", "cls": "bad", "n": count(len(stale)),
+                    "label": "stale: " + ", ".join(stale[:STALE_NAMES]) + more})
+    near_end = [r for r in running or [] if r["cls"] == "warn" or r["who"] == "Claude session"]
+    if near_end:
+        out.append({"key": "running", "cls": "warn", "n": count(len(near_end)),
+                    "label": "near its time limit or cut at 2 h: " + "; ".join(r["line"] for r in near_end)})
+    off = (switches or {}).get("backup") or {}
+    if off.get("off_at") is not None:
+        when = _local(datetime.fromtimestamp(float(off["off_at"]), timezone.utc)).strftime("%d %b %H:%M")
+        out.append({"key": "backup_off", "cls": "bad", "n": "off",
+                    "label": f"backups are off · {off.get('off_by') or '?'} {when} · no backup runs until it is on"})
+    if newest_backup is not None and (newest_backup.get("age_days") or 0) > BACKUP_ALERT_DAYS:
+        out.append({"key": "backup", "cls": "bad", "n": day_words(newest_backup["newest"]),
+                    "label": f"newest backup is {newest_backup.get('age_days')} days old ({newest_backup.get('kind')})"})
+    silent = (nd.get("verified") or {}).get("silent_minutes")
+    if silent is not None and silent > BUILDER_SILENT_MINUTES:
+        out.append({"key": "builder", "cls": "bad", "n": f"{silent} min",
+                    "label": f"the builder has not run for {silent} min (alarm past {BUILDER_SILENT_MINUTES})"})
+    if ibkr is not None and str(ibkr.get("state") or "") != "up":
+        out.append({"key": "gateway", "cls": "bad", "n": "logged out",
+                    "label": "IBKR gateway · the IV step skips until a login"})
+    for p in providers:
+        if p["share"] is not None and p["share"] >= CAP_ALERT:
+            out.append({"key": "cap", "cls": "bad" if p["share"] >= 1 else "warn", "n": f"{p['share']:.0%}",
+                        "label": f"{p['name']} at {count(p['used'])} of {count(p['cap'])} calls today"})
+            break
+    return out
+
+
+def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *, timer: dict | None = None,
+           longest: dict | None = None, file_views: list[dict] | None = None, switches: dict | None = None,
+           jobs_now: list[dict] | None = None) -> dict:
+    cards = nd.get("datasets") or []
+    total = len(cards)
     by = {k: 0 for k in ("fresh", "late", "stale", "never")}
     for c in cards:
         by[STATUS_FILTER.get(_status_of(c), "never")] += 1
     problems = sum(int(c.get("issues_open") or 0) for c in cards)
+    with_problems = sum(1 for c in cards if int(c.get("issues_open") or 0))
     v = nd.get("verified") or {}
     run = v.get("builder_last_run") or {}
     silent = v.get("silent_minutes")
     sessions = nd.get("sessions") or {}
     newest = max(sessions) if sessions else None
-    bars = next((c for c in cards if c.get("dataset") == "alpaca/bars"), None)
+    bars = next((c for c in cards if c.get("dataset") == bars_dataset()), None)
     bars_ok = bars is not None and _status_of(bars) in ("fresh", "unchanged")
     queue = (nd.get("queue") or {}).get("active") or []
+    running = sum(1 for q in queue if (q or {}).get("status") == "running")
     near = next((p for p in providers if p["share"] is not None), None)
     others = [p for p in providers if p["share"] is not None and p is not near][:2]
     backups = [k for k in ((nd.get("backups") or {}).get("kinds") or []) if k.get("newest")]
     newest_backup = max(backups, key=lambda k: str(k["newest"]), default=None)
+    timer = timer or NO_TIMER
+    state = timer.get("state")
+    of = f"of {count(total)} datasets"
     tiles = [
-        _tile("fresh", "ok", count(by["fresh"]), "fresh datasets", "fresh"),
-        _tile("late", "warn" if by["late"] else "ok", count(by["late"]), "late", "late"),
-        _tile("stale", "bad" if by["stale"] else "ok", count(by["stale"]), "stale", "stale"),
-        _tile("never", "none", count(by["never"]), "never ran", "never"),
-        _tile("problems", "neu", count(problems), "open problems in total · build_issues, one per row", "problems"),
+        _tile("fresh", "ok", count(by["fresh"]), f"{of} fresh", "fresh"),
+        _tile("late", "warn" if by["late"] else "ok", count(by["late"]), f"{of} late", "late"),
+        _tile("stale", "bad" if by["stale"] else "ok", count(by["stale"]), f"{of} stale", "stale"),
+        _tile("never", "none", count(by["never"]), f"{of} never ran", "never"),
+        _tile("problems", "neu", count(problems),
+              f"open problems, in {count(with_problems)} of {count(total)} datasets", "problems"),
         _tile("session", "ok" if bars_ok else "warn", day_words(newest) if newest else "none",
-              (f"newest session in prices · {count(sum(sessions[newest].values()))} names have a bar on it" if newest
+              (f"newest session in prices · {count(universe.get('filled'))} of {count(universe.get('size'))}"
+               " names have a bar on it" if newest
                else "no session in prices yet: price_bar_daily holds no bar"), "session"),
-        _tile("queue", "ops", count(len(queue)), "waiting or running in the queue", "queue"),
+        _tile("queue", "ops", count(len(queue)), f"{running} running, {len(queue) - running} queued", "queue"),
+        _tile("timer", {"on": "ok", "off": "bad"}.get(state, "none"), state if state in ("on", "off") else "not known",
+              f"hourly builder timer · last pass {_clock(timer.get('last'))} · next {_clock(timer.get('next'))}"),
         _tile("builder", "none" if silent is None else ("bad" if silent > BUILDER_SILENT_MINUTES else "ok"),
               "never" if silent is None else f"{silent} min",
               ("the builder has no run on record" if silent is None else
@@ -252,7 +357,9 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -
         _tile("universe", "none", count(universe.get("filled")) if universe.get("filled") is not None else "—",
               f"of {count(universe.get('size'))} names in the universe have a bar on the newest session"
               + ("" if universe.get("fill_enabled") else " · the Fill buttons are off"), "universe"),
-        _tile("gateway", *_gateway(ibkr), "gateway"),
+        _tile("longest", "none" if longest is None else "neu",
+              "not measured yet" if longest is None else f"{round(longest['seconds'] / 60)} min",
+              "longest build today" if longest is None else f"longest build today · {longest['dataset']}"),
         _tile("backup", "none" if newest_backup is None else ("warn" if newest_backup.get("warn") else "ok"),
               "none" if newest_backup is None else day_words(newest_backup["newest"]),
               "no backup recorded" if newest_backup is None else
@@ -262,7 +369,17 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None) -
                f"{problems} open problems"]
     if near is not None:
         summary.append(f"{near['name']} nearest its cap ({near['share']:.0%})")
-    return {"tiles": tiles, "summary": summary, "counts": by, "problems": problems}
+    if state == "off":
+        timer_words = f"builder timer off (on purpose) · last run {_clock(run.get('started_at'))}, from the queue"
+    else:
+        timer_words = f"builder timer {state or 'not known'} · next {_clock(timer.get('next'))}"
+    good = [f"{by['fresh']} fresh", f"{by['late']} late", f"{by['never']} never ran", f"{problems} open problems",
+            "builder: no run on record" if silent is None else f"builder ran {silent} min ago", timer_words]
+    if newest_backup is not None:
+        good.append(f"newest backup {day_words(newest_backup['newest'])}")
+    return {"tiles": tiles, "summary": summary, "counts": by, "problems": problems,
+            "alerts": alerts(nd, providers, ibkr, switches, newest_backup, newest, jobs_now), "allgood": " · ".join(good),
+            "files": [{"name": f["name"], "state": f["state"]} for f in file_views or []]}
 
 
 def _clock(value) -> str:
@@ -379,7 +496,8 @@ def _provider_name(pid: str | None) -> str | None:
     return screen.PROVIDERS[pid].name if pid in screen.PROVIDERS else pid
 
 
-def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime) -> dict:
+def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime, timer: dict | None = None,
+                 mode: str = "full", file_mode: str | None = None, own: str | None = None) -> dict:
     name = str(card["dataset"])
     meta = screen.DATASETS.get(name)
     from RevenueChaser.rcdata.build import base
@@ -389,7 +507,7 @@ def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime) 
     attended = bool(card.get("attended"))
     build = bool(meta and meta.role == "build")
     tags = []
-    if name == "alpaca/bars" and status not in ("fresh", "unchanged"):
+    if name == bars_dataset() and status not in ("fresh", "unchanged"):
         tags.append("session")
     if any(p in providers for p in ("ibkr",)):
         tags.append("gateway")
@@ -409,10 +527,238 @@ def _dataset_row(card: dict, ds, kind: str, universe_view: dict, now: datetime) 
         "fill": _fill(name, ds, kind, universe_view, card),
         "issues": card.get("issues") or [], "issues_open": int(card.get("issues_open") or 0),
         "paused": bool((card.get("schedule") or {}).get("paused")),
+        # #472: the frequency and the hold a person sets (None while no one has); the one ``due.py`` reads
+        "cadence_own": (card.get("schedule") or {}).get("cadence"),
+        "cadence_effective": (card.get("schedule") or {}).get("cadence_effective") or card.get("cadence"),
+        "next_due": (card.get("schedule") or {}).get("next_due"),
+        "next_words": next_run_words(card.get("schedule"), _check_of(card), as_of_kind(ds), card.get("cadence"),
+                                     attended=attended, starts_by_hand=bool(getattr(ds, "starts_by_hand", False)),
+                                     timer=timer, now=now, mode=mode),
+        "since_words": since_words(card.get("schedule")),
         "backfill": card.get("backfill"), "calendar": name in CALENDARS,
         "recent": card.get("recent") or [], "samples": card.get("samples") or [],
-        "cross_check": name in ("wrds/prices", "uw/total_float", "yfinance/float"),
+        "cross_check": name in ("alpaca/bars", "uw/total_float", "yfinance/float"),
+        # #527: this source's own automation (None: as the file) and its file's, for the source's select
+        "automation_own": own, "automation_file": file_mode if file_mode is not None else mode,
     }
+
+
+# ── When the hourly pass runs a dataset next ──────────────────────────────────────────────────────────────────
+
+NY = ZoneInfo("America/New_York")
+AS_OF_KINDS = ("today_ny", "latest_complete_session")
+
+
+def as_of_kind(ds) -> str | None:
+    """Which ``core.calendar`` day a dataset's ``default_as_of`` returns, read from the code (no call is made)."""
+    code = getattr(getattr(type(ds), "default_as_of", None), "__code__", None)
+    names = code.co_names if code is not None else ()
+    return next((k for k in AS_OF_KINDS if k in names), None)
+
+
+def _when(value) -> datetime | None:
+    try:
+        when = datetime.fromisoformat(str(value)) if value else None
+    except ValueError:
+        return None
+    return None if when is None else (when if when.tzinfo else when.replace(tzinfo=timezone.utc))
+
+
+def _first_pass(at: datetime, minute: int) -> datetime:
+    """The first hourly pass (``*:<minute>``) at or after ``at``; Amsterdam and New York are whole hours apart."""
+    at = at.astimezone(timezone.utc)
+    hour = at.replace(minute=0, second=0, microsecond=0)
+    p = hour + timedelta(minutes=minute)
+    return p if p >= at else p + timedelta(hours=1)
+
+
+def _pass_words(when: datetime, *, recurring: bool = False) -> str:
+    here, there = when.astimezone(LOCAL), when.astimezone(NY)
+    clock = f"{here:%H:%M} ({there:%H:%M} New York)"
+    if recurring:
+        return f"every trading day, {clock}"
+    return f"{here:%a} {here.day} {here:%b}, {clock}"
+
+
+def next_run_words(schedule: dict | None, check: dict | None, kind: str | None, cadence: str | None, *,
+                   attended: bool, starts_by_hand: bool, timer: dict | None, now: datetime,
+                   mode: str = "full") -> str:
+    """When the hourly pass first runs a dataset, by the rules of ``rcdata.build.due.is_due``.
+
+    ``check`` is the newest check (``result``, ``checked_on``, ``next_check_due``), None when it never built; ``kind``
+    the dataset's ``as_of_kind``; ``timer`` the hourly builder timer (``view["timer"]``); ``mode`` its serving kind's
+    automation (``ops.KIND_MODES``)."""
+    from RevenueChaser.core import calendar
+    from RevenueChaser.rcdata.build import due
+    schedule = schedule or {}
+    if schedule.get("paused"):
+        return "skips until Resume"
+    if attended:
+        return "by hand only"
+    if mode == "off":
+        return "automation off · Fetch only"
+    if starts_by_hand and check is None:
+        return "not before a first Fetch"
+    timer = timer or {}
+    minute = timer.get("minute")
+    if timer.get("state") not in ("on", "off") or minute is None:
+        return "next pass not known"
+    prefix = "timer off · " if timer.get("state") == "off" else ""
+    now = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    settle = (datetime.combine(date(2000, 1, 1), calendar.SESSION_CLOSE) + calendar.COMPLETE_MARGIN).time()
+    starts = settle if kind == "latest_complete_session" else time(0, 0)
+    cadence = cadence if cadence in due.CADENCES else due.DEFAULT_CADENCE
+    day = None
+    if check is not None and (check.get("result") not in ("failed", "skipped") or due._stage_done(check, mode)):
+        if cadence == "daily":
+            day = _day(check.get("next_check_due"))
+            if day is None:
+                at = datetime.combine(now.astimezone(NY).date(), starts, tzinfo=NY)
+                return prefix + _pass_words(_first_pass(at, minute), recurring=True)
+        else:
+            checked = _day(check.get("checked_on"))
+            day = checked + timedelta(days=due.CYCLE_DAYS[cadence]) if checked else None
+    if day is not None:
+        at = datetime.combine(day, starts, tzinfo=NY)
+        if at > now:
+            return prefix + _pass_words(_first_pass(at, minute))
+    return prefix + "due · " + _pass_words(_first_pass(now, minute))
+
+
+def since_words(schedule: dict | None) -> str:
+    """``paused · since <Amsterdam time> by <who>`` for a paused dataset, else ``fetch on``."""
+    schedule = schedule or {}
+    if not schedule.get("paused"):
+        return "fetch on"
+    when = _when(schedule.get("paused_at"))
+    at = "not recorded yet" if when is None else f"{_local(when):%a} {_local(when).day} {_local(when):%b, %H:%M}"
+    return (f"paused · since {at} by {schedule.get('paused_by') or 'not recorded yet'} · a running fetch stops "
+            "before its next provider call; the files it fetched stay")
+
+
+#: The cap Claude Code puts on a background command started from a session (#527): it is killed after 2 h.
+CLAUDE_SESSION_LIMIT_S = 2 * 3600
+#: The systemd unit the homesrv Claude Code session runs under; a process in it was started from a session.
+CLAUDE_UNIT = "life-claude-rc.service"
+#: A running request past this share of its limit is a card.
+RUN_ALERT = 0.8
+
+
+def _read_runs_now() -> list[dict]:
+    from RevenueChaser.rcdata import ops
+    return ops._select("SELECT * FROM job_runs2 WHERE status = 'running' AND finished_at IS NULL")
+
+
+def _read_cgroup(pid) -> str | None:
+    try:
+        return Path(f"/proc/{int(pid)}/cgroup").read_text(encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _unit_of(cgroup: str | None) -> str | None:
+    """The ``.service`` a process's cgroup names, or None."""
+    for part in reversed(re.split(r"[/\n]", cgroup or "")):
+        if part.endswith(".service"):
+            return part
+    return None
+
+
+def _unit_limit_s(unit: str) -> tuple[bool, float | None]:
+    """``(known, limit in seconds or None)`` for a ``life-rc-*`` unit, from the registry (#527 step 1 keeps it the
+    installed unit's limit)."""
+    from RevenueChaser.core import automations
+    base = unit[:-len(".service")]
+    for e in automations.REGISTRY:
+        if base in (e.unit, "life-" + e.name.lower()):
+            m = e.settings.limit_minutes
+            return True, None if m is None else m * 60.0
+    return False, None
+
+
+def duration_words(seconds) -> str:
+    s = int(seconds or 0)
+    h, m = divmod(s // 60, 60)
+    return f"{h} h {m} min" if h and m else f"{h} h" if h else f"{m} min"
+
+
+def running_jobs(active: list[dict], runs: list[dict], cgroup, alive, now: datetime) -> list[dict]:
+    """#527 step 6: one line a running request: ``name · elapsed / limit · who started it``.
+
+    A request is paired with its dataset's running ``job_runs2`` row (oldest with oldest), whose pid names the
+    process. A ``life-rc-*`` unit's limit comes from the registry, the Claude Code session's unit gives the 2 h cap,
+    any other process is "unknown" (no limit is guessed), and a pid with no process is "probably lost"."""
+    by_ds: dict[str, list[dict]] = {}
+    for r in sorted(runs or [], key=lambda r: float(r.get("started_at") or 0)):
+        by_ds.setdefault(str(r.get("dataset")), []).append(r)
+    out = []
+    for q in sorted((q for q in active or [] if q.get("status") == "running"),
+                    key=lambda q: float(q.get("started_at") or 0)):
+        ds = str(q.get("dataset"))
+        run = (by_ds.get(ds) or [None]).pop(0) if by_ds.get(ds) else None
+        start = (run or {}).get("started_at") or q.get("started_at")
+        elapsed = max(0.0, now.timestamp() - float(start)) if start else None
+        pid = (run or {}).get("pid")
+        limit, cls = None, "ok"
+        if pid is not None and not alive(pid):
+            who, cls = "process gone · probably lost", "none"
+        else:
+            unit = _unit_of(cgroup(pid)) if pid is not None else None
+            if unit == CLAUDE_UNIT:
+                who, limit = "Claude session", float(CLAUDE_SESSION_LIMIT_S)
+            elif unit and unit.startswith("life-rc-"):
+                known, limit = _unit_limit_s(unit)
+                who = f"systemd {unit[:-len('.service')]}"
+            else:
+                who = "unknown"
+        if cls != "none" and limit and elapsed is not None and elapsed >= RUN_ALERT * limit:
+            cls = "warn"
+        elif cls != "none" and limit is None:
+            cls = "none" if who == "unknown" else "ok"
+        line = (f"{ds} · {duration_words(elapsed) if elapsed is not None else '—'} / "
+                f"{duration_words(limit) if limit else 'no limit'} · {who}")
+        out.append({"id": q.get("id"), "dataset": ds, "elapsed_s": elapsed, "limit_s": limit, "who": who,
+                    "pid": pid, "cls": cls, "line": line})
+    return out
+
+
+def _read_switches() -> dict:
+    from RevenueChaser.rcdata import ops
+    return ops.read_switches()
+
+
+def switches_view(rows, now: datetime | None = None) -> dict:
+    """``{name: {"on", "by", "at"}}`` for the board's two switches (#527). ``rows`` is ``ops.read_switches``'s answer,
+    or None when the store could not be read: then ``on`` is None (not known), never a guessed on."""
+    from RevenueChaser.rcdata import ops
+    out = {}
+    for name in ops.SWITCHES:
+        if rows is None:
+            out[name] = {"on": None, "by": None, "at": None}
+            continue
+        row = rows.get(name) or {}
+        off_at = row.get("off_at")
+        out[name] = ({"on": True, "by": None, "at": None} if off_at is None else
+                     {"on": False, "by": row.get("off_by"),
+                      "at": _local(datetime.fromtimestamp(float(off_at), timezone.utc)).strftime("%d %b %H:%M")})
+    return out
+
+
+def _read_kind_modes() -> dict:
+    from RevenueChaser.rcdata import ops
+    return ops.read_kind_modes()
+
+
+def _read_dataset_modes() -> dict:
+    from RevenueChaser.rcdata import ops
+    return ops.read_dataset_modes()
+
+
+def _check_of(card: dict) -> dict | None:
+    if _status_of(card) == "never":
+        return None
+    return {"result": card.get("last_result"), "checked_on": card.get("checked_on"), "note": card.get("last_note"),
+            "next_check_due": card.get("next_check_due"), "source_as_of": card.get("source_as_of")}
 
 
 def _health_of(rows: list[dict]) -> dict:
@@ -435,15 +781,43 @@ def _health_of(rows: list[dict]) -> dict:
     return {"fresh": fresh, "total": total, "state": state, "pills": pills}
 
 
-def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datetime) -> list[dict]:
-    """The serving files in build order, each with its dataset rows (in step order) and its tables."""
+def file_state(path, tables: list[dict], rows: list[dict]) -> dict:
+    """A served file on disk (an ``os.stat`` of ``path``), its tables with rows (the counts ``collect`` read) and its
+    datasets in the Health strip's buckets. A file not there is ``exists: False``; no path known is ``exists: None``
+    (not known). A table whose rows were not counted is neither empty nor holding rows: it is ``uncounted``."""
+    if not path:
+        st = None
+    else:
+        try:
+            st = os.stat(path)
+        except OSError:
+            st = None
+    counts = {k: sum(1 for r in rows if r["filter"] == k) for k in ("fresh", "late", "stale", "never")}
+    counts["total"] = len(rows)
+    with_rows = [t["name"] for t in tables if (t.get("rows") or 0) > 0]
+    return {"exists": (st is not None) if path else None, "bytes": st.st_size if st else None,
+            "written_at": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds")
+            if st else None,
+            "tables": len(tables), "tables_with_rows": len(with_rows),
+            "empty": [t["name"] for t in tables if t.get("rows") == 0],
+            "uncounted": sum(1 for t in tables if t.get("rows") is None), "counts": counts}
+
+
+def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datetime,
+          timer: dict | None = None, modes: dict | None = None, ds_modes: dict | None = None) -> list[dict]:
+    """The serving files in build order, each with its dataset rows (in step order) and its tables; ``modes`` is
+    ``ops.read_kind_modes()`` (a kind with no row is off)."""
+    modes, ds_modes = modes or {}, ds_modes or {}
     cards = {str(c.get("dataset")): c for c in nd.get("datasets") or []}
     tables_now = nd.get("tables") or {}
     storage = nd.get("storage") or {}
     labels = _board_labels()
     out = []
     for kind, fc in screen.FILES.items():
-        rows = [_dataset_row(cards[n], ds, kind, universe_view, now)
+        auto = modes.get(kind) or {"kind": kind, "mode": "off", "set_at": None, "set_by": None}
+        rows = [_dataset_row(cards[n], ds, kind, universe_view, now, timer,
+                             (ds_modes.get(n) or {}).get("mode") or auto["mode"], file_mode=auto["mode"],
+                             own=(ds_modes.get(n) or {}).get("mode"))
                 for n, ds in datasets.items() if ds.kind == kind and n in cards]
         rows.sort(key=lambda r: (r["step"], 0 if r["role"] == "first" else 1, r["dataset"]))
         schema = scaffold.SCHEMA_OF_KIND.get(kind) or {}
@@ -462,10 +836,11 @@ def files(nd: dict, datasets: dict, universe_view: dict, reads: dict, now: datet
                            "writers": writers})
         live = (storage.get("files") or {}).get(kind) or {}
         out.append({"kind": kind, "name": f"{kind}.duckdb", "steps": fc.steps, "words": fc.words,
-                    "runs_on_universe": fc.runs_on_universe, "color": color, "datasets": rows,
+                    "runs_on_universe": fc.runs_on_universe, "color": color, "datasets": rows, "automation": auto,
                     "health": _health_of(rows), "tables": tables, "path": live.get("path"),
                     "bytes": live.get("bytes"), "storage": storage.get("datasets") or {},
-                    "roots": storage.get("roots") or {}, "walked_at": storage.get("walked_at")})
+                    "roots": storage.get("roots") or {}, "walked_at": storage.get("walked_at"),
+                    "state": file_state(live.get("path"), tables, rows)})
     return out
 
 
@@ -479,7 +854,9 @@ def _cal_bars(nd: dict, universe_view: dict, providers: dict) -> dict:
     return {"dataset": "alpaca/bars", "provider": "Alpaca", "from": screen.CALENDAR_FIRST["alpaca/bars"],
             "groups": True, "names_per_session": sessions, "universe": size,
             "page": bars.LIMIT, "cap": p.get("cap"), "used": p.get("used", 0), "unit": "sessions",
-            "first": (f"Alpaca has daily bars from 2016; the store holds them from {sessions and min(sessions) or 'no day yet'}")}
+            "first": ("the days are the served price_bar_daily sessions (Compustat, wrds/prices), from "
+                      f"{sessions and min(sessions) or 'no day yet'}; Alpaca has daily bars from 2016 and is compared "
+                      "against them")}
 
 
 def _cal_spx(nd: dict, providers: dict) -> dict | None:
@@ -587,27 +964,129 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
             "boardInfo": board_info, "tableReads": table_reads, "needReader": need_reader}
 
 
+BUILDER_ENTRY = "RC-Build"
+
+
+SYSTEM_TIMER_PROPS = ("LoadState", "ActiveState", "UnitFileState", "LastTriggerUSec", "NextElapseUSecRealtime")
+
+
+def _systemctl_system(args: list[str]) -> tuple[int, str, str]:
+    """``systemctl <args>`` against the SYSTEM manager, unprivileged (``show`` needs no root), 10 s at most."""
+    import subprocess
+    p = subprocess.run(["systemctl", *args], capture_output=True, text=True, timeout=10, check=False)
+    return p.returncode, p.stdout, p.stderr
+
+
+def read_system_timer(unit: str, system=None) -> tuple[str | None, str | None, str | None]:
+    """``(state, last, next)`` of the system timer ``<unit>.timer`` (#527: on homesrv the builder is a system unit
+    installed from home-server, which the user-unit scheduler never sees). Not installed, failed, or unreadable:
+    all None."""
+    from RevenueChaser.core import automations
+    rc, out, _ = (system or _systemctl_system)(
+        ["show", "--timestamp=unix", "--property=" + ",".join(SYSTEM_TIMER_PROPS), f"{unit}.timer"])
+    if rc != 0:
+        return None, None, None
+    props = dict(line.partition("=")[::2] for line in (out or "").splitlines() if "=" in line)
+    if props.get("LoadState") != "loaded" or props.get("ActiveState") == "failed":
+        return None, None, None
+    state = "on" if props.get("ActiveState") in ("active", "activating", "reloading") else "off"
+    return (state, automations._show_value(props.get("LastTriggerUSec")),
+            automations._show_value(props.get("NextElapseUSecRealtime")))
+
+
+def read_timer(scheduler=None, system=None) -> dict:
+    """The hourly builder timer (``core.automations``' ``RC-Build`` row, unit ``life-rc-builder``): ``state`` "on"
+    while the timer is active, "off" when disabled; ``last`` / ``next`` its passes; ``minute`` the minute of its
+    ``OnCalendar``. The scheduler answers first; when it has no row (no user unit, or no scheduler on this host)
+    the system unit of the same name is read (``system`` runs ``systemctl``, injectable). Not installed anywhere,
+    or a read that fails: every value None."""
+    from RevenueChaser.core import automations
+    try:
+        e = automations.entry(BUILDER_ENTRY)
+        minute = int(automations.on_calendar(e).split()[-1].split(":")[1])
+        scheduler = scheduler or automations.get_scheduler()
+        st = scheduler.status(BUILDER_ENTRY)
+        if st is not None:
+            return {"state": "off" if st.state == "disabled" else "on", "last": st.last_run,
+                    "next": st.next_run, "minute": minute}
+        state, last, nxt = read_system_timer(e.unit, system)
+    except Exception:  # noqa: BLE001 - a timer that cannot be read is "not known", never a guess
+        return dict(NO_TIMER)
+    if state is None:
+        return dict(NO_TIMER)
+    return {"state": state, "last": last, "next": nxt, "minute": minute}
+
+
+def _timer(reader) -> dict:
+    """``{"state", "last", "next", "minute"}`` from ``reader()`` (default ``read_timer``); all None when it fails."""
+    reader = reader or read_timer
+    try:
+        got = reader() or {}
+        return {k: got.get(k) for k in NO_TIMER}
+    except Exception:  # noqa: BLE001 - a timer that cannot be read is "not known"
+        return dict(NO_TIMER)
+
+
 # ── The whole board ───────────────────────────────────────────────────────────────────────────────────────────
 
 def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, now: datetime | None = None,
-          datasets: dict | None = None) -> dict:
+          datasets: dict | None = None, timer=None, job_runs=None, kind_modes=None, switches=None,
+          runs_now=None, cgroup=None, alive=None, dataset_modes=None) -> dict:
     """The page's model from ``newdata.collect``'s output. ``applied`` is the saved universe
     (``board_settings.values("module_settings")["values"]``), ``ibkr`` the gateway's login state, ``datasets`` the
-    builder's datasets (default: ``newdata._datasets()``)."""
+    builder's datasets (default: ``newdata._datasets()``). ``timer`` and ``job_runs`` are the readers of the hourly
+    builder timer and of ``ops.job_runs2``, injectable so a test needs neither systemd nor a store; a reader that
+    fails gives Nones, never a guess. ``kind_modes`` is the reader of each kind's automation
+    (``ops.read_kind_modes``); unreadable, every kind reads off, which is also what the builder does without a row.
+    ``dataset_modes`` reads each source's own (``ops.read_dataset_modes``, #527); unreadable, every source follows its
+    file."""
     from RevenueChaser.module_settings import newdata
     now = now or datetime.now(timezone.utc)
     if nd.get("error"):
         return {"error": nd["error"], "read_at": _local(now).strftime("%H:%M")}
     datasets = datasets if datasets is not None else newdata._datasets()
     uni = universe(nd, applied)
+    try:
+        uni["funnel"] = control_sources.funnel(nd)
+    except Exception:  # noqa: BLE001 - an unreadable rules file leaves the funnel undrawn, never the board
+        uni["funnel"] = None
     provider_rows = _providers(nd)
     reads = readers()
-    file_views = files(nd, datasets, uni, reads, now)
+    timer_view = _timer(timer)
+    try:
+        longest = longest_build(job_runs() if job_runs else _read_job_runs(now), now)
+    except Exception:  # noqa: BLE001 - an unreadable ops store leaves the tile "not measured yet"
+        longest = None
+    try:
+        modes = kind_modes() if kind_modes else _read_kind_modes()
+    except Exception:  # noqa: BLE001 - an unreadable ops store shows every kind off, never the board failing
+        modes = {}
+    try:
+        ds_modes = dataset_modes() if dataset_modes else _read_dataset_modes()
+    except Exception:  # noqa: BLE001 - an unreadable ops store shows every source "as the file"
+        ds_modes = {}
+    try:
+        switch_rows = switches() if switches else _read_switches()
+    except Exception:  # noqa: BLE001 - an unreadable ops store shows the switches as not known
+        switch_rows = None
+    try:
+        from RevenueChaser.core import procs
+        running = running_jobs((nd.get("queue") or {}).get("active") or [],
+                               runs_now() if runs_now else _read_runs_now(), cgroup or _read_cgroup,
+                               alive or procs.pid_alive, now)
+    except Exception:  # noqa: BLE001 - an unreadable store leaves the lines without a limit, never the board failing
+        running = []
+    file_views = files(nd, datasets, uni, reads, now, timer_view, modes, ds_modes)
+    control_sources.attach_pv(file_views, datasets)
     return {
         "error": None,
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
-        "health": health(nd, provider_rows, uni, ibkr),
-        "universe": uni, "scope": scope(uni), "files": file_views, "providers": provider_rows,
+        "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, file_views=file_views,
+                         switches=switch_rows, jobs_now=running),
+        "running": running,
+        "timer": timer_view, "longest_build": longest,
+        "switches": switches_view(switch_rows), "gateway": dict(zip(("cls", "n", "label"), _gateway(ibkr))),
+        "universe": uni, "identity": nd.get("identity"), "my_universe": nd.get("my_universe"), "scope": scope(uni), "files": file_views, "providers": provider_rows,
         "flow": flow(file_views, datasets, reads, uni), "calendars": calendars(nd, uni, provider_rows),
         "cross_check": (nd.get("cross_check") or {}).get("fields") or [],
         "queue": nd.get("queue") or {"active": [], "finished": []},

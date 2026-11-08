@@ -10,15 +10,17 @@ as-of). A day with no index object (a weekend is never asked; EDGAR keeps the **
 and Veterans Day have no index although the NYSE trades) answers **403**, not 404 — see ``base.is_missing`` — and is
 marked absent (``.none``) once it is more than ``SETTLED`` old; a younger one is asked again on the next run. The
 SEC's own 403 (an undeclared User-Agent, the fair-access rate) is told apart by its body and stops the run, and so
-does a stretch of ``MISSING_RUN`` missing weekdays EDGAR was open, or that many of a day's filings in a row.
+does a stretch of ``MISSING_RUN`` missing weekdays EDGAR was open. That many of a day's filings in a row with no
+object is not a refusal by itself -- the index does list filings EDGAR has removed, and a filer's are adjacent --
+so the archive is asked for a filing it is known to hold, and only its silence stops the run (``Feed._holds``).
 A marker that writes a day or a filing off is written only once the archive has answered something in the same run
 (``_Held``), so a refusal of the whole bucket leaves nothing written off and the next run asks again.
 
 **The filings.** ``GET <base>/Archives/<File Name>``: the full submission (``.txt``): the SGML header (accession, form,
 period, filed date, and each party's CIK and name under ``FILER``, ``SUBJECT COMPANY``, ``FILED BY``,
 ``REPORTING-OWNER`` or ``ISSUER``) and every document, the XML ones between ``<XML>`` and ``</XML>``. One request a
-filing, through ``sec.Pacer``. A filing the index lists but the archive does not hold (the same 403, or a 404) is
-marked (``.none``) and not asked again.
+filing, through ``sec.Pacer``. A filing the index lists but the archive does not hold (the same 403, or a 404 —
+EDGAR does remove filings it has already disseminated and indexed) is marked (``.none``) and not asked again.
 
 **The walk.** A feed walks the days from its first day (``start.json``: the run's as-of less ``FIRST_LOOKBACK`` on the
 first run, moved back by a backfill) to the day before its as-of, newest first, skipping the days it finished
@@ -36,6 +38,7 @@ import json
 import re
 import time
 import xml.etree.ElementTree as ET
+from collections import Counter
 from collections.abc import Iterator
 from datetime import date, timedelta
 from pathlib import Path
@@ -73,9 +76,36 @@ def index_url(day: date) -> str:
     return sec.www_base() + INDEX_PATH.format(year=day.year, q=(day.month - 1) // 3 + 1, ymd=f"{day:%Y%m%d}")
 
 
-# A day or a filing the ``/Archives/`` bucket does not hold answers 403, not 404: ``base.is_missing`` reads the
-# answer's body, and the comment above it says why that, and not the calendar, is what decides.
+# An index day the ``/Archives/`` bucket does not hold answers 403, not 404: ``base.is_missing`` reads the answer's
+# body, and the comment above it says why that, and not the calendar, is what decides. A *filing* EDGAR has removed
+# answers a plain 404 instead (measured 2026-11-06: all six SCHEDULE 13G rows of CIK 2147005 in the index of
+# 2026-08-17), which ``is_missing`` reads the same way, so neither shape alone says whether the path still works.
 MISSING_RUN = base.MISSING_RUN   # consecutive missing weekdays EDGAR does not keep closed: a refusal, not days
+# Absences on one day past which no answer about one object can speak for the rest, so the run stops and says what
+# the cluster looked like. A chosen ceiling, not a measurement: the incident of 2026-11-06 was six filings, and the
+# accession prefix is the filing agent's CIK rather than the filer's, so adjacency groups an agent's batch and the
+# shape of a legitimate removal cluster over twelve years is not known. The histogram in the message is what lets
+# an operator judge; this only stops the walk writing off a path failure while nobody is watching.
+CLUSTER_MAX = 25
+PROBE_CANDIDATES = 3             # filing URLs ``_known_filing`` looks for; one of them may itself have been removed
+SUBMISSION_HEAD = (b"<SEC-DOCUMENT", b"<SEC-HEADER>")   # what a full submission begins with; a 200 that has neither
+                                                        # is not a filing (a throttle page has been served as one)
+
+
+def _shape(absent: list[tuple[str, int]]) -> str:
+    """What a cluster of absences looks like: the answers it got, and how many filing agents it spans. All one
+    status and one agent is a removal; many agents, or an ``AccessDenied`` among 404s, is the path."""
+    by_status = Counter(status for _, status in absent)
+    agents = {acc.split("-", 1)[0] for acc, _ in absent}
+    return (", ".join(f"{n}x{status}" for status, n in sorted(by_status.items()))
+            + f"; {len(agents)} accession prefix" + ("es" if len(agents) != 1 else ""))
+
+
+def is_submission(body: bytes) -> bool:
+    """Whether a 200 carries a full submission. The index path refuses an answer that is not an index
+    (``parse_index``); the data path needs the same, or a host that answers 200 with an error body for everything
+    poisons the raw store, passes the archive check, and seeds it with URLs that keep passing it."""
+    return any(mark in body[:4096] for mark in SUBMISSION_HEAD)
 
 
 def ymd(text) -> date | None:
@@ -222,7 +252,14 @@ class _Held:
     """What a walk has found absent but not written yet: a day with no index, and a filing the archive answered
     nothing for. Nothing is written until the archive has answered something in this run, because a refusal of the
     whole bucket answers every day and every filing the same way, and a marker written under one is never asked
-    again. What is still held when the run ends is simply left: the next run asks those days and filings again."""
+    again. What is still held when the run ends is simply left: the next run asks those days and filings again.
+
+    The evidence is kept apart by path, because the two paths fail apart: ``/Archives/edgar/daily-index/`` answered
+    200 all through the incident of 2026-11-06 while ``/Archives/edgar/data/`` had lost a filer's filings. An index
+    answer therefore writes off index days only; a filing marker waits for the data path itself to hand something
+    over (a filing fetched, or ``Feed._holds``). Without that, a data path that answers nothing for anything would
+    have every day's held filings written off by the next day's index, and a day with fewer filings than
+    ``MISSING_RUN`` never reaches the check at all."""
 
     def __init__(self):
         self.days: list[tuple[date, dict]] = []
@@ -232,14 +269,21 @@ class _Held:
     def count(self) -> int:
         return len(self.days) + len(self.filings)
 
-    def flush(self, feed: "Feed") -> list[date]:
-        """Write every held marker; the days that are finished by it, for the walk to add to ``complete``."""
-        for day, acc, payload in self.filings:
-            base.write_raw_json(feed.filing_none(day, acc), payload)
+    def flush_days(self) -> list[date]:
+        """Write the held index markers, on an answer from the index path; the days they finish."""
         for day, payload in self.days:
             base.write_raw_json(index_none(day), payload)
-        done = [d for d, _ in self.days] + self.finished
-        self.days, self.filings, self.finished = [], [], []
+        done = [d for d, _ in self.days]
+        self.days = []
+        return done
+
+    def flush_filings(self, feed: "Feed") -> list[date]:
+        """Write the held filing markers, on an answer from the data path; the days they finish. A day whose
+        filings were all held is finished only here, never by an index answer."""
+        for day, acc, payload in self.filings:
+            base.write_raw_json(feed.filing_none(day, acc), payload)
+        done = self.finished
+        self.filings, self.finished = [], []
         return done
 
 
@@ -306,14 +350,20 @@ class Feed:
         complete, partial, fetched = [], [], 0
         day = last
         held, unexplained = _Held(), []
+        last_ok = None                     # a filing this run fetched, to ask the archive with (see ``_holds``)
+        probed: dict[date, int] = {}       # probes per day, so a bad day's notes are one line
+        probes = 0                         # which candidate to ask, so a long run does not pin one in a cache
         while day >= first:
+            next_probe = MISSING_RUN       # doubles after each probe: O(log n) of them on a day of absences
+            absent: list[tuple[str, int]] = []      # this day's absences, for CLUSTER_MAX and the messages
+            wrote = 0                               # of them already written off, after a probe answered
             if day.weekday() < 5 and not self.is_done(day):
                 if budget_s is not None and ctx.clock() - t0 >= budget_s:
                     complete += self._release(ctx, pacer, held)
                     return self._stopped(ctx, complete, partial, fetched)
                 index = read_index(ctx, pacer, day)
                 if index.answered:
-                    complete += held.flush(self)
+                    complete += held.flush_days()
                 if index.rows is None:
                     if as_of - day > SETTLED:
                         self._absent(ctx, day, unexplained)
@@ -337,16 +387,41 @@ class Feed:
                     fetched += 1
                     if gone is None:
                         gone_run = 0
-                        complete += held.flush(self)
+                        last_ok = self.filing_url(r)
+                        complete += held.flush_filings(self)
                         continue
                     held.filings.append((day, *gone))
                     gone_run += 1
-                    if gone_run >= MISSING_RUN:
-                        # The index listed them, so the archive holds them: this many in a row is the bucket
-                        # refusing, not the filings missing. Nothing is written, so the next run asks them again.
-                        raise base.SourceError(f"sec: {gone_run} filings of {day} in a row the archive does "
-                                               f"not answer for, last {r['accession']}; the bucket may be "
-                                               "refusing every request, so no filing is written off")
+                    absent.append((r["accession"], gone[1]["status"]))
+                    if len(absent) >= CLUSTER_MAX:
+                        # Counted over the whole day, not since the last check: an answer about one object cannot
+                        # speak for a cluster this size, however many times it came back 200 on the way here.
+                        raise base.SourceError(f"sec: {len(absent)} filings of {day} the archive answers nothing "
+                                               f"for ({_shape(absent)}), {wrote} of them already written off; more "
+                                               f"than {CLUSTER_MAX} on one day is not an agent's filings removed, "
+                                               "so the run stops here")
+                    if gone_run >= next_probe:
+                        try:
+                            holds, why = self._holds(ctx, pacer, last_ok, probes)
+                        except base.SourceError as e:
+                            # The probe itself could not be made (a 5xx, a dropped connection). Nothing is written
+                            # off and the day stays open, but a twelve-year walk does not end over it.
+                            ctx.notes.append(f"{day}: the archive could not be asked for a filing it holds "
+                                             f"({e}); {len(held.filings)} filing markers stay held")
+                            gone_run, next_probe = 0, next_probe * 2
+                            continue
+                        if not holds:
+                            raise base.SourceError(f"sec: {len(absent)} filings of {day} the archive does not "
+                                                   f"answer for ({_shape(absent)}), and it did not hand over one "
+                                                   f"it holds either ({why}); no filing is written off")
+                        probes += 1
+                        probed[day] = probed.get(day, 0) + 1
+                        wrote += len(held.filings)
+                        complete += held.flush_filings(self)   # the probe is the data path's own answer
+                        gone_run, next_probe = 0, next_probe * 2
+                if probed.get(day):
+                    ctx.notes.append(f"{day}: {probed[day]} run(s) of absent filings, and the archive handed over "
+                                     f"one it holds each time ({_shape(absent)})")
                 # A day is finished once its markers are written, never before: a ``.done`` would skip it for good.
                 (held.finished if held.filings else complete).append(day)
             day -= timedelta(days=1)
@@ -355,16 +430,26 @@ class Feed:
         return complete, partial, False
 
     def _release(self, ctx: base.RunContext, pacer: sec.Pacer, held: _Held) -> list[date]:
-        """Write what is still held at the end of a walk. Nothing the archive answered came after it, so one index
-        the archive is known to hold is asked again: a 200 says it is not refusing and the markers are written;
-        anything else leaves them, and the next run asks those days and filings again."""
-        if not held.count():
-            return []
-        if not self._archive_answers(ctx, pacer):
-            ctx.notes.append(f"{held.count()} absent markers held back: the archive answered nothing, so the next "
-                             "run asks those days and filings again")
-            return []
-        return held.flush(self)
+        """Write what is still held at the end of a walk. Nothing the archive answered came after it, so each path
+        is asked for an object it is known to hold: the index path for the held days, the data path for the held
+        filings (``_holds``). A 200 says that path is not refusing and its markers are written; anything else
+        leaves them, and the next run asks those days and filings again. The two are asked apart because they fail
+        apart -- on 2026-11-06 the index path answered 200 throughout while the data path had lost a filer."""
+        done: list[date] = []
+        if held.days:
+            if self._archive_answers(ctx, pacer):
+                done += held.flush_days()
+            else:
+                ctx.notes.append(f"{len(held.days)} absent day markers held back: the index path answered nothing, "
+                                 "so the next run asks those days again")
+        if held.filings:
+            holds, why = self._holds(ctx, pacer, None)
+            if holds:
+                done += held.flush_filings(self)
+            else:
+                ctx.notes.append(f"{len(held.filings)} absent filing markers held back: the archive did not hand "
+                                 f"over one it holds ({why}), so the next run asks those filings again")
+        return done
 
     def _archive_answers(self, ctx: base.RunContext, pacer: sec.Pacer) -> bool:
         """Whether the archive answers at all: one more request for the newest index file already kept."""
@@ -394,11 +479,74 @@ class Feed:
         ctx.notes.append(f"{fetched} filings fetched; stopped at the time budget, the rest on the next run")
         return complete, partial, True
 
+    def filing_url(self, row: dict) -> str:
+        return f"{sec.www_base()}/Archives/{row['path']}"
+
+    def _known_filing(self, run_id: str | None = None) -> list[str]:
+        """Filing URLs the archive once served, rebuilt against the base in force now: what ``_holds`` asks. Lines
+        another run wrote come first, because a URL this run fetched minutes ago is the one most likely to be
+        answered from an edge cache, and the failure this has to catch is the path breaking part-way through a run.
+        Several, because one of them may itself be a filing EDGAR has since removed -- the very thing this guard is
+        about -- and because a day folder can hold no manifest at all (a day with no filing of this feed's forms,
+        or one written off whole, still gets a folder), so the budget counts candidates and not folders."""
+        root = self.raw_dir()
+        if not root.is_dir():
+            return []
+        mine, others = [], []
+        for d in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
+            man = d / MANIFEST
+            if not man.exists():
+                continue
+            for line in man.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    url, was = entry.get("url"), entry.get("run_id")
+                except (ValueError, AttributeError, TypeError):
+                    continue            # a killed run can leave a half-written line; it is not evidence either way
+                if not url or "/Archives/" not in url:
+                    continue
+                here = sec.www_base() + "/Archives/" + url.split("/Archives/", 1)[1]
+                (mine if run_id is not None and was == run_id else others).append(here)
+                break
+            if len(others) >= PROBE_CANDIDATES:
+                break
+        return (others + mine)[:PROBE_CANDIDATES]
+
+    def _holds(self, ctx: base.RunContext, pacer: sec.Pacer, last_ok: str | None, nth: int = 0) -> tuple[bool, str]:
+        """``(whether the archive still hands over a filing it is known to hold, what it said)``. This is the one
+        check that tells a filer whose filings EDGAR removed from a path that answers nothing for anything: the
+        answer to the absent filing is the same either way. Measured 2026-11-06 on the live site, which is why it
+        exists: all six SCHEDULE 13G rows of CIK 2147005 in the index of 2026-08-17 answer 404, the accession
+        folder answers 404, and that CIK's submissions.json holds no filing at all, while a filing of the same day
+        in the same path answers 200.
+
+        ``nth`` rotates which candidate is asked first, so a run of many hours does not ask one URL hundreds of
+        times and read a warm cache as an answer about the origin. A 200 must carry a submission: a host that
+        answers 200 with an error body for everything would otherwise pass this and be taken as proof."""
+        candidates = self._known_filing(ctx.run_id)
+        if candidates:
+            candidates = candidates[nth % len(candidates):] + candidates[:nth % len(candidates)]
+        said = []
+        for url in [*candidates, *([last_ok] if last_ok else [])]:
+            r = sec.get(ctx, pacer, url, accept=(403, 404))
+            if r.status_code == 200 and is_submission(r.content):
+                return True, "200"
+            name = url.rsplit("/", 1)[1]
+            if r.status_code == 200:
+                said.append(f"{name}: 200 but not a submission")
+            elif base.is_missing(r):
+                said.append(f"{name}: no object ({r.status_code})")
+            else:
+                said.append(f"{name}: {r.status_code}{base.refusal_note()}")
+        return False, "; ".join(said) or "no filing it is known to hold"
+
     def _fetch_filing(self, ctx: base.RunContext, pacer: sec.Pacer, day: date,
                       row: dict) -> tuple[str, dict] | None:
         """Fetch one filing. None once it is written; ``(accession, payload)`` when the archive has no object for
         it, for the caller to mark absent."""
-        url = f"{sec.www_base()}/Archives/{row['path']}"
+        url = self.filing_url(row)
         r = sec.get(ctx, pacer, url, accept=(403, 404))
         acc = row["accession"]
         if base.is_missing(r):
@@ -406,6 +554,9 @@ class Feed:
                          "cik": row["cik"]}
         if r.status_code >= 400:
             raise base.SourceError(f"{sec.PROVIDER} {url}: HTTP {r.status_code}{base.refusal_note()}")
+        if not is_submission(r.content):
+            raise base.SourceError(f"{sec.PROVIDER} {url}: a 200 that is not a full submission "
+                                   f"({len(r.content)} bytes); nothing is written")
         base.write_raw(self.filing_path(day, acc), r.content)
         with open(self.day_dir(day) / MANIFEST, "a", encoding="utf-8") as f:
             f.write(json.dumps({"accession": acc, "form": row["form"], "cik": row["cik"], "filed": str(row["filed"]),
@@ -452,6 +603,14 @@ class Feed:
         return self.to_parquet_all(ctx, [raw])
 
     def to_parquet_all(self, ctx: base.RunContext, day_dirs: list[Path]) -> list[Path]:
+        if base.raw_only():
+            # Raw-only (--no-parquet, #498): typing writes no partition (base.write_parquet), and the ``.done``
+            # marker written beside it is the walk's skip test (is_done), so a marker without a partition would
+            # hide the day's filings from every later run for good. The filings stay in raw and the day stays
+            # unmarked, so the next ordinary run walks it again and types it at no provider call.
+            days = sorted(set(day_dirs))
+            ctx.notes.append(f"{self.name}: raw only, {len(days)} day(s) staged and not typed")
+            return []
         out = []
         complete = set((ctx.pending.get(self.name) or {}).get("complete", []))
         for d in sorted(set(day_dirs)):

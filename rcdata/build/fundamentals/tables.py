@@ -108,7 +108,9 @@ TABLE_CHECKS: dict[str, list[str]] = {
                          "CHECK (preliminary OR (accn IS NOT NULL AND filed IS NOT NULL))"],
     # A document's text is never labelled ok at the cap (filings.CAPPED).
     "filing_item": ["CHECK (kind IN ('item', 'document'))",
-                    f"CHECK (quality IS NULL OR quality <> 'ok' OR chars < {filings.max_text_chars()})"],
+                    "CHECK (quality IS NULL OR quality <> 'ok' OR item NOT IN ("
+                    + ", ".join(f"'{i}'" for i in filings.SLICED_ITEMS)
+                    + f") OR chars < {filings.max_text_chars()})"],
     "segment_revenue": ["CHECK (axis IN ('business', 'product', 'geographic'))"],
     "customer_share": ["CHECK (share IS NULL OR (share >= 0 AND share <= 1))"],
 }

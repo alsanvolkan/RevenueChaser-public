@@ -20,6 +20,12 @@ A dataset is due (``is_due``) when nothing holds it and its last run is old enou
   for the next complete session and the market series (as-of: today) run on the first pass of each trading day.
   A check with no ``next_check_due`` (past the calendar's table) is due once the as-of is newer than the one it ran
   for, so a calendar run out does not make a dataset due every hour;
+- its kind's automation (``ops.kind_automation``, set on the Settings page), or the dataset's own when it has one
+  (``ops.dataset_automation``, #527: the source's Automated select; "as the file" is no row), decides what the hourly pass queues:
+  ``off`` (the default) queues nothing for the kind, ``raw`` / ``parquet`` queue the same partial run a Fetch's ▾
+  asks for, ``full`` the whole run. Under a partial mode a check the partial run itself wrote (a ``skipped`` with
+  its stage note) counts as the run for the cadence, so the hourly pass does not queue the dataset again every
+  hour; under ``full`` it stays due, so the next pass builds the rest. A person's Fetch is not touched by any of it;
 - ``weekly`` / ``monthly``: due 7 / 30 days after the last check's ``checked_on``. The cadence is the
   ``dataset_schedule`` row's, else the dataset's own ``cadence`` attribute (the spine's weekly sources), else daily.
 
@@ -33,6 +39,7 @@ from datetime import date
 
 from ...core import calendar
 from .. import ops
+from . import base
 
 CADENCES = ("daily", "weekly", "monthly")
 DEFAULT_CADENCE = "daily"
@@ -45,6 +52,13 @@ WRDS_FAILED_WHY = ("the last WRDS run failed: it waits for a person (no hourly r
 #: the earnings calendar and the listing status): a failed check is due again on the next New York day (#349 S6).
 DAY_CAPPED = frozenset({"alphavantage"})
 BY_HAND_WHY = "starts by hand: not due until a first run from the CLI or a Fetch has built it"
+#: The stage notes a partial run leaves (``base.skip_note``), by the modes whose run they complete: a raw + Parquet
+#: run also completes a raw-only mode, a raw-only run does not complete a raw + Parquet one.
+STAGE_DONE = {"raw": (base.NO_PARQUET_NOTE, base.NO_DUCKDB_NOTE), "parquet": (base.NO_DUCKDB_NOTE,)}
+
+
+def _stage_done(check: dict, mode: str) -> bool:
+    return check["result"] == "skipped" and str(check.get("note") or "").startswith(STAGE_DONE.get(mode, ()))
 
 
 def _day_raw_held(ds) -> bool:
@@ -54,10 +68,13 @@ def _day_raw_held(ds) -> bool:
     return bool(raw_path and raw_path(ds.default_as_of()).exists())
 
 
-def is_due(ds) -> tuple[bool, str]:
-    """``(due, why)`` for dataset ``ds``, from its ``dataset_schedule`` row and its newest ``dataset_check`` row."""
+def is_due(ds, mode: str = "full") -> tuple[bool, str]:
+    """``(due, why)`` for dataset ``ds``, from its ``dataset_schedule`` row and its newest ``dataset_check`` row;
+    ``mode`` is its kind's automation (``ops.KIND_MODES``)."""
     if getattr(ds, "attended", False):
         return False, ATTENDED_WHY
+    if mode == "off":                       # after attended: the Settings row reads "by hand only" first too
+        return False, f"automation off for {ds.kind}"
     if getattr(ds, "starts_by_hand", False) and not ops.ever_built(ds.name):
         return False, BY_HAND_WHY
     schedule = ops.schedule_get(ds.name) or {}
@@ -75,7 +92,7 @@ def is_due(ds) -> tuple[bool, str]:
     if check["result"] == "failed" and DAY_CAPPED & set(getattr(ds, "providers", ())) \
             and str(check.get("checked_on"))[:10] >= today and not _day_raw_held(ds):
         return False, "failed today: again on the next New York day (the provider allows 25 calls a day)"
-    if check["result"] in ("failed", "skipped"):
+    if check["result"] in ("failed", "skipped") and not _stage_done(check, mode):
         return True, f"the last check {'failed' if check['result'] == 'failed' else 'was skipped'}"
     cadence = schedule.get("cadence") if schedule.get("cadence") in CADENCES else getattr(ds, "cadence", None)
     cadence = cadence if cadence in CADENCES else DEFAULT_CADENCE
@@ -99,7 +116,7 @@ def is_due(ds) -> tuple[bool, str]:
 
 
 def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None, bool]]:
-    """Queue every due dataset once; ``(name, why, request id or None, error)`` per dataset, in name order.
+    """Queue every due dataset once; ``(name, why, request id or None, error)`` per dataset, in registry order.
 
     No id: not due, already queued or running, or an error (``why`` says which). ``error`` is True when the due check
     raised or ``ops.sqlite`` stayed locked past its busy timeout; one dataset's error does not stop the others.
@@ -107,9 +124,10 @@ def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None
     if datasets is None:
         from . import DATASETS as datasets
     out = []
-    for name in sorted(datasets):
+    for name in datasets:                     # registry order: sources before the kind's derived datasets (PR A)
         try:
-            due, why = is_due(datasets[name])
+            mode = ops.dataset_mode(name, datasets[name].kind)   # #527: a source's own mode wins over its kind's
+            due, why = is_due(datasets[name], mode)
         except Exception as e:  # noqa: BLE001 - a calendar past its table for one dataset must not stop the rest
             out.append((name, f"due check failed: {type(e).__name__}: {e}"[:300], None, True))
             continue
@@ -117,7 +135,7 @@ def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None
             out.append((name, f"not due ({why})", None, False))
             continue
         try:
-            rid = ops.enqueue_once(name, None, by=REQUESTED_BY)
+            rid = ops.enqueue_once(name, base.STAGE_PARAMS[mode] or None, by=REQUESTED_BY)
         except ops.BUSY_ERRORS as e:
             # ops.sqlite held past busy_timeout, or Redis not answering (as in _run_queue): this dataset waits for
             # the next pass.

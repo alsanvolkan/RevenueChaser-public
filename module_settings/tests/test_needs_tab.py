@@ -189,14 +189,15 @@ def test_the_page_has_the_tab_strip_and_both_panels_and_stays_inert():
     assert_inert(html)
     check_page(html)
     strip = html[html.index('id="settings-tabs"'):]
-    assert strip.index('role="tablist"') < strip.index('id="tab-data"') < strip.index('id="tab-needs"')
+    assert strip.index('role="tablist"') < strip.index('id="tab-data"') < strip.index('id="tab-health"')
+    assert 'id="tab-fetch"' not in html and 'id="tab-needs"' not in html and 'id="panel-fetch"' not in html
     assert re.search(r'<div[^>]*id="panel-data"[^>]*role="tabpanel"', html)
-    assert re.search(r'<div[^>]*id="needs"[^>]*role="tabpanel"[^>]*hidden', html), "Needs starts hidden"
-    data = html[html.index('id="panel-data"'):html.index('id="needs"')]
-    assert 'id="sec-health"' in data and 'id="old-settings"' in data, "the Data tab is the page as it was"
-    needs = html[html.index('id="needs"'):]
+    assert re.search(r'<div[^>]*id="panel-health"[^>]*role="tabpanel"[^>]*hidden', html), "Health starts hidden"
+    data = html[html.index('id="panel-data"'):html.index('id="panel-health"')]
+    assert 'id="sec-health"' in data and 'id="old-settings"' not in html and "oldfold" not in html
+    health = html[html.index('id="panel-health"'):]
     for part in ("needs-catalog", "needs-log", "needs-routes"):
-        assert f'id="{part}"' in needs, part
+        assert f'id="{part}"' in health, part
 
 
 def test_the_pages_scripts_parse_with_the_tab_switch(tmp_path):
@@ -206,7 +207,7 @@ def test_the_pages_scripts_parse_with_the_tab_switch(tmp_path):
 def test_the_tab_switch_is_remembered_per_viewer_and_reads_the_hash():
     html = _page(_model())
     assert "localStorage" in html and "try{" in html.replace(" ", ""), "storage wrapped in try"
-    assert "#needs" in html and "aria-selected" in html and "ArrowRight" in html
+    assert "aria-selected" in html and "ArrowRight" in html
 
 
 def test_the_page_still_renders_when_the_tab_cannot_be_built(monkeypatch):
@@ -248,7 +249,7 @@ def test_phone_rules_44px_tabs_and_tables_stack_under_600px():
     html = needs_tab.render(_model())
     assert html.count('<table class="stk">') == 2
     for td in re.findall(r"<td[^>]*>", html):
-        assert "data-label=" in td, td
+        assert "data-label=" in td or td == '<td colspan="7">', td    # a group head: its button is its label
     assert 'class="part"' in html
 
 
@@ -269,7 +270,7 @@ def test_the_board_fixture_carries_the_hostile_payload_into_the_needs_tab(tmp_pa
     from RevenueChaser.core.tests.board_fixtures import BOARDS
     html = BOARDS["module_settings"].render(tmp_path, monkeypatch)
     assert_inert(html)
-    needs = html[html.index('<div id="needs" role="tabpanel"'):]
+    needs = html[html.index('<div id="panel-health" role="tabpanel"'):]
     for tag in ("need", "table", "dataset", "declared", "planned", "error", "process", "ask_param",
                 "route_path", "route_what", "route_example", "readers_error"):
         assert f"&lt;img src=x onerror=__x(&#x27;{tag}T&#x27;)" in needs, tag
@@ -288,3 +289,59 @@ def test_the_lag_names_its_unit_and_a_need_breaks_only_after_a_dot():
 def test_the_legend_names_the_builder_and_says_old_rows_may_say___main__():
     html = needs_tab.render(_model())
     assert "<code>builder</code>" in html and "<code>__main__</code>" in html and "before 1 Nov 2026" in html
+
+
+# ── #492 (i): the catalog grouped by served file ───────────────────────────────────────────────────────────────
+
+def _groups(html: str) -> list[tuple[str, str]]:
+    """``(file, body)`` per group, in page order: each head's ``data-file`` and its own ``tbody.cbody``."""
+    cat = html[html.index('id="needs-catalog"'):html.index('id="needs-log"')]
+    return re.findall(r'<tbody class="cghead" data-file="([^"]+)">.*?</tbody>\s*(<tbody class="cbody"[^>]*>.*?</tbody>)',
+                      cat, flags=re.S)
+
+
+def test_the_catalog_draws_one_group_per_served_file_in_order_closed_at_load():
+    m = _model()
+    groups = _groups(needs_tab.render(m))
+    files = [f for f, _ in groups]
+    present = {r["kind"] for r in m["catalog"]}
+    assert files == [f for f in needs_tab.SERVED_FILES if f in present]
+    for _, body in groups:
+        assert body.startswith('<tbody class="cbody" hidden')
+    html = needs_tab.render(m)
+    assert html.count('class="cgtog" aria-expanded="false"') == len(groups)
+    assert 'aria-expanded="true"' not in html[html.index('id="needs-catalog"'):html.index('id="needs-log"')]
+
+
+def test_every_need_is_in_exactly_one_group_and_an_unknown_file_goes_last_as_other():
+    m = _model()
+    m["catalog"][0]["kind"] = "somewhere_else"
+    groups = _groups(needs_tab.render(m))
+    assert groups[-1][0] == "other"
+    seen = [n for _, body in groups for n in re.findall(r'data-need="([^"]+)"', body)]
+    assert sorted(seen) == sorted(r["need"] for r in m["catalog"]) and len(seen) == len(set(seen))
+    assert m["catalog"][0]["need"] in re.findall(r'data-need="([^"]+)"', groups[-1][1])
+
+
+def test_a_group_head_says_its_file_and_counts():
+    m = _model(summarize=lambda n: {**_summary(n), "state": "stale" if n == "prices.bars" else "fresh"})
+    cat = needs_tab.render(m)
+    n = sum(1 for r in m["catalog"] if r["kind"] == "prices")
+    head = re.search(r'<tbody class="cghead" data-file="prices" data-bad>(.*?)</tbody>', cat, flags=re.S).group(1)
+    assert "▾" in head and "prices" in head, "#527: a group with a stale need is open at load"
+    assert f"{n} needs · fresh {n - 1} · stale 1" in head
+    assert 'colspan="7"' in head
+
+
+def test_the_group_toggle_script_flips_the_body_and_the_arrow():
+    js = needs_tab.NEEDS_JS
+    assert ".cgtog" in js and "aria-expanded" in js and "▾" in js and "▸" in js
+    html = _page(_model())
+    assert js in html
+
+
+def test_the_group_head_is_a_section_with_a_touch_target():
+    css = needs_tab.NEEDS_CSS
+    assert re.search(r"#needs \.cgtog\{[^}]*min-height:44px", css)
+    assert re.search(r"#needs tbody\.cghead td\{[^}]*border-top", css)
+    assert re.search(r"#needs \.cgtog\{[^}]*font-weight:700", css)

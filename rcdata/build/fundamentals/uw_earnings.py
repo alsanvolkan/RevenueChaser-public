@@ -19,8 +19,9 @@ why the SEC's ``eps_diluted`` stays the only EPS in ``fundamental_fact``. The tw
 
 **Weekly, one request per company** (the pattern of ``yfinance/estimates``): a company whose newest answer is
 ``WEEK_DAYS`` old, or that has none, is asked, the longest without an answer first; ``FAIL_STREAK`` failures in a
-row stop the run (UW throttling or down) and a run where every request failed is a failed run. Paced and counted
-against the ``uw`` cap. No ``UNUSUAL_WHALES_API_KEY``: nothing is asked, a ``missing_key`` issue.
+row stop the run (UW throttling or down) and a run where every request failed is a failed run. Counted against the
+``uw`` day cap; not paced, because UW publishes no request window. No ``UNUSUAL_WHALES_API_KEY``: nothing is asked,
+a ``missing_key`` issue.
 
 Raw: ``raw/uw/earnings/<as-of>/<ticker>.json.gz`` (the resume marker). Parquet:
 ``parquet/uw/earnings/date=<as-of>/part-0.parquet``, rewritten from the day's raw files so a resumed day loses none;
@@ -51,8 +52,8 @@ SCHEMA = [("cik", "TEXT"), ("ticker", "TEXT"), ("period_end", "DATE"), ("report_
 
 
 def endpoint(ticker: str) -> str:
-    from ....core.providers.unusual_whales import _seg
-    return f"/stock/{_seg(ticker)}/earnings"
+    from ....core.providers.unusual_whales import _seg, uw_symbol
+    return f"/stock/{_seg(uw_symbol(ticker))}/earnings"
 
 
 def day_dir(as_of: date | str) -> Path:
@@ -145,8 +146,9 @@ class UWEarnings:
                 not_asked = len(due) - n
                 break
             ctx.check_cap(PROVIDER)
-            base.run_pacer(ctx, PROVIDER).wait()
-            ctx.count(PROVIDER, calls=1)
+            # No pacer: UW publishes no request window (``caps.WINDOWS``), so there is none to keep. The day cap
+            # and the client's own 429 backoff are the limits, as for every other UW dataset. The call itself is
+            # counted by ``RunContext._on_uw_response``, which sees the retries too, so it is not counted here.
             res = ctx.uw_client().stock_earnings_result(ticker)
             if res.status != "ok":
                 ctx.count(PROVIDER, failures=1)
