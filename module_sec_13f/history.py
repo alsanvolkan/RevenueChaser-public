@@ -28,7 +28,9 @@ BOARD, TABLE = "module_sec_13f", "sec13f_metrics_history"
 # 4: shares out, insider % and price come from ownership_snapshot and D01, not sec13f_enrichment (#375 F2).
 # 5: plus ownership breadth, holders ÷ that quarter's filers, and its change (#375 F4, Chen-Hong-Stein 2002).
 # 6: the metrics and the CUSIP map come from the ownership serving store, not the retired derive (G9).
-SELECTION_VERSION = "6"
+# 7: streak, accel and % out skip a quarter still arriving, and the recorded quarter is the one they are from
+#    (#514). effective_config sees none of those, which is what this version is for.
+SELECTION_VERSION = "7"
 _LAST = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow", "sell_flow",
          "breadth", "breadth_chg")
 _ENTRY = ("name", "sector", "streak", "accel", "pct_out", "price", "price_delta", "shares_outstanding",
@@ -59,9 +61,17 @@ def cusips_by_ticker(quarter: str | None) -> dict[str, list[str]]:
 
 
 def metric_rows(totals: dict, meta: dict, enrichment: dict | None) -> tuple[str | None, list]:
-    """``(quarter, rows)``: one row per board row, in board order; ``quarter`` is the board's latest quarter."""
+    """``(quarter, rows)``: one row per board row, in board order; ``quarter`` is the board's latest **settled**
+    quarter, which is the period the recorded metrics are from.
+
+    Not ``quarters[-1]``: since #514 the board's snapshot numbers come from the last settled quarter, and labelling
+    them with a quarter still arriving would record one period's holders, breadth and flows under another's name —
+    the board would stop misreading the quarter and the history would start. ``shares_by_quarter`` and
+    ``chg_by_quarter`` still carry every quarter under its own key, including the one arriving."""
     quarters, entries = report.board_entries(totals, meta, enrichment)
-    quarter = quarters[-1] if quarters else None
+    still_arriving = report.arriving(totals, quarters)
+    settled = [q for q in quarters if q not in still_arriving]
+    quarter = settled[-1] if settled else (quarters[-1] if quarters else None)
     cusips = cusips_by_ticker(quarter)
     rows = []
     for e in entries:

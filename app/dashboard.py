@@ -1475,6 +1475,10 @@ def _request_days(raw_from, raw_to) -> tuple[dict, str | None]:
     return out, None
 
 
+#: A Fetch press's ``stage`` and the builder params it becomes (``rcdata/build/base.py`` ``_run``).
+REQUEST_STAGES = {"raw": {"no_parquet": True}, "parquet": {"no_duckdb": True}, "full": {}}
+
+
 def _request_scope(raw_tiers, raw_names, raw_include=None) -> tuple[dict, str | None]:
     """``{"tiers": [...], "names": [...]}`` of a Fetch press (#265), checked here so the queue holds only a request
     the builder can run. A comma-separated string is accepted from the query string, a JSON body sends a list.
@@ -1540,6 +1544,13 @@ def api_build_request(dataset: str):
     if problem:
         return jsonify({"ok": False, "error": problem}), 400
     params.update(scope)
+    # #492 PR (ii): how far the run goes. "raw" fetches into HDD raw only (the builder's --no-parquet), "parquet"
+    # also stages Parquet (--no-duckdb); "full", or nothing, builds the served file too. A partial run ends
+    # skipped and leaves the dataset due, so the next ordinary pass builds the rest.
+    stage = str(given("stage") or "full").strip()
+    if stage not in REQUEST_STAGES:
+        return jsonify({"ok": False, "error": f"unknown stage {stage!r}; known: {', '.join(REQUEST_STAGES)}"}), 400
+    params.update(REQUEST_STAGES[stage])
     waits_for = None
     if attended:
         waits_for = ("a person at a terminal on the server: python -m RevenueChaser.rcdata.build attended "
@@ -1563,18 +1574,110 @@ def api_build_queue():
 
 @app.route("/api/build/schedule/<path:dataset>/<action>", methods=["POST"])
 def api_build_schedule(dataset: str, action: str):
-    """Pause or resume ``dataset``: the builder skips a paused dataset (a ``skipped: paused`` check row)."""
-    from RevenueChaser.rcdata import ops
+    """``pause`` / ``resume`` ``dataset``, or set its ``cadence`` and hold.
 
-    if action not in ("pause", "resume"):
+    A paused dataset is skipped by the builder (a ``skipped: paused`` check row); ``pause`` also cancels its queued
+    requests and answers how many (``cancelled``), and a running fetch stops at its next provider call (#492 PR (ii)).
+    ``cadence`` takes a JSON body
+    ``{"cadence": "daily|weekly|monthly", "next_due": "YYYY-MM-DD" | ""}``: the frequency the schedule reads
+    (``due.py``) and a hold until that day, which an empty value clears. The three actions are separate, so
+    setting a frequency never resumes a dataset a person paused.
+    """
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build import due
+
+    if action not in ("pause", "resume", "cadence"):
         return jsonify({"ok": False, "error": "unknown action"}), 404
     if _build_dataset(dataset) is None:
         return jsonify({"ok": False, "error": f"unknown dataset {dataset!r}"}), 400
-    if action == "pause":
-        ops.schedule_pause(dataset, by=_requested_by())
+    cancelled = 0
+    if action == "cadence":
+        body = request.get_json(silent=True) or {}
+        cadence = str(body.get("cadence") or "").strip()
+        if cadence not in due.CADENCES:
+            return jsonify({"ok": False, "error": f"unknown cadence {cadence!r}; "
+                                                  f"known: {', '.join(due.CADENCES)}"}), 400
+        hold = str(body.get("next_due") or "").strip()
+        if hold:
+            try:
+                hold = date.fromisoformat(hold).isoformat()
+            except ValueError:
+                return jsonify({"ok": False, "error": f"next_due {hold!r} is not a YYYY-MM-DD date"}), 400
+        ops.schedule_set(dataset, cadence, hold or None)
+    elif action == "pause":
+        # #492 PR (ii): the pause also cancels the queued request; a running fetch stops itself at its next call
+        cancelled = ops.schedule_pause(dataset, by=_requested_by())
     else:
         ops.schedule_resume(dataset)
-    return jsonify({"ok": True, "dataset": dataset, "schedule": ops.schedule_get(dataset)})
+    return jsonify({"ok": True, "dataset": dataset, "schedule": ops.schedule_get(dataset), "cancelled": cancelled})
+
+
+@app.route("/api/build/automation/<kind>", methods=["POST"])
+def api_build_automation(kind: str):
+    """Set what the hourly pass queues for one serving kind's due datasets: ``{"mode": "off|raw|parquet|full"}``
+    (``ops.KIND_MODES``). 400 for an unknown kind or mode. A person's Fetch is not touched by it."""
+    from RevenueChaser.rcdata import ops, serving
+    if kind not in serving.KINDS:
+        return jsonify({"ok": False, "error": f"unknown kind {kind!r}; known: {', '.join(serving.KINDS)}"}), 400
+    mode = str((request.get_json(silent=True) or {}).get("mode") or "").strip()
+    if mode not in ops.KIND_MODES:
+        return jsonify({"ok": False, "error": f"unknown mode {mode!r}; known: {', '.join(ops.KIND_MODES)}"}), 400
+    ops.kind_mode_set(kind, mode, by=_requested_by())
+    return jsonify({"ok": True, "kind": kind, "automation": ops.kind_mode_get(kind)})
+
+
+@app.route("/api/build/automation-ds/<path:dataset>", methods=["POST"])
+def api_build_automation_ds(dataset: str):
+    """#527: one source's own automation, over its file's: ``{"mode": "file|off|raw|parquet|full"}``
+    (``ops.DATASET_MODES``); ``file`` drops the row, so the file's mode holds again. 400 for an unknown dataset or
+    mode. A person's Fetch is not touched by it."""
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build import DATASETS
+    if dataset not in DATASETS:
+        return jsonify({"ok": False, "error": f"unknown dataset {dataset!r}"}), 400
+    mode = str((request.get_json(silent=True) or {}).get("mode") or "").strip()
+    if mode not in ops.DATASET_MODES:
+        return jsonify({"ok": False, "error": f"unknown mode {mode!r}; known: {', '.join(ops.DATASET_MODES)}"}), 400
+    ops.dataset_mode_set(dataset, mode, by=_requested_by())
+    return jsonify({"ok": True, "dataset": dataset, "automation": ops.dataset_mode_get(dataset)})
+
+
+#: #527 step 11: the one root command the board's builder timer press runs (home-server etc/sudoers.d/life-ctl
+#: grants it to ``life``; units/life-rc-dashboard.service runs without NoNewPrivileges for it).
+TIMER_CTL = ("sudo", "-n", "/usr/local/sbin/life-ctl", "life-rc-builder.timer")
+
+
+@app.route("/api/build/timer", methods=["POST"])
+def api_build_timer():
+    """#527 step 11 (avo, 6 Nov 2026): turn the hourly builder timer on or off, ``{"on": true|false}``. Runs only
+    ``TIMER_CTL`` + ``on|off``; 400 for a body without a boolean ``on``, 502 with sudo's or life-ctl's words when it
+    refuses (a unit still under NoNewPrivileges says so)."""
+    on = (request.get_json(silent=True) or {}).get("on")
+    if not isinstance(on, bool):
+        return jsonify({"ok": False, "error": "on must be true or false"}), 400
+    argv = [*TIMER_CTL, "on" if on else "off"]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]}), 502
+    if done.returncode != 0:
+        words = (done.stderr or done.stdout or f"exit {done.returncode}").strip()
+        return jsonify({"ok": False, "error": words[:300]}), 502
+    return jsonify({"ok": True, "on": on, "said": (done.stdout or "").strip()[:300]})
+
+
+@app.route("/api/build/switch/<name>", methods=["POST"])
+def api_build_switch(name: str):
+    """#527: turn the board's ``fetch`` or ``backup`` switch on or off: ``{"on": true|false}``. Off records who (the
+    panel header) and when; 400 for an unknown switch or a body without a boolean ``on``."""
+    from RevenueChaser.rcdata import ops
+    if name not in ops.SWITCHES:
+        return jsonify({"ok": False, "error": f"unknown switch {name!r}; known: {', '.join(ops.SWITCHES)}"}), 400
+    on = (request.get_json(silent=True) or {}).get("on")
+    if not isinstance(on, bool):
+        return jsonify({"ok": False, "error": "on must be true or false"}), 400
+    ops.switch_set(name, on, by=_requested_by())
+    return jsonify({"ok": True, "name": name, "switch": ops.switch_get(name)})
 
 
 @app.route("/api/idle")

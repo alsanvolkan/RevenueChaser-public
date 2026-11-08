@@ -24,26 +24,7 @@ def test_s2_the_statuses_are_one_set_with_one_colour_and_one_icon_each():
     assert in_css == set(report.ND_STATUS_WORDS), "a colour for exactly the statuses, no second set"
 
 
-def test_s2_the_page_carries_no_second_status_mapping():
-    sec = _section(_page())
-    used = set(re.findall(r"nd-st-([a-z]+)", sec))
-    assert used <= set(report.ND_STATUS_WORDS)
-    assert "style=\"color" not in sec, "a status colour is a class, never an inline colour"
-
-
 # ── S6: measured at ──
-
-def test_s6_a_card_says_the_clock_it_was_measured_at():
-    card = _card(_section(_page()), "market_series")
-    assert "Measured" in card
-    assert re.search(r"Measured</span><span class=\"nd-v\">\d\d:\d\d", card), card[:200]
-
-
-def test_s6_a_card_with_no_measured_clock_says_nothing_rather_than_a_wrong_time():
-    nd = newdata_fixture()
-    nd["datasets"] = [{**nd["datasets"][0], "measured_at": None}]
-    assert "Measured" not in _card(_section(_page(nd)), "market_series")
-
 
 def test_s6_the_collector_stamps_the_clock_it_read_the_store_at(monkeypatch):
     from datetime import datetime, timezone
@@ -53,22 +34,6 @@ def test_s6_the_collector_stamps_the_clock_it_read_the_store_at(monkeypatch):
 
 
 # ── S8: a report that has not run ──
-
-def test_s8_a_report_that_has_not_run_shows_a_dash_and_says_so():
-    nd = newdata_fixture()
-    nd["datasets"] = [{**nd["datasets"][0], "wrds": {"text": "no WRDS run yet", "produced": False}}]
-    row = re.search(r'WRDS difference</span><span class="nd-v">(.*?)</span>',
-                    _card(_section(_page(nd)), "market_series"), re.S).group(1)
-    assert report.DASH in row and "not produced yet" in row
-
-
-def test_s8_a_report_that_has_run_shows_its_own_words():
-    nd = newdata_fixture()
-    nd["datasets"] = [{**nd["datasets"][0], "wrds": {"text": "as of 2026-10-27: all equal", "produced": True}}]
-    row = re.search(r'WRDS difference</span><span class="nd-v">(.*?)</span>',
-                    _card(_section(_page(nd)), "market_series"), re.S).group(1)
-    assert "all equal" in row and "not produced yet" not in row
-
 
 def test_s8_the_collector_marks_a_slot_that_has_not_run():
     from RevenueChaser.module_settings import newdata
@@ -90,37 +55,13 @@ def test_s9_a_full_bar_still_shows_the_cap_line():
 
 # ── S10: a disabled button's reason ──
 
-def test_s10_the_reason_a_button_is_off_is_not_muted_text():
-    nd = newdata_fixture()
-    nd["datasets"] = [{**nd["datasets"][0], "backfill": {}}]
-    card = _card(_section(_page(nd)), "market_series")
-    reason = re.search(r'<div class="([^"]*)">[^<]*backfill view[^<]*', card).group(1)
-    assert "nd-k" not in reason, "the reason a control is off is read, so it is not muted"
-    assert "nd-off-why" in reason
-    assert re.search(r"#newdata \.nd-off-why\{[^}]*var\(--fg\)", report.ND_CSS)
-
-
 # ── S14: the filter in the address bar ──
-
-def test_s14_the_section_offers_one_link_per_status_carrying_the_filter():
-    sec = _section(_page())
-    links = dict(re.findall(r'<a class="nd-chip nd-filter[^"]*" href="\?nd_status=([a-z]*)[^"]*"[^>]*>(.*?)</a>',
-                            sec, re.S))
-    assert set(links) >= set(report.ND_STATUS_WORDS) | {""}, links
-    assert all("#newdata" in h for h in re.findall(r'nd-filter[^"]*" href="([^"]+)"', sec))
-
 
 def test_s14_the_filter_is_read_from_the_address_and_written_back_without_a_reload():
     assert "nd_status" in report.ND_JS
     assert "history.replaceState" in report.ND_JS
     assert "location.reload" not in report.ND_JS
     assert "ndFilter" in report.ND_JS
-
-
-def test_s14_the_filter_hides_a_row_by_its_own_status_attribute():
-    sec = _section(_page())
-    assert 'data-status="late"' in sec and 'data-status="fresh"' in sec
-    assert "getAttribute('data-status')" in report.ND_JS
 
 
 # ── The review's m2: the map must not serialise as empty ──

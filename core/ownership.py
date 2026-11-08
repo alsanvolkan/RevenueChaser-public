@@ -160,7 +160,9 @@ SEC13F_METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders
 
 
 def sec13f_totals() -> dict[str, dict]:
-    """The served 13F per-ticker totals, ``{ticker: {"YYYY-MM-DD": metrics}}`` — nothing recomputed, no network.
+    """The served 13F per-ticker totals, ``{ticker: {"YYYY-MM-DD": metrics + ``complete``}}`` — nothing recomputed,
+    no network. ``complete`` says the period's filing deadline has passed; before it the quarter is still arriving
+    and its numbers are a part of themselves (#514).
 
     The builder owns these numbers (``rcdata/build/ownership``, PR 16: ``sec13f_ticker_period`` in
     ``ownership.duckdb``), and since G9 nothing else writes them: the dashboard's own derive and the
@@ -175,7 +177,11 @@ def sec13f_totals() -> dict[str, dict]:
 
     out: dict[str, dict] = {}
     for r in rcread.holders_13f():
-        out.setdefault(r["ticker"], {})[r["period"].isoformat()] = {m: r[m] for m in SEC13F_METRICS}
+        # ``complete`` is not one of the store's metrics, and it is not optional either: a period whose filing
+        # deadline has not passed holds a part of itself, so a reader that cannot tell shows a quarter still
+        # arriving as a collapse (#514). ``rcdata.read`` computes it from the deadline; this used to drop it.
+        out.setdefault(r["ticker"], {})[r["period"].isoformat()] = {**{m: r[m] for m in SEC13F_METRICS},
+                                                                    "complete": r["complete"]}
     return out
 
 

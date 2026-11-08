@@ -647,7 +647,7 @@ worker thread writes while Flask request threads read. So:
   `scripts/ibkr_login_check.py`, one TCP connection and the TWS API version handshake, which writes no table and
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
   expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
-  `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 50 min limit) and its backup
+  `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 120 min limit) and its backup
   RC-Build-Backup daily 04:30 (`rcdata backup --only ops,market,spine,fundamentals,options,raw --subdir market`,
   unit `life-rc-builder-backup`, 30 min limit) and the heavy half of that backup RC-Build-Backup-Heavy weekly
   Sunday 03:30 (`rcdata backup --only prices,ownership --subdir market-heavy`,
@@ -1100,6 +1100,9 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `provider_calls_daily` | Calls, failures and 429s per provider and New York day |
 | `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists (D2): ticker, added at, added by (the board), note; and their history, one row per add or remove with an `id` that keeps its order (version 2 added `id` and `note` to the history). The toggle routes write them (`docs/data_retrieval.md`); `rcdata.read.watchlists()` reads them |
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
+| `kind_automation` | What the hourly pass queues for each serving kind: `off` (no row), `raw`, `parquet` or `full` (Settings, 6 Nov 2026) |
+| `switch` | The board's two switches (#527): `fetch` stops every fetch, build and RC timer task but the backups and the IBKR login check; `backup` stops the three backups. No row, or `off_at` NULL, is on |
+| `dataset_automation` | One source's own automation over its kind's (#527): `off`, `raw`, `parquet` or `full`; no row ("as the file") follows `kind_automation` |
 
 **Day caps** (`rcdata/caps.py`, master plan Order 5, rule 3: only the quotas a provider publishes per day, each with
 its source): uw 100,000 (owner-marked avo 2026-11-02), alphavantage 25 (its free tier, shared by the earnings calendar and the spine's
@@ -1147,7 +1150,7 @@ what keeps a new writer from slipping past the gate; `core/tests/test_job_lock_n
 documented lock name has no entry.
 
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
-RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the
+RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 120 min limit, as the
 systemd unit pair `life-rc-builder.service` / `.timer`. RC-Build-Backup runs `rcdata backup` daily at 04:30, with a
 30 min limit, as `life-rc-builder-backup`; it takes the small files only
 (`--only ops,market,spine,fundamentals,options,raw --subdir market`). The two large serving files are
@@ -1177,7 +1180,10 @@ in; `open_read` opens and closes per call so each request sees the file live at 
 **What is due.** `run` without `--dataset` first queues every due dataset (`rcdata/build/due.py`, requested by
 `schedule`), then drains the queue. The request goes in through `ops.enqueue_once`, whose check and insert are one
 `BEGIN IMMEDIATE`, so a dataset with a request already queued or running gets no second one and two overlapping
-passes queue it once. A paused dataset is not queued, and `dataset_schedule.next_due`, while later than today in New
+passes queue it once. A dataset whose serving kind's automation (`ops.kind_automation`, set per file on the Settings
+Data tab) is `off` — the default, no row — is not queued; `raw` and `parquet` queue the same partial run a Fetch's ▾
+asks for, and that run's own `skipped` check then counts as the run for the cadence; `full` queues the whole run. A
+person's Fetch is not touched by the setting. A paused dataset is not queued, and `dataset_schedule.next_due`, while later than today in New
 York, holds a dataset until that day. Otherwise a dataset never built, or whose last check failed or was skipped,
 is due. With cadence `daily` (the default, and what an unknown cadence reads as) it is due once its own
 `default_as_of()` reaches the last check's `next_check_due`: the SPX slice after the next session is complete, the
@@ -1561,7 +1567,7 @@ never writes it. Nothing here writes `raw.duckdb`: the old 13F, short and inside
 | `ibkr/shortable` | daily | IBKR's public short-stock file (`usa.txt`, FTP, no account): borrow fee, rebate, shares available | `ibkr_shortable` |
 | `sec/ftd` | daily | The SEC's fails-to-deliver halves (`cnsfails<YYYYMM><a/b>.zip`) | `sec_ftd` |
 | `sec/13f` | daily | The SEC's Form 13F data sets (the first fill), then 13F-HR and 13F-HR/A through the EDGAR daily index | `sec13f_filings` (holdings stay in Parquet) |
-| `sec/form4` | daily | Form 4 and 4/A through the EDGAR daily index | `insider_transactions` |
+| `sec/form4` | daily | The SEC's Insider Transactions data sets (the first fill), then Form 4 and 4/A through the EDGAR daily index | `insider_transactions` |
 | `sec/13dg` | daily | Schedules 13D and 13G, old (`SC 13G`) and new (`SCHEDULE 13G`, XML since 2024-12-18) names | `beneficial_ownership` |
 | `ownership/serve` | daily | none: derives the 13F totals from the 13F tables and the spine | the four 13F tables below |
 

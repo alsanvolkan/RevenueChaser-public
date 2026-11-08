@@ -453,8 +453,11 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         r = _client()
         open_rows = _fetch("build_issues", [pk for k in kinds
                                             for pk in r.zrange(_key("build_issues", "open", dataset, "kind", k), 0, -1)])
-        have = {(row["kind"], row["key"]): row for row in open_rows if row["resolved_on"] is None}
-        gone = [{**row, "resolved_on": today} for k, row in have.items() if k not in want]
+        have: dict[tuple, list[dict]] = {}       # every row of a key, not one (see the note in ops.py)
+        for row in open_rows:
+            if row["resolved_on"] is None:
+                have.setdefault((row["kind"], row["key"]), []).append(row)
+        gone = [{**row, "resolved_on": today} for k, rows_ in have.items() if k not in want for row in rows_]
         fresh = [(k, key, detail) for (k, key), detail in sorted(want.items()) if (k, key) not in have]
         ids = _new_ids("build_issues", len(fresh)) if fresh else []
         new = [{"id": i, "dataset": dataset, "found_on": today, "kind": k, "key": key, "detail": detail,
@@ -656,9 +659,20 @@ def schedule_set(dataset: str, cadence: str, next_due: str | None) -> None:
     _schedule(dataset, lambda row: {**(row or {"dataset": dataset}), "cadence": cadence, "next_due": next_due})
 
 
-def schedule_pause(dataset: str, *, by: str) -> None:
+def cancel_queued(dataset: str, *, by: str) -> int:
+    def work():
+        now = time.time()
+        rows = [{**r, "status": "skipped", "ended_at": now, "note": ops.cancel_note(by, now)}
+                for r in _active() if r["status"] == "queued" and r["dataset"] == dataset]
+        return len(rows), (lambda p: [_put(p, "build_requests", r) for r in rows]) if rows else None
+    return _transaction(["build_requests"], work)
+
+
+def schedule_pause(dataset: str, *, by: str) -> int:
+    # the pause first, then the cancel: a request claimed in between already sees the pause at its first call
     now = time.time()
     _schedule(dataset, lambda row: {**(row or {"dataset": dataset}), "paused_at": now, "paused_by": by})
+    return cancel_queued(dataset, by=by)
 
 
 def schedule_resume(dataset: str) -> None:
@@ -670,6 +684,49 @@ def schedule_get(dataset: str) -> dict | None:
 
 
 read_schedule = schedule_get
+
+
+def kind_mode_set(kind: str, mode: str, *, by: str) -> None:
+    row = {"kind": kind, "mode": ops._kind_mode(mode), "set_at": time.time(), "set_by": by}
+    _transaction(["kind_automation"], lambda: (None, lambda p: _put(p, "kind_automation", row)))
+
+
+def kind_mode_get(kind: str) -> dict | None:
+    return _one("kind_automation", kind)
+
+
+def switch_set(name: str, on: bool, *, by: str) -> None:
+    row = {"name": ops._switch(name), "off_at": None if on else time.time(), "off_by": None if on else by}
+    _transaction(["switch"], lambda: (None, lambda p: _put(p, "switch", row)))
+
+
+def switch_get(name: str) -> dict | None:
+    return _one("switch", ops._switch(name))
+
+
+def read_switches() -> dict[str, dict]:
+    return {r["name"]: r for r in _all("switch")}
+
+
+def read_kind_modes() -> dict[str, dict]:
+    return {r["kind"]: r for r in _all("kind_automation")}
+
+
+def dataset_mode_set(dataset: str, mode: str, *, by: str) -> None:
+    if mode == ops.AS_THE_FILE:
+        row = {"dataset": dataset}
+        _transaction(["dataset_automation"], lambda: (None, lambda p: _delete(p, "dataset_automation", row)))
+        return
+    row = {"dataset": dataset, "mode": ops._kind_mode(mode), "set_at": time.time(), "set_by": by}
+    _transaction(["dataset_automation"], lambda: (None, lambda p: _put(p, "dataset_automation", row)))
+
+
+def dataset_mode_get(dataset: str) -> dict | None:
+    return _one("dataset_automation", dataset)
+
+
+def read_dataset_modes() -> dict[str, dict]:
+    return {r["dataset"]: r for r in _all("dataset_automation")}
 
 
 # ── Whole tables ───────────────────────────────────────────────────────────────────────────────────────────────

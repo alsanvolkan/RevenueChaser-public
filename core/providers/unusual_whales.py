@@ -60,6 +60,13 @@ def _seg(value) -> str:
     return quote(str(value), safe="")
 
 
+def uw_symbol(ticker) -> str:
+    """A ticker the way UW writes it: a share class with a dot. The SEC's files and the spine write ``BRK-A``;
+    UW answers that 422 and serves ``BRK.A``. Every ticker path of the client goes through this before
+    :func:`_seg`, which stays a pure encoder; a session or a candle size never does."""
+    return str(ticker).replace("-", ".")
+
+
 # Body shapes for the endpoint methods (B5): each takes a decoded body and returns what the method hands
 # back. ``shape({})`` is the empty placeholder a failed request gets, the same value ``_get``'s ``{}``
 # used to turn into, so the plain methods return exactly what they returned before.
@@ -235,6 +242,14 @@ class UWClient:
             if (status == 429 or status >= 500) and not last:
                 self._backoff(attempts, _retry_after(r) if status == 429 else None)
                 continue
+            if status == 403 and "historic_data_access_missing" in (body or "").lower():
+                # Not the key: UW says this date is older than the token's window and names its earliest
+                # available date (2023-12-07 on 5 Nov 2026). ``uw/greek_expiry_strike`` starts on the moving edge
+                # of that window, so a day that ages out answers this -- and marking the key rejected off one old
+                # day would put "credentials rejected" on every board. One date's answer, not retried: the date
+                # will not get younger.
+                logger.warning(f"UW {ep}: HTTP 403 outside the historical window: {body[:200]}")
+                return self._failed_result(ep, status, "outside the historical window", attempts)
             if status in (401, 403):
                 # Credential failure: remember it and log loudly once. Silently
                 # returning {} here is what made a dead key look like an empty
@@ -396,7 +411,7 @@ class UWClient:
 
     def earnings_rows_result(self, ticker: str) -> ProviderResult:
         """:meth:`earnings_rows` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/earnings/{_seg(ticker)}", None, _rows)
+        return self._shaped(f"/earnings/{_seg(uw_symbol(ticker))}", None, _rows)
 
     def earnings_data(self, ticker: str) -> dict:
         items = self.earnings_rows(ticker)
@@ -417,7 +432,7 @@ class UWClient:
 
     def stock_earnings_result(self, ticker: str) -> ProviderResult:
         """:meth:`stock_earnings` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/stock/{_seg(ticker)}/earnings", None, _list_rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/earnings", None, _list_rows)
 
     # ── Fundamentals ──
     def fundamentals(self, ticker: str) -> dict:
@@ -425,7 +440,7 @@ class UWClient:
 
     def fundamentals_result(self, ticker: str) -> ProviderResult:
         """:meth:`fundamentals` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/stock/{_seg(ticker)}/financials", None, _obj)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/financials", None, _obj)
 
     def financials(self, ticker: str) -> dict:
         """Full financials: income_statements, balance_sheets, cash_flows, earnings."""
@@ -433,7 +448,7 @@ class UWClient:
 
     def financials_result(self, ticker: str) -> ProviderResult:
         """:meth:`financials` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/stock/{_seg(ticker)}/financials", None, _obj)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/financials", None, _obj)
 
     def income_statements(self, ticker: str, report_type: str = None) -> list[dict]:
         """Dedicated income statement series (report_type: e.g. 'annual')."""
@@ -442,7 +457,7 @@ class UWClient:
     def income_statements_result(self, ticker: str, report_type: str = None) -> ProviderResult:
         """:meth:`income_statements` with the request outcome (``ok`` or ``failed``)."""
         params = {"report_type": report_type} if report_type else None
-        return self._shaped(f"/stock/{_seg(ticker)}/income-statements", params, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/income-statements", params, _rows)
 
     def balance_sheets(self, ticker: str, report_type: str = None) -> list[dict]:
         """Dedicated balance sheet series."""
@@ -451,7 +466,7 @@ class UWClient:
     def balance_sheets_result(self, ticker: str, report_type: str = None) -> ProviderResult:
         """:meth:`balance_sheets` with the request outcome (``ok`` or ``failed``)."""
         params = {"report_type": report_type} if report_type else None
-        return self._shaped(f"/stock/{_seg(ticker)}/balance-sheets", params, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/balance-sheets", params, _rows)
 
     def cash_flows(self, ticker: str, report_type: str = None) -> list[dict]:
         """Dedicated cash flow statement series."""
@@ -460,7 +475,7 @@ class UWClient:
     def cash_flows_result(self, ticker: str, report_type: str = None) -> ProviderResult:
         """:meth:`cash_flows` with the request outcome (``ok`` or ``failed``)."""
         params = {"report_type": report_type} if report_type else None
-        return self._shaped(f"/stock/{_seg(ticker)}/cash-flows", params, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/cash-flows", params, _rows)
 
     @staticmethod
     def _num(row: dict, *keys):
@@ -566,7 +581,7 @@ class UWClient:
     def flow_recent_result(self, ticker: str) -> ProviderResult:
         """:meth:`flow_recent` that says whether the request worked: ``ok`` (the list may be
         empty: a quiet tape) or ``failed`` (the list is an empty placeholder)."""
-        return self._shaped(f"/stock/{_seg(ticker)}/flow-recent", None, _list_rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/flow-recent", None, _list_rows)
 
     def aggregate_flow(self, ticker: str, flow: list = None) -> dict:
         """The tape's premium in buckets. ``inst_call``/``inst_put``/``retail_*`` split by size only (size >= 10 is
@@ -628,7 +643,7 @@ class UWClient:
 
     def dark_pool_result(self, ticker: str, limit: int = 100) -> ProviderResult:
         """:meth:`dark_pool` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/darkpool/{_seg(ticker)}", {"limit": limit}, _rows)
+        return self._shaped(f"/darkpool/{_seg(uw_symbol(ticker))}", {"limit": limit}, _rows)
 
     def dark_pool_net(self, ticker: str) -> float:
         prints = self.dark_pool(ticker, 100)
@@ -640,7 +655,7 @@ class UWClient:
 
     def greeks_result(self, ticker: str) -> ProviderResult:
         """:meth:`greeks` with the request outcome (``ok`` or ``failed``); the body is unshaped."""
-        return self._shaped(f"/stock/{_seg(ticker)}/greeks", None, _body)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/greeks", None, _body)
 
     # ── GEX ──
     def gex_levels(self, ticker: str, date: str = None) -> dict:
@@ -649,7 +664,7 @@ class UWClient:
     def gex_levels_result(self, ticker: str, date: str = None) -> ProviderResult:
         """:meth:`gex_levels` with the request outcome (``ok`` or ``failed``)."""
         params = {"date": date} if date else None
-        return self._shaped(f"/stock/{_seg(ticker)}/gex-levels", params, _obj)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/gex-levels", params, _obj)
 
     def term_structure(self, ticker: str, date: str = None) -> list[dict]:
         """ATM IV per expiry for one ticker (/stock/{t}/volatility/term-structure).
@@ -663,7 +678,7 @@ class UWClient:
     def term_structure_result(self, ticker: str, date: str = None) -> ProviderResult:
         """:meth:`term_structure` with the request outcome (``ok`` or ``failed``)."""
         params = {"date": date} if date else None
-        return self._shaped(f"/stock/{_seg(ticker)}/volatility/term-structure", params, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/volatility/term-structure", params, _rows)
 
     def greek_exposure(self, ticker: str, timeframe: str = "1Y", date: str = None) -> list[dict]:
         return self.greek_exposure_result(ticker, timeframe, date).data
@@ -673,7 +688,7 @@ class UWClient:
         params = {"timeframe": timeframe}
         if date:
             params["date"] = date
-        return self._shaped(f"/stock/{_seg(ticker)}/greek-exposure", params, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/greek-exposure", params, _rows)
 
     def greek_exposure_by_strike(self, ticker: str, date: str = None) -> list[dict]:
         return self.greek_exposure_by_strike_result(ticker, date).data
@@ -681,7 +696,7 @@ class UWClient:
     def greek_exposure_by_strike_result(self, ticker: str, date: str = None) -> ProviderResult:
         """:meth:`greek_exposure_by_strike` with the request outcome (``ok`` or ``failed``)."""
         params = {"date": date} if date else None
-        return self._shaped(f"/stock/{_seg(ticker)}/greek-exposure/strike", params, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/greek-exposure/strike", params, _rows)
 
     def greek_exposure_by_expiry(self, ticker: str, date: str = None) -> list[dict]:
         return self.greek_exposure_by_expiry_result(ticker, date).data
@@ -689,7 +704,7 @@ class UWClient:
     def greek_exposure_by_expiry_result(self, ticker: str, date: str = None) -> ProviderResult:
         """:meth:`greek_exposure_by_expiry` with the request outcome (``ok`` or ``failed``)."""
         params = {"date": date} if date else None
-        return self._shaped(f"/stock/{_seg(ticker)}/greek-exposure/expiry", params, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/greek-exposure/expiry", params, _rows)
 
     def spot_exposures_by_strike(self, ticker: str, date: str = None,
                                  min_strike: float = None, max_strike: float = None,
@@ -708,7 +723,7 @@ class UWClient:
             params["min_strike"] = min_strike
         if max_strike is not None:
             params["max_strike"] = max_strike
-        return self._shaped(f"/stock/{_seg(ticker)}/spot-exposures/strike", params, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/spot-exposures/strike", params, _rows)
 
     # ── OI / Flow per expiry (LEAPS accumulation) ──
     def oi_per_expiry(self, ticker: str, date: str = None) -> list[dict]:
@@ -717,21 +732,21 @@ class UWClient:
     def oi_per_expiry_result(self, ticker: str, date: str = None) -> ProviderResult:
         """:meth:`oi_per_expiry` with the request outcome (``ok`` or ``failed``)."""
         params = {"date": date} if date else None
-        return self._shaped(f"/stock/{_seg(ticker)}/oi-per-expiry", params, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/oi-per-expiry", params, _rows)
 
     def flow_per_expiry(self, ticker: str) -> list[dict]:
         return self.flow_per_expiry_result(ticker).data
 
     def flow_per_expiry_result(self, ticker: str) -> ProviderResult:
         """:meth:`flow_per_expiry` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/stock/{_seg(ticker)}/flow-per-expiry", None, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/flow-per-expiry", None, _rows)
 
     def iv_rank(self, ticker: str) -> list[dict]:
         return self.iv_rank_result(ticker).data
 
     def iv_rank_result(self, ticker: str) -> ProviderResult:
         """:meth:`iv_rank` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/stock/{_seg(ticker)}/iv-rank", None, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/iv-rank", None, _rows)
 
     def market_oi_change(self, limit: int = 200) -> list[dict]:
         return self.market_oi_change_result(limit).data
@@ -806,7 +821,7 @@ class UWClient:
     def expiry_breakdown_result(self, ticker: str, date: str = None) -> ProviderResult:
         """:meth:`expiry_breakdown` with the request outcome (``ok`` or ``failed``)."""
         params = {"date": date} if date else None
-        return self._shaped(f"/stock/{_seg(ticker)}/expiry-breakdown", params, _rows)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/expiry-breakdown", params, _rows)
 
     def option_contracts(self, ticker: str, expiry: str = None,
                          option_type: str = None, limit: int = 500,
@@ -828,7 +843,7 @@ class UWClient:
         """:meth:`option_contracts` with the paging outcome: ``ok`` (every page answered),
         ``partial`` (a later page failed: ``data`` holds the earlier pages, ``error`` names
         the page) or ``failed`` (the first page failed: ``data`` is empty)."""
-        ep = f"/stock/{_seg(ticker)}/option-contracts"
+        ep = f"/stock/{_seg(uw_symbol(ticker))}/option-contracts"
         rows: list[dict] = []
         page = 1
         while page <= max_pages:
@@ -858,7 +873,7 @@ class UWClient:
 
     def short_interest_result(self, ticker: str) -> ProviderResult:
         """:meth:`short_interest` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/shorts/{_seg(ticker)}/interest-float/v2", None, _short_row)
+        return self._shaped(f"/shorts/{_seg(uw_symbol(ticker))}/interest-float/v2", None, _short_row)
 
     def short_screener(self, tickers: list[str]) -> dict[str, dict]:
         """Batch short interest/float rows via /api/short_screener.
@@ -913,7 +928,7 @@ class UWClient:
 
     def insider_result(self, ticker: str) -> ProviderResult:
         """:meth:`insider` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/insider/{_seg(ticker)}", None, _rows)
+        return self._shaped(f"/insider/{_seg(uw_symbol(ticker))}", None, _rows)
 
     # ── ETF Holdings ──
     def etf_holdings(self, ticker: str) -> list[dict]:
@@ -922,7 +937,7 @@ class UWClient:
 
     def etf_holdings_result(self, ticker: str) -> ProviderResult:
         """:meth:`etf_holdings` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/etfs/{_seg(ticker)}/holdings", None, _holdings)
+        return self._shaped(f"/etfs/{_seg(uw_symbol(ticker))}/holdings", None, _holdings)
 
     # ── OHLC / Volume ──
     # UW's candle endpoints return up to three rows per trading day (pre-market,
@@ -936,7 +951,7 @@ class UWClient:
     def _candle_request(self, ticker: str, candle_size: str, days: int) -> tuple[str, dict, bool]:
         daily = candle_size == "1d"
         limit = min(days * self._ROWS_PER_SESSION, self._MAX_LIMIT) if daily else days
-        return f"/stock/{_seg(ticker)}/ohlc/{_seg(candle_size)}", {"limit": limit}, daily
+        return f"/stock/{_seg(uw_symbol(ticker))}/ohlc/{_seg(candle_size)}", {"limit": limit}, daily
 
     @staticmethod
     def _shape_candles(data, daily: bool, days: int) -> list[dict]:
@@ -975,14 +990,14 @@ class UWClient:
 
     def ticker_info_result(self, ticker: str) -> ProviderResult:
         """:meth:`ticker_info` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/stock/{_seg(ticker)}/info", None, _obj_or_body)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/info", None, _obj_or_body)
 
     def options_volume(self, ticker: str) -> dict:
         return self.options_volume_result(ticker).data
 
     def options_volume_result(self, ticker: str) -> ProviderResult:
         """:meth:`options_volume` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/stock/{_seg(ticker)}/options-volume", None, _obj_or_body)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/options-volume", None, _obj_or_body)
 
     def calendar_day_raw(self, d: date, session: str) -> list[dict]:
         return self.calendar_day_raw_result(d, session).data
@@ -1021,7 +1036,7 @@ class UWClient:
 
     def etf_flow_result(self, ticker: str) -> ProviderResult:
         """:meth:`etf_flow` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/stock/{_seg(ticker)}/flow-recent", None, _obj_or_body)
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/flow-recent", None, _obj_or_body)
 
     # ── Screener (batch enrichment for stock volume, options volume, OI) ──
     def screener_batch(self, tickers: list[str], date: str = None) -> dict[str, dict]:

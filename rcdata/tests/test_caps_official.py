@@ -227,3 +227,34 @@ def test_the_builder_s_sec_paths_space_themselves_only_when_the_bucket_falls_bac
                 pacer.wait()
             assert bool(slept) is spaced, (pacer, shared())
             assert all(s <= 1 / sec_throttle.FALLBACK_RATE + 1e-9 for s in slept)
+
+
+def test_every_pacer_a_dataset_asks_for_has_an_official_window():
+    """``run_pacer`` reads ``WINDOWS`` by key, so a provider with no published window raises at the first request
+    (``uw/earnings`` did, 6 Nov 2026): what the code paces and what the table holds have to be the same set."""
+    root = Path(caps.__file__).resolve().parents[1]
+    asked: set[str] = set()
+    for path in root.rglob("*.py"):
+        if "tests" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for name in re.findall(r'run_pacer\(\s*ctx\s*,\s*("?[A-Za-z_][\w"]*)', text):
+            # The two spellings in this tree: the provider written out, or the module's own PROVIDER constant.
+            asked.update([name.strip('"')] if name.startswith('"')
+                         else re.findall(rf'^{name} = "([^"]+)"', text, flags=re.M))
+    assert asked, "no run_pacer call found; the pattern this test greps for has changed"
+    assert asked <= set(caps.WINDOWS), sorted(asked - set(caps.WINDOWS))
+
+
+def test_no_uw_dataset_counts_its_own_calls():
+    """``RunContext.uw_client`` hangs ``_on_uw_response`` on the client, which counts every UW response, retries
+    included. A dataset that also counts its own asks doubles the number the day cap is read from: the first
+    ``uw/earnings`` fetch reported 10,608 calls for 5,304 requests (6 Nov 2026)."""
+    root = Path(caps.__file__).resolve().parents[1]
+    for path in root.rglob("*.py"):
+        if "tests" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if not re.search(r'^PROVIDER = "uw"$', text, flags=re.M):
+            continue
+        assert "ctx.count(PROVIDER, calls=" not in text, path

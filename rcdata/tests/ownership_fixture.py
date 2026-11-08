@@ -304,6 +304,10 @@ SET_COLUMNS = {
     "INFOTABLE": ("ACCESSION_NUMBER", "INFOTABLE_SK", "NAMEOFISSUER", "TITLEOFCLASS", "CUSIP", "FIGI", "VALUE",
                   "SSHPRNAMT", "SSHPRNAMTTYPE", "PUTCALL", "INVESTMENTDISCRETION", "OTHERMANAGER", "VOTING_AUTH_SOLE",
                   "VOTING_AUTH_SHARED", "VOTING_AUTH_NONE"),
+    "OTHERMANAGER": ("ACCESSION_NUMBER", "OTHERMANAGER_SK", "CIK", "FORM13FFILENUMBER", "CRDNUMBER",
+                     "SECFILENUMBER", "NAME"),
+    "OTHERMANAGER2": ("ACCESSION_NUMBER", "SEQUENCENUMBER", "CIK", "FORM13FFILENUMBER", "CRDNUMBER",
+                      "SECFILENUMBER", "NAME"),
 }
 
 
@@ -314,14 +318,19 @@ def sets_page(hrefs: list[str]) -> bytes:
 
 def set_filing(accession, cik, filed, holdings, period="30-JUN-2026", form="13F-HR", name=None, amendment_type="",
                amendment_no="", is_amendment="", confidential="N", report_type="13F HOLDINGS REPORT",
-               entries=None, cover_period=None) -> dict:
+               entries=None, cover_period=None, included=(), reported_by=()) -> dict:
     """One filing of a data set: dates ``DD-MON-YYYY``, the CIK zero-padded, ``ISAMENDMENT`` blank by default (as on
-    half the real rows); ``cover_period`` when the cover page's period is not the submission header's."""
+    half the real rows); ``cover_period`` when the cover page's period is not the submission header's.
+
+    ``included`` is the summary page's List of Other Included Managers, ``[(seq, cik, name), ...]`` - the list a
+    holding's ``other_manager`` points into; ``reported_by`` is the cover page's List of Other Managers Reporting
+    for this Manager, ``[(sk, cik, name), ...]``, whose ``sk`` is the set's own key."""
     return {"accession": accession, "cik": f"{cik:010d}", "filed": filed, "form": form, "period": period,
             "cover_period": cover_period or period,
             "name": name or f"MANAGER {cik}", "amendment_type": amendment_type, "amendment_no": amendment_no,
             "is_amendment": is_amendment, "confidential": confidential, "report_type": report_type,
-            "holdings": holdings, "entries": len(holdings) if entries is None else entries}
+            "holdings": holdings, "entries": len(holdings) if entries is None else entries,
+            "included": list(included), "reported_by": list(reported_by)}
 
 
 def f13_set(filings: list[dict], folder: str | None = None, sk_from: int = 133_648_900,
@@ -343,6 +352,12 @@ def f13_set(filings: list[dict], folder: str | None = None, sk_from: int = 133_6
                                         "TABLEENTRYTOTAL": str(f["entries"]),
                                         "TABLEVALUETOTAL": str(sum(h["value"] for h in f["holdings"])),
                                         "ISCONFIDENTIALOMITTED": f["confidential"]})
+        for seq, mcik, mname in f["included"]:
+            rows["OTHERMANAGER2"].append({"ACCESSION_NUMBER": f["accession"], "SEQUENCENUMBER": str(seq),
+                                          "CIK": mcik, "NAME": mname, "FORM13FFILENUMBER": "028-00001"})
+        for msk, mcik, mname in f["reported_by"]:
+            rows["OTHERMANAGER"].append({"ACCESSION_NUMBER": f["accession"], "OTHERMANAGER_SK": str(msk),
+                                         "CIK": mcik, "NAME": mname, "FORM13FFILENUMBER": "028-00002"})
         # The SEC's own row order is not the filing's: the key orders it.
         for h in reversed(f["holdings"]):
             sk -= 1
@@ -364,6 +379,85 @@ def f13_set(filings: list[dict], folder: str | None = None, sk_from: int = 133_6
     return out.getvalue()
 
 
+F345_COLUMNS = {
+    "SUBMISSION": ("ACCESSION_NUMBER", "FILING_DATE", "PERIOD_OF_REPORT", "DATE_OF_ORIG_SUB", "NO_SECURITIES_OWNED",
+                   "NOT_SUBJECT_SEC16", "FORM3_HOLDINGS_REPORTED", "FORM4_TRANS_REPORTED", "DOCUMENT_TYPE",
+                   "ISSUERCIK", "ISSUERNAME", "ISSUERTRADINGSYMBOL", "AFF10B5ONE", "REMARKS"),
+    "REPORTINGOWNER": ("ACCESSION_NUMBER", "RPTOWNERCIK", "RPTOWNERNAME", "RPTOWNER_RELATIONSHIP", "RPTOWNER_TITLE",
+                       "RPTOWNER_TXT", "FILE_NUMBER"),
+    "NONDERIV_TRANS": ("ACCESSION_NUMBER", "NONDERIV_TRANS_SK", "SECURITY_TITLE", "TRANS_DATE", "TRANS_FORM_TYPE",
+                       "TRANS_CODE", "EQUITY_SWAP_INVOLVED", "TRANS_SHARES", "TRANS_SHARES_FN",
+                       "TRANS_PRICEPERSHARE", "TRANS_PRICEPERSHARE_FN", "TRANS_ACQUIRED_DISP_CD",
+                       "SHRS_OWND_FOLWNG_TRANS", "DIRECT_INDIRECT_OWNERSHIP"),
+    "DERIV_TRANS": ("ACCESSION_NUMBER", "DERIV_TRANS_SK", "SECURITY_TITLE", "CONV_EXERCISE_PRICE", "TRANS_DATE",
+                    "TRANS_FORM_TYPE", "TRANS_CODE", "EQUITY_SWAP_INVOLVED", "TRANS_SHARES", "TRANS_PRICEPERSHARE",
+                    "TRANS_ACQUIRED_DISP_CD", "EXPIRATION_DATE", "UNDLYNG_SEC_TITLE", "UNDLYNG_SEC_SHARES",
+                    "SHRS_OWND_FOLWNG_TRANS", "DIRECT_INDIRECT_OWNERSHIP"),
+    "NONDERIV_HOLDING": ("ACCESSION_NUMBER", "NONDERIV_HOLDING_SK", "SECURITY_TITLE"),
+    "FOOTNOTES": ("ACCESSION_NUMBER", "FOOTNOTE_ID", "FOOTNOTE_TXT"),
+}
+F345_PAGE_PATH = "/data-research/sec-markets-data/insider-transactions-data-sets"
+
+
+def f345_filing(accession, filed, issuer_cik, issuer_name, symbol, owners, non_derivative=(), derivative=(),
+                form="4", period=None, aff10b5one="", reported="") -> dict:
+    """One filing of an Insider Transactions data set. ``owners``: ``(cik, name, relationship, title)``, the first
+    the reporting owner the EDGAR path takes; dates are ``DD-MON-YYYY``."""
+    return {"accession": accession, "filed": filed, "period": period or filed, "form": form,
+            "issuer_cik": f"{issuer_cik:010d}", "issuer_name": issuer_name, "symbol": symbol, "owners": owners,
+            "non_derivative": list(non_derivative), "derivative": list(derivative), "aff10b5one": aff10b5one,
+            "reported": reported}
+
+
+def f345_tx(code, shares, price, ad="D", after=0, title="Common Stock", date="13-MAR-2014", swap="0",
+            exercise="", underlying="", expires="") -> dict:
+    return {"code": code, "shares": shares, "price": price, "ad": ad, "after": after, "title": title, "date": date,
+            "swap": swap, "exercise": exercise, "underlying": underlying, "expires": expires}
+
+
+def f345_set(filings: list[dict], folder: str | None = None, sk_from: int = 2_222_400,
+             without: tuple[str, ...] = ()) -> bytes:
+    """An Insider Transactions data-set zip in the SEC's layout (the columns of 2014q1_form345.zip plus the
+    ``AFF10B5ONE`` the newer sets carry), plus the members that are not read; ``without`` leaves columns out (the
+    older sets have no ``AFF10B5ONE``)."""
+    rows = {t: [] for t in F345_COLUMNS}
+    sk = sk_from
+    for f in filings:
+        rows["SUBMISSION"].append({"ACCESSION_NUMBER": f["accession"], "FILING_DATE": f["filed"],
+                                   "PERIOD_OF_REPORT": f["period"], "DOCUMENT_TYPE": f["form"],
+                                   "ISSUERCIK": f["issuer_cik"], "ISSUERNAME": f["issuer_name"],
+                                   "ISSUERTRADINGSYMBOL": f["symbol"], "AFF10B5ONE": f["aff10b5one"],
+                                   "FORM4_TRANS_REPORTED": f["reported"]})
+        for cik, name, relationship, title in f["owners"]:
+            rows["REPORTINGOWNER"].append({"ACCESSION_NUMBER": f["accession"], "RPTOWNERCIK": f"{cik:010d}",
+                                           "RPTOWNERNAME": name, "RPTOWNER_RELATIONSHIP": relationship,
+                                           "RPTOWNER_TITLE": title})
+        for member, key in (("NONDERIV_TRANS", "non_derivative"), ("DERIV_TRANS", "derivative")):
+            # The SEC's own row order is not the filing's: the key orders it.
+            for t in reversed(f[key]):
+                sk -= 1
+                rows[member].append({"ACCESSION_NUMBER": f["accession"], f"{member}_SK": str(sk),
+                                     "SECURITY_TITLE": t["title"], "TRANS_DATE": t["date"], "TRANS_FORM_TYPE": "4",
+                                     "TRANS_CODE": t["code"], "EQUITY_SWAP_INVOLVED": t["swap"],
+                                     "TRANS_SHARES": str(t["shares"]),
+                                     "TRANS_PRICEPERSHARE": "" if t["price"] is None else str(t["price"]),
+                                     "TRANS_PRICEPERSHARE_FN": "F1" if t["price"] is None else "",
+                                     "TRANS_ACQUIRED_DISP_CD": t["ad"],
+                                     "SHRS_OWND_FOLWNG_TRANS": str(t["after"]),
+                                     "DIRECT_INDIRECT_OWNERSHIP": "D", "CONV_EXERCISE_PRICE": str(t["exercise"]),
+                                     "UNDLYNG_SEC_TITLE": t["title"] if t["underlying"] else "",
+                                     "UNDLYNG_SEC_SHARES": str(t["underlying"]), "EXPIRATION_DATE": t["expires"]})
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for table, all_cols in F345_COLUMNS.items():
+            cols = tuple(c for c in all_cols if c not in without)
+            body = "\t".join(cols) + "\n" + "".join("\t".join(r.get(c, "") for c in cols) + "\n"
+                                                    for r in rows[table])
+            z.writestr(f"{folder}/{table}.tsv" if folder else f"{table}.tsv", body)
+        z.writestr("insider_transactions_metadata.json", "{}")
+    return out.getvalue()
+
+
 class Edgar:
     """The daily indexes by day and the submissions by accession, as EDGAR answers them.
 
@@ -377,6 +471,7 @@ class Edgar:
         self.indexes: dict[str, bytes] = {}
         self.filings: dict[str, bytes] = {}
         self.missing: set[str] = set()
+        self.not_found: set[str] = set()
         self.refuse_days: set[str] = set()
         self.refuse = False
 
@@ -401,6 +496,11 @@ class Edgar:
 
     def filing(self, request):
         acc = str(request.url).rsplit("/", 1)[1][:-len(".txt")]
+        if self.refuse:
+            return self._answer(None)
+        if acc in self.not_found:
+            # A plain 404: the daily index listed a filing EDGAR does not hold, which it does (#505).
+            return 404, b"<?xml version='1.0'?><Error><Code>NoSuchKey</Code></Error>", {}
         return self._answer(self.filings.get(acc))
 
     def install(self, http_mock) -> None:

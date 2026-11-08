@@ -29,7 +29,7 @@
 
 /* ── The Needs tab ── */
 #needs *{box-sizing:border-box}
-#needs{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body);min-height:100vh}
+#needs{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body)}
 #needs .wrap{max-width:1600px;margin:0 auto;padding-block:20px 56px;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 #needs h1{font-size:25px;margin:0 0 2px;letter-spacing:-.01em;text-wrap:balance}
@@ -98,3 +98,37 @@
   #needs table.stk td:not(.nm)::before{content:attr(data-label);display:block;font-size:10.5px;text-transform:uppercase;
     letter-spacing:.06em;color:var(--mut);font-weight:700}
 }
+
+/* ── The catalog's groups, one per served file (#492): a head row that reads as a section, closed by default ── */
+#needs tbody.cghead td{padding:0;border-top:2px solid var(--line);border-bottom:1px solid var(--line)}
+#needs .cgtog{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;width:100%;min-height:44px;padding:0 4px;
+  font:inherit;font-size:14px;font-weight:700;text-align:left;background:none;border:0;color:var(--fg);cursor:pointer}
+#needs .cgtog:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
+#needs .cgtog .cgarr{color:var(--acc);width:1em}
+#needs .cgtog .cgfile{font-family:var(--f-mono)}
+#needs .cgtog .cgcount{font-weight:400;color:var(--mut);font-size:12.5px}
+#needs tbody.cbody[hidden]{display:none}
+@media(max-width:600px){
+  #needs table.stk tbody.cghead,#needs table.stk tbody.cghead tr,#needs table.stk tbody.cghead td{display:block;border:0;padding:0;margin:0;background:none}
+  #needs table.stk tbody.cghead td{border-top:2px solid var(--line)}
+  #needs table.stk tbody.cbody[hidden]{display:none}
+}
+
+/* #527: the short columns never wrap, Read by wraps inside its cell; a problem group's head is marked */
+#needs td[data-label="State"],#needs td[data-label="Newest day"],#needs td[data-label="Rows"],
+#needs td[data-label="Fresh if"]{white-space:nowrap}
+#needs td[data-label="Read by"]{min-width:0;max-width:320px}
+#needs td[data-label="Read by"] .chips{min-width:0}
+#needs tbody.cghead[data-bad] .cgcount{color:var(--warn)}
+#needs details.hfold{margin:14px 0;border:1px solid var(--line);border-radius:10px;padding:0 12px}
+#needs details.hfold>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600;color:var(--mut)}
+#needs details.hfold[open]>summary{color:var(--fg)}
+/* #527: the Health tab stacks several blocks; each keeps a small gap, the page keeps its top and bottom air */
+#needs > .wrap,#needs > section.ctl > .wrap{padding-block:6px}
+#needs > .wrap:first-child{padding-top:20px}
+#needs > .wrap:last-child{padding-bottom:56px}
+/* #527 step 10: the Data tab's column, centred */
+#needs .wrap{max-width:var(--page-max,1280px);margin-inline:auto}
+#needs .wrap{box-sizing:border-box;min-width:0}
+#needs table{max-width:100%}
+#settings-tabs .tabs{max-width:var(--page-max,1280px);margin-inline:auto;box-sizing:border-box}

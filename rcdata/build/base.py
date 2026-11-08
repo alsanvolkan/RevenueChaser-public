@@ -19,6 +19,8 @@ check row, the run row, the provider call counts and UW's rate headers. An excep
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import gzip
 import json
 import logging
@@ -69,6 +71,25 @@ class NothingInScope(SourceError):
 
 class CapReached(SourceError):
     """A provider reached its day cap during the run: nothing more is sent to it today."""
+
+
+class Paused(BaseException):
+    """The dataset was paused while its run was going (#492 PR (ii)): the run stops before its next provider call.
+
+    A ``BaseException``, like ``KeyboardInterrupt``: several datasets catch ``SourceError`` or ``Exception`` per
+    name or per file and go on with the next one, and a pause must stop the whole run, not one name. ``_run``
+    catches it by name and ends the run ``skipped``. Limits, by design:
+
+    - a build that has started finishes, so a serving file is never half-written (the pause is read only at a
+      provider call and between the fetch and the build);
+    - a dataset with no ``check_cap`` inside its fetch (WRDS runs SQL) stops only at the fetch/build gap;
+    - the raw and Parquet files fetched before the pause stay; nothing deletes them;
+    - a request a dead builder left ``running`` is still reclaimed by ``ops.fail_orphans`` at the next start.
+    """
+
+
+#: A running fetch reads its pause at most this often (seconds of the run's own clock), not once per call.
+PAUSE_READ_EVERY_S = 5.0
 
 
 class NotIdle(RuntimeError):
@@ -185,6 +206,8 @@ class RunContext:
     _pending: dict[str, list[int]] = field(default_factory=dict)    # counted, not yet written to ops.sqlite
     _http: httpx.Client | None = None
     _uw: Any = None
+    _pause_read_at: float | None = None                             # the clock when the pause was last read
+    _paused: str | None = None                                      # once seen, every later call stops too
 
     def count(self, provider: str, calls: int = 0, failures: int = 0, http_429: int = 0) -> None:
         for book in (self.calls, self._pending):
@@ -202,8 +225,28 @@ class RunContext:
             if calls or failures or http_429:
                 ops.count_calls(name, calls, failures=failures, http_429=http_429)
 
+    def check_pause(self, *, force: bool = False) -> None:
+        """Raise ``Paused`` when the dataset was paused since the run began. The schedule is read at most once
+        every ``PAUSE_READ_EVERY_S`` of the run's clock (``force`` reads now); a pause once seen stays seen."""
+        if self._paused is None:
+            now = self.clock()
+            if not force and self._pause_read_at is not None and now - self._pause_read_at < PAUSE_READ_EVERY_S:
+                return
+            self._pause_read_at = now
+            off = ops.switch_off("fetch")          # #527: the board's fetch switch stops every run, the same way
+            if off is not None:
+                self._paused = f"stopped, {ops.switch_words('fetch', off)}"
+                raise Paused(self._paused)
+            row = ops.schedule_get(self.dataset)
+            if not row or row.get("paused_at") is None:
+                return
+            self._paused = f"stopped, {_paused_words(row)}"
+        raise Paused(self._paused)
+
     def check_cap(self, provider: str) -> None:
-        """Raise ``CapReached`` when today's calls of ``provider``, written and pending, reached its cap."""
+        """Raise ``Paused`` when the dataset was paused during the run (``check_pause``), then ``CapReached`` when
+        today's calls of ``provider``, written and pending, reached its cap."""
+        self.check_pause()
         cap = caps.cap_for(provider)
         if cap is None:
             return
@@ -478,8 +521,36 @@ def _copy(con: duckdb.DuckDBPyConnection, select: str, path: Path) -> None:
                 f"(FORMAT parquet, COMPRESSION {PARQUET_COMPRESSION}, ROW_GROUP_SIZE {PARQUET_ROW_GROUP})")
 
 
+#: True while a raw-only run (``--no-parquet``, #498) is fetching: ``write_parquet`` writes nothing, so a dataset
+#: whose ``backfill`` converts inside itself (``market_series``, the fundamentals datasets) stages raw files only.
+#: A ContextVar and not a ``RunContext`` field, because those conversions reach ``write_parquet`` without the
+#: context in hand; one run per process sets it, and ``raw_only_run`` resets it even when the run raises.
+_RAW_ONLY: contextvars.ContextVar[bool] = contextvars.ContextVar("rcdata_raw_only", default=False)
+
+
+def raw_only() -> bool:
+    """Is this run raw-only (``--no-parquet``)? Read by ``write_parquet``."""
+    return _RAW_ONLY.get()
+
+
+@contextlib.contextmanager
+def raw_only_run(on: bool = True):
+    """Hold the raw-only switch for the fetch of one run (``on=False``: an ordinary run, nothing changes)."""
+    token = _RAW_ONLY.set(bool(on))
+    try:
+        yield
+    finally:
+        _RAW_ONLY.reset(token)
+
+
 def write_parquet(con: duckdb.DuckDBPyConnection, select: str, final: Path) -> Path:
-    """Write ``select`` to ``final`` through ``<final>.tmp`` and a rename, so a partition that exists is whole."""
+    """Write ``select`` to ``final`` through ``<final>.tmp`` and a rename, so a partition that exists is whole.
+
+    In a raw-only run (``--no-parquet``) nothing is written and ``final`` is returned as it is: the callers collect
+    the paths into the list their ``to_parquet_all`` returns, and in that mode the files are simply not there.
+    """
+    if raw_only():
+        return final
     final.parent.mkdir(parents=True, exist_ok=True)
     tmp = final.with_name(final.name + ".tmp")
     _copy(con, select, tmp)
@@ -694,18 +765,46 @@ def cap_problem(ds: Dataset) -> str | None:
 
 def paused_problem(ds: Dataset) -> str | None:
     """``skipped: paused ...`` while ``ops.dataset_schedule`` holds a pause for the dataset (Settings' Pause), else
-    None. Checked before anything is fetched, so a paused dataset sends no call."""
+    None. Checked before anything is fetched, so a paused dataset sends no call. The board's fetch switch (#527)
+    holds every dataset at once and is read first."""
+    off = ops.switch_off("fetch")
+    if off is not None:
+        return f"skipped: {ops.switch_words('fetch', off)}"
     row = ops.schedule_get(ds.name)
     if not row or row.get("paused_at") is None:
         return None
+    return f"skipped: {_paused_words(row)}"
+
+
+def _paused_words(row: dict) -> str:
     when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(row["paused_at"]))
-    return f"skipped: paused by {row.get('paused_by') or '?'} at {when}"
+    return f"paused by {row.get('paused_by') or '?'} at {when}"
 
 
 # ── One request ────────────────────────────────────────────────────────────────────────────────────────────────
 
-#: The check note of a ``--no-build`` run: the serving file was not touched, so the result is a skip, not an "ok".
-NO_BUILD_NOTE = "skipped: build skipped (--no-build); raw and Parquet staged"
+#: The check note of a ``--no-duckdb`` run: the serving file was not touched, so the result is a skip, not an "ok".
+#: It says what the fetch really staged, because the first live run read as a success while its fetch had returned
+#: nothing (``uw/option_list`` outside its provider's window, 5 Nov 2026).
+NO_DUCKDB_NOTE = "skipped: build skipped (--no-duckdb)"
+#: The same for a raw-only run (``--no-parquet``, #498), which skips the Parquet step as well.
+NO_PARQUET_NOTE = "skipped: build and Parquet skipped (--no-parquet)"
+
+
+#: The params of each run stage (``ops.KIND_MODES`` but ``off``): a Fetch press's ▾ (``app/dashboard.py``) and the
+#: hourly pass's kind automation (``due.py``) queue the same request.
+STAGE_PARAMS = {"raw": {"no_parquet": True}, "parquet": {"no_duckdb": True}, "full": {}}
+
+
+def skip_note(staged: int | None, *, raw_only: bool = False) -> str:
+    """The ``--no-duckdb`` / ``--no-parquet`` check note; ``staged`` is how many raw files the fetch returned, None
+    when it cannot be counted (a backfill stages inside the dataset and returns nothing)."""
+    head = NO_PARQUET_NOTE if raw_only else NO_DUCKDB_NOTE
+    if staged is None:
+        return f"{head}; the backfill staged what it fetched"
+    if staged == 0:
+        return f"{head}; nothing staged (the fetch returned no file)"
+    return f"{head}; {staged} raw file{'' if staged == 1 else 's'} staged"
 
 
 def new_run_id() -> str:
@@ -730,19 +829,31 @@ def shrink_scope(ds: Dataset) -> tuple[str, ...]:
 
 def build_kind(ctx: RunContext, ds: Dataset) -> dict:
     """Build ``ds``'s serving kind from Parquet (every dataset of the kind), check it, swap it in; the check row."""
+    return build_kind_many(ds.kind, [(ds, ctx)], lead=ctx)[ds.name]
+
+
+def build_kind_many(kind: str, members: list[tuple[Dataset, RunContext]], *, lead: RunContext) -> dict[str, dict]:
+    """Build ``kind`` once for every request a pass holds of it (PR A); ``{dataset: check row}`` per member, a member
+    being a request's ``(dataset, context)``.
+
+    Each dataset of the kind builds with its own request's context when it has one (its ``as_of``, its notes), and
+    with ``lead``'s otherwise, as a single request's build always did. Every check rides the one swap, so a failed
+    data check of any of them refuses the file; ``allow_shrink`` relaxes the tables of the requests that asked."""
     if not parquet_root().is_dir():
         raise SourceError(f"the Parquet root {parquet_root()} is missing (RC_MARKET_RAW_DIR unset or not mounted?)")
-    with serving.build(ds.kind) as b:
+    ctxs = {ds.name: c for ds, c in members}
+    shrink = tuple(dict.fromkeys(t for ds, c in members if c.allow_shrink for t in shrink_scope(ds)))
+    with serving.build(kind) as b:
         counts: dict[str, int] = {}
-        for d in kind_datasets(ds.kind):
-            counts.update(d.build(ctx, b.con))
-        check = ds.check(ctx, b.con)
-        b.swap(counts, checks=[check], allow_shrink=shrink_scope(ds) if ctx.allow_shrink else ())
-    for d in kind_datasets(ds.kind):
+        for d in kind_datasets(kind):
+            counts.update(d.build(ctxs.get(d.name, lead), b.con))
+        checks = {ds.name: ds.check(c, b.con) for ds, c in members}
+        b.swap(counts, checks=list(checks.values()), allow_shrink=shrink)
+    for d in kind_datasets(kind):
         step = getattr(d, "after_swap", None)
         if step is not None:
-            step(ctx)
-    return check
+            step(ctxs.get(d.name, lead))
+    return checks
 
 
 def _parse_day(value) -> date:
@@ -772,73 +883,201 @@ def run_request(req: dict, *, trigger: str = "queue", attended_ok: bool = False,
     try:
         return _run(ctx, ds, req, params, attended_ok)
     except BaseException as e:
-        # A kill (SIGTERM, which the CLI turns into SystemExit, or Ctrl-C) is "killed"; anything else that got past
-        # _run (a locked ops.sqlite while writing the check row) is "failed". No check row either way, but the
-        # calls already sent are counted by the finally below.
-        status = "killed" if isinstance(e, (KeyboardInterrupt, SystemExit)) else "failed"
-        try:
-            ops.finish_run(run_id, status, f"{type(e).__name__}: {e}"[:500])
-        except ops.STORE_ERRORS:
-            logger.warning("could not mark run %s %s", run_id, status, exc_info=True)
+        _abort(run_id, req, e)
         raise
     finally:
         ctx.close()
         ctx.flush_counts()
 
 
+def _abort(run_id: str | None, req: dict, e: BaseException) -> None:
+    """End a run (when it started) and its request after ``e`` got past ``_run``.
+
+    A kill (SIGTERM, which the CLI turns into SystemExit, or Ctrl-C) is "killed"; anything else that got past _run
+    (a locked ops.sqlite while writing the check row) is "failed". No check row either way, but the calls already
+    sent are counted by the caller's ``flush_counts``. A killed run ends its request too (review B7, 8 Nov): left
+    "running", the next builder start would fail it as "lost: pid unknown (builder died)", which is not what
+    happened. A request has no "killed" status, so it is "failed" with a note that says so."""
+    status = "killed" if isinstance(e, (KeyboardInterrupt, SystemExit)) else "failed"
+    why = f"{type(e).__name__}: {e}"[:500]
+    if run_id is not None:
+        try:
+            ops.finish_run(run_id, status, why)
+        except ops.STORE_ERRORS:
+            logger.warning("could not mark run %s %s", run_id, status, exc_info=True)
+    if status == "killed" and req.get("id") is not None:
+        try:
+            ops.finish_request(req["id"], "failed", note=f"killed: {why}"[:300])
+        except ops.STORE_ERRORS:
+            logger.warning("could not end request %s", req["id"], exc_info=True)
+
+
 def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False) -> dict:
-    status, error, check = "failed", None, None
+    done, stage_note = _stage(ctx, ds, req, params, attended_ok)
+    if done is not None:
+        return done
+    if stage_note is not None:
+        # "Stage only" (--no-duckdb): the data is in raw and Parquet; raw-only (--no-parquet): in raw alone.
+        # Either way the serving file is left as it is. The check row a build would have written cannot be
+        # made without one, and inventing a result value would reach due.py and ops; a skip is the truth (the
+        # serving file did not change) and leaves the dataset due, so the next ordinary pass builds it at no
+        # provider call (the raw file is the resume marker).
+        return _finish(ctx, req, {"result": "skipped", "note": stage_note}, "skipped", None)
+    try:
+        return _finish(ctx, req, build_kind(ctx, ds), "ok", None)
+    except (Paused, NothingInScope) as e:
+        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None)
+    except Exception as e:  # noqa: BLE001 - every failure becomes a failed check row, never a half-swapped file
+        return _failed(ctx, req, e)
+
+
+def _failed(ctx: RunContext, req: dict, e: Exception) -> dict:
+    logger.exception("%s run %s failed", req["dataset"], ctx.run_id)
+    error = f"{type(e).__name__}: {e}"[:500]
+    return _finish(ctx, req, {"result": "failed", "note": error}, "failed", error)
+
+
+def _stage(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False) -> tuple[dict | None, str | None]:
+    """Everything a run does before its build: ``(finished row, None)`` when the request already ended (skipped,
+    paused, failed), ``(None, note)`` for a stage-only request whose fetch is done, ``(None, None)`` when the
+    request is ready for its kind's build."""
     try:
         if ds is None:
             raise ValueError(f"unknown dataset {req['dataset']!r}")
         paused = paused_problem(ds)
         if paused:
-            return _finish(ctx, req, {"result": "skipped", "note": paused}, "skipped", None)
+            return _finish(ctx, req, {"result": "skipped", "note": paused}, "skipped", None), None
         if attended(ds) and not attended_ok and req.get("requested_by") != ATTENDED_BY:
             note = (f"skipped: attended dataset: it waits for the runner on the server (a person logs in): "
                     f"python -m RevenueChaser.rcdata.build attended; requested by "
                     f"{req.get('requested_by') or '?'}")
-            return _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None)
+            return _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None), None
         refused = cap_problem(ds)
         if refused:
-            check = {"result": "skipped", "note": refused}
-            status = "skipped"
-            return _finish(ctx, req, check, status, None)
+            return _finish(ctx, req, {"result": "skipped", "note": refused}, "skipped", None), None
         ctx.scope = parse_scope(params)             # a bad scope is this run's failed check row, like a bad date
         if ctx.scope and not honours_scope(ds):
             ctx.notes.append(f"scope ignored: {ds.name} does not ask by name or tier ({ctx.scope.text()} "
                              "not applied)")
         mode = params.get("mode", "daily")
-        if mode == "backfill":
-            if params.get("from"):
-                start = _parse_day(params["from"])
-            elif getattr(ds, "backfill_needs_from", True):
-                raise ValueError(f"a backfill of {ds.name} needs a first day (--from)")
+        staged: int | None = None
+        # The two "do not build" switches (#498). ``no_parquet`` is raw-only and implies ``no_duckdb``, because
+        # Parquet is the only input a build reads: a build with no new partition would be a no-op that still took
+        # the builder lock. ``no_build`` is the old name of ``no_duckdb``, still read so that a request queued
+        # before the rename keeps working.
+        raw_only_mode = params.get("no_parquet") is True
+        skip_build = raw_only_mode or params.get("no_duckdb") is True or params.get("no_build") is True
+        with raw_only_run(raw_only_mode):
+            if mode == "backfill":
+                if params.get("from"):
+                    start = _parse_day(params["from"])
+                elif getattr(ds, "backfill_needs_from", True):
+                    raise ValueError(f"a backfill of {ds.name} needs a first day (--from)")
+                else:
+                    start = None
+                end = _parse_day(params["to"]) if params.get("to") else ds.default_as_of()
+                ctx.as_of = end
+                # A dataset's own backfill converts inside itself, so the switch reaches it through the
+                # ``raw_only`` guard in ``write_parquet`` rather than by skipping a call here.
+                ds.backfill(ctx, start, end)
+            elif mode == "daily":
+                ctx.as_of = _parse_day(params["as_of"]) if params.get("as_of") else ds.default_as_of()
+                raws = ds.fetch(ctx, ctx.as_of)
+                staged = len(raws)
+                if not raw_only_mode:
+                    ds.to_parquet_all(ctx, raws)
             else:
-                start = None
-            end = _parse_day(params["to"]) if params.get("to") else ds.default_as_of()
-            ctx.as_of = end
-            ds.backfill(ctx, start, end)
-        elif mode == "daily":
-            ctx.as_of = _parse_day(params["as_of"]) if params.get("as_of") else ds.default_as_of()
-            ds.to_parquet_all(ctx, ds.fetch(ctx, ctx.as_of))
-        else:
-            raise ValueError(f"unknown mode {mode!r}")
-        if params.get("no_build"):
-            # "Stage only" (--no-build): the data is in raw and Parquet, the serving file is left as it is. The
-            # check row a build would have written cannot be made without one, and inventing a result value would
-            # reach due.py and ops; a skip is the truth (the serving file did not change) and leaves the dataset
-            # due, so the next ordinary pass builds it at no provider call (the raw file is the resume marker).
-            return _finish(ctx, req, {"result": "skipped", "note": NO_BUILD_NOTE}, "skipped", None)
-        check = build_kind(ctx, ds)
-        status = "ok"
+                raise ValueError(f"unknown mode {mode!r}")
+        ctx.check_pause(force=True)                 # the last stop: a build that starts runs to its end
+        if skip_build:
+            return None, skip_note(staged, raw_only=raw_only_mode)
+        return None, None
+    except Paused as e:
+        # the files fetched so far stay; the serving file was not touched
+        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None), None
     except NothingInScope as e:
-        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None)
-    except Exception as e:  # noqa: BLE001 - every failure becomes a failed check row, never a half-swapped file
-        logger.exception("%s run %s failed", req["dataset"], ctx.run_id)
-        error = f"{type(e).__name__}: {e}"[:500]
-        check = {"result": "failed", "note": error}
-    return _finish(ctx, req, check, status, error)
+        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None), None
+    except Exception as e:  # noqa: BLE001 - a failed fetch is its own failed check row, never a half-swapped file
+        return _failed(ctx, req, e), None
+
+
+def run_batch(reqs: list[dict], *, trigger: str = "queue", attended_ok: bool = False) -> list[dict]:
+    """Run the claimed requests of one kind with one build of its serving file (PR A); one check row each.
+
+    Each request is fetched in turn (registry order, the caller's), exactly as ``run_request`` would. Then:
+
+    - a fetch that failed, was paused or skipped has ended already with its own row and takes no part in the build;
+    - when no request that wants a build is left, nothing is built (owner's D-4, 8 Nov): a stage-only request keeps
+      its ``skipped`` note and the file is not rewritten from the same Parquet;
+    - otherwise the kind is built once, and every fetched request, stage-only ones included (owner's D-8), gets the
+      check row of that build. A build that fails fails the requests that wanted it; a stage-only one keeps its skip.
+
+    A single request is ``run_request`` itself, so that path is unchanged.
+    """
+    if len(reqs) <= 1:
+        return [run_request(r, trigger=trigger, attended_ok=attended_ok) for r in reqs]
+    from . import DATASETS
+    rows: list[dict] = []
+    ended: set[str] = set()                           # run ids whose run and request have ended
+
+    ended_requests: set = set()                       # their request ids, for the caller's busy-store path
+
+    def end(ctx: RunContext, row: dict) -> None:
+        ended.add(ctx.run_id)
+        ended_requests.add(next(r["id"] for r, c in started if c is ctx))
+        rows.append(row)
+    started: list[tuple[dict, RunContext]] = []       # (request, context) of every run started, ended or not
+    ready: list[tuple[dict, Any, RunContext, str | None]] = []
+    pending = list(reqs)
+    try:
+        while pending:
+            req = pending.pop(0)
+            ds = DATASETS.get(req["dataset"])
+            params = req.get("params") or {}
+            ctx = RunContext(run_id=new_run_id(), dataset=req["dataset"], trigger=trigger,
+                             allow_shrink=params.get("allow_shrink") is True)
+            ops.start_run(ctx.run_id, req["dataset"], trigger, params)
+            started.append((req, ctx))
+            done, note = _stage(ctx, ds, req, params, attended_ok)
+            ctx.flush_counts()                      # the next member's day-cap read sees these calls
+            if done is not None:
+                end(ctx, done)
+            else:
+                ready.append((req, ds, ctx, note))
+        wanted = [r for r in ready if r[3] is None]
+        if not wanted:
+            for req, ds, ctx, note in ready:
+                end(ctx, _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None))
+            return rows
+        kind = wanted[0][1].kind
+        try:
+            checks = build_kind_many(kind, [(ds, ctx) for req, ds, ctx, note in ready], lead=wanted[0][2])
+        except Exception as e:  # noqa: BLE001 - every failure becomes a failed check row, never a half-swapped file
+            for req, ds, ctx, note in ready:
+                end(ctx, _failed(ctx, req, e) if note is None else
+                    _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None))
+            return rows
+        for req, ds, ctx, note in ready:
+            end(ctx, _finish(ctx, req, checks[ds.name], "ok", None))
+        return rows
+    except BaseException as e:
+        for req, ctx in started:
+            if ctx.run_id not in ended:
+                _abort(ctx.run_id, req, e)
+        for req in pending:                         # claimed but not reached: no run row, the request still ends
+            _abort(None, req, e)
+        try:
+            e.rc_ended = frozenset(ended_requests)
+        except AttributeError:
+            pass
+        raise
+    finally:
+        for req, ctx in started:
+            try:
+                ctx.close()
+                ctx.flush_counts()
+            except ops.STORE_ERRORS:
+                logger.warning("could not write the calls of run %s", ctx.run_id, exc_info=True)
 
 
 def _finish(ctx: RunContext, req: dict, check: dict, status: str, error: str | None) -> dict:

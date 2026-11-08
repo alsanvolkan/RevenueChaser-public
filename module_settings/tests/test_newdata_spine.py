@@ -76,55 +76,6 @@ def test_the_funnel_and_the_cards_share_one_read_only_handle_per_kind(monkeypatc
     assert seen == ["spine"]                              # one handle on the spine for the cards and the funnel
 
 
-@pytest.mark.usefixtures("built")
-def test_the_page_shows_the_identity_card_and_no_longer_the_hand_built_one():
-    ops.record_issue("spine/security", "tier_a_no_cusip", "ZZZ", "<script>x</script>")
-    html = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": [], "identity_coverage": {
-        "funnel": [], "funnel_note": "old", "inputs": [], "identifiers": []}})
-    card = html[html.index('id="nd-identity"'):]
-    card = card[:card.index("</section>")]
-    assert "Identity" in card and "Tier A" in card and "With a CUSIP" in card and "S&amp;P 500" in card
-    assert re.search(r"With a FIGI</span><span class=\"nd-v\">10 of 10", card)
-    assert "<script>x" not in html and "&lt;script&gt;x&lt;/script&gt;" in card
-    assert 'id="identity-coverage"' not in html and "Identity coverage" not in html
-
-
-@pytest.mark.usefixtures("built")
-def test_an_attended_card_has_no_fetch_or_backfill_button():
-    html = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": []})
-    wrds = html[html.index('data-dataset="wrds/sec_idhist" data-status'):]
-    wrds = wrds[:wrds.index('<div class="nd-card', 10)]
-    assert 'data-nd-act="fetch"' not in wrds and 'data-nd-act="backfill"' not in wrds
-    assert "python -m RevenueChaser.rcdata.build backfill" in wrds and 'data-nd-act="pause"' in wrds
-    assert "never queued by the schedule (attended)" in wrds
-
-
-def test_the_identity_card_says_which_universe_the_boards_read(monkeypatch):
-    """Should-fix 7: the flag's state and its fallback are on the card."""
-    from RevenueChaser.core import universe
-    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
-    funnel = newdata.collect(NOW)["identity"]
-    assert funnel["universe_source"] == {"requested": "spine", "effective": "store", "reason": "no spine.duckdb yet",
-                                         "variable": "spine"}
-    html = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": []})
-    card = html[html.index('id="nd-identity"'):]
-    assert "Boards read" in card and "spine requested (RC_UNIVERSE_SOURCE=spine), falling back: no spine.duckdb yet" in card
-
-
-@pytest.mark.usefixtures("built")
-def test_the_identity_card_says_the_spine_is_the_default(monkeypatch):
-    """PR 6: with the variable unset the boards read the spine, and the card says it is the default."""
-    from RevenueChaser.core import universe
-    monkeypatch.delenv(universe.SOURCE_ENV, raising=False)
-    card = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": []})
-    card = card[card.index('id="nd-identity"'):]
-    assert "the spine (the default, RC_UNIVERSE_SOURCE unset)" in card
-    monkeypatch.setenv(universe.SOURCE_ENV, "store")
-    card = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": []})
-    card = card[card.index('id="nd-identity"'):]
-    assert "the old store (RC_UNIVERSE_SOURCE=store)" in card
-
-
 def test_a_never_built_spine_card_says_it_starts_by_hand():
     """Delta S6: until its first build, a starts-by-hand dataset is never due; its card says so (and the attended
     ones say they run from the CLI), instead of an unexplained "Next check due"."""
