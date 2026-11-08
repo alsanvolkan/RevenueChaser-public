@@ -44,7 +44,7 @@ LAYOUT = r"""(function(){
   var content = document.getElementById("content");
   var frame = document.querySelector(".frame.on");
   var small = [];
-  document.querySelectorAll(".topbar button, .topbar input, .sidebar .nav-item, .sidebar .nav-header, .rc-open-issues > summary")
+  document.querySelectorAll(".topbar button, .topbar input, .sidebar .nav-item, .sidebar .nav-header")
     .forEach(function(el){ if(!shown(el)) return;
       var b = box(el.closest("label") || el);       // a labelled checkbox is tapped through its label
       if(b.h < 44 || b.w < 44) small.push((el.id || el.className || el.tagName) + " " + Math.round(b.w) + "x" + Math.round(b.h)); });
@@ -245,15 +245,13 @@ def test_a_desktop_toggles_the_theme_from_the_sidebar(dashboard, browser):
 
 
 def test_the_summaries_keep_their_arrow_on_a_phone(dashboard, browser):
-    """#190 review: the 44 px rule made "What am I looking at?", "Recorded sessions" and "Open issues" lose
-    their open/closed arrow on a phone or a touch screen."""
+    """#190 review: the 44 px rule made "What am I looking at?" and "Recorded sessions" lose their
+    open/closed arrow on a phone or a touch screen. Every ``<details>`` now lives inside the board
+    document; the shell itself carries none since the open-issues group was removed."""
     _open(browser, dashboard, PHONE, "dark", "module_settings")
-    shell = browser.eval("Array.prototype.map.call(document.querySelectorAll('details > summary'),"
-                         " function(s){ return getComputedStyle(s).display; })")
     board = browser.eval("Array.prototype.map.call(document.querySelector('.frame.on').contentDocument"
                          ".querySelectorAll('details.help > summary'), function(s){"
                          " var r = s.getBoundingClientRect(); return [getComputedStyle(s).display, r.height]; })")
-    assert shell and all(d == "list-item" for d in shell), f"shell summaries: {shell}"
     assert board and all(d == "list-item" for d, _ in board), f"board help summary: {board}"
     assert all(h >= 44 for _, h in board), f"the help summary is under 44 px: {board}"
 
@@ -388,3 +386,53 @@ def test_the_drawer_has_its_own_close_button(dashboard, browser):
     browser.emulate(*DESKTOP, scheme="dark")
     browser.open(f"{dashboard.url}/#runs", ready=FRAME_READY)
     assert browser.eval("document.getElementById('nav-close').getBoundingClientRect().width") == 0
+
+
+# #527 step 10 (avo 6 Nov 2026: "horizontal bar a gerek var mi ... genis ekrana gecince sadece buyusun"): inside the
+# Data/Health frame, on both tabs, the page never scrolls sideways, from a phone to a wide screen, and on a wide
+# screen its one column sits in the middle.
+FRAME_LAYOUT = r"""(function(tab){
+  var d = document.querySelector('.frame.on').contentDocument;
+  var t = d.getElementById('tab-' + tab); if (t) t.click();
+  var de = d.documentElement, vw = de.clientWidth;
+  var wide = Array.prototype.filter.call(d.querySelectorAll('body *'), function(el){
+    var r = el.getBoundingClientRect(); return r.width > 0 && r.right > vw + 0.5;
+  }).filter(function(el){ return !el.parentElement || el.parentElement.getBoundingClientRect().right <= vw + 0.5; })
+    .map(function(el){ return el.tagName + (el.id ? '#' + el.id : '') + '.' + el.className; });
+  var col = d.querySelector(tab === 'data' ? '#ctl > .wrap' : '#needs > .wrap');
+  var r = col.getBoundingClientRect();
+  return {vw: vw, scroll: de.scrollWidth, body: d.body.scrollWidth, wide: wide.slice(0, 8),
+          left: r.left, right: vw - r.right, width: r.width};
+})"""
+
+
+@pytest.mark.parametrize("size", [PHONE, (1920, 1080)])
+@pytest.mark.parametrize("tab", ["data", "health"])
+def test_the_data_health_frame_never_scrolls_sideways_and_centres_its_column(dashboard, browser, size, tab):
+    _open(browser, dashboard, size, "dark", "module_settings")
+    m = browser.eval(f"{FRAME_LAYOUT}({tab!r})")
+    assert m["scroll"] <= m["vw"] and m["body"] <= m["vw"], f"the {tab} tab scrolls sideways: {m['wide']}"
+    if size[0] >= 1600:
+        assert m["width"] <= 1280 + 1, f"the column grows past its width: {m['width']}"
+        assert abs(m["left"] - m["right"]) <= 2, f"the column hugs a side: left {m['left']}, right {m['right']}"
+
+
+# #527 follow-up (avo 6 Nov 2026 20:13, screenshot at a wide screen: the column sits right of centre and a sideways
+# bar runs under the page): the shell around the frame must not scroll sideways either, and the frame must end at the
+# window's right edge, at any width.
+SHELL_LAYOUT = r"""(function(){
+  var de = document.documentElement, vw = de.clientWidth, f = document.querySelector('.frame.on');
+  var r = f.getBoundingClientRect();
+  var wide = Array.prototype.filter.call(document.querySelectorAll('body *'), function(el){
+    var b = el.getBoundingClientRect(); return b.width > 0 && b.right > vw + 0.5;
+  }).map(function(el){ return el.tagName + (el.id ? '#' + el.id : '') + '.' + el.className; });
+  return {vw: vw, scroll: de.scrollWidth, body: document.body.scrollWidth, frameRight: r.right, wide: wide.slice(0, 8)};
+})()"""
+
+
+@pytest.mark.parametrize("size", [(1000, 800), (1200, 800), (1920, 1080), (2560, 1400)])
+def test_the_shell_around_the_data_health_frame_never_scrolls_sideways(dashboard, browser, size):
+    _open(browser, dashboard, size, "dark", "module_settings")
+    m = browser.eval(SHELL_LAYOUT)
+    assert m["scroll"] <= m["vw"] and m["body"] <= m["vw"], f"the shell scrolls sideways: {m}"
+    assert m["frameRight"] <= m["vw"] + 0.5, f"the frame runs past the window: {m}"

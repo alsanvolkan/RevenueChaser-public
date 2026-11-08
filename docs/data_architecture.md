@@ -37,7 +37,7 @@ design file holds it).
 **What a purge loses for good.** The backfill cannot bring these back, so the purge decision has to
 cover them first:
 
-- the SPX Gamma raw day files (`module_spx_gamma/data/raw/<date>/`): UW serves only recent days (see
+- the SPX Gamma raw day files (`<store>/spx_gamma/raw/<date>/`; `module_spx_gamma/data/` before S4): UW serves only recent days (see
   Storage layout);
 - the UW options data observed inside its window (`option_strike`, `option_expiry`, `option_print`,
   the UW rows of `iv_daily`, `er_options`): a past evening cannot be observed again, and the raw
@@ -185,9 +185,9 @@ Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `cor
 | `.store/history.duckdb` | Result history (#287, 2.6-1; schema 11): `result_runs` (one header row per board run: session, run time, quality, model version, params, funnel, payload) and 16 run-keyed row tables (`ag_scores_history`, `earnings_cards_history`, …). Written only by `core/history.record_run`, in one transaction; a session board keeps one whole run per session (`session_snapshot`), a run board keeps every run. Read views `result_sessions` and `<table>_by_session`. Longer backup retention than `raw.duckdb` (5 nightly snapshots, and an off-machine copy; its weekly copy was dropped in #342 — it grew ~6.55 GB/yr against raw's 603 MB). **The file does not exist until the first recorded run** (`rawstore.ensure_history()`); `rawstore.history_db_path()` and `_db_path("history")` resolve it, and the nightly backup and `restore_store` skip it while it is missing. `forecast_ledger` stays in `raw.duckdb`. The 8 change tables live in `raw.duckdb` and ride its backups | No — durable |
 | `.store/prices.duckdb` | Daily prices (#156, moved here before the fill, 2026-10-09): `price_bars_daily`, `price_actions` and their watermarks `price_checks` (the shape of `source_checks`, which stays in raw for the identity stamps), and the SPX daily levels `index_levels_daily` (D03, #293, moved here before its writer, 2026-10-10). One file, so a chunk's bars, actions and watermarks commit in one transaction (`rawstore.atomic(..., db="prices")`); about 2.4 GiB after the `period="max"` fill, kept out of raw's weekly copies. Made by the first store call; a store from before has the two tables (and the price rows of `source_checks`; from #293 also the empty `index_levels_daily`) moved over once by that call: copied, checked row by row (`EXCEPT`), then dropped from raw; each table is added to the `migration_manifest` row `price_tables_to_prices_db` in the transaction that removes it from raw. A conflicting row stops that table's move with a warning and overwrites nothing. Two processes starting together may both run the move: what the other one already moved is left alone and logged at INFO. No `_SCHEMA_VERSION` bump (the #72 precedent): an older checkout recreates the empty raw tables and ignores this file. Backup: 2 nightly snapshots, no weekly copy (append-only, so the newest holds every row); off this machine once a week, 1 copy | No — durable |
 | `edgar_docs/{cik}/{accession}.html.gz` | Raw 10-K/20-F HTML (the durable raw-document record; keyed by CIK + accession). Dir via `RC_EDGAR_DOCS_DIR` | No — durable; backed up as a tree |
-| `.cache/sec_13f/*_form13f.zip` | Downloaded SEC 13F source archives (re-downloadable from SEC) | Yes — deletable after ingest (tracked in `ingested_zips`) |
+| `.cache/sec_13f/*_form13f.zip` | Downloaded SEC 13F source archives, left by the retired dashboard ingest (G9); the builder keeps its own under `raw/sec/13f_sets/` | Yes — nothing reads them |
 | `.cache/` | All regenerable outputs: `*_latest.json`, `*_latest.html` (flat and nested), PNGs, timestamped archives | Yes — delete anytime; re-run regenerates |
-| `module_spx_gamma/data/` (override `SPX_GAMMA_DATA_ROOT`) | SPX Gamma data tree: the UW GEX and greek files per date under `raw/<date>/` (the board's own UW snapshot only: since PR 3 the VIX family, the CFTC COT, the 8-week SPX closes and the 0-1 DTE dollar gamma are no files of the day; `module_spx_gamma/store_reads.py` reads them from the market store, `market_series` and `spx_gamma_expiry_strike`, when the day is rendered, and a day without them says "not stored"; a raw day from before still holding `vix_family.json`, `cftc_tff.json` or `ohlc_8wk.json` has them ignored), `brier.json`, `spx_gamma_gex_history.json`, parsed files, charts and reports. Inside the repo (git-ignored `data/`), not under `.store/`. UW serves only recent days, so the raw day files cannot be fetched again | No — durable. Mirrored by the nightly backup (see Backups); #179 moves it into DuckDB later |
+| `<RC_STORE_DIR>/spx_gamma/` (override `SPX_GAMMA_DATA_ROOT`; `module_spx_gamma/data/` until S4, #38) | SPX Gamma data tree: the UW GEX and greek files per date under `raw/<date>/` (the board's own UW snapshot only: since PR 3 the VIX family, the CFTC COT, the 8-week SPX closes and the 0-1 DTE dollar gamma are no files of the day; `module_spx_gamma/store_reads.py` reads them from the market store, `market_series` and `spx_gamma_expiry_strike`, when the day is rendered, and a day without them says "not stored"; a raw day from before still holding `vix_family.json`, `cftc_tff.json` or `ohlc_8wk.json` has them ignored), `brier.json`, `spx_gamma_gex_history.json`, parsed files, charts and reports. Beside the store's DuckDB files since S4 (#38), outside the checkout: `config.resolve_data_root` reads the legacy in-repo tree only while `<store>/spx_gamma/` does not exist, and `python -m RevenueChaser.module_spx_gamma --migrate-data-root --apply` (dashboard stopped) copies it there, verified by size and SHA-256 and renamed into place in one step; the legacy tree is never deleted by it. UW serves only recent days, so the raw day files cannot be fetched again | No — durable. Mirrored by the nightly backup (see Backups); #179 moves it into DuckDB later |
 
 ## Pipeline stages
 
@@ -272,8 +272,8 @@ Computed from raw caches and persisted in `raw.duckdb`.
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `theme_runs` | NMF over Relatedness | nested fine/medium/coarse themes; pinned run in `run_registry` |
 | `leaps_flow_prints` / `leaps_daily_scores` | LEAPS flow prints + daily scores (ex-SQLite `leaps/radar.db`) | PK `id` / (ticker, date) dedup; schema-versioned |
 | `rotation_snapshots` | Rotation engine cross-section (up to 78 symbols live, 67 backfilled; D01 weekly closes since #374 M-ROT-2) | one row per ETF per session (time series; `as_of_date` is the session, #283) |
-| `sec13f_submissions` / `sec13f_holdings` / `sec13f_cusip_names` / `sec13f_ingested_zips` | Parsed 13F ZIPs (ex-SQLite `sec13f.db`) | non-lossy ingest store; zips deletable after ingest; `sec13f_holdings` is keyed on `(accession, line_no)` and keeps every INFOTABLE row (puts, PRNs and non-equity rows included); the derive filters long equity; a zip's submissions row, names and marker land together, after its streamed holdings |
-| `sec13f_totals` | Per-ticker quarterly totals + per-holder metrics | rebuilt from the ingest store, store only (`engine.recompute_totals`; the Rebuild totals button, or every Fetch) |
+| `sec13f_submissions` / `sec13f_holdings` / `sec13f_cusip_names` / `sec13f_ingested_zips` | Parsed 13F ZIPs (ex-SQLite `sec13f.db`) | **no writer since G9** — the builder keeps the filings and holdings in Parquet and serves them from `ownership.duckdb`; the rows a store already holds stay readable until G10 (#274) retires the tables |
+| `sec13f_totals` | Per-ticker quarterly totals + per-holder metrics | **no writer since G9** — the board reads `sec13f_ticker_period` from the ownership store through `core/ownership.sec13f_totals`; retired with the rest by G10 (#274) |
 | `cusip_ticker` | CUSIP → ticker: a cache of `identity_cusip`'s current map plus the legacy entries whose issuer prefix (first 6 characters) OpenFIGI maps to the same ticker and whose issue number is not 90-99 (#207 option B minus 9x, `engine.legacy_fallback`; no issuer-name matching) | replaced (old rows deleted) only when the derive with the new map passes the guards (`engine.recompute_totals`); a refused derive keeps the stored map and totals |
 | `run_registry` | runtime pins | profile mode, current theme run id, migration markers |
 
@@ -644,14 +644,15 @@ worker thread writes while Flask request threads read. So:
   daily price bars, #129), daily not before 23:45 (the forecast outcomes RC-Forecast-Outcomes, chained on the daily
   price bars, #380 S0), daily 23:50 (the forecast baselines RC-Forecast-Baselines, chained on the outcomes run, #25
   HR-1) and Tuesday to Saturday not before 01:30 (the Earnings inputs RC-Earnings-Inputs, chained on the
-  daily price bars, E0 #372), plus daily 09:30 (the open-issues registry check RC-Open-Issues-Check, #74:
-  `scripts/open_issues_sync.py --check`, which reads the GitHub API, writes nothing, exits 0 whatever it finds
-  and is deliberately not chained on a store writer) and daily 09:15 (the IBKR Gateway login check RC-IBKR-Login-Check, #162:
+  daily price bars, E0 #372), plus daily 09:15 (the IBKR Gateway login check RC-IBKR-Login-Check, #162:
   `scripts/ibkr_login_check.py`, one TCP connection and the TWS API version handshake, which writes no table and
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
   expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
-  `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 50 min limit) and its backup
-  RC-Build-Backup daily 04:30 (`rcdata backup`, unit `life-rc-builder-backup`, 30 min limit), PR 2, plus
+  `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 120 min limit) and its backup
+  RC-Build-Backup daily 04:30 (`rcdata backup --only ops,market,spine,fundamentals,options,raw --subdir market`,
+  unit `life-rc-builder-backup`, 30 min limit) and the heavy half of that backup RC-Build-Backup-Heavy weekly
+  Sunday 03:30 (`rcdata backup --only prices,ownership --subdir market-heavy`,
+  unit `life-rc-builder-backup-heavy`, 60 min limit), PR 2, plus
   Monday to Friday 06:30 (the SPX Gamma Fetch RC-SPX-Gamma-Fetch, #291: `module_spx_gamma --nightly`, the
   latest complete session's raw day with all expiries, only once its Cboe SPX close is stored and outside the US
   session, else exit 3; no catch-up);
@@ -828,7 +829,7 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `rotation_snapshots_history` | Result history (mirror of `rotation_snapshots`; history.duckdb, added by #374 after schema 11, no bump): `run_id`, `row_no INTEGER` and every `rotation_snapshots` column. The RRG points a live Rotation Fetch saved (`store.save_snapshot`'s rows, `source` `live`), in the same run as `rotation_holdings_history` and `sector_tree_history`; one run per session. A range Fetch (stored snapshots) and the holdings job record none. Key `(run_id, row_no)` (`rotation_snapshots` has no PRIMARY KEY); append-only | — |
 | `sector_tree_history` | Result history (row table; schema 11, history.duckdb): `run_id`, `sector`, `industry`, `ticker`, `etf`, `name`, `market_cap DOUBLE`, `weight DOUBLE`. The sector -> industry -> member tree of every sector ETF row, as the Rotation board embeds it (`weight` = share of the industry's market cap). Written by the same Rotation Fetch and run as `rotation_holdings_history` (#374). Key `(run_id, sector, industry, ticker)`; append-only | — |
 | `money_flow_history` | Result history (row table; schema 11, history.duckdb): `run_id`, `side`, `rank INTEGER`, `etf`, `name`, `flow_score DOUBLE`, `as_of DATE`. The ranked inflows and outflows (`side` `inflow`/`outflow`, `rank` from 1; an inflow has a positive score and an outflow a negative one, so a side can hold fewer than 10 rows, DF70) of each Money Flow Fetch (#374, `module_sector_rotation/history.py`, board `module_money_flow`, from `app/runners.run_money_flow_latest` after the leaderboard file, or where the stored leaderboard was kept); one run per session; ETFs with no D01 bars (the leaderboard ranks `price_bars_daily` closes and volumes since M-ROT-3), nothing ranked, a kept leaderboard or failed UW calls make the run `partial` (header only). The newest complete session is the leaderboard an empty or partial pull keeps (`history.stored_leaderboard`, K2 `sessions`), and a missing board file is rebuilt from it. Key `(run_id, side, rank)`; append-only | — |
-| `sec13f_metrics_history` | Result history (row table; schema 11, history.duckdb): `run_id`, `ticker`, `quarter DATE`, `name`, `sector`, `shares DOUBLE`, `value DOUBLE`, `holders INTEGER`, `top10_pct DOUBLE`, `hhi DOUBLE`, `new_holders INTEGER`, `exited_holders INTEGER`, `buy_flow DOUBLE`, `sell_flow DOUBLE`, `breadth DOUBLE`, `breadth_chg DOUBLE` (ownership breadth: the holders of the newest snapshot ÷ the distinct filer CIKs with long-equity holdings in that `quarter`, as a percentage with 4 decimals, and its change in percentage points vs the prior quarter, NULL when the quarter has no filer total; #375 F4, Chen-Hong-Stein 2002, as of quarter-end and filed up to 45 days later), `streak INTEGER`, `accel DOUBLE`, `pct_out DOUBLE`, `price DOUBLE`, `price_delta DOUBLE`, `shares_outstanding DOUBLE`, `float_shares DOUBLE`, `short_pct DOUBLE`, `insider_pct DOUBLE`. One row per 13F board row per 13F Fetch, from the entries the board renders (`report.board_entries`): the latest snapshot's metrics, the snapshot inputs (shares out and insider % from `ownership_snapshot`, the quarter-end price from D01, #375 F2; float and short % stay NULL until F6), the shares and quarter-over-quarter changes per quarter, and the CUSIPs the map gives the ticker. `quarter` is the board's latest quarter; `sec13f_metrics_by_quarter` takes each quarter's last run without an error. Written by a 13F Fetch (#375, `module_sec_13f/history.py`, from `app/runners.build_sec13f` after the board file); an SEC stage failure or a refused derive is the run's `error`, names not refreshed make it `partial`, the CUSIPs left out of the totals are a header warning. A Refresh and the store-only rebuild never record. Key `(run_id, ticker)`; append-only | ``shares_by_quarter``, ``chg_by_quarter``, ``cusips`` |
+| `sec13f_metrics_history` | Result history (row table; schema 11, history.duckdb): `run_id`, `ticker`, `quarter DATE`, `name`, `sector`, `shares DOUBLE`, `value DOUBLE`, `holders INTEGER`, `top10_pct DOUBLE`, `hhi DOUBLE`, `new_holders INTEGER`, `exited_holders INTEGER`, `buy_flow DOUBLE`, `sell_flow DOUBLE`, `breadth DOUBLE`, `breadth_chg DOUBLE` (ownership breadth: the holders of the newest snapshot ÷ the distinct filer CIKs with long-equity holdings in that `quarter`, as a percentage with 4 decimals, and its change in percentage points vs the prior quarter, NULL when the quarter has no filer total; #375 F4, Chen-Hong-Stein 2002, as of quarter-end and filed up to 45 days later), `streak INTEGER`, `accel DOUBLE`, `pct_out DOUBLE`, `price DOUBLE`, `price_delta DOUBLE`, `shares_outstanding DOUBLE`, `float_shares DOUBLE`, `short_pct DOUBLE`, `insider_pct DOUBLE`. One row per 13F board row per 13F Fetch, from the entries the board renders (`report.board_entries`): the latest snapshot's metrics, the snapshot inputs (shares out and insider % from `ownership_snapshot`, the quarter-end price from D01, #375 F2; float and short % stay NULL until F6), the shares and quarter-over-quarter changes per quarter, and the CUSIPs the builder's map gives the ticker in that quarter (`sec13f_cusip_map`). `quarter` is the board's latest quarter; `sec13f_metrics_by_quarter` takes each quarter's last run without an error. Written by a 13F Fetch (#375, `module_sec_13f/history.py`, from `app/runners.build_sec13f` after the board file); names not refreshed make it `partial`, and the CUSIPs the newest stored quarter could not name are a header warning (`sec13f_periods.unmapped_cusips`, G9). A Refresh never records. Key `(run_id, ticker)`; append-only | ``shares_by_quarter``, ``chg_by_quarter``, ``cusips`` |
 | `financials_report_history` | Result history (row table; schema 11, history.duckdb): `run_id`, `ticker`, `sector`, `data_fetched_at`, `modules BLOB`. One row per Financials Fetch: the modules run, the comps peers, the assumptions each model used, the warnings, Quick Remarks and every module's numbers (`modules`, JSON, compressed). Written by a Financials Fetch (#385, `module_financials/history.py`); a module that could not run, or a report the board did not get, makes the run `partial` with its row kept and the reason in `result_runs.quality_note`. Read by `module_financials/history.last_report` (#385, FIN-4): a store-only Refresh renders the newest stored run of the ticker that has comps (walking back at most 20 runs, decoding lazily, read-only), labelled with that run's fetch date in New York — so Refresh computes no comps and fetches nothing; a ticker with no recorded run reads as no comps, an explicit empty state. Key `(run_id, ticker)`; append-only | ``modules_run``, ``peers``, ``assumptions``, ``warnings``, ``quick_remarks`` |
 | `forecast_ledger` | `source`, `forecast_date DATE`, `subject`, `target_type`, `target_date DATE` (NOT NULL), `frozen_at DOUBLE`, `run_id`, `model_version`, `rank INTEGER`, `score DOUBLE`, `bucket`, `market_cap DOUBLE`, `sector`, `shown_price DOUBLE`, `stop DOUBLE`, `target DOUBLE`. Key `(source, forecast_date, subject, target_type, target_date)`; no outcome columns | `probs` |
 | `forecast_outcomes` | The ledger key (`source`, `forecast_date DATE`, `subject`, `target_type`, `target_date DATE` NOT NULL) + `horizon_days INTEGER`, `ref_price DOUBLE`, `mfe DOUBLE`, `mae DOUBLE`, `sessions_seen INTEGER`, `status` (`open`/`closed`/`no_bars`/`split_check`), `computed_at DOUBLE`, `model_version`, `run_id`. Key `(source, forecast_date, subject, target_type, target_date, horizon_days)`; keyed upsert (derived, #380 S0, added after schema 11 with no bump) | — |
@@ -980,15 +981,17 @@ it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed th
 from `RC_DUCKDB_MAX_TEMP` (default `200GB`): past it the build fails instead of filling the disk.
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
-file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `4`), is described under
+file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `5`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
-fundamentals layer, `fundamentals` (serving schema version `1`), under "Fundamentals" after it; and the options
+fundamentals layer, `fundamentals` (serving schema version `2`), under "Fundamentals" after it; and the options
 data, `options` (serving schema version `1`), under "The options data" last. The market data,
-`market` (serving schema version `2`): `serving_schema_version` (one row: kind, version, build time, build id),
+`market` (serving schema version `2`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`), `spx_greek_expiry_strike` (the same key, the four
-greeks per side from `greek-exposure/strike-expiry` for every expiry of the chain, same provenance; its `dte` is
+greeks per side from `greek-exposure/strike-expiry` for every expiry of the chain, same provenance; where two
+option series share an expiry date — SPX and SPXW on a third Friday — UW's two rows for the strike are summed
+into one, because its answer has no field to tell the series apart; its `dte` is
 UW's **calendar**-day count, while `spx_gamma_expiry_strike.dte` counts NYSE sessions, so the two columns are
 different measures of different endpoints and are never substituted) and `market_series` (key series id, observation date,
 source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance). `session_date` comes from
@@ -997,7 +1000,8 @@ stays as `<kind>.prev.duckdb`.
 
 **The swap rule.** A kind is built as a new file `<kind>.<build_id>.duckdb`, from Parquet only (no network), and
 checked before it replaces anything: its `serving_schema_version` row, the row count of every table, the run's
-`dataset_check` row (a `failed` one refuses the swap), and the live file: every live table must be in the build, and
+`dataset_check` row (a `failed` one refuses the swap), and the live file: every live table must be in the build (except
+one the kind's code retired by name, `serving.RETIRED_TABLES`: `prices`' `crsp_unadjusted` since PR 382), and
 none may empty or lose more than 1% of its rows unless the request says `"allow_shrink": true` (the CLI's
 `--allow-shrink`), which relaxes only the asking dataset's own tables and the tables the kind derives from its sources
 (a dataset with no provider, such as `ownership/serve`), never another source dataset's table (`base.shrink_scope`).
@@ -1009,6 +1013,32 @@ a missing Parquet root (the raw disk not mounted). Then the live file is hard-li
 file and leaves the live file byte-identical (test T3, `rcdata/tests/test_serving.py`). The dashboard opens a serving
 file read-only on every request (`rcdata.serving.open_read`) and never writes one; serving files are never
 compacted, they are rebuilt. Pages only enqueue requests; the builder takes them in order.
+
+**A build's base.** A build file starts either empty (`serving.build(kind)`, every table made from Parquet) or as a
+copy of the live file (`serving.build(kind, base="live")`), for a build that replaces only what changed: the rows
+already served are in the file, so a dataset can reload what is dirty instead of its whole history. The copy is a
+build file like any other — the live file is never opened read-write — so the checks above, the atomic swap, the
+`prev` rollback and the shrink guard all hold unchanged. `serving_schema_version.build_mode` records which base the
+build really got: `"live"` falls back to `"fresh"` when there is no live file yet, or it was built by another serving
+schema version, whose tables are not the ones this code builds — which is what makes a version bump a whole rebuild
+without any dataset asking for one. No dataset asks for `base="live"` yet; every kind is still built whole.
+
+**What is dirty** (`rcdata/build/dirty.py`). A build on the live copy only pays off when it can say which rows to
+reload, so the contract for that answer sits in one module. `full_rebuild_reason(kind)` names the cases where no
+dirty set is safe and the kind must be built whole: a live file that is missing or built by another serving schema
+version (`serving.live_version`), or a dataset that declares `full_rebuild_reason(ctx)` because its source restated
+history (a WRDS monthly refresh, SEC republishing a set). `dirty.of(ds, ctx)` is one dataset's dirty set, a `Dirty`: a dataset
+declares `dirty(ctx)`, and a dataset that declares none is `dirty.ALL`, which is why every kind is still built whole
+today. A `Dirty` has two axes, because the tables have two shapes: a **cumulative** table only gains rows for new
+source days, so what is dirty is a *range* of days; a **restated** table can have an old row changed by new data, so
+what is dirty is a *key* whose whole history is rebuilt. A chosen list (`my_universe`) narrows to neither. A `Dirty`
+carrying neither axis means everything, so a dataset that forgets to narrow gets the slow, correct answer instead of
+a silently partial table; an answer of any other shape raises. The signal a `dirty` is meant to read is `changed_partitions(since)`: the Parquet files written after the live
+file's `built_at` stamp. That stamp is written when the build file opens, before any dataset reads Parquet, so a
+partition written while a long build runs is newer than the stamp and comes out dirty on the next build instead of
+being lost. The signal is the partition's mtime, which a copy or a restore can carry over from another machine; it
+becomes a manifest of (path, size, mtime) compared manifest-to-manifest before any kind relies on the dirty set for
+data correctness.
 
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.
@@ -1072,6 +1102,9 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `provider_calls_daily` | Calls, failures and 429s per provider and New York day |
 | `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists (D2): ticker, added at, added by (the board), note; and their history, one row per add or remove with an `id` that keeps its order (version 2 added `id` and `note` to the history). The toggle routes write them (`docs/data_retrieval.md`); `rcdata.read.watchlists()` reads them |
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
+| `kind_automation` | What the hourly pass queues for each serving kind: `off` (no row), `raw`, `parquet` or `full` (Settings, 6 Nov 2026) |
+| `switch` | The board's two switches (#527): `fetch` stops every fetch, build and RC timer task but the backups and the IBKR login check; `backup` stops the three backups. No row, or `off_at` NULL, is on |
+| `dataset_automation` | One source's own automation over its kind's (#527): `off`, `raw`, `parquet` or `full`; no row ("as the file") follows `kind_automation` |
 
 **Day caps** (`rcdata/caps.py`, master plan Order 5, rule 3: only the quotas a provider publishes per day, each with
 its source): uw 100,000 (owner-marked avo 2026-11-02), alphavantage 25 (its free tier, shared by the earnings calendar and the spine's
@@ -1119,9 +1152,20 @@ what keeps a new writer from slipping past the gate; `core/tests/test_job_lock_n
 documented lock name has no entry.
 
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
-RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 50 min limit, as the
+RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 120 min limit, as the
 systemd unit pair `life-rc-builder.service` / `.timer`. RC-Build-Backup runs `rcdata backup` daily at 04:30, with a
-30 min limit, as `life-rc-builder-backup`. Each pass first queues what is due (below), then takes the queued
+30 min limit, as `life-rc-builder-backup`; it takes the small files only
+(`--only ops,market,spine,fundamentals,options,raw --subdir market`). The two large serving files are
+RC-Build-Backup-Heavy's, weekly on Sunday at 03:30 with a 60 min limit, as `life-rc-builder-backup-heavy`
+(`--only prices,ownership --subdir market-heavy`): on 5 Nov 2026 the 04:30 run hit its 30 min limit, and prices
+(2.9 GB) plus ownership (661 MB) are 3.5 GB of the ~3.6 GB that run copies, so they are the likely cause — an
+inference, not a measurement, because the run records no per-step timing. Each `--subdir` keeps its own
+`.manifest.json`, its own verification and its own newest 5 per kind, and every copy carries its sha256. Run the
+heavy command by hand before a deploy that touches either file. The heavy row's unit pair is installed from the
+home-server repository, not from the Settings page: installing it from both would give one unit name a user timer
+and a system unit, each firing at 03:30 into the same folder. Because `_prune` only ever looks inside the folder
+the run writes, the `prices_*` and `ownership_*` copies left in `market/` by the old single run are not pruned
+again; removing them is a deliberate step, not something a later run does. Each pass first queues what is due (below), then takes the queued
 requests in order: those, Fetch and Backfill from Settings, and the CLI's. It skips a paused dataset (`dataset_schedule.paused_at`, a `skipped: paused` check row,
 no call). At start it fails a request a dead builder left running, with `lost: pid <n> gone` and a `failed` check
 row. A request whose builder is still alive (a live `.rc-proc` marker of its pid in the market dir) is left
@@ -1138,7 +1182,10 @@ in; `open_read` opens and closes per call so each request sees the file live at 
 **What is due.** `run` without `--dataset` first queues every due dataset (`rcdata/build/due.py`, requested by
 `schedule`), then drains the queue. The request goes in through `ops.enqueue_once`, whose check and insert are one
 `BEGIN IMMEDIATE`, so a dataset with a request already queued or running gets no second one and two overlapping
-passes queue it once. A paused dataset is not queued, and `dataset_schedule.next_due`, while later than today in New
+passes queue it once. A dataset whose serving kind's automation (`ops.kind_automation`, set per file on the Settings
+Data tab) is `off` — the default, no row — is not queued; `raw` and `parquet` queue the same partial run a Fetch's ▾
+asks for, and that run's own `skipped` check then counts as the run for the cadence; `full` queues the whole run. A
+person's Fetch is not touched by the setting. A paused dataset is not queued, and `dataset_schedule.next_due`, while later than today in New
 York, holds a dataset until that day. Otherwise a dataset never built, or whose last check failed or was skipped,
 is due. With cadence `daily` (the default, and what an unknown cadence reads as) it is due once its own
 `default_as_of()` reaches the last check's `next_check_due`: the SPX slice after the next session is complete, the
@@ -1159,7 +1206,9 @@ damaged one, delete its keys first, `redis-cli --scan --pattern '<ns>:*' | xargs
 keeps rows newer than the copy and its check then fails), each serving file
 copied and verified by row count and `sum(hash(row))` per table before its rename, the sha256 of every copy in
 `.manifest.json`, the newest 5 kept per kind. Then the raw files of the last 35 days go to `RC_MARKET_RAW_COPY_DIR`
-(rsync-like) when they total under 20 GB; over that, or with no folder set, a warning and no copy.
+(rsync-like) when they total under 20 GB; over that, or with no folder set, a warning and no copy. That is the bare
+command; neither scheduled run uses it bare since the light/heavy split above, which picks the steps with `--only`
+and the folder with `--subdir`.
 
 ### The identity spine (`spine.duckdb`, PR 5)
 
@@ -1174,7 +1223,7 @@ the old identity tables there are untouched (D5: they are empty since 27 Oct).
 | `wrds/sec_idhist` | monthly, attended | `comp.company`, `comp.security`, `comp.sec_idhist`; between snapshots only the new listed CIKs | `stg_wrds_company`, `stg_wrds_security`, `stg_wrds_idhist` |
 | `wrds/co_hgic` | monthly, attended | `comp.co_hgic` | `stg_wrds_hgic` |
 | `wrds/idxcst_his` | monthly, attended | `comp.idxcst_his` for the S&P 500, 400 and 600 index keys | `stg_wrds_idx` |
-| `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), 250 requests a minute per key, one box-wide bucket shared with the dashboard's mapping (125 a minute each when it cannot be used) | `stg_figi` |
+| `openfigi/map` | weekly | OpenFIGI `/v3/mapping`, the CUSIPs not mapped yet (a CINS, a letter first, asked as `ID_CINS`), 250 requests a minute per key, one box-wide bucket shared with the dashboard's mapping (125 a minute each when it cannot be used). A second lane asks a `TICKER` job for every Tier A row of the live `security` table with no FIGI **or whose FIGI this lane itself gave** (`wanted_tickers`), with or without a CUSIP: either there is no CUSIP to ask with, or OpenFIGI did not answer for the one there is, and in both cases the type rules have no OpenFIGI security type to read. Measured on the live spine (homesrv, 2 Nov 2026 file read 4 Nov): 321 Tier A rows carry `security_type = 'unknown'` and none of them has a FIGI — 192 with no CUSIP and no gvkey, 129 with both. A `TICKER` answer expires after `ABSENT_RETRY_DAYS` whether it is 'present' or 'absent', unlike a CUSIP's: a ticker is not a stable key, a symbol can move to another issuer, and `figi_ticker_differs` cannot catch that because the asked and answered tickers are equal. So the lane re-asks its own 4 requests once every 90 days. Both lanes share the one 400-request budget, the CUSIPs first | `stg_figi`, `stg_figi_ticker` (the ticker lane, keyed by the ticker asked) |
 | `funds/index_holdings` | daily | SSGA SPY/MDY/SPSM, iShares IVV/IJH/IJR (`latest-holdings.csv`), Vanguard VOO/IVOO/VIOO (daily creation basket), Nasdaq's nasdaq100 list and Invesco QQQ (both vote `ndx`) | `stg_fund_lines`, `stg_fund_files` |
 | `funds/etf_holdings` | daily | the SPDR workbooks of the 11 sector funds and XBI/XOP/XME/KRE/XHB/XRT/KIE, the iShares `latest-holdings.csv` of SOXX/IBB/ITA/ITB/IGV/IAK, and UW `/etfs/<t>/holdings` whole (no top-10 cap) for the 14 themes; on a day UW holds nothing for ARKQ, ARK's own holdings CSV (`ark-ARKQ.csv`, #339; AIRR, SKYY, WCLD and ROBO have no machine-readable issuer file) | none: serves `etf_holdings` itself |
 | `alphavantage/listing_status` | daily, keyed (builder service) | Alpha Vantage `LISTING_STATUS` (CSV, every US listing: `assetType` `ETF` or `Stock`, `ipoDate`), plus one `state=delisted` call whose non-CSV answer is one open `no_rows` build issue (resolved when it answers a list), never a failed run (#346); an active list under 3,000 ETF rows or under 80% of the last snapshot's fails and is not kept; a failed run is due again on the next New York day, not every hourly pass (`due.DAY_CAPPED`, the 25 a day it shares with the calendar), unless the day's raw file is held (a rerun then costs no call); the key is never stored or logged | `stg_av_listing` (the newest snapshot) |
@@ -1208,7 +1257,7 @@ own mark: a panel header that says `cli` is recorded as `panel:cli`.
 the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
 steps, and a first attempt that failed is not retried every hour.
 
-**Served tables** (`spine` serving schema version `4`). Periods are `valid_from` inclusive, `valid_to` exclusive
+**Served tables** (`spine` serving schema version `5`). Periods are `valid_from` inclusive, `valid_to` exclusive
 (Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
 
 | Table | Rows |
@@ -1217,7 +1266,9 @@ steps, and a first attempt that failed is not retried every hour.
 | `security_history` | the SEC file's `cik`, `name`, `exchange` per ticker over the stored snapshots; Compustat's identifier history of the linked securities |
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
-| `etf` | the ETF universe, one row per ticker (#346): Alpha Vantage's active `assetType=ETF` rows ∪ N-CEN's `IS_ETF=Y` series ∪ `security`'s `etp` rows, `source` `both` / `av` / `ncen` / `etp`. Every one is stored: no threshold and no `active` column (a board's thresholds are its settings, applied at read time). `is_etn` by a name rule (ETN, ETRACS, a dated note, a bank issuer's name), never for a row N-CEN calls an ETF: flagged, kept, not counted as ETFs. `is_cef` for a row the spine types `cef` (Alpha Vantage lists some closed-end funds as `ETF`, e.g. DHY; avo, 1 Nov 2026): flagged, kept, not counted as ETFs. From the series' newest N-CEN: `is_index`, `is_lev_inverse` (`IS_MULTI_INVERSE_INDEX`, or true by a name rule: 2x-5x, -1x, ProShares Ultra/Short, inverse, leveraged, a daily long/short/bull/bear fund), `is_money_market`, `is_fund_of_funds` (NULL, not false, for a row N-CEN does not hold) and `aum` (`DAILY_AVG_NET_ASSETS`, else `MONTHLY_AVG_NET_ASSETS`: an average over the filing's fiscal year, not a point-in-time AUM; `aum_as_of` that year's end); `inception` from AV's `ipoDate`; `is_option_income` by a name rule (option income, covered call, buffer, autocallable, defined or target outcome; premium income, buy-write, put-write, option strategy, managed floor, defined or structured protection); `asset_class` `commodity` for an `etp` row that is no note and whose CIK files no N-CEN at all (a 1933-Act trust: GLD, SLV, USO; a UIT such as SPY files one as an S-6 registrant), applied only once `sec/ncen` holds four quarters; `sector_name` for the 11 sector SPDRs (`core/rotation_reference.py`). Still NULL: `focus`, `country`, `adv_usd_20d`, `expense_ratio` and every other `asset_class` (later PRs). Built by `spine/security` (`rcdata/build/spine/etf.py`), after `security` |
+| `etf` | the ETF universe, one row per ticker (#346): Alpha Vantage's active `assetType=ETF` rows ∪ N-CEN's `IS_ETF=Y` series ∪ `security`'s `etp` rows, `source` `both` / `av` / `ncen` / `etp`. Every one is stored: no threshold and no `active` column (a board's thresholds are its settings, applied at read time). `is_etn` by a name rule (ETN, ETRACS, a dated note, a bank issuer's name), never for a row N-CEN calls an ETF: flagged, kept, not counted as ETFs. `is_cef` for a row the spine types `cef` (Alpha Vantage lists some closed-end funds as `ETF`, e.g. DHY; avo, 1 Nov 2026): flagged, kept, not counted as ETFs. From the series' newest N-CEN: `is_index`, `is_lev_inverse` (`IS_MULTI_INVERSE_INDEX`, or true by a name rule: 2x-5x, -1x, ProShares Ultra/Short, inverse, leveraged, a daily long/short/bull/bear fund), `is_money_market`, `is_fund_of_funds` (NULL, not false, for a row N-CEN does not hold) and `aum` (`DAILY_AVG_NET_ASSETS`, else `MONTHLY_AVG_NET_ASSETS`: an average over the filing's fiscal year, not a point-in-time AUM; `aum_as_of` that year's end); `inception` from AV's `ipoDate`; `is_option_income` by a name rule (option income, covered call, buffer, autocallable, defined or target outcome; premium income, buy-write, put-write, option strategy, managed floor, defined or structured protection); `asset_class` `commodity` for an `etp` row that is no note and whose CIK files no N-CEN at all (a 1933-Act trust: GLD, SLV, USO; a UIT such as SPY files one as an S-6 registrant), applied only once `sec/ncen` holds four quarters; `sector_name` for the 11 sector SPDRs (`core/rotation_reference.py`). `adv_usd_20d` is the average of the fund's newest 20 **priced Compustat** sessions' dollar volume (`prccd` times `cshtrd`, US dollars only), read from the raw `comp.secd` Parquet — not from the live `prices.duckdb`, which keeps only today's universe, so a fund that is not stored yet could never earn a volume (#357, avo's decision B of 5 Nov 2026). The fund's series is the one whose own newest priced day carries the ticker (Compustat's `tic`, dots read as dashes) within 14 days of Compustat's newest priced day, the larger average winning where two live series claim one ticker; only a fund with all 20 sessions gets a number — fewer sessions leave it NULL, so `my_universe` reports the fund undecided instead of judging it on a short window. Still NULL: `focus`, `country`, `expense_ratio` and every other `asset_class` (later PRs). Built by `spine/security` (`rcdata/build/spine/etf.py`), after `security` |
+| `my_universe` | one row per ticker of **the names RevenueChaser keeps** (avo, 4 Nov 2026): `kind` (`stock` / `etf`), the spine's own `security_type`, `name`, `exchange`, `tier`, the `rule` that let it in (`stock`, `etf_aum`, `etf_adv`, `manual`) with the `reason` behind it, the ETF numbers that rule read (`aum`, `aum_as_of`, `adv_usd_20d`), `entered_on` (the day it first appeared; kept from the live row, not reset by a rebuild) and the source row's provenance. The rule lives in `rcdata/build/spine/my_universe_rules.json` and avo's hand-written adds and removes in `my_universe_manual.json`, both owned by him and changed only by a pull request: a stock is a `security` row of tier A or D typed common, ADR, REIT or MLP (no royalty trust, no BDC, no non-SEC bank; an untyped name stays out, and tier B and C never enter); an ETF is an `etf` row that is no ETN and no CEF with `aum` at or over 100M USD, or, where N-CEN gives it no AUM at all, `adv_usd_20d` (from Compustat's raw `comp.secd`, #357) at or over 10M USD (a **known** AUM under the floor is the answer: the volume test only decides a fund N-CEN is silent about). A delisted name never enters — neither source holds one. The spine itself stays unfiltered; this table is what a later store is built from. Built by `spine/security` (`rcdata/build/spine/my_universe.py`), after `security` and `etf` |
+| `my_universe_changes` | who entered or left the list, when and why: `ticker`, `kind`, `change` (`entered` / `left`), `reason`, `as_of` (the build day) and `run_id`. A leaver's `reason` names the rule it held under, or, where `my_universe_manual.json` took it out, says so with avo's own reason — his line is the one case where the rules were not applied at all (#444). **Append-only across builds:** the live file's rows are carried forward and today's diff against the live `my_universe` is appended, so the Data settings board shows what changed without keeping its own history |
 | `etf_holdings` | every holding of each ETF of `funds/etf_holdings`, per day: `as_of`, `etf`, `provider`, `ticker`, `cusip`, `name`, `weight` (the relatedness peer sets' source) |
 | `fund` | one per share class of the newest SEC fund file: `cik`, `series_id`, `class_id`, the normalised `ticker` and the file's `ticker_raw`, `is_etf` with the `is_etf_source` that decided it, and the file's provenance. `security`'s counterpart: an ETF is a series of a trust, so it has no row of its own in the equity file (the ETF rule, and the two exceptions, below). The kind's only source-owned served table, so `base.shrink_scope` relaxes it for `allow_shrink` on `sec/company_tickers_mf` alone: an empty `fund` refuses the swap for every spine dataset until that one is run |
 
@@ -1237,6 +1288,21 @@ run's note.
 investment trust and GLD a commodity trust, so neither has a series and a class in the fund file, and both are rows
 of the equity file (GLD, SLV and USO are its `etp` rows). `etf` carries those `etp` rows itself, so a reader after
 the ETF universe reads `etf`, never `fund` alone.
+
+**A shrinking list is not a broken build.** `my_universe` is in `rcdata/serving.SHRINKS_BY_CHOICE`: the swap guard's
+1 % shrink limit does not apply to it, because a smaller list is the intended outcome of avo editing the rules or
+removing a name by hand, and a request-wide `allow_shrink` would relax every other table of the kind with it. The
+"a table may not empty" guard still applies — a universe of no names is a bug whoever edited what. And because that
+exemption is the only swap-time guard the table had, `my_universe.py` guards the names that entered on their dollar
+volume itself, **per fund**: `adv_usd_20d` is NULL for *unknown* and never for zero, so a fund of the live list
+that the rule can no longer measure — no `aum` **and** no `adv_usd_20d` today, the case where the rule would in
+fact have read the volume — is held on its live row, with no `left` row, and every held fund the manual file did
+not then remove is one `my_universe_etf_volume_lost` issue (avo's decision B, #424). A fund N-CEN now prices under
+the floor is answered by that AUM and leaves. A volume that is present and under the floor is the
+rule's answer and that fund leaves as before. When no `etf` row has a volume at all the source itself is gone and
+the build is refused outright: a missing or unreadable Compustat `secd` Parquet is an input outage, not a change of
+the rules. The check is per fund because a table-wide one masked the loss: IBIT is on Nasdaq and GLD, SLV, SPY and
+DIA are not, so IBIT's volume alone passed it while the Arca funds were dropped.
 
 **Tier rule v2** (`rcdata/build/spine/tier.py`): A = listed on Nasdaq, NYSE or Cboe and not an excluded type
 (`core.identity.types.EXCLUDED_TYPES`; an untyped name stays); B = listed, excluded type; C = OTC; D = no exchange.
@@ -1262,8 +1328,14 @@ and a period's CIK is that of the snapshot its last day's lines matched. Compust
 
 **Build issues** live in `ops.sqlite` `build_issues` (D6), dataset `spine/security`, synced after each swap
 (`ops.sync_issues`: found again stays open, gone is resolved). Kinds: `source_never_run`, `tier_a_no_wrds_link`,
-`tier_a_no_cusip`, `tier_a_no_figi`, `tier_a_no_gics`, `figi_ticker_differs`, `cusip_shared`, `cik_many_gvkeys`,
-`index_key_empty`, `fund_file_short`, `member_not_in_sec`, `member_not_tier_a`, `membership_files_disagree`, `membership_wrds_differs`.
+`tier_a_no_cusip`, `tier_a_no_figi`, `tier_a_no_figi_by_ticker` (a Tier A name with no FIGI from either
+lane opens exactly one of these two, so `issues_open` never counts it twice: the name holds a CUSIP and the
+`tier_a_no_figi` message names both lanes' states, or it holds none and the `_by_ticker` kind takes it),
+`figi_by_ticker_with_cusip` (the CUSIP, and the ISIN derived from it, came from Compustat while the FIGI came
+from a `TICKER` job, because OpenFIGI did not answer for that CUSIP; nothing checks the two name the same
+security, so the row is named rather than trusted silently), `tier_a_no_gics`, `figi_ticker_differs`,
+`cusip_shared`, `cik_many_gvkeys`,
+`index_key_empty`, `fund_file_short`, `member_not_in_sec`, `member_not_tier_a`, `membership_files_disagree`, `membership_wrds_differs`, `my_universe_etf_undecided` (the funds with no AUM and no 20-session dollar volume yet **that the manual file says nothing about** — it is built after the manual adds and removes, #444 — one issue naming them, keyed `etf`; nothing is reported before N-CEN has answered at all), `my_universe_etf_volume_lost` (the live list's `etf_adv` funds Compustat gives no volume for today, held on their live numbers instead of dropped, one issue naming them, keyed `etf`), `my_universe_manual_unknown` (a manual line naming a ticker the spine does not hold), `my_universe_both_kinds` (the stock rule and the ETF rule both claim a ticker; kept as the stock).
 A rule needing a source that has never run is not applied; that source is one `source_never_run` row.
 `index_key_empty`: an index key with no `comp.idxcst_his` rows in a run that answered rows for another.
 A WRDS raw value its schema cannot type (a DATE or INTEGER column) is typed to null and recorded as a `value_untyped` issue of that WRDS dataset, keyed `<table>.<column>`, with the row count; it is a one-off row of its run, not synced.
@@ -1293,25 +1365,79 @@ only through `rcdata.read`.
 
 | Dataset | Cadence | Source | Stages |
 |---|---|---|---|
-| `alpaca/bars` | daily | Alpaca `/v2/stocks/bars`, `timeframe=1Day`, feed `sip`, `adjustment` `raw` and `all`, 100 symbols a request, the last 5 complete sessions re-read (the `all` window one session earlier) | `stg_alpaca_bars`, `stg_alpaca_bar_revisions` |
+| `alpaca/bars` | daily | **the tester, never served** (2 Nov 2026 master plan, item 3): Alpaca `/v2/stocks/bars`, `timeframe=1Day`, feed `sip`, `adjustment` `raw` and `all`, 100 symbols a request, the last 5 complete sessions re-read (the `all` window one session earlier); the daily run asks only the names `prices.tester` finds at risk (a split or `ajexdi` change, an empty `trfd`, a dividend or spin-off going ex, an open `price_gap_no_action`, an exchange move, a close under $5, over the last 10 days); a named request asks what it names | `stg_alpaca_bars`, `stg_alpaca_bar_revisions` |
 | `alpaca/corporate_actions` | daily | Alpaca `/v1/corporate-actions`, every symbol, processed from 14 days back to 90 days ahead (a cash dividend is processed on its payable date, weeks after it goes ex; an action is applied once its ex-date has a session, one with no ratio or amount is an issue at once) | `stg_alpaca_actions` |
 | `sec/cover_shares` | daily | The SEC daily master index (10-K, 10-Q, 20-F, 40-F and their -T forms of the last 7 days), each filer's submissions file, the filing's inline-XBRL instance: `dei:EntityCommonStockSharesOutstanding` per class member | `stg_sec_cover` |
 | `yfinance/float` | daily | Yahoo `floatShares` (`yfinance` `get_info`), 400 Tier A names a run, 1.5 s apart and 2,000 an hour, stopped by a 401 or 429 | `stg_yahoo_float` |
 | `uw/total_float` | daily | Unusual Whales `/short_screener` `total_float`, every Tier A name (the client's batching) | `stg_uw_float` |
-| `wrds/prices` | monthly, attended | Compustat `comp.secd` from 1993 on the US exchanges and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025 (stocks and ETFs, from 1993), `comp.sec_split` whole; no CCM link (`wrds_history.PERMNO_LINK`) | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_revisions` |
-| `prices/serving` | daily | none: builds the served tables from the staging tables | the tables below |
+| `wrds/prices` | daily (avo, 3 Nov 2026), attended unless `RC_WRDS_UNATTENDED=1` | Compustat `comp.secd` from 1983 (its earliest priced day, 1983-12-30) on exchg 11, 12, 14, 17, 21 (NYSE, NYSE American, Nasdaq, NYSE Arca, BATS BZX) with the row's dividend columns, and `comp.sec_divid` per year, CRSP `crsp.dsf_v2` per year to 2025 (stocks and ETFs, from 1983), `comp.sec_split` and `crsp_a_stock.stkdelists` whole; no CCM link (`wrds_history.PERMNO_LINK`) | `stg_wrds_secd`, `stg_wrds_dsf`, `stg_wrds_divid`, `stg_wrds_split`, `stg_wrds_revisions` |
+| `prices/serving` | daily | none: builds the served tables from the staging tables; the history is Compustat's (priority 1), CRSP's only on its fallback days, never Alpaca's | the tables below |
 
-**The universe.** The bars ask the live spine's Tier A and B (`prices.DEFAULT_TIERS`; 5,655 + 2,015 = 7,670 names
-on 29 Oct 2026, avo's decision of 30 Oct: the limit is A+B, with no market-cap floor), the benchmarks (SPY, DIA,
-QQQ), the rotation ETFs and the stock watch list. The acceptance "Tier A sessions complete >= 99%" is the bars
+**The one primary source (avo, 3 Nov 2026: the whole history and what follows from Compustat).** A served bar is
+Compustat's `comp.secd` bar, a priced day up to today on which the security was on exchg 11, 12, 14, 17 or 21 by
+`comp.sec_idhist`'s dated EXCHG periods (`SECD_LISTED`; `secd.exchg` is today's code; before 1998 the first known
+exchange), from 1983-12-30 (its earliest priced day,
+`wrds_history.COMPUSTAT_START`), with its splits from `comp.sec_split` and, where that has none, from a change of
+`ajexdi` within one answer (`AJEXDI_SPLITS`), and its dividends from the secd row itself (`div`, `divd`, `divsp`;
+`comp.sec_divid` only where the row has none). Its return (`COMP_RETURN`, flagged by `COMP_RETURN_BASIS` and counted
+in the build note) is `prccd / ajexdi * trfd` over the previous session's (homesrv: p95 0.000055 % from CRSP's
+`dlyret` on dividend days, against 1.5 % for the price alone), and on a day without `trfd` the price plus that day's
+cash distribution: an empty `trfd` means no distribution (homesrv, 3 Nov 2026: `trfd` empty on 26.88 % of the priced
+rows of 2010-2025; there the price-only return matches CRSP's `dlyret` within 0.01 % on 97.69 % of 4,069,937 matched
+days, as the formula does on its rows). **CRSP serves no bar at all** (avo, 4 Nov 2026): the store holds today's
+universe, so no delisted name is in it and the earlier narrow fallback — a delisted security's final `dsf_v2` days,
+its `stkdelists` delisting bar, and the whole history of a security Compustat never priced — has no name left to
+serve. `crsp_a_stock.stkdelists` is still fetched and nothing in the serving build reads it, and
+`wrds_price_diff`'s `crsp_delisting_returns` row is gone with it. CRSP is the cross-check: of every Compustat close (`crsp_vs_compustat`) and
+of the splits (`CRSP_SPLITS`, `dlycumfacpr` steps): one no Compustat or Alpaca split is within 3 days of is applied
+nowhere and is a `split_only_crsp` issue, and the gap it explains is no `price_gap_no_action` (Order 4: 1,167 such
+issues on homesrv, 22 Tier A; Compustat's `ajexdi` now carries most of those splits). Because it stands in for the gap,
+the issue names the served close's move across its ex-date, and a jump of 1.9 times or more says *Compustat lacks
+this split* (the served history is wrong there); the build note `split_only_crsp: ...` counts those first. A CRSP
+split with no served bar of the security on both sides within 7 days touches no served bar: counted in the note, not
+named (review M6 of #382: build 4 named 1,056 with no way to tell the two apart). **Alpaca is the tester**: its
+bars write `alpaca_close_differs` and `adjustment_differs` issues, compared in every serving build, so a session is
+checked again once Compustat's update brings it.
+
+**The universe** (`rcdata/build/prices/universe.py`, the one place that rule lives; avo, 4 Nov 2026). What the
+store keeps, and what the daily fetches ask for, is **today's universe**: the spine's `my_universe` table when it
+has one (avo's own list, 7,363 tickers, which the spine's build resolves from its rule files and his by-hand
+additions and removals), and until that table exists the rule itself — the `universe.STOCK_TIERS` names (Tier A,
+listed on Nasdaq, NYSE or Cboe, and Tier D, no exchange in the SEC file) of a `universe.STOCK_TYPES` type (ordinary
+shares, ADRs, REITs, MLPs; 5,349 on 4 Nov 2026) and the spine's ETFs with `aum` at or over
+`universe.ETF_MIN_AUM` = 100 million (2,071; leveraged and inverse funds in, ETNs, closed-end funds and an unknown
+AUM out). A SPAC, warrant, unit, right, preferred or closed-end fund is out, and so are a BDC, a royalty trust, a
+non-SEC bank (each of them an operating type the identity master keeps, but not one the store keeps) and a Tier A
+name with no type yet. Tier B (a listed excluded type) and Tier C (over the counter) are out whatever the type
+says. One part of avo's approved rule is **not** in this module: he keeps an ETF whose AUM is unknown when its
+20-day average daily dollar volume is at or over 10 million, and that branch is the `my_universe` build's
+(`spine/my_universe.py`, #417), which reads the volume from Compustat's **raw** `comp.secd` Parquet
+(`spine/etf.adv_usd_20d`, #421), not from this store: a store cut to the universe holds no bar of a fund outside it,
+so a new fund could never earn a volume here (review M4 of #382, avo's decision B of 5 Nov 2026). **Nothing
+delisted is in it**, because the list is read from the live spine. Kept beside it
+(`universe.kept_beside`): the benchmarks (SPY, DIA, QQQ), the rotation ETFs and the stock watch list, which the
+boards read from the store, and the other listed classes of a universe issuer that the SEC covers name
+(`cover_classes`, Berkshire's A shares). The serving build turns that list into the `_universe` table before
+anything else and filters Alpaca's, Compustat's and CRSP's rows through it, so nothing outside it is written. A
+universe ETF the spine cannot route to Compustat (no `security` row, or one without a `gvkey`) is found by the ticker
+its Compustat series carries on that series' newest priced day, if that day is within
+`universe.ETF_TIC_RECENT_DAYS` (14) of Compustat's newest one; a series the spine holds under another ticker stays
+out, and a stock is never linked this way (review M3 of #382: Alpaca serves no bar, so such a fund had none). **One
+series per ticker** is stored, the one priced most recently, then the larger dollar volume; more than one is the
+`universe_etf_ticker_shared` issue (review D1 of #420). A fund is a ticker of the spine's `etf` table or one
+`my_universe` holds as an `etf`, and tickers compare upper case with `-` for `.` (D5, NIT 2). The
+whole-tier rule it replaced (`DEFAULT_TIERS = ("A", "B")`, 7,670 names, avo 30 Oct 2026) carried every SPAC,
+warrant, preferred and untyped name with it and still missed the funds the spine's `security` table does not hold.
+The acceptance "Tier A sessions complete >= 99%" is the bars
 dataset's coverage: Tier A names with a bar on the asked session over the Tier A names asked, against that real
 count; Tier B's own coverage is reported beside it and is not part of the acceptance, because an OTC or fund name
 may have no Alpaca bar.
 
 **A request's own scope (#265).** A queued request carries what it asks for, so a fill does not mean editing the
 code: `{"tiers": ["A", "B"], "names": ["KO"], "include": ["anchors"], "mode": "backfill", "from": ..., "to": ...}`.
-A request that names nothing is the daily run: `DEFAULT_TIERS`, the benchmarks and rotation ETFs, the stock watch
-list and the Tier A issuers' other listed classes. **A request that names something gets only what it names**
+A request that names nothing is the daily run: today's universe, the benchmarks and rotation ETFs, the stock watch
+list and the Tier A issuers' other listed classes. A request that names `tiers` keeps the tier reading, because
+that is what it asked for. **A request that names something gets only what it names**
 (avo's Karar 82, 30 Oct 2026): its `tiers`, its `names` (a name the spine does not hold is asked under
 `sym:<ticker>`), and whichever of the three groups it lists in `include` — `anchors` (the benchmarks and the
 rotation ETFs), `watchlist`, `cover_classes`. So `tiers=["B"]` is 2,015 names, not 2,015 plus every Tier A
@@ -1333,45 +1459,60 @@ the history at the next build without a refetch.
 **Bars.** A bar is keyed on the New York session date (`core/calendar.py`; Alpaca stamps a daily bar at midnight New
 York, in UTC), and only a complete session is stored (16:30 New York or later). A row that is no session, outside the
 calendar's years, outside the asked window or fetched before its session was complete is a run issue, not a row. The
-re-read keeps every changed open, high, low, close or volume of a stored bar as a revision (`price_revision`). Bars
-are stored **nominal**; the factors are applied on read.
+re-read keeps every changed open, high, low, close or volume of a stored bar as a revision (`price_revision`). A
+Compustat row with no price (`prccd` NULL; homesrv held 1,128 such rows dated after the newest session, 5 Nov 2026) is
+no bar, no newest day and no revision when it later gets a price or goes. Bars are stored **nominal**; the factors are
+applied on read.
 
 **Served tables** (`prices` serving schema version `1`). Periods are `valid_from` inclusive, `valid_to` exclusive.
 
 | Table | Rows |
 |---|---|
-| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Alpaca's, then WRDS's where Alpaca has none (CRSP where it is the same security, else Compustat; only USD rows), and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`; CRSP `shrout` in thousands) |
-| `corporate_action` | Alpaca's actions of the store's securities (resolved to the security that traded under the action's symbol nearest its date, else the spine's ticker) and Compustat's splits and dividends where Alpaca has none of that kind that day; `ratio` new over old shares, `amount` per share, `applied` and `not_applied_why` |
+| `price_bar_daily` | one nominal bar per security and session (key `security_id`, `session_date`): Compustat's (only USD rows), never CRSP's and never Alpaca's, and the S&P 500 level from the market store's Cboe Parquet (`index:SPX`); `shares_outstanding` is a WRDS bar's own (`cshoc`) |
+| `corporate_action` | Alpaca's actions of the store's securities (resolved to the security that traded under the action's symbol nearest its date, else the spine's ticker) and Compustat's splits (`comp.sec_split`, else an `ajexdi` change) and dividends (the `comp.secd` row's, else `comp.sec_divid`'s) where Alpaca has none of that kind that day; CRSP's `dlycumfacpr` splits are a cross-check, never applied; `ratio` new over old shares, `amount` per share, `applied` and `not_applied_why` |
 | `adj_factor` | per security, the periods between two ex-dates and their `split_factor` (the product of `1 / ratio` of every later split and stock dividend) and `tr_factor` (that, times `1 - amount / close before the ex-date` of every later cash dividend, the close at most 7 days before) |
 | `shares_class` | `outstanding` per class from the SEC covers (an unlisted class keyed `class:<CIK>:<member>`, and so is an ADR issuer's count of ordinary shares), `float` from Yahoo and from UW |
 | `security_symbol` | the symbols a security traded under and when |
-| `market_cap_daily` | close times shares per security and session (the bar's own shares, else a WRDS source's of that session, else the newest cover on or before it moved over the splits between); `issuer_market_cap` sums the issuer's listed classes, each at its newest cap at most 14 days old (a class with no bar that session still counts); the bars' scope asks every listed class a cover names for a Tier A issuer, under `class:<CIK>:<member>` when the spine lacks it (BRK-A) |
+| `market_cap_daily` | close times shares per security and session (the bar's own shares, else a WRDS source's of that session, else the newest cover on or before it moved over the splits between); `issuer_market_cap` sums the issuer's listed classes, each at its newest cap at most 14 days old (a class with no bar that session still counts); a Compustat class the spine lacks (BRK-A) is the issuer's of the spine classes that share its gvkey |
 | `price_revision` | the values a later read replaced: Alpaca's re-read and the monthly WRDS refresh, with `revised_at` and `revised_by` |
-| `crsp_unadjusted` | the view's helper, no dataset's own table: one row per security with a CRSP bar in the history, `unadjusted_before` its first Alpaca session where no Compustat record reaches it (NULL where one does); `price_bars_daily` leaves out its CRSP bars before that day |
-| `wrds_price_diff` | the WRDS difference report, one row per comparison: CRSP against Compustat and each against Alpaca on the closes of the sessions both have, and each WRDS source's own day return (Compustat's `prccd / ajexdi * trfd` over the previous session's, CRSP's `dlyret`) against the store's on consecutive sessions; a difference over 1 bp counts; on the `wrds/prices` Settings card |
+| `wrds_price_diff` | the WRDS difference report, one row per comparison: CRSP against Compustat and each against Alpaca on the closes of the sessions both have, and each WRDS source's own day return (Compustat's `COMP_RETURN`, CRSP's `dlyret`) against the store's on consecutive sessions; a difference over 1 bp counts; on the `wrds/prices` Settings card |
 
 **The bridge (D4).** Views under the old `.store/prices.duckdb` names with the old columns: `price_bars_daily`
 (split-adjusted OHLC, `adj_close` total-return adjusted, both to today, `fetched_at` the build time so the old reader
 applies no split a second time), `price_actions` (splits and dividends, the amount in today's share basis) and
 `index_levels_daily` (`^GSPC`).
 
-**Unadjusted history (review S1 of #353):** a CRSP bar of a security no Compustat record reaches (named otherwise
-than `gvkey:iid`, and no `GVKEY_ALIAS` joins a Compustat `gvkey:iid` of its CUSIP to it), dated before its first
-Alpaca bar, has no split or dividend applied. It stays in `price_bar_daily` (nominal) and is left out of
-`price_bars_daily`; the build note counts those bars. The build writes the per-security cut-off once
-(`crsp_unadjusted`, one row per security with a CRSP bar), so a read of the view does not group every bar. A ticker
-link (rule 3) needs, for a spine `gvkey:iid` with a CUSIP, a Compustat row of it on CRSP's last day, and for an ETF
-an inception day on or before it (review M1).
+**The two big tables' key.** `price_bar_daily` and `market_cap_daily` are the only tables with a row per security
+**and** session, and DuckDB holds a `PRIMARY KEY`'s index in memory for the whole `INSERT`: the scratch build of
+3 Nov 2026 ran the 5 GB `memory_limit` out after 4 h 51 min writing `price_bar_daily`. With the store cut to
+today's universe the index fits, so **the key stays on** (avo, 4 Nov 2026) and the measured build decides;
+`RC_PRICES_NO_PRIMARY_KEY=1` writes those two without it and checks their key with one grouped query instead
+(`serving.duplicate_keys`, a `duplicate_key` build issue), so a build that still does not fit needs no code change.
+
+A CRSP ticker link (rule 3) needs, for a spine `gvkey:iid` with a CUSIP, a Compustat row of it on CRSP's last day,
+and for an ETF an inception day on or before it (review M1).
 
 **Build issues** (dataset `prices/serving`, synced after each swap): `source_never_run`, `crsp_ticker_link` (the CRSP
-PERMNO linked to a spine security, no ETF, by ticker alone: one issue per security, its PERMNO named), `tier_a_no_bar`,
-`tier_a_no_shares`, `price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
-days, with no split), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
+PERMNO linked to a spine security, no ETF, by ticker alone: one issue per security, its PERMNO named), `tier_a_no_bar`
+and `tier_a_no_shares` (a Tier A name **of the stored universe** with no bar, or no market cap, on the newest served
+session: an untyped or excluded Tier A name is left out of the store on purpose), `universe_etf_no_bar` (a universe
+fund, a ticker of the spine's `etf` table or an `etf` of `my_universe`, with no bar on the newest served session;
+key: the ticker), `universe_etf_ticker_shared` (more than one recent Compustat series carries a routeless universe
+fund's ticker: one is stored, the one priced most recently, then the larger dollar volume; key: the ticker),
+`price_gap_no_action` (the split-adjusted close moved by 1.9 times or more, either way, within 7
+days, with no split), `split_only_crsp` (a split CRSP's `dlycumfacpr` records and no Compustat or Alpaca split is
+within 3 days of, between two served bars at most 7 days apart: not applied; the detail names the served close's
+move across it; key security:session), `adjustment_differs` (the store's total-return day return more than 1 bp from Alpaca's own, or
 more than half a cent on each of Alpaca's cent-rounded adjusted closes, the exact bound, where that is larger: about
-1.5 bp at $70, 5 bp at $20, 50 bp at $2, so below a few dollars of adjusted close a dividend-sized gap hides in it),
-`dividend_not_applied`, `action_not_applied` (a spin-off, unit split or rights distribution), `cover_class_unmapped`,
+1.5 bp at $70, 5 bp at $20, 50 bp at $2, so below a few dollars of adjusted close a dividend-sized gap hides in it;
+checked on every served bar Alpaca, the tester, has a bar for), `alpaca_close_differs` (the tester: a Compustat or CRSP
+close more than 1 bp and half a cent from Alpaca's close of the session; key security:session:source),
+`dividend_not_applied` (one that went ex on or before its security's first served bar adjusts no served bar:
+counted in the build note, not named; review D6 of #420), `action_not_applied` (a spin-off, unit split or
+rights distribution), `cover_class_unmapped`,
 `cover_adr_ordinary` (an ADR's issuer's cover counts ordinary shares, not ADSs: kept under `class:`, no cap from it),
 `float_above_outstanding` (over 1.05 times), `float_sources_disagree` (Yahoo and UW more than 25% apart),
+`duplicate_key` (a table written without its `PRIMARY KEY` holds a key value twice; key table:value),
 `shares_disagree_yahoo` (the cover shares behind a cap and Yahoo's `sharesOutstanding` more than 25% apart, on the
 newest cover-sourced cap up to Yahoo's answer: a count from before a dilution or a split; the cap stays, flagged). Run issues of
 the sources: `not_a_session`, `symbol_refused`, `action_undated`, `no_inline_xbrl`, `submissions_missing`,
@@ -1384,9 +1525,13 @@ missing.
 
 **Attended (WRDS).** `wrds/prices` runs on the spine's WRDS worker (`RC_WRDS_PYTHON`, `WRDS_USERNAME`) from the CLI
 only: `python -m RevenueChaser.rcdata.build backfill wrds/prices`. One query per table and year; a backfill asks the
-two snapshot tables, then the years newest first, skips a year partition that exists with no query; the whole
-history is about 130 queries, asked in one session (WRDS publishes no query quota, so `wrds` has no day cap; a run
-that hits one anyway keeps and serves the years it has). The monthly run asks the last two years again and keeps every bar value it replaces as a revision. The long history run is Phase 8, after PR 21.
+two snapshot tables, then the years newest first, skips a year partition that exists with no query (a `comp.secd`
+year asked with an older query, the exchange filter or the columns before, is asked again; its old answer is renamed
+`.superseded-<run id>`, never deleted); the whole history is about 130 queries, asked in one session (WRDS publishes no query
+quota, so `wrds` has no day cap; a run that hits one anyway keeps and serves the years it has). The monthly run asks
+the last two years again and keeps every bar value it replaces as a revision. The long history run is Phase 8, after
+PR 21. `backfill wrds/prices --dry-run` prints each query it would ask (why, expected rows), the query count and the
+expected rows, with no login. Every query names its columns (no `SELECT *`).
 
 **Reading it.** `rcdata.read.security_ids(tickers)`, `rcdata.read.bars(security_ids, start, end, basis)` (`nominal`,
 `split`: today's share basis, `total_return`: the cash dividends taken out too; each row says its basis and factors),
@@ -1424,7 +1569,7 @@ never writes it. Nothing here writes `raw.duckdb`: the old 13F, short and inside
 | `ibkr/shortable` | daily | IBKR's public short-stock file (`usa.txt`, FTP, no account): borrow fee, rebate, shares available | `ibkr_shortable` |
 | `sec/ftd` | daily | The SEC's fails-to-deliver halves (`cnsfails<YYYYMM><a/b>.zip`) | `sec_ftd` |
 | `sec/13f` | daily | The SEC's Form 13F data sets (the first fill), then 13F-HR and 13F-HR/A through the EDGAR daily index | `sec13f_filings` (holdings stay in Parquet) |
-| `sec/form4` | daily | Form 4 and 4/A through the EDGAR daily index | `insider_transactions` |
+| `sec/form4` | daily | The SEC's Insider Transactions data sets (the first fill), then Form 4 and 4/A through the EDGAR daily index | `insider_transactions` |
 | `sec/13dg` | daily | Schedules 13D and 13G, old (`SC 13G`) and new (`SCHEDULE 13G`, XML since 2024-12-18) names | `beneficial_ownership` |
 | `ownership/serve` | daily | none: derives the 13F totals from the 13F tables and the spine | the four 13F tables below |
 
@@ -1441,7 +1586,7 @@ it had filled; the days the walk finished stay the walk's. A backfill shorter th
 days) reads the forms only and asks nothing of the sets. On
 real data (28 Oct 2026) a set took about 30 seconds: 01jun2026-31aug2026 holds 9,900 13F-HR and 13F-HR/A with 3.8
 million holdings. Filings from 2025-01-01 make Q4 2024 the first quarter served, so Q1 2025 has its flows. SEC
-requests share `core/sec_throttle.py`'s bucket (8 a second) with every other SEC caller; when it cannot be used each
+requests share `core/sec_throttle.py`'s bucket (9 a second) with every other SEC caller; when it cannot be used each
 of the SEC processes (`sec_throttle.SEC_PROCESSES`, six) spaces itself at its share, so together they stay at 10.
 
 **The 13F totals** (`ownership/serve`; the rules in `rcdata/build/ownership/serve.py`): per filer and report period
@@ -1502,12 +1647,12 @@ layer is not there yet.
 | `sec/companyfacts` | daily | `data.sec.gov/api/xbrl/companyfacts/CIK*.json`, re-read on the day the SEC daily index shows a statement filing (10-K, 10-Q, 20-F, 40-F and their amendments) whose accession the stored facts do not hold; a new Tier A name up to 500 a run | `stg_sec_facts`, `stg_sec_company` |
 | `sec/filings` | daily | `data.sec.gov/submissions/CIK*.json` when the daily index shows a new filing; the primary document of the newest 10-K (else 20-F) and DEF 14A, fetched once each | `stg_sec_filings`, `stg_sec_documents`, `stg_sec_segments`, `stg_sec_customers` |
 | `alphavantage/earnings_calendar` | daily | Alpha Vantage `EARNINGS_CALENDAR`, three months ahead, one request a run (`ALPHAVANTAGE_API_KEY`) | `stg_av_calendar` |
+| `uw/earnings` | weekly | UW `/stock/<ticker>/earnings`, one request per company: the quarterly rows' reported EPS, UW's consensus of that quarter and its surprise, as UW serves them | `stg_uw_earnings` |
 | `uw/financials` | daily | UW `/stock/<ticker>/financials` for a company that reported in the last 14 days and has not filed; off unless `RC_UW_PRELIMINARY=1` | `stg_uw_financials` |
 | `yfinance/estimates` | weekly | Yahoo's `earningsTrend` per company, its shortest ticker, when its newest answer is 7 days old; 5 failures in a row stop the run | `stg_yf_estimates` |
 | `sec/fsds` | monthly | The SEC's quarterly Financial Statement Data Sets zip, the newest quarter published | `stg_sec_fsds` |
 | `wrds/fundq` | monthly, attended | `comp.fundq`, the Tier A gvkeys, ten years | `stg_wrds_fundq`, `stg_wrds_fundq_revision` |
 | `wrds/funda` | monthly, attended | `comp.funda`, the Tier A gvkeys, ten years | `stg_wrds_funda`, `stg_wrds_funda_revision` |
-| `wrds/firm_ratio` | monthly, attended | `firm_ratio` from the first of `wrdsapps_finratio`, `wrdsapps` that WRDS's catalog shows, three years of publication dates | `stg_wrds_firm_ratio` |
 | `wrds/segments` | monthly, attended | `comp_segments_hist_daily.wrds_segmerged` and `seg_customer`, five years, the newest source date per key where the table has one | `stg_wrds_segments`, `stg_wrds_customers` |
 | `fundamentals/tables` | daily | none: builds the served tables, the views, the peer groups and the build issues from the staging tables | the tables below |
 
@@ -1535,19 +1680,23 @@ no accession, only for a period ending more than 30 days after the company's new
 in the next build. Quarterly rows only, USD only, no total debt and no EPS.
 
 **WRDS is a check, not a served value.** Attended and monthly on the spine's one WRDS worker (one login, at most one
-Duo push per builder process): `python -m RevenueChaser.rcdata.build backfill wrds/fundq wrds/funda wrds/firm_ratio
+Duo push per builder process): `python -m RevenueChaser.rcdata.build backfill wrds/fundq wrds/funda
 wrds/segments` in a foreground terminal on the server. Each monthly `fundq` / `funda` snapshot is compared with the
 one before: every value that changed for a period both hold is a `fundamental_revision` row (a restatement, or a
 correction at Compustat; a new period is not one). The check notes count revenue, net income and diluted EPS that
 agree with the SEC's facts (Compustat's millions times a million, within 0.5%, EPS within a cent, period ends within
-7 days), and WRDS's `debt_at` against the SEC's total debt over total assets (within 0.02). The note of each
+7 days). The note of each
 WRDS dataset's newest run is its card's WRDS difference slot on Settings (`docs/data_health.md`). Compustat segments
 are served beside the annual report's inline XBRL ones, each row with its `source`; a Compustat customer's share is
 its sales over the SEC's annual revenue of that year, NULL when there is none or the ratio is above 1. The first
-real run (2026-10-29, PR 249) found no `wrds_finratio` library and no `srcdate` in `seg_customer`, so `wrds/firm_ratio`
-and `wrds/segments` read WRDS's own catalog (`information_schema.columns`, one more query) before their tables: a
+real run (2026-10-29, PR 249) found no `srcdate` in `seg_customer`, so `wrds/segments` reads WRDS's own catalog
+(`information_schema.columns`, one more query) before its tables: a
 column the code can do without that WRDS lacks is not asked and the note says so, and a table in none of its
 libraries, or without a column it needs, fails the run naming what WRDS has.
+
+`wrds/firm_ratio` (WRDS's Financial Ratios Suite, `debt_at` against the SEC's total debt over total assets) was
+dropped on 5 Nov 2026, avo's decision: it served no table, only that agreement note, and the same real run found no
+`wrds_finratio` library for it. The SEC's own as-filed values (`sec/fsds`) are the check that stands.
 
 **The FSDS check** (`sec/fsds`). The SEC's quarterly data sets hold every XBRL value filed in the quarter. The
 Tier A companies' own values (no co-registrant, no dimension) of revenue, net income, total assets and diluted EPS
@@ -1566,6 +1715,7 @@ hourly pass after a deploy calls no source before the attended backfill.
 | `fundamental_fact` | one per company, field, period type and period end: value, unit, accession, filed, form, `derived`, `preliminary`, source |
 | `filing_item` | one per filing and 8-K item (`kind` `item`), and one per document text (`kind` `document`: `business` or `proxy`, with `quality`; a text that reaches the 200,000-character cap is `capped`, never `ok`) |
 | `earnings_event` | one per report: a coming one from the calendar (`confirmed` false) or one that happened (an 8-K with item 2.02, `confirmed` true, its accession kept) |
+| `earnings_reported` | one per company and reported quarter: the EPS the company itself reported as UW serves it, with UW's consensus and surprise. **Not** a `fundamental_fact` row -- it has no filing behind it, and its basis is usually the company's adjusted (non-GAAP) figure, so `source` is on every row (avo, 5 Nov 2026) |
 | `fundamental_revision` | one per Compustat value that changed between two monthly snapshots |
 | `segment_revenue` | revenue by business segment, product or country (`axis`), from the annual report's inline XBRL (its newest year) and from Compustat |
 | `customer_share` | a major customer's share of revenue (or of receivables, `benchmark`), from `ConcentrationRiskPercentage1` and from Compustat |
@@ -1771,7 +1921,7 @@ Two separate things, deliberately not conflated:
   The `history_*` weekly copies of earlier runs are no longer written (#342: history grows ~6.55 GB/yr) and this prune
   does not touch them: deleting them is the owner's own step. Log line: `weekly backup OK: <path>`, printed only in
   the run that writes a week's copy.
-- **SPX Gamma tree (#276)** — `module_spx_gamma/data/` (or `SPX_GAMMA_DATA_ROOT`) is mirrored into
+- **SPX Gamma tree (#276)** — the board's data root (`<store>/spx_gamma/`, or `SPX_GAMMA_DATA_ROOT`) is mirrored into
   `spx_gamma_mirror/` in the same backup folder, incrementally: a `stat` walk decides what changed (same size and
   an mtime within 2 s means unchanged), each copy goes through `spx_gamma_mirror/.tmp/` and is verified by size and
   SHA-256 before it replaces the mirror file, a file modified in the last 10 minutes (still being written) waits for
@@ -1850,7 +2000,7 @@ Two separate things, deliberately not conflated:
   while a RevenueChaser process uses the store, verifies the snapshot, keeps the
   current file as `<name>.duckdb.pre-restore`. `edgar_docs/` is restored by
   unzipping the chosen archive over the folder; the SPX tree by copying
-  `spx_gamma_mirror/` back over `module_spx_gamma/data` (stop the dashboard first; an earlier version of
+  `spx_gamma_mirror/` back over the board's data root (stop the dashboard first; an earlier version of
   `brier.json` or the GEX history comes from `spx_gamma_versions/`). A weekly copy is restored with
   `... restore_store --from <backup dir>\weekly --latest raw`. From the off-machine folder use the same
   commands with `--from <RAW_STORE_BACKUP_MIRROR folder>\RevenueChaser-backup` (its newest `raw_*` is at most a week

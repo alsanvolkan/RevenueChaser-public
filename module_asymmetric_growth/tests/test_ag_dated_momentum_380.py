@@ -98,8 +98,6 @@ def edgar(ticker: str, annual=None, is_us: bool = True) -> dict:
 def universe(monkeypatch, rows) -> None:
     """A scan over exactly ``rows`` (no network): the universe, 13F totals and the spine are stubbed."""
     monkeypatch.setattr(engine, "fetch_universe_stats", lambda *a, **k: (rows, {}))
-    import RevenueChaser.module_sec_13f.engine as s13
-    monkeypatch.setattr(s13, "load_totals", lambda: {})
     monkeypatch.setattr(engine._spine, "spine_gics", lambda *a, **k: {})
     monkeypatch.setattr(engine._spine, "excluded_tickers", lambda: set())
 

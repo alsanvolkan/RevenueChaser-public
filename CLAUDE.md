@@ -33,6 +33,21 @@ Code, comments, commit messages, issues and docs are written in **English**.
 - Every change maps to a **GitHub issue**, attached as a sub-issue of its area epic. The issues and the board
   live in the private repository — see **Where work happens** for how to reference one.
 - Branch naming: `area/<key>/<slice>`, where `<key>` comes from the issue's `area:` label.
+- **Every issue carries a `board:*` label saying which dashboard it belongs to** (owner's decision,
+  5 Nov 2026: "herseyi github issuelarinda takip edelim"). One label per board it affects —
+  `board:sec-13f`, `board:settings`, `board:value-chain`, and so on, one per **data board** tab
+  (every `app/dashboard.py` `TABS` tab except `logs` and `runs`) — plus two for the work that fits
+  no single board:
+  `board:all` (affects every data board) and `board:repo-wide` (store, serving, providers, test
+  harness). An `area:*` label says which part of the code; a `board:*` label says which screen.
+  So "what is open on the Relatedness board" is
+  `is:issue is:open label:board:relatedness` on GitHub, and nothing in this repository has to be
+  kept in step for that question to stay answerable.
+- There used to be a second copy of this mapping: a checked-in `docs/open_issues.json` that the
+  dashboard shell read and rendered as an "Open issues" group above every board. It was removed on
+  5 Nov 2026, on the owner's words ("O json kalksin ... suan openissue bilgileri dashboardlari
+  kirletiyor"): the file had to be re-synced by hand to stay true, and the group crowded the boards.
+  Do not reintroduce a registry file — the labels are the mapping now.
 
 ## Tests
 
@@ -117,7 +132,7 @@ When the owner wants problems or improvements collected (standing rule, all repo
 
 1. **Collect.** Open one feedback thread. The owner writes every item there; acknowledge each in one short line and fix nothing until the owner says the list is done.
 2. **Reproduce.** Reproduce each item from the code or live data before promising a fix. Cite `file:line` or a measurement.
-3. **Review.** One Fable 5.1 review of the list against the code, using the `avo-architecture-review` and `design-suite` skills. It reports findings, order and risks; it implements nothing.
+3. **Review.** Only when the owner says "Fable ile incele", never automatically: one Fable 5.1 review of the list against the code, using the `avo-architecture-review` and `design-suite` skills. It reports findings, order and risks; it implements nothing. Without that phrase, skip this step.
 4. **Plan.** Write a plan file in `/mnt/project-files/<app>/` with ordered steps, risks, and the decisions only the owner can make. Ask only those.
 5. **Build.** One branch, one pull request, one commit per step. Tests seen red first. A design mock first for anything new.
 6. **Phone friendly.** Every UI works on a phone and in light and dark: single column, full-width cards, 44 px touch targets, charts scale to their container, tables stack instead of scrolling sideways.

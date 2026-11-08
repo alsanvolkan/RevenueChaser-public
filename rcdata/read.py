@@ -30,16 +30,20 @@ STATUS_UNKNOWN = "status_unknown"
 DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
                     "spx_greek_expiry_strike": "uw/greek_expiry_strike",
                     "security": "spine/security", "index_membership": "funds/index_holdings",
-                    "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings", "etf": "spine/security"}
+                    "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings", "etf": "spine/security",
+                    "my_universe": "spine/security", "my_universe_changes": "spine/security"}
 KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market",
                  "spx_greek_expiry_strike": "market", "security": "spine",
-                 "index_membership": "spine", "fund": "spine", "etf_holdings": "spine", "etf": "spine"}
+                 "index_membership": "spine", "fund": "spine", "etf_holdings": "spine", "etf": "spine",
+                 "my_universe": "spine", "my_universe_changes": "spine"}
 # The ownership store (PR 16).
 DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_periods": "ownership/serve",
+                         "sec13f_cusip_map": "ownership/serve",
                          "finra_short_interest": "finra/short_interest", "ibkr_shortable": "ibkr/shortable",
                          "regsho_threshold": "regsho/threshold", "sec_ftd": "sec/ftd",
                          "insider_transactions": "sec/form4", "beneficial_ownership": "sec/13dg"})
-KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_periods", "finra_short_interest",
+KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_periods", "sec13f_cusip_map",
+                                               "finra_short_interest",
                                                "ibkr_shortable", "regsho_threshold", "sec_ftd",
                                                "insider_transactions", "beneficial_ownership")})
 
@@ -172,6 +176,62 @@ def universe(tiers: Iterable[str] = ("A",)) -> list[dict]:
     return _rows("security", sql, tiers)
 
 
+def my_universe(kinds: Iterable[str] = ()) -> list[dict]:
+    """The names we keep (``my_universe``, ``build/spine/my_universe.py``), by ticker; ``kinds`` narrows to
+    ``stock`` or ``etf``.
+
+    One row per ticker: what it is to us (``kind``, ``security_type``), the rule that let it in (``rule``,
+    ``reason``), the ETF numbers behind that rule (``aum``, ``adv_usd_20d``) and the day it entered
+    (``entered_on``). A spine file built before the table existed reads as no rows, not as an error, so a board
+    that asks early shows "nothing yet" instead of a 500.
+    """
+    wanted = [str(k).strip().lower() for k in kinds if str(k or "").strip()]
+    sql = "SELECT * FROM my_universe"
+    if wanted:
+        sql += f" WHERE kind IN ({', '.join('?' * len(wanted))})"
+    return _rows("my_universe", sql + " ORDER BY ticker", wanted, missing_table_ok=True)
+
+
+def my_universe_tickers(kinds: Iterable[str] = ()) -> set[str] | None:
+    """The tickers of avo's own list, or ``None`` when the spine holds no ``my_universe`` table at all.
+
+    ``my_universe`` answers [] both for a spine built before the table existed and for a list avo has emptied, and
+    those mean opposite things: the first says "no list, apply your own rule", the second "keep nothing". Every
+    caller that has a rule of its own to fall back on asks through here instead -- the boards' universe
+    (``core/universe.py``), the companies the fundamentals build asks about
+    (``rcdata/build/fundamentals/common.universe``) and the securities the prices store keeps
+    (``rcdata/build/prices/universe.stored_tickers``) -- so one list decides all three.
+
+    One open, not ``my_universe``'s read after a check of its own: a board render opens the spine once per distinct
+    answer (``core/spine_reads``), and this is one of them.
+    """
+    wanted = [str(k).strip().lower() for k in kinds if str(k or "").strip()]
+    ops.read_log.bump("my_universe")
+    try:
+        con = serving.open_read("spine")
+    except serving.ServingFileMissing:
+        return None
+    try:
+        if not con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = 'my_universe'").fetchone()[0]:
+            return None
+        sql = "SELECT ticker FROM my_universe WHERE ticker IS NOT NULL"
+        if wanted:
+            sql += f" AND kind IN ({', '.join('?' * len(wanted))})"
+        return {r[0] for r in con.execute(sql, wanted).fetchall()}
+    finally:
+        con.close()
+
+
+def my_universe_changes(limit: int = 200) -> list[dict]:
+    """The newest ``my_universe_changes`` rows (who entered or left, when and why), the most recent first.
+
+    The table is append-only across builds, so this is the whole history the live file holds; ``limit`` is the
+    board's page, not a window of the data.
+    """
+    return _rows("my_universe_changes", "SELECT * FROM my_universe_changes ORDER BY as_of DESC, change, ticker "
+                                        f"LIMIT {int(limit)}", [], missing_table_ok=True)
+
+
 def identity(tickers: Iterable[str] | None = None) -> list[dict]:
     """The ``security`` rows of ``tickers`` (upper-cased; any tier), or of every ticker when None, by ticker."""
     if tickers is None:
@@ -209,7 +269,9 @@ def membership(index: str | None = None, on=None, source: str = "funds/index_hol
 # ``security_ids`` maps tickers to it). Bars are stored nominal; ``bars`` applies ``adj_factor`` on read. ``status``
 # is the newest check of the daily source each table follows.
 
-DATASET_OF_TABLE.update({"price_bar_daily": "alpaca/bars", "security_symbol": "alpaca/bars",
+# ``price_bar_daily`` follows Compustat's dataset since Alpaca is only the tester (avo, 3 Nov 2026 ~11:20 Amsterdam,
+# decision 2 of docs/compustat_primary_switch.md: "2 evet").
+DATASET_OF_TABLE.update({"price_bar_daily": "wrds/prices", "security_symbol": "alpaca/bars",
                          "market_cap_daily": "alpaca/bars", "corporate_action": "alpaca/corporate_actions",
                          "shares_class": "sec/cover_shares",
                          # The two second-source reports a cross-check reads (Karar 32-B): the monthly WRDS
@@ -535,9 +597,19 @@ def _where(tickers: list[str] | None, day_col: str, start, end, extra: str = "")
 
 
 def _completed(rows: list[dict]) -> list[dict]:
+    """Mark each period ``complete`` when its filing deadline has passed in New York.
+
+    A period with **no** deadline counts as complete, and says so once: the flag exists so a reader can hold back
+    a quarter that is still arriving, and reading "unknown" as "arriving" would hold back a whole board over
+    missing metadata instead (#514 review). Failing open keeps the old behaviour for such a row."""
     today = calendar.today_ny()
+    unknown = 0
     for r in rows:
-        r["complete"] = r["filing_deadline"] is not None and r["filing_deadline"] < today
+        deadline = r.get("filing_deadline")
+        r["complete"] = deadline is None or deadline < today
+        unknown += deadline is None
+    if unknown:
+        logger.warning("13F: %d row(s) with no filing deadline, counted as a settled period", unknown)
     return rows
 
 
@@ -560,10 +632,47 @@ def holders_13f(tickers: Iterable[str] | None = None, periods: Iterable | None =
                             f"SELECT * FROM sec13f_ticker_period{sql} ORDER BY ticker, period", params))
 
 
+def tickers_13f(period=None) -> list[str]:
+    """The tickers the 13F store holds for one report period, sorted; by default the newest **settled** one.
+
+    That default is the live universe. Every ticker of every period would reach back to 2013 and carry names
+    delisted years ago, and a caller that rotates through the list asking a provider never-stored-first would let
+    that dead tail own the rotation for good (#515 review). A caller that wants the rows and not the names uses
+    ``holders_13f``; this exists so one does not pull a quarter of a million rows to build a list of eight
+    thousand."""
+    if period is None:
+        # The newest settled period, from this table's own deadline column rather than from ``sec13f_periods``:
+        # one table, one query, and the same fail-open rule as ``_completed`` (no deadline counts as settled).
+        sql = ("SELECT DISTINCT ticker FROM sec13f_ticker_period WHERE period = "
+               "(SELECT max(period) FROM sec13f_ticker_period "
+               " WHERE filing_deadline IS NULL OR filing_deadline < ?) ORDER BY ticker")
+        params = [calendar.today_ny()]
+    else:
+        sql = "SELECT DISTINCT ticker FROM sec13f_ticker_period WHERE period = ? ORDER BY ticker"
+        params = [_day(period)]
+    return [r["ticker"] for r in _rows("sec13f_ticker_period", sql, params) if r.get("ticker")]
+
+
 def periods_13f() -> list[dict]:
     """``sec13f_periods``: per report period its filers, value, the share of value named a ticker (``coverage``) and
     ``complete``, by period."""
     return _completed(_rows("sec13f_periods", "SELECT * FROM sec13f_periods ORDER BY period", []))
+
+
+def cusip_map_13f(periods: Iterable | None = None) -> list[dict]:
+    """``sec13f_cusip_map`` rows a ticker was named for (``period``, ``cusip``, ``ticker``, ``map_source``), of
+    ``periods`` (every period when None), by period and CUSIP. A CUSIP the spine could not name is left out: it has
+    no ticker to belong to."""
+    sql, params = "", []
+    if periods is not None:
+        days = sorted({_day(p) for p in periods})
+        if not days:
+            return []
+        sql = f" AND period IN ({', '.join('?' * len(days))})"
+        params = days
+    return _rows("sec13f_cusip_map",
+                 f"SELECT period, cusip, ticker, map_source FROM sec13f_cusip_map WHERE ticker IS NOT NULL{sql} "
+                 "ORDER BY period, cusip", params)
 
 
 def finra_short_interest(tickers: Iterable[str], start=None, end=None) -> list[dict]:
@@ -642,10 +751,11 @@ def beneficial_ownership(tickers: Iterable[str], start=None, end=None) -> list[d
 # A table several datasets write maps to None: each row's ``status`` is the newest check of its ``source``.
 DATASET_OF_TABLE.update({"fundamental_company": "fundamentals/tables", "fundamental_fact": None, "earnings_event": None, "estimate_latest": "yfinance/estimates",
                          "filing_item": "sec/filings", "segment_revenue": None, "customer_share": None,
-                         "peer_group": "fundamentals/tables", "fundamental_revision": None})
+                         "peer_group": "fundamentals/tables", "fundamental_revision": None,
+                         "earnings_reported": "uw/earnings"})
 KIND_OF_TABLE.update({t: "fundamentals" for t in ("fundamental_company", "fundamental_fact", "earnings_event", "estimate_latest",
                                                   "filing_item", "segment_revenue", "customer_share", "peer_group",
-                                                  "fundamental_revision")})
+                                                  "fundamental_revision", "earnings_reported")})
 
 
 def _cik(cik) -> str:
@@ -707,6 +817,21 @@ def statements_many(ciks: Iterable, annual_years: int, quarters: int) -> list[di
           AND ((f.period_type = 'annual' AND e.k <= ?) OR (f.period_type = 'quarterly' AND e.k <= ?))
         ORDER BY f.cik, f.period_type, f.period_end, f.field"""
     return _rows("fundamental_fact", sql, wanted + wanted + [int(annual_years), int(quarters)])
+
+
+def earnings_reported(cik=None) -> list[dict]:
+    """``earnings_reported`` rows (of ``cik``, or every company) by company and quarter: the EPS a company reported
+    as UW serves it, with UW's own consensus and surprise of that quarter.
+
+    Not the SEC's GAAP EPS, which is ``fundamental_fact``'s ``eps_diluted``. A reported EPS is usually the
+    company's adjusted figure, so the two are comparable only when the difference is stated; ``source`` is on
+    every row for that reason.
+    """
+    sql, params = "SELECT * FROM earnings_reported WHERE true", []
+    if cik is not None:
+        sql += " AND cik = ?"
+        params.append(str(cik))
+    return _rows("earnings_reported", sql + " ORDER BY cik, period_end", params, missing_table_ok=True)
 
 
 def earnings_events(cik=None, start=None, end=None) -> list[dict]:

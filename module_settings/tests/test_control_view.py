@@ -48,7 +48,8 @@ def control_nd() -> dict:
                      "datasets": {"alpaca/bars": {"raw": {"path": "/r/alpaca/bars", "files": 52, "bytes": 31_000_000,
                                                           "capped": False},
                                                   "parquet": {"path": "/p/alpaca/bars", "files": 52,
-                                                              "bytes": 9_000_000, "capped": False}}}}
+                                                              "bytes": 9_000_000, "capped": False}}},
+                     "walked_at": "2026-10-28T07:30:00+00:00"}
     nd["tables"] = {"price_bar_daily": {"rows": 18_412_904, "newest": "2026-10-28"}}
     nd["spend"]["providers"] = [{"provider": "alphavantage", "cap": 25, "today": 18, "week": 30},
                                 {"provider": "sec", "cap": None, "today": 20100, "week": 30},
@@ -84,16 +85,17 @@ def test_a_collect_error_is_carried_not_raised():
     assert _build({"error": "RuntimeError: x"})["error"] == "RuntimeError: x"
 
 
-def test_the_health_strip_has_its_twelve_tiles_counted_from_the_cards():
+def test_the_health_strip_has_its_fourteen_tiles_counted_from_the_cards():
     h = _build()["health"]
     keys = [t["key"] for t in h["tiles"]]
-    assert keys == ["fresh", "late", "stale", "never", "problems", "session", "queue", "builder", "cap", "universe",
-                    "gateway", "backup"]
+    assert keys == ["fresh", "late", "stale", "never", "problems", "session", "queue", "timer", "builder", "cap",
+                    "universe", "longest", "backup"]
     tile = {t["key"]: t for t in h["tiles"]}
     assert (tile["fresh"]["n"], tile["late"]["n"], tile["stale"]["n"], tile["never"]["n"]) == ("1", "1", "1", "2")
     assert tile["problems"]["n"] == "10"
-    assert tile["session"]["n"] == "28 Oct" and "7,422 names" in tile["session"]["label"], "every bar in the file"
-    assert tile["session"]["cls"] == "warn", "alpaca/bars is late, so the newest session is not complete"
+    assert tile["session"]["n"] == "28 Oct"
+    assert f"{tile['universe']['n']} of 7,670 names" in tile["session"]["label"], "the universe's own filled count"
+    assert tile["session"]["cls"] == "warn", "wrds/prices serves the bars and never ran, so the session is not complete"
     assert tile["cap"]["n"] == "72%" and "Alpha Vantage" in tile["cap"]["label"] and tile["cap"]["cls"] == "bad"
     assert tile["builder"]["n"] == "24 min" and tile["builder"]["cls"] == "ok"
     assert tile["queue"]["n"] == "1"
@@ -139,7 +141,7 @@ def test_the_files_come_in_build_order_with_the_columns_of_the_code():
     bars = next(t for t in prices["tables"] if t["name"] == "price_bar_daily")
     assert bars["columns"] == [(c, str(t)) for c, t in scaffold.SCHEMA_OF_KIND["prices"]["price_bar_daily"]]
     assert bars["rows"] == 18_412_904
-    assert [d["dataset"] for d in prices["datasets"]] == ["alpaca/bars", "wrds/prices"]
+    assert [d["dataset"] for d in prices["datasets"]] == ["wrds/prices", "alpaca/bars"]
     assert prices["bytes"] == 1_200_000_000
 
 
@@ -240,3 +242,38 @@ def test_ncens_monthly_cadence_is_the_datasets_own_not_a_second_copy_on_its_card
     from RevenueChaser.module_settings import newdata as nd_mod
     assert screen.DATASETS["sec/ncen"].cadence == "daily"           # the card's default, not read for this dataset
     assert nd_mod._cadence("sec/ncen", None) == "monthly"
+
+
+# ── the journey table's three folder states (#434) ──
+
+def test_the_folder_line_tells_not_walked_from_no_folder_from_counted():
+    """#434: the counts come from the storage-picture job, so "I have not looked" is a third state. Before it, a
+    board with no picture rendered every dataset as "no folder yet" -- the same words as a dataset whose folder
+    really is missing."""
+    from RevenueChaser.module_settings import control_render
+
+    walked = control_render.render_data(_build())
+    assert "52 files" in walked and "not walked yet" not in walked
+
+    nd = control_nd()
+    nd["storage"] = {**nd["storage"], "datasets": {}, "walked_at": None}
+    never = control_render.render_data(_build(nd))
+    assert "not walked yet" in never and "no folder yet" not in never, "no picture is not an empty folder"
+
+    nd = control_nd()
+    nd["storage"] = {**nd["storage"],
+                     "datasets": {"alpaca/bars": {"raw": {"files": None, "bytes": None, "capped": False},
+                                                  "parquet": {"files": None, "bytes": None, "capped": False}}}}
+    missing = control_render.render_data(_build(nd))
+    assert "no folder yet" in missing, "a dataset whose folder really is missing still says so"
+
+
+def test_the_roots_line_says_when_the_picture_was_taken_and_offers_the_control():
+    from RevenueChaser.module_settings import control_render
+
+    assert control_render._walked(None) == "not walked yet"
+    fresh = control_render._walked("2026-11-05T12:00:00+00:00", datetime(2026, 11, 5, 13, 0, tzinfo=timezone.utc))
+    assert fresh.startswith("walked ") and "h ago" not in fresh, fresh
+    old = control_render._walked("2026-11-01T12:00:00+00:00", datetime(2026, 11, 5, 13, 0, tzinfo=timezone.utc))
+    assert "h ago" in old, old
+    assert control_render.ROUTES["picture"] == "/run/storage-picture"

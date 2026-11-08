@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -114,12 +115,16 @@ STATUS_ORDER = api_screen.STATUS_ORDER
 # Coverage targets: alarm limits as proposed, to be re-checked after two weeks of real data (decision 1, 27 Oct).
 # spine/security's coverage is the share of Tier A with a CUSIP (the plan's target, >= 98%).
 # The newest-date column of each serving table.
+#: The spine's two universe tables, by the names the build gives them.
+MY_UNIVERSE = "my_universe"
+MY_UNIVERSE_CHANGES = "my_universe_changes"
+
 # The identity funnel (PR 5, D9): the indexes it counts, and the dataset whose build issues it lists.
 SPINE_INDEXES = ("sp500", "sp400", "sp600", "ndx")
 SPINE_ISSUES = "spine/security"
 # The WRDS difference slot (decision 3): these check datasets' cards show their newest monthly difference report,
 # the note of their newest run that read WRDS (PR 12, decided 27 Oct); every other card says no WRDS run yet.
-WRDS_DIFFERENCE = ("wrds/fundq", "wrds/funda", "wrds/firm_ratio", "wrds/segments")
+WRDS_DIFFERENCE = ("wrds/fundq", "wrds/funda", "wrds/segments")
 # S8: a report that has not run shows a dash and says so, rather than a sentence that reads like a result.
 NO_WRDS = {"text": "no WRDS run yet", "produced": False}
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
@@ -407,7 +412,6 @@ _SAMPLE_CACHE: dict[str, tuple[str, dict | None]] = {}
 
 def clear_sample_cache() -> None:
     _SAMPLE_CACHE.clear()
-    _STORAGE_CACHE.clear()
 
 
 def _sample_hour(now: datetime) -> str:
@@ -532,6 +536,9 @@ def _serving_facts(now: datetime | None = None) -> tuple[dict[str, dict], dict[s
             if kind == "spine" and {"security", "index_membership"} <= names:
                 funnel = _spine_counts(con)
                 funnel["universe_sets"] = _universe_sets(con)
+            if kind == "spine" and {MY_UNIVERSE, MY_UNIVERSE_CHANGES} <= names:
+                funnel = dict(funnel or {})
+                funnel["my_universe"] = _my_universe_counts(con)
             if kind == "prices" and "price_bar_daily" in names and now is not None:
                 tables["price_bar_daily"]["sessions"] = _cached_sample(
                     "price_bar_daily#sessions", now, lambda name, c=con: _session_counts(c))
@@ -568,6 +575,52 @@ def _spine_counts(con) -> dict:
     return out
 
 
+def _my_universe_counts(con) -> dict:
+    """The names we keep, from the spine's ``my_universe`` and ``my_universe_changes`` (one handle, the caller's).
+
+    ``kinds`` is how many stocks and ETFs the list holds, ``rules`` how many each rule let in, and ``entered`` /
+    ``left`` what happened on the newest day **that changed anything** -- the changes table is append-only and a
+    build that moved nothing writes no row, so that day may be older than the last build. The card says which day
+    it is rather than calling it the last build (review finding 5).
+    """
+    kinds = {str(k): int(n) for k, n in con.execute(
+        f"SELECT kind, count(*) FROM {MY_UNIVERSE} GROUP BY kind").fetchall()}
+    rules = {str(r): int(n) for r, n in con.execute(
+        f"SELECT rule, count(*) FROM {MY_UNIVERSE} GROUP BY rule ORDER BY count(*) DESC, rule").fetchall()}
+    total, as_of = con.execute(f"SELECT count(*), max(source_as_of) FROM {MY_UNIVERSE}").fetchone()
+    last = con.execute(f"SELECT max(as_of) FROM {MY_UNIVERSE_CHANGES}").fetchone()[0]
+    moved = {str(c): int(n) for c, n in con.execute(
+        f"SELECT change, count(*) FROM {MY_UNIVERSE_CHANGES} WHERE as_of = ? GROUP BY change",
+        [last]).fetchall()} if last is not None else {}
+    return {"total": int(total or 0), "kinds": kinds, "rules": rules,
+            "as_of": as_of.isoformat() if as_of else None,
+            "last_change": last.isoformat() if last else None,
+            "entered": moved.get("entered", 0), "left": moved.get("left", 0)}
+
+
+def _my_universe_card(counts: dict | None) -> dict:
+    """The "our universe" card: the counts above, avo's rules as the two files hold them, and his manual lines.
+
+    The rules and the manual lines are read from the files in this checkout, not from the store: they are what the
+    **next** build will apply, which is what the reader of this card wants to know.
+    """
+    from RevenueChaser.rcdata.build.spine import my_universe as mine
+    rules, (adds, removes) = mine.load_rules(), mine.load_manual()
+    return {**{"total": None, "kinds": {}, "rules": {}, "as_of": None, "last_change": None,
+               "entered": None, "left": None},
+            **(counts or {}),
+            "built": counts is not None,
+            "rule_text": {
+                "stocks": f"tier {' or '.join(rules.stock_tiers)}; "
+                          f"{', '.join(rules.stock_types)}",
+                "etfs": f"AUM at or over {rules.etf_aum_floor / 1e6:,.0f}M USD, or no AUM and a 20-session average "
+                        f"daily dollar volume at or over {rules.etf_adv_floor / 1e6:,.0f}M USD"
+                        + ("; no ETN" if rules.exclude_etn else "") + ("; no CEF" if rules.exclude_cef else ""),
+                "delisted": "a delisted name never enters"},
+            "manual": {"add": [{"ticker": r["ticker"], "reason": r["reason"]} for r in adds],
+                       "remove": [{"ticker": r["ticker"], "reason": r["reason"]} for r in removes]}}
+
+
 def _universe_sets(con) -> dict:
     """The control board's universe bar, from the spine's ``security`` (design v28): how many names each set holds
     (A operating, the funds of B, the rest of B, C, D) and the tickers of B's two sets, which a press asks for by
@@ -592,6 +645,13 @@ def _session_counts(con) -> dict[str, dict[str, int]]:
     The Backfill calendar and the universe tile sum the sets the universe holds, so a narrowed universe is compared
     with its own names only (review M1). The live spine is attached read-only to the caller's handle for one
     GROUP BY and detached; without a spine every bar counts as ``-``. Read once an hour with the samples.
+
+    The count is a plain ``count(*)``, not ``count(DISTINCT security_id)``: ``(security_id, session_date)`` is this
+    table's key (``build.prices.serving.KEYS``, held by its PRIMARY KEY and, when ``RC_PRICES_NO_PRIMARY_KEY=1``
+    drops that, by the ``duplicate_key`` build issue), so inside one ``(session_date, set)`` group a name appears
+    once and the DISTINCT could never change a number. It cost plenty, though: measured on the live 2.9 GB store,
+    5 Nov 2026, same 29 680 groups and same total of 39 186 044 either way -- 10.6 s and 8.0 s with the DISTINCT,
+    2.0 s and 2.2 s without it.
     """
     from RevenueChaser.rcdata.build import base
     from RevenueChaser.rcdata.build.prices import serving as prices_serving
@@ -604,12 +664,12 @@ def _session_counts(con) -> dict[str, dict[str, int]]:
                 "WITH sets AS (SELECT DISTINCT " + prices_serving.SPINE_ID + " AS security_id, "
                 f"CASE WHEN tier = 'B' AND security_type IN ({fund}) THEN 'E' WHEN tier = 'B' THEN 'R' ELSE tier END "
                 "AS s FROM rc_spine.security WHERE tier IN ('A', 'B', 'C', 'D')) "
-                "SELECT b.session_date, coalesce(sets.s, '-'), count(DISTINCT b.security_id) FROM price_bar_daily b "
+                "SELECT b.session_date, coalesce(sets.s, '-'), count(*) FROM price_bar_daily b "
                 "LEFT JOIN sets USING (security_id) GROUP BY 1, 2 ORDER BY 1, 2").fetchall()
         finally:
             con.execute("DETACH rc_spine")
     else:
-        rows = con.execute("SELECT session_date, '-', count(DISTINCT security_id) FROM price_bar_daily "
+        rows = con.execute("SELECT session_date, '-', count(*) FROM price_bar_daily "
                            "GROUP BY 1 ORDER BY 1").fetchall()
     out: dict[str, dict[str, int]] = {}
     for day, key, n in rows:
@@ -632,7 +692,10 @@ def _identity(counts: dict | None) -> dict:
     issues = {"issues_open": n_issues, "issue_kinds": kinds,
               "issues": [{"kind": i["kind"], "key": i["key"], "detail": i["detail"], "found_on": i["found_on"]}
                          for i in newest]}
-    if counts is None:
+    # ``counts.get("sec")``, not ``counts is None``: ``_serving_facts`` puts the universe counts in the same dict,
+    # so a spine file holding ``my_universe`` but not ``security`` would hand this a dict with no funnel in it and
+    # every ``c[...]`` below would be a KeyError, i.e. a 500 where the page used to say the spine is not built.
+    if not counts or counts.get("sec") is None:
         return {"steps": [], "drops": [], "indexes": {}, "as_of": None, "note": "the spine has not been built yet",
                 **issues}
     c = counts
@@ -652,31 +715,48 @@ def _identity(counts: dict | None) -> dict:
 
 # ── Where the data sits (the control board's journey table) ───────────────────────────────────────────────────
 
-#: A folder walk stops after this many entries and says so: the page renders in the dashboard, and the raw tree of
-#: a dataset with one file per company per day runs to tens of thousands of files.
-STORAGE_WALK_BUDGET = 50_000
-_STORAGE_CACHE: dict[str, tuple[str, dict]] = {}
+#: ``walk_storage`` may take this long in all, and a folder that runs out says so (``capped``, drawn as
+#: ``N+ files``). It is a ceiling on the storage-picture job, not on a page render: the walk left the render in
+#: #434, because the raw tree's entries are an HDD seek each and the first ``readdir`` of the 38 folders that exist
+#: was 26 s on homesrv on 5 Nov 2026, over rc-warmup's 600 s ceiling once it was 50 000 entries deep.
+#:
+#: One deadline for the whole walk, not a slice per folder. The slice came in with #433 because the budget was a
+#: render's 20 s and the first dataset walked (``uw/spot_expiry_strike``, one raw folder per session) could spend
+#: all of it and leave every later dataset reading a floor of nothing. Off the request thread the budget is not
+#: scarce -- 600 s against a measured 25 s walk -- so rationing it only guaranteed inaccuracy: at 86 slices of
+#: 7 s, three folders reported a floor that a shared deadline counts exactly. If a tree ever does grow past this,
+#: the later datasets read ``capped`` and the page says so, which is the #433 behaviour with 24x the room.
+STORAGE_WALK_SECONDS = 600.0
+
+#: Where the storage-picture job leaves what it walked. Regenerable, so it lives under the cache root with the
+#: boards' other artifacts; ``app.runners.run_storage_picture`` is the only writer and ``_storage`` the only reader.
+STORAGE_PICTURE = config.OUTPUT_DIR / "storage_picture" / "storage_picture_latest.json"
 
 
-def _folder(path: Path, budget: list[int]) -> dict:
+def _folder(path: Path, deadline: float) -> dict:
     """``{"path", "files", "bytes", "capped"}`` of one folder, walked without following links; files None when the
-    folder does not exist. ``budget`` is the entries the whole storage walk may still look at, shared by every
-    folder of one render (review S3: a cap per folder let the HDD walk reach millions of stats); ``capped`` means it
-    ran out in or before this folder and the counts are a floor."""
+    folder does not exist. ``deadline`` is the ``time.monotonic()`` the whole walk must be done by, shared by every
+    folder of one picture; ``capped`` means it ran out of time in or before this folder and the counts are a floor.
+
+    The clock is checked per entry, and again before each ``os.scandir`` of a subfolder: an entry of the raw tree is
+    an HDD seek, so a single folder is what ran past ten minutes on 5 Nov 2026, and one ``scandir`` of a large
+    folder is itself unbounded. The first ``scandir`` of this folder is not bounded by anything -- see
+    ``STORAGE_WALK_SECONDS``."""
     if not path.is_dir():
         return {"path": str(path), "files": None, "bytes": None, "capped": False}
     files = size = 0
     stack = [path]
     while stack:
         here = stack.pop()
+        if here is not path and time.monotonic() > deadline:
+            return {"path": str(path), "files": files, "bytes": size, "capped": True}
         try:
             entries = list(os.scandir(here))
         except OSError:
             continue
         for e in entries:
-            if budget[0] <= 0:
+            if time.monotonic() > deadline:
                 return {"path": str(path), "files": files, "bytes": size, "capped": True}
-            budget[0] -= 1
             try:
                 if e.is_dir(follow_symlinks=False):
                     stack.append(Path(e.path))
@@ -688,16 +768,44 @@ def _folder(path: Path, budget: list[int]) -> dict:
     return {"path": str(path), "files": files, "bytes": size, "capped": False}
 
 
-def _storage(now: datetime) -> dict:
-    """Where each dataset sits, for the journey table: the live serving file of each kind (its size), and each
-    dataset's HDD raw and Parquet folders (files and bytes). Read once an hour per root, like the samples: a walk of
-    the raw tree is a picture of the disk, not a live number."""
+def walk_storage() -> dict:
+    """``{"datasets": {name: {"raw", "parquet"}}, "walked_at": iso}``: every dataset's raw and Parquet folders on
+    the HDD, walked now. The storage-picture job's work, never a page render's (#434)."""
     from RevenueChaser.rcdata.build import base
     raw_root, parquet_root = base.raw_root(), base.parquet_root()
-    key = f"{_sample_hour(now)}|{raw_root}|{config.MARKET_DIR}"
-    hit = _STORAGE_CACHE.get("storage")
-    if hit is not None and hit[0] == key:
-        return hit[1]
+    deadline = time.monotonic() + STORAGE_WALK_SECONDS
+    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/")), deadline),
+                       "parquet": _folder(parquet_root.joinpath(*name.split("/")), deadline)}
+                for name in _datasets()}
+    return {"datasets": datasets, "walked_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
+def _picture() -> dict:
+    """What the storage-picture job last wrote, or an empty picture when it has not run here yet.
+
+    The write is atomic (``write_artifact``: a temp file in the same folder, then ``os.replace``), so a half-written
+    file is not reachable. The guard is for a hand-edited or truncated one: it reads as "not walked", the page says
+    so, and the next run of the job replaces it."""
+    try:
+        found = json.loads(STORAGE_PICTURE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"datasets": {}, "walked_at": None}
+    if not isinstance(found, dict) or not isinstance(found.get("datasets"), dict):
+        return {"datasets": {}, "walked_at": None}
+    # Only the job writes this file, so a wrong shape means a hand-edited one. The page indexes two levels down
+    # (``storage[dataset][root]["files"]``), so anything else here would be an AttributeError on a render.
+    datasets = {name: roots for name, roots in found["datasets"].items()
+                if isinstance(roots, dict) and all(isinstance(v, dict) for v in roots.values())}
+    if len(datasets) != len(found["datasets"]):
+        return {"datasets": {}, "walked_at": None}
+    return {"datasets": datasets, "walked_at": found.get("walked_at")}
+
+
+def _storage() -> dict:
+    """Where each dataset sits, for the journey table: the live serving file of each kind, stat'ed now because that
+    is four reads of the SSD and a live number, and the dataset folder counts as the storage-picture job last
+    walked them, with the ``walked_at`` the page shows. The walk itself is not a render's work (#434)."""
+    from RevenueChaser.rcdata.build import base
     files = {}
     for kind in serving.KINDS:
         path = serving.live_path(kind)
@@ -705,13 +813,10 @@ def _storage(now: datetime) -> dict:
             files[kind] = {"path": str(path), "bytes": path.stat().st_size}
         except OSError:
             files[kind] = {"path": str(path), "bytes": None}
-    budget = [STORAGE_WALK_BUDGET]
-    datasets = {name: {"raw": _folder(raw_root.joinpath(*name.split("/")), budget),
-                       "parquet": _folder(parquet_root.joinpath(*name.split("/")), budget)} for name in _datasets()}
-    out = {"roots": {"raw": str(raw_root), "parquet": str(parquet_root), "ssd": str(config.MARKET_DIR)},
-           "files": files, "datasets": datasets}
-    _STORAGE_CACHE["storage"] = (key, out)
-    return out
+    picture = _picture()
+    return {"roots": {"raw": str(base.raw_root()), "parquet": str(base.parquet_root()),
+                      "ssd": str(config.MARKET_DIR)},
+            "files": files, "datasets": picture["datasets"], "walked_at": picture["walked_at"]}
 
 
 # ── Page-level blocks ─────────────────────────────────────────────────────────────────────────────────────────
@@ -750,13 +855,18 @@ def _parse_utc(text) -> datetime | None:
 def _backups(now: datetime) -> dict:
     from RevenueChaser.rcdata import backup
     folder = (config.RAW_STORE_BACKUP_DIR or "").strip()
+    # Every folder a backup entry writes into (``backup.SUBDIRS``): since 5 Nov 2026 the nightly run takes the small
+    # files into ``market/`` and a weekly one takes prices and ownership into ``market-heavy/``. A kind is looked for
+    # in all of them, so one that moved folders does not read as never backed up.
     files: dict = {}
     if folder:
-        try:
-            files = json.loads((Path(folder) / backup.SUBDIR / backup.MANIFEST_NAME).read_text(encoding="utf-8"))
-            files = files.get("files", {}) if isinstance(files, dict) else {}
-        except (OSError, ValueError):
-            files = {}
+        for subdir in backup.SUBDIRS:
+            try:
+                found = json.loads((Path(folder) / subdir / backup.MANIFEST_NAME).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(found, dict) and isinstance(found.get("files"), dict):
+                files.update(found["files"])
     kinds = []
     for kind in ("ops", *serving.KINDS):
         stamps = [_parse_utc(v.get("at")) for name, v in files.items()
@@ -870,7 +980,7 @@ def cross_check(now: datetime, facts: dict, used_today: dict[str, int]) -> dict:
     that is what makes avo's choice of A17-B safe.
     """
     newest = next(iter(_diff_rows()), None)
-    prices = {"field": "prices", "need": "prices.wrds_diff", "second_source": CROSS_SECOND_SOURCE,
+    prices = {"field": "prices", "need": "prices.wrds_diff", "second_source": CROSS_SECOND_SOURCE, "provider": "wrds",
               # Attended, so there is nothing for the button to queue; the command is shown instead.
               "dataset": None, "attended": True, "command": ATTENDED_COMMANDS.get("wrds/prices"),
               "calls": None, "remaining": _remaining("wrds", used_today), "as_of": None, "checked": None,
@@ -883,8 +993,8 @@ def cross_check(now: datetime, facts: dict, used_today: dict[str, int]) -> dict:
             "differs": newest.get("close_differs"),
             "worst": f"{worst:.3%}" if isinstance(worst, (int, float)) else None,
             "why": None})
-    rates = {"field": "interest rates", "need": "macro.dgs10", "second_source": None, "dataset": None,
-             "attended": False, "command": None, "calls": None, "remaining": None, "as_of": None,
+    rates = {"field": "interest rates", "need": "macro.dgs10", "second_source": None, "provider": None,
+             "dataset": None, "attended": False, "command": None, "calls": None, "remaining": None, "as_of": None,
              "checked": None, "differs": None, "worst": None, "why": NO_SECOND_SOURCE,
              "cannot_queue": NO_SECOND_SOURCE}
     return {"fields": [prices, rates]}
@@ -961,7 +1071,14 @@ def _card(dataset: str, ds, facts: dict, now: datetime, used_today: dict[str, in
                             if getattr(ds, "attended", False) else None,
         "schedule": {"paused": bool(schedule and schedule.get("paused_at") is not None),
                      "paused_by": (schedule or {}).get("paused_by"),
-                     "paused_at": _iso_utc((schedule or {}).get("paused_at"))},
+                     "paused_at": _iso_utc((schedule or {}).get("paused_at")),
+                     # The cadence and the hold the card's two fields set (``/api/build/schedule/<ds>/cadence``).
+                     # ``cadence`` is None while no one has set one; ``cadence_effective`` is what ``due.py``
+                     # reads either way (the dataset's own, else the catalog's), so the card can say which of the
+                     # two is in force.
+                     "cadence": (schedule or {}).get("cadence"),
+                     "cadence_effective": _cadence(dataset, schedule),
+                     "next_due": str((schedule or {}).get("next_due") or "")[:10] or None},
     }
 
 
@@ -998,6 +1115,8 @@ def collect(now: datetime | None = None) -> dict:
                      "silent_minutes": _silent_minutes(last_run, now)},
         "datasets": cards,
         "identity": {**_identity(spine_counts), "universe_source": _universe_source()},
+        # The list we keep (avo, 4 Nov 2026): its counts, the rules the next build applies, what changed last.
+        "my_universe": _my_universe_card((spine_counts or {}).get("my_universe")),
         "queue": ops.read_queue(finished=20),
         "spend": spend,
         "backups": _backups(now),
@@ -1008,7 +1127,7 @@ def collect(now: datetime | None = None) -> dict:
         # where each dataset sits, and every serving table's row count and newest day.
         "universe": (spine_counts or {}).get("universe_sets"),
         "sessions": (facts.get("price_bar_daily") or {}).get("sessions") or {},
-        "storage": _storage(now),
+        "storage": _storage(),
         "tables": {t: {"rows": f["rows"], "newest": f["newest"]} for t, f in facts.items()},
         **_watch_section(),
     }

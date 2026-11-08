@@ -21,7 +21,10 @@ from RevenueChaser.module_relatedness import config
 from RevenueChaser.module_testing.e2e.harness.dashboard_driver import REPO_PARENT
 
 _XSS = "</script><img src=x onerror=alert(1)>"
-_TEXT = "Item 1. Business\nWe design and sell products to customers."
+# Long enough for the profile floor (#313, ``config.MIN_INPUT_CHARS``): the engine sends no shorter Item 1
+# to the writer, so a seed under it would make every Fetch below spend no call at all.
+_TEXT = ("Item 1. Business\nWe design and sell products to customers.\n"
+         + "This annual report describes the segments, the customers and the competition. " * 30)
 
 
 @pytest.fixture

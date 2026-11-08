@@ -133,10 +133,10 @@ def test_optional_provider_keys_are_not_gated(client, no_credentials, monkeypatc
     submitted = []
     monkeypatch.setattr(jobs, "submit", lambda module, params=None: submitted.append(module) or "job1")
     assert client.post("/run/rotation").status_code == 202
-    assert client.post("/run/module_sec_13f-map").status_code == 202
+    assert client.post("/run/module_sec_13f").status_code == 202
     assert submitted[0] == "rotation"
     assert "moneyflow" in submitted          # the Rotation Fetch's follow-up job, unchanged
-    assert submitted[-1] == "sec13f_map"
+    assert submitted[-1] == "module_sec_13f"
 
 
 def test_the_gate_runs_before_the_uw_probe(no_credentials, monkeypatch):

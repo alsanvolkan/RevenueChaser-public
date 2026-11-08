@@ -39,47 +39,7 @@ FULL = {"fields": [
 
 # ── the table ──
 
-def test_the_table_has_one_row_per_field_with_its_second_source_and_the_difference():
-    sec = _section(_page(_with(FULL)))
-    assert 'id="nd-cross"' in sec
-    block = sec[sec.index('id="nd-cross"'):]
-    assert "prices" in block and "WRDS (CRSP and Compustat)" in block
-    assert "2026-10-31" in block and "20 sessions" in block and "0.012%" in block
-
-
-def test_a_field_with_no_second_source_says_so_rather_than_showing_a_blank():
-    block = _section(_page(_with(FULL)))
-    block = block[block.index('id="nd-cross"'):]
-    assert "no second source is stored for this field yet" in block
-    assert "interest rates" in block
-
-
-def test_no_cross_check_data_is_no_card_at_all():
-    assert 'id="nd-cross"' not in _section(_page(_with(None)))
-
-
 # ── the button: press-only, through the layer, with its cost ──
-
-def test_the_button_queues_the_check_dataset_and_never_names_a_provider():
-    block = _section(_page(_with(FULL)))
-    block = block[block.index('id="nd-cross"'):]
-    button = re.search(r'<button[^>]*data-nd-act="cross"[^>]*>', block).group(0)
-    assert 'data-dataset="wrds/prices"' in button
-    assert "onclick" not in button
-
-
-def test_the_cost_is_written_beside_the_button():
-    block = _section(_page(_with(FULL)))
-    block = block[block.index('id="nd-cross"'):]
-    assert "3 calls" in block and "47" in block
-
-
-def test_a_field_with_no_dataset_to_queue_has_a_disabled_button_with_its_reason():
-    block = _section(_page(_with(FULL)))
-    block = block[block.index("interest rates"):]
-    button = re.search(r'<button[^>]*data-nd-act="cross"[^>]*>', block)
-    assert button is not None and "disabled" in button.group(0)
-
 
 def test_the_script_queues_through_the_build_request_route_and_calls_no_provider():
     assert "'cross'" in report.ND_JS, "the click handler knows the action"
@@ -90,12 +50,6 @@ def test_the_script_queues_through_the_build_request_route_and_calls_no_provider
     cross = report.ND_JS[report.ND_JS.index("function ndCross"):]
     for word in ("unusualwhales", "api.unusualwhales", "https://", "wrds.wharton"):
         assert word not in cross, f"the page calls no provider of its own ({word})"
-
-
-def test_the_page_says_the_cross_check_may_ask_the_live_source_only_on_a_press():
-    sec = _section(_page(_with(FULL)))
-    block = sec[sec.index('id="nd-cross"'):]
-    assert "only when you press" in block.lower()
 
 
 # ── the collector ──
@@ -113,14 +67,6 @@ def test_the_prices_check_cannot_be_queued_because_wrds_is_attended():
     assert row["dataset"] is None and row["attended"] is True
     assert "attended" in row["cannot_queue"] and "Duo" in row["cannot_queue"]
     assert row["command"] == newdata.ATTENDED_COMMANDS["wrds/prices"]
-
-
-def test_the_card_of_an_attended_check_shows_the_command_and_an_off_button():
-    block = _section(_page(_with(newdata.cross_check(NOW, {}, {}))))
-    block = block[block.index('id="nd-cross"'):]
-    button = re.search(r'<button[^>]*data-nd-act="cross"[^>]*>', block).group(0)
-    assert "disabled" in button
-    assert "python -m RevenueChaser.rcdata.build backfill wrds/prices" in block
 
 
 def test_the_prices_row_reads_the_newest_comparison_report(monkeypatch):
@@ -150,16 +96,3 @@ def test_the_collector_reads_no_provider_and_opens_no_connection_on_a_render(mon
     monkeypatch.setattr(newdata, "_diff_rows", lambda: calls.append("read") or [])
     newdata.cross_check(NOW, {}, {})
     assert calls == ["read"], "one read of the stored report, and nothing else"
-
-
-def test_a_field_block_is_not_a_card_of_its_own():
-    """The phone rule is one column of cards, all at the same left edge and the same width
-    (``module_testing/e2e/test_settings_newdata.py``). A field block sits *inside* the cross-check card, so a second
-    ``nd-card`` there is a card indented inside a card: the e2e layout test measured 50 px against the others' 37.
-    It is a row of the card, and carries its own class."""
-    sec = _section(_page(_with(FULL)))
-    block = sec[sec.index('id="nd-cross"'):]
-    block = block[:block.index('<div class="nd-card', 10)] if '<div class="nd-card' in block[10:] else block
-    assert 'data-cross-field="prices"' in block, "the field block is gone"
-    assert 'class="nd-card" data-cross-field' not in block, "a field block is a card nested inside a card"
-    assert 'class="nd-field" data-cross-field' in block

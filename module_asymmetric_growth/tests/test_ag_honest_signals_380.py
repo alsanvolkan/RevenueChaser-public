@@ -151,8 +151,6 @@ def scan(rawstore_tmp_db, monkeypatch):
     rows = [{"ticker": t, "quote": dict(_QUOTE), "market_cap": 5e9} for t in ("FRESH", "STALE", "UNDATED", "FORN")]
     seed_momentum(["FRESH", "STALE", "UNDATED", "FORN"])      # the momentum signal comes from D01 (#380 S4)
     monkeypatch.setattr(engine, "fetch_universe_stats", lambda *a, **k: (rows, {}))
-    import RevenueChaser.module_sec_13f.engine as s13
-    monkeypatch.setattr(s13, "load_totals", lambda: {})
     monkeypatch.setattr(engine._spine, "spine_gics", lambda *a, **k: {})
     monkeypatch.setattr(engine._spine, "excluded_tickers", lambda: set())
     monkeypatch.setattr(engine, "_run_day", lambda: RUN_DAY)
@@ -211,8 +209,6 @@ def gap_scan(rawstore_tmp_db, monkeypatch):
     rows = [{"ticker": t, "quote": dict(_QUOTE), "market_cap": 5e9} for t in ("FRESH", "GAP", "OLDGAP")]
     seed_momentum(["FRESH", "GAP", "OLDGAP"])                 # the momentum signal comes from D01 (#380 S4)
     monkeypatch.setattr(engine, "fetch_universe_stats", lambda *a, **k: (rows, {}))
-    import RevenueChaser.module_sec_13f.engine as s13
-    monkeypatch.setattr(s13, "load_totals", lambda: {})
     monkeypatch.setattr(engine._spine, "spine_gics", lambda *a, **k: {})
     monkeypatch.setattr(engine._spine, "excluded_tickers", lambda: set())
     monkeypatch.setattr(engine, "_run_day", lambda: RUN_DAY)

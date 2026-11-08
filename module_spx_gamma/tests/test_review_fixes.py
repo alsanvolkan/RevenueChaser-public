@@ -109,7 +109,8 @@ def test_vix_and_cftc_are_no_files_of_the_day(tmp_path):
 def test_the_unknown_chip_is_rendered_without_a_regime():
     s = normalize_snapshot({}, DAY)
     assert render.build_context(s)["header_strip"]["source_chip"] == "UNKNOWN"
-    assert ">UNKNOWN<" in render.render_html(s)
+    html = render.render_html(s)
+    assert "Gamma regime unknown" in html and "Short gamma" not in html
 
 
 # ── L2-3: /run/spxgamma defaults to the New York day ───────────────────────

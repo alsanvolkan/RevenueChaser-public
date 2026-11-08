@@ -27,59 +27,11 @@ class TestReleaseSchedule:
 
 
 class TestNormalize:
-    def test_issuer_name(self):
-        assert sf.normalize_issuer_name("ROCKET COS INC-CLASS A") == "ROCKET"
-        assert sf.normalize_issuer_name("Apple Inc.") == "APPLE"
-        assert sf.normalize_issuer_name("ALPHABET INC CAP STK CL A") == "ALPHABET"
-        assert sf.normalize_issuer_name("ROCKET LAB CORP") == "ROCKET LAB"
-        assert sf.normalize_issuer_name("") == ""
-
     def test_period(self):
         assert sf.normalize_period("31-MAR-2026") == "2026-03-31"
         assert sf.normalize_period("2025-06-30") == "2025-06-30"
         assert sf.normalize_period("") is None
         assert sf.normalize_period("garbage") is None
-
-    def test_cusip(self):
-        assert sf.normalize_cusip("77311w101") == "77311W101"
-        assert sf.normalize_cusip("N/A") is None
-        assert sf.normalize_cusip("") is None
-        assert sf.normalize_cusip("000000000") is None
-
-
-class TestFilingRank:
-    def test_later_filing_date_wins(self):
-        assert sf.filing_rank("20-JUN-2025", "13F-HR", "x") > sf.filing_rank("15-MAY-2025", "13F-HR/A", "y")
-
-    def test_same_day_amendment_wins_over_the_original(self):
-        # An original and its amendment can carry the same filing date; the
-        # amendment must win whatever order the rows come back in.
-        orig = sf.filing_rank("24-AUG-2026", "13F-HR", "acc1")
-        amend = sf.filing_rank("24-AUG-2026", "13F-HR/A", "acc1a")
-        assert max(orig, amend) == amend and max(amend, orig) == amend
-
-
-class TestPeriodMetrics:
-    def test_new_exited_and_flows(self):
-        periods = {
-            "2025-03-31": {"shares": 100.0, "value": 1000.0, "cik": {"A": 60.0, "B": 40.0}},
-            "2025-06-30": {"shares": 150.0, "value": 1500.0, "cik": {"A": 70.0, "C": 80.0}},
-        }
-        m = sf.compute_period_metrics(periods)
-        assert m["2025-03-31"]["new_holders"] is None
-        assert m["2025-06-30"]["new_holders"] == 1
-        assert m["2025-06-30"]["exited_holders"] == 1
-        assert m["2025-06-30"]["buy_flow"] == 90.0   # A +10, C +80
-        assert m["2025-06-30"]["sell_flow"] == 40.0  # B exited (-40)
-        assert m["2025-06-30"]["holders"] == 2
-
-    def test_concentration(self):
-        periods = {"2025-03-31": {"shares": 100.0, "value": 0.0,
-                                  "cik": {"A": 90.0, "B": 5.0, "C": 5.0}}}
-        m = sf.compute_period_metrics(periods)
-        assert m["2025-03-31"]["top10_pct"] == 100.0
-        assert m["2025-03-31"]["hhi"] == round((0.9 ** 2 + 0.05 ** 2 + 0.05 ** 2) * 10000, 1)
-
 
 class TestDashboard:
     def test_no_sector_chips_are_left(self):

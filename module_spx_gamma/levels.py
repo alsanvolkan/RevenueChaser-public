@@ -87,6 +87,17 @@ def band_walls(strike_expiry_rows: list[dict], spot: float | None) -> list[dict]
     return out
 
 
+def expiry_walls(strike_expiry_rows: list[dict], expiry: str | None, spot: float | None) -> dict | None:
+    """Put and call wall of one expiry (A11), by the same rule as the DTE bands; None without rows or spot."""
+    if spot is None or not expiry:
+        return None
+    rows = [r for r in strike_expiry_rows if r.get("expiry") == expiry and r.get("strike") is not None
+            and r.get("net_gamma") is not None]
+    if not rows:
+        return None
+    return {"expiry": expiry, **_walls(rows, spot)}
+
+
 def _zero_dte(strike_expiry_rows: list[dict], asof_date: str) -> list[dict]:
     return [r for r in strike_expiry_rows if r.get("expiry") == asof_date]
 
@@ -109,6 +120,16 @@ def intraday_put_concentration(strike_expiry_rows: list[dict], asof_date: str) -
     return best["strike"] if best["put_gex"] < 0 else None
 
 
+def hedge_for_move(net_gex_per_1pct: float | None, spot: float | None, move_pts: float = 25.0) -> float | None:
+    """The reports' hedge for a move (28 Aug Ek C p.12; reproduces the 30 Oct 10.72M): |Net GEX per 1 %| x move %.
+
+    UW's net GEX is dollars per 1 % move, so a move of ``move_pts`` at ``spot`` is ``move_pts / spot x 100`` of it.
+    """
+    if net_gex_per_1pct is None or not spot:
+        return None
+    return abs(net_gex_per_1pct) * (move_pts / spot * 100.0)
+
+
 def cumulative_gex_envelope(strike_rows: list[dict], spot: float | None, window_pct: float = 0.05) -> dict | None:
     """Absorption band vs air gap from the cumulative signed Net GEX profile.
 
@@ -124,7 +145,7 @@ def cumulative_gex_envelope(strike_rows: list[dict], spot: float | None, window_
     (or negative) cumulative region exists inside the window, that band is None.
 
     Returns a dict with the absorption band, air-gap band, their net values,
-    the zero-crossing, and per-25pt hedge intensity, or None when data is
+    the zero-crossing, and the report's hedge for a 25-point move, or None when data is
     insufficient.
     """
     if spot is None:
@@ -164,8 +185,8 @@ def cumulative_gex_envelope(strike_rows: list[dict], spot: float | None, window_
         return sum((r["net_gamma"] or 0.0) for r in rows if lo <= r["strike"] <= hi)
 
     def _per25(lo: float, hi: float, net: float) -> float | None:
-        width = hi - lo
-        return abs(net) * 25.0 / width if width > 0 else None
+        # F4: the report's formula (|net per 1 %| x 25-pt move %), not |net| x 25 / band width
+        return hedge_for_move(net, spot, 25.0)
 
     positive = [r for r in runs if r["sign"] > 0]
     negative = [r for r in runs if r["sign"] < 0]

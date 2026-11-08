@@ -278,13 +278,6 @@ def fundq_rows(month: int = 1) -> list[dict]:
 
 FUNDA_ROWS = [{"gvkey": "012141", "datadate": "2025-06-30", "fyear": "2025", "fyr": "6", "revt": "0.281",
                "ni": "0.101", "epsfx": "13.64", "at": "0.5"}]
-# MSFT's newest quarter: 41,900 of debt over 510,000 of assets is 0.0822 at the SEC.
-FIRM_RATIO_ROWS = [
-    {"gvkey": "012141", "public_date": "2025-10-31", "qdate": "2025-06-30", "debt_at": "0.09"},
-    {"gvkey": "012141", "public_date": "2025-11-30", "qdate": "2025-09-30", "debt_at": "0.0822"},
-    {"gvkey": "005567", "public_date": "2025-06-30", "qdate": "2025-04-30", "debt_at": "0.3"},
-]
-
 
 # Compustat's segments: MSFT's FY2025 business segment from two source filings (the newer one wins), a
 # geographic one, and a state segment (not asked for, so not kept); Customer A's sales.
@@ -305,16 +298,14 @@ SEG_CUSTOMER_ROWS = [
 
 
 # WRDS's catalog as the fake answers it: the relations a query may name and their columns, also the answer to an
-# ``information_schema.columns`` query. Two facts come from the server run of 2026-10-29 (PR 249): WRDS has no
-# ``wrds_finratio`` library, and ``seg_customer`` has no ``srcdate``. The rest is the documented columns, not
-# checked against WRDS. A query that names a relation or a column not here fails as PostgreSQL's would.
+# ``information_schema.columns`` query. One fact comes from the server run of 2026-10-29 (PR 249):
+# ``seg_customer`` has no ``srcdate``. The rest is the documented columns, not checked against WRDS. A query that names a relation or a column not here fails as PostgreSQL's would.
 _COMPUSTAT = ["gvkey", "datadate", "indfmt", "datafmt", "popsrc", "consol", "fyr"]
 WRDS_CATALOG = {
     ("comp", "fundq"): _COMPUSTAT + ["fyearq", "fqtr", "rdq", "revtq", "cogsq", "oiadpq", "niq", "epspxq", "epsfxq",
                                      "atq", "dlttq", "dlcq", "cheq", "ceqq"],
     ("comp", "funda"): _COMPUSTAT + ["fyear", "revt", "cogs", "oiadp", "ni", "epspx", "epsfx", "at", "dltt", "dlc",
                                      "che", "ceq", "oancf", "capx"],
-    ("wrdsapps_finratio", "firm_ratio"): ["gvkey", "permno", "adate", "qdate", "public_date", "debt_at"],
     ("comp_segments_hist_daily", "wrds_segmerged"): ["gvkey", "datadate", "srcdate", "stype", "sid", "snms",
                                                      "sales"],
     ("comp_segments_hist_daily", "seg_customer"): ["gvkey", "datadate", "cid", "cnms", "ctype", "salecs", "stype",
@@ -323,7 +314,7 @@ WRDS_CATALOG = {
 
 
 class FakeFundWrds:
-    """A WRDS worker that answers ``comp.fundq``, ``comp.funda``, ``wrdsapps_finratio.firm_ratio`` and the segment
+    """A WRDS worker that answers ``comp.fundq``, ``comp.funda`` and the segment
     tables from the rows above, filtered by the query's gvkey list, and WRDS's catalog (``catalog``, by default
     ``WRDS_CATALOG``) from ``information_schema.columns``; it records every query."""
 
@@ -353,7 +344,7 @@ class FakeFundWrds:
         for col in named:
             if col not in self.catalog[(library, table)]:
                 raise base.SourceError(f'wrds query failed: column "{col}" does not exist')
-        rows = {"fundq": fundq_rows(self.month), "funda": FUNDA_ROWS, "firm_ratio": FIRM_RATIO_ROWS,
+        rows = {"fundq": fundq_rows(self.month), "funda": FUNDA_ROWS,
                 "wrds_segmerged": SEGMERGED_ROWS, "seg_customer": SEG_CUSTOMER_ROWS}[table]
         gvkeys = re.search(r"gvkey IN \(([^)]*)\)", sql)
         if gvkeys:

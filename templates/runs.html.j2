@@ -8,7 +8,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Runs</title>
 <link rel="icon" href="/static/icons/icon-192.png">
-{%- set columns = ["Started", "Job", "Trigger", "Status", "Took", "Note", "Params"] %}
+{%- set columns = ["Started", "Job", "Trigger", "Status", "Took", "Note", "Counts", "Params"] %}
 <style>
 /* Dark is the dashboard's own look and the default on every device: no data-theme is dark. The shell copies
    its choice onto this document; data-theme="light" is light, and "auto" follows the device (mirrors
@@ -196,6 +196,8 @@ var POLL = "/api/runs";   // app/runview.POLL_PATH
     tr.appendChild(st);
     cell(tr, "took", r.status === "running" ? "going" : took(r.duration_s));
     cell(tr, "note-cell", r.error || r.message, true);
+    // #136: what the run did. A run that reported no number has none: the cell shows a dash, never a zero.
+    cell(tr, "params counts", r.counts && Object.keys(r.counts).length ? r.counts : "", true);
     cell(tr, "params", r.params && Object.keys(r.params).length ? r.params : "", true);
     return tr;
   }

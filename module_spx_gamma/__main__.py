@@ -46,11 +46,21 @@ def main(argv: list[str] | None = None) -> int:
     when = parser.add_mutually_exclusive_group(required=True)
     when.add_argument("--asof", help="report as-of date (YYYY-MM-DD)")
     when.add_argument("--nightly", action="store_true", help="the latest complete New York session (#291)")
+    when.add_argument("--migrate-data-root", action="store_true",
+                      help="S4: copy the tree out of the checkout into the store root (dry run without --apply)")
+    parser.add_argument("--apply", action="store_true", help="with --migrate-data-root: copy (never deletes)")
     parser.add_argument("--mode", default="open_interest",
                         choices=["open_interest", "directionalized_volume"],
                         help="spot-exposure mode (default open_interest)")
     parser.add_argument("--ticker", default=TICKER, help="ticker symbol (default SPX)")
     args = parser.parse_args(argv)
+
+    if args.migrate_data_root:
+        from .config import LEGACY_DATA_ROOT, STORE_DATA_ROOT
+        from .data_root_move import migrate
+        out = migrate(LEGACY_DATA_ROOT, STORE_DATA_ROOT, apply=args.apply)
+        print(json.dumps(out))
+        return 0 if out["status"] in ("dry_run", "copied", "target_exists", "nothing_to_copy") else 1
 
     if args.nightly:
         if args.ticker != TICKER:

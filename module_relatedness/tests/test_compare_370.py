@@ -11,7 +11,7 @@ import pytest
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.providers import evren
 from RevenueChaser.module_relatedness import compare, engine
-from RevenueChaser.module_relatedness.tests.test_relatedness import _seed_universe
+from RevenueChaser.module_relatedness.tests.test_relatedness import _seed_universe, long_body
 
 TICKERS = ["AAA", "BBB", "CCC"]
 
@@ -19,7 +19,7 @@ TICKERS = ["AAA", "BBB", "CCC"]
 def _seed_filings(texts):
     rawstore.write_rows("chain_filings", [
         {"ticker": t, "cik": "", "form": "10-K", "filed": "2026-01-01", "accession": "a-" + t,
-         "primary_doc": "u", "item_text": text, "quality": "ok", "fetched_at": 1.0} for t, text in texts.items()])
+         "primary_doc": "u", "item_text": long_body(text), "quality": "ok", "fetched_at": 1.0} for t, text in texts.items()])
 
 
 @pytest.fixture
@@ -48,6 +48,17 @@ def test_the_job_writes_a_step0_scores_file_and_no_board_table(world):
     assert data["usable"] == 3 and out["usable"] == 3 and set(world) == {"glm-5.3"}
     for table in ("relatedness_profiles", "relatedness_attributes", "relatedness_scores", "theme_runs"):
         assert rawstore.count(table) == 0
+
+
+def test_a_short_filing_text_is_not_sent_to_the_writer(world):
+    """#313: the comparison sends the same text as the board, so the same floor applies; the name is listed apart."""
+    rawstore.write_rows("chain_filings", [
+        {"ticker": "EEE", "cik": "", "form": "10-K", "filed": "2026-01-01", "accession": "a-EEE",
+         "primary_doc": "u", "item_text": "EEE Inc.", "quality": "ok", "fetched_at": 1.0}])
+    out = compare.run(["AAA", "EEE"], provider="evren", model="glm-5.3")
+    data = json.loads(compare.out_path("evren", "glm-5.3").read_text(encoding="utf-8"))
+    assert out["short_text"] == ["EEE"] and out["no_text"] == [] and out["usable"] == 1
+    assert all(v is None for v in data["matrix"][1]) and len(world) == 1
 
 
 def test_more_than_100_names_is_refused(world):

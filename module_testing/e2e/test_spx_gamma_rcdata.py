@@ -108,8 +108,8 @@ def test_the_rendered_scenario_set_is_the_pinned_reports_table(tmp_path, e2e_env
     with _board(tmp_path, e2e_env, market_roots, stored=True) as dash:
         assert dash.run_job("/run/spxgamma", date=DAY).ok
         html = dash.view(TAB).text
-        assert "Scenario Set" in html
-        assert ">Asymmetry<" in html
+        assert 'id="h-sc">Scenarios<' in html
+        assert "asymmetry " in html
         assert "Expectancy" not in html and ">R:R<" not in html, "the columns the reports dropped"
         assert "Scenario rules follow the 2026-10-30 report." in html
         assert "expected value is deliberately not computed" in html

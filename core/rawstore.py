@@ -100,8 +100,8 @@ def _db_path(db: str) -> Path:
 # Write lock-wait budget ~6.9s — the first, tiny delays absorb the in-process
 # attach race; the tail absorbs another process holding the lock. Plenty for the
 # small per-ticker writes. A long ingest must stay chunked so it never holds the
-# file lock for minutes (see module_sec_13f.engine.ingest_zips, which deletes a
-# zip's rows before re-inserting so chunking stays crash-safe).
+# file lock for minutes; the 13F data-set ingest that set this budget is retired
+# (G9: the builder keeps the filings and holdings in Parquet).
 _WRITE_DELAYS = (0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 3.0)
 # Reader budget is longer so a reader out-waits a chunked ingest.
 _READ_DELAYS = (0.01, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0)

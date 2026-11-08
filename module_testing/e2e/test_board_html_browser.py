@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+from . import harness
+
 from RevenueChaser.core.tests.board_fixtures import BOARDS, no_comment_opener
 
 _CANDIDATES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
@@ -104,7 +106,7 @@ def _hits(chrome: str, page: Path, profile: Path) -> list[str]:
          "--disable-extensions", f"--user-data-dir={profile}",
          "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost",
          "--virtual-time-budget=3000", "--dump-dom", page.as_uri()],
-        capture_output=True, text=True, encoding="utf-8", timeout=90)
+        capture_output=True, text=True, encoding="utf-8", timeout=harness.CHROME_TIMEOUT_S)
     assert "<html" in out.stdout.lower(), f"Chrome dumped no DOM: {out.stderr[-1500:]}"
     m = re.search(r'<html[^>]*\sdata-xss="([^"]*)"', out.stdout, re.I)
     return sorted(set(m.group(1).split())) if m else []

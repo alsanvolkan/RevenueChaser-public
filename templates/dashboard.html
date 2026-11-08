@@ -117,42 +117,6 @@ button:disabled{opacity:.5;cursor:default}
 #overlay{position:absolute;inset:0;background:var(--overlay);display:none;align-items:center;justify-content:center;z-index:10}
 #overlay.show{display:flex}
 #overlay .msg{background:var(--card);border:1px solid var(--border);border-radius:9px;padding:16px 24px;color:var(--bright);font-size:14px}
-/* Open issues (#383): parent chrome, one collapsed line above the board iframe. */
-.rc-open-issues{flex:none;background:var(--oi-bg);border-bottom:1px solid var(--border);
-  color:var(--muted);font-size:12.5px}
-.rc-open-issues[hidden]{display:none}
-.rc-open-issues>summary{cursor:pointer;padding:8px 20px;font-weight:600;color:var(--sky);line-height:1.4;
-  user-select:none}
-.rc-open-issues>summary:hover{color:var(--bright)}
-.rc-open-issues .body{max-height:45vh;overflow:auto;padding:0 20px 12px;line-height:1.55}
-.rc-open-issues .rc-oi-error{color:var(--amber);padding:2px 0 8px}
-.rc-oi-sec{margin-top:8px}
-.rc-oi-sec>h4{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--fg);margin:10px 0 4px}
-.rc-oi-item{border-top:1px solid var(--border);padding:2px 0}
-.rc-oi-item>summary{cursor:pointer;padding:5px 0;list-style:none}
-.rc-oi-item>summary::-webkit-details-marker{display:none}
-.rc-oi-item>summary::before{content:"▸ ";color:var(--muted)}
-.rc-oi-item[open]>summary::before{content:"▾ "}
-.rc-oi-head{display:block;color:var(--fg)}
-.rc-oi-title{font-weight:600;color:var(--bright)}
-.rc-oi-chips{margin-left:6px;white-space:normal}
-.rc-oi-chip{display:inline-block;margin-left:4px;padding:0 5px;border:1px solid var(--border);border-radius:4px;
-  font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);vertical-align:1px}
-.rc-oi-chip.warn{color:var(--amber);border-color:var(--amber)}
-.rc-oi-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--amber,#f1c40f);
-  margin-right:5px;vertical-align:0}
-.rc-oi-line{display:block;color:var(--muted);padding:2px 0 0 12px}
-.rc-oi-dl{display:grid;grid-template-columns:190px 1fr;gap:2px 12px;margin:6px 0 0 12px;font-size:12px}
-.rc-oi-dl code{font-size:11.5px;color:var(--bright);background:rgba(56,189,248,.08);padding:0 3px;
-  border-radius:3px}
-.rc-oi-pre{margin:4px 0;padding:6px 8px;background:rgba(0,0,0,.25);border:1px solid var(--border);
-  border-radius:4px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
-.rc-oi-pre code{background:none;padding:0}
-.rc-oi-ul{margin:2px 0;padding-left:18px}
-.rc-oi-dl dt{color:var(--fg);font-weight:600}
-.rc-oi-dl dd{margin:0;color:var(--muted)}
-.rc-oi-links{margin:6px 0 4px 12px;font-size:12px}
-.rc-oi-links a{color:var(--sky)}
 /* week range calendar */
 .range-dd{position:relative;display:flex;align-items:center;gap:8px}
 .cal-popover{position:absolute;top:40px;left:0;z-index:100;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px;display:none;max-height:60vh;overflow-y:auto;box-shadow:0 8px 30px var(--shadow)}
@@ -217,10 +181,6 @@ button:disabled{opacity:.5;cursor:default}
   /* The page itself never scrolls sideways: a board wider than the pane scrolls inside its own frame. */
   .content{overflow-x:hidden}
   .frame{height:100%}
-  .rc-open-issues>summary{padding:8px 12px}
-  .rc-open-issues .body{padding:0 12px 12px}
-  .rc-oi-dl{grid-template-columns:minmax(0,1fr)}
-  .rc-oi-dl dd,.rc-oi-line,.rc-oi-head{min-width:0;overflow-wrap:anywhere}
   .cal-popover{position:fixed;left:8px;right:8px;max-width:none}   /* top and height: placeCal() */
 }
 /* A finger, not a mouse: 44 px touch targets (CLAUDE.md, the phone rule). A desktop mouse keeps 32/38/40. */
@@ -231,8 +191,6 @@ button:disabled{opacity:.5;cursor:default}
   input[type=date],input[type=text]{height:44px;font-size:16px}
   .chk{min-height:44px}
   .chk input{width:20px;height:20px}
-  /* Padding, not display:flex, which would drop the summary's open/closed arrow. */
-  .rc-open-issues>summary{min-height:44px;padding-top:12px;padding-bottom:12px;box-sizing:border-box}
 }
 </style>
 </head>
@@ -266,8 +224,6 @@ button:disabled{opacity:.5;cursor:default}
     <button id="btn-refresh" title="Re-render this tab from the store (.store/raw.duckdb) — no network calls">Refresh Tab</button>
     <button id="btn-fetch" style="display:none" title="Fetch fresh data over the network, cache it, then re-render">Fetch</button>
     <button id="btn-refresh-universe" style="display:none" title="Fetch the shared ticker universe over the network, then run the scan">Fetch Universe</button>
-    <button id="btn-sec13f-check" style="display:none" title="Ask the SEC whether a new Form 13F data set is out. Downloads nothing; press Fetch to ingest it.">Check for new data set</button>
-    <button id="btn-sec13f-rebuild" style="display:none" title="Re-derive the 13F totals from the data already ingested. Store only: no download, no network.">Rebuild totals</button>
     <div class="ctl" id="earnings-ctl">
       <button class="primary" id="btn-earnings-today" title="Load today's earnings">Load Earnings Today</button>
       <button id="btn-earnings-load" title="Fetch earnings for the selected days from UW" style="display:none">Load Selected</button>
@@ -314,148 +270,6 @@ button:disabled{opacity:.5;cursor:default}
     <div class="sync">Last run: <b id="sync-label">—</b></div>
     </div>
   </header>
-  <details class="rc-open-issues" id="rc-open-issues" hidden>
-    <summary id="rc-open-issues-summary">Open issues</summary>
-    {% if open_issues_error %}<div class="body"><p class="rc-oi-error" id="rc-open-issues-error">{{ open_issues_error }}</p></div>{% endif %}
-    <div class="body" id="rc-open-issues-body"></div>
-  </details>
-  <script type="application/json" id="rc-open-issues-data">{{ open_issues_json }}</script>
-  <script>
-{{ rc_esc_js }}
-// Open issues (#383): every data board's own GitHub issues, in the shell, above the board iframe.
-// One JSON block for all boards; rendered as text through rcEsc only, and re-rendered in showTab so a tab switch
-// needs no page load. Nothing here fetches: the registry is a checked-in file (docs/open_issues.json).
-// The block ships each entry once under "entries", keyed "<repo>#<number>"; a board lists the keys it shows (#21).
-var RC_OI_LS = 'rc-open-issues-open';
-var RC_OI_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-var RC_OI_LABELS = {whats_wrong:'What is wrong', evidence:'Evidence', example:'Example',
-                    tried_or_decided:'What was decided', direction:'Direction', next_step:'Next step'};
-var RC_OI_DATA = (function(){
-  try{ return JSON.parse(document.getElementById('rc-open-issues-data').textContent || '{}') || {}; }
-  catch(e){ return {}; }
-})();
-var RC_OI_ENTRIES = RC_OI_DATA.entries || {};
-// Which tabs have a group at all. It ships even when the registry failed, so the error is shown on a data
-// board and never on Logs; the fallback keeps an older payload working.
-var RC_OI_DATA_BOARDS = RC_OI_DATA.data_boards || Object.keys(RC_OI_DATA.boards || {});
-function rcOiItems(keys){
-  // A key with no entry is dropped rather than rendered as undefined: the payload is one map, not a copy per board.
-  return (keys || []).map(function(k){ return RC_OI_ENTRIES[k]; })
-                     .filter(function(it){ return !!it; });
-}
-function rcOiStoredOpen(){
-  // Private windows throw on localStorage; the group then simply starts collapsed.
-  try{ return localStorage.getItem(RC_OI_LS) === '1'; }catch(e){ return false; }
-}
-function rcOiStoreOpen(open){
-  try{ localStorage.setItem(RC_OI_LS, open ? '1' : '0'); }catch(e){}
-}
-function rcOiDate(iso){
-  var d = new Date(iso);
-  if(!iso || isNaN(d.getTime())) return '';
-  return d.getUTCDate() + ' ' + RC_OI_MONTHS[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
-}
-function rcOiMarkdown(safe){
-  // Every step below runs on text rcEsc has already neutralised, so none of it can introduce markup the
-  // registry controls: the only characters these patterns look at are ` * - and the newline, and escaping
-  // produces none of them. The subset is what the approved artboard shows — code, bold, bullets — and
-  // nothing else; anything richer belongs on GitHub behind the issue link.
-  var out = safe.replace(/\n?```[^\n]*\n([\s\S]*?)```\n?/g, function(_, code){
-    return '<pre class="rc-oi-pre"><code>' + code.replace(/\n+$/, '') + '</code></pre>';
-  });
-  out = out.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-  out = out.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-  // A run of "- " lines becomes one list; the lines in between keep their <br> treatment below.
-  out = out.replace(/(?:^|\n)((?:[-*] [^\n]*(?:\n|$))+)/g, function(_, block){
-    var items = block.replace(/\n$/, '').split('\n').map(function(line){
-      return '<li>' + line.replace(/^[-*] /, '') + '</li>';
-    }).join('');
-    return '<ul class="rc-oi-ul">' + items + '</ul>';
-  });
-  // Newlines that are left (plain prose) stay line breaks; the ones the block elements swallowed are gone.
-  return out.replace(/\n/g, '<br>');
-}
-function rcOiText(text){
-  // Escaped first, markup second: the registry's text is data, and only this subset of it is rendered.
-  return rcOiMarkdown(rcEsc(text));
-}
-function rcOiChips(it){
-  var chips = [];
-  if(it.repo !== 'RevenueChaser-public') chips.push('<span class="rc-oi-chip">' + rcEsc(it.repo) + '</span>');
-  chips.push('<span class="rc-oi-chip">' + rcEsc(it.kind) + '</span>');
-  if(it.status === 'deferred' || it.status === 'parked'){
-    chips.push('<span class="rc-oi-chip">' + rcEsc(String(it.status)) +
-               (it.deferred_until ? ' &rarr; ' + rcEsc(it.deferred_until) : '') + '</span>');
-  } else if(it.status === 'needs-review'){
-    chips.push('<span class="rc-oi-chip warn"><span class="rc-oi-dot"></span>needs review</span>');
-  } else if(it.status && it.status !== 'open'){
-    chips.push('<span class="rc-oi-chip">' + rcEsc(String(it.status).replace(/-/g, ' ')) + '</span>');
-  }
-  return chips.join('');
-}
-function rcOiItem(it){
-  var dl = '';
-  Object.keys(RC_OI_LABELS).forEach(function(k){
-    var v = (it.detail || {})[k];
-    if(v){ dl += '<dt>' + RC_OI_LABELS[k] + '</dt><dd>' + rcOiText(v) + '</dd>'; }
-  });
-  var links = '<a href="' + rcEsc(it.url) + '" target="_blank" rel="noopener">Issue #' + rcEsc(it.number) + '</a>';
-  (it.refs || []).forEach(function(r){
-    links += ' · <a href="' + rcEsc(r.url) + '" target="_blank" rel="noopener">' + rcEsc(r.label || 'link') + '</a>';
-  });
-  return '<details class="rc-oi-item"><summary>' +
-    '<span class="rc-oi-head"><span class="rc-oi-title">#' + rcEsc(it.number) + ' · ' + rcEsc(it.title) +
-    '</span><span class="rc-oi-chips">' + rcOiChips(it) + '</span></span>' +
-    '<span class="rc-oi-line">' + rcOiText(it.summary) + '</span></summary>' +
-    '<dl class="rc-oi-dl">' + dl +
-    '<dt>Links</dt><dd class="rc-oi-links">' + links + '</dd></dl></details>';
-}
-function rcOiSection(heading, items){
-  return '<section class="rc-oi-sec"><h4>' + rcEsc(heading) + '</h4>' + items.map(rcOiItem).join('') + '</section>';
-}
-function rcOpenIssuesRender(key){
-  var box = document.getElementById('rc-open-issues');
-  var summary = document.getElementById('rc-open-issues-summary');
-  var body = document.getElementById('rc-open-issues-body');
-  if(!box || !summary || !body) return;
-  if(RC_OI_DATA_BOARDS.indexOf(key) === -1){ box.hidden = true; return; }   // Logs is not a data board
-  if(document.getElementById('rc-open-issues-error')){
-    summary.textContent = 'Open issues — registry unavailable';
-    body.hidden = true;            // the reason is in its own .body block; this one would add empty padding
-    box.hidden = false;
-    return;
-  }
-  body.hidden = false;
-  var data = (RC_OI_DATA.boards || {})[key];
-  if(!data){ box.hidden = true; return; }   // a data board the registry has no entries for
-  box.hidden = false;
-  var board = rcOiItems(data.board), shared = rcOiItems(data.shared), repo = rcOiItems(data.repo);
-  var all = board.concat(shared, repo);
-  var deferred = all.filter(function(it){ return it.status === 'deferred'; }).length;
-  var parked = all.filter(function(it){ return it.status === 'parked'; }).length;
-  var review = all.filter(function(it){ return it.status === 'needs-review'; }).length;
-  // The artboard reads "N on this board, M shared · <what needs attention> · as of <date>": the counts
-  // carry the urgency, so they come before the date rather than after it.
-  var line = 'Open issues — ' + board.length + ' on this board, ' + shared.length + ' shared';
-  if(deferred) line += ' · ' + deferred + ' deferred';
-  if(parked) line += ' · ' + parked + ' parked';
-  if(review) line += ' · ' + review + ' need review';
-  line += ' · as of ' + (rcOiDate(data.generated_at) || 'an unknown date');
-  summary.textContent = line;
-  var html = board.length
-    ? rcOiSection('This board (' + board.length + ')', board)
-    : '<section class="rc-oi-sec"><h4>This board (0)</h4><p>No board-specific open issue.</p></section>';
-  if(shared.length) html += rcOiSection('Affects every board (' + shared.length + ')', shared);
-  if(repo.length) html += rcOiSection('Repository-wide (' + repo.length + ')', repo);
-  body.innerHTML = html;
-}
-(function(){
-  var box = document.getElementById('rc-open-issues');
-  if(!box) return;
-  box.open = rcOiStoredOpen();
-  box.addEventListener('toggle', function(){ rcOiStoreOpen(this.open); });
-})();
-  </script>
   <div class="content" id="content">
     {% for t in tabs %}
     {% if t.type == 'tab' %}
@@ -470,7 +284,10 @@ var ACTIVE = 'module_earnings_radar';
 // Fluid boards (fully width:100% pages with inner overflow wrappers): their
 // iframe FILLS the visible pane instead of being grown to a natural content
 // width like the intentionally-wide boards below (Earnings ~2600px).
-var FILL_WIDTH = {'module_spx_gamma': true, 'module_earnings_radar': true, 'module_oipd': true, 'logs': true, 'runs': true};
+var FILL_WIDTH = {'module_spx_gamma': true, 'module_earnings_radar': true, 'module_oipd': true, 'logs': true, 'runs': true,
+                  // #527: Data/Health keeps its own 1280 px column and scrolls a wide part inside its box; grown to its
+                  // natural width it ran past a 969 px pane (avo 6 Nov 2026: "boyutu fixed olmali").
+                  'module_settings': true};
 var UNIVERSE_TABS = ['module_asymmetric_growth','module_swing_potential','module_fundamentals'];
 // Boards backed by .store data: Refresh drops the cached html and recomputes
 // from raw.duckdb (mirrors _STORE_REFRESHABLE in app/dashboard.py).
@@ -590,10 +407,6 @@ function showTab(key){
   document.getElementById('rotation-ctl').style.display = (key==='module_sector_rotation') ? 'flex' : 'none';
   document.getElementById('spxgamma-ctl').style.display = (key==='module_spx_gamma') ? 'flex' : 'none';
   document.getElementById('quick-ctl').style.display = (key==='module_financials') ? 'flex' : 'none';
-  var uwBtn = document.getElementById('btn-sec13f-check');
-  if(uwBtn) uwBtn.style.display = (key==='module_sec_13f') ? 'inline-block' : 'none';
-  var rbBtn = document.getElementById('btn-sec13f-rebuild');
-  if(rbBtn) rbBtn.style.display = (key==='module_sec_13f') ? 'inline-block' : 'none';
   var rfBtn = document.getElementById('btn-refresh');
   // Logs and Runs are read-only views (the log files, the job_runs rows): both poll by themselves,
   // so there is nothing to refresh.
@@ -610,7 +423,6 @@ function showTab(key){
   if(key==='module_fundamentals'){ checkFundamentalsFreshness(); }
   syncOverlay();
   renderStatus();
-  if(typeof rcOpenIssuesRender === 'function') rcOpenIssuesRender(key);
 }
 
 var CAL_WEEKS = [];   // [{label,start,end,date}] from /api/rotation/weeks
@@ -1502,17 +1314,6 @@ document.getElementById('btn-spx-fetch').addEventListener('click', function(){
   var el = document.getElementById('selected-date-display');
   var d = el ? el.dataset.date : '';
   if(d) fetchTab('/run/spxgamma', new URLSearchParams({date: d}));
-});
-
-// SEC 13F: is a new Form 13F data set out? A short job that downloads nothing and
-// answers through its job message ("New set … — press Fetch" / "Up to date").
-document.getElementById('btn-sec13f-check').addEventListener('click', function(){
-  fetchTab('/run/module_sec_13f-check', null);
-});
-
-// SEC 13F: re-derive the totals from the ingested holdings (store only, zero network).
-document.getElementById('btn-sec13f-rebuild').addEventListener('click', function(){
-  fetchTab('/run/module_sec_13f-rebuild', null);
 });
 
 function showTrail(){

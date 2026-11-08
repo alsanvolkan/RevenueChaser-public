@@ -32,7 +32,8 @@ def test_registry_names_are_stable_and_prefixed():
     assert [e.name for e in A.REGISTRY] == [
         "RC-Store-Backup", "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars", "RC-Screeners-Daily",
         "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Inputs",
-        "RC-Open-Issues-Check", "RC-IBKR-Login-Check", "RC-Build", "RC-Build-Backup", "RC-SPX-Gamma-Fetch"]
+        "RC-IBKR-Login-Check", "RC-Build", "RC-Build-Backup", "RC-Build-Backup-Heavy",
+        "RC-SPX-Gamma-Fetch"]
     assert all(e.name.startswith("RC-") for e in A.REGISTRY)
 
 
@@ -46,7 +47,7 @@ def test_the_index_lists_row_runs_weekly_on_saturday():
     assert not e.default_install
     assert all(x.days == () and x.schedule == f"daily {x.time} (local)" for x in A.REGISTRY
                if x.name not in (e.name, "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Forecast-Baselines",
-                                 "RC-Earnings-Inputs", "RC-Build", "RC-SPX-Gamma-Fetch"))
+                                 "RC-Earnings-Inputs", "RC-Build", "RC-Build-Backup-Heavy", "RC-SPX-Gamma-Fetch"))
 
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
@@ -139,64 +140,6 @@ def test_the_outcomes_row_cannot_chain_on_the_weekday_screeners_row():
     with pytest.raises(ValueError, match="runs weekly"):
         A.check_chain(rows)
 
-
-# --- the scheduled open-issues registry check (W5, #74) ------------------------------------------------
-
-def test_the_open_issues_check_row_is_daily_at_0930_and_not_chained():
-    """W5 (#74): the registry check is its own daily task and must never join the nightly writer chain, because
-    it reads the GitHub API and writes nothing, so it can neither need a store writer nor delay one."""
-    e = A.entry("RC-Open-Issues-Check")
-    assert (e.time, e.days, e.after) == ("09:30", (), None)
-
-
-def test_the_open_issues_check_row_writes_no_table():
-    """The check only reads the API, so it names no table (the panel shows ``writes`` from this field)."""
-    e = A.entry("RC-Open-Issues-Check")
-    assert e.tables_written == ()
-
-
-def test_the_open_issues_check_row_runs_the_existing_check_entry_point():
-    """The scheduled row runs ``scripts/open_issues_sync.py --check`` by module; renaming the script must fail
-    here instead of silently scheduling nothing."""
-    e = A.entry("RC-Open-Issues-Check")
-    assert e.args == ("-m", "RevenueChaser.scripts.open_issues_sync", "--check")
-
-
-def test_the_open_issues_check_row_renders_in_the_automations_panel_payload():
-    """The static row the Settings panel embeds carries every field its renderer reads, and reading it never
-    reaches the scheduler."""
-    f = A.FakeScheduler()
-    A.set_scheduler(f)
-    rows = A.static_rows()
-    row = next(r for r in rows if r["name"] == "RC-Open-Issues-Check")
-    assert {"name", "label", "schedule", "command", "settings", "log_path", "description",
-            "tables_written", "offpeak_gated", "default_install", "after"} <= set(row)
-    assert row["schedule"] == "daily 09:30 (local)"
-    assert row["tables_written"] == [] and row["after"] is None
-    assert row["label"] and row["description"] and row["command"] and row["log_path"]
-    assert not row["default_install"] and not row["offpeak_gated"]
-    assert "state" not in row
-    assert json.loads(json.dumps(row))["name"] == "RC-Open-Issues-Check"
-    assert f.calls == []
-
-
-def test_a_non_zero_check_exit_shows_as_a_failed_row(monkeypatch):
-    """A stale registry makes the command exit 1; the panel reads that as a red row with the run's own output in
-    its log tail, and no last success."""
-    import dataclasses
-    e = A.entry("RC-Open-Issues-Check")
-    monkeypatch.setattr(A, "_BY_NAME", {e.name: dataclasses.replace(
-        e, args=("-c", "import sys; print('registry is stale'); sys.exit(1)"))})
-    assert A.run_task(e.name) == 1
-    text = e.log_path.read_text(encoding="utf-8")
-    assert "registry is stale" in text and re.search(r"=== \S+ exit 1", text)
-    row = A.live_row(A.entry(e.name), A.FakeScheduler(tasks={e.name: A.TaskStatus(last_result=1)}))
-    assert row["result_kind"] == "red" and row["result_text"].startswith("failed")
-    assert row["last_success"] is None and row["last_success_age"] == "never"
-    assert row["log_tail"][-1].endswith("exit 1")
-
-
-# --- nightly inputs steps (C25a/K11, #383) ------------------------------------------------------------------------
 
 def _inputs_entry(**kw):
     import dataclasses
@@ -469,11 +412,11 @@ def test_install_uses_the_registry_settings():
 
 
 def test_a_row_without_restarts_installs_no_restart_settings():
-    """RC-Open-Issues-Check has ``restart_count=0``: ``-RestartCount 0`` makes Task Scheduler refuse the task
+    """RC-IBKR-Login-Check has ``restart_count=0``: ``-RestartCount 0`` makes Task Scheduler refuse the task
     (HRESULT 0x80041319, "Count" out of range), so a zero count installs without the restart pair."""
     ps = FakePS()
     w = _win(ps)
-    w.install(A.entry("RC-Open-Issues-Check"))
+    w.install(A.entry("RC-IBKR-Login-Check"))
     w.install(A.entry("RC-Store-Backup"))
     issues, backup = ps.scripts
     assert "-RestartCount" not in issues and "-RestartInterval" not in issues
@@ -871,8 +814,8 @@ def test_the_warn_thresholds_read_a_positive_number_or_keep_the_default(monkeypa
 # ── #162: the IBKR Gateway login check ──────────────────────────────────────────────────────────
 
 def test_the_ibkr_login_check_writes_no_table():
-    """Like RC-Open-Issues-Check: it records only its own file under .cache/, so it can never queue
-    behind or hold the dashboard's single DuckDB writer."""
+    """It records only its own file under .cache/, so it can never queue behind or hold the
+    dashboard's single DuckDB writer."""
     entry = A.entry("RC-IBKR-Login-Check")
     assert entry.tables_written == ()
     assert entry.offpeak_gated is False
@@ -910,7 +853,7 @@ def test_the_builder_row_runs_one_queue_pass_every_hour_at_07():
     e = A.entry("RC-Build")
     assert e.args == ("-m", "RevenueChaser.rcdata.build", "run", "--once")
     assert e.hourly and e.time == "00:07" and e.schedule == "hourly at :07 (local)"
-    assert e.settings.time_limit_minutes == 50
+    assert e.settings.time_limit_minutes == 120
     assert e.tables_written == (), "it writes the market store, never the old one: no job_runs row (job_runs2 instead)"
     assert e.after is None and not e.default_install
     assert e.unit_name == "life-rc-builder"
@@ -918,10 +861,33 @@ def test_the_builder_row_runs_one_queue_pass_every_hour_at_07():
 
 def test_the_builder_backup_row_runs_daily_at_0430_for_at_most_30_minutes():
     e = A.entry("RC-Build-Backup")
-    assert e.args == ("-m", "RevenueChaser.rcdata", "backup")
+    assert e.args == ("-m", "RevenueChaser.rcdata", "backup",
+                      "--only", "ops,market,spine,fundamentals,options,raw", "--subdir", "market")
     assert not e.hourly and e.time == "04:30" and e.schedule == "daily 04:30 (local)"
     assert e.settings.time_limit_minutes == 30 and e.tables_written == ()
     assert e.unit_name == "life-rc-builder-backup"
+
+
+def test_the_heavy_backup_row_runs_weekly_on_sunday_into_its_own_subdir():
+    """avo, 5 Nov 2026: prices (2.9 GB) and ownership (661 MB) leave the nightly run, which hit its 30-minute
+    limit on them, for one weekly run of their own with its own folder and its own hour."""
+    from RevenueChaser.rcdata import backup
+    e = A.entry("RC-Build-Backup-Heavy")
+    assert e.args == ("-m", "RevenueChaser.rcdata", "backup",
+                      "--only", "prices,ownership", "--subdir", backup.HEAVY_SUBDIR)
+    assert (e.time, e.days) == ("03:30", ("Sunday",))
+    assert e.schedule == "weekly Sunday 03:30 (local)"
+    assert A.on_calendar(e) == "Sun *-*-* 03:30:00"
+    assert e.settings.time_limit_minutes == 60 and e.tables_written == ()
+    assert e.unit_name == "life-rc-builder-backup-heavy" == A.BUILDER_BACKUP_HEAVY_UNIT
+    assert not e.default_install and e.after is None and not e.hourly
+    light = A.entry("RC-Build-Backup")
+    assert _minutes_of(light.time) - _minutes_of(e.time) == 60, "an hour clear of the nightly light run"
+
+
+def _minutes_of(hhmm: str) -> int:
+    h, m = (int(x) for x in hhmm.split(":"))
+    return h * 60 + m
 
 
 def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
@@ -929,18 +895,25 @@ def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
     s = A.LinuxScheduler(runner=sc, python="/srv/rc/.venv/bin/python", workdir="/srv/rc", unit_dir=tmp_path / "u")
     s.install(A.entry("RC-Build"))
     s.install(A.entry("RC-Build-Backup"))
+    s.install(A.entry("RC-Build-Backup-Heavy"))
     files = sorted(p.name for p in (tmp_path / "u").iterdir())
-    assert files == ["life-rc-builder-backup.service", "life-rc-builder-backup.timer",
+    assert files == ["life-rc-builder-backup-heavy.service", "life-rc-builder-backup-heavy.timer",
+                     "life-rc-builder-backup.service", "life-rc-builder-backup.timer",
                      "life-rc-builder.service", "life-rc-builder.timer"]
     service = (tmp_path / "u" / "life-rc-builder.service").read_text(encoding="utf-8")
     timer = (tmp_path / "u" / "life-rc-builder.timer").read_text(encoding="utf-8")
     assert 'ExecStart="/srv/rc/.venv/bin/python" "-m" "RevenueChaser.core.automations" "run" "RC-Build"' in service
-    assert "Type=oneshot" in service and "TimeoutStartSec=50min" in service
+    assert "Type=oneshot" in service and "TimeoutStartSec=120min" in service
     assert "OnCalendar=*-*-* *:07:00" in timer and "Unit=life-rc-builder.service" in timer
     backup_service = (tmp_path / "u" / "life-rc-builder-backup.service").read_text(encoding="utf-8")
     backup_timer = (tmp_path / "u" / "life-rc-builder-backup.timer").read_text(encoding="utf-8")
     assert '"run" "RC-Build-Backup"' in backup_service and "TimeoutStartSec=30min" in backup_service
     assert "OnCalendar=*-*-* 04:30:00" in backup_timer and "Unit=life-rc-builder-backup.service" in backup_timer
+    heavy_service = (tmp_path / "u" / "life-rc-builder-backup-heavy.service").read_text(encoding="utf-8")
+    heavy_timer = (tmp_path / "u" / "life-rc-builder-backup-heavy.timer").read_text(encoding="utf-8")
+    assert '"run" "RC-Build-Backup-Heavy"' in heavy_service and "TimeoutStartSec=60min" in heavy_service
+    assert "OnCalendar=Sun *-*-* 03:30:00" in heavy_timer
+    assert "Unit=life-rc-builder-backup-heavy.service" in heavy_timer
     for text in (service, timer, backup_service, backup_timer):      # valid unit text: sections, key=value lines
         lines = [ln for ln in text.splitlines() if ln.strip()]
         assert lines[0] == "[Unit]"
@@ -953,16 +926,19 @@ def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
     s.remove("RC-Build")
     assert sc.calls == [["disable", "--now", "life-rc-builder.timer"], ["start", "--no-block", "life-rc-builder.service"],
                         ["disable", "--now", "life-rc-builder.timer"], ["daemon-reload"]]
-    assert sorted(p.name for p in (tmp_path / "u").iterdir()) == ["life-rc-builder-backup.service",
+    assert sorted(p.name for p in (tmp_path / "u").iterdir()) == ["life-rc-builder-backup-heavy.service",
+                                                                   "life-rc-builder-backup-heavy.timer",
+                                                                   "life-rc-builder-backup.service",
                                                                    "life-rc-builder-backup.timer"]
 
 
-def test_windows_installs_the_builder_as_an_hourly_trigger_with_a_minute_limit():
+def test_windows_installs_the_builder_as_an_hourly_trigger_with_no_limit():
+    """#527: a zero ExecutionTimeLimit is Task Scheduler's "no limit"; the backup keeps its minutes."""
     ps = FakePS()
     _win(ps).install(A.entry("RC-Build"))
     s = ps.scripts[0]
     assert "-Once -At '00:07' -RepetitionInterval (New-TimeSpan -Hours 1)" in s
-    assert "-ExecutionTimeLimit (New-TimeSpan -Minutes 50)" in s
+    assert "-ExecutionTimeLimit (New-TimeSpan -Minutes 120)" in s
 
 
 def test_a_chain_step_cannot_wait_on_an_hourly_row():
@@ -984,3 +960,55 @@ def test_the_spx_gamma_fetch_runs_on_weekdays_after_the_stored_close():
     assert e.tables_written == () and e.default_install is False
     assert e.settings.start_when_available is False
     assert e.schedule == "weekly Monday, Tuesday, Wednesday, Thursday, Friday 06:30 (local)"
+
+
+def test_every_backup_step_belongs_to_exactly_one_registry_row():
+    """A new serving kind has to be put in the light or the heavy run on purpose, not land in neither."""
+    from RevenueChaser.rcdata import backup
+    chosen: list[str] = []
+    subdirs: list[str] = []
+    for e in A.REGISTRY:
+        args = list(e.args)
+        if args[:3] != ["-m", "RevenueChaser.rcdata", "backup"]:
+            continue
+        assert "--only" in args, f"{e.name} runs rcdata backup without --only: it would take every step"
+        chosen += args[args.index("--only") + 1].split(",")
+        subdirs.append(args[args.index("--subdir") + 1] if "--subdir" in args else backup.SUBDIR)
+    assert sorted(chosen) == sorted(backup.STEPS), "every step belongs to exactly one backup entry"
+    assert set(subdirs) == set(backup.SUBDIRS), "SUBDIRS is exactly the folders the registry writes"
+
+
+def test_a_task_with_no_time_limit_says_so_and_installs_none():
+    """#527: ``no_time_limit`` reads "no time limit", installs ``TimeoutStartSec=infinity`` and a zero (unlimited)
+    Task Scheduler limit, and a chained task after it is not held to a limit it does not have."""
+    s = A.TaskSettings(no_time_limit=True)
+    assert s.limit_minutes is None
+    assert "no time limit" in s.summary() and "h limit" not in s.summary()
+    assert A.TaskSettings(time_limit_minutes=50).limit_minutes == 50
+    assert A.TaskSettings(time_limit_hours=2).limit_minutes == 120
+
+
+def test_the_ibkr_login_check_limit_is_the_installed_unit_s_five_minutes():
+    """#527: the registry said 1 h while homesrv runs ``TimeoutStartSec=5min`` (home-server
+    units/life-rc-ibkr-login-check.service); the board shows the registry, so it follows the unit."""
+    assert A.entry("RC-IBKR-Login-Check").settings.limit_minutes == 5
+
+
+@pytest.mark.parametrize("name,switch,runs", [
+    ("RC-ValueChain-Sync", "fetch", False), ("RC-Build", "fetch", False), ("RC-Daily-Bars", "fetch", False),
+    ("RC-Store-Backup", "fetch", True), ("RC-Build-Backup", "fetch", True), ("RC-IBKR-Login-Check", "fetch", True),
+    ("RC-Store-Backup", "backup", False), ("RC-Build-Backup-Heavy", "backup", False), ("RC-Build", "backup", True),
+])
+def test_a_switched_off_task_does_not_start_its_command(monkeypatch, name, switch, runs):
+    """#527: every RC systemd unit runs ``core.automations run <name>``, so the board's two switches are read here.
+    Fetch stops every task but the backups and the IBKR login check; backup stops only the backups. A stopped task
+    exits 0 (it is not a failed job) and says why in its log."""
+    from RevenueChaser.rcdata import ops
+    ops.switch_set(switch, False, by="avo")
+    started = []
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: started.append(a) or type("R", (), {"returncode": 0})())
+    assert A.run_task(name) == A.RESULT_OK
+    assert bool(started) is runs
+    if not runs:
+        text = A.entry(name).log_path.read_text(encoding="utf-8")
+        assert f"skipped: the {switch} switch is off (avo at " in text

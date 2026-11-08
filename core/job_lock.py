@@ -308,6 +308,12 @@ WRITES: dict[str, tuple[str, ...]] = {
 WRITES_PREFIX: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("nightly_inputs_", (STORE,)),
     ("board_fetch_", (STORE,)),
+    # One dataset's fetch-only run (``build ... --no-duckdb`` or ``--no-parquet``): it writes raw files, and
+    # Parquet partitions unless it is raw-only, and opens no serving file, so it holds off nothing and nothing
+    # holds it off. A partition only ever appears whole (``base.write_parquet`` renames into place), so a builder
+    # reading while one of these writes sees fewer partitions, never half of one. The tail is the dataset, so two datasets fetch side by side while a
+    # second run of the same dataset waits.
+    ("rcdata_fetch_", ()),
 )
 
 

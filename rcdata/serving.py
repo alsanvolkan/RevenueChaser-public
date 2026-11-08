@@ -11,6 +11,12 @@ The swap never leaves the live name missing: the previous file is first hard-lin
 (copied where the file system has no hard links), then ``os.replace`` moves the new file over the live name in one
 step. A reader that opened the old file keeps reading it; the next ``open_read`` gets the new one.
 
+A build either starts empty (``build(kind)``, every table made from Parquet) or as a copy of the live file
+(``build(kind, base="live")``), for a build that replaces only what changed. The copy is a build file like any
+other — the live file is never opened read-write — so the checks, the atomic swap, the ``prev`` rollback and the
+shrink guard all hold unchanged. ``serving_schema_version.build_mode`` says which base the build really got:
+``"live"`` falls back to ``"fresh"`` when there is no live file or it carries another serving schema version.
+
 The dashboard and the boards open serving files with ``open_read`` only: read-only, the path resolved on every
 call, never a connection kept across requests. Serving files are never compacted; they are rebuilt (F10 B).
 """
@@ -30,23 +36,41 @@ import duckdb
 from ..core import config
 
 # The serving schema of each kind. A change to a kind's tables bumps its number in its own PR (box rule).
-SERVING_SCHEMA_VERSION = {"market": 2, "spine": 4, "ownership": 1}
+SERVING_SCHEMA_VERSION = {"market": 2, "spine": 5, "ownership": 1}
 # spine 2: ``fund``, the SEC fund file's share classes and the ETF rule (``build/spine/sec_tickers_mf.py``).
 # spine 3: ``etf_holdings``, the rotation board's ETFs read whole (``build/spine/etf_holdings.py``).
 # spine 4: ``etf``, the ETF universe from Alpha Vantage and N-CEN (``build/spine/etf.py``, #346).
+# spine 5: ``my_universe`` and ``my_universe_changes``, the names we keep and who entered or left
+#          (``build/spine/my_universe.py``, avo's rules of 4 Nov 2026).
 
 # PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
 SERVING_SCHEMA_VERSION["prices"] = 1
 # PR 12 (G5): ``fundamentals.duckdb``, the facts, filings, earnings, estimates and checks (``build/fundamentals/``).
-SERVING_SCHEMA_VERSION["fundamentals"] = 1
+SERVING_SCHEMA_VERSION["fundamentals"] = 2
+# fundamentals 2: ``earnings_reported``, the EPS a company reported as UW serves it, in a table of its own
+#                 (``build/fundamentals/uw_earnings.py``, avo's decision of 5 Nov 2026). Bumped before the kind's
+#                 first build, so no live file had to be checkpointed for it.
 # PR 18 (G8): ``options.duckdb``, the option chains, exposures, prints and IV (``build/options/``).
 SERVING_SCHEMA_VERSION["options"] = 1
 
 KINDS = tuple(SERVING_SCHEMA_VERSION)
 VERSION_TABLE = "serving_schema_version"
+# The base a build starts from: an empty file, or a copy of the live one (``build``).
+BUILD_MODES = ("fresh", "live")
 # A table may lose at most this share of its live rows in one build without an explicit allow_shrink. The datasets
 # only ever add or replace rows, so any real shrink is a build from a partial or missing Parquet tree.
 MAX_SHRINK = 0.01
+# A table whose row count is a **chosen** list and not an accumulation: ``my_universe`` is avo's rules plus his
+# manual removes, so a smaller list is the intended outcome of changing the choice, not a sign of a partial build,
+# and it must not need a request-wide ``allow_shrink`` (which would relax every other table of the kind with it).
+# The "empties" guard still applies: a universe of no names is a bug whoever edited what.
+SHRINKS_BY_CHOICE = ("my_universe",)
+# The tables a kind's code no longer builds, by kind: the live file may still hold one, and the build may leave it
+# out (its swap removes it with the old file). Any other live table missing from a build is still refused, because
+# that is a build from a partial Parquet tree. ``allow_shrink`` cannot stand in for this: the "missing" check comes
+# first, and a request-wide flag would relax every other table of the kind with it (review M2 of #382).
+#   prices: ``crsp_unadjusted`` (#353's CRSP bars no action adjusted); PR 382 serves no CRSP bar, so it is gone.
+RETIRED_TABLES: dict[str, tuple[str, ...]] = {"prices": ("crsp_unadjusted",)}
 # A table that serves only its newest sessions (``option_eod``, G8) names the first value it keeps here, in its own
 # build file (``declare_window``), so the shrink check compares the rows both files are meant to hold: a session
 # that left the window is not a loss, a session inside it that lost rows is.
@@ -140,8 +164,11 @@ def _remove(path: Path) -> None:
 class BuildFile:
     """One build in progress: its read-write connection, path and id. Made by :func:`build`."""
 
-    def __init__(self, kind: str, build_id: str, path: Path, con: duckdb.DuckDBPyConnection):
+    def __init__(self, kind: str, build_id: str, path: Path, con: duckdb.DuckDBPyConnection, mode: str):
         self.kind, self.build_id, self.path, self.con = kind, build_id, path, con
+        # What this file started as, for the datasets: under ``"live"`` their tables are already here with the
+        # live rows, under ``"fresh"`` the file is empty and every table is built whole.
+        self.mode = mode
         self.swapped = False
 
     def close(self) -> None:
@@ -259,13 +286,20 @@ def _counts(path: Path, windows: dict[str, tuple[str, str]] | None = None) -> di
 
 
 def _verify_against_live(kind: str, path: Path, relax: frozenset[str] = frozenset()) -> None:
-    """Refuse a build missing a live table, or (outside ``relax``) emptying or shrinking one by over MAX_SHRINK."""
+    """Refuse a build missing a live table, or (outside ``relax``) emptying or shrinking one by over MAX_SHRINK.
+
+    A table of :data:`SHRINKS_BY_CHOICE` may shrink by any amount; it may still not empty. A table of
+    :data:`RETIRED_TABLES` may be missing from the build: the code no longer builds it.
+    """
     live = live_path(kind)
     if not live.exists():
         return
     windows = _windows(path)
     old, new = _counts(live, windows), _counts(path, windows)
+    retired = set(RETIRED_TABLES.get(kind, ()))
     for table, before in sorted(old.items()):
+        if table not in new and table in retired:
+            continue
         if table not in new:
             raise ValueError(f"table {table} of the live file is missing from the build")
         after = new[table]
@@ -273,27 +307,77 @@ def _verify_against_live(kind: str, path: Path, relax: frozenset[str] = frozense
             continue
         if before > 0 and after == 0:
             raise ValueError(f"{table} empties: {before} rows live, 0 in the build")
+        if table in SHRINKS_BY_CHOICE:
+            continue
         if after < before * (1 - MAX_SHRINK):
             raise ValueError(f"{table} shrinks from {before} to {after} rows (more than {MAX_SHRINK:.0%})")
 
 
+def live_version(kind: str) -> int | None:
+    """The serving schema version the live ``kind`` file was built by; ``None`` when there is no file, no version
+    row, or more than one (a file no build of ours finished)."""
+    try:
+        with open_read(kind) as con:
+            rows = con.execute(f"SELECT version FROM {VERSION_TABLE} WHERE kind = ?", (kind,)).fetchall()
+    except (ServingFileMissing, duckdb.Error):
+        return None
+    return int(rows[0][0]) if len(rows) == 1 else None
+
+
+def _copy_live(kind: str, path: Path) -> str:
+    """Start the build file ``path`` as a copy of the live ``kind`` file; the mode that gave.
+
+    ``"fresh"`` (nothing copied) when there is no live file, or it was built by another serving schema version:
+    its tables are then not the ones this code builds, so only a whole build is safe. That is also what makes a
+    version bump a full rebuild without any dataset asking for one.
+    """
+    if live_version(kind) != SERVING_SCHEMA_VERSION[kind]:
+        return "fresh"
+    # No ``.wal`` to carry over: ``swap`` checkpoints and closes before its checks, ``_verify`` refuses a build file
+    # that still has one, and only the ``.duckdb`` is ever moved or linked. A ``.wal`` beside a live file would mean
+    # something outside this module held the writer, and replaying that into a build is not the safe answer.
+    shutil.copy2(live_path(kind), path)
+    return "live"
+
+
+def _stamp(con: duckdb.DuckDBPyConnection, kind: str, build_id: str, mode: str) -> None:
+    """Write this build's one version row, over the row a copied live file brought with it."""
+    con.execute(f"CREATE TABLE IF NOT EXISTS {VERSION_TABLE} (kind TEXT, version INTEGER, built_at DOUBLE, "
+                "build_id TEXT, build_mode TEXT)")
+    # A live file built before this column existed: the copy keeps its four columns until the first build adds it.
+    con.execute(f"ALTER TABLE {VERSION_TABLE} ADD COLUMN IF NOT EXISTS build_mode TEXT")
+    con.execute(f"DELETE FROM {VERSION_TABLE}")
+    con.execute(f"INSERT INTO {VERSION_TABLE} (kind, version, built_at, build_id, build_mode) "
+                "VALUES (?, ?, ?, ?, ?)", (kind, SERVING_SCHEMA_VERSION[kind], time.time(), build_id, mode))
+
+
 @contextmanager
-def build(kind: str) -> Iterator[BuildFile]:
+def build(kind: str, base: str = "fresh") -> Iterator[BuildFile]:
     """A new, stamped build file of ``kind``; deleted unless ``swap`` moved it into place inside the block.
+
+    ``base="live"`` starts the file as a copy of the live one, for a build that replaces only what changed;
+    ``b.mode`` and ``serving_schema_version.build_mode`` say what it really got, which is ``"fresh"`` when there
+    was nothing to copy (:func:`_copy_live`). The live file itself is only ever read: the copy is checked and
+    swapped like any other build.
 
     The only read-write handle the builder ever opens on a serving file is this one, on its own new file.
     """
+    if base not in BUILD_MODES:
+        raise ValueError(f"unknown build base {base!r}; known: {BUILD_MODES}")
     build_id = new_build_id()
     path = build_path(kind, build_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     spill = spill_dir(path)
     spill.parent.mkdir(parents=True, exist_ok=True)               # DuckDB makes only the last level
-    con = duckdb.connect(str(path), config={**build_config(), "temp_directory": str(spill)})
-    b = BuildFile(kind, build_id, path, con)
     try:
-        con.execute(f"CREATE TABLE {VERSION_TABLE} (kind TEXT, version INTEGER, built_at DOUBLE, build_id TEXT)")
-        con.execute(f"INSERT INTO {VERSION_TABLE} VALUES (?, ?, ?, ?)",
-                    (kind, SERVING_SCHEMA_VERSION[kind], time.time(), build_id))
+        mode = _copy_live(kind, path) if base == "live" else "fresh"
+        con = duckdb.connect(str(path), config={**build_config(), "temp_directory": str(spill)})
+    except BaseException:
+        _remove(path)      # a copy that broke mid-way is as large as the live file, on the live files' own disk
+        raise
+    b = BuildFile(kind, build_id, path, con, mode)
+    try:
+        _stamp(con, kind, build_id, mode)
         yield b
     finally:
         b.close()

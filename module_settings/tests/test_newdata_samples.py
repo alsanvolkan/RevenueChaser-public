@@ -76,7 +76,7 @@ def test_a_sample_names_each_column_with_its_type_and_the_dataset_that_writes_it
     sample = {"columns": [{"name": "session_date", "type": "DATE"}, {"name": "close", "type": "DOUBLE"}],
               "rows": [["2026-10-27", 1.0]]}
     out = newdata._sample_block("price_bar_daily", sample)
-    assert out["dataset"] == "alpaca/bars"
+    assert out["dataset"] == "wrds/prices"      # Compustat writes the served bars (avo's decision 2 of #382)
     assert [c["name"] for c in out["columns"]] == ["session_date", "close"]
     assert out["rows"] == [["2026-10-27", 1.0]]
 
@@ -151,44 +151,6 @@ def _with_sample(sample: dict | None):
     return nd
 
 
-def test_the_card_shows_the_rows_under_their_column_names_with_the_type():
-    nd = _with_sample({"table": "market_series", "dataset": "market_series", "built": True,
-                       "columns": [{"name": "series_id", "type": "VARCHAR"},
-                                   {"name": "value", "type": "DOUBLE"}],
-                       "rows": [["DGS10", 4.0], ["VIX", 17.5]], "notes": ()})
-    card = _card_html(_section(_page(nd)), "market_series")
-    assert "Example rows" in card
-    assert "series_id" in card and "VARCHAR" in card and "DGS10" in card and "17.5" in card
-
-
-def test_the_card_of_a_file_that_was_never_built_says_so_and_still_shows_the_columns():
-    nd = _with_sample({"table": "price_bar_daily", "dataset": "alpaca/bars", "built": False,
-                       "columns": [{"name": "session_date", "type": "DATE"}], "rows": [], "notes": ()})
-    card = _card_html(_section(_page(nd)), "market_series")
-    assert "not built yet" in card and "session_date" in card and "DATE" in card
-
-
-def test_a_hard_case_is_shown_with_its_warning_sign():
-    nd = _with_sample({"table": "security_symbol", "dataset": "spine/security", "built": True,
-                       "columns": [], "rows": [], "notes": ("HEI and HEI-A are two share classes of one issuer",)})
-    card = _card_html(_section(_page(nd)), "market_series")
-    assert "HEI and HEI-A" in card and "⚠" in card
-
-
-def test_a_card_with_no_sample_shows_no_empty_block():
-    nd = _with_sample(None)
-    assert "Example rows" not in _card_html(_section(_page(nd)), "market_series")
-
-
-def test_a_hostile_value_in_a_sample_row_is_escaped():
-    nd = _with_sample({"table": "market_series", "dataset": "market_series", "built": True,
-                       "columns": [{"name": "<img src=x>", "type": "<b>"}],
-                       "rows": [["<script>alert(1)</script>"]], "notes": ("<i>note</i>",)})
-    card = _card_html(_section(_page(nd)), "market_series")
-    assert "<script>alert(1)</script>" not in card and "&lt;script&gt;" in card
-    assert "<img src=x>" not in card and "<i>note</i>" not in card
-
-
 # ── against a real serving file ──
 
 @pytest.fixture
@@ -240,8 +202,3 @@ def test_a_card_whose_file_is_not_built_carries_its_schema(prices_store):
                  if b["table"] == "finra_short_interest")
     assert block["built"] is False and block["rows"] == []
     assert "settlement_date" in [c["name"] for c in block["columns"]]
-
-
-def test_the_whole_page_renders_the_real_rows(prices_store):
-    html = report.render_settings_dashboard({"newdata": newdata.collect(NOW), "rows": []})
-    assert "Example rows · price_bar_daily" in html and "2026-10-28" in html

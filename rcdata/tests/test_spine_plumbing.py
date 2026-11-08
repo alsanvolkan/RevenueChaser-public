@@ -57,10 +57,10 @@ def fake(monkeypatch):
     return ds
 
 
-def test_spine_is_a_serving_kind_of_version_4():
+def test_spine_is_a_serving_kind_of_version_5():
     """2 since ``fund`` joined it (``sec/company_tickers_mf``, #320), 3 since ``etf_holdings`` (``funds/etf_holdings``),
-    4 since ``etf`` (#346)."""
-    assert serving.SERVING_SCHEMA_VERSION["spine"] == 4
+    4 since ``etf`` (#346), 5 since ``my_universe`` and ``my_universe_changes`` (avo, 4 Nov 2026)."""
+    assert serving.SERVING_SCHEMA_VERSION["spine"] == 5
     assert "spine" in serving.KINDS
     assert serving.live_path("spine").name == "spine.duckdb"
 

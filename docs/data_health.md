@@ -137,7 +137,17 @@ closed fold under it (`details#old-settings`), unchanged.
   file by file, then the cross-check and the queue. Health, Fetch and the flow diagram start open.
 - **Health tiles** count the dataset cards. The builder tile turns red when the builder has been
   silent for over 70 minutes; a provider's cap tile warns at 50% of its day cap and is red from 70%.
-- **What can be pressed where.** Fetch, Pause and Fill are in the Fetch section only; the Data cards show bars and
+- **Where the folder counts come from.** Every dataset's raw and Parquet folder line is the **disk picture**, not a
+  live read: the storage-picture job (`POST /run/storage-picture`, the **Recount folders** control (named "Take the disk picture" before #527) at the
+  bottom of the Fetch section, where every press lives) walks the HDD trees and writes
+  `.cache/storage_picture/storage_picture_latest.json`, and the Data section's roots line reads that and says when
+  it was walked. The walk was in the render until #434, where the first `readdir` of the
+  folders that exist measured 26 s and the whole walk held the single-threaded dashboard past `rc-warmup`'s 600 s
+  ceiling. The serving file's own size beside it **is** read live: that is four stats of the SSD. Until the job has
+  run on a box the lines read "not walked yet", which is not the same as a dataset whose folder is missing
+  ("no folder yet"), and past a day the line says how old the picture is.
+- **What can be pressed where.** Fetch, Pause, Fill and **Recount folders** are in the Fetch section only;
+  the Data cards show bars and
   no button. A press on a tier set only drafts; **Apply** saves the universe as the Settings board's
   `UNIVERSE_SETS` and `UNIVERSE_INCLUDE` (`POST /api/settings/board/module_settings`) and fetches nothing. C and D are
   shown greyed and are never offered. The default universe (A and all of B) asks no scope: it is the daily run.
@@ -153,14 +163,21 @@ closed fold under it (`details#old-settings`), unchanged.
 - **Stale page:** when the page is older than 60 minutes on returning to it, a bar offers a reload.
 - **Planned reads** (a board's table read that `boards` does not declare yet) are drawn dashed and marked planned.
 
-### 2.0b The two tabs: Data and Needs (#331)
+### 2.0b The three tabs: Data, Fetch and Needs (#331)
 
-A tab strip sits at the top of the page, under the provider banner: **Data** is the page as described in 2.0a and
-below (the control board, then the closed fold of the old sections), and **Needs** shows the needs layer
-(`rcdata.needs`): what a board can ask for, how fresh it is now, and how often it was asked. The strip is
-`role="tablist"`; the arrow keys move between the two tabs, the choice is remembered per viewer (`localStorage`,
-key `rc.settings.tab`), and `#needs` in the URL opens the Needs tab. With no script the Data tab shows. Showing the
-Data tab again sends a `resize`, because the flow diagram lays itself out from a width that is 0 while hidden.
+A tab strip sits at the top of the page, under the provider banner. **Data** is what the store holds and where it
+comes from (`control_render.render_data`: the header, Health, the flow diagram, Data file by file and the
+cross-check), with the closed fold of the old sections at its bottom. **Fetch** is what gets asked for
+(`control_render.render_fetch`: the universe strip and its legend, every dataset's bar, Providers and the queue).
+**Needs** shows the needs layer (`rcdata.needs`): what a board can ask for, how fresh it is now, and how often it
+was asked. Both board panels carry `class="ctl"`, which is what `static/control.css` is scoped to, so each is styled
+as the one board it was.
+
+The strip is `role="tablist"`; the arrow keys move between the tabs, the choice is remembered per viewer
+(`localStorage`, key `rc.settings.tab`), and `#data`, `#fetch` or `#needs` in the URL opens that tab. With no
+script the Data tab shows. A tab that becomes visible sends a `resize`, because the flow diagram lays itself out
+from a width that is 0 while hidden. A press that points into the other panel (the Cross-check button, "Fetch the
+universe") opens that tab first, through `window.RC_SETTINGS_SHOW_PANEL`.
 
 `module_settings/needs_tab.py` builds the model (`build`) and draws it (`render`); the styles are
 `static/needs.css`, scoped to `#needs` and `#settings-tabs`, with the control board's own light and dark tokens
@@ -253,9 +270,9 @@ the four WRDS checks of the fundamentals layer below.
 **The fundamentals layer (PR 12).** Eleven more dataset cards, one per fundamentals dataset
 (`docs/data_architecture.md`, "Fundamentals"), each with its own cadence (the SEC facts and filings, the Alpha Vantage
 calendar, UW's preliminary quarters and `fundamentals/tables` daily, the yfinance estimates weekly, the SEC's FSDS and
-the four WRDS checks monthly). The WRDS cards `wrds/fundq`, `wrds/funda`, `wrds/firm_ratio` and `wrds/segments` are
+the three WRDS checks monthly). The WRDS cards `wrds/fundq`, `wrds/funda` and `wrds/segments` are
 attended, with their own command (`python -m RevenueChaser.rcdata.build backfill wrds/fundq wrds/funda
-wrds/firm_ratio wrds/segments`), and their WRDS difference slot is the monthly difference report: the note of the
+wrds/segments`), and their WRDS difference slot is the monthly difference report: the note of the
 newest run that read WRDS (a skipped or failed run is not one), so the agreement counts against the SEC and the
 number of revisions since the snapshot before are on the card (decided 27 Oct). No coverage target is set for these
 cards yet: the coverage is shown, and the alarm limits wait for two weeks of real data, as decision 1 did.
@@ -465,6 +482,24 @@ login is what asks for credentials.
   newest session from `price_bars_daily`; `swing_ohlc` appears as the legacy cache and is not the
   price of record.
 
+### 2.9 Which prices file the board reads
+
+The daily bars live in two files. Since build plan PR 7 the builder writes them to the **market store's**
+`prices.duckdb` (`RC_MARKET_DIR`): `price_bar_daily`, keyed on the security id, with the old `price_bars_daily`
+shape served beside it as a view. The **store's own** `prices.duckdb` (`RC_STORE_DIR`) is written only by the old
+nightly, RC-Daily-Bars; where that does not run it is a schema stub. The live check of 1 Nov 2026 found exactly that:
+a 798 KB stub in the store beside 5.65M bars through 2026-10-30 in the market file, and the board showed no bars.
+
+So the "Daily price bars" row, the drill's bar count and the identity input "Daily price bars, latest completed
+session" read the **market file whenever it is built**, and the store's file only when it is not
+(`module_settings/inventory.py`, `_market_prices`). On the market file the row says so in its note (newest session
+against the latest complete one, the bars per source on the newest session, the build time), counts index levels
+out of the bars, names its store `market`, its source Alpaca and its writer `prices/serving`, and its "behind" column
+counts complete sessions the file misses. A market file that is there but cannot be read is said ("could not be read",
+Freshness "query failed"), never shown as an empty one; with neither file holding a bar the row says that the market
+file is not built and the store file holds none. Whether RC-Daily-Bars and the store's file are retired is a decision
+of its own, not made here.
+
 ---
 
 ## 3. The sections below the table
@@ -651,7 +686,8 @@ a link to where its cause is shown. A note renders with a warning mark, a positi
 link, never a button: long store-writing jobs start only from Settings. A board whose payload emits
 no funnel never asks for a Refresh to grow one, and a missing artifact reads as not rendered.
 
-The classification universe is the spine's Tiers A and B whole (PR 2, avo 30 Oct 2026): a security
+The classification universe is avo's own list, the spine's `my_universe` (avo 5 Nov 2026), and the
+spine's Tiers A and B whole where the spine holds no such list (PR 2, avo 30 Oct 2026): a security
 type is data a board filters on, not a cut of the universe. Each screening board has a type filter
 (`OPERATING_ONLY`, a setting on Co-movement, Swing and Fundamentals; `core.universe.BOARD_OPERATING_ONLY`
 holds every board's default, the set it read before PR 2). With the filter on, the board states the

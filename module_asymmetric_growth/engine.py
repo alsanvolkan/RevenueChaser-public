@@ -1035,8 +1035,6 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     ``data_as_of`` is the newest prices-store session among the cards this Fetch scored (#380 S4): the price session their
     momentum came from, None when no card has a bar.
     """
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-
     # This Fetch's Yahoo reads only (Common K3). A Refresh never calls Yahoo, so it does not reset the counter.
     if not no_fetch:
         yfinance_client.reset_health()
@@ -1099,7 +1097,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     if vendor is not None:
         vendor.flush(run_id=vendor_run, label="Asymmetric Growth")
 
-    totals = sec_13f.load_totals()
+    totals = ownership.sec13f_totals()      # #16: the stored rows, not the 13F board's engine
     from RevenueChaser.module_asymmetric_growth import freeze
     version = freeze.model_version()        # the rows say which rules scored them (old-rows view, #380 S2)
     for c in cards:

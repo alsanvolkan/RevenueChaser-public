@@ -10,6 +10,20 @@ from __future__ import annotations
 VIX_TICKERS = ["^VIX", "^VIX9D", "^VIX3M", "^VIX6M", "^VIX1Y", "^VVIX"]
 
 
+def ivts(values: dict) -> float | None:
+    """The implied-volatility term-structure ratio, VIX / VIX3M; None when either close is missing.
+
+    The report's §17 reads it beside the term mode: below 1 is contango (the month is dearer than spot), above 1
+    is backwardation. It is the same two closes ``vix_term_mode`` compares, as a number rather than a label, so a
+    small move inside one mode is still visible.
+    """
+    vix = values.get("^VIX")
+    vix3m = values.get("^VIX3M")
+    if vix is None or vix3m is None or not vix3m:
+        return None
+    return vix / vix3m
+
+
 def vix_term_mode(values: dict) -> str | None:
     """contango (VIX < VIX3M) vs backwardation (VIX > VIX3M); None when missing.
 

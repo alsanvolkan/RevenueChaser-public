@@ -2,9 +2,10 @@
 
 Two halves:
 
-* the three 13F runners take ``job_lock`` name ``"sec_13f"`` for the whole composed job — the engine functions are
-  building blocks, the job is the unit — so a second Fetch, rebuild or map refuses and writes nothing;
-* ``/run/module_sec_13f``, its ``-rebuild`` / ``-map`` siblings, ``/run/identity``, ``/run/edgar-sync``,
+* the 13F Fetch takes ``job_lock`` name ``"sec_13f"`` for the whole composed job — the steps are building blocks,
+  the job is the unit — so a second Fetch refuses and writes nothing (the rebuild and map jobs went with the
+  retired derive, G9);
+* ``/run/module_sec_13f``, ``/run/identity``, ``/run/edgar-sync``,
   ``/run/daily-bars``, ``/run/index-lists`` and ``/run/universe-stats`` answer ``409`` while a job of their family is
   queued or running, instead of queueing a second multi-minute ingest behind the first.
 
@@ -25,35 +26,24 @@ from RevenueChaser.core.tests.panel_client import panel_test_client
 
 # ── the 13F runners: one family lock ─────────────────────────────────────────
 
-_13F_RUNNERS = [("build", runners.build_sec13f), ("rebuild", runners.run_sec13f_rebuild),
-                ("map", runners.run_sec13f_map)]
-
-
-@pytest.mark.parametrize("runner", [r for _, r in _13F_RUNNERS], ids=[n for n, _ in _13F_RUNNERS])
-def test_each_13f_runner_refuses_while_the_family_lock_is_held(rawstore_tmp_db, runner):
-    rawstore.write_rows("sec13f_totals", [{"ticker": "AAPL", "entry": {"2026-03-31": {"shares": 1.0}}}])
-    before = rawstore.query("SELECT * FROM sec13f_totals")
+def test_the_13f_fetch_refuses_while_the_family_lock_is_held(rawstore_tmp_db):
     with lock_held("sec_13f"):
         with pytest.raises(jobs.JobMessage) as err:
-            runner()
+            runners.build_sec13f()
     assert err.value.message == f"A 13F job is already running (pid {os.getpid()}); nothing was written."
-    assert rawstore.query("SELECT * FROM sec13f_totals") == before, "a refused run wrote the totals"
 
 
-def test_a_refused_fetch_downloads_nothing(rawstore_tmp_db, monkeypatch):
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-
+def test_a_refused_fetch_renders_nothing(rawstore_tmp_db, monkeypatch):
     called: list[tuple] = []
-    monkeypatch.setattr(sec_13f, "download_missing_zips", lambda *a, **k: called.append(a) or [])
+    monkeypatch.setattr(runners, "_render_13f", lambda *a, **k: called.append(a))
     with lock_held("sec_13f"):
         with pytest.raises(jobs.JobMessage):
             runners.build_sec13f()
-    assert called == [], "the lock is taken before the first download"
+    assert called == [], "the lock is taken before the first step"
 
 
 def test_a_finished_13f_run_releases_the_lock(rawstore_tmp_db):
-    with pytest.raises(jobs.JobMessage):              # an empty store: "nothing to rebuild", a normal short run
-        runners.run_sec13f_rebuild()
+    runners.build_sec13f()                            # an empty store: the empty board, no note
     assert "sec_13f" not in dict(job_lock.holders()), "the lock outlived the run"
 
 
@@ -61,8 +51,6 @@ def test_a_finished_13f_run_releases_the_lock(rawstore_tmp_db):
 
 FAMILIES = [
     ("/run/module_sec_13f", "module_sec_13f"),
-    ("/run/module_sec_13f-rebuild", "sec13f_rebuild"),
-    ("/run/module_sec_13f-map", "sec13f_map"),
     ("/run/identity", "identity"),
     ("/run/edgar-sync", "edgar_sync"),
     ("/run/daily-bars", "daily_bars"),
@@ -109,15 +97,6 @@ def test_a_second_post_is_refused_while_the_first_is_queued(client, route, modul
     body = second.get_json()
     assert body["ok"] is False and "already queued or running" in body["error"]
     assert len(_queued(module)) == 1, "the refused click queued a second job"
-
-
-def test_the_three_13f_routes_share_one_family(client):
-    assert client.post("/run/module_sec_13f").status_code == 202
-    for route in ("/run/module_sec_13f-rebuild", "/run/module_sec_13f-map"):
-        r = client.post(route)
-        assert r.status_code == 409
-        assert r.get_json()["error"] == "A 13F job is already queued or running."
-    assert _queued("sec13f_rebuild") == [] and _queued("sec13f_map") == []
 
 
 def test_an_unrelated_route_still_submits(client):

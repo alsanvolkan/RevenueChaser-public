@@ -15,13 +15,12 @@ import pytest
 from RevenueChaser.app import dashboard
 from RevenueChaser.core import reporting_common as rc
 from RevenueChaser.core.tests.board_js import DOM_STUB, function_source, inline_scripts
-from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 
 @pytest.fixture()
 def shell():
     dashboard.app.config["TESTING"] = True
-    return strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True))
+    return dashboard.app.test_client().get("/").get_data(as_text=True)
 
 
 def _style(html: str) -> str:

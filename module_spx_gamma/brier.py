@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from . import safe_json
 from .config import BRIER_FILENAME, DATA_ROOT
-from .scenarios import REPORT_AS_OF
+from .scenarios import REPORT_AS_OF, realized_class
 
 logger = logging.getLogger(__name__)
 
@@ -119,11 +119,53 @@ def _load_for_update(p: Path) -> dict:
     return data
 
 
-def record_probs(asof_date: str, probs: dict[str, float], path: Path | None = None) -> dict:
+def target_friday(asof_date: str) -> str:
+    """The Friday whose official close resolves a record made on ``asof_date``.
+
+    The 30 Oct report (p.19) resolves a week's scenario set on the NEXT Friday's close: a Friday's record
+    resolves a week later, any other day's on the coming Friday.
+    """
+    d = date.fromisoformat(asof_date)
+    ahead = (4 - d.weekday()) % 7 or 7
+    return (d + timedelta(days=ahead)).isoformat()
+
+
+def _clean_bands(bands: dict | None) -> dict[str, list[float]] | None:
+    if not bands:
+        return None
+    out: dict[str, list[float]] = {}
+    for key in ("consolidation", "upside", "downside"):
+        lo_hi = bands.get(key)
+        if not lo_hi or len(lo_hi) != 2:
+            return None
+        if key == "upside" and lo_hi[1] is None:
+            # an open upside (the pin at or below the flip): scoring reads only the consolidation band
+            try:
+                lo = float(lo_hi[0])
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(lo):
+                return None
+            out[key] = [lo, None]
+            continue
+        try:
+            lo, hi = float(lo_hi[0]), float(lo_hi[1])
+        except (TypeError, ValueError):
+            return None
+        if not (math.isfinite(lo) and math.isfinite(hi)):
+            return None
+        out[key] = [lo, hi]
+    return out
+
+
+def record_probs(asof_date: str, probs: dict[str, float], path: Path | None = None,
+                 bands: dict | None = None) -> dict:
     """Append a probability record for an asof date (idempotent per date).
 
-    A record that is already scored is kept as it is: its outcome and Brier were computed from
-    its own probabilities, so replacing them would break the audit (SPX-4).
+    ``bands`` are the scenario bands the probabilities were given for; a record without them cannot be
+    scored later, because the outcome class depends on them. A record that is already scored is kept as
+    it is: its outcome and Brier were computed from its own probabilities, so replacing them would break
+    the audit (SPX-4).
     """
     p = path or _default_path()
     clean = _validated_probs(probs)
@@ -139,11 +181,73 @@ def record_probs(asof_date: str, probs: dict[str, float], path: Path | None = No
         "outcome": None,
         "brier": None,
         "rule": current_rule(),
+        "target": target_friday(asof_date),
+        "bands": _clean_bands(bands),
     })
     records.sort(key=lambda r: r["date"])
     data = {"records": records, "average": data.get("average"), "n": data.get("n", 0)}
     safe_json.write_json_atomic(p, data)
     return data
+
+
+def _resolving_close(asof_date: str, target: str, closes: dict[str, float]) -> tuple[str, float] | None:
+    """The close that resolves a record, or None while its week is still open.
+
+    The target Friday's close when it exists. When that Friday was a market holiday and a later session has
+    closed, the week is over and its last close (after the asof date) resolves it.
+    """
+    if target in closes:
+        return target, float(closes[target])
+    if not any(d > target for d in closes):
+        return None
+    week = sorted(d for d in closes if asof_date < d < target)
+    if not week:
+        return None
+    return week[-1], float(closes[week[-1]])
+
+
+def _refresh_average(data: dict) -> None:
+    scored = scored_under_current_rule(data.get("records", []))
+    if scored:
+        data["average"] = sum(r["brier"] for r in scored) / len(scored)
+        data["n"] = len(scored)
+    else:
+        data["average"] = None
+        data["n"] = 0
+
+
+def score_pending(closes: dict[str, float], path: Path | None = None) -> dict:
+    """Score every unscored record whose target week has closed, from SPX daily closes ``{date: close}``.
+
+    A record keeps the outcome it got first; a record without bands is left unscored.
+    """
+    p = path or _default_path()
+    data = _load_for_update(p)
+    scored_now: list[str] = []
+    for r in data.get("records", []):
+        if r.get("outcome") is not None or r.get("brier") is not None:
+            continue
+        bands = r.get("bands")
+        asof = r.get("date")
+        if not bands or not asof:
+            continue
+        target = r.get("target") or target_friday(asof)
+        hit = _resolving_close(asof, target, closes)
+        if hit is None:
+            continue
+        on, close = hit
+        outcome = realized_class({k: tuple(v) for k, v in bands.items()}, close)
+        if outcome not in CLASSES:
+            continue
+        r["brier"] = brier(r.get("scenario_probs") or {}, outcome)
+        r["outcome"] = outcome
+        r["resolved_on"] = on
+        r["resolved_close"] = close
+        scored_now.append(asof)
+    if scored_now:
+        _refresh_average(data)
+        safe_json.write_json_atomic(p, data)
+    return {"scored": scored_now, "data": data}
 
 
 def score_date(asof_date: str, realized: str, path: Path | None = None) -> dict:
@@ -204,6 +308,17 @@ def scorecard(path: Path | None = None) -> dict:
             "constant probabilities beat it whenever one outcome dominates). Recorded for audit only."
         )
         calibrated = False
+    counted = [float(r["brier"]) for r in scored_under_current_rule(records)]
+    threshold = diff = discriminates = None
+    if len(counted) >= 2 and avg is not None:
+        mean = sum(counted) / len(counted)
+        sd = math.sqrt(sum((x - mean) ** 2 for x in counted) / (len(counted) - 1))
+        threshold = 2.0 * sd / math.sqrt(len(counted))
+        diff = mean - EQUAL_WEIGHT_REFERENCE
+        discriminates = abs(diff) > threshold
+        verdict += (f" Difference from 1/3 each: {diff:+.4f}; the report's discrimination threshold (2 standard "
+                    f"errors) is {threshold:.4f}, so the forecasts "
+                    f"{'do' if discriminates else 'do NOT yet'} discriminate.")
     older = [r for r in records if r.get("brier") is not None and r.get("rule") != current_rule()]
     if older:
         verdict += (f" {len(older)} scored day(s) of an earlier scenario rule are kept for the audit but not "
@@ -221,4 +336,7 @@ def scorecard(path: Path | None = None) -> dict:
         "verdict": verdict,
         "calibrated": calibrated,
         "recorded_count": len(records),
+        "discrimination_threshold": threshold,
+        "difference_vs_equal_weight": diff,
+        "discriminates": discriminates,
     }

@@ -105,8 +105,23 @@ BASE_ENDPOINTS = {
     "vol_term_structure": ("/stock/{t}/volatility/term-structure", {}),
     "variance_risk_premium": ("/stock/{t}/volatility/variance-risk-premium", {}),
     "realized_vol": ("/stock/{t}/volatility/realized", {}),
+    # The report's §4.1 directional vega flow: per-minute buckets of the day, summed on read. It takes a date, so
+    # a backfilled day holds its own flow and not today's.
+    "greek_flow": ("/stock/{t}/greek-flow", {"date": None}),
+    # A8: the week's volatility calendar (market-wide, no ticker, no date: a live file).
+    "economic_calendar": ("/market/economic-calendar", {}),
 }
+# The VIX index's own option book (§17). Not in the table above: that one formats one ticker, and this is a second
+# one. MenthorQ publishes VIX gamma levels but not its vanna and charm, so Unusual Whales is the only source for
+# these two and the levels are out of scope under "UW only" (avo, 3 Nov 2026).
+VIX_GREEKS_TICKER = "VIX"
+VIX_GREEKS_PATH = "/stock/{t}/greek-exposure/expiry"
 MANDATORY = ("gex_levels",)
+
+# /option-contracts answers at most this many rows per page (docs/openapi.yaml: "Default 500 Max 500"), and the
+# chains are paged up to this many pages (#255: an SPX 0DTE chain is thousands of contracts).
+CHAIN_PAGE_LIMIT = 500
+CHAIN_MAX_PAGES = 20
 
 # Spot-exposure strikes come back capped at this many rows per call (UW's limit).
 SPOT_EXPOSURE_LIMIT = 500
@@ -125,6 +140,8 @@ _FILENAMES = {
     "vol_term_structure": "vol_term_structure.json",
     "variance_risk_premium": "variance_risk_premium.json",
     "realized_vol": "realized_vol.json",
+    "greek_flow": "greek_flow.json",
+    "economic_calendar": "economic_calendar.json",
 }
 
 # Files that carry the CURRENT value whatever date was asked for (no ``date`` param),
@@ -133,8 +150,33 @@ _FILENAMES = {
 # rendered (PR 3), so they are never a later session's value.
 LIVE_FILES = frozenset(
     {_FILENAMES[n] for n, (_t, p) in BASE_ENDPOINTS.items() if "date" not in p}
-    | {"option_chain.json"}
+    | {"option_chain.json", "skew_chain_1m.json", "skew_chain_3m.json", "target_chain.json", "spy_ohlc_30m.json"}
 )
+
+# F3: the skew chains are read near these tenors, and only from an expiry within half a tenor of it.
+SKEW_TENORS = {"1m": 30, "3m": 90}
+
+
+def skew_expiries(expiries, asof_date: str) -> dict[str, str]:
+    """The listed expiry nearest 30 and nearest 90 calendar days after ``asof_date``, for the 25-delta skew (F3).
+
+    An expiry further than half a tenor from its target is not used, so a short list gives no 3M reading rather
+    than a 2-week one labelled 3M.
+    """
+    from datetime import date as _d
+    base = _d.fromisoformat(asof_date)
+    days = {}
+    for e in expiries or []:
+        try:
+            days[str(e)] = (_d.fromisoformat(str(e)) - base).days
+        except ValueError:
+            continue
+    out = {}
+    for key, target in SKEW_TENORS.items():
+        near = [(abs(d - target), e) for e, d in days.items() if abs(d - target) <= target / 2]
+        if near:
+            out[key] = min(near)[1]
+    return out
 
 # History mode (the 2-year pull, D1 25 Oct 2026): only the calls that take a ``date`` (docs/openapi.yaml, the
 # "Optional Market Date" parameter). The Fetch's table above is left as it is, so the board's Fetch requests and
@@ -354,6 +396,45 @@ def _fetch_snapshot_staged(
             _persist(filename, payload)
         return payload
 
+    def _call_chain(name: str, path: str, params: dict, filename: str) -> dict | None:
+        """An /option-contracts call followed past UW's 500-row page (#255): page 0 as before (no ``page``), then
+        ``page=1, 2, ...`` with the same limit until a page is shorter. A contract on two pages means the answer
+        moved while paging; the repeat is dropped and a warning says so. The ceiling keeps the pages read so far
+        and warns, rather than loop."""
+        first = _request(name, path, params)
+        if first is None:
+            return None
+        rows = list(first.get("data") or []) if isinstance(first.get("data"), list) else []
+        sizes = [len(rows)]
+        while sizes[-1] >= CHAIN_PAGE_LIMIT:
+            if len(sizes) >= CHAIN_MAX_PAGES:
+                warnings.append(f"{name}: {CHAIN_MAX_PAGES} full pages, chain may be cut")
+                break
+            more = _request(name, path, {**params, "page": len(sizes), "limit": CHAIN_PAGE_LIMIT})
+            items = more.get("data") if isinstance(more, dict) else None
+            if not isinstance(items, list):
+                warnings.append(f"{name}: page {len(sizes)} failed, chain cut at {len(rows)} contracts")
+                break
+            sizes.append(len(items))
+            rows.extend(items)
+        seen: set = set()
+        kept = []
+        for r in rows:
+            key = r.get("option_symbol") if isinstance(r, dict) else None
+            if key is not None and key in seen:
+                continue
+            if key is not None:
+                seen.add(key)
+            kept.append(r)
+        if len(kept) < len(rows):
+            warnings.append(f"{name}: {len(rows) - len(kept)} contract(s) repeated across pages "
+                            f"(the answer moved while paging); repeats dropped")
+        payload = {**first, "data": kept}
+        if len(sizes) > 1:
+            payload["pages"] = sizes
+        _persist(filename, payload)
+        return payload
+
     # 1. Base endpoints (gex_levels mandatory)
     for name, (tmpl, base_params) in (HISTORY_ENDPOINTS if history_only else BASE_ENDPOINTS).items():
         path = tmpl.format(t=ticker)
@@ -510,16 +591,67 @@ def _fetch_snapshot_staged(
     if history_only:
         _oc = None                 # a chain is live whatever date is asked (LIVE_FILES): never in a past day
     else:
-        _oc = _call("option_chain", f"/stock/{ticker}/option-contracts",
+        _oc = _call_chain("option_chain", f"/stock/{ticker}/option-contracts",
                     {"expiry": report_date}, "option_chain.json")
         if _oc is None or not (_oc.get("data") or []):
             warnings.append("option_chain: empty for report expiry; retrying live chain")
-            _oc = _call("option_chain", f"/stock/{ticker}/option-contracts",
+            _oc = _call_chain("option_chain", f"/stock/{ticker}/option-contracts",
                         {}, "option_chain.json")
     if _oc is not None and (_oc.get("data") or []):
         raw["option_chain"] = _oc
     elif not history_only:
         warnings.append("option_chain: no chain available (panel degraded)")
+
+    # 4c'. The 25-delta skew chains (F3): one /option-contracts call near 30 and one near 90 days. Live only (a chain
+    #      is today's whatever date is asked), best-effort: a tenor without a chain reads n/a.
+    raw["skew_chains"] = {}
+    if not history_only:
+        picks = skew_expiries([r.get("expiry") for r in normalize_expiry_rows(raw.get("expiry_exposure"))],
+                              asof_date)
+        for key, expiry in picks.items():
+            _sc = _call_chain(f"skew_chain_{key}", f"/stock/{ticker}/option-contracts", {"expiry": expiry},
+                        f"skew_chain_{key}.json")
+            if _sc is not None and (_sc.get("data") or []):
+                raw["skew_chains"][key] = _sc
+            else:
+                warnings.append(f"skew_chain_{key}: no chain for {expiry} (skew {key} n/a)")
+
+    # 4c''. The target Friday's chain (A7 straddle, A2 priced structures): the expiry the week resolves on, when UW
+    #       lists it. Live only, best-effort.
+    raw["target_chain"] = None
+    if not history_only:
+        from .brier import target_friday
+        target = target_friday(asof_date)
+        listed = {r.get("expiry") for r in normalize_expiry_rows(raw.get("expiry_exposure"))}
+        if target in listed:
+            _tc = _call_chain("target_chain", f"/stock/{ticker}/option-contracts", {"expiry": target}, "target_chain.json")
+            if _tc is not None and (_tc.get("data") or []):
+                raw["target_chain"] = _tc
+            else:
+                warnings.append(f"target_chain: no chain for {target} (straddle and structures n/a)")
+
+    # 4c'''. A5: SPY 30-minute bars for the scenario set's hourly-close triggers (UW sells no SPX index prices to
+    #        this account, G2-06; hourly.py scales SPY to SPX). Live only, best-effort.
+    raw["spy_ohlc_30m"] = None
+    if not history_only:
+        from .hourly import CANDLE_LIMIT, CANDLE_SIZE, PROXY_TICKER
+        _hb = _call("spy_ohlc_30m", f"/stock/{PROXY_TICKER}/ohlc/{CANDLE_SIZE}", {"limit": CANDLE_LIMIT},
+                    "spy_ohlc_30m.json")
+        if _hb is not None and (_hb.get("data") if isinstance(_hb, dict) else _hb):
+            raw["spy_ohlc_30m"] = _hb
+        else:
+            warnings.append("spy_ohlc_30m: no SPY bars (hourly triggers n/a)")
+
+    # 4d. The VIX index's own option book (§17): net vanna and net charm over its expiries. Best-effort — the
+    #     panel degrades to None, and a failure here never fails an SPX snapshot.
+    raw["vix_greeks"] = None
+    if not history_only:
+        _vg = _call("vix_greeks", VIX_GREEKS_PATH.format(t=VIX_GREEKS_TICKER),
+                    {"date": asof_date}, "vix_greeks.json")
+        if _vg is not None and (_vg.get("data") or []):
+            raw["vix_greeks"] = _vg
+        else:
+            warnings.append("vix_greeks: no VIX option book (panel degraded)")
 
     # 5. Previous-session strike exposure (for gamma vs prev close)
     prev_date = candles[-2]["date"] if len(candles) >= 2 else None

@@ -33,7 +33,7 @@ from datetime import datetime, time as dtime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Callable
 
-from RevenueChaser.core import config
+from RevenueChaser.core import config, run_counts
 
 ACTIONS = ("install", "enable", "disable", "remove", "run")
 
@@ -69,9 +69,13 @@ class TaskSettings:
     restart_count: int = 2
     restart_minutes: int = 5
     time_limit_minutes: int | None = None  # set: the limit in minutes instead of ``time_limit_hours``
+    no_time_limit: bool = False    # set: no limit at all (#527); both fields above are then ignored
 
     @property
-    def limit_minutes(self) -> int:
+    def limit_minutes(self) -> int | None:
+        """The limit in minutes, or None when the task has none."""
+        if self.no_time_limit:
+            return None
         return self.time_limit_minutes if self.time_limit_minutes is not None else self.time_limit_hours * 60
 
     def summary(self) -> str:
@@ -81,7 +85,8 @@ class TaskSettings:
         if self.start_when_available:
             parts.append("catches up a missed run")
         parts.append("only when logged on" if self.run_only_when_logged_on else "logged on or not")
-        parts.append(f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
+        parts.append("no time limit" if self.no_time_limit else
+                     f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
                      else f"{self.time_limit_hours} h limit")
         return ", ".join(parts)
 
@@ -140,6 +145,7 @@ INPUTS_CAP_FLAGS = ("--max-uw-calls", "--max-fred-calls", "--max-yf-calls")
 # market store and records its own ``ops.job_runs2`` rows, so ``tables_written`` is empty: no old ``job_runs`` row.
 BUILDER_UNIT = "life-rc-builder"
 BUILDER_BACKUP_UNIT = "life-rc-builder-backup"
+BUILDER_BACKUP_HEAVY_UNIT = "life-rc-builder-backup-heavy"
 
 REGISTRY: tuple[AutomationEntry, ...] = (
     AutomationEntry(
@@ -230,17 +236,6 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                         "estimate_snapshots", "vol_index_daily", "cftc_cot"),
         settings=TaskSettings(wake_to_run=True)),
     AutomationEntry(
-        name="RC-Open-Issues-Check", label="Open issues registry check",
-        args=("-m", "RevenueChaser.scripts.open_issues_sync", "--check"), time="09:30",
-        description="Checks docs/open_issues.json against the open issues of the public repo through the GitHub API "
-                    "(read anonymously, 1-2 requests) and writes nothing, no table and no store file. It exits 0 "
-                    "whatever it finds: the log line says how far the registry is behind and how many entries "
-                    "await curation, because the file is behind GitHub the moment an issue is opened. To close the "
-                    "gap, git pull first if this clone is behind main (docs/open_issues.json is tracked, so --write "
-                    "on a stale clone sets up a pull conflict), then python -m "
-                    "RevenueChaser.scripts.open_issues_sync --write and commit the file.",
-        settings=TaskSettings(restart_count=0)),
-    AutomationEntry(
         name="RC-IBKR-Login-Check", label="IBKR Gateway login check",
         args=("-m", "RevenueChaser.scripts.ibkr_login_check"), time="09:15",
         description="Looks at whether the IBKR Gateway is still logged in: one TCP connection to the "
@@ -250,7 +245,8 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "(#162). It exits 0 whatever it finds: a session that expired on its weekly cycle is not "
                     "a failed job. Off until RC_IBKR_LOGIN_CHECK is set, and then it contacts nothing but "
                     "RC_IBKR_HOST:RC_IBKR_PORT (127.0.0.1:4001 by default).",
-        settings=TaskSettings(restart_count=0, time_limit_hours=1)),
+        # #527: the installed unit's limit (home-server units/life-rc-ibkr-login-check.service: 5min), not 1 h.
+        settings=TaskSettings(restart_count=0, time_limit_minutes=5)),
     AutomationEntry(
         name="RC-Build", label="Market-store builder (hourly)",
         args=("-m", "RevenueChaser.rcdata.build", "run", "--once"), time="00:07", hourly=True,
@@ -260,14 +256,33 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "file as a new file and swaps it in. It does not start while a job lock is held or another "
                     "builder runs (exit 3); a request a dead builder left running is failed at start. Writes only "
                     "the market store and ops.sqlite, with its own job_runs2 row per run.",
-        settings=TaskSettings(restart_count=0, time_limit_minutes=50)),
+        # 2 h (avo 6 Nov 2026, #527): 166 runs since 20 Oct peaked at 107 min; at 50 min one was killed (2 Nov)
+        settings=TaskSettings(restart_count=0, time_limit_minutes=120)),
     AutomationEntry(
-        name="RC-Build-Backup", label="Market-store backup",
-        args=("-m", "RevenueChaser.rcdata", "backup"), time="04:30", unit_name=BUILDER_BACKUP_UNIT,
-        description="Verified backup of the market store: ops.sqlite through SQLite's online backup and each "
-                    "serving file, checked row by row against the source, into RAW_STORE_BACKUP_DIR/market/ (the "
-                    "newest 5 kept), then the 35-day raw copy. Writes no table.",
+        name="RC-Build-Backup", label="Market-store backup (light)",
+        args=("-m", "RevenueChaser.rcdata", "backup",
+              "--only", "ops,market,spine,fundamentals,options,raw", "--subdir", "market"),
+        time="04:30", unit_name=BUILDER_BACKUP_UNIT,
+        description="Verified nightly backup of the small files of the market store: ops.sqlite through SQLite's "
+                    "online backup and the market, spine, fundamentals and options serving files, checked row by "
+                    "row against the source, into RAW_STORE_BACKUP_DIR/market/ (the newest 5 kept), then the "
+                    "35-day raw copy. prices and ownership are the weekly RC-Build-Backup-Heavy run's: the 04:30 "
+                    "run of 5 Nov 2026 hit this 30-minute limit, and those two are 3.5 GB of the ~3.6 GB copied, so "
+                    "they are the likely cause - an inference, since the run records no per-step timing. "
+                    "Writes no table.",
         settings=TaskSettings(restart_count=0, time_limit_minutes=30)),
+    AutomationEntry(
+        name="RC-Build-Backup-Heavy", label="Market-store backup (heavy, weekly)",
+        args=("-m", "RevenueChaser.rcdata", "backup", "--only", "prices,ownership", "--subdir", "market-heavy"),
+        time="03:30", days=("Sunday",), unit_name=BUILDER_BACKUP_HEAVY_UNIT,
+        description="Verified weekly backup of the two large serving files, prices (2.9 GB) and ownership (661 MB), "
+                    "into RAW_STORE_BACKUP_DIR/market-heavy/ (its own manifest, its own 5 newest per kind, every "
+                    "copy with its sha256). Sunday 03:30 keeps it clear of the nightly light run at 04:30. Run the "
+                    "same command by hand before a deploy that touches either file. This row's unit is installed "
+                    "from the home-server repository, not from this page: installing it here too would give one "
+                    "name a user timer and a system unit, both firing at 03:30 into the same folder. Writes no "
+                    "table.",
+        settings=TaskSettings(restart_count=0, time_limit_minutes=60)),
     AutomationEntry(
         name="RC-SPX-Gamma-Fetch", label="SPX Gamma Fetch (nightly)",
         args=("-m", "RevenueChaser.module_spx_gamma", "--nightly"), time="06:30", days=_WEEKDAYS,
@@ -316,7 +331,7 @@ def check_chain(entries: tuple[AutomationEntry, ...]) -> None:
                                  f"{seen[e.after].time} on the clock")
             if e.chain_wait_minutes <= 0:
                 raise ValueError(f"{e.name} must wait a positive number of minutes")
-            if e.chain_wait_minutes >= e.settings.limit_minutes:
+            if e.settings.limit_minutes is not None and e.chain_wait_minutes >= e.settings.limit_minutes:
                 raise ValueError(f"{e.name} waits {e.chain_wait_minutes} min, not less than its time limit")
         seen[e.name] = e
 
@@ -547,7 +562,8 @@ class WindowsScheduler(Scheduler):
              f"$tr = New-ScheduledTaskTrigger -Weekly -DaysOfWeek {','.join(e.days)} -At {_ps_quote(e.time)}"
              if e.days else f"$tr = New-ScheduledTaskTrigger -Daily -At {_ps_quote(e.time)}"),
             f"$s = New-ScheduledTaskSettingsSet {' '.join(flags)}"
-            + (f" -ExecutionTimeLimit (New-TimeSpan -Minutes {int(s.time_limit_minutes)})"
+            + (" -ExecutionTimeLimit (New-TimeSpan -Seconds 0)" if s.no_time_limit else
+               f" -ExecutionTimeLimit (New-TimeSpan -Minutes {int(s.time_limit_minutes)})"
                if s.time_limit_minutes is not None else
                f" -ExecutionTimeLimit (New-TimeSpan -Hours {int(s.time_limit_hours)})")
             + (f" -RestartCount {int(s.restart_count)}"
@@ -779,7 +795,8 @@ class LinuxScheduler(Scheduler):
             *(_env_line(k, v) for k, v in _unit_environment()),
             "ExecStart=" + " ".join(_exec_arg(a) for a in
                                     (self._python, "-m", "RevenueChaser.core.automations", "run", e.name)),
-            (f"TimeoutStartSec={int(s.time_limit_minutes)}min" if s.time_limit_minutes is not None
+            ("TimeoutStartSec=infinity" if s.no_time_limit else
+             f"TimeoutStartSec={int(s.time_limit_minutes)}min" if s.time_limit_minutes is not None
              else f"TimeoutStartSec={int(s.time_limit_hours)}h"),
             "",
         ])
@@ -1213,6 +1230,34 @@ def _record_run(row: dict) -> None:
     rawstore.write_rows("job_runs", [row])
 
 
+#: The registry rows the board's backup switch stops (#527); the fetch switch stops every other row but these and
+#: ``SWITCH_EXEMPT``.
+BACKUP_TASKS = frozenset({"RC-Store-Backup", "RC-Build-Backup", "RC-Build-Backup-Heavy"})
+#: A status read, not a fetch: the top bar's IBKR state comes from it, so it runs whatever the switches say.
+SWITCH_EXEMPT = frozenset({"RC-IBKR-Login-Check"})
+
+
+def switch_for(name: str) -> str | None:
+    """Which board switch holds the task: ``"backup"``, ``"fetch"`` or None (#527)."""
+    if name in SWITCH_EXEMPT:
+        return None
+    return "backup" if name in BACKUP_TASKS else "fetch"
+
+
+def _switched_off(name: str) -> str | None:
+    """``skipped: the <switch> switch is off (<by> at <when>)`` while the task's switch is off, else None. A switch
+    that cannot be read does not stop the task: the switch is a convenience, the backup must not miss a night."""
+    switch = switch_for(name)
+    if switch is None:
+        return None
+    try:
+        from RevenueChaser.rcdata import ops
+        off = ops.switch_off(switch)
+    except Exception:  # noqa: BLE001
+        return None
+    return f"skipped: {ops.switch_words(switch, off)}" if off is not None else None
+
+
 def run_task(name: str, python: str | None = None, cwd: Path | str | None = None, *,
              clock: Callable[[], datetime] | None = None, sleep: Callable[[float], None] | None = None,
              tz: tzinfo | None = None) -> int:
@@ -1263,6 +1308,12 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
 
         fh.write(f"=== {stamp()} start {e.name}\n")
         fh.flush()
+        off = _switched_off(e.name)
+        if off is not None:
+            fh.write(off + "\n")
+            record(status="done", started_at=epoch(), finished_at=epoch(), message=off)
+            fh.write(f"=== {stamp()} exit {RESULT_OK}\n")
+            return RESULT_OK
         if e.after:
             fh.write(f"chain: waiting for {e.after} (up to {e.chain_wait_minutes} min)\n")
             fh.flush()
@@ -1276,6 +1327,7 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
             fh.write(f"chain: {line}\n")
             fh.flush()
         record(status="running", started_at=epoch())
+        out_start = os.fstat(fh.fileno()).st_size      # #136: only this run's output is read for counts
         env = None
         if e.tables_written:
             from RevenueChaser.core import rawstore
@@ -1290,8 +1342,10 @@ def run_task(name: str, python: str | None = None, cwd: Path | str | None = None
             fh.write(f"could not start: {exc}\n")
             rc = 1
         fh.flush()
+        # #136: only a table writer records a row at all, so only it pays for the log read.
+        counts = run_counts.from_log(log, out_start) if e.tables_written else None
         record(status="done" if rc == RESULT_OK else "error", finished_at=epoch(),
-               error=None if rc == RESULT_OK else f"exit {rc}", message=f"exit {rc}")
+               error=None if rc == RESULT_OK else f"exit {rc}", message=f"exit {rc}", counts=counts)
         fh.write(f"=== {stamp()} exit {rc}\n")
     return rc
 
