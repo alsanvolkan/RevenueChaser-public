@@ -229,7 +229,8 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
     return out
 
 
-def _escape(value) -> str:
+def _label_value(value) -> str:
+    """A Prometheus label value: backslash, newline and double quote escaped (exposition format, not HTML)."""
     return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
@@ -250,7 +251,7 @@ def render(families: dict[str, list], build_seconds: float | None = None) -> str
         lines.append(f"# HELP {name} {words}")
         lines.append(f"# TYPE {name} {kind}")
         for labels, value in families.get(name) or []:
-            inner = ",".join(f'{k}="{_escape(v)}"' for k, v in labels.items())
+            inner = ",".join(f'{k}="{_label_value(v)}"' for k, v in labels.items())
             lines.append(f"{name}{{{inner}}} {_number(value)}" if inner else f"{name} {_number(value)}")
     return "\n".join(lines) + "\n"
 
