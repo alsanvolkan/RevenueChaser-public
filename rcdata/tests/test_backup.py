@@ -170,9 +170,13 @@ def test_a_killed_runs_temp_files_and_their_wal_and_shm_are_swept(sqlite_ops, ba
     for p in orphans:
         p.write_bytes(b"x")
     ops.enqueue("market_series", None, by="test")
+    kept = backup.run_backup(only="ops")["ops"]          # a kept backup and its manifest entry, before the orphans
+    for p in orphans:
+        p.write_bytes(b"x")
     copy = backup.run_backup(only="ops")["ops"]
     assert not any(p.exists() for p in orphans)
-    assert copy.exists()
+    assert copy.exists() and kept.exists() and kept != copy
+    assert kept.name in (market / backup.MANIFEST_NAME).read_text(encoding="utf-8")
 
 
 def test_s3_a_failed_ops_backup_does_not_block_the_market_copy(backup_dir, monkeypatch):
