@@ -400,7 +400,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     ),
     DatasetSpec(
         key="relatedness", label="Relatedness profiles",
-        tables=("relatedness_profiles", "relatedness_scores", "relatedness_attributes"),
+        tables=("relatedness_profiles", "relatedness_scores", "relatedness_attributes", "relatedness_embeddings"),
         db="raw", source=Source.derived, writer="RC-Relatedness-OffPeak",
         freshness=("relatedness_profiles", "fetched_at"),
     ),

@@ -420,6 +420,7 @@ POPULATION: dict[str, str] = {
     "swing_gates": "module_swing_potential/tests/test_swing_scores.py::test_persist_writes_both",
     "llm_cache": "core/tests/test_relatedness_store.py::test_llm_cache_and_profiles",
     "relatedness_profiles": "core/tests/test_relatedness_store.py::test_llm_cache_and_profiles",
+    "relatedness_embeddings": "core/tests/test_schema_v13_relatedness.py::test_the_new_columns_hold_json_and_the_vector_holds_bytes",
     "relatedness_attributes": "core/tests/test_relatedness_store.py::test_relatedness_attributes_and_scores",
     "relatedness_scores": "core/tests/test_relatedness_store.py::test_relatedness_attributes_and_scores",
     "theme_runs": "module_relatedness/tests/test_themes.py::test_build_shadow_writes_nested_themes",

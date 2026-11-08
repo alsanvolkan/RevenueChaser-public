@@ -137,13 +137,15 @@ LATER_DERIVED_TABLES = ("forecast_outcomes", "forecast_baselines")
 # Per-file schema stamp (#26 PL7): additive table, no schema bump. The raw MANIFEST entry is the
 # column contract; the ensure path creates the same table in every store file.
 SCHEMA_STAMP = ("store_schema",)
+# Schema 13 (#401): the relatedness embedding vectors, one row per profile and model.
+V13 = ("relatedness_embeddings",)
 
 
 def test_legacy_table_list_is_the_66_remaining_pre_g1_tables():
     assert len(LEGACY) == 66
     assert len(V11) == 25
     assert set(LEGACY) | set(ddl292_frozen.ENTRIES) | set(V11) | set(LATER_CHANGE_TABLES) | set(PRICES_DB) \
-        | set(LATER_HISTORY_TABLES) | set(LATER_DERIVED_TABLES) | set(SCHEMA_STAMP) == set(rawstore.MANIFEST)
+        | set(LATER_HISTORY_TABLES) | set(LATER_DERIVED_TABLES) | set(SCHEMA_STAMP) | set(V13) == set(rawstore.MANIFEST)
     assert rawstore.MANIFEST["store_schema"]["history_mode"] == "latest_cache"
     assert not set(LATER_DERIVED_TABLES) & (set(LEGACY) | set(ddl292_frozen.ENTRIES) | set(V11) | set(PRICES_DB))
     assert all(rawstore.MANIFEST[t]["history_mode"] == "latest_cache" for t in LATER_DERIVED_TABLES)
