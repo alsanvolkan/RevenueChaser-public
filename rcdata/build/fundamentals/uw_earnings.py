@@ -18,8 +18,9 @@ why the SEC's ``eps_diluted`` stays the only EPS in ``fundamental_fact``. The tw
 ``source`` column, which is why it is on every row.
 
 **Weekly, one request per company** (the pattern of ``yfinance/estimates``): a company whose newest answer is
-``WEEK_DAYS`` old, or that has none, is asked, the longest without an answer first; ``FAIL_STREAK`` failures in a
-row stop the run (UW throttling or down) and a run where every request failed is a failed run. Counted against the
+``WEEK_DAYS`` old, or that has none, is asked, the longest without an answer first; ``FAIL_STREAK`` provider-side
+failures in a row stop the run (UW throttling or down) and a run where every request failed is a failed run. A
+request UW rejects (``rejected``: an unknown ticker) writes a raw file with no rows, so it ages like an answer. Counted against the
 ``uw`` day cap; not paced, because UW publishes no request window. No ``UNUSUAL_WHALES_API_KEY``: nothing is asked,
 a ``missing_key`` issue.
 
@@ -82,6 +83,14 @@ def _newest(ticker: str) -> date | None:
     return date.fromisoformat(days[-1]) if days else None
 
 
+def rejected(error: dict | None) -> bool:
+    """Whether a failed UW answer is the request's own fault: a 4xx other than 401/403 (the key) and 429
+    (throttling) -- an unknown ticker, a bad parameter. The client keeps those out of its breaker for the same
+    reason (``unusual_whales.get_result``); a 5xx, a 429, a transport error or an open breaker is the provider's."""
+    status = (error or {}).get("status")
+    return isinstance(status, int) and 400 <= status < 500 and status not in (401, 403, 429)
+
+
 def companies() -> list[tuple[str, str]]:
     """``(cik, ticker)`` per company of the universe: its shortest ticker (HEI, not HEI-A)."""
     return [(cik, sorted(tickers, key=lambda t: (len(t), t))[0])
@@ -140,7 +149,8 @@ class UWEarnings:
             if newest is None or (as_of - newest).days >= WEEK_DAYS:
                 due.append((newest or date.min, ticker, cik))
         due.sort()
-        out, failed, streak, not_asked = [], [], 0, 0
+        out, failed, streak, not_asked, answered, n_rejected = [], [], 0, 0, 0, 0
+        earlier = list(day_dir(as_of).glob("*.json.gz"))
         for n, (_, ticker, cik) in enumerate(due):
             if streak >= FAIL_STREAK:
                 not_asked = len(due) - n
@@ -148,24 +158,35 @@ class UWEarnings:
             ctx.check_cap(PROVIDER)
             # No pacer: UW publishes no request window (``caps.WINDOWS``), so there is none to keep. The day cap
             # and the client's own 429 backoff are the limits, as for every other UW dataset. The call itself is
-            # counted by ``RunContext._on_uw_response``, which sees the retries too, so it is not counted here.
+            # counted by ``RunContext._on_uw_request``, which sees the retries too, so it is not counted here.
             res = ctx.uw_client().stock_earnings_result(ticker)
             if res.status != "ok":
                 ctx.count(PROVIDER, failures=1)
                 failed.append(ticker)
-                streak += 1
                 ctx.issue("fetch_failed", ticker, f"UW {endpoint(ticker)}: {res.error}")
+                if rejected(res.error):
+                    # The request's own fault, not an outage: it does not stop the run, and a raw file with no
+                    # rows lets the company age like any other instead of sorting first every run (#519 finding 1).
+                    out.append(base.write_raw_json(day_dir(as_of) / f"{ticker}.json.gz", {
+                        "request": {"endpoint": endpoint(ticker)}, "ticker": ticker, "cik": cik,
+                        "as_of": as_of.isoformat(), "fetched_at": time.time(), "run_id": ctx.run_id,
+                        "rejected": res.error, "body": None}))
+                    n_rejected += 1
+                    continue
+                streak += 1
                 continue
+            answered += 1
             streak = 0
             out.append(base.write_raw_json(day_dir(as_of) / f"{ticker}.json.gz", {
                 "request": {"endpoint": endpoint(ticker)}, "ticker": ticker, "cik": cik, "as_of": as_of.isoformat(),
                 "fetched_at": time.time(), "run_id": ctx.run_id, "body": res.data}))
         # The day's earlier answers too (a resumed day): its Parquet is rewritten from all of them.
         out = sorted(set(out) | set(day_dir(as_of).glob("*.json.gz")))
-        if failed and not out:
+        if failed and not answered and not earlier:
             raise base.SourceError(f"UW /earnings: every request failed ({len(failed)}, first {failed[0]})"
                                    + (f"; {FAIL_STREAK} in a row, {not_asked} not asked" if not_asked else ""))
         ctx.notes.append(f"{len(out)} companies read, {len(failed)} failed"
+                         + (f" ({n_rejected} rejected by UW, kept as an empty answer)" if n_rejected else "")
                          + (f"; {FAIL_STREAK} failures in a row, {not_asked} not asked" if not_asked else "")
                          + f"; {len(every) - len(due)} read within {WEEK_DAYS} days")
         return out
