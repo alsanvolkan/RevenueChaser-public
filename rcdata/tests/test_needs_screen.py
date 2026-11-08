@@ -126,6 +126,14 @@ def test_every_card_names_its_build_step_and_its_role():
         assert card.role in screen.ROLES, f"{name}: role {card.role!r}"
 
 
+def test_compustat_serves_the_daily_prices_and_alpaca_is_the_tester():
+    """#484: since the Compustat switch ``price_bar_daily`` follows ``wrds/prices``; Alpaca's bars are compared only."""
+    assert read.DATASET_OF_TABLE["price_bar_daily"] == "wrds/prices"
+    assert screen.DATASETS["wrds/prices"].role == "first"
+    assert screen.DATASETS["alpaca/bars"].role == "cross-check"
+    assert "tester" in screen.DATASETS["alpaca/bars"].label
+
+
 def test_a_kinds_steps_sit_inside_its_files_steps():
     from RevenueChaser.rcdata.build import DATASETS
     spans = {"spine": range(1, 8), "prices": (8,), "fundamentals": (9,), "ownership": (10,), "options": (11,),
@@ -186,3 +194,10 @@ def test_every_provider_a_dataset_names_has_its_words():
     assert named, "no provider found at all: the search is broken"
     assert named <= set(screen.PROVIDERS), f"no words for {sorted(named - set(screen.PROVIDERS))}"
     assert all(w.name and w.what for w in screen.PROVIDERS.values())
+
+
+def test_the_sec_pace_words_state_the_bucket_rate_the_code_runs():
+    """#527: the page said "8 a second" while ``core/sec_throttle.RATE`` is 9; the words now read the constant."""
+    from RevenueChaser.core import sec_throttle
+    from RevenueChaser.rcdata.needs import screen
+    assert f"{sec_throttle.RATE} a second" in screen.PROVIDERS["sec"].pace

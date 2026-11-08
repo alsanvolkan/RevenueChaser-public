@@ -138,7 +138,7 @@ closed fold under it (`details#old-settings`), unchanged.
 - **Health tiles** count the dataset cards. The builder tile turns red when the builder has been
   silent for over 70 minutes; a provider's cap tile warns at 50% of its day cap and is red from 70%.
 - **Where the folder counts come from.** Every dataset's raw and Parquet folder line is the **disk picture**, not a
-  live read: the storage-picture job (`POST /run/storage-picture`, the **Take the disk picture** control at the
+  live read: the storage-picture job (`POST /run/storage-picture`, the **Recount folders** control (named "Take the disk picture" before #527) at the
   bottom of the Fetch section, where every press lives) walks the HDD trees and writes
   `.cache/storage_picture/storage_picture_latest.json`, and the Data section's roots line reads that and says when
   it was walked. The walk was in the render until #434, where the first `readdir` of the
@@ -146,7 +146,7 @@ closed fold under it (`details#old-settings`), unchanged.
   ceiling. The serving file's own size beside it **is** read live: that is four stats of the SSD. Until the job has
   run on a box the lines read "not walked yet", which is not the same as a dataset whose folder is missing
   ("no folder yet"), and past a day the line says how old the picture is.
-- **What can be pressed where.** Fetch, Pause, Fill and **Take the disk picture** are in the Fetch section only;
+- **What can be pressed where.** Fetch, Pause, Fill and **Recount folders** are in the Fetch section only;
   the Data cards show bars and
   no button. A press on a tier set only drafts; **Apply** saves the universe as the Settings board's
   `UNIVERSE_SETS` and `UNIVERSE_INCLUDE` (`POST /api/settings/board/module_settings`) and fetches nothing. C and D are

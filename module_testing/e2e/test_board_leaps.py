@@ -17,6 +17,8 @@ from urllib.parse import quote
 
 import pytest
 
+from . import harness
+
 
 @pytest.fixture
 def fetched(dashboard):
@@ -224,7 +226,7 @@ def kit_page(tmp_path, monkeypatch):
              f"--user-data-dir={tmp_path / f'profile_{n[0]}'}",
              "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost",
              "--virtual-time-budget=3000", "--dump-dom", url],
-            capture_output=True, text=True, encoding="utf-8", timeout=90)
+            capture_output=True, text=True, encoding="utf-8", timeout=harness.CHROME_TIMEOUT_S)
         assert "<html" in out.stdout.lower(), f"Chrome dumped no DOM: {out.stderr[-1500:]}"
         return out.stdout
     return dom
