@@ -326,6 +326,10 @@ def is_missing(r: httpx.Response) -> bool:
 
 
 MISSING_RUN = 3     # consecutive open weekdays with no object: a refusal of the whole path, not that many days
+# Open weekdays with no object one run takes as absent after the path handed over a kept object (#507). A chosen
+# ceiling, not a measurement: the calendar explains every absent index day 2014 onwards that was measured, so a run
+# that finds more than this is looking at something the calendar and the probe cannot account for, and stops.
+UNEXPLAINED_MAX = 10
 
 
 def open_weekdays(first: date, last: date) -> list[date]:
@@ -336,6 +340,16 @@ def open_weekdays(first: date, last: date) -> list[date]:
             out.append(day)
         day += timedelta(days=1)
     return out
+
+
+def stretch(unexplained: list[date | None], limit: int = MISSING_RUN) -> bool:
+    """Whether the last ``limit`` entries of a walk's unexplained days are contiguous open weekdays. ``None`` marks
+    where a stretch the probe answered for ended, so it can never be part of the next one."""
+    tail = unexplained[-limit:]
+    if len(tail) < limit or None in tail:
+        return False
+    run = sorted(tail)
+    return open_weekdays(run[0], run[-1]) == run
 
 
 class MissingStreak:
@@ -349,11 +363,16 @@ class MissingStreak:
     nothing written off, so the next run asks them again.
 
     ``what`` names the thing in the notes and the error ("daily index"). One streak per walk.
+
+    ``probe`` (#507), when given, asks the path for an object it is known to hold before a stretch stops the run: a
+    real answer says the path is not refusing everything, so the stretch is days the archive truly has no object for
+    -- a closure the calendar does not know yet -- and the walk goes on instead of stopping at the same place every
+    run. Those days are still not written off here. More than ``UNEXPLAINED_MAX`` of them in one run stops it anyway.
     """
 
-    def __init__(self, what: str, limit: int = MISSING_RUN) -> None:
-        self.what, self.limit = what, limit
-        self.unexplained: list[date] = []
+    def __init__(self, what: str, limit: int = MISSING_RUN, probe: Callable[[], bool] | None = None) -> None:
+        self.what, self.limit, self.probe = what, limit, probe
+        self.unexplained: list[date | None] = []      # None: a stretch the probe answered for ends here
 
     @staticmethod
     def closed(day: date) -> bool:
@@ -367,11 +386,20 @@ class MissingStreak:
             ctx.notes.append(f"{day}: no {self.what}, EDGAR closed")
             return True
         self.unexplained.append(day)
-        run = sorted(self.unexplained[-self.limit:])
-        if len(run) >= self.limit and open_weekdays(run[0], run[-1]) == run:
+        if stretch(self.unexplained, self.limit):
+            run = sorted(self.unexplained[-self.limit:])
+            seen = sum(d is not None for d in self.unexplained)
+            if self.probe is not None and seen <= UNEXPLAINED_MAX and self.probe():
+                ctx.notes.append(f"{', '.join(str(d) for d in run)}: no {self.what} for {self.limit} weekdays EDGAR "
+                                 "was open, but the path handed over one it holds, so the walk goes on")
+                self.unexplained.append(None)
+                return False
+            why = (f"{seen} such weekdays in this run, more than the {UNEXPLAINED_MAX} a closure the calendar "
+                   "does not know can explain" if self.probe is not None and seen > UNEXPLAINED_MAX
+                   else "the bucket may be refusing every request")
             raise SourceError(f"sec: no {self.what} for {self.limit} weekdays EDGAR was open "
-                              f"({', '.join(str(d) for d in run)}); the bucket may be refusing every request, so "
-                              "none of them is written off and the next run asks them again")
+                              f"({', '.join(str(d) for d in run)}); {why}, so none of them is written off and the "
+                              "next run asks them again")
         ctx.notes.append(f"{day}: no {self.what} although EDGAR was open")
         return False
 

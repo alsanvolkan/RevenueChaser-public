@@ -323,6 +323,21 @@ def test_a_stretch_of_open_weekdays_with_no_index_stops_the_scan(sec):
         assert not sec_index.absent_path(day).exists(), day
 
 
+def test_a_stretch_with_no_index_goes_on_when_a_kept_index_still_answers(sec):
+    """#507: the scan asks the archive for the newest index it keeps before a stretch stops it. A real answer says
+    the bucket is not refusing everything, so the scan goes on; the days are still not written off, and are asked
+    again by the next run."""
+    as_of = date(2026, 11, 20)
+    sec.add("master.20261119.idx", fx.daily_index([]))
+    sec.add("master.", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)
+    ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
+    assert sec_index.fetch_day(ctx, date(2026, 11, 19), as_of) is not None          # the kept index
+    assert sec_index.filings(ctx, as_of, lookback=7) == []
+    assert any("handed over one it holds" in n for n in ctx.notes), ctx.notes
+    for day in (date(2026, 11, 13), date(2026, 11, 16), date(2026, 11, 17), date(2026, 11, 18)):
+        assert not sec_index.absent_path(day).exists(), day
+
+
 def test_an_open_weekday_with_no_index_on_its_own_is_not_written_off(sec):
     """One such day is no proof either way, so it is noted and asked again rather than marked absent; only EDGAR's
     own closure (11 Nov 2026, Veterans Day) explains a day well enough to write it off."""
