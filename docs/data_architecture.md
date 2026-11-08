@@ -1036,7 +1036,10 @@ file's `built_at` stamp. That stamp is written when the build file opens, before
 partition written while a long build runs is newer than the stamp and comes out dirty on the next build instead of
 being lost. The signal is the partition's mtime, which a copy or a restore can carry over from another machine; it
 becomes a manifest of (path, size, mtime) compared manifest-to-manifest before any kind relies on the dirty set for
-data correctness.
+data correctness. Which class each served table falls in — cumulative (a day only adds rows), restated (new data
+rewrites served rows) or a derivation rebuilt whole — is read from the build code in `docs/dirty_table_classes.md`,
+together with the two dependencies (the spine's symbol map, the prices universe) that make a table dirty with no
+new source day of its own.
 
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.
