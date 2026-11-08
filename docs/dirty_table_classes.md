@@ -21,12 +21,17 @@ file that decides it.
 
 ## Two dependencies that restate tables with no source day of their own
 
-1. **The spine's symbol map.** `ownership/common.symbol_map` joins the live spine to turn a provider's symbol into
-   a ticker, and `finra_short_interest`, `sec_ftd`, `regsho_threshold` and `ibkr_shortable` all select through it.
-   A spine build that moves a ticker changes those columns in **every** row, however old. So: *spine changed →
-   those four tables are wholly dirty*, whatever their own partitions say.
+1. **The spine names the ticker.** Every ownership table gets its `ticker` from the live spine, not from its own
+   source: `finra_short_interest`, `sec_ftd`, `regsho_threshold` and `ibkr_shortable` select through
+   `ownership/common.symbol_map`; `insider_transactions` names the issuer through `common.issuer_tickers`
+   (`ownership/form4.py`) and `beneficial_ownership` through `common.cusip_issuer_map` (`ownership/sched13dg.py`);
+   and the 13F period tables resolve CUSIP → ticker from the spine's identity history (`ownership/serve.py`).
+   A spine build that moves a ticker changes that column in **every** row, however old. So: *spine changed →
+   these tables are wholly dirty*, whatever their own partitions say -- and a narrowed rebuild keyed on `ticker`
+   would miss exactly the rows whose ticker moved, because the key itself is spine-derived.
 2. **The prices universe.** `prices/serving` reads the live spine's `security` and `my_universe` to decide which
-   securities the prices store serves at all (`prices/universe.py`). A universe change adds a security's whole
+   securities the prices store serves at all (`prices/universe.py`), and its `etf` table (AUM at or over
+   `ETF_MIN_AUM`, notes and closed-end funds left out) for the funds. A universe change adds a security's whole
    history and removes another's. So: *universe changed → prices is wholly dirty* (the plan's "mandatory whole
    rebuild" case).
 
@@ -77,10 +82,10 @@ The four source tables are rebuilt from all their `date=` partitions on every bu
 | `regsho_threshold` | cumulative (spine-restated) | `list_date` range | `ownership/regsho.py` |
 | `sec_ftd` | cumulative (spine-restated) | `settlement_date` range | `ownership/ftd.py`: SEC publishes half-month files |
 | `ibkr_shortable` | cumulative (spine-restated) | `session_date` range | `ownership/ibkr.py` |
-| `insider_transactions` | cumulative + restated | `filed` range; key `ticker` | `ownership/form4.py`: a Form 4/A amends a filed transaction |
-| `beneficial_ownership` | cumulative + restated | `filed` range; key `ticker` | `ownership/sched13dg.py`: 13D/G amendments |
-| `sec13f_filings` | cumulative + restated | `filed` range; key `(filer, period)` | `ownership/serve.py`: the amendment rule — a `NEW HOLDINGS` amendment adds to a period's set, any other amendment **replaces** it, and an amendment belongs to the period it reports on, not the quarter it was filed in |
-| `sec13f_filer_period`, `sec13f_ticker_period`, `sec13f_periods`, `sec13f_cusip_map` | derivation per period | key `period` | `ownership/serve.py`: per period it computes the filer's `value_factor` from a consensus price per CUSIP across filers, resolves CUSIP → ticker from the spine's dated identity history, then aggregates. One filer's new filing changes that period's consensus, so **the period is the unit** |
+| `insider_transactions` | cumulative + restated (spine-restated) | `filed` range; key `ticker` (spine-derived, see dependency 1) | `ownership/form4.py`: a Form 4/A amends a filed transaction |
+| `beneficial_ownership` | cumulative + restated (spine-restated) | `filed` range; key `ticker` (spine-derived, see dependency 1) | `ownership/sched13dg.py`: 13D/G amendments |
+| `sec13f_filings` | cumulative | `index_day` / `filed` range | `ownership/sec13f.py`: one row per accession, with `is_amendment`, `amendment_type` and `filed`; an amendment adds a row and rewrites none. Which filing is active for a period (the amendment walk) is decided where the period tables are built, not here |
+| `sec13f_filer_period`, `sec13f_ticker_period`, `sec13f_periods`, `sec13f_cusip_map` | derivation per period (spine-restated) | key `period` | `ownership/serve.py`: the amendment rule — a `NEW HOLDINGS` amendment adds to a period's set, any other amendment **replaces** it, and an amendment belongs to the period it reports on, not the quarter it was filed in. Per period it computes the filer's `value_factor` from a consensus price per CUSIP across filers, resolves CUSIP → ticker from the spine's dated identity history, then aggregates. One filer's new filing changes that period's consensus, so **the period is the unit** |
 
 ## fundamentals
 
