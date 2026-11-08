@@ -13,8 +13,8 @@ import duckdb
 from ....core import calendar
 from ... import ops
 from .. import base
-from . import (KIND, common, companyfacts, earnings, estimates, facts, filings, fsds, uw_financials,
-               wrds_fund)
+from . import (KIND, common, companyfacts, earnings, estimates, facts, filings, fsds, uw_earnings,
+               uw_financials, wrds_fund)
 
 NAME = "fundamentals/tables"
 
@@ -46,6 +46,16 @@ EARNINGS_EVENT = [("cik", "TEXT NOT NULL"), ("ticker", "TEXT"), ("report_date", 
                   ("report_time", "TEXT"), ("fiscal_period_end", "DATE"), ("eps_estimate", "DOUBLE"),
                   ("currency", "TEXT"), ("confirmed", "BOOLEAN NOT NULL"), ("accession", "TEXT"),
                   ("source", "TEXT NOT NULL"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+
+# One row per company and reported quarter: the EPS the company itself reported, as Unusual Whales serves it
+# (``uw/earnings``), with UW's own consensus and surprise of that quarter. **Not** a ``fundamental_fact`` row: it has
+# no filing behind it, and ``fundamental_fact`` is the SEC's values with the filing each came from. Its basis is
+# usually the company's adjusted (non-GAAP) figure, so it is never comparable with ``eps_diluted`` without saying so
+# -- which is why ``source`` is on the row (avo, 5 Nov 2026).
+EARNINGS_REPORTED = [("cik", "TEXT NOT NULL"), ("ticker", "TEXT"), ("period_end", "DATE NOT NULL"),
+                     ("report_date", "DATE"), ("eps_reported", "DOUBLE NOT NULL"), ("eps_estimate", "DOUBLE"),
+                     ("surprise_pct", "DOUBLE"), ("source", "TEXT NOT NULL"), ("source_as_of", "DATE"),
+                     ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 
 # One row per Compustat value that changed between two monthly snapshots, for a period both held (``wrds_fund``);
 # ``cik`` NULL when the gvkey is no longer a Tier A company's.
@@ -85,6 +95,7 @@ SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "fundamental_fact": FACT,
     "filing_item": FILING_ITEM,
     "earnings_event": EARNINGS_EVENT,
+    "earnings_reported": EARNINGS_REPORTED,
     "fundamental_revision": REVISION,
     "segment_revenue": SEGMENT_REVENUE,
     "customer_share": CUSTOMER_SHARE,
@@ -97,7 +108,9 @@ TABLE_CHECKS: dict[str, list[str]] = {
                          "CHECK (preliminary OR (accn IS NOT NULL AND filed IS NOT NULL))"],
     # A document's text is never labelled ok at the cap (filings.CAPPED).
     "filing_item": ["CHECK (kind IN ('item', 'document'))",
-                    f"CHECK (quality IS NULL OR quality <> 'ok' OR chars < {filings.max_text_chars()})"],
+                    "CHECK (quality IS NULL OR quality <> 'ok' OR item NOT IN ("
+                    + ", ".join(f"'{i}'" for i in filings.SLICED_ITEMS)
+                    + f") OR chars < {filings.max_text_chars()})"],
     "segment_revenue": ["CHECK (axis IN ('business', 'product', 'geographic'))"],
     "customer_share": ["CHECK (share IS NULL OR (share >= 0 AND share <= 1))"],
 }
@@ -213,6 +226,18 @@ def _earnings(con: duckdb.DuckDBPyConnection) -> int:
         FROM {filings.STAGING['filings']} f
         WHERE f.form = '8-K' AND f.item = '{EARNINGS_8K_ITEM}' AND f.filing_date IS NOT NULL""")
     return common.count(con, "earnings_event")
+
+
+def _earnings_reported(con: duckdb.DuckDBPyConnection) -> int:
+    """``earnings_reported``: UW's reported EPS per company and quarter, its consensus and its surprise as served."""
+    create(con, "earnings_reported")
+    con.execute(f"""
+        INSERT INTO earnings_reported
+        SELECT u.cik, u.ticker, u.period_end, u.report_date, u.eps_reported, u.eps_estimate, u.surprise_pct,
+               u.source, u.source_as_of, u.fetched_at, u.run_id
+        FROM {uw_earnings.STAGING} u
+        WHERE u.cik IN (SELECT cik FROM fundamental_company) AND u.eps_reported IS NOT NULL""")
+    return common.count(con, "earnings_reported")
 
 
 def _revisions(con: duckdb.DuckDBPyConnection) -> int:
@@ -467,6 +492,7 @@ class FundamentalsTables:
         counts = {"fundamental_fact": _facts(con), "filing_item": _filing_items(con)}
         counts["fundamental_company"] = _companies(ctx, con, common.universe())
         counts["earnings_event"] = _earnings(con)
+        counts["earnings_reported"] = _earnings_reported(con)
         counts["fundamental_revision"] = _revisions(con)
         counts["segment_revenue"] = _segments(con)
         counts["customer_share"] = _customers(con)

@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from RevenueChaser.app import runners
-from RevenueChaser.app.tests.test_sec13f_job import GOOD, _zip, store  # noqa: F401 - the store fixture
+from RevenueChaser.app.tests.test_sec13f_job import GOOD, store  # noqa: F401 - the store fixture
 from RevenueChaser.core import ledger, ownership, rawstore
 from RevenueChaser.module_sec_13f import engine as sec_13f
 
@@ -143,7 +143,6 @@ def test_the_fetch_no_longer_writes_the_13f_enrichment(uw, monkeypatch):
 
 def test_the_board_refresh_writes_no_ownership(uw, monkeypatch):
     _at(monkeypatch, COMPLETE)
-    sec_13f.recompute_totals()
     runners.run_sec_13f_latest(None)
     assert uw.calls == [] and _owned() == []
 

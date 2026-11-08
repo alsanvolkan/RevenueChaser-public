@@ -221,3 +221,101 @@ def test_prices_retires_the_crsp_unadjusted_table_of_pr_353():
     from RevenueChaser.rcdata.build.prices import serving as prices_serving
     assert "crsp_unadjusted" in serving.RETIRED_TABLES["prices"]
     assert not set(serving.RETIRED_TABLES["prices"]) & set(prices_serving.SCHEMAS), "a retired table is still built"
+
+
+# ── base="live": the build file starts as a copy of the live one (PR 1 of the incremental plan) ─────────────────
+
+def _mode(con) -> str:
+    return con.execute("SELECT build_mode FROM serving_schema_version").fetchone()[0]
+
+
+def test_a_live_based_build_starts_as_a_copy_and_appends_to_it():
+    """The point of the mode: the rows already served are in the build file, so a build may add only what changed."""
+    _build_t(10)
+    first = _sha(serving.live_path("market"))
+    with serving.build("market", base="live") as b:
+        assert b.mode == "live"
+        assert b.con.execute("SELECT count(*) FROM t").fetchone()[0] == 10, "the live rows are not in the copy"
+        b.con.execute("INSERT INTO t SELECT range + 10 FROM range(5)")
+        b.swap({"t": 15})
+    with serving.open_read("market") as con:
+        assert con.execute("SELECT count(*) FROM t").fetchone()[0] == 15
+        assert _mode(con) == "live"
+        assert con.execute("SELECT kind, version FROM serving_schema_version").fetchall() == [
+            ("market", serving.SERVING_SCHEMA_VERSION["market"])], "the copied version row must be replaced"
+    assert _sha(serving.prev_path("market")) == first, "the rollback file is still the file that was live"
+    assert _leftovers() == []
+
+
+def test_a_live_based_build_is_fresh_when_there_is_no_live_file():
+    with serving.build("market", base="live") as b:
+        assert b.mode == "fresh"
+        b.con.execute("CREATE TABLE t AS SELECT range AS i FROM range(3)")
+        b.swap({"t": 3})
+    with serving.open_read("market") as con:
+        assert _mode(con) == "fresh"
+
+
+def test_a_live_file_of_another_serving_schema_version_is_not_appended_to(monkeypatch):
+    """A version bump changes which tables the code builds, so its first build must be a whole one."""
+    _build_t(10)
+    monkeypatch.setitem(serving.SERVING_SCHEMA_VERSION, "market", serving.SERVING_SCHEMA_VERSION["market"] + 1)
+    with serving.build("market", base="live") as b:
+        assert b.mode == "fresh"
+        tables = {r[0] for r in b.con.execute("SELECT table_name FROM duckdb_tables()").fetchall()}
+        assert "t" not in tables, "nothing of the live file may be copied into a build of another version"
+
+
+def test_a_live_based_build_keeps_the_shrink_guard_and_the_rollback():
+    _build_t(10)
+    before = _sha(serving.live_path("market"))
+    with pytest.raises(serving.SwapRefused, match="shrinks"):
+        with serving.build("market", base="live") as b:
+            b.con.execute("DELETE FROM t WHERE i < 5")
+            b.swap({"t": 5})
+    assert _sha(serving.live_path("market")) == before and _leftovers() == []
+
+
+def test_an_unknown_base_is_refused():
+    with pytest.raises(ValueError, match="unknown build base"):
+        with serving.build("market", base="incremental"):
+            pass
+    assert not Path(config.MARKET_DIR).exists(), "the refusal comes before any file is made"
+
+
+def test_a_live_file_without_the_build_mode_column_gets_it_in_the_copy():
+    """Why this needs no SERVING_SCHEMA_VERSION bump: a file built before the column is upgraded, not refused."""
+    live = serving.live_path("market")
+    live.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(live))
+    con.execute(f"CREATE TABLE {serving.VERSION_TABLE} (kind TEXT, version INTEGER, built_at DOUBLE, "
+                "build_id TEXT)")                                  # the four columns of before build_mode
+    con.execute(f"INSERT INTO {serving.VERSION_TABLE} VALUES ('market', ?, 0, 'old')",
+                [serving.SERVING_SCHEMA_VERSION["market"]])
+    con.execute("CREATE TABLE t AS SELECT range AS i FROM range(10)")
+    con.execute("CHECKPOINT")
+    con.close()
+    with serving.build("market", base="live") as b:
+        assert b.mode == "live", "an older live file of the same version is still copied"
+        b.con.execute("INSERT INTO t SELECT range + 10 FROM range(5)")
+        b.swap({"t": 15})
+    with serving.open_read("market") as con:
+        assert _mode(con) == "live"
+        assert con.execute("SELECT count(*) FROM t").fetchone()[0] == 15
+
+
+def test_a_copy_that_breaks_leaves_no_partial_build_file(monkeypatch):
+    """A half-copied 2.9 GB file on the live files' own SSD is what a failed copy must not leave behind."""
+    _build_t(10)
+    before = _sha(serving.live_path("market"))
+
+    def no_space(src, dst):
+        Path(dst).write_bytes(b"half a file")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(serving.shutil, "copy2", no_space)
+    with pytest.raises(OSError, match="No space"):
+        with serving.build("market", base="live"):
+            pass
+    assert _leftovers() == [], "the partial copy must go with the failure"
+    assert _sha(serving.live_path("market")) == before

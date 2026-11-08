@@ -12,13 +12,17 @@ import pytest
 from RevenueChaser.module_settings import report
 from RevenueChaser.module_settings.tests.test_report import _payload
 
-SECTION = 'id="ibkr-login"'
+# #527: the link moved from its own card into the top bar's IBKR gateway box
+SECTION = 'id="ibkr-login-link"'
 URL = "https://gateway.example.ts.net:6080/vnc.html?autoconnect=1&resize=scale"
 
 
 def _card(url) -> str:
     html = report.render_settings_dashboard(dict(_payload(), ibkr_login_url=url))
-    return html[html.index(SECTION):].split("</section>")[0] if SECTION in html else ""
+    if SECTION not in html:
+        return ""
+    start = html.rindex("<a ", 0, html.index(SECTION))
+    return html[start:html.index("</a>", start) + 4]
 
 
 @pytest.mark.parametrize("value", [None, "", "   "])

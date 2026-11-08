@@ -1,5 +1,9 @@
 """Ownership per session (#300, D20): the one writer of ``ownership_snapshot``.
 
+It is also the shared **reader** of the served 13F totals (:func:`sec13f_totals`, #16), which it does not
+write — the builder does (``rcdata/build/ownership``). That read lives here so a screener whose score includes
+institutional ownership reads rows instead of importing the 13F board's engine.
+
 Two jobs store what they read, each under its own ``source``:
 
 - ``universe`` / Asymmetric Growth (``yfinance``): shares outstanding, insider % and institutional % from each fresh
@@ -147,6 +151,38 @@ def record(rows, *, run_id: str, run_at: float | None = None, fetched_at: float 
 # ``module_sec_13f/enrich.py`` applies to shares: UW was asked for that ticker on purpose, while a yfinance row is a
 # bulk screener payload whose ``.info`` can arrive empty. It only decides a tie: a newer session always wins.
 READER_ORDER = (UW_INFO, YFINANCE)
+
+
+# The metrics a 13F cell carries, in the shape the retired derive wrote: ``rcdata/build/ownership/serve.py``
+# ``METRICS``, pinned by ``module_sec_13f/tests/test_sec13f_board_store_g9.py``.
+SEC13F_METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow",
+                  "sell_flow", "breadth", "breadth_chg")
+
+
+def sec13f_totals() -> dict[str, dict]:
+    """The served 13F per-ticker totals, ``{ticker: {"YYYY-MM-DD": metrics + ``complete``}}`` — nothing recomputed,
+    no network. ``complete`` says the period's filing deadline has passed; before it the quarter is still arriving
+    and its numbers are a part of themselves (#514).
+
+    The builder owns these numbers (``rcdata/build/ownership``, PR 16: ``sec13f_ticker_period`` in
+    ``ownership.duckdb``), and since G9 nothing else writes them: the dashboard's own derive and the
+    ``sec13f_totals`` rows it kept in ``raw.duckdb`` are gone.
+
+    Read by the 13F board (``module_sec_13f.engine.load_totals``) and by the Asymmetric Growth scan, whose
+    institutional block is part of the score (owner, 5 Nov 2026). It lives here so the screener reads rows
+    rather than importing the 13F engine for them (#16): a store both sides read is the contract, while an
+    engine call makes one board's run depend on the other board's module being present.
+    """
+    from RevenueChaser.rcdata import read as rcread
+
+    out: dict[str, dict] = {}
+    for r in rcread.holders_13f():
+        # ``complete`` is not one of the store's metrics, and it is not optional either: a period whose filing
+        # deadline has not passed holds a part of itself, so a reader that cannot tell shows a quarter still
+        # arriving as a collapse (#514). ``rcdata.read`` computes it from the deadline; this used to drop it.
+        out.setdefault(r["ticker"], {})[r["period"].isoformat()] = {**{m: r[m] for m in SEC13F_METRICS},
+                                                                    "complete": r["complete"]}
+    return out
 
 
 def latest_institutional(tickers) -> dict[str, dict]:

@@ -66,8 +66,8 @@ def enabled() -> bool:
 
 
 def endpoint(ticker: str) -> str:
-    from ....core.providers.unusual_whales import _seg
-    return f"/stock/{_seg(ticker)}/financials"
+    from ....core.providers.unusual_whales import _seg, uw_symbol
+    return f"/stock/{_seg(uw_symbol(ticker))}/financials"
 
 
 def raw_path(ticker: str, as_of: date) -> Path:

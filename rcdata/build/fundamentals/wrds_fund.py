@@ -1,29 +1,29 @@
-"""``wrds/fundq``, ``wrds/funda``, ``wrds/firm_ratio``: Compustat's statements and WRDS's ratios, a check of the SEC.
+"""``wrds/fundq``, ``wrds/funda``, ``wrds/segments``: Compustat's statements and segments, a check of the SEC.
 
 **Run against the real source once** (the server run of 2026-10-29, PR 249: ``comp.fundq`` and ``comp.funda``
-answered; ``wrds_finratio.firm_ratio`` did not exist and ``seg_customer`` had no ``srcdate``). So the two datasets
-whose library or columns were a guess, ``wrds/firm_ratio`` and ``wrds/segments``, read WRDS's own catalog first
-(``catalog``: ``information_schema.columns``, one more query): the ratio table is asked from the first of
-``RATIO_LIBRARIES`` that holds it, and a segment table's columns in ``optional`` that WRDS does not have are not asked
-(read as empty, said in the note). A table in none of its libraries, or without a column it needs, fails the run with
-what WRDS has. The tests answer from a fake worker whose catalog follows that run.
+answered; ``seg_customer`` had no ``srcdate``). So the dataset whose columns were a guess, ``wrds/segments``, reads
+WRDS's own catalog first (``catalog``: ``information_schema.columns``, one more query): a segment table's columns in
+``optional`` that WRDS does not have are not asked (read as empty, said in the note). A table in none of its
+libraries, or without a column it needs, fails the run with what WRDS has. The tests answer from a fake worker whose
+catalog follows that run.
+
+``wrds/firm_ratio`` (WRDS's Financial Ratios Suite, the debt-to-assets check) was dropped on 5 Nov 2026, avo's
+decision: it served no table, only an agreement note, and its table was not in either library it was asked from on
+the one real run. The SEC's own as-filed values (``sec/fsds``) are the check that stands.
 
 **A check source, not a served value.** The served statement values are the SEC's (``sec/companyfacts``). What WRDS
 adds: (1) **the revision table**: each monthly snapshot of ``fundq`` / ``funda`` against the one before, every value
 that changed for a period both hold (a restatement, or a correction at Compustat), served as
 ``fundamental_revision``; a new period is not a revision; (2) **the agreement notes**: revenue, net income and
 diluted EPS against the SEC's facts of the same period (Compustat's millions times a million, within 0.5%; EPS
-within a cent; period ends within 7 days, for the 52/53-week years); (3) **the debt check**: WRDS's ``debt_at``
-(total debt over total assets) of each company's newest quarter against the SEC's total debt over total
-assets, within 0.02. ``debt_at`` sums long-term debt and debt in current liabilities, so a company with short-term
-borrowings outside those differs by design; the note counts, it does not fail.
+within a cent; period ends within 7 days, for the 52/53-week years).
 
 **Attended and monthly, on the spine's one WRDS worker** (``spine/wrds.py``: one login, at most one Duo push per
 builder process, ``WRDS_USERNAME``, ``RC_WRDS_PYTHON``): never due; ``python -m RevenueChaser.rcdata.build backfill
-wrds/fundq wrds/funda wrds/firm_ratio wrds/segments`` in a foreground terminal on the server. A run asks a table once its newest
+wrds/fundq wrds/funda wrds/segments`` in a foreground terminal on the server. A run asks a table once its newest
 snapshot is ``SNAPSHOT_DAYS`` old (the CLI's backfill asks it now); one query per table, for the Tier A gvkeys (the
-spine's Compustat link), Compustat's standard rows (``COMPUSTAT_FILTER``), ``YEARS`` of periods (``firm_ratio``:
-``RATIO_YEARS`` of publication dates). Every query counts as one ``wrds`` call.
+spine's Compustat link), Compustat's standard rows (``COMPUSTAT_FILTER``), ``YEARS`` of periods. Every query counts
+as one ``wrds`` call.
 
 Raw: ``raw/wrds/<table>/<as-of>/<table>.jsonl.gz`` with a ``.meta.json`` sidecar (the query, rows, run), and
 ``.../catalog.jsonl.gz`` for the catalog read; an existing raw file is not asked again. Parquet:
@@ -47,18 +47,12 @@ from . import KIND, common, facts
 PROVIDER = wrds_session.PROVIDER
 SNAPSHOT_DAYS = 30
 YEARS = 10
-RATIO_YEARS = 3
 COMPUSTAT_FILTER = "indfmt = 'INDL' AND datafmt = 'STD' AND popsrc = 'D' AND consol = 'C'"
 PERIOD_DAYS = 7
 MONEY_TOLERANCE = 0.005
 EPS_TOLERANCE = 0.01
-DEBT_TOLERANCE = 0.02
 MILLION = 1_000_000.0
 SEGMENT_LIBRARY = "comp_segments_hist_daily"
-# Where WRDS may keep the Financial Ratios Suite's ``firm_ratio``, in the order tried. shortcut: neither name is
-# verified against WRDS (the catalog read is the check, and a run names the libraries that hold it when neither
-# does); upgrade by pinning the one the server's ``catalog.jsonl.gz`` shows.
-RATIO_LIBRARIES = ("wrdsapps_finratio", "wrdsapps")
 CATALOG = [("table_schema", "TEXT"), ("table_name", "TEXT"), ("column_name", "TEXT")]
 SEGMENT_YEARS = 5
 # Compustat's segment types: business and operating segments are one axis here, geographic the other.
@@ -311,28 +305,6 @@ def agreement(con: duckdb.DuckDBPyConnection, staging: str, item: str, field: st
     return int(n or 0), int(agree or 0)
 
 
-class FirmRatio(WrdsFund):
-    def _library(self, ctx: base.RunContext, as_of: date) -> str:
-        found = catalog(ctx, self.name, as_of, [self.table])
-        return locate(found, RATIO_LIBRARIES, self.table, [c for c, _ in self.schema])[0]
-
-    def note(self, con: duckdb.DuckDBPyConnection) -> str:
-        n, ok = con.execute(f"""
-            WITH r AS (SELECT c.cik, s.qdate, s.debt_at FROM {self.staging} s JOIN {_links()} c ON c.gvkey = s.gvkey
-                       WHERE s.debt_at IS NOT NULL AND s.qdate IS NOT NULL
-                       QUALIFY row_number() OVER (PARTITION BY c.cik ORDER BY s.qdate DESC, s.public_date DESC) = 1),
-                 q AS (SELECT cik, period_end, value, field FROM fundamental_fact
-                       WHERE period_type = '{facts.QUARTERLY}' AND NOT preliminary
-                         AND field IN ('total_debt', 'total_assets'))
-            SELECT count(*), count(*) FILTER (WHERE abs(d.value / a.value - r.debt_at) <= {DEBT_TOLERANCE})
-            FROM r JOIN q d ON d.cik = r.cik AND d.field = 'total_debt'
-                                AND abs(date_diff('day', d.period_end, r.qdate)) <= {PERIOD_DAYS}
-                   JOIN q a ON a.cik = r.cik AND a.field = 'total_assets' AND a.period_end = d.period_end
-                                AND a.value <> 0""").fetchone()
-        return (f"debt to assets within {DEBT_TOLERANCE} of WRDS on {int(ok or 0)} of {int(n or 0)} companies "
-                "(each one's newest WRDS quarter)")
-
-
 class WrdsSegments(WrdsFund):
     """``wrds/segments``: Compustat's segment sales (``wrds_segmerged``: business, operating and geographic
     segments) and major customers (``seg_customer``), ``SEGMENT_YEARS`` of fiscal years; per segment and year the
@@ -457,8 +429,5 @@ FUNDA = WrdsFund("funda", "comp",
                  [("gvkey", "TEXT"), ("datadate", "DATE"), ("fyear", "INTEGER"), ("fyr", "INTEGER")],
                  ["revt", "cogs", "oiadp", "ni", "epspx", "epsfx", "at", "dltt", "dlc", "che", "ceq", "oancf", "capx"],
                  ["gvkey", "datadate"], "datadate", YEARS, revisions=True)
-FIRM_RATIO = FirmRatio("firm_ratio", RATIO_LIBRARIES[0],
-                       [("gvkey", "TEXT"), ("public_date", "DATE"), ("qdate", "DATE")], ["debt_at"],
-                       ["gvkey", "public_date"], "public_date", RATIO_YEARS, revisions=False)
 SEGMENTS = WrdsSegments()
-DATASETS = (FUNDQ, FUNDA, FIRM_RATIO, SEGMENTS)
+DATASETS = (FUNDQ, FUNDA, SEGMENTS)

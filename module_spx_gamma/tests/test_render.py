@@ -153,15 +153,17 @@ def test_v3_missing_data_degrades():
     assert "data unavailable" in md.lower()
 
 
-def test_skew_derived_unverified_flag_renders():
+def test_skew_renders_three_tenors_and_its_source():
     snap = make_snapshot()
     snap["skew"] = {
-        "put_bias_1m": 0.004, "put_bias_3m": 0.002,
-        "derived_unverified": True,
-        "note": "Derived from UW /interpolated-iv twin blocks",
+        "put_bias_0dte": 0.10, "put_bias_1m": 0.08, "put_bias_3m": 0.06,
+        "expiries": {"0dte": "2026-08-14", "1m": "2026-09-18", "3m": "2026-11-20"},
+        "note": "25-delta put IV minus 25-delta call IV, per expiry, from UW /option-contracts",
     }
     md = render.render_markdown(snap)
-    assert "derived/unverified" in md
+    assert "derived/unverified" not in md
+    assert "0DTE **10.0%**" in md and "1M **8.0%**" in md and "3M **6.0%**" in md
+    assert "25-delta" in md
 
 
 def test_flip_methods_and_dte_table():

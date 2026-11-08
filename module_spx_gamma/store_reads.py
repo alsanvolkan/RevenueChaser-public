@@ -290,7 +290,12 @@ def vix_family(day) -> dict:
     vix_row = next(r for r in on_day if r["series_id"] == "VIX")
     return {"stored": True, "label": f"VIX family of {_iso(obs)} ({SERIES_SOURCE}, {vix_row.get('source')}, "
                                      f"status {vix_row.get('status')})",
-            "payload": {"tickers": tickers, "term_mode": vix_term_mode(tickers)}, "obs_date": _iso(obs),
+            "payload": {"tickers": tickers, "term_mode": vix_term_mode(tickers),
+                        # A3: the VIX closes of the window, for the close check's threshold
+                        "history": sorted(({"date": _iso(_day(r["obs_date"])), "close": _value(r)} for r in rows
+                                           if r["series_id"] == "VIX" and _value(r) is not None),
+                                          key=lambda h: h["date"])},
+            "obs_date": _iso(obs),
             "status": vix_row.get("status"), "source": SERIES_SOURCE, "source_as_of": _iso(vix_row.get("source_as_of"))}
 
 

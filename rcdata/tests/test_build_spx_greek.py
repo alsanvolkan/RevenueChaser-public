@@ -8,7 +8,7 @@ import pytest
 
 from RevenueChaser.core import calendar
 from RevenueChaser.core.providers import unusual_whales
-from RevenueChaser.rcdata import read, serving
+from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base, uw_greek_expiry_strike as uw
 
 UW_HEADERS = {"x-uw-daily-req-count": "355", "x-uw-req-per-minute-remaining": "1000000",
@@ -40,7 +40,20 @@ def _grid_rows(expiry: str, dte: int, session: date = SESSION, stamp: str | None
     return {"data": rows}
 
 
-def _route_grid(session: date = SESSION, *, stamp=None, missing: str | None = None, not_a_list: str | None = None):
+def _second_series(rows: list[dict]) -> list[dict]:
+    """The same strikes again, as UW answers them when two option series share the expiry date: every greek
+    doubled, and one of them absent, which is what a live 0-DTE row looks like."""
+    out = []
+    for r in rows:
+        twin = dict(r)
+        twin.update({f: f"{float(r[f] or 0) * 2:.4f}" for f in uw.NUMERIC_FIELDS})
+        twin["put_gex"] = None
+        out.append(twin)
+    return out
+
+
+def _route_grid(session: date = SESSION, *, stamp=None, missing: str | None = None, not_a_list: str | None = None,
+                twice: str | None = None, thrice: bool = False):
     """One handler for every ``strike-expiry`` call: it answers the expiry the query names."""
     dte_of = dict(CHAIN)
 
@@ -50,7 +63,11 @@ def _route_grid(session: date = SESSION, *, stamp=None, missing: str | None = No
             return 200, {"data": {"message": "no grid"}}, UW_HEADERS
         if expiry == missing:
             return 200, {"data": []}, UW_HEADERS
-        return 200, _grid_rows(expiry, dte_of[expiry], session, stamp), UW_HEADERS
+        body = _grid_rows(expiry, dte_of[expiry], session, stamp)
+        if expiry == twice:
+            extra = _second_series(body["data"])
+            body = {"data": body["data"] + extra + (_second_series(extra) if thrice else [])}
+        return 200, body, UW_HEADERS
 
     return handler
 
@@ -124,6 +141,85 @@ def test_the_reader_serves_the_whole_chain_and_filters_by_band(http_mock):
     band = read.spx_greek_expiry_strike(SESSION, min_dte=181, max_dte=365)
     assert {r["expiry"] for r in band} == {date(2027, 10, 15)}, "the 181-365 band the board's put wall reads"
     assert read.spx_greek_expiry_strike(SESSION, min_dte=0, max_dte=1)
+
+
+def test_the_two_uw_datasets_start_on_different_days_on_purpose():
+    """``greek`` reaches back to UW's own earliest date; ``spot`` must not follow it there.
+
+    The token's earliest available date is 2023-12-07 (probed 5 Nov 2026: a 403 ``historic_data_access_missing``
+    names it), and ``greek-exposure/strike-expiry`` serves that far back whole -- 2024-06-14 answered a 53-expiry
+    chain and 259 strikes on its first expiry. ``spot-exposures/expiry-strike`` has nothing there: it answers 200
+    with zero rows on every day before 2025-01-16 (measured on six of them, while the greek chain answered 53-56
+    expiries on the same days), and its historical answer also stops at the page limit of 500 with no paging,
+    which is what failed 168 days of the 28 Oct 2026 backfill. So the two constants are deliberately different,
+    and moving the sibling's back would write empty or clipped days.
+    """
+    from RevenueChaser.rcdata.build import uw_spot_expiry_strike as spot
+    assert uw.FIRST_SESSION == date(2023, 12, 7)
+    assert spot.FIRST_SESSION == date(2025, 1, 16)
+
+
+def test_a_summed_answer_says_how_many_strikes_it_merged(http_mock):
+    """The merge is routine on a third Friday, so its count belongs on the check row, not in the issue list."""
+    _wire(http_mock, twice="2026-11-20")
+    row = _daily()
+    assert f"{STRIKES_PER_EXPIRY} strikes on 1 expiries" in (row["note"] or ""), row["note"]
+    assert "2026-11-20" in (row["note"] or "")
+    assert [i["kind"] for i in ops.open_issues(uw.NAME)[1]] == []
+
+
+def test_a_repeat_past_the_calendars_table_is_summed_but_does_not_count_as_a_monthly(http_mock):
+    """2029-12-21 and later sit on the live chain, past ``core/calendar.py``'s 1993-2028 holiday table, so
+    "standard monthly" has no answer there. Summing is still the right guess -- the near monthlies behave that
+    way -- but such a merge must not be what silences the alarm that the second series has stopped arriving."""
+    _wire(http_mock, twice="2029-12-21")
+    row = _daily()
+    assert row["result"] == "changed"
+    kinds = [i["kind"] for i in ops.open_issues(uw.NAME)[1]]
+    assert "unexpected_merge" not in kinds, kinds
+    assert "missing_series" in kinds, "a far merge is not a monthly merge"
+    with serving.open_read("market") as con:
+        summed = con.execute("SELECT call_gex FROM spx_greek_expiry_strike "
+                             "WHERE expiry = '2029-12-21' AND strike = 7000").fetchone()
+    assert summed[0] == pytest.approx(10.5 + 21.0), "summed, like a near monthly"
+
+
+def test_a_merge_on_an_expiry_that_is_not_a_standard_monthly_is_an_issue(http_mock):
+    """Two series share only the standard monthly date. A merge anywhere else means the answer is not what we
+    think it is -- the same strike twice for one series -- and summing it would double a real number."""
+    _wire(http_mock, twice="2026-10-27")               # a Tuesday: the two series do not share this date
+    _daily()
+    kinds = [i["kind"] for i in ops.open_issues(uw.NAME)[1]]
+    assert "unexpected_merge" in kinds, kinds
+
+
+def test_a_third_row_for_one_key_is_a_hard_issue(http_mock):
+    """Two series is two rows. A third is a shape we have never seen, and summing three is a guess."""
+    _wire(http_mock, twice="2026-11-20", thrice=True)
+    _daily()
+    kinds = [i["kind"] for i in ops.open_issues(uw.NAME)[1]]
+    assert "key_multiplicity" in kinds, kinds
+
+
+def test_two_series_on_one_expiry_date_are_summed_not_dropped(http_mock):
+    """SPX (AM, standard monthly) and SPXW (PM, weekly) share the third Friday, and UW answers one row per series
+    with no field to tell them apart (docs/openapi.yaml, "Greek Exposure By Strike And Expiry": only expiry,
+    strike and the eight greeks). The strike's exposure is the two together, so they are summed. Measured on the
+    live answer of 2026-11-04: 1,570 of 14,551 rows were a second series, all of them on the nearest five third
+    Fridays, and each one used to be dropped."""
+    _wire(http_mock, twice="2026-11-20")
+    row = _daily()
+    assert row["result"] == "changed"
+    assert row["rows"] == len(CHAIN) * STRIKES_PER_EXPIRY, "one row per strike, not one per series"
+    with serving.open_read("market") as con:
+        summed = con.execute("SELECT call_gex, put_gex FROM spx_greek_expiry_strike "
+                             "WHERE expiry = '2026-11-20' AND strike = 7000").fetchone()
+        untouched = con.execute("SELECT call_gex FROM spx_greek_expiry_strike "
+                                "WHERE expiry = '2027-01-15' AND strike = 7000").fetchone()
+    assert summed[0] == pytest.approx(10.5 + 21.0), "both series' call gamma"
+    assert summed[1] == pytest.approx(21.0), "the second series answered none, so the first one's value stands"
+    assert untouched[0] == pytest.approx(10.5), "an expiry with one series is unchanged"
+    assert "duplicate_key" not in [i["kind"] for i in ops.open_issues(uw.NAME)[1]]
 
 
 def test_one_expiry_without_a_list_of_rows_fails_the_day(http_mock):

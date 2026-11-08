@@ -194,7 +194,7 @@ def test_the_two_ibkr_cards_share_a_page_without_sharing_an_id(rawstore_tmp_db, 
     _record(on, ibkr_login.UP, NOW - timedelta(hours=2), version=178)
     html = report.render_settings_dashboard(inventory.collect(now=NOW))
 
-    assert 'id="ibkr-login-card"' in html, "the shortcut card is gone"
+    assert 'id="ibkr-login-link"' in html, "the shortcut (#527: in the top bar) is gone"
     assert 'id="ibkr-state-card"' in html, "the state card is gone"
     ids = re.findall(r'id="(ibkr[a-z0-9-]*)"', html)
     assert len(ids) == len(set(ids)), f"duplicate id on the page: {sorted(i for i in ids if ids.count(i) > 1)}"

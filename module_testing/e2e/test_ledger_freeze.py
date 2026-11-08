@@ -19,6 +19,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from . import harness
+
 from RevenueChaser.module_testing.e2e.harness.screener_seed import seed_d01, seed_quote
 
 D = "2026-09-25"                                    # a Friday, in the past on any machine running this
@@ -275,7 +277,7 @@ def _alerts_and_seen(chrome: str, dashboard, tmp_path: Path) -> tuple[list[str],
             "--host-resolver-rules=MAP * ~NOTFOUND",
             "--virtual-time-budget=12000", "--dump-dom", page.as_uri()]
     try:
-        out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", timeout=120)
+        out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", timeout=harness.CHROME_TIMEOUT_S)
     except subprocess.TimeoutExpired as exc:               # it never returned: say what it had to say
         err = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", "replace")
         raise AssertionError(f"Chrome did not finish in 120 s. Its stderr: {err[-2000:]}") from exc

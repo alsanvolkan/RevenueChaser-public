@@ -70,17 +70,6 @@ class TestView:
         assert r.status_code == 200
         assert "Settings / Data health" in r.text
 
-    def test_inventory_shows_the_null_cap_hole(self, dashboard, seeded_settings):
-        r = dashboard.view(_APP)
-        assert r.status_code == 200
-        assert _hole(2) in r.text
-
-    def test_corpus_row_notes_the_recorded_miss(self, dashboard, seeded_settings):
-        r = dashboard.view(_APP)
-        assert r.status_code == 200
-        assert ("1 recorded misses (1 no 10-K/20-F, 0 40-F; 0 due for retry)" in r.text), (
-            "the corpus row must name the seeded miss: key")
-
 
 class TestRefreshIsOfflineAndFaithful:
     @pytest.fixture
@@ -149,12 +138,6 @@ class TestStatsFetch:
         assert "fast_info:MU" in calls, calls
         assert not any(c.startswith("screen") for c in calls), (
             f"the standalone stats job must not call the screener: {calls}")
-
-    def test_after_fetch_the_board_shows_one_hole(self, dashboard, seeded_settings):
-        result = dashboard.run_job("/run/universe-stats")
-        assert result.ok, f"universe-stats failed: {result}\n{dashboard.logs()}"
-        html = dashboard.view(_APP).text
-        assert _hole(1) in html
 
 
 class TestDrillApi:

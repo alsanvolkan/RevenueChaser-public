@@ -101,8 +101,9 @@ def change_conditions(snapshot: dict, history: dict | None = None, asof=None) ->
                                 f"(a {_fmt_usd(-moved)} move, to below {_fmt_usd(floor)})"),
                     "then": "the dealer lean behind the current frame weakens meaningfully"})
 
-    charm = _finite((snapshot.get("charm_qualification") or {}).get("signed_net_charm"))
-    pin = _finite((snapshot.get("charm_qualification") or {}).get("strike"))
+    report_pin = snapshot.get("charm_pin_report") or {}       # F2: the report's front-expiry pin and its charm
+    charm = _finite(report_pin.get("net_charm"))
+    pin = _finite(report_pin.get("strike"))
     if charm is not None and charm != 0:
         way = "from minus to plus" if charm < 0 else "from plus to minus"
         at = f" at {pin:,.0f}" if pin is not None else ""

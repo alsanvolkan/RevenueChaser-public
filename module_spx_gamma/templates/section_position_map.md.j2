@@ -29,7 +29,8 @@ UW does not document how it computes its gamma flip, and the open-interest and v
 | DTE Band | Put Wall | Put Wall Net GEX | Call Wall | Call Wall Net GEX |
 |---|---|---|---|---|
 {% for w in dte_band_walls %}| {{ w.band }}{% if w.band == '181-365' %} **(Put Wall standard)**{% endif %} | {{ w.put_wall }} | {{ w.put_wall_net }} | {{ w.call_wall }} | {{ w.call_wall_net }} |
-{% endfor %}
+{% endfor %}{% if target_walls %}| **{{ target_walls.band }}** | {{ target_walls.put_wall }} | {{ target_walls.put_wall_net }} | {{ target_walls.call_wall }} | {{ target_walls.call_wall_net }} |
+{% endif %}
 
 Put Wall (main level) is the 181-365 day band. The ALL row is the all-expiry reference.
 
@@ -59,12 +60,49 @@ Put Wall (main level) is the 181-365 day band. The ALL row is the all-expiry ref
 
 {% if chart_image %}![SPX Option Position Map]({{ chart_image }})
 {% endif %}
-## Liquidity Layer — Dealer Flow
+## Close check (22:00 Amsterdam)
 
-| Band | Range | Net GEX | ~ /25pt |
+{% for st in close_check.steps %}{{ loop.index }}. **{{ st.step }}** — {{ st.reading }}
+{% endfor %}
+{{ close_check.note }}
+
+{% if week_gamma %}## Week gamma map
+
+Expiries through **{{ week_gamma.target }}** ({{ week_gamma.expiries }}) · week net gamma {{ week_gamma.net_gamma }} · **Turning point {{ week_gamma.turning_point }}**
+
+| Zone | Strikes | Net gamma | Share of abs gamma |
+|---|---|---|---|
+{% for z in week_gamma.zones %}| {{ z.kind }} | {{ z.range }} | {{ z.gamma }} | {{ z.share }} |
+{% endfor %}
+{{ week_gamma.rule }}
+
+{% endif %}{% if session_flow %}## Session hedge flow
+
+| Expiry (session) | Net gamma | Hedge per 50 pt | Net charm | Net vanna | Effect |
+|---|---|---|---|---|---|
+{% for r in session_flow %}| {{ r.expiry }} | {{ r.net_gex }} | {{ r.hedge_50pt }} | {{ r.net_charm }} | {{ r.net_vanna }} | {{ r.effect }} |
+{% endfor %}
+
+{% endif %}{% if historical.dealer_book %}## Dealer book
+
+n/a (historical): the option chains behind it were fetched in a later session than this day.
+
+{% elif dealer_book %}## Dealer book
+
+| Greek | (a) long calls, short puts | (b) short all |
+|---|---|---|
+{% for r in dealer_book.rows %}| {{ r.label }} | {{ r.a }} | {{ r.b }} |
+{% endfor %}
+(a) {{ dealer_book.words_a }}. (b) {{ dealer_book.words_b }}. Black-Scholes greeks from each UW contract's IV over {{ dealer_book.contracts }} contracts ({{ dealer_book.expiries }}).
+
+{% endif %}## Liquidity Layer — Dealer Flow
+
+| Band | Range | Net GEX | Hedge for a 25-pt move |
 |---|---|---|---|
 | Absorption (positive gamma) | {{ gex_envelope.absorption.range }} | {{ gex_envelope.absorption.net_gex }} | {{ gex_envelope.absorption.per_25pt }} |
 | Air Gap (negative gamma) | {{ gex_envelope.air_gap.range }} | {{ gex_envelope.air_gap.net_gex }} | {{ gex_envelope.air_gap.per_25pt }} |
+
+Hedge for a 25-pt move = band Net GEX per 1 % x (25 / spot x 100 %), the reports' formula.
 
 Zero crossing (approx. gamma flip): **{{ gex_envelope.zero_crossing }}**
 
@@ -89,19 +127,29 @@ Zero crossing (approx. gamma flip): **{{ gex_envelope.zero_crossing }}**
 |---|---|---|
 {% for label, value, note in r.row %}| {{ label }} | {{ value }} | {{ note }} |
 {% endfor %}
-> TR: {{ r.turkish }}
 {% endfor %}
 ## Volatility Board
 
 What it tells you: whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.
 
 {% if vix %}VIX family: VIX {{ vix.vix }} · 9D {{ vix.vix9d }} · 3M {{ vix.vix3m }} · 6M {{ vix.vix6m }} · 1Y {{ vix.vix1y }} · VVIX {{ vix.vvix }} — term structure: **{{ vix.term_mode or 'n/a' }}**{% if vix.ivts %} (IVTS {{ vix.ivts|round(4) }}){% endif %}
-{% endif %}{% if vega_flow %}Directional vega flow (cumulative, {{ vega_flow.buckets }} buckets): {{ vega_flow.dir_vega_flow | fmtnum('{:+,.0f}') }} — flow, not the book's net vega; the sign is the reading.
+{% if straddle and not historical.straddle %}Straddle expected move ({{ straddle.expiry }}, ATM {{ straddle.strike | fmtnum('{:,.0f}') }}, UW quotes): **±{{ straddle.points | fmtnum('{:,.1f}') }}** ({{ straddle.lower | fmtnum('{:,.0f}') }} – {{ straddle.upper | fmtnum('{:,.0f}') }})
+{% endif %}{% if vega_flow %}Directional vega flow (cumulative, {{ vega_flow.buckets }} buckets): {{ vega_flow.dir_vega_flow | fmtnum('{:+,.0f}') }}{% if vega_flow.get('verdict') %} · **{{ vega_flow.verdict }}**{% endif %} — flow, not the book's net vega; the sign is the reading, unless the largest minute alone carries it.
 {% endif %}{% if vix_greeks %}VIX option book ({{ vix_greeks.expiries }} expiries): net vanna {{ vix_greeks.net_vanna | fmtnum('{:+,.0f}') }} · net charm {{ vix_greeks.net_charm | fmtnum('{:+,.0f}') }}
+{% endif %}{% endif %}
+{% if vol_calendar %}
+Volatility calendar to the target Friday (Amsterdam time):
+
+{% for e in vol_calendar %}- {{ e.local }} — {% if e.high_impact %}**{{ e.event }}** (high impact){% else %}{{ e.event }}{% endif %}
+{% endfor %}
+{% endif %}{% if tails %}
+| 5-session move | Implied probability | Realized (stored closes) |
+|---|---|---|
+{% for t in tails %}| {{ t.move }} | {{ t.implied }} | {{ t.realized }} |
+{% endfor %}
+{% endif %}{% if iv_rank %}IV Rank (1Y): **{{ iv_rank.iv_rank_1y }}%** (ATM IV {{ iv_rank.volatility }})
 {% endif %}
-{% if iv_rank %}IV Rank (1Y): **{{ iv_rank.iv_rank_1y }}%** (ATM IV {{ iv_rank.volatility }})
-{% endif %}
-{% if skew %}Skew (Put Bias): 1M **{{ skew.put_bias_1m | fmtnum('{:.1%}') }}** · 3M **{{ skew.put_bias_3m | fmtnum('{:.1%}') }}** — *(derived/unverified: {{ skew.note }})*
+{% if skew %}Skew (25-delta put minus call IV): 0DTE **{{ skew.get('put_bias_0dte') | fmtnum('{:.1%}') }}** · 1M **{{ skew.put_bias_1m | fmtnum('{:.1%}') }}** · 3M **{{ skew.put_bias_3m | fmtnum('{:.1%}') }}** — *({{ skew.note }})*
 {% endif %}
 {% if realized_vol %}Realized vs Implied: IV **{{ realized_vol.implied_volatility | fmtnum('{:.1%}') }}** · RV **{{ realized_vol.realized_volatility | fmtnum('{:.1%}') }}**
 {% endif %}
@@ -123,14 +171,18 @@ What it tells you: whether options flow is protective (put-heavy) or directional
 Options volume data unavailable.
 {% endif %}
 
-## Max Pain
+{% if front_share %}Front-expiry share of Net GEX: **{{ front_share.share }}** ({{ front_share.expiry }}: {{ front_share.front }} of {{ front_share.total }})
+
+{% endif %}## Max Pain
 
 What it tells you: the strike where the most options expire worthless; a structural gravity center, NOT a directional signal.
 
 | Expiry | Max Pain | % from Spot |
 |---|---|---|
 {% for m in max_pain %}| {{ m.expiry }} | {{ m.max_pain }} | {{ m.distance_pct }} |
-{% endfor %}
+{% endfor %}{% if max_pain_count %}
+{{ max_pain_count.below }} below spot · {{ max_pain_count.above }} above{% if max_pain_count.at %} · {{ max_pain_count.at }} at spot{% endif %}
+{% endif %}
 ## CFTC COT — E-mini S&P 500 (TFF)
 
 What it tells you: how big players (asset managers, leveraged funds, dealers) are positioned; weekly-delayed but regular.
@@ -148,19 +200,38 @@ CFTC COT data unavailable.
 
 ## Scenario Set
 
-| Scenario | Range | P | Asymmetry | Trade |
-|---|---|---|---|---|
-{% for s in scenarios.scenarios %}| {{ s.name }} | {{ s.range }} | {{ s.p }} | {{ "%.2f"|format(s.asymmetry) if s.asymmetry is not none else 'n/a' }} | {{ s.trade }} |
+| Scenario | Range | P | Asymmetry | Trade |{% if scenarios.get("hourly_source") %} Hourly close |{% endif %}
+|---|---|---|---|---|{% if scenarios.get("hourly_source") %}---|{% endif %}
+{% for s in scenarios.scenarios %}| {{ s.name }} | {{ s.range }} | {{ s.p }} | {{ "%.2f"|format(s.asymmetry) if s.asymmetry is not none else 'n/a' }} | {{ s.trade }} |{% if scenarios.get("hourly_source") %} {{ s.get("hourly_text", "") }} |{% endif %}
 {% endfor %}
 
-{{ scenarios.note }}
+{{ scenarios.note }}{% if historical.structures %}
 
-{% if iron_butterfly %}
+Trade structures: n/a (historical), the target Friday's chain was fetched in a later session than this day.{% elif structures %}
+
+### Trade structures ({{ structures.expiry }})
+
+{{ structures.label }}
+
+| Structure | Legs | Net (SPX pts) | XSP | Max profit | Max loss | Breakevens | Reward / risk |
+|---|---|---|---|---|---|---|---|
+{% for r in structures.rows %}| {{ r.name }} | {{ r.legs }} | {{ r.net }} | {{ r.xsp }} | {{ r.max_profit }} | {{ r.max_loss }} | {{ r.breakevens }} | {{ r.reward_risk }} |
+{% endfor %}{% endif %}{% if scenarios.get("hourly_source") %}{% set hs = scenarios.hourly_source %}
+
+Hourly closes from {{ hs.week_start }} ({{ hs.rows|length }} so far): UW {{ hs.source }} 30-minute bars at the report times, scaled to SPX by {{ "%.4f"|format(hs.ratio) }}. A proxy: the report reads IBKR's SPX hourly close.{% endif %}{% if historical.hourly_triggers %}
+
+Hourly closes: n/a (historical), the SPY bars were fetched in a later session than this day.{% endif %}
+
+{% if iron_butterfly_na and not iron_butterfly %}Iron Butterfly n/a: {{ iron_butterfly_na }}.
+
+{% endif %}{% if iron_butterfly %}
 ## Iron Butterfly — Pin Harvest
 
 **Signal: `{{ iron_butterfly.signal.signal }}`** — {{ iron_butterfly.signal.action }}{% if iron_butterfly.signal.target %} → target {{ iron_butterfly.signal.target | fmtnum }}{% endif %}
 
-Center pin: **{{ iron_butterfly.center_strike | fmtnum }}** · Wing width: **{{ iron_butterfly.wing_width | fmtnum }}** (EM {{ iron_butterfly.width_source.em_points | fmtnum }} pts @ IV {{ iron_butterfly.width_source.iv_used | fmtnum('{:,.2f}') }})
+{% if iron_butterfly.get("source") in ("model", "mixed") %}No live quotes at the Fetch: {{ "all" if iron_butterfly.source == "model" else "some" }} legs are modeled (Black-Scholes on UW's IV); a model price is not a market price.
+
+{% endif %}Center pin: **{{ iron_butterfly.center_strike | fmtnum }}** · Wing width: **{{ iron_butterfly.wing_width | fmtnum }}** (EM {{ iron_butterfly.width_source.em_points | fmtnum }} pts @ IV {{ iron_butterfly.width_source.iv_used | fmtnum('{:,.2f}') }})
 
 | Leg | Action | Type | Strike | Mid | IV | Θ /day |
 |---|---|---|---|---|---|---|
@@ -234,15 +305,5 @@ Gamma Flip ({{ how_to_read.flip }}) — the volatility turning point:
 ## Delta Map — Walkthrough
 
 {% for p in walkthrough %}- {{ p }}
-{% endfor %}
-## Greek Sözlüğü & İlişkiler — Türkçe
-
-Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce başlıklarıyla aynı veriden türetilmiştir.
-
-{% for g in glossary_tr %}- **{{ g.greek }}**: {{ g.def }}
-{% endfor %}
-Bu haftaki veriye göre greek ilişkileri:
-
-{% for r in relations %}- **{{ r.greek }}** — {{ r.turkish }}
 {% endfor %}
 {{ footer }}

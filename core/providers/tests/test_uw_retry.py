@@ -339,6 +339,21 @@ class TestBreaker:
             assert len(calls) == 8 and c.health()["breaker_open"] is False
             assert c.auth_error["status"] == status          # still reported as an auth failure
 
+    def test_a_403_about_the_historical_window_is_not_a_rejected_key(self, monkeypatch):
+        """UW answers 403 ``historic_data_access_missing`` for a date older than the token's window, naming its
+        earliest available date. That is an entitlement answer about one date, not a dead credential: counting it
+        as one makes every board read "credentials rejected" off a single old day, and the greek history now
+        starts on the moving edge of that window, so a day that ages out would do exactly that.
+        """
+        body = ('{"code": "historic_data_access_missing", "message": "The earliest date currently available to '
+                'this token is 2023-12-07, so 2022-01-03 in query param date will not return historical data."}')
+        c, calls = _routed(monkeypatch, _always(_Resp(403, text=body)))
+        r = c.get_result("/stock/SPX/greek-exposure/expiry")
+        assert c.auth_error is None, "an entitlement answer must not mark the key rejected"
+        assert len(calls) == 1, "not retried: the date will not get younger"
+        assert r.status == "failed" and c.health()["failed"] == 1
+        assert "window" in (c.health()["failures"][0]["error"] or "")
+
     def test_health_reports_the_breaker_and_counts_the_skipped_calls(self, monkeypatch):
         c, calls = _routed(monkeypatch, _always(_Resp(503)))
         for i in range(8):

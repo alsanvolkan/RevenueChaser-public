@@ -118,7 +118,8 @@ def test_nothing_mutates_on_import_get_or_a_settings_refresh(rawstore_tmp_db, cl
     reads = len(fake.calls)
     r = client.get("/view/module_settings?refresh=1")
     assert r.status_code == 200 and "RC-Store-Backup" in r.get_data(as_text=True)
-    assert len(fake.calls) == reads, "a Settings Refresh must not reach the scheduler"
+    # #492: the board's timer tile reads the builder timer's status, once; nothing else, and nothing that writes
+    assert fake.calls[reads:] in ([], [("status", "RC-Build")]), "a Settings Refresh only reads the builder timer"
     assert fake.mutations == []
 
 

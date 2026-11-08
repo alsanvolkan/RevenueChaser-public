@@ -61,8 +61,6 @@ def test_a_passed_deadline_stops_the_pool(scored):
 
 def test_without_a_stop_every_ticker_is_scored(scored, monkeypatch):
     calls, preloads, _ = scored
-    from RevenueChaser.module_sec_13f import engine as sec_13f
-    monkeypatch.setattr(sec_13f, "load_totals", lambda: {})
     monkeypatch.setattr("RevenueChaser.core.index_registry.annotate_cards", lambda cards: None)
     with job_control.bound(job_control.StopToken()):
         engine.run_asymmetric_growth_hunter(None)

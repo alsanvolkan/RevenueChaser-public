@@ -30,20 +30,20 @@ def _fractional_snapshot() -> dict:
 # Hand-derived from each regime's rule (see the module docstring for both).
 GOLDEN = [
     (
-        # spot 7,784 < flip 7,820.63 -> negative gamma: [put support, flip] / [flip, charm pin 8,000] /
+        # spot 7,784 < flip 7,820.63 -> negative gamma: [put support, flip] / [flip, charm pin 7,900] /
         # [put support - 100, put support], probabilities 0,35 / 0,30 / 0,35.
         make_snapshot,
         {
             "regime": scenarios.NEGATIVE_GAMMA,
             "consolidation": (7500.0, 7820.63),
-            "upside": (7820.63, 8000.0),
+            "upside": (7820.63, 7900.0),
             "downside": (7400.0, 7500.0),
         },
         [
             {"name": "Consolidation", "range": "7,500 \u2013 7,821", "p": 0.35,
              "asymmetry": None, "trade": "Theta-weighted (directionless)"},
-            {"name": "Upside", "range": "7,821 \u2013 8,000", "p": 0.30,
-             "asymmetry": 179.37 / 320.63, "trade": "Directional long"},
+            {"name": "Upside", "range": "7,821 \u2013 7,900", "p": 0.30,
+             "asymmetry": 79.37 / 320.63, "trade": "Directional long"},
             {"name": "Downside", "range": "7,400 \u2013 7,500", "p": 0.35,
              "asymmetry": 100.0 / 320.63, "trade": "Directional short"},
         ],

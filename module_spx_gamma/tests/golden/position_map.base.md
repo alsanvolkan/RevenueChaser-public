@@ -36,6 +36,7 @@ UW does not document how it computes its gamma flip, and the open-interest and v
 | 181-365 **(Put Wall standard)** | 7,500 | +58 | 7,900 | +9 |
 | 365+ | N/A | N/A | N/A | N/A |
 | ALL | 7,500 | +60 | 7,900 | +48 |
+| **Target expiry 2026-08-21** | 7,750 | -140 | 7,900 | +10 |
 
 
 Put Wall (main level) is the 181-365 day band. The ALL row is the all-expiry reference.
@@ -82,12 +83,13 @@ Long Vanna — IV spikes pressure stock lower via dealer selling.
 
 #### Charm — TIMER `Agree`
 
-Charm signals agree — sell-side lean.
+Charm signals agree — sell-side lean. Sign caveat: this is UW's summed charm; its sign can differ from a Black-Scholes sum over the same contracts (02-06 Nov report), so treat the direction as UW's, not a confirmed dealer hedge.
 
 | Metric | Value | Note |
 |---|---|---|
 | Live charm | -$80 | Sell pressure |
 | Positioning | -$45.00M | Sell pressure · 100% imbalance |
+| Report pin | $7,900 | front expiry 2026-08-14 · net charm -$7.00M · not a confirmed attractor |
 | Where it matters | $8,000 | +2.8% from spot · pin zone |
 
 
@@ -98,19 +100,62 @@ Charm signals agree — sell-side lean.
 | A daily close ABOVE 7,821 (the gamma flip) | back to positive gamma — acceleration is dampened, the upside frame opens |
 | The close stays BELOW 7,821 | negative gamma continues, so a move keeps being amplified, 7,500 the next support |
 | Net DEX falls through its 25% threshold (a -$140.75M move, to below +$422.25M) | the dealer lean behind the current frame weakens meaningfully |
-| Charm changes sign (from minus to plus) | the pin's pull at 8,000 reverses, so the close drifts the other way |
+| Charm changes sign (from minus to plus) | the pin's pull at 7,900 reverses, so the close drifts the other way |
 
 
 ## SPX Option Position Map
 
 ![SPX Option Position Map](chart.png)
 
+## Close check (22:00 Amsterdam)
+
+1. **Price band** — close 7,784.00 is in Consolidation (7,500 – 7,821)
+2. **VIX threshold** — VIX threshold n/a
+3. **Week gamma** — week net gamma is negative (expiries through 2026-08-21)
+
+VIX threshold is a substitute for the report's VIX HVL, which comes from a source the board does not use: the prior week's last VIX close plus the average one-day VIX move over the stored window (about two weeks).
+
+## Week gamma map
+
+Expiries through **2026-08-21** (3) · week net gamma -609 · **Turning point N/A**
+
+| Zone | Strikes | Net gamma | Share of abs gamma |
+|---|---|---|---|
+| Air gap | 7,600–7,775 | -932 | 74% |
+| Braked staircase | 7,800–7,925 | +323 | 26% |
+
+Board rule (the reports name the zones but print no thresholds): negative gamma = air gap; positive gamma = dense block at 2x or more of the window's mean |gamma|, braked staircase 0.5x-2x, half-full below 0.5x. Strikes summed in 25-point buckets, window +-5 % of spot, week = expiries through the target Friday.
+
+## Session hedge flow
+
+| Expiry (session) | Net gamma | Hedge per 50 pt | Net charm | Net vanna | Effect |
+|---|---|---|---|---|---|
+| 2026-08-14 | +54.5K | 35.0K | N/A | N/A | dampens moves (positive gamma) |
+| 2026-08-21 | +10.0K | 6.4K | N/A | N/A | dampens moves (positive gamma) |
+
+
+## Dealer book
+
+| Greek | (a) long calls, short puts | (b) short all |
+|---|---|---|
+| Gamma ($ per 1 %) | -849.9M | -2.8B |
+| Gamma, spot -50 ($ per 1 %) | -1.2B | -1.3B |
+| Vanna ($ delta per IV point) | +51.5M | -11.9M |
+| Charm ($ delta per day) | -514.8M | +119.5M |
+| Vomma (sign) | + | - |
+| Zomma (sign) | + | + |
+| Speed (sign) | + | - |
+
+(a) dealers amplify moves; charm buys into expiry; an IV spike grows the book's vega. (b) dealers amplify moves; charm sells into expiry; an IV spike shrinks the book's vega. Black-Scholes greeks from each UW contract's IV over 6 contracts (2026-08-14).
+
 ## Liquidity Layer — Dealer Flow
 
-| Band | Range | Net GEX | ~ /25pt |
+| Band | Range | Net GEX | Hedge for a 25-pt move |
 |---|---|---|---|
-| Absorption (positive gamma) | 7,800–8,000 | +623 | 77.9 |
-| Air Gap (negative gamma) | 7,700–7,750 | -249 | 124.5 |
+| Absorption (positive gamma) | 7,800–8,000 | +623 | 200 |
+| Air Gap (negative gamma) | 7,700–7,750 | -249 | 80 |
+
+Hedge for a 25-pt move = band Net GEX per 1 % x (25 / spot x 100 %), the reports' formula.
 
 Zero crossing (approx. gamma flip): **7,800**
 
@@ -141,7 +186,6 @@ Spot 7,784 sits below the gamma flip 7,821 (+0.5%). Dealers trade WITH the move:
 |---|---|---|
 | Net dealer Γ | +$374 | Short |
 
-> TR: Fiyat 7,784, gamma flip'in (7,821, +0.5%) ALTINDA. Piyasa yapıcılar hareketle AYNI YÖNDE işlem yapar: düşerken satar, çıkarken alır; bu yüzden hareket hızlanır, kırılımlar uzar.
 
 ### Vanna — Long vanna — IV spikes pressure lower
 
@@ -151,18 +195,16 @@ Net vanna is +$45.00M. If IV jumps, dealer delta RISES, so dealers SELL stock to
 |---|---|---|
 | Net Vanna | +$45.00M | Long |
 
-> TR: Net vanna +$45.00M (pozitif). IV sıçrarsa dealer delta'sı YÜKSELİR ve dealer dengelemek için STOK SATAR — vol sıçraması aşağı baskıyı büyütür.
 
 ### Charm — Negative charm — mechanical selling into the close
 
-Net charm is -$80. As expiry approaches, dealer delta builds; dealers mechanically SELL toward the close.
+Net charm is -$80. As expiry approaches, dealer delta builds; dealers mechanically SELL toward the close. Sign caveat: this is UW's summed charm; its sign can differ from a Black-Scholes sum over the same contracts (02-06 Nov report), so treat the direction as UW's, not a confirmed dealer hedge.
 
 | Metric | Value | Note |
 |---|---|---|
 | Net Charm | -$80 | Sell pressure |
 | Charm Peak | $8,000 | +2.8% from spot |
 
-> TR: Net charm -$80 (negatif). Vade yaklaştıkça dealer delta'sı birikir; dealer kapanışa doğru mekanik SATIŞ yapar.
 
 ### Delta — Net delta bullish lean
 
@@ -172,7 +214,24 @@ Net dealer delta is +$563.00M — a bullish structural lean.
 |---|---|---|
 | Net DEX | +$563.00M | All strikes |
 
-> TR: Net dealer delta +$563.00M — yukarı yönlü yapısal eğilim.
+
+### Vol / VIX — Vol / VIX — unknown
+
+No VIX family stored for this day.
+
+| Metric | Value | Note |
+|---|---|---|
+| VIX | N/A |  |
+
+
+### Flow — Flow — unknown
+
+No flow data for this day.
+
+| Metric | Value | Note |
+|---|---|---|
+| Dir. vega flow | N/A |  |
+
 
 ### Vomma — Vomma — vega's sensitivity to IV (2nd order)
 
@@ -182,12 +241,18 @@ Vomma measures how vega itself changes as IV moves. When vega is large and Vomma
 |---|---|---|
 | Order | 2nd | above Vanna |
 
-> TR: Vomma, IV değişince vega'nın kendisinin ne kadar değiştiğini ölçer (2. derece). Vega büyük ve Vomma pozitifken IV sıçraması vol pozisyonunu büyütür ve dengeleme hızlanır. Vanna'nın üstüne binen ikinci derece bir etkidir.
 
 ## Volatility Board
 
 What it tells you: whether implied vol is cheap or expensive, how the term structure slopes, and what the skew costs.
 
+
+
+| 5-session move | Implied probability | Realized (stored closes) |
+|---|---|---|
+| ±2% | 6.2% | 0.0% (0/5) |
+| ±3% | 0.5% | 0.0% (0/5) |
+| ±5% | 0.0% | 0.0% (0/5) |
 
 
 
@@ -201,6 +266,8 @@ What it tells you: whether options flow is protective (put-heavy) or directional
 
 Options volume data unavailable.
 
+
+Front-expiry share of Net GEX: **84.51%** (2026-08-14: +54.5K of +64.5K)
 
 ## Max Pain
 
@@ -222,7 +289,7 @@ CFTC COT data unavailable.
 | Scenario | Range | P | Asymmetry | Trade |
 |---|---|---|---|---|
 | Consolidation | 7,500 – 7,821 | 0.35 | n/a | Theta-weighted (directionless) |
-| Upside | 7,821 – 8,000 | 0.3 | 0.56 | Directional long |
+| Upside | 7,821 – 7,900 | 0.3 | 0.25 | Directional long |
 | Downside | 7,400 – 7,500 | 0.35 | 0.31 | Directional short |
 
 
@@ -328,32 +395,5 @@ Gamma Flip (7,821) — the volatility turning point:
 - Spot trades at 7,784. Around and just below spot, net delta concentration is relatively thin, so price can churn through this tight zone without major dealer-hedge interference.
 - The delta Call Wall sits at 7,800 (net Δ +180,000,000), heavily call-dominated; dealers are net long delta here, so rallies toward it force mechanical selling — a heavy lid that caps upside unless buying volume overwhelms it.
 - Deep liquidity pockets sit at 7,750 and 7,700; these institutional levels mix large put and call positions into sizeable net positive delta bars, so a drop toward them triggers dealer buying to rebalance — strong structural cushions below spot.
-
-## Greek Sözlüğü & İlişkiler — Türkçe
-
-Aşağıdaki tanımlar ve ilişkiler eğitim amaçlıdır; bu raporun İngilizce başlıklarıyla aynı veriden türetilmiştir.
-
-- **Gamma (Γ)**: Spot fiyat 1 puan oynayınca delta'nın (dealer pozisyonunun) ne kadar değiştiği. Pozitif gamma: dealer hareketi söndürür. Negatif gamma: dealer hareketi büyütür.
-- **Vanna**: IV (volatilite) değişince delta'nın ne kadar değiştiği. Negatif net vanna: IV yükselirse dealer alıcı olur → düşüş yastıklanır. Pozitif: IV yükselirse dealer satıcı olur → baskı artar.
-- **Charm**: Vade yaklaştıkça delta'nın kendiliğinden erimesi. Pozitif charm: kapanışa doğru mekanik alış baskısı (pin etkisi). Negatif charm: mekanik satış baskısı.
-- **Vomma**: IV değişince vega'nın ne kadar değiştiği (2. derece). IV sıçrarsa vol pozisyonunun büyüyüp dengelemeyi hızlandırıp hızlandırmayacağını gösterir.
-- **HVL / Gamma Flip**: Kümülatif net GEX'in işaret değiştirdiği fiyat. Üstünde pozitif gamma (sakin), altında negatif gamma (hızlı).
-- **Net GEX**: Tüm strike'lardaki net gamma maruziyeti. + milyon dolar = söndürücü kütle, − = hızlandırıcı.
-- **Absorpsiyon bandı**: Kümülatif Net GEX'in pozitif olduğu bölge; dealer harekete karşı işlem yapar, fiyat orada zor ilerler.
-- **Hava boşluğu (air gap)**: Kümülatif Net GEX'in negatif olduğu bölge; dealer hareketle aynı yönde işlem yapar, fiyat orada hızlı akar.
-- **Max Pain**: En çok opsiyonun değersiz bittiği strike; yapısal 'çekim' seviyesi, yön sinyali değildir. Spot'tan uzaklığıyla okunur.
-- **IV Rank**: Bugünkü IV'nin son 1 yıldaki konumu (%). Düşük = opsiyonlar ucuz, yüksek = pahalı.
-- **Variance Risk Premium (VRP)**: Örtük oynaklığın (IV) gerçekleşen oynaklığın (RV) üzerindeki payı; kısa vol pozisyonunun ne kadar kazandırdığı. Yüksek = vol satıcısı zengin.
-- **Put/Call oranı (P/C)**: Put hacminin call hacmine oranı. >1 put-ağır akış (koruma veya yönlü aşağı bahis); tek başına yön okunmaz, premium ve Net GEX ile birlikte yorumlanır.
-- **Contango / Backwardation**: Vade yapısının yönü. Contango (kısa vade sakin, uzak vade pahalı) normaldir; backwardation (yakın vade daha pahalı) yakın stresin erken göstergesidir.
-- **CFTC COT (TFF)**: Haftalık yayınlanan büyük oyuncu pozisyonları (asset manager, leveraged funds, dealer). Gecikmeli ama düzenli; yön ölçmek için kullanılır.
-
-Bu haftaki veriye göre greek ilişkileri:
-
-- **Gamma** — Fiyat 7,784, gamma flip'in (7,821, +0.5%) ALTINDA. Piyasa yapıcılar hareketle AYNI YÖNDE işlem yapar: düşerken satar, çıkarken alır; bu yüzden hareket hızlanır, kırılımlar uzar.
-- **Vanna** — Net vanna +$45.00M (pozitif). IV sıçrarsa dealer delta'sı YÜKSELİR ve dealer dengelemek için STOK SATAR — vol sıçraması aşağı baskıyı büyütür.
-- **Charm** — Net charm -$80 (negatif). Vade yaklaştıkça dealer delta'sı birikir; dealer kapanışa doğru mekanik SATIŞ yapar.
-- **Delta** — Net dealer delta +$563.00M — yukarı yönlü yapısal eğilim.
-- **Vomma** — Vomma, IV değişince vega'nın kendisinin ne kadar değiştiğini ölçer (2. derece). Vega büyük ve Vomma pozitifken IV sıçraması vol pozisyonunu büyütür ve dengeleme hızlanır. Vanna'nın üstüne binen ikinci derece bir etkidir.
 
 Source: Unusual Whales API — open-position-based option exposure model. Report date: 2026-08-14. These levels are provider-model outputs and strike aggregations, not guaranteed support/resistance, pin certainty, forecasts, or price targets. Long vanna: an IV rise raises dealer delta and forces stock selling to re-hedge — a drag during vol spikes. A flow effect, not a support guarantee.

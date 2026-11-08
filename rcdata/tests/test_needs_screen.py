@@ -19,8 +19,9 @@ import pytest
 from RevenueChaser.rcdata import read
 from RevenueChaser.rcdata.needs import catalog, screen
 
+# ``earnings_reported``: the board's day is the quarter the EPS belongs to, the write's day is when UW was asked.
 DIFFER = {"index_membership", "fundamental_fact", "earnings_event", "segment_revenue", "customer_share",
-          "fundamental_revision", "sec13f_periods"}
+          "fundamental_revision", "sec13f_periods", "earnings_reported"}
 
 
 def test_every_dataset_a_need_names_has_a_card():
@@ -80,10 +81,11 @@ def test_every_table_a_need_names_has_a_written_column_or_no_date_at_all():
 
 #: Served tables the control board's "Refresh the example rows" cannot answer: it draws the button for every table
 #: a dataset serves (``module_settings/newdata.py``: ``samples`` comes from ``ds.tables``), but the route behind it
-#: needs the table's written column and its kind, and these seven are in neither or only one map. Measured
-#: 30 Oct 2026. The set is the record of a gap that predates the test, not a target: a table added to a dataset
-#: must be answerable, not join this list.
-REFRESH_GAPS = {"adj_factor", "gics_history", "peer_group", "sec13f_cusip_map", "sec13f_filer_period",
+#: needs the table's written column and its kind, and these six are in neither or only one map. Measured
+#: 30 Oct 2026; ``sec13f_cusip_map`` left the list with G9, which gave it a reader and a kind. The set is the
+#: record of a gap that predates the test, not a target: a table added to a dataset must be answerable, not join
+#: this list.
+REFRESH_GAPS = {"adj_factor", "gics_history", "peer_group", "sec13f_filer_period",
                 "sec13f_filings", "security_history"}
 
 
@@ -122,6 +124,14 @@ def test_every_card_names_its_build_step_and_its_role():
     for name, card in screen.DATASETS.items():
         assert 1 <= card.step <= 11, f"{name}: step {card.step}"
         assert card.role in screen.ROLES, f"{name}: role {card.role!r}"
+
+
+def test_compustat_serves_the_daily_prices_and_alpaca_is_the_tester():
+    """#484: since the Compustat switch ``price_bar_daily`` follows ``wrds/prices``; Alpaca's bars are compared only."""
+    assert read.DATASET_OF_TABLE["price_bar_daily"] == "wrds/prices"
+    assert screen.DATASETS["wrds/prices"].role == "first"
+    assert screen.DATASETS["alpaca/bars"].role == "cross-check"
+    assert "tester" in screen.DATASETS["alpaca/bars"].label
 
 
 def test_a_kinds_steps_sit_inside_its_files_steps():
@@ -184,3 +194,10 @@ def test_every_provider_a_dataset_names_has_its_words():
     assert named, "no provider found at all: the search is broken"
     assert named <= set(screen.PROVIDERS), f"no words for {sorted(named - set(screen.PROVIDERS))}"
     assert all(w.name and w.what for w in screen.PROVIDERS.values())
+
+
+def test_the_sec_pace_words_state_the_bucket_rate_the_code_runs():
+    """#527: the page said "8 a second" while ``core/sec_throttle.RATE`` is 9; the words now read the constant."""
+    from RevenueChaser.core import sec_throttle
+    from RevenueChaser.rcdata.needs import screen
+    assert f"{sec_throttle.RATE} a second" in screen.PROVIDERS["sec"].pace

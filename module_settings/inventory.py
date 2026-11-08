@@ -512,7 +512,7 @@ def _overlay_market_prices(rows: list[dict]) -> list[dict]:
         market = row.get("market")
         if row.get("key") != "price_bars" or not isinstance(market, dict):
             continue
-        row["db"], row["source"], row["writer"], row["writer_note"] = "market", "alpaca", MARKET_BARS_WRITER, None
+        row["db"], row["source"], row["writer"], row["writer_note"] = "market", "wrds", MARKET_BARS_WRITER, None
         row["coverage"] = {"covered": None, "expected": None, "fraction": None, "newest": market.get("newest"),
                            "problems": [], "label": COVERAGE_NA}
         if market.get("state") == "failed":
@@ -1051,15 +1051,20 @@ def _board_fit(presence: dict) -> list[dict]:
     return out
 
 
-def _universe_tickers() -> list[dict]:
-    """``[{ticker, name}]`` for the ticker combobox — one store read, no network."""
+def _universe_tickers() -> tuple[list[dict], str | None]:
+    """``([{ticker, name}], error)`` for the ticker combobox, from the spine's ``security`` (the need
+    ``identity.universe``) through ``rcdata.read``: one read, no network, never a file opened here (#485).
+
+    ``error`` is the failed read's reason, ``None`` otherwise; an empty list with no error is a spine that holds no
+    names (or no spine yet).
+    """
+    from RevenueChaser.rcdata import read as rcread
     try:
-        rows = rawstore.query("SELECT ticker, name FROM equity_universe ORDER BY ticker")
-    except Exception as exc:  # noqa: BLE001 - recorded (F4); empty picker
-        _record("equity_universe", "_universe_tickers", exc)
-        return []
+        rows = rcread.universe()
+    except Exception as exc:  # noqa: BLE001 - said on the page in the box's place, never an empty box
+        return [], f"{type(exc).__name__}: {exc}"[:300]
     return [{"ticker": r["ticker"], "name": r.get("name") or r["ticker"]}
-            for r in rows if r.get("ticker")]
+            for r in rows if r.get("ticker")], None
 
 
 # The tables the drill's unknown-name check reads: only a failed read of one of these (or of its file's table list)
@@ -2169,19 +2174,19 @@ def _cusip_map_counts() -> dict | None:
     * ``asked`` — CUSIPs ``identity_cusip`` holds an answer for (the map's whole population);
     * ``mapped`` — of those, the ones whose newest answer names a ticker;
     * ``empty`` — asked and answered with no ticker: the store's own "unmatched" count;
-    * ``never_asked`` — CUSIPs the 13F filings need a ticker for that the map has not asked about,
-      from the map step's own queue (``module_sec_13f.engine.map_candidates``);
-    * ``board_left_out`` — what the 13F board drops after its own filters (newest period, long
-      equity holdings of the active filings, ``engine.unmatched_summary``). The period's own CUSIP
-      total is not stored, so this count has no denominator to count against.
+    * ``board_left_out`` — the CUSIPs the newest stored quarter holds no ticker for, as the builder
+      counted them (``sec13f_periods.unmapped_cusips``). The period's own CUSIP total is not stored,
+      so this count has no denominator to count against.
 
-    The map, its queue and the board's summary are three reads. Each carries its own state, so one
-    failing read leaves the other two answering, and the failed one says so instead of a zero.
+    The map and the board's count are two reads. Each carries its own state, so one failing read
+    leaves the other answering, and the failed one says so instead of a zero.
+
+    ``never_asked`` is gone with the retired map step (G9): the builder names a CUSIP from the spine
+    inside its own build, so there is no queue of CUSIPs waiting to be asked about.
     """
     from RevenueChaser.core import identity_cusip
 
     out = {"asked": 0, "mapped": 0, "empty": 0,
-           "never_asked": 0, "never_asked_state": "",
            "board_left_out": 0, "board_state": ""}
     map_read = _table_exists(identity_cusip.TABLE)
     if map_read:
@@ -2194,24 +2199,13 @@ def _cusip_map_counts() -> dict | None:
         out["mapped"] = sum(1 for row in latest.values()
                             if row.get("status") == identity_cusip.PRESENT and row.get("ticker"))
         out["empty"] = out["asked"] - out["mapped"]
-    if _count("sec13f_holdings") and all(_table_exists(t) for t in SEC13F_TABLES):
-        from RevenueChaser.module_sec_13f import engine as sec_13f
-        if map_read:
-            try:
-                out["never_asked"] = len(sec_13f.map_candidates())
-            except Exception as exc:  # noqa: BLE001
-                _record("sec13f_holdings", "identity_coverage", exc)
-                out["never_asked"], out["never_asked_state"] = None, COVERAGE_UNREADABLE
-        else:
-            # The queue excludes the CUSIPs the map holds, so without its table the count has no
-            # definition here — said, never drawn as "nothing is waiting".
-            out["never_asked"], out["never_asked_state"] = None, COVERAGE_UNMEASURED
-        try:
-            summary = sec_13f.unmatched_summary(sec_13f.load_cusip_ticker())
-            out["board_left_out"] = int((summary or {}).get("cusips") or 0)
-        except Exception as exc:  # noqa: BLE001
-            _record("sec13f_holdings", "identity_coverage", exc)
-            out["board_left_out"], out["board_state"] = None, COVERAGE_UNREADABLE
+    from RevenueChaser.rcdata import read as rcread
+    try:
+        periods = rcread.periods_13f()
+        out["board_left_out"] = int((periods[-1].get("unmapped_cusips") or 0) if periods else 0)
+    except Exception as exc:  # noqa: BLE001
+        _record("sec13f_periods", "identity_coverage", exc)
+        out["board_left_out"], out["board_state"] = None, COVERAGE_UNREADABLE
     return out
 
 
@@ -2312,34 +2306,24 @@ def identity_coverage(tickers: list[str], now: datetime | None = None,
     cusips = _cusip_map_counts()
     if cusips is None:
         for key, label in (("cusip_mapped", "CUSIP mapped to a ticker"),
-                           ("cusip_empty", "CUSIP the store has no ticker for"),
-                           ("cusip_never_asked",
-                            "CUSIP the 13F filings hold that the store has never asked about")):
+                           ("cusip_empty", "CUSIP the store has no ticker for")):
             identifiers.append(_coverage(key, label, "CUSIPs the store has asked about",
                                          covered=None, expected=None, state=COVERAGE_UNREADABLE))
         identifiers.append(_coverage("sec13f_left_out", "CUSIP the 13F board leaves out of its totals",
                                      "not measured", covered=None, expected=None,
                                      state=COVERAGE_UNREADABLE))
     else:
-        asked, waiting = cusips["asked"], cusips["never_asked"]
+        asked = cusips["asked"]
         asked_text = f"{_count_text(asked, 'CUSIP')} the store has asked about"
         identifiers.append(_coverage("cusip_mapped", "CUSIP mapped to a ticker", asked_text,
                                      covered=cusips["mapped"], expected=asked))
         identifiers.append(_coverage(
             "cusip_empty", "CUSIP the store asked about and has no ticker for (the store's unmatched count)",
             asked_text, covered=cusips["empty"], expected=asked))
-        # The waiting count is a second read: when it failed (or has no definition here) its
-        # denominator is not a number either, and the row says so instead of counting to zero.
-        need = asked + waiting if isinstance(waiting, int) else None
-        need_text = (f"{_count_text(need, 'CUSIP')} that need a ticker (asked plus waiting)"
-                     if need is not None else "CUSIPs that need a ticker (asked plus waiting)")
-        identifiers.append(_coverage(
-            "cusip_never_asked", "CUSIP the 13F filings hold that the store has never asked about",
-            need_text, covered=waiting, expected=need, state=cusips["never_asked_state"]))
         identifiers.append(_coverage(
             "sec13f_left_out", "CUSIP the 13F board leaves out of its totals", "not measured",
             covered=cusips["board_left_out"], expected=None, state=cusips["board_state"],
-            detail="Newest 13F period only: stock holdings (not options), in filings still in force."))
+            detail="Newest stored 13F quarter, as the builder counted it (sec13f_periods.unmapped_cusips)."))
 
     return {"names_kept": n_kept, "funnel": funnel, "funnel_note": funnel_note,
             "inputs": inputs, "identifiers": identifiers}
@@ -2533,12 +2517,13 @@ def _collect(now: datetime) -> dict:
         },
         _inputs_row(),
     ]
-    tickers_list = _universe_tickers()
+    tickers_list, tickers_error = _universe_tickers()
     board_cards = boards.board_cards()
     return {
         # Worst coverage first: the rows that need a Fetch are at the top (#124).
         "rows": sorted(_overlay_market_prices(_attach_registry(rows, now)), key=sort_key),
         "tickers": tickers_list,
+        "tickers_error": tickers_error,
         "boards": board_cards,
         "identity": identity,
         # Fixed registry fields only: the live state is polled from /api/automations.

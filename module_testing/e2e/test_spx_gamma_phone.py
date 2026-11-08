@@ -1,8 +1,7 @@
 """The SPX Gamma board on a phone, in a real browser against the real dashboard.
 
 Phone pass on the pilot board: at an exact 390 px viewport (device emulation, ``harness/cdp_browser.py``) the page
-never scrolls sideways, every table stacks, every control inside the board is at least 44 px, a tooltip opens by
-tap, the board follows the shell's theme (``data-theme``) in light and dark, and the charts fit their container.
+never scrolls sideways, every table stacks, every control inside the board is at least 44 px, the board follows the shell's theme (``data-theme``) in light and dark, and the charts fit their container.
 
 The board is rendered from the module's fixture snapshot (demo values, not market data) and written where the
 dashboard looks for the newest SPX report; nothing here starts a job or touches a provider.
@@ -73,6 +72,9 @@ def _open(browser, board, size, scheme="dark", theme="dark"):
     browser.open(f"{board.url}/view/{TAB}")
     browser.eval(f"document.documentElement.setAttribute('data-theme', {theme!r})")
     browser.wait_for("document.querySelectorAll('.js-plotly-plot .main-svg').length >= 3")
+    # The mock rebuild (5 Nov 2026) put the position map, tornado and liquidity layer in a collapsed card; the
+    # chart checks open it as a reader does (the page resizes the charts on the toggle).
+    browser.eval("document.getElementById('g6b').open = true")
     browser.settle()
 
 
@@ -163,28 +165,6 @@ def test_text_has_4_5_to_1_contrast_in_both_themes(board, browser, theme):
     assert not low, f"{theme}: text under 4.5:1: {low[:10]}"
 
 
-def test_a_tooltip_opens_by_tap_and_by_keyboard(board, browser):
-    _open(browser, board, PHONE)
-    box = "document.querySelector('details.tip .ag-tip-box')"
-    assert browser.eval(f"{box}.checkVisibility()") is False, "a tooltip must not show before it is asked for"
-    size = browser.eval("(function(){ var r = document.querySelector('details.tip > summary').getBoundingClientRect();"
-                        " return [r.width, r.height]; })()")
-    assert size[0] >= 44 and size[1] >= 44, f"tooltip trigger is {size}"
-    browser.eval("document.querySelector('details.tip > summary').scrollIntoView({block: 'center'})")
-    x, y = browser.eval("(function(){ var r = document.querySelector('details.tip > summary').getBoundingClientRect();"
-                        " return [r.left + r.width / 2, r.top + r.height / 2]; })()")
-    for typ in ("mousePressed", "mouseReleased"):
-        browser.send("Input.dispatchMouseEvent", type=typ, x=x, y=y, button="left", clickCount=1)
-    assert browser.eval("document.querySelector('details.tip').open") is True, "a tap did not open the tooltip"
-    r = browser.eval(f"(function(){{ var r = {box}.getBoundingClientRect(); return [r.left, r.right, r.top]; }})()")
-    assert r[0] >= 0 and r[1] <= PHONE[0] and r[2] >= 0, f"the tooltip is off screen: {r}"
-    browser.press("Escape")
-    assert browser.eval("document.querySelector('details.tip').open") is False
-    browser.eval("document.querySelector('details.tip > summary').focus()")
-    browser.press("Enter")
-    assert browser.eval("document.querySelector('details.tip').open") is True, "Enter did not open the tooltip"
-
-
 def test_the_board_controls_are_44_px_on_a_phone(board, browser):
     _open(browser, board, PHONE)
     small = browser.eval("""(function(){ var out = [];
@@ -244,6 +224,8 @@ def test_the_position_map_is_700_px_tall_on_a_desktop_inside_the_shell(board, br
     """#195 review MUST 1: min(700px, 70vh) made the map 486 px in the shell at 1280x800."""
     browser.emulate(*DESKTOP, scheme="dark")
     browser.open(f"{board.url}/#{TAB}", ready=FRAME_READY)
+    browser.eval("document.querySelector('.frame.on').contentDocument.getElementById('g6b').open = true")
+    browser.wait_for(f"JSON.stringify({FRAME_CHARTS}) === '[700,460,460]'", timeout=8)
     assert browser.eval(FRAME_CHARTS) == [700, 460, 460]
 
 
@@ -319,12 +301,12 @@ def test_the_boards_own_focus_rule_draws_the_ring(board, browser):
     assert ring[3] is True and ring[1] == "solid" and ring[2] == "2px", ring
 
 
-def test_the_at_a_glance_grid_is_two_columns_on_a_phone_and_seven_on_a_desktop(board, browser):
-    cols = "getComputedStyle(document.querySelector('.ag-grid7')).gridTemplateColumns.split(' ').length"
+def test_the_at_a_glance_grid_is_two_columns_on_a_phone_and_four_on_a_desktop(board, browser):
+    cols = "getComputedStyle(document.querySelector('.grid')).gridTemplateColumns.split(' ').length"
     _open(browser, board, PHONE)
     assert browser.eval(cols) == 2
     _open(browser, board, DESKTOP)
-    assert browser.eval(cols) == 7
+    assert browser.eval(cols) == 4
 
 
 def test_the_iron_butterfly_legs_do_not_scroll_on_a_phone(board, browser):
@@ -336,15 +318,6 @@ def test_the_iron_butterfly_legs_do_not_scroll_on_a_phone(board, browser):
 
 
 # ── #195 review SHOULD 4: phone readability ──
-def test_intraday_is_not_a_label_under_spot_on_a_phone(board, browser):
-    """On a desktop 'Intraday' names the row of (VOL) values; stacked under Spot it read as Spot's own."""
-    shown = "getComputedStyle(document.querySelector('.ag-h-vol')).display"
-    _open(browser, board, PHONE)
-    assert browser.eval(shown) == "none"
-    _open(browser, board, DESKTOP)
-    assert browser.eval(shown) != "none"
-
-
 def test_a_stacked_summary_metric_is_a_heading_with_a_rule_between_metrics(board, browser):
     _open(browser, board, PHONE)
     got = browser.eval("""(function(){ var tr = document.querySelector('.summary-card table.stack tbody tr'),
@@ -364,31 +337,6 @@ def test_an_iron_butterfly_leg_is_two_columns_on_a_phone(board, browser):
     assert got[2] <= 150, f"a leg card is {got[2]} px tall"
 
 
-def test_the_tooltip_target_sits_in_its_card_without_covering_the_value(board, browser):
-    """#195 review SHOULD 5: negative margins overlapped the value by 10 px, stuck out of the card, and the focus
-    ring cut the card's border."""
-    for size in (PHONE, DESKTOP):
-        _open(browser, board, size)
-        got = browser.eval("""(function(){ return Array.prototype.map.call(document.querySelectorAll('details.tip'), function(d){
-          var s = d.querySelector('summary').getBoundingClientRect(), card = d.closest('.ag-gex').getBoundingClientRect(),
-              v = d.closest('.ag-gex').querySelector('.v').getBoundingClientRect(),
-              text = document.createRange(); text.selectNodeContents(d.closest('.ag-gex').querySelector('.v'));
-              var t = text.getBoundingClientRect();
-          return {inside: s.left >= card.left && s.right <= card.right && s.top >= card.top && s.bottom <= card.bottom,
-                  overlap: s.left < t.right && s.right > t.left && s.top < t.bottom && s.bottom > t.top,
-                  w: s.width, h: s.height}; }); })()""")
-        assert len(got) == 2
-        for g in got:
-            assert g["inside"] and not g["overlap"] and g["w"] >= 44 and g["h"] >= 44, (size, g)
-        browser.eval("document.body.focus()")
-        for _ in range(60):                       # Tab to the first tooltip trigger, as a keyboard reader does
-            browser.press("Tab")
-            if browser.eval("document.activeElement.matches('details.tip > summary:focus-visible')"):
-                break
-        offset = browser.eval("getComputedStyle(document.activeElement).outlineOffset")
-        assert offset.startswith("-"), f"the focus ring would cut the card border: {offset}"
-
-
 def test_collapsed_sections_open_for_print_and_close_again(board, browser):
     """#195 review SHOULD 6: nothing opened the <details> for a printout, so Details, How to read, the
     Walkthrough and the glossary were left out of it."""
@@ -400,53 +348,6 @@ def test_collapsed_sections_open_for_print_and_close_again(board, browser):
     assert all(browser.eval(state)), "a section stays closed in the printout"
     browser.eval("window.dispatchEvent(new Event('afterprint'))")
     assert browser.eval(state) == before, "the sections the reader had open or closed are restored"
-
-
-def _move(browser, x, y):
-    browser.send("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
-
-
-def _click_at(browser, x, y):
-    for typ in ("mousePressed", "mouseReleased"):
-        browser.send("Input.dispatchMouseEvent", type=typ, x=x, y=y, button="left", clickCount=1)
-
-
-CARD_POINTS = """(function(){ var d = document.querySelector('details.tip'), c = d.closest('.ag-gex').getBoundingClientRect(),
-  s = d.querySelector('summary').getBoundingClientRect();
-  return {card: [c.left + 8, c.top + 8], tip: [s.left + s.width / 2, s.top + s.height / 2]}; })()"""
-OPEN = "document.querySelector('details.tip').open"
-FINE_POINTER = """(function(){ var real = window.matchMedia.bind(window);
-  window.matchMedia = function(q){ var r = real(q);
-    return /hover: hover/.test(q) ? {matches: true, media: q, addEventListener: function(){}, removeEventListener: function(){}} : r; }; })()"""
-
-
-def test_a_tooltip_opens_on_hover_with_a_mouse_and_a_click_pins_it(board, browser):
-    """#195 review SHOULD 7: the desktop hover tooltip was gone (click only). A fine pointer hovers; a click pins."""
-    # Headless Chrome reports no hover or fine pointer and CDP cannot emulate one, so the board's capability query
-    # is answered "yes" before the page runs; what is tested is the board's hover handling.
-    browser.emulate(*DESKTOP, scheme="dark")
-    browser.send("Page.addScriptToEvaluateOnNewDocument", source=FINE_POINTER)
-    browser.open(f"{board.url}/view/{TAB}")
-    browser.wait_for("document.querySelectorAll('.js-plotly-plot .main-svg').length >= 3")
-    browser.eval("document.querySelector('details.tip').scrollIntoView({block: 'center'})")
-    pts = browser.eval(CARD_POINTS)
-    _move(browser, *pts["card"])
-    assert browser.eval(OPEN) is True, "hovering the card did not open its tooltip"
-    _move(browser, 4, 4)
-    assert browser.eval(OPEN) is False, "leaving the card did not close it"
-    _move(browser, *pts["card"])
-    _click_at(browser, *pts["tip"])
-    _move(browser, 4, 4)
-    assert browser.eval(OPEN) is True, "a click should pin the tooltip open"
-    _click_at(browser, *pts["tip"])
-    assert browser.eval(OPEN) is False, "a second click unpins it"
-
-
-def test_a_phone_tooltip_does_not_open_on_hover(board, browser):
-    _open(browser, board, PHONE)
-    browser.eval("document.querySelector('details.tip').scrollIntoView({block: 'center'})")
-    _move(browser, *browser.eval(CARD_POINTS)["card"])
-    assert browser.eval(OPEN) is False
 
 
 # ── #195 review NITs ──
@@ -465,12 +366,12 @@ def test_every_chart_title_fits_its_chart_on_a_phone(board, browser):
     assert browser.eval(probe) == [False, False, False]
 
 
-def test_the_iron_butterfly_boxes_use_the_8_px_radius_of_the_other_boxes(board, browser):
+def test_cards_use_the_mocks_radii(board, browser):
+    """The mock: an 8 px card, a 6 px block inside it (trade, scenario, step)."""
     _open(browser, board, DESKTOP)
-    radii = browser.eval("[getComputedStyle(document.querySelector('.ib-hero')).borderTopLeftRadius,"
-                         " getComputedStyle(document.querySelector('.ib-legs table')).borderTopLeftRadius,"
-                         " getComputedStyle(document.querySelector('.box')).borderTopLeftRadius]")
-    assert radii == ["8px", "8px", "8px"], radii
+    radii = browser.eval("['.card', '.trade', '.sc', '.step'].map(function(q){"
+                         " return getComputedStyle(document.querySelector(q)).borderTopLeftRadius; })")
+    assert radii == ["8px", "6px", "6px", "6px"], radii
 
 
 def test_the_hidden_header_cells_of_a_stacked_table_stay_on_screen_with_a_wide_font(board, browser):

@@ -177,6 +177,8 @@ _NEEDS = (
          ask_param="tickers", normalize=TICKER, providers=("sec",)),
     Need("fundamentals.earnings_event", "earnings_events", "earnings_event", "report_date", "cik", 1,
          providers=("sec", "uw")),
+    Need("fundamentals.earnings_reported", "earnings_reported", "earnings_reported", "period_end", "cik", 95,
+         providers=("uw",)),
     Need("fundamentals.filings", "filing_items", "filing_item", "filing_date", "cik", 1,
          ask_param="ciks", providers=("sec",)),
     Need("fundamentals.segments", "segments", "segment_revenue", "period_end", "cik", 65,

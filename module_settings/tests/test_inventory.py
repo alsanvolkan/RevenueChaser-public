@@ -145,8 +145,12 @@ def _seed_detail():
     ])
 
 
-def test_collect_embeds_ticker_names_for_the_drill(rawstore_tmp_db):
+def test_collect_embeds_ticker_names_for_the_drill(rawstore_tmp_db, monkeypatch):
+    """#485: the names are the spine's ``security`` rows, read through ``rcdata.read``."""
+    from RevenueChaser.rcdata import read as rcread
     _seed_detail()
+    monkeypatch.setattr(rcread, "universe", lambda *a, **k: [{"ticker": "AAPL", "name": "Apple Inc."},
+                                                             {"ticker": "MU", "name": "Micron Technology"}])
     tickers = inventory.collect()["tickers"]
     assert {"ticker": "MU", "name": "Micron Technology"} in tickers
     assert {"ticker": "AAPL", "name": "Apple Inc."} in tickers

@@ -123,8 +123,6 @@ def test_the_hunter_stamps_the_model_version(rawstore_tmp_db, monkeypatch):
     seed_momentum(["AAA"])                                    # the momentum signal comes from D01 (#380 S4)
     monkeypatch.setattr(engine, "fetch_universe_stats",
                         lambda *a, **k: ([{"ticker": "AAA", "quote": dict(_QUOTE), "market_cap": 5e9}], {}))
-    import RevenueChaser.module_sec_13f.engine as s13
-    monkeypatch.setattr(s13, "load_totals", lambda: {})
     monkeypatch.setattr(engine._spine, "spine_gics", lambda *a, **k: {})
     monkeypatch.setattr(engine._spine, "excluded_tickers", lambda: set())
     res = engine.run_asymmetric_growth_hunter(None, max_workers=1, no_fetch=True)
