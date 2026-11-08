@@ -106,12 +106,14 @@ def is_trading_day(d: date) -> bool:
 # weekday of a month) and an observance shift: a Saturday date is kept the Friday before, a Sunday date the Monday
 # after. So, unlike the NYSE table, this one needs no horizon and never has to be extended.
 _FIXED = ((1, 1), (6, 19), (7, 4), (11, 11), (12, 25))
+_JUNETEENTH_FROM = 2021   # added to 5 U.S.C. 6103 on 17 June 2021; the offices worked on 19 June before it (#507)
 #        month, n-th (1-4), weekday (0 = Monday); n = -1 is the last of the month
 _NTH = ((1, 3, 0), (2, 3, 0), (5, -1, 0), (9, 1, 0), (10, 2, 0), (11, 4, 3))
 
 # Days the federal offices were closed by executive order, which no rule gives. Each one is measured: the SEC
 # published no daily index for it (checked 2026-10-30).
 EXTRA_FEDERAL_CLOSURES: frozenset[date] = frozenset({
+    date(2018, 12, 5),    # national day of mourning, President G. H. W. Bush (#507)
     date(2025, 1, 9),     # national day of mourning, President Carter
     date(2025, 12, 24),   # Christmas Eve, federal offices closed by executive order
     date(2025, 12, 26),   # the day after Christmas, same order
@@ -140,7 +142,7 @@ def federal_holidays(year: int) -> frozenset[date]:
     """The days the US federal offices, and so EDGAR, are closed in ``year``: the eleven statutory holidays as they
     are observed, plus any closure by executive order. A New Year's Day that falls on a Saturday is kept on 31
     December of the year before, so it belongs to that year's set, not to this one."""
-    days = {_observed(date(year, m, d)) for m, d in _FIXED}
+    days = {_observed(date(year, m, d)) for m, d in _FIXED if (m, d) != (6, 19) or year >= _JUNETEENTH_FROM}
     days |= {_nth_weekday(year, m, n, w) for m, n, w in _NTH}
     days = {d for d in days if d.year == year}
     if date(year + 1, 1, 1).weekday() == 5:              # next New Year's Day is kept this 31 December
