@@ -247,7 +247,7 @@ def test_every_pacer_a_dataset_asks_for_has_an_official_window():
 
 
 def test_no_uw_dataset_counts_its_own_calls():
-    """``RunContext.uw_client`` hangs ``_on_uw_response`` on the client, which counts every UW response, retries
+    """``RunContext.uw_client`` hangs ``_on_uw_request`` on the client, which counts every UW request sent, retries
     included. A dataset that also counts its own asks doubles the number the day cap is read from: the first
     ``uw/earnings`` fetch reported 10,608 calls for 5,304 requests (6 Nov 2026)."""
     root = Path(caps.__file__).resolve().parents[1]

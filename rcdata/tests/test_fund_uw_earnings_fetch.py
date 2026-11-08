@@ -167,3 +167,37 @@ def test_a_failed_flush_raises_to_a_direct_caller():
         ops.count_calls = real
     ctx.flush_counts()
     assert ops.calls_today("uw") == 3
+
+
+# ── Review of #541: a 4xx on every request is not each request's own fault ──────────────────────────────────────
+
+def test_a_4xx_on_every_request_stops_the_run_and_hides_nobody(http_mock, monkeypatch):
+    """UW drops the path (404 for everyone): the run stops after ``REJECT_STREAK`` rejected requests in a row with
+    no answer between, fails loudly, and writes no empty answer, so nobody is hidden for a week."""
+    _companies(monkeypatch, [f"T{i:03d}" for i in range(uw_earnings.REJECT_STREAK + 10)])
+    http_mock.add("/earnings", {"error": "not found"}, status=404)
+    with pytest.raises(base.SourceError):
+        _fetch()
+    assert len(http_mock.calls("/earnings")) == uw_earnings.REJECT_STREAK
+    assert not list(uw_earnings.day_dir(AS_OF).glob("*.json.gz"))
+
+
+def test_the_same_stop_holds_on_a_resumed_day(http_mock, monkeypatch):
+    """Earlier answers of the day must not turn a mid-run loss of the path into an ``ok`` run."""
+    tickers = [f"T{i:03d}" for i in range(uw_earnings.REJECT_STREAK + 10)]
+    _companies(monkeypatch, tickers)
+    http_mock.add("/stock/T000/earnings", ANSWER)
+    http_mock.add("/earnings", {"error": "not found"}, status=404)
+    with pytest.raises(base.SourceError):
+        _fetch()
+    assert [p.name for p in uw_earnings.day_dir(AS_OF).glob("*.json.gz")] == ["T000.json.gz"]
+
+
+def test_a_rejected_request_waits_for_an_answer_before_its_empty_file(http_mock, monkeypatch):
+    """An empty answer is written only once a later request shows the path still answers; one at the end of the
+    queue is asked again next run instead."""
+    _companies(monkeypatch, ["AAA", "ZZZ"])
+    http_mock.add("/stock/AAA/earnings", ANSWER)
+    http_mock.add("/stock/ZZZ/earnings", {"error": "unknown ticker"}, status=422)
+    _fetch()
+    assert [p.name for p in uw_earnings.day_dir(AS_OF).glob("*.json.gz")] == ["AAA.json.gz"]
