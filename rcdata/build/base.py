@@ -1020,8 +1020,11 @@ def run_batch(reqs: list[dict], *, trigger: str = "queue", attended_ok: bool = F
     rows: list[dict] = []
     ended: set[str] = set()                           # run ids whose run and request have ended
 
+    ended_requests: set = set()                       # their request ids, for the caller's busy-store path
+
     def end(ctx: RunContext, row: dict) -> None:
         ended.add(ctx.run_id)
+        ended_requests.add(next(r["id"] for r, c in started if c is ctx))
         rows.append(row)
     started: list[tuple[dict, RunContext]] = []       # (request, context) of every run started, ended or not
     ready: list[tuple[dict, Any, RunContext, str | None]] = []
@@ -1036,6 +1039,7 @@ def run_batch(reqs: list[dict], *, trigger: str = "queue", attended_ok: bool = F
             ops.start_run(ctx.run_id, req["dataset"], trigger, params)
             started.append((req, ctx))
             done, note = _stage(ctx, ds, req, params, attended_ok)
+            ctx.flush_counts()                      # the next member's day-cap read sees these calls
             if done is not None:
                 end(ctx, done)
             else:
@@ -1062,11 +1066,18 @@ def run_batch(reqs: list[dict], *, trigger: str = "queue", attended_ok: bool = F
                 _abort(ctx.run_id, req, e)
         for req in pending:                         # claimed but not reached: no run row, the request still ends
             _abort(None, req, e)
+        try:
+            e.rc_ended = frozenset(ended_requests)
+        except AttributeError:
+            pass
         raise
     finally:
         for req, ctx in started:
-            ctx.close()
-            ctx.flush_counts()
+            try:
+                ctx.close()
+                ctx.flush_counts()
+            except ops.STORE_ERRORS:
+                logger.warning("could not write the calls of run %s", ctx.run_id, exc_info=True)
 
 
 def _finish(ctx: RunContext, req: dict, check: dict, status: str, error: str | None) -> dict:

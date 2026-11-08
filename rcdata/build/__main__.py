@@ -200,11 +200,22 @@ def _claim_kind(req: dict, *, skip=(), only=None, by=None) -> list[dict]:
     names = [d.name for d in base.kind_datasets(ds.kind)
              if d.name != req["dataset"] and d.name not in skip and (allowed is None or d.name in allowed)]
     batch = [req]
-    while names:
-        more = ops.next_request(only=names, by=by)
-        if more is None:
-            break
-        batch.append(more)
+    try:
+        while names:
+            try:
+                more = ops.next_request(only=names, by=by)
+            except ops.BUSY_ERRORS as e:
+                # a locked ops store while claiming: run what is claimed; the rest waits for the next turn
+                print(f"{ds.kind}: ops store busy while claiming: {e}", file=sys.stderr, flush=True)
+                break
+            if more is None:
+                break
+            batch.append(more)
+            names.remove(more["dataset"])       # one request per dataset: the batch keys by dataset
+    except BaseException as e:
+        for r in batch:                         # a kill while claiming ends what was claimed (as B7)
+            base._abort(None, r, e)
+        raise
     order = {name: i for i, name in enumerate(DATASETS)}
     return sorted(batch, key=lambda r: order.get(r["dataset"], len(order)))
 
@@ -253,7 +264,10 @@ def _run_queue(dataset: str | None, once: bool, *, skip=(), only=None, by=None,
             # requests are failed when the store lets us, and the loop goes on with the next one.
             print(f"{req['dataset']}: ops store busy during the run: {e}", file=sys.stderr, flush=True)
             worst = 1
+            ended = getattr(e, "rc_ended", frozenset())    # what the batch had already ended stays as it is
             for r in batch:
+                if r["id"] in ended:
+                    continue
                 try:
                     ops.finish_request(r["id"], "failed", note=f"ops store busy: {e}"[:300])
                 except ops.BUSY_ERRORS:

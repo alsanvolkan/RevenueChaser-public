@@ -169,3 +169,67 @@ def test_enqueue_due_walks_the_registry_order_not_the_alphabet(monkeypatch):
     reg = {n: Fake(n) for n in ("m/zeta", "m/alpha", "m/mid")}
     monkeypatch.setattr(due, "is_due", lambda ds, mode="full": (False, "test"))
     assert [row[0] for row in due.enqueue_due(reg)] == ["m/zeta", "m/alpha", "m/mid"]
+
+
+def test_two_requests_of_one_dataset_are_not_claimed_into_one_batch(fakes):
+    """Review 4: the batch keys by dataset, so a second request of a member's dataset waits for the next turn."""
+    reg, log, builds = fakes
+    lead = ops.enqueue("m/alpha", None, by="test")
+    first = ops.enqueue("m/beta", None, by="test")
+    second = ops.enqueue("m/beta", {"as_of": "2026-11-05"}, by="test")
+    assert cli._run_queue(None, once=True) == 0
+    assert [_status(r)["status"] for r in (lead, first, second)] == ["done"] * 3
+    assert builds == ["market", "market"]
+
+
+def test_a_busy_store_while_claiming_does_not_end_the_builder(fakes, monkeypatch):
+    """Review 2: the claim stops at a locked ops store and the batch claimed so far runs."""
+    import sqlite3
+    reg, log, builds = fakes
+    rids = [ops.enqueue(n, None, by="test") for n in ("m/alpha", "m/beta")]
+    real, calls = ops.next_request, []
+
+    def flaky(dataset=None, **kw):
+        calls.append(kw.get("only"))
+        if kw.get("only") is not None:
+            raise sqlite3.OperationalError("database is locked")
+        return real(dataset, **kw)
+    monkeypatch.setattr(ops, "next_request", flaky)
+    assert cli._run_queue(None, once=True) == 0         # before the fix: the error ended the builder
+    assert [_status(r)["status"] for r in rids] == ["done", "done"]
+    assert builds == ["market", "market"]               # not claimed together: one turn each
+
+
+def test_a_busy_store_mid_batch_leaves_the_requests_that_ended_as_they_are(fakes, monkeypatch):
+    """Review 1: only the requests the batch had not ended are failed as "ops store busy"."""
+    import sqlite3
+    reg, log, builds = fakes
+    rids = [ops.enqueue(n, None, by="test") for n in ("m/alpha", "m/beta")]
+    real, seen = ops.record_check, []
+
+    def flaky(dataset, result, **kw):
+        seen.append(dataset)
+        if dataset == "m/beta":
+            raise sqlite3.OperationalError("database is locked")
+        return real(dataset, result, **kw)
+    monkeypatch.setattr(ops, "record_check", flaky)
+    monkeypatch.setattr(cli, "POLL_S", 0)
+    assert cli._run_queue(None, once=True) == 1
+    assert _status(rids[0])["status"] == "done"
+    assert _status(rids[1])["status"] == "failed" and "ops store busy" in _status(rids[1])["note"]
+
+
+def test_each_fetch_writes_its_calls_before_the_next_member_fetches(fakes, monkeypatch):
+    """Review 3: a member's day-cap read sees the calls the members before it sent."""
+    reg, log, builds = fakes
+    seen = []
+
+    def fetch_counting(self, ctx, as_of):
+        seen.append(ops.calls_today("fakeprov"))
+        ctx.count("fakeprov", calls=1)
+        return []
+    monkeypatch.setattr(Fake, "fetch", fetch_counting)
+    for n in ("m/alpha", "m/beta"):
+        ops.enqueue(n, None, by="test")
+    assert cli._run_queue(None, once=True) == 0
+    assert seen == [0, 1]
