@@ -2,7 +2,8 @@
 
 The board computed those walls from its per-expiry raw files; the store now holds the same endpoint's answer for
 the whole chain (`uw/greek_expiry_strike`, #384). Measured on the live store for 2026-11-03 and 2026-11-04, the
-two agree on all 24 band/wall values, so the repoint prints no new number. These tests hold that property in
+two agree on all 24 band/wall strikes; the Net GEX beside a wall can differ on a third Friday (the store sums
+SPX and SPXW rows at one strike, the files keep the first). These tests hold that property in
 place and cover the fallback for a day the store does not have.
 """
 from __future__ import annotations
@@ -76,3 +77,38 @@ def test_the_label_says_what_it_served(rcdata_market):
 @pytest.mark.parametrize("bad", [[], [{"strike": None}], [{"expiry": "2026-11-20"}]])
 def test_an_unusable_row_is_dropped_rather_than_crashing(bad):
     assert normalize_stored_greek_grid(bad) == []
+
+
+def test_a_locked_ops_file_is_a_failed_grid_read_never_a_failed_board(rcdata_market, monkeypatch):
+    """Review of #436, B1: a store error while the serving file exists used to re-raise out of ``read_day`` and
+    fail the whole Fetch; it is a failed read of this one input now, and the bands fall back to the files."""
+    import sqlite3
+    real = store_reads.needs.ask
+
+    def locked(need, *a, **k):
+        if need == "market.spx_greek_expiry_strike":
+            raise sqlite3.OperationalError("database is locked")
+        return real(need, *a, **k)
+    monkeypatch.setattr(store_reads.needs, "ask", locked)
+    grid = store_reads.greek_expiry_grid(DAY)
+    assert grid["stored"] is False and "database is locked" in grid["label"]
+    out = store_reads.read_day(DAY)                              # the board's own entry point: it must not raise
+    assert out["store_inputs"]["greek_grid"]["stored"] is False
+
+
+def test_normalize_takes_the_bands_from_the_stored_grid_and_says_so():
+    """Review of #436, S2: the switch in ``normalize_snapshot`` itself, not only the reader."""
+    from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
+    rows = fx.greek_rows(DAY)
+    spot = {"spot": {"value": SPOT}}
+    stored = normalize_snapshot({**spot, "greek_grid": {"stored": True, "rows": rows, "source": "rcdata:test"}},
+                                DAY.isoformat())
+    files = normalize_snapshot(dict(spot), DAY.isoformat())
+    assert stored["dte_band_source"] == "rcdata:test"
+    assert files["dte_band_source"] == "raw day files"
+    want = band_walls(normalize_stored_greek_grid(rows), SPOT)
+    assert stored["dte_band_walls"] == want and any(r["put_wall"] not in (None, "N/A") for r in want)
+    assert files["dte_band_walls"] != want, "with no stored grid the bands come from the (here empty) files"
+    not_stored = normalize_snapshot({**spot, "greek_grid": {"stored": False, "rows": rows, "source": "rcdata:test"}},
+                                    DAY.isoformat())
+    assert not_stored["dte_band_source"] == "raw day files"
