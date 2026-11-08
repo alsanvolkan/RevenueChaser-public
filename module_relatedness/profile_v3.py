@@ -268,3 +268,154 @@ def to_attributes(prof: dict | None) -> dict[str, list[str]]:
     return {"products": union("products"), "end_markets": union("end_markets"),
             "business_model": one(p.get("business_model")), "customer_types": types,
             "value_chain_role": one(p.get("channel")), "keywords": list(p.get("keywords") or [])}
+
+
+# ── chunks ──────────────────────────────────────────────────────────────────
+
+# A text up to CHUNK_MAX characters is one call. A longer one is cut at its headings into chunks of at most CHUNK_MAX;
+# a section that is itself longer (an overrun with no heading) is cut into fixed WINDOW-character windows.
+CHUNK_MAX = 60_000
+WINDOW = 40_000
+
+_SMALL = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with", "&", "-"}
+
+
+def _is_heading(line: str) -> bool:
+    """A line that reads as a heading: short, no closing punctuation, every word capitalised but the small ones.
+
+    The same family of headers the Value Chain splitter cuts Item 1 on (``ITEM 1. BUSINESS``), widened to the
+    sub-headings inside Item 1 (``Building Technologies``)."""
+    s = (line or "").strip()
+    if not (3 <= len(s) <= 100) or s[-1] in ".;,:?!" or not re.search(r"[A-Za-z]", s):
+        return False
+    words = s.split()
+    if len(words) > 12 or not words[0][:1].isupper() and not words[0][:1].isdigit():
+        return False
+    for w in words:
+        core = w.strip("()\"'.,—–-")
+        if not core or core.lower() in _SMALL or not core[0].isalpha():
+            continue
+        if not core[0].isupper():
+            return False
+    return True
+
+
+def _sections(text: str) -> list[str]:
+    cuts, pos = [], 0
+    for line in text.splitlines(keepends=True):
+        if pos and _is_heading(line):
+            cuts.append(pos)
+        pos += len(line)
+    bounds = [0, *cuts, len(text)]
+    return [text[a:b] for a, b in zip(bounds, bounds[1:]) if b > a]
+
+
+def split_chunks(text: str) -> list[str]:
+    """``text`` as the chunks the writer reads, in order; joined they are ``text`` again."""
+    text = text or ""
+    if len(text) <= CHUNK_MAX:
+        return [text]
+    out, cur = [], ""
+    for sec in _sections(text):
+        if len(sec) > CHUNK_MAX:
+            if cur:
+                out.append(cur)
+                cur = ""
+            out += [sec[i:i + WINDOW] for i in range(0, len(sec), WINDOW)]
+        elif len(cur) + len(sec) > CHUNK_MAX:
+            out.append(cur)
+            cur = sec
+        else:
+            cur += sec
+    if cur:
+        out.append(cur)
+    return out
+
+
+# ── merge (avo's amendment 1) ───────────────────────────────────────────────
+
+def _union_parties(profs, key: str, with_share: bool) -> list[dict]:
+    by: dict[str, dict] = {}
+    for _i, p, _n in profs:
+        for c in p.get(key) or []:
+            k = resolve_key(c.get("name"))
+            if not k:
+                continue
+            row = by.setdefault(k, {"name": c["name"], "type": "", "quote": "", **({"share": None} if with_share
+                                                                                   else {})})
+            row["type"] = row["type"] or c.get("type") or ""
+            row["quote"] = row["quote"] or c.get("quote") or ""
+            if with_share and c.get("share") is not None:
+                row["share"] = c["share"] if row["share"] is None else max(row["share"], c["share"])
+    return list(by.values())[:MAX_LIST]
+
+
+def _union_segments(profs) -> list[dict]:
+    by: dict[str, dict] = {}
+    weight: dict[str, float] = {}
+    for _i, p, n in profs:
+        for s in p.get("segments") or []:
+            k = resolve_key(s.get("name")) or s.get("name", "").lower()
+            row = by.setdefault(k, {"name": s["name"], "share": None, "source": "text", "products": [],
+                                    "end_markets": []})
+            for f in ("products", "end_markets"):
+                row[f] += [v for v in s.get(f) or [] if v not in row[f]]
+            if s.get("share") is not None:
+                weight[k] = weight.get(k, 0.0) + float(s["share"]) * n
+    total = sum(weight.values())
+    for k, row in by.items():
+        if k in weight and total > 0:
+            row["share"] = round(weight[k] / total, 4)
+    return list(by.values())[:MAX_LIST]
+
+
+def merge_chunks(chunks: list[tuple[dict | None, int]]) -> tuple[dict | None, dict]:
+    """One profile from the chunks' ``(profile, chunk length)``, and per field where its value came from.
+
+    summary: the first chunk's. segments: the first chunk with a segment whose ``source`` is ``table``, else the union
+    by name with each share weighted by its chunk's length and renormalised to 1. customers / suppliers /
+    named_competitors: the union by resolved name. Enum fields: the longest chunk that has a value. keywords: the
+    union, the most frequent first (then first seen), capped at 15. An unusable chunk is left out; none usable is
+    ``(None, {})``.
+    """
+    profs = [(i, p, int(n)) for i, (p, n) in enumerate(chunks) if usable(p)]
+    if not profs:
+        return None, {}
+    if len(profs) == 1:
+        i, p, _n = profs[0]
+        return dict(p), {f: f"chunk:{i}" for f in empty()}
+
+    out, labels = empty(), {}
+    for i, p, _n in profs:
+        if p.get("summary"):
+            out["summary"], labels["summary"] = p["summary"], f"chunk:{i}"
+            break
+    table = next(((i, p) for i, p, _n in profs if any(s.get("source") == "table" for s in p.get("segments") or [])),
+                 None)
+    if table is not None:
+        out["segments"], labels["segments"] = list(table[1]["segments"]), f"table:chunk:{table[0]}"
+    else:
+        out["segments"], labels["segments"] = _union_segments(profs), "union"
+    out["customers"] = _union_parties(profs, "customers", with_share=True)
+    out["suppliers"] = _union_parties(profs, "suppliers", with_share=False)
+    named: dict[str, str] = {}
+    for _i, p, _n in profs:
+        for name in p.get("named_competitors") or []:
+            named.setdefault(resolve_key(name), name)
+    out["named_competitors"] = [v for k, v in named.items() if k][:MAX_LIST]
+    for f in ("customers", "suppliers", "named_competitors", "keywords"):
+        labels[f] = "union"
+    longest = sorted(profs, key=lambda x: (-x[2], x[0]))
+    for f in ENUM_FIELDS:
+        for i, p, _n in longest:
+            if p.get(f):
+                out[f], labels[f] = p[f], f"chunk:{i}"
+                break
+    count: dict[str, int] = {}
+    first: dict[str, int] = {}
+    for _i, p, _n in profs:
+        for k in p.get("keywords") or []:
+            count[k] = count.get(k, 0) + 1
+            first.setdefault(k, len(first))
+    out["keywords"] = sorted(count, key=lambda k: (-count[k], first[k]))[:MAX_KEYWORDS]
+    return out, labels
