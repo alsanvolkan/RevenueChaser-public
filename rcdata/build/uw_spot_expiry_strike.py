@@ -267,8 +267,9 @@ class UWSpotExpiryStrike:
         rows = int(con.execute(f"SELECT count(*) FROM {TABLE}").fetchone()[0])
         days = int(con.execute(f"SELECT count(DISTINCT session_date) FROM {TABLE}").fetchone()[0])
         as_of = ctx.as_of or self.default_as_of()
-        try:
-            expected = sum(1 for _ in base.iter_sessions(FIRST_SESSION, as_of))
+        newest = con.execute(f"SELECT max(session_date) FROM {TABLE}").fetchone()[0]
+        try:                                        # to the newest held day too: re-typing an old day must not shrink it
+            expected = sum(1 for _ in base.iter_sessions(FIRST_SESSION, max(as_of, newest or as_of)))
         except ValueError as e:                     # an as-of past the calendar's table: no coverage, no failure
             ctx.issue("outside_calendar", NAME, str(e)[:300])
             expected = 0
