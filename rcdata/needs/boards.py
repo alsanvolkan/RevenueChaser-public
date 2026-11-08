@@ -62,7 +62,8 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
     "module_sec_13f": ("ownership.holders_13f", "ownership.periods_13f", "prices.actions"),
     "module_leaps": ("options.daily",),
     # #490: ``engine.py`` reads the company records and the served filing texts.
-    "module_relatedness": ("identity.universe", "fundamentals.companies", "fundamentals.filings"),
+    "module_relatedness": ("identity.universe", "fundamentals.companies", "fundamentals.filings",
+                           "fundamentals.segments"),
 }
 
 
