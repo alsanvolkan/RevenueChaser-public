@@ -66,8 +66,8 @@ def mode_stamp(writer: tuple[str, str] | None = None) -> dict:
     from RevenueChaser.core.providers import deepseek
     provider, model = writer or ("deepseek", deepseek.MODEL)
     if provider == "deepseek":
-        return {"model": model, "thinking": bool(config.THINKING),
-                "effort": config.REASONING_EFFORT, "prompt_version": PROMPT_VERSION}
+        # v3 (#400) sends no thinking: a DeepSeek stamp names neither knob, as every other writer's.
+        return {"model": model, "thinking": False, "effort": "", "prompt_version": PROMPT_VERSION}
     return {"provider": provider, "model": model, "thinking": False, "effort": "", "prompt_version": PROMPT_VERSION}
 
 

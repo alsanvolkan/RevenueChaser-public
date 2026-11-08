@@ -1,26 +1,21 @@
-"""LLM structured business profile for one company.
+"""LLM structured business profile for one company (v3, #400).
 
-The prompt asks for a fixed JSON schema with short, lowercase tags — no prose —
-so the local similarity is well-defined and comparable across companies.
+The writer returns one structured JSON (``profile_v3``): read whole, in chunks above 60k characters, and merged.
+``profile_for`` returns the board's attribute rows (``config.PROFILE_FIELDS``, what the filters and today's
+similarity read) as a ``Profile``: a dict that also carries the v3 JSON (``.v3``) and where each field came from
+(``.labels``), which the store keeps in ``profile_json`` / ``label_source``.
 """
 from __future__ import annotations
 
-import json
-import re
 import threading
 
 from RevenueChaser.core.providers import deepseek
 
 from . import config
+from . import profile_v3
 
-SYSTEM = (
-    "You are a financial analyst. Given a company's business description, output "
-    "a JSON object describing what the company actually does. Use short, lowercase "
-    "noun phrases only (1-3 words). No sentences, no explanations. "
-    "Schema: {\"products\": [...], \"end_markets\": [...], \"business_model\": [...], "
-    "\"customer_types\": [...], \"value_chain_role\": [...], \"keywords\": [...]}. "
-    "Every field is an array of strings; omit a field only if truly unknown."
-)
+# The v3 prompt (#400): one structured JSON per company, see ``profile_v3``.
+SYSTEM = profile_v3.SYSTEM
 
 
 class BudgetExceeded(Exception):
@@ -31,8 +26,8 @@ class CallBudget:
     """A run's remaining LLM-call count, shared by the worker threads.
 
     ``max_calls`` of ``None`` means unlimited; ``0`` means no call at all. The
-    budget counts **calls**, so a thinking retry (the second, uncached request in
-    :func:`profile_for`) is counted too.
+    budget counts **calls**: every chunk, and a retry (the second, uncached request in
+    :func:`profile_for`), is counted.
     """
 
     def __init__(self, max_calls: int | None):
@@ -70,13 +65,13 @@ def llm(provider: str = "deepseek"):
 
 
 def system_prompt(version: str | None = None) -> str:
-    """``SYSTEM`` with the prompt version appended.
+    """``SYSTEM`` with the prompt version appended (``profile_v3.system_prompt``).
 
     ``deepseek.complete`` hashes ``(system, user)`` for its cache key and does not
     take ``prompt_version``; appending the version here is what makes a
     ``PROMPT_VERSION`` bump miss the LLM cache instead of replaying the old reply.
     """
-    return f"{SYSTEM}\n\nPrompt version: {version or config.PROMPT_VERSION}."
+    return profile_v3.system_prompt(version or config.PROMPT_VERSION)
 
 
 def text_status(item_text: str | None) -> str | None:
@@ -93,85 +88,78 @@ def text_status(item_text: str | None) -> str | None:
     return "short_text" if len(text) < config.MIN_INPUT_CHARS else None
 
 
-def build_user(name: str, item_text: str) -> str:
-    text = (item_text or "")[:config.MAX_INPUT_CHARS]
-    return f"Company: {name}\n\nBusiness description (10-K Item 1 / 20-F Item 4):\n{text}"
+def build_user(name: str, item_text: str, context: dict | None = None, part: tuple[int, int] | None = None) -> str:
+    """One call's user prompt: the whole text (no cut, #400), or chunk ``part`` of it."""
+    return profile_v3.build_user(name, item_text, context, part)
 
 
-def _clean(values) -> list[str]:
-    out, seen = [], set()
-    if isinstance(values, str):          # a lone string is a comma/semicolon list
-        values = re.split(r"[,;\n]", values)
-    if not isinstance(values, list):
-        return out
-    for v in values:
-        s = re.sub(r"\s+", " ", str(v or "").strip().lower())
-        s = s.strip(" .,;:-")
-        if not s or len(s) > 60 or s in seen:
-            continue
-        seen.add(s)
-        out.append(s)
-        if len(out) >= 30:
-            break
-    return out
+def prompts(name: str, item_text: str, context: dict | None = None) -> list[str]:
+    """The user prompts of one profile: one per chunk (``profile_v3.split_chunks``), in order."""
+    chunks = profile_v3.split_chunks(item_text or "")
+    return [build_user(name, c, context, (i, len(chunks))) for i, c in enumerate(chunks)]
+
+
+def input_hash(name: str, item_text: str, context: dict | None = None) -> str:
+    """The hash a profile's cache key carries: over the exact bytes of every chunk's prompt."""
+    from .store import prompt_hash
+    return prompt_hash(SYSTEM, "\n\n".join(prompts(name, item_text, context)))
 
 
 def parse_profile(raw: str) -> dict:
-    """Parse the model's JSON into the fixed schema (never raises)."""
-    if isinstance(raw, str):
-        raw = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw.strip(),
-                     flags=re.IGNORECASE)
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return {f: [] for f in config.PROFILE_FIELDS}
-    if not isinstance(data, dict):
-        return {f: [] for f in config.PROFILE_FIELDS}
-    return {f: _clean(data.get(f)) for f in config.PROFILE_FIELDS}
+    """The reply as the board's attribute rows (empty fields when unusable; never raises)."""
+    return profile_v3.to_attributes(profile_v3.parse(raw))
 
 
-def token_budget(thinking: bool) -> int:
-    """``max_tokens`` of a profile call: thinking spends tokens on reasoning, so it gets more (the ping sends this
-    too, so it tests what a run sends)."""
-    return 8000 if thinking else 1500
+class Profile(dict):
+    """The attribute rows of a profile (``config.PROFILE_FIELDS``) plus its v3 JSON and per-field source."""
+
+    def __init__(self, attrs: dict, v3: dict | None = None, labels: dict | None = None):
+        super().__init__(attrs)
+        self.v3 = v3
+        self.labels = labels or {}
+
+
+def token_budget(thinking: bool = False) -> int:
+    """``max_tokens`` of a profile call (the ping sends this too, so it tests what a run sends). The v3 JSON with
+    segments, quotes and parties is longer than v2's tag lists; no thinking is sent (#400)."""
+    return 4000
 
 
 def profile_for(ticker: str, name: str, item_text: str, thinking: bool = False,
                 effort: str | None = None, max_tokens: int | None = None,
                 client=None, budget: "CallBudget | None" = None,
-                provider: str = "deepseek", model: str | None = None) -> dict:
-    """Call the LLM and return the parsed profile (empty fields when unusable).
+                provider: str = "deepseek", model: str | None = None,
+                context: dict | None = None) -> Profile:
+    """Call the writer once per chunk and return the merged profile (empty fields when unusable).
 
-    ``provider`` picks the writer (``llm``); the prompt, the token budget and the parse are the same for both, so a
-    Grok profile hashes to the same ``input_hash`` as a DeepSeek one made from the same filing.
+    ``provider`` picks the writer (``llm``); the prompt, the token budget and the parse are the same for every writer,
+    so profiles made from the same filing by two writers hash to the same ``input_hash``. JSON mode, no thinking
+    (#400): ``thinking`` / ``effort`` are accepted for old callers and not sent.
 
-    Thinking mode spends tokens on reasoning that count against ``max_tokens``,
-    so it gets a larger budget. An answer that does not parse into a profile —
-    a fresh one or an unparseable reply already in ``llm_cache`` — is retried
-    once, bypassing the cache (within ``budget``), so a bad cached reply cannot
-    pin the company forever.
-
-    The reply is only cached when it parses into a profile (the ``validate``
-    hook), so the next run asks again instead of replaying it.
+    A chunk whose answer does not parse into a v3 profile - a fresh one or an unparseable reply already in
+    ``llm_cache`` - is retried once, bypassing the cache (within ``budget``), so a bad cached reply cannot pin the
+    company forever. A reply is only cached when it parses (the ``validate`` hook).
     """
-    user = build_user(name, item_text)
-    budget_tokens = max_tokens or token_budget(thinking)
+    tokens = max_tokens or token_budget()
     client_mod = llm(provider)
+    users = prompts(name, item_text, context)
 
-    def _call(use_cache: bool, tokens: int) -> str:
+    def _call(user: str, use_cache: bool) -> str:
         if budget is not None and not budget.consume():
             raise BudgetExceeded()
         # The board's model (#360) only when one is chosen, so a caller's fake ``complete`` keeps its signature.
         extra = {"model": model} if model else {}
         return client_mod.complete(
-            system_prompt(), user, thinking=thinking, reasoning_effort=effort,
+            system_prompt(), user, thinking=False, reasoning_effort=None,
             max_tokens=tokens, json_mode=True, use_cache=use_cache, client=client,
             ticker=ticker, prompt_version=config.PROMPT_VERSION,
-            validate=lambda c: any(parse_profile(c).values()), **extra)
+            validate=lambda c: profile_v3.parse(c) is not None, **extra)
 
-    raw = _call(True, budget_tokens)
-    prof = parse_profile(raw)
-    if not any(prof.values()):
-        raw = _call(False, budget_tokens * 2 if thinking else budget_tokens)
-        prof = parse_profile(raw)
-    return prof
+    parts = []
+    for user in users:
+        got = profile_v3.parse(_call(user, True))
+        if got is None:
+            got = profile_v3.parse(_call(user, False))
+        parts.append((got, len(user)))
+    merged, labels = profile_v3.merge_chunks(parts)
+    return Profile(profile_v3.to_attributes(merged), merged, labels)

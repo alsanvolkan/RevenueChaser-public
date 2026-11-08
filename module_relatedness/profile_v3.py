@@ -130,7 +130,7 @@ def _share(value) -> float | None:
 
 
 def _label(value) -> str:
-    return _tag(value)
+    return _tag(value) if isinstance(value, str) else ""      # a number or a list is no enum value
 
 
 def _segments(values) -> list[dict]:

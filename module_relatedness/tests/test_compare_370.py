@@ -9,6 +9,7 @@ import json
 import pytest
 
 from RevenueChaser.core import rawstore
+from RevenueChaser.module_relatedness.tests.test_relatedness import v3_reply
 from RevenueChaser.core.providers import evren
 from RevenueChaser.module_relatedness import compare, engine
 from RevenueChaser.module_relatedness.tests.test_relatedness import _seed_universe, long_body
@@ -32,7 +33,7 @@ def world(rawstore_tmp_db, monkeypatch, tmp_path):
     def fake(system, user, **k):
         seen.append(k.get("model"))
         food = "bread" in user
-        return json.dumps({"products": ["bread" if food else "gpu"], "end_markets": ["grocery" if food else "dc"]})
+        return v3_reply(["bread" if food else "gpu"], ["grocery" if food else "dc"])
 
     monkeypatch.setattr(evren, "complete", fake)
     return seen

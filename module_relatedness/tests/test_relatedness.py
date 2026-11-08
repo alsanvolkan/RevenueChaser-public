@@ -13,16 +13,14 @@ from RevenueChaser.module_relatedness import config, engine, profiles, similarit
 
 # ── profiles ────────────────────────────────────────────────────────────────
 def test_parse_profile_cleans_and_limits():
-    raw = json.dumps({
-        "products": ["AI Accelerators", "gpu ", "GPU", ""],
-        "end_markets": ["Data Center", "gaming"],
-        "business_model": 7,
-        "keywords": ["cuda"],
-    })
+    """The v3 reply (#400) as the board's attribute rows: lower-cased, de-duplicated, a wrong type dropped."""
+    raw = v3_reply(["AI Accelerators", "gpu ", "GPU", ""], ["Data Center", "gaming"], business_model=7,
+                   keywords=["cuda"])
     p = profiles.parse_profile(raw)
     assert p["products"] == ["ai accelerators", "gpu"]     # lowercased, de-duped
     assert p["end_markets"] == ["data center", "gaming"]
     assert p["business_model"] == []                       # wrong type -> empty
+    assert p["keywords"] == ["cuda"]
     assert set(p) == set(config.PROFILE_FIELDS)
 
 
@@ -72,6 +70,15 @@ def _seed_universe(tickers):
 # sends a shorter one to the writer. ``long_body`` pads a distinctive sentence past it; an empty text stays empty,
 # because that is the ``no_text`` case.
 _PAD = "This annual report describes the company's business in detail. " * 40
+
+
+def v3_reply(products=(), end_markets=(), **fields) -> str:
+    """A writer's v3 reply (#400) whose attribute rows carry ``products`` / ``end_markets`` (one segment)."""
+    import json as _json
+    body = {"summary": "", "segments": [{"name": "main", "share": None, "source": "text",
+                                         "products": list(products), "end_markets": list(end_markets)}],
+            **fields}
+    return _json.dumps(body)
 
 
 def long_body(text: str) -> str:

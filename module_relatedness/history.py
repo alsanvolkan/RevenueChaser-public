@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from RevenueChaser.core import history, ledger
 from RevenueChaser.core.providers import deepseek
-from RevenueChaser.module_relatedness import config, store
+from RevenueChaser.module_relatedness import config, profile_v3, store
 
 BOARD, TABLE = "module_relatedness", "relatedness_scores_history"
 # Bump when the similarity changes in a way the config hash does not see (``similarity``'s formula, the percentile),
@@ -28,9 +28,8 @@ SELECTION_VERSION = "2"
 def effective_config() -> dict:
     """What the profiles are built with and the peers scored with."""
     return {
-        "MODEL": deepseek.MODEL, "THINKING": config.THINKING, "REASONING_EFFORT": config.REASONING_EFFORT,
-        "PROMPT_VERSION": config.PROMPT_VERSION, "PILOT_N": config.PILOT_N,
-        "MAX_INPUT_CHARS": config.MAX_INPUT_CHARS, "MIN_INPUT_CHARS": config.MIN_INPUT_CHARS,
+        "MODEL": deepseek.MODEL, "PROMPT_VERSION": config.PROMPT_VERSION, "MIN_INPUT_CHARS": config.MIN_INPUT_CHARS,
+        "CHUNK_MAX": profile_v3.CHUNK_MAX, "WINDOW": profile_v3.WINDOW,
         "PROFILE_FIELDS": list(config.PROFILE_FIELDS),
         "FIELD_WEIGHTS": dict(config.FIELD_WEIGHTS), "TOP_PEERS": config.TOP_PEERS,
     }

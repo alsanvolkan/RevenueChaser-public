@@ -110,7 +110,8 @@ Reference (informational; DST shifts these):
   `equity_universe` company name) differs from the `input_hash` in its cache key
   (#388 D5). Both wait for the run's `$` cap like any pending name. "Another
   mode" is another `prompt_version` for every writer; a DeepSeek profile must
-  also match the mode's model, thinking and effort. A Grok profile (its cache key
+  also match the mode's model, thinking and effort (v3, #400: no thinking and no effort for every writer). The
+  input hash covers every chunk's prompt, context included (SIC, sector, industry, segment note, candidates). A Grok profile (its cache key
   carries `"provider": "grok"`) at the current `prompt_version` is current for
   both writers (`store.is_stale`, `ALT_WRITERS`), so the nightly DeepSeek run
   does not redo it; see the Grok writer below.
