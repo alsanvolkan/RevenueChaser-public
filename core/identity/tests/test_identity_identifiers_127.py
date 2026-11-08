@@ -45,7 +45,7 @@ def test_security_master_declares_the_identifier_columns_as_text_and_tracks_them
     for col in ID_COLS:
         assert decl[col] == f"{col} TEXT", col
         assert col in rawstore.CHANGES["security_master"]["track"]
-    assert rawstore.schema_version() == "12"
+    assert rawstore.schema_version() == "13"   # moved for relatedness v13 (#401), not for these columns
 
 
 def test_two_cusips_for_one_ticker_keep_the_newest_valid_from_then_the_lowest_cusip():
@@ -182,7 +182,7 @@ def test_opening_an_old_store_adds_the_columns_without_a_bump(old_master):
     row = rawstore.get("security_master", "AAPL")
     assert row["name"] == "Apple Inc."
     assert all(row[c] is None for c in ID_COLS)
-    assert rawstore.schema_version() == "12"
+    assert rawstore.schema_version() == "13"   # moved for relatedness v13 (#401), not for these columns
 
 
 @pytest.mark.rawstore_schema_from_scratch
