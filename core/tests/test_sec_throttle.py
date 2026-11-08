@@ -320,3 +320,43 @@ def test_every_sec_request_takes_one_shared_token(monkeypatch):
     se.get_bytes("http://x", client)
     se._throttle()
     assert taken == [1, 1, 1, 1]
+
+
+def test_a_fallback_says_why_and_every_request_is_counted(tmp_path, monkeypatch, caplog):
+    """#487: one fallback line per process hid its cause, so the fix was chosen blind. Each reason is now its own
+    line and every request is counted, shared or not."""
+    monkeypatch.setattr(sec_throttle.rawstore, "DB_PATH", tmp_path / "raw.duckdb")
+    monkeypatch.setattr(sec_throttle, "_LOGGED", set())
+    monkeypatch.setattr(sec_throttle, "_COUNTS", {})
+    monkeypatch.setattr(sec_throttle, "_LOCK_WAIT", 0.01)
+    caplog.set_level("INFO", logger=sec_throttle.__name__)
+    assert sec_throttle.pace() is True                                   # the real bucket, free
+    monkeypatch.setattr(job_lock, "_os_lock", lambda fd: False)          # a peer that never lets go
+    assert sec_throttle.pace() is False and sec_throttle.pace() is False
+    assert sec_throttle.stats() == {"shared": 1, "lock_timeout": 2}
+    assert "(lock_timeout)" in caplog.text
+    monkeypatch.setattr(job_lock, "_OS_LOCK_AVAILABLE", False)
+    assert sec_throttle.pace() is False
+    assert sec_throttle.stats()["no_os_lock"] == 1
+    assert sum("cannot be used" in r.getMessage() for r in caplog.records) == 2   # one line per reason
+
+
+def test_an_unopenable_bucket_names_the_errno(tmp_path, monkeypatch):
+    monkeypatch.setattr(sec_throttle.rawstore, "DB_PATH", tmp_path / "raw.duckdb")
+    monkeypatch.setattr(sec_throttle, "_COUNTS", {})
+
+    def refuse(*a, **k):
+        raise PermissionError(13, "Permission denied")
+    monkeypatch.setattr(sec_throttle.os, "open", refuse)
+    assert sec_throttle.pace() is False
+    assert sec_throttle.stats() == {"open_failed:EACCES": 1}
+
+
+def test_the_exit_line_gives_the_totals_only_when_something_fell_back(monkeypatch, caplog):
+    caplog.set_level("INFO", logger=sec_throttle.__name__)
+    monkeypatch.setattr(sec_throttle, "_COUNTS", {"shared": 5})
+    sec_throttle._log_totals()
+    assert caplog.text == ""
+    monkeypatch.setattr(sec_throttle, "_COUNTS", {"shared": 5, "lock_timeout": 3})
+    sec_throttle._log_totals()
+    assert "5 request(s) on the shared bucket, 3 fell back (lock_timeout 3)" in caplog.text

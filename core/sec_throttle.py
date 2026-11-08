@@ -26,6 +26,8 @@ falls back to its in-process throttle. A pacing failure never fails the request.
 """
 from __future__ import annotations
 
+import atexit
+import errno
 import json
 import logging
 import os
@@ -62,6 +64,39 @@ _DEFICIT_BURSTS = 8
 _GUARD = threading.Lock()
 _NAME = ".sec_throttle.json"
 _LOGGED: set[str] = set()
+
+# Why ``_reserve`` gave up, per request, for this process's SEC bucket (#487: a fallback was logged once and its
+# cause could not be told from the log, so a fix was chosen blind). ``shared`` counts the requests the bucket paced.
+# Read with :func:`stats`; a process that fell back at least once logs the totals when it exits.
+#: ``no_os_lock``: the platform has no OS lock. ``open_failed``: the bucket file could not be opened (an ``errno``
+#: name follows). ``lock_timeout``: the lock was not won inside ``_LOCK_WAIT``. ``io_error``: reading or writing the
+#: state failed (``errno`` name follows). ``exception``: anything else, caught in :func:`pace`.
+_COUNTS: dict[str, int] = {}
+_last_reason: str | None = None
+
+
+def _count(key: str) -> None:
+    _COUNTS[key] = _COUNTS.get(key, 0) + 1
+
+
+def _why(prefix: str, exc: OSError) -> str:
+    return f"{prefix}:{errno.errorcode.get(exc.errno, exc.errno)}" if exc.errno else prefix
+
+
+def stats() -> dict[str, int]:
+    """This process's SEC bucket outcomes so far: ``shared`` and one key per fallback reason."""
+    return dict(_COUNTS)
+
+
+def _log_totals() -> None:
+    fell = {k: v for k, v in _COUNTS.items() if k != "shared"}
+    if fell:
+        logger.warning("SEC pacing totals: %d request(s) on the shared bucket, %d fell back (%s)",
+                       _COUNTS.get("shared", 0), sum(fell.values()),
+                       ", ".join(f"{k} {v}" for k, v in sorted(fell.items())))
+
+
+atexit.register(_log_totals)
 
 
 def _log_once(kind: str, message: str, *args) -> None:
@@ -152,17 +187,23 @@ def _lock_within(fd: int, seconds: float) -> bool:
 
 
 def _reserve(now: float, name: str = _NAME, rate: float | None = None, burst: float | None = None) -> float | None:
-    """Reserve one token (of the SEC bucket, or ``name``'s at ``rate`` and ``burst``). ``None``: it cannot be used."""
+    """Reserve one token (of the SEC bucket, or ``name``'s at ``rate`` and ``burst``). ``None``: it cannot be used,
+    and ``_last_reason`` says why."""
+    global _last_reason
+    _last_reason = None
     if not job_lock._OS_LOCK_AVAILABLE:
+        _last_reason = "no_os_lock"
         return None
     path = bucket_path() if name == _NAME else bucket_path(name)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o660)   # the box's users of the bucket share its group
-    except OSError:
+    except OSError as exc:
+        _last_reason = _why("open_failed", exc)
         return None
     try:
         if not _lock_within(fd, _LOCK_WAIT):
+            _last_reason = "lock_timeout"
             return None
         try:
             wait, new_state = _take(_read_state(fd), now, float(RATE if rate is None else rate), burst)
@@ -170,7 +211,8 @@ def _reserve(now: float, name: str = _NAME, rate: float | None = None, burst: fl
             return wait
         finally:
             job_lock._os_unlock(fd)
-    except OSError:
+    except OSError as exc:
+        _last_reason = _why("io_error", exc)
         return None
     finally:
         try:
@@ -189,16 +231,21 @@ def pace() -> bool:
     try:
         with _GUARD:
             wait = _reserve(time.monotonic())
+            reason = _last_reason
+            _count("shared" if wait is not None else (reason or "unknown"))
         if wait is None:
-            _log_once("fallback", "SEC pacing: the shared bucket %s (%s) cannot be used; this process paces itself "
-                      "(in-process, %g/s)", bucket_path(), _owner(bucket_path()), FALLBACK_RATE)
+            # One line per reason, not one per process: the first reason seen used to hide every later one.
+            _log_once(f"fallback {reason}", "SEC pacing: the shared bucket %s (%s) cannot be used (%s); this request "
+                      "paces itself (in-process, %g/s)", bucket_path(), _owner(bucket_path()), reason, FALLBACK_RATE)
             return False
         _log_once("shared", "SEC pacing: shared bucket %s (rate %s/s, burst %s)", bucket_path(), RATE, _burst(RATE))
         if wait > 0:
             time.sleep(wait)
         return True
     except Exception:
-        _log_once("fallback", "SEC pacing: the shared bucket failed; this process paces itself (in-process)")
+        with _GUARD:
+            _count("exception")
+        _log_once("fallback exception", "SEC pacing: the shared bucket failed; this request paces itself (in-process)")
         return False
 
 
@@ -219,4 +266,4 @@ def shared_pace(name: str, rate: float, burst: float) -> bool:
         return False
 
 
-__all__ = ["FALLBACK_RATE", "SEC_PROCESSES", "LIMIT", "RATE", "bucket_path", "pace", "shared_pace"]
+__all__ = ["FALLBACK_RATE", "SEC_PROCESSES", "LIMIT", "RATE", "bucket_path", "pace", "shared_pace", "stats"]
