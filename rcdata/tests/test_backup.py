@@ -311,12 +311,12 @@ def test_the_redis_ops_copy_is_written_in_one_transaction(backup_dir, monkeypatc
     backup_dir.mkdir()
     dest = backup._backup_ops_redis(backup_dir, backup._Manifest(backup_dir))
     inserts = [i for i, s in enumerate(seen) if s.startswith("INSERT INTO build_requests")]
-    begins = [i for i, s in enumerate(seen) if s.startswith("BEGIN")]
-    commits = [i for i, s in enumerate(seen) if s == "COMMIT"]
+    marks = [(i, s) for i, s in enumerate(seen) if s.startswith(("BEGIN", "COMMIT"))]
     assert len(inserts) == 2
-    begin = max(i for i in begins if i < inserts[0])                  # no BEGIN before them: each row committed alone
-    assert not [c for c in commits if begin < c < inserts[-1]]
-    assert [c for c in commits if c > inserts[-1]]
+    before = [s for i, s in marks if i < inserts[0]]
+    assert before and before[-1].startswith("BEGIN")             # on main the last mark is ensure's own COMMIT
+    assert not [i for i, _ in marks if inserts[0] < i < inserts[-1]]
+    assert [i for i, s in marks if i > inserts[-1] and s == "COMMIT"]
     from RevenueChaser.rcdata import ops_copy
     con = ops_copy._open_read_only(dest)
     try:
