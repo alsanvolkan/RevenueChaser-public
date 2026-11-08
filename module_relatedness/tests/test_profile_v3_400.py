@@ -82,3 +82,8 @@ def test_prompt_carries_version_context_and_part():
     assert "Segment note (same filing):\nCompute 78%" in user and "Dell; HP" in user
     assert "part 2 of 3:\nTEXT" in user
     assert "part" not in v3.build_user("X", "T", None, part=(0, 1))
+
+
+def test_a_quote_is_capped():
+    p = v3.parse(json.dumps({"customers": [{"name": "Dell", "quote": "x" * 2000}]}))
+    assert len(p["customers"][0]["quote"]) == v3.MAX_QUOTE == 300

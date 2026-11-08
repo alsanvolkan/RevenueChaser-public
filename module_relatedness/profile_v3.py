@@ -1,7 +1,8 @@
 """Relatedness profile v3 (#400, Relatedness v2 plan Step 1): one structured JSON per company.
 
 The writer reads the whole Item 1 (10-K) / Item 4 (20-F), with no ``MAX_INPUT_CHARS``, plus the filing's segment note,
-the SIC, sector and industry, and the CIK's ``chain_mentions`` as candidate counterparties, and returns one JSON object:
+the SIC, sector and industry, and the company's ``chain_mentions`` names (Value Chain's keyword scan of the same
+filing) as candidates, and returns one JSON object:
 
 ``summary`` (one or two sentences), ``segments`` (``name``, ``share``, ``source``, ``products``, ``end_markets``),
 ``customers`` (``name``, ``type``, ``share``, ``quote``), ``suppliers`` (``name``, ``type``, ``quote``),
@@ -21,6 +22,8 @@ import re
 PROMPT_VERSION = "v3"
 MAX_KEYWORDS = 15
 MAX_LIST = 30
+# A customer's or supplier's quote: one sentence, kept short so a reply of 30 parties fits ``token_budget``.
+MAX_QUOTE = 300
 
 # The closed sets the prompt offers for the enum fields. A reply outside its set keeps its own short label
 # (``_label``), so a new kind of company is not forced into a wrong one; the board filters on the value as written.
@@ -51,8 +54,8 @@ SYSTEM = (
     "source is \"table\" only when the share comes from a segment table or note. A customer's or supplier's name is "
     "a named company, never a category; its type says what it is (\"distributor\", \"oem\", \"government\"); its "
     "share is the stated fraction of sales or purchases, else null; quote is the one sentence that names it, "
-    "copied as written. Candidates, when given, are names other filings link to this company: list one only when "
-    "the text names it. A blank-check company or one with no operations has stage \"shell\"."
+    f"copied as written (at most {MAX_QUOTE} characters). Candidates, when given, are company names a keyword scan "
+    "of this filing found: list one only when the text names it as a customer, supplier or competitor. A blank-check company or one with no operations has stage \"shell\"."
 )
 
 
@@ -70,7 +73,7 @@ def _context_lines(context: dict | None) -> list[str]:
     if c.get("segment_note"):
         out.append(f"Segment note (same filing):\n{c['segment_note']}")
     if c.get("candidates"):
-        out.append("Candidates (names other filings link to this company): " + "; ".join(c["candidates"]))
+        out.append("Candidates (names a keyword scan of this filing found): " + "; ".join(c["candidates"]))
     return out
 
 
@@ -161,7 +164,7 @@ def _parties(values, with_share: bool) -> list[dict]:
         if not key or key in seen:
             continue
         seen.add(key)
-        row = {"name": name, "type": _tag(p.get("type")), "quote": _text(p.get("quote"))}
+        row = {"name": name, "type": _tag(p.get("type")), "quote": _text(p.get("quote"), MAX_QUOTE)}
         if with_share:
             row["share"] = _share(p.get("share"))
         out.append(row)
@@ -383,7 +386,7 @@ def merge_chunks(chunks: list[tuple[dict | None, int]]) -> tuple[dict | None, di
         return None, {}
     if len(profs) == 1:
         i, p, _n = profs[0]
-        return dict(p), {f: f"chunk:{i}" for f in empty()}
+        return dict(p), {f: f"chunk:{i}" for f in empty() if p.get(f)}
 
     out, labels = empty(), {}
     for i, p, _n in profs:

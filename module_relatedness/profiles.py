@@ -99,10 +99,14 @@ def prompts(name: str, item_text: str, context: dict | None = None) -> list[str]
     return [build_user(name, c, context, (i, len(chunks))) for i, c in enumerate(chunks)]
 
 
-def input_hash(name: str, item_text: str, context: dict | None = None) -> str:
-    """The hash a profile's cache key carries: over the exact bytes of every chunk's prompt."""
+def input_hash(name: str, item_text: str) -> str:
+    """The staleness hash a profile's cache key carries: the company and the whole text it was read from.
+
+    The context (SIC, sector, segment note, candidates) is left out on purpose (review of PR #557): a Value Chain
+    re-extract, a reclassification or a failed context read must not pay for the profile again. The LLM cache key
+    is still over the exact bytes of every prompt sent."""
     from .store import prompt_hash
-    return prompt_hash(SYSTEM, "\n\n".join(prompts(name, item_text, context)))
+    return prompt_hash(SYSTEM, build_user(name, item_text))
 
 
 def parse_profile(raw: str) -> dict:
@@ -121,8 +125,9 @@ class Profile(dict):
 
 def token_budget(thinking: bool = False) -> int:
     """``max_tokens`` of a profile call (the ping sends this too, so it tests what a run sends). The v3 JSON with
-    segments, quotes and parties is longer than v2's tag lists; no thinking is sent (#400)."""
-    return 4000
+    segments, quoted parties (``profile_v3.MAX_QUOTE``) and keywords is longer than v2's tag lists; a reply cut off
+    at the limit does not parse and is paid twice, so the budget is generous. No thinking is sent (#400)."""
+    return 8000
 
 
 def profile_for(ticker: str, name: str, item_text: str, thinking: bool = False,
@@ -162,4 +167,9 @@ def profile_for(ticker: str, name: str, item_text: str, thinking: bool = False,
             got = profile_v3.parse(_call(user, False))
         parts.append((got, len(user)))
     merged, labels = profile_v3.merge_chunks(parts)
+    missing = [i for i, (got, _n) in enumerate(parts) if got is None]
+    if merged is not None and missing:
+        # A partial profile is kept and shown, and says which chunks it lacks; the engine redoes it within the
+        # attempt rule (review of PR #557: a dropped chunk used to leave no trace and was never asked again).
+        labels = {**labels, "missing_chunks": missing}
     return Profile(profile_v3.to_attributes(merged), merged, labels)

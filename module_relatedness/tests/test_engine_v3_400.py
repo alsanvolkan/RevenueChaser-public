@@ -93,9 +93,8 @@ def test_a_long_item_is_read_in_chunks_and_merged(rawstore_tmp_db, monkeypatch, 
     assert [s["name"] for s in row["profile_json"]["segments"]] == [f"Seg {i}" for i in range(1, n + 1)]
     assert row["profile_json"]["keywords"][0] == "common"
     assert row["label_source"]["segments"] == "union"
-    # The cache key's input hash is over every chunk's exact prompt.
-    users = [c["user"] for c in calls]
-    assert store.input_hash(row["cache_key"]) == store.prompt_hash(profile_v3.SYSTEM, "\n\n".join(users))
+    # The cache key's input hash is the company and its whole text (no context, review of PR #557).
+    assert store.input_hash(row["cache_key"]) == profiles.input_hash("HON", text)
 
 
 def test_a_short_item_falls_back_to_the_previous_filing_then_the_whole_document(rawstore_tmp_db, monkeypatch,
@@ -179,3 +178,71 @@ def test_the_board_mode_has_no_thinking():
     assert not hasattr(config, "PILOT_N") and not hasattr(config, "MAX_INPUT_CHARS")
     assert config.PROMPT_VERSION == "v3"
     assert store.mode_stamp()["thinking"] is False
+
+
+# ── review findings (PR #557) ───────────────────────────────────────────────
+
+def test_the_whole_document_fallback_is_capped(rawstore_tmp_db, monkeypatch, calls):
+    """A 10-K's whole text runs to 1.4M characters: the fallback sends at most MAX_FALLBACK_CHARS of it."""
+    _text(monkeypatch, "short")
+    huge = long_body("the whole 10-K") * 300
+    assert len(huge) > 500_000
+    monkeypatch.setattr(engine, "_whole_document", lambda t: {"text": huge, "source": None})
+    engine.build_profiles(["NVDA"], usd_cap=1.0)
+    sent = sum(len(c["user"]) for c in calls)
+    assert len(calls) <= -(-engine.MAX_FALLBACK_CHARS // profile_v3.WINDOW) + 1
+    assert sent < engine.MAX_FALLBACK_CHARS + 5_000 * len(calls)
+
+
+def test_a_context_change_alone_does_not_redo_a_profile(rawstore_tmp_db, monkeypatch, calls):
+    """The staleness hash is the company and its text: a new candidate list (a Value Chain re-extract), a sector
+    change or a failed context read does not pay for the profile again."""
+    _text(monkeypatch, long_body("we make gpus"))
+    monkeypatch.setattr(engine, "_context", lambda t, cik, source=None: {"candidates": ["Dell"]})
+    engine.build_profiles(["NVDA"], usd_cap=1.0)
+    monkeypatch.setattr(engine, "_context", lambda t, cik, source=None: {"candidates": ["HP"], "sector": "x"})
+    engine.build_profiles(["NVDA"], usd_cap=1.0)
+    assert len(calls) == 1
+    _text(monkeypatch, long_body("we make cpus now"))
+    engine.build_profiles(["NVDA"], usd_cap=1.0)
+    assert len(calls) == 2                          # a new text still redoes it
+
+
+def test_a_chunk_that_stays_unusable_is_recorded_and_retried_within_the_attempts(rawstore_tmp_db, monkeypatch,
+                                                                                calls):
+    from RevenueChaser.module_relatedness.tests.test_profile_v3_chunks_400 import conglomerate
+    _text(monkeypatch, conglomerate())
+    n = len(profile_v3.split_chunks(conglomerate()))
+    calls.fake.reply = lambda user: "junk" if ", part 2 of" in user else REPLY
+    monkeypatch.setattr(profiles.deepseek, "complete",
+                        lambda system, user, **kw: calls.append({"user": user, **kw}) or
+                        ("not json" if ", part 2 of" in user else json.dumps(REPLY)))
+    engine.build_profiles(["HON"], usd_cap=1.0)
+    row = rawstore.get("relatedness_profiles", "HON")
+    assert row["status"] == "ok" and row["label_source"]["missing_chunks"] == [1]
+    assert any(store.load_profiles(["HON"])["HON"].values())         # the partial profile is shown
+    first = len(calls)
+    assert first == n + 1                                              # the bad chunk was retried once
+    for run in range(1, engine.MAX_ATTEMPTS + 2):
+        engine.build_profiles(["HON"], usd_cap=1.0)
+    row = rawstore.get("relatedness_profiles", "HON")
+    assert row["attempts"] == engine.MAX_ATTEMPTS
+    # each redo asks every chunk again (the fake has no cache), and stops once the attempts are spent
+    assert len(calls) == first + (engine.MAX_ATTEMPTS - 1) * (n + 1)
+
+
+def test_a_sic_shell_is_not_reread_every_run(rawstore_tmp_db, monkeypatch, calls):
+    # The real Item reader: the hash pass reads ``chain_filings`` in batches, as ``_filing_text`` does.
+    rawstore.write_rows("chain_filings", [{"ticker": "SPAC", "cik": "1", "form": "10-K", "filed": "2026-01-01",
+                                           "accession": "a", "primary_doc": "u",
+                                           "item_text": long_body("blank check company"), "quality": "ok",
+                                           "fetched_at": 1.0}])
+    monkeypatch.setattr(engine, "_context", lambda t, cik, source=None: {"sic": "6770"})
+    engine.build_profiles(["SPAC"], usd_cap=1.0)
+    seen = []
+    real = engine._filing_input
+    monkeypatch.setattr(engine, "_filing_input", lambda t: seen.append(t) or real(t))
+    engine.build_profiles(["SPAC"], usd_cap=1.0)
+    assert rawstore.get("relatedness_profiles", "SPAC")["status"] == "shell"
+    assert calls == [] and seen == []              # done until its text changes: not even prepared again
+

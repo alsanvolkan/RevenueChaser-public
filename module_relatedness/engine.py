@@ -142,6 +142,10 @@ def _whole_document(ticker: str) -> dict | None:
     return {"text": d.get("text") or "", "source": _doc_source(d)} if d else None
 
 
+# The most of a fallback text a profile reads (review of PR #557): three chunks at most.
+MAX_FALLBACK_CHARS = 120_000
+
+
 def _filing_input(ticker: str) -> dict:
     """The text a profile is made from, with the fallback chain of #400: the newest filing's Item 1 / Item 4, else the
     previous year's filing's, else the newest filing's whole document.
@@ -156,7 +160,10 @@ def _filing_input(ticker: str) -> dict:
     for label, link in (("previous_filing", _previous_filing), ("whole_document", _whole_document)):
         got = link(ticker)
         if got and profiles_mod.text_status(got.get("text")) is None:
-            return {"name": name, "text": got["text"], "fallback": label, "source": got.get("source")}
+            # A whole 10-K runs to 1.4M characters (``filing_item`` item ``whole`` is uncut): the fallback reads its
+            # first MAX_FALLBACK_CHARS, which hold the business description, in a bounded number of calls.
+            return {"name": name, "text": got["text"][:MAX_FALLBACK_CHARS], "fallback": label,
+                    "source": got.get("source")}
     return {"name": name, "text": text, "fallback": status, "source": _filing_source(ticker)}
 
 
@@ -227,8 +234,7 @@ def _prepare(rep: str, name: str | None, cik: str | None) -> dict:
     inp = _filing_input(rep)
     inp["name"] = name or inp["name"]
     inp["context"] = _context(rep, cik, inp.get("source"))
-    inp["hash"] = (profiles_mod.input_hash(inp["name"], inp["text"], inp["context"])
-                   if inp["fallback"] in FALLBACKS else None)
+    inp["hash"] = profiles_mod.input_hash(inp["name"], inp["text"]) if inp["fallback"] in FALLBACKS else None
     return inp
 
 
@@ -247,20 +253,39 @@ def _company_names(tickers: list[str]) -> dict[str, str]:
     return {r["ticker"]: str(r["name"]) for r in rows if r.get("name")}
 
 
-def _input_hashes(groups: dict[str, list[str]], names: dict[str, str], ciks: dict[str, str] | None = None
-                  ) -> dict[str, str]:
-    """``{group key: input hash}``: the hash of the prompts a group would be profiled from today (#388 D5, #400).
+# How many tickers' filing texts ``_input_hashes`` holds at once (each is up to ~50 KB of prose).
+_HASH_CHUNK = 200
+# A stored partial profile's input hash carries this suffix, so the next run redoes it (within MAX_ATTEMPTS).
+PARTIAL = ":partial"
 
-    The same choice ``_work`` makes (``_prepare``): the first ticker with filing text speaks for its CIK group, under its
-    universe name, through the fallback chain and with the same context. A group with nothing to send gets none (its
-    kept profile is not redone). Store-only.
+
+def _input_hashes(groups: dict[str, list[str]], names: dict[str, str]) -> dict[str, str]:
+    """``{group key: input hash}``: the hash of the text a group would be profiled from today (#388 D5, #400).
+
+    The same choice ``_work`` makes: the first ticker with filing text speaks for its CIK group, under its universe
+    name; the hash is ``profiles.input_hash`` of that company and text, as in the profile's ``cache_key``. The Item
+    texts are read in chunks with one query each, store-only; only a group whose Item is too short to profile walks
+    the fallback chain (``_filing_input``) one by one. A group with nothing to send gets none (its kept profile is
+    not redone).
     """
     out: dict[str, str] = {}
-    for key, ts in groups.items():
-        rep = next((t for t in ts if _filing_text(t)[1]), ts[0])
-        got = _prepare(rep, names.get(rep), (ciks or {}).get(rep))
-        if got["hash"]:
-            out[key] = got["hash"]
+    items = list(groups.items())
+    for i in range(0, len(items), _HASH_CHUNK):
+        chunk = items[i:i + _HASH_CHUNK]
+        wanted = [t for _k, ts in chunk for t in ts]
+        docs = _layer_documents(wanted)
+        rows = ({t: {"item_text": d.get("text")} for t, d in docs.items()} if docs is not None else
+                rawstore.get_many("chain_filings", wanted, columns=["ticker", "item_text"]))
+        for key, ts in chunk:
+            rep = next((t for t in ts if (rows.get(t) or {}).get("item_text")), ts[0])
+            text = (rows.get(rep) or {}).get("item_text") or ""
+            name = names.get(rep) or rep
+            if profiles_mod.text_status(text) is not None:
+                inp = _filing_input(rep)
+                if inp["fallback"] not in FALLBACKS:
+                    continue
+                text = inp["text"]
+            out[key] = profiles_mod.input_hash(name, text)
     return out
 
 
@@ -359,8 +384,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
         return True                        # no_text / short_text / SIC shell / unknown: re-check (no LLM cost)
 
     # The input check reads filing texts, so it runs only for the groups nothing else already sends to the LLM.
-    current = _input_hashes({k: ts for k, ts in groups.items() if not any(_needs_llm(t) for t in ts)}, names,
-                             ciks)
+    current = _input_hashes({k: ts for k, ts in groups.items() if not any(_needs_llm(t) for t in ts)}, names)
     todo = {k: ts for k, ts in groups.items() if any(_needs_llm(t, current.get(k)) for t in ts)}
 
     # ``cap`` is a spend ceiling: ``0`` means no LLM call at all. It counts calls
@@ -449,7 +473,9 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
         inp = _prepare(rep, names.get(rep), ciks.get(rep))
         name, text = inp["name"], inp["text"]     # the company, not the ticker (#388 D5)
         if profile_v3.is_shell(None, inp["context"].get("sic")):
-            _save_shell(ts, "")                   # a blank check: nothing is sent
+            # A blank check: nothing is sent. Its key carries the input, so the next run does not read it again.
+            _save_shell(ts, store.cache_key(w_model, w_thinking, w_effort, store.PROMPT_VERSION, rep,
+                                            inp["hash"] or "", provider=provider, source=inp.get("source")))
             return
         if inp["fallback"] not in FALLBACKS:
             # No filing text (``no_text``) or one under Value Chain's MIN_ITEM_CHARS (``short_text``, #313) in every
@@ -505,8 +531,19 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
         usable = any(prof.values())
         if _unusable_before_any_usable(usable):
             return                     # Grok: nothing usable yet this run, so this reply counts no attempt
+        partial = bool(labels.get("missing_chunks"))
         for t in ts:
             m = meta.get(t)
+            if usable and partial:
+                # Some chunks stayed unusable: keep and show what came back, and redo it on the next runs (its input
+                # hash says ``partial``) until the attempts are spent.
+                was_partial = m is not None and (store.input_hash(m.get("cache_key")) or "").endswith(PARTIAL)
+                tries = m["attempts"] + 1 if was_partial else 1
+                pck = store.cache_key(w_model, w_thinking, w_effort, store.PROMPT_VERSION, rep, inp["hash"] + PARTIAL,
+                                      provider=provider, source=inp.get("source"))
+                store.save_profile(t, ciks.get(t), prof, pck, w_model, provider=provider, attempts=tries,
+                                   profile_json=v3, label_source=labels)
+                continue
             if usable:
                 store.save_profile(t, ciks.get(t), prof, ck, w_model, provider=provider,
                                    profile_json=v3, label_source=labels if v3 is not None else None)

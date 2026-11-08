@@ -100,7 +100,7 @@ def test_one_chunk_is_its_own_profile():
     prof = _p(summary="s", keywords=["a"], stage="mature")
     merged, labels = v3.merge_chunks([(prof, 100)])
     assert merged == prof
-    assert labels["summary"] == "chunk:0" and labels["segments"] == "chunk:0"
+    assert labels == {"summary": "chunk:0", "stage": "chunk:0", "keywords": "chunk:0"}   # only fields with a value
 
 
 def test_summary_comes_from_the_first_chunk():

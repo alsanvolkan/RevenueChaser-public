@@ -27,9 +27,10 @@ MIN_INPUT_CHARS = vc_config.MIN_ITEM_CHARS
 PROMPT_VERSION = "v3"
 
 # $ hard-stop: cap the number of LLM calls per run (~1.5x the expected spend).
-# Measured on v2 thinking-high (the dearer mode); v3 sends no thinking, and a chunked filing is several calls, each
-# counted by the cap.
-EST_USD_PER_CALL = 0.00143
+# The cap's cost per call. v2 measured 0.00143 USD at a 12k-character input (thinking-high); a v3 call carries up to
+# 60k characters and a longer JSON reply, so the cap assumes about 4x until the pilot measures it (review of PR #557).
+# A chunked filing is several calls, each counted.
+EST_USD_PER_CALL = 0.006
 USD_CAP = float(os.getenv("RC_RELATEDNESS_USD_CAP", "8.0"))
 LLM_WORKERS = 8
 # Grok writer (#388): a run whose first N replies hold no usable profile stops (``unusable``) before it counts an
