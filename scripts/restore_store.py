@@ -63,7 +63,8 @@ def restore(snapshot: Path) -> Path:
     wal = target.with_name(target.name + ".wal")
     if wal.exists():
         raise BackupError(f"leftover write-ahead log {wal}: it would be replayed on top of the snapshot; "
-                          "open the store once to checkpoint it, or move it aside, then restore again")
+                          "move it aside (or, if the current file should keep those writes, open the store "
+                          "once so DuckDB checkpoints it), then restore again")
     tables = _table_fingerprints(snapshot)  # raises if the snapshot does not open
     aside = target.with_name(target.name + ".pre-restore")
     if target.exists():
