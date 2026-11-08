@@ -21,8 +21,8 @@ step runs into ``market/``, as the command did before the light/heavy split of 5
 small files, a weekly one takes ``prices`` and ``ownership`` into ``market-heavy/``: the 04:30 run of 5 Nov 2026 hit
 its 30-minute limit. The split was taken for the 3.5 GB those two copy, but the measured cost was the ops step, not
 theirs: the copy stamps in the run log put ops at 8m28s on 4 Nov and 8m44s on 5 Nov against 1m26s for both large
-files, because SQLite built its copy page by page on the backup disk. It is built on local storage now (see
-``_backup_ops``). Each folder has its own manifest, verification and retention count.
+files. The likely cause -- an inference, the 8 minutes were not reproduced (#429) -- is SQLite building its copy page
+by page on the backup disk, so it is built on local storage now (see ``_backup_ops``). Each folder has its own manifest, verification and retention count.
 
 Then the D3 copy: the raw files of the last ``RAW_COPY_DAYS`` (35) days (by modification time) under
 ``<MARKET_RAW_DIR>/raw/`` go to ``RC_MARKET_RAW_COPY_DIR``, rsync-like (a file whose size and mtime match is not
@@ -148,10 +148,10 @@ def _backup_ops(out: Path, manifest: _Manifest) -> Path | None:
         return None
     dest = out / f"ops_{_stamp()}.sqlite"
     tmp = dest.with_name(dest.name + ".tmp")
-    # SQLite writes a database page by page, and the backup folder is a spinning disk: built there, the copy of a
-    # 5.8 MB ops.sqlite took 8m44s on 5 Nov 2026 and timed the 04:30 run out, while the same copy onto local storage
-    # takes under three seconds. So it is built here and then copied across in one sequential write, like the
-    # serving files already are.
+    # SQLite writes a database page by page, and the backup folder is a spinning disk: the ops step took 8m44s on
+    # 5 Nov 2026 and timed the 04:30 run out. That the page-by-page build on that disk is why is an inference (the
+    # 8 minutes were not reproduced, #429; a re-measure onto the disk took 2.67 s, onto local storage 0.01 s). So
+    # it is built here and then copied across in one sequential write, like the serving files already are.
     with tempfile.TemporaryDirectory(prefix="rc-ops-backup-") as staging:
         local = Path(staging) / dest.name
         with ops.connect(src) as source:

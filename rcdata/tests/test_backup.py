@@ -146,6 +146,35 @@ def test_the_ops_copy_is_built_off_the_backup_folder(sqlite_ops, backup_dir, mon
     assert copy.exists() and not list((backup_dir / "market").glob("*.tmp*"))
 
 
+def test_an_ops_copy_whose_rows_do_not_match_is_failed_and_leaves_nothing(sqlite_ops, backup_dir, monkeypatch):
+    """The check reads the copy on the backup disk: a short copy is a failed step, with no ``.tmp`` and no
+    manifest entry left behind to look like a backup."""
+    ops.enqueue("market_series", None, by="test")
+    real = backup._sqlite_counts
+    monkeypatch.setattr(backup, "_sqlite_counts", lambda p: {**real(p), "build_requests": 0})
+    with pytest.raises(backup.BackupFailed, match="ops"):
+        backup.run_backup(only="ops")
+    market = backup_dir / "market"
+    assert not list(market.glob("*.tmp*")) and not list(market.glob("ops_*.sqlite"))
+    manifest = market / "manifest.json"
+    assert not manifest.exists() or "ops_" not in manifest.read_text(encoding="utf-8")
+
+
+def test_a_killed_runs_temp_files_and_their_wal_and_shm_are_swept(sqlite_ops, backup_dir):
+    """A run killed mid-copy leaves ``*.tmp`` and, from SQLite, ``*.tmp-wal`` / ``*.tmp-shm``: the next run removes
+    them and nothing that is a kept backup."""
+    market = backup_dir / "market"
+    market.mkdir(parents=True)
+    orphans = [market / n for n in ("ops_1.sqlite.tmp", "ops_1.sqlite.tmp-wal", "ops_1.sqlite.tmp-shm",
+                                    "market_1.duckdb.tmp")]
+    for p in orphans:
+        p.write_bytes(b"x")
+    ops.enqueue("market_series", None, by="test")
+    copy = backup.run_backup(only="ops")["ops"]
+    assert not any(p.exists() for p in orphans)
+    assert copy.exists()
+
+
 def test_s3_a_failed_ops_backup_does_not_block_the_market_copy(backup_dir, monkeypatch):
     _serve(4)
     ops.ensure()
