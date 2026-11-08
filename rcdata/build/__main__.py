@@ -464,6 +464,9 @@ def main(argv: list[str] | None = None) -> int:
             for name, why, _, error in due.enqueue_due():
                 print(f"{name}: {why}", file=sys.stderr, flush=True)
                 due_failed = due_failed or int(error)
+            pruned = ops.prune_issues()
+            if pruned:
+                print(f"build_issues: {pruned} resolved row(s) pruned", file=sys.stderr, flush=True)
         # A due step that failed still drains the queue, then fails the pass, so an hourly error is not an exit 0.
         # Without --dataset this is the hourly pass, which leaves the attended requests queued for the terminal
         # that may run them.

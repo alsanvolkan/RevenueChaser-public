@@ -161,6 +161,18 @@ def test_the_hourly_pass_leaves_an_attended_request_in_the_queue(monkeypatch):
     assert _request(rid)["status"] == "queued"
 
 
+def test_the_hourly_pass_prunes_the_resolved_build_issues_and_a_dataset_run_does_not(monkeypatch):
+    """#387: the resolved rows of build_issues are pruned once an hour (ops.prune_issues), not by each build."""
+    calls: list = []
+    monkeypatch.setattr(cli.base, "run_request", _fake_run([]))
+    monkeypatch.setattr(ops, "prune_issues", lambda: calls.append(1) or 0)
+    _nothing_due()
+    assert cli.main(["run", "--once"]) == 0
+    assert calls == [1]
+    assert cli.main(["run", "--dataset", "market_series", "--once"]) == 0
+    assert calls == [1]
+
+
 def test_the_attended_runner_drains_the_attended_requests_only(monkeypatch):
     ran: list = []
     monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
