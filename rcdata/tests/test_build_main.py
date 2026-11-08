@@ -358,3 +358,21 @@ def test_a_fetch_only_lock_holds_off_nothing_and_nothing_holds_it_off():
     assert not job_lock.shares_files(cli.base.BUILDER_LOCK, "rcdata_fetch_sec/companyfacts")
     assert not job_lock.shares_files("rcdata_fetch_sec/filings", "rcdata_fetch_sec/companyfacts")
     assert job_lock.shares_files("rcdata_fetch_sec/filings", "rcdata_fetch_sec/filings")   # itself: one at a time
+
+
+@pytest.mark.parametrize("kill", [KeyboardInterrupt, SystemExit])
+def test_a_killed_run_finishes_its_own_request(kill, monkeypatch):
+    """Ctrl-C or SIGTERM inside a run marks the run killed *and* ends its request, so the request does not sit
+    "running" until the next builder start fails it as "lost: pid unknown (builder died)" (review B7, 8 Nov)."""
+    from RevenueChaser.rcdata.build import base
+    rid = ops.enqueue("market_series", None, by="test")
+    req = ops.next_request()
+    assert req["id"] == rid
+    monkeypatch.setattr(base, "_run", lambda *a, **k: (_ for _ in ()).throw(kill()))
+    with pytest.raises(kill):
+        base.run_request(req)
+    [run] = ops.rows("job_runs2")
+    got = _request(rid)
+    assert run["status"] == "killed"
+    assert got["status"] == "failed" and got["note"].startswith("killed:")
+    assert "builder died" not in got["note"]

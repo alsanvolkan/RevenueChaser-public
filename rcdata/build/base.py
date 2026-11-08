@@ -875,10 +875,19 @@ def run_request(req: dict, *, trigger: str = "queue", attended_ok: bool = False,
         # _run (a locked ops.sqlite while writing the check row) is "failed". No check row either way, but the
         # calls already sent are counted by the finally below.
         status = "killed" if isinstance(e, (KeyboardInterrupt, SystemExit)) else "failed"
+        why = f"{type(e).__name__}: {e}"[:500]
         try:
-            ops.finish_run(run_id, status, f"{type(e).__name__}: {e}"[:500])
+            ops.finish_run(run_id, status, why)
         except ops.STORE_ERRORS:
             logger.warning("could not mark run %s %s", run_id, status, exc_info=True)
+        if status == "killed" and req.get("id") is not None:
+            # The request ends with its run (review B7, 8 Nov): left "running", the next builder start would fail
+            # it as "lost: pid unknown (builder died)", which is not what happened. A request has no "killed"
+            # status, so it is "failed" with a note that says so.
+            try:
+                ops.finish_request(req["id"], "failed", note=f"killed: {why}"[:300])
+            except ops.STORE_ERRORS:
+                logger.warning("could not end request %s", req["id"], exc_info=True)
         raise
     finally:
         ctx.close()
