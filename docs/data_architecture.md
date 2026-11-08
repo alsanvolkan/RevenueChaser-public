@@ -2001,7 +2001,8 @@ Two separate things, deliberately not conflated:
   either in `.env`).
 - **Restore** — `python -m RevenueChaser.scripts.restore_store --list`, then
   `... restore_store --latest raw` (or `edgar`, `history`, `prices`, or a snapshot file name). Refuses
-  while a RevenueChaser process uses the store, verifies the snapshot, keeps the
+  while a RevenueChaser process uses the store or a leftover `<name>.duckdb.wal` sits next to it (#214: DuckDB
+  would replay it over the snapshot; the message names the file), verifies the snapshot, keeps the
   current file as `<name>.duckdb.pre-restore`. `edgar_docs/` is restored by
   unzipping the chosen archive over the folder; the SPX tree by copying
   `spx_gamma_mirror/` back over the board's data root (stop the dashboard first; an earlier version of
