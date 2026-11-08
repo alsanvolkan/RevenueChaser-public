@@ -29,6 +29,7 @@ import duckdb
 
 from ....core import calendar
 from .. import base
+from .. import dirty as dirty_set
 from . import KIND, common, facts
 
 NAME = "sec/fsds"
@@ -149,6 +150,10 @@ class Fsds:
             WHERE n.tag IN ({tags}) AND CAST(TRY_CAST(s.cik AS BIGINT) AS VARCHAR) IN ({wanted})
                   {own} AND TRY_CAST(n.value AS DOUBLE) IS NOT NULL
             ORDER BY cik, adsh, tag, ddate"""
+
+    def dirty(self, ctx: base.RunContext):
+        """Small and not partitioned by company: reloaded whole by every build, on the live copy too (#446)."""
+        return dirty_set.ALL
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         common.stage_glob(con, STAGING, SCHEMA, common.parquet_dir(NAME), "quarter=*/part-0.parquet")

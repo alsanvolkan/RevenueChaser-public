@@ -13,6 +13,7 @@ import duckdb
 from ....core import calendar
 from ... import ops
 from .. import base
+from .. import dirty as dirty_set
 from . import (KIND, common, companyfacts, earnings, estimates, facts, filings, fsds, uw_earnings,
                uw_financials, wrds_fund)
 
@@ -166,6 +167,25 @@ def load(con: duckdb.DuckDBPyConnection, table: str, rows: list[dict]) -> int:
     return common.count(con, table)
 
 
+# ── #446: a build on the live copy ───────────────────────────────────────────────────────────────────────────
+# The served tables are then already there, with every company's rows. A company of ``common.DIRTY_TABLE`` has its
+# rows deleted and reloaded from its staged partitions (the keyed sources stage only those companies); a part of a
+# table that comes from a whole-reloaded source (Alpha Vantage, UW earnings, WRDS, Yahoo) is deleted and reloaded
+# whole; a table made from the other served tables (companies, peers) and the views are made again.
+
+DIRTY = f"(SELECT cik FROM {common.DIRTY_TABLE})"
+
+
+def _clear(con: duckdb.DuckDBPyConnection, table: str, ciks, *parts: str) -> None:
+    """Make ``table`` ready to take this build's rows: created empty on a whole build (``ciks`` None); on the live
+    copy, each of ``parts`` deleted (a SQL condition; ``"dirty"`` the dirty companies' rows, any source)."""
+    if ciks is None:
+        create(con, table)
+        return
+    for part in parts:
+        con.execute(f"DELETE FROM {table} WHERE " + (f"cik IN {DIRTY}" if part == "dirty" else part))
+
+
 def _names(table: str) -> str:
     return ", ".join(f'"{c}"' for c, _ in SCHEMAS[table])
 
@@ -178,10 +198,12 @@ def _ensure_staging(con: duckdb.DuckDBPyConnection) -> None:
 
 # ── The served tables ─────────────────────────────────────────────────────────────────────────────────────────
 
-def _facts(con: duckdb.DuckDBPyConnection) -> int:
+def _facts(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
     """``fundamental_fact``: the SEC facts, one row per (company, field, period type, period end), and UW's
-    preliminary quarters after the company's newest SEC quarter (``uw_financials``; only when that is on)."""
-    create(con, "fundamental_fact")
+    preliminary quarters after the company's newest SEC quarter (``uw_financials``; only when that is on).
+
+    A company's UW rows depend only on its own SEC rows, so a dirty company reloads both, and no other company's."""
+    _clear(con, "fundamental_fact", ciks, "dirty")
     names = _names("fundamental_fact")
     con.execute(f"""INSERT INTO fundamental_fact SELECT {names} FROM {companyfacts.STAGING['facts']}
                     QUALIFY row_number() OVER (PARTITION BY cik, field, period_type, period_end
@@ -196,9 +218,9 @@ def _facts(con: duckdb.DuckDBPyConnection) -> int:
     return common.count(con, "fundamental_fact")
 
 
-def _filing_items(con: duckdb.DuckDBPyConnection) -> int:
+def _filing_items(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
     """``filing_item``: every listed filing and 8-K item, and the document texts."""
-    create(con, "filing_item")
+    _clear(con, "filing_item", ciks, "dirty")
     con.execute(f"""
         INSERT INTO filing_item
         SELECT cik, accession, form, filing_date, report_date, primary_document, 'item', item, NULL, NULL, NULL,
@@ -212,9 +234,10 @@ def _filing_items(con: duckdb.DuckDBPyConnection) -> int:
 EARNINGS_8K_ITEM = "2.02"
 
 
-def _earnings(con: duckdb.DuckDBPyConnection) -> int:
+def _earnings(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
     """``earnings_event``: Alpha Vantage's coming reports of the Tier A tickers, and the 8-K item 2.02 reports."""
-    create(con, "earnings_event")
+    _clear(con, "earnings_event", ciks, f"source = '{earnings.NAME}'",
+           f"source = '{filings.NAME}' AND cik IN {DIRTY}")
     con.execute(f"""
         INSERT INTO earnings_event
         SELECT c.cik, a.symbol, a.report_date, a.time_of_day, a.fiscal_date_ending, a.estimate, a.currency, false,
@@ -228,9 +251,9 @@ def _earnings(con: duckdb.DuckDBPyConnection) -> int:
     return common.count(con, "earnings_event")
 
 
-def _earnings_reported(con: duckdb.DuckDBPyConnection) -> int:
+def _earnings_reported(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
     """``earnings_reported``: UW's reported EPS per company and quarter, its consensus and its surprise as served."""
-    create(con, "earnings_reported")
+    _clear(con, "earnings_reported", ciks, "true")
     con.execute(f"""
         INSERT INTO earnings_reported
         SELECT u.cik, u.ticker, u.period_end, u.report_date, u.eps_reported, u.eps_estimate, u.surprise_pct,
@@ -240,9 +263,9 @@ def _earnings_reported(con: duckdb.DuckDBPyConnection) -> int:
     return common.count(con, "earnings_reported")
 
 
-def _revisions(con: duckdb.DuckDBPyConnection) -> int:
+def _revisions(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
     """``fundamental_revision``: the Compustat revisions of ``fundq`` and ``funda``, with the company's CIK."""
-    create(con, "fundamental_revision")
+    _clear(con, "fundamental_revision", ciks, "true")
     union = " UNION ALL ".join(f"SELECT * FROM {d.revision_staging}" for d in wrds_fund.DATASETS if d.revisions)
     con.execute(f"""
         INSERT INTO fundamental_revision
@@ -252,10 +275,10 @@ def _revisions(con: duckdb.DuckDBPyConnection) -> int:
     return common.count(con, "fundamental_revision")
 
 
-def _segments(con: duckdb.DuckDBPyConnection) -> int:
+def _segments(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
     """``segment_revenue``: the annual report's segments and Compustat's (business and geographic)."""
-    create(con, "segment_revenue")
     seg = wrds_fund.SEGMENTS
+    _clear(con, "segment_revenue", ciks, f"source = '{filings.NAME}' AND cik IN {DIRTY}", f"source <> '{filings.NAME}'")
     axis = " ".join(f"WHEN '{t}' THEN '{a}'" for t, a in sorted(wrds_fund.SEGMENT_TYPES.items()))
     con.execute(f"""
         INSERT INTO segment_revenue
@@ -272,10 +295,10 @@ def _segments(con: duckdb.DuckDBPyConnection) -> int:
     return common.count(con, "segment_revenue")
 
 
-def _customers(con: duckdb.DuckDBPyConnection) -> int:
+def _customers(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
     """``customer_share``: the annual report's major customers, and Compustat's customers over the SEC's revenue."""
-    create(con, "customer_share")
     seg = wrds_fund.SEGMENTS
+    _clear(con, "customer_share", ciks, f"source = '{filings.NAME}' AND cik IN {DIRTY}", f"source <> '{filings.NAME}'")
     con.execute(f"""
         INSERT INTO customer_share
         SELECT cik, period_end, customer, member, benchmark, share, NULL, NULL, accession, form, filing_date,
@@ -295,9 +318,9 @@ def _customers(con: duckdb.DuckDBPyConnection) -> int:
     return common.count(con, "customer_share")
 
 
-def _estimates(con: duckdb.DuckDBPyConnection) -> int:
+def _estimates(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
     """``estimate_latest``: each company, ticker and period's newest estimates."""
-    create(con, "estimate_latest")
+    _clear(con, "estimate_latest", ciks, "true")
     names = ", ".join(f'"{c}"' for c, _ in estimates.schema())
     con.execute(f"""
         INSERT INTO estimate_latest SELECT {names}, '{estimates.NAME}' FROM {estimates.STAGING}
@@ -310,16 +333,16 @@ def _estimate_view(con: duckdb.DuckDBPyConnection) -> None:
     # The old ``estimate_snapshots`` shape (Earnings Radar's D14), one row per ticker and period: the newest.
     values = ", ".join(f'"{c}"' for c in estimates.value_columns())
     con.execute(f"""
-        CREATE VIEW estimate_snapshots AS
+        CREATE OR REPLACE VIEW estimate_snapshots AS
         SELECT ticker, source_as_of AS session_date, period, {values}, CAST(payload AS JSON) AS payload,
                'yfinance' AS source, fetched_at, run_id, NULL::DOUBLE AS run_at
         FROM estimate_latest""")
 
 
-def _peers(con: duckdb.DuckDBPyConnection, k: int = PEER_K, run_id: str | None = None) -> int:
+def _peers(con: duckdb.DuckDBPyConnection, k: int = PEER_K, run_id: str | None = None, ciks=None) -> int:
     """``peer_group`` from ``fundamental_company`` (GICS, one ticker per company: its shortest) and the newest
     annual SEC revenue in ``fundamental_fact``."""
-    create(con, "peer_group")
+    _clear(con, "peer_group", ciks, "true")
     level = " ".join(f"WHEN a.{c} = b.{c} THEN {i}" for i, c in enumerate(PEER_LEVELS))
     names = "CASE r.lvl " + " ".join(f"WHEN {i} THEN '{c}'" for i, c in enumerate(PEER_LEVELS)) + " END"
     con.execute(f"""
@@ -347,7 +370,29 @@ def _links() -> str:
     return "(SELECT DISTINCT gvkey, cik FROM fundamental_company WHERE gvkey IS NOT NULL)"
 
 
-def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[dict]) -> int:
+def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[dict], ciks=None) -> int:
+    """``fundamental_company``: the universe's tickers, each with its company's SEC columns.
+
+    Made again whole every build (the universe and the spine's columns can change for any company). On the live
+    copy, a clean company's SEC columns (read from the staging on a whole build) are its live row's own: its
+    partitions did not change, so they are what a whole build would read."""
+    sec_co = f"SELECT * FROM {companyfacts.STAGING['company']}"
+    listed = f"SELECT cik, source_as_of FROM {filings.STAGING['filings']}"
+    if ciks is not None:
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE _prev_company AS
+                        SELECT cik, any_value(entity_name) AS entity_name, any_value(is_us) AS is_us,
+                               any_value(non_usd_units) AS non_usd_units, any_value(us_gaap) AS us_gaap,
+                               any_value(facts_as_of) AS facts_as_of, any_value(facts_fetched_at) AS fetched_at,
+                               any_value(submissions_as_of) AS submissions_as_of
+                        FROM fundamental_company WHERE cik NOT IN {DIRTY} GROUP BY cik""")
+        cols = ", ".join(c for c, _ in facts.COMPANY)
+        # A staged company row always carries ``facts_as_of`` (``companyfacts.to_parquet_all`` sets it from the raw
+        # file's meta), so a clean company's live columns join exactly when its staged row would have.
+        sec_co = (f"SELECT {cols} FROM {companyfacts.STAGING['company']} UNION ALL "
+                  f"SELECT {cols.replace('run_id', 'NULL AS run_id')} FROM _prev_company WHERE facts_as_of IS NOT NULL "
+                  "OR entity_name IS NOT NULL")
+        listed += " UNION ALL SELECT cik, submissions_as_of FROM _prev_company WHERE submissions_as_of IS NOT NULL"
+        con.execute("DROP TABLE fundamental_company")
     spine = [{"ticker": r["ticker"], "cik": common.norm_cik(r["cik"]), "gvkey": r.get("gvkey"), "name": r.get("name"),
               "exchange": r.get("exchange"), "gsector": r.get("gsector"), "ggroup": r.get("ggroup"),
               "gind": r.get("gind"), "gsubind": r.get("gsubind"), "sector": r.get("sector"),
@@ -359,13 +404,14 @@ def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[
         SELECT s.*, c.entity_name, c.is_us, c.non_usd_units, c.us_gaap, c.facts_as_of, c.fetched_at,
                n.newest_filed, n.newest_period_end, l.submissions_as_of, 'spine/security', '{ctx.run_id}'
         FROM _spine s
-        LEFT JOIN (SELECT * FROM {companyfacts.STAGING['company']}
+        LEFT JOIN (SELECT * FROM ({sec_co})
                    QUALIFY row_number() OVER (PARTITION BY cik ORDER BY facts_as_of DESC) = 1) c ON c.cik = s.cik
         LEFT JOIN (SELECT cik, max(filed) AS newest_filed, max(period_end) AS newest_period_end
                    FROM fundamental_fact WHERE NOT preliminary GROUP BY cik) n ON n.cik = s.cik
-        LEFT JOIN (SELECT cik, max(source_as_of) AS submissions_as_of FROM {filings.STAGING['filings']}
+        LEFT JOIN (SELECT cik, max(source_as_of) AS submissions_as_of FROM ({listed})
                    GROUP BY cik) l ON l.cik = s.cik""")
     con.execute("DROP TABLE _spine")
+    con.execute("DROP TABLE IF EXISTS _prev_company")
     return common.count(con, "fundamental_company")
 
 
@@ -375,7 +421,7 @@ def _views(con: duckdb.DuckDBPyConnection) -> None:
     pivot = ", ".join(f"max(value) FILTER (WHERE field = '{f}') AS \"{f}\"" for f in facts.FIELDS)
     # One row per company and quarter, a column per field; ``filed`` the newest filing a value came from.
     con.execute(f"""
-        CREATE VIEW fundamental_quarter AS
+        CREATE OR REPLACE VIEW fundamental_quarter AS
         SELECT cik, period_end, min(period_start) AS period_start, {pivot},
                max(filed) AS filed, bool_or(preliminary) AS preliminary,
                string_agg(DISTINCT source, ',' ORDER BY source) AS source
@@ -393,7 +439,7 @@ def _views(con: duckdb.DuckDBPyConnection) -> None:
                             'accn', json_group_object(field, accn))) AS rec
             FROM fundamental_fact WHERE period_type = '{period_type}' AND NOT preliminary GROUP BY cik, {key}"""
     con.execute(f"""
-        CREATE VIEW edgar_financials AS
+        CREATE OR REPLACE VIEW edgar_financials AS
         WITH a AS ({records('annual', 'fiscal_year', "'fiscal_year', CAST(fiscal_year AS VARCHAR)")}),
              q AS ({records('quarterly', 'period_end', "'period', CAST(period_end AS VARCHAR)")}),
              al AS (SELECT cik, to_json(list(rec ORDER BY k)) AS annual FROM a GROUP BY cik),
@@ -410,7 +456,7 @@ def _views(con: duckdb.DuckDBPyConnection) -> None:
 def _submission_view(con: duckdb.DuckDBPyConnection) -> None:
     # The old ``sec_submissions`` row per filing: its 8-K items as one comma-separated text, as the SEC lists them.
     con.execute(f"""
-        CREATE VIEW sec_submissions AS
+        CREATE OR REPLACE VIEW sec_submissions AS
         SELECT cik, accession, any_value(form) AS form, any_value(filing_date) AS filing_date,
                any_value(primary_document) AS primary_document,
                string_agg(item, ',' ORDER BY item) AS items, '{filings.NAME}' AS source,
@@ -421,7 +467,7 @@ def _submission_view(con: duckdb.DuckDBPyConnection) -> None:
 def _calendar_view(con: duckdb.DuckDBPyConnection) -> None:
     # The old ``earnings_calendar`` shape, one row per ticker and report; what this layer does not have is NULL.
     con.execute("""
-        CREATE VIEW earnings_calendar AS
+        CREATE OR REPLACE VIEW earnings_calendar AS
         SELECT e.source_as_of AS session_date, e.report_date AS earnings_date, c.ticker,
                CASE lower(e.report_time) WHEN 'pre-market' THEN 'premarket' WHEN 'post-market' THEN 'afterhours'
                     ELSE e.report_time END AS report_session,
@@ -487,25 +533,39 @@ class FundamentalsTables:
     def to_parquet_all(self, ctx, raws) -> list:
         return []
 
+    def rules_state(self) -> str:
+        """The document cap the ``filing_item`` CHECK embeds (``filings.max_text_chars``) lives outside this package;
+        a live copy keeps the table and its old CHECK, so a change of the cap builds whole (#446)."""
+        return f"max_text_chars={filings.max_text_chars()}"
+
+    def dirty(self, ctx: base.RunContext):
+        """No Parquet of its own: what it serves is made from the sources' staging (#446)."""
+        return dirty_set.ALL
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         _ensure_staging(con)
-        counts = {"fundamental_fact": _facts(con), "filing_item": _filing_items(con)}
-        counts["fundamental_company"] = _companies(ctx, con, common.universe())
-        counts["earnings_event"] = _earnings(con)
-        counts["earnings_reported"] = _earnings_reported(con)
-        counts["fundamental_revision"] = _revisions(con)
-        counts["segment_revenue"] = _segments(con)
-        counts["customer_share"] = _customers(con)
-        counts["estimate_latest"] = _estimates(con)
-        counts["peer_group"] = _peers(con, run_id=ctx.run_id)
+        ciks = common.dirty_ciks(ctx, con)
+        if ciks is not None:
+            for view in VIEWS:                     # made again below, over the tables as this build leaves them
+                con.execute(f"DROP VIEW IF EXISTS {view}")
+        counts = {"fundamental_fact": _facts(con, ciks), "filing_item": _filing_items(con, ciks)}
+        counts["fundamental_company"] = _companies(ctx, con, common.universe(), ciks)
+        counts["earnings_event"] = _earnings(con, ciks)
+        counts["earnings_reported"] = _earnings_reported(con, ciks)
+        counts["fundamental_revision"] = _revisions(con, ciks)
+        counts["segment_revenue"] = _segments(con, ciks)
+        counts["customer_share"] = _customers(con, ciks)
+        counts["estimate_latest"] = _estimates(con, ciks)
+        counts["peer_group"] = _peers(con, run_id=ctx.run_id, ciks=ciks)
         _views(con)
         _submission_view(con)
         _calendar_view(con)
         _estimate_view(con)
         found = _issues(con, ctx.as_of or self.default_as_of())
-        found += [("source_never_run", name, "no Parquet yet") for name, table in
-                  ((companyfacts.NAME, companyfacts.STAGING["facts"]),
-                   (filings.NAME, filings.STAGING["filings"])) if not common.count(con, table)]
+        # Read from the served tables: on the live copy the staging holds only the dirty companies.
+        found += [("source_never_run", name, "no Parquet yet") for name, table, where in
+                  ((companyfacts.NAME, "fundamental_fact", f"source = '{facts.SOURCE}'"),
+                   (filings.NAME, "filing_item", "kind = 'item'")) if not common.count(con, table, where)]
         ctx.pending[NAME] = found
         return counts
 
