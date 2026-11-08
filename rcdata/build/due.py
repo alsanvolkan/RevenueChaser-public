@@ -116,7 +116,7 @@ def is_due(ds, mode: str = "full") -> tuple[bool, str]:
 
 
 def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None, bool]]:
-    """Queue every due dataset once; ``(name, why, request id or None, error)`` per dataset, in name order.
+    """Queue every due dataset once; ``(name, why, request id or None, error)`` per dataset, in registry order.
 
     No id: not due, already queued or running, or an error (``why`` says which). ``error`` is True when the due check
     raised or ``ops.sqlite`` stayed locked past its busy timeout; one dataset's error does not stop the others.
@@ -124,7 +124,7 @@ def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None
     if datasets is None:
         from . import DATASETS as datasets
     out = []
-    for name in sorted(datasets):
+    for name in datasets:                     # registry order: sources before the kind's derived datasets (PR A)
         try:
             mode = ops.dataset_mode(name, datasets[name].kind)   # #527: a source's own mode wins over its kind's
             due, why = is_due(datasets[name], mode)

@@ -829,19 +829,31 @@ def shrink_scope(ds: Dataset) -> tuple[str, ...]:
 
 def build_kind(ctx: RunContext, ds: Dataset) -> dict:
     """Build ``ds``'s serving kind from Parquet (every dataset of the kind), check it, swap it in; the check row."""
+    return build_kind_many(ds.kind, [(ds, ctx)], lead=ctx)[ds.name]
+
+
+def build_kind_many(kind: str, members: list[tuple[Dataset, RunContext]], *, lead: RunContext) -> dict[str, dict]:
+    """Build ``kind`` once for every request a pass holds of it (PR A); ``{dataset: check row}`` per member, a member
+    being a request's ``(dataset, context)``.
+
+    Each dataset of the kind builds with its own request's context when it has one (its ``as_of``, its notes), and
+    with ``lead``'s otherwise, as a single request's build always did. Every check rides the one swap, so a failed
+    data check of any of them refuses the file; ``allow_shrink`` relaxes the tables of the requests that asked."""
     if not parquet_root().is_dir():
         raise SourceError(f"the Parquet root {parquet_root()} is missing (RC_MARKET_RAW_DIR unset or not mounted?)")
-    with serving.build(ds.kind) as b:
+    ctxs = {ds.name: c for ds, c in members}
+    shrink = tuple(dict.fromkeys(t for ds, c in members if c.allow_shrink for t in shrink_scope(ds)))
+    with serving.build(kind) as b:
         counts: dict[str, int] = {}
-        for d in kind_datasets(ds.kind):
-            counts.update(d.build(ctx, b.con))
-        check = ds.check(ctx, b.con)
-        b.swap(counts, checks=[check], allow_shrink=shrink_scope(ds) if ctx.allow_shrink else ())
-    for d in kind_datasets(ds.kind):
+        for d in kind_datasets(kind):
+            counts.update(d.build(ctxs.get(d.name, lead), b.con))
+        checks = {ds.name: ds.check(c, b.con) for ds, c in members}
+        b.swap(counts, checks=list(checks.values()), allow_shrink=shrink)
+    for d in kind_datasets(kind):
         step = getattr(d, "after_swap", None)
         if step is not None:
-            step(ctx)
-    return check
+            step(ctxs.get(d.name, lead))
+    return checks
 
 
 def _parse_day(value) -> date:
@@ -871,47 +883,78 @@ def run_request(req: dict, *, trigger: str = "queue", attended_ok: bool = False,
     try:
         return _run(ctx, ds, req, params, attended_ok)
     except BaseException as e:
-        # A kill (SIGTERM, which the CLI turns into SystemExit, or Ctrl-C) is "killed"; anything else that got past
-        # _run (a locked ops.sqlite while writing the check row) is "failed". No check row either way, but the
-        # calls already sent are counted by the finally below.
-        status = "killed" if isinstance(e, (KeyboardInterrupt, SystemExit)) else "failed"
-        why = f"{type(e).__name__}: {e}"[:500]
-        try:
-            ops.finish_run(run_id, status, why)
-        except ops.STORE_ERRORS:
-            logger.warning("could not mark run %s %s", run_id, status, exc_info=True)
-        if status == "killed" and req.get("id") is not None:
-            # The request ends with its run (review B7, 8 Nov): left "running", the next builder start would fail
-            # it as "lost: pid unknown (builder died)", which is not what happened. A request has no "killed"
-            # status, so it is "failed" with a note that says so.
-            try:
-                ops.finish_request(req["id"], "failed", note=f"killed: {why}"[:300])
-            except ops.STORE_ERRORS:
-                logger.warning("could not end request %s", req["id"], exc_info=True)
+        _abort(run_id, req, e)
         raise
     finally:
         ctx.close()
         ctx.flush_counts()
 
 
+def _abort(run_id: str | None, req: dict, e: BaseException) -> None:
+    """End a run (when it started) and its request after ``e`` got past ``_run``.
+
+    A kill (SIGTERM, which the CLI turns into SystemExit, or Ctrl-C) is "killed"; anything else that got past _run
+    (a locked ops.sqlite while writing the check row) is "failed". No check row either way, but the calls already
+    sent are counted by the caller's ``flush_counts``. A killed run ends its request too (review B7, 8 Nov): left
+    "running", the next builder start would fail it as "lost: pid unknown (builder died)", which is not what
+    happened. A request has no "killed" status, so it is "failed" with a note that says so."""
+    status = "killed" if isinstance(e, (KeyboardInterrupt, SystemExit)) else "failed"
+    why = f"{type(e).__name__}: {e}"[:500]
+    if run_id is not None:
+        try:
+            ops.finish_run(run_id, status, why)
+        except ops.STORE_ERRORS:
+            logger.warning("could not mark run %s %s", run_id, status, exc_info=True)
+    if status == "killed" and req.get("id") is not None:
+        try:
+            ops.finish_request(req["id"], "failed", note=f"killed: {why}"[:300])
+        except ops.STORE_ERRORS:
+            logger.warning("could not end request %s", req["id"], exc_info=True)
+
+
 def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False) -> dict:
-    status, error, check = "failed", None, None
+    done, stage_note = _stage(ctx, ds, req, params, attended_ok)
+    if done is not None:
+        return done
+    if stage_note is not None:
+        # "Stage only" (--no-duckdb): the data is in raw and Parquet; raw-only (--no-parquet): in raw alone.
+        # Either way the serving file is left as it is. The check row a build would have written cannot be
+        # made without one, and inventing a result value would reach due.py and ops; a skip is the truth (the
+        # serving file did not change) and leaves the dataset due, so the next ordinary pass builds it at no
+        # provider call (the raw file is the resume marker).
+        return _finish(ctx, req, {"result": "skipped", "note": stage_note}, "skipped", None)
+    try:
+        return _finish(ctx, req, build_kind(ctx, ds), "ok", None)
+    except (Paused, NothingInScope) as e:
+        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None)
+    except Exception as e:  # noqa: BLE001 - every failure becomes a failed check row, never a half-swapped file
+        return _failed(ctx, req, e)
+
+
+def _failed(ctx: RunContext, req: dict, e: Exception) -> dict:
+    logger.exception("%s run %s failed", req["dataset"], ctx.run_id)
+    error = f"{type(e).__name__}: {e}"[:500]
+    return _finish(ctx, req, {"result": "failed", "note": error}, "failed", error)
+
+
+def _stage(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False) -> tuple[dict | None, str | None]:
+    """Everything a run does before its build: ``(finished row, None)`` when the request already ended (skipped,
+    paused, failed), ``(None, note)`` for a stage-only request whose fetch is done, ``(None, None)`` when the
+    request is ready for its kind's build."""
     try:
         if ds is None:
             raise ValueError(f"unknown dataset {req['dataset']!r}")
         paused = paused_problem(ds)
         if paused:
-            return _finish(ctx, req, {"result": "skipped", "note": paused}, "skipped", None)
+            return _finish(ctx, req, {"result": "skipped", "note": paused}, "skipped", None), None
         if attended(ds) and not attended_ok and req.get("requested_by") != ATTENDED_BY:
             note = (f"skipped: attended dataset: it waits for the runner on the server (a person logs in): "
                     f"python -m RevenueChaser.rcdata.build attended; requested by "
                     f"{req.get('requested_by') or '?'}")
-            return _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None)
+            return _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None), None
         refused = cap_problem(ds)
         if refused:
-            check = {"result": "skipped", "note": refused}
-            status = "skipped"
-            return _finish(ctx, req, check, status, None)
+            return _finish(ctx, req, {"result": "skipped", "note": refused}, "skipped", None), None
         ctx.scope = parse_scope(params)             # a bad scope is this run's failed check row, like a bad date
         if ctx.scope and not honours_scope(ds):
             ctx.notes.append(f"scope ignored: {ds.name} does not ask by name or tier ({ctx.scope.text()} "
@@ -947,25 +990,83 @@ def _run(ctx: RunContext, ds, req: dict, params: dict, attended_ok: bool = False
                 raise ValueError(f"unknown mode {mode!r}")
         ctx.check_pause(force=True)                 # the last stop: a build that starts runs to its end
         if skip_build:
-            # "Stage only" (--no-duckdb): the data is in raw and Parquet; raw-only (--no-parquet): in raw alone.
-            # Either way the serving file is left as it is. The check row a build would have written cannot be
-            # made without one, and inventing a result value would reach due.py and ops; a skip is the truth (the
-            # serving file did not change) and leaves the dataset due, so the next ordinary pass builds it at no
-            # provider call (the raw file is the resume marker).
-            note = skip_note(staged, raw_only=raw_only_mode)
-            return _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None)
-        check = build_kind(ctx, ds)
-        status = "ok"
+            return None, skip_note(staged, raw_only=raw_only_mode)
+        return None, None
     except Paused as e:
         # the files fetched so far stay; the serving file was not touched
-        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None)
+        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None), None
     except NothingInScope as e:
-        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None)
-    except Exception as e:  # noqa: BLE001 - every failure becomes a failed check row, never a half-swapped file
-        logger.exception("%s run %s failed", req["dataset"], ctx.run_id)
-        error = f"{type(e).__name__}: {e}"[:500]
-        check = {"result": "failed", "note": error}
-    return _finish(ctx, req, check, status, error)
+        return _finish(ctx, req, {"result": "skipped", "note": f"skipped: {e}"}, "skipped", None), None
+    except Exception as e:  # noqa: BLE001 - a failed fetch is its own failed check row, never a half-swapped file
+        return _failed(ctx, req, e), None
+
+
+def run_batch(reqs: list[dict], *, trigger: str = "queue", attended_ok: bool = False) -> list[dict]:
+    """Run the claimed requests of one kind with one build of its serving file (PR A); one check row each.
+
+    Each request is fetched in turn (registry order, the caller's), exactly as ``run_request`` would. Then:
+
+    - a fetch that failed, was paused or skipped has ended already with its own row and takes no part in the build;
+    - when no request that wants a build is left, nothing is built (owner's D-4, 8 Nov): a stage-only request keeps
+      its ``skipped`` note and the file is not rewritten from the same Parquet;
+    - otherwise the kind is built once, and every fetched request, stage-only ones included (owner's D-8), gets the
+      check row of that build. A build that fails fails the requests that wanted it; a stage-only one keeps its skip.
+
+    A single request is ``run_request`` itself, so that path is unchanged.
+    """
+    if len(reqs) <= 1:
+        return [run_request(r, trigger=trigger, attended_ok=attended_ok) for r in reqs]
+    from . import DATASETS
+    rows: list[dict] = []
+    ended: set[str] = set()                           # run ids whose run and request have ended
+
+    def end(ctx: RunContext, row: dict) -> None:
+        ended.add(ctx.run_id)
+        rows.append(row)
+    started: list[tuple[dict, RunContext]] = []       # (request, context) of every run started, ended or not
+    ready: list[tuple[dict, Any, RunContext, str | None]] = []
+    pending = list(reqs)
+    try:
+        while pending:
+            req = pending.pop(0)
+            ds = DATASETS.get(req["dataset"])
+            params = req.get("params") or {}
+            ctx = RunContext(run_id=new_run_id(), dataset=req["dataset"], trigger=trigger,
+                             allow_shrink=params.get("allow_shrink") is True)
+            ops.start_run(ctx.run_id, req["dataset"], trigger, params)
+            started.append((req, ctx))
+            done, note = _stage(ctx, ds, req, params, attended_ok)
+            if done is not None:
+                end(ctx, done)
+            else:
+                ready.append((req, ds, ctx, note))
+        wanted = [r for r in ready if r[3] is None]
+        if not wanted:
+            for req, ds, ctx, note in ready:
+                end(ctx, _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None))
+            return rows
+        kind = wanted[0][1].kind
+        try:
+            checks = build_kind_many(kind, [(ds, ctx) for req, ds, ctx, note in ready], lead=wanted[0][2])
+        except Exception as e:  # noqa: BLE001 - every failure becomes a failed check row, never a half-swapped file
+            for req, ds, ctx, note in ready:
+                end(ctx, _failed(ctx, req, e) if note is None else
+                    _finish(ctx, req, {"result": "skipped", "note": note}, "skipped", None))
+            return rows
+        for req, ds, ctx, note in ready:
+            end(ctx, _finish(ctx, req, checks[ds.name], "ok", None))
+        return rows
+    except BaseException as e:
+        for req, ctx in started:
+            if ctx.run_id not in ended:
+                _abort(ctx.run_id, req, e)
+        for req in pending:                         # claimed but not reached: no run row, the request still ends
+            _abort(None, req, e)
+        raise
+    finally:
+        for req, ctx in started:
+            ctx.close()
+            ctx.flush_counts()
 
 
 def _finish(ctx: RunContext, req: dict, check: dict, status: str, error: str | None) -> dict:
