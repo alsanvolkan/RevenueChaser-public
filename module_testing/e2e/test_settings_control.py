@@ -159,3 +159,25 @@ def test_refresh_the_example_rows_reads_the_store_and_says_when_a_file_is_not_bu
                      " var n = b.parentNode.querySelector('.dim');"
                      " return n && /not been built|no .* table yet|read again/.test(n.textContent); })()")
     assert len(provider_routes.requests()) == before
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_the_what_am_i_looking_at_band_follows_the_theme(dashboard, browser, scheme):
+    """Seen in the #539 screenshots: in light the Data tab's help box and the band around it stayed dark, because
+    they read the page's old dark-only tokens instead of the board's themed ones."""
+    _open(browser, dashboard, scheme)
+    lum = browser.eval(r"""(function(){
+      function l(el){ var m = getComputedStyle(el).backgroundColor.match(/\d+(\.\d+)?/g).map(Number);
+        if (m.length > 3 && m[3] === 0) return null;
+        return 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]; }
+      function painted(el){ for (; el; el = el.parentElement) { var v = l(el); if (v !== null) return v; } return null; }
+      var help = document.querySelector('.helpwrap .help'), band = help.parentElement.parentElement;
+      var next = band.nextElementSibling;
+      return {box: painted(help), band: painted(help.parentElement),
+              gap: next ? next.getBoundingClientRect().top - band.getBoundingClientRect().bottom : 0};
+    })()""")
+    assert abs(lum["gap"]) < 0.5, f"the page's own background shows between the band and the board: {lum}"
+    if scheme == "light":
+        assert lum["box"] > 200 and lum["band"] > 200, f"the help band is dark in light: {lum}"
+    else:
+        assert lum["box"] < 80 and lum["band"] < 80, f"the help band is light in dark: {lum}"

@@ -548,7 +548,7 @@ def _sbox(d: dict, view: dict) -> str:
         tags += '<span class="pill p-new">build</span>'
     head = (f'<div class="sb1"><button type="button" class="sbtog" aria-expanded="true" aria-label="Fold '
             f'{esc(d["dataset"])}">▾</button><span class="sdot {esc(d["filter"])}" aria-hidden="true"></span>'
-            f'{badges}<span class="dsname">{esc(d["dataset"])}</span>{tags}'
+            f'{badges}<span class="dsname" title="{esc(d["dataset"])}">{esc(d["dataset"])}</span>{tags}'
             f'<span class="sbbtn">{_one_button(d, view)}</span></div>')
     nxt = d.get("next_words")
     since = d.get("since_words")

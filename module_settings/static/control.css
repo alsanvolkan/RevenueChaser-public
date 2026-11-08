@@ -1154,3 +1154,25 @@
 .ctl .wrap{max-width:var(--page-max,1280px);margin-inline:auto}
 .ctl .wrap,.ctl .fpanel,.ctl .sgrid,.ctl .sbox{box-sizing:border-box;min-width:0}
 .ctl table{max-width:100%}
+/* avo 6 Nov 2026 20:19 ("kaydirdin"): a source box's head row keeps Fetch / ▾ / Pause on the name line in every box;
+   a long name shortens (its full text in the title) rather than pushing the buttons under it. A phone may wrap.
+   avo 20:25: "iki kutu yan yana gormek istiyorum, kutulari kucultebilirsin icindekiler ile beraber" - two boxes a
+   row stay; a narrow grid shrinks each box with its contents (zoom), so the head line still fits. A phone keeps one
+   box a row at full size. */
+.ctl .sgrid{container-type:inline-size;container-name:sgrid}
+@media(min-width:761px){
+  @container sgrid (max-width:1100px){.ctl .sgrid>.sbox{zoom:.82}}
+  @container sgrid (max-width:900px){.ctl .sgrid>.sbox{zoom:.72}}
+}
+.ctl .sb1{flex-wrap:nowrap}
+.ctl .sb1 .dsname{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ctl .sb1 .sbbtn,.ctl .sb1 .srcb{flex:none}
+@media(max-width:760px){.ctl .sb1{flex-wrap:wrap}.ctl .sb1 .dsname{white-space:normal;overflow-wrap:anywhere}}
+/* The Data tab's "What am I looking at?" box sits in a .ctl band of its own, so it takes the board's themed tokens
+   instead of the page's old dark-only ones (seen in the #539 screenshots: dark in light). */
+.ctl .help{background:var(--card);border-color:var(--line);color:var(--mut)}
+.ctl .help summary{color:var(--acc)}
+.ctl .help b{color:var(--fg)}
+.ctl .help code{color:var(--acc)}
+/* flow-root keeps the box's bottom margin inside the band, so no strip of the page's own background shows below. */
+.ctl.helpband{display:flow-root}

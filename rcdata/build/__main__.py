@@ -133,9 +133,14 @@ def _wait_for_turn(wait: float, said: list | None = None) -> str | None:
 
 def _fetch_lock_names(args) -> list[str]:
     """The ``rcdata_fetch_<dataset>`` locks a fetch-only command (``--no-duckdb`` / ``--no-parquet``) needs, one
-    per dataset it names."""
+    per dataset it names.
+
+    The ``/`` of a dataset name becomes ``_``: ``job_lock._lock_path`` puts the name straight into a path, so
+    ``sec/companyfacts`` would open a ``rcdata_fetch_sec/`` directory inside the store dir and hide the lock
+    inside it, where ``holders()`` -- which globs ``*.lock`` one level deep -- can never name it.
+    """
     names = list(getattr(args, "datasets", None) or ([args.dataset] if getattr(args, "dataset", None) else []))
-    return [f"rcdata_fetch_{n}" for n in names]
+    return [f"rcdata_fetch_{n.replace('/', '_')}" for n in names]
 
 
 def _take_fetch_locks(stack: contextlib.ExitStack, locks: list[str], wait: float) -> tuple[bool, str | None]:
@@ -189,6 +194,54 @@ def _take_the_turn(stack: contextlib.ExitStack, wait: float) -> tuple[bool, str 
         time.sleep(min(WAIT_POLL_S, max(0.0, deadline - time.monotonic())))
 
 
+def _claim_kind(req: dict, *, skip=(), only=None, by=None) -> list[dict]:
+    """``req`` and every other request of its kind queued now, in registry order (PR A): the pass builds the
+    kind's file once for all of them. A request queued after this moment waits for the next turn of its kind."""
+    from . import DATASETS
+    ds = DATASETS.get(req["dataset"])
+    if ds is None:
+        return [req]
+    allowed = set(only) if only is not None else None
+    names = [d.name for d in base.kind_datasets(ds.kind)
+             if d.name != req["dataset"] and d.name not in skip and (allowed is None or d.name in allowed)]
+    batch = [req]
+    try:
+        while names:
+            try:
+                more = ops.next_request(only=names, by=by)
+            except ops.BUSY_ERRORS as e:
+                # a locked ops store while claiming: run what is claimed; the rest waits for the next turn
+                print(f"{ds.kind}: ops store busy while claiming: {e}", file=sys.stderr, flush=True)
+                break
+            if more is None:
+                break
+            batch.append(more)
+            names.remove(more["dataset"])       # one request per dataset: the batch keys by dataset
+    except BaseException as e:
+        for r in batch:                         # a kill while claiming ends what was claimed (as B7)
+            base._abort(None, r, e)
+        raise
+    order = {name: i for i, name in enumerate(DATASETS)}
+    return sorted(batch, key=lambda r: order.get(r["dataset"], len(order)))
+
+
+def _build_line(batch: list[dict], rows: list[dict], seconds: float) -> str | None:
+    """``build kind=<kind> datasets=<built>/<of the kind> duration=<s>s swap=<size>`` for a batch whose kind's file
+    was written, None otherwise (nothing built: every row skipped or failed)."""
+    from . import DATASETS
+    ds = DATASETS.get(batch[0]["dataset"])
+    built = [r for r in rows if r["result"] in ("changed", "unchanged")]
+    if ds is None or not built:
+        return None
+    try:
+        size = serving.live_path(ds.kind).stat().st_size
+    except (OSError, ValueError):
+        size = None
+    swap = f"{size / 1e9:.2f}GB" if size is not None else "?"
+    return (f"build kind={ds.kind} datasets={len(built)}/{len(base.kind_datasets(ds.kind))} "
+            f"duration={seconds:.0f}s swap={swap}")
+
+
 def _run_queue(dataset: str | None, once: bool, *, skip=(), only=None, by=None,
                attended_ok: bool = False) -> int:
     worst = 0
@@ -207,22 +260,32 @@ def _run_queue(dataset: str | None, once: bool, *, skip=(), only=None, by=None,
                 return worst
             time.sleep(POLL_S)
             continue
+        batch = [req] if dataset is not None else _claim_kind(req, skip=skip, only=only, by=by)
+        started = time.monotonic()
         try:
-            row = base.run_request(req, attended_ok=attended_ok)
+            rows = base.run_batch(batch, attended_ok=attended_ok)
         except ops.BUSY_ERRORS as e:
             # The run could not write its rows (ops.sqlite locked past busy_timeout, Redis not answering): the
-            # request is failed when the store lets us, and the loop goes on with the next one.
+            # requests are failed when the store lets us, and the loop goes on with the next one.
             print(f"{req['dataset']}: ops store busy during the run: {e}", file=sys.stderr, flush=True)
             worst = 1
-            try:
-                ops.finish_request(req["id"], "failed", note=f"ops store busy: {e}"[:300])
-            except ops.BUSY_ERRORS:
-                pass                     # still running in the file; the next builder start fails it (S2)
+            ended = getattr(e, "rc_ended", frozenset())    # what the batch had already ended stays as it is
+            for r in batch:
+                if r["id"] in ended:
+                    continue
+                try:
+                    ops.finish_request(r["id"], "failed", note=f"ops store busy: {e}"[:300])
+                except ops.BUSY_ERRORS:
+                    pass                 # still running in the file; the next builder start fails it (S2)
             time.sleep(POLL_S)
             continue
-        print(base.format_check(row), flush=True)
-        if row["result"] == "failed":
-            worst = 1
+        for row in rows:
+            print(base.format_check(row), flush=True)
+            if row["result"] == "failed":
+                worst = 1
+        line = _build_line(batch, rows, time.monotonic() - started)
+        if line:
+            print(line, flush=True)
 
 
 def _terminate(signum, frame) -> None:

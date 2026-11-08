@@ -155,6 +155,11 @@ def _local_only():
     return None
 
 
+#: Routes that never read the serving store: static files, and the Prometheus scrape (#527 plan B1), which reads only
+#: the ops store and small files and must not take raw.duckdb's lock every minute.
+_NO_STORE_SESSION = frozenset({"static", "metrics"})
+
+
 @app.before_request
 def _open_store_session():
     """One store handle per request instead of one per query.
@@ -165,7 +170,7 @@ def _open_store_session():
     locks it) and closed in ``_close_store_session`` — never held between
     requests, so scheduled jobs still get the file. Static files skip it.
     """
-    if request.endpoint == "static":
+    if request.endpoint in _NO_STORE_SESSION:
         return
     g._store_session = rawstore.session()
     g._store_session.__enter__()
@@ -1570,6 +1575,23 @@ def api_build_queue():
     from RevenueChaser.rcdata import ops
 
     return jsonify({"ok": True, **ops.queue_view(finished=20)})
+
+
+@app.route("/api/build/datasets")
+def api_build_datasets():
+    """Every dataset the builder knows: ``{name, kind, attended, providers}``, sorted by name. An allow-list for the
+    Grafana buttons (#527 plan B3), which may press Fetch / Pause / Resume only on a dataset named here."""
+    from RevenueChaser.module_settings import metrics
+
+    return jsonify({"ok": True, "datasets": metrics.datasets_list()})
+
+
+@app.route("/metrics", endpoint="metrics")
+def prometheus_metrics():
+    """Prometheus text format for Grafana on homesrv (#527 plan B1). Cheap readers only, no store session."""
+    from RevenueChaser.module_settings import metrics as rc_metrics
+
+    return Response(rc_metrics.exposition(), content_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 @app.route("/api/build/schedule/<path:dataset>/<action>", methods=["POST"])

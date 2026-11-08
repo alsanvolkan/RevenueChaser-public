@@ -46,8 +46,9 @@ def test_a_disabled_timer_is_off():
 
 def test_a_failed_or_missing_read_is_all_none():
     assert control.read_timer(FakeScheduler(error=automations.AutomationError("the timer failed"))) == NONE
-    assert control.read_timer(FakeScheduler(None)) == NONE, "not installed: nothing to read"
-    assert control.read_timer(automations.UnavailableScheduler()) == NONE
+    gone = lambda a: (0, "LoadState=not-found\nActiveState=inactive\n", "")
+    assert control.read_timer(FakeScheduler(None), system=gone) == NONE, "not installed: nothing to read"
+    assert control.read_timer(automations.UnavailableScheduler(), system=gone) == NONE
 
 
 def test_build_carries_the_timer_and_the_rows_read_it():
@@ -69,3 +70,40 @@ def test_build_with_a_reader_that_raises_says_not_known():
 def test_build_reads_the_scheduler_by_default(monkeypatch):
     monkeypatch.setattr(automations, "get_scheduler", lambda: FakeScheduler(_status("ready")))
     assert _build()["timer"]["state"] == "on"
+
+
+# #527 follow-up (avo 6 Nov 2026 20:12, screenshot "Builder timer: not known"): on homesrv the builder is a SYSTEM
+# unit (/etc/systemd/system/life-rc-builder.timer, installed from home-server), which the user-unit scheduler never
+# sees. When the scheduler has no row, the board reads the system timer with an unprivileged ``systemctl show``.
+
+def _show(**props) -> str:
+    return "\n".join(f"{k}={v}" for k, v in props.items()) + "\n"
+
+
+def test_a_system_timer_is_read_when_the_scheduler_has_no_row():
+    asked = []
+
+    def run(args):
+        asked.append(args)
+        return 0, _show(LoadState="loaded", ActiveState="inactive", UnitFileState="disabled",
+                        LastTriggerUSec="@1793988421", NextElapseUSecRealtime=""), ""
+
+    got = control.read_timer(automations.UnavailableScheduler(), system=run)
+    assert got["state"] == "off" and got["minute"] == 7 and got["last"] and got["next"] is None
+    assert asked[0][0] == "show" and asked[0][-1] == "life-rc-builder.timer" and "--user" not in asked[0]
+    on = control.read_timer(FakeScheduler(None), system=lambda a: (0, _show(
+        LoadState="loaded", ActiveState="active", UnitFileState="enabled", LastTriggerUSec="",
+        NextElapseUSecRealtime="@1793992020"), ""))
+    assert on["state"] == "on" and on["next"]
+
+
+def test_a_system_timer_that_is_not_installed_or_not_readable_stays_not_known():
+    missing = lambda a: (0, _show(LoadState="not-found", ActiveState="inactive", UnitFileState=""), "")
+    assert control.read_timer(automations.UnavailableScheduler(), system=missing) == NONE
+    assert control.read_timer(automations.UnavailableScheduler(), system=lambda a: (1, "", "no bus")) == NONE
+
+    def boom(a):
+        raise OSError("no systemctl")
+    assert control.read_timer(automations.UnavailableScheduler(), system=boom) == NONE
+    failed = lambda a: (0, _show(LoadState="loaded", ActiveState="failed", UnitFileState="enabled"), "")
+    assert control.read_timer(automations.UnavailableScheduler(), system=failed) == NONE
