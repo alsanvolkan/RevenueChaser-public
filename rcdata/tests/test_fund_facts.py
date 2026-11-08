@@ -332,8 +332,12 @@ def test_a_stretch_with_no_index_goes_on_when_a_kept_index_still_answers(sec):
     sec.add("master.", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)
     ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
     assert sec_index.fetch_day(ctx, date(2026, 11, 19), as_of) is not None          # the kept index
+    # The ownership walk keeps its own copies in the same folder, named so that they sort after the dated ones.
+    base.write_raw(sec_index.raw_path(date(2026, 11, 19)).with_name("master.20261119.idx.gz"), b"x")
     assert sec_index.filings(ctx, as_of, lookback=7) == []
     assert any("handed over one it holds" in n for n in ctx.notes), ctx.notes
+    # One probe for the stretch 16-18 Nov; the 13th, contiguous with it, does not ask again.
+    assert len(sec.calls("master.20261119.idx")) == 2
     for day in (date(2026, 11, 13), date(2026, 11, 16), date(2026, 11, 17), date(2026, 11, 18)):
         assert not sec_index.absent_path(day).exists(), day
 

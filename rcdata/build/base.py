@@ -326,7 +326,8 @@ def is_missing(r: httpx.Response) -> bool:
 
 
 MISSING_RUN = 3     # consecutive open weekdays with no object: a refusal of the whole path, not that many days
-# Open weekdays with no object one run takes as absent after the path handed over a kept object (#507). A chosen
+# Open weekdays in stretches one run lets pass after the path handed over a kept object (#507); isolated days do not
+# count. A chosen
 # ceiling, not a measurement: the calendar explains every absent index day 2014 onwards that was measured, so a run
 # that finds more than this is looking at something the calendar and the probe cannot account for, and stops.
 UNEXPLAINED_MAX = 10
@@ -373,6 +374,7 @@ class MissingStreak:
     def __init__(self, what: str, limit: int = MISSING_RUN, probe: Callable[[], bool] | None = None) -> None:
         self.what, self.limit, self.probe = what, limit, probe
         self.unexplained: list[date | None] = []      # None: a stretch the probe answered for ends here
+        self.passed = 0                                # days in stretches the probe answered for, this run
 
     @staticmethod
     def closed(day: date) -> bool:
@@ -388,8 +390,9 @@ class MissingStreak:
         self.unexplained.append(day)
         if stretch(self.unexplained, self.limit):
             run = sorted(self.unexplained[-self.limit:])
-            seen = sum(d is not None for d in self.unexplained)
+            seen = self.passed + self.limit
             if self.probe is not None and seen <= UNEXPLAINED_MAX and self.probe():
+                self.passed = seen
                 ctx.notes.append(f"{', '.join(str(d) for d in run)}: no {self.what} for {self.limit} weekdays EDGAR "
                                  "was open, but the path handed over one it holds, so the walk goes on")
                 self.unexplained.append(None)

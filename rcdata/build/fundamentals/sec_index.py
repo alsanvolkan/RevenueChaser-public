@@ -115,7 +115,8 @@ def fetch_day(ctx: base.RunContext, day: date, as_of: date,
 def kept_answers(ctx: base.RunContext) -> bool:
     """Whether the archive hands over the newest index this store already keeps: the probe a stretch of open
     weekdays with no index asks before it stops the scan (``base.MissingStreak``, #507). No kept index: False."""
-    kept = sorted(common.raw_dir(DATASET_DIR).glob("*.idx.gz"))
+    # ``????-??-??``: the ownership walk keeps its own ``master.<YYYYMMDD>.idx.gz`` in the same folder, which sorts last
+    kept = sorted(common.raw_dir(DATASET_DIR).glob("????-??-??.idx.gz"))
     if not kept:
         return False
     try:
