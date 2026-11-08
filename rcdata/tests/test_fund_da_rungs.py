@@ -16,7 +16,8 @@ END, START, ACCN, FILED = "2025-12-31", "2025-01-01", "0000000001-26-000001", "2
 
 def _filer(**tags):
     """One FY2025 10-K with ``tags`` (USD): flows over the year, instants (``AssetsCurrent``...) at its end."""
-    instants = {"AssetsCurrent", "LiabilitiesCurrent"}
+    instants = {"AssetsCurrent", "LiabilitiesCurrent", "Goodwill", "IntangibleAssetsNetExcludingGoodwill",
+                "FiniteLivedIntangibleAssetsNet"}
     gaap = {"Revenues": {"units": {"USD": [fx._fact(1_000, END, ACCN, FILED, "10-K", "FY", 2025, START)]}}}
     for tag, val in tags.items():
         start = None if tag in instants else START
@@ -35,9 +36,13 @@ def _value(doc, field):
     ({"DepreciationAmortizationAndAccretionNet": 55, "DepreciationAndAmortization": 70}, (55, False)),  # rung 2
     ({"DepreciationAndAmortization": 70, "Depreciation": 40, "AmortizationOfIntangibleAssets": 20}, (70, False)),
     ({"Depreciation": 40, "AmortizationOfIntangibleAssets": 20}, (60, False)),      # rung 4: a sum, each line once
-    # Depreciation alone leaves amortization out, so it is no D&A (default chosen, change if avo prefers: 384 of
-    # the 792 rung-4 filers of 6 Nov 2026 tag no AmortizationOfIntangibleAssets).
-    ({"Depreciation": 40}, None),
+    # Depreciation alone is the whole D&A only when there is nothing to amortize (avo, 8 Nov 2026: 305 of the 384
+    # rung-4 filers with no amortization line hold no goodwill or intangible balance).
+    ({"Depreciation": 40}, (40, False)),
+    ({"Depreciation": 40, "Goodwill": 0, "IntangibleAssetsNetExcludingGoodwill": 0}, (40, False)),
+    ({"Depreciation": 40, "Goodwill": 500}, None),
+    ({"Depreciation": 40, "FiniteLivedIntangibleAssetsNet": 30}, None),
+    ({"Depreciation": -40}, None),
     ({"AmortizationOfIntangibleAssets": 20}, None),
 ])
 def test_depreciation_reads_the_rungs_in_order(tags, served):
