@@ -279,12 +279,38 @@ def dirty_ciks(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> frozense
             if d is not None:
                 keys |= set(d.keys)
         served = {r[0] for r in con.execute("SELECT DISTINCT cik FROM fundamental_company").fetchall()}
+        if plan.fallback:
+            keys |= _gone_companies(con)
         keys |= {c for c in ciks(universe()) if c not in served}
         con.execute(f"CREATE OR REPLACE TEMP TABLE {DIRTY_TABLE} (cik TEXT PRIMARY KEY)")
         if keys:
             con.execute(f"INSERT INTO {DIRTY_TABLE} SELECT unnest(?)", (sorted(keys),))
         plan.memo["ciks"] = frozenset(keys)
     return plan.memo["ciks"]
+
+
+def _gone_companies(con: duckdb.DuckDBPyConnection) -> set[str]:
+    """The companies the live copy serves rows of from a keyed source whose ``cik=<cik>`` folder is gone.
+
+    Only for a live file built before the manifest: its ``built_at`` cannot show a deleted partition, and the
+    manifest this build writes would never show it either (review of #554). A folder, not a single file, is what
+    goes in practice; a lone file deleted inside a folder is caught from the next build on, by the manifest."""
+    from . import companyfacts, filings, uw_financials
+    served = {
+        companyfacts.NAME: f"SELECT DISTINCT cik FROM fundamental_fact WHERE source = '{facts_source()}'",
+        filings.NAME: "SELECT DISTINCT cik FROM filing_item",
+        uw_financials.NAME: f"SELECT DISTINCT cik FROM fundamental_fact WHERE source = '{uw_financials.NAME}'",
+    }
+    gone: set[str] = set()
+    for name, sql in served.items():
+        folder = parquet_dir(name)
+        gone |= {r[0] for r in con.execute(sql).fetchall() if not (folder / f"cik={r[0]}").is_dir()}
+    return gone
+
+
+def facts_source() -> str:
+    from . import facts
+    return facts.SOURCE
 
 
 def staged_value(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, staging: str, folder: Path, pattern: str,

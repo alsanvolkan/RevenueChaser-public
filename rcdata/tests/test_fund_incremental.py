@@ -117,8 +117,8 @@ def _same_as_whole(monkeypatch) -> dict[str, list]:
     """Assert the live file (just built on the live copy) serves what a whole build of the same tree serves."""
     incremental = _snapshot()
     monkeypatch.setenv(dirty.WHOLE_ENV, "1")
-    check = _build()
-    assert "built whole" in _note(check), _note(check)
+    check = _build(allow_shrink=True)
+    assert "built whole" in _note(check) and check["result"] != "failed", _note(check)
     monkeypatch.delenv(dirty.WHOLE_ENV)
     whole = _snapshot()
     for name in whole:
@@ -293,3 +293,24 @@ def test_every_fundamentals_dataset_declares_a_dirty_set():
     assert dirty.incremental(base.kind_datasets("fundamentals"))
     keyed = {d.name for d in base.kind_datasets("fundamentals") if getattr(d, "dirty_keyed", False)}
     assert keyed == set(common.KEYED)
+
+
+def test_a_partition_gone_before_the_first_manifest_is_still_dropped(monkeypatch):
+    """The fallback cannot see a deleted file, and the manifest it writes would never show it: the keyed sources
+    add the companies the live file serves whose folder is gone (review of #554)."""
+    _seed()
+    _build()
+    con = duckdb.connect(str(serving.live_path("fundamentals")))
+    try:
+        con.execute(f"DROP TABLE {dirty.MANIFEST_TABLE}")
+        con.execute(f"DROP TABLE {dirty.RULES_TABLE}")
+    finally:
+        con.close()
+    for p in base.parquet_root().rglob("*.parquet"):
+        then = p.stat().st_mtime - 60
+        os.utime(p, (then, then))
+    shutil.rmtree(common.parquet_dir(filings.NAME) / f"cik={HEI}")
+    check = _build(allow_shrink=True)
+    assert "built on the live file" in _note(check) and "1 key(s) dirty" in _note(check), _note(check)
+    assert fx.q("SELECT count(*) FROM filing_item WHERE cik = ?", HEI) == [(0,)]
+    _same_as_whole(monkeypatch)

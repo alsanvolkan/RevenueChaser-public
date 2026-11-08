@@ -386,6 +386,8 @@ def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[
                                any_value(submissions_as_of) AS submissions_as_of
                         FROM fundamental_company WHERE cik NOT IN {DIRTY} GROUP BY cik""")
         cols = ", ".join(c for c, _ in facts.COMPANY)
+        # A staged company row always carries ``facts_as_of`` (``companyfacts.to_parquet_all`` sets it from the raw
+        # file's meta), so a clean company's live columns join exactly when its staged row would have.
         sec_co = (f"SELECT {cols} FROM {companyfacts.STAGING['company']} UNION ALL "
                   f"SELECT {cols.replace('run_id', 'NULL AS run_id')} FROM _prev_company WHERE facts_as_of IS NOT NULL "
                   "OR entity_name IS NOT NULL")
@@ -530,6 +532,11 @@ class FundamentalsTables:
 
     def to_parquet_all(self, ctx, raws) -> list:
         return []
+
+    def rules_state(self) -> str:
+        """The document cap the ``filing_item`` CHECK embeds (``filings.max_text_chars``) lives outside this package;
+        a live copy keeps the table and its old CHECK, so a change of the cap builds whole (#446)."""
+        return f"max_text_chars={filings.max_text_chars()}"
 
     def dirty(self, ctx: base.RunContext):
         """No Parquet of its own: what it serves is made from the sources' staging (#446)."""

@@ -207,6 +207,12 @@ def rules_fingerprint(datasets: Iterable[Any]) -> str:
         state = getattr(d, "rules_state", None)
         if state is not None:
             h.update(f"{d.name}={state()}".encode() + b"\0")
+    # The code that decides what a build on the live copy reloads is a rule too: a fix to it must reach the rows
+    # it built wrongly, which only a whole build revisits (review of #554).
+    for module_name in (__name__, base.__name__, serving.__name__):
+        path = getattr(sys.modules.get(module_name), "__file__", None)
+        if path:
+            h.update(Path(path).name.encode() + b"\0" + Path(path).read_bytes() + b"\0")
     for d in datasets:
         module = sys.modules.get(type(d).__module__)
         path = getattr(module, "__file__", None)
@@ -285,6 +291,9 @@ class Plan:
     manifest: dict[str, tuple[int, float]]
     rules: str
     changed: tuple[Path, ...] | None
+    #: The live file had no manifest, so ``changed`` came from its ``built_at``: no gone file is in it, and a
+    #: keyed dataset adds the keys the live file serves that have no partition any more (``common.dirty_ciks``).
+    fallback: bool = False
     memo: dict[str, Any] = field(default_factory=dict)       # what the datasets of one build share (their keys)
 
     def note(self) -> str:
@@ -304,6 +313,7 @@ def plan(kind: str, ctx: Any, datasets: Iterable[Any] | None = None) -> Plan | N
         return None
     current = scan(datasets)
     rules = rules_fingerprint(datasets)
+    fallback = live_manifest(kind) is None
     changed = changes(kind, current)
     ctx.changed = changed
     reason = None
@@ -328,7 +338,7 @@ def plan(kind: str, ctx: Any, datasets: Iterable[Any] | None = None) -> Plan | N
                 reason = f"{d.name}: no narrower dirty set"
                 sets = {}
                 break
-    return Plan(reason, sets, current, rules, changed)
+    return Plan(reason, sets, current, rules, changed, fallback)
 
 
 def write_manifest(con: duckdb.DuckDBPyConnection, p: Plan) -> None:
