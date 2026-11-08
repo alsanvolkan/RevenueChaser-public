@@ -138,7 +138,8 @@ def _iso_epoch(value) -> float | None:
 def collect(now: datetime | None = None, *, datasets: dict | None = None, timer: dict | None = None,
             ibkr: Callable[[], dict | None] | None = None, cgroup=None, alive=None) -> dict[str, list]:
     """``{family: [(labels, value), ...]}``. Each part is read on its own; a part that fails is left empty and
-    counted, and a dataset that fails is left out of the dataset families and counted under ``datasets``. ``timer`` is the builder timer's reading (default: ``TIMER.get()``)."""
+    counted, and a dataset that fails is left out of the dataset families and counted under ``datasets``.
+    ``timer`` is the builder timer's reading (default: ``TIMER.get()``)."""
     from RevenueChaser.module_settings import newdata
     from RevenueChaser.rcdata import ops
     now = now or datetime.now(timezone.utc)

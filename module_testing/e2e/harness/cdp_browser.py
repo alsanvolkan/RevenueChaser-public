@@ -177,8 +177,8 @@ class Page:
             # A later plain size must not keep the phone's user agent: put the browser's own back.
             if self._default_ua is None:
                 self._default_ua = self._call("Browser.getVersion")["userAgent"]
-            self.send("Emulation.setUserAgentOverride", userAgent=user_agent or self._default_ua,
-                      platform="Linux armv8l" if user_agent and mobile else "")
+            extra = {"platform": "Linux armv8l"} if user_agent and mobile else {}
+            self.send("Emulation.setUserAgentOverride", userAgent=user_agent or self._default_ua, **extra)
             self._ua_overridden = user_agent is not None
         self.send("Emulation.setEmulatedMedia",
                   features=[{"name": "prefers-color-scheme", "value": scheme}])
