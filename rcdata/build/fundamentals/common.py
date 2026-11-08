@@ -294,7 +294,9 @@ def _gone_companies(con: duckdb.DuckDBPyConnection) -> set[str]:
 
     Only for a live file built before the manifest: its ``built_at`` cannot show a deleted partition, and the
     manifest this build writes would never show it either (review of #554). A folder, not a single file, is what
-    goes in practice; a lone file deleted inside a folder is caught from the next build on, by the manifest."""
+    goes in practice. shortcut: a lone file deleted inside a folder that stays (``documents.parquet``) between the
+    live file's build and this one is not seen, now or later; it can only happen once, on the first build after
+    the manifest landed, and ``RC_BUILD_WHOLE=1`` clears it. Upgrade only if a source starts deleting single files."""
     from . import companyfacts, filings, uw_financials
     served = {
         companyfacts.NAME: f"SELECT DISTINCT cik FROM fundamental_fact WHERE source = '{facts_source()}'",
