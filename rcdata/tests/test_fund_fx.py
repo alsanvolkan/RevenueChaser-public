@@ -86,3 +86,16 @@ def test_a_nan_close_is_left_out_never_zero(yf):
     answers["CADUSD=X"] = _history({"2026-11-04": float("nan"), "2026-11-05": 0.51})
     fx.run(fx_rates.NAME, "2026-11-06")
     assert [r for r in _parquet() if r[0] == "CAD"] == [("CAD", date(2026, 11, 5), 0.51)]
+
+
+def test_a_second_run_on_the_same_day_keeps_the_whole_history(yf):
+    # Review of PR 536: the second run asks only the last week and wrote over the same <as_of>/<CUR>.json.gz,
+    # so the raw file and the Parquet lost every older day.
+    asked, answers = yf
+    answers["CADUSD=X"] = _history({"2001-01-02": 0.65, "2026-11-04": 0.5, "2026-11-05": 0.51})
+    fx.run(fx_rates.NAME, "2026-11-06")
+    answers["CADUSD=X"] = _history({"2026-11-05": 0.52})
+    fx.run(fx_rates.NAME, "2026-11-06")
+    assert asked[-1] == ("CADUSD=X", "2026-10-29")
+    assert [r for r in _parquet() if r[0] == "CAD"] == [("CAD", date(2001, 1, 2), 0.65), ("CAD", date(2026, 11, 4), 0.5),
+                                                        ("CAD", date(2026, 11, 5), 0.52)]

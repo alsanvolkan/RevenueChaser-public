@@ -82,9 +82,12 @@ class FxRates:
                 empty.append(cur)
                 ctx.issue("no_rows", cur, f"yfinance {cur}USD=X: no rows from {start or 'the start'}")
                 continue
-            out.append(base.write_raw_json(day_dir(as_of) / f"{cur}.json.gz",
-                                           {"currency": cur, "as_of": as_of.isoformat(), "start": start,
-                                            "fetched_at": time.time(), "run_id": ctx.run_id, "rates": res.data}))
+            path = day_dir(as_of) / f"{cur}.json.gz"
+            # A second run on the same day asks only the last week; it adds to that day's file, never replaces it,
+            # or the whole history the first run read would be gone from raw and from Parquet.
+            rates = {**(base.read_raw_json(path).get("rates") or {}), **res.data} if path.exists() else res.data
+            out.append(base.write_raw_json(path, {"currency": cur, "as_of": as_of.isoformat(), "start": start,
+                                                  "fetched_at": time.time(), "run_id": ctx.run_id, "rates": rates}))
         if not out and (failed or empty):
             raise base.SourceError(f"yfinance fx: no currency answered ({len(failed)} failed, {len(empty)} empty)")
         ctx.notes.append(f"{len(out)} of {len(CURRENCIES)} currencies read, {len(failed)} failed, {len(empty)} empty")
