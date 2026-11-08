@@ -152,3 +152,8 @@ def test_the_reads_of_a_board_say_whether_it_declared_them():
     planned = boards.reads_of("module_comovement")
     assert planned["declared"] is False and "prices.bars" in planned["needs"]
     assert boards.reads_of("module_no_such_board") == {"declared": False, "needs": ()}
+
+
+def test_comovement_plans_the_corporate_actions_its_bar_reads_join():
+    """#489: ``ohlc.py`` calls ``read.changed_at`` and ``read.bar_facts``, and both query ``corporate_action``."""
+    assert "prices.actions" in boards.PLANNED_READS["module_comovement"]
