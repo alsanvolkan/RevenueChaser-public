@@ -166,3 +166,60 @@ def test_relatedness_plans_the_universe_and_the_two_fundamentals_needs_it_reads(
         "identity.universe", "fundamentals.companies", "fundamentals.filings")
     assert boards.reads_of("module_relatedness") == {
         "declared": False, "needs": ("identity.universe", "fundamentals.companies", "fundamentals.filings")}
+
+
+# ── #491: a board's planned reads are compared with the rcdata.read calls of its own code ─────────────────────────
+
+def test_the_reader_map_names_the_catalog_tables_each_read_function_queries():
+    tables = boards.reader_tables()
+    assert tables["changed_at"] == {"price_bar_daily", "corporate_action"}, "the SQL text counts, not only _rows' table"
+    assert tables["bar_facts"] == {"price_bar_daily", "corporate_action"}
+    assert tables["filing_texts"] == {"filing_item"}
+    assert tables["fundamental_companies"] == {"fundamental_company"}
+    assert tables["market_series"] == {"market_series"}
+    assert tables["watched"] == set(), "a watch list lives in ops.sqlite, which no need covers"
+
+
+def test_the_call_scan_sees_every_import_form_and_leaves_tests_out(tmp_path, monkeypatch):
+    pkg = tmp_path / "module_fake"
+    (pkg / "tests").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "a.py").write_text("from RevenueChaser.rcdata import read\n\ndef f():\n    return read.ticker_bars([])\n",
+                              encoding="utf-8")
+    (pkg / "b.py").write_text("def g():\n    from RevenueChaser.rcdata import read as rc\n    return rc.filing_texts([])\n",
+                              encoding="utf-8")
+    (pkg / "c.py").write_text("from RevenueChaser.rcdata.read import actions as acts\n\nX = acts\n", encoding="utf-8")
+    (pkg / "d.py").write_text("read = object()\n\ndef h():\n    return read.peers(1)\n", encoding="utf-8")
+    (pkg / "tests" / "test_x.py").write_text("from RevenueChaser.rcdata import read\nread.customers(1)\n",
+                                             encoding="utf-8")
+    monkeypatch.setattr(boards, "root", lambda: tmp_path)
+    assert boards.read_calls("module_fake") == ("actions", "filing_texts", "ticker_bars")
+
+
+def test_a_read_the_code_makes_and_the_plan_leaves_out_is_named_with_its_function(tmp_path, monkeypatch):
+    pkg = tmp_path / "module_fake"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "a.py").write_text("from RevenueChaser.rcdata import read\nread.changed_at([])\nread.market_series([])\n",
+                              encoding="utf-8")
+    monkeypatch.setattr(boards, "root", lambda: tmp_path)
+    monkeypatch.setattr(boards, "PLANNED_READS", {"module_fake": ("prices.bars", "macro.dgs10", "options.daily")})
+    assert boards.unplanned_reads("module_fake") == (("changed_at", "corporate_action", ("prices.actions",)),)
+    assert boards.unread_plans("module_fake") == ("options.daily",)
+
+
+def test_every_board_not_migrated_yet_plans_every_need_its_code_reads():
+    """#491: the plan is written by hand and drifted from the code (#483 found three boards with lines missing).
+    Only the board's own package is scanned: a read made inside a shared ``core`` module is not counted here,
+    because a board importing a core module may use none of that module's reads."""
+    missing = {b: boards.unplanned_reads(b) for b in sorted(boards.UNDECLARED)}
+    assert {b: m for b, m in missing.items() if m} == {}
+
+
+def test_a_planned_need_the_code_never_reads_is_a_warning_not_a_failure():
+    import warnings
+    for board in sorted(boards.UNDECLARED):
+        unread = boards.unread_plans(board)
+        if unread:
+            warnings.warn(f"{board}: planned but not read by its own package (maybe through core): "
+                          f"{', '.join(unread)}", stacklevel=1)
