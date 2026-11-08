@@ -464,9 +464,13 @@ def main(argv: list[str] | None = None) -> int:
             for name, why, _, error in due.enqueue_due():
                 print(f"{name}: {why}", file=sys.stderr, flush=True)
                 due_failed = due_failed or int(error)
-            pruned = ops.prune_issues()
-            if pruned:
-                print(f"build_issues: {pruned} resolved row(s) pruned", file=sys.stderr, flush=True)
+            try:
+                pruned = ops.prune_issues()
+            except ops.BUSY_ERRORS as e:                 # best effort: the next hour prunes, the queue still drains
+                print(f"build_issues: prune skipped, ops store busy: {e}", file=sys.stderr, flush=True)
+            else:
+                if pruned:
+                    print(f"build_issues: {pruned} resolved row(s) pruned", file=sys.stderr, flush=True)
         # A due step that failed still drains the queue, then fails the pass, so an hourly error is not an exit 0.
         # Without --dataset this is the hourly pass, which leaves the attended requests queued for the terminal
         # that may run them.

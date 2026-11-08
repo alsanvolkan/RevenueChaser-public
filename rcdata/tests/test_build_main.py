@@ -173,6 +173,19 @@ def test_the_hourly_pass_prunes_the_resolved_build_issues_and_a_dataset_run_does
     assert calls == [1]
 
 
+def test_a_busy_store_skips_the_prune_and_the_hourly_pass_still_drains_the_queue(monkeypatch):
+    ran: list = []
+    monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+
+    def busy():
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(ops, "prune_issues", busy)
+    _nothing_due()
+    ops.enqueue("market_series", None, by="settings")
+    assert cli.main(["run", "--once"]) == 0
+    assert [r[0] for r in ran] == ["market_series"]
+
+
 def test_the_attended_runner_drains_the_attended_requests_only(monkeypatch):
     ran: list = []
     monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
