@@ -199,6 +199,33 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  red-on-base:
+    # A test the PR adds that already passes on the merge-base proves nothing about the change
+    # (scripts/red_on_base.py; plan home-server/2026-11-08_review-llm-coder-llm-plan.md step 3). It reports, it does
+    # not gate: merge-gate does not need it and no ruleset requires it (avo 8 Nov 2026: no required check).
+    # A pure refactor or a regression test for behaviour that already works is expected to be red here; say so in
+    # the PR.
+    if: github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: RevenueChaser
+          # The merge-base with the base branch needs the history.
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: RevenueChaser/requirements.txt
+      - run: pip install -r RevenueChaser/requirements.txt
+      - name: new tests against the merge-base
+        working-directory: RevenueChaser
+        env:
+          BASE: origin/${{ github.base_ref }}
+        run: python scripts/red_on_base.py "$BASE"
+
   merge-gate:
     # The one check that means "merge-ready": green only for a FULL run whose unit and e2e both passed.
     # A SELECTIVE run fails here on purpose, so an all-green unlabelled PR does not read as gated.
