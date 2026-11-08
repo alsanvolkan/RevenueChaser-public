@@ -182,21 +182,20 @@ def test_report_shows_stale_badge():
 def test_payload_marks_stale(rawstore_tmp_db):
     _old_mode_profile("A", products=["x"])
     store.save_scores({})
-    payload = engine._payload({"A": store.load_profiles(["A"])["A"]}, {},
-                              stale={"A"})
+    payload = engine._payload({"A": store.load_profiles(["A"])["A"]}, stale={"A"})
     assert payload["companies"][0]["stale"] is True
 
 
 # ── C3: empty answers ───────────────────────────────────────────────────────
 def test_fenced_json_parses():
-    raw = "```json\n{\"products\": [\"gpu\"]}\n```"
-    assert profiles_mod.parse_profile(raw)["products"] == ["gpu"]
-    assert profiles_mod.parse_profile("```\n{\"products\": [\"a\"]}\n```")["products"] == ["a"]
+    from RevenueChaser.module_relatedness.tests.test_relatedness import v3_reply
+    assert profiles_mod.parse_profile("```json\n" + v3_reply(["gpu"]) + "\n```")["products"] == ["gpu"]
+    assert profiles_mod.parse_profile("```\n" + v3_reply(["a"]) + "\n```")["products"] == ["a"]
 
 
 def test_string_valued_fields_are_accepted():
     p = profiles_mod.parse_profile(json.dumps(
-        {"products": "GPU, accelerators", "business_model": "Fabless"}))
+        {"segments": [{"name": "Chips", "products": "GPU, accelerators"}], "business_model": "Fabless"}))
     assert p["products"] == ["gpu", "accelerators"] and p["business_model"] == ["fabless"]
 
 

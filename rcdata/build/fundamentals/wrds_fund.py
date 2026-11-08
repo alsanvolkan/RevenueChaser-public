@@ -41,6 +41,7 @@ import duckdb
 
 from ....core import calendar
 from .. import base
+from .. import dirty as dirty_set
 from ..spine import wrds as wrds_session
 from . import KIND, common, facts
 
@@ -234,6 +235,19 @@ class WrdsFund:
             WHERE o.value IS DISTINCT FROM n.value
               AND (coalesce(o.gvkey, n.gvkey), coalesce(o.datadate, n.datadate)) IN ({both})
             ORDER BY gvkey, datadate, item"""
+
+    # ── incremental (#446) ──
+    def dirty(self, ctx: base.RunContext):
+        """One snapshot a month, reloaded whole by every build, on the live copy too."""
+        return dirty_set.ALL
+
+    def full_rebuild_reason(self, ctx: base.RunContext) -> str | None:
+        """A new monthly snapshot restates Compustat's history: the owner's rule is a whole build (#446 item 6)."""
+        folder = common.parquet_dir(self.name)
+        changed = getattr(ctx, "changed", None) or ()
+        new = sorted({p.relative_to(folder).parts[0] for p in changed
+                      if folder in p.parents and p.relative_to(folder).parts[0].startswith("snapshot=")})
+        return f"a new monthly snapshot ({', '.join(new)})" if new else None
 
     # ── stage ──
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:

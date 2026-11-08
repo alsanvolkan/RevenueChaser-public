@@ -6,6 +6,9 @@
 
 - Refuses while any RevenueChaser process (dashboard, scheduled job) is using
   the store — stop them first.
+- Refuses while ``<name>.duckdb.wal`` exists next to the store file (#214): DuckDB
+  would replay it on top of the restored snapshot. Nothing is touched; the
+  message names the file.
 - Checks the snapshot opens and fingerprints it (row count + content checksum
   per table) before touching anything.
 - Moves the current file aside as ``<name>.duckdb.pre-restore`` (overwritten on
@@ -55,6 +58,13 @@ def restore(snapshot: Path) -> Path:
     peers = rawstore._peer_pids(target)
     if peers:
         raise BackupError(f"store in use by RevenueChaser process(es) {peers}; stop them first")
+    # DuckDB replays <name>.duckdb.wal on the next open, so a WAL left by a writer that did not
+    # close cleanly would be applied on top of the restored snapshot (#214, decision A: refuse).
+    wal = target.with_name(target.name + ".wal")
+    if wal.exists():
+        raise BackupError(f"leftover write-ahead log {wal}: it would be replayed on top of the snapshot; "
+                          "move it aside (or, if the current file should keep those writes, open the store "
+                          "once so DuckDB checkpoints it), then restore again")
     tables = _table_fingerprints(snapshot)  # raises if the snapshot does not open
     aside = target.with_name(target.name + ".pre-restore")
     if target.exists():

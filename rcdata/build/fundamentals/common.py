@@ -190,14 +190,27 @@ def meta_path(raw: Path) -> Path:
 
 
 def stage_glob(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str, str]], folder: Path,
-               pattern: str, select: str | None = None) -> int:
+               pattern: str, select: str | None = None, ciks: Iterable[str] | None = None) -> int:
     """``CREATE TEMP TABLE name`` with ``schema`` and load every Parquet file under ``folder`` matching ``pattern``
     (one ``read_parquet`` glob, not a list of thousands of paths); its row count. ``select`` shapes the load over
-    ``{src}``, as in ``spine.stage.create``. No file yet: an empty, typed table."""
+    ``{src}``, as in ``spine.stage.create``. No file yet: an empty, typed table.
+
+    ``ciks`` (a build on the live copy, :func:`dirty_ciks`) loads only those companies' partitions: the
+    ``cik=*`` of ``pattern`` is each of them in turn."""
     cols = ", ".join(f'"{c}" {t}' for c, t in schema)
     con.execute(f"CREATE OR REPLACE TEMP TABLE {name} ({cols})")
+    names = ", ".join(f'"{c}"' for c, _ in schema)
+    if ciks is not None:
+        if "cik=*" not in pattern:
+            raise ValueError(f"{pattern!r} is not partitioned by company")
+        files = [p for c in sorted(ciks) if folder.is_dir()
+                 for p in sorted(folder.glob(pattern.replace("cik=*", f"cik={c}")))]
+        if files:
+            src = f"read_parquet([{', '.join(base.sql_path(p) for p in files)}], union_by_name = true)"
+            body = select.replace("{src}", src) if select else f"SELECT {names} FROM {src}"
+            con.execute(f"INSERT INTO {name} SELECT {names} FROM ({body})")
+        return count(con, name)
     if folder.is_dir() and next(folder.glob(pattern), None) is not None:
-        names = ", ".join(f'"{c}"' for c, _ in schema)
         src = f"read_parquet({base.sql_path(folder / pattern)}, union_by_name = true)"
         body = select.replace("{src}", src) if select else f"SELECT {names} FROM {src}"
         con.execute(f"INSERT INTO {name} SELECT {names} FROM ({body})")
@@ -209,9 +222,16 @@ def count(con: duckdb.DuckDBPyConnection, table: str, where: str = "") -> int:
 
 
 def compare_live(con: duckdb.DuckDBPyConnection, select_new: str, table: str, columns: list[str],
-                 where: str = "") -> tuple[int, int]:
+                 where: str = "", dirty_only: bool = False) -> tuple[int, int]:
     """``(added, removed)``: rows of ``select_new`` (over the build connection) against ``table`` of the live
-    ``fundamentals.duckdb`` on ``columns``, the live rows filtered by ``where``. No live file or table: all added."""
+    ``fundamentals.duckdb`` on ``columns``, the live rows filtered by ``where``. No live file or table: all added.
+
+    ``dirty_only`` (a build on the live copy) compares only the dirty companies' rows (:data:`DIRTY_TABLE`): every
+    other company's rows are the live file's own, so they cannot differ."""
+    if dirty_only:
+        only = f"cik IN (SELECT cik FROM {DIRTY_TABLE})"
+        select_new = f"SELECT * FROM ({select_new}) WHERE {only}"
+        where = f"({where}) AND {only}" if where else only
     from ... import serving
     cols = ", ".join(f'"{c}"' for c in columns)
     new_rows = int(con.execute(f"SELECT count(*) FROM ({select_new})").fetchone()[0])
@@ -231,3 +251,79 @@ def compare_live(con: duckdb.DuckDBPyConnection, select_new: str, table: str, co
         return int(added), int(removed)
     finally:
         con.execute("DETACH live_fund")
+
+
+# ── #446: the build on the live copy ─────────────────────────────────────────────────────────────────────────
+
+#: The datasets partitioned by company (``cik=<cik>``). On a build over the live copy their staging holds only the
+#: dirty companies, and every served row of those companies is replaced; every other dataset is small and is
+#: reloaded whole (``tables.py``).
+KEYED = ("sec/companyfacts", "sec/filings", "uw/financials")
+#: The build connection's TEMP table of the dirty companies, one ``cik`` a row.
+DIRTY_TABLE = "_dirty_cik"
+
+
+def dirty_ciks(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> frozenset[str] | None:
+    """The companies a build on the live copy reloads; None for a whole build.
+
+    The keys of the changed partitions of every :data:`KEYED` dataset, and every company of the universe the live
+    file serves no row of (one that joined the list: its partitions may be old, but it has no company row yet).
+    Worked out once per build (the plan's memo) and written to :data:`DIRTY_TABLE`."""
+    plan = getattr(ctx, "incremental", None)
+    if plan is None:
+        return None
+    if "ciks" not in plan.memo:
+        keys: set[str] = set()
+        for name in KEYED:
+            d = plan.dirty.get(name)
+            if d is not None:
+                keys |= set(d.keys)
+        served = {r[0] for r in con.execute("SELECT DISTINCT cik FROM fundamental_company").fetchall()}
+        if plan.fallback:
+            keys |= _gone_companies(con)
+        keys |= {c for c in ciks(universe()) if c not in served}
+        con.execute(f"CREATE OR REPLACE TEMP TABLE {DIRTY_TABLE} (cik TEXT PRIMARY KEY)")
+        if keys:
+            con.execute(f"INSERT INTO {DIRTY_TABLE} SELECT unnest(?)", (sorted(keys),))
+        plan.memo["ciks"] = frozenset(keys)
+    return plan.memo["ciks"]
+
+
+def _gone_companies(con: duckdb.DuckDBPyConnection) -> set[str]:
+    """The companies the live copy serves rows of from a keyed source whose ``cik=<cik>`` folder is gone.
+
+    Only for a live file built before the manifest: its ``built_at`` cannot show a deleted partition, and the
+    manifest this build writes would never show it either (review of #554). A folder, not a single file, is what
+    goes in practice. shortcut: a lone file deleted inside a folder that stays (``documents.parquet``) between the
+    live file's build and this one is not seen, now or later; it can only happen once, on the first build after
+    the manifest landed, and ``RC_BUILD_WHOLE=1`` clears it. Upgrade only if a source starts deleting single files."""
+    from . import companyfacts, filings, uw_financials
+    served = {
+        companyfacts.NAME: f"SELECT DISTINCT cik FROM fundamental_fact WHERE source = '{facts_source()}'",
+        filings.NAME: "SELECT DISTINCT cik FROM filing_item",
+        uw_financials.NAME: f"SELECT DISTINCT cik FROM fundamental_fact WHERE source = '{uw_financials.NAME}'",
+    }
+    gone: set[str] = set()
+    for name, sql in served.items():
+        folder = parquet_dir(name)
+        gone |= {r[0] for r in con.execute(sql).fetchall() if not (folder / f"cik={r[0]}").is_dir()}
+    return gone
+
+
+def facts_source() -> str:
+    from . import facts
+    return facts.SOURCE
+
+
+def staged_value(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, staging: str, folder: Path, pattern: str,
+                 expr: str, select: str | None = None):
+    """``expr`` (``max(source_as_of)``, ``count(*)``) over a keyed source's whole staging: the staging table itself
+    on a whole build, the whole Parquet tree on a build over the live copy (whose staging holds only the dirty
+    companies). ``select`` shapes the load as in :func:`stage_glob`."""
+    if dirty_ciks(ctx, con) is None:
+        return con.execute(f"SELECT {expr} FROM {staging}").fetchone()[0]
+    if not (folder.is_dir() and next(folder.glob(pattern), None) is not None):
+        return con.execute(f"SELECT {expr} FROM {staging} WHERE false").fetchone()[0]
+    src = f"read_parquet({base.sql_path(folder / pattern)}, union_by_name = true)"
+    body = select.replace("{src}", src) if select else f"SELECT * FROM {src}"
+    return con.execute(f"SELECT {expr} FROM ({body})").fetchone()[0]

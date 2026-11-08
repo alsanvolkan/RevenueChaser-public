@@ -244,3 +244,21 @@ def test_a_chain_past_the_ceiling_is_refused_before_the_grid_is_asked(http_mock,
     row = _daily()
     assert row["result"] == "failed"
     assert http_mock.calls("strike-expiry") == [], "no grid call once the chain is refused"
+
+
+@pytest.mark.parametrize("mod", ["greek", "spot"])
+def test_re_typing_an_old_day_does_not_push_coverage_above_one(mod, monkeypatch):
+    """The 1.5733 of 6 Nov: an as-of of an old day shrank the denominator below the days the table holds."""
+    import duckdb
+    from RevenueChaser.rcdata.build import uw_spot_expiry_strike as spot
+    m = uw if mod == "greek" else spot
+    monkeypatch.setattr(base, "compare_with_live", lambda *a: (0, 0))
+    days = list(base.iter_sessions(m.FIRST_SESSION, SESSION))
+    con = duckdb.connect()
+    con.execute(f"CREATE TABLE {m.TABLE} (session_date DATE)")
+    con.executemany(f"INSERT INTO {m.TABLE} VALUES (?)", [(d,) for d in days])
+    ctx = base.RunContext(run_id="t", dataset=m.NAME, as_of=days[len(days) // 2])
+    assert m.DATASET.check(ctx, con)["coverage"] == 1.0
+    con.execute(f"DELETE FROM {m.TABLE} WHERE session_date = ?", [SESSION])
+    ctx = base.RunContext(run_id="t", dataset=m.NAME, as_of=SESSION)
+    assert m.DATASET.check(ctx, con)["coverage"] < 1.0, "a missing newest day still counts against a fresh as-of"

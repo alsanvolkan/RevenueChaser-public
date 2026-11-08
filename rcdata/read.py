@@ -883,6 +883,13 @@ def filing_text(cik, item: str = "business") -> dict | None:
     return rows[0] if rows else None
 
 
+def filing_documents(cik, item: str = "business") -> list[dict]:
+    """Every served document of ``item`` of company ``cik``, newest filing first (Relatedness's fallback to the
+    previous year's filing, #400)."""
+    return _rows("filing_item", "SELECT * FROM filing_item WHERE cik = ? AND kind = 'document' AND item = ? "
+                                "ORDER BY filing_date DESC, accession DESC", [_cik(cik), str(item)])
+
+
 def filing_texts(ciks: Iterable, item: str = "business") -> list[dict]:
     """``filing_text`` of several companies at once: per company the newest served document of ``item``, one row
     each (a company with none is absent)."""

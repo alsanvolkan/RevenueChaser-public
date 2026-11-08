@@ -198,10 +198,15 @@ def _backup_ops_redis(out: Path, manifest: _Manifest) -> Path | None:
             local = Path(staging) / dest.name
             ops.ensure.__wrapped__(local)               # the SQLite tables and stamp, whatever the backend
             with ops.connect(local) as con:
-                for table, rows in taken.items():
-                    for row in rows:
-                        con.execute(f"INSERT INTO {table} ({', '.join(row)}) "
-                                    f"VALUES ({', '.join('?' * len(row))})", tuple(row.values()))
+                # One transaction, one statement per table: the autocommit connection made each row its own commit,
+                # 9-11 min a night on the HDD before #430 (#387); 42,225 rows on tmpfs: 0.9 s -> 0.1 s. _decode gives
+                # every row of a table the same columns.
+                with ops._tx(con):
+                    for table, rows in taken.items():
+                        if rows:
+                            con.executemany(f"INSERT INTO {table} ({', '.join(rows[0])}) "
+                                            f"VALUES ({', '.join('?' * len(rows[0]))})",
+                                            [tuple(row.values()) for row in rows])
                 con.execute("PRAGMA journal_mode = DELETE")     # one self-contained file
             _copy_bytes(local, tmp)
         got = _sqlite_counts(tmp)
