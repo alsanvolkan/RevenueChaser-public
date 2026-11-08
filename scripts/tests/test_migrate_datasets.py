@@ -367,7 +367,7 @@ class TestEveryManifestDatasetHasARoundTripTest:
                     "llm_cache", "relatedness_profiles", "relatedness_attributes",
                     "relatedness_scores", "theme_runs", "relatedness_themes",
                     "relatedness_theme_tags", "relatedness_theme_members",
-                    "relatedness_theme_etfs",
+                    "relatedness_theme_etfs", "relatedness_embeddings",   # schema 13 (#401)
                     "oipd_chain", "oipd_meta",
                     "security_master", "identity_conflicts", "identity_source_cache",
                     "identity_runs", "board_settings", "store_schema",
