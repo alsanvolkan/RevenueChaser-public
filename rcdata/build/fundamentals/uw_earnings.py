@@ -91,8 +91,8 @@ def rejected(error: dict | None) -> bool:
     """Whether a failed UW answer is the request's own fault: a 4xx other than 401/403 (the key) and 429
     (throttling) -- an unknown ticker, a bad parameter. The client keeps those out of its breaker for the same
     reason (``unusual_whales.get_result``); a 5xx, a 429, a transport error or an open breaker is the provider's."""
-    status = (error or {}).get("status")
-    return isinstance(status, int) and 400 <= status < 500 and status not in (401, 403, 429)
+    from ....core.providers.unusual_whales import is_rejected
+    return is_rejected((error or {}).get("status"))
 
 
 def companies() -> list[tuple[str, str]]:
@@ -168,7 +168,7 @@ class UWEarnings:
             # counted by ``RunContext._on_uw_request``, which sees the retries too, so it is not counted here.
             res = ctx.uw_client().stock_earnings_result(ticker)
             if res.status != "ok":
-                ctx.count(PROVIDER, failures=1)
+                # Not counted here: ``RunContext`` counts every final failure once (#519 finding 2).
                 failed.append(ticker)
                 ctx.issue("fetch_failed", ticker, f"UW {endpoint(ticker)}: {res.error}")
                 if rejected(res.error):

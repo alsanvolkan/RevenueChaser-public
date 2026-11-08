@@ -253,3 +253,45 @@ def test_failures_at_the_very_end_are_not_a_stop(http_mock, monkeypatch):
     http_mock.add("/earnings", {"error": "down"}, status=503)
     ctx, out = _fetch()
     assert [p.name for p in out] == ["AAA.json.gz"]
+
+
+# ── Finding 2: a final failure is one failure, whoever saw it ───────────────────────────────────────────────────
+
+def _failures_today() -> int:
+    day = ops._today()
+    return sum(int(r["failures"]) for r in ops.calls_by_day(day, day) if r["provider"] == "uw")
+
+
+def test_a_provider_side_failure_is_counted_once(http_mock, monkeypatch):
+    """A 503 after the retries is recorded by the client (``health()``) and added by ``RunContext.close``; the
+    dataset used to add its own as well, so the Data screen showed 2 for one failed company."""
+    _companies(monkeypatch, ["DOWN", "MSFT"])
+    http_mock.add("/stock/DOWN/earnings", {"error": "down"}, status=503)
+    http_mock.add("/stock/MSFT/earnings", ANSWER)
+    ctx, _ = _fetch()
+    assert ctx.calls["uw"][1] == 1 and _failures_today() == 1
+
+
+def test_a_rejected_request_is_counted_once(http_mock, monkeypatch):
+    """A 422 never reaches ``health()`` (not an outage), so ``RunContext`` counts it where it sees the answer."""
+    _companies(monkeypatch, ["BAD", "MSFT"])
+    http_mock.add("/stock/BAD/earnings", {"error": "unknown ticker"}, status=422)
+    http_mock.add("/stock/MSFT/earnings", ANSWER)
+    ctx, _ = _fetch()
+    assert ctx.calls["uw"][1] == 1 and _failures_today() == 1
+
+
+def test_every_uw_dataset_counts_a_rejected_request_the_same_way(http_mock):
+    """Not only ``uw/earnings``: any dataset on ``ctx.uw_client()`` (``uw/financials`` counted none of its own) gets
+    one failure for a request UW rejects, and none for a 401/403/429/5xx, which ``close()`` takes from
+    ``health()``."""
+    http_mock.add("/stock/BAD/financials", {"error": "unknown ticker"}, status=404)
+    http_mock.add("/stock/KEY/financials", {"error": "no"}, status=401)
+    ctx = base.RunContext(run_id="t", dataset="uw/financials")
+    try:
+        ctx.uw_client().get_result("/stock/BAD/financials")
+        ctx.uw_client().get_result("/stock/KEY/financials")
+    finally:
+        ctx.close()
+        ctx.flush_counts()
+    assert ctx.calls["uw"][:2] == [2, 2] and _failures_today() == 2
