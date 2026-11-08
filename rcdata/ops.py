@@ -44,6 +44,7 @@ import sys
 import threading
 import time
 from contextlib import closing, contextmanager
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
@@ -66,6 +67,8 @@ KIND_MODES = ("off", "raw", "parquet", "full")
 #: The board's two switches (#527, avo 6 Nov 2026): ``fetch`` stops every fetch and build, ``backup`` every backup.
 #: A switch with no ``switch`` row, or with ``off_at`` NULL, is on.
 SWITCHES = ("fetch", "backup")
+# avo, 8 Nov 2026 ("B", #387): a resolved build issue is kept seven days; an open one until it is resolved.
+RESOLVED_ISSUE_DAYS = 7
 # The UW response headers sampled into uw_remaining: only UW's own, never a cookie or anything else the answer had.
 UW_HEADER_PREFIX = "x-uw-"
 # What a live answer carries (27 Oct 2026): x-uw-daily-req-count is today's count; the per-minute pair is a rate
@@ -947,6 +950,18 @@ def latest_good_check(dataset: str) -> dict | None:
     rows = _select("SELECT * FROM dataset_check WHERE dataset = ? AND result IN ('changed', 'unchanged') "
                    "ORDER BY id DESC LIMIT 1", (dataset,))
     return rows[0] if rows else None
+
+
+def _prune_cutoff(days: int) -> str:
+    return (date.fromisoformat(_today()) - timedelta(days=days)).isoformat()
+
+
+@_routed
+def prune_issues(days: int = RESOLVED_ISSUE_DAYS) -> int:
+    """Delete the ``build_issues`` rows resolved more than ``days`` days ago; an open row is never touched. Returns
+    how many went."""
+    with _open() as con, _tx(con):
+        return con.execute("DELETE FROM build_issues WHERE resolved_on < ?", (_prune_cutoff(days),)).rowcount
 
 
 @_routed

@@ -109,6 +109,25 @@ def test_sync_issues_resolves_every_open_row_of_a_key_not_just_one():
     assert ops.open_issues("market_series", 0)[0] == 0
 
 
+def test_prune_issues_deletes_rows_resolved_over_a_week_ago_and_never_an_open_one(monkeypatch):
+    """#387: build_issues was 42,225 rows on 6 Nov, 16,155 of them resolved. avo, 8 Nov 2026 ("B"): a resolved row
+    is kept seven days. An open row stays until it is resolved, however old."""
+    monkeypatch.setattr(ops, "_today", lambda: "2026-10-01")
+    ops.record_issue("market_series", "parse", "old-open", "still broken")
+    for key in ("old", "edge"):
+        ops.record_issue("market_series", "parse", key, "fixed")
+    ops.sync_issues("market_series", ["parse"], [("parse", "old-open", "still broken")])   # resolves old and edge
+    monkeypatch.setattr(ops, "_today", lambda: "2026-10-08")
+    ops.record_issue("market_series", "parse", "recent", "fixed")
+    ops.sync_issues("market_series", ["parse"], [("parse", "old-open", "still broken")])   # resolves recent
+    assert ops.prune_issues() == 0                       # 2026-10-01 is exactly seven days old: kept
+    monkeypatch.setattr(ops, "_today", lambda: "2026-10-09")
+    assert ops.prune_issues() == 2
+    left = sorted((r["key"], r["resolved_on"]) for r in ops.rows("build_issues"))
+    assert left == [("old-open", None), ("recent", "2026-10-08")]
+    assert ops.open_issues("market_series", 0)[0] == 1
+
+
 def test_record_issue_and_job_runs():
     ops.record_issue("market_series", "parse", "fred:DGS2", "bad row", run_id="r1")
     ops.start_run("r1", "market_series", "cli", {"once": True})
