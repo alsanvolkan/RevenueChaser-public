@@ -123,3 +123,72 @@ def test_the_base_checkout_is_left_untouched(repo, tmp_path):
                           text=True).stdout == ""
     assert subprocess.run(["git", "-C", str(repo), "worktree", "list"], capture_output=True,
                           text=True).stdout.count("\n") == 1
+
+
+# --- review of 1449059 (Opus, 8 Nov 2026) ---
+
+def test_a_passing_test_beside_an_uncollectable_file_is_still_flagged(repo, tmp_path, capsys):
+    """B1: one file that cannot import on the base must not turn every other new test red."""
+    _commit(repo, {"mul.py": "def mul(a, b):\n    return a * b\n",
+                   "test_mul.py": "from mul import mul\n\ndef test_mul():\n    assert mul(2, 3) == 6\n",
+                   "test_plain.py": "def test_plain():\n    assert True\n"})
+    assert _run(repo, tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "test_plain.py::test_plain" in out.split("prove nothing", 1)[1]
+
+
+def test_a_pytest_that_reports_nothing_is_a_failure_not_all_red(repo, tmp_path, monkeypatch, capsys):
+    """B2: no junit (pytest crashed or got a usage error) is exit 2, never "every test red"."""
+    _commit(repo, {"test_plain.py": "def test_plain():\n    assert True\n"})
+    real = mod.subprocess.run
+
+    def fake(cmd, *a, **kw):
+        if "--junitxml" in " ".join(map(str, cmd)):
+            return subprocess.CompletedProcess(cmd, 4, "", "usage error")
+        return real(cmd, *a, **kw)
+
+    monkeypatch.setattr(mod.subprocess, "run", fake)
+    assert _run(repo, tmp_path) == 2
+    assert "pytest" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("node,key", [("a.py::test_p[a::b]", ("a", "test_p[a::b]")),
+                                      ("a.py::Cls::test_q[pkg/a.py::Cls]", ("a.Cls", "test_q[pkg/a.py::Cls]"))])
+def test_a_parameter_with_double_colons_keeps_its_name(node, key):
+    """M1: junit keeps the bracketed parameters whole."""
+    assert mod._id_key(node) == key
+
+
+def test_a_passing_parametrized_id_with_double_colons_is_flagged(repo, tmp_path, capsys):
+    _commit(repo, {"test_p.py": "import pytest\n\n@pytest.mark.parametrize('x', ['a::b'])\n"
+                                "def test_p(x):\n    assert x\n"})
+    assert _run(repo, tmp_path) == 1
+    assert "test_p.py::test_p[a::b]" in capsys.readouterr().out.split("prove nothing", 1)[1]
+
+
+def test_a_renamed_test_file_still_has_its_new_tests_checked(repo, tmp_path, capsys):
+    """M2: a rename keeps the old ids as old; only the added test is new."""
+    _git(repo, "mv", "test_calc.py", "test_calc2.py")
+    _commit(repo, {"test_calc2.py": "from calc import add\n\ndef test_add():\n    assert add(1, 2) == 3\n\n"
+                                    "def test_more():\n    assert add(0, 0) == 0\n"})
+    assert _run(repo, tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "test_calc2.py::test_more" in out and "test_calc2.py::test_add" not in out
+
+
+def test_a_scratch_path_that_already_exists_is_refused(repo, tmp_path):
+    """m3: never point the worktree (and its forced removal) at a folder that is already there."""
+    _commit(repo, {"test_plain.py": "def test_plain():\n    assert True\n"})
+    work = tmp_path / "work"
+    (work / repo.name).mkdir(parents=True)
+    (work / repo.name / "keep.txt").write_text("mine", encoding="utf-8")
+    assert mod.main(["main", "--repo", str(repo), "--work", str(work), "--python", sys.executable]) == 2
+    assert (work / repo.name / "keep.txt").read_text(encoding="utf-8") == "mine"
+
+
+def test_a_test_file_with_a_space_in_its_path_is_checked(repo, tmp_path, capsys):
+    """m4: paths are read NUL-separated."""
+    (repo / "sub dir").mkdir()
+    _commit(repo, {"sub dir/test_s.py": "def test_s():\n    assert True\n"})
+    assert _run(repo, tmp_path) == 1
+    assert "sub dir/test_s.py::test_s" in capsys.readouterr().out
