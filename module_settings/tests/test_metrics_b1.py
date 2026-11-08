@@ -95,9 +95,14 @@ def test_the_timer_unknown_leaves_its_family_empty_not_zero():
     assert _families(metrics.render(_collect(timer={"state": "off"})))["rc_builder_timer_on"] == ["rc_builder_timer_on 0"]
 
 
-def test_ibkr_state_is_one_of_a_closed_set():
-    fam = _families(metrics.render(_collect(ibkr=lambda: {"state": "not set"})))
-    assert [l for l in fam["rc_ibkr_state"] if l.endswith(" 1")] == ['rc_ibkr_state{state="not_set"} 1']
+@pytest.mark.parametrize("state, label", [("not set", "not_set"), ("silent", "silent"), ("up", "up"),
+                                          ("down", "down"), ("garbage from the file", "unknown"), (None, "unknown")])
+def test_ibkr_state_is_one_of_a_closed_set(state, label):
+    """The review of #539: a hung gateway is "silent", and the record is a file, so other text must not become a
+    label value. Every state is always present, 0 or 1, so an alert on one of them never sees a gap."""
+    fam = _families(metrics.render(_collect(ibkr=lambda: {"state": state})))
+    assert [l for l in fam["rc_ibkr_state"] if l.endswith(" 1")] == [f'rc_ibkr_state{{state="{label}"}} 1']
+    assert len(fam["rc_ibkr_state"]) == len(metrics.IBKR_STATES)
 
 
 def test_a_running_request_names_who_from_a_closed_set():
@@ -108,9 +113,12 @@ def test_a_running_request_names_who_from_a_closed_set():
                                             alive=lambda pid: True)))
     assert fam["rc_queue_requests"] == ['rc_queue_requests{status="queued"} 0', 'rc_queue_requests{status="running"} 1']
     elapsed = fam["rc_run_elapsed_seconds"]
-    assert len(elapsed) == 1 and elapsed[0].startswith('rc_run_elapsed_seconds{dataset="market_series",who="')
-    who = re.search(r'who="([a-z]+)"', elapsed[0]).group(1)
-    assert who in metrics.WHO
+    request = ops.read_queue(finished=0)["active"][0]["id"]
+    # The review of #539: under Redis the run row was read from ops.sqlite, so "who" fell to "unknown" with no limit.
+    assert len(elapsed) == 1 and elapsed[0].startswith(
+        f'rc_run_elapsed_seconds{{id="{request}",dataset="market_series",who="claude"}} ')
+    assert fam["rc_run_limit_seconds"] == [
+        f'rc_run_limit_seconds{{id="{request}",dataset="market_series"}} {float(control.CLAUDE_SESSION_LIMIT_S)}']
 
 
 @pytest.mark.parametrize("words, who", [("systemd life-rc-builder", "systemd"), ("Claude session", "claude"),
@@ -128,6 +136,26 @@ def test_a_failing_part_is_counted_and_the_rest_still_reads(monkeypatch):
     assert fam["rc_queue_requests"] == []
     assert any(l.startswith('rc_metrics_read_errors_total{part="queue"}') for l in fam["rc_metrics_read_errors_total"])
     assert fam["rc_dataset_state"], "the other parts still read"
+
+
+def test_one_unreadable_dataset_does_not_drop_the_others(monkeypatch):
+    """The review of #539: the loop was one part, so a dataset that raised dropped every dataset after it."""
+    real = ops.read_schedule
+    monkeypatch.setattr(ops, "read_schedule",
+                        lambda name: (_ for _ in ()).throw(RuntimeError("odd row")) if name == "market_series"
+                        else real(name))
+    before = metrics._errors["datasets"]
+    fam = _families(metrics.render(_collect()))
+    names = {re.search(r'dataset="([^"]+)"', l).group(1) for l in fam["rc_dataset_state"]}
+    assert names == {"wrds/prices"}, "the dataset after the bad one still reports; the bad one is left out whole"
+    assert metrics._errors["datasets"] == before + 1
+
+
+def test_every_part_has_an_error_counter_from_the_start():
+    """A counter that appears only at its first error hides that error from increase() and rate()."""
+    fam = _families(metrics.render(_collect()))
+    parts = {re.search(r'part="([a-z]+)"', l).group(1) for l in fam["rc_metrics_read_errors_total"]}
+    assert parts == set(metrics.PARTS)
 
 
 def test_thresholds_come_from_control():
@@ -153,10 +181,18 @@ def test_the_timer_is_read_in_the_background_at_most_once_a_minute():
 
 
 def test_the_route_serves_text_and_opens_no_store_session(client, monkeypatch):
+    """No store session, and no DuckDB connection of any kind: a scrape every minute must never take raw.duckdb's
+    lock (a session alone opens lazily, so the connect itself is what is refused here)."""
     from RevenueChaser.core import rawstore
     opened = []
-    real = rawstore.session
-    monkeypatch.setattr(rawstore, "session", lambda *a, **k: opened.append(1) or real(*a, **k))
+
+    def refuse(*a, **k):
+        opened.append(a)
+        raise AssertionError("the scrape opened the store")
+    monkeypatch.setattr(rawstore, "session", refuse)
+    monkeypatch.setattr(rawstore, "connect", refuse)
+    import duckdb
+    monkeypatch.setattr(duckdb, "connect", refuse)
     monkeypatch.setattr(metrics.TIMER, "get", lambda wait=False: {"state": "on"})
     r = client.get("/metrics")
     assert r.status_code == 200
@@ -164,6 +200,8 @@ def test_the_route_serves_text_and_opens_no_store_session(client, monkeypatch):
     assert "version=0.0.4" in r.headers["Content-Type"]
     assert "# TYPE rc_dataset_state gauge" in r.get_data(as_text=True)
     assert opened == [], "a scrape must not open raw.duckdb"
+    assert 'rc_dataset_state{dataset="market_series"' in r.get_data(as_text=True), \
+        "the datasets were read with every DuckDB connect refused"
 
 
 def test_the_datasets_route_lists_names_kinds_attended_and_providers(client):

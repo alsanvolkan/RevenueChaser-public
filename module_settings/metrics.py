@@ -32,11 +32,16 @@ RESULT_CODE = {"changed": 0, "unchanged": 0, "skipped": 1, "failed": 2}
 #: ``control.running_jobs``'s "who" words as a closed set, so a label can never carry free text.
 WHO = ("systemd", "claude", "unknown", "lost")
 STATES = ("fresh", "unchanged", "late", "stale", "never")
+#: The IBKR gateway's login states (core/ibkr_login.py), as label values; anything else reads ``unknown``.
+IBKR_STATES = ("up", "silent", "down", "unknown", "not_set")
+#: The parts ``collect`` reads one by one; each starts its error counter at 0 so a first failure is an increase.
+PARTS = ("queue", "providers", "datasets", "builder", "timer", "backups", "switches", "ibkr")
 TIMER_EVERY_S = 60.0
 
 HELP = {
     "rc_queue_requests": ("gauge", "Build requests in the queue now, by status (queued, running)."),
-    "rc_run_elapsed_seconds": ("gauge", "Seconds a running build request has run, by dataset and who started it."),
+    "rc_run_elapsed_seconds": ("gauge", "Seconds a running build request has run, by request id, dataset and who "
+                               "started it."),
     "rc_run_limit_seconds": ("gauge", "The time limit of a running build request's unit, when it has one."),
     "rc_provider_calls_today": ("gauge", "Calls to a provider on the current New York day."),
     "rc_provider_day_cap": ("gauge", "Our own day cap for a provider (absent: no cap)."),
@@ -52,13 +57,14 @@ HELP = {
     "rc_builder_timer_on": ("gauge", "1 when the hourly builder timer is on, 0 when off (absent: not known)."),
     "rc_backup_newest_timestamp_seconds": ("gauge", "The newest backup of a kind, epoch seconds."),
     "rc_switch_on": ("gauge", "1 when a switch (fetch, backup) is on."),
-    "rc_ibkr_state": ("gauge", "1 for the IBKR gateway's current login state (up, down, unknown, not_set)."),
+    "rc_ibkr_state": ("gauge", "1 for the IBKR gateway's current login state (up, silent, down, unknown, "
+                      "not_set)."),
     "rc_threshold": ("gauge", "The thresholds the Data/Health page alarms at, from module_settings/control.py."),
     "rc_metrics_read_errors_total": ("counter", "Readers that failed since the dashboard started, by part."),
     "rc_metrics_build_seconds": ("gauge", "How long building this answer took."),
 }
 
-_errors: dict[str, int] = {}
+_errors: dict[str, int] = {p: 0 for p in PARTS}
 _errors_lock = threading.Lock()
 
 
@@ -132,7 +138,7 @@ def _iso_epoch(value) -> float | None:
 def collect(now: datetime | None = None, *, datasets: dict | None = None, timer: dict | None = None,
             ibkr: Callable[[], dict | None] | None = None, cgroup=None, alive=None) -> dict[str, list]:
     """``{family: [(labels, value), ...]}``. Each part is read on its own; a part that fails is left empty and
-    counted. ``timer`` is the builder timer's reading (default: ``TIMER.get()``)."""
+    counted, and a dataset that fails is left out of the dataset families and counted under ``datasets``. ``timer`` is the builder timer's reading (default: ``TIMER.get()``)."""
     from RevenueChaser.module_settings import newdata
     from RevenueChaser.rcdata import ops
     now = now or datetime.now(timezone.utc)
@@ -152,11 +158,12 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
         from RevenueChaser.core import procs
         for r in control.running_jobs(active, control._read_runs_now(), cgroup or control._read_cgroup,
                                       alive or procs.pid_alive, now):
-            labels = {"dataset": r["dataset"], "who": _who(r["who"])}
+            # The request id keeps two runs of one dataset two series (a duplicate sample would be dropped).
+            ident = {"id": str(r.get("id")), "dataset": r["dataset"]}
             if r["elapsed_s"] is not None:
-                out["rc_run_elapsed_seconds"].append((labels, round(r["elapsed_s"], 1)))
+                out["rc_run_elapsed_seconds"].append(({**ident, "who": _who(r["who"])}, round(r["elapsed_s"], 1)))
             if r["limit_s"]:
-                out["rc_run_limit_seconds"].append(({"dataset": r["dataset"]}, r["limit_s"]))
+                out["rc_run_limit_seconds"].append((ident, r["limit_s"]))
 
     def providers() -> None:
         for p in newdata._spend(now)["providers"]:
@@ -168,22 +175,37 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
 
     def dataset_states() -> None:
         for name, ds in (datasets if datasets is not None else newdata._datasets()).items():
-            label = {"dataset": name, "kind": str(getattr(ds, "kind", "") or "")}
-            recent = ops.recent_checks(name, limit=1)
-            last = recent[0] if recent else None
-            schedule = ops.read_schedule(name)
-            state, _, base = newdata.status_of(name, last, ops.latest_unskipped_check(name),
-                                               newdata._cadence(name, schedule), now)
-            for s in STATES:
-                out["rc_dataset_state"].append(({**label, "state": s}, 1 if s == state else 0))
-            if last is not None:
-                out["rc_dataset_last_check_result"].append((label, RESULT_CODE.get(last["result"], 2)))
-                when = _day_epoch(last.get("checked_on"))
-                if when is not None:
-                    out["rc_dataset_checked_timestamp_seconds"].append((label, when))
-            paused = bool(schedule and schedule.get("paused_at") is not None)
-            out["rc_dataset_paused"].append((label, 1 if paused else 0))
-            out["rc_dataset_open_issues"].append((label, ops.open_issues(name, limit=0)[0]))
+            # A dataset that cannot be read is counted and left out whole; the ones after it still report.
+            rows: dict[str, list] = {}
+            try:
+                one_dataset(name, ds, rows)
+            except Exception:  # noqa: BLE001 - one dataset never drops the rest
+                _failed("datasets")
+                continue
+            for family, got in rows.items():
+                out[family].extend(got)
+
+    def one_dataset(name, ds, out) -> None:
+        """One dataset's rows into ``out`` (its own dict, merged only when the whole dataset read)."""
+        for family in ("rc_dataset_state", "rc_dataset_last_check_result", "rc_dataset_checked_timestamp_seconds",
+                       "rc_dataset_paused", "rc_dataset_open_issues"):
+            out[family] = []
+        label = {"dataset": name, "kind": str(getattr(ds, "kind", "") or "")}
+        recent = ops.recent_checks(name, limit=1)
+        last = recent[0] if recent else None
+        schedule = ops.read_schedule(name)
+        state, _, base = newdata.status_of(name, last, ops.latest_unskipped_check(name),
+                                           newdata._cadence(name, schedule), now)
+        for s in STATES:
+            out["rc_dataset_state"].append(({**label, "state": s}, 1 if s == state else 0))
+        if last is not None:
+            out["rc_dataset_last_check_result"].append((label, RESULT_CODE.get(last["result"], 2)))
+            when = _day_epoch(last.get("checked_on"))
+            if when is not None:
+                out["rc_dataset_checked_timestamp_seconds"].append((label, when))
+        paused = bool(schedule and schedule.get("paused_at") is not None)
+        out["rc_dataset_paused"].append((label, 1 if paused else 0))
+        out["rc_dataset_open_issues"].append((label, ops.open_issues(name, limit=0)[0]))
 
     def builder() -> None:
         run = ops.last_builder_run()
@@ -213,12 +235,15 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
             from RevenueChaser.core import ibkr_login
             got = ibkr_login.collect(now=now)
         state = str((got or {}).get("state") or "unknown").replace(" ", "_").replace("-", "_")
-        for s in sorted({"up", "down", "unknown", "not_set", state}):
+        if state not in IBKR_STATES:          # the record is a file: any other text is "unknown", never a label
+            state = "unknown"
+        for s in IBKR_STATES:
             out["rc_ibkr_state"].append(({"state": s}, 1 if s == state else 0))
 
-    for name, fn in (("queue", queue), ("providers", providers), ("datasets", dataset_states), ("builder", builder),
-                     ("timer", timer_part), ("backups", backups), ("switches", switches), ("ibkr", gateway)):
-        part(name, fn)
+    parts = {"queue": queue, "providers": providers, "datasets": dataset_states, "builder": builder,
+             "timer": timer_part, "backups": backups, "switches": switches, "ibkr": gateway}
+    for name in PARTS:
+        part(name, parts[name])
     for key, value in (("run_alert_share", control.RUN_ALERT), ("cap_alert_share", control.CAP_ALERT),
                        ("builder_silent_minutes", control.BUILDER_SILENT_MINUTES),
                        ("backup_alert_days", control.BACKUP_ALERT_DAYS),

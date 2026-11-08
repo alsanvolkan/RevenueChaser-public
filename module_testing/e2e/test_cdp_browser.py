@@ -63,3 +63,17 @@ def test_a_wide_viewport_can_be_a_mobile_on_request(page):
     page.emulate(919, 360, mobile=True)
     page.open(PHONE_PAGE)
     assert page.eval("navigator.maxTouchPoints") >= 1
+
+
+def test_a_plain_size_after_a_phone_drops_the_phone_user_agent(page):
+    """The review of #539: the screenshots took 969, 1280 and 1920 px after the realme on one page, and they kept its
+    Android user agent (which Plotly reads)."""
+    page.emulate(1280, 800)
+    page.open(PHONE_PAGE)
+    own = page.eval("navigator.userAgent")
+    page.emulate_device(DEVICES[0])
+    page.open(PHONE_PAGE)
+    assert page.eval("navigator.userAgent") == DEVICES[0].user_agent
+    page.emulate(1280, 800)
+    page.open(PHONE_PAGE)
+    assert page.eval("navigator.userAgent") == own

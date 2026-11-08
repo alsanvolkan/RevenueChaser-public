@@ -123,6 +123,8 @@ class Page:
         self._ws = _WebSocket(int(port), path)
         self._id = 0
         self._events: list[dict] = []
+        self._default_ua: str | None = None      # the browser's own user agent, read once an override is in play
+        self._ua_overridden = False
         target = self._call("Target.createTarget", url="about:blank")["targetId"]
         self._session = self._call("Target.attachToTarget", targetId=target, flatten=True)["sessionId"]
         self.send("Page.enable")
@@ -171,9 +173,13 @@ class Page:
             self.send("Emulation.setTouchEmulationEnabled", enabled=True, maxTouchPoints=5)
         else:
             self.send("Emulation.setTouchEmulationEnabled", enabled=False)
-        if user_agent is not None:
-            self.send("Emulation.setUserAgentOverride", userAgent=user_agent,
-                      platform="Linux armv8l" if mobile else "")
+        if user_agent is not None or self._ua_overridden:
+            # A later plain size must not keep the phone's user agent: put the browser's own back.
+            if self._default_ua is None:
+                self._default_ua = self._call("Browser.getVersion")["userAgent"]
+            self.send("Emulation.setUserAgentOverride", userAgent=user_agent or self._default_ua,
+                      platform="Linux armv8l" if user_agent and mobile else "")
+            self._ua_overridden = user_agent is not None
         self.send("Emulation.setEmulatedMedia",
                   features=[{"name": "prefers-color-scheme", "value": scheme}])
 

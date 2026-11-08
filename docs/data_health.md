@@ -931,7 +931,8 @@ view of health and fetch is Grafana on homesrv (avo, 6 Nov 2026), fed by the das
 (`module_settings/metrics.py`, Prometheus text format, scraped every 60 s on loopback). It reads only the ops store,
 the backup manifests and the IBKR login record, never the serving DuckDB files, so the route opens no store session.
 The builder timer is read in the background at most once a minute. A part that cannot be read leaves its family
-empty and counts one `rc_metrics_read_errors_total{part}`; the scrape itself never fails.
+empty and counts one `rc_metrics_read_errors_total{part}` (every part starts at 0); a dataset that cannot be read is left
+out whole and counted under `datasets`, and the others still report. The scrape itself never fails.
 
 The names are a contract with the Grafana boards; `core/tests/test_doc_constants.py` checks this list against the
 code:
@@ -939,8 +940,8 @@ code:
 | Metric | Labels | What |
 |---|---|---|
 | `rc_queue_requests` | `status` | build requests queued and running now |
-| `rc_run_elapsed_seconds` | `dataset`, `who` | how long a running request has run; `who` is `systemd`, `claude`, `unknown` or `lost` |
-| `rc_run_limit_seconds` | `dataset` | its unit's time limit, when it has one |
+| `rc_run_elapsed_seconds` | `id`, `dataset`, `who` | how long a running request has run; `who` is `systemd`, `claude`, `unknown` or `lost` |
+| `rc_run_limit_seconds` | `id`, `dataset` | its unit's time limit, when it has one |
 | `rc_provider_calls_today` | `provider` | calls on the New York day |
 | `rc_provider_day_cap` | `provider` | our day cap |
 | `rc_provider_failures_today` | `provider` | failed calls on the New York day |
@@ -953,7 +954,7 @@ code:
 | `rc_builder_timer_on` | | 1 on, 0 off, absent when not known |
 | `rc_backup_newest_timestamp_seconds` | `kind` | the newest backup of a kind |
 | `rc_switch_on` | `name` | the fetch and backup switches |
-| `rc_ibkr_state` | `state` | 1 for the gateway's login state: up, down, unknown, not_set |
+| `rc_ibkr_state` | `state` | 1 for the gateway's login state: up, silent (port open, API not answering), down, unknown, not_set; any other text reads unknown |
 | `rc_threshold` | `name` | the page's alarm thresholds, from `control.py`, so an alert rule does not retype them |
 | `rc_metrics_read_errors_total` | `part` | readers that failed since the dashboard started |
 | `rc_metrics_build_seconds` | | what the scrape cost |
