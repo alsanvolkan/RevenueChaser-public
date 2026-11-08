@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import httpx
+import pytest
 
 from RevenueChaser.core import job_lock, rawstore, sec_throttle
 from RevenueChaser.core.providers import sec_edgar as se
@@ -93,6 +94,16 @@ def _hammer(path, ready, go, result, rate, duration):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_counts(monkeypatch):
+    """Each test starts with no counts, no logged kinds and no stale reason, so no test leaks a fallback into the
+    worker's exit line or another test's log assertions."""
+    monkeypatch.setattr(sec_throttle, "_COUNTS", {})
+    monkeypatch.setattr(sec_throttle, "_LOGGED", set())
+    monkeypatch.setattr(sec_throttle, "_last_reason", None)
+    monkeypatch.setattr(sec_throttle, "_totals_logged_at", None)
 
 
 def test_rate_is_one_constant_below_the_ceiling_and_the_burst_is_what_the_ceiling_leaves():
@@ -360,3 +371,21 @@ def test_the_exit_line_gives_the_totals_only_when_something_fell_back(monkeypatc
     monkeypatch.setattr(sec_throttle, "_COUNTS", {"shared": 5, "lock_timeout": 3})
     sec_throttle._log_totals()
     assert "5 request(s) on the shared bucket, 3 fell back (lock_timeout 3)" in caplog.text
+
+
+def test_a_long_lived_process_logs_its_totals_hourly_not_only_at_exit(tmp_path, monkeypatch, caplog):
+    """Review of #560: the dashboard is stopped by SIGTERM, which skips atexit, so the totals come while it runs."""
+    monkeypatch.setattr(sec_throttle.rawstore, "DB_PATH", tmp_path / "raw.duckdb")
+    monkeypatch.setattr(sec_throttle, "_LOCK_WAIT", 0.01)
+    monkeypatch.setattr(job_lock, "_os_lock", lambda fd: False)
+    caplog.set_level("INFO", logger=sec_throttle.__name__)
+    sec_throttle.pace()
+    sec_throttle.pace()
+    totals = [r for r in caplog.records if "totals" in r.getMessage()]
+    assert totals == []                                                 # the reason line says it at once
+    sec_throttle._totals_logged_at -= sec_throttle._TOTALS_EVERY       # an hour later
+    sec_throttle.pace()
+    totals = [r for r in caplog.records if "totals" in r.getMessage()]
+    assert len(totals) == 1 and "3 fell back (lock_timeout 3)" in totals[0].getMessage()
+    sec_throttle.pace()                                                 # not again inside the hour
+    assert len([r for r in caplog.records if "totals" in r.getMessage()]) == 1

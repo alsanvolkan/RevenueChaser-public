@@ -67,12 +67,15 @@ _LOGGED: set[str] = set()
 
 # Why ``_reserve`` gave up, per request, for this process's SEC bucket (#487: a fallback was logged once and its
 # cause could not be told from the log, so a fix was chosen blind). ``shared`` counts the requests the bucket paced.
-# Read with :func:`stats`; a process that fell back at least once logs the totals when it exits.
-#: ``no_os_lock``: the platform has no OS lock. ``open_failed``: the bucket file could not be opened (an ``errno``
+# Read with :func:`stats`. A process that fell back logs the totals hourly while it runs (the dashboard is stopped
+# by SIGTERM, which skips ``atexit``) and once more when it exits normally.
+#: ``no_os_lock``: the platform has no OS lock. ``open_failed``: the bucket's folder or file could not be opened (an ``errno``
 #: name follows). ``lock_timeout``: the lock was not won inside ``_LOCK_WAIT``. ``io_error``: reading or writing the
 #: state failed (``errno`` name follows). ``exception``: anything else, caught in :func:`pace`.
 _COUNTS: dict[str, int] = {}
 _last_reason: str | None = None
+_TOTALS_EVERY = 3600.0
+_totals_logged_at: float | None = None
 
 
 def _count(key: str) -> None:
@@ -85,15 +88,30 @@ def _why(prefix: str, exc: OSError) -> str:
 
 def stats() -> dict[str, int]:
     """This process's SEC bucket outcomes so far: ``shared`` and one key per fallback reason."""
-    return dict(_COUNTS)
+    with _GUARD:
+        return dict(_COUNTS)
 
 
-def _log_totals() -> None:
-    fell = {k: v for k, v in _COUNTS.items() if k != "shared"}
+def _log_totals(counts: dict[str, int] | None = None) -> None:
+    counts = stats() if counts is None else counts
+    fell = {k: v for k, v in counts.items() if k != "shared"}
     if fell:
         logger.warning("SEC pacing totals: %d request(s) on the shared bucket, %d fell back (%s)",
-                       _COUNTS.get("shared", 0), sum(fell.values()),
+                       counts.get("shared", 0), sum(fell.values()),
                        ", ".join(f"{k} {v}" for k, v in sorted(fell.items())))
+
+
+def _totals_due(now: float) -> dict[str, int] | None:
+    """Under ``_GUARD``: a copy of the counts an hour after the first fallback, and hourly after that. The first
+    fallback itself is already its own reason line, so the clock starts there."""
+    global _totals_logged_at
+    if _totals_logged_at is None:
+        _totals_logged_at = now
+        return None
+    if now - _totals_logged_at < _TOTALS_EVERY:
+        return None
+    _totals_logged_at = now
+    return dict(_COUNTS)
 
 
 atexit.register(_log_totals)
@@ -233,6 +251,9 @@ def pace() -> bool:
             wait = _reserve(time.monotonic())
             reason = _last_reason
             _count("shared" if wait is not None else (reason or "unknown"))
+            due = _totals_due(time.monotonic()) if wait is None else None
+        if due is not None:
+            _log_totals(due)
         if wait is None:
             # One line per reason, not one per process: the first reason seen used to hide every later one.
             _log_once(f"fallback {reason}", "SEC pacing: the shared bucket %s (%s) cannot be used (%s); this request "
