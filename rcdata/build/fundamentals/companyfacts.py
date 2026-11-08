@@ -158,14 +158,21 @@ class CompanyFacts:
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
         # The facts answer holds a company's whole history: a backfill reads every company not read yet.
-        out = []
+        out, read = [], 0
         for cik in common.ciks(common.universe()):
-            if _raws(cik) or self._recently_absent(cik, end):
+            held = _raws(cik)
+            if held:
+                # Typed again from raw, with no request: a change of the extraction rules (#271) reaches a company
+                # already on disk only this way, as sec/filings does.
+                out.append(held[-1])
+                continue
+            if self._recently_absent(cik, end):
                 continue
             raw = read_company(ctx, cik, end)
             if raw is not None:
                 out.append(raw)
-        ctx.notes.append(f"backfill: {len(out)} companies read")
+                read += 1
+        ctx.notes.append(f"backfill: {read} companies read, {len(out) - read} retyped from raw")
         self.to_parquet_all(ctx, out)
 
     def to_parquet(self, ctx: base.RunContext, raw: Path) -> list[Path]:

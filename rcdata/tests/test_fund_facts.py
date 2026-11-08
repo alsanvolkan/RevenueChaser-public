@@ -200,6 +200,19 @@ def test_the_backfill_reads_every_tier_a_company_once_and_serves_its_facts(sec):
     assert len(sec.calls("companyfacts")) == 4                         # resumable: nobody is read twice
 
 
+def test_the_backfill_retypes_the_facts_already_on_disk(sec):
+    # A rule change of the extraction (#271's D&A rungs) reaches a company held on disk only through a retype: the
+    # backfill types every company's newest raw again, with no SEC request (as sec/filings does).
+    import shutil
+    _answers(sec)
+    fx.run(companyfacts.NAME, mode="backfill", to="2026-10-28", no_duckdb=True)
+    shutil.rmtree(companyfacts.common.parquet_dir(companyfacts.NAME) / "cik=789019")
+    check = fx.run(companyfacts.NAME, mode="backfill", to="2026-10-29")
+    assert check["result"] in ("changed", "unchanged"), check["note"]
+    assert len(sec.calls("companyfacts")) == 4                         # no company asked again
+    assert fx.q("SELECT count(*) > 0 FROM fundamental_fact WHERE cik = '789019'") == [(True,)]
+
+
 def test_without_the_bucket_requests_to_the_sec_are_spaced_at_the_fallback_share(sec, monkeypatch):
     monkeypatch.setattr(companyfacts.common.sec_throttle, "pace", lambda: False)
     _answers(sec)
