@@ -247,12 +247,19 @@ _STI_HTM_TAGS = ["HeldToMaturitySecuritiesCurrent",
 #
 # A concept listed here may be the primary only when no other tag of its field reports anything,
 # and otherwise only adds the years the primary lacks (any missing year, not just a contiguous run).
-_ADD_ONLY_CONCEPTS = frozenset({"RevenueFromContractWithCustomerIncludingAssessedTax"})
+# ``RegulatedAndUnregulatedOperatingRevenue`` (#105): a utility's total, measured on 14 filers' newest year (6 Nov
+# 2026), 4 of which tag no other revenue line; a total, not a part, so it follows the same add-only rule.
+_ADD_ONLY_CONCEPTS = frozenset({"RevenueFromContractWithCustomerIncludingAssessedTax",
+                                "RegulatedAndUnregulatedOperatingRevenue"})
+# Quarterly series are not merged, so the utility total is read there only when the field's other tags hold no
+# quarter at all; it can never take a filer's quarterly pick (the including-tax tag keeps its older rule).
+_QUARTERLY_LAST_RESORT = frozenset({"RegulatedAndUnregulatedOperatingRevenue"})
 
 
 CONCEPTS = {
     "revenue": (["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet",
-                 "RevenueFromContractWithCustomerIncludingAssessedTax"], "USD"),
+                 "RevenueFromContractWithCustomerIncludingAssessedTax", "RegulatedAndUnregulatedOperatingRevenue"],
+                "USD"),
     # #450: a bank's income-statement top line, never revenue (see the comment above). One field per
     # tag, because the two tags are two different quantities: a single field would let the #246
     # backfill take a year from the other tag and store a series that steps on a tag change.
@@ -268,6 +275,13 @@ CONCEPTS = {
     "capex": (["PaymentsToAcquirePropertyPlantAndEquipment",
                "PaymentsToAcquireProductiveAssets"], "USD"),
     "depreciation": (["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet"], "USD"),
+    # #271: the lines the fundamentals layer's D&A rungs 3 and 4 read (``rcdata/build/fundamentals/facts.py``);
+    # ``depreciation`` itself stays the two rungs above, so the old store's records do not move.
+    "depreciation_and_amortization": (["DepreciationAndAmortization"], "USD"),
+    "depreciation_tangible": (["Depreciation"], "USD"),
+    "amortization_intangibles": (["AmortizationOfIntangibleAssets"], "USD"),
+    "current_assets": (["AssetsCurrent"], "USD"),
+    "current_liabilities": (["LiabilitiesCurrent"], "USD"),
     "total_assets": (["Assets"], "USD"),
     "total_equity": (["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"], "USD"),
     "cash": (["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"], "USD"),
@@ -326,6 +340,10 @@ _PRIORITY_FIELDS = frozenset({"cost_of_revenue", "marketable_securities_noncurre
                               "long_term_investments", "share_repurchases",
                               "share_based_compensation"}) | _DEBT_COMPONENT_FIELDS
 
+# #271: the fields only the fundamentals layer reads (its D&A rungs, the current lines), so no old record moves.
+_LAYER_ONLY_FIELDS = frozenset({"depreciation_and_amortization", "depreciation_tangible", "amortization_intangibles",
+                                "current_assets", "current_liabilities"})
+
 # The two bank top lines of #450, grouped so the sets below name them once.
 _BANK_TOP_LINE_FIELDS = frozenset({"revenue_net_of_interest_expense", "interest_and_dividend_income"})
 
@@ -335,7 +353,7 @@ _BANK_TOP_LINE_FIELDS = frozenset({"revenue_net_of_interest_expense", "interest_
 _NEVER_A_RECORD = frozenset({"cost_of_revenue", "short_term_investments",
                              "marketable_securities_noncurrent", "long_term_investments",
                              "share_repurchases", "share_based_compensation",
-                             }) | _DEBT_COMPONENT_FIELDS | _BANK_TOP_LINE_FIELDS
+                             }) | _DEBT_COMPONENT_FIELDS | _BANK_TOP_LINE_FIELDS | _LAYER_ONLY_FIELDS
 
 # Flows that cannot be negative. A YTD difference that comes out negative for one of them (a Q4 whose
 # FY was restated for discontinued operations while the 9M was not) is dropped and flagged
@@ -344,6 +362,7 @@ _NEVER_A_RECORD = frozenset({"cost_of_revenue", "short_term_investments",
 # genuinely negative (net interest expense plus large securities losses), unlike ``revenue``, so a
 # negative derived quarter of theirs is kept and carries no ``_suspect`` flag.
 _NON_NEGATIVE_FLOWS = frozenset({"revenue", "cost_of_revenue", "capex", "depreciation", "rd_expense",
+                                 "depreciation_and_amortization", "depreciation_tangible", "amortization_intangibles",
                                  "share_repurchases", "share_based_compensation"})
 
 # Fields written only when they hold a value: a record has no such key when the filer reports none.
@@ -357,7 +376,7 @@ _NON_NEGATIVE_FLOWS = frozenset({"revenue", "cost_of_revenue", "capex", "depreci
 # an ``EXTRACT_VERSION`` bump TOGETHER with a re-extraction: the bump alone does not fill them, and on
 # its own it marks the whole scored universe behind (``module_fundamentals/history.py``). That is why
 # this change leaves the version at 2.
-_OMIT_WHEN_ABSENT = _BANK_TOP_LINE_FIELDS
+_OMIT_WHEN_ABSENT = _BANK_TOP_LINE_FIELDS | _LAYER_ONLY_FIELDS
 
 # Version of the extraction rules, stored in ``meta`` of every row this module writes. A row without
 # it was extracted before #158 (no YTD-derived quarters, no per-field filed/accn). Bump it whenever
@@ -746,7 +765,8 @@ def _quarterly_facts(facts: dict, concepts: list[str], unit: str,
     def _core(series, only_reported):
         return [e for e, fact in series.items() if not only_reported or fact.info.get("v1", True)]
 
-    all_series = [s_ for s_ in (_one(c) for c in concepts) if s_]
+    all_series = [s_ for s_ in (_one(c) for c in concepts if c not in _QUARTERLY_LAST_RESORT) if s_] or [
+        s_ for s_ in (_one(c) for c in concepts if c in _QUARTERLY_LAST_RESORT) if s_]
     for only_reported in (True, False):
         for series in all_series:
             core = _core(series, only_reported)
