@@ -246,3 +246,44 @@ def test_a_sic_shell_is_not_reread_every_run(rawstore_tmp_db, monkeypatch, calls
     assert rawstore.get("relatedness_profiles", "SPAC")["status"] == "shell"
     assert calls == [] and seen == []              # done until its text changes: not even prepared again
 
+
+
+# ── delta review of fade7de: the batched hash pass and a spent partial ──────
+
+def _filing(t, text):
+    rawstore.write_rows("chain_filings", [{"ticker": t, "cik": "1", "form": "10-K", "filed": "2026-01-01",
+                                           "accession": "a", "primary_doc": "u", "item_text": text,
+                                           "quality": "ok", "fetched_at": 1.0}])
+
+
+def test_the_batched_hash_pass_matches_the_profile_on_the_store_path(rawstore_tmp_db, calls):
+    """The real ``_filing_text`` over ``chain_filings``: a second run makes no call."""
+    _filing("NVDA", long_body("we make gpus"))
+    engine.build_profiles(["NVDA"], usd_cap=1.0)
+    engine.build_profiles(["NVDA"], usd_cap=1.0)
+    assert len(calls) == 1
+
+
+def test_the_batched_hash_pass_matches_a_dual_class_group(rawstore_tmp_db, monkeypatch, calls):
+    monkeypatch.setattr(engine, "_cik_for", lambda ts: {t: "1" for t in ts})
+    _filing("GOOG", long_body("we search"))
+    engine.build_profiles(["GOOGL", "GOOG"], usd_cap=1.0)
+    n = len(calls)
+    engine.build_profiles(["GOOGL", "GOOG"], usd_cap=1.0)
+    assert n == 1 and len(calls) == n
+
+
+def test_a_spent_partial_is_redone_for_a_new_text(rawstore_tmp_db, monkeypatch, calls):
+    from RevenueChaser.module_relatedness.tests.test_profile_v3_chunks_400 import conglomerate
+    _text(monkeypatch, conglomerate())
+    monkeypatch.setattr(profiles.deepseek, "complete",
+                        lambda system, user, **kw: calls.append({"user": user}) or
+                        ("not json" if ", part 2 of" in user else json.dumps(REPLY)))
+    for _ in range(engine.MAX_ATTEMPTS + 1):
+        engine.build_profiles(["HON"], usd_cap=1.0)
+    assert rawstore.get("relatedness_profiles", "HON")["attempts"] == engine.MAX_ATTEMPTS
+    before = len(calls)
+    _text(monkeypatch, conglomerate() + "\n\n" + long_body("a brand new 10-K business"))
+    engine.build_profiles(["HON"], usd_cap=1.0)
+    assert len(calls) > before                                          # a new filing is read again
+    assert rawstore.get("relatedness_profiles", "HON")["attempts"] == 1  # and its partial counts from 1

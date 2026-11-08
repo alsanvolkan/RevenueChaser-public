@@ -100,3 +100,15 @@ def test_the_fallback_links_read_the_layer(layer):
 
 def test_off_the_layer_there_is_no_fallback_link(monkeypatch):
     assert engine._previous_filing("AAA") is None and engine._whole_document("AAA") is None
+
+
+def test_on_the_layer_a_profile_is_not_redone_on_the_next_run(layer, monkeypatch):
+    """The batched hash pass reads the same layer text ``_work`` profiled (delta review of fade7de)."""
+    from RevenueChaser.module_relatedness import profiles as profiles_mod
+    from RevenueChaser.module_relatedness.tests.test_relatedness import v3_reply
+    calls = []
+    monkeypatch.setattr(profiles_mod.deepseek, "complete",
+                        lambda system, user, **k: calls.append(user) or v3_reply(["cloud software"]))
+    engine.build_profiles(["MSFT"], usd_cap=1.0)
+    engine.build_profiles(["MSFT"], usd_cap=1.0)
+    assert len(calls) == 1

@@ -376,6 +376,13 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
         stale = store.is_stale(m, mode) or (
             current is not None and store.input_hash(m.get("cache_key")) != current)
         if m["status"] == "ok" and any((have.get(t) or {}).values()):
+            stored = store.input_hash(m.get("cache_key")) or ""
+            if stored.endswith(PARTIAL):
+                # A partial profile: a new text or mode is a new input (redone whatever its attempts); the same one
+                # is redone until its attempts are spent.
+                if store.is_stale(m, mode) or current is not None and stored[:-len(PARTIAL)] != current:
+                    return True
+                return m["attempts"] < MAX_ATTEMPTS
             return stale and m["attempts"] < MAX_ATTEMPTS
         if m["status"] == "empty":
             return stale or m["attempts"] < MAX_ATTEMPTS
@@ -537,7 +544,9 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
             if usable and partial:
                 # Some chunks stayed unusable: keep and show what came back, and redo it on the next runs (its input
                 # hash says ``partial``) until the attempts are spent.
-                was_partial = m is not None and (store.input_hash(m.get("cache_key")) or "").endswith(PARTIAL)
+                # Counted on from the stored attempts only for the same input and mode (delta review of fade7de).
+                was_partial = (m is not None and not store.is_stale(m, mode)
+                               and store.input_hash(m.get("cache_key")) == inp["hash"] + PARTIAL)
                 tries = m["attempts"] + 1 if was_partial else 1
                 pck = store.cache_key(w_model, w_thinking, w_effort, store.PROMPT_VERSION, rep, inp["hash"] + PARTIAL,
                                       provider=provider, source=inp.get("source"))
