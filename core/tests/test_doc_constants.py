@@ -462,3 +462,12 @@ def test_data_health_states_the_control_boards_values_the_code_owns():
     assert f"`{screen.FILL_ENV}`" in section
     assert f"`GET {control_render.ROUTES['sample']}<table>`" in section
     assert f"{newdata.SAMPLE_ROWS} rows" in section
+
+
+def test_the_metrics_table_in_data_health_matches_the_code():
+    """#527 plan B1: the /metrics names are a contract with the Grafana boards; the doc lists exactly the code's."""
+    from RevenueChaser.module_settings import metrics
+    text = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
+    section = text.split("## 9. Live in Grafana", 1)[1]
+    listed = re.findall(r"^\| `(rc_[a-z_]+)` \|", section, flags=re.M)
+    assert listed == list(metrics.HELP), "docs/data_health.md section 9 and module_settings/metrics.HELP differ"

@@ -921,3 +921,42 @@ Checked 2026-09-24. None of these replaces our own SEC client and filing picker.
 The Stage 2 and Stage 3 dataset tables in [`data_architecture.md`](data_architecture.md) are still
 written by hand rather than generated from `core/datasets.py`. That generator is code, not
 documentation, so it is not part of this change and issue #146 stays open for it.
+
+---
+
+## 9. Live in Grafana: `GET /metrics`
+
+The page is the library: what data exists, where it comes from, its settings and the complex presses. The live
+view of health and fetch is Grafana on homesrv (avo, 6 Nov 2026), fed by the dashboard's `GET /metrics`
+(`module_settings/metrics.py`, Prometheus text format, scraped every 60 s on loopback). It reads only the ops store,
+the backup manifests and the IBKR login record, never the serving DuckDB files, so the route opens no store session.
+The builder timer is read in the background at most once a minute. A part that cannot be read leaves its family
+empty and counts one `rc_metrics_read_errors_total{part}`; the scrape itself never fails.
+
+The names are a contract with the Grafana boards; `core/tests/test_doc_constants.py` checks this list against the
+code:
+
+| Metric | Labels | What |
+|---|---|---|
+| `rc_queue_requests` | `status` | build requests queued and running now |
+| `rc_run_elapsed_seconds` | `dataset`, `who` | how long a running request has run; `who` is `systemd`, `claude`, `unknown` or `lost` |
+| `rc_run_limit_seconds` | `dataset` | its unit's time limit, when it has one |
+| `rc_provider_calls_today` | `provider` | calls on the New York day |
+| `rc_provider_day_cap` | `provider` | our day cap |
+| `rc_provider_failures_today` | `provider` | failed calls on the New York day |
+| `rc_dataset_state` | `dataset`, `kind`, `state` | 1 for its state: fresh, unchanged, late, stale, never |
+| `rc_dataset_last_check_result` | `dataset`, `kind` | 0 changed or unchanged, 1 skipped, 2 failed |
+| `rc_dataset_checked_timestamp_seconds` | `dataset`, `kind` | the newest check's day |
+| `rc_dataset_paused` | `dataset`, `kind` | 1 when its schedule is paused |
+| `rc_dataset_open_issues` | `dataset`, `kind` | open build issues |
+| `rc_builder_last_run_timestamp_seconds` | | when the builder last started a run |
+| `rc_builder_timer_on` | | 1 on, 0 off, absent when not known |
+| `rc_backup_newest_timestamp_seconds` | `kind` | the newest backup of a kind |
+| `rc_switch_on` | `name` | the fetch and backup switches |
+| `rc_ibkr_state` | `state` | 1 for the gateway's login state: up, down, unknown, not_set |
+| `rc_threshold` | `name` | the page's alarm thresholds, from `control.py`, so an alert rule does not retype them |
+| `rc_metrics_read_errors_total` | `part` | readers that failed since the dashboard started |
+| `rc_metrics_build_seconds` | | what the scrape cost |
+
+`GET /api/build/datasets` lists every dataset the builder knows (`name`, `kind`, `attended`, `providers`): the
+allow-list for the Grafana buttons.

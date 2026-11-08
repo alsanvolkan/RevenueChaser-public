@@ -1,0 +1,183 @@
+"""#527 plan B1: ``GET /metrics`` for Prometheus and ``GET /api/build/datasets`` for the Grafana buttons' allow-list.
+
+The scrape reads only the ops store and small files: it never opens the serving DuckDB files, so it is exempt from
+the dashboard's per-request store session. A part that cannot be read leaves its family empty, never the scrape.
+"""
+from __future__ import annotations
+
+import re
+from datetime import datetime, timezone
+from types import SimpleNamespace
+
+import pytest
+
+from RevenueChaser.core import config
+from RevenueChaser.core.tests.panel_client import panel_test_client
+from RevenueChaser.module_settings import control, metrics
+from RevenueChaser.rcdata import ops
+
+NOW = datetime(2026, 11, 9, 15, 0, tzinfo=timezone.utc)          # a Monday, New York session open
+LINE = re.compile(r'^[a-z_:][a-z0-9_:]*(\{([a-z_]+="([^"\\]|\\.)*",?)*\})? -?[0-9.e+-]+$')
+
+
+@pytest.fixture(autouse=True)
+def _market(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "MARKET_DIR", tmp_path / "market")
+    monkeypatch.setattr(config, "MARKET_RAW_DIR", tmp_path / "market_raw")
+    monkeypatch.setattr(ops, "read_log", ops.ReadLog(process="test"))
+
+
+@pytest.fixture
+def client():
+    from RevenueChaser.app.dashboard import app
+    return panel_test_client(app)
+
+
+def _families(text: str) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for line in text.splitlines():
+        if line.startswith("# TYPE "):
+            out.setdefault(line.split()[2], [])
+        elif line and not line.startswith("#"):
+            out.setdefault(re.split(r"[{ ]", line, maxsplit=1)[0], []).append(line)
+    return out
+
+
+DS = {"market_series": SimpleNamespace(kind="market", providers=("fred",), attended=False),
+      "wrds/prices": SimpleNamespace(kind="prices", providers=("wrds",), attended=True)}
+
+
+def _collect(**kw):
+    kw.setdefault("datasets", DS)
+    kw.setdefault("timer", {"state": "on"})
+    kw.setdefault("ibkr", lambda: {"state": "up"})
+    return metrics.collect(NOW, **kw)
+
+
+def test_every_line_is_valid_exposition_and_every_family_has_its_type():
+    text = metrics.render(_collect(), 0.01)
+    types = [l.split()[2] for l in text.splitlines() if l.startswith("# TYPE ")]
+    assert types == list(metrics.HELP), "one # TYPE per family, in a fixed order"
+    for line in text.splitlines():
+        assert line.startswith("# ") or LINE.match(line), f"not exposition text: {line!r}"
+    assert "rc_metrics_build_seconds 0.01" in text
+
+
+def test_a_dataset_reports_its_state_from_its_newest_check():
+    ops.record_check("market_series", "changed", checked_on="2026-11-09", source_as_of="2026-11-06")
+    ops.record_check("wrds/prices", "failed", checked_on="2026-11-09")
+    fam = _families(metrics.render(_collect()))
+    state = {l for l in fam["rc_dataset_state"] if l.endswith(" 1")}
+    assert state == {'rc_dataset_state{dataset="market_series",kind="market",state="fresh"} 1',
+                     'rc_dataset_state{dataset="wrds/prices",kind="prices",state="stale"} 1'}
+    assert len(fam["rc_dataset_state"]) == 2 * len(metrics.STATES), "every state present, 0 or 1"
+    assert 'rc_dataset_last_check_result{dataset="wrds/prices",kind="prices"} 2' in fam["rc_dataset_last_check_result"]
+    assert 'rc_dataset_last_check_result{dataset="market_series",kind="market"} 0' in fam["rc_dataset_last_check_result"]
+
+
+def test_a_dataset_never_checked_reads_never_and_has_no_result():
+    fam = _families(metrics.render(_collect()))
+    assert 'rc_dataset_state{dataset="market_series",kind="market",state="never"} 1' in fam["rc_dataset_state"]
+    assert fam["rc_dataset_last_check_result"] == []
+
+
+def test_provider_calls_and_the_day_cap():
+    ops.count_calls("uw", 7, failures=1)                   # counted on today's New York day, so read at today
+    fam = _families(metrics.render(metrics.collect(datetime.now(timezone.utc), datasets=DS, timer={"state": "on"},
+                                                   ibkr=lambda: None)))
+    assert 'rc_provider_calls_today{provider="uw"} 7' in fam["rc_provider_calls_today"]
+    assert 'rc_provider_failures_today{provider="uw"} 1' in fam["rc_provider_failures_today"]
+    assert any(l.startswith('rc_provider_day_cap{provider="uw"} ') for l in fam["rc_provider_day_cap"])
+
+
+def test_the_timer_unknown_leaves_its_family_empty_not_zero():
+    assert _families(metrics.render(_collect(timer={"state": None})))["rc_builder_timer_on"] == []
+    assert _families(metrics.render(_collect(timer={"state": "off"})))["rc_builder_timer_on"] == ["rc_builder_timer_on 0"]
+
+
+def test_ibkr_state_is_one_of_a_closed_set():
+    fam = _families(metrics.render(_collect(ibkr=lambda: {"state": "not set"})))
+    assert [l for l in fam["rc_ibkr_state"] if l.endswith(" 1")] == ['rc_ibkr_state{state="not_set"} 1']
+
+
+def test_a_running_request_names_who_from_a_closed_set():
+    ops.enqueue("market_series", by="settings")
+    ops.next_request()
+    ops.start_run("r1", "market_series", "queue")
+    fam = _families(metrics.render(_collect(cgroup=lambda pid: "0::/system.slice/life-claude-rc.service",
+                                            alive=lambda pid: True)))
+    assert fam["rc_queue_requests"] == ['rc_queue_requests{status="queued"} 0', 'rc_queue_requests{status="running"} 1']
+    elapsed = fam["rc_run_elapsed_seconds"]
+    assert len(elapsed) == 1 and elapsed[0].startswith('rc_run_elapsed_seconds{dataset="market_series",who="')
+    who = re.search(r'who="([a-z]+)"', elapsed[0]).group(1)
+    assert who in metrics.WHO
+
+
+@pytest.mark.parametrize("words, who", [("systemd life-rc-builder", "systemd"), ("Claude session", "claude"),
+                                        ("process gone · probably lost", "lost"), ("unknown", "unknown"),
+                                        ("anything else", "unknown")])
+def test_who_words_map_to_the_enum(words, who):
+    assert metrics._who(words) == who
+
+
+def test_a_failing_part_is_counted_and_the_rest_still_reads(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("ops unreadable")
+    monkeypatch.setattr(ops, "read_queue", boom)
+    fam = _families(metrics.render(_collect()))
+    assert fam["rc_queue_requests"] == []
+    assert any(l.startswith('rc_metrics_read_errors_total{part="queue"}') for l in fam["rc_metrics_read_errors_total"])
+    assert fam["rc_dataset_state"], "the other parts still read"
+
+
+def test_thresholds_come_from_control():
+    fam = _families(metrics.render(_collect()))
+    assert f'rc_threshold{{name="builder_silent_minutes"}} {control.BUILDER_SILENT_MINUTES}' in fam["rc_threshold"]
+    assert f'rc_threshold{{name="cap_alert_share"}} {control.CAP_ALERT!r}' in fam["rc_threshold"]
+
+
+def test_a_label_value_is_escaped():
+    text = metrics.render({"rc_switch_on": [({"name": 'a"b\\c\nd'}, 1)]})
+    assert 'rc_switch_on{name="a\\"b\\\\c\\nd"} 1' in text
+
+
+def test_the_timer_is_read_in_the_background_at_most_once_a_minute():
+    calls, t = [], [0.0]
+    timer = metrics._Timer(reader=lambda: calls.append(1) or {"state": "on"}, clock=lambda: t[0])
+    assert timer.get(wait=True)["state"] == "on"
+    timer.get(wait=True)
+    assert len(calls) == 1, "a second scrape within the minute reuses the reading"
+    t[0] = metrics.TIMER_EVERY_S
+    timer.get(wait=True)
+    assert len(calls) == 2
+
+
+def test_the_route_serves_text_and_opens_no_store_session(client, monkeypatch):
+    from RevenueChaser.core import rawstore
+    opened = []
+    real = rawstore.session
+    monkeypatch.setattr(rawstore, "session", lambda *a, **k: opened.append(1) or real(*a, **k))
+    monkeypatch.setattr(metrics.TIMER, "get", lambda wait=False: {"state": "on"})
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert r.mimetype == "text/plain"
+    assert "version=0.0.4" in r.headers["Content-Type"]
+    assert "# TYPE rc_dataset_state gauge" in r.get_data(as_text=True)
+    assert opened == [], "a scrape must not open raw.duckdb"
+
+
+def test_the_datasets_route_lists_names_kinds_attended_and_providers(client):
+    r = client.get("/api/build/datasets")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["ok"] is True
+    names = [d["name"] for d in body["datasets"]]
+    assert names == sorted(names) and "market_series" in names
+    one = next(d for d in body["datasets"] if d["name"] == "market_series")
+    assert set(one) == {"name", "kind", "attended", "providers"} and one["attended"] is False
+
+
+def test_datasets_list_marks_attended():
+    assert metrics.datasets_list(DS) == [
+        {"name": "market_series", "kind": "market", "attended": False, "providers": ["fred"]},
+        {"name": "wrds/prices", "kind": "prices", "attended": True, "providers": ["wrds"]}]
