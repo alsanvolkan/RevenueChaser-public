@@ -117,13 +117,15 @@ module_testing/e2e/
 │   ├── dashboard_driver.py         # run_job / view / restart / table_count
 │   ├── shared.py                   # one dashboard + one Fetch shared by read-only tests
 │   ├── cdp_browser.py              # headless Chrome over DevTools: exact viewport, colour scheme
+│   ├── devices.py                  # measured phones (realme GT2 Pro): viewport, DPR, touch, user agent
 │   ├── mock_provider_server.py     # loopback HTTP server + request counter
 │   ├── yfinance_fake.py            # fake yf.Ticker / yf.screen + call counter
 │   └── provider_fixtures/          # hand-written JSON, one file per endpoint
 ├── test_board_<name>.py            # one per board
 ├── test_board_html_browser.py      # hostile fixtures in headless Chrome (ADR-X1)
 ├── test_phone_shell.py             # the shell at 390 px and 1280 px, light and dark (#184)
-├── test_cdp_browser.py             # the DevTools harness stays off the network
+├── test_cdp_browser.py             # the DevTools harness stays off the network; a device emulates as itself
+├── test_screenshots.py             # PNGs of Data/Health and Runs for a reviewer (only with RC_SHOTS_DIR)
 └── test_live_provider_fetch.py     # the --live tier
 ```
 
@@ -144,6 +146,16 @@ at 1280 px the sidebar stays a column.
 It finds Chrome the way the HTML guard does, and fails under `CI=true` without one. Chrome resolves no host
 but loopback (`--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1`: the rule matches
 an IP literal too, so the dashboard's `127.0.0.1` is excluded by name); `test_cdp_browser.py` holds both halves.
+
+The phone checks also run on the owner's own phone, the realme GT2 Pro, upright (412 x 806 CSS px) and sideways
+(919 x 360), from `harness/devices.py`: measured on the phone on 8 Nov 2026 (DPR 3.5, Android 15, Chrome 156; the
+sideways height is an estimate). `Page.emulate_device` sets the viewport, the pixel ratio, touch and the user
+agent; plain `emulate` treats anything 900 px or wider as a desktop, which a phone held sideways is not.
+
+`test_screenshots.py` runs only when `RC_SHOTS_DIR` names a folder. It writes the Data/Health and Runs tabs at
+390 px, the realme, 969, 1280 and 1920 px, light and dark (20 PNGs, about 3.5 MB), and the e2e job on CI uploads
+them as the `screenshots` artifact, kept 14 days, so a reviewer sees the layout without running anything. Mock
+data, so the pictures show the layout, not live numbers.
 
 ### The mock provider server
 

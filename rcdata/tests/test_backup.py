@@ -8,6 +8,8 @@ import time
 
 import pytest
 
+from pathlib import Path
+
 from RevenueChaser.core import config
 from RevenueChaser.rcdata import backup, ops, serving
 
@@ -126,6 +128,55 @@ def test_s3_a_write_landing_during_the_ops_backup_does_not_fail_it(sqlite_ops, b
     con = sqlite3.connect(summary["ops"])
     assert con.execute("SELECT count(*) FROM build_requests").fetchone()[0] == 1
     con.close()
+
+
+def test_the_ops_copy_is_built_off_the_backup_folder(sqlite_ops, backup_dir, monkeypatch):
+    """SQLite writes a database page by page, and the backup folder is slow storage: only the finished file is
+    copied there (5 Nov 2026: 8m44s for a 5.8 MB ops.sqlite, and a 30-minute timeout on the 04:30 run)."""
+    ops.enqueue("market_series", None, by="test")
+    real = backup._online_backup
+    targets = []
+
+    def watch(source, target):
+        targets.append(Path(target.execute("PRAGMA database_list").fetchone()[2]))
+        real(source, target)
+    monkeypatch.setattr(backup, "_online_backup", watch)
+    copy = backup.run_backup(only="ops")["ops"]
+    assert targets and backup_dir not in targets[0].parents
+    assert copy.exists() and not list((backup_dir / "market").glob("*.tmp*"))
+
+
+def test_an_ops_copy_whose_rows_do_not_match_is_failed_and_leaves_nothing(sqlite_ops, backup_dir, monkeypatch):
+    """The check reads the copy on the backup disk: a short copy is a failed step, with no ``.tmp`` and no
+    manifest entry left behind to look like a backup."""
+    ops.enqueue("market_series", None, by="test")
+    real = backup._sqlite_counts
+    monkeypatch.setattr(backup, "_sqlite_counts", lambda p: {**real(p), "build_requests": 0})
+    with pytest.raises(backup.BackupFailed, match="ops"):
+        backup.run_backup(only="ops")
+    market = backup_dir / "market"
+    assert not list(market.glob("*.tmp*")) and not list(market.glob("ops_*.sqlite"))
+    manifest = market / "manifest.json"
+    assert not manifest.exists() or "ops_" not in manifest.read_text(encoding="utf-8")
+
+
+def test_a_killed_runs_temp_files_and_their_wal_and_shm_are_swept(sqlite_ops, backup_dir):
+    """A run killed mid-copy leaves ``*.tmp`` and, from SQLite, ``*.tmp-wal`` / ``*.tmp-shm``: the next run removes
+    them and nothing that is a kept backup."""
+    market = backup_dir / "market"
+    market.mkdir(parents=True)
+    orphans = [market / n for n in ("ops_1.sqlite.tmp", "ops_1.sqlite.tmp-wal", "ops_1.sqlite.tmp-shm",
+                                    "market_1.duckdb.tmp")]
+    for p in orphans:
+        p.write_bytes(b"x")
+    ops.enqueue("market_series", None, by="test")
+    kept = backup.run_backup(only="ops")["ops"]          # a kept backup and its manifest entry, before the orphans
+    for p in orphans:
+        p.write_bytes(b"x")
+    copy = backup.run_backup(only="ops")["ops"]
+    assert not any(p.exists() for p in orphans)
+    assert copy.exists() and kept.exists() and kept != copy
+    assert kept.name in (market / backup.MANIFEST_NAME).read_text(encoding="utf-8")
 
 
 def test_s3_a_failed_ops_backup_does_not_block_the_market_copy(backup_dir, monkeypatch):

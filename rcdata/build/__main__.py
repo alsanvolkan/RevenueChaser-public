@@ -133,9 +133,14 @@ def _wait_for_turn(wait: float, said: list | None = None) -> str | None:
 
 def _fetch_lock_names(args) -> list[str]:
     """The ``rcdata_fetch_<dataset>`` locks a fetch-only command (``--no-duckdb`` / ``--no-parquet``) needs, one
-    per dataset it names."""
+    per dataset it names.
+
+    The ``/`` of a dataset name becomes ``_``: ``job_lock._lock_path`` puts the name straight into a path, so
+    ``sec/companyfacts`` would open a ``rcdata_fetch_sec/`` directory inside the store dir and hide the lock
+    inside it, where ``holders()`` -- which globs ``*.lock`` one level deep -- can never name it.
+    """
     names = list(getattr(args, "datasets", None) or ([args.dataset] if getattr(args, "dataset", None) else []))
-    return [f"rcdata_fetch_{n}" for n in names]
+    return [f"rcdata_fetch_{n.replace('/', '_')}" for n in names]
 
 
 def _take_fetch_locks(stack: contextlib.ExitStack, locks: list[str], wait: float) -> tuple[bool, str | None]:
