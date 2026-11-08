@@ -79,7 +79,6 @@ def test_a_refresh_builds_the_same_payload_as_the_fetch(uw, monkeypatch, no_enri
 def test_the_chart_route_takes_its_price_from_d01(store, no_enrichment):  # noqa: F811
     from RevenueChaser.app import dashboard
     from RevenueChaser.module_sec_13f import engine as sec_13f
-    sec_13f.recompute_totals()                        # the ingested quarter: AAPL 2026-03-31
     rawstore.write_rows("price_bars_daily", [_bar("AAPL", "2026-03-31", 220.0)])
     dashboard.app.config["TESTING"] = True
     r = dashboard.app.test_client().get("/api/sec_13f/AAPL")

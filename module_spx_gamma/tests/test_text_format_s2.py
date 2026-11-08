@@ -61,7 +61,7 @@ def test_missing_vrp_and_skew_print_na():
     html = _html(variance_risk_premium={"risk_premium": None, "rank": None},
                  skew={"put_bias_1m": None, "put_bias_3m": None, "note": "x"})
     vrp_row = html.split("Variance Risk Premium</td>")[1].split("</tr>")[0]
-    skew_row = html.split("Skew (Put Bias)</td>")[1].split("</tr>")[0]
+    skew_row = html.split("Skew (25Δ put − call IV)</td>")[1].split("</tr>")[0]
     assert "N/A" in vrp_row and "0.0%" not in vrp_row and "0%" not in vrp_row.split("rank")[0]
     assert "N/A" in skew_row and "0.0%" not in skew_row
 
@@ -84,8 +84,8 @@ def test_vix_in_a_backfilled_day_is_the_days_own_stored_value():
 
 def test_live_skew_in_a_backfilled_day_shows_the_historical_label():
     html = _html(skew={"put_bias_1m": 0.031, "put_bias_3m": 0.042, "note": "x"},
-                 historical_live_files=["interpolated_iv.json"])
-    row = html.split("Skew (Put Bias)</td>")[1].split("</tr>")[0]
+                 historical_live_files=["skew_chain_1m.json"])
+    row = html.split("Skew (25Δ put − call IV)</td>")[1].split("</tr>")[0]
     assert "n/a (historical)" in row and "3.1%" not in row
 
 
@@ -93,9 +93,9 @@ def test_iron_butterfly_from_a_later_chain_shows_the_historical_label():
     s = make_snapshot()
     s["historical_live_files"] = ["option_chain.json"]
     html = render.render_html(s)
-    panel = html.split("Iron Butterfly — Pin Harvest</h2>")[1].split("At a Glance")[0]
+    panel = html.split("Iron Butterfly — Pin Harvest</b>")[1].split("</section>")[0]
     assert "n/a (historical)" in panel
-    assert "Center (Pin)" not in panel and "ib-legs" not in panel.split("</style>")[-1]
+    assert "Center (Pin)" not in panel and "ib-legs" not in panel
 
 
 def test_the_current_day_keeps_its_live_values():

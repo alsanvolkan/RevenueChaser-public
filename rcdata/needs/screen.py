@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from RevenueChaser.core import sec_throttle
+
 
 @dataclass(frozen=True)
 class DatasetCard:
@@ -39,7 +41,8 @@ ROLES = ("first", "only source", "fills", "cross-check", "build")
 
 #: The screen's card per dataset. A dataset the store knows and this map does not raises in CI.
 DATASETS: dict[str, DatasetCard] = {
-    'alpaca/bars': DatasetCard('Daily bars (Alpaca)', coverage_target=0.99, step=8, role='first'),
+    'alpaca/bars': DatasetCard('Daily bars (Alpaca, the tester: compared, never served)', coverage_target=0.99, step=8,
+                                role='cross-check'),
     'alpaca/corporate_actions': DatasetCard('Corporate actions (Alpaca)', step=8, role='first'),
     'alphavantage/listing_status': DatasetCard('Every US listing, the ETF list (Alpha Vantage)', step=1, role='first'),
     'alphavantage/earnings_calendar': DatasetCard('Earnings calendar (Alpha Vantage)', step=9, role='first'),
@@ -68,6 +71,7 @@ DATASETS: dict[str, DatasetCard] = {
     'sec/fsds': DatasetCard('SEC Financial Statement Data Sets (the check)', step=9, role='fills'),
     'sec/ftd': DatasetCard('Fails to deliver (SEC)', step=10, role='first'),
     'spine/security': DatasetCard('Identity spine (security, tiers, history)', coverage_target=0.98, step=7, role='build'),
+    'uw/earnings': DatasetCard('Reported EPS and its surprise (Unusual Whales)', step=9, role='fills'),
     'uw/financials': DatasetCard('Preliminary quarters (Unusual Whales, off by default)', step=9, role='fills'),
     'uw/option_list': DatasetCard('Options of SPX and the option list (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/option_screener': DatasetCard('Earnings options: calendar, screener and earnings set (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
@@ -75,11 +79,10 @@ DATASETS: dict[str, DatasetCard] = {
     'uw/greek_expiry_strike': DatasetCard('SPX greek exposure by expiry and strike, whole chain (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/total_float': DatasetCard('Float check (Unusual Whales)', step=8, role='cross-check'),
     'wrds/co_hgic': DatasetCard('Compustat GICS history (WRDS)', step=5, role='fills'),
-    'wrds/firm_ratio': DatasetCard('WRDS financial ratios (the debt check)', step=9, role='cross-check'),
     'wrds/funda': DatasetCard('Compustat annual fundamentals (WRDS, the revision check)', step=9, role='cross-check'),
     'wrds/fundq': DatasetCard('Compustat quarterly fundamentals (WRDS, the revision check)', step=9, role='cross-check'),
     'wrds/idxcst_his': DatasetCard('Compustat index constituents (WRDS, the membership check)', step=6, role='cross-check'),
-    'wrds/prices': DatasetCard('Price history and actions (WRDS: Compustat, CRSP)', step=8, role='cross-check'),
+    'wrds/prices': DatasetCard('Price history and actions (WRDS: Compustat, CRSP)', step=8, role='first'),
     'wrds/sec_idhist': DatasetCard('Compustat securities and identifier history (WRDS)', step=3, role='fills'),
     'wrds/segments': DatasetCard('Compustat segments and customers (WRDS)', step=9, role='fills'),
     'yfinance/estimates': DatasetCard('Analyst estimates (yfinance)', step=9, role='first'),
@@ -93,6 +96,7 @@ WRITTEN_COLUMN: dict[str, str] = {
     'corporate_action': 'ex_date',
     'customer_share': 'document_date',
     'earnings_event': 'source_as_of',
+    'earnings_reported': 'source_as_of',
     'er_options': 'session_date',
     'estimate_latest': 'source_as_of',
     'etf': 'source_as_of',
@@ -279,7 +283,7 @@ class ProviderWords:
 #: CI, so the screen never shows a bare id.
 PROVIDERS: dict[str, ProviderWords] = {
     "sec": ProviderWords("SEC", "the ticker file, company facts, filings, 13F, Form 4, 13D/G, fails to deliver, N-CEN",
-                         "one shared bucket, 8 a second, for every SEC caller · 10 split between the SEC processes when it falls back",
+                         f"one shared bucket, {sec_throttle.RATE} a second, for every SEC caller · 10 split between the SEC processes when it falls back",
                          "10 a second per User-Agent (fair access)"),
     "uw": ProviderWords("Unusual Whales", "options, SPX, float, financials", "a budget a run · each endpoint's own page size",
                         "100,000 a day (owner-marked avo 2026-11-02)"),

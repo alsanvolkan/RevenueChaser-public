@@ -220,9 +220,11 @@ Line numbers are this worktree's.
   closed with it.
 - The needs layer (`rcdata/needs/`, asked as `needs.ask(...)`) is read by Earnings Radar and by Settings; it
   runs no SQL of its own and sits on `rcdata.read`. It was `rcdata.api` until #329.
-- `module_asymmetric_growth/engine.py:842` — a screener imports
-  `module_sec_13f.engine`. **Worth an issue** only if the two are meant to stay
-  independent; today an AG run cannot be reasoned about without the 13F store.
+- ~~`module_asymmetric_growth/engine.py:842` — a screener imports `module_sec_13f.engine`.~~
+  **Closed** (#16, 5 Nov 2026) on the "if yes" branch: institutional ownership stays part of the AG score,
+  so the scan reads the stored rows through `core/ownership.sec13f_totals()` instead of the other board's
+  engine, and `module_sec_13f.engine.load_totals` reads the same function. The input did not change; the
+  import did.
 - `module_financials/engines/quick_remarks_engine.py:51` calls the AG screener's
   `score_ticker`. Cross-board *computation*, not just a data read — **worth an issue**
   as the clearest case of one board computing another's score.

@@ -99,6 +99,7 @@ CSS = """
 
 E = html.escape
 DBLABEL = {"raw": "raw.duckdb", "edgar": "edgar.duckdb", "prices": "prices.duckdb",
+           "ownership": "ownership.duckdb",
            "files": "file on disk", "none": "not stored"}
 
 

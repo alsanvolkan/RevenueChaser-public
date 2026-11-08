@@ -47,7 +47,7 @@ def _render():
 def test_a_render_reads_each_spine_answer_once(opens):
     first = _render()
     n = len(opens)
-    assert n <= 4, opens                                     # universe, membership, identity (+ provenance)
+    assert n <= 5, opens                   # universe, my_universe, membership, identity (+ provenance)
     assert _render() == first and len(opens) == n           # a second render opens nothing
 
 

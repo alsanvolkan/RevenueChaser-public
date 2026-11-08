@@ -575,7 +575,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     _runlog(
         "cusip_map", "CUSIP to ticker map", ("cusip_ticker",),
         "raw", Source.derived, None,
-        "rebuilt by the 13F derive (engine.recompute_totals); not a REGISTRY entry",
+        "no writer since G9: the builder names a CUSIP per period in sec13f_cusip_map; not a REGISTRY entry",
     ),
     DatasetSpec(
         key="sec_sic", label="SEC industry code cache",

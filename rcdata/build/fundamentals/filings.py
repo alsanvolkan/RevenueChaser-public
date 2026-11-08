@@ -29,6 +29,7 @@ Staging: ``stg_sec_filings``, ``stg_sec_documents``, ``stg_sec_segments``, ``stg
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -40,10 +41,18 @@ from .. import base
 from . import KIND, common, ixbrl, sec_index
 
 NAME = "sec/filings"
-NEW_PER_RUN = 300
+NEW_PER_RUN = 9000
 ANNUAL_FORMS = ("10-K", "20-F", "40-F")             # newest by filing date; a 10-K first on one day
 PROXY_FORMS = ("DEF 14A",)
 CAPPED = "capped"
+#: How many AIF exhibits of one 40-F are kept. shortcut: one filing has never been seen with more than one, so the
+#: largest is taken; upgrade the number if a filer splits its Annual Information Form across exhibits.
+_AIF_PER_FILING = 1
+#: The one sliced item: ``business`` is Value Chain's own field and its slicer caps it
+#: (``module_value_chain/splitter.py``), which is that board's rule and not changed here. Everything else this
+#: layer stores is kept entire (avo, 5 Nov 2026: "belgeyi hic kesmeyelim, hepsi kalsin"): ``whole``, ``proxy``
+#: and an ``aif`` exhibit carry the filer's own length.
+SLICED_ITEMS = ("business",)
 STAGING = {"filings": "stg_sec_filings", "documents": "stg_sec_documents", "segments": "stg_sec_segments",
            "customers": "stg_sec_customers"}
 
@@ -89,6 +98,85 @@ def _doc_path(cik: str, accession: str) -> Path:
     return common.raw_dir(NAME) / "documents" / str(cik) / f"{accession}.html.gz"
 
 
+def _exhibit_path(cik: str, accession: str, name: str) -> Path:
+    return common.raw_dir(NAME) / "documents" / str(cik) / f"{accession}.{name}.gz"
+
+
+def index_url(cik: str, accession: str) -> str:
+    """The filing's own file listing. Only a 40-F needs it: every other form this layer reads keeps what it wants
+    in the primary document."""
+    return f"{common.sec_www()}/Archives/edgar/data/{int(cik)}/{accession.replace('-', '')}/index.json"
+
+
+#: An exhibit of a 40-F whose name says it is the Annual Information Form -- the Canadian filing that carries the
+#: business description when the 40-F itself does not. Measured on two real filings (5 Nov 2026): Brookfield files
+#: it as ``a2025-40xfex991aif.htm`` while Canadian Natural writes everything into the primary document, so both
+#: shapes exist and the primary document is fetched either way.
+#: An ``ex99`` alone is not enough. Brookfield's 40-F (read 5 Nov 2026) files 99.1 as the Annual Information
+#: Form, 99.2 as the financial statements and 99.3 as the MD&A, and the statements are the largest of the three --
+#: so "the biggest ex99" picks the wrong one. A name that says ``aif`` is taken first; only when none does is
+#: ``99.1`` taken, by its number.
+#: shortcut: three named limits. (1) The name is the only signal, because ``index.json`` carries no reliable
+#: exhibit *type*; upgrade by reading the filing's ``<CIK>-index.htm`` description column. (2) The 99.1/99.2/99.3
+#: order is **one filer's** layout, not a rule of the form. (3) Only ``.htm`` and ``.html`` are considered, so a
+#: filer who files the AIF as a PDF is missed (``read_exhibits`` raises ``aif_not_named`` when it can tell).
+_AIF_NAME = re.compile(r"aif", re.I)
+_EX_99_1 = re.compile(r"ex(?:hibit)?[-_]?99[._-]?1(?![0-9])", re.I)
+_EX_99_ANY = re.compile(r"ex(?:hibit)?[-_]?99", re.I)
+
+
+def stored_exhibits(cik: str, accession: str, primary: str | None = None) -> list[Path]:
+    """The AIF exhibit files fetched for one filing, in the order :func:`aif_exhibits` chose them.
+
+    Read from the stored ``index.json`` rather than guessed from file names: the fallback branch picks a name with
+    no ``aif`` in it (``ex99-1.htm``), which a name filter cannot find again -- so the exhibit was fetched, stored,
+    and never typed.
+    """
+    index = _exhibit_path(cik, accession, "index.json")
+    if not index.exists():
+        return []
+    names = aif_exhibits(base.read_raw_json(index), primary)[:_AIF_PER_FILING]
+    return [pth for pth in (_exhibit_path(cik, accession, name) for name in names) if pth.exists()]
+
+
+def aif_exhibits(listing: dict, primary: str | None = None) -> list[str]:
+    """The names of a 40-F's Annual Information Form exhibits in its ``index.json``, largest first; [] when none.
+
+    A name that says ``aif`` wins outright. Only when no name does is ``99.1`` taken, so the statements exhibit
+    (99.2) and the MD&A (99.3) are never mistaken for the business description. ``primary`` is left out: the
+    index lists the 40-F itself, which is already read as the document, and a primary named like an AIF would
+    otherwise be fetched and typed twice.
+    """
+    items = ((listing or {}).get("directory") or {}).get("item") or []
+    pages = [(int(i.get("size") or 0), str(i.get("name") or "")) for i in items
+             if str(i.get("name") or "").lower().endswith((".htm", ".html")) and str(i.get("name")) != primary]
+    return [name for _, name in sorted(_chosen(pages), reverse=True)]
+
+
+def _chosen(pages: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    named = [(size, name) for size, name in pages if _AIF_NAME.search(name)]
+    return named or [(size, name) for size, name in pages if _EX_99_1.search(name)]
+
+
+def picked_by_name(listing: dict, name: str, primary: str | None = None) -> bool:
+    """True when ``name`` was chosen because it says ``aif``, False when only its number chose it.
+
+    The number is one filer's layout and not a rule of the form, so a by-number pick is a guess: a filer who
+    keeps the Annual Information Form in the primary document and files its statements as 99.1 would get an
+    ``aif`` row that is the statements. Carried onto the row's ``quality`` so the guesses can be counted.
+    """
+    return bool(_AIF_NAME.search(name))
+
+
+def missed_exhibits(listing: dict, primary: str | None = None) -> int:
+    """How many ``ex99`` pages the filing has when :func:`aif_exhibits` chose none -- the one case this can tell
+    apart from "the AIF is in the primary document", and worth an issue rather than silence."""
+    if aif_exhibits(listing, primary):
+        return 0
+    items = ((listing or {}).get("directory") or {}).get("item") or []
+    return sum(1 for i in items if _EX_99_ANY.search(str(i.get("name") or "")))
+
+
 def _subs_raws(cik: str) -> list[Path]:
     folder = _subs_dir(cik)
     return sorted(folder.glob("*.json.gz")) if folder.is_dir() else []
@@ -131,22 +219,37 @@ def pick(rows: list[dict], forms: tuple[str, ...]) -> dict | None:
     return best
 
 
-def slice_text(html: str, form: str) -> tuple[str, str]:
-    """``(text, quality)`` of one document: the business section of an annual report, a proxy whole. Never ``ok``
-    at the cap (``capped``)."""
+def document_sections(html: str, form: str) -> list[tuple[str, str, str]]:
+    """``(item, text, quality)`` per section this layer serves from one document.
+
+    Nothing here is cut. ``whole`` is the document's text **uncut** (avo, 5 Nov 2026: "belgeyi hic kesmeyelim, hepsi kalsin"): a 10-K
+    runs from 220,000 to 1.4 million characters and the business section is a tenth of it, so everything a later
+    reader might want -- the risk factors, the legal proceedings, the notes -- was being thrown away at the one
+    place it could be kept for free. Its quality is the length's only; the cap belongs to a slice, which can run
+    away when a stop header is missed, and not to a whole document, whose length is the filer's.
+
+    Then ``business`` as before (``splitter``, Value Chain's own rule). A proxy is one ``proxy`` row, whole.
+
+    Item 5 and Item 8, which avo also asked for, are not here: a review of the first attempt found that the
+    longest-match rule picks a **cross-reference** in the item before ("included in Item 8 -- Financial
+    Statements") over the real header, because both resolve to the same stop, and that a 10-K often writes one
+    sentence under Item 8 and puts the statements after Item 15. Both need the 8,891 documents on disk measured
+    before a rule is chosen, so they come in their own change.
+    """
     from ....module_value_chain import splitter
     cap = max_text_chars()
     text = splitter.strip_html(html)
     if form in PROXY_FORMS:
-        out = text[:cap]
-        quality = CAPPED if len(text) >= cap else ("ok" if len(out) >= min_text_chars() else
-                                                   ("short" if out else "missing"))
-        return out, quality
+        return [("proxy", text, "ok" if len(text) >= min_text_chars() else ("short" if text else "missing"))]
+    out = [("whole", text, "ok" if len(text) >= min_text_chars() else ("short" if text else "missing"))]
+    if str(form).upper() == "40-F":
+        # Value Chain's splitter knows a 10-K's Item 1 and a 20-F's Item 4; a Canadian 40-F has neither, so a
+        # slice of it would be an arbitrary cut labelled by rules that do not apply. The whole text is the row.
+        return out
     item, quality = splitter.slice_item(text, form)
     item = item or ""
-    if len(item) >= cap:
-        quality = CAPPED
-    return item, quality
+    out.append(("business", item, CAPPED if len(item) >= cap else quality))
+    return out
 
 
 def read_list(ctx: base.RunContext, cik: str, as_of: date) -> Path | None:
@@ -174,18 +277,57 @@ def read_documents(ctx: base.RunContext, cik: str, raw: Path, as_of: date) -> in
     fetched = 0
     for forms in (ANNUAL_FORMS, PROXY_FORMS):
         f = pick(rows, forms)
-        if f is None or f["form"] == "40-F":
+        if f is None:
             continue
         path = _doc_path(cik, f["accession"])
+        if not path.exists():
+            url = document_url(cik, f["accession"], f["primary_document"])
+            r = common.sec_get(ctx, url, missing_object=True)  # /Archives/: a missing document answers 403
+            if r is None:
+                ctx.issue("document_missing", f"{cik}:{f['accession']}",
+                          f"the archive holds no {f['primary_document']}")
+            else:
+                base.write_raw_json(common.meta_path(path), {"cik": cik, "accession": f["accession"],
+                                                             "form": f["form"], "as_of": as_of.isoformat(),
+                                                             "url": url, "fetched_at": time.time(),
+                                                             "run_id": ctx.run_id})
+                base.write_raw(path, r.content)
+                fetched += 1
+        # A 40-F may keep its business description in an Annual Information Form exhibit instead of the primary
+        # document (``aif_exhibits``), and the primary document is now read either way.
+        if f["form"] == "40-F":
+            fetched += read_exhibits(ctx, cik, f, as_of)
+    return fetched
+
+
+def read_exhibits(ctx: base.RunContext, cik: str, f: dict, as_of: date) -> int:
+    """Fetch a 40-F's AIF exhibits that are not stored yet; how many were fetched. One index request per filing."""
+    first = _exhibit_path(cik, f["accession"], "index.json")
+    if first.exists():
+        listing = base.read_raw_json(first)
+    else:
+        r = common.sec_get(ctx, index_url(cik, f["accession"]), missing_object=True)
+        if r is None:
+            ctx.issue("index_missing", f"{cik}:{f['accession']}", "the archive holds no index.json")
+            return 0
+        listing = r.json()
+        base.write_raw_json(first, listing)
+    missed = missed_exhibits(listing, f.get("primary_document"))
+    if missed:
+        ctx.issue("aif_not_named", f"{cik}:{f['accession']}",
+                  f"{missed} ex99 page(s) and none named an Annual Information Form")
+    fetched = 0
+    for name in aif_exhibits(listing, f.get("primary_document"))[:_AIF_PER_FILING]:
+        path = _exhibit_path(cik, f["accession"], name)
         if path.exists():
             continue
-        url = document_url(cik, f["accession"], f["primary_document"])
-        r = common.sec_get(ctx, url, missing_object=True)      # /Archives/: a missing document answers 403
+        url = document_url(cik, f["accession"], name)
+        r = common.sec_get(ctx, url, missing_object=True)
         if r is None:
-            ctx.issue("document_missing", f"{cik}:{f['accession']}",
-                      f"the archive holds no {f['primary_document']}")
+            ctx.issue("document_missing", f"{cik}:{f['accession']}:{name}", f"the archive holds no {name}")
             continue
         base.write_raw_json(common.meta_path(path), {"cik": cik, "accession": f["accession"], "form": f["form"],
+                                                     "exhibit": name, "by_name": picked_by_name(listing, name),
                                                      "as_of": as_of.isoformat(), "url": url,
                                                      "fetched_at": time.time(), "run_id": ctx.run_id})
         base.write_raw(path, r.content)
@@ -235,10 +377,11 @@ class Filings:
             raw = raws[-1] if raws else read_list(ctx, cik, end)
             if raw is None:
                 continue
-            n = read_documents(ctx, cik, raw, end)
-            docs += n
-            if not raws or n:
-                out.append(raw)
+            docs += read_documents(ctx, cik, raw, end)
+            # Every company this holds a list for, not only the ones fetched from this run: the rows are typed
+            # from raw, so a company whose documents were already on disk still has to be rewritten to gain a
+            # row shape it did not have before (the ``whole`` row, 5 Nov 2026).
+            out.append(raw)
         ctx.notes.append(f"backfill: {len(out)} filing lists, {docs} documents")
         self.to_parquet_all(ctx, out)
 
@@ -285,29 +428,40 @@ class Filings:
     def _documents(cik: str, rows: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
         """The document rows, and the annual report's segment and customer rows (its inline XBRL)."""
         out, segments, customers = [], [], []
-        for forms, item in ((ANNUAL_FORMS, "business"), (PROXY_FORMS, "proxy")):
+        for forms in (ANNUAL_FORMS, PROXY_FORMS):
             f = pick(rows, forms)
             if f is None:
                 continue
+            annual = forms is ANNUAL_FORMS
             base_row = {k: f.get(k) for k in ("cik", "accession", "form", "filing_date", "report_date",
                                                "primary_document")}
-            if f["form"] == "40-F":
-                out.append({**base_row, "item": item, "text": None, "chars": 0, "quality": "form_40f"})
-                continue
-            path = _doc_path(cik, f["accession"])
-            if not path.exists():
-                continue
-            meta = base.read_raw_json(common.meta_path(path))
-            html = base.read_raw(path).decode("utf-8", "replace")
-            text, quality = slice_text(html, f["form"])
-            stamps = {"source_as_of": date.fromisoformat(meta["as_of"]), "fetched_at": float(meta["fetched_at"]),
-                      "run_id": meta["run_id"]}
-            out.append({**base_row, "item": item, "text": text, "chars": len(text), "quality": quality, **stamps})
-            if item == "business":
-                filed = {k: base_row[k] for k in ("cik", "accession", "form", "filing_date")}
-                found_segments, found_customers = ixbrl.parse(html)
-                segments += [{**filed, **r, "segment": r["label"], **stamps} for r in found_segments]
-                customers += [{**filed, **r, **stamps} for r in found_customers]
+            paths = [_doc_path(cik, f["accession"])]
+            if annual and f["form"] == "40-F":
+                paths += stored_exhibits(cik, f["accession"], f.get("primary_document"))
+            for path in paths:
+                if not path.exists():
+                    continue
+                meta = base.read_raw_json(common.meta_path(path))
+                html = base.read_raw(path).decode("utf-8", "replace")
+                stamps = {"source_as_of": date.fromisoformat(meta["as_of"]),
+                          "fetched_at": float(meta["fetched_at"]), "run_id": meta["run_id"]}
+                exhibit = meta.get("exhibit")
+                for item, text, quality in document_sections(html, f["form"]):
+                    if exhibit and meta.get("by_name") is False:
+                        # Chosen by its number alone, which is one filer's layout: say so on the row rather than
+                        # letting a guess read like Brookfield's real Annual Information Form.
+                        quality = "by_number"
+                    # An exhibit is the business description on its own: its whole text is the section, and the
+                    # 10-K item slices do not apply to a Canadian Annual Information Form.
+                    if exhibit and item != "whole":
+                        continue
+                    out.append({**base_row, "item": "aif" if exhibit else item, "text": text,
+                                "chars": len(text), "quality": quality, **stamps})
+                if annual and not exhibit:
+                    filed = {k: base_row[k] for k in ("cik", "accession", "form", "filing_date")}
+                    found_segments, found_customers = ixbrl.parse(html)
+                    segments += [{**filed, **r, "segment": r["label"], **stamps} for r in found_segments]
+                    customers += [{**filed, **r, **stamps} for r in found_customers]
         return out, segments, customers
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:

@@ -68,6 +68,11 @@ def live_rows(table: str, columns: list[str]) -> list[dict] | None:
     """``columns`` of every row of ``table`` in the **live** ``spine.duckdb``, or ``None`` when there is no live
     file or no such table in it (a first build, or a build that predates the table).
 
+    A column the live table does not hold is **NULL in every row** rather than an error: the live file was written
+    by the code of its own build, so a build that reads its predecessor's rows asks for today's columns and may
+    name one that was added since (``my_universe`` reads its whole row to carry a fund forward). Every requested
+    key is in every dict either way, so a caller may index them.
+
     Its own read-only connection, not the build's: a build reads the live file to say what changed since it
     (``my_universe``'s entered and left), and the build connection may already hold an attachment of its own.
     """
@@ -80,7 +85,9 @@ def live_rows(table: str, columns: list[str]) -> list[dict] | None:
         known = {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables()").fetchall()}
         if table not in known:
             return None
-        cols = ", ".join(f'"{c}"' for c in columns)
+        have = {r[0] for r in con.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE table_name = ?", [table]).fetchall()}
+        cols = ", ".join(f'"{c}"' if c in have else f'NULL AS "{c}"' for c in columns)
         return [dict(zip(columns, r)) for r in con.execute(f'SELECT {cols} FROM "{table}"').fetchall()]
     finally:
         con.close()

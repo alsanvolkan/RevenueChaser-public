@@ -53,10 +53,27 @@ HOLDINGS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed"
             ("value", "DOUBLE"), ("value_usd", "DOUBLE"), ("shares", "DOUBLE"), ("sh_type", "TEXT"),
             ("put_call", "TEXT"), ("discretion", "TEXT"), ("other_manager", "TEXT"), ("vote_sole", "BIGINT"),
             ("vote_shared", "BIGINT"), ("vote_none", "BIGINT")]
+# The managers a filing names beside the filer. Two lists, one shape (avo, 5 Nov 2026):
+# ``included`` is the summary page's List of Other Included Managers - the managers whose holdings this report
+# carries. A holding's ``other_manager`` points into it by ``sequenceNumber`` when it is a number at all;
+# measured over 2023's days: of 2,886,468 holdings, 1,621,523 leave it empty, 1,066,142 write one integer, and
+# 198,803 write something else - a manager's name, or several separated by commas ("ASSETMARK,ENVESTNET,
+# MORNINGSTAR"). So the join is the common case, not the rule, and the column is kept as filed.
+# ``cover`` is the cover page's List of Other Managers Reporting for this Manager - filers who report this one's
+# holdings elsewhere. Nothing points at it, so its ``seq`` is only the order the filing lists them in, which is
+# all both paths can agree on (the data set's own surrogate key does not exist in the XML). Checked against six
+# real filings with three or four cover managers (2026-11-06): the XML's order is OTHERMANAGER_SK's order, not
+# the order the set's file writes the rows in, so the set path numbers them by the key.
+# ``seq`` is not unique within ``included``: a filer may give several managers one number (609 of 163,101 rows
+# over the 54 sets on homesrv; one filing lists five managers under 1 and 2), and the set carries no key that
+# says the XML's order among them. Both paths therefore write a filing's rows ordered by kind, seq, then name.
+MANAGERS = [("accession", "TEXT"), ("cik", "TEXT"), ("period", "DATE"), ("filed", "DATE"), ("kind", "TEXT"),
+            ("seq", "INTEGER"), ("manager_cik", "TEXT"), ("form13f_file_number", "TEXT"), ("crd_number", "TEXT"),
+            ("sec_file_number", "TEXT"), ("name", "TEXT")]
 SERVED = FILINGS + [("source", "TEXT")]
 ORIGIN = "edgar"
-SETS_SCHEMA = {"forms": FORMS, "filings": FILINGS, "holdings": HOLDINGS, "dollars_from": DOLLARS_FROM,
-               "cusip_none": CUSIP_NONE}
+SETS_SCHEMA = {"forms": FORMS, "filings": FILINGS, "holdings": HOLDINGS, "managers": MANAGERS,
+               "dollars_from": DOLLARS_FROM, "cusip_none": CUSIP_NONE}
 
 
 def _mdy(value) -> date | None:
@@ -84,8 +101,44 @@ def status_of(report_type: str | None, holdings: int, entry_total: int | None) -
     return "ok", None
 
 
-def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
-    """One 13F submission: its filing row and its holdings."""
+def _cik(value: str | None) -> str | None:
+    """A CIK without its leading zeros, as the filer's own is written, so a manager joins to ``filings.cik``; text
+    that is not a number is kept as filed (#495 review)."""
+    return str(int(value)) if value and value.isascii() and value.isdigit() else value
+
+
+def _managers(root, row: dict) -> list[dict]:
+    """The filing's other managers, both lists, in ``MANAGERS`` shape (avo, 5 Nov 2026).
+
+    The two lists are shaped differently, checked against real filings on 2026-11-06: the cover page's
+    ``otherManagersInfo/otherManager`` carries ``cik``, ``form13FFileNumber`` and ``name`` directly, while the
+    summary page's ``otherManagers2Info/otherManager2`` carries ``sequenceNumber`` beside a nested
+    ``otherManager`` that holds those fields. Each kind names its own field parent, and the lists are read as
+    direct children, so a future nesting cannot double a row; an ``otherManager2`` without its nested element is
+    read in place and gives a row with only its ``seq``.
+    """
+    out = []
+    for kind, path, tag, nested, seq_tag in (
+            ("cover", ".//coverpage/othermanagersinfo", "othermanager", False, None),
+            ("included", ".//summarypage/othermanagers2info", "othermanager2", True, "sequencenumber")):
+        holder = root.find(path)
+        for n, m in enumerate(holder.findall(tag) if holder is not None else (), start=1):
+            f = m.find("othermanager") if nested else m
+            if f is None:
+                f = m
+            out.append({"accession": row["accession"], "cik": row["cik"], "period": row["period"],
+                        "filed": row["filed"], "kind": kind,
+                        "seq": edgar.integer(edgar.text(m, seq_tag)) if seq_tag else n,
+                        "manager_cik": _cik(edgar.text(f, "cik")),
+                        "form13f_file_number": edgar.text(f, "form13ffilenumber"),
+                        "crd_number": edgar.text(f, "crdnumber"),
+                        "sec_file_number": edgar.text(f, "secfilenumber"),
+                        "name": edgar.text(f, "name")})
+    return out
+
+
+def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict], list[dict]]:
+    """One 13F submission: its filing row, its holdings and the other managers it names."""
     sub = edgar.parse_submission(text)
     f = sub["fields"]
     form = (f.get("CONFORMED SUBMISSION TYPE") or entry.get("form") or "").upper()
@@ -103,12 +156,12 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
     table = next((d for d in docs if d["xml"] and d["type"] == "INFORMATION TABLE"), None)
     if primary is None:
         row["detail"] = "no cover page XML"
-        return row, []
+        return row, [], []
     try:
         root = edgar.tree(primary["xml"])
     except ET.ParseError as e:
         row["detail"] = f"cover page XML does not parse: {e}"
-        return row, []
+        return row, [], []
     cover = root.find(".//coverpage")
     row["period"] = _mdy(edgar.text(cover, "reportcalendarorquarter")) or row["period"]
     flag = (edgar.text(cover, "isamendment") or "").lower()
@@ -123,14 +176,15 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
     row["value_total"] = edgar.number(edgar.text(summary, "tablevaluetotal"))
     omitted = (edgar.text(summary, "isconfidentialomitted") or "").lower()
     row["confidential_omitted"] = {"true": True, "false": False}.get(omitted)
+    managers = _managers(root, row)
     if row["period"] is None:
         row["detail"] = "no report period"
-        return row, []
+        return row, [], managers
     try:
         info = edgar.tree(table["xml"]) if table is not None else None
     except ET.ParseError as e:
         row["detail"] = f"information table does not parse: {e}"
-        return row, []
+        return row, [], managers
     holdings = []
     for n, it in enumerate(info.iter("infotable") if info is not None else ()):
         value = edgar.number(edgar.text(it, "value"))
@@ -151,7 +205,7 @@ def parse(text: str, entry: dict, index_day: date) -> tuple[dict, list[dict]]:
             "vote_none": edgar.integer(edgar.text(it, "votingauthority/none"))})
     row["holdings"] = len(holdings)
     row["status"], row["detail"] = status_of(row["report_type"], len(holdings), row["entry_total"])
-    return row, holdings
+    return row, holdings, managers
 
 
 def recent_cusips(periods: int = 2) -> set[str]:
@@ -201,16 +255,20 @@ class Sec13f(edgar.Feed):
         try:
             rows = edgar.Appender(con, "filings", FILINGS)
             held = edgar.Appender(con, "holdings", HOLDINGS)
+            mgrs = edgar.Appender(con, "managers", MANAGERS)
             for _acc, entry, text in self.filings_of(day):
-                filing, holdings = parse(text, entry, day)
+                filing, holdings, managers = parse(text, entry, day)
                 rows.add([filing])
                 held.add(holdings)
+                mgrs.add(managers)
             if not rows.total:
                 return []
             rows.flush()
             held.flush()
+            mgrs.flush()
             return [self.write_day(con, "filings", "filings", day, "accession"),
-                    self.write_day(con, "holdings", "holdings", day, "accession, line")]
+                    self.write_day(con, "holdings", "holdings", day, "accession, line"),
+                    self.write_day(con, "managers", "managers", day, sec13f_sets.MANAGERS_ORDER)]
         finally:
             con.close()
 

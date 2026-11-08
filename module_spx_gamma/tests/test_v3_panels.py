@@ -81,23 +81,7 @@ def test_realized_vol_spread():
     assert r["iv_minus_rv"] == pytest.approx(0.045314)
 
 
-# ── skew (derived, unverified) ──
-def test_skew_from_twin_blocks():
-    payload = {"data": [
-        {"days": 1, "volatility": "0.09"}, {"days": 1, "volatility": "0.062"},
-        {"days": 30, "volatility": "0.119"}, {"days": 30, "volatility": "0.115"},
-        {"days": 90, "volatility": "0.14"}, {"days": 90, "volatility": "0.138"},
-    ]}
-    s = nm.normalize_skew(payload)
-    assert s is not None
-    assert s["derived_unverified"] is True
-    assert s["put_bias_1m"] == pytest.approx(0.115 - 0.119)  # put block - call block
-    assert s["put_bias_3m"] == pytest.approx(0.138 - 0.14)
-
-
-def test_skew_returns_none_with_single_block():
-    payload = {"data": [{"days": 30, "volatility": "0.119"}]}
-    assert nm.normalize_skew(payload) is None
+# ── skew: the twin-block guess is retired; test_skew_f3.py covers the chain-based skew (F3) ──
 
 
 # ── VIX ──

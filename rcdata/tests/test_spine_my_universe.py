@@ -174,6 +174,54 @@ def test_with_no_aum_anywhere_n_cen_has_not_run_and_no_fund_is_called_undecided(
     assert rows == {} and issues == []
 
 
+def test_an_undecided_fund_a_manual_remove_took_out_is_not_named_undecided():
+    """``my_universe_etf_undecided`` is built after the manual lines (#444): a fund avo removed by hand is gone on
+    purpose, not a fund the rule cannot judge."""
+    con = _con(etfs=[_etf("ZZZ"), _etf("XLK", aum=80_000_000_000.0)])
+    rows, _, issues = _rows(con, manual=([], [{"ticker": "ZZZ", "reason": "avo took it out"}]))
+    assert sorted(rows) == ["XLK"]
+    assert issues == []
+
+
+def test_an_undecided_fund_a_manual_add_let_in_is_not_named_undecided():
+    """The other side of the same rule: the fund is in the list, by hand, so the rule's silence is no longer news."""
+    con = _con(etfs=[_etf("ZZZ"), _etf("XLK", aum=80_000_000_000.0)])
+    rows, _, issues = _rows(con, manual=([{"ticker": "ZZZ", "reason": "avo wants it"}], []))
+    assert sorted(rows) == ["XLK", "ZZZ"] and rows["ZZZ"]["rule"] == "manual"
+    assert issues == []
+
+
+def test_the_undecided_issue_still_names_the_funds_the_manual_file_says_nothing_about():
+    con = _con(etfs=[_etf("ZZZ"), _etf("WWW"), _etf("XLK", aum=80_000_000_000.0)])
+    _, _, issues = _rows(con, manual=([], [{"ticker": "ZZZ", "reason": "avo took it out"}]))
+    kind, key, detail = issues[0]
+    assert (kind, key) == ("my_universe_etf_undecided", my_universe.ETF)
+    assert detail.startswith("1 ETFs") and "WWW" in detail and "ZZZ" not in detail
+
+
+def test_the_undecided_issue_names_the_first_twenty_funds_and_counts_the_rest():
+    """One issue, not thousands of rows, and it names at most :data:`my_universe.MANY` of them."""
+    many = [f"U{i:03d}" for i in range(my_universe.MANY + 2)]
+    con = _con(etfs=[_etf(t) for t in many] + [_etf("XLK", aum=80_000_000_000.0)])
+    _, _, issues = _rows(con)
+    detail = issues[0][2]
+    assert issues[0][0] == "my_universe_etf_undecided"
+    assert detail.endswith("and 2 more") and many[my_universe.MANY - 1] in detail
+    assert many[my_universe.MANY] not in detail
+
+
+def test_a_name_a_manual_remove_took_out_says_so_in_the_changes_table(live_my_universe):
+    """The append-only changes table told every leaver "the rules no longer hold", even one avo removed by hand,
+    which is the one case where the rules were not applied at all (#444)."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_aum", "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY", aum=80_000_000_000.0), _etf("XLK", aum=80_000_000_000.0)])
+    rows, changes, _ = _rows(con, manual=([], [{"ticker": "SPY", "reason": "avo took it out"}]))
+    assert sorted(rows) == ["XLK"]
+    gone = [c for c in changes if c["change"] == "left"]
+    assert [(c["ticker"], c["reason"]) for c in gone] == [
+        ("SPY", "taken out by hand in my_universe_manual.json: avo took it out")]
+
+
 def test_a_manual_add_enters_with_its_reason_and_the_spines_own_name():
     con = _con([_sec("MSGS", None)], [_etf("NEWE")])
     rows, _, _ = _rows(con, manual=([{"ticker": "msgs", "reason": "avo: a real stock, untyped"},
@@ -270,13 +318,157 @@ def test_the_build_refuses_when_the_volume_source_went_away_under_names_that_nee
         my_universe.rows(_ctx(), con)
 
 
-def test_a_fund_losing_only_its_own_volume_is_not_an_outage(live_my_universe):
-    """One fund dropping out while others still measure is a real change, not a missing source."""
-    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "entered_on": date(2026, 10, 1)}])
+def test_one_fund_losing_its_volume_is_held_even_while_another_still_measures(live_my_universe):
+    """The guard is per name, not over the table (#424): a fund whose own volume went away keeps its live row and
+    writes no ``left`` row, however many other funds still measure. ``adv_usd_20d`` NULL is unknown, not zero."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "security_type": "etf", "rule": "etf_adv",
+                            "reason": "no AUM; 20-session dollar volume 40,000.0M USD",
+                            "adv_usd_20d": 40_000_000_000.0, "entered_on": date(2026, 10, 1)}])
     con = _con(etfs=[_etf("SPY"), _etf("GLD", adv=50_000_000.0)])
-    rows, changes, _ = _rows(con)
+    rows, changes, issues = _rows(con)
+    assert sorted(rows) == ["GLD", "SPY"]
+    assert rows["SPY"]["rule"] == "etf_adv" and rows["SPY"]["adv_usd_20d"] == 40_000_000_000.0
+    assert rows["SPY"]["entered_on"] == date(2026, 10, 1)
+    assert [(c["ticker"], c["change"]) for c in changes] == [("GLD", "entered")]
+    assert [(k, key) for k, key, _ in issues] == [("my_universe_etf_volume_lost", "etf")]
+    assert "SPY" in issues[0][2]
+
+
+def test_a_held_fund_is_not_also_called_undecided(live_my_universe):
+    """It is not a fund the rule cannot judge; it is a fund whose own number went missing, and one issue says so."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 40_000_000_000.0,
+                            "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY"), _etf("GLD", aum=80_000_000_000.0), _etf("IBIT", adv=50_000_000.0)])
+    _, _, issues = _rows(con)
+    assert [k for k, _, _ in issues] == ["my_universe_etf_volume_lost"]
+
+
+def test_a_fund_that_got_an_aum_under_the_floor_leaves_even_with_no_volume(live_my_universe):
+    """The hold is only for a fund the rule would have judged **on its volume**, and the rule reads the volume only
+    where N-CEN gives no AUM at all. A fund N-CEN now prices under the floor is answered by that AUM, whatever its
+    volume says, so it leaves and Compustat is not blamed for it (review S1 of PR 428)."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 4e10,
+                            "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY", aum=1_000_000.0), _etf("GLD", adv=50_000_000.0)])
+    rows, changes, issues = _rows(con)
+    assert sorted(rows) == ["GLD"]
+    assert ("SPY", "left") in [(c["ticker"], c["change"]) for c in changes]
+    assert issues == []
+
+
+def test_a_fund_a_manual_remove_takes_out_is_not_named_as_held(live_my_universe):
+    """A fund avo removed by hand is gone on purpose, so the issue does not report it as held (review N1)."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 4e10,
+                            "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY"), _etf("GLD", adv=50_000_000.0)])
+    rows, _, issues = _rows(con, manual=([], [{"ticker": "SPY", "reason": "avo took it out"}]))
+    assert sorted(rows) == ["GLD"]
+    assert issues == []
+
+
+def test_the_held_issue_counts_only_the_funds_the_manual_file_left_in(live_my_universe):
+    """Two funds lose their volume and avo removes one by hand: the issue names and counts the other alone. The
+    single-fund test above cannot tell the filtered list from the whole one (#443)."""
+    live_my_universe(rows=[{"ticker": t, "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 4e10,
+                            "entered_on": date(2026, 10, 1)} for t in ("GLD", "SPY")])
+    con = _con(etfs=[_etf("GLD"), _etf("SPY"), _etf("IBIT", adv=50_000_000.0)])
+    rows, _, issues = _rows(con, manual=([], [{"ticker": "GLD", "reason": "avo took it out"}]))
+    assert sorted(rows) == ["IBIT", "SPY"]
+    kind, key, detail = issues[0]
+    assert (kind, key) == ("my_universe_etf_volume_lost", my_universe.ETF)
+    assert detail.startswith("1 ETFs") and "SPY" in detail and "GLD" not in detail
+
+
+def test_the_held_issue_names_the_first_twenty_funds_and_counts_the_rest(live_my_universe):
+    """One issue, not thousands of rows: it names :data:`my_universe.MANY` tickers and says how many more (N2)."""
+    many = [f"F{i:03d}" for i in range(my_universe.MANY + 3)]
+    live_my_universe(rows=[{"ticker": t, "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 4e10,
+                            "entered_on": date(2026, 10, 1)} for t in many])
+    con = _con(etfs=[_etf(t) for t in many] + [_etf("GLD", adv=50_000_000.0)])
+    rows, _, issues = _rows(con)
+    assert sorted(rows) == sorted(many + ["GLD"])
+    detail = issues[0][2]
+    assert detail.endswith("and 3 more") and many[my_universe.MANY - 1] in detail
+    assert many[my_universe.MANY] not in detail
+
+
+def test_a_fund_whose_volume_fell_under_the_floor_still_leaves(live_my_universe):
+    """A number under the floor is the rule's answer, not an outage: only NULL where the live row had one is held."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 40_000_000_000.0,
+                            "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("SPY", adv=1_000_000.0), _etf("GLD", adv=50_000_000.0)])
+    rows, changes, issues = _rows(con)
     assert sorted(rows) == ["GLD"]
     assert [(c["ticker"], c["change"]) for c in changes] == [("SPY", "left"), ("GLD", "entered")]
+    assert issues == []
+
+
+def test_a_fund_that_entered_on_its_aum_is_not_held_by_the_volume_guard(live_my_universe):
+    """The guard protects the names that entered **on the volume**; an ``etf_aum`` name leaving is the AUM's story."""
+    live_my_universe(rows=[{"ticker": "CCOI", "kind": "etf", "rule": "etf_aum", "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("CCOI"), _etf("GLD", adv=50_000_000.0)])
+    rows, changes, issues = _rows(con)
+    assert sorted(rows) == ["GLD"]
+    assert ("CCOI", "left") in [(c["ticker"], c["change"]) for c in changes]
+    assert [k for k, _, _ in issues] == []
+
+
+def test_a_ticker_the_stock_rule_already_kept_is_not_overwritten_by_the_held_row(live_my_universe):
+    """A ticker that is already in today's list stays the row the rules wrote; the hold is only for a name that
+    would otherwise be dropped."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 4e10,
+                            "entered_on": date(2026, 10, 1)}])
+    con = _con([_sec("SPY")], [_etf("SPY"), _etf("GLD", adv=50_000_000.0)])
+    rows, _, issues = _rows(con)
+    assert rows["SPY"]["kind"] == "stock" and rows["SPY"]["rule"] == "stock"
+    assert [k for k, _, _ in issues] == []
+
+
+def test_a_fund_the_etf_table_no_longer_holds_at_all_is_not_held_by_this_guard(live_my_universe):
+    """A vanished ``etf`` row is the ETF universe's own source failing, wider than this guard: holding the row would
+    keep a name alive on no evidence. It leaves, and the swap guard's "may not empty" rule is what is left."""
+    live_my_universe(rows=[{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 4e10,
+                            "entered_on": date(2026, 10, 1)}])
+    con = _con(etfs=[_etf("GLD", adv=50_000_000.0)])
+    rows, changes, issues = _rows(con)
+    assert sorted(rows) == ["GLD"]
+    assert ("SPY", "left") in [(c["ticker"], c["change"]) for c in changes]
+    assert issues == []
+
+
+def test_every_held_fund_is_one_issue_between_them_naming_them_all(live_my_universe):
+    live_my_universe(rows=[{"ticker": t, "kind": "etf", "rule": "etf_adv", "adv_usd_20d": 5e10,
+                            "entered_on": date(2026, 10, 1)} for t in ("GLD", "SLV", "SPY")])
+    con = _con(etfs=[_etf("GLD"), _etf("SLV"), _etf("SPY"), _etf("IBIT", adv=50_000_000.0)])
+    rows, _, issues = _rows(con)
+    assert sorted(rows) == ["GLD", "IBIT", "SLV", "SPY"]
+    assert len(issues) == 1
+    kind, key, detail = issues[0]
+    assert (kind, key) == ("my_universe_etf_volume_lost", "etf")
+    assert "GLD" in detail and "SLV" in detail and "SPY" in detail and "3" in detail
+
+
+def test_a_live_table_written_before_a_column_existed_is_read_anyway():
+    """The build reads its whole live row to carry a fund forward, so it asks for today's columns of a file an
+    older build wrote. A column that file does not hold is NULL, not a broken build."""
+    from RevenueChaser.rcdata import serving
+    path = serving.live_path("spine")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    old = duckdb.connect(str(path))
+    try:                                                        # the four columns the build read before #424
+        base.rows_table(old, my_universe.TABLE,
+                        [("ticker", "TEXT"), ("kind", "TEXT"), ("rule", "TEXT"), ("entered_on", "DATE")],
+                        [{"ticker": "SPY", "kind": "etf", "rule": "etf_adv", "entered_on": date(2026, 10, 1)}])
+        base.rows_table(old, my_universe.CHANGES, _plain(my_universe.CHANGES_SCHEMA), [])
+    finally:
+        old.close()
+    con = _con(etfs=[_etf("SPY"), _etf("GLD", adv=50_000_000.0)])
+    rows, changes, issues = _rows(con)
+    assert sorted(rows) == ["GLD", "SPY"]
+    assert rows["SPY"]["adv_usd_20d"] is None                   # the old file holds no such column
+    assert rows["SPY"]["entered_on"] == date(2026, 10, 1)
+    assert [(c["ticker"], c["change"]) for c in changes] == [("GLD", "entered")]
+    assert [k for k, _, _ in issues] == ["my_universe_etf_volume_lost"]
 
 
 def test_a_name_that_left_names_the_rule_it_held_under(live_my_universe):

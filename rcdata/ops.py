@@ -26,6 +26,7 @@ The tables and what writes them:
   and an optional note; ``watchlist_*_changes`` is their history, one row per add or remove. The dashboard's toggle
   routes write them (PR 4); the option list is what the options build will cover besides SPX.
 - ``dataset_schedule``: cadence and pause state per dataset.
+- ``kind_automation``: what the hourly pass queues on its own for each serving kind (``KIND_MODES``); no row is off.
 
 ``ensure()`` creates the tables and stamps ``ops_schema``; it upgrades an older file in place and refuses a file
 stamped by a newer version.
@@ -55,6 +56,12 @@ FILE_NAME = "ops.sqlite"
 REQUEST_STATUSES = ("queued", "running", "done", "failed", "skipped")
 CHECK_RESULTS = ("changed", "unchanged", "failed", "skipped")
 WATCH_KINDS = ("option", "stock")
+#: What the hourly pass queues for a kind's due datasets (avo, 6 Nov 2026): nothing, a raw-only fetch, raw + Parquet,
+#: or the whole run up to the served DuckDB file. A kind with no ``kind_automation`` row is off.
+KIND_MODES = ("off", "raw", "parquet", "full")
+#: The board's two switches (#527, avo 6 Nov 2026): ``fetch`` stops every fetch and build, ``backup`` every backup.
+#: A switch with no ``switch`` row, or with ``off_at`` NULL, is on.
+SWITCHES = ("fetch", "backup")
 # The UW response headers sampled into uw_remaining: only UW's own, never a cookie or anything else the answer had.
 UW_HEADER_PREFIX = "x-uw-"
 # What a live answer carries (27 Oct 2026): x-uw-daily-req-count is today's count; the per-minute pair is a rate
@@ -103,6 +110,15 @@ _DDL = {
         at REAL NOT NULL, by TEXT, note TEXT)""" for k in WATCH_KINDS},
     "dataset_schedule": """CREATE TABLE IF NOT EXISTS dataset_schedule (
         dataset TEXT PRIMARY KEY, cadence TEXT, next_due TEXT, paused_at REAL, paused_by TEXT)""",
+    # A new table, no upgrade step: ``ensure`` makes it in an older file too, and an older checkout ignores it.
+    "kind_automation": """CREATE TABLE IF NOT EXISTS kind_automation (
+        kind TEXT PRIMARY KEY, mode TEXT NOT NULL, set_at REAL, set_by TEXT)""",
+    # #527, a new table as kind_automation was: no upgrade step.
+    "switch": """CREATE TABLE IF NOT EXISTS switch (
+        name TEXT PRIMARY KEY, off_at REAL, off_by TEXT)""",
+    # #527: one source's own automation, over its kind's; no row follows the kind. A new table: no upgrade step.
+    "dataset_automation": """CREATE TABLE IF NOT EXISTS dataset_automation (
+        dataset TEXT PRIMARY KEY, mode TEXT NOT NULL, set_at REAL, set_by TEXT)""",
 }
 TABLES = tuple(_DDL)
 _INDEXES = (
@@ -480,8 +496,13 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         marks = ", ".join("?" * len(kinds))
         open_rows = con.execute(f"SELECT id, kind, key FROM build_issues WHERE dataset = ? AND resolved_on IS NULL "
                                 f"AND kind IN ({marks})", (dataset, *kinds)).fetchall()
-        have = {(r["kind"], r["key"]): r["id"] for r in open_rows}
-        gone = [i for k, i in have.items() if k not in want]
+        # Every row of a key, not one: ``record_issue`` writes a row per run, so one unfixed problem becomes
+        # many rows with the same key (FRED's missing key left six), and keeping all but one open means the
+        # health screen never stops claiming a problem that is over.
+        have: dict[tuple, list[int]] = {}
+        for r in open_rows:
+            have.setdefault((r["kind"], r["key"]), []).append(r["id"])
+        gone = [i for k, ids in have.items() if k not in want for i in ids]
         con.executemany("UPDATE build_issues SET resolved_on = ? WHERE id = ?", [(today, i) for i in gone])
         new = [(dataset, today, k, key, detail, run_id) for (k, key), detail in sorted(want.items())
                if (k, key) not in have]
@@ -712,12 +733,34 @@ def schedule_set(dataset: str, cadence: str, next_due: str | None) -> None:
                     (dataset, cadence, next_due))
 
 
+def cancel_note(by: str, at: float) -> str:
+    """The note a request cancelled by a Pause carries: who and when (UTC, to the minute)."""
+    return f"cancelled: paused by {by} at {time.strftime('%Y-%m-%d %H:%M', time.gmtime(at))} UTC"
+
+
+def _cancel_queued(con: sqlite3.Connection, dataset: str, by: str, at: float) -> int:
+    # only ``queued`` rows: ``next_request`` claims those alone, so the builder and a cancel never hold one row
+    return con.execute("UPDATE build_requests SET status = 'skipped', ended_at = ?, note = ? "
+                       "WHERE dataset = ? AND status = 'queued'", (at, cancel_note(by, at), dataset)).rowcount
+
+
 @_routed
-def schedule_pause(dataset: str, *, by: str) -> None:
-    with _open() as con:
+def cancel_queued(dataset: str, *, by: str) -> int:
+    """Skip every queued request of ``dataset`` (``cancelled: paused by <by> at <when> UTC``); how many. A running
+    request is never touched: the running fetch stops itself at its next provider call (``base.RunContext``)."""
+    with _open() as con, _tx(con):
+        return _cancel_queued(con, dataset, by, time.time())
+
+
+@_routed
+def schedule_pause(dataset: str, *, by: str) -> int:
+    """Hold ``dataset`` and cancel its queued requests in one transaction (#492 PR (ii)); how many were cancelled."""
+    now = time.time()
+    with _open() as con, _tx(con):
         con.execute("INSERT INTO dataset_schedule (dataset, paused_at, paused_by) VALUES (?, ?, ?) "
                     "ON CONFLICT (dataset) DO UPDATE SET paused_at = excluded.paused_at, paused_by = excluded.paused_by",
-                    (dataset, time.time(), by))
+                    (dataset, now, by))
+        return _cancel_queued(con, dataset, by, now)
 
 
 @_routed
@@ -731,6 +774,96 @@ def schedule_get(dataset: str) -> dict | None:
     with _open() as con:
         row = con.execute("SELECT * FROM dataset_schedule WHERE dataset = ?", (dataset,)).fetchone()
     return dict(row) if row else None
+
+
+def _kind_mode(mode: str) -> str:
+    if mode not in KIND_MODES:
+        raise ValueError(f"unknown mode {mode!r}; known: {', '.join(KIND_MODES)}")
+    return mode
+
+
+@_routed
+def kind_mode_set(kind: str, mode: str, *, by: str) -> None:
+    with _open() as con:
+        con.execute("INSERT INTO kind_automation (kind, mode, set_at, set_by) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT (kind) DO UPDATE SET mode = excluded.mode, set_at = excluded.set_at, "
+                    "set_by = excluded.set_by", (kind, _kind_mode(mode), time.time(), by))
+
+
+@_routed
+def kind_mode_get(kind: str) -> dict | None:
+    with _open() as con:
+        row = con.execute("SELECT * FROM kind_automation WHERE kind = ?", (kind,)).fetchone()
+    return dict(row) if row else None
+
+
+def kind_mode(kind: str) -> str:
+    """The kind's ``KIND_MODES`` value; ``off`` when it has no row."""
+    return (kind_mode_get(kind) or {}).get("mode") or "off"
+
+
+#: What a source's own Automated select sets (#527): ``file`` ("as the file") drops its row, so the kind's mode
+#: holds; any ``KIND_MODES`` value holds for that source only.
+AS_THE_FILE = "file"
+DATASET_MODES = (AS_THE_FILE, *KIND_MODES)
+
+
+@_routed
+def dataset_mode_set(dataset: str, mode: str, *, by: str) -> None:
+    if mode == AS_THE_FILE:
+        with _open() as con:
+            con.execute("DELETE FROM dataset_automation WHERE dataset = ?", (dataset,))
+        return
+    with _open() as con:
+        con.execute("INSERT INTO dataset_automation (dataset, mode, set_at, set_by) VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT (dataset) DO UPDATE SET mode = excluded.mode, set_at = excluded.set_at, "
+                    "set_by = excluded.set_by", (dataset, _kind_mode(mode), time.time(), by))
+
+
+@_routed
+def dataset_mode_get(dataset: str) -> dict | None:
+    with _open() as con:
+        row = con.execute("SELECT * FROM dataset_automation WHERE dataset = ?", (dataset,)).fetchone()
+    return dict(row) if row else None
+
+
+def dataset_mode(dataset: str, kind: str) -> str:
+    """What the hourly pass runs for ``dataset``: its own row's mode, else its kind's (``kind_mode``)."""
+    return (dataset_mode_get(dataset) or {}).get("mode") or kind_mode(kind)
+
+
+def _switch(name: str) -> str:
+    if name not in SWITCHES:
+        raise ValueError(f"unknown switch {name!r}; known: {', '.join(SWITCHES)}")
+    return name
+
+
+@_routed
+def switch_set(name: str, on: bool, *, by: str) -> None:
+    """Turn a board switch on (``off_at`` NULL) or off (who and when)."""
+    off_at, off_by = (None, None) if on else (time.time(), by)
+    with _open() as con:
+        con.execute("INSERT INTO switch (name, off_at, off_by) VALUES (?, ?, ?) "
+                    "ON CONFLICT (name) DO UPDATE SET off_at = excluded.off_at, off_by = excluded.off_by",
+                    (_switch(name), off_at, off_by))
+
+
+@_routed
+def switch_get(name: str) -> dict | None:
+    with _open() as con:
+        row = con.execute("SELECT * FROM switch WHERE name = ?", (_switch(name),)).fetchone()
+    return dict(row) if row else None
+
+
+def switch_off(name: str) -> dict | None:
+    """The switch's row while it is off, else None."""
+    row = switch_get(name)
+    return row if row and row.get("off_at") is not None else None
+
+
+def switch_words(name: str, row: dict) -> str:
+    when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(row["off_at"]))
+    return f"the {name} switch is off ({row.get('off_by') or '?'} at {when})"
 
 
 # ── Read helpers for the Settings page (PR 2) ──────────────────────────────────────────────────────────────────
@@ -826,6 +959,24 @@ def read_queue(finished: int = 20) -> dict:
 def read_schedule(dataset: str) -> dict | None:
     rows = _select("SELECT * FROM dataset_schedule WHERE dataset = ?", (dataset,))
     return rows[0] if rows else None
+
+
+@_routed
+def read_switches() -> dict[str, dict]:
+    """``{name: switch row}`` for a reader, without creating the file."""
+    return {r["name"]: r for r in _select("SELECT * FROM switch")}
+
+
+@_routed
+def read_dataset_modes() -> dict[str, dict]:
+    """``{dataset: dataset_automation row}`` for a reader, without creating the file."""
+    return {r["dataset"]: r for r in _select("SELECT * FROM dataset_automation")}
+
+
+@_routed
+def read_kind_modes() -> dict[str, dict]:
+    """``{kind: kind_automation row}`` for a reader, without creating the file."""
+    return {r["kind"]: r for r in _select("SELECT * FROM kind_automation")}
 
 
 @_routed

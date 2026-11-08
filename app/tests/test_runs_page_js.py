@@ -17,7 +17,6 @@ import pytest
 
 from RevenueChaser.app import dashboard, runview
 from RevenueChaser.core.tests.board_js import DOM_STUB, function_source, inline_scripts
-from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 # createElement returns elements that remember what was appended to them, which the stub's no-op does not.
 RECORDING_DOM = r"""
@@ -41,7 +40,7 @@ function _cells(tr){
 
 ROW = {"run_id": "r1", "module": "rotation", "source": None, "trigger": None, "status": "done",
        "queued_at": 1_792_700_000.0, "started_at": 1_792_700_001.0, "finished_at": 1_792_700_061.0,
-       "duration_s": 60.0, "error": None, "message": None, "params": {}}
+       "duration_s": 60.0, "error": None, "message": None, "params": {}, "counts": None}
 
 
 def _node(script: str, tmp_path):
@@ -86,7 +85,8 @@ def test_the_row_shows_the_stored_values_in_column_order(client, tmp_path):
     cells = _row_cells(client, tmp_path, row)
     # The stub's classList.add appends, so an empty cell reads "note-cell dash": compare the first class.
     assert [c["cls"].split(" ")[0] for c in cells] == ["when", "job", "trigger", "", "took",
-                                                       "note-cell", "params"]
+                                                       "note-cell", "params", "params"]
+    assert cells[6]["cls"].startswith("params counts"), "the counts cell comes before params (#136)"
     assert cells[1]["text"] == "RC-Daily-Bars"
     assert cells[2]["text"] == "scheduled"
     assert cells[3]["text"] == "done" and cells[3]["pill"] == "pill s-done"
@@ -116,7 +116,7 @@ def test_a_long_value_is_clipped_in_the_cell_and_whole_in_the_tooltip(client, tm
     args = ["-m", "RevenueChaser.scripts.nightly_inputs", "earnings", "--max-uw-calls", "200",
             "--max-fred-calls", "10", "--max-yf-calls", "2000"]
     cells = _row_cells(client, tmp_path, dict(ROW, params={"args": args}))
-    params = cells[6]
+    params = cells[7]
     assert params["text"].endswith("…") and len(params["text"]) == 65
     # The tooltip is the browser's JSON.stringify of the value, which for this ASCII-only blob is exactly
     # json.dumps with compact separators: the whole value, last argument included (#131 item 6).
@@ -205,7 +205,7 @@ def test_the_page_can_ask_for_more_than_the_newest_page(client, tmp_path):
 # ── the overlay, the half of this slice the user sees ─────────────────────────
 
 def _overlay(client, tmp_path, jobs: list[dict]) -> list[str]:
-    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
+    html = client.get("/").get_data(as_text=True)
     script = next(s for s in inline_scripts(html) if "function overlayText" in s)
     # A fixed clock, so the elapsed figures are the test's and not the day's.
     prelude = ('var _now = Date.parse("2026-10-23T10:00:00+00:00");'
@@ -302,7 +302,7 @@ def test_many_changes_during_a_poll_send_one_read(client, tmp_path):
 
 def test_the_overlay_counts_the_other_jobs_covering_the_tab(client, tmp_path):
     """#131 item 3: a Rotation Fetch also queues Money flow; the overlay named only the first job."""
-    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
+    html = client.get("/").get_data(as_text=True)
     script = next(s for s in inline_scripts(html) if "function overlayText" in s)
     prelude = ('var _now = Date.parse("2026-10-23T10:00:00+00:00");'
                "Date.now = function(){ return _now; };\n")
@@ -336,7 +336,7 @@ def test_an_answer_read_under_an_old_filter_is_not_drawn(client, tmp_path):
 def test_the_overlay_names_the_running_job_first(client, tmp_path):
     """#189 review: /api/jobs lists by queued_at, so a job queued earlier but still waiting came first and the
     overlay said "Queued…" while another job covering the tab was running."""
-    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
+    html = client.get("/").get_data(as_text=True)
     script = next(s for s in inline_scripts(html) if "function overlayText" in s)
     prelude = ('var _now = Date.parse("2026-10-23T10:00:00+00:00");'
                "Date.now = function(){ return _now; };\n")

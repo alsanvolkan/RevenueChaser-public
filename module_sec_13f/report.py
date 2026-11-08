@@ -281,6 +281,34 @@ def _qlabel(q):
         return q
 
 
+#: Marks a report period whose filing deadline has not passed, in the column head and the legend (#514).
+ARRIVING_MARK = "*"
+
+
+def _arriving(totals: dict, quarters: list) -> set[str]:
+    """The quarters still arriving: any period a cell says is not ``complete``. The flag is the filing deadline
+    against today (``rcdata.read``), so it is the same answer for every ticker; a quarter no cell mentions is
+    settled by default, which is what an old quarter with no row is."""
+    return {q for periods in totals.values() for q in quarters
+            if (cell := periods.get(q)) is not None and cell.get("complete") is False}
+
+
+def arriving(totals: dict, quarters: list) -> set[str]:
+    """The quarters still arriving: from the newest period a cell says is not ``complete`` onwards.
+
+    Completeness is a property of the period (its filing deadline against today, ``rcdata.read``), so it is
+    monotone: the quarters still arriving are the newest ones. Normalising to that suffix is what keeps this the
+    one definition — an interior flag, which only a row with a deadline the store cannot read could produce, would
+    otherwise reshape the middle of the board while the legend said nothing (#514 review). One function, called by
+    both the entries and the page, because two routes to the same set are free to disagree.
+    """
+    flagged = {q for periods in totals.values() for q in quarters
+               if (cell := periods.get(q)) is not None and cell.get("complete") is False}
+    if not flagged:
+        return set()
+    return set(quarters[quarters.index(min(flagged)):])
+
+
 def _quarters(totals: dict) -> list:
     qs = set()
     for periods in totals.values():
@@ -354,6 +382,7 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
     """``(quarters, entries)``: the board's quarter columns and one entry per ticker, in board order (most shares in
     the latest quarter first). The board renders these; the result history (``history.py``, #375) records them."""
     quarters = _quarters(totals)
+    still_arriving = arriving(totals, quarters)
     enrichment = enrichment or {}
     entries = []
     for t, periods in totals.items():
@@ -361,27 +390,40 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
         chgs = []
         prev = None
         last = None
-        for q in quarters:
+        last_period = None
+        for i, q in enumerate(quarters):
             cell = periods.get(q)
             s = cell["shares"] if cell else None
             shares.append(s)
-            chgs.append(None if q == quarters[0] else _pct(s, prev))
+            # No change against a quarter still arriving, in either direction: it holds a part of itself, so the
+            # comparison is a measurement of how much of it has been filed (#514).
+            # No change against a quarter still arriving, in either direction: it holds a part of itself. The
+            # "out of" half is a tautology while the set is a suffix; it is kept as cheap defence.
+            chgs.append(None if i == 0 or q in still_arriving or quarters[i - 1] in still_arriving
+                        else _pct(s, prev))
             prev = s
-            if cell:
-                last = cell
+            if cell and q not in still_arriving:
+                # The snapshot block (holders, breadth, value, the flows) is the last *settled* quarter's, for the
+                # same reason.
+                last, last_period = cell, q
         info = meta.get(t, {})
         enr = enrichment.get(t, {})
 
+        # Over the settled quarters only: a quarter still arriving is below the one before it by construction, so
+        # it would end every streak and poison the acceleration (#514).
+        kept = [i for i, q in enumerate(quarters) if q not in still_arriving]
+        s_shares = [shares[i] for i in kept]
+        s_chgs = [chgs[i] for i in kept]
         streak = 0
-        for i in range(len(quarters) - 1, 0, -1):
-            cur, pr = shares[i], shares[i - 1]
+        for i in range(len(s_shares) - 1, 0, -1):
+            cur, pr = s_shares[i], s_shares[i - 1]
             if cur is not None and pr is not None and cur > pr:
                 streak += 1
             else:
                 break
         accel = None
-        if len(chgs) >= 3 and chgs[-1] is not None and chgs[-2] is not None:
-            accel = chgs[-1] - chgs[-2]
+        if len(s_chgs) >= 3 and s_chgs[-1] is not None and s_chgs[-2] is not None:
+            accel = s_chgs[-1] - s_chgs[-2]
 
         pct_out = None
         so = enr.get("shares_outstanding")
@@ -400,7 +442,7 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
 
         entries.append({
             "ticker": t, "name": info.get("name", ""), "sector": _row_sector(info.get("sector")),
-            "shares": shares, "chgs": chgs, "last": last,
+            "shares": shares, "chgs": chgs, "last": last, "last_period": last_period,
             "streak": streak, "accel": accel, "pct_out": pct_out,
             "price_delta": price_delta, "short_pct": enr.get("short_pct"),
             "short_pct_as_of": enr.get("short_pct_as_of"),
@@ -408,7 +450,8 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
             "shares_outstanding": so, "float_shares": enr.get("float_shares"),
         })
 
-    entries.sort(key=lambda e: (e["shares"][-1] is None, -(e["shares"][-1] or 0)))
+    order = max((i for i, q in enumerate(quarters) if q not in still_arriving), default=len(quarters) - 1)
+    entries.sort(key=lambda e: (e["shares"][order] is None, -(e["shares"][order] or 0)))
     return quarters, entries
 
 
@@ -499,14 +542,17 @@ def render_sec13f_dashboard(totals: dict, meta: dict, enrichment: dict = None,
                             provider_health: dict | None = None, notice: str | None = None) -> str:
     quarters, entries = board_entries(totals, meta, enrichment)
     fields, kit_notice = _kit_rows(entries)
-    return _render_page(quarters, entries, fields, kit_notice, provider_health, notice)
+    return _render_page(quarters, entries, fields, kit_notice, provider_health, notice,
+                        arriving(totals, quarters))
 
 
 def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | None = None,
-                 provider_health: dict | None = None, notice: str | None = None) -> str:
-    q_labels = {q: _qlabel(q) for q in quarters}
+                 provider_health: dict | None = None, notice: str | None = None,
+                 still_arriving: set[str] | frozenset[str] = frozenset()) -> str:
+    q_labels = {q: _qlabel(q) + (ARRIVING_MARK if q in still_arriving else "") for q in quarters}
+    settled = [q for q in quarters if q not in still_arriving]
 
-    default_sort = f"sh_{quarters[-1]}" if quarters else "ticker"
+    default_sort = f"sh_{settled[-1]}" if settled else (f"sh_{quarters[-1]}" if quarters else "ticker")
     n = len(quarters)
     ns = len(_SNAP_COLS)
     ncols = 2 + n + max(0, n - 1) + ns          # Ticker, Sector, shares per quarter, Δ%, the snapshot (13F-7)
@@ -517,10 +563,11 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
         '<th class="left" rowspan="2" data-col="sector" onclick="sortTable(this.dataset.col,this)">Sector</th>'
         f'<th class="group" colspan="{n}">Total ownership (shares) per quarter</th>'
         f'<th class="group" colspan="{max(0, n - 1)}">Δ% vs prior quarter</th>'
-        f'<th class="group" colspan="{ns}">Latest snapshot</th>'
+        f'<th class="group" colspan="{ns}">Latest settled snapshot</th>'
         '</tr><tr>'
         + ''.join(f'<th data-col="sh_{esc(q)}" onclick="sortTable(this.dataset.col,this)"'
-                  f' class="{("sort-desc " if q == quarters[-1] else "")}">{esc(q_labels[q])}</th>' for q in quarters)
+                  f' class="{("sort-desc " if settled and q == settled[-1] else "")}">{esc(q_labels[q])}</th>'
+                  for q in quarters)
         + ''.join(f'<th data-col="ch_{esc(q)}" onclick="sortTable(this.dataset.col,this)">{esc(q_labels[q])}</th>' for q in quarters[1:])
         + ''.join(f'<th data-col="{c}" onclick="sortTable(this.dataset.col,this)">{label}</th>' for c, label in _SNAP_COLS)
         + '</tr>'
@@ -554,6 +601,14 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
         d = e.get("short_pct_as_of")
         if d is not None and (short_as_of is None or d > short_as_of):
             short_as_of = d
+    arriving_legend = ""
+    if still_arriving:
+        names = [_qlabel(q) for q in sorted(still_arriving)]
+        arriving_legend = (
+            f"<b>{ARRIVING_MARK}</b> {', '.join(names)} {'is' if len(names) == 1 else 'are'} <b>still arriving</b>: "
+            "the filing deadline has not passed, so the shares are what has been filed so far. No change, streak "
+            "or acceleration is computed against it, and the snapshot columns are the last settled quarter's, named "
+            "on each cell (#514).")
     short_legend = (
         "<b>Short%</b> = short interest as % of float from UW short screener → UW interest-float → yfinance "
         f"(D10, nightly RC-Earnings-Inputs); as of {short_as_of.isoformat() if short_as_of else '—'}.")
@@ -590,6 +645,7 @@ before it; as of quarter-end, filed up to 45 days later.
 <b>Top10%/HHI</b> = ownership concentration.
 <b>Net flow</b> = shares bought − sold (holder-level deltas). <b>Streak</b> = consecutive quarters of net accumulation.
 <b>Accel</b> = Δ%(latest) − Δ%(prior). <b>Insider%</b> = newest stored snapshot. {short_legend}
+{arriving_legend}
 <b>Price Δ</b> = close change since the first quarter end.
 </div>
 <div id="modal"><div id="modal-card">
@@ -614,4 +670,5 @@ def export_sec13f_dashboard(totals: dict, meta: dict, enrichment: dict = None, f
     path = OUTPUT_DIR / (filename or f"sec_13f/sec_13f_latest.html")
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = _payload(quarters, entries, fields) if entries else None
-    return write_board(path, _render_page(quarters, entries, fields, kit_notice, provider_health, notice), payload)
+    return write_board(path, _render_page(quarters, entries, fields, kit_notice, provider_health, notice,
+                                         arriving(totals, quarters)), payload)

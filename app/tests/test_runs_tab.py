@@ -14,7 +14,6 @@ import pytest
 
 from RevenueChaser.app import dashboard, logview, runview
 from RevenueChaser.core import provenance, rawstore
-from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 
 TEMPLATE = dashboard.Path(dashboard.__file__).resolve().parent.parent / "templates" / "dashboard.html"
 
@@ -93,15 +92,26 @@ def test_the_params_come_back_as_an_object():
 
 
 def test_only_the_columns_the_page_shows_are_read():
-    """The payload travels on every poll, and a column with no reader is weight. ``counts`` is written
-    only when a runner returns a counts dict (none does; core/automations.run_task passes none), so reading
-    it would ship a NULL every time; it comes back with a runner that returns counts."""
+    """The payload travels on every poll, and a column with no reader is weight. ``counts`` has readers and
+    writers since #136 (both writers fill it, and the page has a cell), so it is selected; ``pid``, ``lane``
+    and ``registry_name`` still have none."""
     _write(_row("k", counts={"rows": 12}))
     row = runview.read()["rows"][0]
-    assert set(row) == {"run_id", "module", "source", "trigger", "params", "queued_at", "started_at",
-                        "finished_at", "status", "error", "message", "duration_s"}
-    for dead in ("counts", "pid", "lane", "registry_name"):
+    assert set(row) == {"run_id", "module", "source", "trigger", "params", "counts", "queued_at",
+                        "started_at", "finished_at", "status", "error", "message", "duration_s"}
+    for dead in ("pid", "lane", "registry_name"):
         assert dead not in runview.COLUMNS, f"{dead} is selected but nothing shows it"
+
+
+def test_the_counts_a_run_recorded_come_back_as_an_object_and_a_run_with_none_as_nothing():
+    """#136: the column the Runs tab shows. A run that reported no number keeps it NULL — the page renders
+    a dash — rather than being shown a zero it never measured."""
+    _write(_row("counted", counts={"rows_inserted": 93714, "scope": 7}))
+    _write(_row("silent"))
+
+    by_id = {r["run_id"]: r for r in runview.read()["rows"]}
+    assert by_id["counted"]["counts"] == {"rows_inserted": 93714, "scope": 7}
+    assert by_id["silent"]["counts"] is None
 
 
 def test_the_message_of_a_done_run_and_the_error_of_a_failed_one_both_show():
@@ -220,7 +230,7 @@ def test_the_tab_is_registered_in_the_ops_group():
 
 
 def test_the_shell_lists_the_tab(client):
-    html = strip_open_issues_data(client.get("/").get_data(as_text=True))
+    html = client.get("/").get_data(as_text=True)
     assert 'data-tab="runs"' in html and 'data-url="/view/runs"' in html
 
 

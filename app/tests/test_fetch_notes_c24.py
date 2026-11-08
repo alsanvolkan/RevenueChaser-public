@@ -56,7 +56,6 @@ def test_a_13f_refresh_shows_the_names_note_and_the_unmatched_cusips(store, tmp_
     monkeypatch.setattr(sr, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(runners, "SEC_13F_LATEST", tmp_path / "sec_13f_latest.html")
     sec_13f.save_sec13f_meta({"AAPL": GOOD})
-    sec_13f.recompute_totals()
     sec13f_history.record({"totals": sec_13f.load_totals()}, run_id="f1", run_at=TUE,
                           names_note="Names and sectors were not refreshed: key rejected.",
                           unmatched="7 CUSIPs with no ticker are left out")

@@ -69,7 +69,7 @@ def test_the_row_reads_the_market_file_beside_an_empty_store_file(rawstore_tmp_d
     assert "newest 2026-09-30 vs latest complete 2026-09-30" in row["note"]
     assert "Alpaca 2" in row["note"]
     assert row["fresh"]["text"] == "2026-09-30", "the Freshness cell dates the market file, not the stub"
-    assert row["db"] == "market" and row["source"] == "alpaca"
+    assert row["db"] == "market" and row["source"] == "wrds", "#484: Compustat serves the bars"
 
 
 def test_a_market_file_behind_the_calendar_counts_the_sessions_it_misses(rawstore_tmp_db):

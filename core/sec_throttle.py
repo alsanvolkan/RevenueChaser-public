@@ -14,7 +14,7 @@ a crash cannot wedge the bucket. The file is a dotfile, not ``*.lock``:
 ``job_lock.holders()`` globs ``*.lock``, and a token file is not a job mutex.
 
 ``RATE`` is the only knob: the sustained rate. The burst is derived from the ceiling,
-``LIMIT - RATE`` (2 at the default 8), so the first second after an idle period carries
+``LIMIT - RATE`` (1 at the default 9), so the first second after an idle period carries
 at most ``burst + RATE`` = ``LIMIT`` requests and never above SEC's 10/s, which a burst
 equal to the rate (16 in the first second) would exceed.
 
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # SEC fair-access ceiling, requests per second, per user-agent (both hosts share it).
 LIMIT = 10
 # The sustained rate. The only knob; the burst is derived from the ceiling (see ``_burst``).
-RATE = 8
+RATE = 9
 # The processes that can ask SEC at the same time on the box. When this bucket cannot be used each paces itself at
 # its share of the ceiling (``FALLBACK_RATE``), so all of them falling back together stay under it. A new SEC caller
 # that runs as its own process belongs on this list.

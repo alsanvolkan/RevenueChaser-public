@@ -16,7 +16,7 @@ def _snapshot(**over) -> dict:
         "current_level": 7580.09,
         "asof_date": "2026-10-30",
         "levels": {"regime_threshold": 7750.0, "upper_resistance_band": 8100.0, "lower_support_band": 7500.0},
-        "charm_qualification": {"strike": 7800.0, "signed_net_charm": -17.39},
+        "charm_pin_report": {"strike": 7800.0, "net_charm": -17.39},
         "vix": {"vix": 19.42, "vix3m": 20.78, "term_mode": "contango"},
         # The report prints this in billions: +727,10 milyar dolar.
         "net_dex": 727.10e9,
@@ -55,7 +55,7 @@ def test_a_condition_whose_level_is_missing_is_left_out_not_blank():
     no_vix = regime.change_conditions(_snapshot(vix={}))
     assert not any("VIX" in r["trigger"] for r in no_vix)
     assert len(no_vix) == 4
-    no_charm = regime.change_conditions(_snapshot(charm_qualification={}))
+    no_charm = regime.change_conditions(_snapshot(charm_pin_report={}))
     assert not any("Charm" in r["trigger"] for r in no_charm)
 
 

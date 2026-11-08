@@ -6,7 +6,6 @@ from datetime import date, timedelta
 import pytest
 
 from RevenueChaser.app import dashboard, runners
-from RevenueChaser.core.tests.open_issues_shell import strip_open_issues_data
 from RevenueChaser.core.tests.panel_client import panel_test_client
 
 
@@ -34,7 +33,7 @@ class TestDashboardRoutes:
         c = self._client()
         r = c.get("/")
         assert r.status_code == 200
-        body = strip_open_issues_data(r.get_data(as_text=True))
+        body = r.get_data(as_text=True)
         for label in ("Research", "Earnings Radar",
                       "SPX Gamma", "Financials",
                       "Screeners", "Sector Rotation", "Asymmetric Growth", "Swing Potential",
@@ -57,7 +56,7 @@ class TestDashboardRoutes:
             assert not hasattr(runners, name), f"runners.{name} must be removed"
 
     def test_index_renders_collapsible_nav(self):
-        body = strip_open_issues_data(self._client().get("/").get_data(as_text=True))
+        body = self._client().get("/").get_data(as_text=True)
         assert 'class="nav-group"' in body
         assert 'class="nav-header"' in body and 'aria-expanded="true"' in body
         assert 'class="caret"' in body
@@ -80,7 +79,7 @@ class TestDashboardRoutes:
         """SPX Gamma is a fluid page: its iframe must fill the pane width (and
         re-fit on resize), not sit at the fixed 1280px default."""
         c = self._client()
-        body = strip_open_issues_data(c.get("/").get_data(as_text=True))
+        body = c.get("/").get_data(as_text=True)
         assert 'data-tab="module_spx_gamma"' in body
         assert "'module_spx_gamma': true" in body
         assert "'module_earnings_radar': true" in body
@@ -90,7 +89,7 @@ class TestDashboardRoutes:
 
     def test_every_board_is_floored_at_the_pane_width_not_the_default_frame_width(self):
         """G1 (#124): a board narrower than the window used to stop at the 1280px frame default."""
-        body = strip_open_issues_data(self._client().get("/").get_data(as_text=True))
+        body = self._client().get("/").get_data(as_text=True)
         assert "var target = inner <= pane ? pane : (inner > cur ? inner + 40 : cur);" in body
         assert "var pane = document.getElementById('content').clientWidth" in body
         assert "Math.max(inner + 40, f.offsetWidth || 1280)" not in body
@@ -103,9 +102,7 @@ class TestDashboardRoutes:
         assert c.post("/run/tw").status_code == 404
         assert c.get("/api/tw/chart/AAPL").status_code == 404
         assert not any(k.startswith("tw") for k in jobs._RUNNERS)
-        # The shell embeds the open-issues registry, whose prose mentions the retired board by name;
-        # the scan covers the page, not that block (core/tests/open_issues_shell.py).
-        assert "TradeWhisperer" not in strip_open_issues_data(c.get("/").get_data(as_text=True))
+        assert "TradeWhisperer" not in c.get("/").get_data(as_text=True)
 
     def test_view_missing_module_placeholder(self, tmp_path, monkeypatch):
         monkeypatch.setattr(runners, "EARNINGS_LATEST", tmp_path / "earnings_latest.html")
@@ -155,42 +152,13 @@ class TestDashboardRoutes:
         assert "module_sec_13f_edgar" not in jobs._RUNNERS
         c = self._client()
         assert c.post("/run/module_sec_13f-edgar", data={"period": "2026-06-30"}).status_code == 404
-        assert "sec_13f-edgar" not in strip_open_issues_data(c.get("/").get_data(as_text=True))
+        assert "sec_13f-edgar" not in c.get("/").get_data(as_text=True)
 
     def test_sec13f_fetch_needs_no_uw_key(self):
         """#206: the SEC ingest is not gated on Unusual Whales; its names step is best-effort."""
         from RevenueChaser.app import jobs, runners
         assert jobs._RUNNERS["module_sec_13f"] is runners.build_sec13f
         assert jobs._REQUIRES_UW["module_sec_13f"] is False
-
-    def test_sec13f_rebuild_job_is_store_only(self):
-        from RevenueChaser.app import jobs, runners
-        assert jobs._RUNNERS["sec13f_rebuild"] is runners.run_sec13f_rebuild
-        assert jobs._REQUIRES_UW["sec13f_rebuild"] is False
-        assert jobs._PRODUCES["sec13f_rebuild"] == ["module_sec_13f"]
-
-    def test_sec13f_rebuild_route_and_button(self, monkeypatch):
-        import RevenueChaser.app.dashboard as d
-        seen = []
-        monkeypatch.setattr(d.jobs, "submit", lambda module, params: seen.append(module) or "stubjob")
-        c = self._client()
-        r = c.post("/run/module_sec_13f-rebuild")
-        assert r.status_code == 202 and seen == ["sec13f_rebuild"]
-        assert "btn-sec13f-rebuild" in strip_open_issues_data(c.get("/").get_data(as_text=True))
-
-    def test_sec13f_check_registered_no_uw(self):
-        from RevenueChaser.app import jobs
-        assert jobs._REQUIRES_UW.get("sec13f_check") is False
-
-    def test_run_sec13f_check_route_submits(self, monkeypatch):
-        import RevenueChaser.app.dashboard as d
-        seen = []
-        monkeypatch.setattr(d.jobs, "submit", lambda module, params: seen.append(module) or "stubjob")
-        c = self._client()
-        r = c.post("/run/module_sec_13f-check")
-        assert r.status_code == 202 and r.get_json()["job_id"] == "stubjob"
-        assert seen == ["sec13f_check"]
-        assert "btn-sec13f-check" in strip_open_issues_data(c.get("/").get_data(as_text=True))
 
     def test_run_earnings_bad_date(self):
         c = self._client()
@@ -658,7 +626,7 @@ class TestQuickTickerCacheState:
         """DF47: the box was a fixed 'AAPL' while the iframe showed the last report (e.g. MSFT)."""
         rn = self._patch_state(monkeypatch, tmp_path)
         rn._remember_quick_ticker("msft")
-        body = strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True))
+        body = dashboard.app.test_client().get("/").get_data(as_text=True)
         assert 'id="quick-ticker" value="MSFT"' in body
 
     def test_remember_uppercases_ticker_and_stamps_date(self, tmp_path, monkeypatch):
@@ -1121,7 +1089,7 @@ class TestOipdParentChrome:
 
     def _body(self):
         dashboard.app.config["TESTING"] = True
-        return strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True))
+        return dashboard.app.test_client().get("/").get_data(as_text=True)
 
     def test_header_ticker_box_is_gone(self):
         body = self._body()
@@ -1562,7 +1530,7 @@ class TestPerTabOverlay:
 
     def _body(self):
         dashboard.app.config["TESTING"] = True
-        return strip_open_issues_data(dashboard.app.test_client().get("/").get_data(as_text=True))
+        return dashboard.app.test_client().get("/").get_data(as_text=True)
 
     def test_overlay_is_driven_by_the_active_tab(self):
         body = self._body()
@@ -1844,3 +1812,73 @@ class TestRunValueChainEmptyFetch:
         assert runners.run_value_chain(None, no_fetch=False) == runners.VALUE_CHAIN_LATEST
         self._stub(monkeypatch, tmp_path, {"fetched": 0, "cached": 7})
         assert runners.run_value_chain(None, no_fetch=True) == runners.VALUE_CHAIN_LATEST
+
+
+def test_every_route_the_control_board_names_is_served_by_the_dashboard():
+    """#434 shipped a board control for a job that had no route: the page offered "Take the disk picture" and
+    nothing answered it. There is no generic ``/run/<job>`` in this app -- every job gets its own route -- so a
+    registered job plus a button is not enough, and nothing else said so.
+
+    The page spells a route three ways, so each one is resolved through Flask's own matcher rather than by
+    comparing strings: a whole path (``/run/storage-picture``), a prefix the script appends an id to (``/api/job/``
+    -> ``/api/job/<id>``), and a path that fills a rule's parameter in (``/api/settings/board/module_settings`` ->
+    ``/api/settings/board/<board>``). A rule that exists but refuses the method still counts as served.
+    """
+    from werkzeug.exceptions import MethodNotAllowed, NotFound
+
+    from RevenueChaser.module_settings import control_render
+
+    adapter = dashboard.app.url_map.bind("127.0.0.1")
+    for name, path in control_render.ROUTES.items():
+        # A prefix is followed by however many segments its rule takes: one for ``/api/job/<id>``, two for
+        # ``/api/build/schedule/<path:dataset>/<action>``.
+        probes = [path] if not path.endswith("/") else [path + "/".join(["x"] * n) for n in (1, 2, 3)]
+        served = False
+        for probe in probes:
+            try:
+                adapter.match(probe, method="POST")
+            except MethodNotAllowed:
+                pass                                            # the rule is there, GET-only
+            except NotFound:
+                continue
+            served = True
+            break
+        assert served, f"the board names {name} -> {path}, which no route serves"
+
+
+def test_the_disk_picture_route_queues_the_job_and_refuses_a_second_one(monkeypatch):
+    """The control is the only way the picture is ever taken (#434), so the route has to enqueue, and repeated
+    presses must not fill the long lane with re-walks of the same trees."""
+    seen = []
+    monkeypatch.setattr(dashboard.jobs, "submit", lambda module, params: seen.append(module) or "stubjob")
+    with panel_test_client(dashboard.app) as client:
+        answer = client.post("/run/storage-picture")
+    assert answer.status_code == 202, answer.get_data(as_text=True)
+    assert answer.get_json()["job_id"] == "stubjob"
+    assert seen == ["storage_picture"], "the route enqueues the walk rather than doing it in the request"
+
+    monkeypatch.setattr(dashboard.jobs, "active_id", lambda modules: "running-one")
+    with panel_test_client(dashboard.app) as client:
+        refused = client.post("/run/storage-picture")
+    assert refused.status_code == 409, "repeated presses must not fill the long lane with re-walks"
+    assert refused.get_json()["job_id"] == "running-one", "and the board can follow the run already going"
+
+
+def test_the_disk_picture_job_says_what_it_walked(monkeypatch, tmp_path):
+    """AGENTS.md: a run says what it found. A capped folder's count is a floor, and that is the one failure that
+    quietly falsifies the journey table, so it has to reach the job's message rather than only the page."""
+    from RevenueChaser.app.jobs import JobMessage
+    from RevenueChaser.module_settings import newdata
+
+    monkeypatch.setattr(newdata, "STORAGE_PICTURE", tmp_path / "picture.json")
+    monkeypatch.setattr(runners, "run_settings", lambda *a, **k: tmp_path / "board.html")
+    monkeypatch.setattr(newdata, "walk_storage", lambda: {
+        "walked_at": "2026-11-05T12:00:00+00:00",
+        "datasets": {"a/one": {"raw": {"files": 4, "bytes": 40, "capped": False},
+                               "parquet": {"files": None, "bytes": None, "capped": False}},
+                     "b/two": {"raw": {"files": 7, "bytes": 70, "capped": True}}}})
+    with pytest.raises(JobMessage) as held:
+        runners.run_storage_picture()
+    assert "2 folders walked" in str(held.value) and "11 files" in str(held.value)
+    assert "1 folders ran out of time" in str(held.value), "a floor is not reported as a count"
+    assert json.loads((tmp_path / "picture.json").read_text())["datasets"]["a/one"]["raw"]["files"] == 4

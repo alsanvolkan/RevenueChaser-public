@@ -1,4 +1,6 @@
-"""The SEC's Form 13F data sets: how ``sec/13f`` is first filled (avo, 2026-10-28: the zips, as the old board did,
+"""The SEC's Form 13F data sets. Through the arguments of ``listed``, ``download``, ``raw_dir``, ``_member`` and
+``_load`` this is also the shared index-read, download and TSV-load primitive the Insider Transactions data sets
+use (``form345_sets``), so the defaults are the 13F ones and must stay. how ``sec/13f`` is first filled (avo, 2026-10-28: the zips, as the old board did,
 from the start of 2025); the EDGAR forms (``edgar.Feed``) follow from the newest set's last day.
 
 ``GET <RC_FORM13F_INDEX_URL>`` (default ``<www.sec.gov>/data-research/sec-markets-data/form-13f-data-sets``) links
@@ -7,7 +9,8 @@ one zip per filing window: ``<ddmonyyyy>-<ddmonyyyy>_form13f.zip`` since 2024 (t
 folder than the rest). A page that links no zip is refused (its shape changed). The window is the filing dates the
 set holds.
 
-A zip holds tab-separated ``SUBMISSION``, ``COVERPAGE``, ``SUMMARYPAGE`` and ``INFOTABLE`` (others are not read),
+A zip holds tab-separated ``SUBMISSION``, ``COVERPAGE``, ``SUMMARYPAGE``, ``INFOTABLE``, ``OTHERMANAGER`` and
+``OTHERMANAGER2`` (``SIGNATURE`` and the readme are not read),
 matched by name suffix, case-insensitive (one set nests them in an upper-case folder), read with no quote character
 (names hold quotes) into a scratch DuckDB file beside the raw zip, so a set's 3.8 million holdings never sit in
 memory. Each 13F-HR and 13F-HR/A becomes the row the EDGAR path writes (``sec13f.FILINGS``, ``origin``
@@ -21,7 +24,8 @@ memory. Each 13F-HR and 13F-HR/A becomes the row the EDGAR path writes (``sec13f
 - ``ISCONFIDENTIALOMITTED`` ``Y`` / ``N`` is ``confidential_omitted``; a 13F notice (``13F-NT``) is not kept, as the
   EDGAR path does not fetch one;
 - the status is ``sec13f.status_of``'s rule, written in SQL: a 13F-HR whose report type is a notice is ``notice``, and
-  one with no holdings in ``INFOTABLE`` is ``unparsed`` unless its summary says 0 entries.
+  one with no holdings in ``INFOTABLE`` is ``unparsed`` unless its summary says 0 entries; one rule is the set's own:
+  an amendment with no cover page row is ``unparsed`` (#301), since its type cannot be read.
 
 The rows go to the EDGAR walk's own day partitions (``filings/day=<filed>``, ``holdings/day=<filed>``), and every
 weekday of the window inside the requested range, up to the set's newest filing, is marked done for that walk (a day
@@ -55,7 +59,9 @@ from . import edgar, sec
 
 INDEX_ENV = "RC_FORM13F_INDEX_URL"
 INDEX_PATH = "/data-research/sec-markets-data/form-13f-data-sets"
-MEMBERS = ("SUBMISSION", "COVERPAGE", "SUMMARYPAGE", "INFOTABLE")
+# The order a day's ``managers`` rows are written in, on both paths: ``seq`` alone ties (``sec13f.MANAGERS``).
+MANAGERS_ORDER = "accession, kind, seq, name"
+MEMBERS = ("SUBMISSION", "COVERPAGE", "SUMMARYPAGE", "INFOTABLE", "OTHERMANAGER", "OTHERMANAGER2")
 ORIGIN = "set:"
 SCRATCH = ".typing-"              # a set is typed in a folder of this prefix beside the raw zips
 MIN_WEEKDAYS = 20                 # a shorter backfill reads the forms only (a re-walk of a few days; review S6)
@@ -67,13 +73,13 @@ def index_url() -> str:
     return os.getenv(INDEX_ENV) or sec.www_base() + INDEX_PATH
 
 
-def window(name: str) -> tuple[date, date] | None:
+def window(name: str, suffix: str = "_form13f") -> tuple[date, date] | None:
     """The filing dates a set holds, from its name; None for a name of neither shape."""
     low = name.lower()
-    m = re.fullmatch(r"(\d{2})([a-z]{3})(\d{4})-(\d{2})([a-z]{3})(\d{4})_form13f\.zip", low)
+    m = re.fullmatch(rf"(\d{{2}})([a-z]{{3}})(\d{{4}})-(\d{{2}})([a-z]{{3}})(\d{{4}}){re.escape(suffix)}\.zip", low)
     if m and m[2] in _MONTHS and m[5] in _MONTHS:
         return (date(int(m[3]), _MONTHS[m[2]], int(m[1])), date(int(m[6]), _MONTHS[m[5]], int(m[4])))
-    m = re.fullmatch(r"(\d{4})q([1-4])_form13f\.zip", low)
+    m = re.fullmatch(rf"(\d{{4}})q([1-4]){re.escape(suffix)}\.zip", low)
     if m:
         year, q = int(m[1]), int(m[2])
         after = date(year + 1, 1, 1) if q == 4 else date(year, 3 * q + 1, 1)
@@ -81,48 +87,50 @@ def window(name: str) -> tuple[date, date] | None:
     return None
 
 
-def parse_index(html: str, page: str) -> dict[str, str]:
+def parse_index(html: str, page: str, suffix: str = "_form13f") -> dict[str, str]:
     """``{zip name: absolute URL}`` of the page's links, each resolved against the page."""
     out = {}
-    for href in re.findall(r"""href\s*=\s*["']([^"']*?_form13f\.zip)["']""", html, flags=re.I):
+    for href in re.findall(rf"""href\s*=\s*["']([^"']*?{re.escape(suffix)}\.zip)["']""", html, flags=re.I):
         url = urljoin(page, href)
         out[url.rsplit("/", 1)[1]] = url
     return out
 
 
-def raw_dir() -> Path:
-    return base.raw_root() / "sec" / "13f_sets"
+def raw_dir(sub: str = "13f_sets") -> Path:
+    return base.raw_root() / "sec" / sub
 
 
-def raw_path(name: str) -> Path:
-    return raw_dir() / name
+def raw_path(name: str, sub: str = "13f_sets") -> Path:
+    return raw_dir(sub) / name
 
 
 def _meta(path: Path) -> Path:
     return path.with_name(path.name + ".meta.json")
 
 
-def listed(ctx: base.RunContext, pacer: sec.Pacer) -> dict[str, tuple[date, date, str]]:
+def listed(ctx: base.RunContext, pacer: sec.Pacer, page: str | None = None, suffix: str = "_form13f",
+           label: str = "13F") -> dict[str, tuple[date, date, str]]:
     """``{name: (first day, last day, URL)}`` of the sets the page links (one request)."""
-    page = index_url()
-    sets = parse_index(sec.get(ctx, pacer, page).text, page)
+    page = page or index_url()
+    sets = parse_index(sec.get(ctx, pacer, page).text, page, suffix)
     if not sets:
-        raise base.SourceError(f"13F data sets: {page} links no *_form13f.zip (its shape changed?)")
+        raise base.SourceError(f"{label} data sets: {page} links no *{suffix}.zip (its shape changed?)")
     out = {}
     for name, url in sets.items():
-        span = window(name)
+        span = window(name, suffix)
         if span is None:
-            ctx.notes.append(f"13F data set {name}: no filing window in its name, not read")
+            ctx.notes.append(f"{label} data set {name}: no filing window in its name, not read")
             continue
         out[name] = (*span, url)
     return out
 
 
-def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str) -> tuple[Path, bool]:
-    """``(the set's zip under raw/sec/13f_sets/, whether it replaced a kept one)``. A kept set is asked again with
+def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str, sub: str = "13f_sets",
+             label: str = "13F") -> tuple[Path, bool]:
+    """``(the set's zip under raw/sec/<sub>/, whether it replaced a kept one)``. A kept set is asked again with
     ``If-Modified-Since`` its ``Last-Modified`` (one without one is kept as it is); an answer that is not a zip is
     refused and not kept."""
-    path = raw_path(name)
+    path = raw_path(name, sub)
     kept = path.exists()
     seen = (base.read_raw_json(_meta(path)) if _meta(path).exists() else {}).get("last_modified") if kept else None
     if kept and not seen:
@@ -131,20 +139,21 @@ def download(ctx: base.RunContext, pacer: sec.Pacer, name: str, url: str) -> tup
     if kept and (r.status_code == 304 or r.headers.get("last-modified") == seen):
         return path, False
     if not zipfile.is_zipfile(BytesIO(r.content)):
-        raise base.SourceError(f"13F data set {name}: the answer is not a zip ({len(r.content)} bytes)")
+        raise base.SourceError(f"{label} data set {name}: the answer is not a zip ({len(r.content)} bytes)")
     base.write_raw_json(_meta(path), {"url": url, "last_modified": r.headers.get("last-modified"),
                                       "fetched_at": time.time(), "run_id": ctx.run_id, "bytes": len(r.content)})
     return base.write_raw(path, r.content), kept
 
 
-def _clear_scratch(ctx: base.RunContext) -> None:
+def _clear_scratch(ctx: base.RunContext, sub: str = "13f_sets", label: str = "13F") -> None:
     """Remove the typing folders a killed run left beside the raw zips (several GB each; ``./app.sh clean-scratch``
     does not look here). One builder process writes, so a folder found before a fill is always a dead run's."""
-    stale = sorted(raw_dir().glob(SCRATCH + "*")) if raw_dir().is_dir() else []
+    root = raw_dir(sub)
+    stale = sorted(root.glob(SCRATCH + "*")) if root.is_dir() else []
     for d in stale:
         shutil.rmtree(d, ignore_errors=True)
     if stale:
-        ctx.notes.append(f"13F data sets: {len(stale)} typing folder of a killed run removed")
+        ctx.notes.append(f"{label} data sets: {len(stale)} typing folder of a killed run removed")
 
 
 def _reopen(feed: edgar.Feed, name: str, first: date, last: date) -> int:
@@ -158,13 +167,13 @@ def _reopen(feed: edgar.Feed, name: str, first: date, last: date) -> int:
     return n
 
 
-def _member(z: zipfile.ZipFile, table: str) -> str:
+def _member(z: zipfile.ZipFile, table: str, label: str = "13F") -> str:
     want = f"{table}.TSV"
     for m in z.namelist():
         up = m.upper()
         if up == want or up.endswith("/" + want):
             return m
-    raise base.SourceError(f"13F data set {Path(z.filename or '').name}: no {table}.tsv in the zip")
+    raise base.SourceError(f"{label} data set {Path(z.filename or '').name}: no {table}.tsv in the zip")
 
 
 def _header(path: Path) -> tuple[list[str], str]:
@@ -175,16 +184,23 @@ def _header(path: Path) -> tuple[list[str], str]:
     return [c.strip() for c in first.decode("utf-8", errors="replace").rstrip("\r\n").split("\t")], ending
 
 
-def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, notes: list[str]) -> None:
-    """The set's four tables as ``z_submission``, ``z_coverpage``, ``z_summarypage``, ``z_infotable`` (text). The
-    columns are the member's own header line (no sniffing: the dialect is known). A row that does not read (a tab
-    too few or too many, a byte that is not UTF-8) is left out and counted in ``notes``, not the whole set and the
-    year's fill with it (13F review B3, 2026-10-30); the filing it belonged to says in its ``detail`` that fewer
-    holdings were read than its summary counts. A set before 2023 has no ``FIGI`` column: it is added, empty (D4)."""
+def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, notes: list[str],
+          members: tuple[str, ...] = MEMBERS, add_missing: dict[str, tuple[str, ...]] | None = None,
+          label: str = "13F") -> None:
+    """``members`` as ``z_<lower name>`` tables (text), for whichever data set is being read: the 13F sets' four by
+    default, the Insider Transactions sets' four when ``form345_sets`` calls it. The columns are the member's own
+    header line (no sniffing: the dialect is known). A row that does not read (a tab too few or too many, a byte
+    that is not UTF-8) is left out and counted in ``notes``, not the whole set and the year's fill with it (13F
+    review B3, 2026-10-30); the filing it belonged to says in its ``detail`` that fewer rows were read than its own
+    count. ``add_missing`` names the columns an older set may lack, added empty: ``INFOTABLE.FIGI`` before 2023 (D4)
+    for 13F, ``SUBMISSION.AFF10B5ONE`` for the insider sets.
+
+    A rejected row is not chased back to the filing it belonged to: ``_typed`` reads the cover page's absence from
+    its own join (#301), which is the same answer without depending on the text of a line that did not read."""
     with zipfile.ZipFile(zip_path) as z:
-        for table in MEMBERS:
+        for table in members:
             out = tmp / f"{table}.tsv"
-            with z.open(_member(z, table)) as src, open(out, "wb") as dst:
+            with z.open(_member(z, table, label)) as src, open(out, "wb") as dst:
                 shutil.copyfileobj(src, dst, 1 << 20)
             cols, ending = _header(out)
             columns = ", ".join(f"'{c}': 'VARCHAR'" for c in cols)
@@ -196,10 +212,11 @@ def _load(con: duckdb.DuckDBPyConnection, zip_path: Path, tmp: Path, name: str, 
                               "FROM reject_errors").fetchone()
             con.execute("DROP TABLE reject_errors; DROP TABLE reject_scans")
             if bad[0]:
-                notes.append(f"13F data set {name}: {bad[0]} rows of {table}.tsv rejected (first: line {bad[1]}, "
+                notes.append(f"{label} data set {name}: {bad[0]} rows of {table}.tsv rejected (first: line {bad[1]}, "
                              f"{bad[2]})")
-            if table == "INFOTABLE" and "FIGI" not in cols:
-                con.execute("ALTER TABLE z_infotable ADD COLUMN FIGI VARCHAR")
+            for missing in ({"INFOTABLE": ("FIGI",)} if add_missing is None else add_missing).get(table, ()):
+                if missing not in cols:
+                    con.execute(f"ALTER TABLE z_{table.lower()} ADD COLUMN {missing} VARCHAR")
             out.unlink()
 
 
@@ -211,7 +228,20 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
            fetched_at: float, run_id: str | None, cusip_none=()) -> None:
     """``filings`` and ``holdings`` of the set's 13F-HR and 13F-HR/A filed from ``first`` to ``last``, typed as the
     EDGAR path writes them: the period is the cover page's, the submission header's when the cover page has none
-    (13F review D2, 2026-10-30), and a CUSIP in ``cusip_none`` is none (D3)."""
+    (13F review D2, 2026-10-30), and a CUSIP in ``cusip_none`` is none (D3).
+
+    An amendment the set holds no cover page for is ``unparsed``, not ``ok`` with an empty one (#301): read as ok,
+    its NULL ``amendment_type`` makes the amendment walk treat a NEW HOLDINGS amendment as a replacement, and the
+    filer's quarter becomes the amendment's few names. The join itself answers this — a rejected cover row, a row
+    the set never carried and a row whose own accession field is the damaged one all leave ``c`` NULL — so nothing
+    has to be recovered from the text of a line that by definition did not read. An original 13F-HR without one
+    keeps the status the rest of its row earns (its detail says ``no cover page in the data set`` when nothing
+    else is wrong with it): unparsing it would drop the filer's quarter and let a later NEW HOLDINGS amendment
+    become the whole quarter — #301's harm from the other side (#482 review). One rare path stays open: a NEW
+    HOLDINGS report filed as a plain 13F-HR (13F review B1, ``serve.active_accessions``) that also loses its cover
+    row reads as a replacement; telling it apart needs the filer's other reports, which this step does not see. A RESTATEMENT amendment without its cover page is now
+    left out too, so the quarter keeps the report it restates: the conservative reading. The holdings of an
+    unparsed filing are still typed and stored, not served."""
     form_list = ", ".join(f"'{f}'" for f in sorted(forms))
     none_list = ", ".join(f"'{c}'" for c in sorted(cusip_none)) or "''"
     period = f"coalesce({_day('c.REPORTCALENDARORQUARTER')}, s.period)"
@@ -243,21 +273,48 @@ def _typed(con: duckdb.DuckDBPyConnection, name: str, first: date, last: date, f
                CASE upper(trim(m.ISCONFIDENTIALOMITTED)) WHEN 'Y' THEN true WHEN 'N' THEN false END
                    AS confidential_omitted,
                CASE WHEN {period} IS NULL THEN 'unparsed'
+                    WHEN c.ACCESSION_NUMBER IS NULL AND ends_with(s.form, '/A') THEN 'unparsed'
                     WHEN upper(c.REPORTTYPE) LIKE '%NOTICE%' THEN 'notice'
                     WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
                     THEN 'unparsed' ELSE 'ok' END AS status,
                CASE WHEN {period} IS NULL THEN 'no report period'
+                    WHEN c.ACCESSION_NUMBER IS NULL AND ends_with(s.form, '/A') THEN 'no cover page in the data set'
                     WHEN upper(c.REPORTTYPE) LIKE '%NOTICE%' THEN NULL
                     WHEN coalesce(k.n, 0) = 0 AND TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) IS DISTINCT FROM 0
                     THEN 'no information table'
                     WHEN TRY_CAST(trim(m.TABLEENTRYTOTAL) AS INTEGER) <> coalesce(k.n, 0)
                     THEN coalesce(k.n, 0) || ' holdings read, the summary says ' || trim(m.TABLEENTRYTOTAL)
+                    WHEN c.ACCESSION_NUMBER IS NULL THEN 'no cover page in the data set'
                END AS detail,
                '{ORIGIN}{name}' AS origin, {fetched_at!r} AS fetched_at, ? AS run_id
         FROM z_sub s
         LEFT JOIN z_coverpage c ON trim(c.ACCESSION_NUMBER) = s.accession
         LEFT JOIN z_summarypage m ON trim(m.ACCESSION_NUMBER) = s.accession
         LEFT JOIN z_count k ON k.accession = s.accession""", [run_id])
+
+    # Both manager lists in one shape, joined to ``filings`` rather than to the submission rows: the filing has
+    # already settled the period, the form filter and the one-row-per-accession rule, so a manager row cannot
+    # belong to a filing the set did not type.
+    #
+    # ``cover``'s ``seq`` is the position in the list, not OTHERMANAGER_SK: the key is the data set's own
+    # surrogate and does not exist in the EDGAR XML, so writing it here would make the two paths disagree on
+    # every cover row. The order is the key's, which is the order the set wrote them in.
+    con.execute("""CREATE TABLE managers AS
+        SELECT f.accession, f.cik, f.period, f.filed, 'included' AS kind,
+               TRY_CAST(trim(o.SEQUENCENUMBER) AS INTEGER) AS seq,
+               coalesce(CAST(TRY_CAST(trim(o.CIK) AS BIGINT) AS VARCHAR), nullif(trim(o.CIK), '')) AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
+               nullif(trim(o.CRDNUMBER), '') AS crd_number, nullif(trim(o.SECFILENUMBER), '') AS sec_file_number,
+               nullif(trim(o.NAME), '') AS name
+        FROM filings f JOIN z_othermanager2 o ON trim(o.ACCESSION_NUMBER) = f.accession
+        UNION ALL
+        SELECT f.accession, f.cik, f.period, f.filed, 'cover' AS kind,
+               CAST(row_number() OVER (PARTITION BY f.accession
+                                       ORDER BY TRY_CAST(trim(o.OTHERMANAGER_SK) AS BIGINT),
+                                                trim(o.OTHERMANAGER_SK)) AS INTEGER) AS seq,
+               coalesce(CAST(TRY_CAST(trim(o.CIK) AS BIGINT) AS VARCHAR), nullif(trim(o.CIK), '')) AS manager_cik, nullif(trim(o.FORM13FFILENUMBER), '') AS form13f_file_number,
+               nullif(trim(o.CRDNUMBER), '') AS crd_number, nullif(trim(o.SECFILENUMBER), '') AS sec_file_number,
+               nullif(trim(o.NAME), '') AS name
+        FROM filings f JOIN z_othermanager o ON trim(o.ACCESSION_NUMBER) = f.accession""")
 
     def num(col: str, typ: str = "DOUBLE") -> str:
         return f"TRY_CAST(TRY_CAST(replace(trim({col}), ',', '') AS DOUBLE) AS {typ})"
@@ -283,7 +340,7 @@ def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema:
     """Fill ``feed``'s days from ``start`` to ``end`` that a listed set covers; the last day covered (None when no
     set covers any). A range of fewer than ``MIN_WEEKDAYS`` weekdays asks nothing: the walk reads its forms. Every
     backfill first removes a killed run's typing folders, a short one too.
-    ``schema``: ``{"forms", "filings", "holdings", "dollars_from", "cusip_none"}`` of ``sec/13f``."""
+    ``schema``: ``{"forms", "filings", "holdings", "managers", "dollars_from", "cusip_none"}`` of ``sec/13f``."""
     _clear_scratch(ctx)
     weekdays = sum(1 for k in range((end - start).days + 1) if (start + timedelta(days=k)).weekday() < 5)
     if weekdays < MIN_WEEKDAYS:
@@ -308,6 +365,12 @@ def fill(ctx: base.RunContext, feed: edgar.Feed, start: date, end: date, schema:
 
 def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str, first: date, last: date,
               schema: dict) -> int:
+    if base.raw_only():
+        # Raw-only (--no-parquet, #498): the set's zip is staged in raw above, and typing it here would write the
+        # ``.done`` marker of every day in range while base.write_parquet writes no partition, so those days would
+        # never be typed again (the forms walk skips a marked day, and _reopen is the only way back).
+        ctx.notes.append(f"13F data set {name}: raw only, the zip is staged and not typed")
+        return 0
     days = [first + timedelta(days=n) for n in range((last - first).days + 1)]
     todo = [d for d in days if d.weekday() < 5 and not feed.is_done(d)]
     if not todo:
@@ -331,6 +394,7 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
             filed = {r[0] for r in con.execute("SELECT DISTINCT filed FROM filings").fetchall()}
             cols_f = ", ".join(f'"{c}"' for c, _ in schema["filings"])
             cols_h = ", ".join(f'"{c}"' for c, _ in schema["holdings"])
+            cols_m = ", ".join(f'"{c}"' for c, _ in schema["managers"])
             written = 0
             for day in todo:
                 if day in filed:
@@ -340,6 +404,9 @@ def _fill_one(ctx: base.RunContext, feed: edgar.Feed, zip_path: Path, name: str,
                     base.write_parquet(con, f"SELECT {cols_h} FROM holdings WHERE filed = DATE '{day}' "
                                             "ORDER BY accession, line",
                                        feed.parquet_dir() / "holdings" / f"day={day}" / "part-0.parquet")
+                    base.write_parquet(con, f"SELECT {cols_m} FROM managers WHERE filed = DATE '{day}' "
+                                            f"ORDER BY {MANAGERS_ORDER}",
+                                       feed.parquet_dir() / "managers" / f"day={day}" / "part-0.parquet")
                     written += 1
                 d = feed.day_dir(day)
                 d.mkdir(parents=True, exist_ok=True)
