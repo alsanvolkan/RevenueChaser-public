@@ -541,6 +541,12 @@ def start_run(run_id: str, dataset: str, trigger: str, params: dict | None = Non
 
 
 @_routed
+def running_runs() -> list[dict]:
+    """The ``job_runs2`` rows still running (no ``finished_at``), from whichever backend holds the ops state."""
+    return _select("SELECT * FROM job_runs2 WHERE status = 'running' AND finished_at IS NULL")
+
+
+@_routed
 def finish_run(run_id: str, status: str, error: str | None = None) -> None:
     with _open() as con:
         con.execute("UPDATE job_runs2 SET status = ?, finished_at = ?, error = ? WHERE run_id = ?",

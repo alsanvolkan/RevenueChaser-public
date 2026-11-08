@@ -1168,3 +1168,11 @@
 .ctl .sb1 .dsname{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .ctl .sb1 .sbbtn,.ctl .sb1 .srcb{flex:none}
 @media(max-width:760px){.ctl .sb1{flex-wrap:wrap}.ctl .sb1 .dsname{white-space:normal;overflow-wrap:anywhere}}
+/* The Data tab's "What am I looking at?" box sits in a .ctl band of its own, so it takes the board's themed tokens
+   instead of the page's old dark-only ones (seen in the #539 screenshots: dark in light). */
+.ctl .help{background:var(--card);border-color:var(--line);color:var(--mut)}
+.ctl .help summary{color:var(--acc)}
+.ctl .help b{color:var(--fg)}
+.ctl .help code{color:var(--acc)}
+/* flow-root keeps the box's bottom margin inside the band, so no strip of the page's own background shows below. */
+.ctl.helpband{display:flow-root}

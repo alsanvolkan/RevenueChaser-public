@@ -221,9 +221,12 @@ class RunContext:
     def flush_counts(self, provider: str | None = None) -> None:
         """Write the pending counts (of ``provider``, or all) to ``provider_calls_daily``."""
         for name in [provider] if provider else sorted(self._pending):
-            calls, failures, http_429 = self._pending.pop(name, [0, 0, 0])
+            calls, failures, http_429 = self._pending.get(name, [0, 0, 0])
             if calls or failures or http_429:
+                # Written first, dropped after: a store error (a locked ops.sqlite) keeps the counts pending for
+                # the next flush, so the day cap never loses them (#519 finding 4).
                 ops.count_calls(name, calls, failures=failures, http_429=http_429)
+            self._pending.pop(name, None)
 
     def check_pause(self, *, force: bool = False) -> None:
         """Raise ``Paused`` when the dataset was paused since the run began. The schedule is read at most once
@@ -275,12 +278,19 @@ class RunContext:
             # The client's own backoff sleep (``unusual_whales._sleep``), not the context's: its retry ladder
             # stays exactly what every other UW caller gets.
             self._uw = UWClient()
+            self._uw.on_request = self._on_uw_request
             self._uw.on_response = self._on_uw_response
         return self._uw
 
+    def _on_uw_request(self, ep: str) -> None:
+        # Counted on send, as the keyless path is: a request cut off by a timeout was still made and UW counted
+        # it, and the client retries it (#519 finding 3).
+        self.count("uw", calls=1)
+
     def _on_uw_response(self, ep: str, response) -> None:
         status = getattr(response, "status_code", 0)
-        self.count("uw", calls=1, http_429=int(status == 429))
+        if status == 429:
+            self.count("uw", http_429=1)
         if not self.uw_sampled and ops.sample_uw_headers(getattr(response, "headers", None), run_id=self.run_id):
             self.uw_sampled = True
 

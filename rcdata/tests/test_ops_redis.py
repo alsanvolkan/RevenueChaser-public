@@ -92,6 +92,8 @@ def _script() -> dict:
                                                       ops.watch_list("option"), ops.watch_list("stock"),
                                                       ops.watch_rows("stock"), ops.watch_last_change() is not None],
         "schema": ops.schema_version(),
+        # smembers has no order: sorted, so the two backends compare (#539 review).
+        "running": sorted(ops.running_runs(), key=lambda r: r["run_id"]),
     }
     out["tables"] = {t: ops.rows(t) for t in ops.TABLES if t != "ops_schema"}
     return out

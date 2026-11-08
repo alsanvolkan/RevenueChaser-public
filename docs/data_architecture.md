@@ -1036,7 +1036,10 @@ file's `built_at` stamp. That stamp is written when the build file opens, before
 partition written while a long build runs is newer than the stamp and comes out dirty on the next build instead of
 being lost. The signal is the partition's mtime, which a copy or a restore can carry over from another machine; it
 becomes a manifest of (path, size, mtime) compared manifest-to-manifest before any kind relies on the dirty set for
-data correctness.
+data correctness. Which class each served table falls in — cumulative (a day only adds rows), restated (new data
+rewrites served rows) or a derivation rebuilt whole — is read from the build code in `docs/dirty_table_classes.md`,
+together with the two dependencies (the spine's symbol map, the prices universe) that make a table dirty with no
+new source day of its own.
 
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.
@@ -1648,6 +1651,7 @@ layer is not there yet.
 | `uw/earnings` | weekly | UW `/stock/<ticker>/earnings`, one request per company: the quarterly rows' reported EPS, UW's consensus of that quarter and its surprise, as UW serves them | `stg_uw_earnings` |
 | `uw/financials` | daily | UW `/stock/<ticker>/financials` for a company that reported in the last 14 days and has not filed; off unless `RC_UW_PRELIMINARY=1` | `stg_uw_financials` |
 | `yfinance/estimates` | weekly | Yahoo's `earningsTrend` per company, its shortest ticker, when its newest answer is 7 days old; 5 failures in a row stop the run | `stg_yf_estimates` |
+| `yfinance/fx` | daily | Yahoo's daily close of `<CUR>USD=X` per currency in `fx_rates.CURRENCIES` (USD per unit), the whole history the first time, then from 7 days before the newest stored day | `stg_yf_fx` |
 | `sec/fsds` | monthly | The SEC's quarterly Financial Statement Data Sets zip, the newest quarter published | `stg_sec_fsds` |
 | `wrds/fundq` | monthly, attended | `comp.fundq`, the Tier A gvkeys, ten years | `stg_wrds_fundq`, `stg_wrds_fundq_revision` |
 | `wrds/funda` | monthly, attended | `comp.funda`, the Tier A gvkeys, ten years | `stg_wrds_funda`, `stg_wrds_funda_revision` |

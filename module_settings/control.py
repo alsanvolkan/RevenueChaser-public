@@ -646,7 +646,7 @@ RUN_ALERT = 0.8
 
 def _read_runs_now() -> list[dict]:
     from RevenueChaser.rcdata import ops
-    return ops._select("SELECT * FROM job_runs2 WHERE status = 'running' AND finished_at IS NULL")
+    return ops.running_runs()          # routed: under Redis the runs live there, not in ops.sqlite
 
 
 def _read_cgroup(pid) -> str | None:

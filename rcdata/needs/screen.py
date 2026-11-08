@@ -86,6 +86,7 @@ DATASETS: dict[str, DatasetCard] = {
     'wrds/sec_idhist': DatasetCard('Compustat securities and identifier history (WRDS)', step=3, role='fills'),
     'wrds/segments': DatasetCard('Compustat segments and customers (WRDS)', step=9, role='fills'),
     'yfinance/estimates': DatasetCard('Analyst estimates (yfinance)', step=9, role='first'),
+    'yfinance/fx': DatasetCard('Daily exchange rates for non-USD filers (Yahoo)', step=9, role='fills'),
     'yfinance/float': DatasetCard('Float (Yahoo)', step=8, role='fills'),
 }
 

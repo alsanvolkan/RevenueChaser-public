@@ -492,6 +492,11 @@ def start_run(run_id: str, dataset: str, trigger: str, params: dict | None = Non
                          "params": ops._json(params)})
 
 
+def running_runs() -> list[dict]:
+    return [r for r in _fetch("job_runs2", _client().smembers(_key("job_runs2", "running")))
+            if r.get("status") == "running" and r.get("finished_at") is None]
+
+
 def finish_run(run_id: str, status: str, error: str | None = None) -> None:
     def work():
         row = _one("job_runs2", run_id)
