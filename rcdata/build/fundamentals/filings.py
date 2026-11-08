@@ -38,6 +38,7 @@ import duckdb
 
 from ....core import calendar
 from .. import base
+from .. import dirty as dirty_set
 from . import KIND, common, ixbrl, sec_index
 
 NAME = "sec/filings"
@@ -466,28 +467,39 @@ class Filings:
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         folder = common.parquet_dir(NAME)
-        common.stage_glob(con, STAGING["filings"], FILING, folder, "cik=*/filings.parquet")
-        common.stage_glob(con, STAGING["documents"], DOCUMENT, folder, "cik=*/documents.parquet")
-        common.stage_glob(con, STAGING["segments"], SEGMENT, folder, "cik=*/segments.parquet")
-        common.stage_glob(con, STAGING["customers"], CUSTOMER, folder, "cik=*/customers.parquet")
+        ciks = common.dirty_ciks(ctx, con)
+        common.stage_glob(con, STAGING["filings"], FILING, folder, "cik=*/filings.parquet", ciks=ciks)
+        common.stage_glob(con, STAGING["documents"], DOCUMENT, folder, "cik=*/documents.parquet", ciks=ciks)
+        common.stage_glob(con, STAGING["segments"], SEGMENT, folder, "cik=*/segments.parquet", ciks=ciks)
+        common.stage_glob(con, STAGING["customers"], CUSTOMER, folder, "cik=*/customers.parquet", ciks=ciks)
         return {}
+
+    dirty_keyed = True
+
+    def dirty(self, ctx: base.RunContext):
+        """The companies whose ``cik=<cik>`` partitions changed since the live file was built (#446)."""
+        return dirty_set.keyed(ctx, self)
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         cols = ["cik", "accession", "item", "quality"]
-        added, removed = common.compare_live(con, f"SELECT {', '.join(cols)} FROM filing_item", "filing_item", cols)
-        as_of = con.execute(f"SELECT max(source_as_of) FROM {STAGING['filings']}").fetchone()[0]
-        listed = con.execute(f"SELECT count(DISTINCT cik) FROM {STAGING['filings']}").fetchone()[0]
+        added, removed = common.compare_live(con, f"SELECT {', '.join(cols)} FROM filing_item", "filing_item", cols,
+                                             dirty_only=common.dirty_ciks(ctx, con) is not None)
+        # From the served table, not the staging: on a build over the live copy the staging holds only the dirty
+        # companies, and every filing-list row is a ``kind = 'item'`` row of ``filing_item`` either way.
+        as_of = con.execute("SELECT max(source_as_of) FROM filing_item WHERE kind = 'item'").fetchone()[0]
+        listed = con.execute("SELECT count(DISTINCT cik) FROM filing_item WHERE kind = 'item'").fetchone()[0]
         tier_a = con.execute("SELECT count(DISTINCT cik) FROM fundamental_company").fetchone()[0]
         recent = con.execute(f"""SELECT count(DISTINCT c.cik) FROM fundamental_company c
                                  WHERE c.submissions_as_of >= DATE '{(ctx.as_of or self.default_as_of())
                                  - timedelta(days=sec_index.LOOKBACK_DAYS)}'""").fetchone()[0]
-        qualities = dict(con.execute(f"SELECT quality, count(*) FROM {STAGING['documents']} GROUP BY 1").fetchall())
+        qualities = dict(con.execute("SELECT quality, count(*) FROM filing_item WHERE kind = 'document' "
+                                     "GROUP BY 1").fetchall())
         ctx.notes.append(f"{listed} of {tier_a} Tier A companies have a filing list ({recent} read in the last "
                          f"{sec_index.LOOKBACK_DAYS} days); documents by quality: "
                          + (", ".join(f"{k} {v}" for k, v in sorted(qualities.items())) or "none"))
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": (as_of or ctx.as_of or self.default_as_of()).isoformat(),
-                "rows": common.count(con, STAGING["filings"]), "added": added, "removed": removed,
+                "rows": common.count(con, "filing_item", "kind = 'item'"), "added": added, "removed": removed,
                 "coverage": round(listed / tier_a, 4) if tier_a else None}
 
 

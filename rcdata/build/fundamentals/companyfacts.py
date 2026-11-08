@@ -33,6 +33,7 @@ import duckdb
 
 from ....core import calendar
 from .. import base
+from .. import dirty as dirty_set
 from . import KIND, common, facts, sec_index
 
 NAME = "sec/companyfacts"
@@ -210,23 +211,33 @@ class CompanyFacts:
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         folder = common.parquet_dir(NAME)
-        common.stage_glob(con, STAGING["facts"], facts.FACT, folder, "cik=*/part-0.parquet")
-        common.stage_glob(con, STAGING["company"], facts.COMPANY, folder, "cik=*/company.parquet")
+        ciks = common.dirty_ciks(ctx, con)
+        common.stage_glob(con, STAGING["facts"], facts.FACT, folder, "cik=*/part-0.parquet", ciks=ciks)
+        common.stage_glob(con, STAGING["company"], facts.COMPANY, folder, "cik=*/company.parquet", ciks=ciks)
         return {}
+
+    dirty_keyed = True
+
+    def dirty(self, ctx: base.RunContext):
+        """The companies whose ``cik=<cik>`` partitions changed since the live file was built (#446)."""
+        return dirty_set.keyed(ctx, self)
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         cols = ["cik", "field", "period_type", "period_end", "value", "accn"]
         added, removed = common.compare_live(con, f"SELECT {', '.join(cols)} FROM fundamental_fact "
                                                   f"WHERE source = '{facts.SOURCE}'", "fundamental_fact", cols,
-                                             where=f"source = '{facts.SOURCE}'")
-        as_of = con.execute(f"SELECT max(facts_as_of) FROM {STAGING['company']}").fetchone()[0]
+                                             where=f"source = '{facts.SOURCE}'",
+                                             dirty_only=common.dirty_ciks(ctx, con) is not None)
+        folder = common.parquet_dir(NAME)
+        as_of = common.staged_value(ctx, con, STAGING["company"], folder, "cik=*/company.parquet", "max(facts_as_of)")
         fresh = freshness(con, ctx.as_of or self.default_as_of())
         ctx.notes.append(f"statements <= {STALE_DAYS} days: {fresh['fresh']} of {fresh['quarterly']} quarterly "
                          f"filers; annual-only filers {fresh['annual_fresh']} of {fresh['annual']} within "
                          f"{ANNUAL_STALE_DAYS} days; {fresh['no_facts']} Tier A companies with no statement")
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": (as_of or ctx.as_of or self.default_as_of()).isoformat(),
-                "rows": common.count(con, STAGING["facts"]), "added": added, "removed": removed,
+                "rows": int(common.staged_value(ctx, con, STAGING["facts"], folder, "cik=*/part-0.parquet",
+                                                "count(*)")), "added": added, "removed": removed,
                 "coverage": fresh["coverage"]}
 
 

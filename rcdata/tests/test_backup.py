@@ -289,3 +289,48 @@ def test_the_cli_passes_only_and_subdir_through(backup_dir):
     assert backup.main(["backup", "--only", "market", "--subdir", "market-heavy"]) == 0
     assert len(list((backup_dir / "market-heavy").glob("market_*.duckdb"))) == 1
     assert not (backup_dir / "market").exists()
+
+
+def test_the_redis_ops_copy_is_written_in_one_transaction(backup_dir, monkeypatch):
+    # #387: an autocommit insert per row made 42k commits, 9-11 min a night and past the 30 min unit limit.
+    from RevenueChaser.rcdata import ops_redis
+    ops.enqueue("market_series", {"x": 1}, by="test")
+    ops.enqueue("market_series", {"x": 2}, by="test")
+    taken = {t: ops.rows(t) for t in ops.TABLES if t != "ops_schema"}
+    assert len(taken["build_requests"]) == 2
+    monkeypatch.setattr(ops_redis, "snapshot", lambda: taken)
+    real, seen = ops.connect, []
+
+    def traced(path=None):
+        cm = real(path)
+        con = cm.__enter__()
+        con.set_trace_callback(seen.append)
+        return _Exit(cm, con)
+
+    monkeypatch.setattr(ops, "connect", traced)
+    backup_dir.mkdir()
+    dest = backup._backup_ops_redis(backup_dir, backup._Manifest(backup_dir))
+    inserts = [i for i, s in enumerate(seen) if s.startswith("INSERT INTO build_requests")]
+    marks = [(i, s) for i, s in enumerate(seen) if s.startswith(("BEGIN", "COMMIT"))]
+    assert len(inserts) == 2
+    before = [s for i, s in marks if i < inserts[0]]
+    assert before and before[-1].startswith("BEGIN")             # on main the last mark is ensure's own COMMIT
+    assert not [i for i, _ in marks if inserts[0] < i < inserts[-1]]
+    assert [i for i, s in marks if i > inserts[-1] and s == "COMMIT"]
+    from RevenueChaser.rcdata import ops_copy
+    con = ops_copy._open_read_only(dest)
+    try:
+        assert ops_copy._table_rows(con, "build_requests") == taken["build_requests"]
+    finally:
+        con.close()
+
+
+class _Exit:
+    def __init__(self, cm, con):
+        self.cm, self.con = cm, con
+
+    def __enter__(self):
+        return self.con
+
+    def __exit__(self, *exc):
+        return self.cm.__exit__(*exc)

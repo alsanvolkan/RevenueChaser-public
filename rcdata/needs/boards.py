@@ -37,18 +37,20 @@ UNDECLARED = frozenset({
     "module_swing_potential", "module_uw_interaction", "module_value_chain",
 })
 
-#: What each board not migrated yet will read, from the catalog's need list of 29 Oct 2026
-#: (``DataPlan/2026-10-29_katalog-need-listesi.md``, its "which board reads it" column). The control board draws
+#: What each board not migrated yet will read: first from the catalog's need list of 29 Oct 2026
+#: (``DataPlan/2026-10-29_katalog-need-listesi.md``, its "which board reads it" column), since corrected from the
+#: boards' code (#489, #490, #491). The control board draws
 #: these as dashed lines, so a reader can tell a board's own declaration from the plan. An entry goes away in the
 #: PR that migrates the board, the one that adds its ``READS``. A board whose data has no need in the catalog yet
-#: is left out rather than given a need it does not read. Relatedness is not listed yet, though its code reads
-#: ``fundamentals.companies`` and ``fundamentals.filings``, both in the catalog.
+#: is left out rather than given a need it does not read. A test compares each entry with the ``rcdata.read``
+#: calls of the board's own package (``unplanned_reads``, #491), so a read the code makes cannot go missing again.
 PLANNED_READS: dict[str, tuple[str, ...]] = {
     "module_oipd": ("macro.dgs10", "options.chain", "options.strikes", "options.expiries"),
-    "module_financials": ("identity.universe", "prices.shares", "prices.market_cap", "prices.latest", "macro.dgs10",
-                          "fundamentals.statements", "fundamentals.segments", "fundamentals.peers"),
+    "module_financials": ("identity.universe", "prices.bars", "prices.shares", "prices.market_cap", "prices.latest",
+                          "macro.dgs10", "fundamentals.statements", "fundamentals.segments", "fundamentals.peers"),
     "module_uw_interaction": ("options.prints",),
-    "module_comovement": ("identity.universe", "identity.membership", "prices.bars", "prices.market_cap"),
+    "module_comovement": ("identity.universe", "identity.membership", "prices.bars", "prices.market_cap",
+                          "prices.actions"),
     "module_value_chain": ("identity.universe", "fundamentals.segments", "fundamentals.customers"),
     "module_sector_rotation": ("identity.membership", "prices.bars", "market.series"),
     "module_asymmetric_growth": ("identity.universe", "prices.bars", "fundamentals.statements",
@@ -59,6 +61,8 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
                             "fundamentals.filings", "earnings.next"),
     "module_sec_13f": ("ownership.holders_13f", "ownership.periods_13f", "prices.actions"),
     "module_leaps": ("options.daily",),
+    # #490: ``engine.py`` reads the company records and the served filing texts.
+    "module_relatedness": ("identity.universe", "fundamentals.companies", "fundamentals.filings"),
 }
 
 
@@ -137,6 +141,115 @@ def need_literals(board: str) -> tuple[str, ...]:
 def undeclared_uses(board: str) -> tuple[str, ...]:
     declared = set(declared_reads(board) or ())
     return tuple(name for name in need_literals(board) if name not in declared)
+
+
+# ── The plan checked against the code (#491) ───────────────────────────────────────────────────────────────────
+# ``PLANNED_READS`` is written by hand, and #483 found it had drifted: three boards read data the diagram drew no
+# line for. These read the board's own source instead, for the ``rcdata.read`` functions it calls, and map each
+# function to the catalog tables it queries, so a test can name a read the plan is missing.
+
+#: The ``rcdata.read`` helpers a reader passes its table to, as the first argument.
+_ROW_HELPERS = frozenset({"_rows", "_frame", "_option_rows"})
+#: A table a reader's SQL names. A CTE's name matches too, and is dropped because it is no catalog table.
+_SQL_TABLE = re.compile(r"\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)")
+
+
+def reader_tables() -> dict[str, set[str]]:
+    """``{function: catalog tables it queries}`` for every top-level function of ``rcdata/read.py``.
+
+    A table counts when the function hands it to a row helper or names it in its own SQL text: ``changed_at``
+    passes ``price_bar_daily`` to ``_rows`` but also reads ``corporate_action`` inside the query (#489). Only
+    tables some need is over are kept; a helper function's own SQL (``_now_cte``'s symbol lookup) is the helper's.
+    """
+    tables = {n.table for n in catalog.NEEDS.values()}
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "read.py").read_text(encoding="utf-8"))
+    out: dict[str, set[str]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        found: set[str] = set()
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                found.update(_SQL_TABLE.findall(sub.value))
+            elif (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) and sub.func.id in _ROW_HELPERS
+                  and sub.args and isinstance(sub.args[0], ast.Constant) and isinstance(sub.args[0].value, str)):
+                found.add(sub.args[0].value)
+        out[node.name] = found & tables
+    return out
+
+
+def _board_sources(board: str):
+    for path in sorted((root() / board).rglob("*.py")):
+        if "tests" not in path.relative_to(root() / board).parts:
+            yield path
+
+
+def read_calls(board: str) -> tuple[str, ...]:
+    """The ``rcdata.read`` functions the board's own package uses, tests left out.
+
+    Found by the imports: ``from ...rcdata import read [as x]`` then ``x.<function>``, or
+    ``from ...rcdata.read import <function>``. A name ``read`` that was not imported from ``rcdata`` is not one.
+    """
+    found: set[str] = set()
+    for path in _board_sources(board):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        aliases: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if node.module == "rcdata" or node.module.endswith(".rcdata"):
+                    aliases.update(a.asname or a.name for a in node.names if a.name == "read")
+                elif node.module == "rcdata.read" or node.module.endswith(".rcdata.read"):
+                    found.update(a.name for a in node.names if a.name != "*")
+            elif isinstance(node, ast.Import):
+                aliases.update(a.asname for a in node.names if a.asname and a.name.endswith("rcdata.read"))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in aliases
+                    and not node.attr.startswith("_")):
+                found.add(node.attr)
+    return tuple(sorted(found))
+
+
+def _needs_over(table: str) -> tuple[str, ...]:
+    return tuple(sorted(n.name for n in catalog.NEEDS.values() if n.table == table))
+
+
+def unplanned_reads(board: str) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """``(function, table, needs over that table)`` for every table the board's code reads with no planned need.
+
+    When the function is a need's own ``reader_name``, only that need covers it. Otherwise several needs can share
+    the table (``corporate_action`` read inside ``changed_at``), and any one of them planned covers the read. A
+    reader shared by several needs (``market_series``) is covered by any of them, because the code cannot say
+    which series it means without running.
+    """
+    planned = set(PLANNED_READS.get(board, ()))
+    tables = reader_tables()
+    out = []
+    for fn in read_calls(board):
+        # A function that is a need's own reader serves that need, not any need over its table:
+        # ``read.latest_market`` is ``prices.latest``, and ``prices.market_cap`` over the same table must not
+        # cover it (the review's 1).
+        own: dict[str, set[str]] = {}
+        for n in catalog.NEEDS.values():
+            if n.reader_name == fn:
+                own.setdefault(n.table, set()).add(n.name)
+        for table in sorted(tables.get(fn, set()) | set(own)):
+            candidates = tuple(sorted(own[table])) if table in own else _needs_over(table)
+            if not planned & set(candidates):
+                out.append((fn, table, candidates))
+    return tuple(out)
+
+
+def unread_plans(board: str) -> tuple[str, ...]:
+    """Planned needs whose table no ``rcdata.read`` call in the board's own package queries.
+
+    A warning, not a fault: a board can read a need through a shared ``core`` module, which this does not follow.
+    """
+    tables = reader_tables()
+    read = {t for fn in read_calls(board) for t in tables.get(fn, ())}
+    return tuple(n for n in PLANNED_READS.get(board, ()) if catalog.NEEDS[n].table not in read)
 
 
 def flow_rows() -> tuple[dict, ...]:

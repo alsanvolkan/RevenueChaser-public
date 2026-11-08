@@ -470,6 +470,20 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
     return _transaction(["build_issues"], work)
 
 
+def prune_issues(days: int = ops.RESOLVED_ISSUE_DAYS) -> int:
+    cutoff = ops._prune_cutoff(days)
+
+    def work():
+        # Resolved rows have no lookup of their own, so this reads the whole table.
+        old = [r for r in _all("build_issues") if r["resolved_on"] is not None and r["resolved_on"] < cutoff]
+
+        def writes(p):
+            for row in old:
+                _delete(p, "build_issues", row)
+        return len(old), (writes if old else None)
+    return _transaction(["build_issues"], work)
+
+
 def open_issues(dataset: str, limit: int = 20) -> tuple[int, list[dict]]:
     r, k, limit = _client(), _key("build_issues", "open", dataset), int(limit)
     return r.zcard(k), (_fetch("build_issues", r.zrevrange(k, 0, limit - 1)) if limit > 0 else [])

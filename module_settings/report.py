@@ -3010,7 +3010,7 @@ def _collect_newdata() -> dict:
 #: The page's two tabs (#492): the key a viewer's choice is remembered under, and each tab's panel id. ``ALIASES`` maps
 #: a choice remembered from the three-tab page (Data, Fetch, Needs) onto the tab that now holds it.
 SETTINGS_TABS = {"key": "rc.settings.tab",
-                 "tabs": {"data": "panel-data", "health": "panel-health"},
+                 "tabs": {"data": "panel-data", "health": "panel-health", "live": "panel-live"},
                  "aliases": {"fetch": "data", "needs": "health"}}
 
 TABS_JS = """
@@ -3166,7 +3166,65 @@ def _tab_strip() -> str:
             '<button type="button" role="tab" id="tab-data" data-tab="data" aria-controls="panel-data" '
             'aria-selected="true" tabindex="0">Data</button>'
             '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
-            'aria-selected="false" tabindex="-1">Health</button></div></nav>')
+            'aria-selected="false" tabindex="-1">Health</button>'
+            '<button type="button" role="tab" id="tab-live" data-tab="live" aria-controls="panel-live" '
+            'aria-selected="false" tabindex="-1">Live</button></div></nav>')
+
+
+# #527: the live view of data health and fetching is two Grafana boards on homesrv (home-server
+# grafana/make_dashboards.py rc_data_health / rc_fetch), framed here rather than shown as Grafana tabs (avo, 8 Nov
+# 2026: "bunlar revenue chaser app icine gomulu olmaliydi"). Grafana allows only this app's origin to frame it. The
+# frame has no address until the tab opens, so a Data/Health visit never loads Grafana.
+LIVE_BOARDS = (("rc-data-health", "Data health"), ("rc-fetch", "Fetch"))
+LIVE_CSS = """
+#panel-live .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
+  padding:0 12px}
+#panel-live .livebar button{min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--line,#8884);
+  background:var(--card,transparent);color:var(--fg,inherit);font:inherit;cursor:pointer}
+#panel-live .livebar button[aria-pressed="true"]{border-color:var(--acc,#4a86e8);color:var(--acc,#4a86e8);font-weight:600}
+#panel-live .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px}
+#panel-live iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
+  background:var(--bg,transparent)}
+"""
+LIVE_HTML = ('<div class="livebar" role="group" aria-label="Live board">'
+             + "".join(f'<button type="button" data-board="{uid}" aria-pressed="{"true" if i == 0 else "false"}">'
+                       f'{label}</button>' for i, (uid, label) in enumerate(LIVE_BOARDS))
+             + '<a id="live-open" target="_blank" rel="noopener">Open in Grafana</a></div>'
+             '<iframe id="live-frame" title="Live data health and fetch (Grafana)" loading="lazy"></iframe>')
+LIVE_JS = """
+(function(){
+  var panel = document.getElementById('panel-live'), frame = document.getElementById('live-frame');
+  if (!panel || !frame) return;
+  var buttons = [].slice.call(panel.querySelectorAll('[data-board]')), open = document.getElementById('live-open');
+  var board = buttons.length ? buttons[0].getAttribute('data-board') : 'rc-data-health';
+  function theme() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t === 'light' || t === 'dark') return t;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  function address(kiosk) {
+    return location.protocol + '//' + location.hostname + ':3000/d/' + board + '/' + board + '?theme=' + theme()
+      + (kiosk ? '&kiosk' : '');
+  }
+  function load() {
+    if (panel.hidden) return;
+    var want = address(true);
+    if (frame.getAttribute('src') !== want) frame.setAttribute('src', want);
+    if (open) open.href = address(false);
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      board = b.getAttribute('data-board');
+      buttons.forEach(function (o) { o.setAttribute('aria-pressed', o === b ? 'true' : 'false'); });
+      load();
+    });
+  });
+  if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
+  var tab = document.getElementById('tab-live');
+  if (tab) tab.addEventListener('click', function () { setTimeout(load, 0); });
+  load();
+})();
+"""
 
 
 def _ticker_drill(payload: dict) -> str:
@@ -3217,6 +3275,7 @@ def render_settings_dashboard(payload: dict) -> str:
 <style>{_UCARDS_CSS}</style>
 <style>{control_render.CTL_CSS}</style>
 <style>{needs_tab.NEEDS_CSS}</style>
+<style>{LIVE_CSS}</style>
 {FILTERS_CSS}
 <script>{THEME_JS}</script>
 </head>
@@ -3229,6 +3288,9 @@ def render_settings_dashboard(payload: dict) -> str:
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
 {health_html}
+</div>
+<div id="panel-live" role="tabpanel" aria-labelledby="tab-live" hidden>
+{LIVE_HTML}
 </div>
 <script>{FILTERS_JS}</script>
 <script>
@@ -3248,6 +3310,7 @@ var ND_PAGE_STALE_MS = {ND_PAGE_STALE_MINUTES * 60 * 1000};
 window.RC_SETTINGS_TABS = {script_json(SETTINGS_TABS)};
 {TABS_JS}
 {needs_tab.NEEDS_JS}
+{LIVE_JS}
 </script>
 </body>
 </html>
