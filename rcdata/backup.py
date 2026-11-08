@@ -19,9 +19,10 @@ Into ``<RAW_STORE_BACKUP_DIR>/market/`` (an empty ``RAW_STORE_BACKUP_DIR`` is re
 ``--only`` picks the steps (``ops``, a serving kind, ``raw``) and ``--subdir`` the folder; without either, every
 step runs into ``market/``, as the command did before the light/heavy split of 5 Nov 2026. The nightly run takes the
 small files, a weekly one takes ``prices`` and ``ownership`` into ``market-heavy/``: the 04:30 run of 5 Nov 2026 hit
-its 30-minute limit, and those two are 3.5 GB of the ~3.6 GB it copies, so they are where the time most likely went
-— an inference, not a measured step, because the run records no per-step timing. Each folder has its own manifest,
-verification and retention count.
+its 30-minute limit. The split was taken for the 3.5 GB those two copy, but the measured cost was the ops step, not
+theirs: the copy stamps in the run log put ops at 8m28s on 4 Nov and 8m44s on 5 Nov against 1m26s for both large
+files. The likely cause -- an inference, the 8 minutes were not reproduced (#429) -- is SQLite building its copy page
+by page on the backup disk, so it is built on local storage now (see ``_backup_ops``). Each folder has its own manifest, verification and retention count.
 
 Then the D3 copy: the raw files of the last ``RAW_COPY_DAYS`` (35) days (by modification time) under
 ``<MARKET_RAW_DIR>/raw/`` go to ``RC_MARKET_RAW_COPY_DIR``, rsync-like (a file whose size and mtime match is not
@@ -38,6 +39,7 @@ import os
 import shutil
 import sqlite3
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
@@ -132,6 +134,12 @@ def _online_backup(source: sqlite3.Connection, target: sqlite3.Connection) -> No
     source.backup(target)
 
 
+def _copy_bytes(src: Path, dest: Path) -> None:
+    """One sequential write, which is what the backup disk is good at."""
+    with open(src, "rb") as s, open(dest, "wb") as d:
+        shutil.copyfileobj(s, d, 1 << 20)
+
+
 def _backup_ops(out: Path, manifest: _Manifest) -> Path | None:
     if ops.backend() == "redis":
         return _backup_ops_redis(out, manifest)
@@ -140,30 +148,37 @@ def _backup_ops(out: Path, manifest: _Manifest) -> Path | None:
         return None
     dest = out / f"ops_{_stamp()}.sqlite"
     tmp = dest.with_name(dest.name + ".tmp")
-    with ops.connect(src) as source:
-        # One read transaction: the counts and the copy see the same snapshot, so a write that lands in between
-        # (the dashboard enqueuing, the builder counting calls) is in neither and cannot fail the check.
-        source.execute("BEGIN")
-        try:
-            want = {r[0]: source.execute(f'SELECT count(*) FROM "{r[0]}"').fetchone()[0]
-                    for r in source.execute("SELECT name FROM sqlite_master WHERE type = 'table' "
-                                            "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()}
-            target = sqlite3.connect(str(tmp))
+    # SQLite writes a database page by page, and the backup folder is a spinning disk: the ops step took 8m44s on
+    # 5 Nov 2026 and timed the 04:30 run out. That the page-by-page build on that disk is why is an inference (the
+    # 8 minutes were not reproduced, #429; a re-measure onto the disk took 2.67 s, onto local storage 0.01 s). So
+    # it is built here and then copied across in one sequential write, like the serving files already are.
+    with tempfile.TemporaryDirectory(prefix="rc-ops-backup-") as staging:
+        local = Path(staging) / dest.name
+        with ops.connect(src) as source:
+            # One read transaction: the counts and the copy see the same snapshot, so a write that lands in between
+            # (the dashboard enqueuing, the builder counting calls) is in neither and cannot fail the check.
+            source.execute("BEGIN")
             try:
-                _online_backup(source, target)
-                # A copy is one self-contained file: no -wal/-shm beside it, whatever the source's mode.
-                target.execute("PRAGMA journal_mode = DELETE")
+                want = {r[0]: source.execute(f'SELECT count(*) FROM "{r[0]}"').fetchone()[0]
+                        for r in source.execute("SELECT name FROM sqlite_master WHERE type = 'table' "
+                                                "AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()}
+                target = sqlite3.connect(str(local))
+                try:
+                    _online_backup(source, target)
+                    # A copy is one self-contained file: no -wal/-shm beside it, whatever the source's mode.
+                    target.execute("PRAGMA journal_mode = DELETE")
+                finally:
+                    target.close()
             finally:
-                target.close()
-        finally:
-            source.execute("COMMIT")
-    try:
-        got = _sqlite_counts(tmp)
-        if got != want:
-            raise BackupFailed(f"{dest.name}: rows {got} != source {want}")
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
+                source.execute("COMMIT")
+        try:
+            _copy_bytes(local, tmp)
+            got = _sqlite_counts(tmp)
+            if got != want:
+                raise BackupFailed(f"{dest.name}: rows {got} != source {want}")
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
     os.replace(tmp, dest)
     manifest.add(dest, tables=got)
     manifest.save()
@@ -179,13 +194,16 @@ def _backup_ops_redis(out: Path, manifest: _Manifest) -> Path | None:
     dest = out / f"ops_{_stamp()}.sqlite"
     tmp = dest.with_name(dest.name + ".tmp")
     try:
-        ops.ensure.__wrapped__(tmp)                     # the SQLite tables and stamp, whatever the backend
-        with ops.connect(tmp) as con:
-            for table, rows in taken.items():
-                for row in rows:
-                    con.execute(f"INSERT INTO {table} ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
-                                tuple(row.values()))
-            con.execute("PRAGMA journal_mode = DELETE")     # one self-contained file
+        with tempfile.TemporaryDirectory(prefix="rc-ops-backup-") as staging:   # row by row: never on the backup disk
+            local = Path(staging) / dest.name
+            ops.ensure.__wrapped__(local)               # the SQLite tables and stamp, whatever the backend
+            with ops.connect(local) as con:
+                for table, rows in taken.items():
+                    for row in rows:
+                        con.execute(f"INSERT INTO {table} ({', '.join(row)}) "
+                                    f"VALUES ({', '.join('?' * len(row))})", tuple(row.values()))
+                con.execute("PRAGMA journal_mode = DELETE")     # one self-contained file
+            _copy_bytes(local, tmp)
         got = _sqlite_counts(tmp)
         con = ops_copy._open_read_only(tmp)
         try:
@@ -212,8 +230,7 @@ def _backup_kind(kind: str, out: Path, manifest: _Manifest) -> Path | None:
     for _ in range(ATTEMPTS):
         dest = out / f"{kind}_{_stamp()}.duckdb"
         tmp = dest.with_name(dest.name + ".tmp")
-        with open(live, "rb") as src, open(tmp, "wb") as dst:
-            shutil.copyfileobj(src, dst, 1 << 20)
+        _copy_bytes(live, tmp)
         try:
             want, got = _fingerprints(live), _fingerprints(tmp)
         except Exception as e:  # noqa: BLE001 - an unreadable copy is a failed try, never a kept file
@@ -307,7 +324,7 @@ def run_backup(only=None, subdir: str = SUBDIR) -> dict:
     if files:
         out = Path(folder) / subdir
         out.mkdir(parents=True, exist_ok=True)
-        for stale in out.glob("*.tmp"):                     # a run that was killed mid-copy
+        for stale in out.glob("*.tmp*"):                    # a run that was killed mid-copy, its -wal/-shm too
             stale.unlink(missing_ok=True)
         manifest = _Manifest(out)
         # Each file on its own: a failed (or raced) ops copy must not cost the serving files theirs, and the other way.
