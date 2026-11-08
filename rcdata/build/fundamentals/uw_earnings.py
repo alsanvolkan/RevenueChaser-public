@@ -39,6 +39,7 @@ import duckdb
 
 from ....core import calendar, credentials
 from .. import base
+from .. import dirty as dirty_set
 from . import KIND, common, facts
 
 NAME = "uw/earnings"
@@ -248,6 +249,10 @@ class UWEarnings:
         if left:
             ctx.notes.append("rows left out: " + ", ".join(f"{k} {n}" for k, n in sorted(left.items())))
         return out
+
+    def dirty(self, ctx: base.RunContext):
+        """Small and not partitioned by company: reloaded whole by every build, on the live copy too (#446)."""
+        return dirty_set.ALL
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         common.stage_glob(con, STAGING, SCHEMA, common.parquet_dir(NAME), "date=*/part-0.parquet",

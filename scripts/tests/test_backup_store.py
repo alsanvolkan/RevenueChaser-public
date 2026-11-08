@@ -1338,3 +1338,25 @@ def test_a_lone_retired_archive_is_never_offered(tmp_path):
     out = tmp_path / "local"
     _aged(out, "discord_media_20261003_094720_653120.zip", 331, 21)
     assert bs.expired_backups(out, now=NOW).files == ()
+
+
+def test_restore_refuses_a_leftover_wal_and_names_it(rawstore_tmp_db, tmp_path):
+    # #214 (F9, decision A): DuckDB replays ``<name>.duckdb.wal`` on the next open, so a WAL left
+    # behind by a crashed writer would be applied on top of the restored snapshot. Refuse and name
+    # it; touch nothing.
+    from RevenueChaser.scripts import restore_store as rs
+    _seed()
+    snap = bs.snapshot(out_dir=tmp_path, keep=3)
+    target = pathlib.Path(rawstore.DB_PATH)
+    wal = target.with_name(target.name + ".wal")
+    wal.write_bytes(b"leftover")
+    before = target.read_bytes()
+    try:
+        with pytest.raises(bs.BackupError, match=re.escape(str(wal))):
+            rs.restore(snap)
+        assert target.read_bytes() == before
+        assert not target.with_name(target.name + ".pre-restore").exists()
+        assert wal.read_bytes() == b"leftover"
+        assert rs.main(["--from", str(tmp_path), "--latest", "raw"]) == 1
+    finally:
+        wal.unlink()

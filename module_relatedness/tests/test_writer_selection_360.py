@@ -17,6 +17,7 @@ import re
 import pytest
 
 from RevenueChaser.core import board_settings, rawstore
+from RevenueChaser.module_relatedness.tests.test_relatedness import v3_reply
 from RevenueChaser.core.providers import deepseek, evren
 from RevenueChaser.module_relatedness import __main__ as cli
 from RevenueChaser.module_relatedness import engine, settings, store, writers
@@ -46,7 +47,7 @@ class _EvrenHttp:
         body = k.get("json")
         self.posts.append({"url": url, "json": body})
         name = re.match(r"Company: (.+)\n", body["messages"][-1]["content"]).group(1).lower()
-        content = json.dumps({"products": [f"{name} gpu"], "end_markets": ["data center"]})
+        content = v3_reply([f"{name} gpu"], ["data center"])
         return _Resp(200, {"choices": [{"message": {"content": content}}], "usage": {"total_tokens": 5}})
 
     def close(self):
@@ -80,7 +81,7 @@ def deepseek_calls(monkeypatch):
 
     def fake(system, user, **k):
         seen.append(user)
-        return json.dumps({"products": ["deepseek gpu"], "end_markets": ["data center"]})
+        return v3_reply(["deepseek gpu"], ["data center"])
 
     monkeypatch.setattr(deepseek, "complete", fake)
     return seen

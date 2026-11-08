@@ -203,6 +203,10 @@ class RunContext:
     allow_shrink: bool = False                                      # a request's explicit "allow_shrink": true
     scope: Scope = field(default_factory=Scope)                     # a request's "tiers" / "names" (empty: daily)
     pending: dict[str, Any] = field(default_factory=dict)          # a build's results for its after_swap step
+    # #446: the Parquet files changed since the live file was built (``dirty.plan``; None: not known), and the plan
+    # of a build made on the live copy (None: a whole build, every table made from the whole Parquet tree).
+    changed: Any = None
+    incremental: Any = None
     _pending: dict[str, list[int]] = field(default_factory=dict)    # counted, not yet written to ops.sqlite
     _http: httpx.Client | None = None
     _uw: Any = None
@@ -859,10 +863,27 @@ def build_kind_many(kind: str, members: list[tuple[Dataset, RunContext]], *, lea
         raise SourceError(f"the Parquet root {parquet_root()} is missing (RC_MARKET_RAW_DIR unset or not mounted?)")
     ctxs = {ds.name: c for ds, c in members}
     shrink = tuple(dict.fromkeys(t for ds, c in members if c.allow_shrink for t in shrink_scope(ds)))
-    with serving.build(kind) as b:
+    from . import dirty
+    plan = dirty.plan(kind, lead)
+    every = [lead, *ctxs.values()]
+    for c in every:
+        c.changed = lead.changed
+    with serving.build(kind, base="live" if plan is not None and plan.reason is None else "fresh") as b:
+        on_live = b.mode == "live"
+        for c in every:
+            c.incremental = plan if on_live else None
+        if on_live:
+            # A table the code no longer builds would survive in the copy and go on being served (#451).
+            for table in serving.RETIRED_TABLES.get(kind, ()):
+                b.con.execute(f'DROP TABLE IF EXISTS "{table}"')
         counts: dict[str, int] = {}
         for d in kind_datasets(kind):
             counts.update(d.build(ctxs.get(d.name, lead), b.con))
+        if plan is not None:
+            dirty.write_manifest(b.con, plan)
+            if not on_live and plan.reason is None:
+                plan.reason = "no live file to build on"
+            lead.notes.append(plan.note())
         checks = {ds.name: ds.check(c, b.con) for ds, c in members}
         b.swap(counts, checks=list(checks.values()), allow_shrink=shrink)
     for d in kind_datasets(kind):
