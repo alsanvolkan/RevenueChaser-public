@@ -109,7 +109,7 @@ def test_a_running_request_names_who_from_a_closed_set():
     ops.enqueue("market_series", by="settings")
     ops.next_request()
     ops.start_run("r1", "market_series", "queue")
-    fam = _families(metrics.render(_collect(cgroup=lambda pid: "0::/system.slice/life-claude-rc.service",
+    fam = _families(metrics.render(_collect(cgroup=lambda pid: "0::/system.slice/life-claude-remote-control-b.service",
                                             alive=lambda pid: True)))
     assert fam["rc_queue_requests"] == ['rc_queue_requests{status="queued"} 0', 'rc_queue_requests{status="running"} 1']
     elapsed = fam["rc_run_elapsed_seconds"]
