@@ -330,6 +330,25 @@ def live_version(kind: str) -> int | None:
     return int(rows[0][0]) if len(rows) == 1 else None
 
 
+def live_stamp(kind: str) -> dict | None:
+    """``{kind, file, build_id, built_at, build_mode}`` of the build that is live now, from the file's own version row
+    (``_stamp``); ``None`` when there is no file or no single version row. ``built_at`` is epoch seconds. A board run
+    records this for every file it reads (``rcdata/board_sources.py``, #566)."""
+    try:
+        with open_read(kind) as con:
+            cols = {r[0] for r in con.execute(f"DESCRIBE {VERSION_TABLE}").fetchall()}
+            mode = "build_mode" if "build_mode" in cols else "NULL"
+            rows = con.execute(f"SELECT build_id, built_at, {mode} FROM {VERSION_TABLE} WHERE kind = ?",
+                               (kind,)).fetchall()
+    except (ServingFileMissing, duckdb.Error):
+        return None
+    if len(rows) != 1:
+        return None
+    build_id, built_at, build_mode = rows[0]
+    return {"kind": kind, "file": live_path(kind).name, "build_id": build_id,
+            "built_at": float(built_at) if built_at is not None else None, "build_mode": build_mode}
+
+
 def _copy_live(kind: str, path: Path) -> str:
     """Start the build file ``path`` as a copy of the live ``kind`` file; the mode that gave.
 
