@@ -1,4 +1,5 @@
 """``python -m RevenueChaser.rcdata backup`` — the weekly backup (avo's decisions of 8 Nov 2026).
+``rcdata restore`` and ``rcdata restore-check`` are in ``rcdata/restore.py``.
 
 One job a week (Sunday 03:30, registry row ``RC-Backup-Weekly``), everything onto the HDD under
 ``<RAW_STORE_BACKUP_DIR>/weekly-v2/<step>/`` (an empty ``RAW_STORE_BACKUP_DIR`` is refused: log, exit 2, nothing
@@ -796,9 +797,13 @@ def main(argv: list[str] | None = None) -> int:
                                 "an existing file is never touched. Says what it would do unless --apply is given")
     empty.add_argument("--apply", action="store_true",
                        help="actually create the files (the default only reports what is missing)")
+    from . import restore
+    restore.add_parsers(sub)
     args = p.parse_args(argv)
     if args.cmd == "create-empty-stores":
         return _create_empty_stores(apply=args.apply)
+    if args.cmd in ("restore", "restore-check"):
+        return restore.run(args)
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
