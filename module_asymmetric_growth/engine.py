@@ -811,14 +811,16 @@ def _quarter(period) -> tuple[int, int] | None:
     return d.year, (d.month - 1) // 3 + 1
 
 
-def _institutional(ticker: str, totals: dict, shares_outstanding: float | None = None) -> dict:
+def _institutional(ticker: str, totals: dict, shares_outstanding: float | None = None,
+                   shares_out_source: str = "stored") -> dict:
     """13F institutional ownership: the newest settled quarter, and its share change against the quarter right
     before it. ``inst_quarter`` / ``inst_prev_quarter`` name them (``2026 Q1``); when the quarter before is not
     stored, there is no QoQ change rather than one over two quarters (AG review SF-3, PR 6).
 
     A quarter whose filing deadline has not passed (``complete`` false) holds a part of itself (#514) and is skipped.
     ``inst_ownership_pct`` is that quarter's shares ÷ ``shares_outstanding``, the 13F board's ``% Out`` (#481), and
-    ``ownership`` says which quarter it came from; without either there is no share and no provenance."""
+    ``ownership`` says which quarter it came from and where the shares outstanding came from
+    (``shares_out_source``); without either there is no share and no provenance."""
     out = {"inst_holders": None, "inst_new": None, "inst_exited": None,
            "inst_buy_flow": None, "inst_sell_flow": None,
            "inst_shares": None, "inst_shares_delta_pct": None,
@@ -843,7 +845,7 @@ def _institutional(ticker: str, totals: dict, shares_outstanding: float | None =
     out["inst_shares"] = p.get("shares")
     if p.get("shares") is not None and shares_outstanding:
         out["inst_ownership_pct"] = p["shares"] / shares_outstanding
-        out["ownership"] = {"source": "sec13f", "session": str(latest)[:10]}
+        out["ownership"] = {"source": "sec13f", "session": str(latest)[:10], "shares_out": shares_out_source}
     q = _quarter(latest)
     out["inst_quarter"] = f"{q[0]} Q{q[1]}" if q else None
     if len(sorted_periods) >= 2 and q:
@@ -1068,7 +1070,12 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     from RevenueChaser.module_asymmetric_growth import freeze
     version = freeze.model_version()        # the rows say which rules scored them (old-rows view, #380 S2)
     for c in cards:
-        inst = _institutional(c["ticker"], totals, (shares_out.get(c["ticker"]) or {}).get("shares_outstanding"))
+        so = (shares_out.get(c["ticker"]) or {}).get("shares_outstanding")
+        so_source = "stored"
+        if not so and c.get("market_cap") and c.get("price"):
+            # Measured 9 Nov 2026: the store held shares outstanding for 1,219 of 4,159 AG names; every card has these.
+            so, so_source = c["market_cap"] / c["price"], "market_cap/price"
+        inst = _institutional(c["ticker"], totals, so, so_source)
         # The 13F quarters the card read are period ends it read: they ride in ``period_ends`` (a JSON column of
         # ``ticker_scores``), so a Refresh shows them too (AG review SF-3).
         c.setdefault("period_ends", {})["inst_13f"] = [inst.pop("inst_quarter"), inst.pop("inst_prev_quarter")]

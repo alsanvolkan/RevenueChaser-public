@@ -63,7 +63,7 @@ def test_the_share_is_the_settled_13f_quarter_over_shares_outstanding(rawstore_t
     card = _cards(_scan(monkeypatch, ["AAA"]))["AAA"]
 
     assert card["inst_ownership_pct"] == 0.4                 # 400 / 1000; not .info's 0.62, not the stored 0.11
-    assert card["ownership"] == {"source": "sec13f", "session": "2026-03-31"}
+    assert card["ownership"] == {"source": "sec13f", "session": "2026-03-31", "shares_out": "stored"}
 
 
 def test_a_quarter_still_arriving_feeds_neither_the_share_nor_the_block(rawstore_tmp_db, monkeypatch):
@@ -86,14 +86,6 @@ def test_no_13f_quarter_means_no_share_not_the_yahoo_one(rawstore_tmp_db, monkey
     assert card["inst_ownership_pct"] is None and card["ownership"] is None
 
 
-def test_no_shares_outstanding_keeps_the_block_but_no_share(rawstore_tmp_db, monkeypatch):
-    _payload("NOSO")
-
-    card = _cards(_scan(monkeypatch, ["NOSO"]))["NOSO"]
-
-    assert card["inst_ownership_pct"] is None and card["inst_holders"] == 10
-
-
 def test_the_summary_counts_the_13f_shares_and_names_the_quarter(rawstore_tmp_db, monkeypatch):
     for t in ("AAA", "NOSO", "NONE"):
         _payload(t)
@@ -101,7 +93,7 @@ def test_the_summary_counts_the_13f_shares_and_names_the_quarter(rawstore_tmp_db
 
     result = _scan(monkeypatch, ["AAA", "NOSO", "NONE"])
 
-    assert result["summary"]["ownership"] == {"sec13f": 1, "quarter": "2026-03-31"}
+    assert result["summary"]["ownership"] == {"sec13f": 2, "quarter": "2026-03-31"}   # AAA, NOSO
 
 
 def test_a_summary_counted_from_stored_cards_reports_the_counts_as_unknown():
@@ -109,3 +101,33 @@ def test_a_summary_counted_from_stored_cards_reports_the_counts_as_unknown():
     card = {"ticker": "AAA", "sector": "Technology", "total_points": 1, "themes": [], "flags": [],
             "tech_breakthrough": False, "source": "sec_edgar"}
     assert engine._summary([card], None, {})["ownership"] == {"sec13f": None, "quarter": None}
+
+
+# ── the measured gaps (live data, 9 Nov 2026): 1,219 of 4,159 names had a stored shares outstanding ─────────────
+
+def test_without_stored_shares_out_the_cards_own_market_cap_over_price_is_the_denominator(rawstore_tmp_db,
+                                                                                           monkeypatch):
+    _payload("NOSO")
+
+    card = _cards(_scan(monkeypatch, ["NOSO"]))["NOSO"]
+
+    implied = card["market_cap"] / card["price"]
+    assert abs(card["inst_ownership_pct"] - 400.0 / implied) < 1e-12
+    assert card["ownership"] == {"source": "sec13f", "session": "2026-03-31", "shares_out": "market_cap/price"}
+
+
+def test_a_stored_shares_out_is_named_too(rawstore_tmp_db, monkeypatch):
+    _payload("AAA")
+    _shares_out("AAA", 1000.0)
+
+    card = _cards(_scan(monkeypatch, ["AAA"]))["AAA"]
+
+    assert card["ownership"]["shares_out"] == "stored"
+
+
+def test_a_share_above_100_percent_is_shown_as_a_check_not_a_number():
+    """GOSS read 6,242 % on live data: 13F shares on a pre-reverse-split base. The card says so, not the number."""
+    from RevenueChaser.module_asymmetric_growth import report
+    html = report.render_asymmetric_growth_hunter_html({"asof": "", "cards": [], "summary": {},
+                                                        "thresholds": engine.THRESHOLDS})
+    assert "inst_ownership_pct > 1" in html and "above 100%" in html

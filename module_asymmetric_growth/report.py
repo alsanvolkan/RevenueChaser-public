@@ -403,7 +403,7 @@ def render_asymmetric_growth_hunter_html(result: dict) -> str:
         Data: fundamentals from the Securities and Exchange Commission (SEC) EDGAR filings (annual 10-K) ·
         price, volume, 52-week high and 50-day mean from the stored daily price bars (the prices store, the session in the header) ·
         institutional ownership from SEC Form 13F (reported quarterly, ~45-day filing lag; the newest quarter whose filing
-        deadline has passed), held % = 13F shares ÷ shares outstanding, as on the 13F board ·
+        deadline has passed), held % = 13F shares ÷ shares outstanding, as on the 13F board (market cap ÷ price where none is stored; above 100% is shown as a check) ·
         Unusual Whales (UW) options flow is manual-only (rule K3) ·
         no Seeking Alpha confirmation (rule 3).
         The scanner produces candidate lists, not directional signals.
@@ -570,8 +570,10 @@ function instTable(c) {{
     + '<div class="ih">Institutional' + (q13[0] ? ' (13F ' + rcEsc(q13[0]) + ')' : '')
     + ' <span class="' + cls + '">' + dir + '</span></div>'
     + '<table>'
-    + '<tr><td class="k">Held</td><td class="v">' + (c.inst_ownership_pct != null
-        ? (c.inst_ownership_pct * 100).toFixed(1) + '% of shares out' : 'N/A') + '</td></tr>'
+    + '<tr><td class="k">Held</td><td class="v">' + (c.inst_ownership_pct == null ? 'N/A'
+        // Above 100% is a share base mismatch (a reverse split, measured: GOSS 6,242%), not a holding to read.
+        : c.inst_ownership_pct > 1 ? 'check: above 100% of shares out'
+        : (c.inst_ownership_pct * 100).toFixed(1) + '% of shares out') + '</td></tr>'
     + '<tr><td class="k">Holders</td><td class="v">' + c.inst_holders + '</td></tr>'
     + '<tr><td class="k">New / Exited</td><td class="v">+' + (c.inst_new||0) + ' / -' + (c.inst_exited||0) + '</td></tr>'
     + '<tr><td class="k">Buy / Sell (shares)</td><td class="v">' + shares(c.inst_buy_flow) + ' / ' + shares(c.inst_sell_flow) + '</td></tr>'
