@@ -74,6 +74,11 @@ def uw_symbol(ticker) -> str:
     return str(ticker).replace("-", ".")
 
 
+def uw_path(ticker) -> str:
+    """A ticker as one URL path segment, the way UW writes it: :func:`uw_symbol`, then :func:`_seg`."""
+    return _seg(uw_symbol(ticker))
+
+
 # Body shapes for the endpoint methods (B5): each takes a decoded body and returns what the method hands
 # back. ``shape({})`` is the empty placeholder a failed request gets, the same value ``_get``'s ``{}``
 # used to turn into, so the plain methods return exactly what they returned before.
@@ -187,7 +192,9 @@ class UWClient:
         first_error: Optional[dict] = None
         failed = 0
         for n, chunk in enumerate(chunks):
-            res = self.get_result(ep, {ticker_param: ",".join(chunk), **extra})
+            # Asked in UW's spelling, answered under the caller's: UW keys its rows ``BRK.A`` (#519 finding 5).
+            back = {uw_symbol(t): t for t in chunk}
+            res = self.get_result(ep, {ticker_param: ",".join(back), **extra})
             if res.status != "ok":
                 failed += 1
                 if first_error is None:
@@ -201,7 +208,7 @@ class UWClient:
                     continue
                 t = item.get(keys[0]) or item.get(keys[1])
                 if t:
-                    result[t] = item
+                    result[back.get(t, t)] = item
         if not failed:
             return ProviderResult("ok", result, None, ep)
         err = {**first_error, "failed_chunks": failed, "chunks": len(chunks)}
@@ -790,7 +797,7 @@ class UWClient:
         """:meth:`option_trades` with the request outcome (``ok`` or ``failed``)."""
         params = {"limit": limit, "page": page}
         if ticker:
-            params["ticker_symbol"] = ticker
+            params["ticker_symbol"] = uw_symbol(ticker)
         if min_dte is not None:
             params["min_dte"] = min_dte
         if max_dte is not None:

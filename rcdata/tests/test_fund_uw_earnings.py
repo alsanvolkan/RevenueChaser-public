@@ -106,3 +106,70 @@ def test_the_segment_encoder_stays_a_pure_encoder():
     from RevenueChaser.core.providers.unusual_whales import _seg, uw_symbol
     assert (_seg("BRK-A"), _seg("afterhours"), _seg("1d"), _seg("a/b")) == ("BRK-A", "afterhours", "1d", "a%2Fb")
     assert (uw_symbol("BRK-A"), uw_symbol("BRK.B"), uw_symbol("AAPL")) == ("BRK.A", "BRK.B", "AAPL")
+
+
+def _asked(call, body):
+    """``(path?query, ...)`` a real :class:`UWClient` sends for ``call(client)``, each answered with ``body``,
+    and what ``call`` returned."""
+    import httpx
+    from RevenueChaser.core.providers.unusual_whales import UWClient
+    seen: list[str] = []
+
+    def answer(request):
+        seen.append(request.url.raw_path.decode())
+        return httpx.Response(200, json=body)
+
+    client = UWClient(key="test", sleep=lambda _s: None)
+    client._client = httpx.Client(transport=httpx.MockTransport(answer))
+    return seen, call(client)
+
+
+def test_a_share_class_in_a_query_parameter_is_written_the_way_uw_does():
+    """#519 finding 5: the dot rule held only for path segments; ``ticker_symbol`` went out as ``BRK-A``."""
+    seen, _ = _asked(lambda c: c.option_trades_result("BRK-A"), [])
+    assert "ticker_symbol=BRK.A" in seen[0], seen
+
+
+def test_a_batched_screener_asks_uws_spelling_and_answers_under_the_callers():
+    """#519 finding 5: the comma list went out with dashes, and the result was keyed by UW's own ``ticker``, so a
+    caller asking for ``BRK-A`` looked up a key that was never there."""
+    seen, res = _asked(lambda c: c.screener_batch_result(["BRK-A", "AAPL"]),
+                       {"data": [{"ticker": "BRK.A", "volume": 1}, {"ticker": "AAPL", "volume": 2}]})
+    assert "ticker=BRK.A%2CAAPL" in seen[0] or "ticker=BRK.A,AAPL" in seen[0], seen
+    assert res.data["BRK-A"]["volume"] == 1 and res.data["AAPL"]["volume"] == 2
+    assert "BRK.A" not in res.data
+
+
+def test_the_short_screener_answers_under_the_callers_spelling_too():
+    seen, res = _asked(lambda c: c.short_screener_result(["BF-B"]), {"data": [{"symbol": "BF.B", "short_interest": 5}]})
+    assert "BF.B" in seen[0], seen
+    assert res.data == {"BF-B": {"symbol": "BF.B", "short_interest": 5}}
+
+
+def test_the_public_path_helper_is_the_uw_spelling_percent_encoded():
+    """#519 finding 9: the datasets imported the private ``_seg``; ``uw_path`` is the public form of the two."""
+    from RevenueChaser.core.providers.unusual_whales import uw_path
+    assert (uw_path("BRK-A"), uw_path("AAPL"), uw_path("A/B")) == ("BRK.A", "AAPL", "A%2FB")
+
+
+def test_a_restated_quarter_is_counted_not_dropped_silently():
+    """#519 finding 9: two quarterly rows for one period end (a restatement): the last one is kept, as before, and
+    the other is now in ``counts``."""
+    twice = [{"report_type": "quarterly", "fiscal_date_ending": "2025-09-30", "reported_eps": "3.70"},
+             {"report_type": "quarterly", "fiscal_date_ending": "2025-09-30", "reported_eps": "3.72"}]
+    rows, counts = uw_earnings.rows_of(twice, CIK, TICKER)
+    assert [r["eps_reported"] for r in rows] == [3.72]
+    assert counts == {"duplicate_period": 1}
+
+
+def test_the_newest_answer_per_company_is_one_walk_and_ignores_a_stray_folder(monkeypatch, tmp_path):
+    """#519 finding 7: one walk of the raw root gives every company's newest day; a folder that is not a date
+    (a stray ``tmp``, or ``2026-11-02-old``, which starts like one) is skipped instead of raising or winning."""
+    from RevenueChaser.rcdata.build.fundamentals import common
+    monkeypatch.setattr(common, "raw_dir", lambda _name: tmp_path)
+    for day, tickers in {"2026-10-23": ["MSFT", "AAPL"], "2026-10-30": ["MSFT"], "tmp": ["MSFT"],
+                         "2026-11-02-old": ["MSFT"]}.items():
+        (tmp_path / day).mkdir()
+        for t in tickers:
+            (tmp_path / day / f"{t}.json.gz").write_bytes(b"")
+    assert uw_earnings.newest_by_ticker() == {"MSFT": date(2026, 10, 30), "AAPL": date(2026, 10, 23)}

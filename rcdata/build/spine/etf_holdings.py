@@ -289,8 +289,8 @@ def sweep_etfs() -> list[str]:
 
 
 def _endpoint(etf: str) -> str:
-    from ....core.providers.unusual_whales import _seg, uw_symbol
-    return f"/etfs/{_seg(uw_symbol(etf))}/holdings"
+    from ....core.providers.unusual_whales import uw_path
+    return f"/etfs/{uw_path(etf)}/holdings"
 
 
 def _uw_down(ctx: base.RunContext, etf: str) -> str | None:

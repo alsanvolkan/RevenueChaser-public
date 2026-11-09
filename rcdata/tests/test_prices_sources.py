@@ -365,7 +365,8 @@ def test_uw_total_float_one_request_per_hundred(http_mock):
     ctx = _ctx(floats.UW)
     out = floats.UW_FLOAT.to_parquet_all(ctx, floats.UW_FLOAT.fetch(ctx, TUE))
     q = _query(http_mock.calls("/short_screener")[0])
-    assert sorted(q["tickers"].split(",")) == ["AAPL", "BRK-B", "FLG", "GAPX", "GOOG", "GOOGL"]
+    # Asked in UW's spelling (#519 finding 5); the rows below stay under the spine's.
+    assert sorted(q["tickers"].split(",")) == ["AAPL", "BRK.B", "FLG", "GAPX", "GOOG", "GOOGL"]
     rows = {r["ticker"]: r for p in out for r in stage.read_rows(p)}
     assert rows["AAPL"]["total_float"] == 14_700_000_000.0 and rows["BRK-B"]["total_float"] == 1_300_000_000.0
     assert set(rows) == {"AAPL", "BRK-B"} and ctx.calls["uw"][0] == 1

@@ -58,8 +58,8 @@ SCHEMA = [("cik", "TEXT"), ("ticker", "TEXT"), ("period_end", "DATE"), ("report_
 
 
 def endpoint(ticker: str) -> str:
-    from ....core.providers.unusual_whales import _seg, uw_symbol
-    return f"/stock/{_seg(uw_symbol(ticker))}/earnings"
+    from ....core.providers.unusual_whales import uw_path
+    return f"/stock/{uw_path(ticker)}/earnings"
 
 
 def day_dir(as_of: date | str) -> Path:
@@ -82,10 +82,20 @@ def _day(v) -> date | None:
         return None
 
 
-def _newest(ticker: str) -> date | None:
+def newest_by_ticker() -> dict[str, date]:
+    """Each company's newest answered day, from one walk of the raw root (#519 finding 7: a walk per company was
+    companies x days of stats). A folder that is not a date is not a day and is skipped."""
     root = common.raw_dir(NAME)
-    days = sorted(d.name for d in root.iterdir() if (d / f"{ticker}.json.gz").exists()) if root.is_dir() else []
-    return date.fromisoformat(days[-1]) if days else None
+    newest: dict[str, date] = {}
+    for d in (root.iterdir() if root.is_dir() else ()):
+        day = _day(d.name)
+        if day is None or day.isoformat() != d.name or not d.is_dir():
+            continue
+        for f in d.glob("*.json.gz"):
+            t = f.name[:-len(".json.gz")]
+            if t not in newest or day > newest[t]:
+                newest[t] = day
+    return newest
 
 
 def rejected(error: dict | None) -> bool:
@@ -121,6 +131,9 @@ def rows_of(body, cik: str, ticker: str) -> tuple[list[dict], dict[str, int]]:
         if eps is None:
             counts["no_reported_eps"] = counts.get("no_reported_eps", 0) + 1
             continue
+        if end in out:
+            # A restated quarter: the later row wins as before, and the earlier one is counted, not lost silently.
+            counts["duplicate_period"] = counts.get("duplicate_period", 0) + 1
         out[end] = {"cik": cik, "ticker": ticker, "period_end": end, "report_date": _day(row.get("report_date")),
                     "eps_reported": eps, "eps_estimate": _num(row.get("estimated_eps")),
                     "surprise_pct": _num(row.get("surprise_percentage")), "source": NAME}
@@ -149,8 +162,9 @@ class UWEarnings:
             ctx.notes.append("no UNUSUAL_WHALES_API_KEY: nothing asked")
             return []
         due = []
+        seen = newest_by_ticker()
         for cik, ticker in every:
-            newest = _newest(ticker)
+            newest = seen.get(ticker)
             if newest is None or (as_of - newest).days >= WEEK_DAYS:
                 due.append((newest or date.min, ticker, cik))
         due.sort()
