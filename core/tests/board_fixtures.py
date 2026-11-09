@@ -539,7 +539,7 @@ def _news(tmp_path, monkeypatch):
     from RevenueChaser.module_news import report
     now = time.time()
     _news_rows(now)
-    return report.render_html(now)
+    return report.render_html(now, provider_health=health("news"))
 
 
 def _welcome(tmp_path, monkeypatch):

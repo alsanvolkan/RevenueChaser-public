@@ -14,7 +14,7 @@ from pathlib import Path
 from RevenueChaser.core import econ_importance, rawstore
 from RevenueChaser.core.config import OUTPUT_DIR
 from RevenueChaser.core.html_safe import esc
-from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, write_artifact
+from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, provider_health_html, write_artifact
 from RevenueChaser.module_news.calendar import AMS, EVENTS, HIGHLIGHT, local_day, tr_value
 
 FILENAME = "news_latest.html"
@@ -193,7 +193,8 @@ HELP = help_html(
     "<b>Refresh</b> yalnızca saklı veriden sayfayı yeniden çizer, hiçbir şey indirmez.</p>")
 
 
-def render_html(now: float | None = None) -> str:
+def render_html(now: float | None = None, provider_health: dict | None = None) -> str:
+    """The page; ``provider_health`` (a Fetch whose gateway did not answer) adds the "Data incomplete" banner."""
     now = time.time() if now is None else now
     events, hl, heads, stamp = _load(now)
     today = local_day(now)
@@ -208,6 +209,7 @@ def render_html(now: float | None = None) -> str:
 <header class="top"><div><div class="eyebrow">ABD · Ekonomik takvim</div><h1>{long_date(today)}</h1>
 <div class="muted">{WEEKDAYS[today.weekday()]} · bugün {n_today} veri</div></div>
 <div class="muted">{updated}</div></header>
+{provider_health_html(provider_health)}
 <div class="grid">
 <section class="card"><div class="tabs" role="tablist">
 <button type="button" role="tab" aria-selected="true" aria-controls="news-today" onclick="newsTab(this)">Bugün</button>
@@ -221,6 +223,6 @@ def render_html(now: float | None = None) -> str:
 </div><script>{_JS}</script></body></html>"""
 
 
-def render(now: float | None = None) -> Path:
+def render(now: float | None = None, provider_health: dict | None = None) -> Path:
     """Write the board file ``.cache/news_latest.html`` and return its path."""
-    return write_artifact(Path(OUTPUT_DIR) / FILENAME, render_html(now))
+    return write_artifact(Path(OUTPUT_DIR) / FILENAME, render_html(now, provider_health))

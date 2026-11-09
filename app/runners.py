@@ -1852,12 +1852,17 @@ def run_news(uw=None) -> Path:
                     f"{out['retired']} retired, {out['highlights']} day highlights")
     names = headlines.tickers(_load_watchlist())
     got = headlines.fetch(names, run_id=rid)
+    health = None
     if got["error"]:
         ledger.add_note(f"News headlines not fetched: {got['error']}")
+        # The board says so too, or a down gateway would pass for a quiet news day. A name IBKR does not know is
+        # only a note: it is the same names every run, and a banner on every Fetch would be noise.
+        health = {"provider": "ibkr", "calls": len(names), "failed": len(names), "auth_error": None,
+                  "failures": [{"endpoint": "headlines", "error": got["error"]}]}
     else:
         skipped = f"; not known to IBKR: {', '.join(got['skipped'])}" if got["skipped"] else ""
         ledger.add_note(f"News headlines: {got['stored']} from {got['tickers']} names (IBKR, Dow Jones){skipped}")
-    return report.render()
+    return report.render(provider_health=health)
 
 
 def run_news_cached(uw=None) -> Path:

@@ -48,3 +48,21 @@ def test_the_job_builds_then_renders(monkeypatch, tmp_path):
     assert path == tmp_path / "news_latest.html"
     assert rawstore.query("SELECT event FROM news_events", db="news") == [{"event": "CPI, M/M%"}]
     assert asked and asked[0][0] == "AAPL"            # a down gateway is a note, never a failed Fetch
+
+
+def test_a_down_gateway_shows_the_data_incomplete_banner(monkeypatch, tmp_path):
+    from RevenueChaser.module_news import headlines, report
+    monkeypatch.setattr(report, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(headlines, "fetch", lambda names, **kw:
+                        {"tickers": len(names), "stored": 0, "skipped": [], "error": "no API session"})
+    page = runners.run_news().read_text(encoding="utf-8")
+    assert page.count('class="rc-provider-health"') == 1
+    assert "Interactive Brokers" in page and "no API session" in page
+
+
+def test_a_name_ibkr_does_not_know_is_no_banner(monkeypatch, tmp_path):
+    from RevenueChaser.module_news import headlines, report
+    monkeypatch.setattr(report, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(headlines, "fetch", lambda names, **kw:
+                        {"tickers": len(names), "stored": 3, "skipped": ["BRK.B"], "error": None})
+    assert 'class="rc-provider-health"' not in runners.run_news().read_text(encoding="utf-8")

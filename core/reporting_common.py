@@ -526,7 +526,7 @@ def universe_provenance_html(generated_at, refreshed_by, partial: bool = False) 
 
 
 # Banner names of the providers whose health a board shows (K3); any other ``provider`` is shown as given.
-PROVIDER_NAMES = {"unusual_whales": "Unusual Whales", "yfinance": "Yahoo Finance"}
+PROVIDER_NAMES = {"unusual_whales": "Unusual Whales", "yfinance": "Yahoo Finance", "ibkr": "Interactive Brokers"}
 
 
 def provider_health_html(health: dict | None) -> str:
