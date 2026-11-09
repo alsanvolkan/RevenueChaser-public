@@ -39,3 +39,21 @@ def test_the_two_boards_and_the_grafana_address():
     assert "location.hostname" in js and "':3000/d/'" in js, "same host as the page, Grafana's port"
     assert "kiosk" in js and "theme=" in js
     assert "rc-data-health" in report.LIVE_HTML and "rc-fetch" in report.LIVE_HTML
+
+
+
+def test_the_health_tab_no_longer_draws_the_live_parts():
+    """#527 B4, decision D4 = B (avo, 8 Nov 2026 02:39): the queue, the running jobs and the "right now" strip leave
+    the Health tab once Grafana shows them; one link to the Live tab takes their place. The Data tab keeps its top
+    bar, so the switches and the gateway login link are still one tab away."""
+    from RevenueChaser.module_settings.tests.test_control_view import control_nd
+    from RevenueChaser.module_settings.tests.test_report import _BACKUPS, _panel, _payload
+    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS,
+                                                 ibkr_login_url="https://gateway.example/"))
+    health = _panel(html, "panel-health")
+    assert 'id="sec-queue"' not in health and 'id="health-queue"' not in health
+    assert 'class="topbar"' not in health and "sw-msg-h" not in health
+    link = re.search(r'<a[^>]*id="health-live-link"[^>]*>', health).group(0)
+    assert 'data-board="rc-fetch"' in link and 'href="#live"' in link
+    data = _panel(html, "panel-data")
+    assert data.count('class="topbar"') == 1 and 'href="https://gateway.example/"' in data

@@ -3072,15 +3072,11 @@ def _needs_model(payload: dict) -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300], "read_at": datetime.now().strftime("%H:%M")}
 
 
-def _queue_html(view: dict) -> str:
-    """Queue and last runs, the control board's own section (``control_render._queue``), in its ``.ctl`` scope."""
-    if view.get("error"):
-        return ""
-    try:
-        inner = control_render._queue(view)
-    except Exception as exc:  # noqa: BLE001 - one broken section is a line, never a blank Health tab
-        inner = f'<p class="warn">Queue and last runs could not be read: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
-    return f'<section class="ctl" id="health-queue" aria-label="Queue and last runs"><div class="wrap">{inner}</div></section>'
+#: #527 B4, decision D4 = B (avo, 8 Nov 2026 02:39): the queue, the running requests and the switches strip left the
+#: Health tab once Grafana showed them (the RC Fetch board, on the Live tab); this one link takes their place.
+HEALTH_LIVE_LINK = ('<div class="wrap"><p class="live-link"><a id="health-live-link" href="#live" data-board="rc-fetch" '
+                    'style="display:inline-flex;align-items:center;min-height:44px;color:var(--acc)">The queue, the running requests '
+                    'and the switches are live in Grafana →</a></p></div>')
 
 
 #: The Identity and Our universe cards now sit in the spine's source box (#492 C1): the New data system section's
@@ -3097,9 +3093,8 @@ DATA_HELP = help_html(
     "dataset, then the Build stage from HDD raw and Parquet to the SSD file, then example rows. <b>Fetch</b> puts "
     "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
     "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
-    "call and holds the dataset until <b>Resume</b>. <b>Health</b> holds the queue and last runs, the need "
-    "catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
-    "the backups. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
+    "call and holds the dataset until <b>Resume</b>. <b>Health</b> holds the need catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
+    "the backups. <b>Live</b> shows the queue, the running requests and the switches from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )
 
@@ -3118,8 +3113,8 @@ def _watch_section(nd: dict | None) -> str:
             + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES) + "</section>")
 
 
-def _health_panel(payload: dict, view: dict, nd: dict | None = None) -> str:
-    """The Health tab (#492): the Needs head, the queue, the catalog, the request log and the routes, then the ticker
+def _health_panel(payload: dict, nd: dict | None = None) -> str:
+    """The Health tab (#492): the Needs head, the link to the live parts on the Live tab (#527 B4), the catalog, the request log and the routes, then the ticker
     detail, the four parts that live nowhere else (the board settings, Automations, the watch lists, the IBKR
     cards) and the backups, in that order."""
     model = _needs_model(payload)
@@ -3128,8 +3123,8 @@ def _health_panel(payload: dict, view: dict, nd: dict | None = None) -> str:
         backups = _backups_card(payload.get("backups"))
     except Exception as exc:  # noqa: BLE001 - one broken card is a line, never a blank Health tab
         backups = f'<p class="warn">The backups card could not be drawn: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
-    # One ``#needs`` scope (needs.css) around the head, the queue and the Needs parts; the queue keeps its ``.ctl``.
-    # #527 step 9: what needs avo first (the top bar, the reads that failed, the queue, the backups, the catalog
+    # One ``#needs`` scope (needs.css) around the head and the Needs parts.
+    # #527 step 9 and B4: what needs avo first (the link to the live parts, the reads that failed, the backups, the catalog
     # with its problem groups open), then the parts he looks things up in, then the reference parts folded. The
     # IBKR login card is gone: its link is in the top bar.
     moved = (_ticker_drill(payload)
@@ -3137,13 +3132,12 @@ def _health_panel(payload: dict, view: dict, nd: dict | None = None) -> str:
              + _ibkr_state_card(payload.get("ibkr_login_state"))
              + _boards_section(payload.get("boards") or [], payload.get("rows") or [])
              + _watch_section(nd))
-    # One ``#needs`` frame and palette for the whole tab; the queue keeps its ``.ctl`` scope inside it.
+    # One ``#needs`` frame and palette for the whole tab.
     errs = _errors_list(payload.get("errors") or [])
     return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
-            f'{control_render.topbar_health(view)}'
+            f'{HEALTH_LIVE_LINK}'
             + (f'<div class="wrap">{errs}</div>' if errs else "")
-            + f'{_queue_html(view)}'
-            f'<div class="wrap">{backups}{catalog}</div>'
+            + f'<div class="wrap">{backups}{catalog}</div>'
             f'<div class="wrap" id="health-more">{moved}{_folded(rest)}</div></div>')
 
 
@@ -3222,6 +3216,14 @@ LIVE_JS = """
   if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
   var tab = document.getElementById('tab-live');
   if (tab) tab.addEventListener('click', function () { setTimeout(load, 0); });
+  // #527 B4: the Health tab's one link to the live parts opens this tab on the board it names
+  var jump = document.getElementById('health-live-link');
+  if (jump) jump.addEventListener('click', function (e) {
+    e.preventDefault();
+    var want = jump.getAttribute('data-board');
+    buttons.forEach(function (b) { if (b.getAttribute('data-board') === want) b.click(); });
+    if (tab) tab.click();
+  });
   load();
 })();
 """
@@ -3260,7 +3262,7 @@ def render_settings_dashboard(payload: dict) -> str:
     view = _control_view(nd, payload)
     control_html = control_render.render_data(view)
     control_js = control_render.scripts(view)
-    health_html = _health_panel(payload, view, nd)
+    health_html = _health_panel(payload, nd)
     automations = payload.get("automations") or []
     automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
 

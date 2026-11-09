@@ -2263,13 +2263,13 @@ def _panel(html: str, ident: str) -> str:
 
 
 def test_the_health_panel_holds_its_parts_in_order():
-    """#492 (i), reordered by #527 step 9: the head, the queue, the backups and the catalog, then Ticker detail, then
+    """#492 (i), reordered by #527 step 9 and B4: the head, the link to the live parts, the backups and the catalog, then Ticker detail, then
     the request log and the routes folded."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS))
     assert "<title>Data/Health</title>" in html
     health = _panel(html, "panel-health")
-    order = ["<h1>Data/Health · Health</h1>", "What am I looking at?", 'id="sec-queue"', 'id="backups"',
+    order = ["<h1>Data/Health · Health</h1>", "What am I looking at?", 'id="health-live-link"', 'id="backups"',
              'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
