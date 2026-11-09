@@ -400,9 +400,15 @@ class RawstoreTemplate:
         finally:
             mp.undo()
         # What the apply leaves in this process besides the files: the per-(file, table) memo and the "applied" mark.
-        self.ready = {(Path(p).name, t) for p, t in rawstore._TABLE_READY if Path(p).parent == self.dir}
-        self.files = {p.name: (p.stat().st_size, p.stat().st_mtime_ns) for p in self.dir.iterdir()
-                      if p.is_file() and not p.name.startswith(rawstore._PRESENCE_PREFIX)}
+        # Board files (``boards/<board>.duckdb``, DECISIONS S9) are part of the template too, by their path
+        # relative to the store directory.
+        self.ready = {(Path(p).relative_to(self.dir).as_posix(), t) for p, t in rawstore._TABLE_READY
+                      if Path(p).parent in (self.dir, self.dir / rawstore.BOARDS_DIRNAME)}
+        files = [p for p in self.dir.iterdir() if p.is_file()]
+        if (self.dir / rawstore.BOARDS_DIRNAME).is_dir():
+            files += [p for p in (self.dir / rawstore.BOARDS_DIRNAME).iterdir() if p.is_file()]
+        self.files = {p.relative_to(self.dir).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns) for p in files
+                      if not p.name.startswith(rawstore._PRESENCE_PREFIX)}
 
     def copy_to(self, raw_path: Path) -> bool:
         """Give ``raw_path``'s directory its own copy of the template; False when it has to be built from scratch."""
@@ -412,6 +418,7 @@ class RawstoreTemplate:
                 or any((dest / name).exists() for name in self.files)):
             return False
         for name in self.files:
+            (dest / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(self.dir / name, dest / name)
         rawstore._TABLE_READY.update((str(dest / name), table) for name, table in self.ready)
         rawstore._ENSURED[str(raw_path)] = 0.0

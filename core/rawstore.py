@@ -88,7 +88,22 @@ def _db_of(name: str) -> str:
     return (MANIFEST.get(name) or {}).get("db", "raw")
 
 
+#: Board result files (DECISIONS S9, S16): ``<store>/boards/<board>.duckdb``, one writer per board package, written
+#: incrementally. The first, narrow step of the board-file plan (2026-11-08): only boards born with their own file are
+#: listed here (News, Welcome); the move of the older boards' tables (plan PR 0 and on) extends this tuple.
+BOARD_DBS = ("news", "welcome")
+#: The folder of the board files, beside the raw store; ``rcdata/backup.py`` copies ``boards/*.duckdb``.
+BOARDS_DIRNAME = "boards"
+
+
+def board_db_path(board: str) -> Path:
+    """A board's own result file, ``<store>/boards/<board>.duckdb`` (follows ``DB_PATH`` redirects)."""
+    return Path(DB_PATH).parent / BOARDS_DIRNAME / f"{board}.duckdb"
+
+
 def _db_path(db: str) -> Path:
+    if db in BOARD_DBS:
+        return board_db_path(db)
     if db == "edgar":
         return edgar_db_path()
     if db == "history":
@@ -414,6 +429,8 @@ def _connect_with_retry(delays: tuple[float, ...], path: Path | None = None) -> 
     foreign holder fails fast.
     """
     path = Path(path if path is not None else DB_PATH)
+    if path.parent.name == BOARDS_DIRNAME:
+        path.parent.mkdir(parents=True, exist_ok=True)   # the first write of a board makes its folder
     last: Exception | None = None
     i = 0
     judged = False
@@ -448,8 +465,8 @@ def _connect_with_retry(delays: tuple[float, ...], path: Path | None = None) -> 
 def connect(read_only: bool = False, db: str = "raw"):
     """Open a connection for one operation; always closes. Retries on lock.
 
-    ``db`` selects the store file (``"raw"``, ``"edgar"``, ``"history"`` or ``"prices"``). ``read_only`` is
-    ADVISORY: it only selects the retry budget, and every handle is opened
+    ``db`` selects the store file (``"raw"``, ``"edgar"``, ``"history"``, ``"prices"`` or a board in
+    ``BOARD_DBS``). ``read_only`` is ADVISORY: it only selects the retry budget, and every handle is opened
     read-write. DuckDB refuses a second connection to the same file with a
     *different* configuration in the same process::
 
@@ -2938,7 +2955,7 @@ def _migrate_price_tables() -> list[str]:
 # ensure touches any file (``_refuse_ensure_if_ahead``), so an old checkout never reshapes a newer one.
 _SCHEMA_STAMP_TABLE = "store_schema"
 _SCHEMA_STAMP_KEY = "schema_version"
-_SCHEMA_FILES = ("raw", "edgar", "history", "prices")
+_SCHEMA_FILES = ("raw", "edgar", "history", "prices") + BOARD_DBS
 _STAMP_WRITES: dict[str, int] = {}   # test hook: counts real stamp writes, not a metric
 _STAMP_WARNED: set[tuple] = set()
 _STAMP_SEEN: dict[str, tuple] = {}   # file path -> ((size, mtime_ns), stamp): a steady file costs one stat
@@ -3165,6 +3182,9 @@ def ensure_all_tables() -> None:
         with connect(db="prices") as conn:    # #156: made eagerly, so Data Health counts 0 rows, not "no table"
             _ensure_db_tables(conn, "prices")
         _migrate_price_tables()
+        for board in BOARD_DBS:              # S9: each board's own file, made eagerly like prices
+            with connect(db=board) as conn:
+                _ensure_db_tables(conn, board)
         if _db_path("history").exists():   # result history (#287); the first record_run makes the file
             ensure_history()
         _persist_drift(seen)                 # every file is reconciled now; never raises
@@ -3598,6 +3618,29 @@ def _tracked_writes(conn, sql: str, db: str) -> list[str]:
     return named
 
 
+def _refuse_wrong_file(sql: str, db: str) -> None:
+    """Raise when raw ``sql`` names a MANIFEST table that lives in another store file than ``db``.
+
+    A read of a missing table comes back ``[]`` (``query`` is lenient), so once a table moves to its board file
+    (``boards/<board>.duckdb``, DECISIONS S9) a call site still sending it to ``raw`` would empty the board without
+    an error. DuckDB names the tables itself when it can bind the text (parameters read as NULL); otherwise (writes,
+    ``USING`` joins) a table is a name after FROM, JOIN, INTO, UPDATE or TABLE, comments and literals left out.
+    Covers ``query``, ``execute`` and ``transaction().execute``; a caller's own ``connect()`` handle is not checked.
+    """
+    text = re.sub(r"--[^\n]*|/\*.*?\*/", " ", re.sub(r"'(?:[^']|'')*'", "''", sql), flags=re.S)
+    try:
+        names = duckdb.get_table_names(re.sub(r"\?|\$\d+", "NULL", text))
+    except duckdb.Error:
+        names = {m.split(".")[-1].strip('"') for m in re.findall(
+            r'(?i)\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+((?:"?\w+"?\.){0,2}"?\w+"?)', text)}
+    # Only a board file's side is checked: the older moves (edgar, prices) still read their tables' old raw copies.
+    wrong = sorted(f"{n} ({_db_of(n)})" for n in names if n in MANIFEST and n != _SCHEMA_STAMP_TABLE
+                   and _db_of(n) != db and (db in BOARD_DBS or _db_of(n) in BOARD_DBS))
+    if wrong:
+        raise RawStoreError(f"raw SQL sent to the {db} file names tables that live in another file: "
+                            f"{', '.join(wrong)}. Pass db=<that file>, one query per file (S9: no ATTACH).")
+
+
 class _Fetched:
     """A statement's result, read before the change capture reused its connection (``_Tx.execute``)."""
 
@@ -3967,6 +4010,7 @@ class _Tx:
         return spec
 
     def execute(self, sql: str, params: list | None = None):
+        _refuse_wrong_file(sql, self._db)
         _refuse_history_sql(self._conn, sql)
         tracked = _tracked_writes(self._conn, sql, self._db)
         res = self._conn.execute(sql, params or [])
@@ -4032,6 +4076,7 @@ def atomic(fn, db: str = "raw"):
 
 def execute(sql: str, params: list | None = None, db: str = "raw") -> None:
     """Run a single write statement (DELETE/UPDATE) against a store file."""
+    _refuse_wrong_file(sql, db)
     _auto_ensure(write=True)
     _guard_schema_write(db)
     with connect(db=db) as conn:
@@ -4049,6 +4094,7 @@ def execute(sql: str, params: list | None = None, db: str = "raw") -> None:
 def query(sql: str, params: list | None = None, read_only: bool = True,
           db: str = "raw") -> list[dict]:
     """Run a read query; returns rows as dicts. Safe for raw SQL from callers."""
+    _refuse_wrong_file(sql, db)
     if read_only and not _db_path(db).exists():
         return []
     _auto_ensure(write=not read_only)
@@ -4254,11 +4300,13 @@ def reset_db(include_edgar: bool = True) -> None:
     ``--reset`` must pass it: it points ``DB_PATH`` at ``raw.duckdb.new``, and
     ``edgar_db_path()`` — a sibling of ``DB_PATH`` — is then still the LIVE
     ``edgar.duckdb``, which this used to delete. The same flag guards the sibling
-    ``history.duckdb`` and ``prices.duckdb``.
+    ``history.duckdb``, ``prices.duckdb`` and the board files.
     """
+    boards = list(BOARD_DBS) if include_edgar else []
     targets = [Path(DB_PATH)] + (
-        [edgar_db_path(), history_db_path(), prices_db_path()] if include_edgar else [])
-    for db in (["raw"] + (["edgar", "history", "prices"] if include_edgar else [])):
+        [edgar_db_path(), history_db_path(), prices_db_path()] + [board_db_path(b) for b in boards]
+        if include_edgar else [])
+    for db in (["raw"] + (["edgar", "history", "prices"] + boards if include_edgar else [])):
         if _db_path(db).exists():
             _guard_schema_write(db)   # PL7-b: do not delete a newer file while refusal is on
     for p in targets:
