@@ -439,7 +439,7 @@ def record_issue(dataset: str, kind: str, key: str | None, detail: str | None, r
     return row["id"]
 
 
-def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[int, int]:
+def sync_issues(dataset: str, kinds, found, run_id: str | None = None, keep=None) -> tuple[int, int]:
     kinds = sorted(set(kinds))
     want = {(k, key): detail for k, key, detail in found}
     stray = sorted({k for k, _ in want} - set(kinds))
@@ -457,7 +457,8 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         for row in open_rows:
             if row["resolved_on"] is None:
                 have.setdefault((row["kind"], row["key"]), []).append(row)
-        gone = [{**row, "resolved_on": today} for k, rows_ in have.items() if k not in want for row in rows_]
+        gone = [{**row, "resolved_on": today} for k, rows_ in have.items()
+                if k not in want and not (keep is not None and keep(*k)) for row in rows_]
         fresh = [(k, key, detail) for (k, key), detail in sorted(want.items()) if (k, key) not in have]
         ids = _new_ids("build_issues", len(fresh)) if fresh else []
         new = [{"id": i, "dataset": dataset, "found_on": today, "kind": k, "key": key, "detail": detail,

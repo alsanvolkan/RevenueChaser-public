@@ -72,8 +72,9 @@ SHRINKS_BY_CHOICE = ("my_universe",)
 #   prices: ``crsp_unadjusted`` (#353's CRSP bars no action adjusted); PR 382 serves no CRSP bar, so it is gone.
 RETIRED_TABLES: dict[str, tuple[str, ...]] = {"prices": ("crsp_unadjusted",)}
 # A build file's own bookkeeping, not served data (``build/dirty.py``: the Parquet manifest and the build code's
-# fingerprint): neither the shrink nor the missing-table check applies to it.
-META_TABLES = ("build_manifest", "build_rules")
+# fingerprint, and ``prices``' identity, ``build/prices/incremental.py``): neither the shrink nor the missing-table
+# check applies to it.
+META_TABLES = ("build_manifest", "build_rules", "build_identity")
 # A table that serves only its newest sessions (``option_eod``, G8) names the first value it keeps here, in its own
 # build file (``declare_window``), so the shrink check compares the rows both files are meant to hold: a session
 # that left the window is not a loss, a session inside it that lost rows is.

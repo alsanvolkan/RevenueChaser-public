@@ -13,7 +13,8 @@ import pytest
 
 from RevenueChaser.rcdata.build.prices import wrds_history
 
-from .test_prices_wrds import (AAPL, JUNE, FakeWrds, _backfill, _build, _data, _q, built, env, fake)  # noqa: F401
+from .test_prices_wrds import (AAPL, JUNE, FakeWrds, _backfill, _build, _data, _q, built, env, fake,  # noqa: F401
+                               whole_builds)
 from RevenueChaser.rcdata.build.spine import wrds
 
 
@@ -364,7 +365,8 @@ def _crsp_only_details():
             if i["kind"] == "split_only_crsp"}
 
 
-def test_a_split_only_crsp_names_the_served_jump_and_one_outside_the_served_bars_is_only_counted(monkeypatch):
+def test_a_split_only_crsp_names_the_served_jump_and_one_outside_the_served_bars_is_only_counted(
+        whole_builds, monkeypatch):
     """Review M6 of #382: ``split_only_crsp`` stands in for ``price_gap_no_action``, so the one whose served close
     jumps (Compustat lacks the split: the served history is wrong) must not hide among the cross-check's noise. The
     issue names the served close's move across the ex-date, and the note counts the jumps. A CRSP split with no served
@@ -383,7 +385,8 @@ def test_a_split_only_crsp_names_the_served_jump_and_one_outside_the_served_bars
             "not named") in note
 
 
-def test_a_split_only_crsp_the_served_close_does_not_jump_across_is_named_as_no_jump(monkeypatch):
+def test_a_split_only_crsp_the_served_close_does_not_jump_across_is_named_as_no_jump(
+        whole_builds, monkeypatch):
     data = _split_unknown_to_compustat(_data())
     for r in data["comp.secd"]:                       # Compustat's closes run on: no split in the served bars
         if r["gvkey"] == "001690" and r["datadate"] in JUNE[:2]:

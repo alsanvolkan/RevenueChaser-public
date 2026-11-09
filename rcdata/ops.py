@@ -500,12 +500,13 @@ def record_issue(dataset: str, kind: str, key: str | None, detail: str | None, r
 
 
 @_routed
-def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[int, int]:
+def sync_issues(dataset: str, kinds, found, run_id: str | None = None, keep=None) -> tuple[int, int]:
     """Make the open ``build_issues`` of ``dataset`` and ``kinds`` the rows ``found`` (``(kind, key, detail)``).
 
     A found row that is already open stays as it is (its first ``found_on`` and ``run_id``); a new one is added;
-    an open row of those kinds that is no longer found gets ``resolved_on`` today. Rows of other kinds or datasets
-    are not touched. One transaction. Returns ``(added, resolved)``.
+    an open row of those kinds that is no longer found gets ``resolved_on`` today, unless ``keep(kind, key)`` says
+    the build did not look where it was found (``prices``' build on the live copy, #446). Rows of other kinds or
+    datasets are not touched. One transaction. Returns ``(added, resolved)``.
     """
     kinds = sorted(set(kinds))
     want = {(k, key): detail for k, key, detail in found}
@@ -525,7 +526,7 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         have: dict[tuple, list[int]] = {}
         for r in open_rows:
             have.setdefault((r["kind"], r["key"]), []).append(r["id"])
-        gone = [i for k, ids in have.items() if k not in want for i in ids]
+        gone = [i for k, ids in have.items() if k not in want and not (keep is not None and keep(*k)) for i in ids]
         con.executemany("UPDATE build_issues SET resolved_on = ? WHERE id = ?", [(today, i) for i in gone])
         new = [(dataset, today, k, key, detail, run_id) for (k, key), detail in sorted(want.items())
                if (k, key) not in have]

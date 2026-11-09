@@ -54,6 +54,10 @@ def _script() -> dict:
     out["dupes_open"] = ops.open_issues("funds/etf_holdings", 0)[0]
     out["sync2"] = ops.sync_issues("prices/serving", ["price_gap_no_action"],
                                    [("price_gap_no_action", f"T{i}", "new detail") for i in range(2, 7)])
+    # A build that did not look where an open row was found keeps it open (prices on the live copy, #446).
+    out["sync_keep"] = ops.sync_issues("prices/serving", ["price_gap_no_action"],
+                                       [("price_gap_no_action", "T6", "new detail")],
+                                       keep=lambda kind, key: key in ("T2", "T3"))
     ops.start_run("r1", "market_series", "cli", {"once": True})
     ops.finish_run("r1", "ok")
     ops.start_run("r2", "prices/serving", "hourly")
