@@ -323,6 +323,16 @@ def test_a_stretch_of_open_weekdays_with_no_index_stops_the_scan(sec):
         assert not sec_index.absent_path(day).exists(), day
 
 
+def test_a_day_in_the_archives_2014_q2_gap_is_written_off(sec):
+    """#507: sec.gov holds no daily index for any weekday of 2014-04-01..2014-06-30 (measured 2026-11-08: all 65
+    absent), so those days are explained the way a closed day is, and a 2014 backfill does not stop on them."""
+    sec.add("master.", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)
+    ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
+    assert sec_index.fetch_day(ctx, date(2014, 5, 14), date(2026, 11, 8)) is None
+    assert sec_index.absent_path(date(2014, 5, 14)).exists()
+    assert ctx.notes == ["2014-05-14: no daily index, a gap in EDGAR's daily index (2014 Q2)"]
+
+
 def test_a_stretch_with_no_index_goes_on_when_a_kept_index_still_answers(sec):
     """#507: the scan asks the archive for the newest index it keeps before a stretch stops it. A real answer says
     the bucket is not refusing everything, so the scan goes on; the days are still not written off, and are asked

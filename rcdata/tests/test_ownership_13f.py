@@ -206,6 +206,18 @@ def test_more_unexplained_days_than_a_closure_can_explain_stop_the_run_although_
     assert row["result"] == "failed" and f"more than the {base.UNEXPLAINED_MAX}" in row["note"], row["note"]
 
 
+def test_the_archives_2014_q2_gap_does_not_stop_a_backfill(feed):
+    """#507: EDGAR has no daily index for any weekday of 2014 Q2 (measured 2026-11-08); without that known gap a
+    newest-first 2014 backfill would stop at 2014-06-30 on every run, with no kept index old enough to matter."""
+    assert _run()["result"] == "changed"                       # a store that keeps an index, as the live one does
+    feed.missing |= {f"201405{d:02d}" for d in range(12, 17)}
+    row = _backfill("2014-05-12", "2014-05-16")
+    assert "handed over one it holds" not in row["note"]        # explained by the gap, not let through by the probe
+    assert row["result"] != "failed", row["note"]
+    for d in range(12, 17):
+        assert edgar.index_none(date(2014, 5, d)).exists(), d
+
+
 def test_a_filing_the_archive_does_not_hold_is_marked_absent(feed, http_mock):
     """The index lists an accession the archive has no object for: the same 403, and the filing is not asked again."""
     acc = "0001000007-26-000001"

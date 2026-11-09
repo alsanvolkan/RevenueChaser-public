@@ -197,19 +197,24 @@ def test_a_closure_by_executive_order_is_in_the_table():
         assert is_federal_holiday(date.fromisoformat(iso)), iso
 
 
-def test_juneteenth_closes_edgar_only_from_2021():
-    """5 U.S.C. 6103 has listed Juneteenth since 17 June 2021 (observed Friday 18 June that year); before that the
-    federal offices worked on 19 June, so a backfill from 2014 must not treat it as a closed day (#507)."""
-    assert date(2021, 6, 18) in federal_holidays(2021)
-    for year in range(2014, 2021):
+def test_juneteenth_closes_edgar_only_from_2022():
+    """5 U.S.C. 6103 has listed Juneteenth since 17 June 2021, a day before it was first observed, and EDGAR published
+    the index of Friday 2021-06-18 (measured 2026-11-08, #507); before that the offices worked on 19 June."""
+    assert date(2021, 6, 18) not in federal_holidays(2021)
+    assert date(2022, 6, 20) in federal_holidays(2022)
+    for year in range(2014, 2022):
         assert not any(d.month == 6 and d.day in (18, 19, 20) for d in federal_holidays(year)), year
-    assert len(federal_holidays(2019)) == 10
+    assert len(federal_holidays(2019)) == 11            # ten statutory days and 24 December by executive order
 
 
 def test_the_one_off_closures_inside_the_backfill_window_are_known():
-    """#507: the national day of mourning for President G. H. W. Bush closed the federal offices on 2018-12-05, and
-    EDGAR published no index for it; without it the day reads as an open weekday with no index."""
-    assert is_federal_holiday(date(2018, 12, 5))
+    """#507, measured 2026-11-08 by asking sec.gov for every weekday index 2014-01-01..2026-11-04: these are the
+    weekdays with no index that neither a statutory holiday nor the 2014 Q2 gap explains. 2015-12-24 is not one of
+    them: EDGAR published its index although the offices closed early."""
+    for iso in ("2014-12-26", "2018-12-05", "2018-12-24", "2019-12-24", "2020-12-24", "2024-12-24",
+                "2025-01-09", "2025-12-24", "2025-12-26"):
+        assert is_federal_holiday(date.fromisoformat(iso)), iso
+    assert not is_federal_holiday(date(2015, 12, 24))
     assert not is_federal_holiday(date(2018, 12, 4)) and not is_federal_holiday(date(2018, 12, 6))
 
 

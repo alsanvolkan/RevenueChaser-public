@@ -106,16 +106,26 @@ def is_trading_day(d: date) -> bool:
 # weekday of a month) and an observance shift: a Saturday date is kept the Friday before, a Sunday date the Monday
 # after. So, unlike the NYSE table, this one needs no horizon and never has to be extended.
 _FIXED = ((1, 1), (6, 19), (7, 4), (11, 11), (12, 25))
-_JUNETEENTH_FROM = 2021   # added to 5 U.S.C. 6103 on 17 June 2021; the offices worked on 19 June before it (#507)
+# Juneteenth joined 5 U.S.C. 6103 on 17 June 2021 and was first observed the next day, but EDGAR published the index
+# of 2021-06-18 (measured 2026-11-08, #507), so for EDGAR it closes from 2022.
+_JUNETEENTH_FROM = 2022
 #        month, n-th (1-4), weekday (0 = Monday); n = -1 is the last of the month
 _NTH = ((1, 3, 0), (2, 3, 0), (5, -1, 0), (9, 1, 0), (10, 2, 0), (11, 4, 3))
 
 # Days the federal offices were closed by executive order, which no rule gives. Each one is measured: the SEC
-# published no daily index for it (checked 2026-10-30).
+# published no daily index for it. Measured 2026-11-08 (#507) for every weekday 2014-01-01..2026-11-04: these are all
+# the weekdays with no index that neither a statutory holiday nor the 2014 Q2 gap (``rcdata.build.base.INDEX_GAPS``)
+# explains. 2015-12-24, also closed by executive order, is not one: EDGAR published its index. The next closure goes
+# here once sec.gov shows its index absent.
 EXTRA_FEDERAL_CLOSURES: frozenset[date] = frozenset({
-    date(2018, 12, 5),    # national day of mourning, President G. H. W. Bush (#507)
+    date(2014, 12, 26),   # the day after Christmas, executive order
+    date(2018, 12, 5),    # national day of mourning, President G. H. W. Bush
+    date(2018, 12, 24),   # Christmas Eve, executive order
+    date(2019, 12, 24),   # Christmas Eve, executive order
+    date(2020, 12, 24),   # Christmas Eve, executive order
+    date(2024, 12, 24),   # Christmas Eve, executive order
     date(2025, 1, 9),     # national day of mourning, President Carter
-    date(2025, 12, 24),   # Christmas Eve, federal offices closed by executive order
+    date(2025, 12, 24),   # Christmas Eve, executive order
     date(2025, 12, 26),   # the day after Christmas, same order
 })
 

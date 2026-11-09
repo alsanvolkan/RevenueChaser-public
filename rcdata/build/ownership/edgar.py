@@ -30,7 +30,9 @@ filing's raw file is its resume marker, so a stopped run loses nothing.
 
 Checked against sec.gov on 2026-10-28: the index of 2026-10-27 and that day's 13F (202 filings), Form 4 (134, a run
 stopped at its budget) and Schedule 13D/G (248) filings, every one typed. Checked again on 2026-10-30: every weekday
-index from 2025-01-01 answers 200 except the federal holidays, which answer the 403 below.
+index from 2025-01-01 answers 200 except the federal holidays, which answer the 403 below. Checked on 2026-11-08 for every
+weekday 2014-01-01..2026-11-04 (#507): 205 have no index, every one a federal holiday, a closure by executive order
+(``calendar.EXTRA_FEDERAL_CLOSURES``) or the 2014 Q2 gap (``base.INDEX_GAPS``).
 """
 from __future__ import annotations
 

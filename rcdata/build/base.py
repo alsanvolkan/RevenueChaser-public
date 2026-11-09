@@ -337,6 +337,23 @@ MISSING_RUN = 3     # consecutive open weekdays with no object: a refusal of the
 UNEXPLAINED_MAX = 10
 
 
+# Stretches EDGAR keeps no daily index for although it was open, so no calendar explains them: (first, last, name).
+# Measured 2026-11-08 (#507) by asking for every weekday index 2014-01-01..2026-11-04: all 65 weekdays of 2014 Q2 are
+# absent, the only such stretch. A walk writes these days off as it does a closed one; their filings are not in the
+# daily index at all.
+INDEX_GAPS: tuple[tuple[date, date, str], ...] = (
+    (date(2014, 4, 1), date(2014, 6, 30), "2014 Q2"),
+)
+
+
+def index_gap(day: date) -> str | None:
+    """The name of the known gap in EDGAR's daily index that ``day`` falls in, None for a day outside every one."""
+    for first, last, name in INDEX_GAPS:
+        if first <= day <= last:
+            return name
+    return None
+
+
 def open_weekdays(first: date, last: date) -> list[date]:
     """The days from ``first`` to ``last`` EDGAR was open: weekdays that are no federal holiday."""
     out, day = [], first
@@ -390,6 +407,10 @@ class MissingStreak:
         stretch of ``limit`` unexplained open weekdays raises instead of writing any of them off."""
         if self.closed(day):
             ctx.notes.append(f"{day}: no {self.what}, EDGAR closed")
+            return True
+        gap = index_gap(day)
+        if gap is not None:
+            ctx.notes.append(f"{day}: no {self.what}, a gap in EDGAR's daily index ({gap})")
             return True
         self.unexplained.append(day)
         if stretch(self.unexplained, self.limit):
