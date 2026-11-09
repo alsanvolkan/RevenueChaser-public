@@ -22,7 +22,8 @@ why the SEC's ``eps_diluted`` stays the only EPS in ``fundamental_fact``. The tw
 failures in a row stop the run (UW throttling or down) and fail it, keeping what was answered. A request UW
 rejects (``rejected``: an unknown ticker) writes a raw file with no rows once a later request answers, so it ages
 like an answer; ``REJECT_STREAK`` rejected in a row stop and fail the run. Counted against the
-``uw`` day cap; not paced, because UW publishes no request window. No ``UNUSUAL_WHALES_API_KEY``: nothing is asked,
+``uw`` day cap; no provider pacer, because UW publishes no request window, only the politeness wait every UW
+dataset gets off UW's own per-minute headers (``base.UW_POLITE_FLOOR``). No ``UNUSUAL_WHALES_API_KEY``: nothing is asked,
 a ``missing_key`` issue.
 
 Raw: ``raw/uw/earnings/<as-of>/<ticker>.json.gz`` (the resume marker). Parquet:
@@ -58,8 +59,8 @@ SCHEMA = [("cik", "TEXT"), ("ticker", "TEXT"), ("period_end", "DATE"), ("report_
 
 
 def endpoint(ticker: str) -> str:
-    from ....core.providers.unusual_whales import _seg, uw_symbol
-    return f"/stock/{_seg(uw_symbol(ticker))}/earnings"
+    from ....core.providers.unusual_whales import uw_segment
+    return f"/stock/{uw_segment(ticker)}/earnings"
 
 
 def day_dir(as_of: date | str) -> Path:
@@ -82,10 +83,18 @@ def _day(v) -> date | None:
         return None
 
 
-def _newest(ticker: str) -> date | None:
+def newest_by_ticker() -> dict[str, date]:
+    """``{ticker: the newest day it has a raw file}``, from one walk of the raw root (#519 finding 7: one walk per
+    company was ~275k stats a run after a year). A directory whose name is not a day is skipped."""
+    newest: dict[str, date] = {}
     root = common.raw_dir(NAME)
-    days = sorted(d.name for d in root.iterdir() if (d / f"{ticker}.json.gz").exists()) if root.is_dir() else []
-    return date.fromisoformat(days[-1]) if days else None
+    for d in sorted(root.iterdir()) if root.is_dir() else []:
+        day = _day(d.name)
+        if day is None or str(day) != d.name:
+            continue
+        for f in d.glob("*.json.gz"):
+            newest[f.name[:-len(".json.gz")]] = day        # sorted days: the last seen is the newest
+    return newest
 
 
 def rejected(error: dict | None) -> bool:
@@ -121,6 +130,9 @@ def rows_of(body, cik: str, ticker: str) -> tuple[list[dict], dict[str, int]]:
         if eps is None:
             counts["no_reported_eps"] = counts.get("no_reported_eps", 0) + 1
             continue
+        if end in out:
+            # A restatement: the later row wins, as it always did, and the one it replaced is counted (#519 finding 9).
+            counts["duplicate_period"] = counts.get("duplicate_period", 0) + 1
         out[end] = {"cik": cik, "ticker": ticker, "period_end": end, "report_date": _day(row.get("report_date")),
                     "eps_reported": eps, "eps_estimate": _num(row.get("estimated_eps")),
                     "surprise_pct": _num(row.get("surprise_percentage")), "source": NAME}
@@ -148,9 +160,9 @@ class UWEarnings:
             ctx.issue("missing_key", KEY, credentials.missing_message(KEY))
             ctx.notes.append("no UNUSUAL_WHALES_API_KEY: nothing asked")
             return []
-        due = []
+        due, seen = [], newest_by_ticker()
         for cik, ticker in every:
-            newest = _newest(ticker)
+            newest = seen.get(ticker)
             if newest is None or (as_of - newest).days >= WEEK_DAYS:
                 due.append((newest or date.min, ticker, cik))
         due.sort()
@@ -164,8 +176,8 @@ class UWEarnings:
                 not_asked = len(due) - n
                 break
             ctx.check_cap(PROVIDER)
-            # No pacer: UW publishes no request window (``caps.WINDOWS``), so there is none to keep. The day cap
-            # and the client's own 429 backoff are the limits, as for every other UW dataset. The call itself is
+            # No provider pacer: UW publishes no request window (``caps.WINDOWS``). The day cap, the client's 429
+            # backoff and ``RunContext``'s politeness wait off UW's minute headers are the limits. The call itself is
             # counted by ``RunContext._on_uw_request``, which sees the retries too, so it is not counted here.
             res = ctx.uw_client().stock_earnings_result(ticker)
             if res.status != "ok":

@@ -55,6 +55,12 @@ PARQUET_ROW_GROUP = 100_000
 # The call counter is written to ops.sqlite every this many calls of a provider (and at the end of the run, and on
 # a kill), so a run killed mid-way still leaves its calls counted against the day cap (S1).
 COUNT_FLUSH_EVERY = 25
+# UW politeness pacing (#519 finding 8). Politeness, not a provider limit (``caps.py``): UW publishes no request
+# window, but every answer says how many requests its minute has left and when it resets. At or below the floor the
+# run waits that reset, capped, before its next request, instead of running into the 429 ladder.
+UW_POLITE_FLOOR = 5
+UW_POLITE_MAX_S = 60.0
+_uw_pause = time.sleep          # patch point for tests
 
 
 class SourceError(RuntimeError):
@@ -300,8 +306,17 @@ class RunContext:
             # A rejected request is final (never retried) and never reaches ``health()``, so ``close()`` does not
             # see it: counted here, once, for every UW dataset alike (#519 finding 2). The rest are ``close()``'s.
             self.count("uw", failures=1)
-        if not self.uw_sampled and ops.sample_uw_headers(getattr(response, "headers", None), run_id=self.run_id):
+        headers = getattr(response, "headers", None) or {}
+        if not self.uw_sampled and ops.sample_uw_headers(headers, run_id=self.run_id):
             self.uw_sampled = True
+        try:
+            left = int(headers.get(ops.UW_MINUTE_REMAINING_HEADER))
+            reset_s = int(headers.get(ops.UW_MINUTE_RESET_HEADER)) / 1000
+        except (TypeError, ValueError):
+            return                                          # no header, or not a number: nothing to pace off
+        # Not on a 429: the client's Retry-After backoff already waits before its retry (review of #570).
+        if status != 429 and left <= UW_POLITE_FLOOR and reset_s > 0:
+            _uw_pause(min(reset_s, UW_POLITE_MAX_S))
 
     def close(self) -> None:
         if self._http is not None:

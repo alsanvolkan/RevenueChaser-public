@@ -22,7 +22,7 @@ from __future__ import annotations
 from datetime import date
 
 from ....core import calendar
-from ....core.providers.unusual_whales import _seg, uw_symbol
+from ....core.providers.unusual_whales import uw_segment
 from .. import base
 
 PAGE_LIMIT = 500        # UW's documented maximum for the paged endpoints (docs/openapi.yaml, "Default 500 Max 500")
@@ -40,7 +40,7 @@ class NameFailed(base.SourceError):
 
 
 def stock(ticker: str, path: str) -> str:
-    return f"/stock/{_seg(uw_symbol(ticker))}/{path}"
+    return f"/stock/{uw_segment(ticker)}/{path}"
 
 
 def observed(as_of: date) -> bool:
