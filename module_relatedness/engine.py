@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -157,15 +158,78 @@ def _filing_input(ticker: str) -> dict:
     name, text = _filing_text(ticker)
     status = profiles_mod.text_status(text)
     if status is None:
-        return {"name": name, "text": text, "fallback": "item", "source": _filing_source(ticker)}
+        return {"name": name, "text": clean_input(text), "fallback": "item", "source": _filing_source(ticker)}
     for label, link in (("previous_filing", _previous_filing), ("whole_document", _whole_document)):
         got = link(ticker)
         if got and profiles_mod.text_status(got.get("text")) is None:
             # A whole 10-K runs to 1.4M characters (``filing_item`` item ``whole`` is uncut): the fallback reads its
             # first MAX_FALLBACK_CHARS, which hold the business description, in a bounded number of calls.
-            return {"name": name, "text": got["text"][:MAX_FALLBACK_CHARS], "fallback": label,
+            return {"name": name, "text": clean_input(got["text"][:MAX_FALLBACK_CHARS]), "fallback": label,
                     "source": got.get("source")}
     return {"name": name, "text": text, "fallback": status, "source": _filing_source(ticker)}
+
+
+# ── the B input (#400 WP6; avo's decision C, 8 Nov 2026; the pilot's rounds 1-3) ────────────────────────────────
+MAX_SENTENCES = 40
+MAX_XBRL_CUSTOMERS = 15
+_DROP_HEADINGS = re.compile(r"^\s*(available information|information about our executive officers|executive officers"
+                            r"( of the registrant)?|human capital( resources| management)?|our employees|employees)\s*$",
+                            re.I)
+_TAGGY = re.compile(r"\b[a-z][\w-]*:[A-Za-z]\w*")
+_SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+_KEY = re.compile(r"\b(customers?|suppliers?|vendors?|sole[- ]source|single[- ]source|concentration|"
+                  r"distributors?|contract manufactur\w*|foundr(y|ies)|accounted for (approximately )?\d+|"
+                  r"\d+(\.\d+)?\s?% of (our )?(total |net |consolidated )?(sales|revenues?))\b", re.I)
+
+
+def clean_input(text: str) -> str:
+    """The profile's text: without the sections that say nothing about the business, and without a tail of XBRL
+    tags or number tables (ONEG, RCON). Pure, so ``_input_hashes`` hashes what ``_prepare`` sends."""
+    keep = [sec for sec in profile_v3._sections(text or "")
+            if not _DROP_HEADINGS.match(sec.strip().splitlines()[0] if sec.strip() else "")]
+    lines = "".join(keep).rstrip().split("\n")
+    while lines:
+        ln = lines[-1].replace("\u200b", "").strip()
+        dense = sum(c.isdigit() or c in "¥$€£,.%()-" for c in ln) / max(len(ln.replace(" ", "")), 1)
+        if ln and not _TAGGY.search(ln) and dense < 0.5:
+            break
+        lines.pop()
+    return "\n".join(lines)
+
+
+def filing_sentences(whole: str, item: str) -> list[str]:
+    """The filing's customer / supplier / concentration sentences that ``item`` does not already hold, at most 40."""
+    have = re.sub(r"\s+", " ", item or "")
+    out, seen = [], set()
+    for sent in _SENT.split(re.sub(r"\s+", " ", whole or "")):
+        sent = sent.strip()
+        if not (40 <= len(sent) <= 500) or not _KEY.search(sent) or sent[:120] in have or sent.lower()[:120] in seen:
+            continue
+        seen.add(sent.lower()[:120])
+        out.append(sent)
+        if len(out) >= MAX_SENTENCES:
+            break
+    return out
+
+
+def _filing_extras(cik: str | None, text: str) -> dict:
+    """``filing_sentences`` and ``xbrl_customers`` of the company's newest annual report, for the prompt."""
+    from RevenueChaser.core import fundamentals_layer
+    if not cik or not fundamentals_layer.reads_layer():
+        return {}
+    from RevenueChaser.rcdata import read
+    out: dict = {}
+    sents = filing_sentences((read.filing_text(cik, "whole") or {}).get("text") or "", text)
+    if sents:
+        out["filing_sentences"] = sents
+    rows = read.customers(cik)
+    newest = rows[0].get("period_end") if rows else None
+    lines = [f"{r.get('customer')}: {r['share']:.1%} of {r.get('benchmark') or 'revenue'}"
+             if isinstance(r.get("share"), float) else str(r.get("customer"))
+             for r in rows if r.get("period_end") == newest][:MAX_XBRL_CUSTOMERS]
+    if lines:
+        out["xbrl_customers"] = lines
+    return out
 
 
 # How many ``chain_mentions`` names the prompt offers as candidates, and how many segment-note lines.
@@ -235,6 +299,10 @@ def _prepare(rep: str, name: str | None, cik: str | None) -> dict:
     inp = _filing_input(rep)
     inp["name"] = name or inp["name"]
     inp["context"] = _context(rep, cik, inp.get("source"))
+    try:
+        inp["context"].update(_filing_extras(cik, inp["text"]))
+    except Exception:  # noqa: BLE001 - optional context, as the rest of it
+        logger.debug("no filing extras for %s", rep, exc_info=True)
     inp["hash"] = profiles_mod.input_hash(inp["name"], inp["text"]) if inp["fallback"] in FALLBACKS else None
     return inp
 
@@ -286,6 +354,8 @@ def _input_hashes(groups: dict[str, list[str]], names: dict[str, str]) -> dict[s
                 if inp["fallback"] not in FALLBACKS:
                     continue
                 text = inp["text"]
+            else:
+                text = clean_input(text)          # what _filing_input sends
             out[key] = profiles_mod.input_hash(name, text)
     return out
 
