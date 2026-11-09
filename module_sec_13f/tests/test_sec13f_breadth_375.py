@@ -76,7 +76,7 @@ def test_the_board_shows_breadth_between_new_exit_and_top10_with_the_lag_legend(
     cols = payload["cols"]
     assert cols.index("breadth") == cols.index("new_exit") + 1 == cols.index("top10") - 1
     cells = dict(zip(cols, payload["rows"][0][3]))
-    assert cells["breadth"] == ["50.00% (+0.00)", 50.0, "zero"]
+    assert cells["breadth"] == ["50.00% (+0.00)", 50.0, "zero", "as of 2026 Q2"]
     html = report.render_sec13f_dashboard(totals, {"AAA": {"name": "Aaa"}}, {})
     assert "<b>Breadth</b>" in html
     assert "filed up to 45 days later" in html
@@ -87,7 +87,7 @@ def test_a_row_without_breadth_renders_an_empty_cell():
     totals = {"AAA": {Q1: {"shares": 100.0, "value": 1000.0, "holders": 1,
                            "top10_pct": 100.0, "hhi": 10000.0}}}
     payload = report.board_payload(totals, {"AAA": {"name": "Aaa"}}, {})
-    assert dict(zip(payload["cols"], payload["rows"][0][3]))["breadth"] == ["—", None, "zero"]
+    assert dict(zip(payload["cols"], payload["rows"][0][3]))["breadth"] == ["—", None, "zero", "as of 2026 Q1"]
 
 
 @pytest.mark.rawstore_schema_from_scratch

@@ -80,10 +80,10 @@ def test_the_cells_carry_todays_text_val_and_class():
     cells = _cells(payload, "RKT")
     assert cells["sh_2025-06-30"] == ["150", 150.0, "zero", "150 shares"]
     assert cells["ch_2025-06-30"] == ["+50.0%", 50.0, "pos"]
-    assert cells["value"] == ["$1.5K", 1500.0, "zero"]
-    assert cells["pct_out"] == ["7.5%", 7.5, "zero"]
-    assert cells["new_exit"] == ["+1/−1", 0, "zero"]
-    assert cells["netflow"] == ["50", 50.0, "pos"]
+    assert cells["value"] == ["$1.5K", 1500.0, "zero", "as of 2025 Q2"]
+    assert cells["pct_out"] == ["7.5%", 7.5, "zero", "as of 2025 Q2"]
+    assert cells["new_exit"] == ["+1/−1", 0, "zero", "as of 2025 Q2"]
+    assert cells["netflow"] == ["50", 50.0, "pos", "as of 2025 Q2"]
     assert cells["streak"] == ["1", 1, "zero"]
 
 
