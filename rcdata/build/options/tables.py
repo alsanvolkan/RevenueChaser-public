@@ -269,7 +269,7 @@ def _load(con: duckdb.DuckDBPyConnection, t: Table, parts: list[Path], sessions:
     files = ", ".join(base.sql_path(p) for p in parts)
     names_sql = ", ".join(f'"{c}"' for c in t.columns)
     keys = ", ".join(f'"{k}"' for k in t.key)
-    where = "WHERE CAST(session_date AS TEXT) IN (SELECT unnest(?::TEXT[])) " if sessions is not None else ""
+    where = "WHERE session_date IN (SELECT unnest(?::DATE[])) " if sessions is not None else ""
     con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM read_parquet([{files}], union_by_name = true) '
                 f"{where}QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY fetched_at DESC) = 1",
                 (sessions,) if sessions is not None else None)
@@ -306,7 +306,7 @@ def _reload(con: duckdb.DuckDBPyConnection, t: Table, changed) -> int:
         reload = (reload & window) | (window - served)
         drop = reload | (served - window)
     if drop:
-        con.execute(f'DELETE FROM "{t.name}" WHERE CAST(session_date AS TEXT) IN (SELECT unnest(?::TEXT[]))',
+        con.execute(f'DELETE FROM "{t.name}" WHERE session_date IN (SELECT unnest(?::DATE[]))',
                     (sorted(drop),))
     parts = [p for p in kept if _day(p) is None or _day(p) in reload]
     if reload and parts:
