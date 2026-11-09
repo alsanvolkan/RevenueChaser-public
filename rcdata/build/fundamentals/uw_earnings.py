@@ -22,7 +22,8 @@ why the SEC's ``eps_diluted`` stays the only EPS in ``fundamental_fact``. The tw
 failures in a row stop the run (UW throttling or down) and fail it, keeping what was answered. A request UW
 rejects (``rejected``: an unknown ticker) writes a raw file with no rows once a later request answers, so it ages
 like an answer; ``REJECT_STREAK`` rejected in a row stop and fail the run. Counted against the
-``uw`` day cap; not paced, because UW publishes no request window. No ``UNUSUAL_WHALES_API_KEY``: nothing is asked,
+``uw`` day cap; no provider pacer, because UW publishes no request window, only the politeness wait every UW
+dataset gets off UW's own per-minute headers (``base.UW_POLITE_FLOOR``). No ``UNUSUAL_WHALES_API_KEY``: nothing is asked,
 a ``missing_key`` issue.
 
 Raw: ``raw/uw/earnings/<as-of>/<ticker>.json.gz`` (the resume marker). Parquet:
@@ -172,8 +173,8 @@ class UWEarnings:
                 not_asked = len(due) - n
                 break
             ctx.check_cap(PROVIDER)
-            # No pacer: UW publishes no request window (``caps.WINDOWS``), so there is none to keep. The day cap
-            # and the client's own 429 backoff are the limits, as for every other UW dataset. The call itself is
+            # No provider pacer: UW publishes no request window (``caps.WINDOWS``). The day cap, the client's 429
+            # backoff and ``RunContext``'s politeness wait off UW's minute headers are the limits. The call itself is
             # counted by ``RunContext._on_uw_request``, which sees the retries too, so it is not counted here.
             res = ctx.uw_client().stock_earnings_result(ticker)
             if res.status != "ok":

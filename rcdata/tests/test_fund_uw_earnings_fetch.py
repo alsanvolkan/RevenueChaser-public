@@ -316,3 +316,40 @@ def test_the_newest_answer_per_company_is_read_in_one_walk(http_mock, monkeypatc
     http_mock.add("/earnings", ANSWER)
     _fetch(date(2026, 11, 2))
     assert len(calls) == 1 and _asked(http_mock) == ["DDD"]     # AAA and BBB answered within the week
+
+
+# ── Finding 8: politeness pacing off UW's own per-minute headers ────────────────────────────────────────────────
+
+def _minute_headers(left, reset_ms="1500"):
+    return {"x-uw-req-per-minute-remaining": str(left), "x-uw-req-per-minute-reset": reset_ms}
+
+
+def test_an_exhausted_minute_window_waits_for_its_reset(http_mock, monkeypatch):
+    """When UW says the minute's requests are (nearly) spent, the run waits the reset UW names before the next
+    request, instead of running into the 429 ladder. Politeness, not a published limit (``caps.py``)."""
+    slept = []
+    monkeypatch.setattr(base, "_uw_pause", slept.append)
+    _companies(monkeypatch, ["AAA", "BBB"])
+    http_mock.add("/stock/AAA/earnings", lambda request: (200, b"[]", _minute_headers(0)))
+    http_mock.add("/stock/BBB/earnings", lambda request: (200, b"[]", _minute_headers(1_000_000)))
+    _fetch()
+    assert slept == [1.5]
+
+
+def test_a_wide_window_or_no_header_never_waits(http_mock, monkeypatch):
+    slept = []
+    monkeypatch.setattr(base, "_uw_pause", slept.append)
+    _companies(monkeypatch, ["AAA", "BBB"])
+    http_mock.add("/stock/AAA/earnings", lambda request: (200, b"[]", _minute_headers(1_000_000, "60000")))
+    http_mock.add("/stock/BBB/earnings", ANSWER)
+    _fetch()
+    assert slept == []
+
+
+def test_the_wait_is_capped(http_mock, monkeypatch):
+    slept = []
+    monkeypatch.setattr(base, "_uw_pause", slept.append)
+    _companies(monkeypatch, ["AAA"])
+    http_mock.add("/stock/AAA/earnings", lambda request: (200, b"[]", _minute_headers(0, "3600000")))
+    _fetch()
+    assert slept == [base.UW_POLITE_MAX_S]
