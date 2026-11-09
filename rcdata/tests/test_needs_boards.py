@@ -53,11 +53,12 @@ def test_the_migrated_board_declares_the_four_needs_it_reads():
 
 
 def test_spx_gamma_is_the_second_migrated_board_and_leaves_the_plan():
-    """#330: SPX Gamma declares the four needs it reads and is neither "not migrated" nor "planned" any more (its
-    plan named three option needs it never read)."""
+    """#330: SPX Gamma declares the needs it reads and is neither "not migrated" nor "planned" any more (its plan
+    named three option needs it never read). Since #291 the DTE-band walls read the stored greek grid too."""
     reads = boards.all_reads()
     assert reads["module_spx_gamma"] == ("market.cot", "market.cot_release", "market.spx_close",
-                                         "market.spx_expiry_strike", "market.vix")
+                                         "market.spx_expiry_strike", "market.spx_greek_expiry_strike",
+                                         "market.vix")
     assert "module_spx_gamma" not in boards.UNDECLARED and "module_spx_gamma" not in boards.PLANNED_READS
     assert boards.reads_of("module_spx_gamma") == {"declared": True, "needs": reads["module_spx_gamma"]}
     assert boards.readers_of("market.spx_close") == ("module_spx_gamma",)

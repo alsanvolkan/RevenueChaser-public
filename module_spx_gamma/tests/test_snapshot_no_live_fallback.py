@@ -137,14 +137,15 @@ def test_a_fetch_reads_vix_cot_and_candles_from_the_store(uw, http_mock, yfinanc
     assert s["candles"][-1]["date"] == DAY and s["candles"][-1]["close"] == 6749.0
     assert s["candle_source"].startswith("rcdata:market_series")
     inputs = s["store_inputs"]
-    assert {k: v["stored"] for k, v in inputs.items()} == {"vix": True, "cftc": True, "candles": True,
+    assert {k: v["stored"] for k, v in inputs.items()} == {"vix": True, "cftc": True, "candles": True, "greek_grid": True,
                                                            "zero_one_dte": True}
     manifest = json.loads((tmp_path / "raw" / DAY / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["input_sources"]["candles"]["source"] == "rcdata:market_series"
     assert manifest["input_sources"]["candles"]["status"] == "changed"
     assert not any(n in manifest["sha256"] for n in ("vix_family.json", "cftc_tff.json", "ohlc_8wk.json"))
     latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
-    assert set(latest["input_sources"]) == {"vix", "cftc", "candles", "zero_one_dte"}
+    assert set(latest["input_sources"]) == {"vix", "cftc", "candles", "zero_one_dte", "greek_grid"}
+    assert latest["input_sources"]["greek_grid"]["source"] == "rcdata:spx_greek_expiry_strike"
     assert latest["input_sources"]["zero_one_dte"]["source"] == "rcdata:spx_gamma_expiry_strike"
 
 
