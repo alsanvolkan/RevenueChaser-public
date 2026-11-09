@@ -40,7 +40,7 @@ It is **not** the "Edge" column — that display value is median realized 1D mov
 | | ≥ 1.25 (rich) | −5 |
 | Term-structure slope | ≤ −0.00406/day (backwardated) | −8 |
 | | (−0.00406, −0.002]/day (mild backwardation) | −3 |
-| | > 0/day (contango) | +5 |
+| | > 0/day (contango; earnings night: > +0.002/day on the ex-event curve) | +5 |
 | GEX block (clamped **+20 / −15**) | | |
 | · regime (volume book) | EM-band net gamma red (short) | +15 |
 | | EM-band net gamma green (long) | −10 |
@@ -84,6 +84,27 @@ from the skill's calendar-seller filter: backwardation (front IV rich vs the
 back) is a −8 drag, mild backwardation −3, contango (front-dated vol cheap)
 +5. Slope points are scored but **do not enter the coverage denominator** —
 coverage stays the shipped four-part set below.
+
+**Earnings night (ex-event slope, avo's decision B on E2, 10 Nov 2026).** When the
+print is still ahead of the curve's date, the nearest expiry carries the whole
+one-day event variance in a few days of life, so the raw curve is backwardated
+by construction: on the 10 Nov run the front/45-DTE IV ratio had a median of
+1.45 and 30 of 35 cards sat past −0.00406/day, a −8 on nearly every card, while
+the event premium is already read by the EM buckets and the straddle history.
+So the slope is read on the **ex-event curve** (`core/vol_metrics.ex_event_curve`):
+every expiry that spans the print obeys `iv² · T = base² · T + E`, an OLS of
+total variance on T over the spanning expiries out to 60 DTE gives the event
+variance `E`, and each spanning IV becomes `sqrt(iv² − E / T)` (a non-positive
+result drops that expiry). On the same run √E came out at a median 1.24× the
+UW expected move (the straddle-to-σ factor √(π/2)), and the ex-event slope had
+a median of +0.00016/day: 1 card still past −0.00406, 2 mild, 6 above +0.002.
+The backwardation lines stay; contango on the ex-event curve needs
+> +0.002/day (`TS_SLOPE_EVENT_CONTANGO`, the mirror of the mild line) so fit
+noise is not a +5. A print that has already happened, rows without dates or
+expiries, or fewer than two spanning expiries inside 60 DTE keep the plain
+slope. The reason text says "ex-earnings term structure". Effect on the 10 Nov
+cards: vol-edge median 0 → 10, max 42 → 55, 18 → 11 cards at 0; OPTIONS still 0,
+because no card with |dir| ≥ 25 and confidence ≥ 50 has vol-edge near 50.
 
 ### Honesty rules
 

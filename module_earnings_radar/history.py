@@ -32,7 +32,8 @@ BOARD, TABLE = "module_earnings_radar", "earnings_cards_history"
 # Bump when the board's scoring changes in a way the config hash does not see (a rule's formula, not a threshold).
 # 2: a missing screener row is N/A, not Thin (E2, #372).
 # 3: R6 vetoes on a real FOMC/CPI overlap from the stored calendar and the run reads the stored inputs (E5, #372).
-SELECTION_VERSION = "3"
+# 4: on earnings night R4 reads the term-structure slope on the ex-event curve (R4 backwardation calibration).
+SELECTION_VERSION = "4"
 # The most rows the client reads for one (day, session) since it pages (#259): a session that reaches it may be
 # cut. G2-14 measured 157 and 161 rows on heavy days.
 UW_CALENDAR_ROW_LIMIT = uw.CALENDAR_PAGE_LIMIT * uw.CALENDAR_MAX_PAGES

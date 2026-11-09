@@ -184,6 +184,10 @@ TS_SLOPE_HALF = -0.002
 TS_SLOPE_BACK_POINTS = -8.0
 TS_SLOPE_MILD_POINTS = -3.0
 TS_SLOPE_CONTANGO_POINTS = 5.0
+# Earnings night: the slope is read on the ex-event curve (``vol_metrics.ex_event_curve``), which the event fit leaves
+# near flat (10 Nov 2026: median +0.00016/day, most cards just above 0). Contango there needs this much, the mirror of
+# TS_SLOPE_HALF, so fit noise is not a +5.
+TS_SLOPE_EVENT_CONTANGO = 0.002
 
 # Strike window around spot used to qualify magnet / charm / vanna.
 GEX_ATM_WINDOW_PCT = 0.15
@@ -252,6 +256,7 @@ TUNABLES = {
     "R4_TS_SLOPE_BACK_POINTS": TS_SLOPE_BACK_POINTS,
     "R4_TS_SLOPE_MILD_POINTS": TS_SLOPE_MILD_POINTS,
     "R4_TS_SLOPE_CONTANGO_POINTS": TS_SLOPE_CONTANGO_POINTS,
+    "R4_TS_SLOPE_EVENT_CONTANGO": TS_SLOPE_EVENT_CONTANGO,
     "R6_MIN_OBS": R6_MIN_OBS,
     "R6_RATE_HIGH": R6_RATE_HIGH,
     "R6_RATE_VETO": R6_RATE_VETO,

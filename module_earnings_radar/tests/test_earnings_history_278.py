@@ -118,7 +118,7 @@ def test_the_header_carries_model_version_params_funnel_and_context(store):
     stats = {"total": 3, "passed": 1, "bypassed": 0, "filtered": 2, "by_reason": {"OI": 2}, "excluded": []}
     _record([_card("AAA")], filter_stats=stats, span=(date(2026, 10, 8), date(2026, 10, 9)), n_events=3)
     (head,) = _headers()
-    assert head["model_version"] == er_history.model_version() and head["model_version"].startswith("3+")
+    assert head["model_version"] == er_history.model_version() and head["model_version"].startswith("4+")
     assert json.loads(head["funnel"]) == stats
     assert json.loads(head["params"])["MAX_DEEP_CHECKS_PER_DAY"] == 500
     ctx = json.loads(head["context"])

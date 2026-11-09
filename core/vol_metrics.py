@@ -162,3 +162,63 @@ def term_structure_slope(curve, horizon: int = 45):
     iv_far = _interp_flat(curve, horizon)
     iv_near = curve[0][1]
     return (iv_far - iv_near) / (horizon - nearest_dte)
+
+
+def ex_event_curve(rows, earnings_date, after_close: bool, fit_max_dte: int = 60) -> list[tuple]:
+    """The ATM-IV curve with the earnings event's variance taken out of every expiry that spans it.
+
+    On earnings night the nearest expiry carries the whole one-day event variance in a few days of life, so the curve
+    is backwardated by construction (10 Nov 2026 run: front/45-DTE IV ratio median 1.45, 30 of 35 cards past the
+    -0.00406/day line). That is the event premium, which R4 already reads through the expected move and the straddle
+    history, not front vol rich against the back. Each spanning expiry obeys ``iv^2 * T = base^2 * T + E`` (T in
+    years), so an OLS of total variance on T over the spanning expiries out to ``fit_max_dte`` gives the event
+    variance ``E`` as the intercept; the ex-event IV is ``sqrt(iv^2 - E / T)``. Measured on the same run, ``sqrt(E)``
+    came out at a median 1.24x the UW expected move, the straddle-to-sigma factor sqrt(pi/2), so the fit reads the
+    event the board already prices.
+
+    Returns [] (the caller keeps the plain curve) when the rows carry no as-of date or expiry, the event is not ahead
+    of the curve's date, fewer than two spanning expiries fall inside the fit window, or fewer than two points survive.
+    An expiry whose ex-event variance would be <= 0 is dropped, never floored into a made-up IV.
+    """
+    from datetime import date as _date
+
+    def _day(v):
+        try:
+            return _date.fromisoformat(str(v)[:10])
+        except (TypeError, ValueError):
+            return None
+
+    if earnings_date is None:
+        return []
+    as_of = next((_day(r.get("date")) for r in rows or [] if isinstance(r, dict) and r.get("date")), None)
+    if as_of is None or not (earnings_date > as_of or (earnings_date == as_of and after_close)):
+        return []
+    points = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        expiry = _day(r.get("expiry"))
+        try:
+            dte = int(float(r.get("dte")))
+            iv = float(r.get("volatility"))
+        except (TypeError, ValueError):
+            continue
+        if expiry is None or dte <= 0 or iv <= 0:
+            continue
+        spans = expiry > earnings_date if after_close else expiry >= earnings_date
+        points.append((dte, iv, spans))
+    fit = [(dte / 365.0, iv * iv * dte / 365.0) for dte, iv, spans in points if spans and dte <= fit_max_dte]
+    if len({t for t, _ in fit}) < 2:
+        return []
+    mt = sum(t for t, _ in fit) / len(fit)
+    mv = sum(v for _, v in fit) / len(fit)
+    slope = sum((t - mt) * (v - mv) for t, v in fit) / sum((t - mt) ** 2 for t, _ in fit)
+    event_var = max(0.0, mv - slope * mt)
+    curve = []
+    for dte, iv, spans in points:
+        var = iv * iv - (event_var * 365.0 / dte if spans else 0.0)
+        if var > 0:
+            curve.append((dte, math.sqrt(var)))
+    curve.sort(key=lambda p: p[0])
+    curve = [p for i, p in enumerate(curve) if i == 0 or p[0] != curve[i - 1][0]]
+    return curve if len(curve) >= 2 else []
