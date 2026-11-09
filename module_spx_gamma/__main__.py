@@ -3,9 +3,13 @@
 ``--nightly`` (#291, the RC-SPX-Gamma-Fetch task) fetches the latest complete New York session instead, SPX only, and
 only once the market store holds that session's SPX close and outside the US session: a complete raw day is never
 fetched again, so a day fetched before its close is stored would keep a stale spot, and one fetched mid-session (a
-missed run caught up) would keep intraday answers. Either case exits ``EXIT_NOT_READY`` without a UW call. It prints
-one JSON line: the session, the day actually stored (``effective``; the mandatory-endpoint fallback can store the
-previous one), the status and the UW call count. ``run``'s own backfill still fills a missing session of the last two
+missed run caught up) would keep intraday answers. Either case exits ``EXIT_NOT_READY`` without a UW call.
+
+The Fetch itself runs in the dashboard, the one writer (S14, SPX Gamma review F1/D3): the task posts
+``/run/spxgamma`` with the ``X-RC-Panel`` header and polls ``/api/job/<id>``. With the dashboard down that night's
+Fetch does not happen (exit 1); it never falls back to writing in its own process. It prints one JSON line: the
+session, the day actually stored (``effective``, read from ``latest.json``; the mandatory-endpoint fallback can store
+the previous one), the status and the job id. ``run``'s own backfill still fills a missing session of the last two
 weeks a day or more late, as a board Fetch does: its dated calls are that session's, its undated ones (the live
 files, ``as_of: false`` in the manifest) the later day's.
 """
@@ -13,15 +17,53 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
+
+import httpx
 
 from RevenueChaser.core.calendar import in_us_session_window, latest_complete_session
-from RevenueChaser.core.providers.unusual_whales import UWClient
 
-from .config import TICKER
-from .run import run
+from .config import DATA_ROOT, TICKER
 from .snapshot import stored_spx_candles
 
 EXIT_NOT_READY = 3
+DASHBOARD = "http://127.0.0.1:8000"     # app.dashboard.main's port
+_HEADERS = {"X-RC-Panel": "cli"}        # every non-GET request needs it (CLAUDE.md)
+_POLL_S = 10.0
+_WAIT_S = 25 * 60                       # under the task's 30 min limit; the job itself keeps running past it
+
+
+def _queue_fetch(asof: str) -> dict:
+    """Ask the dashboard for the board Fetch of ``asof`` and wait for the job; one JSON-able outcome."""
+    try:
+        r = httpx.post(f"{DASHBOARD}/run/spxgamma", data={"date": asof}, headers=_HEADERS, timeout=60)
+    except httpx.HTTPError as exc:
+        return {"status": "dashboard_down", "error": str(exc)}
+    body = r.json()
+    if r.status_code != 202:
+        return {"status": "refused", "http": r.status_code, "error": body.get("error")}
+    job_id = body["job_id"]
+    deadline = time.monotonic() + _WAIT_S
+    while True:
+        try:
+            job = httpx.get(f"{DASHBOARD}/api/job/{job_id}", timeout=30).json().get("job") or {}
+        except httpx.HTTPError as exc:
+            return {"status": "dashboard_down", "job_id": job_id, "error": str(exc)}
+        if job.get("status") in ("done", "error", "cancelled"):
+            break
+        if time.monotonic() > deadline:
+            return {"status": "timeout", "job_id": job_id}
+        time.sleep(_POLL_S)
+    if job["status"] != "done":
+        return {"status": job["status"], "job_id": job_id, "error": job.get("error") or job.get("message")}
+    try:
+        effective = json.loads((DATA_ROOT / "latest.json").read_text(encoding="utf-8")).get("asof_date")
+    except (OSError, ValueError):
+        effective = None
+    out = {"effective": effective, "status": "done", "job_id": job_id, "message": job.get("message")}
+    if job.get("provider_health"):
+        out["uw"] = job["provider_health"]
+    return out
 
 
 def _nightly(ticker: str) -> int:
@@ -34,11 +76,9 @@ def _nightly(ticker: str) -> int:
         print(json.dumps({"asof": asof, "status": "not_ready",
                           "reason": f"no stored {ticker} close for {asof}; nothing was requested"}))
         return EXIT_NOT_READY
-    uw = UWClient()
-    result = run(asof, uw=uw, ticker=ticker)
-    print(json.dumps({"asof": asof, "effective": result["latest"]["asof_date"], "status": "done",
-                      "uw": uw.health()}))
-    return 0
+    out = {"asof": asof, **_queue_fetch(asof)}
+    print(json.dumps(out))
+    return 0 if out["status"] == "done" else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--nightly is SPX only: its close guard reads the stored SPX series")
         return _nightly(args.ticker)
 
+    from .run import run
     result = run(args.asof, mode=args.mode, ticker=args.ticker)
     print(f"report.md:    {result['paths']['report_md']}")
     print(f"report.html:  {result['paths']['report_html']}")

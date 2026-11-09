@@ -11,6 +11,7 @@ the assertions can check the page names it.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 
 import duckdb
@@ -19,13 +20,27 @@ import pytest
 
 @pytest.fixture
 def store_file(dashboard):
-    """Ensure ``raw.duckdb`` exists before anyone tries to lock it."""
-    path = dashboard.store_dir / "raw.duckdb"
-    if not path.exists():
-        conn = duckdb.connect(str(path))
-        conn.execute("CREATE TABLE IF NOT EXISTS _probe (x INTEGER)")
-        conn.close()
-    return path
+    """``raw.duckdb`` and every board file (S9: Sector Rotation and LEAPS read their own), each made before anyone
+    tries to lock it."""
+    from RevenueChaser.core import rawstore
+    paths = [dashboard.store_dir / "raw.duckdb"] + [
+        dashboard.store_dir / rawstore.BOARDS_DIRNAME / f"{b}.duckdb" for b in rawstore.BOARD_DBS]
+    for path in paths:
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            conn = duckdb.connect(str(path))
+            conn.execute("CREATE TABLE IF NOT EXISTS _probe (x INTEGER)")
+            conn.close()
+    return paths
+
+
+@contextlib.contextmanager
+def _held(paths):
+    """Hold every store file open from this process for the block."""
+    with contextlib.ExitStack() as stack:
+        for path in paths:
+            stack.callback(duckdb.connect(str(path)).close)
+        yield
 
 
 @pytest.fixture
@@ -37,11 +52,8 @@ def locked_store(store_file, serve_13f_totals):
     meets the lock. One served quarter puts it back in the same position as the other boards.
     """
     serve_13f_totals({"NVDA": {"2026-06-30": {"shares": 5_000_000.0, "value": 7e8, "holders": 2250}}})
-    conn = duckdb.connect(str(store_file))
-    try:
-        yield conn
-    finally:
-        conn.close()
+    with _held(store_file):
+        yield
 
 
 BOARDS = ["module_sector_rotation", "module_leaps", "module_sec_13f",
@@ -118,11 +130,8 @@ class TestApiCallersGetJson:
 class TestRecovery:
     def test_boards_work_again_once_the_lock_is_released(self, dashboard, store_file):
         """A lock is transient — nothing may need re-fetching afterwards."""
-        conn = duckdb.connect(str(store_file))
-        try:
+        with _held(store_file):
             assert dashboard.view("module_sector_rotation", refresh=True).status_code == 503
-        finally:
-            conn.close()
         r = dashboard.view("module_sector_rotation", refresh=True)
         assert r.status_code == 200, (
             f"board did not recover after the lock was released: {r.status_code}")

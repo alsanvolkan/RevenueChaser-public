@@ -419,7 +419,7 @@ def _builder_alive(pid: int | None) -> bool:
 
 
 @_routed
-def fail_orphans() -> tuple[int, int]:
+def fail_orphans(*, dead_pids_only: bool = False) -> tuple[int, int]:
     """Reclaim every request and run a dead builder left running: ``(requests, runs)`` failed.
 
     Called by the builder at start, while it holds the ``rcdata_build`` lock. A request's pid is its run's (the
@@ -427,20 +427,23 @@ def fail_orphans() -> tuple[int, int]:
     whose builder is still alive is left alone; any other becomes ``failed`` with the note ``lost: pid <n> gone``
     (``lost: pid unknown`` when the builder died before its run row), and each reclaimed request gets a ``failed``
     ``dataset_check`` row with that note, so the dataset's card shows the lost run.
+
+    ``dead_pids_only`` (#602, ``fail_dead_requests``): a caller that is not the builder and holds no build lock.
+    Only a run whose own pid names no process counts as dead, and a request with no run row yet is left alone.
     """
     me = os.getpid()
-    now, tail = time.time(), f"builder died; found running by the builder started as pid {me}"
+    now, tail = time.time(), _orphan_tail(me, dead_pids_only)
     with _open() as con, _tx(con):
         runs = [dict(r) for r in con.execute("SELECT run_id, dataset, pid, started_at FROM job_runs2 "
                                              "WHERE status = 'running' AND pid IS NOT ? ORDER BY started_at",
                                              (me,))]
-        alive = {r["run_id"]: _builder_alive(r["pid"]) for r in runs}
+        alive = {r["run_id"]: _run_alive(r["pid"], dead_pids_only) for r in runs}
         n_reqs = 0
         for req in con.execute("SELECT id, dataset, started_at FROM build_requests WHERE status = 'running' "
                                "ORDER BY id").fetchall():
             run = next((r for r in runs if r["dataset"] == req["dataset"]
                         and (r["started_at"] or 0) >= (req["started_at"] or 0)), None)
-            if run is not None and alive[run["run_id"]]:
+            if (run is None and dead_pids_only) or (run is not None and alive[run["run_id"]]):
                 continue
             note = (f"lost: pid {run['pid']} gone" if run is not None else "lost: pid unknown (no run row)")
             note += f" ({tail})"
@@ -458,6 +461,26 @@ def fail_orphans() -> tuple[int, int]:
                         (now, f"lost: pid {run['pid']} gone ({tail})", run["run_id"]))
             n_runs += 1
     return n_reqs, n_runs
+
+
+def _orphan_tail(me: int, dead_pids_only: bool) -> str:
+    return (f"its process is gone; found running by the queue read of pid {me}" if dead_pids_only
+            else f"builder died; found running by the builder started as pid {me}")
+
+
+def _run_alive(pid: int | None, dead_pids_only: bool) -> bool:
+    """The builder's start asks whether the run's builder is alive; a reader asks only whether its pid is gone."""
+    if dead_pids_only:
+        from ..core import procs
+        return not pid or procs.pid_alive(pid)
+    return _builder_alive(pid)
+
+
+def fail_dead_requests() -> tuple[int, int]:
+    """#602: close the requests and runs whose process is gone (SIGKILL, OOM, a power cut) without waiting for the
+    next builder start, which may be days away while the builder timer is off. Safe without the build lock: it acts
+    only on a run whose own pid is dead."""
+    return fail_orphans(dead_pids_only=True)
 
 
 # ── Checks, issues, runs ───────────────────────────────────────────────────────────────────────────────────────

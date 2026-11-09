@@ -77,7 +77,7 @@ import duckdb
 
 from ....core import calendar
 from ... import ops, serving
-from .. import base
+from .. import base, dirty
 from ..spine import openfigi_map, wrds
 from . import KIND, common, sec13f
 
@@ -283,13 +283,41 @@ class OwnershipServe:
 
     # ── Build ──────────────────────────────────────────────────────────────────────────────────────────────────
 
+    def dirty(self, ctx: base.RunContext):
+        """Everything: the 13F tables are derived whole whenever they are derived (on a run of ``sec/13f`` or of
+        this dataset), on the live copy too; on any other run they are the live file's own, kept as they are.
+        shortcut: a 13F run derives every quarter again although a day's filings reach only their own quarter and
+        the next (its flow); upgrade to a per-quarter reload when that derive is what a build waits on."""
+        return dirty.ALL
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        counts = None if ctx.dataset in (NAME, sec13f.NAME) else self._carry_over(con)
+        on_live = getattr(ctx, "incremental", None) is not None
+        derive = ctx.dataset in (NAME, sec13f.NAME)
+        counts = None
+        if not derive:
+            counts = self._kept(con) if on_live else self._carry_over(con)
         if counts is None:
+            if on_live:
+                for view in VIEWS:
+                    con.execute(f"DROP VIEW IF EXISTS {view}")
+                for t in SCHEMAS:
+                    con.execute(f"DROP TABLE IF EXISTS {t}")
             counts = self._derive(ctx, con)
         for view, sql in VIEWS.items():
-            con.execute(f"CREATE VIEW {view} AS {sql}")
+            con.execute(f"CREATE OR REPLACE VIEW {view} AS {sql}")
         return counts
+
+    @staticmethod
+    def _kept(con: duckdb.DuckDBPyConnection) -> dict[str, int] | None:
+        """The 13F tables the live copy already holds, or None when they are not of this shape."""
+        cols: dict[str, list[str]] = {}
+        for t, c in con.execute("SELECT table_name, column_name FROM duckdb_columns() "
+                                "WHERE database_name = current_database() ORDER BY table_name, column_index"
+                                ).fetchall():
+            cols.setdefault(t, []).append(c)
+        if any(cols.get(t) != [c for c, _ in s] for t, s in SCHEMAS.items()):
+            return None
+        return {t: common.count(con, t) for t in SCHEMAS}
 
     @staticmethod
     def _carry_over(con: duckdb.DuckDBPyConnection) -> dict[str, int] | None:

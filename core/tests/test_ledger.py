@@ -33,7 +33,7 @@ def _write(rows, *, source="swing", forecast_date=D, run_id="run1", **kw):
 
 
 def _stored(source="swing"):
-    return rawstore.query("SELECT * FROM forecast_ledger WHERE source = ? ORDER BY rank", [source])
+    return rawstore.query("SELECT * FROM forecast_ledger WHERE source = ? ORDER BY rank", [source], db="forecast")
 
 
 # ── write_picks ──────────────────────────────────────────────────────────────
@@ -621,7 +621,7 @@ def test_a_full_size_batch_goes_through_the_bulk_insert_path(rawstore_tmp_db):
     got = rawstore.query("SELECT count(*) AS n, count(DISTINCT subject) AS s, min(rank) AS lo, max(rank) AS hi, "
                          "min(forecast_date) AS fd, max(target_date) AS td, count(stop) AS stops, "
                          "count(market_cap) AS caps, any_value(typeof(forecast_date)) AS ty "
-                         "FROM forecast_ledger")[0]
+                         "FROM forecast_ledger", db="forecast")[0]
     assert (got["n"], got["s"], got["lo"], got["hi"]) == (4251, 4251, 1, 4251)
     assert got["fd"] == D and got["td"] == D and got["ty"] == "DATE"
     assert got["stops"] == 0 and got["caps"] == 4251 - len([i for i in range(1, 4252) if i % 7 == 0])

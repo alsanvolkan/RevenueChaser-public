@@ -385,14 +385,14 @@ def _bulk_copy_sqlite(db_path: Path, tables: list[tuple[str, str]]) -> tuple[int
     with sqlite3.connect(str(db_path)) as src_db:
         src_tables = {r[0] for r in src_db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
-    with rawstore.connect() as conn:
-        conn.execute("LOAD sqlite")
-        src = str(db_path)
-        for table, tds in tables:
-            # A legacy db may predate a later-added table (e.g. edgar_backfill):
-            # skip it rather than failing the whole migration.
-            if table not in src_tables:
-                continue
+    src = str(db_path)
+    for table, tds in tables:
+        # A legacy db may predate a later-added table (e.g. edgar_backfill):
+        # skip it rather than failing the whole migration.
+        if table not in src_tables:
+            continue
+        with rawstore.connect(db=rawstore._db_of(tds)) as conn:   # a board table lives in its own file (S9)
+            conn.execute("LOAD sqlite")
             src_cols = [r[0] for r in conn.execute(
                 f"DESCRIBE SELECT * FROM sqlite_scan('{src}', '{table}')").fetchall()]
             cols = rawstore._columns_of(rawstore.MANIFEST[tds])

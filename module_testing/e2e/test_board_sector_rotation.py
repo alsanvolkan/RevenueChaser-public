@@ -284,7 +284,7 @@ def _rendered_rows(html: str) -> int:
 def _stored(dashboard, what: str, start: str = None, end: str = None):
     import duckdb
     dashboard.wait_until_idle()    # /run/rotation also queues moneyflow; every job writes its job_runs row (#282)
-    conn = duckdb.connect(str(dashboard.store_dir / "raw.duckdb"))
+    conn = duckdb.connect(str(dashboard.db_file("rotation_snapshots")))
     try:
         if start and end:
             return conn.execute(

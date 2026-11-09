@@ -13,9 +13,11 @@ from RevenueChaser.core.tests.board_fixtures import BOARDS
 from RevenueChaser.core.tests.test_help_every_tab import HELP_TABS
 
 BANNER = 'class="rc-provider-health"'
+#: Tabs that call no provider, so have no run that can fail: Welcome reads only stored data (its Fetch is a build).
+NO_PROVIDER = {"module_welcome"}
 
 
-@pytest.mark.parametrize("key", HELP_TABS)
+@pytest.mark.parametrize("key", [k for k in HELP_TABS if k not in NO_PROVIDER])
 def test_the_tab_shows_the_provider_banner_once(key, tmp_path, monkeypatch, rawstore_tmp_db):
     html = BOARDS[key].render(tmp_path, monkeypatch)
     assert html.count(BANNER) == 1, "provider_health_html missing (or rendered twice)"

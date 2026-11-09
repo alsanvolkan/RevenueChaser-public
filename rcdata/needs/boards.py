@@ -33,8 +33,8 @@ NOT_A_BOARD = frozenset({"module_testing", "module_settings"})
 #: PR that migrates that board, which is also the PR that adds its ``READS``.
 UNDECLARED = frozenset({
     "module_asymmetric_growth", "module_comovement", "module_financials", "module_fundamentals", "module_leaps",
-    "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
-    "module_swing_potential", "module_uw_interaction", "module_value_chain",
+    "module_news", "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
+    "module_swing_potential", "module_uw_interaction", "module_value_chain", "module_welcome",
 })
 
 #: What each board not migrated yet will read: first from the catalog's need list of 29 Oct 2026
@@ -53,9 +53,10 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
                           "prices.actions"),
     "module_value_chain": ("identity.universe", "fundamentals.segments", "fundamentals.customers"),
     "module_sector_rotation": ("identity.membership", "prices.bars", "market.series"),
-    "module_asymmetric_growth": ("identity.universe", "prices.bars", "fundamentals.statements",
-                                 "fundamentals.companies", "fundamentals.earnings_event", "ownership.beneficial",
-                                 "earnings.next"),
+    # #481: the 13F share's split factor reads ``prices.security_ids`` and ``prices.bars`` (basis "split").
+    "module_asymmetric_growth": ("identity.universe", "prices.bars", "prices.security_ids",
+                                 "fundamentals.statements", "fundamentals.companies", "fundamentals.earnings_event",
+                                 "ownership.beneficial", "earnings.next"),
     "module_swing_potential": ("identity.universe", "prices.bars", "earnings.next"),
     "module_fundamentals": ("identity.universe", "prices.bars", "fundamentals.statements", "fundamentals.companies",
                             "fundamentals.filings", "earnings.next"),

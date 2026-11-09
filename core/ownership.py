@@ -20,9 +20,8 @@ nothing) and the first write of a session wins. ``insider_pct`` and ``institutio
 writes no row.
 
 Which source a reader takes first is the readers' rule (06 §3 D20: UW, then SEC dei via D11, then yfinance); this
-module stores every source as served. :func:`latest_institutional` is that rule for the institutional share, read
-by Asymmetric Growth (#34 D20) instead of the yfinance ``.info`` the scan already fetched, whose failures the client
-swallows to ``{}``.
+module stores every source as served. :func:`load_ownership` is that rule for shares outstanding and insider %, read
+by the 13F board's ``% Out`` and by Asymmetric Growth's institutional share (13F shares ÷ shares outstanding, #481).
 """
 from __future__ import annotations
 
@@ -145,14 +144,6 @@ def record(rows, *, run_id: str, run_at: float | None = None, fetched_at: float 
     return out
 
 
-# ── the reader (Asymmetric Growth, #34 D20) ─────────────────────────────────
-
-# Inside one session the 13F Fetch's own UW answer wins over a yfinance snapshot, the same preference
-# ``module_sec_13f/enrich.py`` applies to shares: UW was asked for that ticker on purpose, while a yfinance row is a
-# bulk screener payload whose ``.info`` can arrive empty. It only decides a tie: a newer session always wins.
-READER_ORDER = (UW_INFO, YFINANCE)
-
-
 # The metrics a 13F cell carries, in the shape the retired derive wrote: ``rcdata/build/ownership/serve.py``
 # ``METRICS``, pinned by ``module_sec_13f/tests/test_sec13f_board_store_g9.py``.
 SEC13F_METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow",
@@ -185,47 +176,34 @@ def sec13f_totals() -> dict[str, dict]:
     return out
 
 
-def latest_institutional(tickers) -> dict[str, dict]:
-    """``{ticker: {"institutional_pct", "source", "session", "session_label"}}``: the stored institutional share of
-    each ticker that has a usable row.
+SEC_DEI = "sec_dei"          # the D11 slot of the readers' order; no writer stores it yet (#161)
+SHARES_ORDER = (UW_INFO, SEC_DEI, YFINANCE)
 
-    Usable means a non-NULL ``institutional_pct`` (a ``uw_info`` row stores shares only, so most of its rows are
-    not). The newest session wins; inside one session :data:`READER_ORDER` decides, UW first. ``session`` is the
-    row's own ``session_date`` — the column the write already mapped through :func:`session_of` — and
-    ``session_label`` its ISO text, for a provenance line. Ranking and display read that one column, so the number
-    shown can never be dated by a different rule than the one that picked it.
 
-    One store read for the whole list (the scan asks for ~4,000 names at once). Read-only, and a missing,
-    unreadable or locked table answers ``{}`` rather than raising: the board must keep scanning without the store.
-    """
-    wanted = sorted({str(t).strip().upper() for t in tickers or () if t and str(t).strip()})
+def _rank(source: str) -> int:
+    return SHARES_ORDER.index(source) if source in SHARES_ORDER else len(SHARES_ORDER)
+
+
+def load_ownership(tickers) -> dict[str, dict]:
+    """``{ticker: {"shares_outstanding": .., "insider_pct": ..}}`` from ``ownership_snapshot``; a field with no
+    stored value in any source is left out. Per ticker the newest non-NULL value of the first source in
+    :data:`SHARES_ORDER` that holds one (UW ``info``, then SEC dei via D11, then yfinance). One store read."""
+    wanted = {str(t).upper() for t in tickers if t}
     if not wanted:
         return {}
-    try:
-        rows = rawstore.query(
-            f"SELECT ticker, source, institutional_pct, session_date FROM ("
-            f"  SELECT ticker, source, institutional_pct, session_date,"
-            f"         row_number() OVER (PARTITION BY ticker ORDER BY session_date DESC,"
-            f"           CASE source WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END) AS pick"
-            f"  FROM {TABLE} WHERE institutional_pct IS NOT NULL"
-            f"    AND ticker IN ({_placeholders(len(wanted))})"
-            f") WHERE pick = 1",
-            [*READER_ORDER, *wanted], read_only=True)
-    except Exception as exc:  # noqa: BLE001 - a missing, locked or unreadable table is "no stored number"
-        logger.warning("ownership %s: the read failed, readers fall back to their own source: %s: %s",
-                       TABLE, type(exc).__name__, exc)
-        return {}
+    rows = rawstore.query(
+        f"SELECT ticker, source, "
+        f"arg_max(shares_outstanding, session_date) FILTER (WHERE shares_outstanding IS NOT NULL) AS shares, "
+        f"arg_max(insider_pct, session_date) FILTER (WHERE insider_pct IS NOT NULL) AS insider "
+        f"FROM {TABLE} GROUP BY ticker, source")
     out: dict[str, dict] = {}
-    for r in rows:
-        pct = _num(r.get("institutional_pct"))
-        if pct is None:      # the query already skips NULLs; a broken value is not a number to show either
-            continue
-        session = r.get("session_date")
-        session = session if isinstance(session, date) else None
-        out[str(r["ticker"]).upper()] = {"institutional_pct": pct, "source": r["source"],
-                                         "session": session,
-                                         "session_label": session.isoformat() if session else None}
-    return out
+    for r in sorted((r for r in rows if r["ticker"] in wanted), key=lambda r: _rank(r["source"])):
+        entry = out.setdefault(r["ticker"], {})
+        if r["shares"] is not None:
+            entry.setdefault("shares_outstanding", float(r["shares"]))
+        if r["insider"] is not None:
+            entry.setdefault("insider_pct", float(r["insider"]) * 100.0)
+    return {t: e for t, e in out.items() if e}
 
 
 # ── the 13F UW shares step ───────────────────────────────────────────────────

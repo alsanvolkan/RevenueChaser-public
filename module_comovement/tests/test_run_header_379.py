@@ -61,7 +61,7 @@ def recorded(monkeypatch):
 
 
 def _runs() -> list[dict]:
-    return rawstore.query("SELECT * FROM comov_runs ORDER BY as_of")
+    return rawstore.query("SELECT * FROM comov_runs ORDER BY as_of", db="comovement")
 
 
 # ── the run columns ─────────────────────────────────────────────────────────
@@ -107,12 +107,12 @@ def test_a_store_that_predates_the_columns_reads_null(isolate_rawstore):
     """The additive ALTER (``_reconcile_table``): an old row keeps its values and reads NULL in the new columns."""
     new = ("run_id", "session_date", "dropped_json")
     old = [c for c in rawstore.MANIFEST["comov_runs"]["columns"] if c.split()[0] not in new]
-    with rawstore.connect() as conn:
+    with rawstore.connect(db="comovement") as conn:
         conn.execute(f"CREATE TABLE comov_runs ({', '.join(old)})")
         conn.execute("INSERT INTO comov_runs (as_of, window_days, config_hash) VALUES "
                      "('2026-10-01T20:00:00.000000+00:00', 252, 'abc')")
     rawstore.ensure_table("comov_runs")
-    row = rawstore.query("SELECT * FROM comov_runs")[0]
+    row = rawstore.query("SELECT * FROM comov_runs", db="comovement")[0]
     assert row["window_days"] == 252 and row["config_hash"] == "abc"
     assert row["run_id"] is None and row["session_date"] is None and row["dropped_json"] is None
 

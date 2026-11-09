@@ -42,7 +42,7 @@ def test_save_scores(rawstore_tmp_db):
                                     {"peer": "TSM", "score": 0.1}]})
     assert n == 2
     rows = rawstore.query("SELECT peer, score FROM relatedness_scores "
-                          "WHERE ticker='NVDA' ORDER BY score DESC")
+                          "WHERE ticker='NVDA' ORDER BY score DESC", db="relatedness")
     assert [r["peer"] for r in rows] == ["AMD", "TSM"]
 
 
@@ -51,7 +51,7 @@ def _seed_scores():
 
 
 def _stored_peers():
-    return [r["peer"] for r in rawstore.query("SELECT peer FROM relatedness_scores ORDER BY peer")]
+    return [r["peer"] for r in rawstore.query("SELECT peer FROM relatedness_scores ORDER BY peer", db="relatedness")]
 
 
 @pytest.mark.parametrize("peers", [{}, {"NVDA": [], "AMD": []}], ids=["no tickers", "no peers"])

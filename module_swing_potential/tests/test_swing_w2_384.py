@@ -136,11 +136,11 @@ def test_gate_rows_are_21_per_name_including_direction():
 
 
 def test_the_four_new_columns_are_in_the_swing_scores_table(rawstore_tmp_db):
-    with rawstore.connect() as conn:
+    with rawstore.connect(db="swing_potential") as conn:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(swing_scores)").fetchall()}
     assert {"direction_ok", "m_pass", "w_pass", "q_pass"} <= cols
     scores.persist([_row("AAA", _ind())])
-    got = rawstore.query("SELECT direction_ok, m_pass, w_pass, q_pass, quality FROM swing_scores")
+    got = rawstore.query("SELECT direction_ok, m_pass, w_pass, q_pass, quality FROM swing_scores", db="swing_potential")
     assert got == [{"direction_ok": 1, "m_pass": 1, "w_pass": 1, "q_pass": 1, "quality": 100}]
 
 

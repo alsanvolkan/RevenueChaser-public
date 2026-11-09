@@ -290,7 +290,7 @@ AREAS = [
      "raw", "ownership_snapshot (source yfinance)", ":1687", "ticker + session_date + source", "append",
      "One row per session, first write wins, never rewritten.", "core/ownership.py:1-20"),
    ],
-   note="The 13F board reads shares out (% Out) and insider % from ownership_snapshot since #375 F2 (module_sec_13f/enrich.py:51-69, load_ownership: per ticker the newest non-NULL value of the first source in UW, SEC dei, yfinance order; no job writes SEC dei rows yet, #161); the Fetch and the store-only Refresh read it the same way, and a 13F Fetch records the values it showed in sec13f_metrics_history (#375). The AG footer reads the live .info.",
+   note="The 13F board reads shares out (% Out) and insider % from ownership_snapshot since #375 F2 (module_sec_13f/enrich.py:51-69, load_ownership: per ticker the newest non-NULL value of the first source in UW, SEC dei, yfinance order; no job writes SEC dei rows yet, #161); the Fetch and the store-only Refresh read it the same way, and a 13F Fetch records the values it showed in sec13f_metrics_history (#375). Asymmetric Growth divides its 13F shares by the same shares outstanding (#481).",
    planned="ownership_snapshot is written (#300) and read by the 13F board (#375 F2). The AG footer switches later."),
  ]),
  ("Reference data", [

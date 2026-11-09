@@ -199,15 +199,14 @@ class IbkrShortable:
                 con.close()
         return out
 
+    dirty_keyed = True
+
+    def dirty(self, ctx: base.RunContext):
+        return common.keyed_dirty(ctx, self, "date")
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        files = [f for _, f in partitions(parquet_dir(), "date")]
-        if not files:
-            return {TABLE: common.create_table(con, TABLE, SERVED)}
-        src = common.files_sql(files)
-        common.symbol_map(con, f"SELECT symbol FROM {src}", ctx.notes, NAME)
-        select = (f"SELECT p.*, m.ticker, m.ticker_source, '{NAME}' AS source FROM {src} p "
-                  f"LEFT JOIN _symbol_map m USING (symbol) ORDER BY p.snapshot_date, p.symbol")
-        return {TABLE: common.create_table(con, TABLE, SERVED, select)}
+        return {TABLE: common.build_keyed(ctx, con, NAME, TABLE, SERVED, partitions(parquet_dir(), "date"),
+                                          "snapshot_date", "snapshot_date, symbol", common.BY_SYMBOL)}
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         added, removed = base.compare_with_live(con, KIND, TABLE, ["snapshot_date", "symbol", "available", "fee_rate"])

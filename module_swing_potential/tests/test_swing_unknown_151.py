@@ -94,7 +94,7 @@ def test_the_multiplier_counts_only_passed_gates():
 def test_the_gate_rows_persist_through_the_real_table(rawstore_tmp_db):
     from RevenueChaser.core import rawstore
     scores.persist([{"ticker": "AAA", "ind": _without("sma200")}])
-    got = rawstore.query("SELECT passed FROM swing_gates WHERE ticker='AAA' AND rule_id='ma200_rising'")
+    got = rawstore.query("SELECT passed FROM swing_gates WHERE ticker='AAA' AND rule_id='ma200_rising'", db="swing_potential")
     assert got == [{"passed": None}]
 
 

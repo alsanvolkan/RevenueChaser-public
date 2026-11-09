@@ -91,7 +91,8 @@ def _db_of(name: str) -> str:
 #: Board result files (DECISIONS S9, S16): ``<store>/boards/<board>.duckdb``, one writer per board package, written
 #: incrementally. The first, narrow step of the board-file plan (2026-11-08): only boards born with their own file are
 #: listed here (News, Welcome); the move of the older boards' tables (plan PR 0 and on) extends this tuple.
-BOARD_DBS = ("news", "welcome")
+BOARD_DBS = ("news", "welcome", "relatedness", "comovement", "asymmetric_growth", "swing_potential",
+             "fundamentals", "sector_rotation", "leaps", "oipd", "forecast")
 #: The folder of the board files, beside the raw store; ``rcdata/backup.py`` copies ``boards/*.duckdb``.
 BOARDS_DIRNAME = "boards"
 
@@ -749,6 +750,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "swing_info": {
+        "db": "swing_potential",
         "history_mode": "session_snapshot",
         "key": ["ticker"],
         "columns": ["ticker TEXT PRIMARY KEY", "payload JSON", "cached_at DOUBLE",
@@ -760,6 +762,7 @@ MANIFEST: dict[str, dict] = {
         "sources": ["swing_potential/info/{TICKER}.json"],
     },
     "leaps_cache": {
+        "db": "leaps",
         "history_mode": "latest_cache",
         "key": ["ticker"],
         "columns": ["ticker TEXT PRIMARY KEY", "payload JSON",
@@ -770,6 +773,7 @@ MANIFEST: dict[str, dict] = {
         "sources": ["leaps/cache/{TICKER}.json"],
     },
     "rotation_holdings": {
+        "db": "sector_rotation",
         "history_mode": "latest_cache",
         "key": ["ticker"],
         "columns": ["ticker TEXT PRIMARY KEY", "date TEXT", "rows JSON",
@@ -837,6 +841,7 @@ MANIFEST: dict[str, dict] = {
     },
     # ── Co-movement board (module_comovement) ────────────────────────────────
     "comov_runs": {
+        "db": "comovement",
         "history_mode": "event",
         # One dated clustering run. ``config_hash`` covers window/linkage/cuts
         # plus horizon/benchmark, so a config change produces a new as_of
@@ -870,6 +875,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "comov_nodes": {
+        "db": "comovement",
         "history_mode": "event",
         "key": ["as_of", "cut", "cluster_id"],
         # A run is written whole: "replace" clears the run's old clusters.
@@ -898,6 +904,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "comov_members": {
+        "db": "comovement",
         "history_mode": "event",
         "key": ["as_of", "cut", "ticker"],
         "group_by": ["as_of"],
@@ -912,6 +919,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "comov_lag": {
+        "db": "comovement",
         "history_mode": "event",
         # Groups formed on the window ending a quarter before the run, with
         # their held-out-quarter test (Fetch-only). A Refresh re-matches its
@@ -1089,6 +1097,7 @@ MANIFEST: dict[str, dict] = {
     },
     # ── tabular stores ───────────────────────────────────────────────────────
     "ticker_themes": {
+        "db": "relatedness",
         "history_mode": "event",
         # Runtime theme SSoT. ``theme_id`` is the join key (stable slug), ``theme``
         # is the display label. ``theme_run_id`` separates the legacy keyword
@@ -1107,6 +1116,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "fundamentals_scores": {
+        "db": "fundamentals",
         "history_mode": "latest_cache",
         # Per-ticker OWN metrics only (no identity/GICS — those live on
         # equity_universe). Single writer: module_fundamentals/scores.py
@@ -1127,6 +1137,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "fundamentals_gates": {
+        "db": "fundamentals",
         "history_mode": "latest_cache",
         # One typed row per (ticker, gate, rule) — filterable.
         "key": ["ticker", "gate", "rule_id"],
@@ -1140,6 +1151,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "swing_scores": {
+        "db": "swing_potential",
         "history_mode": "latest_cache",
         "key": ["ticker"],
         "columns": [
@@ -1155,6 +1167,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "swing_gates": {
+        "db": "swing_potential",
         "history_mode": "latest_cache",
         "key": ["ticker", "gate", "rule_id"],
         "columns": [
@@ -1168,6 +1181,7 @@ MANIFEST: dict[str, dict] = {
     },
     # ── Relatedness (Phase 6) ────────────────────────────────────────────────
     "llm_cache": {
+        "db": "relatedness",
         "history_mode": "event",
         # Structured cache key over (model, thinking, effort, prompt_version,
         # ticker, input_hash). Response is the raw JSON. Durable (raw.duckdb).
@@ -1182,6 +1196,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "relatedness_profiles": {
+        "db": "relatedness",
         "history_mode": "latest_cache",
         # One row per ticker; profile job grain is CIK (dual-class shares one
         # item_text), so cache_key is keyed on cik+input_hash.
@@ -1205,6 +1220,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "relatedness_embeddings": {
+        "db": "relatedness",
         # Relatedness v2 Step 2 (#401, schema 13): one vector per ticker and embedding model, the float32 bytes of
         # ``dim`` values (raw BLOB, not ``compress``: it is binary already). Writer arrives with Step 2.
         "history_mode": "latest_cache",
@@ -1219,6 +1235,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "relatedness_attributes": {
+        "db": "relatedness",
         "history_mode": "latest_cache",
         "key": ["ticker", "field"],
         # A profile is written whole: "replace" clears the ticker's old fields.
@@ -1232,6 +1249,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "relatedness_scores": {
+        "db": "relatedness",
         "history_mode": "latest_cache",
         "key": ["ticker", "peer"],
         "columns": [
@@ -1243,6 +1261,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "theme_runs": {
+        "db": "relatedness",
         "history_mode": "event",
         # One NMF theme run (Phase 8). ``is_current`` pins the cut-over run.
         "key": ["id"],
@@ -1261,6 +1280,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "relatedness_themes": {
+        "db": "relatedness",
         "history_mode": "event",
         "key": ["theme_id"],
         "columns": [
@@ -1272,6 +1292,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "relatedness_theme_tags": {
+        "db": "relatedness",
         "history_mode": "event",
         "key": ["theme_id", "tag"],
         "columns": [
@@ -1283,6 +1304,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "relatedness_theme_members": {
+        "db": "relatedness",
         "history_mode": "event",
         "key": ["ticker", "theme_id"],
         "columns": [
@@ -1294,6 +1316,7 @@ MANIFEST: dict[str, dict] = {
         "sources": [],
     },
     "relatedness_theme_etfs": {
+        "db": "relatedness",
         "history_mode": "event",
         # Top ETFs whose holdings overlap a theme node (fine/medium/coarse).
         # Written by module_relatedness.themes.match_theme_etfs (store-only).
@@ -1321,6 +1344,7 @@ MANIFEST: dict[str, dict] = {
         "sources": ["swing_potential/ohlc/{TICKER}.csv"],
     },
     "rotation_snapshots": {
+        "db": "sector_rotation",
         "history_mode": "session_snapshot",
         "key": ["as_of_date", "ticker"],
         "group_by": ["as_of_date"],
@@ -1345,6 +1369,7 @@ MANIFEST: dict[str, dict] = {
         "sources": ["indexes/{slug}.json"],
     },
     "leaps_flow_prints": {
+        "db": "leaps",
         "history_mode": "event",
         "key": ["id"],
         "columns": [
@@ -1372,6 +1397,7 @@ MANIFEST: dict[str, dict] = {
         "sources": ["leaps/radar.db"],
     },
     "ticker_scores": {
+        "db": "asymmetric_growth",
         "history_mode": "latest_cache",
         "key": ["ticker"],
         "columns": [
@@ -1453,6 +1479,7 @@ MANIFEST: dict[str, dict] = {
     # normalised so the risk-neutral surface can be re-fit on Refresh with zero
     # network. One ticker's chain is replaced per fetch (group_by ticker).
     "oipd_chain": {
+        "db": "oipd",
         "history_mode": "latest_cache",
         "key": ["ticker", "option_symbol"],
         "group_by": ["ticker"],
@@ -1469,6 +1496,7 @@ MANIFEST: dict[str, dict] = {
     # One row per fetched ticker: the download context (asof/spot/rate/horizon)
     # the fit needs, plus provenance for /api/data_asof.
     "oipd_meta": {
+        "db": "oipd",
         "history_mode": "latest_cache",
         "key": ["ticker"],
         "columns": [
@@ -1660,6 +1688,7 @@ MANIFEST: dict[str, dict] = {
     # ``history: True`` (#286) makes rawstore enforce the append-only rule, so the
     # frozen picks can no longer be rewritten by a cleanup script or a refactor.
     "forecast_ledger": {
+        "db": "forecast",
         "history": True,
         "history_mode": "session_snapshot",
         "key": ["source", "forecast_date", "subject", "target_type", "target_date"],
@@ -1683,6 +1712,7 @@ MANIFEST: dict[str, dict] = {
     # ``ref_price``/``mfe``/``mae`` are on the D01 nominal basis; ``status`` is open / closed / no_bars / split_check.
     # Additive (no schema bump). Writer: core/outcomes.py.
     "forecast_outcomes": {
+        "db": "forecast",
         "history_mode": "latest_cache",
         "key": ["source", "forecast_date", "subject", "target_type", "target_date", "horizon_days"],
         "columns": [
@@ -1707,6 +1737,7 @@ MANIFEST: dict[str, dict] = {
     # like the outcomes, and ``mae_mean`` is there because "up 5% on average" means something else with a -40%
     # drawdown. Additive (no schema bump; the ``forecast_outcomes`` precedent). Writer: core/baselines.py.
     "forecast_baselines": {
+        "db": "forecast",
         "history_mode": "latest_cache",
         "key": ["forecast_date", "horizon_days", "basis"],
         "columns": [
@@ -1930,6 +1961,69 @@ MANIFEST: dict[str, dict] = {
             "run_id TEXT", "run_at DOUBLE", "PRIMARY KEY (session_date, event_ts, event, type)",
         ],
         "kind": "tabular", "write": "append", "history_mode": "session_snapshot", "sources": [],
+    },
+    # News board (plan 2026-11-09, DECISIONS S9/S16): its own boards/news.duckdb, one writer (module_news),
+    # written incrementally: upserts by key, retired events marked, never a whole-table rewrite.
+    "news_events": {
+        "key": ["event_ts", "event", "type"],
+        "columns": [
+            "event_ts DOUBLE", "event TEXT", "type TEXT", "importance INTEGER", "forecast TEXT", "prev TEXT",
+            "reported_period TEXT", "first_seen DOUBLE", "last_seen DOUBLE", "retired_at DOUBLE",
+            "run_id TEXT", "run_at DOUBLE", "PRIMARY KEY (event_ts, event, type)",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "news", "sources": [],
+    },
+    "news_highlight": {
+        "key": ["session_date"],
+        "columns": [
+            "session_date DATE PRIMARY KEY", "event_ts DOUBLE", "event TEXT", "type TEXT", "importance INTEGER",
+            "forecast TEXT", "prev TEXT", "text TEXT", "text_source TEXT", "run_id TEXT", "run_at DOUBLE",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "news", "sources": [],
+    },
+    "news_headlines": {
+        "key": ["headline_id"],
+        "columns": [
+            "headline_id TEXT PRIMARY KEY", "provider TEXT", "published_at DOUBLE", "headline TEXT", "source TEXT",
+            "tickers TEXT", "url TEXT", "fetched_at DOUBLE", "run_id TEXT", "run_at DOUBLE",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "news", "sources": [],
+    },
+    "news_meta": {
+        "key": ["key"],
+        "columns": ["key TEXT PRIMARY KEY", "value TEXT", "run_at DOUBLE"],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "news", "sources": [],
+    },
+    # Welcome board (S9, S16): its own file boards/welcome.duckdb, written only by module_welcome/build.py.
+    "welcome_snapshot": {
+        "key": ["series", "session_date"],
+        "columns": [
+            "series TEXT", "session_date DATE", "close DOUBLE", "prev_close DOUBLE", "change DOUBLE",
+            "change_pct DOUBLE", "spark TEXT", "run_id TEXT", "run_at DOUBLE", "PRIMARY KEY (series, session_date)",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "welcome", "sources": [],
+    },
+    "welcome_earnings": {
+        "key": ["earnings_date", "ticker", "report_session"],
+        "columns": [
+            "earnings_date DATE", "ticker TEXT", "report_session TEXT", "full_name TEXT", "expected_move_perc DOUBLE",
+            "report_time TEXT", "source_session DATE", "first_seen DOUBLE", "last_seen DOUBLE", "retired_at DOUBLE",
+            "run_id TEXT", "run_at DOUBLE", "PRIMARY KEY (earnings_date, ticker, report_session)",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "welcome", "sources": [],
+    },
+    "welcome_freshness": {
+        "key": ["job"],
+        "columns": [
+            "job TEXT PRIMARY KEY", "last_status TEXT", "last_finished_at DOUBLE", "last_ok_at DOUBLE",
+            "last_failed_at DOUBLE", "last_error TEXT", "run_id TEXT", "run_at DOUBLE",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "welcome", "sources": [],
+    },
+    "welcome_meta": {
+        "key": ["key"],
+        "columns": ["key TEXT PRIMARY KEY", "value TEXT", "run_at DOUBLE"],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "welcome", "sources": [],
     },
     "source_checks": {
         "key": ["dataset", "source", "key"],
@@ -3318,23 +3412,13 @@ _VIEWS: list[tuple[str, str]] = [
      "SELECT c.slug, c.ticker, u.name, u.sector "
      "FROM index_constituents c "
      "LEFT JOIN equity_universe u ON u.ticker = c.ticker"),
-    ("company_profile",
-     "CREATE OR REPLACE VIEW company_profile AS "
-     "SELECT u.ticker, u.name, u.sector, u.industry, u.industry_group, "
-     "u.sub_industry, u.market_cap, u.price, "
-     "a.total_points, a.tech_breakthrough, a.dilution_warning, a.earnings_date, "
-     "f.ro40, f.rev_growth_ttm, f.fcf_margin, f.gross_margin, f.roic, f.pe, f.pb, "
-     "f.multiplier AS fundamentals_multiplier, "
-     "s.quality AS swing_quality, s.rs_rating, s.ma_alignment, "
-     "s.multiplier AS swing_multiplier "
-     "FROM equity_universe u "
-     "LEFT JOIN ticker_scores a ON a.ticker = u.ticker "
-     "LEFT JOIN fundamentals_scores f ON f.ticker = u.ticker "
-     "LEFT JOIN swing_scores s ON s.ticker = u.ticker"),
 ]
 
 
 def _apply_views(conn) -> list[str]:
+    # ``company_profile`` joined board tables that now live in their own files (S9); core/company_profile.py
+    # joins them in Python. The old derived view is dropped (a view holds no data).
+    conn.execute("DROP VIEW IF EXISTS company_profile")
     made = []
     for name, sql in _VIEWS:
         conn.execute(sql)
@@ -3993,6 +4077,37 @@ def replace_all(name: str, rows: list[dict], *, allow_empty: bool = False) -> in
 
     _retry_write(_op)
     return len(rows)
+
+
+def sync_rows(name: str, rows: list[dict], *, allow_empty: bool = False) -> int:
+    """Make ``rows`` the table's contents incrementally (plan 2026-11-08 §10, the board-file rule): upsert the run's
+    rows and delete, by key, only the stored keys the run no longer has, in one transaction. Returns the number of
+    keys retired. An empty run raises like ``replace_all`` (#284) or, with ``allow_empty``, deletes nothing."""
+    spec = _check(name)
+    _refuse_history(name, spec, "sync_rows")
+    if not rows:
+        if allow_empty:
+            return 0
+        raise RawStoreError(f"sync_rows({name!r}, []) would retire every key; keep the stored rows when a run "
+                            f"produced nothing")
+    key = [k.strip('"') for k in spec.get("key") or []]
+    if not key:
+        raise RawStoreError(f"sync_rows needs a key; {name} has none")
+    new = {tuple(r.get(k) for k in key) for r in rows}
+    cols = ", ".join(_q(k) for k in key)
+
+    def _write(tx):
+        tx.ensure_table(name)
+        gone = [tuple(k) for k in tx.execute(f"SELECT {cols} FROM {name}").fetchall() if tuple(k) not in new]
+        one = "(" + ", ".join(["?"] * len(key)) + ")"
+        for i in range(0, len(gone), 500):
+            chunk = gone[i:i + 500]
+            tx.execute(f"DELETE FROM {name} WHERE ({cols}) IN ({', '.join([one] * len(chunk))})",
+                       [v for k in chunk for v in k])
+        tx.write_rows(name, rows)
+        return len(gone)
+
+    return atomic(_write, db=_db_of(name))
 
 
 class _Tx:

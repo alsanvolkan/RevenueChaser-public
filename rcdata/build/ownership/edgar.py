@@ -50,7 +50,8 @@ import duckdb
 
 from ....core import calendar
 from .. import base
-from . import KIND, sec
+from ..spine.stage import partitions
+from . import KIND, common, sec
 
 INDEX_PATH = "/Archives/edgar/daily-index/{year}/QTR{q}/master.{ymd}.idx"
 INDEX_HEADER = "CIK|Company Name|Form Type|Date Filed|File Name"
@@ -301,6 +302,19 @@ class Feed:
     forms: frozenset[str]
     sub: str
     budget_s: float | None
+
+    # A build on the live copy (#446) reloads the index days whose partitions changed: every partition of a feed is
+    # ``<table>/day=<index day>/`` and every row it serves carries that day as ``index_day``.
+    dirty_keyed = True
+
+    def dirty(self, ctx: base.RunContext):
+        return common.keyed_dirty(ctx, self, "day")
+
+    def build_rows(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection, table: str,
+                   schema: list[tuple[str, str]], sub: str, order: str, naming=None) -> int:
+        """Served ``table`` from the feed's ``<sub>/day=<day>`` partitions (``common.build_keyed``)."""
+        return common.build_keyed(ctx, con, self.name, table, schema, partitions(self.parquet_dir() / sub, "day"),
+                                  "index_day", order, naming)
 
     def default_as_of(self) -> date:
         return calendar.today_ny()

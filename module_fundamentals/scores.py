@@ -100,14 +100,14 @@ def edgar_versions(results: list[dict]) -> dict[str, int]:
 
 def persist(results: list[dict], sink: dict | None = None) -> dict:
     """Full-refresh both tables from one scan. The pipeline never persists an empty scan; an empty
-    ``results`` is refused by ``rawstore.replace_all`` (#284) instead of wiping the last scores.
+    ``results`` is refused by ``rawstore.sync_rows`` (#284) instead of wiping the last scores.
 
     ``sink`` (a dict) receives the rows just written under ``scores`` and ``gates``, and the EDGAR extract versions
     behind them under ``edgar_versions``, so the result history (``history.record``) records exactly what the latest
     tables got (#278)."""
     srows, grows = score_rows(results), gate_rows(results)
-    rawstore.replace_all("fundamentals_scores", srows)
-    rawstore.replace_all("fundamentals_gates", grows)
+    rawstore.sync_rows("fundamentals_scores", srows)
+    rawstore.sync_rows("fundamentals_gates", grows)
     if sink is not None:
         sink.update(scores=srows, gates=grows, edgar_versions=edgar_versions(results))
     return {"scores": len(srows), "gates": len(grows)}
