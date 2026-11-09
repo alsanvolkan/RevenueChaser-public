@@ -82,10 +82,18 @@ def _day(v) -> date | None:
         return None
 
 
-def _newest(ticker: str) -> date | None:
+def newest_by_ticker() -> dict[str, date]:
+    """``{ticker: the newest day it has a raw file}``, from one walk of the raw root (#519 finding 7: one walk per
+    company was ~275k stats a run after a year). A directory whose name is not a day is skipped."""
+    newest: dict[str, date] = {}
     root = common.raw_dir(NAME)
-    days = sorted(d.name for d in root.iterdir() if (d / f"{ticker}.json.gz").exists()) if root.is_dir() else []
-    return date.fromisoformat(days[-1]) if days else None
+    for d in sorted(root.iterdir()) if root.is_dir() else []:
+        day = _day(d.name)
+        if day is None or str(day) != d.name:
+            continue
+        for f in d.glob("*.json.gz"):
+            newest[f.name[:-len(".json.gz")]] = day        # sorted days: the last seen is the newest
+    return newest
 
 
 def rejected(error: dict | None) -> bool:
@@ -148,9 +156,9 @@ class UWEarnings:
             ctx.issue("missing_key", KEY, credentials.missing_message(KEY))
             ctx.notes.append("no UNUSUAL_WHALES_API_KEY: nothing asked")
             return []
-        due = []
+        due, seen = [], newest_by_ticker()
         for cik, ticker in every:
-            newest = _newest(ticker)
+            newest = seen.get(ticker)
             if newest is None or (as_of - newest).days >= WEEK_DAYS:
                 due.append((newest or date.min, ticker, cik))
         due.sort()

@@ -295,3 +295,24 @@ def test_every_uw_dataset_counts_a_rejected_request_the_same_way(http_mock):
         ctx.close()
         ctx.flush_counts()
     assert ctx.calls["uw"][:2] == [2, 2] and _failures_today() == 2
+
+
+# ── Finding 7: one walk of the raw root, not one per company ────────────────────────────────────────────────────
+
+def test_the_newest_answer_per_company_is_read_in_one_walk(http_mock, monkeypatch):
+    """``{ticker: newest day}`` from one pass over the day directories; a directory that is not a day is skipped
+    instead of raising, and a company with no answer is simply absent."""
+    root = uw_earnings.common.raw_dir(uw_earnings.NAME)
+    for day, ticker in [("2026-10-23", "AAA"), ("2026-10-30", "AAA"), ("2026-10-30", "BBB")]:
+        (root / day).mkdir(parents=True, exist_ok=True)
+        (root / day / f"{ticker}.json.gz").write_bytes(b"")
+    (root / "tmp").mkdir()
+    (root / "tmp" / "CCC.json.gz").write_bytes(b"")
+    assert uw_earnings.newest_by_ticker() == {"AAA": date(2026, 10, 30), "BBB": date(2026, 10, 30)}
+    calls = []
+    real = uw_earnings.newest_by_ticker
+    monkeypatch.setattr(uw_earnings, "newest_by_ticker", lambda: calls.append(1) or real())
+    _companies(monkeypatch, ["AAA", "BBB", "DDD"])
+    http_mock.add("/earnings", ANSWER)
+    _fetch(date(2026, 11, 2))
+    assert len(calls) == 1 and _asked(http_mock) == ["DDD"]     # AAA and BBB answered within the week
