@@ -192,8 +192,9 @@ def _session_events(n, day=date(2026, 10, 8), when="AMC", source="UW"):
     return [{"ticker": f"T{i}", "earnings_date": day, "earnings_time": when, "source": source} for i in range(n)]
 
 
-def test_a_calendar_session_at_the_500_row_limit_is_partial_but_keeps_the_rows(store):
-    _record([_card("AAA")], events=_session_events(500))
+def test_a_calendar_session_at_the_client_row_cap_is_partial_but_keeps_the_rows(store):
+    from RevenueChaser.module_earnings_radar.history import UW_CALENDAR_ROW_LIMIT
+    _record([_card("AAA")], events=_session_events(UW_CALENDAR_ROW_LIMIT))
     (head,) = _headers()
     assert head["quality"] == "partial" and "2026-10-08 AMC" in head["quality_note"] and len(_rows("r1")) == 1
 

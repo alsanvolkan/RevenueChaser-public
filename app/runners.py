@@ -187,7 +187,7 @@ def _calendar_event(item: dict, d: date, session: str) -> dict | None:
     """One UW calendar row as the run's event dict, or None when the row names no ticker.
 
     ``source`` stays "UW" for a stored row too: ``history._input_problems`` counts these against
-    ``UW_CALENDAR_ROW_LIMIT``, the client's page limit, whichever path served them.
+    ``UW_CALENDAR_ROW_LIMIT``, the most rows the client reads per session, whichever path served them.
     """
     t = item.get("symbol") or item.get("ticker", "")
     if not t:
