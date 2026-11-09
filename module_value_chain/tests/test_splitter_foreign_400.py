@@ -23,11 +23,8 @@ def _item_4(middle: str) -> str:
 def test_the_regulation_chapter_of_4b_is_dropped():
     item, quality = splitter.slice_item(_item_4(" B. Business Overview \n" + PROSE + " PRC Regulations \n" + REG), "20-F")
     assert quality == "ok" and item.count("We make widgets") == 120 and "PRC government" not in item
-
-
-def test_a_regulation_heading_before_4b_does_not_cut():
     item, _ = splitter.slice_item(_item_4(" Regulation \n" + PROSE + " B. Business Overview \n" + PROSE), "20-F")
-    assert item.count("We make widgets") == 180
+    assert item.count("We make widgets") == 180          # a regulation heading before 4.B does not cut
 
 
 AIF = (" ANNUAL INFORMATION FORM \n TABLE OF CONTENTS \n GENERAL DEVELOPMENT OF THE BUSINESS \n 5 \n"
@@ -41,10 +38,7 @@ def test_an_aif_in_the_40f_primary_document_gives_a_business_row():
     rows = {item: (text, quality) for item, text, quality in filings.document_sections(html, "40-F")}
     text, quality = rows["business"]
     assert quality.startswith("ok") and text.count("We make widgets") == 120 and "risk text" not in text
-
-
-def test_a_40f_without_an_aif_still_has_only_the_whole_row():
-    html = "<html><body><p>" + PROSE + "</p></body></html>"
+    html = "<html><body><p>" + PROSE + "</p></body></html>"          # no AIF: the whole row only
     assert {item for item, _, _ in filings.document_sections(html, "40-F")} == {"whole"}
 
 
