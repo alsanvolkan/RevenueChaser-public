@@ -146,13 +146,6 @@ def _timer_box(view: dict) -> str:
             f'{press}{link}</span>')
 
 
-def topbar_health(view: dict) -> str:
-    """The same top bar at the head of the Health tab, in its own ``.ctl`` scope so its styles and presses work."""
-    if view.get("error"):
-        return ""
-    return f'<section class="ctl ctltop" aria-label="Switches"><div class="wrap">{_topbar(view, "sw-msg-h")}</div></section>'
-
-
 #: The Health groups (#492 C1): three side by side, then Data at full width.
 HEALTH_GROUPS = (("sources", "Sources"), ("scheduled", "Scheduled run"), ("build", "Build"))
 FILE_TOTAL = 6

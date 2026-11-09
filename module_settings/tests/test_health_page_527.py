@@ -64,15 +64,15 @@ def test_the_data_page_has_one_what_am_i_looking_at():
     assert "What a press does." in data, "the board's own help moved into the shared box"
 
 
-def test_the_top_bar_heads_both_tabs_and_carries_the_gateway_login_link():
+def test_the_top_bar_heads_the_data_tab_and_carries_the_gateway_login_link():
+    """#527 B4 took the Health tab's copy away (it is live in Grafana now); the Data tab keeps the one top bar."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS,
                                                  ibkr_login_url="https://gateway.example/"))
-    for panel in ("panel-data", "panel-health"):
-        part = _panel(html, panel)
-        assert part.count('class="topbar"') == 1, panel
-        assert 'href="https://gateway.example/"' in part.split('class="topbar"', 1)[1].split("</div>", 1)[0], panel
-    assert html.count('id="sw-msg"') == 1, "one id; the Health copy's status line has its own"
+    part = _panel(html, "panel-data")
+    assert part.count('class="topbar"') == 1
+    assert 'href="https://gateway.example/"' in part.split('class="topbar"', 1)[1].split("</div>", 1)[0]
+    assert html.count('class="topbar"') == 1 and html.count('id="sw-msg"') == 1
     assert "btn.closest('.topbar')" in control_render.CTL_JS
 
 
@@ -81,7 +81,7 @@ def test_the_health_tab_puts_what_needs_avo_first_and_folds_the_reference_parts(
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS,
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
-    order = ["<h1>Data/Health · Health</h1>", 'class="topbar"', 'id="sec-queue"', 'id="backups"',
+    order = ["<h1>Data/Health · Health</h1>", 'id="health-live-link"', 'id="backups"',
              'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
