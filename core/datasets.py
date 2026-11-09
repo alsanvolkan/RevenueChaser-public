@@ -34,7 +34,7 @@ from importlib import import_module
 
 from RevenueChaser.core.datahealth import Health
 
-DBS = ("raw", "edgar", "prices", "history")
+DBS = ("raw", "edgar", "prices", "history", "news", "welcome")  # the last two: board files (S9, S16)
 
 FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
@@ -645,6 +645,21 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         tables=("llm_cache",),
         db="raw", source=Source.unknown, writer="RC-Relatedness-OffPeak",
         freshness=("llm_cache", "fetched_at"),
+    ),
+    DatasetSpec(
+        key="news_calendar", label="News: economic calendar and the day's highlight",
+        tables=("news_events", "news_highlight", "news_meta"),
+        db="news", source=Source.derived, writer=None,
+        writer_note=("built incrementally from raw.economic_calendar by module_news/calendar.py on the News board's "
+                     "Refresh; the hourly job comes in its own pull request"),
+        freshness=("news_events", "run_at"),
+    ),
+    DatasetSpec(
+        key="news_headlines", label="News: market headlines",
+        tables=("news_headlines",),
+        db="news", source=Source.uw, writer=None,
+        writer_note="fetched by module_news on the News board's Refresh; the hourly job comes in its own pull request",
+        freshness=("news_headlines", "fetched_at"),
     ),
     DatasetSpec(
         key="source_checks", label="Source check watermarks",
