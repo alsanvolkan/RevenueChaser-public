@@ -123,6 +123,7 @@ def index_url(cik: str, accession: str) -> str:
 #: filer who files the AIF as a PDF is missed (``read_exhibits`` raises ``aif_not_named`` when it can tell).
 _AIF_NAME = re.compile(r"aif", re.I)
 _EX_99_1 = re.compile(r"ex(?:hibit)?[-_]?99[._-]?1(?![0-9])", re.I)
+_EX_1 = re.compile(r"ex(?:hibit)?[-_]?0?1(?![0-9])", re.I)     # RY files its AIF as Exhibit 1, dex1.htm (#400 WP3)
 _EX_99_ANY = re.compile(r"ex(?:hibit)?[-_]?99", re.I)
 
 
@@ -156,7 +157,8 @@ def aif_exhibits(listing: dict, primary: str | None = None) -> list[str]:
 
 def _chosen(pages: list[tuple[int, str]]) -> list[tuple[int, str]]:
     named = [(size, name) for size, name in pages if _AIF_NAME.search(name)]
-    return named or [(size, name) for size, name in pages if _EX_99_1.search(name)]
+    return (named or [(size, name) for size, name in pages if _EX_99_1.search(name)]
+            or [(size, name) for size, name in pages if _EX_1.search(name)])
 
 
 def picked_by_name(listing: dict, name: str, primary: str | None = None) -> bool:
@@ -245,7 +247,11 @@ def document_sections(html: str, form: str) -> list[tuple[str, str, str]]:
     out = [("whole", text, "ok" if len(text) >= min_text_chars() else ("short" if text else "missing"))]
     if str(form).upper() == "40-F":
         # Value Chain's splitter knows a 10-K's Item 1 and a 20-F's Item 4; a Canadian 40-F has neither, so a
-        # slice of it would be an arbitrary cut labelled by rules that do not apply. The whole text is the row.
+        # slice of it would be an arbitrary cut labelled by rules that do not apply. The whole text is the row,
+        # plus the business section of an Annual Information Form kept in the primary document (CNQ, #400 WP3).
+        aif = splitter.aif_business(text)
+        if aif:
+            out.append(("business", aif, CAPPED if len(aif) >= cap else splitter.flag("ok", text, aif, form)))
         return out
     item, quality = splitter.slice_item(text, form)
     item = item or ""

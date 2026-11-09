@@ -49,7 +49,41 @@ def _line_item(text: str, key: str) -> tuple[int, int] | None:
             return None          # no closing heading: the old rule decides (and labels it overrun)
         if end - m.start() < _BODY_MIN:
             continue
+        if key == "20-F":
+            end = _before_regulation(text, m.end(), end)
         return m.end(), end
+    return None
+
+
+# 20-F 4.B's regulation chapter is not the business (PDD 87%, BABA 68% of 4.B; 10-K reading report A6, 8 Nov 2026).
+_OVERVIEW = re.compile(r"(?im)^[^\S\n]*b\.[^\S\n]*business\s+overview\b")
+_REGULATION = re.compile(r"(?im)^[^\S\n]*(?:(?:prc|chinese|government(?:al)?)\s+)?regulations?"
+                         r"(?:\s+(?:and\s+supervision|overview|matters))?[^\S\n]*$")
+
+
+def _before_regulation(text: str, start: int, end: int) -> int:
+    b = _OVERVIEW.search(text, start, end)
+    r = _REGULATION.search(text, b.end(), end) if b else None
+    return r.start() if r and r.start() - start >= _BODY_MIN else end
+
+
+# A Canadian Annual Information Form in a 40-F's primary document (CNQ): "General Development" to "Risk Factors"
+# (10-K reading report A7). shortcut: only the primary document is read this way; an AIF exhibit stays whole.
+_AIF = re.compile(r"(?i)annual\s+information\s+form")
+_AIF_START = re.compile(r"(?im)^[^\S\n]*general\s+development\s+of\s+(?:the\s+|our\s+)?business[^\S\n]*$")
+_AIF_END = re.compile(r"(?im)^[^\S\n]*risk\s+factors[^\S\n]*$")
+
+
+def aif_business(text: str) -> str | None:
+    """The business section of an Annual Information Form in ``text``; None when it holds none."""
+    if not _AIF.search(text or ""):
+        return None
+    for m in _AIF_START.finditer(text):
+        if _PAGE_NO.match(text, m.end()):
+            continue
+        e = next((e for e in _AIF_END.finditer(text, m.end()) if not _is_ref(text, e)), None)
+        if e is not None and e.start() - m.start() >= _BODY_MIN:
+            return text[m.end():e.start()].strip()[:config.MAX_ITEM_CHARS]
     return None
 
 
