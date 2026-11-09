@@ -38,10 +38,28 @@ def _rows(path, table):
 @pytest.mark.rawstore_schema_from_scratch
 def test_copy_counts_and_twice_is_once(old_rows):
     report = mig.migrate("news", source="raw")
-    assert report == [{"table": _TABLE, "source": 3, "before": 0, "copied": 3, "after": 3}]
+    assert report == [{"table": _TABLE, "source": 3, "before": 0, "copied": 3, "after": 3, "skipped": 0,
+                       "left_out": []}]
     assert _rows(rawstore.board_db_path("news"), _TABLE) == [("a", "1"), ("b", "2"), ("c", "3")]
     again = mig.migrate("news", source="raw")
-    assert again[0]["copied"] == 0 and again[0]["after"] == 3
+    assert again[0]["copied"] == 0 and again[0]["after"] == 3 and again[0]["skipped"] == 3
+
+
+@pytest.mark.rawstore_schema_from_scratch
+def test_a_table_without_a_primary_key_copies_once_both_ways(old_rows, monkeypatch):
+    con = duckdb.connect(str(old_rows))
+    con.execute("CREATE TABLE migrate_nopk (k TEXT, v TEXT)")
+    con.execute("INSERT INTO migrate_nopk VALUES ('a', '1'), ('a', '1'), ('b', '2')")
+    con.close()
+    monkeypatch.setitem(rawstore.MANIFEST, "migrate_nopk", {
+        "key": ["k"], "columns": ["k TEXT", "v TEXT"], "kind": "tabular", "write": "replace",
+        "history_mode": "operational", "sources": [], "db": "news"})
+    mig.migrate("news", source="raw")
+    again = {r["table"]: r for r in mig.migrate("news", source="raw")}
+    assert again["migrate_nopk"]["after"] == 3 and again["migrate_nopk"]["copied"] == 0
+    mig.rename_legacy("news", source="raw")
+    mig.reverse("news", source="raw")
+    assert len(_rows(old_rows, "legacy_migrate_nopk")) == 3
 
 
 @pytest.mark.rawstore_schema_from_scratch

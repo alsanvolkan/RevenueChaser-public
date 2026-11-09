@@ -8,8 +8,9 @@ on the live store, with the dashboard stopped (plan 2026-11-08 §3)::
     python -m RevenueChaser.scripts.migrate_board_store relatedness --rename-legacy   # old tables -> legacy_<name>
     python -m RevenueChaser.scripts.migrate_board_store relatedness --reverse    # rollback: board rows -> legacy_
 
-The copy is by key (``INSERT OR IGNORE``), so a second run adds nothing; a table without a key is copied only into
-an empty board table. ``--from`` names the old file (``raw`` by default, ``history`` for the ``*_history`` move).
+The copy is by PRIMARY KEY (``INSERT OR IGNORE``; board rows win), or as a multiset (``EXCEPT ALL``) for a table
+without one, so a second run adds nothing. The report says per table what was copied, skipped (key already in the
+board) and which old-only columns were left out (they stay in ``legacy_<name>``). ``--from`` names the old file (``raw`` by default, ``history`` for the ``*_history`` move).
 Nothing is ever deleted: the old tables stay as ``legacy_<name>`` until avo says "sil". This script is the one
 place a board table is written whole (plan §10 rule 3).
 """
@@ -43,6 +44,22 @@ def _attach(conn, source: str, read_only: bool) -> None:
     conn.execute(f"ATTACH '{path}' AS src" + (" (READ_ONLY)" if read_only else ""))
 
 
+def _copy(conn, src: str, dst: str, cols: list[str], has_pk: bool) -> None:
+    """Rows of ``src`` not yet in ``dst``, in one transaction: by PRIMARY KEY where the table has one, otherwise as
+    a multiset (``EXCEPT ALL``), so a second run adds nothing either way."""
+    c = ", ".join(f'"{x}"' for x in cols)
+    sql = (f"INSERT OR REPLACE INTO {dst} ({c}) SELECT {c} FROM {src}" if has_pk and dst.startswith("src.")
+           else f"INSERT OR IGNORE INTO {dst} ({c}) SELECT {c} FROM {src}" if has_pk
+           else f"INSERT INTO {dst} ({c}) SELECT {c} FROM {src} EXCEPT ALL SELECT {c} FROM {dst}")
+    conn.execute("BEGIN")
+    try:
+        conn.execute(sql)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def migrate(board: str, source: str = "raw", dry_run: bool = False) -> list[dict]:
     """Copy each of ``board``'s tables from ``source``; one row per table: source/before/copied/after counts."""
     tables = _tables(board)
@@ -66,14 +83,13 @@ def migrate(board: str, source: str = "raw", dry_run: bool = False) -> list[dict
                     out.append({"table": t, "source": None, "before": before, "copied": 0, "after": before})
                     continue
                 n_src = _count(conn, f"src.{t}")
-                cols = ", ".join(f'"{c}"' for c in _cols(conn, board_cat, t) if c in src_cols)
-                keyed = bool(rawstore.MANIFEST[t].get("key"))
-                if keyed or before == 0:
-                    conn.execute("BEGIN")
-                    conn.execute(f"INSERT OR IGNORE INTO {t} ({cols}) SELECT {cols} FROM src.{t}")
-                    conn.execute("COMMIT")
+                board_cols = _cols(conn, board_cat, t)
+                cols = [c for c in board_cols if c in src_cols]
+                _copy(conn, f"src.{t}", t, cols, rawstore._has_primary_key(rawstore.MANIFEST[t]))
                 after = _count(conn, t)
-                out.append({"table": t, "source": n_src, "before": before, "copied": after - before, "after": after})
+                out.append({"table": t, "source": n_src, "before": before, "copied": after - before, "after": after,
+                            "skipped": n_src - (after - before),
+                            "left_out": [c for c in src_cols if c not in board_cols]})
         finally:
             conn.execute("DETACH src")
     return out
@@ -93,7 +109,8 @@ def rename_legacy(board: str, source: str = "raw") -> list[str]:
 
 def reverse(board: str, source: str = "raw") -> list[dict]:
     """Rollback half: copy every board row back over ``legacy_<name>`` in ``source`` (rows written after the deploy
-    included, ``llm_cache`` is paid for). The caller then renames ``legacy_<name>`` back and checks out the old SHA."""
+    included, ``llm_cache`` is paid for). The caller then renames ``legacy_<name>`` back BEFORE the old checkout
+    starts: an old ``ensure_all_tables`` would make an empty ``<name>`` in raw and the rename-back would fail."""
     out = []
     with rawstore.connect(db=board) as conn:
         _attach(conn, source, read_only=False)
@@ -104,10 +121,8 @@ def reverse(board: str, source: str = "raw") -> list[dict]:
                 dst_cols = _cols(conn, "src", legacy)
                 if not dst_cols or not _cols(conn, board_cat, t):
                     continue
-                cols = ", ".join(f'"{c}"' for c in _cols(conn, board_cat, t) if c in dst_cols)
-                conn.execute("BEGIN")
-                conn.execute(f"INSERT OR REPLACE INTO src.{legacy} ({cols}) SELECT {cols} FROM {t}")
-                conn.execute("COMMIT")
+                cols = [c for c in _cols(conn, board_cat, t) if c in dst_cols]
+                _copy(conn, t, f"src.{legacy}", cols, rawstore._has_primary_key(rawstore.MANIFEST[t]))
                 out.append({"table": t, "copied": _count(conn, t)})
         finally:
             conn.execute("DETACH src")

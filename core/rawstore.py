@@ -3623,13 +3623,16 @@ def _refuse_wrong_file(sql: str, db: str) -> None:
 
     A read of a missing table comes back ``[]`` (``query`` is lenient), so once a table moves to its board file
     (``boards/<board>.duckdb``, DECISIONS S9) a call site still sending it to ``raw`` would empty the board without
-    an error. DuckDB names a SELECT's tables itself; a write (which it will not bind without the table) is read as
-    text, string literals left out.
+    an error. DuckDB names the tables itself when it can bind the text (parameters read as NULL); otherwise (writes,
+    ``USING`` joins) a table is a name after FROM, JOIN, INTO, UPDATE or TABLE, comments and literals left out.
+    Covers ``query``, ``execute`` and ``transaction().execute``; a caller's own ``connect()`` handle is not checked.
     """
+    text = re.sub(r"--[^\n]*|/\*.*?\*/", " ", re.sub(r"'(?:[^']|'')*'", "''", sql), flags=re.S)
     try:
-        names = duckdb.get_table_names(sql)
+        names = duckdb.get_table_names(re.sub(r"\?|\$\d+", "NULL", text))
     except duckdb.Error:
-        names = set(re.findall(r"\w+", re.sub(r"'(?:[^']|'')*'", "''", sql)))
+        names = {m.split(".")[-1].strip('"') for m in re.findall(
+            r'(?i)\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+((?:"?\w+"?\.){0,2}"?\w+"?)', text)}
     # Only a board file's side is checked: the older moves (edgar, prices) still read their tables' old raw copies.
     wrong = sorted(f"{n} ({_db_of(n)})" for n in names if n in MANIFEST and n != _SCHEMA_STAMP_TABLE
                    and _db_of(n) != db and (db in BOARD_DBS or _db_of(n) in BOARD_DBS))

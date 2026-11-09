@@ -50,6 +50,22 @@ def test_a_write_sent_to_the_wrong_file_raises(board_table):
 
 
 @pytest.mark.rawstore_schema_from_scratch
+def test_a_column_alias_or_comment_with_a_board_table_name_is_not_a_table(board_table):
+    rawstore.ensure_all_tables()
+    rawstore.query(f"SELECT ticker AS {board_table} FROM security_master WHERE ticker = ? -- {board_table}", ["X"])
+    rawstore.execute(f"DELETE FROM security_master WHERE ticker = ? /* {board_table} */", ["X"])
+    rawstore.query(f"SELECT 1 FROM security_master s JOIN security_master t USING (ticker) WHERE s.ticker = ?", ["X"])
+
+
+@pytest.mark.rawstore_schema_from_scratch
+def test_a_parameterised_or_using_read_sent_to_the_wrong_file_still_raises(board_table):
+    with pytest.raises(rawstore.RawStoreError, match="news"):
+        rawstore.query(f"SELECT v FROM {board_table} WHERE k = ?", ["a"])
+    with pytest.raises(rawstore.RawStoreError, match="news"):
+        rawstore.query(f"SELECT 1 FROM security_master s JOIN main.{board_table} USING (k)")
+
+
+@pytest.mark.rawstore_schema_from_scratch
 def test_the_right_file_still_reads_and_writes(board_table):
     assert rawstore.query(f"SELECT v FROM {board_table}", db="news") == [{"v": "1"}]
     rawstore.execute(f"UPDATE {board_table} SET v = '2'", db="news")
