@@ -192,8 +192,16 @@ class UWOptionList:
         ctx.notes.append("no backfill: UW serves the option chain and the prints for the current session only")
 
     # ── build and check ──
+    def dirty(self, ctx: base.RunContext):
+        """Its session partitions that changed (``tables._reload`` reads them per table)."""
+        from .. import dirty
+        return dirty.keyed(ctx, self, "date")
+
+    def full_rebuild_reason(self, ctx: base.RunContext) -> str | None:
+        return tables.full_rebuild_reason(ctx)
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        return tables.build_tables(con, OWNED)
+        return tables.build_tables(con, OWNED, ctx)
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         as_of = ctx.as_of or self.default_as_of()
