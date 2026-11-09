@@ -403,7 +403,7 @@ def render_asymmetric_growth_hunter_html(result: dict) -> str:
         Data: fundamentals from the Securities and Exchange Commission (SEC) EDGAR filings (annual 10-K) ·
         price, volume, 52-week high and 50-day mean from the stored daily price bars (the prices store, the session in the header) ·
         institutional ownership from SEC Form 13F (reported quarterly, ~45-day filing lag; the newest quarter whose filing
-        deadline has passed), held % = 13F shares ÷ shares outstanding, as on the 13F board (market cap ÷ price where none is stored; above 100% is shown as a check) ·
+        deadline has passed), held % = 13F shares (put on today's share basis by the splits since the quarter, from the prices store) ÷ shares outstanding (market cap ÷ price where none is stored); above 100% is shown as a check ·
         Unusual Whales (UW) options flow is manual-only (rule K3) ·
         no Seeking Alpha confirmation (rule 3).
         The scanner produces candidate lists, not directional signals.
