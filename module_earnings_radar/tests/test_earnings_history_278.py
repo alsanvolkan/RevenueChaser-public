@@ -192,7 +192,8 @@ def _session_events(n, day=date(2026, 10, 8), when="AMC", source="UW"):
     return [{"ticker": f"T{i}", "earnings_date": day, "earnings_time": when, "source": source} for i in range(n)]
 
 
-def test_a_calendar_session_at_the_client_row_cap_is_partial_but_keeps_the_rows(store):
+def test_a_calendar_session_at_the_500_row_limit_is_partial_but_keeps_the_rows(store):
+    # Name kept from before #259: the limit is now the client's paging cap (500 rows x CALENDAR_MAX_PAGES).
     from RevenueChaser.module_earnings_radar.history import UW_CALENDAR_ROW_LIMIT
     _record([_card("AAA")], events=_session_events(UW_CALENDAR_ROW_LIMIT))
     (head,) = _headers()
