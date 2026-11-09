@@ -345,20 +345,20 @@ def finish_request(request_id: int, status: str, note: str | None = None) -> Non
     _transaction(["build_requests"], work)
 
 
-def fail_orphans() -> tuple[int, int]:
+def fail_orphans(*, dead_pids_only: bool = False) -> tuple[int, int]:
     me = os.getpid()
-    now, tail = time.time(), f"builder died; found running by the builder started as pid {me}"
+    now, tail = time.time(), ops._orphan_tail(me, dead_pids_only)
 
     def work():
         runs = sorted((r for r in _fetch("job_runs2", _client().smembers(_key("job_runs2", "running")))
                        if r["status"] == "running" and r["pid"] != me),
                       key=lambda r: (r["started_at"] is not None, r["started_at"] or 0.0))
-        alive = {r["run_id"]: ops._builder_alive(r["pid"]) for r in runs}
+        alive = {r["run_id"]: ops._run_alive(r["pid"], dead_pids_only) for r in runs}
         reqs, checks = [], []
         for req in (r for r in _active() if r["status"] == "running"):
             run = next((r for r in runs if r["dataset"] == req["dataset"]
                         and (r["started_at"] or 0) >= (req["started_at"] or 0)), None)
-            if run is not None and alive[run["run_id"]]:
+            if (run is None and dead_pids_only) or (run is not None and alive[run["run_id"]]):
                 continue
             note = (f"lost: pid {run['pid']} gone" if run is not None else "lost: pid unknown (no run row)")
             note += f" ({tail})"

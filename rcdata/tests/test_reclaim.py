@@ -72,3 +72,43 @@ def test_a_running_request_whose_builder_is_alive_is_left_alone():
     # Once that builder is gone, the next start reclaims it.
     assert ops.fail_orphans() == (1, 1)
     assert _request(rid)["note"].startswith(f"lost: pid {sleeper.pid} gone")
+
+
+# #602: between builder starts (the timer is off), a reader closes what a SIGKILL or an OOM kill left running.
+
+def test_a_request_whose_run_pid_is_gone_is_closed_without_a_builder_start():
+    dead = _dead_pid()
+    rid = _taken_and_started("market_series", "killed-run", dead)
+    assert ops.fail_dead_requests() == (1, 1)
+    req = _request(rid)
+    assert req["status"] == "failed" and req["note"].startswith(f"lost: pid {dead} gone")
+    [run] = [r for r in ops.rows("job_runs2") if r["run_id"] == "killed-run"]
+    assert run["status"] == "failed"
+    assert ops.fail_dead_requests() == (0, 0)                  # idempotent
+
+
+def test_a_request_with_no_run_row_yet_is_left_to_the_builder():
+    rid = ops.enqueue("market_series", None, by="test")
+    ops.next_request()                                     # just taken: its run row may be a moment away
+    assert ops.fail_dead_requests() == (0, 0)
+    assert _request(rid)["status"] == "running"
+
+
+def test_a_request_whose_run_pid_is_alive_is_left_alone_even_without_a_builder_marker():
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        rid = _taken_and_started("market_series", "live-cli-run", sleeper.pid)   # a cli run marks no presence
+        assert ops.fail_dead_requests() == (0, 0)
+        assert _request(rid)["status"] == "running"
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+
+
+def test_the_data_health_page_read_closes_a_request_whose_run_was_killed():
+    """#602: the board's own queue rows (the Stop buttons) come from this read, not from /api/build/queue."""
+    from RevenueChaser.module_settings import report
+    rid = _taken_and_started("market_series", "killed-page-run", _dead_pid())
+    nd = report._collect_newdata()
+    assert all(r["id"] != rid for r in (nd.get("queue") or {}).get("active", []))
+    assert _request(rid)["status"] == "failed"

@@ -2895,6 +2895,11 @@ def _control_view(nd: dict | None, payload: dict) -> dict:
 def _collect_newdata() -> dict:
     """The section's data, read now; an error is a line on the page, never a blank board."""
     from RevenueChaser.module_settings import newdata
+    from RevenueChaser.rcdata import ops
+    try:
+        ops.fail_dead_requests()   # #602: a killed run's request must not show "running" with a Stop button
+    except Exception:  # noqa: BLE001 - housekeeping before the read; the board still renders
+        pass
     try:
         return newdata.collect()
     except Exception as exc:  # noqa: BLE001 - one unreadable ops file must not take the whole board down
