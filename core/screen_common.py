@@ -43,6 +43,7 @@ from RevenueChaser.core import universe as _universe
 from RevenueChaser.core.config import to_float
 from RevenueChaser.core.gics_map import UNCLASSIFIED
 from RevenueChaser.core.scan_quality import DROP_LABELS, count_drops, no_data_payload
+from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 logger = logging.getLogger(__name__)
 
@@ -447,7 +448,7 @@ def run_screen(*, board: str, refreshed_by: str, cfg: Any,
     drops: list[str] = []
     dropped: dict[str, list[str]] = {}      # reason -> tickers, for the funnel (C16)
     stale = stale_names([r.get("ticker") for r in filtered], bars_reference_session())   # S1 (#434 review)
-    with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+    with ThreadPoolExecutor(max_workers=WORKERS, **opens.pool_kwargs()) as ex:
         # S3 (#434 review): D01 is read once per chunk of names, both bases from that read, not per name.
         for i in range(0, len(filtered), BARS_CHUNK):
             chunk = filtered[i:i + BARS_CHUNK]

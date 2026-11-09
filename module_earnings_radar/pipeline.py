@@ -23,6 +23,7 @@ from RevenueChaser.core.reaction_anchor import reaction_anchor, session_closes, 
 from RevenueChaser.module_earnings_radar.models import TradeCard, RuleResult
 from RevenueChaser.module_sector_rotation.engine import get_quadrant_for_ticker
 from RevenueChaser.module_leaps.engine import load_cache as leaps_load_cache
+from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 logger = logging.getLogger(__name__)
 
@@ -453,7 +454,7 @@ class EarningsPipeline:
             scored = [score_one(t) for t in scoring]
         else:
             from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=workers) as ex:
+            with ThreadPoolExecutor(max_workers=workers, **opens.pool_kwargs()) as ex:
                 scored = list(ex.map(score_one, scoring))
         cards = [c for c in scored if c]
         # The workers are done: the OHLC source counts are settled (E5e, #372).

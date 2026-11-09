@@ -3026,8 +3026,17 @@ def _health_panel(payload: dict, nd: dict | None = None) -> str:
     return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
             f'{HEALTH_LIVE_LINK}'
             + (f'<div class="wrap">{errs}</div>' if errs else "")
+            + f'<div class="wrap">{_freshness_part(payload)}</div>'
             + f'<div class="wrap">{catalog}</div>'
             f'<div class="wrap" id="health-more">{moved}{_folded(rest)}</div></div>')
+
+
+def _freshness_part(payload: dict) -> str:
+    """#566: the Board freshness part, read now; the board cards' labels name the boards."""
+    from RevenueChaser.module_settings import freshness_tab
+    labels = {str(c.get("key")): str(c.get("label")) for c in payload.get("boards") or []
+              if isinstance(c, dict) and c.get("key") and c.get("label")}
+    return freshness_tab.section(freshness_tab.collect(), labels)
 
 
 def _folded(rest: str) -> str:

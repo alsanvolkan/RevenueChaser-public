@@ -82,6 +82,9 @@ def record_run(board: str, *, run_id: str, run_at: float, model_version: str | N
         except (ValueError, TypeError):       # not JSON: keep it as given; a bad value never loses the run
             pass
     rows = rows or {}
+    # #566: which build of which source DuckDB this run read, kept with the run (``core/board_sources.py``).
+    from RevenueChaser.core import board_sources
+    context = board_sources.with_sources(board, context, run_at)
     own = set(tables_of(board))
     stray = [t for t in rows if t not in own]
     if stray:
@@ -146,6 +149,13 @@ def last_run(board: str, *, payload: bool = False) -> dict | None:
     with ``payload=True`` also the board payload the Fetch recorded. ``None`` when nothing is recorded."""
     rows = _headers("board = ?", [board], payload=payload, limit=1)
     return rows[0] if rows else None
+
+
+def last_runs() -> list[dict]:
+    """The newest recorded run header of every board, decoded, board by board (#566). ``[]`` when nothing is recorded."""
+    rows = rawstore.query(f"SELECT {_HEADER} FROM result_runs QUALIFY row_number() OVER "
+                          f"(PARTITION BY board ORDER BY run_at DESC, run_id DESC) = 1 ORDER BY board", [], db="history")
+    return [rawstore._decode_row("result_runs", r) for r in rows]
 
 
 def runs(board: str, limit: int = 20, *, payload: bool = False) -> list[dict]:

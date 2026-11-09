@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.core.providers import sec_edgar
+from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 from . import aliases
 from . import concentration
@@ -245,7 +246,7 @@ def fetch_corpus(tickers: list[str] | None = None, no_fetch: bool = False,
     if pairs:
         # Parallel fetch; sec_edgar._throttle is shared and lock-guarded, so the
         # aggregate request rate stays within SEC's 10 req/s regardless of workers.
-        with ThreadPoolExecutor(max_workers=workers) as ex:
+        with ThreadPoolExecutor(max_workers=workers, **opens.pool_kwargs()) as ex:
             futs = {ex.submit(edgar_text.fetch_filing, t, cik, client): (t, cik)
                     for t, cik in pairs}
             for f in as_completed(futs):

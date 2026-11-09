@@ -154,7 +154,10 @@ def open_read(kind: str) -> duckdb.DuckDBPyConnection:
     path = live_path(kind)
     if not path.exists():
         raise ServingFileMissing(f"no {kind} serving file at {path} yet")
-    return duckdb.connect(str(path), read_only=True)
+    con = duckdb.connect(str(path), read_only=True)
+    from . import opens
+    opens.note(kind, path, con, VERSION_TABLE)       # #566: which build this job read; never raises
+    return con
 
 
 def _remove(path: Path) -> None:
@@ -328,6 +331,23 @@ def live_version(kind: str) -> int | None:
     except (ServingFileMissing, duckdb.Error):
         return None
     return int(rows[0][0]) if len(rows) == 1 else None
+
+
+def live_stamp(kind: str) -> dict | None:
+    """``{kind, file, build_id, built_at}`` of the build that is live now, from the file's own version row
+    (``_stamp``); ``None`` when there is no file. ``built_at`` is epoch seconds; ``build_id`` and ``built_at`` are
+    None for a file with no single version row. Not an ``open_read``: looking at a file is not a board reading it
+    (``rcdata/opens.py``, #566)."""
+    from . import opens
+    path = live_path(kind)
+    if not path.exists():
+        return None
+    try:
+        with duckdb.connect(str(path), read_only=True) as con:
+            build_id, built_at = opens.stamp_of(con, VERSION_TABLE, kind)
+    except duckdb.Error:
+        return None
+    return {"kind": kind, "file": path.name, "build_id": build_id, "built_at": built_at}
 
 
 def _copy_live(kind: str, path: Path) -> str:
