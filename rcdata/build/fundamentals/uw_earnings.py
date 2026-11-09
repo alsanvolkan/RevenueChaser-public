@@ -130,6 +130,9 @@ def rows_of(body, cik: str, ticker: str) -> tuple[list[dict], dict[str, int]]:
         if eps is None:
             counts["no_reported_eps"] = counts.get("no_reported_eps", 0) + 1
             continue
+        if end in out:
+            # A restatement: the later row wins, as it always did, and the one it replaced is counted (#519 finding 9).
+            counts["duplicate_period"] = counts.get("duplicate_period", 0) + 1
         out[end] = {"cik": cik, "ticker": ticker, "period_end": end, "report_date": _day(row.get("report_date")),
                     "eps_reported": eps, "eps_estimate": _num(row.get("estimated_eps")),
                     "surprise_pct": _num(row.get("surprise_percentage")), "source": NAME}

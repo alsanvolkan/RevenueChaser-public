@@ -106,3 +106,12 @@ def test_the_segment_encoder_stays_a_pure_encoder():
     from RevenueChaser.core.providers.unusual_whales import _seg, uw_symbol
     assert (_seg("BRK-A"), _seg("afterhours"), _seg("1d"), _seg("a/b")) == ("BRK-A", "afterhours", "1d", "a%2Fb")
     assert (uw_symbol("BRK-A"), uw_symbol("BRK.B"), uw_symbol("AAPL")) == ("BRK.A", "BRK.B", "AAPL")
+
+
+def test_a_restated_quarter_is_counted_not_dropped_silently():
+    """Two quarterly rows sharing a ``fiscal_date_ending`` (a restatement): the later row is kept, as before, and the
+    one it replaced shows in ``counts`` as ``duplicate_period`` (#519 finding 9)."""
+    q = {"report_type": "quarterly", "fiscal_date_ending": "2025-09-30"}
+    rows, counts = uw_earnings.rows_of([{**q, "reported_eps": "3.70"}, {**q, "reported_eps": "3.72"}], CIK, TICKER)
+    assert [r["eps_reported"] for r in rows] == [3.72]
+    assert counts == {"duplicate_period": 1}
