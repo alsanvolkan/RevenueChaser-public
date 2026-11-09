@@ -336,6 +336,28 @@ def is_missing(r: httpx.Response) -> bool:
 
 
 MISSING_RUN = 3     # consecutive open weekdays with no object: a refusal of the whole path, not that many days
+# Open weekdays in stretches one run lets pass after the path handed over a kept object (#507); isolated days do not
+# count. A chosen
+# ceiling, not a measurement: the calendar explains every absent index day 2014 onwards that was measured, so a run
+# that finds more than this is looking at something the calendar and the probe cannot account for, and stops.
+UNEXPLAINED_MAX = 10
+
+
+# Stretches EDGAR keeps no daily index for although it was open, so no calendar explains them: (first, last, name).
+# Measured 2026-11-08 (#507) by asking for every weekday index 2014-01-01..2026-11-04: all 65 weekdays of 2014 Q2 are
+# absent, the only such stretch. A walk writes these days off as it does a closed one; their filings are not in the
+# daily index at all.
+INDEX_GAPS: tuple[tuple[date, date, str], ...] = (
+    (date(2014, 4, 1), date(2014, 6, 30), "2014 Q2"),
+)
+
+
+def index_gap(day: date) -> str | None:
+    """The name of the known gap in EDGAR's daily index that ``day`` falls in, None for a day outside every one."""
+    for first, last, name in INDEX_GAPS:
+        if first <= day <= last:
+            return name
+    return None
 
 
 def open_weekdays(first: date, last: date) -> list[date]:
@@ -346,6 +368,16 @@ def open_weekdays(first: date, last: date) -> list[date]:
             out.append(day)
         day += timedelta(days=1)
     return out
+
+
+def stretch(unexplained: list[date | None], limit: int = MISSING_RUN) -> bool:
+    """Whether the last ``limit`` entries of a walk's unexplained days are contiguous open weekdays. ``None`` marks
+    where a stretch the probe answered for ended, so it can never be part of the next one."""
+    tail = unexplained[-limit:]
+    if len(tail) < limit or None in tail:
+        return False
+    run = sorted(tail)
+    return open_weekdays(run[0], run[-1]) == run
 
 
 class MissingStreak:
@@ -359,11 +391,17 @@ class MissingStreak:
     nothing written off, so the next run asks them again.
 
     ``what`` names the thing in the notes and the error ("daily index"). One streak per walk.
+
+    ``probe`` (#507), when given, asks the path for an object it is known to hold before a stretch stops the run: a
+    real answer says the path is not refusing everything, so the stretch is days the archive truly has no object for
+    -- a closure the calendar does not know yet -- and the walk goes on instead of stopping at the same place every
+    run. Those days are still not written off here. More than ``UNEXPLAINED_MAX`` of them in one run stops it anyway.
     """
 
-    def __init__(self, what: str, limit: int = MISSING_RUN) -> None:
-        self.what, self.limit = what, limit
-        self.unexplained: list[date] = []
+    def __init__(self, what: str, limit: int = MISSING_RUN, probe: Callable[[], bool] | None = None) -> None:
+        self.what, self.limit, self.probe = what, limit, probe
+        self.unexplained: list[date | None] = []      # None: a stretch the probe answered for ends here
+        self.passed = 0                                # days in stretches the probe answered for, this run
 
     @staticmethod
     def closed(day: date) -> bool:
@@ -376,12 +414,26 @@ class MissingStreak:
         if self.closed(day):
             ctx.notes.append(f"{day}: no {self.what}, EDGAR closed")
             return True
+        gap = index_gap(day)
+        if gap is not None:
+            ctx.notes.append(f"{day}: no {self.what}, a gap in EDGAR's daily index ({gap})")
+            return True
         self.unexplained.append(day)
-        run = sorted(self.unexplained[-self.limit:])
-        if len(run) >= self.limit and open_weekdays(run[0], run[-1]) == run:
+        if stretch(self.unexplained, self.limit):
+            run = sorted(self.unexplained[-self.limit:])
+            seen = self.passed + self.limit
+            if self.probe is not None and seen <= UNEXPLAINED_MAX and self.probe():
+                self.passed = seen
+                ctx.notes.append(f"{', '.join(str(d) for d in run)}: no {self.what} for {self.limit} weekdays EDGAR "
+                                 "was open, but the path handed over one it holds, so the walk goes on")
+                self.unexplained.append(None)
+                return False
+            why = (f"{seen} such weekdays in this run, more than the {UNEXPLAINED_MAX} a closure the calendar "
+                   "does not know can explain" if self.probe is not None and seen > UNEXPLAINED_MAX
+                   else "the bucket may be refusing every request")
             raise SourceError(f"sec: no {self.what} for {self.limit} weekdays EDGAR was open "
-                              f"({', '.join(str(d) for d in run)}); the bucket may be refusing every request, so "
-                              "none of them is written off and the next run asks them again")
+                              f"({', '.join(str(d) for d in run)}); {why}, so none of them is written off and the "
+                              "next run asks them again")
         ctx.notes.append(f"{day}: no {self.what} although EDGAR was open")
         return False
 

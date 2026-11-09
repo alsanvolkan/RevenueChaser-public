@@ -167,6 +167,57 @@ def test_a_stretch_of_missing_weekdays_edgar_does_not_keep_closed_stops_the_run(
         assert not edgar.index_none(day).exists(), day
 
 
+def _backfill(first: str, last: str) -> dict:
+    return base.run_request({"dataset": sec13f.NAME, "params": {"mode": "backfill", "from": first, "to": last}},
+                            sleep=lambda s: None)
+
+
+def test_a_stretch_with_no_index_while_a_kept_day_still_answers_is_taken_as_absent(feed, http_mock):
+    """#507: a closure the calendar does not know yet (three open weekdays in a row with no index) used to stop the
+    walk at the same place on every run, because nothing was written off and the walk goes newest first. When the
+    index path still hands over a day it is known to hold, the bucket is answering and the stretch is real absence."""
+    assert _run()["result"] == "changed"                       # keeps the index of 2026-10-27
+    feed.missing |= {f"202609{d:02d}" for d in range(14, 19)}
+    http_mock.requests.clear()
+    row = _backfill("2026-09-14", "2026-09-18")
+    assert row["result"] in ("changed", "unchanged"), row["note"]
+    assert "the walk goes on" in row["note"]
+    for d in range(14, 19):
+        assert edgar.index_none(date(2026, 9, d)).exists(), d
+    assert any(str(c.url).endswith("master.20261027.idx") for c in http_mock.calls("daily-index"))   # the probe
+
+
+def test_a_stretch_with_no_index_stops_when_the_kept_day_does_not_answer_either(feed):
+    """The probe is what tells a stretch of absent days from a bucket refusing everything: when the day it is known
+    to hold answers the same ``AccessDenied``, the run stops and writes none of them off, as before #507."""
+    assert _run()["result"] == "changed"
+    feed.missing |= {f"202609{d:02d}" for d in range(14, 19)} | {"20261027"}
+    row = _backfill("2026-09-14", "2026-09-18")
+    assert row["result"] == "failed" and "no daily index" in row["note"]
+    assert not any(edgar.index_none(date(2026, 9, d)).exists() for d in range(14, 19))
+
+
+def test_more_unexplained_days_than_a_closure_can_explain_stop_the_run_although_the_probe_answers(feed):
+    """A month of open weekdays with no index is no closure by executive order: past ``base.UNEXPLAINED_MAX`` the run
+    stops even though the kept day still answers."""
+    assert _run()["result"] == "changed"
+    feed.missing |= {f"202609{d:02d}" for d in range(1, 31)}
+    row = _backfill("2026-09-01", "2026-09-30")
+    assert row["result"] == "failed" and f"more than the {base.UNEXPLAINED_MAX}" in row["note"], row["note"]
+
+
+def test_the_archives_2014_q2_gap_does_not_stop_a_backfill(feed):
+    """#507: EDGAR has no daily index for any weekday of 2014 Q2 (measured 2026-11-08); without that known gap a
+    newest-first 2014 backfill would stop at 2014-06-30 on every run, with no kept index old enough to matter."""
+    assert _run()["result"] == "changed"                       # a store that keeps an index, as the live one does
+    feed.missing |= {f"201405{d:02d}" for d in range(12, 17)}
+    row = _backfill("2014-05-12", "2014-05-16")
+    assert "handed over one it holds" not in row["note"]        # explained by the gap, not let through by the probe
+    assert row["result"] != "failed", row["note"]
+    for d in range(12, 17):
+        assert edgar.index_none(date(2014, 5, d)).exists(), d
+
+
 def test_a_filing_the_archive_does_not_hold_is_marked_absent(feed, http_mock):
     """The index lists an accession the archive has no object for: the same 403, and the filing is not asked again."""
     acc = "0001000007-26-000001"
