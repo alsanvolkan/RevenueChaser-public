@@ -29,8 +29,7 @@ REPO_PARENT = Path(__file__).resolve().parents[3]
 
 @pytest.fixture
 def market(tmp_path):
-    return {"RC_MARKET_DIR": str(tmp_path / "market"), "RC_MARKET_RAW_DIR": str(tmp_path / "market_raw"),
-            "RC_MARKET_RAW_COPY_DIR": ""}
+    return {"RC_MARKET_DIR": str(tmp_path / "market"), "RC_MARKET_RAW_DIR": str(tmp_path / "market_raw")}
 
 
 @pytest.fixture

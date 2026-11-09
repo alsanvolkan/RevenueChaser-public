@@ -15,10 +15,8 @@ def market_roots(tmp_path, monkeypatch):
     ssd, hdd = tmp_path / "market", tmp_path / "market_raw"
     monkeypatch.setattr(config, "MARKET_DIR", ssd)
     monkeypatch.setattr(config, "MARKET_RAW_DIR", hdd)
-    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", None)
     monkeypatch.setenv("RC_MARKET_DIR", str(ssd))
     monkeypatch.setenv("RC_MARKET_RAW_DIR", str(hdd))
-    monkeypatch.setenv("RC_MARKET_RAW_COPY_DIR", "")
     # The process-wide read log is flushed at exit; a test's counts must not land in the scratch root after the
     # session removed it, so each test counts into its own log, which goes with it.
     from RevenueChaser.rcdata import ops

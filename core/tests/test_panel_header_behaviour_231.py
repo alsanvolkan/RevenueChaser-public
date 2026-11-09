@@ -44,12 +44,12 @@ CASES = {
           return {'data-setting': 'WINDOW', 'data-orig': '60'}[k]; }};
         document.querySelectorAll = function(s){ return s.indexOf('[data-setting]') >= 0 ? [inp] : []; };
         settingsSave(_btn({'data-board': 'module_comovement'}));
-        var named = _btn({'data-name': 'RC-Store-Backup', 'data-act': 'install'});
+        var named = _btn({'data-name': 'RC-Daily-Bars', 'data-act': 'install'});
         autoAct(named);
         """,
         ["/api/settings/board/module_comovement", "/run/universe-stats",
          "/api/settings/board/module_comovement",
-         "/api/automations/RC-Store-Backup/install"]),
+         "/api/automations/RC-Daily-Bars/install"]),
     "module_leaps": (
         "rcWatchToggle(_btn({'data-rc-watch': 'stock', 'data-ticker': 'AAPL'}));"
         "rcWatchToggle(_btn({'data-rc-watch': 'option', 'data-ticker': 'AAPL'}));",

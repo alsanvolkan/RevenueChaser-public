@@ -56,7 +56,7 @@ cover them first:
 
 | Folder | Semantics | May you delete it? |
 |---|---|---|
-| **`.store/`** | **DURABLE.** Everything in `.store` is the source of truth. It holds exactly **three** DuckDB files today (a fourth, `history.duckdb`, appears with the first recorded board run, #278; see its row below) (plus tiny `.rc-proc-<pid>` presence markers and `*.lock` job locks, see Concurrency model): `.store/raw.duckdb` (structured raw + derived data, and the identity/GICS spine incl. `sec_company_*`), `.store/edgar.duckdb` (EDGAR **content**: `edgar_documents` metadata, `edgar_facts`, `edgar_financials`, `chain_*`) and `.store/prices.duckdb` (the daily price tables: `price_bars_daily`, `price_actions`, `price_checks`, and the SPX daily levels `index_levels_daily`). Raw 10-K/20-F HTML is the one file-based durable artifact, under `edgar_docs/{cik}/{accession}.html.gz`. They grow over time and CANNOT be regenerated from the app — losing them loses what only accumulates (the option-flow prints, one Rotation snapshot per date, one Co-movement run per as-of date), the ingested 13F data and the raw filings. | **NO.** Treat like database files. Back them up (`scripts/backup_store.py` covers the DB files, the `edgar_docs/` tree as a zip, and the SPX Gamma tree as an incremental mirror); never `rm -rf`. |
+| **`.store/`** | **DURABLE.** Everything in `.store` is the source of truth. It holds exactly **three** DuckDB files today (a fourth, `history.duckdb`, appears with the first recorded board run, #278; see its row below) (plus tiny `.rc-proc-<pid>` presence markers and `*.lock` job locks, see Concurrency model): `.store/raw.duckdb` (structured raw + derived data, and the identity/GICS spine incl. `sec_company_*`), `.store/edgar.duckdb` (EDGAR **content**: `edgar_documents` metadata, `edgar_facts`, `edgar_financials`, `chain_*`) and `.store/prices.duckdb` (the daily price tables: `price_bars_daily`, `price_actions`, `price_checks`, and the SPX daily levels `index_levels_daily`). Raw 10-K/20-F HTML is the one file-based durable artifact, under `edgar_docs/{cik}/{accession}.html.gz`. They grow over time and CANNOT be regenerated from the app — losing them loses what only accumulates (the option-flow prints, one Rotation snapshot per date, one Co-movement run per as-of date), the ingested 13F data and the raw filings. | **NO.** Treat like database files. Back them up (`rcdata backup`, the weekly job: the DB files, the `edgar_docs/` tree as a zip, the UW raw files and the SPX Gamma tree); never `rm -rf`. |
 | **`.cache/`** | **ARTIFACTS.** Fully regenerable outputs: `*_latest.html` dashboards, `*_latest.json` payloads, PNGs, timestamped archives, and downloaded SEC 13F source zips. | **YES.** Delete any time; re-running the relevant module regenerates everything. |
 
 Rule of thumb: if deleting it loses *history* or *ingested* data → it belongs in
@@ -174,7 +174,7 @@ below).
 
 Each store file carries its own schema stamp (#26 PL7-a): a `store_schema` row, key `schema_version`, equal to `_SCHEMA_VERSION`. The ensure path writes it when the row is absent or older than the code, and leaves a newer stamp as stored; an upgrade of an older stamp is a warning and keeps the old value in the same table (`upgraded_from`, `upgraded_at`), so a restored older file leaves a trace. `rawstore.store_schema_mismatch()` lists those (`db`, `file`, `stored`, `code`); a read logs a warning and does not raise. An existing file with no stamp is stamped with the current version on that first ensure — an already-wrong file would be marked current; `schema_drift()` remains the backstop for a retyped column, a changed key or an extra column. The table is additive (`CREATE TABLE` plus one row) in each of `raw`, `edgar`, `prices` and, when that file exists, `history`. It does not bump `_SCHEMA_VERSION` and does not need a Drive checkpoint. `history.duckdb` is stamped by `ensure_history`, not created just to hold a stamp.
 
-Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `core/store_schema_refuse.py` is `False`. Set `RC_STORE_SCHEMA_REFUSE=1` to refuse a data write when that file's stamp is ahead of this code: newer, or not a version number. A file with no stamp is not refused: the ensure stamps it current. The same check runs before the ensure, so an old checkout never renames, merges or ALTERs a newer file; the ensure then logs one warning and the writes are refused. A refused write is also a skipped `job_runs` row (the run log goes quiet while jobs fail), so read the Server log first. `store_schema_mismatch()` opens the files read-write, so run the gate check with the dashboard stopped or on the fresh backup copy. Readers still only warn. `RC_STORE_SCHEMA_OK=1` is the escape for a deliberate migration: writes are allowed and the warning is suppressed. The exception is `StoreSchemaMismatch`; it names the file, the stored version, the code version and `python -m RevenueChaser.scripts.restore_store --latest <raw|edgar|history|prices>`. It does not run at import. Leave the switch off unless that refusal is intended.
+Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `core/store_schema_refuse.py` is `False`. Set `RC_STORE_SCHEMA_REFUSE=1` to refuse a data write when that file's stamp is ahead of this code: newer, or not a version number. A file with no stamp is not refused: the ensure stamps it current. The same check runs before the ensure, so an old checkout never renames, merges or ALTERs a newer file; the ensure then logs one warning and the writes are refused. A refused write is also a skipped `job_runs` row (the run log goes quiet while jobs fail), so read the Server log first. `store_schema_mismatch()` opens the files read-write, so run the gate check with the dashboard stopped or on the fresh backup copy. Readers still only warn. `RC_STORE_SCHEMA_OK=1` is the escape for a deliberate migration: writes are allowed and the warning is suppressed. The exception is `StoreSchemaMismatch`; it names the file, the stored version, the code version and `python -m RevenueChaser.rcdata restore --step boards --latest <raw|edgar|history|prices> --live`. It does not run at import. Leave the switch off unless that refusal is intended.
 
 ## Storage layout
 
@@ -182,7 +182,7 @@ Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `cor
 |---|---|---|
 | `.store/raw.duckdb` | Structured raw + derived data (tables below) + the identity/GICS spine (`sec_company_*`) | No — durable source of truth (see `.store` semantics above) |
 | `.store/edgar.duckdb` | EDGAR **content**: `edgar_documents` (metadata only), `edgar_facts`, `edgar_financials`, `chain_filings`/`chain_mentions`/`chain_meta` | No — durable |
-| `.store/history.duckdb` | Result history (#287, 2.6-1; schema 11): `result_runs` (one header row per board run: session, run time, quality, model version, params, funnel, payload) and 16 run-keyed row tables (`ag_scores_history`, `earnings_cards_history`, …). Written only by `core/history.record_run`, in one transaction; a session board keeps one whole run per session (`session_snapshot`), a run board keeps every run. Read views `result_sessions` and `<table>_by_session`. Longer backup retention than `raw.duckdb` (5 nightly snapshots, and an off-machine copy; its weekly copy was dropped in #342 — it grew ~6.55 GB/yr against raw's 603 MB). **The file does not exist until the first recorded run** (`rawstore.ensure_history()`); `rawstore.history_db_path()` and `_db_path("history")` resolve it, and the nightly backup and `restore_store` skip it while it is missing. `forecast_ledger` stays in `raw.duckdb`. The 8 change tables live in `raw.duckdb` and ride its backups | No — durable |
+| `.store/history.duckdb` | Result history (#287, 2.6-1; schema 11): `result_runs` (one header row per board run: session, run time, quality, model version, params, funnel, payload) and 16 run-keyed row tables (`ag_scores_history`, `earnings_cards_history`, …). Written only by `core/history.record_run`, in one transaction; a session board keeps one whole run per session (`session_snapshot`), a run board keeps every run. Read views `result_sessions` and `<table>_by_session`. Backed up like every board file by the weekly job (4 copies kept; grows ~6.55 GB/yr against raw's 603 MB). **The file does not exist until the first recorded run** (`rawstore.ensure_history()`); `rawstore.history_db_path()` and `_db_path("history")` resolve it, and the weekly backup skips it while it is missing. `forecast_ledger` stays in `raw.duckdb`. The 8 change tables live in `raw.duckdb` and ride its backups | No — durable |
 | `.store/prices.duckdb` | Daily prices (#156, moved here before the fill, 2026-10-09): `price_bars_daily`, `price_actions` and their watermarks `price_checks` (the shape of `source_checks`, which stays in raw for the identity stamps), and the SPX daily levels `index_levels_daily` (D03, #293, moved here before its writer, 2026-10-10). One file, so a chunk's bars, actions and watermarks commit in one transaction (`rawstore.atomic(..., db="prices")`); about 2.4 GiB after the `period="max"` fill, kept out of raw's weekly copies. Made by the first store call; a store from before has the two tables (and the price rows of `source_checks`; from #293 also the empty `index_levels_daily`) moved over once by that call: copied, checked row by row (`EXCEPT`), then dropped from raw; each table is added to the `migration_manifest` row `price_tables_to_prices_db` in the transaction that removes it from raw. A conflicting row stops that table's move with a warning and overwrites nothing. Two processes starting together may both run the move: what the other one already moved is left alone and logged at INFO. No `_SCHEMA_VERSION` bump (the #72 precedent): an older checkout recreates the empty raw tables and ignores this file. Backup: 2 nightly snapshots, no weekly copy (append-only, so the newest holds every row); off this machine once a week, 1 copy | No — durable |
 | `edgar_docs/{cik}/{accession}.html.gz` | Raw 10-K/20-F HTML (the durable raw-document record; keyed by CIK + accession). Dir via `RC_EDGAR_DOCS_DIR` | No — durable; backed up as a tree |
 | `.cache/sec_13f/*_form13f.zip` | Downloaded SEC 13F source archives, left by the retired dashboard ingest (G9); the builder keeps its own under `raw/sec/13f_sets/` | Yes — nothing reads them |
@@ -1869,147 +1869,56 @@ Two separate things, deliberately not conflated:
   there).
 
 ## Backups, restore and compaction
-- **Backup** — `python -m RevenueChaser.scripts.backup_store` (scheduled daily by
-  `register_tasks.ps1`). Per file: CHECKPOINT (through rawstore, so a busy store
-  is waited out), copy, then verify every table's row count **and** content
-  checksum (`sum(hash(row))`) against the live file; a busy store, a failed copy,
-  a mismatch or a copy that opens but cannot be read (a damaged data block) is retried (bounded). Retains 5 `raw_*`, 2 `edgar_*`, 5 `history_*` (`--keep-history`; only once
-  `history.duckdb` exists, #287), 2 `prices_*` (`--keep-prices`, #156; no weekly copy, because the price tables
-  are append-only and the newest snapshot holds every row: about 4.7 GiB locally at the expected 2.4 GiB file)
-  snapshots and 2 `edgar_docs_*.zip` archives (verified: member CRCs + file count; an unchanged tree reuses the
-  newest archive, see below)
-  under `%LOCALAPPDATA%\RevenueChaser\backups` (override `RAW_STORE_BACKUP_DIR`), plus the weekly
-  `raw_*` copies (the first snapshot of each ISO week, the newest `--keep-weekly` of them, #342), the SPX mirror and an optional off-machine copy, described below. A step that fails
-  is logged as `<step> FAILED: <why>` and the steps after it still run (so one failed step never costs the rest of
-  the night's backup); an unexpected error, such as an `OSError` on a full disk, also prints its type and stack. The
-  run then exits 1, and only the off-machine copy is skipped.
-- **`edgar_docs/` archive (#336)** — the zip carries a fingerprint of the tree it was made from (SHA-256 over every
-  file's relative path, size and modified time, a `stat` walk) in its zip comment. When the tree's fingerprint equals
-  the newest archive's, the run writes no new archive and logs `backup OK: <path> (unchanged, kept)`; the off-machine
-  copy then finds that file already there. The reused archive gets a cheap check each night (it opens as a zip, the
-  fingerprint matches, it lists every document); the member CRCs were checked when it was written, and re-reading it
-  is left to the periodic integrity scan below (#309 L1), which covers the local `edgar_docs_*.zip` files. An archive that is not a readable zip or misses a
-  document is never reused: a new one is zipped and verified, then the damaged one is removed. An archive from before
-  #336 has no fingerprint, so the first run after the change zips the tree once more. A file whose content changed
-  with the same size and the same modified time is not seen. Restore is unchanged: unzip the chosen archive.
-- **The Discord archive is no longer backed up here (October 2026)** — it became its own app and backs
-  itself up. `discord.duckdb` is not snapshotted and the attachment tree is not mirrored. What earlier
-  runs left behind is **not** pruned or deleted by anything here; it stays until the owner removes it by
-  hand (#175), after the new app has taken a verified backup of its own:
-  - in the backup folder: the `discord_*.duckdb` snapshots, the `discord_media_mirror/` folder and any
-    `discord_media_*.zip` archive from before that mirror (#248);
-  - in the off-machine folder (`<RAW_STORE_BACKUP_MIRROR>/RevenueChaser-backup`): the `discord_*.duckdb`
-    copies (up to 3) and its own `discord_media_mirror/`.
-
-  - in the store folder: the old `.store/discord.duckdb` (and its `.wal`). It stays, allowed by
-    `core/tests/test_store_layout.py` as a retired file, until the owner removes it by hand.
-
-  The local leftovers **are still scanned**: the integrity scan below walks every file of the backup
-  folder and re-hashes each one its manifest lists, these included (some two thousand attachment files). So
-  the night after they are deleted by hand, the scan reports every one of them as
-  `integrity scan FAILED: <path>: missing` and the run exits 1. That is expected and happens once: the
-  scan drops a missing file from the manifest when it reports it, and a scan that failed runs again the
-  next night, which then passes. The off-machine leftovers are never scanned, so removing them reports
-  nothing.
-- **Weekly raw copy (#277, bounded by #342)** — the first verified `raw_*` snapshot of each ISO week (by its UTC
-  stamp) is also copied to `weekly/` in the same backup folder. The copy is written under a temporary name,
-  fingerprinted against the snapshot (row count and content checksum per table) and only then renamed, so a failed
-  copy leaves nothing under the final name and the next night tries again. The newest `--keep-weekly` (12) copies
-  stay: the nightly run prunes the older ones out of `weekly/` (after that night's copy, or after a night that added
-  none because the week had one), they leave the #309 manifest before they are deleted, and the prune never looks at
-  the top folder — as the top folder's `_prune` globs never look in here, so `restore_store --latest` keeps reading
-  the top folder only. It was a stopgap for raw tables that keep only the latest value; the change history has landed
-  (#279), so the owner can turn it off (the default is on), about 430 MB a week at today's size. `--no-weekly` or
-  `RAW_STORE_BACKUP_WEEKLY=0` (also `false`, `no`, `off`) stops new weekly `raw_*` copies; the ones already made stay.
-  The `history_*` weekly copies of earlier runs are no longer written (#342: history grows ~6.55 GB/yr) and this prune
-  does not touch them: deleting them is the owner's own step. Log line: `weekly backup OK: <path>`, printed only in
-  the run that writes a week's copy.
-- **SPX Gamma tree (#276)** — the board's data root (`<store>/spx_gamma/`, or `SPX_GAMMA_DATA_ROOT`) is mirrored into
-  `spx_gamma_mirror/` in the same backup folder, incrementally: a `stat` walk decides what changed (same size and
-  an mtime within 2 s means unchanged), each copy goes through `spx_gamma_mirror/.tmp/` and is verified by size and
-  SHA-256 before it replaces the mirror file, a file modified in the last 10 minutes (still being written) waits for
-  the next run, and nothing is ever deleted from the mirror. Two extra rules for this tree. A `.json` file
-  that no longer parses never replaces a mirror copy that does: the run keeps the good copy, prints
-  `spx mirror WARNING: kept the previous copy of <n> file(s) whose source is not valid JSON: <names>` and exits 1
-  after every other step has run; a repaired source replaces the copy on the next run. And every version of the two
-  files that are rewritten in place, `brier.json` and `spx_gamma_gex_history.json`, also gets a dated copy
-  `<name>.<UTC mtime>.json` in `spx_gamma_versions/`, beside the mirror, that is never replaced or pruned and is
-  checked against the verified mirror copy (SHA-256) before it gets its name. Log line:
-  `spx mirror OK: <copied> copied, <unchanged> unchanged, <n> in flight, <total> files`. About 1.3 GB a year (the
-  review's estimate). It sits on the same disk as the live tree, so on its own it protects against deletion and
-  corruption, not against losing the disk; the off-machine copy below copies it and `spx_gamma_versions/` too. #179 retires it when it moves the tree into DuckDB.
-- **Off-machine copy (#275, #349)** — set `RAW_STORE_BACKUP_MIRROR` (in `.env`; empty means off and the step does
-  nothing) to a folder that is not on this machine's disk: a Google Drive for desktop folder or an external disk.
-  After a nightly run in which every step above was verified, `backup_store` copies the newest snapshot of each kind
-  and the two mirror folders (`spx_gamma_mirror/`, `spx_gamma_versions/`) into the
-  sub-folder `RevenueChaser-backup` of that folder, so it may be an existing Drive folder: nothing outside the
-  sub-folder is written, pruned or deleted. The small kind, `history_*`, goes every run and the newest
-  `--keep-mirror` (default 3) stay. The big kinds, `raw_*` and `edgar_*` snapshots and `edgar_docs_*.zip` (about
-  1.9 GB a set on 2026-10-08), go at most every 7 days: only when the newest copy of that kind there is at least
-  `--mirror-big-every-days` calendar days old (default 7; `0` sends them every run), or there is none yet, or the run
-  has `--mirror-big-now`. The newest `--keep-mirror-big` (default 2) stay. The reason is the Drive trash: Drive for
-  desktop moves every pruned copy into it, and it counts toward the Google quota for 30 days, so a daily big set held
-  about 60 GB of a 200 GB account and filled it on 2026-10-08; weekly with 2 kept holds about 12 GB (an estimate). A
-  manual extra run inside the week therefore sends only the small kinds. The `prices_*` snapshot (#156; about 2.4 GiB
-  once filled) goes last, after the mirror folders, so a failed upload of the biggest file costs no other copy (the
-  mirrors cannot be fetched again; the prices can). It goes once every 7 days (`MIRROR_PRICES_EVERY_DAYS`, which
-  `--mirror-big-every-days` does not change; `--mirror-big-now` sends it too) and one copy stays (`KEEP_MIRROR_PRICES`;
-  avo 2026-10-09). The `weekly/` copies stay on this machine
-  (#349); `weekly/` copies that earlier versions sent stay in the second folder until removed by hand. Each file is
-  written under a temporary name, verified there again (row count and content checksum per table for a snapshot;
-  size, SHA-256 and a CRC check for a zip; size and SHA-256 for the files of a mirror) and only then renamed, so a
-  half-written file never has its final name. A file that is already there is not copied again. Pruning follows the
-  verified copy, and nothing is ever deleted from the mirror folders. The folder must exist already (only its last
-  level and `RevenueChaser-backup` are created, so a disk that is not plugged in is an error and never a new folder
-  on this one), and it must not be the backup folder, inside it or around it. Log line:
-  `off-machine copy OK <iso>: <n> copied, <n> already there -> <folder>/RevenueChaser-backup` (with
-  `, big files skipped until <date>` before the arrow in a run that did not send them), or
-  `off-machine copy FAILED <iso>: <why>` with exit 1. The Automations row of `RC-Store-Backup` reads these lines and
-  shows the age of the last good copy; it is red when no folder is set, no copy was made yet, the newest attempt
-  failed, or the last good copy is older than 48 hours. A run in which an earlier step failed makes no copy and logs
-  `off-machine copy FAILED <iso>: skipped, <n> backup step(s) failed earlier tonight`, so the row is red that night.
-- **Manifest and integrity scan (#309 L1)** — every file the run writes into the local backup folder (snapshots,
-  `weekly/` copies, `edgar_docs_*.zip`, every file of the three mirror folders) is recorded when it is copied, with
-  its size and SHA-256, in `.backup_manifest.json` at the top of the backup folder (beside the mirrors, never inside
-  one, so copying a mirror back does not carry it); a pruned file leaves it. As the last backup step, every
-  `--scan-every-days` (default 7; `0` = every run; `--scan-now` forces it) the run re-reads the whole local folder
-  against it: each listed file is hashed again and its size compared. A file the manifest does not have yet (made
-  before #309) is first self-checked (every table of a `.duckdb` read, every member CRC of a zip) and then recorded.
-  The scan is read-only for the backups: nothing is deleted, moved or rewritten; it writes only the manifest and its
-  marker `.integrity_scan.json` (day, result, next due day). A mismatch, a missing file or a failed self-check prints
-  `integrity scan FAILED: <path>: <why>` and the run exits 1 (after every other step, the off-machine copy
-  included); a failed scan is due again the next night. A mismatch or a failed self-check stays red until a scan
-  passes; a missing file is reported once (its entry leaves the manifest). Otherwise the log
-  line is `integrity scan OK: <n> files, <x> GB match the manifest (<n> added to it); next on <date>`, or
-  `integrity scan not due: next on <date>`. A manifest that is unreadable, or missing once a scan has run, prints
-  `backup manifest WARNING` and makes the scan due that night even when it is not: a scan failure on
-  `.backup_manifest.json` (its files are re-adopted with a self-check only, so the run exits 1 once and the next scan
-  passes). A manifest update that fails (a locked file) prints `backup manifest WARNING` (`off-machine manifest
-  WARNING` for the off-machine record) and never fails a backup, mirror or off-machine step. Cost on the PC
-  (2026-10-16): 12.8 GB, 3,382 files, 80 s. The off-machine
-  folder is never hashed or walked: walking the Drive folder for sizes alone took about 20 minutes.
-- **Folder sizes (#309 part 3)** — the run ends with `backup sizes <iso>: local <n> bytes, off-machine <n> bytes`
-  (the off-machine part is left out when no folder is set or no copy was recorded yet) and writes the same facts, with the file
-  counts and the `.duckdb` / `edgar_docs` zip split, to `.backup_sizes.json`. The local size is a `stat` walk of the
-  local backup folder (seconds). The off-machine size is what the job itself wrote and kept there, recorded at copy
-  time in `.offmachine_manifest.json` in the LOCAL backup folder, so neither the job nor the dashboard lists that
-  folder. The hand-made checkpoints folder is not recorded and shows as unknown. The RC-Store-Backup Automations row
-  and the Backups card of Settings / Data health show both sizes, the last self-check and its next due day, and
-  warn when a folder is above `RAW_STORE_BACKUP_WARN_GB` (default 20) locally or
-  `RAW_STORE_BACKUP_MIRROR_WARN_GB` (default 320, 80% of the 400 GB Google quota) off-machine (GB = 10^9 bytes; set
-  either in `.env`).
-- **Restore** — `python -m RevenueChaser.scripts.restore_store --list`, then
-  `... restore_store --latest raw` (or `edgar`, `history`, `prices`, or a snapshot file name). Refuses
-  while a RevenueChaser process uses the store or a leftover `<name>.duckdb.wal` sits next to it (#214: DuckDB
-  would replay it over the snapshot; the message names the file), verifies the snapshot, keeps the
-  current file as `<name>.duckdb.pre-restore`. `edgar_docs/` is restored by
-  unzipping the chosen archive over the folder; the SPX tree by copying
-  `spx_gamma_mirror/` back over the board's data root (stop the dashboard first; an earlier version of
-  `brier.json` or the GEX history comes from `spx_gamma_versions/`). A weekly copy is restored with
-  `... restore_store --from <backup dir>\weekly --latest raw`. From the off-machine folder use the same
-  commands with `--from <RAW_STORE_BACKUP_MIRROR folder>\RevenueChaser-backup` (its newest `raw_*` is at most a week
-  old; a `weekly` sub-folder there holds only what earlier versions sent); its
-  mirror folders are copied back like the local ones.
+- **One weekly job (avo, 8 Nov 2026)** — `python -m RevenueChaser.rcdata backup`, registry row RC-Backup-Weekly
+  (Sunday 03:30, unit `life-rc-backup-weekly` from the home-server repository, 60 min limit). Everything goes to the
+  HDD under `RAW_STORE_BACKUP_DIR` (an empty value is refused: exit 2, nothing written) as `weekly-v2/<step>/`, one
+  folder and one `.manifest.json` per step (the sha256, size and table fingerprints of every copy kept, the step's
+  `last_run`, `last_ok` and `last_error`). Of every file the newest 4 copies stay, the oldest deleted only after
+  the new copy verified. Nothing leaves the machine. Raw downloads and Parquet are not copied: they are fetched
+  again. A step that fails is logged and the other steps still run; the exit code is then 1. A failed copy leaves
+  nothing (no `.tmp`, no manifest entry) and prunes nothing. The steps, in the order they run:
+  - `duckdb` — the DuckDB files the builder writes from Parquet (`serving.KINDS`), each copied from one open handle
+    of the live file, verified by row count and `sum(hash(row))` per table, then renamed. `rcdata backup
+    --only <kind>` takes a copy by hand before a deploy; it is tagged `manual`, kept on its own count (1) and never
+    costs a weekly copy.
+  - `boards` — the board-result DuckDBs the dashboard writes live: `raw`, `edgar`, `history` and `prices` while they
+    exist, and every `<RC_STORE_DIR>/boards/<board>.duckdb` (DECISIONS S6). Each is first `CHECKPOINT`ed through
+    `rawstore`'s peer-lock budget (a dashboard holding the file is waited out), so the `.wal` is in the main file,
+    then copied and verified like a `duckdb` copy; the manifest records the file's `store_schema` version.
+  - `ops` — the operational state, only the tables worth keeping: the watch lists (`watchlist_*` and their changes),
+    `dataset_schedule`, `switch`, `kind_automation`, `dataset_automation`, `job_runs2`. The queue, the read log, the
+    counters and the check rows are left empty in the copy. On `ops.sqlite` SQLite's online backup API, built on
+    local storage and copied once finished; on Redis a filtered snapshot written in one transaction and compared row
+    for row.
+  - `uw-raw` — the raw files no provider serves again: `<MARKET_RAW_DIR>/raw/uw/` (Unusual Whales keeps no history)
+    and the SPX Gamma tree, into `uw-raw/<ISO week>/`. A file unchanged since last week's folder is hard-linked to
+    that copy, so four weeks cost one copy plus the new days; a new or changed file is copied and verified by size
+    and SHA-256; a file modified in the last 10 minutes waits for the next run; a `.json` that is not valid JSON
+    never replaces a copy that is. The newest 4 week folders stay.
+  - `edgar-docs` — the `edgar_docs/` tree as one verified zip (member CRCs and the document count); an unchanged
+    tree (same `stat` fingerprint in the zip comment) keeps the newest zip instead of zipping again.
+- **What shows it** — the Data/Health "Weekly backups" card (each step's last good run and the error of a failed
+  one, the newest copy of every file and how many are kept; amber past 8 days, red past 15) and the Health strip's
+  backup alert; the home-server health board and Grafana read the same manifests per step.
+- **Restore** — `python -m RevenueChaser.rcdata restore --step <step> (--file <name> | --latest [KIND])
+  (--into <dir> | --live)`. Every restore first verifies the copy against its manifest (sha256, size, the recorded
+  table fingerprints or the kept tables' row counts); an unknown or changed copy is refused and nothing is written.
+  `--into <dir>` writes the verified copy there (a `uw-raw` week as the whole folder) and touches nothing live.
+  `--live` puts a `duckdb` or `boards` copy in place of its live file: it refuses while a RevenueChaser process
+  uses that store or a `<name>.duckdb.wal` lies beside the target (#214: DuckDB would replay it on top of the
+  restored file), keeps the current file as `<name>.duckdb.pre-restore`, copies and fingerprints the result.
+  `ops --live` is a step by hand: on Redis `python -m RevenueChaser.rcdata.ops_copy --sqlite <copy>` into an EMPTY
+  namespace (emptying one is a delete and needs avo's word); on `ops.sqlite` copy the file into place with the
+  dashboard stopped. `uw-raw` and `edgar-docs` are restored `--into` a folder and moved (or unzipped) by hand.
+- **The drill** — `python -m RevenueChaser.rcdata restore-check` (unit `life-rc-restore-check`, the first Sunday of
+  the month 02:30) restores the newest `ops` copy and the newest board copy into a scratch folder, verifies both the
+  way a restore does, removes what it wrote and exits 2 on any mismatch; the home-server health board shows it.
+  Once a quarter, by hand (about 30 minutes): restore the newest `boards` and `duckdb` copies `--into` a scratch
+  folder, start a dashboard on it (`RC_STORE_DIR` and `RC_MARKET_DIR` pointed there, another port) and open the
+  Relatedness and Settings boards.
+- **What is not pruned** — the old `market/`, `market-heavy/`, `weekly/`, `spx_gamma_mirror/` and snapshot files
+  the retired nightly jobs left in `RAW_STORE_BACKUP_DIR` (about 55 GB on 8 Nov 2026) are not touched by the weekly
+  job, which only looks inside `weekly-v2/`. Removing them is a deliberate step on avo's word.
 - **Compaction** — DuckDB re-uses freed blocks but never shrinks the file, so
   every `replace_all`/DELETE leaves it larger than its data. With the dashboard
   and scheduled jobs stopped: `python -m RevenueChaser.scripts.compact_store`

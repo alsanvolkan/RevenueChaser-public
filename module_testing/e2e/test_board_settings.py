@@ -406,15 +406,15 @@ class TestAutomationsPanel:
     def test_install_goes_to_the_fake_scheduler_not_the_real_one(self, dashboard, seeded_settings):
         from RevenueChaser.core import automations
 
-        r = dashboard.client.post("/api/automations/RC-Store-Backup/install", headers=_PANEL)
+        r = dashboard.client.post("/api/automations/RC-Daily-Bars/install", headers=_PANEL)
         assert r.status_code == 200, r.text
         assert r.json()["row"]["state"] == "enabled"
         rows = {x["name"]: x["state"] for x in dashboard.get("/api/automations").json()["rows"]}
         # Installing one row flips that row and no other: the point of the test, and what a hard-coded
         # dict said only incidentally.
-        assert rows == {e.name: ("enabled" if e.name == "RC-Store-Backup" else "not_installed")
+        assert rows == {e.name: ("enabled" if e.name == "RC-Daily-Bars" else "not_installed")
                         for e in automations.REGISTRY}
-        r = dashboard.client.post("/api/automations/RC-Store-Backup/remove", headers=_PANEL)
+        r = dashboard.client.post("/api/automations/RC-Daily-Bars/remove", headers=_PANEL)
         assert r.json()["row"]["state"] == "not_installed"
 
     def test_an_unknown_task_is_refused(self, dashboard, seeded_settings):
@@ -424,34 +424,10 @@ class TestAutomationsPanel:
     def test_a_post_without_the_panel_header_is_refused(self, dashboard, seeded_settings):
         # A bare client: dashboard.client sends X-RC-Panel by default (#231), which would
         # make this a different test (the automations route wants its own value).
-        r = httpx.post(dashboard.url + "/api/automations/RC-Store-Backup/install")
+        r = httpx.post(dashboard.url + "/api/automations/RC-Daily-Bars/install")
         assert r.status_code == 403
         states = [x["state"] for x in dashboard.get("/api/automations").json()["rows"]]
         assert "enabled" not in states
-
-    def test_the_backup_row_reports_both_folder_sizes_from_the_log(self, dashboard, seeded_settings):
-        """#309 part 3: the route reads the sizes line the backup job logs; above the local default (20 GB) it warns."""
-        log = dashboard.cache_dir / "logs" / "RC-Store-Backup.log"
-        log.parent.mkdir(parents=True, exist_ok=True)
-        log.write_text("backup sizes 2026-10-16T04:02:00+00:00: local 25000000000 bytes, "
-                       "off-machine 7676019838 bytes\n", encoding="utf-8")
-        try:
-            rows = {x["name"]: x for x in dashboard.get("/api/automations").json()["rows"]}
-            size = rows["RC-Store-Backup"]["backup_size"]
-            assert size["kind"] == "warn"
-            assert size["text"].startswith("local 25.00 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB), "
-                                           "off-machine 7.68 GB")
-            assert rows["RC-Daily-Bars"]["backup_size"] is None
-        finally:
-            log.unlink()
-
-    def test_the_backups_card_is_on_the_page(self, dashboard, seeded_settings):
-        """#309: the Settings page shows the Backups card (its values come from the host's backup folder records,
-        "unknown" without them, so only the card and its rows are asserted here)."""
-        html = dashboard.view(_APP, refresh=True).text
-        assert 'id="backups"' in html and 'id="backup-local"' in html and 'id="backup-scan"' in html
-        card = html[html.index('id="backups"'):].split("</section>")[0]
-        assert "Off-machine checkpoints" in card
 
     def test_board_and_route_make_no_network_calls(self, dashboard, seeded_settings,
                                                    provider_routes, clear_cache):

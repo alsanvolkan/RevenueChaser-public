@@ -22,7 +22,6 @@ def test_data_architecture_names_the_current_schema_version():
 # ``.env.example`` is the one place a new user learns which variables exist. It listed 3 of the 8
 # provider variables (#169a); these tests compare it with the code that owns the names.
 _ENV_EXTRAS = ("RC_SEC_USER_AGENT",
-               "RAW_STORE_BACKUP_WARN_GB", "RAW_STORE_BACKUP_MIRROR_WARN_GB",   # #309 part 3
                "RC_ALLOWED_HOSTS", "RC_IBKR_LOGIN_URL",                         # #159 / the gateway shortcut
                "RC_BUILDER_TIMER_URL",                                          # #527: the builder timer button
                "RC_IBKR_LOGIN_CHECK", "RC_IBKR_HOST", "RC_IBKR_PORT",           # #162
@@ -111,40 +110,19 @@ def test_the_stage_2_table_names_the_file_each_table_lives_in():
     assert not wrong, f"Stage 2 rows whose DB column is not the MANIFEST file (doc, code): {wrong}"
 
 
-def test_data_architecture_names_the_backup_folders_and_switches_the_code_owns():
-    """Backups section: the folder and setting names ``backup_store`` / ``config`` own are written in the doc (#275-#277)."""
-    from RevenueChaser.scripts import backup_store as bs
+def test_data_architecture_names_the_weekly_backup_the_code_owns():
+    """Backups section: the root, the steps, the retention and the restore command, as ``rcdata/backup.py`` has them."""
+    from RevenueChaser.rcdata import backup
     text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
     section = text.split("## Backups, restore and compaction", 1)[1]
-    assert hasattr(config, "RAW_STORE_BACKUP_WEEKLY") and hasattr(config, "RAW_STORE_BACKUP_MIRROR")
-    for name in (bs.SPX_MIRROR_DIRNAME, bs.SPX_VERSIONS_DIRNAME, bs.WEEKLY_DIRNAME,
-                 "RAW_STORE_BACKUP_DIR", "RAW_STORE_BACKUP_WEEKLY", "--no-weekly", "--keep-weekly",
-                 "RAW_STORE_BACKUP_MIRROR", "--keep-mirror", bs.OFFMACHINE_SUBDIR,
-                 "--keep-mirror-big", "--mirror-big-every-days", "--mirror-big-now",
-                 bs.MANIFEST_NAME, bs.OFFMACHINE_MANIFEST_NAME, bs.SCAN_MARKER_NAME, "--scan-every-days",
-                 "--scan-now", "RAW_STORE_BACKUP_WARN_GB", "RAW_STORE_BACKUP_MIRROR_WARN_GB"):
+    assert not hasattr(config, "RAW_STORE_BACKUP_WEEKLY") and not hasattr(config, "RAW_STORE_BACKUP_MIRROR")
+    for name in (f"`{backup.ROOT}/", *backup.STEPS, backup.MANIFEST_NAME, "RAW_STORE_BACKUP_DIR", "RC-Backup-Weekly",
+                 "rcdata restore", "restore-check", "--into", "--live", ".pre-restore", "--only <kind>"):
         assert name in section, f"the Backups section of docs/data_architecture.md does not name {name}"
-
-
-def test_data_architecture_states_the_scan_interval_and_the_size_thresholds_the_code_owns():
-    """#309: the integrity scan's default interval and the two size warnings' defaults, as the code has them."""
-    from RevenueChaser.scripts import backup_store as bs
-    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
-    section = text.split("## Backups, restore and compaction", 1)[1]
-    for name, value in (("--scan-every-days", bs.SCAN_EVERY_DAYS),
-                        ("RAW_STORE_BACKUP_WARN_GB", f"{config.BACKUP_WARN_GB_DEFAULT:g}"),
-                        ("RAW_STORE_BACKUP_MIRROR_WARN_GB", f"{config.BACKUP_MIRROR_WARN_GB_DEFAULT:g}")):
-        assert re.search(rf"`{re.escape(name)}`\s+\(default {value}\b", section), f"the doc does not state {name}'s default"
-
-
-def test_data_architecture_states_the_off_machine_defaults_the_code_owns():
-    """#349: the Backups section says how often the big kinds go to the second folder and how many copies stay."""
-    from RevenueChaser.scripts import backup_store as bs
-    text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
-    section = text.split("## Backups, restore and compaction", 1)[1]
-    assert f"every {bs.MIRROR_BIG_EVERY_DAYS} days" in section
-    assert f"--keep-mirror-big` (default {bs.KEEP_MIRROR_BIG})" in section
-    assert f"--keep-mirror` (default {bs.KEEP_MIRROR})" in section
+    assert f"newest {backup.KEEP} " in section and f"{backup.SETTLE_SECONDS // 60} minutes" in section
+    for table in backup.OPS_BACKUP_TABLES:
+        assert f"`{table}`" in section, table
+    assert "backup_store" not in section and "RAW_STORE_BACKUP_MIRROR" not in section
 
 
 def test_the_spx_tree_row_no_longer_calls_it_external():
@@ -163,7 +141,7 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
         assert phrase not in text, f"docs/data_architecture.md still says {phrase!r}"
     # An hourly row (RC-Build, PR 2) is stated by its minute: "hourly at :07".
     times = {e.name: f"hourly at :{e.time[-2:]}" if e.hourly else e.time for e in automations.REGISTRY}
-    assert times == {"RC-Store-Backup": "04:00", "RC-Relatedness-OffPeak": "12:30",
+    assert times == {"RC-Relatedness-OffPeak": "12:30",
                      "RC-ValueChain-Sync": "13:00", "RC-Daily-Bars": "22:35",
                      "RC-Screeners-Daily": "23:00", "RC-Forecast-Outcomes": "23:45",
                      "RC-Forecast-Baselines": "23:50",
@@ -173,7 +151,7 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
     for stamp in times.values():
         assert stamp in text, f"the registered time {stamp} is not in docs/data_architecture.md"
     ps1 = (_REPO / "register_tasks.ps1").read_text(encoding="utf-8")
-    assert "RC-Store-Backup" in ps1 and "RC-Relatedness-OffPeak" not in ps1 and "RC-ValueChain-Sync" not in ps1
+    assert "RC-Backup-Weekly" in ps1 and "RC-Store-Backup" not in ps1 and "RC-ValueChain-Sync" not in ps1
 
 
 def test_data_health_drill_line_names_the_500_store_read_failed_case():

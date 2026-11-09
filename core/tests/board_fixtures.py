@@ -249,14 +249,13 @@ def _settings(tmp_path, monkeypatch):
                    "note": "provenance"}],
          # An embedded row (not a poll): the browser guard stubs fetch, so only these
          # reach the panel's renderer. Every text field, the log tail included, is hostile.
-         "automations": [{"name": "RC-Store-Backup", "label": "L", "schedule": "s",
+         "automations": [{"name": "RC-Daily-Bars", "label": "L", "schedule": "s",
                           "command": "c", "settings": "t", "log_path": "p",
                           "description": "d", "tables_written": ["t1"], "state": "enabled",
                           "result_kind": "red", "result_text": "r", "last_run": "x",
                           "next_run": "y", "missed_runs": "2", "last_success_age": "a",
                           "log_tail": ["l1", "l2"], "offpeak_gated": True,
-                          "default_install": True,
-                          "offmachine": {"configured": True, "kind": "red", "text": "t"}}]}
+                          "default_install": True}]}
     p["newdata"] = newdata_fixture()
     p["needs"] = needs_fixture()
     hp = hostile(p)

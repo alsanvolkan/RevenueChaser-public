@@ -482,7 +482,7 @@ function autoSummaryHtml(r, live, st, stText, rcls){
     '<span class="auto-next">' + next + '</span>' +
     '</summary>';
 }
-function autoDetailHtml(r, live, btns, tables, tail, off, size){
+function autoDetailHtml(r, live, btns, tables, tail){
   var lines = '<div class="aline"><b>What it does</b>' + rcEsc(r.description) + '</div>' +
     '<div class="aline"><b>Command</b><span class="tbl">' + rcEsc(r.command) + '</span></div>' +
     '<div class="aline"><b>Schedule</b>' + rcEsc(r.schedule) + '</div>' +
@@ -495,8 +495,7 @@ function autoDetailHtml(r, live, btns, tables, tail, off, size){
       ' · missed runs ' + rcEsc(r.missed_runs) +
       ' · last success ' + rcEsc(r.last_success_age) + '</div>';
   }
-  lines += off + size +
-    '<div class="aline"><b>Log file</b><div class="auto-log">' + rcEsc(r.log_path) +
+  lines += '<div class="aline"><b>Log file</b><div class="auto-log">' + rcEsc(r.log_path) +
     (tail ? '\n' + tail : '') + '</div></div>';
   return '<div class="auto-detail">' + (btns ? '<div class="auto-actions">' + btns + '</div>' : '') +
     lines + '</div>';
@@ -515,15 +514,9 @@ function autoRowHtml(r){
   }
   var tail = (r.log_tail || []).map(rcEsc).join('\n');
   var tables = (r.tables_written || []).map(rcEsc).join(', ');
-  var off = r.offmachine ? '<div class="auto-desc ' +
-    (AUTO_RESULT.hasOwnProperty(r.offmachine.kind) ? AUTO_RESULT[r.offmachine.kind] : '') + '">off-machine copy: ' +
-    rcEsc(r.offmachine.text) + '</div>' : '';
-  var size = r.backup_size ? '<div class="auto-desc ' +
-    (AUTO_RESULT.hasOwnProperty(r.backup_size.kind) ? AUTO_RESULT[r.backup_size.kind] : '') + '">backup size: ' +
-    rcEsc(r.backup_size.text) + '</div>' : '';
   return '<details class="auto-item" id="auto-' + rcEsc(r.name) + '">' +
     autoSummaryHtml(r, live, st, stText, rcls) +
-    autoDetailHtml(r, live, btns, tables, tail, off, size) +
+    autoDetailHtml(r, live, btns, tables, tail) +
     '</details>';
 }
 function autoTableHtml(rows, available){
@@ -2044,120 +2037,6 @@ def _size_text(nbytes) -> str:
     return f"{nbytes / 1e9:.2f} GB"
 
 
-def _retention_from_description(description: str) -> str:
-    """"keeps 5 daily raw and 5 daily history snapshots, ..." — the retention clause of the backup job's registry
-    description, cut out of the text itself so the numbers are read here and never retyped in the renderer."""
-    text = str(description or "")
-    start = text.find("keeps ")
-    if start < 0:
-        return ""
-    end = text.find(".", start)
-    return text[start:end + 1 if end >= 0 else len(text)].strip()
-
-
-def _retention_rule(b: dict) -> str:
-    """The retention rule in plain words: the record's own text when it carries one, else the registry
-    description of RC-Store-Backup (``core.automations``, the job's own entry), else "unknown"."""
-    rule = str(b.get("retention") or "").strip()
-    if rule:
-        return rule
-    try:
-        rule = _retention_from_description(automations.entry("RC-Store-Backup").description)
-    except Exception:  # noqa: BLE001 - a registry without the entry says so on the card, never fails the page
-        rule = ""
-    return rule or "unknown: the job's record names no retention rule"
-
-
-def _backups_card(b: dict | None) -> str:
-    """The Backups card (#309, G8, G9): where the backups are (the local folder in full, and the off-machine
-    location the job's own record names), the retention rule, the last integrity self-check in words, what that
-    rule marks expired (a read-only dry run of the LOCAL folder, ``inventory._backups``), and a delete control that
-    is disabled in the markup itself. Nothing here deletes: the local folder is listed read-only and the
-    off-machine copy is never opened. Without that key there is no card; a missing record reads "unknown"."""
-    if not b:
-        return ""
-    esc = _html.escape
-
-    def cell(part: dict) -> str:
-        cls = _BACKUP_STATES.get(part.get("state"), "")
-        return f'<span class="{cls}">{esc(str(part.get("text") or part.get("state") or "unknown"))}</span>'
-
-    loc, off = b.get("local") or {}, b.get("offmachine") or {}
-    cp, scan = b.get("checkpoints") or {}, b.get("scan") or {}
-    expired = b.get("expired") or {}
-    folder = str(b.get("folder") or "").strip() or "unknown"
-    offmachine_at = str(b.get("offmachine_path") or "").strip() or "unknown"
-    checked = scan.get("checked")
-    selfcheck = (f'last checked {scan.get("last_day") or "never"}, '
-                 f'next due {scan.get("next_due") or "the next backup run"}, '
-                 + (f"{_fmt_rows(checked)} files re-read against their hashes" if isinstance(checked, int)
-                    else "no files re-read yet" if not scan.get("last_day")
-                    else "the number of files re-read was not recorded"))
-    # G9 (#124): the totals of the dry run. A scan that could not read the folder carries no counts at all, so the
-    # line reads "unknown" and never a zero it did not measure.
-    exp_n, exp_b = expired.get("count"), expired.get("bytes")
-    if expired.get("state") == "ok" and isinstance(exp_n, int) and isinstance(exp_b, int):
-        expired_text = (f"The retention rule marks {exp_n:,} file{'' if exp_n == 1 else 's'} as expired, "
-                        f"{_size_text(exp_b)} in total. This is a dry run: nothing has been deleted.")
-    else:
-        why = str(expired.get("why") or "").strip()
-        expired_text = (f"unknown: {why}" if why else "unknown: the local backup folder could not be read")
-        expired_text += "; this page makes no claim about expired files."
-    delete_row = (
-        '<dt>Delete</dt><dd id="backup-delete-row">'
-        '<button type="button" class="set-btn" id="backup-delete-expired" disabled '
-        'title="Arming the delete is a separate change: it needs your typed confirmation, a fresh backup and no '
-        'job running.">Delete expired backups</button> '
-        '<span id="backup-delete-note">Disabled: this page only lists what the retention rule marks expired. '
-        "Arming a delete is a separate change and needs your typed confirmation.</span></dd>"
-    )
-    split = ""
-    if loc.get("duckdb_files") is not None or loc.get("docs_zip_files") is not None:
-        split = (f'{esc(_gb(loc.get("duckdb_bytes")))} in {_fmt_rows(loc.get("duckdb_files"))} .duckdb files; '
-                 f'{esc(_gb(loc.get("docs_zip_bytes")))} in {_fmt_rows(loc.get("docs_zip_files"))} edgar_docs zips')
-    limit = lambda part: f'warns above {part.get("limit_gb"):g} GB' if isinstance(part.get("limit_gb"), (int, float)) else ""
-
-    def tile(ident: str, label: str, value: str, note: str, note_id: str = "") -> str:
-        nid = f' id="{note_id}"' if note_id else ""
-        return (f'<div class="btile" id="{ident}"><div class="bt-h">{label}</div><div class="bt-v">{value}</div>'
-                f'<div class="bt-n"{nid}>{note}</div></div>')
-
-    files = lambda part: f' · {_fmt_rows(part.get("files"))} files' if part.get("files") is not None else ""
-    tiles = (
-        '<div class="btiles">'
-        + tile("backup-local", "Local backup folder", f'{cell(loc)}{files(loc)}',
-               f'{split}{"; " if split and limit(loc) else ""}{esc(limit(loc))}')
-        + tile("backup-offmachine", "Off-machine copy", f'{cell(off)}{files(off)}',
-               f'what the job wrote and kept there (its manifest){"; " if limit(off) else ""}{esc(limit(off))}')
-        + tile("backup-checkpoints", "Off-machine checkpoints", cell(cp), "")
-        + tile("backup-scan", "Integrity self-check",
-               f'{cell(scan)} · next {esc(str(scan.get("next_due") or "the next backup run"))}'
-               + (f' · {_fmt_rows(checked)} files' if isinstance(checked, int) else ""),
-               esc(selfcheck), "backup-selfcheck")
-        + "</div>"
-    )
-    recorded = b.get("recorded_at")
-    recorded_text = str(recorded).replace("T", " ").replace("+00:00", " UTC") if recorded else "never"
-    facts = (
-        '<dl class="bkv">'
-        '<dt>Path</dt><dd><code class="bpath" id="backup-folder">'
-        f'{esc(folder)}</code> · off-machine <code class="bpath" id="backup-offmachine-path">{esc(offmachine_at)}'
-        '</code></dd>'
-        f'<dt>Keeping rule</dt><dd id="backup-retention">{esc(_retention_rule(b))}</dd>'
-        f'<dt>Would be deleted</dt><dd id="backup-expired">Dry run: {esc(expired_text)}</dd>'
-        f'{delete_row}'
-        f'<dt>Measured at</dt><dd id="backup-recorded">Sizes recorded {esc(recorded_text)}</dd>'
-        '</dl>'
-    )
-    return ('<section id="backups"><div class="bcard" id="backups-card"><h3>Backups</h3>'
-            f'{tiles}{facts}'
-            '<p class="asof bfoot" id="backups-note">Read from the nightly backup job\'s own records in the local backup '
-            "folder, plus one read-only listing of that folder for the dry run; the off-machine (Drive) copy is never "
-            "read, walked or listed. The self-check re-reads the local folder against the hashes taken when each file "
-            "was copied, every 7 days by default. <span id=\"backup-nodelete\">Nothing on this page deletes or moves a "
-            "backup file: it reads the backup job's own records and shows them.</span></p></div></section>")
-
-
 def _ibkr_login_href(value) -> str | None:
     """The gateway login address to link to, or ``None`` when there is nothing to show.
 
@@ -3133,10 +3012,6 @@ def _health_panel(payload: dict, nd: dict | None = None) -> str:
     cards) and the backups, in that order."""
     model = _needs_model(payload)
     catalog, rest = needs_tab.sections(model)
-    try:
-        backups = _backups_card(payload.get("backups"))
-    except Exception as exc:  # noqa: BLE001 - one broken card is a line, never a blank Health tab
-        backups = f'<p class="warn">The backups card could not be drawn: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
     # One ``#needs`` scope (needs.css) around the head and the Needs parts.
     # #527 step 9 and B4: what needs avo first (the link to the live parts, the reads that failed, the backups, the catalog
     # with its problem groups open), then the parts he looks things up in, then the reference parts folded. The
@@ -3151,7 +3026,7 @@ def _health_panel(payload: dict, nd: dict | None = None) -> str:
     return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
             f'{HEALTH_LIVE_LINK}'
             + (f'<div class="wrap">{errs}</div>' if errs else "")
-            + f'<div class="wrap">{backups}{catalog}</div>'
+            + f'<div class="wrap">{catalog}</div>'
             f'<div class="wrap" id="health-more">{moved}{_folded(rest)}</div></div>')
 
 

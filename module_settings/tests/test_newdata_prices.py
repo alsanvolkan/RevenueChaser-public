@@ -22,7 +22,6 @@ PRICES = ("alpaca/bars", "alpaca/corporate_actions", "sec/cover_shares", "yfinan
 def roots(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "MARKET_DIR", tmp_path / "market")
     monkeypatch.setattr(config, "MARKET_RAW_DIR", tmp_path / "market_raw")
-    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", None)
     monkeypatch.setattr(config, "RAW_STORE_BACKUP_DIR", str(tmp_path / "backups"))
     monkeypatch.setattr(ops, "read_log", ops.ReadLog(process="test"))
     monkeypatch.setattr(calendar, "_now", lambda: NOW)
