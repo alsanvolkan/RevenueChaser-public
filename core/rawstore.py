@@ -3618,6 +3618,26 @@ def _tracked_writes(conn, sql: str, db: str) -> list[str]:
     return named
 
 
+def _refuse_wrong_file(sql: str, db: str) -> None:
+    """Raise when raw ``sql`` names a MANIFEST table that lives in another store file than ``db``.
+
+    A read of a missing table comes back ``[]`` (``query`` is lenient), so once a table moves to its board file
+    (``boards/<board>.duckdb``, DECISIONS S9) a call site still sending it to ``raw`` would empty the board without
+    an error. DuckDB names a SELECT's tables itself; a write (which it will not bind without the table) is read as
+    text, string literals left out.
+    """
+    try:
+        names = duckdb.get_table_names(sql)
+    except duckdb.Error:
+        names = set(re.findall(r"\w+", re.sub(r"'(?:[^']|'')*'", "''", sql)))
+    # Only a board file's side is checked: the older moves (edgar, prices) still read their tables' old raw copies.
+    wrong = sorted(f"{n} ({_db_of(n)})" for n in names if n in MANIFEST and n != _SCHEMA_STAMP_TABLE
+                   and _db_of(n) != db and (db in BOARD_DBS or _db_of(n) in BOARD_DBS))
+    if wrong:
+        raise RawStoreError(f"raw SQL sent to the {db} file names tables that live in another file: "
+                            f"{', '.join(wrong)}. Pass db=<that file>, one query per file (S9: no ATTACH).")
+
+
 class _Fetched:
     """A statement's result, read before the change capture reused its connection (``_Tx.execute``)."""
 
@@ -3987,6 +4007,7 @@ class _Tx:
         return spec
 
     def execute(self, sql: str, params: list | None = None):
+        _refuse_wrong_file(sql, self._db)
         _refuse_history_sql(self._conn, sql)
         tracked = _tracked_writes(self._conn, sql, self._db)
         res = self._conn.execute(sql, params or [])
@@ -4052,6 +4073,7 @@ def atomic(fn, db: str = "raw"):
 
 def execute(sql: str, params: list | None = None, db: str = "raw") -> None:
     """Run a single write statement (DELETE/UPDATE) against a store file."""
+    _refuse_wrong_file(sql, db)
     _auto_ensure(write=True)
     _guard_schema_write(db)
     with connect(db=db) as conn:
@@ -4069,6 +4091,7 @@ def execute(sql: str, params: list | None = None, db: str = "raw") -> None:
 def query(sql: str, params: list | None = None, read_only: bool = True,
           db: str = "raw") -> list[dict]:
     """Run a read query; returns rows as dicts. Safe for raw SQL from callers."""
+    _refuse_wrong_file(sql, db)
     if read_only and not _db_path(db).exists():
         return []
     _auto_ensure(write=not read_only)
@@ -4274,11 +4297,13 @@ def reset_db(include_edgar: bool = True) -> None:
     ``--reset`` must pass it: it points ``DB_PATH`` at ``raw.duckdb.new``, and
     ``edgar_db_path()`` — a sibling of ``DB_PATH`` — is then still the LIVE
     ``edgar.duckdb``, which this used to delete. The same flag guards the sibling
-    ``history.duckdb`` and ``prices.duckdb``.
+    ``history.duckdb``, ``prices.duckdb`` and the board files.
     """
+    boards = list(BOARD_DBS) if include_edgar else []
     targets = [Path(DB_PATH)] + (
-        [edgar_db_path(), history_db_path(), prices_db_path()] if include_edgar else [])
-    for db in (["raw"] + (["edgar", "history", "prices"] if include_edgar else [])):
+        [edgar_db_path(), history_db_path(), prices_db_path()] + [board_db_path(b) for b in boards]
+        if include_edgar else [])
+    for db in (["raw"] + (["edgar", "history", "prices"] + boards if include_edgar else [])):
         if _db_path(db).exists():
             _guard_schema_write(db)   # PL7-b: do not delete a newer file while refusal is on
     for p in targets:
