@@ -20,6 +20,8 @@ change on both sides.
 """
 from __future__ import annotations
 
+from collections import Counter
+
 import threading
 import time
 from datetime import datetime, timezone
@@ -219,10 +221,15 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
             out["rc_builder_timer_on"].append(({}, 1 if state == "on" else 0))
 
     def backups() -> None:
-        for k in newdata._backups(now)["kinds"]:
+        kinds = newdata._backups(now)["kinds"]
+        # a name that two steps share (prices: a builder DuckDB file and a legacy board file) would be one label
+        # twice, and Prometheus keeps one of them at random; such a kind carries its step
+        counts = Counter(k["kind"] for k in kinds)
+        for k in kinds:
             when = _iso_epoch(k.get("newest"))
             if when is not None:
-                out["rc_backup_newest_timestamp_seconds"].append(({"kind": k["kind"]}, when))
+                label = k["kind"] if counts[k["kind"]] == 1 else f"{k['kind']} ({k['step']})"
+                out["rc_backup_newest_timestamp_seconds"].append(({"kind": label}, when))
 
     def switches() -> None:
         for name, view in control.switches_view(control._read_switches(), now).items():
