@@ -12,6 +12,47 @@ import re
 from . import config
 
 
+# ── line-start headings (#400 10-K package WP1) ─────────────────────────────────────────────────────────────
+# The served text breaks a heading over lines ("ITEM\n1A.", "ITEM 4. \n INFORMATION ON THE COMPANY") and splits
+# words ("B usiness", "INFO RMATION"), and an item named inside a sentence ("see “Item 5. Operating ...”") is not a
+# heading. So a heading starts a line, the gaps inside it may hold a new line, and the body ends at the next
+# line-start item heading that is not a quoted reference. Measured on 32 filings of the #400 input checks (9 Nov
+# 2026): main's rule was wrong on about 20, most of them labelled ``ok`` (ITUB 16k of 293k, IH, ALKS, MREO, NBP).
+_LINE_START = {
+    "10-K": re.compile(r"(?im)^[^\S\n]*items?\s{0,3}(1|i)\b(?:\s*(?:and|&|,)\s*2\b)?\s*[.:]?\s*"
+                       rf"(?:[{config.DASH}]+\s*)?(?:(?:description\s+of|our)\s+(?:the\s+)?)?{config.spaced('business')}"),
+    "20-F": re.compile(r"(?im)^[^\S\n]*item\s{0,3}(4)\b\s*[.:]?\s*"
+                       rf"(?:[{config.DASH}]+\s*)?{config.spaced('information')}\s+(?:on|about|of)\s+(?:the\s+)?[\w&.-]+"
+                       r"(?!\s+(?:our\s+)?executive)"),
+}
+_LINE_END = re.compile(r"(?im)^[^\S\n]*item\s{0,3}(1[abc]|[2-9][abc]?|1[0-9])\b")
+_TOC_NEXT = re.compile(r"(?i)item\s*(1a|2|4a|5)\b")
+_PAGE_NO = re.compile(r"[^\n]{0,80}\n[^\S\n]*\d{1,3}[^\S\n]*\n")          # the heading's next line is a page number
+_REF_BEFORE = re.compile(r"(?i)([“‘]|\b(see|in|under|refer to)[^\S\n]*[“\"‘]?)[^\S\n]*$")
+_BODY_MIN = 4_000            # shorter, it is an index block the contents check missed (TIGO, EC)
+
+
+def _is_ref(text: str, m: re.Match) -> bool:
+    before = text[max(0, m.start() - 40):m.start()].rstrip()
+    return bool(_REF_BEFORE.search(before)) or "”" in text[m.start():m.start() + 200].split("\n", 1)[0]
+
+
+def _line_item(text: str, key: str) -> tuple[int, int] | None:
+    """``(body start, body end)`` of the line-start rule, or None when it finds no closed body."""
+    for m in _LINE_START[key].finditer(text):
+        if _TOC_NEXT.search(text[m.end():m.end() + 400]) or _PAGE_NO.match(text, m.end()) or _is_ref(text, m):
+            continue
+        own = m.group(1).lower()
+        end = next((e.start() for e in _LINE_END.finditer(text, m.end() + config.MIN_ITEM_CHARS)
+                    if e.group(1).lower() != own and not _is_ref(text, e)), None)
+        if end is None:
+            return None          # no closing heading: the old rule decides (and labels it overrun)
+        if end - m.start() < _BODY_MIN:
+            continue
+        return m.end(), end
+    return None
+
+
 def slice_item(text: str, form: str = "10-K") -> tuple[str | None, str]:
     """Return ``(item_text, quality)``: ok / short / overrun / missing.
 
@@ -30,6 +71,10 @@ def slice_item(text: str, form: str = "10-K") -> tuple[str | None, str]:
     key = "20-F" if str(form).upper().startswith("20") else "10-K"
     start_re = re.compile(config.START_PATTERNS[key], re.I)
     stop_re = re.compile(config.STOP_PATTERNS[key], re.I)
+
+    line = _line_item(text, key)
+    if line is not None:
+        return text[line[0]:line[1]].strip()[:config.MAX_ITEM_CHARS], "ok"
 
     best: str | None = None
     stopped = False
