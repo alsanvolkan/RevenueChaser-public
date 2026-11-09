@@ -249,7 +249,7 @@ def document_sections(html: str, form: str) -> list[tuple[str, str, str]]:
         return out
     item, quality = splitter.slice_item(text, form)
     item = item or ""
-    out.append(("business", item, CAPPED if len(item) >= cap else quality))
+    out.append(("business", item, CAPPED if len(item) >= cap else splitter.flag(quality, text, item, form)))
     return out
 
 

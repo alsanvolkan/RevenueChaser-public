@@ -69,7 +69,8 @@ def slice_document(ticker: str, cik, filing: dict, html: str, fetched_at: float 
 
     ``fetched_at`` is when the document was downloaded (K6, #383 R1); without it, the time of this slice."""
     url = document_url(cik, filing["accession"], filing["primary_doc"])
-    item, quality = splitter.slice_item(splitter.strip_html(html), filing["form"])
+    text = splitter.strip_html(html)
+    item, quality = splitter.slice_item(text, filing["form"])
     return {
         "ticker": ticker.upper(),
         "cik": str(cik),
@@ -78,7 +79,7 @@ def slice_document(ticker: str, cik, filing: dict, html: str, fetched_at: float 
         "accession": filing["accession"],
         "primary_doc": url,
         "item_text": item or "",
-        "quality": quality,
+        "quality": splitter.flag(quality, text, item, filing["form"]),
         "fetched_at": time.time() if fetched_at is None else float(fetched_at),
     }
 

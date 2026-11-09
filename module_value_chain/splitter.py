@@ -98,6 +98,42 @@ def slice_item(text: str, form: str = "10-K") -> tuple[str | None, str]:
     return best, ("ok" if stopped else "overrun")
 
 
+# ── suspect flags (#400 10-K package WP2) ───────────────────────────────────────────────────────────────────
+# Measured in the 10-K reading report (§8, 8 Nov 2026) on 85 slices, 29 of them wrong: the loose threshold caught
+# 28 with 17 false alarms. avo's decision D (8 Nov): the flags ride in the ``quality`` TEXT, "ok;suspect:S2,S4".
+_SECTION = re.compile(r"(?im)^[^\S\n]*(competition|human\s+capital|employees|available\s+information)\b")
+_TAIL_REF = re.compile(r"(?i)\b(see|refer\s+to|described\s+in)\b[^.!?\n]{0,60}$")
+_START_REF = re.compile(r"(?i)\b(see|in|of)\b[^\S\n]*[“\"‘]?[^\S\n]*items?\b[^\n]*$")
+
+
+def base(quality) -> str | None:
+    """The label without its flags: ``ok;suspect:S4`` -> ``ok``."""
+    return quality.split(";", 1)[0] if isinstance(quality, str) else quality
+
+
+def flag(quality: str, text: str, item: str | None, form: str = "10-K") -> str:
+    """``quality`` with ``;suspect:<signals>`` added when an ``ok`` slice of ``text`` still looks wrong."""
+    if quality != "ok":
+        return quality
+    item, text = item or "", text or ""
+    key = "20-F" if str(form).upper().startswith("20") else "10-K"
+    own = "4" if key == "20-F" else "1"
+    at = text.find(item[:200]) if item else -1
+    s = {
+        "S1": len(item) < 2_000,
+        "S2": len(text) > 150_000 and len(item) < 0.03 * len(text),
+        "S3": key == "10-K" and not _SECTION.search(item),
+        "S4": bool(_TAIL_REF.search(item[-220:].rstrip())),
+        "S5": at > 0 and bool(_START_REF.search(text[max(0, at - 120):at].rstrip())),
+        "S6": any(m.group(1).lower() != own and not _is_ref(item, m) for m in _LINE_END.finditer(item)),
+        "S8": len(item) >= config.MAX_ITEM_CHARS,
+    }
+    on = [k for k, v in s.items() if v]
+    if any(s[k] for k in ("S1", "S4", "S5", "S6", "S8")) or (s["S2"] and s["S3"]):
+        return "ok;suspect:" + ",".join(on)
+    return quality
+
+
 def strip_html(html: str) -> str:
     """Crude HTML -> text (scripts/styles dropped, entities unescaped)."""
     import html as _html

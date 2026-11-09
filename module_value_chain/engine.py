@@ -22,6 +22,7 @@ from . import config
 from . import edgar_text
 from . import mentions as mentions_mod
 from . import precision as precision_mod
+from . import splitter
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def store_slices(rows: list[dict]) -> tuple[int, int]:
         write, kept = [], []
         for r in rows:
             old_q, old_acc = stored.get(r["ticker"], (None, None))
-            if _RANK.get(r.get("quality"), 0) < _RANK.get(old_q, 0):
+            if _RANK.get(splitter.base(r.get("quality")), 0) < _RANK.get(splitter.base(old_q), 0):
                 kept.append((r, old_q, old_acc))
             else:
                 write.append(r)

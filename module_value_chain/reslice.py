@@ -27,7 +27,7 @@ import duckdb
 
 from RevenueChaser.core import config, edgar_docs, job_lock, ledger, rawstore
 
-from . import edgar_text, engine
+from . import edgar_text, engine, splitter
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +42,13 @@ _CONTEXT = 60
 
 def _rank(quality) -> int:
     """``ok`` > ``overrun`` > ``short`` / ``missing`` (the store's keep guard)."""
-    return engine._RANK.get(quality, 0)
+    return engine._RANK.get(splitter.base(quality), 0)
 
 
 def _classify(old_quality, old_text: str, new_quality, new_text: str) -> str:
     old_r, new_r = _rank(old_quality), _rank(new_quality)
     same_text = (old_text or "") == (new_text or "")
-    if same_text and old_quality == "ok" and new_quality == "overrun":
+    if same_text and splitter.base(old_quality) == "ok" and new_quality == "overrun":
         # Same slice, relabelled: not a worse slice, so not "kept".
         return "relabel"
     if new_r > old_r:
@@ -57,7 +57,7 @@ def _classify(old_quality, old_text: str, new_quality, new_text: str) -> str:
         return "kept"
     if same_text:
         return "unchanged"
-    if old_quality == "ok" and new_quality == "ok":
+    if splitter.base(old_quality) == "ok" and splitter.base(new_quality) == "ok":
         return "ok_text_changed"
     return "same_rank_text_changed"
 
