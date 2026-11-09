@@ -68,6 +68,24 @@ def test_each_step_has_its_own_folder_under_the_root(backup_dir):
     assert not (backup_dir / "market").exists()                                  # the old nightly layout
 
 
+def test_each_step_records_its_last_run_and_last_good_run_in_its_manifest(backup_dir, sqlite_ops, monkeypatch):
+    """The Data/Health card reads these: a step that ran and failed shows its error beside its last good run."""
+    _serve()
+    ops.ensure()
+    backup.run_backup(only=["duckdb", "ops"])
+    m = _manifest(backup_dir / "ops")
+    assert m["last_ok"] == m["last_run"] and m.get("last_error") is None
+    first_ok = m["last_ok"]
+    monkeypatch.setattr(backup, "_backup_ops", lambda out, manifest: (_ for _ in ()).throw(
+        backup.BackupFailed("simulated")))
+    with pytest.raises(backup.BackupFailed):
+        backup.run_backup(only=["duckdb", "ops"])
+    m = _manifest(backup_dir / "ops")
+    assert m["last_ok"] == first_ok and m["last_run"] > first_ok and m["last_error"] == "ops: simulated"
+    d = _manifest(backup_dir / "duckdb")
+    assert d["last_ok"] == d["last_run"] and d.get("last_error") is None
+
+
 # ── duckdb: the builder's files, verified against the live file ──────────────────────────────────────────────────
 
 
@@ -282,8 +300,7 @@ def test_an_ops_copy_whose_kept_rows_do_not_match_is_failed_and_leaves_nothing(s
         backup.run_backup(only="ops")
     out = backup_dir / "ops"
     assert not list(out.glob("*.tmp*")) and not list(out.glob("ops_*.sqlite"))
-    manifest = out / backup.MANIFEST_NAME
-    assert not manifest.exists() or "ops_" not in manifest.read_text(encoding="utf-8")
+    assert _manifest(out)["files"] == {} and "rows" in _manifest(out)["last_error"]
 
 
 def test_a_difference_in_a_table_the_backup_empties_is_not_a_failure(sqlite_ops, backup_dir, monkeypatch):
@@ -532,7 +549,7 @@ def test_uw_raw_with_no_source_tree_writes_nothing(backup_dir, tmp_path, monkeyp
     from RevenueChaser.module_spx_gamma import config as spx_config
     monkeypatch.setattr(spx_config, "DATA_ROOT", tmp_path / "nowhere")
     assert backup.run_backup(only="uw-raw")["uw-raw"] is None
-    assert not list((backup_dir / "uw-raw").iterdir())
+    assert [p.name for p in (backup_dir / "uw-raw").iterdir()] == [backup.MANIFEST_NAME]   # the run record only
 
 
 # ── edgar-docs: one verified zip, reused while the tree is unchanged ────────────────────────────────────────────

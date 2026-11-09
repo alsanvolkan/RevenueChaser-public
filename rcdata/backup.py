@@ -681,6 +681,20 @@ def _open_step(step: str) -> tuple[Path, _Manifest]:
     return out, _Manifest(out)
 
 
+def _record(manifest: _Manifest, failed_before: int, failed: list[str]) -> None:
+    """Stamp the step's manifest with this run: ``last_run`` always, ``last_ok`` when every part verified, else
+    ``last_error`` (the Data/Health card reads them)."""
+    now = datetime.now(timezone.utc).isoformat()
+    errors = failed[failed_before:]
+    manifest.data["last_run"] = now
+    if errors:
+        manifest.data["last_error"] = "; ".join(errors)
+    else:
+        manifest.data["last_ok"] = now
+        manifest.data.pop("last_error", None)
+    manifest.save()
+
+
 def run_backup(only=None) -> dict:
     """Run the named steps (every one of them by default); a summary of what was written.
 
@@ -704,22 +718,20 @@ def run_backup(only=None) -> dict:
         for kind in kinds:
             run(kind, lambda kind=kind: _backup_kind(kind, out, manifest, manual=True))
     for step in steps:
+        out, manifest = _open_step(step)
+        before = len(failed)
         if step == STEP_DUCKDB:
-            out, manifest = _open_step(step)
             for kind in serving.KINDS:
                 run(kind, lambda kind=kind: _backup_kind(kind, out, manifest))
         elif step == STEP_BOARDS:
-            out, manifest = _open_step(step)
             run(step, lambda: _backup_boards(out, manifest))
         elif step == STEP_OPS:
-            out, manifest = _open_step(step)
             run(step, lambda: _backup_ops(out, manifest))
         elif step == STEP_UW_RAW:
-            out, manifest = _open_step(step)
             run(step, lambda: _backup_uw_raw(out, manifest))
         elif step == STEP_EDGAR_DOCS:
-            out, manifest = _open_step(step)
             run(step, lambda: _backup_edgar_docs(out, manifest))
+        _record(manifest, before, failed)
     if failed:
         raise BackupFailed("; ".join(failed))
     return summary

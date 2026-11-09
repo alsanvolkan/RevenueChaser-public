@@ -290,10 +290,9 @@ missing or its last build failed (in amber, with the reason).
 **Page-level cards:** the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
 provider for the New York day and the week from Monday, from `provider_calls_daily`, against the day caps of
 `rcdata/caps.py`, and UW's newest `x-uw-*` sample from `uw_remaining`: its daily count, what is left of our own cap
-(computed) and the per-minute window), market-store backups (the newest
-`ops` and `market` copies in the manifest, the 35-day raw copy dated by its newest copied file, the portable SSD
-from a `dataset_check` row of dataset `backup/portable` or "not recorded"; each warns past 35 days or when
-missing), the raw option retention warning (on until `RC_RAW_RETENTION_DAYS` or a `dataset_schedule` row
+(computed) and the per-minute window), weekly backups (the weekly job's manifests under
+`RAW_STORE_BACKUP_DIR/weekly-v2/<step>/`: each step's last good run and the error of a failed one, then the newest
+weekly copy of every file and how many are kept; amber past 8 days, red past 15 days or when there is none), the raw option retention warning (on until `RC_RAW_RETENTION_DAYS` or a `dataset_schedule` row
 `retention_days`, with the days as its cadence, says how long raw option files are kept; zero or a value that is
 not a whole number of days counts as unset, and the builder's retention hook reads the same rule,
 `rcdata/retention.py`), retirement (reads of

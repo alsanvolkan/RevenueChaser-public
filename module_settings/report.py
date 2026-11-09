@@ -2643,22 +2643,36 @@ def _nd_warn(text_html: str, warn) -> str:
     return f'<span class="nd-warn">{text_html} · warn</span>' if warn else text_html
 
 
+def _nd_level(text_html: str, row: dict) -> str:
+    if row.get("alert"):
+        return f'<span class="nd-bad">{text_html} · red</span>'
+    if row.get("warn"):
+        return f'<span class="nd-warn">{text_html} · warn</span>'
+    return text_html
+
+
 def _nd_backups(b: dict) -> str:
-    days = b.get("warn_days")
+    """The weekly backup (avo, 8 Nov 2026): each step's last good run, then the newest copy of every file."""
     rows = []
     if not b.get("configured"):
-        rows.append(_nd_row("Backup folder", '<span class="nd-warn">not set: RAW_STORE_BACKUP_DIR is empty</span>'))
+        rows.append(_nd_row("Backup folder", '<span class="nd-bad">not set: RAW_STORE_BACKUP_DIR is empty</span>'))
+    elif b.get("root"):
+        rows.append(_nd_row("Backup folder", f'<code>{_nd(b.get("root"))}</code>'))
+    for st in b.get("steps") or []:
+        age = st.get("age_days")
+        text = "never ran" if age is None else f"last good run {_nd(age)} d ago · {_nd(st.get('last_ok'))}"
+        if st.get("error"):
+            text += f' · <span class="nd-bad">last run failed: {_nd(st.get("error"))}</span>'
+        rows.append(_nd_row(f"Step {st.get('step')}", _nd_level(text, st)))
     for k in b.get("kinds") or []:
         age = k.get("age_days")
-        rows.append(_nd_row(f"Newest {k.get('kind')} copy",
-                            _nd_warn(("none" if age is None else f"{_nd(age)} d old · {_nd(k.get('newest'))}"),
-                                     k.get("warn"))))
-    rc = b.get("raw_copy") or {}
-    rows.append(_nd_row("35-day raw copy", _nd_warn(_nd(rc.get("text")), rc.get("warn"))))
-    po = b.get("portable") or {}
-    rows.append(_nd_row("Portable SSD", _nd_warn(_nd(po.get("text")), po.get("warn"))))
-    return ('<div class="nd-card" id="nd-backups"><h3>Market-store backups</h3>'
-            f'<div class="nd-sub">Warns past {_nd(days)} days.</div><div class="nd-rows">{"".join(rows)}</div></div>')
+        text = ("none" if age is None else f"{_nd(age)} d old · {_nd(k.get('newest'))}") \
+            + f" · {_nd(k.get('copies'))} kept"
+        rows.append(_nd_row(f"Newest {k.get('kind')} copy", _nd_level(text, k)))
+    return ('<div class="nd-card" id="nd-backups"><h3>Weekly backups</h3>'
+            f'<div class="nd-sub">One job every Sunday 03:30, the newest 4 copies of every file kept on the HDD. '
+            f'Amber past {_nd(b.get("warn_days"))} days, red past {_nd(b.get("alert_days"))}.</div>'
+            f'<div class="nd-rows">{"".join(rows)}</div></div>')
 
 
 def _nd_retirement(rows: list[dict]) -> str:
