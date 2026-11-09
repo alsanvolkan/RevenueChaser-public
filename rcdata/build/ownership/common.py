@@ -303,7 +303,7 @@ def build_keyed(ctx, con: duckdb.DuckDBPyConnection, name: str, table: str, sche
         keys = None
     else:
         held = {k for k, _ in parts}
-        served = {r[0] for r in con.execute(f"SELECT DISTINCT {key} FROM {table}").fetchall()}
+        served = {r[0] for r in con.execute(f"SELECT DISTINCT {key} FROM {table} WHERE {key} IS NOT NULL").fetchall()}
         # A key the file serves whose partition is gone: its rows go (a live file built before the manifest
         # cannot show a gone partition, ``dirty.changes``).
         keys = sorted(set(d.keys) | (served - held))
