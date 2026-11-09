@@ -9,7 +9,6 @@ See docs/classification_design.md Phase 8a.
 """
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections import Counter
@@ -1070,21 +1069,6 @@ def _sector_by_ticker() -> dict[str, str]:
     }
 
 
-def _etf_holding_tickers(entry) -> set[str]:
-    if isinstance(entry, str):
-        try:
-            entry = json.loads(entry)
-        except (TypeError, ValueError):
-            return set()
-    if not isinstance(entry, list):
-        return set()
-    out = set()
-    for h in entry:
-        if isinstance(h, dict) and h.get("ticker"):
-            out.add(str(h["ticker"]).upper())
-    return out
-
-
 def _theme_ticker_sets(run_id: str) -> dict[str, set[str]]:
     """Ticker set per theme node in ``run_id`` (fines + ancestor unions)."""
     themes_rows = run_rows("relatedness_themes", run_id)
@@ -1116,7 +1100,8 @@ def _theme_ticker_sets(run_id: str) -> dict[str, set[str]]:
 def match_theme_etfs(run_id: str) -> dict:
     """Attach top overlapping ROTATION ETFs to each theme node (store-only).
 
-    Candidates are sector/theme ETFs present in ``etf_holdings``. Overlap is
+    Candidates are sector/theme ETFs with holdings in the spine's ``etf_holdings`` (each fund's newest day, whole
+    list: D4 of the 9 Nov 2026 review, E1 #342; ``raw.duckdb.etf_holdings`` is not read). Overlap is
     Jaccard of holdings vs theme ticker set; keep ``|H∩T| >= 2`` and overlap
     ``>= 0.02``, top 3. Always include the modal Morningstar sector's SPDR as rank 1
     when available (even if it failed the thresholds), bumping others.
@@ -1127,14 +1112,8 @@ def match_theme_etfs(run_id: str) -> dict:
         t: info for t, info in ROTATION_ETFS.items()
         if info.get("group") in ("sector", "theme")
     }
-    holdings: dict[str, set[str]] = {}
-    for t in candidates:
-        row = rawstore.get("etf_holdings", t)
-        if not row:
-            continue
-        ht = _etf_holding_tickers(row.get("entry"))
-        if ht:
-            holdings[t] = ht
+    from RevenueChaser.rcdata import read
+    holdings = {t: ht for t, ht in read.etf_holding_tickers(candidates).items() if ht}
 
     theme_sets = _theme_ticker_sets(run_id)
     sector_by_ticker = _sector_by_ticker()

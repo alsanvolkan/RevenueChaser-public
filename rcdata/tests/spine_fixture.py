@@ -561,3 +561,26 @@ def add_ncen_routes(http_mock, quarters=("2026q3", "2026q2", "2026q1", "2025q4")
     zips = {"2026q3": NCEN_Q3, "2026q2": NCEN_Q2, "2026q1": NCEN_Q1, "2025q4": NCEN_Q4}
     for q in quarters:
         http_mock.add(f"{q}_ncen.zip", zips[q])
+
+
+def write_etf_holdings(by_etf: dict, as_of: str = "2026-11-07") -> None:
+    """Add one day of ``etf_holdings`` lines (``{etf: [ticker, ...]}``) to the live ``spine.duckdb``, creating the
+    file and the table when absent: what ``funds/etf_holdings`` serves, for the readers' tests."""
+    import duckdb
+
+    from RevenueChaser.rcdata import serving
+    from RevenueChaser.rcdata.build.spine import etf_holdings as etf
+    path = serving.live_path("spine")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(path))
+    try:
+        con.execute(f"CREATE TABLE IF NOT EXISTS {serving.VERSION_TABLE} (kind TEXT, version INTEGER, "
+                    "built_at DOUBLE, build_id TEXT)")
+        cols = ", ".join(f'"{c}" {t}' for c, t in etf.SERVED)
+        con.execute(f"CREATE TABLE IF NOT EXISTS {etf.TABLE} ({cols})")
+        for fund, tickers in by_etf.items():
+            for i, t in enumerate(tickers):
+                con.execute(f"INSERT INTO {etf.TABLE} VALUES (?, ?, 'test', ?, NULL, ?, ?)",
+                            [as_of, fund, t, f"{t or 'NONE'} NAME", float(len(tickers) - i)])
+    finally:
+        con.close()
