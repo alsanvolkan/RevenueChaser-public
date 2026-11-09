@@ -1022,7 +1022,7 @@ build file like any other — the live file is never opened read-write — so th
 `prev` rollback and the shrink guard all hold unchanged. `serving_schema_version.build_mode` records which base the
 build really got: `"live"` falls back to `"fresh"` when there is no live file yet, or it was built by another serving
 schema version, whose tables are not the ones this code builds — which is what makes a version bump a whole rebuild
-without any dataset asking for one. No dataset asks for `base="live"` yet; every kind is still built whole.
+without any dataset asking for one.
 
 **What is dirty** (`rcdata/build/dirty.py`). A build on the live copy only pays off when it can say which rows to
 reload, so the contract for that answer sits in one module. `full_rebuild_reason(kind)` names the cases where no
@@ -1043,6 +1043,17 @@ data correctness. Which class each served table falls in — cumulative (a day o
 rewrites served rows) or a derivation rebuilt whole — is read from the build code in `docs/dirty_table_classes.md`,
 together with the two dependencies (the spine's symbol map, the prices universe) that make a table dirty with no
 new source day of its own.
+
+**Which kinds build on the live copy** (#446). `fundamentals` (#554) reloads its dirty companies. `prices`
+(`rcdata/build/prices/incremental.py`) rebuilds every served row on or after one day — the first day of each changed
+WRDS year partition or Alpaca bar session, and at the latest the day after the live file's newest session — and,
+per security, a whole history (a name that joined or left the universe, a changed issuer CIK, every Compustat alias)
+or the rows from a changed cover's `as_of`, closed over the issuer. It reads the WRDS history whole only through
+views, for the identity (`_universe`, `_permno_link`, `_gvkey_alias`), and stages from the January of the year before
+that day; a whole build staged forty years of `comp.secd` into TEMP tables (homesrv, 9 Nov 2026: 6 h 12 min, 92 GB
+of spill). `wrds_price_diff` is kept from the last whole build, which the monthly WRDS refresh (a new
+`comp.sec_split` snapshot) forces; so do a change of `wrds/sec_idhist`, of the build code, and `RC_BUILD_WHOLE=1`.
+`ownership`, `options` and `market` are still built whole; `spine` stays whole by design (seconds).
 
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.
