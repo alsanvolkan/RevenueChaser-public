@@ -53,9 +53,10 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
                           "prices.actions"),
     "module_value_chain": ("identity.universe", "fundamentals.segments", "fundamentals.customers"),
     "module_sector_rotation": ("identity.membership", "prices.bars", "market.series"),
-    "module_asymmetric_growth": ("identity.universe", "prices.bars", "fundamentals.statements",
-                                 "fundamentals.companies", "fundamentals.earnings_event", "ownership.beneficial",
-                                 "earnings.next"),
+    # #481: the 13F share's split factor reads ``prices.security_ids`` and ``prices.bars`` (basis "split").
+    "module_asymmetric_growth": ("identity.universe", "prices.bars", "prices.security_ids",
+                                 "fundamentals.statements", "fundamentals.companies", "fundamentals.earnings_event",
+                                 "ownership.beneficial", "earnings.next"),
     "module_swing_potential": ("identity.universe", "prices.bars", "earnings.next"),
     "module_fundamentals": ("identity.universe", "prices.bars", "fundamentals.statements", "fundamentals.companies",
                             "fundamentals.filings", "earnings.next"),
