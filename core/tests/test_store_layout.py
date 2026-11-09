@@ -227,8 +227,8 @@ def test_data_roots_are_redirected_even_when_a_conftest_imports_core_config_firs
 
 
 # ── The market store roots (#206, PR 1 of the new data system) ──────────────────────────────────────────────────
-# Serving files and ops.sqlite on the SSD (RC_MARKET_DIR), raw files and Parquet on the HDD (RC_MARKET_RAW_DIR), and
-# the D3 copy target (RC_MARKET_RAW_COPY_DIR, empty = off). The server sets the first two in its paths file.
+# Serving files and ops.sqlite on the SSD (RC_MARKET_DIR), raw files and Parquet on the HDD (RC_MARKET_RAW_DIR). The
+# server sets both in its paths file.
 _MARKET_ROOTS = {"MARKET_DIR": "RC_MARKET_DIR", "MARKET_RAW_DIR": "RC_MARKET_RAW_DIR"}
 
 
@@ -246,8 +246,7 @@ def test_the_market_roots_come_from_their_env_var_through_root():
         value = values.get(name)
         assert isinstance(value, ast.Call) and getattr(value.func, "id", None) == "_root", f"{name} is not _root(...)"
         assert isinstance(value.args[0], ast.Constant) and value.args[0].value == env_var, name
-    copy_dir = ast.unparse(values["MARKET_RAW_COPY_DIR"])
-    assert "RC_MARKET_RAW_COPY_DIR" in copy_dir and "BASE_DIR" not in copy_dir
+    assert "MARKET_RAW_COPY_DIR" not in values, "the D3 raw copy was retired with the weekly backup (9 Nov 2026)"
 
 
 def test_no_market_path_constant_derives_from_base_dir_outside_root():
@@ -269,18 +268,13 @@ def test_the_market_roots_redirect_under_their_env_vars(tmp_path):
     import sys
 
     env = {k: v for k, v in os.environ.items() if not k.startswith("RC_MARKET")}
-    env.update({"RC_MARKET_DIR": str(tmp_path / "ssd"), "RC_MARKET_RAW_DIR": str(tmp_path / "hdd"),
-                "RC_MARKET_RAW_COPY_DIR": str(tmp_path / "offbox")})
+    env.update({"RC_MARKET_DIR": str(tmp_path / "ssd"), "RC_MARKET_RAW_DIR": str(tmp_path / "hdd")})
     code = ("from RevenueChaser.core import config as c; "
-            "print(c.MARKET_DIR); print(c.MARKET_RAW_DIR); print(c.MARKET_RAW_COPY_DIR)")
+            "print(c.MARKET_DIR); print(c.MARKET_RAW_DIR)")
     r = subprocess.run([sys.executable, "-c", code], cwd=ROOT.parent, env=env, capture_output=True, text=True,
                        timeout=120)
     assert r.returncode == 0, r.stderr[-1500:]
-    assert r.stdout.split() == [str(tmp_path / "ssd"), str(tmp_path / "hdd"), str(tmp_path / "offbox")]
-    env["RC_MARKET_RAW_COPY_DIR"] = ""
-    r = subprocess.run([sys.executable, "-c", code], cwd=ROOT.parent, env=env, capture_output=True, text=True,
-                       timeout=120)
-    assert r.stdout.split()[2] == "None", "an empty RC_MARKET_RAW_COPY_DIR must mean off, not a folder"
+    assert r.stdout.split() == [str(tmp_path / "ssd"), str(tmp_path / "hdd")]
 
 
 def test_the_suite_never_points_at_the_repo_local_market_roots(tmp_path):
@@ -292,4 +286,3 @@ def test_the_suite_never_points_at_the_repo_local_market_roots(tmp_path):
     for var in ("RC_MARKET_DIR", "RC_MARKET_RAW_DIR"):
         assert Path(os.environ[var]).parent == config.DATA_DIR.parent, var
     assert config.MARKET_DIR == tmp_path / "market" and config.MARKET_RAW_DIR == tmp_path / "market_raw"
-    assert config.MARKET_RAW_COPY_DIR is None

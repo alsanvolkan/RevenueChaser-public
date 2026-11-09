@@ -47,7 +47,6 @@ def market_roots(tmp_path, monkeypatch):
     ssd, hdd = tmp_path / "market", tmp_path / "market_raw"
     monkeypatch.setattr(config, "MARKET_DIR", ssd)
     monkeypatch.setattr(config, "MARKET_RAW_DIR", hdd)
-    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", None)
     return ssd, hdd
 
 
@@ -56,7 +55,7 @@ def _board(tmp_path, e2e_env, market_roots, *, stored: bool):
         from RevenueChaser.module_spx_gamma.tests import rcdata_fixture
         rcdata_fixture.serve()
     ssd, hdd = market_roots
-    env = {**e2e_env, "RC_MARKET_DIR": str(ssd), "RC_MARKET_RAW_DIR": str(hdd), "RC_MARKET_RAW_COPY_DIR": "",
+    env = {**e2e_env, "RC_MARKET_DIR": str(ssd), "RC_MARKET_RAW_DIR": str(hdd),
            "RC_E2E_NOW": NOW}
     store, cache = tmp_path / ".store", tmp_path / ".cache"
     store.mkdir()

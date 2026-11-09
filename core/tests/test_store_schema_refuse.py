@@ -64,7 +64,7 @@ class TestRefuseWrites:
             rawstore.write_rows("watchlist", [{"ticker": "AAA"}])
         msg = str(ei.value)
         assert "raw.duckdb" in msg and "14" in msg and "13" in msg
-        assert "python -m RevenueChaser.scripts.restore_store --latest raw" in msg
+        assert "python -m RevenueChaser.rcdata restore --step boards --latest raw --live" in msg
         assert str(rawstore.DB_PATH) not in msg
         assert rawstore.count("watchlist") == 0
 
@@ -167,7 +167,7 @@ class TestRefuseWrites:
             rawstore.execute("CREATE TABLE t_probe (id INTEGER)", db="edgar")
         msg = str(ei.value)
         assert "edgar.duckdb" in msg and "14" in msg
-        assert "python -m RevenueChaser.scripts.restore_store --latest edgar" in msg
+        assert "python -m RevenueChaser.rcdata restore --step boards --latest edgar --live" in msg
         assert str(rawstore.edgar_db_path()) not in msg
         with pytest.raises(rawstore.StoreSchemaMismatch):
             with rawstore.transaction(db="edgar"):

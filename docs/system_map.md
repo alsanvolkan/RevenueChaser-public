@@ -19,7 +19,7 @@ stored fact.
 
 | `area:*` key | What it holds | Directories and main modules | Epic |
 |---|---|---|---|
-| `platform-store` | The durable store, its writers, migrations and backups | `.store/` (four DuckDB files), `edgar_docs/`, `core/rawstore.py`, `core/config.py`, `core/prices.py`, `core/quotes.py`, `core/history.py`, `core/automations.py`, `scripts/backup_store.py`, `scripts/restore_store.py`, `scripts/compact_store.py`, `scripts/daily_bars.py`, `scripts/migrate_rawdata_to_duckdb.py` | #49 |
+| `platform-store` | The durable store, its writers, migrations and backups | `.store/` (four DuckDB files), `edgar_docs/`, `core/rawstore.py`, `core/config.py`, `core/prices.py`, `core/quotes.py`, `core/history.py`, `core/automations.py`, `rcdata/backup.py`, `rcdata/restore.py`, `scripts/compact_store.py`, `scripts/daily_bars.py`, `scripts/migrate_rawdata_to_duckdb.py` | #49 |
 | `platform-app` | The dashboard process: tabs, routes, the job queue, Fetch vs Refresh, logs, the launcher | `app/` (`dashboard.py`, `jobs.py`, `runners.py`, `logview.py`, `launcher.py`), `templates/` (the shell, the logs page, and the empty / error / locked pages), `app/static/`, `core/job_control.py`, `core/job_lock.py`, `launch.pyw`, `run_dashboard.bat`, `start.ps1`, `stop.ps1`, `app.sh` | #50 |
 | `providers` | Network clients, and the credential and cost gates in front of them | `core/providers/`, `core/credentials.py`, `core/offpeak.py`, `core/subscription_usage.py`, `scripts/cloud_llm_call.py`, `.env.example`, `docs/openapi.yaml` (the UW endpoint contract) | #51 |
 | `classification` | Which sector, industry, theme and index a ticker carries, and the three boards built on that cut | `module_comovement/`, `module_relatedness/`, `module_value_chain/`, `core/universe.py`, `core/universe_fetch.py`, `core/gics_map.py`, `core/taxonomy.py`, `core/index_registry.py`, `core/index_lists.py` | #55 |
@@ -99,7 +99,7 @@ flowchart LR
         BAR["Daily bars RC-Daily-Bars"]
         OUT["Forecast outcomes RC-Forecast-Outcomes"]
         BAS["Forecast baselines RC-Forecast-Baselines"]
-        BAK["Backup RC-Store-Backup"]
+        BAK["Backup RC-Backup-Weekly"]
     end
 
     subgraph stores["Stores (.store/, durable)"]
@@ -244,9 +244,8 @@ Line numbers are this worktree's.
   to describe it (the Settings knobs, the board's source table), so this is the price of
   a per-board registry in `core/` and it is why a new board touches `core/`. **Not worth
   its own issue.**
-- `scripts/backup_store.py:886` imports `module_spx_gamma.config` for the SPX tree's
-  path. Small; fold it into whichever change next touches the backup — **not worth its
-  own issue**.
+- `rcdata/backup.py` imports `module_spx_gamma.config` for the SPX tree's path (the
+  `uw-raw` step). Small — **not worth its own issue**.
 - `core/vendor_data.py:36` imports `core.ownership` (both are writers, different areas:
   vendor statements vs the ownership snapshot). Core-to-core, so cheaper than the
   above, but the same shape. **Not worth its own issue.**

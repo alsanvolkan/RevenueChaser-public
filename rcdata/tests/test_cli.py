@@ -76,7 +76,7 @@ def cli_env(tmp_path, mock_server):
         "RC_STORE_DIR": str(tmp_path / ".store"), "RC_CACHE_DIR": str(tmp_path / ".cache"),
         "RC_EDGAR_DOCS_DIR": str(tmp_path / "edgar_docs"), "RC_STORE_AUTO_ENSURE": "0",
         "RC_MARKET_DIR": str(tmp_path / "market"), "RC_MARKET_RAW_DIR": str(tmp_path / "market_raw"),
-        "RC_MARKET_RAW_COPY_DIR": "", "RAW_STORE_BACKUP_DIR": str(tmp_path / "backups"),
+        "RAW_STORE_BACKUP_DIR": str(tmp_path / "backups"),
         "RC_TREASURY_BASE": f"{base}/treasury", "RC_CBOE_BASE": f"{base}/cboe", "RC_FRED_BASE": f"{base}/fred",
         "RC_CFTC_BASE": f"{base}/cftc/udgc-27he.json", "RC_FED_BASE": f"{base}/fed", "RC_BLS_BASE": f"{base}/bls",
         "RC_CFTC_SCHEDULE_BASE": f"{base}/cftcschedule", "RC_YAHOO_BASE": f"{base}/yahoo",
@@ -170,9 +170,10 @@ def test_the_backup_cli_writes_a_verified_copy_and_refuses_an_empty_folder(cli_e
     assert r.returncode == 0, r.stderr[-3000:]
     r = _run(cli_env, "RevenueChaser.rcdata", "backup")
     assert r.returncode == 0, r.stderr[-3000:]
-    out = tmp_path / "backups" / "market"
-    assert len(list(out.glob("market_*.duckdb"))) == 1 and len(list(out.glob("ops_*.sqlite"))) == 1
-    assert (out / ".manifest.json").exists()
+    root = tmp_path / "backups" / "weekly-v2"
+    assert len(list((root / "duckdb").glob("market_*.duckdb"))) == 1
+    assert len(list((root / "ops").glob("ops_*.sqlite"))) == 1
+    assert (root / "duckdb" / ".manifest.json").exists() and (root / "ops" / ".manifest.json").exists()
 
     empty = {**cli_env, "RAW_STORE_BACKUP_DIR": ""}
     r = _run(empty, "RevenueChaser.rcdata", "backup")

@@ -2766,7 +2766,7 @@ _PRICE_MOVE_MARKER = "price_tables_to_prices_db"
 
 
 def _fingerprint(conn, select: str) -> tuple[int, int]:
-    """``(row count, sum of row hashes)`` of ``select``: the check ``scripts/backup_store`` uses for a snapshot."""
+    """``(row count, sum of row hashes)`` of ``select``: the check ``rcdata/backup`` uses for a copy."""
     n, h = conn.execute(f"SELECT count(*), coalesce(sum(hash(s)::HUGEINT), 0) FROM ({select}) s").fetchone()
     return int(n), int(h)
 

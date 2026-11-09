@@ -47,8 +47,8 @@ def test_the_health_tab_no_longer_draws_the_live_parts():
     the Health tab once Grafana shows them; one link to the Live tab takes their place. The Data tab keeps its top
     bar, so the switches and the gateway login link are still one tab away."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
-    from RevenueChaser.module_settings.tests.test_report import _BACKUPS, _panel, _payload
-    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS,
+    from RevenueChaser.module_settings.tests.test_report import _panel, _payload
+    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
     assert 'id="sec-queue"' not in health and 'id="health-queue"' not in health

@@ -18,7 +18,7 @@ from RevenueChaser.core import rawstore
 
 REFUSED = {"ok": False, "error": "panel header required: reload this board"}
 _SAFE = {"GET", "HEAD", "OPTIONS"}
-_ARGS = {"ticker": "AAPL", "name": "RC-Store-Backup", "action": "install",
+_ARGS = {"ticker": "AAPL", "name": "RC-Daily-Bars", "action": "install",
          "board": "module_comovement", "job_id": "abc123"}
 
 
@@ -126,5 +126,5 @@ def test_reads_need_no_header(raw):
 def test_automations_keeps_its_own_exact_value_check(raw, monkeypatch):
     """Any non-empty value passes the generic rule; the automations route wants its own."""
     monkeypatch.setattr(A, "apply", lambda *a, **k: pytest.fail("reached the scheduler"))
-    r = raw.post("/api/automations/RC-Store-Backup/install", headers={"X-RC-Panel": "nope"})
+    r = raw.post("/api/automations/RC-Daily-Bars/install", headers={"X-RC-Panel": "nope"})
     assert r.status_code == 403 and r.get_json()["error"] == "panel header required"

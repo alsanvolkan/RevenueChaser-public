@@ -1472,88 +1472,6 @@ def _ibkr_login_state(now: datetime) -> dict | None:
         return None
 
 
-def _gb_text(nbytes: int, limit_gb: float, env: str) -> tuple[str, str]:
-    """``(state, text)``: "warn" when ABOVE ``limit_gb`` (GB = 10^9 bytes), else "ok"."""
-    gb = nbytes / 1e9
-    if gb > limit_gb:
-        return "warn", f"{gb:.2f} GB, above {limit_gb:g} GB ({env})"
-    return "ok", f"{gb:.2f} GB"
-
-
-def _int_or_none(value):
-    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-
-
-def _backups(now: datetime) -> dict:
-    """The Backups card (#309, avo 2026-10-16): the backup job's own records, plus the read-only cleanup dry run.
-
-    Reads ``<backup dir>/.backup_sizes.json`` (both folder sizes, written by the nightly run after the off-machine
-    copy) and ``.integrity_scan.json`` (the last read-only self-check of the local folder). Neither needs a folder
-    walk, and the off-machine (Drive) folder is never touched: walking it took ~20 min (2026-10-16). The one folder
-    read here is the LOCAL backup folder, listed read-only by ``backup_store.expired_backups`` (#124 G9) to say what
-    the retention rule marks expired; nothing is deleted from it. A failure to read is recorded (F4) and the card
-    shows "unknown"; it never fails the page."""
-    from RevenueChaser.core import config
-    from RevenueChaser.scripts import backup_store
-    try:
-        facts = backup_store.backup_facts()
-    except Exception as exc:  # noqa: BLE001 - recorded (F4), the card says unknown
-        _record(None, "_backups", exc)
-        facts = {"folder": None, "sizes": None, "scan": None}
-    sizes, scan = facts.get("sizes") or {}, facts.get("scan") or {}
-
-    local_bytes = _int_or_none(sizes.get("local"))
-    local = {"state": "unknown", "bytes": None, "limit_gb": config.RAW_STORE_BACKUP_WARN_GB,
-             "text": "unknown: no backup run has recorded sizes yet"}
-    if local_bytes is not None:
-        state, text = _gb_text(local_bytes, config.RAW_STORE_BACKUP_WARN_GB, "RAW_STORE_BACKUP_WARN_GB")
-        local.update(state=state, text=text, bytes=local_bytes, files=_int_or_none(sizes.get("local_files")),
-                     duckdb_bytes=_int_or_none(sizes.get("duckdb_bytes")),
-                     duckdb_files=_int_or_none(sizes.get("duckdb_files")),
-                     docs_zip_bytes=_int_or_none(sizes.get("docs_zip_bytes")),
-                     docs_zip_files=_int_or_none(sizes.get("docs_zip_files")))
-
-    off_bytes = _int_or_none(sizes.get("offmachine"))
-    off = {"state": "unknown", "bytes": None, "limit_gb": config.RAW_STORE_BACKUP_MIRROR_WARN_GB,
-           "text": "unknown: no off-machine copy has been recorded yet"}
-    if not str(config.RAW_STORE_BACKUP_MIRROR).strip():
-        off.update(state="not set", text="not set: RAW_STORE_BACKUP_MIRROR is empty, so no copy leaves this machine")
-    elif off_bytes is not None:
-        state, text = _gb_text(off_bytes, config.RAW_STORE_BACKUP_MIRROR_WARN_GB, "RAW_STORE_BACKUP_MIRROR_WARN_GB")
-        off.update(state=state, text=text, bytes=off_bytes, files=_int_or_none(sizes.get("offmachine_files")))
-
-    checkpoints = {"state": "unknown",
-                   "text": "unknown, not recorded: the backup job does not write the checkpoints folder (they are "
-                           "made by hand), and this page never walks the off-machine folder; not in the total above"}
-
-    scan_out = {"state": "unknown", "last_day": None, "failed": None, "checked": None, "next_due": None,
-                "text": "unknown: no integrity scan has run yet"}
-    if scan.get("last_day"):
-        failed = _int_or_none(scan.get("failed")) or 0
-        ok = bool(scan.get("ok")) and failed == 0
-        scan_out.update(state="ok" if ok else "bad", last_day=str(scan.get("last_day")), failed=failed,
-                        checked=_int_or_none(scan.get("checked")),
-                        next_due=str(scan["next_due"]) if scan.get("next_due") else None,
-                        text=(f"OK, {_int_or_none(scan.get('checked')) or 0:,} files match the manifest" if ok
-                              else f"{failed} file{'s do' if failed != 1 else ' does'} not match (see the backup log)"))
-    # #124 G9: what the retention rule marks expired, from one read-only listing of the local folder. A scan that
-    # could not read it keeps the counts None, so the card reads "unknown" and never an empty-looking zero.
-    expired_out = {"state": "unknown", "count": None, "bytes": None,
-                   "why": "the local backup folder could not be read"}
-    try:
-        expired = backup_store.expired_backups()
-    except Exception as exc:  # noqa: BLE001 - recorded (F4), the card says unknown
-        _record(None, "_backups", exc)
-    else:
-        expired_out.update(state=expired.state, count=expired.count, bytes=expired.bytes, why=expired.why)
-    return {"folder": facts.get("folder"), "recorded_at": sizes.get("recorded_at") or None,
-            # G8 (#124): the off-machine location the job itself copies to. A setting read as text; the folder is
-            # never listed, walked or stat-ed from this page.
-            "offmachine_path": str(config.RAW_STORE_BACKUP_MIRROR or "").strip() or None,
-            "local": local, "offmachine": off, "checkpoints": checkpoints, "scan": scan_out,
-            "expired": expired_out}
-
-
 def _provider_health() -> dict | None:
     """The banner's health: ``history.last_run(BOARD)["provider_health"]``. Store-only; None when nothing is recorded."""
     from RevenueChaser.core import history
@@ -2531,7 +2449,6 @@ def _collect(now: datetime) -> dict:
         # #162: the IBKR Gateway login state, read from the login check's record. Never probed here.
         # Named to pair with ``ibkr_login_url`` above it, the shortcut that opens the login screen.
         "ibkr_login_state": _ibkr_login_state(now),
-        "backups": _backups(now),
         "ibkr_login_url": _ibkr_login_url(),
         # S6 (#124): the backstop for a MANIFEST table no dataset claims. Built before the errors
         # list, so a failed read here is reported like any other.

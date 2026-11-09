@@ -290,10 +290,9 @@ missing or its last build failed (in amber, with the reason).
 **Page-level cards:** the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
 provider for the New York day and the week from Monday, from `provider_calls_daily`, against the day caps of
 `rcdata/caps.py`, and UW's newest `x-uw-*` sample from `uw_remaining`: its daily count, what is left of our own cap
-(computed) and the per-minute window), market-store backups (the newest
-`ops` and `market` copies in the manifest, the 35-day raw copy dated by its newest copied file, the portable SSD
-from a `dataset_check` row of dataset `backup/portable` or "not recorded"; each warns past 35 days or when
-missing), the raw option retention warning (on until `RC_RAW_RETENTION_DAYS` or a `dataset_schedule` row
+(computed) and the per-minute window), weekly backups (the weekly job's manifests under
+`RAW_STORE_BACKUP_DIR/weekly-v2/<step>/`: each step's last good run and the error of a failed one, then the newest
+weekly copy of every file and how many are kept; amber past 8 days, red past 15 days or when there is none), the raw option retention warning (on until `RC_RAW_RETENTION_DAYS` or a `dataset_schedule` row
 `retention_days`, with the days as its cadence, says how long raw option files are kept; zero or a value that is
 not a whole number of days counts as unset, and the builder's retention hook reads the same rule,
 `rcdata/retention.py`), retirement (reads of
@@ -598,8 +597,7 @@ it, so without that line its old archives would never be listed. The newest copy
 ### 3.4 Automations panel
 
 `core/automations.py` is the one registry of the scheduled tasks RevenueChaser owns, and the one
-installer. Rows: `RC-Store-Backup` (daily 04:00, `scripts.backup_store --keep 5`),
-`RC-Relatedness-OffPeak` (12:30, `--run --cap 10`, the board's writer, #360), `RC-ValueChain-Sync` (13:00, `--sync-filings`),
+installer. Rows: `RC-Relatedness-OffPeak` (12:30, `--run --cap 10`, the board's writer, #360), `RC-ValueChain-Sync` (13:00, `--sync-filings`),
 `RC-Daily-Bars` (22:35, `scripts.daily_bars --nightly --sec-files`), `RC-Screeners-Daily` (weekdays
 23:00, after `RC-Daily-Bars`, `app.universe_cli`), `RC-Forecast-Outcomes` (daily 23:45, after
 `RC-Daily-Bars`, `scripts.forecast_outcomes --nightly`), `RC-Forecast-Baselines` (daily 23:50, after
