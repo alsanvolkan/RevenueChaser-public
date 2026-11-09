@@ -588,7 +588,8 @@ class UWClient:
                 # the income statement's for the same fiscal date. A YTD row
                 # joined to a quarterly CFO row would make Sloan a lie.
                 "cash_net_income": num(cf, "net_income"),
-                "cash_from_operations": num(cf, "operating_cash_flow"),
+                # UW sends "operating_cashflow" (raw vendor_financials, all 750 rows); the old spelling stays as fallback.
+                "cash_from_operations": num(cf, "operating_cashflow", "operating_cash_flow"),
                 "total_assets": num(bal, "total_assets"),
                 "inventory": num(bal, "inventory"),
                 "receivables": num(bal, "current_net_receivables", "net_receivables"),
