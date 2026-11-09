@@ -329,7 +329,7 @@ def _text(value) -> str | None:
 def _day_frozen(source: str, forecast_date: date) -> bool:
     rows = rawstore.query(
         f"SELECT 1 AS hit FROM {TABLE} WHERE source = ? AND forecast_date = ? AND target_type = ? LIMIT 1",
-        [source, forecast_date, PICK], db="forecast")
+        [source, forecast_date, PICK])
     return bool(rows)
 
 

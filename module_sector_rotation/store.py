@@ -107,7 +107,7 @@ def save_snapshot(snapshots: list, as_of: date = None, benchmark: str = "SPY") -
 def load_snapshot(as_of: date) -> dict | None:
     rows = rawstore.query(
         "SELECT * FROM rotation_snapshots WHERE as_of_date = ? ORDER BY ticker",
-        [as_of.isoformat()], db="sector_rotation")
+        [as_of.isoformat()])
     if not rows:
         return None
     return {
@@ -119,7 +119,7 @@ def load_snapshot(as_of: date) -> dict | None:
 
 
 def list_snapshot_dates() -> list[str]:
-    rows = rawstore.query("SELECT DISTINCT as_of_date AS d FROM rotation_snapshots ORDER BY d", db="sector_rotation")
+    rows = rawstore.query("SELECT DISTINCT as_of_date AS d FROM rotation_snapshots ORDER BY d")
     return [r["d"] for r in rows]
 
 
@@ -127,7 +127,7 @@ def load_range(start: date, end: date) -> dict[str, list[dict]]:
     """Return {as_of_date: [etf dicts]} for every stored snapshot in range."""
     rows = rawstore.query(
         "SELECT * FROM rotation_snapshots WHERE as_of_date >= ? AND as_of_date <= ? ORDER BY as_of_date, ticker",
-        [start.isoformat(), end.isoformat()], db="sector_rotation")
+        [start.isoformat(), end.isoformat()])
     out: dict[str, list[dict]] = {}
     for r in rows:
         out.setdefault(r["as_of_date"], []).append(r)

@@ -12,7 +12,7 @@ from RevenueChaser.module_settings.tests.test_control_view import NOW, control_n
 
 T = NOW.timestamp()
 CG = {101: "0::/system.slice/life-rc-builder.service",
-      202: "0::/system.slice/life-claude-remote-control-b.service/tmux.scope",
+      202: "0::/system.slice/life-claude-rc.service",
       303: "0::/user.slice/user-1000.slice/session-4.scope",
       404: "0::/system.slice/life-rc-store-backup.service"}
 
@@ -48,19 +48,6 @@ def test_the_builder_unit_and_a_claude_session_each_carry_their_two_hour_limit()
     assert got[2]["cls"] == "warn", "past 80 % of its limit"
     alerts = {a["key"]: a for a in v["health"]["alerts"]}
     assert "sec/13dg" in alerts["running"]["label"] and "Claude session" in alerts["running"]["label"]
-
-
-def test_every_remote_control_unit_name_is_a_claude_session():
-    """The homesrv sessions run under life-claude-remote-control-{a,b} (renamed from life-claude-rc-{a,b} on
-    9 Nov 2026); until the rename window both spellings are live, and the name before 28 Oct is gone."""
-    for unit, who in (("life-claude-remote-control-a.service", "Claude session"),
-                      ("life-claude-remote-control-b.service", "Claude session"),
-                      ("life-claude-rc-a.service", "Claude session"), ("life-claude-rc-b.service", "Claude session"),
-                      ("life-claude-rc.service", "unknown")):
-        nd = _nd(_req(1, "sec/13dg", 10))
-        v = control.build(nd, now=NOW, runs_now=lambda: [_run(505, "sec/13dg", 10)],
-                          cgroup=lambda pid: f"0::/system.slice/{unit}", alive=lambda pid: True)
-        assert v["running"][0]["who"] == who, unit
 
 
 def test_an_unknown_starter_and_a_lost_process_say_so():

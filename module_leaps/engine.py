@@ -436,7 +436,7 @@ def _store_prints_rows(prints: list[dict], today: Optional[date] = None, *,
     rows = list(seen.values())
     ids = [r["id"] for r in rows]
     ph = ", ".join(["?"] * len(ids))
-    existing = {r["id"] for r in rawstore.query(f"SELECT id FROM leaps_flow_prints WHERE id IN ({ph})", ids, db="leaps")}
+    existing = {r["id"] for r in rawstore.query(f"SELECT id FROM leaps_flow_prints WHERE id IN ({ph})", ids)}
     new_rows = [r for r in rows if r["id"] not in existing]
     if new_rows:
         session = _print_session(run_at)
@@ -559,7 +559,7 @@ def load_recent_prints(days: int = 5, today: Optional[date] = None) -> list[tupl
     rows = rawstore.query(
         "SELECT ticker, premium, option_type, delta, next_earnings_date, "
         "ask_vol, bid_vol FROM leaps_flow_prints "
-        "WHERE COALESCE(NULLIF(executed_at, ''), discovered_at) >= ?", [since], db="leaps")
+        "WHERE COALESCE(NULLIF(executed_at, ''), discovered_at) >= ?", [since])
     return [(r["ticker"], r["premium"], r["option_type"], r["delta"],
              r["next_earnings_date"], r["ask_vol"], r["bid_vol"]) for r in rows]
 

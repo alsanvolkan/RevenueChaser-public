@@ -57,7 +57,7 @@ def stored(rawstore_tmp_db, monkeypatch):
 
 def _members(run_id):
     return {r["ticker"] for r in rawstore.query(
-        "SELECT ticker FROM relatedness_theme_members WHERE starts_with(theme_id, ?)", [run_id + ":"], db="relatedness")}
+        "SELECT ticker FROM relatedness_theme_members WHERE starts_with(theme_id, ?)", [run_id + ":"])}
 
 
 # ── build_shadow(universe=) ─────────────────────────────────────────────────
@@ -122,7 +122,7 @@ def test_a_bad_selection_is_refused(run_spy, argv):
 def _live_state():
     return (themes.current_run_id(),
             rawstore.query("SELECT ticker, theme_id, theme, level, theme_run_id FROM ticker_themes "
-                           "ORDER BY ALL", db="relatedness"))
+                           "ORDER BY ALL"))
 
 
 def test_build_only_writes_the_shadow_run_and_keeps_the_boards(stored, capsys):

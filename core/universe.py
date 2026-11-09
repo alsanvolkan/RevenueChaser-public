@@ -424,7 +424,7 @@ def current_theme_run(strict: bool = False) -> str | None:
     never breaks a board, so a failed read is None; ``strict=True`` (the Relatedness guards that refuse to
     rebuild or prune the current run) lets the error through instead of reading as "no current run"."""
     try:
-        rows = rawstore.query("SELECT id FROM theme_runs WHERE is_current = 1 LIMIT 1", db="relatedness")
+        rows = rawstore.query("SELECT id FROM theme_runs WHERE is_current = 1 LIMIT 1")
     except Exception:  # noqa: BLE001 - table absent on a fresh store
         if strict:
             raise
@@ -457,7 +457,7 @@ def theme_catalog(run: str | None = None) -> dict[str, dict]:
     try:
         rows = rawstore.query(
             "SELECT theme_id, level, parent_id, label, size FROM relatedness_themes "
-            "WHERE theme_id = ? OR starts_with(theme_id, ?)", [run, f"{run}:"], db="relatedness")
+            "WHERE theme_id = ? OR starts_with(theme_id, ?)", [run, f"{run}:"])
     except Exception:  # noqa: BLE001 - optional control, never fatal
         return {}
     cat = {r["theme_id"]: {"label": (r.get("label") or "").strip(),
@@ -493,7 +493,7 @@ def _theme_ids_by_ticker(catalog: dict[str, dict], run: str | None = None) -> di
     try:
         rows = rawstore.query(
             "SELECT ticker, theme_id FROM relatedness_theme_members "
-            "WHERE theme_id = ? OR starts_with(theme_id, ?)", [run, f"{run}:"], db="relatedness")
+            "WHERE theme_id = ? OR starts_with(theme_id, ?)", [run, f"{run}:"])
     except Exception:  # noqa: BLE001
         return {}
     out: dict[str, set[str]] = {}
@@ -570,7 +570,7 @@ def filter_fields(tickers: list[str] | None = None) -> dict[str, dict]:
     by = {r["ticker"]: r for r in rows}
     try:
         earnings = {r["ticker"]: r["v"] for r in rawstore.query(
-            "SELECT ticker, earnings_date v FROM ticker_scores", db="asymmetric_growth")}
+            "SELECT ticker, earnings_date v FROM ticker_scores")}
     except Exception:  # noqa: BLE001 - table may be absent on a fresh store
         earnings = {}
     wanted = {(t or "").upper() for t in tickers} if tickers is not None else None

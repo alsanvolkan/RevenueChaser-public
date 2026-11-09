@@ -41,7 +41,7 @@ class TestSnapshotPersistence:
     def test_same_day_overwrites(self, rawstore_tmp_db):
         rotation_store.save_snapshot([_snap("XLK")], as_of=date(2026, 8, 14))
         rotation_store.save_snapshot([_snap("XLF", "LAGGING")], as_of=date(2026, 8, 14))
-        rows = rawstore.query("SELECT * FROM rotation_snapshots WHERE as_of_date = '2026-08-14'", db="sector_rotation")
+        rows = rawstore.query("SELECT * FROM rotation_snapshots WHERE as_of_date = '2026-08-14'")
         assert len(rows) == 1
         assert rows[0]["ticker"] == "XLF"
 

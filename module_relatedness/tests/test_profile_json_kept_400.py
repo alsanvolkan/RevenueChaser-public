@@ -40,7 +40,7 @@ def test_a_row_written_by_another_path_keeps_its_json_on_a_plain_resave(rawstore
     """The defect as found: a row carrying profile_json, then the old-style call with no JSON argument."""
     store.save_profile("NVDA", "1045810", ATTRS, "ck", "m")
     rawstore.execute("UPDATE relatedness_profiles SET profile_json = ?, label_source = ? WHERE ticker = 'NVDA'",
-                     ['{"summary": "s"}', '{"summary": "chunk:0"}'], db="relatedness")
+                     ['{"summary": "s"}', '{"summary": "chunk:0"}'])
     store.save_profile("NVDA", "1045810", ATTRS, "ck2", "m", attempts=1)
     assert _json_cols("NVDA") == ({"summary": "s"}, {"summary": "chunk:0"})
 

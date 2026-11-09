@@ -32,7 +32,7 @@ def out_path(provider: str, model: str, partial: bool = False):
 
 def _llm_rows(model: str) -> int:
     try:
-        return int(rawstore.query("SELECT count(*) AS n FROM llm_cache WHERE model = ?", [model], db="relatedness")[0]["n"])
+        return int(rawstore.query("SELECT count(*) AS n FROM llm_cache WHERE model = ?", [model])[0]["n"])
     except Exception:  # noqa: BLE001 - no cache table yet
         return 0
 

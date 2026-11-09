@@ -34,8 +34,7 @@ from importlib import import_module
 
 from RevenueChaser.core.datahealth import Health
 
-DBS = ("raw", "edgar", "prices", "history", "relatedness", "comovement", "asymmetric_growth", "swing_potential",
-       "fundamentals", "sector_rotation", "leaps", "oipd", "forecast")
+DBS = ("raw", "edgar", "prices", "history")
 
 FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
@@ -383,7 +382,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         key="oipd", label="Implied Probability chain",
         tables=("oipd_chain", "oipd_meta"),
-        db="oipd", source=Source.uw, writer=None,
+        db="raw", source=Source.uw, writer=None,
         writer_note="dashboard job POST /run/module_oipd; not an automations.REGISTRY entry",
         freshness=("oipd_meta", "as_of"),
     ),
@@ -402,7 +401,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         key="relatedness", label="Relatedness profiles",
         tables=("relatedness_profiles", "relatedness_scores", "relatedness_attributes", "relatedness_embeddings"),
-        db="relatedness", source=Source.derived, writer="RC-Relatedness-OffPeak",
+        db="raw", source=Source.derived, writer="RC-Relatedness-OffPeak",
         freshness=("relatedness_profiles", "fetched_at"),
     ),
     # The 18 history-file tables. session_date exists on result_runs; it is not the claim until #82/#83.
@@ -505,46 +504,46 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         key="swing_info", label="Swing info cache",
         tables=("swing_info",),
-        db="swing_potential", source=Source.yfinance, writer="RC-Screeners-Daily",
+        db="raw", source=Source.yfinance, writer="RC-Screeners-Daily",
         freshness=("swing_info", "cached_at"),
     ),
     _runlog(
         "ag_scores", "Asymmetric Growth scores", ("ticker_scores",),
-        "asymmetric_growth", Source.derived, "RC-Screeners-Daily",
+        "raw", Source.derived, "RC-Screeners-Daily",
     ),
     _runlog(
         "swing_scores", "Swing scores", ("swing_scores", "swing_gates"),
-        "swing_potential", Source.derived, "RC-Screeners-Daily",
+        "raw", Source.derived, "RC-Screeners-Daily",
     ),
     _runlog(
         "fundamentals_scores", "Fundamentals scores", ("fundamentals_scores", "fundamentals_gates"),
-        "fundamentals", Source.derived, "RC-Screeners-Daily",
+        "raw", Source.derived, "RC-Screeners-Daily",
     ),
     DatasetSpec(
         key="forecast_ledger", label="Forecast ledger",
         tables=("forecast_ledger",),
-        db="forecast", source=Source.derived, writer="RC-Screeners-Daily",
+        db="raw", source=Source.derived, writer="RC-Screeners-Daily",
         freshness=("forecast_ledger", "forecast_date"),
     ),
     _runlog(
         "forecast_outcomes", "Forecast outcomes", ("forecast_outcomes",),
-        "forecast", Source.derived, "RC-Forecast-Outcomes",
+        "raw", Source.derived, "RC-Forecast-Outcomes",
     ),
     _runlog(
         "forecast_baselines", "Forecast baselines", ("forecast_baselines",),
-        "forecast", Source.derived, "RC-Forecast-Baselines",
+        "raw", Source.derived, "RC-Forecast-Baselines",
     ),
     DatasetSpec(
         key="comovement", label="Co-movement runs",
         tables=("comov_runs", "comov_nodes", "comov_members", "comov_lag"),
-        db="comovement", source=Source.derived, writer=None,
+        db="raw", source=Source.derived, writer=None,
         writer_note="dashboard job POST /run/module_comovement; not an automations.REGISTRY entry",
         freshness=("comov_runs", "as_of"),
     ),
     DatasetSpec(
         key="rotation", label="Sector rotation",
         tables=("rotation_snapshots", "rotation_holdings"),
-        db="sector_rotation", source=Source.derived, writer=None,
+        db="raw", source=Source.derived, writer=None,
         writer_note="dashboard job Sector Rotation Fetch (module_sector_rotation/store.py); not a REGISTRY entry",
         freshness=(("rotation_snapshots", "as_of_date"), ("rotation_holdings", "date")),
     ),
@@ -552,14 +551,14 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="themes", label="Fitted themes",
         tables=("relatedness_themes", "relatedness_theme_tags", "relatedness_theme_members",
                 "relatedness_theme_etfs", "theme_runs", "ticker_themes"),
-        db="relatedness", source=Source.derived, writer=None,
+        db="raw", source=Source.derived, writer=None,
         writer_note="module_relatedness/themes.py; not listed on RC-Relatedness-OffPeak",
         freshness=("theme_runs", "session_date"),
     ),
     DatasetSpec(
         key="leaps", label="LEAPS flow",
         tables=("leaps_flow_prints", "leaps_cache"),
-        db="leaps", source=Source.uw, writer=None,
+        db="raw", source=Source.uw, writer=None,
         writer_note="dashboard job POST /run/module_leaps; not an automations.REGISTRY entry",
         freshness=("leaps_flow_prints", "session_date"),
     ),
@@ -644,7 +643,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         key="llm_cache", label="Language-model prompt cache",
         tables=("llm_cache",),
-        db="relatedness", source=Source.unknown, writer="RC-Relatedness-OffPeak",
+        db="raw", source=Source.unknown, writer="RC-Relatedness-OffPeak",
         freshness=("llm_cache", "fetched_at"),
     ),
     DatasetSpec(

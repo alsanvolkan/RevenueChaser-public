@@ -359,7 +359,7 @@ def test_same_day_snapshot_overwrites(rawstore_tmp_db):
 
     rs.save_snapshot([_snap("XLK")], as_of=date(2026, 8, 14))
     rs.save_snapshot([_snap("XLF")], as_of=date(2026, 8, 14))
-    rows = rawstore.query("SELECT ticker FROM rotation_snapshots WHERE as_of_date='2026-08-14'", db="sector_rotation")
+    rows = rawstore.query("SELECT ticker FROM rotation_snapshots WHERE as_of_date='2026-08-14'")
     assert [r["ticker"] for r in rows] == ["XLF"]
 
 

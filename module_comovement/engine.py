@@ -256,7 +256,7 @@ def _persisted_source(chash: str) -> str | None:
     try:
         row = rawstore.query(
             "SELECT prices_through FROM comov_runs WHERE config_hash = ? "
-            "AND null_json IS NOT NULL ORDER BY as_of DESC LIMIT 1", [str(chash)], db="comovement")
+            "AND null_json IS NOT NULL ORDER BY as_of DESC LIMIT 1", [str(chash)])
     except Exception:  # noqa: BLE001 - store predates the column
         return None
     return row[0].get("prices_through") if row else None
@@ -412,7 +412,7 @@ def _persisted_null(chash: str) -> dict[int, float]:
     try:
         row = rawstore.query(
             "SELECT null_json FROM comov_runs WHERE config_hash = ? "
-            "AND null_json IS NOT NULL ORDER BY as_of DESC LIMIT 1", [str(chash)], db="comovement")
+            "AND null_json IS NOT NULL ORDER BY as_of DESC LIMIT 1", [str(chash)])
     except Exception:  # noqa: BLE001 - store predates the column
         return {}
     if not row or not row[0].get("null_json"):
@@ -434,12 +434,12 @@ def _persisted_lag(chash: str) -> dict[int, list[dict]]:
         row = rawstore.query(
             "SELECT r.as_of FROM comov_runs r WHERE r.config_hash = ? AND EXISTS "
             "(SELECT 1 FROM comov_lag l WHERE l.as_of = r.as_of) "
-            "ORDER BY r.as_of DESC LIMIT 1", [str(chash)], db="comovement")
+            "ORDER BY r.as_of DESC LIMIT 1", [str(chash)])
         if not row:
             return {}
         rows = rawstore.query(
             "SELECT cut, lag_id, ticker, oos_r, oos_base, held FROM comov_lag "
-            "WHERE as_of = ?", [row[0]["as_of"]], db="comovement")
+            "WHERE as_of = ?", [row[0]["as_of"]])
     except Exception:  # noqa: BLE001 - store predates the table
         return {}
     groups: dict[tuple, dict] = {}
@@ -494,7 +494,7 @@ def _stored_run(chash: str, prices_through: str | None,
         written = ohlc.last_written(price_tickers)
         rows = rawstore.query(
             "SELECT as_of FROM comov_runs WHERE config_hash = ? AND prices_through = ? "
-            "ORDER BY as_of DESC", [str(chash), str(prices_through)], db="comovement")
+            "ORDER BY as_of DESC", [str(chash), str(prices_through)])
         for r in rows:
             as_of_dt = datetime.fromisoformat(str(r["as_of"]))
             if as_of_dt < epoch:
@@ -502,7 +502,7 @@ def _stored_run(chash: str, prices_through: str | None,
             if as_of_dt.timestamp() < float(written):
                 break                       # older runs predate it too
             names = rawstore.query(
-                "SELECT DISTINCT ticker FROM comov_members WHERE as_of = ?", [r["as_of"]], db="comovement")
+                "SELECT DISTINCT ticker FROM comov_members WHERE as_of = ?", [r["as_of"]])
             if {m["ticker"] for m in names} == clustered:
                 return r["as_of"]
     except Exception:  # noqa: BLE001 - store predates a table/column: recompute
@@ -953,7 +953,7 @@ def _persist(as_of: str, chash: str, n: int, nodes: list[dict],
              "oos_r": g["oos_r"], "oos_base": g["oos_base"], "held": g["held"]}
             for cut, rows in (lag or {}).items() for g in rows for t in g["members"]])
 
-    rawstore.atomic(_write, db="comovement")
+    rawstore.atomic(_write)
 
 
 def load_payload(as_of: str | None = None, horizon: int | None = None,
@@ -975,20 +975,20 @@ def load_payload(as_of: str | None = None, horizon: int | None = None,
         if where:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY as_of DESC LIMIT 1"
-        row = rawstore.query(sql, params, db="comovement")
+        row = rawstore.query(sql, params)
         if not row:
             return _empty_payload([], {}, [], 0, (), horizon, benchmark)
         as_of = row[0]["as_of"]
-    run_row = rawstore.query("SELECT * FROM comov_runs WHERE as_of = ?", [as_of], db="comovement")
+    run_row = rawstore.query("SELECT * FROM comov_runs WHERE as_of = ?", [as_of])
     if not run_row:
         return _empty_payload([], {}, [], 0, (), horizon, benchmark)
     # ``SELECT *`` so a store that predates a column (``last_residual_pct``,
     # then ``core``) still loads: the value is simply
     # absent, not a hard error.
     node_rows = rawstore.query(
-        "SELECT * FROM comov_nodes WHERE as_of = ? ORDER BY cut, n DESC", [as_of], db="comovement")
+        "SELECT * FROM comov_nodes WHERE as_of = ? ORDER BY cut, n DESC", [as_of])
     member_rows = rawstore.query(
-        "SELECT * FROM comov_members WHERE as_of = ?", [as_of], db="comovement")
+        "SELECT * FROM comov_members WHERE as_of = ?", [as_of])
 
     member_map: dict[tuple, list[str]] = {}
     core_map: dict[tuple, dict] = {}

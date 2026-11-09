@@ -71,8 +71,7 @@ def test_fundamentals_names_the_ticker_with_no_edgar_annual(scenario):
 def test_scored_names_that_pass_no_screen_are_their_own_by_design_step(scenario, mod):
     payload = mod.run_scan()
     steps = _steps(payload)
-    scored = len(rawstore.query(f"SELECT ticker FROM {'swing' if mod is sp else 'fundamentals'}_scores",
-                                db="swing_potential" if mod is sp else "fundamentals"))
+    scored = len(rawstore.query(f"SELECT ticker FROM {'swing' if mod is sp else 'fundamentals'}_scores"))
     passed_none = scored - len(payload["candidates"])
     assert passed_none > 0, "the scenario has scored names that pass none of the screens"
     assert steps["passed_no_screen"]["count"] == passed_none and steps["passed_no_screen"]["by_design"] is True

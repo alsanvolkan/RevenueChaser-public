@@ -261,7 +261,7 @@ def test_markup_in_theme_names_is_escaped_on_the_relatedness_board(rebuilt, stor
     """
     rows = store.get_all("relatedness_themes")
     store.write_rows("relatedness_themes", [{**r, "label": _XSS} for r in rows])
-    store.execute("UPDATE ticker_themes SET theme = ?", [_XSS])
+    store.execute("UPDATE ticker_themes SET theme = ?", [_XSS], db="relatedness")
     r = rebuilt.view("module_relatedness", refresh=True)
     assert r.status_code == 200
     assert "</script><img" not in r.text

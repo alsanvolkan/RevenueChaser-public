@@ -143,7 +143,7 @@ def save_profile(ticker: str, cik, profile: dict, cache_key_value: str,
             "attempts": attempts, "provider": provider, **given}])
         tx.write_rows("relatedness_attributes", rows)
 
-    rawstore.atomic(_write, db="relatedness")
+    rawstore.atomic(_write)
 
 
 def load_profiles(tickers: list[str] | None = None) -> dict[str, dict]:
@@ -260,10 +260,9 @@ def save_scores(peers: dict[str, list[dict]]) -> int:
     rows = score_rows(peers)
     if not rows:
         # A run that scored nothing (cold cache, peak-hours stop) must not wipe the last good
-        # Fetch: retiring every pair it did not score would delete every stored score (#284).
+        # Fetch: replace_all would delete every stored score and write none (#284).
         logger.warning("relatedness_scores: the run produced no peer scores; kept the %d stored rows",
                        rawstore.count("relatedness_scores"))
         return 0
-    retired = rawstore.sync_rows("relatedness_scores", rows)   # incremental, plan §10
-    logger.info("relatedness_scores: %d pairs written, %d retired", len(rows), retired)
+    rawstore.replace_all("relatedness_scores", rows)
     return len(rows)

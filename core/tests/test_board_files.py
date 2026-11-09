@@ -39,7 +39,7 @@ def test_board_path_is_under_boards(isolate_rawstore):
 
 
 def test_news_and_welcome_are_board_files():
-    assert {"news", "welcome"} <= set(rawstore.BOARD_DBS)
+    assert set(rawstore.BOARD_DBS) == {"news", "welcome"}
 
 
 @pytest.mark.rawstore_schema_from_scratch

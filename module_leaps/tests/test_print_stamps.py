@@ -22,7 +22,7 @@ def _print(pid, premium=200000.0):
 def _rows():
     return {r["id"]: r for r in rawstore.query(
         "SELECT id, premium, source, fetched_at, session_date, run_at, discovered_at "
-        "FROM leaps_flow_prints", db="leaps")}
+        "FROM leaps_flow_prints")}
 
 
 # Thu 2026-10-08 17:00 ET (after the close): session 2026-10-08.
@@ -66,7 +66,7 @@ class TestStoreStamps:
                                fetched_at=run_at + 1.5) == 250
         assert rawstore.query(
             "SELECT DISTINCT source, fetched_at, session_date, run_at, "
-            "typeof(session_date) AS t FROM leaps_flow_prints", db="leaps") == [
+            "typeof(session_date) AS t FROM leaps_flow_prints") == [
             {"source": "uw", "fetched_at": run_at + 1.5, "session_date": date(2026, 10, 8),
              "run_at": run_at, "t": "DATE"}]
 
@@ -74,7 +74,7 @@ class TestStoreStamps:
         run_at = datetime(2030, 1, 3, 21, 0, tzinfo=timezone.utc).timestamp()
         assert la.store_prints([_print(f"c{i}") for i in range(100)], run_at=run_at) == 100
         assert rawstore.query("SELECT count(*) AS n, count(session_date) AS s "
-                              "FROM leaps_flow_prints", db="leaps") == [{"n": 100, "s": 0}]
+                              "FROM leaps_flow_prints") == [{"n": 100, "s": 0}]
 
     def test_without_stamps_the_clock_seam_gives_them(self, rawstore_tmp_db, monkeypatch):
         monkeypatch.setattr(calendar, "_now", lambda: AFTER_CLOSE)

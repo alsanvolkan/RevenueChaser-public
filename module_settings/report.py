@@ -17,7 +17,7 @@ import os
 from datetime import datetime
 from urllib.parse import urlsplit
 
-from RevenueChaser.core import automations, datasets, rawstore
+from RevenueChaser.core import automations, datasets
 from RevenueChaser.rcdata.needs import screen as api_screen
 from RevenueChaser.module_settings import control as control_model, control_render, needs_tab
 from RevenueChaser.core.html_safe import esc, script_json
@@ -71,7 +71,6 @@ table.inv .warnv{color:var(--amber)}
 .db-edgar{color:#e0a030}
 .db-history{color:#3cb89a}
 .db-prices{color:#e06088}
-.db-board{color:#9b7be0}
 .dblegend{color:var(--muted);font-size:11.5px;margin:6px 2px 0}
 .dblegend .db{margin:0 8px 0 4px}
 /* G11 (#124): the gap tag beside the dataset name - the same words as its detail line, the colour
@@ -1208,9 +1207,6 @@ def _db_pill(db) -> str:
     draws nothing rather than a class.
     """
     name = str(db or "").strip().lower()
-    if name in rawstore.BOARD_DBS:   # a board's own file, boards/<board>.duckdb (DECISIONS S9)
-        title = _html.escape(f"stored in boards/{name}.duckdb under .store/", quote=True)
-        return f'<span class="db db-board" title="{title}">{_html.escape(name)}</span>'
     if name not in DB_PILLS:
         return ""
     title = _html.escape(f"stored in {name}.duckdb under .store/", quote=True)
@@ -1220,8 +1216,7 @@ def _db_pill(db) -> str:
 def _db_legend() -> str:
     """One line under the table naming every store file, so a pill is explained once (G2)."""
     pills = " ".join(_db_pill(db) for db in DB_PILLS)
-    board = '<span class="db db-board" title="a board\'s own file under .store/boards/">board name</span>'
-    return (f'<div class="dblegend" id="db-legend">Store file: {pills} {board} '
+    return (f'<div class="dblegend" id="db-legend">Store file: {pills} '
             "— each pill names the .store/ DuckDB that dataset is written to.</div>")
 
 

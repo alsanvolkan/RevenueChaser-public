@@ -24,7 +24,7 @@ def _forget():
 
 def _columns(table: str) -> dict[str, str]:
     import duckdb
-    db = rawstore._db_of(table)
+    db = "edgar" if table == "chain_meta" else "raw"
     con = duckdb.connect(str(rawstore._db_path(db)), read_only=True)
     try:
         return dict(con.execute(

@@ -101,7 +101,7 @@ def test_persist_hands_its_rows_to_the_sink_and_writes_them_to_the_latest_tables
     out = scores.persist(_results("AAA", "BBB"), sink=sink)
     assert out == {"scores": 2, "gates": 42}
     assert [r["ticker"] for r in sink["scores"]] == ["AAA", "BBB"] and len(sink["gates"]) == 42
-    latest = {r["ticker"]: r for r in rawstore.query("SELECT * FROM swing_scores", db="swing_potential")}
+    latest = {r["ticker"]: r for r in rawstore.query("SELECT * FROM swing_scores")}
     assert {r["ticker"]: r for r in sink["scores"]} == latest
 
 
@@ -119,10 +119,10 @@ def test_a_run_records_a_header_and_the_rows_the_latest_tables_got(store):
     assert json.loads(head["row_counts"]) == {SCORES: 2, GATES: 42}
     got = _score_rows("r1")
     assert [r["ticker"] for r in got] == ["AAA", "BBB"]
-    latest = {r["ticker"]: r for r in rawstore.query("SELECT * FROM swing_scores", db="swing_potential")}
+    latest = {r["ticker"]: r for r in rawstore.query("SELECT * FROM swing_scores")}
     for r in got:
         assert {k: v for k, v in r.items() if k != "run_id"} == latest[r["ticker"]]
-    latest_gates = rawstore.query("SELECT * FROM swing_gates ORDER BY ticker, gate, rule_id", db="swing_potential")
+    latest_gates = rawstore.query("SELECT * FROM swing_gates ORDER BY ticker, gate, rule_id")
     assert [{k: v for k, v in r.items() if k != "run_id"} for r in _gate_rows("r1")] == latest_gates
 
 

@@ -7,7 +7,6 @@ on the live store, with the dashboard stopped (plan 2026-11-08 §3)::
     python -m RevenueChaser.scripts.migrate_board_store relatedness              # copy; twice is the same as once
     python -m RevenueChaser.scripts.migrate_board_store relatedness --rename-legacy   # old tables -> legacy_<name>
     python -m RevenueChaser.scripts.migrate_board_store relatedness --reverse    # rollback: board rows -> legacy_
-    python -m RevenueChaser.scripts.migrate_board_store relatedness --restore-legacy   # rollback: legacy_ -> <name>
 
 The copy is by PRIMARY KEY (``INSERT OR IGNORE``; board rows win), or as a multiset (``EXCEPT ALL``) for a table
 without one, so a second run adds nothing. The report says per table what was copied, skipped (key already in the
@@ -108,18 +107,6 @@ def rename_legacy(board: str, source: str = "raw") -> list[str]:
     return done
 
 
-def restore_legacy(board: str, source: str = "raw") -> list[str]:
-    """Rollback, last step before the old checkout starts: ``legacy_<name>`` back to ``<name>`` in ``source``."""
-    done = []
-    with rawstore.connect(db=source) as conn:
-        have = {r[0] for r in conn.execute("SELECT table_name FROM information_schema.tables").fetchall()}
-        for t in _tables(board):
-            if f"legacy_{t}" in have and t not in have:
-                conn.execute(f"ALTER TABLE legacy_{t} RENAME TO {t}")
-                done.append(t)
-    return done
-
-
 def reverse(board: str, source: str = "raw") -> list[dict]:
     """Rollback half: copy every board row back over ``legacy_<name>`` in ``source`` (rows written after the deploy
     included, ``llm_cache`` is paid for). The caller then renames ``legacy_<name>`` back BEFORE the old checkout
@@ -150,12 +137,9 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--dry-run", action="store_true")
     g.add_argument("--rename-legacy", action="store_true")
     g.add_argument("--reverse", action="store_true")
-    g.add_argument("--restore-legacy", action="store_true")
     a = ap.parse_args(argv)
     if a.rename_legacy:
         res = rename_legacy(a.board, a.source)
-    elif a.restore_legacy:
-        res = restore_legacy(a.board, a.source)
     elif a.reverse:
         res = reverse(a.board, a.source)
     else:

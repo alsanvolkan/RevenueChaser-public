@@ -53,8 +53,7 @@ def test_manifest_adds_exactly_five_columns_after_the_old_ones():
 
 @pytest.mark.rawstore_schema_from_scratch
 def test_migration_adds_five_nullable_columns_and_keeps_rows(rawstore_tmp_db, monkeypatch):
-    path = rawstore.board_db_path("relatedness")   # theme_runs lives in the relatedness board file (S9)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = rawstore.DB_PATH
     _seed_old_table(path)
     _apply(monkeypatch)
     cols = _columns(path)
@@ -77,8 +76,7 @@ def test_migration_adds_five_nullable_columns_and_keeps_rows(rawstore_tmp_db, mo
 
 @pytest.mark.rawstore_schema_from_scratch
 def test_migration_applies_twice_without_error(rawstore_tmp_db, monkeypatch):
-    path = rawstore.board_db_path("relatedness")   # theme_runs lives in the relatedness board file (S9)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = rawstore.DB_PATH
     _seed_old_table(path)
     _apply(monkeypatch)
     first = _columns(path)

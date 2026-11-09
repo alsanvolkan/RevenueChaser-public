@@ -126,7 +126,7 @@ def health_summary() -> dict:
             providers[r["provider"]] = providers.get(r["provider"], 0) + 1
     themes = [t for t, info in ROTATION_ETFS.items() if info.get("group") == "theme"]
     with_rs = {r["ticker"] for r in rawstore.query(
-        "SELECT ticker FROM rotation_holdings WHERE rows IS NOT NULL AND json_array_length(rows) > 0", db="sector_rotation")}
+        "SELECT ticker FROM rotation_holdings WHERE rows IS NOT NULL AND json_array_length(rows) > 0")}
     return {
         "expected": len(expected),
         "stored": sum(1 for t in expected if t in rows),

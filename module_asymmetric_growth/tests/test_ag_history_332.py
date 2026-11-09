@@ -71,7 +71,7 @@ def test_a_run_records_a_header_and_the_rows_the_latest_table_got(store):
     assert rows[0]["total_points"] == 9 and json.loads(rows[0]["themes"]) == ["AI"] and rows[0]["tech_breakthrough"] == 1
     # the same rows ticker_scores takes
     ticker_store.write_from_cards(cards, None)
-    latest = {r["ticker"]: r for r in rawstore.query("SELECT * FROM ticker_scores", db="asymmetric_growth")}
+    latest = {r["ticker"]: r for r in rawstore.query("SELECT * FROM ticker_scores")}
     for r in rows:
         assert {k: v for k, v in r.items() if k != "run_id"} == latest[r["ticker"]]
 

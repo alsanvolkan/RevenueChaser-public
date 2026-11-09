@@ -103,7 +103,7 @@ def test_the_score_row_counts_only_known_passes():
 def test_the_gate_rows_persist_through_the_real_table(rawstore_tmp_db):
     from RevenueChaser.core import rawstore
     scores.persist([_result(rev_growth_ttm=0.25, gross_margin=None, net_debt_ebitda=2.0)])
-    got = rawstore.query("SELECT passed FROM fundamentals_gates WHERE ticker='AAA' AND rule_id='gross_margin'", db="fundamentals")
+    got = rawstore.query("SELECT passed FROM fundamentals_gates WHERE ticker='AAA' AND rule_id='gross_margin'")
     assert got == [{"passed": None}]
 
 

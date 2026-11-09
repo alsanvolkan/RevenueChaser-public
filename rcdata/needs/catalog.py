@@ -156,11 +156,8 @@ _NEEDS = (
     Need("market.spx_greek_expiry_strike", "spx_greek_expiry_strike", "spx_greek_expiry_strike", "session_date",
          "expiry", 1, providers=("uw",)),
     # ── Ownership ───────────────────────────────────────────────────────────────────────────────────────────────
-    # FINRA settles twice a month (mid-month and month end) and publishes about a week later, so the newest settlement
-    # is routinely 10 to 27 calendar days old. 35 lets a holiday-late release through and reads "not stored" once a
-    # whole release is missed (#287, owner's B, 9 Nov 2026). Default chosen in #287; change it if avo prefers.
-    Need("ownership.short_interest", "finra_short_interest", "finra_short_interest", "settlement_date", "ticker", 35,
-         max_lag_unit=DAYS, ask_param="tickers", normalize=TICKER, providers=("finra",)),
+    Need("ownership.short_interest", "finra_short_interest", "finra_short_interest", "settlement_date", "ticker", 3,
+         ask_param="tickers", normalize=TICKER, providers=("finra",)),
     # ── The earnings calendar a screener card shows (step B) ────────────────────────────────────────────────────
     # The options layer's screener calendar is the first source; the stored D26 calendar fills the names it does not
     # cover. That fallback is not a need of its own yet: the dashboard, not the builder, writes ``raw.duckdb``, so it

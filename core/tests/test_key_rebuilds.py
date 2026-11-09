@@ -105,7 +105,7 @@ def test_a_live_key_that_is_neither_the_old_nor_the_new_one_stops_the_call(tmp_p
 def test_theme_runs_and_leaps_flow_prints_gain_their_columns(v10_store):
     rawstore.ensure_all_tables()
     cols = lambda t: {r["column_name"] for r in rawstore.query(      # noqa: E731
-        "SELECT column_name FROM information_schema.columns WHERE table_name = ?", [t], db=rawstore._db_of(t))}
+        "SELECT column_name FROM information_schema.columns WHERE table_name = ?", [t])}
     assert {"session_date", "run_at"} <= cols("theme_runs")
     assert {"source", "fetched_at", "session_date", "run_at"} <= cols("leaps_flow_prints")
 

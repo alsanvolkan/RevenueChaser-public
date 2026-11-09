@@ -624,7 +624,7 @@ def _theme_levels() -> dict[str, dict]:
             return {}
         rows = rawstore.query(
             "SELECT ticker, level, theme_id, theme FROM ticker_themes "
-            "WHERE theme_run_id = ?", [run_id], db="relatedness")
+            "WHERE theme_run_id = ?", [run_id])
         catalog = theme_catalog()
     except Exception:  # noqa: BLE001 - optional enrichment, never fatal
         return {}
@@ -659,16 +659,16 @@ def _cluster_levels() -> dict[str, dict]:
         "ORDER BY prices_through DESC NULLS LAST, (window_days = ?) DESC, "
         "as_of DESC LIMIT 1",
         [comov_config.DEFAULT_HORIZON, comov_config.DEFAULT_BENCHMARK,
-         comov_settings.effective().default_window], db="comovement")
+         comov_settings.effective().default_window])
     if not rows:
         return {}
     as_of = rows[0]["as_of"]
     try:
         cut_rows = rawstore.query(
-            "SELECT DISTINCT cut FROM comov_nodes WHERE as_of = ?", [as_of], db="comovement")
+            "SELECT DISTINCT cut FROM comov_nodes WHERE as_of = ?", [as_of])
         member_rows = rawstore.query(
             "SELECT cut, cluster_id, ticker FROM comov_members WHERE as_of = ?",
-            [as_of], db="comovement")
+            [as_of])
     except Exception:  # noqa: BLE001 - optional enrichment, never fatal
         return {}
     cuts = sorted(r["cut"] for r in cut_rows)

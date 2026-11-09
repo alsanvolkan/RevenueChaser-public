@@ -155,5 +155,5 @@ def test_the_board_renders_the_same_entries():
     payload = report.board_payload(TOTALS, META, ENRICH)
     assert [row[0] for row in payload["rows"]] == ["AAA", "BBB"]
     aaa = dict(zip(payload["cols"], payload["rows"][0][3]))
-    assert aaa["pct_out"] == ["30.0%", 30.0, "zero", "as of 2026 Q2"]
+    assert aaa["pct_out"] == ["30.0%", 30.0, "zero"]
     assert aaa["price_delta"] == ["+50.0%", 50.0, "pos"]

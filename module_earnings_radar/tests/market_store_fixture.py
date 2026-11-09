@@ -61,31 +61,3 @@ def serve_estimates(rows: list[dict], *, as_of: date | None = None, check: str |
         b.swap({"estimate_latest": len(full)})
     if check:
         ops.record_check(est.NAME, check, run_id=RUN_ID, source_as_of=as_of.isoformat())
-
-
-def serve_short_interest(finra_rows: list[dict], shortable_rows: list[dict] = (), *,
-                         check: str | None = "changed") -> None:
-    """Build and swap in an ``ownership`` serving file with ``finra_short_interest`` and ``ibkr_shortable`` (#287).
-
-    Each table has its dataset's own served schema, the columns a row leaves out written NULL. A FINRA row carries at
-    least ``ticker`` and ``settlement_date`` (``symbol`` defaults to the ticker); a shortable row ``ticker`` and
-    ``session_date``.
-    """
-    from RevenueChaser.rcdata import serving
-    from RevenueChaser.rcdata.build.ownership import finra, ibkr
-
-    with serving.build("ownership") as b:
-        counts = {}
-        for table, schema, rows in ((finra.TABLE, finra.SERVED, finra_rows),
-                                    (ibkr.TABLE, ibkr.SERVED, shortable_rows)):
-            names = [c for c, _ in schema]
-            full = [{**{c: None for c in names}, "symbol": r.get("ticker"), "fetched_at": 1.0, "run_id": RUN_ID, **r}
-                    for r in rows]
-            b.con.execute(f"CREATE TABLE {table} ({', '.join(f'{c} {t}' for c, t in schema)})")
-            if full:
-                b.con.executemany(f"INSERT INTO {table} VALUES ({', '.join('?' * len(names))})",
-                                  [[r[c] for c in names] for r in full])
-            counts[table] = len(full)
-        b.swap(counts)
-    if check:
-        ops.record_check(finra.NAME, check, run_id=RUN_ID)

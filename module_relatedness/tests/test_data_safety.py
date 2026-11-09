@@ -27,13 +27,13 @@ def _build(run_id):
 def _members(run_id):
     return rawstore.query(
         "SELECT count(*) n FROM relatedness_theme_members "
-        "WHERE starts_with(theme_id, ?)", [run_id + ":"], db="relatedness")[0]["n"]
+        "WHERE starts_with(theme_id, ?)", [run_id + ":"])[0]["n"]
 
 
 def _live(run_id):
     return rawstore.query(
         "SELECT count(*) n FROM ticker_themes WHERE theme_run_id = ?",
-        [run_id], db="relatedness")[0]["n"]
+        [run_id])[0]["n"]
 
 
 def test_build_keeps_older_run_data(rawstore_tmp_db):
@@ -46,7 +46,7 @@ def test_build_keeps_older_run_data(rawstore_tmp_db):
     assert _live("old") > 0
     tags = rawstore.query(
         "SELECT count(*) n FROM relatedness_theme_tags "
-        "WHERE starts_with(theme_id, 'old:')", db="relatedness")[0]["n"]
+        "WHERE starts_with(theme_id, 'old:')")[0]["n"]
     assert tags > 0
 
 
@@ -90,10 +90,10 @@ def _run_counts(run_id):
     rawstore.ensure_table("relatedness_theme_etfs")
     out = {t: rawstore.query(
         f"SELECT count(*) n FROM {t} WHERE theme_id = ? OR starts_with(theme_id, ?)",
-        [run_id, run_id + ":"], db="relatedness")[0]["n"] for t in _RUN_TABLES}
+        [run_id, run_id + ":"])[0]["n"] for t in _RUN_TABLES}
     out["ticker_themes"] = _live(run_id)
     out["theme_runs"] = rawstore.query(
-        "SELECT count(*) n FROM theme_runs WHERE id = ?", [run_id], db="relatedness")[0]["n"]
+        "SELECT count(*) n FROM theme_runs WHERE id = ?", [run_id])[0]["n"]
     return out
 
 
@@ -125,7 +125,7 @@ def test_cutover_does_not_copy_legacy_keyword(rawstore_tmp_db):
     _build("r")
     themes.cutover_materialize("r")
     assert rawstore.query(
-        "SELECT * FROM ticker_themes WHERE theme_run_id='r' AND ticker='ZZZ'", db="relatedness") == []
+        "SELECT * FROM ticker_themes WHERE theme_run_id='r' AND ticker='ZZZ'") == []
     assert _live("legacy-keyword") == 1      # the legacy rows themselves stay
 
 

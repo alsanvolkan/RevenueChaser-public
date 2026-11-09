@@ -56,8 +56,8 @@ def v12_store(isolate_rawstore):
         rawstore.write_rows("relatedness_profiles", [_PROFILE])
     finally:
         mp.undo()
-    assert V13_TABLE not in _snapshot(rawstore.board_db_path("relatedness"))
-    assert not set(V13_COLUMNS["relatedness_profiles"]) & _columns(rawstore.board_db_path("relatedness"), "relatedness_profiles")
+    assert V13_TABLE not in _snapshot(rawstore.DB_PATH)
+    assert not set(V13_COLUMNS["relatedness_profiles"]) & _columns(rawstore.DB_PATH, "relatedness_profiles")
     yield rawstore.get("relatedness_profiles", "AAPL")
 
 
@@ -72,8 +72,8 @@ def test_the_label_is_13():
 
 def test_a_v12_store_gains_the_columns_and_the_table_and_keeps_its_row(v12_store):
     _migrate()
-    assert {"profile_json", "label_source"} <= _columns(rawstore.board_db_path("relatedness"), "relatedness_profiles")
-    assert {"ticker", "model", "dim", "vector"} <= _columns(rawstore.board_db_path("relatedness"), V13_TABLE)
+    assert {"profile_json", "label_source"} <= _columns(rawstore.DB_PATH, "relatedness_profiles")
+    assert {"ticker", "model", "dim", "vector"} <= _columns(rawstore.DB_PATH, V13_TABLE)
     assert V13_TABLE not in _snapshot(rawstore.edgar_db_path())
     row = rawstore.get("relatedness_profiles", "AAPL")
     assert row["profile_json"] is None and row["label_source"] is None
@@ -97,7 +97,7 @@ def test_the_new_columns_hold_json_and_the_vector_holds_bytes(rawstore_tmp_db):
 
 def test_a_second_ensure_changes_nothing(v12_store):
     _migrate()
-    before = _snapshot(rawstore.board_db_path("relatedness"))
+    before = _snapshot(rawstore.DB_PATH)
     _migrate()
-    assert _snapshot(rawstore.board_db_path("relatedness")) == before
+    assert _snapshot(rawstore.DB_PATH) == before
     assert rawstore.count("relatedness_profiles") == 1

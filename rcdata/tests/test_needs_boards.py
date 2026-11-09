@@ -47,9 +47,9 @@ def test_a_declaration_is_sorted_and_without_a_repeat():
         assert list(reads) == sorted(set(reads)), f"{board}: READS is sorted and each name appears once"
 
 
-def test_the_migrated_board_declares_the_five_needs_it_reads():
+def test_the_migrated_board_declares_the_four_needs_it_reads():
     assert boards.all_reads()["module_earnings_radar"] == (
-        "earnings.next", "fundamentals.estimates", "macro.dgs10", "ownership.short_interest", "ownership.shortable")
+        "earnings.next", "fundamentals.estimates", "macro.dgs10", "ownership.short_interest")
 
 
 def test_spx_gamma_is_the_second_migrated_board_and_leaves_the_plan():

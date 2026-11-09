@@ -37,6 +37,7 @@ def _notes(monkeypatch):
 
 
 def test_an_empty_table_is_nothing_stored_and_raises_nothing():
+    assert stored_inputs.short_rows(["AAPL"]) == ({}, None)
     assert stored_inputs.calendar_items([LATEST]) == ({}, None)
     assert stored_inputs.rate_events() == []
 
@@ -44,6 +45,7 @@ def test_an_empty_table_is_nothing_stored_and_raises_nothing():
 def test_a_table_that_does_not_exist_yet_is_nothing_stored(monkeypatch, tmp_path):
     """Before the first nightly run the store file itself is absent: still not an error."""
     monkeypatch.setattr(rawstore, "DB_PATH", tmp_path / "absent.duckdb")
+    assert stored_inputs.short_rows(["AAPL"]) == ({}, None)
     assert stored_inputs.calendar_items([LATEST]) == ({}, None)
 
 
@@ -53,11 +55,11 @@ def test_a_locked_table_notes_once_and_reads_as_nothing(monkeypatch, caplog):
 
     monkeypatch.setattr(rawstore, "query", locked)
     with caplog.at_level(logging.INFO, logger=stored_inputs.__name__):
-        assert stored_inputs.calendar_items([LATEST]) == ({}, None)
+        assert stored_inputs.short_rows(["AAPL"]) == ({}, None)
         assert stored_inputs.rate_events() == []
-        assert stored_inputs.calendar_items([LATEST]) == ({}, None)    # a second read adds no second note
+        assert stored_inputs.short_rows(["AAPL"]) == ({}, None)    # a second read adds no second note
 
     notes = [r.getMessage() for r in caplog.records if r.getMessage().startswith("stored inputs:")]
     assert len(notes) == 2
-    assert "earnings_calendar" in notes[0] and "database is locked" in notes[0]
+    assert "short_interest" in notes[0] and "database is locked" in notes[0]
     assert "economic_calendar" in notes[1]

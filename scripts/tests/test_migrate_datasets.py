@@ -148,7 +148,7 @@ class TestFileSourceMigrators:
                  "quadrant": "LAGGING"},
             ]})
         _migrate(legacy, "rotation_snapshots")
-        rows = rawstore.query("SELECT * FROM rotation_snapshots ORDER BY ticker", db="sector_rotation")
+        rows = rawstore.query("SELECT * FROM rotation_snapshots ORDER BY ticker")
         assert [r["ticker"] for r in rows] == ["XLF", "XLK"]
         xlk = rows[1]
         assert xlk["as_of_date"] == "2026-08-14"

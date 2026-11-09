@@ -330,16 +330,11 @@ def _fmt_money(v):
 
 
 def build_chart_fig(ticker: str, periods: dict, enrichment: dict = None) -> dict:
-    """Shares + price (row 1) and $ value + holders (row 2) over quarters.
-
-    A quarter still arriving (#514) is drawn as what it is, a part of itself (#521): its bars are hatched, its
-    label carries the board's mark, the holders line goes dashed into it, and a note names it."""
+    """Shares + price (row 1) and $ value + holders (row 2) over quarters."""
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     qs = sorted(periods.keys())
-    still_arriving = arriving({ticker: periods}, qs)
-    labels = [_qlabel(q) + (ARRIVING_MARK if q in still_arriving else "") for q in qs]
-    pattern = dict(shape=["/" if q in still_arriving else "" for q in qs], fgopacity=0.6)
+    labels = [_qlabel(q) for q in qs]
     shares = [periods[q].get("shares") or 0 for q in qs]
     value = [periods[q].get("value") or 0 for q in qs]
     holders = [periods[q].get("holders") or 0 for q in qs]
@@ -350,28 +345,18 @@ def build_chart_fig(ticker: str, periods: dict, enrichment: dict = None) -> dict
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.10,
                         subplot_titles=(f"{ticker} — total shares & price", "market value ($) & holders"),
                         specs=[[{"secondary_y": True}], [{"secondary_y": True}]])
-    fig.add_trace(go.Bar(x=labels, y=shares, name="Shares", marker=dict(color="#3fb950", pattern=pattern),
+    fig.add_trace(go.Bar(x=labels, y=shares, name="Shares", marker_color="#3fb950",
                          hovertemplate="%{y:,.0f}"), 1, 1)
     if price:
         fig.add_trace(go.Scatter(x=labels, y=price, name="Price",
                                  line=dict(color="#58a6ff", width=2)), 1, 1, secondary_y=True)
-    fig.add_trace(go.Bar(x=labels, y=value, name="Value ($)", marker=dict(color="#d2991d", pattern=pattern),
+    fig.add_trace(go.Bar(x=labels, y=value, name="Value ($)", marker_color="#d2991d",
                          hovertemplate="%{y:,.0f}"), 2, 1)
-    n = len(qs) - len(still_arriving)           # the settled quarters come first: the arriving set is a suffix
-    fig.add_trace(go.Scatter(x=labels[:n], y=holders[:n], name="Holders",
+    fig.add_trace(go.Scatter(x=labels, y=holders, name="Holders",
                              line=dict(color="#3fb950", width=2)), 2, 1, secondary_y=True)
-    if still_arriving:
-        start = max(n - 1, 0)
-        fig.add_trace(go.Scatter(x=labels[start:], y=holders[start:], name="Holders (filed so far)",
-                                 line=dict(color="#3fb950", width=2, dash="dash"), showlegend=False), 2, 1, secondary_y=True)
-        names = ", ".join(_qlabel(q) for q in sorted(still_arriving))
-        fig.add_annotation(text=f"{ARRIVING_MARK} {names} still arriving: filed so far, not a drop",
-                           xref="paper", yref="paper", x=0, y=-0.08, xanchor="left", yanchor="top",
-                           showarrow=False, font=dict(size=12, color="#8b949e"))
     fig.update_layout(template="plotly_dark", height=620, hovermode="x unified",
-                      # Anchored at its bottom so a legend that wraps on a phone grows up into the margin, not over the title.
-                      legend=dict(orientation="h", y=1.08, yanchor="bottom", x=0),
-                      margin=dict(l=60, r=60, t=110, b=60 if still_arriving else 40))
+                      legend=dict(orientation="h", y=1.10, x=0),
+                      margin=dict(l=60, r=60, t=80, b=40))
     fig.update_xaxes(type="category")
     return fig.to_dict()
 
@@ -516,12 +501,10 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
                 cells.append(_cell("—", None, "zero"))
             else:
                 cells.append(_cell(_f(c), c, _sign_class(c)))
-        # The snapshot is the last settled quarter's, which differs per row; each cell says which (#521).
-        of = f"as of {_qlabel(e['last_period'])}" if e.get("last_period") else None
-        cells.append(_cell(_fmt_money(last.get("value")), last.get("value"), "zero", of))
-        cells.append(_cell(_f(e["pct_out"], 1, "%", False), e["pct_out"], "zero", of))
-        cells.append(_cell(str(_num(last.get("holders"))), last.get("holders"), "zero", of))
-        cells.append(_cell(new_exit or "—", new_exit_val, "zero", of))
+        cells.append(_cell(_fmt_money(last.get("value")), last.get("value"), "zero"))
+        cells.append(_cell(_f(e["pct_out"], 1, "%", False), e["pct_out"], "zero"))
+        cells.append(_cell(str(_num(last.get("holders"))), last.get("holders"), "zero"))
+        cells.append(_cell(new_exit or "—", new_exit_val, "zero"))
         breadth = last.get("breadth")
         breadth_chg = last.get("breadth_chg")
         breadth_text = "—"
@@ -529,10 +512,10 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
             breadth_text = f"{breadth:.2f}%"
             if breadth_chg is not None:
                 breadth_text += f" ({breadth_chg:+.2f})"
-        cells.append(_cell(breadth_text, breadth, "zero", of))
-        cells.append(_cell(_f(last.get("top10_pct"), 1, "%", False), last.get("top10_pct"), "zero", of))
-        cells.append(_cell(str(_num(last.get("hhi"))), last.get("hhi"), "zero", of))
-        cells.append(_cell(_fmt_shares(netflow), netflow, _sign_class(netflow), of))
+        cells.append(_cell(breadth_text, breadth, "zero"))
+        cells.append(_cell(_f(last.get("top10_pct"), 1, "%", False), last.get("top10_pct"), "zero"))
+        cells.append(_cell(str(_num(last.get("hhi"))), last.get("hhi"), "zero"))
+        cells.append(_cell(_fmt_shares(netflow), netflow, _sign_class(netflow)))
         cells.append(_cell(str(e["streak"]) if e["streak"] is not None else "—", e["streak"], "zero"))
         cells.append(_cell(_f(e["accel"], 1, "pp"), e["accel"], _sign_class(e["accel"])))
         cells.append(_cell(_f(e["insider_pct"], 1, "%", False), e["insider_pct"], "zero"))

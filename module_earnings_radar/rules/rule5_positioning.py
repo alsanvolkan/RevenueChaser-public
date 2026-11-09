@@ -27,8 +27,6 @@ Honest inputs:
 import numpy as np
 from typing import Optional
 
-from datetime import date
-
 from RevenueChaser.core.config import INST_FLOW_MIN_NET, SCORE_RANGE
 from RevenueChaser.module_earnings_radar.models import RuleResult
 
@@ -97,15 +95,11 @@ def score(
     ticker: str = "",
     institutional_side_served: Optional[bool] = None,
     institutional_package_premium: Optional[float] = None,
-    short_as_of: Optional[str] = None,
-    si_basis: Optional[str] = None,
 ) -> RuleResult:
     """``institutional_net_delta`` is the lean net (bullish minus bearish side premium) and the call/put premiums
     the bullish and bearish side premium. ``institutional_side_served`` False says the tape carried no print side,
     so there is no lean (the flow component is absent, never neutral). ``ticker`` leaves the name out of its own
-    peer group. ``short_as_of`` is the FINRA settlement day the short figures are as of (#287): the squeeze reason
-    names it, because a twice-monthly figure can be weeks old. ``si_basis`` "outstanding" says the short interest is
-    a percent of the shares outstanding, not of the float (no float stored); the absolute read then says so."""
+    peer group."""
     available = False
     score_val = 0.0
     reasons: list[str] = []
@@ -182,30 +176,18 @@ def score(
                 reasons.append("no squeeze pressure")
 
     # Absolute short-interest fallback when no in-sector peer Z could be built.
-    of_base = " of shares outstanding" if si_basis == "outstanding" else ""
     if not squeeze_signal and short_interest_pct_float is not None:
         raw_metrics["si_pct"] = round(short_interest_pct_float, 2)
         if short_interest_pct_float > 20:
             squeeze_signal = True
             signals_present += 1
             score_val += 15
-            reasons.append(f"high short interest ({short_interest_pct_float:.1f}%{of_base})")
+            reasons.append(f"high short interest ({short_interest_pct_float:.1f}%)")
         elif short_interest_pct_float > 10:
             squeeze_signal = True
             signals_present += 1
             score_val += 5
-            reasons.append(f"moderate short interest ({short_interest_pct_float:.1f}%{of_base})")
-
-    if squeeze_signal and short_as_of:
-        raw_metrics["si_as_of"] = short_as_of
-        squeeze_words = ("squeeze", "short interest")
-        for i in range(len(reasons) - 1, -1, -1):
-            if any(w in reasons[i] for w in squeeze_words):
-                # day and month only: the age limit is 35 days, so the year is never in doubt, and the short form
-                # does not wrap mid-date in the drawer's narrow reason column
-                settled = date.fromisoformat(short_as_of[:10])
-                reasons[i] += f" · FINRA settled {settled.day} {settled:%b}"
-                break
+            reasons.append(f"moderate short interest ({short_interest_pct_float:.1f}%)")
 
     available = signals_present > 0
     if not available:

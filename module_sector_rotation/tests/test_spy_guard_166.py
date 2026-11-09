@@ -138,7 +138,7 @@ class TestWeeklyBackfillSpyGuard:
             seed(t, BASE)
         res = store.backfill_weekly(None, date(2026, 7, 1), date(2026, 8, 14))
         assert res == 0 and _stored_dates() == []
-        assert rawstore.query("SELECT COUNT(*) AS n FROM rotation_snapshots", db="sector_rotation")[0]["n"] == 0
+        assert rawstore.query("SELECT COUNT(*) AS n FROM rotation_snapshots")[0]["n"] == 0
         assert res.skipped == 7
         assert "SPY" in res.message()
 
@@ -149,7 +149,7 @@ class TestWeeklyBackfillSpyGuard:
         res = store.backfill_weekly(None, date(2026, 6, 1), date(2026, 8, 14))
         assert _stored_dates() == ["2026-07-29", "2026-08-05", "2026-08-12"]
         assert res == 3 and res.skipped == 8
-        zero = rawstore.query("SELECT COUNT(*) AS n FROM rotation_snapshots WHERE rs_1m = 0 AND rs_3m = 0", db="sector_rotation")[0]["n"]
+        zero = rawstore.query("SELECT COUNT(*) AS n FROM rotation_snapshots WHERE rs_1m = 0 AND rs_3m = 0")[0]["n"]
         assert zero == 0
 
     def test_a_healthy_run_is_unchanged(self, rawstore_tmp_db, fixed_today):
@@ -166,13 +166,13 @@ class TestBackfillD01Gaps:
         _full_d01(skip={"XLK"})
         res = store.backfill_weekly(None, date(2026, 7, 1), date(2026, 8, 14))
         assert res == 7 and res.failed == [] and res.skipped == 0
-        tickers = {r["ticker"] for r in rawstore.query("SELECT DISTINCT ticker FROM rotation_snapshots", db="sector_rotation")}
+        tickers = {r["ticker"] for r in rawstore.query("SELECT DISTINCT ticker FROM rotation_snapshots")}
         assert "XLK" not in tickers and "XLF" in tickers
 
     def test_the_macro_series_are_never_backfilled(self, rawstore_tmp_db, fixed_today):
         _full_d01()
         store.backfill_weekly(None, date(2026, 7, 1), date(2026, 8, 14))
-        tickers = {r["ticker"] for r in rawstore.query("SELECT DISTINCT ticker FROM rotation_snapshots", db="sector_rotation")}
+        tickers = {r["ticker"] for r in rawstore.query("SELECT DISTINCT ticker FROM rotation_snapshots")}
         assert tickers == set(ETFS) and not tickers & set(MACRO_SERIES)
 
     def test_stored_days_are_not_counted_as_skipped(self, rawstore_tmp_db, fixed_today):
