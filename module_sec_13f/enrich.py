@@ -29,8 +29,8 @@ from datetime import date, timedelta
 
 from RevenueChaser.core import ownership, rawstore
 
-SEC_DEI = "sec_dei"          # the D11 slot of the readers' order; no writer stores it yet (#161)
-SHARES_ORDER = (ownership.UW_INFO, SEC_DEI, ownership.YFINANCE)
+SEC_DEI = ownership.SEC_DEI
+SHARES_ORDER = ownership.SHARES_ORDER
 PRICE_LOOKBACK_DAYS = 10     # a quarter end on a weekend or a holiday still finds the session before it
 SHORT_INTEREST_TABLE = "short_interest"
 
@@ -45,29 +45,7 @@ def load_enrichment() -> dict:
     return out
 
 
-def _rank(source: str) -> int:
-    return SHARES_ORDER.index(source) if source in SHARES_ORDER else len(SHARES_ORDER)
-
-
-def load_ownership(tickers) -> dict[str, dict]:
-    """``{ticker: {"shares_outstanding": .., "insider_pct": ..}}`` from ``ownership_snapshot``; a field with no
-    stored value in any source is left out. One store read: the newest non-NULL value per (ticker, source)."""
-    wanted = {str(t).upper() for t in tickers if t}
-    if not wanted:
-        return {}
-    rows = rawstore.query(
-        f"SELECT ticker, source, "
-        f"arg_max(shares_outstanding, session_date) FILTER (WHERE shares_outstanding IS NOT NULL) AS shares, "
-        f"arg_max(insider_pct, session_date) FILTER (WHERE insider_pct IS NOT NULL) AS insider "
-        f"FROM {ownership.TABLE} GROUP BY ticker, source")
-    out: dict[str, dict] = {}
-    for r in sorted((r for r in rows if r["ticker"] in wanted), key=lambda r: _rank(r["source"])):
-        entry = out.setdefault(r["ticker"], {})
-        if r["shares"] is not None:
-            entry.setdefault("shares_outstanding", float(r["shares"]))
-        if r["insider"] is not None:
-            entry.setdefault("insider_pct", float(r["insider"]) * 100.0)
-    return {t: e for t, e in out.items() if e}
+load_ownership = ownership.load_ownership   # the readers' rule lives in core (#481: AG reads it too)
 
 
 def load_short_interest(tickers) -> tuple[dict[str, dict], date | None]:

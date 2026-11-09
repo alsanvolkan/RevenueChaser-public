@@ -501,6 +501,15 @@ POPULATION: dict[str, str] = {
         "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
     "sec13f_metrics_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
     "financials_report_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
+    # Board files (S9, S16): each table is filled by its board's incremental build.
+    "news_events": "module_news/tests/test_calendar.py::test_first_build_upserts_every_event_into_the_board_file",
+    "news_highlight": "module_news/tests/test_calendar.py::test_the_highlight_is_the_most_important_live_event_earliest_on_a_tie",
+    "news_meta": "module_news/tests/test_calendar.py::test_a_second_build_reads_only_new_rows_and_keeps_first_seen",
+    "news_headlines": "module_news/tests/test_headlines.py::test_fetch_stores_clean_headlines_with_their_tickers_once",
+    "welcome_snapshot": "module_welcome/tests/test_build.py::test_the_snapshot_keeps_the_last_close_its_change_and_a_20_day_line",
+    "welcome_earnings": "module_welcome/tests/test_build.py::test_earnings_of_today_and_the_next_trading_day_only",
+    "welcome_freshness": "module_welcome/tests/test_build.py::test_freshness_keeps_each_jobs_last_run_last_success_and_last_failure",
+    "welcome_meta": "module_welcome/tests/test_build.py::test_freshness_reads_only_runs_finished_after_its_mark",
 }
 
 _ROOT = Path(__file__).resolve().parent.parent.parent

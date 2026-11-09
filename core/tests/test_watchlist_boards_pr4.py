@@ -43,6 +43,8 @@ WITHOUT_PAIR = {
     "runs": "not a data board",
     "module_sector_rotation_trail": "a chart of the same funds' trails; the board's own table carries their pair",
     "module_uw_interaction": "a lab: raw columns of whatever UW tool was run, not a board of names",
+    "module_news": "a calendar and headlines; the tickers on a headline are a tag, not a row of names (follow-up)",
+    "module_welcome": "a summary page; its earnings card links to Earnings Radar, whose rows carry the pair",
 }
 
 _SERVER_BUTTON = re.compile(r'data-rc-watch="(?:option|stock)" data-ticker="([^"]*)"')

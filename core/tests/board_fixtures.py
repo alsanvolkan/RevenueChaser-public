@@ -516,7 +516,56 @@ def _runs(tmp_path, monkeypatch):
 
 
 
+def _news_rows(now: float) -> None:
+    """Hostile calendar, highlight and headline rows in ``boards/news.duckdb``: every shown text is stored text."""
+    from RevenueChaser.core import rawstore
+    from RevenueChaser.module_news.calendar import local_day
+    rawstore.write_rows("news_events", [{
+        "event_ts": now, "event": H("event"), "type": "report", "importance": 3, "forecast": H("forecast"),
+        "prev": H("prev"), "reported_period": H("reported_period"), "first_seen": now, "last_seen": now,
+        "retired_at": None, "run_id": "r1", "run_at": now}])
+    rawstore.write_rows("news_highlight", [{
+        "session_date": local_day(now), "event_ts": now, "event": H("hl_event"), "type": "report", "importance": 3,
+        "forecast": H("hl_forecast"), "prev": H("hl_prev"), "text": H("hl_text"), "text_source": "template",
+        "run_id": "r1", "run_at": now}])
+    rawstore.write_rows("news_headlines", [{
+        "headline_id": "h1", "provider": "ibkr", "published_at": now - 60, "headline": H("headline"),
+        "source": H("headline_source"), "tickers": json.dumps([H("headline_ticker")]), "url": None,
+        "fetched_at": now, "run_id": "r1", "run_at": now}])
+
+
+def _news(tmp_path, monkeypatch):
+    import time
+    from RevenueChaser.module_news import report
+    now = time.time()
+    _news_rows(now)
+    return report.render_html(now, provider_health=health("news"))
+
+
+def _welcome(tmp_path, monkeypatch):
+    import time
+    from RevenueChaser.core import rawstore
+    from RevenueChaser.module_welcome import report
+    from RevenueChaser.module_welcome.build import earnings_days
+    now = time.time()
+    _news_rows(now)
+    day = earnings_days(now)[0]
+    rawstore.write_rows("welcome_snapshot", [{
+        "series": "SPX", "session_date": day, "close": 5000.0, "prev_close": 4990.0, "change": 10.0,
+        "change_pct": 0.002, "spark": json.dumps([4990.0, 5000.0]), "run_id": "r1", "run_at": now}])
+    rawstore.write_rows("welcome_earnings", [{
+        "earnings_date": day, "ticker": H("ticker"), "report_session": "premarket", "full_name": H("full_name"),
+        "expected_move_perc": 0.05, "report_time": H("report_time"), "source_session": day, "first_seen": now,
+        "last_seen": now, "retired_at": None, "run_id": "r1", "run_at": now}])
+    rawstore.write_rows("welcome_freshness", [{
+        "job": H("job"), "last_status": "error", "last_finished_at": now - 60, "last_ok_at": now - 7200,
+        "last_failed_at": now - 60, "last_error": H("last_error"), "run_id": "r1", "run_at": now}])
+    return report.render_html(now, watchlist=[H("watch")], labels={H("job"): H("job_label")})
+
+
 BOARDS: dict[str, Board] = {
+    "module_welcome": Board(_welcome),
+    "module_news": Board(_news),
     "module_earnings_radar": Board(_earnings),
     # Not a tab: the same board with an openable drawer.
     "module_earnings_radar_detail": Board(_earnings_detail),

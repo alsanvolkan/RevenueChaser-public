@@ -258,6 +258,10 @@ jobs.register("daily_bars", runners.run_daily_bars, ["module_settings"], lane="l
 # Index lists (#302): three UW requests plus the SmallCap 600 list from the identity cache.
 jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane="long")
 jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
+# News (S9, S16): store-only; builds boards/news.duckdb from raw.economic_calendar, then renders.
+jobs.register("module_news", runners.run_news, ["module_news"], requires_uw=False)
+# Welcome (decision A): store-only; builds boards/welcome.duckdb from stored inputs, then renders.
+jobs.register("module_welcome", runners.run_welcome, ["module_welcome"], requires_uw=False)
 
 # Which store-only job a board's Save / Reset queues (``api_settings_board``, #40 / #384 SW-S4).
 SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh",
@@ -268,7 +272,11 @@ SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_pote
                  "module_relatedness": "settings_refresh"}
 
 TABS = [
+    # The opening screen (decision A, avo 9 Nov 2026 17:26: "welcome gelsin").
+    {"type": "header", "label": "Home"},
+    {"type": "tab", "key": "module_welcome", "label": "Welcome", "url": "/view/module_welcome", "sub": True},
     {"type": "header", "label": "Research"},
+    {"type": "tab", "key": "module_news", "label": "News", "url": "/view/module_news", "sub": True},
     {"type": "tab", "key": "module_earnings_radar", "label": "Earnings Radar", "url": "/view/module_earnings_radar", "sub": True},
     {"type": "tab", "key": "module_spx_gamma", "label": "SPX Gamma", "url": "/view/module_spx_gamma", "sub": True},
     {"type": "tab", "key": "module_oipd", "label": "Implied Probability", "url": "/view/module_oipd", "sub": True},
@@ -313,6 +321,8 @@ def _module_file(mod: str) -> Path:
         "module_value_chain": runners.VALUE_CHAIN_LATEST,
         "module_relatedness": runners.RELATEDNESS_LATEST,
         "module_oipd": runners.OIPD_LATEST,
+        "module_news": runners.NEWS_LATEST,
+        "module_welcome": runners.WELCOME_LATEST,
         "module_settings": runners.SETTINGS_LATEST,
     }.get(mod)
 
@@ -498,6 +508,8 @@ _MODEL_ONLY_RENDERERS = {
     "module_value_chain": lambda: _import_runners().run_value_chain(None, no_fetch=True),
     "module_relatedness": lambda: _import_runners().run_relatedness(None, no_fetch=True),
     "module_oipd": lambda: _import_runners().run_oipd_cached(),
+    "module_news": lambda: _import_runners().run_news_cached(),
+    "module_welcome": lambda: _import_runners().run_welcome_cached(),
     "module_settings": lambda: _import_runners().run_settings(None),
 }
 
@@ -703,6 +715,16 @@ def run_relatedness_compare():
 @app.route("/run/module_leaps", methods=["POST"])
 def run_leaps():
     return _submit("module_leaps", {})
+
+
+@app.route("/run/module_news", methods=["POST"])
+def run_module_news():
+    return _submit("module_news", {})
+
+
+@app.route("/run/module_welcome", methods=["POST"])
+def run_module_welcome():
+    return _submit("module_welcome", {})
 
 
 @app.route("/run/module_sec_13f", methods=["POST"])

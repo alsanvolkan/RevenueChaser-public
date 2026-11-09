@@ -33,8 +33,8 @@ NOT_A_BOARD = frozenset({"module_testing", "module_settings"})
 #: PR that migrates that board, which is also the PR that adds its ``READS``.
 UNDECLARED = frozenset({
     "module_asymmetric_growth", "module_comovement", "module_financials", "module_fundamentals", "module_leaps",
-    "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
-    "module_swing_potential", "module_uw_interaction", "module_value_chain",
+    "module_news", "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
+    "module_swing_potential", "module_uw_interaction", "module_value_chain", "module_welcome",
 })
 
 #: What each board not migrated yet will read: first from the catalog's need list of 29 Oct 2026

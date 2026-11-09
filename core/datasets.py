@@ -34,8 +34,8 @@ from importlib import import_module
 
 from RevenueChaser.core.datahealth import Health
 
-DBS = ("raw", "edgar", "prices", "history", "relatedness", "comovement", "asymmetric_growth", "swing_potential",
-       "fundamentals", "sector_rotation", "leaps", "oipd", "forecast")
+DBS = ("raw", "edgar", "prices", "history", "news", "welcome", "relatedness", "comovement", "asymmetric_growth",
+       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast")  # all but the first four: board files (S9, S16)
 
 FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
@@ -94,6 +94,7 @@ class Source(str, Enum):
     cboe = "cboe"
     fred = "fred"
     openfigi = "openfigi"
+    ibkr = "ibkr"
     derived = "derived"
     manual = "manual"
     store = "store"
@@ -646,6 +647,30 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         tables=("llm_cache",),
         db="relatedness", source=Source.unknown, writer="RC-Relatedness-OffPeak",
         freshness=("llm_cache", "fetched_at"),
+    ),
+    DatasetSpec(
+        key="news_calendar", label="News: economic calendar and the day's highlight",
+        tables=("news_events", "news_highlight", "news_meta"),
+        db="news", source=Source.derived, writer=None,
+        writer_note=("built incrementally from raw.economic_calendar by module_news/calendar.py on the News board's "
+                     "Refresh; the hourly job comes in its own pull request"),
+        freshness=("news_events", "run_at"),
+    ),
+    DatasetSpec(
+        key="news_headlines", label="News: market headlines",
+        tables=("news_headlines",),
+        db="news", source=Source.ibkr, writer=None,
+        writer_note=("Dow Jones headlines from the IBKR Gateway (module_news/headlines.py) on the News board's Fetch; "
+                     "the hourly job comes in its own pull request"),
+        freshness=("news_headlines", "fetched_at"),
+    ),
+    DatasetSpec(
+        key="welcome", label="Welcome: market closes, earnings and job freshness",
+        tables=("welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta"),
+        db="welcome", source=Source.derived, writer=None,
+        writer_note=("built incrementally from stored prices, earnings_calendar and job_runs by "
+                     "module_welcome/build.py on the Welcome board's Fetch; the hourly job comes in its own pull request"),
+        freshness=("welcome_snapshot", "session_date"),
     ),
     DatasetSpec(
         key="source_checks", label="Source check watermarks",

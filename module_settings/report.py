@@ -1235,6 +1235,7 @@ SOURCE_WORDS = {
     "cboe": "Cboe (Chicago Board Options Exchange)",
     "fred": "FRED (Federal Reserve Economic Data)",
     "openfigi": "OpenFIGI",
+    "ibkr": "Interactive Brokers (IB Gateway)",
     "derived": "worked out by us from other datasets",
     "manual": "entered by hand",
     "store": "the store's own bookkeeping",
