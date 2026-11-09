@@ -279,11 +279,7 @@ class Sec13f(edgar.Feed):
         return [f for _, f in partitions(self.parquet_dir() / "holdings", "day")]
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        files = self.filing_files()
-        if not files:
-            return {TABLE: common.create_table(con, TABLE, SERVED)}
-        select = f"SELECT *, '{NAME}' AS source FROM {common.files_sql(files)} ORDER BY filed, accession"
-        return {TABLE: common.create_table(con, TABLE, SERVED, select)}
+        return {TABLE: self.build_rows(ctx, con, TABLE, SERVED, "filings", "filed, accession")}
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         added, removed = base.compare_with_live(con, self.kind, TABLE, ["accession", "status", "holdings"])

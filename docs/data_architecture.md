@@ -1052,7 +1052,14 @@ views, for the identity (`_universe`, `_permno_link`, `_gvkey_alias`), and stage
 that day; a whole build staged forty years of `comp.secd` into TEMP tables (homesrv, 9 Nov 2026: 6 h 12 min, 92 GB
 of spill). `wrds_price_diff` is kept from the last whole build, which the monthly WRDS refresh (a new
 `comp.sec_split` snapshot) forces; so do a change of `wrds/sec_idhist`, of the build code, and `RC_BUILD_WHOLE=1`.
-`ownership`, `options` and `market` are still built whole; `spine` stays whole by design (seconds).
+`ownership` (`rcdata/build/ownership/common.py` `build_keyed`) keys every source table by the partition its rows
+come from (`date=`, `half=`, `day=`, carried in each row as `settlement_date`, `list_date`, `snapshot_date`, `half`
+or `index_day`): a build on the live copy deletes the rows of each changed, new or gone partition and loads only
+those, then names every row's ticker again from the live spine and rewrites the rows whose name moved, so a spine
+change reaches rows no partition touched. A new source of the store (N-PORT) declares the same `dirty` and
+`build_keyed`. The 13F totals (`ownership/serve`) are still derived whole on a `sec/13f` or `ownership/serve` run
+and kept as they are otherwise (whole build of 6 Nov 2026: 91 min).
+`options` and `market` are still built whole; `spine` stays whole by design (seconds).
 
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.
