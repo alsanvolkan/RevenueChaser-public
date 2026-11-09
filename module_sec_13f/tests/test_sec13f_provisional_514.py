@@ -216,3 +216,57 @@ def test_tickers_13f_is_the_newest_settled_period_and_ignores_the_old_table():
 
     assert rcread.tickers_13f() == ["LIVE"]
     assert rcread.tickers_13f(Q[-3]) == ["GONE"]
+
+
+# ── #521: the chart modal and the snapshot cells ────────────────────────────────────────────────────────────
+
+def _chart(ticker="AAPL"):
+    totals = sec_13f.load_totals()
+    return report.build_chart_fig(ticker, totals[ticker])
+
+
+def _trace(fig, name):
+    return next(t for t in fig["data"] if t.get("name") == name)
+
+
+def test_the_chart_marks_the_quarter_still_arriving():
+    """The drill-down plotted the partial bar next to the settled one with no mark (#521)."""
+    _two_quarters()
+
+    fig = _chart()
+
+    settled, arriving = report._qlabel(SETTLED.isoformat()), report._qlabel(ARRIVING.isoformat())
+    for name in ("Shares", "Value ($)"):
+        bar = _trace(fig, name)
+        assert list(bar["x"]) == [settled, arriving + report.ARRIVING_MARK]
+        assert list(bar["marker"]["pattern"]["shape"]) == ["", "/"], "the arriving bar is hatched"
+    # The holders line is solid over the settled quarters and dashed into the one arriving.
+    assert list(_trace(fig, "Holders")["x"]) == [settled]
+    tail = _trace(fig, "Holders (filed so far)")
+    assert list(tail["x"]) == [settled, arriving + report.ARRIVING_MARK] and tail["line"]["dash"] == "dash"
+    notes = " ".join(a.get("text", "") for a in fig["layout"].get("annotations", []))
+    assert "still arriving" in notes and arriving in notes
+
+
+def test_a_chart_whose_newest_quarter_has_settled_marks_nothing():
+    today = calendar.today_ny()
+    _store([("AAPL", SETTLED, 1_000_000.0, today - timedelta(days=60)),
+            ("AAPL", ARRIVING, 1_020_000.0, today - timedelta(days=5))])
+
+    fig = _chart()
+
+    assert list(_trace(fig, "Shares")["marker"]["pattern"]["shape"]) == ["", ""]
+    assert not any(t.get("name") == "Holders (filed so far)" for t in fig["data"])
+    notes = " ".join(a.get("text", "") for a in fig["layout"].get("annotations", []))
+    assert "still arriving" not in notes
+
+
+def test_the_snapshot_cells_name_their_quarter():
+    """The legend says the snapshot is the last settled quarter's, "named on each cell"; nothing named it (#521)."""
+    _two_quarters()
+    quarters, entries = report.board_entries(sec_13f.load_totals(), {})
+    payload = report._payload(quarters, entries)
+    cells = dict(zip(payload["cols"], payload["rows"][0][3]))
+
+    for col in ("value", "pct_out", "holders", "new_exit", "breadth", "top10", "hhi", "netflow"):
+        assert len(cells[col]) == 4 and report._qlabel(SETTLED.isoformat()) in cells[col][3], col

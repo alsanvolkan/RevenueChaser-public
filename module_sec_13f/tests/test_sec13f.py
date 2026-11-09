@@ -178,8 +178,8 @@ class TestDashboard:
         cells = dict(zip(payload["cols"], payload["rows"][0][3]))
         assert cells["ch_2026-06-30"] == ["+50.0%", 50.0, "pos"]
         assert cells["streak"] == ["1", 1, "zero"]
-        assert cells["netflow"] == ["50", 50.0, "pos"]
-        assert cells["new_exit"] == ["+2/−1", 1, "zero"]             # +2/−1
+        assert cells["netflow"] == ["50", 50.0, "pos", "as of 2026 Q2"]
+        assert cells["new_exit"] == ["+2/−1", 1, "zero", "as of 2026 Q2"]             # +2/−1
 
 
 class TestUniverseInfo:
