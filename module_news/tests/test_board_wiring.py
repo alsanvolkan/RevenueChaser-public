@@ -35,8 +35,11 @@ def test_the_fetch_queues_the_news_job(monkeypatch):
 
 
 def test_the_job_builds_then_renders(monkeypatch, tmp_path):
-    from RevenueChaser.module_news import report
+    from RevenueChaser.module_news import headlines, report
     monkeypatch.setattr(report, "OUTPUT_DIR", tmp_path)
+    asked = []
+    monkeypatch.setattr(headlines, "fetch", lambda names, **kw: asked.append(names) or
+                        {"tickers": len(names), "stored": 0, "skipped": [], "error": "no API session"})
     rawstore.write_rows("economic_calendar", [{
         "session_date": "2026-11-09", "event_ts": 1794317400.0, "event": "CPI, M/M%", "type": "report",
         "forecast": None, "prev": None, "reported_period": None, "raw_row": "{}", "source": "uw",
@@ -44,3 +47,4 @@ def test_the_job_builds_then_renders(monkeypatch, tmp_path):
     path = runners.run_news()
     assert path == tmp_path / "news_latest.html"
     assert rawstore.query("SELECT event FROM news_events", db="news") == [{"event": "CPI, M/M%"}]
+    assert asked and asked[0][0] == "AAPL"            # a down gateway is a note, never a failed Fetch

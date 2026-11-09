@@ -93,6 +93,7 @@ class Source(str, Enum):
     cboe = "cboe"
     fred = "fred"
     openfigi = "openfigi"
+    ibkr = "ibkr"
     derived = "derived"
     manual = "manual"
     store = "store"
@@ -657,8 +658,9 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         key="news_headlines", label="News: market headlines",
         tables=("news_headlines",),
-        db="news", source=Source.uw, writer=None,
-        writer_note="fetched by module_news on the News board's Refresh; the hourly job comes in its own pull request",
+        db="news", source=Source.ibkr, writer=None,
+        writer_note=("Dow Jones headlines from the IBKR Gateway (module_news/headlines.py) on the News board's Fetch; "
+                     "the hourly job comes in its own pull request"),
         freshness=("news_headlines", "fetched_at"),
     ),
     DatasetSpec(

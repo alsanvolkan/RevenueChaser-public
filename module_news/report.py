@@ -212,7 +212,7 @@ def render_html(now: float | None = None) -> str:
 <div id="news-week" role="tabpanel" hidden>{week_html}</div></section>
 <div class="side">{_highlight(hl)}{_headlines(heads)}</div>
 </div>
-<p class="foot">Kaynak: Unusual Whales · Saatler Europe/Amsterdam · Önem: ●●● yüksek ●●○ orta ●○○ düşük</p>
+<p class="foot">Kaynak: takvim Unusual Whales, başlıklar Dow Jones (IBKR) · Saatler Europe/Amsterdam · Önem: ●●● yüksek ●●○ orta ●○○ düşük</p>
 </div><script>{_JS}</script></body></html>"""
 
 

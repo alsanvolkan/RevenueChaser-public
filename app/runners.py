@@ -1839,14 +1839,24 @@ def run_oipd(uw: UWClient, ticker: str | None = None, no_fetch: bool = False) ->
 
 
 def run_news(uw=None) -> Path:
-    """The News board's Fetch: the incremental calendar build into ``boards/news.duckdb``, then the page.
+    """The News board's Fetch: the incremental calendar build into ``boards/news.duckdb``, the Dow Jones headlines from
+    the IBKR Gateway (watch list first, then the largest names), then the page.
 
-    Store-only for now: it reads ``raw.economic_calendar`` (the nightly sweep D37 writes it) and calls no provider.
+    The calendar reads ``raw.economic_calendar`` (the nightly sweep D37 writes it). The headlines are two gateway
+    requests a name and no UW call; a gateway that is down is a job note, never a failed Fetch.
     """
-    from RevenueChaser.module_news import calendar, report
-    out = calendar.build(run_id=run_id())
+    from RevenueChaser.module_news import calendar, headlines, report
+    rid = run_id()
+    out = calendar.build(run_id=rid)
     ledger.add_note(f"News calendar: {out['read']} raw rows read, {out['upserted']} events upserted, "
                     f"{out['retired']} retired, {out['highlights']} day highlights")
+    names = headlines.tickers(_load_watchlist())
+    got = headlines.fetch(names, run_id=rid)
+    if got["error"]:
+        ledger.add_note(f"News headlines not fetched: {got['error']}")
+    else:
+        skipped = f"; not known to IBKR: {', '.join(got['skipped'])}" if got["skipped"] else ""
+        ledger.add_note(f"News headlines: {got['stored']} from {got['tickers']} names (IBKR, Dow Jones){skipped}")
     return report.render()
 
 
