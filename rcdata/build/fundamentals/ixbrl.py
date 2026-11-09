@@ -4,11 +4,12 @@ The facts are the document's own ``ix:nonFraction`` elements and their contexts 
 label file is read, so a member's label is its name split into words (``msft:IntelligentCloudMember`` is
 "Intelligent Cloud"). Read here:
 
-- **Segment revenue.** A revenue fact (``REVENUE_CONCEPTS``, in that order of preference per member) in USD whose
-  context has exactly one dimension, on one of ``AXES`` (business segment, product or service, geography), for a
+- **Segment revenue.** A revenue fact (``REVENUE_CONCEPTS``, in that order of preference per member) in a currency
+  (the fact's own: an IFRS 20-F reports in EUR, JPY ...) whose context has exactly one dimension besides
+  ``ConsolidationItemsAxis = OperatingSegmentsMember``, on one of ``AXES`` (business segment, product or service, geography), for a
   year-long period; only the newest such year of the document (an annual report repeats the years before).
 - **Major customers.** ``ConcentrationRiskPercentage1`` whose context names the customer on ``MajorCustomersAxis``
-  (and, when it says, a customer concentration on ``ConcentrationRiskByTypeAxis``); the benchmark (revenue, accounts
+  (whatever ``ConcentrationRiskByTypeAxis`` says: VRTX tags McKesson as a product concentration); the benchmark (revenue, accounts
   receivable) from ``ConcentrationRiskByBenchmarkAxis``; the share as the fraction the fact holds (``scale`` -2 on a
   displayed 12 is 0.12); the newest period only. A share above 1 is left out (counted), never guessed at.
 
@@ -29,6 +30,11 @@ SHARE_CONCEPT = "ConcentrationRiskPercentage1"
 CUSTOMER_AXIS = "MajorCustomersAxis"
 TYPE_AXIS = "ConcentrationRiskByTypeAxis"
 BENCHMARK_AXIS = "ConcentrationRiskByBenchmarkAxis"
+# A segment may carry a second dimension saying it is an operating segment (PG, PLD, TJX, NEE; #400 WP4), and an
+# IFRS 20-F reports in its own currency (SAP in EUR), so the currency is the fact's unit and not always USD.
+CONSOLIDATION_AXIS = "ConsolidationItemsAxis"
+OPERATING_SEGMENTS = "OperatingSegmentsMember"
+_CURRENCY = re.compile(r"[A-Z]{3}")
 YEAR_DAYS = (300, 400)
 _WORDS = re.compile(r"[A-Z]+(?=[A-Z][a-z]|\d|$)|[A-Z]?[a-z]+|\d+")
 
@@ -171,22 +177,27 @@ def _segments(found, units) -> list[dict]:
     rows = []
     for f, ctx, value in found:
         concept = local(f["name"])
-        if concept not in REVENUE_CONCEPTS or units.get(f["unit"] or "") != "USD" or len(ctx["dims"]) != 1:
+        unit = units.get(f["unit"] or "") or ""
+        if concept not in REVENUE_CONCEPTS or not _CURRENCY.fullmatch(unit):
             continue
-        (axis, member), = ctx["dims"].items()
+        dims = {a: m for a, m in ctx["dims"].items()
+                if not (local(a) == CONSOLIDATION_AXIS and local(m) == OPERATING_SEGMENTS)}
+        if len(dims) != 1:
+            continue
+        (axis, member), = dims.items()
         if local(axis) not in AXES or not _year_long(ctx):
             continue
-        rows.append((ctx["end"], REVENUE_CONCEPTS.index(concept), AXES[local(axis)], member, concept, value, ctx))
+        rows.append((ctx["end"], REVENUE_CONCEPTS.index(concept), AXES[local(axis)], member, concept, value, ctx, unit))
     if not rows:
         return []
     newest = max(r[0] for r in rows)
-    for end, rank, axis, member, concept, value, ctx in rows:
+    for end, rank, axis, member, concept, value, ctx, unit in rows:
         if end != newest:
             continue
         key = (axis, member)
         if key not in best or rank < best[key][0]:
             best[key] = (rank, {"axis": axis, "member": member, "label": label(member), "concept": concept,
-                                "value": value, "unit": "USD", "period_start": ctx["start"], "period_end": end})
+                                "value": value, "unit": unit, "period_start": ctx["start"], "period_end": end})
     return [row for _, row in sorted(best.values(), key=lambda x: (x[1]["axis"], x[1]["member"]))]
 
 
@@ -206,8 +217,7 @@ def _customers(found, counts) -> list[dict]:
             continue
         dims = {local(a): m for a, m in ctx["dims"].items()}
         customer = dims.get(CUSTOMER_AXIS)
-        kind = dims.get(TYPE_AXIS)
-        if not customer or (kind and local(kind) != "CustomerConcentrationRiskMember") or ctx["end"] is None:
+        if not customer or ctx["end"] is None:      # a named customer counts whatever type the filer wrote (VRTX)
             continue
         if not 0 <= value <= 1:
             counts["share_over_one"] = counts.get("share_over_one", 0) + 1
