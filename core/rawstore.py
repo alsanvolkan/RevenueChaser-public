@@ -88,7 +88,22 @@ def _db_of(name: str) -> str:
     return (MANIFEST.get(name) or {}).get("db", "raw")
 
 
+#: Board result files (DECISIONS S9, S16): ``<store>/boards/<board>.duckdb``, one writer per board package, written
+#: incrementally. The first, narrow step of the board-file plan (2026-11-08): only boards born with their own file are
+#: listed here (News, Welcome); the move of the older boards' tables (plan PR 0 and on) extends this tuple.
+BOARD_DBS = ("news", "welcome")
+#: The folder of the board files, beside the raw store; ``rcdata/backup.py`` copies ``boards/*.duckdb``.
+BOARDS_DIRNAME = "boards"
+
+
+def board_db_path(board: str) -> Path:
+    """A board's own result file, ``<store>/boards/<board>.duckdb`` (follows ``DB_PATH`` redirects)."""
+    return Path(DB_PATH).parent / BOARDS_DIRNAME / f"{board}.duckdb"
+
+
 def _db_path(db: str) -> Path:
+    if db in BOARD_DBS:
+        return board_db_path(db)
     if db == "edgar":
         return edgar_db_path()
     if db == "history":
@@ -414,6 +429,8 @@ def _connect_with_retry(delays: tuple[float, ...], path: Path | None = None) -> 
     foreign holder fails fast.
     """
     path = Path(path if path is not None else DB_PATH)
+    if path.parent.name == BOARDS_DIRNAME:
+        path.parent.mkdir(parents=True, exist_ok=True)   # the first write of a board makes its folder
     last: Exception | None = None
     i = 0
     judged = False
@@ -448,8 +465,8 @@ def _connect_with_retry(delays: tuple[float, ...], path: Path | None = None) -> 
 def connect(read_only: bool = False, db: str = "raw"):
     """Open a connection for one operation; always closes. Retries on lock.
 
-    ``db`` selects the store file (``"raw"``, ``"edgar"``, ``"history"`` or ``"prices"``). ``read_only`` is
-    ADVISORY: it only selects the retry budget, and every handle is opened
+    ``db`` selects the store file (``"raw"``, ``"edgar"``, ``"history"``, ``"prices"`` or a board in
+    ``BOARD_DBS``). ``read_only`` is ADVISORY: it only selects the retry budget, and every handle is opened
     read-write. DuckDB refuses a second connection to the same file with a
     *different* configuration in the same process::
 
@@ -2938,7 +2955,7 @@ def _migrate_price_tables() -> list[str]:
 # ensure touches any file (``_refuse_ensure_if_ahead``), so an old checkout never reshapes a newer one.
 _SCHEMA_STAMP_TABLE = "store_schema"
 _SCHEMA_STAMP_KEY = "schema_version"
-_SCHEMA_FILES = ("raw", "edgar", "history", "prices")
+_SCHEMA_FILES = ("raw", "edgar", "history", "prices") + BOARD_DBS
 _STAMP_WRITES: dict[str, int] = {}   # test hook: counts real stamp writes, not a metric
 _STAMP_WARNED: set[tuple] = set()
 _STAMP_SEEN: dict[str, tuple] = {}   # file path -> ((size, mtime_ns), stamp): a steady file costs one stat
@@ -3165,6 +3182,9 @@ def ensure_all_tables() -> None:
         with connect(db="prices") as conn:    # #156: made eagerly, so Data Health counts 0 rows, not "no table"
             _ensure_db_tables(conn, "prices")
         _migrate_price_tables()
+        for board in BOARD_DBS:              # S9: each board's own file, made eagerly like prices
+            with connect(db=board) as conn:
+                _ensure_db_tables(conn, board)
         if _db_path("history").exists():   # result history (#287); the first record_run makes the file
             ensure_history()
         _persist_drift(seen)                 # every file is reconciled now; never raises
