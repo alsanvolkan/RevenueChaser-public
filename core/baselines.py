@@ -186,7 +186,7 @@ def _mean(values) -> float | None:
 def _freeze_dates() -> list[date]:
     """The dates the ledger froze a pick on: the only dates a baseline exists for."""
     rows = rawstore.query(f"SELECT DISTINCT forecast_date AS d FROM {outcomes.LEDGER} WHERE target_type = ? "
-                          "ORDER BY d", [outcomes.PICK])
+                          "ORDER BY d", [outcomes.PICK], db="forecast")
     return [r["d"] for r in rows if r["d"] is not None]
 
 
@@ -203,7 +203,7 @@ def _open_rows(dates: list[date]) -> dict[date, tuple[int, ...]]:
     rows = rawstore.query(
         f"SELECT forecast_date AS d, horizon_days AS h FROM {TABLE} WHERE basis = ? AND model_version = ? "
         f"AND status = ? AND horizon_days IN ({marks})",
-        [UNIVERSE, MODEL_VERSION, CLOSED, *HORIZONS])
+        [UNIVERSE, MODEL_VERSION, CLOSED, *HORIZONS], db="forecast")
     closed = {(r["d"], int(r["h"])) for r in rows}
     todo: dict[date, tuple[int, ...]] = {}
     for day in dates:

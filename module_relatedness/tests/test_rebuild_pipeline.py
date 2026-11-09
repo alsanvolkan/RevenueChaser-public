@@ -40,7 +40,7 @@ def _synced(run_id):
     labels = {r["theme_id"]: r["label"] for r in rawstore.get_all("relatedness_themes")}
     rows = rawstore.query(
         "SELECT theme_id, theme, level FROM ticker_themes WHERE theme_run_id = ?",
-        [run_id])
+        [run_id], db="relatedness")
     assert rows
     return rows, labels
 

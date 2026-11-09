@@ -44,7 +44,7 @@ def _seed(ticker, last_day="2026-10-02", cached_at=None):
 
 
 def _stored():
-    return rawstore.query("SELECT * FROM forecast_ledger WHERE source = 'fundamentals' ORDER BY rank")
+    return rawstore.query("SELECT * FROM forecast_ledger WHERE source = 'fundamentals' ORDER BY rank", db="forecast")
 
 
 @pytest.fixture

@@ -141,7 +141,7 @@ def _split_jump(bars: list[dict]) -> bool:
 
 
 def _pick_count() -> int:
-    rows = rawstore.query(f"SELECT count(*) AS n FROM {LEDGER} WHERE target_type = ?", [PICK])
+    rows = rawstore.query(f"SELECT count(*) AS n FROM {LEDGER} WHERE target_type = ?", [PICK], db="forecast")
     return int(rows[0]["n"]) if rows else 0
 
 
@@ -150,9 +150,10 @@ def _todo_picks(full: bool) -> list[dict]:
     pick. Otherwise an anti-join in SQL keeps only the picks with fewer than ``len(HORIZONS)`` closed rows of the
     current ``MODEL_VERSION``, so the nightly never loads the whole ledger or every closed key."""
     cols = ", ".join(f"l.{k}" for k in _KEY)
-    if full or not rawstore.query("SELECT 1 AS x FROM information_schema.tables WHERE table_name = ?", [TABLE]):
+    if full or not rawstore.query("SELECT 1 AS x FROM information_schema.tables WHERE table_name = ?", [TABLE],
+                                      db="forecast"):
         rows = rawstore.query(f"SELECT {cols} FROM {LEDGER} l WHERE l.target_type = ? "
-                              "ORDER BY l.subject, l.source, l.forecast_date", [PICK])
+                              "ORDER BY l.subject, l.source, l.forecast_date", [PICK], db="forecast")
         return [{**r, "closed": ()} for r in rows]
     on = " AND ".join(f"o.{k} = l.{k}" for k in _KEY)
     hz = ", ".join("?" for _ in HORIZONS)
@@ -161,7 +162,7 @@ def _todo_picks(full: bool) -> list[dict]:
         f"FROM {LEDGER} l LEFT JOIN {TABLE} o ON {on} AND o.status = ? AND o.model_version = ? "
         f"AND o.horizon_days IN ({hz}) WHERE l.target_type = ? GROUP BY {cols} "
         "HAVING count(o.horizon_days) < ? ORDER BY l.subject, l.source, l.forecast_date",
-        [CLOSED, MODEL_VERSION, *HORIZONS, PICK, len(HORIZONS)])
+        [CLOSED, MODEL_VERSION, *HORIZONS, PICK, len(HORIZONS)], db="forecast")
     return [{**r, "closed": tuple(r["closed"] or ())} for r in rows]
 
 

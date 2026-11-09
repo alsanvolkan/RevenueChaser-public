@@ -95,7 +95,7 @@ def test_a_refresh_leaves_the_persisted_scores_alone(scenario):
     from RevenueChaser.module_swing_potential import pipeline as sp
     sp.run_scan()
     fp.run_scan()
-    before = {t: rawstore.query(f"SELECT * FROM {t} ORDER BY 1, 2") for t in
+    before = {t: rawstore.query(f"SELECT * FROM {t} ORDER BY 1, 2", db=rawstore._db_of(t)) for t in
               ("swing_scores", "swing_gates", "fundamentals_scores", "fundamentals_gates")}
     assert all(before.values())
     rawstore.replace_all("swing_scores", [], allow_empty=True)

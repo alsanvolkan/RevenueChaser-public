@@ -220,7 +220,7 @@ def test_a_board_card_shows_one_source_to_store_line_per_table():
     assert html.count('class="bflow-row"') == 2
     assert html.count("Unusual Whales") == 2, "the provider is written in full, never as a code"
     assert html.count("Implied Probability chain") == 2
-    assert html.count('class="db db-raw"') == 2
+    assert html.count('class="db db-board"') == 2, "the OIPD tables live in boards/oipd.duckdb (S9)"
 
 
 def test_every_provider_the_registry_can_name_is_written_in_words():

@@ -188,7 +188,7 @@ def test_score_rows_carry_the_four_new_keys():
 
 def test_persist_writes_the_four_new_columns(rawstore_tmp_db):
     scores.persist([_score_result()])
-    row = rawstore.query("SELECT * FROM fundamentals_scores")[0]
+    row = rawstore.query("SELECT * FROM fundamentals_scores", db="fundamentals")[0]
     assert row["ro40_basis"] == "FY" and row["anchor_period_end"] == "2024-12-31"
     assert row["price"] == 12.5 and row["market_cap"] == 2.0e9
 

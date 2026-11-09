@@ -60,11 +60,11 @@ def test_cutover_materialize_pins_run(rawstore_tmp_db):
     assert themes.current_run_id() == "r1"          # cutover is the only writer
     assert mat["rows"] >= 1
     n = rawstore.query(
-        "SELECT count(*) n FROM ticker_themes WHERE theme_run_id='r1'")[0]["n"]
+        "SELECT count(*) n FROM ticker_themes WHERE theme_run_id='r1'", db="relatedness")[0]["n"]
     assert n == mat["rows"]
     levels = {r["level"] for r in rawstore.query(
         "SELECT DISTINCT level FROM ticker_themes WHERE theme_run_id='r1' "
-        "AND ticker LIKE 'G%'")}
+        "AND ticker LIKE 'G%'", db="relatedness")}
     assert {"fine", "medium", "coarse"} <= levels
 
 
@@ -327,7 +327,7 @@ def test_match_theme_etfs(rawstore_tmp_db):
     assert out["themes"] >= 1 and out["rows"] >= 1
     rows = rawstore.query(
         "SELECT etf, rank, overlap FROM relatedness_theme_etfs "
-        "WHERE theme_id = ? ORDER BY rank", [tid])
+        "WHERE theme_id = ? ORDER BY rank", [tid], db="relatedness")
     etfs = {r["etf"]: r for r in rows}
     assert "SMH" in etfs
     assert etfs["SMH"]["rank"] <= 3
@@ -363,7 +363,7 @@ def _seed_one_theme(run, sectors, spdr):
 
 def _etf_ranks(tid):
     return {r["etf"]: r["rank"] for r in rawstore.query(
-        "SELECT etf, rank FROM relatedness_theme_etfs WHERE theme_id = ?", [tid])}
+        "SELECT etf, rank FROM relatedness_theme_etfs WHERE theme_id = ?", [tid], db="relatedness")}
 
 
 def test_sector_spdr_is_keyed_by_the_morningstar_sector_names():
@@ -411,7 +411,7 @@ def test_cutover_materialize_does_not_copy_legacy(rawstore_tmp_db):
                         run_id="leg", profiles=_profiles())
     mat = themes.cutover_materialize("leg")
     legacy = rawstore.query(
-        "SELECT * FROM ticker_themes WHERE theme_run_id='leg' AND ticker='ZZZ'")
+        "SELECT * FROM ticker_themes WHERE theme_run_id='leg' AND ticker='ZZZ'", db="relatedness")
     assert legacy == []
     assert mat["profiled"] >= 1
 

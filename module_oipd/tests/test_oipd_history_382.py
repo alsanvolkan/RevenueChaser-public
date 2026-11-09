@@ -68,7 +68,7 @@ def _unpack(cell):
 def test_a_fetch_captures_the_chain_it_saved_and_the_svi_of_each_fitted_expiry(store):
     payload, capture = _fetch()
     assert capture["status"] == "ok" and capture["errors"] == []
-    stored = rawstore.query("SELECT * FROM oipd_chain WHERE ticker = 'TST' ORDER BY option_symbol")
+    stored = rawstore.query("SELECT * FROM oipd_chain WHERE ticker = 'TST' ORDER BY option_symbol", db="oipd")
     assert sorted(capture["chain"], key=lambda r: r["option_symbol"]) == stored
     assert sorted(capture["svi"]) == [e["date"] for e in payload["expiries"]]
     fitted = capture["svi"][payload["expiries"][0]["date"]]

@@ -306,7 +306,7 @@ def build_shadow(candidates=(60, 90, 120, 150), k_medium: int | None = None,
     for name in ("relatedness_themes", "relatedness_theme_tags",
                  "relatedness_theme_members", "theme_runs"):
         rawstore.ensure_table(name)
-    rawstore.atomic(_write)
+    rawstore.atomic(_write, db="relatedness")
     return {"run_id": run_id, "n": len(tickers), "k_fine": k_fine,
             "k_medium": int(len(set(med.tolist()))), "k_medium_requested": requested,
             "k_coarse": int(len(set(coarse.tolist()))),
@@ -374,7 +374,7 @@ def run_rows(table: str, run_id: str, level: str | None = None) -> list[dict]:
         sql += " AND level = ?"
         args.append(level)
     order = ROW_ORDER.get(table)
-    return rawstore.query(f"{sql} ORDER BY {order}" if order else sql, args)
+    return rawstore.query(f"{sql} ORDER BY {order}" if order else sql, args, db="relatedness")
 
 
 def _useful_tag(tag: str) -> bool:
@@ -495,7 +495,7 @@ def themes_for_ticker(ticker: str, run_id: str | None = None) -> list[str]:
     rows = rawstore.query(
         "SELECT theme, theme_id FROM ticker_themes "
         "WHERE ticker = ? AND theme_run_id = ? AND level = 'medium'",
-        [ticker.upper(), run_id])
+        [ticker.upper(), run_id], db="relatedness")
     out = []
     for r in rows:
         label = r.get("theme") or ""
@@ -518,7 +518,7 @@ def themes_for_tickers(tickers, run_id: str | None = None) -> dict[str, list[str
     marks = ", ".join("?" for _ in tickers)
     rows = rawstore.query(
         "SELECT ticker, theme, theme_id FROM ticker_themes "
-        f"WHERE theme_run_id = ? AND level = 'medium' AND ticker IN ({marks})", [run_id, *tickers])
+        f"WHERE theme_run_id = ? AND level = 'medium' AND ticker IN ({marks})", [run_id, *tickers], db="relatedness")
     labels = {}
     missing = sorted({r["theme_id"] for r in rows if not r.get("theme")})
     if missing:
@@ -631,7 +631,7 @@ def drop_empty_coarses(run_id: str) -> dict:
         ph = ", ".join("?" * len(empty))
         rawstore.execute(
             f"DELETE FROM relatedness_themes WHERE theme_id IN ({ph})",
-            list(empty))
+            list(empty), db="relatedness")
     remaining = len(run_rows("relatedness_themes", run_id, "coarse"))
     tr = rawstore.get("theme_runs", run_id)
     if tr is not None:
@@ -812,7 +812,7 @@ def rebalance_coarses(run_id: str, max_share: float = 0.45) -> dict:
     if drop:
         ph = ", ".join("?" * len(drop))
         rawstore.execute(
-            f"DELETE FROM relatedness_themes WHERE theme_id IN ({ph})", drop)
+            f"DELETE FROM relatedness_themes WHERE theme_id IN ({ph})", drop, db="relatedness")
     if coarse_rows:
         rawstore.write_rows("relatedness_themes", coarse_rows)
     if med_updates:
@@ -942,7 +942,7 @@ def sector_coarses(run_id: str) -> dict:
     run_row = rawstore.get("theme_runs", run_id)
     if run_row is not None:
         run_row = {**run_row, "k_coarse": len(coarse_rows)}
-    rawstore.atomic(_write)
+    rawstore.atomic(_write, db="relatedness")
     return sector_coarse_summary(med_sets, sector_by, plan)
 
 
@@ -963,7 +963,7 @@ def adopt_medium_catalog(target_run: str, source_run: str) -> dict:
     src_members: dict[str, set[str]] = {}
     for r in rawstore.query(
             "SELECT ticker, theme_id FROM ticker_themes "
-            "WHERE theme_run_id = ? AND level = 'medium'", [source_run]):
+            "WHERE theme_run_id = ? AND level = 'medium'", [source_run], db="relatedness"):
         if r["theme_id"] in src_meds:
             src_members.setdefault(r["theme_id"], set()).add(r["ticker"])
 
@@ -1027,7 +1027,7 @@ def adopt_medium_catalog(target_run: str, source_run: str) -> dict:
         ph = ", ".join("?" * len(dropped))
         rawstore.execute(
             f"DELETE FROM relatedness_themes WHERE theme_id IN ({ph})",
-            list(dropped))
+            list(dropped), db="relatedness")
     if adopted_rows:
         rawstore.write_rows("relatedness_themes", adopted_rows)
     if fine_updates:
@@ -1170,7 +1170,7 @@ def match_theme_etfs(run_id: str) -> dict:
         ph = ", ".join("?" * len(chunk))
         rawstore.execute(
             f"DELETE FROM relatedness_theme_etfs WHERE theme_id IN ({ph})",
-            chunk)
+            chunk, db="relatedness")
     if out_rows:
         rawstore.write_rows("relatedness_theme_etfs", out_rows)
     return {"themes": themes_touched, "rows": len(out_rows)}
@@ -1195,13 +1195,13 @@ def cutover_materialize(run_id: str) -> dict:
     prefix = f"{run_id}:"
     n_members = rawstore.query(
         "SELECT count(*) AS n FROM relatedness_theme_members "
-        "WHERE theme_id = ? OR starts_with(theme_id, ?)", [run_id, prefix])
+        "WHERE theme_id = ? OR starts_with(theme_id, ?)", [run_id, prefix], db="relatedness")
     if not (n_members and n_members[0]["n"]):
         raise ValueError(f"theme run {run_id!r} has no members; cutover refused")
     if rawstore.get("theme_runs", run_id) is None:
         raise ValueError(f"unknown theme run: {run_id}")
     fetched_at = time.time()
-    with rawstore.transaction() as tx:
+    with rawstore.transaction(db="relatedness") as tx:
         tx.execute("DELETE FROM ticker_themes WHERE theme_run_id = ?", [run_id])
         # fine
         tx.execute(
@@ -1249,7 +1249,7 @@ def cutover_materialize(run_id: str) -> dict:
 
     rows = rawstore.query(
         "SELECT count(*) AS n FROM ticker_themes WHERE theme_run_id = ?",
-        [run_id])
+        [run_id], db="relatedness")
     profiled = rawstore.query(
         """
         SELECT count(DISTINCT m.ticker) AS n
@@ -1258,7 +1258,7 @@ def cutover_materialize(run_id: str) -> dict:
           ON f.theme_id = m.theme_id AND f.level = 'fine'
         WHERE m.theme_id = ? OR starts_with(m.theme_id, ?)
         """,
-        [run_id, prefix])
+        [run_id, prefix], db="relatedness")
     return {
         "run_id": run_id,
         "rows": int((rows[0]["n"] if rows else 0) or 0),

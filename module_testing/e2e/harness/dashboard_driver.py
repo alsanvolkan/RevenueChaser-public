@@ -216,6 +216,18 @@ class Dashboard:
     def artifact(self, relative: str) -> Path:
         return self.cache_dir / relative
 
+    def db_file(self, table: str) -> Path:
+        """The store file MANIFEST places ``table`` in: ``<store>/<db>.duckdb``, or ``<store>/boards/<board>.duckdb``
+        for a board's own file (S9)."""
+        try:
+            from RevenueChaser.core import rawstore
+            name = rawstore.MANIFEST.get(table, {}).get("db", "raw")    # edgar, history, prices (#156), boards
+            if name in rawstore.BOARD_DBS:
+                return self.store_dir / rawstore.BOARDS_DIRNAME / f"{name}.duckdb"
+        except Exception:  # noqa: BLE001
+            name = "raw"
+        return self.store_dir / f"{name}.duckdb"
+
     def table_count(self, table: str) -> int:
         """Row count straight from the temp DuckDB store.
 
@@ -223,12 +235,7 @@ class Dashboard:
         DuckDB allows a single writer process at a time.
         """
         import duckdb
-        try:
-            from RevenueChaser.core import rawstore
-            name = rawstore.MANIFEST.get(table, {}).get("db", "raw")    # edgar, history, prices (#156)
-        except Exception:  # noqa: BLE001
-            name = "raw"
-        db = self.store_dir / f"{name}.duckdb"
+        db = self.db_file(table)
         if not db.exists():
             return 0
         conn = duckdb.connect(str(db))

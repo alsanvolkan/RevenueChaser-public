@@ -77,11 +77,11 @@ def gate_rows(results: list[dict], eff=None) -> list[dict]:
 
 
 def persist(results: list[dict], sink: dict | None = None, eff=None) -> dict:
-    """Full-refresh write of both tables. ``sink`` (a dict) receives the rows just written under ``scores`` and
+    """Incremental write of both tables (``rawstore.sync_rows``: upsert, retire only dropped keys). ``sink`` (a dict) receives the rows just written under ``scores`` and
     ``gates``, so the result history (``history.record``) records exactly what the latest tables got (#278)."""
     srows, grows = _evaluated(results, eff=eff)
-    rawstore.replace_all("swing_scores", srows)
-    rawstore.replace_all("swing_gates", grows)
+    rawstore.sync_rows("swing_scores", srows)
+    rawstore.sync_rows("swing_gates", grows)
     if sink is not None:
         sink.update(scores=srows, gates=grows)
     return {"scores": len(srows), "gates": len(grows)}
