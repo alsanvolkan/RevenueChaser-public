@@ -158,3 +158,15 @@ def test_the_squeeze_reason_names_the_settlement_day():
     r = rule5_positioning.score(short_interest_pct_float=25.0)
     assert r.reasons == ["high short interest (25.0%)"]
     assert "si_as_of" not in r.raw_metrics
+
+
+def test_a_failing_float_or_fee_read_keeps_the_finra_figures(store, monkeypatch):
+    """The float and the fee are extras: a prices or IBKR read that fails leaves si% and the fee out, not the row."""
+    store["finra"] = [_finra("AAPL", SETTLED, 3_000_000, 4.5)]
+    monkeypatch.setattr(read, "security_ids", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no table")))
+    monkeypatch.setattr(read, "shortable", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no table")))
+
+    rows, note = store_reads.short_interest(["AAPL"], today=TODAY)
+
+    assert rows["AAPL"] == {"si_pct": None, "days_to_cover": 4.5, "borrow_fee": None, "settlement_date": "2026-10-15"}
+    assert note["stored"] is True

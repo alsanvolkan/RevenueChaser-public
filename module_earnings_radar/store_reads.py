@@ -261,6 +261,15 @@ def _fees(names: list[str]) -> dict[str, float]:
     return out
 
 
+def _extra(reader, names: list[str], what: str) -> dict[str, float]:
+    """The float and the fee are extras to FINRA's figures: a failed read leaves them out, never the row."""
+    try:
+        return reader(names)
+    except Exception as exc:                                  # noqa: BLE001 - a store error is "not stored"
+        logger.warning("earnings short interest: the %s read failed: %s", what, exc)
+        return {}
+
+
 def short_interest(tickers, today: date | None = None) -> tuple[dict[str, dict], dict]:
     """``({ticker: R5 squeeze inputs}, note)`` from FINRA's newest settlement of each name in the ownership store.
 
@@ -280,12 +289,11 @@ def short_interest(tickers, today: date | None = None) -> tuple[dict[str, dict],
         return {}, _missing("the short interest", None, "no ticker asked", source=SHORT_SOURCE, status=_short_status())
     try:
         rows = read.finra_short_interest(names, start=oldest, end=today)
-        floats = _floats(names)
-        fees = _fees(names)
     except Exception as exc:                                  # noqa: BLE001 - a store error is "not stored"
         logger.warning("earnings ownership-store read failed: %s", exc)
         return {}, _missing("the short interest", None, f"read failed: {type(exc).__name__}", source=SHORT_SOURCE,
                             status=_short_status())
+    floats, fees = _extra(_floats, names, "float"), _extra(_fees, names, "borrow fee")
     best: dict[str, dict] = {}
     for r in rows:
         ticker = str(r.get("ticker") or "").upper()
