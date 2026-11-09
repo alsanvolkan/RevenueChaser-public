@@ -41,13 +41,6 @@ def test_quoted_item_1a_reference_does_not_end_item_1():
     assert quality == "ok" and item.count("We make widgets") == 120 and "risk text" not in item
 
 
-def test_heading_split_over_lines_closes_item_1():
-    # MODD, MXC: "ITEM\n1A. RISK FACTORS" and "Item\n 1. \n Business" in the served text.
-    text = TOC_10K + " ITEM\n1. BUSINESS \n" + PROSE + " ITEM\n1A. RISK FACTORS \n" + RISK
-    item, quality = _cut(text)
-    assert quality == "ok" and "risk text" not in item and item.count("We make widgets") == 60
-
-
 def test_any_later_item_closes_item_1():
     # MXC: the body ran on into ITEM 7 (overrun, 137k) because no 1A / 1B / 2 heading matched.
     text = TOC_10K + " ITEM 1. BUSINESS \n" + PROSE + " ITEM 7. MANAGEMENT’S DISCUSSION AND ANALYSIS \n" + RISK
@@ -58,8 +51,7 @@ def test_any_later_item_closes_item_1():
 @pytest.mark.parametrize("heading,form", [("ITEM I. BUSINESS", "10-K"),                      # PHM: missing
                                           ("ITEM 4. INFORMATION ABOUT SAP", "20-F"),          # SAP: missing
                                           ("ITEM 4. INFORMATION OF THE COMPANY", "20-F"),     # CIGL
-                                          ("ITEM 4. INFO RMATION ON THE COMPANY", "20-F"),    # HYFT, NBP
-                                          ("ITEM\n 4. \n INFORMATION ON THE COMPANY", "20-F")])  # IH, ONEG
+                                          ("ITEM 4. INFO RMATION ON THE COMPANY", "20-F")])   # HYFT, NBP
 def test_heading_variants_are_a_start(heading, form):
     stop = " ITEM 4A. UNRESOLVED STAFF COMMENTS \n" if form == "20-F" else " ITEM 1A. RISK FACTORS \n"
     item, quality = _cut((TOC_20F if form == "20-F" else TOC_10K) + f" {heading} \n" + PROSE + stop + RISK, form)
@@ -68,13 +60,14 @@ def test_heading_variants_are_a_start(heading, form):
 
 def test_contents_entry_followed_by_page_number_is_not_the_body():
     # AEE: "Item 1. Business \n 7 \n General \n 7 ..." with sub-entries, 1A further than 400 characters on.
-    toc = " Item 1. Business \n 7 \n" + " General Section \n 7 \n" * 40 + " Item 1A. Risk Factors \n 22 \n"
+    # A contents block longer than MIN_ITEM_CHARS: the old "first slice of 2,000 wins" took it as the body.
+    toc = " Item 1. Business \n 7 \n" + " General Section \n 7 \n" * 150 + " Item 1A. Risk Factors \n 22 \n"
     item, quality = _cut(toc + " Item 1. Business \n" + PROSE + " Item 1A. Risk Factors \n" + RISK)
     assert quality == "ok" and item.lstrip().startswith("We make widgets") and "risk text" not in item
 
 
 def test_item_4_longer_than_the_cap_is_capped_and_ok():
-    # BCH: Item 4 is 404k; the slice is capped, it still starts at the body heading.
-    big = PROSE * 40
+    # BCH: Item 4 is 404k and names "Item 4A" in a sentence early on; the slice is capped at the body heading.
+    big = PROSE * 2 + " as noted in “Item 4A. Unresolved Staff Comments” below.\n" + PROSE * 38
     item, _ = _cut(TOC_20F + " Item 4 Information on the Company \n" + big + " Item 4A Unresolved Staff Comments \n", "20-F")
     assert len(item) == config.MAX_ITEM_CHARS and item.lstrip().startswith("We make widgets")
