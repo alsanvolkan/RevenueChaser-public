@@ -90,6 +90,16 @@ def test_freshness_flags_a_failed_job_and_drops_old_ones():
     assert page.index("SPX Gamma") < page.index("RC-Earnings-Inputs")          # failures first
 
 
+def test_a_run_with_failed_provider_calls_is_flagged_not_ticked():
+    rawstore.write_rows("welcome_freshness", [
+        {"job": "module_news", "last_status": "gaps", "last_finished_at": NOW - 60, "last_ok_at": NOW - 30 * HOUR,
+         "last_failed_at": None, "last_error": "Finished with gaps: 12 of 12 Interactive Brokers calls failed.",
+         "run_id": "t", "run_at": NOW}])
+    page = report.render_html(now=NOW, watchlist=set(), labels={"module_news": "News"})
+    assert "Hepsi tamam" not in page and "1 işte sorun" in page
+    assert "! eksik veri" in page and "✓ tamam" not in page and "12 of 12 Interactive Brokers" in page
+
+
 def test_the_session_clock_gets_the_next_sessions():
     page = report.render_html(now=NOW, watchlist=set(), labels={})
     sessions = json.loads(page.split("var SESSIONS = ", 1)[1].split(";", 1)[0])

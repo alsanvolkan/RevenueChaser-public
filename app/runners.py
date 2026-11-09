@@ -7,6 +7,7 @@ import functools
 import json
 import logging
 import time
+from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from RevenueChaser.core.config import OUTPUT_DIR
 from RevenueChaser.core.gics_map import UNCLASSIFIED, is_unclassified, sector_or_unclassified
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
 from RevenueChaser.core import job_control, job_lock, ledger, run_counts
-from .jobs import JobMessage, run_id
+from .jobs import GAPS, JobMessage, run_id
 
 logger = logging.getLogger(__name__)
 
@@ -1862,7 +1863,12 @@ def run_news(uw=None) -> Path:
     else:
         skipped = f"; not known to IBKR: {', '.join(got['skipped'])}" if got["skipped"] else ""
         ledger.add_note(f"News headlines: {got['stored']} from {got['tickers']} names (IBKR, Dow Jones){skipped}")
-    return report.render(provider_health=health)
+    path = report.render(provider_health=health)
+    if health:
+        # The job too, so the Welcome freshness card does not show a ✓ for a Fetch that got no headlines.
+        raise JobMessage(f"{GAPS}: {len(names)} of {len(names)} Interactive Brokers calls failed "
+                         f"(headlines: {got['error']}). The board may be incomplete — run Fetch again later.")
+    return path
 
 
 def run_news_cached(uw=None) -> Path:
@@ -1876,7 +1882,12 @@ def welcome_job_labels() -> dict[str, str]:
     from RevenueChaser.app import dashboard
     from . import jobs
     tab_label = {t["key"]: t["label"] for t in dashboard.TABS if t["type"] == "tab"}
-    return {job: tab_label[boards[0]] for job, boards in jobs._PRODUCES.items() if boards and boards[0] in tab_label}
+    first = {job: boards[0] for job, boards in jobs._PRODUCES.items() if boards and boards[0] in tab_label}
+    feeders = Counter(first.values())
+    # Several jobs feed one board (the universe run and AG's own Fetch): only the board's own job keeps the bare
+    # label, or the freshness card lists "Asymmetric Growth" twice.
+    return {job: tab_label[b] if feeders[b] == 1 or job == b else f"{tab_label[b]} · {job}"
+            for job, b in first.items()}
 
 
 def run_welcome(uw=None) -> Path:

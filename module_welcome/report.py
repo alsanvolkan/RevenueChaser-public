@@ -173,7 +173,7 @@ def _freshness_card(now: float, labels: dict[str, str]) -> str:
                           [now - FRESH_DAYS * 86400], db="welcome")
 
     def failing(r):
-        return r.get("last_status") == "error" or (r.get("last_failed_at") or 0) >= now - 86400
+        return r.get("last_status") in ("error", "gaps") or (r.get("last_failed_at") or 0) >= now - 86400
 
     rows.sort(key=lambda r: (not failing(r), -float(r["last_finished_at"])))
     head = '<section class="card"><h2 class="lbl">Veri tazeliği · son 7 gün</h2>'
@@ -181,12 +181,13 @@ def _freshness_card(now: float, labels: dict[str, str]) -> str:
         return head + '<p class="empty">Son 7 günde biten iş yok.</p>' + _open_tab("module_settings", "Data health") + \
             "</section>"
     n_bad = sum(1 for r in rows if failing(r))
-    out = [head, f'<div class="big">{n_bad} işte hata</div>' if n_bad else '<div class="big">Hepsi tamam</div>',
+    out = [head, f'<div class="big">{n_bad} işte sorun</div>' if n_bad else '<div class="big">Hepsi tamam</div>',
            '<ul class="list">']
     for r in rows[:FRESH_LIMIT]:
         bad = failing(r)
         state = '<span class="st bad">✕ hata</span>' if r.get("last_status") == "error" else (
-            '<span class="st warn">! 24 saatte hata</span>' if bad else '<span class="st ok">✓ tamam</span>')
+            '<span class="st warn">! eksik veri</span>' if r.get("last_status") == "gaps" else (
+                '<span class="st warn">! 24 saatte hata</span>' if bad else '<span class="st ok">✓ tamam</span>'))
         err = f'<div class="muted small err">{esc(r["last_error"])}</div>' if bad and r.get("last_error") else ""
         out.append(f'<li class="row fr"><div><div class="name">{esc(labels.get(r["job"], r["job"]))}</div>{err}</div>'
                    f'{state}<span class="muted small">{_ago(r["last_finished_at"], now)}</span></li>')

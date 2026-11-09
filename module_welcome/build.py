@@ -10,7 +10,8 @@ Three parts, each upserted only when its source changed since its mark in ``welc
   ``raw.earnings_calendar`` snapshot of each day and report session. A name that snapshot no longer lists gets
   ``retired_at``. The watch list is applied at render time, so a pin shows without a rebuild.
 - **Freshness**: each job's last finished run, its last success and its last failure, from ``raw.job_runs`` rows
-  finished after the mark. A scheduled task is named by its registry name, a dashboard job by its module.
+  finished after the mark. A scheduled task is named by its registry name, a dashboard job by its module. A "done"
+  run whose message says it finished with gaps (failed provider calls) is stored as ``gaps``, not as a success.
 
 No network, no provider call. The calendar card reads ``boards/news.duckdb`` at render time and copies nothing.
 """
@@ -23,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 from RevenueChaser.core import calendar as mcal
 from RevenueChaser.core import rawstore
+from RevenueChaser.app.jobs import GAPS
 
 NY = ZoneInfo("America/New_York")
 SNAPSHOT, EARNINGS, FRESHNESS, META = "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta"
@@ -133,7 +135,7 @@ def _freshness(now: float, run_id: str) -> int:
     jobs = [r["job"] for r in touched]
     marks = ", ".join("?" for _ in jobs)
     runs = rawstore.query(
-        "SELECT coalesce(registry_name, module) AS job, status, finished_at, error FROM job_runs "
+        "SELECT coalesce(registry_name, module) AS job, status, finished_at, error, message FROM job_runs "
         f"WHERE finished_at IS NOT NULL AND coalesce(registry_name, module) IN ({marks}) ORDER BY finished_at",
         jobs)
     out: dict[str, dict] = {}
@@ -141,7 +143,9 @@ def _freshness(now: float, run_id: str) -> int:
         row = out.setdefault(r["job"], {"job": r["job"], "last_ok_at": None, "last_failed_at": None,
                                         "last_error": None, "run_id": run_id, "run_at": now})
         row["last_status"], row["last_finished_at"] = r["status"], float(r["finished_at"])
-        if r["status"] == "done":
+        if r["status"] == "done" and GAPS in (r.get("message") or ""):    # finished, but its provider calls failed
+            row["last_status"], row["last_error"] = "gaps", r["message"][:200]
+        elif r["status"] == "done":
             row["last_ok_at"] = float(r["finished_at"])
         elif r["status"] == "error":
             row["last_failed_at"] = float(r["finished_at"])

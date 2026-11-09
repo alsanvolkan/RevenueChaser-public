@@ -45,7 +45,16 @@ def test_the_fetch_queues_the_welcome_job(monkeypatch):
 
 def test_job_labels_name_the_board_a_job_feeds():
     labels = runners.welcome_job_labels()
-    assert labels["spxgamma"] == "SPX Gamma" and labels["module_news"] == "News"
+    assert labels["spxgamma"] == "SPX Gamma · spxgamma"                   # SPX Gamma has two jobs, neither its own key
+    assert labels["module_news"] == "News"
+
+
+def test_two_jobs_feeding_one_board_get_two_labels():
+    # Joker-1's shot, 9 Nov: the freshness card listed "Asymmetric Growth" twice (AG's own Fetch and the universe run).
+    labels = runners.welcome_job_labels()
+    assert labels["module_asymmetric_growth"] == "Asymmetric Growth"
+    assert labels["universe"] == "Asymmetric Growth · universe"
+    assert len(set(labels.values())) == len(labels)
 
 
 def test_the_job_builds_then_renders(monkeypatch, tmp_path):
