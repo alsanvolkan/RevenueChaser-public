@@ -44,6 +44,7 @@ import duckdb
 
 from ....core import calendar, config
 from .. import base
+from .. import dirty as dirty_set
 from . import KIND, names, rows, tables, uw
 
 NAME = "uw/option_screener"
@@ -340,8 +341,12 @@ class UWOptionScreener:
                          "UW serves for the current session only")
 
     # ── build and check ──
+    def dirty(self, ctx: base.RunContext):
+        """The ``date=`` partitions changed since the live file was built; the tables reload them (#446)."""
+        return dirty_set.keyed(ctx, self, "date")
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        return tables.build_tables(con, OWNED)
+        return tables.build_tables(con, OWNED, ctx)
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         as_of = ctx.as_of or self.default_as_of()

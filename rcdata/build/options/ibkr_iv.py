@@ -33,6 +33,7 @@ from ....core import calendar, ibkr_login
 from ....core.providers import ibkr_tws
 from ... import serving
 from .. import base
+from .. import dirty as dirty_set
 from . import KIND, names, tables, uw
 
 NAME = "ibkr/iv_history"
@@ -130,6 +131,10 @@ class IBKRIVHistory:
         """The same as the daily run: each list name's year, once."""
         ctx.as_of = end
         self.to_parquet_all(ctx, self.fetch(ctx, end))
+
+    def dirty(self, ctx: base.RunContext):
+        """The ``ticker=`` partitions changed since the live file was built; the tables reload them (#446)."""
+        return dirty_set.keyed(ctx, self, "ticker")
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         return {}

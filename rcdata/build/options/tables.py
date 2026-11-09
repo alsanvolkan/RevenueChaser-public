@@ -236,24 +236,63 @@ def _windowed(table: Table, parts: list[Path]) -> tuple[list[Path], str | None]:
     return [p for p in parts if p.parent.name.removeprefix("date=") in keep], min(keep)
 
 
-def build_tables(con: duckdb.DuckDBPyConnection, names) -> dict[str, int]:
-    """Create each named table in the build file from its Parquet; ``{table: rows}``."""
+def build_tables(con: duckdb.DuckDBPyConnection, names, ctx=None) -> dict[str, int]:
+    """Create each named table in the build file from its Parquet; ``{table: rows}``.
+
+    On a build over the live copy (``ctx.incremental``, #446) a table is not made again: only its dirty
+    partitions are reloaded (:func:`_reload_dirty`)."""
+    plan = getattr(ctx, "incremental", None)
     counts = {}
     for name in names:
         t = TABLES[name]
         cols = ", ".join(f'"{c}" {typ}' for c, typ in t.schema)
-        con.execute(f'CREATE TABLE "{t.name}" ({cols}, PRIMARY KEY ({", ".join(t.key)}))')
+        con.execute(f'CREATE TABLE IF NOT EXISTS "{t.name}" ({cols}, PRIMARY KEY ({", ".join(t.key)}))')
         parts, first = _windowed(t, partitions(t))
         if first is not None:
             serving.declare_window(con, t.name, "session_date", first)
-        if parts:
-            files = ", ".join(base.sql_path(p) for p in parts)
-            names_sql = ", ".join(f'"{c}"' for c in t.columns)
-            keys = ", ".join(f'"{k}"' for k in t.key)
-            con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM read_parquet([{files}], union_by_name = true) '
-                        f"QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY fetched_at DESC) = 1")
+        if plan is not None:
+            parts = _reload_dirty(con, t, parts, plan.changed or ())
+        _insert(con, t, parts)
         counts[t.name] = int(con.execute(f'SELECT count(*) FROM "{t.name}"').fetchone()[0])
     return counts
+
+
+def _insert(con: duckdb.DuckDBPyConnection, t: Table, parts: list[Path]) -> None:
+    if not parts:
+        return
+    files = ", ".join(base.sql_path(p) for p in parts)
+    names_sql = ", ".join(f'"{c}"' for c in t.columns)
+    keys = ", ".join(f'"{k}"' for k in t.key)
+    con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM read_parquet([{files}], union_by_name = true) '
+                f"QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY fetched_at DESC) = 1")
+
+
+# The rows of a ``ticker=`` partition (the IBKR year) carry this ``source``; every ``date=`` partition's rows another.
+TICKER_ROWS_SOURCE = "ibkr"
+
+
+def _reload_dirty(con: duckdb.DuckDBPyConnection, t: Table, parts: list[Path], changed) -> list[Path]:
+    """Delete the rows of ``t``'s dirty partitions from the live copy; the partitions to load again.
+
+    A partition is ``date=<session>`` (UW) or ``ticker=<name>`` (IBKR), and a key never spans two, so a partition's
+    rows are exactly the table's rows of that session (not from IBKR) or of that name (from IBKR). Dirty is: a
+    changed or gone partition (``plan.changed``), one the table holds rows of but that has no partition (gone, or
+    left ``option_eod``'s window), and one that has a partition but no rows in the table (new to the window, or a
+    live file built before the manifest that could not see a change)."""
+    mine = {source_root(s) / t.name for s in t.sources}
+    changed = {p.parent.name for p in changed if p.parent.parent in mine}
+    redo: set[str] = set()
+    for prefix, column, rows_of in (("date=", "session_date", f"source IS DISTINCT FROM '{TICKER_ROWS_SOURCE}'"),
+                                    ("ticker=", "ticker", f"source = '{TICKER_ROWS_SOURCE}'")):
+        have = {p.parent.name for p in parts if p.parent.name.startswith(prefix)}
+        held = {prefix + str(v) for (v,) in con.execute(
+            f'SELECT DISTINCT "{column}" FROM "{t.name}" WHERE {rows_of}').fetchall()}
+        dirty = {k for k in changed if k.startswith(prefix)} | (have ^ held)
+        if dirty:
+            con.execute(f'DELETE FROM "{t.name}" WHERE {rows_of} AND CAST("{column}" AS TEXT) IN '
+                        f"(SELECT unnest(?::TEXT[]))", [sorted(k.removeprefix(prefix) for k in dirty)])
+        redo |= dirty
+    return [p for p in parts if p.parent.name in redo]
 
 
 def compare_by_day(con: duckdb.DuckDBPyConnection, table: Table, kind: str = "options") -> tuple[int, int]:
