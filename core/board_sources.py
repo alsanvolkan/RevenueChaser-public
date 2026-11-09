@@ -21,7 +21,6 @@ Nothing here may fail a run: an error is one entry for its own file (review find
 """
 from __future__ import annotations
 
-import importlib
 import logging
 import threading
 
@@ -35,9 +34,6 @@ CONTEXT_KEY = "source_builds"
 #: A board recorded under a name that is not its package (``module_sector_rotation`` records two boards).
 ALIASES = {"module_money_flow": "module_sector_rotation"}
 
-#: The builder files whose readers can fall back to the old store, and the module that says which one they read.
-_SOURCE_STATE = {"prices": "RevenueChaser.core.prices", "fundamentals": "RevenueChaser.core.fundamentals_layer",
-                 "spine": "RevenueChaser.core.universe"}
 
 CURRENT, BEHIND, ROLLED_BACK, MISSING, ERROR = "current", "behind", "rolled_back", "missing", "error"
 OLD_STORE, NOT_OPENED, NOT_RECORDED = "old_store", "not_opened", "not_recorded"
@@ -79,10 +75,17 @@ def board_kinds(board: str) -> list[str]:
 
 def _state(kind: str) -> dict | None:
     """The ``source_state`` of ``kind``'s readers, or None for a file that has no old-store fallback."""
-    mod = _SOURCE_STATE.get(kind)
-    if mod is None:
+    # Plain imports, not ``import_module``: scripts/select_tests.py follows imports it can read (its test pins the
+    # dynamic-import sites).
+    if kind == "prices":
+        from . import prices as mod
+    elif kind == "fundamentals":
+        from . import fundamentals_layer as mod
+    elif kind == "spine":
+        from . import universe as mod
+    else:
         return None
-    return importlib.import_module(mod).source_state()
+    return mod.source_state()
 
 
 def _order(kind: str) -> int:
