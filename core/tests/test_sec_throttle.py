@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 import httpx
+import pytest
 
 from RevenueChaser.core import job_lock, rawstore, sec_throttle
 from RevenueChaser.core.providers import sec_edgar as se
@@ -93,6 +94,16 @@ def _hammer(path, ready, go, result, rate, duration):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_counts(monkeypatch):
+    """Each test starts with no counts, no logged kinds and no stale reason, so no test leaks a fallback into the
+    worker's exit line or another test's log assertions."""
+    monkeypatch.setattr(sec_throttle, "_COUNTS", {})
+    monkeypatch.setattr(sec_throttle, "_LOGGED", set())
+    monkeypatch.setattr(sec_throttle, "_last_reason", None)
+    monkeypatch.setattr(sec_throttle, "_totals_logged_at", None)
 
 
 def test_rate_is_one_constant_below_the_ceiling_and_the_burst_is_what_the_ceiling_leaves():
@@ -320,3 +331,61 @@ def test_every_sec_request_takes_one_shared_token(monkeypatch):
     se.get_bytes("http://x", client)
     se._throttle()
     assert taken == [1, 1, 1, 1]
+
+
+def test_a_fallback_says_why_and_every_request_is_counted(tmp_path, monkeypatch, caplog):
+    """#487: one fallback line per process hid its cause, so the fix was chosen blind. Each reason is now its own
+    line and every request is counted, shared or not."""
+    monkeypatch.setattr(sec_throttle.rawstore, "DB_PATH", tmp_path / "raw.duckdb")
+    monkeypatch.setattr(sec_throttle, "_LOGGED", set())
+    monkeypatch.setattr(sec_throttle, "_COUNTS", {})
+    monkeypatch.setattr(sec_throttle, "_LOCK_WAIT", 0.01)
+    caplog.set_level("INFO", logger=sec_throttle.__name__)
+    assert sec_throttle.pace() is True                                   # the real bucket, free
+    monkeypatch.setattr(job_lock, "_os_lock", lambda fd: False)          # a peer that never lets go
+    assert sec_throttle.pace() is False and sec_throttle.pace() is False
+    assert sec_throttle.stats() == {"shared": 1, "lock_timeout": 2}
+    assert "(lock_timeout)" in caplog.text
+    monkeypatch.setattr(job_lock, "_OS_LOCK_AVAILABLE", False)
+    assert sec_throttle.pace() is False
+    assert sec_throttle.stats()["no_os_lock"] == 1
+    assert sum("cannot be used" in r.getMessage() for r in caplog.records) == 2   # one line per reason
+
+
+def test_an_unopenable_bucket_names_the_errno(tmp_path, monkeypatch):
+    monkeypatch.setattr(sec_throttle.rawstore, "DB_PATH", tmp_path / "raw.duckdb")
+    monkeypatch.setattr(sec_throttle, "_COUNTS", {})
+
+    def refuse(*a, **k):
+        raise PermissionError(13, "Permission denied")
+    monkeypatch.setattr(sec_throttle.os, "open", refuse)
+    assert sec_throttle.pace() is False
+    assert sec_throttle.stats() == {"open_failed:EACCES": 1}
+
+
+def test_the_exit_line_gives_the_totals_only_when_something_fell_back(monkeypatch, caplog):
+    caplog.set_level("INFO", logger=sec_throttle.__name__)
+    monkeypatch.setattr(sec_throttle, "_COUNTS", {"shared": 5})
+    sec_throttle._log_totals()
+    assert caplog.text == ""
+    monkeypatch.setattr(sec_throttle, "_COUNTS", {"shared": 5, "lock_timeout": 3})
+    sec_throttle._log_totals()
+    assert "5 request(s) on the shared bucket, 3 fell back (lock_timeout 3)" in caplog.text
+
+
+def test_a_long_lived_process_logs_its_totals_hourly_not_only_at_exit(tmp_path, monkeypatch, caplog):
+    """Review of #560: the dashboard is stopped by SIGTERM, which skips atexit, so the totals come while it runs."""
+    monkeypatch.setattr(sec_throttle.rawstore, "DB_PATH", tmp_path / "raw.duckdb")
+    monkeypatch.setattr(sec_throttle, "_LOCK_WAIT", 0.01)
+    monkeypatch.setattr(job_lock, "_os_lock", lambda fd: False)
+    caplog.set_level("INFO", logger=sec_throttle.__name__)
+    sec_throttle.pace()
+    sec_throttle.pace()
+    totals = [r for r in caplog.records if "totals" in r.getMessage()]
+    assert totals == []                                                 # the reason line says it at once
+    sec_throttle._totals_logged_at -= sec_throttle._TOTALS_EVERY       # an hour later
+    sec_throttle.pace()
+    totals = [r for r in caplog.records if "totals" in r.getMessage()]
+    assert len(totals) == 1 and "3 fell back (lock_timeout 3)" in totals[0].getMessage()
+    sec_throttle.pace()                                                 # not again inside the hour
+    assert len([r for r in caplog.records if "totals" in r.getMessage()]) == 1
