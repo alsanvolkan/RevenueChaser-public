@@ -236,24 +236,100 @@ def _windowed(table: Table, parts: list[Path]) -> tuple[list[Path], str | None]:
     return [p for p in parts if p.parent.name.removeprefix("date=") in keep], min(keep)
 
 
-def build_tables(con: duckdb.DuckDBPyConnection, names) -> dict[str, int]:
-    """Create each named table in the build file from its Parquet; ``{table: rows}``."""
+def build_tables(con: duckdb.DuckDBPyConnection, names, ctx=None) -> dict[str, int]:
+    """Create each named table in the build file from its Parquet; ``{table: rows}``.
+
+    On a build over a copy of the live file (``ctx.incremental``, #446) a table the copy holds is reloaded only for
+    the sessions whose partitions changed (:func:`_reload`)."""
+    plan = getattr(ctx, "incremental", None)
     counts = {}
     for name in names:
         t = TABLES[name]
+        if plan is not None and _has(con, t.name):
+            counts[t.name] = _reload(con, t, plan.changed or ())
+            continue
         cols = ", ".join(f'"{c}" {typ}' for c, typ in t.schema)
         con.execute(f'CREATE TABLE "{t.name}" ({cols}, PRIMARY KEY ({", ".join(t.key)}))')
         parts, first = _windowed(t, partitions(t))
         if first is not None:
             serving.declare_window(con, t.name, "session_date", first)
         if parts:
-            files = ", ".join(base.sql_path(p) for p in parts)
-            names_sql = ", ".join(f'"{c}"' for c in t.columns)
-            keys = ", ".join(f'"{k}"' for k in t.key)
-            con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM read_parquet([{files}], union_by_name = true) '
-                        f"QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY fetched_at DESC) = 1")
+            _load(con, t, parts)
         counts[t.name] = int(con.execute(f'SELECT count(*) FROM "{t.name}"').fetchone()[0])
     return counts
+
+
+def _has(con: duckdb.DuckDBPyConnection, table: str) -> bool:
+    return bool(con.execute("SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() "
+                            "AND table_name = ?", (table,)).fetchone()[0])
+
+
+def _load(con: duckdb.DuckDBPyConnection, t: Table, parts: list[Path], sessions: list[str] | None = None) -> None:
+    """Insert ``parts``' rows into ``t``, one per key (the newest ``fetched_at``); only ``sessions`` when given."""
+    files = ", ".join(base.sql_path(p) for p in parts)
+    names_sql = ", ".join(f'"{c}"' for c in t.columns)
+    keys = ", ".join(f'"{k}"' for k in t.key)
+    where = "WHERE session_date IN (SELECT unnest(?::DATE[])) " if sessions is not None else ""
+    con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM read_parquet([{files}], union_by_name = true) '
+                f"{where}QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY fetched_at DESC) = 1",
+                (sessions,) if sessions is not None else None)
+
+
+def _day(p: Path) -> str | None:
+    return p.parent.name.removeprefix("date=") if p.parent.name.startswith("date=") else None
+
+
+def _reload(con: duckdb.DuckDBPyConnection, t: Table, changed) -> int:
+    """``t`` on the live copy: the rows of every session a changed ``date=`` partition holds are replaced by that
+    session's rows of every source; a windowed table also drops the sessions that left its window and loads those
+    that entered it. A changed ``ticker=`` partition (a name's IBKR year, many sessions) reloads the table whole.
+
+    Every key of every table holds ``session_date``, so a session's rows are deduplicated within the session only,
+    as the whole build does. A gone partition is in ``changed`` (the manifest's); a live file built before the
+    manifest is built whole (:func:`full_rebuild_reason`), since its ``built_at`` cannot show one."""
+    from .. import dirty
+    folders = [source_root(s) / t.name for s in t.sources]
+    if any(dirty.keys_of(changed, f, "ticker") for f in folders):
+        con.execute(f'DELETE FROM "{t.name}"')
+        parts, first = _windowed(t, partitions(t))
+        if parts:
+            _load(con, t, parts)
+        _window(con, t, first)
+        return int(con.execute(f'SELECT count(*) FROM "{t.name}"').fetchone()[0])
+    dirty_days = set().union(*(dirty.keys_of(changed, f, "date") for f in folders))
+    every = partitions(t)
+    kept, first = _windowed(t, every)
+    reload, drop = set(dirty_days), set(dirty_days)
+    if t.window is not None:
+        window = {d for p in kept if (d := _day(p))}
+        served = {r[0] for r in con.execute(f'SELECT DISTINCT CAST(session_date AS TEXT) FROM "{t.name}"').fetchall()}
+        reload = (reload & window) | (window - served)
+        drop = reload | (served - window)
+    if drop:
+        con.execute(f'DELETE FROM "{t.name}" WHERE session_date IN (SELECT unnest(?::DATE[]))',
+                    (sorted(drop),))
+    parts = [p for p in kept if _day(p) is None or _day(p) in reload]
+    if reload and parts:
+        _load(con, t, parts, sorted(reload))
+    _window(con, t, first)
+    return int(con.execute(f'SELECT count(*) FROM "{t.name}"').fetchone()[0])
+
+
+def _window(con: duckdb.DuckDBPyConnection, t: Table, first: str | None) -> None:
+    """The build file's window of ``t`` as a whole build would declare it (a copy carries the live file's)."""
+    if first is not None:
+        serving.declare_window(con, t.name, "session_date", first)
+    elif _has(con, serving.WINDOW_TABLE):
+        con.execute(f"DELETE FROM {serving.WINDOW_TABLE} WHERE table_name = ?", (t.name,))
+
+
+def full_rebuild_reason(ctx=None) -> str | None:
+    """A live ``options`` file built before the manifest is built whole once: what it was built from is known only
+    by its ``built_at``, which cannot show a gone partition."""
+    from .. import dirty
+    if serving.live_path("options").exists() and dirty.live_manifest("options") is None:
+        return "the live options file has no build manifest yet"
+    return None
 
 
 def compare_by_day(con: duckdb.DuckDBPyConnection, table: Table, kind: str = "options") -> tuple[int, int]:
