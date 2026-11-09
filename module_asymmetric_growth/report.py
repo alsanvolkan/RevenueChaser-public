@@ -402,8 +402,8 @@ def render_asymmetric_growth_hunter_html(result: dict) -> str:
       <div class="note">
         Data: fundamentals from the Securities and Exchange Commission (SEC) EDGAR filings (annual 10-K) ·
         price, volume, 52-week high and 50-day mean from the stored daily price bars (the prices store, the session in the header) ·
-        institutional ownership from SEC Form 13F (reported quarterly, ~45-day filing lag) where available,
-        otherwise the institutional ownership percentage from Yahoo ·
+        institutional ownership from SEC Form 13F (reported quarterly, ~45-day filing lag; the newest quarter whose filing
+        deadline has passed), held % = 13F shares ÷ shares outstanding, as on the 13F board ·
         Unusual Whales (UW) options flow is manual-only (rule K3) ·
         no Seeking Alpha confirmation (rule 3).
         The scanner produces candidate lists, not directional signals.
@@ -554,12 +554,7 @@ function sigHtml(s) {{
 }}
 
 function instTable(c) {{
-  if (c.inst_holders == null) {{
-    if (c.inst_ownership_pct != null) {{
-      return '<div class="foot">Institutional: ' + (c.inst_ownership_pct * 100).toFixed(1) + '% held</div>';
-    }}
-    return '<div class="foot">Institutional: N/A</div>';
-  }}
+  if (c.inst_holders == null) return '<div class="foot">Institutional: N/A</div>';
   // The 13F quarter read and the one QoQ compares to (AG review SF-3); none compared when it was not stored.
   var q13 = (c.period_ends || {{}}).inst_13f || [];
   var netH = (c.inst_new||0) - (c.inst_exited||0);
@@ -575,6 +570,8 @@ function instTable(c) {{
     + '<div class="ih">Institutional' + (q13[0] ? ' (13F ' + rcEsc(q13[0]) + ')' : '')
     + ' <span class="' + cls + '">' + dir + '</span></div>'
     + '<table>'
+    + '<tr><td class="k">Held</td><td class="v">' + (c.inst_ownership_pct != null
+        ? (c.inst_ownership_pct * 100).toFixed(1) + '% of shares out' : 'N/A') + '</td></tr>'
     + '<tr><td class="k">Holders</td><td class="v">' + c.inst_holders + '</td></tr>'
     + '<tr><td class="k">New / Exited</td><td class="v">+' + (c.inst_new||0) + ' / -' + (c.inst_exited||0) + '</td></tr>'
     + '<tr><td class="k">Buy / Sell (shares)</td><td class="v">' + shares(c.inst_buy_flow) + ' / ' + shares(c.inst_sell_flow) + '</td></tr>'
