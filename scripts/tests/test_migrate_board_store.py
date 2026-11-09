@@ -37,11 +37,12 @@ def _rows(path, table):
 
 @pytest.mark.rawstore_schema_from_scratch
 def test_copy_counts_and_twice_is_once(old_rows):
-    report = mig.migrate("news", source="raw")
+    # Only the probe: the news board's own tables are in MANIFEST too, and absent from this source.
+    report = [r for r in mig.migrate("news", source="raw") if r["table"] == _TABLE]
     assert report == [{"table": _TABLE, "source": 3, "before": 0, "copied": 3, "after": 3, "skipped": 0,
                        "left_out": []}]
     assert _rows(rawstore.board_db_path("news"), _TABLE) == [("a", "1"), ("b", "2"), ("c", "3")]
-    again = mig.migrate("news", source="raw")
+    again = [r for r in mig.migrate("news", source="raw") if r["table"] == _TABLE]
     assert again[0]["copied"] == 0 and again[0]["after"] == 3 and again[0]["skipped"] == 3
 
 

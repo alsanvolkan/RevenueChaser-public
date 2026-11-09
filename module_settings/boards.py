@@ -231,6 +231,13 @@ def _board(key: str, label: str, tables: list[str], payload_path, *,
 # store tables each board's engine or pipeline actually reads, not the tables it
 # writes; ``ops_tables`` the ops.sqlite tables it reads (the stock watch list, PR 4). ``funnel_steps`` only where the rendered payload emits that list.
 BOARD_INPUTS: list[dict] = [
+    # Welcome (decision A) and News (S9, S16) write their own board files; these are the stored tables they read.
+    _board("module_welcome", "Welcome",
+           ["index_levels_daily", "vol_index_daily", "macro_series", "earnings_calendar", "job_runs",
+            "news_events", "news_highlight"],
+           lambda: _html("welcome"), price_basis="last stored closes, not live quotes",
+           ops_tables=["watchlist_stock"]),
+    _board("module_news", "News", ["economic_calendar"], lambda: _html("news")),
     _board("module_earnings_radar", "Earnings Radar",
            ["earnings_calendar", "estimate_snapshots", "short_interest", "economic_calendar",
             "macro_series", "vol_index_daily", "cftc_cot", "price_bars_daily"],

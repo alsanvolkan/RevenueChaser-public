@@ -202,6 +202,12 @@ def _quick_financials_day() -> str | None:
         return None
 
 
+def _news_day() -> str | None:
+    """NY day of the newest economic-calendar fetch in ``boards/news.duckdb`` (the headlines carry their own times)."""
+    rows = rawstore.query("SELECT max(fetched_at) AS v FROM news_calendar", db="news")
+    return session_of(rows[0]["v"]) if rows and rows[0]["v"] is not None else None
+
+
 # module key (as used by app/dashboard.py's tabs) -> resolver.
 # A board absent from this map, or mapped to None, shows no data date — say so
 # explicitly rather than leaving a stale value on screen.
@@ -225,6 +231,10 @@ RESOLVERS = {
     "module_relatedness": _chain_day,
     # Implied Probability reads its own cached UW option chain.
     "module_oipd": _oipd_day,
+    # News: the day of its newest calendar fetch.
+    "module_news": _news_day,
+    # Welcome summarises many datasets, each card stating its own session or time: no single date to stamp.
+    "module_welcome": None,
     # Settings / Data health is an inventory of many datasets, each reporting its
     # own date on its row — there is no single downloaded dataset to stamp here.
     "module_settings": None,
