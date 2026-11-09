@@ -255,6 +255,11 @@ def test_no_uw_dataset_counts_its_own_calls():
         if "tests" in path.parts:
             continue
         text = path.read_text(encoding="utf-8")
-        if not re.search(r'^PROVIDER = "uw"$', text, flags=re.M):
-            continue
-        assert "ctx.count(PROVIDER, calls=" not in text, path
+        # Every spelling the review of #519 (finding 10) found the old ``"ctx.count(PROVIDER, calls=" in text`` let
+        # through: the provider written out in either quote, a positional count, a module whose PROVIDER is written
+        # with single quotes. The behavioural guard is ``test_fund_uw_earnings_fetch`` (one answer is one call).
+        names = [r"""["']uw["']"""]
+        if re.search(r"""^PROVIDER\s*=\s*["']uw["']""", text, flags=re.M):
+            names.append("PROVIDER")
+        for name in names:
+            assert not re.search(rf"ctx\.count\(\s*{name}\s*,\s*(calls\s*=\s*)?\d", text), path
