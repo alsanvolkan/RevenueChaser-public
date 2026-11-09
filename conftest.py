@@ -181,6 +181,19 @@ def pytest_configure(config):
     socket.getaddrinfo = _getaddrinfo
 
 
+def pytest_collection_modifyitems(config, items):
+    """CI splits the unit tier into parallel jobs: RC_SHARD="i/n" keeps only this shard's files (tests.yml)."""
+    shard = os.environ.get("RC_SHARD")
+    if not shard:
+        return
+    from RevenueChaser.scripts.select_tests import in_shard
+
+    keep = [it for it in items if in_shard(it.nodeid, shard)]
+    if len(keep) < len(items):
+        config.hook.pytest_deselected(items=[it for it in items if not in_shard(it.nodeid, shard)])
+        items[:] = keep
+
+
 @pytest.fixture(scope="session")
 def fixtures_dir() -> Path:
     """Path to ``core/tests/fixtures/`` (uw/edgar/yfinance replay live here later)."""

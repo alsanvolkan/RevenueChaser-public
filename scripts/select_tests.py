@@ -34,6 +34,7 @@ import os
 import re
 import subprocess
 import sys
+import zlib
 from collections import Counter
 from dataclasses import dataclass, field
 from functools import cache
@@ -228,6 +229,16 @@ def _github(sel: Selection, changed: list[str]) -> None:
             lines += [f"- `{t}`" for t in sel.unit] + ["", "</details>"]
         with open(summary, "a", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
+
+
+def in_shard(nodeid: str, shard: str) -> bool:
+    """CI's unit matrix (``RC_SHARD="i/n"``, tests.yml job ``unit``): a test runs in shard ``i`` of ``n`` when its
+    file's path hashes there. A whole file stays in one shard (``--dist loadfile`` relies on that), and the split
+    does not depend on which other files exist, so adding a file moves no other file."""
+    i, n = (int(x) for x in shard.split("/"))
+    if not 0 <= i < n:
+        raise ValueError(f"RC_SHARD {shard!r}: want i/n with 0 <= i < n")
+    return zlib.crc32(nodeid.split("::", 1)[0].encode()) % n == i
 
 
 def main(argv: list[str]) -> int:
