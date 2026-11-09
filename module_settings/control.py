@@ -638,8 +638,11 @@ def since_words(schedule: dict | None) -> str:
 
 #: The cap Claude Code puts on a background command started from a session (#527): it is killed after 2 h.
 CLAUDE_SESSION_LIMIT_S = 2 * 3600
-#: The systemd unit the homesrv Claude Code session runs under; a process in it was started from a session.
-CLAUDE_UNIT = "life-claude-rc.service"
+#: The systemd units the homesrv Claude Code sessions (accounts A and B) run under; a process in one was started from
+#: a session. The life-claude-rc-{a,b} names are the ones before the 9 Nov 2026 rename (home-server #194); they stay
+#: until both accounts run under the new names.
+CLAUDE_UNITS = ("life-claude-remote-control-a.service", "life-claude-remote-control-b.service",
+                "life-claude-rc-a.service", "life-claude-rc-b.service")
 #: A running request past this share of its limit is a card.
 RUN_ALERT = 0.8
 
@@ -704,7 +707,7 @@ def running_jobs(active: list[dict], runs: list[dict], cgroup, alive, now: datet
             who, cls = "process gone · probably lost", "none"
         else:
             unit = _unit_of(cgroup(pid)) if pid is not None else None
-            if unit == CLAUDE_UNIT:
+            if unit in CLAUDE_UNITS:
                 who, limit = "Claude session", float(CLAUDE_SESSION_LIMIT_S)
             elif unit and unit.startswith("life-rc-"):
                 known, limit = _unit_limit_s(unit)
