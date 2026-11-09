@@ -203,7 +203,8 @@ class EarningsPipeline:
         # "calendar" from the calendar read, each warm step fills its own slot, and the run's history records it.
         self.input_sources = {
             "calendar": {"stored": 0, "live": 0, "session": None},
-            "short_interest": {"stored": 0, "live": 0, "session": None},
+            "short_interest": {"stored": 0, "missing": 0, "source_as_of": None},
+            "short_interest_note": None,
             "dgs10": "none",
             "dgs10_note": None,
             "rate_events": "none",
@@ -228,40 +229,24 @@ class EarningsPipeline:
         return self._screener_cache
 
     def _warm_short_interest(self) -> dict[str, dict]:
-        """Fetch short-interest rows once for the tickers that will be deep-scored.
+        """R5's squeeze inputs for the tickers that will be deep-scored, read once per run from the ownership store.
 
-        The nightly D10 sweep already stored them (E5c, #372), so UW's batch /short_screener (one extra round per
-        ~100 tickers) is asked only for the tickers the store does not cover — and not at all when it covers them
-        all. Stored rows are parsed with ``UWClient._parse_short_row``, the mapping the live answer would have gone
-        through, so R5 cannot tell the two apart.
+        FINRA's twice-monthly settlement short interest (``store_reads.short_interest``, the need
+        ``ownership.short_interest``; the owner's B on #287): shares short over the float, days to cover, and IBKR's
+        borrow fee. No provider call: a name the store does not cover has no squeeze read and R5 scores flow only.
+        UW's daily figure is not mixed in, because the peer Z-scores below must compare one series.
 
         Every ticker's squeeze metrics are then registered under its spine sector (the sector the card is scored
         against, #272) so the in-sector peer Z-scores can be built before scoring. A name the spine
-        cannot place is nobody's peer. Test fakes that lack
-        ``short_screener`` keep working — R5 simply falls back to flow-only.
+        cannot place is nobody's peer.
         """
         if self._shorts_cache is None:
-            from RevenueChaser.module_earnings_radar import stored_inputs
-            stored, session = stored_inputs.short_rows(self.tickers)
-            parsed: dict[str, dict] = {}
-            missing: list[str] = []
-            for t in self.tickers:
-                row = stored.get(t)
-                if row is None:
-                    missing.append(t)
-                    continue
-                parsed[t] = UWClient._parse_short_row(row)
-            n_stored = len(parsed)
-            n_live = 0
-            if missing and hasattr(self.uw, "short_screener"):
-                rows = self.uw.short_screener(missing) or {}
-                for t, row in rows.items():
-                    parsed[t] = self.uw._parse_short_row(row)
-                n_live = len(rows)
-            self._shorts_cache = parsed
+            rows, note = store_reads.short_interest(self.tickers)
+            self._shorts_cache = rows
             self.input_sources["short_interest"] = {
-                "stored": n_stored, "live": n_live,
-                "session": session.isoformat() if session else None}
+                "stored": len(rows), "missing": len(set(self.tickers) - set(rows)),
+                "source_as_of": note.get("source_as_of")}
+            self.input_sources["short_interest_note"] = note.get("label")
         if not self._peers_registered:
             # the peer group is the spine's sector, the one _score reads: for a name the S&P 1500 list or the SIC
             # table places differently from the UW calendar the two differ (#272)
@@ -709,6 +694,7 @@ class EarningsPipeline:
             ticker=ticker,
             institutional_side_served=flow.get("side_served"),
             institutional_package_premium=flow.get("inst_package"),
+            short_as_of=shorts.get("settlement_date"),
         )
         beta, beta_t = r6_beta(ohlc, self._dgs10_cache or {}, _gap_sessions(hist, ohlc))
         # rate_event_overlap: FOMC/CPI within the print's ±1 trading day, from the stored economic calendar
