@@ -662,7 +662,8 @@ worker thread writes while Flask request threads read. So:
   avo, 8 Nov 2026), plus
   Monday to Friday 06:30 (the SPX Gamma Fetch RC-SPX-Gamma-Fetch, #291: `module_spx_gamma --nightly`, the
   latest complete session's raw day with all expiries, only once its Cboe SPX close is stored and outside the US
-  session, else exit 3; no catch-up);
+  session, else exit 3; no catch-up; the Fetch itself is queued on the dashboard, `POST /run/spxgamma`, so the
+  dashboard stays the one writer, and with the dashboard down the task exits 1);
   `core/automations.py`: the Relatedness and Value Chain rows are 30 min apart.
 
 ### Full-refresh vs. incremental tables
