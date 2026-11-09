@@ -506,3 +506,38 @@ def test_an_alpaca_split_days_after_a_crsp_one_resolves_its_issue(no_split, monk
     stage.write_rows([split], actions.SCHEMA, actions.partition_path(day.year))
     row = _serve()
     _same_as_whole(monkeypatch, row)
+
+
+@pytest.fixture
+def december_split(fake, monkeypatch):
+    """A CRSP-only 2:1 step of AAPL on 23 Dec 2024, with served bars on both sides."""
+    from .test_prices_wrds import _secd
+    conn = fake[0]
+    conn.data["comp.sec_split"] = []
+    conn.data["comp.secd"] = [{**r, "ajexdi": 1.0} for r in conn.data["comp.secd"]] + [
+        _secd("001690", "01", d, "AAPL", c) for d, c in (("2024-12-19", 101.0), ("2024-12-20", 100.0),
+                                                          ("2024-12-23", 50.0), ("2024-12-24", 50.5))]
+    row = conn.data["crsp.dsf_v2"][0]
+    conn.data["crsp.dsf_v2"] = conn.data["crsp.dsf_v2"] + [
+        {**row, "dlycaldt": d, "dlyprc": c, "dlyret": 0.0, "dlycumfacpr": f}
+        for d, c, f in (("2024-12-19", 101.0, 4.0), ("2024-12-20", 100.0, 4.0), ("2024-12-23", 50.0, 2.0),
+                        ("2024-12-24", 50.5, 2.0))]
+    _build()
+    monkeypatch.setenv(dirty.WHOLE_ENV, "1")
+    _serve()
+    monkeypatch.delenv(dirty.WHOLE_ENV)
+    assert "built on the live file" in _note(_serve())
+    assert ("split_only_crsp", "001690:01:2024-12-23") in _snapshot()["open issues"]
+    return fake
+
+
+def test_a_crsp_split_in_the_margin_before_the_staging_cut_is_staged(december_split, monkeypatch):
+    """Delta review 1 of #564: AAPL rebuilt from 2 Jan 2025 (the cut is 1 Jan) looks for CRSP splits ten days
+    before; the one of 23 Dec needs its rows from before the cut staged."""
+    from RevenueChaser.rcdata.build.prices import actions
+    template = stage.read_rows(actions.partition_path(2026))[0]
+    div = {**template, "action_id": "cd-x", "ex_date": date(2025, 1, 2), "process_date": date(2025, 1, 2),
+           "effective_date": date(2025, 1, 2), "rate": 0.05}
+    stage.write_rows([div], actions.SCHEMA, actions.partition_path(2025))
+    row = _serve()
+    _same_as_whole(monkeypatch, row)

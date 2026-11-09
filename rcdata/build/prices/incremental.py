@@ -324,14 +324,15 @@ def restrict(con: duckdb.DuckDBPyConnection, sc: Scope) -> None:
     from . import wrds_history as w
     cut = date(sc.since.year - 1, 1, 1) if sc.since.year > 1 else EVER
     con.execute(f"SET VARIABLE rc_stage_cut = DATE '{cut.isoformat()}'")
-    # The Compustat series and the CRSP PERMNOs of the securities rebuilt from before the cut.
-    con.execute("""CREATE OR REPLACE TEMP TABLE _dirty_gid AS
-        SELECT security_id AS gid FROM _dirty_sec WHERE since < getvariable('rc_stage_cut')
-        UNION SELECT a.gid FROM _gvkey_alias a JOIN _dirty_sec d USING (security_id)
-        WHERE d.since < getvariable('rc_stage_cut')""")
-    con.execute("""CREATE OR REPLACE TEMP TABLE _dirty_permno AS
-        SELECT l.permno FROM _permno_link l JOIN _dirty_sec d USING (security_id)
-        WHERE d.since < getvariable('rc_stage_cut')""")
+    # The Compustat series and the CRSP PERMNOs of the securities rebuilt from before the cut, or from so soon
+    # after it that a CRSP split looked for before their own day (``Scope.margin``) lies before it (delta review 1
+    # of #564: the split's previous row was not staged, so the split was not seen).
+    early = f"d.since - INTERVAL {max(sc.margin.values(), default=0) + 1} DAY < getvariable('rc_stage_cut')"
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE _dirty_gid AS
+        SELECT security_id AS gid FROM _dirty_sec d WHERE {early}
+        UNION SELECT a.gid FROM _gvkey_alias a JOIN _dirty_sec d USING (security_id) WHERE {early}""")
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE _dirty_permno AS
+        SELECT l.permno FROM _permno_link l JOIN _dirty_sec d USING (security_id) WHERE {early}""")
     for table, key, day, ids in (("secd", "gvkey, iid", "datadate", "gvkey || ':' || iid IN (SELECT gid FROM _dirty_gid)"),
                                  ("dsf", "permno", "dlycaldt", "permno IN (SELECT permno FROM _dirty_permno)"),
                                  ("sec_divid", None, "datadate", "gvkey || ':' || iid IN (SELECT gid FROM _dirty_gid)")):
