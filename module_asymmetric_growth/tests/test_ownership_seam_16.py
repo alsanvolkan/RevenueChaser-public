@@ -6,8 +6,8 @@ in DuckDB. So the dependency that has to go is the *import*, not the input: ``en
 ``module_sec_13f.engine.load_totals()``, which meant an AG run could not be reasoned about or tested without
 the 13F side present, even though the call itself only ever read one table.
 
-``core/ownership.py`` is where the shared side lives (it already owns ``latest_institutional``, the reader
-rule Asymmetric Growth uses for the institutional share), so the stored-totals read belongs there too. Since G9
+``core/ownership.py`` is where the shared side lives (it also owns ``load_ownership``, the shares
+outstanding Asymmetric Growth divides the 13F shares by, #481), so the stored-totals read belongs there too. Since G9
 the rows it returns are the builder's (``sec13f_ticker_period`` in ``ownership.duckdb``), not the retired
 derive's.
 
