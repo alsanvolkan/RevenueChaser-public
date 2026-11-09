@@ -295,3 +295,72 @@ def test_every_uw_dataset_counts_a_rejected_request_the_same_way(http_mock):
         ctx.close()
         ctx.flush_counts()
     assert ctx.calls["uw"][:2] == [2, 2] and _failures_today() == 2
+
+
+# ── Finding 7: one walk of the raw root, not one per company ────────────────────────────────────────────────────
+
+def test_the_newest_answer_per_company_is_read_in_one_walk(http_mock, monkeypatch):
+    """``{ticker: newest day}`` from one pass over the day directories; a directory that is not a day is skipped
+    instead of raising, and a company with no answer is simply absent."""
+    root = uw_earnings.common.raw_dir(uw_earnings.NAME)
+    for day, ticker in [("2026-10-23", "AAA"), ("2026-10-30", "AAA"), ("2026-10-30", "BBB")]:
+        (root / day).mkdir(parents=True, exist_ok=True)
+        (root / day / f"{ticker}.json.gz").write_bytes(b"")
+    (root / "tmp").mkdir()
+    (root / "tmp" / "CCC.json.gz").write_bytes(b"")
+    assert uw_earnings.newest_by_ticker() == {"AAA": date(2026, 10, 30), "BBB": date(2026, 10, 30)}
+    calls = []
+    real = uw_earnings.newest_by_ticker
+    monkeypatch.setattr(uw_earnings, "newest_by_ticker", lambda: calls.append(1) or real())
+    _companies(monkeypatch, ["AAA", "BBB", "DDD"])
+    http_mock.add("/earnings", ANSWER)
+    _fetch(date(2026, 11, 2))
+    assert len(calls) == 1 and _asked(http_mock) == ["DDD"]     # AAA and BBB answered within the week
+
+
+# ── Finding 8: politeness pacing off UW's own per-minute headers ────────────────────────────────────────────────
+
+def _minute_headers(left, reset_ms="1500"):
+    return {"x-uw-req-per-minute-remaining": str(left), "x-uw-req-per-minute-reset": reset_ms}
+
+
+def test_an_exhausted_minute_window_waits_for_its_reset(http_mock, monkeypatch):
+    """When UW says the minute's requests are (nearly) spent, the run waits the reset UW names before the next
+    request, instead of running into the 429 ladder. Politeness, not a published limit (``caps.py``)."""
+    slept = []
+    monkeypatch.setattr(base, "_uw_pause", slept.append)
+    _companies(monkeypatch, ["AAA", "BBB"])
+    http_mock.add("/stock/AAA/earnings", lambda request: (200, b"[]", _minute_headers(0)))
+    http_mock.add("/stock/BBB/earnings", lambda request: (200, b"[]", _minute_headers(1_000_000)))
+    _fetch()
+    assert slept == [1.5]
+
+
+def test_a_wide_window_or_no_header_never_waits(http_mock, monkeypatch):
+    slept = []
+    monkeypatch.setattr(base, "_uw_pause", slept.append)
+    _companies(monkeypatch, ["AAA", "BBB"])
+    http_mock.add("/stock/AAA/earnings", lambda request: (200, b"[]", _minute_headers(1_000_000, "60000")))
+    http_mock.add("/stock/BBB/earnings", ANSWER)
+    _fetch()
+    assert slept == []
+
+
+def test_the_wait_is_capped(http_mock, monkeypatch):
+    slept = []
+    monkeypatch.setattr(base, "_uw_pause", slept.append)
+    _companies(monkeypatch, ["AAA"])
+    http_mock.add("/stock/AAA/earnings", lambda request: (200, b"[]", _minute_headers(0, "3600000")))
+    _fetch()
+    assert slept == [base.UW_POLITE_MAX_S]
+
+
+def test_a_429_is_not_paused_on_top_of_its_retry_after(http_mock, monkeypatch):
+    """The client's Retry-After backoff already waits before the retry; the politeness wait must not stack on it."""
+    slept = []
+    monkeypatch.setattr(base, "_uw_pause", slept.append)
+    _companies(monkeypatch, ["AAA"])
+    answers = iter([(429, b'{"error":"slow down"}', _minute_headers(0)), (200, b"[]", _minute_headers(1_000_000))])
+    http_mock.add("/stock/AAA/earnings", lambda request: next(answers))
+    _fetch()
+    assert slept == []

@@ -74,6 +74,12 @@ def uw_symbol(ticker) -> str:
     return str(ticker).replace("-", ".")
 
 
+def uw_segment(ticker) -> str:
+    """A ticker as one UW path segment (:func:`uw_symbol`, then :func:`_seg`): what a caller outside this client
+    uses to name a UW path, so none imports the private encoder (#519 finding 9)."""
+    return _seg(uw_symbol(ticker))
+
+
 # Body shapes for the endpoint methods (B5): each takes a decoded body and returns what the method hands
 # back. ``shape({})`` is the empty placeholder a failed request gets, the same value ``_get``'s ``{}``
 # used to turn into, so the plain methods return exactly what they returned before.
@@ -183,7 +189,12 @@ class UWClient:
         when all did (``data`` is ``{}``). No tickers: ``ok`` and no request. A row is keyed by
         its first non-empty ``keys`` field."""
         result: dict[str, dict] = {}
-        chunks = [tickers[i:i + 100] for i in range(0, len(tickers or []), 100)]
+        # Sent the way UW writes them, keyed back the way the caller asked (#519 finding 5): ``BRK-B`` asked,
+        # ``BRK.B`` answered, ``result["BRK-B"]``. A row nobody asked for keeps UW's own symbol.
+        # ``BRK-B`` and ``BRK.B`` both asked are one UW symbol, asked once and keyed by the last spelling given.
+        asked = {uw_symbol(t): t for t in tickers or []}
+        syms = list(asked)
+        chunks = [syms[i:i + 100] for i in range(0, len(syms), 100)]
         first_error: Optional[dict] = None
         failed = 0
         for n, chunk in enumerate(chunks):
@@ -201,7 +212,7 @@ class UWClient:
                     continue
                 t = item.get(keys[0]) or item.get(keys[1])
                 if t:
-                    result[t] = item
+                    result[asked.get(t, t)] = item
         if not failed:
             return ProviderResult("ok", result, None, ep)
         err = {**first_error, "failed_chunks": failed, "chunks": len(chunks)}
@@ -790,7 +801,7 @@ class UWClient:
         """:meth:`option_trades` with the request outcome (``ok`` or ``failed``)."""
         params = {"limit": limit, "page": page}
         if ticker:
-            params["ticker_symbol"] = ticker
+            params["ticker_symbol"] = uw_symbol(ticker)
         if min_dte is not None:
             params["min_dte"] = min_dte
         if max_dte is not None:
