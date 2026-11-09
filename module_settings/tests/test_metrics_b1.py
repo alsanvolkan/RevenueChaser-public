@@ -219,3 +219,18 @@ def test_datasets_list_marks_attended():
     assert metrics.datasets_list(DS) == [
         {"name": "market_series", "kind": "market", "attended": False, "providers": ["fred"]},
         {"name": "wrds/prices", "kind": "prices", "attended": True, "providers": ["wrds"]}]
+
+
+def test_a_backup_kind_that_exists_in_two_steps_gets_two_distinct_series(monkeypatch):
+    """homesrv, 9 Nov 2026: ``prices`` is both a builder DuckDB kind (step duckdb) and a legacy board file (step
+    boards), so rc_backup_newest_timestamp_seconds{kind="prices"} was written twice and Prometheus kept one at
+    random. A repeated kind now carries its step in the label; a unique kind keeps its plain name."""
+    from RevenueChaser.module_settings import newdata
+    rows = [{"kind": "prices", "step": "duckdb", "newest": "2026-11-08T03:30:00+00:00"},
+            {"kind": "prices", "step": "boards", "newest": "2026-11-01T03:30:00+00:00"},
+            {"kind": "market", "step": "duckdb", "newest": "2026-11-08T03:30:00+00:00"},
+            {"kind": "ops", "step": "ops", "newest": None}]
+    monkeypatch.setattr(newdata, "_backups", lambda now: {"kinds": rows})
+    fam = _families(metrics.render(_collect()))["rc_backup_newest_timestamp_seconds"]
+    labels = sorted(re.search(r'\{kind="([^"]+)"\}', line).group(1) for line in fam)
+    assert labels == ["market", "prices (boards)", "prices (duckdb)"]
