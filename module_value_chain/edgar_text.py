@@ -32,7 +32,7 @@ def document_url(cik, accession: str, primary_doc: str) -> str:
 # Annual forms in tie order (same filing date: 10-K first). A 40-F is recognised
 # only so it can be recorded as a named miss: its business text sits in the AIF
 # exhibit, which is not sliced yet (#184). Amendments (10-K/A) never count.
-ANNUAL_FORMS = ("10-K", "20-F", "40-F")
+ANNUAL_FORMS = ("10-K", "10-KT", "20-F", "40-F")
 FORM_40F = "40-F"
 
 

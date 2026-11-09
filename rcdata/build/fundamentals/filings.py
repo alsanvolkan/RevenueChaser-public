@@ -43,7 +43,7 @@ from . import KIND, common, ixbrl, sec_index
 
 NAME = "sec/filings"
 NEW_PER_RUN = 9000
-ANNUAL_FORMS = ("10-K", "20-F", "40-F")             # newest by filing date; a 10-K first on one day
+ANNUAL_FORMS = ("10-K", "10-KT", "20-F", "40-F")             # newest by filing date; a 10-K first on one day
 PROXY_FORMS = ("DEF 14A",)
 CAPPED = "capped"
 #: How many AIF exhibits of one 40-F are kept. shortcut: one filing has never been seen with more than one, so the
