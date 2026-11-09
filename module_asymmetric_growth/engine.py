@@ -51,6 +51,7 @@ from RevenueChaser.core.universe_fetch import (  # noqa: F401
 )
 from RevenueChaser.core.taxonomy import themes_for_many
 from RevenueChaser.module_asymmetric_growth import sector_rules          # #18: AG's own rule, beside it now
+from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 logger = logging.getLogger(__name__)
 
@@ -1062,7 +1063,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     # A list, not a generator: a caller that looks at the argument (a test spy, a future log line) must not
     # be able to consume it before the reader sees it.
     stored_ownership = ownership.latest_institutional([r["ticker"] for r in to_score])
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+    with ThreadPoolExecutor(max_workers=max_workers, **opens.pool_kwargs()) as ex:
         # The store is read in bulk per batch (a fixed number of queries each), not once per ticker (#150 U13);
         # a batch bounds how many EDGAR and payload rows are in memory at once.
         for start in range(0, len(to_score), PRELOAD_BATCH):

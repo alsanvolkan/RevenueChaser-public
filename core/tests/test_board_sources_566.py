@@ -91,21 +91,39 @@ def test_a_thread_starts_empty_after_its_run_is_recorded(roots):
     assert board_sources.snapshot(BOARD, RUN)[0]["reads"] == "not_opened"
 
 
-def test_another_threads_reads_are_not_this_runs(roots, monkeypatch):
+def test_another_threads_reads_are_not_this_runs(roots):
     _prices_file()
-    monkeypatch.setattr(opens, "job_started_at", lambda: RUN)        # a page render during the job
-    t = threading.Thread(target=_read_prices, name="Thread-render")
+    t = threading.Thread(target=_read_prices, name="Thread-render")       # a page render during the run
     t.start()
     t.join()
     assert board_sources.snapshot(BOARD, RUN)[0]["reads"] == "not_opened"
 
 
-def test_a_pool_workers_reads_count_after_the_job_started(roots, monkeypatch):
+def test_a_pool_made_with_pool_kwargs_reads_for_this_run(roots):
     _prices_file()
-    monkeypatch.setattr(opens, "job_started_at", lambda: RUN)
-    with ThreadPoolExecutor(2) as pool:
+    with ThreadPoolExecutor(2, **opens.pool_kwargs()) as pool:
         list(pool.map(lambda _: _read_prices(), range(2)))
     assert board_sources.snapshot(BOARD, RUN)[0]["build_id"] == "b1"
+
+
+def test_another_jobs_pool_is_not_this_runs(roots):
+    _prices_file()
+    other = threading.Thread(target=lambda: [f.result() for f in [ThreadPoolExecutor(
+        1, **opens.pool_kwargs()).submit(_read_prices)]])                   # another job's board, at the same time
+    other.start()
+    other.join()
+    assert board_sources.snapshot(BOARD, RUN)[0]["reads"] == "not_opened"
+
+
+def test_the_build_is_the_one_the_connection_reads(roots, monkeypatch):
+    _prices_file()
+    with serving.open_read("prices") as held:                             # an older handle keeps b1 alive
+        _prices_file(build_id="b2", built_at=LATER)
+        with serving.open_read("prices") as con:
+            seen = con.execute(f"SELECT build_id FROM {serving.VERSION_TABLE}").fetchone()[0]
+        held.execute("SELECT 1").fetchone()
+    [entry] = board_sources.snapshot(BOARD, RUN)
+    assert entry["build_id"] == seen
 
 
 def test_two_builds_in_one_run_are_flagged(roots):

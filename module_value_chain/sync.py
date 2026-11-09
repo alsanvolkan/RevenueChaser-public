@@ -32,6 +32,7 @@ import httpx
 
 from RevenueChaser.core import job_control, job_lock, ledger, rawstore, sec_submissions
 from RevenueChaser.core.providers import sec_edgar
+from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 from . import edgar_text
 from . import engine as vc_engine
@@ -190,7 +191,7 @@ def sync_filings(tickers: list[str] | None = None, limit: int | None = None,
         # fetched are still captured, so they are flushed on the way out, not thrown away (#26 PL4, review MUST-1).
         # ``Capture.flush`` does not raise, so it cannot mask the stop.
         try:
-            with ThreadPoolExecutor(max_workers=workers) as ex:
+            with ThreadPoolExecutor(max_workers=workers, **opens.pool_kwargs()) as ex:
                 futs = {}
 
                 def _submit_until_full():

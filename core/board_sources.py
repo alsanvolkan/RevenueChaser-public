@@ -94,7 +94,7 @@ def snapshot(board: str, run_at: float | None = None) -> list[dict]:
     """One entry per builder file the run opened or the board declares (see the module docstring). Reading it
     forgets this thread's opens, so the next run on the thread starts empty."""
     from ..rcdata import opens
-    seen = opens.take(since=opens.job_started_at())
+    seen = opens.take()
     try:
         declared = board_kinds(board)
     except Exception as exc:  # noqa: BLE001 - the opened files are still recorded

@@ -7,14 +7,15 @@ once per file change, not per open), and who opened it. A board's ``core/history
 opened, not what a board declares, is the review's blocker 1 on PR #568: a declaration is a plan, and several boards
 plan reads they do not make.
 
-Who opened it (the scope):
+Who opened it (the scope): inside a dashboard job, its id (``app.jobs.current_job_id``; looked up only when
+``app.jobs`` is already imported, so a script never imports the web app for this); otherwise the thread. A board's
+worker pool inherits the scope of the thread that made it (``pool_kwargs``, passed to every ``ThreadPoolExecutor`` a
+board or ``core`` module starts), so a pooled read counts for its own run and for no other job (delta review of
+#568, B and C). A page render's opens are its own thread's and never count for a board.
 
-- a dashboard job: its id (``app.jobs.current_job_id``; looked up only when ``app.jobs`` is already imported, so a
-  script never imports the web app for this);
-- otherwise the thread. A board's helper threads (``ThreadPoolExecutor`` workers) carry no job id, so their opens
-  are attributed by time: a helper open after the job started counts for the job. Two jobs whose helpers read at
-  the same time can then see each other's opens; a page render's opens never count (its thread is not a pool
-  worker).
+The build is read from the connection itself on every open (one one-row SELECT): a new read-only connect can still
+get the previous build while another handle holds it (DuckDB's per-path instance, S7), so a cache keyed by the
+file's ``stat`` could record a build the run did not read (delta review A).
 
 The log keeps one entry per (scope, file, build) with the time of its newest open, so a board that opens a file
 a thousand times costs one entry; it is bounded (``MAX_ENTRIES``, oldest first), and a scope is dropped once
@@ -31,12 +32,10 @@ import duckdb
 
 #: (scope, file, build) entries kept in memory; the least recently opened fall off first.
 MAX_ENTRIES = 5_000
-#: A thread whose opens count for the job that started before them (a board's worker pool).
-HELPER_PREFIXES = ("ThreadPoolExecutor",)
 
 _LOCK = threading.Lock()
 _LOG: OrderedDict = OrderedDict()              # (scope, kind, build_id) -> (last open t, built_at)
-_STAMPS: dict[tuple, tuple] = {}                # (kind, ino, mtime_ns, size) -> (build_id, built_at)
+_LOCAL = threading.local()                      # a pool worker's inherited scope
 
 
 def _job_id() -> str | None:
@@ -48,12 +47,24 @@ def _job_id() -> str | None:
 
 
 def scope() -> tuple:
-    """``("job", id)`` inside a dashboard job, ``("helper", ident)`` on a pool worker, else ``("thread", ident)``."""
+    """``("job", id)`` inside a dashboard job, the inherited scope on a board's pool worker, else
+    ``("thread", ident)``."""
+    inherited = getattr(_LOCAL, "scope", None)
+    if inherited is not None:
+        return inherited
     jid = _job_id()
     if jid:
         return ("job", jid)
-    t = threading.current_thread()
-    return ("helper" if t.name.startswith(HELPER_PREFIXES) else "thread", t.ident)
+    return ("thread", threading.get_ident())
+
+
+def _inherit(sc: tuple) -> None:
+    _LOCAL.scope = sc
+
+
+def pool_kwargs() -> dict:
+    """``ThreadPoolExecutor(..., **opens.pool_kwargs())``: the pool's workers read for the caller's run."""
+    return {"initializer": _inherit, "initargs": (scope(),)}
 
 
 def stamp_of(con: duckdb.DuckDBPyConnection, version_table: str, kind: str) -> tuple:
@@ -71,21 +82,12 @@ def stamp_of(con: duckdb.DuckDBPyConnection, version_table: str, kind: str) -> t
 
 
 def note(kind: str, path, con: duckdb.DuckDBPyConnection, version_table: str) -> None:
-    """Log one open of ``kind``'s live file. Never raises."""
+    """Log one open of ``kind``'s live file at the build this connection reads. Never raises."""
     try:
-        st = path.stat()
-        key = (kind, st.st_ino, st.st_mtime_ns, st.st_size)
+        build_id, built_at = stamp_of(con, version_table, kind)
+        entry = (scope(), kind, build_id)
         with _LOCK:
-            stamp = _STAMPS.get(key)
-        if stamp is None:
-            stamp = stamp_of(con, version_table, kind)
-            with _LOCK:
-                if len(_STAMPS) > 256:
-                    _STAMPS.clear()
-                _STAMPS[key] = stamp
-        entry = (scope(), kind, stamp[0])
-        with _LOCK:
-            _LOG[entry] = (time.time(), stamp[1])
+            _LOG[entry] = (time.time(), built_at)
             _LOG.move_to_end(entry)
             while len(_LOG) > MAX_ENTRIES:
                 _LOG.popitem(last=False)
@@ -93,25 +95,24 @@ def note(kind: str, path, con: duckdb.DuckDBPyConnection, version_table: str) ->
         pass
 
 
-def reads(of: tuple | None = None, since: float | None = None) -> dict[str, dict]:
-    """``{kind: {build_id: built_at}}`` opened by scope ``of`` (the caller's own by default), plus pool-worker opens at
-    or after ``since`` when given."""
+def reads(of: tuple | None = None) -> dict[str, dict]:
+    """``{kind: {build_id: built_at}}`` opened by scope ``of`` (the caller's own by default)."""
     of = of or scope()
     out: dict[str, dict] = {}
     with _LOCK:
         entries = list(_LOG.items())
-    for (sc, kind, build_id), (t, built_at) in entries:
-        if sc == of or (since is not None and sc[0] == "helper" and t >= since):
+    for (sc, kind, build_id), (_t, built_at) in entries:
+        if sc == of:
             out.setdefault(kind, {})[build_id] = built_at
     return out
 
 
-def take(of: tuple | None = None, since: float | None = None) -> dict[str, dict]:
+def take(of: tuple | None = None) -> dict[str, dict]:
     """:func:`reads`, then forget a thread scope's own opens, so the next run on that thread starts empty. A job's
     opens are kept (a job id is never reused, and the bound drops them): one job can record two boards
     (``module_sector_rotation`` and ``module_money_flow``), and both read the files the job opened."""
     of = of or scope()
-    got = reads(of, since)
+    got = reads(of)
     if of[0] == "job":
         return got
     with _LOCK:
@@ -120,22 +121,7 @@ def take(of: tuple | None = None, since: float | None = None) -> dict[str, dict]
     return got
 
 
-def job_started_at() -> float | None:
-    """Epoch start of the dashboard job running on this thread, or None."""
-    jobs = sys.modules.get("RevenueChaser.app.jobs")
-    jid = _job_id()
-    if jobs is None or not jid:
-        return None
-    try:
-        job = jobs.get(jid) or {}
-        started = job.get("started_at")
-        return jobs._epoch(started) if started else None
-    except Exception:  # noqa: BLE001
-        return None
-
-
 def clear() -> None:
     """Forget everything (tests)."""
     with _LOCK:
         _LOG.clear()
-        _STAMPS.clear()

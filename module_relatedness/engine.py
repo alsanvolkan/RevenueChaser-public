@@ -18,6 +18,7 @@ from RevenueChaser.core import job_lock, ledger, rawstore
 from RevenueChaser.core.reporting_common import write_artifact
 from RevenueChaser.core.providers import deepseek, evren, grok
 from RevenueChaser.module_value_chain import engine as vc_engine
+from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 from . import config
 from . import profile_v3
@@ -579,7 +580,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
 
     if todo:
         # LLM workers are a separate pool from the SEC pool (sec_edgar._throttle).
-        with ThreadPoolExecutor(max_workers=workers or config.LLM_WORKERS) as ex:
+        with ThreadPoolExecutor(max_workers=workers or config.LLM_WORKERS, **opens.pool_kwargs()) as ex:
             futs = [ex.submit(_work, it) for it in todo.items()]
             for f in as_completed(futs):
                 try:

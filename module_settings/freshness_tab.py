@@ -78,8 +78,8 @@ def _source_line(s: dict) -> str:
     if s.get("error"):
         words = f'could not be recorded: {esc(str(s["error"]))}'
     elif s.get("reads") == "not_opened":
-        words = (f'the board read the old store, not this file ({esc(str(s["old_store"]))})' if s.get("old_store")
-                 else "the board says it reads this file, but this run did not open it")
+        words = (f'this run did not open it; reads of this file are set to the old store ({esc(str(s["old_store"]))})'
+                 if s.get("old_store") else "the board says it reads this file, but this run did not open it")
     elif state == "missing":
         words = f'read build <b>{esc(_at(s.get("built_at")))}</b> · the file is gone now'
     else:
