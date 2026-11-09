@@ -102,7 +102,7 @@ def _rows(day=D, basis=None):
     if basis is not None:
         sql += " AND basis = ?"
         params.append(basis)
-    return rawstore.query(sql + " ORDER BY horizon_days, basis", params)
+    return rawstore.query(sql + " ORDER BY horizon_days, basis", params, db="forecast")
 
 
 def _row(basis="universe", h=30, day=D):
@@ -117,7 +117,7 @@ def test_manifest_entry_is_a_derived_upsert_keyed_by_date_horizon_and_basis():
     spec = rawstore.MANIFEST["forecast_baselines"]
     assert spec["key"] == ["forecast_date", "horizon_days", "basis"]
     assert spec["write"] == "upsert" and spec["history_mode"] == "latest_cache"
-    assert rawstore._db_of("forecast_baselines") == "raw" and not spec.get("history")
+    assert rawstore._db_of("forecast_baselines") == "forecast" and not spec.get("history")
     cols = {c.split()[0] for c in spec["columns"] if not c.startswith("PRIMARY KEY")}
     assert {"n", "ge20", "ge10", "ge5", "mfe_mean", "mae_mean", "vol_lo", "vol_hi", "status",
             "computed_at", "model_version", "run_id"} <= cols

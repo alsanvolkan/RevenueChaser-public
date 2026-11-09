@@ -18,8 +18,7 @@ def _seed():
 def test_one_row_per_universe_ticker(rawstore_tmp_db):
     _seed()
     n = cp.count()
-    distinct = rawstore.query(
-        "SELECT count(DISTINCT ticker) n FROM company_profile")[0]["n"]
+    distinct = len({r["ticker"] for r in cp.query()})
     assert n == distinct == rawstore.count("equity_universe") == 2
 
 

@@ -2,14 +2,15 @@
 
 The sibling of ``funds/index_holdings``, which reads the index funds' files and votes index membership. This one
 votes nothing: it keeps every holding line of every ETF, with its weight, as the file or the answer gives it, so the
-relatedness peer sets can have a source. Which table they read is the owner's decision E1 (#342): today
-``module_relatedness`` reads ``raw.duckdb.etf_holdings`` (``themes.py``, ``validation/peer_sets.py``), not this one.
+relatedness peer sets can have a source. They read it (owner's decision E1 of #342, D4 of the 9 Nov 2026 review):
+``module_relatedness`` (``themes.py``, ``validation/peer_sets.py``) reads each fund's newest day through
+``rcdata.read.etf_holding_tickers``, not ``raw.duckdb.etf_holdings``.
 
 | Group | Funds | Source |
 |---|---|---|
-| SSGA SPDR (18) | the 11 sector funds, ``XBI XOP XME KRE XHB XRT KIE`` | the issuer's daily holdings xlsx |
-| iShares (6) | ``SOXX IBB ITA ITB IGV IAK`` | the product page's ``latest-holdings.csv`` |
-| Unusual Whales (14) | ``SMH PAVE AIQ LIT URA NLR AIRR SKYY WCLD ARKQ ROBO JETS TAN PBW`` | ``/etfs/<t>/holdings`` |
+| SSGA SPDR (21) | the 11 sector funds, ``XBI XOP XME KRE XHB XRT KIE KBE KCE XPH`` | the issuer's daily holdings xlsx |
+| iShares (10) | ``SOXX IBB ITA ITB IGV IAK IYT IHI IHF ICLN`` | the product page's ``latest-holdings.csv`` |
+| Unusual Whales (17) | ``SMH PAVE AIQ LIT URA NLR AIRR SKYY WCLD ARKQ ROBO JETS TAN PBW GDX OIH CIBR`` | ``/etfs/<t>/holdings`` |
 | ARK, behind UW (1) | ``ARKQ``, on a day UW holds nothing for it | ARK's daily holdings CSV |
 
 **The issuer of each fund was confirmed by fetching it once, 30 Oct 2026**, not taken from memory: IAK is iShares'
@@ -25,12 +26,12 @@ the browser. None of those is a file, so those four stay UW's alone and are not 
 which source served a fund's day (``uw-ARKQ.json`` or ``ark-ARKQ.csv``), and the run note names each fallback.
 
 The funds are the board's ``sector`` and ``theme`` ETFs (``core/rotation_reference.ROTATION_ETFS``) less GLD, SLV and
-USO — commodity trusts, with no equity holdings — plus the seven in ``EXTRA`` that the peer sets need and the board
+USO — commodity trusts, with no equity holdings — plus the 17 in ``EXTRA`` that the peer sets need and the board
 does not run. **UW's answer is kept whole:** the top-10 cap is the Rotation board's own
 (``module_sector_rotation/etf_holdings.py``), and that board's ``raw.duckdb.etf_holdings`` is untouched by this
 dataset, which writes only the market store.
 
-One request per fund per run (24 issuer files, 14 UW calls, plus ARK's file on a day it is needed), each inside
+One request per fund per run (31 issuer files, 17 UW calls, plus ARK's file on a day it is needed), each inside
 its provider's day cap.
 
 **The sweep (#358, avo 1-2 Nov 2026), off until ``RC_ETF_HOLDINGS_SWEEP=1``** (avo, 2 Nov: UW answers at most 250
@@ -38,7 +39,7 @@ holdings a fund, measured on VTI, so it waits for N-PORT's full lists, #354): ev
 ``etf`` table, no ETN and no CEF (5,854 on
 2 Nov 2026), is asked from UW once every ``SWEEP_DAYS`` (30), at most ``SWEEP_PER_RUN`` (3,000) a run, under the
 ``uw`` day cap: a sweep is about 5,850 calls over two daily runs (about 3,014 on its first day with the daily funds'
-14, the rest on the next trading day). Its state is ``raw/funds/etf_holdings/sweep.json`` (its day, empty and failed
+17, the rest on the next trading day). Its state is ``raw/funds/etf_holdings/sweep.json`` (its day, empty and failed
 answers, every sweep day), written before the first call: a cut or killed sweep goes on under its first day, and each
 run types the sweep day's held raws its partition lacks. An empty answer, and a failed one (a 404, or a 5xx or a
 timeout after the client's retries), is not asked again within the sweep; at its end they are one ``uw_empty`` and
@@ -89,7 +90,7 @@ META_SUFFIX = ".meta.json"
 
 # The SPDR funds: the 11 sector funds and the seven industry ones (all one URL template, by ticker).
 SSGA_FUNDS = ("XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY",
-              "XBI", "XOP", "XME", "KRE", "XHB", "XRT", "KIE")
+              "XBI", "XOP", "XME", "KRE", "XHB", "XRT", "KIE", "KBE", "KCE", "XPH")
 # The iShares funds, by (product id, page slug, typed), from the issuer's product screener (30 Oct 2026). The slug
 # is the page's own; the id is what answers, as ``funds.ISHARES_PRODUCTS`` says for the core funds. ``typed`` is
 # which of the issuer's two CSV shapes the fund serves, measured per fund on that day: the five sector and industry
@@ -99,7 +100,14 @@ ISHARES_PRODUCTS = {"SOXX": ("239705", "ishares-semiconductor-etf", False),
                     "ITA": ("239502", "ishares-u-s-aerospace-defense-etf", False),
                     "ITB": ("239512", "ishares-u-s-home-construction-etf", False),
                     "IGV": ("239771", "ishares-expanded-tech-software-sector-etf", False),
-                    "IAK": ("239515", "ishares-u-s-insurance-etf", True)}
+                    "IAK": ("239515", "ishares-u-s-insurance-etf", True),
+                    # The peer-set funds, from the same screener and each file fetched once (9 Nov 2026).
+                    "IYT": ("239501", "ishares-u-s-transportation-etf", False),
+                    "IHI": ("239516", "ishares-u-s-medical-devices-etf", False),
+                    "IHF": ("239510", "ishares-u-s-healthcare-providers-etf", False),
+                    "ICLN": ("239738", "ishares-global-clean-energy-etf", True)}
+# A typed fund whose weight is not ``Market Weight`` (ICLN, 9 Nov 2026: ``Type`` and ``Weight (%)``).
+ISHARES_WEIGHT = {"ICLN": "Weight (%)"}
 # ARK's daily holdings CSV, by fund: the file name under ``/fund-documents/funds-etf-csv/`` on ARK's asset host, as
 # the fund page links it (read 1 Nov 2026, #339). ARK is the issuer file UW's empty answer falls back to.
 ARK_FUNDS = {"ARKQ": "ARK_AUTONOMOUS_TECH._&_ROBOTICS_ETF_ARKQ_HOLDINGS.csv"}
@@ -112,9 +120,12 @@ US_EXCHANGE_CODES = frozenset({"UA", "UN", "UP", "UQ", "UR", "US", "UV", "UW"})
 # The themes whose issuer has no keyless holdings file (VanEck, Global X, First Trust, WisdomTree, ROBO's adviser
 # Exchange Traded Concepts, U.S. Global) and the two Invesco funds its API answers 500 for. ARKQ is UW's first and
 # ARK's file second (``FALLBACKS``).
-UW_FUNDS = ("SMH", "PAVE", "AIQ", "LIT", "URA", "NLR", "AIRR", "SKYY", "WCLD", "ARKQ", "ROBO", "JETS", "TAN", "PBW")
-# The funds the relatedness peer sets need that the rotation board does not run.
-EXTRA = frozenset({"XHB", "XRT", "KIE", "IAK", "ITB", "TAN", "PBW"})
+UW_FUNDS = ("SMH", "PAVE", "AIQ", "LIT", "URA", "NLR", "AIRR", "SKYY", "WCLD", "ARKQ", "ROBO", "JETS", "TAN", "PBW",
+            "GDX", "OIH", "CIBR")
+# The funds the relatedness peer sets need that the rotation board does not run (every ETF of
+# ``module_relatedness/validation/sets/etf_sets.json``; the review of 9 Nov 2026 added the last ten).
+EXTRA = frozenset({"XHB", "XRT", "KIE", "IAK", "ITB", "TAN", "PBW",
+                   "KBE", "KCE", "XPH", "IYT", "IHI", "IHF", "ICLN", "GDX", "OIH", "CIBR"})
 # The sweep (#358, avo 1-2 Nov 2026): every other ETF of the spine's ``etf`` table, no ETN and no CEF, from UW once
 # every ``SWEEP_DAYS``. One run asks at most ``SWEEP_PER_RUN`` of them (the step's own guard, under the ``uw`` cap);
 # the rest wait for the next run, which goes on with the same sweep day.
@@ -128,7 +139,7 @@ SWEEP_STOPS = 3
 # only reports what it would remove unless ``PRUNE_ENV`` is "1": the first real removal is avo's word at that time.
 PRUNE_ENV = "RC_ETF_HOLDINGS_PRUNE"
 # The sweep runs only when this is "1" (owner, 2 Nov 2026, option B): UW answers at most 250 holdings a fund, so the
-# sweep waits for N-PORT's full lists (#354). A named request still asks UW; the 38 daily funds are untouched.
+# sweep waits for N-PORT's full lists (#354). A named request still asks UW; the 48 daily funds are untouched.
 SWEEP_ENV = "RC_ETF_HOLDINGS_SWEEP"
 # Raws typed per pass: a sweep run types up to ``SWEEP_PER_RUN`` answers, merged into the day's partition in DuckDB.
 TYPE_CHUNK = 500
@@ -238,7 +249,7 @@ class EtfFile:
         if self.provider == "ssga":
             return parse_ssga(data)
         if self.provider == "ishares":
-            return parse_ishares(data, typed=ISHARES_PRODUCTS[self.etf][2])
+            return parse_ishares(data, typed=ISHARES_PRODUCTS[self.etf][2], weight_col=ISHARES_WEIGHT.get(self.etf))
         if self.provider == "ark":
             return parse_ark(data, self.etf)
         return parse_uw(data)

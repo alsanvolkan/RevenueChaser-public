@@ -92,7 +92,7 @@ def test_v7_store_gains_job_runs_and_fetched_at_and_keeps_every_row(v7_store):
     assert {"ticker", "session_date", "open", "high", "low", "close", "adj_close", "volume",
             "split_ratio", "source", "fetched_at"} <= _columns(rawstore.prices_db_path(), "price_bars_daily")
     for t in ("catalyst_events", "orphan_designations", "orphan_lookups", "forecast_ledger"):
-        assert _columns(rawstore.DB_PATH, t), t
+        assert _columns(rawstore._db_path(rawstore._db_of(t)), t), t
 
     assert rawstore.count("board_settings") == 1
     assert rawstore.count("edgar_financials") == 1
@@ -151,7 +151,8 @@ V8_COLUMN_TYPES = {
 
 def test_v8_tables_keep_their_column_types(v7_store):
     _migrate()
-    snap = {**_snapshot(rawstore.DB_PATH), **_snapshot(rawstore.prices_db_path())}   # price_bars_daily: #156
+    snap = {**_snapshot(rawstore.DB_PATH), **_snapshot(rawstore.prices_db_path()),   # price_bars_daily: #156
+            **_snapshot(rawstore.board_db_path("forecast"))}                       # forecast_ledger: S9
     for table, expected in V8_COLUMN_TYPES.items():
         have = dict(snap[table])
         for col, want in expected.items():

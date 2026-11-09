@@ -124,6 +124,16 @@ def test_freshness_keeps_each_jobs_last_run_last_success_and_last_failure():
     assert "module_leaps" not in fr                                          # a running job has not finished
 
 
+def test_a_done_run_that_finished_with_gaps_is_not_a_success():
+    gap = {**_run("b", "module_news", "done", NOW - 600),
+           "message": "Finished with gaps: 12 of 12 Interactive Brokers calls failed (headlines: no API session)."}
+    rawstore.write_rows("job_runs", [_run("a", "module_news", "done", NOW - 7200), gap])
+    wb.build(now=NOW)
+    fr = {r["job"]: r for r in rawstore.query("SELECT * FROM welcome_freshness", db="welcome")}["module_news"]
+    assert fr["last_status"] == "gaps" and fr["last_ok_at"] == NOW - 7200
+    assert fr["last_error"].startswith("Finished with gaps: 12 of 12")
+
+
 def test_freshness_reads_only_runs_finished_after_its_mark():
     rawstore.write_rows("job_runs", [_run("a", "spxgamma", "done", NOW - 7200)])
     wb.build(now=NOW)

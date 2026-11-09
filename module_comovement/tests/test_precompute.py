@@ -132,7 +132,7 @@ def test_another_ticker_set_recomputes(market, clusterings):
 
 def test_load_payload_sorts_cards_by_size_then_label(market):
     engine.run(no_fetch=True, persist=True)
-    with rawstore.connect() as conn:                      # a tie, labelled out of order
+    with rawstore.connect(db="comovement") as conn:       # a tie, labelled out of order
         conn.execute("UPDATE comov_nodes SET n = 3, label = CASE cluster_id "
                      "WHEN '1' THEN 'Zeta' ELSE 'Alpha' END")
     for items in engine.load_payload()["clusters"].values():
@@ -241,7 +241,7 @@ def test_precompute_computes_then_skips(market, clusterings):
     clusterings.clear()
     assert engine.precompute() == {126: "reused", 252: "reused"}
     assert clusterings == [] and rawstore.count("comov_runs") == 2
-    w = sorted(r["w"] for r in rawstore.query("SELECT window_days w FROM comov_runs"))
+    w = sorted(r["w"] for r in rawstore.query("SELECT window_days w FROM comov_runs", db="comovement"))
     assert w == [126, 252]
 
 
@@ -252,7 +252,7 @@ def test_precompute_after_a_fetch_reuses_the_fetch_window(market):
 
 def test_precompute_records_a_full_run(market):
     engine.precompute(windows=(126,))
-    row = rawstore.query("SELECT * FROM comov_runs")[0]
+    row = rawstore.query("SELECT * FROM comov_runs", db="comovement")[0]
     assert row["window_days"] == 126 and row["null_json"] and row["funnel_json"]
 
 
@@ -273,7 +273,7 @@ def test_fetch_precomputes_the_popular_windows(runner, monkeypatch):
     monkeypatch.setattr(engine, "precompute", lambda **kw: seen.append(kw) or real(**kw))
     runner.run_comovement(None)
     assert len(seen) == 1
-    assert sorted(r["w"] for r in rawstore.query("SELECT window_days w FROM comov_runs")) \
+    assert sorted(r["w"] for r in rawstore.query("SELECT window_days w FROM comov_runs", db="comovement")) \
         == [126, 252]
 
 

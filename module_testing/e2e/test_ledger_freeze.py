@@ -81,7 +81,7 @@ def seeded(dashboard, monkeypatch):
 def _ledger(dashboard) -> list[dict]:
     """Ledger rows straight from the temp store (the dashboard is idle between calls)."""
     import duckdb
-    db = dashboard.store_dir / "raw.duckdb"
+    db = dashboard.db_file("forecast_ledger")
     conn = duckdb.connect(str(db), read_only=True)
     try:
         cur = conn.execute("SELECT * FROM forecast_ledger ORDER BY source, rank")

@@ -214,17 +214,17 @@ network.
 | `catalyst_events` | Biotech catalysts (trial readouts, PDUFA, AdComs, …) keyed `(source, source_event_id)`: a slipped date updates the row, never adds one (the store records the change in `catalyst_events_changes`); `event_date` + `date_precision` (day/month/quarter/half); writers arrive with #186-#192 | raw | per fetch |
 | `orphan_designations` / `orphan_lookups` | FDA orphan designations per ticker (OOPD) / the outcome of each ticker's lookup. **Writer rules (#190):** skip and report rows whose `date_designated` is None (one NULL key aborts the whole batch); group OOPD's one-record-per-approval rows by key into `approvals`; store `error` as the provider's code; `query` is the query the lookup ended on: when OOPD caps a page (`error` `page_capped`) the provider retries once with a narrower query, so a ticker's stored `query` can differ between sessions only because of that day's cap, and the broad query first asked (`retry_from` in the provider result) is not persisted; readers gate on `orphan_lookups.match` and, since the key is `(ticker, session_date)` (schema 11), take each ticker's latest session (upsert keeps designations that vanish upstream) | raw | per fetch |
 | `price_bars_daily` | Daily bars per `(ticker, session_date)` (schema 11; was `(ticker, date)`): complete New York sessions only (`session_date` is the NY session date, never local/UTC), written from 16:30 ET (`core/calendar.py`); the first write of a key wins and a bar is never rewritten; OHLC nominal as served at `fetched_at` (a price ≤ 0 is not stored; `dropped_no_close` counts bad bars seen, not rows lost), later splits and dividends applied on read from `price_actions` (`core/prices.daily_bars`); `volume` is the value served at write time (#156 R1). Writer `core/prices.ensure_daily_bars`, job `daily_bars`, task RC-Daily-Bars 22:35. Readers (`daily_bars`, windowed by SQL, K8a): Swing and Fundamentals (#383 R3), Asymmetric Growth (nominal: momentum from the last 252/50/63/10 sessions, one read per 500-name batch, #380 S4), the forecast outcomes, and Co-movement plus the Relatedness peer market (adjusted closes over the last 2 years, `module_comovement/ohlc.py` `price_frame`, #379 D01 switch; their Fetch downloads nothing); and, since #372 E5e, the Earnings Fetch's reaction window (`module_earnings_radar/stored_inputs.ohlc_bars`, one windowed nominal read; UW's `etf_ohlc` is asked only for a ticker whose newest stored bar is not the latest complete session, or, from 09:30 to 16:30 New York, for a name reporting today or on the previous trading day, before or after its open) | prices | none (event table, never pruned) |
-| `swing_info` | yfinance `.info` per ticker. `fetched_at DOUBLE` (#127) is the fetch time; a row from before the column is NULL (unknown, never 0) | raw | `OHLC_TTL_DAYS` |
-| `leaps_cache` | LEAPS latest snapshot (Earnings reads it) + the older snapshots list, frozen since #377 L3 (carried unchanged, never appended). `fetched_at DOUBLE` (#127); NULL on older rows is unknown, never 0 | raw | none today (latest only) |
-| `rotation_holdings` | Per-ETF holdings + RS rows for today. `fetched_at DOUBLE` (#127); NULL on older rows is unknown, never 0 | raw | same-day |
+| `swing_info` | yfinance `.info` per ticker. `fetched_at DOUBLE` (#127) is the fetch time; a row from before the column is NULL (unknown, never 0) | swing_potential | `OHLC_TTL_DAYS` |
+| `leaps_cache` | LEAPS latest snapshot (Earnings reads it) + the older snapshots list, frozen since #377 L3 (carried unchanged, never appended). `fetched_at DOUBLE` (#127); NULL on older rows is unknown, never 0 | leaps | none today (latest only) |
+| `rotation_holdings` | Per-ETF holdings + RS rows for today. `fetched_at DOUBLE` (#127); NULL on older rows is unknown, never 0 | sector_rotation | same-day |
 | `tradewhisperer_*` | Legacy TradeWhisperer caches — board removed 2026-09-30; rows kept untouched, no longer in the MANIFEST | raw | — |
 | `equity_universe` | Shared US universe (members = the SEC exchange file's Nasdaq / NYSE / CBOE rows, with Yahoo market data joined on, #264) + provenance snapshot | raw | refreshed on scan |
 | `sec_company_tickers` | SEC CIK map (ticker → cik/name); **retired** (#301 D21): nothing writes it, and the readers use `sec_exchange_file` first — it stays as the CIK map's second source, ahead of a live `company_tickers.json` read | raw | frozen |
 | `sec_company_sic` | SIC per CIK — the fallback behind the SEC submissions code for the SIC sector step (#272) | raw | until refetched |
-| `comov_runs` / `comov_nodes` / `comov_members` / `comov_lag` | Co-movement board: dated return-cluster runs, clusters, members; groups formed a quarter earlier with their held-out-quarter test | raw | per Fetch run (latest as_of wins) |
+| `comov_runs` / `comov_nodes` / `comov_members` / `comov_lag` | Co-movement board: dated return-cluster runs, clusters, members; groups formed a quarter earlier with their held-out-quarter test | comovement | per Fetch run (latest as_of wins) |
 | `chain_filings` / `chain_mentions` / `chain_meta` | Value Chain board: latest 10-K/20-F Item 1/4 text + supplier/customer edges. `chain_meta.fetched_at DOUBLE` (#127) is the fetch time; NULL on older rows is unknown, never 0 | edgar | per fetch (resumable by ticker) |
-| `llm_cache` | DeepSeek (and, for a `--provider grok` run, SuperGrok: #388) prompt/response cache (Relatedness + Value Chain) | raw | none (immutable) |
-| `ticker_themes` | Runtime theme SSoT `(ticker, theme_id, theme, level, theme_run_id)`. `fetched_at DOUBLE` (#127) is when the row was written; NULL on older rows is unknown, never 0 | raw | per theme run |
+| `llm_cache` | DeepSeek (and, for a `--provider grok` run, SuperGrok: #388) prompt/response cache (Relatedness + Value Chain) | relatedness | none (immutable) |
+| `ticker_themes` | Runtime theme SSoT `(ticker, theme_id, theme, level, theme_run_id)`. `fetched_at DOUBLE` (#127) is when the row was written; NULL on older rows is unknown, never 0 | relatedness | per theme run |
 | `sec13f_security_meta` | Shared ticker→{name,sector} across dashboards (merged from old `universe_meta` + `sec13f_universe_meta`). `fetched_at DOUBLE` (#127); NULL on older rows is unknown, never 0 | raw | manual |
 | `sec13f_enrichment` | 13F enrichment (price/short/insider); writer retired (#300), no reader since #375 F2 (the board reads `ownership_snapshot` and D01); the rows stay | raw | none |
 | `sec13f_edgar_backfill` | Retired: the EDGAR backfill is gone and nothing reads it; no writer either, apart from the legacy import `scripts/migrate_rawdata_to_duckdb.py`, so the entry is flagged MANIFEST `"retired": true` (#289) and scheduled to leave the manifest at the next bump (the table leaves the manifest in the 8→9 bump) | raw | none |
@@ -662,7 +662,8 @@ worker thread writes while Flask request threads read. So:
   avo, 8 Nov 2026), plus
   Monday to Friday 06:30 (the SPX Gamma Fetch RC-SPX-Gamma-Fetch, #291: `module_spx_gamma --nightly`, the
   latest complete session's raw day with all expiries, only once its Cboe SPX close is stored and outside the US
-  session, else exit 3; no catch-up);
+  session, else exit 3; no catch-up; the Fetch itself is queued on the dashboard, `POST /run/spxgamma`, so the
+  dashboard stays the one writer, and with the dashboard down the task exits 1);
   `core/automations.py`: the Relatedness and Value Chain rows are 30 min apart.
 
 ### Full-refresh vs. incremental tables
@@ -1069,7 +1070,14 @@ views, for the identity (`_universe`, `_permno_link`, `_gvkey_alias`), and stage
 that day; a whole build staged forty years of `comp.secd` into TEMP tables (homesrv, 9 Nov 2026: 6 h 12 min, 92 GB
 of spill). `wrds_price_diff` is kept from the last whole build, which the monthly WRDS refresh (a new
 `comp.sec_split` snapshot) forces; so do a change of `wrds/sec_idhist`, of the build code, and `RC_BUILD_WHOLE=1`.
-`ownership`, `options` and `market` are still built whole; `spine` stays whole by design (seconds).
+`ownership` (`rcdata/build/ownership/common.py` `build_keyed`) keys every source table by the partition its rows
+come from (`date=`, `half=`, `day=`, carried in each row as `settlement_date`, `list_date`, `snapshot_date`, `half`
+or `index_day`): a build on the live copy deletes the rows of each changed, new or gone partition and loads only
+those, then names every row's ticker again from the live spine and rewrites the rows whose name moved, so a spine
+change reaches rows no partition touched. A new source of the store (N-PORT) declares the same `dirty` and
+`build_keyed`. The 13F totals (`ownership/serve`) are still derived whole on a `sec/13f` or `ownership/serve` run
+and kept as they are otherwise (whole build of 6 Nov 2026: 91 min).
+`options` and `market` are still built whole; `spine` stays whole by design (seconds).
 
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.

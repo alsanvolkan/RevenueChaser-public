@@ -44,7 +44,7 @@ def _no_bars():
 
 
 def _stored():
-    return rawstore.query("SELECT * FROM forecast_ledger WHERE source = 'asymmetric_growth' ORDER BY rank")
+    return rawstore.query("SELECT * FROM forecast_ledger WHERE source = 'asymmetric_growth' ORDER BY rank", db="forecast")
 
 
 @pytest.fixture

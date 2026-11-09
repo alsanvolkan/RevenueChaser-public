@@ -447,7 +447,7 @@ def test_engine_run_persists_horizon_and_benchmark(rawstore_tmp_db):
 
     row = rawstore.query(
         "SELECT horizon, benchmark FROM comov_runs WHERE as_of = ?",
-        [payload["as_of"]])[0]
+        [payload["as_of"]], db="comovement")[0]
     assert row["horizon"] == 5
     assert row["benchmark"] == "spy"
 
@@ -679,7 +679,7 @@ def test_engine_flags_the_catch_all_group_and_load_payload_derives_it(rawstore_t
     assert {c["n"]: c["catchall"] for c in loaded["clusters"]["2"]} == flags
     cols = {r["column_name"] for r in rawstore.query(
         "SELECT column_name FROM information_schema.columns "
-        "WHERE table_name IN ('comov_nodes', 'comov_members')")}
+        "WHERE table_name IN ('comov_nodes', 'comov_members')", db="comovement")}
     assert "catchall" not in cols
 
 
@@ -690,9 +690,9 @@ def test_engine_persists_baseline_n_factors_and_the_null(rawstore_tmp_db):
     _seed_ohlc(ret)
     p = engine.run(no_fetch=True, tickers=tickers, cuts=(2,), persist=True)
     node = rawstore.query("SELECT baseline_r FROM comov_nodes WHERE as_of = ?",
-                          [p["as_of"]])[0]
+                          [p["as_of"]], db="comovement")[0]
     run = rawstore.query("SELECT n_factors, null_json, linkage FROM comov_runs "
-                         "WHERE as_of = ?", [p["as_of"]])[0]
+                         "WHERE as_of = ?", [p["as_of"]], db="comovement")[0]
     assert node["baseline_r"] is not None
     assert run["n_factors"] == p["n_factors"]
     assert run["linkage"] == "ward"
@@ -2218,7 +2218,7 @@ def test_run_drops_a_fund_from_the_clusters_and_the_funnel_says_so(rawstore_tmp_
     assert "FUNDX" not in by["no_prices"].get("tickers", []) and by["no_prices"]["count"] == 0
     # the persisted run carries the new counts, so a reload rebuilds the same steps
     stored = engine._loads_or_empty(rawstore.query(
-        "SELECT funnel_json FROM comov_runs")[0]["funnel_json"])
+        "SELECT funnel_json FROM comov_runs", db="comovement")[0]["funnel_json"])
     assert stored["funds_etfs"] == 1 and stored["unknown_type"] == 6
     assert stored["floor_total"] == 7
     loaded = engine.load_payload()

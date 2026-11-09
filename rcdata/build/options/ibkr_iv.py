@@ -131,6 +131,11 @@ class IBKRIVHistory:
         ctx.as_of = end
         self.to_parquet_all(ctx, self.fetch(ctx, end))
 
+    def dirty(self, ctx: base.RunContext):
+        """Its names' year partitions that changed; ``iv_daily`` (``uw/option_list``'s) reloads whole on one."""
+        from .. import dirty
+        return dirty.keyed(ctx, self, "ticker")
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         return {}
 

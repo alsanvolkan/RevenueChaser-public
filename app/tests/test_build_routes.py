@@ -391,3 +391,19 @@ def test_the_builder_timer_switch_runs_only_life_ctl_on_or_off(client, monkeypat
     monkeypatch.setattr(dashboard.subprocess, "run", refused)
     r = client.post("/api/build/timer", json={"on": True}, headers=h)
     assert r.status_code == 502 and "no new privileges" in r.get_json()["error"]
+
+
+def test_reading_the_queue_closes_a_request_whose_run_was_killed(client):
+    """#602: a SIGKILLed or OOM-killed run left its request running; the board's read closes it."""
+    import subprocess
+    import sys
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    rid = ops.enqueue("market_series", None, by="t")
+    ops.next_request()
+    ops.start_run("killed", "market_series", "queue")
+    [run] = [r for r in ops.rows("job_runs2") if r["run_id"] == "killed"]
+    ops.put_rows("job_runs2", [{**run, "pid": p.pid}])
+    body = client.get("/api/build/queue").get_json()
+    assert body["active"] == []
+    assert body["finished"][0]["id"] == rid and body["finished"][0]["status"] == "failed"

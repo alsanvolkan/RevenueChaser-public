@@ -1596,6 +1596,10 @@ def api_build_queue():
     """The queued and running build requests, oldest first, and the last 20 finished, newest first."""
     from RevenueChaser.rcdata import ops
 
+    try:
+        ops.fail_dead_requests()      # #602: a killed run's request must not read "running" until the next builder
+    except Exception:  # noqa: BLE001 - the sweep is housekeeping; the queue still answers
+        logger.warning("build queue: could not close the requests of dead runs", exc_info=True)
     return jsonify({"ok": True, **ops.queue_view(finished=20)})
 
 

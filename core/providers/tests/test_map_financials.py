@@ -200,3 +200,11 @@ def test_an_untyped_cash_flow_row_still_joins_but_never_over_a_quarterly_one():
         "cash_from_operations"] == 999.0, "legacy: a row without a period type is kept"
     assert _client(income=[_inc(fd, 1000)], cashflow=[typed, untyped])._map_financials("QXO")[0][
         "cash_from_operations"] == 300.0
+
+
+def test_cash_from_operations_reads_the_key_uw_actually_sends():
+    # UW's cash-flow rows carry "operating_cashflow" (no underscore before "flow"); reading only
+    # "operating_cash_flow" left CFO None on every real row, so R3 and R7 never scored on UW data.
+    cashflow = [{"fiscal_date_ending": "2026-03-31", "operating_cashflow": "300"}]
+    c = _client(income=[_inc("2026-03-31", 1000)], cashflow=cashflow)
+    assert c._map_financials("QXO")[0]["cash_from_operations"] == 300.0

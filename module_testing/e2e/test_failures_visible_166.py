@@ -71,8 +71,11 @@ def _heal(routes, ticker: str) -> None:
 
 
 def _query(dashboard, sql: str, params=()) -> list[tuple]:
+    """One query on the file that holds the table after its FROM (board tables have their own file, S9)."""
+    import re
+
     import duckdb
-    conn = duckdb.connect(str(dashboard.store_dir / "raw.duckdb"), read_only=True)
+    conn = duckdb.connect(str(dashboard.db_file(re.search(r"\bFROM\s+(\w+)", sql).group(1))), read_only=True)
     try:
         return conn.execute(sql, list(params)).fetchall()
     finally:

@@ -304,7 +304,7 @@ def alerts(nd: dict, providers: list[dict], ibkr: dict | None, switches: dict | 
 
 def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *, timer: dict | None = None,
            longest: dict | None = None, file_views: list[dict] | None = None, switches: dict | None = None,
-           jobs_now: list[dict] | None = None) -> dict:
+           jobs_now: list[dict] | None = None, longest_unread: bool = False) -> dict:
     cards = nd.get("datasets") or []
     total = len(cards)
     by = {k: 0 for k in ("fresh", "late", "stale", "never")}
@@ -358,6 +358,8 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
         _tile("universe", "none", count(universe.get("filled")) if universe.get("filled") is not None else "—",
               f"of {count(universe.get('size'))} names in the universe have a bar on the newest session"
               + ("" if universe.get("fill_enabled") else " · the Fill buttons are off"), "universe"),
+        _tile("longest", "warn", "could not read", "longest build today · job_runs2 could not be read")
+        if longest_unread else  # #529: an unreadable store must not read as "no run today"
         _tile("longest", "none" if longest is None else "neu",
               "not measured yet" if longest is None else f"{round(longest['seconds'] / 60)} min",
               "longest build today" if longest is None else f"longest build today · {longest['dataset']}"),
@@ -1057,10 +1059,11 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
     provider_rows = _providers(nd)
     reads = readers()
     timer_view = _timer(timer)
+    longest_unread = False
     try:
         longest = longest_build(job_runs() if job_runs else _read_job_runs(now), now)
-    except Exception:  # noqa: BLE001 - an unreadable ops store leaves the tile "not measured yet"
-        longest = None
+    except Exception:  # noqa: BLE001 - an unreadable ops store says so on its tile, never fails the board (#529)
+        longest, longest_unread = None, True
     try:
         modes = kind_modes() if kind_modes else _read_kind_modes()
     except Exception:  # noqa: BLE001 - an unreadable ops store shows every kind off, never the board failing
@@ -1085,7 +1088,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
     return {
         "error": None,
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
-        "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, file_views=file_views,
+        "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, longest_unread=longest_unread, file_views=file_views,
                          switches=switch_rows, jobs_now=running),
         "running": running,
         "timer": timer_view, "longest_build": longest,

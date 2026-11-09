@@ -1,7 +1,10 @@
 """The News tab in the dashboard (plan decision D): first in the Research group, Refresh is store-only, Fetch builds."""
 from __future__ import annotations
 
+import pytest
+
 from RevenueChaser.app import dashboard, runners
+from RevenueChaser.app.jobs import GAPS, JobMessage
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.tests.panel_client import panel_test_client
 
@@ -44,10 +47,11 @@ def test_the_job_builds_then_renders(monkeypatch, tmp_path):
         "session_date": "2026-11-09", "event_ts": 1794317400.0, "event": "CPI, M/M%", "type": "report",
         "forecast": None, "prev": None, "reported_period": None, "raw_row": "{}", "source": "uw",
         "fetched_at": 100.0, "run_id": "s", "run_at": 100.0}])
-    path = runners.run_news()
-    assert path == tmp_path / "news_latest.html"
+    with pytest.raises(JobMessage):                   # a down gateway ends the job "done" with gaps, never failed
+        runners.run_news()
+    assert (tmp_path / "news_latest.html").exists()
     assert rawstore.query("SELECT event FROM news_events", db="news") == [{"event": "CPI, M/M%"}]
-    assert asked and asked[0][0] == "AAPL"            # a down gateway is a note, never a failed Fetch
+    assert asked and asked[0][0] == "AAPL"
 
 
 def test_a_down_gateway_shows_the_data_incomplete_banner(monkeypatch, tmp_path):
@@ -55,7 +59,11 @@ def test_a_down_gateway_shows_the_data_incomplete_banner(monkeypatch, tmp_path):
     monkeypatch.setattr(report, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(headlines, "fetch", lambda names, **kw:
                         {"tickers": len(names), "stored": 0, "skipped": [], "error": "no API session"})
-    page = runners.run_news().read_text(encoding="utf-8")
+    with pytest.raises(JobMessage) as exc:
+        runners.run_news()
+    # The job says so too, so the Welcome freshness card does not tick it (Joker-1's shot, 9 Nov).
+    assert exc.value.message.startswith(f"{GAPS}: ") and "no API session" in exc.value.message
+    page = (tmp_path / "news_latest.html").read_text(encoding="utf-8")
     assert page.count('class="rc-provider-health"') == 1
     assert "Interactive Brokers" in page and "no API session" in page
 

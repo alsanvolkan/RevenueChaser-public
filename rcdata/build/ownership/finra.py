@@ -209,15 +209,14 @@ class FinraShortInterest:
             ctx.notes.append(f"{repeats} repeated symbols of a settlement date (the first row kept)")
         return out
 
+    dirty_keyed = True
+
+    def dirty(self, ctx: base.RunContext):
+        return common.keyed_dirty(ctx, self, "date")
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        files = [f for _, f in partitions(parquet_dir(), "date")]
-        if not files:
-            return {TABLE: common.create_table(con, TABLE, SERVED)}
-        src = common.files_sql(files)
-        common.symbol_map(con, f"SELECT symbol FROM {src}", ctx.notes, NAME)
-        select = (f"SELECT p.*, m.ticker, m.ticker_source, '{NAME}' AS source FROM {src} p "
-                  f"LEFT JOIN _symbol_map m USING (symbol) ORDER BY p.settlement_date, p.symbol")
-        return {TABLE: common.create_table(con, TABLE, SERVED, select)}
+        return {TABLE: common.build_keyed(ctx, con, NAME, TABLE, SERVED, partitions(parquet_dir(), "date"),
+                                          "settlement_date", "settlement_date, symbol", common.BY_SYMBOL)}
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         cols = ["settlement_date", "symbol", "ticker", "current_short", "days_to_cover"]

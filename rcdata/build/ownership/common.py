@@ -3,19 +3,30 @@ comparison with the live file.
 
 The spine is read from its live file (``spine.duckdb``), read-only and closed again; a build with no spine names no
 ticker and says so in its notes, it never guesses one from the symbol.
+
+**The build on the live copy (#446).** Every source table is keyed by the partition its rows come from (``date=``,
+``half=``, ``day=``), and each row carries that key as a column (``settlement_date``, ``half``, ``index_day``).
+:func:`build_keyed` builds such a table whole from every partition on a whole build; on a build over a copy of the
+live file it deletes the rows of the dirty keys (a changed, new or gone partition, and a key the file serves whose
+partition is gone) and loads only those partitions. Its tickers come from the live spine, which changes without a
+partition changing, so it then names every row again from a map over the table's own distinct symbols and rewrites
+the rows whose name moved (:func:`restate`). A map is per symbol (``symbol_tickers``, ``issuer_tickers``,
+``cusip_issuer_map``), so the result is the whole build's, row for row. A new source of the kind (N-PORT, ETF review
+D2) uses the same two calls: a ``dirty`` of :func:`keyed_dirty` over its partition field and a ``build`` of
+:func:`build_keyed`.
 """
 from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable, NamedTuple
 
 import duckdb
 
 from ....core import calendar
 from ....core.identity.sources import norm_ticker
 from ... import serving
-from .. import base
+from .. import base, dirty
 from ..spine.security import squash
 
 SPINE = "spine"
@@ -232,3 +243,98 @@ def cusip_issuer_map(con: duckdb.DuckDBPyConnection, pairs_sql: str, notes: list
         rows.append({"issuer_cik": cik, "cusip": cusip, "ticker": ticker, "ticker_source": src})
     temp_rows(con, "_cusip_issuer_map", [("issuer_cik", "TEXT"), ("cusip", "TEXT"), ("ticker", "TEXT"),
                                          ("ticker_source", "TEXT")], rows)
+
+
+# ── The build on the live copy (#446) ─────────────────────────────────────────────────────────────────────────
+
+class Naming(NamedTuple):
+    """How a source's rows get their ticker: the columns the map is keyed by, the function that writes it (TEMP,
+    over a query selecting those columns) and the TEMP table's name."""
+    cols: tuple[str, ...]
+    make: Callable[[duckdb.DuckDBPyConnection, str, list, str], object]
+    temp: str
+
+
+BY_SYMBOL = Naming(("symbol",), symbol_map, "_symbol_map")
+BY_ISSUER = Naming(("issuer_cik", "symbol"), issuer_map, "_issuer_map")
+BY_CUSIP = Naming(("issuer_cik", "cusip"), cusip_issuer_map, "_cusip_issuer_map")
+
+
+def keyed_dirty(ctx, ds, field: str) -> dirty.Dirty:
+    """A source's dirty set: the ``<field>=<key>`` values of its changed partitions (:func:`dirty.keyed`)."""
+    return dirty.keyed(ctx, ds, field)
+
+
+def has_table(con: duckdb.DuckDBPyConnection, table: str) -> bool:
+    return bool(con.execute("SELECT count(*) FROM duckdb_tables() WHERE database_name = current_database() "
+                            "AND table_name = ?", (table,)).fetchone()[0])
+
+
+def _on(naming: Naming, left: str, right: str) -> str:
+    return " AND ".join(f'{right}."{c}" IS NOT DISTINCT FROM {left}."{c}"' for c in naming.cols)
+
+
+def build_keyed(ctx, con: duckdb.DuckDBPyConnection, name: str, table: str, schema: list[tuple[str, str]],
+                parts: list[tuple[str, Path]], key_col: str, order: str, naming: Naming | None = None) -> int:
+    """``table`` of source ``name`` from its partitions ``parts`` (``[(key, file)]``, ``spine.stage.partitions``),
+    each row's ``key_col`` its partition's key; its row count. ``order`` (unprefixed columns) orders a load,
+    ``naming`` names the rows' tickers (None: the table carries none).
+
+    Whole (no plan, or no such table in the file): every partition. On the live copy: the rows of the dirty keys
+    are replaced by their partitions' rows, then every row is named again (:func:`restate`)."""
+    plan = getattr(ctx, "incremental", None)
+    if plan is None or not has_table(con, table):
+        files = [f for _, f in parts]
+        if not files:
+            return create_table(con, table, schema)
+        src = files_sql(files)
+        if naming is None:
+            select = f"SELECT p.*, '{name}' AS source FROM {src} p"
+        else:
+            naming.make(con, f"SELECT {', '.join(naming.cols)} FROM {src}", ctx.notes, name)
+            select = (f"SELECT p.*, m.ticker, m.ticker_source, '{name}' AS source FROM {src} p "
+                      f"LEFT JOIN {naming.temp} m ON {_on(naming, 'p', 'm')}")
+        return create_table(con, table, schema, f"SELECT * FROM ({select}) ORDER BY {order}")
+    d = plan.dirty.get(name, dirty.ALL)
+    key = f'CAST("{key_col}" AS TEXT)'
+    if d.all:
+        con.execute(f"DELETE FROM {table}")
+        files = [f for _, f in parts]
+        keys = None
+    else:
+        held = {k for k, _ in parts}
+        served = {r[0] for r in con.execute(f"SELECT DISTINCT {key} FROM {table} WHERE {key} IS NOT NULL").fetchall()}
+        # A key the file serves whose partition is gone: its rows go (a live file built before the manifest
+        # cannot show a gone partition, ``dirty.changes``).
+        keys = sorted(set(d.keys) | (served - held))
+        if keys:
+            con.execute(f"DELETE FROM {table} WHERE {key} IN (SELECT unnest(?::TEXT[]))", (keys,))
+        files = [f for k, f in parts if k in set(keys)]
+    if files:
+        src = files_sql(files)
+        if keys is not None:
+            stray = con.execute(f"SELECT count(*) FROM {src} WHERE {key} IS NULL OR {key} NOT IN "
+                                f"(SELECT unnest(?::TEXT[]))", (keys,)).fetchone()[0]
+            if stray:
+                raise base.SourceError(f"{name}: {stray} rows of a partition carry another {key_col}; a build on the "
+                                       f"live copy cannot replace them (build whole: {dirty.WHOLE_ENV}=1)")
+        tick = "NULL AS ticker, NULL AS ticker_source, " if naming is not None else ""
+        names = ", ".join(f'"{c}"' for c, _ in schema)
+        con.execute(f"INSERT INTO {table} SELECT {names} FROM (SELECT p.*, {tick}'{name}' AS source FROM {src} p) "
+                    f"ORDER BY {order}")
+    if naming is not None:
+        restate(con, table, naming, ctx.notes, name)
+    return count(con, table)
+
+
+def restate(con: duckdb.DuckDBPyConnection, table: str, naming: Naming, notes: list[str], label: str) -> int:
+    """Name every row of ``table`` from the live spine again: the map over its distinct keys, and the rows whose
+    ticker or ticker source differs from it rewritten; how many were."""
+    naming.make(con, f"SELECT DISTINCT {', '.join(naming.cols)} FROM {table}", notes, label)
+    moved = con.execute(f"""UPDATE {table} t SET ticker = m.ticker, ticker_source = m.ticker_source
+        FROM {naming.temp} m WHERE {_on(naming, 't', 'm')}
+          AND (t.ticker IS DISTINCT FROM m.ticker OR t.ticker_source IS DISTINCT FROM m.ticker_source)""").fetchone()
+    n = int(moved[0]) if moved else 0
+    if n:
+        notes.append(f"{label}: {n} rows named again from the spine")
+    return n

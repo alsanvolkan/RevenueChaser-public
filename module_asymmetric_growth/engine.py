@@ -811,14 +811,50 @@ def _quarter(period) -> tuple[int, int] | None:
     return d.year, (d.month - 1) // 3 + 1
 
 
-def _institutional(ticker: str, totals: dict, shares_outstanding: float | None = None) -> dict:
+def _settled(periods: dict) -> list:
+    """The 13F periods whose filing deadline has passed, oldest first: a quarter still arriving holds a part of
+    itself (#514)."""
+    return sorted(k for k, v in periods.items() if v.get("complete", True))
+
+
+def _split_factors(latest: dict[str, str]) -> dict[str, float]:
+    """``{ticker: split_factor}`` of each ticker's 13F quarter end (``latest``: ticker -> ISO period): the prices
+    store's factor that turns a share count of that day into today's basis (shares ÷ factor; a 1-for-25 reverse split
+    after it serves 25). Compustat's and Alpaca's splits, applied the way every board's split basis is
+    (``rcdata.read.bars``). One bar read per quarter. A ticker the store cannot place, or a store it cannot read,
+    has no factor: its shares stay as filed."""
+    from RevenueChaser.rcdata import read
+    out: dict[str, float] = {}
+    try:
+        ids = read.security_ids(latest)
+        by_period: dict[str, list[str]] = {}
+        for t, period in latest.items():
+            if t in ids:
+                by_period.setdefault(period, []).append(t)
+        for period, tickers in by_period.items():
+            end = date.fromisoformat(str(period)[:10])
+            sid_to = {ids[t]: t for t in tickers}
+            # The last bar on or before the quarter end: rows come by security and session, so the last one wins.
+            for b in read.bars(sid_to, start=end - timedelta(days=10), end=end, basis="split"):
+                if b.get("split_factor"):
+                    out[sid_to[b["security_id"]]] = float(b["split_factor"])
+    except Exception as exc:  # noqa: BLE001 - no prices store is "no factor", never a failed scan
+        logger.warning("AG 13F split factors unread, shares stay as filed: %s: %s", type(exc).__name__, exc)
+        return {}
+    return out
+
+
+def _institutional(ticker: str, totals: dict, shares_outstanding: float | None = None,
+                   shares_out_source: str = "stored", split_factor: float = 1.0) -> dict:
     """13F institutional ownership: the newest settled quarter, and its share change against the quarter right
     before it. ``inst_quarter`` / ``inst_prev_quarter`` name them (``2026 Q1``); when the quarter before is not
     stored, there is no QoQ change rather than one over two quarters (AG review SF-3, PR 6).
 
     A quarter whose filing deadline has not passed (``complete`` false) holds a part of itself (#514) and is skipped.
     ``inst_ownership_pct`` is that quarter's shares ÷ ``shares_outstanding``, the 13F board's ``% Out`` (#481), and
-    ``ownership`` says which quarter it came from; without either there is no share and no provenance."""
+    ``ownership`` says which quarter it came from and where the shares outstanding came from
+    (``shares_out_source``); without either there is no share and no provenance. The 13F shares are first put on
+    today's basis (÷ ``split_factor``, a split after the quarter: avo, 9 Nov 2026, GOSS read 6,242 % without it)."""
     out = {"inst_holders": None, "inst_new": None, "inst_exited": None,
            "inst_buy_flow": None, "inst_sell_flow": None,
            "inst_shares": None, "inst_shares_delta_pct": None,
@@ -828,7 +864,7 @@ def _institutional(ticker: str, totals: dict, shares_outstanding: float | None =
     if not periods:
         return out
     try:
-        sorted_periods = sorted(k for k, v in periods.items() if v.get("complete", True))
+        sorted_periods = _settled(periods)
     except TypeError:
         return out
     if not sorted_periods:
@@ -842,8 +878,9 @@ def _institutional(ticker: str, totals: dict, shares_outstanding: float | None =
     out["inst_sell_flow"] = p.get("sell_flow")
     out["inst_shares"] = p.get("shares")
     if p.get("shares") is not None and shares_outstanding:
-        out["inst_ownership_pct"] = p["shares"] / shares_outstanding
-        out["ownership"] = {"source": "sec13f", "session": str(latest)[:10]}
+        out["inst_ownership_pct"] = p["shares"] / split_factor / shares_outstanding
+        out["ownership"] = {"source": "sec13f", "session": str(latest)[:10], "shares_out": shares_out_source,
+                            "split_factor": split_factor}
     q = _quarter(latest)
     out["inst_quarter"] = f"{q[0]} Q{q[1]}" if q else None
     if len(sorted_periods) >= 2 and q:
@@ -1065,10 +1102,24 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
 
     totals = ownership.sec13f_totals()      # #16: the stored rows, not the 13F board's engine
     shares_out = ownership.load_ownership([c["ticker"] for c in cards])   # #481: the 13F board's % Out denominator
+    latest_13f = {}
+    for c in cards:
+        try:
+            settled = _settled(totals.get(c["ticker"]) or {})
+        except TypeError:
+            settled = []
+        if settled:
+            latest_13f[c["ticker"]] = settled[-1]
+    splits = _split_factors(latest_13f)
     from RevenueChaser.module_asymmetric_growth import freeze
     version = freeze.model_version()        # the rows say which rules scored them (old-rows view, #380 S2)
     for c in cards:
-        inst = _institutional(c["ticker"], totals, (shares_out.get(c["ticker"]) or {}).get("shares_outstanding"))
+        so = (shares_out.get(c["ticker"]) or {}).get("shares_outstanding")
+        so_source = "stored"
+        if not so and c.get("market_cap") and c.get("price"):
+            # Measured 9 Nov 2026: the store held shares outstanding for 1,219 of 4,159 AG names; every card has these.
+            so, so_source = c["market_cap"] / c["price"], "market_cap/price"
+        inst = _institutional(c["ticker"], totals, so, so_source, splits.get(c["ticker"], 1.0))
         # The 13F quarters the card read are period ends it read: they ride in ``period_ends`` (a JSON column of
         # ``ticker_scores``), so a Refresh shows them too (AG review SF-3).
         c.setdefault("period_ends", {})["inst_13f"] = [inst.pop("inst_quarter"), inst.pop("inst_prev_quarter")]
