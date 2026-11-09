@@ -154,7 +154,10 @@ def open_read(kind: str) -> duckdb.DuckDBPyConnection:
     path = live_path(kind)
     if not path.exists():
         raise ServingFileMissing(f"no {kind} serving file at {path} yet")
-    return duckdb.connect(str(path), read_only=True)
+    con = duckdb.connect(str(path), read_only=True)
+    from . import opens
+    opens.note(kind, path, con, VERSION_TABLE)       # #566: which build this job read; never raises
+    return con
 
 
 def _remove(path: Path) -> None:
@@ -331,22 +334,20 @@ def live_version(kind: str) -> int | None:
 
 
 def live_stamp(kind: str) -> dict | None:
-    """``{kind, file, build_id, built_at, build_mode}`` of the build that is live now, from the file's own version row
-    (``_stamp``); ``None`` when there is no file or no single version row. ``built_at`` is epoch seconds. A board run
-    records this for every file it reads (``rcdata/board_sources.py``, #566)."""
+    """``{kind, file, build_id, built_at}`` of the build that is live now, from the file's own version row
+    (``_stamp``); ``None`` when there is no file. ``built_at`` is epoch seconds; ``build_id`` and ``built_at`` are
+    None for a file with no single version row. Not an ``open_read``: looking at a file is not a board reading it
+    (``rcdata/opens.py``, #566)."""
+    from . import opens
+    path = live_path(kind)
+    if not path.exists():
+        return None
     try:
-        with open_read(kind) as con:
-            cols = {r[0] for r in con.execute(f"DESCRIBE {VERSION_TABLE}").fetchall()}
-            mode = "build_mode" if "build_mode" in cols else "NULL"
-            rows = con.execute(f"SELECT build_id, built_at, {mode} FROM {VERSION_TABLE} WHERE kind = ?",
-                               (kind,)).fetchall()
-    except (ServingFileMissing, duckdb.Error):
+        with duckdb.connect(str(path), read_only=True) as con:
+            build_id, built_at = opens.stamp_of(con, VERSION_TABLE, kind)
+    except duckdb.Error:
         return None
-    if len(rows) != 1:
-        return None
-    build_id, built_at, build_mode = rows[0]
-    return {"kind": kind, "file": live_path(kind).name, "build_id": build_id,
-            "built_at": float(built_at) if built_at is not None else None, "build_mode": build_mode}
+    return {"kind": kind, "file": path.name, "build_id": build_id, "built_at": built_at}
 
 
 def _copy_live(kind: str, path: Path) -> str:

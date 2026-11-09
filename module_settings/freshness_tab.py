@@ -17,10 +17,13 @@ LOCAL = ZoneInfo("Europe/Amsterdam")
 #: state -> (chip text, chip class of needs.css, sort order)
 STATES = {
     "behind": ("behind", "st-stale", 0),
-    "missing": ("file missing", "st-unreadable", 1),
-    "old_store": ("old store", "st-missing", 2),
-    "not_recorded": ("not recorded yet", "st-missing", 3),
-    "current": ("current", "st-fresh", 4),
+    "error": ("error", "st-unreadable", 1),
+    "missing": ("file missing", "st-unreadable", 2),
+    "rolled_back": ("rolled back", "st-stale", 3),
+    "old_store": ("old store", "st-missing", 4),
+    "not_recorded": ("not recorded yet", "st-missing", 5),
+    "current": ("current", "st-fresh", 6),
+    "not_opened": ("not opened", "st-missing", 7),
 }
 
 
@@ -71,22 +74,23 @@ def _label(board: str, labels: dict[str, str]) -> str:
 def _source_line(s: dict) -> str:
     file = f'<code>{esc(str(s.get("file") or s.get("kind") or "?"))}</code>'
     state = s.get("state") or ""
+    newest = f' · newest day {esc(_day(s.get("newest_day")))}' if s.get("newest_day") else ""
     if s.get("error"):
-        words = f'not recorded: {esc(str(s["error"]))}'
-    elif s.get("reads") == "old_store":
-        why = f' ({esc(str(s["reason"]))})' if s.get("reason") else ""
-        words = f"the board read the old store, not this file{why}"
-    elif s.get("reads") == "missing":
-        words = "no such file when the board ran"
+        words = f'could not be recorded: {esc(str(s["error"]))}'
+    elif s.get("reads") == "not_opened":
+        words = (f'the board read the old store, not this file ({esc(str(s["old_store"]))})' if s.get("old_store")
+                 else "the board says it reads this file, but this run did not open it")
+    elif state == "missing":
+        words = f'read build <b>{esc(_at(s.get("built_at")))}</b> · the file is gone now'
     else:
         parts = [f'read build <b>{esc(_at(s.get("built_at")))}</b>']
-        if state == "behind" and s.get("rebuilt_during_run"):
-            parts.append("a new build landed while the board was reading")
+        if s.get("rebuilt_during_run"):
+            parts.append(f'read {len(s.get("build_ids") or [])} builds: a new build landed during the run')
         elif state == "behind":
             parts.append(f'live build now <b>{esc(_at(s.get("live_built_at")))}</b>')
-        if s.get("newest_day"):
-            parts.append(f'newest day {esc(_day(s.get("newest_day")))}')
-        words = " · ".join(parts)
+        elif state == "rolled_back":
+            parts.append(f'live build now older: <b>{esc(_at(s.get("live_built_at")))}</b>')
+        words = " · ".join(parts) + newest
     return f'<li class="bf-src">{file} {_chip(state)}<span class="bf-words">{words}</span></li>'
 
 
@@ -95,11 +99,14 @@ def _board_card(b: dict, labels: dict[str, str]) -> str:
     run = f'last run {esc(_at(b.get("run_at")))}'
     if b.get("quality"):
         run += f' · {esc(str(b["quality"]))}'
-    if state == "not_recorded":
+    if state == "not_opened" and b.get("sources"):
+        body = ('<p class="bf-note">This run opened no builder DuckDB file.</p><ul class="bf-srcs">'
+                + "".join(_source_line(s) for s in b["sources"]) + "</ul>")
+    elif state == "not_recorded":
         body = ('<p class="bf-note">This run was recorded before the board kept which builds it read. '
                 'The next Fetch of the board records them.</p>')
     elif not b.get("sources"):
-        body = '<p class="bf-note">This board reads no builder DuckDB file.</p>'
+        body = '<p class="bf-note">This run opened no builder DuckDB file and the board declares none.</p>'
     else:
         body = '<ul class="bf-srcs">' + "".join(_source_line(s) for s in b["sources"]) + "</ul>"
     return (f'<article class="bf-board bf-{esc(state)}" data-board="{esc(str(b.get("board") or ""))}">'
@@ -114,8 +121,8 @@ def section(data: dict | None, labels: dict[str, str] | None = None) -> str:
     head = ('<section class="part" id="board-freshness" aria-labelledby="board-freshness-h">'
             '<h2 id="board-freshness-h">Board freshness{secs}</h2>'
             '<p class="sub">Did each board\'s last run read the newest build of the DuckDB files it reads? '
-            '<b>Behind</b>: a newer build is live now than the one the run read, so a Fetch of the board would '
-            'change its numbers. Times are Amsterdam.</p>')
+            'Only files the run really opened count. <b>Behind</b>: a newer build is live now than the one the run '
+            'read, so a Fetch of the board would read newer data. Times are Amsterdam.</p>')
     if data.get("error"):
         return head.format(secs="") + f'<p class="warn">Could not be read: {esc(str(data["error"]))}</p></section>'
     boards = data.get("boards") or []
