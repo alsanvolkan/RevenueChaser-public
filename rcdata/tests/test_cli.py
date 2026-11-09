@@ -170,9 +170,10 @@ def test_the_backup_cli_writes_a_verified_copy_and_refuses_an_empty_folder(cli_e
     assert r.returncode == 0, r.stderr[-3000:]
     r = _run(cli_env, "RevenueChaser.rcdata", "backup")
     assert r.returncode == 0, r.stderr[-3000:]
-    out = tmp_path / "backups" / "market"
-    assert len(list(out.glob("market_*.duckdb"))) == 1 and len(list(out.glob("ops_*.sqlite"))) == 1
-    assert (out / ".manifest.json").exists()
+    root = tmp_path / "backups" / "weekly-v2"
+    assert len(list((root / "duckdb").glob("market_*.duckdb"))) == 1
+    assert len(list((root / "ops").glob("ops_*.sqlite"))) == 1
+    assert (root / "duckdb" / ".manifest.json").exists() and (root / "ops" / ".manifest.json").exists()
 
     empty = {**cli_env, "RAW_STORE_BACKUP_DIR": ""}
     r = _run(empty, "RevenueChaser.rcdata", "backup")
