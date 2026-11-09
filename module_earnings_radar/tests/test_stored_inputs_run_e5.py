@@ -80,7 +80,7 @@ def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them():
     assert p.input_sources["ohlc"] == {"stored": 1, "live": 0}
     assert p.input_sources["short_interest"] == {"stored": 1, "missing": 0, "source_as_of": "2026-09-30"}
     # read through the real ownership file: FINRA's row and IBKR's fee; no float in this store, so no si_pct
-    assert p._shorts_cache["AAPL"] == {"si_pct": None, "days_to_cover": 8.0, "borrow_fee": 10.0,
+    assert p._shorts_cache["AAPL"] == {"si_pct": None, "si_basis": None, "days_to_cover": 8.0, "borrow_fee": 10.0,
                                        "settlement_date": "2026-09-30"}
     assert p.input_sources["estimates"] == {"stored": 1, "missing": 0}
     assert p.input_sources["dgs10"] == "stored"

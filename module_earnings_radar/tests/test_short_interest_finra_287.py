@@ -56,7 +56,7 @@ def test_the_newest_settlement_gives_si_of_float_days_to_cover_and_the_borrow_fe
 
     rows, note = store_reads.short_interest(["aapl"], today=TODAY)
 
-    assert rows == {"AAPL": {"si_pct": pytest.approx(30.0), "days_to_cover": 4.5, "borrow_fee": 0.25,
+    assert rows == {"AAPL": {"si_pct": pytest.approx(30.0), "si_basis": "float", "days_to_cover": 4.5, "borrow_fee": 0.25,
                              "settlement_date": "2026-10-15"}}
     assert note["stored"] is True
     assert note["source_as_of"] == "2026-10-15"
@@ -168,5 +168,38 @@ def test_a_failing_float_or_fee_read_keeps_the_finra_figures(store, monkeypatch)
 
     rows, note = store_reads.short_interest(["AAPL"], today=TODAY)
 
-    assert rows["AAPL"] == {"si_pct": None, "days_to_cover": 4.5, "borrow_fee": None, "settlement_date": "2026-10-15"}
+    assert rows["AAPL"] == {"si_pct": None, "si_basis": None, "days_to_cover": 4.5, "borrow_fee": None, "settlement_date": "2026-10-15"}
     assert note["stored"] is True
+
+
+def test_without_a_float_si_is_of_the_shares_outstanding_and_says_so(store):
+    """The live prices store held no float on 9 Nov 2026 (0 rows), only the SEC cover's shares outstanding."""
+    store["finra"] = [_finra("AAPL", SETTLED, 3_000_000, 4.5)]
+    store["ids"] = {"AAPL": "sec:1"}
+    store["floats"] = [{"security_id": "sec:1", "measure": "outstanding", "as_of": date(2026, 10, 30),
+                        "value": 15_000_000.0}]
+
+    rows, _ = store_reads.short_interest(["AAPL"], today=TODAY)
+
+    assert rows["AAPL"]["si_pct"] == pytest.approx(20.0)
+    assert rows["AAPL"]["si_basis"] == "outstanding"
+
+
+def test_a_float_wins_over_the_shares_outstanding(store):
+    store["finra"] = [_finra("AAPL", SETTLED, 3_000_000, 4.5)]
+    store["ids"] = {"AAPL": "sec:1"}
+    store["floats"] = [{"security_id": "sec:1", "measure": "outstanding", "as_of": date(2026, 10, 30), "value": 15e6},
+                       {"security_id": "sec:1", "measure": "float", "as_of": date(2026, 9, 1), "value": 10e6}]
+
+    rows, _ = store_reads.short_interest(["AAPL"], today=TODAY)
+
+    assert rows["AAPL"]["si_pct"] == pytest.approx(30.0)
+    assert rows["AAPL"]["si_basis"] == "float"
+
+
+def test_the_reason_names_shares_outstanding_when_that_was_the_base():
+    from RevenueChaser.module_earnings_radar.rules import rule5_positioning
+
+    rule5_positioning.reset_peer_stats()
+    r = rule5_positioning.score(short_interest_pct_float=25.0, short_as_of="2026-10-15", si_basis="outstanding")
+    assert r.reasons == ["high short interest (25.0% of shares outstanding) · FINRA settled 15 Oct"]

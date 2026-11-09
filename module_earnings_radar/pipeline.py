@@ -695,6 +695,7 @@ class EarningsPipeline:
             institutional_side_served=flow.get("side_served"),
             institutional_package_premium=flow.get("inst_package"),
             short_as_of=shorts.get("settlement_date"),
+            si_basis=shorts.get("si_basis"),
         )
         beta, beta_t = r6_beta(ohlc, self._dgs10_cache or {}, _gap_sessions(hist, ohlc))
         # rate_event_overlap: FOMC/CPI within the print's ±1 trading day, from the stored economic calendar

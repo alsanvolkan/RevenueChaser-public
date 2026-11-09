@@ -232,19 +232,25 @@ def _short_status() -> str:
     return _status(SHORT_DATASET)
 
 
-def _floats(names: list[str]) -> dict[str, float]:
-    """``{ticker: float shares}``: the newest float the prices store holds for each name, of any source.
+def _floats(names: list[str]) -> dict[str, tuple[float, str]]:
+    """``{ticker: (shares, "float" | "outstanding")}``: the newest float the prices store holds for each name, else
+    its newest shares outstanding (the SEC cover). On 9 Nov 2026 the live store held no float row at all (#287).
 
-    shortcut: no age limit on the float (it moves slowly and the prices build renews it); add one if R5 ever reads a
-    float that is years old.
+    shortcut: no age limit on either count (both move slowly); add one if R5 ever reads a count that is years old.
     """
     ids = read.security_ids(names)
-    newest: dict[str, tuple] = {}
-    for r in read.shares(ids.values(), measure="float"):
-        sid, day, value = r.get("security_id"), _day(r.get("as_of")), r.get("value")
-        if value and value > 0 and day is not None and (sid not in newest or day >= newest[sid][0]):
-            newest[sid] = (day, float(value))
-    return {t: newest[sid][1] for t, sid in ids.items() if sid in newest}
+    newest: dict[tuple[str, str], tuple] = {}
+    for r in read.shares(ids.values()):
+        key, day, value = (r.get("security_id"), r.get("measure")), _day(r.get("as_of")), r.get("value")
+        if value and value > 0 and day is not None and (key not in newest or day >= newest[key][0]):
+            newest[key] = (day, float(value))
+    out = {}
+    for t, sid in ids.items():
+        for measure in ("float", "outstanding"):
+            if (sid, measure) in newest:
+                out[t] = (newest[sid, measure][1], measure)
+                break
+    return out
 
 
 def _fees(names: list[str]) -> dict[str, float]:
@@ -273,8 +279,9 @@ def _extra(reader, names: list[str], what: str) -> dict[str, float]:
 def short_interest(tickers, today: date | None = None) -> tuple[dict[str, dict], dict]:
     """``({ticker: R5 squeeze inputs}, note)`` from FINRA's newest settlement of each name in the ownership store.
 
-    A row is ``{"si_pct", "days_to_cover", "borrow_fee", "settlement_date"}``: shares short as a percent of the float
-    (None when the prices store has no float), FINRA's days to cover, IBKR's borrow fee (None when its snapshot is
+    A row is ``{"si_pct", "si_basis", "days_to_cover", "borrow_fee", "settlement_date"}``: shares short as a percent
+    of the float, or of the shares outstanding when the prices store has no float (``si_basis`` says which; both None
+    when it has neither), FINRA's days to cover, IBKR's borrow fee (None when its snapshot is
     older than ``ownership.shortable`` allows) and the settlement day the figure is as of. A name whose newest
     settlement is more than ``MAX_AGE_DAYS["short_interest"]`` calendar days before ``today`` (default New York's
     today) is absent, and so is one FINRA does not list: R5 then reads flow only. Never a provider call.
@@ -305,8 +312,10 @@ def short_interest(tickers, today: date | None = None) -> tuple[dict[str, dict],
             best[ticker] = {**r, "_rank": rank}
     out: dict[str, dict] = {}
     for ticker, r in best.items():
-        short, flt, dtc = r.get("current_short"), floats.get(ticker), r.get("days_to_cover")
-        out[ticker] = {"si_pct": 100.0 * short / flt if short is not None and flt else None,
+        short, dtc = r.get("current_short"), r.get("days_to_cover")
+        base, basis = floats.get(ticker) or (None, None)
+        si = 100.0 * short / base if short is not None and base else None
+        out[ticker] = {"si_pct": si, "si_basis": basis if si is not None else None,
                        "days_to_cover": None if dtc is None else float(dtc), "borrow_fee": fees.get(ticker),
                        "settlement_date": r["_rank"][0].isoformat()}
     if not out:
