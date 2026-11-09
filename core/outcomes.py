@@ -166,7 +166,7 @@ def _todo_picks(full: bool) -> list[dict]:
 
 
 def newest_bar() -> date | None:
-    rows = prices._read("SELECT max(session_date) AS d FROM price_bars_daily")
+    rows = prices._read("SELECT max(session_date) AS d FROM price_bars_daily", layer=True)
     return rows[0]["d"] if rows else None
 
 

@@ -21,7 +21,7 @@ unset (or ``layer``) reads the builder's ``prices.duckdb`` (``rcdata/build/price
 ``price_bars_daily`` and ``price_actions`` views keep the old names and columns (the bridge D4); any other value
 (``store`` by convention) reads the old ``.store/prices.duckdb``. With the layer asked for but no served file, or no
 ``prices/serving`` build yet, the old store is read and a warning is logged once (``source_state``). Only the reads
-move: the writers above and the watermarks (``price_checks``, which the served file does not hold) stay on the store.
+move: the writers above and the watermarks (``price_checks``, which the served file does not hold) and the Data Health row of the writer stay on the store.
 """
 from __future__ import annotations
 
@@ -591,10 +591,11 @@ def _dicts(cur) -> list[dict]:
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def _read(sql: str, params: list | None = None, store: bool = False) -> list[dict]:
-    """A read of the price tables: the served file's (``source_state``), else the store's. ``store`` keeps a
-    read of the watermarks, which only the store holds, there."""
-    rows = None if store else _layer_read(sql, params, _dicts)
+def _read(sql: str, params: list | None = None, layer: bool = False) -> list[dict]:
+    """A read of the price tables in the store. ``layer`` (the read API and the boards' readers only) reads the
+    served file instead while ``source_state`` says so: the writers' skip keys, watermarks and health stay on the
+    store they write, or a writer would skip a bar the store lacks or offer one it holds (review of #563)."""
+    rows = _layer_read(sql, params, _dicts) if layer else None
     return rawstore.query(sql, params, db=_DB) if rows is None else rows
 
 
@@ -613,7 +614,7 @@ def _checks(check: tuple[str, str], scope: list[str]) -> dict[str, float]:
     rows = _read(
         f"SELECT key, checked_at FROM price_checks WHERE dataset = ? AND source = ? "
         f"AND key IN ({_placeholders(len(scope))})",
-        [check[0], check[1], *scope], store=True)
+        [check[0], check[1], *scope])
     return {r["key"]: r["checked_at"] for r in rows if r.get("checked_at") is not None}
 
 
@@ -736,7 +737,7 @@ def _read_series(tickers: list[str], start: date | None = None, end: date | None
     if not tickers:
         return {}, actions
     marks = _placeholders(len(tickers))
-    for r in _read(f"SELECT * FROM price_actions WHERE ticker IN ({marks})", list(tickers)):
+    for r in _read(f"SELECT * FROM price_actions WHERE ticker IN ({marks})", list(tickers), layer=True):
         actions.setdefault(r["ticker"], []).append(r)
     cols = ", ".join(f"b.{c}" for c in _READ_COLUMNS)
     where, params = [f"b.ticker IN ({marks})"], list(tickers)

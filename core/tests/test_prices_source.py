@@ -57,6 +57,15 @@ def test_the_boards_read_the_builders_bars(asked):
     assert ledger.d01_last_bars(["SPY"])["SPY"] == (SESSION.isoformat(), 2e9)
 
 
+def test_the_writers_keep_reading_the_store_they_write(asked):
+    # Review of #563: a writer's skip keys from the served file would skip a bar the store lacks, or re-offer one
+    # it holds and break the chunk on the primary key.
+    _serving_file()
+    assert [r["close"] for r in prices._read("SELECT close FROM price_bars_daily")] == [STORE_CLOSE]
+    assert prices._last_session(["SPY"]) == {"SPY": SESSION}
+    assert prices._stored_rows(["SPY"], SESSION)[("SPY", SESSION)]["close"] == STORE_CLOSE
+
+
 def test_without_a_served_file_the_old_store_is_read(asked):
     state = prices.source_state()
     assert state["effective"] == prices.STORE and state["reason"] == "no prices.duckdb yet"

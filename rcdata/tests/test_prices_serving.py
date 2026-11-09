@@ -381,3 +381,17 @@ def test_a_source_that_never_ran_is_one_issue(http_mock):
     never = _issues()["source_never_run"]
     assert {actions.NAME, cover_shares.NAME, floats.YAHOO, floats.UW} <= never and bars.NAME not in never
     assert math.isclose(_q("SELECT count(*) AS n FROM corporate_action")[0]["n"], 0)
+
+
+def test_the_boards_read_the_bridge_views_through_the_read_api(built, monkeypatch):
+    """``core/prices``' read API on the real views (#563): FLG's bars come back split-adjusted to today on both bases,
+    because the views stamp ``fetched_at`` with the build time and the reader applies no split again."""
+    from RevenueChaser.core import ledger, prices
+    monkeypatch.delenv(prices.SOURCE_ENV, raising=False)
+    ops.record_check(prices.SERVING_DATASET, "changed")
+    assert prices.source_state()["effective"] == prices.LAYER
+    served = [r["close"] for r in _q("SELECT close FROM price_bars_daily WHERE ticker = 'FLG' ORDER BY session_date")]
+    assert prices.daily_bars(["FLG"])["close"].tolist() == pytest.approx(served)
+    assert prices.daily_bars(["FLG"], basis="adjusted")["close"].tolist() == pytest.approx(served)
+    assert ledger.d01_last_bars(["FLG"])["FLG"][0] == max(DAYS).isoformat()
+    assert prices._read("SELECT ticker FROM price_bars_daily") == []       # the writers read the store, empty here

@@ -120,11 +120,11 @@ def quarter_end_closes(tickers, quarters) -> dict[str, dict[str, float]]:
     ranges = " OR ".join("session_date BETWEEN ? AND ?" for _ in windows)
     bars: dict[str, list[dict]] = {}
     for r in prices._read(f"SELECT * FROM price_bars_daily WHERE ticker IN ({marks}) AND ({ranges})",
-                          [*names, *(d for w in windows for d in w)]):
+                          [*names, *(d for w in windows for d in w)], layer=True):
         bars.setdefault(r["ticker"], []).append(r)
     splits: dict[str, list[dict]] = {}
     for r in prices._read(f"SELECT * FROM price_actions WHERE action = 'split' AND ticker IN ({marks}) "
-                          f"AND ex_date > ?", [*names, windows[0][0]]):
+                          f"AND ex_date > ?", [*names, windows[0][0]], layer=True):
         splits.setdefault(r["ticker"], []).append(r)
     for ticker, rows in bars.items():
         series = [b for b in prices.apply_events(rows, splits.get(ticker, []), "nominal") if b.get("close") is not None]
