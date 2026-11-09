@@ -92,7 +92,7 @@ class TestStampOnEnsure:
     def test_a_current_stamp_is_not_rewritten(self, isolate_rawstore):
         rawstore.ensure_all_tables()
         before = dict(rawstore._STAMP_WRITES)
-        assert set(before) == {"raw", "edgar", "prices"}
+        assert set(before) == {"raw", "edgar", "prices", *rawstore.BOARD_DBS}
         assert all(n == 1 for n in before.values())
         with rawstore.connect() as conn:
             conn.execute("INSERT INTO store_schema (key, value) VALUES ('canary', 'keep')")
