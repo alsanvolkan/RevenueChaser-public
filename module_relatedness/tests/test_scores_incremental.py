@@ -7,6 +7,7 @@ from RevenueChaser.module_relatedness import store
 
 
 def _pairs():
+    assert rawstore._db_of("relatedness_scores") == "relatedness"   # read from the board file, not raw.duckdb
     return {(r["ticker"], r["peer"]): r["score"] for r in
             rawstore.query("SELECT ticker, peer, score FROM relatedness_scores", db="relatedness")}
 

@@ -60,14 +60,14 @@ def test_a_fundamentals_scan_survives_a_short_spy_series(scenario, bars):
 def test_rs_6m_has_no_value_without_an_spy_return_and_the_momentum_gate_still_runs(scenario):
     _short_spy(100)
     fp.run_scan()
-    rows = rawstore.query("SELECT ticker, rs_6m, momentum_pass FROM fundamentals_scores ORDER BY ticker")
+    rows = rawstore.query("SELECT ticker, rs_6m, momentum_pass FROM fundamentals_scores ORDER BY ticker", db="fundamentals")
     assert rows and all(r["rs_6m"] is None for r in rows)
     assert all(r["momentum_pass"] is not None for r in rows)
 
 
 def test_rs_6m_keeps_its_value_with_a_full_spy_series(scenario):
     fp.run_scan()
-    rows = rawstore.query("SELECT rs_6m FROM fundamentals_scores")
+    rows = rawstore.query("SELECT rs_6m FROM fundamentals_scores", db="fundamentals")
     assert rows and all(r["rs_6m"] is not None for r in rows)
 
 
@@ -83,7 +83,7 @@ def test_rs_6m_has_no_value_when_the_ticker_return_is_missing(scenario, monkeypa
     payload = fp.run_scan()
     assert payload["no_data"] is False and payload["candidates"]
     assert payload["data_quality"]["dropped"].get("compute_error") is None
-    assert all(r["rs_6m"] is None for r in rawstore.query("SELECT rs_6m FROM fundamentals_scores"))
+    assert all(r["rs_6m"] is None for r in rawstore.query("SELECT rs_6m FROM fundamentals_scores", db="fundamentals"))
 
 
 @pytest.mark.parametrize("mod,name,render", BOARDS)
@@ -122,7 +122,7 @@ def test_a_fetch_still_persists_the_tickers_that_scored(scenario, monkeypatch, m
     _poison(monkeypatch, mod, "UP3")
     mod.run_scan()
     table = f"{name}_scores"
-    tickers = {r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {table}")}
+    tickers = {r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {table}", db=rawstore._db_of(table))}
     assert tickers and "UP3" not in tickers and "UP1" in tickers
 
 

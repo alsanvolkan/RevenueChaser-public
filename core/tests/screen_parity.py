@@ -183,7 +183,7 @@ TABLES = {"swing": ("swing_scores", "swing_gates"), "fundamentals": ("fundamenta
 
 
 def _table(name: str) -> list[dict]:
-    rows = rawstore.query(f"SELECT * FROM {name}")
+    rows = rawstore.query(f"SELECT * FROM {name}", db=rawstore._db_of(name))
     return sorted((_norm(r) for r in rows), key=lambda r: [str(r.get(k)) for k in sorted(r)])
 
 

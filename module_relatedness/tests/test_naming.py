@@ -57,7 +57,7 @@ def test_name_themes_writes_label_and_syncs(rawstore_tmp_db):
     labels = {r["theme_id"]: r["label"] for r in med}
     tt = rawstore.query(
         "SELECT theme_id, theme FROM ticker_themes "
-        "WHERE theme_run_id = ? AND level = 'medium'", [run_id])
+        "WHERE theme_run_id = ? AND level = 'medium'", [run_id], db="relatedness")
     assert tt
     for row in tt:
         assert row["theme"] == labels[row["theme_id"]]
@@ -254,7 +254,7 @@ def test_transport_failure_keeps_written_names_and_syncs(rawstore_tmp_db):
     labels = _labels(run_id)
     assert sum(1 for v in labels.values() if v.startswith("Name ")) == 2
     synced = rawstore.query(
-        "SELECT theme_id, theme FROM ticker_themes WHERE theme_run_id = ?", [run_id])
+        "SELECT theme_id, theme FROM ticker_themes WHERE theme_run_id = ?", [run_id], db="relatedness")
     assert all(r["theme"] == labels[r["theme_id"]] for r in synced)
     assert calls["n"] == 3                                   # 2 ok + the 503: stop, no retry
 

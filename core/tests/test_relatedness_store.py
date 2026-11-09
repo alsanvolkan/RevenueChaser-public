@@ -26,10 +26,10 @@ def test_relatedness_attributes_and_scores(rawstore_tmp_db):
         {"ticker": "AAPL", "field": "customer_count", "value": "1.5e9",
          "value_num": 1.5e9}])
     assert rawstore.query(
-        "SELECT count(*) n FROM relatedness_attributes")[0]["n"] == 2
+        "SELECT count(*) n FROM relatedness_attributes", db="relatedness")[0]["n"] == 2
 
     rawstore.replace_all("relatedness_scores", [
         {"ticker": "AAPL", "peer": "MSFT", "score": 0.42}])
     row = rawstore.query(
-        "SELECT score FROM relatedness_scores WHERE ticker='AAPL' AND peer='MSFT'")[0]
+        "SELECT score FROM relatedness_scores WHERE ticker='AAPL' AND peer='MSFT'", db="relatedness")[0]
     assert row["score"] == 0.42

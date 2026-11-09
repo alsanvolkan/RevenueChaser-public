@@ -237,7 +237,7 @@ def test_short_window_locks_horizon_skips_oos_and_says_so(rawstore_tmp_db):
     assert p["funnel"]["min_obs"] == 21 and p["funnel"]["window"] == 42
     assert p["eligible"] == 6
     assert rawstore.count("comov_lag") == 0
-    assert rawstore.query("SELECT window_days w FROM comov_runs")[0]["w"] == 42
+    assert rawstore.query("SELECT window_days w FROM comov_runs", db="comovement")[0]["w"] == 42
 
 
 def test_short_window_scaling_reaches_the_return_matrix(rawstore_tmp_db, monkeypatch):
