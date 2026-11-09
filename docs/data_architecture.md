@@ -1047,8 +1047,10 @@ new source day of its own.
 **Which kinds build on the live copy** (#446). `fundamentals` (#554) reloads its dirty companies. `prices`
 (`rcdata/build/prices/incremental.py`) rebuilds every served row on or after one day — the first day of each changed
 WRDS year partition or Alpaca bar session, and at the latest the day after the live file's newest session — and,
-per security, a whole history (a name that joined or left the universe, a changed issuer CIK, every Compustat alias)
-or the rows from a changed cover's `as_of`, closed over the issuer. It reads the WRDS history whole only through
+per security, a whole history (a name that joined or left the universe, a changed issuer CIK, PERMNO link or
+Compustat alias) or the rows from a changed cover's `as_of` or Alpaca action's ex-date, closed over the issuer. The
+identity a build used is recorded in the file's own `build_identity` table, bookkeeping like `build_manifest`, so the
+next build sees what moved. It reads the WRDS history whole only through
 views, for the identity (`_universe`, `_permno_link`, `_gvkey_alias`), and stages from the January of the year before
 that day; a whole build staged forty years of `comp.secd` into TEMP tables (homesrv, 9 Nov 2026: 6 h 12 min, 92 GB
 of spill). `wrds_price_diff` is kept from the last whole build, which the monthly WRDS refresh (a new

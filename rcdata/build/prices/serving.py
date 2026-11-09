@@ -91,6 +91,10 @@ SHARES_DISAGREE = 0.25
 # A CRSP split (``wrds_history.CRSP_SPLITS``, the cross-check) is the same split as another source's this many days
 # from it, either way.
 SPLIT_SAME_DAYS = 3
+# How far before its gap or its Alpaca split a CRSP split can still decide an issue there: a build on the live copy
+# finds the CRSP splits this many days before what it rebuilds again, and the gaps ``SPLIT_SAME_DAYS`` before it
+# (a split from then on can take a CRSP split, and with it the gap's explanation; ``incremental``, review S6 of #564).
+NEAR_SPLIT_DAYS = GAP_DAYS + SPLIT_SAME_DAYS
 # A dividend is applied with the close of the last bar before its ex-date, at most this many days before it.
 CLOSE_BEFORE_DAYS = 7
 # The issuer cap of a session counts each listed class at its newest cap at most this many days old (a thin class
@@ -394,6 +398,11 @@ CREATE OR REPLACE TEMP TABLE _hist_all AS
 ACTION_KIND = ("CASE WHEN {a}.action_type IN ('forward_split', 'reverse_split', 'stock_dividend') THEN 'split' "
                "WHEN {a}.action_type IN ('cash_dividend', 'capital_gains_distribution') THEN 'cash_dividend' "
                "ELSE {a}.action_type END")
+# The ratio and the amount ``corporate_action`` serves of an Alpaca action, over its raw rates.
+ACTION_RATIO = ("CASE WHEN {a}.action_type IN ('forward_split', 'reverse_split') AND {a}.old_rate > 0 "
+                "AND {a}.new_rate > 0 THEN {a}.new_rate / {a}.old_rate "
+                "WHEN {a}.action_type = 'stock_dividend' AND {a}.rate > 0 THEN 1 + {a}.rate END")
+ACTION_AMOUNT = "CASE WHEN {a}.action_type IN ('cash_dividend', 'capital_gains_distribution') THEN {a}.rate END"
 
 
 class PricesServing:
@@ -450,6 +459,7 @@ class PricesServing:
             sc = incremental.scope(ctx, con, lambda: counts.__setitem__("shares_class",
                                                                         self._shares(con, found, live=True)))
             ctx.pending[NAME + ":scope"] = sc
+        incremental.record_identity(con)
         rows = incremental.where("session_date") if live else None
         con.execute(BUILD_HIST_SQL.format(crsp=wrds_history.CRSP_BARS, comp=wrds_history.COMP_BARS,
                                           listed=wrds_history.SECD_LISTED))
@@ -559,7 +569,8 @@ class PricesServing:
               AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id
                               AND {ACTION_KIND.format(a='p')} = 'split'
                               AND abs(date_diff('day', p.ex_date, w.ex_date)) <= {SPLIT_SAME_DAYS})
-              {f"AND {incremental.where('w.ex_date', 'w.security_id')}" if live else ""}""")
+              {f"AND {incremental.where(f'w.ex_date + INTERVAL {NEAR_SPLIT_DAYS} DAY', 'w.security_id')}"
+               if live else ""}""")
         # Review M6 of #382: such a split stands in for the ``price_gap_no_action`` it explains, so it carries the
         # served close's move across its ex-date, from the security's last served bar before it to its first on or
         # after it: the same two bars the gap check pairs, but their raw closes, not its split-adjusted ones (the two
@@ -599,10 +610,7 @@ class PricesServing:
             SELECT a.*, CASE WHEN action_type IN ('forward_split', 'reverse_split') THEN 'split'
                              WHEN action_type IN ('cash_dividend', 'capital_gains_distribution') THEN 'cash_dividend'
                              ELSE action_type END AS action,
-                   CASE WHEN action_type IN ('forward_split', 'reverse_split') AND old_rate > 0 AND new_rate > 0
-                            THEN new_rate / old_rate
-                        WHEN action_type = 'stock_dividend' AND rate > 0 THEN 1 + rate END AS ratio,
-                   CASE WHEN action_type IN ('cash_dividend', 'capital_gains_distribution') THEN rate END AS amount
+                   {ACTION_RATIO.format(a='a')} AS ratio, {ACTION_AMOUNT.format(a='a')} AS amount
             FROM _act a""")
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _act_close AS
             SELECT a.*, p.close AS close_before, p.session_date AS close_day
@@ -834,7 +842,8 @@ class PricesServing:
                   -- a split only CRSP records explains the gap: it is the split_only_crsp issue instead
                   AND NOT EXISTS (SELECT 1 FROM _crsp_only_split c WHERE c.security_id = r.security_id
                                   AND c.ex_date > r.prev_day AND c.ex_date <= r.session_date)
-                  {f"AND {incremental.where('r.session_date', 'r.security_id')}" if live else ""}
+                  {f"AND {incremental.where(f'r.session_date + INTERVAL {SPLIT_SAME_DAYS} DAY', 'r.security_id')}"
+                   if live else ""}
                 ORDER BY 1, 2""").fetchall():
             found.append(("price_gap_no_action", f"{sid}:{day}", f"split-adjusted close x{ratio:.3f}, no split"))
         # Alpaca's previous adjusted close is close_all / (1 + all_return). The allowance is its exact rounding

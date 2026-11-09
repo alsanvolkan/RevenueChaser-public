@@ -10,7 +10,7 @@ The fixture is ``test_prices_wrds``'s: AAPL (``001690:01``) with a 2-for-1 split
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -75,9 +75,8 @@ def _snapshot() -> dict[str, list]:
 
 
 def _open_issues() -> list[dict]:
-    with ops._open() as con:
-        return [dict(r) for r in con.execute("SELECT kind, key FROM build_issues WHERE dataset = ? "
-                                             "AND resolved_on IS NULL", (prices_serving.NAME,)).fetchall()]
+    # Through ``ops``, so it reads whichever backend holds the issues (Redis on the server, review B1 of #564).
+    return [{"kind": r["kind"], "key": r["key"]} for r in ops.open_issues(prices_serving.NAME, 1_000_000)[1]]
 
 
 def _report() -> list:
@@ -94,6 +93,9 @@ def _same_as_whole(monkeypatch, row: dict) -> dict[str, list]:
     assert "built whole" in _note(whole), _note(whole)
     want = _snapshot()
     for name in want:
+        if got[name] != want[name]:
+            print("DIFF", name, "\n inc-only", sorted(set(got[name]) - set(want[name]), key=repr)[:20],
+                  "\n whole-only", sorted(set(want[name]) - set(got[name]), key=repr)[:20], "\nNOTE", _note(row))
         assert got[name] == want[name], name
     return want
 
@@ -333,3 +335,174 @@ def test_a_new_split_snapshot_the_monthly_refresh_forces_a_whole_build(live):
 
 def test_every_prices_dataset_declares_a_dirty_set():
     assert dirty.incremental(base.kind_datasets("prices"))
+
+
+# ── Review of PR #564: each a case the first cut served differently from a whole build ───────────────────────
+
+def _alpaca_split(template: dict, rate: float) -> dict:
+    return {**template, "action_id": "sp-1", "action_type": "forward_split", "symbol": "AAPL",
+            "ex_date": date(2025, 6, 4), "process_date": date(2025, 6, 4), "effective_date": date(2025, 6, 4),
+            "old_rate": 1.0, "new_rate": rate, "rate": None, "special": False, "foreign": False, "sub_type": None,
+            "currency": None, "payload": "{}"}
+
+
+def test_a_corrected_alpaca_split_ratio_restates_the_caps_after_it(live, monkeypatch):
+    """Review S3: the same split on the same day with another ratio moves every cover cap after it."""
+    from RevenueChaser.rcdata.build.prices import actions, cover_shares
+    _write_secd(2025, [{**r, "cshoc": None} if r["gvkey"] == "001690" else r for r in _secd_rows(2025)])
+    cpath = cover_shares.partition_path(2026)
+    stage.write_rows(stage.read_rows(cpath) + [{
+        "cik": "320193", "accession": "0000320193-25-000001", "form": "10-Q", "filed": date(2025, 5, 1),
+        "period_end": date(2025, 3, 29), "class_member": "", "symbol": "AAPL", "shares": 7_500_000_000.0,
+        "as_of": date(2025, 4, 18), "source_as_of": date(2025, 5, 1), "fetched_at": 9.0, "run_id": "c-x"}],
+        cover_shares.SCHEMA, cpath)
+    template = stage.read_rows(actions.partition_path(2026))[0]
+    path = actions.partition_path(2025)
+    stage.write_rows([_alpaca_split(template, 4.0)], actions.SCHEMA, path)
+    monkeypatch.setenv(dirty.WHOLE_ENV, "1")
+    _serve()
+    monkeypatch.delenv(dirty.WHOLE_ENV)
+    stage.write_rows([_alpaca_split(template, 2.0)], actions.SCHEMA, path)
+    row = _serve()
+    _same_as_whole(monkeypatch, row)
+
+
+def test_a_dividend_moved_to_a_later_day_leaves_no_copy_on_the_old_one(live, monkeypatch):
+    """Review S4: the rewritten year starts after the row it lost; the window starts at the partition's first day."""
+    path = wrds_history.partition_path("sec_divid", 2025)
+    rows = stage.read_rows(path)
+    assert rows
+    stage.write_rows([{**r, "datadate": date(2025, 6, 6)} for r in rows], wrds_history.DIVID + wrds_history.PROVENANCE,
+                     path)
+    row = _serve()
+    _same_as_whole(monkeypatch, row)
+
+
+@pytest.fixture
+def no_split(fake, monkeypatch):
+    """No Compustat split anywhere, so CRSP's split of AAPL is the cross-check's only one."""
+    conn = fake[0]
+    conn.data["comp.sec_split"] = []
+    conn.data["comp.secd"] = [{**r, "ajexdi": 1.0} for r in conn.data["comp.secd"]]
+    _build()
+    monkeypatch.setenv(dirty.WHOLE_ENV, "1")
+    _serve()
+    monkeypatch.delenv(dirty.WHOLE_ENV)
+    assert "built on the live file" in _note(_serve())
+    return fake
+
+
+def test_a_changed_permno_link_finds_the_crsp_issues_again(no_split, monkeypatch):
+    """Review S5: the spine loses AAPL's CUSIP, so CRSP's PERMNO is no longer AAPL's by id; which CRSP split counts
+    moves on old days, and so do the issues it decides."""
+    _respine([{**r, "cusip": None} if r["ticker"] == "AAPL" else r for r in SPINE])
+    row = _serve()
+    _same_as_whole(monkeypatch, row)
+
+
+FIGI = "figi:BBG000BDTBL9"
+SPY_DAYS = ["2025-06-02", "2025-06-03", "2025-06-04", "2025-06-05", "2025-06-06", "2026-10-26", "2026-10-27"]
+
+
+def _spy_spine(inception, extra=()) -> None:
+    """SPY without its own gvkey in the spine, so its Compustat series is a ticker pick until CRSP links it."""
+    import duckdb
+    rows = [{**r, "gvkey": None, "iid": None} if r["ticker"] == "SPY" else r for r in SPINE] + list(extra)
+    p = serving.live_path("spine")
+    if p.exists():
+        p.unlink()
+    write_spine(rows)
+    con = duckdb.connect(str(p))
+    try:
+        con.execute("CREATE TABLE etf (ticker TEXT, aum DOUBLE, is_etn BOOLEAN, is_cef BOOLEAN, inception DATE)")
+        con.execute("INSERT INTO etf VALUES ('SPY', 5e11, false, false, ?)", [inception])
+    finally:
+        con.close()
+
+
+def _spy(fake, monkeypatch, extra=()) -> None:
+    from .test_prices_wrds import _secd
+    conn = fake[0]
+    conn.data["comp.secd"] = conn.data["comp.secd"] + [
+        _secd("001000", "01", d, "SPY", 500.0 + i, cusip="78462F103", exchg=17) for i, d in enumerate(SPY_DAYS)]
+    conn.data["crsp.dsf_v2"] = conn.data["crsp.dsf_v2"] + [
+        {"permno": "84398", "dlycaldt": d, "dlyprc": 500.0 + i, "dlyopen": 500.0, "dlyhigh": 501.0, "dlylow": 499.0,
+         "dlyvol": 1e6, "dlyret": 0.001, "shrout": 900000, "hdrcusip": "78462F10", "cusip": "78462F10",
+         "ticker": "SPY", "dlycumfacpr": 1.0, "dlycumfacshr": 1.0, "dlyorddivamt": 0.0}
+        for i, d in enumerate(SPY_DAYS[:5])]
+    _spy_spine(None, extra)
+    _build()
+    _spy_spine(None, extra)
+    monkeypatch.setenv(dirty.WHOLE_ENV, "1")
+    _serve()
+    monkeypatch.delenv(dirty.WHOLE_ENV)
+    _serve()
+
+
+SPYX = {"ticker": "SPYX", "cik": "7777777", "name": "x", "exchange": "NYSE", "tier": "C", "security_type": "etf",
+        "gvkey": "001000", "iid": "02", "composite_figi": None}
+
+
+@pytest.mark.parametrize("extra", [(), (SPYX,)], ids=["no-cik", "with-cik"])
+def test_a_new_alias_moves_a_served_series_under_the_fund(fake, monkeypatch, extra):
+    """Review B2: SPY's series is served under its gvkey until CRSP's link makes it the FIGI's alias; its old rows
+    must go, whatever the series' issuer."""
+    _spy(fake, monkeypatch, extra)
+    assert _q("SELECT 1 FROM price_bar_daily WHERE security_id = '001000:01'")
+    _spy_spine(date(1993, 1, 22), extra)
+    row = _serve()
+    assert not _q("SELECT 1 FROM price_bar_daily WHERE security_id = '001000:01'")
+    _same_as_whole(monkeypatch, row)
+
+
+def test_a_security_with_no_issuer_is_not_rebuilt_on_every_build(fake, monkeypatch):
+    """Review S7: a served cap with no CIK is not an issuer change."""
+    _spy(fake, monkeypatch)
+    row = _serve()
+    assert "0 securities whole" in _note(row), _note(row)
+
+
+def test_nothing_changed_rebuilds_no_security_whole(live):
+    row = _serve()
+    assert "0 securities whole" in _note(row), _note(row)
+
+
+def test_the_first_build_on_a_file_without_its_bookkeeping_serves_what_a_whole_build_does(live, monkeypatch):
+    """The live file on homesrv when this lands: no manifest, no rules, no identity. The build falls back to the
+    file times and the served ids, once."""
+    import duckdb
+    import time
+    con = duckdb.connect(str(serving.live_path("prices")))
+    try:
+        for t in (dirty.MANIFEST_TABLE, dirty.RULES_TABLE, incremental.IDENTITY_TABLE):
+            con.execute(f"DROP TABLE IF EXISTS {t}")
+    finally:
+        con.close()
+    time.sleep(1.2)
+    day = date(2026, 10, 28)
+    _write_secd(2026, _secd_rows(2026) + [_aapl_day(day, 203.0)])
+    _clock(day)
+    row = _serve()
+    _same_as_whole(monkeypatch, row)
+
+
+def test_an_open_issue_near_the_window_is_found_again_not_kept():
+    sc = incremental.Scope(since=date(2026, 10, 28), margin={"split_only_crsp": 10})
+    assert not sc.keep("split_only_crsp", "001690:01:2026-10-20")
+    assert sc.keep("split_only_crsp", "001690:01:2026-10-17")
+    assert sc.keep("price_gap_no_action", "001690:01:2026-10-20")
+
+
+def test_an_alpaca_split_days_after_a_crsp_one_resolves_its_issue(no_split, monkeypatch):
+    """Review S6: CRSP's split of AAPL is the cross-check's only one until Alpaca's split two days later; that
+    rebuilds AAPL from its own ex-date, but the CRSP split it explains lies before it."""
+    from RevenueChaser.rcdata.build.prices import actions
+    crsp = [k for kind, k in _snapshot()["open issues"] if kind == "split_only_crsp"]
+    assert crsp, "the fixture has a CRSP-only split"
+    day = date.fromisoformat(crsp[0].rsplit(":", 1)[1])
+    template = stage.read_rows(actions.partition_path(2026))[0]
+    split = {**_alpaca_split(template, 4.0), "ex_date": day + timedelta(days=2), "process_date": day + timedelta(days=2),
+             "effective_date": day + timedelta(days=2)}
+    stage.write_rows([split], actions.SCHEMA, actions.partition_path(day.year))
+    row = _serve()
+    _same_as_whole(monkeypatch, row)
