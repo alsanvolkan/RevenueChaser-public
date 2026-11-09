@@ -144,8 +144,9 @@ INPUTS_CAP_FLAGS = ("--max-uw-calls", "--max-fred-calls", "--max-yf-calls")
 # from ``ops.dataset_schedule`` whether anything is due (avo's rule: scheduled jobs run hourly). It writes only the
 # market store and records its own ``ops.job_runs2`` rows, so ``tables_written`` is empty: no old ``job_runs`` row.
 BUILDER_UNIT = "life-rc-builder"
-BUILDER_BACKUP_UNIT = "life-rc-builder-backup"
-BUILDER_BACKUP_HEAVY_UNIT = "life-rc-builder-backup-heavy"
+# The weekly backup (avo, 8 Nov 2026): one job, every step, onto the HDD, the newest 4 copies kept. Its unit pair is
+# installed from the home-server repository, not from the Settings page (one name, one timer).
+BACKUP_WEEKLY_UNIT = "life-rc-backup-weekly"
 
 REGISTRY: tuple[AutomationEntry, ...] = (
     AutomationEntry(
@@ -259,31 +260,20 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         # 2 h (avo 6 Nov 2026, #527): 166 runs since 20 Oct peaked at 107 min; at 50 min one was killed (2 Nov)
         settings=TaskSettings(restart_count=0, time_limit_minutes=120)),
     AutomationEntry(
-        name="RC-Build-Backup", label="Market-store backup (light)",
-        args=("-m", "RevenueChaser.rcdata", "backup",
-              "--only", "ops,market,spine,fundamentals,options,raw", "--subdir", "market"),
-        time="04:30", unit_name=BUILDER_BACKUP_UNIT,
-        description="Verified nightly backup of the small files of the market store: ops.sqlite through SQLite's "
-                    "online backup and the market, spine, fundamentals and options serving files, checked row by "
-                    "row against the source, into RAW_STORE_BACKUP_DIR/market/ (the newest 5 kept), then the "
-                    "35-day raw copy. prices and ownership are the weekly RC-Build-Backup-Heavy run's: the 04:30 "
-                    "run of 5 Nov 2026 hit this 30-minute limit. Measured afterwards, the cost was the ops step "
-                    "(8m44s for 5.8 MB, against 1m26s for the 3.5 GB of prices and ownership); the likely cause, "
-                    "not reproduced, is SQLite building its copy page by page on the backup disk, so it is built "
-                    "on local storage since. "
+        name="RC-Backup-Weekly", label="Weekly backup",
+        args=("-m", "RevenueChaser.rcdata", "backup"),
+        time="03:30", days=("Sunday",), unit_name=BACKUP_WEEKLY_UNIT,
+        description="The one backup job (avo, 8 Nov 2026): every Sunday 03:30 it copies, verifies and keeps the "
+                    "newest 4 of every file under RAW_STORE_BACKUP_DIR/weekly-v2/<step>/ on the HDD. The steps: "
+                    "the DuckDB files the builder writes from Parquet (market, spine, ownership, prices, "
+                    "fundamentals, options), the board-result DuckDBs (raw, edgar, history, prices and every "
+                    "boards/<board>.duckdb, each CHECKPOINTed first), the needed ops tables (watch lists, "
+                    "schedule, switches, automation rows, run records), the Unusual Whales raw files and the SPX "
+                    "Gamma tree (one folder per week, unchanged files hard-linked), and edgar_docs as one verified "
+                    "zip. Raw downloads and Parquet are not copied: they are fetched again. Nothing leaves the "
+                    "machine. A step that fails is logged and the others still run. Before a deploy, "
+                    "`rcdata backup --only <kind>` takes a copy by hand that is kept apart from the weekly ones. "
                     "Writes no table.",
-        settings=TaskSettings(restart_count=0, time_limit_minutes=30)),
-    AutomationEntry(
-        name="RC-Build-Backup-Heavy", label="Market-store backup (heavy, weekly)",
-        args=("-m", "RevenueChaser.rcdata", "backup", "--only", "prices,ownership", "--subdir", "market-heavy"),
-        time="03:30", days=("Sunday",), unit_name=BUILDER_BACKUP_HEAVY_UNIT,
-        description="Verified weekly backup of the two large serving files, prices (2.9 GB) and ownership (661 MB), "
-                    "into RAW_STORE_BACKUP_DIR/market-heavy/ (its own manifest, its own 5 newest per kind, every "
-                    "copy with its sha256). Sunday 03:30 keeps it clear of the nightly light run at 04:30. Run the "
-                    "same command by hand before a deploy that touches either file. This row's unit is installed "
-                    "from the home-server repository, not from this page: installing it here too would give one "
-                    "name a user timer and a system unit, both firing at 03:30 into the same folder. Writes no "
-                    "table.",
         settings=TaskSettings(restart_count=0, time_limit_minutes=60)),
     AutomationEntry(
         name="RC-SPX-Gamma-Fetch", label="SPX Gamma Fetch (nightly)",
@@ -1234,7 +1224,7 @@ def _record_run(row: dict) -> None:
 
 #: The registry rows the board's backup switch stops (#527); the fetch switch stops every other row but these and
 #: ``SWITCH_EXEMPT``.
-BACKUP_TASKS = frozenset({"RC-Store-Backup", "RC-Build-Backup", "RC-Build-Backup-Heavy"})
+BACKUP_TASKS = frozenset({"RC-Store-Backup", "RC-Backup-Weekly"})
 #: A status read, not a fetch: the top bar's IBKR state comes from it, so it runs whatever the switches say.
 SWITCH_EXEMPT = frozenset({"RC-IBKR-Login-Check"})
 

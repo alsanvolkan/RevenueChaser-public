@@ -169,8 +169,7 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
                      "RC-Forecast-Baselines": "23:50",
                      "RC-Index-Lists": "10:00", "RC-Earnings-Inputs": "01:30",
                      "RC-IBKR-Login-Check": "09:15",
-                     "RC-Build": "hourly at :07", "RC-Build-Backup": "04:30",
-                     "RC-Build-Backup-Heavy": "03:30", "RC-SPX-Gamma-Fetch": "06:30"}
+                     "RC-Build": "hourly at :07", "RC-Backup-Weekly": "03:30", "RC-SPX-Gamma-Fetch": "06:30"}
     for stamp in times.values():
         assert stamp in text, f"the registered time {stamp} is not in docs/data_architecture.md"
     ps1 = (_REPO / "register_tasks.ps1").read_text(encoding="utf-8")
@@ -250,8 +249,8 @@ def test_the_market_store_section_names_every_ops_table_root_and_cap():
     section = _market_store_section()
     for table in ops.TABLES:
         assert f"`{table}`" in section, table
-    for name in ("RC_MARKET_DIR", "RC_MARKET_RAW_DIR", "RC_MARKET_RAW_COPY_DIR", "RAW_STORE_BACKUP_DIR",
-                 backup.MANIFEST_NAME):
+    for name in ("RC_MARKET_DIR", "RC_MARKET_RAW_DIR", "RAW_STORE_BACKUP_DIR", backup.MANIFEST_NAME,
+                 f"`{backup.ROOT}/"):
         assert name in section, name
     flat = " ".join(section.split())
     for provider, cap in caps.DAY_CAPS.items():
@@ -261,22 +260,22 @@ def test_the_market_store_section_names_every_ops_table_root_and_cap():
         if provider != "openfigi_search":
             assert f"{provider} {limit:,} {units[window]}" in flat, provider
     assert f"`/v3/search` {caps.WINDOWS['openfigi_search'][0]} a minute" in flat
-    assert f"newest {backup.KEEP}" in section and f"{backup.RAW_COPY_DAYS} days" in section
+    assert f"newest {backup.KEEP}" in section
+    for table in sorted(backup.OPS_BACKUP_TABLES):
+        assert f"`{table}`" in section, table
 
 
 def test_data_architecture_names_the_builder_units_and_their_times():
     """PR 2: the builder service's unit names, schedule and limits are the registry's (core/automations.py)."""
     from RevenueChaser.core import automations
     text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
-    for name in ("RC-Build", "RC-Build-Backup", "RC-Build-Backup-Heavy"):
+    for name in ("RC-Build", "RC-Backup-Weekly"):
         e = automations.entry(name)
         assert f"unit `{e.unit}`" in text, f"docs/data_architecture.md does not name the unit {e.unit}"
         limit = e.settings.limit_minutes
         assert (f"{limit} min limit" if limit is not None else "no time limit") in text
     assert automations.entry("RC-Build").unit == automations.BUILDER_UNIT == "life-rc-builder"
-    assert automations.entry("RC-Build-Backup").unit == automations.BUILDER_BACKUP_UNIT == "life-rc-builder-backup"
-    assert (automations.entry("RC-Build-Backup-Heavy").unit == automations.BUILDER_BACKUP_HEAVY_UNIT
-            == "life-rc-builder-backup-heavy")
+    assert automations.entry("RC-Backup-Weekly").unit == automations.BACKUP_WEEKLY_UNIT == "life-rc-backup-weekly"
 
 
 def test_data_health_states_the_new_section_limits_the_code_owns():
