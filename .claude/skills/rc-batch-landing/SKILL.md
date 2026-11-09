@@ -39,13 +39,13 @@ approves.
 1. Build only an issue that is approved to build. Every change maps to a GitHub issue of this repository,
    attached as a sub-issue of its area epic, carrying its `area:*` and `board:*` labels.
 2. Branch `area/<key>/<slice>`, where `<key>` is the issue's `area:` label.
-3. Work test-first: **watch each new test fail before implementing it**, then run mutation checks. Report
-   honestly which tests you saw red first and which mutations you ran — "not done" is an acceptable answer, an
-   implied "done" is not.
-4. Run locally **only the tests of the modules you changed or that are affected**, never the full suite. The
-   full unit and e2e run happens once, on CI.
-5. Push your own branch and report the branch, the full head SHA, the tests seen red first and the mutation
-   checks. **Build threads never merge.**
+3. Work test-first, read in CI: "seen red first" is the `red-on-base` job's result, quoted in the report
+   ("e2e: not checked" said plainly). A mutation check, only for money, store, identity and migration logic, is a
+   pushed mutation commit read red, then a revert commit. "Not done" is an acceptable answer, an implied "done"
+   is not.
+4. **Run no test yourself**, not one file: CI runs the changed-module unit tests and the e2e tier.
+5. Push your own branch, open a **draft** PR into `main` at the first push, and report the branch, the full head
+   SHA, the `red-on-base` line and the mutation checks. **Build threads never merge.**
 
 ## CI, and the merge gate
 
