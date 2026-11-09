@@ -74,6 +74,12 @@ def uw_symbol(ticker) -> str:
     return str(ticker).replace("-", ".")
 
 
+def uw_segment(ticker) -> str:
+    """A ticker as one UW path segment (:func:`uw_symbol`, then :func:`_seg`): what a caller outside this client
+    uses to name a UW path, so none imports the private encoder (#519 finding 9)."""
+    return _seg(uw_symbol(ticker))
+
+
 # Body shapes for the endpoint methods (B5): each takes a decoded body and returns what the method hands
 # back. ``shape({})`` is the empty placeholder a failed request gets, the same value ``_get``'s ``{}``
 # used to turn into, so the plain methods return exactly what they returned before.

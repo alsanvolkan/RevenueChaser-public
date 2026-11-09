@@ -59,8 +59,8 @@ SCHEMA = [("cik", "TEXT"), ("ticker", "TEXT"), ("period_end", "DATE"), ("report_
 
 
 def endpoint(ticker: str) -> str:
-    from ....core.providers.unusual_whales import _seg, uw_symbol
-    return f"/stock/{_seg(uw_symbol(ticker))}/earnings"
+    from ....core.providers.unusual_whales import uw_segment
+    return f"/stock/{uw_segment(ticker)}/earnings"
 
 
 def day_dir(as_of: date | str) -> Path:
