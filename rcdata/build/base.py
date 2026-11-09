@@ -314,7 +314,8 @@ class RunContext:
             reset_s = int(headers.get(ops.UW_MINUTE_RESET_HEADER)) / 1000
         except (TypeError, ValueError):
             return                                          # no header, or not a number: nothing to pace off
-        if left <= UW_POLITE_FLOOR and reset_s > 0:
+        # Not on a 429: the client's Retry-After backoff already waits before its retry (review of #570).
+        if status != 429 and left <= UW_POLITE_FLOOR and reset_s > 0:
             _uw_pause(min(reset_s, UW_POLITE_MAX_S))
 
     def close(self) -> None:

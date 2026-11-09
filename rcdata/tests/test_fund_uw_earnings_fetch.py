@@ -353,3 +353,14 @@ def test_the_wait_is_capped(http_mock, monkeypatch):
     http_mock.add("/stock/AAA/earnings", lambda request: (200, b"[]", _minute_headers(0, "3600000")))
     _fetch()
     assert slept == [base.UW_POLITE_MAX_S]
+
+
+def test_a_429_is_not_paused_on_top_of_its_retry_after(http_mock, monkeypatch):
+    """The client's Retry-After backoff already waits before the retry; the politeness wait must not stack on it."""
+    slept = []
+    monkeypatch.setattr(base, "_uw_pause", slept.append)
+    _companies(monkeypatch, ["AAA"])
+    answers = iter([(429, b'{"error":"slow down"}', _minute_headers(0)), (200, b"[]", _minute_headers(1_000_000))])
+    http_mock.add("/stock/AAA/earnings", lambda request: next(answers))
+    _fetch()
+    assert slept == []

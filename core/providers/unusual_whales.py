@@ -191,6 +191,7 @@ class UWClient:
         result: dict[str, dict] = {}
         # Sent the way UW writes them, keyed back the way the caller asked (#519 finding 5): ``BRK-B`` asked,
         # ``BRK.B`` answered, ``result["BRK-B"]``. A row nobody asked for keeps UW's own symbol.
+        # ``BRK-B`` and ``BRK.B`` both asked are one UW symbol, asked once and keyed by the last spelling given.
         asked = {uw_symbol(t): t for t in tickers or []}
         syms = list(asked)
         chunks = [syms[i:i + 100] for i in range(0, len(syms), 100)]
