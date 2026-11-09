@@ -151,7 +151,7 @@ AREAS = [
       "Kept, growing: one row per ticker and session, the first write wins; UW has no past-date call, so a night not stored is lost (#296). Tickers: the stored calendar's, then the 13F tickers (never or longest ago stored first), inside the night's 200 UW calls. Values as served (si_float a fraction); source uw_short_screener, uw_interest_float or yfinance (si_float and total_float only, the rest NULL); payload keeps the source row.",
       "module_earnings_radar/inputs/short_interest.py:1-20"),
     ],
-    note="#375 F6: the 13F board's Short% column reads short_interest (module_sec_13f/enrich.load_short_interest): newest non-null si_float per ticker, shown as percent. Since #372 E5c the Earnings Fetch reads short_interest too (module_earnings_radar/stored_inputs.short_rows, the newest session inside MAX_LAG 3, any source): R5's squeeze inputs are parsed from the stored columns with UWClient._parse_short_row, the very mapping the live answer went through, and short_screener is called for the tickers the store misses only.",
+    note="#375 F6: the 13F board's Short% column reads short_interest (module_sec_13f/enrich.load_short_interest): newest non-null si_float per ticker, shown as percent. The Earnings Fetch no longer reads it (#287, owner's B): R5 reads FINRA's twice-monthly settlement series from the ownership store (module_earnings_radar/store_reads.short_interest, need ownership.short_interest, 35 calendar days) and asks UW nothing.",
     planned="sec13f_enrichment.short_pct is retired for the 13F board; Earnings R5 reads short_interest since #372 E5c."),
  ]),
  ("Fundamentals and filings", [
@@ -290,7 +290,7 @@ AREAS = [
      "raw", "ownership_snapshot (source yfinance)", ":1687", "ticker + session_date + source", "append",
      "One row per session, first write wins, never rewritten.", "core/ownership.py:1-20"),
    ],
-   note="The 13F board reads shares out (% Out) and insider % from ownership_snapshot since #375 F2 (module_sec_13f/enrich.py:51-69, load_ownership: per ticker the newest non-NULL value of the first source in UW, SEC dei, yfinance order; no job writes SEC dei rows yet, #161); the Fetch and the store-only Refresh read it the same way, and a 13F Fetch records the values it showed in sec13f_metrics_history (#375). The AG footer reads the live .info.",
+   note="The 13F board reads shares out (% Out) and insider % from ownership_snapshot since #375 F2 (module_sec_13f/enrich.py:51-69, load_ownership: per ticker the newest non-NULL value of the first source in UW, SEC dei, yfinance order; no job writes SEC dei rows yet, #161); the Fetch and the store-only Refresh read it the same way, and a 13F Fetch records the values it showed in sec13f_metrics_history (#375). Asymmetric Growth divides its 13F shares by the same shares outstanding (#481).",
    planned="ownership_snapshot is written (#300) and read by the 13F board (#375 F2). The AG footer switches later."),
  ]),
  ("Reference data", [

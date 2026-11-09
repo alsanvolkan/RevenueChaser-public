@@ -70,4 +70,4 @@ def test_a_fetch_with_the_inputs_stored_asks_uw_for_none_of_them(seeded, provide
     inputs = json.loads(context)["inputs"]
     assert inputs["calendar"] == {"stored": 2, "live": 0, "session": SWEPT.isoformat()}
     assert inputs["ohlc"] == {"stored": 2, "live": 0}
-    assert inputs["short_interest"]["stored"] == 2 and inputs["short_interest"]["live"] == 0
+    assert inputs["short_interest"] == {"stored": 0, "missing": 2, "source_as_of": None}

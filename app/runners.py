@@ -149,6 +149,8 @@ def _no_events_text_days(days: list[date]) -> tuple[str, str]:
 
 EARNINGS_LATEST = OUTPUT_DIR / "earnings_radar_latest.html"
 LEAPS_LATEST = OUTPUT_DIR / "leaps_latest.html"
+NEWS_LATEST = OUTPUT_DIR / "news_latest.html"
+WELCOME_LATEST = OUTPUT_DIR / "welcome_latest.html"
 ROTATION_LATEST = OUTPUT_DIR / "sector_rotation_latest.html"
 MONEY_FLOW_LATEST = OUTPUT_DIR / "sector_rotation" / "sector_rotation_latest.json"
 ETF_HOLDINGS_CACHE = OUTPUT_DIR / "sector_rotation" / "etf_holdings.json"  # legacy path; store is raw.duckdb
@@ -1834,6 +1836,62 @@ def run_oipd(uw: UWClient, ticker: str | None = None, no_fetch: bool = False) ->
                    f"No expiry could be fitted for {payload.get('ticker')}.")
         raise JobMessage(msg)
     return path
+
+
+def run_news(uw=None) -> Path:
+    """The News board's Fetch: the incremental calendar build into ``boards/news.duckdb``, the Dow Jones headlines from
+    the IBKR Gateway (watch list first, then the largest names), then the page.
+
+    The calendar reads ``raw.economic_calendar`` (the nightly sweep D37 writes it). The headlines are two gateway
+    requests a name and no UW call; a gateway that is down is a job note, never a failed Fetch.
+    """
+    from RevenueChaser.module_news import calendar, headlines, report
+    rid = run_id()
+    out = calendar.build(run_id=rid)
+    ledger.add_note(f"News calendar: {out['read']} raw rows read, {out['upserted']} events upserted, "
+                    f"{out['retired']} retired, {out['highlights']} day highlights")
+    names = headlines.tickers(_load_watchlist())
+    got = headlines.fetch(names, run_id=rid)
+    health = None
+    if got["error"]:
+        ledger.add_note(f"News headlines not fetched: {got['error']}")
+        # The board says so too, or a down gateway would pass for a quiet news day. A name IBKR does not know is
+        # only a note: it is the same names every run, and a banner on every Fetch would be noise.
+        health = {"provider": "ibkr", "calls": len(names), "failed": len(names), "auth_error": None,
+                  "failures": [{"endpoint": "headlines", "error": got["error"]}]}
+    else:
+        skipped = f"; not known to IBKR: {', '.join(got['skipped'])}" if got["skipped"] else ""
+        ledger.add_note(f"News headlines: {got['stored']} from {got['tickers']} names (IBKR, Dow Jones){skipped}")
+    return report.render(provider_health=health)
+
+
+def run_news_cached(uw=None) -> Path:
+    """Store-only News render (Refresh, first load): reads ``boards/news.duckdb``, writes nothing to the store."""
+    from RevenueChaser.module_news import report
+    return report.render()
+
+
+def welcome_job_labels() -> dict[str, str]:
+    """Job name -> the label of the first board it feeds (``jobs.register`` ``produces`` and the dashboard tabs)."""
+    from RevenueChaser.app import dashboard
+    from . import jobs
+    tab_label = {t["key"]: t["label"] for t in dashboard.TABS if t["type"] == "tab"}
+    return {job: tab_label[boards[0]] for job, boards in jobs._PRODUCES.items() if boards and boards[0] in tab_label}
+
+
+def run_welcome(uw=None) -> Path:
+    """The Welcome board's Fetch: the incremental build into ``boards/welcome.duckdb``, then the page. No network."""
+    from RevenueChaser.module_welcome import build
+    out = build.build(run_id=run_id())
+    ledger.add_note(f"Welcome: {out['snapshot']} closes, {out['earnings']} earnings rows "
+                    f"({out['retired']} retired), {out['freshness']} jobs updated")
+    return run_welcome_cached()
+
+
+def run_welcome_cached(uw=None) -> Path:
+    """Store-only Welcome render (Refresh, first load): reads the board files, writes nothing to the store."""
+    from RevenueChaser.module_welcome import report
+    return report.render(watchlist=_load_watchlist(), labels=welcome_job_labels())
 
 
 def run_oipd_cached(uw=None, ticker: str | None = None) -> Path:

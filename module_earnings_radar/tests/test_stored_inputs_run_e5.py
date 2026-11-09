@@ -1,5 +1,6 @@
 """E5/E6 (#372) through ``EarningsPipeline.run()``: with every nightly input stored and fresh, a run asks UW for no
 short-interest batch and no year of bars, does not call FRED, and scores R1 from the stored estimates (review S2).
+Since #287 the short interest is FINRA's settlement series from the ownership store, and is never asked of UW.
 
 The slice tests call ``_score`` with the caches set by hand; this one pins that ``run()`` itself warms them.
 """
@@ -16,7 +17,7 @@ from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve
 from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_estimates
 from RevenueChaser.module_earnings_radar.tests.test_rule1_drivers_e6 import FULL
 from RevenueChaser.module_earnings_radar.tests.test_stored_ohlc_e5e import _bars, _prints, _seed as _seed_bars
-from RevenueChaser.module_earnings_radar.tests.test_stored_short_e5c import LIVE, _seed as _seed_short
+from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_short_interest
 from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW
 
 NY = ZoneInfo("America/New_York")
@@ -53,7 +54,9 @@ class _CountingUW(_FakeUW):
 
 def _seed_everything():
     _seed_bars(_bars(300))
-    _seed_short({"AAPL": LIVE["AAPL"]})
+    serve_short_interest([{"ticker": "AAPL", "settlement_date": date(2026, 9, 30), "current_short": 1_000_000,
+                           "days_to_cover": 8.0}],
+                         [{"ticker": "AAPL", "session_date": SESSION, "fee_rate": 10.0}])
     serve_estimates([{"ticker": "AAPL", "period": "0q", **FULL}])
     serve_market({(SESSION - timedelta(days=i)).isoformat(): 4.0 + i / 100 for i in range(1, 90)})
     rawstore.write_rows("economic_calendar", [
@@ -72,17 +75,21 @@ def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them():
     (card,) = p.run(use_preselect=False, watchlist={"ZZZZ"})
 
     assert fake.ohlc_asked == []                                   # the year of bars came from D01
-    assert fake.shorts_asked == []                                 # R5 read the stored short row
+    assert fake.shorts_asked == []                                 # R5 read FINRA's settlement row
     assert card.rule_audit["rule1_drivers"]["available"] is True   # run() warmed the stored estimates
     assert p.input_sources["ohlc"] == {"stored": 1, "live": 0}
-    assert p.input_sources["short_interest"] == {"stored": 1, "live": 0, "session": SESSION.isoformat()}
+    assert p.input_sources["short_interest"] == {"stored": 1, "missing": 0, "source_as_of": "2026-09-30"}
+    # read through the real ownership file: FINRA's row and IBKR's fee; no float in this store, so no si_pct
+    assert p._shorts_cache["AAPL"] == {"si_pct": None, "si_basis": None, "days_to_cover": 8.0, "borrow_fee": 10.0,
+                                       "settlement_date": "2026-09-30"}
     assert p.input_sources["estimates"] == {"stored": 1, "missing": 0}
     assert p.input_sources["dgs10"] == "stored"
     assert p.input_sources["rate_events"] == "stored"
 
 
 def test_the_same_run_with_an_empty_store_asks_uw():
-    """The reference: without the store the same run asks UW for both, so the zeros above are the store's doing.
+    """The reference: without the store the same run asks UW for the bars, so the zero above is the store's doing.
+    Short interest is never asked of UW (#287): an empty ownership store leaves R5 on flow only.
 
     The yield series is the one input with no live read left: an empty store leaves R6 unavailable (``dgs10`` is
     ``none``), it does not reach for FRED.
@@ -94,5 +101,6 @@ def test_the_same_run_with_an_empty_store_asks_uw():
     (card,) = p.run(use_preselect=False, watchlist={"ZZZZ"})
 
     assert fake.ohlc_asked == ["AAPL"]
-    assert fake.shorts_asked == [["AAPL"]]
+    assert fake.shorts_asked == []
+    assert p.input_sources["short_interest"] == {"stored": 0, "missing": 1, "source_as_of": None}
     assert card.rule_audit["rule1_drivers"]["available"] is False
