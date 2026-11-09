@@ -207,7 +207,7 @@ def test_every_data_board_has_a_board_inputs_entry():
     want = _data_board_keys()
     got = [e["key"] for e in boards.BOARD_INPUTS]
     assert got == want
-    assert len(got) == 14
+    assert len(got) == 16
 
 
 # Boards whose rendered payload emits ``funnel_steps`` (core.funnel). The rest
@@ -313,8 +313,9 @@ def test_leaps_and_earnings_name_the_stock_watch_list_in_ops_not_the_store_table
     assert "watchlist" not in leaps["tables"] and "watchlist" not in er["tables"]
     assert leaps["ops_tables"] == ["watchlist_stock"] and er["ops_tables"] == ["watchlist_stock"]
     assert boards._card(leaps)["ops_tables"] == ["watchlist_stock"]
+    assert _entry("module_welcome")["ops_tables"] == ["watchlist_stock"]     # the "listemde" marks on its earnings
     assert all(e.get("ops_tables", []) == [] for e in boards.BOARD_INPUTS
-               if e["key"] not in ("module_leaps", "module_earnings_radar"))
+               if e["key"] not in ("module_leaps", "module_earnings_radar", "module_welcome"))
 
 
 def test_the_board_card_says_it_reads_the_stock_watch_list_from_ops_sqlite():

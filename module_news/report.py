@@ -23,27 +23,27 @@ WEEK_DAYS = 7
 HEADLINE_HOURS = 24
 HEADLINE_LIMIT = 30
 
-_MONTHS = ("Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım",
+MONTHS = ("Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım",
            "Aralık")
-_WEEKDAYS = ("Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar")
+WEEKDAYS = ("Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar")
 _KIND = {"report": "Veri", "fed-speaker": "Fed", "fomc": "FOMC"}
 _LEVEL = {3: "yüksek", 2: "orta", 1: "düşük"}
 
 
-def _esc(value) -> str:
+def esc(value) -> str:
     return html.escape(str(value if value is not None else ""), quote=True)
 
 
-def _hm(ts: float) -> str:
+def hm(ts: float) -> str:
     return datetime.fromtimestamp(float(ts), AMS).strftime("%H:%M")
 
 
-def _long_date(d) -> str:
-    return f"{d.day} {_MONTHS[d.month - 1]} {d.year}"
+def long_date(d) -> str:
+    return f"{d.day} {MONTHS[d.month - 1]} {d.year}"
 
 
-def _day_label(d) -> str:
-    return f"{_WEEKDAYS[d.weekday()]} {d.day} {_MONTHS[d.month - 1]}"
+def day_label(d) -> str:
+    return f"{WEEKDAYS[d.weekday()]} {d.day} {MONTHS[d.month - 1]}"
 
 
 def _load(now: float) -> tuple[list[dict], dict | None, list[dict], float | None]:
@@ -61,16 +61,16 @@ def _load(now: float) -> tuple[list[dict], dict | None, list[dict], float | None
     return events, (hl[0] if hl else None), heads, (stamp[0]["t"] if stamp else None)
 
 
-def _dots(level) -> str:
+def dots_html(level) -> str:
     n = int(level or 1)
     return (f'<span class="dots" title="{_LEVEL.get(n, "düşük")} önem" aria-label="{_LEVEL.get(n, "düşük")} önem">'
             f'{econ_importance.dots(n)}</span>')
 
 
-def _vals(e: dict) -> str:
+def vals_html(e: dict) -> str:
     fc, prev = tr_value(e.get("forecast")), tr_value(e.get("prev"))
-    return (f'<div class="vals"><span>Beklenti <b>{_esc(fc or "–")}</b></span>'
-            f'<span>Önceki <b>{_esc(prev or "–")}</b></span></div>')
+    return (f'<div class="vals"><span>Beklenti <b>{esc(fc or "–")}</b></span>'
+            f'<span>Önceki <b>{esc(prev or "–")}</b></span></div>')
 
 
 def _row(e: dict, now: float, hl_key) -> str:
@@ -78,9 +78,9 @@ def _row(e: dict, now: float, hl_key) -> str:
     cls = "ev hl" if key == hl_key else "ev"
     past = ' data-past="1"' if float(e["event_ts"]) < now else ""
     kind = _KIND.get(str(e.get("type") or "").lower(), "Veri")
-    return (f'<li class="{cls}"{past}><span class="t">{_hm(e["event_ts"])}</span>'
-            f'<div class="nm"><span class="kind">{kind}</span> {_dots(e.get("importance"))}'
-            f'<div class="name">{_esc(e["event"])}</div></div>{_vals(e)}</li>')
+    return (f'<li class="{cls}"{past}><span class="t">{hm(e["event_ts"])}</span>'
+            f'<div class="nm"><span class="kind">{kind}</span> {dots_html(e.get("importance"))}'
+            f'<div class="name">{esc(e["event"])}</div></div>{vals_html(e)}</li>')
 
 
 def _calendar(events: list[dict], now: float, hl_key) -> tuple[str, str]:
@@ -93,7 +93,7 @@ def _calendar(events: list[dict], now: float, hl_key) -> tuple[str, str]:
     by_day: dict = {}
     for e in events:
         by_day.setdefault(local_day(e["event_ts"]), []).append(e)
-    week = "".join(f'<h3 class="day">{_day_label(d)}</h3><ul class="list">'
+    week = "".join(f'<h3 class="day">{day_label(d)}</h3><ul class="list">'
                    + "".join(_row(e, now, hl_key) for e in rows) + "</ul>" for d, rows in by_day.items())
     return today_html, week
 
@@ -103,9 +103,9 @@ def _highlight(hl: dict | None) -> str:
         return ('<section class="card feat"><h2 class="lbl">Öne çıkan veri</h2>'
                 '<p class="empty">Bugün öne çıkan bir veri yok.</p></section>')
     return (f'<section class="card feat"><h2 class="lbl">Öne çıkan veri</h2>'
-            f'<div class="feat-name">{_esc(hl["event"])}</div>'
-            f'<div class="muted">{_hm(hl["event_ts"])} Amsterdam · {_dots(hl.get("importance"))}</div>'
-            f'{_vals(hl)}<p class="why">{_esc(hl.get("text"))}</p></section>')
+            f'<div class="feat-name">{esc(hl["event"])}</div>'
+            f'<div class="muted">{hm(hl["event_ts"])} Amsterdam · {dots_html(hl.get("importance"))}</div>'
+            f'{vals_html(hl)}<p class="why">{esc(hl.get("text"))}</p></section>')
 
 
 def _tickers(value) -> list[str]:
@@ -122,12 +122,12 @@ def _headlines(rows: list[dict]) -> str:
                 '<p class="empty">Henüz başlık yok.</p></section>')
     items = []
     for r in rows:
-        tk = "".join(f'<span class="tk">{_esc(t)}</span>' for t in _tickers(r.get("tickers")))
-        src = f' · {_esc(r["source"])}' if r.get("source") else ""
-        text = _esc(r.get("headline"))
+        tk = "".join(f'<span class="tk">{esc(t)}</span>' for t in _tickers(r.get("tickers")))
+        src = f' · {esc(r["source"])}' if r.get("source") else ""
+        text = esc(r.get("headline"))
         if r.get("url") and str(r["url"]).startswith(("https://", "http://")):
-            text = f'<a href="{_esc(r["url"])}" target="_blank" rel="noopener noreferrer">{text}</a>'
-        items.append(f'<li class="hd"><div class="muted">{_hm(r["published_at"])}{src} {tk}</div>'
+            text = f'<a href="{esc(r["url"])}" target="_blank" rel="noopener noreferrer">{text}</a>'
+        items.append(f'<li class="hd"><div class="muted">{hm(r["published_at"])}{src} {tk}</div>'
                      f'<div class="htext">{text}</div></li>')
     return ('<section class="card"><h2 class="lbl">Başlıklar · son 24 saat</h2><ul class="list">'
             + "".join(items) + "</ul></section>")
@@ -196,13 +196,13 @@ def render_html(now: float | None = None) -> str:
     hl_key = (hl["event_ts"], hl["event"], hl["type"]) if hl else None
     today_html, week_html = _calendar(events, now, hl_key)
     n_today = sum(1 for e in events if local_day(e["event_ts"]) == today)
-    updated = f"Veri {_hm(stamp)}'de güncellendi" if stamp else "Veri henüz kurulmadı"
+    updated = f"Veri {hm(stamp)}'de güncellendi" if stamp else "Veri henüz kurulmadı"
     return f"""<!doctype html>
 <html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Haberler</title><script>{THEME_JS}</script><style>{THEME_CSS}{_CSS}</style></head>
 <body><div class="wrap">
-<header class="top"><div><div class="eyebrow">ABD · Ekonomik takvim</div><h1>{_long_date(today)}</h1>
-<div class="muted">{_WEEKDAYS[today.weekday()]} · bugün {n_today} veri</div></div>
+<header class="top"><div><div class="eyebrow">ABD · Ekonomik takvim</div><h1>{long_date(today)}</h1>
+<div class="muted">{WEEKDAYS[today.weekday()]} · bugün {n_today} veri</div></div>
 <div class="muted">{updated}</div></header>
 <div class="grid">
 <section class="card"><div class="tabs" role="tablist">

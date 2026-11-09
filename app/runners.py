@@ -150,6 +150,7 @@ def _no_events_text_days(days: list[date]) -> tuple[str, str]:
 EARNINGS_LATEST = OUTPUT_DIR / "earnings_radar_latest.html"
 LEAPS_LATEST = OUTPUT_DIR / "leaps_latest.html"
 NEWS_LATEST = OUTPUT_DIR / "news_latest.html"
+WELCOME_LATEST = OUTPUT_DIR / "welcome_latest.html"
 ROTATION_LATEST = OUTPUT_DIR / "sector_rotation_latest.html"
 MONEY_FLOW_LATEST = OUTPUT_DIR / "sector_rotation" / "sector_rotation_latest.json"
 ETF_HOLDINGS_CACHE = OUTPUT_DIR / "sector_rotation" / "etf_holdings.json"  # legacy path; store is raw.duckdb
@@ -1853,6 +1854,29 @@ def run_news_cached(uw=None) -> Path:
     """Store-only News render (Refresh, first load): reads ``boards/news.duckdb``, writes nothing to the store."""
     from RevenueChaser.module_news import report
     return report.render()
+
+
+def welcome_job_labels() -> dict[str, str]:
+    """Job name -> the label of the first board it feeds (``jobs.register`` ``produces`` and the dashboard tabs)."""
+    from RevenueChaser.app import dashboard
+    from . import jobs
+    tab_label = {t["key"]: t["label"] for t in dashboard.TABS if t["type"] == "tab"}
+    return {job: tab_label[boards[0]] for job, boards in jobs._PRODUCES.items() if boards and boards[0] in tab_label}
+
+
+def run_welcome(uw=None) -> Path:
+    """The Welcome board's Fetch: the incremental build into ``boards/welcome.duckdb``, then the page. No network."""
+    from RevenueChaser.module_welcome import build
+    out = build.build(run_id=run_id())
+    ledger.add_note(f"Welcome: {out['snapshot']} closes, {out['earnings']} earnings rows "
+                    f"({out['retired']} retired), {out['freshness']} jobs updated")
+    return run_welcome_cached()
+
+
+def run_welcome_cached(uw=None) -> Path:
+    """Store-only Welcome render (Refresh, first load): reads the board files, writes nothing to the store."""
+    from RevenueChaser.module_welcome import report
+    return report.render(watchlist=_load_watchlist(), labels=welcome_job_labels())
 
 
 def run_oipd_cached(uw=None, ticker: str | None = None) -> Path:

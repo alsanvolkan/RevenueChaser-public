@@ -1963,6 +1963,37 @@ MANIFEST: dict[str, dict] = {
         "columns": ["key TEXT PRIMARY KEY", "value TEXT", "run_at DOUBLE"],
         "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "news", "sources": [],
     },
+    # Welcome board (S9, S16): its own file boards/welcome.duckdb, written only by module_welcome/build.py.
+    "welcome_snapshot": {
+        "key": ["series", "session_date"],
+        "columns": [
+            "series TEXT", "session_date DATE", "close DOUBLE", "prev_close DOUBLE", "change DOUBLE",
+            "change_pct DOUBLE", "spark TEXT", "run_id TEXT", "run_at DOUBLE", "PRIMARY KEY (series, session_date)",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "welcome", "sources": [],
+    },
+    "welcome_earnings": {
+        "key": ["earnings_date", "ticker", "report_session"],
+        "columns": [
+            "earnings_date DATE", "ticker TEXT", "report_session TEXT", "full_name TEXT", "expected_move_perc DOUBLE",
+            "report_time TEXT", "source_session DATE", "first_seen DOUBLE", "last_seen DOUBLE", "retired_at DOUBLE",
+            "run_id TEXT", "run_at DOUBLE", "PRIMARY KEY (earnings_date, ticker, report_session)",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "welcome", "sources": [],
+    },
+    "welcome_freshness": {
+        "key": ["job"],
+        "columns": [
+            "job TEXT PRIMARY KEY", "last_status TEXT", "last_finished_at DOUBLE", "last_ok_at DOUBLE",
+            "last_failed_at DOUBLE", "last_error TEXT", "run_id TEXT", "run_at DOUBLE",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "welcome", "sources": [],
+    },
+    "welcome_meta": {
+        "key": ["key"],
+        "columns": ["key TEXT PRIMARY KEY", "value TEXT", "run_at DOUBLE"],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "welcome", "sources": [],
+    },
     "source_checks": {
         "key": ["dataset", "source", "key"],
         "columns": [

@@ -662,6 +662,14 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=("news_headlines", "fetched_at"),
     ),
     DatasetSpec(
+        key="welcome", label="Welcome: market closes, earnings and job freshness",
+        tables=("welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta"),
+        db="welcome", source=Source.derived, writer=None,
+        writer_note=("built incrementally from stored prices, earnings_calendar and job_runs by "
+                     "module_welcome/build.py on the Welcome board's Fetch; the hourly job comes in its own pull request"),
+        freshness=("welcome_snapshot", "session_date"),
+    ),
+    DatasetSpec(
         key="source_checks", label="Source check watermarks",
         tables=("source_checks",),
         db="raw", source=Source.store, writer=None,
