@@ -105,10 +105,32 @@ def test_a_second_fetch_asks_only_since_the_last_one(gw):
     headlines.fetch(["AAPL"], now=NOW, run_id="r1")
     headlines.fetch(["AAPL"], now=NOW + 3600, run_id="r2")
     starts = [f[4] for f in gw.sent if f[0] == "86"]
-    assert starts[0] == "2026-11-08 19:00:00.0" and starts[1] == "2026-11-09 18:50:00.0"   # 24 h, then mark - 10 min
+    assert starts[0] == "2026-11-08 19:00:00.0" and starts[1] == "2026-11-09 18:10:00.0"   # 24 h, then newest - 10 min
 
 
 def test_the_ticker_list_puts_the_watch_list_first_and_is_capped():
     names = headlines.tickers({"OKLO", "AAPL", "ZZZ"})
     assert names[:3] == ["AAPL", "OKLO", "ZZZ"] and len(names) <= headlines.MAX_TICKERS
     assert "NVDA" in names and len(set(names)) == len(names)
+
+
+def test_the_mark_is_the_newest_stored_headline_not_the_clock(gw):
+    headlines.fetch(["AAPL"], now=NOW, run_id="r1")
+    mark = rawstore.query("SELECT value FROM news_meta WHERE key = 'headlines_mark'", db="news")[0]["value"]
+    assert float(mark) == datetime(2026, 11, 9, 18, 20, tzinfo=timezone.utc).timestamp()
+
+
+def test_a_skipped_name_keeps_the_mark_so_its_gap_is_asked_again(gw):
+    headlines.fetch(["AAPL"], now=NOW, run_id="r1")
+    before = rawstore.query("SELECT value FROM news_meta WHERE key = 'headlines_mark'", db="news")
+    gw.unknown.add("NVDA")
+    headlines.fetch(["NVDA", "AAPL"], now=NOW + 3600, run_id="r2")
+    assert rawstore.query("SELECT value FROM news_meta WHERE key = 'headlines_mark'", db="news") == before
+
+
+def test_the_same_story_under_another_provider_in_a_later_run_is_one_row(gw):
+    headlines.fetch(["AAPL"], now=NOW, run_id="r1")
+    gw.news[265598] = [("2026-11-09 18:21:00.0", "DJ-RT", "DJ-RT$77", "Apple Expands AI Deal")]
+    headlines.fetch(["AAPL"], now=NOW + 3600, run_id="r2")
+    got = rawstore.query("SELECT count(*) AS n FROM news_headlines WHERE headline = 'Apple Expands AI Deal'", db="news")
+    assert got == [{"n": 1}]

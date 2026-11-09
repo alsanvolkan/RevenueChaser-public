@@ -5,7 +5,7 @@ Three parts, each upserted only when its source changed since its mark in ``welc
 - **Snapshot**: the last stored close of SPX (``prices.index_levels_daily`` ``^GSPC``), VIX and MOVE
   (``raw.vol_index_daily``, the newest fetch of a day across sources) and the US 10-year yield (``raw.macro_series``
   ``DGS10``), with the change on the session before and a 20-session line. A row is written only for a session
-  newer than the series' stored one.
+  newer than the series' stored one, or when the stored session's close changed.
 - **Earnings**: the names reporting today and on the next trading day (New York dates), from the newest
   ``raw.earnings_calendar`` snapshot of each day and report session. A name that snapshot no longer lists gets
   ``retired_at``. The watch list is applied at render time, so a pin shows without a rebuild.
@@ -66,12 +66,16 @@ def _set_meta(key: str, value: str, now: float) -> None:
 
 
 def _snapshot(now: float, run_id: str) -> int:
-    stored = {r["series"]: r["d"] for r in rawstore.query(
-        f"SELECT series, max(session_date) AS d FROM {SNAPSHOT} GROUP BY series", db="welcome")}
+    stored = {r["series"]: (r["session_date"], r["close"]) for r in rawstore.query(
+        f"SELECT series, session_date, close FROM {SNAPSHOT} "
+        "QUALIFY row_number() OVER (PARTITION BY series ORDER BY session_date DESC) = 1", db="welcome")}
     rows = []
     for series, (db, sql) in SERIES.items():
         got = rawstore.query(sql, [SPARK_DAYS], db=db)
-        if not got or (stored.get(series) is not None and got[0]["session_date"] <= stored[series]):
+        old = stored.get(series)
+        # A newer session, or a corrected close for the session already held (a revision, a later fetch).
+        if not got or (old is not None and (got[0]["session_date"] < old[0] or
+                                            (got[0]["session_date"] == old[0] and float(got[0]["close"]) == old[1]))):
             continue
         close = float(got[0]["close"])
         prev = float(got[1]["close"]) if len(got) > 1 else None

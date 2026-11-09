@@ -136,3 +136,13 @@ def test_the_build_writes_only_its_own_board_file():
     _prices(SESSIONS)
     wb.build(now=NOW)
     assert rawstore.query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'welcome_%'") == []
+
+
+def test_a_corrected_close_for_the_stored_session_is_written():
+    _ten_year(SESSIONS)
+    wb.build(now=NOW)
+    rawstore.write_rows("macro_series", [
+        {"series_id": "DGS10", "obs_date": SESSIONS[-1], "source": "fred_revised", "value": 4.5, "frequency": "daily",
+         "proxy_for": None, "session_date": SESSIONS[-1], "fetched_at": 5.0, "run_id": "s", "run_at": 5.0}])
+    assert wb.build(now=NOW + 60)["snapshot"] == 1
+    assert _snap()["US10Y"]["close"] == 4.5

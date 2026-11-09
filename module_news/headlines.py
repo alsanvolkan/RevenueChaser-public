@@ -5,12 +5,13 @@ none for SPY). So the board asks for the Dow Jones headlines (``DJ-N`` news, ``D
 the stock watch list first, then the largest US names, at most ``MAX_TICKERS``. Two requests a name (its contract id,
 then its headlines), headlines only: the article body is never fetched.
 
-Incremental (S16): a fetch asks only from the last one's time (less ``OVERLAP_S``), at most ``WINDOW_S`` back, and
-upserts by headline id. The same story under two names or two providers is one row whose ``tickers`` lists every
+Incremental (S16): a fetch asks only from the newest stored headline's time (less ``OVERLAP_S``), at most
+``WINDOW_S`` back, and upserts by a headline id made from the story's words. The same story under two names or two providers is one row whose ``tickers`` lists every
 name. A gateway that is down writes nothing, moves no mark and says why; a name it does not know is skipped.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -98,7 +99,9 @@ def fetch(names: list[str], now: float | None = None, run_id: str | None = None,
                         continue
                     key = re.sub(r"\W+", " ", text.lower()).strip()
                     row = found.setdefault(key, {
-                        "headline_id": f"ibkr:{it['article_id']}", "provider": "ibkr", "published_at": at,
+                        # By the story's words, not IBKR's article id: DJ-N and DJ-RT carry one story under two ids,
+                        # and a later run may meet it first under the other one.
+                        "headline_id": "ibkr:" + hashlib.sha1(key.encode()).hexdigest()[:16], "provider": "ibkr", "published_at": at,
                         "headline": text, "source": SOURCE, "tickers": [], "url": None, "fetched_at": now,
                         "run_id": run_id, "run_at": now})
                     if name not in row["tickers"]:
@@ -113,5 +116,9 @@ def fetch(names: list[str], now: float | None = None, run_id: str | None = None,
         old = json.loads(stored[r["headline_id"]]["tickers"] or "[]") if r["headline_id"] in stored else []
         r["tickers"] = json.dumps(sorted(set(old) | set(r["tickers"])))
     rawstore.write_rows(TABLE, rows)
-    rawstore.write_rows(META, [{"key": MARK_KEY, "value": repr(now), "run_at": now}])
+    # The mark is the newest headline stored, on IBKR's own clock, and moves only when every name answered: a name
+    # skipped now has its gap asked for again next time (the upsert makes the overlap harmless).
+    if rows and not skipped:
+        rawstore.write_rows(META, [{"key": MARK_KEY, "value": repr(max(r["published_at"] for r in rows)),
+                                    "run_at": now}])
     return {"tickers": len(names), "stored": len(rows), "skipped": skipped, "error": None}
