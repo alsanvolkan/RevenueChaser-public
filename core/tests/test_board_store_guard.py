@@ -101,7 +101,16 @@ def test_no_board_table_is_rewritten_whole():
     assert hits == [], "board tables are written incrementally (plan §10): " + "; ".join(hits)
 
 
+_BOARD_OPENERS = {"core/rawstore.py", "rcdata/backup.py"}   # the store itself, and the weekly backup's copy
+
+
+def _direct_board_opens(files) -> list[str]:
+    path_hint = re.compile(rf"board_db_path\(|BOARDS_DIRNAME|[\"'/]{rawstore.BOARDS_DIRNAME}[\"'/]")
+    return [rel for rel, text in files
+            if rel not in _BOARD_OPENERS and path_hint.search(text) and "duckdb.connect" in text]
+
+
 def test_only_rawstore_opens_a_board_file():
-    hits = [rel for rel, text in _code_files()
-            if rel != "core/rawstore.py" and re.search(r"board_db_path\(", text) and "duckdb.connect" in text]
+    assert _direct_board_opens([("module_x/w.py", "con = duckdb.connect(str(store / 'boards' / 'x.duckdb'))")])
+    hits = _direct_board_opens(_code_files())
     assert hits == [], "a board file is opened only through rawstore.connect(db=<board>) (plan §9, R4): " + str(hits)
