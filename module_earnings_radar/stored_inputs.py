@@ -5,7 +5,8 @@ the same answers in ``raw.duckdb``: the earnings calendar (D26), short interest 
 reaction window's daily bars.
 
 What left this module for the new stores: the 10-year yield and the analyst estimates, now read through
-``store_reads`` (``macro.dgs10``, ``fundamentals.estimates``), and the two market series SPX Gamma reads from the
+``store_reads`` (``macro.dgs10``, ``fundamentals.estimates``), the short interest, now FINRA's settlement series from
+the ownership store (``store_reads.short_interest``, ``ownership.short_interest``, #287), and the two market series SPX Gamma reads from the
 market store itself (the volatility indices and the CFTC report, ``module_spx_gamma/store_reads.py``).
 
 This module is the ONE reader of those tables — it reads only, over ``rawstore.query(..., read_only=True)``,
@@ -40,8 +41,9 @@ NY = ZoneInfo("America/New_York")
 # Trading sessions a stored session may lag the latest complete one by, before the reader goes live instead.
 # The catalog is the single owner of every one of these numbers (avo, 29 Oct 2026): a copy here would let the two
 # drift while ``model_version``, which hashes this map, claims nothing changed. PR 285 moved the yield, the estimates
-# and the volatility tables to the new store, so what is left here is the old store's calendar and short interest.
-NEED_OF_TABLE = {"earnings_calendar": "earnings.next", "short_interest": "ownership.short_interest"}
+# and the volatility tables to the new store, and #287 the short interest (``store_reads.short_interest``), so what
+# is left here is the old store's calendar.
+NEED_OF_TABLE = {"earnings_calendar": "earnings.next"}
 
 
 def max_lag_map() -> dict[str, int]:
@@ -223,41 +225,6 @@ def calendar_items(days) -> tuple[dict, date | None]:
         if not (item.get("symbol") or item.get("ticker")):
             continue
         out.setdefault((d, report_session), []).append(item)
-    return out, session
-
-
-# ── D10: short interest ──────────────────────────────────────────────────────────────────────────────────────────
-
-# The ``short_interest`` columns that make up the UW row ``UWClient._parse_short_row`` reads.
-_SHORT_FIELDS = ("short_interest", "si_float", "total_float", "days_to_cover", "fee_rate", "rebate_rate",
-                 "short_shares_available")
-
-
-def short_rows(tickers) -> tuple[dict[str, dict], date | None]:
-    """``({ticker: UW-shaped short row}, session|None)`` from the newest fresh session of ``short_interest``.
-
-    The row is the shape ``/short_screener`` serves, rebuilt from the typed columns (``payload`` is the source row
-    but not every source fills it, and a NULL cell is dropped rather than served as ``None``). Any source counts:
-    the sweep's yfinance fallback carries ``si_float`` and ``total_float`` only, and a ticker with no stored row
-    here is one the caller must still ask UW for.
-    """
-    names = sorted({str(t).upper() for t in (tickers or []) if t})
-    if not names:
-        return {}, None
-    session, usable = _fresh_session("short_interest")
-    if not usable:
-        return {}, None
-    marks = ", ".join("?" * len(names))
-    rows = _query(
-        f"SELECT ticker, {', '.join(_SHORT_FIELDS)} FROM short_interest "
-        f"WHERE session_date = ? AND ticker IN ({marks})",
-        [session, *names], table="short_interest")
-    out: dict[str, dict] = {}
-    for r in rows:
-        t = str(r.get("ticker") or "").upper()
-        if not t:
-            continue
-        out[t] = {k: r.get(k) for k in _SHORT_FIELDS if r.get(k) is not None}
     return out, session
 
 
