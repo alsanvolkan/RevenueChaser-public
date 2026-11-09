@@ -204,11 +204,11 @@ def test_a_scan_reads_d01_once_per_chunk_not_per_name(rawstore_tmp_db, monkeypat
     calls: list[str] = []
 
     def counting(real):
-        def counted(sql, params=None):
+        def counted(sql, params=None, **kw):
             names = [p for p in params or [] if isinstance(p, str)]
             if ("price_bars_daily b" in sql or "FROM price_actions" in sql) and names != ["SPY"]:   # not the baseline
                 calls.append(sql)
-            return real(sql, params)
+            return real(sql, params, **kw)
         return counted
 
     monkeypatch.setattr(prices, "_read", counting(prices._read))
