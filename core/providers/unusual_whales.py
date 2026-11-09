@@ -60,6 +60,13 @@ def _seg(value) -> str:
     return quote(str(value), safe="")
 
 
+def is_rejected(status) -> bool:
+    """Whether a final UW answer is the request's own fault: a 4xx other than 401/403 (the key) and 429
+    (throttling) -- an unknown ticker, a bad parameter. ``get_result`` returns those without recording them in
+    ``health()`` (not an outage), so a caller that counts failures counts these itself."""
+    return isinstance(status, int) and 400 <= status < 500 and status not in (401, 403, 429)
+
+
 def uw_symbol(ticker) -> str:
     """A ticker the way UW writes it: a share class with a dot. The SEC's files and the spine write ``BRK-A``;
     UW answers that 422 and serves ``BRK.A``. Every ticker path of the client goes through this before

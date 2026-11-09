@@ -292,9 +292,14 @@ class RunContext:
         self.count("uw", calls=1)
 
     def _on_uw_response(self, ep: str, response) -> None:
+        from ...core.providers.unusual_whales import is_rejected
         status = getattr(response, "status_code", 0)
         if status == 429:
             self.count("uw", http_429=1)
+        if is_rejected(status):
+            # A rejected request is final (never retried) and never reaches ``health()``, so ``close()`` does not
+            # see it: counted here, once, for every UW dataset alike (#519 finding 2). The rest are ``close()``'s.
+            self.count("uw", failures=1)
         if not self.uw_sampled and ops.sample_uw_headers(getattr(response, "headers", None), run_id=self.run_id):
             self.uw_sampled = True
 
@@ -304,7 +309,8 @@ class RunContext:
             self._http = None
         if self._uw is not None:
             health = self._uw.health()
-            # Final failures; a call the breaker refused sent nothing, so it is not a provider failure here.
+            # Final failures; a call the breaker refused sent nothing, so it is not a provider failure here. A
+            # rejected request (``is_rejected``) is not in ``health()`` and was counted by ``_on_uw_response``.
             self.count("uw", failures=max(0, health["failed"] - health["skipped_calls"]))
             self._uw.close()
             self._uw = None
