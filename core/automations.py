@@ -271,8 +271,10 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "fills (the last two weeks, missing days only). 06:30 Monday to Friday is after the builder's "
                     "first pass of the New York trading day (00:07) stored the previous session's Cboe SPX close, so "
                     "Monday fetches Friday; without that close, or inside the US session, it exits 3 and calls "
-                    "nothing. A missed run is not caught up. Writes the SPX Gamma tree (raw day, latest.json, GEX "
-                    "history), no table.",
+                    "nothing. A missed run is not caught up. The Fetch runs in the dashboard (POST /run/spxgamma, "
+                    "the one writer): the task only queues it and waits; with the dashboard down it exits 1 and "
+                    "nothing is fetched. The job writes the SPX Gamma tree (raw day, latest.json, GEX history), "
+                    "no table.",
         settings=TaskSettings(start_when_available=False, restart_count=0, time_limit_minutes=30)),
 )
 _BY_NAME = {e.name: e for e in REGISTRY}
