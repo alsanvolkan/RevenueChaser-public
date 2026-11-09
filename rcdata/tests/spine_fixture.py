@@ -321,7 +321,7 @@ ISHARES_ROUTE = {"IVV": "products/239726/", "IJH": "products/239763/", "IJR": "p
 VANGUARD_ROUTE = {"VOO": "standard/01S990737/", "IVOO": "standard/00S991588/", "VIOO": "standard/00S991612/"}
 
 
-def ishares_csv(holdings, drop_dash=False, typed=True) -> bytes:
+def ishares_csv(holdings, drop_dash=False, typed=True, weight_col="Market Weight") -> bytes:
     """iShares' ``latest-holdings.csv``, in both shapes the issuer serves (both measured 30 Oct 2026): eight
     preamble lines and a blank one, the header, the lines (every value quoted), a blank line.
 
@@ -330,12 +330,16 @@ def ishares_csv(holdings, drop_dash=False, typed=True) -> bytes:
     ``typed`` it is the sector and industry funds' shape (SOXX, IBB, ITA, ITB, IGV): no ``Type`` column, the weight
     is ``Weight (%)``, and the lines that are no holding of a stock are a money-market fund, cash collateral, a
     future and cash, each under ``Asset Class`` of its own. ``drop_dash`` writes class tickers without the dot
-    (iShares' ``BRKB`` style)."""
+    (iShares' ``BRKB`` style). ``weight_col="Weight (%)"`` with ``typed`` is ICLN's shape (9 Nov 2026): ``Type``, but
+    the weight in ``Weight (%)`` and no ``Market Weight`` or ``Notional Weight``."""
     head = ['iShares Core S&P 500 ETF', 'Fund Holdings as of,"Oct 27, 2026"', 'Inception Date,"May 15, 2000"',
             'Shares Outstanding,"1,000,000.00"', 'Stock,"-"', 'Bond,"-"', 'Cash,"-"', 'Other,"-"', '']
     cols = (["Ticker", "Name", "Type", "Sector", "Asset Class", "Market Value", "Notional Value", "Quantity",
              "Price", "Location", "Exchange", "Currency", "FX Rate", "Market Currency", "Accrual Date",
-             "Market Weight", "Notional Weight"] if typed else
+             "Market Weight", "Notional Weight"] if typed and weight_col == "Market Weight" else
+            ["Ticker", "Name", "Type", "Sector", "Asset Class", "Market Value", "Weight (%)", "Notional Value",
+             "Quantity", "Price", "Location", "Exchange", "Currency", "FX Rate", "Market Currency",
+             "Accrual Date"] if typed else
             ["Ticker", "Name", "Sector", "Asset Class", "Market Value", "Weight (%)", "Notional Value", "Quantity",
              "Price", "Location", "Exchange", "Currency", "FX Rate", "Market Currency", "Accrual Date"])
 
@@ -470,7 +474,8 @@ def add_etf_routes(http_mock, holdings=None, fail=(), repeat=()) -> None:
             route, body = f"holdings-daily-us-en-{f.etf.lower()}.", ssga_xlsx(rows)
         elif f.provider == "ishares":
             pid, _slug, typed = etf.ISHARES_PRODUCTS[f.etf]
-            route, body = f"/products/{pid}/", ishares_csv(rows, typed=typed)
+            route, body = f"/products/{pid}/", ishares_csv(rows, typed=typed,
+                                                           weight_col=etf.ISHARES_WEIGHT.get(f.etf, "Market Weight"))
         elif f.provider == "ark":
             route, body = f"_{f.etf}_HOLDINGS.csv", ark_csv(rows, f.etf)
         else:

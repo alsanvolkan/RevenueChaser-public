@@ -108,7 +108,7 @@ def parse_ssga(data: bytes) -> list[dict]:
     return out
 
 
-def parse_ishares(data: bytes, typed: bool = True) -> list[dict]:
+def parse_ishares(data: bytes, typed: bool = True, weight_col: str | None = None) -> list[dict]:
     """iShares' ``latest-holdings.csv``: preamble lines (fund name, ``Fund Holdings as of``), a header line starting
     ``Ticker,``, the lines, then a blank line. The issuer serves **two shapes**, both measured 30 Oct 2026, and the
     caller says which one its fund has, so a file that changed shape fails loudly instead of being read the other way:
@@ -120,6 +120,9 @@ def parse_ishares(data: bytes, typed: bool = True) -> list[dict]:
       a future and cash, each under an ``Asset Class`` of its own. Without ``Type`` a swap filed as Equity cannot be
       told from a stock — none of those five files held one on the day they were read, and that is the whole reason
       the shape is the fund's and not the file's.
+
+    A third shape, measured 9 Nov 2026 on ICLN: ``Type``, but the weight in ``Weight (%)``. The caller names that
+    column in ``weight_col``; it is the fund's, like ``typed``.
 
     A file without the columns its fund's shape needs is a failed file, never a quiet reshape."""
     text = data.decode("utf-8-sig", errors="replace")
@@ -134,7 +137,8 @@ def parse_ishares(data: bytes, typed: bool = True) -> list[dict]:
         body.append(line)
     reader = csv.DictReader(io.StringIO("\n".join(body)))
     fields = reader.fieldnames or ()
-    held_col, weight_col = ("Type", "Market Weight") if typed else ("Asset Class", "Weight (%)")
+    held_col, default_weight = ("Type", "Market Weight") if typed else ("Asset Class", "Weight (%)")
+    weight_col = weight_col or default_weight
     missing = [c for c in (held_col, weight_col) if c not in fields]
     if missing:
         shape = "typed" if typed else "untyped"
