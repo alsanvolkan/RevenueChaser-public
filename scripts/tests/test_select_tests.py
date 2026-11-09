@@ -214,9 +214,10 @@ def test_the_merge_gate_check_is_green_only_for_a_full_run_that_passed():
     """Review of #383: without it every check of an unlabelled PR is green and reads like the gate."""
     wf = (_REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
     gate = wf.split("\n  merge-gate:\n", 1)[1]
-    assert "needs: [plan, unit, e2e]" in gate
+    assert "needs: [plan, unit, e2e, earlier-gate]" in gate
     # Delta review of #383: a skipped check counts as passed, so the gate runs (and fails) when plan did not succeed.
-    assert "\n    if: always()\n" in gate
+    # Only a label run with no earlier gate on the head skips it (review 9 Nov 2026, F7).
+    assert "\n    if: always() && (needs.earlier-gate.result == 'skipped' || needs.earlier-gate.outputs.last != '')\n" in gate
     script = "\n".join(line[10:] for line in gate.split("run: |\n", 1)[1].splitlines() if line.startswith(" " * 10))
     for (plan, mode, unit, e2e), code in {
         ("success", "FULL", "success", "success"): 0, ("success", "SELECTIVE", "success", "success"): 1,
@@ -234,22 +235,34 @@ def _gate_script() -> str:
 
 
 @pytest.mark.parametrize("earlier, code", [("success", 0), ("failure", 1), ("cancelled", 1), ("", 1)])
-def test_a_label_other_than_full_ci_keeps_the_heads_earlier_gate_result(tmp_path, earlier, code):
+def test_a_label_other_than_full_ci_keeps_the_heads_earlier_gate_result(earlier, code):
     """Review of #383: a triage label after a green FULL run must not turn the head's merge-gate red.
 
-    The run such a label starts tests nothing, so its gate repeats the latest completed merge-gate on the same head
-    (none yet: it fails, as before).
+    The run such a label starts tests nothing, so its gate repeats the latest completed merge-gate on the same head,
+    which job earlier-gate looks up. With none ("") the gate job is skipped by its ``if`` (review 9 Nov 2026, F7);
+    the script itself still fails on "", should it ever run.
     """
     wf = (_REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
-    gate = wf.split("\n  merge-gate:\n", 1)[1]
-    assert "checks: read" in gate.split("steps:", 1)[0]
-    fake = tmp_path / "bin"
-    fake.mkdir()
-    (fake / "gh").write_text(f"#!/bin/sh\necho '{earlier}'\n")
-    (fake / "gh").chmod(0o755)
-    env = {**os.environ, "PATH": f"{fake}:{os.environ['PATH']}", "OTHER_LABEL": "true",
-           "PLAN": "skipped", "MODE": "", "UNIT": "skipped", "E2E": "skipped", "SHA": "abc", "REPO": "o/r"}
+    lookup = wf.split("\n  earlier-gate:\n", 1)[1].split("\n  merge-gate:\n", 1)[0]
+    assert "checks: read" in lookup and "check_name=merge-gate" in lookup and '.conclusion != "skipped"' in lookup
+    assert "if: github.event.action == 'labeled' && github.event.label.name != 'full-ci'" in lookup
+    env = {**os.environ, "OTHER_LABEL": "true", "last": earlier,
+           "PLAN": "skipped", "MODE": "", "UNIT": "skipped", "E2E": "skipped"}
     assert subprocess.run(["bash", "-e", "-c", _gate_script()], env=env, capture_output=True).returncode == code
+
+
+def test_every_test_file_lands_in_exactly_one_unit_shard():
+    """Review 9 Nov 2026, F6: the unit tier runs as 4 jobs; a file in no shard would never run, one in two twice."""
+    wf = (_REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+    unit = wf.split("\n  unit:\n", 1)[1].split("\n  e2e:\n", 1)[0]
+    assert "shard: [0, 1, 2, 3]" in unit and "RC_SHARD: ${{ matrix.shard }}/4" in unit and "fail-fast: false" in unit
+    files = [p.relative_to(_REPO).as_posix() for p in _REPO.rglob("test_*.py") if ".git" not in p.parts]
+    homes = {f: [i for i in range(4) if mod.in_shard(f"{f}::test_x[1]", f"{i}/4")] for f in files}
+    assert all(len(h) == 1 for h in homes.values())
+    assert all(sum(h == [i] for h in homes.values()) > len(files) / 8 for i in range(4)), "a shard far too small"
+    assert mod.in_shard("a/test_a.py::t", "0/1")
+    with pytest.raises(ValueError):
+        mod.in_shard("a/test_a.py::t", "4/4")
 
 
 def test_any_selector_error_falls_back_to_full(monkeypatch, capsys):

@@ -60,7 +60,8 @@ on:
 concurrency:
   # A label other than full-ci gets its own group, so it cannot cancel a run in flight.
   group: tests-${{ github.ref }}${{ github.event.action == 'labeled' && github.event.label.name != 'full-ci' && '-other-label' || '' }}
-  cancel-in-progress: true
+  # Not on main: a second merge would cancel the first one's FULL run, and "which merge broke main" is lost.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -94,11 +95,17 @@ jobs:
 
   unit:
     needs: plan
-    name: unit (${{ needs.plan.outputs.mode }})
+    name: unit (${{ needs.plan.outputs.mode }}) ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
-    # The unit tier is ~11.3k tests. Serial it took 1 h 56 on a 4-core box; `-n auto` below should cut that,
-    # but the limit stays generous so a slow runner fails on a real error, not on the clock.
-    timeout-minutes: 240
+    # The unit tier is ~11.3k tests. As one job under `-n auto` it took 24 min (run 42709712743) and was the whole
+    # wait, so it runs as 4 parallel jobs: RC_SHARD makes the root conftest keep the files whose path hashes to this
+    # shard (scripts/select_tests.py in_shard). merge-gate reads the matrix as one result: any shard red is red.
+    # The limit stays generous so a slow runner fails on a real error, not on the clock.
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     # The ops state runs on Redis here (master plan Order 3): RC_REDIS_URL switches rcdata/ops.py to it, and the root
     # conftest lets the tests reach that one address. The same image as docker-compose.yml.
     services:
@@ -110,6 +117,7 @@ jobs:
           --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
     env:
       RC_REDIS_URL: redis://127.0.0.1:6379/0
+      RC_SHARD: ${{ matrix.shard }}/4
     steps:
       # The code imports itself as `RevenueChaser.*`, so the checkout directory
       # must carry that name (pytest puts its parent on sys.path).
@@ -131,12 +139,12 @@ jobs:
         # (RC_PYTEST_SCRATCH_OWNER), or the first worker to finish would delete it for the rest.
         # --dist loadfile keeps a file's tests on one worker, which the few order-sensitive files
         # assume.
-        # SELECTIVE passes the selected files; exit 5 (every collected test deselected by -m "not e2e") is a pass.
+        # SELECTIVE passes the selected files. Exit 5 (no test left after -m "not e2e" and the shard) is a pass.
         env:
           MODE: ${{ needs.plan.outputs.mode }}
           FILES: ${{ needs.plan.outputs.unit }}
         run: |
-          if [ "$MODE" = FULL ]; then exec python -m pytest -q -n auto --dist loadfile -p no:cacheprovider -rfE; fi
+          if [ "$MODE" = FULL ]; then python -m pytest -q -n auto --dist loadfile -p no:cacheprovider -rfE || [ $? -eq 5 ]; exit; fi
           if [ -z "$FILES" ]; then echo "SELECTIVE: no unit test file reaches this change"; exit 0; fi
           set -f  # $FILES is split on spaces on purpose; no glob expansion
           python -m pytest -q -n auto --dist loadfile -p no:cacheprovider -rfE $FILES || [ $? -eq 5 ]
@@ -226,19 +234,40 @@ jobs:
           BASE: origin/${{ github.base_ref }}
         run: python scripts/red_on_base.py "$BASE"
 
+  earlier-gate:
+    # Only for a label other than full-ci (a run that tests nothing): the latest completed merge-gate on this head,
+    # for merge-gate to repeat. None yet (a new PR whose first run is still going): merge-gate is skipped, so a
+    # triage label paints nothing red and nothing green.
+    if: github.event.action == 'labeled' && github.event.label.name != 'full-ci'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: read
+    outputs:
+      last: ${{ steps.last.outputs.last }}
+    steps:
+      - id: last
+        env:
+          SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          last=$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=merge-gate&filter=all&per_page=100" --jq '[.check_runs[] | select(.status == "completed" and .conclusion != "skipped")] | sort_by(.completed_at) | last | .conclusion // ""')
+          echo "last=$last" >> "$GITHUB_OUTPUT"
+
   merge-gate:
     # The one check that means "merge-ready": green only for a FULL run whose unit and e2e both passed.
     # A SELECTIVE run fails here on purpose, so an all-green unlabelled PR does not read as gated.
     # always(): a skipped check counts as passed, so when plan failed the gate runs and fails.
     # A label other than full-ci starts a run that tests nothing: its gate repeats the latest completed merge-gate
-    # on the same head, so a triage label after a green FULL run does not turn the head red (none yet: it fails).
-    needs: [plan, unit, e2e]
-    if: always()
+    # on the same head (job earlier-gate), so a triage label after a green FULL run does not turn the head red;
+    # with no earlier gate it is skipped.
+    needs: [plan, unit, e2e, earlier-gate]
+    if: always() && (needs.earlier-gate.result == 'skipped' || needs.earlier-gate.outputs.last != '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
-      checks: read
     steps:
       - name: FULL run green?
         env:
@@ -247,12 +276,9 @@ jobs:
           UNIT: ${{ needs.unit.result }}
           E2E: ${{ needs.e2e.result }}
           OTHER_LABEL: ${{ github.event.action == 'labeled' && github.event.label.name != 'full-ci' }}
-          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ github.token }}
+          last: ${{ needs.earlier-gate.outputs.last }}
         run: |
           if [ "$OTHER_LABEL" = true ]; then
-            last=$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=merge-gate&filter=all&per_page=100" --jq '[.check_runs[] | select(.status == "completed")] | sort_by(.completed_at) | last | .conclusion // ""')
             if [ "$last" = success ]; then echo "A label other than full-ci: this head's earlier merge-gate is green; kept."; exit 0; fi
             echo "::error::A label other than full-ci tests nothing, and this head has no earlier green merge-gate (latest: ${last:-none})."; exit 1
           fi
