@@ -59,9 +59,10 @@ import duckdb
 
 from ... import ops
 from .. import base
-from . import KIND, stage, universe, wrds_history
+from . import KIND, incremental, stage, universe, wrds_history
 
 NAME = "prices/serving"
+VIEWS = ("security_symbol_now", "price_bars_daily", "price_actions", "index_levels_daily")
 TABLES = ("price_bar_daily", "corporate_action", "adj_factor", "shares_class", "security_symbol",
           "market_cap_daily", "price_revision", "wrds_price_diff")
 ALPACA_BARS, ALPACA_ACTIONS = "alpaca/bars", "alpaca/corporate_actions"
@@ -248,12 +249,21 @@ def duplicate_keys(con: duckdb.DuckDBPyConnection, table: str, limit: int = 20) 
         f"ORDER BY n DESC, key LIMIT {limit}").fetchall()]
 
 
-def _create(con: duckdb.DuckDBPyConnection, table: str, select: str) -> int:
+def _create(con: duckdb.DuckDBPyConnection, table: str, select: str, live: bool = False, rows: str | None = None) -> int:
+    """Fill ``table`` from ``select``. A whole build creates it. On the live copy (``live``) the table is there with
+    the live rows: ``rows`` (a condition, ``incremental.where``) names the rows that are rebuilt, which are deleted
+    and loaded again from ``select``; without it every row is. The delete commits before the insert, so a key
+    deleted and loaded again never meets itself in the ``PRIMARY KEY``'s index."""
     schema = SCHEMAS[table]
+    names = ", ".join(f'"{c}"' for c, _ in schema)
+    if live:
+        con.execute(f"DELETE FROM {table}" + (f" WHERE {rows}" if rows else ""))
+        con.execute(f"INSERT INTO {table} ({names}) SELECT {names} FROM ({select})"
+                    + (f" WHERE {rows}" if rows else ""))
+        return stage.count(con, table)
     cols = ", ".join(f'"{c}" {t}' for c, t in schema)
     key = None if table in no_primary_key() else KEYS.get(table)
     con.execute(f"CREATE TABLE {table} ({cols}{f', PRIMARY KEY ({chr(44).join(key)})' if key else ''})")
-    names = ", ".join(f'"{c}"' for c, _ in schema)
     con.execute(f"INSERT INTO {table} ({names}) SELECT {names} FROM ({select})")
     return stage.count(con, table)
 
@@ -371,6 +381,9 @@ CREATE OR REPLACE TEMP TABLE _act AS
     SELECT best.security_id, a.*, '{actions}' AS source FROM a JOIN best USING (action_id);
 CREATE OR REPLACE TEMP TABLE _permno_link AS {link};
 CREATE OR REPLACE TEMP TABLE _gvkey_alias AS {alias};
+"""
+# The history rows, over the WRDS staging: whole on a whole build, the rebuilt slice on the live copy (``incremental``).
+BUILD_HIST_SQL = """
 CREATE OR REPLACE TEMP TABLE _secd_listed AS {listed};
 CREATE OR REPLACE TEMP TABLE _hist_all AS
     SELECT * FROM ({crsp}) UNION ALL BY NAME SELECT * FROM ({comp});
@@ -425,16 +438,26 @@ class PricesServing:
         _universe(ctx, con)
         con.execute(BUILD_SQL.format(in_universe_alp=universe.IN_UNIVERSE.format(
                                          sid="coalesce(s.security_id, b.security_id)"),
-                                     bars=ALPACA_BARS, actions=ALPACA_ACTIONS, crsp=wrds_history.CRSP_BARS,
-                                     comp=wrds_history.COMP_BARS, link=wrds_history.PERMNO_LINK,
-                                     alias=wrds_history.GVKEY_ALIAS, listed=wrds_history.SECD_LISTED))
+                                     bars=ALPACA_BARS, actions=ALPACA_ACTIONS, link=wrds_history.PERMNO_LINK,
+                                     alias=wrds_history.GVKEY_ALIAS))
         self._link_note(ctx, con, found)
         counts = {}
+        # A build on the live copy (#446): what it rebuilds is worked out over the whole identity just built, and
+        # the WRDS staging narrowed to it before the history rows are made (``incremental``).
+        live = incremental.active(ctx)
+        sc = None
+        if live:
+            sc = incremental.scope(ctx, con, lambda: counts.__setitem__("shares_class",
+                                                                        self._shares(con, found, live=True)))
+            ctx.pending[NAME + ":scope"] = sc
+        rows = incremental.where("session_date") if live else None
+        con.execute(BUILD_HIST_SQL.format(crsp=wrds_history.CRSP_BARS, comp=wrds_history.COMP_BARS,
+                                          listed=wrds_history.SECD_LISTED))
         cols = ", ".join(c for c, _ in PRICE_BAR)
         # Alpaca's bar wins its session; of the history bars, Compustat's (priority 1) before CRSP's.
         bars_sql = (f"SELECT * FROM ({_index_levels(con)}) UNION ALL "
                     f"SELECT {cols} FROM (SELECT * FROM _hist_all h WHERE {HIST_FIRST.format(where='WHERE ' + HIST_SERVED)})")
-        counts["price_bar_daily"] = _create(con, "price_bar_daily", bars_sql)
+        counts["price_bar_daily"] = _create(con, "price_bar_daily", bars_sql, live, rows)
         self._key_check(ctx, con, "price_bar_daily", found)
         # The dated exchange rule against today's code: what it serves that today's code would not, and the reverse.
         moved = con.execute("SELECT count(*) FILTER (WHERE listed AND NOT listed_today), count(DISTINCT gvkey || iid) "
@@ -450,18 +473,33 @@ class PricesServing:
                             "GROUP BY ALL ORDER BY 1").fetchall()
         if basis:
             ctx.notes.append("Compustat day returns by rule: " + ", ".join(f"{n} {b}" for b, n in basis))
-        counts["corporate_action"] = self._actions(ctx, con, found)
-        counts["adj_factor"] = _create(con, "adj_factor", ADJ_SQL)
-        counts["shares_class"] = self._shares(con, found)
-        counts["security_symbol"] = _create(con, "security_symbol", SYMBOL_SQL)
+        counts["corporate_action"] = self._actions(ctx, con, found, live)
+        if live:
+            # The factors are made from every action the file now holds, with the close before each from its bars:
+            # ``_act_final``'s ``close_before``, by the same ASOF join.
+            con.execute("""CREATE OR REPLACE TEMP TABLE _act_final AS
+                SELECT c.*, p.close AS close_before FROM corporate_action c ASOF LEFT JOIN price_bar_daily p
+                    ON p.security_id = c.security_id AND c.ex_date > p.session_date""")
+        counts["adj_factor"] = _create(con, "adj_factor", ADJ_SQL, live)
+        if not live:
+            counts["shares_class"] = self._shares(con, found)
+        counts["security_symbol"] = _create(con, "security_symbol", SYMBOL_SQL, live)
+        # On the live copy the caps of a rebuilt session need the bars ``ISSUER_WITHIN_DAYS`` before it, and nothing
+        # older: the issuer cap reads each class's newest cap at most that old.
+        near = (f"AND ({incremental.where(f'b.session_date + INTERVAL {ISSUER_WITHIN_DAYS} DAY', 'b.security_id')})"
+                if live else "")
         counts["market_cap_daily"] = _create(con, "market_cap_daily",
-                                             MARKET_CAP_SQL.format(within=ISSUER_WITHIN_DAYS))
+                                             MARKET_CAP_SQL.format(within=ISSUER_WITHIN_DAYS).replace("/*near*/", near),
+                                             live, rows)
         self._key_check(ctx, con, "market_cap_daily", found)
         counts["price_revision"] = _create(con, "price_revision",
-                                           f"{REVISION_SQL} UNION ALL {wrds_history.REVISIONS_SQL}")
-        counts["wrds_price_diff"] = self._wrds_report(con)
+                                           f"{REVISION_SQL} UNION ALL {wrds_history.REVISIONS_SQL}", live)
+        if live:
+            counts["wrds_price_diff"] = stage.count(con, "wrds_price_diff")
+        else:
+            counts["wrds_price_diff"] = self._wrds_report(con)
         self._views(con)
-        found += self._issues(con, have)
+        found += self._issues(con, have, live)
         ctx.pending[NAME] = found
         return counts
 
@@ -507,7 +545,7 @@ class PricesServing:
     # ── Actions ───────────────────────────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _actions(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, found: list) -> int:
+    def _actions(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, found: list, live: bool = False) -> int:
         # Compustat's actions of the securities with bars, unless Alpaca has one of that kind that day.
         con.execute(f"""INSERT INTO _act BY NAME SELECT w.* FROM ({wrds_history.ACTIONS_SQL}) w
             WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
@@ -520,7 +558,8 @@ class PricesServing:
             WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
               AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id
                               AND {ACTION_KIND.format(a='p')} = 'split'
-                              AND abs(date_diff('day', p.ex_date, w.ex_date)) <= {SPLIT_SAME_DAYS})""")
+                              AND abs(date_diff('day', p.ex_date, w.ex_date)) <= {SPLIT_SAME_DAYS})
+              {f"AND {incremental.where('w.ex_date', 'w.security_id')}" if live else ""}""")
         # Review M6 of #382: such a split stands in for the ``price_gap_no_action`` it explains, so it carries the
         # served close's move across its ex-date, from the security's last served bar before it to its first on or
         # after it: the same two bars the gap check pairs, but their raw closes, not its split-adjusted ones (the two
@@ -593,7 +632,11 @@ class PricesServing:
                    source, action_id AS source_id, source_as_of, fetched_at, run_id,
                    close_before
             FROM _act_close""")
-        n = _create(con, "corporate_action", "SELECT * FROM _act_final ORDER BY security_id, ex_date, action")
+        # On the live copy: every Alpaca action again (they are few, and which security one lands on can move),
+        # and the WRDS actions of the rebuilt days and securities.
+        rebuilt = (f"(source = '{ALPACA_ACTIONS}' OR {incremental.where('ex_date')})" if live else None)
+        n = _create(con, "corporate_action", "SELECT * FROM _act_final ORDER BY security_id, ex_date, action", live,
+                    rebuilt)
         # A cash dividend that went ex on or before its security's first served bar adjusts no served bar (the
         # factors move the bars before the ex-date, and there are none): the history's start, not a defect. It is
         # counted in the note and not named, so the few that are defects are not buried (review D6 of #420: 7,497
@@ -614,7 +657,7 @@ class PricesServing:
     # ── Shares ────────────────────────────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _shares(con: duckdb.DuckDBPyConnection, found: list) -> int:
+    def _shares(con: duckdb.DuckDBPyConnection, found: list, live: bool = False) -> int:
         # A cover class goes to the spine row of its trading symbol, else (no symbol, the filing's one class) to the
         # CIK's one Tier A row. Not to an ADR's: the cover counts the issuer's ordinary shares and the bar is the ADS
         # (one TSM ADS is five shares), so the count stays under ``class:`` and the ADR has no cover shares.
@@ -650,7 +693,7 @@ class PricesServing:
             SELECT coalesce(s.security_id, u.security_id), 'float', u.source_as_of, u.total_float, u.ticker, u.cik,
                    NULL, '{UW}', NULL, NULL, u.source_as_of, u.fetched_at, u.run_id
             FROM stg_uw_float u LEFT JOIN stg_spine s ON s.ticker = u.ticker AND s.cik IS NOT DISTINCT FROM u.cik
-            WHERE u.total_float IS NOT NULL""")
+            WHERE u.total_float IS NOT NULL""", live)
         for cik, symbol in con.execute(
                 "SELECT DISTINCT cik, symbol FROM _cover WHERE symbol IS NOT NULL AND by_symbol IS NULL").fetchall():
             found.append(("cover_class_unmapped", f"{cik}:{symbol}", "no spine ticker of the CIK is this symbol"))
@@ -713,10 +756,10 @@ class PricesServing:
     @staticmethod
     def _views(con: duckdb.DuckDBPyConnection) -> None:
         built = "(SELECT max(built_at) FROM serving_schema_version)"
-        con.execute("CREATE VIEW security_symbol_now AS SELECT security_id, symbol FROM security_symbol "
+        con.execute("CREATE OR REPLACE VIEW security_symbol_now AS SELECT security_id, symbol FROM security_symbol "
                     "QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY valid_to IS NULL DESC, "
                     "valid_from DESC NULLS LAST) = 1")
-        con.execute(f"""CREATE VIEW price_bars_daily AS
+        con.execute(f"""CREATE OR REPLACE VIEW price_bars_daily AS
             SELECT n.symbol AS ticker, b.session_date, b.open * coalesce(a.split_factor, 1) AS open,
                    b.high * coalesce(a.split_factor, 1) AS high, b.low * coalesce(a.split_factor, 1) AS low,
                    b.close * coalesce(a.split_factor, 1) AS close, b.close * coalesce(a.tr_factor, 1) AS adj_close,
@@ -725,7 +768,7 @@ class PricesServing:
             FROM price_bar_daily b JOIN security_symbol_now n USING (security_id)
             {factor_join('a', 'b.security_id', 'b.session_date')}
             WHERE b.security_id NOT LIKE 'index:%'""")
-        con.execute(f"""CREATE VIEW price_actions AS
+        con.execute(f"""CREATE OR REPLACE VIEW price_actions AS
             SELECT n.symbol AS ticker, c.ex_date, CASE WHEN c.action = 'cash_dividend' THEN 'dividend'
                    ELSE 'split' END AS action,
                    CASE WHEN c.action = 'cash_dividend' THEN c.amount * coalesce(a.split_factor, 1)
@@ -734,7 +777,7 @@ class PricesServing:
             FROM corporate_action c JOIN security_symbol_now n USING (security_id)
             {factor_join('a', 'c.security_id', 'c.ex_date')}
             WHERE c.applied""")
-        con.execute(f"""CREATE VIEW index_levels_daily AS
+        con.execute(f"""CREATE OR REPLACE VIEW index_levels_daily AS
             SELECT '^GSPC' AS symbol, session_date, open, high, low, close, volume, source, {built} AS fetched_at,
                    run_id, {built} AS run_at
             FROM price_bar_daily WHERE security_id = 'index:SPX'""")
@@ -742,7 +785,7 @@ class PricesServing:
     # ── Issues ────────────────────────────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _issues(con: duckdb.DuckDBPyConnection, have: dict[str, int]) -> list[tuple[str, str, str]]:
+    def _issues(con: duckdb.DuckDBPyConnection, have: dict[str, int], live: bool = False) -> list[tuple[str, str, str]]:
         found: list[tuple[str, str, str]] = []
         newest = con.execute("SELECT max(session_date) FROM price_bar_daily WHERE security_id NOT LIKE 'index:%'"
                              ).fetchone()[0]
@@ -791,6 +834,7 @@ class PricesServing:
                   -- a split only CRSP records explains the gap: it is the split_only_crsp issue instead
                   AND NOT EXISTS (SELECT 1 FROM _crsp_only_split c WHERE c.security_id = r.security_id
                                   AND c.ex_date > r.prev_day AND c.ex_date <= r.session_date)
+                  {f"AND {incremental.where('r.session_date', 'r.security_id')}" if live else ""}
                 ORDER BY 1, 2""").fetchall():
             found.append(("price_gap_no_action", f"{sid}:{day}", f"split-adjusted close x{ratio:.3f}, no split"))
         # Alpaca's previous adjusted close is close_all / (1 + all_return). The allowance is its exact rounding
@@ -812,6 +856,7 @@ class PricesServing:
                 SELECT h.security_id, h.session_date, h.source, h.close, a.close FROM _hist_all h
                 JOIN _alp a ON a.security_id = h.security_id AND a.session_date = h.session_date
                 WHERE a.close > 0 AND abs(h.close - a.close) > greatest({TOLERANCE} * a.close, {HALF_CENT})
+                  {f"AND {incremental.where('h.session_date', 'h.security_id')}" if live else ""}
                 ORDER BY 1, 2, 3""").fetchall():
             found.append(("alpaca_close_differs", f"{sid}:{day}:{source}",
                           f"{source.split('/')[-1]} {close:.4f}, alpaca {alp:.4f}"))
@@ -856,7 +901,9 @@ class PricesServing:
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         cols = ["security_id", "session_date", "open", "high", "low", "close", "volume", "source"]
-        added, removed = stage.compare_live(con, "price_bar_daily", cols)
+        # On the live copy only the rebuilt rows can differ from the live file's.
+        added, removed = stage.compare_live(con, "price_bar_daily", cols,
+                                            incremental.where("session_date") if incremental.active(ctx) else "")
         newest = con.execute("SELECT max(session_date) FROM price_bar_daily").fetchone()[0]
         n_issues = len(ctx.pending.get(NAME, []))
         ctx.notes.append(f"{n_issues} build issues found")
@@ -868,7 +915,8 @@ class PricesServing:
         found = ctx.pending.get(NAME)
         if found is None:
             return
-        ops.sync_issues(NAME, ISSUE_KINDS, found, run_id=ctx.run_id)
+        sc = ctx.pending.get(NAME + ":scope")
+        ops.sync_issues(NAME, ISSUE_KINDS, found, run_id=ctx.run_id, keep=sc.keep if sc is not None else None)
 
 
 ADJ_SQL = f"""
@@ -906,6 +954,16 @@ SYMBOL_SQL = """
     SELECT security_id, ticker, cik, NULL, NULL, 'spine/security' FROM stg_spine
     WHERE tier = 'A' AND security_id NOT IN (SELECT security_id FROM p)"""
 
+# The issuer CIK of each security a cap is computed for: the spine's, and a Compustat class the spine lacks (BRK-A)
+# is its issuer's through the gvkey of the classes it holds.
+ISSUER_SQL = """
+    WITH gv AS (SELECT gvkey, any_value(cik) AS cik FROM stg_spine WHERE nullif(gvkey, '') IS NOT NULL
+                AND cik IS NOT NULL GROUP BY gvkey HAVING count(DISTINCT cik) = 1)
+    SELECT DISTINCT security_id, cik FROM stg_spine
+    UNION ALL
+    SELECT DISTINCT d.gvkey || ':' || d.iid, gv.cik FROM stg_wrds_secd d JOIN gv USING (gvkey)
+    WHERE d.gvkey || ':' || d.iid NOT IN (SELECT security_id FROM stg_spine WHERE security_id IS NOT NULL)"""
+
 MARKET_CAP_SQL = f"""
     WITH o AS (SELECT security_id, as_of, value, source FROM shares_class WHERE measure = 'outstanding'
                QUALIFY row_number() OVER (PARTITION BY security_id, as_of ORDER BY fetched_at DESC) = 1),
@@ -913,18 +971,12 @@ MARKET_CAP_SQL = f"""
          h AS (SELECT security_id, session_date, arg_min(shares_outstanding, priority) AS shares_outstanding,
                       arg_min(source, priority) AS source FROM _hist_all
                WHERE shares_outstanding > 0 AND {HIST_SERVED} GROUP BY security_id, session_date),
-         -- A Compustat class the spine lacks (BRK-A) is its issuer's through the gvkey of the classes it holds.
-         gv AS (SELECT gvkey, any_value(cik) AS cik FROM stg_spine WHERE nullif(gvkey, '') IS NOT NULL
-               AND cik IS NOT NULL GROUP BY gvkey HAVING count(DISTINCT cik) = 1),
-         sec AS (SELECT DISTINCT security_id, cik FROM stg_spine
-                 UNION ALL
-                 SELECT DISTINCT d.gvkey || ':' || d.iid, gv.cik FROM stg_wrds_secd d JOIN gv USING (gvkey)
-                 WHERE d.gvkey || ':' || d.iid NOT IN (SELECT security_id FROM stg_spine WHERE security_id IS NOT NULL)),
+         sec AS ({ISSUER_SQL}),
          b AS (SELECT b.*, coalesce(s.cik, b.cik) AS issuer, h.shares_outstanding AS hist_shares,
                       h.source AS hist_source FROM price_bar_daily b
                LEFT JOIN sec s USING (security_id)
                LEFT JOIN h ON h.security_id = b.security_id AND h.session_date = b.session_date
-               WHERE b.security_id NOT LIKE 'index:%' AND b.close IS NOT NULL),
+               WHERE b.security_id NOT LIKE 'index:%' AND b.close IS NOT NULL /*near*/),
          -- The bar's own shares, else a WRDS source's of that session (an Alpaca bar Compustat also has), else the
          -- newest cover on or before the session.
          j AS (SELECT b.security_id, b.session_date, b.issuer, b.close, coalesce(b.shares_outstanding, b.hist_shares) AS own,

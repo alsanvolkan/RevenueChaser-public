@@ -178,12 +178,18 @@ def dataset_dir(ds: Any) -> Path:
     return base.parquet_root().joinpath(*str(ds.name).split("/", 1))
 
 
+def read_dirs(ds: Any) -> list[Path]:
+    """The Parquet folders ``ds``'s build reads: its own, and those of another kind's dataset it names in
+    ``parquet_reads`` (``wrds/prices`` reads the spine's ``wrds/sec_idhist``), so a change there is seen too."""
+    root = base.parquet_root()
+    return [dataset_dir(ds), *(root.joinpath(*str(n).split("/", 1)) for n in getattr(ds, "parquet_reads", ()))]
+
+
 def scan(datasets: Iterable[Any]) -> dict[str, tuple[int, float]]:
     """Every Parquet file of ``datasets``: its path relative to the Parquet root, its size and mtime."""
     root = base.parquet_root()
     out: dict[str, tuple[int, float]] = {}
-    for d in datasets:
-        folder = dataset_dir(d)
+    for folder in dict.fromkeys(f for d in datasets for f in read_dirs(d)):
         if not folder.is_dir():
             continue
         for p in folder.rglob("*.parquet"):
@@ -300,6 +306,8 @@ class Plan:
         if self.reason:
             return f"built whole: {self.reason}"
         n = len(self.changed or ())
+        if "note" in self.memo:                         # a kind that words its own dirty set (``prices``)
+            return f"built on the live file: {n} Parquet file(s) changed, {self.memo['note']}"
         keys = self.memo.get("ciks")
         if keys is None:
             keys = set().union(*(d.keys for d in self.dirty.values())) if self.dirty else set()

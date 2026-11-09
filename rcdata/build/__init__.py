@@ -28,6 +28,10 @@ from .prices import floats as prices_floats, serving as prices_serving, wrds_his
 DATASETS.update({d.name: d for d in (prices_bars.DATASET, prices_actions.DATASET, prices_cover.DATASET,
                                      prices_floats.YAHOO_FLOAT, prices_floats.UW_FLOAT, prices_wrds.DATASET,
                                      prices_serving.DATASET)})
+# #446 steps 3 and 4: ``prices`` builds on a copy of the live file (``prices/incremental.py``).
+from .prices import incremental as prices_incremental  # noqa: E402
+
+prices_incremental.enable([d for d in DATASETS.values() if d.kind == prices_bars.KIND])
 
 # ── Fundamentals (build plan PR 12): the sources stage their Parquet, ``fundamentals/tables`` builds the served
 # file last (``base.build_kind`` builds a kind's datasets in this order).
