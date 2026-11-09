@@ -8,6 +8,7 @@ import json
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_relatedness import __main__ as cli
 from RevenueChaser.module_relatedness import config, naming, store, themes
+from RevenueChaser.rcdata.tests import spine_fixture
 
 
 def _profiles():
@@ -29,8 +30,7 @@ def _seed(monkeypatch):
          "sector": "Technology"} for t in profs])
     for t, p in profs.items():
         store.save_profile(t, "", p, "k", config.PROMPT_VERSION)
-    rawstore.write_rows("etf_holdings", [
-        {"ticker": "XLK", "entry": json.dumps([{"ticker": t} for t in list(profs)[:20]])}])
+    spine_fixture.write_etf_holdings({"XLK": list(profs)[:20]})
     monkeypatch.setattr(themes, "build_shadow", functools.partial(
         themes.build_shadow, candidates=(2, 3), k_medium=2, k_coarse=2))
 

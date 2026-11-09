@@ -7,6 +7,7 @@ import pytest
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_relatedness.validation import peer_sets
+from RevenueChaser.rcdata.tests import spine_fixture
 
 
 def test_exactly_ten_hand_sets_with_ids_one_to_ten():
@@ -103,93 +104,26 @@ def test_etf_loader_drops_etfs_with_no_holdings_and_unknown_holdings():
     assert len(loaded.report) == 29
 
 
-def test_etf_holdings_from_store_reads_etf_holdings_only(rawstore_tmp_db):
-    rawstore.write_rows("etf_holdings", [
-        {"ticker": "SMH", "entry": [{"ticker": "nvda", "weight": 0.2}, {"ticker": "TSM", "weight": 0.1}]},
-        {"ticker": "XLK", "entry": [{"ticker": "AAPL", "weight": 0.2}]},
-    ])
+def test_etf_holdings_from_store_reads_the_spines_whole_lists(rawstore_tmp_db):
+    """D4 of the 9 Nov 2026 review (E1, #342): the peer sets read the spine's ``etf_holdings``, each fund's newest
+    day; ``raw.duckdb.etf_holdings`` (a top 10, empty on homesrv) is not read."""
+    spine_fixture.write_etf_holdings({"SMH": ["NVDA", "INTC"], "XLK": ["AAPL"]}, as_of="2026-11-05")
+    spine_fixture.write_etf_holdings({"SMH": ["NVDA", "TSM"]}, as_of="2026-11-07")
+    rawstore.write_rows("etf_holdings", [{"ticker": "KRE", "entry": [{"ticker": "USB", "weight": 0.2}]}])
     out = peer_sets.etf_holdings_from_store()
     assert out["SMH"] == {"NVDA", "TSM"}
     assert "XLK" not in out          # not one of the 29
-    assert out["KRE"] == set()       # in the list, no holdings stored
+    assert out["KRE"] == set()       # the raw table is not read
     assert len(out) == 29
 
 
-def test_etf_holdings_from_store_never_applies_the_manifest(monkeypatch):
-    """Review S1 (#342): with RC_STORE_AUTO_ENSURE unset, a read must not create tables or columns."""
-    import duckdb
-
-    path = rawstore.DB_PATH                  # the per-test file from the autouse isolate_rawstore
-    con = duckdb.connect(str(path))
-    try:
-        con.execute("CREATE TABLE etf_holdings (ticker TEXT PRIMARY KEY, entry JSON, provider TEXT, "
-                    "fetched_at DOUBLE)")
-        con.execute("INSERT INTO etf_holdings VALUES ('SMH', '[{\"ticker\": \"NVDA\"}]', 'x', 1.0)")
-        con.execute("CREATE TABLE theme_runs (id TEXT PRIMARY KEY, created_at TEXT)")
-    finally:
-        con.close()
-
-    def shape():
-        c = duckdb.connect(str(path), read_only=True)
-        try:
-            return c.execute("SELECT table_name, column_name FROM information_schema.columns "
-                             "ORDER BY table_name, column_name").fetchall()
-        finally:
-            c.close()
-
-    before = shape()
-    monkeypatch.setenv("RC_STORE_AUTO_ENSURE", "1")   # recorded, so the teardown restores the session's value
-    monkeypatch.delenv("RC_STORE_AUTO_ENSURE")
-    monkeypatch.setattr(rawstore, "_ENSURED", {})
-    out = peer_sets.etf_holdings_from_store()
-    assert out["SMH"] == {"NVDA"}
-    assert shape() == before
-    import os
-    assert "RC_STORE_AUTO_ENSURE" not in os.environ      # the read put the caller's environment back
-
-
-def _scratch_holdings(path):
-    import duckdb
-    con = duckdb.connect(str(path))
-    try:
-        con.execute("CREATE TABLE etf_holdings (ticker TEXT PRIMARY KEY, entry JSON, provider TEXT, "
-                    "fetched_at DOUBLE)")
-        con.execute("INSERT INTO etf_holdings VALUES ('SMH', '[{\"ticker\": \"nvda\"}, {\"ticker\": \"TSM\"}]', "
-                    "'x', 1.0)")
-    finally:
-        con.close()
-
-
-def test_etf_holdings_are_read_through_a_read_only_handle(tmp_path):
-    """Review R2 (#342): the read opens the file read-only, so it runs beside another read-only handle."""
+def test_etf_holdings_from_store_never_writes_the_spine():
+    """Reviews S1 and R2 (#342): the read goes through a read-only handle and leaves the file as it was."""
     import os
 
-    import duckdb
-
-    path = tmp_path / "scratch.duckdb"
-    _scratch_holdings(path)
+    from RevenueChaser.rcdata import serving
+    spine_fixture.write_etf_holdings({"XBI": ["VRTX"]})
+    path = serving.live_path("spine")
     mtime = os.stat(path).st_mtime_ns
-    held = duckdb.connect(str(path), read_only=True)
-    try:
-        tables = held.execute("SELECT table_name FROM information_schema.tables ORDER BY 1").fetchall()
-        out = peer_sets.etf_holdings_from_store(db_path=path)
-        assert held.execute("SELECT table_name FROM information_schema.tables ORDER BY 1").fetchall() == tables
-    finally:
-        held.close()
-    assert out["SMH"] == {"NVDA", "TSM"} and out["KRE"] == set() and len(out) == 29
+    assert peer_sets.etf_holdings_from_store()["XBI"] == {"VRTX"}
     assert os.stat(path).st_mtime_ns == mtime
-
-
-def test_etf_holdings_table_is_an_argument(tmp_path):
-    import duckdb
-
-    path = tmp_path / "scratch.duckdb"
-    con = duckdb.connect(str(path))
-    try:
-        con.execute("CREATE TABLE spine_holdings (ticker TEXT, entry JSON)")
-        con.execute("INSERT INTO spine_holdings VALUES ('XBI', '[{\"ticker\": \"VRTX\"}]')")
-    finally:
-        con.close()
-    assert peer_sets.etf_holdings_from_store(db_path=path, table="spine_holdings")["XBI"] == {"VRTX"}
-    with pytest.raises(ValueError, match="table"):
-        peer_sets.etf_holdings_from_store(db_path=path, table="x; DROP TABLE spine_holdings")

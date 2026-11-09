@@ -232,6 +232,24 @@ def my_universe_changes(limit: int = 200) -> list[dict]:
                                         f"LIMIT {int(limit)}", [], missing_table_ok=True)
 
 
+def etf_holding_tickers(etfs: Iterable[str]) -> dict[str, set[str]]:
+    """The holding tickers of each of ``etfs`` (upper-cased) on that fund's own newest day of ``etf_holdings``, the
+    whole lists ``funds/etf_holdings`` serves. A fund with no line, or no spine file at all, is an empty set; a line
+    with no ticker (a foreign listing) is no holding. Relatedness reads this (D4 of the 9 Nov 2026 review, E1 #342).
+    """
+    wanted = sorted({str(e).strip().upper() for e in etfs if str(e or "").strip()})
+    out: dict[str, set[str]] = {e: set() for e in wanted}
+    if not wanted:
+        return out
+    marks = ", ".join("?" * len(wanted))
+    sql = (f"SELECT h.etf, h.ticker FROM etf_holdings h JOIN (SELECT etf, max(as_of) AS as_of FROM etf_holdings "
+           f"WHERE etf IN ({marks}) GROUP BY etf) d ON h.etf = d.etf AND h.as_of = d.as_of "
+           "WHERE h.ticker IS NOT NULL")
+    for r in _rows("etf_holdings", sql, wanted, missing_table_ok=True):
+        out[r["etf"]].add(r["ticker"])
+    return out
+
+
 def identity(tickers: Iterable[str] | None = None) -> list[dict]:
     """The ``security`` rows of ``tickers`` (upper-cased; any tier), or of every ticker when None, by ticker."""
     if tickers is None:

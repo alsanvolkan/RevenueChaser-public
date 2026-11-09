@@ -9,6 +9,7 @@ import pytest
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_relatedness import themes
+from RevenueChaser.rcdata.tests import spine_fixture
 
 
 def _profiles():
@@ -318,20 +319,9 @@ def test_match_theme_etfs(rawstore_tmp_db):
         {"ticker": t, "market_cap": 1e11, "sector": "Technology"}
         for t in ("NVDA", "TSM", "AMD", "AVGO")
     ])
-    rawstore.write_rows("etf_holdings", [
-        {"ticker": "SMH", "entry": [
-            {"ticker": "NVDA", "name": "n", "weight": 0.2},
-            {"ticker": "TSM", "name": "t", "weight": 0.15},
-            {"ticker": "AMD", "name": "a", "weight": 0.1},
-            {"ticker": "AVGO", "name": "v", "weight": 0.1},
-            {"ticker": "MU", "name": "m", "weight": 0.05},
-        ]},
-        {"ticker": "XLK", "entry": [
-            {"ticker": "NVDA", "name": "n", "weight": 0.1},
-            {"ticker": "AAPL", "name": "a", "weight": 0.2},
-            {"ticker": "MSFT", "name": "m", "weight": 0.2},
-        ]},
-    ])
+    # The spine's whole lists (D4, 9 Nov 2026); raw.duckdb's etf_holdings is no longer read.
+    spine_fixture.write_etf_holdings({"SMH": ["NVDA", "TSM", "AMD", "AVGO", "MU"],
+                                      "XLK": ["NVDA", "AAPL", "MSFT"]})
 
     out = themes.match_theme_etfs(run)
     assert out["themes"] >= 1 and out["rows"] >= 1
@@ -367,9 +357,7 @@ def _seed_one_theme(run, sectors, spdr):
                          [{"ticker": t, "theme_id": tid, "weight": 1.0} for t in tickers])
     rawstore.replace_all("equity_universe", [
         {"ticker": t, "market_cap": 1e11, "sector": sec} for t, sec in zip(tickers, sectors)])
-    rawstore.write_rows("etf_holdings", [
-        {"ticker": spdr, "entry": [{"ticker": tickers[0], "name": "n", "weight": 0.1},
-                                   {"ticker": "OUTSIDE", "name": "o", "weight": 0.9}]}])
+    spine_fixture.write_etf_holdings({spdr: ["OUTSIDE", tickers[0]]})
     return tid
 
 
