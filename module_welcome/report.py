@@ -19,7 +19,7 @@ from pathlib import Path
 from RevenueChaser.core import calendar as mcal
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.config import OUTPUT_DIR
-from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, write_artifact
+from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, write_artifact
 from RevenueChaser.module_news.calendar import AMS, EVENTS, HIGHLIGHT, local_day
 from RevenueChaser.module_news.report import (WEEKDAYS, day_label, dots_html, esc, hm, long_date, vals_html)
 from RevenueChaser.module_welcome.build import EARNINGS, FRESHNESS, NY, SNAPSHOT, earnings_days
@@ -291,6 +291,13 @@ sessionClock(); setInterval(sessionClock, 30000);
 """
 
 
+HELP = help_html(
+    "<p>Günün özeti: bugünün ekonomik takvimi, bugün ve sonraki işlem günü bilanço açıklayan şirketler, "
+    "SPX, VIX, MOVE ve ABD 10 yıllık faizin son kapanışı ve işlerin son çalışması.</p>"
+    "<p><b>Fetch</b> saklı verilerden <code>boards/welcome.duckdb</code> dosyasını artımlı günceller; ağ "
+    "çağrısı yapmaz. <b>Refresh</b> yalnızca sayfayı yeniden çizer.</p>")
+
+
 def render_html(now: float | None = None, *, watchlist: set[str], labels: dict[str, str]) -> str:
     now = time.time() if now is None else now
     today = local_day(now)
@@ -305,6 +312,7 @@ def render_html(now: float | None = None, *, watchlist: set[str], labels: dict[s
 <div class="clock" id="clock" role="status" data-state="closed">ABD seansı</div></header>
 <div class="grid"><div class="col">{left}</div><div class="col">{right}</div></div>
 <p class="foot">Saklı verilerden hazırlanır, ağ çağrısı yapmaz · Kaynak: Unusual Whales, Yahoo, FRED</p>
+{HELP}
 </div><script>var SESSIONS = {json.dumps(sessions(now))};{_JS}</script></body></html>"""
 
 

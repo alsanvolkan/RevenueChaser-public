@@ -6,7 +6,6 @@ own words are Turkish. Phone first: one column under 900 px, 44 px touch targets
 """
 from __future__ import annotations
 
-import html
 import json
 import time
 from datetime import datetime, timedelta
@@ -14,7 +13,8 @@ from pathlib import Path
 
 from RevenueChaser.core import econ_importance, rawstore
 from RevenueChaser.core.config import OUTPUT_DIR
-from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, write_artifact
+from RevenueChaser.core.html_safe import esc
+from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, write_artifact
 from RevenueChaser.module_news.calendar import AMS, EVENTS, HIGHLIGHT, local_day, tr_value
 
 FILENAME = "news_latest.html"
@@ -28,10 +28,6 @@ MONTHS = ("Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağ
 WEEKDAYS = ("Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar")
 _KIND = {"report": "Veri", "fed-speaker": "Fed", "fomc": "FOMC"}
 _LEVEL = {3: "yüksek", 2: "orta", 1: "düşük"}
-
-
-def esc(value) -> str:
-    return html.escape(str(value if value is not None else ""), quote=True)
 
 
 def hm(ts: float) -> str:
@@ -189,6 +185,14 @@ function newsTab(btn){
 """
 
 
+HELP = help_html(
+    "<p>ABD ekonomik takvimi (bugün ve bu hafta, saatler Amsterdam) ve izleme listesindeki ve en büyük ABD "
+    "şirketlerinin Dow Jones başlıkları. Gerçekleşen değer gösterilmez: beklenti ve önceki değer.</p>"
+    "<p><b>Fetch</b> saklı takvimi <code>boards/news.duckdb</code> içine artımlı yazar (yeni ve değişen "
+    "olaylar; listeden düşen olay silinmez, emekliye ayrılır) ve IBKR Gateway'den son başlıkları sorar. "
+    "<b>Refresh</b> yalnızca saklı veriden sayfayı yeniden çizer, hiçbir şey indirmez.</p>")
+
+
 def render_html(now: float | None = None) -> str:
     now = time.time() if now is None else now
     events, hl, heads, stamp = _load(now)
@@ -213,6 +217,7 @@ def render_html(now: float | None = None) -> str:
 <div class="side">{_highlight(hl)}{_headlines(heads)}</div>
 </div>
 <p class="foot">Kaynak: takvim Unusual Whales, başlıklar Dow Jones (IBKR) · Saatler Europe/Amsterdam · Önem: ●●● yüksek ●●○ orta ●○○ düşük</p>
+{HELP}
 </div><script>{_JS}</script></body></html>"""
 
 
