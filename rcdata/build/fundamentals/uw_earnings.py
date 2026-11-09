@@ -19,9 +19,9 @@ why the SEC's ``eps_diluted`` stays the only EPS in ``fundamental_fact``. The tw
 
 **Weekly, one request per company** (the pattern of ``yfinance/estimates``): a company whose newest answer is
 ``WEEK_DAYS`` old, or that has none, is asked, the longest without an answer first; ``FAIL_STREAK`` provider-side
-failures in a row stop the run (UW throttling or down) and a run where every request failed is a failed run. A
-request UW rejects (``rejected``: an unknown ticker) writes a raw file with no rows once a later request answers,
-so it ages like an answer; ``REJECT_STREAK`` rejected in a row stop and fail the run. Counted against the
+failures in a row stop the run (UW throttling or down) and fail it, keeping what was answered. A request UW
+rejects (``rejected``: an unknown ticker) writes a raw file with no rows once a later request answers, so it ages
+like an answer; ``REJECT_STREAK`` rejected in a row stop and fail the run. Counted against the
 ``uw`` day cap; not paced, because UW publishes no request window. No ``UNUSUAL_WHALES_API_KEY``: nothing is asked,
 a ``missing_key`` issue.
 
@@ -92,8 +92,8 @@ def rejected(error: dict | None) -> bool:
     """Whether a failed UW answer is the request's own fault: a 4xx other than 401/403 (the key) and 429
     (throttling) -- an unknown ticker, a bad parameter. The client keeps those out of its breaker for the same
     reason (``unusual_whales.get_result``); a 5xx, a 429, a transport error or an open breaker is the provider's."""
-    status = (error or {}).get("status")
-    return isinstance(status, int) and 400 <= status < 500 and status not in (401, 403, 429)
+    from ....core.providers.unusual_whales import is_rejected
+    return is_rejected((error or {}).get("status"))
 
 
 def companies() -> list[tuple[str, str]]:
@@ -157,6 +157,7 @@ class UWEarnings:
         out, failed, streak, not_asked, answered, n_rejected = [], [], 0, 0, 0, 0
         held: list[tuple[str, str, dict | None]] = []      # rejected, waiting for a later answer
         lost = False                                        # REJECT_STREAK rejected in a row: the path is gone
+        streak_first = ""                                   # the first ticker of the current provider-side streak
         earlier = list(day_dir(as_of).glob("*.json.gz"))
         for n, (_, ticker, cik) in enumerate(due):
             if streak >= FAIL_STREAK:
@@ -168,7 +169,7 @@ class UWEarnings:
             # counted by ``RunContext._on_uw_request``, which sees the retries too, so it is not counted here.
             res = ctx.uw_client().stock_earnings_result(ticker)
             if res.status != "ok":
-                ctx.count(PROVIDER, failures=1)
+                # Not counted here: ``RunContext`` counts every final failure once (#519 finding 2).
                 failed.append(ticker)
                 ctx.issue("fetch_failed", ticker, f"UW {endpoint(ticker)}: {res.error}")
                 if rejected(res.error):
@@ -183,6 +184,8 @@ class UWEarnings:
                         break
                     continue
                 streak += 1
+                if streak == 1:
+                    streak_first = ticker
                 continue
             for t, c, err in held:
                 out.append(base.write_raw_json(day_dir(as_of) / f"{t}.json.gz", {
@@ -203,9 +206,17 @@ class UWEarnings:
         if failed and not answered and not earlier:
             raise base.SourceError(f"UW /earnings: every request failed ({len(failed)}, first {failed[0]})"
                                    + (f"; {FAIL_STREAK} in a row, {not_asked} not asked" if not_asked else ""))
+        if not_asked:
+            # A provider-side stop with companies left unasked is a failed run, a resumed day too: the day's
+            # earlier files must not turn it into ``ok`` with the truth only in a note (#519 finding 6). What was
+            # answered stays -- the raw files are the resume marker -- and is converted here, because a failed
+            # fetch is not converted by the runner and a next-day run does not ask those companies again.
+            if out:
+                self.to_parquet_all(ctx, out)
+            raise base.SourceError(f"UW /earnings: {FAIL_STREAK} provider-side failures in a row (first "
+                                   f"{streak_first}), {not_asked} not asked; {answered} answered this run and kept")
         ctx.notes.append(f"{len(out) - n_rejected} companies read, {len(failed)} failed"
                          + (f" ({n_rejected} rejected by UW, kept as an empty answer)" if n_rejected else "")
-                         + (f"; {FAIL_STREAK} failures in a row, {not_asked} not asked" if not_asked else "")
                          + f"; {len(every) - len(due)} read within {WEEK_DAYS} days")
         return out
 

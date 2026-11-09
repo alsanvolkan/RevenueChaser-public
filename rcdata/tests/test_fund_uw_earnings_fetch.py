@@ -1,4 +1,4 @@
-"""``uw/earnings``'s ``fetch()`` driven at the HTTP boundary (#519 findings 1, 3 and 4).
+"""``uw/earnings``'s ``fetch()`` driven at the HTTP boundary (#519 findings 1, 2, 3, 4 and 6).
 
 The guard tests of #511/#513 read the dataset's source text; these drive the real ``fetch()`` over a real
 :class:`UWClient` whose transport answers like UW, and read the result where it lands: the raw files, the calls the
@@ -201,3 +201,97 @@ def test_a_rejected_request_waits_for_an_answer_before_its_empty_file(http_mock,
     http_mock.add("/stock/ZZZ/earnings", {"error": "unknown ticker"}, status=422)
     _fetch()
     assert [p.name for p in uw_earnings.day_dir(AS_OF).glob("*.json.gz")] == ["AAA.json.gz"]
+
+
+# ── Finding 6: a provider-side stop mid-run is a failed run, not a successful one ───────────────────────────────
+
+def _outage_after(http_mock, monkeypatch, good):
+    """``good`` companies answer, then UW goes down (503 after the retries) for every later one."""
+    tickers = [*good, *[f"Z{n:02d}" for n in range(uw_earnings.FAIL_STREAK + 3)]]
+    _companies(monkeypatch, tickers)
+    for t in good:
+        http_mock.add(f"/stock/{t}/earnings", ANSWER)
+    http_mock.add("/earnings", {"error": "down"}, status=503)
+
+
+def test_an_outage_after_some_answers_fails_the_run(http_mock, monkeypatch):
+    """Two answers, then five provider-side failures: the run used to end ``ok`` with three companies never asked,
+    the truth only in a note. It fails now, naming how many were not asked."""
+    _outage_after(http_mock, monkeypatch, ["AAA", "BBB"])
+    with pytest.raises(base.SourceError, match="3 not asked"):
+        _fetch()
+
+
+def test_an_outage_mid_run_keeps_what_was_answered(http_mock, monkeypatch):
+    """The answers before the stop stay as raw files (the resume marker) and reach their Parquet partition, so a
+    next-day run, which does not ask them again within the week, does not leave them out of the build."""
+    _outage_after(http_mock, monkeypatch, ["AAA", "BBB"])
+    with pytest.raises(base.SourceError):
+        _fetch()
+    assert sorted(p.name for p in uw_earnings.day_dir(AS_OF).glob("*.json.gz")) == ["AAA.json.gz", "BBB.json.gz"]
+    part = uw_earnings.common.parquet_dir(uw_earnings.NAME) / f"date={AS_OF}" / "part-0.parquet"
+    import duckdb
+    assert duckdb.sql(f"SELECT DISTINCT ticker FROM '{part}' ORDER BY 1").fetchall() == [("AAA",), ("BBB",)]
+
+
+def test_an_outage_on_a_resumed_day_fails_the_run_too(http_mock, monkeypatch):
+    """The day's earlier answers must not turn the stop into an ``ok`` run (``out`` is unioned with them)."""
+    _companies(monkeypatch, ["AAA"])
+    http_mock.add("/stock/AAA/earnings", ANSWER)
+    _fetch()
+    http_mock.requests.clear()
+    _outage_after(http_mock, monkeypatch, [])
+    with pytest.raises(base.SourceError, match="3 not asked"):
+        _fetch()
+
+
+def test_failures_at_the_very_end_are_not_a_stop(http_mock, monkeypatch):
+    """When the last companies of the queue fail, everyone was asked: a note, not a failed run (finding 6 is
+    about the companies the stop left unasked)."""
+    _companies(monkeypatch, ["AAA", *[f"Z{n}" for n in range(uw_earnings.FAIL_STREAK)]])
+    http_mock.add("/stock/AAA/earnings", ANSWER)
+    http_mock.add("/earnings", {"error": "down"}, status=503)
+    ctx, out = _fetch()
+    assert [p.name for p in out] == ["AAA.json.gz"]
+
+
+# ── Finding 2: a final failure is one failure, whoever saw it ───────────────────────────────────────────────────
+
+def _failures_today() -> int:
+    day = ops._today()
+    return sum(int(r["failures"]) for r in ops.calls_by_day(day, day) if r["provider"] == "uw")
+
+
+def test_a_provider_side_failure_is_counted_once(http_mock, monkeypatch):
+    """A 503 after the retries is recorded by the client (``health()``) and added by ``RunContext.close``; the
+    dataset used to add its own as well, so the Data screen showed 2 for one failed company."""
+    _companies(monkeypatch, ["DOWN", "MSFT"])
+    http_mock.add("/stock/DOWN/earnings", {"error": "down"}, status=503)
+    http_mock.add("/stock/MSFT/earnings", ANSWER)
+    ctx, _ = _fetch()
+    assert ctx.calls["uw"][1] == 1 and _failures_today() == 1
+
+
+def test_a_rejected_request_is_counted_once(http_mock, monkeypatch):
+    """A 422 never reaches ``health()`` (not an outage), so ``RunContext`` counts it where it sees the answer."""
+    _companies(monkeypatch, ["BAD", "MSFT"])
+    http_mock.add("/stock/BAD/earnings", {"error": "unknown ticker"}, status=422)
+    http_mock.add("/stock/MSFT/earnings", ANSWER)
+    ctx, _ = _fetch()
+    assert ctx.calls["uw"][1] == 1 and _failures_today() == 1
+
+
+def test_every_uw_dataset_counts_a_rejected_request_the_same_way(http_mock):
+    """Not only ``uw/earnings``: any dataset on ``ctx.uw_client()`` (``uw/financials`` counted none of its own) gets
+    one failure for a request UW rejects, and none for a 401/403/429/5xx, which ``close()`` takes from
+    ``health()``."""
+    http_mock.add("/stock/BAD/financials", {"error": "unknown ticker"}, status=404)
+    http_mock.add("/stock/KEY/financials", {"error": "no"}, status=401)
+    ctx = base.RunContext(run_id="t", dataset="uw/financials")
+    try:
+        ctx.uw_client().get_result("/stock/BAD/financials")
+        ctx.uw_client().get_result("/stock/KEY/financials")
+    finally:
+        ctx.close()
+        ctx.flush_counts()
+    assert ctx.calls["uw"][:2] == [2, 2] and _failures_today() == 2

@@ -162,7 +162,7 @@ def get_financials(ticker: str, max_years: int = MAX_YEARS) -> dict:
 
     income = _stmt(("income_stmt", "financials"))
     cashflow = _stmt(("cashflow", "cash_flow"))
-    balance = _stmt(("balance_sheet", "balance_sheets"))
+    balance = _stmt(("balance_sheet",))
 
     annual: list[dict] = []
 
