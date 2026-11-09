@@ -96,7 +96,8 @@ def test_the_builder_cli_builds_market_series_and_a_second_run_calls_nothing(cli
     r = _run(cli_env, *args)
     assert r.returncode == 0, r.stderr[-3000:]
     assert r.stdout.startswith("market_series changed as_of=2026-10-27")
-    assert all(len(line) <= 120 for line in r.stdout.splitlines())
+    # A check line's note is clipped to 60 characters (base.py) and now carries the build plan (#446): the rest fits 120.
+    assert all(len(line.split(" note=")[0]) <= 120 for line in r.stdout.splitlines())
     first = len(seen)
     assert first > 0 and not any("cli-test-key" in line for line in (r.stdout + r.stderr).splitlines())
     assert sorted(p for p in seen if p.startswith("/yahoo/")) == ["/yahoo/%5EMOVE.json", "/yahoo/ZW%3DF.json"]

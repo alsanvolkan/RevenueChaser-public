@@ -283,10 +283,10 @@ def test_a_live_file_without_a_manifest_falls_back_to_its_build_stamp(monkeypatc
 
 
 def test_a_kind_whose_datasets_declare_no_dirty_set_is_built_whole_with_no_manifest():
-    from RevenueChaser.rcdata.build import DATASETS
-    market = [d for d in DATASETS.values() if d.kind == "market"]
-    assert market and not dirty.incremental(market)
-    assert dirty.plan("market", _ctx()) is None
+    # No real kind is left to point at for long (#446 makes them incremental one by one): a dataset with no dirty.
+    whole = [type("Whole", (), {"name": "test/whole", "kind": "market"})()]
+    assert not dirty.incremental(whole)
+    assert dirty.plan("market", _ctx(), whole) is None
 
 
 def test_every_fundamentals_dataset_declares_a_dirty_set():

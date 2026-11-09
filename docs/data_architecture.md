@@ -1052,7 +1052,9 @@ views, for the identity (`_universe`, `_permno_link`, `_gvkey_alias`), and stage
 that day; a whole build staged forty years of `comp.secd` into TEMP tables (homesrv, 9 Nov 2026: 6 h 12 min, 92 GB
 of spill). `wrds_price_diff` is kept from the last whole build, which the monthly WRDS refresh (a new
 `comp.sec_split` snapshot) forces; so do a change of `wrds/sec_idhist`, of the build code, and `RC_BUILD_WHOLE=1`.
-`ownership`, `options` and `market` are still built whole; `spine` stays whole by design (seconds).
+`market` (`rcdata/build/partitions.py`) reloads each changed Parquet partition: a UW session (`date=`) of
+`spx_gamma_expiry_strike` or `spx_greek_expiry_strike`, a source and year of `market_series`; a gone partition only
+deletes its rows. `ownership` and `options` are still built whole; `spine` stays whole by design (seconds).
 
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.
