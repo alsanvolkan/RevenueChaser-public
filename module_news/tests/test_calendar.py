@@ -105,7 +105,7 @@ def test_the_highlight_is_the_most_important_live_event_earliest_on_a_tie():
     hl = rawstore.query("SELECT * FROM news_highlight", db="news")
     assert len(hl) == 1 and hl[0]["session_date"] == date(2026, 11, 10)
     assert hl[0]["event"] == "CPI, M/M%" and hl[0]["text_source"] == "template"
-    assert "beklenti 0.2%" in hl[0]["text"]
+    assert "beklenti %0,2" in hl[0]["text"]
 
 
 def test_a_retired_event_is_never_the_highlight():
@@ -132,3 +132,11 @@ def test_the_build_writes_nothing_to_raw_duckdb():
 ])
 def test_explain_template(event, kind, prev, fc, want):
     assert want in cal.explain({"event": event, "type": kind, "prev": prev, "forecast": fc})
+
+
+def test_on_a_tie_a_release_beats_a_fed_speech():
+    _raw([(T0 - HOUR, "Fed President Musalem speaks", "fed-speaker"),
+          (T0, "NY Fed consumer inflation expectations", "report")], fetched_at=100.0)
+    cal.build(now=T0 - 5 * HOUR)
+    assert rawstore.query("SELECT event FROM news_highlight", db="news") == [
+        {"event": "NY Fed consumer inflation expectations"}]

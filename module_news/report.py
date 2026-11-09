@@ -1,0 +1,221 @@
+"""The News board page (plan §6, mock ``News.dc.html``): today's US economic calendar, this week, the day's highlight
+and the market headlines, in Turkish, times in Europe/Amsterdam.
+
+Store-only: it reads ``boards/news.duckdb`` and never fetches. Event names stay as the provider serves them; the board's
+own words are Turkish. Phone first: one column under 900 px, 44 px touch targets, light and dark from the shell's theme.
+"""
+from __future__ import annotations
+
+import html
+import json
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from RevenueChaser.core import econ_importance, rawstore
+from RevenueChaser.core.config import OUTPUT_DIR
+from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, write_artifact
+from RevenueChaser.module_news.calendar import AMS, EVENTS, HIGHLIGHT, local_day, tr_value
+
+FILENAME = "news_latest.html"
+HEADLINES = "news_headlines"
+WEEK_DAYS = 7
+HEADLINE_HOURS = 24
+HEADLINE_LIMIT = 30
+
+_MONTHS = ("Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım",
+           "Aralık")
+_WEEKDAYS = ("Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar")
+_KIND = {"report": "Veri", "fed-speaker": "Fed", "fomc": "FOMC"}
+_LEVEL = {3: "yüksek", 2: "orta", 1: "düşük"}
+
+
+def _esc(value) -> str:
+    return html.escape(str(value if value is not None else ""), quote=True)
+
+
+def _hm(ts: float) -> str:
+    return datetime.fromtimestamp(float(ts), AMS).strftime("%H:%M")
+
+
+def _long_date(d) -> str:
+    return f"{d.day} {_MONTHS[d.month - 1]} {d.year}"
+
+
+def _day_label(d) -> str:
+    return f"{_WEEKDAYS[d.weekday()]} {d.day} {_MONTHS[d.month - 1]}"
+
+
+def _load(now: float) -> tuple[list[dict], dict | None, list[dict], float | None]:
+    today = local_day(now)
+    start = datetime(today.year, today.month, today.day, tzinfo=AMS)
+    end = start + timedelta(days=WEEK_DAYS)
+    events = rawstore.query(
+        f"SELECT * FROM {EVENTS} WHERE event_ts >= ? AND event_ts < ? AND retired_at IS NULL ORDER BY event_ts, event",
+        [start.timestamp(), end.timestamp()], db="news")
+    hl = rawstore.query(f"SELECT * FROM {HIGHLIGHT} WHERE session_date = ?", [today.isoformat()], db="news")
+    heads = rawstore.query(
+        f"SELECT * FROM {HEADLINES} WHERE published_at >= ? ORDER BY published_at DESC LIMIT {HEADLINE_LIMIT}",
+        [now - HEADLINE_HOURS * 3600], db="news")
+    stamp = rawstore.query(f"SELECT max(run_at) AS t FROM {EVENTS}", db="news")
+    return events, (hl[0] if hl else None), heads, (stamp[0]["t"] if stamp else None)
+
+
+def _dots(level) -> str:
+    n = int(level or 1)
+    return (f'<span class="dots" title="{_LEVEL.get(n, "düşük")} önem" aria-label="{_LEVEL.get(n, "düşük")} önem">'
+            f'{econ_importance.dots(n)}</span>')
+
+
+def _vals(e: dict) -> str:
+    fc, prev = tr_value(e.get("forecast")), tr_value(e.get("prev"))
+    return (f'<div class="vals"><span>Beklenti <b>{_esc(fc or "–")}</b></span>'
+            f'<span>Önceki <b>{_esc(prev or "–")}</b></span></div>')
+
+
+def _row(e: dict, now: float, hl_key) -> str:
+    key = (e["event_ts"], e["event"], e["type"])
+    cls = "ev hl" if key == hl_key else "ev"
+    past = ' data-past="1"' if float(e["event_ts"]) < now else ""
+    kind = _KIND.get(str(e.get("type") or "").lower(), "Veri")
+    return (f'<li class="{cls}"{past}><span class="t">{_hm(e["event_ts"])}</span>'
+            f'<div class="nm"><span class="kind">{kind}</span> {_dots(e.get("importance"))}'
+            f'<div class="name">{_esc(e["event"])}</div></div>{_vals(e)}</li>')
+
+
+def _calendar(events: list[dict], now: float, hl_key) -> tuple[str, str]:
+    today = local_day(now)
+    todays = [e for e in events if local_day(e["event_ts"]) == today]
+    today_html = ("<ul class=\"list\">" + "".join(_row(e, now, hl_key) for e in todays) + "</ul>") if todays else (
+        '<p class="empty">Bugün takvimde veri yok.</p>')
+    if not events:
+        return today_html, '<p class="empty">Bu hafta takvimde veri yok. Yenile, saklı takvimden yeniden kurar.</p>'
+    by_day: dict = {}
+    for e in events:
+        by_day.setdefault(local_day(e["event_ts"]), []).append(e)
+    week = "".join(f'<h3 class="day">{_day_label(d)}</h3><ul class="list">'
+                   + "".join(_row(e, now, hl_key) for e in rows) + "</ul>" for d, rows in by_day.items())
+    return today_html, week
+
+
+def _highlight(hl: dict | None) -> str:
+    if not hl:
+        return ('<section class="card feat"><h2 class="lbl">Öne çıkan veri</h2>'
+                '<p class="empty">Bugün öne çıkan bir veri yok.</p></section>')
+    return (f'<section class="card feat"><h2 class="lbl">Öne çıkan veri</h2>'
+            f'<div class="feat-name">{_esc(hl["event"])}</div>'
+            f'<div class="muted">{_hm(hl["event_ts"])} Amsterdam · {_dots(hl.get("importance"))}</div>'
+            f'{_vals(hl)}<p class="why">{_esc(hl.get("text"))}</p></section>')
+
+
+def _tickers(value) -> list[str]:
+    try:
+        got = json.loads(value) if isinstance(value, str) else (value or [])
+    except ValueError:
+        return []
+    return [str(t) for t in got if t][:4] if isinstance(got, list) else []
+
+
+def _headlines(rows: list[dict]) -> str:
+    if not rows:
+        return ('<section class="card"><h2 class="lbl">Başlıklar · son 24 saat</h2>'
+                '<p class="empty">Henüz başlık yok.</p></section>')
+    items = []
+    for r in rows:
+        tk = "".join(f'<span class="tk">{_esc(t)}</span>' for t in _tickers(r.get("tickers")))
+        src = f' · {_esc(r["source"])}' if r.get("source") else ""
+        text = _esc(r.get("headline"))
+        if r.get("url") and str(r["url"]).startswith(("https://", "http://")):
+            text = f'<a href="{_esc(r["url"])}" target="_blank" rel="noopener noreferrer">{text}</a>'
+        items.append(f'<li class="hd"><div class="muted">{_hm(r["published_at"])}{src} {tk}</div>'
+                     f'<div class="htext">{text}</div></li>')
+    return ('<section class="card"><h2 class="lbl">Başlıklar · son 24 saat</h2><ul class="list">'
+            + "".join(items) + "</ul></section>")
+
+
+_CSS = """
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.wrap{max-width:1200px;margin:0 auto;padding:16px}
+.top{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 16px;align-items:flex-end;margin-bottom:12px}
+.eyebrow{color:var(--muted);font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+h1{margin:2px 0 0;color:var(--bright);font-size:22px}
+.muted{color:var(--muted);font-size:12.5px}
+.grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px}
+.side{display:flex;flex-direction:column;gap:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+.lbl{margin:0 0 10px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.tabs{display:flex;gap:8px;margin-bottom:12px}
+.tabs button{min-height:44px;padding:0 18px;border-radius:10px;border:1px solid var(--border);background:transparent;
+ color:var(--fg);font:inherit;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--input-bg);color:var(--bright);border-color:var(--amber)}
+.list{list-style:none;margin:0;padding:0}
+.ev{display:grid;grid-template-columns:60px 1fr auto;gap:8px 12px;align-items:center;padding:10px 8px;
+ border-bottom:1px solid var(--border);min-height:44px}
+.ev.hl{border:1px solid var(--amber);border-radius:10px;background:var(--input-bg)}
+.ev.hl .t{color:var(--amber)}
+.ev[data-past="1"]{opacity:.55}
+.t{font-variant-numeric:tabular-nums;color:var(--bright);font-weight:600}
+.kind{font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.dots{color:var(--amber);letter-spacing:1px;font-size:11px}
+.name{color:var(--bright)}
+.vals{display:flex;gap:12px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.vals b{color:var(--fg);font-weight:600}
+.day{margin:14px 0 4px;font-size:13px;color:var(--muted);font-weight:600}
+.feat-name{font-size:18px;color:var(--bright);font-weight:600;margin-bottom:2px}
+.feat .vals{margin:10px 0}
+.why{margin:8px 0 0;line-height:1.6}
+.hd{padding:10px 0;border-bottom:1px solid var(--border)}
+.htext a{color:var(--bright);text-decoration:none}
+.htext a:hover{text-decoration:underline}
+.tk{display:inline-block;margin-left:4px;padding:0 6px;border-radius:6px;background:var(--input-bg);
+ color:var(--sky);font-size:11.5px}
+.empty{color:var(--muted);margin:6px 0}
+.foot{margin-top:16px;color:var(--muted);font-size:12px}
+[hidden]{display:none!important}
+@media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}.feat{order:-1}}
+@media (max-width:560px){.ev{grid-template-columns:60px 1fr}.vals{grid-column:2}.wrap{padding:12px}}
+"""
+
+_JS = """
+function newsTab(btn){
+  var tabs = document.querySelectorAll('.tabs button');
+  for(var i = 0; i < tabs.length; i++){
+    var on = tabs[i] === btn;
+    tabs[i].setAttribute('aria-selected', on ? 'true' : 'false');
+    document.getElementById(tabs[i].getAttribute('aria-controls')).hidden = !on;
+  }
+}
+"""
+
+
+def render_html(now: float | None = None) -> str:
+    now = time.time() if now is None else now
+    events, hl, heads, stamp = _load(now)
+    today = local_day(now)
+    hl_key = (hl["event_ts"], hl["event"], hl["type"]) if hl else None
+    today_html, week_html = _calendar(events, now, hl_key)
+    n_today = sum(1 for e in events if local_day(e["event_ts"]) == today)
+    updated = f"Veri {_hm(stamp)}'de güncellendi" if stamp else "Veri henüz kurulmadı"
+    return f"""<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Haberler</title><script>{THEME_JS}</script><style>{THEME_CSS}{_CSS}</style></head>
+<body><div class="wrap">
+<header class="top"><div><div class="eyebrow">ABD · Ekonomik takvim</div><h1>{_long_date(today)}</h1>
+<div class="muted">{_WEEKDAYS[today.weekday()]} · bugün {n_today} veri</div></div>
+<div class="muted">{updated}</div></header>
+<div class="grid">
+<section class="card"><div class="tabs" role="tablist">
+<button type="button" role="tab" aria-selected="true" aria-controls="news-today" onclick="newsTab(this)">Bugün</button>
+<button type="button" role="tab" aria-selected="false" aria-controls="news-week" onclick="newsTab(this)">Bu hafta</button>
+</div><div id="news-today" role="tabpanel">{today_html}</div>
+<div id="news-week" role="tabpanel" hidden>{week_html}</div></section>
+<div class="side">{_highlight(hl)}{_headlines(heads)}</div>
+</div>
+<p class="foot">Kaynak: Unusual Whales · Saatler Europe/Amsterdam · Önem: ●●● yüksek ●●○ orta ●○○ düşük</p>
+</div><script>{_JS}</script></body></html>"""
+
+
+def render(now: float | None = None) -> Path:
+    """Write the board file ``.cache/news_latest.html`` and return its path."""
+    return write_artifact(Path(OUTPUT_DIR) / FILENAME, render_html(now))

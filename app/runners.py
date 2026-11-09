@@ -149,6 +149,7 @@ def _no_events_text_days(days: list[date]) -> tuple[str, str]:
 
 EARNINGS_LATEST = OUTPUT_DIR / "earnings_radar_latest.html"
 LEAPS_LATEST = OUTPUT_DIR / "leaps_latest.html"
+NEWS_LATEST = OUTPUT_DIR / "news_latest.html"
 ROTATION_LATEST = OUTPUT_DIR / "sector_rotation_latest.html"
 MONEY_FLOW_LATEST = OUTPUT_DIR / "sector_rotation" / "sector_rotation_latest.json"
 ETF_HOLDINGS_CACHE = OUTPUT_DIR / "sector_rotation" / "etf_holdings.json"  # legacy path; store is raw.duckdb
@@ -1834,6 +1835,24 @@ def run_oipd(uw: UWClient, ticker: str | None = None, no_fetch: bool = False) ->
                    f"No expiry could be fitted for {payload.get('ticker')}.")
         raise JobMessage(msg)
     return path
+
+
+def run_news(uw=None) -> Path:
+    """The News board's Fetch: the incremental calendar build into ``boards/news.duckdb``, then the page.
+
+    Store-only for now: it reads ``raw.economic_calendar`` (the nightly sweep D37 writes it) and calls no provider.
+    """
+    from RevenueChaser.module_news import calendar, report
+    out = calendar.build(run_id=run_id())
+    ledger.add_note(f"News calendar: {out['read']} raw rows read, {out['upserted']} events upserted, "
+                    f"{out['retired']} retired, {out['highlights']} day highlights")
+    return report.render()
+
+
+def run_news_cached(uw=None) -> Path:
+    """Store-only News render (Refresh, first load): reads ``boards/news.duckdb``, writes nothing to the store."""
+    from RevenueChaser.module_news import report
+    return report.render()
 
 
 def run_oipd_cached(uw=None, ticker: str | None = None) -> Path:

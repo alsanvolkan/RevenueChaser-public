@@ -7,12 +7,14 @@ Plan 2026-11-09 §5 and the incremental rule (DECISIONS S16, migration plan §10
   previous value move forward.
 - An event the newest fetch no longer lists, inside the time span that fetch covers, is marked ``retired_at``; it is
   never deleted. A fetch with no rows (a failed or empty sweep) retires nothing.
-- The highlight of an Amsterdam day is its most important live event, the earliest on a tie.
+- The highlight of an Amsterdam day is its most important live event; on a tie a release beats a Fed speech, then
+  the earliest wins.
 
 No network: the nightly sweep D37 (and later the hourly News job) writes the raw rows.
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
@@ -105,7 +107,8 @@ def build(now: float | None = None, run_id: str | None = None) -> dict:
 
 
 def _highlights(days: set[date], now: float, run_id: str) -> int:
-    """Pick and store the highlight of each Amsterdam day in ``days`` that has live events. Returns the count."""
+    """Store the highlight of each Amsterdam day in ``days`` with live events: most important, a release before a Fed
+    speech, then earliest. Returns the count."""
     if not days:
         return 0
     lo = min(days)
@@ -119,7 +122,8 @@ def _highlights(days: set[date], now: float, run_id: str) -> int:
             by_day.setdefault(d, []).append(r)
     out = []
     for d, events in by_day.items():
-        top = min(events, key=lambda e: (-(e.get("importance") or 1), e["event_ts"]))
+        top = min(events, key=lambda e: (-(e.get("importance") or 1), str(e.get("type")).lower() == "fed-speaker",
+                                         e["event_ts"]))
         out.append({"session_date": d.isoformat(), "event_ts": top["event_ts"], "event": top["event"],
                     "type": top["type"], "importance": top.get("importance"), "forecast": top.get("forecast"),
                     "prev": top.get("prev"), "text": explain(top), "text_source": "template",
@@ -150,6 +154,21 @@ _MEANS = (
 )
 
 
+_NUM = re.compile(r"^(-?)(\d+(?:\.\d+)?)(%|[KMBT])?$")
+
+
+def tr_value(value) -> str | None:
+    """A served value in Turkish writing: ``3.9%`` -> ``%3,9``, ``1.25M`` -> ``1,25M``; anything else as served."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    m = _NUM.match(text)
+    if not m:
+        return text
+    sign, num, unit = m.group(1), m.group(2).replace(".", ","), m.group(3) or ""
+    return f"{sign}%{num}" if unit == "%" else f"{sign}{num}{unit}"
+
+
 def explain(event: dict) -> str:
     """Two short sentences: what the release measures, then its previous value and forecast when known."""
     words = econ_importance._words(event.get("event"))
@@ -159,7 +178,7 @@ def explain(event: dict) -> str:
         means = "Bir Fed yetkilisinin konuşması; faiz yoluna dair ipuçları için izlenir."
     if means is None:
         means = "ABD ekonomik takviminde bugünün öne çıkan verisi."
-    prev, fc = event.get("prev"), event.get("forecast")
+    prev, fc = tr_value(event.get("prev")), tr_value(event.get("forecast"))
     tail = []
     if prev:
         tail.append(f"Önceki değer {prev}")
