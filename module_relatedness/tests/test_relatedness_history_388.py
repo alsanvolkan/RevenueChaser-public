@@ -54,7 +54,7 @@ def test_a_fetch_records_the_scores_it_saved_and_the_payload(seeded):
     payload = engine.run(no_fetch=False, tickers=seeded, run_id="r1")
     (head,) = _headers()
     assert head["run_id"] == "r1" and head["error"] is None and head["quality_note"] is None
-    latest = rawstore.query("SELECT ticker, peer, score FROM relatedness_scores ORDER BY ticker, peer")
+    latest = rawstore.query("SELECT ticker, peer, score FROM relatedness_scores ORDER BY ticker, peer", db="relatedness")
     assert [{k: r[k] for k in ("ticker", "peer", "score")} for r in _rows("r1")] == latest and latest
     assert json.loads(head["row_counts"]) == {TABLE: len(latest)}
     stored = _unpack(head["payload"])

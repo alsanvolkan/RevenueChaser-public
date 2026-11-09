@@ -55,7 +55,7 @@ def _jaccard_etfs(theme_id: str) -> list[str]:
             "SELECT etf, rank FROM relatedness_theme_etfs "
             "WHERE theme_id = ? ORDER BY rank ASC, etf ASC",
             [theme_id],
-        )
+        db="relatedness")
     except Exception:  # noqa: BLE001
         return []
     out: list[str] = []
@@ -74,7 +74,7 @@ def _stored_coarse_labels(run_id: str) -> dict[str, str]:
     try:
         rows = rawstore.query(
             "SELECT theme_id, label FROM relatedness_themes "
-            "WHERE level = 'coarse' AND (theme_id = ? OR starts_with(theme_id, ?))", [run_id, f"{run_id}:"])
+            "WHERE level = 'coarse' AND (theme_id = ? OR starts_with(theme_id, ?))", [run_id, f"{run_id}:"], db="relatedness")
     except Exception:  # noqa: BLE001
         return {}
     return {r["theme_id"]: (r.get("label") or "").strip() for r in rows}

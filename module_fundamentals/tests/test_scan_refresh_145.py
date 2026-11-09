@@ -203,7 +203,7 @@ def test_refresh_leaves_the_stored_score_table_alone(seeded, yf_calls, mod, rend
     """Measured on main e83aa26: a Refresh replaced {OLD1, OLD2} with whatever the cache could score."""
     rawstore.replace_all(table, [{"ticker": "OLD1", "multiplier": 3}, {"ticker": "OLD2", "multiplier": 2}])
     mod.run_scan(no_fetch=True)
-    after = sorted(r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {table}"))
+    after = sorted(r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {table}", db=rawstore._db_of(table)))
     assert after == ["OLD1", "OLD2"]
 
 

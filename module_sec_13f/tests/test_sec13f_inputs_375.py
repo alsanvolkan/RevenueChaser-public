@@ -66,7 +66,7 @@ def test_pct_out_comes_from_a_uw_info_row(rawstore_tmp_db):
     inputs = enrich.load_inputs(TOTALS)
     assert inputs["AAA"]["shares_outstanding"] == 1000.0
     cells = _cells(report.board_payload(TOTALS, META, inputs), "AAA")
-    assert cells["pct_out"] == ["20.0%", pytest.approx(20.0), "zero"]      # 200 of 1,000 shares
+    assert cells["pct_out"] == ["20.0%", pytest.approx(20.0), "zero", "as of 2025 Q2"]      # 200 of 1,000 shares
 
 
 def test_uw_wins_over_yfinance_and_yfinance_fills_a_name_uw_lacks(rawstore_tmp_db):

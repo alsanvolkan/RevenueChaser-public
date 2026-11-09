@@ -72,12 +72,12 @@ def backfill_legacy() -> dict:
     rawstore.ensure_table("ticker_themes")
     src = rawstore.query(
         "SELECT ticker, themes FROM ticker_scores "
-        "WHERE themes IS NOT NULL AND themes <> ''")
+        "WHERE themes IS NOT NULL AND themes <> ''", db="asymmetric_growth")
     rows: list[dict] = []
     fetched_at = time.time()
     for r in src:
         rows.extend({**row, "fetched_at": fetched_at} for row in _rows_for(r["ticker"], r["themes"]))
-    with rawstore.transaction() as tx:
+    with rawstore.transaction(db="relatedness") as tx:
         tx.execute("DELETE FROM ticker_themes WHERE theme_run_id = ?", [LEGACY_RUN_ID])
         if rows:
             tx.write_rows("ticker_themes", rows)

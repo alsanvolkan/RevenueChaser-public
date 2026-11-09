@@ -81,6 +81,8 @@ def test_rename_legacy_then_reverse(old_rows):
     back = mig.reverse("news", source="raw")
     assert back == [{"table": _TABLE, "copied": 4}]
     assert _rows(old_rows, f"legacy_{_TABLE}") == [("a", "1"), ("b", "new"), ("c", "3"), ("d", "4")]
+    assert mig.restore_legacy("news", source="raw") == [_TABLE]
+    assert _rows(old_rows, _TABLE) == [("a", "1"), ("b", "new"), ("c", "3"), ("d", "4")]
 
 
 @pytest.mark.rawstore_schema_from_scratch

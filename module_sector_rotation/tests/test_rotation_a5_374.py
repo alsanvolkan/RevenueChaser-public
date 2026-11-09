@@ -94,7 +94,7 @@ def test_live_and_backfill_give_identical_rows_for_the_same_closes(world):
     live = _stored(date(2026, 10, 7))
     assert len(live) == 5 and {r["source"] for r in live} == {"live"}
 
-    with rawstore.connect() as conn:
+    with rawstore.connect(db="sector_rotation") as conn:
         conn.execute("DELETE FROM rotation_snapshots")
     written = store.backfill_weekly(_UW(), date(2026, 10, 5), date(2026, 10, 9))
     assert written == 1

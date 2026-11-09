@@ -164,7 +164,7 @@ def test_finalize_run_with_sector_coarse_materializes_sector_labels(rawstore_tmp
     run = _two_sector_run()
     themes.finalize_run(run, coarse="sector")
     rows = rawstore.query("SELECT ticker, theme FROM ticker_themes WHERE theme_run_id = ? AND level = 'coarse'",
-                          [run])
+                          [run], db="relatedness")
     coarse_of = {r["ticker"]: r["theme"] for r in rows}
     assert coarse_of["T2"] == "Technology" and coarse_of["B0"] == "Financial Services"
     assert coarse_of["U0"] == "Unclassified"

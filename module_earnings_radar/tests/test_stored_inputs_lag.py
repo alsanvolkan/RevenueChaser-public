@@ -36,16 +36,8 @@ def _calendar(session):
     return stored_inputs.calendar_items([DAY])[1]
 
 
-def _short(session):
-    rawstore.write_rows("short_interest", [{"ticker": "AAA", "session_date": session, "source": "yfinance",
-                                            "si_float": 0.1, "total_float": 1e6}])
-    return stored_inputs.short_rows(["AAA"])[1]
-
-
-
-
 # (reader, the spec's MAX_LAG) — written out, so a changed constant fails here rather than moving the boundary.
-READERS = {"earnings_calendar": (_calendar, 1), "short_interest": (_short, 3)}
+READERS = {"earnings_calendar": (_calendar, 1)}
 
 
 @pytest.mark.parametrize("table", sorted(READERS))
@@ -62,7 +54,9 @@ def test_a_session_one_past_max_lag_is_not_read(table):
 
 def test_the_lags_are_the_spec_values():
     """The boundaries above follow MAX_LAG; these are the values the spec and the model version name."""
-    assert stored_inputs.MAX_LAG == {"earnings_calendar": 1, "short_interest": 3}
+    assert stored_inputs.MAX_LAG == {"earnings_calendar": 1}
+    # The short interest left this module for FINRA's settlement series (#287): 35 calendar days, not sessions.
+    assert store_reads.MAX_AGE_DAYS["short_interest"] == 35
     # The 10-year yield left this module with the market store and the catalog owns its limit, so this value
     # follows ``macro.dgs10``. It was 4 from 30 Oct 2026: the live store measured an ordinary lag of 2 and 3 left
     # one session of room, so a single missed run read "not stored" with nothing wrong.
