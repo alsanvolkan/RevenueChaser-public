@@ -193,7 +193,9 @@ def _session_events(n, day=date(2026, 10, 8), when="AMC", source="UW"):
 
 
 def test_a_calendar_session_at_the_500_row_limit_is_partial_but_keeps_the_rows(store):
-    _record([_card("AAA")], events=_session_events(500))
+    # Name kept from before #259: the limit is now the client's paging cap (500 rows x CALENDAR_MAX_PAGES).
+    from RevenueChaser.module_earnings_radar.history import UW_CALENDAR_ROW_LIMIT
+    _record([_card("AAA")], events=_session_events(UW_CALENDAR_ROW_LIMIT))
     (head,) = _headers()
     assert head["quality"] == "partial" and "2026-10-08 AMC" in head["quality_note"] and len(_rows("r1")) == 1
 

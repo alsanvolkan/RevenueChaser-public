@@ -48,6 +48,10 @@ _RETRY_EXC = (httpx.TimeoutException, httpx.ConnectError)
 BREAKER_THRESHOLD = 5
 # Only this many failure records are kept for ``health()``; the count is exact.
 _MAX_FAILURE_RECORDS = 20
+# The earnings calendar (#259): rows asked per page, and the most pages read for one (day, session). Heavy days
+# measured ~160 rows (G2-14), so a second page is rare and the cap only stops a runaway read.
+CALENDAR_PAGE_LIMIT = 500
+CALENDAR_MAX_PAGES = 10
 
 # Patch points for tests (or pass ``sleep=`` to the client).
 _sleep = time.sleep
@@ -392,20 +396,18 @@ class UWClient:
         return self.calendar_day_result(d).data
 
     def calendar_day_result(self, d: date) -> ProviderResult:
-        """:meth:`calendar_day` with the outcome of its two requests: ``ok``, ``partial`` (one
-        session failed: ``data`` holds the other's events, ``error`` names the session) or
+        """:meth:`calendar_day` with the outcome of its two sessions: ``ok``, ``partial`` (a session
+        failed or lost a later page: ``data`` holds what was read, ``error`` names the session) or
         ``failed`` (both failed: ``data`` is empty)."""
         events = []
         first_error: Optional[dict] = None
         failed = 0
         for session in ("premarket", "afterhours"):
-            res = self.get_result(f"/earnings/{_seg(session)}", {"date": d.isoformat(), "limit": 500})
-            if res.status != "ok":
-                failed += 1
-                if first_error is None:
-                    first_error = {**(res.error or {}), "session": session}
-                continue
-            for item in _rows(res.data):
+            res = self.calendar_day_raw_result(d, session)
+            if res.status != "ok" and first_error is None:
+                first_error = {**(res.error or {}), "session": session}
+            failed += res.status == "failed"
+            for item in res.data:
                 events.append({
                     "ticker": item.get("symbol", item.get("ticker", "")),
                     "earnings_date": d,
@@ -415,7 +417,7 @@ class UWClient:
                     "industry": item.get("industry", ""),
                     "source": "UW",
                 })
-        if not failed:
+        if first_error is None:
             return ProviderResult("ok", events, None, "/earnings/{session}")
         return ProviderResult("failed" if failed == 2 else "partial", events, first_error,
                               "/earnings/{session}")
@@ -1029,8 +1031,29 @@ class UWClient:
         return self.calendar_day_raw_result(d, session).data
 
     def calendar_day_raw_result(self, d: date, session: str) -> ProviderResult:
-        """:meth:`calendar_day_raw` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/earnings/{_seg(session)}", {"date": d.isoformat(), "limit": 500}, _rows)
+        """:meth:`calendar_day_raw` with the paging outcome (#259): ``ok`` (every page answered), ``partial`` (a
+        later page failed: ``data`` holds the earlier pages, ``error`` names the page) or ``failed`` (the first page
+        failed: ``data`` is empty). A full page asks for the next one (UW pages from 0, so the first request sends
+        no ``page``); the read stops at a short page, a page repeating the last one, or ``CALENDAR_MAX_PAGES``."""
+        ep = f"/earnings/{_seg(session)}"
+        rows: list = []
+        last = None
+        for page in range(CALENDAR_MAX_PAGES):
+            params = {"date": d.isoformat(), "limit": CALENDAR_PAGE_LIMIT}
+            if page:
+                params["page"] = page
+            res = self.get_result(ep, params)
+            if res.status != "ok":
+                return ProviderResult("failed" if page == 0 else "partial", rows,
+                                      {**(res.error or {}), "page": page}, ep)
+            items = _list_rows(res.data)
+            if not items or items == last:
+                break
+            rows.extend(items)
+            if len(items) < CALENDAR_PAGE_LIMIT:
+                break
+            last = items
+        return ProviderResult("ok", rows, None, ep)
 
     def economic_calendar(self) -> list[dict]:
         return self.economic_calendar_result().data
