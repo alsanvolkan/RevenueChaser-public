@@ -120,6 +120,29 @@ SAME_ISSUER: dict[str, str] = {"GOOG": "GOOGL", "BRK-B": "BRK-A", "BRK.B": "BRK.
                                "FOX": "FOXA", "NWS": "NWSA"}
 
 
+def _key(name: str) -> str:
+    return normalize(name).replace(" ", "")
+
+
+def spine_names(rows) -> dict[str, str | None]:
+    """``{name key: ticker}`` of the spine's ``security`` rows; None for a name two issuers share (#400 WP5)."""
+    out: dict[str, str | None] = {}
+    for r in rows or []:
+        k, t = _key(r.get("name") or ""), str(r.get("ticker") or "").upper()
+        if len(k) < 3 or not t:
+            continue
+        if k in out and (out[k] is None or issuer(out[k]) != issuer(t)):
+            out[k] = None
+        else:
+            out.setdefault(k, t)
+    return out
+
+
+def resolve_name(name: str, names: dict | None) -> str | None:
+    """The ticker the spine gives ``name`` (an XBRL member's label: "Mc Kesson Corporation"), or None."""
+    return (names or {}).get(_key(name))
+
+
 def issuer(ticker: str) -> str:
     t = (ticker or "").upper()
     return SAME_ISSUER.get(t, t)

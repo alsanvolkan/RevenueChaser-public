@@ -272,17 +272,19 @@ def fetch_corpus(tickers: list[str] | None = None, no_fetch: bool = False,
             "kept": kept, **counts, "misses": missed, "no_fetch": False}
 
 
-def _xbrl_customer_edges(ticker: str, customers: list[dict]) -> list[dict]:
+def _xbrl_customer_edges(ticker: str, customers: list[dict], names: dict | None = None) -> list[dict]:
     """``customer`` edges from the annual report's inline XBRL (``customer_share`` rows of the filer, G6 build plan
     PR 20): a major customer the alias list names, with its share of revenue. An anonymised customer ("Customer A")
     names no company and gives none.
 
-    shortcut: only customers the hand-kept alias list knows become edges (as in the text); upgrade when the Value
-    Chain redo resolves a customer's name to a company of the universe.
+    A customer the hand-kept alias list does not know is named by the spine (``names``, ``aliases.spine_names``;
+    #400 WP5): VRTX's McKesson.
     """
     me, out = aliases.issuer(ticker), {}
     for c in customers:
         hits = [h for h in aliases.find_aliases(c.get("customer") or "") if not h["context_only"]]
+        if not hits and (spine := aliases.resolve_name(c.get("customer") or "", names)):
+            hits = [{"name": c.get("customer"), "ticker": spine}]
         if len(hits) != 1 or aliases.issuer(hits[0]["ticker"]) == me or hits[0]["ticker"] in out:
             continue
         pct = round(float(c["share"]) * 100, 2)
@@ -308,7 +310,14 @@ def _stored_customers(rows: list[dict]) -> dict[str, list[dict]]:
             if r.get("cik") and read._cik(r.get("cik")) in by_cik}
 
 
-def filing_edges(ticker: str, text: str, filed: str = "", customers: list[dict] | None = None) -> list[dict]:
+def _spine_names() -> dict:
+    """The spine's company names for the XBRL customers (only read when a filing has some, on the layer)."""
+    from RevenueChaser.rcdata import read
+    return aliases.spine_names(read.identity())
+
+
+def filing_edges(ticker: str, text: str, filed: str = "", customers: list[dict] | None = None,
+                 names: dict | None = None) -> list[dict]:
     """Edges one filing states: concentration sentences first, then keyword mentions.
 
     A concentration sentence ("Apple accounted for 29.8% of our net sales")
@@ -323,7 +332,7 @@ def filing_edges(ticker: str, text: str, filed: str = "", customers: list[dict] 
     """
     me = aliases.issuer(ticker)
     stated = [c for c in concentration.find(text, filed) if aliases.issuer(c["dst_ticker"]) != me]
-    for x in _xbrl_customer_edges(ticker, customers or []):
+    for x in _xbrl_customer_edges(ticker, customers or [], names):
         same = next((c for c in stated if c["dst_ticker"] == x["dst_ticker"] and c["relation"] == "customer"), None)
         if same is None:
             stated.append(x)
@@ -359,12 +368,13 @@ def build_edges(info: dict | None = None) -> list[dict]:
     whether the stored edges were kept because none came out (``kept``)."""
     rows = rawstore.get_all(_TABLE)
     customers = _stored_customers(rows)
+    names = _spine_names() if customers else {}
     edges: list[dict] = []
     for f in rows:
         text = "" if f.get("quality") == "missing" else (f.get("item_text") or "")
         if not text and f["ticker"] not in customers:
             continue
-        edges.extend(filing_edges(f["ticker"], text, f.get("filed") or "", customers.get(f["ticker"])))
+        edges.extend(filing_edges(f["ticker"], text, f.get("filed") or "", customers.get(f["ticker"]), names))
     rawstore.ensure_table("chain_mentions")
     if info is not None:
         info.update(filings=len(rows), kept=not edges)
