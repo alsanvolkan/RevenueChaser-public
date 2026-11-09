@@ -46,12 +46,6 @@ _LOG_MAX_BYTES = 256 * 1024
 _TAIL_LINES = 5
 _TAIL_WIDTH = 200
 _EXIT_RE = re.compile(r"^=== (\S+) exit (-?\d+)\s*$")
-# ``off-machine copy OK|FAILED <iso>: ...``: the line scripts/backup_store.py prints after its off-machine step.
-_OFFMACHINE_RE = re.compile(r"^off-machine copy (OK|FAILED) (\S+?)(?::\s|\s|$)")
-OFFMACHINE_STALE_HOURS = 48          # one missed night is tolerated, two are not
-# ``backup sizes <iso>: local <n> bytes[, off-machine <n> bytes]``: the last line of a backup run (#309); the
-# off-machine part is missing when no folder is set or no copy was recorded yet.
-_SIZES_RE = re.compile(r"^backup sizes (\S+?): local (\d+) bytes(?:, off-machine (\d+) bytes)?\s*$")
 # Exit code of a chained task whose predecessor's run of tonight did not exit 0 (failed, blocked, missing or overdue).
 CHAIN_BLOCKED = 5
 
@@ -102,7 +96,6 @@ class AutomationEntry:
     offpeak_gated: bool = False
     default_install: bool = False  # a marker only: nothing installs on its own
     settings: TaskSettings = field(default_factory=TaskSettings)
-    offmachine: bool = False       # the row also shows the age of the last off-machine copy (#275)
     days: tuple[str, ...] = ()     # weekly on these days (Task Scheduler names, e.g. "Saturday"); empty = daily
     after: str | None = None       # the nightly chain (#129): run only once this registry task's run of tonight exited 0
     chain_wait_minutes: int = 120  # how long a chained task waits for that run before it gives up
@@ -144,16 +137,11 @@ INPUTS_CAP_FLAGS = ("--max-uw-calls", "--max-fred-calls", "--max-yf-calls")
 # from ``ops.dataset_schedule`` whether anything is due (avo's rule: scheduled jobs run hourly). It writes only the
 # market store and records its own ``ops.job_runs2`` rows, so ``tables_written`` is empty: no old ``job_runs`` row.
 BUILDER_UNIT = "life-rc-builder"
-BUILDER_BACKUP_UNIT = "life-rc-builder-backup"
-BUILDER_BACKUP_HEAVY_UNIT = "life-rc-builder-backup-heavy"
+# The weekly backup (avo, 8 Nov 2026): one job, every step, onto the HDD, the newest 4 copies kept. Its unit pair is
+# installed from the home-server repository, not from the Settings page (one name, one timer).
+BACKUP_WEEKLY_UNIT = "life-rc-backup-weekly"
 
 REGISTRY: tuple[AutomationEntry, ...] = (
-    AutomationEntry(
-        name="RC-Store-Backup", label="Daily store backup",
-        args=("-m", "RevenueChaser.scripts.backup_store", "--keep", "5"), time="04:00",
-        description="Verified daily backup of the durable .store/ (raw, edgar, history, prices) and the SPX Gamma tree; keeps 5 daily raw and 5 daily history snapshots, the newest 12 weekly raw copies, and 2 daily prices snapshots. Every 7 days it re-reads the backup folder against the hashes taken at copy time.",
-        default_install=True,
-        settings=TaskSettings(wake_to_run=True, time_limit_hours=2), offmachine=True),
     AutomationEntry(
         name="RC-Relatedness-OffPeak", label="Relatedness (off-peak)",
         args=("-m", "RevenueChaser.module_relatedness", "--run", "--cap", "10"), time="12:30",
@@ -259,31 +247,20 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         # 2 h (avo 6 Nov 2026, #527): 166 runs since 20 Oct peaked at 107 min; at 50 min one was killed (2 Nov)
         settings=TaskSettings(restart_count=0, time_limit_minutes=120)),
     AutomationEntry(
-        name="RC-Build-Backup", label="Market-store backup (light)",
-        args=("-m", "RevenueChaser.rcdata", "backup",
-              "--only", "ops,market,spine,fundamentals,options,raw", "--subdir", "market"),
-        time="04:30", unit_name=BUILDER_BACKUP_UNIT,
-        description="Verified nightly backup of the small files of the market store: ops.sqlite through SQLite's "
-                    "online backup and the market, spine, fundamentals and options serving files, checked row by "
-                    "row against the source, into RAW_STORE_BACKUP_DIR/market/ (the newest 5 kept), then the "
-                    "35-day raw copy. prices and ownership are the weekly RC-Build-Backup-Heavy run's: the 04:30 "
-                    "run of 5 Nov 2026 hit this 30-minute limit. Measured afterwards, the cost was the ops step "
-                    "(8m44s for 5.8 MB, against 1m26s for the 3.5 GB of prices and ownership); the likely cause, "
-                    "not reproduced, is SQLite building its copy page by page on the backup disk, so it is built "
-                    "on local storage since. "
+        name="RC-Backup-Weekly", label="Weekly backup",
+        args=("-m", "RevenueChaser.rcdata", "backup"),
+        time="03:30", days=("Sunday",), unit_name=BACKUP_WEEKLY_UNIT,
+        description="The one backup job (avo, 8 Nov 2026): every Sunday 03:30 it copies, verifies and keeps the "
+                    "newest 4 of every file under RAW_STORE_BACKUP_DIR/weekly-v2/<step>/ on the HDD. The steps: "
+                    "the DuckDB files the builder writes from Parquet (market, spine, ownership, prices, "
+                    "fundamentals, options), the board-result DuckDBs (raw, edgar, history, prices and every "
+                    "boards/<board>.duckdb, each CHECKPOINTed first), the needed ops tables (watch lists, "
+                    "schedule, switches, automation rows, run records), the Unusual Whales raw files and the SPX "
+                    "Gamma tree (one folder per week, unchanged files hard-linked), and edgar_docs as one verified "
+                    "zip. Raw downloads and Parquet are not copied: they are fetched again. Nothing leaves the "
+                    "machine. A step that fails is logged and the others still run. Before a deploy, "
+                    "`rcdata backup --only <kind>` takes a copy by hand that is kept apart from the weekly ones. "
                     "Writes no table.",
-        settings=TaskSettings(restart_count=0, time_limit_minutes=30)),
-    AutomationEntry(
-        name="RC-Build-Backup-Heavy", label="Market-store backup (heavy, weekly)",
-        args=("-m", "RevenueChaser.rcdata", "backup", "--only", "prices,ownership", "--subdir", "market-heavy"),
-        time="03:30", days=("Sunday",), unit_name=BUILDER_BACKUP_HEAVY_UNIT,
-        description="Verified weekly backup of the two large serving files, prices (2.9 GB) and ownership (661 MB), "
-                    "into RAW_STORE_BACKUP_DIR/market-heavy/ (its own manifest, its own 5 newest per kind, every "
-                    "copy with its sha256). Sunday 03:30 keeps it clear of the nightly light run at 04:30. Run the "
-                    "same command by hand before a deploy that touches either file. This row's unit is installed "
-                    "from the home-server repository, not from this page: installing it here too would give one "
-                    "name a user timer and a system unit, both firing at 03:30 into the same folder. Writes no "
-                    "table.",
         settings=TaskSettings(restart_count=0, time_limit_minutes=60)),
     AutomationEntry(
         name="RC-SPX-Gamma-Fetch", label="SPX Gamma Fetch (nightly)",
@@ -633,7 +610,7 @@ _SHOW_SERVICE = ("ActiveState", "Result", "ExecMainStatus", "ExecMainStartTimest
 # them, so a job systemd starts reads and writes the store and logs the panel reads; without them it would fall back
 # to the checkout's own .store/.cache (``config._root``). The others are passed only when set.
 UNIT_ENVIRONMENT = ("RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR", "SPX_GAMMA_DATA_ROOT", "RAW_STORE_BACKUP_DIR",
-                    "RAW_STORE_BACKUP_WEEKLY", "RAW_STORE_BACKUP_MIRROR", "TZ")
+                    "TZ")
 
 
 def _unit_environment() -> list[tuple[str, str]]:
@@ -965,88 +942,6 @@ def last_success(path: Path) -> str | None:
     return best
 
 
-def last_offmachine(path: Path) -> tuple[str | None, str | None, bool | None]:
-    """``(iso of the last OK copy, iso of the newest attempt, whether that attempt succeeded)`` from the backup log."""
-    last_ok = newest = newest_ok = None
-    for ln in _read_tail(path, 64 * 1024).splitlines():
-        m = _OFFMACHINE_RE.match(ln)
-        if m:
-            newest, newest_ok = m.group(2), m.group(1) == "OK"
-            if newest_ok:
-                last_ok = newest
-    return last_ok, newest, newest_ok
-
-
-def _hours_since(iso: str, now: datetime) -> float:
-    try:
-        t = datetime.fromisoformat(iso)
-    except ValueError:
-        return float("inf")
-    if t.tzinfo is None:
-        t = t.replace(tzinfo=timezone.utc)
-    return (now - t).total_seconds() / 3600
-
-
-def offmachine_state(e: AutomationEntry, now: datetime) -> dict | None:
-    """The off-machine line of a row: ``{configured, kind: ok|red, text}``; None for rows that have none.
-
-    Red when no folder is set (no copy leaves the machine), when no copy was made yet, when the newest attempt
-    failed, or when the last good copy is older than ``OFFMACHINE_STALE_HOURS``.
-    """
-    if not e.offmachine:
-        return None
-    if not str(config.RAW_STORE_BACKUP_MIRROR).strip():
-        return {"configured": False, "kind": "red",
-                "text": "not set: RAW_STORE_BACKUP_MIRROR is empty, so no copy leaves this machine"}
-    last_ok, newest, newest_ok = last_offmachine(e.log_path)
-    if newest_ok is None:
-        return {"configured": True, "kind": "red", "text": "no copy yet"}
-    if newest_ok is False:
-        tail = f"last OK {_age(last_ok, now)}" if last_ok else "no copy has succeeded yet"
-        return {"configured": True, "kind": "red", "text": f"FAILED {_age(newest, now)}; {tail}"}
-    if _hours_since(last_ok, now) >= OFFMACHINE_STALE_HOURS:
-        return {"configured": True, "kind": "red",
-                "text": f"last OK {_age(last_ok, now)}, older than {OFFMACHINE_STALE_HOURS} h"}
-    return {"configured": True, "kind": "ok", "text": f"OK, {_age(last_ok, now)}"}
-
-
-def last_backup_sizes(path: Path) -> tuple[str, int, int | None] | None:
-    """``(iso, local bytes, off-machine bytes or None)`` of the newest sizes line, or None."""
-    found = None
-    for ln in _read_tail(path, 64 * 1024).splitlines():
-        m = _SIZES_RE.match(ln)
-        if m:
-            found = (m.group(1), int(m.group(2)), int(m.group(3)) if m.group(3) else None)
-    return found
-
-
-def size_part(label: str, nbytes: int, limit_gb: float, env: str) -> tuple[str, bool]:
-    """``("<label> 12.78 GB", False)``, or with ``, above <limit> GB (<env>)`` and True when ABOVE the limit."""
-    gb = nbytes / 1e9
-    if gb > limit_gb:
-        return f"{label} {gb:.2f} GB, above {limit_gb:g} GB ({env})", True
-    return f"{label} {gb:.2f} GB", False
-
-
-def backup_size_state(e: AutomationEntry, now: datetime) -> dict | None:
-    """The size line of the backup row (#309 part 3): ``{kind: ok|warn|none, text}``; None for other rows.
-
-    Read from the job's own log line, so the page never walks either folder. ``warn`` when a folder is above its
-    threshold (``RAW_STORE_BACKUP_WARN_GB`` local, ``RAW_STORE_BACKUP_MIRROR_WARN_GB`` off-machine)."""
-    if not e.offmachine:
-        return None
-    found = last_backup_sizes(e.log_path)
-    if found is None:
-        return {"kind": "none", "text": "not measured yet: the next backup run logs it"}
-    iso, local, off = found
-    text, warn = size_part("local", local, config.RAW_STORE_BACKUP_WARN_GB, "RAW_STORE_BACKUP_WARN_GB")
-    if off is not None:
-        part, off_warn = size_part("off-machine", off, config.RAW_STORE_BACKUP_MIRROR_WARN_GB,
-                                   "RAW_STORE_BACKUP_MIRROR_WARN_GB")
-        text, warn = f"{text}, {part}", warn or off_warn
-    return {"kind": "warn" if warn else "ok", "text": f"{text} ({_age(iso, now)})"}
-
-
 def _age(iso: str | None, now: datetime) -> str:
     if not iso:
         return "never"
@@ -1067,8 +962,6 @@ def _age(iso: str | None, now: datetime) -> str:
 def live_row(e: AutomationEntry, sched: Scheduler, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     row = static_row(e)
-    row["offmachine"] = offmachine_state(e, now)
-    row["backup_size"] = backup_size_state(e, now)
     try:
         st = sched.status(e.name) if sched.available else None
     except AutomationError as exc:
@@ -1234,7 +1127,7 @@ def _record_run(row: dict) -> None:
 
 #: The registry rows the board's backup switch stops (#527); the fetch switch stops every other row but these and
 #: ``SWITCH_EXEMPT``.
-BACKUP_TASKS = frozenset({"RC-Store-Backup", "RC-Build-Backup", "RC-Build-Backup-Heavy"})
+BACKUP_TASKS = frozenset({"RC-Backup-Weekly"})
 #: A status read, not a fetch: the top bar's IBKR state comes from it, so it runs whatever the switches say.
 SWITCH_EXEMPT = frozenset({"RC-IBKR-Login-Check"})
 

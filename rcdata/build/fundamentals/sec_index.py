@@ -9,7 +9,8 @@ Raw: ``raw/sec/daily_index/<date>.idx.gz`` with a ``.meta.json`` sidecar, shared
 first to need a day fetches it; a raw file that exists is not fetched again). A day before yesterday the archive holds
 no index for writes ``<date>.absent.json`` (no index will come), so it is not asked again, but **only when a federal
 holiday explains it**: the same answer comes from a path or bucket refusing everything, and a stretch of
-``base.MISSING_RUN`` open weekdays with no index stops the run with nothing written off (``base.MissingStreak``).
+``base.MISSING_RUN`` open weekdays with no index stops the run with nothing written off (``base.MissingStreak``),
+unless the archive still hands over the newest index kept (``kept_answers``, #507), when the scan goes on.
 The answer for yesterday or today writes nothing (the index may not be published yet). Weekends are never asked.
 
 **The scan window.** A run reads the last ``LOOKBACK_DAYS`` days, or further back when it has to: a dataset that
@@ -111,6 +112,20 @@ def fetch_day(ctx: base.RunContext, day: date, as_of: date,
     return base.write_raw(raw, r.content)
 
 
+def kept_answers(ctx: base.RunContext) -> bool:
+    """Whether the archive hands over the newest index this store already keeps: the probe a stretch of open
+    weekdays with no index asks before it stops the scan (``base.MissingStreak``, #507). No kept index: False."""
+    # ``????-??-??``: the ownership walk keeps its own ``master.<YYYYMMDD>.idx.gz`` in the same folder, which sorts last
+    kept = sorted(common.raw_dir(DATASET_DIR).glob("????-??-??.idx.gz"))
+    if not kept:
+        return False
+    try:
+        day = date.fromisoformat(kept[-1].name[:10])
+    except ValueError:
+        return False
+    return common.sec_get(ctx, url(day), missing_object=True) is not None
+
+
 def parse(text: str) -> list[dict]:
     """``[{cik, company, form, filed, accession}]`` of one index file (the header lines are skipped)."""
     out = []
@@ -133,7 +148,7 @@ def filings(ctx: base.RunContext, as_of: date, forms: set[str] | None = None,
             ciks: set[str] | None = None, lookback: int = LOOKBACK_DAYS) -> list[dict]:
     """The filings of the last ``lookback`` days (indexes fetched as needed), kept to ``forms`` and ``ciks``."""
     out = []
-    streak = base.MissingStreak("daily index")
+    streak = base.MissingStreak("daily index", probe=lambda: kept_answers(ctx))
     for day in days(as_of, lookback):
         raw = fetch_day(ctx, day, as_of, streak)
         if raw is None:

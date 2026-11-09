@@ -9,7 +9,7 @@ import re
 
 from RevenueChaser.module_settings import control_render, needs_tab, report
 from RevenueChaser.module_settings.tests.test_needs_tab import _model, _summary
-from RevenueChaser.module_settings.tests.test_report import _BACKUPS, _panel, _payload
+from RevenueChaser.module_settings.tests.test_report import _panel, _payload
 
 
 def _heads(html: str) -> list[tuple[str, str]]:
@@ -57,7 +57,7 @@ def test_the_catalogs_short_columns_never_wrap_and_read_by_wraps():
 
 def test_the_data_page_has_one_what_am_i_looking_at():
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
-    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS))
+    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd()))
     data = _panel(html, "panel-data")
     assert data.count("What am I looking at?") == 1
     assert 'aria-controls="wial"' not in data
@@ -67,7 +67,7 @@ def test_the_data_page_has_one_what_am_i_looking_at():
 def test_the_top_bar_heads_the_data_tab_and_carries_the_gateway_login_link():
     """#527 B4 took the Health tab's copy away (it is live in Grafana now); the Data tab keeps the one top bar."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
-    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS,
+    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
     part = _panel(html, "panel-data")
     assert part.count('class="topbar"') == 1
@@ -78,10 +78,10 @@ def test_the_top_bar_heads_the_data_tab_and_carries_the_gateway_login_link():
 
 def test_the_health_tab_puts_what_needs_avo_first_and_folds_the_reference_parts():
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
-    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS,
+    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
-    order = ["<h1>Data/Health · Health</h1>", 'id="health-live-link"', 'id="backups"',
+    order = ["<h1>Data/Health · Health</h1>", 'id="health-live-link"',
              'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order

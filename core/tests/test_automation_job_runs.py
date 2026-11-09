@@ -123,7 +123,7 @@ def test_an_entry_that_writes_no_table_records_no_row(monkeypatch, rawstore_tmp_
 
 
 def test_the_shipped_backup_records_no_row():
-    assert A.entry("RC-Store-Backup").tables_written == ()
+    assert A.entry("RC-Backup-Weekly").tables_written == ()
 
 
 def test_a_store_that_cannot_be_written_never_changes_the_outcome(monkeypatch, rawstore_tmp_db):

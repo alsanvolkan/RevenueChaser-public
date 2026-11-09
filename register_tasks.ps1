@@ -1,4 +1,4 @@
-# Install the daily store backup (RC-Store-Backup, 04:00 local) in Windows Task Scheduler.
+# Install the weekly backup (RC-Backup-Weekly, Sunday 03:30 local) in Windows Task Scheduler.
 #
 # Thin caller: the registry, the task settings (runs on battery, wakes the PC, catches up a
 # missed run) and the installer live in core/automations.py. The Settings board's
@@ -23,6 +23,6 @@ if (-not (Test-Path $Python)) { $Python = "python" }
 
 $Action = if ($Remove) { "remove" } else { "install" }
 Push-Location $Root
-try { & $Python -m RevenueChaser.core.automations $Action RC-Store-Backup; $rc = $LASTEXITCODE }
+try { & $Python -m RevenueChaser.core.automations $Action RC-Backup-Weekly; $rc = $LASTEXITCODE }
 finally { Pop-Location }
 exit $rc

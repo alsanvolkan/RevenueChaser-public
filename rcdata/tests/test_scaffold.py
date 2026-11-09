@@ -100,7 +100,7 @@ def test_a_read_of_an_empty_file_is_no_rows_never_an_error():
 def backup_taken(monkeypatch):
     """The verified backup, stubbed: a test has no backup folder, and what is under test here is the scaffold."""
     from RevenueChaser.rcdata import backup
-    monkeypatch.setattr(backup, "run_backup", lambda: {"ops.sqlite": "copied"})
+    monkeypatch.setattr(backup, "run_backup", lambda only=None: {"ops": "copied"})
     return backup
 
 

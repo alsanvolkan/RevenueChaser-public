@@ -72,8 +72,8 @@ BUILDER_SILENT_MINUTES = 70
 CAP_WARN, CAP_BAD = 0.5, 0.7
 #: #527 (avo 6 Nov 2026): a provider is a card on the Health strip from this share of its day cap.
 CAP_ALERT = 0.8
-#: A backup older than this many days is a card.
-BACKUP_ALERT_DAYS = 1
+#: A backup older than this many days is a card: two missed Sundays of the weekly job (``newdata.BACKUP_ALERT_DAYS``).
+BACKUP_ALERT_DAYS = 15
 #: At most this many stale dataset names on the stale card; the rest read "and N more".
 STALE_NAMES = 6
 CADENCE_DAYS = {"daily": 1, "weekly": 7, "monthly": 31, "quarterly": 92}

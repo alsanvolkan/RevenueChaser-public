@@ -220,10 +220,8 @@ def market_roots(tmp_path_factory, monkeypatch):
     ssd, hdd = root / "market", root / "market_raw"
     monkeypatch.setattr(config, "MARKET_DIR", ssd)
     monkeypatch.setattr(config, "MARKET_RAW_DIR", hdd)
-    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", None)
     monkeypatch.setenv("RC_MARKET_DIR", str(ssd))
     monkeypatch.setenv("RC_MARKET_RAW_DIR", str(hdd))
-    monkeypatch.setenv("RC_MARKET_RAW_COPY_DIR", "")
     monkeypatch.setattr(ops, "read_log", ops.ReadLog(process="test"))
     return ssd, hdd
 

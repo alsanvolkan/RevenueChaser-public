@@ -684,7 +684,7 @@ def _behind_the_click(html: str) -> str:
 
 
 def _live_row(**fields) -> dict:
-    """The Daily store backup row as the poll returns it: installed, last run ok, next run known."""
+    """The first registry row as the poll returns it: installed, last run ok, next run known."""
     row = dict(_autos()[0], state="enabled", result_kind="ok", result_text="ok",
                last_run="2026-10-23T04:00:05", next_run="2026-10-24T04:00:00",
                missed_runs=0, last_success_age="8 h ago", log_tail=[])
@@ -694,8 +694,9 @@ def _live_row(**fields) -> dict:
 
 def test_the_automation_line_carries_its_name_schedule_state_result_and_next_run():
     line = _one_line(_render_rows([_live_row()]))
-    assert "Daily store backup" in line and "RC-Store-Backup" in line
-    assert "daily 04:00 (local)" in line
+    first = _autos()[0]
+    assert first["label"] in line and first["name"] in line
+    assert first["schedule"] in line
     assert "Enabled" in line
     assert "last result: ok" in line
     assert "next run: 2026-10-24 04:00" in line
@@ -734,10 +735,11 @@ def test_the_line_shows_the_schedule_time_and_the_chain_condition_waits_behind_t
 def test_the_expanded_part_keeps_the_description_command_and_run_conditions_word_for_word():
     auto = _autos()[0]
     opened = _behind_the_click(_render_rows([_live_row()]))
-    assert auto["description"] in opened
-    assert auto["command"] in opened
-    assert auto["settings"] in opened
-    assert auto["schedule"] in opened
+    esc_js = lambda t: str(t).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#39;")  # noqa: E731
+    assert esc_js(auto["description"]) in opened
+    assert esc_js(auto["command"]) in opened
+    assert esc_js(auto["settings"]) in opened
+    assert esc_js(auto["schedule"]) in opened
     assert "What it does" in opened and "Command" in opened and "Run conditions" in opened
 
 
@@ -757,18 +759,6 @@ def test_the_buttons_are_behind_the_click():
     html = _render_rows([_live_row()])
     assert "data-act" not in _one_line(html)
     assert 'data-act="run"' in _behind_the_click(html)
-
-
-def test_the_daily_store_backup_keeps_its_off_machine_line_and_sizes_in_the_expanded_part():
-    row = _live_row(offmachine={"configured": True, "kind": "ok", "text": "OK, 8 h ago"},
-                    backup_size={"kind": "warn",
-                                 "text": "local 21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)"})
-    html = _render_rows([row])
-    opened = _behind_the_click(html)
-    assert "off-machine copy: OK, 8 h ago" in opened
-    assert "backup size: local 21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)" in opened
-    line = _one_line(html)
-    assert "off-machine copy" not in line and "backup size" not in line
 
 
 def test_the_expanded_part_keeps_the_store_tables_the_log_and_its_tail():
@@ -824,13 +814,13 @@ def _auto_poll(open_ids: list, focused_id: str | None) -> dict:
 
 def test_a_row_the_reader_opened_stays_open_across_a_poll():
     """The panel re-renders on every poll while a task runs; the row being watched must not snap shut."""
-    seen = _auto_poll(open_ids=["auto-RC-Store-Backup"], focused_id=None)
+    seen = _auto_poll(open_ids=["auto-RC-Daily-Bars"], focused_id=None)
     assert seen["rendered"] > 0 and seen["open"] == [True]
 
 
 def test_the_focused_automation_keeps_focus_across_a_poll():
     """A keyboard reader inside an opened row must not be dropped back to the page by the 5 s poll."""
-    seen = _auto_poll(open_ids=["auto-RC-Store-Backup"], focused_id="auto-RC-Store-Backup")
+    seen = _auto_poll(open_ids=["auto-RC-Daily-Bars"], focused_id="auto-RC-Daily-Bars")
     assert seen["open"] == [True] and seen["focused"] is True
 
 
@@ -956,229 +946,6 @@ def test_the_drill_shows_a_dash_for_a_missing_industry_and_escapes_a_hostile_one
 
 def test_panel_posts_send_the_panel_header():
     assert "'X-RC-Panel': 'automations'" in report.AUTOMATIONS_JS
-
-
-def test_renderer_shows_the_off_machine_line_with_a_fixed_class():
-    row = dict(_autos()[0], state="enabled",
-               offmachine={"configured": True, "kind": "red", "text": "FAILED 8 h ago; last OK 1 d ago"})
-    html = _render_rows([row])
-    assert "off-machine copy: FAILED 8 h ago; last OK 1 d ago" in html
-    assert 'class="auto-desc st-bad"' in html
-    ok = _render_rows([dict(row, offmachine={"configured": True, "kind": "ok", "text": "OK, 8 h ago"})])
-    assert 'class="auto-desc st-ok"' in ok and "st-bad" not in ok.split("off-machine copy:")[1].split("</div>")[0]
-
-
-def test_renderer_shows_no_off_machine_line_for_rows_that_have_none():
-    html = _render_rows([dict(_autos()[0], state="enabled", offmachine=None)])
-    assert "off-machine" not in html
-    assert "off-machine" not in _render_rows(_autos())          # embedded rows before the first poll
-
-
-def test_renderer_escapes_the_off_machine_text_and_never_takes_a_class_from_it():
-    bad = "<img src=x onerror=__x(1)>"
-    row = dict(_autos()[0], state="enabled", offmachine={"configured": True, "kind": bad, "text": bad})
-    html = _render_rows([row])
-    assert "<img" not in html and "&lt;img" in html
-    assert 'class="auto-desc "' in html or 'class="auto-desc"' in html
-
-
-def _size_div(html: str) -> str:
-    return html.split("backup size:")[0].rsplit("<div", 1)[1] + "backup size:" + \
-        html.split("backup size:")[1].split("</div>")[0]
-
-
-def test_renderer_shows_the_backup_size_line_and_warns_with_a_fixed_class():
-    """#309 part 3: both folder sizes on the backup row; amber above a threshold."""
-    row = dict(_autos()[0], state="enabled",
-               backup_size={"kind": "warn", "text": "local 21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)"})
-    html = _render_rows([row])
-    assert "backup size: local 21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)" in html
-    assert 'class="auto-desc st-warn"' in _size_div(html)
-    ok = _render_rows([dict(row, backup_size={"kind": "ok", "text": "local 1.00 GB, off-machine 2.00 GB"})])
-    assert 'class="auto-desc st-ok"' in _size_div(ok)
-    none = _render_rows([dict(row, backup_size={"kind": "none", "text": "not measured yet"})])
-    assert "st-" not in _size_div(none)
-
-
-def test_renderer_shows_no_size_line_for_rows_that_have_none():
-    assert "backup size" not in _render_rows([dict(_autos()[0], state="enabled", backup_size=None)])
-    assert "backup size" not in _render_rows(_autos())
-
-
-def test_renderer_escapes_the_size_text_and_never_takes_a_class_from_it():
-    bad = "<img src=x onerror=__x(1)>"
-    html = _render_rows([dict(_autos()[0], state="enabled", backup_size={"kind": bad, "text": bad})])
-    assert "<img" not in html and "&lt;img" in html
-
-
-_BACKUPS = {
-    "folder": "/b", "recorded_at": "2026-10-16T04:05:00+00:00",
-    "local": {"state": "warn", "bytes": 21_500_000_000, "files": 3382, "duckdb_bytes": 9_589_997_568,
-              "duckdb_files": 21, "docs_zip_bytes": 2_668_865_089, "docs_zip_files": 2, "limit_gb": 20.0,
-              "text": "21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)"},
-    "offmachine": {"state": "ok", "bytes": 7_676_019_838, "files": 3375, "limit_gb": 320.0, "text": "7.68 GB"},
-    "checkpoints": {"state": "unknown", "text": "unknown, not recorded: the backup job does not write that folder"},
-    "scan": {"state": "bad", "last_day": "2026-10-16", "failed": 2, "checked": 3382, "next_due": "2026-10-17",
-             "text": "2 files do not match"},
-}
-
-
-def _backups_card(b) -> str:
-    html = report.render_settings_dashboard(dict(_payload(), backups=b))
-    return html[html.index('id="backups"'):].split("</section>")[0] if 'id="backups"' in html else ""
-
-
-def _tile(card: str, ident: str) -> str:
-    """One tile of the Backups card, from its id up to the next tile or the key/value list under the tiles."""
-    part = card[card.index(f'id="{ident}"'):]
-    return part.split('<div class="btile"')[0].split('<dl')[0]
-
-
-def test_the_backups_card_shows_every_fact_with_its_id():
-    """#309: sizes, file counts, the .duckdb / docs zip split, checkpoints, the last scan and when it was recorded."""
-    card = _backups_card(_BACKUPS)
-    loc = _tile(card, "backup-local")
-    assert "21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)" in loc and "3,382" in loc
-    assert "9.59 GB in 21 .duckdb" in loc and "2.67 GB in 2 edgar_docs zips" in loc
-    assert 'class="st-warn"' in loc
-    off = _tile(card, "backup-offmachine")
-    assert "7.68 GB" in off and "3,375" in off and "320 GB" in off and 'class="st-ok"' in off
-    cp = _tile(card, "backup-checkpoints")
-    assert "unknown" in cp and "not recorded" in cp
-    scan = _tile(card, "backup-scan")
-    assert "2026-10-16" in scan and "2 files do not match" in scan and "2026-10-17" in scan and 'class="st-bad"' in scan
-    assert 'id="backup-recorded"' in card and "2026-10-16" in card[card.index('id="backup-recorded"'):]
-
-
-def test_the_compact_backups_card_keeps_every_fact_of_the_old_card():
-    """#492 (i): four tiles in a row and one key/value list under them; the facts are the old card's, all of them."""
-    import re
-    card = _backups_card(dict(_BACKUPS, offmachine_path="G:/drive", expired={"state": "ok", "count": 4,
-                                                                            "bytes": 2_000_000_000}))
-    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", card))
-    for fact in ("21.50 GB, above 20 GB (RAW_STORE_BACKUP_WARN_GB)", "3,382", "9.59 GB in 21 .duckdb files",
-                 "2.67 GB in 2 edgar_docs zips", "warns above 20 GB", "7.68 GB", "3,375", "warns above 320 GB",
-                 "what the job wrote and kept there (its manifest)",
-                 "unknown, not recorded: the backup job does not write that folder", "2 files do not match",
-                 "last checked 2026-10-16", "next due 2026-10-17", "3,382 files re-read against their hashes",
-                 "/b", "G:/drive", "keeps 5 daily raw", "The retention rule marks 4 files as expired, 2.00 GB in total",
-                 "nothing has been deleted", "Delete expired backups", "Disabled: this page only lists",
-                 "Sizes recorded 2026-10-16 04:05:00 UTC", "the off-machine (Drive) copy is never read",
-                 "every 7 days by default", "Nothing on this page deletes or moves a backup file"):
-        assert fact in text, fact
-    tiles = card[card.index('class="btiles"'):card.index("<dl")]
-    assert [m for m in re.findall(r'class="btile" id="([^"]+)"', tiles)] == [
-        "backup-local", "backup-offmachine", "backup-checkpoints", "backup-scan"]
-    kv = card[card.index("<dl"):card.index("</dl>")]
-    for ident in ("backup-folder", "backup-retention", "backup-expired", "backup-delete-expired", "backup-recorded"):
-        assert f'id="{ident}"' in kv, ident
-    assert kv.index("backup-folder") < kv.index("backup-retention") < kv.index("backup-expired") \
-        < kv.index("backup-delete-expired") < kv.index("backup-recorded")
-    assert card.index("</dl>") < card.index('id="backups-note"'), "the explanation is one small line at the bottom"
-    assert "<table" not in card
-    assert re.search(r"\.btiles\{[^}]*grid-template-columns:repeat\(4", report.CSS)
-    assert re.search(r"@media\(max-width:760px\)\{[^}]*\.btiles\{grid-template-columns:1fr", report.CSS)
-
-
-def test_the_backups_card_shows_unknown_for_missing_records():
-    unknown = {"folder": "/b", "recorded_at": None,
-               "local": {"state": "unknown", "bytes": None, "text": "unknown: no backup run has recorded sizes yet"},
-               "offmachine": {"state": "unknown", "bytes": None, "text": "unknown"},
-               "checkpoints": {"state": "unknown", "text": "not recorded"},
-               "scan": {"state": "unknown", "last_day": None, "next_due": None, "text": "unknown: no scan yet"}}
-    card = _backups_card(unknown)
-    assert "unknown: no backup run has recorded sizes yet" in card and "unknown: no scan yet" in card
-    assert "st-ok" not in card and "never" in card[card.index('id="backup-recorded"'):]
-
-
-def test_no_backups_card_without_the_key():
-    assert _backups_card(None) == ""
-
-
-def test_the_backups_card_escapes_its_text_and_never_takes_a_class_from_it():
-    bad = "<img src=x onerror=__x(1)>"
-    b = dict(_BACKUPS, folder=bad, local=dict(_BACKUPS["local"], state=bad, text=bad))
-    card = _backups_card(b)
-    assert "<img" not in card and "&lt;img" in card
-
-
-# ── G8 of the GUI brief (#124): where the backups are, what is kept, the last self-check ──────────
-def _backup_line(card: str, ident: str) -> str:
-    """One line of the Backups card, from its id to the end of its element."""
-    import re
-    return re.split(r"</div>|</dd>|</span>|</p>", card[card.index(f'id="{ident}"'):])[0]
-
-
-def test_the_backups_card_shows_the_local_folder_path_in_full_and_in_monospace():
-    """avo 2026-10-23: "show where the backups are" — the whole path, not a shortened one."""
-    long_path = "D:/RevenueChaser backups/raw-store/2026-10-16-with-a-deliberately-long-folder-name"
-    card = _backups_card(dict(_BACKUPS, folder=long_path))
-    assert f'<code class="bpath" id="backup-folder">{long_path}</code>' in card
-    assert "font-family:ui-monospace" in report.CSS[report.CSS.index(".bpath"):].split("}")[0]
-
-
-def test_the_backups_card_says_unknown_in_words_when_the_record_carries_no_folder():
-    card = _backups_card(dict(_BACKUPS, folder=None))
-    assert 'id="backup-folder">unknown</code>' in card
-
-
-def test_the_backups_card_shows_the_offmachine_copy_location_the_record_names():
-    """The location is the job's own record of where it copies; the card never opens that folder."""
-    where = "G:/my-drive/revenuechaser-backups"
-    card = _backups_card(dict(_BACKUPS, offmachine_path=where))
-    assert f'<code class="bpath" id="backup-offmachine-path">{where}</code>' in card
-    assert 'id="backup-offmachine-path">unknown' in _backups_card(_BACKUPS)   # _BACKUPS carries no location
-
-
-def test_the_retention_rule_is_read_from_the_job_registry_description():
-    """The rule's numbers live in core/automations.py; the card reads them there instead of retyping them."""
-    line = _backup_line(_backups_card(_BACKUPS), "backup-retention")
-    assert ("keeps 5 daily raw and 5 daily history snapshots, the newest 12 weekly raw copies, "
-            "and 2 daily prices snapshots") in line
-
-
-def test_a_changed_registry_rule_reaches_the_card(monkeypatch):
-    """Mutation guard: edit the registry text and the card must follow it, not a copy of its own."""
-    from dataclasses import replace
-
-    from RevenueChaser.core import automations
-    real = automations.entry("RC-Store-Backup")
-    monkeypatch.setattr(report.automations, "entry",
-                        lambda name: replace(real, description="Backup; keeps 9 daily raw snapshots. Then a scan."))
-    line = _backup_line(_backups_card(_BACKUPS), "backup-retention")
-    assert "keeps 9 daily raw snapshots." in line and "12 weekly" not in line
-
-
-def test_a_rule_the_record_carries_wins_over_the_registry_text():
-    line = _backup_line(_backups_card(dict(_BACKUPS, retention="keeps 3 daily copies")), "backup-retention")
-    assert "keeps 3 daily copies" in line and "12 weekly" not in line
-
-
-def test_the_integrity_self_check_reads_as_one_sentence_with_its_numbers():
-    line = _backup_line(_backups_card(_BACKUPS), "backup-selfcheck")
-    assert "last checked 2026-10-16" in line
-    assert "next due 2026-10-17" in line
-    assert "3,382 files re-read against their hashes" in line
-
-
-def test_a_missing_self_check_says_never_and_invents_no_count():
-    line = _backup_line(_backups_card(dict(_BACKUPS, scan={"state": "unknown", "text": "unknown: no scan yet"})),
-                        "backup-selfcheck")
-    assert "last checked never" in line and "next due the next backup run" in line
-    assert "no files re-read yet" in line
-
-
-def test_the_backups_card_ships_no_enabled_delete_control_and_says_nothing_is_deleted():
-    """G9 adds a disabled dry-run control only: arming a delete is a separate gated change with avo's typed words."""
-    card = _backups_card(_BACKUPS)
-    assert "<form" not in card and "/delete" not in card
-    assert "Nothing on this page deletes or moves a backup file" in _backup_line(card, "backup-nodelete")
-
-
-def test_the_backups_card_escapes_the_paths_and_the_rule():
-    bad = "<img src=x onerror=__x(1)>"
-    card = _backups_card(dict(_BACKUPS, folder=bad, offmachine_path=bad, retention=bad))
-    assert "<img" not in card and card.count("&lt;img") >= 3
 
 
 def test_null_cap_text_does_not_claim_it_is_outside_the_universe():
@@ -1827,56 +1594,6 @@ def test_every_registry_source_is_spelled_out_in_words():
     assert report.source_words("something-new") == "something-new"
 
 
-# ── G9 of the GUI brief (#124): the cleanup dry run's totals and the disabled delete control ──────────
-def test_the_backups_card_states_how_many_files_the_rule_marks_expired_and_their_total_size():
-    card = _backups_card(dict(_BACKUPS, expired={"state": "ok", "count": 12, "bytes": 6_400_000_000}))
-    line = _backup_line(card, "backup-expired")
-    assert "12 files" in line and "6.40 GB" in line
-    assert "dry run" in line and "nothing has been deleted" in line
-
-
-def test_one_expired_file_reads_in_the_singular_with_a_size_in_words():
-    line = _backup_line(_backups_card(dict(_BACKUPS, expired={"state": "ok", "count": 1, "bytes": 512})),
-                        "backup-expired")
-    assert "1 file " in line and "512 bytes" in line and "1 files" not in line
-
-
-def test_a_scan_that_could_not_read_the_folder_reads_unknown_not_zero():
-    card = _backups_card(dict(_BACKUPS, expired={"state": "unknown", "count": None, "bytes": None,
-                                                 "why": "the local backup folder is missing"}))
-    line = _backup_line(card, "backup-expired")
-    assert "unknown" in line and "missing" in line
-    assert "0 files" not in line and "0.00 GB" not in line and "0 bytes" not in line
-
-
-def test_a_record_without_the_expired_key_reads_unknown_never_a_zero():
-    line = _backup_line(_backups_card(_BACKUPS), "backup-expired")
-    assert "unknown" in line and "0 files" not in line
-
-
-def test_the_backups_note_says_the_local_folder_is_listed_read_only_and_the_offmachine_copy_is_not():
-    """G9 makes the old "walks no folder" sentence untrue: the local folder is now listed, read-only."""
-    line = _backup_line(_backups_card(_BACKUPS), "backups-note")
-    assert "read-only" in line and "off-machine (Drive) copy is never" in line
-    assert "walks no folder" not in line
-
-
-def test_the_delete_control_is_disabled_in_the_markup_and_carries_no_route():
-    import re
-
-    b = dict(_BACKUPS, expired={"state": "ok", "count": 12, "bytes": 6_400_000_000})
-    card = _backups_card(b)
-    tag = re.search(r'<button[^>]*id="backup-delete-expired"[^>]*>', card)
-    assert tag, "the card carries no delete control"
-    tag = tag.group(0)
-    assert re.search(r"\sdisabled(\s|>)", tag), tag
-    assert 'type="button"' in tag
-    assert "data-fetch" not in tag and "onclick" not in tag and "action=" not in tag
-    assert "Arming the delete is a separate change" in tag
-    assert "<form" not in card and "/delete" not in card and "data-delete" not in card
-    assert card.count('id="backup-delete-expired"') == 1
-    full = report.render_settings_dashboard(dict(_payload(), backups=b))
-    assert full.count('id="backup-delete-expired"') == 1      # no script names it either
 # ── G11 of the GUI brief (#124): what is missing, and how it improves ───────────────────────
 def _detail_text(html: str, key: str) -> str:
     import re
@@ -2266,10 +1983,10 @@ def test_the_health_panel_holds_its_parts_in_order():
     """#492 (i), reordered by #527 step 9 and B4: the head, the link to the live parts, the backups and the catalog, then Ticker detail, then
     the request log and the routes folded."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
-    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(), backups=_BACKUPS))
+    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd()))
     assert "<title>Data/Health</title>" in html
     health = _panel(html, "panel-health")
-    order = ["<h1>Data/Health · Health</h1>", "What am I looking at?", 'id="health-live-link"', 'id="backups"',
+    order = ["<h1>Data/Health · Health</h1>", "What am I looking at?", 'id="health-live-link"',
              'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
@@ -2381,11 +2098,11 @@ def test_the_four_parts_that_live_nowhere_else_sit_in_health_above_backups():
     """avo, 6 Nov 2026 ("A"): the board settings, Automations, the watch lists and the IBKR cards move to Health."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), automations=_autos(), newdata=control_nd(),
-                                                 ibkr_login_url="https://gateway.example/", backups=_BACKUPS,
+                                                 ibkr_login_url="https://gateway.example/",
                                                  errors=[{"table": "ibkr", "where": "x", "error": "read failed"}]))
     health = _panel(html, "panel-health")
     # #527 step 9: the reads that failed and the backups lead; the login link is in the top bar (Data tab's copy)
-    marks = ['id="errors"', 'id="backups"', 'id="ticker-drill"', 'id="auto-body"', 'id="nd-watch-option"',
+    marks = ['id="errors"', 'id="ticker-drill"', 'id="auto-body"', 'id="nd-watch-option"',
              'id="nd-watch-stock"']
     at = [health.index(m) for m in marks]
     assert at == sorted(at), marks

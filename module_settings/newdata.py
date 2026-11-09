@@ -128,8 +128,9 @@ WRDS_DIFFERENCE = ("wrds/fundq", "wrds/funda", "wrds/segments")
 # S8: a report that has not run shows a dash and says so, rather than a sentence that reads like a result.
 NO_WRDS = {"text": "no WRDS run yet", "produced": False}
 # Old .store tables a new dataset replaces: their reads in read_log are the retirement count (read for 14 days).
-BACKUP_WARN_DAYS = 35
-PORTABLE_DATASET = "backup/portable"
+# The weekly backup (avo, 8 Nov 2026; ``rcdata/backup.py``): amber once a Sunday run is missed, red once two are.
+BACKUP_WARN_DAYS = 8
+BACKUP_ALERT_DAYS = 15
 # The raw-option retention: on as a warning until one of these says how many days raw option files are kept
 # (``rcdata/retention.py``, the rule the builder's retention hook reads too).
 RETENTION_ENV = retention.ENV
@@ -852,61 +853,68 @@ def _parse_utc(text) -> datetime | None:
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
+def _read_manifest(path: Path) -> dict | None:
+    try:
+        found = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return found if isinstance(found, dict) and isinstance(found.get("files"), dict) else None
+
+
 def _backups(now: datetime) -> dict:
+    """The weekly backup as its manifests record it (``<RAW_STORE_BACKUP_DIR>/weekly-v2/<step>/.manifest.json``).
+
+    ``steps``: each step's last good run (``last_ok``) and the error of its last run when that failed. ``kinds``:
+    the newest weekly copy of every file (the DuckDB kinds, each board file, ops, the uw-raw weeks, the edgar_docs
+    zip) and how many copies are kept. ``warn`` past ``BACKUP_WARN_DAYS``, ``alert`` past ``BACKUP_ALERT_DAYS`` or
+    when there is none; a manual copy (``--only <kind>`` before a deploy) does not count as a weekly one."""
     from RevenueChaser.rcdata import backup
     folder = (config.RAW_STORE_BACKUP_DIR or "").strip()
-    # Every folder a backup entry writes into (``backup.SUBDIRS``): since 5 Nov 2026 the nightly run takes the small
-    # files into ``market/`` and a weekly one takes prices and ownership into ``market-heavy/``. A kind is looked for
-    # in all of them, so one that moved folders does not read as never backed up.
-    files: dict = {}
-    if folder:
-        for subdir in backup.SUBDIRS:
-            try:
-                found = json.loads((Path(folder) / subdir / backup.MANIFEST_NAME).read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            if isinstance(found, dict) and isinstance(found.get("files"), dict):
-                files.update(found["files"])
+    root = Path(folder) / backup.ROOT if folder else None
+    manifests = {step: (_read_manifest(root / step / backup.MANIFEST_NAME) if root else None) or {"files": {}}
+                 for step in backup.STEPS}
+
+    def flags(age: int | None) -> dict:
+        return {"warn": age is None or age > BACKUP_WARN_DAYS, "alert": age is None or age > BACKUP_ALERT_DAYS}
+
+    steps = []
+    for step in backup.STEPS:
+        m = manifests[step]
+        last_ok = _parse_utc(m.get("last_ok"))
+        age = _age_days(last_ok, now)
+        steps.append({"step": step, "last_ok": last_ok.isoformat() if last_ok else None, "age_days": age,
+                      **flags(age), "error": m.get("last_error") or None})
+
+    def newest_of(step: str, prefix: str) -> tuple[datetime | None, int]:
+        stamps = [_parse_utc(v.get("at")) for name, v in manifests[step]["files"].items()
+                  if name.startswith(f"{prefix}_") and isinstance(v, dict) and v.get("source", "weekly") == "weekly"]
+        return max((s for s in stamps if s), default=None), len(stamps)
+
     kinds = []
-    for kind in ("ops", *serving.KINDS):
-        stamps = [_parse_utc(v.get("at")) for name, v in files.items()
-                  if name.startswith(f"{kind}_") and isinstance(v, dict)]
-        newest = max((s for s in stamps if s), default=None)
-        age = _age_days(newest, now)
-        kinds.append({"kind": kind, "newest": newest.isoformat(timespec="seconds") if newest else None,
-                      "age_days": age, "warn": age is None or age > BACKUP_WARN_DAYS})
-    return {"configured": bool(folder), "kinds": kinds, "raw_copy": _raw_copy(now), "portable": _portable(now),
-            "warn_days": BACKUP_WARN_DAYS}
+    for kind in serving.KINDS:
+        newest, copies = newest_of(backup.STEP_DUCKDB, kind)
+        kinds.append(_kind_row(kind, backup.STEP_DUCKDB, newest, copies, now, flags))
+    board_names = sorted({name.rsplit("_", 3)[0] for name in manifests[backup.STEP_BOARDS]["files"]
+                          if name.endswith(".duckdb") and name.count("_") >= 3})
+    for stem in board_names:
+        newest, copies = newest_of(backup.STEP_BOARDS, stem)
+        kinds.append(_kind_row(stem, backup.STEP_BOARDS, newest, copies, now, flags))
+    newest, copies = newest_of(backup.STEP_OPS, "ops")
+    kinds.append(_kind_row("ops", backup.STEP_OPS, newest, copies, now, flags))
+    uw = manifests[backup.STEP_UW_RAW]
+    kinds.append(_kind_row("uw-raw", backup.STEP_UW_RAW, _parse_utc(uw.get("last_ok")),
+                           len(uw.get("weeks") or []), now, flags))
+    docs = manifests[backup.STEP_EDGAR_DOCS]
+    _, zips = newest_of(backup.STEP_EDGAR_DOCS, "edgar_docs")
+    kinds.append(_kind_row("edgar_docs", backup.STEP_EDGAR_DOCS, _parse_utc(docs.get("last_ok")), zips, now, flags))
+    return {"configured": bool(folder), "root": str(root) if root else None, "steps": steps, "kinds": kinds,
+            "warn_days": BACKUP_WARN_DAYS, "alert_days": BACKUP_ALERT_DAYS}
 
 
-def _raw_copy(now: datetime) -> dict:
-    target = config.MARKET_RAW_COPY_DIR
-    if target is None:
-        return {"text": "not set: RC_MARKET_RAW_COPY_DIR is empty, so no raw copy is made", "warn": True,
-                "age_days": None}
-    newest = None
-    for dirpath, _dirs, names in os.walk(target):
-        for n in names:
-            if n.endswith(".tmp"):
-                continue
-            try:
-                m = os.stat(os.path.join(dirpath, n)).st_mtime
-            except OSError:
-                continue
-            newest = m if newest is None or m > newest else newest
-    if newest is None:
-        return {"text": "no file copied yet", "warn": True, "age_days": None}
-    age = _age_days(datetime.fromtimestamp(newest, timezone.utc), now)
-    return {"text": f"newest copied raw file {age} d old", "warn": age > BACKUP_WARN_DAYS, "age_days": age}
-
-
-def _portable(now: datetime) -> dict:
-    rows = ops.recent_checks(PORTABLE_DATASET, limit=1)
-    on = _day(rows[0]["checked_on"]) if rows else None
-    if on is None:
-        return {"text": "not recorded", "warn": True, "age_days": None}
-    age = (calendar._as_ny(now).date() - on).days
-    return {"text": f"recorded {on.isoformat()}", "warn": age > BACKUP_WARN_DAYS, "age_days": age}
+def _kind_row(kind: str, step: str, newest: datetime | None, copies: int, now: datetime, flags) -> dict:
+    age = _age_days(newest, now)
+    return {"kind": kind, "step": step, "newest": newest.isoformat() if newest else None, "age_days": age,
+            "copies": copies, **flags(age)}
 
 
 def _retention() -> dict:
