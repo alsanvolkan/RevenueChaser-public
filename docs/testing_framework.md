@@ -71,6 +71,9 @@ def test_something(mock_httpx):
 `socket.connect`, `connect_ex`, `create_connection`, and `getaddrinfo` to raise
 `NetworkAccessAttempted`. A test that tries to reach a real endpoint fails immediately with a
 message telling you to mock instead, so you cannot accidentally ship one that goes live.
+The guard itself lives in `module_testing/netguard/sitecustomize.py`; the conftest puts that folder on
+`PYTHONPATH` with `RC_NETGUARD=1`, so every Python child a test starts installs it at startup too, with
+loopback open (#258). A child started with `-S`/`-I` or a cleaned environment runs unguarded.
 
 That enforcement matters because **credentials are always present at run time**: the UW key lives in
 `.env`, and `core/config.py` calls `load_dotenv()` at import, so `os.environ` is populated the moment
