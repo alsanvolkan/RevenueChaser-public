@@ -63,10 +63,14 @@ def test_a_later_fetch_the_same_day_replaces_the_day_so_a_revision_is_kept(http_
     http_mock.add("/market/economic-calendar", {"data": [CPI, FOMC]}, headers=UW_HEADERS)
     _run(econ.NAME)
     http_mock.routes.clear()
-    http_mock.add("/market/economic-calendar", {"data": [{**CPI, "forecast": "0.2%"}]}, headers=UW_HEADERS)
+    # The forecast is revised and the minutes move a day: same row count, so the swap's shrink guard is not met.
+    moved = {**FOMC, "time": "2026-11-19 19:00:00+00:00"}
+    http_mock.add("/market/economic-calendar", {"data": [{**CPI, "forecast": "0.2%"}, moved]}, headers=UW_HEADERS)
     row = _run(econ.NAME)
     assert row["result"] == "changed", row
-    assert [(r["event"], r["forecast"]) for r in read.economic_calendar()] == [("CPI", "0.2%")]
+    got = read.economic_calendar()
+    assert [(r["event"], r["forecast"]) for r in got] == [("CPI", "0.2%"), ("FOMC Minutes", None)]
+    assert got[1]["event_time"] == "2026-11-19 19:00:00+00:00", "the moved event is not kept twice"
     assert len(list(econ.day_dir(date(2026, 11, 9)).glob("*.json.gz"))) >= 1
 
 

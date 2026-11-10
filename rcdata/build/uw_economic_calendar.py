@@ -109,6 +109,9 @@ class UWEconomicCalendar:
         try:
             base.rows_table(con, "snap", SCHEMA, rows)
             # The day's newest fetch replaces it whole: an event UW dropped is gone from that day too.
+            # shortcut: the swap's 1% shrink guard (serving.MAX_SHRINK) refuses a fetch that drops events while the
+            # table holds only a day or two; the check fails and the next pass retries. Past a week of days one
+            # dropped event is far under 1%. Upgrade: add the table to serving.SHRINKS_BY_CHOICE in a serving PR.
             return [base.write_parquet(con, "SELECT * FROM snap ORDER BY event_ts, event, type", partition_path(day))]
         finally:
             con.close()
