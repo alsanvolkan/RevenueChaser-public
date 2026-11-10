@@ -926,9 +926,13 @@ def _peers(profiles: dict[str, dict], companies: list[dict], write: bool):
         logger.warning("relatedness embeddings failed, scoring on tags: %s", exc)
         vectors = {}
     if vectors:
-        sectors = {c["ticker"]: c["sector"] for c in companies}
-        peers, scores = similarity.blended_peer_lists(profiles, pjs, vectors, sectors, config.TOP_PEERS)
-        return peers, scores, "embedding"
+        # "Unclassified" is no sector two companies share (review of #680).
+        sectors = {c["ticker"]: c["sector"] for c in companies if c["sector"] != "Unclassified"}
+        try:
+            peers, scores = similarity.blended_peer_lists(profiles, pjs, vectors, sectors, config.TOP_PEERS)
+            return peers, scores, "embedding"
+        except Exception as exc:  # noqa: BLE001 - a bad cached vector must not empty the board
+            logger.warning("relatedness similarity v2 failed, scoring on tags: %s", exc)
     peers, scores = similarity.peer_lists(profiles, config.TOP_PEERS)
     return peers, scores, "tags"
 
@@ -977,10 +981,12 @@ def _payload(profiles: dict[str, dict], stale: set[str] | None = None, model: st
     names = {c["ticker"]: c["name"] for c in companies}
     import numpy as np
     peers, raw_scores, method = _peers(profiles, companies, write)
-    arr = (np.sort(np.asarray(raw_scores, dtype="float64"))
+    # float32 for the v2 path: every pair is kept (~12.5M at 5,000 names), so no float64 copy (review of #680).
+    arr = (np.sort(np.asarray(raw_scores, dtype="float32" if method == "embedding" else "float64"))
            if len(raw_scores) else np.zeros(0))
-    # ``n_pairs`` is every unordered pair of profiled tickers; the percentile ranks a peer among the scored
+    # ``n_pairs`` is every unordered pair of profiled tickers; the tag path ranks a peer among the scored
     # (non-zero) pairs only (#395, review RL-3): with two thirds of the pairs at zero, a 0.06 peer read as p90.
+    # The embedding path (#669) scores every pair, so there it ranks among all of them.
     n_pairs = len(profiles) * (len(profiles) - 1) // 2
     n_scored = len(arr)
     for a in peers:
