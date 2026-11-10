@@ -722,12 +722,12 @@ def test_the_automation_line_leaves_the_long_text_behind_the_click():
 def test_the_line_shows_the_schedule_time_and_the_chain_condition_waits_behind_the_click():
     auto = next(a for a in _autos() if a["name"] == "RC-Screeners-Daily")
     row = dict(auto, state="enabled", result_kind="ok", result_text="ok",
-               last_run="2026-10-22T23:00:00", next_run="2026-10-23T23:00:00", missed_runs=0,
+               last_run="2026-10-22T23:30:00", next_run="2026-10-23T23:30:00", missed_runs=0,
                last_success_age="18 h ago", log_tail=[])
     html = _render_rows([row])
     line = _one_line(html)
-    assert "23:00 (local)" in line and "after RC-Daily-Bars" not in line
-    assert "weekly 23:00 (local)" in line and "Wednesday" not in line
+    assert "23:30 (local)" in line and "after RC-Daily-Bars" not in line
+    assert "weekly 23:30 (local)" in line and "Wednesday" not in line
     opened = _behind_the_click(html)
     assert "after RC-Daily-Bars" in opened and "Wednesday" in opened
 

@@ -134,7 +134,7 @@ INPUTS_CAP_FLAGS = ("--max-uw-calls", "--max-fred-calls", "--max-yf-calls")
 # applies), the others the 10 Nov measurement + 50%.
 _EARNINGS_CAPS = ("--max-uw-calls", "unlimited", "--max-fred-calls", "12", "--max-yf-calls", "1000",
                   "--max-cboe-calls", "20", "--max-cftc-calls", "5")
-_EARNINGS_CAPS_TEXT = ("No Unusual Whales cap (UW's own 100,000 a day applies); at most 12 FRED, 1000 yfinance, "
+_EARNINGS_CAPS_TEXT = ("No Unusual Whales cap (its own 100,000 a day applies); at most 12 FRED, 1000 yfinance, "
                        "20 Cboe and 5 CFTC read calls a run, no SEC call")
 _EARNINGS_TAIL = ("A run inside the US session writes nothing; a busy step lock exits 3, and nothing was written. "
                   "Not chained on RC-Daily-Bars: these sweeps read no bars (#620).")
