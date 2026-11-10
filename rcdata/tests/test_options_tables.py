@@ -156,3 +156,19 @@ def test_an_upsert_into_an_old_screener_partition_keeps_its_rows_and_adds_the_ne
         con.close()
     assert rows == [("AAPL", None, None), ("MSFT", 0.25, 1000.0)]
     assert set(t.columns) <= cols  # DuckDB adds the hive "date" column of the partition path
+
+
+def test_the_check_against_a_live_file_built_before_options_2_compares_the_columns_both_hold():
+    """The live file of 10 Nov still had the options 1 screener table: the check must not ask it for a new column."""
+    _old_screener_partition(date(2026, 11, 9), ("AAPL", "MSFT"))
+    _build(["option_screener_daily"])
+    con = duckdb.connect(str(serving.live_path("options")))
+    try:
+        for c in ("realized_volatility", "stock_volume"):
+            con.execute(f'ALTER TABLE option_screener_daily DROP COLUMN "{c}"')
+    finally:
+        con.close()
+    t = tables.TABLES["option_screener_daily"]
+    with serving.build("options") as b:
+        tables.build_tables(b.con, [t.name])
+        assert tables.compare_by_day(b.con, t) == (0, 0)
