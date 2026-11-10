@@ -158,3 +158,32 @@ def test_total_assets_of_an_older_year_are_not_borrowed():
     annual = [_rec(2022, revenue=100.0, total_assets=1000.0),
               _rec(2023, revenue=130.0, total_debt=50.0, cash=20.0)]
     assert _sub(_card(annual), "net_debt_assets")["value"] is None
+
+
+# ── G4 K1: the SEC business address decides non-US ──────────────────────────
+
+def _country_of(monkeypatch, meta, yahoo_country=None):
+    _edgar(monkeypatch, _EDGAR_ANNUAL, {"entity_name": "X", "is_us": True, **meta})
+    info = {"country": yahoo_country} if yahoo_country else {}
+    monkeypatch.setattr(engine.cache_manager, "load",
+                        lambda t, ignore_ttl=False, allow_info_only=False: {"info": dict(info)})
+    return engine._cached_financials("X", no_fetch=True)["info"]["country"]
+
+
+def test_a_10k_filer_with_a_foreign_business_address_is_non_us(monkeypatch):
+    assert _country_of(monkeypatch, {"business_country": "IL"}) == "Foreign"
+
+
+def test_the_sec_address_wins_over_yahoos_country(monkeypatch):
+    assert _country_of(monkeypatch, {"business_country": "US"}, yahoo_country="Ireland") == "United States"
+    assert _country_of(monkeypatch, {"business_country": "CN"}, yahoo_country="United States") == "Foreign"
+
+
+def test_a_20f_filer_with_a_us_address_is_still_non_us(monkeypatch):
+    assert _country_of(monkeypatch, {"is_us": False, "business_country": "US"}) == "Foreign"
+
+
+def test_an_unread_address_keeps_yahoos_country(monkeypatch):
+    # Until ``sec/filings`` fills the header the column is NULL; Yahoo's country still keeps the 282 names out.
+    assert _country_of(monkeypatch, {"business_country": None}, yahoo_country="Canada") == "Canada"
+    assert _country_of(monkeypatch, {"business_country": None}) == "United States"

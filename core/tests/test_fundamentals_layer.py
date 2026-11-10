@@ -198,3 +198,8 @@ def test_a_stored_ticker_with_whitespace_still_keys_its_records(monkeypatch):
     monkeypatch.setattr(read, "fundamental_companies", lambda tickers: [{"ticker": " grw ", "cik": "1"}])
     monkeypatch.setattr(read, "statements_many", lambda ciks, years, quarters: [])
     assert set(layer.records_many(["GRW"])) == {"GRW"}
+
+
+def test_the_meta_carries_the_sec_business_country():
+    assert layer._meta({"business_country": "JP"}, True, [])["business_country"] == "JP"
+    assert layer._meta({}, True, [])["business_country"] is None
