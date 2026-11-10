@@ -292,7 +292,7 @@ def test_retirement_counts_reads_of_the_old_tables_in_the_last_14_days():
     assert rows["macro_series"]["reads_14d"] == 7
     assert rows["vol_index_daily"]["reads_14d"] == 0
     assert "market_series" not in rows                                  # a new table is not being retired
-    assert "RC-Earnings-Inputs" in rows["macro_series"]["writers"]
+    assert "RC-Macro-Weekly" in rows["macro_series"]["writers"]
     # The analyst estimates joined the list when the board stopped reading the old table (the fundamentals store
     # serves them as ``estimate_latest``), so the card counts its reads down to zero too.
     assert rows["estimate_snapshots"]["replaced_by"] == "estimate_latest"

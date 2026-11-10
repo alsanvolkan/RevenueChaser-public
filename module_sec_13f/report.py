@@ -628,7 +628,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
             "on each cell (#514).")
     short_legend = (
         "<b>Short%</b> = short interest as % of float from UW short screener → UW interest-float → yfinance "
-        f"(D10, nightly RC-Earnings-Inputs); as of {short_as_of.isoformat() if short_as_of else '—'}.")
+        f"(D10, weeknightly RC-Short-Interest); as of {short_as_of.isoformat() if short_as_of else '—'}.")
 
     help_block = help_html(
         "Every fund manager with more than $100M files a <b>Form 13F</b> each quarter listing its stock "

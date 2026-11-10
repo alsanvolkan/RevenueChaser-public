@@ -56,7 +56,7 @@ def test_install_writes_one_service_and_one_timer_and_enables_the_timer(tmp_path
     assert "WorkingDirectory=/srv/rc" in service
     assert "TimeoutStartSec=4h" in service
     timer = _unit(tmp_path, "RC-Daily-Bars", "timer")
-    assert "OnCalendar=*-*-* 22:35:00" in timer
+    assert "OnCalendar=*-*-* 23:00:00" in timer
     assert "Unit=RC-Daily-Bars.service" in timer
     assert "Persistent=true" in timer
     # A user timer cannot arm a wake alarm (no CAP_WAKE_ALARM): WakeSystem=true leaves it failed and never run.
@@ -74,7 +74,7 @@ def test_a_weekly_row_installs_its_days_and_a_row_that_does_not_wake_says_so(tmp
     s.install(A.entry("RC-Screeners-Daily"))
     s.install(A.entry("RC-ValueChain-Sync"))
     assert "OnCalendar=Sat *-*-* 10:00:00" in _unit(tmp_path, "RC-Index-Lists", "timer")
-    assert "OnCalendar=Mon,Tue,Wed,Thu,Fri *-*-* 23:00:00" in _unit(tmp_path, "RC-Screeners-Daily", "timer")
+    assert "OnCalendar=Mon,Tue,Wed,Thu,Fri *-*-* 23:30:00" in _unit(tmp_path, "RC-Screeners-Daily", "timer")
     vc = _unit(tmp_path, "RC-ValueChain-Sync", "timer")
     assert "OnCalendar=*-*-* 13:00:00" in vc
     for name in ("RC-Index-Lists", "RC-Screeners-Daily", "RC-ValueChain-Sync"):

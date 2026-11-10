@@ -114,13 +114,13 @@ def _run(run_id, job, status, finished, registry=None, error=None):
 def test_freshness_keeps_each_jobs_last_run_last_success_and_last_failure():
     rawstore.write_rows("job_runs", [
         _run("a", "spxgamma", "done", NOW - 7200), _run("b", "spxgamma", "error", NOW - 3600, error="UW 503"),
-        _run("c", "nightly", "done", NOW - 600, registry="RC-Earnings-Inputs"),
+        _run("c", "nightly", "done", NOW - 600, registry="RC-Earnings-Calendar"),
         _run("d", "module_leaps", "running", None)])
     wb.build(now=NOW)
     fr = {r["job"]: r for r in rawstore.query("SELECT * FROM welcome_freshness", db="welcome")}
     assert fr["spxgamma"]["last_status"] == "error" and fr["spxgamma"]["last_ok_at"] == NOW - 7200
     assert fr["spxgamma"]["last_failed_at"] == NOW - 3600 and fr["spxgamma"]["last_error"] == "UW 503"
-    assert fr["RC-Earnings-Inputs"]["last_status"] == "done"
+    assert fr["RC-Earnings-Calendar"]["last_status"] == "done"
     assert "module_leaps" not in fr                                          # a running job has not finished
 
 

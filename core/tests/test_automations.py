@@ -28,11 +28,16 @@ def _cache(tmp_path, monkeypatch):
 
 # --- registry ---------------------------------------------------------------
 
+# The Earnings inputs entries, one per schedule (#620).
+_EARNINGS_INPUTS = ("RC-Earnings-Calendar", "RC-Short-Interest", "RC-Earnings-Daytime", "RC-Macro-Weekly",
+                    "RC-CFTC-Weekly")
+
 def test_registry_names_are_stable_and_prefixed():
     assert [e.name for e in A.REGISTRY] == [
         "RC-Relatedness-OffPeak", "RC-ValueChain-Sync", "RC-Daily-Bars", "RC-Screeners-Daily",
-        "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Inputs",
-        "RC-IBKR-Login-Check", "RC-Build", "RC-Backup-Weekly", "RC-SPX-Gamma-Fetch"]
+        "RC-Forecast-Outcomes", "RC-Forecast-Baselines", "RC-Index-Lists", "RC-Earnings-Calendar",
+        "RC-Short-Interest", "RC-Earnings-Daytime", "RC-Macro-Weekly", "RC-CFTC-Weekly", "RC-IBKR-Login-Check",
+        "RC-Build", "RC-Backup-Weekly", "RC-SPX-Gamma-Fetch"]
     assert all(e.name.startswith("RC-") for e in A.REGISTRY)
 
 
@@ -46,18 +51,18 @@ def test_the_index_lists_row_runs_weekly_on_saturday():
     assert not e.default_install
     assert all(x.days == () and x.schedule == f"daily {x.time} (local)" for x in A.REGISTRY
                if x.name not in (e.name, "RC-Screeners-Daily", "RC-Forecast-Outcomes", "RC-Forecast-Baselines",
-                                 "RC-Earnings-Inputs", "RC-Build", "RC-Backup-Weekly", "RC-SPX-Gamma-Fetch"))
+                                 "RC-Build", "RC-Backup-Weekly", "RC-SPX-Gamma-Fetch", *_EARNINGS_INPUTS))
 
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
 
 
 def test_the_screeners_row_is_chained_on_the_daily_bars():
-    """#129 A1: S2 (the universe CLI) waits for S1 (RC-Daily-Bars) on weekdays, not before 23:00."""
+    """#129 A1: S2 (the universe CLI) waits for S1 (RC-Daily-Bars) on weekdays, not before 23:30 (#620)."""
     e = A.entry("RC-Screeners-Daily")
-    assert (e.after, e.time, e.days) == ("RC-Daily-Bars", "23:00", _WEEKDAYS)
+    assert (e.after, e.time, e.days) == ("RC-Daily-Bars", "23:30", _WEEKDAYS)
     assert e.args == ("-m", "RevenueChaser.app.universe_cli")
-    assert e.schedule == "weekly Monday, Tuesday, Wednesday, Thursday, Friday 23:00 (local), after RC-Daily-Bars"
+    assert e.schedule == "weekly Monday, Tuesday, Wednesday, Thursday, Friday 23:30 (local), after RC-Daily-Bars"
     assert not e.default_install
     s = e.settings
     assert s.wake_to_run and s.allow_on_battery and s.start_when_available and s.run_only_when_logged_on
@@ -65,7 +70,7 @@ def test_the_screeners_row_is_chained_on_the_daily_bars():
     assert {"equity_universe", "forecast_ledger", "swing_ohlc", "job_runs"} <= set(e.tables_written)
     assert not A.entry("RC-Daily-Bars").days       # the chain needs a daily predecessor
     assert [x.name for x in A.REGISTRY if x.after] == ["RC-Screeners-Daily", "RC-Forecast-Outcomes",
-                                                       "RC-Forecast-Baselines", "RC-Earnings-Inputs"]
+                                                       "RC-Forecast-Baselines"]
 
 
 def test_the_daily_bars_row_first_stores_the_sec_files():
@@ -75,7 +80,7 @@ def test_the_daily_bars_row_first_stores_the_sec_files():
 
     e = A.entry("RC-Daily-Bars")
     assert e.args[:4] == ("-m", "RevenueChaser.scripts.daily_bars", "--nightly", "--sec-files")
-    assert (e.time, e.days, e.after) == ("22:35", (), None)
+    assert (e.time, e.days, e.after) == ("23:00", (), None)
     assert {"price_bars_daily", "price_actions", "price_checks", "sec_exchange_file",
             "sec_mf_file"} <= set(e.tables_written)
     assert {f.table for f in sec_files.FILES.values()} <= set(e.tables_written)
@@ -97,12 +102,12 @@ def test_the_daily_bars_row_then_stores_the_spx_levels():
 
 
 def test_the_forecast_outcomes_row_is_chained_daily_on_the_daily_bars():
-    """S0 (#380): the outcomes writer reads D01, so it waits for tonight's RC-Daily-Bars, every day at 23:45, clear of
-    RC-Screeners-Daily (23:00 to about 23:15), and writes forecast_outcomes alone."""
+    """S0 (#380): the outcomes writer reads D01, so it waits for tonight's RC-Daily-Bars, every day at 23:35 (#620),
+    and writes forecast_outcomes alone."""
     e = A.entry("RC-Forecast-Outcomes")
-    assert (e.after, e.time, e.days) == ("RC-Daily-Bars", "23:45", ())
+    assert (e.after, e.time, e.days) == ("RC-Daily-Bars", "23:35", ())
     assert e.args == ("-m", "RevenueChaser.scripts.forecast_outcomes", "--nightly")
-    assert e.schedule == "daily 23:45 (local), after RC-Daily-Bars"
+    assert e.schedule == "daily 23:35 (local), after RC-Daily-Bars"
     assert e.tables_written == ("forecast_outcomes",)
     assert e.chain_wait_minutes == 120 and not e.default_install and not e.offpeak_gated
 
@@ -126,7 +131,7 @@ def test_each_busy_capable_nightly_row_says_its_busy_exit_in_the_description():
 
     The wording follows RC-Screeners-Daily's "A busy universe lock exits 3."
     """
-    for name in ("RC-Forecast-Outcomes", "RC-Earnings-Inputs"):
+    for name in ("RC-Forecast-Outcomes", *_EARNINGS_INPUTS):
         description = A.entry(name).description
         assert "exits 3" in description and "nothing was written" in description, name
 
@@ -143,7 +148,7 @@ def test_the_outcomes_row_cannot_chain_on_the_weekday_screeners_row():
 def _inputs_entry(**kw):
     import dataclasses
     base = A.AutomationEntry(
-        name="RC-Test-Inputs", label="x", time="01:30", description="d", after="RC-Daily-Bars",
+        name="RC-Test-Inputs", label="x", time="01:30", description="d",
         args=("-m", A.INPUTS_CLI, "fake", "--max-uw-calls", "200", "--max-fred-calls", "10", "--max-yf-calls", "5"),
         tables_written=("short_interest",))
     return dataclasses.replace(base, **kw)
@@ -163,11 +168,17 @@ def test_an_inputs_step_with_every_cap_stated_passes(fake_step):
     A.check_inputs_steps(A.REGISTRY + (_inputs_entry(),))
 
 
-def test_an_inputs_step_must_run_after_the_daily_bars(fake_step):
-    with pytest.raises(ValueError, match="after RC-Daily-Bars"):
-        A.check_inputs_steps(A.REGISTRY + (_inputs_entry(after=None),))
-    with pytest.raises(ValueError, match="after RC-Daily-Bars"):
-        A.check_inputs_steps(A.REGISTRY + (_inputs_entry(after="RC-ValueChain-Sync"),))
+def test_an_inputs_step_need_not_chain_on_the_daily_bars(fake_step):
+    """#620: the sweeps read no bars, so an inputs step may run unchained (a 13:00 entry could not chain at all)."""
+    A.check_inputs_steps(A.REGISTRY + (_inputs_entry(after=None, time="13:00"),))
+    assert all(A.entry(n).after is None for n in _EARNINGS_INPUTS)
+
+
+def test_an_inputs_cap_may_be_unlimited(fake_step):
+    """#620: ``unlimited`` (no cap) is accepted beside a whole number."""
+    args = list(_inputs_entry().args)
+    args[args.index("--max-uw-calls") + 1] = "unlimited"
+    A.check_inputs_steps(A.REGISTRY + (_inputs_entry(args=tuple(args)),))
 
 
 def test_an_inputs_step_must_name_a_known_step(fake_step):
@@ -185,7 +196,7 @@ def test_an_inputs_step_must_state_every_cap(fake_step, drop):
         A.check_inputs_steps(A.REGISTRY + (_inputs_entry(args=tuple(args)),))
 
 
-@pytest.mark.parametrize("value", ["-1", "lots", ""])
+@pytest.mark.parametrize("value", ["-1", "lots", "", "Unlimited"])
 def test_an_inputs_cap_must_be_a_whole_number_of_calls(fake_step, value):
     args = list(_inputs_entry().args)
     args[args.index("--max-uw-calls") + 1] = value
@@ -202,7 +213,7 @@ def test_the_screeners_task_installs_a_weekday_trigger():
     ps = FakePS()
     _win(ps).install(A.entry("RC-Screeners-Daily"))
     script = ps.scripts[0]
-    assert "-Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At '23:00'" in script
+    assert "-Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At '23:30'" in script
     assert "-WakeToRun" in script and "-StartWhenAvailable" in script and "-AllowStartIfOnBatteries" in script
     assert "run RC-Screeners-Daily" in script
 
@@ -401,7 +412,7 @@ def test_install_uses_the_registry_settings():
                  "-DontStopIfGoingOnBatteries", "-WakeToRun"):
         assert flag in waking
     assert "-WakeToRun" not in vc and "-AllowStartIfOnBatteries" in vc
-    assert "-At '23:00'" in waking and "-Daily -At '13:00'" in vc
+    assert "-At '23:30'" in waking and "-Daily -At '13:00'" in vc
     assert "-LogonType Interactive" in waking
 
 
@@ -678,10 +689,10 @@ class _FakeSystemctl:
         return 0, "", ""
 
 
-def test_the_builder_row_runs_one_queue_pass_every_hour_at_07():
+def test_the_builder_row_runs_one_queue_pass_every_hour_at_05():
     e = A.entry("RC-Build")
     assert e.args == ("-m", "RevenueChaser.rcdata.build", "run", "--once")
-    assert e.hourly and e.time == "00:07" and e.schedule == "hourly at :07 (local)"
+    assert e.hourly and e.time == "00:05" and e.schedule == "hourly at :05 (local)"
     assert e.settings.time_limit_minutes == 120
     assert e.tables_written == (), "it writes the market store, never the old one: no job_runs row (job_runs2 instead)"
     assert e.after is None and not e.default_install
@@ -722,7 +733,7 @@ def test_linux_renders_the_builder_rows_as_life_rc_builder_units(tmp_path):
     timer = (tmp_path / "u" / "life-rc-builder.timer").read_text(encoding="utf-8")
     assert 'ExecStart="/srv/rc/.venv/bin/python" "-m" "RevenueChaser.core.automations" "run" "RC-Build"' in service
     assert "Type=oneshot" in service and "TimeoutStartSec=120min" in service
-    assert "OnCalendar=*-*-* *:07:00" in timer and "Unit=life-rc-builder.service" in timer
+    assert "OnCalendar=*-*-* *:05:00" in timer and "Unit=life-rc-builder.service" in timer
     backup_service = (tmp_path / "u" / "life-rc-backup-weekly.service").read_text(encoding="utf-8")
     backup_timer = (tmp_path / "u" / "life-rc-backup-weekly.timer").read_text(encoding="utf-8")
     assert '"run" "RC-Backup-Weekly"' in backup_service and "TimeoutStartSec=60min" in backup_service
@@ -748,7 +759,7 @@ def test_windows_installs_the_builder_as_an_hourly_trigger_with_no_limit():
     ps = FakePS()
     _win(ps).install(A.entry("RC-Build"))
     s = ps.scripts[0]
-    assert "-Once -At '00:07' -RepetitionInterval (New-TimeSpan -Hours 1)" in s
+    assert "-Once -At '00:05' -RepetitionInterval (New-TimeSpan -Hours 1)" in s
     assert "-ExecutionTimeLimit (New-TimeSpan -Minutes 120)" in s
 
 
@@ -761,7 +772,7 @@ def test_a_chain_step_cannot_wait_on_an_hourly_row():
 
 def test_the_spx_gamma_fetch_runs_on_weekdays_after_the_stored_close():
     """#291: the scheduled SPX Gamma Fetch keeps a raw day (all expiries) for every session. The builder stores the
-    market series on the first pass of each trading day (00:07 New York, ``rcdata/build/due.py``), so 06:30
+    market series on the first pass of each trading day (00:05 New York, ``rcdata/build/due.py``), so 06:30
     Amsterdam Monday to Friday finds the previous session's Cboe SPX close: Monday fetches Friday. A Saturday run
     would never find Friday's close (no trading day, no builder pass). Not chained: the CLI waits for that close
     itself (exit 3, no UW call)."""

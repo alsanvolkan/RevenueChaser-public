@@ -142,4 +142,4 @@ def test_the_board_says_the_builder_was_asked_and_when_it_runs():
                                "datasets": {"uw/spot_expiry_strike": "queued", "market_series": "already queued"}}
     html = render.render_html(snap)
     assert "builder requested at 2026-10-26 16:40 New York" in html
-    assert "the builder runs hourly at :07" in html
+    assert "the builder runs hourly at :05" in html

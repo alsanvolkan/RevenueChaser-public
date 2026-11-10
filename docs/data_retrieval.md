@@ -162,7 +162,7 @@ button silently degrades to a plain iframe reload.
   one `market_series` build (`ops.enqueue_once`, `requested_by` `spx_gamma`; one
   already queued adds nothing; a refused Fetch queues nothing), then runs the
   board's own UW snapshot as before and renders at once with what is
-  stored, saying "builder requested at <time>; the builder runs hourly at :07". It
+  stored, saying "builder requested at <time>; the builder runs hourly at :05". It
   never waits on the builder. There is no live fallback any more: no yfinance VIX,
   no Socrata COT, no candle fetch; an input the store does not hold for the day
   shows "<input> not stored for <day>" on its panel and in the data-quality banner,

@@ -3,9 +3,10 @@
 ``python -m RevenueChaser.scripts.nightly_inputs <step> --max-uw-calls N --max-fred-calls N --max-yf-calls N
 --max-cboe-calls N --max-cftc-calls N``
 
-A registry entry runs it (``core/automations.py`` checks the entry: after RC-Daily-Bars, every cap stated). A cap
-left out is 0 for ``uw``, ``fred`` and ``yfinance``: that provider gets no call. ``cboe`` and ``cftc`` default to
-their runaway guard, 20 and 5. Prints the result as one JSON line on stdout and a summary on stderr; exit 0 when every
+A registry entry runs it (``core/automations.py`` checks the entry: a known step, every cap stated). ``N`` is a whole
+number of calls or ``unlimited`` (no cap; the provider's own daily limit still applies, #620). A cap left out is 0 for
+``uw``, ``fred`` and ``yfinance``: that provider gets no call. ``cboe`` and ``cftc`` default to their runaway guard,
+20 and 5. Prints the result as one JSON line on stdout and a summary on stderr; exit 0 when every
 sweep finished, 1 when one failed or the run had no session, 2 for a bad command line, ``BUSY_EXIT`` (3) when another
 run of this step holds the lock (``job_lock`` name ``"nightly_inputs_<step>"``, #26) — no table was written then, and
 ``--report`` gets a ``{"status": "busy"}`` record over the last success (S-3). The lock is per step, because the steps
@@ -21,6 +22,12 @@ from pathlib import Path
 from RevenueChaser.core import job_lock, nightly_inputs
 
 BUSY_EXIT = 3
+UNLIMITED = "unlimited"
+
+
+def _cap(text: str) -> int | None:
+    """A cap flag's value: a whole number of calls, or ``unlimited`` (None: no cap)."""
+    return None if text == UNLIMITED else int(text)
 
 
 def _write_report(path: str | None, res: dict) -> None:
@@ -32,11 +39,11 @@ def _write_report(path: str | None, res: dict) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="nightly_inputs", description=__doc__)
     ap.add_argument("step", help="the inputs step to run")
-    ap.add_argument("--max-uw-calls", type=int, default=0, help="Unusual Whales calls allowed tonight")
-    ap.add_argument("--max-fred-calls", type=int, default=0, help="FRED calls allowed tonight")
-    ap.add_argument("--max-yf-calls", type=int, default=0, help="yfinance requests allowed tonight (read only)")
-    ap.add_argument("--max-cboe-calls", type=int, default=20, help="Cboe index-file calls allowed tonight")
-    ap.add_argument("--max-cftc-calls", type=int, default=5, help="CFTC requests allowed tonight")
+    ap.add_argument("--max-uw-calls", type=_cap, default=0, help="Unusual Whales calls allowed tonight")
+    ap.add_argument("--max-fred-calls", type=_cap, default=0, help="FRED calls allowed tonight")
+    ap.add_argument("--max-yf-calls", type=_cap, default=0, help="yfinance requests allowed tonight (read only)")
+    ap.add_argument("--max-cboe-calls", type=_cap, default=20, help="Cboe index-file calls allowed tonight")
+    ap.add_argument("--max-cftc-calls", type=_cap, default=5, help="CFTC requests allowed tonight")
     ap.add_argument("--report", default=None, help="write the result JSON to this path")
     try:
         args = ap.parse_args(argv)
@@ -44,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     caps = {"uw": args.max_uw_calls, "fred": args.max_fred_calls, "yfinance": args.max_yf_calls,
             "cboe": args.max_cboe_calls, "cftc": args.max_cftc_calls}
-    if any(v < 0 for v in caps.values()):
+    if any(v is not None and v < 0 for v in caps.values()):
         print("a call cap cannot be negative", file=sys.stderr)
         return 2
     if args.step not in nightly_inputs.STEPS:

@@ -71,7 +71,7 @@ def _make_anchor(result: dict):
     def anchor(session) -> str | None:
         if ledger.d01_has_session(session, "SPY"):
             return None
-        return f"no SPY D01 bar for the {session} session yet (RC-Daily-Bars runs at 22:35 Amsterdam)"
+        return f"no SPY D01 bar for the {session} session yet (RC-Daily-Bars runs at 23:00 Amsterdam)"
     return anchor
 
 

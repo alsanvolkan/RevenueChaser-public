@@ -30,7 +30,7 @@ def test_an_active_timer_is_on_with_its_passes_and_the_minute_of_its_calendar():
     got = control.read_timer(s)
     assert s.asked == ["RC-Build"]
     assert got == {"state": "on", "last": "2026-10-30T17:07:01+00:00", "next": "2026-10-30T18:07:00+00:00",
-                   "minute": 7}
+                   "minute": 5}
     assert control.read_timer(FakeScheduler(_status("running")))["state"] == "on"
 
 
@@ -54,7 +54,7 @@ def test_a_failed_or_missing_read_is_all_none():
 def test_build_carries_the_timer_and_the_rows_read_it():
     view = _build(timer=lambda: control.read_timer(FakeScheduler(_status("disabled"))),
                   kind_modes=lambda: {"market": {"kind": "market", "mode": "full"}})
-    assert view["timer"]["state"] == "off" and view["timer"]["minute"] == 7
+    assert view["timer"]["state"] == "off" and view["timer"]["minute"] == 5
     rows = {r["dataset"]: r for f in view["files"] for r in f["datasets"]}
     assert rows["market_series"]["next_words"].startswith("timer off · ")
 
@@ -89,7 +89,7 @@ def test_a_system_timer_is_read_when_the_scheduler_has_no_row():
                         LastTriggerUSec="@1793988421", NextElapseUSecRealtime=""), ""
 
     got = control.read_timer(automations.UnavailableScheduler(), system=run)
-    assert got["state"] == "off" and got["minute"] == 7 and got["last"] and got["next"] is None
+    assert got["state"] == "off" and got["minute"] == 5 and got["last"] and got["next"] is None
     assert asked[0][0] == "show" and asked[0][-1] == "life-rc-builder.timer" and "--user" not in asked[0]
     on = control.read_timer(FakeScheduler(None), system=lambda a: (0, _show(
         LoadState="loaded", ActiveState="active", UnitFileState="enabled", LastTriggerUSec="",

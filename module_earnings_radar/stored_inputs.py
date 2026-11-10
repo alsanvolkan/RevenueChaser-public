@@ -1,4 +1,4 @@
-"""Read the inputs the nightly RC-Earnings-Inputs sweeps stored (E5, #372).
+"""Read the inputs the Earnings inputs sweeps stored (E5, #372; one registry entry per schedule since #620).
 
 The Earnings Fetch used to ask UW (and FRED) for everything it needed, every run. Since E0 the nightly job stores
 the same answers in ``raw.duckdb``: the earnings calendar (D26), short interest (D10), the economic calendar (D37) and the

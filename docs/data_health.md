@@ -598,12 +598,14 @@ it, so without that line its old archives would never be listed. The newest copy
 
 `core/automations.py` is the one registry of the scheduled tasks RevenueChaser owns, and the one
 installer. Rows: `RC-Relatedness-OffPeak` (12:30, `--run --cap 10`, the board's writer, #360), `RC-ValueChain-Sync` (13:00, `--sync-filings`),
-`RC-Daily-Bars` (22:35, `scripts.daily_bars --nightly --sec-files`), `RC-Screeners-Daily` (weekdays
-23:00, after `RC-Daily-Bars`, `app.universe_cli`), `RC-Forecast-Outcomes` (daily 23:45, after
+`RC-Daily-Bars` (23:00, `scripts.daily_bars --nightly --sec-files`), `RC-Screeners-Daily` (weekdays
+23:30, after `RC-Daily-Bars`, `app.universe_cli`), `RC-Forecast-Outcomes` (daily 23:35, after
 `RC-Daily-Bars`, `scripts.forecast_outcomes --nightly`), `RC-Forecast-Baselines` (daily 23:50, after
 `RC-Forecast-Outcomes`, `scripts.forecast_baselines --nightly`), `RC-Index-Lists` (Saturday 10:00,
-`scripts.index_lists --weekly`) and `RC-Earnings-Inputs` (Tuesday to Saturday 01:30, after
-`RC-Daily-Bars`, `scripts.nightly_inputs earnings`). Each entry carries its schedule, the tables it
+`scripts.index_lists --weekly`) and the Earnings inputs, one `scripts.nightly_inputs <step>` entry per
+schedule (#620, none chained): `RC-Earnings-Calendar` (Monday and Thursday 23:40), `RC-Short-Interest`
+(weekdays 23:40), `RC-Earnings-Daytime` (Tuesday and Thursday 13:00), `RC-Macro-Weekly` (Thursday 23:40) and
+`RC-CFTC-Weekly` (Friday 23:40), each with `--max-uw-calls unlimited`. Each entry carries its schedule, the tables it
 writes, whether it is off-peak gated, a log path under `.cache/logs/` and its task settings (named
 for Task Scheduler; the Linux backend maps the ones systemd has).
 

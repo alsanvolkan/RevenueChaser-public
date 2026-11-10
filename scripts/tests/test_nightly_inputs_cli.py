@@ -51,6 +51,14 @@ def test_caps_default_to_no_calls():
     assert SEEN == [("ok", {"uw": 0, "fred": 0, "yfinance": 0, "cboe": 20, "cftc": 5})]
 
 
+def test_unlimited_is_a_cap_with_no_limit():
+    """#620: ``unlimited`` parses to no cap (None); any other word is a bad command line."""
+    cli.main(["fake", "--max-uw-calls", "unlimited", "--max-fred-calls", "12"])
+    assert SEEN == [("ok", {"uw": None, "fred": 12, "yfinance": 0, "cboe": 20, "cftc": 5})]
+    SEEN.clear()
+    assert cli.main(["fake", "--max-uw-calls", "lots"]) == 2 and SEEN == []
+
+
 def test_the_caps_reach_the_sweeps():
     cli.main(["fake", "--max-uw-calls", "200", "--max-fred-calls", "10", "--max-yf-calls", "7"])
     assert SEEN == [("ok", {"uw": 200, "fred": 10, "yfinance": 7, "cboe": 20, "cftc": 5})]
