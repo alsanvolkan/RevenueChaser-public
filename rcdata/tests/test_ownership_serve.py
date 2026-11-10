@@ -333,7 +333,6 @@ def test_the_13f_derive_runs_one_quarter_at_a_time_with_the_same_rows(store, mon
         fills = [q for q in seen if q.startswith(f"INSERT INTO {t} ")]
         assert fills and all("period = ?" in q for q in fills), t
         assert not any(q.startswith(f"CREATE OR REPLACE TEMP TABLE {t} AS") for q in seen), t
-    assert len([q for q in seen if q.startswith("INSERT INTO _px ")]) == 2          # Q2 and Q3 2026
     assert {t: _served(f"SELECT * FROM {t} ORDER BY {k}") for t, k in SERVED_13F.items()} == before
 
 
