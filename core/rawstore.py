@@ -1221,10 +1221,10 @@ MANIFEST: dict[str, dict] = {
     },
     "relatedness_embeddings": {
         "db": "relatedness",
-        # Relatedness v2 Step 2 (#401, schema 13): one vector per ticker and embedding model, the float32 bytes of
-        # ``dim`` values (raw BLOB, not ``compress``: it is binary already). Writer arrives with Step 2.
+        # Relatedness v2 Step 2 (#401, schema 13): one vector per ticker and embedding model (raw BLOB, not
+        # ``compress``: it is binary already). Writer: ``module_relatedness/embeddings.py`` (#669); the blob is a
+        # 16-byte hash of the embedded text, then the float32 bytes of ``dim`` values.
         "history_mode": "latest_cache",
-        "planned": True,
         "key": ["ticker", "model"],
         "columns": [
             "ticker TEXT", "model TEXT", "dim INTEGER", "vector BLOB",
