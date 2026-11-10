@@ -92,3 +92,5 @@ Operating margin: positive
 ```
 
 SE has solid marketplace economics — good take rate and margins. This positive signal partially offsets the very negative R2 guidance score.
+
+**Pre-revenue names (Earnings review E6, avo 10 Nov 2026: A).** The universal GAAP operating-margin vote is skipped when the last four OM quarters sum to less than `R3_OM_MIN_REVENUE_4Q` ($10M, `core/config.py`): on ~0 revenue the margin delta runs to thousands of points (LWLG −302 pt on −22 195%). The cluster's own score stands and the drawer says "op. margin vote skipped: pre-revenue".

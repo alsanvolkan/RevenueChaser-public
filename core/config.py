@@ -184,6 +184,10 @@ TS_SLOPE_HALF = -0.002
 TS_SLOPE_BACK_POINTS = -8.0
 TS_SLOPE_MILD_POINTS = -3.0
 TS_SLOPE_CONTANGO_POINTS = 5.0
+# Earnings night: the slope is read on the ex-event curve (``vol_metrics.ex_event_curve``), which the event fit leaves
+# near flat (10 Nov 2026: median +0.00016/day, most cards just above 0). Contango there needs this much, the mirror of
+# TS_SLOPE_HALF, so fit noise is not a +5.
+TS_SLOPE_EVENT_CONTANGO = 0.002
 
 # Strike window around spot used to qualify magnet / charm / vanna.
 GEX_ATM_WINDOW_PCT = 0.15
@@ -215,6 +219,8 @@ R3_OM_MAG_UP_BULL = 2.0
 R3_GM_HELD_YOY_BP = -0.005
 R3_SGA_Z_SPIKE = 3.0
 R3_MIN_OM_QUARTERS = 4
+# Below this summed revenue of the last four OM quarters (USD) the name is pre-revenue: no OM vote (review E6).
+R3_OM_MIN_REVENUE_4Q = 10_000_000.0
 # R6 — macro (rate sensitivity)
 R6_MIN_OBS = 20
 R6_RATE_HIGH = 2.0
@@ -243,6 +249,7 @@ TUNABLES = {
     "R3_GM_HELD_YOY_BP": R3_GM_HELD_YOY_BP,
     "R3_SGA_Z_SPIKE": R3_SGA_Z_SPIKE,
     "R3_MIN_OM_QUARTERS": R3_MIN_OM_QUARTERS,
+    "R3_OM_MIN_REVENUE_4Q": R3_OM_MIN_REVENUE_4Q,
     "R4_IV_RV_RICH": IV_RV_RICH,
     "R4_IV_RV_CHEAP": IV_RV_CHEAP,
     "R4_IV_RV_CHEAP_POINTS": IV_RV_CHEAP_POINTS,
@@ -252,6 +259,7 @@ TUNABLES = {
     "R4_TS_SLOPE_BACK_POINTS": TS_SLOPE_BACK_POINTS,
     "R4_TS_SLOPE_MILD_POINTS": TS_SLOPE_MILD_POINTS,
     "R4_TS_SLOPE_CONTANGO_POINTS": TS_SLOPE_CONTANGO_POINTS,
+    "R4_TS_SLOPE_EVENT_CONTANGO": TS_SLOPE_EVENT_CONTANGO,
     "R6_MIN_OBS": R6_MIN_OBS,
     "R6_RATE_HIGH": R6_RATE_HIGH,
     "R6_RATE_VETO": R6_RATE_VETO,

@@ -342,7 +342,8 @@ def earnings_options(tickers, latest: date | None = None) -> tuple[dict[str, dic
     ``uw/option_screener`` fetches, on the evening before a report, the same UW answers R4 reads: the GEX levels
     (``er_options``), the spot exposures by strike (``option_strike``) and the term structure (``option_expiry``),
     set ``earnings``. A row is ``{"session_date", "report_date", "gex_levels", "strikes", "term"}``: ``strikes`` in
-    the field names of UW's spot-exposure rows, ``term`` as ``{"dte", "volatility"}`` rows like UW's term structure.
+    the field names of UW's spot-exposure rows, ``term`` as ``{"date", "expiry", "dte", "volatility"}`` rows like
+    UW's term structure (R4's ex-event curve reads the date and the expiry).
     Only each name's newest evening counts, and only when it lags ``latest`` (default the latest complete session)
     by no more than ``earnings.options`` allows. A name with no such row is absent: the pipeline then asks UW live.
     """
@@ -363,7 +364,8 @@ def earnings_options(tickers, latest: date | None = None) -> tuple[dict[str, dic
                              "gex_levels": {f: r.get(f) for f in GEX_LEVEL_FIELDS}}
         for t, row in newest.items():          # sequential on purpose: one read-only handle at a time
             row["strikes"] = read.option_strikes(t, row["session_date"], set_name="earnings")
-            row["term"] = [{"dte": e["days_to_expiry"], "volatility": e["volatility"]}
+            row["term"] = [{"date": row["session_date"].isoformat(), "expiry": str(e["expiry"]),
+                            "dte": e["days_to_expiry"], "volatility": e["volatility"]}
                            for e in read.option_expiries(t, row["session_date"], set_name="earnings")
                            if e.get("volatility") is not None and e.get("days_to_expiry") is not None]
     except Exception as exc:                                  # noqa: BLE001 - a store error is "not stored"

@@ -473,7 +473,7 @@ def test_e8_closest_partner_wins():
 def test_e8_universal_om_votes_on_a_drifting_fiscal_calendar():
     dates = ["2026-02-01", "2025-11-02", "2025-08-03", "2025-05-04", "2025-02-02", "2024-11-03"]
     oms = [0.02, 0.18, 0.18, 0.18, 0.20, 0.20]
-    hist = [{"revenue": 1000, "operating_margin": om, "gross_margin": 0.5, "fiscal_date": d}
+    hist = [{"revenue": 1e9, "operating_margin": om, "gross_margin": 0.5, "fiscal_date": d}
             for om, d in zip(oms, dates)]
     r = score("COST", "unmapped", hist)
     assert any("pts" in x for x in r.reasons)  # the GAAP OM vote ran
@@ -511,3 +511,20 @@ def test_e2_a_quarter_without_revenue_is_dropped_from_both_series():
             for rv, iv, d in zip(revs, invs, _Q6 + ["2024-09-30"])]
     s, r, f, a, t = _score_hardware(rows[0], rows)
     assert "inventory_growth_exceeds_revenue_growth" in f
+
+
+# ── Earnings review E6 (avo 10 Nov: A): no universal OM vote on a pre-revenue name ──
+
+def _pre_revenue_history(rev):
+    """LWLG-shaped: an operating loss hundreds of times revenue, OM -22 195% vs -21 893% YoY (-302 pts)."""
+    oms = [-221.95, -200.0, -210.0, -205.0, -218.93, -150.0]
+    return [{"revenue": rev, "operating_margin": om, "gross_margin": 0.60, "fiscal_date": d}
+            for om, d in zip(oms, _Q6)]
+
+
+def test_pre_revenue_name_gets_no_universal_om_vote():
+    r = score("LWLG", "unmapped", _pre_revenue_history(25_000.0))  # $100k over the last four quarters
+    assert not any("pts" in x for x in r.reasons), "no thousand-point OM delta in the drawer"
+    assert r.score == 10.0  # the cluster's own score stands: GM +10, never floored to -30
+    assert any("pre-revenue" in x for x in r.reasons)
+

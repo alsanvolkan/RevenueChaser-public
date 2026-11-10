@@ -410,6 +410,28 @@ class TestR4TermStructureWiring:
         assert "backwardated" in reasons
         assert card.volatility_edge_score == 7.0  # +15 EM, -8 backwardation
 
+    def test_earnings_night_backwardation_from_the_event_is_no_penalty(self):
+        # Base vol 0.50 plus a 10% event on every expiry after the 10 Nov premarket print: the raw curve is deeply
+        # backwardated (-0.0122/day, a -8 before), the ex-event curve is flat -> EM 7.4 (+15) alone.
+        rows = [
+            {"date": "2026-11-09", "expiry": "2026-11-13", "dte": "4", "volatility": "1.078193"},
+            {"date": "2026-11-09", "expiry": "2026-11-20", "dte": "11", "volatility": "0.762770"},
+            {"date": "2026-11-09", "expiry": "2026-11-27", "dte": "18", "volatility": "0.672888"},
+            {"date": "2026-11-09", "expiry": "2026-12-19", "dte": "40", "volatility": "0.584166"},
+            {"date": "2026-11-09", "expiry": "2027-01-16", "dte": "68", "volatility": "0.551068"},
+        ]
+        fake = _TermUW(rows, flow_recent=[], aggregate_flow={})
+        p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
+                                           "put_volume": "0", "total_open_interest": "0"}},
+                           {"AAPL": {"earnings_date": "2026-11-10", "report_time": "premarket",
+                                     "full_name": "Cooper", "sector": "Healthcare",
+                                     "expected_move_perc": 0.0743}})
+        p._dgs10_cache = {}
+        card = p._score("AAPL")
+        audit = (card.rule_audit or {}).get("rule4_volatility", {})
+        assert "backwardated" not in " ".join(audit.get("reasons") or [])
+        assert card.volatility_edge_score == 15.0
+
     def test_no_term_structure_method_falls_back_cleanly(self):
         fake = _FakeUW()
         p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",

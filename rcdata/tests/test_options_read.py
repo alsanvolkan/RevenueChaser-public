@@ -134,7 +134,8 @@ def test_the_earnings_board_reads_r4_s_inputs_from_the_evening_set(built):
     assert good["session_date"] == SESSION and good["report_date"] == NEXT
     assert good["gex_levels"] == {"call_wall": 110.0, "gamma_flip": 102.5, "gamma_magnet": 105.0, "put_wall": 95.0}
     assert good["strikes"] and all(r["call_gamma_oi"] == 1000.5 for r in good["strikes"])
-    assert good["term"] and all(r["volatility"] == 0.3 and r["dte"] > 0 for r in good["term"])
+    assert good["term"] and all(r["volatility"] == 0.3 and r["dte"] > 0 and r["date"] == SESSION.isoformat()
+                                 and r["expiry"] for r in good["term"])
 
 
 def test_an_evening_older_than_the_need_allows_is_not_read(built):

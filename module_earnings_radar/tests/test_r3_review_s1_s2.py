@@ -46,7 +46,7 @@ QUARTERS = ["2026-03-31", "2025-12-31", "2025-09-30", "2025-06-30", "2025-03-31"
 
 
 def _history(oms):
-    return [{"revenue": 100.0, "operating_margin": om, "fiscal_date": fd} for om, fd in zip(oms, QUARTERS)]
+    return [{"revenue": 100e6, "operating_margin": om, "fiscal_date": fd} for om, fd in zip(oms, QUARTERS)]
 
 
 @pytest.fixture
