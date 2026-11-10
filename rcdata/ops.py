@@ -336,6 +336,17 @@ def queue_view(finished: int = 20) -> dict:
     return {"active": [_request(r) for r in active], "finished": [_request(r) for r in done]}
 
 
+#: A request carrying any of these builds no serving file (``--no-duckdb``, ``--no-parquet``, the old ``--no-build``).
+FETCH_ONLY_PARAMS = ("no_duckdb", "no_parquet", "no_build")
+
+
+def is_fetch_only(params) -> bool:
+    """True for a request's params (a dict, its JSON text, or None) that build no serving file."""
+    if isinstance(params, str):
+        params = json.loads(params) if params else None
+    return any((params or {}).get(k) for k in FETCH_ONLY_PARAMS)
+
+
 def _request(row: sqlite3.Row | None) -> dict | None:
     if row is None:
         return None
@@ -346,7 +357,8 @@ def _request(row: sqlite3.Row | None) -> dict | None:
 
 @_routed
 def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
-                 only: Iterable[str] | None = None, by: str | None = None) -> dict | None:
+                 only: Iterable[str] | None = None, by: str | None = None,
+                 fetch_only: bool = False) -> dict | None:
     """Take the oldest queued request (of ``dataset``, when given) and mark it running; None when none is queued.
 
     ``skip`` leaves those datasets' requests in the queue, and ``only`` claims nothing else: that is how a request
@@ -357,6 +369,9 @@ def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
     ``by`` claims only what that requester queued. A person's ``backfill <attended>`` uses it so their run is
     their own: a request a page left for the attended runner is not theirs to spend the WRDS login and the day
     cap on (review SHOULD-2).
+
+    ``fetch_only`` claims only requests that build no serving file (``FETCH_ONLY_PARAMS``): a fetch-only process
+    holds no builder lock, so an ordinary request it drained would build and swap beside the real builder (#502).
     """
     skip = tuple(skip)
     if skip and only is not None:
@@ -373,6 +388,8 @@ def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
         if by is not None:
             sql += " AND requested_by = ?"
             args += (by,)
+        if fetch_only:
+            sql += " AND (" + " OR ".join(f"coalesce(json_extract(params, '$.{k}'), 0)" for k in FETCH_ONLY_PARAMS) + ")"
         if only is not None:
             names = tuple(only)
             if not names:

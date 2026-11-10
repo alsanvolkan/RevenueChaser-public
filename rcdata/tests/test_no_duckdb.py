@@ -167,3 +167,35 @@ def test_the_old_no_build_flag_queues_the_new_param(stager, monkeypatch):
     assert cli.main(["backfill", stager.name, "--from", "2026-10-01", "--no-build"]) == 0
     assert seen and seen[-1]["params"].get("no_duckdb") is True, seen
     assert seen[-1]["params"].get("no_build") is True, seen[-1]["params"]
+
+
+# ── #502: a fetch-only process drains only fetch-only requests ────────────────────────────────────────────────
+
+def test_next_request_with_fetch_only_skips_an_ordinary_request():
+    ordinary = ops.enqueue("market_series", None, by="settings")
+    staged = ops.enqueue("market_series", {"no_duckdb": True, "no_build": True}, by="cli")
+    raw_only = ops.enqueue("market_series", {"no_parquet": True}, by="cli")
+    assert ops.next_request("market_series", fetch_only=True)["id"] == staged
+    assert ops.next_request("market_series", fetch_only=True)["id"] == raw_only
+    assert ops.next_request("market_series", fetch_only=True) is None
+    assert ops.next_request("market_series")["id"] == ordinary, "left for the real builder"
+
+
+@pytest.mark.parametrize("cmd", [["backfill", "{name}", "--from", "2026-10-01", "--no-duckdb"],
+                                 ["run", "--once", "--dataset", "{name}", "--no-duckdb"]])
+def test_a_fetch_only_command_leaves_an_older_ordinary_request_queued(stager, monkeypatch, cmd):
+    """The example of #502: a Settings Fetch is queued, a person runs a raw-only command for the same dataset."""
+    seen: list = []
+
+    @contextlib.contextmanager
+    def always(name, wait=0.0, **kw):
+        yield True
+    monkeypatch.setattr(cli.job_lock, "acquire", always)
+    monkeypatch.setattr(cli.base, "run_request", lambda req, **kw: seen.append(req) or {
+        "dataset": req["dataset"], "result": "skipped", "source_as_of": None, "rows": 0, "added": 0,
+        "removed": 0, "calls": 0, "note": None})
+    monkeypatch.setattr(cli.base, "run_batch", lambda reqs, **kw: [cli.base.run_request(r) for r in reqs])
+    ordinary = ops.enqueue(stager.name, None, by="settings")
+    assert cli.main([a.format(name=stager.name) for a in cmd]) == 0
+    assert seen and all(ops.is_fetch_only(r["params"]) for r in seen), seen
+    assert [r["id"] for r in ops.rows("build_requests") if r["status"] == "queued"] == [ordinary]

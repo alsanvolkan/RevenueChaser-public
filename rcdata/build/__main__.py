@@ -243,11 +243,11 @@ def _build_line(batch: list[dict], rows: list[dict], seconds: float) -> str | No
 
 
 def _run_queue(dataset: str | None, once: bool, *, skip=(), only=None, by=None,
-               attended_ok: bool = False) -> int:
+               attended_ok: bool = False, fetch_only: bool = False) -> int:
     worst = 0
     while True:
         try:
-            req = ops.next_request(dataset, skip=skip, only=only, by=by)
+            req = ops.next_request(dataset, skip=skip, only=only, by=by, fetch_only=fetch_only)
         except ops.BUSY_ERRORS as e:
             # ops.sqlite held past busy_timeout (a long backup, a stuck writer), or Redis not answering: wait and ask
             # again, never die.
@@ -443,10 +443,11 @@ def main(argv: list[str] | None = None) -> int:
             for name in args.datasets:
                 mine = _own_requests_only(name)
                 rid = ops.enqueue(name, params, by="cli")
-                req = ops.next_request(name, by=mine)
+                # #502: a fetch-only run holds no builder lock, so it drains only fetch-only requests.
+                req = ops.next_request(name, by=mine, fetch_only=fetch_only)
                 while req is not None and req["id"] != rid:      # an older request of this dataset goes first
                     print(base.format_check(base.run_request(req)), flush=True)
-                    req = ops.next_request(name, by=mine)
+                    req = ops.next_request(name, by=mine, fetch_only=fetch_only)
                 row = base.run_request(req)
                 print(base.format_check(row), flush=True)
                 worst = max(worst, int(row["result"] == "failed"))
@@ -475,7 +476,7 @@ def main(argv: list[str] | None = None) -> int:
         # Without --dataset this is the hourly pass, which leaves the attended requests queued for the terminal
         # that may run them.
         skip = () if args.dataset else base.attended_names()
-        return max(_run_queue(args.dataset, args.once, skip=skip, by=mine), due_failed)
+        return max(_run_queue(args.dataset, args.once, skip=skip, by=mine, fetch_only=fetch_only), due_failed)
 
 
 if __name__ == "__main__":
