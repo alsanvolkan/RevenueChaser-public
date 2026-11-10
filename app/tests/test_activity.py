@@ -64,7 +64,7 @@ def test_add_never_removes_and_remove_never_adds(client):
 def test_the_page_has_three_tabs_frames_grafana_only_when_opened_and_escapes_the_lists(client):
     html = activity.render_page({"option": ([{"ticker": "<b>X", "added_at": 0, "added_by": "avo", "note": "<i>"}], None),
                                  "stock": (None, "OSError: boom")})
-    assert html.count('role="tab"') == 3
+    assert html.split("</nav>")[0].count('role="tab"') == 3
     assert 'data-board="rc-activity"' in html and 'data-board="rc-logs"' in html
     assert " src=" not in html.split('<iframe')[1].split(">")[0], "Grafana loads only when its tab opens"
     assert "<b>X" not in html and "&lt;b&gt;X" in html

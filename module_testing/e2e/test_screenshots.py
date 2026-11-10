@@ -21,7 +21,7 @@ SHOTS_DIR = os.environ.get("RC_SHOTS_DIR", "")
 
 # 390 the generic phone, the realme upright, 969 the owner's laptop pane beside the sidebar, two desktops.
 SIZES = [(390, 844), REALME_GT2_PRO, (969, 900), (1280, 800), (1920, 1080)]
-TABS = ["module_settings", "runs"]
+TABS = ["module_settings", "activity"]
 
 pytestmark = pytest.mark.skipif(not SHOTS_DIR, reason="RC_SHOTS_DIR is not set: no screenshots asked for")
 
