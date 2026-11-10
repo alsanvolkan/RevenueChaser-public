@@ -25,6 +25,8 @@ from zoneinfo import ZoneInfo
 
 AMS = ZoneInfo("Europe/Amsterdam")
 PROVIDER = "grok-x"
+# The IMAP folder of avo's Gmail label (measured on homesrv 11 Nov 2026: 275 mails; the web search name 00_invest-grok is not a folder).
+LABEL = "00_invest/Grok"
 KINDS = frozenset({"news", "level", "option", "macro", "position", "other"})
 TEXT_MAX = 280
 MAX_SKEW_S = 120

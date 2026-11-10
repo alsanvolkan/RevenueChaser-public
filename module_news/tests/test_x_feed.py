@@ -143,8 +143,8 @@ class FakeImap:
 
 def test_read_mails_is_read_only_and_starts_after_the_mark():
     imap = FakeImap({7: b"seven", 9: b"nine", 12: b"twelve"})
-    assert x_feed.read_mails(imap, "00_invest-grok", 7) == [(9, b"nine"), (12, b"twelve")]
-    assert imap.calls[0] == ("select", '"00_invest-grok"', True)
+    assert x_feed.read_mails(imap, x_feed.LABEL, 7) == [(9, b"nine"), (12, b"twelve")]
+    assert imap.calls[0] == ("select", '"00_invest/Grok"', True)
     fetches = [c for c in imap.calls if c[0] == "FETCH"]
     assert fetches and all(c[2] == "(BODY.PEEK[])" for c in fetches)
     assert not any(c[0] in ("STORE", "COPY", "MOVE", "EXPUNGE") for c in imap.calls)
