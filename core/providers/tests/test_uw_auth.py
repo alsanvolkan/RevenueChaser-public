@@ -55,6 +55,15 @@ class TestGetRecordsAuthFailures:
         assert "unusualwhales.com/api" in caplog.text
         assert "UNUSUAL_WHALES_API_KEY" in caplog.text
 
+    def test_a_401_without_a_key_is_logged_as_missing_not_rejected(self, monkeypatch, caplog):
+        # #388: no key in the process (a hand-run builder without life-with-keys) is not an expired key.
+        monkeypatch.delenv("UNUSUAL_WHALES_API_KEY", raising=False)
+        c = _client(monkeypatch, _Resp(401), key="")
+        with caplog.at_level(logging.ERROR):
+            c._get("/stock/AAPL/info")
+        assert "missing" in caplog.text.lower() and "life-with-keys" in caplog.text
+        assert "set but not valid" not in caplog.text
+
     def test_repeat_auth_failures_do_not_repeat_the_long_message(self, monkeypatch, caplog):
         c = _client(monkeypatch, _Resp(401))
         c._get("/a")
