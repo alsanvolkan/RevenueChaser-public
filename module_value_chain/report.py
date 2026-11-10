@@ -300,7 +300,7 @@ function render(){
   var q = fm.quality || "";
   document.getElementById("fmeta").innerHTML = rcWatchRow(FOCAL) +     // the focal company's pair (PR 4)
     (fm.form ? rcEsc(fm.form) + " · filed " + rcEsc(fm.filed) + " · " : "") +
-    (q === "ok" ? "text: ok" : (q ? '<span class="chip warn">text: ' + rcEsc(q) + ' — item not fully extracted</span>' : ""));
+    (q.split(";")[0] === "ok" ? "text: ok" : (q ? '<span class="chip warn">text: ' + rcEsc(q) + ' — item not fully extracted</span>' : ""));
   drawSankey(FOCAL, links);
   drawEdges(links);
 }

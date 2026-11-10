@@ -247,3 +247,15 @@ def test_the_statements_exhibit_is_never_mistaken_for_the_business_description()
         {"name": "ex99-13.htm", "size": "5000000"},
     ]}}
     assert filings.aif_exhibits(no_aif) == ["ex99-1.htm"]
+
+
+def test_a_transition_period_10kt_is_an_annual_report():
+    """#400 package (avo's condition, 8 Nov 2026: every SEC reading covered): a 10-KT, the report of a fiscal-year
+    change, is the newest annual report when nothing newer exists; Value Chain's picker agrees."""
+    from RevenueChaser.module_value_chain import edgar_text
+    rows = [{"form": "10-K", "filing_date": "2025-03-01", "accession": "a", "primary_document": "a.htm"},
+            {"form": "10-KT", "filing_date": "2026-02-01", "accession": "b", "primary_document": "b.htm"}]
+    assert filings.pick(rows, filings.ANNUAL_FORMS)["accession"] == "b"
+    payload = {"filings": {"recent": {"form": ["10-K", "10-KT"], "filingDate": ["2025-03-01", "2026-02-01"],
+                                      "accessionNumber": ["a", "b"], "primaryDocument": ["a.htm", "b.htm"]}}}
+    assert edgar_text.pick_filing(payload)["accession"] == "b"

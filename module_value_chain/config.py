@@ -27,12 +27,16 @@ SEED: tuple[str, ...] = (
 # A 10-K stop needs the section title, so a cross-reference such as "see Item 1A of
 # this report" does not cut the body short (#116 C17).
 _DASH = r"\-\u2010-\u2015\u2212"     # hyphen-minus, U+2010..U+2015 dashes, minus sign
+DASH = _DASH
 
 
 def _spaced(word: str) -> str:
     """A heading word with a stray space inside it: "Bus iness", "BUSINES S", "Risk Fac tors". The filer's HTML
     breaks words that way, as it writes "TAB LE OF CONTENTS" (#315). One optional space per letter boundary."""
     return r"\s?".join(word)
+
+
+spaced = _spaced
 
 
 START_PATTERNS = {

@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import re
 
-PROMPT_VERSION = "v3"
+PROMPT_VERSION = "v3b"
 MAX_KEYWORDS = 15
 MAX_LIST = 30
 # A customer's or supplier's quote: one sentence, kept short so a reply of 30 parties fits ``token_budget``.
@@ -74,6 +74,11 @@ def _context_lines(context: dict | None) -> list[str]:
         out.append(f"Segment note (same filing):\n{c['segment_note']}")
     if c.get("candidates"):
         out.append("Candidates (names a keyword scan of this filing found): " + "; ".join(c["candidates"]))
+    if c.get("filing_sentences"):
+        out.append("Other sentences of the same filing that name customers, suppliers or concentration:\n"
+                   + "\n".join(f"- {x}" for x in c["filing_sentences"]))
+    if c.get("xbrl_customers"):
+        out.append("Major customers (the filing's XBRL):\n" + "\n".join(f"- {x}" for x in c["xbrl_customers"]))
     return out
 
 

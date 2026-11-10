@@ -51,7 +51,9 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
     "module_uw_interaction": ("options.prints",),
     "module_comovement": ("identity.universe", "identity.membership", "prices.bars", "prices.market_cap",
                           "prices.actions"),
-    "module_value_chain": ("identity.universe", "fundamentals.segments", "fundamentals.customers"),
+    # #400 WP5: the XBRL customers are named by the spine's ``security`` names (``identity.security``).
+    "module_value_chain": ("identity.universe", "identity.security", "fundamentals.segments",
+                           "fundamentals.customers"),
     "module_sector_rotation": ("identity.membership", "prices.bars", "market.series"),
     # #481: the 13F share's split factor reads ``prices.security_ids`` and ``prices.bars`` (basis "split").
     "module_asymmetric_growth": ("identity.universe", "prices.bars", "prices.security_ids",
@@ -63,8 +65,9 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
     "module_sec_13f": ("ownership.holders_13f", "ownership.periods_13f", "prices.actions"),
     "module_leaps": ("options.daily",),
     # #490: ``engine.py`` reads the company records and the served filing texts.
+    # #400 WP6: the B input adds the filing's XBRL major customers (``fundamentals.customers``).
     "module_relatedness": ("identity.universe", "fundamentals.companies", "fundamentals.filings",
-                           "fundamentals.segments"),
+                           "fundamentals.segments", "fundamentals.customers"),
 }
 
 

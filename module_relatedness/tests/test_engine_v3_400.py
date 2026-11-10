@@ -57,7 +57,7 @@ def test_a_v3_profile_is_stored_whole_with_its_attribute_rows(rawstore_tmp_db, m
     assert len(calls) == 1 and calls[0]["json_mode"] is True and calls[0]["thinking"] is False
     assert calls[0]["system"] == profile_v3.system_prompt()
     row = rawstore.get("relatedness_profiles", "NVDA")
-    assert row["status"] == "ok" and row["prompt_version"] == "v3"
+    assert row["status"] == "ok" and row["prompt_version"] == "v3b"
     assert row["profile_json"]["customers"][0] == {"name": "Dell", "type": "oem", "quote": "Dell accounted for 10%.",
                                                    "share": 0.1}
     assert row["label_source"]["summary"] == "chunk:0" and row["label_source"]["input"] == "item"
@@ -176,7 +176,7 @@ def test_an_unparseable_reply_is_retried_once_uncached(rawstore_tmp_db, monkeypa
 def test_the_board_mode_has_no_thinking():
     assert not hasattr(config, "THINKING") and not hasattr(config, "THINKING_SAMPLE")
     assert not hasattr(config, "PILOT_N") and not hasattr(config, "MAX_INPUT_CHARS")
-    assert config.PROMPT_VERSION == "v3"
+    assert config.PROMPT_VERSION == "v3b"
     assert store.mode_stamp()["thinking"] is False
 
 

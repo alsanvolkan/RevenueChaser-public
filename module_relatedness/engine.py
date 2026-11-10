@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -21,7 +22,7 @@ from RevenueChaser.module_value_chain import engine as vc_engine
 from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 from . import config
-from . import profile_v3
+from . import locator, profile_v3
 from . import profiles as profiles_mod
 from . import similarity
 
@@ -91,6 +92,15 @@ def _filing_text(ticker: str) -> tuple[str, str]:
     return row.get("name") or ticker, row.get("item_text") or ""
 
 
+def _filing_quality(ticker: str) -> str | None:
+    """The rule cut's label of the Item ``_filing_text`` reads (``splitter.slice_item``: ok / short / overrun /
+    missing), from the layer's document row or ``chain_filings``."""
+    docs = _layer_documents([ticker])
+    if docs is not None:
+        return (docs.get(ticker.upper()) or {}).get("quality")
+    return (rawstore.get("chain_filings", ticker) or {}).get("quality")
+
+
 def _filing_source(ticker: str) -> dict | None:
     """The filing ``_filing_text`` reads for ``ticker``: ``{cik, accession, form, filed}`` (build plan PR 20: a profile
     carries the filing it was made from), or None without one."""
@@ -151,21 +161,104 @@ def _filing_input(ticker: str) -> dict:
     """The text a profile is made from, with the fallback chain of #400: the newest filing's Item 1 / Item 4, else the
     previous year's filing's, else the newest filing's whole document.
 
-    ``{name, text, fallback, source}``; ``fallback`` is ``item``, ``previous_filing`` or ``whole_document``, and when
-    no link is long enough it is ``profiles.text_status`` of the newest Item (``no_text`` / ``short_text``) with that
-    text, so nothing is sent."""
+    ``{name, text, fallback, source, locate, hash_text}``; ``fallback`` is ``item``, ``previous_filing`` or
+    ``whole_document``, and when no link is long enough it is ``profiles.text_status`` of the newest Item
+    (``no_text`` / ``short_text``) with that text, so nothing is sent.
+
+    ``locate`` (avo, 8 Nov 2026) is the whole document when the rule cut of the Item is ``overrun``, ``missing``,
+    ``short`` or a suspect ``ok`` (``locator.asks``, #400 WP7) and the layer serves the document: ``_work`` then asks the writer where the section is, from its
+    headings (``locator``), and keeps this text when it cannot say. Such a filing's ``hash_text`` is the whole
+    document, so the staleness hash does not depend on the locator's answer. No call is made here."""
     name, text = _filing_text(ticker)
     status = profiles_mod.text_status(text)
+    whole = None
+    if status is not None or locator.asks(_filing_quality(ticker)):
+        whole = _whole_document(ticker)
+        if whole and profiles_mod.text_status(whole.get("text")) is not None:
+            whole = None
+    out = None
     if status is None:
-        return {"name": name, "text": text, "fallback": "item", "source": _filing_source(ticker)}
-    for label, link in (("previous_filing", _previous_filing), ("whole_document", _whole_document)):
-        got = link(ticker)
-        if got and profiles_mod.text_status(got.get("text")) is None:
-            # A whole 10-K runs to 1.4M characters (``filing_item`` item ``whole`` is uncut): the fallback reads its
-            # first MAX_FALLBACK_CHARS, which hold the business description, in a bounded number of calls.
-            return {"name": name, "text": got["text"][:MAX_FALLBACK_CHARS], "fallback": label,
-                    "source": got.get("source")}
-    return {"name": name, "text": text, "fallback": status, "source": _filing_source(ticker)}
+        out = {"name": name, "text": clean_input(text), "fallback": "item", "source": _filing_source(ticker)}
+    else:
+        for label, link in (("previous_filing", _previous_filing), ("whole_document", lambda t: whole)):
+            got = link(ticker)
+            if got and profiles_mod.text_status(got.get("text")) is None:
+                # A whole 10-K runs to 1.4M characters (``filing_item`` item ``whole`` is uncut): the fallback reads
+                # its first MAX_FALLBACK_CHARS, which hold the business description, in a bounded number of calls.
+                out = {"name": name, "text": clean_input(got["text"][:MAX_FALLBACK_CHARS]), "fallback": label,
+                       "source": got.get("source")}
+                break
+    if out is None:
+        out = {"name": name, "text": text, "fallback": status, "source": _filing_source(ticker)}
+    out["locate"] = whole
+    out["hash_text"] = "locator\n" + whole["text"] if whole else out["text"]
+    return out
+
+
+# ── the B input (#400 WP6; avo's decision C, 8 Nov 2026; the pilot's rounds 1-3) ────────────────────────────────
+MAX_SENTENCES = 40
+MAX_XBRL_CUSTOMERS = 15
+_DROP_HEADINGS = re.compile(r"^\s*(available information|information about our executive officers|executive officers"
+                            r"( of the registrant)?|human capital( resources| management)?|our employees|employees)\s*$",
+                            re.I)
+_TAGGY = re.compile(r"\b[a-z][\w-]*:[A-Za-z]\w*")
+_SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+_KEY = re.compile(r"\b(customers?|suppliers?|vendors?|sole[- ]source|single[- ]source|concentration|"
+                  r"distributors?|contract manufactur\w*|foundr(y|ies)|accounted for (approximately )?\d+|"
+                  r"\d+(\.\d+)?\s?% of (our )?(total |net |consolidated )?(sales|revenues?))\b", re.I)
+
+
+def clean_input(text: str) -> str:
+    """The profile's text: without the sections that say nothing about the business, and without a tail of XBRL
+    tags or number tables (ONEG, RCON). Pure, so ``_input_hashes`` hashes what ``_prepare`` sends."""
+    secs = profile_v3._sections(text or "")
+    keep = [sec for sec in secs if not _DROP_HEADINGS.match(sec.strip().splitlines()[0] if sec.strip() else "")]
+    lines = "".join(keep).rstrip().split("\n")
+    popped = False
+    while lines:
+        ln = lines[-1].replace("\u200b", "").strip()
+        dense = sum(c.isdigit() or c in "¥$€£,.%()-" for c in ln) / max(len(ln.replace(" ", "")), 1)
+        if ln and not _TAGGY.search(ln) and dense < 0.5:
+            break
+        lines.pop()
+        popped = True
+    # A text with nothing to drop is sent as it is, so its hash and its kept profile stay the same.
+    return "\n".join(lines) if popped or len(keep) < len(secs) else (text or "")
+
+
+def filing_sentences(whole: str, item: str) -> list[str]:
+    """The filing's customer / supplier / concentration sentences that ``item`` does not already hold, at most 40."""
+    have = re.sub(r"\s+", " ", item or "")
+    out, seen = [], set()
+    for sent in _SENT.split(re.sub(r"\s+", " ", whole or "")):
+        sent = sent.strip()
+        if not (40 <= len(sent) <= 500) or not _KEY.search(sent) or sent[:120] in have or sent.lower()[:120] in seen:
+            continue
+        seen.add(sent.lower()[:120])
+        out.append(sent)
+        if len(out) >= MAX_SENTENCES:
+            break
+    return out
+
+
+def _filing_extras(cik: str | None, text: str) -> dict:
+    """``filing_sentences`` and ``xbrl_customers`` of the company's newest annual report, for the prompt."""
+    from RevenueChaser.core import fundamentals_layer
+    if not cik or not fundamentals_layer.reads_layer():
+        return {}
+    from RevenueChaser.rcdata import read
+    out: dict = {}
+    sents = filing_sentences((read.filing_text(cik, "whole") or {}).get("text") or "", text)
+    if sents:
+        out["filing_sentences"] = sents
+    rows = read.customers(cik)
+    newest = rows[0].get("period_end") if rows else None
+    lines = [f"{r.get('customer')}: {r['share']:.1%} of {r.get('benchmark') or 'revenue'}"
+             if isinstance(r.get("share"), float) else str(r.get("customer"))
+             for r in rows if r.get("period_end") == newest][:MAX_XBRL_CUSTOMERS]
+    if lines:
+        out["xbrl_customers"] = lines
+    return out
 
 
 # How many ``chain_mentions`` names the prompt offers as candidates, and how many segment-note lines.
@@ -235,7 +328,12 @@ def _prepare(rep: str, name: str | None, cik: str | None) -> dict:
     inp = _filing_input(rep)
     inp["name"] = name or inp["name"]
     inp["context"] = _context(rep, cik, inp.get("source"))
-    inp["hash"] = profiles_mod.input_hash(inp["name"], inp["text"]) if inp["fallback"] in FALLBACKS else None
+    try:
+        inp["context"].update(_filing_extras(cik, inp["text"]))
+    except Exception:  # noqa: BLE001 - optional context, as the rest of it
+        logger.debug("no filing extras for %s", rep, exc_info=True)
+    inp["hash"] = (profiles_mod.input_hash(inp["name"], inp["hash_text"])
+                   if inp["fallback"] in FALLBACKS or inp.get("locate") else None)
     return inp
 
 
@@ -275,17 +373,20 @@ def _input_hashes(groups: dict[str, list[str]], names: dict[str, str]) -> dict[s
         chunk = items[i:i + _HASH_CHUNK]
         wanted = [t for _k, ts in chunk for t in ts]
         docs = _layer_documents(wanted)
-        rows = ({t: {"item_text": d.get("text")} for t, d in docs.items()} if docs is not None else
-                rawstore.get_many("chain_filings", wanted, columns=["ticker", "item_text"]))
+        rows = ({t: {"item_text": d.get("text"), "quality": d.get("quality")} for t, d in docs.items()}
+                if docs is not None else
+                rawstore.get_many("chain_filings", wanted, columns=["ticker", "item_text", "quality"]))
         for key, ts in chunk:
             rep = next((t for t in ts if (rows.get(t) or {}).get("item_text")), ts[0])
             text = (rows.get(rep) or {}).get("item_text") or ""
             name = names.get(rep) or rep
-            if profiles_mod.text_status(text) is not None:
+            if profiles_mod.text_status(text) is not None or locator.asks((rows.get(rep) or {}).get("quality")):
                 inp = _filing_input(rep)
-                if inp["fallback"] not in FALLBACKS:
+                if inp["fallback"] not in FALLBACKS and not inp.get("locate"):
                     continue
-                text = inp["text"]
+                text = inp["hash_text"]
+            else:
+                text = clean_input(text)          # what _filing_input sends
             out[key] = profiles_mod.input_hash(name, text)
     return out
 
@@ -473,6 +574,29 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
             store.save_profile(t, ciks.get(t), {f: [] for f in config.PROFILE_FIELDS}, ck, w_model,
                                status="shell", provider=provider, profile_json=v3, label_source=labels)
 
+    def _locate(rep, name, inp):
+        """The writer's cut of the business section from the heading list, or None (a reply it cannot use; a
+        provider failure that does not stop the run). Run-stopping failures go up as for a profile call."""
+        try:
+            got = locator.locate(rep, name, (inp.get("source") or {}).get("form"), inp["locate"]["text"],
+                                 budget=budget, provider=provider, model=model)
+        except (deepseek.PeakHoursError, deepseek.DeepSeekAuthError, deepseek.DeepSeekTransientError,
+                grok.GrokAllowanceError, grok.GrokAuthError, grok.GrokRequestError, grok.GrokTransientError):
+            raise
+        except (deepseek.DeepSeekError, grok.GrokError) as exc:
+            logger.warning("relatedness locator %s unusable: %s", rep, exc)
+            return None
+        if got is not None:
+            logger.info("relatedness: %s Item located by the writer (%s) from its headings", rep, provider)
+        return got
+
+    def _no_text(ts, inp):
+        for t in ts:
+            if any((have.get(t) or {}).values()):
+                continue
+            store.save_profile(t, ciks.get(t), {f: [] for f in config.PROFILE_FIELDS}, "", w_model,
+                               status=inp["fallback"], provider=provider)
+
     def _work(item):
         if stop.is_set():
             return
@@ -485,7 +609,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
             _save_shell(ts, store.cache_key(w_model, w_thinking, w_effort, store.PROMPT_VERSION, rep,
                                             inp["hash"] or "", provider=provider, source=inp.get("source")))
             return
-        if inp["fallback"] not in FALLBACKS:
+        if inp["fallback"] not in FALLBACKS and not inp.get("locate"):
             # No filing text (``no_text``) or one under Value Chain's MIN_ITEM_CHARS (``short_text``, #313) in every
             # link of the fallback chain: the writer would answer from the company name alone, so nothing is sent.
             for t in ts:
@@ -506,6 +630,15 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
         if stop.is_set():
             return
         try:
+            if inp.get("locate"):
+                located = _locate(rep, name, inp)
+                if located is not None:
+                    located = located[:MAX_FALLBACK_CHARS]      # a located end past the headings runs to the end
+                    text = located
+                    inp = {**inp, "text": located, "fallback": "llm_locator",
+                           "source": inp["locate"].get("source") or inp.get("source")}
+                elif inp["fallback"] not in FALLBACKS:
+                    return _no_text(ts, inp)          # nothing usable: the rule cut was too short to send
             prof = profiles_mod.profile_for(rep, name, text, budget=budget, provider=provider, model=model,
                                             context=inp["context"])
         except profiles_mod.BudgetExceeded:
@@ -974,6 +1107,11 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
     payload["no_text"] = len(no_text)
     payload["short_text"] = len(short_text)
     payload["shell"] = len(shell)
+    # Which companies' Item the writer located from the headings (avo, 8 Nov 2026: logged per company).
+    payload["llm_located"] = sorted(
+        r["ticker"] for r in rawstore.get_all("relatedness_profiles")
+        if r["ticker"] in set(tickers) and isinstance(r.get("label_source"), dict)
+        and r["label_source"].get("input") == "llm_locator")
     payload["pending"] = max(0, len(tickers) - len(profiles) - len(no_text) - len(short_text) - len(shell))
     if no_fetch:
         # A Refresh changes no profile or score, so it shows when the last Fetch ran (#388 REL-10).
