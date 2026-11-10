@@ -218,14 +218,14 @@ def test_option_contracts_result_is_failed_when_the_first_page_fails():
     c, _ = _scripted(_Resp(500))
     res = c.option_contracts_result("SPY")
     assert res.status == "failed" and res.data == []
-    assert res.error["page"] == 1
+    assert res.error["page"] == 0        # UW pages from 0 (#255)
 
 
 def test_option_contracts_result_is_partial_when_a_later_page_fails():
     c, calls = _scripted(_Resp(200, FULL), _Resp(500))
     res = c.option_contracts_result("SPY", limit=500)
-    assert res.status == "partial" and len(res.data) == 500   # page 1's rows are kept
-    assert res.error["page"] == 2 and res.error["status"] == 500
+    assert res.status == "partial" and len(res.data) == 500   # page 0's rows are kept
+    assert res.error["page"] == 1 and res.error["status"] == 500
     assert len(calls) == 1 + uwmod.MAX_ATTEMPTS               # page 2 was retried, then gave up
 
 

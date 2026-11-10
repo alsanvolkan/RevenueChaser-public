@@ -287,7 +287,9 @@ class UWClient:
                 first = self.auth_error is None
                 self.auth_error = {"status": status, "endpoint": ep, "detail": body}
                 if first:
-                    logger.error(credentials.rejected_message("unusual_whales", status))
+                    # No key sent is the ordinary 401 of a hand-run command, not an expired key (#388).
+                    logger.error(credentials.rejected_message("unusual_whales", status) if self.key
+                                 else credentials.missing_message("unusual_whales"))
                 else:
                     logger.warning(f"UW {ep}: HTTP {status} (credentials rejected)")
                 return self._failed_result(ep, status, f"HTTP {status}", attempts)
@@ -874,9 +876,13 @@ class UWClient:
         the page) or ``failed`` (the first page failed: ``data`` is empty)."""
         ep = f"/stock/{_seg(uw_symbol(ticker))}/option-contracts"
         rows: list[dict] = []
-        page = 1
-        while page <= max_pages:
-            params = {"limit": limit, "page": page}
+        last = None
+        # UW pages from 0 (docs/openapi.yaml, schema ``Page``): page 0 goes without ``page``, as the calendar's
+        # does, so the first 500 contracts are not skipped (#255). A page repeating the last one ends the read.
+        for page in range(max_pages):
+            params = {"limit": limit}
+            if page:
+                params["page"] = page
             if expiry:
                 params["expiry"] = expiry
             if option_type:
@@ -885,15 +891,15 @@ class UWClient:
             res = self.get_result(ep, params)
             if res.status != "ok":
                 err = {**(res.error or {}), "page": page}
-                return ProviderResult("failed" if page == 1 else "partial", rows, err, ep)
+                return ProviderResult("failed" if page == 0 else "partial", rows, err, ep)
             data = res.data
             items = data.get("data", []) if isinstance(data, dict) else data or []
-            if not isinstance(items, list) or not items:
+            if not isinstance(items, list) or not items or items == last:
                 break
             rows.extend(items)
             if len(items) < limit:
                 break
-            page += 1
+            last = items
         return ProviderResult("ok", rows, None, ep)
 
     # ── Short Interest ──

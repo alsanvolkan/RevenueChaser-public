@@ -52,7 +52,8 @@ def test_option_contracts_pages_until_short_page():
     rows = c.option_contracts("SPY", expiry="2026-10-17", limit=500, max_pages=6)
     assert len(rows) == 501
     assert len(fake.calls) == 2
-    assert fake.calls[0][1]["page"] == 1 and fake.calls[1][1]["page"] == 2
+    # #255: UW pages from 0, so the first request sends no ``page`` and the second asks for page 1.
+    assert "page" not in fake.calls[0][1] and fake.calls[1][1]["page"] == 1
     assert fake.calls[0][1]["expiry"] == "2026-10-17"
 
 
@@ -67,3 +68,10 @@ def test_option_contracts_stops_at_max_pages():
 def test_option_contracts_handles_empty():
     c, _ = _client([{"data": []}])
     assert c.option_contracts("SPY") == []
+
+
+def test_option_contracts_stops_when_a_page_repeats_the_last_one():
+    full = {"data": [{"option_symbol": f"X{i}"} for i in range(500)]}
+    c, fake = _client([full, full])
+    assert len(c.option_contracts("SPY", limit=500, max_pages=6)) == 500
+    assert len(fake.calls) == 2
