@@ -141,7 +141,8 @@ SCHEMA_STAMP = ("store_schema",)
 V13 = ("relatedness_embeddings",)
 # Board files (S9, S16), no schema bump: each table lives in its own boards/<board>.duckdb, rebuilt incrementally.
 BOARD_TABLES = ("news_events", "news_highlight", "news_headlines", "news_meta",
-                "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta")
+                "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta",
+                "spx_raw_days", "spx_raw_files", "spx_brier", "spx_gex_daily", "spx_meta")
 
 
 def test_legacy_table_list_is_the_66_remaining_pre_g1_tables():

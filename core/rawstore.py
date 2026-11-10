@@ -92,7 +92,7 @@ def _db_of(name: str) -> str:
 #: incrementally. The first, narrow step of the board-file plan (2026-11-08): only boards born with their own file are
 #: listed here (News, Welcome); the move of the older boards' tables (plan PR 0 and on) extends this tuple.
 BOARD_DBS = ("news", "welcome", "relatedness", "comovement", "asymmetric_growth", "swing_potential",
-             "fundamentals", "sector_rotation", "leaps", "oipd", "forecast")
+             "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma")
 #: The folder of the board files, beside the raw store; ``rcdata/backup.py`` copies ``boards/*.duckdb``.
 BOARDS_DIRNAME = "boards"
 
@@ -2024,6 +2024,50 @@ MANIFEST: dict[str, dict] = {
         "key": ["key"],
         "columns": ["key TEXT PRIMARY KEY", "value TEXT", "run_at DOUBLE"],
         "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "welcome", "sources": [],
+    },
+    # SPX Gamma board (SPX Gamma review 9 Nov 2026, D1-D5): its own file boards/spx_gamma.duckdb, written only by
+    # module_spx_gamma/store.py. A raw day and its answers land in one transaction; UW serves no history, so they
+    # cannot be fetched again.
+    "spx_raw_days": {
+        "key": ["session_date"],
+        "columns": [
+            "session_date DATE PRIMARY KEY", "requested_date TEXT", "api_snapshot_time TEXT", "origin TEXT",
+            "spot DOUBLE", "zero_dte_expiry TEXT", "file_count INTEGER", "manifest BLOB", "stored_at DOUBLE",
+        ],
+        "compress": {"manifest": "json"},
+        "kind": "tabular", "write": "upsert", "history_mode": "event", "db": "spx_gamma", "sources": [],
+    },
+    "spx_raw_files": {
+        "key": ["session_date", "file"],
+        "columns": [
+            "session_date DATE", "file TEXT", "sha256 TEXT", "bytes INTEGER", "body BLOB", "stored_at DOUBLE",
+            "PRIMARY KEY (session_date, file)",
+        ],
+        "compress": {"body": "text"},
+        "kind": "tabular", "write": "upsert", "history_mode": "event", "db": "spx_gamma", "sources": [],
+    },
+    "spx_brier": {
+        "key": ["asof_date"],
+        "columns": [
+            "asof_date DATE PRIMARY KEY", "scenario_probs JSON", "outcome TEXT", "brier DOUBLE", "rule TEXT",
+            "target TEXT", "bands JSON", "resolved_on TEXT", "resolved_close DOUBLE", "updated_at DOUBLE",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "event", "db": "spx_gamma", "sources": [],
+    },
+    "spx_gex_daily": {
+        "key": ["session_date"],
+        "columns": [
+            "session_date DATE PRIMARY KEY", "is_friday_close BOOLEAN", "spot DOUBLE", "net_dex DOUBLE",
+            "net_gex_oi DOUBLE", "net_vanna DOUBLE", "live_charm DOUBLE", "vanna_at_spot DOUBLE",
+            "charm_live_sum DOUBLE", "matrix_gex DOUBLE", "source_chip TEXT", "regime TEXT", "vix DOUBLE",
+            "updated_at DOUBLE",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "session_snapshot", "db": "spx_gamma", "sources": [],
+    },
+    "spx_meta": {
+        "key": ["key"],
+        "columns": ["key TEXT PRIMARY KEY", "value TEXT", "updated_at DOUBLE"],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "spx_gamma", "sources": [],
     },
     "source_checks": {
         "key": ["dataset", "source", "key"],
