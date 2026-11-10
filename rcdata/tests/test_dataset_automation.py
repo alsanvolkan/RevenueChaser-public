@@ -55,7 +55,7 @@ def test_a_sources_own_mode_wins_for_that_source_only():
     assert _queued() == [{"dataset": MS, "params": None}]
 
 
-def test_a_source_set_off_is_not_queued_whatever_its_file_says():
+def test_a_source_set_off_is_not_queued_while_its_file_runs_full():
     ops.kind_mode_set("market", "full", by="avo")
     ops.dataset_mode_set(MS, "off", by="avo")
     [(name, why, rid, _)] = due.enqueue_due()
