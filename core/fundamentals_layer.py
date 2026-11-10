@@ -120,7 +120,9 @@ def _meta(company: dict, has_rows: bool, preliminary: list[str]) -> dict:
             "extract_version": sec_edgar.EXTRACT_VERSION, "layer": True, "cik": company.get("cik"),
             "facts_as_of": _iso(company.get("facts_as_of")), "submissions_as_of": _iso(company.get("submissions_as_of")),
             "newest_filed": _iso(company.get("newest_filed")),
-            "newest_period_end": _iso(company.get("newest_period_end"))}
+            "newest_period_end": _iso(company.get("newest_period_end")),
+            # ISO-2 of the SEC business address (#645 G2); None until ``sec/filings`` has read the header.
+            "business_country": company.get("business_country")}
     # #46: the currencies a money concept was tagged in instead of USD. The layer measures it on every read of the
     # facts, so the key is always there once the facts were read (``facts_as_of``); before that it is "not measured".
     if company.get("facts_as_of") is not None:
