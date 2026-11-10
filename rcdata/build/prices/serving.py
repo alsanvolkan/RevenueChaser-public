@@ -1026,13 +1026,15 @@ def _hist_counts(con: duckdb.DuckDBPyConnection) -> tuple[list[int], dict[str, i
 HRET_SQL = f"""CREATE OR REPLACE TEMP TABLE _hret AS
     WITH d AS (SELECT security_id, ex_date, sum(amount) AS amount FROM corporate_action
                WHERE applied AND action = 'cash_dividend' GROUP BY ALL),
-    x AS (SELECT h.source, h.security_id, h.session_date, h.own_return, h.return_basis,
+    x AS (SELECT h.source, h.security_id, h.series, h.session_date, h.own_return, h.return_basis,
                  h.close * coalesce(a.split_factor, 1) AS sc,
                  coalesce(d.amount, 0) * coalesce(a.split_factor, 1) AS dv
           FROM _hist_all h {factor_join('a', 'h.security_id', 'h.session_date')}
           LEFT JOIN d ON d.security_id = h.security_id AND d.ex_date = h.session_date WHERE h.close > 0),
     y AS (SELECT *, lag(sc) OVER w AS prev_sc, lag(session_date) OVER w AS prev_day FROM x
-          WINDOW w AS (PARTITION BY source, security_id ORDER BY session_date))
+          -- per series: two series of one aliased fund price the same sessions, and each return is its own series'
+          -- (review F3 of #654: otherwise which one is the previous row depends on the row order)
+          WINDOW w AS (PARTITION BY source, security_id, series ORDER BY session_date))
     -- The economic day return: the close plus the dividend over the previous close, in one share basis.
     SELECT source, security_id, session_date, own_return, return_basis, (sc + dv) / prev_sc - 1 AS ours FROM y
     WHERE prev_sc > 0 AND own_return IS NOT NULL AND date_diff('day', prev_day, session_date) <= 7"""
