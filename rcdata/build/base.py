@@ -247,9 +247,9 @@ class RunContext:
             if not force and self._pause_read_at is not None and now - self._pause_read_at < PAUSE_READ_EVERY_S:
                 return
             self._pause_read_at = now
-            off = ops.switch_off("fetch")          # #527: the board's fetch switch stops every run, the same way
-            if off is not None:
-                self._paused = f"stopped, {ops.switch_words('fetch', off)}"
+            held = held_by_switch(self.dataset)    # #527: the fetch switch, then the file's, stop a run the same way
+            if held is not None:
+                self._paused = f"stopped, {ops.switch_words(*held)}"
                 raise Paused(self._paused)
             row = ops.schedule_get(self.dataset)
             if not row or row.get("paused_at") is None:
@@ -851,13 +851,26 @@ def cap_problem(ds: Dataset) -> str | None:
     return "day cap reached: " + ", ".join(refused) if refused else None
 
 
+def held_by_switch(name: str) -> tuple[str, dict] | None:
+    """``(switch, its row)`` of the board switch that holds dataset ``name``, else None: the fetch switch first, then
+    its file's (avo, 10 Nov 2026: "main > midswitch > subswitches"; a file's switch holds a Fetch pressed by hand too)."""
+    from . import DATASETS
+    ds = DATASETS.get(name)
+    file = f"file-{ds.kind}" if ds is not None else None
+    for sw in ("fetch",) + ((file,) if file in ops.FILE_SWITCHES else ()):
+        off = ops.switch_off(sw)
+        if off is not None:
+            return sw, off
+    return None
+
+
 def paused_problem(ds: Dataset) -> str | None:
     """``skipped: paused ...`` while ``ops.dataset_schedule`` holds a pause for the dataset (Settings' Pause), else
     None. Checked before anything is fetched, so a paused dataset sends no call. The board's fetch switch (#527)
-    holds every dataset at once and is read first."""
-    off = ops.switch_off("fetch")
-    if off is not None:
-        return f"skipped: {ops.switch_words('fetch', off)}"
+    holds every dataset at once and is read first, then the switch of the dataset's file."""
+    held = held_by_switch(ds.name)
+    if held is not None:
+        return f"skipped: {ops.switch_words(*held)}"
     row = ops.schedule_get(ds.name)
     if not row or row.get("paused_at") is None:
         return None

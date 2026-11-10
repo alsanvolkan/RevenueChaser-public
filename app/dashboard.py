@@ -1724,11 +1724,13 @@ def api_build_timer():
 
 @app.route("/api/build/switch/<name>", methods=["POST"])
 def api_build_switch(name: str):
-    """#527: turn the board's ``fetch`` or ``backup`` switch on or off: ``{"on": true|false}``. Off records who (the
-    panel header) and when; 400 for an unknown switch or a body without a boolean ``on``."""
+    """#527: turn the board's ``fetch`` or ``backup`` switch, or a file's ``file-<kind>`` switch, on or off:
+    ``{"on": true|false}``. Off records who (the panel header) and when; 400 for an unknown switch or a body without a
+    boolean ``on``."""
     from RevenueChaser.rcdata import ops
-    if name not in ops.SWITCHES:
-        return jsonify({"ok": False, "error": f"unknown switch {name!r}; known: {', '.join(ops.SWITCHES)}"}), 400
+    known = ops.SWITCHES + ops.FILE_SWITCHES
+    if name not in known:
+        return jsonify({"ok": False, "error": f"unknown switch {name!r}; known: {', '.join(known)}"}), 400
     on = (request.get_json(silent=True) or {}).get("on")
     if not isinstance(on, bool):
         return jsonify({"ok": False, "error": "on must be true or false"}), 400

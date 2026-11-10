@@ -267,6 +267,10 @@ def test_the_board_head_says_the_switches_the_timer_and_the_gateway(monkeypatch)
     head = metrics.board_head(NOW, ibkr=lambda: {"state": "up"})
     assert head["switches"] == {"fetch": True, "backup": True}
     assert head["timer"] == "on" and head["timer_fired"] == {"last": metrics.control._clock(NOW), "next": None}
+    from RevenueChaser.rcdata import ops
+    assert head["files"] == {k: True for k in ops.FILE_KINDS}
+    ops.switch_set("file-options", False, by="avo")
+    assert metrics.board_head(NOW, ibkr=lambda: None)["files"]["options"] is False
     assert head["gateway"] == {"cls": "ok", "n": "open", "label": "logged in", "login": None}
     monkeypatch.setenv("RC_IBKR_LOGIN_URL", "https://gateway.example/")
     assert metrics.board_head(NOW, ibkr=lambda: None)["gateway"]["login"] == "https://gateway.example/"
@@ -276,6 +280,14 @@ def test_the_detail_route_takes_the_pickers_range_and_refuses_a_backwards_one(cl
     body = client.get("/api/build/datasets?detail=1&from=1000&to=5000").get_json()
     assert body["ok"] and "head" in body and all("history" in d for d in body["datasets"] if "error" not in d)
     assert client.get("/api/build/datasets?detail=1&from=5000&to=1000").status_code == 400
+
+
+def test_a_files_switch_is_set_through_the_switch_route(client):
+    from RevenueChaser.rcdata import ops
+    r = client.post("/api/build/switch/file-options", json={"on": False}, headers={"X-RC-Panel": "grafana"})
+    assert r.status_code == 200 and ops.switch_off("file-options") is not None
+    assert client.post("/api/build/switch/file-nope", json={"on": False},
+                       headers={"X-RC-Panel": "grafana"}).status_code == 400
 
 
 def test_datasets_list_marks_attended():

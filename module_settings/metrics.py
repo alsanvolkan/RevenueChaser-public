@@ -382,7 +382,13 @@ def board_head(now: datetime | None = None, *, ibkr: Callable[[], dict] | None =
     # avo, 10 Nov 2026: "builder timer (icine yaz ne zaman fire ettigini)": its last and next pass, as the page says them
     fired = {"last": control._clock(timer.get("last")) if timer.get("last") else None,
              "next": control._clock(timer.get("next")) if timer.get("next") else None}
-    return {"switches": switches, "timer": timer.get("state"), "timer_fired": fired,
+    try:
+        rows = control._read_switches()
+        from RevenueChaser.rcdata import ops
+        files = {k: (rows.get(f"file-{k}") or {}).get("off_at") is None for k in ops.FILE_KINDS}
+    except Exception:  # noqa: BLE001 - files not known: the board draws no file switch rather than a guessed one
+        files = None
+    return {"switches": switches, "timer": timer.get("state"), "timer_fired": fired, "files": files,
             "gateway": {"cls": cls, "n": n, "label": label.replace("IBKR gateway · ", ""),
                         "login": report._ibkr_login_href(inventory._ibkr_login_url())}}
 

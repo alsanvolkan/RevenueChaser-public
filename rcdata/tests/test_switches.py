@@ -89,3 +89,29 @@ def test_backup_switch_does_not_stop_a_fetch(fetcher):
     ops.switch_set("backup", False, by="avo")
     row, _ = _run(fetcher)
     assert fetcher.steps[-1] == "build" and row["result"] == "changed"
+
+
+def test_a_files_switch_holds_its_datasets_by_hand_too_and_no_other_file(fetcher):
+    """avo, 10 Nov 2026: "main > midswitch > subswitches" and "Fetch de dursun": a file's switch off skips a Fetch
+    pressed by hand on one of its datasets before any call; another file's switch does not."""
+    from RevenueChaser.rcdata import serving
+    assert set(ops.FILE_KINDS) == set(serving.KINDS)
+    ops.switch_set("file-options", False, by="avo")
+    row, _ = _run(fetcher)
+    assert fetcher.steps[-1] == "build" and row["result"] == "changed", "market's datasets run on"
+    ops.switch_set("file-market", False, by="avo")
+    fetcher.steps.clear()
+    row, req = _run(fetcher)
+    assert fetcher.steps == [] and req["status"] == "skipped"
+    assert row["note"].startswith("skipped: the market.duckdb switch is off (avo at ")
+    with pytest.raises(ValueError):
+        ops.switch_set("file-nope", False, by="avo")
+
+
+def test_the_fetch_switch_is_read_before_the_files(fetcher):
+    ops.switch_set("file-market", False, by="avo")
+    ops.switch_set("fetch", False, by="avo")
+    assert base.held_by_switch(fetcher.name)[0] == "fetch"
+    ops.switch_set("fetch", True, by="avo")
+    assert base.held_by_switch(fetcher.name)[0] == "file-market"
+    assert base.held_by_switch("no/such_dataset") is None

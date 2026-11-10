@@ -67,6 +67,11 @@ KIND_MODES = ("off", "raw", "parquet", "full")
 #: The board's two switches (#527, avo 6 Nov 2026): ``fetch`` stops every fetch and build, ``backup`` every backup.
 #: A switch with no ``switch`` row, or with ``off_at`` NULL, is on.
 SWITCHES = ("fetch", "backup")
+#: One switch per served DuckDB file (avo, 10 Nov 2026: "main > midswitch > subswitches", and "Fetch de dursun"):
+#: ``file-<kind>`` off holds every dataset of that file, on its own or pressed by hand, under the fetch switch and
+#: over each dataset's own. The kinds are ``serving.KINDS`` (not imported here: serving imports duckdb).
+FILE_KINDS = ("market", "spine", "ownership", "prices", "fundamentals", "options")
+FILE_SWITCHES = tuple(f"file-{k}" for k in FILE_KINDS)
 # avo, 8 Nov 2026 ("B", #387): a resolved build issue is kept seven days; an open one until it is resolved.
 RESOLVED_ISSUE_DAYS = 7
 # The UW response headers sampled into uw_remaining: only UW's own, never a cookie or anything else the answer had.
@@ -903,8 +908,8 @@ def dataset_mode(dataset: str, kind: str) -> str:
 
 
 def _switch(name: str) -> str:
-    if name not in SWITCHES:
-        raise ValueError(f"unknown switch {name!r}; known: {', '.join(SWITCHES)}")
+    if name not in SWITCHES + FILE_SWITCHES:
+        raise ValueError(f"unknown switch {name!r}; known: {', '.join(SWITCHES + FILE_SWITCHES)}")
     return name
 
 
@@ -933,7 +938,8 @@ def switch_off(name: str) -> dict | None:
 
 def switch_words(name: str, row: dict) -> str:
     when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(row["off_at"]))
-    return f"the {name} switch is off ({row.get('off_by') or '?'} at {when})"
+    what = f"{name.removeprefix('file-')}.duckdb" if name in FILE_SWITCHES else name
+    return f"the {what} switch is off ({row.get('off_by') or '?'} at {when})"
 
 
 # ── Read helpers for the Settings page (PR 2) ──────────────────────────────────────────────────────────────────
