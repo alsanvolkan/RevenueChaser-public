@@ -1,4 +1,5 @@
-"""#527: the RC Data Health and RC Fetch Grafana boards live inside the app, on a Live tab of Data/Health.
+"""#527: the RC Data Health and RC Fetch Grafana boards live inside the app, at the head of the Fetch/Health tab
+(avo, 10 Nov 2026: "iki tabdan daha fazlasi olmasin"; the Live tab is gone).
 
 avo, 8 Nov 2026: "bunlarin ne isi var burada? bunlar revenue chaser app icine gomulu olmaliydi". Grafana runs on
 the same host as the dashboard, port 3000, and allows only this app's origin to frame it (home-server units/
@@ -15,12 +16,15 @@ def _page() -> str:
     return report.render_settings_dashboard({"newdata": {"error": "not read in this test"}, "tickers": []})
 
 
-def test_live_is_the_third_tab_and_starts_hidden():
+def test_two_tabs_only_and_the_frame_heads_fetch_health_with_rc_fetch_first():
     html = _page()
     strip = html[html.index('id="settings-tabs"'):html.index("</nav>")]
-    assert strip.index('id="tab-data"') < strip.index('id="tab-health"') < strip.index('id="tab-live"')
-    assert re.search(r'<div[^>]*id="panel-live"[^>]*role="tabpanel"[^>]*hidden', html)
-    assert report.SETTINGS_TABS["tabs"]["live"] == "panel-live"
+    assert re.findall(r'role="tab" id="(tab-[a-z]+)"', strip) == ["tab-data", "tab-health"]
+    assert 'id="panel-live"' not in html and "live" not in report.SETTINGS_TABS["tabs"]
+    health = html[html.index('id="panel-health"'):]
+    assert health.index('id="live-frame"') < health.index("<h1>Data/Health · Fetch/Health</h1>")
+    assert report.LIVE_BOARDS[0][0] == "rc-fetch"
+    assert "getElementById('panel-health')" in report.LIVE_JS
 
 
 def test_the_frame_has_no_source_until_the_tab_opens():
@@ -44,8 +48,7 @@ def test_the_boards_and_the_grafana_address():
 
 def test_the_health_tab_no_longer_draws_the_live_parts():
     """#527 B4, decision D4 = B (avo, 8 Nov 2026 02:39): the queue, the running jobs and the "right now" strip leave
-    the Health tab once Grafana shows them; one link to the Live tab takes their place. The Data tab keeps its top
-    bar, so the switches and the gateway login link are still one tab away."""
+    the Health tab once Grafana shows them; the Grafana frame now heads the same tab, so no link is needed."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     from RevenueChaser.module_settings.tests.test_report import _panel, _payload
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
@@ -54,7 +57,6 @@ def test_the_health_tab_no_longer_draws_the_live_parts():
     assert 'id="sec-queue"' not in health and 'id="health-queue"' not in health
     # avo, 10 Nov 2026: the switches moved with every control to Fetch/Health, once
     assert health.count('class="topbar"') == 1 and "sw-msg-h" not in health
-    link = re.search(r'<a[^>]*id="health-live-link"[^>]*>', health).group(0)
-    assert 'data-board="rc-fetch"' in link and 'href="#live"' in link
+    assert 'id="health-live-link"' not in health and 'id="live-frame"' in health
     data = _panel(html, "panel-data")
     assert 'class="topbar"' not in data and 'href="https://gateway.example/"' in health

@@ -81,8 +81,7 @@ def test_the_health_tab_puts_what_needs_avo_first_and_folds_the_reference_parts(
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
-    order = ["<h1>Data/Health · Fetch/Health</h1>", "<h1>Needs, boards and automations</h1>",
-             'id="health-live-link"',
+    order = ['id="live-frame"', "<h1>Data/Health · Fetch/Health</h1>", "<h1>Needs, boards and automations</h1>",
              'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
