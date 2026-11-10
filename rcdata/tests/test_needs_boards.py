@@ -163,8 +163,9 @@ def test_comovement_plans_the_corporate_actions_its_bar_reads_join():
 def test_relatedness_plans_the_universe_and_the_fundamentals_needs_it_reads():
     """#490: ``engine.py`` calls ``read.fundamental_companies`` and ``read.filing_texts``, so the board has a plan
     entry now instead of none, and the control board draws its lines. #400: the v3 profile's segment note reads
-    ``read.segments`` too."""
-    want = ("identity.universe", "fundamentals.companies", "fundamentals.filings", "fundamentals.segments")
+    ``read.segments`` too, and the B input (WP6) ``read.customers``."""
+    want = ("identity.universe", "fundamentals.companies", "fundamentals.filings", "fundamentals.segments",
+            "fundamentals.customers")
     assert boards.PLANNED_READS["module_relatedness"] == want
     assert boards.reads_of("module_relatedness") == {"declared": False, "needs": want}
 
