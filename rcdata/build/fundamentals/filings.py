@@ -123,7 +123,7 @@ def index_url(cik: str, accession: str) -> str:
 #: filer who files the AIF as a PDF is missed (``read_exhibits`` raises ``aif_not_named`` when it can tell).
 _AIF_NAME = re.compile(r"aif", re.I)
 _EX_99_1 = re.compile(r"ex(?:hibit)?[-_]?99[._-]?1(?![0-9])", re.I)
-_EX_1 = re.compile(r"ex(?:hibit)?[-_]?0?1(?![0-9])", re.I)     # RY files its AIF as Exhibit 1, dex1.htm (#400 WP3)
+_EX_1 = re.compile(r"(?<![a-z])d?ex(?:hibit)?[-_]?0?1(?![0-9-])", re.I)     # RY files its AIF as Exhibit 1, dex1.htm (#400 WP3)
 _EX_99_ANY = re.compile(r"ex(?:hibit)?[-_]?99", re.I)
 
 

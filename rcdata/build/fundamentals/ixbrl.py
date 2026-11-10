@@ -217,7 +217,9 @@ def _customers(found, counts) -> list[dict]:
             continue
         dims = {local(a): m for a, m in ctx["dims"].items()}
         customer = dims.get(CUSTOMER_AXIS)
-        if not customer or ctx["end"] is None:      # a named customer counts whatever type the filer wrote (VRTX)
+        kind = local(dims.get(TYPE_AXIS))
+        # A named customer counts whatever type the filer wrote (VRTX), but a supplier is not a customer.
+        if not customer or kind == "SupplierConcentrationRiskMember" or ctx["end"] is None:
             continue
         if not 0 <= value <= 1:
             counts["share_over_one"] = counts.get("share_over_one", 0) + 1

@@ -22,8 +22,8 @@ _LINE_START = {
     "10-K": re.compile(r"(?im)^[^\S\n]*items?\s{0,3}(1|i)\b(?:\s*(?:and|&|,)\s*2\b)?\s*[.:]?\s*"
                        rf"(?:[{config.DASH}]+\s*)?(?:(?:description\s+of|our)\s+(?:the\s+)?)?{config.spaced('business')}"),
     "20-F": re.compile(r"(?im)^[^\S\n]*item\s{0,3}(4)\b\s*[.:]?\s*"
-                       rf"(?:[{config.DASH}]+\s*)?{config.spaced('information')}\s+(?:on|about|of)\s+(?:the\s+)?[\w&.-]+"
-                       r"(?!\s+(?:our\s+)?executive)"),
+                       rf"(?:[{config.DASH}]+\s*)?{config.spaced('information')}\s+(?:on|about|of)\s+(?:the\s+)?"
+                       r"(?!(?:our\s+)?executive)[\w&.-]+"),
 }
 _LINE_END = re.compile(r"(?im)^[^\S\n]*item\s{0,3}(1[abc]|[2-9][abc]?|1[0-9])\b")
 _TOC_NEXT = re.compile(r"(?i)item\s*(1a|2|4a|5)\b")

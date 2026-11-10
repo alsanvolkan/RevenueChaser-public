@@ -49,3 +49,7 @@ def test_a_named_customer_counts_whatever_concentration_type_the_filer_wrote():
                 [fx._ix("us-gaap:ConcentrationRiskPercentage1", "a", "22", unit="pure", scale="-2")])
     _, customers = ixbrl.parse(html)
     assert [(c["customer"], c["share"]) for c in customers] == [("Mc Kesson Corporation", pytest.approx(0.22))]
+    supplier = {**dims, "us-gaap:ConcentrationRiskByTypeAxis": "us-gaap:SupplierConcentrationRiskMember"}
+    html = _doc([fx._ctx("a", *FY, supplier)],
+                [fx._ix("us-gaap:ConcentrationRiskPercentage1", "a", "22", unit="pure", scale="-2")])
+    assert ixbrl.parse(html)[1] == []                                    # a supplier is not a customer

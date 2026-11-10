@@ -633,6 +633,7 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
             if inp.get("locate"):
                 located = _locate(rep, name, inp)
                 if located is not None:
+                    located = located[:MAX_FALLBACK_CHARS]      # a located end past the headings runs to the end
                     text = located
                     inp = {**inp, "text": located, "fallback": "llm_locator",
                            "source": inp["locate"].get("source") or inp.get("source")}

@@ -46,3 +46,11 @@ def test_an_aif_filed_as_exhibit_1_is_found():
     listing = {"directory": {"item": [{"name": "d40f.htm", "size": "90000"}, {"name": "dex1.htm", "size": "800000"},
                                       {"name": "dex10.htm", "size": "900000"}, {"name": "dex2.htm", "size": "700000"}]}}
     assert filings.aif_exhibits(listing, "d40f.htm") == ["dex1.htm"]
+    for name in ("annex1.htm", "index1.htm", "ex1-1.htm"):              # not an Exhibit 1 (review of #617)
+        assert filings.aif_exhibits({"directory": {"item": [{"name": name, "size": "1"}]}}) == []
+
+
+def test_a_20f_executive_officers_heading_is_not_item_4():
+    assert not splitter._LINE_START["20-F"].search(" ITEM 4. INFORMATION ABOUT OUR EXECUTIVE OFFICERS \n")
+    assert not splitter._LINE_START["20-F"].search(" ITEM 4. INFORMATION ABOUT EXECUTIVE OFFICERS \n")
+    assert splitter._LINE_START["20-F"].search(" ITEM 4. INFORMATION ABOUT SAP \n")
