@@ -522,6 +522,11 @@ def finish_run(run_id: str, status: str, error: str | None = None) -> None:
     _transaction(["job_runs2"], work)
 
 
+def run_started_at(run_id: str) -> float | None:
+    row = _one("job_runs2", run_id)
+    return row["started_at"] if row else None
+
+
 def last_builder_run() -> dict | None:
     newest = _fetch("job_runs2", _client().zrevrange(_key("job_runs2"), 0, 0))
     cols = ("run_id", "dataset", "trigger", "pid", "started_at", "finished_at", "status", "error")

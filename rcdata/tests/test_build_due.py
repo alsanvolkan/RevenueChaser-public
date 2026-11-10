@@ -115,11 +115,28 @@ def test_weekly_and_monthly_count_days_since_the_last_check(clock, cadence, days
 
 
 def test_an_unknown_cadence_reads_as_daily(clock):
-    ops.schedule_set(MS, "hourly", None)
+    ops.schedule_set(MS, "yearly", None)
     _checked(MS, as_of="2026-10-27")
     assert due.is_due(DATASETS[MS])[0] is False
     clock(WED_MORNING)
     assert due.is_due(DATASETS[MS])[0] is True
+
+
+@pytest.mark.parametrize("minutes, expect", [(54, False), (55, True), (180, True)])
+def test_hourly_counts_minutes_since_the_last_run_started(clock, minutes, expect):
+    # #643 F1: the start of the run behind the last check, not its finish, so a ten-minute run keeps every hour.
+    ops.schedule_set(MS, "hourly", None)
+    ops.start_run("r1", MS, "schedule")
+    ops.record_check(MS, "changed", source_as_of="2026-10-27", run_id="r1")
+    started = ops.run_started_at("r1")
+    clock(datetime.fromtimestamp(started + minutes * 60, timezone.utc))
+    assert due.is_due(DATASETS[MS]) == (expect, f"hourly: last run started {minutes} min ago")
+
+
+def test_hourly_with_no_run_behind_the_check_is_due(clock):
+    ops.schedule_set(MS, "hourly", None)
+    _checked(MS, as_of="2026-10-27")
+    assert due.is_due(DATASETS[MS]) == (True, "hourly: the last check names no run")
 
 
 def test_the_schedule_next_due_holds_a_dataset_until_that_day(clock):

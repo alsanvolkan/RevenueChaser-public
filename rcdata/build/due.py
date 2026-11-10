@@ -26,6 +26,10 @@ A dataset is due (``is_due``) when nothing holds it and its last run is old enou
   asks for, ``full`` the whole run. Under a partial mode a check the partial run itself wrote (a ``skipped`` with
   its stage note) counts as the run for the cadence, so the hourly pass does not queue the dataset again every
   hour; under ``full`` it stays due, so the next pass builds the rest. A person's Fetch is not touched by any of it;
+- ``hourly`` (#643 F1, for the hourly economic calendar and headlines, and group 3's Earnings refresh): due once the
+  run that wrote the last check started ``HOURLY_MIN`` minutes ago or more (``job_runs2.started_at`` through the
+  check's ``run_id``; ``dataset_check`` holds only a day). Start, not finish: a run that took ten minutes would
+  otherwise miss every second hourly pass. A check with no run behind it is due;
 - ``weekly`` / ``monthly``: due 7 / 30 days after the last check's ``checked_on``. The cadence is the
   ``dataset_schedule`` row's, else the dataset's own ``cadence`` attribute (the spine's weekly sources), else daily.
 
@@ -41,9 +45,11 @@ from ...core import calendar
 from .. import ops
 from . import base
 
-CADENCES = ("daily", "weekly", "monthly")
+CADENCES = ("hourly", "daily", "weekly", "monthly")
 DEFAULT_CADENCE = "daily"
 CYCLE_DAYS = {"weekly": 7, "monthly": 30}
+#: Under 60 so a pass that starts a few minutes early (timer jitter, a long pass before it) still finds it due.
+HOURLY_MIN = 55
 REQUESTED_BY = "schedule"
 ATTENDED_WHY = "attended: run from the CLI on the server (a person logs in; WRDS_USERNAME must be set)"
 WRDS_FAILED_WHY = ("the last WRDS run failed: it waits for a person (no hourly retry, the last snapshot stays); "
@@ -109,6 +115,12 @@ def is_due(ds, mode: str = "full") -> tuple[bool, str]:
                 return True, f"no next session known; as-of {as_of} is newer"
             return False, f"no next session known; ran for {ran}"
         return (True, f"next check {nxt} reached") if as_of >= nxt else (False, f"next check {nxt}")
+    if cadence == "hourly":
+        started = ops.run_started_at(check["run_id"]) if check.get("run_id") else None
+        if started is None:
+            return True, "hourly: the last check names no run"
+        minutes = int((calendar._now().timestamp() - float(started)) // 60)
+        return minutes >= HOURLY_MIN, f"hourly: last run started {minutes} min ago"
     age = (calendar.today_ny() - date.fromisoformat(str(check["checked_on"])[:10])).days
     if age >= CYCLE_DAYS[cadence]:
         return True, f"{cadence}: last checked {age} days ago"

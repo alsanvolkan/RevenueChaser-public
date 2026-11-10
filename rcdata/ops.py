@@ -1089,6 +1089,13 @@ def need_reads(first_day: str) -> list[dict]:
 
 
 @_routed
+def run_started_at(run_id: str) -> float | None:
+    """``job_runs2.started_at`` of ``run_id`` (epoch seconds), None when there is no such run."""
+    rows = _select("SELECT started_at FROM job_runs2 WHERE run_id = ?", (run_id,))
+    return rows[0]["started_at"] if rows else None
+
+
+@_routed
 def last_builder_run() -> dict | None:
     rows = _select("SELECT run_id, dataset, trigger, pid, started_at, finished_at, status, error FROM job_runs2 "
                    "ORDER BY started_at DESC LIMIT 1")

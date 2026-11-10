@@ -618,6 +618,8 @@ def next_run_words(schedule: dict | None, check: dict | None, kind: str | None, 
             if day is None:
                 at = datetime.combine(now.astimezone(NY).date(), starts, tzinfo=NY)
                 return prefix + _pass_words(_first_pass(at, minute), recurring=True)
+        elif cadence == "hourly":                  # due.is_due: due again within the hour of its last run
+            return f"{prefix}every hourly pass (:{int(minute):02d})"
         else:
             checked = _day(check.get("checked_on"))
             day = checked + timedelta(days=due.CYCLE_DAYS[cadence]) if checked else None
