@@ -4,7 +4,7 @@ Claim rule, applied to ``rawstore.MANIFEST``:
 
 - A ``*_changes`` table (MANIFEST ``changes_of``) is listed on the dataset that owns its base table.
 - A history.duckdb table (``result_runs`` and every result-history ``*_history`` mirror) is listed on
-  ``result_history``. Those 18 tables take freshness ``from_run_log`` until #82 and #83 make the run
+  ``result_history``. Those 19 tables take freshness ``from_run_log`` until #82 and #83 make the run
   log trustworthy. ``earnings_history`` is not one of them: it is a raw change-history table.
 - Every other MANIFEST table is listed on exactly one dataset.
 - ``UNCLAIMED_ALLOWLIST`` is empty. A new MANIFEST table fails the claim test until a dataset owns it.
@@ -35,7 +35,7 @@ from importlib import import_module
 from RevenueChaser.core.datahealth import Health
 
 DBS = ("raw", "edgar", "prices", "history", "news", "welcome", "relatedness", "comovement", "asymmetric_growth",
-       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast")  # all but the first four: board files (S9, S16)
+       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma")  # all but the first four: board files (S9, S16)
 
 FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
@@ -44,7 +44,7 @@ FROM_RUN_LOG_CAVEAT = (
     "from the run log; not trustworthy until alsanvolkan/RevenueChaser-public#82 and alsanvolkan/RevenueChaser-public#83 are fixed (run_registry / result_runs)"
 )
 
-# history.duckdb: the header plus every ``*_history`` mirror. 18 tables. S5b part 3.
+# history.duckdb: the header plus every ``*_history`` mirror. 19 tables. S5b part 3.
 _HISTORY = (
     "result_runs",
     "ag_scores_history",
@@ -60,6 +60,7 @@ _HISTORY = (
     "oipd_fit_history",
     "rotation_holdings_history",
     "rotation_snapshots_history",
+    "spx_gamma_levels_history",
     "sector_tree_history",
     "money_flow_history",
     "sec13f_metrics_history",
@@ -406,7 +407,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         db="relatedness", source=Source.derived, writer="RC-Relatedness-OffPeak",
         freshness=("relatedness_profiles", "fetched_at"),
     ),
-    # The 18 history-file tables. session_date exists on result_runs; it is not the claim until #82/#83.
+    # The 19 history-file tables. session_date exists on result_runs; it is not the claim until #82/#83.
     DatasetSpec(
         key="result_history", label="Result history",
         tables=_HISTORY,
@@ -671,6 +672,22 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         writer_note=("built incrementally from stored prices, earnings_calendar and job_runs by "
                      "module_welcome/build.py on the Welcome board's Fetch; the hourly job comes in its own pull request"),
         freshness=("welcome_snapshot", "session_date"),
+    ),
+    DatasetSpec(
+        key="spx_gamma_raw", label="SPX Gamma: stored Unusual Whales days",
+        tables=("spx_raw_days", "spx_raw_files"),
+        db="spx_gamma", source=Source.uw, writer=None,
+        writer_note=("every Unusual Whales answer of a stored day, byte-exact, by module_spx_gamma/store.py on the SPX Gamma "
+                     "Fetch (the nightly RC-SPX-Gamma-Fetch queues it) and the history pull; Unusual Whales serves no history"),
+        freshness=("spx_raw_days", "session_date"),
+    ),
+    DatasetSpec(
+        key="spx_gamma_records", label="SPX Gamma: Brier and GEX records, latest pointer",
+        tables=("spx_brier", "spx_gex_daily", "spx_meta"),
+        db="spx_gamma", source=Source.derived, writer=None,
+        writer_note=("derived from the stored days by module_spx_gamma/store.py on the SPX Gamma Fetch; "
+                     "Refresh moves only spx_meta.latest"),
+        freshness=("spx_gex_daily", "session_date"),
     ),
     DatasetSpec(
         key="source_checks", label="Source check watermarks",

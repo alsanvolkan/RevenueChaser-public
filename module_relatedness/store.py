@@ -174,6 +174,36 @@ def load_profiles(tickers: list[str] | None = None) -> dict[str, dict]:
     return out
 
 
+def load_profile_json(tickers: list[str] | None = None) -> dict[str, dict]:
+    """``{ticker: v3 profile}`` for the stored rows that carry one (#669; a v2 row has none)."""
+    want = {t.upper() for t in tickers} if tickers else None
+    out = {}
+    for r in rawstore.get_all("relatedness_profiles", ["ticker", "profile_json"]):
+        pj = r.get("profile_json")
+        if isinstance(pj, str):
+            try:
+                pj = json.loads(pj)
+            except (json.JSONDecodeError, TypeError):
+                pj = None
+        if isinstance(pj, dict) and (want is None or r["ticker"] in want):
+            out[r["ticker"]] = pj
+    return out
+
+
+def load_vectors(model: str, tickers: list[str]) -> dict[str, bytes]:
+    """``{ticker: vector blob}`` stored for ``model`` (``embeddings`` reads the blob's layout)."""
+    want = set(tickers)
+    return {r["ticker"]: bytes(r["vector"]) for r in rawstore.get_all("relatedness_embeddings")
+            if r["model"] == model and r["ticker"] in want and r.get("vector") is not None}
+
+
+def save_vectors(model: str, blobs: dict[str, bytes], dim: int) -> None:
+    """Upsert one vector row per ticker (key ``(ticker, model)``): a re-embedded company replaces its row."""
+    if blobs:
+        rawstore.write_rows("relatedness_embeddings",
+                            [{"ticker": t, "model": model, "dim": dim, "vector": b} for t, b in blobs.items()])
+
+
 def profile_meta(tickers: list[str] | None = None) -> dict[str, dict]:
     """``{ticker: {status, attempts, cache_key}}`` for stored profile rows."""
     want = {t.upper() for t in tickers} if tickers else None

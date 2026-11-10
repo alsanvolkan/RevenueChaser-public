@@ -1,56 +1,34 @@
-"""Promoting a staged raw day is one critical section, not a check followed by a rename.
+"""Promoting a staged raw day into the board file is one critical section (#194, CI run 40950317460).
 
-CI run 40950317460 failed ``test_two_threads_staging_the_same_day_never_mix_their_files`` with
-``OSError(39, 'Directory not empty')`` on a diff that does not touch this module, so the race is in the code and
-not in the diff. The promotion used to read
-
-    if final.exists(): shutil.rmtree(final)
-    raw_dir.replace(final)
-
-and on POSIX ``rename`` onto a directory that is not empty raises ``ENOTEMPTY``. Two threads staging the same day
-interleave there: one removes the old day and the other promotes into the gap before the first renames. The test
-below wedges them there on purpose, so the failure is deterministic rather than one CI run in some number.
+The folder rename and its ``ENOTEMPTY`` race are gone: a day goes into ``boards/spx_gamma.duckdb`` in one
+transaction (``store.put_raw_day``). What stays: two threads of one process staging the same day (a board Fetch's
+backfill and the history pull) never interleave the "already stored?" check and the write, and never mix files.
 """
 from __future__ import annotations
 
-import errno
 import threading
+import time
 
-import pytest
+from RevenueChaser.module_spx_gamma import snapshot, store
+from .conftest import store_day
 
-from RevenueChaser.module_spx_gamma import snapshot
 
-
-def _day(root, name: str, files: int = 2):
+def _staged(root, name: str, tag: str, files: int = 2):
     d = root / name
     d.mkdir(parents=True, exist_ok=True)
+    (d / "manifest.json").write_text('{"tag": "%s"}' % tag, encoding="utf-8")
     for i in range(files):
-        (d / f"f{i}.json").write_text("{}", encoding="utf-8")
+        (d / f"f{i}.json").write_text('{"tag": "%s"}' % tag, encoding="utf-8")
     return d
 
 
-def test_the_promotion_is_one_critical_section(tmp_path, monkeypatch):
-    """Both threads promote a day of their own onto the same destination; neither may raise."""
-    final = _day(tmp_path, "2026-10-29")
-    staging = [_day(tmp_path, f".partial-{i}") for i in (1, 2)]
-    reached = threading.Barrier(2, timeout=0.5)
-    real_rmtree = snapshot.shutil.rmtree
-
-    def rmtree(path, *a, **kw):
-        real_rmtree(path, *a, **kw)
-        # Inside the old section both threads would now have removed the destination and be about to rename onto
-        # it. Hold them here together, which is exactly the interleaving CI hit.
-        try:
-            reached.wait()
-        except threading.BrokenBarrierError:
-            pass
-    monkeypatch.setattr(snapshot.shutil, "rmtree", rmtree)
-
+def test_two_threads_promoting_the_same_day_never_mix_their_files(tmp_path):
+    staging = [_staged(tmp_path, f".partial-{i}", str(i)) for i in (1, 2)]
     errors: list[BaseException] = []
 
     def run(src):
         try:
-            snapshot._promote(src, final)
+            snapshot._promote(src, "2026-10-29")
         except BaseException as exc:  # noqa: BLE001 - reported below
             errors.append(exc)
 
@@ -60,69 +38,31 @@ def test_the_promotion_is_one_critical_section(tmp_path, monkeypatch):
     for t in threads:
         t.join(10)
     assert errors == [], errors
-    assert final.exists() and sorted(p.name for p in final.glob("*.json")) == ["f0.json", "f1.json"]
-    assert not list(tmp_path.glob(".partial-*")), "the staging folder that won is renamed away"
-
-
-def test_a_destination_that_appears_between_the_removal_and_the_rename_is_still_promoted(tmp_path, monkeypatch):
-    """The retry, without threads: the first rename raises ENOTEMPTY and the promotion still finishes."""
-    final = _day(tmp_path, "2026-10-29")
-    staging = _day(tmp_path, ".partial-1")
-    calls: list[int] = []
-    real_replace = type(staging).replace
-
-    def replace(self, dest):
-        calls.append(1)
-        if len(calls) == 1:
-            _day(tmp_path, "2026-10-29")          # someone put the day back
-            raise OSError(errno.ENOTEMPTY, "Directory not empty")
-        return real_replace(self, dest)
-    monkeypatch.setattr(type(staging), "replace", replace)
-
-    snapshot._promote(staging, final)
-    assert len(calls) == 2, "one retry, not a loop"
-    assert final.exists() and not staging.exists()
-
-
-def test_an_error_that_is_not_the_race_is_not_retried(tmp_path, monkeypatch):
-    final = _day(tmp_path, "2026-10-29")
-    staging = _day(tmp_path, ".partial-1")
-    calls: list[int] = []
-
-    def replace(self, dest):
-        calls.append(1)
-        raise OSError(errno.EACCES, "Permission denied")
-    monkeypatch.setattr(type(staging), "replace", replace)
-
-    with pytest.raises(OSError) as exc:
-        snapshot._promote(staging, final)
-    assert exc.value.errno == errno.EACCES
-    assert len(calls) == 1
+    files = store.raw_files("2026-10-29")
+    assert sorted(files) == ["f0.json", "f1.json"]
+    assert len(set(files.values())) == 1, "one thread's files only"
+    assert store.raw_manifest("2026-10-29")["tag"] == next(iter(set(files.values())))[9:10]
 
 
 def test_only_one_thread_is_inside_the_promotion_at_a_time(tmp_path, monkeypatch):
-    """The retry alone would converge, but not before a thread removes a day the other has just promoted - the
-    data loss #194 was about. So the section is held, and this counts how many threads are inside it."""
-    final = _day(tmp_path, "2026-10-29")
-    staging = [_day(tmp_path, f".partial-{i}") for i in (1, 2)]
+    staging = [_staged(tmp_path, f".partial-{i}", str(i)) for i in (1, 2)]
     inside, peak, seat = 0, 0, threading.Lock()
-    real_replace = type(final).replace
+    real_put = store.put_raw_day
 
-    def replace(self, dest):
+    def put(*a, **k):
         nonlocal inside, peak
         with seat:
             inside += 1
             peak = max(peak, inside)
         try:
-            import time
             time.sleep(0.05)
-            return real_replace(self, dest)
+            return real_put(*a, **k)
         finally:
             with seat:
                 inside -= 1
-    monkeypatch.setattr(type(final), "replace", replace)
+    monkeypatch.setattr(store, "put_raw_day", put)
 
-    threads = [threading.Thread(target=snapshot._promote, args=(s, final)) for s in staging]
+    threads = [threading.Thread(target=snapshot._promote, args=(s, "2026-10-29")) for s in staging]
     for t in threads:
         t.start()
     for t in threads:
@@ -130,25 +70,16 @@ def test_only_one_thread_is_inside_the_promotion_at_a_time(tmp_path, monkeypatch
     assert peak == 1, f"{peak} threads were promoting at once"
 
 
-def test_a_complete_day_another_process_promoted_meanwhile_is_kept(tmp_path, monkeypatch):
-    """The review's m5. The retry covers a second process renaming into the gap, and it used to remove whatever it
-    found there. If that second process promoted a *complete* day — a day with a manifest, which is not
-    regenerable — removing it contradicts the rule two lines below the call site: a complete day is never replaced.
-    Our staged copy is discarded instead."""
-    staged, final = _day(tmp_path, "staged"), tmp_path / "2026-10-28"
-    calls = {"n": 0}
-    real_replace = type(staged).replace
+def test_a_complete_day_stored_meanwhile_is_kept(tmp_path):
+    """The review's m5: a history pull's staged copy never replaces a complete day stored meanwhile."""
+    store_day("2026-10-28", {"tag": "fetch"}, {"f0.json": '{"tag": "fetch"}'})
+    staged = _staged(tmp_path, ".partial-1", "pull")
+    assert snapshot._promote(staged, "2026-10-28", keep_stored=True) is False
+    assert store.raw_manifest("2026-10-28")["tag"] == "fetch"
+    assert store.raw_files("2026-10-28") == {"f0.json": '{"tag": "fetch"}'}
 
-    def wedge(self, dest):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            # The other process promotes a complete day into the gap, exactly as the race does.
-            _day(tmp_path, "2026-10-28")
-            (final / "manifest.json").write_text("{}", encoding="utf-8")
-            raise OSError(errno.ENOTEMPTY, "Directory not empty")
-        return real_replace(self, dest)
-    monkeypatch.setattr(type(staged), "replace", wedge)
 
-    snapshot._promote(staged, final)
-    assert (final / "manifest.json").exists(), "the complete day another process promoted was removed"
-    assert calls["n"] == 1, "the rename was retried over a complete day"
+def test_a_fetch_replaces_the_stored_day_whole(tmp_path):
+    store_day("2026-10-28", {"tag": "old"}, {"old.json": "{}", "f0.json": "{}"})
+    snapshot._promote(_staged(tmp_path, ".partial-1", "new", files=1), "2026-10-28")
+    assert store.raw_files("2026-10-28") == {"f0.json": '{"tag": "new"}'}

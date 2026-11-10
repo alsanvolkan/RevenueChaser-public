@@ -6,10 +6,9 @@ from .conftest import make_snapshot
 
 
 def test_record_then_score(tmp_path):
-    p = tmp_path / "brier.json"
-    data = brier.record_probs("2026-08-21", {"Consolidation": 0.5, "Upside": 0.3, "Downside": 0.2}, path=p)
+    data = brier.record_probs("2026-08-21", {"Consolidation": 0.5, "Upside": 0.3, "Downside": 0.2})
     assert len(data["records"]) == 1
-    scored = brier.score_date("2026-08-21", "Upside", path=p)
+    scored = brier.score_date("2026-08-21", "Upside")
     rec = scored["records"][0]
     assert rec["outcome"] == "Upside"
     # Brier = (0.5-0)^2 + (0.3-1)^2 + (0.2-0)^2
@@ -17,29 +16,26 @@ def test_record_then_score(tmp_path):
 
 
 def test_record_is_idempotent_per_date(tmp_path):
-    p = tmp_path / "brier.json"
-    brier.record_probs("2026-08-21", {"Consolidation": 0.5, "Upside": 0.3, "Downside": 0.2}, path=p)
-    brier.record_probs("2026-08-21", {"Consolidation": 0.4, "Upside": 0.4, "Downside": 0.2}, path=p)
-    data = brier.load_scores(p)
+    brier.record_probs("2026-08-21", {"Consolidation": 0.5, "Upside": 0.3, "Downside": 0.2})
+    brier.record_probs("2026-08-21", {"Consolidation": 0.4, "Upside": 0.4, "Downside": 0.2})
+    data = brier.load_scores()
     assert len(data["records"]) == 1
 
 
 def test_scorecard_training_mode(tmp_path):
-    p = tmp_path / "brier.json"
-    card = brier.scorecard(path=p)
+    card = brier.scorecard()
     assert card["scored_count"] == 0
     assert card["calibrated"] is None
     assert "training mode" in card["verdict"]
 
 
 def test_scorecard_uncalibrated_verdict(tmp_path):
-    p = tmp_path / "brier.json"
     # Two outcome classes, so there is a base rate to compare with (review N6).
-    brier.record_probs("2026-08-21", {"Consolidation": 1.0, "Upside": 0.0, "Downside": 0.0}, path=p)
-    brier.score_date("2026-08-21", "Upside", path=p)  # wrong call -> high Brier
-    brier.record_probs("2026-08-24", {"Consolidation": 1.0, "Upside": 0.0, "Downside": 0.0}, path=p)
-    brier.score_date("2026-08-24", "Downside", path=p)
-    card = brier.scorecard(path=p)
+    brier.record_probs("2026-08-21", {"Consolidation": 1.0, "Upside": 0.0, "Downside": 0.0})
+    brier.score_date("2026-08-21", "Upside")  # wrong call -> high Brier
+    brier.record_probs("2026-08-24", {"Consolidation": 1.0, "Upside": 0.0, "Downside": 0.0})
+    brier.score_date("2026-08-24", "Downside")
+    card = brier.scorecard()
     assert card["scored_count"] == 2
     assert card["average"] > card["equal_weight_reference"]
     assert card["calibrated"] is False
@@ -47,11 +43,10 @@ def test_scorecard_uncalibrated_verdict(tmp_path):
 
 
 def test_scorecard_calibrated_verdict(tmp_path):
-    p = tmp_path / "brier.json"
-    brier.record_probs("2026-08-21", {"Consolidation": 1.0, "Upside": 0.0, "Downside": 0.0}, path=p)
-    brier.score_date("2026-08-21", "Consolidation", path=p)  # correct -> Brier 0
-    brier.record_probs("2026-08-24", {"Consolidation": 0.0, "Upside": 1.0, "Downside": 0.0}, path=p)
-    brier.score_date("2026-08-24", "Upside", path=p)  # correct again, a second outcome class (review N6)
-    card = brier.scorecard(path=p)
+    brier.record_probs("2026-08-21", {"Consolidation": 1.0, "Upside": 0.0, "Downside": 0.0})
+    brier.score_date("2026-08-21", "Consolidation")  # correct -> Brier 0
+    brier.record_probs("2026-08-24", {"Consolidation": 0.0, "Upside": 1.0, "Downside": 0.0})
+    brier.score_date("2026-08-24", "Upside")  # correct again, a second outcome class (review N6)
+    card = brier.scorecard()
     assert card["average"] == 0.0
     assert card["calibrated"] is True

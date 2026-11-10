@@ -1,7 +1,6 @@
 """Fetch and persist raw endpoint snapshots plus a SHA-256 audit manifest."""
 from __future__ import annotations
 
-import errno
 import hashlib
 import json
 import logging
@@ -17,7 +16,7 @@ from RevenueChaser.core import credentials
 # The VIX family, the CFTC COT and the SPX closes come from the market store, read by store_reads (D4, PR 3). The
 # snapshot asks no live source for them and writes none of them into the raw day: run.build_day reads them for the
 # day it renders, so a Fetch and a Refresh render the same.
-from . import store_reads
+from . import store, store_reads
 from .candles import live_spot, price_window_sessions, window_lag
 from .config import RAW_ROOT, SPOT_EXPOSURE_WINDOW_PCT, TICKER
 from .expiry_table import normalize_expiry_rows
@@ -262,16 +261,13 @@ def fetch_snapshot(
     The VIX family and the CFTC COT are not fetched at all: run.build_day reads them from the
     market store for the day it renders (PR 3), and no live source is asked for them.
 
-    ``overwrite=False`` (the backfill) never touches a day that already has its
-    manifest: nothing is fetched and ``None`` comes back. The returned raw dict
+    ``overwrite=False`` (the backfill) never touches a day that is already stored
+    (``spx_raw_days``): nothing is fetched and ``None`` comes back. The returned raw dict
     carries ``_meta`` with the requested and the effective (possibly fallback) date.
 
-    The fetch stages into a scratch directory and is promoted over the existing
-    ``{root}/{asof_date}`` at the very end. Deleting the target up-front (the
-    old behaviour) destroyed a good cached day whenever the fetch then failed:
-    clicking through the date picker with a dead API key wiped the stored GEX
-    history and left empty directories behind — which in turn broke the
-    "do we have a snapshot for this day?" checks that test for the directory.
+    The fetch stages into a scratch directory under ``data_root`` (the cache folder) and only a
+    complete day is taken into the board file, in one transaction (``store.put_raw_day``), at the
+    very end. A failed fetch therefore never touches a stored day.
 
     ``history_only=True`` (the history pull, ``module_spx_gamma.history_pull``) fetches a past session with dated
     calls only (``HISTORY_ENDPOINTS``, flow-per-strike, the spot-exposure halves, the 0DTE strike-expiry): spot is
@@ -282,10 +278,11 @@ def fetch_snapshot(
     if history_only and fetch_all_expiries:
         raise ValueError("history mode never fetches the all-expiry ladder")
     root = data_root or RAW_ROOT
-    if not overwrite and (root / asof_date / "manifest.json").exists():
+    if not overwrite and store.has_day(asof_date):
         return None
     # One staging folder per call: a board Fetch's backfill and the history pull can stage the same day in one
     # process at once, and a shared name let each delete the other's files (#194 review).
+    root.mkdir(parents=True, exist_ok=True)
     staging = root / f".partial-{os.getpid()}-{uuid.uuid4().hex[:12]}-{asof_date}"
     try:
         return _fetch_snapshot_staged(
@@ -293,44 +290,29 @@ def fetch_snapshot(
             fetch_candles=fetch_candles, fetch_all_expiries=fetch_all_expiries,
             candle_fetcher=candle_fetcher or stored_spx_candles, history_only=history_only)
     finally:
-        # Promotion renames the staging dir away; anything left is a failed run.
+        # The staging folder is never kept: its day is in the board file now, or the run failed.
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
 
 
-#: Promotion is one critical section. Two threads of one process can stage the same day (a board Fetch's backfill
-#: and the history pull, #194), and removing the destination and renaming onto it are two steps: between them the
-#: other thread can promote, and ``rename`` onto a directory that is not empty raises ``ENOTEMPTY``. That is the
-#: failure CI run 40950317460 hit on a diff that does not touch this module.
+#: Promotion is one critical section: two threads of one process can stage the same day (a board Fetch's backfill and
+#: the history pull, #194), and the "already stored?" check and the write must not interleave.
 _PROMOTE_LOCK = threading.Lock()
-_RACE_ERRNOS = (errno.ENOTEMPTY, errno.EEXIST)
 
 
-def _promote(staged, final) -> None:
-    """Rename a finished staging folder onto the cached day, removing whatever is there first.
+def _promote(staged, day: str, keep_stored: bool = False) -> bool:
+    """Take a finished staging folder into the board file as ``day`` (manifest row + every answer, one transaction).
 
-    The lock serialises the two threads of this process. The one retry covers a second *process* doing the same
-    thing, which no lock of ours reaches: the destination reappeared between the removal and the rename, so remove
-    it again and rename once more. Any other error is the caller's to see.
+    ``keep_stored=True`` keeps a day that is already stored (a complete day is never replaced from a history pull
+    or a fallback, S-2) and returns False; otherwise the stored day is replaced whole and True comes back.
     """
     with _PROMOTE_LOCK:
-        for attempt in (1, 2):
-            if final.exists():
-                shutil.rmtree(final, ignore_errors=True)
-            try:
-                staged.replace(final)
-                return
-            except OSError as exc:
-                if attempt == 2 or exc.errno not in _RACE_ERRNOS:
-                    raise
-                if (final / "manifest.json").exists():
-                    # What reappeared is a *complete* day another process promoted, and a complete day is never
-                    # replaced (the rule at the call site). Keep theirs and drop our staged copy (review m5).
-                    logger.warning("spx snapshot: raw/%s was completed by another run while promoting; kept it "
-                                   "and discarded this staging copy", final.name)
-                    return
-                logger.warning("spx snapshot: raw/%s reappeared while promoting; removing it and renaming again",
-                               final.name)
+        if keep_stored and store.has_day(day):
+            return False
+        manifest = json.loads((staged / "manifest.json").read_text(encoding="utf-8"))
+        files = {p.name: p.read_bytes() for p in sorted(staged.glob("*.json")) if p.name != "manifest.json"}
+        store.put_raw_day(day, manifest, files)
+        return True
 
 
 def _fetch_snapshot_staged(
@@ -723,24 +705,22 @@ def _fetch_snapshot_staged(
     raw["_meta"] = {"requested_date": report_date, "effective_date": asof_date,
                     "api_snapshot_time": manifest["api_snapshot_time"]}
     (raw_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    # Promote: the snapshot is complete, so it may now replace the cached day.
+    # Promote: the snapshot is complete, so it may now replace the stored day.
     # ``asof_date`` may have been reassigned to the fallback session above, so
-    # the destination is resolved here rather than up-front.
-    final = root / asof_date
-    if asof_date != report_date and (final / "manifest.json").exists():
+    # the day is resolved here rather than up-front.
+    if asof_date != report_date and store.has_day(asof_date):
         # Fallback run: this staging dir mixes the previous session's gex with
         # the report day's chain and candles. Never replace that session's
-        # complete, non-regenerable raw day with it (S-2) — keep the cached day
+        # complete, non-regenerable raw day with it (S-2) — keep the stored day
         # and discard the staging copy (the caller's finally removes it).
-        logger.warning("spx snapshot: %s rejected, fell back to %s; kept the complete "
-                       "raw/%s and did not overwrite it", report_date, asof_date, asof_date)
+        logger.warning("spx snapshot: %s rejected, fell back to %s; kept the stored "
+                       "day %s and did not overwrite it", report_date, asof_date, asof_date)
         # The caller builds from what it is handed: hand it the stored day, not the staging raw
         # (today's live IV, chain and VIX), or the stored session is rebuilt from mixed inputs (M4).
         from .raw_day import load_raw_day
-        return load_raw_day(final)
-    if history_only and (final / "manifest.json").exists():
+        return load_raw_day(asof_date)
+    if not _promote(raw_dir, asof_date, keep_stored=history_only):
         # A Fetch completed this day while the pull was staging it: a complete day is never replaced.
-        logger.warning("spx history pull: raw/%s completed meanwhile; kept it and discarded the pull", asof_date)
+        logger.warning("spx history pull: %s completed meanwhile; kept it and discarded the pull", asof_date)
         return None
-    _promote(raw_dir, final)
     return raw

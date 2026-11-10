@@ -44,9 +44,9 @@ def store(rawstore_tmp_db):
 
 
 @pytest.mark.rawstore_schema_from_scratch
-def test_the_manifest_puts_18_tables_in_the_history_file_and_none_in_raw(store):
+def test_the_manifest_puts_19_tables_in_the_history_file_and_none_in_raw(store):
     names = [n for n, s in rawstore.MANIFEST.items() if s.get("db") == "history"]
-    assert len(names) == 18 and "result_runs" in names
+    assert len(names) == 19 and "result_runs" in names
     assert all(rawstore._db_of(n) == "history" for n in names)
     rawstore.ensure_history()
     assert {r["table_name"] for r in rawstore.query(

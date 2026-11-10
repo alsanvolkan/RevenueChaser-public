@@ -126,7 +126,7 @@ V11 = V11_CHANGE_TABLES + V11_HISTORY_TABLES
 # Change tables added after schema 11 without a bump (design C: one CHANGES line is an addition, report §14.3).
 LATER_CHANGE_TABLES = ("etf_holdings_changes",)    # #303
 # History tables added after schema 11 without a bump: a new run-keyed table is an addition (avo, #374 card).
-LATER_HISTORY_TABLES = ("rotation_snapshots_history",)
+LATER_HISTORY_TABLES = ("rotation_snapshots_history", "spx_gamma_levels_history")  # the second: SPX review PR 3
 # Pre-existing append-only table flagged history later (#286): the guard rides the flag, no schema change.
 FORECAST_LEDGER = ("forecast_ledger",)
 # Added with prices.duckdb (#156, avo 2026-10-09), no schema bump: the price watermarks beside the bars.
@@ -141,7 +141,8 @@ SCHEMA_STAMP = ("store_schema",)
 V13 = ("relatedness_embeddings",)
 # Board files (S9, S16), no schema bump: each table lives in its own boards/<board>.duckdb, rebuilt incrementally.
 BOARD_TABLES = ("news_events", "news_highlight", "news_headlines", "news_meta",
-                "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta")
+                "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta",
+                "spx_raw_days", "spx_raw_files", "spx_brier", "spx_gex_daily", "spx_meta")
 
 
 def test_legacy_table_list_is_the_66_remaining_pre_g1_tables():

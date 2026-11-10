@@ -52,6 +52,13 @@ FIELD_WEIGHTS = {
     "value_chain_role": 0.6,
     "keywords": 0.4,
 }
+# Similarity v2 (#669, plan 2026-10-30 Step 2): score = 0.6 s_do + 0.25 s_chain + 0.15 s_struct, with
+# s_chain = 0.6 type Jaccard + 0.4 shared-name bonus. Starting weights from the Fable review (section 4.3);
+# the validation set (Step 4) tunes them and writes the chosen values here with the run id.
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+EMBED_CACHE = OUTPUT_DIR / "fastembed"
+W_DO, W_CHAIN, W_STRUCT = 0.6, 0.25, 0.15
+W_CHAIN_TYPES, W_CHAIN_NAMES = 0.6, 0.4
 TOP_PEERS = 25
 # A peer is shown only with at least this many shared tags (#395, review RL-3). No score floor: measured 4 Nov 2026
 # on 93 DeepSeek profiles, floor 0.10 -> hand P@10 0.459, 0.02 -> 0.726, none -> 0.728 / recall@25 0.799; a floor

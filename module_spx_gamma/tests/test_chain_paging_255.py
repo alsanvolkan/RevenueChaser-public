@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from RevenueChaser.module_spx_gamma import store as spx_store
 
 from .test_s2_fetch import DAY, _fetch, _handler
 
@@ -28,7 +29,7 @@ def test_a_full_first_page_is_followed_to_a_short_page(tmp_path):
     assert chain_calls[0].get("page") is None and chain_calls[1]["page"] == 1 and chain_calls[1]["limit"] == 500
     assert len(chain_calls) == 2
     assert len(raw["option_chain"]["data"]) == 620
-    on_disk = json.loads((tmp_path / DAY / "option_chain.json").read_text())
+    on_disk = json.loads(spx_store.raw_files(DAY)["option_chain.json"])
     assert len(on_disk["data"]) == 620 and on_disk["pages"] == [500, 120]
 
 
@@ -40,5 +41,5 @@ def test_a_repeated_key_across_pages_is_dropped_and_warned(tmp_path):
         return _handler(path, params)
     _uw, raw = _fetch(tmp_path, handler=moved)
     assert len(raw["option_chain"]["data"]) == 505
-    manifest = json.loads((tmp_path / DAY / "manifest.json").read_text())
+    manifest = spx_store.raw_manifest(DAY)
     assert any("moved while paging" in w for w in manifest["warnings"])

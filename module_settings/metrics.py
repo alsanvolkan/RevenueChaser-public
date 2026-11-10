@@ -295,6 +295,107 @@ def exposition(now: datetime | None = None) -> str:
     return render(families, time.monotonic() - started)
 
 
+#: How many of a dataset's newest checks ``datasets_detail`` hands over: enough for the Jobs-style week grid.
+DETAIL_RUNS = 14
+
+
+def datasets_detail(now: datetime | None = None, *, datasets: dict | None = None, timer: dict | None = None,
+                    span: tuple[float, float] | None = None, providers: list[dict] | None = None) -> list[dict]:
+    """``GET /api/build/datasets?detail=1``: ``datasets_list``'s rows, each with its health and fetch settings, for the
+    Grafana RC Fetch board (avo, 10 Nov 2026: one category a DuckDB file, as the Jobs board shows its jobs). Reads the
+    ops store only, as the scrape does. A dataset that cannot be read carries ``error`` and keeps its place.
+
+    Each row also carries ``badges``, its providers as the RC page draws them (name, Tabler icon, colour), and, with
+    ``span`` (epoch seconds, the Grafana picker's range), ``history``: its builder runs started in it,
+    ``[started_at, status]`` oldest first, for the board's heatmap."""
+    from RevenueChaser.module_settings import newdata
+    from RevenueChaser.rcdata import ops
+    now = now or datetime.now(timezone.utc)
+    datasets = datasets if datasets is not None else newdata._datasets()
+    timer = timer if timer is not None else (TIMER.get() or {})
+    if providers is None:
+        try:
+            providers = control._providers({"spend": newdata._spend(now)})
+        except Exception:  # noqa: BLE001 - a badge without its colour still names its provider
+            providers = []
+    colour = {p["id"]: control.SOURCE_COLORS[i % len(control.SOURCE_COLORS)] for i, p in enumerate(providers)}
+    names = {p["id"]: p["name"] for p in providers}
+    from RevenueChaser.rcdata.needs import screen
+    paid = {pid for pid, w in screen.PROVIDERS.items() if w.paid}
+    history: dict[str, list] = {}
+    if span:
+        for r in ops.runs_between(*span):
+            history.setdefault(r["dataset"], []).append([r["started_at"], r["status"]])
+    out = []
+    for row in datasets_list(datasets):
+        name, ds = row["name"], datasets[row["name"]]
+        row["badges"] = [{"id": p, "name": names.get(p, p), "icon": control.ICONS.get(p, ""),
+                          "color": colour.get(p, control.SOURCE_COLORS[0]), "paid": p in paid}
+                         for p in row.get("providers") or []]
+        if span:
+            row["history"] = history.get(name, [])
+        try:
+            recent = ops.recent_checks(name, limit=DETAIL_RUNS)
+            last = recent[0] if recent else None
+            raw = ops.read_schedule(name) or {}
+            cadence = newdata._cadence(name, raw)
+            state, reason, _ = newdata.status_of(name, last, ops.latest_unskipped_check(name), cadence, now)
+            own = ops.dataset_mode_get(name)
+            mode = ops.dataset_mode(name, row["kind"])
+            schedule = {"paused": raw.get("paused_at") is not None, "next_due": raw.get("next_due")}
+            row.update({
+                "state": state, "reason": reason, "cadence": cadence, "cadence_own": raw.get("cadence"),
+                "next_due": str(raw.get("next_due") or "")[:10] or None, "paused": schedule["paused"],
+                "paused_by": raw.get("paused_by"), "mode": mode, "mode_own": (own or {}).get("mode"),
+                "next": control.next_run_words(schedule, last, control.as_of_kind(ds), cadence,
+                                               attended=row["attended"],
+                                               starts_by_hand=bool(getattr(ds, "starts_by_hand", False)),
+                                               timer=timer, now=now, mode=mode),
+                "last": ({k: last.get(k) for k in ("checked_on", "result", "rows", "added", "removed", "note")}
+                         if last else None),
+                "runs": [[r.get("checked_on"), r.get("result")] for r in recent],
+                "open_issues": ops.open_issues(name, limit=0)[0],
+            })
+        except Exception as e:  # noqa: BLE001 - one dataset never drops the rest
+            row["error"] = f"{type(e).__name__}: {e}"[:200]
+        out.append(row)
+    return out
+
+
+def board_head(now: datetime | None = None, *, ibkr: Callable[[], dict] | None = None) -> dict:
+    """The Grafana RC Fetch board's head strip (avo, 10 Nov 2026: "bu main switchlerde icinde olsun"): the Fetch and
+    Backup switches (on, off, or None when not known), the builder timer's state and the IBKR gateway as the RC page's
+    top bar shows it, with its login address when ``RC_IBKR_LOGIN_URL`` holds a valid one. Never raises."""
+    from RevenueChaser.module_settings import inventory, report
+    now = now or datetime.now(timezone.utc)
+    try:
+        switches = {k: v["on"] for k, v in control.switches_view(control._read_switches(), now).items()}
+    except Exception:  # noqa: BLE001 - a switch not known is drawn as such, never guessed
+        switches = {}
+    try:
+        if ibkr is not None:
+            got = ibkr()
+        else:
+            from RevenueChaser.core import ibkr_login
+            got = ibkr_login.collect(now=now)
+    except Exception:  # noqa: BLE001
+        got = None
+    cls, n, label = control._gateway(got)
+    timer = TIMER.get() or {}
+    # avo, 10 Nov 2026: "builder timer (icine yaz ne zaman fire ettigini)": its last and next pass, as the page says them
+    fired = {"last": control._clock(timer.get("last")) if timer.get("last") else None,
+             "next": control._clock(timer.get("next")) if timer.get("next") else None}
+    try:
+        rows = control._read_switches()
+        from RevenueChaser.rcdata import ops
+        files = {k: (rows.get(f"file-{k}") or {}).get("off_at") is None for k in ops.FILE_KINDS}
+    except Exception:  # noqa: BLE001 - files not known: the board draws no file switch rather than a guessed one
+        files = None
+    return {"switches": switches, "timer": timer.get("state"), "timer_fired": fired, "files": files,
+            "gateway": {"cls": cls, "n": n, "label": label.replace("IBKR gateway · ", ""),
+                        "login": report._ibkr_login_href(inventory._ibkr_login_url())}}
+
+
 def datasets_list(datasets: dict | None = None) -> list[dict]:
     """``GET /api/build/datasets``: every dataset the builder knows, for an allow-list (Grafana buttons, B3)."""
     from RevenueChaser.module_settings import newdata

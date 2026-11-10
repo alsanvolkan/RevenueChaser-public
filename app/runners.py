@@ -1033,14 +1033,14 @@ def run_etf_holdings_sync(uw: UWClient) -> None:
     raise JobMessage(msg)
 
 
-def spxgamma_latest_path() -> Path:
-    """Stable pointer written by the SPX Option Position Map pipeline."""
-    from RevenueChaser.module_spx_gamma.config import DATA_ROOT as spx_data_root
-    return spx_data_root / "latest.json"
+def spxgamma_latest() -> dict | None:
+    """The SPX board's latest pointer: the manifest of the newest day it shows (``spx_meta``)."""
+    from RevenueChaser.module_spx_gamma import store as spx_store
+    return spx_store.latest()
 
 
 # The SPX report the last Fetch or calendar click built, so the board shows the clicked day. Kept in
-# this process only: a restart, or a Refresh, puts the board back on the newest day (latest.json).
+# this process only: a restart, or a Refresh, puts the board back on the newest day (the latest pointer).
 _SPX_VIEW: Path | None = None
 
 
@@ -1074,7 +1074,7 @@ def spx_builder_request() -> dict:
     return {"requested_at": f"{now_ny():%Y-%m-%d %H:%M} New York", "datasets": datasets}
 
 
-def run_spxgamma(uw, asof_date: str, force: bool = False) -> Path:
+def run_spxgamma(uw, asof_date: str, force: bool = False) -> Path | None:
     """Run the SPX Option Position Map (Unusual Whales) for one as-of date.
 
     The module uses the job's own ``uw`` client, so its calls count in the job's provider health.
@@ -1082,34 +1082,42 @@ def run_spxgamma(uw, asof_date: str, force: bool = False) -> Path:
     It first asks the builder for the board's two datasets (PR 3, :func:`spx_builder_request`); the board says so.
     """
     global _SPX_VIEW
+    from RevenueChaser.module_spx_gamma import history as spx_history
     from RevenueChaser.module_spx_gamma.run import run as spx_run
-    from RevenueChaser.module_spx_gamma.config import DATA_ROOT as spx_data_root
 
+    run, run_at = _freeze_run_id(), time.time()
     out = spx_run(asof_date, uw=uw, force=force, builder_request=spx_builder_request())
     _SPX_VIEW = (out or {}).get("paths", {}).get("report_html")
-    return spx_data_root / "latest.json"
+    # Result history (SPX review PR 3): a Fetch that built a day, after the board file. A stored past day served
+    # from disk is no Fetch and records nothing. A failure is a job note, never a failed Fetch.
+    if out and out.get("fetched"):
+        try:
+            spx_history.record(out, run_id=run, run_at=run_at, uw_health=_uw_health(uw))
+        except Exception as exc:
+            logger.exception("SPX Gamma result history failed")
+            ledger.add_note(f"SPX Gamma result history was not recorded: {type(exc).__name__}: {exc}")
+    return _SPX_VIEW
 
 
 def run_spxgamma_stored(uw, asof_date: str) -> Path:
     """Rebuild a stored past SPX day from disk (#179 D5): no UW client, so no auth probe either.
 
     Registered with ``requires_uw=False``; the route sends a date here only when
-    ``serves_from_disk`` holds. ``refresh`` reads ``raw/<day>`` and never writes it.
+    ``serves_from_disk`` holds. ``refresh`` reads the stored day and never writes it.
     """
     global _SPX_VIEW
     from RevenueChaser.module_spx_gamma.run import refresh
-    from RevenueChaser.module_spx_gamma.config import DATA_ROOT as spx_data_root
 
     out = refresh(asof_date, builder_request=spx_builder_request())
     _SPX_VIEW = out["paths"]["report_html"]
-    return spx_data_root / "latest.json"
+    return _SPX_VIEW
 
 
 def run_spxgamma_history(uw, start: str, end: str, max_calls: int | None = None,
                          sleep_s: float | None = None) -> dict:
     """Pull past SPX Gamma sessions in ``[start, end]`` into the raw day folders (D1, the 2-year history pull).
 
-    Only raw days are written (``origin: history_pull``); the board, ``latest.json``, the GEX history and the Brier
+    Only raw days are written (``origin: history_pull``); the board, the latest pointer, the GEX record and the Brier
     record are untouched. The returned ``counts`` (without the answer shapes, a few failures) go into the run's
     ``job_runs`` row; the run's file under ``history_pull/`` has them all.
     """
@@ -1846,11 +1854,26 @@ def run_news(uw=None) -> Path:
     The calendar reads ``raw.economic_calendar`` (the nightly sweep D37 writes it). The headlines are two gateway
     requests a name and no UW call; a gateway that is down is a job note, never a failed Fetch.
     """
-    from RevenueChaser.module_news import calendar, headlines, report
+    from RevenueChaser.module_news import calendar, report
     rid = run_id()
     out = calendar.build(run_id=rid)
     ledger.add_note(f"News calendar: {out['read']} raw rows read, {out['upserted']} events upserted, "
                     f"{out['retired']} retired, {out['highlights']} day highlights")
+    health = _news_headlines_pass(rid)
+    path = report.render(provider_health=health)
+    if health:
+        # The job too, so the Welcome freshness card does not show a ✓ for a Fetch that got no headlines.
+        raise JobMessage(health["message"])
+    return path
+
+
+def _news_headlines_pass(rid: str) -> dict | None:
+    """The tape lines the listener appended (#673), then the per-ticker Dow Jones headlines. ``None``, or the
+    provider health of a gateway that did not answer (with the job message in ``message``)."""
+    from RevenueChaser.module_news import headlines
+    tape = headlines.load_tape(run_id=rid)
+    if tape["read"]:
+        ledger.add_note(f"News tape: {tape['stored']} market headlines from {tape['read']} new lines")
     names = headlines.tickers(_load_watchlist())
     got = headlines.fetch(names, run_id=rid)
     health = None
@@ -1859,16 +1882,21 @@ def run_news(uw=None) -> Path:
         # The board says so too, or a down gateway would pass for a quiet news day. A name IBKR does not know is
         # only a note: it is the same names every run, and a banner on every Fetch would be noise.
         health = {"provider": "ibkr", "calls": len(names), "failed": len(names), "auth_error": None,
-                  "failures": [{"endpoint": "headlines", "error": got["error"]}]}
+                  "failures": [{"endpoint": "headlines", "error": got["error"]}],
+                  "message": f"{GAPS}: {len(names)} of {len(names)} Interactive Brokers calls failed "
+                             f"(headlines: {got['error']}). The board may be incomplete — run Fetch again later."}
     else:
         skipped = f"; not known to IBKR: {', '.join(got['skipped'])}" if got["skipped"] else ""
         ledger.add_note(f"News headlines: {got['stored']} from {got['tickers']} names (IBKR, Dow Jones){skipped}")
-    path = report.render(provider_health=health)
-    if health:
-        # The job too, so the Welcome freshness card does not show a ✓ for a Fetch that got no headlines.
-        raise JobMessage(f"{GAPS}: {len(names)} of {len(names)} Interactive Brokers calls failed "
-                         f"(headlines: {got['error']}). The board may be incomplete — run Fetch again later.")
-    return path
+    return health
+
+
+def run_news_headlines(uw=None) -> Path:
+    """The live listener's 5-minute job (#673): new tape lines and the per-ticker headlines into
+    ``boards/news.duckdb``, then the page. No calendar build, no UW call. A down gateway is the page's banner and a job
+    note, not a job message: the shell alerts every message, and this job runs 288 times a day."""
+    from RevenueChaser.module_news import report
+    return report.render(provider_health=_news_headlines_pass(run_id()))
 
 
 def run_news_cached(uw=None) -> Path:

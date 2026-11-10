@@ -150,8 +150,8 @@ button silently degrades to a plain iframe reload.
 - **`/run/quick` bypasses the credential preflight** entirely — Financials is
   yfinance- and store-backed.
 - **SPX Gamma's `?refresh=1` is its own.** Its view is intercepted before the
-  generic refresh path: Refresh rebuilds the newest stored raw day of its own tree
-  (`SPX_GAMMA_DATA_ROOT`) from disk and makes no network call. The VIX family, the
+  generic refresh path: Refresh rebuilds the newest stored raw day from its board
+  file (`.store/boards/spx_gamma.duckdb`) and makes no network call. The VIX family, the
   CFTC COT, the 8-week SPX closes and the 0-1 DTE dollar gamma the pin and squeeze
   tests size by are read from the market store at render time
   (`module_spx_gamma/store_reads.py` through `needs.ask(..., as_of=day)`, #330:

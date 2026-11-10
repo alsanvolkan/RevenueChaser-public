@@ -7,13 +7,11 @@ from __future__ import annotations
 import json
 
 from RevenueChaser.module_spx_gamma import render, snapshot as spx_snapshot
-from .conftest import make_snapshot
+from .conftest import make_snapshot, store_day
 
 
 def _day(root, asof, **manifest):
-    day = root / "raw" / asof
-    day.mkdir(parents=True, exist_ok=True)
-    (day / "manifest.json").write_text(json.dumps({"warnings": [], **manifest}), encoding="utf-8")
+    store_day(asof, {"warnings": [], **manifest})
 
 
 def test_a_history_pull_day_says_what_it_does_not_hold(tmp_path):

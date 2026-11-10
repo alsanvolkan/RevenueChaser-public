@@ -44,6 +44,11 @@ class NewsGateway(FakeGateway):
             super()._answer(fields)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_con_ids(monkeypatch):
+    monkeypatch.setattr(headlines, "_CON_IDS", {})        # the cache lives as long as the dashboard process
+
+
 @pytest.fixture
 def gw(monkeypatch):
     g = NewsGateway()
@@ -134,3 +139,9 @@ def test_the_same_story_under_another_provider_in_a_later_run_is_one_row(gw):
     headlines.fetch(["AAPL"], now=NOW + 3600, run_id="r2")
     got = rawstore.query("SELECT count(*) AS n FROM news_headlines WHERE headline = 'Apple Expands AI Deal'", db="news")
     assert got == [{"n": 1}]
+
+
+def test_a_later_pass_reuses_the_contract_id(gw):
+    headlines.fetch(["AAPL"], now=NOW, run_id="r1")
+    headlines.fetch(["AAPL"], now=NOW + 300, run_id="r2")
+    assert gw.message_ids().count("9") == 1 and gw.message_ids().count("86") == 2

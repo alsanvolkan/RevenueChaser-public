@@ -265,3 +265,19 @@ def market_closed(monkeypatch):
     """
     from RevenueChaser.core import calendar as nyse_calendar
     monkeypatch.setattr(nyse_calendar, "in_us_session_window", lambda *a, **k: False)
+
+
+def store_day(day: str, manifest: dict | None = None, files: dict | None = None) -> None:
+    """Put a raw day in the board file (what a finished Fetch leaves): ``files`` maps a file name to its payload (a
+    dict/list is JSON-encoded, str/bytes stored as they are)."""
+    import json as _json
+
+    from RevenueChaser.module_spx_gamma import store
+
+    def _bytes(v):
+        if isinstance(v, bytes):
+            return v
+        return (v if isinstance(v, str) else _json.dumps(v)).encode("utf-8")
+
+    store.put_raw_day(day, {"asof_date": day, **(manifest or {})},
+                      {name: _bytes(v) for name, v in (files or {}).items()})

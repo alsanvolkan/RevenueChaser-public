@@ -83,17 +83,17 @@ def test_snapshot_carries_the_card_numbers():
 
 def test_history_records_the_card_numbers(tmp_path):
     s = normalize_snapshot(make_raw(), DAY)
-    path = tmp_path / "h.json"
-    spx_run._record_history(s, DAY, path)
-    rec = spx_run._load_history(path)[DAY]
+    spx_run._record_history(s, DAY)
+    rec = spx_run._load_history()[DAY]
     assert rec["vanna_at_spot"] == s["vanna_at_spot"]
     assert rec["charm_live_sum"] == s["charm_live_sum"]
 
 
 def _render_cards(snapshot, history, prev_snapshot=None):
-    import json
+    from RevenueChaser.module_spx_gamma import store
     root = snapshot["_root"]
-    (root / "spx_gamma_gex_history.json").write_text(json.dumps(history), encoding="utf-8")
+    for day, rec in history.items():
+        store.put_gex(day, rec)
     ctx = render.build_context(snapshot, prev_snapshot=prev_snapshot, data_root=root)
     return {c["title"]: c for c in ctx["summary"]}
 

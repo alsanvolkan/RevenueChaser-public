@@ -17,8 +17,9 @@ from RevenueChaser.core.providers import unusual_whales
 from RevenueChaser.module_spx_gamma import history_pull as hp
 from RevenueChaser.module_spx_gamma import snapshot as snap
 from RevenueChaser.module_spx_gamma.snapshot import UWApiError
+from RevenueChaser.module_spx_gamma import store as spx_store
 
-from .conftest import FakeUW
+from .conftest import FakeUW, store_day
 
 # Three NYSE sessions (Mon-Wed); the Thursday is a session the store holds no close for.
 DAYS = ["2025-03-10", "2025-03-11", "2025-03-12"]
@@ -63,15 +64,17 @@ def _offline(monkeypatch):
 FETCH_DAY = "2025-03-14"        # the board's newest Fetch: the pull may not reach past it
 
 
+_NO_FETCH_DAY = {"test_refuses_an_end_after_the_newest_fetch_day", "test_refuses_when_no_fetch_day_is_stored"}
+
+
 @pytest.fixture(autouse=True)
-def _a_fetch_day(tmp_path):
-    _store_day(tmp_path, FETCH_DAY, "fetch")
+def _a_fetch_day(request):
+    if request.node.name not in _NO_FETCH_DAY:
+        _store_day(None, FETCH_DAY, "fetch")
 
 
 def _store_day(root, day, origin):
-    folder = root / "raw" / day
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "manifest.json").write_text(json.dumps({"origin": origin}), encoding="utf-8")
+    store_day(day, {"origin": origin})
 
 
 def _pull(tmp_path, uw, start=DAYS[0], end=NO_CLOSE, **kw):
@@ -80,9 +83,7 @@ def _pull(tmp_path, uw, start=DAYS[0], end=NO_CLOSE, **kw):
 
 
 def _days(tmp_path):
-    raw = tmp_path / "raw"
-    return sorted(d.name for d in raw.iterdir()
-                  if (d / "manifest.json").exists() and d.name != FETCH_DAY) if raw.exists() else []
+    return [d for d in spx_store.stored_days() if d != FETCH_DAY]
 
 
 def test_pulls_each_session_once_and_counts_every_call(tmp_path):
@@ -95,7 +96,7 @@ def test_pulls_each_session_once_and_counts_every_call(tmp_path):
     assert counts["status"] == {"200": len(uw.calls)}
     assert counts["stop_reason"] is None
     for day in DAYS:
-        manifest = json.loads((tmp_path / "raw" / day / "manifest.json").read_text(encoding="utf-8"))
+        manifest = spx_store.raw_manifest(day)
         assert manifest["origin"] == "history_pull"
 
 
@@ -113,14 +114,12 @@ def test_iv_rank_is_asked_once_as_a_series(tmp_path):
 
 
 def test_a_stored_day_costs_no_request(tmp_path):
-    first = tmp_path / "raw" / DAYS[0]
-    first.mkdir(parents=True)
-    (first / "manifest.json").write_text('{"origin": "fetch"}', encoding="utf-8")
+    _store_day(tmp_path, DAYS[0], "fetch")
     uw = Recorder()
     counts = _pull(tmp_path, uw)
     assert counts["skipped_existing"] == 1
     assert not [c for c in uw.calls if c[1].get("date") == DAYS[0]]
-    assert json.loads((first / "manifest.json").read_text(encoding="utf-8")) == {"origin": "fetch"}
+    assert spx_store.raw_manifest(DAYS[0])["origin"] == "fetch"
 
 
 def test_the_shape_of_the_dated_volatility_answers_is_reported(tmp_path):
@@ -148,7 +147,7 @@ def test_stops_after_a_run_of_429s_and_keeps_no_partial_day(tmp_path):
     assert counts["stop_reason"] == "rate_limit_streak"
     assert counts["status"]["429"] == hp.RATE_LIMIT_STREAK_STOP
     assert _days(tmp_path) == DAYS[:1]
-    assert not list((tmp_path / "raw").glob(".partial-*"))
+    assert not list((tmp_path / "staging").glob(".partial-*"))
     assert len(uw.calls) == 1 + snap.HISTORY_CALLS_PER_SESSION + 3 + hp.RATE_LIMIT_STREAK_STOP
 
 
@@ -284,7 +283,7 @@ def test_max_calls_also_caps_the_http_requests_the_client_retries(tmp_path, monk
     assert counts["http_requests"] == len(sent) <= 30
     assert counts["stop_reason"] == "max_calls"
     assert _days(tmp_path) == DAYS[:1]                      # the second day was cut short and not kept
-    assert not list((tmp_path / "raw").glob(".partial-*"))
+    assert not list((tmp_path / "staging").glob(".partial-*"))
 
 
 def test_a_day_that_no_longer_fits_the_request_count_is_not_started(tmp_path, monkeypatch):
@@ -336,8 +335,6 @@ def test_an_unexpected_error_still_leaves_its_counts(tmp_path, monkeypatch):
 
 def test_refuses_an_end_after_the_newest_fetch_day(tmp_path):
     """A history day newer than the board's newest Fetch would become the day Refresh rebuilds (#194 review)."""
-    import shutil
-    shutil.rmtree(tmp_path / "raw" / FETCH_DAY)
     _store_day(tmp_path, DAYS[1], "fetch")
     _store_day(tmp_path, DAYS[2], hp.HISTORY_ORIGIN)       # a history day is not a Fetch day
     uw = Recorder()
@@ -348,8 +345,6 @@ def test_refuses_an_end_after_the_newest_fetch_day(tmp_path):
 
 
 def test_refuses_when_no_fetch_day_is_stored(tmp_path):
-    import shutil
-    shutil.rmtree(tmp_path / "raw" / FETCH_DAY)
     with pytest.raises(ValueError, match="no board Fetch"):
         _pull(tmp_path, Recorder())
 

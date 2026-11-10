@@ -1,15 +1,14 @@
-"""SPX-1 / #179 D5: a stored past day is served from disk and never rewritten; SPX-3: only the
-newest day moves ``latest.json``; an explicit ``force`` still refetches."""
+"""SPX-1 / #179 D5: a stored past day is served from the board file and never rewritten; SPX-3: only the
+newest day moves the latest pointer (``spx_meta``); an explicit ``force`` still refetches."""
 from __future__ import annotations
 
 import functools
-import hashlib
-import json
 from datetime import date
 
 import pytest
 
-from RevenueChaser.module_spx_gamma import run as spx_run, snapshot as snap
+from RevenueChaser.core import rawstore
+from RevenueChaser.module_spx_gamma import run as spx_run, snapshot as snap, store as spx_store
 
 from .conftest import FakeUW
 from .test_s2_fetch import CFTC, VIX, _handler
@@ -23,15 +22,15 @@ def _candles(day):
 
 def _store(root, day):
     """One complete stored raw day (with its manifest), fetched from a fake client."""
-    snap.fetch_snapshot(FakeUW(_handler, prefix=""), day, data_root=root / "raw",
+    snap.fetch_snapshot(FakeUW(_handler, prefix=""), day, data_root=root / "staging",
                         candle_fetcher=_candles(day))
-    assert (root / "raw" / day / "manifest.json").exists()
+    assert spx_store.has_day(day)
 
 
-def _state(folder):
-    """SHA-256 and mtime of every file in a folder: byte-identical and untouched."""
-    return {p.name: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
-            for p in sorted(folder.rglob("*")) if p.is_file()}
+def _state(day):
+    """Every stored row of a day, with its write stamp: byte-identical and untouched."""
+    return (rawstore.query("SELECT * FROM spx_raw_days WHERE session_date = ?", [day], db="spx_gamma"),
+            rawstore.query("SELECT * FROM spx_raw_files WHERE session_date = ? ORDER BY file", [day], db="spx_gamma"))
 
 
 class _Calls:
@@ -64,27 +63,27 @@ def _uw():
 def two_days(tmp_path):
     _store(tmp_path, OLD)
     _store(tmp_path, NEW)
-    spx_run.refresh(data_root=tmp_path)          # latest.json on the newest day, as after a Fetch
+    spx_run.refresh(data_root=tmp_path)          # the latest pointer on the newest day, as after a Fetch
     return tmp_path
 
 
 def test_a_stored_past_day_makes_no_uw_call_and_stays_byte_identical(two_days, monkeypatch):
     calls = _Calls(monkeypatch, today="2026-08-17")
-    before = _state(two_days / "raw" / OLD)
+    before = _state(OLD)
     uw = _uw()
     out = spx_run.run(OLD, data_root=two_days, uw=uw)
     assert uw.paths == []
     assert calls.fetches == [] and calls.backfills == 0
-    assert _state(two_days / "raw" / OLD) == before
+    assert _state(OLD) == before
     assert out["latest"]["asof_date"] == OLD
     assert out["paths"]["report_html"].exists()
 
 
-def test_a_stored_past_day_leaves_latest_json_on_the_newest_day(two_days, monkeypatch):
+def test_a_stored_past_day_leaves_the_latest_pointer_on_the_newest_day(two_days, monkeypatch):
     _Calls(monkeypatch, today="2026-08-17")
-    latest = (two_days / "latest.json").read_bytes()
+    latest = spx_store.latest()
     spx_run.run(OLD, data_root=two_days, uw=_uw())
-    assert (two_days / "latest.json").read_bytes() == latest
+    assert spx_store.latest() == latest and latest["asof_date"] == NEW
 
 
 def test_force_refetches_a_stored_past_day(two_days, monkeypatch):
@@ -95,22 +94,22 @@ def test_force_refetches_a_stored_past_day(two_days, monkeypatch):
     assert uw.paths
 
 
-def test_a_forced_refetch_of_an_older_day_leaves_latest_json_alone(two_days, monkeypatch):
+def test_a_forced_refetch_of_an_older_day_leaves_the_latest_pointer_alone(two_days, monkeypatch):
     _Calls(monkeypatch, today="2026-08-17")
-    latest = (two_days / "latest.json").read_bytes()
+    latest = spx_store.latest()
     spx_run.run(OLD, data_root=two_days, uw=_uw(), force=True)
-    assert (two_days / "latest.json").read_bytes() == latest
+    assert spx_store.latest() == latest
 
 
-def test_today_is_still_fetched_and_moves_latest_json(two_days, monkeypatch):
+def test_today_is_still_fetched_and_moves_the_latest_pointer(two_days, monkeypatch):
     calls = _Calls(monkeypatch, today=NEW)
-    (two_days / "latest.json").unlink()          # the fixture's refresh already wrote NEW there
+    spx_store.put_meta("latest", {"asof_date": OLD})     # the fixture's refresh already wrote NEW there
     uw = _uw()
     out = spx_run.run(NEW, data_root=two_days, uw=uw)
     assert calls.fetches == [NEW] and calls.backfills == 1
     assert uw.paths
     assert out["latest"]["asof_date"] == NEW
-    assert json.loads((two_days / "latest.json").read_text(encoding="utf-8"))["asof_date"] == NEW
+    assert spx_store.latest()["asof_date"] == NEW
 
 
 def test_a_past_day_without_a_manifest_is_still_fetched(tmp_path, monkeypatch):
@@ -147,13 +146,11 @@ def test_the_route_sends_a_stored_past_day_to_the_no_uw_job(board, two_days, mon
 
     seen = []
     monkeypatch.setattr(dashboard, "_submit", lambda module, params: seen.append((module, params)) or ("ok", 200))
-    (two_days / "raw" / OLD / "manifest.json").rename(two_days / "raw" / OLD / "manifest.bak")
-    board.post("/run/spxgamma", data={"date": OLD}, headers={"X-RC-Panel": "cli"})       # no complete day
-    (two_days / "raw" / OLD / "manifest.bak").rename(two_days / "raw" / OLD / "manifest.json")
+    board.post("/run/spxgamma", data={"date": "2026-08-12"}, headers={"X-RC-Panel": "cli"})  # not stored
     board.post("/run/spxgamma", data={"date": OLD}, headers={"X-RC-Panel": "cli"})       # stored
     board.post("/run/spxgamma", data={"date": OLD, "force": "1"}, headers={"X-RC-Panel": "cli"})
     board.post("/run/spxgamma", data={"date": "2026-08-17"}, headers={"X-RC-Panel": "cli"})  # today
-    assert seen == [("spxgamma", {"asof_date": OLD}),
+    assert seen == [("spxgamma", {"asof_date": "2026-08-12"}),
                     ("spxgamma_stored", {"asof_date": OLD}),
                     ("spxgamma", {"asof_date": OLD, "force": True}),
                     ("spxgamma", {"asof_date": "2026-08-17"})]
@@ -186,11 +183,11 @@ def test_the_stored_job_rebuilds_from_disk_with_no_network(board, two_days, monk
 
     monkeypatch.setattr(spx_run, "fetch_snapshot", boom)
     monkeypatch.setattr(spx_run, "UWClient", boom)
-    before = _state(two_days / "raw" / OLD)
-    latest = (two_days / "latest.json").read_bytes()
+    before = _state(OLD)
+    latest = spx_store.latest()
     runners.run_spxgamma_stored(None, OLD)
-    assert _state(two_days / "raw" / OLD) == before
-    assert (two_days / "latest.json").read_bytes() == latest
+    assert _state(OLD) == before
+    assert spx_store.latest() == latest
 
 
 def test_the_runner_passes_force_to_the_module(monkeypatch):

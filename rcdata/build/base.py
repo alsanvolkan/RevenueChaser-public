@@ -247,9 +247,9 @@ class RunContext:
             if not force and self._pause_read_at is not None and now - self._pause_read_at < PAUSE_READ_EVERY_S:
                 return
             self._pause_read_at = now
-            off = ops.switch_off("fetch")          # #527: the board's fetch switch stops every run, the same way
-            if off is not None:
-                self._paused = f"stopped, {ops.switch_words('fetch', off)}"
+            held = held_by_switch(self.dataset)    # #527: the fetch switch, then the file's, stop a run the same way
+            if held is not None:
+                self._paused = f"stopped, {ops.switch_words(*held)}"
                 raise Paused(self._paused)
             row = ops.schedule_get(self.dataset)
             if not row or row.get("paused_at") is None:
@@ -667,6 +667,13 @@ def rows_table(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str
         con.unregister("_rows_frame")
 
 
+def with_all(con: duckdb.DuckDBPyConnection, schema: list[tuple[str, str]], src: str) -> str:
+    """``src`` with every ``schema`` column it lacks added as a typed NULL (Parquet written before it was added)."""
+    have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
+    missing = [f'CAST(NULL AS {t}) AS "{c}"' for c, t in schema if c not in have]
+    return f"(SELECT *, {', '.join(missing)} FROM {src})" if missing else src
+
+
 def upsert_partition(rows: list[dict], schema: list[tuple[str, str]], key: list[str], final: Path) -> Path:
     """Merge ``rows`` into the Parquet partition ``final`` by ``key``; the newest ``fetched_at`` wins a key."""
     con = duckdb.connect()
@@ -675,7 +682,8 @@ def upsert_partition(rows: list[dict], schema: list[tuple[str, str]], key: list[
         cols = ", ".join(f'"{c}"' for c, _ in schema)
         source = "SELECT * FROM new_rows"
         if final.exists():
-            source = f"SELECT {cols} FROM read_parquet({sql_path(final)}) UNION ALL BY NAME " + source
+            old = with_all(con, schema, f"read_parquet({sql_path(final)})")
+            source = f"SELECT {cols} FROM {old} UNION ALL BY NAME " + source
         keys = ", ".join(f'"{k}"' for k in key)
         select = (f"SELECT {cols} FROM ({source}) QUALIFY row_number() OVER "
                   f"(PARTITION BY {keys} ORDER BY fetched_at DESC) = 1 ORDER BY {keys}")
@@ -791,12 +799,19 @@ def attended_names() -> frozenset[str]:
     return frozenset(name for name, ds in DATASETS.items() if attended(ds))
 
 
+def live_columns(con: duckdb.DuckDBPyConnection, table: str, columns: list[str]) -> list[str]:
+    """``columns`` that ``table`` of the attached live file holds: a live file built before a column was added is
+    compared on the columns both files have."""
+    have = {r[0] for r in con.execute("SELECT column_name FROM duckdb_columns() WHERE database_name = 'live_cmp' "
+                                      "AND table_name = ?", (table,)).fetchall()}
+    return [c for c in columns if c in have]
+
+
 def compare_with_live(con: duckdb.DuckDBPyConnection, kind: str, table: str, columns: list[str]) -> tuple[int, int]:
     """``(added, removed)`` rows of ``table`` in the build file against the live file, on ``columns``.
 
     The live file is attached read-only for the comparison and detached before returning.
     """
-    cols = ", ".join(f'"{c}"' for c in columns)
     live = serving.live_path(kind)
     new_rows = con.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
     if not live.exists():
@@ -807,6 +822,7 @@ def compare_with_live(con: duckdb.DuckDBPyConnection, kind: str, table: str, col
             "SELECT table_name FROM duckdb_tables() WHERE database_name = 'live_cmp'").fetchall()}
         if table not in known:
             return int(new_rows), 0
+        cols = ", ".join(f'"{c}"' for c in live_columns(con, table, columns))
         added = con.execute(f'SELECT count(*) FROM (SELECT {cols} FROM "{table}" '
                             f'EXCEPT ALL SELECT {cols} FROM live_cmp."{table}")').fetchone()[0]
         removed = con.execute(f'SELECT count(*) FROM (SELECT {cols} FROM live_cmp."{table}" '
@@ -851,13 +867,26 @@ def cap_problem(ds: Dataset) -> str | None:
     return "day cap reached: " + ", ".join(refused) if refused else None
 
 
+def held_by_switch(name: str) -> tuple[str, dict] | None:
+    """``(switch, its row)`` of the board switch that holds dataset ``name``, else None: the fetch switch first, then
+    its file's (avo, 10 Nov 2026: "main > midswitch > subswitches"; a file's switch holds a Fetch pressed by hand too)."""
+    from . import DATASETS
+    ds = DATASETS.get(name)
+    file = f"file-{ds.kind}" if ds is not None else None
+    for sw in ("fetch",) + ((file,) if file in ops.FILE_SWITCHES else ()):
+        off = ops.switch_off(sw)
+        if off is not None:
+            return sw, off
+    return None
+
+
 def paused_problem(ds: Dataset) -> str | None:
     """``skipped: paused ...`` while ``ops.dataset_schedule`` holds a pause for the dataset (Settings' Pause), else
     None. Checked before anything is fetched, so a paused dataset sends no call. The board's fetch switch (#527)
-    holds every dataset at once and is read first."""
-    off = ops.switch_off("fetch")
-    if off is not None:
-        return f"skipped: {ops.switch_words('fetch', off)}"
+    holds every dataset at once and is read first, then the switch of the dataset's file."""
+    held = held_by_switch(ds.name)
+    if held is not None:
+        return f"skipped: {ops.switch_words(*held)}"
     row = ops.schedule_get(ds.name)
     if not row or row.get("paused_at") is None:
         return None
