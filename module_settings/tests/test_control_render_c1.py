@@ -59,7 +59,7 @@ def _box(html: str, ds: str) -> str:
 def test_the_sources_head_counts_and_the_file_state_line():
     html = _sources(_view(), "spine.duckdb")
     assert "<span class=\"stn\">1</span> Sources · spine.duckdb</h3>" in html
-    assert re.search(r"plan step 1–7 · the spine · 1 sources · 1 fresh · 0 late · 0 stale · 0 never ran", html)
+    assert "plan step" not in html and '<span class="dim">the spine</span>' in html
     assert ">Collapse all</button>" in html and ">Open all</button>" in html
     assert ("🦆 spine.duckdb · on the disk · 9.8 MB · written 5 Nov 19:43 · 7 of 9 tables hold rows · empty: "
             "cik_map, lei") in html
@@ -132,9 +132,11 @@ def test_the_script_routes_the_one_button():
     assert "'/pause'" in blk and "'/resume'" in blk
 
 
-def test_the_universe_sits_in_the_spine_box_with_its_new_words():
+def test_the_universe_sits_at_the_top_of_fetch_health_with_its_new_words():
     spine = _box(_sources(_view(), "spine.duckdb"), "spine/security")
-    sb5 = spine[spine.index('class="sb5"'):]
+    assert 'id="universe"' not in spine
+    fetch = control_render.render_fetch(_view())
+    sb5 = fetch[fetch.index('id="sec-universe"'):fetch.index('class="fgrps"')]
     assert 'id="universe"' in sb5
     assert "hover them, or press and hold" not in sb5
     assert ("A Fetch of only some tier sets also brings each group whose chip is on (a Fetch of the whole universe "
@@ -143,20 +145,21 @@ def test_the_universe_sits_in_the_spine_box_with_its_new_words():
 
 
 def test_the_funnel_block_with_a_count_not_counted():
-    html = _sources(_view(), "spine.duckdb")
+    html = control_render._universe(control_render._ready(_view()))
     assert "How the list comes down to 5,655 stocks and 558 ETFs" in html
     fun = html[html.index('class="funnel"'):]
     assert "<h4>Stocks</h4>" in fun and "<h4>ETFs</h4>" in fun
     assert re.search(r'US listed, common stock</span><b class="fn">not counted</b><span class="fd">ADRs, units', fun)
     v = _view()
     v["universe"].pop("funnel")
-    assert 'class="funnel"' not in _sources(v, "spine.duckdb")
+    assert 'class="funnel"' not in control_render._universe(control_render._ready(v))
 
 
-def test_providers_sit_once_under_each_panels_boxes_with_their_source_line():
-    html = _sources(_view(), "prices.duckdb")
-    assert html.count("Providers and daily limits") == 1
-    assert html.index('class="sgrid"') < html.index("Providers and daily limits")
+def test_providers_sit_once_on_fetch_health_above_the_universe_with_their_source_line():
+    html = control_render.render_fetch(_view())
+    assert html.count("Providers and daily limits") == 1 and "Providers and daily limits" not in _sources(
+        _view(), "prices.duckdb")
+    assert html.index('id="sec-health"') < html.index('id="sec-providers"') < html.index('id="sec-universe"')
     assert ("day caps and request windows: <code>rcdata/caps.py</code> (<code>DAY_CAPS</code>, <code>WINDOWS</code>)"
             " · what each provider brings, our pace and its rule: <code>rcdata/needs/screen.py</code> "
             "(<code>PROVIDERS</code>) · used today: <code>ops.provider_calls_daily</code>") in html
@@ -272,9 +275,14 @@ def test_the_script_selects_a_file_from_the_picker_the_diagram_and_by_file():
 
 def test_render_data_holds_the_parts_in_order():
     html = control_render.render_data(_view())
-    marks = ['<h1>Data/Health · Data</h1>', 'id="sec-health"', 'id="sec-flow"', 'id="fpick"',
-             'class="fpanel" data-file="spine.duckdb"', 'id="sec-crosscheck"']
+    marks = ['<h1>Data/Health · Database</h1>', 'id="sec-flow"', 'id="fpick"', 'class="fpanel" data-file="spine.duckdb"']
     at = [html.index(m) for m in marks]
+    assert at == sorted(at)
+    assert 'id="sec-health"' not in html and 'id="sec-crosscheck"' not in html and "data-job=" not in html
+    fetch = control_render.render_fetch(_view())
+    marks = ['<h1>Data/Health · Fetch/Health</h1>', 'class="topbar"', 'id="sec-health"', 'id="sec-providers"',
+             'id="sec-universe"', 'class="fgrps"', 'class="pictrow"', 'id="sec-crosscheck"']
+    at = [fetch.index(m) for m in marks]
     assert at == sorted(at)
     # #527: the board's own help box folded into the page's one shared box (report.DATA_HELP)
     from RevenueChaser.module_settings import report
@@ -290,16 +298,19 @@ def test_one_panel_per_file_in_plan_order_only_the_first_shown():
     assert [p[0] for p in panels] == [f["name"] for f in v["files"]]
     assert [bool(p[1]) for p in panels] == [False] + [True] * 5
     one = html[html.index('class="fpanel" data-file="prices.duckdb"'):html.index('class="fpanel" data-file="fund')]
-    at = [one.index(m) for m in ('class="sources', 'class="journey"', 'class="pictrow"')]
-    assert at == sorted(at)
+    assert 'class="journey"' in one and 'class="sources' not in one and 'class="pictrow"' not in one
+    fetch = control_render.render_fetch(v)
+    groups = re.findall(r'<details class="sec fgrp" data-file="([^"]+)"', fetch)
+    assert groups == [f["name"] for f in v["files"]], "Fetch/Health: one group a file, in plan order"
+    assert fetch.index('class="fgrps"') < fetch.index('class="pictrow"')
 
 
-def test_the_old_controls_are_gone_and_fetch_is_an_empty_alias():
+def test_the_old_controls_are_gone_and_the_universe_is_on_fetch_health_once():
     html = control_render.render_data(_view())
     assert 'id="openall"' not in html and 'id="shutall"' not in html and 'id="dataempty"' not in html
     assert "No file matches the diagram" not in html
-    assert control_render.render_fetch(_view()) == ""
-    assert html.count('id="universe"') == 1
+    fetch = control_render.render_fetch(_view())
+    assert html.count('id="universe"') == 0 and fetch.count('id="universe"') == 1
     assert "WIAL" not in html and "cannot be taken back" not in control_render.WIAL
 
 

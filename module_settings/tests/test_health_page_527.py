@@ -64,13 +64,13 @@ def test_the_data_page_has_one_what_am_i_looking_at():
     assert "What a press does." in data, "the board's own help moved into the shared box"
 
 
-def test_the_top_bar_heads_the_data_tab_and_carries_the_gateway_login_link():
-    """#527 B4 took the Health tab's copy away (it is live in Grafana now); the Data tab keeps the one top bar."""
+def test_the_top_bar_heads_the_fetch_health_tab_and_carries_the_gateway_login_link():
+    """#527 B4 left one top bar; avo, 10 Nov 2026 moved it with every control to Fetch/Health."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
-    part = _panel(html, "panel-data")
-    assert part.count('class="topbar"') == 1
+    part = _panel(html, "panel-health")
+    assert part.count('class="topbar"') == 1 and 'class="topbar"' not in _panel(html, "panel-data")
     assert 'href="https://gateway.example/"' in part.split('class="topbar"', 1)[1].split("</div>", 1)[0]
     assert html.count('class="topbar"') == 1 and html.count('id="sw-msg"') == 1
     assert "btn.closest('.topbar')" in control_render.CTL_JS
@@ -81,7 +81,8 @@ def test_the_health_tab_puts_what_needs_avo_first_and_folds_the_reference_parts(
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
-    order = ["<h1>Data/Health · Health</h1>", 'id="health-live-link"',
+    order = ["<h1>Data/Health · Fetch/Health</h1>", "<h1>Needs, boards and automations</h1>",
+             'id="health-live-link"',
              'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order

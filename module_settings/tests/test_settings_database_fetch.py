@@ -70,5 +70,5 @@ def test_the_journey_has_a_board_column_and_folded_paths():
     assert '<details class="pf">' in db
 
 
-def test_the_page_scripts_still_parse():
-    assert_scripts_parse(_page())
+def test_the_page_scripts_still_parse(tmp_path):
+    assert_scripts_parse(_page(), tmp_path)

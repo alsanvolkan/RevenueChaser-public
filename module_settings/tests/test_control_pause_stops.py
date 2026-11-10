@@ -31,7 +31,7 @@ def test_the_queue_has_stop_on_queued_and_running_rows_only():
 
 
 def test_the_words_say_pause_stops_and_the_old_ones_are_gone():
-    html = control_render.render_data(_view()) + control_render._queue(_view())
+    html = control_render.render_fetch(_view()) + control_render._queue(_view())
     for gone in ("cannot be cancelled", "cannot be taken back", "no cancel route"):
         assert gone not in html and gone not in report.ND_PAUSE_STOPS, gone
     assert "<b>Pause</b> cancels a queued run, stops a running one before its next provider call" in html

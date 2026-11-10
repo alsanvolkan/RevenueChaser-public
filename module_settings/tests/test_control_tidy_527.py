@@ -11,7 +11,8 @@ from RevenueChaser.module_settings.tests.test_control_render_c1 import _box, _so
 
 
 def test_the_button_text_and_the_fill_legend_are_one_line_and_a_question_mark():
-    html = _sources(_view(), "prices.duckdb")
+    # the fill legend sits once under the universe on Fetch/Health (avo, 10 Nov 2026)
+    html = _sources(_view(), "prices.duckdb") + control_render.render_fetch(_view())
     blegend = re.search(r'<div class="blegend">(.*?)</div>', html, re.S)
     assert blegend, "the button legend is one line with a ? beside it"
     visible = blegend.group(1).split("<details", 1)[0]
