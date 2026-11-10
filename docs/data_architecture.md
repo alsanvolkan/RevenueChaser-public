@@ -1004,7 +1004,7 @@ file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema 
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `3`), under "Fundamentals" after it; and the options
-data, `options` (serving schema version `1`), under "The options data" last. The six numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
+data, `options` (serving schema version `2`), under "The options data" last. The six numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
 (`rcdata/build/dirty.py`), so a bump makes only its own kind's next build whole (#649). The market data,
 `market` (serving schema version `3`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
@@ -1835,8 +1835,10 @@ name, and the earnings set of the evening. Built by the same builder, swapped th
 | `option_daily` | session date, ticker | The GEX levels, the day's option volume and premium, IV rank, and the chain's size |
 | `option_print` | session date, ticker, set, print id | The last 50 prints of the session, with `tags`, `nbbo_bid`/`nbbo_ask`, the side volumes, `multi_vol`, `upstream_condition_detail` and `report_flags`; `side` (`ask`, `bid` or `mid`: UW's side tag, else the side of the quote's midpoint the price is on, NULL without either) and `package` (a multi-leg or stock-tied trade condition); the rule is `core/option_prints.py`, the same one the Earnings Radar R5 lean reads from the live tape |
 | `iv_daily` | session date, ticker, source, days | Implied volatility per tenor: UW's interpolated IV (observed by the daily run) and IBKR's 30-day IV year (backfilled, `observed` false) |
-| `option_screener_daily` | session date, ticker | Every name reporting in the next 28 days, its report date and session, its screener row (or `screened` false), and whether it passes the Earnings Radar gates; `dollar_option_volume` is the day's call plus put premium as UW served it (NULL when not served, which fails the gate), not volume x 100 |
+| `option_screener_daily` | session date, ticker | Every name reporting in the next 28 days, its report date and session, the calendar item's `expected_move_perc`, `street_mean_est`, `pre_earnings_close`, `post_earnings_close`, `report_time` and `full_name` (`marketcap` the calendar's when the screener has none), its screener row (or `screened` false), and whether it passes the Earnings Radar gates; `dollar_option_volume` is the day's call plus put premium as UW served it (NULL when not served, which fails the gate), not volume x 100 |
 | `er_options` | session date, ticker | The earnings set: one row per name fetched on the evening before its report, with the report date it was fetched for |
+| `option_far_print` | session date, print id | The market's far-dated prints of the session (183 days or more, $50k premium or more, every underlying): the LEAPS scan's input, the print fields of `option_print` plus `next_earnings_date`; the last 5 sessions (the Parquet keeps every one) |
+| `earnings_tape` | session date, ticker, report date | `/earnings/{ticker}` of an earnings-set name on its evening: one row per report UW lists (EPS and estimate, expected move, the pre- and post-earnings moves, the straddle returns); a name fetched again lists its reports again, so a reader takes the newest session's row |
 
 **Datasets.** Three, all daily and all `starts_by_hand` (no automatic first run: the first one is started from the
 CLI or Settings):
@@ -1852,8 +1854,10 @@ CLI or Settings):
 - `uw/option_screener`: the earnings calendar of the next 28 days (`raw/uw/earnings_calendar/`, premarket and
   afterhours, 100 a page), the screener row of every name on it (`/screener/stocks`, 100 names a call), and the
   earnings set: once per name, on the evening before its report, each name that passes the Earnings Radar gates and
-  is not on the option list gets spot exposures by strike, GEX levels, term structure, options volume and the last
-  50 prints (not the chain).
+  is not on the option list gets spot exposures by strike, GEX levels, term structure, options volume, the last
+  50 prints (not the chain) and its earnings tape (`/earnings/{ticker}`). Once a session it also asks
+  `/option-trades` for the market's far prints (`min_dte` 183, `min_premium` 50,000, 500 a call), paged back with
+  `older_than` (UW ignores `page`), at most 3 calls.
 - `ibkr/iv_history`: one year of IBKR's daily 30-day option implied volatility per list name, once (a name added
   later gets its year on the next run). Through `core/providers/ibkr_tws.py`, a minimal TWS socket client that sends
   only the handshake, `startApi` and `reqHistoricalData`: market data only, never an account, a position or an
@@ -1875,11 +1879,11 @@ read, it reads the stored D26 `earnings_calendar` as before (#304), and Yahoo's 
 has the name.
 
 **UW calls a session** (`rcdata/build/options/__init__.py`, the plan's arithmetic: list names x (chain + stats +
-prints) + screener pages + earnings-set names). A list name is 11 calls plus 2 per expiry plus one per extra page;
-an earnings-set name 5; the screener one per 100 reporting names; the calendar one per day and report session plus
+prints) + screener pages + earnings-set names + far-print pages). A list name is 11 calls plus 2 per expiry plus one
+per extra page; an earnings-set name 6; the far prints at most 3; the screener one per 100 reporting names; the calendar one per day and report session plus
 one per extra 100 names. With the planning numbers (25 expiries and 5 extra pages a name, SPX 400, 2,500 reporting
-names, 150 in the earnings set: assumptions until the first week's real counts replace them) that is 1,240 calls
-with SPX alone, 7,840 with 100 list names and 34,240 with 500, and UW has no day cap since avo removed it on
+names, 150 in the earnings set: assumptions until the first week's real counts replace them) that is 1,393 calls
+with SPX alone, 7,993 with 100 list names and 34,393 with 500, and UW has no day cap since avo removed it on
 2026-11-10 (`rcdata/caps.py`); the other UW datasets spend the same UW day. The real count is the builder's, per request, in `provider_calls_daily`.
 
 **Raw retention.** A hook after each `options` swap (`rcdata/build/options/raw_retention.py`) removes the

@@ -2,7 +2,7 @@
 reporting name, 100 names a call. UW is mocked at the HTTP boundary."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -105,6 +105,54 @@ def test_the_gates_are_the_earnings_radar_s_with_the_real_premium(uw_opts):
     assert got == {"PASS": (500, 50_000.0, True), "LOWVOL": (499, 180_000.0, False),
                    "LOWOI": (600, 180_000.0, False), "CHEAP": (5000, 49_999.0, False),
                    "NOPREMIUM": (5000, None, False)}
+
+
+def test_the_calendar_item_s_fields_are_kept_on_the_screener_row(uw_opts):
+    """Group 3 G3: the fields the Earnings Radar event is made of (``app/runners.py`` ``_calendar_event``) are on
+    ``option_screener_daily``; ``marketcap`` is the calendar's when the screener sends none."""
+    _report(uw_opts, NEXT, "premarket", ["AAA"])
+    _report(uw_opts, NEXT, "afterhours", ["BBB"], {**LIQUID, "marketcap": 7e9, "realized_volatility": 0.25,
+                                                   "stock_volume": 1_000_000})
+    _daily()
+    assert _query("SELECT ticker, full_name, expected_move_perc, street_mean_est, pre_earnings_close, "
+                  "post_earnings_close, report_time, marketcap, realized_volatility, stock_volume "
+                  "FROM option_screener_daily ORDER BY ticker") == [
+        ("AAA", "AAA Inc", 0.0512, 1.10, 100.5, None, "premarket", 5e9, None, None),
+        ("BBB", "BBB Inc", 0.0512, 1.10, 100.5, None, "afterhours", 7e9, 0.25, 1_000_000.0)]
+
+
+def _far(i: int, **extra) -> dict:
+    s = 20 * 3600 - 1 - i                         # newest first, one second apart, all on the session
+    return {"id": f"f{i:04d}", "underlying_symbol": "AAPL",
+            "executed_at": f"{SESSION}T{s // 3600:02d}:{s // 60 % 60:02d}:{s % 60:02d}Z",
+            "option_chain_id": "AAPL280121C00200000", "option_type": "call", "premium": "75000", "size": "50",
+            "delta": "0.4", "tags": ["ask_side"], "report_flags": ["intermarket_sweep"],
+            "next_earnings_date": "2027-01-28", **extra}
+
+
+def test_the_far_prints_are_paged_back_with_older_than_at_most_three_calls(uw_opts):
+    """Group 3 G5: UW ignores ``page`` on /option-trades (M5), so each page asks ``older_than`` the oldest print so
+    far; at most ``FAR_CALLS`` calls, once a session."""
+    uw_opts.far = [_far(i) for i in range(1_600)]
+    _daily()
+    asked = uw_opts.calls("/option-trades")
+    assert len(asked) == 3
+    assert all(q["min_dte"] == ["183"] and q["min_premium"] == ["50000"] and q["limit"] == ["500"] for _, q in asked)
+    assert "older_than" not in asked[0][1] and asked[1][1]["older_than"] == [uw_opts.far[499]["executed_at"]]
+    assert _query("SELECT count(*), count(DISTINCT print_id) FROM option_far_print") == [(1_500, 1_500)]
+    uw_opts.requests.clear()
+    _daily()
+    assert uw_opts.calls("/option-trades") == [], "once a session"
+
+
+def test_a_far_print_row_carries_the_print_fields(uw_opts):
+    prev = calendar.previous_trading_day(SESSION - timedelta(days=1))
+    uw_opts.far = [_far(1), _far(2, underlying_symbol=""), _far(3, executed_at=f"{prev}T19:00:00Z")]
+    _daily()
+    assert _query("SELECT print_id, ticker, expiry, strike, option_type, days_to_expiry, premium, size, delta, "
+                  "next_earnings_date, report_flags FROM option_far_print") == [
+        ("f0001", "AAPL", date(2028, 1, 21), 200.0, "call", (date(2028, 1, 21) - SESSION).days, 75000.0, 50, 0.4,
+         date(2027, 1, 28), ["intermarket_sweep"])], "no underlying or another session: left out"
 
 
 def test_a_second_run_of_the_evening_asks_nothing_again(uw_opts):

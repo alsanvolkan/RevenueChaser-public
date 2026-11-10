@@ -1098,9 +1098,11 @@ def as_frame(rows: list[dict]):
 
 DATASET_OF_TABLE.update({**{t: "uw/option_list" for t in ("option_eod", "option_strike", "option_expiry",
                                                           "option_daily", "option_print", "iv_daily")},
-                         "option_screener_daily": "uw/option_screener", "er_options": "uw/option_screener"})
+                         **{t: "uw/option_screener" for t in ("option_screener_daily", "er_options",
+                                                              "option_far_print", "earnings_tape")}})
 KIND_OF_TABLE.update({t: "options" for t in ("option_eod", "option_strike", "option_expiry", "option_daily",
-                                             "option_print", "iv_daily", "option_screener_daily", "er_options")})
+                                             "option_print", "iv_daily", "option_screener_daily", "er_options",
+                                             "option_far_print", "earnings_tape")})
 # Rows a table shares between datasets: the earnings set (``set_name`` earnings) is uw/option_screener's, the IBKR
 # year of ``iv_daily`` (``source`` ibkr) is ibkr/iv_history's. Their ``status`` is that dataset's newest check.
 _SHARED_STATUS = (("set_name", "earnings", "uw/option_screener"), ("source", "ibkr", "ibkr/iv_history"))

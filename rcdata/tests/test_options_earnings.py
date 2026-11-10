@@ -2,7 +2,7 @@
 passes the gates and is not on the option watch list. UW is mocked at the HTTP boundary."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -64,7 +64,8 @@ def test_a_name_that_passes_reports_next_session_and_is_not_on_the_list_is_fetch
     assert _fetched(uw_opts) == {"GOOD"}
     asked = [p.split("/", 3)[3] for p, _ in uw_opts.calls("/stock/GOOD/")]
     assert sorted(asked) == sorted(ER_PARTS), "spot exposures, GEX levels, term structure, volume, prints; no chain"
-    assert row["calls"] == 2 * len(uw_screener.report_days(SESSION)) + 1 + len(ER_PARTS)
+    assert [p for p, _ in uw_opts.calls("/earnings/GOOD")] == ["/earnings/GOOD"], "the tape, once"
+    assert row["calls"] == 2 * len(uw_screener.report_days(SESSION)) + 1 + len(ER_PARTS) + 1 + 1   # tape, far
     assert _query("SELECT ticker, report_date, report_session, option_volume, total_open_interest, gamma_flip, "
                   "call_volume, prints FROM er_options") == [("GOOD", NEXT, "premarket", 600, 5000, 102.5, 600, 50)]
     uw_opts.requests.clear()
@@ -100,6 +101,18 @@ def test_the_earnings_rows_share_the_list_tables_marked_earnings(uw_opts):
     expiry = _query("SELECT set_name, volatility, call_gex FROM option_expiry ORDER BY expiry")
     assert expiry and all(r[0] == "earnings" and r[1] == 0.3 and r[2] is None for r in expiry), \
         "the term structure only: no greek exposure is asked for the earnings set"
+
+
+def test_the_tape_is_one_row_per_report_of_the_name(uw_opts):
+    """avo's D2 (10 Nov 2026): ``/earnings/{ticker}`` of an earnings-set name lands in ``earnings_tape``; a report
+    UW lists twice is kept once."""
+    _setup(uw_opts, GOOD=(NEXT, LIQUID))
+    _daily()
+    assert _query("SELECT ticker, report_date, report_time, actual_eps, street_mean_est, expected_move_perc, "
+                  "post_earnings_move_1d, long_straddle_1d, report_source, session_date FROM earnings_tape "
+                  "ORDER BY report_date") == [
+        ("GOOD", date(2026, 4, 28), "postmarket", 2.45, 2.25, 0.0359, 0.0724, 0.2349, "company", SESSION),
+        ("GOOD", date(2026, 7, 28), "postmarket", 2.45, 2.25, 0.0359, 0.0724, 0.2349, "company", SESSION)]
 
 
 def test_the_earnings_set_rule_on_its_own():

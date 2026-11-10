@@ -30,6 +30,7 @@ class UWOptions:
         self.contracts: dict[str, int] = {}
         self.screener: dict[str, dict] = {}        # ticker -> screener fields (step 3)
         self.calendar: dict[tuple[date, str], list[str]] = {}   # (report day, premarket|afterhours) -> tickers
+        self.far: list[dict] = []                  # /option-trades rows, newest first (the far prints)
         self.requests: list[tuple[str, dict]] = []
 
     # ── the answers ──
@@ -72,12 +73,21 @@ class UWOptions:
             tickers = [t for t in (q.get("ticker") or [""])[0].split(",") if t]
             return {"data": [{"ticker": t, **{k: str(v) for k, v in self.screener[t].items()}}
                              for t in tickers if t in self.screener]}
+        if path.startswith("/earnings/") and parts[2] not in ("premarket", "afterhours"):
+            return {"data": [self.tape(parts[2], "2026-07-28"), self.tape(parts[2], "2026-04-28"),
+                             self.tape(parts[2], "2026-07-28")]}
         if path.startswith("/earnings/"):
             day = date.fromisoformat(q["date"][0])
             page, limit = int((q.get("page") or ["0"])[0]), int((q.get("limit") or ["50"])[0])
-            rows = [{"symbol": t, "report_date": day.isoformat(), "full_name": f"{t} Inc"}
+            rows = [{"symbol": t, "report_date": day.isoformat(), "full_name": f"{t} Inc",
+                     "expected_move_perc": "0.0512", "street_mean_est": "1.10", "pre_earnings_close": "100.5", "report_time": parts[2],
+                     "marketcap": "5000000000"}
                     for t in self.calendar.get((day, parts[2]), [])]
             return {"data": rows[page * limit:(page + 1) * limit]}
+        if path == "/option-trades":
+            older = (q.get("older_than") or [None])[0]
+            rows = [r for r in self.far if older is None or r["executed_at"] < older]
+            return {"data": rows[:int(q["limit"][0])]}
         ticker, ep = parts[2], "/".join(parts[3:])
         if ep == "expiry-breakdown":
             # ``expires``, not the spec's ``expiry``: what UW sent in the first real sample (2026-10-28).
@@ -121,6 +131,13 @@ class UWOptions:
         if ep == "flow-recent":
             return {"data": self._prints(ticker)}
         return None
+
+    @staticmethod
+    def tape(ticker: str, report_date: str) -> dict:
+        """One ``/earnings/{ticker}`` row, its numbers strings as UW sends them."""
+        return {"report_date": report_date, "report_time": "postmarket", "actual_eps": "2.45",
+                "street_mean_est": "2.25", "expected_move_perc": "0.0359", "post_earnings_move_1d": "0.0724",
+                "long_straddle_1d": "0.2349", "ending_fiscal_quarter": "2026-06-30", "source": "company"}
 
     def __call__(self, request):
         path = request.url.path.split("/api", 1)[1]

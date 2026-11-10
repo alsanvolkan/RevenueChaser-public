@@ -29,4 +29,7 @@ SERVING_SCHEMA_VERSION["fundamentals"] = 3
 #                 ``business_country``) and ``fundamental_fact`` the first-reported value (#277 A2); the three SEC
 #                 fields (tax, pre-tax income, interest) are rows, not columns.
 # PR 18 (G8): ``options.duckdb``, the option chains, exposures, prints and IV (``build/options/``).
-SERVING_SCHEMA_VERSION["options"] = 1
+SERVING_SCHEMA_VERSION["options"] = 2
+# options 2: the calendar item's fields on ``option_screener_daily`` (and the screener's ``realized_volatility``,
+#            ``stock_volume``), ``option_far_print`` (the LEAPS market scan) and ``earnings_tape`` (``/earnings/{t}``
+#            of the earnings set); group 3's one structure PR (#644, avo's D2 of 10 Nov 2026).
