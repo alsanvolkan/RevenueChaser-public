@@ -220,7 +220,7 @@ R3_GM_HELD_YOY_BP = -0.005
 R3_SGA_Z_SPIKE = 3.0
 R3_MIN_OM_QUARTERS = 4
 # Below this summed revenue of the last four OM quarters (USD) the name is pre-revenue: no OM vote (review E6).
-R3_OM_MIN_REVENUE_4Q = 10_000_000.0
+R3_OM_MIN_REVENUE_4Q = 25_000_000.0
 # R6 — macro (rate sensitivity)
 R6_MIN_OBS = 20
 R6_RATE_HIGH = 2.0
