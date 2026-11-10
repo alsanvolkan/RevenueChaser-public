@@ -88,13 +88,15 @@ def aif_business(text: str) -> str | None:
 
 
 def slice_item(text: str, form: str = "10-K") -> tuple[str | None, str]:
-    """Return ``(item_text, quality)``: ok / short / overrun / missing.
+    """Return ``(item_text, quality)``: ok / capped / short / overrun / missing.
 
     A 10-K opens with a table of contents that lists ``Item 1. Business`` and
     ``Item 1A. Risk Factors`` back to back, so the *first* start match is the
     TOC and the slice is a few dozen characters. We therefore try every start
     and keep the longest section — the real body, not the contents page.
 
+    ``capped``: the section is longer than ``MAX_ITEM_CHARS``, so the slice is
+    cut at the cap and holds only the start of Item 1.
     ``overrun``: no stop header follows the start, so the slice runs on into
     Item 1A and beyond (or up to the cap). It is kept, but not labelled ``ok``.
     """
@@ -108,7 +110,9 @@ def slice_item(text: str, form: str = "10-K") -> tuple[str | None, str]:
 
     line = _line_item(text, key)
     if line is not None:
-        return text[line[0]:line[1]].strip()[:config.MAX_ITEM_CHARS], "ok"
+        item = text[line[0]:line[1]].strip()
+        # A section longer than the cap holds only part of Item 1, so it is not ``ok``.
+        return item[:config.MAX_ITEM_CHARS], "capped" if len(item) > config.MAX_ITEM_CHARS else "ok"
 
     best: str | None = None
     stopped = False
@@ -126,10 +130,12 @@ def slice_item(text: str, form: str = "10-K") -> tuple[str | None, str]:
     if best is None:
         return None, "missing"
 
+    # A section longer than the cap holds only part of Item 1, so it is not ``ok``.
+    capped = len(best) > config.MAX_ITEM_CHARS
     best = best[:config.MAX_ITEM_CHARS]
     if len(best) < config.MIN_ITEM_CHARS:
         return best, "short"
-    return best, ("ok" if stopped else "overrun")
+    return best, ("overrun" if not stopped else ("capped" if capped else "ok"))
 
 
 # ── suspect flags (#400 10-K package WP2) ───────────────────────────────────────────────────────────────────

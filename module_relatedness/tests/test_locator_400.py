@@ -139,4 +139,10 @@ def test_a_suspect_ok_cut_asks_the_locator_too():
     # #400 WP7: 24 of the 10-K reading report's 29 wrong cuts were labelled ok, so ASK_ON alone never asked.
     from RevenueChaser.module_relatedness import locator
     assert locator.asks("ok;suspect:S4") and locator.asks("overrun") and locator.asks("short;x")
-    assert not locator.asks("ok") and not locator.asks("capped") and not locator.asks(None)
+    assert not locator.asks("ok") and not locator.asks(None)
+
+
+def test_a_capped_cut_asks_the_locator():
+    # #260: a slice cut at MAX_ITEM_CHARS is labelled capped, where it used to be ok;suspect:S8 (which asked).
+    from RevenueChaser.module_relatedness import locator
+    assert locator.asks("capped") and locator.asks("capped;x")
