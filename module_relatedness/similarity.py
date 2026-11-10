@@ -137,3 +137,110 @@ def peer_lists(profiles: dict[str, dict], top: int = 25, min_score: float = conf
             out[t].append({"peer": peer, "score": round(float(vals[k]), 4), "score_raw": float(vals[k]),
                            "shared": shared_terms(weights[t], weights[peer]), "n_shared": n_shared})
     return out, scores
+
+
+# --- Similarity v2 (#669, plan 2026-10-30 Step 2): embeddings + customer/supplier + structure -----------------
+
+_SUFFIXES = {"inc", "corp", "corporation", "co", "company", "ltd", "limited", "plc", "llc", "lp", "sa", "ag", "nv",
+             "group", "holdings", "the"}
+STRUCT_FIELDS = ("business_model", "channel", "stage", "sector")
+
+
+def party_name(name) -> str:
+    """A customer/supplier name compared across profiles: lower case, punctuation and company suffixes dropped."""
+    words = "".join(c if c.isalnum() else " " for c in str(name or "").lower()).split()
+    return " ".join(w for w in words if w not in _SUFFIXES)
+
+
+def chain_sets(pj: dict | None) -> tuple[set[str], set[str]]:
+    """``(types, names)`` of a v3 profile's customers (``c:``) and suppliers (``s:``)."""
+    types, names = set(), set()
+    for side, key in (("c", "customers"), ("s", "suppliers")):
+        for p in (pj or {}).get(key) or []:
+            if not isinstance(p, dict):
+                continue
+            t = str(p.get("type") or "").strip().lower()
+            if t:
+                types.add(f"{side}:{t}")
+            n = party_name(p.get("name"))
+            if n:
+                names.add(n)
+    return types, names
+
+
+def _binary(sets: list[set[str]]):
+    from scipy.sparse import csr_matrix
+    vocab: dict[str, int] = {}
+    rows, cols = [], []
+    for i, s in enumerate(sets):
+        for v in s:
+            rows.append(i)
+            cols.append(vocab.setdefault(v, len(vocab)))
+    return csr_matrix(([1.0] * len(rows), (rows, cols)), shape=(len(sets), max(1, len(vocab))), dtype="float32")
+
+
+def blended_peer_lists(profiles: dict[str, dict], pjs: dict[str, dict], vectors: dict, sectors: dict | None = None,
+                       top: int = 25, chunk: int = 256):
+    """Top-``top`` peers per ticker on ``W_DO s_do + W_CHAIN s_chain + W_STRUCT s_struct`` -> ``(peers, scores)``.
+
+    ``s_do`` is the cosine of the company vectors (``embeddings.company_vectors``; a ticker without one scores 0 on
+    it). ``s_chain`` = ``W_CHAIN_TYPES`` x Jaccard of the customer/supplier types + ``W_CHAIN_NAMES`` when the two
+    name a customer or supplier in common. ``s_struct`` is the share of ``STRUCT_FIELDS`` both fill with the same
+    value. ``scores`` is the upper triangle (i < j) as one float32 array, for the percentile. The pairs are scored in
+    row chunks, so memory stays ``chunk x n``, never ``n x n``. Each peer keeps the shared tags as evidence.
+    shortcut: names are matched as normalised text, not resolved to tickers through Value Chain's aliases, and the
+    direct edge (A names B) is not scored; upgrade when Value Chain's resolver (#410) lands.
+    """
+    import numpy as np
+
+    tickers = sorted(profiles)
+    n = len(tickers)
+    if n < 2:
+        return {t: [] for t in tickers}, np.zeros(0, dtype="float32")
+    dim = len(next(iter(vectors.values()))) if vectors else 1
+    E = np.zeros((n, dim), dtype="float32")
+    for i, t in enumerate(tickers):
+        if t in vectors:
+            E[i] = vectors[t]
+    chains = [chain_sets(pjs.get(t)) for t in tickers]
+    T, N = _binary([c[0] for c in chains]), _binary([c[1] for c in chains])
+    t_size = np.asarray(T.sum(axis=1)).ravel()
+    codes = []
+    for f in STRUCT_FIELDS:
+        vals = [str((sectors or {}).get(t) if f == "sector" else (pjs.get(t) or {}).get(f) or "").strip().lower()
+                for t in tickers]
+        index = {v: k for k, v in enumerate(sorted({v for v in vals if v}))}
+        codes.append(np.asarray([index.get(v, -1) for v in vals]))
+    scale = idf(profiles)
+    weights = {t: term_weights(profiles[t], scale) for t in tickers}
+
+    peers: dict[str, list] = {}
+    upper = []
+    for a in range(0, n, chunk):
+        b = min(n, a + chunk)
+        s_do = E[a:b] @ E.T
+        inter = (T[a:b] @ T.T).toarray()
+        union = t_size[a:b, None] + t_size[None, :] - inter
+        jac = np.divide(inter, union, out=np.zeros_like(inter), where=union > 0)
+        named = ((N[a:b] @ N.T).toarray() > 0).astype("float32")
+        s_struct = sum(((c[a:b, None] == c[None, :]) & (c[a:b, None] >= 0)).astype("float32") for c in codes)
+        s = (config.W_DO * s_do + config.W_CHAIN * (config.W_CHAIN_TYPES * jac + config.W_CHAIN_NAMES * named)
+             + config.W_STRUCT * s_struct / len(STRUCT_FIELDS)).astype("float32")
+        for r in range(b - a):
+            i = a + r
+            upper.append(s[r, i + 1:])
+            row = s[r].copy()
+            row[i] = -np.inf
+            k = min(top, n - 1)
+            sel = np.argpartition(-row, k - 1)[:k]
+            sel = sel[np.argsort(-row[sel])]
+            focal = tickers[i]
+            peers[focal] = []
+            for j in sel:
+                if row[j] <= 0:
+                    continue
+                peer = tickers[int(j)]
+                peers[focal].append({"peer": peer, "score": round(float(row[j]), 4), "score_raw": float(row[j]),
+                                     "shared": shared_terms(weights[focal], weights[peer]),
+                                     "n_shared": len(set(weights[focal]) & set(weights[peer]))})
+    return peers, np.concatenate(upper)
