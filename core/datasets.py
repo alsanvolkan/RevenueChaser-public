@@ -4,7 +4,7 @@ Claim rule, applied to ``rawstore.MANIFEST``:
 
 - A ``*_changes`` table (MANIFEST ``changes_of``) is listed on the dataset that owns its base table.
 - A history.duckdb table (``result_runs`` and every result-history ``*_history`` mirror) is listed on
-  ``result_history``. Those 18 tables take freshness ``from_run_log`` until #82 and #83 make the run
+  ``result_history``. Those 19 tables take freshness ``from_run_log`` until #82 and #83 make the run
   log trustworthy. ``earnings_history`` is not one of them: it is a raw change-history table.
 - Every other MANIFEST table is listed on exactly one dataset.
 - ``UNCLAIMED_ALLOWLIST`` is empty. A new MANIFEST table fails the claim test until a dataset owns it.
@@ -44,7 +44,7 @@ FROM_RUN_LOG_CAVEAT = (
     "from the run log; not trustworthy until alsanvolkan/RevenueChaser-public#82 and alsanvolkan/RevenueChaser-public#83 are fixed (run_registry / result_runs)"
 )
 
-# history.duckdb: the header plus every ``*_history`` mirror. 18 tables. S5b part 3.
+# history.duckdb: the header plus every ``*_history`` mirror. 19 tables. S5b part 3.
 _HISTORY = (
     "result_runs",
     "ag_scores_history",
@@ -407,7 +407,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         db="relatedness", source=Source.derived, writer="RC-Relatedness-OffPeak",
         freshness=("relatedness_profiles", "fetched_at"),
     ),
-    # The 18 history-file tables. session_date exists on result_runs; it is not the claim until #82/#83.
+    # The 19 history-file tables. session_date exists on result_runs; it is not the claim until #82/#83.
     DatasetSpec(
         key="result_history", label="Result history",
         tables=_HISTORY,
