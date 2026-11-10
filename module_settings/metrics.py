@@ -295,6 +295,51 @@ def exposition(now: datetime | None = None) -> str:
     return render(families, time.monotonic() - started)
 
 
+#: How many of a dataset's newest checks ``datasets_detail`` hands over: enough for the Jobs-style week grid.
+DETAIL_RUNS = 14
+
+
+def datasets_detail(now: datetime | None = None, *, datasets: dict | None = None, timer: dict | None = None
+                    ) -> list[dict]:
+    """``GET /api/build/datasets?detail=1``: ``datasets_list``'s rows, each with its health and fetch settings, for the
+    Grafana RC Fetch board (avo, 10 Nov 2026: one category a DuckDB file, as the Jobs board shows its jobs). Reads the
+    ops store only, as the scrape does. A dataset that cannot be read carries ``error`` and keeps its place."""
+    from RevenueChaser.module_settings import newdata
+    from RevenueChaser.rcdata import ops
+    now = now or datetime.now(timezone.utc)
+    datasets = datasets if datasets is not None else newdata._datasets()
+    timer = timer if timer is not None else (TIMER.get() or {})
+    out = []
+    for row in datasets_list(datasets):
+        name, ds = row["name"], datasets[row["name"]]
+        try:
+            recent = ops.recent_checks(name, limit=DETAIL_RUNS)
+            last = recent[0] if recent else None
+            raw = ops.read_schedule(name) or {}
+            cadence = newdata._cadence(name, raw)
+            state, reason, _ = newdata.status_of(name, last, ops.latest_unskipped_check(name), cadence, now)
+            own = ops.dataset_mode_get(name)
+            mode = ops.dataset_mode(name, row["kind"])
+            schedule = {"paused": raw.get("paused_at") is not None, "next_due": raw.get("next_due")}
+            row.update({
+                "state": state, "reason": reason, "cadence": cadence, "cadence_own": raw.get("cadence"),
+                "next_due": str(raw.get("next_due") or "")[:10] or None, "paused": schedule["paused"],
+                "paused_by": raw.get("paused_by"), "mode": mode, "mode_own": (own or {}).get("mode"),
+                "next": control.next_run_words(schedule, last, control.as_of_kind(ds), cadence,
+                                               attended=row["attended"],
+                                               starts_by_hand=bool(getattr(ds, "starts_by_hand", False)),
+                                               timer=timer, now=now, mode=mode),
+                "last": ({k: last.get(k) for k in ("checked_on", "result", "rows", "added", "removed", "note")}
+                         if last else None),
+                "runs": [[r.get("checked_on"), r.get("result")] for r in recent],
+                "open_issues": ops.open_issues(name, limit=0)[0],
+            })
+        except Exception as e:  # noqa: BLE001 - one dataset never drops the rest
+            row["error"] = f"{type(e).__name__}: {e}"[:200]
+        out.append(row)
+    return out
+
+
 def datasets_list(datasets: dict | None = None) -> list[dict]:
     """``GET /api/build/datasets``: every dataset the builder knows, for an allow-list (Grafana buttons, B3)."""
     from RevenueChaser.module_settings import newdata

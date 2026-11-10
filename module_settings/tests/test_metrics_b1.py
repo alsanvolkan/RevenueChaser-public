@@ -216,6 +216,30 @@ def test_the_datasets_route_lists_names_kinds_attended_and_providers(client):
     assert set(one) == {"name", "kind", "attended", "providers"} and one["attended"] is False
 
 
+def test_the_detail_carries_each_datasets_health_and_fetch_settings():
+    from RevenueChaser.rcdata import ops
+    ops.record_check("market_series", "changed", source_as_of="2026-11-06", rows=12, added=2, removed=1,
+                     next_check_due="2026-11-10")
+    ops.dataset_mode_set("market_series", "full", by="avo")
+    ops.schedule_pause("wrds/prices", by="avo")
+    rows = {r["name"]: r for r in metrics.datasets_detail(NOW, datasets=DS, timer={"state": "on", "minute": 5})}
+    ms, wp = rows["market_series"], rows["wrds/prices"]
+    assert (ms["mode"], ms["mode_own"], ms["paused"]) == ("full", "full", False)
+    assert ms["last"]["result"] == "changed" and (ms["last"]["added"], ms["last"]["removed"]) == (2, 1)
+    assert ms["runs"] and ms["runs"][0][1] == "changed" and ms["state"] in metrics.STATES
+    assert ms["cadence"] and isinstance(ms["next"], str) and ms["open_issues"] == 0
+    assert wp["paused"] is True and wp["paused_by"] == "avo" and wp["next"] == "skips until Resume"
+    assert wp["last"] is None and wp["runs"] == [] and wp["state"] == "never"
+
+
+def test_the_detail_route_answers_and_the_plain_route_keeps_its_four_keys(client):
+    body = client.get("/api/build/datasets?detail=1").get_json()
+    one = next(d for d in body["datasets"] if d["name"] == "market_series")
+    assert {"state", "mode", "next", "runs", "paused"} <= set(one)
+    plain = next(d for d in client.get("/api/build/datasets").get_json()["datasets"] if d["name"] == "market_series")
+    assert set(plain) == {"name", "kind", "attended", "providers"}
+
+
 def test_datasets_list_marks_attended():
     assert metrics.datasets_list(DS) == [
         {"name": "market_series", "kind": "market", "attended": False, "providers": ["fred"]},

@@ -1603,9 +1603,13 @@ def api_build_queue():
 @app.route("/api/build/datasets")
 def api_build_datasets():
     """Every dataset the builder knows: ``{name, kind, attended, providers}``, sorted by name. An allow-list for the
-    Grafana buttons (#527 plan B3), which may press Fetch / Pause / Resume only on a dataset named here."""
+    Grafana buttons (#527 plan B3), which may press Fetch / Pause / Resume only on a dataset named here.
+    ``?detail=1`` adds each one's health and fetch settings from the ops store (``metrics.datasets_detail``), for
+    the Grafana RC Fetch board's categories."""
     from RevenueChaser.module_settings import metrics
 
+    if request.args.get("detail") == "1":
+        return jsonify({"ok": True, "datasets": metrics.datasets_detail()})
     return jsonify({"ok": True, "datasets": metrics.datasets_list()})
 
 
