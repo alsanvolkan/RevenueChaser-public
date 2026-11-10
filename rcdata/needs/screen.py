@@ -53,6 +53,9 @@ DATASETS: dict[str, DatasetCard] = {
                                       'every 30 days (Unusual Whales)', step=6,
                                       role='only source'),
     'ibkr/iv_history': DatasetCard('One year of 30-day implied volatility per list name (IBKR)', coverage_target=None, step=11, role='first'),
+    # shortcut: the cards of the two hourly datasets (#643) say daily, so the screen reads them late after a day
+    # without a run, not an hour; an "hourly" card cadence needs newdata's CYCLE_DAYS to learn it first.
+    'ibkr/news': DatasetCard('Dow Jones headlines of the watch list and large names (IBKR)', step=11, role='only source'),
     'ibkr/shortable': DatasetCard('Borrow fee and shares available (IBKR file)', step=10, role='first'),
     'market_series': DatasetCard('Market series', coverage_target=None, step=11, role='first'),
     'openfigi/map': DatasetCard('OpenFIGI map of the CUSIPs', step=4, role='only source'),
@@ -76,6 +79,7 @@ DATASETS: dict[str, DatasetCard] = {
     'uw/option_list': DatasetCard('Options of SPX and the option list (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/option_screener': DatasetCard('Earnings options: calendar, screener and earnings set (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/spot_expiry_strike': DatasetCard('SPX expiry-strike (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
+    'uw/economic_calendar': DatasetCard('Economic calendar, this week and next (Unusual Whales)', step=11, role='only source'),
     'uw/greek_expiry_strike': DatasetCard('SPX greek exposure by expiry and strike, whole chain (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/total_float': DatasetCard('Float check (Unusual Whales)', step=8, role='cross-check'),
     'wrds/co_hgic': DatasetCard('Compustat GICS history (WRDS)', step=5, role='fills'),
@@ -98,6 +102,7 @@ WRITTEN_COLUMN: dict[str, str] = {
     'customer_share': 'document_date',
     'earnings_event': 'source_as_of',
     'earnings_reported': 'source_as_of',
+    'economic_event': 'snapshot_date',
     'er_options': 'session_date',
     'estimate_latest': 'source_as_of',
     'etf': 'source_as_of',
@@ -115,6 +120,7 @@ WRITTEN_COLUMN: dict[str, str] = {
     'iv_daily': 'session_date',
     'market_cap_daily': 'session_date',
     'market_series': 'obs_date',
+    'news_headline': 'published_date',
     'my_universe': 'source_as_of',
     'my_universe_changes': 'as_of',
     'option_daily': 'session_date',
@@ -146,7 +152,7 @@ WRITTEN_COLUMN: dict[str, str] = {
 #: the retirement count, read for ``RETIREMENT_DAYS`` days before the old table goes.
 RETIRING: dict[str, str] = {
     'cftc_cot': 'market_series',
-    'economic_calendar': 'market_series',
+    'economic_calendar': 'economic_event',
     'estimate_snapshots': 'estimate_latest',
     'macro_series': 'market_series',
     'vol_index_daily': 'market_series',
@@ -215,6 +221,8 @@ NO_TIER_WORDS: dict[str, str] = {
 NO_TIER_DATASET_WORDS: dict[str, str] = {
     "alphavantage/earnings_calendar": "one call brings the whole calendar, every name at once.",
     "sec/fsds": "one file a quarter holds every filer at once.",
+    "uw/economic_calendar": "one call brings the whole calendar, no names.",
+    "ibkr/news": "the stock watch list and twelve large names, not a tier set.",
     "sec/ncen": "one file a quarter holds every fund at once.",
 }
 #: A hand-run (attended) dataset is never filled by tier.
