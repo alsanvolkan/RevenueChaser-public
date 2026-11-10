@@ -51,6 +51,7 @@ CONNECT_TIMEOUT_S = 5.0
 READ_TIMEOUT_S = 60.0
 MAX_FRAME = 16 * 1024 * 1024
 START_API, REQ_HISTORICAL_DATA, REQ_CONTRACT_DETAILS, REQ_HISTORICAL_NEWS, REQ_MKT_DATA = 71, 20, 9, 86, 1
+CANCEL_MKT_DATA = 2
 NEXT_VALID_ID, ERR_MSG, HISTORICAL_DATA = "9", "4", "17"
 CONTRACT_DATA, CONTRACT_DATA_END, HISTORICAL_NEWS, HISTORICAL_NEWS_END = "10", "52", "86", "87"
 TICK_NEWS = "84"
@@ -229,7 +230,17 @@ class TWSClient:
 
     def subscribe_news(self, req_id: int, contract: Contract) -> None:
         """Start the headlines of a broad-tape ``contract`` (``news_contract``); they arrive through ``next_news``."""
-        self._sock.sendall(encode(REQ_MKT_DATA, 11, req_id, *contract.fields(), False, "mdoff,292", False, False, ""))
+        self._send(encode(REQ_MKT_DATA, 11, req_id, *contract.fields(), False, "mdoff,292", False, False, ""))
+
+    def cancel_news(self, req_id: int) -> None:
+        """Stop a ``subscribe_news`` subscription (``cancelMktData``, ``[2, 2, req id]``)."""
+        self._send(encode(CANCEL_MKT_DATA, 2, req_id))
+
+    def _send(self, data: bytes) -> None:
+        try:
+            self._sock.sendall(data)
+        except OSError as e:                                   # a closed socket is a reconnect, not a crash
+            raise TWSError(f"the gateway went away: {type(e).__name__}: {e}") from e
 
     def next_news(self) -> dict | None:
         """The next message if it is a headline: ``{req_id, time_ms, provider, article_id, headline}``; ``None`` for

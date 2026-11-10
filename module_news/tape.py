@@ -103,6 +103,7 @@ def listen(client, names: list[str], *, clock=time.time, post=httpx.post, until=
                 log.info("news tape: error for a request no longer held: %s", e)
             else:
                 log.warning("news tape: feed %s refused (%s); asked again in %d min", feed, e, RESUB_S // 60)
+                client.cancel_news(e.req_id)        # if the gateway kept it, asking again must not add a second line
                 retry[feed] = clock() + RESUB_S
             continue
         if item and item.get("headline") and item["req_id"] in by_req:

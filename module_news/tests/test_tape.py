@@ -70,6 +70,9 @@ class FakeClient:
     def subscribe_news(self, req_id, contract):
         self.subs.append((req_id, contract.symbol))
 
+    def cancel_news(self, req_id):
+        self.subs.append((req_id, "cancel"))
+
     def next_news(self):
         step = self.script.pop(0) if self.script else None
         if isinstance(step, Exception):
@@ -92,7 +95,8 @@ def test_listen_appends_each_headline_and_drops_a_refused_feed():
                 post=lambda *a, **k: posts.append(a) or httpx.Response(202), until=lambda: not client.script)
     lines = [json.loads(x) for x in tape.day_file(NOW).read_text(encoding="utf-8").splitlines()]
     assert [x["headline"] for x in lines] == ["Stocks open higher"]       # the refused feed's tick is not kept
-    assert lines[0]["feed"] == "BRFG" and client.subs == [(1, "BRFG:BRFG_ALL"), (2, "BRFUPDN:BRFUPDN_ALL")]
+    assert lines[0]["feed"] == "BRFG"
+    assert client.subs == [(1, "BRFG:BRFG_ALL"), (2, "BRFUPDN:BRFUPDN_ALL"), (2, "cancel")]
     assert len(posts) == 1 and posts[0][0].endswith("/run/news_headlines")
 
 
@@ -180,7 +184,8 @@ def test_a_refused_feed_is_asked_again_and_an_unknown_request_error_is_ignored()
         return not client.script
 
     tape.listen(client, ["BRFG"], clock=clock, post=lambda *a, **k: httpx.Response(202), until=until)
-    assert client.subs == [(1, "BRFG:BRFG_ALL"), (2, "BRFG:BRFG_ALL")]   # asked again under a new id, once
+    # cancelled, then asked again under a new id, once
+    assert client.subs == [(1, "BRFG:BRFG_ALL"), (1, "cancel"), (2, "BRFG:BRFG_ALL")]
 
 
 def test_the_five_minute_schedule_carries_over_a_reconnect():
