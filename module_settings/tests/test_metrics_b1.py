@@ -240,6 +240,42 @@ def test_the_detail_route_answers_and_the_plain_route_keeps_its_four_keys(client
     assert set(plain) == {"name", "kind", "attended", "providers"}
 
 
+def test_the_detail_carries_badges_and_the_runs_in_the_pickers_range():
+    """avo, 10 Nov 2026: the RC page's provider icons on the Grafana board, and a heatmap over the picker's range."""
+    from RevenueChaser.rcdata import ops
+    ops.start_run("r-a", "market_series", "hourly")
+    ops.start_run("r-b", "market_series", "hourly")
+    ops.finish_run("r-b", "failed")
+    first = min(r["started_at"] for r in ops.rows("job_runs2"))
+    span = (first, first + 60)
+    provs = [{"id": "fred", "name": "FRED"}]
+    rows = {r["name"]: r for r in metrics.datasets_detail(NOW, datasets=DS, timer={}, span=span, providers=provs)}
+    assert rows["market_series"]["badges"] == [{"id": "fred", "name": "FRED", "icon": metrics.control.ICONS.get("fred", ""),
+                                                "color": metrics.control.SOURCE_COLORS[0]}]
+    assert sorted(s for _, s in rows["market_series"]["history"]) == ["failed", "running"]
+    before = {r["name"]: r for r in metrics.datasets_detail(NOW, datasets=DS, timer={}, span=(0, first),
+                                                            providers=provs)}
+    assert before["market_series"]["history"] == []
+    assert rows["wrds/prices"]["history"] == []
+    plain = {r["name"]: r for r in metrics.datasets_detail(NOW, datasets=DS, timer={}, providers=provs)}
+    assert "history" not in plain["market_series"]
+
+
+def test_the_board_head_says_the_switches_the_timer_and_the_gateway(monkeypatch):
+    monkeypatch.setenv("RC_IBKR_LOGIN_URL", "javascript:alert(1)")
+    head = metrics.board_head(NOW, ibkr=lambda: {"state": "up"})
+    assert head["switches"] == {"fetch": True, "backup": True}
+    assert head["gateway"] == {"cls": "ok", "n": "open", "label": "logged in", "login": None}
+    monkeypatch.setenv("RC_IBKR_LOGIN_URL", "https://gateway.example/")
+    assert metrics.board_head(NOW, ibkr=lambda: None)["gateway"]["login"] == "https://gateway.example/"
+
+
+def test_the_detail_route_takes_the_pickers_range_and_refuses_a_backwards_one(client):
+    body = client.get("/api/build/datasets?detail=1&from=1000&to=5000").get_json()
+    assert body["ok"] and "head" in body and all("history" in d for d in body["datasets"] if "error" not in d)
+    assert client.get("/api/build/datasets?detail=1&from=5000&to=1000").status_code == 400
+
+
 def test_datasets_list_marks_attended():
     assert metrics.datasets_list(DS) == [
         {"name": "market_series", "kind": "market", "attended": False, "providers": ["fred"]},

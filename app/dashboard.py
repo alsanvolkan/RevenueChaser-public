@@ -1609,7 +1609,14 @@ def api_build_datasets():
     from RevenueChaser.module_settings import metrics
 
     if request.args.get("detail") == "1":
-        return jsonify({"ok": True, "datasets": metrics.datasets_detail()})
+        # the Grafana picker's range, epoch milliseconds (${__from} / ${__to}); without both, no history
+        try:
+            span = (float(request.args["from"]) / 1000, float(request.args["to"]) / 1000)
+        except (KeyError, ValueError):
+            span = None
+        if span and not 0 <= span[0] < span[1]:
+            return jsonify({"ok": False, "error": "from must be before to"}), 400
+        return jsonify({"ok": True, "datasets": metrics.datasets_detail(span=span), "head": metrics.board_head()})
     return jsonify({"ok": True, "datasets": metrics.datasets_list()})
 
 

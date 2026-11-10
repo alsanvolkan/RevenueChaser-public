@@ -1113,6 +1113,14 @@ def run_started_at(run_id: str) -> float | None:
 
 
 @_routed
+def runs_between(start: float, end: float) -> list[dict]:
+    """The builder's runs that started in ``[start, end)`` (epoch seconds), oldest first: ``dataset``,
+    ``started_at``, ``status``. The Grafana RC Fetch board's heatmap over its time picker's range (avo, 10 Nov 2026)."""
+    return _select("SELECT dataset, started_at, status FROM job_runs2 WHERE started_at >= ? AND started_at < ? "
+                   "ORDER BY started_at, run_id", (float(start), float(end)))
+
+
+@_routed
 def last_builder_run() -> dict | None:
     rows = _select("SELECT run_id, dataset, trigger, pid, started_at, finished_at, status, error FROM job_runs2 "
                    "ORDER BY started_at DESC LIMIT 1")
