@@ -92,7 +92,7 @@ def test_no_overlap_answer_keeps_the_badge_only():
 
 
 def test_a_stored_overlap_with_an_extreme_beta_is_the_veto():
-    r = score(rate_sensitivity=5.0, rate_event_overlap=True)
+    r = score(rate_sensitivity=5.0, rate_event_overlap=True, beta_tstat=3.1)
     assert r.flags == ["extreme rate sensitivity"]
     assert any("macro veto" in x for x in r.reasons)
 

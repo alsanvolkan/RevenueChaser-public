@@ -1,4 +1,5 @@
 """UW-first earnings pipeline — Unusual Whales API for all data."""
+import math
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
@@ -39,7 +40,8 @@ def yield_beta_tstat(stock_by_date: dict[str, float], yield_by_date: dict[str, f
 
     ``rule6_macro.score`` skips the NO_TRADE veto when ``|t| < 2`` (the noise gate, ``docs/rules/redesign.md``): a
     60-return beta of a volatile name can pass 4 from noise alone. None when there is no beta or the t-stat
-    cannot be formed (fewer than three pairs, no yield variance, a perfect fit) — the gate then stays open.
+    cannot be formed (fewer than three pairs, no yield variance). A perfect fit (zero residual) is ``inf``: a beta
+    with no scatter at all is as real as a beta gets, and ``None`` now closes the gate (#635: no t, no veto).
     """
     if beta is None:
         return None
@@ -60,8 +62,10 @@ def yield_beta_tstat(stock_by_date: dict[str, float], yield_by_date: dict[str, f
     mean_r, mean_dy = sum(r) / n, sum(dy) / n
     sxx = sum((x - mean_dy) ** 2 for x in dy)
     sse = sum((ri - mean_r - beta * (di - mean_dy)) ** 2 for ri, di in zip(r, dy))
-    if sxx == 0 or sse == 0:
+    if sxx == 0:
         return None
+    if sse == 0:
+        return math.copysign(math.inf, beta)
     return beta / ((sse / (n - 2)) / sxx) ** 0.5
 
 

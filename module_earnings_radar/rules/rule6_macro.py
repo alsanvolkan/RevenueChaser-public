@@ -15,6 +15,7 @@ Not wired (optional kwargs, pipeline does not pass them):
 - FX tailwind / FX exposure, regulatory / geopolitical text, consensus
   crowding. ``regulatory_risk="low"`` is not a signal.
 """
+import math
 from typing import Optional
 
 from RevenueChaser.core.config import (
@@ -103,7 +104,9 @@ def score(
             # No t statistic = no evidence the beta is real: badge only, never a veto (owner, 10 Nov 2026, #635).
             noisy = beta_tstat is None or abs(beta_tstat) < 2.0
             raw_metrics["noisy_beta"] = noisy
-            raw_metrics["beta_tstat"] = round(float(beta_tstat), 2) if beta_tstat is not None else None
+            # A perfect-fit beta carries t = inf (test fixtures); JSON cannot hold it, so the card says None.
+            raw_metrics["beta_tstat"] = (round(float(beta_tstat), 2)
+                                         if beta_tstat is not None and math.isfinite(beta_tstat) else None)
             if rate_event_overlap and not noisy:
                 score_val -= 15
                 flags.append("extreme rate sensitivity")
