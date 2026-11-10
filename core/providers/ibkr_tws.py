@@ -56,6 +56,8 @@ CONTRACT_DATA, CONTRACT_DATA_END, HISTORICAL_NEWS, HISTORICAL_NEWS_END = "10", "
 TICK_NEWS = "84"
 # Error codes the gateway sends as notices (farm connection status and the like), never a request's failure.
 NOTICE_CODES = range(2100, 2200)
+# "Connectivity restored, data lost": the gateway forgot every market data subscription; the caller resubscribes.
+DATA_LOST = 1101
 
 
 class TWSError(RuntimeError):
@@ -238,6 +240,8 @@ class TWSClient:
             if isinstance(e.__cause__, TimeoutError):          # a quiet tape is not a dead gateway
                 return None
             raise
+        if got[0] == ERR_MSG and len(got) >= 5 and got[3] == str(DATA_LOST):
+            raise TWSError(f"IBKR {DATA_LOST}: {got[4]}")        # the gateway dropped every subscription
         if got[0] == ERR_MSG and len(got) >= 5 and int(got[3] or 0) not in NOTICE_CODES and got[2] not in ("", "-1"):
             err = HistoryError(int(got[3]), got[4])
             err.req_id = int(got[2])

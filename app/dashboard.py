@@ -261,7 +261,8 @@ jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True
 # News (S9, S16): store-only; builds boards/news.duckdb from raw.economic_calendar, then renders.
 jobs.register("module_news", runners.run_news, ["module_news"], requires_uw=False)
 # News live (#673): the listener (module_news/tape.py) queues this every 5 minutes; headlines only, then the page.
-jobs.register("news_headlines", runners.run_news_headlines, ["module_news"], requires_uw=False)
+# produces nothing: the shell would reload the News frame (and alert a gap) every 5 minutes; the page polls itself.
+jobs.register("news_headlines", runners.run_news_headlines, [], requires_uw=False)
 # Welcome (decision A): store-only; builds boards/welcome.duckdb from stored inputs, then renders.
 jobs.register("module_welcome", runners.run_welcome, ["module_welcome"], requires_uw=False)
 

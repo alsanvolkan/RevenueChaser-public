@@ -185,7 +185,7 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
 .feat-name{font-size:18px;color:var(--bright);font-weight:600;margin-bottom:2px}
 .feat .vals{margin:10px 0}
 .why{margin:8px 0 0;line-height:1.6}
-.hd{padding:10px 0;border-bottom:1px solid var(--border)}
+.hd{padding:10px 0;border-bottom:1px solid var(--border);overflow-wrap:anywhere}
 .htext a{color:var(--bright);text-decoration:none}
 .htext a:hover{text-decoration:underline}
 .tk{display:inline-block;margin-left:4px;padding:0 6px;border-radius:6px;background:var(--input-bg);

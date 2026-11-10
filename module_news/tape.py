@@ -6,9 +6,10 @@ and appends every headline, as it arrives, to ``tape_dir()/<UTC day>.jsonl``. It
 the one writer of ``boards/news.duckdb``, so every ``TRIGGER_S`` the listener queues the dashboard job
 ``news_headlines`` (``POST /run/news_headlines``), which loads the new lines and runs the per-ticker fetch.
 
-A feed the account does not have is refused by the gateway; it is dropped with a log line and the rest go on. With
-no feed left the listener still queues the job every ``TRIGGER_S``, so the per-ticker headlines keep their pace. A
-gateway that goes away (its daily restart) is retried after ``RETRY_S``, doubling up to ``RETRY_MAX_S``.
+A feed the gateway refuses is dropped with a log line and asked again after ``RESUB_S``; the rest go on. With no feed
+left the listener still queues the job every ``TRIGGER_S``, so the per-ticker headlines keep their pace. A gateway
+that goes away (its daily restart, or 1101 "data lost", which drops every subscription) is retried after
+``RETRY_S``, doubling up to ``RETRY_MAX_S``; the 5-minute schedule carries over the reconnect.
 """
 from __future__ import annotations
 
@@ -33,6 +34,7 @@ DEFAULT_FEEDS = ("BRFG", "BRFUPDN", "DJNL")
 TRIGGER_S = 300                      # avo: "5 dk cok yerinde"
 READ_WAIT_S = 5.0                    # a quiet socket returns this often, so the trigger is never late by more
 RETRY_S, RETRY_MAX_S = 30.0, 300.0
+RESUB_S = 1800                       # a refused feed (e.g. 10197, a competing live session) is asked again after this
 DASHBOARD = "http://127.0.0.1:8000"  # app.dashboard.main's port
 _HEADERS = {"X-RC-Panel": "cli"}     # every non-GET request needs it (CLAUDE.md)
 
@@ -71,25 +73,37 @@ def trigger(post=httpx.post) -> str:
     return "queued" if r.status_code == 202 else f"refused {r.status_code}"
 
 
-def listen(client, names: list[str], *, clock=time.time, post=httpx.post, until=None) -> None:
-    """Subscribe ``names`` on ``client`` and run until the connection fails (``TWSError``) or ``until()`` is true."""
-    by_req = {}
-    for i, name in enumerate(names, start=1):
-        client.subscribe_news(i, ibkr.news_contract(name))
-        by_req[i] = name
-    next_trigger = clock()
+def listen(client, names: list[str], *, clock=time.time, post=httpx.post, until=None, state: dict | None = None) -> None:
+    """Subscribe ``names`` on ``client`` and run until the connection fails (``TWSError``) or ``until()`` is true.
+
+    ``state["next_trigger"]`` outlives a reconnect, so a gateway that keeps dropping the socket does not turn the
+    5-minute pass into one per reconnect. A refused feed is asked again after ``RESUB_S`` (a competing session ends);
+    an error for a request id no longer held is logged and ignored."""
+    state = {} if state is None else state
+    state.setdefault("next_trigger", clock())
+    by_req: dict[int, str] = {}
+    retry: dict[str, float] = {name: 0.0 for name in names}      # feed -> when to (re)subscribe
+    req = 0
     while not (until and until()):
         now = clock()
-        if now >= next_trigger:
+        for name, at in list(retry.items()):
+            if now >= at:
+                req += 1
+                client.subscribe_news(req, ibkr.news_contract(name))
+                by_req[req] = name
+                del retry[name]
+        if now >= state["next_trigger"]:
             log.info("news tape: %s (%d feeds live)", trigger(post), len(by_req))
-            next_trigger = now + TRIGGER_S
+            state["next_trigger"] = now + TRIGGER_S
         try:
             item = client.next_news()
         except ibkr.HistoryError as e:
             feed = by_req.pop(getattr(e, "req_id", None), None)
             if feed is None:
-                raise
-            log.warning("news tape: feed %s refused: %s", feed, e)
+                log.info("news tape: error for a request no longer held: %s", e)
+            else:
+                log.warning("news tape: feed %s refused (%s); asked again in %d min", feed, e, RESUB_S // 60)
+                retry[feed] = clock() + RESUB_S
             continue
         if item and item.get("headline") and item["req_id"] in by_req:
             append(item, by_req[item["req_id"]], clock())
@@ -97,16 +111,18 @@ def listen(client, names: list[str], *, clock=time.time, post=httpx.post, until=
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    names, wait = feeds(), RETRY_S
+    names, wait, state = feeds(), RETRY_S, {}
     while True:
         host, port = ibkr_login.target()
+        opened = time.time()
         try:
             with ibkr.TWSClient(host, port, client_id=CLIENT_ID, timeout=READ_WAIT_S) as client:
                 log.info("news tape: connected to %s:%s, feeds %s", host, port, ",".join(names))
-                wait = RETRY_S
-                listen(client, names)
+                listen(client, names, state=state)
         except ibkr.TWSError as e:
             log.warning("news tape: gateway %s:%s: %s; retry in %.0f s", host, port, e, wait)
+        if time.time() - opened >= RETRY_MAX_S:      # a connection that held a while starts the backoff over
+            wait = RETRY_S
         time.sleep(wait)
         wait = min(wait * 2, RETRY_MAX_S)
 

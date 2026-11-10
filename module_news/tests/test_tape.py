@@ -166,3 +166,39 @@ def test_load_tape_reads_into_the_next_day_and_keeps_a_ticker_already_stored():
     assert headlines.load_tape(now=tomorrow)["stored"] == 1
     rows = _heads()
     assert json.loads(rows["Apple beats"]["tickers"]) == ["AAPL"] and "Asia opens" in rows
+
+
+def test_a_refused_feed_is_asked_again_and_an_unknown_request_error_is_ignored():
+    t = [NOW]
+    client = FakeClient([_refused(1), _refused(99), None, None])
+
+    def clock():
+        return t[0]
+
+    def until():
+        t[0] += tape.RESUB_S / 2                 # each loop moves half the wait on
+        return not client.script
+
+    tape.listen(client, ["BRFG"], clock=clock, post=lambda *a, **k: httpx.Response(202), until=until)
+    assert client.subs == [(1, "BRFG:BRFG_ALL"), (2, "BRFG:BRFG_ALL")]   # asked again under a new id, once
+
+
+def test_the_five_minute_schedule_carries_over_a_reconnect():
+    state, posts = {}, []
+    post = lambda *a, **k: posts.append(1) or httpx.Response(202)
+    for _ in range(3):                          # three short connections inside one five-minute window
+        client = FakeClient([None])
+        tape.listen(client, [], clock=lambda: NOW, post=post, until=lambda: not client.script, state=state)
+    assert len(posts) == 1
+
+
+def test_data_lost_ends_the_connection_so_the_listener_resubscribes(monkeypatch):
+    gw = TapeGateway()
+    monkeypatch.setattr(ibkr, "CONNECT", gw.connect)
+    gw.ticks["BRFG:BRFG_ALL"] = []
+    with ibkr.TWSClient("127.0.0.1", 4001, client_id=tape.CLIENT_ID) as c:
+        c.subscribe_news(1, ibkr.news_contract("BRFG"))
+        gw._out += frame(4, 2, -1, 1101, "Connectivity between IB and TWS has been restored- data lost.", "")
+        with pytest.raises(ibkr.TWSError) as e:
+            c.next_news(), c.next_news()
+    assert not isinstance(e.value, ibkr.HistoryError) and "1101" in str(e.value)

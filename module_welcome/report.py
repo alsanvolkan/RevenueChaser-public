@@ -314,10 +314,14 @@ function headsPoll(){
         HEADS_SINCE = Math.max(HEADS_SINCE, r.run_at);
         if(document.querySelector('[data-hid="' + r.headline_id + '"]')) return;
         var li = document.createElement('li'); li.className = 'hd'; li.setAttribute('data-hid', r.headline_id);
+        li.setAttribute('data-at', r.published_at);
         var m = document.createElement('div'); m.className = 'muted';
         m.textContent = r.hm + (r.tickers.length ? ' · ' + r.tickers.slice(0, 4).join(' ') : ' · Piyasa');
         var h = document.createElement('div'); h.textContent = r.headline;
-        li.appendChild(m); li.appendChild(h); ul.insertBefore(li, ul.firstChild);
+        li.appendChild(m); li.appendChild(h);
+        var kids = ul.children, i = 0;          // by publish time: a re-stored older story never jumps the newer ones
+        while(i < kids.length && parseFloat(kids[i].getAttribute('data-at')) > r.published_at) i++;
+        ul.insertBefore(li, kids[i] || null);
       });
       while(ul.children.length > 3) ul.removeChild(ul.lastChild);
       if(ul.children.length){ var e = ul.parentNode.querySelector('.empty'); if(e) e.hidden = true; }

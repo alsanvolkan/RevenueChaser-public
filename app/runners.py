@@ -1885,13 +1885,10 @@ def _news_headlines_pass(rid: str) -> dict | None:
 
 def run_news_headlines(uw=None) -> Path:
     """The live listener's 5-minute job (#673): new tape lines and the per-ticker headlines into
-    ``boards/news.duckdb``, then the page. No calendar build, no UW call."""
+    ``boards/news.duckdb``, then the page. No calendar build, no UW call. A down gateway is the page's banner and a job
+    note, not a job message: the shell alerts every message, and this job runs 288 times a day."""
     from RevenueChaser.module_news import report
-    health = _news_headlines_pass(run_id())
-    path = report.render(provider_health=health)
-    if health:
-        raise JobMessage(health["message"])
-    return path
+    return report.render(provider_health=_news_headlines_pass(run_id()))
 
 
 def run_news_cached(uw=None) -> Path:

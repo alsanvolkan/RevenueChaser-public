@@ -110,3 +110,27 @@ def test_the_api_returns_headlines_stored_after_since_with_their_lane():
     assert set(rows) == {"market", "stock"}
     assert rows["market"]["lane"] == "market" and rows["stock"]["lane"] == "stocks" and rows["stock"]["tickers"] == ["NVDA"]
     assert _client().get("/api/news/headlines", query_string={"since": "x"}).status_code == 400
+
+
+def test_the_five_minute_pass_reloads_no_frame_and_a_down_gateway_raises_no_alert(monkeypatch, tmp_path):
+    from RevenueChaser.app import jobs
+    from RevenueChaser.module_news import headlines, report
+    assert jobs._PRODUCES["news_headlines"] == []              # the shell reloads what a job produces
+    monkeypatch.setattr(report, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(headlines, "load_tape", lambda **kw: {"read": 0, "stored": 0})
+    monkeypatch.setattr(headlines, "fetch", lambda names, **kw:
+                        {"tickers": len(names), "stored": 0, "skipped": [], "error": "no API session"})
+    page = runners.run_news_headlines().read_text(encoding="utf-8")   # no JobMessage: the shell alerts each one
+    assert page.count('class="rc-provider-health"') == 1
+
+
+def test_the_history_drops_the_five_minute_passes_first(monkeypatch):
+    from RevenueChaser.app import jobs
+    monkeypatch.setattr(jobs, "_JOBS", {})
+    monkeypatch.setattr(jobs, "_SEQ", {})
+    monkeypatch.setattr(jobs, "MAX_HISTORY", 3)
+    for i, module in enumerate(["earnings", "news_headlines", "news_headlines", "rotation"]):
+        jobs._JOBS[f"j{i}"] = {"id": f"j{i}", "module": module, "status": "done"}
+        jobs._SEQ[f"j{i}"] = i
+    jobs._trim_history()
+    assert sorted(jobs._JOBS) == ["j0", "j2", "j3"]
