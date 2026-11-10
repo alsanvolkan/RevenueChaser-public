@@ -260,6 +260,8 @@ jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane=
 jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
 # News (S9, S16): store-only; builds boards/news.duckdb from raw.economic_calendar, then renders.
 jobs.register("module_news", runners.run_news, ["module_news"], requires_uw=False)
+# News live (#673): the listener (module_news/tape.py) queues this every 5 minutes; headlines only, then the page.
+jobs.register("news_headlines", runners.run_news_headlines, ["module_news"], requires_uw=False)
 # Welcome (decision A): store-only; builds boards/welcome.duckdb from stored inputs, then renders.
 jobs.register("module_welcome", runners.run_welcome, ["module_welcome"], requires_uw=False)
 
@@ -720,6 +722,26 @@ def run_leaps():
 @app.route("/run/module_news", methods=["POST"])
 def run_module_news():
     return _submit("module_news", {})
+
+
+@app.route("/run/news_headlines", methods=["POST"])
+def run_news_headlines():
+    """The listener's 5-minute pass (#673). One at a time: a pass still queued or running answers 409."""
+    refused = _busy(("news_headlines", "module_news"), "A News headlines pass is already queued or running.")
+    if refused:
+        return refused
+    return _submit("news_headlines", {})
+
+
+@app.route("/api/news/headlines")
+def api_news_headlines():
+    """The News and Welcome pages' 60 s poll (#673): headlines newer than ``since`` (epoch seconds). Read-only."""
+    from RevenueChaser.module_news import report as news_report
+    try:
+        since = float(request.args.get("since") or 0)
+    except ValueError:
+        return jsonify({"ok": False, "error": "since must be epoch seconds"}), 400
+    return jsonify({"ok": True, "rows": news_report.api_rows(since)})
 
 
 @app.route("/run/module_welcome", methods=["POST"])

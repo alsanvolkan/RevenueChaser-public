@@ -84,3 +84,18 @@ def test_render_writes_the_board_file(seeded, tmp_path, monkeypatch):
     monkeypatch.setattr(report, "OUTPUT_DIR", tmp_path)
     path = report.render(now=NOW)
     assert path == tmp_path / "news_latest.html" and "CPI, Y/Y%" in path.read_text(encoding="utf-8")
+
+
+def test_market_and_stock_headlines_get_their_own_lane_and_the_page_polls():
+    rawstore.write_rows("news_headlines", [
+        {"headline_id": "ibkr:m", "provider": "ibkr", "published_at": NOW - HOUR, "headline": "Fed holds rates",
+         "source": "BRFG", "tickers": "[]", "url": None, "fetched_at": NOW, "run_id": "t", "run_at": NOW - 50},
+        {"headline_id": "ibkr:s", "provider": "ibkr", "published_at": NOW - HOUR, "headline": "Apple beats",
+         "source": "Dow Jones", "tickers": json.dumps(["AAPL"]), "url": None, "fetched_at": NOW, "run_id": "t",
+         "run_at": NOW - 40}])
+    page = report.render_html(now=NOW)
+    market, stocks = page.index('id="heads-market"'), page.index('id="heads-stocks"')
+    assert "Piyasa · son 24 saat" in page and "Hisseler · son 24 saat" in page
+    assert market < page.index("Fed holds rates") < stocks < page.index("Apple beats")
+    assert f"NEWS_SINCE = {NOW - 40!r}" in page and "/api/news/headlines?since=" in page
+    assert "textContent" in page and "innerHTML" not in page         # polled text is never parsed as HTML

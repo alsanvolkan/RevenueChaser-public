@@ -74,3 +74,39 @@ def test_a_name_ibkr_does_not_know_is_no_banner(monkeypatch, tmp_path):
     monkeypatch.setattr(headlines, "fetch", lambda names, **kw:
                         {"tickers": len(names), "stored": 3, "skipped": ["BRK.B"], "error": None})
     assert 'class="rc-provider-health"' not in runners.run_news().read_text(encoding="utf-8")
+
+
+def test_the_listener_route_queues_the_headlines_job_once(monkeypatch):
+    captured = []
+    monkeypatch.setattr(dashboard.jobs, "submit", lambda module, params: captured.append(module) or "stubjob")
+    monkeypatch.setattr(dashboard.jobs, "active_id", lambda modules: None)
+    assert _client().post("/run/news_headlines").status_code == 202 and captured == ["news_headlines"]
+    monkeypatch.setattr(dashboard.jobs, "active_id", lambda modules: "busyjob")      # a pass still queued
+    r = _client().post("/run/news_headlines")
+    assert r.status_code == 409 and r.get_json()["job_id"] == "busyjob" and captured == ["news_headlines"]
+
+
+def test_the_headlines_job_loads_the_tape_then_renders_without_the_calendar(monkeypatch, tmp_path):
+    from RevenueChaser.module_news import calendar, headlines, report
+    monkeypatch.setattr(report, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(calendar, "build", lambda **kw: pytest.fail("the 5-minute pass builds no calendar"))
+    order = []
+    monkeypatch.setattr(headlines, "load_tape", lambda **kw: order.append("tape") or {"read": 2, "stored": 1})
+    monkeypatch.setattr(headlines, "fetch", lambda names, **kw: order.append("fetch") or
+                        {"tickers": len(names), "stored": 0, "skipped": [], "error": None})
+    assert runners.run_news_headlines().name == "news_latest.html" and order == ["tape", "fetch"]
+
+
+def test_the_api_returns_headlines_stored_after_since_with_their_lane():
+    import json
+    import time
+    now = time.time()
+    rawstore.write_rows("news_headlines", [
+        {"headline_id": h, "provider": "ibkr", "published_at": now - 60, "headline": h, "source": "Dow Jones",
+         "tickers": json.dumps(t), "url": None, "fetched_at": now, "run_id": "r", "run_at": at}
+        for h, t, at in (("old", ["AAPL"], now - 600), ("market", [], now - 10), ("stock", ["NVDA"], now - 5))])
+    r = _client().get("/api/news/headlines", query_string={"since": now - 100})
+    rows = {x["headline"]: x for x in r.get_json()["rows"]}
+    assert set(rows) == {"market", "stock"}
+    assert rows["market"]["lane"] == "market" and rows["stock"]["lane"] == "stocks" and rows["stock"]["tickers"] == ["NVDA"]
+    assert _client().get("/api/news/headlines", query_string={"since": "x"}).status_code == 400

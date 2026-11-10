@@ -20,6 +20,10 @@ the two below. Its framing was read off ``ib_async`` 2.1.0:
   ``HISTORICAL_NEWS`` (86: ``[86, req id, time, providerCode, articleId, headline]``) rows and
   ``HISTORICAL_NEWS_END`` (87). Headlines only: the article body (``reqNewsArticle``) is never asked for. The News
   board's source since avo's choice, 9 Nov 2026 20:54 Amsterdam ("Ibkr kullanalim");
+- ``reqMktData`` on a broad-tape news contract (``[1, 11, req id, <contract>, deltaNeutral, "mdoff,292", snapshot,
+  regulatorySnapshot, options]``, ``client.py`` ``reqMktData``; contract ``secType=NEWS``, symbol ``<code>:<code>_ALL``,
+  exchange ``<code>``), answered by ``TICK_NEWS`` (84: ``[84, req id, time ms, providerCode, articleId, headline,
+  extraData]``, ``decoder.py`` ``tickNews``). Headlines only, as above; the News board's market lane (#673);
 - ``reqHistoricalData`` (``[20, req id, <contract>, includeExpired, endDateTime, barSize, duration, useRTH,
   whatToShow, formatDate, keepUpToDate, chartOptions]``, ``client.py`` ``reqHistoricalData``), answered by
   ``HISTORICAL_DATA`` (17: ``[17, req id, start, end, n, then per bar date, open, high, low, close, volume, average,
@@ -46,9 +50,10 @@ CONNECT_TIMEOUT_S = 5.0
 # A year of daily bars comes back in a second or two; a minute leaves room for a busy historical farm.
 READ_TIMEOUT_S = 60.0
 MAX_FRAME = 16 * 1024 * 1024
-START_API, REQ_HISTORICAL_DATA, REQ_CONTRACT_DETAILS, REQ_HISTORICAL_NEWS = 71, 20, 9, 86
+START_API, REQ_HISTORICAL_DATA, REQ_CONTRACT_DETAILS, REQ_HISTORICAL_NEWS, REQ_MKT_DATA = 71, 20, 9, 86, 1
 NEXT_VALID_ID, ERR_MSG, HISTORICAL_DATA = "9", "4", "17"
 CONTRACT_DATA, CONTRACT_DATA_END, HISTORICAL_NEWS, HISTORICAL_NEWS_END = "10", "52", "86", "87"
+TICK_NEWS = "84"
 # Error codes the gateway sends as notices (farm connection status and the like), never a request's failure.
 NOTICE_CODES = range(2100, 2200)
 
@@ -80,6 +85,12 @@ class Contract:
 
 # Index names the gateway knows as an index on its own exchange; everything else is a stock or ETF routed SMART.
 INDEXES = {"SPX": "CBOE", "NDX": "NASDAQ", "RUT": "RUSSELL", "VIX": "CBOE"}
+
+
+def news_contract(code: str) -> Contract:
+    """The broad-tape contract of a news provider (``BRFG`` -> ``BRFG:BRFG_ALL`` on exchange ``BRFG``)."""
+    code = code.strip().upper()
+    return Contract(f"{code}:{code}_ALL", "NEWS", code, "")
 
 
 def contract_for(ticker: str) -> Contract:
@@ -213,6 +224,28 @@ class TWSClient:
                 out.append({"time": got[2], "provider": got[3], "article_id": got[4], "headline": got[5]})
             elif got[0] == HISTORICAL_NEWS_END and got[1] == str(req_id):
                 return out
+
+    def subscribe_news(self, req_id: int, contract: Contract) -> None:
+        """Start the headlines of a broad-tape ``contract`` (``news_contract``); they arrive through ``next_news``."""
+        self._sock.sendall(encode(REQ_MKT_DATA, 11, req_id, *contract.fields(), False, "mdoff,292", False, False, ""))
+
+    def next_news(self) -> dict | None:
+        """The next message if it is a headline: ``{req_id, time_ms, provider, article_id, headline}``; ``None`` for
+        any other message or a quiet ``timeout``. A refused subscription raises ``HistoryError`` with ``req_id`` set."""
+        try:
+            got = self._read()
+        except TWSError as e:
+            if isinstance(e.__cause__, TimeoutError):          # a quiet tape is not a dead gateway
+                return None
+            raise
+        if got[0] == ERR_MSG and len(got) >= 5 and int(got[3] or 0) not in NOTICE_CODES and got[2] not in ("", "-1"):
+            err = HistoryError(int(got[3]), got[4])
+            err.req_id = int(got[2])
+            raise err
+        if got[0] == TICK_NEWS and len(got) >= 6:
+            return {"req_id": int(got[1]), "time_ms": got[2], "provider": got[3], "article_id": got[4],
+                    "headline": got[5]}
+        return None
 
 
 def _bars(fields: list[str]) -> list[dict]:
