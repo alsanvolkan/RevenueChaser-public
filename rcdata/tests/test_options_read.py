@@ -122,3 +122,24 @@ def test_a_name_only_the_stored_d26_calendar_holds_is_not_dropped(built, monkeyp
     monkeypatch.setattr(earnings_dates.rawstore, "query",
                         lambda *a, **k: [{"ticker": "OTHER", "d": NEXT}])
     assert earnings_dates.stored_next_dates(SESSION) == {"GOOD": NEXT, "OTHER": NEXT}
+
+
+def test_the_earnings_board_reads_r4_s_inputs_from_the_evening_set(built):
+    """O1 = A (avo, 10 Nov 2026): the Earnings board reads the GEX levels, the strikes and the term structure of the
+    evening's earnings set from this file, in the shapes its R4 code reads from UW; a list name has no such row."""
+    from RevenueChaser.module_earnings_radar import store_reads
+    rows, note = store_reads.earnings_options(["good", "SPX"], latest=SESSION)
+    assert set(rows) == {"GOOD"} and note["stored"] is True and note["source_as_of"] == SESSION.isoformat()
+    good = rows["GOOD"]
+    assert good["session_date"] == SESSION and good["report_date"] == NEXT
+    assert good["gex_levels"] == {"call_wall": 110.0, "gamma_flip": 102.5, "gamma_magnet": 105.0, "put_wall": 95.0}
+    assert good["strikes"] and all(r["call_gamma_oi"] == 1000.5 for r in good["strikes"])
+    assert good["term"] and all(r["volatility"] == 0.3 and r["dte"] > 0 and r["date"] == SESSION.isoformat()
+                                 and r["expiry"] for r in good["term"])
+
+
+def test_an_evening_older_than_the_need_allows_is_not_read(built):
+    from RevenueChaser.module_earnings_radar import store_reads
+    later = calendar.next_trading_day(calendar.next_trading_day(SESSION))
+    rows, note = store_reads.earnings_options(["GOOD"], latest=later)
+    assert rows == {} and note["stored"] is False

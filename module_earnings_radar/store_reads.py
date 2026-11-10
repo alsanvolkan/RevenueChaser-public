@@ -18,6 +18,9 @@ rather than the board:
   interest (``finra_short_interest``, the owner's B on #287): shares short over the float the prices store holds, FINRA's
   days to cover, and IBKR's borrow fee of the newest snapshot. The nightly D10 table of UW's daily figure and the live
   ``/short_screener`` call it fell back to are no longer read: the two series measure different things.
+- ``earnings_options`` (``earnings.options``): rule R4's GEX levels, spot exposures by strike and term structure from
+  the options store's earnings set, which ``uw/option_screener`` fetches the evening before a report (avo's O1 = A).
+  This one reader has a live fallback, in the pipeline and not here: a name the store has no evening for is asked live.
 
 Before this module the board read the nightly ``macro_series`` table of ``raw.duckdb`` and called FRED itself when
 that table was empty or stale (``stored_inputs.dgs10_map`` and ``macro_watch.fred_daily_map``). The market build
@@ -325,3 +328,52 @@ def short_interest(tickers, today: date | None = None) -> tuple[dict[str, dict],
     return out, {"stored": True,
                  "label": f"{len(out)} of {len(names)} names have FINRA short interest, settlement {newest}",
                  "source": SHORT_SOURCE, "source_as_of": newest, "status": _short_status()}
+
+
+OPTIONS_SOURCE = "rcdata:er_options"
+OPTIONS_DATASET = "uw/option_screener"
+OPTIONS_NEED = "earnings.options"
+GEX_LEVEL_FIELDS = ("call_wall", "gamma_flip", "gamma_magnet", "put_wall")
+
+
+def earnings_options(tickers, latest: date | None = None) -> tuple[dict[str, dict], dict]:
+    """``({ticker: R4's option inputs}, note)`` from the options store's earnings set (avo's O1 = A, 10 Nov 2026).
+
+    ``uw/option_screener`` fetches, on the evening before a report, the same UW answers R4 reads: the GEX levels
+    (``er_options``), the spot exposures by strike (``option_strike``) and the term structure (``option_expiry``),
+    set ``earnings``. A row is ``{"session_date", "report_date", "gex_levels", "strikes", "term"}``: ``strikes`` in
+    the field names of UW's spot-exposure rows, ``term`` as ``{"date", "expiry", "dte", "volatility"}`` rows like
+    UW's term structure (R4's ex-event curve reads the date and the expiry).
+    Only each name's newest evening counts, and only when it lags ``latest`` (default the latest complete session)
+    by no more than ``earnings.options`` allows. A name with no such row is absent: the pipeline then asks UW live.
+    """
+    from RevenueChaser.rcdata import needs
+    names = sorted({str(t).strip().upper() for t in (tickers or []) if str(t or "").strip()})
+    status = _status(OPTIONS_DATASET)
+    if not names:
+        return {}, _missing("the earnings option set", None, "no ticker asked", source=OPTIONS_SOURCE, status=status)
+    try:
+        day = _day(latest) or calendar.latest_complete_session()
+        lag_max = needs.catalog.NEEDS[OPTIONS_NEED].max_lag
+        newest: dict[str, dict] = {}
+        for r in read.earnings_options(start=day - timedelta(days=10), end=day, tickers=names):
+            t, s = str(r.get("ticker") or "").upper(), _day(r.get("session_date"))
+            lag = None if s is None else _sessions_after(s, day)
+            if lag is not None and lag <= lag_max and (t not in newest or s > newest[t]["session_date"]):
+                newest[t] = {"session_date": s, "report_date": _day(r.get("report_date")),
+                             "gex_levels": {f: r.get(f) for f in GEX_LEVEL_FIELDS}}
+        for t, row in newest.items():          # sequential on purpose: one read-only handle at a time
+            row["strikes"] = read.option_strikes(t, row["session_date"], set_name="earnings")
+            row["term"] = [{"date": row["session_date"].isoformat(), "expiry": str(e["expiry"]),
+                            "dte": e["days_to_expiry"], "volatility": e["volatility"]}
+                           for e in read.option_expiries(t, row["session_date"], set_name="earnings")
+                           if e.get("volatility") is not None and e.get("days_to_expiry") is not None]
+    except Exception as exc:                                  # noqa: BLE001 - a store error is "not stored"
+        logger.warning("earnings options-store read failed: %s", exc)
+        return {}, _missing("the earnings option set", latest, f"read failed: {type(exc).__name__}",
+                            source=OPTIONS_SOURCE, status=status)
+    if not newest:
+        return {}, _missing("the earnings option set", day, source=OPTIONS_SOURCE, status=status)
+    as_of = max(r["session_date"] for r in newest.values()).isoformat()
+    return newest, {"stored": True, "label": f"{len(newest)} of {len(names)} names have the evening's option set",
+                    "source": OPTIONS_SOURCE, "source_as_of": as_of, "status": status}
