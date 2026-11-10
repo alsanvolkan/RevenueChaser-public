@@ -39,7 +39,8 @@ def yield_beta_tstat(stock_by_date: dict[str, float], yield_by_date: dict[str, f
 
     ``rule6_macro.score`` skips the NO_TRADE veto when ``|t| < 2`` (the noise gate, ``docs/rules/redesign.md``): a
     60-return beta of a volatile name can pass 4 from noise alone. None when there is no beta or the t-stat
-    cannot be formed (fewer than three pairs, no yield variance, a perfect fit) — the gate then stays open.
+    cannot be formed (fewer than three pairs, no yield variance, a perfect fit) — since #635 a missing t keeps
+    the extreme reading a badge and never a veto.
     """
     if beta is None:
         return None

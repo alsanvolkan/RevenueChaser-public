@@ -23,6 +23,9 @@ so β ≈ equity duration (−10 ≈ 10% price drop per 1pp yield rise).
 | > 2 | reason only — does not block |
 | else | measured, no penalty |
 
+The veto also needs a real beta: `|t| < 2` on the beta, or no t statistic at all, is "noisy" and the
+extreme reading stays a badge (`noisy_beta`, `beta_tstat` on the card; owner, 10 Nov 2026, #635).
+
 Needs ≥ 20 paired returns and nonzero yield variance. Otherwise R6 is
 `unavailable` (`score=None`, never a 0 fill).
 
