@@ -528,3 +528,10 @@ def test_pre_revenue_name_gets_no_universal_om_vote():
     assert r.score == 10.0  # the cluster's own score stands: GM +10, never floored to -30
     assert any("pre-revenue" in x for x in r.reasons)
 
+
+
+def test_revenue_floor_is_25m_over_four_quarters():
+    """QBTS-shaped (avo 10 Nov 2026, 'evet' to 25M): a few $M a quarter is still pre-revenue, no OM vote."""
+    r = score("QBTS", "unmapped", _pre_revenue_history(5_000_000.0))  # $20M over the last four quarters
+    assert any("pre-revenue" in x for x in r.reasons)
+    assert r.score == 10.0
