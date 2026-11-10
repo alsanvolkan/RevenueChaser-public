@@ -303,6 +303,32 @@ def test_a_filers_value_off_by_1000_is_rescaled_once_its_prices_agree(monkeypatc
     assert not any(k == "value_rescaled" and key.startswith("2000006") for k, key in issues)
 
 
+def test_the_13f_medians_are_taken_one_quarter_at_a_time(store, monkeypatch):
+    """Queue #242, 10 Nov 2026: a median's state holds its group's values outside DuckDB's memory_limit; taken over
+    every quarter at once it held every long 13F row and the whole build was OOM-killed at 7.55 GB."""
+    seen: list[str] = []
+
+    class Recording:
+        def __init__(self, con):
+            self._con = con
+
+        def execute(self, sql, *args):
+            seen.append(sql)
+            return self._con.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._con, name)
+
+    held = serve.OwnershipServe._held
+    monkeypatch.setattr(serve.OwnershipServe, "_held", staticmethod(lambda con, files: held(Recording(con), files)))
+    before = _served("SELECT cik, period, value_factor, median_ratio FROM sec13f_filer_period ORDER BY ALL")
+    _serve()
+    medians = [q for q in seen if "median(" in q]
+    assert medians and all("period = ?" in q for q in medians)
+    assert len(medians) >= 4                                    # two statements for each of Q2 and Q3 2026
+    assert _served("SELECT cik, period, value_factor, median_ratio FROM sec13f_filer_period ORDER BY ALL") == before
+
+
 def test_a_quarter_whose_deadline_passed_before_the_first_13f_day_is_not_served(monkeypatch, http_mock):
     """Real data, 2026-10-28: 852 filings of 135 filers in the sets from 2025 report quarters back to 2001, filed
     late; only those late filers of such a quarter are stored, so its breadth and totals would mislead."""
