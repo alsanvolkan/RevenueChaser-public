@@ -10,6 +10,7 @@ from RevenueChaser.core.config import (
     R3_GM_HELD_YOY_BP as GM_HELD_YOY_BP,
     R3_SGA_Z_SPIKE as SGA_Z_SPIKE,
     R3_MIN_OM_QUARTERS as _MIN_OM_QUARTERS,
+    R3_OM_MIN_REVENUE_4Q as OM_MIN_REVENUE_4Q,
 )
 from RevenueChaser.module_earnings_radar.models import RuleResult
 from RevenueChaser.module_earnings_radar.classifier import get_cluster_red_flags
@@ -92,12 +93,17 @@ def _universal_om(history: list[dict], cluster: str) -> Tuple[Optional[dict], li
     """Universal reported-OM vote + opex tags.
 
     Returns ``(info, reasons, flags)`` where ``info`` is None when there are not
-    enough usable quarters or no YoY partner — the cluster score then stands
+    enough usable quarters, no YoY partner, or a pre-revenue name (last-4
+    revenue under R3_OM_MIN_REVENUE_4Q) — the cluster score then stands
     unchanged (a short or undated history never fabricates a GAAP vote).
     """
     rows = [r for r in history if _om_row(r) is not None]
     if len(rows) < _MIN_OM_QUARTERS:
         return None, [], []
+    # Pre-revenue (review E6): OM on ~0 revenue is thousands of points; no vote beats a meaningless one.
+    rev_4q = sum(float(_get(r, "revenue") or 0.0) for r in rows[:4])
+    if rev_4q < OM_MIN_REVENUE_4Q:
+        return None, [f"op. margin vote skipped: pre-revenue (last-4 revenue ${rev_4q / 1e6:.1f}M)"], []
     latest = rows[0]
     yoy_i = _yoY_index(rows, str(_get(latest, "fiscal_date") or ""))
     if yoy_i is None:
@@ -269,9 +275,9 @@ def score(ticker: str, cluster: str, fundamentals_history: list[dict],
     # the cluster score. It never overrides a cluster's own signal, but a
     # >8-pt OM decline floors the result negative — no cluster score can flip it.
     om_info, om_reasons, om_flags = _universal_om(fundamentals_history, cluster)
+    reasons.extend(om_reasons)
+    flags.extend(om_flags)
     if om_info is not None:
-        reasons.extend(om_reasons)
-        flags.extend(om_flags)
         if om_info["om_pts"] <= -OM_MAG_DOWN_BEAR:
             pct_score = min(pct_score, -30.0)
         elif om_info["om_pts"] <= -OM_MAG_DOWN_MILD and pct_score > -15:
