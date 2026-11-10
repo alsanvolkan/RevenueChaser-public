@@ -44,15 +44,16 @@ def _cached_filings() -> dict[str, dict]:
 # ── the one write path for chain_filings (#116 C6) ──────────────────────────
 _DB = rawstore.MANIFEST[_TABLE].get("db", "raw")   # chain_filings and chain_meta share it
 # A slice is replaced only by one of the same rank or better. ``overrun`` still
-# holds all of Item 1, so it is protected too; ``short`` and ``missing`` rank 0.
-_RANK = {"ok": 2, "overrun": 1}
+# holds all of Item 1, and ``capped`` its start (cut only at the cap), so both
+# are protected too; ``short`` and ``missing`` rank 0.
+_RANK = {"ok": 2, "overrun": 1, "capped": 1}
 
 
 def store_slices(rows: list[dict]) -> tuple[int, int]:
     """Write sliced filings; return ``(written, kept)``.
 
-    A stored slice is never replaced by a worse one (``ok`` > ``overrun`` >
-    ``short`` / ``missing``), whatever the caller (sync, ``fetch_corpus``,
+    A stored slice is never replaced by a worse one (``ok`` > ``overrun`` /
+    ``capped`` > ``short`` / ``missing``), whatever the caller (sync, ``fetch_corpus``,
     ``force``); between two of the same rank the new filing wins. The stored quality is read and
     the rows written in one transaction. A written row clears its ``miss:`` key.
     """
