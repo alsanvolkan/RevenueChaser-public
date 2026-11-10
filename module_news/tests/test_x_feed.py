@@ -89,3 +89,62 @@ def test_unknown_kind_is_refused_and_a_repeated_tweet_is_kept_once():
 def test_empty_or_no_rows_mail_gives_nothing():
     assert x_feed.parse("X saatlik özet is ready No tweets in window Maddi tweet yok.", NOW, "r1") == ([], [])
     assert x_feed.parse("", NOW, "r1") == ([], [])
+
+
+NEW_PROMPT = (
+    "[RC-TW] SAATLİK | NN SPY\nPENCERE 21:12-22:12 Amsterdam\nKAYIT n=3\n"
+    "2026-11-10 22:11 | @zohmbastic | 2120263144924692750 | NN | news | - | $NN NextNav Q3 EPS $(0.04) Beats\n"
+    "2026-11-10 21:24 | @kiantrades | 2120251362529419593 | SPY | option | SPY 759C 11/20exp $1.8M yön belirsiz | $SPY 759C\n"
+    "SON\n"
+)
+
+
+def test_the_compact_prompt_format_parses_and_declares_its_count():
+    rows, refused = x_feed.parse(NEW_PROMPT, NOW, "r1")
+    assert refused == [] and len(rows) == 2
+    assert rows[1]["headline"] == "$SPY 759C"
+    # Three declared, two arrived: the caller sees the mail was cut.
+    assert x_feed.declared(NEW_PROMPT) == 3
+    assert x_feed.declared(RUN_TOGETHER) is None
+
+
+def _mail(plain=None, html_body=None):
+    from email.message import EmailMessage
+    m = EmailMessage()
+    m["From"], m["Subject"] = "Grok <noreply@x.ai>", "x"
+    if plain is not None:
+        m.set_content(plain)
+    if html_body is not None:
+        (m.add_alternative if plain is not None else m.set_content)(html_body, subtype="html")
+    return m.as_bytes()
+
+
+def test_mail_text_prefers_plain_and_falls_back_to_html_without_tags():
+    assert "KAYIT n=3" in x_feed.mail_text(_mail(plain=NEW_PROMPT, html_body="<p>other</p>"))
+    assert x_feed.mail_text(_mail(html_body="<p>KAYIT n=0</p><p>SON &amp; end</p>")).split() == [
+        "KAYIT", "n=0", "SON", "&", "end"]
+
+
+class FakeImap:
+    def __init__(self, mails):
+        self.mails, self.calls = mails, []
+
+    def select(self, box, readonly=False):
+        self.calls.append(("select", box, readonly))
+        return "OK", [b"3"]
+
+    def uid(self, cmd, *args):
+        self.calls.append((cmd, *args))
+        if cmd == "SEARCH":
+            return "OK", [b" ".join(str(u).encode() for u in self.mails)]
+        u = int(args[0])
+        return "OK", [(f"{u} (BODY[] {{9}}".encode(), self.mails[u]), b")"]
+
+
+def test_read_mails_is_read_only_and_starts_after_the_mark():
+    imap = FakeImap({7: b"seven", 9: b"nine", 12: b"twelve"})
+    assert x_feed.read_mails(imap, "00_invest-grok", 7) == [(9, b"nine"), (12, b"twelve")]
+    assert imap.calls[0] == ("select", '"00_invest-grok"', True)
+    fetches = [c for c in imap.calls if c[0] == "FETCH"]
+    assert fetches and all(c[2] == "(BODY.PEEK[])" for c in fetches)
+    assert not any(c[0] in ("STORE", "COPY", "MOVE", "EXPUNGE") for c in imap.calls)

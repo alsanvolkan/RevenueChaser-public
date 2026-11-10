@@ -16,6 +16,9 @@ or mistyped id without asking X. ``published_at`` is the id's own time, exact to
 """
 from __future__ import annotations
 
+import email
+import email.policy
+import html
 import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -32,8 +35,10 @@ _ROW = re.compile(
     r"([^|]*)\|([^|]*)\|([^|]*)\|"
 )
 # Where a row's text stops when no next row follows: the summary part, the mail footer, or a cut body.
-_TEXT_END = re.compile(r"\s*(?:\*?\s*BÖLÜM 2|\*?ÖZET\b|\|\s*Continue (?:reading|conversation)|\n\s*\n)")
+_TEXT_END = re.compile(r"\s*(?:\*?\s*BÖLÜM 2|\*?ÖZET\b|\|\s*Continue (?:reading|conversation)|\n\s*\n|\n\s*SON\b)")
 _TICKER = re.compile(r"^[A-Z][A-Z0-9.]{0,9}$")
+_COUNT = re.compile(r"KAYIT\s+n\s*=\s*(\d+)")
+_TAG = re.compile(r"<[^>]+>")
 
 
 def status_time(status_id: int) -> float:
@@ -101,6 +106,44 @@ def parse(body: str, fetched_at: float, run_id: str) -> tuple[list[dict], list[d
             "run_at": fetched_at,
         })
     return rows, refused
+
+
+def declared(body: str) -> int | None:
+    """The row count the prompt's ``KAYIT n=K`` line declares, or None for a mail without one (older prompt).
+    Fewer parsed rows than this means the mail was cut."""
+    m = _COUNT.search(body or "")
+    return int(m.group(1)) if m else None
+
+
+def mail_text(raw: bytes) -> str:
+    """The plain text of one RFC 822 mail: its text/plain part, else its HTML with the tags removed."""
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    part = msg.get_body(preferencelist=("plain",))
+    if part is not None:
+        return part.get_content()
+    part = msg.get_body(preferencelist=("html",))
+    return html.unescape(_TAG.sub(" ", part.get_content())) if part is not None else ""
+
+
+def read_mails(imap, label: str, after_uid: int) -> list[tuple[int, bytes]]:
+    """``(uid, raw mail)`` for every Grok mail in ``label`` with a UID above ``after_uid``, oldest first.
+
+    ``imap`` is a logged-in ``imaplib.IMAP4_SSL``. The label is opened read-only and bodies are fetched with
+    ``BODY.PEEK``, so nothing is marked read, moved or deleted."""
+    status, _ = imap.select(f'"{label}"', readonly=True)
+    if status != "OK":
+        raise RuntimeError(f"cannot open label {label}")
+    status, data = imap.uid("SEARCH", None, f"UID {after_uid + 1}:*", "FROM", '"noreply@x.ai"')
+    if status != "OK":
+        raise RuntimeError("IMAP search failed")
+    out = []
+    # IMAP answers "N:*" with the newest UID even when it is below N, so the bound is checked again here.
+    for uid in sorted(int(u) for u in (data[0] or b"").split() if int(u) > after_uid):
+        status, parts = imap.uid("FETCH", str(uid), "(BODY.PEEK[])")
+        raw = next((p[1] for p in parts or () if isinstance(p, tuple)), None)
+        if status == "OK" and raw:
+            out.append((uid, raw))
+    return out
 
 
 def published_local(row: dict) -> str:
