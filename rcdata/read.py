@@ -136,12 +136,13 @@ def economic_calendar(snapshot_date=None) -> list[dict]:
                  params, missing_table_ok=True)
 
 
-def news_headlines(tickers: Iterable[str] = (), since=None) -> list[dict]:
-    """IBKR headlines, newest first; ``tickers`` narrows to those names, ``since`` (epoch seconds) to newer ones.
+def news_headlines(tickers: Iterable[str] | None = None, since=None) -> list[dict]:
+    """IBKR headlines, newest first; ``tickers`` (None: every name) narrows to those names, ``since`` (epoch seconds)
+    to newer ones.
 
     A file built before market 3 has no ``news_headline``: that reads as no rows, not an error."""
     sql, params = "SELECT * FROM news_headline WHERE TRUE", []
-    names = [str(t).upper() for t in tickers]
+    names = [str(t).upper() for t in tickers or ()]
     if names:
         sql += f" AND ticker IN ({', '.join('?' * len(names))})"
         params += names
