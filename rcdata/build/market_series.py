@@ -87,7 +87,8 @@ class MarketSeries:
     parquet_reads = tuple(f"{s.SOURCE}/{s.DATASET_DIR}" for s in SOURCES)
 
     def default_as_of(self) -> date:
-        return calendar.today_ny()
+        # #643 F4: the evening of the close, as the UW datasets; "today" took Friday's close only on Monday.
+        return calendar.latest_complete_session()
 
     def _each_source(self, ctx: base.RunContext, step) -> list[Path]:
         out, failed = [], []
