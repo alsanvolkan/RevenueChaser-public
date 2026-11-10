@@ -187,7 +187,9 @@ def fetch_result(uw, ticker: str) -> FetchResult:
             continue
         errors.append({"expiry": label, **err})
         if res.status == "partial":
-            warnings.append(f"{label}: page {err.get('page', '?')} of the Unusual Whales chain failed; "
+            page = err.get("page")      # 0-based, as UW pages (#255); shown counted from 1
+            shown = page + 1 if isinstance(page, int) else "?"
+            warnings.append(f"{label}: page {shown} of the Unusual Whales chain failed; "
                             "this expiry is truncated.")
         else:
             warnings.append(f"{label}: the Unusual Whales request failed; this expiry is missing.")

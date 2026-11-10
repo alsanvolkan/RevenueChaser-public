@@ -215,10 +215,10 @@ class _ResultUW(_FakeUW):
         rows = _chain_for(expiry) if expiry in self.expiries else [
             c for e in self.expiries for c in _chain_for(e)]
         if expiry in self.failed or (expiry is None and self.failed):
-            return ProviderResult("failed", [], {"status": self.status, "error": f"HTTP {self.status}", "page": 1}, "")
+            return ProviderResult("failed", [], {"status": self.status, "error": f"HTTP {self.status}", "page": 0}, "")
         if expiry in self.partial:
             return ProviderResult("partial", rows[: len(rows) // 2],
-                                  {"status": self.status, "error": f"HTTP {self.status}", "page": 2}, "")
+                                  {"status": self.status, "error": f"HTTP {self.status}", "page": 1}, "")
         return ProviderResult("ok", rows, None, "")
 
 
