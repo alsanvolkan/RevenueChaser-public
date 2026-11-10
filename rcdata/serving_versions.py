@@ -25,4 +25,7 @@ SERVING_SCHEMA_VERSION["fundamentals"] = 2
 #                 (``build/fundamentals/uw_earnings.py``, avo's decision of 5 Nov 2026). Bumped before the kind's
 #                 first build, so no live file had to be checkpointed for it.
 # PR 18 (G8): ``options.duckdb``, the option chains, exposures, prints and IV (``build/options/``).
-SERVING_SCHEMA_VERSION["options"] = 1
+SERVING_SCHEMA_VERSION["options"] = 2
+# options 2: the calendar item's fields on ``option_screener_daily`` (and the screener's ``realized_volatility``,
+#            ``stock_volume``), ``option_far_print`` (the LEAPS market scan) and ``earnings_tape`` (``/earnings/{t}``
+#            of the earnings set); group 3's one structure PR (#644, avo's D2 of 10 Nov 2026).

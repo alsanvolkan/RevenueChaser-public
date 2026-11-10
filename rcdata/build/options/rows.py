@@ -216,19 +216,58 @@ def print_rows(session: date, ticker: str, set_name: str, body, prov: dict, keep
         if pid in seen:
             continue
         seen.add(pid)
-        parsed = parse_occ(item.get("option_chain_id"))
-        option_type = str(item.get("option_type") or "").lower() or (parsed[1] if parsed else None)
         out.append({"session_date": session, "ticker": ticker, "set_name": set_name, "print_id": pid,
-                    "executed_at": when.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-                    "option_symbol": item.get("option_chain_id"),
-                    "expiry": t.to_day(item.get("expiry")) or (parsed[0] if parsed else None),
-                    "strike": t.to_float(item.get("strike")) if item.get("strike") is not None
-                    else (parsed[2] if parsed else None),
-                    "option_type": option_type, "exchange": item.get("exchange"),
-                    "tags": _texts(item.get("tags")), "report_flags": _texts(item.get("report_flags")),
-                    "upstream_condition_detail": item.get("upstream_condition_detail"),
-                    "canceled": t.to_bool(item.get("canceled")), "side": print_side(item),
-                    "package": is_package(item), **t.numbers(item, t.PRINT_DOUBLES, t.PRINT_COUNTS), **prov})
+                    **_print_fields(item, when), **prov})
         if len(out) >= keep:
             break
     return out
+
+
+def _print_fields(item: dict, when: datetime) -> dict:
+    """The fields of one UW print (``option_print`` and ``option_far_print`` alike)."""
+    parsed = parse_occ(item.get("option_chain_id"))
+    option_type = str(item.get("option_type") or "").lower() or (parsed[1] if parsed else None)
+    return {"executed_at": when.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "option_symbol": item.get("option_chain_id"),
+            "expiry": t.to_day(item.get("expiry")) or (parsed[0] if parsed else None),
+            "strike": t.to_float(item.get("strike")) if item.get("strike") is not None
+            else (parsed[2] if parsed else None),
+            "option_type": option_type, "exchange": item.get("exchange"),
+            "tags": _texts(item.get("tags")), "report_flags": _texts(item.get("report_flags")),
+            "upstream_condition_detail": item.get("upstream_condition_detail"),
+            "canceled": t.to_bool(item.get("canceled")), "side": print_side(item),
+            "package": is_package(item), **t.numbers(item, t.PRINT_DOUBLES, t.PRINT_COUNTS)}
+
+
+def far_print_rows(session: date, items: list, prov: dict) -> list[dict]:
+    """``option_far_print``: every print of ``items`` executed on the session (New York date) with an id and an
+    underlying, once per id."""
+    out: dict[str, dict] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        when = _executed(item)
+        pid, ticker = str(item.get("id") or ""), str(item.get("underlying_symbol") or "").upper()
+        if when is None or when.astimezone(calendar.NY).date() != session or not pid or not ticker or pid in out:
+            continue
+        row = {"session_date": session, "print_id": pid, "ticker": ticker, **_print_fields(item, when),
+               "next_earnings_date": t.to_day(item.get("next_earnings_date")), **prov}
+        row["days_to_expiry"] = (row["expiry"] - session).days if row["expiry"] else None
+        out[pid] = row
+    return list(out.values())
+
+
+# ── earnings_tape ──────────────────────────────────────────────────────────────────────────────────────────────
+
+def tape_rows(session: date, ticker: str, body, prov: dict) -> list[dict]:
+    """``earnings_tape``: one row per report of the ``/earnings/{ticker}`` answer (the first row of a report wins)."""
+    out: dict[date, dict] = {}
+    for item in rows_of(body):
+        day = t.to_day(item.get("report_date")) if isinstance(item, dict) else None
+        if day is None or day in out:
+            continue
+        out[day] = {"session_date": session, "ticker": ticker, "report_date": day,
+                    "report_time": item.get("report_time"),
+                    "ending_fiscal_quarter": t.to_day(item.get("ending_fiscal_quarter")),
+                    "report_source": item.get("source"), **t.numbers(item, t.TAPE_DOUBLES), **prov}
+    return [out[d] for d in sorted(out)]
