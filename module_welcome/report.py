@@ -350,7 +350,7 @@ def render_html(now: float | None = None, *, watchlist: set[str], labels: dict[s
 <div class="grid"><div class="col">{left}</div><div class="col">{right}</div></div>
 <p class="foot">Saklı verilerden hazırlanır, ağ çağrısı yapmaz · Kaynak: Unusual Whales, Yahoo, FRED</p>
 {HELP}
-</div><script>var SESSIONS = {json.dumps(sessions(now))}, HEADS_SINCE = {heads_since!r};{_JS}</script></body></html>"""
+</div><script>var SESSIONS = {json.dumps(sessions(now))};var HEADS_SINCE = {heads_since!r};{_JS}</script></body></html>"""
 
 
 def render(now: float | None = None, *, watchlist: set[str], labels: dict[str, str]) -> Path:
