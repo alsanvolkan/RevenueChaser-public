@@ -81,3 +81,5 @@
 .ctl details.pf>code.p{display:inline;margin-left:3px;white-space:nowrap;font-size:10.5px;color:var(--mut);background:none;padding:0}
 .ctl .hl .hk{flex:0 0 auto;color:var(--mut);font-size:10.5px}
 .ctl .hl details.pf{flex:1 1 auto;overflow:hidden}
+/* a phone's press target is 44 px (CLAUDE.md, phone friendly): the 📁 fold grows to that, the path stays small */
+@media(max-width:640px){.ctl details.pf>summary{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px}}
