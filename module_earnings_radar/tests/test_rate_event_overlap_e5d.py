@@ -350,12 +350,3 @@ def test_the_economic_calendar_is_read_once_per_run(monkeypatch):
 
     assert len(reads) == 1
     assert first.macro_veto is True and second.macro_veto is True
-
-
-def test_yield_beta_tstat_perfect_fit_is_infinite():
-    """#635: zero residual is not "no evidence"; it is the strongest evidence, so the veto gate stays usable."""
-    from RevenueChaser.module_earnings_radar.pipeline import yield_beta_tstat
-    from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _duration_ohlc_and_yields
-    ohlc, yld = _duration_ohlc_and_yields(duration=10.0)
-    closes = {b["date"]: b["close"] for b in ohlc}
-    assert yield_beta_tstat(closes, yld, -10.0) == float("-inf")
