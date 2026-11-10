@@ -219,6 +219,8 @@ R3_OM_MAG_UP_BULL = 2.0
 R3_GM_HELD_YOY_BP = -0.005
 R3_SGA_Z_SPIKE = 3.0
 R3_MIN_OM_QUARTERS = 4
+# Below this summed revenue of the last four OM quarters (USD) the name is pre-revenue: no OM vote (review E6).
+R3_OM_MIN_REVENUE_4Q = 10_000_000.0
 # R6 — macro (rate sensitivity)
 R6_MIN_OBS = 20
 R6_RATE_HIGH = 2.0
@@ -247,6 +249,7 @@ TUNABLES = {
     "R3_GM_HELD_YOY_BP": R3_GM_HELD_YOY_BP,
     "R3_SGA_Z_SPIKE": R3_SGA_Z_SPIKE,
     "R3_MIN_OM_QUARTERS": R3_MIN_OM_QUARTERS,
+    "R3_OM_MIN_REVENUE_4Q": R3_OM_MIN_REVENUE_4Q,
     "R4_IV_RV_RICH": IV_RV_RICH,
     "R4_IV_RV_CHEAP": IV_RV_CHEAP,
     "R4_IV_RV_CHEAP_POINTS": IV_RV_CHEAP_POINTS,
