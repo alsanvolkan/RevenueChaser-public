@@ -265,7 +265,7 @@ def test_the_cadence_action_sets_the_cadence_and_the_hold(client):
 
 
 def test_a_cadence_the_builder_does_not_know_is_refused_before_the_store_is_touched(client):
-    r = client.post("/api/build/schedule/market_series/cadence", json={"cadence": "hourly"},
+    r = client.post("/api/build/schedule/market_series/cadence", json={"cadence": "yearly"},
                     headers={"X-RC-Panel": "settings"})
     assert r.status_code == 400 and "cadence" in r.get_json()["error"]
     assert _sched().get("cadence") is None, "a refused cadence writes nothing"
