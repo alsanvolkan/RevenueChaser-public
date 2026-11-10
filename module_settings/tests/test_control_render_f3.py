@@ -17,9 +17,11 @@ def test_next_words_prefix_only_a_time():
 
 
 def test_the_disk_picture_status_is_found_from_its_button_not_a_repeated_id():
-    html = control_render.render_data(_view())
+    # avo, 10 Nov 2026: one Recount folders press, on Fetch/Health, and none on Database
+    html = control_render.render_fetch(_view())
     assert 'id="picout"' not in html
-    assert html.count('class="hm picout" role="status"') == len(_view()["files"])
+    assert html.count('class="hm picout" role="status"') == 1
+    assert 'class="hm picout"' not in control_render.render_data(_view())
 
 
 def test_a_cross_check_step_is_not_a_from_chip():

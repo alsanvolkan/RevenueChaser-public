@@ -2993,11 +2993,14 @@ _UCARDS_CSS = (".ctl .ucards{--border:var(--line);--muted:var(--mut);--neg:var(-
 #: The page's one "What am I looking at?" box (#383), at the top of the Data tab; #527 folded the board's own box
 #: (``control_render.WIAL``) into it, so the tab has one.
 DATA_HELP = help_html(
-    "<b>Data</b> shows each served file (the six SSD DuckDB files) and how it is made: its sources, one box a "
-    "dataset, then the Build stage from HDD raw and Parquet to the SSD file, then example rows. <b>Fetch</b> puts "
+    "<b>Database</b> shows what the data is and where it goes: the Data flow from each source through the six SSD "
+    "DuckDB files to the boards and the file each board writes, then for one served file the Build stage from HDD "
+    "raw and Parquet to the SSD file, the boards that read it, and example rows. Nothing there starts a job. "
+    "<b>Fetch/Health</b> holds every control: the switches, Health right now, the providers' limits, the universe, "
+    "then one group a served file with its sources. <b>Fetch</b> puts "
     "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
     "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
-    "call and holds the dataset until <b>Resume</b>. <b>Health</b> holds the need catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
+    "call and holds the dataset until <b>Resume</b>. Under the groups sit the need catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
     "the backups. <b>Live</b> shows the queue, the running requests and the switches from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )

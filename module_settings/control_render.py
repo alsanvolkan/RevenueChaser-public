@@ -643,7 +643,7 @@ def _picture_control(view: dict) -> str:
     (``docs/data_health.md``: the Data section shows bars and no button), while the picture's age sits beside the
     counts it explains, on the Data section's roots line."""
     walked = next((f.get("walked_at") for f in view["files"]), None)
-    return ('<div class="pictrow"><span class="hm">The HDD folder counts above are not read live &middot; last count: '
+    return ('<div class="pictrow"><span class="hm">The HDD folder counts on the Database tab are not read live &middot; last count: '
             f'{esc(_walked(walked))}</span>'
             '<button type="button" class="btn" data-job="picture" title="Walks the HDD raw and Parquet folders and counts '
             'their files and bytes again (about half a minute, no provider call)">Recount folders</button>'

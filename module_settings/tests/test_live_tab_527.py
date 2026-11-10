@@ -52,8 +52,9 @@ def test_the_health_tab_no_longer_draws_the_live_parts():
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
     assert 'id="sec-queue"' not in health and 'id="health-queue"' not in health
-    assert 'class="topbar"' not in health and "sw-msg-h" not in health
+    # avo, 10 Nov 2026: the switches moved with every control to Fetch/Health, once
+    assert health.count('class="topbar"') == 1 and "sw-msg-h" not in health
     link = re.search(r'<a[^>]*id="health-live-link"[^>]*>', health).group(0)
     assert 'data-board="rc-fetch"' in link and 'href="#live"' in link
     data = _panel(html, "panel-data")
-    assert data.count('class="topbar"') == 1 and 'href="https://gateway.example/"' in data
+    assert 'class="topbar"' not in data and 'href="https://gateway.example/"' in health
