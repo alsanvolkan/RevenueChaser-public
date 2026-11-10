@@ -74,7 +74,7 @@ def test_attributes_feed_the_board_fields():
 
 
 def test_prompt_carries_version_context_and_part():
-    assert v3.system_prompt().endswith("Prompt version: v3.")
+    assert v3.system_prompt().endswith("Prompt version: v3b.")
     user = v3.build_user("NVIDIA Corp", "TEXT", {"sic": "3674", "sector": "Technology", "industry": "Semis",
                                                  "segment_note": "Compute 78%", "candidates": ["Dell", "HP"]},
                          part=(1, 3))
