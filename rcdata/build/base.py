@@ -667,6 +667,13 @@ def rows_table(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str
         con.unregister("_rows_frame")
 
 
+def with_all(con: duckdb.DuckDBPyConnection, schema: list[tuple[str, str]], src: str) -> str:
+    """``src`` with every ``schema`` column it lacks added as a typed NULL (Parquet written before it was added)."""
+    have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
+    missing = [f'CAST(NULL AS {t}) AS "{c}"' for c, t in schema if c not in have]
+    return f"(SELECT *, {', '.join(missing)} FROM {src})" if missing else src
+
+
 def upsert_partition(rows: list[dict], schema: list[tuple[str, str]], key: list[str], final: Path) -> Path:
     """Merge ``rows`` into the Parquet partition ``final`` by ``key``; the newest ``fetched_at`` wins a key."""
     con = duckdb.connect()
@@ -675,7 +682,8 @@ def upsert_partition(rows: list[dict], schema: list[tuple[str, str]], key: list[
         cols = ", ".join(f'"{c}"' for c, _ in schema)
         source = "SELECT * FROM new_rows"
         if final.exists():
-            source = f"SELECT {cols} FROM read_parquet({sql_path(final)}) UNION ALL BY NAME " + source
+            old = with_all(con, schema, f"read_parquet({sql_path(final)})")
+            source = f"SELECT {cols} FROM {old} UNION ALL BY NAME " + source
         keys = ", ".join(f'"{k}"' for k in key)
         select = (f"SELECT {cols} FROM ({source}) QUALIFY row_number() OVER "
                   f"(PARTITION BY {keys} ORDER BY fetched_at DESC) = 1 ORDER BY {keys}")

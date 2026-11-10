@@ -149,9 +149,9 @@ def test_an_upsert_into_an_old_screener_partition_keeps_its_rows_and_adds_the_ne
                           t.schema, list(t.key), path)
     con = duckdb.connect()
     try:
-        rows = con.execute(f"SELECT ticker, realized_volatility, stock_volume FROM read_parquet({base.sql_path(path)}) "
-                           "ORDER BY ticker").fetchall()
-        cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet({base.sql_path(path)})").fetchall()}
+        src = f"read_parquet({base.sql_path(path)})"
+        rows = con.execute(f"SELECT ticker, realized_volatility, stock_volume FROM {src} ORDER BY ticker").fetchall()
+        cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
     finally:
         con.close()
     assert rows == [("AAPL", None, None), ("MSFT", 0.25, 1000.0)]

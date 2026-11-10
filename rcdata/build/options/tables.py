@@ -306,7 +306,9 @@ def _load(con: duckdb.DuckDBPyConnection, t: Table, parts: list[Path], sessions:
     names_sql = ", ".join(f'"{c}"' for c in t.columns)
     keys = ", ".join(f'"{k}"' for k in t.key)
     where = "WHERE session_date IN (SELECT unnest(?::DATE[])) " if sessions is not None else ""
-    con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM read_parquet([{files}], union_by_name = true) '
+    # A column no partition holds yet (added after the Parquet was written) is read as NULL.
+    src = base.with_all(con, t.schema, f"read_parquet([{files}], union_by_name = true)")
+    con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM {src} '
                 f"{where}QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY fetched_at DESC) = 1",
                 (sessions,) if sessions is not None else None)
 
