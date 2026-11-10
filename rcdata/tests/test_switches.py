@@ -115,3 +115,16 @@ def test_the_fetch_switch_is_read_before_the_files(fetcher):
     ops.switch_set("fetch", True, by="avo")
     assert base.held_by_switch(fetcher.name)[0] == "file-market"
     assert base.held_by_switch("no/such_dataset") is None
+
+
+def test_a_held_dataset_is_not_queued_by_the_hourly_pass(fetcher, monkeypatch):
+    """avo, 10 Nov 2026 ("burada yaptigim her ayarin uygulanabilir oldugundan emin ol"): a file switched off queues
+    nothing every hour (no skipped row an hour); switched on, the dataset is due again."""
+    from RevenueChaser.rcdata.build import due
+    monkeypatch.setattr(due, "is_due", lambda ds, mode: (True, "test"))
+    ops.switch_set("file-market", False, by="avo")
+    [(name, why, rid, error)] = due.enqueue_due({fetcher.name: fetcher})
+    assert rid is None and not error and "market.duckdb switch is off" in why
+    ops.switch_set("file-market", True, by="avo")
+    [(_, why, rid, _)] = due.enqueue_due({fetcher.name: fetcher})
+    assert rid is not None, why
