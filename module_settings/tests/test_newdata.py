@@ -157,7 +157,8 @@ def test_the_market_series_backfill_counts_partitions_per_source(roots):
 
 # ── spend, backups, retention, retirement, watch lists, queue ─────────────────────────────────────────────────
 
-def test_spend_is_today_and_this_week_per_provider_against_the_caps():
+def test_spend_is_today_and_this_week_per_provider_against_the_caps(monkeypatch):
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", 100_000)              # UW has no cap since 2026-11-10: a test cap
     ops.count_calls("uw", 1200)
     ops.put_rows("provider_calls_daily", [{"provider": p, "ny_day": d, "calls": n, "failures": 0, "http_429": 0}
                                           for p, d, n in (("uw", "2026-10-26", 300), ("uw", "2026-10-25", 999),

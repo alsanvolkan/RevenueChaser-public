@@ -172,9 +172,9 @@ def test_the_fill_buttons_are_off_unless_the_server_says_so(monkeypatch):
 
 def test_the_providers_are_sorted_nearest_their_cap_first():
     rows = _build()["providers"]
-    assert [r["id"] for r in rows[:2]] == ["alphavantage", "uw"]       # the only day caps (caps.DAY_CAPS)
-    assert rows[0]["cls"] == "bad" and rows[1]["cls"] == "warn"
-    assert all(r["cap"] is None and r["cls"] == "" for r in rows[2:])  # sec's 20,100 calls: a window, no day cap
+    assert rows[0]["id"] == "alphavantage" and rows[0]["cls"] == "bad"   # the only day cap (caps.DAY_CAPS)
+    assert all(r["cap"] is None and r["cls"] == "" for r in rows[1:])  # sec's 20,100 calls: a window, no day cap
+    assert next(r for r in rows if r["id"] == "uw")["cap"] is None     # UW's cap removed, avo 2026-11-10
     assert {r["id"] for r in rows} == set(screen.PROVIDERS)
     assert next(r for r in rows if r["id"] == "cboe")["cap"] is None
 

@@ -25,7 +25,7 @@ def _fake_time():
 
 
 def test_day_caps_hold_only_the_quotas_published_per_day():
-    assert caps.DAY_CAPS == {"uw": 100_000, "alphavantage": 25}
+    assert caps.DAY_CAPS == {"alphavantage": 25}      # UW: none since avo 2026-11-10
 
 
 def test_the_request_windows_are_the_official_ones():
@@ -107,9 +107,9 @@ def test_finra_pages_go_through_the_finra_window(monkeypatch, tmp_path):
     assert waits == [1]
 
 
-def test_the_spx_history_pull_reads_the_uw_day_cap():
+def test_the_spx_history_route_holds_no_uw_cap_of_its_own():
     from RevenueChaser.app import dashboard
-    assert dashboard._SPX_HISTORY_MAX_CALLS == caps.DAY_CAPS["uw"]
+    assert not hasattr(dashboard, "_SPX_HISTORY_MAX_CALLS") and caps.cap_for("uw") is None
 
 
 def test_module_financials_holds_no_uw_limit_of_its_own():

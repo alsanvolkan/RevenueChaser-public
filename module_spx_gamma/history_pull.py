@@ -9,10 +9,10 @@ Each session is one ``fetch_snapshot(history_only=True)`` (``HISTORY_CALLS_PER_S
 ``run._backfill_history``: that one asks for every expiry's strike ladder and the live files, which suits a few
 recent days and not five hundred past ones.
 
-UW's limit is 100,000 requests a day (``rcdata/caps.py``, owner-marked avo 2026-11-02), shared with the builder: a run's
-``max_calls`` is held to what is left of the New York day in ``provider_calls_daily`` (a run is refused when nothing
-is), and the run adds what it sent there every ``COUNT_EVERY`` calls, re-reading the room each time (a run that
-finds the day spent stops with ``day_cap``). Beyond that the job measures instead of assuming: every run has a call cap
+UW has no day cap since avo removed it on 2026-11-10 (``rcdata/caps.py``). The run still adds what it sent to
+``provider_calls_daily`` every ``COUNT_EVERY`` calls; if a cap is ever set again in ``caps.DAY_CAPS``, a run's
+``max_calls`` is held to what is left of the New York day (a run is refused when nothing is), re-reading the room at
+each count (a run that finds the day spent stops with ``day_cap``). Beyond that the job measures instead of assuming: every run has a call cap
 (``max_calls``) and a pause between calls (``sleep_s``), and it returns what it sent and what came back
 (``counts``, stored in the run's ``job_runs`` row). It stops on the first of:
 
@@ -133,7 +133,8 @@ class _Meter:
             raise _Stop("rate_limit_streak")
         if self.used - self._counted >= COUNT_EVERY:
             self.flush()
-            if ops.calls_today("uw") >= caps.DAY_CAPS["uw"]:     # the builder spends the same day meanwhile
+            cap = caps.cap_for("uw")
+            if cap is not None and ops.calls_today("uw") >= cap:     # the builder spends the same day meanwhile
                 raise _Stop("day_cap")
         return res
 
@@ -241,10 +242,12 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
         raise ValueError("max_calls must be positive")
     if _session_open():
         raise HistoryPullRefused("the US session is open; the history pull runs outside session hours")
-    room = caps.DAY_CAPS["uw"] - ops.calls_today("uw")
-    if room <= 0:
-        raise HistoryPullRefused(f"UW's day cap of {caps.DAY_CAPS['uw']:,} calls is reached for today")
-    max_calls = min(max_calls, room)
+    cap = caps.cap_for("uw")
+    if cap is not None:
+        room = cap - ops.calls_today("uw")
+        if room <= 0:
+            raise HistoryPullRefused(f"UW's day cap of {cap:,} calls is reached for today")
+        max_calls = min(max_calls, room)
     root = Path(data_root) if data_root else DATA_ROOT
     raw_root = root / "raw"
     raw_root.mkdir(parents=True, exist_ok=True)

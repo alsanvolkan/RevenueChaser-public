@@ -287,7 +287,7 @@ PROVIDERS: dict[str, ProviderWords] = {
                          f"one shared bucket, {sec_throttle.RATE} a second, for every SEC caller · 10 split between the SEC processes when it falls back",
                          "10 a second per User-Agent (fair access)"),
     "uw": ProviderWords("Unusual Whales", "options, SPX, float, financials", "a budget a run · each endpoint's own page size",
-                        "100,000 a day (owner-marked avo 2026-11-02)"),
+                        "no day cap (owner-removed avo 2026-11-10)"),
     "alpaca": ProviderWords("Alpaca", "bars, corporate actions", "200 a minute",
                             "200 historical calls a minute (Basic plan) · no SIP data of the last 15 minutes"),
     "yfinance": ProviderWords("yfinance", "float, estimates, MOVE", "2,000 an hour · float lookups 1.5 s apart · a 429 stops the run",

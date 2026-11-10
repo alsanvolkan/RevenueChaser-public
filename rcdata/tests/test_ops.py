@@ -160,14 +160,21 @@ LIVE_UW_HEADERS = {"x-uw-daily-req-count": "355", "x-uw-req-per-minute-remaining
                    "x-uw-req-per-minute-reset": "60000", "x-uw-token-req-limit": "100000000"}
 
 
-def test_sample_uw_headers_reads_the_daily_count_and_computes_what_is_left_under_our_cap():
+def test_sample_uw_headers_reads_the_daily_count_and_computes_what_is_left_under_our_cap(monkeypatch):
     from RevenueChaser.rcdata import caps
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", 100_000)              # UW has no cap since 2026-11-10: a test cap
     ops.sample_uw_headers({**LIVE_UW_HEADERS, "set-cookie": "secret"}, run_id="r1")
     [row] = ops.rows("uw_remaining")
     assert row["run_id"] == "r1" and row["daily_req_count"] == 355
     assert row["daily_cap"] == caps.DAY_CAPS["uw"] and row["daily_remaining_computed"] == caps.DAY_CAPS["uw"] - 355
     assert row["per_minute_remaining"] == 1_000_000 and row["per_minute_reset_ms"] == 60_000
     assert row["token_req_limit"] == 100_000_000           # kept as sent, never read as the daily cap
+
+
+def test_sample_uw_headers_without_a_uw_cap_computes_nothing():
+    ops.sample_uw_headers(LIVE_UW_HEADERS, run_id="r1")
+    [row] = ops.rows("uw_remaining")
+    assert row["daily_req_count"] == 355 and row["daily_cap"] is None and row["daily_remaining_computed"] is None
     assert json.loads(row["raw_headers"]) == LIVE_UW_HEADERS
     ops.sample_uw_headers({}, run_id="r2")      # nothing to sample: no row
     assert len(ops.rows("uw_remaining")) == 1

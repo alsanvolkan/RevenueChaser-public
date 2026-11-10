@@ -233,6 +233,7 @@ def test_the_market_store_section_names_every_ops_table_root_and_cap():
     flat = " ".join(section.split())
     for provider, cap in caps.DAY_CAPS.items():
         assert f"{provider} {cap:,}" in flat, provider
+    assert "uw" not in caps.DAY_CAPS and "UW has none (owner-removed avo 2026-11-10)" in flat
     units = {1.0: "a second", 60.0: "a minute", 3_600.0: "an hour"}
     for provider, (limit, window) in caps.WINDOWS.items():
         if provider != "openfigi_search":
@@ -423,7 +424,7 @@ def test_the_options_section_states_what_the_code_owns():
     for n, words in ((0, "with SPX alone"), (100, "with 100 list names"), (500, "with 500")):
         assert f"{options.uw_calls_a_session(n):,} calls {words}" in flat or \
             f"{options.uw_calls_a_session(n):,} {words}" in flat, n
-    assert f"UW's day cap of {caps.DAY_CAPS['uw']:,}" in flat
+    assert "uw" not in caps.DAY_CAPS and "UW has no day cap since avo removed it on 2026-11-10" in flat
     assert f"`{retention.ENV}`" in section and f"`{retention.ROW}`" in section
 
 

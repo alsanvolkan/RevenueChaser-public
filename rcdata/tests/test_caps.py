@@ -16,7 +16,15 @@ def clock(monkeypatch):
     monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 26, 21, 0, tzinfo=timezone.utc))
 
 
-def test_a_dataset_whose_provider_is_at_its_cap_is_skipped_before_any_call(http_mock):
+def test_uw_has_no_day_cap():
+    """avo 2026-11-10: "UW icin sinir koyma, siniri tamamen kaldir"."""
+    assert "uw" not in caps.DAY_CAPS and caps.cap_for("uw") is None
+    ops.count_calls("uw", 10**6)
+    assert caps.at_cap("uw") == (False, 10**6, None)
+
+
+def test_a_dataset_whose_provider_is_at_its_cap_is_skipped_before_any_call(http_mock, monkeypatch):
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", 1_000)                # UW has no cap: the mechanism, on a test cap
     ops.count_calls("uw", caps.DAY_CAPS["uw"])
     rid = ops.enqueue(uw.NAME, {"as_of": "2026-10-26"}, by="test")
     row = base.run_request(ops.next_request())
@@ -27,8 +35,9 @@ def test_a_dataset_whose_provider_is_at_its_cap_is_skipped_before_any_call(http_
     assert [r["status"] for r in ops.rows("job_runs2")] == ["skipped"]
 
 
-def test_one_call_under_the_cap_still_runs(http_mock):
+def test_one_call_under_the_cap_still_runs(http_mock, monkeypatch):
     from . import uw_fixture
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", 1_000)
     ops.count_calls("uw", caps.DAY_CAPS["uw"] - 1)
     http_mock.add("expiry-strike", uw_fixture.body())
     row = base.run_request({"dataset": uw.NAME, "params": {"as_of": "2026-10-26"}})
