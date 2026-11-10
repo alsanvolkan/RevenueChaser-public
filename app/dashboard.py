@@ -1257,7 +1257,7 @@ def api_data_asof(mod: str):
     by downloaded data reports its own data date here.
     """
     from RevenueChaser.core import provenance
-    return jsonify({"module": mod, "data_as_of": provenance.data_as_of(mod)})
+    return jsonify({"module": mod, "data_as_of": provenance.data_as_of(mod), "last_run": provenance.last_run(mod)})
 
 
 @app.route("/needs")
