@@ -152,7 +152,7 @@ class TestApi:
         seed_d01("AAPL", ["2026-08-28", "2026-08-31"], 1.0)
         rawstore.replace_all("swing_scores", [{"ticker": "AAPL"}])
         d = self._client().get("/api/data_asof/module_swing_potential").get_json()
-        assert d == {"module": "module_swing_potential", "data_as_of": "2026-08-31"}
+        assert d == {"module": "module_swing_potential", "data_as_of": "2026-08-31", "last_run": None}
 
     def test_endpoint_is_lenient_for_an_empty_store(self, rawstore_tmp_db):
         d = self._client().get("/api/data_asof/module_sec_13f").get_json()

@@ -1090,9 +1090,9 @@ def client(view: dict) -> dict:
             "calendars": cals, "today": view["read_at_iso"][:10]}
 
 
-def _err(view: dict) -> str:
+def _err(view: dict, title: str = "Database") -> str:
     """The one line a panel is when the model could not be built."""
-    return ('<section class="ctl"><div class="wrap"><h1>Data/Health · Data</h1><div class="errbar"><b>Could not read</b> '
+    return (f'<section class="ctl"><div class="wrap"><h1>Data/Health · {esc(title)}</h1><div class="errbar"><b>Could not read</b> '
             f'· {esc(view["error"])}</div></div></section>')
 
 
@@ -1143,7 +1143,7 @@ def render_fetch(view: dict) -> str:
     """The Fetch/Health tab's top (avo, 10 Nov 2026): the switches, Health right now, then one folded group a served
     file with its sources and runs, then Cross-check. The Health tab's parts follow it in the same panel."""
     if view.get("error"):
-        return _err(view)
+        return _err(view, "Fetch/Health")
     view = _ready(view)
     groups = "".join(_fetch_group(f, view) for f in view["files"])
     return ('<section class="ctl" aria-label="Data/Health · Fetch/Health"><div class="wrap">'
