@@ -227,9 +227,11 @@ def _verify(kind: str, path: Path, expected_counts: dict[str, int], checks: list
 
 
 def sweep_builds(kind: str) -> list[Path]:
-    """Remove the build files of ``kind`` a killed builder left (``<kind>.<build_id>.duckdb`` and its ``.wal``);
-    never the live or the ``prev`` file. Called by the builder at start, while it holds the ``rcdata_build`` lock,
-    so no build of its own is in progress. Returns what it removed."""
+    """Remove the build files of ``kind`` a killed builder left (``<kind>.<build_id>.duckdb`` and its ``.wal``) and
+    their spill folders (``spill_dir``: DuckDB removes one only when its build closes, so an OOM-killed build left
+    19 GB of ownership and 22 GB of prices spill on homesrv, 10 Nov 2026); never the live or the ``prev`` file.
+    Called by the builder at start, while it holds the ``rcdata_build`` lock, so no build of its own is in progress.
+    Returns what it removed."""
     keep = {live_path(kind).name, prev_path(kind).name}
     removed = []
     for p in sorted(Path(config.MARKET_DIR).glob(f"{_kind(kind)}.*.duckdb*")):
@@ -238,6 +240,10 @@ def sweep_builds(kind: str) -> list[Path]:
             continue
         p.unlink(missing_ok=True)
         removed.append(p)
+    for d in sorted(spill_dir(Path(f"{_kind(kind)}.duckdb")).parent.glob(f"{kind}.*.duckdb.tmp")):
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+            removed.append(d)
     return removed
 
 

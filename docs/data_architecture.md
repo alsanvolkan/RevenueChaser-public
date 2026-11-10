@@ -1539,6 +1539,15 @@ today's universe the index fits, so **the key stays on** (avo, 4 Nov 2026) and t
 `RC_PRICES_NO_PRIMARY_KEY=1` writes those two without it and checks their key with one grouped query instead
 (`serving.duplicate_keys`, a `duplicate_key` build issue), so a build that still does not fit needs no code change.
 
+**A whole build in chunks (#654).** A whole build used to stage forty years of `comp.secd`, `crsp.dsf` and
+`comp.sec_divid` as TEMP tables and spilled about 80 GB (homesrv, 10 Nov 2026). It now runs the WRDS history in
+`RC_PRICES_CHUNKS` chunks (default 16; `1` is the old single pass): the identity (`_universe`, the PERMNO link, the
+gvkey aliases) is built whole over the WRDS years read through views, then each contiguous range of security ids
+stages only its own series and PERMNOs and adds its bars and WRDS actions; the market caps are built per issuer
+bucket from the served tables, and the difference report and the Alpaca close check in a second pass over the chunks
+(`serving.Chunked`). Every history computation is per security, so the served tables are those of the single pass;
+the build note logs each pass's time and peak spill.
+
 A CRSP ticker link (rule 3) needs, for a spine `gvkey:iid` with a CUSIP, a Compustat row of it on CRSP's last day,
 and for an ETF an inception day on or before it (review M1).
 

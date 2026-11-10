@@ -543,9 +543,10 @@ class WrdsPrices:
         for table in YEARLY:
             files = [f for _, f in stage.partitions(base.parquet_root() / "wrds" / "prices" / table, "year")]
             later = SECD_ADDED if table == "secd" else ()
-            if live:
+            if live or stage.chunks() > 1:
                 # A build on the live copy reads the years whole only through a view (the identity) and stages the
-                # slice it rebuilds itself (``incremental.restrict``).
+                # slice it rebuilds itself (``incremental.restrict``); a chunked whole build stages one chunk of
+                # securities at a time (``serving``, #654).
                 stage.view(con, STAGING[table] + incremental.WHOLE, TABLES[table]["schema"] + PROVENANCE, files,
                            added_later=later)
                 con.execute(f"CREATE OR REPLACE TEMP VIEW {STAGING[table]} AS "
@@ -695,7 +696,9 @@ GVKEY_ALIAS = """
     QUALIFY row_number() OVER (PARTITION BY m.gid ORDER BY l.security_id) = 1"""
 
 # Every history bar of both sources (``PRICE_BAR``'s columns, then the source's own day return and the serving
-# priority): ``prices/serving`` serves one per session (Compustat first, priority 1) and compares them all.
+# priority, and the series a row comes from, which breaks a tie between two series of one security, an aliased fund's,
+# the same way in every build): ``prices/serving`` serves one per session (Compustat first, priority 1) and compares
+# them all.
 # The Compustat security of a ``comp.secd`` row, as ``COMP_BARS`` keys it (the alias when a fund's gvkey is one).
 _COMP_BAR_ID = ("coalesce((SELECT a.security_id FROM _gvkey_alias a WHERE a.gid = gvkey || ':' || iid), "
                 "gvkey || ':' || iid)")
@@ -704,7 +707,7 @@ CRSP_BARS = f"""
            CAST(NULL AS TEXT) AS symbol, CAST(NULL AS TEXT) AS cik, dlyopen AS open, dlyhigh AS high, dlylow AS low,
            abs(dlyprc) AS close, dlyvol AS volume, CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count,
            shrout * {CRSP_SHARES_UNIT} AS shares_outstanding, '{CRSP}' AS source, source_as_of, fetched_at, run_id,
-           dlyret AS own_return, 'dlyret' AS return_basis, 2 AS priority
+           dlyret AS own_return, 'dlyret' AS return_basis, 2 AS priority, 'permno:' || d.permno AS series
     FROM stg_wrds_dsf d LEFT JOIN _permno_link l USING (permno)
     WHERE dlyprc IS NOT NULL AND dlyprc <> 0
       AND coalesce(l.security_id, 'permno:' || d.permno) IN (SELECT security_id FROM _universe)"""
@@ -714,7 +717,7 @@ COMP_BARS = f"""
            CAST(NULL AS TEXT) AS cik, prcod AS open, prchd AS high, prcld AS low, prccd AS close, cshtrd AS volume,
            CAST(NULL AS DOUBLE) AS vwap, CAST(NULL AS BIGINT) AS trade_count, cshoc AS shares_outstanding,
            '{COMPUSTAT}' AS source, source_as_of, fetched_at, run_id, {COMP_RETURN} AS own_return,
-           {COMP_RETURN_BASIS} AS return_basis, 1 AS priority
+           {COMP_RETURN_BASIS} AS return_basis, 1 AS priority, gvkey || ':' || iid AS series
     -- secd holds rows of events to come (to 2027): a bar is a priced day up to the build's date only (``serving`` sets
     -- ``rc_build_date``; unset, as in a test of this SQL alone, nothing is cut).
     FROM _secd_listed WHERE listed AND coalesce(upper(curcdd), 'USD') = 'USD' AND prccd > 0

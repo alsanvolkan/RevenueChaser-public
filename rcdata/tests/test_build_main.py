@@ -53,6 +53,18 @@ def test_s2_the_run_loop_outlives_a_locked_ops_file(busy, monkeypatch):
     assert len(calls) == 2
 
 
+def test_the_spill_folders_a_dead_builder_left_are_swept_with_its_build_files():
+    from RevenueChaser.core import config
+    tmp = config.MARKET_RAW_DIR / "build_tmp"
+    stale = tmp / "prices.20261110T080000Z-deadbeef.duckdb.tmp"
+    other = tmp / "ownership.20261110T080000Z-deadbeef.duckdb.tmp"
+    for d in (stale, other):
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "duckdb_temp_storage-0.tmp").write_bytes(b"x")
+    assert serving.sweep_builds("prices") == [stale]
+    assert not stale.exists() and other.exists()
+
+
 def test_s4_build_files_a_dead_builder_left_are_swept_at_start():
     from RevenueChaser.core import config
     d = config.MARKET_DIR
