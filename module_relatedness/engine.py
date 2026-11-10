@@ -914,7 +914,31 @@ def _attach_peer_market(peers: dict) -> None:
                 p["cluster"] = same
 
 
-def _payload(profiles: dict[str, dict], stale: set[str] | None = None, model: str | None = None) -> dict:
+def _peers(profiles: dict[str, dict], companies: list[dict], write: bool):
+    """``(peers, scores, method)``: similarity v2 on the local embeddings when any profile has a vector (#669),
+    else the tag cosine. A failing embedder (no model file, no network for its first download) falls back to the
+    tag cosine with a warning, so the board still renders."""
+    from . import embeddings, store
+    pjs = store.load_profile_json(list(profiles))
+    try:
+        vectors = embeddings.company_vectors(pjs, write=write)
+    except Exception as exc:  # noqa: BLE001 - the board renders on the tag cosine instead
+        logger.warning("relatedness embeddings failed, scoring on tags: %s", exc)
+        vectors = {}
+    if vectors:
+        # "Unclassified" is no sector two companies share (review of #680).
+        sectors = {c["ticker"]: c["sector"] for c in companies if c["sector"] != "Unclassified"}
+        try:
+            peers, scores = similarity.blended_peer_lists(profiles, pjs, vectors, sectors, config.TOP_PEERS)
+            return peers, scores, "embedding"
+        except Exception as exc:  # noqa: BLE001 - a bad cached vector must not empty the board
+            logger.warning("relatedness similarity v2 failed, scoring on tags: %s", exc)
+    peers, scores = similarity.peer_lists(profiles, config.TOP_PEERS)
+    return peers, scores, "tags"
+
+
+def _payload(profiles: dict[str, dict], stale: set[str] | None = None, model: str | None = None,
+             write: bool = False) -> dict:
     from RevenueChaser.core.gics_map import canonical_sector, sector_path
     from RevenueChaser.core.universe import (BOARD_OPERATING_ONLY, classification_universe, filter_fields,
                                              theme_catalog)
@@ -956,11 +980,13 @@ def _payload(profiles: dict[str, dict], stale: set[str] | None = None, model: st
 
     names = {c["ticker"]: c["name"] for c in companies}
     import numpy as np
-    peers, raw_scores = similarity.peer_lists(profiles, config.TOP_PEERS)
-    arr = (np.sort(np.asarray(raw_scores, dtype="float64"))
-           if raw_scores else np.zeros(0))
-    # ``n_pairs`` is every unordered pair of profiled tickers; the percentile ranks a peer among the scored
+    peers, raw_scores, method = _peers(profiles, companies, write)
+    # float32 for the v2 path: every pair is kept (~12.5M at 5,000 names), so no float64 copy (review of #680).
+    arr = (np.sort(np.asarray(raw_scores, dtype="float32" if method == "embedding" else "float64"))
+           if len(raw_scores) else np.zeros(0))
+    # ``n_pairs`` is every unordered pair of profiled tickers; the tag path ranks a peer among the scored
     # (non-zero) pairs only (#395, review RL-3): with two thirds of the pairs at zero, a 0.06 peer read as p90.
+    # The embedding path (#669) scores every pair, so there it ranks among all of them.
     n_pairs = len(profiles) * (len(profiles) - 1) // 2
     n_scored = len(arr)
     for a in peers:
@@ -981,6 +1007,7 @@ def _payload(profiles: dict[str, dict], stale: set[str] | None = None, model: st
         "peers": peers,
         "n_pairs": n_pairs,
         "n_scored": n_scored,
+        "similarity": method,
         "fields": list(config.PROFILE_FIELDS),
         "universe_total": len(classification_universe(operating_only=BOARD_OPERATING_ONLY["module_relatedness"])),
         "theme_catalog": theme_catalog(),
@@ -1110,7 +1137,8 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
     writer = (provider, model or _writer(provider)[0])
     other = store.other_writer_tickers(list(profiles), writer)
     profiles = {t: p for t, p in profiles.items() if any(p.values()) and t not in other}
-    payload = _payload(profiles, stale=store.stale_tickers(list(profiles), writer=writer), model=writer[1])
+    payload = _payload(profiles, stale=store.stale_tickers(list(profiles), writer=writer), model=writer[1],
+                       write=not no_fetch)
     payload["other_writer"] = len(other)
     payload["writer"] = {"provider": writer[0], "model": writer[1]}
     # Pending is what a next run can still profile (#388 D4): a name whose filing has no text, or one too short to

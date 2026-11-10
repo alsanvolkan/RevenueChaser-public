@@ -50,9 +50,9 @@ def _load(now: float) -> tuple[list[dict], dict | None, list[dict], float | None
         f"SELECT * FROM {EVENTS} WHERE event_ts >= ? AND event_ts < ? AND retired_at IS NULL ORDER BY event_ts, event",
         [start.timestamp(), end.timestamp()], db="news")
     hl = rawstore.query(f"SELECT * FROM {HIGHLIGHT} WHERE session_date = ?", [today.isoformat()], db="news")
-    heads = rawstore.query(
-        f"SELECT * FROM {HEADLINES} WHERE published_at >= ? ORDER BY published_at DESC LIMIT {HEADLINE_LIMIT}",
-        [now - HEADLINE_HOURS * 3600], db="news")
+    heads = [r for cond in ("= '[]'", "<> '[]'") for r in rawstore.query(      # each lane its own newest LIMIT
+        f"SELECT * FROM {HEADLINES} WHERE published_at >= ? AND coalesce(tickers, '[]') {cond} "
+        f"ORDER BY published_at DESC LIMIT {HEADLINE_LIMIT}", [now - HEADLINE_HOURS * 3600], db="news")]
     stamp = rawstore.query(f"SELECT max(run_at) AS t FROM {EVENTS}", db="news")
     return events, (hl[0] if hl else None), heads, (stamp[0]["t"] if stamp else None)
 
@@ -112,21 +112,45 @@ def _tickers(value) -> list[str]:
     return [str(t) for t in got if t][:4] if isinstance(got, list) else []
 
 
+def lane(row: dict) -> str:
+    """``market`` for a broad-tape headline (no ticker, #673), else ``stocks``."""
+    return "stocks" if _tickers(row.get("tickers")) else "market"
+
+
+_LANES = {"market": ("Piyasa", "Piyasa akışından henüz başlık yok."),
+          "stocks": ("Hisseler", "Henüz başlık yok.")}
+
+
+def _head_li(r: dict) -> str:
+    tk = "".join(f'<span class="tk">{esc(t)}</span>' for t in _tickers(r.get("tickers")))
+    src = f' · {esc(r["source"])}' if r.get("source") else ""
+    text = esc(r.get("headline"))
+    if r.get("url") and str(r["url"]).startswith(("https://", "http://")):
+        text = f'<a href="{esc(r["url"])}" target="_blank" rel="noopener noreferrer">{text}</a>'
+    return (f'<li class="hd" data-hid="{esc(r["headline_id"])}" data-at="{float(r["published_at"])}">'
+            f'<div class="muted">{hm(r["published_at"])}{src} {tk}</div><div class="htext">{text}</div></li>')
+
+
 def _headlines(rows: list[dict]) -> str:
-    if not rows:
-        return ('<section class="card"><h2 class="lbl">Başlıklar · son 24 saat</h2>'
-                '<p class="empty">Henüz başlık yok.</p></section>')
-    items = []
-    for r in rows:
-        tk = "".join(f'<span class="tk">{esc(t)}</span>' for t in _tickers(r.get("tickers")))
-        src = f' · {esc(r["source"])}' if r.get("source") else ""
-        text = esc(r.get("headline"))
-        if r.get("url") and str(r["url"]).startswith(("https://", "http://")):
-            text = f'<a href="{esc(r["url"])}" target="_blank" rel="noopener noreferrer">{text}</a>'
-        items.append(f'<li class="hd"><div class="muted">{hm(r["published_at"])}{src} {tk}</div>'
-                     f'<div class="htext">{text}</div></li>')
-    return ('<section class="card"><h2 class="lbl">Başlıklar · son 24 saat</h2><ul class="list">'
-            + "".join(items) + "</ul></section>")
+    """Two cards: Piyasa (the broad tape) and Hisseler (per ticker); the page's poll adds to their lists."""
+    out = []
+    for key, (title, empty) in _LANES.items():
+        mine = [r for r in rows if lane(r) == key][:HEADLINE_LIMIT]
+        out.append(f'<section class="card"><h2 class="lbl">{title} · son {HEADLINE_HOURS} saat</h2>'
+                   f'<p class="empty"{" hidden" if mine else ""}>{empty}</p>'
+                   f'<ul class="list" id="heads-{key}">{"".join(_head_li(r) for r in mine)}</ul></section>')
+    return "".join(out)
+
+
+def api_rows(since: float, limit: int = 2 * HEADLINE_LIMIT) -> list[dict]:
+    """Headlines stored after ``since`` (their ``run_at``), newest first, as the poll draws them."""
+    rows = rawstore.query(
+        f"SELECT headline_id, published_at, headline, source, tickers, run_at FROM {HEADLINES} "
+        f"WHERE run_at > ? AND published_at >= ? ORDER BY published_at DESC LIMIT {int(limit)}",
+        [float(since), time.time() - HEADLINE_HOURS * 3600], db="news")
+    return [{"headline_id": r["headline_id"], "published_at": r["published_at"], "hm": hm(r["published_at"]),
+             "headline": r["headline"], "source": r.get("source") or "", "tickers": _tickers(r.get("tickers")),
+             "lane": lane(r), "run_at": r["run_at"]} for r in rows]
 
 
 _CSS = """
@@ -161,7 +185,7 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
 .feat-name{font-size:18px;color:var(--bright);font-weight:600;margin-bottom:2px}
 .feat .vals{margin:10px 0}
 .why{margin:8px 0 0;line-height:1.6}
-.hd{padding:10px 0;border-bottom:1px solid var(--border)}
+.hd{padding:10px 0;border-bottom:1px solid var(--border);overflow-wrap:anywhere}
 .htext a{color:var(--bright);text-decoration:none}
 .htext a:hover{text-decoration:underline}
 .tk{display:inline-block;margin-left:4px;padding:0 6px;border-radius:6px;background:var(--input-bg);
@@ -174,6 +198,32 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
 """
 
 _JS = """
+function _headLi(r){
+  var li = document.createElement('li'); li.className = 'hd';
+  li.setAttribute('data-hid', r.headline_id); li.setAttribute('data-at', r.published_at);
+  var m = document.createElement('div'); m.className = 'muted';
+  m.textContent = r.hm + (r.source ? ' · ' + r.source : '') + ' ';
+  r.tickers.forEach(function(t){ var s = document.createElement('span'); s.className = 'tk'; s.textContent = t; m.appendChild(s); });
+  var h = document.createElement('div'); h.className = 'htext'; h.textContent = r.headline;
+  li.appendChild(m); li.appendChild(h); return li;
+}
+function _addHead(r){
+  if(document.querySelector('[data-hid="' + r.headline_id + '"]')) return;
+  var ul = document.getElementById('heads-' + r.lane); if(!ul) return;
+  var li = _headLi(r), kids = ul.children, i = 0;
+  while(i < kids.length && parseFloat(kids[i].getAttribute('data-at')) > r.published_at) i++;
+  ul.insertBefore(li, kids[i] || null);
+  while(ul.children.length > HEAD_LIMIT) ul.removeChild(ul.lastChild);
+  var empty = ul.parentNode.querySelector('.empty'); if(empty) empty.hidden = true;
+}
+function newsPoll(){
+  fetch('/api/news/headlines?since=' + NEWS_SINCE, {cache: 'no-store'}).then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d || !d.ok) return;
+      d.rows.forEach(function(r){ NEWS_SINCE = Math.max(NEWS_SINCE, r.run_at); _addHead(r); });
+    }).catch(function(){});
+}
+setInterval(newsPoll, 60000);
 function newsTab(btn){
   var tabs = document.querySelectorAll('.tabs button');
   for(var i = 0; i < tabs.length; i++){
@@ -187,7 +237,9 @@ function newsTab(btn){
 
 HELP = help_html(
     "<p>ABD ekonomik takvimi (bugün ve bu hafta, saatler Amsterdam) ve izleme listesindeki ve en büyük ABD "
-    "şirketlerinin Dow Jones başlıkları. Gerçekleşen değer gösterilmez: beklenti ve önceki değer.</p>"
+    "şirketlerinin Dow Jones başlıkları (<b>Hisseler</b>), ve IBKR'nin piyasa geneli haber akışı (<b>Piyasa</b>). "
+    "Gerçekleşen değer gösterilmez: beklenti ve önceki değer.</p>"
+    "<p>Başlıklar 5 dakikada bir saklanır; sayfa açıkken dakikada bir yenileri kendisi ekler.</p>"
     "<p><b>Fetch</b> saklı takvimi <code>boards/news.duckdb</code> içine artımlı yazar (yeni ve değişen "
     "olaylar; listeden düşen olay silinmez, emekliye ayrılır) ve IBKR Gateway'den son başlıkları sorar. "
     "<b>Refresh</b> yalnızca saklı veriden sayfayı yeniden çizer, hiçbir şey indirmez.</p>")
@@ -197,6 +249,7 @@ def render_html(now: float | None = None, provider_health: dict | None = None) -
     """The page; ``provider_health`` (a Fetch whose gateway did not answer) adds the "Data incomplete" banner."""
     now = time.time() if now is None else now
     events, hl, heads, stamp = _load(now)
+    since = max((float(h["run_at"]) for h in heads if h.get("run_at") is not None), default=now)
     today = local_day(now)
     hl_key = (hl["event_ts"], hl["event"], hl["type"]) if hl else None
     today_html, week_html = _calendar(events, now, hl_key)
@@ -220,7 +273,7 @@ def render_html(now: float | None = None, provider_health: dict | None = None) -
 </div>
 <p class="foot">Kaynak: takvim Unusual Whales, başlıklar Dow Jones (IBKR) · Saatler Europe/Amsterdam · Önem: ●●● yüksek ●●○ orta ●○○ düşük</p>
 {HELP}
-</div><script>{_JS}</script></body></html>"""
+</div><script>var NEWS_SINCE = {since!r}, HEAD_LIMIT = {HEADLINE_LIMIT};{_JS}</script></body></html>"""
 
 
 def render(now: float | None = None, provider_health: dict | None = None) -> Path:

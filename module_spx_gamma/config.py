@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from RevenueChaser.core.config import load_env_file
+from RevenueChaser.core.config import OUTPUT_DIR, load_env_file
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 load_env_file(_REPO_ROOT / "RevenueChaser" / ".env")   # writer keys never from .env (#360)
@@ -15,8 +15,9 @@ UW_API_TOKEN = os.environ.get("UNUSUAL_WHALES_API_KEY", "") or os.environ.get("U
 UW_CLIENT_API_ID = "100001"
 TICKER = "SPX"
 
-# The board's durable tree (UW raw days, brier.json, the GEX history, parsed files, charts, reports). Overridable via
-# SPX_GAMMA_DATA_ROOT so tests never touch the real tree.
+# The board's old durable tree (UW raw days, brier.json, the GEX history, parsed files, charts, reports). Its durable
+# part now lives in boards/spx_gamma.duckdb (module_spx_gamma/store.py); the tree is the import's source and the
+# weekly uw-raw step's until PR 4. Overridable via SPX_GAMMA_DATA_ROOT so tests never touch the real tree.
 #: Where the tree lived until S4 (#38): inside the checkout, so a fresh clone or `git clean -x` lost it.
 LEGACY_DATA_ROOT = Path(__file__).resolve().parent / "data"
 #: Where it lives from S4: beside the store's DuckDB files (RC_STORE_DIR), outside the checkout.
@@ -45,10 +46,14 @@ def resolve_data_root(override: str | None, store_root: Path = STORE_DATA_ROOT,
     return legacy_root
 
 
-DATA_ROOT = resolve_data_root(os.environ.get("SPX_GAMMA_DATA_ROOT"))
+TREE_ROOT = resolve_data_root(os.environ.get("SPX_GAMMA_DATA_ROOT"))
 BRIER_FILENAME = "brier.json"
 HISTORY_FILENAME = "spx_gamma_gex_history.json"
-RAW_ROOT = DATA_ROOT / "raw"
+#: The board's regenerable files (D4): parsed snapshots, charts, reports, the Fetch's staging folders and the history
+#: pull's run files, under the cache root; SPX_GAMMA_DATA_ROOT overrides it (tests).
+DATA_ROOT = Path(os.environ.get("SPX_GAMMA_DATA_ROOT") or (OUTPUT_DIR / "spx_gamma"))
+#: Where a Fetch stages a day's answers before ``store.put_raw_day`` takes them into the board file.
+RAW_ROOT = DATA_ROOT / "staging"
 PARSED_ROOT = DATA_ROOT / "parsed"
 CHART_ROOT = DATA_ROOT / "charts"
 REPORT_ROOT = DATA_ROOT / "reports"

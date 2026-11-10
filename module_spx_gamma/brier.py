@@ -16,15 +16,12 @@ from __future__ import annotations
 import logging
 import math
 from datetime import date, timedelta
-from pathlib import Path
 
-from . import safe_json
-from .config import BRIER_FILENAME, DATA_ROOT
+from . import store
 from .scenarios import REPORT_AS_OF, realized_class
 
 logger = logging.getLogger(__name__)
 
-BRIER_FILE = DATA_ROOT / BRIER_FILENAME
 CLASSES = ["Consolidation", "Upside", "Downside"]
 # Uniform 1/3 forecast against a one-hot outcome: (1 - 1/3)^2 + 2 * (1/3)^2 = 2/3.
 EQUAL_WEIGHT_REFERENCE = (1 - 1 / len(CLASSES)) ** 2 + (len(CLASSES) - 1) * (1 / len(CLASSES)) ** 2
@@ -91,31 +88,10 @@ def brier(probs: dict, realized: str) -> float:
     return sum((clean[c] - (1.0 if c == realized else 0.0)) ** 2 for c in CLASSES)
 
 
-def _default_path() -> Path:
-    return BRIER_FILE
-
-
-def _empty() -> dict:
-    return {"records": [], "average": None, "n": 0}
-
-
-def load_scores(path: Path | None = None) -> dict:
-    """Scores for display: a corrupt file reads as empty but is left untouched."""
-    p = path or _default_path()
-    try:
-        data = safe_json.load_json(p, _empty())
-    except (safe_json.CorruptJsonError, OSError) as exc:
-        logger.error("spx brier unreadable, shown as empty: %s", exc)
-        return _empty()
-    return data if isinstance(data, dict) else _empty()
-
-
-def _load_for_update(p: Path) -> dict:
-    """Scores for a write: a corrupt file is moved aside and the write refused (S-1)."""
-    data = safe_json.load_for_update(p, _empty())
-    if not isinstance(data, dict):
-        safe_json.quarantine(p)
-        raise safe_json.CorruptJsonError(p, f"expected an object, got {type(data).__name__}")
+def load_scores() -> dict:
+    """``{"records", "average", "n"}`` from the board file; average and n are computed, not stored."""
+    data = {"records": store.brier_records()}
+    _refresh_average(data)
     return data
 
 
@@ -158,8 +134,7 @@ def _clean_bands(bands: dict | None) -> dict[str, list[float]] | None:
     return out
 
 
-def record_probs(asof_date: str, probs: dict[str, float], path: Path | None = None,
-                 bands: dict | None = None) -> dict:
+def record_probs(asof_date: str, probs: dict[str, float], bands: dict | None = None) -> dict:
     """Append a probability record for an asof date (idempotent per date).
 
     ``bands`` are the scenario bands the probabilities were given for; a record without them cannot be
@@ -167,15 +142,13 @@ def record_probs(asof_date: str, probs: dict[str, float], path: Path | None = No
     it is: its outcome and Brier were computed from its own probabilities, so replacing them would break
     the audit (SPX-4).
     """
-    p = path or _default_path()
     clean = _validated_probs(probs)
-    data = _load_for_update(p)
+    data = load_scores()
     for r in data.get("records", []):
         if r.get("date") == asof_date and (r.get("outcome") is not None or r.get("brier") is not None):
             logger.info("spx brier record for %s is scored; kept", asof_date)
             return data
-    records = [r for r in data.get("records", []) if r.get("date") != asof_date]
-    records.append({
+    store.put_brier([{
         "date": asof_date,
         "scenario_probs": clean,
         "outcome": None,
@@ -183,11 +156,8 @@ def record_probs(asof_date: str, probs: dict[str, float], path: Path | None = No
         "rule": current_rule(),
         "target": target_friday(asof_date),
         "bands": _clean_bands(bands),
-    })
-    records.sort(key=lambda r: r["date"])
-    data = {"records": records, "average": data.get("average"), "n": data.get("n", 0)}
-    safe_json.write_json_atomic(p, data)
-    return data
+    }])
+    return load_scores()
 
 
 def _resolving_close(asof_date: str, target: str, closes: dict[str, float]) -> tuple[str, float] | None:
@@ -216,14 +186,14 @@ def _refresh_average(data: dict) -> None:
         data["n"] = 0
 
 
-def score_pending(closes: dict[str, float], path: Path | None = None) -> dict:
+def score_pending(closes: dict[str, float]) -> dict:
     """Score every unscored record whose target week has closed, from SPX daily closes ``{date: close}``.
 
     A record keeps the outcome it got first; a record without bands is left unscored.
     """
-    p = path or _default_path()
-    data = _load_for_update(p)
+    data = load_scores()
     scored_now: list[str] = []
+    changed: list[dict] = []
     for r in data.get("records", []):
         if r.get("outcome") is not None or r.get("brier") is not None:
             continue
@@ -244,39 +214,31 @@ def score_pending(closes: dict[str, float], path: Path | None = None) -> dict:
         r["resolved_on"] = on
         r["resolved_close"] = close
         scored_now.append(asof)
+        changed.append(r)
     if scored_now:
+        store.put_brier(changed)
         _refresh_average(data)
-        safe_json.write_json_atomic(p, data)
     return {"scored": scored_now, "data": data}
 
 
-def score_date(asof_date: str, realized: str, path: Path | None = None) -> dict:
-    """Score the record for ``asof_date`` with the realized scenario class."""
+def score_date(asof_date: str, realized: str) -> dict:
+    """Score the unscored record for ``asof_date`` with the realized scenario class (a scored one is kept)."""
     if realized not in CLASSES:
         raise ValueError(f"realized scenario must be one of {CLASSES}, got {realized!r}")
-    p = path or _default_path()
-    data = _load_for_update(p)
+    data = load_scores()
     for r in data.get("records", []):
         if r.get("date") != asof_date:
             continue
         r["brier"] = brier(r.get("scenario_probs") or {}, realized)
         r["outcome"] = realized
+        store.put_brier([r])
         break
-    scored = scored_under_current_rule(data.get("records", []))
-    if scored:
-        avg = sum(r["brier"] for r in scored) / len(scored)
-        data["average"] = avg
-        data["n"] = len(scored)
-    else:
-        data["average"] = None
-        data["n"] = 0
-    safe_json.write_json_atomic(p, data)
-    return data
+    return load_scores()
 
 
-def scorecard(path: Path | None = None) -> dict:
+def scorecard() -> dict:
     """Summary for the dashboard: average, n, both references and the verdict against the base rate."""
-    data = load_scores(path=path)
+    data = load_scores()
     records = data.get("records", [])
     avg = data.get("average")
     n = data.get("n", 0)

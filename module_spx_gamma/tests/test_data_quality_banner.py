@@ -8,15 +8,13 @@ from __future__ import annotations
 import json
 
 from RevenueChaser.module_spx_gamma import render
-from .conftest import make_snapshot
+from .conftest import make_snapshot, store_day
 
 HOSTILE = '<img src=x onerror="alert(1)">'
 
 
 def _write_manifest(root, asof, warnings):
-    day = root / "raw" / asof
-    day.mkdir(parents=True, exist_ok=True)
-    (day / "manifest.json").write_text(json.dumps({"warnings": warnings}), encoding="utf-8")
+    store_day(asof, {"warnings": warnings})
 
 
 def test_manifest_warning_is_shown_escaped(tmp_path):

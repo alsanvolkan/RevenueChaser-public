@@ -44,7 +44,7 @@ from RevenueChaser.core import calendar as nyse_calendar
 from RevenueChaser.rcdata import caps, ops
 from RevenueChaser.core import job_control
 
-from . import safe_json
+from . import safe_json, store
 from .config import DATA_ROOT, TICKER
 from .run import _is_session
 from .snapshot import HISTORY_CALLS_PER_SESSION, HISTORY_ORIGIN, NoStoredClose, SnapshotError, fetch_snapshot
@@ -191,18 +191,12 @@ def sessions_between(start: date, end: date) -> list[str]:
 
 
 def newest_fetch_day(root=None) -> str | None:
-    """The newest raw day a board Fetch wrote (it has a manifest whose ``origin`` is not the pull's), or None."""
-    raw_root = (Path(root) if root else DATA_ROOT) / "raw"
-    if not raw_root.exists():
-        return None
-    for day in sorted((d for d in raw_root.iterdir() if d.is_dir() and not d.name.startswith(".")),
-                      key=lambda d: d.name, reverse=True):
-        try:
-            manifest = json.loads((day / "manifest.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
+    """The newest stored day a board Fetch wrote (its manifest's ``origin`` is not the pull's), or None. ``root`` is
+    unused: the days are in the board file."""
+    for day in reversed(store.stored_days()):
+        manifest = store.raw_manifest(day)
         if isinstance(manifest, dict) and manifest.get("origin") != HISTORY_ORIGIN:
-            return day.name
+            return day
     return None
 
 
@@ -211,7 +205,7 @@ def check_range(start: str, end: str, root=None) -> tuple[date, date]:
     board's newest Fetch day.
 
     The last rule keeps the board on a Fetch day: Refresh rebuilds the newest stored day and moves
-    ``latest.json`` to it, and a history day has no chain, iv-rank or options volume (#194 review). A day up to the
+    the latest pointer to it, and a history day has no chain, iv-rank or options volume (#194 review). A day up to the
     newest Fetch day is fine (that day itself is stored, so it costs nothing).
     """
     lo, hi = date.fromisoformat(start), date.fromisoformat(end)
@@ -249,7 +243,7 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
             raise HistoryPullRefused(f"UW's day cap of {cap:,} calls is reached for today")
         max_calls = min(max_calls, room)
     root = Path(data_root) if data_root else DATA_ROOT
-    raw_root = root / "raw"
+    raw_root = root / "staging"
     raw_root.mkdir(parents=True, exist_ok=True)
     http, remove_hook = _http_counter(uw)
     meter = _Meter(uw, max_calls, sleep_s, sleep or time.sleep, requests=http)
@@ -264,7 +258,7 @@ def pull_history(uw, start: str, end: str, *, max_calls: int = DEFAULT_MAX_CALLS
         rejected_streak = 0
         for day in days:
             job_control.checkpoint(f"session {day}")
-            if (raw_root / day / "manifest.json").exists():
+            if store.has_day(day):
                 counts["skipped_existing"] += 1
                 continue
             if _session_open():

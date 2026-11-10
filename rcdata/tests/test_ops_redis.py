@@ -92,6 +92,7 @@ def _script() -> dict:
         "schedule": [ops.read_schedule("market_series"), ops.schedule_get("prices/serving"), ops.schedule_get("x")],
         "calls": [ops.calls_by_day("2000-01-01", today), ops.calls_today("uw"), ops.calls_today("nope")],
         "uw": ops.latest_uw_sample(), "reads": ops.reads_since("2000-01-01", ["market_series", "macro_series", "x"]),
+        "between": [(r["dataset"], r["status"]) for r in ops.runs_between(0, 4e9)] + [ops.runs_between(0, 1)],
         "last_run": ops.last_builder_run(), "watch": [ops.watch_count("option"), ops.watch_count("stock"),
                                                       ops.watch_list("option"), ops.watch_list("stock"),
                                                       ops.watch_rows("stock"), ops.watch_last_change() is not None],

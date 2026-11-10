@@ -303,8 +303,8 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "Monday fetches Friday; without that close, or inside the US session, it exits 3 and calls "
                     "nothing. A missed run is not caught up. The Fetch runs in the dashboard (POST /run/spxgamma, "
                     "the one writer): the task only queues it and waits; with the dashboard down it exits 1 and "
-                    "nothing is fetched. The job writes the SPX Gamma tree (raw day, latest.json, GEX history), "
-                    "no table.",
+                    "nothing is fetched. The job writes the board file boards/spx_gamma.duckdb (raw day, Brier "
+                    "record, GEX record, latest pointer; module_spx_gamma/store.py).",
         settings=TaskSettings(start_when_available=False, restart_count=0, time_limit_minutes=30)),
 )
 _BY_NAME = {e.name: e for e in REGISTRY}

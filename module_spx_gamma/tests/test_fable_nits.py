@@ -196,12 +196,11 @@ CONSTANT = {"Consolidation": 0.45, "Upside": 0.25, "Downside": 0.30}
 
 
 def _scored(tmp_path, outcomes: list[str]):
-    p = tmp_path / "brier.json"
     for i, outcome in enumerate(outcomes):
         day = f"2026-08-{10 + i:02d}"
-        brier.record_probs(day, CONSTANT, path=p)
-        brier.score_date(day, outcome, path=p)
-    return brier.scorecard(path=p)
+        brier.record_probs(day, CONSTANT)
+        brier.score_date(day, outcome)
+    return brier.scorecard()
 
 
 def test_n6_constant_probabilities_beat_one_third_but_not_the_base_rate(tmp_path):
@@ -228,16 +227,15 @@ def test_n6_the_scorecard_counts_days_not_weeks(tmp_path):
     for name in ("section_position_map.md.j2", "section_position_map.html.j2"):
         text = (templates / name).read_text(encoding="utf-8")
         assert "Scored weeks" not in text and "Scored days" in text, name
-    assert "weeks" not in brier.scorecard(path=tmp_path / "none.json")["verdict"]
+    assert "weeks" not in brier.scorecard()["verdict"]
 
 
 def test_n6_recorded_but_unscored_days_do_not_move_the_base_rate(tmp_path):
-    p = tmp_path / "brier.json"
     for day, outcome in (("2026-08-10", "Consolidation"), ("2026-08-11", "Upside")):
-        brier.record_probs(day, CONSTANT, path=p)
-        brier.score_date(day, outcome, path=p)
-    brier.record_probs("2026-08-12", CONSTANT, path=p)        # today's record, not scored yet
-    assert brier.scorecard(path=p)["base_rate_reference"] == pytest.approx(0.5)
+        brier.record_probs(day, CONSTANT)
+        brier.score_date(day, outcome)
+    brier.record_probs("2026-08-12", CONSTANT)        # today's record, not scored yet
+    assert brier.scorecard()["base_rate_reference"] == pytest.approx(0.5)
 
 
 # ── N7: the VIX term mode reads the 9-day point too ─────────────────────────────────────────────

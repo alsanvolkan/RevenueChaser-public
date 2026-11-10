@@ -144,7 +144,7 @@ def test_a_shell_stage_reply_stores_no_profile_and_is_not_asked_again(rawstore_t
 
 def test_a_shell_is_neither_a_peer_nor_pending(rawstore_tmp_db, monkeypatch, calls):
     monkeypatch.setattr(engine.vc_engine, "fetch_corpus", lambda *a, **k: None)
-    monkeypatch.setattr(engine, "_payload", lambda profiles, thinking=None, stale=None, model=None:
+    monkeypatch.setattr(engine, "_payload", lambda profiles, thinking=None, stale=None, model=None, write=False:
                         {"as_of": "x", "companies": [{"ticker": t} for t in profiles], "peers": {}, "n": len(profiles)})
     monkeypatch.setattr(engine, "_record_history", lambda *a, **k: None)
     _text(monkeypatch, long_body("blank check"))

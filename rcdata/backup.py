@@ -27,7 +27,7 @@ The steps, in the order they run (``--only`` picks some of them, or one DuckDB k
   one Lua script, written into a new ``ops.sqlite`` and checked row for row. The copy restores with
   ``python -m RevenueChaser.rcdata.ops_copy --sqlite <copy>`` into an EMPTY namespace only.
 - ``uw-raw``: the raw files no provider serves again: ``<MARKET_RAW_DIR>/raw/uw/`` (Unusual Whales gives no
-  history; the subscription ends 6 Dec 2026) and the SPX Gamma tree (``module_spx_gamma.config.DATA_ROOT``), into
+  history; the subscription ends 6 Dec 2026) and the SPX Gamma tree (``module_spx_gamma.config.TREE_ROOT``), into
   ``uw-raw/<ISO week>/``. A file unchanged since the previous week's folder (size and mtime) is hard-linked to that
   copy, so four weeks cost one copy plus the new days; a new or changed file is copied through ``.tmp`` and verified
   by size and SHA-256. A file modified in the last ``SETTLE_SECONDS`` waits for the next run (it may still be
@@ -438,7 +438,7 @@ def _same_stat(a: os.stat_result, b: os.stat_result) -> bool:
 def uw_raw_sources() -> list[tuple[str, Path]]:
     """``(name, root)`` of every tree the ``uw-raw`` step copies: the UW raw folder and the SPX Gamma tree."""
     from ..module_spx_gamma import config as spx_config
-    return [("uw", Path(config.MARKET_RAW_DIR) / "raw" / "uw"), ("spx_gamma", Path(spx_config.DATA_ROOT))]
+    return [("uw", Path(config.MARKET_RAW_DIR) / "raw" / "uw"), ("spx_gamma", Path(spx_config.TREE_ROOT))]
 
 
 def _copy_tree(src: Path, dest: Path, previous: Path | None, manifest: _Manifest, *, json_guard: bool,

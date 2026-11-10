@@ -251,10 +251,45 @@ def _is_stale(path: Path, stale_after: float) -> bool:
         return False
 
 
-def _break_if_unchanged(path: Path, seen: tuple[int | None, str, str]) -> None:
-    """Remove a stale lock unless it changed hands since we judged it stale."""
-    if _read_owner(path) == seen:
-        path.unlink(missing_ok=True)
+#: A breaker file older than this was left by a breaker that died mid-break, and is removed.
+_BREAKER_STALE_S = 30.0
+
+
+def _take_breaker(breaker: Path) -> bool:
+    """Take the one-at-a-time right to break ``breaker``'s lock; False while another breaker has it."""
+    for _ in range(2):
+        try:
+            os.close(os.open(breaker, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return True
+        except FileExistsError:
+            try:
+                if time.time() - breaker.stat().st_mtime <= _BREAKER_STALE_S:
+                    return False
+                # shortcut: two processes clearing one dead breaker's file can race again; that needs a crash
+                # inside a break on a host with no OS lock. Upgrade only if such a host ever runs RC.
+                breaker.unlink(missing_ok=True)
+            except OSError:
+                return False
+    return False
+
+
+def _break_if_unchanged(path: Path, seen: tuple[int | None, str, str], stale_after: float) -> bool:
+    """Remove a stale lock unless it changed hands since we judged it stale; True when it was removed.
+
+    Breakers take turns through ``<lock>.break`` (#33): the compare and the unlink of two breakers can no longer
+    interleave, so the second one re-reads the lock after the first has broken it and taken it over, finds the new
+    holder's file, and leaves it.
+    """
+    breaker = path.with_name(path.name + ".break")
+    if not _take_breaker(breaker):
+        return False
+    try:
+        if _read_owner(path) == seen and _is_stale(path, stale_after):
+            path.unlink(missing_ok=True)
+            return True
+        return False
+    finally:
+        breaker.unlink(missing_ok=True)
 
 
 def holders(directory: Path | None = None) -> list[tuple[str, int]]:
@@ -404,8 +439,8 @@ def acquire(name: str = "edgar", wait: float = 0.0, stale_after: float = 3600.0)
                     seen = _read_owner(path)
                     if _is_stale(path, stale_after):
                         try:
-                            _break_if_unchanged(path, seen)
-                            continue
+                            if _break_if_unchanged(path, seen, stale_after):
+                                continue
                         except OSError:
                             pass  # could not remove it: fall through to the deadline
                     if time.time() >= deadline:

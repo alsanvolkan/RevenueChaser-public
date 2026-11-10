@@ -1,8 +1,8 @@
 """The pin and squeeze on the old and the new basis, side by side, for stored days (PR 3, homesrv step S3).
 
-No market data written and no network: each day's raw files are read from ``<data root>/raw/<day>/`` (the board's
-own UW snapshot) and the market-store inputs through ``store_reads`` (``rcdata.read``: DuckDB ``read_only=True``, one
-connection per read); nothing is written into the board's data root or a serving file. It is not read-only, though:
+No market data written and no network: each day's raw files are read from ``boards/spx_gamma.duckdb`` (the board's
+own UW snapshot, ``module_spx_gamma.store``) and the market-store inputs through ``store_reads`` (``rcdata.read``: DuckDB ``read_only=True``, one
+connection per read); nothing is written into the board file, its cache folder or a serving file. It is not read-only, though:
 ``rcdata.read`` counts each read in its read log and the status reads open ``ops.sqlite``, which ``rcdata.ops``
 creates with its tables when it is missing.
 
@@ -11,15 +11,15 @@ dollar gamma (the old basis, ``/spot-exposures/strike``), the pin flag and the s
 VIX, COT and SPX close the board now shows beside what the raw day itself held (an older Fetch wrote
 ``vix_family.json``, ``cftc_tff.json`` and ``ohlc_8wk.json``; a day fetched after PR 3 has none, so ``old=n/a``).
 
-Usage: python -m RevenueChaser.module_spx_gamma.tools.compare_pin --days 2026-10-26 2026-10-23 [--data-root PATH]
+Usage: python -m RevenueChaser.module_spx_gamma.tools.compare_pin --days 2026-10-26 2026-10-23
 """
 from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
-from RevenueChaser.module_spx_gamma.config import DATA_ROOT, net_sum
+from RevenueChaser.module_spx_gamma import store
+from RevenueChaser.module_spx_gamma.config import net_sum
 from RevenueChaser.module_spx_gamma.engines.prediction_engine import scenario_extraction
 from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
 from RevenueChaser.module_spx_gamma.raw_day import load_raw_day
@@ -47,30 +47,29 @@ def _scenarios(snapshot: dict, dollars: dict | None) -> dict:
     return scenario_extraction({**snapshot, "zero_one_dte_dollars": dollars})
 
 
-def _file(day_dir: Path, name: str):
+def _file(files: dict[str, str], name: str):
     try:
-        return json.loads((day_dir / name).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return json.loads(files[name])
+    except (KeyError, ValueError):
         return None
 
 
-def _old_inputs(day_dir: Path) -> dict[str, str]:
+def _old_inputs(files: dict[str, str]) -> dict[str, str]:
     """What the raw day itself held for the three inputs that moved to the store (an older Fetch's files)."""
-    vix = ((_file(day_dir, "vix_family.json") or {}).get("tickers") or {}).get("^VIX")
-    cot = (_file(day_dir, "cftc_tff.json") or {}).get("report_date")
-    window = (_file(day_dir, "ohlc_8wk.json") or {}).get("data") or []
+    vix = ((_file(files, "vix_family.json") or {}).get("tickers") or {}).get("^VIX")
+    cot = (_file(files, "cftc_tff.json") or {}).get("report_date")
+    window = (_file(files, "ohlc_8wk.json") or {}).get("data") or []
     last = window[-1] if window else {}
     return {"vix": f"{vix:.2f}" if vix is not None else "n/a",
             "cot": str(cot).split("T", 1)[0] if cot else "n/a",
             "spx": f"{last['close']:,.2f}@{last.get('date')}" if last.get("close") is not None else "n/a"}
 
 
-def compare_day(day: str, data_root: Path) -> str:
-    day_dir = data_root / "raw" / day
+def compare_day(day: str) -> str:
     try:
-        raw = load_raw_day(day_dir)
+        raw = load_raw_day(day)
     except FileNotFoundError:
-        return f"{day} no complete raw day (manifest.json missing)"
+        return f"{day} no complete raw day (not in the board file)"
     effective = raw["_meta"]["effective_date"]
     full = with_store_inputs(raw, effective)
     snapshot = normalize_snapshot(full, effective)
@@ -85,7 +84,7 @@ def compare_day(day: str, data_root: Path) -> str:
     vix = (full.get("vix") or {}).get("tickers", {}).get("^VIX")
     cot = (full.get("cftc") or {}).get("report_date")
     closes = (full.get("ohlc") or {}).get("data") or []
-    was = _old_inputs(day_dir)
+    was = _old_inputs(store.raw_files(day))
     vix_now = f"{vix:.2f}@{inputs['vix'].get('obs_date')}" if vix is not None else "not stored"
     spx_now = f"{closes[-1]['close']:,.2f}@{closes[-1]['date']}" if closes else "not stored"
     parts = [
@@ -105,11 +104,9 @@ def compare_day(day: str, data_root: Path) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("--days", nargs="+", required=True, help="stored days, YYYY-MM-DD")
-    parser.add_argument("--data-root", default=str(DATA_ROOT), help="the board's data root (default: DATA_ROOT)")
     args = parser.parse_args(argv)
-    root = Path(args.data_root)
     for day in args.days:
-        print(compare_day(day, root))
+        print(compare_day(day))
     return 0
 
 

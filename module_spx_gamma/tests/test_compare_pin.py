@@ -10,6 +10,7 @@ import pytest
 
 from RevenueChaser.core import calendar
 from RevenueChaser.module_spx_gamma import snapshot as snap
+from RevenueChaser.module_spx_gamma import store as spx_store
 from RevenueChaser.module_spx_gamma.tools import compare_pin
 
 from . import rcdata_fixture as fx
@@ -43,7 +44,7 @@ def stored_day(tmp_path, monkeypatch):
     # 0-1 DTE: $4B at the magnet (no pin on the new basis), -$300M at 6760 (a squeeze trigger on the new basis)
     fx.serve(spx={s: [fx.uw_row(s, s, MAGNET, 3e9, 0), fx.uw_row(s, nxt, MAGNET, 1e9, 0),
                       fx.uw_row(s, s, 6760, 0, -3e8)]})
-    snap.fetch_snapshot(FakeUW(_handler, prefix=""), DAY, data_root=tmp_path / "raw")
+    snap.fetch_snapshot(FakeUW(_handler, prefix=""), DAY, data_root=tmp_path / "staging")
     return tmp_path
 
 
@@ -52,7 +53,7 @@ def _tree(root):
 
 
 def test_one_line_per_day_with_both_bases(stored_day, capsys):
-    assert compare_pin.main(["--days", DAY, "2026-10-23", "--data-root", str(stored_day)]) == 0
+    assert compare_pin.main(["--days", DAY, "2026-10-23"]) == 0
     lines = capsys.readouterr().out.strip().splitlines()
     assert len(lines) == 2
     line = lines[0]
@@ -63,27 +64,36 @@ def test_one_line_per_day_with_both_bases(stored_day, capsys):
     assert "squeeze new=6,760 ($-0.30B) old=-" in line
     assert "vix new=" in line and "@2026-10-26" in line and "cot new=2026-10-20" in line
     assert "spx new=6,749.00@2026-10-26" in line
-    assert lines[1] == "2026-10-23 no complete raw day (manifest.json missing)"
+    assert lines[1] == "2026-10-23 no complete raw day (not in the board file)"
 
 
-def test_it_writes_nothing_and_opens_duckdb_read_only(stored_day, capsys, monkeypatch):
+def _board_rows():
+    return (spx_store.stored_days(), spx_store.raw_manifest(DAY), spx_store.raw_files(DAY), spx_store.latest())
+
+
+def test_it_writes_nothing_and_opens_the_market_store_read_only(stored_day, capsys, monkeypatch):
+    """The market store is opened ``read_only``; the board file goes through ``rawstore.query`` (its handles are
+    read-write by design, see ``rawstore.connect``), so for it the check is that no row changed."""
     opened = []
     real = duckdb.connect
 
     def spy(*a, **k):
-        opened.append(k.get("read_only"))
+        if "boards" not in str(a[0] if a else k.get("database", "")):
+            opened.append(k.get("read_only"))
         return real(*a, **k)
     monkeypatch.setattr(duckdb, "connect", spy)
-    before = _tree(stored_day)
-    compare_pin.main(["--days", DAY, "--data-root", str(stored_day)])
+    before, rows = _tree(stored_day), _board_rows()
+    compare_pin.main(["--days", DAY])
     assert opened and all(ro is True for ro in opened), opened
-    assert _tree(stored_day) == before, "the tool wrote into the board's data root"
+    assert _tree(stored_day) == before, "the tool wrote into the board's cache folder"
+    assert _board_rows() == rows, "the tool wrote into the board file"
 
 
 def test_an_older_day_shows_its_own_files_as_the_old_side(stored_day, capsys):
-    day = stored_day / "raw" / DAY
-    (day / "vix_family.json").write_text(json.dumps({"tickers": {"^VIX": 21.5}}), encoding="utf-8")
-    (day / "cftc_tff.json").write_text(json.dumps({"report_date": "2026-10-13T00:00:00.000"}), encoding="utf-8")
-    compare_pin.main(["--days", DAY, "--data-root", str(stored_day)])
+    files = {k: v.encode("utf-8") for k, v in spx_store.raw_files(DAY).items()}
+    files["vix_family.json"] = json.dumps({"tickers": {"^VIX": 21.5}}).encode("utf-8")
+    files["cftc_tff.json"] = json.dumps({"report_date": "2026-10-13T00:00:00.000"}).encode("utf-8")
+    spx_store.put_raw_day(DAY, spx_store.raw_manifest(DAY), files)
+    compare_pin.main(["--days", DAY])
     out = capsys.readouterr().out
     assert "@2026-10-26 old=21.50 |" in out and "cot new=2026-10-20 old=2026-10-13" in out

@@ -112,3 +112,12 @@ def test_the_data_health_page_read_closes_a_request_whose_run_was_killed():
     nd = report._collect_newdata()
     assert all(r["id"] != rid for r in (nd.get("queue") or {}).get("active", []))
     assert _request(rid)["status"] == "failed"
+
+
+def test_a_reader_leaves_a_run_another_host_started_alone():
+    """#611: a pid is only meaningful on the host that wrote it, so the queue sweep skips another host's run."""
+    rid = _taken_and_started("market_series", "other-host-run", _dead_pid())
+    [run] = [r for r in ops.rows("job_runs2") if r["run_id"] == "other-host-run"]
+    ops.put_rows("job_runs2", [{**run, "host": "some-other-host"}])
+    assert ops.fail_dead_requests() == (0, 0)
+    assert _request(rid)["status"] == "running"

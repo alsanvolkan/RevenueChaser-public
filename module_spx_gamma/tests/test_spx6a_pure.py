@@ -234,10 +234,9 @@ def test_brier_rejects_an_unknown_realized_class():
 
 
 def test_score_date_stores_the_same_brier(tmp_path):
-    p = tmp_path / "brier.json"
     probs = {"Consolidation": 0.5, "Upside": 0.3, "Downside": 0.2}
-    brier.record_probs("2026-08-21", probs, path=p)
-    scored = brier.score_date("2026-08-21", "Upside", path=p)
+    brier.record_probs("2026-08-21", probs)
+    scored = brier.score_date("2026-08-21", "Upside")
     assert scored["records"][0]["brier"] == brier.brier(probs, "Upside")
 
 

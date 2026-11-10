@@ -77,8 +77,8 @@ def test_the_twin_block_guess_is_retired():
 def test_a_stored_day_reads_its_skew_chains_back(tmp_path):
     import json
     from RevenueChaser.module_spx_gamma.raw_day import load_raw_day
-    (tmp_path / "manifest.json").write_text(json.dumps({"effective_date": "2026-11-04"}), encoding="utf-8")
-    (tmp_path / "skew_chain_1m.json").write_text(json.dumps(_chain("2026-12-04")), encoding="utf-8")
-    raw = load_raw_day(tmp_path)
+    from .conftest import store_day
+    store_day("2026-11-04", {"effective_date": "2026-11-04"}, {"skew_chain_1m.json": _chain("2026-12-04")})
+    raw = load_raw_day("2026-11-04")
     assert set(raw["skew_chains"]) == {"1m"}
     assert nm.chain_skew(raw)["put_bias_1m"] == pytest.approx(0.08)
