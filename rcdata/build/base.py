@@ -25,6 +25,7 @@ import gzip
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from collections import deque
@@ -919,6 +920,40 @@ def build_kind(ctx: RunContext, ds: Dataset) -> dict:
     return build_kind_many(ds.kind, [(ds, ctx)], lead=ctx)[ds.name]
 
 
+def _dir_bytes(folder: Path) -> int:
+    total = 0
+    for p in folder.rglob("*"):
+        try:
+            total += p.stat().st_size if p.is_file() else 0
+        except FileNotFoundError:                     # DuckDB freed it while listed
+            pass
+    return total
+
+
+@contextlib.contextmanager
+def spill_peak(folder: Path, every: float = 2.0):
+    """The most bytes ``folder`` held while the block ran, sampled every ``every`` seconds and once at its end; yields
+    a one-item list the peak is written into. shortcut: a spike shorter than ``every`` can be missed, upgrade only if
+    the logged peaks look too low against the disk."""
+    peak = [0]
+    stop = threading.Event()
+
+    def sample() -> None:
+        while True:
+            peak[0] = max(peak[0], _dir_bytes(folder))
+            if stop.wait(every):
+                return
+
+    thread = threading.Thread(target=sample, name="spill-peak", daemon=True)
+    thread.start()
+    try:
+        yield peak
+    finally:
+        stop.set()
+        thread.join()
+        peak[0] = max(peak[0], _dir_bytes(folder))
+
+
 def build_kind_many(kind: str, members: list[tuple[Dataset, RunContext]], *, lead: RunContext) -> dict[str, dict]:
     """Build ``kind`` once for every request a pass holds of it (PR A); ``{dataset: check row}`` per member, a member
     being a request's ``(dataset, context)``.
@@ -945,7 +980,12 @@ def build_kind_many(kind: str, members: list[tuple[Dataset, RunContext]], *, lea
                 b.con.execute(f'DROP TABLE IF EXISTS "{table}"')
         counts: dict[str, int] = {}
         for d in kind_datasets(kind):
-            counts.update(d.build(ctxs.get(d.name, lead), b.con))
+            started = time.monotonic()
+            with spill_peak(serving.spill_dir(b.path)) as peak:
+                counts.update(d.build(ctxs.get(d.name, lead), b.con))
+            # What a dataset costs, so a chunked or SSD-spilling build is decided from a measure (#654 review).
+            logger.info("build %s %s (%s): %.1f s, spill peak %.2f GB", kind, d.name, b.mode,
+                        time.monotonic() - started, peak[0] / 1e9)
         if plan is not None:
             dirty.write_manifest(b.con, plan)
             if not on_live and plan.reason is None:

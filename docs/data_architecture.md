@@ -995,7 +995,9 @@ it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed th
 #319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server). The spill goes to
 `<MARKET_RAW_DIR>/build_tmp/<build file>.tmp` (`serving.spill_dir`, the HDD), never beside the live files on the SSD
 (#372: request 71 spilled 47 GB there), and DuckDB removes it when the build closes. `max_temp_directory_size` comes
-from `RC_DUCKDB_MAX_TEMP` (default `200GB`): past it the build fails instead of filling the disk.
+from `RC_DUCKDB_MAX_TEMP` (default `200GB`): past it the build fails instead of filling the disk. `RC_DUCKDB_TEMP_DIR` moves the
+spill's parent folder (unset: `<MARKET_RAW_DIR>/build_tmp`). Each dataset's build logs one line with its seconds and
+its spill peak (`base.spill_peak`, sampled every 2 s), the measure for moving the spill to the SSD or chunking a kind.
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
 file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `6`), is described under
