@@ -74,7 +74,9 @@ THREADS_DEFAULT = 3
 # The most a build may spill (``RC_DUCKDB_MAX_TEMP``, a DuckDB size): past it the build fails, it does not fill the disk.
 # DuckDB's own default is 90 % of the free space. 2010-2025 of history spilled 9.5 GB at its largest statement (#372).
 MAX_TEMP_DEFAULT = "200GB"
-_SIZE_UNITS = ("KB", "MB", "GB", "TB", "KIB", "MIB", "GIB", "TIB")
+_SIZE_BYTES = {"KIB": 2**10, "MIB": 2**20, "GIB": 2**30, "TIB": 2**40,
+               "KB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
+_SIZE_UNITS = tuple(_SIZE_BYTES)
 
 
 def _size(env: str, default: str) -> str:
@@ -82,16 +84,31 @@ def _size(env: str, default: str) -> str:
     return value if value[:1].isdigit() and value.upper().endswith(_SIZE_UNITS) else default
 
 
-def build_config() -> dict[str, str | int]:
+def _spill_cap(cap: str, spill_parent: Path) -> str:
+    """The smaller of ``cap`` and 90 % of the free space on ``spill_parent``'s disk (DuckDB's own default, which a set
+    cap replaces): a 200 GB cap must not let a spill moved to the SSD (``RC_DUCKDB_TEMP_DIR``, or ``MARKET_RAW_DIR``
+    falling back into the checkout) fill the disk the live stores share (#379)."""
+    unit = next(u for u in _SIZE_UNITS if cap.upper().endswith(u))
+    try:
+        cap_bytes = float(cap[:-len(unit)]) * _SIZE_BYTES[unit]
+    except ValueError:                        # not a number DuckDB reads either: it refuses it at connect
+        return cap
+    room = shutil.disk_usage(spill_parent).free * 0.9
+    return cap if cap_bytes <= room else f"{int(room) // 1000}KB"
+
+
+def build_config(spill_parent: Path | None = None) -> dict[str, str | int]:
     """``memory_limit``, ``threads`` and ``max_temp_directory_size`` for a build connection, from
-    ``RC_DUCKDB_MEMORY_LIMIT`` / ``RC_DUCKDB_THREADS`` / ``RC_DUCKDB_MAX_TEMP``."""
+    ``RC_DUCKDB_MEMORY_LIMIT`` / ``RC_DUCKDB_THREADS`` / ``RC_DUCKDB_MAX_TEMP``; given the spill folder's parent, the
+    spill cap is held to 90 % of that disk's free space (``_spill_cap``)."""
     try:
         threads = int(os.getenv("RC_DUCKDB_THREADS", "").strip())
     except ValueError:
         threads = THREADS_DEFAULT
+    max_temp = _size("RC_DUCKDB_MAX_TEMP", MAX_TEMP_DEFAULT)
     return {"memory_limit": _size("RC_DUCKDB_MEMORY_LIMIT", MEMORY_LIMIT_DEFAULT),
             "threads": threads if threads > 0 else THREADS_DEFAULT,
-            "max_temp_directory_size": _size("RC_DUCKDB_MAX_TEMP", MAX_TEMP_DEFAULT)}
+            "max_temp_directory_size": _spill_cap(max_temp, spill_parent) if spill_parent else max_temp}
 
 
 def spill_dir(path: Path) -> Path:
@@ -391,7 +408,7 @@ def build(kind: str, base: str = "fresh") -> Iterator[BuildFile]:
     spill.parent.mkdir(parents=True, exist_ok=True)               # DuckDB makes only the last level
     try:
         mode = _copy_live(kind, path) if base == "live" else "fresh"
-        con = duckdb.connect(str(path), config={**build_config(), "temp_directory": str(spill)})
+        con = duckdb.connect(str(path), config={**build_config(spill.parent), "temp_directory": str(spill)})
     except BaseException:
         _remove(path)      # a copy that broke mid-way is as large as the live file, on the live files' own disk
         raise
