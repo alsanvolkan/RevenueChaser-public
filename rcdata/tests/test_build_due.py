@@ -74,18 +74,27 @@ def test_a_paused_dataset_is_not_queued(clock):
 
 
 def test_daily_is_due_once_the_datasets_own_as_of_reaches_the_next_check_day(clock):
-    _checked(MS, as_of="2026-10-27")                       # today's run done: next check Wed
-    _checked(UW, as_of="2026-10-26")                       # Monday's session in: next check Tue
+    _checked(MS, as_of="2026-10-26")                       # Monday's session in: next check Tue
+    _checked(UW, as_of="2026-10-26")
     clock(TUE_MORNING)                                     # Tuesday's session not complete yet
     assert due.is_due(DATASETS[MS])[0] is False
     assert due.is_due(DATASETS[UW])[0] is False
-    clock(TUE_EVENING)                                     # Tuesday complete: UW is due, the series are not
+    clock(TUE_EVENING)                                     # Tuesday complete: both are due the same evening
     assert due.is_due(DATASETS[UW])[0] is True
-    assert due.is_due(DATASETS[MS])[0] is False
-    clock(WED_MORNING)
     assert due.is_due(DATASETS[MS])[0] is True
     due.enqueue_due()
     assert sorted(r["dataset"] for r in _queue()) == sorted([MS, UW])
+
+
+def test_the_series_take_fridays_close_on_friday_evening_not_monday(clock):
+    # #643 F4: with "today in New York" as the as-of, Friday's close reached the series only on Monday.
+    _checked(MS, as_of="2026-10-29")                       # Thursday's session in: next check Fri 30
+    clock(datetime(2026, 10, 30, 22, 0, tzinfo=timezone.utc))
+    assert DATASETS[MS].default_as_of() == date(2026, 10, 30)
+    assert due.is_due(DATASETS[MS])[0] is True
+    _checked(MS, as_of="2026-10-30")                       # Friday's run done: next check Mon 2 Nov
+    clock(datetime(2026, 10, 31, 15, 0, tzinfo=timezone.utc))
+    assert due.is_due(DATASETS[MS])[0] is False            # nothing to fetch over the weekend
 
 
 def test_a_failed_or_skipped_last_check_is_due_again(clock):
@@ -99,7 +108,9 @@ def test_a_check_with_no_next_day_is_due_again_once_the_as_of_moves_on(clock):
     # base.next_due() is None past core/calendar.py's table (2028): the series must not then run every hour.
     ops.record_check(MS, "changed", source_as_of="2026-10-27", next_check_due=None)
     assert due.is_due(DATASETS[MS]) == (False, "no next session known; ran for 2026-10-27")
-    clock(WED_MORNING)
+    clock(WED_MORNING)                                     # Wednesday not complete: still Tuesday's as-of
+    assert due.is_due(DATASETS[MS]) == (False, "no next session known; ran for 2026-10-27")
+    clock(datetime(2026, 10, 28, 22, 0, tzinfo=timezone.utc))
     assert due.is_due(DATASETS[MS]) == (True, "no next session known; as-of 2026-10-28 is newer")
     ops.record_check(UW, "changed", source_as_of=None, next_check_due=None)
     assert due.is_due(DATASETS[UW]) == (True, "the last check names no as-of")
