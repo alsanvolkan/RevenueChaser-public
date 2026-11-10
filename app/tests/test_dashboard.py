@@ -117,7 +117,7 @@ class TestDashboardRoutes:
         assert r.status_code == 404
 
     def test_spxgamma_latest_and_view(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(runners, "spxgamma_latest_path", lambda: tmp_path / "latest.json")
+        monkeypatch.setattr(runners, "spxgamma_latest", lambda: None)
         monkeypatch.setattr(dashboard, "_spxgamma_latest_report_file", lambda: None)
         c = self._client()
         r = c.get("/api/spxgamma/latest")

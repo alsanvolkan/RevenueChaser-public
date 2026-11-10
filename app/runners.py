@@ -1033,14 +1033,14 @@ def run_etf_holdings_sync(uw: UWClient) -> None:
     raise JobMessage(msg)
 
 
-def spxgamma_latest_path() -> Path:
-    """Stable pointer written by the SPX Option Position Map pipeline."""
-    from RevenueChaser.module_spx_gamma.config import DATA_ROOT as spx_data_root
-    return spx_data_root / "latest.json"
+def spxgamma_latest() -> dict | None:
+    """The SPX board's latest pointer: the manifest of the newest day it shows (``spx_meta``)."""
+    from RevenueChaser.module_spx_gamma import store as spx_store
+    return spx_store.latest()
 
 
 # The SPX report the last Fetch or calendar click built, so the board shows the clicked day. Kept in
-# this process only: a restart, or a Refresh, puts the board back on the newest day (latest.json).
+# this process only: a restart, or a Refresh, puts the board back on the newest day (the latest pointer).
 _SPX_VIEW: Path | None = None
 
 
@@ -1074,7 +1074,7 @@ def spx_builder_request() -> dict:
     return {"requested_at": f"{now_ny():%Y-%m-%d %H:%M} New York", "datasets": datasets}
 
 
-def run_spxgamma(uw, asof_date: str, force: bool = False) -> Path:
+def run_spxgamma(uw, asof_date: str, force: bool = False) -> Path | None:
     """Run the SPX Option Position Map (Unusual Whales) for one as-of date.
 
     The module uses the job's own ``uw`` client, so its calls count in the job's provider health.
@@ -1083,33 +1083,31 @@ def run_spxgamma(uw, asof_date: str, force: bool = False) -> Path:
     """
     global _SPX_VIEW
     from RevenueChaser.module_spx_gamma.run import run as spx_run
-    from RevenueChaser.module_spx_gamma.config import DATA_ROOT as spx_data_root
 
     out = spx_run(asof_date, uw=uw, force=force, builder_request=spx_builder_request())
     _SPX_VIEW = (out or {}).get("paths", {}).get("report_html")
-    return spx_data_root / "latest.json"
+    return _SPX_VIEW
 
 
 def run_spxgamma_stored(uw, asof_date: str) -> Path:
     """Rebuild a stored past SPX day from disk (#179 D5): no UW client, so no auth probe either.
 
     Registered with ``requires_uw=False``; the route sends a date here only when
-    ``serves_from_disk`` holds. ``refresh`` reads ``raw/<day>`` and never writes it.
+    ``serves_from_disk`` holds. ``refresh`` reads the stored day and never writes it.
     """
     global _SPX_VIEW
     from RevenueChaser.module_spx_gamma.run import refresh
-    from RevenueChaser.module_spx_gamma.config import DATA_ROOT as spx_data_root
 
     out = refresh(asof_date, builder_request=spx_builder_request())
     _SPX_VIEW = out["paths"]["report_html"]
-    return spx_data_root / "latest.json"
+    return _SPX_VIEW
 
 
 def run_spxgamma_history(uw, start: str, end: str, max_calls: int | None = None,
                          sleep_s: float | None = None) -> dict:
     """Pull past SPX Gamma sessions in ``[start, end]`` into the raw day folders (D1, the 2-year history pull).
 
-    Only raw days are written (``origin: history_pull``); the board, ``latest.json``, the GEX history and the Brier
+    Only raw days are written (``origin: history_pull``); the board, the latest pointer, the GEX record and the Brier
     record are untouched. The returned ``counts`` (without the answer shapes, a few failures) go into the run's
     ``job_runs`` row; the run's file under ``history_pull/`` has them all.
     """

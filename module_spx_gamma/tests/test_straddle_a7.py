@@ -44,9 +44,9 @@ def test_snapshot_reads_the_target_chain():
 
 def test_target_chain_file_is_live_and_read_back(tmp_path):
     assert "target_chain.json" in snap.LIVE_FILES
-    (tmp_path / "manifest.json").write_text(json.dumps({"effective_date": "2026-11-04"}), encoding="utf-8")
-    (tmp_path / "target_chain.json").write_text(json.dumps(CHAIN), encoding="utf-8")
-    assert load_raw_day(tmp_path)["target_chain"] == CHAIN
+    from .conftest import store_day
+    store_day("2026-11-04", {"effective_date": "2026-11-04"}, {"target_chain.json": CHAIN})
+    assert load_raw_day("2026-11-04")["target_chain"] == CHAIN
 
 
 def test_vol_board_shows_the_straddle():

@@ -112,37 +112,38 @@ class TestAbortMessageEndToEnd:
 
 
 class TestCacheIsNotDestroyedByAFailedFetch:
-    def _seed(self, tmp_path, day="2026-08-14"):
-        d = tmp_path / day
-        d.mkdir(parents=True)
-        (d / "gex_levels.json").write_text('{"data": {"call_wall": "1"}}', encoding="utf-8")
-        return d
+    def _seed(self, day="2026-08-14", **extra):
+        from .conftest import store_day
+        store_day(day, files={"gex_levels.json": '{"data": {"call_wall": "1"}}', **extra})
 
     def test_existing_snapshot_survives_a_failed_fetch(self, tmp_path):
-        cached = self._seed(tmp_path)
+        from RevenueChaser.module_spx_gamma import store
+        self._seed()
         with pytest.raises(snap.SnapshotError):
             snap.fetch_snapshot(as_uw(_Client(401)), "2026-08-14", data_root=tmp_path)
-        assert (cached / "gex_levels.json").exists(), "a failed fetch must not delete the cache"
-        assert '"call_wall": "1"' in (cached / "gex_levels.json").read_text()
+        assert '"call_wall": "1"' in store.raw_files("2026-08-14")["gex_levels.json"], \
+            "a failed fetch must not touch the stored day"
 
     def test_no_empty_directory_is_left_behind(self, tmp_path):
+        from RevenueChaser.module_spx_gamma import store
         with pytest.raises(snap.SnapshotError):
             snap.fetch_snapshot(as_uw(_Client(401)), "2026-08-14", data_root=tmp_path)
-        assert not (tmp_path / "2026-08-14").exists()
+        assert not store.has_day("2026-08-14")
         assert list(tmp_path.iterdir()) == [], "no staging directory may survive"
 
-    def test_a_successful_fetch_replaces_the_cached_day(self, tmp_path):
-        cached = self._seed(tmp_path)
+    def test_a_successful_fetch_replaces_the_stored_day(self, tmp_path):
+        from RevenueChaser.module_spx_gamma import store
+        self._seed()
         snap.fetch_snapshot(as_uw(_Client(200, fail_paths=())), "2026-08-14", data_root=tmp_path)
-        assert (cached / "manifest.json").exists()
-        assert '"call_wall": "1"' not in (cached / "gex_levels.json").read_text()
+        assert store.raw_manifest("2026-08-14").get("files")
+        assert '"call_wall": "1"' not in store.raw_files("2026-08-14")["gex_levels.json"]
 
     def test_a_successful_fetch_leaves_no_staging_directory(self, tmp_path):
         snap.fetch_snapshot(as_uw(_Client(200, fail_paths=())), "2026-08-14", data_root=tmp_path)
-        assert [p.name for p in tmp_path.iterdir()] == ["2026-08-14"]
+        assert list(tmp_path.iterdir()) == []
 
     def test_stale_files_from_a_prior_run_are_not_carried_over(self, tmp_path):
-        cached = self._seed(tmp_path)
-        (cached / "leftover.json").write_text("{}", encoding="utf-8")
+        from RevenueChaser.module_spx_gamma import store
+        self._seed(**{"leftover.json": "{}"})
         snap.fetch_snapshot(as_uw(_Client(200, fail_paths=())), "2026-08-14", data_root=tmp_path)
-        assert not (cached / "leftover.json").exists()
+        assert "leftover.json" not in store.raw_files("2026-08-14")

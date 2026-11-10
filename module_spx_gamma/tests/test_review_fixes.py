@@ -9,6 +9,7 @@ import pytest
 
 from RevenueChaser.module_spx_gamma import render, run as spx_run, snapshot as snap
 from RevenueChaser.module_spx_gamma.normalize import compute_positioning_deltas, normalize_snapshot
+from RevenueChaser.module_spx_gamma import store as spx_store
 
 from .conftest import FakeUW, make_raw, make_snapshot
 from .test_s2_fetch import CANDLES, CFTC, DAY, VIX, _fetch, _handler, _no_network
@@ -43,13 +44,13 @@ def test_a_fallback_fetch_hands_back_the_stored_day(tmp_path):
                               candle_fetcher=lambda *a, **k: list(CANDLES))
     assert raw["_meta"]["effective_date"] == DAY
     assert raw["interpolated_iv"]["data"][0]["volatility"] == 0.1          # the stored IV, not today's 0.2
-    stored = json.loads((tmp_path / DAY / "interpolated_iv.json").read_text(encoding="utf-8"))
+    stored = json.loads(spx_store.raw_files(DAY)["interpolated_iv.json"])
     assert stored["data"][0]["volatility"] == 0.1
 
 
 # ── M5: the backfill repairs a missing history row from disk ───────────────
 def test_backfill_records_the_history_row_of_a_complete_raw_day(tmp_path, monkeypatch):
-    _fetch(tmp_path / "raw")
+    _fetch(tmp_path / "staging")
     _no_network(monkeypatch)
     monkeypatch.setattr(spx_run, "today_ny", lambda: date(2026, 8, 17))
     monkeypatch.setattr(spx_run.time if hasattr(spx_run, "time") else __import__("time"), "sleep", lambda s: None)
@@ -100,7 +101,7 @@ def test_vix_and_cftc_are_no_files_of_the_day(tmp_path):
     """PR 3: the VIX family and the COT are read from the market store for the day rendered, never written into
     the raw day, so they can no longer be a later session's live value."""
     _fetch(tmp_path)
-    files = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))["files"]
+    files = spx_store.raw_manifest(DAY)["files"]
     assert "vix_family.json" not in files and "cftc_tff.json" not in files
     assert files["gex_levels.json"]["as_of"] is True
 
@@ -125,19 +126,18 @@ def test_run_spxgamma_defaults_to_the_new_york_date(monkeypatch):
     assert seen == {"module": "spxgamma", "asof_date": "2026-08-14"}
 
 
-# ── L2-4: refreshing an older day leaves latest.json on the newest day ─────
+# ── L2-4: refreshing an older day leaves the latest pointer on the newest day ─────
 def test_refresh_of_an_older_day_keeps_latest_on_the_newest(tmp_path, monkeypatch):
     for day in ("2026-08-13", DAY):
-        d = tmp_path / "raw" / day
         # one stored day per date: reuse the fetch with the day's own candle
         uw = FakeUW(_handler, prefix="")
-        snap.fetch_snapshot(uw, day, data_root=tmp_path / "raw",
+        snap.fetch_snapshot(uw, day, data_root=tmp_path / "staging",
                             candle_fetcher=lambda *a, _d=day, **k: [{**CANDLES[0], "date": _d}])
     _no_network(monkeypatch)
     spx_run.refresh(DAY, data_root=tmp_path)
-    assert json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))["asof_date"] == DAY
+    assert spx_store.latest()["asof_date"] == DAY
     spx_run.refresh("2026-08-13", data_root=tmp_path)
-    assert json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))["asof_date"] == DAY
+    assert spx_store.latest()["asof_date"] == DAY
 
 
 # ── DF20: the header gamma flip has one source (the OI gex-levels gamma_flip) ──

@@ -26,64 +26,57 @@ def test_target_friday(asof, target):
 
 
 def test_record_keeps_bands_and_target(tmp_path):
-    p = tmp_path / "b.json"
-    data = brier.record_probs("2026-10-23", P, path=p, bands=BANDS)
+    data = brier.record_probs("2026-10-23", P, bands=BANDS)
     rec = data["records"][0]
     assert rec["target"] == "2026-10-30"
     assert rec["bands"]["consolidation"] == [7700.0, 7750.0]
 
 
 def test_score_pending_resolves_on_target_close(tmp_path):
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-10-23", P, path=p, bands=BANDS)
+    brier.record_probs("2026-10-23", P, bands=BANDS)
     closes = {"2026-10-26": 7760.0, "2026-10-30": 7650.0}
-    out = brier.score_pending(closes, path=p)
+    out = brier.score_pending(closes)
     assert out["scored"] == ["2026-10-23"]
-    rec = brier.load_scores(p)["records"][0]
+    rec = brier.load_scores()["records"][0]
     assert rec["outcome"] == "Downside" == realized_class(BANDS, 7650.0)
     assert rec["resolved_close"] == 7650.0 and rec["resolved_on"] == "2026-10-30"
-    assert brier.load_scores(p)["n"] == 1
+    assert brier.load_scores()["n"] == 1
 
 
 def test_score_pending_waits_for_the_target(tmp_path):
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-10-26", P, path=p, bands=BANDS)
-    out = brier.score_pending({"2026-10-27": 7720.0, "2026-10-29": 7730.0}, path=p)
+    brier.record_probs("2026-10-26", P, bands=BANDS)
+    out = brier.score_pending({"2026-10-27": 7720.0, "2026-10-29": 7730.0})
     assert out["scored"] == []
-    assert brier.load_scores(p)["records"][0]["outcome"] is None
+    assert brier.load_scores()["records"][0]["outcome"] is None
 
 
 def test_holiday_friday_uses_last_close_of_the_week(tmp_path):
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-11-23", P, path=p, bands=BANDS)    # target Friday 2026-11-27
+    brier.record_probs("2026-11-23", P, bands=BANDS)    # target Friday 2026-11-27
     # the Friday close exists in this example; a missing Friday with a later close resolves on Thursday
-    out = brier.score_pending({"2026-11-26": 7720.0, "2026-11-30": 7900.0}, path=p)
+    out = brier.score_pending({"2026-11-26": 7720.0, "2026-11-30": 7900.0})
     assert out["scored"] == ["2026-11-23"]
-    rec = brier.load_scores(p)["records"][0]
+    rec = brier.load_scores()["records"][0]
     assert rec["resolved_on"] == "2026-11-26" and rec["outcome"] == "Consolidation"
 
 
 def test_record_without_bands_is_not_scored(tmp_path):
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-10-23", P, path=p)
-    assert brier.score_pending({"2026-10-30": 7650.0}, path=p)["scored"] == []
+    brier.record_probs("2026-10-23", P)
+    assert brier.score_pending({"2026-10-30": 7650.0})["scored"] == []
 
 
 def test_scored_record_is_not_rescored(tmp_path):
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-10-23", P, path=p, bands=BANDS)
-    brier.score_pending({"2026-10-30": 7650.0}, path=p)
-    again = brier.score_pending({"2026-10-30": 7720.0}, path=p)
+    brier.record_probs("2026-10-23", P, bands=BANDS)
+    brier.score_pending({"2026-10-30": 7650.0})
+    again = brier.score_pending({"2026-10-30": 7720.0})
     assert again["scored"] == []
-    assert brier.load_scores(p)["records"][0]["outcome"] == "Downside"
+    assert brier.load_scores()["records"][0]["outcome"] == "Downside"
 
 
 def test_scorecard_two_se_threshold(tmp_path):
-    p = tmp_path / "b.json"
     for i, (asof, close) in enumerate([("2026-10-02", 7650.0), ("2026-10-09", 7720.0), ("2026-10-16", 7790.0)]):
-        brier.record_probs(asof, P, path=p, bands=BANDS)
-    brier.score_pending({"2026-10-09": 7650.0, "2026-10-16": 7720.0, "2026-10-23": 7790.0}, path=p)
-    card = brier.scorecard(path=p)
+        brier.record_probs(asof, P, bands=BANDS)
+    brier.score_pending({"2026-10-09": 7650.0, "2026-10-16": 7720.0, "2026-10-23": 7790.0})
+    card = brier.scorecard()
     scores = [r["brier"] for r in card["records"]]
     n = len(scores)
     mean = sum(scores) / n
@@ -98,18 +91,16 @@ def test_run_scores_pending_records_from_stored_closes(tmp_path, monkeypatch):
     """The Fetch run scores what it can from the stored SPX closes before it records today's set."""
     from RevenueChaser.module_spx_gamma import run, store_reads
 
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-10-23", P, path=p, bands=BANDS)
+    brier.record_probs("2026-10-23", P, bands=BANDS)
     rows = [{"date": "2026-10-29", "close": 7740.0}, {"date": "2026-10-30", "close": 7810.0}]
     monkeypatch.setattr(store_reads, "spx_candles", lambda day: {"stored": True, "rows": rows})
-    assert run._score_brier("2026-11-04", p) == ["2026-10-23"]
-    assert brier.load_scores(p)["records"][0]["outcome"] == "Upside"
+    assert run._score_brier("2026-11-04") == ["2026-10-23"]
+    assert brier.load_scores()["records"][0]["outcome"] == "Upside"
 
 
 def test_run_scoring_survives_missing_closes(tmp_path, monkeypatch):
     from RevenueChaser.module_spx_gamma import run, store_reads
 
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-10-23", P, path=p, bands=BANDS)
+    brier.record_probs("2026-10-23", P, bands=BANDS)
     monkeypatch.setattr(store_reads, "spx_candles", lambda day: {"stored": False, "rows": []})
-    assert run._score_brier("2026-11-04", p) == []
+    assert run._score_brier("2026-11-04") == []

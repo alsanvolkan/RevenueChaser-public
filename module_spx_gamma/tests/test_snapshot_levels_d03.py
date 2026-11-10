@@ -13,6 +13,7 @@ import pytest
 from datetime import date
 
 from RevenueChaser.module_spx_gamma import snapshot as snap
+from RevenueChaser.module_spx_gamma import store as spx_store
 
 from . import rcdata_fixture
 from .conftest import as_uw
@@ -82,7 +83,7 @@ def test_an_empty_store_warns_and_writes_an_empty_window_rather_than_reaching_ou
 
     monkeypatch.setattr(yfinance, "Ticker", _Counted)
     raw = _fetch(tmp_path)
-    man = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
+    man = spx_store.raw_manifest(DAY)
     assert raw["ohlc"]["data"] == []
     assert any(w.startswith("SPX closes not stored") for w in man["warnings"])
     assert built == [], f"the snapshot built yfinance.Ticker for {built} with the market closed"
@@ -165,18 +166,15 @@ def test_normalize_and_a_reload_both_keep_the_recorded_live_spot(tmp_path):
     from RevenueChaser.module_spx_gamma import raw_day
     from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
 
-    from .conftest import make_raw
+    from .conftest import make_raw, store_day
 
     raw = make_raw()
     raw["spot"] = {"source": "yfinance (live)", "value": 8123.45}
     assert normalize_snapshot(raw, "2026-08-14")["current_level"] == 8123.45
 
     # the same day written out and read back must still answer with the live level
-    day = tmp_path / "2026-08-14"
-    day.mkdir()
-    (day / "manifest.json").write_text(_json.dumps({
-        "asof_date": "2026-08-14", "effective_date": "2026-08-14", "spot": raw["spot"]}), encoding="utf-8")
-    reloaded = raw_day.load_raw_day(day)
+    store_day("2026-08-14", {"asof_date": "2026-08-14", "effective_date": "2026-08-14", "spot": raw["spot"]})
+    reloaded = raw_day.load_raw_day("2026-08-14")
     assert reloaded.get("spot", {}).get("value") == 8123.45, "a Refresh lost the Fetch's live spot"
     # and the board built from the reloaded day shows the same level, not the window's last close
     rebuilt = {**raw, **reloaded}
@@ -247,6 +245,6 @@ def test_an_open_session_spends_exactly_one_request_on_spot(tmp_path, rawstore_t
     spot_calls = [c for c in client.calls if c[0].endswith("/spot-exposures/strike")]
     assert spot_calls and spot_calls[0][1]["min_strike"] == int(8000.0 * 0.75), (
         "the live spot must move the UW strike window")
-    man = _json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
+    man = _spx_store.raw_manifest(DAY)
     assert man["spot"]["value"] == 8000.0, "the Fetch must record its spot for a later Refresh"
     assert man["spot"]["source"] == "yfinance (live)"

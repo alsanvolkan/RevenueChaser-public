@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from RevenueChaser.module_spx_gamma import store as spx_store
 
 from .test_s2_fetch import DAY, _fetch, _handler
 
@@ -40,5 +41,5 @@ def test_a_repeated_key_across_pages_is_dropped_and_warned(tmp_path):
         return _handler(path, params)
     _uw, raw = _fetch(tmp_path, handler=moved)
     assert len(raw["option_chain"]["data"]) == 505
-    manifest = json.loads((tmp_path / DAY / "manifest.json").read_text())
+    manifest = spx_store.raw_manifest(DAY)
     assert any("moved while paging" in w for w in manifest["warnings"])
