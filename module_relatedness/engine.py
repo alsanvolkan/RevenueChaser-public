@@ -306,6 +306,9 @@ def _context(ticker: str, cik: str | None, source: dict | None = None) -> dict:
             out.update({k: rows[0][k] for k in ("sector", "industry") if rows[0].get(k)})
     except Exception:  # noqa: BLE001
         pass
+    # The spine's SIC (Compustat's), sector and industry win over the old tables (avo, 10 Nov 2026).
+    spine = _spine_rows([ticker]).get(ticker.upper()) or {}
+    out.update({k: str(spine[k]) for k in ("sic", "sector", "industry") if spine.get(k)})
     try:
         note = _segment_note((source or {}).get("cik") or cik, (source or {}).get("accession"))
         if note:
@@ -349,7 +352,20 @@ def _company_names(tickers: list[str]) -> dict[str, str]:
         return {}
     rows = rawstore.query(f"SELECT ticker, name FROM {_UNIVERSE} WHERE ticker IN (SELECT unnest(?))",
                           [list(tickers)])
-    return {r["ticker"]: str(r["name"]) for r in rows if r.get("name")}
+    out = {r["ticker"]: str(r["name"]) for r in rows if r.get("name")}
+    # The spine's name wins (avo, 10 Nov 2026: name, sector, industry and SIC from the new system before the 400 run):
+    # ``equity_universe`` cuts a name at about 31 characters, so 4,501 of 7,664 differed from the spine's.
+    out.update({t: str(r["name"]) for t, r in _spine_rows(tickers).items() if r.get("name")})
+    return out
+
+
+def _spine_rows(tickers) -> dict[str, dict]:
+    """``{ticker: security row}`` from ``spine.duckdb``; none when the file or the table is not there."""
+    from RevenueChaser.rcdata import read
+    try:
+        return {r["ticker"]: r for r in read.identity(tickers)}
+    except Exception:  # noqa: BLE001 - optional: the old universe still answers
+        return {}
 
 
 # How many tickers' filing texts ``_input_hashes`` holds at once (each is up to ~50 KB of prose).

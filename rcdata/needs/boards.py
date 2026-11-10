@@ -66,8 +66,8 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
     "module_leaps": ("options.daily",),
     # #490: ``engine.py`` reads the company records and the served filing texts.
     # #400 WP6: the B input adds the filing's XBRL major customers (``fundamentals.customers``).
-    "module_relatedness": ("identity.universe", "fundamentals.companies", "fundamentals.filings",
-                           "fundamentals.segments", "fundamentals.customers"),
+    "module_relatedness": ("identity.universe", "identity.security", "fundamentals.companies",
+                           "fundamentals.filings", "fundamentals.segments", "fundamentals.customers"),
 }
 
 
