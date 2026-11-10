@@ -122,6 +122,7 @@ def test_a_held_dataset_is_not_queued_by_the_hourly_pass(fetcher, monkeypatch):
     nothing every hour (no skipped row an hour); switched on, the dataset is due again."""
     from RevenueChaser.rcdata.build import due
     monkeypatch.setattr(due, "is_due", lambda ds, mode: (True, "test"))
+    ops.dataset_mode_set(fetcher.name, "full", by="avo")      # due, in a mode the hourly pass queues
     ops.switch_set("file-market", False, by="avo")
     [(name, why, rid, error)] = due.enqueue_due({fetcher.name: fetcher})
     assert rid is None and not error and "market.duckdb switch is off" in why
