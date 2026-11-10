@@ -162,6 +162,16 @@ def test_a_build_over_its_memory_limit_spills_on_the_raw_disk_and_leaves_no_scra
     assert not spill.exists() and _leftovers() == []
 
 
+def test_rc_duckdb_temp_dir_moves_the_spill_and_unset_keeps_the_raw_root(monkeypatch, tmp_path):
+    """#654 review: the spill folder can move (to the SSD, once a logged peak says it fits); the default is unchanged."""
+    monkeypatch.setenv("RC_DUCKDB_TEMP_DIR", str(tmp_path / "ssd_tmp"))
+    with serving.build("market") as b:
+        spill = Path(b.con.execute("SELECT current_setting('temp_directory')").fetchone()[0])
+    assert spill.parent == tmp_path / "ssd_tmp" and spill.name == f"{b.path.name}.tmp"
+    monkeypatch.setenv("RC_DUCKDB_TEMP_DIR", " ")
+    assert serving.spill_dir(Path("m.duckdb")) == Path(config.MARKET_RAW_DIR) / "build_tmp" / "m.duckdb.tmp"
+
+
 def _build_t(rows: int, **swap_kw) -> None:
     with serving.build("market") as b:
         b.con.execute(f"CREATE TABLE t AS SELECT range AS i FROM range({rows})")
