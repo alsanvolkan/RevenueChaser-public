@@ -73,12 +73,8 @@ class TaskSettings:
         return self.time_limit_minutes if self.time_limit_minutes is not None else self.time_limit_hours * 60
 
     def summary(self) -> str:
-        parts = ["runs on battery" if self.allow_on_battery else "AC power only"]
-        if self.wake_to_run:
-            parts.append("wakes the PC")
-        if self.start_when_available:
-            parts.append("catches up a missed run")
-        parts.append("only when logged on" if self.run_only_when_logged_on else "logged on or not")
+        # only what the systemd timer and service honour (#579): Persistent= and TimeoutStartSec=
+        parts = ["catches up a missed run" if self.start_when_available else "skips a missed run"]
         parts.append("no time limit" if self.no_time_limit else
                      f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
                      else f"{self.time_limit_hours} h limit")
@@ -446,7 +442,7 @@ class UnavailableScheduler(Scheduler):
         return None
 
     def _no(self, *a, **k):
-        raise SchedulerUnavailable("Task Scheduler is not available on this host")
+        raise SchedulerUnavailable("No scheduler is available on this host")
 
     install = set_enabled = remove = run = _no
 
@@ -1045,7 +1041,7 @@ def apply(name: str, action: str, sched: Scheduler | None = None) -> dict:
         raise UnknownAction("unknown action")
     sched = sched or get_scheduler()
     if not sched.available:
-        raise SchedulerUnavailable("Task Scheduler is not available on this host")
+        raise SchedulerUnavailable("No scheduler is available on this host")
     if action == "install":
         sched.install(e)
     elif action == "enable":

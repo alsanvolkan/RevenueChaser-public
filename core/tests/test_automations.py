@@ -797,6 +797,9 @@ def test_a_task_with_no_time_limit_says_so_and_installs_none():
     s = A.TaskSettings(no_time_limit=True)
     assert s.limit_minutes is None
     assert "no time limit" in s.summary() and "h limit" not in s.summary()
+    assert A.TaskSettings(wake_to_run=True, start_when_available=False).summary() == "skips a missed run, 4 h limit"
+    # #579: the jobs run as systemd units, so no Task Scheduler words reach the Settings page
+    assert not any(w in e.settings.summary() for e in A.REGISTRY for w in ("battery", "AC power", "PC", "logged on"))
     assert A.TaskSettings(time_limit_minutes=50).limit_minutes == 50
     assert A.TaskSettings(time_limit_hours=2).limit_minutes == 120
 
