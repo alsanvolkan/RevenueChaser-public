@@ -18,7 +18,9 @@ def test_a_stale_dataset_is_a_card_that_names_it():
     assert a["stale"]["cls"] == "bad" and "market_series" in a["stale"]["label"]
 
 
-def test_a_provider_past_80_percent_of_its_cap_is_a_card_and_below_is_not():
+def test_a_provider_past_80_percent_of_its_cap_is_a_card_and_below_is_not(monkeypatch):
+    from RevenueChaser.rcdata import caps
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", 100_000)              # UW has no cap since 2026-11-10: a test cap
     nd = control_nd()
     assert "cap" not in _alerts(nd), "uw at 60 % is fine"
     nd["spend"]["providers"] = [{"provider": "uw", "cap": 100000, "today": 85_000, "week": 1}]

@@ -87,7 +87,8 @@ def test_provider_calls_and_the_day_cap():
                                                    ibkr=lambda: None)))
     assert 'rc_provider_calls_today{provider="uw"} 7' in fam["rc_provider_calls_today"]
     assert 'rc_provider_failures_today{provider="uw"} 1' in fam["rc_provider_failures_today"]
-    assert any(l.startswith('rc_provider_day_cap{provider="uw"} ') for l in fam["rc_provider_day_cap"])
+    assert not any(l.startswith('rc_provider_day_cap{provider="uw"} ') for l in fam["rc_provider_day_cap"])  # no UW cap
+    assert any(l.startswith('rc_provider_day_cap{provider="alphavantage"} ') for l in fam["rc_provider_day_cap"])
 
 
 def test_the_timer_unknown_leaves_its_family_empty_not_zero():
