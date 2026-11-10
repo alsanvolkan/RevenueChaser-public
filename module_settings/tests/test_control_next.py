@@ -37,6 +37,11 @@ def test_a_dataset_that_starts_by_hand_waits_for_its_first_fetch():
     assert words(ok(next_check_due="2026-11-13"), starts_by_hand=True) == "Fri 13 Nov, 06:07 (00:07 New York)"
 
 
+def test_an_hourly_dataset_runs_on_every_pass():
+    assert words(ok(), cadence="hourly") == "every hourly pass (:07)"
+    assert words(ok(), cadence="hourly", timer=OFF) == "timer off · every hourly pass (:07)"
+
+
 def test_a_timer_not_known_gives_no_time():
     assert words(ok(), timer=UNKNOWN) == "next pass not known"
     assert words(ok(), timer=None) == "next pass not known"
