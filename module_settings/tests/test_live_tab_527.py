@@ -31,9 +31,9 @@ def test_the_frame_has_no_source_until_the_tab_opens():
     assert 'title="' in frame and 'loading="lazy"' in frame
 
 
-def test_the_two_boards_and_the_grafana_address():
+def test_the_boards_and_the_grafana_address():
     html = _page()
-    for uid in ("rc-data-health", "rc-fetch"):
+    for uid in ("rc-data-health", "rc-fetch", "rc-jobs"):
         assert f'data-board="{uid}"' in html
     js = report.LIVE_JS
     assert "location.hostname" in js and "':3000/d/'" in js, "same host as the page, Grafana's port"
