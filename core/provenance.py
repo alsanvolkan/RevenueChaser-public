@@ -241,6 +241,8 @@ RESOLVERS = {
     "module_uw_interaction": None,
     # the dashboard's own log files: no downloaded dataset
     "logs": None,
+    # Activity: runs, logs and the watch lists; no downloaded dataset
+    "activity": None,
     "runs": None,
 }
 
