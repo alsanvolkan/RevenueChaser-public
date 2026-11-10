@@ -97,8 +97,10 @@ def build_config() -> dict[str, str | int]:
 def spill_dir(path: Path) -> Path:
     """Where the build file ``path`` spills: under the raw root (the server's HDD), one folder per build, which DuckDB
     removes when the build closes. Not beside the build file: request 71 spilled 47 GB on the SSD the live files share
-    (#372)."""
-    return Path(config.MARKET_RAW_DIR) / "build_tmp" / f"{path.name}.tmp"
+    (#372). ``RC_DUCKDB_TEMP_DIR`` moves the parent folder (a later move to the SSD, once a build's logged spill peak
+    says it fits); unset or empty keeps the raw root."""
+    root = os.getenv("RC_DUCKDB_TEMP_DIR", "").strip()
+    return (Path(root) if root else Path(config.MARKET_RAW_DIR) / "build_tmp") / f"{path.name}.tmp"
 
 
 class SwapRefused(RuntimeError):
