@@ -2312,10 +2312,10 @@ HISTORY: dict[str, dict] = {
     ], "module_sector_rotation", "session"),
     # The RRG points a live Rotation Fetch saved (avo's card, #374), keyed by row_no: rotation_snapshots has no PK.
     "rotation_snapshots_history": _mirror_entry("rotation_snapshots", "module_sector_rotation", "session"),
-    # SPX Gamma review 9 Nov 2026, PR 3 (#427 item 4): the levels a Fetch showed, one row per run; the header's
+    # SPX Gamma review 9 Nov 2026, PR 3 (#427 item 4): the levels a Fetch showed, one row per run (row_no numbered by record_run); the header's
     # payload is the whole snapshot. A session board: one run's row per session (added without a bump, as #374).
-    "spx_gamma_levels_history": _run_entry(["run_id", "asof_date"], [
-        "run_id TEXT", "asof_date DATE", "spot DOUBLE", "regime TEXT", "net_gex DOUBLE", "gamma_flip DOUBLE",
+    "spx_gamma_levels_history": _run_entry(["run_id", "row_no"], [
+        "run_id TEXT", "row_no INTEGER", "asof_date DATE", "spot DOUBLE", "regime TEXT", "net_gex DOUBLE", "gamma_flip DOUBLE",
         "call_wall DOUBLE", "put_wall DOUBLE", "pin_magnet DOUBLE", "pin_flag TEXT", "charm_label TEXT",
         "charm_strike DOUBLE", "expected_move DOUBLE", "s_dir DOUBLE", "bias TEXT", "p_consolidation DOUBLE",
         "p_upside DOUBLE", "p_downside DOUBLE",
