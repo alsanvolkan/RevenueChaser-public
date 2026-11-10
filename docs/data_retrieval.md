@@ -239,8 +239,9 @@ each, never the builder lock — so two datasets fetch side by side and beside a
 
 - **`POST /api/build/schedule/<dataset>/<pause|resume>`**: sets or clears `dataset_schedule.paused_at` /
   `paused_by`; 404 for another action.
-- **`POST /api/build/automation/<kind>`** `{"mode": "off|raw|parquet|full"}`: what the hourly pass queues on its own
-  for that serving kind's due datasets (`ops.kind_automation`); 400 for an unknown kind or mode.
+- **`POST /api/build/automation-ds/<dataset>`** `{"mode": "off|raw|parquet|full"}`: what the hourly pass queues on its
+  own for that dataset (`ops.dataset_automation`; no row is `off`); 400 for an unknown dataset or mode. The file-level
+  `/api/build/automation/<kind>` is gone (avo, 10 Nov 2026).
 - **`GET /api/idle`** (loopback, no header): `{idle, reasons}` from `app/jobs.py` `idle()`. It is false while a
   dashboard job is queued or running, while any `core/job_lock` name is held by any process, or while another
   process's live `.rc-proc-<pid>` marker sits in the store dir or the market dir (F8 A). `stop.ps1` reads it, and

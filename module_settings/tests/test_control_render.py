@@ -130,7 +130,7 @@ def test_the_script_uses_only_the_routes_the_page_names():
     js = control_render.CTL_JS
     assert "'/api/" not in js and '"/api/' not in js, "routes come from CTL.routes"
     assert set(control_render.ROUTES.values()) == {
-        "/api/build/request/", "/api/build/schedule/", "/api/build/automation/", "/api/build/automation-ds/",
+        "/api/build/request/", "/api/build/schedule/", "/api/build/automation-ds/",
         "/api/build/switch/", "/api/build/timer", "/api/build/queue",
         "/api/settings/board/module_settings",
         "/api/settings/sample/", "/api/job/", "/run/storage-picture"}

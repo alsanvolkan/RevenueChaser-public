@@ -27,7 +27,7 @@ CTL_JS = (_STATIC / "control.js").read_text(encoding="utf-8")
 
 #: The routes a press uses; the script reads them from the page's data, so a test sees every route in one place.
 ROUTES = {"request": "/api/build/request/", "schedule": "/api/build/schedule/", "queue": "/api/build/queue",
-          "automation": "/api/build/automation/", "automation_ds": "/api/build/automation-ds/",
+          "automation_ds": "/api/build/automation-ds/",
           "switch": "/api/build/switch/", "timer": "/api/build/timer",
           "settings": "/api/settings/board/module_settings", "sample": "/api/settings/sample/",
           "job": "/api/job/", "picture": "/run/storage-picture"}
@@ -472,36 +472,15 @@ def _one_button(d: dict, view: dict) -> str:
             f'{menu}</span>{idle}')
 
 
-def _automation(f: dict, view: dict) -> str:
-    """What the hourly pass queues on its own for this file's due datasets (``/api/build/automation/<kind>``); a
-    Fetch press is not touched by it. When and how often stay each dataset's own (its schedule below)."""
-    a = f.get("automation") or {}
-    mode, kind = a.get("mode") or "off", esc(f["kind"])
-    opts = "".join(f'<option value="{m}"{" selected" if m == mode else ""}>{esc(w)}</option>'
-                   for m, w in AUTOMATION_MODES)
-    timer = view.get("timer") or {}
-    minute = timer.get("minute")
-    when = (f'the hourly pass at :{int(minute):02d}' if minute is not None else "the hourly pass") + (
-        " · the builder timer is off, so nothing runs on its own" if timer.get("state") == "off" else "")
-    who = (f' · set by {esc(a.get("set_by") or "?")} at {esc(_local_clock(a.get("set_at")))}'
-           if a.get("set_at") else " · the default")
-    return ('<div class="schedset">'
-            f'<label for="auto-{kind}">Automated</label><select id="auto-{kind}" data-automation>{opts}</select>'
-            f'<button type="button" class="btn" data-job="automation" data-kind="{kind}">Save</button>'
-            f'<span class="dim" role="status">{esc(when)}{who}</span></div>')
-
-
 def _local_clock(at) -> str:
     return control._local(datetime.fromtimestamp(float(at), timezone.utc)).strftime("%d %b %H:%M")
 
 
 def _ds_automation(d: dict, key: str) -> str:
-    """#527: this source's own Automated select, "as the file" by default (no row: the file's mode holds)."""
-    from RevenueChaser.rcdata import ops
-    mine = d.get("automation_own") or ops.AS_THE_FILE
-    file_mode = dict(AUTOMATION_MODES).get(d.get("automation_file") or "off", d.get("automation_file"))
-    choices = ((ops.AS_THE_FILE, f"as the file ({file_mode})"), *AUTOMATION_MODES)
-    opts = "".join(f'<option value="{m}"{" selected" if m == mine else ""}>{esc(w)}</option>' for m, w in choices)
+    """#527: this source's own Automated select; ``off`` when it has no row (avo, 10 Nov 2026: no file-level mode)."""
+    mine = d.get("automation_own") or "off"
+    opts = "".join(f'<option value="{m}"{" selected" if m == mine else ""}>{esc(w)}</option>'
+                   for m, w in AUTOMATION_MODES)
     return ('<div class="schedset">'
             f'<label for="dsauto-{key}">Automated</label><select id="dsauto-{key}" data-dsauto>{opts}</select>'
             f'<button type="button" class="btn" data-job="automation" data-dataset="{esc(d["dataset"])}">Save</button>'

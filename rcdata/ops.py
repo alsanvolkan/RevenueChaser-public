@@ -872,8 +872,8 @@ def kind_mode(kind: str) -> str:
     return (kind_mode_get(kind) or {}).get("mode") or "off"
 
 
-#: What a source's own Automated select sets (#527): ``file`` ("as the file") drops its row, so the kind's mode
-#: holds; any ``KIND_MODES`` value holds for that source only.
+#: What a source's own Automated select sets (#527): any ``KIND_MODES`` value. ``file`` (the old "as the file") still
+#: drops the row, which is ``off`` now: the hourly pass no longer reads the kind's mode (avo, 10 Nov 2026).
 AS_THE_FILE = "file"
 DATASET_MODES = (AS_THE_FILE, *KIND_MODES)
 
@@ -898,8 +898,25 @@ def dataset_mode_get(dataset: str) -> dict | None:
 
 
 def dataset_mode(dataset: str, kind: str) -> str:
-    """What the hourly pass runs for ``dataset``: its own row's mode, else its kind's (``kind_mode``)."""
-    return (dataset_mode_get(dataset) or {}).get("mode") or kind_mode(kind)
+    """What the hourly pass runs for ``dataset``: its own row's mode, ``off`` when it has none. ``kind`` is no longer
+    read (avo, 10 Nov 2026: the file-level setting is gone); the argument stays so the builder's call is unchanged."""
+    return (dataset_mode_get(dataset) or {}).get("mode") or "off"
+
+
+def copy_kind_modes(datasets: dict, *, by: str) -> list[tuple[str, str]]:
+    """The one-time step of the deploy that drops the file-level setting: each dataset with no row of its own gets
+    its kind's mode as its own, so the hourly pass runs exactly what it ran before. ``datasets`` is ``{name: object
+    with .kind}`` (``rcdata.build.DATASETS``). Returns ``[(dataset, mode)]`` it wrote; ``off`` kinds write nothing,
+    and running it twice writes nothing the second time."""
+    out = []
+    for name, ds in datasets.items():
+        if dataset_mode_get(name) is not None:
+            continue
+        mode = kind_mode(ds.kind)
+        if mode != "off":
+            dataset_mode_set(name, mode, by=by)
+            out.append((name, mode))
+    return out
 
 
 def _switch(name: str) -> str:

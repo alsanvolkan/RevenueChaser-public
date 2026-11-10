@@ -44,13 +44,14 @@ def test_a_kind_with_no_row_is_off_and_queues_nothing():
 @pytest.mark.parametrize("mode, params", [("raw", '{"no_parquet": true}'), ("parquet", '{"no_duckdb": true}'),
                                           ("full", None)])
 def test_each_mode_queues_the_stage_a_fetch_press_asks_for(mode, params):
-    ops.kind_mode_set("market", mode, by="avo")
+    ops.dataset_mode_set(MS, mode, by="avo")
     due.enqueue_due()
     assert _queued() == [{"dataset": MS, "requested_by": "schedule", "params": params}]
 
 
-def test_another_kinds_mode_does_not_open_this_one():
-    ops.kind_mode_set("prices", "full", by="avo")
+def test_a_kinds_mode_no_longer_opens_its_datasets():
+    # avo, 10 Nov 2026: the file-level setting is gone; only a dataset's own row queues it
+    ops.kind_mode_set("market", "full", by="avo")
     due.enqueue_due()
     assert _queued() == []
 

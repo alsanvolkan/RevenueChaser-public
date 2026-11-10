@@ -1106,10 +1106,10 @@
   /* what the hourly pass queues for one served file on its own (ops.kind_automation); a Fetch press is not touched */
   function automation(btn) {
     // #527: a source's own select (data-dsauto, its dataset) or the file's (data-automation, its kind)
-    var row = btn.closest('.schedset'), kind = btn.getAttribute('data-kind'), ds = btn.getAttribute('data-dataset');
-    var sel = row.querySelector(ds ? '[data-dsauto]' : '[data-automation]'), out = row.querySelector('[role="status"]');
+    var row = btn.closest('.schedset'), ds = btn.getAttribute('data-dataset');
+    var sel = row.querySelector('[data-dsauto]'), out = row.querySelector('[role="status"]');
     btn.disabled = true;
-    X.send('POST', ds ? C.routes.automation_ds + ds : C.routes.automation + kind, { mode: sel.value }).then(function (r) {
+    X.send('POST', C.routes.automation_ds + ds, { mode: sel.value }).then(function (r) {
       btn.disabled = false;
       if (r.status >= 200 && r.status < 300) out.textContent = 'saved: ' + sel.options[sel.selectedIndex].text + ' · the next hourly pass reads it';
       else out.textContent = r.body.error || ('refused · HTTP ' + r.status);

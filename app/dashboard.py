@@ -1663,25 +1663,11 @@ def api_build_schedule(dataset: str, action: str):
     return jsonify({"ok": True, "dataset": dataset, "schedule": ops.schedule_get(dataset), "cancelled": cancelled})
 
 
-@app.route("/api/build/automation/<kind>", methods=["POST"])
-def api_build_automation(kind: str):
-    """Set what the hourly pass queues for one serving kind's due datasets: ``{"mode": "off|raw|parquet|full"}``
-    (``ops.KIND_MODES``). 400 for an unknown kind or mode. A person's Fetch is not touched by it."""
-    from RevenueChaser.rcdata import ops, serving
-    if kind not in serving.KINDS:
-        return jsonify({"ok": False, "error": f"unknown kind {kind!r}; known: {', '.join(serving.KINDS)}"}), 400
-    mode = str((request.get_json(silent=True) or {}).get("mode") or "").strip()
-    if mode not in ops.KIND_MODES:
-        return jsonify({"ok": False, "error": f"unknown mode {mode!r}; known: {', '.join(ops.KIND_MODES)}"}), 400
-    ops.kind_mode_set(kind, mode, by=_requested_by())
-    return jsonify({"ok": True, "kind": kind, "automation": ops.kind_mode_get(kind)})
-
-
 @app.route("/api/build/automation-ds/<path:dataset>", methods=["POST"])
 def api_build_automation_ds(dataset: str):
-    """#527: one source's own automation, over its file's: ``{"mode": "file|off|raw|parquet|full"}``
-    (``ops.DATASET_MODES``); ``file`` drops the row, so the file's mode holds again. 400 for an unknown dataset or
-    mode. A person's Fetch is not touched by it."""
+    """#527: one source's own automation: ``{"mode": "off|raw|parquet|full"}`` (``ops.DATASET_MODES``; ``file`` drops
+    the row, which is ``off``: the file-level mode is gone, avo 10 Nov 2026). 400 for an unknown dataset or mode. A
+    person's Fetch is not touched by it."""
     from RevenueChaser.rcdata import ops
     from RevenueChaser.rcdata.build import DATASETS
     if dataset not in DATASETS:

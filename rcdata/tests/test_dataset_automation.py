@@ -26,10 +26,22 @@ def _queued() -> list[dict]:
     return [{c: r[c] for c in ("dataset", "params")} for r in ops.rows("build_requests")]
 
 
-def test_no_row_follows_the_file_and_the_reader_never_creates_the_file():
+def test_no_row_is_off_whatever_the_file_says_and_the_reader_never_creates_the_file():
     assert ops.read_dataset_modes() == {} and not ops.ops_path().exists()
     assert ops.dataset_mode(MS, "market") == "off"
     ops.kind_mode_set("market", "raw", by="avo")
+    assert ops.dataset_mode(MS, "market") == "off"
+
+
+def test_the_one_time_copy_gives_each_dataset_its_files_mode_once():
+    from types import SimpleNamespace as NS
+    ds = {MS: NS(kind="market"), "own": NS(kind="market"), "idle": NS(kind="options")}
+    ops.kind_mode_set("market", "raw", by="avo")
+    ops.dataset_mode_set("own", "full", by="avo")
+    assert ops.copy_kind_modes(ds, by="deploy") == [(MS, "raw")]
+    modes = {k: v["mode"] for k, v in ops.read_dataset_modes().items()}
+    assert modes == {MS: "raw", "own": "full"}, "an own row is kept and an off kind writes nothing"
+    assert ops.copy_kind_modes(ds, by="deploy") == []
     assert ops.dataset_mode(MS, "market") == "raw"
 
 
@@ -43,7 +55,7 @@ def test_a_sources_own_mode_wins_for_that_source_only():
     assert _queued() == [{"dataset": MS, "params": None}]
 
 
-def test_a_source_set_off_is_not_queued_while_its_file_runs_full():
+def test_a_source_set_off_is_not_queued_whatever_its_file_says():
     ops.kind_mode_set("market", "full", by="avo")
     ops.dataset_mode_set(MS, "off", by="avo")
     [(name, why, rid, _)] = due.enqueue_due()
