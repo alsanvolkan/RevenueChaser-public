@@ -158,3 +158,10 @@ def test_an_hourly_dataset_is_due_again_an_hour_after_its_run(gw, monkeypatch):
     started = ops.run_started_at(ops.latest_check(ibkr_news.NAME)["run_id"])
     monkeypatch.setattr(calendar, "_now", lambda: datetime.fromtimestamp(started + 3600, timezone.utc))
     assert due.is_due(DATASETS[ibkr_news.NAME])[0] is True
+
+
+def test_settings_reads_the_hourly_cadence_and_counts_it_like_a_daily_one():
+    from RevenueChaser.module_settings import newdata
+    assert newdata._cadence(ibkr_news.NAME, None) == newdata._cadence(econ.NAME, None) == "hourly"
+    check = {"result": "changed", "source_as_of": "2026-11-09", "checked_on": "2026-11-09", "coverage": None}
+    assert newdata.status_of(econ.NAME, check, check, "hourly", NOW)[0] == "fresh"
