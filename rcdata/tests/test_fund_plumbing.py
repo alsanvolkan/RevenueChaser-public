@@ -43,7 +43,7 @@ def test_a_build_with_no_source_yet_serves_the_tier_a_companies():
     rows = fx.q("SELECT ticker, cik, gvkey, gsubind, spine_as_of, source FROM fundamental_company ORDER BY ticker")
     assert [r[0] for r in rows] == fx.TIER_A                                 # WFC-PC is Tier B
     assert rows[0] == ("HEI", "46619", "005567", "20101010", date(2026, 10, 27), "spine/security")
-    assert fx.q("SELECT kind, version FROM serving_schema_version") == [("fundamentals", 2)]
+    assert fx.q("SELECT kind, version FROM serving_schema_version") == [("fundamentals", 3)]
 
 
 def test_no_spine_yet_builds_empty_tables_not_an_error():
