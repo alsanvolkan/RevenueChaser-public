@@ -52,7 +52,7 @@ def test_the_391_rows_land_typed_with_their_provenance(http_mock):
         lo, hi = con.execute("SELECT min(strike), max(strike) FROM spx_gamma_expiry_strike").fetchone()
         version = con.execute("SELECT kind, version FROM serving_schema_version").fetchone()
     assert by_dte == {0: 155, 1: 236} and (lo, hi) == (4800.0, 9200.0)
-    assert version == ("market", 2)
+    assert version == ("market", 3)
     for f in uw.NUMERIC_FIELDS:
         assert types[f] == "DOUBLE", f
     assert types["session_date"] == "DATE" and types["observed"] == "BOOLEAN" and types["fetched_at"] == "DOUBLE"

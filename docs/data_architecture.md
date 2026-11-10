@@ -1006,7 +1006,7 @@ below; the ownership store, `ownership` (serving schema version `1`), under "The
 fundamentals layer, `fundamentals` (serving schema version `2`), under "Fundamentals" after it; and the options
 data, `options` (serving schema version `1`), under "The options data" last. The six numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
 (`rcdata/build/dirty.py`), so a bump makes only its own kind's next build whole (#649). The market data,
-`market` (serving schema version `2`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
+`market` (serving schema version `3`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`), `spx_greek_expiry_strike` (the same key, the four
 greeks per side from `greek-exposure/strike-expiry` for every expiry of the chain, same provenance; where two
@@ -1014,7 +1014,11 @@ option series share an expiry date — SPX and SPXW on a third Friday — UW's t
 into one, because its answer has no field to tell the series apart; its `dte` is
 UW's **calendar**-day count, while `spx_gamma_expiry_strike.dte` counts NYSE sessions, so the two columns are
 different measures of different endpoints and are never substituted) and `market_series` (key series id, observation date,
-source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance). `session_date` comes from
+source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance), `economic_event` (UW's economic
+calendar, hourly: key snapshot day, event time as epoch seconds, event, type; `forecast`, `prev` and
+`reported_period` as text; each day is the newest fetch of that New York day, so a same-day revision is kept) and
+`news_headline` (IBKR's Dow Jones headlines of the stock watch list and twelve large names, hourly: key headline id,
+ticker; `published_date` the UTC publish day, `published_at`, `headline`, `provider`; market 3, #643). `session_date` comes from
 `core/calendar.py` and is empty outside its 1993-2028 table (its rule C: no second calendar). The previous file
 stays as `<kind>.prev.duckdb`.
 

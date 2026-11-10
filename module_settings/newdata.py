@@ -167,15 +167,16 @@ def _iso_utc(epoch) -> str | None:
 
 def _cadence(dataset: str, schedule: dict | None) -> str:
     c = (schedule or {}).get("cadence")
-    if c in ("daily", "weekly", "monthly"):
+    if c in ("hourly", "daily", "weekly", "monthly"):
         return c
     own = getattr(_datasets().get(dataset), "cadence", None)
-    return own if own in ("daily", "weekly", "monthly") else CADENCE.get(dataset, "daily")
+    return own if own in ("hourly", "daily", "weekly", "monthly") else CADENCE.get(dataset, "daily")
 
 
 def _missed(cadence: str, check: dict, now: datetime) -> int:
     """Cycles missed since ``check``: 0 within its cycle, 1 one cycle late, 2 for two or more."""
-    if cadence == "daily":
+    # shortcut: an hourly dataset is counted in missed sessions like a daily one (a check holds only its day).
+    if cadence in ("daily", "hourly"):
         as_of = _day(check.get("source_as_of")) or _day(check.get("checked_on"))
         if as_of is None:
             return 2
@@ -209,7 +210,7 @@ def status_of(dataset: str, last: dict | None, base: dict | None, cadence: str,
     if base is None:
         return "never", "only skipped checks so far", last
     missed = _missed(cadence, base, now)
-    unit = "session" if cadence == "daily" else f"{cadence} cycle"
+    unit = "session" if cadence in ("daily", "hourly") else f"{cadence} cycle"
     if missed >= 2:
         return "stale", f"two or more {unit}s missed", base
     target = COVERAGE_TARGET.get(dataset)
