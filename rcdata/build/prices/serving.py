@@ -53,6 +53,7 @@ without it and checks their key with one query instead (``no_primary_key``, ``du
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 import duckdb
@@ -60,6 +61,8 @@ import duckdb
 from ... import ops
 from .. import base
 from . import KIND, incremental, stage, universe, wrds_history
+
+logger = logging.getLogger(__name__)
 
 NAME = "prices/serving"
 VIEWS = ("security_symbol_now", "price_bars_daily", "price_actions", "index_levels_daily")
@@ -195,9 +198,11 @@ KEYS = {"price_bar_daily": ("security_id", "session_date"), "market_cap_daily": 
 MAY_DROP_PRIMARY_KEY = ("price_bar_daily", "market_cap_daily")
 NO_PRIMARY_KEY_ENV = "RC_PRICES_NO_PRIMARY_KEY"
 # One ``_hist_all`` row per (security, session), the lowest priority (Compustat, 1, before CRSP) of those ``where`` keeps,
-# as a filter on ``rowid``. A hash aggregate, not a ``row_number()`` window: the window over every security and
+# then the lowest series (two Compustat series of one aliased fund: chunking changes ``rowid`` order, review F3 of
+# #654), as a filter on ``rowid``. A hash aggregate, not a ``row_number()`` window: the window over every security and
 # session of 2010-2025 (60.7M rows, 39.2M partitions) ran out of DuckDB's 5 GB, where this spills (#372).
-HIST_FIRST = "rowid IN (SELECT arg_min(rowid, priority) FROM _hist_all {where} GROUP BY security_id, session_date)"
+HIST_FIRST = ("rowid IN (SELECT arg_min(rowid, row(priority, series)) FROM _hist_all {where} "
+              "GROUP BY security_id, session_date)")
 # The history rows a session may be served from: Compustat's. A CRSP row is staged for the difference report and
 # the split cross-check and is never served (avo, 4 Nov 2026; ``wrds_history``'s CRSP section).
 HIST_SERVED = f"source <> '{wrds_history.CRSP}'"
@@ -461,29 +466,28 @@ class PricesServing:
             ctx.pending[NAME + ":scope"] = sc
         incremental.record_identity(con)
         rows = incremental.where("session_date") if live else None
-        con.execute(BUILD_HIST_SQL.format(crsp=wrds_history.CRSP_BARS, comp=wrds_history.COMP_BARS,
-                                          listed=wrds_history.SECD_LISTED))
-        cols = ", ".join(c for c, _ in PRICE_BAR)
-        # Alpaca's bar wins its session; of the history bars, Compustat's (priority 1) before CRSP's.
-        bars_sql = (f"SELECT * FROM ({_index_levels(con)}) UNION ALL "
-                    f"SELECT {cols} FROM (SELECT * FROM _hist_all h WHERE {HIST_FIRST.format(where='WHERE ' + HIST_SERVED)})")
-        counts["price_bar_daily"] = _create(con, "price_bar_daily", bars_sql, live, rows)
+        # A whole build runs the WRDS history one chunk of securities at a time (#654), so its spill is about 1/N of
+        # one pass; ``RC_PRICES_CHUNKS=1`` and the build on the live copy keep the single pass.
+        chunked = None if live or stage.chunks() == 1 else Chunked(ctx, con, stage.chunks())
+        if chunked is None:
+            con.execute(BUILD_HIST_SQL.format(crsp=wrds_history.CRSP_BARS, comp=wrds_history.COMP_BARS,
+                                              listed=wrds_history.SECD_LISTED))
+            # Alpaca's bar wins its session; of the history bars, Compustat's (priority 1) before CRSP's.
+            bars_sql = f"SELECT * FROM ({_index_levels(con)}) UNION ALL {HIST_BARS}"
+            counts["price_bar_daily"] = _create(con, "price_bar_daily", bars_sql, live, rows)
+            moved, basis = _hist_counts(con)
+        else:
+            counts["price_bar_daily"], moved, basis = chunked.bars(self)
         self._key_check(ctx, con, "price_bar_daily", found)
         # The dated exchange rule against today's code: what it serves that today's code would not, and the reverse.
-        moved = con.execute("SELECT count(*) FILTER (WHERE listed AND NOT listed_today), count(DISTINCT gvkey || iid) "
-                            "FILTER (WHERE listed AND NOT listed_today), count(*) FILTER (WHERE listed_today AND NOT "
-                            "listed), count(DISTINCT gvkey || iid) FILTER (WHERE listed_today AND NOT listed) "
-                            "FROM _secd_listed WHERE prccd > 0 AND coalesce(upper(curcdd), 'USD') = 'USD' "
-                            "AND datadate <= getvariable('rc_build_date')").fetchone()
         if any(moved):
             ctx.notes.append(f"exchange history: {moved[0]} secd rows of {moved[1]} securities listed that day though "
-                             f"not today, {moved[2]} rows of {moved[3]} listed today though not that day")
-        basis = con.execute(f"SELECT return_basis, count(*) FROM _hist_all WHERE source = '{wrds_history.COMPUSTAT}' "
-                            "AND return_basis IS NOT NULL "
-                            "GROUP BY ALL ORDER BY 1").fetchall()
+                             f"not today, {moved[2]} rows of {moved[3]} listed today though not that day"
+                             + (" (of the stored securities)" if chunked else ""))
         if basis:
-            ctx.notes.append("Compustat day returns by rule: " + ", ".join(f"{n} {b}" for b, n in basis))
-        counts["corporate_action"] = self._actions(ctx, con, found, live)
+            ctx.notes.append("Compustat day returns by rule: "
+                             + ", ".join(f"{n} {b}" for b, n in sorted(basis.items())))
+        counts["corporate_action"] = self._actions(ctx, con, found, live, wrds=chunked is None)
         if live:
             # The factors are made from every action the file now holds, with the close before each from its bars:
             # ``_act_final``'s ``close_before``, by the same ASOF join.
@@ -494,22 +498,28 @@ class PricesServing:
         if not live:
             counts["shares_class"] = self._shares(con, found)
         counts["security_symbol"] = _create(con, "security_symbol", SYMBOL_SQL, live)
-        # On the live copy the caps of a rebuilt session need the bars ``ISSUER_WITHIN_DAYS`` before it, and nothing
-        # older: the issuer cap reads each class's newest cap at most that old.
-        near = (f"AND ({incremental.where(f'b.session_date + INTERVAL {ISSUER_WITHIN_DAYS} DAY', 'b.security_id')})"
-                if live else "")
-        counts["market_cap_daily"] = _create(con, "market_cap_daily",
-                                             MARKET_CAP_SQL.format(within=ISSUER_WITHIN_DAYS).replace("/*near*/", near),
-                                             live, rows)
+        if chunked is None:
+            # On the live copy the caps of a rebuilt session need the bars ``ISSUER_WITHIN_DAYS`` before it, and
+            # nothing older: the issuer cap reads each class's newest cap at most that old.
+            near = (f"AND ({incremental.where(f'b.session_date + INTERVAL {ISSUER_WITHIN_DAYS} DAY', 'b.security_id')})"
+                    if live else "")
+            caps_sql = MARKET_CAP_SQL.format(within=ISSUER_WITHIN_DAYS).replace("/*near*/", near)
+            counts["market_cap_daily"] = _create(con, "market_cap_daily", caps_sql, live, rows)
+        else:
+            counts["market_cap_daily"] = chunked.caps()
         self._key_check(ctx, con, "market_cap_daily", found)
         counts["price_revision"] = _create(con, "price_revision",
                                            f"{REVISION_SQL} UNION ALL {wrds_history.REVISIONS_SQL}", live)
+        alpaca = None
         if live:
             counts["wrds_price_diff"] = stage.count(con, "wrds_price_diff")
-        else:
+        elif chunked is None:
             counts["wrds_price_diff"] = self._wrds_report(con)
+        else:
+            counts["wrds_price_diff"], alpaca = chunked.report()
+            chunked.note()
         self._views(con)
-        found += self._issues(con, have, live)
+        found += self._issues(con, have, live, alpaca)
         ctx.pending[NAME] = found
         return counts
 
@@ -555,22 +565,33 @@ class PricesServing:
     # ── Actions ───────────────────────────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _actions(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, found: list, live: bool = False) -> int:
+    def _wrds_actions(con: duckdb.DuckDBPyConnection, live: bool = False, chunk: bool = False) -> None:
+        """The WRDS history's part of the actions, over the WRDS staging: Compustat's into ``_act``, CRSP's lone
+        splits into ``_crsp_split_near``. A chunk (``Chunked``) adds the rows of its own securities to both."""
+        mine = " AND w.security_id IN (SELECT security_id FROM _bucket)" if chunk else ""
         # Compustat's actions of the securities with bars, unless Alpaca has one of that kind that day.
         con.execute(f"""INSERT INTO _act BY NAME SELECT w.* FROM ({wrds_history.ACTIONS_SQL}) w
-            WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
+            WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily){mine}
               AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id AND p.ex_date = w.ex_date
                               AND {ACTION_KIND.format(a='p')} = {ACTION_KIND.format(a='w')})""")
         # CRSP's splits are the cross-check only (Order 4; the WRDS access inventory of 3 Nov 2026 prefers
         # Compustat's daily splits, and avo's rule of 4 Nov 2026 leaves CRSP no served bar): one no Alpaca or
         # Compustat split of the security is near is kept aside and named, never applied.
-        con.execute(f"""CREATE OR REPLACE TEMP TABLE _crsp_split_near AS SELECT w.* FROM ({wrds_history.CRSP_SPLITS}) w
-            WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily)
+        into = "INSERT INTO _crsp_split_near" if chunk else "CREATE OR REPLACE TEMP TABLE _crsp_split_near AS"
+        con.execute(f"""{into}
+            SELECT w.* FROM ({wrds_history.CRSP_SPLITS}) w
+            WHERE w.security_id IN (SELECT DISTINCT security_id FROM price_bar_daily){mine}
               AND NOT EXISTS (SELECT 1 FROM _act p WHERE p.security_id = w.security_id
                               AND {ACTION_KIND.format(a='p')} = 'split'
                               AND abs(date_diff('day', p.ex_date, w.ex_date)) <= {SPLIT_SAME_DAYS})
               {f"AND {incremental.where(f'w.ex_date + INTERVAL {NEAR_SPLIT_DAYS} DAY', 'w.security_id')}"
                if live else ""}""")
+
+    @staticmethod
+    def _actions(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, found: list, live: bool = False,
+                 wrds: bool = True) -> int:
+        if wrds:                                    # a chunked build added the WRDS part chunk by chunk
+            PricesServing._wrds_actions(con, live)
         # Review M6 of #382: such a split stands in for the ``price_gap_no_action`` it explains, so it carries the
         # served close's move across its ex-date, from the security's last served bar before it to its first on or
         # after it: the same two bars the gap check pairs, but their raw closes, not its split-adjusted ones (the two
@@ -718,46 +739,14 @@ class PricesServing:
     @staticmethod
     def _wrds_report(con: duckdb.DuckDBPyConnection) -> int:
         """``wrds_price_diff``: one row per ``wrds_history.COMPARISONS`` entry (zero sessions when a side has none)."""
-        con.execute(f"""CREATE OR REPLACE TEMP TABLE _hret AS
-            WITH d AS (SELECT security_id, ex_date, sum(amount) AS amount FROM corporate_action
-                       WHERE applied AND action = 'cash_dividend' GROUP BY ALL),
-            x AS (SELECT h.source, h.security_id, h.session_date, h.own_return, h.return_basis,
-                         h.close * coalesce(a.split_factor, 1) AS sc,
-                         coalesce(d.amount, 0) * coalesce(a.split_factor, 1) AS dv
-                  FROM _hist_all h {factor_join('a', 'h.security_id', 'h.session_date')}
-                  LEFT JOIN d ON d.security_id = h.security_id AND d.ex_date = h.session_date WHERE h.close > 0),
-            y AS (SELECT *, lag(sc) OVER w AS prev_sc, lag(session_date) OVER w AS prev_day FROM x
-                  WINDOW w AS (PARTITION BY source, security_id ORDER BY session_date))
-            -- The economic day return: the close plus the dividend over the previous close, in one share basis.
-            SELECT source, security_id, session_date, own_return, return_basis, (sc + dv) / prev_sc - 1 AS ours FROM y
-            WHERE prev_sc > 0 AND own_return IS NOT NULL AND date_diff('day', prev_day, session_date) <= 7""")
-        side = {"crsp": f"SELECT security_id, session_date, close FROM _hist_all WHERE source = '{wrds_history.CRSP}'",
-                "compustat": ("SELECT security_id, session_date, close FROM _hist_all "
-                              f"WHERE source = '{wrds_history.COMPUSTAT}'"),
-                "alpaca": "SELECT security_id, session_date, close FROM _alp"}
-        pair = ("SELECT '{name}' AS comparison, count(DISTINCT x.security_id) AS securities, count(*) AS sessions, "
-                f"count(*) FILTER (WHERE abs(x.close - y.close) > {TOLERANCE} * y.close) AS close_differs, "
-                "max(abs(x.close - y.close) / y.close) AS max_close_diff, CAST(NULL AS INTEGER) AS return_differs, "
-                "CAST(NULL AS DOUBLE) AS max_return_diff, min(x.session_date) AS first_session, "
-                "max(x.session_date) AS last_session "
-                "FROM ({x}) x JOIN ({y}) y USING (security_id, session_date) WHERE y.close > 0")
-        own = ("SELECT '{name}', count(DISTINCT security_id), count(*), CAST(NULL AS INTEGER), CAST(NULL AS DOUBLE), "
-               f"count(*) FILTER (WHERE abs(ours - own_return) > {TOLERANCE}), max(abs(ours - own_return)), "
-               "min(session_date), max(session_date) FROM _hret WHERE source = '{source}' AND {basis}")
-        parts = []
-        for name in wrds_history.COMPARISONS:
-            if name.endswith("_returns"):
-                source = wrds_history.CRSP if name.startswith("crsp") else wrds_history.COMPUSTAT
-                parts.append(own.format(name=name, source=source, basis="true"))
-            else:
-                x, y = name.split("_vs_")
-                parts.append(pair.format(name=name, x=side[x], y=side[y]))
+        con.execute(HRET_SQL)
+        parts = _report_parts()
         as_of = ("(SELECT max(source_as_of) FROM (SELECT source_as_of FROM stg_wrds_secd "
                  "UNION ALL SELECT source_as_of FROM stg_wrds_dsf))")
         return _create(con, "wrds_price_diff",
                        f"SELECT comparison, {as_of} AS as_of, securities, sessions, close_differs, max_close_diff, "
                        "return_differs, max_return_diff, first_session, last_session FROM ("
-                       + " UNION ALL ".join(parts) + ")")
+                       + parts + ")")
 
     # ── Views ─────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -793,7 +782,8 @@ class PricesServing:
     # ── Issues ────────────────────────────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _issues(con: duckdb.DuckDBPyConnection, have: dict[str, int], live: bool = False) -> list[tuple[str, str, str]]:
+    def _issues(con: duckdb.DuckDBPyConnection, have: dict[str, int], live: bool = False,
+                alpaca: list | None = None) -> list[tuple[str, str, str]]:
         found: list[tuple[str, str, str]] = []
         newest = con.execute("SELECT max(session_date) FROM price_bar_daily WHERE security_id NOT LIKE 'index:%'"
                              ).fetchone()[0]
@@ -860,15 +850,9 @@ class PricesServing:
                   AND abs((r.tr_close / r.prev_tr - 1) - a.all_return) > greatest({TOLERANCE}, {allowance})
                 ORDER BY 1, 2""").fetchall():
             found.append(("adjustment_differs", f"{sid}:{day}", f"ours {ours:.6f}, alpaca {theirs:.6f}"))
-        # The tester's close check: every history bar of a session Alpaca has, either source.
-        for sid, day, source, close, alp in con.execute(f"""
-                SELECT h.security_id, h.session_date, h.source, h.close, a.close FROM _hist_all h
-                JOIN _alp a ON a.security_id = h.security_id AND a.session_date = h.session_date
-                WHERE a.close > 0 AND abs(h.close - a.close) > greatest({TOLERANCE} * a.close, {HALF_CENT})
-                  {f"AND {incremental.where('h.session_date', 'h.security_id')}" if live else ""}
-                ORDER BY 1, 2, 3""").fetchall():
-            found.append(("alpaca_close_differs", f"{sid}:{day}:{source}",
-                          f"{source.split('/')[-1]} {close:.4f}, alpaca {alp:.4f}"))
+        # The tester's close check: every history bar of a session Alpaca has, either source (a chunked build found
+        # them chunk by chunk, ``Chunked.report``).
+        found += alpaca_differs(con, live) if alpaca is None else alpaca
         newest_of = ("SELECT security_id, value FROM shares_class WHERE measure = '{m}' AND source = '{s}' "
                      "QUALIFY row_number() OVER (PARTITION BY security_id ORDER BY as_of DESC, fetched_at DESC) = 1")
         for sid, fl, out in con.execute(f"""
@@ -977,8 +961,9 @@ MARKET_CAP_SQL = f"""
     WITH o AS (SELECT security_id, as_of, value, source FROM shares_class WHERE measure = 'outstanding'
                QUALIFY row_number() OVER (PARTITION BY security_id, as_of ORDER BY fetched_at DESC) = 1),
          -- The lowest-priority servable history bar with shares, per session: one hash aggregate (#372's rule).
-         h AS (SELECT security_id, session_date, arg_min(shares_outstanding, priority) AS shares_outstanding,
-                      arg_min(source, priority) AS source FROM _hist_all
+         h AS (SELECT security_id, session_date,
+                      arg_min(shares_outstanding, row(priority, series)) AS shares_outstanding,
+                      arg_min(source, row(priority, series)) AS source FROM _hist_all
                WHERE shares_outstanding > 0 AND {HIST_SERVED} GROUP BY security_id, session_date),
          sec AS ({ISSUER_SQL}),
          b AS (SELECT b.*, coalesce(s.cik, b.cik) AS issuer, h.shares_outstanding AS hist_shares,
@@ -1017,6 +1002,245 @@ REVISION_SQL = f"""
     SELECT coalesce(s.security_id, r.security_id) AS security_id, r.session_date, r.ticker AS symbol, r.open, r.high,
            r.low, r.close, r.volume, '{ALPACA_BARS}' AS source, r.fetched_at, r.run_id, r.revised_at, r.revised_by
     FROM stg_alpaca_bar_revisions r LEFT JOIN stg_spine s ON s.ticker = r.ticker AND s.cik IS NOT DISTINCT FROM r.cik"""
+
+
+# The served history bars: one per session of a ``_hist_all`` security, Compustat's (priority 1) before CRSP's.
+HIST_BARS = (f"SELECT {', '.join(c for c, _ in PRICE_BAR)} FROM (SELECT * FROM _hist_all h "
+             f"WHERE {HIST_FIRST.format(where='WHERE ' + HIST_SERVED)})")
+
+
+def _hist_counts(con: duckdb.DuckDBPyConnection) -> tuple[list[int], dict[str, int]]:
+    """Over ``_secd_listed`` and ``_hist_all``: the rows and securities the dated exchange rule lists that today's code
+    would not and the reverse, and Compustat's day returns per rule (the build's notes)."""
+    moved = con.execute("SELECT count(*) FILTER (WHERE listed AND NOT listed_today), count(DISTINCT gvkey || iid) "
+                        "FILTER (WHERE listed AND NOT listed_today), count(*) FILTER (WHERE listed_today AND NOT "
+                        "listed), count(DISTINCT gvkey || iid) FILTER (WHERE listed_today AND NOT listed) "
+                        "FROM _secd_listed WHERE prccd > 0 AND coalesce(upper(curcdd), 'USD') = 'USD' "
+                        "AND datadate <= getvariable('rc_build_date')").fetchone()
+    basis = con.execute(f"SELECT return_basis, count(*) FROM _hist_all WHERE source = '{wrds_history.COMPUSTAT}' "
+                        "AND return_basis IS NOT NULL GROUP BY ALL").fetchall()
+    return [int(n) for n in moved], {b: int(n) for b, n in basis}
+
+
+# Each WRDS source's own day return against the store's (its closes, the store's factors), for the difference report.
+HRET_SQL = f"""CREATE OR REPLACE TEMP TABLE _hret AS
+    WITH d AS (SELECT security_id, ex_date, sum(amount) AS amount FROM corporate_action
+               WHERE applied AND action = 'cash_dividend' GROUP BY ALL),
+    x AS (SELECT h.source, h.security_id, h.series, h.session_date, h.own_return, h.return_basis,
+                 h.close * coalesce(a.split_factor, 1) AS sc,
+                 coalesce(d.amount, 0) * coalesce(a.split_factor, 1) AS dv
+          FROM _hist_all h {factor_join('a', 'h.security_id', 'h.session_date')}
+          LEFT JOIN d ON d.security_id = h.security_id AND d.ex_date = h.session_date WHERE h.close > 0),
+    y AS (SELECT *, lag(sc) OVER w AS prev_sc, lag(session_date) OVER w AS prev_day FROM x
+          -- per series: two series of one aliased fund price the same sessions, and each return is its own series'
+          -- (review F3 of #654: otherwise which one is the previous row depends on the row order)
+          WINDOW w AS (PARTITION BY source, security_id, series ORDER BY session_date))
+    -- The economic day return: the close plus the dividend over the previous close, in one share basis.
+    SELECT source, security_id, session_date, own_return, return_basis, (sc + dv) / prev_sc - 1 AS ours FROM y
+    WHERE prev_sc > 0 AND own_return IS NOT NULL AND date_diff('day', prev_day, session_date) <= 7"""
+
+
+def _report_parts() -> str:
+    """One row per ``wrds_history.COMPARISONS`` entry over ``_hist_all``, ``_hret`` and ``_alp`` (zero sessions when a
+    side has none), without ``as_of``: the difference report's counts."""
+    side = {"crsp": f"SELECT security_id, session_date, close FROM _hist_all WHERE source = '{wrds_history.CRSP}'",
+            "compustat": ("SELECT security_id, session_date, close FROM _hist_all "
+                          f"WHERE source = '{wrds_history.COMPUSTAT}'"),
+            "alpaca": "SELECT security_id, session_date, close FROM _alp"}
+    pair = ("SELECT '{name}' AS comparison, count(DISTINCT x.security_id) AS securities, count(*) AS sessions, "
+            f"count(*) FILTER (WHERE abs(x.close - y.close) > {TOLERANCE} * y.close) AS close_differs, "
+            "max(abs(x.close - y.close) / y.close) AS max_close_diff, CAST(NULL AS INTEGER) AS return_differs, "
+            "CAST(NULL AS DOUBLE) AS max_return_diff, min(x.session_date) AS first_session, "
+            "max(x.session_date) AS last_session "
+            "FROM ({x}) x JOIN ({y}) y USING (security_id, session_date) WHERE y.close > 0")
+    own = ("SELECT '{name}', count(DISTINCT security_id), count(*), CAST(NULL AS INTEGER), CAST(NULL AS DOUBLE), "
+           f"count(*) FILTER (WHERE abs(ours - own_return) > {TOLERANCE}), max(abs(ours - own_return)), "
+           "min(session_date), max(session_date) FROM _hret WHERE source = '{source}' AND {basis}")
+    parts = []
+    for name in wrds_history.COMPARISONS:
+        if name.endswith("_returns"):
+            source = wrds_history.CRSP if name.startswith("crsp") else wrds_history.COMPUSTAT
+            parts.append(own.format(name=name, source=source, basis="true"))
+        else:
+            x, y = name.split("_vs_")
+            parts.append(pair.format(name=name, x=side[x], y=side[y]))
+    return " UNION ALL ".join(parts)
+
+
+def alpaca_differs(con: duckdb.DuckDBPyConnection, live: bool = False) -> list[tuple[str, str, str]]:
+    """``alpaca_close_differs``: every ``_hist_all`` bar of a session Alpaca has, either source, whose close differs."""
+    return [("alpaca_close_differs", f"{sid}:{day}:{source}", f"{source.split('/')[-1]} {close:.4f}, alpaca {alp:.4f}")
+            for sid, day, source, close, alp in con.execute(f"""
+                SELECT h.security_id, h.session_date, h.source, h.close, a.close FROM _hist_all h
+                JOIN _alp a ON a.security_id = h.security_id AND a.session_date = h.session_date
+                WHERE a.close > 0 AND abs(h.close - a.close) > greatest({TOLERANCE} * a.close, {HALF_CENT})
+                  {f"AND {incremental.where('h.session_date', 'h.security_id')}" if live else ""}
+                ORDER BY 1, 2, 3""").fetchall()]
+
+
+def _append(con: duckdb.DuckDBPyConnection, table: str, select: str) -> None:
+    names = ", ".join(f'"{c}"' for c, _ in SCHEMAS[table])
+    con.execute(f"INSERT INTO {table} ({names}) SELECT {names} FROM ({select})")
+
+
+def _lit(value: str) -> str:
+    """A SQL string literal of a security id or gvkey (a chunk's bound)."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _spill(con: duckdb.DuckDBPyConnection) -> int:
+    return int(con.execute("SELECT coalesce(sum(size), 0) FROM duckdb_temporary_files()").fetchone()[0])
+
+
+class Chunked:
+    """A whole build of the WRDS history in chunks of securities (#654; review of 10 Nov 2026, F1-F4).
+
+    The identity stays whole and is built first, over the WRDS years read through views (``wrds_history.build``):
+    ``_universe``, ``_permno_link``, ``_gvkey_alias``, the ETF series. A chunk is one contiguous range of
+    ``_universe``'s security ids (``_bucket``): the Compustat series it reads (``_bgid``: its own ``gvkey:iid`` ids,
+    and the series aliased to one of its ids, never a series aliased to another chunk's) and the PERMNOs linked to it
+    (``_bpermno``) are staged as TEMP tables under the staging names, ``_secd_listed`` and ``_hist_all`` are made from
+    them, and every row is cut to the chunk's securities. Every history computation is per security, so a chunk
+    computes exactly its securities' rows; what spans securities is whole: the issuer cap (looped by issuer instead,
+    ``caps``), the factors, the symbols and the issues, which read the served tables.
+
+    Two passes over the chunks: ``bars`` (the bars, the WRDS actions, and the few history rows the symbols and the
+    caps still need, kept as a narrow ``_hist_all``), and ``report`` (the difference report and the Alpaca close
+    check, which need the factors that only the whole actions give)."""
+
+    def __init__(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection, n: int):
+        self.ctx, self.con, self.n = ctx, con, n
+        ids = [r[0] for r in con.execute("SELECT DISTINCT security_id FROM _universe WHERE security_id IS NOT NULL "
+                                         "ORDER BY security_id").fetchall()]
+        # shortcut: equal counts of securities, not of rows; weigh by rows if the step log shows one chunk spilling
+        # far more than the others.
+        size = max(1, -(-len(ids) // n))
+        self.ranges = [(ids[i], ids[min(i + size, len(ids)) - 1]) for i in range(0, len(ids), size)] or [("", "")]
+        self.log: list[str] = []
+
+    def _stage(self, lo: str, hi: str) -> None:
+        con, w = self.con, wrds_history
+        con.execute("CREATE OR REPLACE TEMP TABLE _bucket AS SELECT DISTINCT security_id FROM _universe "
+                    f"WHERE security_id BETWEEN {_lit(lo)} AND {_lit(hi)}")
+        con.execute("""CREATE OR REPLACE TEMP TABLE _bgid AS
+            SELECT security_id AS gid FROM _bucket WHERE security_id NOT IN (SELECT gid FROM _gvkey_alias)
+            UNION SELECT gid FROM _gvkey_alias WHERE security_id IN (SELECT security_id FROM _bucket)""")
+        con.execute("""CREATE OR REPLACE TEMP TABLE _bpermno AS
+            SELECT permno FROM _permno_link WHERE security_id IN (SELECT security_id FROM _bucket)
+            UNION SELECT substr(security_id, 8) FROM _bucket WHERE security_id LIKE 'permno:%'""")
+        not_gvkey = ", ".join(f"'{p}'" for p in incremental.NOT_GVKEY)
+        glo, ghi = con.execute(f"SELECT min(split_part(gid, ':', 1)), max(split_part(gid, ':', 1)) FROM _bgid "
+                               f"WHERE split_part(gid, ':', 1) NOT IN ({not_gvkey})").fetchone()
+        # The range lets the Parquet reader skip the row groups of other gvkeys (the files are sorted by gvkey).
+        series = ("false" if glo is None else
+                  f"gvkey BETWEEN {_lit(glo)} AND {_lit(ghi)} AND gvkey || ':' || iid IN (SELECT gid FROM _bgid)")
+        for table, where in (("secd", series), ("sec_divid", series),
+                             ("dsf", "permno IN (SELECT permno FROM _bpermno)")):
+            name = w.STAGING[table]
+            con.execute(f"CREATE OR REPLACE TEMP TABLE {name} AS SELECT * FROM {name}{incremental.WHOLE} WHERE {where}")
+        con.execute(BUILD_HIST_SQL.format(crsp=w.CRSP_BARS, comp=w.COMP_BARS, listed=w.SECD_LISTED))
+        # A PERMNO linked to two securities is staged in both chunks: each keeps only its own.
+        con.execute("DELETE FROM _hist_all WHERE security_id NOT IN (SELECT security_id FROM _bucket)")
+
+    def _passes(self, what: str, step) -> None:
+        """Run ``step(lo, hi)`` after staging each chunk, the staging names being TEMP tables meanwhile; then the
+        whole-history views again (the report's ``as_of``, ``wrds/prices``' check)."""
+        import time
+        con = self.con
+        names = [wrds_history.STAGING[t] for t in wrds_history.YEARLY]
+        for name in names:
+            con.execute(f"DROP VIEW {name}")
+        start, peak, at = time.monotonic(), 0, 0
+        for i, (lo, hi) in enumerate(self.ranges):
+            self._stage(lo, hi)
+            step(lo, hi)
+            spill = _spill(con)
+            if spill > peak:
+                peak, at = spill, i + 1
+        for name in names:
+            con.execute(f"DROP TABLE IF EXISTS {name}")
+            con.execute(f"CREATE OR REPLACE TEMP VIEW {name} AS SELECT * FROM {name}{incremental.WHOLE}")
+        self.log.append(f"{what} {time.monotonic() - start:.0f} s, peak spill {peak / 1e9:.1f} GB (chunk {at})")
+
+    def bars(self, serving) -> tuple[int, list[int], dict[str, int]]:
+        """Pass 1: ``price_bar_daily`` (the index bars, then each chunk's), the WRDS actions, the notes' counts."""
+        con = self.con
+        _create(con, "price_bar_daily", _index_levels(con))
+        con.execute(f"CREATE OR REPLACE TEMP TABLE _crsp_split_near AS SELECT w.* FROM ({wrds_history.CRSP_SPLITS}) w "
+                    "WHERE false")
+        moved, basis = [0, 0, 0, 0], {}
+
+        def step(lo: str, hi: str) -> None:
+            _append(con, "price_bar_daily", HIST_BARS)
+            m, b = _hist_counts(con)
+            moved[:] = [x + y for x, y in zip(moved, m)]
+            for k, v in b.items():
+                basis[k] = basis.get(k, 0) + v
+            serving._wrds_actions(con, chunk=True)
+            # What the symbols (a history symbol on a session whose bar has none) and the caps (a session's shares when
+            # its bar has none) read of the history after the passes: a few rows, so ``_hist_all`` stays narrow.
+            keep = f"""SELECT h.* FROM _hist_all h
+                       LEFT JOIN (SELECT security_id, session_date, shares_outstanding, symbol FROM price_bar_daily
+                                  WHERE security_id BETWEEN {_lit(lo)} AND {_lit(hi)}) w USING (security_id, session_date)
+                       WHERE (h.shares_outstanding > 0 AND {HIST_SERVED} AND w.shares_outstanding IS NULL)
+                          OR (h.symbol IS NOT NULL AND w.symbol IS NULL)"""
+            if con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = '_hist_keep'").fetchone()[0]:
+                con.execute(f"INSERT INTO _hist_keep {keep}")
+            else:
+                con.execute(f"CREATE TEMP TABLE _hist_keep AS {keep}")
+
+        self._passes("bars", step)
+        con.execute("DROP TABLE IF EXISTS _secd_listed")
+        con.execute("DROP TABLE _hist_all")
+        con.execute("ALTER TABLE _hist_keep RENAME TO _hist_all")
+        return stage.count(con, "price_bar_daily"), moved, basis
+
+    def caps(self) -> int:
+        """``market_cap_daily`` from the served tables, one issuer bucket at a time (review F2): an issuer's classes
+        always share a bucket, so its cap counts each of them."""
+        import time
+        con, n = self.con, self.n
+        start = time.monotonic()
+        con.execute(f"CREATE OR REPLACE TEMP TABLE _issuer AS {ISSUER_SQL}")
+        sql = MARKET_CAP_SQL.format(within=ISSUER_WITHIN_DAYS).replace(ISSUER_SQL, "SELECT * FROM _issuer")
+        _create(con, "market_cap_daily", sql.replace("/*near*/", "AND false"))
+        peak = 0
+        for k in range(n):
+            _append(con, "market_cap_daily",
+                    sql.replace("/*near*/", f"AND hash(coalesce(s.cik, b.cik, b.security_id)) % {n} = {k}"))
+            peak = max(peak, _spill(con))
+        self.log.append(f"market cap {time.monotonic() - start:.0f} s, peak spill {peak / 1e9:.1f} GB")
+        return stage.count(con, "market_cap_daily")
+
+    def report(self) -> tuple[int, list[tuple[str, str, str]]]:
+        """Pass 2: the difference report, summed over the chunks (their securities do not overlap), and the Alpaca
+        close check, chunk by chunk."""
+        con = self.con
+        alpaca: list[tuple[str, str, str]] = []
+        parts = _report_parts()
+
+        def step(lo: str, hi: str) -> None:
+            con.execute(HRET_SQL)
+            if con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = '_report_part'").fetchone()[0]:
+                con.execute(f"INSERT INTO _report_part {parts}")
+            else:
+                con.execute(f"CREATE TEMP TABLE _report_part AS {parts}")
+            alpaca.extend(alpaca_differs(con))
+
+        self._passes("report", step)
+        as_of = ("(SELECT max(source_as_of) FROM (SELECT source_as_of FROM stg_wrds_secd "
+                 "UNION ALL SELECT source_as_of FROM stg_wrds_dsf))")
+        n = _create(con, "wrds_price_diff",
+                    f"SELECT comparison, {as_of} AS as_of, sum(securities) AS securities, sum(sessions) AS sessions, "
+                    "sum(close_differs) AS close_differs, max(max_close_diff) AS max_close_diff, "
+                    "sum(return_differs) AS return_differs, max(max_return_diff) AS max_return_diff, "
+                    "min(first_session) AS first_session, max(last_session) AS last_session "
+                    "FROM _report_part GROUP BY comparison")
+        return n, alpaca
+
+    def note(self) -> None:
+        self.ctx.notes.append(f"chunked whole build: {len(self.ranges)} chunks of security ids; " + "; ".join(self.log))
+        logger.info("prices chunked whole build: %s", "; ".join(self.log))
 
 
 DATASET = PricesServing()

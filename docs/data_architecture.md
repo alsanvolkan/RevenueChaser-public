@@ -995,15 +995,18 @@ it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed th
 #319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server). The spill goes to
 `<MARKET_RAW_DIR>/build_tmp/<build file>.tmp` (`serving.spill_dir`, the HDD), never beside the live files on the SSD
 (#372: request 71 spilled 47 GB there), and DuckDB removes it when the build closes. `max_temp_directory_size` comes
-from `RC_DUCKDB_MAX_TEMP` (default `200GB`): past it the build fails instead of filling the disk.
+from `RC_DUCKDB_MAX_TEMP` (default `200GB`): past it the build fails instead of filling the disk. `RC_DUCKDB_TEMP_DIR` moves the
+spill's parent folder (unset: `<MARKET_RAW_DIR>/build_tmp`). Each dataset's build logs one line with its seconds and
+its spill peak (`base.spill_peak`, sampled every 2 s), the measure for moving the spill to the SSD or chunking a kind.
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
 file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `6`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `2`), under "Fundamentals" after it; and the options
-data, `options` (serving schema version `1`), under "The options data" last. The market data,
-`market` (serving schema version `2`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
+data, `options` (serving schema version `1`), under "The options data" last. The six numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
+(`rcdata/build/dirty.py`), so a bump makes only its own kind's next build whole (#649). The market data,
+`market` (serving schema version `3`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`), `spx_greek_expiry_strike` (the same key, the four
 greeks per side from `greek-exposure/strike-expiry` for every expiry of the chain, same provenance; where two
@@ -1011,7 +1014,11 @@ option series share an expiry date — SPX and SPXW on a third Friday — UW's t
 into one, because its answer has no field to tell the series apart; its `dte` is
 UW's **calendar**-day count, while `spx_gamma_expiry_strike.dte` counts NYSE sessions, so the two columns are
 different measures of different endpoints and are never substituted) and `market_series` (key series id, observation date,
-source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance). `session_date` comes from
+source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance), `economic_event` (UW's economic
+calendar, hourly: key snapshot day, event time as epoch seconds, event, type; `forecast`, `prev` and
+`reported_period` as text; each day is the newest fetch of that New York day, so a same-day revision is kept) and
+`news_headline` (IBKR's Dow Jones headlines of the stock watch list and twelve large names, hourly: key headline id,
+ticker; `published_date` the UTC publish day, `published_at`, `headline`, `provider`; market 3, #643). `session_date` comes from
 `core/calendar.py` and is empty outside its 1993-2028 table (its rule C: no second calendar). The previous file
 stays as `<kind>.prev.duckdb`.
 
@@ -1531,6 +1538,15 @@ applies no split a second time), `price_actions` (splits and dividends, the amou
 today's universe the index fits, so **the key stays on** (avo, 4 Nov 2026) and the measured build decides;
 `RC_PRICES_NO_PRIMARY_KEY=1` writes those two without it and checks their key with one grouped query instead
 (`serving.duplicate_keys`, a `duplicate_key` build issue), so a build that still does not fit needs no code change.
+
+**A whole build in chunks (#654).** A whole build used to stage forty years of `comp.secd`, `crsp.dsf` and
+`comp.sec_divid` as TEMP tables and spilled about 80 GB (homesrv, 10 Nov 2026). It now runs the WRDS history in
+`RC_PRICES_CHUNKS` chunks (default 16; `1` is the old single pass): the identity (`_universe`, the PERMNO link, the
+gvkey aliases) is built whole over the WRDS years read through views, then each contiguous range of security ids
+stages only its own series and PERMNOs and adds its bars and WRDS actions; the market caps are built per issuer
+bucket from the served tables, and the difference report and the Alpaca close check in a second pass over the chunks
+(`serving.Chunked`). Every history computation is per security, so the served tables are those of the single pass;
+the build note logs each pass's time and peak spill.
 
 A CRSP ticker link (rule 3) needs, for a spine `gvkey:iid` with a CUSIP, a Compustat row of it on CRSP's last day,
 and for an ETF an inception day on or before it (review M1).
