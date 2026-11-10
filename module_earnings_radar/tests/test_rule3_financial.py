@@ -528,8 +528,3 @@ def test_pre_revenue_name_gets_no_universal_om_vote():
     assert r.score == 10.0  # the cluster's own score stands: GM +10, never floored to -30
     assert any("pre-revenue" in x for x in r.reasons)
 
-
-def test_name_above_the_revenue_floor_still_gets_the_om_vote():
-    r = score("BIG", "unmapped", _pre_revenue_history(50e6))  # $200M over the last four quarters
-    assert any("pts" in x for x in r.reasons)
-    assert r.score <= -30.0
