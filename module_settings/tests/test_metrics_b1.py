@@ -263,8 +263,10 @@ def test_the_detail_carries_badges_and_the_runs_in_the_pickers_range():
 
 def test_the_board_head_says_the_switches_the_timer_and_the_gateway(monkeypatch):
     monkeypatch.setenv("RC_IBKR_LOGIN_URL", "javascript:alert(1)")
+    monkeypatch.setattr(metrics.TIMER, "get", lambda wait=False: {"state": "on", "last": NOW, "next": None})
     head = metrics.board_head(NOW, ibkr=lambda: {"state": "up"})
     assert head["switches"] == {"fetch": True, "backup": True}
+    assert head["timer"] == "on" and head["timer_fired"] == {"last": metrics.control._clock(NOW), "next": None}
     assert head["gateway"] == {"cls": "ok", "n": "open", "label": "logged in", "login": None}
     monkeypatch.setenv("RC_IBKR_LOGIN_URL", "https://gateway.example/")
     assert metrics.board_head(NOW, ibkr=lambda: None)["gateway"]["login"] == "https://gateway.example/"

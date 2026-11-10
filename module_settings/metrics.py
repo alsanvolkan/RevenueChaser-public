@@ -378,7 +378,11 @@ def board_head(now: datetime | None = None, *, ibkr: Callable[[], dict] | None =
     except Exception:  # noqa: BLE001
         got = None
     cls, n, label = control._gateway(got)
-    return {"switches": switches, "timer": (TIMER.get() or {}).get("state"),
+    timer = TIMER.get() or {}
+    # avo, 10 Nov 2026: "builder timer (icine yaz ne zaman fire ettigini)": its last and next pass, as the page says them
+    fired = {"last": control._clock(timer.get("last")) if timer.get("last") else None,
+             "next": control._clock(timer.get("next")) if timer.get("next") else None}
+    return {"switches": switches, "timer": timer.get("state"), "timer_fired": fired,
             "gateway": {"cls": cls, "n": n, "label": label.replace("IBKR gateway · ", ""),
                         "login": report._ibkr_login_href(inventory._ibkr_login_url())}}
 
