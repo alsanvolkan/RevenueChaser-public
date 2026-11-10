@@ -60,7 +60,8 @@ Code, comments, commit messages, issues and docs are written in **English**.
 - **End-to-end tier:** `RC_E2E=1 python -m pytest module_testing/e2e -m e2e`.
 - **Both are offline by construction.** The root `conftest.py` replaces the socket primitives and raises
   `NetworkAccessAttempted` on any real connection; the e2e tier is allowed loopback only, because it drives a real
-  dashboard against a local mock-provider server. Mock at the HTTP boundary (the `mock_httpx` fixture), never at
+  dashboard against a local mock-provider server. A Python child the suite starts gets the same guard
+  (`module_testing/netguard/sitecustomize.py`, on its `PYTHONPATH`), with loopback open (#258). Mock at the HTTP boundary (the `mock_httpx` fixture), never at
   rule-math level.
 - `conftest.py` also redirects **both data roots** (`RC_STORE_DIR`, `RC_CACHE_DIR` and the other artifact roots) to a
   per-process temp directory, and the autouse `isolate_rawstore` fixture gives **every** test its own
