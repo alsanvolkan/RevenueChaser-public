@@ -3078,7 +3078,8 @@ def _tab_strip() -> str:
 # grafana/make_dashboards.py rc_data_health / rc_fetch), framed here rather than shown as Grafana tabs (avo, 8 Nov
 # 2026: "bunlar revenue chaser app icine gomulu olmaliydi"). Grafana allows only this app's origin to frame it. The
 # frame has no address until the tab opens, so a Data/Health visit never loads Grafana.
-LIVE_BOARDS = (("rc-data-health", "Data health"), ("rc-fetch", "Fetch"))
+# home-server #222 (avo, 10 Nov 2026): the RC timers with the Jobs tab's own design, switches and fuse (board rc-jobs)
+LIVE_BOARDS = (("rc-data-health", "Data health"), ("rc-fetch", "Fetch"), ("rc-jobs", "Jobs"))
 LIVE_CSS = """
 #panel-live .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
   padding:0 12px}
@@ -3093,7 +3094,7 @@ LIVE_HTML = ('<div class="livebar" role="group" aria-label="Live board">'
              + "".join(f'<button type="button" data-board="{uid}" aria-pressed="{"true" if i == 0 else "false"}">'
                        f'{label}</button>' for i, (uid, label) in enumerate(LIVE_BOARDS))
              + '<a id="live-open" target="_blank" rel="noopener">Open in Grafana</a></div>'
-             '<iframe id="live-frame" title="Live data health and fetch (Grafana)" loading="lazy"></iframe>')
+             '<iframe id="live-frame" title="Live data health, fetch and jobs (Grafana)" loading="lazy"></iframe>')
 LIVE_JS = """
 (function(){
   var panel = document.getElementById('panel-live'), frame = document.getElementById('live-frame');
