@@ -107,9 +107,9 @@ def test_finra_pages_go_through_the_finra_window(monkeypatch, tmp_path):
     assert waits == [1]
 
 
-def test_the_spx_history_pull_reads_the_uw_day_cap():
+def test_the_spx_history_route_holds_no_uw_cap_of_its_own():
     from RevenueChaser.app import dashboard
-    assert dashboard._SPX_HISTORY_MAX_CALLS == caps.DAY_CAPS["uw"]
+    assert not hasattr(dashboard, "_SPX_HISTORY_MAX_CALLS") and caps.cap_for("uw") is None
 
 
 def test_module_financials_holds_no_uw_limit_of_its_own():

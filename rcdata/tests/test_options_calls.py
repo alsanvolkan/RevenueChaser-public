@@ -8,7 +8,6 @@ import pytest
 
 from RevenueChaser.core import calendar
 from RevenueChaser.core.providers import unusual_whales
-from RevenueChaser.rcdata import caps
 from RevenueChaser.rcdata.build import base, options
 from RevenueChaser.rcdata.build.options import uw_screener
 
@@ -48,7 +47,7 @@ def test_the_screener_side_costs_the_arithmetic_s_calls(http_mock):
 
 
 def test_the_planning_figure_leaves_most_of_uw_s_day_cap_to_the_other_datasets():
-    cap = caps.DAY_CAPS["uw"]
+    cap = 100_000                                          # the planning yardstick; UW has no cap since 2026-11-10
     assert options.uw_calls_a_session(0) < 2_000
     assert options.uw_calls_a_session(100) < cap / 10
     assert options.uw_calls_a_session(500) < cap / 2       # 34,240 of 100,000: a third of the day
