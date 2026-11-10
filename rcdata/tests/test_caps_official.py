@@ -25,7 +25,7 @@ def _fake_time():
 
 
 def test_day_caps_hold_only_the_quotas_published_per_day():
-    assert caps.DAY_CAPS == {"uw": 100_000, "alphavantage": 25}
+    assert caps.DAY_CAPS == {"alphavantage": 25}      # UW: none since avo 2026-11-10
 
 
 def test_the_request_windows_are_the_official_ones():

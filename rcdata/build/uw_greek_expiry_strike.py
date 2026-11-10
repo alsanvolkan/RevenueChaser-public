@@ -53,7 +53,7 @@ TICKER = "SPX"
 ENDPOINT = f"/stock/{TICKER}/greek-exposure/strike-expiry"
 CHAIN_ENDPOINT = f"/stock/{TICKER}/greek-exposure/expiry"
 # The chain's length on the live check of 30 Oct 2026 was 54, so a day is ~55 calls (the chain plus one per
-# expiry). UW's day cap is 100,000 (``caps.DAY_CAPS``), so a daily run is nothing; a long backfill is not, which
+# expiry). UW has no day cap (``caps.DAY_CAPS``, avo 2026-11-10), so a daily run is nothing; a long backfill is not, which
 # is what the Settings estimate below is for.
 CALLS_PER_SESSION_ESTIMATE = 55
 # A chain longer than this is not the SPX chain: refuse the day rather than send hundreds of calls. The live

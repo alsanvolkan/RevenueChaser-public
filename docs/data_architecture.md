@@ -1148,8 +1148,8 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `dataset_automation` | One source's own automation over its kind's (#527): `off`, `raw`, `parquet` or `full`; no row ("as the file") follows `kind_automation` |
 
 **Day caps** (`rcdata/caps.py`, master plan Order 5, rule 3: only the quotas a provider publishes per day, each with
-its source): uw 100,000 (owner-marked avo 2026-11-02), alphavantage 25 (its free tier, shared by the earnings calendar and the spine's
-`alphavantage/listing_status`, #346). **Request windows**
+its source): alphavantage 25 (its free tier, shared by the earnings calendar and the spine's
+`alphavantage/listing_status`, #346); UW has none (owner-removed avo 2026-11-10). **Request windows**
 (`caps.WINDOWS`, enforced by `base.Pacer`, one pacer per provider and run through `base.run_pacer`): sec 10 a second,
 alpaca 200 a minute (Basic plan, historical), openfigi 250 a minute (keyed `/v3/mapping`; `/v3/search` 20 a minute,
 no caller yet), finra 1,200 a minute (synchronous, per IP), yfinance 2,000 an hour (per IP, owner-marked avo
@@ -1862,8 +1862,8 @@ prints) + screener pages + earnings-set names). A list name is 11 calls plus 2 p
 an earnings-set name 5; the screener one per 100 reporting names; the calendar one per day and report session plus
 one per extra 100 names. With the planning numbers (25 expiries and 5 extra pages a name, SPX 400, 2,500 reporting
 names, 150 in the earnings set: assumptions until the first week's real counts replace them) that is 1,240 calls
-with SPX alone, 7,840 with 100 list names and 34,240 with 500, against UW's day cap of 100,000 (`rcdata/caps.py`),
-which the other UW datasets share. The real count is the builder's, per request, in `provider_calls_daily`.
+with SPX alone, 7,840 with 100 list names and 34,240 with 500, and UW has no day cap since avo removed it on
+2026-11-10 (`rcdata/caps.py`); the other UW datasets spend the same UW day. The real count is the builder's, per request, in `provider_calls_daily`.
 
 **Raw retention.** A hook after each `options` swap (`rcdata/build/options/raw_retention.py`) removes the
 per-session raw folders of `raw/uw/option_list/` and `raw/uw/er_options/` older than the retention, once one is
