@@ -86,7 +86,7 @@ def test_a_fetch_queues_the_two_datasets_and_renders_from_the_store(tmp_path, e2
         assert "CFTC TFF report of 2026-10-20" in html
         assert not [r for r in provider_routes.requests() if "cftc" in r.path.lower()], "no Socrata request"
         assert dash.yf_calls() == [], "no yfinance request: VIX, COT and the window come from the store"
-        latest = json.loads((tmp_path / "spx_gamma" / "latest.json").read_text(encoding="utf-8"))
+        latest = dash.get("/api/spxgamma/latest").json()       # the board file is the dashboard's: ask it
         assert latest["input_sources"]["vix"]["source"] == "rcdata:market_series"
 
         before = provider_routes.request_count

@@ -15,8 +15,9 @@ from RevenueChaser.module_spx_gamma import snapshot as snap
 from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
 from RevenueChaser.module_spx_gamma.raw_day import load_raw_day
 from RevenueChaser.module_spx_gamma.snapshot import UWApiError
+from RevenueChaser.module_spx_gamma import store as spx_store
 
-from .conftest import FakeUW
+from .conftest import FakeUW, store_day
 
 DAY = "2025-03-14"          # a Friday session inside the 2-year window
 CLOSE = 5638.94
@@ -123,16 +124,15 @@ def test_history_mode_spot_is_the_stored_close_and_live_spot_is_never_called(tmp
     raw = _fetch(tmp_path, uw)
     assert raw["spot"]["value"] == CLOSE
     assert raw["spot"]["source"].startswith("rcdata:market_series SPX")
-    manifest = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
+    manifest = spx_store.raw_manifest(DAY)
     assert manifest["spot"]["value"] == CLOSE
     assert manifest["spot_exposure_search_bounds"] == [int(CLOSE * 0.75), int(CLOSE * 1.25)]
 
 
 def test_history_mode_writes_no_live_file_and_marks_its_origin(tmp_path, uw):
     _fetch(tmp_path, uw)
-    day_dir = tmp_path / DAY
-    manifest = json.loads((day_dir / "manifest.json").read_text(encoding="utf-8"))
-    on_disk = {p.name for p in day_dir.glob("*.json")} - {"manifest.json"}
+    manifest = spx_store.raw_manifest(DAY)
+    on_disk = set(spx_store.raw_files(DAY))
     # The Fetch's LIVE_FILES less the five volatility files, which history mode asks WITH the day's date.
     dated_here = {snap._FILENAMES[n] for n in snap.HISTORY_ENDPOINTS}
     undated = snap.LIVE_FILES - dated_here
@@ -145,12 +145,12 @@ def test_history_mode_writes_no_live_file_and_marks_its_origin(tmp_path, uw):
     assert all(meta["as_of"] for meta in manifest["files"].values())
     assert manifest["origin"] == snap.HISTORY_ORIGIN == "history_pull"
     # the board's "n/a (historical)" marking reads the manifest: nothing in a history day is live
-    assert spx_run._historical_live_files(day_dir) == []
+    assert spx_run._historical_live_files(DAY) == []
 
 
 def test_history_day_reads_back_and_normalizes(tmp_path, uw):
     _fetch(tmp_path, uw)
-    raw = load_raw_day(tmp_path / DAY)
+    raw = load_raw_day(DAY)
     assert raw["spot"]["value"] == CLOSE
     snapshot = normalize_snapshot(raw, DAY)
     assert snapshot["current_level"] == CLOSE
@@ -162,7 +162,7 @@ def test_no_stored_close_for_the_day_costs_no_request(tmp_path, uw, calls):
     with pytest.raises(snap.NoStoredClose):
         snap.fetch_snapshot(uw, DAY, data_root=tmp_path, history_only=True, candle_fetcher=window_without_the_day)
     assert calls == []
-    assert not (tmp_path / DAY).exists()
+    assert not spx_store.has_day(DAY)
 
 
 def test_history_mode_does_not_fall_back_to_the_previous_session(tmp_path, calls):
@@ -172,7 +172,7 @@ def test_history_mode_does_not_fall_back_to_the_previous_session(tmp_path, calls
     with pytest.raises(snap.SnapshotError):
         _fetch(tmp_path, fake)
     assert calls == [EXPECTED[0]], "a rejected past day must cost one call and never move to another session"
-    assert not (tmp_path / DAY).exists()
+    assert not spx_store.has_day(DAY)
 
 
 @pytest.mark.parametrize("status", [429, 500, 0])
@@ -180,37 +180,33 @@ def test_a_transient_failure_leaves_no_day_behind(tmp_path, status):
     """A day with a 429/5xx/no-response hole would read as complete and never be pulled again."""
     with pytest.raises(snap.SnapshotError, match="max_pain"):
         _fetch(tmp_path, FakeUW(_handler({"/max-pain": status})))
-    assert not (tmp_path / DAY).exists()
+    assert not spx_store.has_day(DAY)
     assert not list(tmp_path.glob(".partial-*"))
 
 
 def test_a_permanent_rejection_of_an_optional_endpoint_keeps_the_day(tmp_path):
     """A 422/404 is the same answer tomorrow: keep the day with its warning rather than pay for it again."""
     _fetch(tmp_path, FakeUW(_handler({"/variance-risk-premium": 422})))
-    manifest = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
+    manifest = spx_store.raw_manifest(DAY)
     assert any("variance_risk_premium" in w for w in manifest["warnings"])
 
 
 def test_history_mode_honours_overwrite_false(tmp_path, uw, calls):
-    day_dir = tmp_path / DAY
-    day_dir.mkdir()
-    (day_dir / "manifest.json").write_text('{"origin": "fetch"}', encoding="utf-8")
+    store_day(DAY, {"origin": "fetch"})
     assert _fetch(tmp_path, uw, overwrite=False) is None
     assert calls == []
-    assert json.loads((day_dir / "manifest.json").read_text(encoding="utf-8")) == {"origin": "fetch"}
+    assert spx_store.raw_manifest(DAY) == {"asof_date": DAY, "origin": "fetch"}
 
 
 def test_history_mode_never_replaces_a_complete_day_that_appeared_meanwhile(tmp_path, monkeypatch):
     """The promote re-checks: a day a Fetch completed while this one was staging is kept as it is."""
-    day_dir = tmp_path / DAY
 
     def handler(path, params):
-        if path.endswith("/greek-exposure/strike-expiry") and not day_dir.exists():
-            day_dir.mkdir()
-            (day_dir / "manifest.json").write_text('{"origin": "fetch"}', encoding="utf-8")
+        if path.endswith("/greek-exposure/strike-expiry") and not spx_store.has_day(DAY):
+            store_day(DAY, {"origin": "fetch"})
         return _handler()(path, params)
     assert _fetch(tmp_path, FakeUW(handler)) is None
-    assert json.loads((day_dir / "manifest.json").read_text(encoding="utf-8")) == {"origin": "fetch"}
+    assert spx_store.raw_manifest(DAY) == {"asof_date": DAY, "origin": "fetch"}
     assert not list(tmp_path.glob(".partial-*"))
 
 
@@ -262,9 +258,8 @@ def test_two_threads_staging_the_same_day_never_mix_their_files(tmp_path):
     pull = threading.Thread(target=run, name="pull", kwargs={"history_only": True, "overwrite": False})
     fetch.start(); pull.start(); fetch.join(10); pull.join(10)
     assert errors == []
-    day_dir = tmp_path / DAY
-    manifest = json.loads((day_dir / "manifest.json").read_text(encoding="utf-8"))
-    on_disk = {p.name for p in day_dir.glob("*.json")} - {"manifest.json"}
+    manifest = spx_store.raw_manifest(DAY)
+    on_disk = set(spx_store.raw_files(DAY))
     assert on_disk == set(manifest["files"]), f"files outside the manifest: {sorted(on_disk - set(manifest['files']))}"
     assert not list(tmp_path.glob(".partial-*"))
 
@@ -272,8 +267,8 @@ def test_two_threads_staging_the_same_day_never_mix_their_files(tmp_path):
 def test_history_mode_asks_no_live_vix_or_cot_and_writes_neither(tmp_path, uw):
     _fetch(tmp_path, uw)
     assert LIVE_ASKED == []
-    manifest = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
+    manifest = spx_store.raw_manifest(DAY)
     assert "vix_family.json" not in manifest["files"] and "cftc_tff.json" not in manifest["files"]
-    assert not (tmp_path / DAY / "vix_family.json").exists() and not (tmp_path / DAY / "cftc_tff.json").exists()
+    assert not {"vix_family.json", "cftc_tff.json"} & set(spx_store.raw_files(DAY))
     # PR 3: neither is fetched by any mode; the render reads them from the market store for the day
     assert set(manifest["input_sources"]) == {"vix", "cftc", "candles", "zero_one_dte", "greek_grid"}

@@ -592,13 +592,7 @@ def _spxgamma_latest_report_file() -> Path | None:
 
 
 def _spxgamma_latest_payload() -> dict | None:
-    path = runners.spxgamma_latest_path()
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
+    return runners.spxgamma_latest()
 
 
 def _view_uw_interaction():

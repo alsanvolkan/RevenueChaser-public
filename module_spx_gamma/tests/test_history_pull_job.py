@@ -18,12 +18,12 @@ _REAL_SESSION_WINDOW = nyse_calendar.in_us_session_window       # read at import
 
 
 @pytest.fixture(autouse=True)
-def _a_fetch_day(tmp_path, monkeypatch):
-    """The board's newest Fetch is the Friday: every range below ends before it."""
+def _a_fetch_day(tmp_path, monkeypatch, request):
+    """The board's newest Fetch is the Friday: every range below ends before it (one test puts it on the Wednesday)."""
+    from .conftest import store_day
     monkeypatch.setattr(hp, "DATA_ROOT", tmp_path)
-    folder = tmp_path / "raw" / "2025-03-14"
-    folder.mkdir(parents=True)
-    (folder / "manifest.json").write_text('{"origin": "fetch"}', encoding="utf-8")
+    day = "2025-03-12" if request.node.name == "test_the_route_refuses_an_end_after_the_newest_fetch_day" else "2025-03-14"
+    store_day(day, {"origin": "fetch"})
 
 
 @pytest.fixture
@@ -239,7 +239,6 @@ def test_the_pull_is_refused_while_a_board_fetch_runs(real_lanes, monkeypatch):
 
 
 def test_the_route_refuses_an_end_after_the_newest_fetch_day(client, tmp_path):
-    (tmp_path / "raw" / "2025-03-14").rename(tmp_path / "raw" / "2025-03-12")
     r = client.post("/run/spxgamma_history?start=2025-03-10&end=2025-03-13", headers=CLI)
     assert r.status_code == 400 and "newest Fetch" in r.get_json()["error"]
     assert client.post("/run/spxgamma_history?start=2025-03-10&end=2025-03-12", headers=CLI).status_code == 202

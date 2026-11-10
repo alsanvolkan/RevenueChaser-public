@@ -401,6 +401,8 @@ class TestEveryManifestDatasetHasARoundTripTest:
                     # board files (S9, S16): built incrementally by module_news / module_welcome, no legacy source
                     "news_events", "news_highlight", "news_headlines", "news_meta",
                     "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta",
+                    # the SPX Gamma board file: filled by a Fetch or by --import-tree from its own old tree
+                    "spx_raw_days", "spx_raw_files", "spx_brier", "spx_gex_daily", "spx_meta",
                     # #25 HR-1: derived from the universe snapshot and the bars by core/baselines.py
                     "forecast_baselines"}
         # composite SQLite targets are covered through their source dataset

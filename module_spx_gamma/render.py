@@ -1,7 +1,6 @@
 """Render the SPX critical thresholds report as Markdown and HTML (Jinja2)."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
@@ -12,7 +11,6 @@ from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, 
 from . import expected_move
 from .close_check import close_card
 from .brier import scorecard
-from .config import BRIER_FILENAME, HISTORY_FILENAME
 from .snapshot import HISTORY_ORIGIN
 from .flow_signals import evaluate_flow_signal
 from .narrative import build_walkthrough
@@ -238,13 +236,14 @@ _QUALITY_LABELS = {
 
 
 def _manifest(data_root, asof) -> dict:
-    """The raw day's manifest for the day shown (best-effort; {} when absent)."""
-    if not data_root or not asof:
+    """The stored raw day's manifest for the day shown (best-effort; {} when absent). ``data_root`` is unused: the
+    day is in the board file."""
+    if not asof:
         return {}
-    path = Path(data_root) / "raw" / str(asof) / "manifest.json"
+    from . import store
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        manifest = store.raw_manifest(str(asof))
+    except Exception:  # noqa: BLE001 - a notice is best-effort
         return {}
     return manifest if isinstance(manifest, dict) else {}
 
@@ -461,7 +460,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
     # each card's pill and the header strip's GEX deltas (#49 — it used to be loaded and derived a second time).
     try:
         from .run import _load_history as _lh
-        _hist = _lh(Path(data_root) / HISTORY_FILENAME) if data_root else _lh()
+        _hist = _lh()
     except Exception:  # noqa: BLE001 — history is best-effort
         _hist = {}
     _g_d = compute_positioning_deltas(snapshot.get("net_gamma_total"), "net_gex_oi", _hist, asof=snapshot.get("asof_date"))
@@ -491,7 +490,7 @@ def build_context(snapshot: dict, prev_snapshot: dict | None = None, data_root=N
     _hist_panels = _historical_panels(snapshot)
     # A backfilled day's SPY bars are a later session's file: no hourly state for it (n/a, not "waiting")
     scenarios = build_scenarios({**snapshot, "hourly_closes": None} if _hist_panels.get("hourly_triggers") else snapshot)
-    brier = scorecard(path=Path(data_root) / BRIER_FILENAME) if data_root else scorecard()
+    brier = scorecard()
     signal = signal_matrix(cards)
 
     _vix = (snapshot.get("vix") or {}).get("vix")

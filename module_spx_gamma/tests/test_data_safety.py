@@ -1,10 +1,9 @@
-"""SPX durable data must never be wiped by a corrupt read or a fallback (S-1, S-2).
+"""SPX durable data must never be wiped by a fallback or a Refresh (S-1, S-2, SPX-4, F2).
 
-- S-1: a corrupt / torn ``history.json`` or ``brier.json`` used to read as ``{}``
-  and the next write replaced the whole history with one record. Writes are now
-  atomic, and a decode error preserves the bad file and refuses the write.
-- S-2: when gex-levels falls back to the previous session, the promotion used to
-  ``rmtree`` that session's complete raw day and put the hybrid in its place.
+- S-1 (torn ``history.json`` / ``brier.json``) is gone with the files: the records are rows in
+  ``boards/spx_gamma.duckdb`` now. ``safe_json`` stays for the history pull's own run files.
+- S-2: when gex-levels falls back to the previous session, the stored complete day is kept.
+- A Refresh leaves every table of the board file unchanged but the latest pointer (review §9).
 """
 from __future__ import annotations
 
@@ -15,24 +14,11 @@ import pytest
 from RevenueChaser.module_spx_gamma import brier, run, safe_json
 from RevenueChaser.module_spx_gamma import snapshot as snap
 from RevenueChaser.module_spx_gamma.snapshot import UWApiError
+from RevenueChaser.module_spx_gamma import store as spx_store
 
-from .conftest import as_uw
+from .conftest import as_uw, store_day
 
 TORN = '{"2026-08-13": {"spot": 7700.0}, "2026-08-14": {"sp'
-
-
-@pytest.fixture
-def spx_root(tmp_path, monkeypatch):
-    """A temp SPX_GAMMA_DATA_ROOT; the module constants are bound at import."""
-    root = tmp_path / "spx_gamma"
-    monkeypatch.setenv("SPX_GAMMA_DATA_ROOT", str(root))
-    monkeypatch.setattr(run, "HISTORY_PATH", root / "spx_gamma_gex_history.json")
-    monkeypatch.setattr(brier, "BRIER_FILE", root / "brier.json")
-    return root
-
-
-def _corrupt_copies(path):
-    return sorted(path.parent.glob(path.name + ".corrupt-*"))
 
 
 class TestAtomicJson:
@@ -60,55 +46,12 @@ class TestAtomicJson:
             safe_json.load_json(p, {})
 
 
-class TestHistoryCorruption:
-    def test_torn_history_is_preserved_not_overwritten(self, spx_root, caplog):
-        run.HISTORY_PATH.parent.mkdir(parents=True)
-        run.HISTORY_PATH.write_text(TORN, encoding="utf-8")
-        with pytest.raises(safe_json.CorruptJsonError):
-            run._record_history({"current_level": 7800.0}, "2026-08-17")
-        copies = _corrupt_copies(run.HISTORY_PATH)
-        assert len(copies) == 1 and copies[0].read_text(encoding="utf-8") == TORN
-        # Nothing single-record was written in its place.
-        assert not run.HISTORY_PATH.exists()
-        assert "corrupt" in caplog.text.lower()
-
-    def test_readers_degrade_to_empty_without_touching_the_file(self, spx_root):
-        run.HISTORY_PATH.parent.mkdir(parents=True)
-        run.HISTORY_PATH.write_text(TORN, encoding="utf-8")
-        assert run._load_history() == {}
-        assert run.HISTORY_PATH.read_text(encoding="utf-8") == TORN
-
-    def test_good_history_round_trips(self, spx_root):
+class TestGexRecord:
+    def test_good_history_round_trips(self):
         run._record_history({"current_level": 7800.0}, "2026-08-14")
         run._record_history({"current_level": 7810.0}, "2026-08-17")
         assert sorted(run._load_history()) == ["2026-08-14", "2026-08-17"]
-        assert [f.name for f in spx_root.iterdir()] == ["spx_gamma_gex_history.json"]
-
-
-class TestBrierCorruption:
-    def test_torn_brier_is_preserved_not_overwritten(self, spx_root):
-        spx_root.mkdir(parents=True)
-        brier.BRIER_FILE.write_text(TORN, encoding="utf-8")
-        with pytest.raises(safe_json.CorruptJsonError):
-            brier.record_probs("2026-08-17", {"Consolidation": 0.5, "Upside": 0.3,
-                                              "Downside": 0.2})
-        copies = _corrupt_copies(brier.BRIER_FILE)
-        assert len(copies) == 1 and copies[0].read_text(encoding="utf-8") == TORN
-        assert not brier.BRIER_FILE.exists()
-
-    def test_score_date_refuses_too(self, spx_root):
-        spx_root.mkdir(parents=True)
-        brier.BRIER_FILE.write_text(TORN, encoding="utf-8")
-        with pytest.raises(safe_json.CorruptJsonError):
-            brier.score_date("2026-08-14", "Upside")
-        assert _corrupt_copies(brier.BRIER_FILE)
-
-    def test_scorecard_display_degrades_to_empty(self, spx_root):
-        spx_root.mkdir(parents=True)
-        brier.BRIER_FILE.write_text(TORN, encoding="utf-8")
-        card = brier.scorecard()
-        assert card is not None
-        assert brier.BRIER_FILE.read_text(encoding="utf-8") == TORN
+        assert run._load_history()["2026-08-17"]["spot"] == 7810.0
 
 
 # ── S-2: fallback promotion ─────────────────────────────────────────────────
@@ -140,37 +83,23 @@ def _no_candle_network(monkeypatch):
 
 
 class TestFallbackPromotion:
-    def _seed_complete(self, raw_root, day="2026-08-14"):
-        d = raw_root / day
-        d.mkdir(parents=True)
-        (d / "gex_levels.json").write_text('{"data": {"call_wall": "1"}}', encoding="utf-8")
-        (d / "manifest.json").write_text('{"asof_date": "%s"}' % day, encoding="utf-8")
-        return d
-
     def test_fallback_never_replaces_a_complete_previous_day(self, tmp_path, _no_candle_network):
-        raw_root = tmp_path / "raw"
-        good = self._seed_complete(raw_root)
+        staging = tmp_path / "staging"
+        store_day("2026-08-14", {"asof_date": "2026-08-14"}, {"gex_levels.json": '{"data": {"call_wall": "1"}}'})
         # Monday 2026-08-17 is rejected -> falls back to Friday 2026-08-14.
-        snap.fetch_snapshot(as_uw(_FallbackClient("2026-08-17")), "2026-08-17", data_root=raw_root)
-        assert '"call_wall": "1"' in (good / "gex_levels.json").read_text(encoding="utf-8")
-        assert (good / "manifest.json").read_text(encoding="utf-8") == '{"asof_date": "2026-08-14"}'
-        assert [p.name for p in raw_root.iterdir()] == ["2026-08-14"], "no staging left behind"
+        snap.fetch_snapshot(as_uw(_FallbackClient("2026-08-17")), "2026-08-17", data_root=staging)
+        assert spx_store.raw_files("2026-08-14") == {"gex_levels.json": '{"data": {"call_wall": "1"}}'}
+        assert spx_store.raw_manifest("2026-08-14") == {"asof_date": "2026-08-14"}
+        assert spx_store.stored_days() == ["2026-08-14"]
+        assert list(staging.iterdir()) == [], "no staging left behind"
 
     def test_fallback_is_written_under_its_true_date_when_absent(self, tmp_path, _no_candle_network):
-        raw_root = tmp_path / "raw"
-        snap.fetch_snapshot(as_uw(_FallbackClient("2026-08-17")), "2026-08-17", data_root=raw_root)
-        assert [p.name for p in raw_root.iterdir()] == ["2026-08-14"]
-        man = json.loads((raw_root / "2026-08-14" / "manifest.json").read_text(encoding="utf-8"))
+        staging = tmp_path / "staging"
+        snap.fetch_snapshot(as_uw(_FallbackClient("2026-08-17")), "2026-08-17", data_root=staging)
+        assert spx_store.stored_days() == ["2026-08-14"]
+        man = spx_store.raw_manifest("2026-08-14")
         assert man["asof_date"] == "2026-08-14"
-
-    def test_fallback_replaces_an_incomplete_previous_day(self, tmp_path, _no_candle_network):
-        """A day without a manifest is a leftover, not a complete snapshot."""
-        raw_root = tmp_path / "raw"
-        d = raw_root / "2026-08-14"
-        d.mkdir(parents=True)
-        (d / "gex_levels.json").write_text('{"data": {"call_wall": "1"}}', encoding="utf-8")
-        snap.fetch_snapshot(as_uw(_FallbackClient("2026-08-17")), "2026-08-17", data_root=raw_root)
-        assert (d / "manifest.json").exists()
+        assert list(staging.iterdir()) == []
 
 
 # ── SPX-4 (M-SPX-1, #376): a Refresh never rewrites the Brier record ───────
@@ -181,58 +110,59 @@ _PROBS = {"Consolidation": 0.5, "Upside": 0.3, "Downside": 0.2}
 
 
 def _stored_day(tmp_path, monkeypatch):
-    """One stored raw day under ``tmp_path`` built offline, then the network is cut."""
-    _s2_fetch(tmp_path / "raw")
+    """One stored raw day built offline, then the network is cut."""
+    _s2_fetch(tmp_path / "staging")
     _s2_no_network(monkeypatch)
-    return tmp_path / "brier.json", tmp_path / "spx_gamma_gex_history.json"
 
 
-class TestRefreshKeepsBrier:
-    def test_refresh_leaves_brier_byte_identical(self, tmp_path, monkeypatch):
-        brier_path, _ = _stored_day(tmp_path, monkeypatch)
-        brier.record_probs("2026-08-13", _PROBS, path=brier_path)
-        brier.score_date("2026-08-13", "Upside", path=brier_path)
-        before = brier_path.read_bytes()
+def _tables() -> dict:
+    """Every row of every board-file table but the latest pointer, which a Refresh of the newest day moves."""
+    from RevenueChaser.core import rawstore
+    out = {}
+    for t in (spx_store.RAW_DAYS, spx_store.RAW_FILES, spx_store.BRIER, spx_store.GEX, spx_store.META):
+        cols = [c for c in rawstore._columns_of(rawstore.MANIFEST[t])]
+        where = " WHERE key <> 'latest'" if t == spx_store.META else ""
+        out[t] = rawstore.query(f"SELECT {', '.join(cols)} FROM {t}{where} ORDER BY ALL", db="spx_gamma")
+    return out
+
+
+class TestRefreshKeepsTheBoardFile:
+    def test_refresh_leaves_every_table_unchanged(self, tmp_path, monkeypatch):
+        _stored_day(tmp_path, monkeypatch)
+        brier.record_probs("2026-08-13", _PROBS)
+        brier.score_date("2026-08-13", "Upside")
+        run._record_history({"current_level": 7800.0}, _S2_DAY)
+        before = _tables()
         run.refresh(_S2_DAY, data_root=tmp_path)
-        assert brier_path.read_bytes() == before
+        assert _tables() == before
 
-    def test_refresh_does_not_create_a_brier_record(self, tmp_path, monkeypatch):
-        brier_path, _ = _stored_day(tmp_path, monkeypatch)
+    def test_refresh_does_not_create_a_brier_or_gex_record(self, tmp_path, monkeypatch):
+        _stored_day(tmp_path, monkeypatch)
         run.refresh(_S2_DAY, data_root=tmp_path)
-        assert not brier_path.exists()
+        assert spx_store.brier_records() == [] and spx_store.gex_days() == {}
 
     def test_refresh_keeps_a_scored_record_of_the_same_day(self, tmp_path, monkeypatch):
-        brier_path, _ = _stored_day(tmp_path, monkeypatch)
-        brier.record_probs(_S2_DAY, _PROBS, path=brier_path)
-        brier.score_date(_S2_DAY, "Downside", path=brier_path)
+        _stored_day(tmp_path, monkeypatch)
+        brier.record_probs(_S2_DAY, _PROBS)
+        brier.score_date(_S2_DAY, "Downside")
         run.refresh(_S2_DAY, data_root=tmp_path)
-        rec = next(r for r in brier.load_scores(brier_path)["records"] if r["date"] == _S2_DAY)
+        rec = next(r for r in brier.load_scores()["records"] if r["date"] == _S2_DAY)
         assert rec["outcome"] == "Downside" and rec["brier"] is not None
-
-    def test_gex_history_unchanged_after_refresh_of_an_unchanged_day(self, tmp_path, monkeypatch):
-        _, history_path = _stored_day(tmp_path, monkeypatch)
-        run.refresh(_S2_DAY, data_root=tmp_path)
-        first = history_path.read_bytes()
-        run.refresh(_S2_DAY, data_root=tmp_path)
-        assert history_path.read_bytes() == first
-        assert _S2_DAY in json.loads(first)
 
 
 class TestRecordProbsKeepsScores:
     def test_record_probs_keeps_a_scored_record(self, tmp_path):
-        p = tmp_path / "brier.json"
-        brier.record_probs("2026-08-14", _PROBS, path=p)
-        scored = brier.score_date("2026-08-14", "Upside", path=p)
-        brier.record_probs("2026-08-14", {"Consolidation": 0.2, "Upside": 0.2, "Downside": 0.6}, path=p)
-        rec = brier.load_scores(p)["records"][0]
+        brier.record_probs("2026-08-14", _PROBS)
+        scored = brier.score_date("2026-08-14", "Upside")
+        brier.record_probs("2026-08-14", {"Consolidation": 0.2, "Upside": 0.2, "Downside": 0.6})
+        rec = brier.load_scores()["records"][0]
         assert rec["outcome"] == "Upside"
         assert rec["brier"] == scored["records"][0]["brier"]
         # the probabilities the score was computed from stay with it
         assert rec["scenario_probs"] == _PROBS
 
     def test_record_probs_still_replaces_an_unscored_record(self, tmp_path):
-        p = tmp_path / "brier.json"
-        brier.record_probs("2026-08-14", _PROBS, path=p)
+        brier.record_probs("2026-08-14", _PROBS)
         new = {"Consolidation": 0.2, "Upside": 0.2, "Downside": 0.6}
-        brier.record_probs("2026-08-14", new, path=p)
-        assert brier.load_scores(p)["records"][0]["scenario_probs"] == new
+        brier.record_probs("2026-08-14", new)
+        assert brier.load_scores()["records"][0]["scenario_probs"] == new

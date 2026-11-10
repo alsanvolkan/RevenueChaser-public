@@ -146,12 +146,11 @@ def _leaps_day() -> str | None:
 
 
 def _spx_gamma_day() -> str | None:
-    """SPX Gamma reports come from an external tree, not the store."""
+    """SPX Gamma's newest shown day, from its board file's latest pointer (``spx_meta``)."""
     from RevenueChaser.app import runners
-    path = runners.spxgamma_latest_path()
-    if not path.exists():
+    payload = runners.spxgamma_latest()
+    if not payload:
         return None
-    payload = json.loads(path.read_text(encoding="utf-8"))
     return _day(payload.get("asof_date") or payload.get("api_snapshot_time"))
 
 

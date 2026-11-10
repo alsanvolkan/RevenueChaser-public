@@ -8,7 +8,7 @@ missed run caught up) would keep intraday answers. Either case exits ``EXIT_NOT_
 The Fetch itself runs in the dashboard, the one writer (S14, SPX Gamma review F1/D3): the task posts
 ``/run/spxgamma`` with the ``X-RC-Panel`` header and polls ``/api/job/<id>``. With the dashboard down that night's
 Fetch does not happen (exit 1); it never falls back to writing in its own process. It prints one JSON line: the
-session, the day actually stored (``effective``, read from ``latest.json``; the mandatory-endpoint fallback can store
+session, the day actually stored (``effective``, read from the board file's latest pointer; the mandatory-endpoint fallback can store
 the previous one), the status and the job id. ``run``'s own backfill still fills a missing session of the last two
 weeks a day or more late, as a board Fetch does: its dated calls are that session's, its undated ones (the live
 files, ``as_of: false`` in the manifest) the later day's.
@@ -23,7 +23,8 @@ import httpx
 
 from RevenueChaser.core.calendar import in_us_session_window, latest_complete_session
 
-from .config import DATA_ROOT, TICKER
+from . import store
+from .config import TICKER
 from .snapshot import stored_spx_candles
 
 EXIT_NOT_READY = 3
@@ -56,10 +57,7 @@ def _queue_fetch(asof: str) -> dict:
         time.sleep(_POLL_S)
     if job["status"] != "done":
         return {"status": job["status"], "job_id": job_id, "error": job.get("error") or job.get("message")}
-    try:
-        effective = json.loads((DATA_ROOT / "latest.json").read_text(encoding="utf-8")).get("asof_date")
-    except (OSError, ValueError):
-        effective = None
+    effective = (store.latest() or {}).get("asof_date")
     out = {"effective": effective, "status": "done", "job_id": job_id, "message": job.get("message")}
     if job.get("provider_health"):
         out["uw"] = job["provider_health"]
@@ -88,7 +86,14 @@ def main(argv: list[str] | None = None) -> int:
     when.add_argument("--nightly", action="store_true", help="the latest complete New York session (#291)")
     when.add_argument("--migrate-data-root", action="store_true",
                       help="S4: copy the tree out of the checkout into the store root (dry run without --apply)")
-    parser.add_argument("--apply", action="store_true", help="with --migrate-data-root: copy (never deletes)")
+    when.add_argument("--import-tree", action="store_true",
+                      help="import the old file tree into boards/spx_gamma.duckdb (dry run without --apply); "
+                           "run with the dashboard stopped, it writes the board file")
+    parser.add_argument("--apply", action="store_true",
+                        help="with --migrate-data-root: copy; with --import-tree: write (neither deletes)")
+    parser.add_argument("--legacy", help="with --import-tree: the old in-checkout tree, to list files only it has")
+    parser.add_argument("--extra-gex", action="append", default=[],
+                        help="with --import-tree: another GEX history JSON (e.g. a spx_gamma_versions copy)")
     parser.add_argument("--mode", default="open_interest",
                         choices=["open_interest", "directionalized_volume"],
                         help="spot-exposure mode (default open_interest)")
@@ -101,6 +106,13 @@ def main(argv: list[str] | None = None) -> int:
         out = migrate(LEGACY_DATA_ROOT, STORE_DATA_ROOT, apply=args.apply)
         print(json.dumps(out))
         return 0 if out["status"] in ("dry_run", "copied", "target_exists", "nothing_to_copy") else 1
+
+    if args.import_tree:
+        from .config import TREE_ROOT
+        from .import_tree import import_tree
+        out = import_tree(TREE_ROOT, apply=args.apply, legacy=args.legacy, extra_gex=args.extra_gex)
+        print(json.dumps(out, indent=2, default=str))
+        return 0 if out["status"] != "no_tree" else 1
 
     if args.nightly:
         if args.ticker != TICKER:

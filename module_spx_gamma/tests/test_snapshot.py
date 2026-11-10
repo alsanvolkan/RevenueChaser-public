@@ -7,6 +7,7 @@ import pytest
 
 from RevenueChaser.module_spx_gamma import snapshot as snap
 from RevenueChaser.module_spx_gamma.snapshot import UWApiError
+from RevenueChaser.module_spx_gamma import store as spx_store
 
 from .conftest import as_uw
 
@@ -66,7 +67,7 @@ def test_manifest_has_sha256(tmp_path, monkeypatch):
     monkeypatch.setattr(snap, "stored_spx_candles", _candles_fn)
     client = _FakeClient()
     snap.fetch_snapshot(as_uw(client), "2026-08-14", data_root=tmp_path)
-    manifest = json.loads((tmp_path / "2026-08-14" / "manifest.json").read_text(encoding="utf-8"))
+    manifest = spx_store.raw_manifest("2026-08-14")
     assert "sha256" in manifest
     assert "gex_levels.json" in manifest["sha256"]
     assert manifest["candle_source"] == "rcdata:market_series SPX (cboe)"

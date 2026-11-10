@@ -14,9 +14,8 @@ from RevenueChaser.core.providers.unusual_whales import UWClient
 
 from .charts import position_map
 from .charts.tornado import build_tornado_fig
-from .brier import BRIER_FILENAME
-from .config import DATA_ROOT, HISTORY_FILENAME, TICKER, UW_API_TOKEN
-from . import safe_json
+from .config import DATA_ROOT, TICKER, UW_API_TOKEN
+from . import store
 from .brier import record_probs, score_pending
 from .normalize import normalize_snapshot
 from .render import render_html, render_markdown
@@ -27,47 +26,23 @@ from . import store_reads
 
 logger = logging.getLogger(__name__)
 
-HISTORY_PATH = DATA_ROOT / HISTORY_FILENAME
-HISTORY_LOOKBACK_DAYS = 10  # keep ~2 trading weeks of daily Net GEX records
+HISTORY_LOOKBACK_DAYS = 10  # how far back a Fetch's backfill looks for a missing session (every day is kept, D2)
 
 
-def _load_history(path: Path | None = None) -> dict:
-    """History for display (render, API): a corrupt file reads as empty here but
-    is left untouched — only the writer quarantines it (S-1)."""
-    p = path or HISTORY_PATH
-    try:
-        data = safe_json.load_json(p, {})
-    except (safe_json.CorruptJsonError, OSError) as exc:
-        logger.error("spx history unreadable, shown as empty: %s", exc)
-        return {}
-    return data if isinstance(data, dict) else {}
+def _load_history() -> dict:
+    """The daily GEX record, every stored day (``spx_gex_daily``), as ``{date: record}``."""
+    return store.gex_days()
 
 
-def _load_history_for_update(path: Path | None = None) -> dict:
-    """History for a write: a corrupt file is moved aside and the write refused,
-    so a torn file never becomes a one-record history (S-1)."""
-    p = path or HISTORY_PATH
-    data = safe_json.load_for_update(p, {})
-    if not isinstance(data, dict):
-        safe_json.quarantine(p)
-        raise safe_json.CorruptJsonError(p, f"expected an object, got {type(data).__name__}")
-    return data
-
-
-def _save_history(history: dict, path: Path | None = None) -> None:
-    safe_json.write_json_atomic(path or HISTORY_PATH, history)
-
-
-def _record_history(snapshot: dict, asof_date: str, path: Path | None = None) -> None:
-    """Append today's EOD GEX record, keeping only the last ~2 weeks."""
+def gex_record(snapshot: dict, asof_date: str) -> dict:
+    """The day's EOD GEX record from a normalized snapshot (``spx_gex_daily``'s fields)."""
     from datetime import date as _date
     vix = (snapshot.get("vix") or {}).get("vix")
     try:
         is_friday = _date.fromisoformat(asof_date).weekday() == 4
     except ValueError:
         is_friday = False
-    history = _load_history_for_update(path)
-    history[asof_date] = {
+    return {
         "is_friday_close": is_friday,
         "spot": snapshot.get("current_level"),
         "net_dex": snapshot.get("net_dex"),
@@ -81,11 +56,11 @@ def _record_history(snapshot: dict, asof_date: str, path: Path | None = None) ->
         "regime": snapshot.get("regime"),
         "vix": vix,
     }
-    # prune to the newest N records (sorted by date)
-    kept = dict(sorted(history.items()))
-    if len(kept) > HISTORY_LOOKBACK_DAYS:
-        kept = dict(list(kept.items())[-HISTORY_LOOKBACK_DAYS:])
-    _save_history(kept, path)
+
+
+def _record_history(snapshot: dict, asof_date: str) -> None:
+    """Store the day's EOD GEX record (a Fetch only, F2). Every day is kept (D2)."""
+    store.put_gex(asof_date, gex_record(snapshot, asof_date))
 
 
 def _is_session(d) -> bool:
@@ -130,26 +105,23 @@ def _backfill_history(root: Path, uw, ticker: str,
     """
     import time
 
-    history_path = root / HISTORY_FILENAME
-    history = _load_history_for_update(history_path)
-    missing = _missing_backfill_days(history, today_ny(), days)
+    missing = _missing_backfill_days(_load_history(), today_ny(), days)
     if not missing:
         return
 
     from .snapshot import fetch_snapshot as _fs
     for day in missing:
         try:
-            raw = _fs(uw, day, ticker=ticker, data_root=root / "raw",
+            raw = _fs(uw, day, ticker=ticker, data_root=root / "staging",
                       mode="open_interest", fetch_all_expiries=True, overwrite=False)
             if raw is None:
-                # A complete raw day is never overwritten, but its history row may be missing (a
-                # quarantined history file, a run that died after the promote): rebuild it from
-                # disk, no network.
-                raw = load_raw_day(root / "raw" / day)
+                # A complete raw day is never overwritten, but its GEX row may be missing (a run that died
+                # after the day was stored): rebuild it from the stored day, no network.
+                raw = load_raw_day(day)
             effective = (raw.get("_meta") or {}).get("effective_date") or day
             snap = normalize_snapshot(with_store_inputs(raw, effective), effective, ticker=ticker,
                                       mode="open_interest")
-            _record_history(snap, effective, history_path)
+            _record_history(snap, effective)
             time.sleep(0.2)
         except Exception as exc:  # noqa: BLE001 — best effort per day
             logger.warning("spx backfill %s skipped: %s", day, exc)
@@ -160,7 +132,7 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _score_brier(asof_date: str, brier_path: Path) -> list[str]:
+def _score_brier(asof_date: str) -> list[str]:
     """Score the recorded weeks whose target Friday has closed, from the stored SPX closes (F1).
 
     Returns the asof dates scored now; an empty list when the closes are not stored."""
@@ -168,7 +140,7 @@ def _score_brier(asof_date: str, brier_path: Path) -> list[str]:
     closes = {r["date"]: float(r["close"]) for r in candles.get("rows") or [] if r.get("close") is not None}
     if not closes:
         return []
-    scored = score_pending(closes, path=brier_path)["scored"]
+    scored = score_pending(closes)["scored"]
     if scored:
         logger.info("spx brier scored %d record(s): %s", len(scored), ", ".join(scored))
     return scored
@@ -213,7 +185,7 @@ def _export_chart(fig, chart_dir: Path, name: str, png: bool = True):
     return html_path, png_path, fragment
 
 
-def _historical_live_files(day_dir: Path) -> list[str]:
+def _historical_live_files(day: str) -> list[str]:
     """The live files (manifest ``as_of`` false) of a day fetched after a later session opened.
 
     Live files carry the value at fetch time whatever date was asked for (snapshot.LIVE_FILES),
@@ -225,11 +197,11 @@ def _historical_live_files(day_dir: Path) -> list[str]:
     from datetime import datetime, time as _time, timedelta, timezone
     from zoneinfo import ZoneInfo
     try:
-        manifest = json.loads((Path(day_dir) / "manifest.json").read_text(encoding="utf-8"))
+        manifest = store.raw_manifest(day) or {}
         effective = date.fromisoformat(manifest.get("effective_date") or manifest.get("asof_date"))
         fetched = datetime.fromisoformat(str(manifest["api_snapshot_time"]).replace("Z", "+00:00"))
     except (OSError, ValueError, TypeError, KeyError) as exc:
-        logger.debug("spx manifest gives no fetch time for %s: %s", day_dir, exc)
+        logger.debug("spx manifest gives no fetch time for %s: %s", day, exc)
         return []
     if fetched.tzinfo is None:
         fetched = fetched.replace(tzinfo=timezone.utc)   # the snapshot stamps UTC (snapshot._utc_now)
@@ -260,23 +232,21 @@ def with_store_inputs(raw: dict, day: str) -> dict:
 def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
               mode: str = "open_interest", update_latest: bool = True, record: bool = True,
               write_png: bool = True, builder_request: dict | None = None) -> dict:
-    """Everything after the fetch: one raw day -> snapshot, charts, report, latest.json, history.
+    """Everything after the fetch: one raw day -> snapshot, charts, report, the latest pointer, the GEX record.
 
     Pure of the network, so Refresh runs it on a stored day. The day is filed under the raw day's
     effective date, never the requested one (a fallback session is not the requested day, G3).
-    ``update_latest=False`` leaves the ``latest.json`` pointer alone (rebuilding an older day).
-    ``record=False`` leaves the Brier record alone: only a Fetch records the day's probabilities,
-    a Refresh never rewrites the audit file (SPX-4).
+    ``update_latest=False`` leaves the ``spx_meta`` latest pointer alone (rebuilding an older day).
+    ``record=False`` leaves the Brier record and the GEX record alone: only a Fetch records the day,
+    a Refresh never rewrites them (SPX-4, F2).
     ``write_png=False`` skips the PNG export (a Refresh, #376): PNGs a Fetch wrote stay on disk and
     keep their report reference, but the manifest records no sha256 for a PNG this run did not write.
     ``builder_request`` is what a Fetch queued for the builder (PR 3, A4); the board says so in one line.
     """
     asof_date = (raw.get("_meta") or {}).get("effective_date") or requested_date
-    history_path = root / HISTORY_FILENAME
-    brier_path = root / BRIER_FILENAME
 
     snapshot = normalize_snapshot(with_store_inputs(raw, asof_date), asof_date, ticker=ticker, mode=mode)
-    snapshot["historical_live_files"] = _historical_live_files(root / "raw" / asof_date)
+    snapshot["historical_live_files"] = _historical_live_files(asof_date)
     snapshot["builder_request"] = builder_request
 
     parsed_dir = root / "parsed" / asof_date
@@ -325,20 +295,15 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
     # Brier scorecard: record this week's scenario probabilities (honest audit), Fetch only
     if record:
         try:
-            _score_brier(asof_date, brier_path)
+            _score_brier(asof_date)
             scenarios = build_scenarios(snapshot).get("scenarios", [])
             probs = {s["name"]: s["p"] for s in scenarios}
-            record_probs(asof_date, probs, path=brier_path, bands=scenario_bands(snapshot))
-        except safe_json.CorruptJsonError as exc:
-            logger.error("spx brier not recorded (file kept aside): %s", exc)
+            record_probs(asof_date, probs, bands=scenario_bands(snapshot))
         except Exception as exc:  # noqa: BLE001 — scorecard is best-effort
             logger.warning("spx brier record failed: %s", exc)
 
-    # Final audit manifest with SHA-256 of raw inputs and rendered artifacts
-    raw_dir = root / "raw" / asof_date
-    hashes = {}
-    for p in sorted(raw_dir.glob("*.json")):
-        hashes[p.name] = _sha256(p)
+    # Final audit manifest with SHA-256 of raw inputs (as stored in the board file) and rendered artifacts
+    hashes = dict(store.raw_file_hashes(asof_date))
     for p in (html_path, png_path):
         if p and p.exists():
             hashes[p.name] = _sha256(p)
@@ -368,22 +333,22 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
         "sha256": hashes,
     }
     if update_latest:
-        safe_json.write_json_atomic(root / "latest.json", manifest)
+        store.put_meta("latest", manifest)
 
-    # EOD GEX history record (daily Net GEX for Δ + calendar coloring).
-    try:
-        _record_history(snapshot, asof_date, history_path)
-    except safe_json.CorruptJsonError as exc:
-        logger.error("spx history not recorded (file kept aside): %s", exc)
-    except Exception as exc:  # noqa: BLE001 — history is best-effort
-        logger.warning("spx history record failed: %s", exc)
+    # EOD GEX record (daily Net GEX for the deltas and the calendar colours): a Fetch only, so a Refresh never
+    # rewrites a stored day with today's code (F2).
+    if record:
+        try:
+            _record_history(snapshot, asof_date)
+        except Exception as exc:  # noqa: BLE001 — history is best-effort
+            logger.warning("spx history record failed: %s", exc)
 
     return {
         "snapshot": snapshot,
         "latest": manifest,
         "fig": fig,
         "paths": {
-            "raw": raw_dir,
+            "raw": asof_date,
             "parsed": parsed_dir / "snapshot.json",
             "chart_html": html_path,
             "chart_png": png_path or kept_png,
@@ -394,11 +359,9 @@ def build_day(raw: dict, requested_date: str, root: Path, ticker: str = TICKER,
 
 
 def serves_from_disk(asof_date: str, data_root=None) -> bool:
-    """True when :func:`run` rebuilds ``asof_date`` from disk instead of fetching it (#179 D5):
-    a date before today in New York whose raw day is complete (it has its manifest)."""
-    root = Path(data_root) if data_root else DATA_ROOT
-    return (date.fromisoformat(asof_date) < today_ny()
-            and (root / "raw" / asof_date / "manifest.json").exists())
+    """True when :func:`run` rebuilds ``asof_date`` from the board file instead of fetching it (#179 D5):
+    a date before today in New York whose raw day is stored."""
+    return date.fromisoformat(asof_date) < today_ny() and store.has_day(asof_date)
 
 
 def run(asof_date: str, data_root=None, token: str | None = None, mode: str = "open_interest",
@@ -425,9 +388,9 @@ def run(asof_date: str, data_root=None, token: str | None = None, mode: str = "o
     elif not getattr(uw, "key", None):
         raise RuntimeError("UNUSUAL_WHALES_API_KEY not set")
 
-    raw = fetch_snapshot(uw, asof_date, ticker=ticker, data_root=root / "raw", mode=mode,
+    raw = fetch_snapshot(uw, asof_date, ticker=ticker, data_root=root / "staging", mode=mode,
                          fetch_all_expiries=fetch_all_expiries)
-    # Only the newest stored day moves latest.json, which drives the global Regime badge (SPX-3).
+    # Only the newest stored day moves the latest pointer (spx_meta), which drives the global Regime badge (SPX-3).
     effective = (raw.get("_meta") or {}).get("effective_date") or asof_date
     newest = latest_stored_day(root)
     result = build_day(raw, asof_date, root, ticker=ticker, mode=mode,
@@ -442,28 +405,23 @@ def run(asof_date: str, data_root=None, token: str | None = None, mode: str = "o
     return result
 
 
-def latest_stored_day(root: Path) -> str | None:
-    """The newest raw day that has its manifest (a complete fetch), or None."""
-    raw_root = root / "raw"
-    if not raw_root.exists():
-        return None
-    days = sorted(d.name for d in raw_root.iterdir()
-                  if d.is_dir() and not d.name.startswith(".") and (d / "manifest.json").exists())
-    return days[-1] if days else None
+def latest_stored_day(root: Path | None = None) -> str | None:
+    """The newest stored raw day (a complete fetch), or None. ``root`` is ignored (the day is in the board file)."""
+    return store.latest_day()
 
 
 def refresh(day: str | None = None, data_root=None, ticker: str = TICKER,
             mode: str = "open_interest", builder_request: dict | None = None) -> dict | None:
-    """Rebuild a stored day's snapshot, charts and report from disk with no network.
+    """Rebuild a stored day's snapshot, charts and report from the board file with no network.
 
     ``day`` defaults to the newest stored raw day. Returns the same dict as :func:`run`, or None
-    when there is no stored day to rebuild. The raw files and the Brier record are never written.
+    when there is no stored day to rebuild. The raw day, the Brier record and the GEX record are never written.
     """
     root = Path(data_root) if data_root else DATA_ROOT
     day = day or latest_stored_day(root)
     if day is None:
         return None
-    raw = load_raw_day(root / "raw" / day)
+    raw = load_raw_day(day)
     return build_day(raw, day, root, ticker=ticker, mode=mode,
                      update_latest=(day == latest_stored_day(root)), record=False, write_png=False,
                      builder_request=builder_request)

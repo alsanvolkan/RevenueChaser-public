@@ -1,18 +1,16 @@
 """#376 M-SPX-4: Refresh skips the PNG export; the tornado sets its annotations once."""
 from __future__ import annotations
 
-import json
-
 import plotly.graph_objects as go
 
-from RevenueChaser.module_spx_gamma import run as spx_run
+from RevenueChaser.module_spx_gamma import run as spx_run, store as spx_store
 from RevenueChaser.module_spx_gamma.charts import tornado
 from RevenueChaser.module_spx_gamma.charts.tornado import (
     BG, GREEN, GRID, ORANGE, RED, TEXT, _level_entries, bar_value_and_overflow, fmt_signed_compact,
     tornado_range, tornado_rows,
 )
 
-from .conftest import make_raw, make_snapshot
+from .conftest import make_raw, make_snapshot, store_day
 from .test_s2_fetch import _no_network
 
 DAY = "2026-08-14"
@@ -305,17 +303,14 @@ def _stored_day(root, monkeypatch):
     """A stored raw day (manifest + one raw file) whose content is the full synthetic payload,
     so all three charts exist; the loader is faked, the raw files only feed the sha256 map."""
     raw = dict(make_raw(), _meta={"effective_date": DAY})
-    d = root / "raw" / DAY
-    d.mkdir(parents=True)
-    (d / "manifest.json").write_text("{}", encoding="utf-8")
-    (d / "gex_levels.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(spx_run, "load_raw_day", lambda day_dir: raw)
+    store_day(DAY, {}, {"gex_levels.json": "{}"})
+    monkeypatch.setattr(spx_run, "load_raw_day", lambda day: raw)
     _no_network(monkeypatch)
     return raw
 
 
 def _sha_map(root):
-    return json.loads((root / "latest.json").read_text(encoding="utf-8"))["sha256"]
+    return spx_store.latest()["sha256"]
 
 
 def test_refresh_writes_no_png(tmp_path, monkeypatch, stored_make_raw_window):
@@ -340,17 +335,19 @@ def test_refresh_records_no_sha256_for_a_png_it_did_not_write(tmp_path, monkeypa
     raw = _stored_day(tmp_path, monkeypatch)
     _PngCalls(monkeypatch)
     spx_run.build_day(raw, DAY, tmp_path)               # Fetch: png on disk and in the map
-    before = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    before = spx_store.latest()
     spx_run.refresh(DAY, data_root=tmp_path)
-    after = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    after = spx_store.latest()
     assert "position_map.png" not in after["sha256"]
     assert set(after["sha256"]) == {k for k in before["sha256"] if not k.endswith(".png")}
-    # latest.json is equal to before except for the sha256 map
+    # the latest pointer is equal to before except for the sha256 map
     assert {k: v for k, v in after.items() if k != "sha256"} == {k: v for k, v in before.items() if k != "sha256"}
     # every recorded hash matches a file on disk
     for name, digest in after["sha256"].items():
-        p = (tmp_path / "raw" / DAY / name) if name.endswith(".json") else (tmp_path / "charts" / DAY / name)
-        assert spx_run._sha256(p) == digest
+        if name.endswith(".json"):
+            assert spx_store.raw_file_hashes(DAY)[name] == digest
+        else:
+            assert spx_run._sha256(tmp_path / "charts" / DAY / name) == digest
 
 
 def test_refresh_keeps_the_report_image_reference(tmp_path, monkeypatch, stored_make_raw_window):

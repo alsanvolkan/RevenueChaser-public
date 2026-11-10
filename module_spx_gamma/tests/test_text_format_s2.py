@@ -7,7 +7,7 @@ import pytest
 
 from RevenueChaser.module_spx_gamma import render, run as spx_run
 
-from .conftest import make_snapshot
+from .conftest import make_snapshot, store_day
 from .test_s2_fetch import DAY, _fetch, _no_network
 
 
@@ -105,7 +105,7 @@ def test_the_current_day_keeps_its_live_values():
 
 def test_refresh_of_a_backfilled_day_marks_its_live_files(tmp_path, monkeypatch):
     # the stored day was fetched today (api_snapshot_time = now), long after DAY's session
-    _fetch(tmp_path / "raw")
+    _fetch(tmp_path / "staging")
     _no_network(monkeypatch)
     spx_run.refresh(DAY, data_root=tmp_path)
     snap = json.loads((tmp_path / "parsed" / DAY / "snapshot.json").read_text(encoding="utf-8"))
@@ -117,25 +117,22 @@ def test_refresh_of_a_backfilled_day_marks_its_live_files(tmp_path, monkeypatch)
 
 
 def test_a_day_fetched_in_its_own_session_is_not_historical(tmp_path):
-    day = tmp_path / "raw" / DAY
-    day.mkdir(parents=True)
-    (day / "manifest.json").write_text(json.dumps({
+    store_day(DAY, {
         "effective_date": DAY, "requested_date": DAY, "api_snapshot_time": f"{DAY}T19:30:00+00:00",
-        "files": {"vix_family.json": {"as_of": False}, "gex_levels.json": {"as_of": True}}}), encoding="utf-8")
-    assert spx_run._historical_live_files(day) == []
+        "files": {"vix_family.json": {"as_of": False}, "gex_levels.json": {"as_of": True}}})
+    assert spx_run._historical_live_files(DAY) == []
 
 
 def test_a_saturday_fetch_of_friday_is_not_historical(tmp_path):
-    day = tmp_path / "raw" / DAY            # 2026-08-14 is a Friday
-    day.mkdir(parents=True)
-    (day / "manifest.json").write_text(json.dumps({
+    # 2026-08-14 is a Friday
+    store_day(DAY, {
         "effective_date": DAY, "requested_date": "2026-08-15", "api_snapshot_time": "2026-08-15T16:00:00+00:00",
-        "files": {"vix_family.json": {"as_of": False}}}), encoding="utf-8")
-    assert spx_run._historical_live_files(day) == []
-    (day / "manifest.json").write_text(json.dumps({
+        "files": {"vix_family.json": {"as_of": False}}})
+    assert spx_run._historical_live_files(DAY) == []
+    store_day(DAY, {
         "effective_date": DAY, "requested_date": DAY, "api_snapshot_time": "2026-08-17T16:00:00+00:00",
-        "files": {"vix_family.json": {"as_of": False}}}), encoding="utf-8")
-    assert spx_run._historical_live_files(day) == ["vix_family.json"]
+        "files": {"vix_family.json": {"as_of": False}}})
+    assert spx_run._historical_live_files(DAY) == ["vix_family.json"]
 
 
 def test_markdown_survives_missing_vol_numbers():
@@ -148,12 +145,10 @@ def test_markdown_survives_missing_vol_numbers():
 
 
 def _manifest_day(tmp_path, effective, fetched_utc):
-    day = tmp_path / "raw" / effective
-    day.mkdir(parents=True, exist_ok=True)
-    (day / "manifest.json").write_text(json.dumps({
+    store_day(effective, {
         "effective_date": effective, "requested_date": effective, "api_snapshot_time": fetched_utc,
-        "files": {"vix_family.json": {"as_of": False}, "gex_levels.json": {"as_of": True}}}), encoding="utf-8")
-    return day
+        "files": {"vix_family.json": {"as_of": False}, "gex_levels.json": {"as_of": True}}})
+    return effective
 
 
 @pytest.mark.parametrize("fetched_utc, historical", [

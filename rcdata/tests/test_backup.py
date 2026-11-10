@@ -445,7 +445,7 @@ def raw_trees(tmp_path, monkeypatch):
     uw = config.MARKET_RAW_DIR / "raw" / "uw"
     spx = tmp_path / "spx_gamma"
     from RevenueChaser.module_spx_gamma import config as spx_config
-    monkeypatch.setattr(spx_config, "DATA_ROOT", spx)
+    monkeypatch.setattr(spx_config, "TREE_ROOT", spx)
     _file(uw / "spot_expiry_strike" / "2026-10-26" / "SPX.json.gz", b"a" * 20)
     _file(uw / "greek_expiry_strike" / "2026-10-26" / "SPX.json.gz", b"b" * 30)
     _file(spx / "spx_gamma_gex_history.json", b'{"days": [1]}')
@@ -547,7 +547,7 @@ def test_uw_raw_keeps_the_newest_four_weeks(backup_dir, raw_trees):
 
 def test_uw_raw_with_no_source_tree_writes_nothing(backup_dir, tmp_path, monkeypatch):
     from RevenueChaser.module_spx_gamma import config as spx_config
-    monkeypatch.setattr(spx_config, "DATA_ROOT", tmp_path / "nowhere")
+    monkeypatch.setattr(spx_config, "TREE_ROOT", tmp_path / "nowhere")
     assert backup.run_backup(only="uw-raw")["uw-raw"] is None
     assert [p.name for p in (backup_dir / "uw-raw").iterdir()] == [backup.MANIFEST_NAME]   # the run record only
 
