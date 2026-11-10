@@ -920,6 +920,8 @@ class EarningsPipeline:
                 "contribution": None,
                 "reasons": r6.reasons,
                 "flags": r6.flags or [],
+                # rate_sensitivity, beta_tstat, noisy_beta: the veto's inputs, so a NO_TRADE can be audited (#635).
+                "metrics": r6.raw_metrics,
             }
 
         # ── Liquidity from screener + endpoints ──
