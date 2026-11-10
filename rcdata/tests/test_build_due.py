@@ -94,7 +94,9 @@ def test_the_series_take_fridays_close_on_friday_evening_not_monday(clock):
     assert due.is_due(DATASETS[MS])[0] is True
     _checked(MS, as_of="2026-10-30")                       # Friday's run done: next check Mon 2 Nov
     clock(datetime(2026, 10, 31, 15, 0, tzinfo=timezone.utc))
-    assert due.is_due(DATASETS[MS])[0] is False            # nothing to fetch over the weekend
+    assert DATASETS[MS].default_as_of() == date(2026, 10, 30)   # Saturday still names Friday's close
+    clock(datetime(2026, 11, 2, 15, 0, tzinfo=timezone.utc))
+    assert due.is_due(DATASETS[MS])[0] is False            # Monday's session not complete: no morning refetch
 
 
 def test_a_failed_or_skipped_last_check_is_due_again(clock):
