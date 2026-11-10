@@ -188,6 +188,10 @@ class EarningsPipeline:
         self._estimates = None
         # Which tickers read their year of bars from the store and which from UW (the input_sources note).
         self._ohlc_stored: set = set()
+        # The evening's option set of the scored names (avo's O1 = A): R4's GEX levels, strikes and term structure.
+        self._er_options = None
+        self._options_stored: set = set()
+        self._options_live: set = set()
         self._ohlc_live: set = set()
         self._bypass_tickers = set()
         self._pre_scores = {}
@@ -211,6 +215,8 @@ class EarningsPipeline:
             "ohlc": {"stored": 0, "live": 0},
             "estimates": {"stored": 0, "missing": 0},
             "estimates_note": None,
+            "options": {"stored": 0, "live": 0},
+            "options_note": None,
         }
 
     @property
@@ -329,7 +335,26 @@ class EarningsPipeline:
             self.input_sources["estimates_note"] = note.get("label")
         return self._estimates
 
-    def _gex_profile(self, ticker: str, spot, em_pct: float | None, capture: dict | None = None) -> dict:
+    def _warm_er_options(self, tickers) -> dict[str, dict]:
+        """The options store's earnings set for the scored names (``store_reads.earnings_options``, the need
+        ``earnings.options``; avo's O1 = A). A name it lacks is asked live in ``_score``, as before."""
+        if self._er_options is None:
+            rows, note = store_reads.earnings_options(tickers)
+            self._er_options = rows
+            self.input_sources["options_note"] = note.get("label")
+        return self._er_options
+
+    def _stored_options(self, ticker: str, report_date: str) -> dict:
+        """The stored evening of ``ticker`` when it was fetched for this ``report_date``, else ``{}``."""
+        row = (self._er_options or {}).get(ticker) or {}
+        if row and row.get("report_date") is not None and row["report_date"].isoformat() == report_date:
+            self._options_stored.add(ticker)
+            return row
+        self._options_live.add(ticker)
+        return {}
+
+    def _gex_profile(self, ticker: str, spot, em_pct: float | None, capture: dict | None = None,
+                     stored: list | None = None) -> dict:
         """Strike-level GEX profile (Directionalized Volume) for R4.
 
         One extra UW call per deep-scored ticker when ``R4_GEX_PROFILE_ENABLED``
@@ -341,10 +366,10 @@ class EarningsPipeline:
         from RevenueChaser.core.gex_profile import normalize_strike_rows, build_profile
         if not R4_GEX_PROFILE_ENABLED or not em_pct:
             return {}
-        if not hasattr(self.uw, "spot_exposures_by_strike"):
+        if not stored and not hasattr(self.uw, "spot_exposures_by_strike"):
             return {}
         try:
-            payload = self.uw.spot_exposures_by_strike(ticker) or []
+            payload = stored or self.uw.spot_exposures_by_strike(ticker) or []
             if capture is not None:
                 capture["spot_exposures"] = _strike_fields(payload)   # the fields R4 reads, kept in the history row
             rows = normalize_strike_rows(payload)
@@ -356,7 +381,8 @@ class EarningsPipeline:
             logger.debug("gex profile %s unavailable: %s", ticker, e)
             return {}
 
-    def _term_slope(self, ticker: str, em_pct: float | None, capture: dict | None = None) -> float | None:
+    def _term_slope(self, ticker: str, em_pct: float | None, capture: dict | None = None,
+                    stored: list | None = None) -> float | None:
         """Per-day ATM-IV slope (nearest expiry -> 45 DTE) for R4's slope term.
 
         One extra UW call per deep-scored ticker when
@@ -369,10 +395,10 @@ class EarningsPipeline:
         from RevenueChaser.core.vol_metrics import term_structure_curve, term_structure_slope
         if not R4_TERM_STRUCTURE_ENABLED or not em_pct:
             return None
-        if not hasattr(self.uw, "term_structure"):
+        if not stored and not hasattr(self.uw, "term_structure"):
             return None
         try:
-            rows = self.uw.term_structure(ticker) or []
+            rows = stored or self.uw.term_structure(ticker) or []
             if capture is not None:
                 capture["term_structure"] = rows             # the answer, kept in the card's history row
             curve = term_structure_curve(rows)
@@ -419,6 +445,7 @@ class EarningsPipeline:
         # One D01 read for the names that will be scored, before the scoring workers start (E5e, #372).
         self._ohlc_bars = stored_inputs.ohlc_bars(scoring)
         self._warm_estimates()
+        self._warm_er_options(scoring)
         if getattr(self, "_spine_gics", None) is None:
             self._spine_gics = _spine.spine_gics()   # once, before the workers start
 
@@ -444,6 +471,7 @@ class EarningsPipeline:
         cards = [c for c in scored if c]
         # The workers are done: the OHLC source counts are settled (E5e, #372).
         self.input_sources["ohlc"] = {"stored": len(self._ohlc_stored), "live": len(self._ohlc_live)}
+        self.input_sources["options"] = {"stored": len(self._options_stored), "live": len(self._options_live)}
         cards.sort(key=lambda c: (-(c.confidence_score + c.pre_score), -c.expected_move_pct))
         return cards
 
@@ -658,9 +686,13 @@ class EarningsPipeline:
         spot = scr.get("close") or earn.get("price") or None
         spot = _fmt_price_float(spot)
         current_price = f"${spot:.2f}" if spot is not None else ""
-        gex = self.uw.gex_levels(ticker) or {}
+        # O1 = A: R4's three UW answers come from the evening's option set when the store has it for this report;
+        # each part it lacks (an empty answer UW gave that evening) is asked live, as before.
+        stored_opt = self._stored_options(ticker, report_date)
+        stored_gex = stored_opt.get("gex_levels") or {}
+        gex = stored_gex if any(v is not None for v in stored_gex.values()) else (self.uw.gex_levels(ticker) or {})
         spot_num = _fmt_price_float(earn.get("price") or spot)
-        gex_profile = self._gex_profile(ticker, spot_num, em_pct, captured)
+        gex_profile = self._gex_profile(ticker, spot_num, em_pct, captured, stored_opt.get("strikes"))
         scr_rv = _safe_float(scr.get("realized_volatility"))
         yz_rv30 = self._yz_rv30(ticker, ohlc)
         opt = {
@@ -673,7 +705,7 @@ class EarningsPipeline:
             # screener RV — same construction the skill's 1.25 threshold assumes.
             "realized_volatility": yz_rv30 if yz_rv30 is not None else scr_rv,
             "rv_source": "yang_zhang" if yz_rv30 is not None else "screener",
-            "ts_slope": self._term_slope(ticker, em_pct, captured),
+            "ts_slope": self._term_slope(ticker, em_pct, captured, stored_opt.get("term")),
             "iv_rank": _safe_float(scr.get("iv_rank")),
             "straddle_payoff_median": _straddle_payoff_median(hist),
         }
@@ -813,6 +845,7 @@ class EarningsPipeline:
             "rate_event_overlap": overlap,
             "spot_exposures": captured.get("spot_exposures"),
             "term_structure": captured.get("term_structure"),
+            "options_source": (f"stored {stored_opt['session_date']}" if stored_opt else "live"),
             "fin_records": fin_records,
             "current_price": spot,
             "leaps": leaps,
