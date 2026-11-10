@@ -529,6 +529,12 @@ def run_started_at(run_id: str) -> float | None:
     return row["started_at"] if row else None
 
 
+def runs_between(start: float, end: float) -> list[dict]:
+    rows = _fetch("job_runs2", _client().zrangebyscore(_key("job_runs2"), float(start), f"({float(end)}"))
+    rows.sort(key=lambda r: (r["started_at"] or 0.0, r["run_id"]))
+    return [{c: r[c] for c in ("dataset", "started_at", "status")} for r in rows]
+
+
 def last_builder_run() -> dict | None:
     newest = _fetch("job_runs2", _client().zrevrange(_key("job_runs2"), 0, 0))
     cols = ("run_id", "dataset", "trigger", "pid", "started_at", "finished_at", "status", "error")

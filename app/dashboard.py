@@ -1628,9 +1628,20 @@ def api_build_queue():
 @app.route("/api/build/datasets")
 def api_build_datasets():
     """Every dataset the builder knows: ``{name, kind, attended, providers}``, sorted by name. An allow-list for the
-    Grafana buttons (#527 plan B3), which may press Fetch / Pause / Resume only on a dataset named here."""
+    Grafana buttons (#527 plan B3), which may press Fetch / Pause / Resume only on a dataset named here.
+    ``?detail=1`` adds each one's health and fetch settings from the ops store (``metrics.datasets_detail``), for
+    the Grafana RC Fetch board's categories."""
     from RevenueChaser.module_settings import metrics
 
+    if request.args.get("detail") == "1":
+        # the Grafana picker's range, epoch milliseconds (${__from} / ${__to}); without both, no history
+        try:
+            span = (float(request.args["from"]) / 1000, float(request.args["to"]) / 1000)
+        except (KeyError, ValueError):
+            span = None
+        if span and not 0 <= span[0] < span[1]:
+            return jsonify({"ok": False, "error": "from must be before to"}), 400
+        return jsonify({"ok": True, "datasets": metrics.datasets_detail(span=span), "head": metrics.board_head()})
     return jsonify({"ok": True, "datasets": metrics.datasets_list()})
 
 
@@ -1738,11 +1749,13 @@ def api_build_timer():
 
 @app.route("/api/build/switch/<name>", methods=["POST"])
 def api_build_switch(name: str):
-    """#527: turn the board's ``fetch`` or ``backup`` switch on or off: ``{"on": true|false}``. Off records who (the
-    panel header) and when; 400 for an unknown switch or a body without a boolean ``on``."""
+    """#527: turn the board's ``fetch`` or ``backup`` switch, or a file's ``file-<kind>`` switch, on or off:
+    ``{"on": true|false}``. Off records who (the panel header) and when; 400 for an unknown switch or a body without a
+    boolean ``on``."""
     from RevenueChaser.rcdata import ops
-    if name not in ops.SWITCHES:
-        return jsonify({"ok": False, "error": f"unknown switch {name!r}; known: {', '.join(ops.SWITCHES)}"}), 400
+    known = ops.SWITCHES + ops.FILE_SWITCHES
+    if name not in known:
+        return jsonify({"ok": False, "error": f"unknown switch {name!r}; known: {', '.join(known)}"}), 400
     on = (request.get_json(silent=True) or {}).get("on")
     if not isinstance(on, bool):
         return jsonify({"ok": False, "error": "on must be true or false"}), 400
