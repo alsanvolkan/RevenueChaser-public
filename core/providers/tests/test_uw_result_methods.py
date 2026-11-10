@@ -235,7 +235,9 @@ def test_option_contracts_still_returns_the_rows_it_got_when_a_page_fails():
 
 
 def test_option_contracts_stops_at_max_pages_and_is_ok():
-    c, calls = _scripted(_Resp(200, FULL))
+    # Distinct pages: a page repeating the last one ends the read (#255).
+    full = [_Resp(200, {"data": [{"option_symbol": f"P{p}X{i}"} for i in range(500)]}) for p in range(10)]
+    c, calls = _scripted(*full)
     res = c.option_contracts_result("SPY", limit=500, max_pages=3)
     assert res.status == "ok" and len(res.data) == 1500 and len(calls) == 3
 

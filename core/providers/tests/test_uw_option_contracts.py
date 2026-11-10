@@ -58,8 +58,8 @@ def test_option_contracts_pages_until_short_page():
 
 
 def test_option_contracts_stops_at_max_pages():
-    full = {"data": [{"option_symbol": f"X{i}"} for i in range(500)]}
-    c, fake = _client([full] * 10)
+    # Distinct pages: a page repeating the last one ends the read (#255).
+    c, fake = _client([{"data": [{"option_symbol": f"P{p}X{i}"} for i in range(500)]} for p in range(10)])
     rows = c.option_contracts("SPY", limit=500, max_pages=3)
     assert len(rows) == 1500
     assert len(fake.calls) == 3
