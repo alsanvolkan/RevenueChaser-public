@@ -156,9 +156,33 @@ class IBKRNews:
         return dirty_set.keyed(ctx, self, "date")
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
+        """``partitions.load``, except that one story and name may sit in two day partitions (the same words for a
+        name on two UTC days, or DJ-N and DJ-RT either side of midnight): the key is served once, from its first
+        publish day. The 10 Nov 16:05 pass died on that primary key."""
         parts = {p.parent.name.split("=", 1)[1]: p
                  for p in (base.parquet_root() / "ibkr" / "news").glob("date=*/part-0.parquet")}
-        return partitions.load(ctx, con, NAME, TABLE, SCHEMA, KEY, parts, _where)
+        keys = partitions.dirty_keys(ctx, NAME)
+        if keys is None:
+            cols = ", ".join(f'"{c}" {t}' for c, t in SCHEMA)
+            con.execute(f"CREATE TABLE {TABLE} ({cols}, PRIMARY KEY ({', '.join(KEY)}))")
+            files = [parts[k] for k in sorted(parts)]
+        else:
+            con.execute(f"DELETE FROM {TABLE} WHERE {partitions.where_any(keys, _where)}")
+            files = [parts[k] for k in sorted(keys) if k in parts]
+        if files:
+            names = ", ".join(f'"{c}"' for c, _ in SCHEMA)
+            on = " AND ".join(f't."{k}" = n."{k}"' for k in KEY)
+            listed = ", ".join(base.sql_path(p) for p in files)
+            con.execute(f"CREATE OR REPLACE TEMP TABLE _news_new AS SELECT {names} FROM read_parquet([{listed}], "
+                        f"union_by_name = true) QUALIFY row_number() OVER (PARTITION BY {', '.join(KEY)} "
+                        f"ORDER BY published_at, fetched_at DESC) = 1")
+            # On the live copy a key may already be served from another day: the earlier day wins either way, as in
+            # a whole build. (Days of one key never tie: one day's partition holds a key once.)
+            con.execute(f"DELETE FROM {TABLE} t USING _news_new n WHERE {on} AND t.published_at > n.published_at")
+            con.execute(f"INSERT INTO {TABLE} SELECT {names} FROM _news_new n "
+                        f"WHERE NOT EXISTS (SELECT 1 FROM {TABLE} t WHERE {on})")
+            con.execute("DROP TABLE _news_new")
+        return {TABLE: int(con.execute(f"SELECT count(*) FROM {TABLE}").fetchone()[0])}
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         added, removed = partitions.compare(ctx, con, self.kind, NAME, TABLE, COMPARE, _where)

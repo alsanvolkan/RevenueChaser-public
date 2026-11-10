@@ -138,6 +138,23 @@ def test_headlines_land_one_row_a_story_and_name_by_utc_publish_day(gw):
     assert sum(i["kind"] == "fetch_failed" for i in ops.rows("build_issues")) == len(ibkr_news.BASE_TICKERS) - 2
 
 
+def test_one_story_and_name_on_two_publish_days_serves_its_first_day_only(gw):
+    # The 10 Nov 16:05 builder pass: the same words for AAPL on two UTC days were two partitions holding one key,
+    # and the market build died on the news_headline primary key.
+    story = "Apple Shares Edge Higher"
+    gw.news[265598] = [("2026-11-08 23:50:00.0", "DJ-RT", "DJ-RT$1", story),
+                       ("2026-11-09 08:00:00.0", "DJ-N", "DJ-N$2", story)]
+    gw.news[4815747] = []
+    row = _run(ibkr_news.NAME)
+    assert row["result"] == "changed" and row["rows"] == 1, row
+    # A later pass brings it again on the second day: a build on the live copy keeps the first day too.
+    gw.news[265598] = [("2026-11-09 18:50:00.0", "DJ-N", "DJ-N$3", story)]
+    row = _run(ibkr_news.NAME)
+    assert row["result"] != "failed", row
+    got = [r for r in read.news_headlines() if r["ticker"] == "AAPL"]
+    assert [(r["headline"], r["published_date"]) for r in got] == [(story, date(2026, 11, 8))]
+
+
 def test_the_watch_list_comes_first(gw):
     ops.watch_add("stock", "crwv", by="test")
     assert ibkr_news.tickers(ops.watch_list("stock"))[:2] == ["CRWV", "AAPL"]
