@@ -12,11 +12,12 @@ Three datasets, all daily and started by hand the first time:
 
 The tables are in ``tables.py``, the reads in ``rcdata/read.py``.
 
-**The UW call arithmetic** (the plan's: list names x (chain + stats + prints) + screener pages + earnings-set names),
+**The UW call arithmetic** (the plan's: list names x (chain + stats + prints) + screener pages + earnings-set names, plus
+the far-print pages),
 per session. ``uw_calls_a_session`` is the planning figure; the real count is the builder's, per request, in
 ``provider_calls_daily``, and each name's own count is in the ``names`` Parquet (``tables.NAMES``). A list name takes
 ``LIST_CALLS`` + ``EXPIRY_CALLS`` per expiry, plus one call per extra page of a paged answer (500 rows a page); an
-earnings-set name ``EARNINGS_CALLS``; the screener one call per 100 reporting names; the calendar one call per day
+earnings-set name ``EARNINGS_CALLS``; the far prints at most ``FAR_CALLS``; the screener one call per 100 reporting names; the calendar one call per day
 and report session (premarket, afterhours) plus one per extra 100 names. The planning numbers below are assumptions
 until the first week of real runs replaces them (dataset_check notes and the ``names`` rows).
 
@@ -38,7 +39,8 @@ KIND = "options"
 
 LIST_CALLS = 11       # expiry-breakdown, the nine stats parts and flow-recent: one call each (a paged one: page 0)
 EXPIRY_CALLS = 2      # option-contracts (page 0) and greeks, per expiry
-EARNINGS_CALLS = 5    # spot exposures by strike, GEX levels, term structure, options volume, flow-recent
+EARNINGS_CALLS = 6    # spot exposures by strike, GEX levels, term structure, options volume, flow-recent, the tape
+FAR_CALLS = 3         # the market's far prints (LEAPS scan): at most three pages a session
 CALENDAR_DAYS = 20    # trading days in the 28 calendar days ahead (DAYS_AHEAD), each asked twice
 PAGE_ROWS = 100       # the screener's ticker batch and the calendar's page
 
@@ -62,4 +64,5 @@ def uw_calls_a_session(list_names: int, *, expiries: int = EXPIRIES_A_NAME,
     return (list_names * list_name_calls(expiries, extra_pages) + spx_calls
             + batches                                    # the screener
             + 2 * CALENDAR_DAYS + batches                # the calendar: each day and session, and its extra pages
-            + EARNINGS_CALLS * earnings_names)
+            + EARNINGS_CALLS * earnings_names
+            + FAR_CALLS)

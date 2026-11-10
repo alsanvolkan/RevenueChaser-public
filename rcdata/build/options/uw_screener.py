@@ -9,8 +9,9 @@ on more than one day takes its first report.
 **The screener**: ``/screener/stocks?ticker=<100 names>&date=S&limit=500`` over the calendar's names in ticker order,
 100 a call (the plan: 1,727 of 1,834 calendar names). Raw: ``raw/uw/screener/<S>/part-NN.json.gz``, one per batch.
 It waits until every calendar file of S is there, so the batches of a session never change. ``option_screener_daily``:
-one row per calendar name and session, with its report date and session, its screener row (``screened`` false when
-UW has none), the option volume, the dollar option volume (the day's call plus put premium as UW served it,
+one row per calendar name and session, with its report date and session, the calendar item's fields (``tables``
+``CALENDAR_DOUBLES``, ``CALENDAR_TEXTS``; ``marketcap`` the calendar's when the screener has none), its screener
+row (``screened`` false when UW has none), the option volume, the dollar option volume (the day's call plus put premium as UW served it,
 ``premium``) and ``passes_gates``: the Earnings Radar gates of ``core/config.py`` (option volume >= 500, total open
 interest >= 200, dollar option volume >= 50k; ``module_earnings_radar/pipeline.py`` ``preselect``). The dollar gate
 reads the real premium, not the radar's old volume x 100 estimate, which made it the volume gate a second time (500
@@ -21,11 +22,16 @@ contracts with under $50k of premium, or with no premium served, which fails the
 **The earnings set** (``names.earnings_set``): every screener-set name that reports on the next session, passes
 the gates on S and is not in the list set (SPX and the option watch list, which have their full chain), once, on
 that evening: ``spot-exposures/strike?date=S`` (paged), ``gex-levels?date=S``, ``volatility/term-structure?date=S``,
-``options-volume?limit=5`` (the row of S) and ``flow-recent`` (the newest 50 prints of S): five calls a name, not the
-full chain (the plan: 527 names over 9 report days). Raw: ``raw/uw/er_options/<S>/<TICKER>.json.gz``, the name's
-resume marker. ``er_options``: one row per name and evening, with the report date it was fetched for, the gate
+``options-volume?limit=5`` (the row of S), ``flow-recent`` (the newest 50 prints of S) and ``/earnings/{ticker}`` (the
+earnings tape, avo's D2): six calls a name, not the full chain (the plan: 527 names over 9 report days).
+Raw: ``raw/uw/er_options/<S>/<TICKER>.json.gz``, the name's resume marker. ``er_options``: one row per name and evening, with the report date it was fetched for, the gate
 inputs, the GEX levels and the option volume; its strikes, term structure and prints go to ``option_strike``,
-``option_expiry`` and ``option_print`` as set ``earnings``.
+``option_expiry`` and ``option_print`` as set ``earnings``, its tape to ``earnings_tape``.
+
+**The far prints** (the LEAPS market scan, group 3 G5): ``/option-trades?min_dte=183&min_premium=50000&limit=500``,
+the whole market's far-dated prints of the session, paged back with ``older_than`` (UW ignores ``page``, M5), at most
+``FAR_CALLS`` calls, until a page brings no new print. Raw: ``raw/uw/far_prints/<S>/prints.json.gz``.
+``option_far_print``: one row per print id, its last ``tables.FAR_PRINT_SESSIONS`` sessions served.
 
 All of it takes a ``date`` or is fetched in the observed window (``uw.observed``) like the rest of the options data, so
 the screener row, the calendar and the earnings set of an evening are one moment. A run stops starting calls after
@@ -44,11 +50,11 @@ import duckdb
 
 from ....core import calendar, config
 from .. import base
-from . import KIND, names, rows, tables, uw
+from . import FAR_CALLS, KIND, names, rows, tables, uw
 
 NAME = "uw/option_screener"
 SOURCE = tables.SCREENER_SOURCE
-OWNED = ("option_screener_daily", "er_options")
+OWNED = ("option_screener_daily", "er_options", "option_far_print", "earnings_tape")
 DAYS_AHEAD = 28                 # the radar's calendar window (D26)
 CALENDAR_SESSIONS = ("premarket", "afterhours")
 CALENDAR_LIMIT = 100            # UW's documented maximum for /earnings/{session} (docs/openapi.yaml)
@@ -57,6 +63,9 @@ SCREENER_LIMIT = 500            # the screener's default page is about 50 rows (
 # A ticker the screener's comma list can carry; anything else is left out with an issue, so one odd name cannot
 # make UW refuse the whole batch of 100.
 TICKER = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,9}$")
+FAR_MIN_DTE = 183               # the LEAPS scan's far-dated floor (module_leaps)
+FAR_MIN_PREMIUM = 50_000
+FAR_LIMIT = 500                 # UW's documented maximum for /option-trades
 
 
 def calendar_path(session: date, day: date, report_session: str) -> Path:
@@ -72,6 +81,10 @@ def er_path(session: date, ticker: str) -> Path:
     return base.raw_root() / "uw" / "er_options" / session.isoformat() / f"{ticker}.json.gz"
 
 
+def far_path(session: date) -> Path:
+    return base.raw_root() / "uw" / "far_prints" / session.isoformat() / "prints.json.gz"
+
+
 def report_days(session: date) -> list[date]:
     return list(base.iter_sessions(session + timedelta(days=1), session + timedelta(days=DAYS_AHEAD)))
 
@@ -80,10 +93,10 @@ def calendar_files(session: date) -> list[Path]:
     return [calendar_path(session, d, s) for d in report_days(session) for s in CALENDAR_SESSIONS]
 
 
-def calendar_names(session: date) -> dict[str, tuple[date, str]]:
-    """``{ticker: (report day, report session)}`` from the calendar files of ``session`` there are; the first
-    report of a name wins."""
-    out: dict[str, tuple[date, str]] = {}
+def calendar_names(session: date) -> dict[str, tuple[date, str, dict]]:
+    """``{ticker: (report day, report session, calendar item)}`` from the calendar files of ``session`` there are;
+    the first report of a name wins."""
+    out: dict[str, tuple[date, str, dict]] = {}
     for path in calendar_files(session):
         if not path.exists():
             continue
@@ -93,7 +106,7 @@ def calendar_names(session: date) -> dict[str, tuple[date, str]]:
             ticker = str((item or {}).get("symbol") or (item or {}).get("ticker") or "").strip().upper()
             if ticker and (ticker not in out or (day, CALENDAR_SESSIONS.index(rs)) <
                            (out[ticker][0], CALENDAR_SESSIONS.index(out[ticker][1]))):
-                out[ticker] = (day, rs)
+                out[ticker] = (day, rs, item)
     return out
 
 
@@ -131,12 +144,12 @@ def screener_rows(session: date) -> list[dict] | None:
             if ticker in cal and ticker not in found:
                 found[ticker] = (item, doc)
     out = []
-    for ticker, (day, rs) in sorted(cal.items()):
+    for ticker, (day, rs, cal_item) in sorted(cal.items()):
         item, doc = found.get(ticker, ({}, None))
         volume = int((tables.to_float(item.get("call_volume")) or 0) + (tables.to_float(item.get("put_volume")) or 0))
         oi = tables.to_int(item.get("total_open_interest")) or 0
         dollar = premium(item)
-        out.append({"session_date": session, "ticker": ticker, "report_date": day, "report_session": rs,
+        row = {"session_date": session, "ticker": ticker, "report_date": day, "report_session": rs,
                     "screened": doc is not None, "passes_gates": doc is not None and passes_gates(volume, oi, dollar),
                     "option_volume": volume if doc is not None else None,
                     "dollar_option_volume": dollar if doc is not None else None,
@@ -145,9 +158,14 @@ def screener_rows(session: date) -> list[dict] | None:
                     "is_index": tables.to_bool(item.get("is_index")),
                     "next_earnings_date": tables.to_day(item.get("next_earnings_date")),
                     "next_dividend_date": tables.to_day(item.get("next_dividend_date")),
+                    **tables.numbers(cal_item, tables.CALENDAR_DOUBLES),
+                    **{f: (None if cal_item.get(f) in (None, "") else str(cal_item[f])) for f in tables.CALENDAR_TEXTS},
                     "source": "uw", "source_as_of": session,
                     "fetched_at": doc["fetched_at"] if doc else None, "run_id": doc["run_id"] if doc else None,
-                    "observed": bool(doc.get("observed")) if doc else None})
+                    "observed": bool(doc.get("observed")) if doc else None}
+        if row["marketcap"] is None:
+            row["marketcap"] = tables.to_float(cal_item.get("marketcap"))
+        out.append(row)
     return out
 
 
@@ -248,6 +266,7 @@ class UWOptionScreener:
                     "options_volume": uw.get(ctx, uw.stock(ticker, "options-volume"), {"limit": 5}, "options_volume",
                                              errors),
                     "prints": uw.get(ctx, uw.stock(ticker, "flow-recent"), None, "prints", errors),
+                    "tape": uw.get(ctx, f"/earnings/{uw.uw_segment(ticker)}", None, "tape", errors),
                 }
             except uw.NameFailed as e:
                 state["failed"].append(ticker)
@@ -260,6 +279,33 @@ class UWOptionScreener:
                           "dollar_option_volume": r["dollar_option_volume"]},
                 "parts": parts, "errors": errors}, before)
 
+    def _far_prints(self, ctx: base.RunContext, session: date, state: dict) -> None:
+        """Fetch the session's far prints once: newest first, each page asked ``older_than`` the oldest print so
+        far, until a page brings no new print or ``FAR_CALLS`` calls are spent."""
+        path = far_path(session)
+        if path.exists() or self._over_budget(ctx, state):
+            return
+        errors: dict[str, str] = {}
+        before = ctx.calls.get("uw", [0])[0]
+        params = {"min_dte": FAR_MIN_DTE, "min_premium": FAR_MIN_PREMIUM, "limit": FAR_LIMIT}
+        items: dict[str, dict] = {}
+        try:
+            for _ in range(FAR_CALLS):
+                page = [r for r in uw.rows_of(uw.get(ctx, "/option-trades", params, "far_prints", errors))
+                        if isinstance(r, dict) and r.get("id") and r.get("executed_at")]
+                new = [r for r in page if str(r["id"]) not in items]
+                if not new:
+                    break
+                items.update((str(r["id"]), r) for r in new)
+                params = dict(params, older_than=min(str(r["executed_at"]) for r in page))
+        except uw.NameFailed as e:
+            ctx.issue("fetch_failed", f"{session} far prints", str(e)[:300])
+            return
+        if errors:
+            ctx.issue("part_empty", f"{session} far prints", f"UW refused: {errors['far_prints']}")
+        self._write(ctx, path, {"session_date": session.isoformat(), "body": list(items.values()),
+                                "errors": errors}, before)
+
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
         state = ctx.pending.setdefault(NAME, {"stopped": None, "start": ctx.clock(), "failed": []})
         if not uw.observed(as_of):
@@ -268,6 +314,7 @@ class UWOptionScreener:
         try:
             if self._calendar(ctx, as_of, state) and self._screener(ctx, as_of, state):
                 self._earnings(ctx, as_of, state)
+            self._far_prints(ctx, as_of, state)
         except base.CapReached as e:
             state["stopped"] = str(e)
         return self._raws(as_of)
@@ -279,7 +326,8 @@ class UWOptionScreener:
         done = tables.names_done(SOURCE, session)
         earnings = sorted(p for p in (base.raw_root() / "uw" / "er_options" / session.isoformat()).glob("*.json.gz")
                           if p.name.removesuffix(".json.gz") not in done)
-        return [p for p in calendar_files(session) if p.exists()] + screener + earnings
+        far = [far_path(session)] if far_path(session).exists() else []
+        return [p for p in calendar_files(session) if p.exists()] + screener + far + earnings
 
     # ── type ──
     def type_earnings(self, ctx: base.RunContext, raw: Path) -> tuple[dict[str, list[dict]], dict]:
@@ -306,7 +354,8 @@ class UWOptionScreener:
         if errors:
             issue("part_empty", f"{session} {ticker}",
                   ("UW refused, stored empty: " + "; ".join(f"{k} {v}" for k, v in sorted(errors.items())))[:300])
-        out = {"er_options": [er], "option_strike": strike, "option_expiry": expiry, "option_print": prints}
+        out = {"er_options": [er], "option_strike": strike, "option_expiry": expiry, "option_print": prints,
+               "earnings_tape": rows.tape_rows(session, ticker, parts.get("tape"), prov)}
         return out, {"session_date": session, "ticker": ticker, "set_name": tables.SET_EARNINGS,
                      "raw_bytes": raw.stat().st_size, "calls": doc.get("calls"),
                      "errors": json.dumps(errors, sort_keys=True) if errors else None,
@@ -321,6 +370,12 @@ class UWOptionScreener:
             day_rows = screener_rows(session)
             if day_rows:
                 out += tables.upsert(SOURCE, tables.TABLES["option_screener_daily"], day_rows)
+            if far_path(session).exists():
+                doc = base.read_raw_json(far_path(session))
+                prov = {"source": "uw", "source_as_of": session, "fetched_at": doc["fetched_at"],
+                        "run_id": doc["run_id"], "observed": bool(doc.get("observed"))}
+                far = rows.far_print_rows(session, doc.get("body") or [], prov)
+                out += tables.upsert(SOURCE, tables.TABLES["option_far_print"], far) if far else []
         by_table: dict[str, list[dict]] = {}
         done = []
         for raw in (p for p in raws if er_root in p.parents):
