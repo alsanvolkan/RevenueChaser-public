@@ -251,7 +251,9 @@ def test_the_detail_carries_badges_and_the_runs_in_the_pickers_range():
     provs = [{"id": "fred", "name": "FRED"}]
     rows = {r["name"]: r for r in metrics.datasets_detail(NOW, datasets=DS, timer={}, span=span, providers=provs)}
     assert rows["market_series"]["badges"] == [{"id": "fred", "name": "FRED", "icon": metrics.control.ICONS.get("fred", ""),
-                                                "color": metrics.control.SOURCE_COLORS[0]}]
+                                                "color": metrics.control.SOURCE_COLORS[0], "paid": False}]
+    from RevenueChaser.rcdata.needs import screen
+    assert {p for p, w in screen.PROVIDERS.items() if w.paid} == {"uw"}, "avo, 10 Nov 2026: the paid ones ringed red"
     assert sorted(s for _, s in rows["market_series"]["history"]) == ["failed", "running"]
     before = {r["name"]: r for r in metrics.datasets_detail(NOW, datasets=DS, timer={}, span=(0, first),
                                                             providers=provs)}

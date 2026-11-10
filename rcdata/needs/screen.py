@@ -288,6 +288,8 @@ class ProviderWords:
     what: str
     pace: str = "none"
     rule: str = "none quoted in the code"
+    #: a subscription we pay for; the Grafana RC Fetch board rings its badge red (avo, 10 Nov 2026)
+    paid: bool = False
 
 
 #: Every provider a dataset names (``Dataset.providers``). A provider a dataset names and this map does not raises in
@@ -297,7 +299,7 @@ PROVIDERS: dict[str, ProviderWords] = {
                          f"one shared bucket, {sec_throttle.RATE} a second, for every SEC caller · 10 split between the SEC processes when it falls back",
                          "10 a second per User-Agent (fair access)"),
     "uw": ProviderWords("Unusual Whales", "options, SPX, float, financials", "a budget a run · each endpoint's own page size",
-                        "no day cap (owner-removed avo 2026-11-10)"),
+                        "no day cap (owner-removed avo 2026-11-10)", paid=True),
     "alpaca": ProviderWords("Alpaca", "bars, corporate actions", "200 a minute",
                             "200 historical calls a minute (Basic plan) · no SIP data of the last 15 minutes"),
     "yfinance": ProviderWords("yfinance", "float, estimates, MOVE", "2,000 an hour · float lookups 1.5 s apart · a 429 stops the run",

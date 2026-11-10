@@ -320,6 +320,8 @@ def datasets_detail(now: datetime | None = None, *, datasets: dict | None = None
             providers = []
     colour = {p["id"]: control.SOURCE_COLORS[i % len(control.SOURCE_COLORS)] for i, p in enumerate(providers)}
     names = {p["id"]: p["name"] for p in providers}
+    from RevenueChaser.rcdata.needs import screen
+    paid = {pid for pid, w in screen.PROVIDERS.items() if w.paid}
     history: dict[str, list] = {}
     if span:
         for r in ops.runs_between(*span):
@@ -328,7 +330,8 @@ def datasets_detail(now: datetime | None = None, *, datasets: dict | None = None
     for row in datasets_list(datasets):
         name, ds = row["name"], datasets[row["name"]]
         row["badges"] = [{"id": p, "name": names.get(p, p), "icon": control.ICONS.get(p, ""),
-                          "color": colour.get(p, control.SOURCE_COLORS[0])} for p in row.get("providers") or []]
+                          "color": colour.get(p, control.SOURCE_COLORS[0]), "paid": p in paid}
+                         for p in row.get("providers") or []]
         if span:
             row["history"] = history.get(name, [])
         try:
