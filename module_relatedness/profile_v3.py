@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import re
 
-PROMPT_VERSION = "v3"
+PROMPT_VERSION = "v3b"
 MAX_KEYWORDS = 15
 MAX_LIST = 30
 # A customer's or supplier's quote: one sentence, kept short so a reply of 30 parties fits ``token_budget``.

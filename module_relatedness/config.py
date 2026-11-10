@@ -24,7 +24,9 @@ MIN_INPUT_CHARS = vc_config.MIN_ITEM_CHARS
 # v3 (#400, Relatedness v2 Step 1): one structured JSON profile from the whole Item 1 / Item 4 (no input cut), read
 # in chunks above 60k characters, JSON mode and no thinking (``profile_v3``). Every v2 profile reads stale and is
 # redone by the next run of the board's writer. v2 (#388 D5) named the company instead of the ticker.
-PROMPT_VERSION = "v3"
+# v3b (#400 10-K package, avo "basla" 10 Nov 2026): the B input -- the new Item 1 cut, without its non-business
+# sections, with the filing's customer sentences and XBRL customers in the prompt. Every v3 profile reads stale.
+PROMPT_VERSION = "v3b"
 
 # $ hard-stop: cap the number of LLM calls per run (~1.5x the expected spend).
 # The cap's cost per call. v2 measured 0.00143 USD at a 12k-character input (thinking-high); a v3 call carries up to
