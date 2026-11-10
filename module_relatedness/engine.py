@@ -211,16 +211,19 @@ _KEY = re.compile(r"\b(customers?|suppliers?|vendors?|sole[- ]source|single[- ]s
 def clean_input(text: str) -> str:
     """The profile's text: without the sections that say nothing about the business, and without a tail of XBRL
     tags or number tables (ONEG, RCON). Pure, so ``_input_hashes`` hashes what ``_prepare`` sends."""
-    keep = [sec for sec in profile_v3._sections(text or "")
-            if not _DROP_HEADINGS.match(sec.strip().splitlines()[0] if sec.strip() else "")]
+    secs = profile_v3._sections(text or "")
+    keep = [sec for sec in secs if not _DROP_HEADINGS.match(sec.strip().splitlines()[0] if sec.strip() else "")]
     lines = "".join(keep).rstrip().split("\n")
+    popped = False
     while lines:
         ln = lines[-1].replace("\u200b", "").strip()
         dense = sum(c.isdigit() or c in "¥$€£,.%()-" for c in ln) / max(len(ln.replace(" ", "")), 1)
         if ln and not _TAGGY.search(ln) and dense < 0.5:
             break
         lines.pop()
-    return "\n".join(lines)
+        popped = True
+    # A text with nothing to drop is sent as it is, so its hash and its kept profile stay the same.
+    return "\n".join(lines) if popped or len(keep) < len(secs) else (text or "")
 
 
 def filing_sentences(whole: str, item: str) -> list[str]:
