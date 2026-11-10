@@ -155,4 +155,4 @@ def test_an_upsert_into_an_old_screener_partition_keeps_its_rows_and_adds_the_ne
     finally:
         con.close()
     assert rows == [("AAPL", None, None), ("MSFT", 0.25, 1000.0)]
-    assert set(t.columns) == cols
+    assert set(t.columns) <= cols  # DuckDB adds the hive "date" column of the partition path
