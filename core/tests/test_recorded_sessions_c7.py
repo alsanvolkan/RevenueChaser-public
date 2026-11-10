@@ -98,7 +98,7 @@ def test_every_history_board_is_covered():
     # Money Flow is a panel of the Rotation tab (its own board id, no page of its own): its block is on Rotation.
     boards = {s["board"] for s in rawstore.MANIFEST.values() if s.get("db") == "history" and s.get("board")}
     assert boards - set(BOARDS) == {"module_money_flow"}
-    assert len(HISTORY_BOARDS) == 11
+    assert len(HISTORY_BOARDS) == 12
 
 
 def test_the_rotation_tab_also_shows_the_money_flow_block(tmp_path, monkeypatch, store):

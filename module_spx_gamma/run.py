@@ -395,6 +395,7 @@ def run(asof_date: str, data_root=None, token: str | None = None, mode: str = "o
     newest = latest_stored_day(root)
     result = build_day(raw, asof_date, root, ticker=ticker, mode=mode,
                        update_latest=newest is None or effective >= newest, builder_request=builder_request)
+    result["fetched"] = True                    # a Fetch built this day (the runner records its result history)
 
     # Backfill of missing recent GEX history days (idempotent, ~2 weeks) comes last: it is
     # many UW calls and the requested report must not wait for, or fail on, them.

@@ -1082,10 +1082,20 @@ def run_spxgamma(uw, asof_date: str, force: bool = False) -> Path | None:
     It first asks the builder for the board's two datasets (PR 3, :func:`spx_builder_request`); the board says so.
     """
     global _SPX_VIEW
+    from RevenueChaser.module_spx_gamma import history as spx_history
     from RevenueChaser.module_spx_gamma.run import run as spx_run
 
+    run, run_at = _freeze_run_id(), time.time()
     out = spx_run(asof_date, uw=uw, force=force, builder_request=spx_builder_request())
     _SPX_VIEW = (out or {}).get("paths", {}).get("report_html")
+    # Result history (SPX review PR 3): a Fetch that built a day, after the board file. A stored past day served
+    # from disk is no Fetch and records nothing. A failure is a job note, never a failed Fetch.
+    if out and out.get("fetched"):
+        try:
+            spx_history.record(out, run_id=run, run_at=run_at, uw_health=_uw_health(uw))
+        except Exception as exc:
+            logger.exception("SPX Gamma result history failed")
+            ledger.add_note(f"SPX Gamma result history was not recorded: {type(exc).__name__}: {exc}")
     return _SPX_VIEW
 
 

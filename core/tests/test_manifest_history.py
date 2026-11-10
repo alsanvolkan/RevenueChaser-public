@@ -126,7 +126,7 @@ V11 = V11_CHANGE_TABLES + V11_HISTORY_TABLES
 # Change tables added after schema 11 without a bump (design C: one CHANGES line is an addition, report §14.3).
 LATER_CHANGE_TABLES = ("etf_holdings_changes",)    # #303
 # History tables added after schema 11 without a bump: a new run-keyed table is an addition (avo, #374 card).
-LATER_HISTORY_TABLES = ("rotation_snapshots_history",)
+LATER_HISTORY_TABLES = ("rotation_snapshots_history", "spx_gamma_levels_history")  # the second: SPX review PR 3
 # Pre-existing append-only table flagged history later (#286): the guard rides the flag, no schema change.
 FORECAST_LEDGER = ("forecast_ledger",)
 # Added with prices.duckdb (#156, avo 2026-10-09), no schema bump: the price watermarks beside the bars.

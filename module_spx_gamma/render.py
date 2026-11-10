@@ -6,7 +6,8 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from markupsafe import Markup
 
-from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, notice_html, provider_health_html
+from RevenueChaser.core.reporting_common import (THEME_CSS, THEME_JS, help_html, notice_html, provider_health_html,
+                                                 recorded_sessions_html)
 
 from . import expected_move
 from .close_check import close_card
@@ -937,6 +938,8 @@ def render_html(snapshot: dict, chart_png: str | None = None, chart_html: str | 
     ctx["tornado_html"] = Markup(tornado_html) if tornado_html else tornado_html
     ctx["envelope_html"] = Markup(envelope_html) if envelope_html else envelope_html
     ctx["help_block"] = Markup(HELP)
+    # The shared "Recorded sessions" block (#383 C7): the SPX Fetches recorded in result history (PR 3).
+    ctx["history_block"] = Markup(recorded_sessions_html("module_spx_gamma"))
     # The shell's palette (dark; light under data-theme), the one place it is defined.
     ctx["theme_css"] = Markup(THEME_CSS)
     ctx["theme_js"] = Markup(THEME_JS)        # applies the reader's stored choice before the page paints

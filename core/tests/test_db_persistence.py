@@ -493,6 +493,7 @@ POPULATION: dict[str, str] = {
     "oipd_chain_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
     "earnings_cards_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
     "leaps_footprint_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
+    "spx_gamma_levels_history": "module_spx_gamma/tests/test_result_history.py::test_a_fetch_records_its_header_and_levels_row",
     "oipd_fit_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
     "rotation_holdings_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
     "sector_tree_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
