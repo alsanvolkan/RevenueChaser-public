@@ -1003,7 +1003,7 @@ its spill peak (`base.spill_peak`, sampled every 2 s), the measure for moving th
 file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `6`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
-fundamentals layer, `fundamentals` (serving schema version `2`), under "Fundamentals" after it; and the options
+fundamentals layer, `fundamentals` (serving schema version `3`), under "Fundamentals" after it; and the options
 data, `options` (serving schema version `1`), under "The options data" last. The six numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
 (`rcdata/build/dirty.py`), so a bump makes only its own kind's next build whole (#649). The market data,
 `market` (serving schema version `3`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
@@ -1704,7 +1704,7 @@ layer is not there yet.
 | Dataset | Cadence | Source | Stages |
 |---|---|---|---|
 | `sec/companyfacts` | daily | `data.sec.gov/api/xbrl/companyfacts/CIK*.json`, re-read on the day the SEC daily index shows a statement filing (10-K, 10-Q, 20-F, 40-F and their amendments) whose accession the stored facts do not hold; a new Tier A name up to 500 a run | `stg_sec_facts`, `stg_sec_company` |
-| `sec/filings` | daily | `data.sec.gov/submissions/CIK*.json` when the daily index shows a new filing; the primary document of the newest 10-K (else 20-F) and DEF 14A, fetched once each | `stg_sec_filings`, `stg_sec_documents`, `stg_sec_segments`, `stg_sec_customers` |
+| `sec/filings` | daily | `data.sec.gov/submissions/CIK*.json` when the daily index shows a new filing; the primary document of the newest 10-K (else 20-F) and DEF 14A, fetched once each; the list's company header (SEC SIC, state of incorporation, business address) | `stg_sec_filings`, `stg_sec_documents`, `stg_sec_segments`, `stg_sec_customers`, `stg_sec_header` |
 | `alphavantage/earnings_calendar` | daily | Alpha Vantage `EARNINGS_CALENDAR`, three months ahead, one request a run (`ALPHAVANTAGE_API_KEY`) | `stg_av_calendar` |
 | `uw/earnings` | weekly | UW `/stock/<ticker>/earnings`, one request per company: the quarterly rows' reported EPS, UW's consensus of that quarter and its surprise, as UW serves them | `stg_uw_earnings` |
 | `uw/financials` | daily | UW `/stock/<ticker>/financials` for a company that reported in the last 14 days and has not filed; off unless `RC_UW_PRELIMINARY=1` | `stg_uw_financials` |
@@ -1767,12 +1767,12 @@ the period.
 **Starts by hand.** Every fundamentals dataset is not due until it has built once, as the spine's are, so the first
 hourly pass after a deploy calls no source before the attended backfill.
 
-**Served tables** (`fundamentals` serving schema version `1`):
+**Served tables** (`fundamentals` serving schema version `3`):
 
 | Table | Rows |
 |---|---|
-| `fundamental_company` | one per Tier A ticker: the spine's identity and GICS codes, the SEC filer's name and kind (`is_us`, `us_gaap`, non-USD units), the newest facts read and statement filed, and `submissions_as_of`, the day its filing list was last read ("no 8-K event" means something only after it, the Fundamentals review's F2) |
-| `fundamental_fact` | one per company, field, period type and period end: value, unit, accession, filed, form, `derived`, `preliminary`, source |
+| `fundamental_company` | one per Tier A ticker: the spine's identity and GICS codes, the SEC filer's name and kind (`is_us`, `us_gaap`, non-USD units), the newest facts read and statement filed, and `submissions_as_of`, the day its filing list was last read ("no 8-K event" means something only after it, the Fundamentals review's F2); from that list's header (#645, version 3) `sic`, `sic_description`, `state_of_incorporation` (EDGAR's code) and its description, `business_state` (a US state or Canadian province) and `business_country` (ISO 3166-1 alpha-2 from EDGAR's state-or-country code, `rcdata/build/fundamentals/edgar_codes.py`) |
+| `fundamental_fact` | one per company, field, period type and period end: value, unit, accession, filed, form, `derived`, `preliminary`, source; and the first-reported value of the same tag and span with its accession and filed date (`first_value`, `first_accn`, `first_filed`; #277 A2, version 3; NULL on a derived row). The fields include `income_tax_expense`, `pretax_income` and `interest_expense` (#645 G1) |
 | `filing_item` | one per filing and 8-K item (`kind` `item`), and one per document text (`kind` `document`: `business` or `proxy`, with `quality`; a text that reaches the 200,000-character cap is `capped`, never `ok`) |
 | `earnings_event` | one per report: a coming one from the calendar (`confirmed` false) or one that happened (an 8-K with item 2.02, `confirmed` true, its accession kept) |
 | `earnings_reported` | one per company and reported quarter: the EPS the company itself reported as UW serves it, with UW's consensus and surprise. **Not** a `fundamental_fact` row -- it has no filing behind it, and its basis is usually the company's adjusted (non-GAAP) figure, so `source` is on every row (avo, 5 Nov 2026) |
