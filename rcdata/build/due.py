@@ -119,7 +119,7 @@ def is_due(ds, mode: str = "full") -> tuple[bool, str]:
         started = ops.run_started_at(check["run_id"]) if check.get("run_id") else None
         if started is None:
             return True, "hourly: the last check names no run"
-        minutes = int((calendar._now().timestamp() - float(started)) // 60)
+        minutes = round(calendar._now().timestamp() - float(started)) // 60   # whole seconds first: float noise
         return minutes >= HOURLY_MIN, f"hourly: last run started {minutes} min ago"
     age = (calendar.today_ny() - date.fromisoformat(str(check["checked_on"])[:10])).days
     if age >= CYCLE_DAYS[cadence]:
