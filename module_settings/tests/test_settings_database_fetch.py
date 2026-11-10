@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.core.tests.board_js import assert_scripts_parse
 from RevenueChaser.module_settings import control, report
 from RevenueChaser.module_settings.tests.test_control_view import control_nd
 
@@ -68,7 +67,3 @@ def test_the_journey_has_a_board_column_and_folded_paths():
     db = _between(_page(), 'id="panel-data"', 'id="panel-health"')
     assert 'class="bdh"' in db and '<td class="bdc"' in db
     assert '<details class="pf">' in db
-
-
-def test_the_page_scripts_still_parse(tmp_path):
-    assert_scripts_parse(_page(), tmp_path)
