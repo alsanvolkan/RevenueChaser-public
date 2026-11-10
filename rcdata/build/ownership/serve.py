@@ -26,9 +26,13 @@
   divided by 1,000 (0.001). Shares never change.
 - *Each CUSIP named*, per report period, by the first spine source that answers: (1) Compustat's dated identifier
   history (``security_history``, field ``cusip``, the period inside ``valid_from``..``valid_to``) with exactly one
-  ticker: ``wrds/sec_idhist``; (2) the spine's current CUSIP of exactly one ticker: ``spine/security``; (3) the
-  spine's OpenFIGI map, when its ticker is a spine ticker: ``openfigi/map`` (the map asks the newest two quarters'
-  13F CUSIPs too, a CINS as ``ID_CINS``). A CUSIP is never named from an issuer name.
+  ticker: ``wrds/sec_idhist``; (2) the spine's current CUSIP of exactly one ticker: ``spine/security``; (2b) when
+  (2) is refused or absent, Compustat's owner of the CUSIP in the period (``comp.sec_idhist`` ``efffrom``..``effthru``,
+  or a security's own CUSIP with no dates), when exactly one security owns it then and that security is exactly one
+  spine ticker: ``compustat/owner`` (#278: a CUSIP Compustat moved to another security after the quarter, or a
+  spine row whose own CUSIP differs or is empty); (3) the spine's OpenFIGI map, when its ticker is a spine ticker:
+  ``openfigi/map`` (the map asks the newest two quarters' 13F CUSIPs too, a CINS as ``ID_CINS``). A CUSIP is never
+  named from an issuer name.
 - *The reused-ticker guard* (#236, on the 13F side): OpenFIGI's ticker is refused when Compustat gives the CUSIP to
   securities (``comp.security`` and the CUSIP items of ``comp.sec_idhist``, every company, not only the linked) and
   the ticker is linked to none of them: an old company's CUSIP whose ticker was later reused. The spine's current
@@ -56,8 +60,9 @@
 
 **Views** under the old ``raw.duckdb`` names, with the old columns (D4): ``sec13f_totals`` (ticker, ``entry`` JSON
 ``{period: {shares, value, holders, ...}}``) and ``short_interest``: one row per ticker and session (an IBKR snapshot
-session or a FINRA settlement date) with the newest FINRA short interest settled on or before it and that session's
-IBKR borrow fee, rebate and shares available. ``si_float`` and ``total_float`` have no source here and are NULL.
+session or the day a FINRA settlement date becomes visible, ``FINRA_VISIBLE_DAY``) with the newest FINRA short
+interest published before it and that session's IBKR borrow fee, rebate and shares available. ``si_float`` and
+``total_float`` have no source here and are NULL.
 
 **When it derives.** A run of any ownership dataset builds the whole kind. The 13F tables are derived on a run of
 ``sec/13f`` or of this dataset (a spine change reaches them through this dataset's own daily run) and carried over
@@ -84,6 +89,7 @@ from . import KIND, common, sec13f
 NAME = "ownership/serve"
 SPINE = "spine"
 HIST, CURRENT, FIGI, REFUSED = "wrds/sec_idhist", "spine/security", openfigi_map.NAME, "refused"
+OWNER = "compustat/owner"
 CONSENSUS_FILERS = 3
 MIN_NAMES = 5
 SCALE_BAND = (1.0 / 3000.0, 1.0 / 300.0)
@@ -123,24 +129,42 @@ ISSUE_KINDS = {
     "value_rescaled": "one of the largest filer-quarters whose VALUE was off by a factor of 1,000 and was rescaled",
 }
 
+# FINRA publishes a settlement date's short interest on the seventh business day after it (FINRA's equity short
+# interest page), after the close, so a session sees it from the eighth (#252: the bridge view read it from the
+# settlement date itself, a week early). A business day skips the NYSE's and the federal closures, the later of the
+# two readings.
+FINRA_VISIBLE_DAY = 8
+_CLOSED = ", ".join(f"DATE '{d}'" for d in sorted(set().union(
+    *(calendar.market_holidays(y) | calendar.federal_holidays(y) for y in calendar.MARKET_HOLIDAYS))))
+
 VIEWS = {
     "sec13f_totals": (
         "SELECT ticker, CAST(json_group_object(strftime(period, '%Y-%m-%d'), json_object("
         + ", ".join(f"'{m}', {m}" for m in METRICS) + ")) AS JSON) AS entry "
         "FROM sec13f_ticker_period GROUP BY ticker"),
-    "short_interest": """
-        WITH f AS (
+    "short_interest": f"""
+        WITH f0 AS (
             SELECT ticker, settlement_date, current_short, days_to_cover, fetched_at, run_id
             FROM finra_short_interest WHERE ticker IS NOT NULL AND settlement_date IS NOT NULL
             QUALIFY row_number() OVER (PARTITION BY ticker, settlement_date
                                        ORDER BY (symbol = ticker) DESC, symbol) = 1),
+        p AS (
+            SELECT settlement_date, CAST(day AS DATE) AS visible_from FROM (
+                SELECT settlement_date,
+                       unnest(generate_series(CAST(settlement_date AS TIMESTAMP) + INTERVAL 1 DAY,
+                                              CAST(settlement_date AS TIMESTAMP) + INTERVAL 31 DAY,
+                                              INTERVAL 1 DAY)) AS day
+                FROM (SELECT DISTINCT settlement_date FROM f0))
+            WHERE isodow(day) <= 5 AND CAST(day AS DATE) NOT IN ({_CLOSED})
+            QUALIFY row_number() OVER (PARTITION BY settlement_date ORDER BY day) = {FINRA_VISIBLE_DAY}),
+        f AS (SELECT f0.*, p.visible_from FROM f0 JOIN p USING (settlement_date)),
         i AS (
             SELECT ticker, session_date, fee_rate, rebate_rate, available, fetched_at, run_id
             FROM ibkr_shortable WHERE ticker IS NOT NULL AND session_date IS NOT NULL
             QUALIFY row_number() OVER (PARTITION BY ticker, session_date
                                        ORDER BY snapshot_at DESC, fetched_at DESC, (symbol = ticker) DESC,
                                                 symbol) = 1),
-        k AS (SELECT ticker, session_date FROM i UNION SELECT ticker, settlement_date FROM f)
+        k AS (SELECT ticker, session_date FROM i UNION SELECT ticker, visible_from FROM f)
         SELECT k.ticker, k.session_date, f.settlement_date AS market_date,
                CAST(f.current_short AS DOUBLE) AS short_interest, CAST(NULL AS DOUBLE) AS si_float,
                CAST(NULL AS DOUBLE) AS total_float, CAST(f.days_to_cover AS DOUBLE) AS days_to_cover,
@@ -151,7 +175,7 @@ VIEWS = {
                CAST(list_max([f.fetched_at, i.fetched_at]) AS DOUBLE) AS fetched_at,
                coalesce(i.run_id, f.run_id) AS run_id, CAST(NULL AS DOUBLE) AS run_at
         FROM k
-        ASOF LEFT JOIN f ON f.ticker = k.ticker AND k.session_date >= f.settlement_date
+        ASOF LEFT JOIN f ON f.ticker = k.ticker AND k.session_date >= f.visible_from
         LEFT JOIN i ON i.ticker = k.ticker AND i.session_date = k.session_date""",
 }
 
@@ -270,8 +294,8 @@ def _figi(con: duckdb.DuckDBPyConnection) -> None:
 
 TEMPS = ("_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
          "_held",
-         "_cp", "_m_hist", "_m_cur", "_m_figi", "_filers", "_filed", "_deadline", "_tot", "_pos", "_shape", "_pairs",
-         "_flow")
+         "_cp", "_m_hist", "_m_cur", "_m_owner", "_m_figi", "_filers", "_filed", "_deadline", "_tot", "_pos", "_shape",
+         "_pairs", "_flow")
 
 
 class OwnershipServe:
@@ -474,6 +498,15 @@ class OwnershipServe:
                        AND (o.effthru IS NULL OR c.period <= o.effthru)) AS refused
             FROM _cp c JOIN s ON s.cusip = c.cusip WHERE c.period = ?)""",
                    [("cusip", "TEXT"), ("period", "DATE"), ("ticker", "TEXT"), ("refused", "BOOLEAN")])
+        # #278: the one security Compustat gives the CUSIP to in the period, when it is exactly one spine ticker.
+        _by_period(con, periods, "_m_owner", """
+            SELECT c.cusip, c.period, min(s.ticker) FROM _cp c
+            JOIN _owners o ON o.cusip = c.cusip AND (o.efffrom IS NULL OR o.efffrom <= c.period)
+                          AND (o.effthru IS NULL OR c.period <= o.effthru)
+            LEFT JOIN _sp_security s ON s.gvkey = o.gvkey AND s.iid IS NOT DISTINCT FROM o.iid
+            WHERE c.period = ? GROUP BY ALL
+            HAVING count(DISTINCT o.gvkey || '/' || coalesce(o.iid, '')) = 1 AND count(DISTINCT s.ticker) = 1""",
+                   [("cusip", "TEXT"), ("period", "DATE"), ("ticker", "TEXT")])
         con.execute("""CREATE OR REPLACE TEMP TABLE _m_figi AS
             SELECT f.cusip, f.ticker, s.gvkey, s.iid,
                    s.gvkey IS NOT NULL AND EXISTS (SELECT 1 FROM _owners o WHERE o.cusip = f.cusip)
@@ -483,17 +516,20 @@ class OwnershipServe:
         common.create_table(con, "sec13f_cusip_map", MAP)
         _by_period(con, periods, "sec13f_cusip_map", f"""
             SELECT c.cusip, c.period,
-                   coalesce(a.ticker, CASE WHEN NOT b.refused THEN b.ticker END,
+                   coalesce(a.ticker, CASE WHEN NOT b.refused THEN b.ticker END, o.ticker,
                             CASE WHEN b.ticker IS NULL AND NOT f.refused THEN f.ticker END) AS ticker,
                    CASE WHEN a.ticker IS NOT NULL THEN '{HIST}' WHEN NOT b.refused THEN '{CURRENT}'
+                        WHEN o.ticker IS NOT NULL THEN '{OWNER}'
                         WHEN b.refused THEN '{REFUSED}' WHEN NOT f.refused THEN '{FIGI}'
                         WHEN f.refused THEN '{REFUSED}' END AS map_source,
-                   CASE WHEN a.ticker IS NULL AND b.refused THEN b.ticker
-                        WHEN a.ticker IS NULL AND b.ticker IS NULL AND f.refused THEN f.ticker END AS candidate_ticker,
+                   CASE WHEN a.ticker IS NULL AND o.ticker IS NULL AND b.refused THEN b.ticker
+                        WHEN a.ticker IS NULL AND o.ticker IS NULL AND b.ticker IS NULL AND f.refused THEN f.ticker
+                        END AS candidate_ticker,
                    c.issuer_name, c.value, c.holders
             FROM _cp c
             LEFT JOIN _m_hist a ON a.cusip = c.cusip AND a.period = c.period
             LEFT JOIN _m_cur b ON b.cusip = c.cusip AND b.period = c.period
+            LEFT JOIN _m_owner o ON o.cusip = c.cusip AND o.period = c.period
             LEFT JOIN _m_figi f ON f.cusip = c.cusip
             WHERE c.period = ? ORDER BY c.cusip""")
         return common.count(con, "sec13f_cusip_map")

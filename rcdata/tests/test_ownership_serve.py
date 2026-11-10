@@ -222,6 +222,31 @@ def test_a_current_cusip_compustat_gave_another_security_in_the_period_is_refuse
         (date(2001, 9, 30),), (Q3,)]
 
 
+def test_a_cusip_is_named_through_compustats_owner_in_the_period(store):
+    """#278: Compustat moved MSFT's CUSIP to it only on 1 Aug 2026; before that it was Wells Fargo's (008007/01, a
+    spine row). The spine's current CUSIP is refused for 30 Jun and Compustat's owner names it WFC there; 30 Sep stays
+    MSFT's. NOBODY's CUSIP no spine CUSIP holds is NVR's (025648/01) in Compustat's history: named NVR. Neither is
+    a ``cusip_owner_differs`` issue any more."""
+    folder = wrds.parquet_dir(wrds.SEC_IDHIST.name) / "delta=9999-12-31"
+    folder.mkdir(parents=True)
+    con = duckdb.connect()
+    try:
+        con.execute(f"COPY (SELECT '008007' AS gvkey, '01' AS iid, 'CUSIP' AS item, '594918104' AS itemvalue, "
+                    f"DATE '2026-01-01' AS efffrom, DATE '2026-07-31' AS effthru "
+                    f"UNION ALL SELECT '012141', '01', 'CUSIP', '594918104', DATE '2026-08-01', NULL "
+                    f"UNION ALL SELECT '025648', '01', 'CUSIP', '{NOBODY}', DATE '2020-01-01', NULL) "
+                    f"TO {base.sql_path(folder / 'sec_idhist.parquet')} (FORMAT parquet)")
+    finally:
+        con.close()
+    _serve(allow_shrink=True)
+    assert _served("SELECT cusip, period, ticker, map_source, candidate_ticker FROM sec13f_cusip_map "
+                   "WHERE cusip IN ('594918104', ?) ORDER BY cusip, period", NOBODY) == [
+        ("594918104", Q2, "WFC", "compustat/owner", None), ("594918104", Q3, "MSFT", "spine/security", None),
+        (NOBODY, Q3, "NVR", "compustat/owner", None)]
+    issues = _issues()
+    assert ("cusip_owner_differs", "594918104") not in issues and ("cusip_unmapped_large", NOBODY) not in issues
+
+
 def test_the_period_summary_and_the_plans_two_counts(store):
     assert _served("SELECT period, filers, filings_active, value_total, value_mapped, coverage, unmapped_cusips, "
                    "refused_value, filing_deadline, filed_through FROM sec13f_periods "
@@ -468,14 +493,16 @@ def test_short_interest_joins_the_newest_settled_short_interest_to_each_session(
     assert cols == ["ticker", "session_date", "market_date", "short_interest", "si_float", "total_float",
                     "days_to_cover", "fee_rate", "rebate_rate", "short_shares_available", "payload", "source",
                     "fetched_at", "run_id", "run_at"]
-    oct15, oct28 = date(2026, 10, 15), date(2026, 10, 28)
+    # #252: 15 Oct's numbers are published on the seventh business day after it (26 Oct), after the close, so the
+    # first session that sees them is 27 Oct, not 15 Oct.
+    oct15, oct27, oct28 = date(2026, 10, 15), date(2026, 10, 27), date(2026, 10, 28)
     assert rows == [
         ("AAPL", oct28, None, None, None, 0.25, 3.3383, 10_000_000.0),
-        ("BF-A", oct15, oct15, 120_000.0, 1.5, None, None, None),
-        ("BRK-B", oct15, oct15, 9_000_000.0, 2.5, None, None, None),
+        ("BF-A", oct27, oct15, 120_000.0, 1.5, None, None, None),
+        ("BRK-B", oct27, oct15, 9_000_000.0, 2.5, None, None, None),
         ("BRK-B", oct28, oct15, 9_000_000.0, 2.5, 0.25, 3.1, 3_500_000.0),
         ("GME", oct28, None, None, None, 16.0, -12.5, 150_000.0),
-        ("MSFT", oct15, oct15, 50_000_000.0, 1.5, None, None, None)]
+        ("MSFT", oct27, oct15, 50_000_000.0, 1.5, None, None, None)]
     finra_rows = read.finra_short_interest(["brk-b", "MSFT"])
     assert [(r["ticker"], r["settlement_date"], r["current_short"]) for r in finra_rows] == [
         ("BRK-B", oct15, 9_000_000), ("MSFT", oct15, 50_000_000)]
