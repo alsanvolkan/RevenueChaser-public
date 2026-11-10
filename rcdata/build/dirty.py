@@ -215,7 +215,7 @@ def rules_fingerprint(datasets: Iterable[Any]) -> str:
             h.update(f"{d.name}={state()}".encode() + b"\0")
     # The code that decides what a build on the live copy reloads is a rule too: a fix to it must reach the rows
     # it built wrongly, which only a whole build revisits (review of #554).
-    for module_name in (__name__, base.__name__, serving.__name__, serving.__name__ + "_versions"):
+    for module_name in (__name__, base.__name__, serving.__name__):
         path = getattr(sys.modules.get(module_name), "__file__", None)
         if path:
             h.update(Path(path).name.encode() + b"\0" + Path(path).read_bytes() + b"\0")
