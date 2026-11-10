@@ -522,7 +522,7 @@ function autoRowHtml(r){
 }
 function autoTableHtml(rows, available){
   var note = available === false
-    ? '<div class="auto-desc">Task Scheduler is not available on this host.</div>' : '';
+    ? '<div class="auto-desc">No scheduler is connected on this host, so this panel cannot install or read the tasks.</div>' : '';
   var list = rows.length
     ? '<div class="auto-list">' + rows.map(autoRowHtml).join('') + '</div>'
     : '<div class="auto-desc">No scheduled tasks are registered.</div>';
@@ -1150,7 +1150,7 @@ def _automations_section(rows: list[dict]) -> str:
     return (
         '<h2 class="sec">Automations</h2>'
         '<div class="sub">Scheduled tasks RevenueChaser owns. Nothing is installed '
-        "until you press <b>Install</b>; the state below is read live from Task Scheduler "
+        "until you press <b>Install</b>; the state below is read live from the scheduler "
         "(this page itself stays store-only). Each task is one line; press a line to see "
         "what it does, its command, its run conditions, its log and its buttons.</div>"
         '<div id="auto-msg"></div><div id="auto-body"></div>')
@@ -3034,7 +3034,7 @@ def _health_panel(payload: dict, nd: dict | None = None) -> str:
              + _watch_section(nd))
     # One ``#needs`` frame and palette for the whole tab.
     errs = _errors_list(payload.get("errors") or [])
-    return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
+    return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Needs, boards and automations")}</div>'
             f'{HEALTH_LIVE_LINK}'
             + (f'<div class="wrap">{errs}</div>' if errs else "")
             + f'<div class="wrap">{_freshness_part(payload)}</div>'
@@ -3067,9 +3067,9 @@ def _folded(rest: str) -> str:
 def _tab_strip() -> str:
     return ('<nav id="settings-tabs" aria-label="Settings tabs"><div class="tabs" role="tablist">'
             '<button type="button" role="tab" id="tab-data" data-tab="data" aria-controls="panel-data" '
-            'aria-selected="true" tabindex="0">Data</button>'
+            'aria-selected="true" tabindex="0">Database</button>'
             '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
-            'aria-selected="false" tabindex="-1">Health</button>'
+            'aria-selected="false" tabindex="-1">Fetch/Health</button>'
             '<button type="button" role="tab" id="tab-live" data-tab="live" aria-controls="panel-live" '
             'aria-selected="false" tabindex="-1">Live</button></div></nav>')
 
@@ -3171,6 +3171,7 @@ def render_settings_dashboard(payload: dict) -> str:
     nd = payload["newdata"] if "newdata" in payload else _collect_newdata()
     view = _control_view(nd, payload)
     control_html = control_render.render_data(view)
+    fetch_html = control_render.render_fetch(view)
     control_js = control_render.scripts(view)
     health_html = _health_panel(payload, nd)
     automations = payload.get("automations") or []
@@ -3199,6 +3200,7 @@ def render_settings_dashboard(payload: dict) -> str:
 {control_html}
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
+{fetch_html}
 {health_html}
 </div>
 <div id="panel-live" role="tabpanel" aria-labelledby="tab-live" hidden>
