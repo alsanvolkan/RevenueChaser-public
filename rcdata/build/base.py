@@ -799,12 +799,19 @@ def attended_names() -> frozenset[str]:
     return frozenset(name for name, ds in DATASETS.items() if attended(ds))
 
 
+def live_columns(con: duckdb.DuckDBPyConnection, table: str, columns: list[str]) -> list[str]:
+    """``columns`` that ``table`` of the attached live file holds: a live file built before a column was added is
+    compared on the columns both files have."""
+    have = {r[0] for r in con.execute("SELECT column_name FROM duckdb_columns() WHERE database_name = 'live_cmp' "
+                                      "AND table_name = ?", (table,)).fetchall()}
+    return [c for c in columns if c in have]
+
+
 def compare_with_live(con: duckdb.DuckDBPyConnection, kind: str, table: str, columns: list[str]) -> tuple[int, int]:
     """``(added, removed)`` rows of ``table`` in the build file against the live file, on ``columns``.
 
     The live file is attached read-only for the comparison and detached before returning.
     """
-    cols = ", ".join(f'"{c}"' for c in columns)
     live = serving.live_path(kind)
     new_rows = con.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
     if not live.exists():
@@ -815,6 +822,7 @@ def compare_with_live(con: duckdb.DuckDBPyConnection, kind: str, table: str, col
             "SELECT table_name FROM duckdb_tables() WHERE database_name = 'live_cmp'").fetchall()}
         if table not in known:
             return int(new_rows), 0
+        cols = ", ".join(f'"{c}"' for c in live_columns(con, table, columns))
         added = con.execute(f'SELECT count(*) FROM (SELECT {cols} FROM "{table}" '
                             f'EXCEPT ALL SELECT {cols} FROM live_cmp."{table}")').fetchone()[0]
         removed = con.execute(f'SELECT count(*) FROM (SELECT {cols} FROM live_cmp."{table}" '

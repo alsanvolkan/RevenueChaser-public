@@ -381,13 +381,13 @@ def compare_by_day(con: duckdb.DuckDBPyConnection, table: Table, kind: str = "op
     new_rows = con.execute(f'SELECT count(*) FROM "{table.name}"').fetchone()[0]
     if not live.exists():
         return int(new_rows), 0
-    names = ", ".join(f'"{c}"' for c in cols)
     con.execute(f"ATTACH {base.sql_path(live)} AS live_cmp (READ_ONLY)")
     try:
         known = {r[0] for r in con.execute(
             "SELECT table_name FROM duckdb_tables() WHERE database_name = 'live_cmp'").fetchall()}
         if table.name not in known:
             return int(new_rows), 0
+        names = ", ".join(f'"{c}"' for c in base.live_columns(con, table.name, cols))
         old = f'SELECT {names} FROM live_cmp."{table.name}" WHERE session_date >= ?'
         added = con.execute(f'SELECT count(*) FROM (SELECT {names} FROM "{table.name}" EXCEPT ALL {old})',
                             [first]).fetchone()[0]
