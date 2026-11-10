@@ -319,6 +319,16 @@ CONCEPTS = {
     # (#13, #76) and the two tags are never mixed in one field.
     "share_repurchases": (["PaymentsForRepurchaseOfCommonStock", "PaymentsForRepurchaseOfEquity"], "USD"),
     "share_based_compensation": (["ShareBasedCompensation"], "USD"),
+    # #645 G1 (fundamentals freeze, avo 10 Nov 2026): the Financials engines' tax rate (provision / pre-tax) and
+    # interest cover, which only Yahoo supplied. Flows, layer-only (no old record moves) and possibly negative (a tax
+    # benefit, a pre-tax loss), so not in ``_NON_NEGATIVE_FLOWS``. The two multi-tag fields are strict priority: their
+    # tags are different quantities, never merged.
+    "income_tax_expense": (["IncomeTaxExpenseBenefit"], "USD"),
+    "pretax_income": (["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                       "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquity"
+                       "MethodInvestments"], "USD"),
+    "interest_expense": (["InterestExpense", "InterestExpenseNonoperating", "InterestExpenseDebt",
+                          "InterestAndDebtExpense"], "USD"),
     "diluted_shares": (["WeightedAverageNumberOfDilutedSharesOutstanding"], "shares"),
     "basic_shares": (["WeightedAverageNumberOfSharesOutstandingBasic"], "shares"),
 }
@@ -338,11 +348,12 @@ _DEBT_COMPONENT_FIELDS = frozenset({
 # Fields whose concept list is a strict priority order, resolved period by period.
 _PRIORITY_FIELDS = frozenset({"cost_of_revenue", "marketable_securities_noncurrent",
                               "long_term_investments", "share_repurchases",
-                              "share_based_compensation"}) | _DEBT_COMPONENT_FIELDS
+                              "share_based_compensation", "pretax_income", "interest_expense"}) | _DEBT_COMPONENT_FIELDS
 
 # #271: the fields only the fundamentals layer reads (its D&A rungs, the current lines), so no old record moves.
 _LAYER_ONLY_FIELDS = frozenset({"depreciation_and_amortization", "depreciation_tangible", "amortization_intangibles",
-                                "current_assets", "current_liabilities"})
+                                "current_assets", "current_liabilities",
+                                "income_tax_expense", "pretax_income", "interest_expense"})
 
 # The two bank top lines of #450, grouped so the sets below name them once.
 _BANK_TOP_LINE_FIELDS = frozenset({"revenue_net_of_interest_expense", "interest_and_dividend_income"})

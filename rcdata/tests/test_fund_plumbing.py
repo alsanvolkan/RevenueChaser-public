@@ -15,9 +15,9 @@ from . import fund_fixture as fx
 FUND = [n for n, d in DATASETS.items() if d.kind == KIND]
 
 
-def test_the_fundamentals_kind_is_served_at_version_2():
-    """2 since ``earnings_reported`` (``uw/earnings``, avo's decision of 5 Nov 2026)."""
-    assert serving.SERVING_SCHEMA_VERSION["fundamentals"] == 2 and "fundamentals" in serving.KINDS
+def test_the_fundamentals_kind_is_served_at_version_3():
+    """2 since ``earnings_reported`` (``uw/earnings``, avo's decision of 5 Nov 2026); 3 since the freeze of #645."""
+    assert serving.SERVING_SCHEMA_VERSION["fundamentals"] == 3 and "fundamentals" in serving.KINDS
 
 
 def test_every_fundamentals_dataset_starts_by_hand_and_the_served_tables_build_last():
@@ -43,7 +43,7 @@ def test_a_build_with_no_source_yet_serves_the_tier_a_companies():
     rows = fx.q("SELECT ticker, cik, gvkey, gsubind, spine_as_of, source FROM fundamental_company ORDER BY ticker")
     assert [r[0] for r in rows] == fx.TIER_A                                 # WFC-PC is Tier B
     assert rows[0] == ("HEI", "46619", "005567", "20101010", date(2026, 10, 27), "spine/security")
-    assert fx.q("SELECT kind, version FROM serving_schema_version") == [("fundamentals", 2)]
+    assert fx.q("SELECT kind, version FROM serving_schema_version") == [("fundamentals", 3)]
 
 
 def test_no_spine_yet_builds_empty_tables_not_an_error():

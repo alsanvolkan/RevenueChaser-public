@@ -28,8 +28,12 @@ COMPANY = [
     ("facts_as_of", "DATE"), ("facts_fetched_at", "DOUBLE"), ("newest_filed", "DATE"), ("newest_period_end", "DATE"),
     # The day the company's SEC filing list was last read: "no 8-K event" means something only after it (F2).
     ("submissions_as_of", "DATE"),
+    # The filing list's company header (``filings.HEADER``, #645 G2; fundamentals 3): SEC SIC, state of
+    # incorporation (EDGAR's code), and the business address's state and ISO country.
+    *[(c, t) for c, t in filings.HEADER if c not in ("cik", "source_as_of", "fetched_at", "run_id")],
     ("source", "TEXT"), ("run_id", "TEXT"),
 ]
+HEADER_COLS = [c for c, _ in filings.HEADER if c not in ("cik", "source_as_of", "fetched_at", "run_id")]
 FACT = [(c, "TEXT NOT NULL" if c in ("cik", "field", "period_type", "source") else
          "DATE NOT NULL" if c == "period_end" else "DOUBLE NOT NULL" if c == "value" else
          "BOOLEAN NOT NULL" if c in ("derived", "preliminary") else t) for c, t in facts.FACT]
@@ -131,6 +135,7 @@ STAGED: dict[str, list[tuple[str, str]]] = {
     fsds.STAGING: fsds.SCHEMA,
     filings.STAGING["segments"]: filings.SEGMENT,
     filings.STAGING["customers"]: filings.CUSTOMER,
+    filings.STAGING["header"]: filings.HEADER,
     **{wrds_fund.SEGMENTS.STAGING[p]: schema + wrds_fund.PROVENANCE
        for p, (schema, _, _, _) in wrds_fund.SEGMENTS.PARTS.items()},
 }
@@ -378,12 +383,15 @@ def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[
     partitions did not change, so they are what a whole build would read."""
     sec_co = f"SELECT * FROM {companyfacts.STAGING['company']}"
     listed = f"SELECT cik, source_as_of FROM {filings.STAGING['filings']}"
+    head = ", ".join(HEADER_COLS)
+    headers = f"SELECT cik, source_as_of, {head} FROM {filings.STAGING['header']}"
     if ciks is not None:
         con.execute(f"""CREATE OR REPLACE TEMP TABLE _prev_company AS
                         SELECT cik, any_value(entity_name) AS entity_name, any_value(is_us) AS is_us,
                                any_value(non_usd_units) AS non_usd_units, any_value(us_gaap) AS us_gaap,
                                any_value(facts_as_of) AS facts_as_of, any_value(facts_fetched_at) AS fetched_at,
-                               any_value(submissions_as_of) AS submissions_as_of
+                               any_value(submissions_as_of) AS submissions_as_of,
+                               {", ".join(f"any_value({c}) AS {c}" for c in HEADER_COLS)}
                         FROM fundamental_company WHERE cik NOT IN {DIRTY} GROUP BY cik""")
         cols = ", ".join(c for c, _ in facts.COMPANY)
         # A staged company row always carries ``facts_as_of`` (``companyfacts.to_parquet_all`` sets it from the raw
@@ -392,6 +400,7 @@ def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[
                   f"SELECT {cols.replace('run_id', 'NULL AS run_id')} FROM _prev_company WHERE facts_as_of IS NOT NULL "
                   "OR entity_name IS NOT NULL")
         listed += " UNION ALL SELECT cik, submissions_as_of FROM _prev_company WHERE submissions_as_of IS NOT NULL"
+        headers += f" UNION ALL SELECT cik, submissions_as_of, {head} FROM _prev_company"
         con.execute("DROP TABLE fundamental_company")
     spine = [{"ticker": r["ticker"], "cik": common.norm_cik(r["cik"]), "gvkey": r.get("gvkey"), "name": r.get("name"),
               "exchange": r.get("exchange"), "gsector": r.get("gsector"), "ggroup": r.get("ggroup"),
@@ -402,14 +411,18 @@ def _companies(ctx: base.RunContext, con: duckdb.DuckDBPyConnection, rows: list[
     con.execute(f"""
         INSERT INTO fundamental_company
         SELECT s.*, c.entity_name, c.is_us, c.non_usd_units, c.us_gaap, c.facts_as_of, c.fetched_at,
-               n.newest_filed, n.newest_period_end, l.submissions_as_of, 'spine/security', '{ctx.run_id}'
+               n.newest_filed, n.newest_period_end, l.submissions_as_of, {", ".join(f"h.{c}" for c in HEADER_COLS)},
+               'spine/security', '{ctx.run_id}'
         FROM _spine s
         LEFT JOIN (SELECT * FROM ({sec_co})
                    QUALIFY row_number() OVER (PARTITION BY cik ORDER BY facts_as_of DESC) = 1) c ON c.cik = s.cik
         LEFT JOIN (SELECT cik, max(filed) AS newest_filed, max(period_end) AS newest_period_end
                    FROM fundamental_fact WHERE NOT preliminary GROUP BY cik) n ON n.cik = s.cik
         LEFT JOIN (SELECT cik, max(source_as_of) AS submissions_as_of FROM ({listed})
-                   GROUP BY cik) l ON l.cik = s.cik""")
+                   GROUP BY cik) l ON l.cik = s.cik
+        LEFT JOIN (SELECT * FROM ({headers})
+                   QUALIFY row_number() OVER (PARTITION BY cik ORDER BY source_as_of DESC NULLS LAST) = 1) h
+               ON h.cik = s.cik""")
     con.execute("DROP TABLE _spine")
     con.execute("DROP TABLE IF EXISTS _prev_company")
     return common.count(con, "fundamental_company")
