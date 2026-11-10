@@ -12,7 +12,7 @@ from RevenueChaser.core.tests.board_fixtures import BOARDS
 
 # What help_html writes, byte for byte (a fork spells it with other whitespace or another class).
 SHARED = '<details class="help"><summary>What am I looking at?</summary>\n<div class="body">'
-NOT_A_DATA_TAB = {"activity"}
+NOT_A_DATA_TAB = {"logs", "runs", "activity"}   # pages of their own, no help box
 SUB_PAGES = {"module_earnings_radar_detail", "module_sector_rotation_trail"}
 HELP_TABS = sorted(set(BOARDS) - NOT_A_DATA_TAB - SUB_PAGES)
 
