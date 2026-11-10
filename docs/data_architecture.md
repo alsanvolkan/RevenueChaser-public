@@ -1077,7 +1077,9 @@ those, then names every row's ticker again from the live spine and rewrites the 
 change reaches rows no partition touched. A new source of the store (N-PORT) declares the same `dirty` and
 `build_keyed`. The 13F totals (`ownership/serve`) are still derived whole on a `sec/13f` or `ownership/serve` run
 and kept as they are otherwise (whole build of 6 Nov 2026: 91 min).
-`options` and `market` are still built whole; `spine` stays whole by design (seconds).
+`market` (`rcdata/build/partitions.py`) reloads each changed Parquet partition: a UW session (`date=`) of
+`spx_gamma_expiry_strike` or `spx_greek_expiry_strike`, a source and year of `market_series`; a gone partition only
+deletes its rows. `options` is still built whole; `spine` stays whole by design (seconds).
 
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.
