@@ -19,16 +19,16 @@ TABLES = (ms.TABLE, spot.TABLE, greek.TABLE)
 D1, D2, D3 = date(2026, 10, 26), date(2026, 10, 27), date(2026, 10, 28)
 
 
-def _uw(mod, day: date, value: float = 1.0) -> None:
+def _uw(mod, day: date, value: float = 1.0, fetched: float = 1.0) -> None:
     rows = [{"session_date": day, "expiry": date(2026, 11, 20), "strike": 7000.0 + 100 * k, "dte": 18,
-             "source": "uw", "source_as_of": day, "fetched_at": 1.0, "run_id": "r",
+             "source": "uw", "source_as_of": day, "fetched_at": fetched, "run_id": "r",
              **{f: value * (k + 1) for f in mod.NUMERIC_FIELDS if f != "price"}} for k in range(3)]
     base.upsert_partition(rows, mod.SCHEMA, list(mod.KEY), mod.partition_path(day))
 
 
-def _series(src, series_id: str, year: int, value: float) -> None:
+def _series(src, series_id: str, year: int, value: float, fetched: float = 1.0) -> None:
     rows = [{"series_id": series_id, "obs_date": date(year, 3, d), "source": src.SOURCE, "value": value + d,
-             "frequency": "daily", "source_as_of": date(year, 3, 31), "fetched_at": 1.0, "run_id": "r"}
+             "frequency": "daily", "source_as_of": date(year, 3, 31), "fetched_at": fetched, "run_id": "r"}
             for d in (2, 3, 4)]
     base.upsert_partition(rows, ms.SCHEMA, ms.KEY, ms.partition_path(src, year))
 
@@ -82,9 +82,9 @@ def test_changed_new_and_gone_partitions_serve_what_a_whole_build_serves(monkeyp
     _seed()
     _build()
     _uw(spot, D3)                                   # a new session
-    _uw(greek, D2, value=2.0)                       # a session re-typed with other values
+    _uw(greek, D2, value=2.0, fetched=2.0)          # a session re-typed (a later fetch wins the key)
     shutil.rmtree(greek.partition_path(D1).parent)  # a session gone
-    _series(fred, "DGS10", 2026, 9.9)               # one source's year restated
+    _series(fred, "DGS10", 2026, 9.9, fetched=2.0)  # one source's year restated
     check, note = _build(shrink=True)
     assert "built on the live file: 4 Parquet file(s) changed, 4 key(s) dirty" in note, note
     assert check["added"] == 3 and check["removed"] == 3, check      # market_series: 3 values changed
