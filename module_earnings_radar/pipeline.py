@@ -356,30 +356,38 @@ class EarningsPipeline:
             logger.debug("gex profile %s unavailable: %s", ticker, e)
             return {}
 
-    def _term_slope(self, ticker: str, em_pct: float | None, capture: dict | None = None) -> float | None:
-        """Per-day ATM-IV slope (nearest expiry -> 45 DTE) for R4's slope term.
+    def _term_slope(self, ticker: str, em_pct: float | None, capture: dict | None = None,
+                    earnings_date=None, after_close: bool = False) -> tuple[float | None, bool]:
+        """Per-day ATM-IV slope (nearest expiry -> 45 DTE) for R4's slope term, and whether it is ex-event.
 
         One extra UW call per deep-scored ticker when
         ``R4_TERM_STRUCTURE_ENABLED`` and the provider exposes ``term_structure``
-        (mirrors ``_gex_profile``). Any failure, an empty curve, or a curve that
-        cannot span near -> horizon returns ``None`` — R4 then simply has no
-        slope term; a slope is never fabricated.
+        (mirrors ``_gex_profile``). When the earnings event is still ahead of the
+        curve's date the slope is read on ``vol_metrics.ex_event_curve`` (the
+        event's variance stripped out), else on the plain curve. Any failure, an
+        empty curve, or a curve that cannot span near -> horizon returns
+        ``(None, False)`` — R4 then simply has no slope term; a slope is never
+        fabricated.
         """
         from RevenueChaser.core.config import R4_TERM_STRUCTURE_ENABLED
-        from RevenueChaser.core.vol_metrics import term_structure_curve, term_structure_slope
+        from RevenueChaser.core.vol_metrics import ex_event_curve, term_structure_curve, term_structure_slope
         if not R4_TERM_STRUCTURE_ENABLED or not em_pct:
-            return None
+            return None, False
         if not hasattr(self.uw, "term_structure"):
-            return None
+            return None, False
         try:
             rows = self.uw.term_structure(ticker) or []
             if capture is not None:
                 capture["term_structure"] = rows             # the answer, kept in the card's history row
-            curve = term_structure_curve(rows)
-            return term_structure_slope(curve)
+            ex_curve = ex_event_curve(rows, earnings_date, after_close)
+            if ex_curve:
+                ex_slope = term_structure_slope(ex_curve)
+                if ex_slope is not None:
+                    return ex_slope, True
+            return term_structure_slope(term_structure_curve(rows)), False
         except Exception as e:  # noqa: BLE001 — a missing slope must never kill a score
             logger.debug("term structure %s unavailable: %s", ticker, e)
-            return None
+            return None, False
 
     def _yz_rv30(self, ticker: str, ohlc: list) -> float | None:
         """Yang-Zhang RV30 from the OHLC the pipeline already fetched (offline).
@@ -663,6 +671,9 @@ class EarningsPipeline:
         gex_profile = self._gex_profile(ticker, spot_num, em_pct, captured)
         scr_rv = _safe_float(scr.get("realized_volatility"))
         yz_rv30 = self._yz_rv30(ticker, ohlc)
+        ts_slope, ts_ex_event = self._term_slope(ticker, em_pct, captured,
+                                                 earnings_date=ed if report_date else None,
+                                                 after_close=report_time_label == "PM")
         opt = {
             "underlying_price": spot_num,
             "expected_move_pct": em_pct,
@@ -673,7 +684,8 @@ class EarningsPipeline:
             # screener RV — same construction the skill's 1.25 threshold assumes.
             "realized_volatility": yz_rv30 if yz_rv30 is not None else scr_rv,
             "rv_source": "yang_zhang" if yz_rv30 is not None else "screener",
-            "ts_slope": self._term_slope(ticker, em_pct, captured),
+            "ts_slope": ts_slope,
+            "ts_slope_ex_event": ts_ex_event,
             "iv_rank": _safe_float(scr.get("iv_rank")),
             "straddle_payoff_median": _straddle_payoff_median(hist),
         }

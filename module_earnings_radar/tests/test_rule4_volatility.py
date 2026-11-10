@@ -256,6 +256,23 @@ class TestTermStructureSlope:
         r = r4_score({"expected_move_pct": 8.0, "ts_slope": -0.005})
         assert r.coverage == 0.25  # EM alone still covers 1 of 4 parts
 
+    def test_ex_event_near_flat_slope_is_not_contango(self):
+        # Earnings night: +0.001 on the ex-event curve is fit noise, below TS_SLOPE_EVENT_CONTANGO -> nothing.
+        r = r4_score({"expected_move_pct": 8.0, "ts_slope": 0.001, "ts_slope_ex_event": True})
+        assert r.score == 15.0
+        assert not any("term structure" in x for x in r.reasons)
+        assert r.raw_metrics.get("ts_slope_ex_event") is True
+
+    def test_ex_event_contango_past_the_band_is_the_edge(self):
+        r = r4_score({"expected_move_pct": 8.0, "ts_slope": 0.003, "ts_slope_ex_event": True})
+        assert r.score == 20.0
+        assert any(x.startswith("ex-earnings term structure contango") for x in r.reasons)
+
+    def test_ex_event_backwardation_is_still_a_drag(self):
+        r = r4_score({"expected_move_pct": 8.0, "ts_slope": -0.005, "ts_slope_ex_event": True})
+        assert r.score == 7.0
+        assert any(x.startswith("ex-earnings term structure backwardated") for x in r.reasons)
+
     def test_garbage_slope_is_ignored(self):
         r = r4_score({"expected_move_pct": 8.0, "ts_slope": "n/a"})
         assert r.score == 15.0
