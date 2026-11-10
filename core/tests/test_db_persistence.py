@@ -510,6 +510,11 @@ POPULATION: dict[str, str] = {
     "welcome_earnings": "module_welcome/tests/test_build.py::test_earnings_of_today_and_the_next_trading_day_only",
     "welcome_freshness": "module_welcome/tests/test_build.py::test_freshness_keeps_each_jobs_last_run_last_success_and_last_failure",
     "welcome_meta": "module_welcome/tests/test_build.py::test_freshness_reads_only_runs_finished_after_its_mark",
+    "spx_raw_days": "module_spx_gamma/tests/test_store.py::test_a_raw_day_round_trips_byte_exact",
+    "spx_raw_files": "module_spx_gamma/tests/test_store.py::test_a_replaced_day_keeps_no_old_file",
+    "spx_brier": "module_spx_gamma/tests/test_store.py::test_a_scored_brier_record_is_never_changed",
+    "spx_gex_daily": "module_spx_gamma/tests/test_store.py::test_every_gex_day_is_kept",
+    "spx_meta": "module_spx_gamma/tests/test_store.py::test_meta_round_trips",
 }
 
 _ROOT = Path(__file__).resolve().parent.parent.parent

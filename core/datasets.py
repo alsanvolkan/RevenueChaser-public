@@ -35,7 +35,7 @@ from importlib import import_module
 from RevenueChaser.core.datahealth import Health
 
 DBS = ("raw", "edgar", "prices", "history", "news", "welcome", "relatedness", "comovement", "asymmetric_growth",
-       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast")  # all but the first four: board files (S9, S16)
+       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma")  # all but the first four: board files (S9, S16)
 
 FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
@@ -671,6 +671,22 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         writer_note=("built incrementally from stored prices, earnings_calendar and job_runs by "
                      "module_welcome/build.py on the Welcome board's Fetch; the hourly job comes in its own pull request"),
         freshness=("welcome_snapshot", "session_date"),
+    ),
+    DatasetSpec(
+        key="spx_gamma_raw", label="SPX Gamma: stored UW days",
+        tables=("spx_raw_days", "spx_raw_files"),
+        db="spx_gamma", source=Source.uw, writer=None,
+        writer_note=("every UW answer of a stored day, byte-exact, by module_spx_gamma/store.py on the SPX Gamma "
+                     "Fetch (the nightly RC-SPX-Gamma-Fetch queues it) and the history pull; UW serves no history"),
+        freshness=("spx_raw_days", "session_date"),
+    ),
+    DatasetSpec(
+        key="spx_gamma_records", label="SPX Gamma: Brier and GEX records, latest pointer",
+        tables=("spx_brier", "spx_gex_daily", "spx_meta"),
+        db="spx_gamma", source=Source.derived, writer=None,
+        writer_note=("derived from the stored days by module_spx_gamma/store.py on the SPX Gamma Fetch; "
+                     "Refresh moves only spx_meta.latest"),
+        freshness=("spx_gex_daily", "session_date"),
     ),
     DatasetSpec(
         key="source_checks", label="Source check watermarks",
