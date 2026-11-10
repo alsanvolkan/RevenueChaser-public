@@ -68,3 +68,10 @@ def test_only_the_store_module_writes_the_board_file():
         if pattern.search(text) or 'db="spx_gamma"' in text and "transaction" in text:
             offenders.append(str(rel))
     assert offenders == []
+
+
+def test_a_fetch_manifest_spot_stores_its_value():
+    """A Fetch's manifest carries ``spot`` as ``{"source", "value"}``; the column takes the number."""
+    store.put_raw_day("2026-11-06", {"spot": {"source": "rcdata", "value": 6749.0}}, {"a.json": b"{}"})
+    assert store._query("SELECT spot FROM spx_raw_days")[0]["spot"] == 6749.0
+    assert store.raw_manifest("2026-11-06")["spot"] == {"source": "rcdata", "value": 6749.0}

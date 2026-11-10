@@ -45,7 +45,7 @@ def test_a_dry_run_reports_and_writes_nothing(tmp_path):
     assert (raw["days_read"], raw["written"], raw["files"]) == (1, 1, 1)
     assert raw["not_days"] == ["2026-08-14"] and raw["partial"] == [".partial-1-x-2026-08-15"]
     assert raw["sha_mismatch"] == []
-    assert out["spx_brier"]["written"] == 1 and out["spx_brier"]["recomputed_n"] == 1
+    assert out["spx_brier"]["written"] == 1 and out["spx_brier"]["file_n"] == 1
     assert out["spx_gex_daily"]["written"] == 12
     assert out["corrupt"] == ["brier.json.corrupt-20261101"]
     assert store.stored_days() == [] and store.brier_records() == [] and store.gex_days() == {}

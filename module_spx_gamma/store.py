@@ -59,10 +59,13 @@ def put_raw_day(day: str, manifest: dict, files: dict[str, bytes]) -> None:
     """Store one whole day: its manifest row and every answer file, in one transaction (replaces the staging-folder
     rename). A day already stored is replaced whole; the caller decides when that is allowed (force only)."""
     now = time.time()
+    spot = manifest.get("spot")
+    if isinstance(spot, dict):              # a Fetch writes {"source", "value"}
+        spot = spot.get("value")
     day_row = {
         "session_date": day, "requested_date": manifest.get("requested_date"),
         "api_snapshot_time": manifest.get("api_snapshot_time"), "origin": manifest.get("origin") or "fetch",
-        "spot": manifest.get("spot"), "zero_dte_expiry": manifest.get("zero_dte_expiry"),
+        "spot": spot, "zero_dte_expiry": manifest.get("zero_dte_expiry"),
         "file_count": len(files), "manifest": manifest, "stored_at": now,
     }
     file_rows = [{"session_date": day, "file": name, "sha256": hashlib.sha256(body).hexdigest(),
