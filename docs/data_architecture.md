@@ -1668,14 +1668,15 @@ be sales.
 | `sec13f_filings` | one per 13F-HR and 13F-HR/A: period, filed, amendment and its type, `confidential_omitted`, `value_scale`, `origin` (`edgar` or `set:<zip>`), status |
 | `insider_transactions` | one per Form 4 transaction (or one `unparsed` / `no_transaction` row per filing) |
 | `beneficial_ownership` | one per Schedule 13D/G reporting person (or one `header_only` / `unparsed` row per filing) |
-| `sec13f_cusip_map` | one per CUSIP and period: its ticker and `map_source`, or the refused `candidate_ticker` |
+| `sec13f_cusip_map` | one per CUSIP and period: its ticker and `map_source` (`compustat/owner` when Compustat's one owner of the CUSIP in the period named it, #278), or the refused `candidate_ticker` |
 | `sec13f_filer_period` | one per filer and period: names, value, `median_ratio`, `value_factor`, `confidential_omitted` |
 | `sec13f_ticker_period` | one per ticker and period: shares, value, holders, top-10 %, HHI, new / exited holders, buy / sell flow, breadth and its change, `prev_period`, `filing_deadline`. The period is the calendar quarter end; a filing's period that is not one (09-29 for the September quarter) counts in its quarter, and `sec13f_filings` keeps it as written |
 | `sec13f_periods` | one per period: filers, value, value mapped, `coverage`, unmapped CUSIPs, refused value, rescaled filers |
 
 **The bridge (D4).** Views under the old `raw.duckdb` names: `sec13f_totals` (ticker, `entry` JSON keyed by period
 with the old metric keys) and `short_interest` (one row per ticker and session: the newest FINRA short interest
-settled on or before it and that session's IBKR fee, rebate and shares available; `si_float` and `total_float` are
+published before it, a settlement date counting from the eighth business day after it because FINRA publishes it
+on the seventh after the close (#252), and that session's IBKR fee, rebate and shares available; `si_float` and `total_float` are
 NULL).
 
 **Build issues** (`ownership/serve`): `spine_missing`, `cusip_owner_differs`, `cusip_unmapped_large`,
@@ -1689,8 +1690,8 @@ NULL).
 `parse_status`).
 
 **Known limits.** The IBKR file is not reachable from the cloud (no FTP egress): its format is checked by the first
-server run. Cboe's threshold list is a JavaScript page and is not read. FINRA's later revisions of a settlement date
-are not fetched again. A quarter's flows across a stock split compare unadjusted shares (G2). A store built before
+server run. Cboe's threshold list is a JavaScript page and is not read. FINRA's revisions are caught for the newest two
+stored settlement dates only, which every daily run fetches again (#252). A quarter's flows across a stock split compare unadjusted shares (G2). A store built before
 the served-quarter rule shrinks once on its next derive (`allow_shrink`).
 
 ### Fundamentals (`fundamentals.duckdb`, PR 12)

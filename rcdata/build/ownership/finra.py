@@ -10,12 +10,13 @@ refused, never kept short. Every request waits for FINRA's synchronous window, 1
 (``caps.WINDOWS``, ``base.run_pacer``).
 
 A daily run reads the list (one call) and fetches the published dates newer than the newest one stored, at most
-``DAILY_MAX_DATES``; the first run fetches the newest date only, and a backfill every missing date of its range (from
+``DAILY_MAX_DATES``, and the newest ``REVISED_DATES`` stored ones again, so a date FINRA revised after publishing
+replaces its rows (#252); the first run fetches the newest date only, and a backfill every missing date of its range (from
 the first published one when no ``--from`` is given).
 
 Raw: ``raw/finra/short_interest/<settlement-date>.json.gz`` (FINRA's pages as answered, and the run's provenance);
-it is the resume marker, so a date is fetched once. FINRA's later revisions of a date are not fetched again (a known
-limit). Parquet: ``parquet/finra/short_interest/date=<settlement-date>/part-0.parquet``. Served:
+it is the resume marker, so a date is fetched once, except the newest ``REVISED_DATES``, which each daily run fetches
+again (a revision of an older date is not fetched). Parquet: ``parquet/finra/short_interest/date=<settlement-date>/part-0.parquet``. Served:
 ``finra_short_interest``, one row per settlement date and symbol, the symbol named by the spine (``common``).
 """
 from __future__ import annotations
@@ -42,6 +43,7 @@ DATA = "/data/group/otcMarket/name/consolidatedShortInterest"
 PAGE = 5000
 MAX_PAGES = 20
 DAILY_MAX_DATES = 6
+REVISED_DATES = 2
 HEADERS = {"Accept": "application/json"}
 SCHEMA = [("settlement_date", "DATE"), ("symbol", "TEXT"), ("issue_name", "TEXT"), ("market_class", "TEXT"),
           ("current_short", "BIGINT"), ("previous_short", "BIGINT"), ("change_shares", "BIGINT"),
@@ -180,7 +182,10 @@ class FinraShortInterest:
         todo = newer[-DAILY_MAX_DATES:] if stored else listed[-1:]
         if len(newer) > len(todo) and stored:
             ctx.notes.append(f"{len(newer) - len(todo)} older missing dates left for a backfill")
-        return [fetch_date(ctx, d) for d in todo]
+        again = [d for d in stored[-REVISED_DATES:] if d in listed]
+        if again:
+            ctx.notes.append(f"{len(again)} stored date(s) fetched again for FINRA's revisions")
+        return [fetch_date(ctx, d) for d in todo + again]
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
         have = set(stored_dates())
