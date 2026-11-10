@@ -111,3 +111,48 @@ def test_a_table_whose_parquet_never_ran_is_built_empty():
     finally:
         con.close()
     assert keys == set(tables.TABLES)
+
+
+# ── Parquet written before a column was added (10 Nov 2026 whole build: "realized_volatility" not found) ─────────
+
+_NEW_SCREENER_COLUMNS = {"realized_volatility", "stock_volume", "expected_move_perc", "street_mean_est",
+                         "pre_earnings_close", "post_earnings_close", "full_name", "report_time"}
+
+
+def _screener_row(session: date, ticker: str, fetched_at: float, **extra) -> dict:
+    return {"session_date": session, "ticker": ticker, "close": 10.0, "source": "uw", "source_as_of": session,
+            "fetched_at": fetched_at, "run_id": "r", "observed": True, **extra}
+
+
+def _old_screener_partition(session: date, tickers=("AAPL",)):
+    """A screener partition in the shape options 1 wrote: none of the columns options 2 added."""
+    t = tables.TABLES["option_screener_daily"]
+    old = [(c, typ) for c, typ in t.schema if c not in _NEW_SCREENER_COLUMNS]
+    path = tables.partition_path(tables.SCREENER_SOURCE, t.name, session)
+    base.upsert_partition([_screener_row(session, k, 1.0) for k in tickers], old, list(t.key), path)
+    return t, path
+
+
+def test_a_build_over_only_old_screener_parquet_reads_the_new_columns_as_null():
+    _old_screener_partition(date(2026, 11, 9), ("AAPL", "MSFT"))
+    assert _build(["option_screener_daily"]) == {"option_screener_daily": 2}
+    with serving.open_read("options") as con:
+        got = con.execute("SELECT count(*), count(realized_volatility), count(stock_volume), "
+                          "count(expected_move_perc), min(close) FROM option_screener_daily").fetchone()
+    assert got == (2, 0, 0, 0, 10.0)
+
+
+def test_an_upsert_into_an_old_screener_partition_keeps_its_rows_and_adds_the_new_columns():
+    session = date(2026, 11, 9)
+    t, path = _old_screener_partition(session)
+    base.upsert_partition([_screener_row(session, "MSFT", 2.0, realized_volatility=0.25, stock_volume=1000.0)],
+                          t.schema, list(t.key), path)
+    con = duckdb.connect()
+    try:
+        rows = con.execute(f"SELECT ticker, realized_volatility, stock_volume FROM read_parquet({base.sql_path(path)}) "
+                           "ORDER BY ticker").fetchall()
+        cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet({base.sql_path(path)})").fetchall()}
+    finally:
+        con.close()
+    assert rows == [("AAPL", None, None), ("MSFT", 0.25, 1000.0)]
+    assert set(t.columns) == cols
