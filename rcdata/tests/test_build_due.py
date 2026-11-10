@@ -128,10 +128,10 @@ def test_weekly_and_monthly_count_days_since_the_last_check(clock, cadence, days
 
 
 def test_an_unknown_cadence_reads_as_daily(clock):
-    ops.schedule_set(MS, "hourly", None)
+    ops.schedule_set(MS, "yearly", None)
     _checked(MS, as_of="2026-10-27")
     assert due.is_due(DATASETS[MS])[0] is False
-    clock(WED_MORNING)
+    clock(datetime(2026, 10, 28, 22, 0, tzinfo=timezone.utc))      # Wednesday complete
     assert due.is_due(DATASETS[MS])[0] is True
 
 
