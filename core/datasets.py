@@ -673,11 +673,11 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=("welcome_snapshot", "session_date"),
     ),
     DatasetSpec(
-        key="spx_gamma_raw", label="SPX Gamma: stored UW days",
+        key="spx_gamma_raw", label="SPX Gamma: stored Unusual Whales days",
         tables=("spx_raw_days", "spx_raw_files"),
         db="spx_gamma", source=Source.uw, writer=None,
-        writer_note=("every UW answer of a stored day, byte-exact, by module_spx_gamma/store.py on the SPX Gamma "
-                     "Fetch (the nightly RC-SPX-Gamma-Fetch queues it) and the history pull; UW serves no history"),
+        writer_note=("every Unusual Whales answer of a stored day, byte-exact, by module_spx_gamma/store.py on the SPX Gamma "
+                     "Fetch (the nightly RC-SPX-Gamma-Fetch queues it) and the history pull; Unusual Whales serves no history"),
         freshness=("spx_raw_days", "session_date"),
     ),
     DatasetSpec(

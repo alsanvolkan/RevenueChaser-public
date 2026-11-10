@@ -60,8 +60,7 @@ def test_backfill_records_the_history_row_of_a_complete_raw_day(tmp_path, monkey
             raise AssertionError("network used")
 
     spx_run._backfill_history(tmp_path, _NoCalls(), "SPX", "2026-08-17", days=1)
-    history = json.loads((tmp_path / "spx_gamma_gex_history.json").read_text(encoding="utf-8"))
-    assert DAY in history
+    assert DAY in spx_store.gex_days()
 
 
 # ── M6 / G17: deltas are relative to the day shown ─────────────────────────
