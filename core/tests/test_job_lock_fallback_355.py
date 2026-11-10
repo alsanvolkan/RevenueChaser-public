@@ -142,3 +142,64 @@ def test_the_fallback_release_never_removes_someone_elses_lock_file(rawstore_tmp
         assert got
         path.write_text("4242 someone-elses-token 1")     # our lock was taken over
     assert path.read_text() == "4242 someone-elses-token 1"
+
+
+# ── #33: two breakers of one stale lock ───────────────────────────────────────
+
+def test_two_breakers_of_one_stale_lock_never_both_hold_it(rawstore_tmp_db, monkeypatch):
+    """E reads the stale lock inside its break and pauses before the unlink; D comes along meanwhile.
+
+    Before #33, D broke the same stale lock and took it, then E's unlink removed D's live lock and E took it too:
+    both held it. Now breakers take turns, so exactly one of the two holds it.
+    """
+    import threading
+    _write_lock("edgar", f"{_dead_pid()} abandoned 1")
+    real = job_lock._read_owner
+    e_ident: list = []
+    reads = [0]
+    compared, go, e_done, release = (threading.Event() for _ in range(4))
+
+    def read_owner(path):
+        out = real(path)
+        if e_ident and threading.get_ident() == e_ident[0]:
+            reads[0] += 1
+            if reads[0] == 3:                          # the read inside the break, just before the unlink
+                compared.set()
+                go.wait(10)
+        return out
+
+    monkeypatch.setattr(job_lock, "_read_owner", read_owner)
+    got: dict = {}
+
+    def run_e():
+        e_ident.append(threading.get_ident())
+        with job_lock.acquire("edgar", wait=0) as ok:
+            got["e"] = ok
+            e_done.set()
+            release.wait(10)
+
+    e = threading.Thread(target=run_e)
+    e.start()
+    try:
+        assert compared.wait(10), "E never reached its break"
+        with job_lock.acquire("edgar", wait=0) as ok:
+            got["d"] = ok
+            go.set()
+            assert e_done.wait(10)
+            release.set()
+    finally:
+        go.set()
+        release.set()
+        e.join(10)
+    assert [got["d"], got["e"]].count(True) == 1, got
+
+
+def test_a_breaker_file_a_dead_breaker_left_is_cleared(rawstore_tmp_db):
+    _write_lock("edgar", f"{_dead_pid()} abandoned 1")
+    breaker = job_lock._lock_path("edgar").with_name("edgar.lock.break")
+    breaker.write_text("")
+    old = breaker.stat().st_mtime - job_lock._BREAKER_STALE_S - 5
+    os.utime(breaker, (old, old))
+    with job_lock.acquire("edgar", wait=0) as got:
+        assert got is True
+    assert not breaker.exists()

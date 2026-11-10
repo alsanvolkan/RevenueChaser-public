@@ -129,7 +129,9 @@ def _freshness(now: float, run_id: str) -> int:
         mark = 0.0
     touched = rawstore.query(
         "SELECT DISTINCT coalesce(registry_name, module) AS job FROM job_runs "
-        "WHERE finished_at > ? AND coalesce(registry_name, module) IS NOT NULL", [mark])
+        # The listener's 5-minute News pass (#673) is not a job a person waits on; the News page shows its gaps.
+        "WHERE finished_at > ? AND coalesce(registry_name, module) IS NOT NULL "
+        "AND coalesce(registry_name, module) <> 'news_headlines'", [mark])
     if not touched:
         return 0
     jobs = [r["job"] for r in touched]

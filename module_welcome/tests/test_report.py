@@ -125,3 +125,19 @@ def test_a_change_that_rounds_to_zero_reads_flat():
          "change_pct": -0.0005, "spark": "[4.052, 4.05]", "run_id": "t", "run_at": NOW}])
     page = report.render_html(now=NOW, watchlist=set(), labels={})
     assert "-0,00" not in page and "• 0,00" in page
+
+
+def test_the_headlines_card_shows_the_three_newest_and_polls():
+    rawstore.write_rows("news_headlines", [
+        {"headline_id": f"ibkr:{i}", "provider": "ibkr", "published_at": NOW - i * 60, "headline": f"Story {i}",
+         "source": "Dow Jones", "tickers": json.dumps(["AAPL"] if i % 2 else []), "url": None, "fetched_at": NOW,
+         "run_id": "t", "run_at": NOW - i} for i in range(1, 6)])
+    page = report.render_html(now=NOW, watchlist=set(), labels={})
+    assert "Son başlıklar" in page and "Story 1" in page and "Story 3" in page and "Story 4" not in page
+    assert "HEADS_SINCE = " in page and "/api/news/headlines?since=" in page
+
+
+def test_without_headlines_the_card_says_so():
+    _news()
+    page = report.render_html(now=NOW, watchlist=set(), labels={})
+    assert "Son 24 saatte başlık yok." in page and '<p class="empty">Son 24 saatte' in page

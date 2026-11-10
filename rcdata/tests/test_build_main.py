@@ -432,3 +432,25 @@ def test_a_fetch_locks_name_is_one_file_name_not_a_path():
         assert job_lock.writes_of(name) == ()           # still the family that holds off nothing
     # Two datasets of one provider must still be two locks, not one.
     assert len(set(names)) == 3
+
+
+def test_attended_closes_a_request_a_killed_run_left_running(monkeypatch, capsys):
+    """#321: a killed attended run left its request `running`; `attended` said nothing was queued and the Fetch
+    route kept answering 409. Now it closes that request, says so, and a fresh one can be queued."""
+    import subprocess
+    import sys as _sys
+    monkeypatch.setattr(cli, "at_a_terminal", lambda: True)
+    monkeypatch.setattr(cli.base, "idle_problem",
+                        lambda: (_ for _ in ()).throw(AssertionError("took the turn")))
+    dead = subprocess.Popen([_sys.executable, "-c", "pass"])
+    dead.wait()
+    rid = ops.enqueue("wrds/sec_idhist", None, by="settings")
+    assert ops.next_request("wrds/sec_idhist")["id"] == rid
+    ops.start_run("killed-attended", "wrds/sec_idhist", "queue")
+    [run] = [r for r in ops.rows("job_runs2") if r["run_id"] == "killed-attended"]
+    ops.put_rows("job_runs2", [{**run, "pid": dead.pid}])
+    assert cli.main(["attended"]) == 0
+    err = capsys.readouterr().err
+    assert "closed 1 request(s) whose run was killed" in err
+    assert _request(rid)["status"] == "failed"
+    assert ops.enqueue_once("wrds/sec_idhist", None, by="settings") is not None

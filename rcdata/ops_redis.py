@@ -355,7 +355,7 @@ def fail_orphans(*, dead_pids_only: bool = False) -> tuple[int, int]:
         runs = sorted((r for r in _fetch("job_runs2", _client().smembers(_key("job_runs2", "running")))
                        if r["status"] == "running" and r["pid"] != me),
                       key=lambda r: (r["started_at"] is not None, r["started_at"] or 0.0))
-        alive = {r["run_id"]: ops._run_alive(r["pid"], dead_pids_only) for r in runs}
+        alive = {r["run_id"]: ops._run_alive(r["pid"], dead_pids_only, r.get("host")) for r in runs}
         reqs, checks = [], []
         for req in (r for r in _active() if r["status"] == "running"):
             run = next((r for r in runs if r["dataset"] == req["dataset"]

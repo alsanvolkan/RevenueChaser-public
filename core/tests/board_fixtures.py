@@ -501,6 +501,13 @@ def _logs(tmp_path, monkeypatch):
     return logview.render_page(p)
 
 
+def _activity(tmp_path, monkeypatch):
+    from RevenueChaser.app import activity
+    # A watch-list row's added_by is the panel header a press sent, and its note is free text.
+    rows = [{"ticker": H("ticker"), "added_at": 1.0, "added_by": H("added_by"), "note": H("note")}]
+    return activity.render_page({"option": (rows, None), "stock": (None, H("error"))})
+
+
 def _runs(tmp_path, monkeypatch):
     from RevenueChaser.app import runview
     from RevenueChaser.core import rawstore
@@ -590,4 +597,5 @@ BOARDS: dict[str, Board] = {
     "logs": Board(_logs),
     # Not a data board: the run log over job_runs, whose messages and params are stored text (#26 PL5-b).
     "runs": Board(_runs),
+    "activity": Board(_activity),
 }
