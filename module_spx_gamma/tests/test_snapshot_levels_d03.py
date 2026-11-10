@@ -245,6 +245,6 @@ def test_an_open_session_spends_exactly_one_request_on_spot(tmp_path, rawstore_t
     spot_calls = [c for c in client.calls if c[0].endswith("/spot-exposures/strike")]
     assert spot_calls and spot_calls[0][1]["min_strike"] == int(8000.0 * 0.75), (
         "the live spot must move the UW strike window")
-    man = _spx_store.raw_manifest(DAY)
+    man = spx_store.raw_manifest(DAY)
     assert man["spot"]["value"] == 8000.0, "the Fetch must record its spot for a later Refresh"
     assert man["spot"]["source"] == "yfinance (live)"

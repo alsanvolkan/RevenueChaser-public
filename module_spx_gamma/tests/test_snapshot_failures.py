@@ -139,8 +139,9 @@ class TestCacheIsNotDestroyedByAFailedFetch:
         assert '"call_wall": "1"' not in store.raw_files("2026-08-14")["gex_levels.json"]
 
     def test_a_successful_fetch_leaves_no_staging_directory(self, tmp_path):
-        snap.fetch_snapshot(as_uw(_Client(200, fail_paths=())), "2026-08-14", data_root=tmp_path)
-        assert list(tmp_path.iterdir()) == []
+        staging = tmp_path / "staging"          # the test's store also lives under tmp_path
+        snap.fetch_snapshot(as_uw(_Client(200, fail_paths=())), "2026-08-14", data_root=staging)
+        assert list(staging.iterdir()) == []
 
     def test_stale_files_from_a_prior_run_are_not_carried_over(self, tmp_path):
         from RevenueChaser.module_spx_gamma import store

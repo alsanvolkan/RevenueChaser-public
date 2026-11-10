@@ -29,7 +29,7 @@ def test_a_full_first_page_is_followed_to_a_short_page(tmp_path):
     assert chain_calls[0].get("page") is None and chain_calls[1]["page"] == 1 and chain_calls[1]["limit"] == 500
     assert len(chain_calls) == 2
     assert len(raw["option_chain"]["data"]) == 620
-    on_disk = json.loads((tmp_path / DAY / "option_chain.json").read_text())
+    on_disk = json.loads(spx_store.raw_files(DAY)["option_chain.json"])
     assert len(on_disk["data"]) == 620 and on_disk["pages"] == [500, 120]
 
 

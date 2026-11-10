@@ -119,7 +119,7 @@ def test_a_stored_day_costs_no_request(tmp_path):
     counts = _pull(tmp_path, uw)
     assert counts["skipped_existing"] == 1
     assert not [c for c in uw.calls if c[1].get("date") == DAYS[0]]
-    assert spx_store.raw_manifest(DAYS[0]) == {"origin": "fetch"}
+    assert spx_store.raw_manifest(DAYS[0])["origin"] == "fetch"
 
 
 def test_the_shape_of_the_dated_volatility_answers_is_reported(tmp_path):
