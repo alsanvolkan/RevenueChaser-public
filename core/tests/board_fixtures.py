@@ -323,7 +323,7 @@ def newdata_fixture() -> dict:
                     "portable": {"text": "not recorded", "warn": True, "age_days": None}},
         "retention": {"warn": True, "text": "kept without a limit", "source": "src"},
         "retirement": [{"table": "macro_series", "replaced_by": "market_series", "reads_14d": 2,
-                        "writers": ["RC-Earnings-Inputs"]}],
+                        "writers": ["RC-Macro-Weekly"]}],
         "watchlists": {"option": {"count": 1, "rows": [{"ticker": "NVDA", "added_on": "2026-10-28T10:00:00+00:00",
                                                         "added_by": "leaps", "note": "note"}]},
                        "stock": {"count": 1, "rows": [{"ticker": "MSFT", "added_on": "2026-10-28T10:00:00+00:00",

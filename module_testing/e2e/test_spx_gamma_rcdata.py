@@ -76,7 +76,7 @@ def test_a_fetch_queues_the_two_datasets_and_renders_from_the_store(tmp_path, e2
         assert _queued(market_roots[0]) == [("uw/spot_expiry_strike", "spx_gamma", "queued"),
                                             ("market_series", "spx_gamma", "queued")]
         html = dash.view(TAB).text
-        assert "builder requested at" in html and "the builder runs hourly at :07" in html
+        assert "builder requested at" in html and "the builder runs hourly at :05" in html
         assert "VIX family of 2026-10-26" in html
         # The pin line sits in the prediction panel, which this thin mock day does not fill; the slice it reads is
         # in the parsed snapshot either way.

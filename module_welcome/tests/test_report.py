@@ -45,7 +45,7 @@ def _welcome():
     rawstore.write_rows("welcome_freshness", [
         {"job": "spxgamma", "last_status": "error", "last_finished_at": NOW - HOUR, "last_ok_at": NOW - 30 * HOUR,
          "last_failed_at": NOW - HOUR, "last_error": "UW <503>", "run_id": "t", "run_at": NOW},
-        {"job": "RC-Earnings-Inputs", "last_status": "done", "last_finished_at": NOW - 8 * HOUR,
+        {"job": "RC-Earnings-Calendar", "last_status": "done", "last_finished_at": NOW - 8 * HOUR,
          "last_ok_at": NOW - 8 * HOUR, "last_failed_at": None, "last_error": None, "run_id": "t", "run_at": NOW},
         {"job": "old_job", "last_status": "done", "last_finished_at": NOW - 30 * 24 * HOUR,
          "last_ok_at": NOW - 30 * 24 * HOUR, "last_failed_at": None, "last_error": None, "run_id": "t",
@@ -85,9 +85,9 @@ def test_the_snapshot_tiles_show_close_change_date_and_a_line():
 def test_freshness_flags_a_failed_job_and_drops_old_ones():
     _welcome()
     page = report.render_html(now=NOW, watchlist=set(), labels={"spxgamma": "SPX Gamma"})
-    assert "SPX Gamma" in page and "UW &lt;503&gt;" in page and "RC-Earnings-Inputs" in page
+    assert "SPX Gamma" in page and "UW &lt;503&gt;" in page and "RC-Earnings-Calendar" in page
     assert "old_job" not in page
-    assert page.index("SPX Gamma") < page.index("RC-Earnings-Inputs")          # failures first
+    assert page.index("SPX Gamma") < page.index("RC-Earnings-Calendar")          # failures first
 
 
 def test_a_run_with_failed_provider_calls_is_flagged_not_ticked():

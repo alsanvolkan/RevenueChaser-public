@@ -436,46 +436,46 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         key="earnings_calendar", label="Earnings calendar",
         tables=("earnings_calendar",),
-        db="raw", source=Source.uw, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.uw, writer="RC-Earnings-Calendar",
         freshness=("earnings_calendar", "session_date"),
     ),
     # UW, then yfinance (docs/data_architecture.md short_interest).
     DatasetSpec(
         key="short_interest", label="Short interest",
         tables=("short_interest",),
-        db="raw", source=Source.uw, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.uw, writer="RC-Short-Interest",
         freshness=("short_interest", "session_date"),
     ),
     DatasetSpec(
         key="economic_calendar", label="Economic calendar",
         tables=("economic_calendar",),
-        db="raw", source=Source.uw, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.uw, writer="RC-Earnings-Daytime",
         freshness=("economic_calendar", "session_date"),
     ),
     DatasetSpec(
         key="macro_series", label="FRED macro series",
         tables=("macro_series",),
-        db="raw", source=Source.fred, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.fred, writer="RC-Macro-Weekly",
         freshness=("macro_series", "obs_date"),
     ),
     DatasetSpec(
         key="estimates", label="Analyst estimates",
         tables=("estimate_snapshots",),
-        db="raw", source=Source.yfinance, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.yfinance, writer="RC-Earnings-Daytime",
         freshness=("estimate_snapshots", "session_date"),
     ),
     # Cboe for the VIX family; MOVE is yfinance (docs/data_architecture.md vol_index_daily).
     DatasetSpec(
         key="vol_index", label="Volatility indices",
         tables=("vol_index_daily",),
-        db="raw", source=Source.cboe, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.cboe, writer="RC-Macro-Weekly",
         freshness=("vol_index_daily", "session_date"),
     ),
     # Reader ages by session_date (stored_inputs.cot_row, MAX_LAG). report_date is the report's own date.
     DatasetSpec(
         key="cftc", label="CFTC E-mini Commitments of Traders",
         tables=("cftc_cot",),
-        db="raw", source=Source.finra_cftc, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.finra_cftc, writer="RC-CFTC-Weekly",
         freshness=("cftc_cot", "session_date"),
         gap_kind=GapKind.needs_decision,
         next_step=("The Commitments of Traders table is fresh but shallow: the nightly writer asks for the "

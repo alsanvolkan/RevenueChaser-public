@@ -1,4 +1,4 @@
-"""RC-Earnings-Inputs sweeps (E0, #372): D26, D37, D27, D10 and D14 against fake providers.
+"""The Earnings inputs sweeps (E0, #372): D26, D37, D27, D10 and D14 against fake providers.
 
 No request leaves the process: UW goes through a ``CappedUWClient`` whose transport is a dict of canned answers,
 FRED and yfinance through monkeypatched provider functions.
@@ -160,6 +160,13 @@ def test_d26_without_a_key_is_failed_and_sends_nothing(rawstore_tmp_db, tmp_path
 def test_the_step_is_registered_and_lists_its_sweeps():
     assert N.STEPS["earnings"] == "RevenueChaser.module_earnings_radar.inputs:sweeps"
     assert [s.name for s in N.load_step("earnings")] == [s.name for s in inputs.sweeps()]
+
+
+def test_the_scheduled_steps_split_the_seven_sweeps_once_each():
+    """#620: one step per schedule; together they run every sweep of ``earnings`` exactly once."""
+    split = [s.name for step in ("earnings-calendar", "short-interest", "earnings-daytime", "macro-weekly", "cftc")
+             for s in N.load_step(step)]
+    assert sorted(split) == sorted(s.name for s in inputs.sweeps())
 
 
 # --- D37 economic calendar (#307) -----------------------------------------------------------------------------------
@@ -553,29 +560,37 @@ def test_the_provider_reads_the_four_blocks_as_one_call(monkeypatch):
     assert res.status == "failed" and yfp.health()["failed"] == 1
 
 
-# --- the step: RC-Earnings-Inputs ---------------------------------------------------------------------------------
+# --- the scheduled entries (#620) ---------------------------------------------------------------------------------
 
 ALL_TABLES = ("earnings_calendar", "short_interest", "economic_calendar", "macro_series", "estimate_snapshots",
               "vol_index_daily", "cftc_cot")
+CAPS = ("--max-uw-calls", "unlimited", "--max-fred-calls", "12", "--max-yf-calls", "1000", "--max-cboe-calls", "20",
+        "--max-cftc-calls", "5")
 
 
-def test_the_task_runs_tuesday_to_saturday_at_0130_after_the_daily_bars():
-    import dataclasses
+@pytest.mark.parametrize("name,step,time,days", [
+    ("RC-Earnings-Calendar", "earnings-calendar", "23:40", ("Monday", "Thursday")),
+    ("RC-Short-Interest", "short-interest", "23:40", ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")),
+    ("RC-Earnings-Daytime", "earnings-daytime", "13:00", ("Tuesday", "Thursday")),
+    ("RC-Macro-Weekly", "macro-weekly", "23:40", ("Thursday",)),
+    ("RC-CFTC-Weekly", "cftc", "23:40", ("Friday",)),
+])
+def test_each_inputs_entry_runs_its_own_step_on_its_schedule(name, step, time, days):
     from RevenueChaser.core import automations as A
-    e = A.entry("RC-Earnings-Inputs")
-    assert (e.time, e.after) == ("01:30", "RC-Daily-Bars")
-    assert e.days == ("Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
-    assert e.args == ("-m", "RevenueChaser.scripts.nightly_inputs", "earnings", "--max-uw-calls", "200",
-                      "--max-fred-calls", "10", "--max-yf-calls", "2000", "--max-cboe-calls", "20",
-                      "--max-cftc-calls", "5")
-    assert set(e.tables_written) == set(ALL_TABLES) == {t for s in inputs.sweeps() for t in s.tables}
+    e = A.entry(name)
+    assert (e.time, e.days, e.after) == (time, days, None)
+    assert e.args == ("-m", "RevenueChaser.scripts.nightly_inputs", step, *CAPS)
+    assert set(e.tables_written) == {t for s in N.load_step(step) for t in s.tables}
     assert e.settings.wake_to_run and not e.default_install and not e.offpeak_gated
     A.check_chain(A.REGISTRY)
     A.check_inputs_steps(A.REGISTRY)
-    on_screeners = tuple(dataclasses.replace(x, after="RC-Screeners-Daily") if x.name == e.name else x
-                         for x in A.REGISTRY)
-    with pytest.raises(ValueError, match="runs weekly"):
-        A.check_chain(on_screeners)
+
+
+def test_the_entries_write_every_table_once_and_the_old_entry_is_gone():
+    from RevenueChaser.core import automations as A
+    written = [t for e in A.REGISTRY if e.args[2:3] and e.args[:2] == ("-m", A.INPUTS_CLI) for t in e.tables_written]
+    assert sorted(written) == sorted(ALL_TABLES) == sorted({t for s in inputs.sweeps() for t in s.tables})
+    assert "RC-Earnings-Inputs" not in {e.name for e in A.REGISTRY}
 
 
 def _vol_csv() -> str:
