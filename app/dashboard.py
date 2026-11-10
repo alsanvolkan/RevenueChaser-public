@@ -296,10 +296,9 @@ TABS = [
     {"type": "tab", "key": "module_leaps", "label": "LEAPS", "url": "/view/module_leaps", "sub": True},
     {"type": "header", "label": "Ops"},
     {"type": "tab", "key": "module_settings", "label": "Settings / Data health", "url": "/view/module_settings", "sub": True},
-    # Read-only: the dashboard's own log files (app/logview.py). No Fetch, no Refresh, no data date.
-    {"type": "tab", "key": "logs", "label": "Logs", "url": "/view/logs", "sub": True},
-    # Read-only: the job_runs rows every job and scheduled task leaves (app/runview.py, #26 PL5-b).
-    {"type": "tab", "key": "runs", "label": "Runs", "url": "/view/runs", "sub": True},
+    # avo, 10 Nov 2026: the runs and logs of every job by the board it feeds, and the watch lists (app/activity.py);
+    # it takes the place of Logs and Runs, whose pages still answer at /view/logs and /view/runs. No Fetch, no Refresh.
+    {"type": "tab", "key": "activity", "label": "Activity", "url": "/view/activity", "sub": True},
 ]
 
 
@@ -388,6 +387,9 @@ def view(mod: str):
         return _view_spxgamma()
     if mod == "module_uw_interaction":
         return _view_uw_interaction()
+    if mod == "activity":
+        from . import activity
+        return activity.render_page()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     if mod == "runs":
@@ -1968,6 +1970,38 @@ def api_watchlist_kind_toggle(kind: str, ticker: str):
         return jsonify({"ok": False, "error": "bad ticker"}), 400
     on = ops.watch_toggle(kind, t, by=_requested_by())
     return jsonify({"ok": True, "list": kind, "ticker": t, "on": on})
+
+
+@app.route("/api/watchlist/<kind>/add/<ticker>", methods=["POST"])
+def api_watchlist_add(kind: str, ticker: str):
+    """Put ``ticker`` on one watch list (the Activity board's Add): ``{ok, list, ticker, added}``, where ``added`` is
+    false when it was there already (nothing is written then). Never removes, so an Add typed for a name someone else
+    just added cannot take it off, as the toggle would. 404 / 400 as the toggle."""
+    from RevenueChaser.rcdata import ops
+    if kind not in ops.WATCH_KINDS:
+        return jsonify({"ok": False, "error": f"unknown watch list {kind!r}"}), 404
+    t = (ticker or "").strip().upper()
+    if not _valid_ticker(t):
+        return jsonify({"ok": False, "error": "bad ticker"}), 400
+    added = ops.watch_add(kind, t, by=_requested_by())
+    return jsonify({"ok": True, "list": kind, "ticker": t, "added": added})
+
+
+@app.route("/api/activity/boards")
+def api_activity_boards():
+    """The Activity board's grouping (app/activity.py): each board with the scheduled jobs that feed it, worked out
+    from the code, and how many runs were pressed on it (the dashboard's own ``job_runs``). Read by homeops for the
+    Grafana boards rc-activity and rc-logs."""
+    from . import activity
+    out = activity.job_boards()
+    try:
+        pressed = activity.pressed_by_board(runview.read(limit=runview.MAX_LIMIT).get("rows") or [])
+    except Exception as e:  # noqa: BLE001 - the grouping still answers without the pressed counts
+        logger.warning("activity: runs not read: %s", e)
+        pressed = {}
+    for b in out["boards"]:
+        b["pressed"] = pressed.get(b["key"], {"runs": 0, "last": None, "bad": 0})
+    return jsonify({"ok": True, **out})
 
 
 @app.route("/api/watchlist/<kind>/remove/<ticker>", methods=["POST"])
