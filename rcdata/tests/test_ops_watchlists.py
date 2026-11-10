@@ -210,7 +210,10 @@ def test_concurrent_whole_list_replaces_raise_nothing_and_the_history_replays_to
         t.start()
     for t in threads:
         t.join(60)
-    assert not errors, errors[:2]
+    # #261: once seen failing here with the message cut off; #522 since queues a process's writers on one lock, so a
+    # failure now names its type and text, and a writer still running at the deadline is its own failure.
+    assert not [t for t in threads if t.is_alive()], "a writer was still running after 60 s"
+    assert not errors, [f"{type(e).__name__}: {e}" for e in errors[:3]]
     state = {}
     for r in ops.rows("watchlist_stock_changes"):
         state[r["ticker"]] = r["action"] == "add"

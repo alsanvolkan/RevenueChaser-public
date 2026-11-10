@@ -427,8 +427,9 @@ def test_the_pull_counts_its_calls_against_uw_s_day_cap(tmp_path):
     assert ops.calls_today("uw") - before == counts["calls"] == 1 + 3 * snap.HISTORY_CALLS_PER_SESSION
 
 
-def test_the_pull_is_held_to_what_is_left_of_uw_s_day(tmp_path):
+def test_the_pull_is_held_to_what_is_left_of_uw_s_day(tmp_path, monkeypatch):
     from RevenueChaser.rcdata import caps, ops
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", 100_000)              # UW has no cap since 2026-11-10: a test cap
     ops.count_calls("uw", caps.DAY_CAPS["uw"] - ops.calls_today("uw") - 1)     # one call left today
     uw = Recorder()
     counts = _pull(tmp_path, uw, max_calls=500)
@@ -451,9 +452,10 @@ def test_the_pull_counts_as_it_goes_so_a_crash_loses_at_most_a_few_calls(tmp_pat
     assert max(seen) >= hp.COUNT_EVERY and seen[hp.COUNT_EVERY + 1] >= hp.COUNT_EVERY
 
 
-def test_the_pull_stops_when_the_builder_spends_the_rest_of_the_day(tmp_path):
+def test_the_pull_stops_when_the_builder_spends_the_rest_of_the_day(tmp_path, monkeypatch):
     """The builder's calls land in the same counter while the pull runs: the pull re-reads the room at each count."""
     from RevenueChaser.rcdata import caps, ops
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", 100_000)              # UW has no cap since 2026-11-10: a test cap
     ops.count_calls("uw", caps.DAY_CAPS["uw"] - ops.calls_today("uw") - 1_000)     # 1,000 left at the start
 
     def handler(path, params):

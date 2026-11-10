@@ -172,7 +172,7 @@ def test_d01_a_day_behind_for_the_picks_refuses_and_names_them(night):
         assert "lack a complete 2026-10-14 daily bar" in outcome.reason, (name, outcome.reason)
         assert "a later Fetch will not change it unless Daily Bars is run again" in outcome.reason
         assert "stale_bars" not in {s["key"] for s in payload["funnel_steps"]}
-    assert rawstore.query("SELECT count(*) AS n FROM forecast_ledger")[0]["n"] == 0
+    assert rawstore.query("SELECT count(*) AS n FROM forecast_ledger", db="forecast")[0]["n"] == 0
     assert night.history_calls == []
 
 

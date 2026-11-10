@@ -25,7 +25,7 @@ def _fake_time():
 
 
 def test_day_caps_hold_only_the_quotas_published_per_day():
-    assert caps.DAY_CAPS == {"uw": 100_000, "alphavantage": 25}
+    assert caps.DAY_CAPS == {"alphavantage": 25}      # UW: none since avo 2026-11-10
 
 
 def test_the_request_windows_are_the_official_ones():
@@ -107,9 +107,9 @@ def test_finra_pages_go_through_the_finra_window(monkeypatch, tmp_path):
     assert waits == [1]
 
 
-def test_the_spx_history_pull_reads_the_uw_day_cap():
+def test_the_spx_history_route_holds_no_uw_cap_of_its_own():
     from RevenueChaser.app import dashboard
-    assert dashboard._SPX_HISTORY_MAX_CALLS == caps.DAY_CAPS["uw"]
+    assert not hasattr(dashboard, "_SPX_HISTORY_MAX_CALLS") and caps.cap_for("uw") is None
 
 
 def test_module_financials_holds_no_uw_limit_of_its_own():
@@ -247,7 +247,7 @@ def test_every_pacer_a_dataset_asks_for_has_an_official_window():
 
 
 def test_no_uw_dataset_counts_its_own_calls():
-    """``RunContext.uw_client`` hangs ``_on_uw_response`` on the client, which counts every UW response, retries
+    """``RunContext.uw_client`` hangs ``_on_uw_request`` on the client, which counts every UW request sent, retries
     included. A dataset that also counts its own asks doubles the number the day cap is read from: the first
     ``uw/earnings`` fetch reported 10,608 calls for 5,304 requests (6 Nov 2026)."""
     root = Path(caps.__file__).resolve().parents[1]
@@ -255,6 +255,32 @@ def test_no_uw_dataset_counts_its_own_calls():
         if "tests" in path.parts:
             continue
         text = path.read_text(encoding="utf-8")
-        if not re.search(r'^PROVIDER = "uw"$', text, flags=re.M):
-            continue
-        assert "ctx.count(PROVIDER, calls=" not in text, path
+        # Every spelling the review of #519 (finding 10) found the old ``"ctx.count(PROVIDER, calls=" in text`` let
+        # through: the provider written out in either quote, a positional count, a module whose PROVIDER is written
+        # with single quotes. The behavioural guard is ``test_fund_uw_earnings_fetch`` (one answer is one call).
+        names = [r"""["']uw["']"""]
+        if re.search(r"""^PROVIDER\s*=\s*["']uw["']""", text, flags=re.M):
+            names.append("PROVIDER")
+        for name in names:
+            # ``calls=`` with any value, or any positional second argument; ``failures=``/``http_429=`` are not calls.
+            assert not re.search(rf"ctx\.count\(\s*{name}\s*,\s*(calls\s*=|[^=,)]+[,)])", text), path
+
+
+@pytest.mark.parametrize("spelling", ["ctx.count(PROVIDER, calls=n)", "ctx.count(PROVIDER, calls=len(rows))",
+                                      'ctx.count("uw", calls=got)', "ctx.count('uw', n)", 'ctx.count("uw", 1)'])
+def test_the_self_count_guard_catches_a_count_that_is_not_a_literal(spelling, tmp_path, monkeypatch):
+    """Review of #570: the guard required a numeric literal, so a count held in a name or an expression passed."""
+    pkg = tmp_path / "pkg"
+    (pkg / "rcdata").mkdir(parents=True)
+    (pkg / "rcdata" / "fake.py").write_text(f'PROVIDER = "uw"\n\n\ndef fetch(ctx):\n    {spelling}\n')
+    monkeypatch.setattr(caps, "__file__", str(pkg / "rcdata" / "caps.py"))
+    with pytest.raises(AssertionError):
+        test_no_uw_dataset_counts_its_own_calls()
+
+
+def test_the_self_count_guard_leaves_a_failure_count_alone(tmp_path, monkeypatch):
+    pkg = tmp_path / "pkg"
+    (pkg / "rcdata").mkdir(parents=True)
+    (pkg / "rcdata" / "fake.py").write_text('PROVIDER = "uw"\n\n\ndef fetch(ctx):\n    ctx.count(PROVIDER, failures=1)\n')
+    monkeypatch.setattr(caps, "__file__", str(pkg / "rcdata" / "caps.py"))
+    test_no_uw_dataset_counts_its_own_calls()

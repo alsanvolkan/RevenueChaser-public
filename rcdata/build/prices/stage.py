@@ -62,3 +62,24 @@ def compare_live(con: duckdb.DuckDBPyConnection, table: str, columns: list[str],
         return int(added), int(removed)
     finally:
         con.execute("DETACH live_prices")
+
+
+def view(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str, str]], files=(),
+         added_later=()) -> None:
+    """``CREATE TEMP VIEW name`` over ``files`` (Parquet, by name), typed by ``schema``: what :func:`create` would
+    load, read where it is used instead of copied into the build. A build on the live copy (#446) reads the WRDS
+    history whole only for the identity (the universe, the PERMNO link) and stages a narrow slice of it for the rows
+    it rebuilds (``incremental``); a whole TEMP copy of 40 years of ``comp.secd`` is what filled 92 GB of spill."""
+    files = sorted(Path(f) for f in files)
+    if not files:
+        empty = ", ".join(f'CAST(NULL AS {t}) AS "{c}"' for c, t in schema)
+        con.execute(f"CREATE OR REPLACE TEMP VIEW {name} AS SELECT {empty} WHERE false")
+        return
+    src = f"read_parquet([{', '.join(base.sql_path(f) for f in files)}], union_by_name = true)"
+    later = set(added_later)
+    if later:
+        have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
+        later &= {c for c, _ in schema} - have
+    typed = ", ".join(f'CAST(NULL AS {t}) AS "{c}"' if c in later else f'CAST("{c}" AS {t}) AS "{c}"'
+                      for c, t in schema)
+    con.execute(f"CREATE OR REPLACE TEMP VIEW {name} AS SELECT {typed} FROM {src}")

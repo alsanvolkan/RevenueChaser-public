@@ -146,6 +146,7 @@ def test_every_dataset_either_honours_the_scope_or_is_named_here():
         "wrds/sec_idhist": "attended, a whole-history pull",
         "wrds/segments": "attended, a whole-history pull",
         "yfinance/estimates": "the fundamentals universe (its own PR)",
+        "yfinance/fx": "one request per currency, not per company",
     }
     honours = {n for n, d in DATASETS.items() if getattr(d, "honours_scope", False)}
     assert honours == {"alpaca/bars", "yfinance/float", "uw/total_float", "funds/etf_holdings"}, honours

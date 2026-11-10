@@ -17,7 +17,7 @@ import os
 from datetime import datetime
 from urllib.parse import urlsplit
 
-from RevenueChaser.core import automations, datasets
+from RevenueChaser.core import automations, datasets, rawstore
 from RevenueChaser.rcdata.needs import screen as api_screen
 from RevenueChaser.module_settings import control as control_model, control_render, needs_tab
 from RevenueChaser.core.html_safe import esc, script_json
@@ -71,6 +71,7 @@ table.inv .warnv{color:var(--amber)}
 .db-edgar{color:#e0a030}
 .db-history{color:#3cb89a}
 .db-prices{color:#e06088}
+.db-board{color:#9b7be0}
 .dblegend{color:var(--muted);font-size:11.5px;margin:6px 2px 0}
 .dblegend .db{margin:0 8px 0 4px}
 /* G11 (#124): the gap tag beside the dataset name - the same words as its detail line, the colour
@@ -482,7 +483,7 @@ function autoSummaryHtml(r, live, st, stText, rcls){
     '<span class="auto-next">' + next + '</span>' +
     '</summary>';
 }
-function autoDetailHtml(r, live, btns, tables, tail, off, size){
+function autoDetailHtml(r, live, btns, tables, tail){
   var lines = '<div class="aline"><b>What it does</b>' + rcEsc(r.description) + '</div>' +
     '<div class="aline"><b>Command</b><span class="tbl">' + rcEsc(r.command) + '</span></div>' +
     '<div class="aline"><b>Schedule</b>' + rcEsc(r.schedule) + '</div>' +
@@ -495,8 +496,7 @@ function autoDetailHtml(r, live, btns, tables, tail, off, size){
       ' · missed runs ' + rcEsc(r.missed_runs) +
       ' · last success ' + rcEsc(r.last_success_age) + '</div>';
   }
-  lines += off + size +
-    '<div class="aline"><b>Log file</b><div class="auto-log">' + rcEsc(r.log_path) +
+  lines += '<div class="aline"><b>Log file</b><div class="auto-log">' + rcEsc(r.log_path) +
     (tail ? '\n' + tail : '') + '</div></div>';
   return '<div class="auto-detail">' + (btns ? '<div class="auto-actions">' + btns + '</div>' : '') +
     lines + '</div>';
@@ -515,15 +515,9 @@ function autoRowHtml(r){
   }
   var tail = (r.log_tail || []).map(rcEsc).join('\n');
   var tables = (r.tables_written || []).map(rcEsc).join(', ');
-  var off = r.offmachine ? '<div class="auto-desc ' +
-    (AUTO_RESULT.hasOwnProperty(r.offmachine.kind) ? AUTO_RESULT[r.offmachine.kind] : '') + '">off-machine copy: ' +
-    rcEsc(r.offmachine.text) + '</div>' : '';
-  var size = r.backup_size ? '<div class="auto-desc ' +
-    (AUTO_RESULT.hasOwnProperty(r.backup_size.kind) ? AUTO_RESULT[r.backup_size.kind] : '') + '">backup size: ' +
-    rcEsc(r.backup_size.text) + '</div>' : '';
   return '<details class="auto-item" id="auto-' + rcEsc(r.name) + '">' +
     autoSummaryHtml(r, live, st, stText, rcls) +
-    autoDetailHtml(r, live, btns, tables, tail, off, size) +
+    autoDetailHtml(r, live, btns, tables, tail) +
     '</details>';
 }
 function autoTableHtml(rows, available){
@@ -1214,6 +1208,9 @@ def _db_pill(db) -> str:
     draws nothing rather than a class.
     """
     name = str(db or "").strip().lower()
+    if name in rawstore.BOARD_DBS:   # a board's own file, boards/<board>.duckdb (DECISIONS S9)
+        title = _html.escape(f"stored in boards/{name}.duckdb under .store/", quote=True)
+        return f'<span class="db db-board" title="{title}">{_html.escape(name)}</span>'
     if name not in DB_PILLS:
         return ""
     title = _html.escape(f"stored in {name}.duckdb under .store/", quote=True)
@@ -1223,7 +1220,8 @@ def _db_pill(db) -> str:
 def _db_legend() -> str:
     """One line under the table naming every store file, so a pill is explained once (G2)."""
     pills = " ".join(_db_pill(db) for db in DB_PILLS)
-    return (f'<div class="dblegend" id="db-legend">Store file: {pills} '
+    board = '<span class="db db-board" title="a board\'s own file under .store/boards/">board name</span>'
+    return (f'<div class="dblegend" id="db-legend">Store file: {pills} {board} '
             "— each pill names the .store/ DuckDB that dataset is written to.</div>")
 
 
@@ -1237,6 +1235,7 @@ SOURCE_WORDS = {
     "cboe": "Cboe (Chicago Board Options Exchange)",
     "fred": "FRED (Federal Reserve Economic Data)",
     "openfigi": "OpenFIGI",
+    "ibkr": "Interactive Brokers (IB Gateway)",
     "derived": "worked out by us from other datasets",
     "manual": "entered by hand",
     "store": "the store's own bookkeeping",
@@ -2044,120 +2043,6 @@ def _size_text(nbytes) -> str:
     return f"{nbytes / 1e9:.2f} GB"
 
 
-def _retention_from_description(description: str) -> str:
-    """"keeps 5 daily raw and 5 daily history snapshots, ..." — the retention clause of the backup job's registry
-    description, cut out of the text itself so the numbers are read here and never retyped in the renderer."""
-    text = str(description or "")
-    start = text.find("keeps ")
-    if start < 0:
-        return ""
-    end = text.find(".", start)
-    return text[start:end + 1 if end >= 0 else len(text)].strip()
-
-
-def _retention_rule(b: dict) -> str:
-    """The retention rule in plain words: the record's own text when it carries one, else the registry
-    description of RC-Store-Backup (``core.automations``, the job's own entry), else "unknown"."""
-    rule = str(b.get("retention") or "").strip()
-    if rule:
-        return rule
-    try:
-        rule = _retention_from_description(automations.entry("RC-Store-Backup").description)
-    except Exception:  # noqa: BLE001 - a registry without the entry says so on the card, never fails the page
-        rule = ""
-    return rule or "unknown: the job's record names no retention rule"
-
-
-def _backups_card(b: dict | None) -> str:
-    """The Backups card (#309, G8, G9): where the backups are (the local folder in full, and the off-machine
-    location the job's own record names), the retention rule, the last integrity self-check in words, what that
-    rule marks expired (a read-only dry run of the LOCAL folder, ``inventory._backups``), and a delete control that
-    is disabled in the markup itself. Nothing here deletes: the local folder is listed read-only and the
-    off-machine copy is never opened. Without that key there is no card; a missing record reads "unknown"."""
-    if not b:
-        return ""
-    esc = _html.escape
-
-    def cell(part: dict) -> str:
-        cls = _BACKUP_STATES.get(part.get("state"), "")
-        return f'<span class="{cls}">{esc(str(part.get("text") or part.get("state") or "unknown"))}</span>'
-
-    loc, off = b.get("local") or {}, b.get("offmachine") or {}
-    cp, scan = b.get("checkpoints") or {}, b.get("scan") or {}
-    expired = b.get("expired") or {}
-    folder = str(b.get("folder") or "").strip() or "unknown"
-    offmachine_at = str(b.get("offmachine_path") or "").strip() or "unknown"
-    checked = scan.get("checked")
-    selfcheck = (f'last checked {scan.get("last_day") or "never"}, '
-                 f'next due {scan.get("next_due") or "the next backup run"}, '
-                 + (f"{_fmt_rows(checked)} files re-read against their hashes" if isinstance(checked, int)
-                    else "no files re-read yet" if not scan.get("last_day")
-                    else "the number of files re-read was not recorded"))
-    # G9 (#124): the totals of the dry run. A scan that could not read the folder carries no counts at all, so the
-    # line reads "unknown" and never a zero it did not measure.
-    exp_n, exp_b = expired.get("count"), expired.get("bytes")
-    if expired.get("state") == "ok" and isinstance(exp_n, int) and isinstance(exp_b, int):
-        expired_text = (f"The retention rule marks {exp_n:,} file{'' if exp_n == 1 else 's'} as expired, "
-                        f"{_size_text(exp_b)} in total. This is a dry run: nothing has been deleted.")
-    else:
-        why = str(expired.get("why") or "").strip()
-        expired_text = (f"unknown: {why}" if why else "unknown: the local backup folder could not be read")
-        expired_text += "; this page makes no claim about expired files."
-    delete_row = (
-        '<dt>Delete</dt><dd id="backup-delete-row">'
-        '<button type="button" class="set-btn" id="backup-delete-expired" disabled '
-        'title="Arming the delete is a separate change: it needs your typed confirmation, a fresh backup and no '
-        'job running.">Delete expired backups</button> '
-        '<span id="backup-delete-note">Disabled: this page only lists what the retention rule marks expired. '
-        "Arming a delete is a separate change and needs your typed confirmation.</span></dd>"
-    )
-    split = ""
-    if loc.get("duckdb_files") is not None or loc.get("docs_zip_files") is not None:
-        split = (f'{esc(_gb(loc.get("duckdb_bytes")))} in {_fmt_rows(loc.get("duckdb_files"))} .duckdb files; '
-                 f'{esc(_gb(loc.get("docs_zip_bytes")))} in {_fmt_rows(loc.get("docs_zip_files"))} edgar_docs zips')
-    limit = lambda part: f'warns above {part.get("limit_gb"):g} GB' if isinstance(part.get("limit_gb"), (int, float)) else ""
-
-    def tile(ident: str, label: str, value: str, note: str, note_id: str = "") -> str:
-        nid = f' id="{note_id}"' if note_id else ""
-        return (f'<div class="btile" id="{ident}"><div class="bt-h">{label}</div><div class="bt-v">{value}</div>'
-                f'<div class="bt-n"{nid}>{note}</div></div>')
-
-    files = lambda part: f' · {_fmt_rows(part.get("files"))} files' if part.get("files") is not None else ""
-    tiles = (
-        '<div class="btiles">'
-        + tile("backup-local", "Local backup folder", f'{cell(loc)}{files(loc)}',
-               f'{split}{"; " if split and limit(loc) else ""}{esc(limit(loc))}')
-        + tile("backup-offmachine", "Off-machine copy", f'{cell(off)}{files(off)}',
-               f'what the job wrote and kept there (its manifest){"; " if limit(off) else ""}{esc(limit(off))}')
-        + tile("backup-checkpoints", "Off-machine checkpoints", cell(cp), "")
-        + tile("backup-scan", "Integrity self-check",
-               f'{cell(scan)} · next {esc(str(scan.get("next_due") or "the next backup run"))}'
-               + (f' · {_fmt_rows(checked)} files' if isinstance(checked, int) else ""),
-               esc(selfcheck), "backup-selfcheck")
-        + "</div>"
-    )
-    recorded = b.get("recorded_at")
-    recorded_text = str(recorded).replace("T", " ").replace("+00:00", " UTC") if recorded else "never"
-    facts = (
-        '<dl class="bkv">'
-        '<dt>Path</dt><dd><code class="bpath" id="backup-folder">'
-        f'{esc(folder)}</code> · off-machine <code class="bpath" id="backup-offmachine-path">{esc(offmachine_at)}'
-        '</code></dd>'
-        f'<dt>Keeping rule</dt><dd id="backup-retention">{esc(_retention_rule(b))}</dd>'
-        f'<dt>Would be deleted</dt><dd id="backup-expired">Dry run: {esc(expired_text)}</dd>'
-        f'{delete_row}'
-        f'<dt>Measured at</dt><dd id="backup-recorded">Sizes recorded {esc(recorded_text)}</dd>'
-        '</dl>'
-    )
-    return ('<section id="backups"><div class="bcard" id="backups-card"><h3>Backups</h3>'
-            f'{tiles}{facts}'
-            '<p class="asof bfoot" id="backups-note">Read from the nightly backup job\'s own records in the local backup '
-            "folder, plus one read-only listing of that folder for the dry run; the off-machine (Drive) copy is never "
-            "read, walked or listed. The self-check re-reads the local folder against the hashes taken when each file "
-            "was copied, every 7 days by default. <span id=\"backup-nodelete\">Nothing on this page deletes or moves a "
-            "backup file: it reads the backup job's own records and shows them.</span></p></div></section>")
-
-
 def _ibkr_login_href(value) -> str | None:
     """The gateway login address to link to, or ``None`` when there is nothing to show.
 
@@ -2212,7 +2097,7 @@ ND_WORKER_SILENT_MINUTES = 70
 ND_PAGE_STALE_MINUTES = 15
 ND_PAUSE_STOPS = "A Pause cancels a queued request and stops a running one before its next provider call."
 ND_BACKFILL_CONFIRM_OVER = 1000
-ND_NEXT_PASS = "the builder takes it at its next pass (hourly at :07)"
+ND_NEXT_PASS = "the builder takes it at its next pass (hourly at :05)"
 
 ND_THEME_CSS = (THEME_CSS.replace(':root[data-theme="auto"]{', ':root[data-theme="auto"] #newdata{')
                 .replace(':root[data-theme="light"]{', ':root[data-theme="light"] #newdata{')
@@ -2643,22 +2528,36 @@ def _nd_warn(text_html: str, warn) -> str:
     return f'<span class="nd-warn">{text_html} · warn</span>' if warn else text_html
 
 
+def _nd_level(text_html: str, row: dict) -> str:
+    if row.get("alert"):
+        return f'<span class="nd-bad">{text_html} · red</span>'
+    if row.get("warn"):
+        return f'<span class="nd-warn">{text_html} · warn</span>'
+    return text_html
+
+
 def _nd_backups(b: dict) -> str:
-    days = b.get("warn_days")
+    """The weekly backup (avo, 8 Nov 2026): each step's last good run, then the newest copy of every file."""
     rows = []
     if not b.get("configured"):
-        rows.append(_nd_row("Backup folder", '<span class="nd-warn">not set: RAW_STORE_BACKUP_DIR is empty</span>'))
+        rows.append(_nd_row("Backup folder", '<span class="nd-bad">not set: RAW_STORE_BACKUP_DIR is empty</span>'))
+    elif b.get("root"):
+        rows.append(_nd_row("Backup folder", f'<code>{_nd(b.get("root"))}</code>'))
+    for st in b.get("steps") or []:
+        age = st.get("age_days")
+        text = "never ran" if age is None else f"last good run {_nd(age)} d ago · {_nd(st.get('last_ok'))}"
+        if st.get("error"):
+            text += f' · <span class="nd-bad">last run failed: {_nd(st.get("error"))}</span>'
+        rows.append(_nd_row(f"Step {st.get('step')}", _nd_level(text, st)))
     for k in b.get("kinds") or []:
         age = k.get("age_days")
-        rows.append(_nd_row(f"Newest {k.get('kind')} copy",
-                            _nd_warn(("none" if age is None else f"{_nd(age)} d old · {_nd(k.get('newest'))}"),
-                                     k.get("warn"))))
-    rc = b.get("raw_copy") or {}
-    rows.append(_nd_row("35-day raw copy", _nd_warn(_nd(rc.get("text")), rc.get("warn"))))
-    po = b.get("portable") or {}
-    rows.append(_nd_row("Portable SSD", _nd_warn(_nd(po.get("text")), po.get("warn"))))
-    return ('<div class="nd-card" id="nd-backups"><h3>Market-store backups</h3>'
-            f'<div class="nd-sub">Warns past {_nd(days)} days.</div><div class="nd-rows">{"".join(rows)}</div></div>')
+        text = ("none" if age is None else f"{_nd(age)} d old · {_nd(k.get('newest'))}") \
+            + f" · {_nd(k.get('copies'))} kept"
+        rows.append(_nd_row(f"Newest {k.get('kind')} copy", _nd_level(text, k)))
+    return ('<div class="nd-card" id="nd-backups"><h3>Weekly backups</h3>'
+            f'<div class="nd-sub">One job every Sunday 03:30, the newest 4 copies of every file kept on the HDD. '
+            f'Amber past {_nd(b.get("warn_days"))} days, red past {_nd(b.get("alert_days"))}.</div>'
+            f'<div class="nd-rows">{"".join(rows)}</div></div>')
 
 
 def _nd_retirement(rows: list[dict]) -> str:
@@ -3001,6 +2900,11 @@ def _control_view(nd: dict | None, payload: dict) -> dict:
 def _collect_newdata() -> dict:
     """The section's data, read now; an error is a line on the page, never a blank board."""
     from RevenueChaser.module_settings import newdata
+    from RevenueChaser.rcdata import ops
+    try:
+        ops.fail_dead_requests()   # #602: a killed run's request must not show "running" with a Stop button
+    except Exception:  # noqa: BLE001 - housekeeping before the read; the board still renders
+        pass
     try:
         return newdata.collect()
     except Exception as exc:  # noqa: BLE001 - one unreadable ops file must not take the whole board down
@@ -3010,7 +2914,7 @@ def _collect_newdata() -> dict:
 #: The page's two tabs (#492): the key a viewer's choice is remembered under, and each tab's panel id. ``ALIASES`` maps
 #: a choice remembered from the three-tab page (Data, Fetch, Needs) onto the tab that now holds it.
 SETTINGS_TABS = {"key": "rc.settings.tab",
-                 "tabs": {"data": "panel-data", "health": "panel-health"},
+                 "tabs": {"data": "panel-data", "health": "panel-health", "live": "panel-live"},
                  "aliases": {"fetch": "data", "needs": "health"}}
 
 TABS_JS = """
@@ -3072,15 +2976,11 @@ def _needs_model(payload: dict) -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300], "read_at": datetime.now().strftime("%H:%M")}
 
 
-def _queue_html(view: dict) -> str:
-    """Queue and last runs, the control board's own section (``control_render._queue``), in its ``.ctl`` scope."""
-    if view.get("error"):
-        return ""
-    try:
-        inner = control_render._queue(view)
-    except Exception as exc:  # noqa: BLE001 - one broken section is a line, never a blank Health tab
-        inner = f'<p class="warn">Queue and last runs could not be read: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
-    return f'<section class="ctl" id="health-queue" aria-label="Queue and last runs"><div class="wrap">{inner}</div></section>'
+#: #527 B4, decision D4 = B (avo, 8 Nov 2026 02:39): the queue, the running requests and the switches strip left the
+#: Health tab once Grafana showed them (the RC Fetch board, on the Live tab); this one link takes their place.
+HEALTH_LIVE_LINK = ('<div class="wrap"><p class="live-link"><a id="health-live-link" href="#live" data-board="rc-fetch" '
+                    'style="display:inline-flex;align-items:center;min-height:44px;color:var(--acc)">The queue, the running requests '
+                    'and the switches are live in Grafana →</a></p></div>')
 
 
 #: The Identity and Our universe cards now sit in the spine's source box (#492 C1): the New data system section's
@@ -3097,9 +2997,8 @@ DATA_HELP = help_html(
     "dataset, then the Build stage from HDD raw and Parquet to the SSD file, then example rows. <b>Fetch</b> puts "
     "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
     "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
-    "call and holds the dataset until <b>Resume</b>. <b>Health</b> holds the queue and last runs, the need "
-    "catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
-    "the backups. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
+    "call and holds the dataset until <b>Resume</b>. <b>Health</b> holds the need catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
+    "the backups. <b>Live</b> shows the queue, the running requests and the switches from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )
 
@@ -3118,18 +3017,14 @@ def _watch_section(nd: dict | None) -> str:
             + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES) + "</section>")
 
 
-def _health_panel(payload: dict, view: dict, nd: dict | None = None) -> str:
-    """The Health tab (#492): the Needs head, the queue, the catalog, the request log and the routes, then the ticker
+def _health_panel(payload: dict, nd: dict | None = None) -> str:
+    """The Health tab (#492): the Needs head, the link to the live parts on the Live tab (#527 B4), the catalog, the request log and the routes, then the ticker
     detail, the four parts that live nowhere else (the board settings, Automations, the watch lists, the IBKR
     cards) and the backups, in that order."""
     model = _needs_model(payload)
     catalog, rest = needs_tab.sections(model)
-    try:
-        backups = _backups_card(payload.get("backups"))
-    except Exception as exc:  # noqa: BLE001 - one broken card is a line, never a blank Health tab
-        backups = f'<p class="warn">The backups card could not be drawn: {esc(f"{type(exc).__name__}: {exc}"[:300])}</p>'
-    # One ``#needs`` scope (needs.css) around the head, the queue and the Needs parts; the queue keeps its ``.ctl``.
-    # #527 step 9: what needs avo first (the top bar, the reads that failed, the queue, the backups, the catalog
+    # One ``#needs`` scope (needs.css) around the head and the Needs parts.
+    # #527 step 9 and B4: what needs avo first (the link to the live parts, the reads that failed, the backups, the catalog
     # with its problem groups open), then the parts he looks things up in, then the reference parts folded. The
     # IBKR login card is gone: its link is in the top bar.
     moved = (_ticker_drill(payload)
@@ -3137,14 +3032,22 @@ def _health_panel(payload: dict, view: dict, nd: dict | None = None) -> str:
              + _ibkr_state_card(payload.get("ibkr_login_state"))
              + _boards_section(payload.get("boards") or [], payload.get("rows") or [])
              + _watch_section(nd))
-    # One ``#needs`` frame and palette for the whole tab; the queue keeps its ``.ctl`` scope inside it.
+    # One ``#needs`` frame and palette for the whole tab.
     errs = _errors_list(payload.get("errors") or [])
     return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
-            f'{control_render.topbar_health(view)}'
+            f'{HEALTH_LIVE_LINK}'
             + (f'<div class="wrap">{errs}</div>' if errs else "")
-            + f'{_queue_html(view)}'
-            f'<div class="wrap">{backups}{catalog}</div>'
+            + f'<div class="wrap">{_freshness_part(payload)}</div>'
+            + f'<div class="wrap">{catalog}</div>'
             f'<div class="wrap" id="health-more">{moved}{_folded(rest)}</div></div>')
+
+
+def _freshness_part(payload: dict) -> str:
+    """#566: the Board freshness part, read now; the board cards' labels name the boards."""
+    from RevenueChaser.module_settings import freshness_tab
+    labels = {str(c.get("key")): str(c.get("label")) for c in payload.get("boards") or []
+              if isinstance(c, dict) and c.get("key") and c.get("label")}
+    return freshness_tab.section(freshness_tab.collect(), labels)
 
 
 def _folded(rest: str) -> str:
@@ -3166,7 +3069,74 @@ def _tab_strip() -> str:
             '<button type="button" role="tab" id="tab-data" data-tab="data" aria-controls="panel-data" '
             'aria-selected="true" tabindex="0">Data</button>'
             '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
-            'aria-selected="false" tabindex="-1">Health</button></div></nav>')
+            'aria-selected="false" tabindex="-1">Health</button>'
+            '<button type="button" role="tab" id="tab-live" data-tab="live" aria-controls="panel-live" '
+            'aria-selected="false" tabindex="-1">Live</button></div></nav>')
+
+
+# #527: the live view of data health and fetching is two Grafana boards on homesrv (home-server
+# grafana/make_dashboards.py rc_data_health / rc_fetch), framed here rather than shown as Grafana tabs (avo, 8 Nov
+# 2026: "bunlar revenue chaser app icine gomulu olmaliydi"). Grafana allows only this app's origin to frame it. The
+# frame has no address until the tab opens, so a Data/Health visit never loads Grafana.
+# home-server #222 (avo, 10 Nov 2026): the RC timers with the Jobs tab's own design, switches and fuse (board rc-jobs)
+LIVE_BOARDS = (("rc-data-health", "Data health"), ("rc-fetch", "Fetch"), ("rc-jobs", "Jobs"))
+LIVE_CSS = """
+#panel-live .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
+  padding:0 12px}
+#panel-live .livebar button{min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--line,#8884);
+  background:var(--card,transparent);color:var(--fg,inherit);font:inherit;cursor:pointer}
+#panel-live .livebar button[aria-pressed="true"]{border-color:var(--acc,#4a86e8);color:var(--acc,#4a86e8);font-weight:600}
+#panel-live .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px}
+#panel-live iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
+  background:var(--bg,transparent)}
+"""
+LIVE_HTML = ('<div class="livebar" role="group" aria-label="Live board">'
+             + "".join(f'<button type="button" data-board="{uid}" aria-pressed="{"true" if i == 0 else "false"}">'
+                       f'{label}</button>' for i, (uid, label) in enumerate(LIVE_BOARDS))
+             + '<a id="live-open" target="_blank" rel="noopener">Open in Grafana</a></div>'
+             '<iframe id="live-frame" title="Live data health, fetch and jobs (Grafana)" loading="lazy"></iframe>')
+LIVE_JS = """
+(function(){
+  var panel = document.getElementById('panel-live'), frame = document.getElementById('live-frame');
+  if (!panel || !frame) return;
+  var buttons = [].slice.call(panel.querySelectorAll('[data-board]')), open = document.getElementById('live-open');
+  var board = buttons.length ? buttons[0].getAttribute('data-board') : 'rc-data-health';
+  function theme() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t === 'light' || t === 'dark') return t;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  function address(kiosk) {
+    return location.protocol + '//' + location.hostname + ':3000/d/' + board + '/' + board + '?theme=' + theme()
+      + (kiosk ? '&kiosk' : '');
+  }
+  function load() {
+    if (panel.hidden) return;
+    var want = address(true);
+    if (frame.getAttribute('src') !== want) frame.setAttribute('src', want);
+    if (open) open.href = address(false);
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      board = b.getAttribute('data-board');
+      buttons.forEach(function (o) { o.setAttribute('aria-pressed', o === b ? 'true' : 'false'); });
+      load();
+    });
+  });
+  if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
+  var tab = document.getElementById('tab-live');
+  if (tab) tab.addEventListener('click', function () { setTimeout(load, 0); });
+  // #527 B4: the Health tab's one link to the live parts opens this tab on the board it names
+  var jump = document.getElementById('health-live-link');
+  if (jump) jump.addEventListener('click', function (e) {
+    e.preventDefault();
+    var want = jump.getAttribute('data-board');
+    buttons.forEach(function (b) { if (b.getAttribute('data-board') === want) b.click(); });
+    if (tab) tab.click();
+  });
+  load();
+})();
+"""
 
 
 def _ticker_drill(payload: dict) -> str:
@@ -3202,7 +3172,7 @@ def render_settings_dashboard(payload: dict) -> str:
     view = _control_view(nd, payload)
     control_html = control_render.render_data(view)
     control_js = control_render.scripts(view)
-    health_html = _health_panel(payload, view, nd)
+    health_html = _health_panel(payload, nd)
     automations = payload.get("automations") or []
     automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
 
@@ -3217,6 +3187,7 @@ def render_settings_dashboard(payload: dict) -> str:
 <style>{_UCARDS_CSS}</style>
 <style>{control_render.CTL_CSS}</style>
 <style>{needs_tab.NEEDS_CSS}</style>
+<style>{LIVE_CSS}</style>
 {FILTERS_CSS}
 <script>{THEME_JS}</script>
 </head>
@@ -3224,11 +3195,14 @@ def render_settings_dashboard(payload: dict) -> str:
 {provider_health_html(payload.get("provider_health"))}
 {_tab_strip()}
 <div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
-<div class="wrap helpwrap" style="max-width:var(--page-max,1280px);margin:0 auto;padding:12px 12px 0">{DATA_HELP}</div>
+<div class="ctl helpband"><div class="wrap helpwrap" style="max-width:var(--page-max,1280px);margin:0 auto;padding:12px 12px 0">{DATA_HELP}</div></div>
 {control_html}
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
 {health_html}
+</div>
+<div id="panel-live" role="tabpanel" aria-labelledby="tab-live" hidden>
+{LIVE_HTML}
 </div>
 <script>{FILTERS_JS}</script>
 <script>
@@ -3248,6 +3222,7 @@ var ND_PAGE_STALE_MS = {ND_PAGE_STALE_MINUTES * 60 * 1000};
 window.RC_SETTINGS_TABS = {script_json(SETTINGS_TABS)};
 {TABS_JS}
 {needs_tab.NEEDS_JS}
+{LIVE_JS}
 </script>
 </body>
 </html>

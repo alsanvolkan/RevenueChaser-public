@@ -228,7 +228,9 @@ def test_the_header_carries_model_version_params_and_context(store):
     assert head["model_version"] == leaps_history.model_version() and head["model_version"].startswith("2+")
     assert json.loads(head["params"])["CALL_SHARE_MIN"] == engine.CALL_SHARE_MIN
     assert json.loads(head["params"])["ASK_SHARE_MIN"] == engine.ASK_SHARE_MIN
-    assert json.loads(head["context"]) == {"watchlist": 2, "shown": {"watched": 0, "unwatched": 0}}
+    ctx = json.loads(head["context"])
+    assert isinstance(ctx.pop("source_builds"), list)          # #566: the builds the run read
+    assert ctx == {"watchlist": 2, "shown": {"watched": 0, "unwatched": 0}}
     assert json.loads(head["warnings"]) == ["The print scan hit its cap"]
     assert head["quality"] == "complete"                    # a capped print scan is a warning, not a reason
 

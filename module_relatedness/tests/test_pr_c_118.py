@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from RevenueChaser.core import rawstore
+from RevenueChaser.module_relatedness.tests.test_relatedness import v3_reply
 from RevenueChaser.core.providers import deepseek
 from RevenueChaser.module_relatedness import config, engine, profiles, similarity, store
 from RevenueChaser.module_relatedness.tests.test_relatedness import long_body
@@ -100,10 +101,9 @@ def test_cap_zero_makes_no_llm_calls(rawstore_tmp_db, monkeypatch):
     assert calls["n"] == 0
 
 
-def test_cap_counts_calls_including_the_thinking_retry(rawstore_tmp_db, monkeypatch):
+def test_cap_counts_calls_including_the_retry(rawstore_tmp_db, monkeypatch):
     _one_group_per_ticker(monkeypatch)
     monkeypatch.setattr(config, "EST_USD_PER_CALL", 0.001)
-    monkeypatch.setattr(config, "THINKING", True)
     # An unusable reply makes ``profile_for`` retry once per group: without the
     # call budget the cap of 3 would still make 6 calls.
     calls = _count_complete(monkeypatch, "{}")
@@ -176,29 +176,26 @@ class _FakeClient:
         return _Resp()
 
 
-def _seed_cached_reply(ticker, name, text, content, thinking):
+def _seed_cached_reply(ticker, name, text, content):
+    """A cached reply under the key a v3 call makes (#400: no thinking, no effort)."""
     from RevenueChaser.module_relatedness import profiles as prof_mod
-    effort = (config.REASONING_EFFORT or "").lower() or None
     key = deepseek._cache_key(prof_mod.system_prompt(), prof_mod.build_user(name, text),
-                              thinking, deepseek.MODEL, effort)
+                              False, deepseek.MODEL, None)
     rawstore.write_rows("llm_cache", [{
         "cache_key": key, "ticker": ticker, "cik": "", "model": deepseek.MODEL,
-        "thinking": int(thinking), "effort": config.REASONING_EFFORT,
+        "thinking": 0, "effort": "",
         "prompt_version": config.PROMPT_VERSION, "input_hash": key,
         "response": {"content": content, "usage": {}}, "fetched_at": 1.0,
         "status": "ok"}])
     return key
 
 
-@pytest.mark.parametrize("thinking", [False, True])
-def test_an_unparseable_cached_reply_is_ignored_and_the_live_one_wins(
-        rawstore_tmp_db, monkeypatch, thinking):
+def test_an_unparseable_cached_reply_is_ignored_and_the_live_one_wins(rawstore_tmp_db, monkeypatch):
     monkeypatch.setenv("RC_DEEPSEEK_OFF_PEAK_ONLY", "0")
     monkeypatch.setattr(deepseek, "key_for", lambda slug: "k")
-    _seed_cached_reply("AAA", "A Corp", "text", "not json", thinking)
-    client = _FakeClient('{"products": ["gpu"]}')
-    prof = profiles.profile_for("AAA", "A Corp", "text", thinking=thinking,
-                                effort=config.REASONING_EFFORT, client=client)
+    _seed_cached_reply("AAA", "A Corp", "text", "not json")
+    client = _FakeClient(v3_reply(["gpu"]))
+    prof = profiles.profile_for("AAA", "A Corp", "text", client=client)
     assert prof["products"] == ["gpu"]      # the live reply, not the cached junk
     assert client.calls == 1
 
@@ -336,7 +333,7 @@ def test_a_prompt_version_bump_misses_the_llm_cache(rawstore_tmp_db, monkeypatch
     monkeypatch.setenv("RC_DEEPSEEK_OFF_PEAK_ONLY", "0")
     monkeypatch.setattr(deepseek, "key_for", lambda slug: "k")
     monkeypatch.setattr(config, "PROMPT_VERSION", "v1")
-    client = _FakeClient('{"products": ["gpu"]}')
+    client = _FakeClient(v3_reply(["gpu"]))
     profiles.profile_for("AAA", "A", "text", thinking=False, client=client)
     assert client.calls == 1
     profiles.profile_for("AAA", "A", "text", thinking=False, client=client)

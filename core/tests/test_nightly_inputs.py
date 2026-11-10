@@ -112,6 +112,13 @@ def test_a_zero_budget_makes_no_call():
     assert not b.take() and b.left == 0
 
 
+def test_a_budget_with_no_limit_never_refuses():
+    """#620: ``unlimited`` on the command line is ``limit=None``: every call is counted, none refused."""
+    b = N.CallBudget("uw", None, before=5)
+    assert all(b.take() for _ in range(1000)) and b.left > 0
+    assert b.as_dict() == {"limit": None, "before": 5, "used": 1000, "refused": 0}
+
+
 def test_a_negative_cap_is_refused():
     with pytest.raises(ValueError):
         N.CallBudget("uw", -1)

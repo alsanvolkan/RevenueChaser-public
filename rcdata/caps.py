@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from . import ops
 
+# UW has no day cap: the owner removed it (avo 2026-11-10, "UW icin sinir koyma, siniri tamamen kaldir").
 DAY_CAPS: dict[str, int] = {
-    "uw": 100_000,  # UW API requests a day: owner-marked avo 2026-11-02
     # shared by the earnings calendar (one a run) and the spine's listing status (two a run, #346)
     "alphavantage": 25,  # free tier requests a day: https://www.alphavantage.co/support/#api-key
 }

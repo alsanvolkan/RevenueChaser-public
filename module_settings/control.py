@@ -41,7 +41,8 @@ LOCAL = ZoneInfo("Europe/Amsterdam")
 #: ``app.dashboard.TABS`` in short; importing the dashboard from a render would pull in the whole app, so the copy is
 #: held equal to it by ``test_the_board_menu_is_the_dashboards``.
 BOARD_MENU: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("Research", (("module_earnings_radar", "Earnings Radar"), ("module_spx_gamma", "SPX Gamma"),
+    ("Home", (("module_welcome", "Welcome"),)),
+    ("Research", (("module_news", "News"), ("module_earnings_radar", "Earnings Radar"), ("module_spx_gamma", "SPX Gamma"),
                   ("module_oipd", "Implied Probability"), ("module_financials", "Financials"),
                   ("module_uw_interaction", "UW Interaction (lab)"))),
     ("Classification", (("module_comovement", "Co-movement"), ("module_value_chain", "Value Chain"),
@@ -72,8 +73,8 @@ BUILDER_SILENT_MINUTES = 70
 CAP_WARN, CAP_BAD = 0.5, 0.7
 #: #527 (avo 6 Nov 2026): a provider is a card on the Health strip from this share of its day cap.
 CAP_ALERT = 0.8
-#: A backup older than this many days is a card.
-BACKUP_ALERT_DAYS = 1
+#: A backup older than this many days is a card: two missed Sundays of the weekly job (``newdata.BACKUP_ALERT_DAYS``).
+BACKUP_ALERT_DAYS = 15
 #: At most this many stale dataset names on the stale card; the rest read "and N more".
 STALE_NAMES = 6
 CADENCE_DAYS = {"daily": 1, "weekly": 7, "monthly": 31, "quarterly": 92}
@@ -303,7 +304,7 @@ def alerts(nd: dict, providers: list[dict], ibkr: dict | None, switches: dict | 
 
 def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *, timer: dict | None = None,
            longest: dict | None = None, file_views: list[dict] | None = None, switches: dict | None = None,
-           jobs_now: list[dict] | None = None) -> dict:
+           jobs_now: list[dict] | None = None, longest_unread: bool = False) -> dict:
     cards = nd.get("datasets") or []
     total = len(cards)
     by = {k: 0 for k in ("fresh", "late", "stale", "never")}
@@ -357,6 +358,8 @@ def health(nd: dict, providers: list[dict], universe: dict, ibkr: dict | None, *
         _tile("universe", "none", count(universe.get("filled")) if universe.get("filled") is not None else "—",
               f"of {count(universe.get('size'))} names in the universe have a bar on the newest session"
               + ("" if universe.get("fill_enabled") else " · the Fill buttons are off"), "universe"),
+        _tile("longest", "warn", "could not read", "longest build today · job_runs2 could not be read")
+        if longest_unread else  # #529: an unreadable store must not read as "no run today"
         _tile("longest", "none" if longest is None else "neu",
               "not measured yet" if longest is None else f"{round(longest['seconds'] / 60)} min",
               "longest build today" if longest is None else f"longest build today · {longest['dataset']}"),
@@ -615,6 +618,8 @@ def next_run_words(schedule: dict | None, check: dict | None, kind: str | None, 
             if day is None:
                 at = datetime.combine(now.astimezone(NY).date(), starts, tzinfo=NY)
                 return prefix + _pass_words(_first_pass(at, minute), recurring=True)
+        elif cadence == "hourly":                  # due.is_due: due again within the hour of its last run
+            return f"{prefix}every hourly pass (:{int(minute):02d})"
         else:
             checked = _day(check.get("checked_on"))
             day = checked + timedelta(days=due.CYCLE_DAYS[cadence]) if checked else None
@@ -638,15 +643,18 @@ def since_words(schedule: dict | None) -> str:
 
 #: The cap Claude Code puts on a background command started from a session (#527): it is killed after 2 h.
 CLAUDE_SESSION_LIMIT_S = 2 * 3600
-#: The systemd unit the homesrv Claude Code session runs under; a process in it was started from a session.
-CLAUDE_UNIT = "life-claude-rc.service"
+#: The systemd units the homesrv Claude Code sessions (accounts A and B) run under; a process in one was started from
+#: a session. The life-claude-rc-{a,b} names are the ones before the 9 Nov 2026 rename (home-server #194); they stay
+#: until both accounts run under the new names.
+CLAUDE_UNITS = ("life-claude-remote-control-a.service", "life-claude-remote-control-b.service",
+                "life-claude-rc-a.service", "life-claude-rc-b.service")
 #: A running request past this share of its limit is a card.
 RUN_ALERT = 0.8
 
 
 def _read_runs_now() -> list[dict]:
     from RevenueChaser.rcdata import ops
-    return ops._select("SELECT * FROM job_runs2 WHERE status = 'running' AND finished_at IS NULL")
+    return ops.running_runs()          # routed: under Redis the runs live there, not in ops.sqlite
 
 
 def _read_cgroup(pid) -> str | None:
@@ -704,7 +712,7 @@ def running_jobs(active: list[dict], runs: list[dict], cgroup, alive, now: datet
             who, cls = "process gone · probably lost", "none"
         else:
             unit = _unit_of(cgroup(pid)) if pid is not None else None
-            if unit == CLAUDE_UNIT:
+            if unit in CLAUDE_UNITS:
                 who, limit = "Claude session", float(CLAUDE_SESSION_LIMIT_S)
             elif unit and unit.startswith("life-rc-"):
                 known, limit = _unit_limit_s(unit)
@@ -1053,10 +1061,11 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
     provider_rows = _providers(nd)
     reads = readers()
     timer_view = _timer(timer)
+    longest_unread = False
     try:
         longest = longest_build(job_runs() if job_runs else _read_job_runs(now), now)
-    except Exception:  # noqa: BLE001 - an unreadable ops store leaves the tile "not measured yet"
-        longest = None
+    except Exception:  # noqa: BLE001 - an unreadable ops store says so on its tile, never fails the board (#529)
+        longest, longest_unread = None, True
     try:
         modes = kind_modes() if kind_modes else _read_kind_modes()
     except Exception:  # noqa: BLE001 - an unreadable ops store shows every kind off, never the board failing
@@ -1081,7 +1090,7 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
     return {
         "error": None,
         "read_at": _local(now).strftime("%H:%M"), "read_at_iso": now.astimezone(timezone.utc).isoformat(),
-        "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, file_views=file_views,
+        "health": health(nd, provider_rows, uni, ibkr, timer=timer_view, longest=longest, longest_unread=longest_unread, file_views=file_views,
                          switches=switch_rows, jobs_now=running),
         "running": running,
         "timer": timer_view, "longest_build": longest,

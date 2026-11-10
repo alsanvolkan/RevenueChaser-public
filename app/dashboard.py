@@ -155,6 +155,11 @@ def _local_only():
     return None
 
 
+#: Routes that never read the serving store: static files, and the Prometheus scrape (#527 plan B1), which reads only
+#: the ops store and small files and must not take raw.duckdb's lock every minute.
+_NO_STORE_SESSION = frozenset({"static", "metrics"})
+
+
 @app.before_request
 def _open_store_session():
     """One store handle per request instead of one per query.
@@ -165,7 +170,7 @@ def _open_store_session():
     locks it) and closed in ``_close_store_session`` — never held between
     requests, so scheduled jobs still get the file. Static files skip it.
     """
-    if request.endpoint == "static":
+    if request.endpoint in _NO_STORE_SESSION:
         return
     g._store_session = rawstore.session()
     g._store_session.__enter__()
@@ -253,6 +258,10 @@ jobs.register("daily_bars", runners.run_daily_bars, ["module_settings"], lane="l
 # Index lists (#302): three UW requests plus the SmallCap 600 list from the identity cache.
 jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane="long")
 jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
+# News (S9, S16): store-only; builds boards/news.duckdb from raw.economic_calendar, then renders.
+jobs.register("module_news", runners.run_news, ["module_news"], requires_uw=False)
+# Welcome (decision A): store-only; builds boards/welcome.duckdb from stored inputs, then renders.
+jobs.register("module_welcome", runners.run_welcome, ["module_welcome"], requires_uw=False)
 
 # Which store-only job a board's Save / Reset queues (``api_settings_board``, #40 / #384 SW-S4).
 SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_potential": "settings_refresh",
@@ -263,7 +272,11 @@ SETTINGS_JOBS = {"module_comovement": "comovement_recompute", "module_swing_pote
                  "module_relatedness": "settings_refresh"}
 
 TABS = [
+    # The opening screen (decision A, avo 9 Nov 2026 17:26: "welcome gelsin").
+    {"type": "header", "label": "Home"},
+    {"type": "tab", "key": "module_welcome", "label": "Welcome", "url": "/view/module_welcome", "sub": True},
     {"type": "header", "label": "Research"},
+    {"type": "tab", "key": "module_news", "label": "News", "url": "/view/module_news", "sub": True},
     {"type": "tab", "key": "module_earnings_radar", "label": "Earnings Radar", "url": "/view/module_earnings_radar", "sub": True},
     {"type": "tab", "key": "module_spx_gamma", "label": "SPX Gamma", "url": "/view/module_spx_gamma", "sub": True},
     {"type": "tab", "key": "module_oipd", "label": "Implied Probability", "url": "/view/module_oipd", "sub": True},
@@ -308,6 +321,8 @@ def _module_file(mod: str) -> Path:
         "module_value_chain": runners.VALUE_CHAIN_LATEST,
         "module_relatedness": runners.RELATEDNESS_LATEST,
         "module_oipd": runners.OIPD_LATEST,
+        "module_news": runners.NEWS_LATEST,
+        "module_welcome": runners.WELCOME_LATEST,
         "module_settings": runners.SETTINGS_LATEST,
     }.get(mod)
 
@@ -493,6 +508,8 @@ _MODEL_ONLY_RENDERERS = {
     "module_value_chain": lambda: _import_runners().run_value_chain(None, no_fetch=True),
     "module_relatedness": lambda: _import_runners().run_relatedness(None, no_fetch=True),
     "module_oipd": lambda: _import_runners().run_oipd_cached(),
+    "module_news": lambda: _import_runners().run_news_cached(),
+    "module_welcome": lambda: _import_runners().run_welcome_cached(),
     "module_settings": lambda: _import_runners().run_settings(None),
 }
 
@@ -700,6 +717,16 @@ def run_leaps():
     return _submit("module_leaps", {})
 
 
+@app.route("/run/module_news", methods=["POST"])
+def run_module_news():
+    return _submit("module_news", {})
+
+
+@app.route("/run/module_welcome", methods=["POST"])
+def run_module_welcome():
+    return _submit("module_welcome", {})
+
+
 @app.route("/run/module_sec_13f", methods=["POST"])
 def run_module_sec_13f():
     refused = _busy(("module_sec_13f",), "A 13F job is already queued or running.")
@@ -807,7 +834,6 @@ _SPX_JOBS = ("spxgamma", "spxgamma_stored", "spxgamma_history")
 # Held from an SPX route's busy check to its submit (which includes the UW key probe): the two SPX routes'
 # check-then-submit never interleave, so a Fetch and a pull posted together cannot both be queued.
 _SPX_SUBMIT_LOCK = threading.Lock()
-_SPX_HISTORY_MAX_CALLS = caps.DAY_CAPS["uw"]     # UW's day cap: no single run may be allowed more
 _SPX_HISTORY_MAX_SLEEP_S = 60.0
 
 
@@ -837,10 +863,14 @@ def run_spxgamma_history():
         except ValueError:
             return jsonify({"ok": False, "error": "bad max_calls"}), 400
         from RevenueChaser.rcdata import ops
-        room = _SPX_HISTORY_MAX_CALLS - ops.calls_today("uw")      # the builder's and earlier pulls' calls today
-        if not 0 < params["max_calls"] <= room:
-            return jsonify({"ok": False, "error": f"max_calls must be 1-{max(room, 0)} (what is left of UW's day "
-                                                  f"cap of {_SPX_HISTORY_MAX_CALLS:,})"}), 400
+        cap = caps.cap_for("uw")                                   # None: UW has no day cap (avo 2026-11-10)
+        if params["max_calls"] <= 0:
+            return jsonify({"ok": False, "error": "max_calls must be positive"}), 400
+        if cap is not None:
+            room = cap - ops.calls_today("uw")                     # the builder's and earlier pulls' calls today
+            if params["max_calls"] > room:
+                return jsonify({"ok": False, "error": f"max_calls must be 1-{max(room, 0)} (what is left of UW's "
+                                                      f"day cap of {cap:,})"}), 400
     raw = (request.values.get("sleep") or "").strip()
     if raw:
         try:
@@ -1569,7 +1599,28 @@ def api_build_queue():
     """The queued and running build requests, oldest first, and the last 20 finished, newest first."""
     from RevenueChaser.rcdata import ops
 
+    try:
+        ops.fail_dead_requests()      # #602: a killed run's request must not read "running" until the next builder
+    except Exception:  # noqa: BLE001 - the sweep is housekeeping; the queue still answers
+        logger.warning("build queue: could not close the requests of dead runs", exc_info=True)
     return jsonify({"ok": True, **ops.queue_view(finished=20)})
+
+
+@app.route("/api/build/datasets")
+def api_build_datasets():
+    """Every dataset the builder knows: ``{name, kind, attended, providers}``, sorted by name. An allow-list for the
+    Grafana buttons (#527 plan B3), which may press Fetch / Pause / Resume only on a dataset named here."""
+    from RevenueChaser.module_settings import metrics
+
+    return jsonify({"ok": True, "datasets": metrics.datasets_list()})
+
+
+@app.route("/metrics", endpoint="metrics")
+def prometheus_metrics():
+    """Prometheus text format for Grafana on homesrv (#527 plan B1). Cheap readers only, no store session."""
+    from RevenueChaser.module_settings import metrics as rc_metrics
+
+    return Response(rc_metrics.exposition(), content_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 @app.route("/api/build/schedule/<path:dataset>/<action>", methods=["POST"])

@@ -48,6 +48,10 @@ _RETRY_EXC = (httpx.TimeoutException, httpx.ConnectError)
 BREAKER_THRESHOLD = 5
 # Only this many failure records are kept for ``health()``; the count is exact.
 _MAX_FAILURE_RECORDS = 20
+# The earnings calendar (#259): rows asked per page, and the most pages read for one (day, session). Heavy days
+# measured ~160 rows (G2-14), so a second page is rare and the cap only stops a runaway read.
+CALENDAR_PAGE_LIMIT = 500
+CALENDAR_MAX_PAGES = 10
 
 # Patch points for tests (or pass ``sleep=`` to the client).
 _sleep = time.sleep
@@ -60,11 +64,24 @@ def _seg(value) -> str:
     return quote(str(value), safe="")
 
 
+def is_rejected(status) -> bool:
+    """Whether a final UW answer is the request's own fault: a 4xx other than 401/403 (the key) and 429
+    (throttling) -- an unknown ticker, a bad parameter. ``get_result`` returns those without recording them in
+    ``health()`` (not an outage), so a caller that counts failures counts these itself."""
+    return isinstance(status, int) and 400 <= status < 500 and status not in (401, 403, 429)
+
+
 def uw_symbol(ticker) -> str:
     """A ticker the way UW writes it: a share class with a dot. The SEC's files and the spine write ``BRK-A``;
     UW answers that 422 and serves ``BRK.A``. Every ticker path of the client goes through this before
     :func:`_seg`, which stays a pure encoder; a session or a candle size never does."""
     return str(ticker).replace("-", ".")
+
+
+def uw_segment(ticker) -> str:
+    """A ticker as one UW path segment (:func:`uw_symbol`, then :func:`_seg`): what a caller outside this client
+    uses to name a UW path, so none imports the private encoder (#519 finding 9)."""
+    return _seg(uw_symbol(ticker))
 
 
 # Body shapes for the endpoint methods (B5): each takes a decoded body and returns what the method hands
@@ -135,6 +152,9 @@ class UWClient:
         # rate-header sampling and call counting (#206). None by default; it never changes what a call returns,
         # and an observer that raises is ignored.
         self.on_response: Optional[Callable[[str, Any], None]] = None
+        # Optional observer of every request about to be sent (``on_request(ep)``), once per attempt, so a caller
+        # can count a request that ends in a transport error too (#519 finding 3). Same contract as above.
+        self.on_request: Optional[Callable[[str], None]] = None
 
     @property
     def active(self) -> bool:
@@ -173,7 +193,12 @@ class UWClient:
         when all did (``data`` is ``{}``). No tickers: ``ok`` and no request. A row is keyed by
         its first non-empty ``keys`` field."""
         result: dict[str, dict] = {}
-        chunks = [tickers[i:i + 100] for i in range(0, len(tickers or []), 100)]
+        # Sent the way UW writes them, keyed back the way the caller asked (#519 finding 5): ``BRK-B`` asked,
+        # ``BRK.B`` answered, ``result["BRK-B"]``. A row nobody asked for keeps UW's own symbol.
+        # ``BRK-B`` and ``BRK.B`` both asked are one UW symbol, asked once and keyed by the last spelling given.
+        asked = {uw_symbol(t): t for t in tickers or []}
+        syms = list(asked)
+        chunks = [syms[i:i + 100] for i in range(0, len(syms), 100)]
         first_error: Optional[dict] = None
         failed = 0
         for n, chunk in enumerate(chunks):
@@ -191,7 +216,7 @@ class UWClient:
                     continue
                 t = item.get(keys[0]) or item.get(keys[1])
                 if t:
-                    result[t] = item
+                    result[asked.get(t, t)] = item
         if not failed:
             return ProviderResult("ok", result, None, ep)
         err = {**first_error, "failed_chunks": failed, "chunks": len(chunks)}
@@ -210,6 +235,11 @@ class UWClient:
         while True:
             attempts += 1
             last = attempts >= MAX_ATTEMPTS
+            if self.on_request is not None:
+                try:
+                    self.on_request(ep)
+                except Exception:  # noqa: BLE001 - an observer must never change the call's outcome
+                    logger.warning("UW on_request observer failed", exc_info=True)
             try:
                 r = self._client.get(f"{BASE}{ep}", params=params)
             except _RETRY_EXC as e:
@@ -227,7 +257,7 @@ class UWClient:
                 try:
                     self.on_response(ep, r)
                 except Exception:  # noqa: BLE001 - an observer must never change the call's outcome
-                    logger.debug("UW on_response observer failed", exc_info=True)
+                    logger.warning("UW on_response observer failed", exc_info=True)
             status = r.status_code
             if status < 400:
                 try:
@@ -257,7 +287,9 @@ class UWClient:
                 first = self.auth_error is None
                 self.auth_error = {"status": status, "endpoint": ep, "detail": body}
                 if first:
-                    logger.error(credentials.rejected_message("unusual_whales", status))
+                    # No key sent is the ordinary 401 of a hand-run command, not an expired key (#388).
+                    logger.error(credentials.rejected_message("unusual_whales", status) if self.key
+                                 else credentials.missing_message("unusual_whales"))
                 else:
                     logger.warning(f"UW {ep}: HTTP {status} (credentials rejected)")
                 return self._failed_result(ep, status, f"HTTP {status}", attempts)
@@ -366,20 +398,18 @@ class UWClient:
         return self.calendar_day_result(d).data
 
     def calendar_day_result(self, d: date) -> ProviderResult:
-        """:meth:`calendar_day` with the outcome of its two requests: ``ok``, ``partial`` (one
-        session failed: ``data`` holds the other's events, ``error`` names the session) or
+        """:meth:`calendar_day` with the outcome of its two sessions: ``ok``, ``partial`` (a session
+        failed or lost a later page: ``data`` holds what was read, ``error`` names the session) or
         ``failed`` (both failed: ``data`` is empty)."""
         events = []
         first_error: Optional[dict] = None
         failed = 0
         for session in ("premarket", "afterhours"):
-            res = self.get_result(f"/earnings/{_seg(session)}", {"date": d.isoformat(), "limit": 500})
-            if res.status != "ok":
-                failed += 1
-                if first_error is None:
-                    first_error = {**(res.error or {}), "session": session}
-                continue
-            for item in _rows(res.data):
+            res = self.calendar_day_raw_result(d, session)
+            if res.status != "ok" and first_error is None:
+                first_error = {**(res.error or {}), "session": session}
+            failed += res.status == "failed"
+            for item in res.data:
                 events.append({
                     "ticker": item.get("symbol", item.get("ticker", "")),
                     "earnings_date": d,
@@ -389,7 +419,7 @@ class UWClient:
                     "industry": item.get("industry", ""),
                     "source": "UW",
                 })
-        if not failed:
+        if first_error is None:
             return ProviderResult("ok", events, None, "/earnings/{session}")
         return ProviderResult("failed" if failed == 2 else "partial", events, first_error,
                               "/earnings/{session}")
@@ -560,7 +590,8 @@ class UWClient:
                 # the income statement's for the same fiscal date. A YTD row
                 # joined to a quarterly CFO row would make Sloan a lie.
                 "cash_net_income": num(cf, "net_income"),
-                "cash_from_operations": num(cf, "operating_cash_flow"),
+                # UW sends "operating_cashflow" (raw vendor_financials, all 750 rows); the old spelling stays as fallback.
+                "cash_from_operations": num(cf, "operating_cashflow", "operating_cash_flow"),
                 "total_assets": num(bal, "total_assets"),
                 "inventory": num(bal, "inventory"),
                 "receivables": num(bal, "current_net_receivables", "net_receivables"),
@@ -775,7 +806,7 @@ class UWClient:
         """:meth:`option_trades` with the request outcome (``ok`` or ``failed``)."""
         params = {"limit": limit, "page": page}
         if ticker:
-            params["ticker_symbol"] = ticker
+            params["ticker_symbol"] = uw_symbol(ticker)
         if min_dte is not None:
             params["min_dte"] = min_dte
         if max_dte is not None:
@@ -845,9 +876,13 @@ class UWClient:
         the page) or ``failed`` (the first page failed: ``data`` is empty)."""
         ep = f"/stock/{_seg(uw_symbol(ticker))}/option-contracts"
         rows: list[dict] = []
-        page = 1
-        while page <= max_pages:
-            params = {"limit": limit, "page": page}
+        last = None
+        # UW pages from 0 (docs/openapi.yaml, schema ``Page``): page 0 goes without ``page``, as the calendar's
+        # does, so the first 500 contracts are not skipped (#255). A page repeating the last one ends the read.
+        for page in range(max_pages):
+            params = {"limit": limit}
+            if page:
+                params["page"] = page
             if expiry:
                 params["expiry"] = expiry
             if option_type:
@@ -856,15 +891,15 @@ class UWClient:
             res = self.get_result(ep, params)
             if res.status != "ok":
                 err = {**(res.error or {}), "page": page}
-                return ProviderResult("failed" if page == 1 else "partial", rows, err, ep)
+                return ProviderResult("failed" if page == 0 else "partial", rows, err, ep)
             data = res.data
             items = data.get("data", []) if isinstance(data, dict) else data or []
-            if not isinstance(items, list) or not items:
+            if not isinstance(items, list) or not items or items == last:
                 break
             rows.extend(items)
             if len(items) < limit:
                 break
-            page += 1
+            last = items
         return ProviderResult("ok", rows, None, ep)
 
     # ── Short Interest ──
@@ -1003,8 +1038,29 @@ class UWClient:
         return self.calendar_day_raw_result(d, session).data
 
     def calendar_day_raw_result(self, d: date, session: str) -> ProviderResult:
-        """:meth:`calendar_day_raw` with the request outcome (``ok`` or ``failed``)."""
-        return self._shaped(f"/earnings/{_seg(session)}", {"date": d.isoformat(), "limit": 500}, _rows)
+        """:meth:`calendar_day_raw` with the paging outcome (#259): ``ok`` (every page answered), ``partial`` (a
+        later page failed: ``data`` holds the earlier pages, ``error`` names the page) or ``failed`` (the first page
+        failed: ``data`` is empty). A full page asks for the next one (UW pages from 0, so the first request sends
+        no ``page``); the read stops at a short page, a page repeating the last one, or ``CALENDAR_MAX_PAGES``."""
+        ep = f"/earnings/{_seg(session)}"
+        rows: list = []
+        last = None
+        for page in range(CALENDAR_MAX_PAGES):
+            params = {"date": d.isoformat(), "limit": CALENDAR_PAGE_LIMIT}
+            if page:
+                params["page"] = page
+            res = self.get_result(ep, params)
+            if res.status != "ok":
+                return ProviderResult("failed" if page == 0 else "partial", rows,
+                                      {**(res.error or {}), "page": page}, ep)
+            items = _list_rows(res.data)
+            if not items or items == last:
+                break
+            rows.extend(items)
+            if len(items) < CALENDAR_PAGE_LIMIT:
+                break
+            last = items
+        return ProviderResult("ok", rows, None, ep)
 
     def economic_calendar(self) -> list[dict]:
         return self.economic_calendar_result().data

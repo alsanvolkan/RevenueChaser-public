@@ -174,9 +174,9 @@ def test_store_reads_keeps_no_connection_at_module_level(rcdata_market):
 
 def test_read_day_hands_build_day_the_raw_keys(rcdata_market):
     day = store_reads.read_day(fx.LAST)
-    assert set(day) == {"vix", "cftc", "ohlc", "zero_one_dte", "store_inputs"}
+    assert set(day) == {"vix", "cftc", "ohlc", "zero_one_dte", "greek_grid", "store_inputs"}
     assert day["ohlc"]["data"] and day["vix"]["tickers"]["^VIX"] is not None and day["cftc"]["report_date"]
-    assert set(day["store_inputs"]) == {"vix", "cftc", "candles", "zero_one_dte"}
+    assert set(day["store_inputs"]) == {"vix", "cftc", "candles", "zero_one_dte", "greek_grid"}
     for meta in day["store_inputs"].values():
         assert meta["stored"] is True and meta["status"] == "changed" and meta["source_as_of"]
 

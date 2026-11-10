@@ -318,7 +318,7 @@ def builder_line(snapshot: dict) -> str | None:
         return None
     asked = "; ".join(f"{name} {state}" for name, state in sorted((req.get("datasets") or {}).items()))
     return (f"Market store: builder requested at {req.get('requested_at')} ({asked}); the builder runs hourly at "
-            f":07, and this board shows what is stored now.")
+            f":05, and this board shows what is stored now.")
 
 
 def _spot_method(snapshot: dict) -> str:

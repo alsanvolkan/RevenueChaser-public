@@ -7,6 +7,7 @@ order in one process: the second fails if the first one's file is still where th
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -46,3 +47,12 @@ def test_the_next_test_does_not_see_it():
     for prefix, module in PAIRS:
         for path in _copies(prefix, module, "JSON"):
             assert not path.exists(), f"{path} is an earlier test's leftover"
+
+
+def test_the_sec_13f_page_is_written_and_read_in_this_tests_folder(isolate_board_artifacts):
+    """#257: seven app test files render ``sec_13f_latest.html``; in the shared process root two xdist workers wrote,
+    read and unlinked one file (``FileNotFoundError``, 28 Oct 2026). The runner reads where the report writes."""
+    runners = importlib.import_module("RevenueChaser.app.runners")
+    report = importlib.import_module("RevenueChaser.module_sec_13f.report")
+    assert runners.SEC_13F_LATEST.is_relative_to(isolate_board_artifacts)
+    assert Path(report.OUTPUT_DIR) / "sec_13f_latest.html" == runners.SEC_13F_LATEST

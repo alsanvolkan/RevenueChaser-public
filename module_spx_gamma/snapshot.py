@@ -70,7 +70,8 @@ def _mandatory_failure_message(name: str, path: str, tried: list[str],
     actually happen. Name the status, the dates tried, and the fix.
     """
     if status in (401, 403):
-        return credentials.rejected_message("unusual_whales", status)
+        # No key in this process is not a rejected key (#388).
+        return credentials.describe("unusual_whales", status)
     dates = " and ".join(tried) if tried else "the requested date"
     where = f"{name} ({path}) for {dates}"
     if status is None:

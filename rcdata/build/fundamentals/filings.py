@@ -38,11 +38,12 @@ import duckdb
 
 from ....core import calendar
 from .. import base
+from .. import dirty as dirty_set
 from . import KIND, common, ixbrl, sec_index
 
 NAME = "sec/filings"
 NEW_PER_RUN = 9000
-ANNUAL_FORMS = ("10-K", "20-F", "40-F")             # newest by filing date; a 10-K first on one day
+ANNUAL_FORMS = ("10-K", "10-KT", "20-F", "40-F")             # newest by filing date; a 10-K first on one day
 PROXY_FORMS = ("DEF 14A",)
 CAPPED = "capped"
 #: How many AIF exhibits of one 40-F are kept. shortcut: one filing has never been seen with more than one, so the
@@ -122,6 +123,7 @@ def index_url(cik: str, accession: str) -> str:
 #: filer who files the AIF as a PDF is missed (``read_exhibits`` raises ``aif_not_named`` when it can tell).
 _AIF_NAME = re.compile(r"aif", re.I)
 _EX_99_1 = re.compile(r"ex(?:hibit)?[-_]?99[._-]?1(?![0-9])", re.I)
+_EX_1 = re.compile(r"(?<![a-z])d?ex(?:hibit)?[-_]?0?1(?![0-9-])", re.I)     # RY files its AIF as Exhibit 1, dex1.htm (#400 WP3)
 _EX_99_ANY = re.compile(r"ex(?:hibit)?[-_]?99", re.I)
 
 
@@ -155,7 +157,8 @@ def aif_exhibits(listing: dict, primary: str | None = None) -> list[str]:
 
 def _chosen(pages: list[tuple[int, str]]) -> list[tuple[int, str]]:
     named = [(size, name) for size, name in pages if _AIF_NAME.search(name)]
-    return named or [(size, name) for size, name in pages if _EX_99_1.search(name)]
+    return (named or [(size, name) for size, name in pages if _EX_99_1.search(name)]
+            or [(size, name) for size, name in pages if _EX_1.search(name)])
 
 
 def picked_by_name(listing: dict, name: str, primary: str | None = None) -> bool:
@@ -244,11 +247,15 @@ def document_sections(html: str, form: str) -> list[tuple[str, str, str]]:
     out = [("whole", text, "ok" if len(text) >= min_text_chars() else ("short" if text else "missing"))]
     if str(form).upper() == "40-F":
         # Value Chain's splitter knows a 10-K's Item 1 and a 20-F's Item 4; a Canadian 40-F has neither, so a
-        # slice of it would be an arbitrary cut labelled by rules that do not apply. The whole text is the row.
+        # slice of it would be an arbitrary cut labelled by rules that do not apply. The whole text is the row,
+        # plus the business section of an Annual Information Form kept in the primary document (CNQ, #400 WP3).
+        aif = splitter.aif_business(text)
+        if aif:
+            out.append(("business", aif, CAPPED if len(aif) >= cap else splitter.flag("ok", text, aif, form)))
         return out
     item, quality = splitter.slice_item(text, form)
     item = item or ""
-    out.append(("business", item, CAPPED if len(item) >= cap else quality))
+    out.append(("business", item, CAPPED if len(item) >= cap else splitter.flag(quality, text, item, form)))
     return out
 
 
@@ -466,28 +473,39 @@ class Filings:
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         folder = common.parquet_dir(NAME)
-        common.stage_glob(con, STAGING["filings"], FILING, folder, "cik=*/filings.parquet")
-        common.stage_glob(con, STAGING["documents"], DOCUMENT, folder, "cik=*/documents.parquet")
-        common.stage_glob(con, STAGING["segments"], SEGMENT, folder, "cik=*/segments.parquet")
-        common.stage_glob(con, STAGING["customers"], CUSTOMER, folder, "cik=*/customers.parquet")
+        ciks = common.dirty_ciks(ctx, con)
+        common.stage_glob(con, STAGING["filings"], FILING, folder, "cik=*/filings.parquet", ciks=ciks)
+        common.stage_glob(con, STAGING["documents"], DOCUMENT, folder, "cik=*/documents.parquet", ciks=ciks)
+        common.stage_glob(con, STAGING["segments"], SEGMENT, folder, "cik=*/segments.parquet", ciks=ciks)
+        common.stage_glob(con, STAGING["customers"], CUSTOMER, folder, "cik=*/customers.parquet", ciks=ciks)
         return {}
+
+    dirty_keyed = True
+
+    def dirty(self, ctx: base.RunContext):
+        """The companies whose ``cik=<cik>`` partitions changed since the live file was built (#446)."""
+        return dirty_set.keyed(ctx, self)
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         cols = ["cik", "accession", "item", "quality"]
-        added, removed = common.compare_live(con, f"SELECT {', '.join(cols)} FROM filing_item", "filing_item", cols)
-        as_of = con.execute(f"SELECT max(source_as_of) FROM {STAGING['filings']}").fetchone()[0]
-        listed = con.execute(f"SELECT count(DISTINCT cik) FROM {STAGING['filings']}").fetchone()[0]
+        added, removed = common.compare_live(con, f"SELECT {', '.join(cols)} FROM filing_item", "filing_item", cols,
+                                             dirty_only=common.dirty_ciks(ctx, con) is not None)
+        # From the served table, not the staging: on a build over the live copy the staging holds only the dirty
+        # companies, and every filing-list row is a ``kind = 'item'`` row of ``filing_item`` either way.
+        as_of = con.execute("SELECT max(source_as_of) FROM filing_item WHERE kind = 'item'").fetchone()[0]
+        listed = con.execute("SELECT count(DISTINCT cik) FROM filing_item WHERE kind = 'item'").fetchone()[0]
         tier_a = con.execute("SELECT count(DISTINCT cik) FROM fundamental_company").fetchone()[0]
         recent = con.execute(f"""SELECT count(DISTINCT c.cik) FROM fundamental_company c
                                  WHERE c.submissions_as_of >= DATE '{(ctx.as_of or self.default_as_of())
                                  - timedelta(days=sec_index.LOOKBACK_DAYS)}'""").fetchone()[0]
-        qualities = dict(con.execute(f"SELECT quality, count(*) FROM {STAGING['documents']} GROUP BY 1").fetchall())
+        qualities = dict(con.execute("SELECT quality, count(*) FROM filing_item WHERE kind = 'document' "
+                                     "GROUP BY 1").fetchall())
         ctx.notes.append(f"{listed} of {tier_a} Tier A companies have a filing list ({recent} read in the last "
                          f"{sec_index.LOOKBACK_DAYS} days); documents by quality: "
                          + (", ".join(f"{k} {v}" for k, v in sorted(qualities.items())) or "none"))
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": (as_of or ctx.as_of or self.default_as_of()).isoformat(),
-                "rows": common.count(con, STAGING["filings"]), "added": added, "removed": removed,
+                "rows": common.count(con, "filing_item", "kind = 'item'"), "added": added, "removed": removed,
                 "coverage": round(listed / tier_a, 4) if tier_a else None}
 
 

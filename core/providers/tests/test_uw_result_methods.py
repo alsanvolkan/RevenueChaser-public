@@ -218,14 +218,14 @@ def test_option_contracts_result_is_failed_when_the_first_page_fails():
     c, _ = _scripted(_Resp(500))
     res = c.option_contracts_result("SPY")
     assert res.status == "failed" and res.data == []
-    assert res.error["page"] == 1
+    assert res.error["page"] == 0        # UW pages from 0 (#255)
 
 
 def test_option_contracts_result_is_partial_when_a_later_page_fails():
     c, calls = _scripted(_Resp(200, FULL), _Resp(500))
     res = c.option_contracts_result("SPY", limit=500)
-    assert res.status == "partial" and len(res.data) == 500   # page 1's rows are kept
-    assert res.error["page"] == 2 and res.error["status"] == 500
+    assert res.status == "partial" and len(res.data) == 500   # page 0's rows are kept
+    assert res.error["page"] == 1 and res.error["status"] == 500
     assert len(calls) == 1 + uwmod.MAX_ATTEMPTS               # page 2 was retried, then gave up
 
 
@@ -235,7 +235,9 @@ def test_option_contracts_still_returns_the_rows_it_got_when_a_page_fails():
 
 
 def test_option_contracts_stops_at_max_pages_and_is_ok():
-    c, calls = _scripted(_Resp(200, FULL))
+    # Distinct pages: a page repeating the last one ends the read (#255).
+    full = [_Resp(200, {"data": [{"option_symbol": f"P{p}X{i}"} for i in range(500)]}) for p in range(10)]
+    c, calls = _scripted(*full)
     res = c.option_contracts_result("SPY", limit=500, max_pages=3)
     assert res.status == "ok" and len(res.data) == 1500 and len(calls) == 3
 

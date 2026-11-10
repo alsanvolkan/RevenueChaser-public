@@ -119,7 +119,7 @@ def test_the_backfill_names_the_etfs_it_left_out(world):
     res = store.backfill_weekly(_UW(), date(2026, 9, 28), date(2026, 10, 7))
     assert res == 2
     assert "IBB" in res.message()
-    with rawstore.connect() as conn:
+    with rawstore.connect(db="sector_rotation") as conn:
         conn.execute("DELETE FROM rotation_snapshots")
     with pytest.raises(JobMessage, match="IBB"):
         runners.run_rotation_latest(_UW(), start="2026-09-28", end="2026-10-07")

@@ -77,7 +77,7 @@ from ... import caps
 from .. import base
 from ..fundamentals import wrds_fund
 from ..spine import wrds
-from . import KIND, stage
+from . import KIND, incremental, stage
 
 NAME = "wrds/prices"
 COMPUSTAT, CRSP = "wrds/compustat", "wrds/crsp"          # the bar sources in ``price_bar_daily``
@@ -535,11 +535,23 @@ class WrdsPrices:
                                revision_path(table, year, ctx.run_id))
             ctx.notes.append(f"{TABLES[table]['wrds']} {year}: {n} replaced value row(s) kept as revisions")
 
+    #: The spine's exchange history (``stg_wrds_exchg``) is read here: a change to it is seen (``dirty.read_dirs``).
+    parquet_reads = ("wrds/sec_idhist",)
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
+        live = getattr(ctx, "incremental", None) is not None
         for table in YEARLY:
-            stage.create(con, STAGING[table], TABLES[table]["schema"] + PROVENANCE,
-                         [f for _, f in stage.partitions(base.parquet_root() / "wrds" / "prices" / table, "year")],
-                         added_later=SECD_ADDED if table == "secd" else ())
+            files = [f for _, f in stage.partitions(base.parquet_root() / "wrds" / "prices" / table, "year")]
+            later = SECD_ADDED if table == "secd" else ()
+            if live:
+                # A build on the live copy reads the years whole only through a view (the identity) and stages the
+                # slice it rebuilds itself (``incremental.restrict``).
+                stage.view(con, STAGING[table] + incremental.WHOLE, TABLES[table]["schema"] + PROVENANCE, files,
+                           added_later=later)
+                con.execute(f"CREATE OR REPLACE TEMP VIEW {STAGING[table]} AS "
+                            f"SELECT * FROM {STAGING[table]}{incremental.WHOLE}")
+            else:
+                stage.create(con, STAGING[table], TABLES[table]["schema"] + PROVENANCE, files, added_later=later)
         # The EXCHG periods of the spine's newest sec_idhist snapshot and its deltas, one row per period (the newest).
         stage.create(con, "stg_wrds_exchg", EXCHG_STAGE, wrds.parquet_files("wrds/sec_idhist", "sec_idhist"),
                      select="SELECT gvkey, iid, TRY_CAST(TRY_CAST(itemvalue AS DOUBLE) AS INTEGER) AS exchg, efffrom, "
@@ -555,12 +567,17 @@ class WrdsPrices:
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         # The served rows this dataset feeds against the live file: its bars, its actions and the revisions.
         mine = f"source IN ('{COMPUSTAT}', '{CRSP}')"
+        bars_where, acts_where = mine, f"source = '{NAME}'"
+        if incremental.active(ctx):
+            # On the live copy only the rebuilt rows can differ from the live file's (``incremental.where``).
+            bars_where += " AND " + incremental.where("session_date")
+            acts_where += " AND " + incremental.where("ex_date")
         added = removed = 0
         for table, cols, where in (
                 ("price_bar_daily", ["security_id", "session_date", "open", "high", "low", "close", "volume",
-                                     "source"], mine),
+                                     "source"], bars_where),
                 ("corporate_action", ["security_id", "ex_date", "action", "ratio", "amount", "source_id"],
-                 f"source = '{NAME}'"),
+                 acts_where),
                 ("price_revision", ["security_id", "session_date", "close", "source", "revised_by"], mine)):
             a, r = stage.compare_live(con, table, cols, where)
             added, removed = added + a, removed + r

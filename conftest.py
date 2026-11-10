@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import socket
 import tempfile
 import uuid
 from pathlib import Path
@@ -47,14 +46,9 @@ def _redirect_data_roots() -> None:
     # Same for the SPX Gamma tree (UW day files, brier.json): the backup mirrors it (#276), and an
     # unredirected test once wrote into the real brier.json (G1). Tests that pass their own root still win.
     os.environ.setdefault("SPX_GAMMA_DATA_ROOT", str(_root / "spx_gamma"))
-    # The market store's SSD and HDD roots (#206). The off-box copy target is forced off, like the backup mirror.
+    # The market store's SSD and HDD roots (#206).
     os.environ.setdefault("RC_MARKET_DIR", str(_root / "market"))
     os.environ.setdefault("RC_MARKET_RAW_DIR", str(_root / "market_raw"))
-    os.environ["RC_MARKET_RAW_COPY_DIR"] = ""
-    # The backup switches are forced, not defaulted: a real off-machine folder in .env or the shell would receive a
-    # copy of every test store (#275), and RAW_STORE_BACKUP_WEEKLY=0 would break the weekly-copy tests (#277).
-    os.environ["RAW_STORE_BACKUP_MIRROR"] = ""
-    os.environ["RAW_STORE_BACKUP_WEEKLY"] = "1"
     # The WRDS switch is forced off: a server .env with RC_WRDS_UNATTENDED=1 would make the attended tests fail (#344).
     os.environ["RC_WRDS_UNATTENDED"] = ""
     # The ops store on Redis (master plan Order 3): never the server's named namespace (a .env with
@@ -114,8 +108,25 @@ def pytest_sessionfinish(session, exitstatus):
     _remove_scratch_root(SCRATCH_ROOT)
 
 
-class NetworkAccessAttempted(RuntimeError):
-    """Raised when a test tries to open a real socket."""
+NETGUARD_DIR = Path(__file__).resolve().parent / "module_testing" / "netguard"
+
+
+def _load_netguard():
+    """The guard module: the one this process's ``site`` already imported as ``sitecustomize`` (an xdist worker, or
+    a pytest started by a test), else a fresh load of the file, never a system ``sitecustomize``."""
+    import importlib.util
+    import sys
+    mod = sys.modules.get("sitecustomize")
+    if getattr(mod, "RC_NETGUARD", False):
+        return mod
+    spec = importlib.util.spec_from_file_location("rc_netguard", NETGUARD_DIR / "sitecustomize.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_netguard = _load_netguard()
+NetworkAccessAttempted = _netguard.NetworkAccessAttempted
 
 
 def pytest_configure(config):
@@ -128,62 +139,26 @@ def pytest_configure(config):
     # The end-to-end tier (RC_E2E=1) runs a real dashboard against a real local
     # mock-provider server, so loopback must stay open there. Everything that is
     # not loopback still fails loudly — an e2e test reaching the real internet is
-    # as much a bug as a unit test doing it.
-    e2e = os.environ.get("RC_E2E") == "1"
-    # The ops store's Redis (RC_REDIS_URL, master plan Order 3) is the one address the unit tier may reach: it is a
-    # local service (CI starts it beside the job), not the internet. Only that host and port, nothing else.
-    redis_addr = None
-    if os.environ.get("RC_REDIS_URL", "").strip():
-        from urllib.parse import urlsplit
-        _u = urlsplit(os.environ["RC_REDIS_URL"].strip())
-        redis_addr = (_u.hostname, _u.port or 6379)
-    real_connect = socket.socket.connect
-    real_connect_ex = socket.socket.connect_ex
-    real_create_connection = socket.create_connection
-    real_getaddrinfo = socket.getaddrinfo
+    # as much a bug as a unit test doing it. The ops store's Redis (RC_REDIS_URL)
+    # is the one other address allowed (module_testing/netguard/sitecustomize.py).
+    _netguard.install(loopback=os.environ.get("RC_E2E") == "1")
+    # #258: every Python child the suite starts installs the same guard at startup, loopback open there.
+    os.environ["RC_NETGUARD"] = "1"
+    paths = [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p and p != str(NETGUARD_DIR)]
+    os.environ["PYTHONPATH"] = os.pathsep.join([str(NETGUARD_DIR), *paths])
 
-    def _is_loopback(address) -> bool:
-        if not isinstance(address, (tuple, list)) or not address:
-            return False
-        host = address[0]
-        return host in ("127.0.0.1", "::1", "localhost")
 
-    def _is_redis(address) -> bool:
-        return (redis_addr is not None and isinstance(address, (tuple, list)) and len(address) >= 2
-                and (address[0], address[1]) == redis_addr)
+def pytest_collection_modifyitems(config, items):
+    """CI splits the unit tier into parallel jobs: RC_SHARD="i/n" keeps only this shard's files (tests.yml)."""
+    shard = os.environ.get("RC_SHARD")
+    if not shard:
+        return
+    from RevenueChaser.scripts.select_tests import in_shard
 
-    def _blocked(*args, **kwargs):
-        raise NetworkAccessAttempted(
-            "This test tried to open a real network connection. Unit tests must mock "
-            "at the HTTP boundary — use the `mock_httpx` fixture, or patch the client "
-            "method directly. Live-API checks belong in a standalone script under "
-            "core/, not in the pytest suite."
-        )
-
-    def _connect(self, address, *a, **kw):
-        if (e2e and _is_loopback(address)) or _is_redis(address):
-            return real_connect(self, address, *a, **kw)
-        _blocked()
-
-    def _connect_ex(self, address, *a, **kw):
-        if (e2e and _is_loopback(address)) or _is_redis(address):
-            return real_connect_ex(self, address, *a, **kw)
-        _blocked()
-
-    def _create_connection(address, *a, **kw):
-        if (e2e and _is_loopback(address)) or _is_redis(address):
-            return real_create_connection(address, *a, **kw)
-        _blocked()
-
-    def _getaddrinfo(host, *a, **kw):
-        if (e2e and host in ("127.0.0.1", "::1", "localhost")) or (redis_addr is not None and host == redis_addr[0]):
-            return real_getaddrinfo(host, *a, **kw)
-        _blocked()
-
-    socket.socket.connect = _connect
-    socket.socket.connect_ex = _connect_ex
-    socket.create_connection = _create_connection
-    socket.getaddrinfo = _getaddrinfo
+    keep = [it for it in items if in_shard(it.nodeid, shard)]
+    if len(keep) < len(items):
+        config.hook.pytest_deselected(items=[it for it in items if not in_shard(it.nodeid, shard)])
+        items[:] = keep
 
 
 @pytest.fixture(scope="session")
@@ -405,9 +380,15 @@ class RawstoreTemplate:
         finally:
             mp.undo()
         # What the apply leaves in this process besides the files: the per-(file, table) memo and the "applied" mark.
-        self.ready = {(Path(p).name, t) for p, t in rawstore._TABLE_READY if Path(p).parent == self.dir}
-        self.files = {p.name: (p.stat().st_size, p.stat().st_mtime_ns) for p in self.dir.iterdir()
-                      if p.is_file() and not p.name.startswith(rawstore._PRESENCE_PREFIX)}
+        # Board files (``boards/<board>.duckdb``, DECISIONS S9) are part of the template too, by their path
+        # relative to the store directory.
+        self.ready = {(Path(p).relative_to(self.dir).as_posix(), t) for p, t in rawstore._TABLE_READY
+                      if Path(p).parent in (self.dir, self.dir / rawstore.BOARDS_DIRNAME)}
+        files = [p for p in self.dir.iterdir() if p.is_file()]
+        if (self.dir / rawstore.BOARDS_DIRNAME).is_dir():
+            files += [p for p in (self.dir / rawstore.BOARDS_DIRNAME).iterdir() if p.is_file()]
+        self.files = {p.relative_to(self.dir).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns) for p in files
+                      if not p.name.startswith(rawstore._PRESENCE_PREFIX)}
 
     def copy_to(self, raw_path: Path) -> bool:
         """Give ``raw_path``'s directory its own copy of the template; False when it has to be built from scratch."""
@@ -417,6 +398,7 @@ class RawstoreTemplate:
                 or any((dest / name).exists() for name in self.files)):
             return False
         for name in self.files:
+            (dest / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(self.dir / name, dest / name)
         rawstore._TABLE_READY.update((str(dest / name), table) for name, table in self.ready)
         rawstore._ENSURED[str(raw_path)] = 0.0

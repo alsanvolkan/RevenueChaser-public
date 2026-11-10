@@ -137,13 +137,20 @@ LATER_DERIVED_TABLES = ("forecast_outcomes", "forecast_baselines")
 # Per-file schema stamp (#26 PL7): additive table, no schema bump. The raw MANIFEST entry is the
 # column contract; the ensure path creates the same table in every store file.
 SCHEMA_STAMP = ("store_schema",)
+# Schema 13 (#401): the relatedness embedding vectors, one row per profile and model.
+V13 = ("relatedness_embeddings",)
+# Board files (S9, S16), no schema bump: each table lives in its own boards/<board>.duckdb, rebuilt incrementally.
+BOARD_TABLES = ("news_events", "news_highlight", "news_headlines", "news_meta",
+                "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta")
 
 
 def test_legacy_table_list_is_the_66_remaining_pre_g1_tables():
     assert len(LEGACY) == 66
     assert len(V11) == 25
     assert set(LEGACY) | set(ddl292_frozen.ENTRIES) | set(V11) | set(LATER_CHANGE_TABLES) | set(PRICES_DB) \
-        | set(LATER_HISTORY_TABLES) | set(LATER_DERIVED_TABLES) | set(SCHEMA_STAMP) == set(rawstore.MANIFEST)
+        | set(LATER_HISTORY_TABLES) | set(LATER_DERIVED_TABLES) | set(SCHEMA_STAMP) | set(V13) | set(BOARD_TABLES) \
+        == set(rawstore.MANIFEST)
+    assert all(rawstore.MANIFEST[t]["db"] in rawstore.BOARD_DBS for t in BOARD_TABLES)
     assert rawstore.MANIFEST["store_schema"]["history_mode"] == "latest_cache"
     assert not set(LATER_DERIVED_TABLES) & (set(LEGACY) | set(ddl292_frozen.ENTRIES) | set(V11) | set(PRICES_DB))
     assert all(rawstore.MANIFEST[t]["history_mode"] == "latest_cache" for t in LATER_DERIVED_TABLES)

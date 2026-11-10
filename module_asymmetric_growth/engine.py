@@ -51,6 +51,7 @@ from RevenueChaser.core.universe_fetch import (  # noqa: F401
 )
 from RevenueChaser.core.taxonomy import themes_for_many
 from RevenueChaser.module_asymmetric_growth import sector_rules          # #18: AG's own rule, beside it now
+from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 logger = logging.getLogger(__name__)
 
@@ -184,13 +185,9 @@ def _end(rec: dict | None, *fields: str) -> str | None:
     return next((str(ends[f])[:10] for f in fields if ends.get(f)), None)
 
 
-def _provenance(annual: list[dict], ai: int | None, pi: int | None,
-                ownership_source: dict | None = None, series: list[dict] | None = None) -> dict:
+def _provenance(annual: list[dict], ai: int | None, pi: int | None, series: list[dict] | None = None) -> dict:
     """What the card read (#380 S3, #66 provenance line): the anchor and prior fiscal years, the three revenue
     period ends (anchor, prior, the year before) and the anchor's balance-sheet and cash-flow period ends.
-
-    ``ownership_source`` (#34 D20) is where the institutional share came from — ``ownership_snapshot``'s source and
-    the session it was stored for, or the live ``.info`` with no session — so a card says which value it shows.
     """
     ppi = _prior(annual, pi)
     cur = annual[ai] if ai is not None else None
@@ -207,7 +204,6 @@ def _provenance(annual: list[dict], ai: int | None, pi: int | None,
             "balance_sheet": _end(rows[0], "total_assets", "cash", "total_debt"),
             "cash_flow": _end(rows[0], "operating_cash_flow", "capex", "capital_expenditure"),
         },
-        "ownership": ownership_source,
     }
 
 
@@ -308,35 +304,13 @@ def technical_from_bars(rows, session: date | None = None) -> dict:
     }
 
 
-OWNERSHIP_LIVE = "info"   # the provenance source of a number read straight off the yfinance ``.info`` (#34 D20)
-
-
-def _ownership_number(info: dict, stored: dict | None) -> tuple:
-    """(the institutional share the card shows, where it came from): the stored row first (#34 D20), ``.info``
-    second.
-
-    The Yahoo client swallows a failed ``.info`` to ``{}`` (#23/#169), so a name can arrive with no live number
-    while ``ownership_snapshot`` already holds one. A name with neither has no number and no provenance to stamp.
-    The scale cannot change: the stored column is the same Yahoo field this read used to take
-    (``core/ownership.py`` maps ``institutional_pct`` to ``heldPercentInstitutions`` and stores fractions as
-    served), so a stored number and a live one are the same kind of number.
-    """
-    if stored and stored.get("institutional_pct") is not None:
-        return stored["institutional_pct"], {"source": stored.get("source"),
-                                             "session": stored.get("session_label")}
-    live = info.get("heldPercentInstitutions")
-    return (live, {"source": OWNERSHIP_LIVE, "session": None}) if live is not None else (None, None)
-
-
 def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | None = None,
                  spine: dict | None = None, pinned_themes: dict | None = None,
-                 as_of: date | None = None, stored_ownership: dict | None = None) -> dict | None:
+                 as_of: date | None = None) -> dict | None:
     """Build the Small/Micro Cap card from already-fetched data; non-US or missing data -> None.
 
     ``pinned_themes`` is ``taxonomy.themes_for_many`` of the whole batch; without it the ticker is looked up alone.
     ``as_of`` is the run day the record choice is judged on (``_card_anchor``); a Fetch always passes it.
-    ``stored_ownership`` is this ticker's row of ``ownership.latest_institutional`` (read once per scan) and wins
-    over the live ``.info`` number.
     """
     meta = meta or {}
     info = financials.get("info", {})
@@ -462,7 +436,6 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
     tech_breakthrough = rd_intensity is not None and rd_intensity >= RND_INTENSITY_MIN
     dilution_warning = dilution_yoy is not None and dilution_yoy > DILUTION_WARN
     earnings_date = to_float((meta.get("quote") or {}).get("earningsTimestampStart"))
-    inst_pct, ownership_src = _ownership_number(info, stored_ownership)
 
     return {
         "ticker": ticker,
@@ -470,7 +443,7 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
         "name": info.get("longName") or info.get("shortName") or meta.get("name") or ticker,
         "sector": sector,
         "industry": gics.industry,
-        "inst_ownership_pct": inst_pct,
+        "inst_ownership_pct": None,     # 13F, set with the rest of the institutional block after scoring (#481)
         "price": price,
         "market_cap": market_cap,
         "ps_ratio": ps_ratio,
@@ -486,7 +459,7 @@ def score_ticker(ticker: str, financials: dict, technical: dict, meta: dict | No
         "signals": signals,
         "flags": flags,
         "basis": basis,
-        **_provenance(annual, ai, pi, ownership_src, series=trailing),
+        **_provenance(annual, ai, pi, series=trailing),
         "themes": themes,
         "tech_breakthrough": tech_breakthrough,
         "dilution_warning": dilution_warning,
@@ -754,8 +727,7 @@ def enrich_and_score(ticker: str, meta: dict, no_fetch: bool = False,
     stored = preload["earnings"] if preload is not None and "earnings" in preload else earnings_dates.stored_next_dates()
     scored_meta = earnings_dates.with_stored_date({**meta, "ticker": ticker}, stored)
     card = score_ticker(ticker, financials, technical, scored_meta, spine,
-                        pinned_themes=preload["themes"] if preload is not None else None, as_of=as_of,
-                        stored_ownership=((preload or {}).get("ownership") or {}).get(ticker))
+                        pinned_themes=preload["themes"] if preload is not None else None, as_of=as_of)
     if card is None:
         return dropped("foreign")
     _mark_bar_date(card, technical)
@@ -839,20 +811,63 @@ def _quarter(period) -> tuple[int, int] | None:
     return d.year, (d.month - 1) // 3 + 1
 
 
-def _institutional(ticker: str, totals: dict) -> dict:
-    """13F institutional ownership: the newest stored quarter, and its share change against the quarter right
+def _settled(periods: dict) -> list:
+    """The 13F periods whose filing deadline has passed, oldest first: a quarter still arriving holds a part of
+    itself (#514)."""
+    return sorted(k for k, v in periods.items() if v.get("complete", True))
+
+
+def _split_factors(latest: dict[str, str]) -> dict[str, float]:
+    """``{ticker: split_factor}`` of each ticker's 13F quarter end (``latest``: ticker -> ISO period): the prices
+    store's factor that turns a share count of that day into today's basis (shares ÷ factor; a 1-for-25 reverse split
+    after it serves 25). Compustat's and Alpaca's splits, applied the way every board's split basis is
+    (``rcdata.read.bars``). One bar read per quarter. A ticker the store cannot place, or a store it cannot read,
+    has no factor: its shares stay as filed."""
+    from RevenueChaser.rcdata import read
+    out: dict[str, float] = {}
+    try:
+        ids = read.security_ids(latest)
+        by_period: dict[str, list[str]] = {}
+        for t, period in latest.items():
+            if t in ids:
+                by_period.setdefault(period, []).append(t)
+        for period, tickers in by_period.items():
+            end = date.fromisoformat(str(period)[:10])
+            sid_to = {ids[t]: t for t in tickers}
+            # The last bar on or before the quarter end: rows come by security and session, so the last one wins.
+            for b in read.bars(sid_to, start=end - timedelta(days=10), end=end, basis="split"):
+                if b.get("split_factor"):
+                    out[sid_to[b["security_id"]]] = float(b["split_factor"])
+    except Exception as exc:  # noqa: BLE001 - no prices store is "no factor", never a failed scan
+        logger.warning("AG 13F split factors unread, shares stay as filed: %s: %s", type(exc).__name__, exc)
+        return {}
+    return out
+
+
+def _institutional(ticker: str, totals: dict, shares_outstanding: float | None = None,
+                   shares_out_source: str = "stored", split_factor: float = 1.0) -> dict:
+    """13F institutional ownership: the newest settled quarter, and its share change against the quarter right
     before it. ``inst_quarter`` / ``inst_prev_quarter`` name them (``2026 Q1``); when the quarter before is not
-    stored, there is no QoQ change rather than one over two quarters (AG review SF-3, PR 6)."""
+    stored, there is no QoQ change rather than one over two quarters (AG review SF-3, PR 6).
+
+    A quarter whose filing deadline has not passed (``complete`` false) holds a part of itself (#514) and is skipped.
+    ``inst_ownership_pct`` is that quarter's shares ÷ ``shares_outstanding``, the 13F board's ``% Out`` (#481), and
+    ``ownership`` says which quarter it came from and where the shares outstanding came from
+    (``shares_out_source``); without either there is no share and no provenance. The 13F shares are first put on
+    today's basis (÷ ``split_factor``, a split after the quarter: avo, 9 Nov 2026, GOSS read 6,242 % without it)."""
     out = {"inst_holders": None, "inst_new": None, "inst_exited": None,
            "inst_buy_flow": None, "inst_sell_flow": None,
            "inst_shares": None, "inst_shares_delta_pct": None,
-           "inst_quarter": None, "inst_prev_quarter": None}
+           "inst_quarter": None, "inst_prev_quarter": None,
+           "inst_ownership_pct": None, "ownership": None}
     periods = totals.get(ticker)
     if not periods:
         return out
     try:
-        sorted_periods = sorted(periods)
+        sorted_periods = _settled(periods)
     except TypeError:
+        return out
+    if not sorted_periods:
         return out
     latest = sorted_periods[-1]
     p = periods[latest]
@@ -862,6 +877,10 @@ def _institutional(ticker: str, totals: dict) -> dict:
     out["inst_buy_flow"] = p.get("buy_flow")
     out["inst_sell_flow"] = p.get("sell_flow")
     out["inst_shares"] = p.get("shares")
+    if p.get("shares") is not None and shares_outstanding:
+        out["inst_ownership_pct"] = p["shares"] / split_factor / shares_outstanding
+        out["ownership"] = {"source": "sec13f", "session": str(latest)[:10], "shares_out": shares_out_source,
+                            "split_factor": split_factor}
     q = _quarter(latest)
     out["inst_quarter"] = f"{q[0]} Q{q[1]}" if q else None
     if len(sorted_periods) >= 2 and q:
@@ -911,23 +930,14 @@ def scored_before(cards: list[dict]) -> bool:
 
 
 def _ownership_counts(cards: list[dict]) -> dict:
-    """``{"stored", "live", "session"}`` (#34 D20; the input-record shape of ``module_earnings_radar``): how many
-    scored names took their institutional share from ``ownership_snapshot`` and how many from the live ``.info``,
-    plus the newest stored session behind them.
-
-    Their sum is the number of cards that show an ownership figure at all, so the owner can tell on real data
-    whether the switch worked. ``session`` is the newest stored session behind those numbers (labels are ISO dates,
-    so the largest string is the newest). A card read back from ``ticker_scores`` carries no provenance (the table
-    has no such column), so a summary counted from cards alone answers ``None``/``None`` — unknown, never 0, the
-    same rule ``low_liquidity`` follows.
-    """
+    """``{"sec13f", "quarter"}`` (#481): how many scored names show a 13F institutional share, and the newest quarter
+    behind them. A card read back from ``ticker_scores`` carries no provenance (the table has no such column), so a
+    summary counted from cards alone answers ``None``/``None`` — unknown, never 0, the rule ``low_liquidity``
+    follows."""
     if not any("ownership" in c for c in cards):
-        return {"stored": None, "live": None, "session": None}
-    marks = [c.get("ownership") for c in cards]
-    stored = [m for m in marks if m and m.get("source") != OWNERSHIP_LIVE]
-    live = [m for m in marks if m and m.get("source") == OWNERSHIP_LIVE]
-    sessions = [m["session"] for m in stored if m.get("session")]
-    return {"stored": len(stored), "live": len(live), "session": max(sessions) if sessions else None}
+        return {"sec13f": None, "quarter": None}
+    marks = [c["ownership"] for c in cards if c.get("ownership")]
+    return {"sec13f": len(marks), "quarter": max((m["session"] for m in marks), default=None)}
 
 
 def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[str, int],
@@ -971,7 +981,7 @@ def _summary(cards: list[dict], excluded_types: int | None, score_errors: dict[s
         "low_liquidity": None if thin is None else sum(1 for c in cards if c["ticker"] in thin_names),
         "unreadable_sec": sum(1 for c in cards if c.get("source") != EDGAR_SOURCE),
         "momentum_unknown": len(_momentum_unknown(cards)),   # AG review N-2: no or too few stored bars
-        "ownership": _ownership_counts(cards),   # #34 D20: stored vs live institutional shares
+        "ownership": _ownership_counts(cards),   # #481: names with a 13F institutional share
     }
 
 
@@ -1056,13 +1066,7 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     run_day = _run_day()                    # anchor age is judged against the day the scan runs (card O-2)
     scan_session = _price_session()         # one price cutoff for the whole Fetch, so no batch reads a newer SPY bar
     stored_earnings = earnings_dates.stored_next_dates()      # #304: one read per run, not per batch
-    # #34 D20: ONE store read for the whole scan, never one per card. The stored institutional share wins over the
-    # live ``.info`` one, which the Yahoo client can swallow to ``{}`` (#23/#169); a name with no stored row keeps
-    # today's number.
-    # A list, not a generator: a caller that looks at the argument (a test spy, a future log line) must not
-    # be able to consume it before the reader sees it.
-    stored_ownership = ownership.latest_institutional([r["ticker"] for r in to_score])
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+    with ThreadPoolExecutor(max_workers=max_workers, **opens.pool_kwargs()) as ex:
         # The store is read in bulk per batch (a fixed number of queries each), not once per ticker (#150 U13);
         # a batch bounds how many EDGAR and payload rows are in memory at once.
         for start in range(0, len(to_score), PRELOAD_BATCH):
@@ -1072,7 +1076,6 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
             batch = to_score[start:start + PRELOAD_BATCH]
             preload = _preload([r["ticker"] for r in batch], no_fetch, scan_session)
             preload["earnings"] = stored_earnings   # #304: read once per run, not per batch
-            preload["ownership"] = stored_ownership  # #34 D20: the same rows for every batch
             preload["drops"] = drops
             preload["vendor"] = vendor
             preload["as_of"] = run_day
@@ -1098,10 +1101,25 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
         vendor.flush(run_id=vendor_run, label="Asymmetric Growth")
 
     totals = ownership.sec13f_totals()      # #16: the stored rows, not the 13F board's engine
+    shares_out = ownership.load_ownership([c["ticker"] for c in cards])   # #481: the 13F board's % Out denominator
+    latest_13f = {}
+    for c in cards:
+        try:
+            settled = _settled(totals.get(c["ticker"]) or {})
+        except TypeError:
+            settled = []
+        if settled:
+            latest_13f[c["ticker"]] = settled[-1]
+    splits = _split_factors(latest_13f)
     from RevenueChaser.module_asymmetric_growth import freeze
     version = freeze.model_version()        # the rows say which rules scored them (old-rows view, #380 S2)
     for c in cards:
-        inst = _institutional(c["ticker"], totals)
+        so = (shares_out.get(c["ticker"]) or {}).get("shares_outstanding")
+        so_source = "stored"
+        if not so and c.get("market_cap") and c.get("price"):
+            # Measured 9 Nov 2026: the store held shares outstanding for 1,219 of 4,159 AG names; every card has these.
+            so, so_source = c["market_cap"] / c["price"], "market_cap/price"
+        inst = _institutional(c["ticker"], totals, so, so_source, splits.get(c["ticker"], 1.0))
         # The 13F quarters the card read are period ends it read: they ride in ``period_ends`` (a JSON column of
         # ``ticker_scores``), so a Refresh shows them too (AG review SF-3).
         c.setdefault("period_ends", {})["inst_13f"] = [inst.pop("inst_quarter"), inst.pop("inst_prev_quarter")]

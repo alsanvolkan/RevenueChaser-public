@@ -29,7 +29,7 @@ def _rows(run_id):
 
 def test_a_live_save_stamps_source_live_and_returns_the_rows_it_wrote(rawstore_tmp_db):
     rows = rotation_store.save_snapshot([_snap("XLK"), _snap("XLF")], as_of=date(2026, 8, 14))
-    stored = rawstore.query("SELECT * FROM rotation_snapshots ORDER BY ticker")
+    stored = rawstore.query("SELECT * FROM rotation_snapshots ORDER BY ticker", db="sector_rotation")
     assert {r["source"] for r in stored} == {"live"} and sorted(r["ticker"] for r in rows) == ["XLF", "XLK"]
     assert sorted(rows, key=lambda r: r["ticker"]) == stored
 
@@ -40,7 +40,7 @@ def test_a_backfill_stamps_source_backfill(rawstore_tmp_db, monkeypatch):
     seed("SPY", date(2026, 8, 14), closes=lambda i: 100.0 + i)
     seed("XLK", date(2026, 8, 14), closes=lambda i: 100.0 + i)
     assert rs.backfill_snapshots(_FakeUW(), days=2) == 2
-    assert {r["source"] for r in rawstore.query("SELECT source FROM rotation_snapshots")} == {"backfill"}
+    assert {r["source"] for r in rawstore.query("SELECT source FROM rotation_snapshots", db="sector_rotation")} == {"backfill"}
 
 
 def test_a_live_fetch_records_the_snapshot_rows_it_saved(rawstore_tmp_db):

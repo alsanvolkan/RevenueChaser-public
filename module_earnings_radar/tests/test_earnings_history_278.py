@@ -118,7 +118,7 @@ def test_the_header_carries_model_version_params_funnel_and_context(store):
     stats = {"total": 3, "passed": 1, "bypassed": 0, "filtered": 2, "by_reason": {"OI": 2}, "excluded": []}
     _record([_card("AAA")], filter_stats=stats, span=(date(2026, 10, 8), date(2026, 10, 9)), n_events=3)
     (head,) = _headers()
-    assert head["model_version"] == er_history.model_version() and head["model_version"].startswith("3+")
+    assert head["model_version"] == er_history.model_version() and head["model_version"].startswith("4+")
     assert json.loads(head["funnel"]) == stats
     assert json.loads(head["params"])["MAX_DEEP_CHECKS_PER_DAY"] == 500
     ctx = json.loads(head["context"])
@@ -193,7 +193,9 @@ def _session_events(n, day=date(2026, 10, 8), when="AMC", source="UW"):
 
 
 def test_a_calendar_session_at_the_500_row_limit_is_partial_but_keeps_the_rows(store):
-    _record([_card("AAA")], events=_session_events(500))
+    # Name kept from before #259: the limit is now the client's paging cap (500 rows x CALENDAR_MAX_PAGES).
+    from RevenueChaser.module_earnings_radar.history import UW_CALENDAR_ROW_LIMIT
+    _record([_card("AAA")], events=_session_events(UW_CALENDAR_ROW_LIMIT))
     (head,) = _headers()
     assert head["quality"] == "partial" and "2026-10-08 AMC" in head["quality_note"] and len(_rows("r1")) == 1
 

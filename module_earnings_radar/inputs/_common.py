@@ -1,4 +1,4 @@
-"""What the RC-Earnings-Inputs sweeps share (E0, #372): value readers, the sweep outcome and the stored ticker sets."""
+"""What the Earnings inputs sweeps share (E0, #372): value readers, the sweep outcome and the stored ticker sets."""
 from __future__ import annotations
 
 import math

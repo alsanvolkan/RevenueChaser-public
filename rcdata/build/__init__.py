@@ -28,6 +28,10 @@ from .prices import floats as prices_floats, serving as prices_serving, wrds_his
 DATASETS.update({d.name: d for d in (prices_bars.DATASET, prices_actions.DATASET, prices_cover.DATASET,
                                      prices_floats.YAHOO_FLOAT, prices_floats.UW_FLOAT, prices_wrds.DATASET,
                                      prices_serving.DATASET)})
+# #446 steps 3 and 4: ``prices`` builds on a copy of the live file (``prices/incremental.py``).
+from .prices import incremental as prices_incremental  # noqa: E402
+
+prices_incremental.enable([d for d in DATASETS.values() if d.kind == prices_bars.KIND])
 
 # ── Fundamentals (build plan PR 12): the sources stage their Parquet, ``fundamentals/tables`` builds the served
 # file last (``base.build_kind`` builds a kind's datasets in this order).
@@ -40,11 +44,12 @@ from .fundamentals import tables as fundamentals_tables  # noqa: E402
 from .fundamentals import uw_earnings as fundamentals_uw_earnings  # noqa: E402
 from .fundamentals import uw_financials as fundamentals_uw_financials  # noqa: E402
 from .fundamentals import wrds_fund as fundamentals_wrds  # noqa: E402
+from .fundamentals import fx_rates as fundamentals_fx  # noqa: E402
 
 DATASETS.update({d.name: d for d in (fundamentals_companyfacts.DATASET, fundamentals_filings.DATASET,
                                      fundamentals_earnings.DATASET, fundamentals_uw_earnings.DATASET,
                                      fundamentals_uw_financials.DATASET,
-                                     fundamentals_estimates.DATASET, fundamentals_fsds.DATASET,
+                                     fundamentals_estimates.DATASET, fundamentals_fx.DATASET, fundamentals_fsds.DATASET,
                                      *fundamentals_wrds.DATASETS,
                                      fundamentals_tables.DATASET)})
 

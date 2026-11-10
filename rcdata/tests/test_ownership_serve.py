@@ -303,6 +303,39 @@ def test_a_filers_value_off_by_1000_is_rescaled_once_its_prices_agree(monkeypatc
     assert not any(k == "value_rescaled" and key.startswith("2000006") for k, key in issues)
 
 
+PER_QUARTER = ("_px", "_ratio", "_held", "_cp", "_m_hist", "_m_cur", "sec13f_cusip_map", "_filers", "_pos", "_tot",
+               "_shape", "_pairs")
+SERVED_13F = {"sec13f_filer_period": "cik, period", "sec13f_cusip_map": "cusip, period",
+              "sec13f_ticker_period": "ticker, period", "sec13f_periods": "period"}
+
+
+def test_the_13f_derive_runs_one_quarter_at_a_time_with_the_same_rows(store, monkeypatch):
+    """Queue #242, 10 Nov 2026: a median's or a DISTINCT's state and a join's build side sit partly outside DuckDB's
+    memory_limit; over every quarter at once the whole build was OOM-killed at 7.2 GiB, in the CUSIP map step."""
+    seen: list[str] = []
+
+    class Recording:
+        def __init__(self, con):
+            self._con = con
+
+        def execute(self, sql, *args):
+            seen.append(" ".join(sql.split()))
+            return self._con.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._con, name)
+
+    derive = serve.OwnershipServe._derive
+    monkeypatch.setattr(serve.OwnershipServe, "_derive", lambda self, ctx, con: derive(self, ctx, Recording(con)))
+    before = {t: _served(f"SELECT * FROM {t} ORDER BY {k}") for t, k in SERVED_13F.items()}
+    _serve()
+    for t in PER_QUARTER:
+        fills = [q for q in seen if q.startswith(f"INSERT INTO {t} ")]
+        assert fills and all("period = ?" in q for q in fills), t
+        assert not any(q.startswith(f"CREATE OR REPLACE TEMP TABLE {t} AS") for q in seen), t
+    assert {t: _served(f"SELECT * FROM {t} ORDER BY {k}") for t, k in SERVED_13F.items()} == before
+
+
 def test_a_quarter_whose_deadline_passed_before_the_first_13f_day_is_not_served(monkeypatch, http_mock):
     """Real data, 2026-10-28: 852 filings of 135 filers in the sets from 2025 report quarters back to 2001, filed
     late; only those late filers of such a quarter are stored, so its breadth and totals would mislead."""

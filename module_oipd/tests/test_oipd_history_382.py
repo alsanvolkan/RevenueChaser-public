@@ -29,7 +29,7 @@ class _PartialUW(_FakeUW):
     def option_contracts_result(self, ticker, expiry=None, **kw):
         rows = _chain_for(expiry)
         if expiry == self.expiries[1]:
-            return ProviderResult("partial", rows[: len(rows) // 2], {"page": 2, "status": 500}, "")
+            return ProviderResult("partial", rows[: len(rows) // 2], {"page": 1, "status": 500}, "")
         return ProviderResult("ok", rows, None, "")
 
 
@@ -68,7 +68,7 @@ def _unpack(cell):
 def test_a_fetch_captures_the_chain_it_saved_and_the_svi_of_each_fitted_expiry(store):
     payload, capture = _fetch()
     assert capture["status"] == "ok" and capture["errors"] == []
-    stored = rawstore.query("SELECT * FROM oipd_chain WHERE ticker = 'TST' ORDER BY option_symbol")
+    stored = rawstore.query("SELECT * FROM oipd_chain WHERE ticker = 'TST' ORDER BY option_symbol", db="oipd")
     assert sorted(capture["chain"], key=lambda r: r["option_symbol"]) == stored
     assert sorted(capture["svi"]) == [e["date"] for e in payload["expiries"]]
     fitted = capture["svi"][payload["expiries"][0]["date"]]

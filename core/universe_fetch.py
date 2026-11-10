@@ -23,6 +23,7 @@ from RevenueChaser.core.universe import (
 )
 from RevenueChaser.core.gics_map import MORNINGSTAR_SECTORS, UNCLASSIFIED
 from RevenueChaser.core.identity.sources import norm_ticker
+from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 logger = logging.getLogger(__name__)
 
@@ -427,7 +428,7 @@ def _backfill_caps(tickers: list[str] | None = None, chunk: int = 200,
 
     if work_tickers:
         workers = min(_CAP_BACKFILL_WORKERS, len(work_tickers))
-        with ThreadPoolExecutor(max_workers=workers) as ex:
+        with ThreadPoolExecutor(max_workers=workers, **opens.pool_kwargs()) as ex:
             pending: dict = {}
             next_i = 0
 

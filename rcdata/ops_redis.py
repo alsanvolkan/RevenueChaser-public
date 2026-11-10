@@ -311,7 +311,8 @@ read_queue = queue_view
 
 
 def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
-                 only: Iterable[str] | None = None, by: str | None = None) -> dict | None:
+                 only: Iterable[str] | None = None, by: str | None = None,
+                 fetch_only: bool = False) -> dict | None:
     skip = tuple(skip)
     if skip and only is not None:
         raise ValueError("next_request takes skip or only, not both")
@@ -320,7 +321,8 @@ def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
     def work():
         for r in _active():
             if (r["status"] == "queued" and dataset in (None, r["dataset"]) and r["dataset"] not in skip
-                    and by in (None, r["requested_by"]) and (names is None or r["dataset"] in names)):
+                    and by in (None, r["requested_by"]) and (names is None or r["dataset"] in names)
+                    and (not fetch_only or ops.is_fetch_only(r.get("params")))):
                 row = {**r, "status": "running", "started_at": time.time()}
                 return ops._request(row), lambda p: _put(p, "build_requests", row)
         return None, None
@@ -345,20 +347,20 @@ def finish_request(request_id: int, status: str, note: str | None = None) -> Non
     _transaction(["build_requests"], work)
 
 
-def fail_orphans() -> tuple[int, int]:
+def fail_orphans(*, dead_pids_only: bool = False) -> tuple[int, int]:
     me = os.getpid()
-    now, tail = time.time(), f"builder died; found running by the builder started as pid {me}"
+    now, tail = time.time(), ops._orphan_tail(me, dead_pids_only)
 
     def work():
         runs = sorted((r for r in _fetch("job_runs2", _client().smembers(_key("job_runs2", "running")))
                        if r["status"] == "running" and r["pid"] != me),
                       key=lambda r: (r["started_at"] is not None, r["started_at"] or 0.0))
-        alive = {r["run_id"]: ops._builder_alive(r["pid"]) for r in runs}
+        alive = {r["run_id"]: ops._run_alive(r["pid"], dead_pids_only) for r in runs}
         reqs, checks = [], []
         for req in (r for r in _active() if r["status"] == "running"):
             run = next((r for r in runs if r["dataset"] == req["dataset"]
                         and (r["started_at"] or 0) >= (req["started_at"] or 0)), None)
-            if run is not None and alive[run["run_id"]]:
+            if (run is None and dead_pids_only) or (run is not None and alive[run["run_id"]]):
                 continue
             note = (f"lost: pid {run['pid']} gone" if run is not None else "lost: pid unknown (no run row)")
             note += f" ({tail})"
@@ -439,7 +441,7 @@ def record_issue(dataset: str, kind: str, key: str | None, detail: str | None, r
     return row["id"]
 
 
-def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[int, int]:
+def sync_issues(dataset: str, kinds, found, run_id: str | None = None, keep=None) -> tuple[int, int]:
     kinds = sorted(set(kinds))
     want = {(k, key): detail for k, key, detail in found}
     stray = sorted({k for k, _ in want} - set(kinds))
@@ -457,7 +459,8 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         for row in open_rows:
             if row["resolved_on"] is None:
                 have.setdefault((row["kind"], row["key"]), []).append(row)
-        gone = [{**row, "resolved_on": today} for k, rows_ in have.items() if k not in want for row in rows_]
+        gone = [{**row, "resolved_on": today} for k, rows_ in have.items()
+                if k not in want and not (keep is not None and keep(*k)) for row in rows_]
         fresh = [(k, key, detail) for (k, key), detail in sorted(want.items()) if (k, key) not in have]
         ids = _new_ids("build_issues", len(fresh)) if fresh else []
         new = [{"id": i, "dataset": dataset, "found_on": today, "kind": k, "key": key, "detail": detail,
@@ -467,6 +470,20 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
             for row in gone + new:
                 _put(p, "build_issues", row)
         return (len(new), len(gone)), (writes if gone or new else None)
+    return _transaction(["build_issues"], work)
+
+
+def prune_issues(days: int = ops.RESOLVED_ISSUE_DAYS) -> int:
+    cutoff = ops._prune_cutoff(days)
+
+    def work():
+        # Resolved rows have no lookup of their own, so this reads the whole table.
+        old = [r for r in _all("build_issues") if r["resolved_on"] is not None and r["resolved_on"] < cutoff]
+
+        def writes(p):
+            for row in old:
+                _delete(p, "build_issues", row)
+        return len(old), (writes if old else None)
     return _transaction(["build_issues"], work)
 
 
@@ -492,6 +509,11 @@ def start_run(run_id: str, dataset: str, trigger: str, params: dict | None = Non
                          "params": ops._json(params)})
 
 
+def running_runs() -> list[dict]:
+    return [r for r in _fetch("job_runs2", _client().smembers(_key("job_runs2", "running")))
+            if r.get("status") == "running" and r.get("finished_at") is None]
+
+
 def finish_run(run_id: str, status: str, error: str | None = None) -> None:
     def work():
         row = _one("job_runs2", run_id)
@@ -500,6 +522,11 @@ def finish_run(run_id: str, status: str, error: str | None = None) -> None:
         row = {**row, "status": status, "finished_at": time.time(), "error": error}
         return None, lambda p: _put(p, "job_runs2", row)
     _transaction(["job_runs2"], work)
+
+
+def run_started_at(run_id: str) -> float | None:
+    row = _one("job_runs2", run_id)
+    return row["started_at"] if row else None
 
 
 def last_builder_run() -> dict | None:

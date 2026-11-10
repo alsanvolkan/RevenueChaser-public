@@ -139,7 +139,7 @@ class TestFetch:
 
         dashboard, result = fetched.dashboard, fetched.result
         assert result.ok, f"comovement fetch failed: {result}\n{dashboard.logs()}"
-        raw = duckdb.connect(str(dashboard.store_dir / "raw.duckdb"), read_only=True)
+        raw = duckdb.connect(str(dashboard.db_file("comov_runs")), read_only=True)
         try:
             ids = raw.execute("SELECT DISTINCT run_id FROM comov_runs").fetchall()
             as_ofs = sorted(r[0] for r in raw.execute("SELECT as_of FROM comov_runs").fetchall())
@@ -164,7 +164,7 @@ class TestFetch:
 
         result = dashboard.run_job("/run/module_comovement")
         assert result.ok, f"comovement fetch failed: {result}\n{dashboard.logs()}"
-        conn = duckdb.connect(str(dashboard.store_dir / "raw.duckdb"))
+        conn = duckdb.connect(str(dashboard.db_file("comov_runs")))
         try:
             stored = conn.execute(
                 "SELECT as_of FROM comov_runs WHERE window_days = 126").fetchall()

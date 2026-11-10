@@ -51,11 +51,17 @@ Code, comments, commit messages, issues and docs are written in **English**.
 
 ## Tests
 
+- **Tests run only in GitHub Actions** (avo, 9 Nov 2026: "asla ve asla claude yerel makinasinda test kosma"). No
+  Claude session runs pytest, not in a cloud container, not on homesrv, not one file, not "just to check": a local
+  run is not deterministic and repeats what CI does. Push, open a **draft** PR into `main` at the first push (no PR,
+  no CI), and read CI on the head SHA. Rendering a page in Chromium for screenshots is not a test and stays allowed;
+  avo's screenshot approval gates "ready for review", not the draft.
 - **Unit suite:** `python -m pytest -q`.
 - **End-to-end tier:** `RC_E2E=1 python -m pytest module_testing/e2e -m e2e`.
 - **Both are offline by construction.** The root `conftest.py` replaces the socket primitives and raises
   `NetworkAccessAttempted` on any real connection; the e2e tier is allowed loopback only, because it drives a real
-  dashboard against a local mock-provider server. Mock at the HTTP boundary (the `mock_httpx` fixture), never at
+  dashboard against a local mock-provider server. A Python child the suite starts gets the same guard
+  (`module_testing/netguard/sitecustomize.py`, on its `PYTHONPATH`), with loopback open (#258). Mock at the HTTP boundary (the `mock_httpx` fixture), never at
   rule-math level.
 - `conftest.py` also redirects **both data roots** (`RC_STORE_DIR`, `RC_CACHE_DIR` and the other artifact roots) to a
   per-process temp directory, and the autouse `isolate_rawstore` fixture gives **every** test its own
@@ -64,14 +70,16 @@ Code, comments, commit messages, issues and docs are written in **English**.
   (`rawstore_template`, never opened by a test), not by running the ~1 s apply per test. A test of the schema apply
   or a migration itself is marked `@pytest.mark.rawstore_schema_from_scratch` and gets the apply on its own file.
 - CI (`.github/workflows/tests.yml`) runs both tiers on every pull request into `main` and on `main`. The unit tier
-  runs under `pytest -n auto --dist loadfile`, because a single pytest process is single-core bound.
+  runs as 4 parallel jobs (`unit (FULL) 0/4` ... `3/4`; `RC_SHARD` splits by test file), each under
+  `pytest -n auto --dist loadfile`, because a single pytest process is single-core bound.
   A push to a PR runs only the test files that import a changed file (`scripts/select_tests.py`; check names
   `unit (SELECTIVE)` / `e2e (SELECTIVE)`), and falls back to FULL when that is not safe to say. **The merge gate is a
   green `merge-gate` check on the current head** (it fails on purpose for a SELECTIVE run): label the PR `full-ci` before merging, and every
   later push stays FULL. `main` and a manual dispatch always run FULL.
-- **TDD:** watch each new test fail before implementing it, and run the tests of the modules you touched before
-  pushing. Report honestly which tests you saw red first and which mutation checks you ran — "not done" is an
-  acceptable answer, an implied "done" is not.
+- **TDD, read in CI:** "seen red first" is the `red-on-base` job's result (the PR's new tests run against the
+  merge-base), quoted in the PR report. It does not cover e2e tests: say "e2e: not checked". A mutation check is a
+  commit: push the mutation, read the red run, push the revert; required only for money, store, identity and
+  migration logic. Report honestly — "not done" is an acceptable answer, an implied "done" is not.
 - **A CI failure the diff cannot explain** is a flaky test. Fix it, or remove its host assumption, in the same
   branch; do not re-run until it passes.
 - **Docs that state a value the code owns** (schema version, suite tiers, ports) are compared against the code by

@@ -290,10 +290,9 @@ missing or its last build failed (in amber, with the reason).
 **Page-level cards:** the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
 provider for the New York day and the week from Monday, from `provider_calls_daily`, against the day caps of
 `rcdata/caps.py`, and UW's newest `x-uw-*` sample from `uw_remaining`: its daily count, what is left of our own cap
-(computed) and the per-minute window), market-store backups (the newest
-`ops` and `market` copies in the manifest, the 35-day raw copy dated by its newest copied file, the portable SSD
-from a `dataset_check` row of dataset `backup/portable` or "not recorded"; each warns past 35 days or when
-missing), the raw option retention warning (on until `RC_RAW_RETENTION_DAYS` or a `dataset_schedule` row
+(computed) and the per-minute window), weekly backups (the weekly job's manifests under
+`RAW_STORE_BACKUP_DIR/weekly-v2/<step>/`: each step's last good run and the error of a failed one, then the newest
+weekly copy of every file and how many are kept; amber past 8 days, red past 15 days or when there is none), the raw option retention warning (on until `RC_RAW_RETENTION_DAYS` or a `dataset_schedule` row
 `retention_days`, with the days as its cadence, says how long raw option files are kept; zero or a value that is
 not a whole number of days counts as unset, and the builder's retention hook reads the same rule,
 `rcdata/retention.py`), retirement (reads of
@@ -598,14 +597,15 @@ it, so without that line its old archives would never be listed. The newest copy
 ### 3.4 Automations panel
 
 `core/automations.py` is the one registry of the scheduled tasks RevenueChaser owns, and the one
-installer. Rows: `RC-Store-Backup` (daily 04:00, `scripts.backup_store --keep 5`),
-`RC-Relatedness-OffPeak` (12:30, `--run --cap 10`, the board's writer, #360), `RC-ValueChain-Sync` (13:00, `--sync-filings`),
-`RC-Daily-Bars` (22:35, `scripts.daily_bars --nightly --sec-files`), `RC-Screeners-Daily` (weekdays
-23:00, after `RC-Daily-Bars`, `app.universe_cli`), `RC-Forecast-Outcomes` (daily 23:45, after
+installer. Rows: `RC-Relatedness-OffPeak` (12:30, `--run --cap 10`, the board's writer, #360), `RC-ValueChain-Sync` (13:00, `--sync-filings`),
+`RC-Daily-Bars` (23:00, `scripts.daily_bars --nightly --sec-files`), `RC-Screeners-Daily` (weekdays
+23:30, after `RC-Daily-Bars`, `app.universe_cli`), `RC-Forecast-Outcomes` (daily 23:35, after
 `RC-Daily-Bars`, `scripts.forecast_outcomes --nightly`), `RC-Forecast-Baselines` (daily 23:50, after
 `RC-Forecast-Outcomes`, `scripts.forecast_baselines --nightly`), `RC-Index-Lists` (Saturday 10:00,
-`scripts.index_lists --weekly`) and `RC-Earnings-Inputs` (Tuesday to Saturday 01:30, after
-`RC-Daily-Bars`, `scripts.nightly_inputs earnings`). Each entry carries its schedule, the tables it
+`scripts.index_lists --weekly`) and the Earnings inputs, one `scripts.nightly_inputs <step>` entry per
+schedule (#620, none chained): `RC-Earnings-Calendar` (Monday and Thursday 23:40), `RC-Short-Interest`
+(weekdays 23:40), `RC-Earnings-Daytime` (Tuesday and Thursday 13:00), `RC-Macro-Weekly` (Thursday 23:40) and
+`RC-CFTC-Weekly` (Friday 23:40), each with `--max-uw-calls unlimited`. Each entry carries its schedule, the tables it
 writes, whether it is off-peak gated, a log path under `.cache/logs/` and its task settings (named
 for Task Scheduler; the Linux backend maps the ones systemd has).
 
@@ -921,3 +921,43 @@ Checked 2026-09-24. None of these replaces our own SEC client and filing picker.
 The Stage 2 and Stage 3 dataset tables in [`data_architecture.md`](data_architecture.md) are still
 written by hand rather than generated from `core/datasets.py`. That generator is code, not
 documentation, so it is not part of this change and issue #146 stays open for it.
+
+---
+
+## 9. Live in Grafana: `GET /metrics`
+
+The page is the library: what data exists, where it comes from, its settings and the complex presses. The live
+view of health and fetch is Grafana on homesrv (avo, 6 Nov 2026), fed by the dashboard's `GET /metrics`
+(`module_settings/metrics.py`, Prometheus text format, scraped every 60 s on loopback). It reads only the ops store,
+the backup manifests and the IBKR login record, never the serving DuckDB files, so the route opens no store session.
+The builder timer is read in the background at most once a minute. A part that cannot be read leaves its family
+empty and counts one `rc_metrics_read_errors_total{part}` (every part starts at 0); a dataset that cannot be read is left
+out whole and counted under `datasets`, and the others still report. The scrape itself never fails.
+
+The names are a contract with the Grafana boards; `core/tests/test_doc_constants.py` checks this list against the
+code:
+
+| Metric | Labels | What |
+|---|---|---|
+| `rc_queue_requests` | `status` | build requests queued and running now |
+| `rc_run_elapsed_seconds` | `id`, `dataset`, `who` | how long a running request has run; `who` is `systemd`, `claude`, `unknown` or `lost` |
+| `rc_run_limit_seconds` | `id`, `dataset` | its unit's time limit, when it has one |
+| `rc_provider_calls_today` | `provider` | calls on the New York day |
+| `rc_provider_day_cap` | `provider` | our day cap |
+| `rc_provider_failures_today` | `provider` | failed calls on the New York day |
+| `rc_dataset_state` | `dataset`, `kind`, `state` | 1 for its state: fresh, unchanged, late, stale, never |
+| `rc_dataset_last_check_result` | `dataset`, `kind` | 0 changed or unchanged, 1 skipped, 2 failed |
+| `rc_dataset_checked_timestamp_seconds` | `dataset`, `kind` | the newest check's day |
+| `rc_dataset_paused` | `dataset`, `kind` | 1 when its schedule is paused |
+| `rc_dataset_open_issues` | `dataset`, `kind` | open build issues |
+| `rc_builder_last_run_timestamp_seconds` | | when the builder last started a run |
+| `rc_builder_timer_on` | | 1 on, 0 off, absent when not known |
+| `rc_backup_newest_timestamp_seconds` | `kind` | the newest backup of a kind |
+| `rc_switch_on` | `name` | the fetch and backup switches |
+| `rc_ibkr_state` | `state` | 1 for the gateway's login state: up, silent (port open, API not answering), down, unknown, not_set; any other text reads unknown |
+| `rc_threshold` | `name` | the page's alarm thresholds, from `control.py`, so an alert rule does not retype them |
+| `rc_metrics_read_errors_total` | `part` | readers that failed since the dashboard started |
+| `rc_metrics_build_seconds` | | what the scrape cost |
+
+`GET /api/build/datasets` lists every dataset the builder knows (`name`, `kind`, `attended`, `providers`): the
+allow-list for the Grafana buttons.

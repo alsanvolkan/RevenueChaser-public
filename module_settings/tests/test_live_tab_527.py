@@ -1,0 +1,59 @@
+"""#527: the RC Data Health and RC Fetch Grafana boards live inside the app, on a Live tab of Data/Health.
+
+avo, 8 Nov 2026: "bunlarin ne isi var burada? bunlar revenue chaser app icine gomulu olmaliydi". Grafana runs on
+the same host as the dashboard, port 3000, and allows only this app's origin to frame it (home-server units/
+grafana-server.service.d/life.conf, CSP frame-ancestors). The frame loads only when the tab opens.
+"""
+from __future__ import annotations
+
+import re
+
+from RevenueChaser.module_settings import report
+
+
+def _page() -> str:
+    return report.render_settings_dashboard({"newdata": {"error": "not read in this test"}, "tickers": []})
+
+
+def test_live_is_the_third_tab_and_starts_hidden():
+    html = _page()
+    strip = html[html.index('id="settings-tabs"'):html.index("</nav>")]
+    assert strip.index('id="tab-data"') < strip.index('id="tab-health"') < strip.index('id="tab-live"')
+    assert re.search(r'<div[^>]*id="panel-live"[^>]*role="tabpanel"[^>]*hidden', html)
+    assert report.SETTINGS_TABS["tabs"]["live"] == "panel-live"
+
+
+def test_the_frame_has_no_source_until_the_tab_opens():
+    """A Data/Health visit must not load Grafana: the frame gets its address from the script, on the tab's open."""
+    html = _page()
+    frame = re.search(r"<iframe[^>]*id=\"live-frame\"[^>]*>", html).group(0)
+    assert " src=" not in frame
+    assert 'title="' in frame and 'loading="lazy"' in frame
+
+
+def test_the_boards_and_the_grafana_address():
+    html = _page()
+    for uid in ("rc-data-health", "rc-fetch", "rc-jobs"):
+        assert f'data-board="{uid}"' in html
+    js = report.LIVE_JS
+    assert "location.hostname" in js and "':3000/d/'" in js, "same host as the page, Grafana's port"
+    assert "kiosk" in js and "theme=" in js
+    assert "rc-data-health" in report.LIVE_HTML and "rc-fetch" in report.LIVE_HTML
+
+
+
+def test_the_health_tab_no_longer_draws_the_live_parts():
+    """#527 B4, decision D4 = B (avo, 8 Nov 2026 02:39): the queue, the running jobs and the "right now" strip leave
+    the Health tab once Grafana shows them; one link to the Live tab takes their place. The Data tab keeps its top
+    bar, so the switches and the gateway login link are still one tab away."""
+    from RevenueChaser.module_settings.tests.test_control_view import control_nd
+    from RevenueChaser.module_settings.tests.test_report import _panel, _payload
+    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
+                                                 ibkr_login_url="https://gateway.example/"))
+    health = _panel(html, "panel-health")
+    assert 'id="sec-queue"' not in health and 'id="health-queue"' not in health
+    assert 'class="topbar"' not in health and "sw-msg-h" not in health
+    link = re.search(r'<a[^>]*id="health-live-link"[^>]*>', health).group(0)
+    assert 'data-board="rc-fetch"' in link and 'href="#live"' in link
+    data = _panel(html, "panel-data")
+    assert data.count('class="topbar"') == 1 and 'href="https://gateway.example/"' in data

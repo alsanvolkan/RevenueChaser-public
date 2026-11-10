@@ -22,7 +22,8 @@ from pathlib import Path
 import duckdb
 
 from ...core import calendar
-from . import base
+from . import base, partitions
+from . import dirty as dirty_set
 from .sources import bls, cboe, cftc, cftc_schedule, fed, fred, treasury, yahoo
 
 NAME = "market_series"
@@ -82,9 +83,12 @@ class MarketSeries:
     kind = "market"
     providers = tuple(getattr(s, "PROVIDER", s.SOURCE) for s in SOURCES)   # Yahoo counts under yfinance
     tables = (TABLE,)
+    # The sources' folders: this dataset has none of its own, so ``dirty.scan`` reads these (#446).
+    parquet_reads = tuple(f"{s.SOURCE}/{s.DATASET_DIR}" for s in SOURCES)
 
     def default_as_of(self) -> date:
-        return calendar.today_ny()
+        # #643 F4: the evening of the close, as the UW datasets; "today" took Friday's close only on Monday.
+        return calendar.latest_complete_session()
 
     def _each_source(self, ctx: base.RunContext, step) -> list[Path]:
         out, failed = [], []
@@ -131,25 +135,42 @@ class MarketSeries:
         return [base.upsert_partition(rows, SCHEMA, KEY, partition_path(src, year))
                 for (_, year), (src, rows) in sorted(groups.items(), key=lambda kv: kv[0])]
 
+    def dirty(self, ctx: base.RunContext):
+        """The ``<source>/<year>`` partitions that changed (#446); :data:`dirty.CLEAN` for none."""
+        if ctx.changed is None:
+            return dirty_set.ALL
+        keys = set()
+        for src in SOURCES:
+            for year in dirty_set.keys_of(ctx.changed, _source_dir(src), "year"):
+                keys.add(f"{src.SOURCE}/{year}")
+        return dirty_set.Dirty(keys=frozenset(keys)) if keys else dirty_set.CLEAN
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        cols = ", ".join(f'"{c}" {t}' for c, t in SCHEMA)
-        con.execute(f"CREATE TABLE {TABLE} ({cols}, PRIMARY KEY ({', '.join(KEY)}))")
-        parts = sorted(p for src in SOURCES
-                       for p in (base.parquet_root() / src.SOURCE / src.DATASET_DIR).glob("year=*/part-0.parquet"))
-        if parts:
-            files = ", ".join(base.sql_path(p) for p in parts)
-            names = ", ".join(f'"{c}"' for c, _ in SCHEMA)
-            con.execute(f"INSERT INTO {TABLE} SELECT {names} FROM read_parquet([{files}], union_by_name = true)")
-        return {TABLE: int(con.execute(f"SELECT count(*) FROM {TABLE}").fetchone()[0])}
+        parts = {f"{src.SOURCE}/{p.parent.name.split('=', 1)[1]}": p
+                 for src in SOURCES for p in _source_dir(src).glob("year=*/part-0.parquet")}
+        return partitions.load(ctx, con, NAME, TABLE, SCHEMA, KEY, parts, _where)
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
-        added, removed = base.compare_with_live(con, self.kind, TABLE, COMPARE)
+        added, removed = partitions.compare(ctx, con, self.kind, NAME, TABLE, COMPARE, _where)
         rows = int(con.execute(f"SELECT count(*) FROM {TABLE}").fetchone()[0])
         sources = {r[0] for r in con.execute(f"SELECT DISTINCT source FROM {TABLE}").fetchall()}
         as_of = ctx.as_of or self.default_as_of()
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": as_of.isoformat(), "rows": rows, "added": added, "removed": removed,
                 "coverage": round(len(sources) / len(SOURCES), 4)}
+
+
+def _source_dir(src) -> Path:
+    return base.parquet_root() / src.SOURCE / src.DATASET_DIR
+
+
+def _where(key: str) -> str:
+    """The served rows of partition ``<source>/<year>``: ``to_parquet_all`` writes a row to its source's folder,
+    under the year of its ``obs_date``."""
+    source, year = key.split("/")
+    if source not in {s.SOURCE for s in SOURCES}:
+        raise ValueError(f"not a market_series source: {source!r}")
+    return f"source = '{source}' AND year(obs_date) = {int(year)}"
 
 
 DATASET = MarketSeries()

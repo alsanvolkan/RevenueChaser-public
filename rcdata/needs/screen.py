@@ -49,7 +49,7 @@ DATASETS: dict[str, DatasetCard] = {
     'finra/short_interest': DatasetCard('Short interest (FINRA)', step=10, role='first'),
     'fundamentals/tables': DatasetCard('Fundamentals (served tables, peers, build issues)', step=9, role='build'),
     'funds/index_holdings': DatasetCard('Index membership (ETF holdings files)', step=6, role='first'),
-    'funds/etf_holdings': DatasetCard('ETF holdings, whole: 38 funds daily (SPDR, iShares, Unusual Whales), every other ETF '
+    'funds/etf_holdings': DatasetCard('ETF holdings, whole: 48 funds daily (SPDR, iShares, Unusual Whales), every other ETF '
                                       'every 30 days (Unusual Whales)', step=6,
                                       role='only source'),
     'ibkr/iv_history': DatasetCard('One year of 30-day implied volatility per list name (IBKR)', coverage_target=None, step=11, role='first'),
@@ -86,6 +86,7 @@ DATASETS: dict[str, DatasetCard] = {
     'wrds/sec_idhist': DatasetCard('Compustat securities and identifier history (WRDS)', step=3, role='fills'),
     'wrds/segments': DatasetCard('Compustat segments and customers (WRDS)', step=9, role='fills'),
     'yfinance/estimates': DatasetCard('Analyst estimates (yfinance)', step=9, role='first'),
+    'yfinance/fx': DatasetCard('Daily exchange rates for non-USD filers (Yahoo)', step=9, role='fills'),
     'yfinance/float': DatasetCard('Float (Yahoo)', step=8, role='fills'),
 }
 
@@ -286,7 +287,7 @@ PROVIDERS: dict[str, ProviderWords] = {
                          f"one shared bucket, {sec_throttle.RATE} a second, for every SEC caller · 10 split between the SEC processes when it falls back",
                          "10 a second per User-Agent (fair access)"),
     "uw": ProviderWords("Unusual Whales", "options, SPX, float, financials", "a budget a run · each endpoint's own page size",
-                        "100,000 a day (owner-marked avo 2026-11-02)"),
+                        "no day cap (owner-removed avo 2026-11-10)"),
     "alpaca": ProviderWords("Alpaca", "bars, corporate actions", "200 a minute",
                             "200 historical calls a minute (Basic plan) · no SIP data of the last 15 minutes"),
     "yfinance": ProviderWords("yfinance", "float, estimates, MOVE", "2,000 an hour · float lookups 1.5 s apart · a 429 stops the run",

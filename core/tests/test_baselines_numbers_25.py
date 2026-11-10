@@ -67,7 +67,7 @@ def _seed(series, *, universe=None):
 
 def _row(basis="universe", horizon=30):
     got = rawstore.query(f"SELECT * FROM {TABLE} WHERE forecast_date = ? AND basis = ? AND horizon_days = ?",
-                         [D, basis, horizon])
+                         [D, basis, horizon], db="forecast")
     assert len(got) == 1, f"{basis}/{horizon}: {got}"
     return got[0]
 
@@ -78,7 +78,7 @@ def test_a_baselines_run_populates_forecast_baselines(rawstore_tmp_db, clock):
     out = baselines.run(now=NOW, run_id="r1")
     assert out["written"] == rawstore.count(TABLE) > 0
     assert [r["horizon_days"] for r in rawstore.query(f"SELECT horizon_days FROM {TABLE} WHERE basis = ? "
-                                                      "ORDER BY horizon_days", ["universe"])] == \
+                                                      "ORDER BY horizon_days", ["universe"], db="forecast")] == \
         sorted(baselines.HORIZONS)
 
 
@@ -102,7 +102,7 @@ def test_the_deciles_partition_the_members_they_can_place(rawstore_tmp_db, clock
     _seed([_series(f"N{i}", mfe=0.03 + 0.01 * i, amp=0.0005 * (i + 1)) for i in range(20)])
     baselines.run(now=NOW, run_id="r1")
     rows = [r for r in rawstore.query(f"SELECT * FROM {TABLE} WHERE forecast_date = ? AND horizon_days = 30 "
-                                      "AND basis <> ? ORDER BY vol_lo NULLS FIRST, basis", [D, "universe"])
+                                      "AND basis <> ? ORDER BY vol_lo NULLS FIRST, basis", [D, "universe"], db="forecast")
             if r["n"]]
     assert len(rows) >= 2
     assert sum(r["n"] for r in rows) == _row()["n"] == 20

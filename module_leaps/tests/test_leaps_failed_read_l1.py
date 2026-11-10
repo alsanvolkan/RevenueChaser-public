@@ -80,7 +80,7 @@ def store(rawstore_tmp_db):
 
 
 def _cache_row():
-    return rawstore.query("SELECT payload FROM leaps_cache WHERE ticker = 'BBB'")
+    return rawstore.query("SELECT payload FROM leaps_cache WHERE ticker = 'BBB'", db="leaps")
 
 
 def _spy_save(monkeypatch):
@@ -157,7 +157,7 @@ def test_a_print_without_size_or_sides_is_stored_null(rawstore_tmp_db):
     p = engine._normalize_print(_tape_row("p1", size=..., ask_vol=..., bid_vol=None))
     assert p["size"] is None and p["ask_vol"] is None and p["bid_vol"] is None
     engine.store_prints([p], today=TODAY, run_at=COMPLETE)
-    (got,) = rawstore.query("SELECT size, ask_vol, bid_vol FROM leaps_flow_prints WHERE id = 'p1'")
+    (got,) = rawstore.query("SELECT size, ask_vol, bid_vol FROM leaps_flow_prints WHERE id = 'p1'", db="leaps")
     assert got == {"size": None, "ask_vol": None, "bid_vol": None}
 
 

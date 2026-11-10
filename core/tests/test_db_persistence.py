@@ -359,7 +359,7 @@ def test_same_day_snapshot_overwrites(rawstore_tmp_db):
 
     rs.save_snapshot([_snap("XLK")], as_of=date(2026, 8, 14))
     rs.save_snapshot([_snap("XLF")], as_of=date(2026, 8, 14))
-    rows = rawstore.query("SELECT ticker FROM rotation_snapshots WHERE as_of_date='2026-08-14'")
+    rows = rawstore.query("SELECT ticker FROM rotation_snapshots WHERE as_of_date='2026-08-14'", db="sector_rotation")
     assert [r["ticker"] for r in rows] == ["XLF"]
 
 
@@ -420,6 +420,7 @@ POPULATION: dict[str, str] = {
     "swing_gates": "module_swing_potential/tests/test_swing_scores.py::test_persist_writes_both",
     "llm_cache": "core/tests/test_relatedness_store.py::test_llm_cache_and_profiles",
     "relatedness_profiles": "core/tests/test_relatedness_store.py::test_llm_cache_and_profiles",
+    "relatedness_embeddings": "core/tests/test_schema_v13_relatedness.py::test_the_new_columns_hold_json_and_the_vector_holds_bytes",
     "relatedness_attributes": "core/tests/test_relatedness_store.py::test_relatedness_attributes_and_scores",
     "relatedness_scores": "core/tests/test_relatedness_store.py::test_relatedness_attributes_and_scores",
     "theme_runs": "module_relatedness/tests/test_themes.py::test_build_shadow_writes_nested_themes",
@@ -500,6 +501,15 @@ POPULATION: dict[str, str] = {
         "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
     "sec13f_metrics_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
     "financials_report_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
+    # Board files (S9, S16): each table is filled by its board's incremental build.
+    "news_events": "module_news/tests/test_calendar.py::test_first_build_upserts_every_event_into_the_board_file",
+    "news_highlight": "module_news/tests/test_calendar.py::test_the_highlight_is_the_most_important_live_event_earliest_on_a_tie",
+    "news_meta": "module_news/tests/test_calendar.py::test_a_second_build_reads_only_new_rows_and_keeps_first_seen",
+    "news_headlines": "module_news/tests/test_headlines.py::test_fetch_stores_clean_headlines_with_their_tickers_once",
+    "welcome_snapshot": "module_welcome/tests/test_build.py::test_the_snapshot_keeps_the_last_close_its_change_and_a_20_day_line",
+    "welcome_earnings": "module_welcome/tests/test_build.py::test_earnings_of_today_and_the_next_trading_day_only",
+    "welcome_freshness": "module_welcome/tests/test_build.py::test_freshness_keeps_each_jobs_last_run_last_success_and_last_failure",
+    "welcome_meta": "module_welcome/tests/test_build.py::test_freshness_reads_only_runs_finished_after_its_mark",
 }
 
 _ROOT = Path(__file__).resolve().parent.parent.parent

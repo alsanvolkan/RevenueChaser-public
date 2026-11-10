@@ -200,6 +200,19 @@ def test_the_backfill_reads_every_tier_a_company_once_and_serves_its_facts(sec):
     assert len(sec.calls("companyfacts")) == 4                         # resumable: nobody is read twice
 
 
+def test_the_backfill_retypes_the_facts_already_on_disk(sec):
+    # A rule change of the extraction (#271's D&A rungs) reaches a company held on disk only through a retype: the
+    # backfill types every company's newest raw again, with no SEC request (as sec/filings does).
+    import shutil
+    _answers(sec)
+    fx.run(companyfacts.NAME, mode="backfill", to="2026-10-28", no_duckdb=True)
+    shutil.rmtree(companyfacts.common.parquet_dir(companyfacts.NAME) / "cik=789019")
+    check = fx.run(companyfacts.NAME, mode="backfill", to="2026-10-29")
+    assert check["result"] in ("changed", "unchanged"), check["note"]
+    assert len(sec.calls("companyfacts")) == 4                         # no company asked again
+    assert fx.q("SELECT count(*) > 0 FROM fundamental_fact WHERE cik = '789019'") == [(True,)]
+
+
 def test_without_the_bucket_requests_to_the_sec_are_spaced_at_the_fallback_share(sec, monkeypatch):
     monkeypatch.setattr(companyfacts.common.sec_throttle, "pace", lambda: False)
     _answers(sec)
@@ -306,6 +319,35 @@ def test_a_stretch_of_open_weekdays_with_no_index_stops_the_scan(sec):
     ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
     with pytest.raises(base.SourceError, match="3 weekdays EDGAR was open"):
         sec_index.filings(ctx, as_of, lookback=7)
+    for day in (date(2026, 11, 13), date(2026, 11, 16), date(2026, 11, 17), date(2026, 11, 18)):
+        assert not sec_index.absent_path(day).exists(), day
+
+
+def test_a_day_in_the_archives_2014_q2_gap_is_written_off(sec):
+    """#507: sec.gov holds no daily index for any weekday of 2014-04-01..2014-06-30 (measured 2026-11-08: all 65
+    absent), so those days are explained the way a closed day is, and a 2014 backfill does not stop on them."""
+    sec.add("master.", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)
+    ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
+    assert sec_index.fetch_day(ctx, date(2014, 5, 14), date(2026, 11, 8)) is None
+    assert sec_index.absent_path(date(2014, 5, 14)).exists()
+    assert ctx.notes == ["2014-05-14: no daily index, a gap in EDGAR's daily index (2014 Q2)"]
+
+
+def test_a_stretch_with_no_index_goes_on_when_a_kept_index_still_answers(sec):
+    """#507: the scan asks the archive for the newest index it keeps before a stretch stops it. A real answer says
+    the bucket is not refusing everything, so the scan goes on; the days are still not written off, and are asked
+    again by the next run."""
+    as_of = date(2026, 11, 20)
+    sec.add("master.20261119.idx", fx.daily_index([]))
+    sec.add("master.", MISSING_OBJECT, status=403, headers=MISSING_HEADERS)
+    ctx = base.RunContext(run_id="r", dataset=companyfacts.NAME, sleep=lambda s: None)
+    assert sec_index.fetch_day(ctx, date(2026, 11, 19), as_of) is not None          # the kept index
+    # The ownership walk keeps its own copies in the same folder, named so that they sort after the dated ones.
+    base.write_raw(sec_index.raw_path(date(2026, 11, 19)).with_name("master.20261119.idx.gz"), b"x")
+    assert sec_index.filings(ctx, as_of, lookback=7) == []
+    assert any("handed over one it holds" in n for n in ctx.notes), ctx.notes
+    # One probe for the stretch 16-18 Nov; the 13th, contiguous with it, does not ask again.
+    assert len(sec.calls("master.20261119.idx")) == 2
     for day in (date(2026, 11, 13), date(2026, 11, 16), date(2026, 11, 17), date(2026, 11, 18)):
         assert not sec_index.absent_path(day).exists(), day
 

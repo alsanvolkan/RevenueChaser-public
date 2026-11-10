@@ -193,7 +193,7 @@ def test_a_live_fetch_with_a_full_rrg_stays_complete_and_records_theme_holdings_
 def test_a_live_fetch_missing_two_etfs_keeps_the_complete_stored_same_day_snapshot(board, monkeypatch):
     rotation_store.save_snapshot([_snap(t, close=50.0) for t in WANTED], as_of=DAY)
     before = rawstore.query("SELECT * FROM rotation_snapshots WHERE as_of_date = ? ORDER BY ticker",
-                            [DAY.isoformat()])
+                            [DAY.isoformat()], db="sector_rotation")
     _engine(monkeypatch, [_snap(t, close=99.0) for t in WANTED[2:]])
     monkeypatch.setattr(rot_engine, "fetch_all_holdings", lambda uw, snaps: {})
     monkeypatch.setattr(rot_engine, "sector_etf_trees", lambda: {})
@@ -202,7 +202,7 @@ def test_a_live_fetch_missing_two_etfs_keeps_the_complete_stored_same_day_snapsh
     msg = exc.value.message
     assert WANTED[0] in msg and WANTED[1] in msg and "kept the stored" in msg
     assert rawstore.query("SELECT * FROM rotation_snapshots WHERE as_of_date = ? ORDER BY ticker",
-                          [DAY.isoformat()]) == before                      # the day was not replaced
+                          [DAY.isoformat()], db="sector_rotation") == before                      # the day was not replaced
     html = runners.ROTATION_LATEST.read_text(encoding="utf-8")
     assert len(_table_rows(html)) == len(WANTED) and _cell(html, "XLK", "close") == "$50.00"   # the stored rows
     head = _header()
@@ -216,7 +216,7 @@ def test_a_degraded_live_fetch_with_nothing_better_stored_is_saved_and_says_so(b
     with pytest.raises(JobMessage) as exc:
         runners.run_rotation_latest(_UW())
     assert WANTED[0] in exc.value.message and WANTED[1] in exc.value.message
-    stored = rawstore.query("SELECT ticker FROM rotation_snapshots WHERE as_of_date = ?", [DAY.isoformat()])
+    stored = rawstore.query("SELECT ticker FROM rotation_snapshots WHERE as_of_date = ?", [DAY.isoformat()], db="sector_rotation")
     assert len(stored) == len(WANTED) - 2
 
 

@@ -1,7 +1,8 @@
 """Nightly inputs steps (C25a/K11, #383): one scheduled task that runs a list of independent sweeps.
 
 A step is a registry entry (``core/automations.py``) whose command is
-``python -m RevenueChaser.scripts.nightly_inputs <step> --max-uw-calls N --max-fred-calls N --max-yf-calls N``.
+``python -m RevenueChaser.scripts.nightly_inputs <step> --max-uw-calls N --max-fred-calls N --max-yf-calls N``
+(``N`` a whole number or ``unlimited``).
 ``STEPS`` maps the step name to the function that returns its sweeps; a sweep fetches one input and writes its own
 tables. The contract every step keeps:
 
@@ -12,10 +13,11 @@ tables. The contract every step keeps:
   others still run. Sweeps share data through the store, never through memory, so a sweep that reads what an earlier
   one wrote falls back to the rows already stored when that one failed.
 - **Calls are capped per night, per provider.** One ``CallBudget`` per provider (``uw``, ``fred``, ``yfinance``,
-  ``cboe``, ``cftc``), shared by every sweep of the run; a cap of 0 makes no call. A request that would pass the cap is
-  refused before it is sent, and one log line says so. The count is per session, not per process: a second run of the
-  same night (a manual run, a catch-up) starts from what the first one spent (``<step>_calls.json`` under
-  ``config.OUTPUT_DIR``). A UW call is one ``get_result`` (the house convention, as ``prices.UW_NIGHTLY_CAP``): its
+  ``cboe``, ``cftc``), shared by every sweep of the run; a cap of 0 makes no call, and a cap of ``None``
+  (``unlimited`` on the command line, #620) refuses nothing: the provider's own daily limit is the only one. A
+  request that would pass the cap is refused before it is sent, and one log line says so. The count is per session,
+  not per process: a second run of the same night (a manual run, a catch-up) starts from what the first one spent
+  (``<step>_calls.json`` under ``config.OUTPUT_DIR``). A UW call is one ``get_result`` (the house convention, as ``prices.UW_NIGHTLY_CAP``): its
   retries of a 429 or 5xx are the same call.
 - **job_runs and run ids as today.** The run id is ``ledger.new_run_id()``, so under the scheduler every row joins the
   task's ``job_runs`` row (``rawstore.task_run``). Writes go through ``record_first`` (append tables only: the first
@@ -45,7 +47,13 @@ STATUSES = ("ok", "partial", "skipped", "failed")
 
 # step name -> "module:function" returning the step's sweeps (imported only when the step runs).
 STEPS: dict[str, str] = {
-    "earnings": "RevenueChaser.module_earnings_radar.inputs:sweeps",     # RC-Earnings-Inputs (E0, #372)
+    "earnings": "RevenueChaser.module_earnings_radar.inputs:sweeps",     # all seven, for a manual run (E0, #372)
+    # one scheduled registry entry each (#620)
+    "earnings-calendar": "RevenueChaser.module_earnings_radar.inputs:calendar_sweeps",     # RC-Earnings-Calendar
+    "short-interest": "RevenueChaser.module_earnings_radar.inputs:short_interest_sweeps",  # RC-Short-Interest
+    "earnings-daytime": "RevenueChaser.module_earnings_radar.inputs:daytime_sweeps",       # RC-Earnings-Daytime
+    "macro-weekly": "RevenueChaser.module_earnings_radar.inputs:macro_sweeps",             # RC-Macro-Weekly
+    "cftc": "RevenueChaser.module_earnings_radar.inputs:cftc_sweeps",                      # RC-CFTC-Weekly
 }
 
 
@@ -56,12 +64,15 @@ def _stderr(line: str) -> None:
 # --- call caps ------------------------------------------------------------------------------------------------------
 
 class CallBudget:
-    """At most ``limit`` calls to one provider this night; ``before`` were spent by an earlier run of the night."""
+    """At most ``limit`` calls to one provider this night (``None``: no cap, only the count); ``before`` were spent
+    by an earlier run of the night."""
 
-    def __init__(self, provider: str, limit: int, *, before: int = 0, log: Callable[[str], None] | None = None):
-        if int(limit) < 0:
+    def __init__(self, provider: str, limit: int | None, *, before: int = 0,
+                 log: Callable[[str], None] | None = None):
+        if limit is not None and int(limit) < 0:
             raise ValueError(f"{provider}: a call cap cannot be negative ({limit})")
-        self.provider, self.limit, self.before = provider, int(limit), max(0, int(before))
+        self.provider, self.before = provider, max(0, int(before))
+        self.limit = None if limit is None else int(limit)
         self.used = self.refused = 0
         self._log = log
         self._told = False
@@ -69,12 +80,14 @@ class CallBudget:
 
     @property
     def left(self) -> int:
+        if self.limit is None:
+            return sys.maxsize
         return max(0, self.limit - self.before - self.used)
 
     def take(self, n: int = 1) -> bool:
         """Reserve ``n`` calls; False (and nothing reserved) when they would pass the cap."""
         with self._lock:
-            if self.before + self.used + n <= self.limit:
+            if self.limit is None or self.before + self.used + n <= self.limit:
                 self.used += n
                 return True
             self.refused += n
@@ -173,7 +186,7 @@ def _save_spent(path: Path, session: date, budgets: dict[str, CallBudget], log) 
         log(f"call ledger not saved ({exc})")
 
 
-def run_step(step: str, sweeps, *, caps: dict[str, int], run_id: str | None = None, run_at: float | None = None,
+def run_step(step: str, sweeps, *, caps: dict[str, int | None], run_id: str | None = None, run_at: float | None = None,
              log: Callable[[str], None] | None = None, ledger_dir: Path | None = None,
              uw_factory: Callable[[CallBudget], UWClient] | None = None) -> dict:
     """Run ``sweeps`` in order under one session and one set of budgets; see the module docstring."""
@@ -182,7 +195,7 @@ def run_step(step: str, sweeps, *, caps: dict[str, int], run_id: str | None = No
     if unknown:
         raise ValueError(f"no call cap for {sorted(unknown)}; providers are {', '.join(PROVIDERS)}")
     for p in PROVIDERS:
-        if int(caps.get(p, 0)) < 0:
+        if caps.get(p, 0) is not None and int(caps.get(p, 0)) < 0:
             raise ValueError(f"{p}: a call cap cannot be negative ({caps[p]})")
     run_at = time.time() if run_at is None else float(run_at)
     run_id = run_id or ledger.new_run_id()
@@ -202,7 +215,7 @@ def run_step(step: str, sweeps, *, caps: dict[str, int], run_id: str | None = No
 
     path = _ledger_path(ledger_dir, step)
     before = _spent_before(path, stamp.session_date)
-    budgets = {p: CallBudget(p, int(caps.get(p, 0)), before=before.get(p, 0), log=log) for p in PROVIDERS}
+    budgets = {p: CallBudget(p, caps.get(p, 0), before=before.get(p, 0), log=log) for p in PROVIDERS}
     ctx = StepRun(step=step, run_id=run_id, run_at=run_at, session_date=stamp.session_date, budgets=budgets,
                   log=log, uw_factory=uw_factory or CappedUWClient)
     try:
@@ -243,7 +256,10 @@ def summary_line(res: dict) -> str:
         if s.get("note"):
             text += f" ({s['note']})"
         parts.append(text)
-    calls = ", ".join(f"{p} {c['before'] + c['used']}/{c['limit']}" for p, c in res.get("calls", {}).items())
+    def _cap(c: dict) -> str:
+        return "unlimited" if c["limit"] is None else str(c["limit"])
+
+    calls = ", ".join(f"{p} {c['before'] + c['used']}/{_cap(c)}" for p, c in res.get("calls", {}).items())
     return f"{head}; {'; '.join(parts) or 'no sweeps'}; calls {calls}"
 
 

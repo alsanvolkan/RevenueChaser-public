@@ -35,6 +35,8 @@ from RevenueChaser.core.providers.unusual_whales import BREAKER_THRESHOLD, UWCli
 logger = logging.getLogger(__name__)
 
 MAX_HISTORY = 50
+#: Opens the message of a "done" run whose provider calls partly failed; the Welcome freshness card reads it.
+GAPS = "Finished with gaps"
 
 _JOB_QUEUE = queue.Queue()
 _JOBS: dict[str, dict] = {}
@@ -520,7 +522,7 @@ def _gap_fields(uw) -> dict:
         skipped = int(health.get("skipped_calls") or 0)
         stopped = (f" The client stopped sending requests after {BREAKER_THRESHOLD} failures in a row"
                    f" ({skipped} calls were never sent).")
-    message = (f"Finished with gaps: {failed} of {calls} Unusual Whales calls failed{example}.{stopped} "
+    message = (f"{GAPS}: {failed} of {calls} Unusual Whales calls failed{example}.{stopped} "
                "The board may be incomplete — run Fetch again later.")
     return {"message": message, "provider_health": health}
 

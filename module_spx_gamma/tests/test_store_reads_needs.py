@@ -41,7 +41,7 @@ def asks(monkeypatch):
 def test_every_reader_asks_its_need_judged_from_the_boards_day(rcdata_market, asks):
     day = fx.FRIDAY
     store_reads.read_day(day)
-    assert {need for need, _, _ in asks} == {"market.vix", "market.cot", "market.cot_release", "market.spx_close",
+    assert {need for need, _, _ in asks} == {"market.vix", "market.cot", "market.cot_release", "market.spx_close", "market.spx_greek_expiry_strike",
                                              "market.spx_expiry_strike"}
     assert all(as_of == day for _, as_of, _ in asks), asks
 

@@ -231,6 +231,11 @@ def test_stored_dgs10_and_a_rate_event_veto_an_extreme_duration():
     assert card.final_action == "NO_TRADE"
     assert "MACRO VETO" in (card.badges_json or "")
     assert p._dgs10_cache == yields
+    # #635: the veto's inputs ride the card, so a NO_TRADE can be audited from the stored row.
+    m = (card.rule_audit or {}).get("rule6_macro", {}).get("metrics") or {}
+    assert m.get("rate_sensitivity") == pytest.approx(-10.0, abs=0.01)
+    assert m.get("noisy_beta") is False
+    assert m.get("beta_tstat") is not None and abs(m["beta_tstat"]) >= 2.0
 
 
 def test_a_report_outside_the_stored_span_keeps_the_badge_only():

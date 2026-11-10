@@ -17,6 +17,7 @@ import json
 import pytest
 
 from RevenueChaser.core import rawstore
+from RevenueChaser.module_relatedness.tests.test_relatedness import v3_reply
 from RevenueChaser.core.providers import deepseek
 from RevenueChaser.module_relatedness import config, engine, store
 from RevenueChaser.module_relatedness.tests.test_relatedness import _prof, _seed_universe, long_body
@@ -47,8 +48,8 @@ def calls(rawstore_tmp_db, monkeypatch):
     return seen
 
 
-def test_the_prompt_is_v2():
-    assert config.PROMPT_VERSION == "v2" and store.PROMPT_VERSION == "v2"
+def test_the_prompt_is_v3():
+    assert config.PROMPT_VERSION == "v3b" and store.PROMPT_VERSION == "v3b"   # #400 (v2 was #388 D5)
 
 
 def test_the_same_input_is_not_profiled_again(calls):
@@ -108,7 +109,7 @@ def test_the_prompt_names_the_company(rawstore_tmp_db, monkeypatch):
 
     def fake_complete(system, user, **k):
         users.append(user)
-        return json.dumps({"products": ["gpu"], "end_markets": ["data center"]})
+        return v3_reply(["gpu"], ["data center"])
 
     monkeypatch.setattr(deepseek, "complete", fake_complete)
     engine.build_profiles(["AAA"])
@@ -122,7 +123,7 @@ def test_a_name_missing_from_the_universe_falls_back_to_the_ticker(calls):
 
 
 def test_v1_profiles_read_stale_and_are_redone(calls):
-    v1 = store.cache_key(deepseek.MODEL, config.THINKING, config.REASONING_EFFORT, "v1", "AAA", "h")
+    v1 = store.cache_key(deepseek.MODEL, False, "", "v1", "AAA", "h")
     store.save_profile("AAA", "", _prof(products=["old"]), v1, deepseek.MODEL, prompt_version="v1")
     assert store.stale_tickers(["AAA"]) == {"AAA"}
     engine.build_profiles(["AAA"])

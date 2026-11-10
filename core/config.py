@@ -67,35 +67,6 @@ CACHE_ROOT = OUTPUT_DIR
 # Logs tab reads them) sit next to the scheduled tasks' logs (core/automations.py). Not created at import.
 LOG_DIR = OUTPUT_DIR / "logs"
 RAW_STORE_BACKUP_DIR = os.getenv("RAW_STORE_BACKUP_DIR", "")
-# One raw snapshot per ISO week is kept in <backup dir>/weekly/ and never pruned (#277). It was a stopgap for the
-# history that raw tables do not keep; the change history has landed (#279), so the owner turns it off with
-# "0"/"false"/"no"/"off" (the PC .env does). The default stays "1"; copies already in weekly/ are left alone.
-RAW_STORE_BACKUP_WEEKLY = os.getenv("RAW_STORE_BACKUP_WEEKLY", "1")
-# A second folder OUTSIDE this machine's disk (a Google Drive for desktop folder or an external disk). After each
-# verified nightly backup the app copies the newest snapshot set and the three mirror folders (not the weekly
-# copies, #349) into its sub-folder RevenueChaser-backup, verified again, and keeps the newest N there (#275); nothing else in
-# the folder is touched. Empty = off: the step does nothing. The folder must already exist (only its last level is
-# created) and must not be the backup folder, inside it or around it; set it in .env, never in code.
-RAW_STORE_BACKUP_MIRROR = os.getenv("RAW_STORE_BACKUP_MIRROR", "")
-
-
-def _warn_gb(name: str, default: float) -> float:
-    """A positive number of GB from the environment; empty, unparsable, zero or negative keeps ``default``."""
-    try:
-        value = float(str(os.getenv(name, "")).strip())
-    except ValueError:
-        return default
-    return value if value > 0 else default
-
-
-# #309 part 3: the Settings row of RC-Store-Backup shows the size of the local backup folder and of the off-machine
-# folder (GB = 10^9 bytes) and warns when one is ABOVE its threshold. Defaults from avo (2026-10-16): 20 GB locally
-# (the folder was 12.8 GB that day), 320 GB off-machine (80% of the 400 GB Google quota; the Drive trash counts
-# toward it too, #349). One line each to change.
-BACKUP_WARN_GB_DEFAULT = 20.0
-BACKUP_MIRROR_WARN_GB_DEFAULT = 320.0
-RAW_STORE_BACKUP_WARN_GB = _warn_gb("RAW_STORE_BACKUP_WARN_GB", BACKUP_WARN_GB_DEFAULT)
-RAW_STORE_BACKUP_MIRROR_WARN_GB = _warn_gb("RAW_STORE_BACKUP_MIRROR_WARN_GB", BACKUP_MIRROR_WARN_GB_DEFAULT)
 
 # Raw EDGAR 10-K/20-F HTML — the one file-based DURABLE artifact, keyed
 # {cik}/{accession}.html.gz. Deliberately NOT under .store/ (that stays
@@ -110,9 +81,6 @@ EDGAR_DOCS_DIR.mkdir(parents=True, exist_ok=True)
 # makes each folder when it first writes there.
 MARKET_DIR = _root("RC_MARKET_DIR", BASE_DIR / ".market")
 MARKET_RAW_DIR = _root("RC_MARKET_RAW_DIR", BASE_DIR / ".market_raw")
-# Where the backup copies the newest raw days when they do not fit on the SSD (D3). Empty = off: the step logs a
-# warning and copies nothing, so there is no default folder.
-MARKET_RAW_COPY_DIR = _root("RC_MARKET_RAW_COPY_DIR", None)
 
 
 def resolved_roots() -> dict[str, Path]:
@@ -216,6 +184,10 @@ TS_SLOPE_HALF = -0.002
 TS_SLOPE_BACK_POINTS = -8.0
 TS_SLOPE_MILD_POINTS = -3.0
 TS_SLOPE_CONTANGO_POINTS = 5.0
+# Earnings night: the slope is read on the ex-event curve (``vol_metrics.ex_event_curve``), which the event fit leaves
+# near flat (10 Nov 2026: median +0.00016/day, most cards just above 0). Contango there needs this much, the mirror of
+# TS_SLOPE_HALF, so fit noise is not a +5.
+TS_SLOPE_EVENT_CONTANGO = 0.002
 
 # Strike window around spot used to qualify magnet / charm / vanna.
 GEX_ATM_WINDOW_PCT = 0.15
@@ -247,6 +219,8 @@ R3_OM_MAG_UP_BULL = 2.0
 R3_GM_HELD_YOY_BP = -0.005
 R3_SGA_Z_SPIKE = 3.0
 R3_MIN_OM_QUARTERS = 4
+# Below this summed revenue of the last four OM quarters (USD) the name is pre-revenue: no OM vote (review E6).
+R3_OM_MIN_REVENUE_4Q = 25_000_000.0
 # R6 — macro (rate sensitivity)
 R6_MIN_OBS = 20
 R6_RATE_HIGH = 2.0
@@ -275,6 +249,7 @@ TUNABLES = {
     "R3_GM_HELD_YOY_BP": R3_GM_HELD_YOY_BP,
     "R3_SGA_Z_SPIKE": R3_SGA_Z_SPIKE,
     "R3_MIN_OM_QUARTERS": R3_MIN_OM_QUARTERS,
+    "R3_OM_MIN_REVENUE_4Q": R3_OM_MIN_REVENUE_4Q,
     "R4_IV_RV_RICH": IV_RV_RICH,
     "R4_IV_RV_CHEAP": IV_RV_CHEAP,
     "R4_IV_RV_CHEAP_POINTS": IV_RV_CHEAP_POINTS,
@@ -284,6 +259,7 @@ TUNABLES = {
     "R4_TS_SLOPE_BACK_POINTS": TS_SLOPE_BACK_POINTS,
     "R4_TS_SLOPE_MILD_POINTS": TS_SLOPE_MILD_POINTS,
     "R4_TS_SLOPE_CONTANGO_POINTS": TS_SLOPE_CONTANGO_POINTS,
+    "R4_TS_SLOPE_EVENT_CONTANGO": TS_SLOPE_EVENT_CONTANGO,
     "R6_MIN_OBS": R6_MIN_OBS,
     "R6_RATE_HIGH": R6_RATE_HIGH,
     "R6_RATE_VETO": R6_RATE_VETO,

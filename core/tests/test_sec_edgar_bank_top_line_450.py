@@ -56,7 +56,7 @@ def _field(facts: dict, field: str) -> dict:
 # ── the table: two new fields, one tag each, and ``revenue`` untouched ──────
 
 def test_revenue_keeps_its_concepts_and_each_bank_tag_has_its_own_field():
-    assert se.CONCEPTS["revenue"][0] == [REV, RFC, SALES, RFC_INC]
+    assert se.CONCEPTS["revenue"][0] == [REV, RFC, SALES, RFC_INC, "RegulatedAndUnregulatedOperatingRevenue"]
     assert se.CONCEPTS[NET] == ([RNOI], "USD")
     assert se.CONCEPTS[GROSS] == ([IODI], "USD")
     assert not set(se.CONCEPTS["revenue"][0]) & {RNOI, IODI}

@@ -49,7 +49,8 @@ def test_extreme_rate_sensitivity_is_badge_not_veto_without_overlap():
 
 
 def test_extreme_rate_sensitivity_veto_with_overlap():
-    r = score(rate_sensitivity=5.0, rate_event_overlap=True)
+    r = score(rate_sensitivity=5.0, rate_event_overlap=True, beta_tstat=3.1)
+    assert r.raw_metrics.get("beta_tstat") == 3.1   # the card carries the t value (#635)
     assert r.available is True
     assert r.flags == ["extreme rate sensitivity"]
     assert any("macro veto" in x for x in r.reasons)
@@ -61,6 +62,16 @@ def test_extreme_beta_noisy_tstat_never_vetoes():
     assert r.available is True
     assert r.flags == []
     assert r.raw_metrics.get("noisy_beta") is True
+
+
+def test_extreme_beta_without_tstat_is_badge_only():
+    """#635 (owner, 10 Nov 2026: "olmasın, sadece rozet"): a beta with no t statistic has no evidence it is
+    real, so it is noisy by definition - badge, never a veto, even on a CPI/FOMC overlap."""
+    r = score(rate_sensitivity=8.7, rate_event_overlap=True, beta_tstat=None)
+    assert r.flags == []
+    assert r.raw_metrics.get("noisy_beta") is True
+    assert r.raw_metrics.get("beta_tstat") is None
+    assert r.raw_metrics.get("rate_badge") is True
 
 
 def test_overlap_without_extreme_beta_no_veto():
@@ -81,7 +92,7 @@ def test_no_overlap_answer_keeps_the_badge_only():
 
 
 def test_a_stored_overlap_with_an_extreme_beta_is_the_veto():
-    r = score(rate_sensitivity=5.0, rate_event_overlap=True)
+    r = score(rate_sensitivity=5.0, rate_event_overlap=True, beta_tstat=3.1)
     assert r.flags == ["extreme rate sensitivity"]
     assert any("macro veto" in x for x in r.reasons)
 

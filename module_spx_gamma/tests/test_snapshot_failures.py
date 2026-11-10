@@ -54,9 +54,16 @@ class TestMandatoryFailureMessage:
         assert "https://unusualwhales.com/api" in msg
         assert "2026-08-14" not in msg
 
-    def test_403_is_also_a_credential_message(self):
+    def test_403_is_also_a_credential_message(self, monkeypatch):
+        monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "k")
         assert "rejected" in snap._mandatory_failure_message(
             "gex_levels", GEX, ["2026-08-14"], 403, "").lower()
+
+    def test_401_without_a_key_says_missing_not_rejected(self, monkeypatch):
+        # #388: a hand-run command without life-with-keys sends no key; that is not an expired one.
+        monkeypatch.delenv("UNUSUAL_WHALES_API_KEY", raising=False)
+        msg = snap._mandatory_failure_message("gex_levels", GEX, ["2026-08-14"], 401, "")
+        assert "missing" in msg.lower() and "set but not valid" not in msg and "life-with-keys" in msg
 
     def test_404_says_the_date_has_no_data(self):
         msg = snap._mandatory_failure_message("gex_levels", GEX, ["2026-06-01"], 404, "")

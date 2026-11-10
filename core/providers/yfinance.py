@@ -162,7 +162,7 @@ def get_financials(ticker: str, max_years: int = MAX_YEARS) -> dict:
 
     income = _stmt(("income_stmt", "financials"))
     cashflow = _stmt(("cashflow", "cash_flow"))
-    balance = _stmt(("balance_sheet", "balance_sheets"))
+    balance = _stmt(("balance_sheet",))
 
     annual: list[dict] = []
 
@@ -314,6 +314,29 @@ def get_earnings_trend(ticker: str) -> ProviderResult:
         return ProviderResult("failed", {}, {"error": type(exc).__name__, "attempts": 1}, endpoint)
     _HEALTH.call()
     return ProviderResult("ok", {k: v if isinstance(v, dict) else {} for k, v in blocks.items()}, None, endpoint)
+
+
+def get_fx_history(currency: str, start: str | None = None) -> ProviderResult:
+    """Yahoo's daily close of ``<currency>USD=X`` (#535): ``{day: usd_per_unit}``, the whole history when ``start`` is
+    None, else from ``start`` (ISO day). A NaN close is left out. ``ok`` with an empty dict when Yahoo has no rows,
+    ``failed`` when the read raised. Counted as one call in ``health()``."""
+    import math
+
+    import yfinance as yf
+
+    endpoint = f"{currency}USD=X.history"
+    try:
+        t = yf.Ticker(f"{currency}USD=X")
+        frame = t.history(start=start, auto_adjust=False) if start else t.history(period="max", auto_adjust=False)
+    except Exception as exc:  # noqa: BLE001 - network or a changed library; counted for the banner
+        logger.debug("yfinance fx %s: %s", currency, exc)
+        _HEALTH.call(error=str(exc)[:200] or type(exc).__name__, endpoint=endpoint)
+        return ProviderResult("failed", {}, {"error": type(exc).__name__, "attempts": 1}, endpoint)
+    _HEALTH.call()
+    closes = {} if frame is None or frame.empty else {
+        ts.date().isoformat(): float(v) for ts, v in frame["Close"].items()
+        if v is not None and not math.isnan(float(v))}
+    return ProviderResult("ok", closes, None, endpoint)
 
 
 def _sector(info: dict) -> str | None:

@@ -77,7 +77,7 @@ import duckdb
 
 from ....core import calendar
 from ... import ops, serving
-from .. import base
+from .. import base, dirty
 from ..spine import openfigi_map, wrds
 from . import KIND, common, sec13f
 
@@ -192,6 +192,23 @@ def _empty(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str, st
     common.temp_rows(con, name, schema, [])
 
 
+def _periods_of(con: duckdb.DuckDBPyConnection, table: str) -> list:
+    return [r[0] for r in con.execute(f"SELECT DISTINCT period FROM {table} ORDER BY period").fetchall()]
+
+
+def _by_period(con: duckdb.DuckDBPyConnection, periods: list, table: str, select: str,
+               schema: list[tuple[str, str]] | None = None) -> None:
+    """``table`` filled by ``select`` (its one ``?`` the period) one quarter at a time, as a TEMP table of ``schema``
+    when one is given (else it exists already). Every caller groups or joins by period, so the rows are the same as
+    one statement over all quarters; what is not, is the memory: a median's or a DISTINCT's state and a join's build
+    side sit partly outside DuckDB's memory_limit, and over every quarter at once the whole build of queue #242 was
+    OOM-killed at 7.2 GiB under a 5 GB limit (10 Nov 2026, in the CUSIP map after ``sec13f_filer_period``)."""
+    if schema is not None:
+        _empty(con, table, schema)
+    for p in periods:
+        con.execute(f"INSERT INTO {table} {select}", [p] * select.count("?"))
+
+
 def _spine(con: duckdb.DuckDBPyConnection, found: list) -> bool:
     """``_sp_security``, ``_sp_hist`` and ``_sp_sp500`` (TEMP) from the live spine, attached read-only and detached
     again; empty, and a ``spine_missing`` issue, without one."""
@@ -283,13 +300,41 @@ class OwnershipServe:
 
     # ── Build ──────────────────────────────────────────────────────────────────────────────────────────────────
 
+    def dirty(self, ctx: base.RunContext):
+        """Everything: the 13F tables are derived whole whenever they are derived (on a run of ``sec/13f`` or of
+        this dataset), on the live copy too; on any other run they are the live file's own, kept as they are.
+        shortcut: a 13F run derives every quarter again although a day's filings reach only their own quarter and
+        the next (its flow); upgrade to a per-quarter reload when that derive is what a build waits on."""
+        return dirty.ALL
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        counts = None if ctx.dataset in (NAME, sec13f.NAME) else self._carry_over(con)
+        on_live = getattr(ctx, "incremental", None) is not None
+        derive = ctx.dataset in (NAME, sec13f.NAME)
+        counts = None
+        if not derive:
+            counts = self._kept(con) if on_live else self._carry_over(con)
         if counts is None:
+            if on_live:
+                for view in VIEWS:
+                    con.execute(f"DROP VIEW IF EXISTS {view}")
+                for t in SCHEMAS:
+                    con.execute(f"DROP TABLE IF EXISTS {t}")
             counts = self._derive(ctx, con)
         for view, sql in VIEWS.items():
-            con.execute(f"CREATE VIEW {view} AS {sql}")
+            con.execute(f"CREATE OR REPLACE VIEW {view} AS {sql}")
         return counts
+
+    @staticmethod
+    def _kept(con: duckdb.DuckDBPyConnection) -> dict[str, int] | None:
+        """The 13F tables the live copy already holds, or None when they are not of this shape."""
+        cols: dict[str, list[str]] = {}
+        for t, c in con.execute("SELECT table_name, column_name FROM duckdb_columns() "
+                                "WHERE database_name = current_database() ORDER BY table_name, column_index"
+                                ).fetchall():
+            cols.setdefault(t, []).append(c)
+        if any(cols.get(t) != [c for c, _ in s] for t, s in SCHEMAS.items()):
+            return None
+        return {t: common.count(con, t) for t in SCHEMAS}
 
     @staticmethod
     def _carry_over(con: duckdb.DuckDBPyConnection) -> dict[str, int] | None:
@@ -369,13 +414,17 @@ class OwnershipServe:
                 JOIN {sec13f.TABLE} f ON f.accession = h.accession
                 WHERE upper(h.sh_type) = 'SH' AND coalesce(trim(h.put_call), '') = '' AND h.cusip IS NOT NULL
                   AND h.cik IS NOT NULL AND h.period IS NOT NULL""")
-        con.execute(f"""CREATE OR REPLACE TEMP TABLE _px AS
-            SELECT cusip, period, median(value_usd / shares) AS px FROM _long
-            WHERE shares > 0 AND value_usd > 0 GROUP BY ALL HAVING count(DISTINCT cik) >= {CONSENSUS_FILERS}""")
-        con.execute("""CREATE OR REPLACE TEMP TABLE _ratio AS
-            SELECT l.cik, l.period, count(DISTINCT l.cusip) AS names, median(l.value_usd / l.shares / p.px) AS ratio
+        periods = _periods_of(con, "_long")
+        _by_period(con, periods, "_px", f"""
+            SELECT cusip, period, median(value_usd / shares) FROM _long
+            WHERE period = ? AND shares > 0 AND value_usd > 0
+            GROUP BY ALL HAVING count(DISTINCT cik) >= {CONSENSUS_FILERS}""",
+                   [("cusip", "TEXT"), ("period", "DATE"), ("px", "DOUBLE")])
+        _by_period(con, periods, "_ratio", """
+            SELECT l.cik, l.period, count(DISTINCT l.cusip), median(l.value_usd / l.shares / p.px)
             FROM _long l JOIN _px p ON p.cusip = l.cusip AND p.period = l.period
-            WHERE l.shares > 0 AND l.value_usd > 0 AND l.value_scale = 1 GROUP BY ALL""")
+            WHERE l.period = ? AND l.shares > 0 AND l.value_usd > 0 AND l.value_scale = 1 GROUP BY ALL""",
+                   [("cik", "TEXT"), ("period", "DATE"), ("names", "BIGINT"), ("ratio", "DOUBLE")])
         lo, hi = SCALE_BAND
         common.create_table(con, "sec13f_filer_period", FILER, f"""
             SELECT l.cik, l.period, max(l.filer_name) AS filer_name, count(DISTINCT l.accession) AS filings,
@@ -390,25 +439,31 @@ class OwnershipServe:
                    ON x.cik = l.cik AND x.period = l.period
             LEFT JOIN _conf c ON c.cik = l.cik AND c.period = l.period
             GROUP BY l.cik, l.period, x.factor, x.names, x.ratio, c.omitted ORDER BY l.period, l.cik""")
-        con.execute("""CREATE OR REPLACE TEMP TABLE _held AS
-            SELECT l.cik, l.period, l.cusip, sum(l.shares) AS shares, sum(l.value_usd * p.value_factor) AS value,
-                   min(l.name_of_issuer) AS issuer_name
-            FROM _long l JOIN sec13f_filer_period p ON p.cik = l.cik AND p.period = l.period GROUP BY ALL""")
+        _by_period(con, periods, "_held", """
+            SELECT l.cik, l.period, l.cusip, sum(l.shares), sum(l.value_usd * p.value_factor), min(l.name_of_issuer)
+            FROM _long l JOIN sec13f_filer_period p ON p.cik = l.cik AND p.period = l.period
+            WHERE l.period = ? GROUP BY ALL""",
+                   [("cik", "TEXT"), ("period", "DATE"), ("cusip", "TEXT"), ("shares", "DOUBLE"),
+                    ("value", "DOUBLE"), ("issuer_name", "TEXT")])
         return (len(left), len({r[2] for r in left}), first) if left else None
 
     @staticmethod
     def _map(con: duckdb.DuckDBPyConnection) -> int:
-        con.execute("""CREATE OR REPLACE TEMP TABLE _cp AS
-            SELECT cusip, period, sum(value) AS value, count(DISTINCT cik) AS holders, min(issuer_name) AS issuer_name
-            FROM _held GROUP BY ALL""")
-        con.execute("""CREATE OR REPLACE TEMP TABLE _m_hist AS
-            SELECT c.cusip, c.period, min(h.ticker) AS ticker FROM _cp c
+        periods = _periods_of(con, "_held")
+        _by_period(con, periods, "_cp", """
+            SELECT cusip, period, sum(value), count(DISTINCT cik), min(issuer_name) FROM _held
+            WHERE period = ? GROUP BY ALL""",
+                   [("cusip", "TEXT"), ("period", "DATE"), ("value", "DOUBLE"), ("holders", "BIGINT"),
+                    ("issuer_name", "TEXT")])
+        _by_period(con, periods, "_m_hist", """
+            SELECT c.cusip, c.period, min(h.ticker) FROM _cp c
             JOIN _sp_hist h ON h.cusip = c.cusip AND (h.valid_from IS NULL OR h.valid_from <= c.period)
                            AND (h.valid_to IS NULL OR c.period < h.valid_to)
-            GROUP BY ALL HAVING count(DISTINCT h.ticker) = 1""")
+            WHERE c.period = ? GROUP BY ALL HAVING count(DISTINCT h.ticker) = 1""",
+                   [("cusip", "TEXT"), ("period", "DATE"), ("ticker", "TEXT")])
         # The current CUSIP has no period of its own: it is refused for a period in which Compustat's dated history
         # gives the CUSIP to another security (or gives it with no dates), as a reused CUSIP would be (#236).
-        con.execute("""CREATE OR REPLACE TEMP TABLE _m_cur AS
+        _by_period(con, periods, "_m_cur", """SELECT * FROM (
             WITH s AS (SELECT cusip, min(ticker) AS ticker, min(gvkey) AS gvkey, min(iid) AS iid FROM _sp_security
                        WHERE cusip IS NOT NULL GROUP BY ALL HAVING count(DISTINCT ticker) = 1)
             SELECT c.cusip, c.period, s.ticker,
@@ -417,14 +472,16 @@ class OwnershipServe:
                        AND NOT (o.gvkey = s.gvkey AND o.iid IS NOT DISTINCT FROM s.iid)
                        AND (o.efffrom IS NULL OR o.efffrom <= c.period)
                        AND (o.effthru IS NULL OR c.period <= o.effthru)) AS refused
-            FROM _cp c JOIN s ON s.cusip = c.cusip""")
+            FROM _cp c JOIN s ON s.cusip = c.cusip WHERE c.period = ?)""",
+                   [("cusip", "TEXT"), ("period", "DATE"), ("ticker", "TEXT"), ("refused", "BOOLEAN")])
         con.execute("""CREATE OR REPLACE TEMP TABLE _m_figi AS
             SELECT f.cusip, f.ticker, s.gvkey, s.iid,
                    s.gvkey IS NOT NULL AND EXISTS (SELECT 1 FROM _owners o WHERE o.cusip = f.cusip)
                    AND NOT EXISTS (SELECT 1 FROM _owners o WHERE o.cusip = f.cusip AND o.gvkey = s.gvkey
                                    AND o.iid IS NOT DISTINCT FROM s.iid) AS refused
             FROM _figi f JOIN _sp_security s ON s.ticker = f.ticker""")
-        return common.create_table(con, "sec13f_cusip_map", MAP, f"""
+        common.create_table(con, "sec13f_cusip_map", MAP)
+        _by_period(con, periods, "sec13f_cusip_map", f"""
             SELECT c.cusip, c.period,
                    coalesce(a.ticker, CASE WHEN NOT b.refused THEN b.ticker END,
                             CASE WHEN b.ticker IS NULL AND NOT f.refused THEN f.ticker END) AS ticker,
@@ -438,12 +495,14 @@ class OwnershipServe:
             LEFT JOIN _m_hist a ON a.cusip = c.cusip AND a.period = c.period
             LEFT JOIN _m_cur b ON b.cusip = c.cusip AND b.period = c.period
             LEFT JOIN _m_figi f ON f.cusip = c.cusip
-            ORDER BY c.period, c.cusip""")
+            WHERE c.period = ? ORDER BY c.cusip""")
+        return common.count(con, "sec13f_cusip_map")
 
     @staticmethod
     def _metrics(con: duckdb.DuckDBPyConnection) -> int:
-        con.execute("CREATE OR REPLACE TEMP TABLE _filers AS "
-                    "SELECT period, count(DISTINCT cik) AS filers FROM _held GROUP BY ALL")
+        held = _periods_of(con, "_held")
+        _by_period(con, held, "_filers", "SELECT period, count(DISTINCT cik) FROM _held WHERE period = ? GROUP BY ALL",
+                   [("period", "DATE"), ("filers", "BIGINT")])
         con.execute(f"CREATE OR REPLACE TEMP TABLE _filed AS SELECT {QE} AS period, max(filed) AS filed_through "
                     f"FROM {sec13f.TABLE} WHERE status = 'ok' AND period IS NOT NULL GROUP BY ALL")
         periods = sorted({r[0] for r in con.execute("SELECT period FROM _filers UNION SELECT period FROM _filed")
@@ -451,31 +510,37 @@ class OwnershipServe:
         common.temp_rows(con, "_deadline", [("period", "DATE"), ("deadline", "DATE")],
                          [{"period": p, "deadline": filing_deadline(p)} for p in periods])
         # One position per ticker, period and filer (a ticker's CUSIPs summed).
-        con.execute("""CREATE OR REPLACE TEMP TABLE _pos AS
-            SELECT m.ticker, h.period, h.cik, sum(h.shares) AS shares
+        _by_period(con, held, "_pos", """
+            SELECT m.ticker, h.period, h.cik, sum(h.shares)
             FROM _held h JOIN sec13f_cusip_map m ON m.cusip = h.cusip AND m.period = h.period
-            WHERE m.ticker IS NOT NULL GROUP BY ALL""")
-        con.execute("""CREATE OR REPLACE TEMP TABLE _tot AS
-            SELECT m.ticker, h.period, sum(h.shares) AS shares, sum(h.value) AS value,
-                   count(DISTINCT h.cik) AS holders, count(DISTINCT h.cusip) AS cusips,
-                   CAST(date_trunc('quarter', h.period) - INTERVAL 1 DAY AS DATE) AS prev_period
+            WHERE h.period = ? AND m.ticker IS NOT NULL GROUP BY ALL""",
+                   [("ticker", "TEXT"), ("period", "DATE"), ("cik", "TEXT"), ("shares", "DOUBLE")])
+        _by_period(con, held, "_tot", """
+            SELECT m.ticker, h.period, sum(h.shares), sum(h.value), count(DISTINCT h.cik), count(DISTINCT h.cusip),
+                   CAST(date_trunc('quarter', h.period) - INTERVAL 1 DAY AS DATE)
             FROM _held h JOIN sec13f_cusip_map m ON m.cusip = h.cusip AND m.period = h.period
-            WHERE m.ticker IS NOT NULL GROUP BY m.ticker, h.period""")
-        con.execute("""CREATE OR REPLACE TEMP TABLE _shape AS
-            SELECT p.ticker, p.period, sum(p.shares) FILTER (WHERE p.rn <= 10) AS top10,
-                   sum(CASE WHEN t.shares > 0 THEN pow(p.shares / t.shares, 2) END) AS h
+            WHERE h.period = ? AND m.ticker IS NOT NULL GROUP BY m.ticker, h.period""",
+                   [("ticker", "TEXT"), ("period", "DATE"), ("shares", "DOUBLE"), ("value", "DOUBLE"),
+                    ("holders", "BIGINT"), ("cusips", "BIGINT"), ("prev_period", "DATE")])
+        _by_period(con, held, "_shape", """
+            SELECT p.ticker, p.period, sum(p.shares) FILTER (WHERE p.rn <= 10),
+                   sum(CASE WHEN t.shares > 0 THEN pow(p.shares / t.shares, 2) END)
             FROM (SELECT *, row_number() OVER (PARTITION BY ticker, period ORDER BY shares DESC, cik) AS rn
-                  FROM _pos) p
-            JOIN _tot t ON t.ticker = p.ticker AND t.period = p.period GROUP BY ALL""")
-        # Each filer's position against its position in the calendar quarter before (FULL JOIN: new and exited).
-        con.execute("""CREATE OR REPLACE TEMP TABLE _pairs AS
-            SELECT coalesce(a.ticker, b.ticker) AS ticker, coalesce(a.period, b.next_period) AS period,
-                   coalesce(a.cik, b.cik) AS cik, a.shares AS now_s, b.shares AS prev_s
-            FROM _pos a
-            FULL OUTER JOIN (SELECT ticker, cik, shares,
-                                    CAST(date_trunc('quarter', period) + INTERVAL 6 MONTH - INTERVAL 1 DAY AS DATE)
-                                        AS next_period FROM _pos) b
-              ON a.ticker = b.ticker AND a.cik = b.cik AND a.period = b.next_period""")
+                  FROM _pos WHERE period = ?) p
+            JOIN _tot t ON t.ticker = p.ticker AND t.period = p.period GROUP BY ALL""",
+                   [("ticker", "TEXT"), ("period", "DATE"), ("top10", "DOUBLE"), ("h", "DOUBLE")])
+        # Each filer's position against its position in the calendar quarter before (FULL JOIN: new and exited),
+        # per quarter a pair lands in: a quarter held, or the one after it.
+        nxt = "CAST(date_trunc('quarter', period) + INTERVAL 6 MONTH - INTERVAL 1 DAY AS DATE)"
+        pairs = sorted({r[0] for r in con.execute(f"SELECT period FROM _pos UNION SELECT {nxt} FROM _pos").fetchall()})
+        _by_period(con, pairs, "_pairs", f"""
+            SELECT coalesce(a.ticker, b.ticker), coalesce(a.period, b.next_period), coalesce(a.cik, b.cik),
+                   a.shares, b.shares
+            FROM (SELECT * FROM _pos WHERE period = ?) a
+            FULL OUTER JOIN (SELECT * FROM (SELECT ticker, cik, shares, {nxt} AS next_period FROM _pos)
+                             WHERE next_period = ?) b
+              ON a.ticker = b.ticker AND a.cik = b.cik AND a.period = b.next_period""",
+                   [("ticker", "TEXT"), ("period", "DATE"), ("cik", "TEXT"), ("now_s", "DOUBLE"), ("prev_s", "DOUBLE")])
         # An exit may not be a sale: the filer left holdings out under confidential treatment, or has no holdings
         # report for the quarter (not filed yet, a notice that another manager reports them, or no longer filing).
         con.execute("""CREATE OR REPLACE TEMP TABLE _flow AS

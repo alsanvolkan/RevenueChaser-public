@@ -42,6 +42,7 @@ from .vix import vix_term_mode
 logger = logging.getLogger(__name__)
 
 SPX_SOURCE = "rcdata:spx_gamma_expiry_strike"
+GREEK_SOURCE = "rcdata:spx_greek_expiry_strike"
 SERIES_SOURCE = "rcdata:market_series"
 CANDLE_SOURCE = f"{SERIES_SOURCE} SPX (cboe)"
 # Sessions an observation may lag the board's day by. The catalog owns the numbers (avo, 29 Oct 2026; #330): this map
@@ -193,6 +194,38 @@ def _expiry_strike(session: date, day: date) -> tuple[list[dict], str | None, st
             raise
         return [], None, f"status unknown, {_failed(exc)}"
     return ans.rows, ans.status, None
+
+
+@_with_board_status("uw/greek_expiry_strike")
+def greek_expiry_grid(day) -> dict:
+    """The whole expiry chain's greek grid for ``day``: the rows the DTE-band walls are computed from (#291).
+
+    The board has been computing those walls from its own per-expiry raw files. The store now holds the same
+    answer of the same endpoint (``uw/greek_expiry_strike``, #384), so it can come from one place. Measured on
+    2026-11-03 and 2026-11-04: every band's put and call wall **strike** is identical either way, 24 values over
+    two sessions. The Net GEX beside a wall can differ on a third Friday: the store sums the SPX and SPXW rows that
+    share a strike, while the per-expiry files keep the first of the two (review of #436, S1).
+
+    ``dte`` is UW's calendar-day count in both, which is the measure ``levels.DTE_BANDS`` are written in. A day
+    the store does not hold reads as "not stored" and the caller falls back to the day's own files, so a backfill
+    gap never empties the bands.
+    """
+    d = _day(day)
+    try:
+        ans = needs.ask("market.spx_greek_expiry_strike", as_of=d, session_date=d)
+    except ops.STORE_ERRORS as exc:                       # sqlite3.Error, and Redis's when ops is on Redis
+        # A locked or unreadable ops file is a failed read of this one input, never a failed board: the bands fall
+        # back to the day's own files, as for a day the store does not hold (review of #436, B1).
+        return _missing("greek grid", d, f"status unknown, {_failed(exc)}", source=GREEK_SOURCE, rows=[])
+    except Exception as exc:  # noqa: BLE001 - a store problem is "not stored", never a failed board
+        return _missing("greek grid", d, _failed(exc), source=GREEK_SOURCE, rows=[])
+    if not ans.rows:
+        return _missing("greek grid", d, None, source=GREEK_SOURCE, rows=[], status=ans.status)
+    expiries = len({str(r.get("expiry")) for r in ans.rows})
+    return {"stored": True, "rows": ans.rows, "source": GREEK_SOURCE, "source_as_of": _iso(d),
+            "status": ans.status, "failed": False,
+            "label": f"greek grid of {_iso(d)} ({len(ans.rows):,} rows, {expiries} expiries) "
+                     f"({GREEK_SOURCE}, status {ans.status})"}
 
 
 @_with_board_status("uw/spot_expiry_strike")
@@ -364,6 +397,7 @@ def read_day(day) -> dict:
     """The raw-dict keys the store now fills for ``day``: ``vix``, ``cftc``, ``ohlc``, ``zero_one_dte`` and
     ``store_inputs`` (per input: stored or not, its label, source, ``source_as_of`` and status)."""
     vix, cot, candles, zod = vix_family(day), cot_tff(day), spx_candles(day), zero_one_dte_dollars(day)
+    grid = greek_expiry_grid(day)
     candle_source = candles["label"]
     if candles["stored"]:
         candle_source = CANDLE_SOURCE
@@ -378,6 +412,7 @@ def read_day(day) -> dict:
         "cftc": cot.get("payload"),
         "ohlc": {"source": candle_source, "data": candles["rows"]},
         "zero_one_dte": zod,
+        "greek_grid": grid,
         "store_inputs": {"vix": _meta(vix), "cftc": _meta(cot), "candles": _meta(candles),
-                         "zero_one_dte": _meta(zod)},
+                         "zero_one_dte": _meta(zod), "greek_grid": _meta(grid)},
     }

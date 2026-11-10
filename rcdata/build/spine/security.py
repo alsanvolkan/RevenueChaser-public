@@ -70,7 +70,7 @@ SECURITY = [
     ("figi", "TEXT"), ("composite_figi", "TEXT"), ("share_class_figi", "TEXT"), ("exch_code", "TEXT"),
     ("figi_ticker", "TEXT"), ("security_description", "TEXT"), ("figi_source", "TEXT"),
     ("gsector", "TEXT"), ("ggroup", "TEXT"), ("gind", "TEXT"), ("gsubind", "TEXT"), ("gics_from", "DATE"),
-    ("gics_source", "TEXT"), ("sector", "TEXT"), ("industry", "TEXT"),
+    ("gics_source", "TEXT"), ("sector", "TEXT"), ("industry", "TEXT"), ("sic", "TEXT"),
     ("source", "TEXT"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT"),
 ]
 HISTORY = [("ticker", "TEXT"), ("cik", "TEXT"), ("gvkey", "TEXT"), ("iid", "TEXT"), ("field", "TEXT"),
@@ -81,6 +81,12 @@ GICS = [("gvkey", "TEXT"), ("cik", "TEXT"), ("gsector", "TEXT"), ("ggroup", "TEX
 MEMBERSHIP = [("index_slug", "TEXT"), ("ticker", "TEXT"), ("cik", "TEXT"), ("gvkey", "TEXT"), ("iid", "TEXT"),
               ("valid_from", "DATE"), ("valid_to", "DATE"), ("source", "TEXT"), ("files_held", "INTEGER"),
               ("files_counted", "INTEGER"), ("source_as_of", "DATE")]
+def _sic_text(v) -> str | None:
+    """Compustat's SIC as its four-digit text (``6770.0`` from a pandas frame reads ``6770``), or None."""
+    code = tier_rule.sic_code(v)
+    return f"{code:04d}" if code is not None else None
+
+
 SCHEMAS = {"security": SECURITY, "security_history": HISTORY, "gics_history": GICS, "index_membership": MEMBERSHIP,
            etf.TABLE: etf.SCHEMA, my_universe.TABLE: my_universe.SCHEMA,
            my_universe.CHANGES: my_universe.CHANGES_SCHEMA}
@@ -405,6 +411,7 @@ class SpineSecurity:
                 "gsector": (g or {}).get("gsector"), "ggroup": (g or {}).get("ggroup"), "gind": (g or {}).get("gind"),
                 "gsubind": (g or {}).get("gsubind"), "gics_from": (g or {}).get("indfrom"),
                 "gics_source": CO_HGIC.name if g else None, "sector": sector, "industry": industry,
+                "sic": _sic_text(sic_of_gvkey.get((sec_row or {}).get("gvkey"))),
                 "source": SEC, "source_as_of": r["source_as_of"], "fetched_at": r["fetched_at"], "run_id": r["run_id"],
             }
             rows.append(row)

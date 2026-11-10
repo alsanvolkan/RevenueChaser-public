@@ -44,7 +44,8 @@ import duckdb
 
 from ...core import calendar
 from ...core.config import to_float
-from . import base
+from . import base, partitions
+from . import dirty as dirty_set
 
 NAME = "uw/greek_expiry_strike"
 TABLE = "spx_greek_expiry_strike"
@@ -52,7 +53,7 @@ TICKER = "SPX"
 ENDPOINT = f"/stock/{TICKER}/greek-exposure/strike-expiry"
 CHAIN_ENDPOINT = f"/stock/{TICKER}/greek-exposure/expiry"
 # The chain's length on the live check of 30 Oct 2026 was 54, so a day is ~55 calls (the chain plus one per
-# expiry). UW's day cap is 100,000 (``caps.DAY_CAPS``), so a daily run is nothing; a long backfill is not, which
+# expiry). UW has no day cap (``caps.DAY_CAPS``, avo 2026-11-10), so a daily run is nothing; a long backfill is not, which
 # is what the Settings estimate below is for.
 CALLS_PER_SESSION_ESTIMATE = 55
 # A chain longer than this is not the SPX chain: refuse the day rather than send hundreds of calls. The live
@@ -327,23 +328,22 @@ class UWGreekExpiryStrike:
         ctx.notes.append(f"backfill {start}..{end}: {done} typed, {skipped} already there")
 
     # ── build and check ──
+    def dirty(self, ctx: base.RunContext):
+        return dirty_set.keyed(ctx, self, "date")      # one partition a session (#446)
+
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        cols = ", ".join(f'"{c}" {t}' for c, t in SCHEMA)
-        con.execute(f"CREATE TABLE {TABLE} ({cols}, PRIMARY KEY ({', '.join(KEY)}))")
-        parts = sorted((base.parquet_root() / "uw" / "greek_expiry_strike").glob("date=*/part-0.parquet"))
-        if parts:
-            files = ", ".join(base.sql_path(p) for p in parts)
-            names = ", ".join(f'"{c}"' for c, _ in SCHEMA)
-            con.execute(f"INSERT INTO {TABLE} SELECT {names} FROM read_parquet([{files}], union_by_name = true)")
-        return {TABLE: int(con.execute(f"SELECT count(*) FROM {TABLE}").fetchone()[0])}
+        parts = {p.parent.name.split("=", 1)[1]: p
+                 for p in (base.parquet_root() / "uw" / "greek_expiry_strike").glob("date=*/part-0.parquet")}
+        return partitions.load(ctx, con, NAME, TABLE, SCHEMA, KEY, parts, _where)
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
-        added, removed = base.compare_with_live(con, self.kind, TABLE, COMPARE)
+        added, removed = partitions.compare(ctx, con, self.kind, NAME, TABLE, COMPARE, _where)
         rows = int(con.execute(f"SELECT count(*) FROM {TABLE}").fetchone()[0])
         days = int(con.execute(f"SELECT count(DISTINCT session_date) FROM {TABLE}").fetchone()[0])
         as_of = ctx.as_of or self.default_as_of()
-        try:
-            expected = sum(1 for _ in base.iter_sessions(FIRST_SESSION, as_of))
+        newest = con.execute(f"SELECT max(session_date) FROM {TABLE}").fetchone()[0]
+        try:                                        # to the newest held day too: re-typing an old day must not shrink it
+            expected = sum(1 for _ in base.iter_sessions(FIRST_SESSION, max(as_of, newest or as_of)))
         except ValueError as e:                     # an as-of past the calendar's table: no coverage, no failure
             ctx.issue("outside_calendar", NAME, str(e)[:300])
             expected = 0
@@ -409,6 +409,11 @@ def _check_answer_day(rows: list, session: date, where: str) -> None:
 
 def time_now() -> float:
     return datetime.now(timezone.utc).timestamp()
+
+
+def _where(key: str) -> str:
+    """The served rows of partition ``date=<key>``."""
+    return f"session_date = DATE '{date.fromisoformat(key).isoformat()}'"
 
 
 DATASET = UWGreekExpiryStrike()

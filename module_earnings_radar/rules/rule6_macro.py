@@ -100,8 +100,10 @@ def score(
         if mag > RATE_VETO:
             reasons.append(f"extreme rate sensitivity ({rate_sensitivity:.1f}x)")
             raw_metrics["rate_badge"] = True
-            noisy = beta_tstat is not None and abs(beta_tstat) < 2.0
+            # No t statistic = no evidence the beta is real: badge only, never a veto (owner, 10 Nov 2026, #635).
+            noisy = beta_tstat is None or abs(beta_tstat) < 2.0
             raw_metrics["noisy_beta"] = noisy
+            raw_metrics["beta_tstat"] = round(float(beta_tstat), 2) if beta_tstat is not None else None
             if rate_event_overlap and not noisy:
                 score_val -= 15
                 flags.append("extreme rate sensitivity")

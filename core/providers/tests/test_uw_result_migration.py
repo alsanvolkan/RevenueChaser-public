@@ -237,3 +237,21 @@ def test_the_module_still_exposes_the_compatibility_wrapper():
     c, _ = _client(_failed())
     assert c._get("/x") == {}
     assert uwmod.UWClient._get.__doc__
+
+
+# ── #519 finding 5: a dashed ticker outside a path is sent and keyed the way the caller wrote it ─────────────────
+
+def test_option_trades_sends_a_share_class_the_way_uw_writes_it():
+    c, calls = _client(_ok({"data": []}))
+    c.option_trades_result("BRK-B")
+    assert calls[0][1]["ticker_symbol"] == "BRK.B"
+
+
+@pytest.mark.parametrize("twin,param,key", [("screener_batch_result", "ticker", "ticker"),
+                                            ("short_screener_result", "tickers", "symbol")])
+def test_a_batch_sends_uw_spellings_and_keys_rows_by_the_callers_ticker(twin, param, key):
+    """UW answers ``BRK.B`` for ``BRK-B``; a caller that asked for ``BRK-B`` looks up ``BRK-B``."""
+    c, calls = _client(_ok({"data": [{key: "BRK.B"}, {key: "AAPL"}, {key: "XYZ.U"}]}))
+    res = getattr(c, twin)(["BRK-B", "AAPL"])
+    assert calls[0][1][param] == "BRK.B,AAPL"
+    assert set(res.data) == {"BRK-B", "AAPL", "XYZ.U"}   # a row nobody asked for keeps UW's own symbol

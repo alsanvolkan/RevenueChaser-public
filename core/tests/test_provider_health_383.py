@@ -87,8 +87,8 @@ def test_a_raised_statement_read_is_counted(monkeypatch):
     assert out["annual"] == []
     h = yfp.health()
     assert h["provider"] == "yfinance"
-    # income_stmt, financials, cashflow, cash_flow, balance_sheet, balance_sheets: each raised
-    assert h["failed"] == 6 and h["calls"] == 7               # + the .info read that answered
+    # income_stmt, financials, cashflow, cash_flow, balance_sheet: each raised
+    assert h["failed"] == 5 and h["calls"] == 6               # + the .info read that answered
     assert h["failures"][0]["endpoint"] == "RAISE.income_stmt"
     assert "income_stmt unavailable" in h["failures"][0]["error"]
 
@@ -113,7 +113,7 @@ def test_a_successful_statement_read_is_counted(monkeypatch):
     import yfinance
 
     class _EmptyTicker:
-        """Every statement read answers with an empty frame, so each of the six labels is tried."""
+        """Every statement read answers with an empty frame, so each of the five labels is tried."""
         info = {"longName": "Empty Co"}
 
         def __getattr__(self, name):
@@ -122,4 +122,4 @@ def test_a_successful_statement_read_is_counted(monkeypatch):
     monkeypatch.setattr(yfinance, "Ticker", lambda t: _EmptyTicker())
     yfp.reset_health()
     yfp.get_financials("EMPTY")
-    assert yfp.health()["calls"] == 7 and yfp.health()["failed"] == 0   # six statement reads + .info
+    assert yfp.health()["calls"] == 6 and yfp.health()["failed"] == 0   # five statement reads + .info

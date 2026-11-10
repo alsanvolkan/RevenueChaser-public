@@ -37,7 +37,10 @@ single work order.
   scores KEPT (`ticker_payload_cache`, `edgar_financials`, `watchlist`); board
   artifacts restricted to the classification universe.
 - EDGAR official/free only (bulk zips + per-document `.htm`); no npm/sec-api/GPL.
-- Relatedness profiles: **thinking-high**; theme naming: **thinking-low** (off-peak).
+- Relatedness profiles: **v3** (#400): one structured JSON per company from the whole Item 1 / Item 4 (no input cut),
+  read in chunks above 60k characters and merged (`module_relatedness/profile_v3.py`), JSON mode, **no thinking**;
+  fallbacks: a short or missing Item -> the previous year's filing -> the whole document; SIC 6770 or `stage = shell`
+  -> no profile (status `shell`). Theme naming: **thinking-low** (off-peak).
 - Relatedness peers (#395): field-weighted tags scaled by their idf over the run's profiles, cosine, top 25;
   a peer with fewer than 2 shared tags is hidden (no score floor); the percentile ranks the scored (non-zero) pairs.
 - Themes: NMF, **nested** (fine ~150 -> medium = max(2, n_fine // 2), halved from the realised fine count (#433) -> coarse ~25 via agglomerative
@@ -64,8 +67,8 @@ N-valued typed children:
 - `index_constituents(slug, ticker)` — reference; `index_tickers` = view.
 - `comov_*`, `chain_filings`/`chain_mentions`.
 - `relatedness_profiles(ticker, cik, model, prompt_version, fetched_at, cache_key,
-  status)` + `relatedness_attributes(ticker, field, value TEXT, value_num DOUBLE)`
-  + `relatedness_scores(ticker, peer, score)`.
+  status, profile_json, label_source)` + `relatedness_attributes(ticker, field, value TEXT, value_num DOUBLE)`
+  + `relatedness_scores(ticker, peer, score)` + `relatedness_embeddings(ticker, model, dim, vector BLOB)` (v2, #401).
 - `relatedness_themes(theme_id, level, parent_id, label, size)` +
   `relatedness_theme_tags(theme_id, tag, rank)` +
   `relatedness_theme_members(ticker, theme_id, weight)` + `theme_runs`.

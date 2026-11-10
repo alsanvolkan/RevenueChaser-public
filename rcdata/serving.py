@@ -36,12 +36,13 @@ import duckdb
 from ..core import config
 
 # The serving schema of each kind. A change to a kind's tables bumps its number in its own PR (box rule).
-SERVING_SCHEMA_VERSION = {"market": 2, "spine": 5, "ownership": 1}
+SERVING_SCHEMA_VERSION = {"market": 2, "spine": 6, "ownership": 1}
 # spine 2: ``fund``, the SEC fund file's share classes and the ETF rule (``build/spine/sec_tickers_mf.py``).
 # spine 3: ``etf_holdings``, the rotation board's ETFs read whole (``build/spine/etf_holdings.py``).
 # spine 4: ``etf``, the ETF universe from Alpha Vantage and N-CEN (``build/spine/etf.py``, #346).
 # spine 5: ``my_universe`` and ``my_universe_changes``, the names we keep and who entered or left
 #          (``build/spine/my_universe.py``, avo's rules of 4 Nov 2026).
+# spine 6: ``security.sic``, Compustat's company SIC, for the relatedness profile (#400, avo 10 Nov 2026).
 
 # PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
 SERVING_SCHEMA_VERSION["prices"] = 1
@@ -71,6 +72,10 @@ SHRINKS_BY_CHOICE = ("my_universe",)
 # first, and a request-wide flag would relax every other table of the kind with it (review M2 of #382).
 #   prices: ``crsp_unadjusted`` (#353's CRSP bars no action adjusted); PR 382 serves no CRSP bar, so it is gone.
 RETIRED_TABLES: dict[str, tuple[str, ...]] = {"prices": ("crsp_unadjusted",)}
+# A build file's own bookkeeping, not served data (``build/dirty.py``: the Parquet manifest and the build code's
+# fingerprint, and ``prices``' identity, ``build/prices/incremental.py``): neither the shrink nor the missing-table
+# check applies to it.
+META_TABLES = ("build_manifest", "build_rules", "build_identity")
 # A table that serves only its newest sessions (``option_eod``, G8) names the first value it keeps here, in its own
 # build file (``declare_window``), so the shrink check compares the rows both files are meant to hold: a session
 # that left the window is not a loss, a session inside it that lost rows is.
@@ -150,7 +155,10 @@ def open_read(kind: str) -> duckdb.DuckDBPyConnection:
     path = live_path(kind)
     if not path.exists():
         raise ServingFileMissing(f"no {kind} serving file at {path} yet")
-    return duckdb.connect(str(path), read_only=True)
+    con = duckdb.connect(str(path), read_only=True)
+    from . import opens
+    opens.note(kind, path, con, VERSION_TABLE)       # #566: which build this job read; never raises
+    return con
 
 
 def _remove(path: Path) -> None:
@@ -298,6 +306,8 @@ def _verify_against_live(kind: str, path: Path, relax: frozenset[str] = frozense
     old, new = _counts(live, windows), _counts(path, windows)
     retired = set(RETIRED_TABLES.get(kind, ()))
     for table, before in sorted(old.items()):
+        if table in META_TABLES:
+            continue
         if table not in new and table in retired:
             continue
         if table not in new:
@@ -322,6 +332,23 @@ def live_version(kind: str) -> int | None:
     except (ServingFileMissing, duckdb.Error):
         return None
     return int(rows[0][0]) if len(rows) == 1 else None
+
+
+def live_stamp(kind: str) -> dict | None:
+    """``{kind, file, build_id, built_at}`` of the build that is live now, from the file's own version row
+    (``_stamp``); ``None`` when there is no file. ``built_at`` is epoch seconds; ``build_id`` and ``built_at`` are
+    None for a file with no single version row. Not an ``open_read``: looking at a file is not a board reading it
+    (``rcdata/opens.py``, #566)."""
+    from . import opens
+    path = live_path(kind)
+    if not path.exists():
+        return None
+    try:
+        with duckdb.connect(str(path), read_only=True) as con:
+            build_id, built_at = opens.stamp_of(con, VERSION_TABLE, kind)
+    except duckdb.Error:
+        return None
+    return {"kind": kind, "file": path.name, "build_id": build_id, "built_at": built_at}
 
 
 def _copy_live(kind: str, path: Path) -> str:

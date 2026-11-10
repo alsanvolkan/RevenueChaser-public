@@ -46,12 +46,6 @@ _LOG_MAX_BYTES = 256 * 1024
 _TAIL_LINES = 5
 _TAIL_WIDTH = 200
 _EXIT_RE = re.compile(r"^=== (\S+) exit (-?\d+)\s*$")
-# ``off-machine copy OK|FAILED <iso>: ...``: the line scripts/backup_store.py prints after its off-machine step.
-_OFFMACHINE_RE = re.compile(r"^off-machine copy (OK|FAILED) (\S+?)(?::\s|\s|$)")
-OFFMACHINE_STALE_HOURS = 48          # one missed night is tolerated, two are not
-# ``backup sizes <iso>: local <n> bytes[, off-machine <n> bytes]``: the last line of a backup run (#309); the
-# off-machine part is missing when no folder is set or no copy was recorded yet.
-_SIZES_RE = re.compile(r"^backup sizes (\S+?): local (\d+) bytes(?:, off-machine (\d+) bytes)?\s*$")
 # Exit code of a chained task whose predecessor's run of tonight did not exit 0 (failed, blocked, missing or overdue).
 CHAIN_BLOCKED = 5
 
@@ -102,7 +96,6 @@ class AutomationEntry:
     offpeak_gated: bool = False
     default_install: bool = False  # a marker only: nothing installs on its own
     settings: TaskSettings = field(default_factory=TaskSettings)
-    offmachine: bool = False       # the row also shows the age of the last off-machine copy (#275)
     days: tuple[str, ...] = ()     # weekly on these days (Task Scheduler names, e.g. "Saturday"); empty = daily
     after: str | None = None       # the nightly chain (#129): run only once this registry task's run of tonight exited 0
     chain_wait_minutes: int = 120  # how long a chained task waits for that run before it gives up
@@ -134,26 +127,27 @@ class AutomationEntry:
 
 
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
-_TUE_SAT = ("Tuesday", "Wednesday", "Thursday", "Friday", "Saturday")
 # A nightly inputs step (C25a/K11, #383): see ``check_inputs_steps`` below.
 INPUTS_CLI = "RevenueChaser.scripts.nightly_inputs"
-INPUTS_PREDECESSOR = "RC-Daily-Bars"
 INPUTS_CAP_FLAGS = ("--max-uw-calls", "--max-fred-calls", "--max-yf-calls")
+# The caps every Earnings inputs entry states (avo, 10 Nov 2026, #620): no UW cap (UW's own 100,000 a day still
+# applies), the others the 10 Nov measurement + 50%.
+_EARNINGS_CAPS = ("--max-uw-calls", "unlimited", "--max-fred-calls", "12", "--max-yf-calls", "1000",
+                  "--max-cboe-calls", "20", "--max-cftc-calls", "5")
+_EARNINGS_CAPS_TEXT = ("No Unusual Whales cap (its own 100,000 a day applies); at most 12 FRED, 1000 yfinance, "
+                       "20 Cboe and 5 CFTC read calls a run, no SEC call")
+_EARNINGS_TAIL = ("A run inside the US session writes nothing; a busy step lock exits 3, and nothing was written. "
+                  "Not chained on RC-Daily-Bars: these sweeps read no bars (#620).")
 
 # The market-store builder (#206, PR 2): one pass over the request queue every hour; the builder decides per dataset
 # from ``ops.dataset_schedule`` whether anything is due (avo's rule: scheduled jobs run hourly). It writes only the
 # market store and records its own ``ops.job_runs2`` rows, so ``tables_written`` is empty: no old ``job_runs`` row.
 BUILDER_UNIT = "life-rc-builder"
-BUILDER_BACKUP_UNIT = "life-rc-builder-backup"
-BUILDER_BACKUP_HEAVY_UNIT = "life-rc-builder-backup-heavy"
+# The weekly backup (avo, 8 Nov 2026): one job, every step, onto the HDD, the newest 4 copies kept. Its unit pair is
+# installed from the home-server repository, not from the Settings page (one name, one timer).
+BACKUP_WEEKLY_UNIT = "life-rc-backup-weekly"
 
 REGISTRY: tuple[AutomationEntry, ...] = (
-    AutomationEntry(
-        name="RC-Store-Backup", label="Daily store backup",
-        args=("-m", "RevenueChaser.scripts.backup_store", "--keep", "5"), time="04:00",
-        description="Verified daily backup of the durable .store/ (raw, edgar, history, prices) and the SPX Gamma tree; keeps 5 daily raw and 5 daily history snapshots, the newest 12 weekly raw copies, and 2 daily prices snapshots. Every 7 days it re-reads the backup folder against the hashes taken at copy time.",
-        default_install=True,
-        settings=TaskSettings(wake_to_run=True, time_limit_hours=2), offmachine=True),
     AutomationEntry(
         name="RC-Relatedness-OffPeak", label="Relatedness (off-peak)",
         args=("-m", "RevenueChaser.module_relatedness", "--run", "--cap", "10"), time="12:30",
@@ -172,7 +166,7 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                         "sec_submissions_cik", "source_checks", "result_runs", "value_chain_edges_history")),
     AutomationEntry(
         name="RC-Daily-Bars", label="Daily price bars",
-        args=("-m", "RevenueChaser.scripts.daily_bars", "--nightly", "--sec-files", "--index-levels"), time="22:35",
+        args=("-m", "RevenueChaser.scripts.daily_bars", "--nightly", "--sec-files", "--index-levels"), time="23:00",
         description="Writes each scope ticker's bars up to the latest complete New York session (Unusual Whales "
                     "daily bars, yfinance fallback), yfinance adj_close, dividends and splits; no calls when current. First, "
                     "best effort, on weekdays: the SEC exchange and fund files (#301, at most 2 SEC requests a "
@@ -183,7 +177,7 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                         "index_levels_daily")),
     AutomationEntry(
         name="RC-Screeners-Daily", label="Daily screeners Fetch",
-        args=("-m", "RevenueChaser.app.universe_cli"), time="23:00", days=_WEEKDAYS, after="RC-Daily-Bars",
+        args=("-m", "RevenueChaser.app.universe_cli"), time="23:30", days=_WEEKDAYS, after="RC-Daily-Bars",
         description="Step S2 of the nightly chain (#129): once tonight's daily bars run exited 0, the universe "
                     "refresh (AG with the universe pull, then Swing, then Fundamentals) and the forecast freeze "
                     "(#128, which writes nothing inside the US session). A busy universe lock exits 3.",
@@ -196,11 +190,11 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         settings=TaskSettings(wake_to_run=True)),
     AutomationEntry(
         name="RC-Forecast-Outcomes", label="Forecast outcomes",
-        args=("-m", "RevenueChaser.scripts.forecast_outcomes", "--nightly"), time="23:45", after="RC-Daily-Bars",
+        args=("-m", "RevenueChaser.scripts.forecast_outcomes", "--nightly"), time="23:35", after="RC-Daily-Bars",
         description="Once tonight's daily bars run exited 0, recomputes the 30- and 90-day outcome (reference open, "
                     "MFE, MAE, open/closed) of every frozen pick not closed yet, from the stored bars; no calls "
-                    "(#380 S0). 23:45 keeps it clear of RC-Screeners-Daily, the other raw.duckdb writer. A busy "
-                    "forecast-outcomes lock exits 3, and nothing was written.",
+                    "(#380 S0). 23:35 is its own trigger (avo, #620), 5 minutes after RC-Screeners-Daily (23:30), the "
+                    "other raw.duckdb writer. A busy forecast-outcomes lock exits 3, and nothing was written.",
         tables_written=("forecast_outcomes",)),
     AutomationEntry(
         name="RC-Forecast-Baselines", label="Forecast baselines",
@@ -209,7 +203,7 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         description="Once tonight's outcomes run exited 0, recomputes the baselines still open: what each freeze "
                     "date's own universe did over the same 30- and 90-day windows, and the same names split into ten "
                     "trailing-volatility deciles, from the stored bars and the universe change history; no calls "
-                    "(#25 HR-1). Chained on RC-Forecast-Outcomes, the other raw.duckdb writer of the 23:45 slot, so "
+                    "(#25 HR-1). Chained on RC-Forecast-Outcomes, the other raw.duckdb writer of the 23:35 slot, so "
                     "the two never run together; 23:50 is its own trigger.",
         tables_written=("forecast_baselines",)),
     AutomationEntry(
@@ -220,20 +214,48 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "change history records each join and leave.",
         tables_written=("index_constituents", "index_constituents_changes")),
     AutomationEntry(
-        name="RC-Earnings-Inputs", label="Earnings inputs (nightly)",
-        args=("-m", INPUTS_CLI, "earnings", "--max-uw-calls", "200", "--max-fred-calls", "10",
-              "--max-yf-calls", "2000", "--max-cboe-calls", "20", "--max-cftc-calls", "5"),
-        time="01:30", days=_TUE_SAT, after="RC-Daily-Bars",
-        description="The Earnings board's nightly inputs (E0, #372), after tonight's daily bars run exited 0: the "
-                    "Unusual Whales earnings calendar of the next four weeks, the economic calendar, 8 FRED series, short "
-                    "interest of the calendar and 13F tickers (Unusual Whales, then yfinance), yfinance analyst estimates, the "
-                    "Cboe vol indices (VIX family, VVIX, OVX) with MOVE from yfinance, and the weekly CFTC "
-                    "E-mini S&P 500 TFF row. At most 200 Unusual Whales, 10 FRED, 2000 yfinance, 20 Cboe and 5 CFTC read calls "
-                    "a night, no SEC call; one sweep failing leaves the others. 01:30 Tuesday to Saturday keys each "
-                    "run to the US session just closed; a run inside the US session writes nothing. A busy step "
-                    "lock exits 3, and nothing was written.",
-        tables_written=("earnings_calendar", "short_interest", "economic_calendar", "macro_series",
-                        "estimate_snapshots", "vol_index_daily", "cftc_cot"),
+        name="RC-Earnings-Calendar", label="Earnings calendar (twice a week)",
+        args=("-m", INPUTS_CLI, "earnings-calendar", *_EARNINGS_CAPS),
+        time="23:40", days=("Monday", "Thursday"),
+        description="The Earnings board's calendar input (D26, #620): the Unusual Whales earnings calendar of the next "
+                    "four weeks, premarket and afterhours. Monday and Thursday 23:40, 10 minutes after "
+                    "RC-Screeners-Daily, the other raw.duckdb writer. " + _EARNINGS_CAPS_TEXT + ". " + _EARNINGS_TAIL,
+        tables_written=("earnings_calendar",),
+        settings=TaskSettings(wake_to_run=True)),
+    AutomationEntry(
+        name="RC-Short-Interest", label="Short interest (weeknights)",
+        args=("-m", INPUTS_CLI, "short-interest", *_EARNINGS_CAPS),
+        time="23:40", days=_WEEKDAYS,
+        description="Short interest of the stored calendar tickers and the 13F tickers (D10, #296; Unusual Whales, "
+                    "then yfinance), Monday to Friday 23:40. Nightly, because Unusual Whales has no past-date short "
+                    "interest: a night not stored is lost. " + _EARNINGS_CAPS_TEXT + ". " + _EARNINGS_TAIL,
+        tables_written=("short_interest",),
+        settings=TaskSettings(wake_to_run=True)),
+    AutomationEntry(
+        name="RC-Earnings-Daytime", label="Economic calendar and estimates (twice a week)",
+        args=("-m", INPUTS_CLI, "earnings-daytime", *_EARNINGS_CAPS),
+        time="13:00", days=("Tuesday", "Thursday"),
+        description="The Unusual Whales economic calendar of this week and next (D37) and the yfinance analyst "
+                    "estimates of the calendar tickers (D14), Tuesday and Thursday 13:00, keyed to the last complete "
+                    "US session. " + _EARNINGS_CAPS_TEXT + "; one sweep failing leaves the other. " + _EARNINGS_TAIL,
+        tables_written=("economic_calendar", "estimate_snapshots"),
+        settings=TaskSettings(wake_to_run=True)),
+    AutomationEntry(
+        name="RC-Macro-Weekly", label="FRED and vol indices (weekly)",
+        args=("-m", INPUTS_CLI, "macro-weekly", *_EARNINGS_CAPS),
+        time="23:40", days=("Thursday",),
+        description="The 8 FRED series (D27) and the Cboe vol indices (VIX family, VVIX, OVX) with MOVE from "
+                    "yfinance (D28), Thursday 23:40. The Cboe files stay here until the board reads market_series. "
+                    + _EARNINGS_CAPS_TEXT + "; one sweep failing leaves the other. " + _EARNINGS_TAIL,
+        tables_written=("macro_series", "vol_index_daily"),
+        settings=TaskSettings(wake_to_run=True)),
+    AutomationEntry(
+        name="RC-CFTC-Weekly", label="CFTC TFF (weekly)",
+        args=("-m", INPUTS_CLI, "cftc", *_EARNINGS_CAPS),
+        time="23:40", days=("Friday",),
+        description="The weekly CFTC E-mini S&P 500 TFF row (D29), Friday 23:40, after CFTC's Friday release. "
+                    + _EARNINGS_CAPS_TEXT + ". " + _EARNINGS_TAIL,
+        tables_written=("cftc_cot",),
         settings=TaskSettings(wake_to_run=True)),
     AutomationEntry(
         name="RC-IBKR-Login-Check", label="IBKR Gateway login check",
@@ -249,7 +271,7 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         settings=TaskSettings(restart_count=0, time_limit_minutes=5)),
     AutomationEntry(
         name="RC-Build", label="Market-store builder (hourly)",
-        args=("-m", "RevenueChaser.rcdata.build", "run", "--once"), time="00:07", hourly=True,
+        args=("-m", "RevenueChaser.rcdata.build", "run", "--once"), time="00:05", hourly=True,
         unit_name=BUILDER_UNIT,
         description="One pass of the market-store builder (rcdata): takes the queued build requests in order (Fetch, "
                     "Backfill from the Settings page, and the datasets the schedule makes due), builds each serving "
@@ -259,29 +281,20 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         # 2 h (avo 6 Nov 2026, #527): 166 runs since 20 Oct peaked at 107 min; at 50 min one was killed (2 Nov)
         settings=TaskSettings(restart_count=0, time_limit_minutes=120)),
     AutomationEntry(
-        name="RC-Build-Backup", label="Market-store backup (light)",
-        args=("-m", "RevenueChaser.rcdata", "backup",
-              "--only", "ops,market,spine,fundamentals,options,raw", "--subdir", "market"),
-        time="04:30", unit_name=BUILDER_BACKUP_UNIT,
-        description="Verified nightly backup of the small files of the market store: ops.sqlite through SQLite's "
-                    "online backup and the market, spine, fundamentals and options serving files, checked row by "
-                    "row against the source, into RAW_STORE_BACKUP_DIR/market/ (the newest 5 kept), then the "
-                    "35-day raw copy. prices and ownership are the weekly RC-Build-Backup-Heavy run's: the 04:30 "
-                    "run of 5 Nov 2026 hit this 30-minute limit, and those two are 3.5 GB of the ~3.6 GB copied, so "
-                    "they are the likely cause - an inference, since the run records no per-step timing. "
+        name="RC-Backup-Weekly", label="Weekly backup",
+        args=("-m", "RevenueChaser.rcdata", "backup"),
+        time="03:30", days=("Sunday",), unit_name=BACKUP_WEEKLY_UNIT,
+        description="The one backup job (avo, 8 Nov 2026): every Sunday 03:30 it copies, verifies and keeps the "
+                    "newest 4 of every file under RAW_STORE_BACKUP_DIR/weekly-v2/<step>/ on the HDD. The steps: "
+                    "the DuckDB files the builder writes from Parquet (market, spine, ownership, prices, "
+                    "fundamentals, options), the board-result DuckDBs (raw, edgar, history, prices and every "
+                    "boards/<board>.duckdb, each CHECKPOINTed first), the needed ops tables (watch lists, "
+                    "schedule, switches, automation rows, run records), the Unusual Whales raw files and the SPX "
+                    "Gamma tree (one folder per week, unchanged files hard-linked), and edgar_docs as one verified "
+                    "zip. Raw downloads and Parquet are not copied: they are fetched again. Nothing leaves the "
+                    "machine. A step that fails is logged and the others still run. Before a deploy, "
+                    "`rcdata backup --only <kind>` takes a copy by hand that is kept apart from the weekly ones. "
                     "Writes no table.",
-        settings=TaskSettings(restart_count=0, time_limit_minutes=30)),
-    AutomationEntry(
-        name="RC-Build-Backup-Heavy", label="Market-store backup (heavy, weekly)",
-        args=("-m", "RevenueChaser.rcdata", "backup", "--only", "prices,ownership", "--subdir", "market-heavy"),
-        time="03:30", days=("Sunday",), unit_name=BUILDER_BACKUP_HEAVY_UNIT,
-        description="Verified weekly backup of the two large serving files, prices (2.9 GB) and ownership (661 MB), "
-                    "into RAW_STORE_BACKUP_DIR/market-heavy/ (its own manifest, its own 5 newest per kind, every "
-                    "copy with its sha256). Sunday 03:30 keeps it clear of the nightly light run at 04:30. Run the "
-                    "same command by hand before a deploy that touches either file. This row's unit is installed "
-                    "from the home-server repository, not from this page: installing it here too would give one "
-                    "name a user timer and a system unit, both firing at 03:30 into the same folder. Writes no "
-                    "table.",
         settings=TaskSettings(restart_count=0, time_limit_minutes=60)),
     AutomationEntry(
         name="RC-SPX-Gamma-Fetch", label="SPX Gamma Fetch (nightly)",
@@ -290,10 +303,12 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "keeps its raw day with the all-expiry ladder the band walls are read from, and the board moves "
                     "to it. About 70 Unusual Whales calls a session, plus the same per session the run's own backfill "
                     "fills (the last two weeks, missing days only). 06:30 Monday to Friday is after the builder's "
-                    "first pass of the New York trading day (00:07) stored the previous session's Cboe SPX close, so "
+                    "first pass of the New York trading day (00:05) stored the previous session's Cboe SPX close, so "
                     "Monday fetches Friday; without that close, or inside the US session, it exits 3 and calls "
-                    "nothing. A missed run is not caught up. Writes the SPX Gamma tree (raw day, latest.json, GEX "
-                    "history), no table.",
+                    "nothing. A missed run is not caught up. The Fetch runs in the dashboard (POST /run/spxgamma, "
+                    "the one writer): the task only queues it and waits; with the dashboard down it exits 1 and "
+                    "nothing is fetched. The job writes the SPX Gamma tree (raw day, latest.json, GEX history), "
+                    "no table.",
         settings=TaskSettings(start_when_available=False, restart_count=0, time_limit_minutes=30)),
 )
 _BY_NAME = {e.name: e for e in REGISTRY}
@@ -342,9 +357,10 @@ check_chain(REGISTRY)
 # --- nightly inputs steps (C25a/K11, #383) ------------------------------------------------------------------------
 #
 # An inputs step runs ``python -m INPUTS_CLI <step> <cap flags>`` (``core/nightly_inputs.py``): independent sweeps
-# under one session and one per-night call budget per provider. Its entry runs after RC-Daily-Bars (so the session's
-# bars and the day's calls are done before it starts), names a step ``nightly_inputs.STEPS`` knows, lists the tables
-# it writes, and states every cap in its command, so the Settings row shows the night's call limits.
+# under one session and one per-night call budget per provider. Its entry names a step ``nightly_inputs.STEPS``
+# knows, lists the tables it writes, and states every cap in its command (a whole number or ``unlimited``), so the
+# Settings row shows the run's call limits. It need not chain on RC-Daily-Bars (#620): the sweeps read no bars, and
+# the session comes from the clock (a run inside the US session writes nothing).
 
 def check_inputs_steps(entries: tuple[AutomationEntry, ...]) -> None:
     from RevenueChaser.core import nightly_inputs
@@ -353,8 +369,6 @@ def check_inputs_steps(entries: tuple[AutomationEntry, ...]) -> None:
         args = list(e.args)
         if args[:2] != ["-m", INPUTS_CLI]:
             continue
-        if e.after != INPUTS_PREDECESSOR:
-            raise ValueError(f"{e.name} is an inputs step; it must run after {INPUTS_PREDECESSOR}")
         step = args[2] if len(args) > 2 else None
         if step not in nightly_inputs.STEPS:
             raise ValueError(f"{e.name} names unknown inputs step {step!r}")
@@ -362,8 +376,9 @@ def check_inputs_steps(entries: tuple[AutomationEntry, ...]) -> None:
             raise ValueError(f"{e.name} is an inputs step; it must list the tables it writes")
         for flag in INPUTS_CAP_FLAGS:
             value = args[args.index(flag) + 1] if flag in args[:-1] else None
-            if value is None or not value.isdigit():
-                raise ValueError(f"{e.name} must state {flag} as a whole number of calls (got {value!r})")
+            if value is None or not (value.isdigit() or value == "unlimited"):
+                raise ValueError(f"{e.name} must state {flag} as a whole number of calls or unlimited "
+                                 f"(got {value!r})")
 
 
 check_inputs_steps(REGISTRY)
@@ -631,7 +646,7 @@ _SHOW_SERVICE = ("ActiveState", "Result", "ExecMainStatus", "ExecMainStartTimest
 # them, so a job systemd starts reads and writes the store and logs the panel reads; without them it would fall back
 # to the checkout's own .store/.cache (``config._root``). The others are passed only when set.
 UNIT_ENVIRONMENT = ("RC_STORE_DIR", "RC_CACHE_DIR", "RC_EDGAR_DOCS_DIR", "SPX_GAMMA_DATA_ROOT", "RAW_STORE_BACKUP_DIR",
-                    "RAW_STORE_BACKUP_WEEKLY", "RAW_STORE_BACKUP_MIRROR", "TZ")
+                    "TZ")
 
 
 def _unit_environment() -> list[tuple[str, str]]:
@@ -963,88 +978,6 @@ def last_success(path: Path) -> str | None:
     return best
 
 
-def last_offmachine(path: Path) -> tuple[str | None, str | None, bool | None]:
-    """``(iso of the last OK copy, iso of the newest attempt, whether that attempt succeeded)`` from the backup log."""
-    last_ok = newest = newest_ok = None
-    for ln in _read_tail(path, 64 * 1024).splitlines():
-        m = _OFFMACHINE_RE.match(ln)
-        if m:
-            newest, newest_ok = m.group(2), m.group(1) == "OK"
-            if newest_ok:
-                last_ok = newest
-    return last_ok, newest, newest_ok
-
-
-def _hours_since(iso: str, now: datetime) -> float:
-    try:
-        t = datetime.fromisoformat(iso)
-    except ValueError:
-        return float("inf")
-    if t.tzinfo is None:
-        t = t.replace(tzinfo=timezone.utc)
-    return (now - t).total_seconds() / 3600
-
-
-def offmachine_state(e: AutomationEntry, now: datetime) -> dict | None:
-    """The off-machine line of a row: ``{configured, kind: ok|red, text}``; None for rows that have none.
-
-    Red when no folder is set (no copy leaves the machine), when no copy was made yet, when the newest attempt
-    failed, or when the last good copy is older than ``OFFMACHINE_STALE_HOURS``.
-    """
-    if not e.offmachine:
-        return None
-    if not str(config.RAW_STORE_BACKUP_MIRROR).strip():
-        return {"configured": False, "kind": "red",
-                "text": "not set: RAW_STORE_BACKUP_MIRROR is empty, so no copy leaves this machine"}
-    last_ok, newest, newest_ok = last_offmachine(e.log_path)
-    if newest_ok is None:
-        return {"configured": True, "kind": "red", "text": "no copy yet"}
-    if newest_ok is False:
-        tail = f"last OK {_age(last_ok, now)}" if last_ok else "no copy has succeeded yet"
-        return {"configured": True, "kind": "red", "text": f"FAILED {_age(newest, now)}; {tail}"}
-    if _hours_since(last_ok, now) >= OFFMACHINE_STALE_HOURS:
-        return {"configured": True, "kind": "red",
-                "text": f"last OK {_age(last_ok, now)}, older than {OFFMACHINE_STALE_HOURS} h"}
-    return {"configured": True, "kind": "ok", "text": f"OK, {_age(last_ok, now)}"}
-
-
-def last_backup_sizes(path: Path) -> tuple[str, int, int | None] | None:
-    """``(iso, local bytes, off-machine bytes or None)`` of the newest sizes line, or None."""
-    found = None
-    for ln in _read_tail(path, 64 * 1024).splitlines():
-        m = _SIZES_RE.match(ln)
-        if m:
-            found = (m.group(1), int(m.group(2)), int(m.group(3)) if m.group(3) else None)
-    return found
-
-
-def size_part(label: str, nbytes: int, limit_gb: float, env: str) -> tuple[str, bool]:
-    """``("<label> 12.78 GB", False)``, or with ``, above <limit> GB (<env>)`` and True when ABOVE the limit."""
-    gb = nbytes / 1e9
-    if gb > limit_gb:
-        return f"{label} {gb:.2f} GB, above {limit_gb:g} GB ({env})", True
-    return f"{label} {gb:.2f} GB", False
-
-
-def backup_size_state(e: AutomationEntry, now: datetime) -> dict | None:
-    """The size line of the backup row (#309 part 3): ``{kind: ok|warn|none, text}``; None for other rows.
-
-    Read from the job's own log line, so the page never walks either folder. ``warn`` when a folder is above its
-    threshold (``RAW_STORE_BACKUP_WARN_GB`` local, ``RAW_STORE_BACKUP_MIRROR_WARN_GB`` off-machine)."""
-    if not e.offmachine:
-        return None
-    found = last_backup_sizes(e.log_path)
-    if found is None:
-        return {"kind": "none", "text": "not measured yet: the next backup run logs it"}
-    iso, local, off = found
-    text, warn = size_part("local", local, config.RAW_STORE_BACKUP_WARN_GB, "RAW_STORE_BACKUP_WARN_GB")
-    if off is not None:
-        part, off_warn = size_part("off-machine", off, config.RAW_STORE_BACKUP_MIRROR_WARN_GB,
-                                   "RAW_STORE_BACKUP_MIRROR_WARN_GB")
-        text, warn = f"{text}, {part}", warn or off_warn
-    return {"kind": "warn" if warn else "ok", "text": f"{text} ({_age(iso, now)})"}
-
-
 def _age(iso: str | None, now: datetime) -> str:
     if not iso:
         return "never"
@@ -1065,8 +998,6 @@ def _age(iso: str | None, now: datetime) -> str:
 def live_row(e: AutomationEntry, sched: Scheduler, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     row = static_row(e)
-    row["offmachine"] = offmachine_state(e, now)
-    row["backup_size"] = backup_size_state(e, now)
     try:
         st = sched.status(e.name) if sched.available else None
     except AutomationError as exc:
@@ -1232,7 +1163,7 @@ def _record_run(row: dict) -> None:
 
 #: The registry rows the board's backup switch stops (#527); the fetch switch stops every other row but these and
 #: ``SWITCH_EXEMPT``.
-BACKUP_TASKS = frozenset({"RC-Store-Backup", "RC-Build-Backup", "RC-Build-Backup-Heavy"})
+BACKUP_TASKS = frozenset({"RC-Backup-Weekly"})
 #: A status read, not a fetch: the top bar's IBKR state comes from it, so it runs whatever the switches say.
 SWITCH_EXEMPT = frozenset({"RC-IBKR-Login-Check"})
 

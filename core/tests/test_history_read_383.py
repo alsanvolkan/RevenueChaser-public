@@ -60,7 +60,7 @@ def test_last_run_is_the_newest_header_decoded(store):
     _session_runs()
     h = history.last_run(SESSION_BOARD)
     assert (h["run_id"], h["model_version"], h["quality"]) == ("wed", "m2", "complete")
-    assert h["context"] == {"n": 4} and h["session_date"] == date(2026, 10, 7)
+    assert h["context"]["n"] == 4 and "source_builds" in h["context"] and h["session_date"] == date(2026, 10, 7)
     assert h["row_counts"] == {SESSION_TABLE: 1}
     assert "payload" not in h                              # the board payload only when asked
     assert history.last_run(SESSION_BOARD, payload=True)["payload"] == {"board": "wed", "cards": [1, 2]}
@@ -89,7 +89,7 @@ def test_sessions_lists_one_snapshot_per_session_with_its_run_count(store):
     wed, tue = history.sessions(SESSION_BOARD)
     assert (wed["session_date"], wed["run_id"], wed["runs"]) == (date(2026, 10, 7), "wed", 2)
     assert (tue["session_date"], tue["run_id"], tue["runs"]) == (date(2026, 10, 6), "tue", 2)
-    assert tue["warnings"] == ["w1"] and tue["context"] == {"n": 1}
+    assert tue["warnings"] == ["w1"] and tue["context"]["n"] == 1
     assert [s["run_id"] for s in history.sessions(SESSION_BOARD, limit=1)] == ["wed"]
 
 

@@ -69,7 +69,7 @@ def _freeze(subjects, *, source="swing", day=D, shown_price=99.0):
 
 
 def _rows(subject="AAA"):
-    got = rawstore.query("SELECT * FROM forecast_outcomes WHERE subject = ? ORDER BY horizon_days", [subject])
+    got = rawstore.query("SELECT * FROM forecast_outcomes WHERE subject = ? ORDER BY horizon_days", [subject], db="forecast")
     return {r["horizon_days"]: r for r in got}
 
 
@@ -79,7 +79,7 @@ def test_manifest_entry_is_the_ledger_key_plus_horizon_in_raw():
     spec = rawstore.MANIFEST["forecast_outcomes"]
     assert spec["key"] == [*rawstore.MANIFEST["forecast_ledger"]["key"], "horizon_days"]
     assert spec["write"] == "upsert" and spec["history_mode"] == "latest_cache"
-    assert rawstore._db_of("forecast_outcomes") == "raw" and not spec.get("history")
+    assert rawstore._db_of("forecast_outcomes") == "forecast" and not spec.get("history")
     cols = {c.split()[0] for c in spec["columns"] if not c.startswith("PRIMARY KEY")}
     assert {"ref_price", "mfe", "mae", "sessions_seen", "status", "computed_at", "model_version"} <= cols
 
@@ -134,10 +134,10 @@ def test_the_forecast_day_stays_out_of_its_window_when_an_earlier_pick_loads_it(
     _freeze(["AAA"], source="fundamentals", day=date(2026, 8, 28))
     _freeze(["AAA"], source="swing")
     outcomes.run(now=NOW, run_id="r1")
-    got = rawstore.query("SELECT ref_price, mae FROM forecast_outcomes WHERE source = 'swing' AND horizon_days = 30")
+    got = rawstore.query("SELECT ref_price, mae FROM forecast_outcomes WHERE source = 'swing' AND horizon_days = 30", db="forecast")
     assert got[0]["ref_price"] == 10.0 and got[0]["mae"] == pytest.approx(-0.2)
     # The earlier pick's reference is Monday 2026-08-31's open: the chunk's bar read starts at its oldest pick.
-    got = rawstore.query("SELECT ref_price FROM forecast_outcomes WHERE source = 'fundamentals' AND horizon_days = 30")
+    got = rawstore.query("SELECT ref_price FROM forecast_outcomes WHERE source = 'fundamentals' AND horizon_days = 30", db="forecast")
     assert got[0]["ref_price"] == 11.5
 
 
@@ -195,9 +195,9 @@ def test_a_rerun_writes_identical_rows(rawstore_tmp_db):
     _seed_bars(_series())
     _freeze(["AAA", "BBB"])                              # BBB has no bars at all
     first = outcomes.run(now=NOW, run_id="r1")
-    before = rawstore.query("SELECT * FROM forecast_outcomes ORDER BY subject, horizon_days")
+    before = rawstore.query("SELECT * FROM forecast_outcomes ORDER BY subject, horizon_days", db="forecast")
     outcomes.run(now=NOW, run_id="r1", full=True)
-    after = rawstore.query("SELECT * FROM forecast_outcomes ORDER BY subject, horizon_days")
+    after = rawstore.query("SELECT * FROM forecast_outcomes ORDER BY subject, horizon_days", db="forecast")
     assert len(before) == 4 and before == after
     assert first["rows"] == 4
 
@@ -324,7 +324,7 @@ def test_every_pick_source_gets_rows_and_a_non_pick_row_gets_none(rawstore_tmp_d
         "score": 0.4, "bucket": None, "probs": None, "market_cap": None, "sector": None, "shown_price": 5700.0,
         "stop": None, "target": None}])
     outcomes.run(now=NOW, run_id="r1")
-    got = rawstore.query("SELECT source, horizon_days FROM forecast_outcomes ORDER BY source, horizon_days")
+    got = rawstore.query("SELECT source, horizon_days FROM forecast_outcomes ORDER BY source, horizon_days", db="forecast")
     assert [(r["source"], r["horizon_days"]) for r in got] == [
         ("asymmetric_growth", 30), ("asymmetric_growth", 90), ("fundamentals", 30), ("fundamentals", 90),
         ("swing", 30), ("swing", 90)]

@@ -85,8 +85,8 @@ def test_a_chained_schedule_names_its_predecessor():
 
 
 def test_unchained_rows_keep_their_schedule_text():
-    assert A.entry("RC-Store-Backup").schedule == "daily 04:00 (local)"
-    assert all(r["after"] is None for r in A.static_rows() if r["name"] == "RC-Store-Backup")
+    assert A.entry("RC-Daily-Bars").schedule == "daily 23:00 (local)"
+    assert all(r["after"] is None for r in A.static_rows() if r["name"] == "RC-Daily-Bars")
 
 
 def test_the_shipped_registry_passes_the_chain_check():

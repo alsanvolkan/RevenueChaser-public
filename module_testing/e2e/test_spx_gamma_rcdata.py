@@ -47,7 +47,6 @@ def market_roots(tmp_path, monkeypatch):
     ssd, hdd = tmp_path / "market", tmp_path / "market_raw"
     monkeypatch.setattr(config, "MARKET_DIR", ssd)
     monkeypatch.setattr(config, "MARKET_RAW_DIR", hdd)
-    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", None)
     return ssd, hdd
 
 
@@ -56,7 +55,7 @@ def _board(tmp_path, e2e_env, market_roots, *, stored: bool):
         from RevenueChaser.module_spx_gamma.tests import rcdata_fixture
         rcdata_fixture.serve()
     ssd, hdd = market_roots
-    env = {**e2e_env, "RC_MARKET_DIR": str(ssd), "RC_MARKET_RAW_DIR": str(hdd), "RC_MARKET_RAW_COPY_DIR": "",
+    env = {**e2e_env, "RC_MARKET_DIR": str(ssd), "RC_MARKET_RAW_DIR": str(hdd),
            "RC_E2E_NOW": NOW}
     store, cache = tmp_path / ".store", tmp_path / ".cache"
     store.mkdir()
@@ -77,7 +76,7 @@ def test_a_fetch_queues_the_two_datasets_and_renders_from_the_store(tmp_path, e2
         assert _queued(market_roots[0]) == [("uw/spot_expiry_strike", "spx_gamma", "queued"),
                                             ("market_series", "spx_gamma", "queued")]
         html = dash.view(TAB).text
-        assert "builder requested at" in html and "the builder runs hourly at :07" in html
+        assert "builder requested at" in html and "the builder runs hourly at :05" in html
         assert "VIX family of 2026-10-26" in html
         # The pin line sits in the prediction panel, which this thin mock day does not fill; the slice it reads is
         # in the parsed snapshot either way.

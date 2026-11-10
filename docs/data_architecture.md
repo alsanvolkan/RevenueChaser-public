@@ -56,7 +56,7 @@ cover them first:
 
 | Folder | Semantics | May you delete it? |
 |---|---|---|
-| **`.store/`** | **DURABLE.** Everything in `.store` is the source of truth. It holds exactly **three** DuckDB files today (a fourth, `history.duckdb`, appears with the first recorded board run, #278; see its row below) (plus tiny `.rc-proc-<pid>` presence markers and `*.lock` job locks, see Concurrency model): `.store/raw.duckdb` (structured raw + derived data, and the identity/GICS spine incl. `sec_company_*`), `.store/edgar.duckdb` (EDGAR **content**: `edgar_documents` metadata, `edgar_facts`, `edgar_financials`, `chain_*`) and `.store/prices.duckdb` (the daily price tables: `price_bars_daily`, `price_actions`, `price_checks`, and the SPX daily levels `index_levels_daily`). Raw 10-K/20-F HTML is the one file-based durable artifact, under `edgar_docs/{cik}/{accession}.html.gz`. They grow over time and CANNOT be regenerated from the app — losing them loses what only accumulates (the option-flow prints, one Rotation snapshot per date, one Co-movement run per as-of date), the ingested 13F data and the raw filings. | **NO.** Treat like database files. Back them up (`scripts/backup_store.py` covers the DB files, the `edgar_docs/` tree as a zip, and the SPX Gamma tree as an incremental mirror); never `rm -rf`. |
+| **`.store/`** | **DURABLE.** Everything in `.store` is the source of truth. It holds exactly **three** DuckDB files today (a fourth, `history.duckdb`, appears with the first recorded board run, #278; see its row below) (plus tiny `.rc-proc-<pid>` presence markers and `*.lock` job locks, see Concurrency model): `.store/raw.duckdb` (structured raw + derived data, and the identity/GICS spine incl. `sec_company_*`), `.store/edgar.duckdb` (EDGAR **content**: `edgar_documents` metadata, `edgar_facts`, `edgar_financials`, `chain_*`) and `.store/prices.duckdb` (the daily price tables: `price_bars_daily`, `price_actions`, `price_checks`, and the SPX daily levels `index_levels_daily`). Raw 10-K/20-F HTML is the one file-based durable artifact, under `edgar_docs/{cik}/{accession}.html.gz`. They grow over time and CANNOT be regenerated from the app — losing them loses what only accumulates (the option-flow prints, one Rotation snapshot per date, one Co-movement run per as-of date), the ingested 13F data and the raw filings. | **NO.** Treat like database files. Back them up (`rcdata backup`, the weekly job: the DB files, the `edgar_docs/` tree as a zip, the UW raw files and the SPX Gamma tree); never `rm -rf`. |
 | **`.cache/`** | **ARTIFACTS.** Fully regenerable outputs: `*_latest.html` dashboards, `*_latest.json` payloads, PNGs, timestamped archives, and downloaded SEC 13F source zips. | **YES.** Delete any time; re-running the relevant module regenerates everything. |
 
 Rule of thumb: if deleting it loses *history* or *ingested* data → it belongs in
@@ -156,14 +156,14 @@ sub-industries), `resolve_gics`, the industry alias table and `core/identity/gic
   (`sic`, `sic_description`, `sic_group2`, `sic_source`) is written on `security_master` for every ticker that has one,
   from caches the identity job already holds, whatever decided the sector.
 
-Schema version `12` (`_SCHEMA_VERSION` in `core/rawstore.py`; v3 added
+Schema version `13` (`_SCHEMA_VERSION` in `core/rawstore.py`; v3 added
 `industry_group` / `sub_industry`, and `equity_universe` also gained
 `industry`; v6 added the identity master tables `security_master`,
 `identity_conflicts`, `identity_source_cache` and `identity_runs`, issue #85, and `board_settings`, issue #40; v7 added
 `relatedness_profiles.attempts`, issue #114; v8 added the `job_runs` table, issue #124 PL5 (its writer is `app/jobs.py`, issue #282, see Jobs below),
 `edgar_financials.fetched_at`, issue #161, the `price_bars_daily` table, issue #156, `catalyst_events`, issue #3,
 `orphan_designations` / `orphan_lookups`, issue #190, and the shared `forecast_ledger`, issue #128 —
-manifest only, no writers yet; #164; v9 added the four SIC columns of `security_master`, issue #272; v10 added the 22 G1 tables of #292 (manifest only, no writers yet); v11 is the history redesign C: 8 `<table>_changes` tables in `raw.duckdb` (the store appends a rule-A row in the same transaction as every write to `equity_universe`, `security_master`, `identity_source_cache`, `index_constituents`, `watchlist`, `board_settings`, `catalyst_events` and `orphan_designations`; the first call seeds them), `result_runs` plus 16 run-keyed row tables in `history.duckdb` (`core/history.record_run`), the key rebuild of `price_bars_daily` (`date` becomes `session_date`) and `orphan_lookups` (key `(ticker, session_date)`), and new columns on `theme_runs` and `leaps_flow_prints`; v12 expands the 13F ingest store to non-lossy INFOTABLE rows, adds COVERPAGE/SUMMARYPAGE fields to `sec13f_submissions`, makes `sec13f_holdings` keyed on `(accession, line_no)` and adds the derive-side VALUE-units rescale (#208)). Adding manifest columns auto-migrates via
+manifest only, no writers yet; #164; v9 added the four SIC columns of `security_master`, issue #272; v10 added the 22 G1 tables of #292 (manifest only, no writers yet); v11 is the history redesign C: 8 `<table>_changes` tables in `raw.duckdb` (the store appends a rule-A row in the same transaction as every write to `equity_universe`, `security_master`, `identity_source_cache`, `index_constituents`, `watchlist`, `board_settings`, `catalyst_events` and `orphan_designations`; the first call seeds them), `result_runs` plus 16 run-keyed row tables in `history.duckdb` (`core/history.record_run`), the key rebuild of `price_bars_daily` (`date` becomes `session_date`) and `orphan_lookups` (key `(ticker, session_date)`), and new columns on `theme_runs` and `leaps_flow_prints`; v12 expands the 13F ingest store to non-lossy INFOTABLE rows, adds COVERPAGE/SUMMARYPAGE fields to `sec13f_submissions`, makes `sec13f_holdings` keyed on `(accession, line_no)` and adds the derive-side VALUE-units rescale (#208); v13 adds the nullable `relatedness_profiles.profile_json` / `label_source` (the Relatedness v2 profile, #401) and the `relatedness_embeddings` table (manifest only, its writer is Step 2)). Adding manifest columns auto-migrates via
 `ALTER TABLE ... ADD COLUMN`; the whole manifest (renames, merges, views,
 column additions, compressed-column rebuilds) is applied on each process's
 first store call — see "Schema on first use" below. `equity_universe.next_earnings_date TEXT` (Phase 1,
@@ -174,7 +174,7 @@ below).
 
 Each store file carries its own schema stamp (#26 PL7-a): a `store_schema` row, key `schema_version`, equal to `_SCHEMA_VERSION`. The ensure path writes it when the row is absent or older than the code, and leaves a newer stamp as stored; an upgrade of an older stamp is a warning and keeps the old value in the same table (`upgraded_from`, `upgraded_at`), so a restored older file leaves a trace. `rawstore.store_schema_mismatch()` lists those (`db`, `file`, `stored`, `code`); a read logs a warning and does not raise. An existing file with no stamp is stamped with the current version on that first ensure — an already-wrong file would be marked current; `schema_drift()` remains the backstop for a retyped column, a changed key or an extra column. The table is additive (`CREATE TABLE` plus one row) in each of `raw`, `edgar`, `prices` and, when that file exists, `history`. It does not bump `_SCHEMA_VERSION` and does not need a Drive checkpoint. `history.duckdb` is stamped by `ensure_history`, not created just to hold a stamp.
 
-Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `core/store_schema_refuse.py` is `False`. Set `RC_STORE_SCHEMA_REFUSE=1` to refuse a data write when that file's stamp is ahead of this code: newer, or not a version number. A file with no stamp is not refused: the ensure stamps it current. The same check runs before the ensure, so an old checkout never renames, merges or ALTERs a newer file; the ensure then logs one warning and the writes are refused. A refused write is also a skipped `job_runs` row (the run log goes quiet while jobs fail), so read the Server log first. `store_schema_mismatch()` opens the files read-write, so run the gate check with the dashboard stopped or on the fresh backup copy. Readers still only warn. `RC_STORE_SCHEMA_OK=1` is the escape for a deliberate migration: writes are allowed and the warning is suppressed. The exception is `StoreSchemaMismatch`; it names the file, the stored version, the code version and `python -m RevenueChaser.scripts.restore_store --latest <raw|edgar|history|prices>`. It does not run at import. Leave the switch off unless that refusal is intended.
+Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `core/store_schema_refuse.py` is `False`. Set `RC_STORE_SCHEMA_REFUSE=1` to refuse a data write when that file's stamp is ahead of this code: newer, or not a version number. A file with no stamp is not refused: the ensure stamps it current. The same check runs before the ensure, so an old checkout never renames, merges or ALTERs a newer file; the ensure then logs one warning and the writes are refused. A refused write is also a skipped `job_runs` row (the run log goes quiet while jobs fail), so read the Server log first. `store_schema_mismatch()` opens the files read-write, so run the gate check with the dashboard stopped or on the fresh backup copy. Readers still only warn. `RC_STORE_SCHEMA_OK=1` is the escape for a deliberate migration: writes are allowed and the warning is suppressed. The exception is `StoreSchemaMismatch`; it names the file, the stored version, the code version and `python -m RevenueChaser.rcdata restore --step boards --latest <raw|edgar|history|prices> --live`. It does not run at import. Leave the switch off unless that refusal is intended.
 
 ## Storage layout
 
@@ -182,7 +182,8 @@ Refusing writes on a mismatch is off (#26 PL7-b). `SCHEMA_REFUSE_WRITES` in `cor
 |---|---|---|
 | `.store/raw.duckdb` | Structured raw + derived data (tables below) + the identity/GICS spine (`sec_company_*`) | No — durable source of truth (see `.store` semantics above) |
 | `.store/edgar.duckdb` | EDGAR **content**: `edgar_documents` (metadata only), `edgar_facts`, `edgar_financials`, `chain_filings`/`chain_mentions`/`chain_meta` | No — durable |
-| `.store/history.duckdb` | Result history (#287, 2.6-1; schema 11): `result_runs` (one header row per board run: session, run time, quality, model version, params, funnel, payload) and 16 run-keyed row tables (`ag_scores_history`, `earnings_cards_history`, …). Written only by `core/history.record_run`, in one transaction; a session board keeps one whole run per session (`session_snapshot`), a run board keeps every run. Read views `result_sessions` and `<table>_by_session`. Longer backup retention than `raw.duckdb` (5 nightly snapshots, and an off-machine copy; its weekly copy was dropped in #342 — it grew ~6.55 GB/yr against raw's 603 MB). **The file does not exist until the first recorded run** (`rawstore.ensure_history()`); `rawstore.history_db_path()` and `_db_path("history")` resolve it, and the nightly backup and `restore_store` skip it while it is missing. `forecast_ledger` stays in `raw.duckdb`. The 8 change tables live in `raw.duckdb` and ride its backups | No — durable |
+| `.store/history.duckdb` | Result history (#287, 2.6-1; schema 11): `result_runs` (one header row per board run: session, run time, quality, model version, params, funnel, payload) and 16 run-keyed row tables (`ag_scores_history`, `earnings_cards_history`, …). Written only by `core/history.record_run`, in one transaction; a session board keeps one whole run per session (`session_snapshot`), a run board keeps every run. Read views `result_sessions` and `<table>_by_session`. Backed up like every board file by the weekly job (4 copies kept; grows ~6.55 GB/yr against raw's 603 MB). **The file does not exist until the first recorded run** (`rawstore.ensure_history()`); `rawstore.history_db_path()` and `_db_path("history")` resolve it, and the weekly backup skips it while it is missing. `forecast_ledger` stays in `raw.duckdb`. The 8 change tables live in `raw.duckdb` and ride its backups | No — durable |
+| `.store/boards/<board>.duckdb` | Board result files (DECISIONS S9, S16): a board's own tables, written only by that board, incrementally. For now `news` and `welcome` (`rawstore.BOARD_DBS`); a MANIFEST table with `"db": "<board>"` lives only there. Made by the schema apply with its own `store_schema` stamp; the writer's presence marker sits beside it | No — durable |
 | `.store/prices.duckdb` | Daily prices (#156, moved here before the fill, 2026-10-09): `price_bars_daily`, `price_actions` and their watermarks `price_checks` (the shape of `source_checks`, which stays in raw for the identity stamps), and the SPX daily levels `index_levels_daily` (D03, #293, moved here before its writer, 2026-10-10). One file, so a chunk's bars, actions and watermarks commit in one transaction (`rawstore.atomic(..., db="prices")`); about 2.4 GiB after the `period="max"` fill, kept out of raw's weekly copies. Made by the first store call; a store from before has the two tables (and the price rows of `source_checks`; from #293 also the empty `index_levels_daily`) moved over once by that call: copied, checked row by row (`EXCEPT`), then dropped from raw; each table is added to the `migration_manifest` row `price_tables_to_prices_db` in the transaction that removes it from raw. A conflicting row stops that table's move with a warning and overwrites nothing. Two processes starting together may both run the move: what the other one already moved is left alone and logged at INFO. No `_SCHEMA_VERSION` bump (the #72 precedent): an older checkout recreates the empty raw tables and ignores this file. Backup: 2 nightly snapshots, no weekly copy (append-only, so the newest holds every row); off this machine once a week, 1 copy | No — durable |
 | `edgar_docs/{cik}/{accession}.html.gz` | Raw 10-K/20-F HTML (the durable raw-document record; keyed by CIK + accession). Dir via `RC_EDGAR_DOCS_DIR` | No — durable; backed up as a tree |
 | `.cache/sec_13f/*_form13f.zip` | Downloaded SEC 13F source archives, left by the retired dashboard ingest (G9); the builder keeps its own under `raw/sec/13f_sets/` | Yes — nothing reads them |
@@ -212,18 +213,18 @@ network.
 | `swing_ohlc` | 2y daily OHLCV per ticker (tabular columns); one writer `module_swing_potential/ohlc_cache.write` (C8), which only the Swing/Fundamentals SPY fallback still calls: Co-movement and the Relatedness peer market read D01 since #379 | raw | none today |
 | `catalyst_events` | Biotech catalysts (trial readouts, PDUFA, AdComs, …) keyed `(source, source_event_id)`: a slipped date updates the row, never adds one (the store records the change in `catalyst_events_changes`); `event_date` + `date_precision` (day/month/quarter/half); writers arrive with #186-#192 | raw | per fetch |
 | `orphan_designations` / `orphan_lookups` | FDA orphan designations per ticker (OOPD) / the outcome of each ticker's lookup. **Writer rules (#190):** skip and report rows whose `date_designated` is None (one NULL key aborts the whole batch); group OOPD's one-record-per-approval rows by key into `approvals`; store `error` as the provider's code; `query` is the query the lookup ended on: when OOPD caps a page (`error` `page_capped`) the provider retries once with a narrower query, so a ticker's stored `query` can differ between sessions only because of that day's cap, and the broad query first asked (`retry_from` in the provider result) is not persisted; readers gate on `orphan_lookups.match` and, since the key is `(ticker, session_date)` (schema 11), take each ticker's latest session (upsert keeps designations that vanish upstream) | raw | per fetch |
-| `price_bars_daily` | Daily bars per `(ticker, session_date)` (schema 11; was `(ticker, date)`): complete New York sessions only (`session_date` is the NY session date, never local/UTC), written from 16:30 ET (`core/calendar.py`); the first write of a key wins and a bar is never rewritten; OHLC nominal as served at `fetched_at` (a price ≤ 0 is not stored; `dropped_no_close` counts bad bars seen, not rows lost), later splits and dividends applied on read from `price_actions` (`core/prices.daily_bars`); `volume` is the value served at write time (#156 R1). Writer `core/prices.ensure_daily_bars`, job `daily_bars`, task RC-Daily-Bars 22:35. Readers (`daily_bars`, windowed by SQL, K8a): Swing and Fundamentals (#383 R3), Asymmetric Growth (nominal: momentum from the last 252/50/63/10 sessions, one read per 500-name batch, #380 S4), the forecast outcomes, and Co-movement plus the Relatedness peer market (adjusted closes over the last 2 years, `module_comovement/ohlc.py` `price_frame`, #379 D01 switch; their Fetch downloads nothing); and, since #372 E5e, the Earnings Fetch's reaction window (`module_earnings_radar/stored_inputs.ohlc_bars`, one windowed nominal read; UW's `etf_ohlc` is asked only for a ticker whose newest stored bar is not the latest complete session, or, from 09:30 to 16:30 New York, for a name reporting today or on the previous trading day, before or after its open) | prices | none (event table, never pruned) |
-| `swing_info` | yfinance `.info` per ticker. `fetched_at DOUBLE` (#127) is the fetch time; a row from before the column is NULL (unknown, never 0) | raw | `OHLC_TTL_DAYS` |
-| `leaps_cache` | LEAPS latest snapshot (Earnings reads it) + the older snapshots list, frozen since #377 L3 (carried unchanged, never appended). `fetched_at DOUBLE` (#127); NULL on older rows is unknown, never 0 | raw | none today (latest only) |
-| `rotation_holdings` | Per-ETF holdings + RS rows for today. `fetched_at DOUBLE` (#127); NULL on older rows is unknown, never 0 | raw | same-day |
+| `price_bars_daily` | Daily bars per `(ticker, session_date)` (schema 11; was `(ticker, date)`): complete New York sessions only (`session_date` is the NY session date, never local/UTC), written from 16:30 ET (`core/calendar.py`); the first write of a key wins and a bar is never rewritten; OHLC nominal as served at `fetched_at` (a price ≤ 0 is not stored; `dropped_no_close` counts bad bars seen, not rows lost), later splits and dividends applied on read from `price_actions` (`core/prices.daily_bars`); `volume` is the value served at write time (#156 R1). Writer `core/prices.ensure_daily_bars`, job `daily_bars`, task RC-Daily-Bars 23:00. Readers (`daily_bars`, windowed by SQL, K8a): Swing and Fundamentals (#383 R3), Asymmetric Growth (nominal: momentum from the last 252/50/63/10 sessions, one read per 500-name batch, #380 S4), the forecast outcomes, and Co-movement plus the Relatedness peer market (adjusted closes over the last 2 years, `module_comovement/ohlc.py` `price_frame`, #379 D01 switch; their Fetch downloads nothing); and, since #372 E5e, the Earnings Fetch's reaction window (`module_earnings_radar/stored_inputs.ohlc_bars`, one windowed nominal read; UW's `etf_ohlc` is asked only for a ticker whose newest stored bar is not the latest complete session, or, from 09:30 to 16:30 New York, for a name reporting today or on the previous trading day, before or after its open) | prices | none (event table, never pruned) |
+| `swing_info` | yfinance `.info` per ticker. `fetched_at DOUBLE` (#127) is the fetch time; a row from before the column is NULL (unknown, never 0) | swing_potential | `OHLC_TTL_DAYS` |
+| `leaps_cache` | LEAPS latest snapshot (Earnings reads it) + the older snapshots list, frozen since #377 L3 (carried unchanged, never appended). `fetched_at DOUBLE` (#127); NULL on older rows is unknown, never 0 | leaps | none today (latest only) |
+| `rotation_holdings` | Per-ETF holdings + RS rows for today. `fetched_at DOUBLE` (#127); NULL on older rows is unknown, never 0 | sector_rotation | same-day |
 | `tradewhisperer_*` | Legacy TradeWhisperer caches — board removed 2026-09-30; rows kept untouched, no longer in the MANIFEST | raw | — |
 | `equity_universe` | Shared US universe (members = the SEC exchange file's Nasdaq / NYSE / CBOE rows, with Yahoo market data joined on, #264) + provenance snapshot | raw | refreshed on scan |
 | `sec_company_tickers` | SEC CIK map (ticker → cik/name); **retired** (#301 D21): nothing writes it, and the readers use `sec_exchange_file` first — it stays as the CIK map's second source, ahead of a live `company_tickers.json` read | raw | frozen |
 | `sec_company_sic` | SIC per CIK — the fallback behind the SEC submissions code for the SIC sector step (#272) | raw | until refetched |
-| `comov_runs` / `comov_nodes` / `comov_members` / `comov_lag` | Co-movement board: dated return-cluster runs, clusters, members; groups formed a quarter earlier with their held-out-quarter test | raw | per Fetch run (latest as_of wins) |
+| `comov_runs` / `comov_nodes` / `comov_members` / `comov_lag` | Co-movement board: dated return-cluster runs, clusters, members; groups formed a quarter earlier with their held-out-quarter test | comovement | per Fetch run (latest as_of wins) |
 | `chain_filings` / `chain_mentions` / `chain_meta` | Value Chain board: latest 10-K/20-F Item 1/4 text + supplier/customer edges. `chain_meta.fetched_at DOUBLE` (#127) is the fetch time; NULL on older rows is unknown, never 0 | edgar | per fetch (resumable by ticker) |
-| `llm_cache` | DeepSeek (and, for a `--provider grok` run, SuperGrok: #388) prompt/response cache (Relatedness + Value Chain) | raw | none (immutable) |
-| `ticker_themes` | Runtime theme SSoT `(ticker, theme_id, theme, level, theme_run_id)`. `fetched_at DOUBLE` (#127) is when the row was written; NULL on older rows is unknown, never 0 | raw | per theme run |
+| `llm_cache` | DeepSeek (and, for a `--provider grok` run, SuperGrok: #388) prompt/response cache (Relatedness + Value Chain) | relatedness | none (immutable) |
+| `ticker_themes` | Runtime theme SSoT `(ticker, theme_id, theme, level, theme_run_id)`. `fetched_at DOUBLE` (#127) is when the row was written; NULL on older rows is unknown, never 0 | relatedness | per theme run |
 | `sec13f_security_meta` | Shared ticker→{name,sector} across dashboards (merged from old `universe_meta` + `sec13f_universe_meta`). `fetched_at DOUBLE` (#127); NULL on older rows is unknown, never 0 | raw | manual |
 | `sec13f_enrichment` | 13F enrichment (price/short/insider); writer retired (#300), no reader since #375 F2 (the board reads `ownership_snapshot` and D01); the rows stay | raw | none |
 | `sec13f_edgar_backfill` | Retired: the EDGAR backfill is gone and nothing reads it; no writer either, apart from the legacy import `scripts/migrate_rawdata_to_duckdb.py`, so the entry is flagged MANIFEST `"retired": true` (#289) and scheduled to leave the manifest at the next bump (the table leaves the manifest in the 8→9 bump) | raw | none |
@@ -232,20 +233,28 @@ network.
 | `price_actions` | Key `(ticker, ex_date, action)`. `ticker`, `ex_date DATE`, `action`, `value DOUBLE`, `session_date DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`; writer `core/prices.py` (#156): yfinance dividends (amount), splits (ratio, 4.0 = 4-for-1) and capital gains (amount); first write wins | prices | none |
 | `index_levels_daily` | D03 (#293, M-SPX-0 #376): writer `core/index_levels.py` (yfinance `^GSPC`, `auto_adjust=False`, symbol `^GSPC`, source `yfinance`), two entry points under one lock: the best-effort last step of RC-Daily-Bars (`scripts/daily_bars.py --nightly --index-levels`; at most 1 yfinance request a night, none when the latest complete session is stored or before the fill, a per-session marker under `.cache/index_levels/`, no retry; its failure never changes the exit code) and the attended one-time `period="max"` fill (`scripts/daily_bars.py --index-fill --confirm`, one request, needs SPY's D01 fill). Append, the first write of a key wins; complete sessions only: from 2025 a calendar trading day up to the latest complete session, before 2025 a date of SPY's stored D01 bars or any `^GSPC` date before SPY's first (rule C). SPX Gamma read its 8-week candle window from it until PR 3 and no longer reads it (it reads Cboe's `SPX` closes from the market store's `market_series`, `module_spx_gamma/store_reads.py`, and still makes no candle request of its own, D03); the Settings / Data health board reports newest session vs latest complete, row count and source. In prices.duckdb beside `price_bars_daily` since #293 (avo 2026-10-10; a store from before has the empty raw table moved over by the first call). Key `(symbol, session_date)`. `symbol`, `session_date DATE`, `open DOUBLE`, `high DOUBLE`, `low DOUBLE`, `close DOUBLE`, `volume DOUBLE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | prices | none |
 | `quote_snapshot` | G1 (#292); writers `core/quotes.py` (#294): one row per ticker per complete New York session per source, append (first write of a key wins), a row only with a positive cap, nothing written inside the session or by a run that crosses a session boundary. `yfinance` rows from the universe pull (Phase A screener quotes, Phase B `fast_info` fills), `uw` rows from the universe job (UW screener, batches of 100, when a UW key verifies). Boards still read `equity_universe` (#279 D6). Key `(ticker, session_date, source)`. `ticker`, `session_date DATE`, `source`, `market_cap DOUBLE`, `price DOUBLE`, `shares_outstanding DOUBLE`, `week_52_high DOUBLE`, `week_52_low DOUBLE`, `payload BLOB`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
-| `short_interest` | D10 (#296): writer `module_earnings_radar/inputs/short_interest.py`, task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); read by 13F Short% since #375 F6 (`module_sec_13f/enrich.load_short_interest`: newest non-null `si_float` per ticker, shown as a percent) and, since #372 E5c, by Earnings R5 (`module_earnings_radar/stored_inputs.short_rows`, the newest session inside `MAX_LAG` 3, any source; the row is parsed with `UWClient._parse_short_row`, so the live answer and the stored one give the same inputs, and UW's `/short_screener` is called only for the tickers the store misses). The calendar tickers then the 13F tickers inside the UW cap; source `uw_short_screener`, then `uw_interest_float`, then `yfinance` (si_float and total_float only); values as served (si_float a fraction); first write per session wins. Key `(ticker, session_date)`. `ticker`, `session_date DATE`, `market_date DATE`, `short_interest DOUBLE`, `si_float DOUBLE`, `total_float DOUBLE`, `days_to_cover DOUBLE`, `fee_rate DOUBLE`, `rebate_rate DOUBLE`, `short_shares_available DOUBLE`, `payload JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
+| `short_interest` | D10 (#296): writer `module_earnings_radar/inputs/short_interest.py`, task RC-Short-Interest (Mon-Fri 23:40, #620; `core/nightly_inputs.py`); read by 13F Short% since #375 F6 (`module_sec_13f/enrich.load_short_interest`: newest non-null `si_float` per ticker, shown as a percent) and, since #372 E5c, by Earnings R5 (`module_earnings_radar/stored_inputs.short_rows`, the newest session inside `MAX_LAG` 3, any source; the row is parsed with `UWClient._parse_short_row`, so the live answer and the stored one give the same inputs, and UW's `/short_screener` is called only for the tickers the store misses). The calendar tickers then the 13F tickers inside the UW cap; source `uw_short_screener`, then `uw_interest_float`, then `yfinance` (si_float and total_float only); values as served (si_float a fraction); first write per session wins. Key `(ticker, session_date)`. `ticker`, `session_date DATE`, `market_date DATE`, `short_interest DOUBLE`, `si_float DOUBLE`, `total_float DOUBLE`, `days_to_cover DOUBLE`, `fee_rate DOUBLE`, `rebate_rate DOUBLE`, `short_shares_available DOUBLE`, `payload JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `vendor_financials` | G1 (#292). Writer `core/vendor_data.record` (#297, D12): the statements an AG/universe Fetch (yfinance, names without EDGAR years), an Earnings Fetch (UW `/financials`, annual and quarterly as served) or a Financials Fetch (yfinance) fetched; change history (rule A): a row is appended only when the typed fields or the payload differ from the newest row of its key (UW `inserted_at`/`updated_at` ignored), `valid_from` = the run's session, `status` 'present'; a period leaving the vendor's window is not closed. `operating_income` is yfinance's `ebit`. Read by `core/vendor_data.read_financials` (#385, FIN-5): the statements a store-only Financials Refresh models from (`source` `yfinance`, `report_type` `annual`, `status` 'present', the newest row per statement and period, merged per fiscal year) — zero network, and the read writes nothing. Key `(ticker, source, statement, report_type, period_end, run_at)`. `ticker`, `source`, `statement`, `report_type`, `period_end DATE`, `valid_from DATE`, `status`, `revenue DOUBLE`, `gross_profit DOUBLE`, `operating_income DOUBLE`, `ebitda DOUBLE`, `net_income DOUBLE`, `operating_cash_flow DOUBLE`, `total_assets DOUBLE`, `inventory DOUBLE`, `receivables DOUBLE`, `deferred_revenue DOUBLE`, `rpo DOUBLE`, `total_debt DOUBLE`, `interest_expense DOUBLE`, `payload JSON`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `vendor_valuation` | G1 (#292). Writer `core/vendor_data.record` (#297, D12): the yfinance `.info` of every AG/universe name a Fetch asked, and of the Financials ticker and its comps peers; one row per session, written only by a complete-session run (from 16:30 ET; an intraday run writes none), first write of a session wins. Read by `core/vendor_data.read_financials` (#385, FIN-5): the `.info` half of a store-only Refresh's model inputs (newest session first) — a ticker an intraday Fetch left no row for takes its market snapshot from the raw payload cache instead. Key `(ticker, source, session_date)`. `ticker`, `source`, `session_date DATE`, `enterprise_value DOUBLE`, `ebitda DOUBLE`, `total_revenue DOUBLE`, `net_income_to_common DOUBLE`, `trailing_pe DOUBLE`, `beta DOUBLE`, `currency`, `long_business_summary`, `payload BLOB`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `earnings_history` | G1 (#292). Writer `module_earnings_radar/earnings_store.record` (#298, D13): the two UW answers an Earnings Fetch already reads per scored ticker (`/earnings/{ticker}`, `/stock/{ticker}/earnings`; `endpoint` names which), captured by the scoring workers and flushed after the run with the job's id; a print is appended only when its typed fields or payload changed (change history, daytime runs too), a failed read closes nothing. Key `(ticker, endpoint, report_date, run_at)`. `ticker`, `endpoint`, `report_date DATE`, `valid_from DATE`, `status`, `report_time`, `actual_eps DOUBLE`, `eps_estimate DOUBLE`, `surprise_pct DOUBLE`, `expected_move_perc DOUBLE`, `post_earnings_move_1d DOUBLE`, `fiscal_period_end DATE`, `report_type`, `payload JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
-| `estimate_snapshots` | D14 (A6, #323): writer `module_earnings_radar/inputs/estimates.py` (yfinance `earningsTrend`, one read per calendar ticker), task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); up to four periods per ticker, a field Yahoo does not give stays NULL; first write per session wins. Read by Earnings R1 from #372 E6 until the ties to the old store were cut; the board now reads the fundamentals store's `estimate_latest` (`module_earnings_radar/store_reads.estimates`, the `0q` row while its `source_as_of` is at most 14 days old, `MAX_AGE_DAYS`, the need `fundamentals.estimates`; the rule is logged only, weight 0), so this table has no reader. The new source is narrower: the fundamentals build asks Tier A companies only, one ticker per company (the shortest), so a calendar name outside Tier A, or the other class of a two-class company, has no R1 row. Key `(ticker, session_date, period)`. `ticker`, `session_date DATE`, `period`, `eps_est_analysts DOUBLE`, `eps_est_avg DOUBLE`, `eps_est_low DOUBLE`, `eps_est_high DOUBLE`, `eps_est_year_ago DOUBLE`, `eps_est_growth DOUBLE`, `rev_est_analysts DOUBLE`, `rev_est_avg DOUBLE`, `rev_est_low DOUBLE`, `rev_est_high DOUBLE`, `rev_est_year_ago DOUBLE`, `rev_est_growth DOUBLE`, `eps_trend_current DOUBLE`, `eps_trend_7d DOUBLE`, `eps_trend_30d DOUBLE`, `eps_trend_60d DOUBLE`, `eps_trend_90d DOUBLE`, `eps_rev_up_7d DOUBLE`, `eps_rev_up_30d DOUBLE`, `eps_rev_down_7d DOUBLE`, `eps_rev_down_30d DOUBLE`, `payload JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
+| `estimate_snapshots` | D14 (A6, #323): writer `module_earnings_radar/inputs/estimates.py` (yfinance `earningsTrend`, one read per calendar ticker), task RC-Earnings-Daytime (Tue + Thu 13:00, #620; `core/nightly_inputs.py`); up to four periods per ticker, a field Yahoo does not give stays NULL; first write per session wins. Read by Earnings R1 from #372 E6 until the ties to the old store were cut; the board now reads the fundamentals store's `estimate_latest` (`module_earnings_radar/store_reads.estimates`, the `0q` row while its `source_as_of` is at most 14 days old, `MAX_AGE_DAYS`, the need `fundamentals.estimates`; the rule is logged only, weight 0), so this table has no reader. The new source is narrower: the fundamentals build asks Tier A companies only, one ticker per company (the shortest), so a calendar name outside Tier A, or the other class of a two-class company, has no R1 row. Key `(ticker, session_date, period)`. `ticker`, `session_date DATE`, `period`, `eps_est_analysts DOUBLE`, `eps_est_avg DOUBLE`, `eps_est_low DOUBLE`, `eps_est_high DOUBLE`, `eps_est_year_ago DOUBLE`, `eps_est_growth DOUBLE`, `rev_est_analysts DOUBLE`, `rev_est_avg DOUBLE`, `rev_est_low DOUBLE`, `rev_est_high DOUBLE`, `rev_est_year_ago DOUBLE`, `rev_est_growth DOUBLE`, `eps_trend_current DOUBLE`, `eps_trend_7d DOUBLE`, `eps_trend_30d DOUBLE`, `eps_trend_60d DOUBLE`, `eps_trend_90d DOUBLE`, `eps_rev_up_7d DOUBLE`, `eps_rev_up_30d DOUBLE`, `eps_rev_down_7d DOUBLE`, `eps_rev_down_30d DOUBLE`, `payload JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `identity_cusip` | G1 (#292). Writer `core/identity_cusip.py` `record` (#207): OpenFIGI's CUSIP answers from the 13F map step, change history (rule A: a changed answer appends a row, a lost match one `absent` row, nothing is updated or deleted), `source` `openfigi`. Key `(cusip, run_at)`. `cusip`, `valid_from DATE`, `status`, `ticker`, `figi`, `share_class_figi`, `share_class`, `name`, `exch_code`, `security_type`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `ownership_snapshot` | G1 (#292). Writer `core/ownership.record` (#300, D20): source `yfinance`, the shares outstanding, insider % and institutional % of the `.info` an AG/universe Fetch already gets for the D12 valuation; source `uw_info`, UW `/stock/{t}/info` `outstanding` of every 13F totals ticker, asked by the 13F Fetch after its board render (one call each, only for tickers not stored yet this session, at most `UW_MAX_CALLS_PER_FETCH` = 2,500 per Fetch, never-stored tickers first, then the oldest stored). One row per session, written only by a complete-session run (a weekend or pre-open run maps to the last complete session, an intraday run writes none, and the 13F Fetch then asks nothing), first write of a session wins; percentages are fractions as served, a field the source did not give is NULL. No board reads it yet. Key `(ticker, session_date, source)`. `ticker`, `session_date DATE`, `source`, `shares_outstanding DOUBLE`, `insider_pct DOUBLE`, `institutional_pct DOUBLE`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `sec_mf_file` | D8 (#301 F0): writer `core/sec_files.py` (SEC `company_tickers_mf.json`, one GET a New York weekday night, no retry), the best-effort first step of RC-Daily-Bars (`scripts/daily_bars.py --nightly --sec-files`); change history (rule A): a row when `cik`, `series_id` or `symbol` change, one 'absent' row (key and stamps) when a class leaves, `valid_from` the run's session, source `sec_mf`; a file under 10,000 classes writes nothing. No board reads it. Key `(class_id, run_at)`. `class_id`, `valid_from DATE`, `status`, `cik`, `series_id`, `symbol`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
 | `sec_exchange_file` | D21 (#301 F0): writer `core/sec_files.py` (SEC `company_tickers_exchange.json` through `sec.exchange_map`, one GET a New York weekday night, no retry), the best-effort first step of RC-Daily-Bars (`scripts/daily_bars.py --nightly --sec-files`); change history (rule A): a row when `cik`, `name` or `exchange` change, one 'absent' row (key and stamps) when a ticker leaves, `valid_from` the run's session, source `sec_exchange`; a file under 3,000 Nasdaq / NYSE / CBOE rows writes nothing. The universe and identity jobs still pull the file themselves. Key `(ticker, run_at)`. `ticker`, `valid_from DATE`, `status`, `cik`, `name`, `exchange`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
-| `earnings_calendar` | D26 (#304): writer `module_earnings_radar/inputs/earnings_calendar.py` (UW calendar, the trading days of the next four weeks, premarket and afterhours), task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); source `uw`; first write per session wins. Read by the Earnings Fetch since #372 E5a (`module_earnings_radar/stored_inputs.calendar_items`, the newest session inside `MAX_LAG` 1): a covered `(earnings_date, report_session)` pair is rebuilt from `item` and UW is called for the pairs the sweep did not reach, and always for today's and the next trading day's pairs. Key `(session_date, earnings_date, ticker, report_session)`. `session_date DATE`, `earnings_date DATE`, `ticker`, `report_session`, `sector`, `full_name`, `marketcap DOUBLE`, `expected_move_perc DOUBLE`, `street_mean_est DOUBLE`, `pre_earnings_close DOUBLE`, `post_earnings_close DOUBLE`, `report_time`, `item JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
-| `macro_series` | D27 (#305, FRED part): writer `module_earnings_radar/inputs/macro.py` (DGS2/5/10/20/30, T10Y2Y, T10YIE, DCOILWTICO; 8 FRED calls), task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); source `fred`, `session_date` the NY session on or before `obs_date`; first write of an observation wins. Read by Earnings R6 from #372 E5d until the ties to the old store were cut; R6 now reads the market store's own FRED row (`module_earnings_radar/store_reads.dgs10_map`, the need `macro.dgs10`: the newest 80 observations while the newest is at most 4 trading sessions old, and no FRED call at all; 4 and not 3 since the live measurement of 30 Oct 2026 showed an ordinary lag of 2, FRED publishing one business day late). Still read by the Financials DCF as its risk-free rate (`module_financials/run._stored_risk_free`, the newest DGS10 row while it is at most 14 days old; older or none, the 4% default, labelled on the board; Financials review S2). Key `(series_id, obs_date, source)`. `series_id`, `obs_date DATE`, `source`, `value DOUBLE`, `frequency`, `proxy_for`, `session_date DATE`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
-| `vol_index_daily` | D28 (#305, Cboe part; #371): writer `module_earnings_radar/inputs/vol_index.py`, task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); Cboe's public daily-price CSV per symbol (VIX, VIX9D, VIX3M, VIX6M, VIX1Y, VVIX, OVX; 7 calls, `source` `cboe`) plus MOVE from yfinance (`^MOVE`, 1 call, `source` `yfinance`); the newest 60 rows per symbol a night, a symbol's first run keeping its whole file (`FIRST_RUN_LIMIT` = None); `session_date` the row's own trading date as served, `operator` NULL; first write of a key wins. Read by SPX Gamma from D28 until PR 3; SPX Gamma no longer reads it (it reads the VIX family from the market store's `market_series`, the newest observation on or before the day inside 3 sessions, and asks yfinance for it never). `module_earnings_radar/stored_inputs.vol_index_rows` was the last reader of the table and is gone with it: nothing reads this table now. The Earnings board itself reads neither series (R6 is the 10Y-yield-beta veto); the sweep writes them for SPX Gamma. Rotation reads neither: its macro series come from `market_series` since PR 9 (MOVE and wheat from its `yahoo` source). Key `(symbol, session_date, source)`. `symbol`, `session_date DATE`, `source`, `open DOUBLE`, `high DOUBLE`, `low DOUBLE`, `close DOUBLE`, `operator`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
-| `cftc_cot` | D29 (#305, CFTC part; #371): writer `module_earnings_radar/inputs/cftc_cot.py`, task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); CFTC Socrata Traders-in-Financial-Futures, the newest 4 rows of the E-mini S&P 500 (1 call, `source` `cftc`), parsed by `core/providers/cftc.py::map_row`; `report_type` `TFF`, `market` `E-MINI S&P 500`, `release_date` the report date + 3 days unless the source states one, `session_date` the New York session on or before `report_date`, `raw_row` the source row; first write per report wins. Read by SPX Gamma from D29 until PR 3; SPX Gamma no longer reads it (it reads the E-mini TFF report from the market store's `market_series`, `cftc:tff:13874A:*`, the newest report released on or before the day inside 10 sessions, its weekly change computed as this report minus the previous one, decision A5 (None, shown "n/a (gap)", when the two newest reports are not 5 to 9 days apart (#228)), and never asks CFTC live). `module_earnings_radar/stored_inputs.cot_row` was the last reader of the table and is gone with it: nothing reads this table now. The Earnings board itself reads neither series. Key `(report_type, market, report_date)`. `report_type`, `market`, `report_date DATE`, `release_date DATE`, `open_interest DOUBLE`, `asset_mgr_long DOUBLE`, `asset_mgr_short DOUBLE`, `asset_mgr_change_long DOUBLE`, `lev_money_long DOUBLE`, `lev_money_short DOUBLE`, `lev_money_change_long DOUBLE`, `dealer_long DOUBLE`, `dealer_short DOUBLE`, `dealer_change_long DOUBLE`, `raw_row JSON`, `session_date DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
-| `economic_calendar` | D37 (#307): writer `module_earnings_radar/inputs/economic.py` (UW economic calendar, this week and next, 1 call), task RC-Earnings-Inputs (Tue-Sat 01:30, after RC-Daily-Bars; `core/nightly_inputs.py`); `event_ts` UW's UTC time as epoch seconds; first write per session wins. Read by Earnings R6 since #372 E5d (`module_earnings_radar/stored_inputs.rate_event_overlap`): an FOMC, or a report whose text names CPI, inside the report date ±1 trading day vetoes an extreme yield beta whose t-stat is at least 2; the event's day is its New York date, the newest session whose own rows span the window answers (the writer keeps every session's sweep, so a moved release keeps its old date in the older ones), and a window no one session spans gives `None` (no veto). Key `(session_date, event_ts, event, type)`. `session_date DATE`, `event_ts DOUBLE`, `event`, `type`, `forecast`, `prev`, `reported_period`, `raw_row JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
+| `earnings_calendar` | D26 (#304): writer `module_earnings_radar/inputs/earnings_calendar.py` (UW calendar, the trading days of the next four weeks, premarket and afterhours), task RC-Earnings-Calendar (Mon + Thu 23:40, #620; `core/nightly_inputs.py`); source `uw`; first write per session wins. Read by the Earnings Fetch since #372 E5a (`module_earnings_radar/stored_inputs.calendar_items`, the newest session inside `MAX_LAG` 1): a covered `(earnings_date, report_session)` pair is rebuilt from `item` and UW is called for the pairs the sweep did not reach, and always for today's and the next trading day's pairs. Key `(session_date, earnings_date, ticker, report_session)`. `session_date DATE`, `earnings_date DATE`, `ticker`, `report_session`, `sector`, `full_name`, `marketcap DOUBLE`, `expected_move_perc DOUBLE`, `street_mean_est DOUBLE`, `pre_earnings_close DOUBLE`, `post_earnings_close DOUBLE`, `report_time`, `item JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
+| `macro_series` | D27 (#305, FRED part): writer `module_earnings_radar/inputs/macro.py` (DGS2/5/10/20/30, T10Y2Y, T10YIE, DCOILWTICO; 8 FRED calls), task RC-Macro-Weekly (Thu 23:40, #620; `core/nightly_inputs.py`); source `fred`, `session_date` the NY session on or before `obs_date`; first write of an observation wins. Read by Earnings R6 from #372 E5d until the ties to the old store were cut; R6 now reads the market store's own FRED row (`module_earnings_radar/store_reads.dgs10_map`, the need `macro.dgs10`: the newest 80 observations while the newest is at most 4 trading sessions old, and no FRED call at all; 4 and not 3 since the live measurement of 30 Oct 2026 showed an ordinary lag of 2, FRED publishing one business day late). Still read by the Financials DCF as its risk-free rate (`module_financials/run._stored_risk_free`, the newest DGS10 row while it is at most 14 days old; older or none, the 4% default, labelled on the board; Financials review S2). Key `(series_id, obs_date, source)`. `series_id`, `obs_date DATE`, `source`, `value DOUBLE`, `frequency`, `proxy_for`, `session_date DATE`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
+| `vol_index_daily` | D28 (#305, Cboe part; #371): writer `module_earnings_radar/inputs/vol_index.py`, task RC-Macro-Weekly (Thu 23:40, #620; `core/nightly_inputs.py`); Cboe's public daily-price CSV per symbol (VIX, VIX9D, VIX3M, VIX6M, VIX1Y, VVIX, OVX; 7 calls, `source` `cboe`) plus MOVE from yfinance (`^MOVE`, 1 call, `source` `yfinance`); the newest 60 rows per symbol a night, a symbol's first run keeping its whole file (`FIRST_RUN_LIMIT` = None); `session_date` the row's own trading date as served, `operator` NULL; first write of a key wins. Read by SPX Gamma from D28 until PR 3; SPX Gamma no longer reads it (it reads the VIX family from the market store's `market_series`, the newest observation on or before the day inside 3 sessions, and asks yfinance for it never). `module_earnings_radar/stored_inputs.vol_index_rows` was the last reader of the table and is gone with it: nothing reads this table now. The Earnings board itself reads neither series (R6 is the 10Y-yield-beta veto); the sweep writes them for SPX Gamma. Rotation reads neither: its macro series come from `market_series` since PR 9 (MOVE and wheat from its `yahoo` source). Key `(symbol, session_date, source)`. `symbol`, `session_date DATE`, `source`, `open DOUBLE`, `high DOUBLE`, `low DOUBLE`, `close DOUBLE`, `operator`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
+| `cftc_cot` | D29 (#305, CFTC part; #371): writer `module_earnings_radar/inputs/cftc_cot.py`, task RC-CFTC-Weekly (Fri 23:40, #620; `core/nightly_inputs.py`); CFTC Socrata Traders-in-Financial-Futures, the newest 4 rows of the E-mini S&P 500 (1 call, `source` `cftc`), parsed by `core/providers/cftc.py::map_row`; `report_type` `TFF`, `market` `E-MINI S&P 500`, `release_date` the report date + 3 days unless the source states one, `session_date` the New York session on or before `report_date`, `raw_row` the source row; first write per report wins. Read by SPX Gamma from D29 until PR 3; SPX Gamma no longer reads it (it reads the E-mini TFF report from the market store's `market_series`, `cftc:tff:13874A:*`, the newest report released on or before the day inside 10 sessions, its weekly change computed as this report minus the previous one, decision A5 (None, shown "n/a (gap)", when the two newest reports are not 5 to 9 days apart (#228)), and never asks CFTC live). `module_earnings_radar/stored_inputs.cot_row` was the last reader of the table and is gone with it: nothing reads this table now. The Earnings board itself reads neither series. Key `(report_type, market, report_date)`. `report_type`, `market`, `report_date DATE`, `release_date DATE`, `open_interest DOUBLE`, `asset_mgr_long DOUBLE`, `asset_mgr_short DOUBLE`, `asset_mgr_change_long DOUBLE`, `lev_money_long DOUBLE`, `lev_money_short DOUBLE`, `lev_money_change_long DOUBLE`, `dealer_long DOUBLE`, `dealer_short DOUBLE`, `dealer_change_long DOUBLE`, `raw_row JSON`, `session_date DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
+| `economic_calendar` | D37 (#307): writer `module_earnings_radar/inputs/economic.py` (UW economic calendar, this week and next, 1 call), task RC-Earnings-Daytime (Tue + Thu 13:00, #620; `core/nightly_inputs.py`); `event_ts` UW's UTC time as epoch seconds; first write per session wins. Read by Earnings R6 since #372 E5d (`module_earnings_radar/stored_inputs.rate_event_overlap`): an FOMC, or a report whose text names CPI, inside the report date ±1 trading day vetoes an extreme yield beta whose t-stat is at least 2; the event's day is its New York date, the newest session whose own rows span the window answers (the writer keeps every session's sweep, so a moved release keeps its old date in the older ones), and a window no one session spans gives `None` (no veto). Key `(session_date, event_ts, event, type)`. `session_date DATE`, `event_ts DOUBLE`, `event`, `type`, `forecast`, `prev`, `reported_period`, `raw_row JSON`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
+| `news_events` | News board (S9, S16): its own file `.store/boards/news.duckdb`. Writer `module_news/calendar.build`, incremental from `raw.economic_calendar` rows fetched after the `news_meta` mark `calendar_mark`: upsert by key (first sighting kept, last sighting, forecast and previous value move forward); a key the newest fetch no longer lists inside that fetch's span gets `retired_at`, never a delete; no new rows retire nothing. `importance` from `core/econ_importance.py` (3 high, 2 medium, 1 low). Key `(event_ts, event, type)`. `event_ts DOUBLE`, `event`, `type`, `importance INTEGER`, `forecast`, `prev`, `reported_period`, `first_seen DOUBLE`, `last_seen DOUBLE`, `retired_at DOUBLE`, `run_id`, `run_at DOUBLE` | news | none |
+| `news_highlight` | News board: the highlighted release of each Amsterdam day, its most important live `news_events` row (earliest on a tie), with a Turkish template text (`text_source` 'template', no model call). Key `session_date`. `session_date DATE`, `event_ts DOUBLE`, `event`, `type`, `importance INTEGER`, `forecast`, `prev`, `text`, `text_source`, `run_id`, `run_at DOUBLE` | news | none |
+| `news_headlines` | News board: Dow Jones headlines (`DJ-N`, `DJ-RT`) from the IBKR Gateway, `module_news/headlines.py` (avo, 9 Nov 2026: "Ibkr kullanalim"): per name of the stock watch list, then the largest US names (at most 25), headlines only, never the article body; asked from the `news_meta` mark `headlines_mark` less 10 minutes, at most 24 h back; the same story under several names is one row whose `tickers` lists them. One row per headline id, upserted. Key `headline_id`. `headline_id`, `provider`, `published_at DOUBLE`, `headline`, `source`, `tickers` (JSON text), `url`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | news | none |
+| `news_meta` | News board bookkeeping: the incremental marks (`calendar_mark` = the newest `raw.economic_calendar.fetched_at` already built). Key `key`. `key`, `value`, `run_at DOUBLE` | news | none |
+| `welcome_snapshot` | Welcome board (S9, S16): its own file `.store/boards/welcome.duckdb`. Writer `module_welcome/build.py`: the last stored close of SPX (`index_levels_daily` `^GSPC`), VIX and MOVE (`vol_index_daily`, newest fetch of a day), US 10-year (`macro_series` `DGS10`), with the change on the session before and a 20-session line (`spark`, JSON text); a row only for a session newer than the series' stored one. Key `(series, session_date)`. `series`, `session_date DATE`, `close DOUBLE`, `prev_close DOUBLE`, `change DOUBLE`, `change_pct DOUBLE`, `spark`, `run_id`, `run_at DOUBLE` | welcome | none |
+| `welcome_earnings` | Welcome board: the names reporting today and on the next trading day (New York dates), from the newest `earnings_calendar` snapshot of each day and report session; a name that snapshot drops gets `retired_at`, never a delete. Key `(earnings_date, ticker, report_session)`. `earnings_date DATE`, `ticker`, `report_session`, `full_name`, `expected_move_perc DOUBLE`, `report_time`, `source_session DATE`, `first_seen DOUBLE`, `last_seen DOUBLE`, `retired_at DOUBLE`, `run_id`, `run_at DOUBLE` | welcome | none |
+| `welcome_freshness` | Welcome board: each job's last finished run, last success and last failure, from `job_runs` rows finished after the mark (a scheduled task by its registry name, a dashboard job by its module). Key `job`. `job`, `last_status`, `last_finished_at DOUBLE`, `last_ok_at DOUBLE`, `last_failed_at DOUBLE`, `last_error`, `run_id`, `run_at DOUBLE` | welcome | none |
+| `welcome_meta` | Welcome board bookkeeping: the incremental marks `earnings_mark` and `freshness_mark`. Key `key`. `key`, `value`, `run_at DOUBLE` | welcome | none |
 | `source_checks` | Key `(dataset, source, key)`. `dataset`, `source`, `key`, `checked_at DOUBLE`, `run_id`; the generic per-key "last checked" stamp (rule A); `core/quotes.py` (#294): `quote_snapshot`/`yfinance`/`__rate_limited__` = Phase B's last stop on Yahoo's rate limit; the price watermarks moved to `price_checks` (#156) | raw | none |
 | `price_checks` | Key `(dataset, source, key)`, the shape of `source_checks`; writer `core/prices.py` (#156), in the chunk's transaction: `price_actions`/`yfinance` = per-ticker actions watermark; `price_bars_daily`/`yfinance_max` = fill marker | prices | none |
 | `sec13f_filers` | G1 (#292), manifest only, no writers yet. Key `(accession)`. `accession`, `cik`, `period`, `name`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE` | raw | none |
@@ -268,6 +277,7 @@ Computed from raw caches and persisted in `raw.duckdb`.
 | `swing_scores` / `swing_gates` | Swing Potential scan | same gate shape |
 | `company_profile` (VIEW) | `equity_universe` + `ticker_scores` / `fundamentals_scores` / `swing_scores` | one row per universe ticker; scalar joins only |
 | `relatedness_profiles` / `relatedness_attributes` / `relatedness_scores` | Relatedness LLM run | CIK-grained profiles + similarity |
+| `relatedness_embeddings` | Relatedness v2 Step 2 (#401, schema 13) | one vector per ticker and embedding model; manifest only until Step 2 lands its writer |
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `theme_runs` | NMF over Relatedness | nested fine/medium/coarse themes; pinned run in `run_registry` |
 | `leaps_flow_prints` / `leaps_daily_scores` | LEAPS flow prints + daily scores (ex-SQLite `leaps/radar.db`) | PK `id` / (ticker, date) dedup; schema-versioned |
 | `rotation_snapshots` | Rotation engine cross-section (up to 78 symbols live, 67 backfilled; D01 weekly closes since #374 M-ROT-2) | one row per ETF per session (time series; `as_of_date` is the session, #283) |
@@ -387,8 +397,8 @@ universe did, over the same windows (`outcomes.outcome` is reused, so the rules 
   90-day ones; `full` recomputes the date, after a bar backfill or a rule change). A night whose Daily Bars failed
   therefore leaves the rows open instead of freezing them on a short window.
 
-The task RC-Forecast-Outcomes runs daily at 23:45, chained on RC-Daily-Bars (the bars it reads), after
-RC-Screeners-Daily (weekdays from 23:00), the other `raw.duckdb` writer of the night. The task RC-Forecast-Baselines
+The task RC-Forecast-Outcomes runs daily at 23:35, chained on RC-Daily-Bars (the bars it reads), after
+RC-Screeners-Daily (weekdays from 23:30), the other `raw.duckdb` writer of the night. The task RC-Forecast-Baselines
 runs daily at 23:50, chained on RC-Forecast-Outcomes (the same night's other `raw.duckdb` writer, so the two never
 overlap) and writes `forecast_baselines` alone; its `--full` is the attended first fill. A dated target (an SPX pin)
 gets one row with `horizon_days` = `target_date` - `forecast_date` from its own writer later; S0 writes picks only.
@@ -637,24 +647,24 @@ worker thread writes while Flask request threads read. So:
   `ingest_zips` clears a zip's own accessions before re-inserting them, so an
   interrupted run resumes without duplicating holdings.
 - The registered scheduled tasks run at 04:00 (backup), 12:30 (Relatedness off-peak), 13:00
-  (Value Chain filing sync) and 22:35 (daily price bars, #156; first the SEC exchange and fund files, #301; last the
+  (Value Chain filing sync) and 23:00 (daily price bars, #156; first the SEC exchange and fund files, #301; last the
   `^GSPC` daily levels, #293), plus Saturday 10:00 weekly (index lists,
-  RC-Index-Lists, #302), weekdays not before 23:00 (the screeners Fetch RC-Screeners-Daily, chained on the
-  daily price bars, #129), daily not before 23:45 (the forecast outcomes RC-Forecast-Outcomes, chained on the daily
+  RC-Index-Lists, #302), weekdays not before 23:30 (the screeners Fetch RC-Screeners-Daily, chained on the
+  daily price bars, #129), daily not before 23:35 (the forecast outcomes RC-Forecast-Outcomes, chained on the daily
   price bars, #380 S0), daily 23:50 (the forecast baselines RC-Forecast-Baselines, chained on the outcomes run, #25
-  HR-1) and Tuesday to Saturday not before 01:30 (the Earnings inputs RC-Earnings-Inputs, chained on the
-  daily price bars, E0 #372), plus daily 09:15 (the IBKR Gateway login check RC-IBKR-Login-Check, #162:
+  HR-1), the Earnings inputs (E0 #372, one entry per schedule since #620, none chained: the sweeps read no
+  bars) RC-Earnings-Calendar Monday and Thursday 23:40, RC-Short-Interest weekdays 23:40, RC-Earnings-Daytime
+  Tuesday and Thursday 13:00, RC-Macro-Weekly Thursday 23:40 and RC-CFTC-Weekly Friday 23:40, plus daily 09:15 (the IBKR Gateway login check RC-IBKR-Login-Check, #162:
   `scripts/ibkr_login_check.py`, one TCP connection and the TWS API version handshake, which writes no table and
   no store file, only its own record under `.cache/ibkr_login/`, and exits 0 whatever it finds — a session that
-  expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :07 (one
-  `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 120 min limit) and its backup
-  RC-Build-Backup daily 04:30 (`rcdata backup --only ops,market,spine,fundamentals,options,raw --subdir market`,
-  unit `life-rc-builder-backup`, 30 min limit) and the heavy half of that backup RC-Build-Backup-Heavy weekly
-  Sunday 03:30 (`rcdata backup --only prices,ownership --subdir market-heavy`,
-  unit `life-rc-builder-backup-heavy`, 60 min limit), PR 2, plus
+  expired on its weekly cycle is not a failed job), plus the market-store builder RC-Build hourly at :05 (one
+  `rcdata.build run --once` pass over the request queue, unit `life-rc-builder`, 120 min limit) and the weekly
+  backup RC-Backup-Weekly, Sunday 03:30 (`rcdata backup`, every step, unit `life-rc-backup-weekly`, 60 min limit;
+  avo, 8 Nov 2026), plus
   Monday to Friday 06:30 (the SPX Gamma Fetch RC-SPX-Gamma-Fetch, #291: `module_spx_gamma --nightly`, the
   latest complete session's raw day with all expiries, only once its Cboe SPX close is stored and outside the US
-  session, else exit 3; no catch-up);
+  session, else exit 3; no catch-up; the Fetch itself is queued on the dashboard, `POST /run/spxgamma`, so the
+  dashboard stays the one writer, and with the dashboard down the task exits 1);
   `core/automations.py`: the Relatedness and Value Chain rows are 30 min apart.
 
 ### Full-refresh vs. incremental tables
@@ -782,7 +792,8 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `ticker_themes` | `ticker`, `theme_id`, `theme`, `level`, `theme_run_id`, `fetched_at DOUBLE` (#127; NULL on older rows is unknown, never 0) | — |
 | `fundamentals_scores` / `swing_scores` | per-ticker metric columns (see MANIFEST) | — |
 | `fundamentals_gates` / `swing_gates` | `ticker`, `gate`, `rule_id`, `passed`, `actual`, `unit` | — |
-| `relatedness_profiles` | `ticker`, `cik`, `model`, `prompt_version`, `fetched_at`, `cache_key`, `status`, `attempts`, `provider` (the writer, #360: `evren` / `deepseek` / `grok`; nullable, added by `ALTER TABLE ADD COLUMN`, no schema bump) | — |
+| `relatedness_profiles` | `ticker`, `cik`, `model`, `prompt_version`, `fetched_at`, `cache_key`, `status`, `attempts`, `provider` (the writer, #360: `evren` / `deepseek` / `grok`; nullable, added by `ALTER TABLE ADD COLUMN`, no schema bump) | `profile_json` (the v3 structured profile, #401, schema 13; NULL on a v2 row), `label_source` (which chunk or table each v3 field came from, #401) |
+| `relatedness_embeddings` | `ticker`, `model`, `dim INTEGER`, `vector BLOB` (the float32 bytes of `dim` values; raw, not zlib-compressed); `PRIMARY KEY (ticker, model)` (#401, schema 13; writer: Step 2) | — |
 | `relatedness_attributes` | `ticker`, `field`, `value` (TEXT holding a JSON list), `value_num` | — |
 | `relatedness_scores` | `ticker`, `peer`, `score` | — |
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `relatedness_theme_etfs` | `theme_id` (run id is its prefix), `level`, `parent_id`, `label`, `size` / `tag`, `rank` / `ticker`, `weight` / `etf`, `overlap`, `rank` | — |
@@ -869,6 +880,14 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `vol_index_daily` | `symbol`, `session_date DATE`, `source`, `open DOUBLE`, `high DOUBLE`, `low DOUBLE`, `close DOUBLE`, `operator`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `(symbol, session_date, source)` | — |
 | `cftc_cot` | `report_type`, `market`, `report_date DATE`, `release_date DATE`, `open_interest DOUBLE`, `asset_mgr_long DOUBLE`, `asset_mgr_short DOUBLE`, `asset_mgr_change_long DOUBLE`, `lev_money_long DOUBLE`, `lev_money_short DOUBLE`, `lev_money_change_long DOUBLE`, `dealer_long DOUBLE`, `dealer_short DOUBLE`, `dealer_change_long DOUBLE`, `session_date DATE`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `(report_type, market, report_date)` | `raw_row` |
 | `economic_calendar` | `session_date DATE`, `event_ts DOUBLE`, `event`, `type`, `forecast`, `prev`, `reported_period`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `(session_date, event_ts, event, type)` | `raw_row` |
+| `news_events` | `event_ts DOUBLE`, `event`, `type`, `importance INTEGER`, `forecast`, `prev`, `reported_period`, `first_seen DOUBLE`, `last_seen DOUBLE`, `retired_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `(event_ts, event, type)` | — |
+| `news_highlight` | `session_date DATE`, `event_ts DOUBLE`, `event`, `type`, `importance INTEGER`, `forecast`, `prev`, `text`, `text_source`, `run_id`, `run_at DOUBLE`. Key `session_date` | — |
+| `news_headlines` | `headline_id`, `provider`, `published_at DOUBLE`, `headline`, `source`, `tickers`, `url`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `headline_id` | — |
+| `news_meta` | `key`, `value`, `run_at DOUBLE`. Key `key` | — |
+| `welcome_snapshot` | `series`, `session_date DATE`, `close DOUBLE`, `prev_close DOUBLE`, `change DOUBLE`, `change_pct DOUBLE`, `spark`, `run_id`, `run_at DOUBLE`. Key `(series, session_date)` | — |
+| `welcome_earnings` | `earnings_date DATE`, `ticker`, `report_session`, `full_name`, `expected_move_perc DOUBLE`, `report_time`, `source_session DATE`, `first_seen DOUBLE`, `last_seen DOUBLE`, `retired_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `(earnings_date, ticker, report_session)` | — |
+| `welcome_freshness` | `job`, `last_status`, `last_finished_at DOUBLE`, `last_ok_at DOUBLE`, `last_failed_at DOUBLE`, `last_error`, `run_id`, `run_at DOUBLE`. Key `job` | — |
+| `welcome_meta` | `key`, `value`, `run_at DOUBLE`. Key `key` | — |
 | `source_checks` | `dataset`, `source`, `key`, `checked_at DOUBLE`, `run_id`. Key `(dataset, source, key)` | — |
 | `price_checks` | `dataset`, `source`, `key`, `checked_at DOUBLE`, `run_id`. Key `(dataset, source, key)`; prices.duckdb (#156) | — |
 | `sec13f_filers` | `accession`, `cik`, `period`, `name`, `source`, `fetched_at DOUBLE`, `run_id`, `run_at DOUBLE`. Key `(accession)` | — |
@@ -943,7 +962,8 @@ old table names, the routes and the Settings cards come in later PRs.
 **The first board on it: SPX Gamma (PR 3, D7).** `module_spx_gamma/store_reads.py` is the board's one reader (D4:
 no SQL of its own, no kept connection; a missing day is a "not stored" marker, never an exception or a provider call).
 Since #330 it reads through the needs layer, `needs.ask(need, as_of=day)` over `market.spx_expiry_strike`,
-`market.vix`, `market.cot`, `market.cot_release` and `market.spx_close` (its `READS`). VIX and COT are judged against the day rendered, not
+`market.spx_greek_expiry_strike`, `market.vix`, `market.cot`, `market.cot_release` and `market.spx_close` (its `READS`;
+the greek grid feeds the DTE-band walls, falling back to the day's own per-expiry files when the day is not stored, #291). VIX and COT are judged against the day rendered, not
 the newest session, with the catalog's lag limits; the closes and the 0-1 DTE slice keep their own rules, and a day
 the calendar's holiday table does not cover keeps its rows with the lag left undecided: the 0-1 DTE dollar OI gamma per strike (`call_gamma_oi + put_gamma_oi` over the
 expiries 0 and 1 DTE of `spx_gamma_expiry_strike`; a day whose session has not closed reads the previous session's
@@ -967,7 +987,6 @@ renders at once with what is stored.
 |---|---|---|
 | `RC_MARKET_DIR` | `MARKET_DIR` | The serving DuckDB files and `ops.sqlite` (the server's SSD); with `RC_REDIS_URL` set and no `RC_REDIS_NAMESPACE`, also the key of the Redis namespace the ops state lives in |
 | `RC_MARKET_RAW_DIR` | `MARKET_RAW_DIR` | `raw/<source>/<dataset>/...` and `parquet/<source>/<dataset>/<partition>/` (the HDD) |
-| `RC_MARKET_RAW_COPY_DIR` | `MARKET_RAW_COPY_DIR` | Where the backup copies the newest raw days; empty = off |
 
 **Build memory.** The one read-write connection of a build (`serving.build`) is opened with DuckDB's `memory_limit`
 from `RC_DUCKDB_MEMORY_LIMIT` (a DuckDB size such as `5GB`; default `5GB`) and `threads` from `RC_DUCKDB_THREADS`
@@ -979,7 +998,7 @@ it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed th
 from `RC_DUCKDB_MAX_TEMP` (default `200GB`): past it the build fails instead of filling the disk.
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
-file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `5`), is described under
+file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `6`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `2`), under "Fundamentals" after it; and the options
@@ -1019,7 +1038,7 @@ build file like any other — the live file is never opened read-write — so th
 `prev` rollback and the shrink guard all hold unchanged. `serving_schema_version.build_mode` records which base the
 build really got: `"live"` falls back to `"fresh"` when there is no live file yet, or it was built by another serving
 schema version, whose tables are not the ones this code builds — which is what makes a version bump a whole rebuild
-without any dataset asking for one. No dataset asks for `base="live"` yet; every kind is still built whole.
+without any dataset asking for one.
 
 **What is dirty** (`rcdata/build/dirty.py`). A build on the live copy only pays off when it can say which rows to
 reload, so the contract for that answer sits in one module. `full_rebuild_reason(kind)` names the cases where no
@@ -1036,7 +1055,32 @@ file's `built_at` stamp. That stamp is written when the build file opens, before
 partition written while a long build runs is newer than the stamp and comes out dirty on the next build instead of
 being lost. The signal is the partition's mtime, which a copy or a restore can carry over from another machine; it
 becomes a manifest of (path, size, mtime) compared manifest-to-manifest before any kind relies on the dirty set for
-data correctness.
+data correctness. Which class each served table falls in — cumulative (a day only adds rows), restated (new data
+rewrites served rows) or a derivation rebuilt whole — is read from the build code in `docs/dirty_table_classes.md`,
+together with the two dependencies (the spine's symbol map, the prices universe) that make a table dirty with no
+new source day of its own.
+
+**Which kinds build on the live copy** (#446). `fundamentals` (#554) reloads its dirty companies. `prices`
+(`rcdata/build/prices/incremental.py`) rebuilds every served row on or after one day — the first day of each changed
+WRDS year partition or Alpaca bar session, and at the latest the day after the live file's newest session — and,
+per security, a whole history (a name that joined or left the universe, a changed issuer CIK, PERMNO link or
+Compustat alias) or the rows from a changed cover's `as_of` or Alpaca action's ex-date, closed over the issuer. The
+identity a build used is recorded in the file's own `build_identity` table, bookkeeping like `build_manifest`, so the
+next build sees what moved. It reads the WRDS history whole only through
+views, for the identity (`_universe`, `_permno_link`, `_gvkey_alias`), and stages from the January of the year before
+that day; a whole build staged forty years of `comp.secd` into TEMP tables (homesrv, 9 Nov 2026: 6 h 12 min, 92 GB
+of spill). `wrds_price_diff` is kept from the last whole build, which the monthly WRDS refresh (a new
+`comp.sec_split` snapshot) forces; so do a change of `wrds/sec_idhist`, of the build code, and `RC_BUILD_WHOLE=1`.
+`ownership` (`rcdata/build/ownership/common.py` `build_keyed`) keys every source table by the partition its rows
+come from (`date=`, `half=`, `day=`, carried in each row as `settlement_date`, `list_date`, `snapshot_date`, `half`
+or `index_day`): a build on the live copy deletes the rows of each changed, new or gone partition and loads only
+those, then names every row's ticker again from the live spine and rewrites the rows whose name moved, so a spine
+change reaches rows no partition touched. A new source of the store (N-PORT) declares the same `dirty` and
+`build_keyed`. The 13F totals (`ownership/serve`) are still derived whole on a `sec/13f` or `ownership/serve` run
+and kept as they are otherwise (whole build of 6 Nov 2026: 91 min).
+`market` (`rcdata/build/partitions.py`) reloads each changed Parquet partition: a UW session (`date=`) of
+`spx_gamma_expiry_strike` or `spx_greek_expiry_strike`, a source and year of `market_series`; a gone partition only
+deletes its rows. `options` is still built whole; `spine` stays whole by design (seconds).
 
 CFTC COT rows are futures-only: the TFF dataset's `Combined` rows (futures and options) are filtered out; taking
 them instead is a later choice.
@@ -1105,8 +1149,8 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `dataset_automation` | One source's own automation over its kind's (#527): `off`, `raw`, `parquet` or `full`; no row ("as the file") follows `kind_automation` |
 
 **Day caps** (`rcdata/caps.py`, master plan Order 5, rule 3: only the quotas a provider publishes per day, each with
-its source): uw 100,000 (owner-marked avo 2026-11-02), alphavantage 25 (its free tier, shared by the earnings calendar and the spine's
-`alphavantage/listing_status`, #346). **Request windows**
+its source): alphavantage 25 (its free tier, shared by the earnings calendar and the spine's
+`alphavantage/listing_status`, #346); UW has none (owner-removed avo 2026-11-10). **Request windows**
 (`caps.WINDOWS`, enforced by `base.Pacer`, one pacer per provider and run through `base.run_pacer`): sec 10 a second,
 alpaca 200 a minute (Basic plan, historical), openfigi 250 a minute (keyed `/v3/mapping`; `/v3/search` 20 a minute,
 no caller yet), finra 1,200 a minute (synchronous, per IP), yfinance 2,000 an hour (per IP, owner-marked avo
@@ -1150,20 +1194,17 @@ what keeps a new writer from slipping past the gate; `core/tests/test_job_lock_n
 documented lock name has no entry.
 
 **The builder as a service (PR 2).** Scheduled jobs run hourly unless avo says otherwise. The registry row
-RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :07, with a 120 min limit, as the
-systemd unit pair `life-rc-builder.service` / `.timer`. RC-Build-Backup runs `rcdata backup` daily at 04:30, with a
-30 min limit, as `life-rc-builder-backup`; it takes the small files only
-(`--only ops,market,spine,fundamentals,options,raw --subdir market`). The two large serving files are
-RC-Build-Backup-Heavy's, weekly on Sunday at 03:30 with a 60 min limit, as `life-rc-builder-backup-heavy`
-(`--only prices,ownership --subdir market-heavy`): on 5 Nov 2026 the 04:30 run hit its 30 min limit, and prices
-(2.9 GB) plus ownership (661 MB) are 3.5 GB of the ~3.6 GB that run copies, so they are the likely cause — an
-inference, not a measurement, because the run records no per-step timing. Each `--subdir` keeps its own
-`.manifest.json`, its own verification and its own newest 5 per kind, and every copy carries its sha256. Run the
-heavy command by hand before a deploy that touches either file. The heavy row's unit pair is installed from the
+RC-Build (`core/automations.py`) runs `rcdata.build run --once` every hour at :05, with a 120 min limit, as the
+systemd unit pair `life-rc-builder.service` / `.timer`. RC-Backup-Weekly runs `rcdata backup` every Sunday at
+03:30, with a 60 min limit, as `life-rc-backup-weekly`: every step, into `RAW_STORE_BACKUP_DIR/weekly-v2/<step>/`,
+the newest 4 copies of every file kept (avo, 8 Nov 2026; the section **Backups, restore and compaction** has the
+steps). It replaced the nightly RC-Build-Backup (04:30, `--subdir market`) and the weekly RC-Build-Backup-Heavy
+(`--subdir market-heavy`) on 9 Nov 2026. Run `rcdata backup --only <kind>` by hand before a deploy that touches a
+DuckDB file: that copy is tagged manual and kept apart from the weekly ones. The unit pair is installed from the
 home-server repository, not from the Settings page: installing it from both would give one unit name a user timer
-and a system unit, each firing at 03:30 into the same folder. Because `_prune` only ever looks inside the folder
-the run writes, the `prices_*` and `ownership_*` copies left in `market/` by the old single run are not pruned
-again; removing them is a deliberate step, not something a later run does. Each pass first queues what is due (below), then takes the queued
+and a system unit, each firing at 03:30 into the same folder. The old `market/` and `market-heavy/` folders are
+not pruned by the weekly run (it only looks inside `weekly-v2/`); removing them is a deliberate step on avo's word.
+Each pass first queues what is due (below), then takes the queued
 requests in order: those, Fetch and Backfill from Settings, and the CLI's. It skips a paused dataset (`dataset_schedule.paused_at`, a `skipped: paused` check row,
 no call). At start it fails a request a dead builder left running, with `lost: pid <n> gone` and a `failed` check
 row. A request whose builder is still alive (a live `.rc-proc` marker of its pid in the market dir) is left
@@ -1196,17 +1237,21 @@ pass with no backoff: for the SPX slice at worst about 24 runs a day, each one U
 holds a dataset twice: `due.py` does not queue it, and `base.run_request` skips a request of it that was queued
 anyway (PR #222).
 
-**Backup.** `python -m RevenueChaser.rcdata backup` writes under `<RAW_STORE_BACKUP_DIR>/market/` and refuses an empty
-`RAW_STORE_BACKUP_DIR` (exit 2, nothing written): the ops state as `ops_<stamp>.sqlite` (on `ops.sqlite`, through
-SQLite's online backup API; on Redis, a snapshot of every table read by one Lua script, so at one moment (0.31 s for 30,000 issue rows), written into a new ops file
-and compared with it row for row, so it restores with `ops_copy --sqlite <copy>` into an empty namespace: over a
-damaged one, delete its keys first, `redis-cli --scan --pattern '<ns>:*' | xargs -r redis-cli del`, since `--force`
-keeps rows newer than the copy and its check then fails), each serving file
-copied and verified by row count and `sum(hash(row))` per table before its rename, the sha256 of every copy in
-`.manifest.json`, the newest 5 kept per kind. Then the raw files of the last 35 days go to `RC_MARKET_RAW_COPY_DIR`
-(rsync-like) when they total under 20 GB; over that, or with no folder set, a warning and no copy. That is the bare
-command; neither scheduled run uses it bare since the light/heavy split above, which picks the steps with `--only`
-and the folder with `--subdir`.
+**Backup.** `python -m RevenueChaser.rcdata backup` is the weekly job (RC-Backup-Weekly, Sunday 03:30). It writes
+under `<RAW_STORE_BACKUP_DIR>/weekly-v2/<step>/` and refuses an empty `RAW_STORE_BACKUP_DIR` (exit 2, nothing
+written). Its `duckdb` step copies each serving file from one open handle, verifies it by row count and
+`sum(hash(row))` per table before the rename, and writes the sha256 of every copy to the step's `.manifest.json`,
+the newest 4 kept per kind. Its `ops` step keeps only the needed tables (the watch lists and their changes,
+`dataset_schedule`, `switch`, `kind_automation`, `dataset_automation`, `job_runs2`; the queue, the read log and the
+counters are emptied in the copy) as `ops_<stamp>.sqlite`: on `ops.sqlite` through SQLite's online backup API, built
+on local storage and copied once finished; on Redis a snapshot of every table read by one Lua script, filtered,
+written into a new ops file in one transaction and compared with it row for row. It restores with
+`ops_copy --sqlite <copy>` into an empty namespace (over a damaged one, delete its keys first,
+`redis-cli --scan --pattern '<ns>:*' | xargs -r redis-cli del`, since `--force` keeps rows newer than the copy and
+its check then fails). The raw files and the Parquet get no copy (avo, 8 Nov 2026: they are fetched again); the
+exception is the `uw-raw` step, which keeps the Unusual Whales raw files and the SPX Gamma tree, since no provider
+serves them again. `RC_MARKET_RAW_COPY_DIR` is no longer read. The other steps and the retention rule are in
+**Backups, restore and compaction**.
 
 ### The identity spine (`spine.duckdb`, PR 5)
 
@@ -1255,12 +1300,12 @@ own mark: a panel header that says `cli` is recorded as `panel:cli`.
 the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
 steps, and a first attempt that failed is not retried every hour.
 
-**Served tables** (`spine` serving schema version `5`). Periods are `valid_from` inclusive, `valid_to` exclusive
+**Served tables** (`spine` serving schema version `6`). Periods are `valid_from` inclusive, `valid_to` exclusive
 (Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
 
 | Table | Rows |
 |---|---|
-| `security` | one per ticker of the newest SEC file: CIK, name, exchange, `tier` and `tier_rule`, `security_type` and its source, the Compustat link (`gvkey`, `iid`, `link_source`), `cusip`, `isin` (derived), the FIGI fields, the current GICS codes, the bridge `sector` / `industry`, each with its source, and the SEC file's provenance |
+| `security` | one per ticker of the newest SEC file: CIK, name, exchange, `tier` and `tier_rule`, `security_type` and its source, the Compustat link (`gvkey`, `iid`, `link_source`), `cusip`, `isin` (derived), the FIGI fields, the current GICS codes, the bridge `sector` / `industry`, Compustat's company `sic` (spine 6), each with its source, and the SEC file's provenance |
 | `security_history` | the SEC file's `cik`, `name`, `exchange` per ticker over the stored snapshots; Compustat's identifier history of the linked securities |
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
@@ -1648,6 +1693,7 @@ layer is not there yet.
 | `uw/earnings` | weekly | UW `/stock/<ticker>/earnings`, one request per company: the quarterly rows' reported EPS, UW's consensus of that quarter and its surprise, as UW serves them | `stg_uw_earnings` |
 | `uw/financials` | daily | UW `/stock/<ticker>/financials` for a company that reported in the last 14 days and has not filed; off unless `RC_UW_PRELIMINARY=1` | `stg_uw_financials` |
 | `yfinance/estimates` | weekly | Yahoo's `earningsTrend` per company, its shortest ticker, when its newest answer is 7 days old; 5 failures in a row stop the run | `stg_yf_estimates` |
+| `yfinance/fx` | daily | Yahoo's daily close of `<CUR>USD=X` per currency in `fx_rates.CURRENCIES` (USD per unit), the whole history the first time, then from 7 days before the newest stored day | `stg_yf_fx` |
 | `sec/fsds` | monthly | The SEC's quarterly Financial Statement Data Sets zip, the newest quarter published | `stg_sec_fsds` |
 | `wrds/fundq` | monthly, attended | `comp.fundq`, the Tier A gvkeys, ten years | `stg_wrds_fundq`, `stg_wrds_fundq_revision` |
 | `wrds/funda` | monthly, attended | `comp.funda`, the Tier A gvkeys, ten years | `stg_wrds_funda`, `stg_wrds_funda_revision` |
@@ -1817,8 +1863,8 @@ prints) + screener pages + earnings-set names). A list name is 11 calls plus 2 p
 an earnings-set name 5; the screener one per 100 reporting names; the calendar one per day and report session plus
 one per extra 100 names. With the planning numbers (25 expiries and 5 extra pages a name, SPX 400, 2,500 reporting
 names, 150 in the earnings set: assumptions until the first week's real counts replace them) that is 1,240 calls
-with SPX alone, 7,840 with 100 list names and 34,240 with 500, against UW's day cap of 100,000 (`rcdata/caps.py`),
-which the other UW datasets share. The real count is the builder's, per request, in `provider_calls_daily`.
+with SPX alone, 7,840 with 100 list names and 34,240 with 500, and UW has no day cap since avo removed it on
+2026-11-10 (`rcdata/caps.py`); the other UW datasets spend the same UW day. The real count is the builder's, per request, in `provider_calls_daily`.
 
 **Raw retention.** A hook after each `options` swap (`rcdata/build/options/raw_retention.py`) removes the
 per-session raw folders of `raw/uw/option_list/` and `raw/uw/er_options/` older than the retention, once one is
@@ -1864,146 +1910,56 @@ Two separate things, deliberately not conflated:
   there).
 
 ## Backups, restore and compaction
-- **Backup** — `python -m RevenueChaser.scripts.backup_store` (scheduled daily by
-  `register_tasks.ps1`). Per file: CHECKPOINT (through rawstore, so a busy store
-  is waited out), copy, then verify every table's row count **and** content
-  checksum (`sum(hash(row))`) against the live file; a busy store, a failed copy,
-  a mismatch or a copy that opens but cannot be read (a damaged data block) is retried (bounded). Retains 5 `raw_*`, 2 `edgar_*`, 5 `history_*` (`--keep-history`; only once
-  `history.duckdb` exists, #287), 2 `prices_*` (`--keep-prices`, #156; no weekly copy, because the price tables
-  are append-only and the newest snapshot holds every row: about 4.7 GiB locally at the expected 2.4 GiB file)
-  snapshots and 2 `edgar_docs_*.zip` archives (verified: member CRCs + file count; an unchanged tree reuses the
-  newest archive, see below)
-  under `%LOCALAPPDATA%\RevenueChaser\backups` (override `RAW_STORE_BACKUP_DIR`), plus the weekly
-  `raw_*` copies (the first snapshot of each ISO week, the newest `--keep-weekly` of them, #342), the SPX mirror and an optional off-machine copy, described below. A step that fails
-  is logged as `<step> FAILED: <why>` and the steps after it still run (so one failed step never costs the rest of
-  the night's backup); an unexpected error, such as an `OSError` on a full disk, also prints its type and stack. The
-  run then exits 1, and only the off-machine copy is skipped.
-- **`edgar_docs/` archive (#336)** — the zip carries a fingerprint of the tree it was made from (SHA-256 over every
-  file's relative path, size and modified time, a `stat` walk) in its zip comment. When the tree's fingerprint equals
-  the newest archive's, the run writes no new archive and logs `backup OK: <path> (unchanged, kept)`; the off-machine
-  copy then finds that file already there. The reused archive gets a cheap check each night (it opens as a zip, the
-  fingerprint matches, it lists every document); the member CRCs were checked when it was written, and re-reading it
-  is left to the periodic integrity scan below (#309 L1), which covers the local `edgar_docs_*.zip` files. An archive that is not a readable zip or misses a
-  document is never reused: a new one is zipped and verified, then the damaged one is removed. An archive from before
-  #336 has no fingerprint, so the first run after the change zips the tree once more. A file whose content changed
-  with the same size and the same modified time is not seen. Restore is unchanged: unzip the chosen archive.
-- **The Discord archive is no longer backed up here (October 2026)** — it became its own app and backs
-  itself up. `discord.duckdb` is not snapshotted and the attachment tree is not mirrored. What earlier
-  runs left behind is **not** pruned or deleted by anything here; it stays until the owner removes it by
-  hand (#175), after the new app has taken a verified backup of its own:
-  - in the backup folder: the `discord_*.duckdb` snapshots, the `discord_media_mirror/` folder and any
-    `discord_media_*.zip` archive from before that mirror (#248);
-  - in the off-machine folder (`<RAW_STORE_BACKUP_MIRROR>/RevenueChaser-backup`): the `discord_*.duckdb`
-    copies (up to 3) and its own `discord_media_mirror/`.
-
-  - in the store folder: the old `.store/discord.duckdb` (and its `.wal`). It stays, allowed by
-    `core/tests/test_store_layout.py` as a retired file, until the owner removes it by hand.
-
-  The local leftovers **are still scanned**: the integrity scan below walks every file of the backup
-  folder and re-hashes each one its manifest lists, these included (some two thousand attachment files). So
-  the night after they are deleted by hand, the scan reports every one of them as
-  `integrity scan FAILED: <path>: missing` and the run exits 1. That is expected and happens once: the
-  scan drops a missing file from the manifest when it reports it, and a scan that failed runs again the
-  next night, which then passes. The off-machine leftovers are never scanned, so removing them reports
-  nothing.
-- **Weekly raw copy (#277, bounded by #342)** — the first verified `raw_*` snapshot of each ISO week (by its UTC
-  stamp) is also copied to `weekly/` in the same backup folder. The copy is written under a temporary name,
-  fingerprinted against the snapshot (row count and content checksum per table) and only then renamed, so a failed
-  copy leaves nothing under the final name and the next night tries again. The newest `--keep-weekly` (12) copies
-  stay: the nightly run prunes the older ones out of `weekly/` (after that night's copy, or after a night that added
-  none because the week had one), they leave the #309 manifest before they are deleted, and the prune never looks at
-  the top folder — as the top folder's `_prune` globs never look in here, so `restore_store --latest` keeps reading
-  the top folder only. It was a stopgap for raw tables that keep only the latest value; the change history has landed
-  (#279), so the owner can turn it off (the default is on), about 430 MB a week at today's size. `--no-weekly` or
-  `RAW_STORE_BACKUP_WEEKLY=0` (also `false`, `no`, `off`) stops new weekly `raw_*` copies; the ones already made stay.
-  The `history_*` weekly copies of earlier runs are no longer written (#342: history grows ~6.55 GB/yr) and this prune
-  does not touch them: deleting them is the owner's own step. Log line: `weekly backup OK: <path>`, printed only in
-  the run that writes a week's copy.
-- **SPX Gamma tree (#276)** — the board's data root (`<store>/spx_gamma/`, or `SPX_GAMMA_DATA_ROOT`) is mirrored into
-  `spx_gamma_mirror/` in the same backup folder, incrementally: a `stat` walk decides what changed (same size and
-  an mtime within 2 s means unchanged), each copy goes through `spx_gamma_mirror/.tmp/` and is verified by size and
-  SHA-256 before it replaces the mirror file, a file modified in the last 10 minutes (still being written) waits for
-  the next run, and nothing is ever deleted from the mirror. Two extra rules for this tree. A `.json` file
-  that no longer parses never replaces a mirror copy that does: the run keeps the good copy, prints
-  `spx mirror WARNING: kept the previous copy of <n> file(s) whose source is not valid JSON: <names>` and exits 1
-  after every other step has run; a repaired source replaces the copy on the next run. And every version of the two
-  files that are rewritten in place, `brier.json` and `spx_gamma_gex_history.json`, also gets a dated copy
-  `<name>.<UTC mtime>.json` in `spx_gamma_versions/`, beside the mirror, that is never replaced or pruned and is
-  checked against the verified mirror copy (SHA-256) before it gets its name. Log line:
-  `spx mirror OK: <copied> copied, <unchanged> unchanged, <n> in flight, <total> files`. About 1.3 GB a year (the
-  review's estimate). It sits on the same disk as the live tree, so on its own it protects against deletion and
-  corruption, not against losing the disk; the off-machine copy below copies it and `spx_gamma_versions/` too. #179 retires it when it moves the tree into DuckDB.
-- **Off-machine copy (#275, #349)** — set `RAW_STORE_BACKUP_MIRROR` (in `.env`; empty means off and the step does
-  nothing) to a folder that is not on this machine's disk: a Google Drive for desktop folder or an external disk.
-  After a nightly run in which every step above was verified, `backup_store` copies the newest snapshot of each kind
-  and the two mirror folders (`spx_gamma_mirror/`, `spx_gamma_versions/`) into the
-  sub-folder `RevenueChaser-backup` of that folder, so it may be an existing Drive folder: nothing outside the
-  sub-folder is written, pruned or deleted. The small kind, `history_*`, goes every run and the newest
-  `--keep-mirror` (default 3) stay. The big kinds, `raw_*` and `edgar_*` snapshots and `edgar_docs_*.zip` (about
-  1.9 GB a set on 2026-10-08), go at most every 7 days: only when the newest copy of that kind there is at least
-  `--mirror-big-every-days` calendar days old (default 7; `0` sends them every run), or there is none yet, or the run
-  has `--mirror-big-now`. The newest `--keep-mirror-big` (default 2) stay. The reason is the Drive trash: Drive for
-  desktop moves every pruned copy into it, and it counts toward the Google quota for 30 days, so a daily big set held
-  about 60 GB of a 200 GB account and filled it on 2026-10-08; weekly with 2 kept holds about 12 GB (an estimate). A
-  manual extra run inside the week therefore sends only the small kinds. The `prices_*` snapshot (#156; about 2.4 GiB
-  once filled) goes last, after the mirror folders, so a failed upload of the biggest file costs no other copy (the
-  mirrors cannot be fetched again; the prices can). It goes once every 7 days (`MIRROR_PRICES_EVERY_DAYS`, which
-  `--mirror-big-every-days` does not change; `--mirror-big-now` sends it too) and one copy stays (`KEEP_MIRROR_PRICES`;
-  avo 2026-10-09). The `weekly/` copies stay on this machine
-  (#349); `weekly/` copies that earlier versions sent stay in the second folder until removed by hand. Each file is
-  written under a temporary name, verified there again (row count and content checksum per table for a snapshot;
-  size, SHA-256 and a CRC check for a zip; size and SHA-256 for the files of a mirror) and only then renamed, so a
-  half-written file never has its final name. A file that is already there is not copied again. Pruning follows the
-  verified copy, and nothing is ever deleted from the mirror folders. The folder must exist already (only its last
-  level and `RevenueChaser-backup` are created, so a disk that is not plugged in is an error and never a new folder
-  on this one), and it must not be the backup folder, inside it or around it. Log line:
-  `off-machine copy OK <iso>: <n> copied, <n> already there -> <folder>/RevenueChaser-backup` (with
-  `, big files skipped until <date>` before the arrow in a run that did not send them), or
-  `off-machine copy FAILED <iso>: <why>` with exit 1. The Automations row of `RC-Store-Backup` reads these lines and
-  shows the age of the last good copy; it is red when no folder is set, no copy was made yet, the newest attempt
-  failed, or the last good copy is older than 48 hours. A run in which an earlier step failed makes no copy and logs
-  `off-machine copy FAILED <iso>: skipped, <n> backup step(s) failed earlier tonight`, so the row is red that night.
-- **Manifest and integrity scan (#309 L1)** — every file the run writes into the local backup folder (snapshots,
-  `weekly/` copies, `edgar_docs_*.zip`, every file of the three mirror folders) is recorded when it is copied, with
-  its size and SHA-256, in `.backup_manifest.json` at the top of the backup folder (beside the mirrors, never inside
-  one, so copying a mirror back does not carry it); a pruned file leaves it. As the last backup step, every
-  `--scan-every-days` (default 7; `0` = every run; `--scan-now` forces it) the run re-reads the whole local folder
-  against it: each listed file is hashed again and its size compared. A file the manifest does not have yet (made
-  before #309) is first self-checked (every table of a `.duckdb` read, every member CRC of a zip) and then recorded.
-  The scan is read-only for the backups: nothing is deleted, moved or rewritten; it writes only the manifest and its
-  marker `.integrity_scan.json` (day, result, next due day). A mismatch, a missing file or a failed self-check prints
-  `integrity scan FAILED: <path>: <why>` and the run exits 1 (after every other step, the off-machine copy
-  included); a failed scan is due again the next night. A mismatch or a failed self-check stays red until a scan
-  passes; a missing file is reported once (its entry leaves the manifest). Otherwise the log
-  line is `integrity scan OK: <n> files, <x> GB match the manifest (<n> added to it); next on <date>`, or
-  `integrity scan not due: next on <date>`. A manifest that is unreadable, or missing once a scan has run, prints
-  `backup manifest WARNING` and makes the scan due that night even when it is not: a scan failure on
-  `.backup_manifest.json` (its files are re-adopted with a self-check only, so the run exits 1 once and the next scan
-  passes). A manifest update that fails (a locked file) prints `backup manifest WARNING` (`off-machine manifest
-  WARNING` for the off-machine record) and never fails a backup, mirror or off-machine step. Cost on the PC
-  (2026-10-16): 12.8 GB, 3,382 files, 80 s. The off-machine
-  folder is never hashed or walked: walking the Drive folder for sizes alone took about 20 minutes.
-- **Folder sizes (#309 part 3)** — the run ends with `backup sizes <iso>: local <n> bytes, off-machine <n> bytes`
-  (the off-machine part is left out when no folder is set or no copy was recorded yet) and writes the same facts, with the file
-  counts and the `.duckdb` / `edgar_docs` zip split, to `.backup_sizes.json`. The local size is a `stat` walk of the
-  local backup folder (seconds). The off-machine size is what the job itself wrote and kept there, recorded at copy
-  time in `.offmachine_manifest.json` in the LOCAL backup folder, so neither the job nor the dashboard lists that
-  folder. The hand-made checkpoints folder is not recorded and shows as unknown. The RC-Store-Backup Automations row
-  and the Backups card of Settings / Data health show both sizes, the last self-check and its next due day, and
-  warn when a folder is above `RAW_STORE_BACKUP_WARN_GB` (default 20) locally or
-  `RAW_STORE_BACKUP_MIRROR_WARN_GB` (default 320, 80% of the 400 GB Google quota) off-machine (GB = 10^9 bytes; set
-  either in `.env`).
-- **Restore** — `python -m RevenueChaser.scripts.restore_store --list`, then
-  `... restore_store --latest raw` (or `edgar`, `history`, `prices`, or a snapshot file name). Refuses
-  while a RevenueChaser process uses the store, verifies the snapshot, keeps the
-  current file as `<name>.duckdb.pre-restore`. `edgar_docs/` is restored by
-  unzipping the chosen archive over the folder; the SPX tree by copying
-  `spx_gamma_mirror/` back over the board's data root (stop the dashboard first; an earlier version of
-  `brier.json` or the GEX history comes from `spx_gamma_versions/`). A weekly copy is restored with
-  `... restore_store --from <backup dir>\weekly --latest raw`. From the off-machine folder use the same
-  commands with `--from <RAW_STORE_BACKUP_MIRROR folder>\RevenueChaser-backup` (its newest `raw_*` is at most a week
-  old; a `weekly` sub-folder there holds only what earlier versions sent); its
-  mirror folders are copied back like the local ones.
+- **One weekly job (avo, 8 Nov 2026)** — `python -m RevenueChaser.rcdata backup`, registry row RC-Backup-Weekly
+  (Sunday 03:30, unit `life-rc-backup-weekly` from the home-server repository, 60 min limit). Everything goes to the
+  HDD under `RAW_STORE_BACKUP_DIR` (an empty value is refused: exit 2, nothing written) as `weekly-v2/<step>/`, one
+  folder and one `.manifest.json` per step (the sha256, size and table fingerprints of every copy kept, the step's
+  `last_run`, `last_ok` and `last_error`). Of every file the newest 4 copies stay, the oldest deleted only after
+  the new copy verified. Nothing leaves the machine. Raw downloads and Parquet are not copied: they are fetched
+  again. A step that fails is logged and the other steps still run; the exit code is then 1. A failed copy leaves
+  nothing (no `.tmp`, no manifest entry) and prunes nothing. The steps, in the order they run:
+  - `duckdb` — the DuckDB files the builder writes from Parquet (`serving.KINDS`), each copied from one open handle
+    of the live file, verified by row count and `sum(hash(row))` per table, then renamed. `rcdata backup
+    --only <kind>` takes a copy by hand before a deploy; it is tagged `manual`, kept on its own count (1) and never
+    costs a weekly copy.
+  - `boards` — the board-result DuckDBs the dashboard writes live: `raw`, `edgar`, `history` and `prices` while they
+    exist, and every `<RC_STORE_DIR>/boards/<board>.duckdb` (DECISIONS S6). Each is first `CHECKPOINT`ed through
+    `rawstore`'s peer-lock budget (a dashboard holding the file is waited out), so the `.wal` is in the main file,
+    then copied and verified like a `duckdb` copy; the manifest records the file's `store_schema` version.
+  - `ops` — the operational state, only the tables worth keeping: the watch lists (`watchlist_*` and their changes),
+    `dataset_schedule`, `switch`, `kind_automation`, `dataset_automation`, `job_runs2`. The queue, the read log, the
+    counters and the check rows are left empty in the copy. On `ops.sqlite` SQLite's online backup API, built on
+    local storage and copied once finished; on Redis a filtered snapshot written in one transaction and compared row
+    for row.
+  - `uw-raw` — the raw files no provider serves again: `<MARKET_RAW_DIR>/raw/uw/` (Unusual Whales keeps no history)
+    and the SPX Gamma tree, into `uw-raw/<ISO week>/`. A file unchanged since last week's folder is hard-linked to
+    that copy, so four weeks cost one copy plus the new days; a new or changed file is copied and verified by size
+    and SHA-256; a file modified in the last 10 minutes waits for the next run; a `.json` that is not valid JSON
+    never replaces a copy that is. The newest 4 week folders stay.
+  - `edgar-docs` — the `edgar_docs/` tree as one verified zip (member CRCs and the document count); an unchanged
+    tree (same `stat` fingerprint in the zip comment) keeps the newest zip instead of zipping again.
+- **What shows it** — the Data/Health "Weekly backups" card (each step's last good run and the error of a failed
+  one, the newest copy of every file and how many are kept; amber past 8 days, red past 15) and the Health strip's
+  backup alert; the home-server health board and Grafana read the same manifests per step.
+- **Restore** — `python -m RevenueChaser.rcdata restore --step <step> (--file <name> | --latest [KIND])
+  (--into <dir> | --live)`. Every restore first verifies the copy against its manifest (sha256, size, the recorded
+  table fingerprints or the kept tables' row counts); an unknown or changed copy is refused and nothing is written.
+  `--into <dir>` writes the verified copy there (a `uw-raw` week as the whole folder) and touches nothing live.
+  `--live` puts a `duckdb` or `boards` copy in place of its live file: it refuses while a RevenueChaser process
+  uses that store or a `<name>.duckdb.wal` lies beside the target (#214: DuckDB would replay it on top of the
+  restored file), keeps the current file as `<name>.duckdb.pre-restore`, copies and fingerprints the result.
+  `ops --live` is a step by hand: on Redis `python -m RevenueChaser.rcdata.ops_copy --sqlite <copy>` into an EMPTY
+  namespace (emptying one is a delete and needs avo's word); on `ops.sqlite` copy the file into place with the
+  dashboard stopped. `uw-raw` and `edgar-docs` are restored `--into` a folder and moved (or unzipped) by hand.
+- **The drill** — `python -m RevenueChaser.rcdata restore-check` (unit `life-rc-restore-check`, the first Sunday of
+  the month 02:30) restores the newest `ops` copy and the newest board copy into a scratch folder, verifies both the
+  way a restore does, removes what it wrote and exits 2 on any mismatch; the home-server health board shows it.
+  Once a quarter, by hand (about 30 minutes): restore the newest `boards` and `duckdb` copies `--into` a scratch
+  folder, start a dashboard on it (`RC_STORE_DIR` and `RC_MARKET_DIR` pointed there, another port) and open the
+  Relatedness and Settings boards.
+- **What is not pruned** — the old `market/`, `market-heavy/`, `weekly/`, `spx_gamma_mirror/` and snapshot files
+  the retired nightly jobs left in `RAW_STORE_BACKUP_DIR` (about 55 GB on 8 Nov 2026) are not touched by the weekly
+  job, which only looks inside `weekly-v2/`. Removing them is a deliberate step on avo's word.
 - **Compaction** — DuckDB re-uses freed blocks but never shrinks the file, so
   every `replace_all`/DELETE leaves it larger than its data. With the dashboard
   and scheduled jobs stopped: `python -m RevenueChaser.scripts.compact_store`

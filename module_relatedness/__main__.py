@@ -62,7 +62,7 @@ import json
 from RevenueChaser.core import offpeak, rawstore, subscription_usage
 from RevenueChaser.core.providers import deepseek, evren, grok
 
-from . import config, engine, writers
+from . import engine, writers
 from . import settings as rel_settings
 
 
@@ -105,8 +105,8 @@ def _grok_ping() -> int:
     out: dict = {"provider": "grok", "model": grok.MODEL, "endpoint": grok.endpoint()}
     try:
         raw = grok.complete(profiles.system_prompt(), profiles.build_user("Example Semiconductor Corp", _PING_TEXT),
-                            thinking=config.THINKING, reasoning_effort=config.REASONING_EFFORT,
-                            max_tokens=profiles.token_budget(config.THINKING), json_mode=True, use_cache=False)
+                            thinking=False, reasoning_effort=None,
+                            max_tokens=profiles.token_budget(), json_mode=True, use_cache=False)
         fields = [f for f, v in profiles.parse_profile(raw).items() if v]
         out.update(ok=bool(fields), fields=fields)
         if not fields:

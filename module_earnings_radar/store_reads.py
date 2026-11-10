@@ -14,6 +14,13 @@ rather than the board:
 - ``estimates`` (``fundamentals.estimates``): the current-quarter EPS trend and revision counts rule R1 reads, from
   the fundamentals store's ``estimate_latest`` (``rcdata/build/fundamentals/estimates.py``, the same D14 value
   columns). The old nightly made one Yahoo request per ticker for these; the fundamentals build fetches them now.
+- ``short_interest`` (``ownership.short_interest``): rule R5's squeeze inputs from FINRA's twice-monthly settlement short
+  interest (``finra_short_interest``, the owner's B on #287): shares short over the float the prices store holds, FINRA's
+  days to cover, and IBKR's borrow fee of the newest snapshot. The nightly D10 table of UW's daily figure and the live
+  ``/short_screener`` call it fell back to are no longer read: the two series measure different things.
+- ``earnings_options`` (``earnings.options``): rule R4's GEX levels, spot exposures by strike and term structure from
+  the options store's earnings set, which ``uw/option_screener`` fetches the evening before a report (avo's O1 = A).
+  This one reader has a live fallback, in the pipeline and not here: a name the store has no evening for is asked live.
 
 Before this module the board read the nightly ``macro_series`` table of ``raw.duckdb`` and called FRED itself when
 that table was empty or stale (``stored_inputs.dgs10_map`` and ``macro_watch.fred_daily_map``). The market build
@@ -65,7 +72,7 @@ ESTIMATES_DATASET = "yfinance/estimates"
 # and 14 covers one missed weekly run. Past that the build has stopped renewing it: R1 would score an old EPS trend
 # without a word, so the row is "not stored" instead. The nightly table the board read before allowed 5 sessions, but it
 # was asked every night. Default chosen in the PR 285 review; change it if avo prefers.
-_NEED_OF_AGE = {"estimates": "fundamentals.estimates"}
+_NEED_OF_AGE = {"estimates": "fundamentals.estimates", "short_interest": "ownership.short_interest"}
 
 
 def max_age_days() -> dict[str, int]:
@@ -217,3 +224,156 @@ def estimates(tickers, today: date | None = None) -> tuple[dict[str, dict], dict
     return out, {"stored": True,
                  "label": f"{len(out)} of {len(names)} names have estimates" + (f"; {left_out}" if left_out else ""),
                  "source": ESTIMATES_SOURCE, "source_as_of": max(as_of), "status": _estimates_status()}
+
+
+SHORT_SOURCE = "rcdata:finra_short_interest"
+SHORT_DATASET = "finra/short_interest"
+FEE_NEED = "ownership.shortable"
+
+
+def _short_status() -> str:
+    return _status(SHORT_DATASET)
+
+
+def _floats(names: list[str]) -> dict[str, tuple[float, str]]:
+    """``{ticker: (shares, "float" | "outstanding")}``: the newest float the prices store holds for each name, else
+    its newest shares outstanding (the SEC cover). On 9 Nov 2026 the live store held no float row at all (#287).
+
+    shortcut: no age limit on either count (both move slowly); add one if R5 ever reads a count that is years old.
+    """
+    ids = read.security_ids(names)
+    newest: dict[tuple[str, str], tuple] = {}
+    for r in read.shares(ids.values()):
+        key, day, value = (r.get("security_id"), r.get("measure")), _day(r.get("as_of")), r.get("value")
+        if value and value > 0 and day is not None and (key not in newest or day >= newest[key][0]):
+            newest[key] = (day, float(value))
+    out = {}
+    for t, sid in ids.items():
+        for measure in ("float", "outstanding"):
+            if (sid, measure) in newest:
+                out[t] = (newest[sid, measure][1], measure)
+                break
+    return out
+
+
+def _fees(names: list[str]) -> dict[str, float]:
+    """``{ticker: borrow fee}`` from IBKR's newest snapshot, when it is inside ``ownership.shortable``'s session lag."""
+    from RevenueChaser.rcdata import needs
+    lag_max = needs.catalog.NEEDS[FEE_NEED].max_lag
+    latest = calendar.latest_complete_session()
+    out: dict[str, float] = {}
+    for r in read.shortable(names):
+        day, fee = _day(r.get("session_date")), r.get("fee_rate")
+        lag = None if day is None else _sessions_after(day, latest)
+        if fee is not None and lag is not None and lag <= lag_max:
+            out[str(r.get("ticker") or "").upper()] = float(fee)
+    return out
+
+
+def _extra(reader, names: list[str], what: str) -> dict[str, float]:
+    """The float and the fee are extras to FINRA's figures: a failed read leaves them out, never the row."""
+    try:
+        return reader(names)
+    except Exception as exc:                                  # noqa: BLE001 - a store error is "not stored"
+        logger.warning("earnings short interest: the %s read failed: %s", what, exc)
+        return {}
+
+
+def short_interest(tickers, today: date | None = None) -> tuple[dict[str, dict], dict]:
+    """``({ticker: R5 squeeze inputs}, note)`` from FINRA's newest settlement of each name in the ownership store.
+
+    A row is ``{"si_pct", "si_basis", "days_to_cover", "borrow_fee", "settlement_date"}``: shares short as a percent
+    of the float, or of the shares outstanding when the prices store has no float (``si_basis`` says which; both None
+    when it has neither), FINRA's days to cover, IBKR's borrow fee (None when its snapshot is
+    older than ``ownership.shortable`` allows) and the settlement day the figure is as of. A name whose newest
+    settlement is more than ``MAX_AGE_DAYS["short_interest"]`` calendar days before ``today`` (default New York's
+    today) is absent, and so is one FINRA does not list: R5 then reads flow only. Never a provider call.
+    """
+    try:
+        today = _day(today) or calendar.today_ny()
+    except ValueError:
+        today = calendar.today_ny()
+    oldest = today - timedelta(days=MAX_AGE_DAYS["short_interest"])
+    names = sorted({str(t).strip().upper() for t in (tickers or []) if str(t or "").strip()})
+    if not names:
+        return {}, _missing("the short interest", None, "no ticker asked", source=SHORT_SOURCE, status=_short_status())
+    try:
+        rows = read.finra_short_interest(names, start=oldest, end=today)
+    except Exception as exc:                                  # noqa: BLE001 - a store error is "not stored"
+        logger.warning("earnings ownership-store read failed: %s", exc)
+        return {}, _missing("the short interest", None, f"read failed: {type(exc).__name__}", source=SHORT_SOURCE,
+                            status=_short_status())
+    floats, fees = _extra(_floats, names, "float"), _extra(_fees, names, "borrow fee")
+    best: dict[str, dict] = {}
+    for r in rows:
+        ticker = str(r.get("ticker") or "").upper()
+        day = _day(r.get("settlement_date"))
+        if not ticker or day is None:
+            continue
+        rank = (day, r.get("symbol") == ticker)       # the newest settlement; on a tie, the ticker's own symbol
+        if ticker not in best or rank > best[ticker]["_rank"]:
+            best[ticker] = {**r, "_rank": rank}
+    out: dict[str, dict] = {}
+    for ticker, r in best.items():
+        short, dtc = r.get("current_short"), r.get("days_to_cover")
+        base, basis = floats.get(ticker) or (None, None)
+        si = 100.0 * short / base if short is not None and base else None
+        out[ticker] = {"si_pct": si, "si_basis": basis if si is not None else None,
+                       "days_to_cover": None if dtc is None else float(dtc), "borrow_fee": fees.get(ticker),
+                       "settlement_date": r["_rank"][0].isoformat()}
+    if not out:
+        return {}, _missing("the short interest", None, f"no settlement inside {MAX_AGE_DAYS['short_interest']} days",
+                            source=SHORT_SOURCE, status=_short_status())
+    newest = max(r["settlement_date"] for r in out.values())
+    return out, {"stored": True,
+                 "label": f"{len(out)} of {len(names)} names have FINRA short interest, settlement {newest}",
+                 "source": SHORT_SOURCE, "source_as_of": newest, "status": _short_status()}
+
+
+OPTIONS_SOURCE = "rcdata:er_options"
+OPTIONS_DATASET = "uw/option_screener"
+OPTIONS_NEED = "earnings.options"
+GEX_LEVEL_FIELDS = ("call_wall", "gamma_flip", "gamma_magnet", "put_wall")
+
+
+def earnings_options(tickers, latest: date | None = None) -> tuple[dict[str, dict], dict]:
+    """``({ticker: R4's option inputs}, note)`` from the options store's earnings set (avo's O1 = A, 10 Nov 2026).
+
+    ``uw/option_screener`` fetches, on the evening before a report, the same UW answers R4 reads: the GEX levels
+    (``er_options``), the spot exposures by strike (``option_strike``) and the term structure (``option_expiry``),
+    set ``earnings``. A row is ``{"session_date", "report_date", "gex_levels", "strikes", "term"}``: ``strikes`` in
+    the field names of UW's spot-exposure rows, ``term`` as ``{"date", "expiry", "dte", "volatility"}`` rows like
+    UW's term structure (R4's ex-event curve reads the date and the expiry).
+    Only each name's newest evening counts, and only when it lags ``latest`` (default the latest complete session)
+    by no more than ``earnings.options`` allows. A name with no such row is absent: the pipeline then asks UW live.
+    """
+    from RevenueChaser.rcdata import needs
+    names = sorted({str(t).strip().upper() for t in (tickers or []) if str(t or "").strip()})
+    status = _status(OPTIONS_DATASET)
+    if not names:
+        return {}, _missing("the earnings option set", None, "no ticker asked", source=OPTIONS_SOURCE, status=status)
+    try:
+        day = _day(latest) or calendar.latest_complete_session()
+        lag_max = needs.catalog.NEEDS[OPTIONS_NEED].max_lag
+        newest: dict[str, dict] = {}
+        for r in read.earnings_options(start=day - timedelta(days=10), end=day, tickers=names):
+            t, s = str(r.get("ticker") or "").upper(), _day(r.get("session_date"))
+            lag = None if s is None else _sessions_after(s, day)
+            if lag is not None and lag <= lag_max and (t not in newest or s > newest[t]["session_date"]):
+                newest[t] = {"session_date": s, "report_date": _day(r.get("report_date")),
+                             "gex_levels": {f: r.get(f) for f in GEX_LEVEL_FIELDS}}
+        for t, row in newest.items():          # sequential on purpose: one read-only handle at a time
+            row["strikes"] = read.option_strikes(t, row["session_date"], set_name="earnings")
+            row["term"] = [{"date": row["session_date"].isoformat(), "expiry": str(e["expiry"]),
+                            "dte": e["days_to_expiry"], "volatility": e["volatility"]}
+                           for e in read.option_expiries(t, row["session_date"], set_name="earnings")
+                           if e.get("volatility") is not None and e.get("days_to_expiry") is not None]
+    except Exception as exc:                                  # noqa: BLE001 - a store error is "not stored"
+        logger.warning("earnings options-store read failed: %s", exc)
+        return {}, _missing("the earnings option set", latest, f"read failed: {type(exc).__name__}",
+                            source=OPTIONS_SOURCE, status=status)
+    if not newest:
+        return {}, _missing("the earnings option set", day, source=OPTIONS_SOURCE, status=status)
+    as_of = max(r["session_date"] for r in newest.values()).isoformat()
+    return newest, {"stored": True, "label": f"{len(newest)} of {len(names)} names have the evening's option set",
+                    "source": OPTIONS_SOURCE, "source_as_of": as_of, "status": status}

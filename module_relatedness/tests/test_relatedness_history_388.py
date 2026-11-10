@@ -54,7 +54,7 @@ def test_a_fetch_records_the_scores_it_saved_and_the_payload(seeded):
     payload = engine.run(no_fetch=False, tickers=seeded, run_id="r1")
     (head,) = _headers()
     assert head["run_id"] == "r1" and head["error"] is None and head["quality_note"] is None
-    latest = rawstore.query("SELECT ticker, peer, score FROM relatedness_scores ORDER BY ticker, peer")
+    latest = rawstore.query("SELECT ticker, peer, score FROM relatedness_scores ORDER BY ticker, peer", db="relatedness")
     assert [{k: r[k] for k in ("ticker", "peer", "score")} for r in _rows("r1")] == latest and latest
     assert json.loads(head["row_counts"]) == {TABLE: len(latest)}
     stored = _unpack(head["payload"])
@@ -70,9 +70,8 @@ def test_the_header_carries_model_version_params_and_context(seeded):
     assert ctx["requested"] == len(seeded) and ctx["profiled"] == len(seeded) and ctx["pending"] == 0
 
 
-@pytest.mark.parametrize("name, value", [("TOP_PEERS", 10), ("PROMPT_VERSION", "v3"), ("REASONING_EFFORT", "low"),
-                                         ("FIELD_WEIGHTS", {"products": 2.0}), ("PILOT_N", 100),
-                                         ("MIN_INPUT_CHARS", 500)])
+@pytest.mark.parametrize("name, value", [("TOP_PEERS", 10), ("PROMPT_VERSION", "v4"),
+                                         ("FIELD_WEIGHTS", {"products": 2.0}), ("MIN_INPUT_CHARS", 500)])
 def test_model_version_changes_with_a_setting(monkeypatch, name, value):
     before = rel_history.model_version()
     monkeypatch.setattr(config, name, value)

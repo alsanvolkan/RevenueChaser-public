@@ -161,6 +161,31 @@ def test_the_hourly_pass_leaves_an_attended_request_in_the_queue(monkeypatch):
     assert _request(rid)["status"] == "queued"
 
 
+def test_the_hourly_pass_prunes_the_resolved_build_issues_and_a_dataset_run_does_not(monkeypatch):
+    """#387: the resolved rows of build_issues are pruned once an hour (ops.prune_issues), not by each build."""
+    calls: list = []
+    monkeypatch.setattr(cli.base, "run_request", _fake_run([]))
+    monkeypatch.setattr(ops, "prune_issues", lambda: calls.append(1) or 0)
+    _nothing_due()
+    assert cli.main(["run", "--once"]) == 0
+    assert calls == [1]
+    assert cli.main(["run", "--dataset", "market_series", "--once"]) == 0
+    assert calls == [1]
+
+
+def test_a_busy_store_skips_the_prune_and_the_hourly_pass_still_drains_the_queue(monkeypatch):
+    ran: list = []
+    monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
+
+    def busy():
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(ops, "prune_issues", busy)
+    _nothing_due()
+    ops.enqueue("market_series", None, by="settings")
+    assert cli.main(["run", "--once"]) == 0
+    assert [r[0] for r in ran] == ["market_series"]
+
+
 def test_the_attended_runner_drains_the_attended_requests_only(monkeypatch):
     ran: list = []
     monkeypatch.setattr(cli.base, "run_request", _fake_run(ran))
@@ -334,7 +359,7 @@ def test_no_duckdb_takes_a_lock_per_dataset_and_never_the_builders(monkeypatch):
     # A builder on the store would stop an ordinary run; a fetch-only one never asks.
     monkeypatch.setattr(cli.base, "idle_problem", lambda: pytest.fail("the gate was asked for a fetch-only run"))
     assert cli.main(["backfill", "market_series", "sec/ftd", "--from", "2026-10-01", "--no-duckdb"]) == 0
-    assert taken == ["rcdata_fetch_market_series", "rcdata_fetch_sec/ftd"]
+    assert taken == ["rcdata_fetch_market_series", "rcdata_fetch_sec_ftd"]
     assert cli.base.BUILDER_LOCK not in taken
     assert [r[0] for r in ran] == ["market_series", "sec/ftd"]
 
@@ -376,3 +401,22 @@ def test_a_killed_run_finishes_its_own_request(kill, monkeypatch):
     assert run["status"] == "killed"
     assert got["status"] == "failed" and got["note"].startswith("killed:")
     assert "builder died" not in got["note"]
+
+
+def test_a_fetch_locks_name_is_one_file_name_not_a_path():
+    """A dataset name carries a ``/`` (``sec/companyfacts``), and ``job_lock._lock_path`` puts the name straight
+    into a path -- so an unsanitised name opened a ``rcdata_fetch_sec/`` directory inside the store dir and put the
+    lock inside it. ``holders()`` globs ``*.lock`` one level deep, so such a lock is invisible to every diagnostic
+    that names a holder. Found on the first real parallel fetch, 5 Nov 2026."""
+    from RevenueChaser.core import job_lock
+
+    class Args:
+        datasets = ["sec/companyfacts", "sec/filings", "market_series"]
+    names = cli._fetch_lock_names(Args())
+    assert names == ["rcdata_fetch_sec_companyfacts", "rcdata_fetch_sec_filings", "rcdata_fetch_market_series"]
+    for name in names:
+        assert "/" not in name
+        assert job_lock._lock_path(name).parent == job_lock._lock_path("rcdata_build").parent
+        assert job_lock.writes_of(name) == ()           # still the family that holds off nothing
+    # Two datasets of one provider must still be two locks, not one.
+    assert len(set(names)) == 3

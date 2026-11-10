@@ -3,7 +3,7 @@ year-of-bars request for them (review S2, the spec's e2e).
 
 The dashboard subprocess reads the faked clock through ``RC_E2E_NOW``: Wed 2026-08-12 17:00 New York, so 08-12 is
 the latest complete session. The Fetch is for Fri 08-14, past today and the next trading day (which always read
-the calendar live, S4). The store holds what RC-Earnings-Inputs and RC-Daily-Bars leave after that night: the
+the calendar live, S4). The store holds what the Earnings inputs entries and RC-Daily-Bars leave after that night: the
 calendar pairs, the short-interest rows and the D01 bars ending 08-12.
 """
 from __future__ import annotations
@@ -70,4 +70,4 @@ def test_a_fetch_with_the_inputs_stored_asks_uw_for_none_of_them(seeded, provide
     inputs = json.loads(context)["inputs"]
     assert inputs["calendar"] == {"stored": 2, "live": 0, "session": SWEPT.isoformat()}
     assert inputs["ohlc"] == {"stored": 2, "live": 0}
-    assert inputs["short_interest"]["stored"] == 2 and inputs["short_interest"]["live"] == 0
+    assert inputs["short_interest"] == {"stored": 0, "missing": 2, "source_as_of": None}

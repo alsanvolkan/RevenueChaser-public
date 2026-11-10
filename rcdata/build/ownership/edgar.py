@@ -30,7 +30,9 @@ filing's raw file is its resume marker, so a stopped run loses nothing.
 
 Checked against sec.gov on 2026-10-28: the index of 2026-10-27 and that day's 13F (202 filings), Form 4 (134, a run
 stopped at its budget) and Schedule 13D/G (248) filings, every one typed. Checked again on 2026-10-30: every weekday
-index from 2025-01-01 answers 200 except the federal holidays, which answer the 403 below.
+index from 2025-01-01 answers 200 except the federal holidays, which answer the 403 below. Checked on 2026-11-08 for every
+weekday 2014-01-01..2026-11-04 (#507): 205 have no index, every one a federal holiday, a closure by executive order
+(``calendar.EXTRA_FEDERAL_CLOSURES``) or the 2014 Q2 gap (``base.INDEX_GAPS``).
 """
 from __future__ import annotations
 
@@ -48,7 +50,8 @@ import duckdb
 
 from ....core import calendar
 from .. import base
-from . import KIND, sec
+from ..spine.stage import partitions
+from . import KIND, common, sec
 
 INDEX_PATH = "/Archives/edgar/daily-index/{year}/QTR{q}/master.{ymd}.idx"
 INDEX_HEADER = "CIK|Company Name|Form Type|Date Filed|File Name"
@@ -300,6 +303,19 @@ class Feed:
     sub: str
     budget_s: float | None
 
+    # A build on the live copy (#446) reloads the index days whose partitions changed: every partition of a feed is
+    # ``<table>/day=<index day>/`` and every row it serves carries that day as ``index_day``.
+    dirty_keyed = True
+
+    def dirty(self, ctx: base.RunContext):
+        return common.keyed_dirty(ctx, self, "day")
+
+    def build_rows(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection, table: str,
+                   schema: list[tuple[str, str]], sub: str, order: str, naming=None) -> int:
+        """Served ``table`` from the feed's ``<sub>/day=<day>`` partitions (``common.build_keyed``)."""
+        return common.build_keyed(ctx, con, self.name, table, schema, partitions(self.parquet_dir() / sub, "day"),
+                                  "index_day", order, naming)
+
     def default_as_of(self) -> date:
         return calendar.today_ny()
 
@@ -349,7 +365,7 @@ class Feed:
         t0 = ctx.clock()
         complete, partial, fetched = [], [], 0
         day = last
-        held, unexplained = _Held(), []
+        held, streak = _Held(), self._streak(ctx, pacer)
         last_ok = None                     # a filing this run fetched, to ask the archive with (see ``_holds``)
         probed: dict[date, int] = {}       # probes per day, so a bad day's notes are one line
         probes = 0                         # which candidate to ask, so a long run does not pin one in a cache
@@ -366,7 +382,7 @@ class Feed:
                     complete += held.flush_days()
                 if index.rows is None:
                     if as_of - day > SETTLED:
-                        self._absent(ctx, day, unexplained)
+                        streak.missing(ctx, day)
                         held.days.append((day, {"status": 403, "url": index_url(day), "run_id": ctx.run_id,
                                                 "closed": calendar.is_federal_holiday(day)}))
                     day -= timedelta(days=1)
@@ -459,21 +475,13 @@ class Feed:
         r = sec.get(ctx, pacer, index_url(kept[-1]), accept=(403, 404))
         return r.status_code == 200
 
-    def _absent(self, ctx: base.RunContext, day: date, unexplained: list[date]) -> None:
-        """A day this run found no index for. A federal holiday explains it; a weekday that is none is noted, and a
-        stretch of them stops the run, because a refusal of the whole bucket answers every day the same way and
-        would otherwise walk past real days and mark them absent for good."""
-        if calendar.is_federal_holiday(day):
-            ctx.notes.append(f"{day}: no index, EDGAR closed")
-            return
-        unexplained.append(day)
-        # The walk goes newest first, so the days it just found are the last ones appended, not the earliest dates.
-        run = sorted(unexplained[-MISSING_RUN:])
-        if len(run) >= MISSING_RUN and base.open_weekdays(run[0], run[-1]) == run:
-            raise base.SourceError(f"sec: no daily index for {MISSING_RUN} weekdays EDGAR was open "
-                                   f"({', '.join(str(d) for d in run)}); the bucket may be refusing every "
-                                   "request, so none of them is written off and the next run asks them again")
-        ctx.notes.append(f"{day}: no daily index although EDGAR was open")
+    def _streak(self, ctx: base.RunContext, pacer: sec.Pacer) -> base.MissingStreak:
+        """The walk's days with no index (``base.MissingStreak``). A federal holiday explains one; a weekday that is
+        none is noted, and a stretch of them stops the run, because a refusal of the whole bucket answers every day
+        the same way and would otherwise walk past real days and mark them absent for good -- unless the index path
+        hands over a day it is known to hold (``_archive_answers``), which says the bucket is answering and these
+        days truly have no index (#507: a closure the calendar does not know yet must not wedge a long backfill)."""
+        return base.MissingStreak("daily index", probe=lambda: self._archive_answers(ctx, pacer))
 
     def _stopped(self, ctx, complete, partial, fetched):
         ctx.notes.append(f"{fetched} filings fetched; stopped at the time budget, the rest on the next run")

@@ -9,6 +9,7 @@ import pytest
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_relatedness import themes
+from RevenueChaser.rcdata.tests import spine_fixture
 
 
 def _profiles():
@@ -59,11 +60,11 @@ def test_cutover_materialize_pins_run(rawstore_tmp_db):
     assert themes.current_run_id() == "r1"          # cutover is the only writer
     assert mat["rows"] >= 1
     n = rawstore.query(
-        "SELECT count(*) n FROM ticker_themes WHERE theme_run_id='r1'")[0]["n"]
+        "SELECT count(*) n FROM ticker_themes WHERE theme_run_id='r1'", db="relatedness")[0]["n"]
     assert n == mat["rows"]
     levels = {r["level"] for r in rawstore.query(
         "SELECT DISTINCT level FROM ticker_themes WHERE theme_run_id='r1' "
-        "AND ticker LIKE 'G%'")}
+        "AND ticker LIKE 'G%'", db="relatedness")}
     assert {"fine", "medium", "coarse"} <= levels
 
 
@@ -318,26 +319,15 @@ def test_match_theme_etfs(rawstore_tmp_db):
         {"ticker": t, "market_cap": 1e11, "sector": "Technology"}
         for t in ("NVDA", "TSM", "AMD", "AVGO")
     ])
-    rawstore.write_rows("etf_holdings", [
-        {"ticker": "SMH", "entry": [
-            {"ticker": "NVDA", "name": "n", "weight": 0.2},
-            {"ticker": "TSM", "name": "t", "weight": 0.15},
-            {"ticker": "AMD", "name": "a", "weight": 0.1},
-            {"ticker": "AVGO", "name": "v", "weight": 0.1},
-            {"ticker": "MU", "name": "m", "weight": 0.05},
-        ]},
-        {"ticker": "XLK", "entry": [
-            {"ticker": "NVDA", "name": "n", "weight": 0.1},
-            {"ticker": "AAPL", "name": "a", "weight": 0.2},
-            {"ticker": "MSFT", "name": "m", "weight": 0.2},
-        ]},
-    ])
+    # The spine's whole lists (D4, 9 Nov 2026); raw.duckdb's etf_holdings is no longer read.
+    spine_fixture.write_etf_holdings({"SMH": ["NVDA", "TSM", "AMD", "AVGO", "MU"],
+                                      "XLK": ["NVDA", "AAPL", "MSFT"]})
 
     out = themes.match_theme_etfs(run)
     assert out["themes"] >= 1 and out["rows"] >= 1
     rows = rawstore.query(
         "SELECT etf, rank, overlap FROM relatedness_theme_etfs "
-        "WHERE theme_id = ? ORDER BY rank", [tid])
+        "WHERE theme_id = ? ORDER BY rank", [tid], db="relatedness")
     etfs = {r["etf"]: r for r in rows}
     assert "SMH" in etfs
     assert etfs["SMH"]["rank"] <= 3
@@ -367,15 +357,13 @@ def _seed_one_theme(run, sectors, spdr):
                          [{"ticker": t, "theme_id": tid, "weight": 1.0} for t in tickers])
     rawstore.replace_all("equity_universe", [
         {"ticker": t, "market_cap": 1e11, "sector": sec} for t, sec in zip(tickers, sectors)])
-    rawstore.write_rows("etf_holdings", [
-        {"ticker": spdr, "entry": [{"ticker": tickers[0], "name": "n", "weight": 0.1},
-                                   {"ticker": "OUTSIDE", "name": "o", "weight": 0.9}]}])
+    spine_fixture.write_etf_holdings({spdr: ["OUTSIDE", tickers[0]]})
     return tid
 
 
 def _etf_ranks(tid):
     return {r["etf"]: r["rank"] for r in rawstore.query(
-        "SELECT etf, rank FROM relatedness_theme_etfs WHERE theme_id = ?", [tid])}
+        "SELECT etf, rank FROM relatedness_theme_etfs WHERE theme_id = ?", [tid], db="relatedness")}
 
 
 def test_sector_spdr_is_keyed_by_the_morningstar_sector_names():
@@ -423,7 +411,7 @@ def test_cutover_materialize_does_not_copy_legacy(rawstore_tmp_db):
                         run_id="leg", profiles=_profiles())
     mat = themes.cutover_materialize("leg")
     legacy = rawstore.query(
-        "SELECT * FROM ticker_themes WHERE theme_run_id='leg' AND ticker='ZZZ'")
+        "SELECT * FROM ticker_themes WHERE theme_run_id='leg' AND ticker='ZZZ'", db="relatedness")
     assert legacy == []
     assert mat["profiled"] >= 1
 

@@ -36,7 +36,7 @@ def message(db: str, stored: str, code: str) -> str:
             else f"schema stamp is {stored}")
     return (f"{file} {what} but this code is {code}; refusing writes so this checkout cannot change a "
             f"newer store. Restore a matching snapshot: "
-            f"python -m RevenueChaser.scripts.restore_store --latest {db}. "
+            f"python -m RevenueChaser.rcdata restore --step boards --latest {db} --live. "
             f"Set {ESCAPE_ENV}=1 only for a deliberate migration.")
 
 

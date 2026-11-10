@@ -36,12 +36,17 @@ def _card(sec: str, ds: str) -> str:
 
 # ── M3: every button says its cost — the call count and what is left today — and that there is no cancel ──
 
-def test_m3_the_collector_counts_the_cost_from_the_caps_and_the_days_calls():
+def test_m3_the_collector_counts_the_cost_from_the_caps_and_the_days_calls(monkeypatch):
     """The day's calls are handed in from the spend read, never read again here: a render must not create
     ops.sqlite (``test_the_collect_never_creates_ops_sqlite_or_a_serving_file``)."""
+    monkeypatch.setitem(newdata.caps.DAY_CAPS, "uw", 100_000)      # UW has no cap since 2026-11-10: a test cap
     cost = newdata._cost("uw/spot_expiry_strike", {"calls_per_partition": 3}, {"uw": 1_300})
     assert cost == {"provider": "uw", "calls_per_partition": 3, "remaining": 98_700, "cap": 100_000}
     assert newdata._cost("uw/x", {}, {})["remaining"] == newdata.caps.DAY_CAPS["uw"]
+
+
+def test_m3_uw_has_no_cap_so_nothing_is_left_to_count():
+    assert newdata._cost("uw/x", {}, {"uw": 1_300})["remaining"] is None
 
 
 def test_m3_a_dataset_name_without_a_provider_prefix_names_no_provider():

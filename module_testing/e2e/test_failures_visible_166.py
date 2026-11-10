@@ -71,8 +71,11 @@ def _heal(routes, ticker: str) -> None:
 
 
 def _query(dashboard, sql: str, params=()) -> list[tuple]:
+    """One query on the file that holds the table after its FROM (board tables have their own file, S9)."""
+    import re
+
     import duckdb
-    conn = duckdb.connect(str(dashboard.store_dir / "raw.duckdb"), read_only=True)
+    conn = duckdb.connect(str(dashboard.db_file(re.search(r"\bFROM\s+(\w+)", sql).group(1))), read_only=True)
     try:
         return conn.execute(sql, list(params)).fetchall()
     finally:
@@ -315,11 +318,12 @@ def oipd_routes(provider_routes):
     def contracts(path, query, body):
         q = parse_qs(query)
         expiry = (q.get("expiry") or [""])[0]
-        page, limit = int((q.get("page") or ["1"])[0]), int((q.get("limit") or ["500"])[0])
-        if page >= 2 and expiry in state["fail_page2_for"]:
+        # UW pages from 0 (#255): no ``page`` is page 0, the second page is ``page=1``.
+        page, limit = int((q.get("page") or ["0"])[0]), int((q.get("limit") or ["500"])[0])
+        if page >= 1 and expiry in state["fail_page2_for"]:
             return 500, BOOM
         rows = chains.get(expiry, [])
-        return 200, {"data": rows[(page - 1) * limit: page * limit]}
+        return 200, {"data": rows[page * limit: (page + 1) * limit]}
 
     provider_routes.route(f"/api/stock/{_TICKER}/expiry-breakdown", payload={
         "data": [{"expiry": e, "open_interest": 10000, "volume": 500, "chains": 50} for e in exps]})
@@ -337,7 +341,7 @@ class TestOipdSecondPageFails:
         assert res.ok, res
         assert dashboard.table_count("oipd_chain") > 0
         pages = [q.query for q in oipd_routes.requests(f"/api/stock/{_TICKER}/option-contracts")]
-        assert any("page=2" in q for q in pages), "the fixture must really have a second page"
+        assert any("page=1" in q for q in pages), "the fixture must really have a second page"
 
     def test_a_failed_second_page_warns_and_saves_nothing(self, dashboard, oipd_routes):
         bad = _expiries()[1]

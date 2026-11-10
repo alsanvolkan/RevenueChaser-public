@@ -1,4 +1,4 @@
-"""A minimal TWS API client for the IBKR Gateway: historical bars, and nothing else.
+"""A minimal TWS API client for the IBKR Gateway: historical bars, contract ids and news headlines, nothing else.
 
 **Market data only.** The IBKR rule of this project: the gateway is used for market data, contract data and
 history, never for an account, a position or an order. ``ib_async``'s ``IB.connect`` asks for the positions on every
@@ -11,6 +11,15 @@ the two below. Its framing was read off ``ib_async`` 2.1.0:
 - ``startApi`` (``[71, 2, client id, ""]``, ``client.py`` ``startApi``); the gateway answers with the next valid id
   (9), the account list (15) and farm notices (4). Only the next valid id is read; **the account list is dropped
   unread**, never kept and never logged;
+- ``reqContractDetails`` (``[9, 8, req id, <contract>, includeExpired, secIdType, secId(, issuerId from server
+  176)]``, ``client.py`` ``reqContractDetails``), answered by ``CONTRACT_DATA`` (10; from server 164 ``[10, req id,
+  symbol, secType, lastTimes, strike, right, exchange, currency, localSymbol, marketName, tradingClass, conId, ...]``,
+  one field more before 164, ``decoder.py`` ``contractDetails``) and ``CONTRACT_DATA_END`` (52). Only the conId is
+  read: the News board needs it to ask for a name's headlines;
+- ``reqHistoricalNews`` (``[86, req id, conId, providerCodes, start, end, totalResults, options]``), answered by
+  ``HISTORICAL_NEWS`` (86: ``[86, req id, time, providerCode, articleId, headline]``) rows and
+  ``HISTORICAL_NEWS_END`` (87). Headlines only: the article body (``reqNewsArticle``) is never asked for. The News
+  board's source since avo's choice, 9 Nov 2026 20:54 Amsterdam ("Ibkr kullanalim");
 - ``reqHistoricalData`` (``[20, req id, <contract>, includeExpired, endDateTime, barSize, duration, useRTH,
   whatToShow, formatDate, keepUpToDate, chartOptions]``, ``client.py`` ``reqHistoricalData``), answered by
   ``HISTORICAL_DATA`` (17: ``[17, req id, start, end, n, then per bar date, open, high, low, close, volume, average,
@@ -37,8 +46,9 @@ CONNECT_TIMEOUT_S = 5.0
 # A year of daily bars comes back in a second or two; a minute leaves room for a busy historical farm.
 READ_TIMEOUT_S = 60.0
 MAX_FRAME = 16 * 1024 * 1024
-START_API, REQ_HISTORICAL_DATA = 71, 20
+START_API, REQ_HISTORICAL_DATA, REQ_CONTRACT_DETAILS, REQ_HISTORICAL_NEWS = 71, 20, 9, 86
 NEXT_VALID_ID, ERR_MSG, HISTORICAL_DATA = "9", "4", "17"
+CONTRACT_DATA, CONTRACT_DATA_END, HISTORICAL_NEWS, HISTORICAL_NEWS_END = "10", "52", "86", "87"
 # Error codes the gateway sends as notices (farm connection status and the like), never a request's failure.
 NOTICE_CODES = range(2100, 2200)
 
@@ -163,6 +173,46 @@ class TWSClient:
                     raise HistoryError(code, fields[4])
             elif fields[0] == HISTORICAL_DATA and fields[1] == str(req_id):
                 return _bars(fields)
+
+
+    def _request_error(self, fields: list[str], req_id: int) -> None:
+        """Raise ``HistoryError`` when ``fields`` is this request's error (a notice code is not one)."""
+        if fields[0] == ERR_MSG and len(fields) >= 5 and fields[2] == str(req_id):
+            code = int(fields[3])
+            if code not in NOTICE_CODES:
+                raise HistoryError(code, fields[4])
+
+    def con_id(self, req_id: int, contract: Contract) -> int:
+        """The gateway's contract id of ``contract`` (the first match). ``HistoryError`` 200 for an unknown name."""
+        fields = [REQ_CONTRACT_DETAILS, 8, req_id, *contract.fields(), False, "", ""]
+        if (self.server_version or 0) >= 176:
+            fields.append("")                                   # issuerId
+        self._sock.sendall(encode(*fields))
+        found = None
+        at = 12 if (self.server_version or 0) >= 164 else 13
+        while True:
+            got = self._read()
+            self._request_error(got, req_id)
+            if got[0] == CONTRACT_DATA and req_id == int(got[at - 11]) and found is None:
+                found = int(got[at])
+            elif got[0] == CONTRACT_DATA_END and got[2] == str(req_id):
+                if found is None:
+                    raise HistoryError(200, "no contract details came back")
+                return found
+
+    def news(self, req_id: int, con_id: int, providers: str, start: str, end: str, total: int) -> list[dict]:
+        """Headlines of one contract, newest first: ``[{time, provider, article_id, headline}]``.
+
+        ``start`` and ``end`` are ``yyyy-MM-dd HH:mm:ss.0`` (UTC), or empty; ``providers`` joined with ``+``."""
+        self._sock.sendall(encode(REQ_HISTORICAL_NEWS, req_id, con_id, providers, start, end, total, ""))
+        out = []
+        while True:
+            got = self._read()
+            self._request_error(got, req_id)
+            if got[0] == HISTORICAL_NEWS and got[1] == str(req_id):
+                out.append({"time": got[2], "provider": got[3], "article_id": got[4], "headline": got[5]})
+            elif got[0] == HISTORICAL_NEWS_END and got[1] == str(req_id):
+                return out
 
 
 def _bars(fields: list[str]) -> list[dict]:

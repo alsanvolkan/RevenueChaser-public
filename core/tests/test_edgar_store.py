@@ -42,19 +42,3 @@ def test_count_missing_file_is_zero(rawstore_tmp_db):
 def test_compress_decompress_round_trip():
     s = "Item 1. Business — ünïcode"
     assert es.decompress(es.compress(s)) == s
-
-
-def test_snapshot_edgar_skips_missing_and_copies_present(rawstore_tmp_db, tmp_path):
-    from RevenueChaser.scripts import backup_store as bs
-
-    out = tmp_path / "backups"
-    assert bs.snapshot_edgar(db_path=tmp_path / "nope.duckdb", out_dir=out) is None
-
-    es.save_document(_row())
-    dest = bs.snapshot_edgar(out_dir=out, keep=2)
-    assert dest is not None and dest.exists()
-    assert dest.name.startswith("edgar_")
-    # the snapshot opens and carries the same row
-    n = duckdb.connect(str(dest), read_only=True).execute(
-        "SELECT COUNT(*) FROM edgar_documents").fetchone()[0]
-    assert n == 1

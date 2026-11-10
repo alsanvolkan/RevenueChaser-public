@@ -17,7 +17,9 @@ Honest inputs (no fake values):
   the RV is Yang-Zhang RV30 (the exact construction that ceiling assumes);
 - the term-structure slope (nearest expiry -> 45 DTE, per day) adds a fifth
   input: backwardation = front IV rich vs the back = a drag, contango = the
-  favourable read. Absent (no curve, disabled, or a curve that can't span the
+  favourable read. On earnings night the slope is read on the ex-event curve
+  (the event's variance stripped from every expiry that spans it), since the
+  event alone backwardates the raw curve. Absent (no curve, disabled, or a curve that can't span the
   horizon) it contributes nothing and never fabricates a slope;
 - coverage stays the shipped four-part set {EM, IV/RV, GEX, history}; the slope
   term is scored but does not enter the coverage denominator, and R4 coverage
@@ -35,6 +37,7 @@ from RevenueChaser.core.config import (
     IV_RV_RICH, IV_RV_CHEAP, IV_RV_CHEAP_POINTS, IV_RV_RICH_POINTS,
     TS_SLOPE_BACKWARDATION, TS_SLOPE_HALF,
     TS_SLOPE_BACK_POINTS, TS_SLOPE_MILD_POINTS, TS_SLOPE_CONTANGO_POINTS,
+    TS_SLOPE_EVENT_CONTANGO,
 )
 from RevenueChaser.module_earnings_radar.models import RuleResult
 
@@ -91,6 +94,12 @@ def score(options_data: dict = None) -> RuleResult:
     # skill's construction). Backwardation means the front-dated vol a premium
     # buyer pays is rich vs the back, a drag; contango is the favourable read.
     ts_slope = options_data.get("ts_slope")
+    # Earnings night: the pipeline hands the slope of the ex-event curve (the event's variance taken out of every
+    # expiry that spans it), so only backwardation beyond the event itself is a drag. That curve sits near flat, so
+    # contango needs TS_SLOPE_EVENT_CONTANGO rather than any positive value.
+    ex_event = bool(options_data.get("ts_slope_ex_event"))
+    label = "ex-earnings term structure" if ex_event else "term structure"
+    contango_min = TS_SLOPE_EVENT_CONTANGO if ex_event else 0.0
     if ts_slope is not None:
         try:
             slope = float(ts_slope)
@@ -100,18 +109,18 @@ def score(options_data: dict = None) -> RuleResult:
             if slope <= TS_SLOPE_BACKWARDATION:
                 score_val += TS_SLOPE_BACK_POINTS
                 reasons.append(
-                    f"term structure backwardated ({slope:.5f}/day) — front IV rich, "
+                    f"{label} backwardated ({slope:.5f}/day) — front IV rich, "
                     "drag on a premium buyer"
                 )
             elif slope <= TS_SLOPE_HALF:
                 score_val += TS_SLOPE_MILD_POINTS
                 reasons.append(
-                    f"term structure mildly backwardated ({slope:.5f}/day)"
+                    f"{label} mildly backwardated ({slope:.5f}/day)"
                 )
-            elif slope > 0:
+            elif slope > contango_min:
                 score_val += TS_SLOPE_CONTANGO_POINTS
                 reasons.append(
-                    f"term structure contango ({slope:+.5f}/day) — front-dated "
+                    f"{label} contango ({slope:+.5f}/day) — front-dated "
                     "vol cheap vs the back"
                 )
 
@@ -254,6 +263,7 @@ def score(options_data: dict = None) -> RuleResult:
             "rv_source": options_data.get("rv_source"),
             "iv_rv": round(ivrv, 2) if ivrv is not None else None,
             "ts_slope": round(slope, 5) if slope is not None else None,
+            "ts_slope_ex_event": ex_event if slope is not None else None,
             "flip": round(flip, 2) if flip is not None else None,
             "magnet": magnet.get("strike") if magnet else None,
             "charm_strike": charm.get("strike") if charm else None,

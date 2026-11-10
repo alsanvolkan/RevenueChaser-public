@@ -138,23 +138,19 @@ class TestScoreStringCloseEndToEnd:
         assert cards[0].current_price == "$6.36"
 
 
-class _ShortUW(_FakeUW):
-    """Fake UW that serves real short_screener rows through the client parser."""
-
-    def __init__(self, **overrides):
-        super().__init__(**overrides)
-        self._short_rows = overrides.get("short_rows", {})
-
-    def short_screener(self, tickers):
-        return {t: self._short_rows[t] for t in tickers if t in self._short_rows}
-
-    def _parse_short_row(self, row):
-        from RevenueChaser.core.providers.unusual_whales import UWClient
-        return UWClient(key="test")._parse_short_row(row)
+def _serve_shorts(monkeypatch, rows):
+    """#287: the board reads R5's inputs only through ``store_reads.short_interest`` (FINRA's settlement series).
+    Serve these short rows through it, mapped the way the UW client maps a short row, so the R5 values below stay
+    the hand-checked ones."""
+    from RevenueChaser.core.providers.unusual_whales import UWClient
+    from RevenueChaser.module_earnings_radar import store_reads
+    parsed = {t: UWClient._parse_short_row(r) for t, r in rows.items()}
+    monkeypatch.setattr(store_reads, "short_interest", lambda tickers, today=None: (
+        {t: parsed[t] for t in tickers if t in parsed}, {"source_as_of": None, "label": "fixture"}))
 
 
 class TestR5ShortInterestWiring:
-    """R5's squeeze inputs must reach the scorer via the batch short screener."""
+    """R5's squeeze inputs must reach the scorer through the ownership-store reader (#287)."""
 
     def _pipeline(self, fake):
         cal = {
@@ -175,8 +171,9 @@ class TestR5ShortInterestWiring:
             "ticker": t, "cik": "", "name": t, "market_cap": 1e9, "price": 10.0, "sector": sec, "industry": "x",
             "industry_group": None, "sub_industry": None, "quote": {"symbol": t}} for t, sec in sectors.items()])
 
-    def test_warm_short_interest_registers_peer_stats(self):
-        fake = _ShortUW(short_rows={
+    def test_warm_short_interest_registers_peer_stats(self, monkeypatch):
+        fake = _FakeUW()
+        _serve_shorts(monkeypatch, {
             "AAPL": {"si_float": "0.35", "fee_rate": "10", "short_interest": "1000000",
                      "short_shares_available": "100000", "days_to_cover": "8"},
             "MSFT": {"si_float": "0.03", "fee_rate": "1", "short_interest": "100000",
@@ -188,13 +185,13 @@ class TestR5ShortInterestWiring:
         p._warm_short_interest()
         assert sorted(rule5_positioning.PEER_STATS["Technology"]["si"]) == pytest.approx([3.0, 35.0])
         assert sorted(rule5_positioning.PEER_STATS["Technology"]["borrow"]) == pytest.approx([1.0, 10.0])
-        assert fake.short_screener(["AAPL", "MSFT"])
 
-    def test_score_uses_shorts_for_squeeze_signal(self):
+    def test_score_uses_shorts_for_squeeze_signal(self, monkeypatch):
         """AAPL has flow {} (no inst signal) but a short-interest row -> R5 must
         be available from the squeeze side alone; without wiring it would be
         unavailable."""
-        fake = _ShortUW(short_rows={
+        fake = _FakeUW()
+        _serve_shorts(monkeypatch, {
             "AAPL": {"si_float": "0.35", "fee_rate": "10", "short_interest": "1000000",
                      "short_shares_available": "100000", "days_to_cover": "8"},
             "MSFT": {"si_float": "0.03", "fee_rate": "1", "short_interest": "100000",
@@ -207,8 +204,9 @@ class TestR5ShortInterestWiring:
         audit = (card.rule_audit or {}).get("rule5_positioning", {})
         assert audit.get("available") is True
 
-    def test_missing_short_screener_falls_back_to_flow_only(self):
-        """A fake without short_screener must not crash the warm/score path."""
+    def test_no_stored_short_interest_falls_back_to_flow_only(self, monkeypatch):
+        """No ownership store: R5 reads flow only, and nothing is asked of a provider."""
+        _serve_shorts(monkeypatch, {})
         rule5_positioning.reset_peer_stats()
         fake = _FakeUW()
         p = self._pipeline(fake)
@@ -217,38 +215,6 @@ class TestR5ShortInterestWiring:
         card = p._score("AAPL")
         audit = (card.rule_audit or {}).get("rule5_positioning", {})
         assert audit.get("available") is False
-
-    def test_the_stored_rows_replace_the_batch_call(self, monkeypatch):
-        """E5c (#372): when the nightly D10 sweep covers every ticker, /short_screener is not called at all, and
-        the stored row is parsed with the client's own mapping so R5 reads exactly what the live row would give."""
-        from datetime import date, datetime, timezone
-        from RevenueChaser.core import calendar, rawstore
-        monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc))
-        self._seed_spine({"AAPL": "Technology", "MSFT": "Technology"})
-        rawstore.write_rows("short_interest", [
-            {"ticker": t, "session_date": date(2026, 10, 14), "source": "uw_short_screener", "si_float": si,
-             "fee_rate": fee, "short_interest": 1_000_000, "short_shares_available": 100_000,
-             "days_to_cover": 8}
-            for t, (si, fee) in {"AAPL": (0.35, 10.0), "MSFT": (0.03, 1.0)}.items()])
-
-        class _Counting(_ShortUW):
-            def __init__(self, **kw):
-                super().__init__(**kw)
-                self.asked = []
-
-            def short_screener(self, tickers):
-                self.asked.append(list(tickers))
-                return super().short_screener(tickers)
-
-        fake = _Counting(short_rows={})
-        rule5_positioning.reset_peer_stats()
-        p = self._pipeline(fake)
-        p._warm_short_interest()
-
-        assert fake.asked == []
-        assert sorted(p._shorts_cache["AAPL"]) == ["borrow_fee", "days_to_cover", "si_pct"]
-        assert p._shorts_cache["AAPL"]["si_pct"] == pytest.approx(35.0)
-        assert sorted(rule5_positioning.PEER_STATS["Technology"]["si"]) == pytest.approx([3.0, 35.0])
 
 
 def _duration_ohlc_and_yields(n=25, duration=10.0):
@@ -444,6 +410,28 @@ class TestR4TermStructureWiring:
         assert "backwardated" in reasons
         assert card.volatility_edge_score == 7.0  # +15 EM, -8 backwardation
 
+    def test_earnings_night_backwardation_from_the_event_is_no_penalty(self):
+        # Base vol 0.50 plus a 10% event on every expiry after the 10 Nov premarket print: the raw curve is deeply
+        # backwardated (-0.0122/day, a -8 before), the ex-event curve is flat -> EM 7.4 (+15) alone.
+        rows = [
+            {"date": "2026-11-09", "expiry": "2026-11-13", "dte": "4", "volatility": "1.078193"},
+            {"date": "2026-11-09", "expiry": "2026-11-20", "dte": "11", "volatility": "0.762770"},
+            {"date": "2026-11-09", "expiry": "2026-11-27", "dte": "18", "volatility": "0.672888"},
+            {"date": "2026-11-09", "expiry": "2026-12-19", "dte": "40", "volatility": "0.584166"},
+            {"date": "2026-11-09", "expiry": "2027-01-16", "dte": "68", "volatility": "0.551068"},
+        ]
+        fake = _TermUW(rows, flow_recent=[], aggregate_flow={})
+        p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
+                                           "put_volume": "0", "total_open_interest": "0"}},
+                           {"AAPL": {"earnings_date": "2026-11-10", "report_time": "premarket",
+                                     "full_name": "Cooper", "sector": "Healthcare",
+                                     "expected_move_perc": 0.0743}})
+        p._dgs10_cache = {}
+        card = p._score("AAPL")
+        audit = (card.rule_audit or {}).get("rule4_volatility", {})
+        assert "backwardated" not in " ".join(audit.get("reasons") or [])
+        assert card.volatility_edge_score == 15.0
+
     def test_no_term_structure_method_falls_back_cleanly(self):
         fake = _FakeUW()
         p = _make_pipeline(fake, {"AAPL": {"close": "66.83", "call_volume": "0",
@@ -629,16 +617,20 @@ class TestR5PeersAreTheTickersSector:
         "CCCC": ("0.03", "1.2", "1.1"), "DDDD": ("0.025", "0.9", "0.9"),
     }
 
+    @pytest.fixture(autouse=True)
+    def _shorts(self, monkeypatch):
+        _serve_shorts(monkeypatch, {
+            t: {"si_float": si, "fee_rate": fee, "short_interest": "1000000",
+                "short_shares_available": "100000", "days_to_cover": dtc}
+            for t, (si, fee, dtc) in self._ROWS.items()})
+
     def _pipeline(self, sectors):
         from RevenueChaser.core import rawstore
         rawstore.replace_all("equity_universe", [{
             "ticker": t, "cik": "", "name": t, "market_cap": 1e9, "price": 10.0,
             "sector": sec, "industry": "x", "industry_group": None, "sub_industry": None,
             "quote": {"symbol": t}} for t, sec in sectors.items()])
-        fake = _ShortUW(short_rows={
-            t: {"si_float": si, "fee_rate": fee, "short_interest": "1000000",
-                "short_shares_available": "100000", "days_to_cover": dtc}
-            for t, (si, fee, dtc) in self._ROWS.items()})
+        fake = _FakeUW()
         cal = {t: {"earnings_date": "2026-08-14", "full_name": t, "sector": "Technology",
                    "expected_move_perc": 0.05} for t in self._ROWS}
         p = EarningsPipeline(list(self._ROWS), uw=fake, cal_meta=cal)

@@ -109,6 +109,25 @@ def test_sync_issues_resolves_every_open_row_of_a_key_not_just_one():
     assert ops.open_issues("market_series", 0)[0] == 0
 
 
+def test_prune_issues_deletes_rows_resolved_over_a_week_ago_and_never_an_open_one(monkeypatch):
+    """#387: build_issues was 42,225 rows on 6 Nov, 16,155 of them resolved. avo, 8 Nov 2026 ("B"): a resolved row
+    is kept seven days. An open row stays until it is resolved, however old."""
+    monkeypatch.setattr(ops, "_today", lambda: "2026-10-01")
+    ops.record_issue("market_series", "parse", "old-open", "still broken")
+    for key in ("old", "edge"):
+        ops.record_issue("market_series", "parse", key, "fixed")
+    ops.sync_issues("market_series", ["parse"], [("parse", "old-open", "still broken")])   # resolves old and edge
+    monkeypatch.setattr(ops, "_today", lambda: "2026-10-08")
+    ops.record_issue("market_series", "parse", "recent", "fixed")
+    ops.sync_issues("market_series", ["parse"], [("parse", "old-open", "still broken")])   # resolves recent
+    assert ops.prune_issues() == 0                       # 2026-10-01 is exactly seven days old: kept
+    monkeypatch.setattr(ops, "_today", lambda: "2026-10-09")
+    assert ops.prune_issues() == 2
+    left = sorted((r["key"], r["resolved_on"]) for r in ops.rows("build_issues"))
+    assert left == [("old-open", None), ("recent", "2026-10-08")]
+    assert ops.open_issues("market_series", 0)[0] == 1
+
+
 def test_record_issue_and_job_runs():
     ops.record_issue("market_series", "parse", "fred:DGS2", "bad row", run_id="r1")
     ops.start_run("r1", "market_series", "cli", {"once": True})
@@ -141,14 +160,21 @@ LIVE_UW_HEADERS = {"x-uw-daily-req-count": "355", "x-uw-req-per-minute-remaining
                    "x-uw-req-per-minute-reset": "60000", "x-uw-token-req-limit": "100000000"}
 
 
-def test_sample_uw_headers_reads_the_daily_count_and_computes_what_is_left_under_our_cap():
+def test_sample_uw_headers_reads_the_daily_count_and_computes_what_is_left_under_our_cap(monkeypatch):
     from RevenueChaser.rcdata import caps
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", 100_000)              # UW has no cap since 2026-11-10: a test cap
     ops.sample_uw_headers({**LIVE_UW_HEADERS, "set-cookie": "secret"}, run_id="r1")
     [row] = ops.rows("uw_remaining")
     assert row["run_id"] == "r1" and row["daily_req_count"] == 355
     assert row["daily_cap"] == caps.DAY_CAPS["uw"] and row["daily_remaining_computed"] == caps.DAY_CAPS["uw"] - 355
     assert row["per_minute_remaining"] == 1_000_000 and row["per_minute_reset_ms"] == 60_000
     assert row["token_req_limit"] == 100_000_000           # kept as sent, never read as the daily cap
+
+
+def test_sample_uw_headers_without_a_uw_cap_computes_nothing():
+    ops.sample_uw_headers(LIVE_UW_HEADERS, run_id="r1")
+    [row] = ops.rows("uw_remaining")
+    assert row["daily_req_count"] == 355 and row["daily_cap"] is None and row["daily_remaining_computed"] is None
     assert json.loads(row["raw_headers"]) == LIVE_UW_HEADERS
     ops.sample_uw_headers({}, run_id="r2")      # nothing to sample: no row
     assert len(ops.rows("uw_remaining")) == 1
@@ -234,6 +260,44 @@ def test_a_writer_waits_for_the_other_process_instead_of_failing(sqlite_ops):
     finally:
         p.wait(timeout=30)
     assert ops.calls_today("uw") == 1
+
+
+def test_threads_of_one_process_queue_for_the_write_lock_instead_of_running_out_of_busy_timeout(sqlite_ops,
+                                                                                                monkeypatch):
+    """#522: n threads of one process (the dashboard's hourly pass and a panel click) writing at once.
+
+    SQLite's busy handler polls with growing sleeps and no queue, so the last of n writers waits for the n - 1 before
+    it plus its own idle sleeps, and on a loaded box (slow fsync) that runs past ``busy_timeout``: "database is
+    locked". Here each transaction is held 80 ms and the timeout is 300 ms, so the eighth writer's turn comes ~560 ms
+    in: it must wait its turn behind the others, not fail."""
+    import threading
+    ops.ensure()
+    monkeypatch.setattr(ops, "BUSY_TIMEOUT_MS", 300)
+    real = ops._watch_write
+
+    def slow(*a, **k):
+        time.sleep(0.08)                                  # a commit on a loaded disk
+        return real(*a, **k)
+
+    monkeypatch.setattr(ops, "_watch_write", slow)
+    n = 8
+    gate, results, errors = threading.Barrier(n), [], []
+
+    def run():
+        try:
+            gate.wait(10)
+            results.append(ops.watch_toggle("stock", "AAA", by="test"))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+    assert errors == [], errors[:2]
+    assert sorted(results) == [False] * 4 + [True] * 4
+    assert ops.watch_list("stock") == []
 
 
 # ── Who may claim which request (#queueing the attended and CLI jobs) ──────────────────────────────────────────

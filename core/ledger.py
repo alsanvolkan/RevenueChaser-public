@@ -253,10 +253,10 @@ def d01_last_bars(tickers) -> dict[str, tuple[str, float | None]]:
     if not tickers:
         return {}
     try:
-        rows = rawstore.query(
+        from RevenueChaser.core import prices   # the read API picks the file (``prices.source_state``)
+        rows = prices._read(
             "SELECT ticker, max(session_date) AS last_day, arg_max(fetched_at, session_date) AS fetched_at "
-            f"FROM {_D01} WHERE ticker IN (SELECT unnest(?)) GROUP BY ticker", [tickers],
-            db=rawstore.MANIFEST[_D01].get("db", "raw"))
+            f"FROM {_D01} WHERE ticker IN (SELECT unnest(?)) GROUP BY ticker", [tickers], layer=True)
     except Exception as exc:  # noqa: BLE001 - no D01 means the old check, never a failed freeze
         logger.warning("forecast ledger: the D01 bars could not be read (%s)", exc)
         return {}
@@ -329,7 +329,7 @@ def _text(value) -> str | None:
 def _day_frozen(source: str, forecast_date: date) -> bool:
     rows = rawstore.query(
         f"SELECT 1 AS hit FROM {TABLE} WHERE source = ? AND forecast_date = ? AND target_type = ? LIMIT 1",
-        [source, forecast_date, PICK])
+        [source, forecast_date, PICK], db="forecast")
     return bool(rows)
 
 

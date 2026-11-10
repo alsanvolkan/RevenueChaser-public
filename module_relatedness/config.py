@@ -14,10 +14,6 @@ from RevenueChaser.module_value_chain import config as vc_config
 RELATEDNESS_LATEST = OUTPUT_DIR / "relatedness_latest.html"
 RELATEDNESS_JSON = OUTPUT_DIR / "relatedness" / "relatedness_latest.json"
 
-# Pilot: seed names + a sector-diverse fill from the liquid universe.
-PILOT_N = 200
-THINKING_SAMPLE = 20          # first N companies also profiled in thinking mode
-MAX_INPUT_CHARS = 12_000      # cost control: first chars of Item 1/4
 # The floor under which a filing text is not sent to the writer at all (#313). Value Chain's own
 # MIN_ITEM_CHARS, so "this is a sliced Item 1, not a table-of-contents fragment" means the same thing on both
 # boards. A model asked from a one-line description does not refuse; it writes the profile from the company
@@ -25,17 +21,18 @@ MAX_INPUT_CHARS = 12_000      # cost control: first chars of Item 1/4
 # this floor, AAP's being 1 character).
 MIN_INPUT_CHARS = vc_config.MIN_ITEM_CHARS
 
-# Profile mode: thinking-high only (see docs/plan_rest.md Phase 6 and
-# the private notes validation/validation_thinking_vs_nonthinking_50.md). Thinking costs more tokens
-# (reasoning counts against max_tokens) but produces richer, more stable peers.
-THINKING = True
-REASONING_EFFORT = "high"
-# v2 (#388 D5): the prompt names the company (``equity_universe.name``) instead of the ticker. Every v1 profile reads
-# stale and is redone by the off-peak runs within their $ cap.
-PROMPT_VERSION = "v2"
+# v3 (#400, Relatedness v2 Step 1): one structured JSON profile from the whole Item 1 / Item 4 (no input cut), read
+# in chunks above 60k characters, JSON mode and no thinking (``profile_v3``). Every v2 profile reads stale and is
+# redone by the next run of the board's writer. v2 (#388 D5) named the company instead of the ticker.
+# v3b (#400 10-K package, avo "basla" 10 Nov 2026): the B input -- the new Item 1 cut, without its non-business
+# sections, with the filing's customer sentences and XBRL customers in the prompt. Every v3 profile reads stale.
+PROMPT_VERSION = "v3b"
 
 # $ hard-stop: cap the number of LLM calls per run (~1.5x the expected spend).
-EST_USD_PER_CALL = 0.00143          # thinking-high, measured
+# The cap's cost per call. v2 measured 0.00143 USD at a 12k-character input (thinking-high); a v3 call carries up to
+# 60k characters and a longer JSON reply, so the cap assumes about 4x until the pilot measures it (review of PR #557).
+# A chunked filing is several calls, each counted.
+EST_USD_PER_CALL = 0.006
 USD_CAP = float(os.getenv("RC_RELATEDNESS_USD_CAP", "8.0"))
 LLM_WORKERS = 8
 # Grok writer (#388): a run whose first N replies hold no usable profile stops (``unusable``) before it counts an

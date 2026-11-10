@@ -87,6 +87,22 @@
 #needs .route .try a{color:var(--acc);display:inline-flex;align-items:center;min-height:44px}
 @media(max-width:900px){#needs .routes{grid-template-columns:1fr}}
 
+/* Board freshness (#566): one card per board, the ones to look at first; one column on a phone. */
+#needs .bf-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));gap:12px}
+#needs .bf-board{border:1px solid var(--line);border-left:4px solid var(--line);border-radius:10px;
+  padding:10px 14px;background:var(--bg);min-width:0}
+#needs .bf-board.bf-behind{border-left-color:var(--warn)}
+#needs .bf-board.bf-missing,#needs .bf-board.bf-error{border-left-color:var(--bad)}
+#needs .bf-board.bf-rolled_back{border-left-color:var(--warn)}
+#needs .bf-board.bf-current{border-left-color:var(--ok)}
+#needs .bf-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:15px}
+#needs .bf-run{color:var(--mut);font-size:12.5px;margin:2px 0 6px;font-variant-numeric:tabular-nums}
+#needs .bf-srcs{list-style:none;margin:0;padding:0}
+#needs .bf-src{padding:6px 0;border-top:1px solid var(--line);font-size:13px;display:flex;flex-wrap:wrap;
+  align-items:center;gap:4px 8px}
+#needs .bf-words{flex:1 1 100%;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+#needs .bf-note{margin:6px 0 0;font-size:13px;color:var(--mut)}
+
 /* Under 600 px a table row is a full-width card, one cell per line, the column name before the value. */
 @media(max-width:600px){
   #needs .part{padding:4px 12px 12px}

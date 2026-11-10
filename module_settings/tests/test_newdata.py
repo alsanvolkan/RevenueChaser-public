@@ -28,7 +28,6 @@ TODAY = date(2026, 10, 28)
 def roots(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "MARKET_DIR", tmp_path / "market")
     monkeypatch.setattr(config, "MARKET_RAW_DIR", tmp_path / "market_raw")
-    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", None)
     monkeypatch.setattr(config, "RAW_STORE_BACKUP_DIR", str(tmp_path / "backups"))
     monkeypatch.setattr(ops, "read_log", ops.ReadLog(process="test"))
     monkeypatch.delenv(newdata.RETENTION_ENV, raising=False)
@@ -158,7 +157,8 @@ def test_the_market_series_backfill_counts_partitions_per_source(roots):
 
 # ── spend, backups, retention, retirement, watch lists, queue ─────────────────────────────────────────────────
 
-def test_spend_is_today_and_this_week_per_provider_against_the_caps():
+def test_spend_is_today_and_this_week_per_provider_against_the_caps(monkeypatch):
+    monkeypatch.setitem(caps.DAY_CAPS, "uw", 100_000)              # UW has no cap since 2026-11-10: a test cap
     ops.count_calls("uw", 1200)
     ops.put_rows("provider_calls_daily", [{"provider": p, "ny_day": d, "calls": n, "failures": 0, "http_429": 0}
                                           for p, d, n in (("uw", "2026-10-26", 300), ("uw", "2026-10-25", 999),
@@ -177,69 +177,81 @@ def test_spend_is_today_and_this_week_per_provider_against_the_caps():
     assert uw_sample["per_minute_remaining"] == 118
 
 
-def _manifest(roots, files: dict):
-    out = roots / "backups" / "market"
+def _manifest(roots, step: str, files: dict, **top):
+    """A ``weekly-v2/<step>/.manifest.json`` as the weekly job writes it (``rcdata/backup.py``)."""
+    out = roots / "backups" / "weekly-v2" / step
     out.mkdir(parents=True, exist_ok=True)
-    (out / ".manifest.json").write_text(json.dumps({"version": 1, "files": files}), encoding="utf-8")
+    (out / ".manifest.json").write_text(json.dumps({"version": 2, "files": files, **top}), encoding="utf-8")
 
 
-def _heavy_manifest(roots, files: dict):
-    out = roots / "backups" / "market-heavy"
-    out.mkdir(parents=True, exist_ok=True)
-    (out / ".manifest.json").write_text(json.dumps({"version": 1, "files": files}), encoding="utf-8")
+def _iso(days: float) -> str:
+    return (NOW - timedelta(days=days)).isoformat()
 
 
-def test_the_heavy_subdir_is_where_the_card_finds_the_prices_and_ownership_copies(roots):
-    """avo, 5 Nov 2026: prices and ownership are backed up weekly into market-heavy/. The card reads every folder
-    the registry writes, so a kind that moved does not read as "never backed up"."""
-    new = (NOW - timedelta(days=3)).isoformat()
-    _manifest(roots, {"ops_20261102_000000_000000.sqlite": {"at": new, "sha256": "a"}})
-    _heavy_manifest(roots, {"prices_20261101_000000_000000.duckdb": {"at": new, "sha256": "b"},
-                            "ownership_20261101_000000_000000.duckdb": {"at": new, "sha256": "c"}})
-    kinds = {k["kind"]: k for k in newdata.collect(NOW)["backups"]["kinds"]}
-    assert kinds["prices"]["age_days"] == 3 and kinds["prices"]["warn"] is False
-    assert kinds["ownership"]["age_days"] == 3 and kinds["ownership"]["warn"] is False
-    assert kinds["ops"]["age_days"] == 3 and kinds["market"]["age_days"] is None
-
-
-def test_backup_ages_and_the_35_day_warning(roots):
-    old = (NOW - timedelta(days=40)).isoformat()
-    new = (NOW - timedelta(days=1)).isoformat()
-    _manifest(roots, {"market_20260918_000000_000000.duckdb": {"at": old, "sha256": "a"},
-                      "ops_20261027_000000_000000.sqlite": {"at": new, "sha256": "b"},
-                      "ops_20261001_000000_000000.sqlite": {"at": old, "sha256": "c"}})
+def test_the_backups_card_reads_every_step_of_the_weekly_job(roots):
+    """avo, 8 Nov 2026: one weekly job, 4 copies kept. The card shows each step's last good run and the newest
+    copy of every file; amber past 8 days (a missed Sunday), red past 15 (two)."""
+    _manifest(roots, "duckdb", {"market_20261025_000000_000000.duckdb": {"at": _iso(3), "source": "weekly"},
+                                "market_20261018_000000_000000.duckdb": {"at": _iso(10), "source": "weekly"},
+                                "prices_20261027_000000_000000.duckdb": {"at": _iso(1), "source": "manual"}},
+              last_ok=_iso(3), last_run=_iso(3))
+    _manifest(roots, "boards", {"raw_20261025_000000_000000.duckdb": {"at": _iso(3), "store_schema": 41},
+                                "sec_13f_20261025_000000_000000.duckdb": {"at": _iso(3)}},
+              last_ok=_iso(3), last_run=_iso(3))
+    _manifest(roots, "ops", {"ops_20261025_000000_000000.sqlite": {"at": _iso(3), "backend": "sqlite"}},
+              last_ok=_iso(3), last_run=_iso(3))
+    _manifest(roots, "uw-raw", {"2026-W43/uw/a.json.gz": {"sha256": "x"}}, weeks=["2026-W42", "2026-W43"],
+              last_ok=_iso(10), last_run=_iso(3), last_error="uw: copy of a.json.gz does not match")
+    _manifest(roots, "edgar-docs", {"edgar_docs_20261011_000000_000000.zip": {"at": _iso(17), "documents": 5}},
+              last_ok=_iso(3), last_run=_iso(3))
     b = newdata.collect(NOW)["backups"]
+    assert b["configured"] is True and b["root"].endswith("weekly-v2")
+    assert (b["warn_days"], b["alert_days"]) == (newdata.BACKUP_WARN_DAYS, newdata.BACKUP_ALERT_DAYS) == (8, 15)
+    steps = {s["step"]: s for s in b["steps"]}
+    assert list(steps) == ["duckdb", "boards", "ops", "uw-raw", "edgar-docs"]
+    assert steps["duckdb"] == {"step": "duckdb", "last_ok": _iso(3), "age_days": 3, "warn": False, "alert": False,
+                               "error": None}
+    assert steps["uw-raw"]["age_days"] == 10 and steps["uw-raw"]["warn"] is True and steps["uw-raw"]["alert"] is False
+    assert steps["uw-raw"]["error"].startswith("uw: copy of")
     kinds = {k["kind"]: k for k in b["kinds"]}
-    assert kinds["ops"]["age_days"] == 1 and kinds["ops"]["warn"] is False
-    assert kinds["market"]["age_days"] == 40 and kinds["market"]["warn"] is True
-    assert b["raw_copy"]["text"].startswith("not set")
-    assert b["portable"] == {"text": "not recorded", "warn": True, "age_days": None}
+    assert kinds["market"] == {"kind": "market", "step": "duckdb", "newest": _iso(3), "age_days": 3, "copies": 2,
+                               "warn": False, "alert": False}
+    assert kinds["prices"]["newest"] is None and kinds["prices"]["copies"] == 0, "a manual copy is not a weekly one"
+    assert kinds["raw"]["copies"] == 1 and kinds["sec_13f"]["step"] == "boards" and kinds["ops"]["age_days"] == 3
+    assert kinds["uw-raw"] == {"kind": "uw-raw", "step": "uw-raw", "newest": _iso(10), "age_days": 10, "copies": 2,
+                               "warn": True, "alert": False}
+    # an unchanged edgar_docs tree keeps its zip: the step's last good run, not the zip's age, is what counts
+    assert kinds["edgar_docs"]["age_days"] == 3 and kinds["edgar_docs"]["warn"] is False
+    assert "raw_copy" not in b and "portable" not in b
 
 
-def test_the_portable_ssd_date_comes_from_its_check_row():
-    ops.record_check("backup/portable", "changed", checked_on=(TODAY - timedelta(days=36)).isoformat())
-    p = newdata.collect(NOW)["backups"]["portable"]
-    assert p["age_days"] == 36 and p["warn"] is True
-    ops.record_check("backup/portable", "changed", checked_on=(TODAY - timedelta(days=2)).isoformat())
-    assert newdata.collect(NOW)["backups"]["portable"]["warn"] is False
+def test_a_step_that_never_ran_and_a_kind_past_15_days_are_red(roots):
+    _manifest(roots, "duckdb", {"market_20261001_000000_000000.duckdb": {"at": _iso(16), "source": "weekly"}},
+              last_ok=_iso(16), last_run=_iso(16))
+    b = newdata.collect(NOW)["backups"]
+    steps = {s["step"]: s for s in b["steps"]}
+    assert steps["duckdb"]["warn"] is True and steps["duckdb"]["alert"] is True
+    assert steps["ops"] == {"step": "ops", "last_ok": None, "age_days": None, "warn": True, "alert": True,
+                            "error": None}
+    kinds = {k["kind"]: k for k in b["kinds"]}
+    assert kinds["market"]["age_days"] == 16 and kinds["market"]["alert"] is True
+    assert kinds["ops"]["newest"] is None and kinds["ops"]["alert"] is True
 
 
 def test_the_backups_with_no_folder_say_so(monkeypatch):
     monkeypatch.setattr(config, "RAW_STORE_BACKUP_DIR", "")
     b = newdata.collect(NOW)["backups"]
-    assert b["configured"] is False and all(k["age_days"] is None and k["warn"] for k in b["kinds"])
+    assert b["configured"] is False and b["root"] is None
+    assert all(k["age_days"] is None and k["alert"] for k in b["kinds"])
+    assert all(s["last_ok"] is None and s["alert"] for s in b["steps"])
 
 
-def test_the_raw_copy_age_is_its_newest_file(roots, monkeypatch):
-    copy = roots / "copy"
-    (copy / "uw").mkdir(parents=True)
-    f = copy / "uw" / "a.json.gz"
-    f.write_bytes(b"x")
-    t = (NOW - timedelta(days=3)).timestamp()
-    os.utime(f, (t, t))
-    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", copy)
-    rc = newdata.collect(NOW)["backups"]["raw_copy"]
-    assert rc["age_days"] == 3 and rc["warn"] is False
+def test_a_damaged_manifest_reads_as_never_backed_up(roots):
+    out = roots / "backups" / "weekly-v2" / "ops"
+    out.mkdir(parents=True)
+    (out / ".manifest.json").write_text("{not json", encoding="utf-8")
+    b = newdata.collect(NOW)["backups"]
+    assert next(s for s in b["steps"] if s["step"] == "ops")["last_ok"] is None
 
 
 def test_the_raw_retention_warning_is_on_until_a_retention_is_set(monkeypatch):
@@ -280,7 +292,7 @@ def test_retirement_counts_reads_of_the_old_tables_in_the_last_14_days():
     assert rows["macro_series"]["reads_14d"] == 7
     assert rows["vol_index_daily"]["reads_14d"] == 0
     assert "market_series" not in rows                                  # a new table is not being retired
-    assert "RC-Earnings-Inputs" in rows["macro_series"]["writers"]
+    assert "RC-Macro-Weekly" in rows["macro_series"]["writers"]
     # The analyst estimates joined the list when the board stopped reading the old table (the fundamentals store
     # serves them as ``estimate_latest``), so the card counts its reads down to zero too.
     assert rows["estimate_snapshots"]["replaced_by"] == "estimate_latest"

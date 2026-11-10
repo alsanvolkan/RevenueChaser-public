@@ -8,7 +8,7 @@ from datetime import date
 import pytest
 
 from RevenueChaser.core.vol_metrics import (
-    TRADING_PERIODS_PER_YEAR, clean_ohlc, term_structure_curve,
+    TRADING_PERIODS_PER_YEAR, clean_ohlc, ex_event_curve, term_structure_curve,
     term_structure_slope, yang_zhang,
 )
 
@@ -121,3 +121,44 @@ class TestTermStructureSlope:
         curve = [(7, 0.5), (30, 0.5), (60, 0.35)]
         s = term_structure_slope(curve)
         assert s is not None and s < 0
+
+
+# Base vol 0.50 everywhere plus a 10% one-day event: iv^2 = 0.25 + 0.01 * 365 / dte on every expiry after the print.
+_EVENT_ROWS = [
+    {"date": "2026-11-09", "expiry": "2026-11-13", "dte": 4, "volatility": "1.078193"},
+    {"date": "2026-11-09", "expiry": "2026-11-20", "dte": 11, "volatility": "0.762770"},
+    {"date": "2026-11-09", "expiry": "2026-11-27", "dte": 18, "volatility": "0.672888"},
+    {"date": "2026-11-09", "expiry": "2026-12-19", "dte": 40, "volatility": "0.584166"},
+    {"date": "2026-11-09", "expiry": "2027-01-16", "dte": 68, "volatility": "0.551068"},
+]
+
+
+class TestExEventCurve:
+    def test_raw_curve_is_backwardated_by_the_event_alone(self):
+        assert term_structure_slope(term_structure_curve(_EVENT_ROWS)) < -0.00406
+
+    def test_event_variance_comes_out_and_the_curve_is_flat(self):
+        curve = ex_event_curve(_EVENT_ROWS, date(2026, 11, 10), after_close=False)
+        assert [d for d, _ in curve] == [4, 11, 18, 40, 68]
+        assert all(iv == pytest.approx(0.5, abs=1e-4) for _, iv in curve)
+        assert term_structure_slope(curve) == pytest.approx(0.0, abs=1e-5)
+
+    def test_event_already_printed_gives_no_curve(self):
+        assert ex_event_curve(_EVENT_ROWS, date(2026, 11, 6), after_close=False) == []
+        # premarket today has printed; after the close today has not
+        assert ex_event_curve(_EVENT_ROWS, date(2026, 11, 9), after_close=False) == []
+        assert ex_event_curve(_EVENT_ROWS, date(2026, 11, 9), after_close=True) != []
+
+    def test_expiry_on_the_day_spans_a_premarket_print_only(self):
+        rows = [{"date": "2026-11-09", "expiry": "2026-11-13", "dte": 4, "volatility": "0.50"}] + _EVENT_ROWS[1:]
+        # after the close on the 13th: the 13 Nov expiry closes before the print, so it keeps its 0.50
+        curve = ex_event_curve(rows, date(2026, 11, 13), after_close=True)
+        assert curve[0] == (4, 0.5)
+
+    def test_rows_without_dates_or_expiries_give_no_curve(self):
+        bare = [{"dte": r["dte"], "volatility": r["volatility"]} for r in _EVENT_ROWS]
+        assert ex_event_curve(bare, date(2026, 11, 10), after_close=False) == []
+        assert ex_event_curve(_EVENT_ROWS, None, after_close=False) == []
+
+    def test_fewer_than_two_spanning_expiries_in_the_fit_gives_no_curve(self):
+        assert ex_event_curve(_EVENT_ROWS[:1] + _EVENT_ROWS[4:], date(2026, 11, 10), after_close=False) == []

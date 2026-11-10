@@ -86,14 +86,14 @@ def _scored_d01_day(scores: str):
     #380 S4, so its date is its scored names' too. No scored name: no date.
     """
     def resolve() -> str | None:
-        return d01_day(r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {scores}"))
+        return d01_day(r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {scores}", db=rawstore._db_of(scores)))
     return resolve
 
 
 def _scored_prices_day(scores: str):
     """``_scored_d01_day`` over the prices store: Asymmetric Growth reads its momentum there since PR 11 (G3)."""
     def resolve() -> str | None:
-        return prices_day(r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {scores}"))
+        return prices_day(r["ticker"] for r in rawstore.query(f"SELECT ticker FROM {scores}", db=rawstore._db_of(scores)))
     return resolve
 
 
@@ -114,7 +114,7 @@ def _earnings_day() -> str | None:
 
 
 def _rotation_day() -> str | None:
-    return _max("SELECT max(as_of_date) AS v FROM rotation_snapshots")
+    return _max("SELECT max(as_of_date) AS v FROM rotation_snapshots", db="sector_rotation")
 
 
 def _sec13f_day() -> str | None:
@@ -138,11 +138,11 @@ def _leaps_day() -> str | None:
     newest cached snapshot. ``discovered_at`` alone dated a print by its discovery: a Saturday scan read Saturday."""
     rows = rawstore.query(
         "SELECT v FROM (SELECT DISTINCT COALESCE(NULLIF(executed_at, ''), discovered_at) AS v "
-        "FROM leaps_flow_prints) WHERE v IS NOT NULL AND v <> '' ORDER BY v DESC LIMIT ?", [_LEAPS_CANDIDATES])
+        "FROM leaps_flow_prints) WHERE v IS NOT NULL AND v <> '' ORDER BY v DESC LIMIT ?", [_LEAPS_CANDIDATES], db="leaps")
     sessions = [d for d in (session_of(r["v"]) for r in rows) if d]
     if sessions:
         return max(sessions)
-    return _max("SELECT max(json_extract_string(payload, '$.latest.as_of')) AS v FROM leaps_cache")
+    return _max("SELECT max(json_extract_string(payload, '$.latest.as_of')) AS v FROM leaps_cache", db="leaps")
 
 
 def _spx_gamma_day() -> str | None:
@@ -173,7 +173,7 @@ def _oipd_day() -> str | None:
     ticker = (json.loads(p.read_text(encoding="utf-8")).get("ticker") or "").strip().upper()
     if not ticker:
         return None
-    rows = rawstore.query("SELECT as_of, fetched_at FROM oipd_meta WHERE ticker = ?", [ticker])
+    rows = rawstore.query("SELECT as_of, fetched_at FROM oipd_meta WHERE ticker = ?", [ticker], db="oipd")
     if not rows:
         return None
     return _day(rows[0].get("as_of")) or _day(rows[0].get("fetched_at"))
@@ -202,6 +202,12 @@ def _quick_financials_day() -> str | None:
         return None
 
 
+def _news_day() -> str | None:
+    """NY day of the newest economic-calendar fetch in ``boards/news.duckdb`` (the headlines carry their own times)."""
+    rows = rawstore.query("SELECT max(fetched_at) AS v FROM news_calendar", db="news")
+    return session_of(rows[0]["v"]) if rows and rows[0]["v"] is not None else None
+
+
 # module key (as used by app/dashboard.py's tabs) -> resolver.
 # A board absent from this map, or mapped to None, shows no data date — say so
 # explicitly rather than leaving a stale value on screen.
@@ -225,6 +231,10 @@ RESOLVERS = {
     "module_relatedness": _chain_day,
     # Implied Probability reads its own cached UW option chain.
     "module_oipd": _oipd_day,
+    # News: the day of its newest calendar fetch.
+    "module_news": _news_day,
+    # Welcome summarises many datasets, each card stating its own session or time: no single date to stamp.
+    "module_welcome": None,
     # Settings / Data health is an inventory of many datasets, each reporting its
     # own date on its row — there is no single downloaded dataset to stamp here.
     "module_settings": None,

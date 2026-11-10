@@ -148,7 +148,7 @@ class TestFileSourceMigrators:
                  "quadrant": "LAGGING"},
             ]})
         _migrate(legacy, "rotation_snapshots")
-        rows = rawstore.query("SELECT * FROM rotation_snapshots ORDER BY ticker")
+        rows = rawstore.query("SELECT * FROM rotation_snapshots ORDER BY ticker", db="sector_rotation")
         assert [r["ticker"] for r in rows] == ["XLF", "XLK"]
         xlk = rows[1]
         assert xlk["as_of_date"] == "2026-08-14"
@@ -367,7 +367,7 @@ class TestEveryManifestDatasetHasARoundTripTest:
                     "llm_cache", "relatedness_profiles", "relatedness_attributes",
                     "relatedness_scores", "theme_runs", "relatedness_themes",
                     "relatedness_theme_tags", "relatedness_theme_members",
-                    "relatedness_theme_etfs",
+                    "relatedness_theme_etfs", "relatedness_embeddings",   # schema 13 (#401)
                     "oipd_chain", "oipd_meta",
                     "security_master", "identity_conflicts", "identity_source_cache",
                     "identity_runs", "board_settings", "store_schema",
@@ -398,6 +398,9 @@ class TestEveryManifestDatasetHasARoundTripTest:
                     "rotation_snapshots_history",
                     # #380 S0: derived from forecast_ledger and the bars by core/outcomes.py
                     "forecast_outcomes",
+                    # board files (S9, S16): built incrementally by module_news / module_welcome, no legacy source
+                    "news_events", "news_highlight", "news_headlines", "news_meta",
+                    "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta",
                     # #25 HR-1: derived from the universe snapshot and the bars by core/baselines.py
                     "forecast_baselines"}
         # composite SQLite targets are covered through their source dataset

@@ -17,6 +17,7 @@ import pytest
 from RevenueChaser.core.reporting_common import THEME_STORAGE_KEY, THEME_TOKENS
 
 from .harness.cdp_browser import Page, find_chrome
+from .harness.devices import REALME_GT2_PRO, REALME_GT2_PRO_LANDSCAPE, Device
 
 PHONE = (390, 844)
 DESKTOP = (1280, 800)
@@ -87,7 +88,10 @@ def browser(chrome):
 
 
 def _open(browser, dashboard, size, scheme, tab="runs"):
-    browser.emulate(*size, scheme=scheme)
+    if isinstance(size, Device):
+        browser.emulate_device(size, scheme=scheme)
+    else:
+        browser.emulate(*size, scheme=scheme)
     browser.open(f"{dashboard.url}/#{tab}", ready=FRAME_READY)
     return browser.eval(LAYOUT)
 
@@ -98,11 +102,21 @@ def _click(browser, selector):
     return browser.eval(LAYOUT)
 
 
+# The generic narrow phone, and the owner's realme GT2 Pro upright and sideways (harness/devices.py).
+PHONES = [pytest.param(PHONE, id="390"), pytest.param(REALME_GT2_PRO, id="realme"),
+          pytest.param(REALME_GT2_PRO_LANDSCAPE, id="realme-landscape")]
+
+
+def _width(size) -> int:
+    return size.width if isinstance(size, Device) else size[0]
+
+
+@pytest.mark.parametrize("phone", PHONES)
 @pytest.mark.parametrize("scheme", ["light", "dark"])
 @pytest.mark.parametrize("tab", ["runs", "module_settings", "module_earnings_radar"])
-def test_the_page_never_scrolls_sideways_on_a_phone(dashboard, browser, scheme, tab):
-    m = _open(browser, dashboard, PHONE, scheme, tab)
-    assert m["vw"] == PHONE[0]
+def test_the_page_never_scrolls_sideways_on_a_phone(dashboard, browser, scheme, tab, phone):
+    m = _open(browser, dashboard, phone, scheme, tab)
+    assert m["vw"] == _width(phone)
     assert m["docScroll"] <= m["vw"] and m["bodyScroll"] <= m["vw"], f"the page scrolls sideways: {m['wide']}"
     assert m["contentScroll"] <= m["contentW"], "the board pane scrolls sideways"
     assert m["frameW"] is not None and m["frameW"] <= m["contentW"], f"the frame ({m['frameW']}) is wider than its pane"
@@ -128,10 +142,11 @@ def test_the_nav_is_reachable_through_the_drawer(dashboard, browser, scheme):
     assert m["expanded"] == "false", "the scrim closes the drawer"
 
 
+@pytest.mark.parametrize("phone", PHONES)
 @pytest.mark.parametrize("scheme", ["light", "dark"])
-def test_the_shells_touch_targets_are_44_px_on_a_phone(dashboard, browser, scheme):
+def test_the_shells_touch_targets_are_44_px_on_a_phone(dashboard, browser, scheme, phone):
     for tab in ("runs", "module_earnings_radar", "module_sector_rotation"):
-        m = _open(browser, dashboard, PHONE, scheme, tab)
+        m = _open(browser, dashboard, phone, scheme, tab)
         assert not m["small"], f"{tab}: touch targets under 44 px: {m['small']}"
 
 

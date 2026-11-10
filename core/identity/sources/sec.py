@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 
 from ...providers import sec_edgar
+from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 from . import SourceResult, fail, norm_ticker, now_iso, redact
 
 EXCHANGE_SOURCE = "sec_exchange"
@@ -158,7 +159,7 @@ def submissions(ciks, ticker_by_cik: dict | None = None, workers: int = 4) -> So
         with lock:
             out[cik] = row
 
-    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(unique)))) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(unique))), **opens.pool_kwargs()) as pool:
         list(pool.map(work, unique))
     rows = [out[c] for c in unique]
     failed = sum(1 for r in rows if r["status"] == "error")

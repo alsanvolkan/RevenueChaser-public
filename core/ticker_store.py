@@ -108,9 +108,8 @@ def all_cards() -> list[dict]:
 def write_from_cards(cards: list[dict], asof: str | None = None):
     """Kart listesini ticker-keyed store'a yazar (tam yenileme).
 
-    ``replace_all`` — clear + insert in ONE transaction. Two separate calls
-    would leave the store empty if the insert failed, and would expose an empty
-    window to the dashboard's concurrent readers.
+    ``sync_rows`` — upsert, and retire only the tickers the scan dropped, in ONE
+    transaction (plan 2026-11-08 §10: a board table is never rewritten whole).
     """
     rows = rows_from_cards(cards)
     if not rows:
@@ -119,7 +118,7 @@ def write_from_cards(cards: list[dict], asof: str | None = None):
         # should show its empty state while the durable ticker data survives.
         logger.warning("ticker_store.write_from_cards: empty card list — store left unchanged")
         return
-    rawstore.replace_all("ticker_scores", rows)
+    rawstore.sync_rows("ticker_scores", rows)
     if asof:
         _set_meta("asof", asof)
     _set_meta("schema_version", SCHEMA_VERSION)
@@ -148,7 +147,7 @@ def get(ticker: str) -> Optional[dict]:
 
 def list_tickers() -> list[dict]:
     rows = rawstore.query(
-        "SELECT ticker, name, sector, market_cap, total_points FROM ticker_scores ORDER BY ticker")
+        "SELECT ticker, name, sector, market_cap, total_points FROM ticker_scores ORDER BY ticker", db="asymmetric_growth")
     return [dict(r) for r in rows]
 
 

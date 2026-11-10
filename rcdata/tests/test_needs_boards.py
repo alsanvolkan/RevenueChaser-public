@@ -47,17 +47,18 @@ def test_a_declaration_is_sorted_and_without_a_repeat():
         assert list(reads) == sorted(set(reads)), f"{board}: READS is sorted and each name appears once"
 
 
-def test_the_migrated_board_declares_the_four_needs_it_reads():
+def test_the_migrated_board_declares_the_six_needs_it_reads():
     assert boards.all_reads()["module_earnings_radar"] == (
-        "earnings.next", "fundamentals.estimates", "macro.dgs10", "ownership.short_interest")
+        "earnings.next", "earnings.options", "fundamentals.estimates", "macro.dgs10", "ownership.short_interest", "ownership.shortable")
 
 
 def test_spx_gamma_is_the_second_migrated_board_and_leaves_the_plan():
-    """#330: SPX Gamma declares the four needs it reads and is neither "not migrated" nor "planned" any more (its
-    plan named three option needs it never read)."""
+    """#330: SPX Gamma declares the needs it reads and is neither "not migrated" nor "planned" any more (its plan
+    named three option needs it never read). Since #291 the DTE-band walls read the stored greek grid too."""
     reads = boards.all_reads()
     assert reads["module_spx_gamma"] == ("market.cot", "market.cot_release", "market.spx_close",
-                                         "market.spx_expiry_strike", "market.vix")
+                                         "market.spx_expiry_strike", "market.spx_greek_expiry_strike",
+                                         "market.vix")
     assert "module_spx_gamma" not in boards.UNDECLARED and "module_spx_gamma" not in boards.PLANNED_READS
     assert boards.reads_of("module_spx_gamma") == {"declared": True, "needs": reads["module_spx_gamma"]}
     assert boards.readers_of("market.spx_close") == ("module_spx_gamma",)
@@ -152,3 +153,97 @@ def test_the_reads_of_a_board_say_whether_it_declared_them():
     planned = boards.reads_of("module_comovement")
     assert planned["declared"] is False and "prices.bars" in planned["needs"]
     assert boards.reads_of("module_no_such_board") == {"declared": False, "needs": ()}
+
+
+def test_comovement_plans_the_corporate_actions_its_bar_reads_join():
+    """#489: ``ohlc.py`` calls ``read.changed_at`` and ``read.bar_facts``, and both query ``corporate_action``."""
+    assert "prices.actions" in boards.PLANNED_READS["module_comovement"]
+
+
+def test_relatedness_plans_the_universe_and_the_fundamentals_needs_it_reads():
+    """#490: ``engine.py`` calls ``read.fundamental_companies`` and ``read.filing_texts``, so the board has a plan
+    entry now instead of none, and the control board draws its lines. #400: the v3 profile's segment note reads
+    ``read.segments`` too, the B input (WP6) ``read.customers``, and the prompt's name, sector and industry
+    ``read.identity`` (10 Nov 2026)."""
+    want = ("identity.universe", "identity.security", "fundamentals.companies", "fundamentals.filings",
+            "fundamentals.segments", "fundamentals.customers")
+    assert boards.PLANNED_READS["module_relatedness"] == want
+    assert boards.reads_of("module_relatedness") == {"declared": False, "needs": want}
+
+
+# ── #491: a board's planned reads are compared with the rcdata.read calls of its own code ─────────────────────────
+
+def test_the_reader_map_names_the_catalog_tables_each_read_function_queries():
+    tables = boards.reader_tables()
+    assert tables["changed_at"] == {"price_bar_daily", "corporate_action"}, "the SQL text counts, not only _rows' table"
+    assert tables["bar_facts"] == {"price_bar_daily", "corporate_action"}
+    assert tables["filing_texts"] == {"filing_item"}
+    assert tables["fundamental_companies"] == {"fundamental_company"}
+    assert tables["market_series"] == {"market_series"}
+    assert tables["watched"] == set(), "a watch list lives in ops.sqlite, which no need covers"
+
+
+def test_the_call_scan_sees_every_import_form_and_leaves_tests_out(tmp_path, monkeypatch):
+    pkg = tmp_path / "module_fake"
+    (pkg / "tests").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "a.py").write_text("from RevenueChaser.rcdata import read\n\ndef f():\n    return read.ticker_bars([])\n",
+                              encoding="utf-8")
+    (pkg / "b.py").write_text("def g():\n    from RevenueChaser.rcdata import read as rc\n    return rc.filing_texts([])\n",
+                              encoding="utf-8")
+    (pkg / "c.py").write_text("from RevenueChaser.rcdata.read import actions as acts\n\nX = acts\n", encoding="utf-8")
+    (pkg / "d.py").write_text("read = object()\n\ndef h():\n    return read.peers(1)\n", encoding="utf-8")
+    (pkg / "tests" / "test_x.py").write_text("from RevenueChaser.rcdata import read\nread.customers(1)\n",
+                                             encoding="utf-8")
+    monkeypatch.setattr(boards, "root", lambda: tmp_path)
+    assert boards.read_calls("module_fake") == ("actions", "filing_texts", "ticker_bars")
+
+
+def test_a_read_the_code_makes_and_the_plan_leaves_out_is_named_with_its_function(tmp_path, monkeypatch):
+    pkg = tmp_path / "module_fake"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "a.py").write_text("from RevenueChaser.rcdata import read\nread.changed_at([])\nread.market_series([])\n",
+                              encoding="utf-8")
+    monkeypatch.setattr(boards, "root", lambda: tmp_path)
+    monkeypatch.setattr(boards, "PLANNED_READS", {"module_fake": ("prices.bars", "macro.dgs10", "options.daily")})
+    assert boards.unplanned_reads("module_fake") == (("changed_at", "corporate_action", ("prices.actions",)),)
+    assert boards.unread_plans("module_fake") == ("options.daily",)
+
+
+def test_a_needs_own_reader_is_covered_only_by_that_need_not_by_a_sibling_over_its_table(tmp_path, monkeypatch):
+    """The review's 1: ``prices.market_cap`` and ``prices.latest`` share ``market_cap_daily``, so a table match let
+    a board call ``read.latest_market`` with only ``prices.market_cap`` planned, and the diagram drew no line."""
+    pkg = tmp_path / "module_fake"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "a.py").write_text("import RevenueChaser.rcdata.read as rd\nrd.latest_market([])\n", encoding="utf-8")
+    monkeypatch.setattr(boards, "root", lambda: tmp_path)
+    monkeypatch.setattr(boards, "PLANNED_READS", {"module_fake": ("prices.market_cap",)})
+    assert ("latest_market", "market_cap_daily", ("prices.latest",)) in boards.unplanned_reads("module_fake")
+    monkeypatch.setattr(boards, "PLANNED_READS", {"module_fake": ("prices.market_cap", "prices.latest", "prices.bars",
+                                                                  "prices.security_ids")})
+    assert boards.unplanned_reads("module_fake") == ()
+
+
+def test_the_call_scan_sees_the_real_boards_reads_so_an_empty_scan_cannot_pass():
+    """The review's 2: a scan that found nothing would make the board-wide test pass on every board."""
+    assert {"changed_at", "bar_facts", "ticker_bars"} <= set(boards.read_calls("module_comovement"))
+    assert {"fundamental_companies", "filing_texts"} <= set(boards.read_calls("module_relatedness"))
+
+
+def test_every_board_not_migrated_yet_plans_every_need_its_code_reads():
+    """#491: the plan is written by hand and drifted from the code (#483 found three boards with lines missing).
+    Only the board's own package is scanned: a read made inside a shared ``core`` module is not counted here,
+    because a board importing a core module may use none of that module's reads."""
+    missing = {b: boards.unplanned_reads(b) for b in sorted(boards.UNDECLARED)}
+    assert {b: m for b, m in missing.items() if m} == {}
+
+
+def test_a_planned_need_the_code_never_reads_is_a_warning_not_a_failure():
+    import warnings
+    for board in sorted(boards.UNDECLARED):
+        unread = boards.unread_plans(board)
+        if unread:
+            warnings.warn(f"{board}: planned but not read by its own package (maybe through core): "
+                          f"{', '.join(unread)}", stacklevel=1)

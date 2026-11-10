@@ -83,7 +83,7 @@ def _contracts_from_store(rows: list[dict]) -> list[dict]:
 
 def last_ticker() -> str | None:
     rows = rawstore.query(
-        "SELECT ticker FROM oipd_meta ORDER BY fetched_at DESC LIMIT 1")
+        "SELECT ticker FROM oipd_meta ORDER BY fetched_at DESC LIMIT 1", db="oipd")
     return rows[0]["ticker"] if rows else None
 
 
@@ -187,7 +187,9 @@ def fetch_result(uw, ticker: str) -> FetchResult:
             continue
         errors.append({"expiry": label, **err})
         if res.status == "partial":
-            warnings.append(f"{label}: page {err.get('page', '?')} of the Unusual Whales chain failed; "
+            page = err.get("page")      # 0-based, as UW pages (#255); shown counted from 1
+            shown = page + 1 if isinstance(page, int) else "?"
+            warnings.append(f"{label}: page {shown} of the Unusual Whales chain failed; "
                             "this expiry is truncated.")
         else:
             warnings.append(f"{label}: the Unusual Whales request failed; this expiry is missing.")
@@ -397,7 +399,7 @@ def run(uw=None, ticker: str | None = None, no_fetch: bool = False, capture: dic
         rows = rawstore.query(
             "SELECT option_symbol, expiry, option_type, strike, bid, ask, "
             "last_price, volume, open_interest, iv, delta, tape_time "
-            "FROM oipd_chain WHERE ticker = ?", [ticker])
+            "FROM oipd_chain WHERE ticker = ?", [ticker], db="oipd")
         meta = rawstore.get("oipd_meta", ticker)
         if not rows or not meta:
             return _empty_payload(

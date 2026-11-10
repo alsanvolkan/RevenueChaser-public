@@ -136,12 +136,15 @@ def missing_message(slug: str) -> str:
     return (
         f"{p.label} API key is missing. Set {p.env_var} in the service environment "
         f"(on homesrv: /etc/life/secrets.env, loaded by the unit; never .env), then restart the dashboard. "
-        f"Get a key at {p.signup_url}. Needed for: {p.required_for}."
+        f"Get a key at {p.signup_url}. Needed for: {p.required_for}. "
+        f"A command run by hand on homesrv sees no key unless it runs under "
+        f"life-with-keys <provider> -- <command>; that is not an expired key (#388)."
     )
 
 
 def rejected_message(slug: str, status: int | None = None, detail: str = "") -> str:
-    """Actionable message for a key the provider refused (401/403)."""
+    """Actionable message for a key the provider refused (401/403). Only for a key that was sent: a 401 without one
+    is :func:`missing_message` (#388); :func:`describe` picks between them from the environment."""
     p = PROVIDERS[slug]
     code = f" (HTTP {status})" if status else ""
     tail = f" Provider said: {detail.strip()}" if detail.strip() else ""

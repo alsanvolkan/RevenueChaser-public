@@ -70,7 +70,10 @@ def test_no_run_today_is_not_measured_yet():
 def test_a_job_runs_read_that_fails_is_not_measured():
     def broken():
         raise OSError("locked")
-    assert _build(job_runs=broken)["longest_build"] is None
+    view = _build(job_runs=broken)
+    assert view["longest_build"] is None
+    t = _tiles(view)["longest"]   # #529: an unreadable store is not the same as no run today
+    assert (t["cls"], t["n"], t["label"]) == ("warn", "could not read", "longest build today · job_runs2 could not be read")
 
 
 def test_the_health_lists_the_files_in_plan_order_with_their_state():

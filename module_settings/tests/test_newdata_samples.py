@@ -163,7 +163,6 @@ def prices_store(tmp_path, monkeypatch):
     from RevenueChaser.rcdata.build.prices import serving as prices_serving
     monkeypatch.setattr(config, "MARKET_DIR", tmp_path / "market")
     monkeypatch.setattr(config, "MARKET_RAW_DIR", tmp_path / "market_raw")
-    monkeypatch.setattr(config, "MARKET_RAW_COPY_DIR", None)
     monkeypatch.setattr(config, "RAW_STORE_BACKUP_DIR", str(tmp_path / "backups"))
     monkeypatch.setattr(ops, "read_log", ops.ReadLog(process="test"))
     monkeypatch.setattr(calendar, "_now", lambda: NOW)

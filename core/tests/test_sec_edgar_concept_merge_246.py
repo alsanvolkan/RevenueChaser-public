@@ -242,7 +242,9 @@ def test_the_gross_margin_pairing_still_needs_the_same_end():
 
 _REVENUE_TAGS = se.CONCEPTS["revenue"][0]
 _INCLUDING_TAX = "RevenueFromContractWithCustomerIncludingAssessedTax"
-_OLD_REVENUE_TAGS = tuple(t for t in _REVENUE_TAGS if t != _INCLUDING_TAX)
+# The add-only tags (#435, and the utility total of #105): they may only ADD years, whatever their number.
+_ADD_ONLY_TAGS = [t for t in _REVENUE_TAGS if t in se._ADD_ONLY_CONCEPTS]
+_OLD_REVENUE_TAGS = tuple(t for t in _REVENUE_TAGS if t not in se._ADD_ONLY_CONCEPTS)
 
 
 def _pick_parts(facts: dict) -> tuple[dict, dict]:
@@ -296,7 +298,7 @@ def _random_facts(rng: random.Random) -> dict:
 def test_property_todays_pick_is_only_ever_extended(seed):
     facts = _random_facts(random.Random(seed))
     primary, old = _pick_parts(facts)  # the three old tags only: the 6250a89 pick
-    inc = se._annual_facts(facts, [_INCLUDING_TAX], "USD")  # what the #435 tag reports
+    inc = se._annual_facts(facts, _ADD_ONLY_TAGS, "USD")  # what the add-only tags report
     new = se._annual_facts(facts, _REVENUE_TAGS, "USD")
     assert {y: new[y] for y in old} == old  # no year the old tags hold changes, value or end
     if not old:  # the target class: no old tag, so the including-tax series IS the primary

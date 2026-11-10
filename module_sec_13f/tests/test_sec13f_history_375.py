@@ -86,7 +86,9 @@ def test_a_fetch_records_a_header_and_one_row_per_board_row(store):
     assert sec13f_history.record(SHOWN, run_id="r1", run_at=COMPLETE) == {TABLE: 2}
     (head,) = _headers()
     assert head["error"] is None and head["quality_note"] is None and head["warnings"] is None
-    assert json.loads(head["context"]) == {"quarter": Q3, "tickers": 2}
+    ctx = json.loads(head["context"])
+    assert isinstance(ctx.pop("source_builds"), list)          # #566: the builds the run read
+    assert ctx == {"quarter": Q3, "tickers": 2}
     rows = _rows("r1")
     assert [r["ticker"] for r in rows] == ["AAA", "BBB"] and str(rows[0]["quarter"]) == Q3
     assert json.loads(rows[0]["cusips"]) == ["111111111", "222222222"]
@@ -153,5 +155,5 @@ def test_the_board_renders_the_same_entries():
     payload = report.board_payload(TOTALS, META, ENRICH)
     assert [row[0] for row in payload["rows"]] == ["AAA", "BBB"]
     aaa = dict(zip(payload["cols"], payload["rows"][0][3]))
-    assert aaa["pct_out"] == ["30.0%", 30.0, "zero"]
+    assert aaa["pct_out"] == ["30.0%", 30.0, "zero", "as of 2026 Q2"]
     assert aaa["price_delta"] == ["+50.0%", 50.0, "pos"]

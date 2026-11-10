@@ -395,6 +395,14 @@ def _build():
 
 
 @pytest.fixture
+def whole_builds(monkeypatch):
+    """Every build of the test whole: the difference report and the CRSP cross-check's counts are a whole build's
+    (a build on the live copy keeps the report and counts only the rows it rebuilds, ``prices/incremental``)."""
+    from RevenueChaser.rcdata.build import dirty
+    monkeypatch.setenv(dirty.WHOLE_ENV, "1")
+
+
+@pytest.fixture
 def built(fake):
     _build()
     return fake
@@ -731,7 +739,7 @@ def test_wrds_actions_feed_the_factors_and_alpaca_wins_an_action_both_know(built
     assert view["2025-06-03"]["adj_close"] == pytest.approx(202.0 / 2 * tr)
 
 
-def test_the_difference_report_counts_close_and_return_differences(built):
+def test_the_difference_report_counts_close_and_return_differences(whole_builds, built):
     report = {r["comparison"]: r for r in _q("SELECT * FROM wrds_price_diff")}
     assert set(report) == set(wrds_history.COMPARISONS)
     crsp_comp = report["crsp_vs_compustat"]
@@ -745,7 +753,7 @@ def test_the_difference_report_counts_close_and_return_differences(built):
     assert {str(r["as_of"]) for r in report.values()} == {"2026-10-27"}
 
 
-def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(built):
+def test_the_monthly_refresh_keeps_the_values_it_replaces_as_revisions(whole_builds, built):
     conn, _ = built
     conn.queries.clear()
     for r in conn.data["comp.secd"]:
@@ -891,7 +899,7 @@ def refusing(monkeypatch):
     wrds.reset()
 
 
-def test_a_crsp_permission_refusal_skips_crsp_once_and_serves_compustat(refusing):
+def test_a_crsp_permission_refusal_skips_crsp_once_and_serves_compustat(whole_builds, refusing):
     conn = refusing()
     row = _backfill()
     assert row["result"] == "changed", row

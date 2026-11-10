@@ -30,6 +30,11 @@ today. What this layer adds:
   billion long-term line is the including-current tag above). The total sits on the period end of the newest line;
   its provenance is the newest-filed line's, and it is ``derived``. The old extraction's two-term ``total_debt`` is
   not served.
+- **D&A in four rungs** (#271): the extraction's two (``DepreciationDepletionAndAmortization``, then
+  ``DepreciationAmortizationAndAccretionNet``), else ``DepreciationAndAmortization``, else ``Depreciation`` plus
+  ``AmortizationOfIntangibleAssets`` of the same span (``_depreciation``; ``derived`` only when a line is a YTD
+  difference), else ``Depreciation`` alone when no goodwill or intangible balance is held. The old store's records
+  keep the first two only. ``current_assets`` / ``current_liabilities`` are served as tagged.
 - **EPS** (``eps_basic``, ``eps_diluted``: ``EarningsPerShareBasic`` / ``...Diluted``, else
   ``EarningsPerShareBasicAndDiluted``, unit ``USD/shares``), which the old extraction did not read: per period the
   first concept that has one, a reported quarter only (EPS is not additive, so no YTD difference).
@@ -154,6 +159,9 @@ def _rows_of(facts: dict, rec: dict, period_type: str, index: _Index, counts: di
                       "period_start": _day(starts.get(field)), "period_end": _day(end), "value": float(value),
                       "unit": unit, "accn": p[1], "filed": _day(p[0]), "form": index.form.get(p[1]),
                       "derived": field in derived}
+    da = None if rec.get("depreciation_suspect") else _depreciation(out, index)
+    if da:
+        out["depreciation"] = da
     balance_end = rec["period"] if quarterly else ends.get("total_assets")
     terms = _debt_lines(out, index, balance_end)
     if terms:
@@ -163,6 +171,36 @@ def _rows_of(facts: dict, rec: dict, period_type: str, index: _Index, counts: di
                              "value": sum(r["value"] for r in terms), "unit": "USD", "accn": newest["accn"],
                              "filed": newest["filed"], "form": newest["form"], "derived": True}
     return list(out.values())
+
+
+# The balances whose presence means a filer has something to amortize (#271, avo 8 Nov 2026).
+INTANGIBLE_BALANCES = ("Goodwill", "IntangibleAssetsNetExcludingGoodwill", "FiniteLivedIntangibleAssetsNet",
+                       "IndefiniteLivedIntangibleAssetsExcludingGoodwill", "IntangibleAssetsNetIncludingGoodwill")
+
+
+def _depreciation(out: dict[str, dict], index: _Index) -> dict | None:
+    """The D&A row when the extraction's two rungs gave none for the period (#271): rung 3
+    ``DepreciationAndAmortization``, else rung 4 ``Depreciation`` + ``AmortizationOfIntangibleAssets`` of the same
+    span, each line read once. ``Depreciation`` alone is the whole D&A only when the filer holds no goodwill or
+    intangible balance (``INTANGIBLE_BALANCES``, none tagged or all zero) on the period's end: there is then
+    nothing to amortize (avo, 8 Nov 2026: 305 of the 384 rung-4 filers with no amortization line). A negative line is
+    never summed, and the sum is ``derived`` only when a line is (a YTD difference), so a sum of two reported
+    quarters stays in the board's TTM. The caller skips a period the extraction flagged ``depreciation_suspect``."""
+    if "depreciation" in out:
+        return None
+    if "depreciation_and_amortization" in out:
+        return {**out["depreciation_and_amortization"], "field": "depreciation"}
+    dep, amort = out.get("depreciation_tangible"), out.get("amortization_intangibles")
+    if dep and not amort and dep["value"] >= 0:
+        end = dep["period_end"].isoformat()
+        held = [r for c in INTANGIBLE_BALANCES if (r := _tagged(index, c, end)) and r["value"]]
+        return None if held else {**dep, "field": "depreciation"}
+    if (not dep or not amort or dep["value"] < 0 or amort["value"] < 0
+            or (dep["period_start"], dep["period_end"]) != (amort["period_start"], amort["period_end"])):
+        return None
+    newest = max((dep, amort), key=lambda r: (r["filed"], r["accn"]))
+    return {**newest, "field": "depreciation", "value": dep["value"] + amort["value"],
+            "derived": dep["derived"] or amort["derived"]}
 
 
 def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) -> list[dict]:

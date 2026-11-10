@@ -55,6 +55,12 @@ PARQUET_ROW_GROUP = 100_000
 # The call counter is written to ops.sqlite every this many calls of a provider (and at the end of the run, and on
 # a kill), so a run killed mid-way still leaves its calls counted against the day cap (S1).
 COUNT_FLUSH_EVERY = 25
+# UW politeness pacing (#519 finding 8). Politeness, not a provider limit (``caps.py``): UW publishes no request
+# window, but every answer says how many requests its minute has left and when it resets. At or below the floor the
+# run waits that reset, capped, before its next request, instead of running into the 429 ladder.
+UW_POLITE_FLOOR = 5
+UW_POLITE_MAX_S = 60.0
+_uw_pause = time.sleep          # patch point for tests
 
 
 class SourceError(RuntimeError):
@@ -203,6 +209,10 @@ class RunContext:
     allow_shrink: bool = False                                      # a request's explicit "allow_shrink": true
     scope: Scope = field(default_factory=Scope)                     # a request's "tiers" / "names" (empty: daily)
     pending: dict[str, Any] = field(default_factory=dict)          # a build's results for its after_swap step
+    # #446: the Parquet files changed since the live file was built (``dirty.plan``; None: not known), and the plan
+    # of a build made on the live copy (None: a whole build, every table made from the whole Parquet tree).
+    changed: Any = None
+    incremental: Any = None
     _pending: dict[str, list[int]] = field(default_factory=dict)    # counted, not yet written to ops.sqlite
     _http: httpx.Client | None = None
     _uw: Any = None
@@ -221,9 +231,12 @@ class RunContext:
     def flush_counts(self, provider: str | None = None) -> None:
         """Write the pending counts (of ``provider``, or all) to ``provider_calls_daily``."""
         for name in [provider] if provider else sorted(self._pending):
-            calls, failures, http_429 = self._pending.pop(name, [0, 0, 0])
+            calls, failures, http_429 = self._pending.get(name, [0, 0, 0])
             if calls or failures or http_429:
+                # Written first, dropped after: a store error (a locked ops.sqlite) keeps the counts pending for
+                # the next flush, so the day cap never loses them (#519 finding 4).
                 ops.count_calls(name, calls, failures=failures, http_429=http_429)
+            self._pending.pop(name, None)
 
     def check_pause(self, *, force: bool = False) -> None:
         """Raise ``Paused`` when the dataset was paused since the run began. The schedule is read at most once
@@ -275,14 +288,35 @@ class RunContext:
             # The client's own backoff sleep (``unusual_whales._sleep``), not the context's: its retry ladder
             # stays exactly what every other UW caller gets.
             self._uw = UWClient()
+            self._uw.on_request = self._on_uw_request
             self._uw.on_response = self._on_uw_response
         return self._uw
 
+    def _on_uw_request(self, ep: str) -> None:
+        # Counted on send, as the keyless path is: a request cut off by a timeout was still made and UW counted
+        # it, and the client retries it (#519 finding 3).
+        self.count("uw", calls=1)
+
     def _on_uw_response(self, ep: str, response) -> None:
+        from ...core.providers.unusual_whales import is_rejected
         status = getattr(response, "status_code", 0)
-        self.count("uw", calls=1, http_429=int(status == 429))
-        if not self.uw_sampled and ops.sample_uw_headers(getattr(response, "headers", None), run_id=self.run_id):
+        if status == 429:
+            self.count("uw", http_429=1)
+        if is_rejected(status):
+            # A rejected request is final (never retried) and never reaches ``health()``, so ``close()`` does not
+            # see it: counted here, once, for every UW dataset alike (#519 finding 2). The rest are ``close()``'s.
+            self.count("uw", failures=1)
+        headers = getattr(response, "headers", None) or {}
+        if not self.uw_sampled and ops.sample_uw_headers(headers, run_id=self.run_id):
             self.uw_sampled = True
+        try:
+            left = int(headers.get(ops.UW_MINUTE_REMAINING_HEADER))
+            reset_s = int(headers.get(ops.UW_MINUTE_RESET_HEADER)) / 1000
+        except (TypeError, ValueError):
+            return                                          # no header, or not a number: nothing to pace off
+        # Not on a 429: the client's Retry-After backoff already waits before its retry (review of #570).
+        if status != 429 and left <= UW_POLITE_FLOOR and reset_s > 0:
+            _uw_pause(min(reset_s, UW_POLITE_MAX_S))
 
     def close(self) -> None:
         if self._http is not None:
@@ -290,7 +324,8 @@ class RunContext:
             self._http = None
         if self._uw is not None:
             health = self._uw.health()
-            # Final failures; a call the breaker refused sent nothing, so it is not a provider failure here.
+            # Final failures; a call the breaker refused sent nothing, so it is not a provider failure here. A
+            # rejected request (``is_rejected``) is not in ``health()`` and was counted by ``_on_uw_response``.
             self.count("uw", failures=max(0, health["failed"] - health["skipped_calls"]))
             self._uw.close()
             self._uw = None
@@ -316,6 +351,28 @@ def is_missing(r: httpx.Response) -> bool:
 
 
 MISSING_RUN = 3     # consecutive open weekdays with no object: a refusal of the whole path, not that many days
+# Open weekdays in stretches one run lets pass after the path handed over a kept object (#507); isolated days do not
+# count. A chosen
+# ceiling, not a measurement: the calendar explains every absent index day 2014 onwards that was measured, so a run
+# that finds more than this is looking at something the calendar and the probe cannot account for, and stops.
+UNEXPLAINED_MAX = 10
+
+
+# Stretches EDGAR keeps no daily index for although it was open, so no calendar explains them: (first, last, name).
+# Measured 2026-11-08 (#507) by asking for every weekday index 2014-01-01..2026-11-04: all 65 weekdays of 2014 Q2 are
+# absent, the only such stretch. A walk writes these days off as it does a closed one; their filings are not in the
+# daily index at all.
+INDEX_GAPS: tuple[tuple[date, date, str], ...] = (
+    (date(2014, 4, 1), date(2014, 6, 30), "2014 Q2"),
+)
+
+
+def index_gap(day: date) -> str | None:
+    """The name of the known gap in EDGAR's daily index that ``day`` falls in, None for a day outside every one."""
+    for first, last, name in INDEX_GAPS:
+        if first <= day <= last:
+            return name
+    return None
 
 
 def open_weekdays(first: date, last: date) -> list[date]:
@@ -326,6 +383,16 @@ def open_weekdays(first: date, last: date) -> list[date]:
             out.append(day)
         day += timedelta(days=1)
     return out
+
+
+def stretch(unexplained: list[date | None], limit: int = MISSING_RUN) -> bool:
+    """Whether the last ``limit`` entries of a walk's unexplained days are contiguous open weekdays. ``None`` marks
+    where a stretch the probe answered for ended, so it can never be part of the next one."""
+    tail = unexplained[-limit:]
+    if len(tail) < limit or None in tail:
+        return False
+    run = sorted(tail)
+    return open_weekdays(run[0], run[-1]) == run
 
 
 class MissingStreak:
@@ -339,11 +406,17 @@ class MissingStreak:
     nothing written off, so the next run asks them again.
 
     ``what`` names the thing in the notes and the error ("daily index"). One streak per walk.
+
+    ``probe`` (#507), when given, asks the path for an object it is known to hold before a stretch stops the run: a
+    real answer says the path is not refusing everything, so the stretch is days the archive truly has no object for
+    -- a closure the calendar does not know yet -- and the walk goes on instead of stopping at the same place every
+    run. Those days are still not written off here. More than ``UNEXPLAINED_MAX`` of them in one run stops it anyway.
     """
 
-    def __init__(self, what: str, limit: int = MISSING_RUN) -> None:
-        self.what, self.limit = what, limit
-        self.unexplained: list[date] = []
+    def __init__(self, what: str, limit: int = MISSING_RUN, probe: Callable[[], bool] | None = None) -> None:
+        self.what, self.limit, self.probe = what, limit, probe
+        self.unexplained: list[date | None] = []      # None: a stretch the probe answered for ends here
+        self.passed = 0                                # days in stretches the probe answered for, this run
 
     @staticmethod
     def closed(day: date) -> bool:
@@ -356,12 +429,26 @@ class MissingStreak:
         if self.closed(day):
             ctx.notes.append(f"{day}: no {self.what}, EDGAR closed")
             return True
+        gap = index_gap(day)
+        if gap is not None:
+            ctx.notes.append(f"{day}: no {self.what}, a gap in EDGAR's daily index ({gap})")
+            return True
         self.unexplained.append(day)
-        run = sorted(self.unexplained[-self.limit:])
-        if len(run) >= self.limit and open_weekdays(run[0], run[-1]) == run:
+        if stretch(self.unexplained, self.limit):
+            run = sorted(self.unexplained[-self.limit:])
+            seen = self.passed + self.limit
+            if self.probe is not None and seen <= UNEXPLAINED_MAX and self.probe():
+                self.passed = seen
+                ctx.notes.append(f"{', '.join(str(d) for d in run)}: no {self.what} for {self.limit} weekdays EDGAR "
+                                 "was open, but the path handed over one it holds, so the walk goes on")
+                self.unexplained.append(None)
+                return False
+            why = (f"{seen} such weekdays in this run, more than the {UNEXPLAINED_MAX} a closure the calendar "
+                   "does not know can explain" if self.probe is not None and seen > UNEXPLAINED_MAX
+                   else "the bucket may be refusing every request")
             raise SourceError(f"sec: no {self.what} for {self.limit} weekdays EDGAR was open "
-                              f"({', '.join(str(d) for d in run)}); the bucket may be refusing every request, so "
-                              "none of them is written off and the next run asks them again")
+                              f"({', '.join(str(d) for d in run)}); {why}, so none of them is written off and the "
+                              "next run asks them again")
         ctx.notes.append(f"{day}: no {self.what} although EDGAR was open")
         return False
 
@@ -843,10 +930,27 @@ def build_kind_many(kind: str, members: list[tuple[Dataset, RunContext]], *, lea
         raise SourceError(f"the Parquet root {parquet_root()} is missing (RC_MARKET_RAW_DIR unset or not mounted?)")
     ctxs = {ds.name: c for ds, c in members}
     shrink = tuple(dict.fromkeys(t for ds, c in members if c.allow_shrink for t in shrink_scope(ds)))
-    with serving.build(kind) as b:
+    from . import dirty
+    plan = dirty.plan(kind, lead)
+    every = [lead, *ctxs.values()]
+    for c in every:
+        c.changed = lead.changed
+    with serving.build(kind, base="live" if plan is not None and plan.reason is None else "fresh") as b:
+        on_live = b.mode == "live"
+        for c in every:
+            c.incremental = plan if on_live else None
+        if on_live:
+            # A table the code no longer builds would survive in the copy and go on being served (#451).
+            for table in serving.RETIRED_TABLES.get(kind, ()):
+                b.con.execute(f'DROP TABLE IF EXISTS "{table}"')
         counts: dict[str, int] = {}
         for d in kind_datasets(kind):
             counts.update(d.build(ctxs.get(d.name, lead), b.con))
+        if plan is not None:
+            dirty.write_manifest(b.con, plan)
+            if not on_live and plan.reason is None:
+                plan.reason = "no live file to build on"
+            lead.notes.append(plan.note())
         checks = {ds.name: ds.check(c, b.con) for ds, c in members}
         b.swap(counts, checks=list(checks.values()), allow_shrink=shrink)
     for d in kind_datasets(kind):

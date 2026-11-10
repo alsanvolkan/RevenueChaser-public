@@ -45,16 +45,16 @@ def test_get_lists_registry_rows_with_live_state(client, fake):
 
 
 def test_post_install_runs_the_action_and_returns_the_row(client, fake):
-    r = client.post("/api/automations/RC-Store-Backup/install")
+    r = client.post("/api/automations/RC-Daily-Bars/install")
     assert r.status_code == 200
     assert r.get_json()["row"]["state"] == "enabled"
-    assert fake.mutations == [("install", "RC-Store-Backup")]
+    assert fake.mutations == [("install", "RC-Daily-Bars")]
 
 
 @pytest.mark.parametrize("action", ["enable", "disable", "remove", "run"])
 def test_post_other_actions(client, fake, action):
-    assert client.post(f"/api/automations/RC-Store-Backup/{action}").status_code == 200
-    assert fake.mutations == [(action, "RC-Store-Backup")]
+    assert client.post(f"/api/automations/RC-Daily-Bars/{action}").status_code == 200
+    assert fake.mutations == [(action, "RC-Daily-Bars")]
 
 
 def test_unknown_name_is_404_and_touches_nothing(client, fake):
@@ -65,7 +65,7 @@ def test_unknown_name_is_404_and_touches_nothing(client, fake):
 
 
 def test_unknown_action_is_400(client, fake):
-    assert client.post("/api/automations/RC-Store-Backup/format").status_code == 400
+    assert client.post("/api/automations/RC-Daily-Bars/format").status_code == 400
     assert fake.calls == []
 
 
@@ -75,18 +75,18 @@ def test_unknown_action_is_400(client, fake):
     {"query_string": {"args": "-m evil"}},
 ])
 def test_extra_arguments_are_refused(client, fake, kw):
-    r = client.post("/api/automations/RC-Store-Backup/install", **kw)
+    r = client.post("/api/automations/RC-Daily-Bars/install", **kw)
     assert r.status_code == 400
     assert fake.calls == []
 
 
 def test_get_is_not_a_mutation_route(client, fake):
-    assert client.get("/api/automations/RC-Store-Backup/install").status_code == 405
+    assert client.get("/api/automations/RC-Daily-Bars/install").status_code == 405
     assert fake.calls == []
 
 
 def test_cross_site_post_is_refused(client, fake):
-    r = client.post("/api/automations/RC-Store-Backup/install",
+    r = client.post("/api/automations/RC-Daily-Bars/install",
                     headers={"Origin": "https://evil.example"})
     assert r.status_code == 403 and fake.calls == []
 
@@ -94,7 +94,7 @@ def test_cross_site_post_is_refused(client, fake):
 def test_unavailable_host_answers_409_for_actions_and_a_state_for_the_list(client):
     A.set_scheduler(A.FakeScheduler(available=False))
     try:
-        assert client.post("/api/automations/RC-Store-Backup/install").status_code == 409
+        assert client.post("/api/automations/RC-Daily-Bars/install").status_code == 409
         d = client.get("/api/automations").get_json()
         assert d["available"] is False and d["rows"][0]["state"] == "unavailable"
     finally:
@@ -117,7 +117,7 @@ def test_nothing_mutates_on_import_get_or_a_settings_refresh(rawstore_tmp_db, cl
     assert client.get("/api/automations").status_code == 200
     reads = len(fake.calls)
     r = client.get("/view/module_settings?refresh=1")
-    assert r.status_code == 200 and "RC-Store-Backup" in r.get_data(as_text=True)
+    assert r.status_code == 200 and "RC-Daily-Bars" in r.get_data(as_text=True)
     # #492: the board's timer tile reads the builder timer's status, once; nothing else, and nothing that writes
     assert fake.calls[reads:] in ([], [("status", "RC-Build")]), "a Settings Refresh only reads the builder timer"
     assert fake.mutations == []
@@ -127,22 +127,22 @@ def test_post_without_the_panel_header_is_refused(fake):
     """N3: another localhost origin can send a simple POST, but not a custom header
     without a CORS preflight the dashboard never answers."""
     raw = dashboard.app.test_client()
-    r = raw.post("/api/automations/RC-Store-Backup/install")
+    r = raw.post("/api/automations/RC-Daily-Bars/install")
     assert r.status_code == 403 and fake.calls == []
-    r = raw.post("/api/automations/RC-Store-Backup/install", headers={"X-RC-Panel": "nope"})
+    r = raw.post("/api/automations/RC-Daily-Bars/install", headers={"X-RC-Panel": "nope"})
     assert r.status_code == 403 and fake.calls == []
 
 
 def test_a_file_upload_is_an_argument_too(client, fake):
     import io
-    r = client.post("/api/automations/RC-Store-Backup/install",
+    r = client.post("/api/automations/RC-Daily-Bars/install",
                     data={"f": (io.BytesIO(b""), "x.txt")},
                     content_type="multipart/form-data")
     assert r.status_code == 400 and fake.calls == []
 
 
 def test_a_declared_body_length_is_refused(client, fake):
-    r = client.post("/api/automations/RC-Store-Backup/install",
+    r = client.post("/api/automations/RC-Daily-Bars/install",
                     environ_overrides={"CONTENT_LENGTH": "5"})
     assert r.status_code == 400 and fake.calls == []
 

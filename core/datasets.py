@@ -34,7 +34,8 @@ from importlib import import_module
 
 from RevenueChaser.core.datahealth import Health
 
-DBS = ("raw", "edgar", "prices", "history")
+DBS = ("raw", "edgar", "prices", "history", "news", "welcome", "relatedness", "comovement", "asymmetric_growth",
+       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast")  # all but the first four: board files (S9, S16)
 
 FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
@@ -93,6 +94,7 @@ class Source(str, Enum):
     cboe = "cboe"
     fred = "fred"
     openfigi = "openfigi"
+    ibkr = "ibkr"
     derived = "derived"
     manual = "manual"
     store = "store"
@@ -382,7 +384,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         key="oipd", label="Implied Probability chain",
         tables=("oipd_chain", "oipd_meta"),
-        db="raw", source=Source.uw, writer=None,
+        db="oipd", source=Source.uw, writer=None,
         writer_note="dashboard job POST /run/module_oipd; not an automations.REGISTRY entry",
         freshness=("oipd_meta", "as_of"),
     ),
@@ -400,8 +402,8 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     ),
     DatasetSpec(
         key="relatedness", label="Relatedness profiles",
-        tables=("relatedness_profiles", "relatedness_scores", "relatedness_attributes"),
-        db="raw", source=Source.derived, writer="RC-Relatedness-OffPeak",
+        tables=("relatedness_profiles", "relatedness_scores", "relatedness_attributes", "relatedness_embeddings"),
+        db="relatedness", source=Source.derived, writer="RC-Relatedness-OffPeak",
         freshness=("relatedness_profiles", "fetched_at"),
     ),
     # The 18 history-file tables. session_date exists on result_runs; it is not the claim until #82/#83.
@@ -434,46 +436,46 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         key="earnings_calendar", label="Earnings calendar",
         tables=("earnings_calendar",),
-        db="raw", source=Source.uw, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.uw, writer="RC-Earnings-Calendar",
         freshness=("earnings_calendar", "session_date"),
     ),
     # UW, then yfinance (docs/data_architecture.md short_interest).
     DatasetSpec(
         key="short_interest", label="Short interest",
         tables=("short_interest",),
-        db="raw", source=Source.uw, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.uw, writer="RC-Short-Interest",
         freshness=("short_interest", "session_date"),
     ),
     DatasetSpec(
         key="economic_calendar", label="Economic calendar",
         tables=("economic_calendar",),
-        db="raw", source=Source.uw, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.uw, writer="RC-Earnings-Daytime",
         freshness=("economic_calendar", "session_date"),
     ),
     DatasetSpec(
         key="macro_series", label="FRED macro series",
         tables=("macro_series",),
-        db="raw", source=Source.fred, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.fred, writer="RC-Macro-Weekly",
         freshness=("macro_series", "obs_date"),
     ),
     DatasetSpec(
         key="estimates", label="Analyst estimates",
         tables=("estimate_snapshots",),
-        db="raw", source=Source.yfinance, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.yfinance, writer="RC-Earnings-Daytime",
         freshness=("estimate_snapshots", "session_date"),
     ),
     # Cboe for the VIX family; MOVE is yfinance (docs/data_architecture.md vol_index_daily).
     DatasetSpec(
         key="vol_index", label="Volatility indices",
         tables=("vol_index_daily",),
-        db="raw", source=Source.cboe, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.cboe, writer="RC-Macro-Weekly",
         freshness=("vol_index_daily", "session_date"),
     ),
     # Reader ages by session_date (stored_inputs.cot_row, MAX_LAG). report_date is the report's own date.
     DatasetSpec(
         key="cftc", label="CFTC E-mini Commitments of Traders",
         tables=("cftc_cot",),
-        db="raw", source=Source.finra_cftc, writer="RC-Earnings-Inputs",
+        db="raw", source=Source.finra_cftc, writer="RC-CFTC-Weekly",
         freshness=("cftc_cot", "session_date"),
         gap_kind=GapKind.needs_decision,
         next_step=("The Commitments of Traders table is fresh but shallow: the nightly writer asks for the "
@@ -504,46 +506,46 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         key="swing_info", label="Swing info cache",
         tables=("swing_info",),
-        db="raw", source=Source.yfinance, writer="RC-Screeners-Daily",
+        db="swing_potential", source=Source.yfinance, writer="RC-Screeners-Daily",
         freshness=("swing_info", "cached_at"),
     ),
     _runlog(
         "ag_scores", "Asymmetric Growth scores", ("ticker_scores",),
-        "raw", Source.derived, "RC-Screeners-Daily",
+        "asymmetric_growth", Source.derived, "RC-Screeners-Daily",
     ),
     _runlog(
         "swing_scores", "Swing scores", ("swing_scores", "swing_gates"),
-        "raw", Source.derived, "RC-Screeners-Daily",
+        "swing_potential", Source.derived, "RC-Screeners-Daily",
     ),
     _runlog(
         "fundamentals_scores", "Fundamentals scores", ("fundamentals_scores", "fundamentals_gates"),
-        "raw", Source.derived, "RC-Screeners-Daily",
+        "fundamentals", Source.derived, "RC-Screeners-Daily",
     ),
     DatasetSpec(
         key="forecast_ledger", label="Forecast ledger",
         tables=("forecast_ledger",),
-        db="raw", source=Source.derived, writer="RC-Screeners-Daily",
+        db="forecast", source=Source.derived, writer="RC-Screeners-Daily",
         freshness=("forecast_ledger", "forecast_date"),
     ),
     _runlog(
         "forecast_outcomes", "Forecast outcomes", ("forecast_outcomes",),
-        "raw", Source.derived, "RC-Forecast-Outcomes",
+        "forecast", Source.derived, "RC-Forecast-Outcomes",
     ),
     _runlog(
         "forecast_baselines", "Forecast baselines", ("forecast_baselines",),
-        "raw", Source.derived, "RC-Forecast-Baselines",
+        "forecast", Source.derived, "RC-Forecast-Baselines",
     ),
     DatasetSpec(
         key="comovement", label="Co-movement runs",
         tables=("comov_runs", "comov_nodes", "comov_members", "comov_lag"),
-        db="raw", source=Source.derived, writer=None,
+        db="comovement", source=Source.derived, writer=None,
         writer_note="dashboard job POST /run/module_comovement; not an automations.REGISTRY entry",
         freshness=("comov_runs", "as_of"),
     ),
     DatasetSpec(
         key="rotation", label="Sector rotation",
         tables=("rotation_snapshots", "rotation_holdings"),
-        db="raw", source=Source.derived, writer=None,
+        db="sector_rotation", source=Source.derived, writer=None,
         writer_note="dashboard job Sector Rotation Fetch (module_sector_rotation/store.py); not a REGISTRY entry",
         freshness=(("rotation_snapshots", "as_of_date"), ("rotation_holdings", "date")),
     ),
@@ -551,14 +553,14 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="themes", label="Fitted themes",
         tables=("relatedness_themes", "relatedness_theme_tags", "relatedness_theme_members",
                 "relatedness_theme_etfs", "theme_runs", "ticker_themes"),
-        db="raw", source=Source.derived, writer=None,
+        db="relatedness", source=Source.derived, writer=None,
         writer_note="module_relatedness/themes.py; not listed on RC-Relatedness-OffPeak",
         freshness=("theme_runs", "session_date"),
     ),
     DatasetSpec(
         key="leaps", label="LEAPS flow",
         tables=("leaps_flow_prints", "leaps_cache"),
-        db="raw", source=Source.uw, writer=None,
+        db="leaps", source=Source.uw, writer=None,
         writer_note="dashboard job POST /run/module_leaps; not an automations.REGISTRY entry",
         freshness=("leaps_flow_prints", "session_date"),
     ),
@@ -643,8 +645,32 @@ REGISTRY: tuple[DatasetSpec, ...] = (
     DatasetSpec(
         key="llm_cache", label="Language-model prompt cache",
         tables=("llm_cache",),
-        db="raw", source=Source.unknown, writer="RC-Relatedness-OffPeak",
+        db="relatedness", source=Source.unknown, writer="RC-Relatedness-OffPeak",
         freshness=("llm_cache", "fetched_at"),
+    ),
+    DatasetSpec(
+        key="news_calendar", label="News: economic calendar and the day's highlight",
+        tables=("news_events", "news_highlight", "news_meta"),
+        db="news", source=Source.derived, writer=None,
+        writer_note=("built incrementally from raw.economic_calendar by module_news/calendar.py on the News board's "
+                     "Refresh; the hourly job comes in its own pull request"),
+        freshness=("news_events", "run_at"),
+    ),
+    DatasetSpec(
+        key="news_headlines", label="News: market headlines",
+        tables=("news_headlines",),
+        db="news", source=Source.ibkr, writer=None,
+        writer_note=("Dow Jones headlines from the IBKR Gateway (module_news/headlines.py) on the News board's Fetch; "
+                     "the hourly job comes in its own pull request"),
+        freshness=("news_headlines", "fetched_at"),
+    ),
+    DatasetSpec(
+        key="welcome", label="Welcome: market closes, earnings and job freshness",
+        tables=("welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta"),
+        db="welcome", source=Source.derived, writer=None,
+        writer_note=("built incrementally from stored prices, earnings_calendar and job_runs by "
+                     "module_welcome/build.py on the Welcome board's Fetch; the hourly job comes in its own pull request"),
+        freshness=("welcome_snapshot", "session_date"),
     ),
     DatasetSpec(
         key="source_checks", label="Source check watermarks",

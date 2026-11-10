@@ -44,6 +44,7 @@ import sys
 import threading
 import time
 from contextlib import closing, contextmanager
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
@@ -51,6 +52,10 @@ from ..core import calendar, config
 
 OPS_SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 5000
+#: How long a thread waits for another thread of the same process to finish its write transaction (``_tx``). The
+#: threads queue on ``_WRITE_LOCK`` and are woken when it is released, so this is patience for a stuck transaction,
+#: not a share of ``busy_timeout``, which is now only what a writer waits for another process (#522).
+THREAD_WRITE_WAIT_S = 60.0
 FILE_NAME = "ops.sqlite"
 
 REQUEST_STATUSES = ("queued", "running", "done", "failed", "skipped")
@@ -62,6 +67,8 @@ KIND_MODES = ("off", "raw", "parquet", "full")
 #: The board's two switches (#527, avo 6 Nov 2026): ``fetch`` stops every fetch and build, ``backup`` every backup.
 #: A switch with no ``switch`` row, or with ``off_at`` NULL, is on.
 SWITCHES = ("fetch", "backup")
+# avo, 8 Nov 2026 ("B", #387): a resolved build issue is kept seven days; an open one until it is resolved.
+RESOLVED_ISSUE_DAYS = 7
 # The UW response headers sampled into uw_remaining: only UW's own, never a cookie or anything else the answer had.
 UW_HEADER_PREFIX = "x-uw-"
 # What a live answer carries (27 Oct 2026): x-uw-daily-req-count is today's count; the per-minute pair is a rate
@@ -191,16 +198,32 @@ def connect(path: Path | None = None) -> Iterator[sqlite3.Connection]:
         con.close()
 
 
+# One write transaction at a time per process (#522). SQLite's busy handler polls with growing sleeps (up to 100 ms)
+# and keeps no queue, so n threads of one process racing for the write lock spend their ``busy_timeout`` in idle
+# sleeps and behind each other: on a loaded box the last one ran out of it and failed with "database is locked"
+# (``test_same_ticker_concurrent_toggles``, run on main 6 Nov 2026). Threads now queue here and are woken in turn;
+# ``busy_timeout`` is left for a writer in another process (the builder against the dashboard).
+_WRITE_LOCK = threading.RLock()
+
+
 @contextmanager
 def _tx(con: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    """One write transaction, taken at once (``BEGIN IMMEDIATE``), so a read-then-write cannot race."""
-    con.execute("BEGIN IMMEDIATE")
+    """One write transaction, taken at once (``BEGIN IMMEDIATE``), so a read-then-write cannot race.
+
+    Held under ``_WRITE_LOCK``, so the threads of this process take turns instead of polling SQLite's lock."""
+    if not _WRITE_LOCK.acquire(timeout=THREAD_WRITE_WAIT_S):
+        raise sqlite3.OperationalError(
+            f"database is locked: another thread of this process held the ops write lock for {THREAD_WRITE_WAIT_S:g} s")
     try:
-        yield con
-    except BaseException:
-        con.execute("ROLLBACK")
-        raise
-    con.execute("COMMIT")
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            yield con
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        con.execute("COMMIT")
+    finally:
+        _WRITE_LOCK.release()
 
 
 _ENSURED: set[str] = set()
@@ -313,6 +336,17 @@ def queue_view(finished: int = 20) -> dict:
     return {"active": [_request(r) for r in active], "finished": [_request(r) for r in done]}
 
 
+#: A request carrying any of these builds no serving file (``--no-duckdb``, ``--no-parquet``, the old ``--no-build``).
+FETCH_ONLY_PARAMS = ("no_duckdb", "no_parquet", "no_build")
+
+
+def is_fetch_only(params) -> bool:
+    """True for a request's params (a dict, its JSON text, or None) that build no serving file."""
+    if isinstance(params, str):
+        params = json.loads(params) if params else None
+    return any((params or {}).get(k) for k in FETCH_ONLY_PARAMS)
+
+
 def _request(row: sqlite3.Row | None) -> dict | None:
     if row is None:
         return None
@@ -323,7 +357,8 @@ def _request(row: sqlite3.Row | None) -> dict | None:
 
 @_routed
 def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
-                 only: Iterable[str] | None = None, by: str | None = None) -> dict | None:
+                 only: Iterable[str] | None = None, by: str | None = None,
+                 fetch_only: bool = False) -> dict | None:
     """Take the oldest queued request (of ``dataset``, when given) and mark it running; None when none is queued.
 
     ``skip`` leaves those datasets' requests in the queue, and ``only`` claims nothing else: that is how a request
@@ -334,6 +369,9 @@ def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
     ``by`` claims only what that requester queued. A person's ``backfill <attended>`` uses it so their run is
     their own: a request a page left for the attended runner is not theirs to spend the WRDS login and the day
     cap on (review SHOULD-2).
+
+    ``fetch_only`` claims only requests that build no serving file (``FETCH_ONLY_PARAMS``): a fetch-only process
+    holds no builder lock, so an ordinary request it drained would build and swap beside the real builder (#502).
     """
     skip = tuple(skip)
     if skip and only is not None:
@@ -350,6 +388,8 @@ def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
         if by is not None:
             sql += " AND requested_by = ?"
             args += (by,)
+        if fetch_only:
+            sql += " AND (" + " OR ".join(f"coalesce(json_extract(params, '$.{k}'), 0)" for k in FETCH_ONLY_PARAMS) + ")"
         if only is not None:
             names = tuple(only)
             if not names:
@@ -396,7 +436,7 @@ def _builder_alive(pid: int | None) -> bool:
 
 
 @_routed
-def fail_orphans() -> tuple[int, int]:
+def fail_orphans(*, dead_pids_only: bool = False) -> tuple[int, int]:
     """Reclaim every request and run a dead builder left running: ``(requests, runs)`` failed.
 
     Called by the builder at start, while it holds the ``rcdata_build`` lock. A request's pid is its run's (the
@@ -404,20 +444,23 @@ def fail_orphans() -> tuple[int, int]:
     whose builder is still alive is left alone; any other becomes ``failed`` with the note ``lost: pid <n> gone``
     (``lost: pid unknown`` when the builder died before its run row), and each reclaimed request gets a ``failed``
     ``dataset_check`` row with that note, so the dataset's card shows the lost run.
+
+    ``dead_pids_only`` (#602, ``fail_dead_requests``): a caller that is not the builder and holds no build lock.
+    Only a run whose own pid names no process counts as dead, and a request with no run row yet is left alone.
     """
     me = os.getpid()
-    now, tail = time.time(), f"builder died; found running by the builder started as pid {me}"
+    now, tail = time.time(), _orphan_tail(me, dead_pids_only)
     with _open() as con, _tx(con):
         runs = [dict(r) for r in con.execute("SELECT run_id, dataset, pid, started_at FROM job_runs2 "
                                              "WHERE status = 'running' AND pid IS NOT ? ORDER BY started_at",
                                              (me,))]
-        alive = {r["run_id"]: _builder_alive(r["pid"]) for r in runs}
+        alive = {r["run_id"]: _run_alive(r["pid"], dead_pids_only) for r in runs}
         n_reqs = 0
         for req in con.execute("SELECT id, dataset, started_at FROM build_requests WHERE status = 'running' "
                                "ORDER BY id").fetchall():
             run = next((r for r in runs if r["dataset"] == req["dataset"]
                         and (r["started_at"] or 0) >= (req["started_at"] or 0)), None)
-            if run is not None and alive[run["run_id"]]:
+            if (run is None and dead_pids_only) or (run is not None and alive[run["run_id"]]):
                 continue
             note = (f"lost: pid {run['pid']} gone" if run is not None else "lost: pid unknown (no run row)")
             note += f" ({tail})"
@@ -435,6 +478,26 @@ def fail_orphans() -> tuple[int, int]:
                         (now, f"lost: pid {run['pid']} gone ({tail})", run["run_id"]))
             n_runs += 1
     return n_reqs, n_runs
+
+
+def _orphan_tail(me: int, dead_pids_only: bool) -> str:
+    return (f"its process is gone; found running by the queue read of pid {me}" if dead_pids_only
+            else f"builder died; found running by the builder started as pid {me}")
+
+
+def _run_alive(pid: int | None, dead_pids_only: bool) -> bool:
+    """The builder's start asks whether the run's builder is alive; a reader asks only whether its pid is gone."""
+    if dead_pids_only:
+        from ..core import procs
+        return not pid or procs.pid_alive(pid)
+    return _builder_alive(pid)
+
+
+def fail_dead_requests() -> tuple[int, int]:
+    """#602: close the requests and runs whose process is gone (SIGKILL, OOM, a power cut) without waiting for the
+    next builder start, which may be days away while the builder timer is off. Safe without the build lock: it acts
+    only on a run whose own pid is dead."""
+    return fail_orphans(dead_pids_only=True)
 
 
 # ── Checks, issues, runs ───────────────────────────────────────────────────────────────────────────────────────
@@ -477,12 +540,13 @@ def record_issue(dataset: str, kind: str, key: str | None, detail: str | None, r
 
 
 @_routed
-def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[int, int]:
+def sync_issues(dataset: str, kinds, found, run_id: str | None = None, keep=None) -> tuple[int, int]:
     """Make the open ``build_issues`` of ``dataset`` and ``kinds`` the rows ``found`` (``(kind, key, detail)``).
 
     A found row that is already open stays as it is (its first ``found_on`` and ``run_id``); a new one is added;
-    an open row of those kinds that is no longer found gets ``resolved_on`` today. Rows of other kinds or datasets
-    are not touched. One transaction. Returns ``(added, resolved)``.
+    an open row of those kinds that is no longer found gets ``resolved_on`` today, unless ``keep(kind, key)`` says
+    the build did not look where it was found (``prices``' build on the live copy, #446). Rows of other kinds or
+    datasets are not touched. One transaction. Returns ``(added, resolved)``.
     """
     kinds = sorted(set(kinds))
     want = {(k, key): detail for k, key, detail in found}
@@ -502,7 +566,7 @@ def sync_issues(dataset: str, kinds, found, run_id: str | None = None) -> tuple[
         have: dict[tuple, list[int]] = {}
         for r in open_rows:
             have.setdefault((r["kind"], r["key"]), []).append(r["id"])
-        gone = [i for k, ids in have.items() if k not in want for i in ids]
+        gone = [i for k, ids in have.items() if k not in want and not (keep is not None and keep(*k)) for i in ids]
         con.executemany("UPDATE build_issues SET resolved_on = ? WHERE id = ?", [(today, i) for i in gone])
         new = [(dataset, today, k, key, detail, run_id) for (k, key), detail in sorted(want.items())
                if (k, key) not in have]
@@ -518,6 +582,12 @@ def start_run(run_id: str, dataset: str, trigger: str, params: dict | None = Non
         con.execute("INSERT INTO job_runs2 (run_id, dataset, trigger, pid, host, started_at, status, params) "
                     "VALUES (?, ?, ?, ?, ?, ?, 'running', ?)",
                     (run_id, dataset, trigger, os.getpid(), socket.gethostname(), time.time(), _json(params)))
+
+
+@_routed
+def running_runs() -> list[dict]:
+    """The ``job_runs2`` rows still running (no ``finished_at``), from whichever backend holds the ops state."""
+    return _select("SELECT * FROM job_runs2 WHERE status = 'running' AND finished_at IS NULL")
 
 
 @_routed
@@ -923,6 +993,18 @@ def latest_good_check(dataset: str) -> dict | None:
     return rows[0] if rows else None
 
 
+def _prune_cutoff(days: int) -> str:
+    return (date.fromisoformat(_today()) - timedelta(days=days)).isoformat()
+
+
+@_routed
+def prune_issues(days: int = RESOLVED_ISSUE_DAYS) -> int:
+    """Delete the ``build_issues`` rows resolved more than ``days`` days ago; an open row is never touched. Returns
+    how many went."""
+    with _open() as con, _tx(con):
+        return con.execute("DELETE FROM build_issues WHERE resolved_on < ?", (_prune_cutoff(days),)).rowcount
+
+
 @_routed
 def open_issues(dataset: str, limit: int = 20) -> tuple[int, list[dict]]:
     """``(count, newest rows)`` of the unresolved ``build_issues`` of ``dataset``."""
@@ -1021,6 +1103,13 @@ def need_reads(first_day: str) -> list[dict]:
                    "ORDER BY table_name, process, day", (first_day,))
     return [{"need": r["table_name"][len(NEED_READ_PREFIX):], "process": r["process"], "day": r["day"],
              "reads": int(r["reads"])} for r in rows]
+
+
+@_routed
+def run_started_at(run_id: str) -> float | None:
+    """``job_runs2.started_at`` of ``run_id`` (epoch seconds), None when there is no such run."""
+    rows = _select("SELECT started_at FROM job_runs2 WHERE run_id = ?", (run_id,))
+    return rows[0]["started_at"] if rows else None
 
 
 @_routed

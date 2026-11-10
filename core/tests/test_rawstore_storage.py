@@ -131,7 +131,8 @@ class TestAutoEnsure:
 
     def test_views_exist_on_a_store_built_by_plain_writes(self, rawstore_tmp_db, auto):
         rawstore.write_rows("equity_universe", [{"ticker": "AAPL", "market_cap": 3e12}])
-        rows = rawstore.query("SELECT ticker, market_cap FROM company_profile")
+        from RevenueChaser.core import company_profile   # a Python join since the boards' own files (S9)
+        rows = [{k: r[k] for k in ("ticker", "market_cap")} for r in company_profile.query()]
         assert rows == [{"ticker": "AAPL", "market_cap": 3e12}]
 
     def test_a_read_of_a_missing_store_does_not_create_it(self, isolate_rawstore, auto):
@@ -187,7 +188,7 @@ class TestReplaceGroups:
         rows = lambda ids: [{"as_of": "D", "cut": 20, "cluster_id": c} for c in ids]
         rawstore.write_rows("comov_nodes", rows("abc"))
         rawstore.write_rows("comov_nodes", rows("ax"))
-        got = rawstore.query("SELECT cluster_id FROM comov_nodes ORDER BY 1")
+        got = rawstore.query("SELECT cluster_id FROM comov_nodes ORDER BY 1", db="comovement")
         assert [r["cluster_id"] for r in got] == ["a", "x"]
 
     def test_other_runs_are_untouched(self, rawstore_tmp_db):
@@ -397,7 +398,7 @@ class TestCompact:
         assert r["after_bytes"] < before
         assert rawstore.count("swing_ohlc") == 4000
         assert _stored_watchlist() == {"KEEP"}
-        assert rawstore.query("SELECT count(*) AS n FROM company_profile")  # views copied
+        assert rawstore.query("SELECT count(*) AS n FROM index_tickers")  # views copied
         assert (rawstore_tmp_db.with_name("raw.duckdb.pre-compact")).exists()
 
     def test_refuses_while_a_peer_uses_the_store(self, rawstore_tmp_db):

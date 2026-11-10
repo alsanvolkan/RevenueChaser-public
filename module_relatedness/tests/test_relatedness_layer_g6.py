@@ -84,3 +84,31 @@ def test_the_input_hash_reads_the_layers_text(layer):
     from RevenueChaser.module_relatedness import profiles as profiles_mod
     want = store.prompt_hash(profiles_mod.SYSTEM, profiles_mod.build_user("Microsoft", engine._filing_text("MSFT")[1]))
     assert engine._input_hashes({"789019": ["MSFT"]}, {"MSFT": "Microsoft"}) == {"789019": want}
+
+
+def test_the_fallback_links_read_the_layer(layer):
+    """#400: the previous year's business section and the whole document come from ``filing_item``."""
+    from RevenueChaser.rcdata import read
+    docs = read.filing_documents("789019", "business")
+    assert [d["accession"] for d in docs] == [fx.K25]
+    assert engine._previous_filing("MSFT") is None              # one annual report served: no earlier one
+    whole = engine._whole_document("MSFT")
+    assert "cloud software and developer tools" in whole["text"] and len(whole["text"]) > len(BUSINESS)
+    assert whole["source"]["accession"] == fx.K25
+    assert engine._filing_input("MSFT")["fallback"] == "item"
+
+
+def test_off_the_layer_there_is_no_fallback_link(monkeypatch):
+    assert engine._previous_filing("AAA") is None and engine._whole_document("AAA") is None
+
+
+def test_on_the_layer_a_profile_is_not_redone_on_the_next_run(layer, monkeypatch):
+    """The batched hash pass reads the same layer text ``_work`` profiled (delta review of fade7de)."""
+    from RevenueChaser.module_relatedness import profiles as profiles_mod
+    from RevenueChaser.module_relatedness.tests.test_relatedness import v3_reply
+    calls = []
+    monkeypatch.setattr(profiles_mod.deepseek, "complete",
+                        lambda system, user, **k: calls.append(user) or v3_reply(["cloud software"]))
+    engine.build_profiles(["MSFT"], usd_cap=1.0)
+    engine.build_profiles(["MSFT"], usd_cap=1.0)
+    assert len(calls) == 1

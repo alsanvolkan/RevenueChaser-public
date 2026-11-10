@@ -19,9 +19,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from RevenueChaser.core import offpeak, rawstore, subscription_usage
+from RevenueChaser.module_relatedness.tests.test_relatedness import v3_reply
 from RevenueChaser.core.providers import deepseek, grok
 from RevenueChaser.module_relatedness import __main__ as cli
-from RevenueChaser.module_relatedness import config, engine, similarity, store
+from RevenueChaser.module_relatedness import config, engine, profiles, similarity, store
 from RevenueChaser.module_relatedness.tests.test_relatedness import _prof, _seed_universe, long_body
 
 TICKERS = ["AAA", "BBB", "CCC"]
@@ -68,7 +69,7 @@ class _GrokHttp:
         elif name.split()[0].upper() in self.bad:
             content = "I cannot help with that."
         else:
-            content = json.dumps({"products": [f"{name} gpu"], "end_markets": ["data center"]})
+            content = v3_reply([f"{name} gpu"], ["data center"])
         return _Resp(200, {"choices": [{"message": {"content": content}}], "usage": {"total_tokens": 5}})
 
     def close(self):
@@ -113,7 +114,7 @@ def deepseek_calls(monkeypatch):
 
     def fake(system, user, **k):
         seen.append(user)
-        return json.dumps({"products": ["deepseek gpu"], "end_markets": ["data center"]})
+        return v3_reply(["deepseek gpu"], ["data center"])
 
     monkeypatch.setattr(deepseek, "complete", fake)
     return seen
@@ -145,7 +146,7 @@ def test_a_deepseek_v2_profile_is_redone_by_a_grok_run(world, deepseek_calls):
 
 
 def test_a_v1_profile_stays_stale_for_both_providers(world, deepseek_calls):
-    v1 = store.cache_key(deepseek.MODEL, config.THINKING, config.REASONING_EFFORT, "v1", "AAA", "h")
+    v1 = store.cache_key(deepseek.MODEL, False, "", "v1", "AAA", "h")
     store.save_profile("AAA", "", _prof(products=["old"]), v1, deepseek.MODEL, prompt_version="v1")
     grok_v1 = store.cache_key(grok.MODEL, False, "", "v1", "BBB", "h", provider="grok")
     store.save_profile("BBB", "", _prof(products=["old"]), grok_v1, grok.MODEL, prompt_version="v1")
@@ -188,8 +189,8 @@ def test_a_deepseek_cache_key_is_unchanged():
 
 
 def test_the_mode_stamp_is_unchanged():
-    assert store.mode_stamp() == {"model": deepseek.MODEL, "thinking": bool(config.THINKING),
-                                  "effort": config.REASONING_EFFORT, "prompt_version": config.PROMPT_VERSION}
+    assert store.mode_stamp() == {"model": deepseek.MODEL, "thinking": False,      # v3 sends no thinking (#400)
+                                  "effort": "", "prompt_version": config.PROMPT_VERSION}
 
 
 # ── the Grok run: --limit caps calls, the allowance gate, no off-peak gate ───
@@ -321,7 +322,7 @@ def test_the_grok_ping_makes_one_call_and_writes_nothing(world, capsys):
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["ok"] is True and out["calls"] == 1 and out["model"] == grok.MODEL
     assert out["endpoint"] == "https://cli-chat-proxy.grok.com/v1/chat/completions"
-    assert len(world.posts) == 1 and world.posts[0]["json"]["max_tokens"] == 8000
+    assert len(world.posts) == 1 and world.posts[0]["json"]["max_tokens"] == profiles.token_budget()
     assert world.posts[0]["json"]["response_format"] == {"type": "json_object"}
     assert rawstore.get_all("llm_cache") == [] and rawstore.get_all("relatedness_profiles") == []
 

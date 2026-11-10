@@ -26,7 +26,6 @@ import duckdb
 
 from ....core import calendar
 from .. import base
-from ..spine.stage import partitions
 from . import common, edgar, form345_sets
 
 NAME = "sec/form4"
@@ -149,15 +148,8 @@ class SecForm4(edgar.Feed):
             con.close()
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
-        files = [f for _, f in partitions(self.parquet_dir() / "rows", "day")]
-        if not files:
-            return {TABLE: common.create_table(con, TABLE, SERVED)}
-        src = common.files_sql(files)
-        common.issuer_map(con, f"SELECT issuer_cik, symbol FROM {src}", ctx.notes, NAME)
-        select = (f"SELECT p.*, m.ticker, m.ticker_source, '{NAME}' AS source FROM {src} p LEFT JOIN _issuer_map m "
-                  "ON m.issuer_cik IS NOT DISTINCT FROM p.issuer_cik AND m.symbol IS NOT DISTINCT FROM p.symbol "
-                  "ORDER BY p.filed, p.accession, p.tx_table, p.line")
-        return {TABLE: common.create_table(con, TABLE, SERVED, select)}
+        return {TABLE: self.build_rows(ctx, con, TABLE, SERVED, "rows", "filed, accession, tx_table, line",
+                                       common.BY_ISSUER)}
 
     def check(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict:
         added, removed = base.compare_with_live(con, self.kind, TABLE, ["accession", "tx_table", "line", "status"])
