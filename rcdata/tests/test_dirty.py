@@ -163,9 +163,11 @@ def test_an_edit_to_the_serving_base_or_dirty_code_changes_every_kinds_rules_fin
 
 
 def test_a_version_bump_makes_only_its_own_kind_whole(monkeypatch):
+    from RevenueChaser.rcdata import serving_versions        # where a bump is now made
     _build("market")
     _build("spine")
-    monkeypatch.setitem(serving.SERVING_SCHEMA_VERSION, "market", serving.SERVING_SCHEMA_VERSION["market"] + 1)
+    versions = serving_versions.SERVING_SCHEMA_VERSION
+    monkeypatch.setitem(versions, "market", versions["market"] + 1)
     assert dirty.full_rebuild_reason("market", datasets=())
     assert dirty.full_rebuild_reason("spine", datasets=()) is None
 
