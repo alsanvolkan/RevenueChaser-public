@@ -2,8 +2,8 @@
 
 A reader written against ``equity_universe``, ``security_master``, ``index_constituents`` or ``index_tickers`` can
 point at the spine and run its SQL unchanged. Each view keeps the old column list and order; a column the spine has
-no source for is NULL of its old type (market cap, price and the quote are market data, not identity; SIC is not
-fetched by the spine), never a made-up value.
+no source for is NULL of its old type (market cap, price and the quote are market data, not identity), never a
+made-up value. ``sic`` is Compustat's company SIC (spine 6); its description and group have no source.
 
 - ``equity_universe``: the listed rows (Tier A and B), the old table's membership rule (#264); the type filter stays
   with the reader (``core/universe.py``), as before.
@@ -27,7 +27,7 @@ VIEWS: dict[str, str] = {
         "CAST(NULL AS TEXT) AS industry_group, CAST(NULL AS TEXT) AS group_source, industry, "
         "gics_source AS industry_source, CAST(NULL AS TEXT) AS sub_industry, CAST(NULL AS TEXT) AS sub_source, "
         "CAST(gics_from AS TEXT) AS gics_asof, CAST(source_as_of AS TEXT) AS updated_at, figi, composite_figi, "
-        "share_class_figi, exch_code, security_description, figi_source, CAST(NULL AS TEXT) AS sic, "
+        "share_class_figi, exch_code, security_description, figi_source, sic, "
         "CAST(NULL AS TEXT) AS sic_description, CAST(NULL AS TEXT) AS sic_group2, CAST(NULL AS TEXT) AS sic_source, "
         "cusip, cusip_source, isin, isin_source FROM security"),
     "index_constituents": (

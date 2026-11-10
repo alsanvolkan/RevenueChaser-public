@@ -997,7 +997,7 @@ it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed th
 from `RC_DUCKDB_MAX_TEMP` (default `200GB`): past it the build fails instead of filling the disk.
 
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
-file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `5`), is described under
+file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `6`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `2`), under "Fundamentals" after it; and the options
@@ -1299,12 +1299,12 @@ own mark: a panel header that says `cli` is recorded as `panel:cli`.
 the CLI or a Fetch), so the first hourly builder pass after a deploy calls no spine source before the attended
 steps, and a first attempt that failed is not retried every hour.
 
-**Served tables** (`spine` serving schema version `5`). Periods are `valid_from` inclusive, `valid_to` exclusive
+**Served tables** (`spine` serving schema version `6`). Periods are `valid_from` inclusive, `valid_to` exclusive
 (Compustat's inclusive ends are moved one day on), `valid_to` NULL while current.
 
 | Table | Rows |
 |---|---|
-| `security` | one per ticker of the newest SEC file: CIK, name, exchange, `tier` and `tier_rule`, `security_type` and its source, the Compustat link (`gvkey`, `iid`, `link_source`), `cusip`, `isin` (derived), the FIGI fields, the current GICS codes, the bridge `sector` / `industry`, each with its source, and the SEC file's provenance |
+| `security` | one per ticker of the newest SEC file: CIK, name, exchange, `tier` and `tier_rule`, `security_type` and its source, the Compustat link (`gvkey`, `iid`, `link_source`), `cusip`, `isin` (derived), the FIGI fields, the current GICS codes, the bridge `sector` / `industry`, Compustat's company `sic` (spine 6), each with its source, and the SEC file's provenance |
 | `security_history` | the SEC file's `cik`, `name`, `exchange` per ticker over the stored snapshots; Compustat's identifier history of the linked securities |
 | `gics_history` | Compustat's GICS periods of the linked companies |
 | `index_membership` | the fund-file members (source `funds/index_holdings`) and Compustat's constituents (source `wrds/idxcst_his`, the check) |
