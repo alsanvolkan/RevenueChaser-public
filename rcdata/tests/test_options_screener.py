@@ -146,7 +146,7 @@ def test_the_far_prints_are_paged_back_with_older_than_at_most_three_calls(uw_op
 
 
 def test_a_far_print_row_carries_the_print_fields(uw_opts):
-    prev = calendar.previous_trading_day(SESSION)
+    prev = calendar.previous_trading_day(SESSION - timedelta(days=1))
     uw_opts.far = [_far(1), _far(2, underlying_symbol=""), _far(3, executed_at=f"{prev}T19:00:00Z")]
     _daily()
     assert _query("SELECT print_id, ticker, expiry, strike, option_type, days_to_expiry, premium, size, delta, "
