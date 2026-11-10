@@ -138,7 +138,7 @@ def spine_names(rows) -> dict[str, str | None]:
     return out
 
 
-def resolve_name(name: str, names: dict | None) -> str | None:
+def spine_ticker(name: str, names: dict | None) -> str | None:
     """The ticker the spine gives ``name`` (an XBRL member's label: "Mc Kesson Corporation"), or None."""
     return (names or {}).get(_key(name))
 

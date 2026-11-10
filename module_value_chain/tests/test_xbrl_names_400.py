@@ -18,9 +18,9 @@ def _customer(name, member, share=0.22):
 
 def test_a_customer_the_alias_list_does_not_know_is_named_by_the_spine():
     names = aliases.spine_names(SPINE)
-    assert aliases.resolve_name("Mc Kesson Corporation", names) == "MCK"
-    assert aliases.resolve_name("Customer A", names) is None
-    assert aliases.resolve_name("Acme", names) is None                  # two companies share it
+    assert aliases.spine_ticker("Mc Kesson Corporation", names) == "MCK"
+    assert aliases.spine_ticker("Customer A", names) is None
+    assert aliases.spine_ticker("Acme", names) is None                  # two companies share it
 
 
 def test_the_xbrl_customer_edge_uses_the_spine_name():

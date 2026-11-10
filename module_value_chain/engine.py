@@ -283,7 +283,7 @@ def _xbrl_customer_edges(ticker: str, customers: list[dict], names: dict | None 
     me, out = aliases.issuer(ticker), {}
     for c in customers:
         hits = [h for h in aliases.find_aliases(c.get("customer") or "") if not h["context_only"]]
-        if not hits and (spine := aliases.resolve_name(c.get("customer") or "", names)):
+        if not hits and (spine := aliases.spine_ticker(c.get("customer") or "", names)):
             hits = [{"name": c.get("customer"), "ticker": spine}]
         if len(hits) != 1 or aliases.issuer(hits[0]["ticker"]) == me or hits[0]["ticker"] in out:
             continue
