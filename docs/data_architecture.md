@@ -1002,7 +1002,8 @@ file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema 
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `2`), under "Fundamentals" after it; and the options
-data, `options` (serving schema version `1`), under "The options data" last. The market data,
+data, `options` (serving schema version `1`), under "The options data" last. The six numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
+(`rcdata/build/dirty.py`), so a bump makes only its own kind's next build whole (#649). The market data,
 `market` (serving schema version `2`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`), `spx_greek_expiry_strike` (the same key, the four

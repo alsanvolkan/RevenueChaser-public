@@ -134,6 +134,42 @@ def test_a_live_file_of_another_serving_version_needs_a_whole_rebuild(monkeypatc
     assert dirty.full_rebuild_reason("market", datasets=())
 
 
+# ── #649: a version bump rebuilds only its own kind ─────────────────────────────────────────────────────────────
+
+def _fingerprints_with_edit(monkeypatch, edited: Path) -> tuple[dict, dict]:
+    """Every kind's rules fingerprint as the code is, and again with ``edited``'s bytes changed."""
+    def all_kinds() -> dict:
+        return {k: dirty.rules_fingerprint(base.kind_datasets(k)) for k in serving.KINDS}
+    before = all_kinds()
+    real = Path.read_bytes
+    target = edited.resolve()
+    monkeypatch.setattr(Path, "read_bytes",
+                        lambda self: real(self) + (b"\n# edited\n" if self.resolve() == target else b""))
+    return before, all_kinds()
+
+
+def test_a_version_bump_leaves_every_kinds_rules_fingerprint_unchanged(monkeypatch):
+    from RevenueChaser.rcdata import serving_versions
+    assert serving.SERVING_SCHEMA_VERSION is serving_versions.SERVING_SCHEMA_VERSION
+    before, after = _fingerprints_with_edit(monkeypatch, Path(serving_versions.__file__))
+    assert before == after
+
+
+def test_an_edit_to_the_serving_base_or_dirty_code_changes_every_kinds_rules_fingerprint(monkeypatch):
+    for module in (serving, base, dirty):
+        before, after = _fingerprints_with_edit(monkeypatch, Path(module.__file__))
+        monkeypatch.undo()
+        assert all(before[k] != after[k] for k in serving.KINDS), module.__name__
+
+
+def test_a_version_bump_makes_only_its_own_kind_whole(monkeypatch):
+    _build("market")
+    _build("spine")
+    monkeypatch.setitem(serving.SERVING_SCHEMA_VERSION, "market", serving.SERVING_SCHEMA_VERSION["market"] + 1)
+    assert dirty.full_rebuild_reason("market", datasets=())
+    assert dirty.full_rebuild_reason("spine", datasets=()) is None
+
+
 def test_a_current_live_file_needs_no_whole_rebuild():
     _build()
     assert dirty.full_rebuild_reason("market", datasets=()) is None
