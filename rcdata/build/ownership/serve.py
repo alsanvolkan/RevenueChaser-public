@@ -397,13 +397,21 @@ class OwnershipServe:
                 JOIN {sec13f.TABLE} f ON f.accession = h.accession
                 WHERE upper(h.sh_type) = 'SH' AND coalesce(trim(h.put_call), '') = '' AND h.cusip IS NOT NULL
                   AND h.cik IS NOT NULL AND h.period IS NOT NULL""")
-        con.execute(f"""CREATE OR REPLACE TEMP TABLE _px AS
-            SELECT cusip, period, median(value_usd / shares) AS px FROM _long
-            WHERE shares > 0 AND value_usd > 0 GROUP BY ALL HAVING count(DISTINCT cik) >= {CONSENSUS_FILERS}""")
-        con.execute("""CREATE OR REPLACE TEMP TABLE _ratio AS
-            SELECT l.cik, l.period, count(DISTINCT l.cusip) AS names, median(l.value_usd / l.shares / p.px) AS ratio
-            FROM _long l JOIN _px p ON p.cusip = l.cusip AND p.period = l.period
-            WHERE l.shares > 0 AND l.value_usd > 0 AND l.value_scale = 1 GROUP BY ALL""")
+        # One quarter at a time: median()'s state keeps every value of its group outside DuckDB's memory_limit, so
+        # over all quarters at once it held every long 13F row; the whole build of queue #242 was OOM-killed at
+        # 7.55 GB under a 5 GB limit. Both tables are grouped by period, so the result is the same row for row.
+        _empty(con, "_px", [("cusip", "TEXT"), ("period", "DATE"), ("px", "DOUBLE")])
+        _empty(con, "_ratio", [("cik", "TEXT"), ("period", "DATE"), ("names", "BIGINT"), ("ratio", "DOUBLE")])
+        for (period,) in con.execute("SELECT DISTINCT period FROM _long ORDER BY period").fetchall():
+            con.execute(f"""INSERT INTO _px
+                SELECT cusip, period, median(value_usd / shares) FROM _long
+                WHERE period = ? AND shares > 0 AND value_usd > 0
+                GROUP BY ALL HAVING count(DISTINCT cik) >= {CONSENSUS_FILERS}""", [period])
+            con.execute("""INSERT INTO _ratio
+                SELECT l.cik, l.period, count(DISTINCT l.cusip), median(l.value_usd / l.shares / p.px)
+                FROM _long l JOIN _px p ON p.cusip = l.cusip AND p.period = l.period
+                WHERE l.period = ? AND l.shares > 0 AND l.value_usd > 0 AND l.value_scale = 1 GROUP BY ALL""",
+                        [period])
         lo, hi = SCALE_BAND
         common.create_table(con, "sec13f_filer_period", FILER, f"""
             SELECT l.cik, l.period, max(l.filer_name) AS filer_name, count(DISTINCT l.accession) AS filings,
