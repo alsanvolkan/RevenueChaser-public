@@ -60,6 +60,7 @@ _HISTORY = (
     "oipd_fit_history",
     "rotation_holdings_history",
     "rotation_snapshots_history",
+    "spx_gamma_levels_history",
     "sector_tree_history",
     "money_flow_history",
     "sec13f_metrics_history",
