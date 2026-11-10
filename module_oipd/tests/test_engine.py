@@ -81,6 +81,21 @@ class TestFetch:
         assert rawstore.count("oipd_chain") > 0
         assert rawstore.get("oipd_meta", "TST")["spot"] == _SPOT
 
+    def test_chain_and_meta_land_together_or_not_at_all(self, fixed_today, monkeypatch):
+        # #592: a failed meta write must roll the chain write back with it.
+        real = rawstore._apply_write
+
+        def _fail_meta(conn, name, spec, rows):
+            if name == "oipd_meta":
+                raise RuntimeError("meta write failed")
+            return real(conn, name, spec, rows)
+
+        monkeypatch.setattr(rawstore, "_apply_write", _fail_meta)
+        with pytest.raises(RuntimeError, match="meta write failed"):
+            engine.run(_FakeUW(), "TST")
+        assert rawstore.count("oipd_chain") == 0
+        assert rawstore.get("oipd_meta", "TST") is None
+
     def test_each_expiry_is_arbitrage_clean(self, fixed_today):
         payload = engine.run(_FakeUW(), "TST")
         for e in payload["expiries"]:
