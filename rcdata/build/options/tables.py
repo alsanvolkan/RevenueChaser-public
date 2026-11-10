@@ -306,7 +306,9 @@ def _load(con: duckdb.DuckDBPyConnection, t: Table, parts: list[Path], sessions:
     names_sql = ", ".join(f'"{c}"' for c in t.columns)
     keys = ", ".join(f'"{k}"' for k in t.key)
     where = "WHERE session_date IN (SELECT unnest(?::DATE[])) " if sessions is not None else ""
-    con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM read_parquet([{files}], union_by_name = true) '
+    # A column no partition holds yet (added after the Parquet was written) is read as NULL.
+    src = base.with_all(con, t.schema, f"read_parquet([{files}], union_by_name = true)")
+    con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM {src} '
                 f"{where}QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY fetched_at DESC) = 1",
                 (sessions,) if sessions is not None else None)
 
@@ -379,13 +381,13 @@ def compare_by_day(con: duckdb.DuckDBPyConnection, table: Table, kind: str = "op
     new_rows = con.execute(f'SELECT count(*) FROM "{table.name}"').fetchone()[0]
     if not live.exists():
         return int(new_rows), 0
-    names = ", ".join(f'"{c}"' for c in cols)
     con.execute(f"ATTACH {base.sql_path(live)} AS live_cmp (READ_ONLY)")
     try:
         known = {r[0] for r in con.execute(
             "SELECT table_name FROM duckdb_tables() WHERE database_name = 'live_cmp'").fetchall()}
         if table.name not in known:
             return int(new_rows), 0
+        names = ", ".join(f'"{c}"' for c in base.live_columns(con, table.name, cols))
         old = f'SELECT {names} FROM live_cmp."{table.name}" WHERE session_date >= ?'
         added = con.execute(f'SELECT count(*) FROM (SELECT {names} FROM "{table.name}" EXCEPT ALL {old})',
                             [first]).fetchone()[0]
