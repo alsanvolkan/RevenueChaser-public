@@ -405,6 +405,12 @@ def main(argv: list[str] | None = None) -> int:
             print("builder not started: attended needs a terminal (a person logs in to WRDS and confirms Duo)",
                   file=sys.stderr)
             return 3
+        # #321: a request a killed run left `running` would hide here and keep the Fetch button at 409. Closing it
+        # needs no lock (#602: only a run whose own pid is gone), and the person is told to queue it again.
+        closed = ops.fail_dead_requests()[0]
+        if closed:
+            print(f"closed {closed} request(s) whose run was killed; press Fetch to queue it again",
+                  file=sys.stderr, flush=True)
         if not _attended_queued(args.dataset):
             # N2: otherwise it would sit on the writer turn for the whole wait and then exit without a word.
             print("no attended request queued", file=sys.stderr)
