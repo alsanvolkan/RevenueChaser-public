@@ -17,6 +17,7 @@ from pathlib import Path
 from RevenueChaser.core import board_settings
 from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.module_settings import control
+from RevenueChaser.rcdata import backup
 from RevenueChaser.rcdata.needs import screen
 
 _STATIC = Path(__file__).resolve().parent / "static"
@@ -1049,6 +1050,53 @@ def _queue(view: dict) -> str:
             'started it; a Claude session\'s command is cut at 2 h.</p></div></details>')
 
 
+def _bcls(row: dict) -> str:
+    """A backup row's colour: red past the alert age or with nothing kept, amber past the warn age."""
+    return "s-bad" if row.get("alert") else ("s-warn" if row.get("warn") else "s-ok")
+
+
+def _backups(view: dict) -> str:
+    """The weekly backup, on the page itself (#715 step 2; avo, 11 Nov 2026). One row a step, one row a served
+    file: how old the newest copy is and how many are kept. It reads what the backup job recorded and starts
+    nothing."""
+    b = view.get("backups") or {}
+    rows, bad = [], 0
+    if not b:
+        return ""
+    if not b.get("configured"):
+        rows.append('<tr><td data-label="What">Backup folder</td>'
+                    '<td data-label="State" class="s-bad">not set: RAW_STORE_BACKUP_DIR is empty</td></tr>')
+        bad += 1
+    elif b.get("root"):
+        rows.append('<tr><td data-label="What">Backup folder</td>'
+                    f'<td data-label="State"><code>{esc(b.get("root"))}</code></td></tr>')
+    for st in b.get("steps") or []:
+        age = st.get("age_days")
+        text = "never ran" if age is None else f"last good run {age} d ago · {esc(st.get('last_ok') or '—')}"
+        if st.get("error"):
+            text += f" · last run failed: {esc(st['error'])}"
+        bad += 1 if st.get("alert") else 0
+        rows.append(f'<tr><td data-label="What">Step {esc(st.get("step"))}</td>'
+                    f'<td data-label="State" class="{_bcls(st)}">{text}</td></tr>')
+    for k in b.get("kinds") or []:
+        age = k.get("age_days")
+        text = ("no copy" if age is None else f"{age} d old · {esc(k.get('newest') or '—')}") \
+            + f" · {esc(k.get('copies') or 0)} kept"
+        bad += 1 if k.get("alert") else 0
+        rows.append(f'<tr><td data-label="What">Newest {esc(k.get("kind"))} copy</td>'
+                    f'<td data-label="State" class="{_bcls(k)}">{text}</td></tr>')
+    body = "".join(rows) or '<tr><td colspan="2" class="dim">no backup recorded</td></tr>'
+    words = (f'{bad} past its limit' if bad else "every copy inside its limit")
+    return (f'<details class="sec" id="sec-backups"{" open" if bad else ""}><summary><h2>Weekly backups</h2>'
+            f'<span class="secs">{words}</span></summary>'
+            '<div class="group" style="border-left-color:var(--mut)"><div class="scroll">'
+            '<table class="stk bktbl"><thead><tr><th>What</th><th>State</th></tr></thead>'
+            f'<tbody>{body}</tbody></table></div><p class="hint">One job every Sunday 03:30 keeps the newest '
+            f'{backup.KEEP} copies of every file on the HDD. Amber past '
+            f'{esc(b.get("warn_days") or "?")} days, red past {esc(b.get("alert_days") or "?")}. This page only reads what that '
+            'job recorded; it copies nothing.</p></div></details>')
+
+
 # ── The page's data and the whole section ─────────────────────────────────────────────────────────────────────
 
 def client(view: dict) -> dict:
@@ -1125,7 +1173,8 @@ def render_data(view: dict, lookup_html: str = "") -> str:
 
 def render_fetch(view: dict) -> str:
     """The Fetch/Health tab's top (avo, 10 Nov 2026): the switches, Health right now, then one folded group a served
-    file with its sources and runs, then Cross-check. The Health tab's parts follow it in the same panel."""
+    file with its sources and runs, then the queue, Cross-check and the weekly backups (#715 step 2). The Health
+    tab's parts follow it in the same panel."""
     if view.get("error"):
         return _err(view, "Fetch/Health")
     view = _ready(view)
@@ -1136,7 +1185,8 @@ def render_fetch(view: dict) -> str:
             f'{esc(view["universe_summary"])} · the tier sets the next fetches and fills use</span></summary>'
             f'{_universe(view)}{_legend(view)}</details>'
             '<div class="ffilter" id="ffilter" hidden></div><div class="emptyst" id="ffempty" hidden></div>'
-            f'<div class="fgrps">{groups}</div>{_picture_control(view)}{_cross(view)}</div></section>')
+            f'<div class="fgrps">{groups}</div>{_picture_control(view)}{_queue(view)}{_cross(view)}'
+            f'{_backups(view)}</div></section>')
 
 
 def scripts(view: dict) -> str:

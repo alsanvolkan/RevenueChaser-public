@@ -1152,6 +1152,9 @@ def build(nd: dict, *, applied: dict | None = None, ibkr: dict | None = None, no
         "flow": flow(file_views, datasets, reads, uni), "calendars": calendars(nd, uni, provider_rows),
         "cross_check": (nd.get("cross_check") or {}).get("fields") or [],
         "queue": nd.get("queue") or {"active": [], "finished": []},
+        # #715 step 2: the weekly backup is read here so the board can draw it natively
+        # (avo, 11 Nov 2026: every control on the page itself), instead of the dead New data system section.
+        "backups": nd.get("backups") or {},
         "fill_enabled": screen.fill_enabled(), "fill_off_why": screen.FILL_OFF_WHY,
         "datasets_total": len(nd.get("datasets") or []),
     }

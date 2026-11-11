@@ -1188,3 +1188,14 @@
 .ctl.helpband{display:flow-root}
 /* the read-only universe bar (Fetch/Health): a set in the universe is filled, as a pressed button was */
 .ctl .useg[data-on="1"]:not(button){background:var(--c);border:1.5px solid var(--c);color:#fff}
+
+/* #715 step 2: the weekly backups table on the Fetch tab colours its state cell by age. */
+.ctl table.bktbl td.s-ok{color:var(--ok)}
+.ctl table.bktbl td.s-warn{color:var(--warn)}
+.ctl table.bktbl td.s-bad{color:var(--bad)}
+/* #715 step 2: a path, a dataset id or a command has no spaces, so on a phone it wraps instead of widening
+   the page. The queue, the cross-check and the weekly backups all print such strings. */
+@media (max-width:680px){
+.ctl code,.ctl table.stk td{overflow-wrap:anywhere;word-break:break-word;min-width:0}
+}
+.ctl table.bktbl code{overflow-wrap:anywhere;word-break:break-word}

@@ -137,13 +137,20 @@ select,input[type=text],input[type=number]{background:#10151f;border:1px solid #
 .drill{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .drill-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 26px}
 /* G7 (#124): which boards can score the name — one row per board, across the whole grid. */
-.dgroup{grid-column:1/-1;margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
-.dhead{font-size:12.5px;font-weight:600;margin-bottom:2px}
-.dnote{color:var(--muted);font-size:11.5px;padding:6px 0 0}
-.drow{display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid var(--border);padding:5px 0;font-size:12.5px}
+.dgroup{grid-column:1/-1;margin-top:6px;border-top:1px solid var(--border);padding-top:4px}
+.dhead{font-size:11.5px;font-weight:600;letter-spacing:.02em;margin-bottom:1px;color:var(--muted)}
+.dnote{color:var(--muted);font-size:11px;padding:6px 0 0;grid-column:1/-1}
+.drow{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border);padding:2px 0;font-size:12px}
 .dlbl{color:var(--muted)}
 .dval{text-align:right;font-variant-numeric:tabular-nums}
 .dempty{color:var(--muted);font-size:13px;padding:8px 0}
+/* #715: the answer is dense — ids on one wrapped line, the files side by side where there is room. */
+.dident{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:2px 0 6px;font-size:12.5px}
+.dchip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:999px;
+  padding:1px 9px;line-height:1.7;white-space:nowrap}
+.dfiles{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:0 22px;
+  align-items:start}
+.dfiles .dgroup{grid-column:auto;min-width:0}
 .row-err,.board-err,.errlist{color:var(--red);font-size:12px;white-space:normal}
 .errlist{background:var(--panel);border:1px solid var(--red);border-radius:12px;padding:10px 16px;margin-top:14px}
 .errlist ul{margin:4px 0 0;padding-left:18px}
@@ -610,30 +617,35 @@ function lookupSince(t){
   return text;
 }
 function lookupFile(f){
-  var head = (f.name || '') + (f.title ? ' — ' + f.title : '');
-  if(f.error) return '<div class="dgroup"><div class="dhead">' + rcEsc(head) + '</div>'
-    + '<div class="dnote">' + rcEsc(f.error) + '</div></div>';
-  var tables = f.tables || [];
-  if(!tables.length) return '<div class="dgroup"><div class="dhead">' + rcEsc(head) + '</div>'
-    + '<div class="dnote">nothing stored for this name ('
-    + (f.looked_at || 0) + ' tables looked at)</div></div>';
-  var rows = '';
+  var head = (f.title || f.name || '');
+  var tables = f.tables || [], rows = '';
   for(var i = 0; i < tables.length; i++) rows += drillRow(tables[i].table, lookupSince(tables[i]));
   return '<div class="dgroup"><div class="dhead">' + rcEsc(head) + '</div>' + rows + '</div>';
 }
+// #715: the names and ids on one wrapped line, and only the ones that have a value, so the
+// answer starts with the data and not with ten empty rows (avo, 11 Nov 2026: "daha compact").
 function lookupIdentity(d){
-  return '<div class="dgroup"><div class="dhead">Who it is</div>'
-    + drillRow('Ticker', d.ticker || '—')
-    + drillRow('Name', d.name || '—')
-    + drillRow('CIK', d.cik || '—')
-    + drillRow('Security id', d.security_id || '—')
-    + drillRow('FIGI', d.figi || '—')
-    + drillRow('CUSIP', d.cusip || '—')
-    + drillRow('ISIN', d.isin || '—')
-    + drillRow('Sector', d.sector || '—')
-    + drillRow('Industry', d.industry || '—')
-    + drillRow('SEC industry code', d.sic || '—')
-    + '</div>';
+  var fields = [['', d.ticker], ['', d.name], ['CIK', d.cik], ['id', d.security_id], ['FIGI', d.figi],
+                ['CUSIP', d.cusip], ['ISIN', d.isin], ['', d.sector], ['', d.industry],
+                ['SEC industry code', d.sic]];
+  var out = '';
+  for(var i = 0; i < fields.length; i++){
+    if(!fields[i][1]) continue;
+    out += '<span class="dchip">' + (fields[i][0] ? '<span class="dlbl">' + rcEsc(fields[i][0]) + '</span> ' : '')
+        + rcEsc(fields[i][1]) + '</span>';
+  }
+  return '<div class="dident">' + out + '</div>';
+}
+// One line for every file that holds nothing, instead of a group each.
+function lookupEmpty(list){
+  if(!list.length) return '';
+  var rows = '';
+  for(var i = 0; i < list.length; i++){
+    var f = list[i];
+    rows += drillRow(f.title || f.name,
+      f.error ? ('could not read — ' + f.error) : ('nothing stored · ' + (f.looked_at || 0) + ' tables asked'));
+  }
+  return '<div class="dgroup" id="drill-empty"><div class="dhead">Nothing for this name</div>' + rows + '</div>';
 }
 function lookupErrors(list){
   if(!list || !list.length) return '';
@@ -642,12 +654,15 @@ function lookupErrors(list){
   return '<div class="dgroup" id="drill-errors"><div class="dhead">Could not read</div>' + rows + '</div>';
 }
 function drillFill(d){
-  var files = d.files || [], out = lookupIdentity(d);
-  for(var i = 0; i < files.length; i++) out += lookupFile(files[i]);
-  return out + lookupErrors(d.errors)
-    + '<div class="dnote">Every line is read from a served DuckDB file now, read-only: how many rows the '
-    + 'name has in that table and the first and last day they cover. A table that keeps no date shows its '
-    + 'row count alone. A table that carries no ticker, security id or CIK is not asked about the name.</div>';
+  var files = d.files || [], held = '', empty = [];
+  for(var i = 0; i < files.length; i++){
+    if((files[i].tables || []).length && !files[i].error) held += lookupFile(files[i]);
+    else empty.push(files[i]);
+  }
+  return lookupIdentity(d) + '<div class="dfiles">' + held + '</div>' + lookupEmpty(empty)
+    + lookupErrors(d.errors)
+    + '<div class="dnote">Read from the served DuckDB files, read-only: rows for this name, first and last day.'
+    + ' A table with no date shows its count alone; one with no ticker, security id or CIK is not asked.</div>';
 }
 function onDrillPick(ticker){
   var panel = document.getElementById('drill');
@@ -2998,7 +3013,8 @@ DATA_HELP = help_html(
     "then one group a served file with its sources. <b>Fetch</b> puts "
     "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
     "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
-    "call and holds the dataset until <b>Resume</b>. Under the groups sit the need catalog by file, the board settings, the automations, the watch lists and the IBKR cards. "
+    "call and holds the dataset until <b>Resume</b>. Under the groups sit the <b>queue</b> with the last runs and the "
+    "<b>weekly backups</b>, then the need catalog by file, the board settings, the automations, the watch lists and the IBKR cards. "
     "The frame on top shows Fetch, Data health, the jobs by the board they feed and their run logs, from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )

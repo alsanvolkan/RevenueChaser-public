@@ -48,13 +48,19 @@ def test_the_boards_and_the_grafana_address():
 
 def test_the_health_tab_no_longer_draws_the_live_parts():
     """#527 B4, decision D4 = B (avo, 8 Nov 2026 02:39): the queue, the running jobs and the "right now" strip leave
-    the Health tab once Grafana shows them; the Grafana frame now heads the same tab, so no link is needed."""
+    the Health tab once Grafana shows them; the Grafana frame now heads the same tab, so no link is needed.
+
+    #715 step 2 (avo, 11 Nov 2026) puts the queue back, but as part of the Fetch board under its file groups,
+    not as the Health tab's own card."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     from RevenueChaser.module_settings.tests.test_report import _panel, _payload
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
-    assert 'id="sec-queue"' not in health and 'id="health-queue"' not in health
+    # #715 step 2 (avo, 11 Nov 2026: every control on the page itself) brought the queue back, under the
+    # Fetch groups of the same panel; the Health tab's own old queue card stays gone.
+    assert 'id="health-queue"' not in health
+    assert health.index('class="fgrps"') < health.index('id="sec-queue"') < health.index('id="needs"')
     # avo, 10 Nov 2026: the switches moved with every control to Fetch/Health, once
     assert health.count('class="topbar"') == 1 and "sw-msg-h" not in health
     assert 'id="health-live-link"' not in health and 'id="live-frame"' in health
