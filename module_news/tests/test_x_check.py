@@ -89,7 +89,7 @@ def test_run_checks_the_print_then_the_next_days_open_interest_and_then_stops():
                 [{"date": "2026-11-10", "open_interest": 1200}, {"date": "2026-11-11", "open_interest": 5300}])
     assert x_check.run(lambda: uw, now=TWEET + 600) == {"checked": 1, "calls": 1}
     assert uw.calls == [("flow", "SPY261120C00759000", "2026-11-10", x_check.MIN_PREMIUM)] and uw.closed
-    assert _state()["status"] == "seen" and _state()["oi_change"] is None
+    assert _state()["status"] == "seen" and _state().get("oi_change") is None
     assert x_check.run(lambda: uw, now=TWEET + 1200) == {"checked": 0, "calls": 0}      # same session: nothing to ask
     next_day = TWEET + 20 * 3600
     assert x_check.run(lambda: uw, now=next_day) == {"checked": 1, "calls": 1}
