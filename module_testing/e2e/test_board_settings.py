@@ -10,6 +10,7 @@ never invent a value for.
 from __future__ import annotations
 
 import json
+import pathlib
 import time
 from datetime import datetime, timezone
 
@@ -140,8 +141,29 @@ class TestStatsFetch:
             f"the standalone stats job must not call the screener: {calls}")
 
 
+@pytest.fixture
+def served_spine(dashboard):
+    """A one-row ``spine.duckdb`` in the dashboard's own market dir: the lookup reads served files only.
+
+    ``seeded_settings`` fills the old store, which this lookup never opens, so without this a known name
+    would answer 404 and the offline check would prove nothing about a real answer.
+    """
+    import duckdb
+    path = pathlib.Path(dashboard.env["RC_MARKET_DIR"]) / "spine.duckdb"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(path))
+    try:
+        con.execute("CREATE TABLE IF NOT EXISTS security (ticker VARCHAR, name VARCHAR, cik VARCHAR, "
+                    "sector VARCHAR, industry VARCHAR, tier VARCHAR)")
+        con.execute("INSERT INTO security VALUES ('AAPL', 'Apple Inc.', '0000320193', 'Technology', "
+                    "'Hardware', 'A')")
+    finally:
+        con.close()
+    return path
+
+
 class TestLookupApi:
-    def test_lookup_api_is_offline(self, dashboard, seeded_settings, provider_routes):
+    def test_lookup_api_is_offline(self, dashboard, seeded_settings, served_spine, provider_routes):
         before_provider = provider_routes.request_count
         before_yf = dashboard.yf_calls()
         r = dashboard.get("/api/settings/lookup/AAPL")
@@ -157,13 +179,13 @@ class TestLookupApi:
             "the lookup reached yfinance: "
             f"{dashboard.yf_calls()[len(before_yf):]}")
 
-    def test_lookup_api_unknown_is_404(self, dashboard, seeded_settings):
+    def test_lookup_api_unknown_is_404(self, dashboard, seeded_settings, served_spine):
         r = dashboard.get("/api/settings/lookup/ZZZZ")
         assert r.status_code == 404
         assert r.json() == {"ok": False}
 
-    def test_the_old_store_drill_route_is_gone(self, dashboard, seeded_settings):
-        """The seeded store holds AAPL, so a 404 here is the route being gone, not an empty store."""
+    def test_the_old_store_drill_route_is_gone(self, dashboard, seeded_settings, served_spine):
+        """The served spine holds AAPL, so a 404 here is the route being gone, not an empty store."""
         assert dashboard.get("/api/settings/ticker/AAPL").status_code == 404
         assert dashboard.get("/api/settings/lookup/AAPL").status_code == 200
 
