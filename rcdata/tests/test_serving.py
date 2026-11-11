@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import duckdb
 import pytest
@@ -128,6 +129,7 @@ def test_the_cap_comes_from_the_environment(monkeypatch):
     monkeypatch.setenv("RC_DUCKDB_MEMORY_LIMIT", "2GB")
     monkeypatch.setenv("RC_DUCKDB_THREADS", "2")
     monkeypatch.setenv("RC_DUCKDB_MAX_TEMP", "50GB")
+    _free_space(monkeypatch, 10**15)          # a CI runner has less than 50 GB free; the cap is the variable's here
     with serving.build("market") as b:
         memory, threads = _settings(b.con)
         max_temp = b.con.execute("SELECT current_setting('max_temp_directory_size')").fetchone()[0]
@@ -145,6 +147,31 @@ def test_an_empty_or_invalid_cap_keeps_the_default(monkeypatch, memory, threads,
     assert serving.build_config() == {"memory_limit": serving.MEMORY_LIMIT_DEFAULT,
                                       "threads": serving.THREADS_DEFAULT,
                                       "max_temp_directory_size": serving.MAX_TEMP_DEFAULT}
+
+
+def _free_space(monkeypatch, free: int) -> None:
+    monkeypatch.setattr(serving.shutil, "disk_usage", lambda p: SimpleNamespace(free=free))
+
+
+@pytest.mark.parametrize("max_temp, free, expected", [("200GB", 10**15, "200GB"),
+                                                      ("200GB", 50 * 10**9, "45000000KB"),
+                                                      ("200GiB", 100 * 10**9, "90000000KB"),
+                                                      ("1KB", 0, "0KB")])
+def test_379_the_spill_cap_never_exceeds_90_percent_of_the_spill_disks_free_space(monkeypatch, tmp_path, max_temp,
+                                                                                  free, expected):
+    """#379: a 200 GB cap on an SSD with 50 GB free would let a spill fill the disk the live stores share."""
+    monkeypatch.setenv("RC_DUCKDB_MAX_TEMP", max_temp)
+    _free_space(monkeypatch, free)
+    assert serving.build_config(tmp_path)["max_temp_directory_size"] == expected
+    assert serving.build_config()["max_temp_directory_size"] == max_temp
+
+
+def test_379_a_build_opens_with_the_cap_held_to_the_free_space(monkeypatch):
+    _free_space(monkeypatch, 50 * 10**9)
+    monkeypatch.delenv("RC_DUCKDB_MAX_TEMP", raising=False)
+    with serving.build("market") as b:
+        max_temp = b.con.execute("SELECT current_setting('max_temp_directory_size')").fetchone()[0]
+    assert max_temp.replace(" ", "") in ("41.9GiB", "45.0GB"), max_temp
 
 
 def test_a_build_over_its_memory_limit_spills_on_the_raw_disk_and_leaves_no_scratch(monkeypatch):

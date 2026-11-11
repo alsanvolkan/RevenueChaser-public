@@ -21,7 +21,7 @@ def test_the_top_bar_draws_both_switches_and_the_gateway_above_health():
     v = _view()
     v["switches"] = {"fetch": {"on": True, "by": None, "at": None},
                      "backup": {"on": False, "by": "avo", "at": "17:05"}}
-    html = control_render.render_data(v)
+    html = control_render.render_fetch(v)
     bar = html[html.index('class="topbar"'):html.index('id="sec-health"')]
     assert 'data-job="switch" data-name="fetch" data-on="1"' in bar and "Fetch: on" in bar
     assert 'data-job="switch" data-name="backup" data-on="0"' in bar and "Backup: off" in bar and "avo 17:05" in bar

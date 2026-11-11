@@ -1854,11 +1854,26 @@ def run_news(uw=None) -> Path:
     The calendar reads ``raw.economic_calendar`` (the nightly sweep D37 writes it). The headlines are two gateway
     requests a name and no UW call; a gateway that is down is a job note, never a failed Fetch.
     """
-    from RevenueChaser.module_news import calendar, headlines, report
+    from RevenueChaser.module_news import calendar, report
     rid = run_id()
     out = calendar.build(run_id=rid)
     ledger.add_note(f"News calendar: {out['read']} raw rows read, {out['upserted']} events upserted, "
                     f"{out['retired']} retired, {out['highlights']} day highlights")
+    health = _news_headlines_pass(rid)
+    path = report.render(provider_health=health)
+    if health:
+        # The job too, so the Welcome freshness card does not show a ✓ for a Fetch that got no headlines.
+        raise JobMessage(health["message"])
+    return path
+
+
+def _news_headlines_pass(rid: str) -> dict | None:
+    """The tape lines the listener appended (#673), then the per-ticker Dow Jones headlines. ``None``, or the
+    provider health of a gateway that did not answer (with the job message in ``message``)."""
+    from RevenueChaser.module_news import headlines
+    tape = headlines.load_tape(run_id=rid)
+    if tape["read"]:
+        ledger.add_note(f"News tape: {tape['stored']} market headlines from {tape['read']} new lines")
     names = headlines.tickers(_load_watchlist())
     got = headlines.fetch(names, run_id=rid)
     health = None
@@ -1867,16 +1882,21 @@ def run_news(uw=None) -> Path:
         # The board says so too, or a down gateway would pass for a quiet news day. A name IBKR does not know is
         # only a note: it is the same names every run, and a banner on every Fetch would be noise.
         health = {"provider": "ibkr", "calls": len(names), "failed": len(names), "auth_error": None,
-                  "failures": [{"endpoint": "headlines", "error": got["error"]}]}
+                  "failures": [{"endpoint": "headlines", "error": got["error"]}],
+                  "message": f"{GAPS}: {len(names)} of {len(names)} Interactive Brokers calls failed "
+                             f"(headlines: {got['error']}). The board may be incomplete — run Fetch again later."}
     else:
         skipped = f"; not known to IBKR: {', '.join(got['skipped'])}" if got["skipped"] else ""
         ledger.add_note(f"News headlines: {got['stored']} from {got['tickers']} names (IBKR, Dow Jones){skipped}")
-    path = report.render(provider_health=health)
-    if health:
-        # The job too, so the Welcome freshness card does not show a ✓ for a Fetch that got no headlines.
-        raise JobMessage(f"{GAPS}: {len(names)} of {len(names)} Interactive Brokers calls failed "
-                         f"(headlines: {got['error']}). The board may be incomplete — run Fetch again later.")
-    return path
+    return health
+
+
+def run_news_headlines(uw=None) -> Path:
+    """The live listener's 5-minute job (#673): new tape lines and the per-ticker headlines into
+    ``boards/news.duckdb``, then the page. No calendar build, no UW call. A down gateway is the page's banner and a job
+    note, not a job message: the shell alerts every message, and this job runs 288 times a day."""
+    from RevenueChaser.module_news import report
+    return report.render(provider_health=_news_headlines_pass(run_id()))
 
 
 def run_news_cached(uw=None) -> Path:

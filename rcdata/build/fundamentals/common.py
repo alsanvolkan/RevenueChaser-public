@@ -209,23 +209,16 @@ def stage_glob(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str
         files = [p for c in sorted(ciks) if folder.is_dir()
                  for p in sorted(folder.glob(pattern.replace("cik=*", f"cik={c}")))]
         if files:
-            src = _with_all(con, schema, f"read_parquet([{', '.join(base.sql_path(p) for p in files)}], "
-                                         "union_by_name = true)")
+            src = base.with_all(con, schema, f"read_parquet([{', '.join(base.sql_path(p) for p in files)}], "
+                                             "union_by_name = true)")
             body = select.replace("{src}", src) if select else f"SELECT {names} FROM {src}"
             con.execute(f"INSERT INTO {name} SELECT {names} FROM ({body})")
         return count(con, name)
     if folder.is_dir() and next(folder.glob(pattern), None) is not None:
-        src = _with_all(con, schema, f"read_parquet({base.sql_path(folder / pattern)}, union_by_name = true)")
+        src = base.with_all(con, schema, f"read_parquet({base.sql_path(folder / pattern)}, union_by_name = true)")
         body = select.replace("{src}", src) if select else f"SELECT {names} FROM {src}"
         con.execute(f"INSERT INTO {name} SELECT {names} FROM ({body})")
     return count(con, name)
-
-
-def _with_all(con: duckdb.DuckDBPyConnection, schema: list[tuple[str, str]], src: str) -> str:
-    """``src`` with every ``schema`` column it lacks added as a typed NULL."""
-    have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
-    missing = [f'CAST(NULL AS {t}) AS "{c}"' for c, t in schema if c not in have]
-    return f"(SELECT *, {', '.join(missing)} FROM {src})" if missing else src
 
 
 def count(con: duckdb.DuckDBPyConnection, table: str, where: str = "") -> int:

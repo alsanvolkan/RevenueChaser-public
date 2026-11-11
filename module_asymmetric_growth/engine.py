@@ -213,13 +213,9 @@ def _run_day() -> date:
 
 
 def _is_us(info: dict) -> bool:
+    # No exchange leg (G4 K1): the spine universe is US-listed by construction; a foreign listing is not the test.
     country = (info.get("country") or "").strip()
-    exchange = (info.get("exchange") or "").strip().upper()
-    if country and country != US_COUNTRY:
-        return False
-    if exchange and exchange not in US_EXCHANGES:
-        return False
-    return True
+    return not country or country == US_COUNTRY
 
 
 def technical_from_quote(q: dict) -> dict:
@@ -548,10 +544,13 @@ def _cached_financials(ticker: str, no_fetch: bool = False, preload: dict | None
         financials["quarterly"] = edgar_quarterly     # review SF-4 (G6): the trailing years read them
         financials["source"] = EDGAR_SOURCE
         info = financials.get("info") or {}
-        if edgar_meta.get("is_us") is False:
+        # G4 K1: non-US = a 20-F / 40-F filer (``is_us`` False) or an SEC business address outside the US. The
+        # address wins over Yahoo's country; while it is unread (None) Yahoo's country still decides, as before.
+        business_country = (edgar_meta.get("business_country") or "").strip().upper()
+        if edgar_meta.get("is_us") is False or (business_country and business_country != "US"):
             info["country"] = "Foreign"
-        elif not info.get("country"):
-            info["country"] = "United States"
+        elif business_country == "US" or not info.get("country"):
+            info["country"] = US_COUNTRY
         if edgar_meta.get("entity_name") and not info.get("longName"):
             info["longName"] = edgar_meta["entity_name"]
         financials["info"] = info
@@ -740,7 +739,7 @@ def enrich_and_score(ticker: str, meta: dict, no_fetch: bool = False,
 # Funnel steps in the order a name can leave: (key, label, by design). ``excluded_types`` and the scorer's own
 # reasons come first; ``score_errors`` and ``unrecorded`` are added by ``_funnel_steps``.
 _DROP_STEPS = (
-    ("foreign", "Non-US filers (country or exchange, or a 20-F / 40-F filer)", True),
+    ("foreign", "Non-US filers (a 20-F / 40-F filer, or an SEC business address outside the US)", True),
     ("stale_annual", f"Latest annual report ended more than {fiscal_year.STALE_DAYS} days ago", True),
     ("no_annual", "No annual financials (no EDGAR record and no Yahoo statements)", False),
     ("no_price", "No price in any source (the stored close, the financials, the stored quote)", False),

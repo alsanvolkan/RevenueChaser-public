@@ -282,7 +282,7 @@ Computed from raw caches and persisted in `raw.duckdb`.
 | `swing_scores` / `swing_gates` | Swing Potential scan | same gate shape |
 | `company_profile` (VIEW) | `equity_universe` + `ticker_scores` / `fundamentals_scores` / `swing_scores` | one row per universe ticker; scalar joins only |
 | `relatedness_profiles` / `relatedness_attributes` / `relatedness_scores` | Relatedness LLM run | CIK-grained profiles + similarity |
-| `relatedness_embeddings` | Relatedness v2 Step 2 (#401, schema 13) | one vector per ticker and embedding model; manifest only until Step 2 lands its writer |
+| `relatedness_embeddings` | Relatedness v2 Step 2 (#401, schema 13) | one vector per ticker and embedding model; written by `module_relatedness/embeddings.py` (#669), made again only when the embedded text changes |
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `theme_runs` | NMF over Relatedness | nested fine/medium/coarse themes; pinned run in `run_registry` |
 | `leaps_flow_prints` / `leaps_daily_scores` | LEAPS flow prints + daily scores (ex-SQLite `leaps/radar.db`) | PK `id` / (ticker, date) dedup; schema-versioned |
 | `rotation_snapshots` | Rotation engine cross-section (up to 78 symbols live, 67 backfilled; D01 weekly closes since #374 M-ROT-2) | one row per ETF per session (time series; `as_of_date` is the session, #283) |
@@ -798,7 +798,7 @@ schema, reachable with path expressions like `payload.market_cap::DOUBLE`).
 | `fundamentals_scores` / `swing_scores` | per-ticker metric columns (see MANIFEST) | — |
 | `fundamentals_gates` / `swing_gates` | `ticker`, `gate`, `rule_id`, `passed`, `actual`, `unit` | — |
 | `relatedness_profiles` | `ticker`, `cik`, `model`, `prompt_version`, `fetched_at`, `cache_key`, `status`, `attempts`, `provider` (the writer, #360: `evren` / `deepseek` / `grok`; nullable, added by `ALTER TABLE ADD COLUMN`, no schema bump) | `profile_json` (the v3 structured profile, #401, schema 13; NULL on a v2 row), `label_source` (which chunk or table each v3 field came from, #401) |
-| `relatedness_embeddings` | `ticker`, `model`, `dim INTEGER`, `vector BLOB` (the float32 bytes of `dim` values; raw, not zlib-compressed); `PRIMARY KEY (ticker, model)` (#401, schema 13; writer: Step 2) | — |
+| `relatedness_embeddings` | `ticker`, `model`, `dim INTEGER`, `vector BLOB` (a 16-byte hash of the embedded text, then the float32 bytes of `dim` values; raw, not zlib-compressed); `PRIMARY KEY (ticker, model)` (#401, schema 13; writer: `module_relatedness/embeddings.py`, #669) | — |
 | `relatedness_attributes` | `ticker`, `field`, `value` (TEXT holding a JSON list), `value_num` | — |
 | `relatedness_scores` | `ticker`, `peer`, `score` | — |
 | `relatedness_themes` / `relatedness_theme_tags` / `relatedness_theme_members` / `relatedness_theme_etfs` | `theme_id` (run id is its prefix), `level`, `parent_id`, `label`, `size` / `tag`, `rank` / `ticker`, `weight` / `etf`, `overlap`, `rank` | — |
@@ -1006,7 +1006,9 @@ it a connection may take 80 % of the machine's RAM, and the kernel OOM-killed th
 #319's code (request #35, 30 Oct 2026, 7.7 GB peak on a 15 GB server). The spill goes to
 `<MARKET_RAW_DIR>/build_tmp/<build file>.tmp` (`serving.spill_dir`, the HDD), never beside the live files on the SSD
 (#372: request 71 spilled 47 GB there), and DuckDB removes it when the build closes. `max_temp_directory_size` comes
-from `RC_DUCKDB_MAX_TEMP` (default `200GB`): past it the build fails instead of filling the disk. `RC_DUCKDB_TEMP_DIR` moves the
+from `RC_DUCKDB_MAX_TEMP` (default `200GB`), held to 90 % of the spill disk's free space when the build opens
+(DuckDB's own default, which a set cap replaces; #379): past it the build fails instead of filling the disk.
+`RC_DUCKDB_TEMP_DIR` moves the
 spill's parent folder (unset: `<MARKET_RAW_DIR>/build_tmp`). Each dataset's build logs one line with its seconds and
 its spill peak (`base.spill_peak`, sampled every 2 s), the measure for moving the spill to the SSD or chunking a kind.
 

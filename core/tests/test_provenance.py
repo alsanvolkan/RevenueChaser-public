@@ -152,7 +152,7 @@ class TestApi:
         seed_d01("AAPL", ["2026-08-28", "2026-08-31"], 1.0)
         rawstore.replace_all("swing_scores", [{"ticker": "AAPL"}])
         d = self._client().get("/api/data_asof/module_swing_potential").get_json()
-        assert d == {"module": "module_swing_potential", "data_as_of": "2026-08-31"}
+        assert d == {"module": "module_swing_potential", "data_as_of": "2026-08-31", "last_run": None}
 
     def test_endpoint_is_lenient_for_an_empty_store(self, rawstore_tmp_db):
         d = self._client().get("/api/data_asof/module_sec_13f").get_json()
@@ -161,6 +161,23 @@ class TestApi:
     def test_endpoint_never_500s_on_a_bogus_module(self, rawstore_tmp_db):
         r = self._client().get("/api/data_asof/../../etc/passwd")
         assert r.status_code in (200, 404)
+
+
+def test_settings_header_names_the_prices_session_and_the_builders_last_run(monkeypatch):
+    """avo, 10 Nov 2026 ("su bolumlerde dogru gelmeli"): Settings read "Data: n/a · Last run: —"."""
+    from RevenueChaser.rcdata import ops
+    monkeypatch.setitem(provenance.RESOLVERS, "module_settings", lambda: "2026-11-09")
+    monkeypatch.setattr(ops, "last_builder_run", lambda: {"started_at": 1762804800.0})
+    from RevenueChaser.app import dashboard
+    r = dashboard.app.test_client().get("/api/data_asof/module_settings").get_json()
+    assert r["data_as_of"] == "2026-11-09" and r["last_run"] == "2025-11-10T20:00:00+00:00"
+    assert provenance.last_run("module_swing_potential") is None
+    monkeypatch.setattr(ops, "last_builder_run", lambda: None)
+    assert provenance.last_run("module_settings") is None
+
+
+def test_settings_reads_the_universe_prices_close():
+    assert provenance.RESOLVERS["module_settings"] is provenance._comovement_day
 
 
 def test_every_dashboard_tab_declares_a_data_date():

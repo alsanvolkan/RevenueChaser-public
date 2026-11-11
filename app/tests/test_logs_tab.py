@@ -35,18 +35,13 @@ def _api(client, query):
 
 # ── the tab ───────────────────────────────────────────────────────────────────
 
-def test_the_tab_is_registered_in_the_ops_group():
-    tabs = dashboard.TABS
-    i_head = next(i for i, t in enumerate(tabs) if t["type"] == "header" and t["label"] == "Ops")
-    keys = [t["key"] for t in tabs[i_head + 1:] if t["type"] == "tab"]
-    assert "logs" in keys
-    tab = next(t for t in tabs if t.get("key") == "logs")
-    assert tab["url"] == "/view/logs" and tab["label"] == "Logs"
-
-
-def test_the_shell_lists_the_tab(client):
+def test_the_activity_board_took_the_tabs_place_in_the_menu(client):
+    """avo, 10 Nov 2026: Logs and Runs moved into the Activity board; /view/logs still answers."""
+    keys = [t.get("key") for t in dashboard.TABS]
+    assert "logs" not in keys and "activity" in keys
     html = client.get("/").get_data(as_text=True)
-    assert 'data-tab="logs"' in html and 'data-url="/view/logs"' in html
+    assert 'data-tab="logs"' not in html and 'data-url="/view/activity"' in html
+    assert client.get("/view/logs").status_code == 200
 
 
 def test_the_tab_is_a_read_only_view_with_no_fetch_or_refresh():

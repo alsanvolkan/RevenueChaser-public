@@ -194,7 +194,8 @@ def test_the_page_has_the_tab_strip_and_both_panels_and_stays_inert():
     assert re.search(r'<div[^>]*id="panel-data"[^>]*role="tabpanel"', html)
     assert re.search(r'<div[^>]*id="panel-health"[^>]*role="tabpanel"[^>]*hidden', html), "Health starts hidden"
     data = html[html.index('id="panel-data"'):html.index('id="panel-health"')]
-    assert 'id="sec-health"' in data and 'id="old-settings"' not in html and "oldfold" not in html
+    assert 'id="sec-flow"' in data and 'id="sec-health"' not in data
+    assert 'id="old-settings"' not in html and "oldfold" not in html
     health = html[html.index('id="panel-health"'):]
     for part in ("needs-catalog", "needs-log", "needs-routes"):
         assert f'id="{part}"' in health, part

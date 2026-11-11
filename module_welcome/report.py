@@ -1,6 +1,7 @@
 """The Welcome page, the dashboard's opening screen (welcome plan §2), in Turkish with Amsterdam times.
 
-Four cards: today's economic calendar in short (read from ``boards/news.duckdb``, nothing copied), the earnings of
+Five cards: today's economic calendar in short and the three newest headlines (#673; both read from
+``boards/news.duckdb``, nothing copied, the headlines refreshed by a 60 s poll), the earnings of
 today and the next trading day, the last stored market closes, and how fresh each job's data is. Store-only: it
 reads the two board files and never fetches. The US session clock runs in the page from the session times written
 here (``core/calendar``: holidays and early closes included), so it stays right between renders.
@@ -21,13 +22,15 @@ from RevenueChaser.core import rawstore
 from RevenueChaser.core.config import OUTPUT_DIR
 from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, write_artifact
 from RevenueChaser.module_news.calendar import AMS, EVENTS, HIGHLIGHT, local_day
-from RevenueChaser.module_news.report import (WEEKDAYS, day_label, dots_html, esc, hm, long_date, vals_html)
+from RevenueChaser.module_news.report import (HEADLINES, WEEKDAYS, _head_li, day_label, dots_html, esc, hm, long_date,
+                                              vals_html)
 from RevenueChaser.module_welcome.build import EARNINGS, FRESHNESS, NY, SNAPSHOT, earnings_days
 
 FILENAME = "welcome_latest.html"
 SESSION_DAYS = 8
 FRESH_DAYS = 7
 FRESH_LIMIT = 12
+HEAD_LIMIT = 3
 EARNINGS_PER_DAY = 8
 _SHORT = ("Oca", "Şub", "Mar", "Nis", "May", "Haz", "Tem", "Ağu", "Eyl", "Eki", "Kas", "Ara")
 
@@ -88,6 +91,17 @@ def _calendar_card(now: float) -> str:
             f'<li class="row"><span class="t">{hm(e["event_ts"])}</span><span>{esc(e["event"])}</span>'
             f'{dots_html(e.get("importance"))}</li>' for e in nxt) + "</ul>"
     return head + body + _open_tab("module_news", "News board") + "</section>"
+
+
+def _headlines_card(now: float) -> tuple[str, float]:
+    """The three newest headlines of the last day, either lane, and the newest ``run_at`` the poll starts from."""
+    head = '<section class="card"><h2 class="lbl">Son başlıklar</h2>'
+    rows = rawstore.query(
+        f"SELECT * FROM {HEADLINES} WHERE published_at >= ? ORDER BY published_at DESC LIMIT {HEAD_LIMIT}",
+        [now - 86400], db="news") if rawstore.board_db_path("news").exists() else []
+    since = max((float(r["run_at"]) for r in rows if r.get("run_at") is not None), default=now)
+    return (head + f'<p class="empty"{" hidden" if rows else ""}>Son 24 saatte başlık yok.</p>'
+            f'<ul class="list" id="heads-all">{"".join(_head_li(r) for r in rows)}</ul></section>'), since
 
 
 def _earnings_card(now: float, watchlist: set[str]) -> str:
@@ -254,6 +268,9 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
  background:transparent;color:var(--sky);font:inherit;cursor:pointer}
 .go:hover{background:var(--hover-soft)}
 .empty{color:var(--muted);margin:6px 0}
+.hd{padding:8px 0;border-bottom:1px solid var(--border);overflow-wrap:anywhere}
+.hd .tk{min-width:0;margin-left:4px;font-size:11.5px;color:var(--sky)}
+[hidden]{display:none!important}
 .foot{margin-top:16px;color:var(--muted);font-size:12px}
 @media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
 @media (max-width:560px){.wrap{padding:12px}.go{width:100%}}
@@ -289,6 +306,28 @@ function sessionClock(){
   el.setAttribute('data-state', state); el.textContent = text;
 }
 sessionClock(); setInterval(sessionClock, 30000);
+function headsPoll(){
+  fetch('/api/news/headlines?since=' + HEADS_SINCE, {cache: 'no-store'}).then(function(r){ return r.json(); })
+    .then(function(d){
+      var ul = document.getElementById('heads-all'); if(!d || !d.ok || !ul) return;
+      d.rows.slice().reverse().forEach(function(r){
+        HEADS_SINCE = Math.max(HEADS_SINCE, r.run_at);
+        if(document.querySelector('[data-hid="' + r.headline_id + '"]')) return;
+        var li = document.createElement('li'); li.className = 'hd'; li.setAttribute('data-hid', r.headline_id);
+        li.setAttribute('data-at', r.published_at);
+        var m = document.createElement('div'); m.className = 'muted';
+        m.textContent = r.hm + (r.tickers.length ? ' · ' + r.tickers.slice(0, 4).join(' ') : ' · Piyasa');
+        var h = document.createElement('div'); h.textContent = r.headline;
+        li.appendChild(m); li.appendChild(h);
+        var kids = ul.children, i = 0;          // by publish time: a re-stored older story never jumps the newer ones
+        while(i < kids.length && parseFloat(kids[i].getAttribute('data-at')) > r.published_at) i++;
+        ul.insertBefore(li, kids[i] || null);
+      });
+      while(ul.children.length > 3) ul.removeChild(ul.lastChild);
+      if(ul.children.length){ var e = ul.parentNode.querySelector('.empty'); if(e) e.hidden = true; }
+    }).catch(function(){});
+}
+setInterval(headsPoll, 60000);
 """
 
 
@@ -302,7 +341,8 @@ HELP = help_html(
 def render_html(now: float | None = None, *, watchlist: set[str], labels: dict[str, str]) -> str:
     now = time.time() if now is None else now
     today = local_day(now)
-    left = _calendar_card(now) + _earnings_card(now, watchlist)
+    heads, heads_since = _headlines_card(now)
+    left = _calendar_card(now) + heads + _earnings_card(now, watchlist)
     right = _snapshot_card() + _freshness_card(now, labels)
     return f"""<!doctype html>
 <html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -314,7 +354,7 @@ def render_html(now: float | None = None, *, watchlist: set[str], labels: dict[s
 <div class="grid"><div class="col">{left}</div><div class="col">{right}</div></div>
 <p class="foot">Saklı verilerden hazırlanır, ağ çağrısı yapmaz · Kaynak: Unusual Whales, Yahoo, FRED</p>
 {HELP}
-</div><script>var SESSIONS = {json.dumps(sessions(now))};{_JS}</script></body></html>"""
+</div><script>var SESSIONS = {json.dumps(sessions(now))};var HEADS_SINCE = {heads_since!r};{_JS}</script></body></html>"""
 
 
 def render(now: float | None = None, *, watchlist: set[str], labels: dict[str, str]) -> Path:

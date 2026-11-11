@@ -56,9 +56,10 @@ def test_non_us_excluded():
     assert card is None
 
 
-def test_foreign_exchange_excluded():
+def test_exchange_is_not_the_non_us_test():
+    # G4 K1: the exchange leg is gone; the spine universe is US-listed by construction.
     card = score_ticker("TEST", _fin(exchange="TSE"), _tech())
-    assert card is None
+    assert card is not None
 
 
 def test_tech_breakthrough_overlay():

@@ -216,6 +216,82 @@ def test_the_datasets_route_lists_names_kinds_attended_and_providers(client):
     assert set(one) == {"name", "kind", "attended", "providers"} and one["attended"] is False
 
 
+def test_the_detail_carries_each_datasets_health_and_fetch_settings():
+    from RevenueChaser.rcdata import ops
+    ops.record_check("market_series", "changed", source_as_of="2026-11-06", rows=12, added=2, removed=1,
+                     next_check_due="2026-11-10")
+    ops.dataset_mode_set("market_series", "full", by="avo")
+    ops.schedule_pause("wrds/prices", by="avo")
+    rows = {r["name"]: r for r in metrics.datasets_detail(NOW, datasets=DS, timer={"state": "on", "minute": 5})}
+    ms, wp = rows["market_series"], rows["wrds/prices"]
+    assert (ms["mode"], ms["mode_own"], ms["paused"]) == ("full", "full", False)
+    assert ms["last"]["result"] == "changed" and (ms["last"]["added"], ms["last"]["removed"]) == (2, 1)
+    assert ms["runs"] and ms["runs"][0][1] == "changed" and ms["state"] in metrics.STATES
+    assert ms["cadence"] and isinstance(ms["next"], str) and ms["open_issues"] == 0
+    assert wp["paused"] is True and wp["paused_by"] == "avo" and wp["next"] == "skips until Resume"
+    assert wp["last"] is None and wp["runs"] == [] and wp["state"] == "never"
+
+
+def test_the_detail_route_answers_and_the_plain_route_keeps_its_four_keys(client):
+    body = client.get("/api/build/datasets?detail=1").get_json()
+    one = next(d for d in body["datasets"] if d["name"] == "market_series")
+    assert {"state", "mode", "next", "runs", "paused"} <= set(one)
+    plain = next(d for d in client.get("/api/build/datasets").get_json()["datasets"] if d["name"] == "market_series")
+    assert set(plain) == {"name", "kind", "attended", "providers"}
+
+
+def test_the_detail_carries_badges_and_the_runs_in_the_pickers_range():
+    """avo, 10 Nov 2026: the RC page's provider icons on the Grafana board, and a heatmap over the picker's range."""
+    from RevenueChaser.rcdata import ops
+    ops.start_run("r-a", "market_series", "hourly")
+    ops.start_run("r-b", "market_series", "hourly")
+    ops.finish_run("r-b", "failed")
+    first = min(r["started_at"] for r in ops.rows("job_runs2"))
+    span = (first, first + 60)
+    provs = [{"id": "fred", "name": "FRED"}]
+    rows = {r["name"]: r for r in metrics.datasets_detail(NOW, datasets=DS, timer={}, span=span, providers=provs)}
+    assert rows["market_series"]["badges"] == [{"id": "fred", "name": "FRED", "icon": metrics.control.ICONS.get("fred", ""),
+                                                "color": metrics.control.SOURCE_COLORS[0], "paid": False}]
+    from RevenueChaser.rcdata.needs import screen
+    assert {p for p, w in screen.PROVIDERS.items() if w.paid} == {"uw"}, "avo, 10 Nov 2026: the paid ones ringed red"
+    assert sorted(s for _, s in rows["market_series"]["history"]) == ["failed", "running"]
+    before = {r["name"]: r for r in metrics.datasets_detail(NOW, datasets=DS, timer={}, span=(0, first),
+                                                            providers=provs)}
+    assert before["market_series"]["history"] == []
+    assert rows["wrds/prices"]["history"] == []
+    plain = {r["name"]: r for r in metrics.datasets_detail(NOW, datasets=DS, timer={}, providers=provs)}
+    assert "history" not in plain["market_series"]
+
+
+def test_the_board_head_says_the_switches_the_timer_and_the_gateway(monkeypatch):
+    monkeypatch.setenv("RC_IBKR_LOGIN_URL", "javascript:alert(1)")
+    monkeypatch.setattr(metrics.TIMER, "get", lambda wait=False: {"state": "on", "last": NOW, "next": None})
+    head = metrics.board_head(NOW, ibkr=lambda: {"state": "up"})
+    assert head["switches"] == {"fetch": True, "backup": True}
+    assert head["timer"] == "on" and head["timer_fired"] == {"last": metrics.control._clock(NOW), "next": None}
+    from RevenueChaser.rcdata import ops
+    assert head["files"] == {k: True for k in ops.FILE_KINDS}
+    ops.switch_set("file-options", False, by="avo")
+    assert metrics.board_head(NOW, ibkr=lambda: None)["files"]["options"] is False
+    assert head["gateway"] == {"cls": "ok", "n": "open", "label": "logged in", "login": None}
+    monkeypatch.setenv("RC_IBKR_LOGIN_URL", "https://gateway.example/")
+    assert metrics.board_head(NOW, ibkr=lambda: None)["gateway"]["login"] == "https://gateway.example/"
+
+
+def test_the_detail_route_takes_the_pickers_range_and_refuses_a_backwards_one(client):
+    body = client.get("/api/build/datasets?detail=1&from=1000&to=5000").get_json()
+    assert body["ok"] and "head" in body and all("history" in d for d in body["datasets"] if "error" not in d)
+    assert client.get("/api/build/datasets?detail=1&from=5000&to=1000").status_code == 400
+
+
+def test_a_files_switch_is_set_through_the_switch_route(client):
+    from RevenueChaser.rcdata import ops
+    r = client.post("/api/build/switch/file-options", json={"on": False}, headers={"X-RC-Panel": "grafana"})
+    assert r.status_code == 200 and ops.switch_off("file-options") is not None
+    assert client.post("/api/build/switch/file-nope", json={"on": False},
+                       headers={"X-RC-Panel": "grafana"}).status_code == 400
+
+
 def test_datasets_list_marks_attended():
     assert metrics.datasets_list(DS) == [
         {"name": "market_series", "kind": "market", "attended": False, "providers": ["fred"]},

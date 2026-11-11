@@ -1986,7 +1986,8 @@ def test_the_health_panel_holds_its_parts_in_order():
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd()))
     assert "<title>Data/Health</title>" in html
     health = _panel(html, "panel-health")
-    order = ["<h1>Data/Health · Health</h1>", "What am I looking at?", 'id="health-live-link"',
+    order = ['id="live-frame"', "<h1>Data/Health · Fetch/Health</h1>", 'id="sec-health"', 'class="fgrps"',
+             "<h1>Needs, boards and automations</h1>", "What am I looking at?",
              'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
@@ -2005,8 +2006,8 @@ def test_the_old_settings_fold_and_its_sections_are_gone():
 
 
 def test_the_tabs_map_data_and_health_and_old_choices_land_on_them():
-    assert report.SETTINGS_TABS["tabs"] == {"data": "panel-data", "health": "panel-health", "live": "panel-live"}
-    assert report.SETTINGS_TABS["aliases"] == {"fetch": "data", "needs": "health"}
+    assert report.SETTINGS_TABS["tabs"] == {"data": "panel-data", "health": "panel-health"}
+    assert report.SETTINGS_TABS["aliases"] == {"fetch": "data", "needs": "health", "live": "health"}
     assert "CFG.aliases[name]" in report.TABS_JS
 
 
