@@ -206,6 +206,7 @@ def test_the_flag_needs_a_dataset_on_the_hourly_command(capsys):
 
 @pytest.mark.usefixtures("kinds_full")
 def test_the_hourly_pass_never_asks_for_raw_only(stager):
+    ops.dataset_mode_set(stager.name, "full", by="test")   # a test dataset is not in build.DATASETS
     [(name, why, rid, error)] = due.enqueue_due({stager.name: stager})
     assert rid and not error, why
     req = next(r for r in ops.rows("build_requests") if r["id"] == rid)
