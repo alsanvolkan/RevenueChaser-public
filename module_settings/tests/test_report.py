@@ -848,7 +848,7 @@ def test_the_lookup_shows_both_ends_of_each_range():
          "tables": [{"table": "price_bar_daily", "rows": 2, "first": "2021-01-04", "last": "2026-11-10"}]}]})
     assert '<span class="dlbl">price_bar_daily</span>' in html
     assert "2 rows · 2021-01-04 → 2026-11-10" in html
-    assert "prices.duckdb — Prices and shares" in html
+    assert "Prices and shares" in html, "the group is headed by what the file is for"
 
 
 def test_a_table_with_no_date_shows_its_row_count_alone():
@@ -859,9 +859,11 @@ def test_a_table_with_no_date_shows_its_row_count_alone():
 
 
 def test_a_file_that_holds_nothing_for_the_name_says_how_many_tables_were_asked():
+    """#715, compact: the files holding nothing share one short group instead of a group each."""
     html = _drill_rows({"ticker": "MU", "files": [
         {"kind": "options", "name": "options.duckdb", "title": "Options", "looked_at": 7, "tables": []}]})
-    assert "nothing stored for this name (7 tables looked at)" in html
+    assert 'id="drill-empty"' in html and "Options" in html
+    assert "nothing stored · 7 tables asked" in html
 
 
 def test_a_missing_file_is_a_line_not_an_empty_group():
@@ -878,16 +880,17 @@ def test_a_table_that_could_not_be_read_says_so_by_name():
     assert "could not read — IOError: locked" in html
 
 
-def test_the_lookup_shows_the_identifiers_at_the_top():
+def test_the_lookup_shows_the_identifiers_on_one_line_and_skips_the_empty_ones():
+    """avo, 11 Nov 2026 ("daha compact"): one wrapped line of chips, and no row for a field we do not have."""
     html = _drill_rows({"ticker": "MU", "cik": "0000723125", "figi": "BBG000BLNNH6",
                         "security_id": "sec:7", "cusip": None, "isin": None, "files": []})
-    assert '<span class="dlbl">CIK</span><span class="dval">0000723125</span>' in html
-    assert '<span class="dlbl">FIGI</span><span class="dval">BBG000BLNNH6</span>' in html
-    assert '<span class="dlbl">Security id</span><span class="dval">sec:7</span>' in html
-    assert '<span class="dlbl">CUSIP</span><span class="dval">—</span>' in html
+    assert '<div class="dident">' in html
+    assert '<span class="dlbl">CIK</span> 0000723125' in html
+    assert '<span class="dlbl">FIGI</span> BBG000BLNNH6' in html
+    assert '<span class="dlbl">id</span> sec:7' in html
+    assert "CUSIP" not in html and "ISIN" not in html, "a field with no value takes no room"
     rich = _drill_rows({"name": "Micron", "sector": "Technology", "industry": "Semiconductors", "files": []})
-    assert '<span class="dlbl">Sector</span><span class="dval">Technology</span>' in rich
-    assert '<span class="dlbl">Industry</span><span class="dval">Semiconductors</span>' in rich
+    assert "Technology" in rich and "Semiconductors" in rich and "Micron" in rich
 
 
 def test_the_lookup_escapes_a_hostile_identifier_and_table_name():
