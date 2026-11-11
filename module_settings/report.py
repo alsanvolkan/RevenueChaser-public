@@ -2021,8 +2021,8 @@ def _ibkr_state_card(ibkr: dict | None) -> str:
     return ('<section id="ibkr-state"><div class="bcard" id="ibkr-state-card">'
             "<h3>IBKR Gateway login state</h3>"
             '<div class="asof" id="ibkr-state-note">Read from the login check\'s own record, not from the gateway: '
-            "this page opens no connection. The check itself opens the port and sends the API version "
-            "handshake, and nothing else - no account, position, order or execution is ever asked for. "
+            "this page opens no connection. The check itself opens the port, sends the API version "
+            "handshake and startApi, and waits for nextValidId - no account, position, order or execution is ever asked for. "
             f'The gateway it watches is {esc(str(ibkr.get("target") or "")) or "not configured"}.</div>'
             + "".join(lines) + changes + "</div></section>")
 

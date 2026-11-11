@@ -257,7 +257,7 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         name="RC-IBKR-Login-Check", label="IBKR Gateway login check",
         args=("-m", "RevenueChaser.scripts.ibkr_login_check"), time="09:15",
         description="Looks at whether the IBKR Gateway is still logged in: one TCP connection to the "
-                    "configured host and port and the TWS API version handshake, and nothing else - no "
+                    "configured host and port, the TWS API version handshake and startApi up to nextValidId - no "
                     "account, position, order or execution is ever asked for. Writes no table and no store "
                     "file, only its own record under .cache/ibkr_login/, which the Data Health card reads "
                     "(#162). It exits 0 whatever it finds: a session that expired on its weekly cycle is not "

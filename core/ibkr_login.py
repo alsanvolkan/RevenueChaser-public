@@ -6,9 +6,15 @@ read-only question there is, and keeps a record of the answers so the Data Healt
 **when** it dropped and when it was last up.
 
 **The probe is market-data safe and deliberately tiny.** It opens a TCP connection to the configured
-host and port, sends the TWS API version handshake, and reads the reply. That is all. It never asks
-for an account, a position, an order or an execution, and it sends nothing past the handshake: those
-requests have no code here to make them.
+host and port, sends the TWS API version handshake, then ``startApi`` with its own client id
+(``PROBE_CLIENT_ID``), and waits for ``nextValidId``. That is all. It never asks for an account, a
+position, an order or an execution: those requests have no code here to make them. The account list
+the gateway volunteers after ``startApi`` is dropped unread, as ``core/providers/ibkr_tws.py`` does.
+
+**Why ``startApi`` and not the handshake alone (#629).** On 10 Nov 2026 the gateway answered the version
+handshake and then closed every API client before ``nextValidId`` (fresh API settings after a re-login),
+so the card read "Logged in" while every News and IV-history call failed. Only ``nextValidId`` proves an
+API client can work.
 
 The handshake is nine lines of ``socket`` and ``struct``, so no IBKR library becomes a dependency.
 Its shape was read off ``ib_async`` 2.1.0 (``ib_async/client.py:218-224`` for the request,
@@ -20,9 +26,11 @@ of NUL-separated fields whose first two are the server version and the connectio
 
 - ``DOWN``   - the connection was refused, timed out or could not be made: the gateway is not
   listening, so it is not running or is sitting on its login screen.
-- ``SILENT`` - the port accepted the connection but the handshake brought nothing back: the port is
-  up and the API session is not usable.
-- ``UP``     - the handshake was answered. The server version is kept as the evidence.
+- ``SILENT`` - the port accepted the connection but the API is not usable: the handshake brought nothing
+  back, or it was answered and the gateway then refused the client (closed it, or sent no
+  ``nextValidId`` in time). The detail says which, with the server version when there was one.
+- ``UP``     - the handshake was answered and the client got ``nextValidId``. The server version is kept
+  as the evidence.
 
 A reply that arrives but cannot be parsed still counts as ``UP`` with the version left unknown: a
 mistake in the framing here must degrade to "answered, version unknown" and never to a false "down".
@@ -50,6 +58,7 @@ import json
 import os
 import socket
 import struct
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +78,13 @@ _REAL_STATES = (UP, SILENT, DOWN)
 # (``ib_async/client.py:88-89``). The gateway picks a version inside it and answers with its own.
 MIN_CLIENT_VERSION = 157
 MAX_CLIENT_VERSION = 178
+
+# ``startApi`` and the two answers the probe looks at (``core/providers/ibkr_tws.py`` has the framing).
+# Error codes 2100-2199 are farm notices, never the reason a client was refused.
+START_API, NEXT_VALID_ID, ERR_MSG = 71, b"9", b"4"
+# The probe's own API client id: 73 IV history, 74 the News board, 75 the builder, 76 the news tape; a
+# second client with an id already in use is refused (326), so this one is used by nothing else.
+PROBE_CLIENT_ID = 77
 
 # A loopback connect and one small reply: a second is already generous, three leaves room for a
 # gateway busy with its own startup. Short on purpose - the job runs often and waits for nobody.
@@ -140,11 +156,60 @@ def _server_version(data: bytes) -> int | None:
         return None
 
 
-def probe(host: str, port: int, *, timeout: float = TIMEOUT_SECONDS, connect=None) -> Reading:
-    """Open the port, send the version handshake, read the reply. Never raises; never asks for more.
+def _frame(buf: bytes) -> tuple[list[bytes] | None, bytes]:
+    """The first whole message's fields and the bytes after it; ``(None, buf)`` while it is incomplete."""
+    if len(buf) < 4:
+        return None, buf
+    n = struct.unpack(">I", buf[:4])[0]
+    if len(buf) < 4 + n:        # incomplete: wait for more bytes, until the deadline
+        return None, buf
+    return buf[4:4 + n].split(b"\0")[:-1], buf[4 + n:]
 
-    ``connect`` is the seam the tests use (``socket.create_connection`` by default), so the suite
-    opens no socket at all.
+
+def _start_api(sock, buf: bytes, host: str, port: int, version: int, timeout: float) -> Reading:
+    """Send ``startApi`` with the probe's own client id and wait for ``nextValidId`` (#629).
+
+    The version handshake alone is answered by a gateway that then drops every API client (a fresh
+    user's API settings, a confirmation dialog, a re-login after the daily restart), so only a
+    ``nextValidId`` proves the API is usable. The account list and notices that come before it are
+    dropped unread, exactly as ``core/providers/ibkr_tws.py`` ``TWSClient.open`` drops them.
+    """
+    where = f"{host}:{port}"
+    body = f"{START_API}\0" "2\0" f"{PROBE_CLIENT_ID}\0" "\0"   # [71, 2, client id, ""]
+    sock.sendall(struct.pack(">I", len(body)) + body.encode())
+    deadline = time.monotonic() + timeout
+    error = ""
+    while True:
+        fields, buf = _frame(buf)
+        if fields is not None:
+            if fields and fields[0] == NEXT_VALID_ID:
+                return Reading(UP, f"{where} answered the API handshake (server version {version}) and "
+                                   f"accepted an API client (id {PROBE_CLIENT_ID})", version)
+            if fields and fields[0] == ERR_MSG and len(fields) >= 5 and not fields[3].startswith(b"21"):
+                error = f" (gateway said {fields[3].decode(errors='replace')}: "\
+                        f"{fields[4].decode(errors='replace')})"
+            continue
+        if time.monotonic() > deadline:
+            return Reading(SILENT, f"{where} answered the version handshake (server version {version}) but "
+                                   f"sent no nextValidId within {timeout:g}s after startApi{error}", version)
+        try:
+            data = sock.recv(_READ_BYTES)
+        except OSError as exc:
+            return Reading(SILENT, f"{where} answered the version handshake (server version {version}) but "
+                                   f"not startApi - {exc}{error}", version)
+        if not data:
+            return Reading(SILENT, f"{where} answered the version handshake (server version {version}) but "
+                                   f"closed the API client (id {PROBE_CLIENT_ID}) before nextValidId{error}: "
+                                   "the API refuses clients (check the gateway's API settings, Trusted IPs "
+                                   "or a confirmation dialog)", version)
+        buf += data
+
+
+def probe(host: str, port: int, *, timeout: float = TIMEOUT_SECONDS, connect=None) -> Reading:
+    """Open the port, send the version handshake, then ``startApi``; ``UP`` only on ``nextValidId``.
+
+    Never raises; never asks for an account, a position, an order or an execution. ``connect`` is the
+    seam the tests use (``socket.create_connection`` by default), so the suite opens no socket at all.
     """
     connect = connect or socket.create_connection
     try:
@@ -155,6 +220,15 @@ def probe(host: str, port: int, *, timeout: float = TIMEOUT_SECONDS, connect=Non
         sock.settimeout(timeout)
         sock.sendall(_handshake())
         data = sock.recv(_READ_BYTES)
+        if not data:
+            return Reading(SILENT, f"{host}:{port} accepted the connection but answered the API handshake "
+                                   "with nothing")
+        version = _server_version(data)
+        if version is None:
+            return Reading(UP, f"{host}:{port} answered the API handshake; its version could not be read "
+                               f"from the {len(data)} bytes it sent")
+        rest = data[4 + struct.unpack(">I", data[:4])[0]:]
+        return _start_api(sock, rest, host, port, version, timeout)
     except OSError as exc:
         return Reading(SILENT, f"{host}:{port} accepted the connection but the API handshake failed - {exc}")
     finally:
@@ -162,14 +236,6 @@ def probe(host: str, port: int, *, timeout: float = TIMEOUT_SECONDS, connect=Non
             sock.close()
         except OSError:
             pass
-    if not data:
-        return Reading(SILENT, f"{host}:{port} accepted the connection but answered the API handshake "
-                               "with nothing")
-    version = _server_version(data)
-    if version is None:
-        return Reading(UP, f"{host}:{port} answered the API handshake; its version could not be read "
-                           f"from the {len(data)} bytes it sent")
-    return Reading(UP, f"{host}:{port} answered the API handshake, server version {version}", version)
 
 
 # ── the record ──────────────────────────────────────────────────────────────────────────────────
