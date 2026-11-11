@@ -205,6 +205,26 @@ def test_a_claude_comparison_records_the_window_before_and_after(world, cli, mon
         assert rawstore.count(table) == 0
 
 
+def test_a_claude_comparison_sends_its_names_in_parallel(world, cli, monkeypatch, tmp_path):
+    """avo, 11 Nov 2026 ("8li paralel"): the first two calls meet at a barrier, which one-at-a-time never reaches."""
+    import threading
+    monkeypatch.setattr(compare, "OUT_DIR", tmp_path / "research")
+    meet, lock, started = threading.Barrier(2, timeout=10), threading.Lock(), []
+    plain = cli.__call__
+
+    def together(cmd, input=None, **kw):
+        with lock:
+            started.append(1)
+            first_two = len(started) <= 2
+        if first_two:
+            meet.wait()
+        return plain(cmd, input=input, **kw)
+
+    monkeypatch.setattr(claude_code, "_run", together)
+    out = compare.run(TICKERS, provider="claude", model="claude-haiku-5-5")
+    assert out["usable"] == 3 and len(cli.calls) == 3 and "stopped_reason" not in out
+
+
 def test_the_board_says_which_scorer_made_the_peers():
     from RevenueChaser.module_relatedness import report
     base = {"as_of": "2026-11-11T00:00:00+00:00", "model": "m", "n": 0, "companies": [], "peers": {},

@@ -35,6 +35,8 @@ PROMPT_VERSION = "v3b"
 EST_USD_PER_CALL = 0.006
 USD_CAP = float(os.getenv("RC_RELATEDNESS_USD_CAP", "8.0"))
 LLM_WORKERS = 8
+# The writer comparison's Claude calls at a time (avo, 11 Nov 2026: "8li paralel"); the other writers go one by one.
+COMPARE_WORKERS = LLM_WORKERS
 # Grok writer (#388): a run whose first N replies hold no usable profile stops (``unusable``) before it counts an
 # attempt on any group; the endpoint or the model is then wrong, not the companies.
 GROK_UNUSABLE_STOP = 5
