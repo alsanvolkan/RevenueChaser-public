@@ -1107,15 +1107,20 @@ def _fetch_group(f: dict, view: dict) -> str:
             f'</summary>{_sources(f, view)}{_health_table(f)}</details>')
 
 
-def render_data(view: dict) -> str:
-    """The Data tab's panel (#331, #492): the header, Health right now, the flow diagram, the file picker, one panel
-    a served file in plan order, then Cross-check."""
+def render_data(view: dict, lookup_html: str = "") -> str:
+    """The Data tab's panel (#331, #492): the header, the Ticker lookup (#715), Health right now, the flow diagram,
+    the file picker, one panel a served file in plan order, then Cross-check.
+
+    ``lookup_html`` rides inside the board rather than in a sibling block of its own, so the page's own background
+    never shows between the help band and the board (e2e ``test_the_what_am_i_looking_at_band_follows_the_theme``).
+    """
     if view.get("error"):
-        return _err(view)
+        return _err(view) + lookup_html
     view = _ready(view)
     panels = "".join(_panel(f, view, i == 0) for i, f in enumerate(view["files"]))
     return ('<section id="ctl" class="ctl" aria-label="Data/Health · Data control board"><div class="wrap">'
-            f'{_header(view)}{_flow(view)}{_picker(view)}<div class="fpanels">{panels}</div></div></section>')
+            f'{_header(view)}{lookup_html}{_flow(view)}{_picker(view)}'
+            f'<div class="fpanels">{panels}</div></div></section>')
 
 
 def render_fetch(view: dict) -> str:
