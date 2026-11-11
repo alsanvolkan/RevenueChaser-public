@@ -3,7 +3,12 @@ three shapes seen in real mails (4-10 Nov), trimmed: rows run together, rows on 
 """
 from __future__ import annotations
 
-from RevenueChaser.module_news import x_feed
+import json
+
+import pytest
+
+from RevenueChaser.core import config, rawstore
+from RevenueChaser.module_news import headlines, report, x_feed
 
 NOW = 1794345669.0
 
@@ -44,7 +49,7 @@ def test_rows_that_run_together_split_on_the_row_pattern():
     assert _ids(rows) == ["x:2120263144924692750", "x:2120251362529419593"]
     news, flow = rows
     assert news["headline"] == "$NN NextNav Q3 EPS $(0.04) Beats"
-    assert news["tickers"] == "NN" and news["kind"] == "news" and news["option"] == ""
+    assert news["tickers"] == ["NN"] and news["kind"] == "news" and news["option"] == ""
     assert flow["option"] == "SPY 759C 11/20exp $1.8M premium yön belirsiz"
     assert flow["headline"] == "$SPY 759C 11/20exp $1.8M premium #flowseidon"
     assert flow["url"] == "https://x.com/kiantrades/status/2120251362529419593"
@@ -56,7 +61,7 @@ def test_rows_on_own_lines_and_a_cut_last_row_is_dropped():
     rows, refused = x_feed.parse(OWN_LINES, NOW, "r1")
     assert _ids(rows) == ["x:2118017069270884385", "x:2118019958378479720"]
     assert rows[0]["headline"] == "$RKT 15 soon"
-    assert rows[1]["tickers"] == "" and rows[1]["kind"] == "macro"
+    assert rows[1]["tickers"] == [] and rows[1]["kind"] == "macro"
     assert refused == []
 
 
@@ -148,3 +153,110 @@ def test_read_mails_is_read_only_and_starts_after_the_mark():
     fetches = [c for c in imap.calls if c[0] == "FETCH"]
     assert fetches and all(c[2] == "(BODY.PEEK[])" for c in fetches)
     assert not any(c[0] in ("STORE", "COPY", "MOVE", "EXPUNGE") for c in imap.calls)
+
+
+# ── the hourly fetcher (system python, no DuckDB) ───────────────────────────────────────────────────────────
+
+
+class FakeSession(FakeImap):
+    """``imaplib.IMAP4_SSL`` as the fetcher uses it: a context manager that logs in."""
+    def __init__(self, mails):
+        super().__init__(mails)
+        self.closed = False
+
+    def __call__(self, host, timeout=None):
+        self.calls.append(("connect", host))
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.closed = True
+
+    def login(self, user, password):
+        self.calls.append(("login", user))
+
+
+class FakeResponse:
+    status = 202
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _keys(monkeypatch):
+    monkeypatch.setenv("GMAIL_IMAP_USER", "user@example.invalid")
+    monkeypatch.setenv("GMAIL_IMAP_APP_PASSWORD", "app-password-value")
+
+
+def test_the_fetcher_saves_new_mails_moves_its_mark_and_queues_the_board_job(tmp_path, monkeypatch, capsys):
+    _keys(monkeypatch)
+    imap, posts = FakeSession({5: _mail(plain=NEW_PROMPT), 6: _mail(plain="GÜNLÜK")}), []
+
+    def urlopen(req, timeout=None):
+        posts.append((req.full_url, req.get_method(), req.get_header("X-rc-panel")))
+        return FakeResponse()
+
+    assert x_feed.run(imap_factory=imap, folder=tmp_path, now=NOW, urlopen=urlopen) == 0
+    lines = [json.loads(x) for x in (tmp_path / "2026-11-10.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [x["uid"] for x in lines] == [5, 6] and "KAYIT n=3" in lines[0]["text"] and lines[0]["subject"] == "x"
+    assert x_feed.uid_mark(tmp_path) == 6 and imap.closed
+    assert posts == [("http://127.0.0.1:8000/run/news_headlines", "POST", "cli")]
+    out = capsys.readouterr()
+    assert "2 new mails" in out.out and "queued" in out.out and "app-password-value" not in out.out + out.err
+    # The next pass asks only after the mark, and queues nothing when nothing is new.
+    imap.mails = {}
+    assert x_feed.run(imap_factory=imap, folder=tmp_path, now=NOW + 3600, urlopen=urlopen) == 0
+    assert ("SEARCH", None, "UID 7:*", "FROM", '"noreply@x.ai"') in imap.calls and len(posts) == 1
+
+
+def test_the_fetcher_without_its_keys_stops_before_connecting(tmp_path, monkeypatch):
+    monkeypatch.delenv("GMAIL_IMAP_USER", raising=False)
+    monkeypatch.delenv("GMAIL_IMAP_APP_PASSWORD", raising=False)
+    imap = FakeSession({})
+    assert x_feed.run(imap_factory=imap, folder=tmp_path, now=NOW) == 2
+    assert imap.calls == [] and not list(tmp_path.iterdir())
+
+
+# ── the dashboard's loader and the board's X lane ────────────────────────────────────────────────────────────
+
+
+def _saved(*bodies, now=NOW):
+    folder = x_feed.x_dir(config.MARKET_RAW_DIR)
+    x_feed.save([(i + 1, _mail(plain=b)) for i, b in enumerate(bodies)], folder, now)
+
+
+def _heads():
+    return {r["headline_id"]: r for r in rawstore.query("SELECT * FROM news_headlines", db="news")}
+
+
+def test_load_x_stores_each_tweet_once_and_counts_a_cut_mail():
+    _saved(NEW_PROMPT, RUN_TOGETHER)
+    got = headlines.load_x(now=NOW, run_id="r1")
+    assert got == {"mails": 2, "stored": 2, "refused": 0, "cut": 1}     # NEW_PROMPT declared 3 and carried 2
+    row = _heads()["x:2120251362529419593"]
+    assert row["provider"] == "grok-x" and row["kind"] == "option" and json.loads(row["tickers"]) == ["SPY"]
+    assert row["option"].startswith("SPY 759C") and row["published_at"] == pytest.approx(
+        x_feed.status_time(2120251362529419593))
+    assert headlines.load_x(now=NOW + 60)["mails"] == 0                  # the mark moved
+    _saved(OWN_LINES, now=NOW + 3600)
+    assert headlines.load_x(now=NOW + 3600)["stored"] == 2
+
+
+def test_the_board_shows_tweets_in_their_own_x_lane_with_kind_and_option(monkeypatch):
+    _saved(NEW_PROMPT)
+    headlines.load_x(now=NOW, run_id="r1")
+    page = report.render_html(now=NOW + 60)
+    x_lane = page.index('id="heads-x"')
+    assert "X · son 24 saat" in page and x_lane < page.index("$NN NextNav")
+    assert page.index('id="heads-market"') < page.index('id="heads-stocks"') < x_lane
+    assert '<span class="xk">opsiyon</span>' in page and "SPY 759C 11/20exp $1.8M yön belirsiz" in page
+    assert 'href="https://x.com/zohmbastic/status/2120263144924692750"' in page
+    monkeypatch.setattr(report.time, "time", lambda: NOW + 60)          # api_rows' 24 h window is the clock's
+    polled = {r["headline_id"]: r for r in report.api_rows(0)}
+    flow = polled["x:2120251362529419593"]
+    assert flow["lane"] == "x" and flow["kind"] == "opsiyon" and flow["url"].startswith("https://x.com/")

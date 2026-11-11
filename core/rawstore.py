@@ -1986,6 +1986,8 @@ MANIFEST: dict[str, dict] = {
         "columns": [
             "headline_id TEXT PRIMARY KEY", "provider TEXT", "published_at DOUBLE", "headline TEXT", "source TEXT",
             "tickers TEXT", "url TEXT", "fetched_at DOUBLE", "run_id TEXT", "run_at DOUBLE",
+            # The X lane (module_news/x_feed.py): the tweet's kind and option code; NULL for every other provider.
+            "kind TEXT", "option TEXT",
         ],
         "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "news", "sources": [],
     },

@@ -16,6 +16,7 @@ from RevenueChaser.core.config import OUTPUT_DIR
 from RevenueChaser.core.html_safe import esc
 from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, provider_health_html, write_artifact
 from RevenueChaser.module_news.calendar import AMS, EVENTS, HIGHLIGHT, local_day, tr_value
+from RevenueChaser.module_news.x_feed import PROVIDER as X_PROVIDER
 
 FILENAME = "news_latest.html"
 HEADLINES = "news_headlines"
@@ -50,8 +51,10 @@ def _load(now: float) -> tuple[list[dict], dict | None, list[dict], float | None
         f"SELECT * FROM {EVENTS} WHERE event_ts >= ? AND event_ts < ? AND retired_at IS NULL ORDER BY event_ts, event",
         [start.timestamp(), end.timestamp()], db="news")
     hl = rawstore.query(f"SELECT * FROM {HIGHLIGHT} WHERE session_date = ?", [today.isoformat()], db="news")
-    heads = [r for cond in ("= '[]'", "<> '[]'") for r in rawstore.query(      # each lane its own newest LIMIT
-        f"SELECT * FROM {HEADLINES} WHERE published_at >= ? AND coalesce(tickers, '[]') {cond} "
+    x = f"coalesce(provider, '') = '{X_PROVIDER}'"
+    lanes = (f"NOT {x} AND coalesce(tickers, '[]') = '[]'", f"NOT {x} AND coalesce(tickers, '[]') <> '[]'", x)
+    heads = [r for cond in lanes for r in rawstore.query(      # each lane its own newest LIMIT
+        f"SELECT * FROM {HEADLINES} WHERE published_at >= ? AND {cond} "
         f"ORDER BY published_at DESC LIMIT {HEADLINE_LIMIT}", [now - HEADLINE_HOURS * 3600], db="news")]
     stamp = rawstore.query(f"SELECT max(run_at) AS t FROM {EVENTS}", db="news")
     return events, (hl[0] if hl else None), heads, (stamp[0]["t"] if stamp else None)
@@ -113,26 +116,37 @@ def _tickers(value) -> list[str]:
 
 
 def lane(row: dict) -> str:
-    """``market`` for a broad-tape headline (no ticker, #673), else ``stocks``."""
+    """``x`` for a tweet from the Grok X mails, ``market`` for a broad-tape headline (no ticker, #673), else
+    ``stocks``."""
+    if row.get("provider") == X_PROVIDER:
+        return "x"
     return "stocks" if _tickers(row.get("tickers")) else "market"
 
 
 _LANES = {"market": ("Piyasa", "Piyasa akışından henüz başlık yok."),
-          "stocks": ("Hisseler", "Henüz başlık yok.")}
+          "stocks": ("Hisseler", "Henüz başlık yok."),
+          "x": ("X", "X özetlerinden henüz kayıt yok.")}
+#: The tweet kinds of the X lane, in the board's Turkish (the JS keeps the same map).
+X_KINDS = {"news": "haber", "level": "seviye", "option": "opsiyon", "macro": "makro", "position": "pozisyon",
+           "other": "diğer"}
 
 
 def _head_li(r: dict) -> str:
     tk = "".join(f'<span class="tk">{esc(t)}</span>' for t in _tickers(r.get("tickers")))
+    kind = f'<span class="xk">{esc(X_KINDS.get(r.get("kind") or "", r.get("kind")))}</span>' if r.get("kind") else ""
     src = f' · {esc(r["source"])}' if r.get("source") else ""
     text = esc(r.get("headline"))
     if r.get("url") and str(r["url"]).startswith(("https://", "http://")):
         text = f'<a href="{esc(r["url"])}" target="_blank" rel="noopener noreferrer">{text}</a>'
+    opt = f'<div class="xo">{esc(r["option"])}</div>' if r.get("option") else ""
     return (f'<li class="hd" data-hid="{esc(r["headline_id"])}" data-at="{float(r["published_at"])}">'
-            f'<div class="muted">{hm(r["published_at"])}{src} {tk}</div><div class="htext">{text}</div></li>')
+            f'<div class="muted">{hm(r["published_at"])}{src} {kind}{tk}</div>'
+            f'<div class="htext">{text}</div>{opt}</li>')
 
 
 def _headlines(rows: list[dict]) -> str:
-    """Two cards: Piyasa (the broad tape) and Hisseler (per ticker); the page's poll adds to their lists."""
+    """Three cards: Piyasa (the broad tape), Hisseler (per ticker) and X (the Grok X mails); the page's poll adds to
+    their lists."""
     out = []
     for key, (title, empty) in _LANES.items():
         mine = [r for r in rows if lane(r) == key][:HEADLINE_LIMIT]
@@ -145,11 +159,14 @@ def _headlines(rows: list[dict]) -> str:
 def api_rows(since: float, limit: int = 2 * HEADLINE_LIMIT) -> list[dict]:
     """Headlines stored after ``since`` (their ``run_at``), newest first, as the poll draws them."""
     rows = rawstore.query(
-        f"SELECT headline_id, published_at, headline, source, tickers, run_at FROM {HEADLINES} "
+        f"SELECT headline_id, provider, published_at, headline, source, tickers, url, kind, option, run_at "
+        f"FROM {HEADLINES} "
         f"WHERE run_at > ? AND published_at >= ? ORDER BY published_at DESC LIMIT {int(limit)}",
         [float(since), time.time() - HEADLINE_HOURS * 3600], db="news")
     return [{"headline_id": r["headline_id"], "published_at": r["published_at"], "hm": hm(r["published_at"]),
              "headline": r["headline"], "source": r.get("source") or "", "tickers": _tickers(r.get("tickers")),
+             "kind": X_KINDS.get(r.get("kind") or "", r.get("kind") or ""), "option": r.get("option") or "",
+             "url": r["url"] if str(r.get("url") or "").startswith(("https://", "http://")) else "",
              "lane": lane(r), "run_at": r["run_at"]} for r in rows]
 
 
@@ -190,6 +207,9 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
 .htext a:hover{text-decoration:underline}
 .tk{display:inline-block;margin-left:4px;padding:0 6px;border-radius:6px;background:var(--input-bg);
  color:var(--sky);font-size:11.5px}
+.xk{display:inline-block;margin-left:4px;padding:0 6px;border-radius:6px;border:1px solid var(--border);
+ color:var(--amber);font-size:11.5px}
+.xo{margin-top:2px;color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
 .empty{color:var(--muted);margin:6px 0}
 .foot{margin-top:16px;color:var(--muted);font-size:12px}
 [hidden]{display:none!important}
@@ -203,9 +223,14 @@ function _headLi(r){
   li.setAttribute('data-hid', r.headline_id); li.setAttribute('data-at', r.published_at);
   var m = document.createElement('div'); m.className = 'muted';
   m.textContent = r.hm + (r.source ? ' · ' + r.source : '') + ' ';
+  if(r.kind){ var k = document.createElement('span'); k.className = 'xk'; k.textContent = r.kind; m.appendChild(k); }
   r.tickers.forEach(function(t){ var s = document.createElement('span'); s.className = 'tk'; s.textContent = t; m.appendChild(s); });
-  var h = document.createElement('div'); h.className = 'htext'; h.textContent = r.headline;
-  li.appendChild(m); li.appendChild(h); return li;
+  var h = document.createElement('div'); h.className = 'htext';
+  if(r.url){ var a = document.createElement('a'); a.href = r.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.textContent = r.headline; h.appendChild(a); } else { h.textContent = r.headline; }
+  li.appendChild(m); li.appendChild(h);
+  if(r.option){ var o = document.createElement('div'); o.className = 'xo'; o.textContent = r.option; li.appendChild(o); }
+  return li;
 }
 function _addHead(r){
   if(document.querySelector('[data-hid="' + r.headline_id + '"]')) return;
@@ -237,7 +262,9 @@ function newsTab(btn){
 
 HELP = help_html(
     "<p>ABD ekonomik takvimi (bugün ve bu hafta, saatler Amsterdam) ve izleme listesindeki ve en büyük ABD "
-    "şirketlerinin Dow Jones başlıkları (<b>Hisseler</b>), ve IBKR'nin piyasa geneli haber akışı (<b>Piyasa</b>). "
+    "şirketlerinin Dow Jones başlıkları (<b>Hisseler</b>), IBKR'nin piyasa geneli haber akışı (<b>Piyasa</b>) ve "
+    "Grok'un saatlik X özet maillerindeki paylaşımlar (<b>X</b>: tür, ticker ve opsiyon kodu; her kaydın X "
+    "kimliği kendi zamanıyla doğrulanır). "
     "Gerçekleşen değer gösterilmez: beklenti ve önceki değer.</p>"
     "<p>Başlıklar 5 dakikada bir saklanır; sayfa açıkken dakikada bir yenileri kendisi ekler.</p>"
     "<p><b>Fetch</b> saklı takvimi <code>boards/news.duckdb</code> içine artımlı yazar (yeni ve değişen "
@@ -271,7 +298,7 @@ def render_html(now: float | None = None, provider_health: dict | None = None) -
 <div id="news-week" role="tabpanel" hidden>{week_html}</div></section>
 <div class="side">{_highlight(hl)}{_headlines(heads)}</div>
 </div>
-<p class="foot">Kaynak: takvim Unusual Whales, başlıklar Dow Jones (IBKR) · Saatler Europe/Amsterdam · Önem: ●●● yüksek ●●○ orta ●○○ düşük</p>
+<p class="foot">Kaynak: takvim Unusual Whales, başlıklar Dow Jones (IBKR), X kayıtları Grok özetleri · Saatler Europe/Amsterdam · Önem: ●●● yüksek ●●○ orta ●○○ düşük</p>
 {HELP}
 </div><script>var NEWS_SINCE = {since!r}, HEAD_LIMIT = {HEADLINE_LIMIT};{_JS}</script></body></html>"""
 
