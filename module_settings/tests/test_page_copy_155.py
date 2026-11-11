@@ -63,7 +63,7 @@ def test_the_texts_a_seeded_page_may_not_reach_use_no_internal_short_form_either
     texts = list(_registry_texts())
     texts += [(f"{e['key']}.label", e["label"]) for e in boards.BOARD_INPUTS]
     texts += [(f"{e['key']}.price_basis", e["price_basis"]) for e in boards.BOARD_INPUTS]
-    texts += [(f"drill.{t}", label) for t, label in inventory._DRILL_TABLE_LABELS.items()]
+    texts += [(f"lookup.{kind}", title) for kind, title in ticker_lookup.FILE_TITLES.items()]
     texts += [(f"vendor.{k}", v) for k, v in inventory._VENDOR_SOURCE_LABELS.items()]
     texts += [(f"holdings.{k}", v) for k, v in inventory._HOLDINGS_PROVIDERS]
 
