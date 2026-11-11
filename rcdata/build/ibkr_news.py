@@ -1,9 +1,10 @@
 """``ibkr/news``: Dow Jones headlines from the IBKR Gateway, one pass an hour (#643 F5).
 
 IBKR serves news per contract, so the names are the stock watch list (``ops.watch_list("stock")``, sorted) and then
-``BASE_TICKERS``, at most ``MAX_TICKERS``; two requests a name (its contract id, then its ``DJ-N``/``DJ-RT``
-headlines of the last ``WINDOW_S``). Headlines only, never the article body. A client id of its own (75): the IV
-history client is 73 and the News board's own call 74, and the Gateway refuses a second client with one id (326).
+``BASE_TICKERS``, at most ``MAX_TICKERS``; two requests a name (its contract id, then its newest ``PER_TICKER``
+``DJ-N``/``DJ-RT`` headlines: the gateway reads a start time as the newest time, see ``ibkr_tws.TWSClient.news``).
+Headlines only, never the article body. A client id of its own (75): the IV history client is 73 and the News
+board's own call 74, and the Gateway refuses a second client with one id (326).
 A Gateway that is down is a ``failed`` check, which the hourly pass retries; a name it does not know is an issue.
 
 One row a story and name: ``headline_id`` is made from the story's words (``DJ-N`` and ``DJ-RT`` carry one story
@@ -41,9 +42,8 @@ PROVIDERS = "DJ-N+DJ-RT"
 SOURCE = "Dow Jones"
 PER_TICKER = 20
 MAX_TICKERS = 25
-# shortcut: every pass asks the whole day back (the upsert makes the overlap harmless), 50 requests an hour; a
-# mark from the newest stored headline would ask less, worth it only if the Gateway starts pacing these.
-WINDOW_S = 24 * 3600
+# shortcut: every pass asks each name's newest PER_TICKER (the upsert makes the overlap harmless), 50 requests an
+# hour; a busy name with more than PER_TICKER stories an hour loses the rest, worth a paged ask only if that shows.
 BASE_TICKERS = ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "JPM", "BRK.B", "LLY", "XOM")
 SCHEMA = [("published_date", "DATE"), ("headline_id", "TEXT"), ("ticker", "TEXT"), ("published_at", "DOUBLE"),
           ("headline", "TEXT"), ("source", "TEXT"), ("provider", "TEXT"), ("source_as_of", "DATE"),
@@ -101,7 +101,6 @@ class IBKRNews:
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
         names = tickers(ops.watch_list("stock"))
         now = time.time()
-        since = datetime.fromtimestamp(now - WINDOW_S, timezone.utc).strftime(_IB_TIME)
         host, port = ibkr_login.target()
         items, skipped = [], []
         try:
@@ -114,7 +113,7 @@ class IBKRNews:
                         req += 1
                         con_id = client.con_id(req, ibkr_tws.contract_for(name))
                         req += 1
-                        got = client.news(req, con_id, PROVIDERS, since, "", PER_TICKER)
+                        got = client.news(req, con_id, PROVIDERS, "", "", PER_TICKER)   # the newest; see news()
                     except ibkr_tws.HistoryError as e:
                         skipped.append(name)
                         ctx.issue("fetch_failed", name, str(e)[:300])
@@ -126,7 +125,7 @@ class IBKRNews:
             raise base.SourceError(f"IBKR gateway {host}:{port}: every name failed (first: {skipped[0]})")
         raw = day_dir(datetime.fromtimestamp(now, timezone.utc).date()) / \
             f"{datetime.fromtimestamp(now, timezone.utc):%H%M%S}.json.gz"
-        return [base.write_raw_json(raw, {"names": names, "since": since, "providers": PROVIDERS,
+        return [base.write_raw_json(raw, {"names": names, "providers": PROVIDERS,
                                           "skipped": skipped, "as_of": as_of.isoformat(), "fetched_at": now,
                                           "run_id": ctx.run_id, "items": items})]
 
@@ -150,7 +149,7 @@ class IBKRNews:
         return [p for raw in raws for p in self.to_parquet(ctx, raw)]
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
-        raise base.SourceError(f"{NAME} has no backfill: each pass already asks the last {WINDOW_S // 3600} hours")
+        raise base.SourceError(f"{NAME} has no backfill: each pass asks each name's newest {PER_TICKER} headlines")
 
     def dirty(self, ctx: base.RunContext):
         return dirty_set.keyed(ctx, self, "date")

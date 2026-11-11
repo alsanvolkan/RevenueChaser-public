@@ -217,7 +217,9 @@ class TWSClient:
     def news(self, req_id: int, con_id: int, providers: str, start: str, end: str, total: int) -> list[dict]:
         """Headlines of one contract, newest first: ``[{time, provider, article_id, headline}]``.
 
-        ``start`` and ``end`` are ``yyyy-MM-dd HH:mm:ss.0`` (UTC), or empty; ``providers`` joined with ``+``."""
+        ``start`` and ``end`` are ``yyyy-MM-dd HH:mm:ss.0`` (UTC), or empty; ``providers`` joined with ``+``. The
+        gateway reads ``start`` as the newest time to return (measured 11 Nov on NVDA: ``start`` = a day ago gave
+        nothing newer than a day ago), so pass ``""`` for the newest ``total`` and cut older ones yourself."""
         self._sock.sendall(encode(REQ_HISTORICAL_NEWS, req_id, con_id, providers, start, end, total, ""))
         out = []
         while True:

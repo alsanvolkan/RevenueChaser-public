@@ -106,11 +106,12 @@ def test_a_gateway_that_is_down_writes_nothing_and_says_so(gw):
     assert out["stored"] == 0 and "gateway" in out["error"] and _rows() == {}
 
 
-def test_a_second_fetch_asks_only_since_the_last_one(gw):
+def test_a_second_fetch_asks_the_newest_and_keeps_only_since_the_last_one(gw):
     headlines.fetch(["AAPL"], now=NOW, run_id="r1")
-    headlines.fetch(["AAPL"], now=NOW + 3600, run_id="r2")
-    starts = [f[4] for f in gw.sent if f[0] == "86"]
-    assert starts[0] == "2026-11-08 19:00:00.0" and starts[1] == "2026-11-09 18:10:00.0"   # 24 h, then newest - 10 min
+    out = headlines.fetch(["AAPL"], now=NOW + 3600, run_id="r2")
+    # The gateway reads a start time as the newest time to return (11 Nov: the board sat a day behind), so none is sent.
+    assert [f[4] for f in gw.sent if f[0] == "86"] == ["", ""]
+    assert out["stored"] == 1                                   # 17:00 is before the mark (18:20) - 10 min
 
 
 def test_the_ticker_list_puts_the_watch_list_first_and_is_capped():
