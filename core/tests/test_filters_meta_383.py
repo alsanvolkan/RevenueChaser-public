@@ -82,18 +82,28 @@ def test_sp600_never_joins_the_fetched_indexes():
 
 
 # ── labels and meta ───────────────────────────────────────────────────────────────────────────────────────────────
-def test_a_stored_sp600_member_is_labelled_on_a_card(fetchers):
-    il.refresh_lists(run_id="r1", first_fill=["sp600"])
+def _spine(monkeypatch, members: dict[str, set[str]], nasdaq=("N0001",)) -> None:
+    """The spine's index members and Nasdaq-listed names (``core.index_registry`` reads only the spine, #642 PR 6)."""
+    from RevenueChaser.core import spine_reads
+    monkeypatch.setattr(spine_reads, "membership", lambda *a, **k: [
+        {"index_slug": slug, "ticker": t} for slug, ts in members.items() for t in sorted(ts)])
+    monkeypatch.setattr(spine_reads, "universe", lambda tiers=("A",): [
+        {"ticker": t, "exchange": "Nasdaq"} for t in nasdaq])
+
+
+def test_a_spine_sp600_member_is_labelled_on_a_card(monkeypatch):
+    _spine(monkeypatch, {"sp500": {"S0001"}, "sp600": {"M0001"}})
     cards = ir.annotate_cards([{"ticker": "M0001"}, {"ticker": "S0001"}])
     assert cards[0]["index"] == ["S&P SmallCap 600"] and cards[1]["index"] == ["S&P 500"]
 
 
-def test_filters_meta_lists_sp600_only_when_it_has_rows(fetchers):
+def test_filters_meta_lists_sp600_only_when_it_has_members_and_never_the_dow(monkeypatch):
+    _spine(monkeypatch, {"sp500": {"S0001"}})
     meta = rc.filters_meta("b")
-    assert meta["indexes"] == ["S&P 500", "Dow Jones", "Nasdaq Composite"]
+    assert meta["indexes"] == ["S&P 500", "Nasdaq Composite"]                # the spine has no Dow Jones source
     assert meta["index_labels"] == {"Nasdaq Composite": "Nasdaq-listed"}
-    il.refresh_lists(run_id="r1", first_fill=["sp600"])
-    assert rc.filters_meta("b")["indexes"] == ["S&P 500", "Dow Jones", "S&P SmallCap 600", "Nasdaq Composite"]
+    _spine(monkeypatch, {"sp500": {"S0001"}, "sp600": {"M0001"}})
+    assert rc.filters_meta("b")["indexes"] == ["S&P 500", "S&P SmallCap 600", "Nasdaq Composite"]
 
 
 def test_filters_meta_carries_the_board_fields(rawstore_tmp_db):
@@ -107,14 +117,15 @@ def test_the_component_has_no_literal_index_list():
     assert "meta.indexes || []" in js
 
 
-def test_comovement_meta_carries_the_registry_indexes(rawstore_tmp_db):
+def test_comovement_meta_carries_the_registry_indexes(rawstore_tmp_db, monkeypatch):
     from RevenueChaser.module_comovement import report
+    _spine(monkeypatch, {"sp500": {"S0001"}})
 
     html = report.render_comovement_dashboard({"as_of": "2026-09-17T00:00:00+00:00", "clusters": {}, "cuts": []})
     m = re.search(r"var META = (.*?);\n", html)
     assert m, "META not found"
     meta = json.loads(m.group(1))
-    assert meta["indexes"] == ["S&P 500", "Dow Jones", "Nasdaq Composite"]
+    assert meta["indexes"] == ["S&P 500", "Nasdaq Composite"]
     assert meta["board"] == "comovement"
 
 

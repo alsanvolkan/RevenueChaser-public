@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.app import runners
 from RevenueChaser.core import history, rawstore, screen_common, ticker_store
 from RevenueChaser.module_fundamentals import config as fcfg
@@ -101,7 +102,7 @@ def _ag_payload():
 @pytest.fixture
 def ag_fetched(rawstore_tmp_db, out, monkeypatch):
     from RevenueChaser.module_asymmetric_growth import engine, freeze
-    rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
+    universe_store.replace([{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
     monkeypatch.setattr(engine, "run_asymmetric_growth_hunter", lambda uw, **k: _ag_result())
     monkeypatch.setattr(freeze, "freeze_result", lambda *a, **k: None)
     monkeypatch.setattr(runners, "_freeze_run_id", lambda: "fetch-1")
@@ -175,7 +176,7 @@ def test_ag_a_fetch_embeds_the_stored_card_shape():
 
 def test_ag_refresh_with_a_universe_but_no_stored_scan_says_so(rawstore_tmp_db, out, monkeypatch):
     _no_scoring(monkeypatch)
-    rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
+    universe_store.replace([{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
     runners.run_asymmetric_growth(None, no_fetch=True)
     assert "No stored scan yet" in runners.ASYMMETRIC_GROWTH_LATEST.read_text(encoding="utf-8")
 
@@ -190,7 +191,7 @@ BOARDS = [pytest.param(sp, "run_swing", "SWING_LATEST", scfg, "SWING_JSON", "mod
 def seeded(rawstore_tmp_db, out, monkeypatch):
     from RevenueChaser.module_fundamentals import freeze as ffreeze
     from RevenueChaser.module_swing_potential import freeze as sfreeze
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": t, "market_cap": 1e9, "price": 10.0, "name": t, "sector": "Technology"} for t in ("AAA", "BBB")])
     for mod in (fp, sp):
         monkeypatch.setattr(mod, "prefilter", lambda r: screen_common.Prefiltered(list(r)))
@@ -266,7 +267,7 @@ def test_an_empty_or_demo_saved_board_never_wins(seeded, monkeypatch, mod, runne
 def test_a_header_without_payload_falls_back_to_the_saved_board(rawstore_tmp_db, out, monkeypatch, mod, runner,
                                                                 latest, cfg, saved, board):
     _no_scoring(monkeypatch)
-    rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
+    universe_store.replace([{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
     when = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()
     history.record_run(board, run_id="old", run_at=when, model_version="m")          # a header from before K4
     shown = mod.build_payload([], run_stats={"regime": "RISK-OFF"})

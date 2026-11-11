@@ -36,6 +36,7 @@ from RevenueChaser.module_fundamentals import freeze as fund_freeze
 from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_swing_potential import freeze as swing_freeze
 from RevenueChaser.module_swing_potential import pipeline as sp
+from RevenueChaser.core.tests.d01_seed import drop_d01
 
 D = date(2026, 10, 14)
 NOW = datetime(2026, 10, 14, 21, 45, tzinfo=timezone.utc)                      # 17:45 EDT
@@ -67,9 +68,8 @@ def _cache(ticker: str, df: pd.DataFrame, cached_at: float) -> None:
 
 def _d01_day_behind(*tickers: str) -> None:
     """``tickers``' D01 series as the 13 Oct night left it: ending 13 Oct, written that evening."""
-    with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-        for t in tickers:
-            conn.execute("DELETE FROM price_bars_daily WHERE ticker = ?", [t])
+    for t in tickers:
+        drop_d01(t)
     for t in tickers:
         sc.seed_d01(t, _bars(t, date(2026, 10, 13)), fetched_at=NIGHT_BEFORE)
 

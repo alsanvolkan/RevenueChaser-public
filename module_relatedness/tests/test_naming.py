@@ -9,6 +9,7 @@ import logging
 import pytest
 from datetime import datetime, timezone
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.providers import deepseek
 from RevenueChaser.module_relatedness import naming, themes
@@ -28,8 +29,7 @@ def _profiles():
 
 
 def _seed_run(run_id="nmf"):
-    rawstore.replace_all("equity_universe",
-                         [{"ticker": f"G{i}", "market_cap": 1e9} for i in range(3)])
+    universe_store.replace([{"ticker": f"G{i}", "market_cap": 1e9} for i in range(3)])
     themes.build_shadow(candidates=(2, 3), k_medium=2, k_coarse=2,
                         run_id=run_id, profiles=_profiles())
     themes.cutover_materialize(run_id)

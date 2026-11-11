@@ -9,6 +9,7 @@ from datetime import date
 
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import ledger, rawstore
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 D = date(2026, 10, 2)          # a Friday and a normal session
 
@@ -25,7 +26,7 @@ def _seed_cache(ticker, last_day, cached_at):
 
 
 def _seed_d01(ticker, last_day, fetched_at):
-    rawstore.write_rows("price_bars_daily", [
+    write_d01([
         {"ticker": ticker, "session_date": date.fromisoformat(d), "open": 1.0, "high": 2.0, "low": 0.5,
          "close": 1.5, "adj_close": None, "volume": 100.0, "split_ratio": None, "adj_source": None,
          "source": "uw", "fetched_at": fetched_at, "run_id": "seed", "run_at": fetched_at}
@@ -73,7 +74,8 @@ def test_d01_last_bars_has_the_shape_of_last_bars(rawstore_tmp_db):
     _seed_d01("SPY", "2026-10-02", _close_plus(40))
     _seed_d01("AAA", "2026-10-01", 123.0)
     got = ledger.d01_last_bars([" spy", "AAA", "MISSING", None])
-    assert got == {"SPY": ("2026-10-02", _close_plus(40)), "AAA": ("2026-10-01", 123.0)}
+    # The served file stamps every bar with its one build (#642 PR 6): the newest write, SPY's.
+    assert got == {"SPY": ("2026-10-02", _close_plus(40)), "AAA": ("2026-10-01", _close_plus(40))}
     assert ledger.d01_last_bars([]) == {}
 
 
@@ -84,14 +86,13 @@ def test_no_price_file_reads_as_no_d01_bars(isolate_rawstore):
 
 
 def test_a_failed_d01_read_reads_as_no_bars(rawstore_tmp_db, monkeypatch):
-    real = rawstore.query
+    from RevenueChaser.core import prices
 
-    def query(sql, params=None, read_only=True, db="raw"):
-        if "price_bars_daily" in sql:
-            raise RuntimeError("IO Error: Could not set lock on file prices.duckdb")
-        return real(sql, params, read_only=read_only, db=db)
+    def read(sql, params=None, layer=False):
+        raise RuntimeError("IO Error: Could not set lock on file prices.duckdb")
 
-    monkeypatch.setattr(rawstore, "query", query)
+    _seed_d01("SPY", "2026-10-02", _close_plus(40))
+    monkeypatch.setattr(prices, "_read", read)
     _seed_cache("SPY", "2026-10-02", _close_plus(45))
     assert ledger.d01_last_bars(["SPY"]) == {}
     assert ledger.spy_anchor_problem(D) is None             # the old cache check, which passes here
@@ -105,4 +106,5 @@ def test_the_picks_own_bars_are_read_from_d01_the_board_scored_from(rawstore_tmp
     _seed_cache("AAA", "2026-10-01", _close_plus(-24 * 60))
     _seed_cache("BBB", "2026-10-02", _close_plus(45))
     _seed_d01("BBB", "2026-10-01", _close_plus(-24 * 60))
-    assert ledger.ohlc_gaps(D, ["AAA", "BBB"]) == {"BBB": ledger.NEEDS_REFETCH}
+    # The served file built after D's close (its one stamp, #642 PR 6) holds no D bar for BBB: none to refetch.
+    assert ledger.ohlc_gaps(D, ["AAA", "BBB"]) == {"BBB": ledger.NO_SESSION_BAR}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.core.providers import sec_edgar as se
 
 
@@ -75,13 +76,12 @@ def test_get_fundamentals_no_fetch_cache_miss(rawstore_tmp_db):
 
 
 def test_get_fundamentals_no_fetch_serves_cache(rawstore_tmp_db):
-    from RevenueChaser.core import rawstore
-    rawstore.write_rows("edgar_financials", [{
-        "ticker": "AAA", "annual": [{"revenue": 100}], "quarterly": [], "meta": {"available": True},
+    fund_store.put_edgar([{
+        "ticker": "AAA", "annual": [{"fiscal_year": "2025", "revenue": 100.0}], "quarterly": [], "meta": {},
     }])
     annual, _, meta = se.get_fundamentals("AAA", no_fetch=True)
-    assert annual == [{"revenue": 100}]
-    assert meta.get("available") is True
+    assert [(r["fiscal_year"], r["revenue"]) for r in annual] == [("2025", 100.0)]
+    assert meta.get("available") is True and meta["layer"]
 
 
 # ── #234: gross_profit derived from revenue − cost of revenue ──

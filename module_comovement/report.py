@@ -411,7 +411,7 @@ def _funnel_rows(payload: dict, f: dict, floor_txt: str, eff: dict, scanned,
         return rows
     rows = []
     if scanned is not None:
-        rows.append(("", "Scanned universe (<code>equity_universe</code>, all caps)", scanned))
+        rows.append(("", "Scanned universe (the identity spine, all caps)", scanned))
     if f.get("below_floor") and floor_txt:
         rows.append(("minus", f"Below the {floor_txt} classification floor", -f["below_floor"]))
     if f.get("no_market_cap"):
@@ -535,7 +535,10 @@ def render_comovement_dashboard(payload: dict) -> str:
     eff = _eff(payload)
     applied = bool(payload.get("benchmark_applied")) and benchmark != "off"
     members = _member_rows(payload, applied)
-    sync = _friendly(payload.get("prices_through") or payload.get("as_of"))
+    # #392: the header's date is the prices', never the render's: an empty board has none.
+    through = payload.get("prices_through") or (payload.get("as_of") if members else None)    # an old run's
+    sync_html = (f'Prices through <b>{_html.escape(_friendly(through))}</b>' if through
+                 else "Prices: <b>no data yet</b>")
 
     if not members:
         grid = ('<div class="empty">No clusters yet. The <b>prices build</b> fills the daily prices after '
@@ -573,11 +576,17 @@ def render_comovement_dashboard(payload: dict) -> str:
                f"{blabel}</b> ({used}) · {horizon}-day overlapping returns · "
                f"last {eff['window']} sessions")
     elif benchmark != "off":
-        sub = (f"Remove market unavailable ({etf} has no usable prices) · "
+        short = payload.get("benchmark_status") == "short"
+        why = "too few returns in the window" if short else "no usable prices"
+        sub = (f"Remove market unavailable ({etf} has {why}) · "
                f"{horizon}-day overlapping returns")
-        alerts.append(f"<b>{etf} has no usable prices in the store</b>, so the board fell "
-                      f"back to raw returns (market still inside the groups). The next "
-                      f"<b>prices build</b> adds it; <b>Refresh</b> then re-clusters.")
+        # #392: only a board with groups fell back to anything; an empty one says so in its body.
+        if members:
+            alerts.append(f"<b>{etf} has {why} in the store</b>, so the board fell back to raw returns "
+                          f"(market still inside the groups). " + (
+                              "Its history fills as the <b>prices build</b> adds sessions; "
+                              if short else "The next <b>prices build</b> adds it; ")
+                          + "<b>Refresh</b> then re-clusters.")
     else:
         sub = (f"Raw return clusters · {horizon}-day overlapping returns — market still "
                f"inside the groups")
@@ -1054,7 +1063,7 @@ function init(){
       {funnel_line}
       <div class="limits">{limits}</div>
     </div>
-    <div class="sync">Prices through <b>{_html.escape(sync)}</b></div>
+    <div class="sync">{sync_html}</div>
   </header>
   {provider_health_html(payload.get("provider_health"))}
   {help_block}

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.gics_map import UNCLASSIFIED
 from RevenueChaser.core.identity import apply as A
@@ -163,7 +164,7 @@ class TestPlanFromBuiltRows:
 
 # ── apply_to_universe: IO ─────────────────────────────────────────────────────────────────────
 def seed_universe(rows):
-    rawstore.replace_all("equity_universe", rows)
+    universe_store.replace(rows)
 
 
 def uni(ticker, sector="Other", industry="Vendor Industry", cap=1.0e9, **kw):

@@ -23,7 +23,6 @@ STATED = "Direct sales to Apple accounted for 29.8% of our net sales. "
 def layer(monkeypatch, http_mock):  # noqa: F811
     monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
     monkeypatch.setattr(sec_edgar, "SEC_DATA_BASE", "https://data.sec.test")
-    monkeypatch.delenv(fundamentals_layer.SOURCE_ENV, raising=False)
     fx.spine()
     fx.sec_routes(http_mock, {"789019": fx.msft_facts()})
     ten_k = fx.ten_k().replace("<p>Item 1. Business</p><p>", "<p>Item 1. Business</p><p>" + STATED * 40, 1)

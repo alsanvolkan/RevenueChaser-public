@@ -84,7 +84,7 @@ def test_the_source_search_sees_a_need_named_in_the_board_and_not_one_named_in_i
 
 def test_which_boards_read_a_need_is_answered_from_the_same_record():
     assert "module_earnings_radar" in boards.readers_of("earnings.next")
-    assert boards.readers_of("prices.bars") == ()
+    assert boards.readers_of("prices.bars") == ("module_comovement",)
     with pytest.raises(needs.UnknownNeed):
         boards.readers_of("no.such.need")
 
@@ -152,14 +152,16 @@ def test_every_planned_need_is_a_need_the_catalog_has():
 def test_the_reads_of_a_board_say_whether_it_declared_them():
     declared = boards.reads_of("module_earnings_radar")
     assert declared["declared"] is True and "macro.dgs10" in declared["needs"]
-    planned = boards.reads_of("module_comovement")
+    planned = boards.reads_of("module_fundamentals")
     assert planned["declared"] is False and "prices.bars" in planned["needs"]
     assert boards.reads_of("module_no_such_board") == {"declared": False, "needs": ()}
 
 
-def test_comovement_plans_the_corporate_actions_its_bar_reads_join():
-    """#489: ``ohlc.py`` calls ``read.changed_at`` and ``read.bar_facts``, and both query ``corporate_action``."""
-    assert "prices.actions" in boards.PLANNED_READS["module_comovement"]
+def test_comovement_declares_the_corporate_actions_its_bar_reads_join():
+    """#489: ``ohlc.py`` calls ``read.changed_at`` and ``read.bar_facts``, and both query ``corporate_action``. Since
+    #642 PR 6 the board declares its reads itself and has left the plan."""
+    assert "prices.actions" in boards.all_reads()["module_comovement"]
+    assert "module_comovement" not in boards.UNDECLARED and "module_comovement" not in boards.PLANNED_READS
 
 
 def test_relatedness_plans_the_universe_and_the_fundamentals_needs_it_reads():

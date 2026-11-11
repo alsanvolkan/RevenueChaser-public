@@ -530,8 +530,7 @@ def _compute_row(row: dict, spy_df, no_fetch: bool = False, spine: dict | None =
     if not no_fetch and (emeta or {}).get("downloaded"):
         _EDGAR_HEALTH.call(endpoint=f"{ticker}.companyfacts")     # review N5: a download that worked is a call too
     # #46: whether this row was extracted since the currency measure landed at all. An absent key is "not
-    # measured", and a stored row is never re-extracted (``sec_edgar._stored_fundamentals``), so only a
-    # re-extraction fills it.
+    # measured"; the layer measures it on every facts read (``fundamentals_layer._meta``).
     if non_usd_seen is not None and "non_usd_units" in (emeta or {}):
         non_usd_seen.append(ticker)
     if not annual:
@@ -815,6 +814,7 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     def prefilter_and_chunk(rows: list[dict]) -> screen_common.Prefiltered:
         from RevenueChaser.core import fundamentals_layer
         pf = prefilter(rows)
+        # Batched only when the file is there: without it every name reads as unavailable anyway.
         if not no_fetch and fundamentals_layer.reads_layer():
             chunks.append(_LayerChunks([str(r.get("ticker") or "").strip().upper() for r in pf.kept]))
         return pf

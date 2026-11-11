@@ -28,7 +28,6 @@ ROWS = [(EVENT, "8-K", "2026-06-01", "2026-05-29", "msft-8k2.htm", "2.01,9.01"),
 def layer(monkeypatch, http_mock):  # noqa: F811
     monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
     monkeypatch.setattr(sec_edgar, "SEC_DATA_BASE", "https://data.sec.test")
-    monkeypatch.delenv(fundamentals_layer.SOURCE_ENV, raising=False)
     # A run's own check is dated by the clock: pinned, so the stale line does not move with the day CI runs.
     monkeypatch.setattr(ops, "_today", lambda: "2026-10-28")
     fx.spine()

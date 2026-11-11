@@ -17,6 +17,7 @@ import pytest
 from RevenueChaser.core import prices, rawstore
 from RevenueChaser.core.tests.test_prices import bar_row
 from RevenueChaser.core.tests.test_prices_vector_383 import spy_bar_reads
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 
 def _ts(d: date) -> float:
@@ -49,8 +50,8 @@ def series(rawstore_tmp_db):
         bars.append(bar_row("TTT", d, close=close, fetched_at=early if i < 30 else _ts(d)))
         if i not in (40, 41):                                   # UUU misses two sessions
             bars.append(bar_row("UUU", d, close=20.0 + 0.1 * i, fetched_at=_ts(d)))
-    rawstore.write_rows("price_bars_daily", bars)
-    rawstore.write_rows("price_actions", [
+    write_d01(bars)
+    write_d01([], [
         _act("TTT", days[30], "split", 2.0),
         _act("TTT", days[10], "dividend", 1.0),
         _act("TTT", days[25], "dividend", 0.5, fetched=days[20]),      # fetched before the split: divided by it
@@ -109,9 +110,9 @@ def test_a_dividend_whose_previous_close_is_before_start_still_adjusts_the_windo
 
 def test_skipped_events_count_only_the_events_that_touch_the_window(rawstore_tmp_db):
     days = _days(6)
-    rawstore.write_rows("price_bars_daily", [bar_row("T", d, close=10.0 + i, fetched_at=_ts(d))
+    write_d01([bar_row("T", d, close=10.0 + i, fetched_at=_ts(d))
                                              for i, d in enumerate(days)])
     # ex on the first session: no previous close, skipped in a full read; it adjusts no bar from days[2] on.
-    rawstore.write_rows("price_actions", [_act("T", days[0], "dividend", 1.0)])
+    write_d01([], [_act("T", days[0], "dividend", 1.0)])
     assert prices.daily_bars(["T"], basis="adjusted").attrs["skipped_events"] == 1
     assert prices.daily_bars(["T"], basis="adjusted", start=days[2]).attrs["skipped_events"] == 0

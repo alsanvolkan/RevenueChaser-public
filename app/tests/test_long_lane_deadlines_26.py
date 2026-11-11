@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.app import jobs, runners
 from RevenueChaser.app import dashboard as _dashboard  # noqa: F401 - registrations
 from RevenueChaser.core import job_control, rawstore
@@ -67,8 +68,7 @@ def test_the_four_long_writers_are_cancellable_and_only_daily_bars_has_a_deadlin
 
 def _seed_edgar(monkeypatch, tickers=("NVDA",)):
     from RevenueChaser.module_value_chain import sync
-    rawstore.replace_all("equity_universe",
-                         [{"ticker": t, "market_cap": 1e9, "name": t} for t in tickers])
+    universe_store.replace([{"ticker": t, "market_cap": 1e9, "name": t} for t in tickers])
     rawstore.write_rows("sec_exchange_file", [
         {"ticker": t, "cik": str(1045810 + i), "name": t, "status": "present", "run_at": 1.0}
         for i, t in enumerate(tickers)])
@@ -161,7 +161,7 @@ def test_an_edgar_cancel_inside_the_pool_does_not_start_the_next_filer(sync_jobs
 def _identity_fakes(monkeypatch):
     from RevenueChaser.core.identity.tests.test_identity_refresh import Fakes
     from RevenueChaser.core.identity import refresh as identity_refresh
-    rawstore.write_rows("equity_universe", [{"ticker": "AAPL", "name": "Apple Inc.", "market_cap": 3.0e12}])
+    universe_store.put([{"ticker": "AAPL", "name": "Apple Inc.", "market_cap": 3.0e12}])
     fk = Fakes()
     monkeypatch.setattr(identity_refresh, "_default_clients", fk.clients)
     return fk

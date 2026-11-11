@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import ibkr_login
 from RevenueChaser.module_settings import inventory, report
 
@@ -24,8 +25,7 @@ NOW = datetime(2026, 9, 15, 9, 20, tzinfo=timezone.utc)
 
 
 def _seed():
-    from RevenueChaser.core import rawstore
-    rawstore.write_rows("equity_universe", [{"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"}])
+    universe_store.put([{"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"}])
 
 
 @pytest.fixture

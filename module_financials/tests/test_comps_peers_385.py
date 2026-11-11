@@ -17,7 +17,7 @@ import copy
 import pytest
 
 import RevenueChaser.module_financials.run as fm
-from RevenueChaser.core import rawstore
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import universe as spine
 from RevenueChaser.core.providers import cache as cache_manager
 from RevenueChaser.module_financials import peers as peer_ladder
@@ -29,7 +29,7 @@ from RevenueChaser.module_financials.reporting.html_builder import build_report_
 
 def _seed(rows):
     """The spine rows a peer ladder reads: ticker, market cap, sector, industry."""
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": r["ticker"], "cik": "", "name": r["ticker"], "market_cap": r["market_cap"],
         "price": 10.0, "sector": r.get("sector") or "Energy", "industry": r.get("industry", "Oil & Gas E&P"),
         "industry_group": None, "sub_industry": None, "quote": {"symbol": r["ticker"]},

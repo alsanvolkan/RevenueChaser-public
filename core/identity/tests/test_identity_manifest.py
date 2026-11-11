@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 
 TABLES = {
@@ -127,7 +128,7 @@ def old_universe(isolate_rawstore):
             **spec, "columns": [c for c in spec["columns"] if c.split()[0] != "next_earnings_date"]})
         _forget_reconciliation()
         rawstore.ensure_all_tables()
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": "AAPL", "name": "Apple Inc.", "market_cap": 3.0e12, "sector": "Technology",
              "industry": "Consumer Electronics", "industry_group": "Old Group", "sub_industry": "Old Sub",
              "price": 200.0, "quote": {"symbol": "AAPL", "x": [1, 2]}},
@@ -166,7 +167,7 @@ def test_the_first_write_adds_the_column_without_an_explicit_ensure(old_universe
 def test_a_universe_rewrite_after_the_migration_still_takes_rows_without_the_column(old_universe):
     """``_save_universe`` rebuilds rows without ``next_earnings_date``: the column is NULL until the apply copies it."""
     rawstore.ensure_all_tables()
-    rawstore.replace_all("equity_universe", [{"ticker": "AAPL", "name": "Apple Inc.", "market_cap": 3.0e12}])
+    universe_store.replace([{"ticker": "AAPL", "name": "Apple Inc.", "market_cap": 3.0e12}])
     assert rawstore.get("equity_universe", "AAPL")["next_earnings_date"] is None
 
 

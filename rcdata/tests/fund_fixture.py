@@ -48,8 +48,12 @@ def spine(rows: list[dict] | None = None, as_of: date = SPINE_AS_OF) -> None:
              "source_as_of": as_of, "fetched_at": 1.0, "run_id": "spine-run", **r}
             for r in (COMPANIES if rows is None else rows)]
     with serving.build("spine") as b:
-        n = security._create(b.con, "security", full)
-        b.swap({"security": n})
+        counts = {"security": security._create(b.con, "security", full)}
+        # The swap refuses a build that drops a table the live file holds, and the readers' fixture
+        # (``spine_fixture.write_security``) creates all four, so the build carries the other three empty.
+        for table in ("security_history", "gics_history", "index_membership"):
+            counts[table] = security._create(b.con, table, [])
+        b.swap(counts)
 
 
 def parquet_root() -> None:

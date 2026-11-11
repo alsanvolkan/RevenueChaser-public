@@ -11,6 +11,7 @@ import pytest
 from RevenueChaser.module_earnings_radar import pipeline as pl
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
 from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 
 @pytest.fixture(autouse=True)
@@ -83,7 +84,7 @@ def test_the_stored_d01_series_serves_the_reaction_window(monkeypatch):
     from RevenueChaser.core import calendar, rawstore
     from RevenueChaser.module_earnings_radar import stored_inputs
     series = _sessions(400)
-    rawstore.write_rows("price_bars_daily", [
+    write_d01([
         {"ticker": "AAPL", "session_date": date.fromisoformat(b["date"]), "open": b["close"], "high": b["close"],
          "low": b["close"], "close": b["close"], "volume": 1000.0, "source": "uw"} for b in series])
     monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 7, 21, 0, tzinfo=timezone.utc))

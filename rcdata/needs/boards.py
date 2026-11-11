@@ -32,7 +32,7 @@ NOT_A_BOARD = frozenset({"module_testing", "module_settings"})
 #: Boards whose reads are not declared yet, because they have not migrated to the API. Each entry goes away in the
 #: PR that migrates that board, which is also the PR that adds its ``READS``.
 UNDECLARED = frozenset({
-    "module_asymmetric_growth", "module_comovement", "module_financials", "module_fundamentals", "module_leaps",
+    "module_asymmetric_growth", "module_financials", "module_fundamentals", "module_leaps",
     "module_news", "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
     "module_swing_potential", "module_uw_interaction", "module_value_chain",
 })
@@ -49,8 +49,6 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
     "module_financials": ("identity.universe", "prices.bars", "prices.shares", "prices.market_cap", "prices.latest",
                           "macro.dgs10", "fundamentals.statements", "fundamentals.segments", "fundamentals.peers"),
     "module_uw_interaction": ("options.prints",),
-    "module_comovement": ("identity.universe", "identity.membership", "prices.bars", "prices.market_cap",
-                          "prices.actions"),
     # #400 WP5: the XBRL customers are named by the spine's ``security`` names (``identity.security``).
     "module_value_chain": ("identity.universe", "identity.security", "fundamentals.companies",
                            "fundamentals.filings", "fundamentals.segments", "fundamentals.customers"),

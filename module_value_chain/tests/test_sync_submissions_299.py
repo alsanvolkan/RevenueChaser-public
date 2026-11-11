@@ -4,6 +4,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import edgar_store, rawstore, sec_submissions
 from RevenueChaser.module_value_chain import edgar_text, engine, sync
 
@@ -28,7 +29,7 @@ def env(rawstore_tmp_db, monkeypatch):
     TINY used to sit below the $300M floor and stay out of the universe. The floor is gone (avo, 29 Oct 2026),
     so all three are in it now and TINY takes a document step like the rest: one more CIK, one more request.
     """
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": "NVDA", "market_cap": 2e9, "name": "N"}, {"ticker": "NVDB", "market_cap": 1e9, "name": "N"},
         {"ticker": "TINY", "market_cap": 1e6, "name": "T"}])
     rawstore.write_rows("sec_exchange_file", [

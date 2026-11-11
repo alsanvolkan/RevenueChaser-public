@@ -271,25 +271,6 @@ def test_a_period_with_only_buyback_or_sbc_is_no_record():
     assert {"share_repurchases", "share_based_compensation"} <= se._NEVER_A_RECORD
 
 
-def test_extract_version_is_stored_in_meta(rawstore_tmp_db, monkeypatch):
-    from RevenueChaser.core import rawstore
-    monkeypatch.setattr(se, "_cik_map", lambda: {"AAA": {"cik": 1, "name": "Aaa"}})
-    monkeypatch.setattr(se, "_fetch_facts", lambda cik: _facts(**{OCF: _ytd_2023()}))
-    _annual, quarterly, meta = se.get_fundamentals("AAA")
-    assert meta["extract_version"] == se.EXTRACT_VERSION
-    assert rawstore.get("edgar_financials", "AAA")["meta"]["extract_version"] == se.EXTRACT_VERSION
-    assert quarterly[-1]["derived"] == ["operating_cash_flow"]
-
-
-def test_a_cached_row_without_the_new_keys_is_served_as_it_is(rawstore_tmp_db):
-    from RevenueChaser.core import rawstore
-    rawstore.write_rows("edgar_financials", [{
-        "ticker": "OLD", "annual": [{"revenue": 1}], "quarterly": [{"period": "2023-03-31", "revenue": 1}],
-        "meta": {"available": True}}])
-    _a, q, meta = se.get_fundamentals("OLD", no_fetch=True)
-    assert q == [{"period": "2023-03-31", "revenue": 1}] and "extract_version" not in meta
-
-
 @pytest.mark.parametrize("order", list(itertools.permutations(["Revenues", REV_ALT])))
 def test_concept_order_in_the_payload_does_not_matter(order):
     rows = {"Revenues": _ytd_2023(), REV_ALT: _ytd_2023("0000-99-")}

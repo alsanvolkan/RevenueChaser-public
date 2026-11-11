@@ -1,6 +1,7 @@
 """Value Chain core — aliases, splitter, mentions, engine (no network)."""
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_value_chain import aliases, engine, mentions, splitter
 
@@ -348,7 +349,7 @@ def test_board_rows_carry_the_sector_and_the_industry_not_the_gics_levels(rawsto
     ``OLD`` is a row the identity master has not re-applied yet: it still holds the GICS spelling.
     """
     from RevenueChaser.module_value_chain import report
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": t, "name": t, "market_cap": 1e9, "sector": sec, "industry": ind, "price": 1.0,
          "quote": {}} for t, sec, ind in (
             ("MSFT", "Technology", "Software - Application"),
@@ -430,7 +431,7 @@ def test_board_rows_carry_the_filter_path_and_theme_ids(rawstore_tmp_db):
 
 # ── the security-type filter on the board (#87, Identity R4) ─────────────────
 def _seed_typed_chain():
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": t, "market_cap": 1.0e9, "name": t, "sector": "Technology",
          "industry": "Software - Application", "price": 10.0, "quote": {"symbol": t}}
         for t in ("AAA", "BBB", "FUND", "NODST")])
@@ -476,7 +477,7 @@ def test_load_payload_filters_but_deletes_nothing(rawstore_tmp_db):
 
 
 def test_board_payload_without_a_master_table_is_unchanged(tmp_path):
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": "AAA", "market_cap": 1.0e9, "name": "AAA", "price": 1.0,
          "quote": {"symbol": "AAA"}}])
     filings = [{"ticker": "AAA", "form": "10-K", "filed": "2026-02-01", "quality": "ok"}]

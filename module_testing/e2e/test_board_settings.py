@@ -9,6 +9,7 @@ never invent a value for.
 """
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 import json
 import pathlib
 import time
@@ -34,7 +35,7 @@ def seeded_settings(dashboard, monkeypatch):
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
 
     monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # the prices store (G3)
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple Inc."},
         {"ticker": "MU", "market_cap": None, "name": "Micron Technology"},
         {"ticker": "NOCAP", "market_cap": None, "name": "No Cap Co"},
@@ -155,8 +156,11 @@ def served_spine(dashboard):
     try:
         con.execute("CREATE TABLE IF NOT EXISTS security (ticker VARCHAR, name VARCHAR, cik VARCHAR, "
                     "sector VARCHAR, industry VARCHAR, tier VARCHAR)")
-        con.execute("INSERT INTO security VALUES ('AAPL', 'Apple Inc.', '0000320193', 'Technology', "
-                    "'Hardware', 'A')")
+        # ``seeded_settings`` may already have created this table with the spine's whole schema and put AAPL in
+        # it (``universe_store``). So: name the columns, and replace the row rather than add a second one.
+        con.execute("DELETE FROM security WHERE ticker = 'AAPL'")
+        con.execute("INSERT INTO security (ticker, name, cik, sector, industry, tier) "
+                    "VALUES ('AAPL', 'Apple Inc.', '0000320193', 'Technology', 'Hardware', 'A')")
     finally:
         con.close()
     return path
@@ -311,7 +315,7 @@ class TestBoardInputs:
 
         ret = cm._returns()
         tickers = list(ret.columns)
-        rawstore.replace_all("equity_universe", [{
+        universe_store.replace([{
             "ticker": t, "market_cap": 1.0e10, "sector": "Technology", "price": 10.0,
             "name": t + " Inc", "industry": cm._INDUSTRY.get(t, ""), "quote": {"symbol": t},
         } for t in tickers + [_FUND]])

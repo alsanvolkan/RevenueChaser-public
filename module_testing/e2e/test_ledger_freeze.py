@@ -21,6 +21,7 @@ import pytest
 
 from . import harness
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.module_testing.e2e.harness.screener_seed import seed_d01, seed_quote
 
 D = "2026-09-25"                                    # a Friday, in the past on any machine running this
@@ -60,10 +61,11 @@ def seeded(dashboard, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
 
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # served prices.duckdb
     rawstore.ensure_all_tables()
     quote = {"regularMarketPrice": 130.0, "fiftyTwoWeekHigh": 135.0, "fiftyDayAverage": 120.0,
              "averageDailyVolume10Day": 2_000_000}
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": "ZETA", "cik": "", "name": "Zeta Corp", "market_cap": 2.0e9, "price": 130.0,
         "sector": "Information Technology", "industry": "Software",
         "industry_group": "Software & Services", "sub_industry": "Application Software",
@@ -71,7 +73,8 @@ def seeded(dashboard, monkeypatch):
     for t in ("ZETA", "SPY"):
         seed_d01(t, _bars())                        # fetched_at = real now, bars end on D
     seed_quote("ZETA", datetime.strptime(D, "%Y-%m-%d").date(), quote, 2.0e9)
-    rawstore.write_rows("edgar_financials", [{
+    from RevenueChaser.rcdata.tests import fund_store
+    fund_store.put_edgar([{
         "ticker": "ZETA", "annual": _ANNUAL, "quarterly": [],
         "meta": {"source": "sec_edgar", "entity_name": "Zeta Corp", "is_us": True, "available": True},
         "fetched_at": time.time()}])
@@ -106,6 +109,8 @@ def _cache_mid_session(dashboard):
     fetched_at = datetime(2026, 9, 25, 15, 30, tzinfo=timezone.utc).timestamp()
     with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
         conn.execute("UPDATE price_bars_daily SET fetched_at = ?", [fetched_at])
+    from RevenueChaser.rcdata.tests import prices_store
+    prices_store.set_built_at(fetched_at)          # the served file the boards read: one build stamp (#642 PR 6)
 
 
 def test_a_post_close_fetch_freezes_the_shown_pick(dashboard, seeded):

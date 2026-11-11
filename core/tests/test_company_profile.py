@@ -1,12 +1,13 @@
 """``company_profile`` VIEW — grain + scalar-join contract."""
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import company_profile as cp
 from RevenueChaser.core import rawstore
 
 
 def _seed():
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": "AAPL", "name": "Apple", "sector": "Technology"},
         {"ticker": "MSFT", "name": "Microsoft", "sector": "Technology"},
     ])

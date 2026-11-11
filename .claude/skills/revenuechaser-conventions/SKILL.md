@@ -151,7 +151,7 @@ file disagree, trust the code, then fix this file in the same change.
   list, `load_index`). By default (PR 6) it reads the identity spine through
   `rcdata.read`: the current fund-file members of the S&P 500 / 400 / 600 and
   the Nasdaq-100, and `nasdaq` = listed on Nasdaq; there is no Dow Jones on the
-  spine. `RC_UNIVERSE_SOURCE=store` reads the old store instead.
+  spine. It reads nothing else since #642 PR 6.
 - `core/index_lists.py` writes the old store's `index_constituents` (read via the
   `index_tickers` view). Sources are all Unusual Whales: S&P 500 (screener
   `is_s_p_500`), Dow (DIA holdings), Nasdaq Composite (exchange map); sp600 from

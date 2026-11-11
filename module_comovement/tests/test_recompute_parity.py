@@ -80,7 +80,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from RevenueChaser.core import rawstore
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.module_comovement import engine
 from RevenueChaser.module_comovement import returns as returns_mod
 from RevenueChaser.module_comovement.tests import prices_bars
@@ -122,7 +122,7 @@ def _market(n: int = 400, blocks: int = 8, per: int = 20, seed: int = 93):
 def _seed(ret: pd.DataFrame) -> list[str]:
     """Store the market (a NaN return = no bar that day) and its universe."""
     tickers = [t for t in ret.columns if t != "SPY"]
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": t, "market_cap": 1.0e10, "sector": "Technology",
         "price": 10.0, "name": t,
         "industry": (_INDUSTRIES[int(t[1])] if t.startswith("B") else "Unclassified"),

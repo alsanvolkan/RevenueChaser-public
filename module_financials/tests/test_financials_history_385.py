@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import pytest
 
 import RevenueChaser.module_financials.run as fm
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.module_financials import history as fin_history
 
@@ -45,7 +46,7 @@ def store(rawstore_tmp_db):
 def results(store, tmp_path, monkeypatch, financials):
     """What a real Financials run returns for TEST: every module, peers from the spine sector, no network."""
     monkeypatch.setattr(fm, "OUTPUT_DIR", tmp_path)
-    rawstore.replace_all("equity_universe", [_energy_row("TEST", 1e9)] +
+    universe_store.replace([_energy_row("TEST", 1e9)] +
                          [_energy_row(t, cap) for t, cap in PEERS])
     monkeypatch.setattr(fm.cache_manager, "get_or_fetch", lambda t, fn, use_cache=True: dict(financials))
     qr = fm.quick_remarks_engine

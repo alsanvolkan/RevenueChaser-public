@@ -1,6 +1,6 @@
 """``core/index_registry.py`` reads the identity spine (build plan PR 6): the badges, the filter's index list and
-``load_index`` come from ``rcdata.read`` while the spine is the universe source; ``RC_UNIVERSE_SOURCE`` set to
-anything else reads the old store's ``index_constituents``, which ``core/index_lists.py`` writes."""
+``load_index`` come from ``rcdata.read`` only; the old store's ``index_constituents`` (``core/index_lists.py``) is
+never read by the registry since #642 PR 6 removed ``RC_UNIVERSE_SOURCE``."""
 from __future__ import annotations
 
 import ast
@@ -25,8 +25,7 @@ def old_lists(rawstore_tmp_db):
 
 
 @pytest.fixture
-def spine(monkeypatch, built, old_lists):
-    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
+def spine(built, old_lists):
     assert universe.universe_source() == "spine"
 
 
@@ -67,15 +66,6 @@ def test_the_weekly_step_still_reads_its_own_store():
     """The old lists keep their own reader: the first-fill gate and the cache check must not see the spine."""
     assert il.stored_index("sp500") == {"OLDCO", "MSFT"}
     assert il.stored_slugs() == {"sp500", "dow", "nasdaq"}
-
-
-def test_the_old_value_reads_the_old_store(monkeypatch, built, old_lists):
-    monkeypatch.setenv(universe.SOURCE_ENV, "store")
-    assert universe.universe_source() == "store"
-    assert ir.load_index("sp500") == {"OLDCO", "MSFT"}
-    assert ir.load_index("dow") == {"OLDCO"}
-    assert ir.load_registry()["OLDCO"]["index"] == ["S&P 500", "Dow Jones", "Nasdaq Composite"]
-    assert ir.filter_labels() == ["S&P 500", "Dow Jones", "Nasdaq Composite"]
 
 
 def test_the_registry_does_not_import_the_old_store():

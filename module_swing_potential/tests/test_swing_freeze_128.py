@@ -8,6 +8,7 @@ import pytest
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.core.tests.d01_seed import seed_d01
+from RevenueChaser.rcdata.tests import prices_store
 from RevenueChaser.module_swing_potential import config, freeze
 
 D = date(2026, 10, 2)
@@ -150,15 +151,16 @@ def test_one_halted_candidate_skips_the_whole_board_and_names_it(seeded):
 
 
 def test_a_candidate_still_cached_intraday_skips_the_whole_board_and_says_a_refetch_fixes_it(seeded):
-    """Option A refetches such bars at load time; one still partial here (the refetch failed) refuses the
-    board, and the note says a later Fetch can complete the day."""
-    _seed("CCC", cached_at=_close_plus(-265))
+    """Option A refetches such bars at load time; ones still partial here (the refetch failed) refuse the
+    board, and the note says a later Fetch can complete the day. The served file stamps every bar with its build
+    (#642 PR 6), so "partial" is a file built at 11:35 ET; SPY's anchor then comes from ``swing_ohlc``."""
+    prices_store.set_built_at(_close_plus(-265))
     out = freeze.freeze_payload(_payload([_cand("AAA", 90.0), _cand("CCC", 70.0)]), run_id="x", now=POST_CLOSE)
     assert out.frozen == 0 and rawstore.count("forecast_ledger") == 0
     (note,) = ledger.take_notes()
     assert ("need their 2026-10-02 bar (none in D01 written past the close + 30 min yet; "
-            "a later Fetch can complete the day once Daily Bars has run): CCC") in note
-    assert "1 of 2" in note and "reuses" not in note
+            "a later Fetch can complete the day once Daily Bars has run): AAA, CCC") in note
+    assert "2 of 2" in note and "reuses" not in note
 
 
 def test_a_candidate_without_its_bar_after_daily_bars_ran_is_named_as_such(seeded):
@@ -174,11 +176,10 @@ def test_a_candidate_without_its_bar_after_daily_bars_ran_is_named_as_such(seede
 
 
 def test_the_candidates_are_named_in_board_rank_order(seeded):
-    for t in ("CCC", "AAA"):
-        _seed(t, cached_at=_close_plus(-265))
+    prices_store.set_built_at(_close_plus(-265))            # the served file built intraday (#642 PR 6)
     out = freeze.freeze_payload(_payload([_cand("CCC", 90.0), _cand("BBB", 80.0), _cand("AAA", 70.0)]),
                                 run_id="x", now=POST_CLOSE)
-    assert out.frozen == 0 and "CCC, AAA" in ledger.take_notes()[0]
+    assert out.frozen == 0 and "CCC, BBB, AAA" in ledger.take_notes()[0]
 
 
 def test_a_complete_board_is_frozen_whole_after_a_refused_run(seeded):

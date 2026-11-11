@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore, universe
 from RevenueChaser.core.identity import types as id_types
 
 
 def _seed_universe(rows):
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": r["ticker"], "cik": "", "name": r.get("name") or r["ticker"],
         "market_cap": r.get("market_cap", 1.0e9), "price": 10.0,
         "sector": r.get("sector") or "Technology", "industry": r.get("industry", "x"),
@@ -35,12 +36,11 @@ def test_a_caller_can_still_ask_for_a_floor_of_its_own(rawstore_tmp_db):
     assert universe.classification_universe(mc_min=300_000_000) == ["BIG"]
 
 
-def test_filter_fields_joins_name_gics_and_index(rawstore_tmp_db):
+def test_filter_fields_joins_name_gics_and_index(rawstore_tmp_db, monkeypatch):
     _seed_universe([{"ticker": "NVDA", "name": "NVIDIA Corporation",
                      "market_cap": 1e12, "sector": "Technology", "industry": "Semiconductors"}])
-    rawstore.replace_all("index_constituents", [
-        {"slug": "sp500", "ticker": "NVDA"},
-    ])
+    from RevenueChaser.core import spine_reads           # the badges are the spine's members (#642 PR 6)
+    monkeypatch.setattr(spine_reads, "membership", lambda *a, **k: [{"index_slug": "sp500", "ticker": "NVDA"}])
     meta = universe.filter_fields(["NVDA", "MISSING"])
     assert meta["NVDA"]["name"] == "NVIDIA Corporation"
     assert meta["NVDA"]["market_cap"] == 1e12
@@ -219,7 +219,7 @@ def test_universe_counts_still_split_by_an_explicit_floor(rawstore_tmp_db):
 
 # ── R3 (#86): an unknown GICS value reads Unclassified (never the legacy "Other") ─────────────
 def test_filter_fields_reads_an_unknown_sector_as_unclassified(rawstore_tmp_db):
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": "LEG", "name": "Legacy", "market_cap": 1e9, "sector": "Other", "industry": "Other",
          "quote": {}},                                                                  # vendor fallback
         {"ticker": "MAS", "name": "Master", "market_cap": 1e9, "sector": "Unclassified",
@@ -370,7 +370,7 @@ def test_a_missing_security_master_table_leaves_the_universe_unfiltered(tmp_path
     _seed_universe([{"ticker": "AAA", "market_cap": 2e9}, {"ticker": "BBB", "market_cap": 1e9}])
     assert rawstore.query("SELECT count(*) n FROM information_schema.tables "
                           "WHERE table_name = 'security_master'")[0]["n"] == 0
-    assert universe._security_types() == {}
+    assert not any(universe._security_types().values())     # every name untyped, none typed by the master
     assert universe.classification_universe() == ["AAA", "BBB"]
     assert universe.excluded_tickers() == set()
     c = universe.universe_counts()
@@ -469,17 +469,13 @@ def test_spine_gics_for_named_tickers_filters_in_sql(rawstore_tmp_db, monkeypatc
         {"ticker": "NVDA", "sector": "Technology"},
         {"ticker": "XOM", "sector": "Energy"},
     ])
+    from RevenueChaser.rcdata import read
     seen = []
-    real = universe.rawstore.query
-
-    def spy(sql, params=None, **kw):
-        rows = real(sql, params, **kw)
-        seen.append(len(rows))
-        return rows
-    monkeypatch.setattr(universe.rawstore, "query", spy)
+    real = read.identity
+    monkeypatch.setattr(read, "identity", lambda tickers=None: seen.append(tickers) or real(tickers))
     g = universe.spine_gics(["nvda"])
     assert set(g) == {"NVDA"}
-    assert seen == [1]                                   # only the named row left the store
+    assert seen == [["NVDA"]]                            # only the named row is asked for
     assert universe.spine_gics([]) == {}
 
 
@@ -501,13 +497,13 @@ def test_load_cached_universe_returns_normalised_rows(rawstore_tmp_db):
 
 def test_load_cached_universe_parses_a_json_string_quote_and_survives_bad_json(
         rawstore_tmp_db, monkeypatch):
+    _seed_universe([{"ticker": "A"}, {"ticker": "B"}])      # the spine names; the quote is the old table's
     monkeypatch.setattr(rawstore, "query", lambda sql, *a, **k: [
         {"ticker": "A", "quote": '{"x": 1}', "sector": None},
         {"ticker": "B", "quote": "not json"}])
-    rows = universe.load_cached_universe()
-    assert rows[0]["quote"] == {"x": 1}
-    assert rows[0]["sector"] == ""
-    assert rows[1]["quote"] == {}
+    rows = {r["ticker"]: r for r in universe.load_cached_universe()}
+    assert rows["A"]["quote"] == {"x": 1}
+    assert rows["B"]["quote"] == {}
 
 
 def test_load_cached_universe_is_empty_without_rows(rawstore_tmp_db):

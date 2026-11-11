@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import time
 
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_asymmetric_growth import engine
 
@@ -36,7 +37,7 @@ def _no_edgar_network(monkeypatch) -> None:
 
 
 def test_a_failed_refetch_keeps_the_expired_row_and_hands_the_scorer_stale_info(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     _stale_full_row()
     _no_edgar_network(monkeypatch)
     before_row = rawstore.get("ticker_payload_cache", "AAA")
@@ -57,7 +58,7 @@ def test_a_failed_refetch_keeps_the_expired_row_and_hands_the_scorer_stale_info(
 
 
 def test_a_stub_refetch_keeps_the_expired_row(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     _stale_full_row()
     _no_edgar_network(monkeypatch)
     before = rawstore.get("ticker_payload_cache", "AAA")["payload"]
@@ -70,7 +71,7 @@ def test_a_stub_refetch_keeps_the_expired_row(rawstore_tmp_db, monkeypatch):
 
 
 def test_a_good_refetch_is_saved(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     _stale_full_row()
     _no_edgar_network(monkeypatch)
     monkeypatch.setattr(engine.yfinance_client, "get_info",
@@ -102,7 +103,7 @@ def test_an_unexpected_refetch_error_still_reaches_the_score_errors(rawstore_tmp
     run's score_errors (#202) and the 1% freeze guard still see it."""
     import pytest
 
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     _stale_full_row()
     _no_edgar_network(monkeypatch)
 

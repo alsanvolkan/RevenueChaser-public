@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_value_chain import config, edgar_text, engine, sync
 
@@ -209,7 +210,7 @@ def test_the_pending_tile_after_a_fetch_matches_the_refresh(fetch_env, monkeypat
 @pytest.fixture
 def sync_env(rawstore_tmp_db, monkeypatch):
     env = {"subs": _subs(), "calls": 0}
-    rawstore.replace_all("equity_universe", [{"ticker": t, "market_cap": 1e9, "name": t}
+    universe_store.replace([{"ticker": t, "market_cap": 1e9, "name": t}
                                              for t in ("NVDA", "NOCIK")])
     _seed_tickers((("NVDA", "1045810"),))
 

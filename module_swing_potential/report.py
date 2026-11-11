@@ -263,7 +263,7 @@ def _render(payload: dict, inline: bool) -> tuple[str, dict | None]:
     universe_prov = universe_provenance_html(
         payload.get("universe_generated_at"), payload.get("universe_refreshed_by"),
         partial=bool(payload.get("universe_partial")))
-    names_from = "identity spine" if _universe.universe_source() == _universe.SPINE else "old universe store"
+    names_from = "identity spine"
 
     # The rows the shared filter bar reads (#383 C1c): a copy of each candidate plus the store's
     # ``gics`` + ``theme_ids``. A store read only, so a Refresh stays network-free; the stored payload is never mutated.

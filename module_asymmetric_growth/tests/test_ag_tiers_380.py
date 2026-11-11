@@ -17,6 +17,8 @@ import json
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.app import runners
 from RevenueChaser.core import ledger, rawstore, ticker_store
 from RevenueChaser.core import reporting_common as rc
@@ -119,7 +121,7 @@ def test_the_history_mirror_has_the_new_columns():
 def test_the_hunter_stamps_the_model_version(rawstore_tmp_db, monkeypatch):
     from RevenueChaser.module_asymmetric_growth.tests.test_ag_info_only_150 import _QUOTE, _edgar
     from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import seed_momentum
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     seed_momentum(["AAA"])                                    # the momentum signal comes from D01 (#380 S4)
     monkeypatch.setattr(engine, "fetch_universe_stats",
                         lambda *a, **k: ([{"ticker": "AAA", "quote": dict(_QUOTE), "market_cap": 5e9}], {}))
@@ -192,7 +194,7 @@ def out(tmp_path, monkeypatch, rawstore_tmp_db):
     monkeypatch.setattr(runners, "ASYMMETRIC_GROWTH_LATEST", folder / "asymmetric_growth_latest.html")
     monkeypatch.setattr(freeze, "freeze_result", lambda *a, **k: None)
     monkeypatch.setattr(runners, "_freeze_run_id", lambda: "fetch-1")
-    rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
+    universe_store.replace([{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
     return folder
 
 

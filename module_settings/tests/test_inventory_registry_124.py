@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import datasets, rawstore
 from RevenueChaser.core.datahealth import Health
 from RevenueChaser.module_settings import inventory, report
@@ -491,7 +492,7 @@ def test_the_payload_carries_the_identity_coverage_over_the_classification_unive
     population when a filter changes.
     """
     from RevenueChaser.core import universe
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"},
         {"ticker": "TINY", "market_cap": 1.0e6, "name": "A Tiny Company"},
     ])

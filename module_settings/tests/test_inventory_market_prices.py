@@ -14,6 +14,7 @@ from datetime import date, datetime, timezone
 
 import duckdb
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore, universe
 from RevenueChaser.module_settings import inventory
 from RevenueChaser.rcdata import serving
@@ -35,6 +36,13 @@ def _market_prices(bars: list[tuple[str, date, str]], built_at=datetime(2026, 10
                     "source VARCHAR)")
         con.execute("CREATE TABLE serving_schema_version (version INTEGER, built_at TIMESTAMP)")
         con.execute("INSERT INTO serving_schema_version VALUES (1, ?)", [built_at])
+        # Since #642 PR 6 the spine universe reads cap and price from here (``rcdata.read.latest_market``), so the
+        # stub carries the two tables that query joins; without them the read raises and the row never builds.
+        con.execute("CREATE TABLE security_symbol (security_id VARCHAR, symbol VARCHAR, valid_to DATE)")
+        con.execute("CREATE TABLE market_cap_daily (security_id VARCHAR, session_date DATE, market_cap DOUBLE, "
+                    "issuer_market_cap DOUBLE)")
+        for ticker in dict.fromkeys(t for t, _d, _s in bars):
+            con.execute("INSERT INTO security_symbol VALUES (?, ?, NULL)", [f"sym:{ticker}", ticker])
         for ticker, day, source in bars:
             con.execute("INSERT INTO price_bar_daily VALUES (?, ?, 1.0, ?)", [f"sym:{ticker}", day, source])
             con.execute("INSERT INTO price_bars_daily VALUES (?, ?, 1.0, ?)", [ticker, day, source])
@@ -48,7 +56,7 @@ def _price_row(payload: dict) -> dict:
 
 
 def _seed_universe() -> None:
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple"},
         {"ticker": "MU", "market_cap": 1.0e11, "name": "Micron Technology"},
     ])

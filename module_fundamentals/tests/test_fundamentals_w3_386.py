@@ -69,17 +69,6 @@ def test_a_swallowed_edgar_download_failure_is_edgar_fetch_failed(monkeypatch):
     assert row is None and drops == ["edgar_fetch_failed"]
 
 
-def test_get_fundamentals_marks_a_failed_download(monkeypatch, rawstore_tmp_db):
-    from RevenueChaser.core.providers import sec_edgar
-    monkeypatch.setattr(sec_edgar, "_cik_map", lambda: {"ZZZ": {"cik": "1", "name": "Z"}})
-
-    def boom(_cik):
-        raise RuntimeError("503")
-    monkeypatch.setattr(sec_edgar, "_fetch_facts", boom)
-    annual, quarterly, meta = sec_edgar.get_fundamentals("ZZZ")
-    assert annual == [] and meta.get("fetch_failed") is True and meta["available"] is False
-
-
 def test_a_filer_whose_newest_record_is_500_days_old_is_stale(monkeypatch):
     monkeypatch.setattr(pipeline, "_today", lambda: AS_OF)
     end = (AS_OF - timedelta(days=500)).isoformat()

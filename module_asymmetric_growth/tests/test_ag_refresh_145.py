@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore, universe_fetch
 from RevenueChaser.module_asymmetric_growth import engine
 
@@ -22,7 +23,7 @@ def screener(monkeypatch):
 
 
 def _store(*tickers):
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": t, "market_cap": 1e9, "price": 10.0, "name": t, "sector": "Technology"} for t in tickers])
     rawstore.replace_all("equity_universe_provenance", [
         {"key": engine._UNIVERSE_META_KEY, "generated_at": "2026-10-01T00:00:00+00:00", "refreshed_by": "Swing Potential"}])

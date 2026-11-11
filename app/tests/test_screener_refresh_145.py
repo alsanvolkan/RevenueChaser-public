@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.app import dashboard, jobs, runners
 from RevenueChaser.app.jobs import JobMessage
-from RevenueChaser.core import rawstore
 from RevenueChaser.core.scan_quality import no_data_payload
 from RevenueChaser.module_fundamentals import config as fcfg
 from RevenueChaser.module_fundamentals import pipeline as fp
@@ -208,7 +208,7 @@ def test_a_running_universe_job_shows_loading_and_caches_nothing(client, out, mo
 
 
 def test_loading_is_not_shown_once_the_universe_is_stored(client, out, monkeypatch):
-    rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
+    universe_store.replace([{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
     monkeypatch.setattr(jobs, "has_active", lambda modules: True)
     monkeypatch.setattr(sp, "prefilter", lambda r: sp.screen_common.Prefiltered(list(r)))
     body = client.get("/view/module_swing_potential?refresh=1").get_data(as_text=True)

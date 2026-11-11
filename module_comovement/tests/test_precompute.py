@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import board_settings as bs
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_comovement import cluster as cluster_mod
@@ -169,7 +170,7 @@ def _four_group_returns(n=300, seed=17):
 def _seed_universe_industry(industry_by_ticker: dict):
     """Like ``test_comovement._seed_universe`` but each ticker keeps its own
     industry (UW's text, #266), so a cluster's label depends on which group it lands in."""
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": t, "market_cap": 1.0e10, "sector": "Technology",
         "price": 10.0, "name": t, "industry": industry, "quote": {"symbol": t},
     } for t, industry in industry_by_ticker.items()])

@@ -50,3 +50,11 @@ def test_the_client_data_holds_only_the_backfill_estimate_inputs():
     client = report._nd_client(newdata_fixture())
     assert client["datasets"]["market_series"] == {"missing": ["2026-10-20"], "calls_per_partition": 1}
     assert client["confirm_over"] == 1000
+
+
+def test_the_identity_card_says_the_boards_read_the_spine_and_why_it_gives_no_names():
+    """#642 PR 6: the spine is the only universe; a reason (no file, a failed build) is shown, never an old store."""
+    ok = report._nd_identity({"universe_source": {"requested": "spine", "effective": "spine", "reason": None}})
+    assert "Boards read" in ok and "the spine" in ok and "no names yet" not in ok and "old store" not in ok
+    bad = report._nd_identity({"universe_source": {"reason": "no spine.duckdb yet"}})
+    assert 'class="nd-warn">the spine, no names yet: no spine.duckdb yet' in bad

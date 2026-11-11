@@ -6,6 +6,7 @@ added at render time so a Refresh stays network-free.
 """
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 import json
 import re
 
@@ -43,8 +44,7 @@ def test_the_board_renders_the_shared_filter_bar(rawstore_tmp_db):
 
 
 def test_the_embedded_rows_equal_the_candidates_and_carry_filter_fields(rawstore_tmp_db):
-    from RevenueChaser.core import rawstore
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAA", "name": "AAA Inc", "sector": "Technology", "industry": "Software - Application"}])
     candidates = [_candidate("AAA"), _candidate("BBB", sector="", industry="")]
     html = _render(candidates)
@@ -74,7 +74,7 @@ def _seed_one_theme():
         {"theme_id": _THEME, "level": "coarse", "parent_id": "", "label": "Memory", "size": 1}])
     rawstore.write_rows("relatedness_theme_members", [
         {"ticker": "AAA", "theme_id": _THEME, "weight": 1.0}])
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAA", "name": "AAA Inc", "sector": "Technology", "industry": "Software - Application"},
         {"ticker": "BBB", "name": "BBB Inc", "sector": "Healthcare", "industry": "Biotechnology"},
         {"ticker": "CCC", "name": "CCC Inc", "sector": "Technology", "industry": "Software - Application"}])

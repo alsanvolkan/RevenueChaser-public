@@ -43,8 +43,8 @@ def _connect() -> duckdb.DuckDBPyConnection:
     if serving.VERSION_TABLE not in have:
         con.execute(f"CREATE TABLE {serving.VERSION_TABLE} (kind TEXT, version INTEGER, built_at DOUBLE, "
                     "build_id TEXT)")
-        con.execute(f"INSERT INTO {serving.VERSION_TABLE} VALUES ('prices', ?, ?, 'test')",
-                    [serving.SERVING_SCHEMA_VERSION["prices"], time.time()])
+        con.execute(f"INSERT INTO {serving.VERSION_TABLE} VALUES ('prices', ?, 0, 'test')",   # _derive stamps it
+                    [serving.SERVING_SCHEMA_VERSION["prices"]])
     for table in TABLES:
         if table not in have:
             cols = ", ".join(f'"{c}" {t}' for c, t in prices_serving.SCHEMAS[table])
@@ -52,11 +52,13 @@ def _connect() -> duckdb.DuckDBPyConnection:
     return con
 
 
-def put_bars(rows: list[dict], *, replace: bool = True, overwrite: bool = False) -> int:
+def put_bars(rows: list[dict], *, replace: bool = True, overwrite: bool = False,
+             built_at: float | None = None) -> int:
     """``rows`` (``ticker``, ``session_date`` or ``ts``, ``close``, optional ``open``/``high``/``low``/``volume``,
     ``fetched_at``, ``source``, ``security_id``, ``symbol``) as served bars. With ``replace`` each ticker's stored
     bars go first (a re-fetched series); with ``overwrite`` only the stored bars of the rows' own sessions do (an
-    upsert, as the old D01 seed did). Otherwise the first row of a (security, session) wins."""
+    upsert, as the old D01 seed did). Otherwise the first row of a (security, session) wins. ``built_at`` stamps the
+    file's build (the ``fetched_at`` every ``price_bars_daily`` view row carries), now when None."""
     if not rows:
         return 0
     con = _connect()
@@ -86,7 +88,7 @@ def put_bars(rows: list[dict], *, replace: bool = True, overwrite: bool = False)
             con.register("_new_bars", pd.DataFrame(out, columns=cols).astype({"cik": "object"}))
             con.execute("INSERT INTO price_bar_daily SELECT * FROM _new_bars")
             con.unregister("_new_bars")
-        _derive(con)
+        _derive(con, built_at)
         return len(out)
     finally:
         con.close()
@@ -114,9 +116,10 @@ def put_action(ticker: str, ex_date, action: str, value: float, *, fetched_at: f
         con.close()
 
 
-def _derive(con: duckdb.DuckDBPyConnection) -> None:
+def _derive(con: duckdb.DuckDBPyConnection, built_at: float | None = None) -> None:
     """``adj_factor`` and ``security_symbol`` again from the bars and actions the file now holds (a dividend takes
-    the close of the last bar before its ex-date, the builder's ``close_before``, which the served table does not keep)."""
+    the close of the last bar before its ex-date, the builder's ``close_before``, which the served table does not keep),
+    then the builder's views (``price_bars_daily``, ``price_actions``: what ``core/prices`` reads)."""
     con.execute("CREATE OR REPLACE TEMP TABLE stg_spine (ticker TEXT, cik TEXT, tier TEXT, security_id TEXT)")
     con.execute("CREATE OR REPLACE TEMP TABLE _hist_all AS SELECT * FROM price_bar_daily WHERE false")
     con.execute("""CREATE OR REPLACE TEMP TABLE _act_final AS
@@ -126,20 +129,30 @@ def _derive(con: duckdb.DuckDBPyConnection) -> None:
         names = ", ".join(f'"{c}"' for c, _ in prices_serving.SCHEMAS[table])
         con.execute(f"DELETE FROM {table}")
         con.execute(f"INSERT INTO {table} ({names}) SELECT {names} FROM ({sql})")
-    con.execute(f"UPDATE {serving.VERSION_TABLE} SET built_at = ?", [time.time()])
+    if built_at is None:
+        con.execute(f"UPDATE {serving.VERSION_TABLE} SET built_at = ?", [time.time()])
+    else:   # a build after every stamped write: the newest stamp wins (a seed of an older bar keeps the file's)
+        con.execute(f"UPDATE {serving.VERSION_TABLE} SET built_at = greatest(coalesce(built_at, 0), ?)", [built_at])
+    prices_serving.PricesServing._views(con)
     con.execute("CHECKPOINT")
 
 
-def delete_bars(ticker: str, since=None) -> None:
-    """Drop ``ticker``'s bars (from session ``since`` on, every one when None)."""
+def delete_bars(ticker: str | None, since=None, *, session=None) -> None:
+    """Drop ``ticker``'s bars (every ticker's when None): from session ``since`` on, only ``session``'s, or all."""
     con = _connect()
     try:
-        sql, params = "DELETE FROM price_bar_daily WHERE security_id = ?", [f"sym:{ticker.strip().upper()}"]
+        sql, params = "DELETE FROM price_bar_daily WHERE true", []
+        if ticker is not None:
+            sql += " AND security_id = ?"
+            params.append(f"sym:{ticker.strip().upper()}")
         if since is not None:
             sql += " AND session_date >= ?"
             params.append(_day(since))
+        if session is not None:
+            sql += " AND session_date = ?"
+            params.append(_day(session))
         con.execute(sql, params)
-        _derive(con)
+        _derive(con, built_at=0)        # a drop is no build: the file keeps its stamp
     finally:
         con.close()
 
@@ -152,6 +165,38 @@ def clear() -> None:
         _derive(con)
     finally:
         con.close()
+
+
+def stamp() -> float:
+    """The file's build time (``built_at``)."""
+    con = _connect()
+    try:
+        return con.execute(f"SELECT built_at FROM {serving.VERSION_TABLE}").fetchone()[0]
+    finally:
+        con.close()
+
+
+def set_built_at(built_at: float) -> None:
+    """Stamp the file's build time, as given: the ``fetched_at`` of every ``price_bars_daily`` row, as the builder's
+    views give (a test that stages a build before the close + 30 min sets it back)."""
+    con = _connect()
+    try:
+        con.execute(f"UPDATE {serving.VERSION_TABLE} SET built_at = ?", [built_at])
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
+
+
+def put_store_rows(bars=(), actions=(), *, built_at: float | None = None) -> None:
+    """Rows shaped as the old ``.store`` ``price_bars_daily`` / ``price_actions`` (``ticker``, ``ex_date``,
+    ``action``, ``value``) as served rows; the first bar of a (ticker, session) wins, as the store's append did."""
+    put_bars(list(bars), replace=False, built_at=built_at)
+    if actions:
+        before = stamp()
+        for a in actions:
+            put_action(a["ticker"], a["ex_date"], a["action"], a["value"], fetched_at=a.get("fetched_at"))
+        if built_at is not None:
+            set_built_at(max(before, built_at))     # bars-free puts never stamped the file
 
 
 def put_series(rows: list[dict]) -> None:

@@ -350,7 +350,7 @@ AREAS = [
      "Latest per source; Yahoo refetched after 90 days.", "core/identity/refresh.py:56"),
    ],
    planned="Same table; order changes in #272 (own gated PR)."),
-  dict(id="D24", name="Index membership", readers="badges and index filters on RC_UNIVERSE_SOURCE=store",
+  dict(id="D24", name="Index membership", readers="the identity refresh SPDR check only (no board since #642 PR 6)",
    flows=[
     ("UW index lists (sp500, dow, nasdaq; 3 requests)", "core/index_lists.py:104, :111, :119",
      "refresh_lists (job index_lists, task RC-Index-Lists Saturday 10:00)", "core/index_lists.py:195, :240",

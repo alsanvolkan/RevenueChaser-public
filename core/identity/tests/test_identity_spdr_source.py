@@ -38,4 +38,4 @@ def test_no_stored_list_is_not_checked_not_clean(rawstore_tmp_db):
 
 def test_the_module_docstring_names_the_source():
     assert "index_lists.stored_index" in R.__doc__
-    assert universe  # imported for the reader of this file: the check is independent of RC_UNIVERSE_SOURCE
+    assert universe  # imported for the reader of this file: the check does not read the boards' universe

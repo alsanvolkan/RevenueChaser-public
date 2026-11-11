@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import board_settings as bs
 from RevenueChaser.core import funnel as funnel_mod
 from RevenueChaser.core import rawstore
@@ -54,7 +55,7 @@ def test_board_configs_have_no_floor_of_their_own():
 def test_comovement_universe_is_the_classification_universe_at_the_floor(rawstore_tmp_db):
     caps = {"BIG1": 5e10, "BIG2": 1e9, "EDGE": universe_mod.DEFAULT_MC_MIN,
             "LOW": universe_mod.DEFAULT_MC_MIN - 1, "NOCAP": None}
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": t, "market_cap": c, "sector": "x", "price": 1.0, "name": t,
          "quote": {"symbol": t}} for t, c in caps.items()])
     got = ohlc.universe_tickers()

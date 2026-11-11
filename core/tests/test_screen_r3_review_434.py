@@ -28,6 +28,7 @@ from RevenueChaser.module_fundamentals import freeze as fund_freeze
 from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_swing_potential import freeze as swing_freeze
 from RevenueChaser.module_swing_potential import pipeline as sp
+from RevenueChaser.core.tests.d01_seed import drop_d01, write_d01
 
 D = date(2026, 10, 14)
 PREV = date(2026, 10, 13)
@@ -50,16 +51,14 @@ def _sessions(end: date, n: int) -> list[date]:
 
 
 def _seed(ticker: str, days: list[date], actions=()):
-    rawstore.write_rows("price_bars_daily", [{
+    write_d01([{
         "ticker": ticker, "session_date": d, "open": c, "high": c * 1.01, "low": c * 0.99, "close": c,
         "adj_close": None, "volume": 1.0e6, "split_ratio": None, "adj_source": None, "source": "uw",
         "fetched_at": _evening(d), "run_id": "seed", "run_at": _evening(d)}
-        for i, d in enumerate(days) for c in [(100.0 if i < len(days) // 2 else 50.0) + 0.01 * i]])
-    if actions:
-        rawstore.write_rows("price_actions", [
-            {"ticker": ticker, "ex_date": ex, "action": kind, "value": v, "session_date": ex,
-             "source": "yfinance", "fetched_at": _evening(ex), "run_id": "seed", "run_at": _evening(ex)}
-            for ex, kind, v in actions])
+        for i, d in enumerate(days) for c in [(100.0 if i < len(days) // 2 else 50.0) + 0.01 * i]], [
+        {"ticker": ticker, "ex_date": ex, "action": kind, "value": v, "session_date": ex,
+         "source": "yfinance", "fetched_at": _evening(ex), "run_id": "seed", "run_at": _evening(ex)}
+        for ex, kind, v in actions])
 
 
 def _halt_up1(monkeypatch=None):
@@ -67,8 +66,7 @@ def _halt_up1(monkeypatch=None):
     only nine scored names, so one gap is 11% of them: the drop share is raised to let it drop (``monkeypatch``)."""
     if monkeypatch is not None:
         monkeypatch.setattr(screen_common, "STALE_DROP_MAX_SHARE", 0.2)
-    with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM price_bars_daily WHERE ticker = 'UP1'")
+    drop_d01("UP1")
     kind, drift = scn.BARS["UP1"]
     scn.seed_d01("UP1", scn._bars(kind, drift, scn.LONG_BARS, end=PREV), fetched_at=_evening(PREV))
 
@@ -99,8 +97,7 @@ def test_before_daily_bars_has_run_no_name_drops_as_stale(rawstore_tmp_db, monke
     scn.seed()
     scn.patch(monkeypatch)
     _halt_up1(monkeypatch)
-    with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM price_bars_daily WHERE session_date = DATE '2026-10-14'")
+    drop_d01(session=date(2026, 10, 14))
     payload = sp.run_scan()
     assert "stale_bars" not in {s["key"] for s in payload["funnel_steps"]}
     assert "stale_bars" not in payload["data_quality"]["dropped"]

@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 from datetime import date
 
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.providers import cache as cache_manager
 from RevenueChaser.module_asymmetric_growth.tests.test_ag_info_only_150 import _edgar
@@ -31,7 +32,7 @@ def _owned():
 
 
 def test_a_fetch_stores_ownership_for_every_fetched_name(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("EDG")])
+    fund_store.put_edgar([_edgar("EDG")])
     _OwnedYahoo(monkeypatch)
     _run(monkeypatch, ["EDG", "NOE"])
     rows = _owned()
@@ -42,7 +43,7 @@ def test_a_fetch_stores_ownership_for_every_fetched_name(rawstore_tmp_db, monkey
 
 
 def test_a_refresh_stores_no_ownership(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("EDG")])
+    fund_store.put_edgar([_edgar("EDG")])
     yahoo = _OwnedYahoo(monkeypatch)
     _run(monkeypatch, ["EDG"], no_fetch=True)
     assert yahoo.info_calls == [] and _owned() == []

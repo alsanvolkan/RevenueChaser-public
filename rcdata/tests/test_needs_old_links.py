@@ -33,7 +33,7 @@ from RevenueChaser.rcdata.needs import boards
 
 #: ``boards.UNDECLARED`` on 11 Nov 2026. Remove a board here when it migrates; never add one.
 UNDECLARED_CEILING = frozenset({
-    "module_asymmetric_growth", "module_comovement", "module_financials", "module_fundamentals", "module_leaps",
+    "module_asymmetric_growth", "module_financials", "module_fundamentals", "module_leaps",
     "module_news", "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
     "module_swing_potential", "module_uw_interaction", "module_value_chain",
 })
@@ -44,7 +44,6 @@ OLD_TABLES = {
     "module_asymmetric_growth": {"ag_scores_history"},
     "module_earnings_radar": {"earnings_calendar", "earnings_history", "watchlist"},
     "module_financials": {"macro_series", "result_runs", "ticker_payload_cache"},
-    "module_fundamentals": {"sec_submissions", "security_master"},
     "module_leaps": {"leaps_footprint_history"},
     "module_relatedness": {"chain_filings", "chain_mentions", "run_registry"},
     "module_sec_13f": {"price_actions", "price_bars_daily", "sec13f_enrichment", "sec13f_security_meta"},
@@ -86,10 +85,10 @@ SHARED_TABLES = {
     "core/index_lists.py": {"index_constituents", "index_constituents_changes"},
     "core/ledger.py": {"swing_ohlc"},
     "core/outcomes.py": {"price_bars_daily"},
-    "core/prices.py": {"equity_universe", "price_actions", "price_bars_daily", "price_checks"},
+    "core/prices.py": {"price_actions", "price_bars_daily", "price_checks"},
     "core/provenance.py": {"chain_filings", "sec13f_totals", "ticker_payload_cache"},
     "core/providers/cache.py": {"ticker_payload_cache"},
-    "core/providers/sec_edgar.py": {"edgar_financials", "sec_company_tickers"},
+    "core/providers/sec_edgar.py": {"sec_company_tickers"},
     "core/quotes.py": {"equity_universe", "source_checks"},
     "core/ticker_store.py": {"store_meta"},
     "core/universe.py": {"equity_universe", "equity_universe_provenance", "security_master"},

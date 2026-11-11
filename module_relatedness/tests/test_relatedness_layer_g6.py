@@ -28,7 +28,6 @@ BUSINESS = "We build cloud software and developer tools for enterprises. " * 40
 def layer(monkeypatch, http_mock):  # noqa: F811
     monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
     monkeypatch.setattr(sec_edgar, "SEC_DATA_BASE", "https://data.sec.test")
-    monkeypatch.delenv(fundamentals_layer.SOURCE_ENV, raising=False)
     fx.spine()
     fx.sec_routes(http_mock, {"789019": fx.msft_facts()})
     ten_k = fx.ten_k().replace("We develop software and cloud services. Our customers include enterprises. ", "")

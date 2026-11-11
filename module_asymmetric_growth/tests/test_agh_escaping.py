@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core.tests.board_js import run_board_js, with_payload
 from RevenueChaser.module_asymmetric_growth.report import board_payload, render_asymmetric_growth_hunter_html
 
@@ -68,13 +69,12 @@ def test_a_comment_opener_in_a_name_keeps_the_script_intact(tmp_path):
 
 def test_the_board_filters_on_sector_then_industry(tmp_path, rawstore_tmp_db):
     """#266, #383 C1c: the shared filter kit narrows the grid by sector, then by the two-level path."""
-    from RevenueChaser.core import rawstore
     r = _result()
     base = r["cards"][0]
     r["cards"] = [dict(copy.deepcopy(base), ticker=t, sector=s, industry=i) for t, s, i in (
         ("AAA", "Healthcare", "Biotechnology"), ("BBB", "Healthcare", "Medical Devices"),
         ("CCC", "Technology", "Software - Application"))]
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAA", "sector": "Healthcare", "industry": "Biotechnology"},
         {"ticker": "BBB", "sector": "Healthcare", "industry": "Medical Devices"},
         {"ticker": "CCC", "sector": "Technology", "industry": "Software - Application"}])

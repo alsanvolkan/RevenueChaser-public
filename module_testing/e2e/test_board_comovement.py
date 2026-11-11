@@ -12,6 +12,7 @@ the contract in docs/data_retrieval.md:
 """
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 import time
 from dataclasses import dataclass
 
@@ -73,11 +74,10 @@ def seeded_comovement(dashboard, monkeypatch):
 
 
 def _seed() -> None:
-    import RevenueChaser.core.rawstore as rawstore
     ret = _returns()
     tickers = list(ret.columns)
 
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": t, "market_cap": 1.0e10, "sector": "Financial Services" if t[0] == "B" else "Technology",
         "price": 10.0, "name": t + " Inc", "industry": _INDUSTRY[t], "quote": {"symbol": t},
     } for t in tickers])
@@ -286,7 +286,7 @@ def _seed_with_late_listers(dashboard, monkeypatch):
         ret[t] = col
     industry = dict(_INDUSTRY, C1="Biotechnology", C2="Biotechnology", C3="Biotechnology",
                     C4="Biotechnology")
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": t, "market_cap": 1.0e10, "sector": "Healthcare", "price": 10.0,
         "name": t + " Inc", "industry": industry[t], "quote": {"symbol": t},
     } for t in ret.columns])

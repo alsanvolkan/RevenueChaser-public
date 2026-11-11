@@ -7,6 +7,7 @@ import time
 
 import pytest
 
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.providers import cache as cache_manager
 from RevenueChaser.module_asymmetric_growth import engine
@@ -53,11 +54,11 @@ def _edgar(ticker, annual=_ANNUAL, is_us=True):
 # ── the provider call ───────────────────────────────────────────────────────
 
 def test_a_name_with_edgar_annual_costs_one_info_call(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     yahoo = _Yahoo(monkeypatch)
     fin = engine._cached_financials("AAA")
     assert (yahoo.info_calls, yahoo.full_calls) == (["AAA"], [])
-    assert fin["source"] == "sec_edgar" and fin["annual"][-1]["fiscal_year"] == 2023
+    assert fin["source"] == "sec_edgar" and fin["annual"][-1]["fiscal_year"] == "2023"
 
 
 def test_a_name_without_edgar_annual_keeps_the_full_call(rawstore_tmp_db, monkeypatch):
@@ -68,7 +69,7 @@ def test_a_name_without_edgar_annual_keeps_the_full_call(rawstore_tmp_db, monkey
 
 
 def test_the_info_only_payload_is_stored_and_reused(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     yahoo = _Yahoo(monkeypatch)
     engine._cached_financials("AAA")
     engine._cached_financials("AAA")
@@ -77,7 +78,7 @@ def test_the_info_only_payload_is_stored_and_reused(rawstore_tmp_db, monkeypatch
 
 
 def test_a_fresh_full_payload_is_used_and_not_overwritten(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     cache_manager.save("AAA", {"info": {"country": "United States"}, "annual": copy.deepcopy(_YF_ANNUAL)})
     yahoo = _Yahoo(monkeypatch)
     engine._cached_financials("AAA")
@@ -87,7 +88,7 @@ def test_a_fresh_full_payload_is_used_and_not_overwritten(rawstore_tmp_db, monke
 
 
 def test_an_expired_full_payload_keeps_its_years_when_an_info_call_replaces_it(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     old = time.time() - 10 * 86400
     rawstore.write_rows("ticker_payload_cache", [{
         "ticker": "AAA", "payload": {"info": {}, "annual": copy.deepcopy(_YF_ANNUAL), "_fetched_at": old},
@@ -108,7 +109,7 @@ def test_an_info_only_row_does_not_serve_a_name_that_lost_its_edgar_annual(rawst
 
 
 def test_the_financials_board_never_sees_the_info_only_row(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     _Yahoo(monkeypatch)
     engine._cached_financials("AAA")
     full = {"info": {}, "annual": [{"fiscal_year": "2023", "revenue": 1.0}]}
@@ -121,7 +122,7 @@ def _seed(n: int, themed: bool = True):
     tickers = [f"T{i:03d}" for i in range(n)]
     seed_momentum(tickers)                     # the momentum signal comes from D01 (#380 S4)
 
-    rawstore.write_rows("edgar_financials", [_edgar(t, is_us=(i % 7 != 3)) for i, t in enumerate(tickers)])
+    fund_store.put_edgar([_edgar(t, is_us=(i % 7 != 3)) for i, t in enumerate(tickers)])
     for i, t in enumerate(tickers):
         if i % 4 == 0:  # a quarter of them has a fresh full yfinance payload
             cache_manager.save(t, {"info": {"country": "United States", "exchange": "NMS", "longName": t,
@@ -207,7 +208,7 @@ def _fetch(ticker="AAA", no_fetch=False):
 
 
 def test_a_stale_full_row_costs_one_info_call_a_day_through_the_bulk_path(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     _stale_full_row()
     yahoo = _Yahoo(monkeypatch)
     assert _fetch()["info"]["longName"] == "AAA Inc"
@@ -217,7 +218,7 @@ def test_a_stale_full_row_costs_one_info_call_a_day_through_the_bulk_path(rawsto
 
 
 def test_the_refresh_shows_the_info_the_fetch_saw_and_financials_keeps_its_years(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     _stale_full_row()
     _Yahoo(monkeypatch)
     _fetch()

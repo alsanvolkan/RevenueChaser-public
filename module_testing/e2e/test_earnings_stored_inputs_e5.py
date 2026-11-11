@@ -35,6 +35,7 @@ def _item(symbol, session):
 def seeded(dashboard, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # served prices.duckdb
     rawstore.ensure_all_tables()
     rawstore.write_rows("earnings_calendar", [
         {"session_date": SWEPT, "earnings_date": DAY, "ticker": t, "report_session": s, "item": _item(t, s),

@@ -15,6 +15,7 @@ import os
 import pytest
 
 from RevenueChaser.core import job_lock, rawstore, universe_fetch as uf
+from RevenueChaser.rcdata.tests import spine_fixture
 
 SECTOR = "Technology"
 
@@ -30,6 +31,10 @@ def _store(*tickers, cap=1e9, quoted=True):
     """Stored rows; ``quoted`` rows carry a Yahoo quote (what a screener pull leaves), the others are SEC-only."""
     uf._save_universe([{"ticker": t, "market_cap": cap, "price": 10.0, "name": f"{t} old", "sector": SECTOR,
                         "quote": {"symbol": t} if quoted else None} for t in tickers])
+    # Since #642 PR 6 the universe the boards (and ``fetch_universe_stats``) return is the spine's listed names,
+    # so a stored name has to stand in the spine too, as the SEC list puts it there on the live box.
+    spine_fixture.write_security([{"ticker": t, "name": f"{t} old", "sector": SECTOR} for t in tickers],
+                                 replace=True)
     uf._save_universe_meta("Old Board", "2026-09-01T00:00:00+00:00")
 
 
@@ -64,7 +69,10 @@ def pull(monkeypatch, rawstore_tmp_db):
                 quoted = [q["symbol"] for spec in chunks if spec != "dead"
                           for q in (spec[1] if isinstance(spec, tuple) else spec)]
                 names = _stored_in_order() + quoted
-            return [{"ticker": t, "name": f"{t} Inc (SEC)"} for t in dict.fromkeys(names)], None
+            rows = [{"ticker": t, "name": f"{t} Inc (SEC)"} for t in dict.fromkeys(names)]
+            # The SEC list is what the spine's listed names are built from, so the fake list writes them too.
+            spine_fixture.write_security([dict(r, sector=SECTOR) for r in rows], replace=True)
+            return rows, None
 
         monkeypatch.setattr(uf, "_sec_member_list", listed)
 
@@ -504,7 +512,9 @@ def test_the_boards_show_the_stored_partial_flag(rawstore_tmp_db, monkeypatch):
     for mod, render in ((fp, render_fundamental_dashboard), (sp, render_swing_dashboard)):
         payload = mod.run_scan()
         assert payload["universe_partial"] is True
-        assert "partial fetch" in render(payload)
+        # On the spine the header names what a partial pull actually left behind, as
+        # ``test_universe_provenance_spine`` has it: the names are the spine's, only the caps are stale.
+        assert "market caps partly stale" in render(payload)
 
 
 def test_the_asymmetric_growth_board_shows_the_stored_partial_flag(rawstore_tmp_db, monkeypatch):
@@ -515,7 +525,7 @@ def test_the_asymmetric_growth_board_shows_the_stored_partial_flag(rawstore_tmp_
     uf._save_fetch_state(True, "2026-10-03T00:00:00+00:00")
     result = engine.run_asymmetric_growth_hunter(None, no_fetch=True)
     assert result["universe_partial"] is True
-    assert "partial fetch" in render_asymmetric_growth_hunter_html(result)
+    assert "market caps partly stale" in render_asymmetric_growth_hunter_html(result)
 
 
 def test_the_settings_inventory_lists_the_fetch_row(rawstore_tmp_db):

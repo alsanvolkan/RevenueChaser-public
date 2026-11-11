@@ -32,7 +32,6 @@ def _ten_k_naming_apple() -> str:
 def layer(monkeypatch, http_mock):  # noqa: F811
     monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
     monkeypatch.setattr(sec_edgar, "SEC_DATA_BASE", "https://data.sec.test")
-    monkeypatch.delenv(fundamentals_layer.SOURCE_ENV, raising=False)
     fx.spine()
     fx.sec_routes(http_mock, {"789019": fx.msft_facts()})
     fx.filing_routes(http_mock, {"789019": fx.submissions(789019, fx.MSFT_FILINGS, "MICROSOFT CORP")},

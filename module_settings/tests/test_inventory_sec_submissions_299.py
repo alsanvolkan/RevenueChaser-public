@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import edgar_store, rawstore, sec_submissions
 from RevenueChaser.module_settings import inventory
 
@@ -19,7 +20,7 @@ def _payload(acc, filed="2026-05-28"):
 
 
 def _seed_universe():
-    rawstore.write_rows("equity_universe", [{"ticker": t, "market_cap": 1e9, "name": t} for t in ("A", "B", "C")])
+    universe_store.put([{"ticker": t, "market_cap": 1e9, "name": t} for t in ("A", "B", "C")])
     rawstore.write_rows("sec_exchange_file", [
         {"ticker": t, "cik": c, "name": t, "exchange": "Nasdaq", "valid_from": None, "status": "present",
          "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}

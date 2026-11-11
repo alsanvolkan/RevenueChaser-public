@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.app import dashboard, runners
 from RevenueChaser.core.tests.panel_client import panel_test_client
 
@@ -462,8 +463,7 @@ class TestDashboardRoutes:
         assert "NVDA" in r.get_data(as_text=True)
 
     def test_holdings_route_sector_uses_the_industry_tree(self, rawstore_tmp_db):
-        from RevenueChaser.core import rawstore
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": "NVDA", "name": "NVIDIA", "sector": "Technology",
              "industry": "Semiconductors", "market_cap": 300.0},
             {"ticker": "AMD", "name": "AMD", "sector": "Technology",
@@ -478,13 +478,12 @@ class TestDashboardRoutes:
     def test_holdings_route_every_sector_etf_finds_its_tree(self, rawstore_tmp_db):
         # XLK/XLV/XLF/XLB/XLY/XLP used to fall silently back to the ETF top 10 once the stored sector
         # carried a Morningstar name; every sector row must find its tree.
-        from RevenueChaser.core import rawstore
         from RevenueChaser.core.gics_map import MORNINGSTAR_SECTORS
         from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
         import RevenueChaser.module_sector_rotation.store as rs
         sector_etfs = {i["name"]: t for t, i in ROTATION_ETFS.items() if i["group"] == "sector"}
         assert set(sector_etfs) == set(MORNINGSTAR_SECTORS)
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": f"Q{n:02d}", "name": f"Co {n}", "sector": s, "industry": "Some Industry",
              "market_cap": 10.0} for n, s in enumerate(MORNINGSTAR_SECTORS)])
         for etf in sector_etfs.values():       # a cached ETF top 10 would win if the tree were missed
@@ -741,7 +740,6 @@ class TestRefreshReadsStoreFetchReadsNetwork:
         Data on storage (a cached yfinance payload + a ticker_scores card) must be
         enough for Refresh to produce the report — no network, no empty state.
         """
-        from RevenueChaser.core import rawstore
         from RevenueChaser.core import ticker_store
         from RevenueChaser.core.providers import cache as cache_manager
 
@@ -1259,9 +1257,7 @@ class TestSettingsDataHealthBoard:
         assert hasattr(runners, "run_settings")
 
     def test_view_settings_renders_the_inventory(self, rawstore_tmp_db):
-        from RevenueChaser.core import rawstore
-        rawstore.write_rows("equity_universe",
-                            [{"ticker": "AAPL", "market_cap": 3.0e9}])
+        universe_store.put([{"ticker": "AAPL", "market_cap": 3.0e9}])
         r = self._client().get("/view/module_settings")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
@@ -1270,11 +1266,9 @@ class TestSettingsDataHealthBoard:
 
     def test_refresh_rerenders_from_store_without_network(
             self, rawstore_tmp_db, monkeypatch):
-        from RevenueChaser.core import rawstore
         from RevenueChaser.core.providers import sec_edgar
 
-        rawstore.write_rows("equity_universe",
-                            [{"ticker": "AAPL", "market_cap": 3.0e9}])
+        universe_store.put([{"ticker": "AAPL", "market_cap": 3.0e9}])
         runners.SETTINGS_LATEST.unlink(missing_ok=True)
 
         def boom(*args, **kwargs):
@@ -1366,7 +1360,7 @@ class TestUniverseStats:
         from RevenueChaser.app.jobs import JobMessage
         from RevenueChaser.core import rawstore
 
-        rawstore.write_rows("equity_universe", [{"ticker": "MU", "market_cap": None}])
+        universe_store.put([{"ticker": "MU", "market_cap": None}])
         calls = []
         monkeypatch.setattr(yf, "Ticker", self._fake_ticker(calls))
         monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)
@@ -1464,10 +1458,9 @@ class TestUniverseStats:
 
     def test_runner_rerenders_settings(self, monkeypatch, rawstore_tmp_db):
         from RevenueChaser.app.jobs import JobMessage
-        from RevenueChaser.core import rawstore
         from RevenueChaser.core import universe_fetch
 
-        rawstore.write_rows("equity_universe", [{"ticker": "AAPL", "market_cap": 3.0e9}])
+        universe_store.put([{"ticker": "AAPL", "market_cap": 3.0e9}])
         monkeypatch.setattr(universe_fetch, "backfill_universe_caps", lambda **kw: self._counts())
         runners.SETTINGS_LATEST.unlink(missing_ok=True)
 
@@ -1611,7 +1604,7 @@ class TestOipdTickerOutsideThePool:
 
     def _seed(self):
         from RevenueChaser.core import rawstore
-        rawstore.replace_all("equity_universe", [
+        universe_store.replace([
             {"ticker": t, "market_cap": 1e9, "name": t, "price": 1.0, "quote": {"symbol": t}}
             for t in ("AAA", "FUND")])
         rawstore.ensure_table("security_master")
@@ -1662,7 +1655,7 @@ class TestOipdTickerOutsideThePool:
 
 def test_api_universe_reports_count_and_provenance(rawstore_tmp_db):
     from RevenueChaser.core import rawstore
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": "AAA", "market_cap": 1e9, "sector": "Energy", "quote": {}},
         {"ticker": "BBB", "market_cap": 2e9, "sector": "Energy", "quote": {}},
         {"ticker": "CCC", "market_cap": 1e8, "sector": "Energy", "quote": {}},

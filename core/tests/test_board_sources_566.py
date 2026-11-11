@@ -136,7 +136,7 @@ def test_two_builds_in_one_run_are_flagged(roots):
 
 
 def test_the_old_store_fallback_is_said(roots, monkeypatch):
-    monkeypatch.setattr(prices, "source_state", lambda: {"effective": prices.STORE, "reason": None,
+    monkeypatch.setattr(prices, "source_state", lambda: {"effective": "store", "reason": None,
                                                           "variable": "store"})
     [entry] = board_sources.snapshot(BOARD, RUN)
     assert entry == {"kind": "prices", "file": "prices.duckdb", "reads": "not_opened", "old_store": "set to store"}

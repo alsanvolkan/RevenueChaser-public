@@ -137,9 +137,8 @@ def test_a_fetch_with_no_cards_still_gets_a_header_and_is_never_the_snapshot(sto
 
 def test_a_post_close_scan_without_spy_s_d01_bar_is_not_the_snapshot_a_later_one_is(store):
     """#380 S4: the session's snapshot needs Daily Bars' SPY bar; a run before it reaches the session header only."""
-    from RevenueChaser.core import rawstore as rs
-    with rs.connect(db="prices") as conn:
-        conn.execute("DELETE FROM price_bars_daily")                 # Daily Bars has not run for the session
+    from RevenueChaser.core.tests.d01_seed import drop_d01
+    drop_d01()                                                       # Daily Bars has not run for the session
     ag_history.record(_result([_card("AAA")]), run_id="early")
     (head,) = _headers()
     assert head["quality"] == "partial" and head["session_snapshot"] is False

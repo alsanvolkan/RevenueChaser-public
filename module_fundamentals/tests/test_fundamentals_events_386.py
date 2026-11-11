@@ -1,7 +1,7 @@
 """#386 F5: the corporate-event flag on the Fundamentals cards.
 
-A synthetic store (``rawstore_tmp_db``: its own temp ``raw.duckdb`` and ``edgar.duckdb``) and synthetic scoring rows;
-no real store, no network. The flag is display only, so the scoring test is the one that matters most.
+A synthetic served ``fundamentals.duckdb`` (``fund_store``: ``fundamental_company`` and ``filing_item``, #642 PR 6)
+and synthetic scoring rows; no real store, no network. The flag is display only, so the scoring test is the one that matters most.
 """
 from __future__ import annotations
 
@@ -10,12 +10,13 @@ from datetime import date, timedelta
 
 import pytest
 
-from RevenueChaser.core import rawstore
 from RevenueChaser.core.tests.board_js import run_board_js
 from RevenueChaser.module_fundamentals import config, events, freeze, pipeline
 from RevenueChaser.module_fundamentals.pipeline import build_payload
 from RevenueChaser.module_fundamentals.report import render_fundamental_dashboard
 from RevenueChaser.module_fundamentals.tests.test_fundamental import _m
+from RevenueChaser.rcdata import read as rc_read
+from RevenueChaser.rcdata.tests import fund_store
 
 TODAY = date(2026, 10, 16)
 _INSIDE = (TODAY - timedelta(days=30)).isoformat()
@@ -24,8 +25,8 @@ _AT_THE_EDGE = (TODAY - timedelta(days=config.CORPORATE_EVENT_WINDOW_DAYS)).isof
 
 
 def _master(*rows):
-    """``security_master`` rows, ``(ticker, cik)``."""
-    rawstore.write_rows("security_master", [{"ticker": t, "cik": c} for t, c in rows])
+    """``fundamental_company`` rows, ``(ticker, cik)``."""
+    fund_store.put_companies(list(rows))
 
 
 def _filing(cik, accession, filing_date, items, form="8-K"):
@@ -33,7 +34,8 @@ def _filing(cik, accession, filing_date, items, form="8-K"):
 
 
 def _filings(*rows):
-    rawstore.write_rows("sec_submissions", list(rows))
+    """``filing_item`` rows; the companies of those CIKs have their filing list read."""
+    fund_store.put_filings(list(rows))
 
 
 # ── the reader ───────────────────────────────────────────────────────────────
@@ -136,7 +138,6 @@ def test_a_non_digit_cik_is_no_cik_and_never_an_exception(rawstore_tmp_db):
 # ── the bounded reads ────────────────────────────────────────────────────────
 
 _BIG = events.CHUNK + 400          # candidate tickers in the chunking test: two slices whatever ``CHUNK`` becomes
-_MANY = 4_500                      # candidates in the session test: the field size the review priced (24 statements)
 
 
 def _big_store(n: int = _BIG) -> list[str]:
@@ -149,69 +150,25 @@ def _big_store(n: int = _BIG) -> list[str]:
 def test_the_store_reads_are_chunked_and_the_answer_is_the_unchunked_one(monkeypatch, rawstore_tmp_db):
     """E3: production passes no top_n, so the candidate list is unbounded: both reads walk it in slices.
 
-    The spy sees every store call of the chunked read; the same input read in one slice must answer the same dict.
+    The spies see every layer read of the chunked call; the same input read in one slice must answer the same dict.
     """
     tickers = _big_store()
-    calls = []
-    real = rawstore.query
-
-    def spy(sql, params=None, **kwargs):
-        calls.append((sql, list(params or [])))
-        return real(sql, params, **kwargs)
-
-    monkeypatch.setattr(rawstore, "query", spy)
+    companies, filings = [], []
+    real_companies, real_filings = rc_read.fundamental_companies, rc_read.filing_items
+    monkeypatch.setattr(rc_read, "fundamental_companies",
+                        lambda chunk: companies.append(list(chunk)) or real_companies(chunk))
+    monkeypatch.setattr(rc_read, "filing_items",
+                        lambda ciks, form, since=None: filings.append(list(ciks)) or real_filings(ciks, form, since))
     stats: dict = {}
-    chunked = events.corporate_events(tickers, today=TODAY, stats=stats)     # stats: the DISTINCT-cik read runs too
-    master = [c for c in calls if "security_master" in c[0]]
-    filings = [c for c in calls if "8-K" in c[0]]
-    absent = [c for c in calls if "DISTINCT cik" in c[0]]
+    chunked = events.corporate_events(tickers, today=TODAY, stats=stats)
 
     assert chunked == {"T0000": {"items": ["2.01"], "last_filing_date": _INSIDE}}
-    assert len(master) > 1 and len(filings) > 1, "the reads must be sliced, not one statement for every candidate"
-    for sql, params in master:
-        assert "ticker IN" in sql, sql            # the whole security_master is never read
-        assert len(params) <= events.CHUNK
-    for _sql, params in filings:
-        assert len(params) - 1 <= events.CHUNK    # the window date plus at most one slice of CIKs
-    assert len(absent) > 1, "the DISTINCT-cik read must run and be sliced too"
-    for _sql, params in absent:
-        assert len(params) <= events.CHUNK
+    assert len(companies) > 1 and len(filings) > 1, "the reads must be sliced, not one statement for every candidate"
+    assert all(len(c) <= events.CHUNK for c in companies + filings)
+    assert stats["no_submissions"] == _BIG - 2         # every filer but the two with a filing row
 
     monkeypatch.setattr(events, "CHUNK", 10 * _BIG)       # one slice per table: the slicing changes no answer
     assert events.corporate_events(tickers, today=TODAY) == chunked
-
-
-def test_the_store_reads_share_one_session(monkeypatch, rawstore_tmp_db):
-    """E7: every store read of one call runs inside one ``rawstore.session()``: one connect per store file.
-
-    A job's worker and the scheduled CLI Fetch have no outer request session, so the reader's own block is what
-    keeps 4,500 candidates from opening the 500 MB store once per statement (the reviewer's field measurement: 24
-    connects, 9.5 s). ``security_master`` lives in ``raw``, ``sec_submissions`` in ``edgar``: at most two connects,
-    whatever the candidate count, and the answer is the same one statement per table gives.
-    """
-    tickers = _big_store(_MANY)
-    with pytest.MonkeyPatch.context() as mp:          # the answer of one statement per table
-        mp.setattr(events, "CHUNK", 10 * _MANY)
-        reference = events.corporate_events(tickers, today=TODAY)
-        ref_stats: dict = {}
-        events.corporate_events(tickers, today=TODAY, stats=ref_stats)
-
-    opened = []
-    real = rawstore._connect_with_retry
-
-    def counting(*args, **kwargs):
-        opened.append(str(kwargs.get("path") or (args[1] if len(args) > 1 else rawstore.DB_PATH)))
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(rawstore, "_connect_with_retry", counting)
-
-    stats: dict = {}
-    assert events.corporate_events(tickers, today=TODAY, stats=stats) == reference
-    assert stats == ref_stats                          # the stats read rides the same session, and agrees
-    assert stats["no_submissions"] == _MANY - 2        # every filer but the two with a filing row
-    assert reference == {"T0000": {"items": ["2.01"], "last_filing_date": _INSIDE}}
-    assert len(opened) <= 2, opened                    # one handle per store file, never one per statement
-    assert len(set(opened)) == len(opened), opened     # and never the same file opened twice
 
 
 def test_a_mixed_input_answers_exactly_what_the_unbounded_read_answered(rawstore_tmp_db):
@@ -310,12 +267,12 @@ def test_no_submissions_counts_only_the_candidates_the_store_cannot_answer_for(m
     """E5: the flag's blind spot, counted. A candidate whose CIK has no filing row at all is not "no event".
 
     Two blind spots, counted apart: ``no_submissions`` (a CIK, no row) and ``no_cik`` (no usable CIK at all — a
-    candidate with no ``security_master`` row like EEE, or a value that is no CIK like DDD, is counted nowhere else).
+    candidate with no ``fundamental_company`` row like EEE, or a value that is no CIK like DDD, is counted nowhere else).
     """
     _master(("AAA", "0001234"), ("BBB", "0002345"), ("CCC", "0003456"), ("DDD", "not-a-cik"))
     _filings(_filing("1234", "a1", _INSIDE, "2.01"),                       # AAA: an 8-K
              _filing("2345", "b1", _INSIDE, "9.01", form="10-K"))          # BBB: a filing of another form
-    # CCC's CIK has no row at all; DDD has a CIK-shaped value that is no CIK; EEE is not in security_master.
+    # CCC's CIK has no row at all; DDD has a CIK-shaped value that is no CIK; EEE is no company.
     monkeypatch.setattr(pipeline, "_today", lambda: TODAY)
     stats = {"regime": "RISK-ON"}
     p = build_payload([_row(t, _m(**_RO40)) for t in ("AAA", "BBB", "CCC", "DDD", "EEE")],
@@ -323,7 +280,7 @@ def test_no_submissions_counts_only_the_candidates_the_store_cannot_answer_for(m
 
     assert p["data_quality"]["no_submissions"] == 1
     assert stats["no_submissions"] == 1
-    assert p["data_quality"]["no_cik"] == 2                # DDD and EEE: no usable CIK in security_master
+    assert p["data_quality"]["no_cik"] == 2                # DDD and EEE: no usable CIK
     assert stats["no_cik"] == 2
     cards = {c["ticker"]: c for c in p["candidates"]}
     assert cards["AAA"]["corporate_event"] == {"items": ["2.01"], "last_filing_date": _INSIDE}

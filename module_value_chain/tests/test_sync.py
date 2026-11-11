@@ -1,6 +1,7 @@
 """New-filing sync — newer→fetch, same→no write, idempotent (no network)."""
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_value_chain import sync
 
@@ -12,8 +13,7 @@ def _subs(accession="acc-1", form="10-K", filed="2026-02-01"):
 
 
 def _seed(monkeypatch, subs):
-    rawstore.replace_all("equity_universe",
-                         [{"ticker": "NVDA", "market_cap": 1e9, "name": "NVIDIA"}])
+    universe_store.replace([{"ticker": "NVDA", "market_cap": 1e9, "name": "NVIDIA"}])
     rawstore.write_rows("sec_exchange_file",
                         [{"ticker": "NVDA", "cik": "1045810", "name": "NVIDIA CORP", "status": "present", "run_at": 1.0}])
     monkeypatch.setattr(sync.sec_edgar, "get_json", lambda url, client=None: subs)
@@ -47,8 +47,7 @@ def test_sync_is_idempotent(rawstore_tmp_db, monkeypatch):
 
 
 def test_sync_no_fetch_makes_no_request(rawstore_tmp_db, monkeypatch):
-    rawstore.replace_all("equity_universe",
-                         [{"ticker": "NVDA", "market_cap": 1e9, "name": "NVIDIA"}])
+    universe_store.replace([{"ticker": "NVDA", "market_cap": 1e9, "name": "NVIDIA"}])
     rawstore.write_rows("sec_exchange_file",
                         [{"ticker": "NVDA", "cik": "1045810", "name": "NVIDIA CORP", "status": "present", "run_at": 1.0}])
     out = sync.sync_filings(no_fetch=True)
@@ -57,7 +56,7 @@ def test_sync_no_fetch_makes_no_request(rawstore_tmp_db, monkeypatch):
 
 def test_sync_stops_when_sec_breaker_opens(rawstore_tmp_db, monkeypatch):
     from RevenueChaser.core.providers import sec_edgar
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": t, "market_cap": 1e9, "name": t} for t in ("AAA", "BBB", "CCC", "DDD")])
     rawstore.write_rows("sec_exchange_file", [
         {"ticker": t, "cik": str(i + 1), "name": t, "status": "present", "run_at": 1.0} for i, t in enumerate(("AAA", "BBB", "CCC", "DDD"))])
@@ -98,7 +97,7 @@ def test_sync_starts_each_run_with_a_closed_breaker(rawstore_tmp_db, monkeypatch
 def test_breaker_stop_does_not_count_form_40f_as_pending(rawstore_tmp_db, monkeypatch):
     from RevenueChaser.core.providers import sec_edgar
     names = ("AAA", "BBB", "CCC")
-    rawstore.replace_all("equity_universe", [{"ticker": t, "market_cap": 1e9, "name": t} for t in names])
+    universe_store.replace([{"ticker": t, "market_cap": 1e9, "name": t} for t in names])
     rawstore.write_rows("sec_exchange_file", [
         {"ticker": t, "cik": str(i + 1), "name": t, "status": "present", "run_at": 1.0} for i, t in enumerate(names)])
 

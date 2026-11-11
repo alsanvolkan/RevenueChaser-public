@@ -1,6 +1,7 @@
 """Tests for the index membership registry (pure functions, no network)."""
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import index_registry as ir
 from RevenueChaser.core import index_lists as il
 from RevenueChaser.core import rawstore
@@ -33,7 +34,8 @@ def test_annotate_cards_sets_index():
 
 
 def test_save_and_load_index(rawstore_tmp_db):
-    il.save_index("sp500", {"AAPL", "MSFT"})
+    """Since #642 PR 6 ``load_index`` is the spine's membership; ``dow`` has no source there, so it stays None."""
+    universe_store.membership("sp500", {"AAPL", "MSFT"})
     assert ir.load_index("sp500") == {"AAPL", "MSFT"}
     assert ir.load_index("dow") is None
 
@@ -57,7 +59,7 @@ def test_fetch_index_uses_cache(rawstore_tmp_db):
 
 
 def test_build_registry_merges_index_and_meta(rawstore_tmp_db):
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": "AAPL", "name": "Apple", "sector": "Information Technology"},
         {"ticker": "MSFT", "name": "Microsoft", "sector": "Information Technology"},
     ])
@@ -65,6 +67,10 @@ def test_build_registry_merges_index_and_meta(rawstore_tmp_db):
     il.save_index("sp500", {"AAPL", "MSFT"})
     il.save_index("dow", {"AAPL"})
     il.save_index("nasdaq", {"MSFT"})
+    # ``load_registry`` reads the spine since #642 PR 6; ``build_registry`` still reads the old lists above.
+    universe_store.membership("sp500", {"AAPL", "MSFT"})
+    universe_store.membership("dow", {"AAPL"})
+    universe_store.membership("nasdaq", {"MSFT"})
 
     reg = il.build_registry(refresh=False)
     assert reg["AAPL"]["index"] == ["S&P 500", "Dow Jones"]
@@ -83,6 +89,7 @@ def test_build_registry_drops_tickers_that_left_every_index(rawstore_tmp_db):
     table write was a per-row upsert — so a delisted/removed ticker kept its row
     and ``index_for`` badged it forever. Membership is now the source of truth."""
     il.save_index("sp500", {"AAPL", "OLDCO"})
+    universe_store.membership("sp500", {"AAPL", "OLDCO"})
     mp = pytest.MonkeyPatch()
     mp.setattr(il, "_FETCHERS", {
         "sp500": lambda: set(), "dow": lambda: set(), "nasdaq": lambda: set()})
@@ -92,6 +99,7 @@ def test_build_registry_drops_tickers_that_left_every_index(rawstore_tmp_db):
 
         # OLDCO is removed from the index on the next refresh
         il.save_index("sp500", {"AAPL"})
+        universe_store.membership("sp500", {"AAPL"})
         second = il.build_registry(refresh=False)
     finally:
         mp.undo()
@@ -103,8 +111,10 @@ def test_build_registry_drops_tickers_that_left_every_index(rawstore_tmp_db):
 
 
 def test_save_index_replaces_the_slug_without_touching_others(rawstore_tmp_db):
+    """``save_index`` is the weekly step's own writer; since #642 PR 6 no board reads it, so it is read back
+    through ``index_lists.stored_index`` rather than through the registry."""
     il.save_index("sp500", {"AAPL", "MSFT"})
     il.save_index("dow", {"AAPL"})
     il.save_index("sp500", {"NVDA"})
-    assert ir.load_index("sp500") == {"NVDA"}
-    assert ir.load_index("dow") == {"AAPL"}
+    assert il.stored_index("sp500") == {"NVDA"}
+    assert il.stored_index("dow") == {"AAPL"}

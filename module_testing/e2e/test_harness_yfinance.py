@@ -12,6 +12,7 @@ it.
 """
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 import pytest
 
 from .harness import yfinance_fake
@@ -40,7 +41,7 @@ class TestCallsCrossTheProcessBoundary:
         import RevenueChaser.core.rawstore as rawstore
 
         monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
-        rawstore.replace_all("equity_universe", [
+        universe_store.replace([
             {"ticker": "AAPL", "market_cap": 3.0e12},
             {"ticker": "MU", "market_cap": None},
         ])

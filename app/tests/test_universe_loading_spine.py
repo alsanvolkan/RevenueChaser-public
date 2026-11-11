@@ -17,9 +17,7 @@ from RevenueChaser.rcdata.tests.test_spine_security import built, run_all  # noq
 
 
 @pytest.fixture
-def spine(monkeypatch, built):
-    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
-    assert universe.universe_source() == "spine"
+def spine(built):
     assert not rawstore.query("SELECT 1 FROM equity_universe LIMIT 1")      # the host's state: the old table empty
 
 
@@ -35,8 +33,7 @@ def test_an_ag_refresh_before_any_fetch_says_no_scan_not_no_universe():
     assert engine.stored_result()["no_data_reason"] == "no_scan_stored"
 
 
-def test_the_old_store_still_says_loading_while_it_is_empty(monkeypatch):
-    monkeypatch.setenv(universe.SOURCE_ENV, "store")
+def test_without_a_spine_a_board_fetch_says_loading(monkeypatch):
     monkeypatch.setattr(jobs, "has_active", lambda modules: True)
     assert universe.has_universe() is False
     assert dashboard._universe_loading("module_swing_potential") is True
