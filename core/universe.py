@@ -145,6 +145,20 @@ def spine_provenance() -> dict | None:
             "source_as_of": as_of.isoformat() if as_of is not None else None}
 
 
+def _universe_ids() -> list[dict]:
+    """The spine rows the universe is made of: avo's own list where the live spine holds one (every tier it
+    names), else the spine's Tiers A and B whole.
+
+    Its own function so that ``has_universe`` asks the same question as ``_spine_universe`` (Fable review of
+    PR 6): the gate used to test Tiers A and B alone, so a list naming only a Tier C or D name left the
+    "Loading universe…" gate closed over a board that had rows.
+    """
+    from . import spine_reads
+    kept = spine_reads.my_universe_tickers()
+    ids = spine_reads.universe(LISTED_TIERS if kept is None else ALL_TIERS)
+    return ids if kept is None else [r for r in ids if r["ticker"] in kept]
+
+
 def _spine_universe() -> list[dict]:
     """The universe as ``equity_universe`` rows: identity from ``rcdata.read``; market cap and price from
     the prices store (``read.latest_market``), each from the old ``equity_universe`` by ticker where the prices store
@@ -156,11 +170,7 @@ def _spine_universe() -> list[dict]:
     the old rule, the spine's Tiers A and B whole. The list is read once a render
     (``spine_reads.my_universe_tickers``), and every caller below goes through this function, so the boards, the
     funnel of ``universe_counts`` and the peer ladder can never read different sets."""
-    from . import spine_reads
-    kept = spine_reads.my_universe_tickers()
-    ids = spine_reads.universe(LISTED_TIERS if kept is None else ALL_TIERS)
-    if kept is not None:
-        ids = [r for r in ids if r["ticker"] in kept]
+    ids = _universe_ids()
     if not ids:
         return []
     # Cap, price and quote still come from the old table where the prices store has none. Taking them away is
@@ -318,11 +328,10 @@ def load_universe_meta() -> dict:
 
 
 def has_universe() -> bool:
-    """Whether the universe the boards read holds any name: the spine's listed names (Tier A/B). Opus review M1
-    (PR 6): the "Loading universe…" gate and AG's no-card Refresh asked the old table directly, which is empty under
-    the spine."""
-    from . import spine_reads
-    return bool(spine_reads.universe(("A", "B")))
+    """Whether the universe the boards read holds any name, asked of the same rows the boards get
+    (``_universe_ids``). Opus review M1 (PR 6): the "Loading universe…" gate and AG's no-card Refresh asked the old
+    table directly, which is empty under the spine."""
+    return bool(_universe_ids())
 
 
 def has_market_caps() -> bool:
