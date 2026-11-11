@@ -84,7 +84,6 @@ def test_co_movement_reads_the_prices_store_date_of_its_names(rawstore_tmp_db):
     session there, not swing_ohlc's nor D01's."""
     _bars("module_comovement", "AAA", _days(date(2026, 10, 9)), EVENING)
     _bars("module_comovement", "OUT", _days(D), EVENING)    # not in the universe: not this board's
-    seed_d01("AAA", _days(D), EVENING)                      # the old D01: not read
     rawstore.write_rows("swing_ohlc", [{"ticker": "AAA", "ts": "2026-10-14T00:00:00", "open": 1.0, "high": 1.0,
                                         "low": 1.0, "close": 1.0, "volume": 1.0, "cached_at": EVENING}])
     rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1.0e10, "sector": "Technology",

@@ -100,11 +100,9 @@ def test_cross_rule_window_plus_holdout_fits_stored_sessions(rawstore_tmp_db):
 
 def test_stored_sessions_reads_spy_from_the_prices_store(rawstore_tmp_db):
     """Co-movement reads the prices store since PR 8 (D01 since #379 before), so the rule counts SPY's sessions
-    there, not swing_ohlc's nor D01's."""
-    from RevenueChaser.core.tests.d01_seed import seed_d01
+    there, not swing_ohlc's (D01 reads the same served file since #642 PR 6)."""
     from RevenueChaser.rcdata.tests import prices_store
     prices_store.put_bars([{"ticker": "SPY", "session_date": f"2025-01-{d:02d}", "close": 1.0} for d in range(1, 11)])
-    seed_d01("SPY", [f"2025-02-{d:02d}" for d in range(1, 21)], 1.0)                 # the old D01: not counted
     rawstore.write_rows("swing_ohlc", [{"ticker": "SPY", "ts": f"2024-02-{d:02d}T00:00:00", "open": 1.0,
                                         "high": 1.0, "low": 1.0, "close": 1.0, "volume": 1.0, "cached_at": 1.0}
                                        for d in range(1, 21)])

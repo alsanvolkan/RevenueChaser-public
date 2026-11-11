@@ -399,6 +399,7 @@ def test_spy_anchor_problem_names_the_reason(rawstore_tmp_db):
     _seed_bars("SPY", "2026-10-01", _close_plus(45))
     assert "2026-10-01" in ledger.spy_anchor_problem(D)
     _seed_bars("SPY", "2026-10-02", _close_plus(-270))
+    prices_store.set_built_at(_close_plus(-270))               # the served file's one stamp (#642 PR 6)
     why = ledger.spy_anchor_problem(D)
     assert "before the close" in why and "intraday" in why
     assert "reuses" not in why and "refetch" in why            # option A: the next Fetch refetches them

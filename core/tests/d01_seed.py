@@ -11,7 +11,7 @@ Since #642 PR 6 the readers read only the builder's served ``prices.duckdb`` (``
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.rcdata.tests import prices_store
@@ -57,5 +57,13 @@ def write_d01(rows, actions=(), *, built_at: float | None = None) -> None:
     if actions:
         rawstore.write_rows("price_actions", actions)
     if built_at is None:
-        built_at = max((r["fetched_at"] for r in rows if r.get("fetched_at") is not None), default=None)
+        # A build is after every ex-date it serves (its view has applied the split), so never stamp it before one.
+        stamps = [r["fetched_at"] for r in rows if r.get("fetched_at") is not None]
+        stamps += [datetime.combine(_date(a["ex_date"]) + timedelta(days=1), time(), timezone.utc).timestamp()
+                   for a in actions]
+        built_at = max(stamps, default=None)
     prices_store.put_store_rows(rows, actions, built_at=built_at)
+
+
+def _date(v) -> date:
+    return v if isinstance(v, date) and not isinstance(v, datetime) else date.fromisoformat(str(v)[:10])

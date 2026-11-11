@@ -113,9 +113,10 @@ def _old_read_series(tickers: list[str], start: date | None = None):
                    f"COALESCE((SELECT MAX(p.session_date) FROM price_bars_daily p "
                    f"WHERE p.ticker = b.ticker AND p.session_date < ?), ?)")
         bar_params = [*tickers, start, start]
-    for r in _read(bar_sql, bar_params):
+    # The rows the code reads: the builder's served file (#642 PR 6), so both sides read one input.
+    for r in _read(bar_sql, bar_params, layer=True):
         bars.setdefault(r["ticker"], []).append(r)
-    for r in _read(f"SELECT * FROM price_actions WHERE ticker IN ({marks})", list(tickers)):
+    for r in _read(f"SELECT * FROM price_actions WHERE ticker IN ({marks})", list(tickers), layer=True):
         actions.setdefault(r["ticker"], []).append(r)
     return bars, actions
 
