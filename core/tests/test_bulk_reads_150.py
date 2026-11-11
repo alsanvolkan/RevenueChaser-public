@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.core import rawstore, taxonomy
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.module_relatedness import themes
@@ -52,7 +53,7 @@ def test_get_many_refuses_a_composite_key_and_an_unknown_column(rawstore_tmp_db)
 
 def test_stored_annual_many_matches_get_annual(rawstore_tmp_db):
     annual = [{"fiscal_year": 2023, "revenue": 5.0}]
-    rawstore.write_rows("edgar_financials", [
+    fund_store.put_edgar([
         {"ticker": "AAA", "annual": annual, "quarterly": [], "meta": {"entity_name": "Aaa", "is_us": True}},
         {"ticker": "BBB", "annual": [], "quarterly": [], "meta": {}},
     ])
@@ -116,11 +117,3 @@ def test_load_many_applies_the_ttl_and_info_only_rules_of_load(rawstore_tmp_db):
                             if cache.load(t, ignore_ttl=ttl, allow_info_only=info) is not None}
     assert sorted(cache.load_many(names)) == ["NEW"]
     assert sorted(cache.load_many(names, ignore_ttl=True, allow_info_only=True)) == ["INFO", "NEW", "OLD"]
-
-
-def test_stored_annual_many_turns_a_stray_meta_string_into_an_empty_dict(monkeypatch):
-    row = {"annual": [{"fiscal_year": 2023}], "quarterly": [], "meta": '{"is_us": true}'}
-    monkeypatch.setattr(sec_edgar.rawstore, "get_many", lambda *a, **k: {"AAA": row})
-    assert sec_edgar.stored_annual_many(["AAA"])["AAA"][1] == {}
-    row["annual"] = "not a list"
-    assert sec_edgar.stored_annual_many(["AAA"]) == {}

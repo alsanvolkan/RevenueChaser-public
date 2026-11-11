@@ -573,11 +573,3 @@ def test_swing_info_ttl_from_cached_at(rawstore_tmp_db):
                                   "cached_at": time.time() - 1000}])
     from RevenueChaser.module_swing_potential.indicators import load_ticker_info
     assert load_ticker_info("AAAA", no_fetch=True) == {"sector": "Tech"}
-
-
-def test_sec_facts_no_ttl_returns_regardless_of_age(rawstore_tmp_db):
-    rawstore.write_rows("edgar_financials", [{"ticker": "OLD", "annual": [], "quarterly": [],
-                                       "meta": {"available": True}}])
-    from RevenueChaser.core.providers import sec_edgar
-    annual, _, meta = sec_edgar.get_fundamentals("OLD", no_fetch=True)
-    assert meta.get("available") is True

@@ -1,15 +1,12 @@
-"""Asymmetric Growth board, end to end (#202): a ticker with EDGAR annual data whose
-legacy ``edgar_financials.meta`` cell is double-encoded must stay on the board.
+"""Asymmetric Growth board, end to end (#202): a ticker with EDGAR annual data stays on the board.
 
-The store is seeded the way the live one looks (JSON-typed EDGAR columns, meta a JSON
-*string* holding the JSON object), then a store-only Refresh renders the board.
+Its statements are seeded in the served ``fundamentals.duckdb`` (the only source since #642 PR 6; the legacy
+double-encoded ``edgar_financials.meta`` case went with that store), then a store-only Refresh renders the board.
 """
 from __future__ import annotations
 
-import json
 import time
 
-import duckdb
 import pytest
 
 _ANNUAL = [
@@ -41,12 +38,10 @@ def seeded_edgar_ticker(dashboard, monkeypatch):
         "payload": {"ticker": "EDGR", "sector": "Technology", "market_cap": 5e9, "source": "test",
                     "info": {"longName": "Edgar Co", "country": "United States", "exchange": "NMS",
                              "industry": "Software"}, "annual": []}}])
-    with duckdb.connect(str(rawstore.edgar_db_path())) as c:
-        c.execute("CREATE TABLE edgar_financials (ticker TEXT PRIMARY KEY, "
-                  "annual JSON, quarterly JSON, meta JSON)")
-        c.execute("INSERT INTO edgar_financials VALUES ('EDGR', ?, '[]', ?)", [
-            json.dumps(json.dumps(_ANNUAL)),
-            json.dumps(json.dumps({"source": "sec_edgar", "is_us": True, "available": True}))])
+    from RevenueChaser.rcdata.tests import fund_store
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # served files
+    fund_store.put_edgar([{"ticker": "EDGR", "annual": _ANNUAL, "quarterly": [],
+                           "meta": {"source": "sec_edgar", "entity_name": "Edgar Co", "is_us": True}}])
     return dashboard
 
 

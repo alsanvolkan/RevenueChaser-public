@@ -17,6 +17,7 @@ import json
 
 import pytest
 
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.app import runners
 from RevenueChaser.core import ledger, rawstore, ticker_store
 from RevenueChaser.core import reporting_common as rc
@@ -119,7 +120,7 @@ def test_the_history_mirror_has_the_new_columns():
 def test_the_hunter_stamps_the_model_version(rawstore_tmp_db, monkeypatch):
     from RevenueChaser.module_asymmetric_growth.tests.test_ag_info_only_150 import _QUOTE, _edgar
     from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import seed_momentum
-    rawstore.write_rows("edgar_financials", [_edgar("AAA")])
+    fund_store.put_edgar([_edgar("AAA")])
     seed_momentum(["AAA"])                                    # the momentum signal comes from D01 (#380 S4)
     monkeypatch.setattr(engine, "fetch_universe_stats",
                         lambda *a, **k: ([{"ticker": "AAA", "quote": dict(_QUOTE), "market_cap": 5e9}], {}))

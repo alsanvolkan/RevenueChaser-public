@@ -10,7 +10,8 @@ import copy
 
 import pytest
 
-from RevenueChaser.core import funnel, rawstore
+from RevenueChaser.rcdata.tests import fund_store
+from RevenueChaser.core import funnel
 from RevenueChaser.module_asymmetric_growth import engine, freeze
 from RevenueChaser.module_asymmetric_growth.report import render_asymmetric_growth_hunter_html
 from RevenueChaser.module_asymmetric_growth.tests.test_ag_info_only_150 import _ANNUAL, _QUOTE, _edgar
@@ -31,7 +32,7 @@ def mixed(rawstore_tmp_db, monkeypatch):
     """GOOD1-2 score; FORN is a foreign filer; GHOST has no data at all; NBAR has a price but no D01 bars, so it
     scores with unknown momentum (decision 3); NOPRC has EDGAR years but no price in any source, so it drops;
     BOOM raises while scoring; ETFX is an excluded type."""
-    rawstore.write_rows("edgar_financials", [_edgar("GOOD1"), _edgar("GOOD2"), _edgar("FORN", is_us=False),
+    fund_store.put_edgar([_edgar("GOOD1"), _edgar("GOOD2"), _edgar("FORN", is_us=False),
                                               _edgar("NOPRC"), _edgar("NBAR"), _edgar("BOOM")])
     seed_momentum(["GOOD1", "GOOD2"])                         # their momentum comes from D01 (#380 S4)
     rows = [_row("GOOD1"), _row("GOOD2"), _row("FORN"), _row("GHOST"), _row("NBAR"), _row("NOPRC", quote=False),

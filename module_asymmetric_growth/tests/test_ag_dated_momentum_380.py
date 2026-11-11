@@ -23,6 +23,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_asymmetric_growth import engine, freeze
@@ -197,7 +198,7 @@ def test_a_fetch_never_calls_fetch_technical(rawstore_tmp_db, monkeypatch):
     assert not hasattr(engine, "fetch_technical"), "the fallback import must be gone, not just unused"
 
     seed_momentum(["D01ONLY"])
-    rawstore.write_rows("edgar_financials", [edgar("D01ONLY"), edgar("NOPRICE")])
+    fund_store.put_edgar([edgar("D01ONLY"), edgar("NOPRICE")])
     universe(monkeypatch, [row("D01ONLY", quote={}), row("NOPRICE", quote={})])
     res = engine.run_asymmetric_growth_hunter(None, max_workers=1, no_fetch=True)
 
@@ -211,7 +212,7 @@ def test_a_fetch_never_calls_fetch_technical(rawstore_tmp_db, monkeypatch):
 
 def test_a_name_with_a_price_but_no_bars_is_a_card_with_unknown_momentum(rawstore_tmp_db, monkeypatch):
     seed_momentum(["HASBARS"])                                     # SPY too: the session exists
-    rawstore.write_rows("edgar_financials", [edgar("HASBARS"), edgar("QUOTEONLY"), edgar("NOPRICE")])
+    fund_store.put_edgar([edgar("HASBARS"), edgar("QUOTEONLY"), edgar("NOPRICE")])
     universe(monkeypatch, [row("HASBARS", quote={}),
                            row("QUOTEONLY", quote={"regularMarketPrice": 42.0}),
                            row("NOPRICE", quote={})])
@@ -280,7 +281,7 @@ def test_a_dividend_in_the_window_does_not_move_the_nominal_momentum(rawstore_tm
 def test_a_passing_quote_with_failing_bars_follows_the_bars(rawstore_tmp_db, monkeypatch):
     seed_momentum([])                                              # SPY's session only
     store_bars([bar("SLIDE", d, close=50.0, high=100.0, volume=100.0) for d in sessions()])
-    rawstore.write_rows("edgar_financials", [edgar("SLIDE")])
+    fund_store.put_edgar([edgar("SLIDE")])
     universe(monkeypatch, [row("SLIDE")])                          # the quote passes all three rules
     res = engine.run_asymmetric_growth_hunter(None, max_workers=1, no_fetch=True)
 
@@ -295,7 +296,7 @@ def test_a_passing_quote_with_failing_bars_follows_the_bars(rawstore_tmp_db, mon
 def test_a_store_without_bars_still_scores(rawstore_tmp_db):
     empty = engine._preload(["AAA"], True)
     assert empty["bars"] == {} and empty["session"] is None
-    rawstore.write_rows("edgar_financials", [edgar("AAA")])
+    fund_store.put_edgar([edgar("AAA")])
     preload = engine._preload(["AAA"], True)
     preload["as_of"] = date.min
     card = engine.enrich_and_score("AAA", row("AAA"), no_fetch=True, spine={}, preload=preload)
@@ -306,7 +307,7 @@ def test_a_store_without_bars_still_scores(rawstore_tmp_db):
 def test_the_per_ticker_path_reads_the_same_bars(rawstore_tmp_db):
     """``enrich_and_score`` without a batch reads the ticker's D01 window itself (research scripts)."""
     seed_momentum(["ONE"])
-    rawstore.write_rows("edgar_financials", [edgar("ONE")])
+    fund_store.put_edgar([edgar("ONE")])
     direct = engine.enrich_and_score("ONE", row("ONE"), no_fetch=True, spine={})
     batch = engine._preload(["ONE"], True)
     via_preload = engine.enrich_and_score("ONE", row("ONE"), no_fetch=True, spine={}, preload=batch)

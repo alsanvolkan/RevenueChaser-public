@@ -19,7 +19,8 @@ from datetime import date
 
 import pytest
 
-from RevenueChaser.core import fiscal_year, funnel, ledger, rawstore
+from RevenueChaser.rcdata.tests import fund_store
+from RevenueChaser.core import fiscal_year, funnel, ledger
 from RevenueChaser.module_asymmetric_growth import engine, freeze
 from RevenueChaser.module_asymmetric_growth.engine import score_ticker
 from RevenueChaser.module_asymmetric_growth.tests.test_ag_info_only_150 import _ANNUAL, _QUOTE, _edgar
@@ -145,7 +146,7 @@ def _dated(rows, end_year: int, month_day: str = "12-31"):
 def scan(rawstore_tmp_db, monkeypatch):
     """FRESH ended 2025-12-31 (288 days before the run day); STALE ended 2024-06-30 (837 days); UNDATED has no
     ``period_ends`` (records stored before #239), so it is not judged; FORN is stale and foreign: foreign wins."""
-    rawstore.write_rows("edgar_financials", [
+    fund_store.put_edgar([
         _edgar("FRESH", _dated(_ANNUAL, 2025)), _edgar("STALE", _dated(_ANNUAL, 2024, "06-30")),
         _edgar("UNDATED"), _edgar("FORN", _dated(_ANNUAL, 2024, "06-30"), is_us=False)])
     rows = [{"ticker": t, "quote": dict(_QUOTE), "market_cap": 5e9} for t in ("FRESH", "STALE", "UNDATED", "FORN")]
@@ -204,7 +205,7 @@ def _gap(newest_year: int, month_day: str = "12-31") -> list[dict]:
 def gap_scan(rawstore_tmp_db, monkeypatch):
     """GAP: newest record 2025-12-31 (fresh), revenue last in FY2017. OLDGAP: the same, but its newest record ended
     2024-06-30 (837 days): a stale filer. FRESH: an ordinary name."""
-    rawstore.write_rows("edgar_financials", [
+    fund_store.put_edgar([
         _edgar("FRESH", _dated(_ANNUAL, 2025)), _edgar("GAP", _gap(2025)), _edgar("OLDGAP", _gap(2024, "06-30"))])
     rows = [{"ticker": t, "quote": dict(_QUOTE), "market_cap": 5e9} for t in ("FRESH", "GAP", "OLDGAP")]
     seed_momentum(["FRESH", "GAP", "OLDGAP"])                 # the momentum signal comes from D01 (#380 S4)

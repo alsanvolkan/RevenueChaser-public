@@ -7,7 +7,8 @@ the session the scan read up to; a card with no bars at all has no date and no c
 """
 from __future__ import annotations
 
-from RevenueChaser.core import rawstore, ticker_store
+from RevenueChaser.rcdata.tests import fund_store
+from RevenueChaser.core import ticker_store
 from RevenueChaser.module_asymmetric_growth import engine, report
 from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import (
     SESSION, edgar, row, seed_momentum, sessions, universe)
@@ -17,7 +18,7 @@ def test_a_card_whose_bars_stop_early_says_so(rawstore_tmp_db, monkeypatch):
     seed_momentum(["FRESH"])
     early = sessions(SESSION, 262)[-3]                              # two sessions before the scan's
     seed_momentum(["HALTED"], session=early)
-    rawstore.write_rows("edgar_financials", [edgar("FRESH"), edgar("HALTED"), edgar("QUOTEONLY")])
+    fund_store.put_edgar([edgar("FRESH"), edgar("HALTED"), edgar("QUOTEONLY")])
     universe(monkeypatch, [row("FRESH", quote={}), row("HALTED", quote={}),
                            row("QUOTEONLY", quote={"regularMarketPrice": 42.0})])
     res = engine.run_asymmetric_growth_hunter(None, max_workers=1, no_fetch=True)

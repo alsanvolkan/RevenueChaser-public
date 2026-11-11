@@ -32,7 +32,6 @@ OLD_TABLES = {
     "module_asymmetric_growth": {"ag_scores_history"},
     "module_earnings_radar": {"earnings_calendar"},
     "module_financials": {"macro_series", "result_runs"},
-    "module_fundamentals": {"sec_submissions", "security_master"},
     "module_leaps": {"leaps_footprint_history"},
     "module_relatedness": {"chain_mentions"},
     "module_sec_13f": {"price_actions", "price_bars_daily"},

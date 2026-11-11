@@ -1,53 +1,17 @@
-"""#202: a legacy double-encoded ``edgar_financials.meta`` must not drop EDGAR-backed tickers
-out of Asymmetric Growth, and a scoring failure must be counted and shown, not swallowed."""
-import json
+"""#202: a scoring failure in Asymmetric Growth must be counted and shown, not swallowed. (Its legacy
+double-encoded ``edgar_financials.meta`` cases went with that store read, #642 PR 6.)"""
 import logging
 
-import duckdb
 import pytest
 
-from RevenueChaser.core import rawstore
-from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.module_asymmetric_growth import engine
 from RevenueChaser.module_asymmetric_growth.report import render_asymmetric_growth_hunter_html
 from RevenueChaser.module_asymmetric_growth.tests.test_score_ticker import _fin, _tech
-
-_ANNUAL = _fin()["annual"]
 
 
 def _quote():
     return {"regularMarketPrice": 100.0, "fiftyTwoWeekHigh": 105.0, "fiftyDayAverage": 90.0,
             "averageDailyVolume10Day": 160.0, "averageDailyVolume3Month": 100.0}
-
-
-def _seed_legacy_edgar(meta_cell: str):
-    """A row exactly as the live store holds it: JSON-typed columns, meta double-encoded."""
-    with duckdb.connect(str(rawstore.edgar_db_path())) as c:
-        c.execute("CREATE TABLE edgar_financials (ticker TEXT PRIMARY KEY, "
-                  "annual JSON, quarterly JSON, meta JSON)")
-        c.execute("INSERT INTO edgar_financials VALUES ('TEST', ?, '[]', ?)",
-                  [json.dumps(json.dumps(_ANNUAL)), meta_cell])
-
-
-def _no_yfinance_cache(monkeypatch):
-    fin = {k: v for k, v in _fin().items() if k != "annual"}
-    monkeypatch.setattr(engine.cache_manager, "load", lambda t, ignore_ttl=False, allow_info_only=False: dict(fin))
-
-
-def test_double_encoded_meta_keeps_the_ticker(isolate_rawstore, monkeypatch):
-    from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import seed_momentum
-    _seed_legacy_edgar(json.dumps(json.dumps({"source": "sec_edgar", "is_us": True})))
-    _no_yfinance_cache(monkeypatch)
-    seed_momentum(["TEST"])                                   # the momentum signal comes from D01 (#380 S4)
-    card = engine.enrich_and_score("TEST", {"quote": _quote()}, no_fetch=True, spine={})
-    assert card is not None and card["ticker"] == "TEST"
-    assert next(s for s in card["signals"] if s["key"] == "momentum")["passed"] == 3
-
-
-def test_get_fundamentals_meta_is_always_a_dict(monkeypatch):
-    monkeypatch.setattr(sec_edgar.rawstore, "get", lambda *a, **k: {
-        "annual": _ANNUAL, "quarterly": [], "meta": '{"is_us": true}'})
-    assert sec_edgar.get_fundamentals("TEST", no_fetch=True)[2] == {}
 
 
 def test_a_programming_error_is_not_swallowed(monkeypatch):

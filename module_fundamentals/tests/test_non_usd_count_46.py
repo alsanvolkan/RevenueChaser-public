@@ -17,8 +17,9 @@ from datetime import date, datetime, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.core import calendar as cal
-from RevenueChaser.core import funnel, rawstore, screen_common
+from RevenueChaser.core import funnel, screen_common
 from RevenueChaser.core.tests.screen_parity import _OfflineTicker, _bars, seed_d01
 from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_fundamentals.report import render_fundamental_dashboard
@@ -26,8 +27,9 @@ from RevenueChaser.module_fundamentals.report import render_fundamental_dashboar
 NOW = datetime(2026, 10, 14, 21, 45, tzinfo=timezone.utc)      # the 14 Oct session is complete
 SESSION = date(2026, 10, 14)
 
-ANNUAL = [{"revenue": 100.0 * (i + 1), "gross_profit": 50.0, "operating_cash_flow": 20.0, "capex": 5.0,
-           "total_debt": 10.0, "cash": 30.0, "total_assets": 200.0, "total_equity": 100.0, "net_income": 10.0}
+ANNUAL = [{"fiscal_year": 2023 + i, "revenue": 100.0 * (i + 1), "gross_profit": 50.0, "operating_cash_flow": 20.0,
+           "capex": 5.0, "total_debt": 10.0, "cash": 30.0, "total_assets": 200.0, "total_equity": 100.0,
+           "net_income": 10.0}
           for i in range(3)]
 
 _USD_ROW = {"source": "sec_edgar", "entity_name": "AAA", "is_us": True, "available": True, "extract_version": 2,
@@ -36,7 +38,7 @@ _USD_ROW = {"source": "sec_edgar", "entity_name": "AAA", "is_us": True, "availab
 
 def _edgar(ticker: str, annual: list[dict], **meta) -> None:
     """One stored ``edgar_financials`` row, as the nightly extraction writes it."""
-    rawstore.write_rows("edgar_financials", [{
+    fund_store.put_edgar([{
         "ticker": ticker, "annual": annual, "quarterly": [],
         "meta": {**_USD_ROW, "entity_name": ticker, **meta}, "fetched_at": time.time()}])
 
@@ -49,7 +51,7 @@ def _edgar_pre_measure(ticker: str, annual: list[dict]) -> None:
     row in the live store looks like until the #52 re-extraction runs.
     """
     meta = {k: v for k, v in {**_USD_ROW, "entity_name": ticker}.items() if k != "non_usd_units"}
-    rawstore.write_rows("edgar_financials", [{
+    fund_store.put_edgar([{
         "ticker": ticker, "annual": annual, "quarterly": [],
         "meta": meta, "fetched_at": time.time()}])
 

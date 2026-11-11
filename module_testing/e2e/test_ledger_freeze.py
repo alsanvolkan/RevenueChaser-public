@@ -72,7 +72,8 @@ def seeded(dashboard, monkeypatch):
     for t in ("ZETA", "SPY"):
         seed_d01(t, _bars())                        # fetched_at = real now, bars end on D
     seed_quote("ZETA", datetime.strptime(D, "%Y-%m-%d").date(), quote, 2.0e9)
-    rawstore.write_rows("edgar_financials", [{
+    from RevenueChaser.rcdata.tests import fund_store
+    fund_store.put_edgar([{
         "ticker": "ZETA", "annual": _ANNUAL, "quarterly": [],
         "meta": {"source": "sec_edgar", "entity_name": "Zeta Corp", "is_us": True, "available": True},
         "fetched_at": time.time()}])

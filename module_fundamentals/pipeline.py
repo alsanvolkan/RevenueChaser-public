@@ -812,8 +812,10 @@ def run_scan(uw=None, top_n: int = None, refresh_universe: bool = False,
     chunks: list[_LayerChunks] = []
 
     def prefilter_and_chunk(rows: list[dict]) -> screen_common.Prefiltered:
+        from RevenueChaser.core import fundamentals_layer
         pf = prefilter(rows)
-        if not no_fetch:
+        # Batched only when the file is there: without it every name reads as unavailable anyway.
+        if not no_fetch and fundamentals_layer.reads_layer():
             chunks.append(_LayerChunks([str(r.get("ticker") or "").strip().upper() for r in pf.kept]))
         return pf
 

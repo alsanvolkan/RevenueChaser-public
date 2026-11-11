@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.core import provenance, rawstore
 from RevenueChaser.module_asymmetric_growth import engine
 from RevenueChaser.module_asymmetric_growth.report import render_asymmetric_growth_hunter_html
@@ -73,7 +74,7 @@ def test_a_halt_row_with_no_close_does_not_blank_the_momentum(rawstore_tmp_db):
 def test_a_scan_dates_its_cards_from_the_prices_store(rawstore_tmp_db, monkeypatch):
     days = sessions()
     prices_store.put_bars(_momentum_rows("AAA", days) + _momentum_rows("SPY", days))
-    rawstore.write_rows("edgar_financials", [edgar("AAA")])
+    fund_store.put_edgar([edgar("AAA")])
     universe(monkeypatch, [row("AAA")])
     res = engine.run_asymmetric_growth_hunter(None, max_workers=1, no_fetch=True)
     (card,) = res["cards"]
