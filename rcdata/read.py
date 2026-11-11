@@ -29,12 +29,12 @@ NEVER_CHECKED = "never_checked"
 STATUS_UNKNOWN = "status_unknown"
 DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
                     "spx_greek_expiry_strike": "uw/greek_expiry_strike",
-                    "economic_event": "uw/economic_calendar", "news_headline": "ibkr/news",
+                    "economic_event": "uw/economic_calendar",
                     "security": "spine/security", "index_membership": "funds/index_holdings",
                     "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings", "etf": "spine/security",
                     "my_universe": "spine/security", "my_universe_changes": "spine/security"}
 KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market",
-                 "spx_greek_expiry_strike": "market", "economic_event": "market", "news_headline": "market",
+                 "spx_greek_expiry_strike": "market", "economic_event": "market",
                  "security": "spine",
                  "index_membership": "spine", "fund": "spine", "etf_holdings": "spine", "etf": "spine",
                  "my_universe": "spine", "my_universe_changes": "spine"}
@@ -145,23 +145,6 @@ def economic_events(fetched_after: float | None = None) -> list[dict]:
     if fetched_after is not None:
         sql, params = sql + " WHERE fetched_at > ?", [float(fetched_after)]
     return _rows("economic_event", sql + " ORDER BY fetched_at, event_ts, event, type", params, missing_table_ok=True)
-
-
-def news_headlines(tickers: Iterable[str] | None = None, since=None) -> list[dict]:
-    """IBKR headlines, newest first; ``tickers`` (None: every name) narrows to those names, ``since`` (epoch seconds)
-    to newer ones.
-
-    A file built before market 3 has no ``news_headline``: that reads as no rows, not an error."""
-    sql, params = "SELECT * FROM news_headline WHERE TRUE", []
-    names = [str(t).upper() for t in tickers or ()]
-    if names:
-        sql += f" AND ticker IN ({', '.join('?' * len(names))})"
-        params += names
-    if since is not None:
-        sql += " AND published_at >= ?"
-        params.append(float(since))
-    return _rows("news_headline", sql + " ORDER BY published_at DESC, headline_id, ticker", params,
-                 missing_table_ok=True)
 
 
 def spx_expiry_strike(session_date, min_dte: int = 0, max_dte: int = 1) -> list[dict]:

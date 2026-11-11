@@ -113,7 +113,6 @@ def test_every_dataset_either_honours_the_scope_or_is_named_here():
         "fundamentals/tables": "no fetch",
         "funds/index_holdings": "the index funds' own holdings files",
         "ibkr/iv_history": "the options universe, from the option list",
-        "ibkr/news": "the stock watch list and twelve fixed names",
         "ibkr/shortable": "IBKR's one shortable-shares file",
         "market_series": "series, not names",
         "uw/economic_calendar": "a calendar, no names",
