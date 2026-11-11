@@ -39,8 +39,9 @@ def test_the_board_is_in_the_designed_order_and_the_old_fold_is_gone():
     html = _page()
     at = [html.index(f'id="{s}"') for s in ("sec-flow",) + DATA_SECTIONS]
     assert at == sorted(at), "the flow diagram on Database, then Health and cross-check on Fetch/Health"
-    assert html.index('id="sec-flow"') < html.index('id="panel-health"') < html.index('id="sec-crosscheck"') \
-        < html.index('id="ticker-drill"')
+    # #715: the Ticker lookup heads the Database panel, above the flow diagram.
+    assert html.index('id="ticker-drill"') < html.index('id="sec-flow"') < html.index('id="panel-health"') \
+        < html.index('id="sec-crosscheck"')
     assert 'id="old-settings"' not in html and 'class="oldfold"' not in html
 
 

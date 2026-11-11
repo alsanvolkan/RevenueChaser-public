@@ -82,7 +82,7 @@ def test_the_health_tab_puts_what_needs_avo_first_and_folds_the_reference_parts(
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
     order = ['id="live-frame"', "<h1>Data/Health · Fetch/Health</h1>", "<h1>Needs, boards and automations</h1>",
-             'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
+             'id="needs-catalog"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
     assert 'id="ibkr-login-card"' not in health, "the login link is in the top bar now"

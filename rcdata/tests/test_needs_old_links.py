@@ -47,11 +47,12 @@ OLD_TABLES = {
     "module_leaps": {"leaps_footprint_history"},
     "module_relatedness": {"chain_filings", "chain_mentions", "run_registry"},
     "module_sec_13f": {"price_actions", "price_bars_daily", "sec13f_enrichment", "sec13f_security_meta"},
-    "module_settings": {"chain_filings", "edgar_documents", "edgar_financials", "equity_universe",
+    # #715 took the per-ticker drill out of ``inventory.py``: with it went ``chain_filings``,
+    # ``edgar_financials``, ``price_bars_daily``, ``sec_company_sic`` and ``swing_ohlc``.
+    "module_settings": {"edgar_documents", "equity_universe",
                         "equity_universe_provenance", "identity_conflicts", "identity_runs",
                         "identity_source_cache", "index_constituents", "index_constituents_changes", "job_runs",
-                        "price_bars_daily", "sec_company_sic", "sec_exchange_file", "security_master",
-                        "swing_ohlc"},
+                        "sec_exchange_file", "security_master"},
     # A declared board is not a cut-loose board: SPX Gamma reads the old economic calendar through a helper.
     "module_spx_gamma": {"economic_calendar"},
     "module_swing_potential": {"swing_ohlc"},

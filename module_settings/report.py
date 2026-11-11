@@ -137,13 +137,20 @@ select,input[type=text],input[type=number]{background:#10151f;border:1px solid #
 .drill{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .drill-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 26px}
 /* G7 (#124): which boards can score the name — one row per board, across the whole grid. */
-.dgroup{grid-column:1/-1;margin-top:10px;border-top:1px solid var(--border);padding-top:8px}
-.dhead{font-size:12.5px;font-weight:600;margin-bottom:2px}
-.dnote{color:var(--muted);font-size:11.5px;padding:6px 0 0}
-.drow{display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid var(--border);padding:5px 0;font-size:12.5px}
+.dgroup{grid-column:1/-1;margin-top:6px;border-top:1px solid var(--border);padding-top:4px}
+.dhead{font-size:11.5px;font-weight:600;letter-spacing:.02em;margin-bottom:1px;color:var(--muted)}
+.dnote{color:var(--muted);font-size:11px;padding:6px 0 0;grid-column:1/-1}
+.drow{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border);padding:2px 0;font-size:12px}
 .dlbl{color:var(--muted)}
 .dval{text-align:right;font-variant-numeric:tabular-nums}
 .dempty{color:var(--muted);font-size:13px;padding:8px 0}
+/* #715: the answer is dense — ids on one wrapped line, the files side by side where there is room. */
+.dident{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:2px 0 6px;font-size:12.5px}
+.dchip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:999px;
+  padding:1px 9px;line-height:1.7;white-space:nowrap}
+.dfiles{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:0 22px;
+  align-items:start}
+.dfiles .dgroup{grid-column:auto;min-width:0}
 .row-err,.board-err,.errlist{color:var(--red);font-size:12px;white-space:normal}
 .errlist{background:var(--panel);border:1px solid var(--red);border-radius:12px;padding:10px 16px;margin-top:14px}
 .errlist ul{margin:4px 0 0;padding-left:18px}
@@ -593,99 +600,69 @@ AUTOMATIONS_BOOT = "autoInit();"
 # per-ticker detail from the store-only API. The combobox behaviour itself is the
 # filter kit's RCCombobox (#383 C1b) — this only wires it to the detail panel.
 DRILL_JS = r"""
+// The Database tab's Ticker lookup (avo, 11 Nov 2026). It draws only what
+// /api/settings/lookup returns: one group a served DuckDB file, one row a table, with how many
+// rows the name has in it and the first and last day they cover. No board scoring, no old store.
 function drillRow(label, value){
   return '<div class="drow"><span class="dlbl">' + rcEsc(label) + '</span>' +
          '<span class="dval">' + rcEsc(value) + '</span></div>';
 }
-function drillCap(cap){
-  if(cap == null) return 'null — no cap stored (not yet resolved)';
-  return '$' + Number(cap).toLocaleString('en-US', {maximumFractionDigits: 0});
+// "since when": both ends, or the row count alone for a table that keeps no date.
+function lookupSince(t){
+  if(t.error) return 'could not read — ' + t.error;
+  var n = t.rows || 0;
+  var text = n + (n === 1 ? ' row' : ' rows');
+  if(t.first || t.last) text += ' · ' + (t.first || '?') + ' → ' + (t.last || '?');
+  else text += ' · no date kept';
+  return text;
 }
-// A dataset's presence as one line: its count, the newest stored session/date, and the source
-// where the dataset carries one. null when the ticker has no row in it.
-function drillCount(presence, unit){
-  var got = presence || {};
-  if(got.error) return 'could not read';
-  var n = got[unit] || 0;
-  if(!n) return null;
-  var text = n + ' ' + (n === 1 ? unit.replace(/s$/, '') : unit) + ' · newest ' + (got.newest || '—');
-  return got.source ? text + ' · ' + got.source : text;
+function lookupFile(f){
+  var head = (f.title || f.name || '');
+  var tables = f.tables || [], rows = '';
+  for(var i = 0; i < tables.length; i++) rows += drillRow(tables[i].table, lookupSince(tables[i]));
+  return '<div class="dgroup"><div class="dhead">' + rcEsc(head) + '</div>' + rows + '</div>';
 }
-// A row check: null means the read failed (#143), which is not a missing row.
-function drillHas(v){ return v === null ? 'could not read' : (v ? 'present' : 'missing'); }
-function drillFill(d){
-  var p = d.presence || {};
-  var d01 = p.price_bars_daily || {};
-  var swing = p.swing_ohlc || {};
-  var f = d.filing;
-  var filing = f
-    ? (f.form || '—') + ' · filed ' + (f.filed || '—') + ' · ' + (f.quality || '—')
-    : 'no stored 10-K / 20-F';
-  var sic = d.sic ? (d.sic + (d.sic_description ? ' — ' + d.sic_description : '')) : '—';
-  return ''
-    + drillRow('Ticker', d.ticker || '—')
-    + drillRow('Name', d.name || '—')
-    + drillRow('CIK', d.cik || '—')
-    + drillRow('FIGI', d.figi || '—')
-    + drillRow('CUSIP', d.cusip || '—')
-    + drillRow('ISIN', d.isin || '—')
-    + drillRow('Market cap', drillCap(d.market_cap))
-    + drillRow('Price', d.price == null ? '—' : '$' + Number(d.price).toFixed(2))
-    + drillRow('Sector', d.sector || '—')
-    + drillRow('Industry', d.industry || '—')
-    + drillRow('SEC industry code', sic)
-    + drillRow('Last 10-K / 20-F', filing)
-    + drillRow('EDGAR facts', drillCount(p.edgar_financials, 'periods') || 'no facts stored')
-    + drillRow('Daily price bars', d01.error ? 'could not read' : d01.bars
-        ? (d01.bars + ' bars · newest ' + (d01.newest || '—')) : 'no bars')
-    + drillRow('Quote', drillCount(p.quote_snapshot, 'rows') || 'no quote stored')
-    + drillRow('Vendor financials', drillCount(p.vendor_financials, 'rows') || 'no vendor statements stored')
-    + drillRow('Ownership', drillCount(p.ownership_snapshot, 'rows') || 'no ownership stored')
-    + drillRow('Legacy daily open/high/low/close cache (SPY fallback)', swing.error ? 'could not read' : swing.bars
-        ? (swing.bars + ' bars · newest ' + (swing.newest || '—')) : 'no bars')
-    + drillRow('Implied Probability chain', drillHas(p.oipd_meta))
-    + drillRow('Relatedness profile', drillHas(p.relatedness_profiles))
-    + drillBoards(d.boards)
-    + drillErrors(d.errors);
+// #715: the names and ids on one wrapped line, and only the ones that have a value, so the
+// answer starts with the data and not with ten empty rows (avo, 11 Nov 2026: "daha compact").
+function lookupIdentity(d){
+  var fields = [['', d.ticker], ['', d.name], ['CIK', d.cik], ['id', d.security_id], ['FIGI', d.figi],
+                ['CUSIP', d.cusip], ['ISIN', d.isin], ['', d.sector], ['', d.industry],
+                ['SEC industry code', d.sic]];
+  var out = '';
+  for(var i = 0; i < fields.length; i++){
+    if(!fields[i][1]) continue;
+    out += '<span class="dchip">' + (fields[i][0] ? '<span class="dlbl">' + rcEsc(fields[i][0]) + '</span> ' : '')
+        + rcEsc(fields[i][1]) + '</span>';
+  }
+  return '<div class="dident">' + out + '</div>';
 }
-// The reads that failed (#143): which table, and the store's own words. Nothing when every read answered.
-function drillErrors(list){
-  if(!list || !list.length) return '';
+// One line for every file that holds nothing, instead of a group each.
+function lookupEmpty(list){
+  if(!list.length) return '';
   var rows = '';
   for(var i = 0; i < list.length; i++){
-    var e = list[i] || {};
-    rows += '<div class="dnote">' + rcEsc((e.table || '—') + ': ' + (e.error || 'read failed')) + '</div>';
+    var f = list[i];
+    rows += drillRow(f.title || f.name,
+      f.error ? ('could not read — ' + f.error) : ('nothing stored · ' + (f.looked_at || 0) + ' tables asked'));
   }
+  return '<div class="dgroup" id="drill-empty"><div class="dhead">Nothing for this name</div>' + rows + '</div>';
+}
+function lookupErrors(list){
+  if(!list || !list.length) return '';
+  var rows = '';
+  for(var i = 0; i < list.length; i++) rows += '<div class="dnote">' + rcEsc(list[i]) + '</div>';
   return '<div class="dgroup" id="drill-errors"><div class="dhead">Could not read</div>' + rows + '</div>';
 }
-// Which boards can score this name (G7, #124). The server decides each board's state from the
-// store tables this drill already measured; this only prints it. A board that reads a table the
-// drill does not measure says so in words — it never claims one way or the other.
-var DRILL_BOARD_WORDS = {can: 'yes — every dataset it reads is stored',
-                         cannot: 'no — missing ',
-                         not_checked: 'not checked for this board',
-                         unreadable: 'unknown — could not read '};
-function drillBoards(list){
-  if(!list || !list.length) return '';
-  var rows = '';
-  for(var i = 0; i < list.length; i++){
-    var b = list[i] || {};
-    var said;
-    if(b.state === 'can') said = DRILL_BOARD_WORDS.can;
-    else if(b.state === 'cannot') said = DRILL_BOARD_WORDS.cannot
-      + ((b.missing || []).join(', ') || 'a dataset this board reads');
-    else if(b.state === 'unreadable') said = DRILL_BOARD_WORDS.unreadable
-      + ((b.unreadable || []).join(', ') || 'a dataset this board reads');
-    else said = DRILL_BOARD_WORDS.not_checked;
-    rows += drillRow(b.label || '', said);
+function drillFill(d){
+  var files = d.files || [], held = '', empty = [];
+  for(var i = 0; i < files.length; i++){
+    if((files[i].tables || []).length && !files[i].error) held += lookupFile(files[i]);
+    else empty.push(files[i]);
   }
-  return '<div class="dgroup" id="drill-boards"><div class="dhead">Boards that can score this name</div>'
-    + rows
-    + '<div class="dnote">A board can score the name when every store table it reads that this '
-    + 'drill measures has a row for the name. A board that reads a store table this drill does not '
-    + 'measure says "not checked for this board": it may be able to score the name, and this drill '
-    + 'does not know. A board whose read failed says "could not read": the store did not answer, '
-    + 'which is not the same as no row.</div></div>';
+  return lookupIdentity(d) + '<div class="dfiles">' + held + '</div>' + lookupEmpty(empty)
+    + lookupErrors(d.errors)
+    + '<div class="dnote">Read from the served DuckDB files, read-only: rows for this name, first and last day.'
+    + ' A table with no date shows its count alone; one with no ticker, security id or CIK is not asked.</div>';
 }
 function onDrillPick(ticker){
   var panel = document.getElementById('drill');
@@ -694,16 +671,16 @@ function onDrillPick(ticker){
   if(!ticker){ panel.hidden = true; return; }
   panel.hidden = false;
   body.innerHTML = drillRow('Ticker', ticker) + '<div class="dempty">Loading…</div>';
-  fetch('/api/settings/ticker/' + encodeURIComponent(ticker)).then(function(r){
+  fetch('/api/settings/lookup/' + encodeURIComponent(ticker)).then(function(r){
     if(r.status === 404 || r.status === 400) throw new Error('unknown ticker');
-    if(!r.ok) throw new Error('store read failed');
+    if(!r.ok) throw new Error('read failed');
     return r.json();
   }).then(function(d){
     body.innerHTML = drillFill(d);
   }).catch(function(e){
     body.innerHTML = (e && e.message === 'unknown ticker')
-      ? '<div class="dempty">No stored data for ' + rcEsc(ticker) + '.</div>'
-      : '<div class="dempty">Could not read the store for ' + rcEsc(ticker) + '. See the Logs tab.</div>';
+      ? '<div class="dempty">No served file holds a row for ' + rcEsc(ticker) + '.</div>'
+      : '<div class="dempty">Could not read the served files for ' + rcEsc(ticker) + '. See the Logs tab.</div>';
   });
 }
 // The picker's options (a test reads them back); onPick/onClear look up onDrillPick at call time.
@@ -3022,15 +2999,17 @@ _UCARDS_CSS = (".ctl .ucards{--border:var(--line);--muted:var(--mut);--neg:var(-
 #: The page's one "What am I looking at?" box (#383), at the top of the Data tab; #527 folded the board's own box
 #: (``control_render.WIAL``) into it, so the tab has one.
 DATA_HELP = help_html(
-    "<b>Database</b> shows what the data is and where it goes: the Data flow from each source through the six SSD "
+    "<b>Database</b> shows what the data is and where it goes: the <b>Ticker lookup</b> (which served file holds "
+    "what for one name, and since when), the Data flow from each source through the six SSD "
     "DuckDB files to the boards and the file each board writes, then for one served file the Build stage from HDD "
     "raw and Parquet to the SSD file, the boards that read it, and example rows. Nothing there starts a job. "
     "<b>Fetch/Health</b> holds every control: the switches, Health right now, the providers' limits, the universe, "
     "then one group a served file with its sources. <b>Fetch</b> puts "
     "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
     "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
-    "call and holds the dataset until <b>Resume</b>. Under the groups sit the need catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
-    "the backups. The frame on top shows Fetch, Data health, the jobs by the board they feed and their run logs, from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
+    "call and holds the dataset until <b>Resume</b>. Under the groups sit the <b>queue</b> with the last runs and the "
+    "<b>weekly backups</b>, then the need catalog by file, the board settings, the automations, the watch lists and the IBKR cards. "
+    "The frame on top shows Fetch, Data health, the jobs by the board they feed and their run logs, from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )
 
@@ -3059,8 +3038,8 @@ def _health_panel(payload: dict, nd: dict | None = None) -> str:
     # #527 step 9 and B4: what needs avo first (the reads that failed, the backups, the catalog
     # with its problem groups open), then the parts he looks things up in, then the reference parts folded. The
     # IBKR login card is gone: its link is in the top bar.
-    moved = (_ticker_drill(payload)
-             + _automations_section(payload.get("automations") or [])
+    # The ticker lookup is on the Database tab now (avo, 11 Nov 2026): it says what the data is, not what to press.
+    moved = (_automations_section(payload.get("automations") or [])
              + _ibkr_state_card(payload.get("ibkr_login_state"))
              + _boards_section(payload.get("boards") or [], payload.get("rows") or [])
              + _watch_section(nd))
@@ -3180,23 +3159,25 @@ def _ticker_drill(payload: dict) -> str:
         pick = ('<div class="frow drillpick"><span class="flbl" id="ticker-combo-label">Ticker</span>'
                 + combobox_html("ticker-combo", "ticker-combo-label", "Search ticker or name") + "</div>")
     return ('<div id="ticker-drill">'
-            '<h2 class="sec">Ticker detail</h2>'
+            '<h2 class="sec">Ticker lookup</h2>'
+            '<p class="dnote">Pick a name to see which served file holds what for it, and since when.</p>'
             f'{pick}'
             '<div class="drill" id="drill" hidden>'
             '<div class="drill-grid" id="drill-body">'
-            '<div class="dempty">Pick a ticker to see its stored data.</div>'
+            '<div class="dempty">Pick a ticker to see what is stored for it.</div>'
             "</div></div></div>")
 
 
 def render_settings_dashboard(payload: dict) -> str:
     """The Data/Health page (#492): two tabs. Data is the control board (``control_render.render_data``); Health is
-    ``_health_panel``. The old Settings sections fold is gone; its Ticker detail and Backups moved to Health."""
+    ``_health_panel``. The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
     payload = payload or {}
     data_json = script_json(payload.get("tickers") or [])
     # The payload's own ``newdata`` when the caller read it (tests, fixtures); else read here, per render.
     nd = payload["newdata"] if "newdata" in payload else _collect_newdata()
     view = _control_view(nd, payload)
-    control_html = control_render.render_data(view)
+    lookup_html = _ticker_drill(payload)
+    control_html = control_render.render_data(view, lookup_html)
     fetch_html = control_render.render_fetch(view)
     control_js = control_render.scripts(view)
     health_html = _health_panel(payload, nd)

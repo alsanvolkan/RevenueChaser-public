@@ -133,8 +133,10 @@ the code records (`rcdata/scaffold`, `rcdata/caps`, and the needs layer's `board
 `static/control.css` and `static/control.js`. The old sections, the "New data system" below among them, sit in one
 closed fold under it (`details#old-settings`), unchanged.
 
-- **Order:** Health, Fetch (with the universe bar and the Backfill calendar), the flow diagram, Providers, Data
-  file by file, then the cross-check and the queue. Health, Fetch and the flow diagram start open.
+- **Order:** Health, Fetch (with the universe bar and the Backfill calendar), the flow diagram, Data file by
+  file — one folded section a served file since #715 step 3, no picker and no tab under a tab — Providers, then the queue (`details#sec-queue`), the cross-check and the weekly backups
+  (`details#sec-backups`). Health, Fetch and the flow diagram start open; the queue opens while something waits or
+  runs and the backups open while a copy is past its limit (#715 step 2).
 - **Health tiles** count the dataset cards. The builder tile turns red when the builder has been
   silent for over 70 minutes; a provider's cap tile warns at 50% of its day cap and is red from 70%.
 - **Where the folder counts come from.** Every dataset's raw and Parquet folder line is the **disk picture**, not a
@@ -285,7 +287,8 @@ and the open `build_issues` of `spine/security` by kind with the newest ten. Bef
 so instead of drawing zeros. Its first row, "Boards read", says the boards read the spine (the only universe since
 #642 PR 6), or, in amber with the reason, that it gives them no names yet: no spine file, or its last build failed.
 
-**Page-level cards:** the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
+**Page-level cards** (the queue and the weekly backups are drawn by `control_render` on the Fetch tab since
+#715 step 2; the rest are the older cards): the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
 provider for the New York day and the week from Monday, from `provider_calls_daily`, against the day caps of
 `rcdata/caps.py`, and UW's newest `x-uw-*` sample from `uw_remaining`: its daily count, what is left of our own cap
 (computed) and the per-minute window), weekly backups (the weekly job's manifests under
@@ -466,19 +469,18 @@ login is what asks for credentials.
 - Every write through the dashboard needs the panel header (`X-RC-Panel`), and
   `POST /api/automations/<name>/<action>` needs exactly `X-RC-Panel: automations`. Without it the
   dashboard answers `403 panel header required` and starts nothing.
-- Per-ticker drill `GET /api/settings/ticker/<t>` — store-only, 404 on an unknown ticker (no row in
-  any dataset the drill reads, with every read answering), 500 `store read failed` when the drill
-  itself raises. A read that fails inside the drill is recorded, never read as "no row" (#143): the
-  answer is a 200 with `errors` (table and message, printed under "Could not read"), the row reads
-  "could not read", and a board that reads the table says "unknown — could not read …" (state
-  `unreadable`) unless a readable table it needs already has no row, which stays "no — missing …".
-  A store file whose table list cannot be read counts as a failed read for every table in it. The
-  drill also has the shared ticker combobox, and a null market cap
-  rendered as "no cap stored (not yet resolved)". It shows **stored**
-  data only: it asks neither SEC nor Yahoo. Price coverage in the drill is the daily bar count and
-  newest session from `price_bars_daily`; `swing_ohlc` appears as the legacy cache and is not the
-  price of record.
-
+- Ticker lookup `GET /api/settings/lookup/<t>` — the Database tab's lookup (#715). It reads **only**
+  the six served DuckDB files, read-only, through `rcdata.serving`: no old store, no job, no network,
+  no credentials. The answer is one group a served file and one row a table, each with how many rows
+  the name has in it and the **first** and last day they cover; a table that keeps no date shows its
+  row count alone. 400 on a ticker that is not ticker-shaped, 404 when no served file holds a row for
+  the name and the spine does not know it, 500 `serving read failed` when the lookup itself raises. A
+  file that is missing or cannot be read is a named line in `errors`, a 200, never a 404. Each live
+  file is asked for its own tables and columns, so a table a later build adds reports by itself; a
+  table that carries no `ticker`, `symbol`, `security_id` or `cik` is skipped, never guessed at. The
+  lookup also has the shared ticker combobox, filled from the spine's `security`.
+  The old store-only drill `GET /api/settings/ticker/<t>` is gone with it (it read
+  `.store/raw.duckdb`).
 ### 2.9 Which prices file the board reads
 
 The daily bars live in two files. Since build plan PR 7 the builder writes them to the **market store's**

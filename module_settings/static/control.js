@@ -1192,31 +1192,22 @@
   });
 })();
 
-/* The file picker (#492 C1): one file's panel shows at a time. A box of the picker, a file in the flow diagram or a
-   line of Health's By file selects it; By file also scrolls to it. */
+/* The served files (#492 C1, #715 step 3): each file is its own folded section. A file in the flow diagram or a
+   line of Health's By file opens that section and scrolls to it; nothing is hidden any more. */
 (function () {
-  var X = window.CTLX, pick = document.getElementById('fpick');
-  if (!X || !pick) return;
-  function select(name, scroll) {
-    var found = false;
-    [].forEach.call(pick.querySelectorAll('.fpb'), function (b) {
-      var on = b.getAttribute('data-file') === name;
-      b.setAttribute('aria-selected', on ? 'true' : 'false');
-      if (on) found = true;
-    });
-    if (!found) return;
-    [].forEach.call(document.querySelectorAll('.ctl .fpanel'), function (p) { p.hidden = p.getAttribute('data-file') !== name; });
-    if (scroll) X.scrollTo(document.querySelector('.ctl .fpanel[data-file="' + name + '"]') || pick);
+  var X = window.CTLX;
+  if (!X) return;
+  function open(name, scroll) {
+    var p = document.querySelector('.ctl details.fpanel[data-file="' + name + '"]');
+    if (!p) return;
+    p.open = true;
+    if (scroll) X.scrollTo(p);
   }
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
-    var b = e.target.closest('#fpick .fpb');
-    if (b) { select(b.getAttribute('data-file'), false); return; }
     var l = e.target.closest('.ctl [data-pick]');
-    if (l) { select(l.getAttribute('data-pick'), true); return; }
+    if (l) { open(l.getAttribute('data-pick'), true); return; }
     var n = e.target.closest('#flow2 [data-node^="file:"]');
-    if (n) select(n.getAttribute('data-node').slice(5), false);
+    if (n) open(n.getAttribute('data-node').slice(5), true);
   });
-  var first = pick.querySelector('.fpb');
-  if (first) select(first.getAttribute('data-file'), false);
 })();

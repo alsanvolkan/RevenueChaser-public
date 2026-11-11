@@ -155,17 +155,17 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
     assert "RC-Backup-Weekly" in ps1 and "RC-Store-Backup" not in ps1 and "RC-ValueChain-Sync" not in ps1
 
 
-def test_data_health_drill_line_names_the_500_store_read_failed_case():
-    """#358: the Settings ticker drill answers 500 "store read failed" (DF98), not only 404."""
+def test_data_health_lookup_line_names_the_500_case_and_the_served_files():
+    """#715: the Ticker lookup answers 500 "serving read failed" (DF98), not only 404, and names no old store."""
     from pathlib import Path
 
     text = (Path(__file__).resolve().parents[2] / "docs" / "data_health.md").read_text(encoding="utf-8")
-    line = next(l for l in text.splitlines() if "Per-ticker drill `GET /api/settings/ticker/<t>`" in l)
+    line = next(l for l in text.splitlines() if "Ticker lookup `GET /api/settings/lookup/<t>`" in l)
     start = text.index(line)
     end = text.find("\n- ", start + 1)
     block = text[start:end]
-    assert "500" in block and "store read failed" in block
-
+    assert "500" in block and "serving read failed" in block and "404" in block
+    assert "/api/settings/ticker/<t>` is gone" in block
 
 # Every Markdown file a test reads by path. tests.yml drops ``**.md``, so each one has to be added back to the
 # path filter of both triggers, or a docs-only PR that edits it skips CI and cannot go red against its test.

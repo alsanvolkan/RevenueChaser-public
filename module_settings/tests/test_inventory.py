@@ -157,82 +157,9 @@ def test_collect_embeds_ticker_names_for_the_drill(rawstore_tmp_db, monkeypatch)
     assert {"ticker": "AAPL", "name": "Apple Inc."} in tickers
 
 
-def test_ticker_detail_reports_null_cap_as_none_and_out_of_universe(rawstore_tmp_db):
-    _seed_detail()
-    detail = inventory.ticker_detail("MU")
-    assert detail["market_cap"] is None
-    assert detail["name"] == "Micron Technology"
-    assert detail["presence"]["in_classification_universe"] is True   # no floor: a NULL cap is still a member
-    # A stored cap is in the classification universe too.
-    assert inventory.ticker_detail("AAPL")["presence"]["in_classification_universe"] is True
-
-
-def test_ticker_detail_reports_the_sector_and_the_industry_text(rawstore_tmp_db):
-    """#266: the drill's classification is the two UW levels; there is no industry group or sub-industry any more."""
-    _seed_detail()
-    detail = inventory.ticker_detail("MU")
-    assert detail["sector"] == "Technology"
-    assert detail["industry"] == "Semiconductors"
-    assert "industry_group" not in detail and "sub_industry" not in detail
-    # a row with no classification stays None, never coerced
-    aapl = inventory.ticker_detail("AAPL")
-    assert aapl["sector"] is None and aapl["industry"] is None
-
-
-def test_ticker_detail_reads_a_stored_pre_rename_sector_as_its_morningstar_name(rawstore_tmp_db):
-    """A row `/run/identity` has not re-applied yet still holds a GICS spelling: the drill shows the UW name."""
-    _seed_detail()
-    universe_store.put([
-        {"ticker": "OLD", "market_cap": 1e9, "name": "Old Row", "sector": "Information Technology",
-         "industry": "Semiconductors"},
-        {"ticker": "LEG", "market_cap": 1e9, "name": "Legacy Row", "sector": "Other"}])
-    assert inventory.ticker_detail("OLD")["sector"] == "Technology"
-    assert inventory.ticker_detail("LEG")["sector"] == "Unclassified"
-
-
-def test_ticker_detail_reads_filing_from_the_edgar_db(rawstore_tmp_db):
-    _seed_detail()
-    detail = inventory.ticker_detail("MU")
-    assert detail["cik"] == "0000723125"
-    assert detail["sic"] == "3674"
-    assert detail["sic_description"] == "Semiconductors & Related Devices"
-    assert detail["filing"] == {"form": "10-K", "filed": "2026-02-01",
-                                "accession": "acc-mu", "quality": "ok"}
-
-
-def test_ticker_detail_reports_dataset_presence_from_the_store(rawstore_tmp_db):
-    _seed_detail()
-    presence = inventory.ticker_detail("MU")["presence"]
-    assert presence["swing_ohlc"] == {"bars": 2, "newest": "2026-02-02"}
-    assert presence["edgar_financials"] == {"periods": 0, "newest": None}
-    assert presence["oipd_meta"] is False
-    assert presence["relatedness_profiles"] is False
-
-
 def _d01_bars(ticker, *days):
     return [{"ticker": ticker, "session_date": date.fromisoformat(day), "close": 1.0,
              "source": "uw", "volume": 1.0} for day in days]
-
-
-def test_drill_reports_d01_bars_when_swing_ohlc_has_none(rawstore_tmp_db):
-    """F1: a name with D01 bars and no swing_ohlc row is not 'no bars', and is not unknown."""
-    rawstore.write_rows("price_bars_daily", _d01_bars("NVDA", "2024-01-02", "2025-06-02", "2026-02-02"))
-    assert rawstore.count("swing_ohlc") == 0
-    detail = inventory.ticker_detail("NVDA")
-    assert detail is not None
-    assert detail["presence"]["price_bars_daily"] == {"bars": 3, "newest": "2026-02-02"}
-    assert detail["presence"]["swing_ohlc"] == {"bars": 0, "newest": None}
-
-
-def test_drill_keeps_the_legacy_count_when_d01_has_no_bars(rawstore_tmp_db):
-    """A swing_ohlc-only name shows 0 D01 bars; the cache count stays under its own key."""
-    rawstore.write_rows("swing_ohlc", [
-        {"ticker": "SPY", "ts": "2026-02-01", "close": 1.0},
-        {"ticker": "SPY", "ts": "2026-02-02", "close": 1.1},
-    ])
-    presence = inventory.ticker_detail("SPY")["presence"]
-    assert presence["price_bars_daily"] == {"bars": 0, "newest": None}
-    assert presence["swing_ohlc"] == {"bars": 2, "newest": "2026-02-02"}
 
 
 def test_ohlc_dataset_row_is_labelled_as_the_legacy_cache(rawstore_tmp_db):
@@ -255,50 +182,6 @@ _EVIDENCE = (
     ("MU", ("2026-02-01", "2026-02-02"), ("2026-02-01", "2026-02-02")),
     ("SPY", (), ("2024-01-02", "2024-06-03", "2025-01-02", "2026-02-02")),
 )
-
-
-def test_evidence_five_tickers_before_swing_after_d01(rawstore_tmp_db, capsys):
-    rawstore.write_rows("price_bars_daily", [
-        bar for ticker, days, _swing in _EVIDENCE for bar in _d01_bars(ticker, *days)])
-    rawstore.write_rows("swing_ohlc", [
-        {"ticker": ticker, "ts": day, "close": 1.0}
-        for ticker, _days, swing in _EVIDENCE for day in swing])
-    lines = ["ticker  before_swing  after_d01  after_newest"]
-    for ticker, days, swing in _EVIDENCE:
-        presence = inventory.ticker_detail(ticker)["presence"]
-        before, after = presence["swing_ohlc"]["bars"], presence["price_bars_daily"]["bars"]
-        newest = presence["price_bars_daily"]["newest"]
-        assert before == len(swing) and after == len(days)
-        assert newest == (max(days) if days else None)
-        lines.append(f"{ticker:<6}  {before:<13}  {after:<9}  {newest}")
-    print("\n".join(lines))
-    captured = capsys.readouterr()
-    assert "AAPL    0              3" in captured.out
-    assert "MSFT    2              0" in captured.out
-
-
-def test_ticker_detail_unknown_is_none(rawstore_tmp_db):
-    _seed_detail()
-    assert inventory.ticker_detail("ZZZZ") is None
-    assert inventory.ticker_detail("") is None
-
-
-def test_ticker_detail_makes_no_provider_calls(rawstore_tmp_db, monkeypatch):
-    _seed_detail()
-    from RevenueChaser.core.providers import sec_edgar, yfinance as yf_provider
-    import yfinance
-
-    def boom(*args, **kwargs):
-        raise AssertionError("ticker_detail must not touch the network")
-
-    monkeypatch.setattr(sec_edgar, "get_json", boom)
-    monkeypatch.setattr(sec_edgar, "get_text", boom)
-    monkeypatch.setattr(sec_edgar, "_cik_map", boom)
-    monkeypatch.setattr(yf_provider, "get_financials", boom)
-    monkeypatch.setattr(yfinance, "Ticker", boom, raising=False)
-    monkeypatch.setattr(yfinance, "screen", boom, raising=False)
-
-    assert inventory.ticker_detail("MU") is not None
 
 
 def test_missing_counts_a_ticker_once_however_many_rows_it_has(rawstore_tmp_db):
@@ -398,18 +281,6 @@ def _seed_typed():
         {"ticker": "AAPL", "security_type": "common"},
         {"ticker": "FUND", "security_type": "cef"},
     ])
-
-
-def test_ticker_detail_flag_is_membership_in_the_classification_universe(rawstore_tmp_db):
-    from RevenueChaser.core import universe
-    _seed_typed()
-    assert universe.classification_universe() == ["AAPL", "FUND", "NOROW"]
-    presence = {t: inventory.ticker_detail(t)["presence"] for t in ("AAPL", "FUND", "NOROW")}
-    # PR 2: FUND is a universe name (every type of Tiers A and B), outside the operating-company slice
-    assert {t: p["in_classification_universe"] for t, p in presence.items()} == {
-        "AAPL": True, "FUND": True, "NOROW": True}
-    assert {t: p["in_operating_universe"] for t, p in presence.items()} == {
-        "AAPL": True, "FUND": False, "NOROW": True}
 
 
 def test_coverage_counts_follow_the_typed_universe(rawstore_tmp_db):
@@ -886,12 +757,12 @@ def test_corpus_note_is_empty_when_the_store_read_fails(rawstore_tmp_db, monkeyp
 
 
 @pytest.mark.parametrize("status,want,not_want", [
-    (404, "No stored data for", "Could not read"),
-    (400, "No stored data for", "Could not read"),
-    (500, "Could not read the store for", "No stored data")])
-def test_df98_drill_message_by_status(tmp_path, rawstore_tmp_db, status, want, not_want):
-    """DF98 under node: only an unknown or malformed ticker says 'No stored data'; a server failure says the store
-    could not be read."""
+    (404, "No served file holds a row for", "Could not read"),
+    (400, "No served file holds a row for", "Could not read"),
+    (500, "Could not read the served files for", "No served file holds")])
+def test_df98_lookup_message_by_status(tmp_path, rawstore_tmp_db, status, want, not_want):
+    """DF98 under node: only an unknown or malformed ticker says the files hold no row; a server failure says the
+    served files could not be read (#715 renamed both, the rule is unchanged)."""
     from RevenueChaser.core.tests.board_js import run_board_js
     from RevenueChaser.module_settings import report as sr
     html = sr.render_settings_dashboard(inventory.collect())

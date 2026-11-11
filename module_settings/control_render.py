@@ -17,6 +17,7 @@ from pathlib import Path
 from RevenueChaser.core import board_settings
 from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.module_settings import control
+from RevenueChaser.rcdata import backup
 from RevenueChaser.rcdata.needs import screen
 
 _STATIC = Path(__file__).resolve().parent / "static"
@@ -645,7 +646,7 @@ def _flow(view: dict) -> str:
                      + (boards or "<b>no board yet</b>") + '</span></div>')
     return (
         '<details class="sec" id="sec-flow" open><summary><h2>Data flow</h2><span class="secs">source → SSD file → '
-        'board → board file · a press lights its lines · a file picks its panel below · a board says what it reads '
+        'board → board file · a press lights its lines · a file opens its section below · a board says what it reads '
         'and writes · a faint dashed line is a board reading another board\'s file</span></summary>'
         '<div class="group" style="border-left-color:var(--acc)"><div class="scroll flowwrap"><svg class="flowsvg" '
         'id="flow2" viewBox="0 0 1116 900" role="group" aria-labelledby="flow2-title"></svg></div>'
@@ -659,27 +660,19 @@ def _flow(view: dict) -> str:
         '</div></details>')
 
 
-def _picker(view: dict) -> str:
-    """The file picker under the diagram: one box a served file, the first selected at load."""
-    boxes = []
-    for i, f in enumerate(view["files"]):
-        st = f.get("state") if isinstance(f.get("state"), dict) else {}
-        if st.get("exists") is False:
-            disk, cls = "no file yet", "fpb nofile"
-        elif st.get("exists"):
-            disk, cls = f'🦆 {_size(st.get("bytes"))}' if st.get("bytes") is not None else "🦆 size not known", "fpb"
-        elif f.get("bytes") is not None:
-            disk, cls = f'🦆 {_size(f["bytes"])}', "fpb"
-        else:
-            disk, cls = "size not known", "fpb"
-        n = len(f["datasets"])
-        boxes.append(f'<button type="button" role="tab" class="{cls}" data-file="{esc(f["name"])}" '
-                     f'aria-selected="{"true" if i == 0 else "false"}" aria-controls="fp-{esc(f["kind"])}" '
-                     f'style="--fh:{esc(f["color"])}"><span class="fpn">{esc(f["name"])}</span>'
-                     f'<span class="fpd">{esc(disk)}</span><span class="fpl">{n} {"line" if n == 1 else "lines"}'
-                     '</span></button>')
-    return ('<div id="fpick" role="tablist" aria-label="The served files">'
-            + '<span class="fpar" aria-hidden="true">⟶</span>'.join(boxes) + '</div>')
+def _file_words(f: dict) -> str:
+    """What a served file's own section says beside its name: what is on disk and how many lines it carries."""
+    st = f.get("state") if isinstance(f.get("state"), dict) else {}
+    if st.get("exists") is False:
+        disk = "no file yet"
+    elif st.get("exists"):
+        disk = f'🦆 {_size(st.get("bytes"))}' if st.get("bytes") is not None else "🦆 size not known"
+    elif f.get("bytes") is not None:
+        disk = f'🦆 {_size(f["bytes"])}'
+    else:
+        disk = "size not known"
+    n = len(f["datasets"])
+    return f'{disk} · {n} {"line" if n == 1 else "lines"}'
 
 
 # ── Providers ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1049,6 +1042,53 @@ def _queue(view: dict) -> str:
             'started it; a Claude session\'s command is cut at 2 h.</p></div></details>')
 
 
+def _bcls(row: dict) -> str:
+    """A backup row's colour: red past the alert age or with nothing kept, amber past the warn age."""
+    return "s-bad" if row.get("alert") else ("s-warn" if row.get("warn") else "s-ok")
+
+
+def _backups(view: dict) -> str:
+    """The weekly backup, on the page itself (#715 step 2; avo, 11 Nov 2026). One row a step, one row a served
+    file: how old the newest copy is and how many are kept. It reads what the backup job recorded and starts
+    nothing."""
+    b = view.get("backups") or {}
+    rows, bad = [], 0
+    if not b:
+        return ""
+    if not b.get("configured"):
+        rows.append('<tr><td data-label="What">Backup folder</td>'
+                    '<td data-label="State" class="s-bad">not set: RAW_STORE_BACKUP_DIR is empty</td></tr>')
+        bad += 1
+    elif b.get("root"):
+        rows.append('<tr><td data-label="What">Backup folder</td>'
+                    f'<td data-label="State"><code>{esc(b.get("root"))}</code></td></tr>')
+    for st in b.get("steps") or []:
+        age = st.get("age_days")
+        text = "never ran" if age is None else f"last good run {age} d ago · {esc(st.get('last_ok') or '—')}"
+        if st.get("error"):
+            text += f" · last run failed: {esc(st['error'])}"
+        bad += 1 if st.get("alert") else 0
+        rows.append(f'<tr><td data-label="What">Step {esc(st.get("step"))}</td>'
+                    f'<td data-label="State" class="{_bcls(st)}">{text}</td></tr>')
+    for k in b.get("kinds") or []:
+        age = k.get("age_days")
+        text = ("no copy" if age is None else f"{age} d old · {esc(k.get('newest') or '—')}") \
+            + f" · {esc(k.get('copies') or 0)} kept"
+        bad += 1 if k.get("alert") else 0
+        rows.append(f'<tr><td data-label="What">Newest {esc(k.get("kind"))} copy</td>'
+                    f'<td data-label="State" class="{_bcls(k)}">{text}</td></tr>')
+    body = "".join(rows) or '<tr><td colspan="2" class="dim">no backup recorded</td></tr>'
+    words = (f'{bad} past its limit' if bad else "every copy inside its limit")
+    return (f'<details class="sec" id="sec-backups"{" open" if bad else ""}><summary><h2>Weekly backups</h2>'
+            f'<span class="secs">{words}</span></summary>'
+            '<div class="group" style="border-left-color:var(--mut)"><div class="scroll">'
+            '<table class="stk bktbl"><thead><tr><th>What</th><th>State</th></tr></thead>'
+            f'<tbody>{body}</tbody></table></div><p class="hint">One job every Sunday 03:30 keeps the newest '
+            f'{backup.KEEP} copies of every file on the HDD. Amber past '
+            f'{esc(b.get("warn_days") or "?")} days, red past {esc(b.get("alert_days") or "?")}. This page only reads what that '
+            'job recorded; it copies nothing.</p></div></details>')
+
+
 # ── The page's data and the whole section ─────────────────────────────────────────────────────────────────────
 
 def client(view: dict) -> dict:
@@ -1087,11 +1127,17 @@ INPUT_ROLES = ("first", "only source", "fills")
 
 
 def _panel(f: dict, view: dict, first: bool) -> str:
-    """One served file's panel on the Database tab: its journey, the folder recount press and its example rows. Its
-    sources and their runs are on the Fetch/Health tab (``_fetch_group``)."""
-    return (f'<section class="fpanel" data-file="{esc(f["name"])}" id="fp-{esc(f["kind"])}" '
-            f'style="--fh:{esc(f["color"])}"{"" if first else " hidden"}>'
-            f'{_journey(f)}{_samples(f)}</section>')
+    """One served file's own folded section on the Database tab: its journey, the folder recount press and its
+    example rows. Its sources and their runs are on the Fetch/Health tab (``_fetch_group``).
+
+    #715 step 3 (avo, 11 Nov 2026: "Hicbir sekmenin altinda baska sekme olmayacak"): the six files used to be a
+    ``role="tablist"`` picker with one panel showing at a time. They are stacked folded sections now, like the
+    Fetch tab's groups; the first one is open.
+    """
+    return (f'<details class="sec fpanel" data-file="{esc(f["name"])}" id="fp-{esc(f["kind"])}" '
+            f'style="--fh:{esc(f["color"])}"{" open" if first else ""}>'
+            f'<summary><h2>🦆 {esc(f["name"])}</h2><span class="secs">{esc(_file_words(f))}</span></summary>'
+            f'<div class="fpbody">{_journey(f)}{_samples(f)}</div></details>')
 
 
 def _fetch_group(f: dict, view: dict) -> str:
@@ -1107,20 +1153,26 @@ def _fetch_group(f: dict, view: dict) -> str:
             f'</summary>{_sources(f, view)}{_health_table(f)}</details>')
 
 
-def render_data(view: dict) -> str:
-    """The Data tab's panel (#331, #492): the header, Health right now, the flow diagram, the file picker, one panel
-    a served file in plan order, then Cross-check."""
+def render_data(view: dict, lookup_html: str = "") -> str:
+    """The Data tab's panel (#331, #492): the header, the Ticker lookup (#715), Health right now, the flow diagram,
+    then one folded section a served file in plan order (#715 step 3: no picker, no nested tabs).
+
+    ``lookup_html`` rides inside the board rather than in a sibling block of its own, so the page's own background
+    never shows between the help band and the board (e2e ``test_the_what_am_i_looking_at_band_follows_the_theme``).
+    """
     if view.get("error"):
-        return _err(view)
+        return _err(view) + lookup_html
     view = _ready(view)
     panels = "".join(_panel(f, view, i == 0) for i, f in enumerate(view["files"]))
     return ('<section id="ctl" class="ctl" aria-label="Data/Health · Data control board"><div class="wrap">'
-            f'{_header(view)}{_flow(view)}{_picker(view)}<div class="fpanels">{panels}</div></div></section>')
+            f'{_header(view)}{lookup_html}{_flow(view)}'
+            f'<div class="fpanels">{panels}</div></div></section>')
 
 
 def render_fetch(view: dict) -> str:
     """The Fetch/Health tab's top (avo, 10 Nov 2026): the switches, Health right now, then one folded group a served
-    file with its sources and runs, then Cross-check. The Health tab's parts follow it in the same panel."""
+    file with its sources and runs, then the queue, Cross-check and the weekly backups (#715 step 2). The Health
+    tab's parts follow it in the same panel."""
     if view.get("error"):
         return _err(view, "Fetch/Health")
     view = _ready(view)
@@ -1131,7 +1183,8 @@ def render_fetch(view: dict) -> str:
             f'{esc(view["universe_summary"])} · the tier sets the next fetches and fills use</span></summary>'
             f'{_universe(view)}{_legend(view)}</details>'
             '<div class="ffilter" id="ffilter" hidden></div><div class="emptyst" id="ffempty" hidden></div>'
-            f'<div class="fgrps">{groups}</div>{_picture_control(view)}{_cross(view)}</div></section>')
+            f'<div class="fgrps">{groups}</div>{_picture_control(view)}{_queue(view)}{_cross(view)}'
+            f'{_backups(view)}</div></section>')
 
 
 def scripts(view: dict) -> str:

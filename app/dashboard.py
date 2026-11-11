@@ -1183,29 +1183,28 @@ def api_automations_action(name: str, action: str):
         return jsonify({"ok": False, "error": str(exc)}), exc.http_status
 
 
-@app.route("/api/settings/ticker/<ticker>")
-def api_settings_ticker(ticker: str):
-    """Store-only per-ticker drill for the Settings board.
+@app.route("/api/settings/lookup/<ticker>")
+def api_settings_lookup(ticker: str):
+    """The Database tab's Ticker lookup: what the **served** files hold for one name, and since when.
 
-    Reads ``raw.duckdb`` / ``edgar.duckdb`` and nothing else: no job, no network,
-    no credentials. An unknown ticker (no row anywhere, every read answering) is a plain 404
-    ``{"ok": false}``; one that is not ticker-shaped is a 400; a read that fails inside the drill
-    is a 200 whose ``errors`` name it (#143), never a 404; a drill that raises is a 500 with
-    ``error: "store read failed"``.
+    Reads only the six serving DuckDB files, read-only, through ``rcdata.serving``: no old store, no job, no
+    network, no credentials. A name no served file holds and the spine does not know is a plain 404
+    ``{"ok": false}``; one that is not ticker-shaped is a 400; a file that could not be read is a 200 whose
+    ``errors`` name it, never a 404; a lookup that raises is a 500.
     """
-    from RevenueChaser.module_settings import inventory
+    from RevenueChaser.module_settings import ticker_lookup
 
     ticker = ticker.strip().upper()
     if not _valid_ticker(ticker):
         return jsonify({"ok": False, "error": "bad ticker"}), 400
     try:
-        detail = inventory.ticker_detail(ticker)
-    except Exception as exc:  # noqa: BLE001 - a failed store read must not look like an unknown ticker (DF98)
-        logger.exception("settings ticker drill failed for %s", ticker)
-        return jsonify({"ok": False, "error": "store read failed", "detail": str(exc)[:200]}), 500
-    if detail is None:
+        found = ticker_lookup.lookup(ticker)
+    except Exception as exc:  # noqa: BLE001 - a failed read must not look like an unknown ticker
+        logger.exception("settings ticker lookup failed for %s", ticker)
+        return jsonify({"ok": False, "error": "serving read failed", "detail": str(exc)[:200]}), 500
+    if found is None:
         return jsonify({"ok": False}), 404
-    return jsonify({"ok": True, **detail})
+    return jsonify({"ok": True, **found})
 
 
 @app.route("/api/settings/sample/<table>")
