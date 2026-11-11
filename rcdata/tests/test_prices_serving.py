@@ -387,7 +387,6 @@ def test_the_boards_read_the_bridge_views_through_the_read_api(built, monkeypatc
     """``core/prices``' read API on the real views (#563): FLG's bars come back split-adjusted to today on both bases,
     because the views stamp ``fetched_at`` with the build time and the reader applies no split again."""
     from RevenueChaser.core import ledger, prices
-    monkeypatch.delenv(prices.SOURCE_ENV, raising=False)
     ops.record_check(prices.SERVING_DATASET, "changed")
     assert prices.source_state()["effective"] == prices.LAYER
     served = [r["close"] for r in _q("SELECT close FROM price_bars_daily WHERE ticker = 'FLG' ORDER BY session_date")]

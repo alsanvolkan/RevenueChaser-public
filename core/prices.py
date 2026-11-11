@@ -16,12 +16,10 @@ Two entry points share one lock (R7):
 The clock is ``now`` (an aware datetime) when given, else the calendar seam
 (``core/calendar._now``). This module never calls ``datetime.now`` itself.
 
-**The source of the reads** (the pattern of ``core/universe.py``; #209, board plan PR D): ``RC_PRICES_SOURCE``
-unset (or ``layer``) reads the builder's ``prices.duckdb`` (``rcdata/build/prices/serving.py``), whose
-``price_bars_daily`` and ``price_actions`` views keep the old names and columns (the bridge D4); any other value
-(``store`` by convention) reads the old ``.store/prices.duckdb``. With the layer asked for but no served file, or no
-``prices/serving`` build yet, the old store is read and a warning is logged once (``source_state``). Only the reads
-move: the writers above and the watermarks (``price_checks``, which the served file does not hold) and the Data Health row of the writer stay on the store.
+**The source of the reads** (#209, board plan PR D; #642 PR 6): the reads read the builder's ``prices.duckdb``
+(``rcdata/build/prices/serving.py``), whose ``price_bars_daily`` and ``price_actions`` views keep the old names and
+columns (the bridge D4). There is no switch and no fallback: no served file reads as no rows, and
+``source_state()["reason"]`` says why. Only the reads moved: the writers above and the watermarks (``price_checks``, which the served file does not hold) and the Data Health row of the writer stay on the store.
 """
 from __future__ import annotations
 
@@ -542,42 +540,28 @@ def overlap_stats(pairs: list[tuple[dict, dict]]) -> dict:
 
 # ── store reads ──────────────────────────────────────────────────────────────
 
-SOURCE_ENV = "RC_PRICES_SOURCE"
 LAYER = "layer"
-STORE = "store"
 SERVING_DATASET = "prices/serving"
-_FALLBACK_LOGGED: set[tuple[str, str]] = set()
 
 
 def source_state() -> dict:
-    """``{requested, effective, reason, variable}`` of the bars the boards read, at call time: the rule of
-    ``core/fundamentals_layer.source_state`` (a failed newest build keeps the last good file)."""
-    import os
-
-    from ..rcdata import ops, serving
-    variable = (os.getenv(SOURCE_ENV) or "").strip() or None
-    if variable is not None and variable.lower() != LAYER:
-        return {"requested": STORE, "effective": STORE, "reason": None, "variable": variable}
-    reason = None
-    if not serving.live_path("prices").exists():
-        reason = "no prices.duckdb yet"
-    elif not ops.ever_built(SERVING_DATASET):
-        reason = f"{SERVING_DATASET} has not built yet"
-    asked = (f"{SOURCE_ENV}={LAYER} is set" if variable
-             else f"The boards read the builder's bars by default ({SOURCE_ENV} unset)")
-    if reason and (asked, reason) not in _FALLBACK_LOGGED:
-        _FALLBACK_LOGGED.add((asked, reason))
-        logger.warning("%s, but they fall back to the old store: %s", asked, reason)
-    return {"requested": LAYER, "effective": STORE if reason else LAYER, "reason": reason, "variable": variable}
+    """``{requested, effective, reason, variable}`` of the bars the boards read: always the builder's file since
+    #642 PR 6 (the old-store switch is gone); ``reason`` says why that file gives no rows, if it does not
+    (``rcdata.read.missing``)."""
+    from ..rcdata import read
+    return {"requested": LAYER, "effective": LAYER, "reason": read.missing("prices", SERVING_DATASET),
+            "variable": None}
 
 
 def _layer_read(sql: str, params: list | None, fetch):
-    """``fetch(cursor)`` of ``sql`` on the served file, or None when the old store is read. A missing view reads as
-    no rows, as ``rawstore.query`` does."""
-    if source_state()["effective"] != LAYER:
-        return None
+    """``fetch(cursor)`` of ``sql`` on the served file. No file, or a missing view, reads as no rows
+    (``fetch(None)``): a board says why with ``source_state()["reason"]``."""
     from ..rcdata import serving
-    with serving.open_read("prices") as con:
+    try:
+        con = serving.open_read("prices")
+    except serving.ServingFileMissing:
+        return fetch(None)
+    with con:
         try:
             return fetch(con.execute(sql, params or []))
         except duckdb.CatalogException:
@@ -592,11 +576,12 @@ def _dicts(cur) -> list[dict]:
 
 
 def _read(sql: str, params: list | None = None, layer: bool = False) -> list[dict]:
-    """A read of the price tables in the store. ``layer`` (the read API and the boards' readers only) reads the
-    served file instead while ``source_state`` says so: the writers' skip keys, watermarks and health stay on the
-    store they write, or a writer would skip a bar the store lacks or offer one it holds (review of #563)."""
-    rows = _layer_read(sql, params, _dicts) if layer else None
-    return rawstore.query(sql, params, db=_DB) if rows is None else rows
+    """A read of the price tables. ``layer`` (the read API and the boards' readers only) reads the served file, with
+    no fallback (#642 PR 6): the writers' skip keys, watermarks and health stay on the store they write, or a writer
+    would skip a bar the store lacks or offer one it holds (review of #563)."""
+    if layer:
+        return _layer_read(sql, params, _dicts)
+    return rawstore.query(sql, params, db=_DB)
 
 
 def _last_session(scope: list[str]) -> dict[str, date]:
@@ -662,18 +647,8 @@ _DATE_DTYPE = pd.to_datetime(pd.Series([date(2000, 1, 3)], dtype=object)).dtype
 
 def _read_columns(sql: str, params: list) -> dict[str, np.ndarray]:
     """A read of the price bars as numpy columns, NULLs masked (#383 K8a speed): the rows ``_read`` would return,
-    without a Python dict per bar. Lenient as ``rawstore.query``: no file or no table reads as no rows, and a read
-    never creates the file. ``_DB`` is ``prices`` (#156); the served file first (``source_state``)."""
-    cols = _layer_read(sql, params, lambda cur: {} if cur is None else cur.fetchnumpy())
-    if cols is not None:
-        return cols
-    if not rawstore.prices_db_path().exists():
-        return {}
-    try:
-        with rawstore.connect(read_only=True, db=_DB) as conn:
-            return conn.execute(sql, params).fetchnumpy()
-    except duckdb.CatalogException:
-        return {}
+    without a Python dict per bar. The served file only (#642 PR 6): no file or no table reads as no rows."""
+    return _layer_read(sql, params, lambda cur: {} if cur is None else cur.fetchnumpy())
 
 
 def _plain(col) -> tuple[np.ndarray, np.ndarray]:

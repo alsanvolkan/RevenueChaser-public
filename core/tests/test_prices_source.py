@@ -1,4 +1,5 @@
-"""The boards' daily bars from the builder's ``prices.duckdb`` (``core/prices.source_state``; #209, board plan PR D).
+"""The boards' daily bars from the builder's ``prices.duckdb`` (``core/prices.source_state``; #209, board plan PR D;
+no old-store switch since #642 PR 6).
 
 The builder serves ``price_bars_daily`` and ``price_actions`` as views under the old names with the old columns
 (``rcdata/build/prices/serving.py``, the bridge D4), so the read API only has to open the other file.
@@ -40,9 +41,7 @@ def _serving_file(built: bool = True):
 
 
 @pytest.fixture
-def asked(monkeypatch, market_roots):  # noqa: F811
-    monkeypatch.delenv(prices.SOURCE_ENV, raising=False)
-    prices._FALLBACK_LOGGED.clear()
+def asked(market_roots):  # noqa: F811
     _store_bar()
 
 
@@ -66,21 +65,15 @@ def test_the_writers_keep_reading_the_store_they_write(asked):
     assert prices._stored_rows(["SPY"], SESSION)[("SPY", SESSION)]["close"] == STORE_CLOSE
 
 
-def test_without_a_served_file_the_old_store_is_read(asked):
+def test_without_a_served_file_the_boards_read_no_bars_and_say_why(asked):
+    """#642 PR 6: no fallback to the old store; the reason is the one text every board shows."""
     state = prices.source_state()
-    assert state["effective"] == prices.STORE and state["reason"] == "no prices.duckdb yet"
-    assert _close() == [STORE_CLOSE]
+    assert state["effective"] == prices.LAYER and state["reason"] == "no prices.duckdb yet"
+    assert _close() == []
+    assert "SPY" not in ledger.d01_last_bars(["SPY"])
 
 
-def test_a_file_never_built_is_not_read(asked):
+def test_a_file_never_built_is_read_and_its_reason_said(asked):
     _serving_file(built=False)
     assert prices.source_state()["reason"] == f"{prices.SERVING_DATASET} has not built yet"
-    assert _close() == [STORE_CLOSE]
-
-
-def test_the_escape_hatch_reads_the_old_store(asked, monkeypatch):
-    _serving_file()
-    monkeypatch.setenv(prices.SOURCE_ENV, "store")
-    assert prices.source_state()["effective"] == prices.STORE
-    assert _close() == [STORE_CLOSE]
-    assert ledger.d01_last_bars(["SPY"])["SPY"][1] == 1.0
+    assert _close() == [LAYER_CLOSE]
