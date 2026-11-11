@@ -18,12 +18,15 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.config import OUTPUT_DIR
 from RevenueChaser.core import fundamentals_layer, subscription_usage
 from RevenueChaser.core.providers import claude_code, deepseek, grok
+from RevenueChaser.rcdata import opens
 
 from . import config, embeddings, engine, locator, profile_v3, profiles, similarity, writers
 
@@ -78,16 +81,27 @@ def run(tickers: list[str], provider: str, model: str) -> dict:
     ciks = engine._cik_for(tickers) if fundamentals_layer.reads_layer() else {}
     profs: dict[str, dict] = {}
     pjs: dict[str, dict] = {}
-    no_text, short_text, empty, shell, stopped = [], [], [], [], None
-    transient = 0
+    no_text, short_text, empty, shell = [], [], [], []
+    todo = []
     for t in tickers:
         inp = engine._prepare(t, names.get(t), ciks.get(t))      # the board's input (plan F4)
         if profile_v3.is_shell(None, inp["context"].get("sic")):
             shell.append(t)
-            continue
-        if inp["fallback"] not in engine.FALLBACKS and not inp.get("locate"):
+        elif inp["fallback"] not in engine.FALLBACKS and not inp.get("locate"):
             (short_text if inp["fallback"] == "short_text" else no_text).append(t)
-            continue
+        else:
+            todo.append((t, inp))
+    lock, halt = threading.Lock(), threading.Event()
+    state = {"stopped": None, "transient": 0}
+
+    def stop(why: str) -> None:
+        with lock:
+            state["stopped"] = state["stopped"] or why
+        halt.set()
+
+    def one(t: str, inp: dict) -> None:
+        if halt.is_set():
+            return
         try:
             text = inp["text"]
             if inp.get("locate"):
@@ -102,46 +116,59 @@ def run(tickers: list[str], provider: str, model: str) -> dict:
                 if located is not None:
                     text = located[:engine.MAX_FALLBACK_CHARS]
                 elif inp["fallback"] not in engine.FALLBACKS:
-                    no_text.append(t)
-                    continue
+                    with lock:
+                        no_text.append(t)
+                    return
             prof = profiles.profile_for(t, inp["name"], text, budget=budget, provider=provider, model=model,
                                         context=inp["context"])
         except profiles.BudgetExceeded:
-            stopped = "cap"
-            break
+            return stop("cap")
         except deepseek.PeakHoursError:
-            stopped = "peak"
-            break
+            return stop("peak")
         except grok.GrokAllowanceError:
-            stopped = "allowance"
-            break
+            return stop("allowance")
         except (deepseek.DeepSeekAuthError, grok.GrokAuthError):
-            stopped = "auth"
-            break
+            return stop("auth")
         except grok.GrokRequestError:
-            stopped = "request"
-            break
+            return stop("request")
         except (deepseek.DeepSeekTransientError, grok.GrokTransientError):
-            transient += 1
-            if transient >= engine.MAX_TRANSIENT_FAILURES:
-                stopped = "transient"
-                break
-            continue
+            with lock:
+                state["transient"] += 1
+                many = state["transient"] >= engine.MAX_TRANSIENT_FAILURES
+            return stop("transient") if many else None
         except (deepseek.DeepSeekError, grok.GrokError):
             prof = {f: [] for f in config.PROFILE_FIELDS}
         v3 = getattr(prof, "v3", None)
-        if v3 is not None and profile_v3.is_shell(v3):
-            shell.append(t)
-            continue
-        if any(prof.values()):
-            profs[t] = prof
-            if v3 is not None:
-                pjs[t] = v3
-        else:
-            empty.append(t)
-            if not profs and len(empty) >= config.GROK_UNUSABLE_STOP:
-                stopped = "unusable"                   # a wrong endpoint shape: stop before paying for every name
+        unusable = False
+        with lock:
+            if v3 is not None and profile_v3.is_shell(v3):
+                shell.append(t)
+            elif any(prof.values()):
+                profs[t] = prof
+                if v3 is not None:
+                    pjs[t] = v3
+            else:
+                empty.append(t)
+                unusable = not profs and len(empty) >= config.GROK_UNUSABLE_STOP
+        if unusable:
+            stop("unusable")                           # a wrong endpoint shape: stop before paying for every name
+
+    # The Claude CLI is slow per call and its gate is shared, so its names go out ``COMPARE_WORKERS`` at a time
+    # (avo, 11 Nov 2026: "8li paralel"); the paid writers stay one at a time so a stop costs at most one call.
+    workers = config.COMPARE_WORKERS if provider == "claude" else 1
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers, **opens.pool_kwargs()) as ex:
+            for f in as_completed([ex.submit(one, t, inp) for t, inp in todo]):
+                f.result()
+    else:
+        for t, inp in todo:
+            one(t, inp)
+            if halt.is_set():
                 break
+    stopped = state["stopped"]
+    order = {t: i for i, t in enumerate(tickers)}       # threads finish in any order; the lists keep the input's
+    for names_ in (no_text, empty, shell):
+        names_.sort(key=order.__getitem__)
     matrix, method = _matrix(tickers, profs, pjs)
     out = {"provider": provider, "model": model, "tickers": tickers, "matrix": matrix, "method": method,
            "usable": len(profs), "empty": empty, "no_text": no_text, "short_text": short_text, "shell": shell,
