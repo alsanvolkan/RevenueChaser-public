@@ -648,14 +648,16 @@ def _flow(view: dict) -> str:
         '<details class="sec" id="sec-flow" open><summary><h2>Data flow</h2><span class="secs">source → SSD file → '
         'board → board file · a press lights its lines · a file opens its section below · a board says what it reads '
         'and writes · a faint dashed line is a board reading another board\'s file</span></summary>'
-        '<div class="group" style="border-left-color:var(--acc)"><div class="scroll flowwrap"><svg class="flowsvg" '
+        '<div class="group" style="border-left-color:var(--acc)">'
+        '<button type="button" class="btn flowbig" id="flowbig" aria-expanded="false">Expand &#10530;</button>'
+        '<div class="scroll flowwrap"><svg class="flowsvg" '
         'id="flow2" viewBox="0 0 1116 900" role="group" aria-labelledby="flow2-title"></svg></div>'
         '<p class="bdmatch" id="bdmatch" aria-live="polite" hidden></p>'
         '<div class="bdinfo empty" id="bdinfo" aria-live="polite" hidden></div>'
         f'<div class="flowlegend"><b>Colour:</b>{legend}<span><i style="background:#6f7b32"></i>source</span>'
         f'<span><i style="background:{control.BOARD_COLOR}"></i>board</span>'
         '<span class="dim">Source icons: Tabler Icons (MIT licence).</span></div>'
-        '<div class="phoneonly"><p class="fnote">The diagram above scrolls sideways on a phone; the same data as a list follows.</p>'
+        '<div class="phoneonly"><p class="fnote">The diagram above scrolls sideways; Expand gives it the whole screen. The same data as a list follows.</p>'
         f'{"".join(phone)}</div>'
         '</div></details>')
 

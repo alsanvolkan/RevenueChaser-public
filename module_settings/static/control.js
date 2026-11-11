@@ -1037,6 +1037,22 @@
   });
   var sec = svg.closest('details');
   if (sec) sec.addEventListener('toggle', function () { if (sec.open) render(); });
+  // avo, 11 Nov 2026: on a phone the diagram pans inside its strip; Expand gives it the whole screen.
+  var big = document.getElementById('flowbig');
+  if (big) {
+    var shut = function () {
+      wrap.classList.remove('big'); big.classList.remove('on');
+      big.innerHTML = 'Expand &#10530;'; big.setAttribute('aria-expanded', 'false'); render();
+    };
+    big.addEventListener('click', function () {
+      if (wrap.classList.contains('big')) { shut(); return; }
+      wrap.classList.add('big'); big.classList.add('on');
+      big.innerHTML = 'Close &#10005;'; big.setAttribute('aria-expanded', 'true'); render();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && wrap.classList.contains('big')) shut();
+    });
+  }
   var rt;
   window.addEventListener('resize', function () { clearTimeout(rt); rt = setTimeout(render, 150); });
   render();
