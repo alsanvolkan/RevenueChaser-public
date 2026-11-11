@@ -34,11 +34,6 @@ def _run(name: str) -> dict:
     return base.run_request({"dataset": name, "params": {}})
 
 
-def test_the_economic_calendar_is_an_hourly_market_dataset():
-    assert econ.TABLE != "economic_calendar", "the old raw table's name, retired by needs/screen.py"
-    assert DATASETS[econ.NAME].cadence == "hourly" and DATASETS[econ.NAME].kind == "market"
-
-
 # ── uw/economic_calendar ──────────────────────────────────────────────────────────────────────────────────────
 
 def test_the_calendar_lands_typed_and_reads_back(http_mock):
@@ -89,6 +84,8 @@ def test_market_4_builds_no_headlines_and_retires_the_live_table():
     assert "ibkr/news" not in DATASETS and not hasattr(read, "news_headlines")
     assert "news_headline" in serving.RETIRED_TABLES["market"]
     assert "news_headline" not in scaffold.SCHEMA_OF_KIND["market"], "a retired table is still built"
+    assert econ.TABLE != "economic_calendar", "the old raw table's name, retired by needs/screen.py"
+    assert DATASETS[econ.NAME].cadence == "hourly" and DATASETS[econ.NAME].kind == "market"
 
 
 def test_a_live_market_3_file_with_headlines_swaps_to_a_build_without_them(http_mock):
