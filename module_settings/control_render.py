@@ -646,7 +646,7 @@ def _flow(view: dict) -> str:
                      + (boards or "<b>no board yet</b>") + '</span></div>')
     return (
         '<details class="sec" id="sec-flow" open><summary><h2>Data flow</h2><span class="secs">source → SSD file → '
-        'board → board file · a press lights its lines · a file picks its panel below · a board says what it reads '
+        'board → board file · a press lights its lines · a file opens its section below · a board says what it reads '
         'and writes · a faint dashed line is a board reading another board\'s file</span></summary>'
         '<div class="group" style="border-left-color:var(--acc)"><div class="scroll flowwrap"><svg class="flowsvg" '
         'id="flow2" viewBox="0 0 1116 900" role="group" aria-labelledby="flow2-title"></svg></div>'
@@ -660,27 +660,19 @@ def _flow(view: dict) -> str:
         '</div></details>')
 
 
-def _picker(view: dict) -> str:
-    """The file picker under the diagram: one box a served file, the first selected at load."""
-    boxes = []
-    for i, f in enumerate(view["files"]):
-        st = f.get("state") if isinstance(f.get("state"), dict) else {}
-        if st.get("exists") is False:
-            disk, cls = "no file yet", "fpb nofile"
-        elif st.get("exists"):
-            disk, cls = f'🦆 {_size(st.get("bytes"))}' if st.get("bytes") is not None else "🦆 size not known", "fpb"
-        elif f.get("bytes") is not None:
-            disk, cls = f'🦆 {_size(f["bytes"])}', "fpb"
-        else:
-            disk, cls = "size not known", "fpb"
-        n = len(f["datasets"])
-        boxes.append(f'<button type="button" role="tab" class="{cls}" data-file="{esc(f["name"])}" '
-                     f'aria-selected="{"true" if i == 0 else "false"}" aria-controls="fp-{esc(f["kind"])}" '
-                     f'style="--fh:{esc(f["color"])}"><span class="fpn">{esc(f["name"])}</span>'
-                     f'<span class="fpd">{esc(disk)}</span><span class="fpl">{n} {"line" if n == 1 else "lines"}'
-                     '</span></button>')
-    return ('<div id="fpick" role="tablist" aria-label="The served files">'
-            + '<span class="fpar" aria-hidden="true">⟶</span>'.join(boxes) + '</div>')
+def _file_words(f: dict) -> str:
+    """What a served file's own section says beside its name: what is on disk and how many lines it carries."""
+    st = f.get("state") if isinstance(f.get("state"), dict) else {}
+    if st.get("exists") is False:
+        disk = "no file yet"
+    elif st.get("exists"):
+        disk = f'🦆 {_size(st.get("bytes"))}' if st.get("bytes") is not None else "🦆 size not known"
+    elif f.get("bytes") is not None:
+        disk = f'🦆 {_size(f["bytes"])}'
+    else:
+        disk = "size not known"
+    n = len(f["datasets"])
+    return f'{disk} · {n} {"line" if n == 1 else "lines"}'
 
 
 # ── Providers ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1135,11 +1127,17 @@ INPUT_ROLES = ("first", "only source", "fills")
 
 
 def _panel(f: dict, view: dict, first: bool) -> str:
-    """One served file's panel on the Database tab: its journey, the folder recount press and its example rows. Its
-    sources and their runs are on the Fetch/Health tab (``_fetch_group``)."""
-    return (f'<section class="fpanel" data-file="{esc(f["name"])}" id="fp-{esc(f["kind"])}" '
-            f'style="--fh:{esc(f["color"])}"{"" if first else " hidden"}>'
-            f'{_journey(f)}{_samples(f)}</section>')
+    """One served file's own folded section on the Database tab: its journey, the folder recount press and its
+    example rows. Its sources and their runs are on the Fetch/Health tab (``_fetch_group``).
+
+    #715 step 3 (avo, 11 Nov 2026: "Hicbir sekmenin altinda baska sekme olmayacak"): the six files used to be a
+    ``role="tablist"`` picker with one panel showing at a time. They are stacked folded sections now, like the
+    Fetch tab's groups; the first one is open.
+    """
+    return (f'<details class="sec fpanel" data-file="{esc(f["name"])}" id="fp-{esc(f["kind"])}" '
+            f'style="--fh:{esc(f["color"])}"{" open" if first else ""}>'
+            f'<summary><h2>🦆 {esc(f["name"])}</h2><span class="secs">{esc(_file_words(f))}</span></summary>'
+            f'<div class="fpbody">{_journey(f)}{_samples(f)}</div></details>')
 
 
 def _fetch_group(f: dict, view: dict) -> str:
@@ -1157,7 +1155,7 @@ def _fetch_group(f: dict, view: dict) -> str:
 
 def render_data(view: dict, lookup_html: str = "") -> str:
     """The Data tab's panel (#331, #492): the header, the Ticker lookup (#715), Health right now, the flow diagram,
-    the file picker, one panel a served file in plan order, then Cross-check.
+    then one folded section a served file in plan order (#715 step 3: no picker, no nested tabs).
 
     ``lookup_html`` rides inside the board rather than in a sibling block of its own, so the page's own background
     never shows between the help band and the board (e2e ``test_the_what_am_i_looking_at_band_follows_the_theme``).
@@ -1167,7 +1165,7 @@ def render_data(view: dict, lookup_html: str = "") -> str:
     view = _ready(view)
     panels = "".join(_panel(f, view, i == 0) for i, f in enumerate(view["files"]))
     return ('<section id="ctl" class="ctl" aria-label="Data/Health · Data control board"><div class="wrap">'
-            f'{_header(view)}{lookup_html}{_flow(view)}{_picker(view)}'
+            f'{_header(view)}{lookup_html}{_flow(view)}'
             f'<div class="fpanels">{panels}</div></div></section>')
 
 

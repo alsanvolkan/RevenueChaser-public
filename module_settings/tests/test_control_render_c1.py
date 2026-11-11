@@ -248,34 +248,38 @@ def test_the_flow_loses_its_three_paragraphs_and_hides_the_board_box():
     assert "Press a board on the right" not in control_render.CTL_JS
 
 
-def test_the_picker_has_six_boxes_with_sizes_or_no_file_yet():
+def test_each_served_file_is_its_own_folded_section_not_a_picker_box():
+    """#715 step 3 (avo, 11 Nov 2026): no tab under a tab, so the file picker is gone."""
     v = _view()
-    html = control_render._picker(control_render._ready(v))
-    assert html.startswith('<div id="fpick" role="tablist"')
-    boxes = re.findall(r'<button type="button" role="tab" class="fpb[^"]*" data-file="([^"]+)"', html)
-    assert boxes == [f["name"] for f in v["files"]] and len(boxes) == 6
-    assert html.count("⟶") == 5
+    html = control_render.render_data(v)
+    assert 'id="fpick"' not in html and 'role="tab"' not in html and "aria-selected" not in html
+    names = re.findall(r'<details class="sec fpanel" data-file="([^"]+)"', html)
+    assert names == [f["name"] for f in v["files"]] and len(names) == 6
     assert "🦆 9.8 MB" in html and html.count("no file yet") == 5
-    assert 'class="fpb nofile"' in html
-    assert re.search(r'data-file="spine.duckdb" aria-selected="true"', html)
-    assert html.count('aria-selected="true"') == 1
-    assert "1 lines" in html or "1 line" in html
-    assert "step" not in html.lower().replace("fpstep", "")
+    assert "1 line" in html
 
 
-def test_the_script_selects_a_file_from_the_picker_the_diagram_and_by_file():
+def test_only_the_first_file_section_is_open_and_none_is_hidden():
+    html = control_render.render_data(_view())
+    assert html.count('<details class="sec fpanel"') == 6
+    assert len(re.findall(r'<details class="sec fpanel"[^>]* open>', html)) == 1
+    assert " hidden>" not in html[html.index('class="fpanels"'):]
+
+
+def test_the_script_opens_a_file_from_the_diagram_and_from_by_file():
     js = control_render.CTL_JS
-    blk = js[js.index("// #492 C1"):]
-    assert "aria-selected" in blk and "fpanel" in blk
+    blk = js[js.index("/* The served files (#492 C1"):]
+    assert "details.fpanel" in blk and "p.open = true" in blk
     assert "data-node^=\"file:\"" in blk or "data-node^='file:'" in blk
     assert "data-pick" in blk and "scrollTo" in blk
+    assert "aria-selected" not in blk and "hidden" not in blk
 
 
 # ── One Data panel ───────────────────────────────────────────────────────────────────────────────────────────
 
 def test_render_data_holds_the_parts_in_order():
     html = control_render.render_data(_view())
-    marks = ['<h1>Data/Health · Database</h1>', 'id="sec-flow"', 'id="fpick"', 'class="fpanel" data-file="spine.duckdb"']
+    marks = ['<h1>Data/Health · Database</h1>', 'id="sec-flow"', 'class="sec fpanel" data-file="spine.duckdb"']
     at = [html.index(m) for m in marks]
     assert at == sorted(at)
     assert 'id="sec-health"' not in html and 'id="sec-crosscheck"' not in html and "data-job=" not in html
@@ -290,14 +294,14 @@ def test_render_data_holds_the_parts_in_order():
             "dataset until Resume.") in report.DATA_HELP
 
 
-def test_one_panel_per_file_in_plan_order_only_the_first_shown():
+def test_one_section_per_file_in_plan_order_only_the_first_open():
     v = _view()
     html = control_render.render_data(v)
-    panels = re.findall(r'<section class="fpanel" data-file="([^"]+)" id="fp-\w+" style="--fh:#[0-9a-f]{6}"( hidden)?>',
+    panels = re.findall(r'<details class="sec fpanel" data-file="([^"]+)" id="fp-\w+" style="--fh:#[0-9a-f]{6}"( open)?>',
                         html)
     assert [p[0] for p in panels] == [f["name"] for f in v["files"]]
-    assert [bool(p[1]) for p in panels] == [False] + [True] * 5
-    one = html[html.index('class="fpanel" data-file="prices.duckdb"'):html.index('class="fpanel" data-file="fund')]
+    assert [bool(p[1]) for p in panels] == [True] + [False] * 5
+    one = html[html.index('class="sec fpanel" data-file="prices.duckdb"'):html.index('class="sec fpanel" data-file="fund')]
     assert 'class="journey"' in one and 'class="sources' not in one and 'class="pictrow"' not in one
     fetch = control_render.render_fetch(v)
     groups = re.findall(r'<details class="sec fgrp" data-file="([^"]+)"', fetch)
@@ -316,7 +320,7 @@ def test_the_old_controls_are_gone_and_the_universe_is_on_fetch_health_once():
 
 def test_render_data_renders_without_the_new_fields():
     html = control_render.render_data(control.build(control_nd(), now=NOW))
-    assert html.count('class="fpanel"') == 6 and 'id="fpick"' in html
+    assert html.count('class="sec fpanel"') == 6 and 'id="fpick"' not in html
 
 
 # ── Layout ───────────────────────────────────────────────────────────────────────────────────────────────────
