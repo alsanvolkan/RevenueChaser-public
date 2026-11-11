@@ -67,23 +67,76 @@ def _refuse(exc):
 
 # ── the probe's three readings ──────────────────────────────────────────────────────────────────
 
-def test_an_answered_handshake_reads_logged_in_and_keeps_the_server_version():
-    sock = _FakeSock(_framed("178", "20261023 23:40:00 CEST"))
+# What a working gateway sends: the version answer, then after startApi the account list, a farm
+# notice and nextValidId.
+_AFTER_START_API = (_framed("15", "1", "DU000000")
+                    + _framed("4", "2", "-1", "2104", "Market data farm connection is OK:usfarm") + _framed("9", "1", "1"))
+_WORKING = _framed("178", "20261023 23:40:00 CEST") + _AFTER_START_API
+
+
+def test_an_api_client_that_gets_next_valid_id_reads_logged_in_and_keeps_the_server_version():
+    sock = _FakeSock(_WORKING)
     reading = ibkr_login.probe("127.0.0.1", 4001, connect=_connect(sock))
     assert reading.state == ibkr_login.UP
     assert reading.server_version == 178
     assert "178" in reading.detail
+    assert "DU000000" not in reading.detail, "the account list is dropped unread"
 
 
-def test_the_probe_sends_the_tws_version_handshake_and_nothing_else():
-    sock = _FakeSock(_framed("178", "t"))
+def test_the_probe_sends_the_version_handshake_then_start_api_and_nothing_else():
+    sock = _FakeSock(_WORKING)
     ibkr_login.probe("127.0.0.1", 4001, connect=_connect(sock))
     assert sock.sent.startswith(b"API\0")
     length = struct.unpack(">I", sock.sent[4:8])[0]
-    body = sock.sent[8:]
-    assert len(body) == length, "the handshake body must match its own length prefix"
+    body = sock.sent[8:8 + length]
     assert body == f"v{ibkr_login.MIN_CLIENT_VERSION}..{ibkr_login.MAX_CLIENT_VERSION}".encode()
-    assert len(sock.sent) == 8 + length, "nothing may be sent after the handshake"
+    assert sock.sent[8 + length:] == _framed("71", "2", str(ibkr_login.PROBE_CLIENT_ID), ""), \
+        "after the handshake only startApi, with the probe's own client id, may be sent"
+
+
+def test_the_probe_client_id_is_not_one_another_ibkr_client_uses():
+    from RevenueChaser.core.providers import ibkr_tws
+    from RevenueChaser.module_news import headlines, tape
+    assert ibkr_login.PROBE_CLIENT_ID not in {ibkr_tws.CLIENT_ID, headlines.CLIENT_ID, tape.CLIENT_ID, 75}
+
+
+def test_a_gateway_that_answers_the_version_but_drops_the_api_client_is_not_logged_in():
+    """#629: 10 Nov 2026 the version handshake was answered and every client closed before nextValidId."""
+    sock = _FakeSock(_framed("178", "t"))          # then recv returns b"": the gateway closed the client
+    reading = ibkr_login.probe("127.0.0.1", 4001, connect=_connect(sock))
+    assert reading.state == ibkr_login.SILENT
+    assert reading.server_version == 178
+    assert "before nextValidId" in reading.detail and "refuses" in reading.detail
+
+
+def test_a_refusal_keeps_the_gateways_own_error_words():
+    sock = _FakeSock(_framed("178", "t") + _framed("4", "2", "-1", "326", "client id is already in use"))
+    reading = ibkr_login.probe("127.0.0.1", 4001, connect=_connect(sock))
+    assert reading.state == ibkr_login.SILENT
+    assert "326: client id is already in use" in reading.detail
+
+
+def test_a_gateway_that_never_sends_next_valid_id_is_not_logged_in():
+    class _Stalls(_FakeSock):
+        def recv(self, n):
+            if self.reply:
+                return super().recv(n)
+            raise socket.timeout("timed out")
+
+    reading = ibkr_login.probe("127.0.0.1", 4001, timeout=0.01, connect=_connect(_Stalls(_framed("178", "t"))))
+    assert reading.state == ibkr_login.SILENT
+    assert reading.server_version == 178
+
+
+def test_next_valid_id_split_across_reads_still_reads_logged_in():
+    first = _framed("178", "t")
+
+    class _Trickle(_FakeSock):
+        def recv(self, n):          # the version answer whole, then everything else 3 bytes at a time
+            return super().recv(len(first) if self.reply.startswith(first) else min(n, 3))
+
+    reading = ibkr_login.probe("127.0.0.1", 4001, connect=_connect(_Trickle(first + _AFTER_START_API)))
+    assert reading.state == ibkr_login.UP and reading.server_version == 178
 
 
 def test_a_silent_port_reads_api_silent_not_logged_in():
@@ -118,7 +171,7 @@ def test_a_reply_that_cannot_be_parsed_still_counts_as_answered():
 
 
 def test_the_probe_closes_the_socket_it_opened():
-    sock = _FakeSock(_framed("178", "t"))
+    sock = _FakeSock(_WORKING)
     ibkr_login.probe("127.0.0.1", 4001, connect=_connect(sock))
     assert sock.closed
 
