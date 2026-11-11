@@ -118,7 +118,8 @@ def render_relatedness_dashboard(payload: dict) -> str:
     payload = payload or {}
     companies = payload.get("companies") or []
     peers = payload.get("peers") or {}
-    sync = _friendly(payload.get("as_of"))
+    # #392: no run that scored a name means no data date, never "now".
+    sync = _friendly(payload.get("as_of")) if payload.get("as_of") and payload.get("n") else "no run yet"
     model = _html.escape(str(payload.get("model") or ""))
     n = payload.get("n") or 0
     body = f"""
@@ -241,7 +242,7 @@ function render(){
     panel.textContent = "Most related to";
     body.innerHTML = '<div class="empty">' + (DATA.length
       ? "No companies match the current filters."
-      : "No profiles yet. Run <b>Fetch</b> to build business profiles.") + '</div>';
+      : "No profiles yet. This board has no Fetch: the off-peak job RC-Relatedness-OffPeak builds them.") + '</div>';
     return;
   }
   var c = BY[FOCAL] || {};

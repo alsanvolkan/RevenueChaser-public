@@ -1197,5 +1197,5 @@ def load_payload() -> dict:
             return json.loads(config.RELATEDNESS_JSON.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             pass
-    return {"as_of": _now(), "model": deepseek.MODEL, "n": 0, "companies": [],
+    return {"as_of": None, "model": deepseek.MODEL, "n": 0, "companies": [],      # #392: no file, no data date
             "peers": {}, "n_pairs": 0, "fields": list(config.PROFILE_FIELDS)}
