@@ -50,7 +50,6 @@ def _security_row(r: dict) -> dict:
             "sector": r.get("sector"), "industry": r.get("industry"), "source": "sec/company_tickers_exchange"}
 
 
-_MARKET_TABLES = ("security_symbol", "price_bar_daily", "market_cap_daily")
 _MARKET_SESSION = date(2026, 10, 1)
 
 
@@ -62,39 +61,37 @@ def _market(rows: list[dict]) -> None:
     number, so the row reads the same whether or not the name's type is an excluded one. A ticker given again
     replaces its own rows and leaves every other ticker alone.
     """
-    from RevenueChaser.rcdata.build.prices.serving import SCHEMAS
+    from RevenueChaser.rcdata.tests import prices_store
     wanted = [r for r in rows if r.get("market_cap") is not None or r.get("price") is not None]
     if not wanted:
         return
-    path = serving.live_path("prices")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(str(path))
+    # Through ``prices_store``, so the live file keeps every table its own helper creates and a test that seeded
+    # its own bars keeps them (``replace=False``: a session already stored wins).
+    prices_store.put_bars([{"ticker": r["ticker"], "session_date": _MARKET_SESSION,
+                            "close": r.get("price") if r.get("price") is not None else 1.0}
+                           for r in wanted], replace=False)
+    con = prices_store._connect()
     try:
-        have = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
-        for table in _MARKET_TABLES:
-            if table not in have:
-                con.execute(f"CREATE TABLE {table} ({', '.join(f'{c} {t}' for c, t in SCHEMAS[table])})")
         for r in wanted:
-            ticker = str(r["ticker"]).strip().upper()
-            sid = f"sym:{ticker}"
-            for table in _MARKET_TABLES:
-                con.execute(f"DELETE FROM {table} WHERE security_id = ?", [sid])
-            con.execute("INSERT INTO security_symbol (security_id, symbol, valid_from, source) VALUES (?, ?, ?, ?)",
-                        [sid, ticker, _MARKET_SESSION, "alpaca/bars"])
-            con.execute("INSERT INTO price_bar_daily (security_id, session_date, symbol, close, source) "
-                        "VALUES (?, ?, ?, ?, ?)", [sid, _MARKET_SESSION, ticker, r.get("price"), "alpaca/bars"])
-            if r.get("market_cap") is not None:
-                con.execute("INSERT INTO market_cap_daily (security_id, session_date, close, market_cap, "
-                            "issuer_market_cap) VALUES (?, ?, ?, ?, ?)",
-                            [sid, _MARKET_SESSION, r.get("price"), r["market_cap"], r["market_cap"]])
+            if r.get("market_cap") is None:
+                continue
+            sid = f"sym:{str(r['ticker']).strip().upper()}"
+            con.execute("DELETE FROM market_cap_daily WHERE security_id = ?", [sid])
+            # On that security's newest bar, so the cap is inside ``read.latest_market``'s window whatever
+            # sessions the test's own bars use.
+            con.execute("INSERT INTO market_cap_daily (security_id, session_date, close, market_cap, "
+                        "issuer_market_cap) SELECT security_id, max(session_date), ?, ?, ? FROM price_bar_daily "
+                        "WHERE security_id = ? GROUP BY security_id",
+                        [r.get("price"), r["market_cap"], r["market_cap"], sid])
         con.execute("CHECKPOINT")
     finally:
         con.close()
 
 
-def _write(rows: list[dict], *, replace: bool) -> None:
+def _write(rows: list[dict], *, replace: bool, market: bool = True) -> None:
     from RevenueChaser.core import spine_reads
-    _market(rows)
+    if market:
+        _market(rows)
     con = _connect()
     try:
         if replace:
@@ -113,18 +110,22 @@ def _write(rows: list[dict], *, replace: bool) -> None:
         ops.record_check("spine/security", "changed")
 
 
-def put(rows: list[dict]) -> None:
-    """``equity_universe`` rows added (a ticker already there is replaced), in the spine and the old table."""
+def put(rows: list[dict], *, market: bool = True) -> None:
+    """``equity_universe`` rows added (a ticker already there is replaced), in the spine and the old table.
+
+    ``market=False`` leaves the prices store alone, for a test that builds that file itself."""
     from RevenueChaser.core import rawstore
     rawstore.write_rows("equity_universe", list(rows))
-    _write(list(rows), replace=False)
+    _write(list(rows), replace=False, market=market)
 
 
-def replace(rows: list[dict]) -> None:
-    """``equity_universe`` rows as the whole universe, in the spine and the old table."""
+def replace(rows: list[dict], *, market: bool = True) -> None:
+    """``equity_universe`` rows as the whole universe, in the spine and the old table.
+
+    ``market=False`` leaves the prices store alone, for a test that builds that file itself."""
     from RevenueChaser.core import rawstore
     rawstore.replace_all("equity_universe", list(rows))
-    _write(list(rows), replace=True)
+    _write(list(rows), replace=True, market=market)
 
 
 def membership(slug: str, tickers) -> None:
