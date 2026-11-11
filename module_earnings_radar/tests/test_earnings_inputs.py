@@ -620,4 +620,4 @@ def test_the_uw_cap_holds_across_all_the_uw_sweeps(rawstore_tmp_db, tmp_path, mo
     fake = _all_fakes(monkeypatch)
     res = _run(inputs.sweeps(), tmp_path, fake=fake, uw=30)
     assert len(fake.calls) == 30 and res["calls"]["uw"]["used"] == 30
-    assert res["sweeps"]["D26"]["status"] == "partial" and res["sweeps"]["D37"]["status"] == "partial"
+    assert res["sweeps"]["D26"]["status"] == "partial" and res["sweeps"]["D10"]["status"] == "partial"
