@@ -59,7 +59,7 @@ def test_a_v3_profile_is_stored_whole_with_its_attribute_rows(rawstore_tmp_db, m
     row = rawstore.get("relatedness_profiles", "NVDA")
     assert row["status"] == "ok" and row["prompt_version"] == "v3c"
     assert row["profile_json"]["customers"][0] == {"name": "Dell", "type": "oem", "quote": "Dell accounted for 10%.",
-                                                   "share": 0.1}
+                                                   "parent": "", "public": None, "share": 0.1}
     assert row["label_source"]["summary"] == "chunk:0" and row["label_source"]["input"] == "item"
     prof = store.load_profiles(["NVDA"])["NVDA"]
     assert prof == profile_v3.to_attributes(row["profile_json"])
