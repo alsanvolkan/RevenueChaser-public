@@ -58,8 +58,10 @@ def _load(now: float) -> tuple[list[dict], dict | None, list[dict], float | None
     heads = [r for cond in lanes for r in rawstore.query(      # each lane its own newest LIMIT
         f"SELECT * FROM {HEADLINES} WHERE published_at >= ? AND {cond} "
         f"ORDER BY published_at DESC LIMIT {HEADLINE_LIMIT}", [now - HEADLINE_HOURS * 3600], db="news")]
-    stamp = rawstore.query(f"SELECT max(run_at) AS t FROM {EVENTS}", db="news")
-    return events, (hl[0] if hl else None), heads, (stamp[0]["t"] if stamp else None)
+    # The page's "updated" time is its newest write: the calendar's, or the 5-minute headline pass's.
+    got = rawstore.query(f"SELECT max(run_at) AS t FROM {EVENTS}", db="news")
+    stamps = [float(t) for t in [got[0]["t"] if got else None] + [h.get("run_at") for h in heads] if t is not None]
+    return events, (hl[0] if hl else None), heads, (max(stamps) if stamps else None)
 
 
 def dots_html(level) -> str:

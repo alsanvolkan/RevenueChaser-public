@@ -167,3 +167,19 @@ def test_every_x_card_has_a_badge_and_each_ticker_a_group_with_its_price_line():
     assert page.count('<details class="xd"><summary>') == 2                     # both charts closed until clicked
     assert "1/1 UW teyitli" in page and "fiyat 722,00 → 725,00 (+0,42%)" in page
     assert x_check.badge(None)[2] == "X kimliği" and x_check.badge({"status": "pending"})[1] == "◷"
+
+
+def test_a_pass_never_asks_uw_more_than_the_cap():
+    # 21 calls on the first live backfill (11 Nov 2026): the cap was checked before a row, which can take 2-3 calls
+    _store(headline_id="x:1", published_at=TWEET + 60, kind="level", option="", tickers='["QQQ"]')   # bars: 1 call
+    for i, tk in enumerate("ABCDEFGHIJKL"):                                                   # flow + bars: 2 each
+        _store(headline_id=f"x:o{i}", published_at=TWEET - i, tickers=f'["{tk}"]',
+               headline=f"${tk} 50C 11/20exp $1M", option=f"{tk} 50C 11/20exp")
+    uw = FakeUW([_print(TWEET - 120, 5000, 1.80)], bars=[_bar(TWEET, 50.0)])
+    assert x_check.run(lambda: uw, now=TWEET + 600)["calls"] <= x_check.MAX_CALLS == 20
+    assert len(uw.calls) <= x_check.MAX_CALLS
+
+
+def test_the_pages_updated_time_is_its_newest_write():
+    _store(run_at=TWEET + 1800, kind="news", option="")
+    assert "Veri 21:54'de güncellendi" in report.render_html(now=TWEET + 3600)    # no calendar run: the headline's
