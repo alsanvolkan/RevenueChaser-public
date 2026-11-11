@@ -165,6 +165,11 @@ def _curated(rows: list[dict]) -> list[dict]:
     return out
 
 
+def _badge_html(state: dict) -> str:
+    cls, icon, label, tip = x_check.badge(state)
+    return f'<span class="vb {cls}" title="{esc(tip)}"><b aria-hidden="true">{icon}</b>{esc(label)}</span>'
+
+
 def _head_li(r: dict) -> str:
     tk = "".join(f'<span class="tk">{esc(t)}</span>' for t in _tickers(r.get("tickers")))
     kind = f'<span class="xk">{esc(X_KINDS.get(r.get("kind") or "", r.get("kind")))}</span>' if r.get("kind") else ""
@@ -172,25 +177,71 @@ def _head_li(r: dict) -> str:
     text = esc(r.get("headline"))
     if r.get("url") and str(r["url"]).startswith(("https://", "http://")):
         text = f'<a href="{esc(r["url"])}" target="_blank" rel="noopener noreferrer">{text}</a>'
-    chip, line = x_lines(r) if lane(r) == "x" else ("", "")
+    x = lane(r) == "x"
+    state = _check(r) if x else {}
+    chip, line = x_lines(r) if x else ("", "")
     if chip:
         tk = f'<span class="tk">{esc(chip)}</span>'
-    opt = f'<div class="xo{" ok" if _check(r).get("status") == "seen" else ""}">{esc(line)}</div>' if line else ""
+    elif x:
+        tk = ""                                    # the group's header names the ticker
+    opt = f'<div class="xo{" ok" if state.get("status") == "seen" else ""}">{esc(line)}</div>' if line else ""
+    if x:
+        move = x_check.price_move(state, float(r["published_at"]))
+        opt += f'<div class="xm">{esc(move)}</div>' if move else ""
+        opt += x_check.chart_svg(state, float(r["published_at"]))
+    badge = _badge_html(state) if x else ""
     return (f'<li class="hd" data-hid="{esc(r["headline_id"])}" data-at="{float(r["published_at"])}">'
-            f'<div class="muted">{hm(r["published_at"])}{src} {kind}{tk}</div>'
+            f'<div class="muted meta">{hm(r["published_at"])}{src} {kind}{tk}{badge}</div>'
             f'<div class="htext">{text}</div>{opt}</li>')
 
 
+def x_group(r: dict) -> str:
+    """The X lane's group of a row: its contract's ticker, else its first ticker, else "" (Genel)."""
+    state = _check(r)
+    return state.get("ticker") or state.get("px_tk") or (_tickers(r.get("tickers")) or [""])[0].upper()
+
+
+def _group_li(key: str, rows: list[dict]) -> str:
+    """One ticker: its name, how many posts of which kinds, how many UW confirmed, the session's price line with every
+    tweet on it, then the posts."""
+    kinds = ", ".join(dict.fromkeys(X_KINDS.get(r.get("kind") or "", r.get("kind") or "") for r in rows if r.get("kind")))
+    seen = sum(1 for r in rows if _check(r).get("status") == "seen")
+    opts = sum(1 for r in rows if r.get("kind") == "option")
+    conf = (f' · <span class="vb {"ok" if seen else "wait"}"><b aria-hidden="true">{"✓" if seen else "–"}</b>'
+            f'{seen}/{opts} UW teyitli</span>') if opts else ""
+    with_px = [r for r in rows if _check(r).get("px")]
+    chart = ""
+    if with_px:
+        newest = with_px[0]
+        session = x_check.session_day(float(newest["published_at"]))
+        marks = [(float(r["published_at"]), f'{hm(r["published_at"])} {r.get("source") or ""}'.strip())
+                 for r in rows if x_check.session_day(float(r["published_at"])) == session]
+        chart = x_check.price_svg(_check(newest)["px"], marks)
+    name = f'<span class="sym">{esc(key)}</span>' if key else '<span class="sym gen">Genel</span>'
+    return (f'<li class="xg" data-grp="{esc(key)}" data-at="{float(rows[0]["published_at"])}">'
+            f'<div class="xgh">{name}<span class="muted">{len(rows)} kayıt · {esc(kinds)}{conf}</span></div>'
+            f'{chart}<ul class="list">{"".join(_head_li(r) for r in rows)}</ul></li>')
+
+
+def _x_groups(rows: list[dict]) -> str:
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(x_group(r), []).append(r)
+    order = sorted(groups.items(), key=lambda kv: (kv[0] == "", -float(kv[1][0]["published_at"])))
+    return "".join(_group_li(k, v) for k, v in order)
+
+
 def _headlines(rows: list[dict]) -> str:
-    """Three cards: Piyasa (the broad tape), Hisseler (per ticker) and X (the Grok X mails); the page's poll adds to
-    their lists."""
+    """Three cards: Piyasa (the broad tape), Hisseler (per ticker) and X (the Grok X mails, one group a ticker); the
+    page's poll adds to their lists."""
     out = []
     for key, (title, empty) in _LANES.items():
         mine = [r for r in rows if lane(r) == key]
         mine = (_curated(mine) if key == "x" else mine)[:HEADLINE_LIMIT]
+        body = _x_groups(mine) if key == "x" else "".join(_head_li(r) for r in mine)
         out.append(f'<section class="card"><h2 class="lbl">{title} · son {HEADLINE_HOURS} saat</h2>'
                    f'<p class="empty"{" hidden" if mine else ""}>{empty}</p>'
-                   f'<ul class="list" id="heads-{key}">{"".join(_head_li(r) for r in mine)}</ul></section>')
+                   f'<ul class="list" id="heads-{key}">{body}</ul></section>')
     return "".join(out)
 
 
@@ -204,9 +255,13 @@ def api_rows(since: float, limit: int = 2 * HEADLINE_LIMIT) -> list[dict]:
     rows = [r for r in rows if not (lane(r) == "x" and r.get("kind") == "other")]
     return [{"headline_id": r["headline_id"], "published_at": r["published_at"], "hm": hm(r["published_at"]),
              "headline": r["headline"], "source": r.get("source") or "",
-             "tickers": [x_lines(r)[0]] if lane(r) == "x" and x_lines(r)[0] else _tickers(r.get("tickers")),
+             "tickers": [x_lines(r)[0]] if lane(r) == "x" and x_lines(r)[0] else (
+                 [] if lane(r) == "x" else _tickers(r.get("tickers"))),
              "kind": X_KINDS.get(r.get("kind") or "", r.get("kind") or ""),
              "option": x_lines(r)[1] if lane(r) == "x" else "",
+             "badge": list(x_check.badge(_check(r))[:3]) if lane(r) == "x" else None,
+             "move": x_check.price_move(_check(r), float(r["published_at"])) if lane(r) == "x" else "",
+             "group": x_group(r) if lane(r) == "x" else "",
              "url": r["url"] if str(r.get("url") or "").startswith(("https://", "http://")) else "",
              "lane": lane(r), "run_at": r["run_at"]} for r in rows]
 
@@ -252,6 +307,40 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
  color:var(--amber);font-size:11.5px}
 .xo{margin-top:4px;color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
 .xo.ok{color:var(--fg);border-left:3px solid var(--amber);padding-left:8px}
+.xc{margin:8px 0 0}
+.xc svg{display:block;width:100%;height:72px}
+.xc .xb{stroke:var(--border);stroke-width:1;vector-effect:non-scaling-stroke}
+.xc .xt{stroke:var(--amber);stroke-width:2;stroke-dasharray:4 3;vector-effect:non-scaling-stroke}
+.xc .pa{fill:var(--pos)}.xc .pb{fill:var(--neg)}.xc .pm{fill:var(--badge-gray)}
+.xc figcaption{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:11.5px;
+ font-variant-numeric:tabular-nums}
+.xc .lg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 3px 0 8px;vertical-align:-1px}
+.xc .lg i.pa{background:var(--pos)}.xc .lg i.pb{background:var(--neg)}
+.xc .lg i.xt{height:0;border-top:2px dashed var(--amber);border-radius:0}
+.meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.vb{display:inline-flex;align-items:center;gap:4px;margin-left:4px;padding:0 7px;border-radius:999px;font-size:11.5px;
+ border:1px solid currentColor;line-height:18px;white-space:nowrap}
+.vb b{font-weight:700}
+.vb.ok{color:var(--pos)}.vb.no{color:var(--neg)}.vb.warn{color:var(--amber)}.vb.wait{color:var(--muted)}
+.vb.id{color:var(--sky)}
+.xg{padding:12px 0 4px;border-bottom:2px solid var(--border)}
+.xg:first-child{padding-top:0}
+.xg>.list>.hd:last-child{border-bottom:0}
+.xgh{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+.sym{font:600 16px/1.3 ui-monospace,"JetBrains Mono","SFMono-Regular",Menlo,monospace;color:var(--bright)}
+.sym.gen{font-family:inherit}
+.xm{margin-top:2px;color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.xp{position:relative;margin:8px 0 2px}
+.xp svg{display:block;width:100%;height:96px}
+.xp .ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.xp .ln.up{stroke:var(--pos)}.xp .ln.down{stroke:var(--neg)}
+.xp .hit{fill:transparent}
+.xp>i.tw{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--amber);
+ border:2px solid var(--card);cursor:default}
+.xp figcaption{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 8px;color:var(--muted);
+ font-size:11.5px;font-variant-numeric:tabular-nums}
+.xp .lg i.tw{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--amber);margin-right:4px;
+ vertical-align:-1px}
 .empty{color:var(--muted);margin:6px 0}
 .foot{margin-top:16px;color:var(--muted);font-size:12px}
 [hidden]{display:none!important}
@@ -267,22 +356,41 @@ function _headLi(r){
   m.textContent = r.hm + (r.source ? ' · ' + r.source : '') + ' ';
   if(r.kind){ var k = document.createElement('span'); k.className = 'xk'; k.textContent = r.kind; m.appendChild(k); }
   r.tickers.forEach(function(t){ var s = document.createElement('span'); s.className = 'tk'; s.textContent = t; m.appendChild(s); });
+  if(r.badge){ var b = document.createElement('span'); b.className = 'vb ' + r.badge[0];
+    var bi = document.createElement('b'); bi.setAttribute('aria-hidden', 'true'); bi.textContent = r.badge[1];
+    b.appendChild(bi); b.appendChild(document.createTextNode(r.badge[2])); m.appendChild(b); }
+  m.className = 'muted meta';
   var h = document.createElement('div'); h.className = 'htext';
   if(r.url){ var a = document.createElement('a'); a.href = r.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.textContent = r.headline; h.appendChild(a); } else { h.textContent = r.headline; }
   li.appendChild(m); li.appendChild(h);
   if(r.option){ var o = document.createElement('div'); o.className = r.option.indexOf('UW teyidi:') === 0 ? 'xo ok' : 'xo';
     o.textContent = r.option; li.appendChild(o); }
+  if(r.move){ var mv = document.createElement('div'); mv.className = 'xm'; mv.textContent = r.move; li.appendChild(mv); }
   return li;
 }
 function _addHead(r){
   if(document.querySelector('[data-hid="' + r.headline_id + '"]')) return;
   var ul = document.getElementById('heads-' + r.lane); if(!ul) return;
+  if(r.lane === 'x'){ ul = _xGroup(ul, r); }
   var li = _headLi(r), kids = ul.children, i = 0;
   while(i < kids.length && parseFloat(kids[i].getAttribute('data-at')) > r.published_at) i++;
   ul.insertBefore(li, kids[i] || null);
   while(ul.children.length > HEAD_LIMIT) ul.removeChild(ul.lastChild);
   var empty = ul.parentNode.querySelector('.empty'); if(empty) empty.hidden = true;
+}
+function _xGroup(top, r){
+  var g = null, gs = top.children;
+  for(var i = 0; i < gs.length; i++){ if(gs[i].getAttribute('data-grp') === r.group){ g = gs[i]; break; } }
+  if(!g){
+    g = document.createElement('li'); g.className = 'xg'; g.setAttribute('data-grp', r.group);
+    var h = document.createElement('div'); h.className = 'xgh'; var n = document.createElement('span');
+    n.className = r.group ? 'sym' : 'sym gen'; n.textContent = r.group || 'Genel'; h.appendChild(n); g.appendChild(h);
+    var l = document.createElement('ul'); l.className = 'list'; g.appendChild(l);
+    top.insertBefore(g, top.firstChild);
+  }
+  g.setAttribute('data-at', Math.max(parseFloat(g.getAttribute('data-at') || 0), r.published_at));
+  return g.querySelector('ul');
 }
 function newsPoll(){
   fetch('/api/news/headlines?since=' + NEWS_SINCE, {cache: 'no-store'}).then(function(r){ return r.json(); })
@@ -308,7 +416,7 @@ HELP = help_html(
     "şirketlerinin Dow Jones başlıkları (<b>Hisseler</b>), IBKR'nin piyasa geneli haber akışı (<b>Piyasa</b>) ve "
     "Grok'un saatlik X özet maillerindeki paylaşımlar (<b>X</b>; her kaydın X kimliği kendi zamanıyla doğrulanır, "
     "\"diğer\" türü ve aynı kontratın tekrarları düşer). Bir opsiyon paylaşımının kontratı Unusual Whales'ta "
-    "aranır: tweet saatinin 4 saat öncesinden 15 dakika sonrasına kadar o kontratın $25 bin üstü işlemleri (adet, "
+    "aranır (rozet: ✓ UW teyitli, ✗ UW'de yok, ◷ bekliyor; opsiyon dışı kayıtlarda ✓ X kimliği) ve kayıtlar hisseye göre gruplanır, her grubun üstünde seansın 5 dakikalık fiyatı ve tweet anları çizilir: tweet saatinin 4 saat öncesinden 15 dakika sonrasına kadar o kontratın $25 bin üstü işlemleri (adet, "
     "kontrat, prim, ask/bid tarafı) ve ertesi gün açık pozisyon (OI) değişimi gösterilir. "
     "Gerçekleşen değer gösterilmez: beklenti ve önceki değer.</p>"
     "<p>Başlıklar 5 dakikada bir saklanır; sayfa açıkken dakikada bir yenileri kendisi ekler.</p>"

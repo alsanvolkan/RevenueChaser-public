@@ -21,9 +21,20 @@ def _print(at, size, price, bid=1.70, ask=1.80, canceled=False):
             "premium": str(size * price * 100), "canceled": canceled}
 
 
+def _bar(at, close, mt="r"):
+    return {"start_time": _iso(at), "close": str(close), "market_time": mt}
+
+
 class FakeUW:
-    def __init__(self, prints, chains=None, fail=False):
+    def __init__(self, prints, chains=None, fail=False, bars=None):
         self.prints, self.chains, self.fail, self.calls, self.closed = prints, chains or [], fail, [], False
+        self.bars = bars or []
+
+    def intraday_bars_result(self, ticker, day, candle_size="5m"):
+        self.calls.append(("bars", ticker, day))
+        if self.fail:
+            return ProviderResult("failed", [], "HTTP 500", "bars")
+        return ProviderResult("ok", self.bars, None, "bars")
 
     def option_contract_flow_result(self, occ, date=None, min_premium=None):
         self.calls.append(("flow", occ, date, min_premium))
@@ -84,16 +95,20 @@ def _state(hid="x:2120251362529419593"):
 
 def test_run_checks_the_print_then_the_next_days_open_interest_and_then_stops():
     _store()
-    _store(headline_id="x:2120263144924692750", kind="news", option="")              # not an option: never asked
+    _store(headline_id="x:2120263144924692750", kind="news", option="")              # not an option: price only
     uw = FakeUW([_print(TWEET - 120, 5000, 1.80)],
-                [{"date": "2026-11-10", "open_interest": 1200}, {"date": "2026-11-11", "open_interest": 5300}])
-    assert x_check.run(lambda: uw, now=TWEET + 600) == {"checked": 1, "calls": 1}
-    assert uw.calls == [("flow", "SPY261120C00759000", "2026-11-10", x_check.MIN_PREMIUM)] and uw.closed
+                [{"date": "2026-11-10", "open_interest": 1200}, {"date": "2026-11-11", "open_interest": 5300}],
+                bars=[_bar(TWEET - 300, 712.4), _bar(TWEET, 713.0)])
+    assert x_check.run(lambda: uw, now=TWEET + 600) == {"checked": 2, "calls": 2}     # one bars call for both rows
+    assert uw.calls == [("flow", "SPY261120C00759000", "2026-11-10", x_check.MIN_PREMIUM),
+                        ("bars", "SPY", "2026-11-10")] and uw.closed
     assert _state()["status"] == "seen" and _state().get("oi_change") is None
-    assert x_check.run(lambda: uw, now=TWEET + 1200) == {"checked": 0, "calls": 0}      # same session: nothing to ask
+    assert _state("x:2120263144924692750")["status"] == "x_only"
+    assert _state("x:2120263144924692750")["px"] == [[round(TWEET - 300), 712.4], [round(TWEET), 713.0]]
+    assert x_check.run(lambda: uw, now=TWEET + 1200) == {"checked": 0, "calls": 0}      # within the hour: nothing
     next_day = TWEET + 20 * 3600
-    assert x_check.run(lambda: uw, now=next_day) == {"checked": 1, "calls": 1}
-    assert uw.calls[-1] == ("historic", "SPY261120C00759000") and _state()["oi_change"] == 4100
+    assert x_check.run(lambda: uw, now=next_day) == {"checked": 2, "calls": 2}          # OI, and the closed session
+    assert ("historic", "SPY261120C00759000") in uw.calls and _state()["oi_change"] == 4100
     assert x_check.run(lambda: pytest_fail(), now=next_day + 60) == {"checked": 0, "calls": 0}   # done: no client
 
 
@@ -106,7 +121,8 @@ def test_a_failing_uw_is_asked_again_then_given_up():
     uw = FakeUW([], fail=True)
     for _ in range(x_check.MAX_TRIES):
         x_check.run(lambda: uw, now=TWEET + 600)
-    assert _state()["status"] == "failed" and len(uw.calls) == x_check.MAX_TRIES
+    assert _state()["status"] == "failed" and sum(c[0] == "flow" for c in uw.calls) == x_check.MAX_TRIES
+    assert _state()["px_tries"] == x_check.MAX_TRIES and x_check.run(lambda: pytest_fail(), now=TWEET + 900)["calls"] == 0
     assert x_check.facts(_state()) == "UW teyidi alınamadı"
 
 
@@ -127,3 +143,22 @@ def test_the_board_shows_the_check_and_one_card_for_a_print_two_accounts_tweeted
     assert "x:2120251362529410000" not in polled
     assert polled["x:2120251362529419593"]["option"].startswith("UW teyidi:")
     assert polled["x:2120251362529419593"]["tickers"] == ["SPY 759C 20.11"]
+
+
+def test_every_x_card_has_a_badge_and_each_ticker_a_group_with_its_price_line():
+    bars = [[round(TWEET - 3600 + i * 300), 710.0 + i] for i in range(16)]
+    seen = {"ticker": "SPY", "strike": 759.0, "right": "C", "expiry": "2026-11-20", "occ": "SPY261120C00759000",
+            "session": "2026-11-10", "status": "seen", "trades": 1, "contracts": 5000, "premium": 900000.0,
+            "ask": 5000, "bid": 0, "mid": 0, "first": TWEET - 120, "last": TWEET - 120,
+            "pts": [[TWEET - 120, 5000, 900000, "ask"]], "px": bars, "px_tk": "SPY"}
+    _store(x_check=json.dumps(seen))
+    _store(headline_id="x:2120245787716354207", published_at=TWEET - 1500, kind="level", option="",
+           headline="Nice $SPY rejection", x_check=json.dumps({"status": "x_only", "px": bars, "px_tk": "SPY"}))
+    _store(headline_id="x:2120217953778208847", published_at=TWEET - 7800, kind="option", tickers='["EL"]',
+           headline="$EL 150C 6/17exp $450k", option="", x_check=json.dumps({"status": "not_seen", "ticker": "EL"}))
+    page = report.render_html(now=TWEET + 3600)
+    assert page.count('class="xg"') == 2 and page.index('data-grp="SPY"') < page.index('data-grp="EL"')
+    assert page.count('<figure class="xp">') == 1 and page.count('<i class="tw" style=') == 2   # both SPY tweets
+    assert "UW teyitli" in page and "UW&#x27;de yok" in page and "X kimliği" in page
+    assert "1/1 UW teyitli" in page and "fiyat 722,00 → 725,00 (+0,42%)" in page
+    assert x_check.badge(None)[2] == "X kimliği" and x_check.badge({"status": "pending"})[1] == "◷"

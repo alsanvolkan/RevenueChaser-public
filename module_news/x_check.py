@@ -15,6 +15,7 @@ pass and builds the UW client only when a row is waiting, so the 5-minute News p
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 import time
@@ -73,8 +74,10 @@ def _epoch(text) -> float | None:
 
 def prints_summary(prints: list[dict], published_at: float) -> dict:
     """What traded in the contract around the tweet: ``trades``, ``contracts``, ``premium``, ``ask``/``bid``/``mid``
-    contracts, ``first``/``last`` (epoch). ``trades`` 0 when nothing did."""
-    out = {"trades": 0, "contracts": 0, "premium": 0.0, "ask": 0, "bid": 0, "mid": 0, "first": None, "last": None}
+    contracts, ``first``/``last`` (epoch) and ``pts``, each print as ``[epoch, size, premium, side]`` (at most UW's
+    50). ``trades`` 0 when nothing did."""
+    out = {"trades": 0, "contracts": 0, "premium": 0.0, "ask": 0, "bid": 0, "mid": 0, "first": None, "last": None,
+           "pts": []}
     for p in prints or []:
         at = _epoch(p.get("executed_at"))
         if at is None or p.get("canceled") or not published_at - BEFORE_S <= at <= published_at + AFTER_S:
@@ -87,6 +90,7 @@ def prints_summary(prints: list[dict], published_at: float) -> dict:
         out["contracts"] += size
         out["premium"] += _num(p.get("premium")) or 0.0
         out[side] += size
+        out["pts"].append([round(at, 1), size, round(_num(p.get("premium")) or 0.0), side])   # the card's chart
         out["first"] = min(at, out["first"] or at)
         out["last"] = max(at, out["last"] or at)
     return out
@@ -102,21 +106,57 @@ def oi_change(chains: list[dict], session: str) -> int | None:
     return int(by_day[later[0]] - by_day[session])
 
 
-def _session(published_at: float) -> str:
+def session_day(published_at: float) -> str:
     return datetime.fromtimestamp(published_at, NY).date().isoformat()
 
 
-def check(uw, row: dict, now: float) -> tuple[dict, int]:
+def _row_ticker(row: dict, state: dict) -> str:
+    if state.get("ticker"):
+        return state["ticker"]
+    try:
+        got = json.loads(row.get("tickers") or "[]")
+    except ValueError:
+        return ""
+    return str(got[0]).upper() if isinstance(got, list) and got else ""
+
+
+def bars_line(candles: list[dict]) -> list[list]:
+    """UW intraday candles as ``[[epoch, close], ...]``, oldest first (pre-market and after-hours kept)."""
+    out = {}
+    for c in candles or []:
+        at, close = _epoch(c.get("start_time")), _num(c.get("close"))
+        if at is not None and close is not None:
+            out[round(at)] = round(close, 4)
+    return [[t, out[t]] for t in sorted(out)]
+
+
+def _close_of(session: str) -> float:
+    d = date.fromisoformat(session)
+    return datetime(d.year, d.month, d.day, 16, 20, tzinfo=NY).timestamp()
+
+
+def _px_due(state: dict, session: str, now: float) -> bool:
+    """The price chart is asked until a fetch lands after the session's close, at most hourly."""
+    if state.get("px_tries", 0) >= MAX_TRIES:
+        return False
+    at = state.get("px_at")
+    return at is None or (at < _close_of(session) and now - at >= OI_EVERY_S)
+
+
+def check(uw, row: dict, now: float, px_cache: dict | None = None) -> tuple[dict, int]:
     """The row's next ``x_check`` and the UW calls it took. A failed call keeps the step for the next pass (at most
-    ``MAX_TRIES``)."""
+    ``MAX_TRIES``). Every X row with a ticker also gets its session's 5-minute closes (``px``), one call a ticker and
+    session a pass (``px_cache``)."""
+    px_cache = {} if px_cache is None else px_cache
     state = json.loads(row["x_check"]) if row.get("x_check") else {}
     calls = 0
     if not state:
-        c = contract(row.get("option") or "", row["published_at"]) or contract(row.get("headline") or "",
-                                                                                row["published_at"])
-        if c is None:
-            return {"status": "no_contract"}, 0
-        state = {**c, "session": _session(row["published_at"]), "status": "pending", "tries": 0}
+        c = None
+        if row.get("kind") == "option":
+            c = contract(row.get("option") or "", row["published_at"]) or contract(row.get("headline") or "",
+                                                                                    row["published_at"])
+        state = ({**c, "session": session_day(row["published_at"]), "status": "pending", "tries": 0} if c else
+                 {"status": "no_contract" if row.get("kind") == "option" else "x_only"})
     if state["status"] == "pending":
         calls += 1
         got = uw.option_contract_flow_result(state["occ"], date=state["session"], min_premium=MIN_PREMIUM)
@@ -124,46 +164,57 @@ def check(uw, row: dict, now: float) -> tuple[dict, int]:
             state["tries"] = state.get("tries", 0) + 1
             if state["tries"] >= MAX_TRIES:
                 state["status"] = "failed"
-            return state, calls
-        s = prints_summary(got.data, row["published_at"])
-        state.update(s, status="seen" if s["trades"] else "not_seen", checked_at=now)
-    if state["status"] in ("seen", "not_seen") and state.get("oi_change") is None and _session(now) > state["session"]:
+        else:
+            s = prints_summary(got.data, row["published_at"])
+            state.update(s, status="seen" if s["trades"] else "not_seen", checked_at=now)
+    if state["status"] in ("seen", "not_seen") and state.get("oi_change") is None and session_day(now) > state["session"]:
         calls += 1
         state["oi_asked_at"] = now
         got = uw.option_contract_historic_result(state["occ"])
         if got.status == "ok":
             state["oi_change"] = oi_change(got.data, state["session"])
+    tk, session = _row_ticker(row, state), session_day(row["published_at"])
+    if tk and _px_due(state, session, now):
+        if (tk, session) not in px_cache:
+            calls += 1
+            got = uw.intraday_bars_result(tk, session)
+            px_cache[(tk, session)] = bars_line(got.data) if got.status == "ok" else None
+        if px_cache[(tk, session)] is None:
+            state["px_tries"] = state.get("px_tries", 0) + 1
+        else:
+            state.update(px=px_cache[(tk, session)], px_at=now, px_tk=tk)
     return state, calls
 
 
 def _waiting(now: float) -> list[dict]:
     rows = rawstore.query(
-        f"SELECT * FROM {TABLE} WHERE provider = ? AND kind = 'option' AND published_at >= ? "
+        f"SELECT * FROM {TABLE} WHERE provider = ? AND kind <> 'other' AND published_at >= ? "
         f"ORDER BY published_at DESC", [x_feed.PROVIDER, now - RECHECK_DAYS * 86400], db="news")
     out = []
     for r in rows:
         state = json.loads(r["x_check"]) if r.get("x_check") else {}
         if not state or state.get("status") == "pending" or (
                 state.get("status") in ("seen", "not_seen") and state.get("oi_change") is None
-                and _session(now) > state.get("session", "") and now - state.get("oi_asked_at", 0) >= OI_EVERY_S):
+                and session_day(now) > state.get("session", "") and now - state.get("oi_asked_at", 0) >= OI_EVERY_S) or (
+                _row_ticker(r, state) and _px_due(state, session_day(r["published_at"]), now)):
             out.append(r)
     return out
 
 
 def run(make_uw, now: float | None = None) -> dict:
-    """Check the option rows still waiting. Returns ``checked`` and ``calls``. ``make_uw()`` builds the client, only
+    """Check the X rows still waiting. Returns ``checked`` and ``calls``. ``make_uw()`` builds the client, only
     when a row waits; the client is closed after."""
     now = time.time() if now is None else now
     rows = _waiting(now)
     if not rows:
         return {"checked": 0, "calls": 0}
     uw = make_uw()
-    calls, done = 0, []
+    calls, done, px_cache = 0, [], {}
     try:
         for r in rows:
             if calls >= MAX_CALLS:
                 break
-            state, n = check(uw, r, now)
+            state, n = check(uw, r, now, px_cache)
             calls += n
             done.append({**r, "x_check": json.dumps(state)})
     finally:
@@ -222,3 +273,126 @@ def chip(state: dict | None) -> str:
         return ""
     strike = f"{s['strike']:g}"
     return f"{s['ticker']} {strike}{s['right']} {s['expiry'][8:10]}.{s['expiry'][5:7]}"
+
+
+def chart_svg(state: dict | None, published_at: float) -> str:
+    """The card's print chart: one bar a print over time, its height the premium, a buy (ask) above the line and a
+    sell (bid) below it, mid prints as short grey ticks, and a dashed line at the tweet. Each bar's ``<title>`` is its
+    hover text; the times under it are the chart's two ends. "" when there are no prints."""
+    pts = (state or {}).get("pts") or []
+    if not pts:
+        return ""
+    lo = min(min(p[0] for p in pts), published_at)
+    hi = max(max(p[0] for p in pts), published_at)
+    pad = max(300.0, (hi - lo) * 0.06)
+    lo, hi = lo - pad, hi + pad
+    top = max(p[2] for p in pts) or 1.0
+    w, h, mid = 600.0, 72.0, 36.0
+
+    def x(t):
+        return round((t - lo) / (hi - lo) * w, 1)
+
+    bars = []
+    for at, size, prem, side in sorted(pts, key=lambda p: p[2]):          # big prints drawn last, on top
+        tip = f"{_hm(at)} · {_int(size)} kontrat · {money(prem)} · " + {"ask": "ask (alım)", "bid": "bid (satım)",
+                                                                       "mid": "orta"}[side]
+        if side == "mid":
+            bars.append(f'<rect class="pm" x="{x(at) - 1.5}" y="{mid - 4}" width="3" height="8" rx="1.5">'
+                        f'<title>{tip}</title></rect>')
+            continue
+        bh = max(3.0, (mid - 4) * prem / top)
+        y = mid - 1 - bh if side == "ask" else mid + 1
+        bars.append(f'<rect class="{"pa" if side == "ask" else "pb"}" x="{x(at) - 2}" y="{round(y, 1)}" width="4" '
+                    f'height="{round(bh, 1)}" rx="2"><title>{tip}</title></rect>')
+    tx = x(published_at)
+    return (f'<figure class="xc"><svg viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" role="img" '
+            f'aria-label="Kontratın işlemleri: üstte alım, altta satım, kesik çizgi tweet anı">'
+            f'<line class="xb" x1="0" y1="{mid}" x2="{w:.0f}" y2="{mid}"/>'
+            f'<line class="xt" x1="{tx}" y1="0" x2="{tx}" y2="{h:.0f}"/>{"".join(bars)}</svg>'
+            f'<figcaption><span>{_hm(lo)}</span><span class="lg"><i class="pa"></i>alım <i class="pb"></i>satım '
+            f'<i class="xt"></i>tweet</span><span>{_hm(hi)}</span></figcaption></figure>')
+
+
+#: The row's verification pill: (class, icon, label, hover text). Icon and word carry it, never the color alone.
+_BADGES = {
+    "seen": ("ok", "✓", "UW teyitli", "Unusual Whales'ta tweet saatinde bu kontratta işlem var"),
+    "not_seen": ("no", "✗", "UW'de yok", f"Unusual Whales'ta tweet saatinde bu kontratta {money(MIN_PREMIUM)} üstü "
+                                          "işlem yok"),
+    "pending": ("wait", "◷", "UW bekliyor", "Unusual Whales henüz sorulmadı"),
+    "failed": ("warn", "!", "UW alınamadı", "Unusual Whales üç denemede cevap vermedi"),
+    "no_contract": ("wait", "–", "kontrat okunamadı", "Tweet'te vade ve strike birlikte yok; UW'de aranamadı"),
+}
+_X_ID = ("id", "✓", "X kimliği", "Tweet'in X kimliğindeki zaman, mailin saatiyle eşleşti")
+
+
+def badge(state: dict | None) -> tuple[str, str, str, str]:
+    """Every stored X row passed the X-id time check (``x_feed``); an option row says what UW found instead."""
+    return _BADGES.get((state or {}).get("status"), _X_ID)
+
+
+def _price(v: float) -> str:
+    return f"{v:,.2f}".replace(",", " ").replace(".", ",").replace(" ", ".")
+
+
+def price_at(px: list, at: float) -> float | None:
+    """The close of the last bar that started at or before ``at``."""
+    got = None
+    for t, close in px or []:
+        if t > at:
+            break
+        got = close
+    return got
+
+
+def price_move(state: dict | None, at: float) -> str:
+    """``fiyat 712,40 → 714,10 (+0,24%)``: at the tweet and the session's last bar, or "" without bars."""
+    px = (state or {}).get("px") or []
+    then = price_at(px, at)
+    if not px or then is None or px[-1][0] <= at:
+        return f"fiyat {_price(then)}" if then else ""
+    last = px[-1][1]
+    pct = (last / then - 1) * 100
+    sign = "+" if pct >= 0 else "−"
+    return (f"fiyat {_price(then)} → {_price(last)} ({sign}" + f"{abs(pct):.2f}".replace(".", ",") + "%)")
+
+
+def price_svg(px: list, marks: list[tuple[float, str]]) -> str:
+    """A ticker's session as a line of 5-minute closes, regular hours plus any tweet outside them, each tweet a dot on
+    the line (``marks``: epoch and hover text). "" without bars."""
+    if not px:
+        return ""
+    day = datetime.fromtimestamp(px[-1][0], NY)
+    open_, close = (datetime(day.year, day.month, day.day, h, m, tzinfo=NY).timestamp() for h, m in ((9, 30), (16, 0)))
+    lo = min([open_] + [t - 900 for t, _ in marks])
+    hi = max([close] + [t + 900 for t, _ in marks])
+    pts = [p for p in px if lo <= p[0] <= hi]
+    if len(pts) < 2:
+        return ""
+    lo, hi = pts[0][0], pts[-1][0]
+    pmin, pmax = min(p[1] for p in pts), max(p[1] for p in pts)
+    span = (pmax - pmin) or 1.0
+    w, h, pad = 600.0, 96.0, 8.0
+
+    def x(t):
+        return round((t - lo) / ((hi - lo) or 1) * w, 1)
+
+    def y(v):
+        return round(pad + (pmax - v) / span * (h - 2 * pad), 1)
+
+    line = " ".join(f"{x(t)},{y(v)}" for t, v in pts)
+    step = w / max(1, len(pts) - 1)
+    hits = "".join(f'<rect class="hit" x="{round(x(t) - step / 2, 1)}" y="0" width="{round(step, 1)}" height="{h:.0f}">'
+                   f'<title>{_hm(t)} · {_price(v)}</title></rect>' for t, v in pts)
+    dots = []                                  # HTML over the stretched SVG, so a dot stays round at any width
+    for at, tip in marks:
+        v = price_at(pts, at)
+        if v is not None and lo <= at <= hi + 300:
+            dots.append(f'<i class="tw" style="left:{x(min(at, hi)) / w * 100:.2f}%;top:{y(v):.1f}px" '
+                        f'title="{html.escape(tip, quote=True)} · {_price(v)}"></i>')
+    first, last = pts[0][1], pts[-1][1]
+    trend = "up" if last >= first else "down"
+    return (f'<figure class="xp"><svg viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" role="img" '
+            f'aria-label="Seansın 5 dakikalık fiyatı, noktalar tweet anları">'
+            f'<polyline class="ln {trend}" points="{line}"/>{hits}</svg>{"".join(dots)}'
+            f'<figcaption><span>{_hm(lo)}</span><span>düşük {_price(pmin)} · yüksek {_price(pmax)}</span>'
+            f'<span class="lg"><i class="tw"></i>tweet</span><span>{_hm(hi)}</span></figcaption></figure>')

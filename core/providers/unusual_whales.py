@@ -625,6 +625,12 @@ class UWClient:
         return self._shaped(f"/option-contract/{_seg(symbol)}/historic", None,
                             lambda d: d.get("chains", []) if isinstance(d, dict) else [])
 
+    def intraday_bars_result(self, ticker: str, day: str, candle_size: str = "5m") -> ProviderResult:
+        """``day``'s raw intraday candles (pre-market, regular and after-hours rows, ``start_time``/``close``/
+        ``market_time``), unshaped; the News board's X price chart (``module_news/x_check.py``)."""
+        return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/ohlc/{_seg(candle_size)}",
+                            {"date": day, "limit": 500}, _list_rows)
+
     def aggregate_flow(self, ticker: str, flow: list = None) -> dict:
         """The tape's premium in buckets. ``inst_call``/``inst_put``/``retail_*`` split by size only (size >= 10 is
         institutional; R8 and Swing read these). The R5 lean (docs/rules/redesign.md R5, review S4) reads only
