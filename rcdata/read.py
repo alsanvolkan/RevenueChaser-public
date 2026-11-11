@@ -50,6 +50,25 @@ KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_p
                                                "insider_transactions", "beneficial_ownership")})
 
 
+def missing(kind: str, dataset: str | None = None) -> str | None:
+    """Why a board has no rows from ``kind``'s builder file, or None when it is there (and ``dataset`` has built).
+
+    A read of a missing file returns no rows (``_rows``), so a board that shows "no data" says why with this: the
+    one reason text for every board once the old-store fallbacks are gone (#642 F3). ``dataset`` names the dataset
+    whose first build the board waits for. Never creates ``ops.sqlite`` (a page read, #336)."""
+    if not serving.live_path(kind).exists():
+        return f"no {kind}.duckdb yet"
+    if dataset is not None:
+        try:
+            built = ops.ever_built(dataset)
+        except Exception as exc:  # noqa: BLE001 - an unreadable ops store must not blank a file that is there
+            logger.warning("build state read failed for %s: %s", dataset, exc)
+            return None
+        if not built:
+            return f"{dataset} has not built yet"
+    return None
+
+
 def dataset_status(dataset: str) -> str:
     try:
         check = ops.read_latest_check(dataset)      # never creates ops.sqlite: a page read (#336)
