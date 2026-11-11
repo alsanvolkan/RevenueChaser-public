@@ -128,7 +128,7 @@ def test_remove_posts_the_remove_route_with_the_settings_header_and_drops_the_ro
     from RevenueChaser.core.html_safe import ESC_JS
     from RevenueChaser.core.tests.board_js import function_source
     js = (_STUB % json.dumps(report._nd_client(newdata_fixture())) + ESC_JS
-          + function_source(report.ND_JS, "ndWatchRemove") + r"""
+          + function_source(report.ND_JS, "ndWatchRemove") + function_source(report.ND_JS, "ndWatchCount") + r"""
       ndWatchRemove(bad);
       ndWatchRemove(btn);
       setTimeout(function(){ console.log(JSON.stringify({calls: calls, left: ul.kids.length,
