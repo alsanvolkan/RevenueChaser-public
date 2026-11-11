@@ -344,7 +344,9 @@ function drawEdges(links){
       '<span class="sentence">'+rcEsc(sentence(l))+'</span>' + share +
       (l.hop === 2 ? ' <span class="chip">2-hop</span>' : '') + flag + '</div>' +
       '<div class="snip">“'+rcEsc(l.snippet)+'”</div>' +
-      '<div class="meta">auto-extracted, unverified · source: 10-K/20-F, '+rcEsc(FILINGS[l.src] ? FILINGS[l.src].filed : "")+'</div></div>';
+      '<div class="meta">'+(l.source === "profile" ? "from the company profile (LLM reading)"
+        : l.source === "xbrl" ? "from the filing's XBRL" : "auto-extracted, unverified") +
+      ' · source: 10-K/20-F, '+rcEsc(FILINGS[l.src] ? FILINGS[l.src].filed : "")+'</div></div>';
   }).join("");
 }
 function init(){

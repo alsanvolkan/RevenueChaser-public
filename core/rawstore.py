@@ -967,6 +967,10 @@ MANIFEST: dict[str, dict] = {
             # existing store, and to the value_chain_edges_history mirror, by ``_reconcile_table``
             # (ALTER TABLE ADD COLUMN) on the first store call.
             "share_pct DOUBLE",
+            # #410: where the edge came from: ``profile`` (the Relatedness profile's customers / suppliers /
+            # competitors), ``xbrl`` (the annual report's major customers) or ``regex`` (sentences and keywords);
+            # NULL on an edge stored before the column. Added like ``share_pct``.
+            "source TEXT",
         ],
         "kind": "tabular",
         "write": "replace",
