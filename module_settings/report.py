@@ -626,7 +626,8 @@ function lookupFile(f){
 // answer starts with the data and not with ten empty rows (avo, 11 Nov 2026: "daha compact").
 function lookupIdentity(d){
   var fields = [['', d.ticker], ['', d.name], ['CIK', d.cik], ['id', d.security_id], ['FIGI', d.figi],
-                ['CUSIP', d.cusip], ['ISIN', d.isin], ['', d.sector], ['', d.industry], ['SIC', d.sic]];
+                ['CUSIP', d.cusip], ['ISIN', d.isin], ['', d.sector], ['', d.industry],
+                ['SEC industry code', d.sic]];
   var out = '';
   for(var i = 0; i < fields.length; i++){
     if(!fields[i][1]) continue;
