@@ -21,6 +21,7 @@ def seeded(dashboard, monkeypatch):
     from RevenueChaser.core import calendar
 
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # served prices.duckdb
     rawstore.ensure_all_tables()
     quote = {"regularMarketPrice": 130.0, "fiftyTwoWeekHigh": 135.0, "fiftyDayAverage": 120.0,
              "averageDailyVolume10Day": 2_000_000}
@@ -95,8 +96,8 @@ console.log(JSON.stringify(log));
 
     def test_a_missing_spy_series_shows_no_regime(self, dashboard, seeded):
         import RevenueChaser.core.rawstore as rawstore
-        with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-            conn.execute("DELETE FROM price_bars_daily WHERE ticker = 'SPY'")
+        from RevenueChaser.core.tests.d01_seed import drop_d01
+        drop_d01("SPY")
         _fetch(dashboard)                       # no D01 SPY: the fallback finds no cache, and the fake Yahoo no SPY
         r = _refresh(dashboard)
         assert _payload(dashboard)["no_data"] is False

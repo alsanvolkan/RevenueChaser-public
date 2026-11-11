@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from RevenueChaser.core import baselines, calendar as cal, ledger, rawstore
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 D = date(2026, 9, 1)                      # the freeze date (a Tuesday)
 LAST_BAR = date(2026, 10, 9)
@@ -57,7 +58,7 @@ def clock(monkeypatch):
 def _seed(series, *, universe=None):
     """The bars, the universe of those names, and one pick on ``D`` — the ledger is what names a date to score."""
     rows = [r for s in series for r in s]
-    rawstore.write_rows("price_bars_daily", rows)
+    write_d01(rows)
     rawstore.write_rows("equity_universe",
                         [{"ticker": t, "name": t, "market_cap": 1e9} for t in (universe or sorted({r["ticker"]
                                                                                               for r in rows}))])

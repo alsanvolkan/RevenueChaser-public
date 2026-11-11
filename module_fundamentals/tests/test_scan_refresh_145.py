@@ -28,6 +28,7 @@ from RevenueChaser.module_swing_potential import pipeline as sp
 from RevenueChaser.module_swing_potential import scores as sscores
 from RevenueChaser.module_swing_potential.report import render_swing_dashboard
 from RevenueChaser.module_swing_potential.tests.test_ohlc import _df
+from RevenueChaser.core.tests.d01_seed import drop_d01
 
 MODS = [(fp, render_fundamental_dashboard, fscores, fcfg), (sp, render_swing_dashboard, sscores, scfg)]
 ANNUAL = [{"revenue": 100.0 * (i + 1), "gross_profit": 50.0, "operating_cash_flow": 20.0,
@@ -163,8 +164,7 @@ def test_a_scan_with_no_spy_bars_reports_no_regime(seeded, monkeypatch, mod, ren
     """A Fetch that cannot get SPY (no stored bars, a dead network) scores the names and shows no regime.
 
     This ran as a Refresh before K4 (#383 R1); a Refresh no longer scores, so it is a Fetch now."""
-    with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM price_bars_daily WHERE ticker = 'SPY'")
+    drop_d01("SPY")
     monkeypatch.setattr(scores, "persist", lambda r: None)
     for name in ("Ticker", "download"):
         monkeypatch.setattr(f"yfinance.{name}", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))

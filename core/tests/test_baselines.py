@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from RevenueChaser.core import baselines, calendar as cal, ledger, outcomes, prices, rawstore
+from RevenueChaser.core.tests.d01_seed import drop_d01, write_d01
 
 D = date(2026, 9, 1)                      # the freeze date (a Tuesday)
 END30 = date(2026, 10, 1)                 # the last session on or before D + 30 days
@@ -73,7 +74,7 @@ def clock(monkeypatch):
 
 def _seed(rows, *, tickers=None):
     """The bars, and the universe of those names (or ``tickers``) as ``D``'s membership."""
-    rawstore.write_rows("price_bars_daily", list(rows))
+    write_d01(list(rows))
     names = tickers if tickers is not None else sorted({r["ticker"] for r in rows})
     rawstore.write_rows("equity_universe", [{"ticker": t, "name": t, "market_cap": 1e9} for t in names])
 
@@ -156,7 +157,7 @@ def test_the_universe_is_the_membership_of_the_freeze_date_not_today(rawstore_tm
 def test_a_freeze_date_without_a_universe_snapshot_writes_zero_members(rawstore_tmp_db, clock):
     """Before the store recorded membership there is no snapshot: the rows say n = 0 rather than quietly using
     today's list, and the run counts the date as one without a snapshot."""
-    rawstore.write_rows("price_bars_daily", _series("AAA"))
+    write_d01(_series("AAA"))
     clock.t = baselines.day_end(D) + 86400                       # membership is first recorded after D
     rawstore.write_rows("equity_universe", [{"ticker": "AAA"}])
     _freeze(["AAA"])
@@ -219,7 +220,7 @@ def test_the_volatility_is_read_adjusted_and_the_outcomes_nominal(rawstore_tmp_d
     bars = [b for i, t in enumerate(names, start=1) for b in _series(t, mfe=0.05, amp=i / 1000)]
     bars = [{**b, "high": 130.0} if b["ticker"] == "T01" and b["session_date"] > step else b for b in bars]
     _seed(bars)
-    rawstore.write_rows("price_actions", [_dividend(t, day, 10.0)
+    write_d01([], [_dividend(t, day, 10.0)
                                          for t in names for day in (date(2026, 8, 28), step)])
     _freeze([names[0]])
     baselines.run(now=NOW, run_id="r1")
@@ -338,7 +339,7 @@ def test_an_empty_price_store_refuses_before_any_write(rawstore_tmp_db, clock):
     _seed(_series("AAA"))
     _freeze(["AAA"])
     baselines.run(now=NOW, run_id="r1")
-    rawstore.clear("price_bars_daily")
+    drop_d01()
     for kw in ({"full": True}, {}, {"full": True, "write": False}):
         with pytest.raises(RuntimeError, match="no daily bars"):
             baselines.run(now=NOW, run_id="r2", **kw)

@@ -26,6 +26,7 @@ from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_swing_potential import pipeline as sp
+from RevenueChaser.rcdata.tests import prices_store
 
 GENERATED_AT = "2026-10-01T06:00:00+00:00"
 SESSION = date(2026, 10, 14)                                                    # the bars' last session
@@ -107,11 +108,13 @@ class _OfflineTicker:
 
 def seed_d01(ticker: str, df: pd.DataFrame, fetched_at: float = D01_WRITTEN) -> None:
     """``df``'s bars as D01 rows, written by RC-Daily-Bars after the last session's close + 30 min."""
-    rawstore.write_rows("price_bars_daily", [{
+    rows = [{
         "ticker": ticker, "session_date": ts.date(), "open": float(r["Open"]), "high": float(r["High"]),
         "low": float(r["Low"]), "close": float(r["Close"]), "adj_close": None, "volume": float(r["Volume"]),
         "split_ratio": None, "adj_source": None, "source": "uw", "fetched_at": fetched_at, "run_id": "bars",
-        "run_at": fetched_at} for ts, r in df.iterrows()])
+        "run_at": fetched_at} for ts, r in df.iterrows()]
+    rawstore.write_rows("price_bars_daily", rows)
+    prices_store.put_store_rows(rows, built_at=fetched_at)   # the served file the readers read (#642 PR 6)
 
 
 def seed_quotes(session: date = SESSION) -> None:

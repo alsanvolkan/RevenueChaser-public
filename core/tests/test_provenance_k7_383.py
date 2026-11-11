@@ -27,6 +27,7 @@ from RevenueChaser.core.tests.d01_seed import seed_d01
 from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_swing_potential import pipeline as sp
 from RevenueChaser.rcdata.tests import prices_store
+from RevenueChaser.core.tests.d01_seed import drop_d01
 
 D = date(2026, 10, 14)
 EVENING = datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc).timestamp()
@@ -121,8 +122,7 @@ def test_a_fetch_on_bars_a_day_behind_says_so(scenario, mod):
     seed_d01("OLDNAME", _days(date(2026, 10, 15)), EVENING)
     for t, (kind, drift) in scn.BARS.items():
         if t != "SPY":
-            with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-                conn.execute("DELETE FROM price_bars_daily WHERE ticker = ?", [t])
+            drop_d01(t)
             scn.seed_d01(t, scn._bars(kind, drift, scn.LONG_BARS, end=date(2026, 10, 13)), fetched_at=EVENING)
     payload = mod.run_scan()
     assert payload["candidates"] and payload["data_as_of"] == "2026-10-13"

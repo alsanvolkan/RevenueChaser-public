@@ -15,6 +15,7 @@ from RevenueChaser.app import runners
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.core.tests.d01_seed import seed_d01
+from RevenueChaser.rcdata.tests import prices_store
 from RevenueChaser.module_swing_potential import freeze, pipeline, scores
 from RevenueChaser.module_swing_potential import history as sw_history
 
@@ -231,6 +232,8 @@ def test_spy_without_the_session_bar_makes_the_run_partial(rawstore_tmp_db):
 
 def test_a_shown_candidate_without_a_complete_bar_makes_the_run_partial(store):
     _seed("BBB", cal.session_close(D).timestamp() - 3 * 3600)               # BBB cached intraday
+    prices_store.set_built_at(cal.session_close(D).timestamp() - 3 * 3600)  # one stamp a file (#642 PR 6)
+    prices_store.set_built_at(cal.session_close(D).timestamp() - 3 * 3600)  # one stamp a file (#642 PR 6)
     sw_history.record(_payload(COMPLETE_1, "AAA", "BBB"), rows=_rows(_results("AAA", "BBB")), run_id="r1")
     (head,) = _headers()
     assert head["quality"] == "partial" and "BBB" in head["quality_note"] and _score_rows("r1") == []

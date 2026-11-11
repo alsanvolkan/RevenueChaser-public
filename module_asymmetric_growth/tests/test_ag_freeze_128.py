@@ -38,9 +38,8 @@ def _spy_bar(minutes=45):
 
 
 def _no_bars():
-    from RevenueChaser.core import rawstore
-    with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM price_bars_daily")
+    from RevenueChaser.core.tests.d01_seed import drop_d01
+    drop_d01()
 
 
 def _stored():

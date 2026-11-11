@@ -22,6 +22,7 @@ import pytest
 
 from RevenueChaser.core import prices, rawstore
 from RevenueChaser.core.prices import _BAR_COLUMNS, _f, _placeholders, _read, _threshold_epoch
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 
 # ── the per-row implementation before #383 K8a speed (main a81f8de), verbatim but for names ──────────────────
@@ -377,8 +378,8 @@ def bounded(rawstore_tmp_db):
         bars.append(_bar("TTT", d, 100.0 + i, fill if i < 30 else _ts(days[55])))
         if i not in (40, 41):
             bars.append(_bar("UUU", d, 20.0 + 0.1 * i, _ts(d)))
-    rawstore.write_rows("price_bars_daily", bars)
-    rawstore.write_rows("price_actions", [
+    write_d01(bars)
+    write_d01([], [
         _act("TTT", days[30], "split", 2.0, _ts(days[30])),
         _act("TTT", days[50], "split", 3.0, _ts(days[58])),            # fetched later: bars after its open stay
         _act("TTT", days[10], "dividend", 1.0, _ts(days[10])),
@@ -434,8 +435,8 @@ def test_an_end_bounded_read_equals_the_per_row_code_on_random_stores(rawstore_t
         rows = _random_bars(rng, t, span, store_like=True)
         bars += rows
         actions += _random_actions(rng, t, rows, span, store_like=True)
-    rawstore.write_rows("price_bars_daily", bars)
-    rawstore.write_rows("price_actions", actions)
+    write_d01(bars)
+    write_d01([], actions)
     names = ["AAA", "BBB", "CCC", "DDD", "EEE", "NONE"]
     for _ in range(25):
         start, end = _edge(rng, span), _day(rng.randrange(-3, span + 3))

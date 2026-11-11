@@ -60,6 +60,7 @@ def seeded(dashboard, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
 
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # served prices.duckdb
     rawstore.ensure_all_tables()
     quote = {"regularMarketPrice": 130.0, "fiftyTwoWeekHigh": 135.0, "fiftyDayAverage": 120.0,
              "averageDailyVolume10Day": 2_000_000}
@@ -106,6 +107,8 @@ def _cache_mid_session(dashboard):
     fetched_at = datetime(2026, 9, 25, 15, 30, tzinfo=timezone.utc).timestamp()
     with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
         conn.execute("UPDATE price_bars_daily SET fetched_at = ?", [fetched_at])
+    from RevenueChaser.rcdata.tests import prices_store
+    prices_store.set_built_at(fetched_at)          # the served file the boards read: one build stamp (#642 PR 6)
 
 
 def test_a_post_close_fetch_freezes_the_shown_pick(dashboard, seeded):

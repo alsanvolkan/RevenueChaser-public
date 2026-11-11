@@ -22,6 +22,7 @@ from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_swing_potential import freeze as swing_freeze
 from RevenueChaser.module_swing_potential import history as swing_history
 from RevenueChaser.module_swing_potential import pipeline as sp
+from RevenueChaser.core.tests.d01_seed import drop_d01
 
 BOARDS = [pytest.param(sp, swing_freeze, swing_history, id="swing"),
           pytest.param(fp, fund_freeze, fund_history, id="fundamentals")]
@@ -50,8 +51,7 @@ def test_a_name_whose_d01_bars_stop_the_day_before_drops_and_the_day_freezes(d01
     of becoming a pick that refuses the whole day (one gap among this scenario's nine names is 11%, so the drop share
     is raised; ``core/tests/test_screen_r3_review_434.py`` pins the share)."""
     monkeypatch.setattr(screen_common, "STALE_DROP_MAX_SHARE", 0.2)
-    with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM price_bars_daily WHERE ticker = 'UP1'")
+    drop_d01("UP1")
     night_before = datetime(2026, 10, 13, 21, 0, tzinfo=timezone.utc).timestamp()
     kind, drift = scn.BARS["UP1"]
     scn.seed_d01("UP1", scn._bars(kind, drift, scn.LONG_BARS, end=date(2026, 10, 13)), fetched_at=night_before)

@@ -21,6 +21,7 @@ from RevenueChaser.app.tests.test_sec13f_job import store  # noqa: F401 - the st
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.reporting_common import payload_path
 from RevenueChaser.module_sec_13f import enrich
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 
 def _payload():
@@ -65,7 +66,7 @@ def test_a_fetch_board_shows_the_shares_its_own_shares_step_stored(uw, monkeypat
 
 def test_a_refresh_builds_the_same_payload_as_the_fetch(uw, monkeypatch, no_enrichment):  # noqa: F811
     _at(monkeypatch, COMPLETE)
-    rawstore.write_rows("price_bars_daily", [_bar("AAPL", "2026-03-31", 220.0)])
+    write_d01([_bar("AAPL", "2026-03-31", 220.0)])
     runners.build_sec13f(None)
     fetched = _payload()
     payload_path(runners.SEC_13F_LATEST).unlink()
@@ -79,7 +80,7 @@ def test_a_refresh_builds_the_same_payload_as_the_fetch(uw, monkeypatch, no_enri
 def test_the_chart_route_takes_its_price_from_d01(store, no_enrichment):  # noqa: F811
     from RevenueChaser.app import dashboard
     from RevenueChaser.module_sec_13f import engine as sec_13f
-    rawstore.write_rows("price_bars_daily", [_bar("AAPL", "2026-03-31", 220.0)])
+    write_d01([_bar("AAPL", "2026-03-31", 220.0)])
     dashboard.app.config["TESTING"] = True
     r = dashboard.app.test_client().get("/api/sec_13f/AAPL")
     assert r.status_code == 200, r.data

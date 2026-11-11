@@ -11,6 +11,7 @@ import pytest
 
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import ledger, outcomes, prices, rawstore
+from RevenueChaser.core.tests.d01_seed import drop_d01, write_d01
 
 D = date(2026, 9, 1)                      # the forecast date (a Tuesday)
 END30 = date(2026, 10, 1)                 # the last session on or before D + 30 days
@@ -57,9 +58,7 @@ def _series(ticker="AAA", *, last=LAST_BAR, scale_before: date | None = None, fa
 
 
 def _seed_bars(rows, actions=()):
-    rawstore.write_rows("price_bars_daily", list(rows))
-    if actions:
-        rawstore.write_rows("price_actions", list(actions))
+    write_d01(rows, actions)
 
 
 def _freeze(subjects, *, source="swing", day=D, shown_price=99.0):
@@ -402,7 +401,7 @@ def test_an_empty_price_store_refuses_and_keeps_the_closed_rows(rawstore_tmp_db)
     _seed_bars(_series())
     _freeze(["AAA"])
     outcomes.run(now=NOW, run_id="r1")
-    rawstore.clear("price_bars_daily")
+    drop_d01()
     for kw in ({"full": True}, {}, {"full": True, "write": False}):
         with pytest.raises(RuntimeError, match="no daily bars"):
             outcomes.run(now=NOW, run_id="r2", **kw)

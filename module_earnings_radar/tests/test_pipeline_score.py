@@ -9,6 +9,7 @@ are coerced and a card is always produced.
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline, _safe_float
 from RevenueChaser.module_earnings_radar.models import TradeCard
 from RevenueChaser.module_earnings_radar.rules import rule5_positioning
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 import pytest
 
@@ -502,7 +503,7 @@ class TestStoredOhlcWiring:
             d -= timedelta(days=1)
         bars = [{"date": x.isoformat(), "open": 99.0 + i, "high": 101.0 + i, "low": 98.0 + i,
                  "close": 100.0 + i, "volume": 1000.0} for i, x in enumerate(reversed(days))]
-        rawstore.write_rows("price_bars_daily", [
+        write_d01([
             {"ticker": "AAPL", "session_date": date.fromisoformat(b["date"]), "open": b["open"],
              "high": b["high"], "low": b["low"], "close": b["close"], "volume": b["volume"], "source": "uw"}
             for b in bars])

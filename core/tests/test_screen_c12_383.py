@@ -25,6 +25,7 @@ from RevenueChaser.core import rawstore, screen_common
 from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_swing_potential import indicators
 from RevenueChaser.module_swing_potential import pipeline as sp
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 D = date(2026, 10, 14)
 NOW = datetime(2026, 10, 14, 21, 45, tzinfo=timezone.utc)      # 17:45 EDT: the 14 Oct session is complete
@@ -47,16 +48,14 @@ def _evening(d: date) -> float:
 
 def _seed_d01(ticker: str, days: list[date], close=None, actions=()):
     """Each bar as the nightly job stored it, on its own session's evening: a bar before a split is pre-split."""
-    rawstore.write_rows("price_bars_daily", [{
+    write_d01([{
         "ticker": ticker, "session_date": d, "open": c, "high": c * 1.01, "low": c * 0.99, "close": c,
         "adj_close": None, "volume": 1.0e6, "split_ratio": None, "adj_source": None, "source": "uw",
         "fetched_at": _evening(d), "run_id": "seed", "run_at": _evening(d)}
-        for i, d in enumerate(days) for c in [close(i) if close else 50.0 + 0.1 * i]])
-    if actions:
-        rawstore.write_rows("price_actions", [
-            {"ticker": ticker, "ex_date": ex, "action": kind, "value": v, "session_date": ex,
-             "source": "yfinance", "fetched_at": FETCHED, "run_id": "seed", "run_at": FETCHED}
-            for ex, kind, v in actions])
+        for i, d in enumerate(days) for c in [close(i) if close else 50.0 + 0.1 * i]], [
+        {"ticker": ticker, "ex_date": ex, "action": kind, "value": v, "session_date": ex,
+         "source": "yfinance", "fetched_at": FETCHED, "run_id": "seed", "run_at": FETCHED}
+        for ex, kind, v in actions])
 
 
 def _q(ticker, session, price, *, v10=None, v3m=None, source="yfinance", payload=None):

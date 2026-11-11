@@ -51,6 +51,7 @@ def seeded_inputs(dashboard, seeded_totals, monkeypatch):
 
     import RevenueChaser.core.rawstore as rawstore
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # served prices.duckdb
     rawstore.ensure_all_tables()
 
     def own(source, shares, insider):
@@ -60,7 +61,8 @@ def seeded_inputs(dashboard, seeded_totals, monkeypatch):
 
     rawstore.write_rows("ownership_snapshot", [own("uw_info", 24_000_000.0, None),
                                                own("yfinance", 30_000_000.0, 0.035)])
-    rawstore.write_rows("price_bars_daily", [
+    from RevenueChaser.core.tests.d01_seed import write_d01
+    write_d01([
         {"ticker": "NVDA", "session_date": date.fromisoformat(d), "open": c, "high": c, "low": c, "close": c,
          "adj_close": None, "volume": 1.0, "split_ratio": None, "adj_source": None, "source": "uw",
          "fetched_at": 0.0, "run_id": "e2e", "run_at": 0.0}
@@ -146,6 +148,7 @@ def seeded_inputs(dashboard, seeded_totals, monkeypatch):
 
     import RevenueChaser.core.rawstore as rawstore
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
+    monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # served prices.duckdb
     rawstore.ensure_all_tables()
 
     def own(source, shares, insider):
@@ -155,7 +158,8 @@ def seeded_inputs(dashboard, seeded_totals, monkeypatch):
 
     rawstore.write_rows("ownership_snapshot", [own("uw_info", 24_000_000.0, None),
                                                own("yfinance", 30_000_000.0, 0.035)])
-    rawstore.write_rows("price_bars_daily", [
+    from RevenueChaser.core.tests.d01_seed import write_d01
+    write_d01([
         {"ticker": "NVDA", "session_date": date.fromisoformat(d), "open": c, "high": c, "low": c, "close": c,
          "adj_close": None, "volume": 1.0, "split_ratio": None, "adj_source": None, "source": "uw",
          "fetched_at": 0.0, "run_id": "e2e", "run_at": 0.0}

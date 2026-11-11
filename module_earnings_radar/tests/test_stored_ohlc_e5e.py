@@ -14,6 +14,7 @@ from RevenueChaser.core import calendar, rawstore
 from RevenueChaser.module_earnings_radar import stored_inputs
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline, REACTION_OHLC_SESSIONS
 from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 SESSION = date(2026, 10, 14)               # Wednesday, the latest complete session
 NOW = datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc)          # 17:00 New York
@@ -49,7 +50,7 @@ def _bars(n=300, end=SESSION, start=100.0):
 
 
 def _seed(bars, ticker="AAPL"):
-    rawstore.write_rows("price_bars_daily", [
+    write_d01([
         {"ticker": ticker, "session_date": date.fromisoformat(b["date"]), "open": b["open"], "high": b["high"],
          "low": b["low"], "close": b["close"], "volume": b["volume"], "source": "uw", "fetched_at": 0.0}
         for b in bars])
@@ -154,7 +155,7 @@ def test_a_split_in_the_window_is_applied_on_read():
     ex-date, so the stored series is the split-adjusted one (the live UW answer is not). A dividend on the same
     ex-date must NOT touch it — the reader asks for the nominal basis, the one the pipeline's columns compare."""
     bars = _bars(6)
-    rawstore.write_rows("price_actions", [{"ticker": "AAPL", "ex_date": date.fromisoformat(bars[4]["date"]),
+    write_d01([], [{"ticker": "AAPL", "ex_date": date.fromisoformat(bars[4]["date"]),
                                            "action": "split", "value": 2.0, "source": "yfinance",
                                            "fetched_at": 0.0}])
     _seed(bars)
@@ -168,7 +169,7 @@ def test_a_split_in_the_window_is_applied_on_read():
         assert got[b["date"]]["close"] == pytest.approx(b["close"])
         assert got[b["date"]]["volume"] == pytest.approx(b["volume"])
 
-    rawstore.write_rows("price_actions", [{"ticker": "AAPL", "ex_date": date.fromisoformat(bars[4]["date"]),
+    write_d01([], [{"ticker": "AAPL", "ex_date": date.fromisoformat(bars[4]["date"]),
                                            "action": "dividend", "value": 1.0, "source": "yfinance",
                                            "fetched_at": 0.0}])
     with_dividend = {b["date"]: b for b in stored_inputs.ohlc_bars(["AAPL"])["AAPL"]}

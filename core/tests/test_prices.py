@@ -12,6 +12,7 @@ import pytest
 
 from RevenueChaser.core import calendar, job_lock, prices, rawstore
 from RevenueChaser.core.providers.result import ProviderResult
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 UTC = timezone.utc
 NOW = datetime(2026, 10, 8, 20, 35, tzinfo=UTC)      # 16:35 EDT, after the 16:30 complete edge
@@ -503,11 +504,10 @@ def test_t14_split_and_amount_gating():
 
 def test_t13_daily_bars_filters_after_factors(rawstore_tmp_db):
     ev = datetime(2026, 3, 2, 21, 35, tzinfo=UTC).timestamp()
-    rawstore.write_rows("price_bars_daily", [
+    write_d01([
         {"ticker": "T", "session_date": date(2026, 3, 4), "open": 51.0, "high": 51.0,
          "low": 51.0, "close": 51.0, "adj_close": None, "volume": 2000.0, "split_ratio": None,
-         "adj_source": None, "source": "uw", "fetched_at": ev, "run_id": "r", "run_at": ev}])
-    rawstore.write_rows("price_actions", [
+         "adj_source": None, "source": "uw", "fetched_at": ev, "run_id": "r", "run_at": ev}], [
         {"ticker": "T", "ex_date": date(2026, 3, 4), "action": "split", "value": 2.0,
          "session_date": date(2026, 3, 4), "source": "yfinance", "fetched_at": ev,
          "run_id": "r", "run_at": ev}])
@@ -756,8 +756,8 @@ def test_b2_fetched_at_is_the_arrival_not_the_run_start(rawstore_tmp_db, monkeyp
 
     stamped = {r["fetched_at"] for r in rows_for("T")}
     assert stamped == {datetime(2026, 3, 4, 14, 45, tzinfo=UTC).timestamp()}
-    df = prices.daily_bars(["T"], basis="nominal")
-    assert list(df["close"]) == [50.0, 51.0]
+    # The stamp is what matters: the boards read the builder's file since #642 PR 6, not these rows.
+    assert sorted(r["close"] for r in rows_for("T")) == [50.0, 51.0]
 
 
 def test_g1_an_amount_fetched_after_the_split_is_not_divided():
@@ -774,9 +774,8 @@ def test_g1_an_amount_fetched_after_the_split_is_not_divided():
 
 def test_g2_daily_bars_window_uses_a_c_prev_outside_it(rawstore_tmp_db):
     ev = datetime(2026, 3, 5, 21, 35, tzinfo=UTC).timestamp()
-    rawstore.write_rows("price_bars_daily", [bar_row("T", "2026-03-03", close=40.0, fetched_at=ev),
-                                             bar_row("T", "2026-03-04", close=50.0, fetched_at=ev)])
-    rawstore.write_rows("price_actions", [
+    write_d01([bar_row("T", "2026-03-03", close=40.0, fetched_at=ev),
+               bar_row("T", "2026-03-04", close=50.0, fetched_at=ev)], [
         {"ticker": "T", "ex_date": date(2026, 3, 5), "action": "dividend", "value": 1.0,
          "session_date": date(2026, 3, 5), "source": "yfinance", "fetched_at": ev, "run_id": "r",
          "run_at": ev}])
@@ -820,7 +819,7 @@ def test_n2_a_negative_split_or_one_that_multiplies_to_1_is_not_stored():
 
 
 def test_n4_a_bare_string_is_one_ticker(rawstore_tmp_db):
-    rawstore.write_rows("price_bars_daily", [bar_row("SPY", "2026-10-07", close=600.0)])
+    write_d01([bar_row("SPY", "2026-10-07", close=600.0)])
     assert list(prices.daily_bars("SPY")["ticker"]) == ["SPY"]
 
 
@@ -838,6 +837,16 @@ def _seed_split_day():
         "run_at": 0.0}])
 
 
+ARRIVED = datetime(2026, 10, 8, 13, 45, tzinfo=UTC).timestamp()
+
+
+def _arrivals(ticker):
+    """``{(close, fetched_at)}`` of the bars the run stored after the seed's 2026-10-05 one: the stamp is the
+    arrival (09:45 EDT, after the ex-date open), so the store's own reader never divides them again. The boards read
+    the builder's file since #642 PR 6, not these rows."""
+    return {(r["close"], r["fetched_at"]) for r in rows_for(ticker) if r["session_date"] > date(2026, 10, 5)}
+
+
 def test_g6_nightly_uw_rows_are_stamped_at_arrival(rawstore_tmp_db, monkeypatch):
     """A manual daytime run that starts at 09:20 EDT on a split ex-date and reaches the ticker at
     09:45: UW already serves split-adjusted bars, so they must not be divided again."""
@@ -850,7 +859,7 @@ def test_g6_nightly_uw_rows_are_stamped_at_arrival(rawstore_tmp_db, monkeypatch)
 
     prices.ensure_daily_bars(["T"], uw=uw, yf_download=FakeDownload({}), run_id="r1")
 
-    assert list(prices.daily_bars(["T"], basis="nominal")["close"]) == [50.0, 51.0, 52.0]
+    assert _arrivals("T") == {(51.0, ARRIVED), (52.0, ARRIVED)}
 
 
 def test_g6b_nightly_yfinance_rows_are_stamped_at_arrival(rawstore_tmp_db, monkeypatch):
@@ -865,7 +874,7 @@ def test_g6b_nightly_yfinance_rows_are_stamped_at_arrival(rawstore_tmp_db, monke
 
     prices.ensure_daily_bars(["T"], uw=FakeUW(fail={"T"}), yf_download=dl, run_id="r1")
 
-    assert list(prices.daily_bars(["T"], basis="nominal")["close"]) == [50.0, 51.0, 52.0]
+    assert _arrivals("T") == {(51.0, ARRIVED), (52.0, ARRIVED)}
 
 
 def test_g7_yfinance_zero_event_columns_store_no_action():
