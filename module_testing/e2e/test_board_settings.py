@@ -140,28 +140,30 @@ class TestStatsFetch:
             f"the standalone stats job must not call the screener: {calls}")
 
 
-class TestDrillApi:
-    def test_drill_api_is_offline(self, dashboard, seeded_settings, provider_routes):
+class TestLookupApi:
+    def test_lookup_api_is_offline(self, dashboard, seeded_settings, provider_routes):
         before_provider = provider_routes.request_count
         before_yf = dashboard.yf_calls()
-        r = dashboard.get("/api/settings/ticker/AAPL")
+        r = dashboard.get("/api/settings/lookup/AAPL")
         assert r.status_code == 200
         body = r.json()
         assert body["ok"] is True
         assert body["ticker"] == "AAPL"
-        assert body["name"] == "Apple Inc."
-        assert body["filing"]["form"] == "10-K"
+        assert [f["kind"] for f in body["files"]], "one group a served file"
         assert provider_routes.request_count == before_provider, (
-            "the drill reached the network: "
+            "the lookup reached the network: "
             f"{[q.path for q in provider_routes.requests()[before_provider:]]}")
         assert dashboard.yf_calls() == before_yf, (
-            "the drill reached yfinance: "
+            "the lookup reached yfinance: "
             f"{dashboard.yf_calls()[len(before_yf):]}")
 
-    def test_drill_api_unknown_is_404(self, dashboard, seeded_settings):
-        r = dashboard.get("/api/settings/ticker/ZZZZ")
+    def test_lookup_api_unknown_is_404(self, dashboard, seeded_settings):
+        r = dashboard.get("/api/settings/lookup/ZZZZ")
         assert r.status_code == 404
         assert r.json() == {"ok": False}
+
+    def test_the_old_store_drill_route_is_gone(self, dashboard, seeded_settings):
+        assert dashboard.get("/api/settings/ticker/AAPL").status_code == 404
 
 
 class TestEmptyStore:

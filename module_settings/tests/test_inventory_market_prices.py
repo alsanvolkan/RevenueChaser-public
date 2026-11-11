@@ -104,15 +104,6 @@ def test_without_a_market_file_the_row_says_where_it_looked(rawstore_tmp_db):
     assert "market prices file is not built" in row["note"]
 
 
-# ── the ticker drill ──────────────────────────────────────────────────────────────────────────────────────────────
-
-def test_the_drill_counts_a_names_bars_in_the_market_file(rawstore_tmp_db):
-    _market_prices([("NVDA", date(2026, 9, 29), "alpaca"), ("NVDA", SESSION, "alpaca"),
-                    ("AAPL", SESSION, "alpaca")])
-    presence = inventory.ticker_detail("NVDA")["presence"]
-    assert presence["price_bars_daily"] == {"bars": 2, "newest": "2026-09-30"}
-
-
 # ── identity coverage ─────────────────────────────────────────────────────────────────────────────────────────────
 
 def test_identity_coverage_counts_bars_in_the_market_file(rawstore_tmp_db):

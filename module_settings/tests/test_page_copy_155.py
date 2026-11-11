@@ -17,7 +17,7 @@ import json
 import re
 
 from RevenueChaser.core import datasets
-from RevenueChaser.module_settings import boards, inventory, report
+from RevenueChaser.module_settings import boards, inventory, report, ticker_lookup
 from RevenueChaser.module_settings.tests.test_identity_coverage_124 import FIXED, _seed
 
 BANNED = ("OIPD", "OHLC", "D01", "COT", "NMF", "UW", "LLM", "SIC", "ATR", "RS")
@@ -52,7 +52,7 @@ def _registry_texts():
 def test_the_rendered_page_uses_no_internal_short_form(rawstore_tmp_db):
     _seed()
     page = _visible(report.render_settings_dashboard(inventory.collect(now=FIXED)))
-    drill = json.dumps(inventory.ticker_detail("AAPL"))
+    drill = json.dumps(ticker_lookup.lookup("AAPL"))
 
     assert _hits("page", page) + _hits("drill", drill) == []
 

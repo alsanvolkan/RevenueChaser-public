@@ -1207,31 +1207,6 @@ def api_settings_lookup(ticker: str):
     return jsonify({"ok": True, **found})
 
 
-@app.route("/api/settings/ticker/<ticker>")
-def api_settings_ticker(ticker: str):
-    """Store-only per-ticker drill for the Settings board.
-
-    Reads ``raw.duckdb`` / ``edgar.duckdb`` and nothing else: no job, no network,
-    no credentials. An unknown ticker (no row anywhere, every read answering) is a plain 404
-    ``{"ok": false}``; one that is not ticker-shaped is a 400; a read that fails inside the drill
-    is a 200 whose ``errors`` name it (#143), never a 404; a drill that raises is a 500 with
-    ``error: "store read failed"``.
-    """
-    from RevenueChaser.module_settings import inventory
-
-    ticker = ticker.strip().upper()
-    if not _valid_ticker(ticker):
-        return jsonify({"ok": False, "error": "bad ticker"}), 400
-    try:
-        detail = inventory.ticker_detail(ticker)
-    except Exception as exc:  # noqa: BLE001 - a failed store read must not look like an unknown ticker (DF98)
-        logger.exception("settings ticker drill failed for %s", ticker)
-        return jsonify({"ok": False, "error": "store read failed", "detail": str(exc)[:200]}), 500
-    if detail is None:
-        return jsonify({"ok": False}), 404
-    return jsonify({"ok": True, **detail})
-
-
 @app.route("/api/settings/sample/<table>")
 def api_settings_sample(table: str):
     """The control board's **Refresh the example rows**: five rows of one serving table, read again (design v28).

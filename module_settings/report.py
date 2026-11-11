@@ -3160,7 +3160,7 @@ def _ticker_drill(payload: dict) -> str:
 
 def render_settings_dashboard(payload: dict) -> str:
     """The Data/Health page (#492): two tabs. Data is the control board (``control_render.render_data``); Health is
-    ``_health_panel``. The old Settings sections fold is gone; its Ticker detail and Backups moved to Health."""
+    ``_health_panel``. The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
     payload = payload or {}
     data_json = script_json(payload.get("tickers") or [])
     # The payload's own ``newdata`` when the caller read it (tests, fixtures); else read here, per render.

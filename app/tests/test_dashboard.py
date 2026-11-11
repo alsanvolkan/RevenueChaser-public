@@ -1477,50 +1477,6 @@ class TestUniverseStats:
         assert runners.SETTINGS_LATEST.exists()
 
 
-class TestSettingsDrillApi:
-    """GET /api/settings/ticker/<t>: the store-only per-ticker drill."""
-
-    def _client(self):
-        dashboard.app.config["TESTING"] = True
-        return panel_test_client(dashboard.app)
-
-    @staticmethod
-    def _seed():
-        from RevenueChaser.core import rawstore
-        rawstore.write_rows("equity_universe", [
-            {"ticker": "MU", "market_cap": None, "name": "Micron Technology"},
-        ])
-        rawstore.write_rows("chain_filings", [
-            {"ticker": "MU", "cik": "0000723125", "form": "10-K",
-             "filed": "2026-02-01", "accession": "acc-mu", "quality": "ok"},
-        ])
-
-    def test_200_shape(self, rawstore_tmp_db):
-        self._seed()
-        r = self._client().get("/api/settings/ticker/MU")
-        assert r.status_code == 200
-        body = r.get_json()
-        assert body["ok"] is True
-        assert body["ticker"] == "MU"
-        assert body["name"] == "Micron Technology"
-        assert body["market_cap"] is None
-        assert body["filing"]["form"] == "10-K"
-        # No market-cap floor (avo, 29 Oct 2026): a NULL cap no longer keeps a name out of the universe.
-        assert body["presence"]["in_classification_universe"] is True
-
-    def test_unknown_ticker_404(self, rawstore_tmp_db):
-        self._seed()
-        r = self._client().get("/api/settings/ticker/ZZZZ")
-        assert r.status_code == 404
-        assert r.get_json() == {"ok": False}
-
-    def test_case_insensitive(self, rawstore_tmp_db):
-        self._seed()
-        r = self._client().get("/api/settings/ticker/mu")
-        assert r.status_code == 200
-        assert r.get_json()["ticker"] == "MU"
-
-
 class TestPerTabOverlay:
     """PL3 / N2: "Running…" covers only the tab a queued/running job produces.
 

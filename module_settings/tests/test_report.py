@@ -825,7 +825,7 @@ def test_the_focused_automation_keeps_focus_across_a_poll():
 
 
 def _drill_rows(detail: dict) -> str:
-    """``drillFill(detail)`` run in node: the helpers of ``DRILL_JS`` without the DOM wiring at its end."""
+    """``drillFill(payload)`` run in node: the helpers of ``DRILL_JS`` without the DOM wiring at its end."""
     import json
     import shutil
     import subprocess
@@ -841,107 +841,70 @@ def _drill_rows(detail: dict) -> str:
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
-def test_the_drill_shows_d01_bars_when_the_legacy_cache_is_empty():
-    """The number the drill shows is D01, not swing_ohlc. Empty cache must not read 'no bars'."""
-    html = _drill_rows({
-        "name": "Nvidia",
-        "presence": {
-            "price_bars_daily": {"bars": 3, "newest": "2026-02-02"},
-            "swing_ohlc": {"bars": 0, "newest": None},
-        },
-    })
-    assert ('<span class="dlbl">Daily price bars</span>'
-            '<span class="dval">3 bars · newest 2026-02-02</span>' in html)
-    assert "Daily OHLC" not in html
+def test_the_lookup_shows_both_ends_of_each_range():
+    """avo, 11 Nov 2026: "ne zamandan kaldigini" — the first day, not only the newest."""
+    html = _drill_rows({"ticker": "MU", "name": "Micron", "files": [
+        {"kind": "prices", "name": "prices.duckdb", "title": "Prices and shares", "looked_at": 4,
+         "tables": [{"table": "price_bar_daily", "rows": 2, "first": "2021-01-04", "last": "2026-11-10"}]}]})
+    assert '<span class="dlbl">price_bar_daily</span>' in html
+    assert "2 rows · 2021-01-04 → 2026-11-10" in html
+    assert "prices.duckdb — Prices and shares" in html
 
 
-def test_the_drill_shows_zero_d01_and_the_legacy_count_under_its_label():
-    html = _drill_rows({
-        "name": "SPY",
-        "presence": {
-            "price_bars_daily": {"bars": 0, "newest": None},
-            "swing_ohlc": {"bars": 4, "newest": "2026-02-02"},
-        },
-    })
-    assert '<span class="dlbl">Daily price bars</span><span class="dval">no bars</span>' in html
-    assert ('<span class="dlbl">Legacy daily open/high/low/close cache (SPY fallback)</span>'
-            '<span class="dval">4 bars · newest 2026-02-02</span>' in html)
+def test_a_table_with_no_date_shows_its_row_count_alone():
+    html = _drill_rows({"ticker": "MU", "files": [
+        {"kind": "ownership", "name": "ownership.duckdb", "title": "Who owns it", "looked_at": 2,
+         "tables": [{"table": "ibkr_shortable", "rows": 1, "first": None, "last": None}]}]})
+    assert "1 row · no date kept" in html
 
 
-def test_the_drill_lists_the_five_scoring_datasets_with_their_newest_date():
-    """S10 (#126): bars, quote, vendor statements, EDGAR facts and ownership, in plain English."""
-    html = _drill_rows({
-        "ticker": "MU", "name": "Micron",
-        "presence": {
-            "price_bars_daily": {"bars": 2, "newest": "2026-02-02"},
-            "quote_snapshot": {"rows": 1, "newest": "2026-10-20", "source": "uw"},
-            "vendor_financials": {"rows": 2, "newest": "2026-06-04"},
-            "edgar_financials": {"periods": 2, "newest": "2026-08-27"},
-            "ownership_snapshot": {"rows": 1, "newest": "2026-10-21", "source": "yfinance"},
-        },
-    })
-    assert ('<span class="dlbl">Daily price bars</span>'
-            '<span class="dval">2 bars · newest 2026-02-02</span>' in html)
-    assert ('<span class="dlbl">Quote</span>'
-            '<span class="dval">1 row · newest 2026-10-20 · uw</span>' in html)
-    assert ('<span class="dlbl">Vendor financials</span>'
-            '<span class="dval">2 rows · newest 2026-06-04</span>' in html)
-    assert ('<span class="dlbl">EDGAR facts</span>'
-            '<span class="dval">2 periods · newest 2026-08-27</span>' in html)
-    assert ('<span class="dlbl">Ownership</span>'
-            '<span class="dval">1 row · newest 2026-10-21 · yfinance</span>' in html)
+def test_a_file_that_holds_nothing_for_the_name_says_how_many_tables_were_asked():
+    html = _drill_rows({"ticker": "MU", "files": [
+        {"kind": "options", "name": "options.duckdb", "title": "Options", "looked_at": 7, "tables": []}]})
+    assert "nothing stored for this name (7 tables looked at)" in html
 
 
-def test_the_drill_says_which_scoring_dataset_has_no_row():
-    html = _drill_rows({
-        "name": "NVDA",
-        "presence": {
-            "price_bars_daily": {"bars": 1, "newest": "2026-02-02"},
-            "quote_snapshot": {"rows": 0, "newest": None, "source": None},
-            "vendor_financials": {"rows": 0, "newest": None},
-            "edgar_financials": {"periods": 0, "newest": None},
-            "ownership_snapshot": {"rows": 0, "newest": None, "source": None},
-        },
-    })
-    assert ('<span class="dlbl">Quote</span><span class="dval">no quote stored</span>' in html)
-    assert ('<span class="dlbl">Vendor financials</span>'
-            '<span class="dval">no vendor statements stored</span>' in html)
-    assert ('<span class="dlbl">EDGAR facts</span><span class="dval">no facts stored</span>' in html)
-    assert ('<span class="dlbl">Ownership</span><span class="dval">no ownership stored</span>' in html)
+def test_a_missing_file_is_a_line_not_an_empty_group():
+    html = _drill_rows({"ticker": "MU", "files": [
+        {"kind": "options", "name": "options.duckdb", "title": "Options", "looked_at": 0, "tables": [],
+         "error": "no options.duckdb yet"}]})
+    assert "no options.duckdb yet" in html
 
 
-def test_the_drill_shows_the_identifiers_at_the_top():
+def test_a_table_that_could_not_be_read_says_so_by_name():
+    html = _drill_rows({"ticker": "MU", "files": [
+        {"kind": "prices", "name": "prices.duckdb", "title": "Prices", "looked_at": 1,
+         "tables": [{"table": "price_bar_daily", "rows": None, "error": "IOError: locked"}]}]})
+    assert "could not read — IOError: locked" in html
+
+
+def test_the_lookup_shows_the_identifiers_at_the_top():
     html = _drill_rows({"ticker": "MU", "cik": "0000723125", "figi": "BBG000BLNNH6",
-                        "cusip": "n/a", "isin": "n/a", "presence": {}})
-    assert ('<span class="dlbl">CIK</span><span class="dval">0000723125</span>' in html)
-    assert ('<span class="dlbl">FIGI</span><span class="dval">BBG000BLNNH6</span>' in html)
-    # The columns arrive in a later PR: the drill says n/a rather than pretending there is no value.
-    assert ('<span class="dlbl">CUSIP</span><span class="dval">n/a</span>' in html)
-    assert ('<span class="dlbl">ISIN</span><span class="dval">n/a</span>' in html)
+                        "security_id": "sec:7", "cusip": None, "isin": None, "files": []})
+    assert '<span class="dlbl">CIK</span><span class="dval">0000723125</span>' in html
+    assert '<span class="dlbl">FIGI</span><span class="dval">BBG000BLNNH6</span>' in html
+    assert '<span class="dlbl">Security id</span><span class="dval">sec:7</span>' in html
+    assert '<span class="dlbl">CUSIP</span><span class="dval">—</span>' in html
 
 
-def test_the_drill_escapes_a_hostile_identifier():
+def test_the_lookup_escapes_a_hostile_identifier_and_table_name():
     bad = "<img src=x onerror=__x(1)>"
-    html = _drill_rows({"ticker": "MU", "cik": bad, "figi": bad, "cusip": bad, "isin": bad,
-                        "presence": {}})
-    assert "<img" not in html and html.count("&lt;img") == 4
+    html = _drill_rows({"ticker": "MU", "cik": bad, "figi": bad, "cusip": bad, "isin": bad, "files": [
+        {"kind": "prices", "name": bad, "title": bad, "looked_at": 1,
+         "tables": [{"table": bad, "rows": 1, "first": None, "last": None}]}]})
+    assert "<img" not in html and html.count("&lt;img") >= 5
 
 
-def test_the_drill_shows_the_sector_and_the_industry_text():
-    """#266: Sector and Industry rows; the industry group and sub-industry rows are gone."""
-    html = _drill_rows({"name": "Micron", "sector": "Technology", "industry": "Semiconductors",
-                        "presence": {"swing_ohlc": {}}})
-    assert ('<span class="dlbl">Sector</span><span class="dval">Technology</span>' in html)
-    assert ('<span class="dlbl">Industry</span><span class="dval">Semiconductors</span>' in html)
-    assert "Industry group" not in html and "Sub-industry" not in html
+def test_the_lookup_shows_the_sector_and_the_industry_text():
+    html = _drill_rows({"name": "Micron", "sector": "Technology", "industry": "Semiconductors", "files": []})
+    assert '<span class="dlbl">Sector</span><span class="dval">Technology</span>' in html
+    assert '<span class="dlbl">Industry</span><span class="dval">Semiconductors</span>' in html
 
 
-def test_the_drill_shows_a_dash_for_a_missing_industry_and_escapes_a_hostile_one():
-    bare = _drill_rows({"name": "x", "sector": None, "industry": None, "presence": {"swing_ohlc": {}}})
-    assert '<span class="dlbl">Industry</span><span class="dval">—</span>' in bare
-    bad = "<img src=x onerror=__x(1)>"
-    html = _drill_rows({"name": "x", "sector": bad, "industry": bad, "presence": {"swing_ohlc": {}}})
-    assert "<img" not in html and html.count("&lt;img") == 2
+def test_the_lookup_errors_are_listed_once_and_only_when_there_are_any():
+    assert 'id="drill-errors"' not in _drill_rows({"ticker": "MU", "files": [], "errors": []})
+    html = _drill_rows({"ticker": "MU", "files": [], "errors": ["options: RuntimeError: disk gone"]})
+    assert 'id="drill-errors"' in html and "options: RuntimeError: disk gone" in html
 
 
 def test_panel_posts_send_the_panel_header():
@@ -949,10 +912,13 @@ def test_panel_posts_send_the_panel_header():
 
 
 def test_null_cap_text_does_not_claim_it_is_outside_the_universe():
-    """DF99: a NULL cap also occurs before the caps backfill has resolved it."""
+    """DF99: a NULL cap also occurs before the caps backfill has resolved it.
+
+    #715: the market cap left the page with the old drill, so the page must claim nothing about it at all.
+    """
     html = report.render_settings_dashboard(_payload())
     assert "not in the $300M classification universe" not in html
-    assert "no cap stored" in html
+    assert "no cap stored" not in html
 
 
 # ── S5 of the Data Health plan (#124): Source / Coverage / Fresh and a detail row ────────────
@@ -1980,7 +1946,7 @@ def _panel(html: str, ident: str) -> str:
 
 
 def test_the_health_panel_holds_its_parts_in_order():
-    """#492 (i), reordered by #527 step 9 and B4: the head, the link to the live parts, the backups and the catalog, then Ticker detail, then
+    """#492 (i), reordered by #527 step 9, B4 and #715: the head, the link to the live parts, the backups and the catalog, then
     the request log and the routes folded."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd()))
@@ -1991,9 +1957,10 @@ def test_the_health_panel_holds_its_parts_in_order():
              'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
-    assert 'id="drill"' in health and 'id="ticker-combo"' in health
+    # avo, 11 Nov 2026: the Ticker lookup is on the Database tab now, not under the Grafana frame.
     data = _panel(html, "panel-data")
-    assert 'id="ticker-drill"' not in data and 'id="backups"' not in data
+    assert 'id="drill"' in data and 'id="ticker-combo"' in data
+    assert 'id="ticker-drill"' not in health and 'id="backups"' not in data
     assert 'id="ctl-fetch"' not in html, "the Fetch panel is no longer drawn here"
 
 
@@ -2011,88 +1978,11 @@ def test_the_tabs_map_data_and_health_and_old_choices_land_on_them():
     assert "CFG.aliases[name]" in report.TABS_JS
 
 
-def test_the_drill_keeps_its_own_search_box():
+def test_the_lookup_keeps_its_own_search_box():
     block = _drill_section(report.render_settings_dashboard(_payload()))
     assert 'id="ticker-combo"' in block and 'id="ticker-combo-list"' in block, \
-        "the drill keeps its own search box"
-    assert "Ticker detail" in block
-
-
-def test_the_drill_says_which_boards_can_score_the_name():
-    html = _drill_rows({"ticker": "MU", "presence": {}, "boards": [
-        {"key": "module_swing_potential", "label": "Swing", "state": "can", "missing": []},
-        {"key": "module_fundamentals", "label": "Fundamentals", "state": "cannot",
-         "missing": ["quote", "EDGAR facts"]},
-        {"key": "module_earnings_radar", "label": "Earnings Radar", "state": "not_checked",
-         "missing": []},
-    ]})
-    assert "Boards that can score this name" in html
-    assert ('<span class="dlbl">Swing</span>'
-            '<span class="dval">yes — every dataset it reads is stored</span>' in html)
-    assert ('<span class="dlbl">Fundamentals</span>'
-            '<span class="dval">no — missing quote, EDGAR facts</span>' in html)
-    assert ('<span class="dlbl">Earnings Radar</span>'
-            '<span class="dval">not checked for this board</span>' in html)
-    assert "not checked for this board" in html
-
-
-def test_the_board_list_says_what_it_measured_and_never_guesses():
-    """The note states the rule a reader can check: measured tables decide, the rest is unknown."""
-    html = _drill_rows({"ticker": "MU", "presence": {}, "boards": [
-        {"key": "module_earnings_radar", "label": "Earnings Radar", "state": "not_checked",
-         "missing": []}]})
-    note = html[html.index('class="dnote"'):].split("</div>")[0]
-    assert "A board can score the name when every store table it reads that this drill measures" in note
-    assert "not checked for this board" in note
-
-
-def test_a_drill_detail_without_the_board_list_renders_no_board_section():
-    """An older payload (or a failed build of the list) shows no claim at all."""
-    html = _drill_rows({"ticker": "MU", "presence": {}})
-    assert "Boards that can score this name" not in html
-
-
-def test_the_drill_escapes_a_hostile_ticker_and_a_hostile_board_label():
-    bad = "<img src=x onerror=__x(1)>"
-    html = _drill_rows({"ticker": bad, "presence": {},
-                        "boards": [{"key": "k", "label": bad, "state": "can", "missing": []}]})
-    assert "<img" not in html and html.count("&lt;img") == 2
-    assert '<span class="dlbl">Ticker</span><span class="dval">&lt;img' in html
-
-def test_a_failed_presence_read_shows_could_not_read_never_missing():
-    """#143: the drill prints a failed read as such, for a row and for a board (the G3 rule)."""
-    html = _drill_rows({
-        "name": "Micron",
-        "presence": {
-            "price_bars_daily": {"bars": 0, "newest": None, "error": True},
-            "quote_snapshot": {"rows": 0, "newest": None, "source": None, "error": True},
-            "oipd_meta": None,
-        },
-        "boards": [{"key": "module_swing_potential", "label": "Swing", "state": "unreadable",
-                    "missing": [], "unreadable": ["daily price bars"]}],
-    })
-    assert ('<span class="dlbl">Daily price bars</span><span class="dval">could not read</span>' in html)
-    assert '<span class="dlbl">Quote</span><span class="dval">could not read</span>' in html
-    assert ('<span class="dlbl">Implied Probability chain</span><span class="dval">could not read</span>'
-            in html)
-    assert '<span class="dval">unknown — could not read daily price bars</span>' in html
-    assert "missing" not in html.split('id="drill-boards"')[1].split("dnote")[0]
-
-
-def test_the_drill_names_the_reads_that_failed():
-    """``ticker_detail`` returns its errors; the drill prints which table could not be read and why."""
-    html = _drill_rows({
-        "name": "Micron",
-        "presence": {"price_bars_daily": {"bars": 0, "newest": None, "error": True}},
-        "errors": [{"table": "price_bars_daily", "where": "_d01_presence", "error": "locked <b>"}],
-    })
-    assert 'id="drill-errors"' in html
-    assert "price_bars_daily: locked &lt;b&gt;" in html
-
-
-def test_a_clean_drill_prints_no_error_note():
-    assert 'id="drill-errors"' not in _drill_rows({"name": "Micron", "presence": {}, "errors": []})
-
+        "the lookup keeps its own search box"
+    assert "Ticker lookup" in block
 
 
 def test_the_four_parts_that_live_nowhere_else_sit_in_health_above_backups():
