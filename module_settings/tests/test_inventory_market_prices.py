@@ -56,11 +56,10 @@ def _price_row(payload: dict) -> dict:
 
 
 def _seed_universe() -> None:
-    # ``market=False``: ``_market_prices`` below is this test's own market file, in its own narrow shape.
     universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple"},
         {"ticker": "MU", "market_cap": 1.0e11, "name": "Micron Technology"},
-    ], market=False)
+    ])
 
 
 # ── the "Daily price bars" row ────────────────────────────────────────────────────────────────────────────────────

@@ -269,7 +269,7 @@
     var d = {
       index: "<b>S&amp;P 500</b> and <b>S&amp;P SmallCap 600</b> are index constituents, read from the index funds' daily holdings files; <b>Nasdaq-listed</b> means listed on the Nasdaq exchange (not the Nasdaq-100). Source: the identity spine; an index shows here once some name carries it. The Dow Jones is not offered: no source the spine reads has it." +
         "<div class='rcf-now'>Counts are names <b>on this board</b> that pass your other filters, not the size of the index.</div>",
-      mc: "Latest market value from the market store (<code>market_cap_daily</code>). Pick one or more size buckets, or type a custom range in $ millions (min ≤ cap &lt; max)." +
+      mc: "Latest market value from <code>equity_universe</code>. Pick one or more size buckets, or type a custom range in $ millions (min ≤ cap &lt; max)." +
         (floor ? "<div class='rcf-now'>This board only covers names <b>≥ " + rcEsc(fmtCap(floor)) + "</b>, so smaller buckets are empty here.</div>" : ""),
       gics: "Two levels: <b>sector → industry</b>, the 11 Morningstar sector names plus an industry text. Every stock has one path, taken from the identity master: the sector comes from the S&amp;P 1500 list for the names on it, then Unusual Whales, then Yahoo, then the SEC industry code; the industry is Unusual Whales' text (Yahoo's where it has none). Pick at either level: picking a sector keeps every industry under it. Names the identity master cannot place show as <b>Unclassified</b>.",
       theme: "Built by <b>Relatedness</b> from each company's 10-K business description, grouped at three levels (<b>coarse → medium → fine</b>). A theme follows what a company says it sells and to whom, which can cut across sectors." +
