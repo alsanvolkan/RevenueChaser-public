@@ -4,8 +4,8 @@
   caps the calls (never the universe), the allowance gate stops the run cleanly, there is no off-peak gate.
 - The stored row names its writer: ``relatedness_profiles.model`` is the Grok model and the cache key carries
   ``"provider": "grok"``; the LLM cache keeps the two providers apart.
-- **One writer per board (#360, replacing #388's trap):** a Grok profile is STALE for a DeepSeek run and a DeepSeek
-  profile is stale for a Grok run, so the board's writer redoes them; a v1 profile stays stale for both.
+- **Mixed writers (avo, 11 Nov 2026, replacing #360's one writer per board):** a Grok profile stays current for a
+  DeepSeek run and the other way round; a v1 profile stays stale for both.
 - Peer scores do not depend on which model wrote a profile.
 
 Offline, temp store: the Grok HTTP client and ``deepseek.complete`` are fakes; nothing reaches xAI, DeepSeek or SEC.
@@ -127,22 +127,23 @@ def _ck(ticker: str) -> dict:
 
 # ── the trap: staleness across providers ────────────────────────────────────
 
-def test_a_grok_v2_profile_is_redone_by_a_deepseek_run(world, deepseek_calls):
+def test_a_grok_v2_profile_stays_current_for_a_deepseek_run(world, deepseek_calls):
+    """Mixed writers (avo, 11 Nov 2026), replacing #360: a profile stays current whoever wrote it."""
     engine.build_profiles(TICKERS, provider="grok", max_calls=10)
     assert len(world.posts) == 3
-    assert store.stale_tickers(TICKERS) == set(TICKERS)                  # stale under the DeepSeek mode (#360)
-    payload = engine.run(usd_cap=10.0)
-    assert len(deepseek_calls) == 3
-    assert payload["pending"] == 0 and payload["n"] == 3
-    assert not any(c["stale"] for c in payload["companies"])
     assert store.stale_tickers(TICKERS) == set()
+    payload = engine.run(usd_cap=10.0)
+    assert deepseek_calls == []
+    assert payload["pending"] == 0 and payload["n"] == 3 and payload["other_writer"] == 3
+    assert not any(c["stale"] for c in payload["companies"])
+    assert {c["writer"] for c in payload["companies"]} == {f"grok/{grok.MODEL}"}
 
 
-def test_a_deepseek_v2_profile_is_redone_by_a_grok_run(world, deepseek_calls):
+def test_a_deepseek_v2_profile_stays_current_for_a_grok_run(world, deepseek_calls):
     engine.build_profiles(TICKERS)
     assert len(deepseek_calls) == 3
     engine.build_profiles(TICKERS, provider="grok", max_calls=10)
-    assert len(world.posts) == 3
+    assert len(world.posts) == 0
 
 
 def test_a_v1_profile_stays_stale_for_both_providers(world, deepseek_calls):

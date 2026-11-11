@@ -50,6 +50,7 @@ WEEKLY_KEYS = (
 
 DEFAULT_MAX_SESSION = 80.0
 DEFAULT_MAX_WEEK = 90.0
+DEFAULT_CLAUDE_WEEK = 80.0   # the Relatedness Claude writer stops here (``claude_weekly_cap``)
 MAX_GROK_CAP = 95.0           # the highest weekly ceiling ``RC_GROK_CAP`` may set
 
 
@@ -272,11 +273,19 @@ def _get_json(url: str, headers: dict[str, str], provider_slug: str) -> dict:
         ) from exc
 
 
+def claude_config_dir() -> Path | None:
+    """``RC_CLAUDE_CONFIG_DIR``: the Claude Code login (account) the Relatedness Claude writer spends, or None for the
+    user's default ``~/.claude``. The writer hands it to the CLI as ``CLAUDE_CONFIG_DIR`` and this gate reads the same
+    login, so the gate never reads one account while the calls spend another."""
+    raw = os.getenv("RC_CLAUDE_CONFIG_DIR", "").strip()
+    return Path(raw) if raw else None
+
+
 def claude_credentials_path() -> Path:
     override = os.getenv("RC_CLAUDE_OAUTH_FILE", "").strip()
     if override:
         return Path(override)
-    return Path.home() / ".claude" / ".credentials.json"
+    return (claude_config_dir() or Path.home() / ".claude") / ".credentials.json"
 
 
 def fetch_claude(now: datetime | None = None) -> list[Window]:
@@ -410,19 +419,30 @@ def fetch_grok(now: datetime | None = None) -> list[Window]:
     return parse_grok_billing(body)
 
 
-def grok_weekly_cap() -> float:
-    """Grok's weekly ceiling in percent: ``RC_GROK_CAP`` (above 0, at most ``MAX_GROK_CAP``), else the default."""
-    raw = os.getenv("RC_GROK_CAP")
+def _weekly_cap(var: str, default: float) -> float:
+    """A weekly ceiling in percent from ``var`` (above 0, at most ``MAX_GROK_CAP``), else ``default``."""
+    raw = os.getenv(var)
     if raw is None:
-        return DEFAULT_MAX_WEEK
+        return default
     try:
         cap = float(raw)
     except ValueError:
         cap = float("nan")
     if not (0.0 < cap <= MAX_GROK_CAP):               # also rejects nan; inf is above the maximum
-        logger.warning("RC_GROK_CAP=%r is not a number in (0, %g]; using %g", raw, MAX_GROK_CAP, DEFAULT_MAX_WEEK)
-        return DEFAULT_MAX_WEEK
+        logger.warning("%s=%r is not a number in (0, %g]; using %g", var, raw, MAX_GROK_CAP, default)
+        return default
     return cap
+
+
+def grok_weekly_cap() -> float:
+    """Grok's weekly ceiling in percent: ``RC_GROK_CAP`` (above 0, at most ``MAX_GROK_CAP``), else the default."""
+    return _weekly_cap("RC_GROK_CAP", DEFAULT_MAX_WEEK)
+
+
+def claude_weekly_cap() -> float:
+    """The Relatedness Claude writer's weekly ceiling: ``RC_CLAUDE_CAP``, else ``DEFAULT_CLAUDE_WEEK`` (80%, the
+    same stop as Grok's 80% rule for build work, avo 25 Oct 2026). The session window keeps ``DEFAULT_MAX_SESSION``."""
+    return _weekly_cap("RC_CLAUDE_CAP", DEFAULT_CLAUDE_WEEK)
 
 
 def check(now: datetime | None = None) -> list[tuple[str, str]]:
