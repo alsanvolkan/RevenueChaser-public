@@ -29,11 +29,13 @@ MIN_INPUT_CHARS = vc_config.MIN_ITEM_CHARS
 PROMPT_VERSION = "v3b"
 
 # $ hard-stop: cap the number of LLM calls per run (~1.5x the expected spend).
-# The cap's cost per call. v2 measured 0.00143 USD at a 12k-character input (thinking-high); a v3 call carries up to
-# 60k characters and a longer JSON reply, so the cap assumes about 4x until the pilot measures it (review of PR #557).
-# A chunked filing is several calls, each counted.
-EST_USD_PER_CALL = 0.006
-USD_CAP = float(os.getenv("RC_RELATEDNESS_USD_CAP", "8.0"))
+# The cap's cost per call, measured on deepseek-flash: the 10 Nov 2026 pilot wrote 400 names in 668 calls for about
+# 1 USD. It replaces the 0.006 the cap carried before, which was "about 4x" of the v2 figure, guessed until the pilot
+# could measure it (review of PR #557). A chunked filing is several calls, each counted.
+EST_USD_PER_CALL = 0.0018
+# A full round is every company with usable text: about 4,750 names at 1.67 calls each, so ~7,900 calls, ~14 USD
+# (#712). The cap sits above that so one run covers the round instead of stopping six times and looking finished.
+USD_CAP = float(os.getenv("RC_RELATEDNESS_USD_CAP", "25.0"))
 LLM_WORKERS = 8
 # The writer comparison's Claude calls at a time (avo, 11 Nov 2026: "8li paralel"); the other writers go one by one.
 COMPARE_WORKERS = LLM_WORKERS
