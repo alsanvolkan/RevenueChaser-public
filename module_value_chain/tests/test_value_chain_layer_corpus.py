@@ -37,7 +37,9 @@ def layer(monkeypatch, http_mock):  # noqa: F811
 
 
 def test_the_edges_come_from_the_layers_text(layer):
-    edges = [e for e in engine.build_edges() if e["src"] == "MSFT" and e["dst_ticker"] == "AAPL"]
+    # A keyword ``other`` stays beside a stated edge (test_value_chain_customers_g6); the stated one is the point.
+    edges = [e for e in engine.build_edges() if e["src"] == "MSFT" and e["dst_ticker"] == "AAPL"
+             and e["relation"] in ("customer", "supplier")]
     assert [(e["relation"], e["share_pct"]) for e in edges] == [("customer", pytest.approx(29.8))]
     assert rawstore.get_all("chain_filings") == []
 
