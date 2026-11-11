@@ -46,9 +46,8 @@ from .identity.types import EXCLUDED_TYPES, OPERATING_TYPES
 if TYPE_CHECKING:
     from .gics_map import GicsPath
 
-# The spine is `equity_universe`; the rename lands in docs/plan_rest.md.
-_UNIVERSE_TABLE = ("equity_universe" if "equity_universe" in rawstore.MANIFEST
-                   else "equity_universe")
+# The last field this module still takes from the old table is ``quote`` (see ``_spine_universe``).
+_UNIVERSE_TABLE = "equity_universe"
 
 #: The tiers the old rule reads (avo, 29 Oct 2026), used when the spine holds no ``my_universe`` list.
 LISTED_TIERS = ("A", "B")
@@ -164,17 +163,19 @@ def _spine_universe() -> list[dict]:
         ids = [r for r in ids if r["ticker"] in kept]
     if not ids:
         return []
-    market = {r["ticker"]: r for r in rawstore.query(
-        f"SELECT ticker, market_cap, price, quote FROM {_UNIVERSE_TABLE}")}
+    # ``quote`` is the one field with no served source yet, so it is still the old table's (avo, 11 Nov 2026: the
+    # old tables are not read; cap and price moved here, the quote needs its own source first - see #706).
+    quotes = {r["ticker"]: r.get("quote") for r in rawstore.query(
+        f"SELECT ticker, quote FROM {_UNIVERSE_TABLE}")}
     latest = spine_reads.latest_market(r["ticker"] for r in ids)
     out = []
     for r in ids:
-        m, n = market.get(r["ticker"]) or {}, latest.get(r["ticker"]) or {}
+        n = latest.get(r["ticker"]) or {}
         cap = n.get("market_cap") if r.get("security_type") in EXCLUDED_TYPES else n.get("issuer_market_cap")
         out.append({"ticker": r["ticker"],
-                    "market_cap": cap if cap is not None else m.get("market_cap"),
-                    "price": n["price"] if n.get("price") is not None else m.get("price"),
-                    "quote": m.get("quote"), "name": r.get("name") or "", "sector": r.get("sector") or "",
+                    "market_cap": cap,
+                    "price": n.get("price"),
+                    "quote": quotes.get(r["ticker"]), "name": r.get("name") or "", "sector": r.get("sector") or "",
                     "industry": r.get("industry") or "", "industry_group": None, "sub_industry": None})
     return out
 

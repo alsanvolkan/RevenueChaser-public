@@ -3,14 +3,16 @@
 Since #642 PR 6 the boards' universe is the spine's (``core/universe.py``): its listed names (Tier A and B, no
 ``my_universe`` list here) with the spine's name, sector, industry and security type. The board tests were written
 against ``equity_universe`` rows (``ticker``, ``name``, ``sector``, ``industry``, ``market_cap``, ``price``,
-``quote``, ...); ``put`` and ``replace`` write those rows as spine ``security`` rows **and** into the old table,
-whose ``quote`` (and, where the prices store has none, cap and price) the spine universe still reads.
+``quote``, ...); ``put`` and ``replace`` write those rows as spine ``security`` rows, their ``market_cap`` / ``price`` as served
+market rows (``_market``), and into the old table, whose ``quote`` the spine universe still reads (#706).
 
 A row's ``tier`` defaults to ``A``; ``security_type`` stays NULL unless the row gives one, so a test's
 ``security_master`` row still types the name (``universe._security_types``). It also books a good
 ``spine/security`` check, so ``universe.source_state`` gives no reason.
 """
 from __future__ import annotations
+
+from datetime import date
 
 import duckdb
 
@@ -48,8 +50,51 @@ def _security_row(r: dict) -> dict:
             "sector": r.get("sector"), "industry": r.get("industry"), "source": "sec/company_tickers_exchange"}
 
 
+_MARKET_TABLES = ("security_symbol", "price_bar_daily", "market_cap_daily")
+_MARKET_SESSION = date(2026, 10, 1)
+
+
+def _market(rows: list[dict]) -> None:
+    """``market_cap`` and ``price`` as served market rows, because since #642 PR 6 the universe takes them from
+    the prices store (``rcdata.read.latest_market``) and not from the old table any more.
+
+    One bar and one cap row per ticker on a fixed session; ``market_cap`` and ``issuer_market_cap`` get the same
+    number, so the row reads the same whether or not the name's type is an excluded one. A ticker given again
+    replaces its own rows and leaves every other ticker alone.
+    """
+    from RevenueChaser.rcdata.build.prices.serving import SCHEMAS
+    wanted = [r for r in rows if r.get("market_cap") is not None or r.get("price") is not None]
+    if not wanted:
+        return
+    path = serving.live_path("prices")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(path))
+    try:
+        have = {r[0] for r in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+        for table in _MARKET_TABLES:
+            if table not in have:
+                con.execute(f"CREATE TABLE {table} ({', '.join(f'{c} {t}' for c, t in SCHEMAS[table])})")
+        for r in wanted:
+            ticker = str(r["ticker"]).strip().upper()
+            sid = f"sym:{ticker}"
+            for table in _MARKET_TABLES:
+                con.execute(f"DELETE FROM {table} WHERE security_id = ?", [sid])
+            con.execute("INSERT INTO security_symbol (security_id, symbol, valid_from, source) VALUES (?, ?, ?, ?)",
+                        [sid, ticker, _MARKET_SESSION, "alpaca/bars"])
+            con.execute("INSERT INTO price_bar_daily (security_id, session_date, symbol, close, source) "
+                        "VALUES (?, ?, ?, ?, ?)", [sid, _MARKET_SESSION, ticker, r.get("price"), "alpaca/bars"])
+            if r.get("market_cap") is not None:
+                con.execute("INSERT INTO market_cap_daily (security_id, session_date, close, market_cap, "
+                            "issuer_market_cap) VALUES (?, ?, ?, ?, ?)",
+                            [sid, _MARKET_SESSION, r.get("price"), r["market_cap"], r["market_cap"]])
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
+
+
 def _write(rows: list[dict], *, replace: bool) -> None:
     from RevenueChaser.core import spine_reads
+    _market(rows)
     con = _connect()
     try:
         if replace:
