@@ -1,14 +1,12 @@
 """Corporate-event flag (#386 F5): the 8-K items that break the comparability of a filer's fundamentals.
 
-``sec_submissions`` (edgar.duckdb) holds every filing of every universe CIK, written by the daily ``edgar_sync`` job
-(``core/sec_submissions.record``). This reader turns the 8-Ks of the last ``config.CORPORATE_EVENT_WINDOW_DAYS``
-into one flag per ticker: the item codes of ``config.CORPORATE_EVENT_ITEMS`` a filer reported, and the date of its
+This reader turns the 8-Ks of the last ``config.CORPORATE_EVENT_WINDOW_DAYS`` into one flag per ticker: the item codes of ``config.CORPORATE_EVENT_ITEMS`` a filer reported, and the date of its
 newest such filing.
 
-**On the fundamentals layer** (``core.fundamentals_layer.reads_layer()``, review F2, G6) the same answer comes from
-``fundamentals.duckdb``: the CIK from ``fundamental_company``, the 8-K items from ``filing_item`` (``sec/filings``),
+**From the fundamentals layer only** (review F2, G6; the old ``sec_submissions`` path went with #642 PR 6):
+``fundamentals.duckdb`` gives the CIK from ``fundamental_company``, the 8-K items from ``filing_item`` (``sec/filings``),
 and a CIK's checked day from its list's read day (``submissions_as_of``) or a later good ``sec/filings`` run
-(``_layer_reads``). The old rows are not read on that path.
+(``_layer_reads``).
 
 **Display only.** Nothing here is scored, ranked, bucketed or frozen: the flag is not in ``freeze._HASHED`` and
 changes no ``ledger.model_version``.
@@ -24,18 +22,13 @@ at all, of any form, ``stats["no_cik"]`` the number the store cannot map to a CI
 (``pipeline.build_payload``). Every store read therefore walks its keys in slices of ``CHUNK``: the statement and its
 ``IN (...)`` list stay the same size whatever the board's universe.
 
-**One session.** All of those reads run inside one ``rawstore.session()``: a job's worker and the scheduled CLI
-Fetch have no outer request session, so without it the 500 MB file is opened once per statement (the review priced
-that at 9.5 s of connects on a 4,000-candidate screen). ``session()`` is re-entrant, so the dashboard's per-request
-session is shared rather than nested.
-
 Read-only store reads, no write and no network call; a missing table read answers empty, like an empty store.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
-from RevenueChaser.core import fundamentals_layer, rawstore, sec_submissions
+from RevenueChaser.core import sec_submissions
 
 from . import config
 
@@ -67,64 +60,13 @@ def _slices(keys: list[str]):
         yield keys[i:i + CHUNK]
 
 
-def _placeholders(n: int) -> str:
-    return ", ".join(["?"] * n)
-
-
 def _items(raw) -> set[str]:
     """The item codes of a filing's ``items`` text column: ``'2.02,9.01'`` -> ``{'2.02', '9.01'}``."""
     return {part.strip() for part in str(raw or "").split(",") if part.strip()}
 
 
-def _store_reads(wanted: list[str], since: date, *, counted: bool):
-    """The old store's answer: ``(cik_of, rows, stored, checked)``. ``cik_of`` maps a ticker to its CIK
-    (``security_master``), ``rows`` are the 8-Ks filed since ``since`` (``sec_submissions``), ``stored`` the CIKs with
-    any filing row and ``checked`` the day the daily sync last checked each (``source_checks``); the last two only
-    when ``counted``."""
-    cik_of: dict[str, str] = {}
-    rows: list[dict] = []
-    stored: set[str] = set()
-    checked: dict[str, date] = {}
-    # One handle per store file for all of it (#386 F5 review): no outer session exists in a job worker or the
-    # scheduled CLI Fetch, and a per-statement connect would open the 500 MB file once per slice.
-    with rawstore.session():
-        for chunk in _slices(wanted):
-            for row in rawstore.query(
-                    f"SELECT ticker, cik FROM security_master WHERE ticker IN ({_placeholders(len(chunk))}) "
-                    "AND cik IS NOT NULL AND cik <> ''", chunk, db="raw"):
-                cik = _norm_cik(row.get("cik"))
-                if cik and row.get("ticker"):
-                    cik_of[row["ticker"]] = cik
-        ciks = sorted(set(cik_of.values()))
-        for chunk in _slices(ciks):
-            rows += rawstore.query(
-                "SELECT cik, items, filing_date FROM sec_submissions "
-                f"WHERE form = '8-K' AND filing_date >= ? AND cik IN ({_placeholders(len(chunk))})",
-                [since, *chunk], db="edgar")
-        if counted:
-            for chunk in _slices(ciks):
-                for row in rawstore.query(
-                        f"SELECT DISTINCT cik FROM sec_submissions WHERE cik IN ({_placeholders(len(chunk))})",
-                        chunk, db="edgar"):
-                    cik = _norm_cik(row.get("cik"))
-                    if cik:
-                        stored.add(cik)
-            # Review F2: the sync's own watermark per CIK (``source_checks``, written in raw by
-            # ``sec_submissions.record``). Rows that stopped being refreshed cannot show a recent 8-K.
-            for chunk in _slices(sorted(stored)):
-                for row in rawstore.query(
-                        f"SELECT key, max(checked_at) AS at FROM {sec_submissions.CHECKS} WHERE dataset = ? "
-                        f"AND source = ? AND key IN ({_placeholders(len(chunk))}) GROUP BY key",
-                        [sec_submissions.SOURCE, sec_submissions.SOURCE, *chunk]):
-                    cik = _norm_cik(row.get("key"))
-                    if cik and row.get("at") is not None:
-                        day = datetime.fromtimestamp(float(row["at"]), timezone.utc).date()
-                        checked[cik] = max(checked.get(cik, day), day)
-    return cik_of, rows, stored, checked
-
-
 def _layer_reads(wanted: list[str], since: date, *, counted: bool):
-    """The fundamentals layer's answer, in ``_store_reads``'s shape (review F2, G6): ``fundamental_company`` maps a
+    """The fundamentals layer's answer, ``(cik_of, rows, stored, checked)`` (review F2, G6): ``fundamental_company`` maps a
     ticker to its CIK, ``filing_item`` holds the 8-K items ``sec/filings`` listed, and a CIK is stored once its list
     was read (``submissions_as_of``). Its checked day is that read, or the day of the newest good ``sec/filings``
     run when later: that run read the daily index and re-read the list of every company that filed, so a quiet
@@ -179,8 +121,7 @@ def corporate_events(tickers, *, today=None, stats: dict | None = None) -> dict[
         return {}
 
     since = today - timedelta(days=config.CORPORATE_EVENT_WINDOW_DAYS)
-    read = _layer_reads if fundamentals_layer.reads_layer() else _store_reads
-    cik_of, rows, stored, checked = read(wanted, since, counted=stats is not None)
+    cik_of, rows, stored, checked = _layer_reads(wanted, since, counted=stats is not None)
     by_cik: dict[str, list[str]] = {}
     for ticker in wanted:
         cik = cik_of.get(ticker)

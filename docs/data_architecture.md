@@ -1714,8 +1714,7 @@ the served-quarter rule shrinks once on its next derive (`allow_shrink`).
 The fifth serving kind: what each Tier A company reported, when, and in which filing. Built by the same builder,
 swapped the same way, read only through `rcdata.read`. The companies are the spine's Tier A names (their CIKs,
 gvkeys and GICS codes), so the spine is built first. Nothing here writes `raw.duckdb` or the old `edgar_financials`
-cache; since their move (G6, below) the boards read that cache only with `RC_FUNDAMENTALS_SOURCE=store` or while the
-layer is not there yet.
+cache; since #642 PR 6 the boards never read that cache: no layer reads as no rows, and the board says why.
 
 | Dataset | Cadence | Source | Stages |
 |---|---|---|---|
@@ -1819,10 +1818,11 @@ the dataset its own row came from (a segment row from Compustat reads `wrds/segm
 report `sec/filings`'), or `never_checked`, or `status_unknown` when `ops.sqlite` cannot be read (#228).
 
 **The boards on the layer (G6, build plan PR 13-15 and 20).** `core/fundamentals_layer.py` rebuilds the old
-`edgar_financials` record shape from `fundamental_fact`, so a board keeps its rules and reads current rows. The
-switch is `RC_FUNDAMENTALS_SOURCE`: unset (or `layer`) reads the layer once `fundamentals.duckdb` exists and
-`sec/companyfacts` has built it once (a failed newer check keeps that last good build); any other value (`store` by convention) reads the old cache, the rollback kept
-until PR 21. What each board reads there:
+`edgar_financials` record shape from `fundamental_fact`, so a board keeps its rules and reads current rows. There is
+no switch since #642 PR 6: the boards read the layer only (a failed newer check keeps the last good build), and
+without `fundamentals.duckdb` or a first `sec/companyfacts` build they read no rows and `fundamentals_layer.source_state()`
+says why. Relatedness and Value Chain alone still read Value Chain's `chain_filings` corpus while the layer is not
+served (`fundamentals_layer.reads_layer`). What each board reads there:
 
 | Board | Reads on the layer |
 |---|---|

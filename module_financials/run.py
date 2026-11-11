@@ -159,12 +159,10 @@ def _statements_choice(sec: list[dict], yahoo: list[dict], bank: bool = False) -
 
 def _sec_statements(ticker: str) -> tuple[list[dict], dict] | None:
     """``(annual, meta)``: the newest ``SEC_YEARS`` fiscal years from the fundamentals layer (G6, build plan PR 15:
-    "statement inputs from the store"), or None off the layer or when it holds no year for ``ticker``. They end on
+    "statement inputs from the store"), or None when it holds no year for ``ticker``. They end on
     the newest year with revenue: a later year the layer serves with only balance-sheet fields is not a base year
     (Opus review S2)."""
     from RevenueChaser.core import fiscal_year, fundamentals_layer
-    if not fundamentals_layer.reads_layer():
-        return None
     annual, _quarterly, meta = fundamentals_layer.records(ticker)
     i = fiscal_year.anchor(annual)
     if i is None:

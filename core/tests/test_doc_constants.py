@@ -394,9 +394,7 @@ def test_the_fundamentals_section_states_what_the_code_owns():
                "revisions", "statements_many", "fundamental_companies", "filing_items", "filing_texts",
                "customer_shares"):
         assert f"`rcdata.read.{fn}(" in section, fn
-    # G6: the boards' switch, and the rollback value.
-    from RevenueChaser.core import fundamentals_layer
-    assert f"`{fundamentals_layer.SOURCE_ENV}={fundamentals_layer.STORE}`" in section
+    assert "RC_FUNDAMENTALS_SOURCE" not in section        # G6's switch went with #642 PR 6
     health = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
     for name in newdata.WRDS_DIFFERENCE:
         assert f"`{name}`" in health, name
