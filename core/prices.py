@@ -712,7 +712,9 @@ def _read_series(tickers: list[str], start: date | None = None, end: date | None
     if not tickers:
         return {}, actions
     marks = _placeholders(len(tickers))
-    for r in _read(f"SELECT * FROM price_actions WHERE ticker IN ({marks})", list(tickers), layer=True):
+    # The served view keeps no row order; the factors' product is order-sensitive in its last bits, so fix one.
+    for r in _read(f"SELECT * FROM price_actions WHERE ticker IN ({marks}) ORDER BY ticker, ex_date, action",
+                   list(tickers), layer=True):
         actions.setdefault(r["ticker"], []).append(r)
     cols = ", ".join(f"b.{c}" for c in _READ_COLUMNS)
     where, params = [f"b.ticker IN ({marks})"], list(tickers)

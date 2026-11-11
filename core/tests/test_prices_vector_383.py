@@ -116,7 +116,9 @@ def _old_read_series(tickers: list[str], start: date | None = None):
     # The rows the code reads: the builder's served file (#642 PR 6), so both sides read one input.
     for r in _read(bar_sql, bar_params, layer=True):
         bars.setdefault(r["ticker"], []).append(r)
-    for r in _read(f"SELECT * FROM price_actions WHERE ticker IN ({marks})", list(tickers), layer=True):
+    # In the store's key order: the view's rows come in no order, and the product of the factors is order-sensitive
+    for r in _read(f"SELECT * FROM price_actions WHERE ticker IN ({marks}) ORDER BY ticker, ex_date, action",
+                   list(tickers), layer=True):
         actions.setdefault(r["ticker"], []).append(r)
     return bars, actions
 
@@ -444,7 +446,4 @@ def test_an_end_bounded_read_equals_the_per_row_code_on_random_stores(rawstore_t
         for basis in ("nominal", "adjusted"):
             want = _old_daily_bars(names, basis, start, end)
             got = prices.daily_bars(names, basis=basis, start=start, end=end)
-            # shortcut: the served view applies its split factors in SQL (#642 PR 6), and the windowed and full
-            # reads differ in the last bits on these random actions; exact again once the cause is pinned down.
-            assert got.attrs == want.attrs
-            pd.testing.assert_frame_equal(got, want, check_exact=False, rtol=1e-12)
+            _assert_frames_equal(got, want)
