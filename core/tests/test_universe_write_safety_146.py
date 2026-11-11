@@ -512,7 +512,9 @@ def test_the_boards_show_the_stored_partial_flag(rawstore_tmp_db, monkeypatch):
     for mod, render in ((fp, render_fundamental_dashboard), (sp, render_swing_dashboard)):
         payload = mod.run_scan()
         assert payload["universe_partial"] is True
-        assert "partial fetch" in render(payload)
+        # On the spine the header names what a partial pull actually left behind, as
+        # ``test_universe_provenance_spine`` has it: the names are the spine's, only the caps are stale.
+        assert "market caps partly stale" in render(payload)
 
 
 def test_the_asymmetric_growth_board_shows_the_stored_partial_flag(rawstore_tmp_db, monkeypatch):
@@ -523,7 +525,7 @@ def test_the_asymmetric_growth_board_shows_the_stored_partial_flag(rawstore_tmp_
     uf._save_fetch_state(True, "2026-10-03T00:00:00+00:00")
     result = engine.run_asymmetric_growth_hunter(None, no_fetch=True)
     assert result["universe_partial"] is True
-    assert "partial fetch" in render_asymmetric_growth_hunter_html(result)
+    assert "market caps partly stale" in render_asymmetric_growth_hunter_html(result)
 
 
 def test_the_settings_inventory_lists_the_fetch_row(rawstore_tmp_db):
