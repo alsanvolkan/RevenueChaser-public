@@ -178,12 +178,12 @@ def _int(n: float) -> str:
 
 
 def money(v: float) -> str:
-    """``$1,82M`` / ``$450B`` (bin) / ``$900``, Turkish decimals."""
+    """``$1,82M`` / ``$450 bin`` / ``$900``, Turkish decimals."""
     v = float(v or 0)
     if v >= 1e6:
         return f"${v / 1e6:.2f}M".replace(".", ",")
     if v >= 1e3:
-        return f"${v / 1e3:.0f}B"
+        return f"${v / 1e3:.0f} bin"
     return f"${v:.0f}"
 
 
