@@ -50,7 +50,7 @@ def _writers():
     return writers
 
 
-PROVIDERS = ("evren", "deepseek", "grok")      # module_relatedness.writers.WRITERS (#360)
+PROVIDERS = ("evren", "deepseek", "grok", "claude")      # module_relatedness.writers.WRITERS (#360)
 
 
 def llm(provider: str = "deepseek"):

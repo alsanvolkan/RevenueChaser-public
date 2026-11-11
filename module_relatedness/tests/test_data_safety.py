@@ -268,7 +268,8 @@ def test_an_interrupted_payload_write_leaves_the_old_file_readable(tmp_path, mon
     import os
     import pathlib
 
-    path = tmp_path / "relatedness_latest.json"
+    path = tmp_path / "out" / "relatedness_latest.json"           # its own folder: the autouse spine file sits in tmp_path
+    path.parent.mkdir()
     old = {"as_of": "old", "companies": [{"ticker": "A"}]}
     engine._save(path, old)
 
@@ -281,4 +282,4 @@ def test_an_interrupted_payload_write_leaves_the_old_file_readable(tmp_path, mon
     monkeypatch.undo()
 
     assert json.loads(path.read_text(encoding="utf-8")) == old
-    assert [p.name for p in tmp_path.iterdir()] == [path.name]      # no temp file left behind
+    assert [p.name for p in path.parent.iterdir()] == [path.name]  # no temp file left behind

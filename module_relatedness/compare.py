@@ -5,7 +5,13 @@ pick the board's writer. It runs as a dashboard job (``POST /run/relatedness-com
 dashboard's own environment, and it writes **no board table**: not ``relatedness_profiles`` / ``_attributes`` /
 ``_scores``, not ``theme_runs``. What it leaves: the writer's replies in ``llm_cache`` (a re-run costs nothing) and one
 file, ``.cache/research/360/<provider>-<model>.json``, in Step 0's ``--scores`` shape (``tickers`` + ``matrix``) plus
-the run's counts. Then ``python -m RevenueChaser.module_relatedness.validation report --scores <file>`` scores it,
+the run's counts.
+
+Since 11 Nov 2026 (plan F4) it measures what the board does: each name gets the board's input (``engine._prepare``:
+the layer's business section, the v3b context, the fallback chain and the writer's locator call), and the matrix is
+similarity v2 (``similarity.blended_peer_lists`` on the local embeddings; ``method`` says ``embedding``, or ``tags``
+when no vector could be made). A Claude run also records the subscription windows before and after (``usage``), so
+the share of the weekly window the names used is read off the file. Then ``python -m RevenueChaser.module_relatedness.validation report --scores <file>`` scores it,
 offline.
 """
 from __future__ import annotations
@@ -16,9 +22,10 @@ import time
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.config import OUTPUT_DIR
-from RevenueChaser.core.providers import deepseek, grok
+from RevenueChaser.core import fundamentals_layer, subscription_usage
+from RevenueChaser.core.providers import claude_code, deepseek, grok
 
-from . import config, engine, profiles, similarity, writers
+from . import config, embeddings, engine, locator, profile_v3, profiles, similarity, writers
 
 MAX_NAMES = 100
 OUT_DIR = OUTPUT_DIR / "research" / "360"
@@ -60,21 +67,45 @@ def run(tickers: list[str], provider: str, model: str) -> dict:
         raise ValueError(f"model {model!r} is not one of {provider}'s: {', '.join(w.models)}")
     if provider == "grok":
         grok.reset_gate()                              # the first request reads the allowance
+    if provider == "claude":
+        claude_code.reset_gate()
+    usage_before = _usage(provider)
     started, cache_before = time.time(), _llm_rows(model)
     budget = _budget(provider)
     names = engine._company_names(tickers)
+    # Off the layer the CIK would come from SEC's ticker map, a network call the comparison never made; the CIK only
+    # adds the layer's context, so off the layer it is left empty.
+    ciks = engine._cik_for(tickers) if fundamentals_layer.reads_layer() else {}
     profs: dict[str, dict] = {}
-    no_text, short_text, empty, stopped = [], [], [], None
+    pjs: dict[str, dict] = {}
+    no_text, short_text, empty, shell, stopped = [], [], [], [], None
     transient = 0
     for t in tickers:
-        _name, text = engine._filing_text(t)
-        unusable = profiles.text_status(text)        # no_text / short_text (#313): never sent to the writer
-        if unusable:
-            (no_text if unusable == "no_text" else short_text).append(t)
+        inp = engine._prepare(t, names.get(t), ciks.get(t))      # the board's input (plan F4)
+        if profile_v3.is_shell(None, inp["context"].get("sic")):
+            shell.append(t)
+            continue
+        if inp["fallback"] not in engine.FALLBACKS and not inp.get("locate"):
+            (short_text if inp["fallback"] == "short_text" else no_text).append(t)
             continue
         try:
-            prof = profiles.profile_for(t, names.get(t) or t, text, thinking=False, effort=None, budget=budget,
-                                        provider=provider, model=model)
+            text = inp["text"]
+            if inp.get("locate"):
+                try:
+                    located = locator.locate(t, inp["name"], (inp.get("source") or {}).get("form"),
+                                             inp["locate"]["text"], budget=budget, provider=provider, model=model)
+                except (deepseek.PeakHoursError, deepseek.DeepSeekAuthError, deepseek.DeepSeekTransientError,
+                        grok.GrokAllowanceError, grok.GrokAuthError, grok.GrokRequestError, grok.GrokTransientError):
+                    raise
+                except (deepseek.DeepSeekError, grok.GrokError):
+                    located = None
+                if located is not None:
+                    text = located[:engine.MAX_FALLBACK_CHARS]
+                elif inp["fallback"] not in engine.FALLBACKS:
+                    no_text.append(t)
+                    continue
+            prof = profiles.profile_for(t, inp["name"], text, budget=budget, provider=provider, model=model,
+                                        context=inp["context"])
         except profiles.BudgetExceeded:
             stopped = "cap"
             break
@@ -98,25 +129,64 @@ def run(tickers: list[str], provider: str, model: str) -> dict:
             continue
         except (deepseek.DeepSeekError, grok.GrokError):
             prof = {f: [] for f in config.PROFILE_FIELDS}
+        v3 = getattr(prof, "v3", None)
+        if v3 is not None and profile_v3.is_shell(v3):
+            shell.append(t)
+            continue
         if any(prof.values()):
             profs[t] = prof
+            if v3 is not None:
+                pjs[t] = v3
         else:
             empty.append(t)
             if not profs and len(empty) >= config.GROK_UNUSABLE_STOP:
                 stopped = "unusable"                   # a wrong endpoint shape: stop before paying for every name
                 break
-    scale = similarity.idf(profs)                          # the board's scoring (#395)
-    matrix = [[None if a == b or a not in profs or b not in profs
-               else round(similarity.score_pair(profs[a], profs[b], scale)[0], 6)
-               for b in tickers] for a in tickers]
-    out = {"provider": provider, "model": model, "tickers": tickers, "matrix": matrix,
-           "usable": len(profs), "empty": empty, "no_text": no_text, "short_text": short_text,
+    matrix, method = _matrix(tickers, profs, pjs)
+    out = {"provider": provider, "model": model, "tickers": tickers, "matrix": matrix, "method": method,
+           "usable": len(profs), "empty": empty, "no_text": no_text, "short_text": short_text, "shell": shell,
            "attempts": budget.calls,
            "new_replies": _llm_rows(model) - cache_before, "seconds": round(time.time() - started, 1),
            "as_of": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if usage_before is not None:
+        out["usage"] = {"before": usage_before, "after": _usage(provider)}
     if stopped:
         out["stopped_reason"] = stopped
     path = out_path(provider, model, partial=bool(stopped))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     return {k: v for k, v in out.items() if k != "matrix"} | {"file": str(path)}
+
+
+def _usage(provider: str) -> dict | None:
+    """``{window: percent}`` of the Claude subscription now (``None`` for another writer or an unreadable login)."""
+    if provider != "claude":
+        return None
+    try:
+        return {w.key: w.percent for w in subscription_usage.fetch_claude()}
+    except Exception:  # noqa: BLE001 - a missing reading is reported as such, never fails the comparison
+        return {}
+
+
+def _matrix(tickers: list[str], profs: dict[str, dict], pjs: dict[str, dict]) -> tuple[list, str]:
+    """The pair matrix in ``tickers`` order: similarity v2 when the embedder gives vectors, else the tag cosine.
+    shortcut: no sector in the structure term (the board passes the universe's); the same for every writer, so the
+    comparison stays fair; add it when the comparison has to match the board's absolute numbers."""
+    vectors = {}
+    try:
+        vectors = embeddings.company_vectors(pjs, write=False) if pjs else {}
+    except Exception:  # noqa: BLE001 - no embedder: the tag cosine, said in ``method``
+        vectors = {}
+    if vectors and len(profs) > 1:
+        _peers, upper = similarity.blended_peer_lists(profs, pjs, vectors, None, top=1)
+        order = sorted(profs)
+        pair, k = {}, 0
+        for i in range(len(order)):
+            for j in range(i + 1, len(order)):
+                pair[(order[i], order[j])] = pair[(order[j], order[i])] = round(float(upper[k]), 6)
+                k += 1
+        return [[pair.get((a, b)) for b in tickers] for a in tickers], "embedding"
+    scale = similarity.idf(profs)                          # the board's scoring before #669
+    return [[None if a == b or a not in profs or b not in profs
+             else round(similarity.score_pair(profs[a], profs[b], scale)[0], 6)
+             for b in tickers] for a in tickers], "tags"

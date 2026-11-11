@@ -147,8 +147,11 @@ def save_profile(ticker: str, cik, profile: dict, cache_key_value: str,
 
 
 def load_profiles(tickers: list[str] | None = None) -> dict[str, dict]:
-    """``{ticker: {field: [str, ...]}}`` from the durable tables."""
-    want = {t.upper() for t in tickers} if tickers else None
+    """``{ticker: {field: [str, ...]}}`` from the durable tables: every stored profile when ``tickers`` is None, none
+    when it is empty (an empty list once read every profile, #642 PR 3)."""
+    if tickers is not None and not tickers:
+        return {}
+    want = {t.upper() for t in tickers} if tickers is not None else None
     attr: dict[str, dict] = {}
     for r in rawstore.get_all("relatedness_attributes"):
         t = r["ticker"]
@@ -235,25 +238,15 @@ def input_hash(cache_key_value) -> str | None:
 
 
 def is_stale(meta: dict, mode: dict) -> bool:
-    """True when a stored profile was made under a different mode than ``mode``.
+    """True when a stored profile was made under another prompt version than ``mode``'s (or its key is unreadable).
 
-    One writer per board (#360, replacing #388's "a Grok profile is current for the DeepSeek nightly"): the board
-    chooses one provider and model, so a profile is current only when its key names the same provider (none =
-    DeepSeek), the same model and the current prompt version; a DeepSeek one must also match thinking and effort,
-    as before. A profile of another writer is stale, stays out of the peer matrix (``other_writer_tickers``) and is
-    redone by the next run.
+    Mixed writers (avo, 11 Nov 2026: "sadece ilk tur claude ile sonra deepseek e donebiliriz"): a profile stays
+    current whoever wrote it, so a first round by Claude is not redone when the board's writer goes back to DeepSeek.
+    This replaces #360's "one writer per board", under which another provider or model made a profile stale. A new
+    filing text or company name still redoes a profile through its input hash (#388 D5), with the board's writer.
     """
     k = _key_mode(meta.get("cache_key") or "")
-    if k is None:
-        return True
-    if k.get("prompt_version") != mode.get("prompt_version"):
-        return True
-    if (k.get("provider") or "deepseek") != (mode.get("provider") or "deepseek"):
-        return True
-    return (k.get("model") != (mode.get("model") or "")
-            or bool(k.get("thinking")) != bool(mode.get("thinking"))
-            or k.get("effort") != (mode.get("effort") or "")
-            or k.get("prompt_version") != mode.get("prompt_version"))
+    return k is None or k.get("prompt_version") != mode.get("prompt_version")
 
 
 def key_writer(cache_key_value) -> tuple[str, str] | None:
@@ -263,9 +256,20 @@ def key_writer(cache_key_value) -> tuple[str, str] | None:
 
 
 def other_writer_tickers(tickers: list[str] | None, writer: tuple[str, str]) -> set[str]:
-    """Tickers whose usable profile another writer made (#360): kept in the store, left out of the peer matrix."""
+    """Tickers whose usable profile another writer made. Counted for the board (``other_writer``); since mixed
+    writers (11 Nov 2026) they stay current and in the peer matrix."""
     return {t for t, meta in profile_meta(tickers).items()
             if meta["status"] == "ok" and key_writer(meta.get("cache_key")) not in (None, tuple(writer))}
+
+
+def profile_writers(tickers: list[str] | None = None) -> dict[str, str]:
+    """``{ticker: "provider/model"}`` of each usable stored profile (the board names the writer per profile)."""
+    out = {}
+    for t, meta in profile_meta(tickers).items():
+        w = key_writer(meta.get("cache_key")) if meta["status"] == "ok" else None
+        if w is not None:
+            out[t] = f"{w[0]}/{w[1]}"
+    return out
 
 
 def stale_tickers(tickers: list[str] | None = None, writer: tuple[str, str] | None = None) -> set[str]:

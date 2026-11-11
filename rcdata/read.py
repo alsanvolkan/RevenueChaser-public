@@ -92,6 +92,9 @@ def _rows(table: str, sql: str, params: list, *, missing_table_ok: bool = False)
     except serving.ServingFileMissing:
         return []
     try:
+        # A table this module also names as a reader (``etf_holdings``) would otherwise resolve to the Python
+        # function through DuckDB's replacement scan, not to "does not exist", when the file lacks the table.
+        con.execute("SET python_enable_replacements = false")
         try:
             cur = con.execute(sql, params)
         except Exception as exc:  # noqa: BLE001 - duckdb's catalog error is not a public class here

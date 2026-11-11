@@ -9,6 +9,7 @@ import pandas as pd
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_relatedness import config, engine, profiles, similarity
+from RevenueChaser.rcdata.tests import spine_fixture
 
 
 # ── profiles ────────────────────────────────────────────────────────────────
@@ -59,11 +60,15 @@ def test_percentile_bounds():
 
 # ── engine ──────────────────────────────────────────────────────────────────
 def _seed_universe(tickers):
-    rawstore.replace_all(engine._UNIVERSE, [{
+    """The old universe (cap, price: the board's filters until #642 PR 6) and the spine's ``security`` rows (name,
+    sector, industry: the profile run's only source since #642 PR 3)."""
+    rawstore.replace_all("equity_universe", [{
         "ticker": t, "cik": "", "name": t + " Inc", "market_cap": 1.0e10,
         "price": 10.0, "sector": "Technology", "industry": "Semiconductors",
         "quote": {"symbol": t},
     } for t in tickers])
+    spine_fixture.write_security([{"ticker": t, "name": t + " Inc", "sector": "Technology",
+                                   "industry": "Semiconductors"} for t in tickers], replace=True)
 
 
 # Item 1 texts a test seeds have to clear the profile floor (#313, ``config.MIN_INPUT_CHARS``): the engine never

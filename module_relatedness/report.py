@@ -65,6 +65,7 @@ input[type=text]{flex:1;min-width:200px}
 .tag{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:1px 7px;font-size:11.5px;color:var(--muted)}
 .empty{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:24px;color:var(--muted);text-align:center}
 .badge-stale{display:inline-block;margin-left:6px;padding:0 6px;border:1px solid var(--amber);border-radius:6px;color:var(--amber);font-size:11px;font-weight:600}
+.badge-writer{display:inline-block;margin-left:6px;padding:0 6px;border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:11px}
 .note{color:var(--muted);font-size:12px;margin-top:12px}
 """
 
@@ -83,6 +84,9 @@ def _summary_html(payload: dict) -> str:
     no_text = payload.get("no_text") or 0
     short_text = payload.get("short_text") or 0
     pairs = payload.get("n_pairs") or len(payload.get("scores") or [])
+    # Which scorer the peers came from (#669): the board looked the same either way, so it says so (WP0, 11 Nov 2026).
+    method = ("similarity v2 (embeddings)" if payload.get("similarity") == "embedding"
+              else "tag cosine (v1)")
     # The names without filing text are not pending (#388 D4): they wait for a 10-K text, not for the next run.
     # Nor are the ones whose Item 1 came out under the splitter's own floor (#313): too short to profile from.
     no_text_line = f'<div class="d">{no_text:,} without filing text</div>' if no_text else ""
@@ -96,7 +100,7 @@ def _summary_html(payload: dict) -> str:
         f'<div class="stat"><div class="v">{payload.get("universe_total") or 0}</div>'
         f'<div class="l">Universe</div><div class="d">operating companies, no market-cap floor</div></div>',
         f'<div class="stat"><div class="v">{pairs}</div>'
-        f'<div class="l">Pairs scored</div><div class="d">cosine sample</div></div>',
+        f'<div class="l">Pairs scored</div><div class="d">{method}</div></div>',
     ])
 
 
@@ -143,6 +147,7 @@ def render_relatedness_dashboard(payload: dict) -> str:
 var DATA = __COMPANIES__;
 var PEERS = __PEERS__;
 var META = __META__;
+var WRITER = __WRITER__;
 var QUERY = "";
 var FOCAL = null;
 var RCF = null;
@@ -206,7 +211,13 @@ function fmtCluster(p){
   return '<div class="prow-cluster">cluster  ' + out.join('  ') + '</div>';
 }
 function staleBadge(t){
-  return (BY[t] && BY[t].stale) ? '<span class="badge-stale" title="Profiled under an older model/prompt; refreshes on the next run">stale</span>' : "";
+  return ((BY[t] && BY[t].stale) ? '<span class="badge-stale" title="Profiled under an older model/prompt; refreshes on the next run">stale</span>' : "") + writerBadge(t);
+}
+// Mixed writers (11 Nov 2026): a profile another writer made stays current; name that writer's model on it.
+function writerBadge(t){
+  var w = BY[t] && BY[t].writer;
+  if(!w || w === WRITER) return "";
+  return '<span class="badge-writer" title="Profile written by ' + rcEsc(w) + '">' + rcEsc(w.split("/").pop()) + '</span>';
 }
 function peerRow(p){
   var name = p.name || "";
@@ -256,6 +267,8 @@ function init(){
     JS = fill(JS, {"__BEYOND_H__": str(int(comov_config.DEFAULT_HORIZON)),
                    "__COMPANIES__": script_json(_embed_companies(companies)),
                    "__PEERS__": script_json(peers),
+                   "__WRITER__": script_json("/".join((payload.get("writer") or {}).get(k) or "" for k in
+                                                       ("provider", "model")) or None),
                    "__META__": script_json(filters_meta(
                        "relatedness", earnings_mode="filter",
                        themes=payload.get("theme_catalog") or {}))})
