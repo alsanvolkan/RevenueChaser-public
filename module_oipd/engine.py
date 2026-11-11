@@ -60,9 +60,14 @@ def chain_rows(ticker: str, contracts: list[dict], meta: dict) -> list[dict]:
 
 def _persist(ticker: str, contracts: list[dict], meta: dict) -> None:
     rows = chain_rows(ticker, contracts, meta)
+
+    # One transaction (#592): a failure between the two writes must not leave a chain without its meta row.
     # write mode "replace" + group_by ticker: only this ticker's chain is swapped.
-    rawstore.write_rows("oipd_chain", rows)
-    rawstore.write_rows("oipd_meta", [meta])
+    def _write(tx):
+        tx.write_rows("oipd_chain", rows)
+        tx.write_rows("oipd_meta", [meta])
+
+    rawstore.atomic(_write, db="oipd")
 
 
 def _contracts_from_store(rows: list[dict]) -> list[dict]:

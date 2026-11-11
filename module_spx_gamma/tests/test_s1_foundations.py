@@ -9,6 +9,8 @@ import pytest
 
 from RevenueChaser.module_spx_gamma import brier, config, run as spx_run, snapshot as snap
 from RevenueChaser.module_spx_gamma.snapshot import UWApiError
+from RevenueChaser.module_spx_gamma import store as spx_store
+from .conftest import store_day
 
 from .conftest import as_uw, make_raw
 
@@ -19,8 +21,7 @@ GOOD = {"Consolidation": 0.5, "Upside": 0.3, "Downside": 0.2}
 def test_data_root_is_redirected_away_from_the_module_tree():
     module_tree = Path(config.__file__).resolve().parent
     assert module_tree not in config.DATA_ROOT.resolve().parents
-    assert brier.BRIER_FILE.resolve().parent == config.DATA_ROOT.resolve()
-    assert module_tree not in spx_run.HISTORY_PATH.resolve().parents
+    assert module_tree not in config.TREE_ROOT.resolve().parents
 
 
 # ── #69: Brier reference, label validation, skill score ────────────────────
@@ -31,40 +32,38 @@ def test_equal_weight_reference_is_two_thirds():
 
 
 def test_uniform_forecast_scores_exactly_the_reference(tmp_path):
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-08-21", {c: 1 / 3 for c in brier.CLASSES}, path=p)
-    rec = brier.score_date("2026-08-21", "Upside", path=p)["records"][0]
+    brier.record_probs("2026-08-21", {c: 1 / 3 for c in brier.CLASSES})
+    rec = brier.score_date("2026-08-21", "Upside")["records"][0]
     assert rec["brier"] == pytest.approx(brier.EQUAL_WEIGHT_REFERENCE)
 
 
-def test_skill_score_zero_for_uniform_one_for_perfect(tmp_path):
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-08-21", {c: 1 / 3 for c in brier.CLASSES}, path=p)
-    brier.score_date("2026-08-21", "Upside", path=p)
-    assert brier.scorecard(path=p)["skill_score"] == pytest.approx(0.0)
-    q = tmp_path / "c.json"
-    brier.record_probs("2026-08-21", {"Consolidation": 1.0, "Upside": 0.0, "Downside": 0.0}, path=q)
-    brier.score_date("2026-08-21", "Consolidation", path=q)
-    assert brier.scorecard(path=q)["skill_score"] == pytest.approx(1.0)
+def test_skill_score_zero_for_uniform(tmp_path):
+    brier.record_probs("2026-08-21", {c: 1 / 3 for c in brier.CLASSES})
+    brier.score_date("2026-08-21", "Upside")
+    assert brier.scorecard()["skill_score"] == pytest.approx(0.0)
+
+
+def test_skill_score_one_for_perfect(tmp_path):
+    brier.record_probs("2026-08-21", {"Consolidation": 1.0, "Upside": 0.0, "Downside": 0.0})
+    brier.score_date("2026-08-21", "Consolidation")
+    assert brier.scorecard()["skill_score"] == pytest.approx(1.0)
 
 
 def test_skill_score_none_when_nothing_scored(tmp_path):
-    assert brier.scorecard(path=tmp_path / "none.json")["skill_score"] is None
+    assert brier.scorecard()["skill_score"] is None
 
 
 def test_verdict_names_the_skill_score(tmp_path):
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-08-21", GOOD, path=p)
-    brier.score_date("2026-08-21", "Upside", path=p)
-    assert "skill" in brier.scorecard(path=p)["verdict"].lower()
+    brier.record_probs("2026-08-21", GOOD)
+    brier.score_date("2026-08-21", "Upside")
+    assert "skill" in brier.scorecard()["verdict"].lower()
 
 
 def test_score_date_rejects_an_unknown_label(tmp_path):
-    p = tmp_path / "b.json"
-    brier.record_probs("2026-08-21", GOOD, path=p)
+    brier.record_probs("2026-08-21", GOOD)
     with pytest.raises(ValueError):
-        brier.score_date("2026-08-21", "Sideways", path=p)
-    assert brier.load_scores(p)["records"][0]["outcome"] is None
+        brier.score_date("2026-08-21", "Sideways")
+    assert brier.load_scores()["records"][0]["outcome"] is None
 
 
 @pytest.mark.parametrize("probs", [
@@ -75,10 +74,9 @@ def test_score_date_rejects_an_unknown_label(tmp_path):
     {"Consolidation": float("nan"), "Upside": 0.5, "Downside": 0.5},        # NaN
 ])
 def test_record_probs_rejects_invalid_probabilities(tmp_path, probs):
-    p = tmp_path / "b.json"
     with pytest.raises(ValueError):
-        brier.record_probs("2026-08-21", probs, path=p)
-    assert not p.exists()
+        brier.record_probs("2026-08-21", probs)
+    assert brier.load_scores()["records"] == []
 
 
 # ── G3/G8/G17: New York calendar ───────────────────────────────────────────
@@ -163,7 +161,7 @@ def test_spot_exposure_rows_are_merged_and_deduplicated(tmp_path, _candles):
 def test_limit_hit_is_warned_and_recorded(tmp_path, _candles):
     c = _SpotClient(full_rows_per_side=500)
     snap.fetch_snapshot(as_uw(c), "2026-08-14", data_root=tmp_path)
-    man = json.loads((tmp_path / "2026-08-14" / "manifest.json").read_text(encoding="utf-8"))
+    man = spx_store.raw_manifest("2026-08-14")
     assert any("limit" in w and "spot_exposure" in w for w in man["warnings"])
     f = man["files"]["spot_exposures_strike.json"]
     assert f["limit_hit"] is True and f["rows"] == 1000
@@ -172,7 +170,7 @@ def test_limit_hit_is_warned_and_recorded(tmp_path, _candles):
 def test_no_limit_warning_when_below_the_cap(tmp_path, _candles):
     c = _SpotClient(full_rows_per_side=40)
     snap.fetch_snapshot(as_uw(c), "2026-08-14", data_root=tmp_path)
-    man = json.loads((tmp_path / "2026-08-14" / "manifest.json").read_text(encoding="utf-8"))
+    man = spx_store.raw_manifest("2026-08-14")
     assert not any("limit" in w for w in man["warnings"])
     assert man["files"]["spot_exposures_strike.json"]["limit_hit"] is False
 
@@ -186,7 +184,7 @@ def test_one_half_failing_keeps_the_other_and_warns(tmp_path, _candles):
 
     raw = snap.fetch_snapshot(as_uw(_C(full_rows_per_side=10)), "2026-08-14", data_root=tmp_path)
     assert len(raw["spot_exposure"]["data"]) == 10
-    man = json.loads((tmp_path / "2026-08-14" / "manifest.json").read_text(encoding="utf-8"))
+    man = spx_store.raw_manifest("2026-08-14")
     assert any("spot_exposure" in w and "partial" in w for w in man["warnings"])
 
 
@@ -199,7 +197,7 @@ def test_manifest_records_requested_and_effective_dates(tmp_path, _candles):
             return super().get(path, params)
 
     raw = snap.fetch_snapshot(as_uw(_Fallback()), "2026-08-17", data_root=tmp_path)
-    man = json.loads((tmp_path / "2026-08-14" / "manifest.json").read_text(encoding="utf-8"))
+    man = spx_store.raw_manifest("2026-08-14")
     assert man["requested_date"] == "2026-08-17"
     assert man["effective_date"] == man["asof_date"] == "2026-08-14"
     assert raw["_meta"]["requested_date"] == "2026-08-17"
@@ -208,7 +206,7 @@ def test_manifest_records_requested_and_effective_dates(tmp_path, _candles):
 
 def test_manifest_marks_each_file_as_of_or_live(tmp_path, _candles):
     snap.fetch_snapshot(as_uw(_SpotClient(40)), "2026-08-14", data_root=tmp_path)
-    files = json.loads((tmp_path / "2026-08-14" / "manifest.json").read_text(encoding="utf-8"))["files"]
+    files = spx_store.raw_manifest("2026-08-14")["files"]
     assert files["gex_levels.json"]["as_of"] is True
     assert files["spot_exposures_strike.json"]["as_of"] is True
     for live in ("interpolated_iv.json", "max_pain.json", "option_chain.json"):
@@ -219,29 +217,23 @@ def test_manifest_marks_each_file_as_of_or_live(tmp_path, _candles):
 
 def test_manifest_row_counts(tmp_path, _candles):
     snap.fetch_snapshot(as_uw(_SpotClient(40)), "2026-08-14", data_root=tmp_path)
-    files = json.loads((tmp_path / "2026-08-14" / "manifest.json").read_text(encoding="utf-8"))["files"]
+    files = spx_store.raw_manifest("2026-08-14")["files"]
     assert files["spot_exposures_strike.json"]["rows"] == 80
     assert files["greek_exposure_expiry.json"]["rows"] == 1
 
 
 def test_backfill_never_overwrites_a_complete_day(tmp_path, _candles):
-    day = tmp_path / "2026-08-14"
-    day.mkdir()
-    (day / "manifest.json").write_text('{"asof_date": "2026-08-14"}', encoding="utf-8")
-    (day / "gex_levels.json").write_text('{"keep": 1}', encoding="utf-8")
+    store_day("2026-08-14", files={"gex_levels.json": '{"keep": 1}'})
     c = _SpotClient()
     assert snap.fetch_snapshot(as_uw(c), "2026-08-14", data_root=tmp_path, overwrite=False) is None
     assert c.calls == []
-    assert (day / "gex_levels.json").read_text(encoding="utf-8") == '{"keep": 1}'
+    assert spx_store.raw_files("2026-08-14")["gex_levels.json"] == '{"keep": 1}'
 
 
 def test_overwrite_default_still_replaces(tmp_path, _candles):
-    day = tmp_path / "2026-08-14"
-    day.mkdir()
-    (day / "manifest.json").write_text('{"asof_date": "2026-08-14"}', encoding="utf-8")
-    (day / "gex_levels.json").write_text('{"keep": 1}', encoding="utf-8")
+    store_day("2026-08-14", files={"gex_levels.json": '{"keep": 1}'})
     snap.fetch_snapshot(as_uw(_SpotClient()), "2026-08-14", data_root=tmp_path)
-    assert "call_wall" in (day / "gex_levels.json").read_text(encoding="utf-8")
+    assert "call_wall" in spx_store.raw_files("2026-08-14")["gex_levels.json"]
 
 
 # ── run(): effective date, isolation, backfill off the critical path ───────
@@ -298,20 +290,16 @@ def test_fallback_day_is_filed_under_its_effective_date(tmp_path, monkeypatch):
     assert out["latest"]["asof_date"] == "2026-08-14"
     assert out["latest"]["requested_date"] == "2026-08-17"
     assert out["latest"]["effective_date"] == "2026-08-14"
-    hist = json.loads((tmp_path / "spx_gamma_gex_history.json").read_text(encoding="utf-8"))
-    assert list(hist) == ["2026-08-14"]
+    assert list(spx_store.gex_days()) == ["2026-08-14"]
 
 
-def test_run_with_data_root_writes_brier_and_history_inside_it(tmp_path, monkeypatch, stored_make_raw_window):
+def test_a_fetch_writes_brier_and_the_gex_record_into_the_board_file(tmp_path, monkeypatch, stored_make_raw_window):
     _patch_run(monkeypatch, [], make_raw())
     monkeypatch.setattr(spx_run, "_backfill_history", lambda *a, **k: None)
-    real_brier = brier.BRIER_FILE
-    before = real_brier.read_text(encoding="utf-8") if real_brier.exists() else None
     spx_run.run("2026-08-14", data_root=tmp_path, token="x")
-    assert (tmp_path / "brier.json").exists()
-    assert (tmp_path / "spx_gamma_gex_history.json").exists()
-    after = real_brier.read_text(encoding="utf-8") if real_brier.exists() else None
-    assert before == after
+    assert [r["date"] for r in spx_store.brier_records()] == ["2026-08-14"]
+    assert list(spx_store.gex_days()) == ["2026-08-14"]
+    assert not (tmp_path / "brier.json").exists() and not (tmp_path / "spx_gamma_gex_history.json").exists()
 
 
 def test_report_shows_reference_and_skill_score(monkeypatch):

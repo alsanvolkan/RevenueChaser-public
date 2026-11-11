@@ -29,8 +29,7 @@ def seams(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "latest_complete_session", lambda: date(2026, 10, 30))
     monkeypatch.setattr(cli, "in_us_session_window", lambda: False)
     monkeypatch.setattr(cli, "_POLL_S", 0)
-    monkeypatch.setattr(cli, "DATA_ROOT", tmp_path)
-    (tmp_path / "latest.json").write_text(json.dumps({"asof_date": "2026-10-30"}))
+    cli.store.put_meta("latest", {"asof_date": "2026-10-30"})
 
     def fake_post(url, data=None, headers=None, timeout=None):
         seen["posts"].append((url, data, headers))
@@ -62,7 +61,7 @@ def test_nightly_queues_the_fetch_on_the_dashboard(seams, monkeypatch, capsys):
 def test_nightly_reports_the_effective_day_when_it_differs(seams, monkeypatch, capsys):
     """The mandatory-endpoint fallback can store the previous session: the log says so instead of a bare "done"."""
     monkeypatch.setattr(cli, "stored_spx_candles", lambda day, ticker="SPX": [{"date": day, "close": 7580.07}])
-    (cli.DATA_ROOT / "latest.json").write_text(json.dumps({"asof_date": "2026-10-29"}))
+    cli.store.put_meta("latest", {"asof_date": "2026-10-29"})
     assert cli.main(["--nightly"]) == 0
     line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert line["effective"] == "2026-10-29"

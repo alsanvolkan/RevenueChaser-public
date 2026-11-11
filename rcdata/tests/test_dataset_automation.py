@@ -26,10 +26,22 @@ def _queued() -> list[dict]:
     return [{c: r[c] for c in ("dataset", "params")} for r in ops.rows("build_requests")]
 
 
-def test_no_row_follows_the_file_and_the_reader_never_creates_the_file():
+def test_no_row_is_off_whatever_the_file_says_and_the_reader_never_creates_the_file():
     assert ops.read_dataset_modes() == {} and not ops.ops_path().exists()
     assert ops.dataset_mode(MS, "market") == "off"
     ops.kind_mode_set("market", "raw", by="avo")
+    assert ops.dataset_mode(MS, "market") == "off"
+
+
+def test_the_one_time_copy_gives_each_dataset_its_files_mode_once():
+    from types import SimpleNamespace as NS
+    ds = {MS: NS(kind="market"), "own": NS(kind="market"), "idle": NS(kind="options")}
+    ops.kind_mode_set("market", "raw", by="avo")
+    ops.dataset_mode_set("own", "full", by="avo")
+    assert ops.copy_kind_modes(ds, by="deploy") == [(MS, "raw")]
+    modes = {k: v["mode"] for k, v in ops.read_dataset_modes().items()}
+    assert modes == {MS: "raw", "own": "full"}, "an own row is kept and an off kind writes nothing"
+    assert ops.copy_kind_modes(ds, by="deploy") == []
     assert ops.dataset_mode(MS, "market") == "raw"
 
 

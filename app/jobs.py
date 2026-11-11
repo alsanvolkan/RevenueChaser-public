@@ -258,7 +258,8 @@ def _trim_history() -> None:
     """
     finished = [k for k, j in _JOBS.items() if j["status"] in ("done", "error", "cancelled")]
     excess = len(_JOBS) - MAX_HISTORY
-    for k in sorted(finished, key=lambda k: _SEQ.get(k, 0))[:max(0, excess)]:
+    # The listener's 5-minute News pass (#673) goes first, so it cannot push every other job out of the history.
+    for k in sorted(finished, key=lambda k: (_JOBS[k].get("module") != "news_headlines", _SEQ.get(k, 0)))[:max(0, excess)]:
         _JOBS.pop(k, None)
         _SEQ.pop(k, None)
 

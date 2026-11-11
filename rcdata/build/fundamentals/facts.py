@@ -38,6 +38,10 @@ today. What this layer adds:
 - **EPS** (``eps_basic``, ``eps_diluted``: ``EarningsPerShareBasic`` / ``...Diluted``, else
   ``EarningsPerShareBasicAndDiluted``, unit ``USD/shares``), which the old extraction did not read: per period the
   first concept that has one, a reported quarter only (EPS is not additive, so no YTD difference).
+- **The first-reported value** (#277 A2, avo 10 Nov 2026): next to the served value (the newest filing's), the value
+  the first filing gave for the same tag and span, with that filing's accession and filed date (``first_value``,
+  ``first_accn``, ``first_filed``). Equal to the served value unless a later filing restated it. A derived value (a
+  YTD difference, a sum) has none: no filing ever reported it as such.
 """
 from __future__ import annotations
 
@@ -67,7 +71,8 @@ FIELDS = tuple(sec_edgar.CONCEPTS) + ("total_debt",) + tuple(EPS_CONCEPTS)
 FACT = [("cik", "TEXT"), ("field", "TEXT"), ("period_type", "TEXT"), ("fiscal_year", "INTEGER"),
         ("period_start", "DATE"), ("period_end", "DATE"), ("value", "DOUBLE"), ("unit", "TEXT"), ("accn", "TEXT"),
         ("filed", "DATE"), ("form", "TEXT"), ("derived", "BOOLEAN"), ("preliminary", "BOOLEAN"),
-        ("source", "TEXT"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
+        ("source", "TEXT"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT"),
+        ("first_value", "DOUBLE"), ("first_accn", "TEXT"), ("first_filed", "DATE")]
 COMPANY = [("cik", "TEXT"), ("entity_name", "TEXT"), ("is_us", "BOOLEAN"), ("non_usd_units", "TEXT"),
            ("us_gaap", "BOOLEAN"), ("facts_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 
@@ -83,13 +88,15 @@ class _Index:
     """What the facts say about every accession and fact span: the form of an accession, per ``(concept, start,
     end)`` the newest ``(filed, accn)`` and the USD value that newest filing gave (``start`` is ``""`` for an
     instant), and per ``(concept, end)`` the newest of any span ending that day. A quarter, its fiscal year and the
-    balance sheet can all end on one day, so a lookup asks for its own span first (the Opus review's N5)."""
+    balance sheet can all end on one day, so a lookup asks for its own span first (the Opus review's N5). Per
+    ``(concept, start, end, unit)`` also the oldest ``(filed, accn, value)``: the first-reported value (#277 A2)."""
 
     def __init__(self, facts: dict):
         self.form: dict[str, str] = {}
         self.at_end: dict[tuple[str, str], tuple[str, str]] = {}
         self.at_span: dict[tuple[str, str, str], tuple[str, str]] = {}
         self.usd_at_span: dict[tuple[str, str, str], float] = {}
+        self.first_at_span: dict[tuple[str, str, str, str], tuple[str, str, float]] = {}
         for taxonomy in (facts.get("facts") or {}).values():
             for concept, body in (taxonomy or {}).items():
                 for unit, units in ((body or {}).get("units") or {}).items():
@@ -102,6 +109,10 @@ class _Index:
                         if (filed, accn) > self.at_end.get((concept, end), ("", "")):
                             self.at_end[(concept, end)] = (filed, accn)
                         span = (concept, f.get("start") or "", end)
+                        val = f.get("val")
+                        if isinstance(val, (int, float)) and (filed, accn) < self.first_at_span.get(
+                                span + (unit,), ("~", "~", 0.0))[:2]:
+                            self.first_at_span[span + (unit,)] = (filed, accn, float(val))
                         if (filed, accn) > self.at_span.get(span, ("", "")):
                             self.at_span[span] = (filed, accn)
                             if unit == "USD" and isinstance(f.get("val"), (int, float)):
@@ -117,6 +128,17 @@ class _Index:
         found = [self.at_span[(c, start or "", end)] for c in concepts if (c, start or "", end) in self.at_span]
         found = found or [self.at_end[(c, end)] for c in concepts if (c, end) in self.at_end]
         return max(found) if found else None
+
+
+def _first(index: _Index, concepts, unit: str, start, end, served: tuple[str, str] | None) -> dict:
+    """The first-reported columns of a served value (#277 A2): the oldest filing of the same span, in the tag the
+    served filing used (else the first of ``concepts`` that has the span). Empty when the facts hold no such span."""
+    spans = [(c, start or "", str(end), unit) for c in concepts if (c, start or "", str(end), unit) in index.first_at_span]
+    if not spans:
+        return {}
+    own = next((s for s in spans if index.at_span.get(s[:3]) == served), spans[0])
+    filed, accn, value = index.first_at_span[own]
+    return {"first_value": value, "first_accn": accn, "first_filed": _day(filed)}
 
 
 def _newer(a: tuple[str, str] | None, b: tuple[str, str] | None) -> tuple[str, str] | None:
@@ -158,7 +180,8 @@ def _rows_of(facts: dict, rec: dict, period_type: str, index: _Index, counts: di
         out[field] = {"field": field, "period_type": period_type, "fiscal_year": fiscal_year,
                       "period_start": _day(starts.get(field)), "period_end": _day(end), "value": float(value),
                       "unit": unit, "accn": p[1], "filed": _day(p[0]), "form": index.form.get(p[1]),
-                      "derived": field in derived}
+                      "derived": field in derived,
+                      **({} if field in derived else _first(index, concepts, unit, starts.get(field), end, p))}
     da = None if rec.get("depreciation_suspect") else _depreciation(out, index)
     if da:
         out["depreciation"] = da
@@ -200,7 +223,7 @@ def _depreciation(out: dict[str, dict], index: _Index) -> dict | None:
         return None
     newest = max((dep, amort), key=lambda r: (r["filed"], r["accn"]))
     return {**newest, "field": "depreciation", "value": dep["value"] + amort["value"],
-            "derived": dep["derived"] or amort["derived"]}
+            "derived": dep["derived"] or amort["derived"], "first_value": None, "first_accn": None, "first_filed": None}
 
 
 def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) -> list[dict]:
@@ -265,7 +288,7 @@ def _eps_rows(facts: dict, index: _Index) -> list[dict]:
                             "fiscal_year": int(key) if period_type == ANNUAL else None,
                             "period_start": _day(info.get("start")), "period_end": _day(end), "value": float(value),
                             "unit": unit, "accn": p[1], "filed": _day(p[0]), "form": index.form.get(p[1]),
-                            "derived": False})
+                            "derived": False, **_first(index, concepts, unit, info.get("start"), end, p)})
     return out
 
 

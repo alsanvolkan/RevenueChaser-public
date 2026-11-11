@@ -31,8 +31,12 @@ def test_the_data_tab_is_on_top_and_the_old_sections_are_gone(dashboard, browser
     _open(browser, dashboard)
     order = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl .wrap > details.sec'),"
                          " function(d){ return d.id + (d.open ? '+' : ''); })")
-    assert order == ["sec-health+", "sec-flow+", "sec-crosscheck"], "the Data tab"
-    assert browser.eval("document.getElementById('panel-health').hidden") is True, "Data is the tab on open"
+    assert order == ["sec-flow+"], "the Database tab"
+    assert browser.eval("document.getElementById('panel-health').hidden") is True, "Database is the tab on open"
+    fetch = browser.eval("Array.prototype.map.call(document.querySelectorAll('#panel-health .ctl .wrap > details.sec'),"
+                         " function(d){ return d.id; }).filter(function(i){ return i; })")
+    assert fetch[0] == "sec-health" and fetch[-1] == "sec-crosscheck" and "sec-universe" in fetch, \
+        f"the Fetch/Health tab: {fetch}"
     assert browser.eval("!document.getElementById('old-settings') && !document.getElementById('panel-fetch')")
     shown = browser.eval("Array.prototype.filter.call(document.querySelectorAll('#ctl .fpanel'),"
                          " function(p){ return !p.hidden; }).length")
@@ -81,7 +85,7 @@ def test_the_board_is_one_column_on_a_phone_with_44px_targets_and_no_sideways_sc
 def test_the_board_follows_the_shells_theme_both_ways(dashboard, browser):
     _open(browser, dashboard, "light")
     look = "(function(){ var c = getComputedStyle(document.getElementById('ctl')); return [c.color, " \
-           "getComputedStyle(document.querySelector('#ctl .tile')).backgroundColor]; })()"
+           "getComputedStyle(document.querySelector('#panel-health .ctl .tile')).backgroundColor]; })()"
     light = browser.eval(look)
     browser.eval("document.documentElement.setAttribute('data-theme', 'dark')")
     dark = browser.eval(look)
@@ -117,12 +121,12 @@ def test_a_tier_press_only_drafts_and_apply_saves_the_universe(dashboard, browse
 def test_fetch_queues_one_request_and_asks_no_provider(dashboard, browser, market, provider_routes):
     before = len(provider_routes.requests())
     _open(browser, dashboard)
-    browser.eval("document.querySelector('#fpick .fpb[data-file=\"market.duckdb\"]').click()")
-    browser.eval("document.querySelector('#ctl .fpanel:not([hidden]) button[data-job=\"one\"]"
-                 "[data-dataset=\"market_series\"]').click()")
+    _tab(browser, "health")
+    browser.eval("document.querySelector('#panel-health .fgrp[data-file=\"market.duckdb\"]').open = true")
     # wait on the button itself, not on any queued pill: another dataset's queue row may show one at render
-    one = ("document.querySelector('#ctl .fpanel:not([hidden]) button[data-job=\"one\"]"
+    one = ("document.querySelector('#panel-health .fgrp[data-file=\"market.duckdb\"] button[data-job=\"one\"]"
            "[data-dataset=\"market_series\"]')")
+    browser.eval(one + ".click()")
     browser.wait_for(one + ".getAttribute('data-state') === 'pause'")
     pill = browser.eval("(function(){ var b = " + one + "; var p = document.querySelector('[data-for=\"' + "
                         "b.getAttribute('data-jid') + '\"]'); return p ? p.className + ' ' + p.textContent : ''; })()")
@@ -139,7 +143,8 @@ def test_fill_and_fill_this_range_are_off_by_default(dashboard, browser, market,
     fills = browser.eval("Array.prototype.map.call(document.querySelectorAll('.ctl [data-job=\"fill\"]'),"
                          " function(b){ return b.disabled; })")
     assert all(fills), "a Fill cell is pressable while the server keeps fills off"
-    opened = browser.eval("(function(){ var c = document.querySelector('#ctl .fpanel:not([hidden]) .fopen');"
+    _tab(browser, "health")
+    opened = browser.eval("(function(){ var c = document.querySelector('#panel-health .fgrp .fopen');"
                           " if (!c) return null; c.click(); return c.getAttribute('data-bf'); })()")
     if opened is not None:
         browser.wait_for(f"!!document.querySelector('#bf-{opened} .bfrun')")

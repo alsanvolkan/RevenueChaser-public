@@ -88,6 +88,10 @@ def test_normal_data_renders_the_same_tags_and_text_as_before():
     banner = render.data_quality_notice(_snapshot())
     if banner:
         html = html.replace(render.notice_html(banner), "")
+    # The recorded-sessions block (SPX Gamma review PR 3) came after the golden too.
+    block = render.recorded_sessions_html("module_spx_gamma") + "\n"
+    assert html.count(block) == 1
+    html = html.replace(block, "")
     got = sequence(html)
     want = sequence((GOLDEN / "position_map.base.html").read_text(encoding="utf-8"))
     assert len(got) == len(want)

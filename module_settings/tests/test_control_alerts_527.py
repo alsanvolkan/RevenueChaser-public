@@ -61,13 +61,13 @@ def test_prices_behind_is_one_card_and_its_dataset_is_not_named_twice():
 def test_the_page_shows_alert_cards_an_all_good_line_and_the_tiles_folded():
     v = _view()
     v["health"]["alerts"] = [{"key": "stale", "cls": "bad", "n": "1", "label": "stale: market_series"}]
-    html = control_render.render_data(v)
+    html = control_render.render_fetch(v)
     sec = html[html.index('id="sec-health"'):html.index("</details>", html.index('id="sec-health"'))]
     assert 'class="alerts"' in sec and "stale: market_series" in sec
     assert 'class="allgood"' in sec
     assert '<details class="htiles"' in sec and "<summary>Every tile</summary>" in sec
     v["health"]["alerts"] = []
-    quiet = control_render.render_data(v)
+    quiet = control_render.render_fetch(v)
     assert "Nothing needs you right now" in quiet
 
 

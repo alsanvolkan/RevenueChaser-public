@@ -16,8 +16,9 @@ from . import profile_v3
 
 PROMPT_VERSION = "loc1"
 MAX_HEADINGS = 400
-# The rule cut's labels that ask the locator (``splitter.slice_item``).
-ASK_ON = ("overrun", "missing", "short")
+# The rule cut's labels that ask the locator (``splitter.slice_item``). ``capped`` (#260) replaced the
+# ``ok;suspect:S8`` a slice cut at MAX_ITEM_CHARS used to carry, so it keeps asking.
+ASK_ON = ("overrun", "missing", "short", "capped")
 
 
 def asks(quality) -> bool:

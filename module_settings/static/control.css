@@ -538,6 +538,16 @@
 .ctl .flowsvg .flow-node.dim,.ctl .flowsvg .flow-node.src.plan.dim,.ctl .flowsvg .flow-node.bd.off.dim{opacity:.16}
 .ctl .flowsvg .flow-edge{fill:none;stroke-width:1.4;opacity:.45}
 .ctl .flowsvg .flow-edge.flow-on{opacity:1;stroke-width:2.6}
+/* the board files column (avo, 10 Nov 2026): a board's own file solid, another board's file it reads faint and dashed */
+.ctl .flowsvg .flow-node.bf .box{fill:var(--card);stroke-width:1.6}
+.ctl .flowsvg .flow-node.bf:hover .box{stroke-width:2.4}
+.ctl .flowsvg .flow-node.bf[aria-pressed="true"] .box{stroke:var(--acc)!important;stroke-width:2.6}
+.ctl .flowsvg .flow-node.bf:focus-visible .box{stroke:var(--acc);stroke-width:2}
+.ctl .flowsvg .flow-edge.read{opacity:.25}
+.ctl .flowsvg .flow-edge.read.flow-on{opacity:.6;stroke-width:1.8}
+.ctl .flowsvg .fnote{fill:var(--mut);font-size:10.5px}
+.ctl .bfile.bown{background:#6d7585}
+.ctl .bfile.bread{background:transparent;color:var(--mut);border:1px dashed var(--line)}
 .ctl .flowsvg .flow-edge.flow-dim{opacity:.06}
 .ctl .sic{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:5px;flex:0 0 20px;vertical-align:middle}
 .ctl .sic svg{width:14px;height:14px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -1176,3 +1186,5 @@
 .ctl .help code{color:var(--acc)}
 /* flow-root keeps the box's bottom margin inside the band, so no strip of the page's own background shows below. */
 .ctl.helpband{display:flow-root}
+/* the read-only universe bar (Fetch/Health): a set in the universe is filled, as a pressed button was */
+.ctl .useg[data-on="1"]:not(button){background:var(--c);border:1.5px solid var(--c);color:#fff}

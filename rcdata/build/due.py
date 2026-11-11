@@ -16,8 +16,8 @@ A dataset is due (``is_due``) when nothing holds it and its last run is old enou
   holds no raw file for the day yet, due again only on the next New York day (with the day's raw file held a rerun
   costs no call, so a failed build or swap retries on the next pass);
 - ``daily`` (the default, and what an unknown cadence reads as): due once the dataset's own ``default_as_of()`` has
-  reached the last check's ``next_check_due`` (the next session after the as-of it ran for), so the SPX slice waits
-  for the next complete session and the market series (as-of: today) run on the first pass of each trading day.
+  reached the last check's ``next_check_due`` (the next session after the as-of it ran for), so the SPX slice and the
+  market series (as-of: the latest complete session, #643 F4) run on the first pass after each session completes.
   A check with no ``next_check_due`` (past the calendar's table) is due once the as-of is newer than the one it ran
   for, so a calendar run out does not make a dataset due every hour;
 - its kind's automation (``ops.kind_automation``, set on the Settings page), or the dataset's own when it has one
@@ -138,6 +138,12 @@ def enqueue_due(datasets: dict | None = None) -> list[tuple[str, str, int | None
     out = []
     for name in datasets:                     # registry order: sources before the kind's derived datasets (PR A)
         try:
+            # avo, 10 Nov 2026 ("burada yaptigim her ayarin uygulanabilir oldugundan emin ol"): a dataset the fetch
+            # switch or its file's switch holds is not queued at all, so a held file leaves no hourly skipped rows
+            held = base.held_by_switch(name)
+            if held is not None:
+                out.append((name, f"not due (held: {ops.switch_words(*held)})", None, False))
+                continue
             mode = ops.dataset_mode(name, datasets[name].kind)   # #527: a source's own mode wins over its kind's
             due, why = is_due(datasets[name], mode)
         except Exception as e:  # noqa: BLE001 - a calendar past its table for one dataset must not stop the rest

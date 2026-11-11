@@ -1,9 +1,11 @@
 """``finra/short_interest``: the published dates read once a run, every page of a date until FINRA's
-``record-total``, a short answer refused and not kept, only newer dates fetched on later runs, a backfill of the
-missing ones, and each symbol named by the spine."""
+``record-total``, a short answer refused and not kept, newer dates fetched on later runs and the newest two stored
+ones again for FINRA's revisions (#252), a backfill of the missing ones, and each symbol named by the spine."""
 from __future__ import annotations
 
 from datetime import date
+
+import json
 
 import pytest
 
@@ -68,21 +70,35 @@ def test_a_date_whose_pages_do_not_add_up_is_refused_and_not_kept(src):
     assert not serving.live_path("ownership").exists()
 
 
-def test_a_later_run_fetches_only_the_dates_after_the_newest_stored(src, http_mock):
+def _asked(http_mock) -> list[str]:
+    return [json.loads(c.content)["compareFilters"][0]["fieldValue"] for c in http_mock.calls("/data/")]
+
+
+def test_a_later_run_fetches_the_new_dates_and_the_newest_stored_one_again(src, http_mock):
     _run()
     src.dates["2026-10-31"] = _rows("2026-10-31", 10)
     http_mock.requests.clear()
     row = _run("2026-11-12")
-    assert [c.content for c in http_mock.calls("/data/")] and len(http_mock.calls("/data/")) == 1
+    assert _asked(http_mock) == ["2026-10-31", NEW, NEW, NEW]       # the new date (1 page), then 10-15's 3 again
     assert finra.stored_dates() == [date(2026, 10, 15), date(2026, 10, 31)]
     assert row["source_as_of"] == "2026-10-31"
 
 
-def test_a_date_already_stored_is_not_fetched_again(src, http_mock):
+def test_a_stored_date_finra_revised_replaces_its_rows(src, http_mock):
+    """#252: FINRA revises a published settlement date; the next run fetches it again and serves the revision."""
     _run()
+    src.dates[NEW][0] = ox.finra_row("MSFT", NEW, 51_000_000)
     http_mock.requests.clear()
     row = _run()
-    assert http_mock.calls("/data/") == [] and row["calls"] == 1
+    assert set(_asked(http_mock)) == {NEW} and row["calls"] == 4 and row["result"] == "changed"
+    assert _served("SELECT current_short FROM finra_short_interest WHERE symbol = 'MSFT'") == [(51_000_000,)]
+
+
+def test_only_the_newest_two_stored_dates_are_fetched_again(src, http_mock):
+    base.run_request({"dataset": finra.NAME, "params": {"mode": "backfill", "to": "2026-10-28"}})
+    http_mock.requests.clear()
+    _run()
+    assert sorted(set(_asked(http_mock))) == [MID, NEW]                 # not 2026-09-15
 
 
 def test_a_backfill_fetches_every_missing_date_of_its_range(src, http_mock):

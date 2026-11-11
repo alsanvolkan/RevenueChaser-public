@@ -1,4 +1,4 @@
-"""The tables of ``options.duckdb`` (serving kind ``options``, version 1): their columns, keys, Parquet sources and
+"""The tables of ``options.duckdb`` (serving kind ``options``, version 2): their columns, keys, Parquet sources and
 windows, the Parquet partitions the datasets write, and the one build of a table from them.
 
 Every table is built from the Parquet partitions of its ``sources`` (``parquet/<source>/<table>/<part>/part-0.parquet``,
@@ -75,8 +75,21 @@ SCREENER_DOUBLES = ("call_volume", "put_volume", "call_open_interest", "put_open
                     "avg_3_day_put_volume", "avg_7_day_call_volume", "avg_7_day_put_volume",
                     "avg_30_day_call_volume", "avg_30_day_put_volume", "put_call_ratio", "relative_volume", "close",
                     "prev_close", "week_52_high", "week_52_low", "marketcap", "implied_move", "implied_move_perc",
-                    "iv30d", "iv30d_1d", "iv30d_1w", "iv30d_1m", "iv_rank", "volatility")
+                    "iv30d", "iv30d_1d", "iv30d_1w", "iv30d_1m", "iv_rank", "volatility",
+                    "realized_volatility", "stock_volume")
 SCREENER_TEXTS = ("er_time", "issue_type", "sector")
+# /earnings/{premarket|afterhours}: the calendar item's fields the Earnings Radar event is made of (``app/runners.py``
+# ``_calendar_event``), kept on the name's screener row (version 2, group 3 G3). ``marketcap`` shares the screener's
+# column: the screener's value first, the calendar's when the screener has none.
+CALENDAR_DOUBLES = ("expected_move_perc", "street_mean_est", "pre_earnings_close", "post_earnings_close")
+CALENDAR_TEXTS = ("full_name", "report_time")
+# /earnings/{ticker}: the earnings tape, one row per report (UW's "Historical Ticker Earnings").
+TAPE_DOUBLES = ("actual_eps", "street_mean_est", "price", "expected_move", "expected_move_perc",
+                "pre_earnings_move_1d", "pre_earnings_move_3d", "pre_earnings_move_1w", "pre_earnings_move_2w",
+                "post_earnings_move_1d", "post_earnings_move_3d", "post_earnings_move_1w", "post_earnings_move_2w",
+                "long_straddle_1d", "long_straddle_1w", "short_straddle_1d", "short_straddle_1w")
+# The far prints (LEAPS market scan) a session serves; the Parquet keeps every session.
+FAR_PRINT_SESSIONS = 5
 
 
 def _doubles(names) -> list[tuple[str, str]]:
@@ -156,7 +169,8 @@ OPTION_SCREENER_DAILY = Table(
      ("dollar_option_volume", "DOUBLE")]
     + _doubles(SCREENER_DOUBLES)
     + [(n, "TEXT") for n in SCREENER_TEXTS]
-    + [("is_index", "BOOLEAN"), ("next_earnings_date", "DATE"), ("next_dividend_date", "DATE")] + PROVENANCE,
+    + [("is_index", "BOOLEAN"), ("next_earnings_date", "DATE"), ("next_dividend_date", "DATE")]
+    + _doubles(CALENDAR_DOUBLES) + [(n, "TEXT") for n in CALENDAR_TEXTS] + PROVENANCE,
     ("session_date", "ticker"), (SCREENER_SOURCE,))
 
 ER_OPTIONS = Table(
@@ -167,8 +181,30 @@ ER_OPTIONS = Table(
     + _doubles(GEX_LEVEL_FIELDS) + _doubles(VOLUME_DOUBLES) + _counts(VOLUME_COUNTS) + PROVENANCE,
     ("session_date", "ticker"), (SCREENER_SOURCE,))
 
+# /option-trades with min_dte and min_premium: the market's far-dated prints of the session (LEAPS scan, G3 G5), every
+# underlying, keyed by UW's print id.
+OPTION_FAR_PRINT = Table(
+    "option_far_print",
+    [("session_date", "DATE"), ("print_id", "TEXT"), ("ticker", "TEXT"), ("executed_at", "TEXT"),
+     ("option_symbol", "TEXT"), ("expiry", "DATE"), ("strike", "DOUBLE"), ("option_type", "TEXT"),
+     ("days_to_expiry", "INTEGER")]
+    + _doubles(PRINT_DOUBLES) + _counts(PRINT_COUNTS)
+    + [("next_earnings_date", "DATE"), ("exchange", "TEXT"), ("tags", "VARCHAR[]"), ("report_flags", "VARCHAR[]"),
+       ("upstream_condition_detail", "TEXT"), ("canceled", "BOOLEAN"), ("side", "TEXT"), ("package", "BOOLEAN")]
+    + PROVENANCE,
+    ("session_date", "print_id"), (SCREENER_SOURCE,), window=FAR_PRINT_SESSIONS)
+
+# /earnings/{ticker} of an earnings-set name, on its evening: one row per report UW lists (avo's D2, 10 Nov 2026).
+# A name fetched again a quarter later lists the same reports again; a reader takes the newest session's row.
+EARNINGS_TAPE = Table(
+    "earnings_tape",
+    [("session_date", "DATE"), ("ticker", "TEXT"), ("report_date", "DATE"), ("report_time", "TEXT"),
+     ("ending_fiscal_quarter", "DATE"), ("report_source", "TEXT")] + _doubles(TAPE_DOUBLES) + PROVENANCE,
+    ("session_date", "ticker", "report_date"), (SCREENER_SOURCE,))
+
 TABLES: dict[str, Table] = {t.name: t for t in (OPTION_EOD, OPTION_STRIKE, OPTION_EXPIRY, OPTION_DAILY, OPTION_PRINT,
-                                                IV_DAILY, OPTION_SCREENER_DAILY, ER_OPTIONS)}
+                                                IV_DAILY, OPTION_SCREENER_DAILY, ER_OPTIONS, OPTION_FAR_PRINT,
+                                                EARNINGS_TAPE)}
 
 # What makes a row "changed" in a check: its data, not when or by which run it was fetched.
 NOT_COMPARED = ("fetched_at", "run_id", "source_as_of")
@@ -270,7 +306,9 @@ def _load(con: duckdb.DuckDBPyConnection, t: Table, parts: list[Path], sessions:
     names_sql = ", ".join(f'"{c}"' for c in t.columns)
     keys = ", ".join(f'"{k}"' for k in t.key)
     where = "WHERE session_date IN (SELECT unnest(?::DATE[])) " if sessions is not None else ""
-    con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM read_parquet([{files}], union_by_name = true) '
+    # A column no partition holds yet (added after the Parquet was written) is read as NULL.
+    src = base.with_all(con, t.schema, f"read_parquet([{files}], union_by_name = true)")
+    con.execute(f'INSERT INTO "{t.name}" SELECT {names_sql} FROM {src} '
                 f"{where}QUALIFY row_number() OVER (PARTITION BY {keys} ORDER BY fetched_at DESC) = 1",
                 (sessions,) if sessions is not None else None)
 
@@ -343,13 +381,13 @@ def compare_by_day(con: duckdb.DuckDBPyConnection, table: Table, kind: str = "op
     new_rows = con.execute(f'SELECT count(*) FROM "{table.name}"').fetchone()[0]
     if not live.exists():
         return int(new_rows), 0
-    names = ", ".join(f'"{c}"' for c in cols)
     con.execute(f"ATTACH {base.sql_path(live)} AS live_cmp (READ_ONLY)")
     try:
         known = {r[0] for r in con.execute(
             "SELECT table_name FROM duckdb_tables() WHERE database_name = 'live_cmp'").fetchall()}
         if table.name not in known:
             return int(new_rows), 0
+        names = ", ".join(f'"{c}"' for c in base.live_columns(con, table.name, cols))
         old = f'SELECT {names} FROM live_cmp."{table.name}" WHERE session_date >= ?'
         added = con.execute(f'SELECT count(*) FROM (SELECT {names} FROM "{table.name}" EXCEPT ALL {old})',
                             [first]).fetchone()[0]

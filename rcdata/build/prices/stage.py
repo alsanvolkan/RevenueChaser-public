@@ -7,6 +7,7 @@ missing table.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import duckdb
@@ -14,6 +15,20 @@ import duckdb
 from .. import base
 from ..spine.stage import count, create, partitions  # noqa: F401 - the one staging helper, shared with the spine
 from . import KIND
+
+#: How many security chunks a whole ``prices`` build runs in (#654): each chunk stages and builds the WRDS history of
+#: one contiguous range of security ids, so the spill is about 1/N of a single pass. ``1`` is the single pass.
+CHUNKS_ENV = "RC_PRICES_CHUNKS"
+CHUNKS_DEFAULT = 16
+
+
+def chunks() -> int:
+    """``RC_PRICES_CHUNKS`` as a positive whole number; empty or invalid keeps ``CHUNKS_DEFAULT``."""
+    try:
+        n = int(os.getenv(CHUNKS_ENV, "").strip())
+    except ValueError:
+        return CHUNKS_DEFAULT
+    return n if n > 0 else CHUNKS_DEFAULT
 
 
 def write_rows(rows: list[dict], schema: list[tuple[str, str]], final: Path, order: str = "") -> Path:

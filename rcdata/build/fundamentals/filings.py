@@ -23,9 +23,10 @@ Raw: ``raw/sec/filings/submissions/<cik>/<as-of>.json.gz`` (with a ``.meta.json`
 ``raw/sec/filings/documents/<cik>/<accession>.html.gz``. Parquet: ``parquet/sec/filings/cik=<cik>/filings.parquet``
 (one row per filing and 8-K item), ``.../documents.parquet`` (the texts), and ``.../segments.parquet`` /
 ``.../customers.parquet`` (the annual report's inline XBRL, ``ixbrl.py``: revenue by segment, product and country,
-and major customers' shares), each replaced whole from the newest list.
+and major customers' shares), each replaced whole from the newest list, and ``.../header.parquet`` (the list's company
+header: SEC SIC, state of incorporation, the business address's state and country; #645 G2, the fundamentals freeze).
 
-Staging: ``stg_sec_filings``, ``stg_sec_documents``, ``stg_sec_segments``, ``stg_sec_customers``.
+Staging: ``stg_sec_filings``, ``stg_sec_documents``, ``stg_sec_segments``, ``stg_sec_customers``, ``stg_sec_header``.
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ import duckdb
 from ....core import calendar
 from .. import base
 from .. import dirty as dirty_set
-from . import KIND, common, ixbrl, sec_index
+from . import KIND, common, edgar_codes, ixbrl, sec_index
 
 NAME = "sec/filings"
 NEW_PER_RUN = 9000
@@ -55,7 +56,7 @@ _AIF_PER_FILING = 1
 #: and an ``aif`` exhibit carry the filer's own length.
 SLICED_ITEMS = ("business",)
 STAGING = {"filings": "stg_sec_filings", "documents": "stg_sec_documents", "segments": "stg_sec_segments",
-           "customers": "stg_sec_customers"}
+           "customers": "stg_sec_customers", "header": "stg_sec_header"}
 
 FILING = [("cik", "TEXT"), ("accession", "TEXT"), ("form", "TEXT"), ("filing_date", "DATE"), ("report_date", "DATE"),
           ("primary_document", "TEXT"), ("item", "TEXT"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"),
@@ -69,6 +70,11 @@ _FILED = [("cik", "TEXT"), ("accession", "TEXT"), ("form", "TEXT"), ("filing_dat
 _STAMPS = [("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 SEGMENT = _FILED + [("axis", "TEXT"), ("member", "TEXT"), ("segment", "TEXT"), ("concept", "TEXT"),
                     ("value", "DOUBLE"), ("unit", "TEXT"), ("period_start", "DATE"), ("period_end", "DATE")] + _STAMPS
+# The company header of the newest list: SIC as the SEC assigns it, the state (or country) of incorporation as EDGAR
+# codes it, and the business address as a state (US, Canada) and an ISO country (``edgar_codes``).
+HEADER = [("cik", "TEXT"), ("sic", "TEXT"), ("sic_description", "TEXT"), ("state_of_incorporation", "TEXT"),
+          ("state_of_incorporation_description", "TEXT"), ("business_state", "TEXT"),
+          ("business_country", "TEXT")] + _STAMPS
 CUSTOMER = _FILED + [("customer", "TEXT"), ("member", "TEXT"), ("benchmark", "TEXT"), ("share", "DOUBLE"),
                      ("period_start", "DATE"), ("period_end", "DATE")] + _STAMPS
 
@@ -207,6 +213,16 @@ def parse(cik: str, body: dict) -> list[dict]:
     for r in rows:
         r["report_date"] = reports.get(r["accession"]) or None
     return rows
+
+
+def header(cik: str, body: dict) -> dict:
+    """The company header of one submissions answer (``HEADER``'s columns, no stamps); a missing key is None."""
+    address = ((body.get("addresses") or {}).get("business") or {}).get("stateOrCountry")
+    return {"cik": cik, "sic": str(body.get("sic") or "").strip() or None,
+            "sic_description": body.get("sicDescription") or None,
+            "state_of_incorporation": body.get("stateOfIncorporation") or None,
+            "state_of_incorporation_description": body.get("stateOfIncorporationDescription") or None,
+            "business_state": edgar_codes.state(address), "business_country": edgar_codes.country(address)}
 
 
 def pick(rows: list[dict], forms: tuple[str, ...]) -> dict | None:
@@ -406,7 +422,8 @@ class Filings:
             meta = base.read_raw_json(common.meta_path(raw))
             stamps = {"source_as_of": date.fromisoformat(meta["as_of"]), "fetched_at": float(meta["fetched_at"]),
                       "run_id": meta["run_id"]}
-            rows = parse(cik, base.read_raw_json(raw))
+            body = base.read_raw_json(raw)
+            rows = parse(cik, body)
             filing_rows = []
             for r in rows:
                 items = [i.strip() for i in str(r.get("items") or "").split(",") if i.strip()] or [None]
@@ -427,6 +444,8 @@ class Filings:
                 base.rows_table(con, "customers", CUSTOMER, customer_rows)
                 out.append(base.write_parquet(con, "SELECT * FROM customers ORDER BY customer, benchmark",
                                               folder / "customers.parquet"))
+                base.rows_table(con, "header", HEADER, [{**header(cik, body), **stamps}])
+                out.append(base.write_parquet(con, "SELECT * FROM header", folder / "header.parquet"))
             finally:
                 con.close()
         return out
@@ -478,6 +497,7 @@ class Filings:
         common.stage_glob(con, STAGING["documents"], DOCUMENT, folder, "cik=*/documents.parquet", ciks=ciks)
         common.stage_glob(con, STAGING["segments"], SEGMENT, folder, "cik=*/segments.parquet", ciks=ciks)
         common.stage_glob(con, STAGING["customers"], CUSTOMER, folder, "cik=*/customers.parquet", ciks=ciks)
+        common.stage_glob(con, STAGING["header"], HEADER, folder, "cik=*/header.parquet", ciks=ciks)
         return {}
 
     dirty_keyed = True

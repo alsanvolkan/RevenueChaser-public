@@ -44,6 +44,11 @@ class NewsGateway(FakeGateway):
             super()._answer(fields)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_con_ids(monkeypatch):
+    monkeypatch.setattr(headlines, "_CON_IDS", {})        # the cache lives as long as the dashboard process
+
+
 @pytest.fixture
 def gw(monkeypatch):
     g = NewsGateway()
@@ -101,11 +106,12 @@ def test_a_gateway_that_is_down_writes_nothing_and_says_so(gw):
     assert out["stored"] == 0 and "gateway" in out["error"] and _rows() == {}
 
 
-def test_a_second_fetch_asks_only_since_the_last_one(gw):
+def test_a_second_fetch_asks_the_newest_and_keeps_only_since_the_last_one(gw):
     headlines.fetch(["AAPL"], now=NOW, run_id="r1")
-    headlines.fetch(["AAPL"], now=NOW + 3600, run_id="r2")
-    starts = [f[4] for f in gw.sent if f[0] == "86"]
-    assert starts[0] == "2026-11-08 19:00:00.0" and starts[1] == "2026-11-09 18:10:00.0"   # 24 h, then newest - 10 min
+    out = headlines.fetch(["AAPL"], now=NOW + 3600, run_id="r2")
+    # The gateway reads a start time as the newest time to return (11 Nov: the board sat a day behind), so none is sent.
+    assert [f[4] for f in gw.sent if f[0] == "86"] == ["", ""]
+    assert out["stored"] == 1                                   # 17:00 is before the mark (18:20) - 10 min
 
 
 def test_the_ticker_list_puts_the_watch_list_first_and_is_capped():
@@ -134,3 +140,9 @@ def test_the_same_story_under_another_provider_in_a_later_run_is_one_row(gw):
     headlines.fetch(["AAPL"], now=NOW + 3600, run_id="r2")
     got = rawstore.query("SELECT count(*) AS n FROM news_headlines WHERE headline = 'Apple Expands AI Deal'", db="news")
     assert got == [{"n": 1}]
+
+
+def test_a_later_pass_reuses_the_contract_id(gw):
+    headlines.fetch(["AAPL"], now=NOW, run_id="r1")
+    headlines.fetch(["AAPL"], now=NOW + 300, run_id="r2")
+    assert gw.message_ids().count("9") == 1 and gw.message_ids().count("86") == 2

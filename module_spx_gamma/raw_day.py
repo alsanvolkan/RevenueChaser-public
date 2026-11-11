@@ -1,12 +1,14 @@
 """Read a stored raw day back into the ``raw`` dict ``normalize_snapshot`` takes.
 
-``snapshot.fetch_snapshot`` writes one folder per day (files plus a manifest); this is its
-inverse, so a board can be rebuilt from disk with no network (Refresh, #177 / G15, G10).
+``snapshot.fetch_snapshot`` stores one day in the board file (its manifest and every answer, ``store.put_raw_day``);
+this is its inverse, so a board can be rebuilt with no network (Refresh, #177 / G15, G10).
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
+
+from . import store
 
 # file stem -> key in the raw dict. The VIX family, the CFTC COT and the 8-week window are not files of the day
 # any more (PR 3): run.build_day reads them from the market store, and an older day's copies of them are ignored.
@@ -37,38 +39,37 @@ ALL_EXPIRY_PREFIX = "strike_expiry_"
 SKEW_CHAIN_PREFIX = "skew_chain_"
 
 
-def _read(path: Path):
-    return json.loads(path.read_text(encoding="utf-8"))
+def load_raw_day(day) -> dict:
+    """The raw dict of one stored day (``day`` is the date, or an old ``.../raw/<date>`` path, whose name is used).
+    Raises FileNotFoundError when the day is not stored (a partial or missing fetch is not a day)."""
+    day = Path(str(day)).name
+    manifest = store.raw_manifest(day)
+    if manifest is None:
+        raise FileNotFoundError(f"no stored raw day {day}")
+    texts = store.raw_files(day)
+    effective = manifest.get("effective_date") or manifest.get("asof_date") or day
 
-
-def load_raw_day(day_dir) -> dict:
-    """The raw dict of one stored day. Raises FileNotFoundError when the day has no manifest
-    (a partial or missing fetch is not a day)."""
-    d = Path(day_dir)
-    manifest_path = d / "manifest.json"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"no complete raw day at {d} (manifest.json missing)")
-    manifest = _read(manifest_path)
-    effective = manifest.get("effective_date") or manifest.get("asof_date") or d.name
+    def _read(name: str):
+        return json.loads(texts[name])
 
     raw: dict = {}
-    for f in sorted(d.glob("*.json")):
-        key = FILE_KEYS.get(f.stem)
+    for name in sorted(texts):
+        key = FILE_KEYS.get(Path(name).stem)
         if key:
-            raw[key] = _read(f)
+            raw[key] = _read(name)
     raw["strike_expiry"] = {}
-    zero = d / f"{ZERO_DTE_STEM}.json"
-    if zero.exists():
+    zero = f"{ZERO_DTE_STEM}.json"
+    if zero in texts:
         raw["strike_expiry"][manifest.get("zero_dte_expiry") or effective] = _read(zero)
     raw["strike_expiry_all"] = {}
-    for f in sorted(d.glob(f"{ALL_EXPIRY_PREFIX}*.json")):
-        raw["strike_expiry_all"][f.stem[len(ALL_EXPIRY_PREFIX):]] = _read(f)
+    for name in sorted(n for n in texts if n.startswith(ALL_EXPIRY_PREFIX)):
+        raw["strike_expiry_all"][Path(name).stem[len(ALL_EXPIRY_PREFIX):]] = _read(name)
     # F3: the 25-delta skew chains near 30 and 90 days
     raw["skew_chains"] = {}
     for key in ("1m", "3m"):
-        f = d / f"{SKEW_CHAIN_PREFIX}{key}.json"
-        if f.exists():
-            raw["skew_chains"][key] = _read(f)
+        name = f"{SKEW_CHAIN_PREFIX}{key}.json"
+        if name in texts:
+            raw["skew_chains"][key] = _read(name)
     raw["_meta"] = {
         "requested_date": manifest.get("requested_date") or effective,
         "effective_date": effective,

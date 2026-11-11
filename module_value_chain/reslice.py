@@ -41,7 +41,7 @@ _CONTEXT = 60
 
 
 def _rank(quality) -> int:
-    """``ok`` > ``overrun`` > ``short`` / ``missing`` (the store's keep guard)."""
+    """``ok`` > ``overrun`` / ``capped`` > ``short`` / ``missing`` (the store's keep guard)."""
     return engine._RANK.get(splitter.base(quality), 0)
 
 

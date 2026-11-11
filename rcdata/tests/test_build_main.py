@@ -53,6 +53,18 @@ def test_s2_the_run_loop_outlives_a_locked_ops_file(busy, monkeypatch):
     assert len(calls) == 2
 
 
+def test_the_spill_folders_a_dead_builder_left_are_swept_with_its_build_files():
+    from RevenueChaser.core import config
+    tmp = config.MARKET_RAW_DIR / "build_tmp"
+    stale = tmp / "prices.20261110T080000Z-deadbeef.duckdb.tmp"
+    other = tmp / "ownership.20261110T080000Z-deadbeef.duckdb.tmp"
+    for d in (stale, other):
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "duckdb_temp_storage-0.tmp").write_bytes(b"x")
+    assert serving.sweep_builds("prices") == [stale]
+    assert not stale.exists() and other.exists()
+
+
 def test_s4_build_files_a_dead_builder_left_are_swept_at_start():
     from RevenueChaser.core import config
     d = config.MARKET_DIR
@@ -420,3 +432,25 @@ def test_a_fetch_locks_name_is_one_file_name_not_a_path():
         assert job_lock.writes_of(name) == ()           # still the family that holds off nothing
     # Two datasets of one provider must still be two locks, not one.
     assert len(set(names)) == 3
+
+
+def test_attended_closes_a_request_a_killed_run_left_running(monkeypatch, capsys):
+    """#321: a killed attended run left its request `running`; `attended` said nothing was queued and the Fetch
+    route kept answering 409. Now it closes that request, says so, and a fresh one can be queued."""
+    import subprocess
+    import sys as _sys
+    monkeypatch.setattr(cli, "at_a_terminal", lambda: True)
+    monkeypatch.setattr(cli.base, "idle_problem",
+                        lambda: (_ for _ in ()).throw(AssertionError("took the turn")))
+    dead = subprocess.Popen([_sys.executable, "-c", "pass"])
+    dead.wait()
+    rid = ops.enqueue("wrds/sec_idhist", None, by="settings")
+    assert ops.next_request("wrds/sec_idhist")["id"] == rid
+    ops.start_run("killed-attended", "wrds/sec_idhist", "queue")
+    [run] = [r for r in ops.rows("job_runs2") if r["run_id"] == "killed-attended"]
+    ops.put_rows("job_runs2", [{**run, "pid": dead.pid}])
+    assert cli.main(["attended"]) == 0
+    err = capsys.readouterr().err
+    assert "closed 1 request(s) whose run was killed" in err
+    assert _request(rid)["status"] == "failed"
+    assert ops.enqueue_once("wrds/sec_idhist", None, by="settings") is not None

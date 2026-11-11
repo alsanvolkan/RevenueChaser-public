@@ -522,7 +522,7 @@ function autoRowHtml(r){
 }
 function autoTableHtml(rows, available){
   var note = available === false
-    ? '<div class="auto-desc">Task Scheduler is not available on this host.</div>' : '';
+    ? '<div class="auto-desc">No scheduler is connected on this host, so this panel cannot install or read the tasks.</div>' : '';
   var list = rows.length
     ? '<div class="auto-list">' + rows.map(autoRowHtml).join('') + '</div>'
     : '<div class="auto-desc">No scheduled tasks are registered.</div>';
@@ -1150,7 +1150,7 @@ def _automations_section(rows: list[dict]) -> str:
     return (
         '<h2 class="sec">Automations</h2>'
         '<div class="sub">Scheduled tasks RevenueChaser owns. Nothing is installed '
-        "until you press <b>Install</b>; the state below is read live from Task Scheduler "
+        "until you press <b>Install</b>; the state below is read live from the scheduler "
         "(this page itself stays store-only). Each task is one line; press a line to see "
         "what it does, its command, its run conditions, its log and its buttons.</div>"
         '<div id="auto-msg"></div><div id="auto-body"></div>')
@@ -2911,11 +2911,12 @@ def _collect_newdata() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
-#: The page's two tabs (#492): the key a viewer's choice is remembered under, and each tab's panel id. ``ALIASES`` maps
-#: a choice remembered from the three-tab page (Data, Fetch, Needs) onto the tab that now holds it.
+#: The page's two tabs (#492; avo, 10 Nov 2026: "iki tabdan daha fazlasi olmasin"): the key a viewer's choice is
+#: remembered under, and each tab's panel id. ``ALIASES`` maps a choice remembered from an older page (Data, Fetch,
+#: Needs, Live) onto the tab that now holds it.
 SETTINGS_TABS = {"key": "rc.settings.tab",
-                 "tabs": {"data": "panel-data", "health": "panel-health", "live": "panel-live"},
-                 "aliases": {"fetch": "data", "needs": "health"}}
+                 "tabs": {"data": "panel-data", "health": "panel-health"},
+                 "aliases": {"fetch": "data", "needs": "health", "live": "health"}}
 
 TABS_JS = """
 (function(){
@@ -2976,13 +2977,6 @@ def _needs_model(payload: dict) -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300], "read_at": datetime.now().strftime("%H:%M")}
 
 
-#: #527 B4, decision D4 = B (avo, 8 Nov 2026 02:39): the queue, the running requests and the switches strip left the
-#: Health tab once Grafana showed them (the RC Fetch board, on the Live tab); this one link takes their place.
-HEALTH_LIVE_LINK = ('<div class="wrap"><p class="live-link"><a id="health-live-link" href="#live" data-board="rc-fetch" '
-                    'style="display:inline-flex;align-items:center;min-height:44px;color:var(--acc)">The queue, the running requests '
-                    'and the switches are live in Grafana →</a></p></div>')
-
-
 #: The Identity and Our universe cards now sit in the spine's source box (#492 C1): the New data system section's
 #: rules, scoped to that box instead of ``#newdata``, on the board's own palette (``.ctl``'s --bg, --card, --fg
 #: inherit; the names the board spells differently are bridged), never the shell's theme block.
@@ -2993,11 +2987,14 @@ _UCARDS_CSS = (".ctl .ucards{--border:var(--line);--muted:var(--mut);--neg:var(-
 #: The page's one "What am I looking at?" box (#383), at the top of the Data tab; #527 folded the board's own box
 #: (``control_render.WIAL``) into it, so the tab has one.
 DATA_HELP = help_html(
-    "<b>Data</b> shows each served file (the six SSD DuckDB files) and how it is made: its sources, one box a "
-    "dataset, then the Build stage from HDD raw and Parquet to the SSD file, then example rows. <b>Fetch</b> puts "
+    "<b>Database</b> shows what the data is and where it goes: the Data flow from each source through the six SSD "
+    "DuckDB files to the boards and the file each board writes, then for one served file the Build stage from HDD "
+    "raw and Parquet to the SSD file, the boards that read it, and example rows. Nothing there starts a job. "
+    "<b>Fetch/Health</b> holds every control: the switches, Health right now, the providers' limits, the universe, "
+    "then one group a served file with its sources. <b>Fetch</b> puts "
     "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
     "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
-    "call and holds the dataset until <b>Resume</b>. <b>Health</b> holds the need catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
+    "call and holds the dataset until <b>Resume</b>. Under the groups sit the need catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
     "the backups. <b>Live</b> shows the queue, the running requests and the switches from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )
@@ -3018,13 +3015,13 @@ def _watch_section(nd: dict | None) -> str:
 
 
 def _health_panel(payload: dict, nd: dict | None = None) -> str:
-    """The Health tab (#492): the Needs head, the link to the live parts on the Live tab (#527 B4), the catalog, the request log and the routes, then the ticker
+    """The Health tab (#492): the Needs head, the catalog, the request log and the routes, then the ticker
     detail, the four parts that live nowhere else (the board settings, Automations, the watch lists, the IBKR
     cards) and the backups, in that order."""
     model = _needs_model(payload)
     catalog, rest = needs_tab.sections(model)
     # One ``#needs`` scope (needs.css) around the head and the Needs parts.
-    # #527 step 9 and B4: what needs avo first (the link to the live parts, the reads that failed, the backups, the catalog
+    # #527 step 9 and B4: what needs avo first (the reads that failed, the backups, the catalog
     # with its problem groups open), then the parts he looks things up in, then the reference parts folded. The
     # IBKR login card is gone: its link is in the top bar.
     moved = (_ticker_drill(payload)
@@ -3034,8 +3031,7 @@ def _health_panel(payload: dict, nd: dict | None = None) -> str:
              + _watch_section(nd))
     # One ``#needs`` frame and palette for the whole tab.
     errs = _errors_list(payload.get("errors") or [])
-    return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Data/Health · Health")}</div>'
-            f'{HEALTH_LIVE_LINK}'
+    return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Needs, boards and automations")}</div>'
             + (f'<div class="wrap">{errs}</div>' if errs else "")
             + f'<div class="wrap">{_freshness_part(payload)}</div>'
             + f'<div class="wrap">{catalog}</div>'
@@ -3067,11 +3063,10 @@ def _folded(rest: str) -> str:
 def _tab_strip() -> str:
     return ('<nav id="settings-tabs" aria-label="Settings tabs"><div class="tabs" role="tablist">'
             '<button type="button" role="tab" id="tab-data" data-tab="data" aria-controls="panel-data" '
-            'aria-selected="true" tabindex="0">Data</button>'
+            'aria-selected="true" tabindex="0">Database</button>'
             '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
-            'aria-selected="false" tabindex="-1">Health</button>'
-            '<button type="button" role="tab" id="tab-live" data-tab="live" aria-controls="panel-live" '
-            'aria-selected="false" tabindex="-1">Live</button></div></nav>')
+            'aria-selected="false" tabindex="-1">Fetch/Health</button>'
+            '</div></nav>')
 
 
 # #527: the live view of data health and fetching is two Grafana boards on homesrv (home-server
@@ -3079,28 +3074,30 @@ def _tab_strip() -> str:
 # 2026: "bunlar revenue chaser app icine gomulu olmaliydi"). Grafana allows only this app's origin to frame it. The
 # frame has no address until the tab opens, so a Data/Health visit never loads Grafana.
 # home-server #222 (avo, 10 Nov 2026): the RC timers with the Jobs tab's own design, switches and fuse (board rc-jobs)
-LIVE_BOARDS = (("rc-data-health", "Data health"), ("rc-fetch", "Fetch"), ("rc-jobs", "Jobs"))
+# avo, 10 Nov 2026 ("iki tabdan daha fazlasi olmasin", "health/fetch kismi grafana arayuzu ile olmali"): no Live tab;
+# the frame opens the Fetch/Health tab, RC Fetch first.
+LIVE_BOARDS = (("rc-fetch", "Fetch"), ("rc-data-health", "Data health"), ("rc-jobs", "Jobs"))
 LIVE_CSS = """
-#panel-live .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
+#live-board .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
   padding:0 12px}
-#panel-live .livebar button{min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--line,#8884);
+#live-board .livebar button{min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--line,#8884);
   background:var(--card,transparent);color:var(--fg,inherit);font:inherit;cursor:pointer}
-#panel-live .livebar button[aria-pressed="true"]{border-color:var(--acc,#4a86e8);color:var(--acc,#4a86e8);font-weight:600}
-#panel-live .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px}
-#panel-live iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
+#live-board .livebar button[aria-pressed="true"]{border-color:var(--acc,#4a86e8);color:var(--acc,#4a86e8);font-weight:600}
+#live-board .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px}
+#live-board iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
   background:var(--bg,transparent)}
 """
-LIVE_HTML = ('<div class="livebar" role="group" aria-label="Live board">'
+LIVE_HTML = ('<div id="live-board"><div class="livebar" role="group" aria-label="Live board">'
              + "".join(f'<button type="button" data-board="{uid}" aria-pressed="{"true" if i == 0 else "false"}">'
                        f'{label}</button>' for i, (uid, label) in enumerate(LIVE_BOARDS))
              + '<a id="live-open" target="_blank" rel="noopener">Open in Grafana</a></div>'
-             '<iframe id="live-frame" title="Live data health, fetch and jobs (Grafana)" loading="lazy"></iframe>')
+             '<iframe id="live-frame" title="Live data health, fetch and jobs (Grafana)" loading="lazy"></iframe></div>')
 LIVE_JS = """
 (function(){
-  var panel = document.getElementById('panel-live'), frame = document.getElementById('live-frame');
+  var panel = document.getElementById('panel-health'), frame = document.getElementById('live-frame');
   if (!panel || !frame) return;
   var buttons = [].slice.call(panel.querySelectorAll('[data-board]')), open = document.getElementById('live-open');
-  var board = buttons.length ? buttons[0].getAttribute('data-board') : 'rc-data-health';
+  var board = buttons.length ? buttons[0].getAttribute('data-board') : 'rc-fetch';
   function theme() {
     var t = document.documentElement.getAttribute('data-theme');
     if (t === 'light' || t === 'dark') return t;
@@ -3124,16 +3121,8 @@ LIVE_JS = """
     });
   });
   if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
-  var tab = document.getElementById('tab-live');
+  var tab = document.getElementById('tab-health');
   if (tab) tab.addEventListener('click', function () { setTimeout(load, 0); });
-  // #527 B4: the Health tab's one link to the live parts opens this tab on the board it names
-  var jump = document.getElementById('health-live-link');
-  if (jump) jump.addEventListener('click', function (e) {
-    e.preventDefault();
-    var want = jump.getAttribute('data-board');
-    buttons.forEach(function (b) { if (b.getAttribute('data-board') === want) b.click(); });
-    if (tab) tab.click();
-  });
   load();
 })();
 """
@@ -3171,6 +3160,7 @@ def render_settings_dashboard(payload: dict) -> str:
     nd = payload["newdata"] if "newdata" in payload else _collect_newdata()
     view = _control_view(nd, payload)
     control_html = control_render.render_data(view)
+    fetch_html = control_render.render_fetch(view)
     control_js = control_render.scripts(view)
     health_html = _health_panel(payload, nd)
     automations = payload.get("automations") or []
@@ -3199,10 +3189,9 @@ def render_settings_dashboard(payload: dict) -> str:
 {control_html}
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
-{health_html}
-</div>
-<div id="panel-live" role="tabpanel" aria-labelledby="tab-live" hidden>
 {LIVE_HTML}
+{fetch_html}
+{health_html}
 </div>
 <script>{FILTERS_JS}</script>
 <script>

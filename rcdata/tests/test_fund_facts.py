@@ -157,7 +157,7 @@ def test_the_served_table_refuses_a_fact_without_its_accession_or_period_type():
     def insert(period_type="'annual'", accn="'a'", filed="DATE '2025-07-30'", preliminary="false"):
         con.execute(f"INSERT INTO fundamental_fact VALUES ('1', 'revenue', {period_type}, 2025, NULL, "
                     f"DATE '2025-06-30', 1.0, 'USD', {accn}, {filed}, '10-K', false, {preliminary}, "
-                    "'sec/companyfacts', NULL, NULL, NULL)")
+                    "'sec/companyfacts', NULL, NULL, NULL, NULL, NULL, NULL)")
     for bad in ({"accn": "NULL"}, {"filed": "NULL"}, {"period_type": "'ttm'"}, {"period_type": "NULL"}):
         with pytest.raises(duckdb.ConstraintException):
             insert(**bad)

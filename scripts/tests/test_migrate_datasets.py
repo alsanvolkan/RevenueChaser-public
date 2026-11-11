@@ -396,11 +396,15 @@ class TestEveryManifestDatasetHasARoundTripTest:
                     "etf_holdings_changes",
                     # #374: the RRG points of a live Rotation Fetch, filled by record_run (red on main 0a75e3b)
                     "rotation_snapshots_history",
+                    # SPX Gamma review PR 3: the levels of an SPX Fetch, filled by record_run
+                    "spx_gamma_levels_history",
                     # #380 S0: derived from forecast_ledger and the bars by core/outcomes.py
                     "forecast_outcomes",
                     # board files (S9, S16): built incrementally by module_news / module_welcome, no legacy source
                     "news_events", "news_highlight", "news_headlines", "news_meta",
                     "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta",
+                    # the SPX Gamma board file: filled by a Fetch or by --import-tree from its own old tree
+                    "spx_raw_days", "spx_raw_files", "spx_brier", "spx_gex_daily", "spx_meta",
                     # #25 HR-1: derived from the universe snapshot and the bars by core/baselines.py
                     "forecast_baselines"}
         # composite SQLite targets are covered through their source dataset

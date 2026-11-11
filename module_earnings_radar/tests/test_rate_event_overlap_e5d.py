@@ -1,4 +1,4 @@
-"""E5d (#372): R6's rate-event overlap comes from the stored ``economic_calendar`` (D37) and the yield series from
+"""E5d (#372): R6's rate-event overlap comes from the served ``market.economic_event`` and the yield series from
 the market store (``store_reads.dgs10_map``) — no run asks FRED.
 
 The yield reader's own cases live in ``test_store_reads.py``; what is pinned here is the rule and the wiring.
@@ -14,10 +14,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from RevenueChaser.core import rawstore
 from RevenueChaser.module_earnings_radar import stored_inputs
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
 from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve as serve_market
+from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_economic
 from RevenueChaser.module_earnings_radar.tests.test_pipeline_score import _FakeUW, _duration_ohlc_and_yields
 
 NY = ZoneInfo("America/New_York")
@@ -49,6 +49,15 @@ def _event(event, kind, when: datetime, session: date = STORE_SESSION):
             "source": "uw"}
 
 
+def _serve(rows):
+    """Serve ``rows`` in ``market.economic_event``, one builder snapshot per sweep session."""
+    sweeps: dict = {}
+    for r in rows:
+        sweeps.setdefault(r["session_date"], []).append({"event": r["event"], "type": r["type"],
+                                                         "event_ts": r["event_ts"]})
+    serve_economic(sweeps)
+
+
 def _rate_event_in_span(event="CPI", kind="report", at=None):
     """A rate event at the window end of REPORT plus the two rows that make the store span the window."""
     start, end = WINDOW
@@ -76,26 +85,26 @@ def _october_span(*events):
 
 
 def test_fomc_two_trading_days_after_a_monday_report_is_no_overlap():
-    rawstore.write_rows("economic_calendar", _october_span(
+    _serve(_october_span(
         _event("FOMC Statement", "fomc", datetime(2026, 10, 21, 14, 0, tzinfo=NY))))
     assert stored_inputs.rate_event_overlap(date(2026, 10, 19)) is False
 
 
 def test_cpi_on_the_monday_after_a_thursday_report_is_no_overlap():
-    rawstore.write_rows("economic_calendar", _october_span(
+    _serve(_october_span(
         _event("CPI", "report", datetime(2026, 10, 26, 8, 30, tzinfo=NY))))
     assert stored_inputs.rate_event_overlap(date(2026, 10, 22)) is False
 
 
 def test_fomc_on_the_monday_after_a_friday_report_is_an_overlap():
-    rawstore.write_rows("economic_calendar", _october_span(
+    _serve(_october_span(
         _event("FOMC Statement", "fomc", datetime(2026, 10, 26, 14, 0, tzinfo=NY))))
     assert stored_inputs.rate_event_overlap(date(2026, 10, 23)) is True
 
 
 def test_fomc_inside_the_window_is_a_rate_event():
     _row = _event("FOMC Statement", "fomc", datetime(2026, 1, 21, 14, 0, tzinfo=NY))
-    rawstore.write_rows("economic_calendar", [
+    _serve([
         _event("Jobs Report", "report", datetime(2026, 1, 16, 8, 30, tzinfo=NY)),
         _row,
         _event("GDP", "report", datetime(2026, 1, 22, 8, 30, tzinfo=NY)),
@@ -105,19 +114,19 @@ def test_fomc_inside_the_window_is_a_rate_event():
 
 @pytest.mark.parametrize("event", ["CPI", "CPI, Y/Y%", "Core CPI, M/M%"])
 def test_cpi_named_events_are_rate_events(event):
-    rawstore.write_rows("economic_calendar", _rate_event_in_span(event=event))
+    _serve(_rate_event_in_span(event=event))
     assert stored_inputs.rate_event_overlap(REPORT) is True
 
 
 @pytest.mark.parametrize("event", ["PPI", "Ex-Food & Energy PPI"])
 def test_ppi_is_not_a_rate_event(event):
     """The PC printed these PPI strings: "CPI" as a substring must not match them."""
-    rawstore.write_rows("economic_calendar", _rate_event_in_span(event=event))
+    _serve(_rate_event_in_span(event=event))
     assert stored_inputs.rate_event_overlap(REPORT) is False
 
 
 def test_payrolls_gdp_and_fed_speakers_are_not_rate_events():
-    rawstore.write_rows("economic_calendar", [
+    _serve([
         _event("Jobs Report", "report", datetime(2026, 1, 16, 8, 30, tzinfo=NY)),
         _event("Fed Speaker", "fed-speaker", datetime(2026, 1, 21, 12, 0, tzinfo=NY)),
         _event("GDP", "report", datetime(2026, 1, 22, 8, 30, tzinfo=NY)),
@@ -127,7 +136,7 @@ def test_payrolls_gdp_and_fed_speakers_are_not_rate_events():
 
 def test_a_report_outside_the_stored_span_is_none():
     """The store holds this week only: a print three months out has no answer, and None is not a veto."""
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _serve(_rate_event_in_span())
     assert stored_inputs.rate_event_overlap(date(2026, 4, 21)) is None
 
 
@@ -138,7 +147,7 @@ def test_an_empty_store_is_none():
 def test_a_2330_new_york_event_lands_on_the_new_york_date():
     """23:30 in New York is the next UTC day; the window is the New York one, so it is the window end."""
     start, end = WINDOW
-    rawstore.write_rows("economic_calendar", [
+    _serve([
         _event("Jobs Report", "report", datetime(start.year, start.month, start.day, 8, 30, tzinfo=NY)),
         _event("CPI", "report", datetime(end.year, end.month, end.day, 23, 30, tzinfo=NY)),
     ])
@@ -146,8 +155,9 @@ def test_a_2330_new_york_event_lands_on_the_new_york_date():
 
 
 def test_a_broken_store_is_none(monkeypatch):
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
-    monkeypatch.setattr(rawstore, "query", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("busy")))
+    _serve(_rate_event_in_span())
+    monkeypatch.setattr(stored_inputs.market_read, "economic_events",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("busy")))
     assert stored_inputs.rate_event_overlap(REPORT) is None
 
 
@@ -162,7 +172,7 @@ def _two_sweeps(old_cpi: datetime, new_cpi: datetime, old=date(2026, 10, 13), ne
 def test_a_rescheduled_cpi_does_not_overlap_on_its_old_date():
     """Review D-1: the 10-13 sweep stored CPI on Thu 10-15, the 10-16 sweep has it moved to Fri 10-23. The writer
     keeps both sessions' rows, but only the newest sweep is the calendar now: a Wed 10-14 report has no CPI near it."""
-    rawstore.write_rows("economic_calendar", _two_sweeps(datetime(2026, 10, 15, 8, 30, tzinfo=NY),
+    _serve(_two_sweeps(datetime(2026, 10, 15, 8, 30, tzinfo=NY),
                                                          datetime(2026, 10, 23, 8, 30, tzinfo=NY)))
     assert len(stored_inputs.rate_events()) == 6
     assert stored_inputs.rate_event_overlap(date(2026, 10, 14)) is False
@@ -170,7 +180,7 @@ def test_a_rescheduled_cpi_does_not_overlap_on_its_old_date():
 
 
 def test_a_cpi_moved_into_the_window_overlaps_on_its_new_date():
-    rawstore.write_rows("economic_calendar", _two_sweeps(datetime(2026, 10, 23, 8, 30, tzinfo=NY),
+    _serve(_two_sweeps(datetime(2026, 10, 23, 8, 30, tzinfo=NY),
                                                          datetime(2026, 10, 15, 8, 30, tzinfo=NY)))
     assert stored_inputs.rate_event_overlap(date(2026, 10, 14)) is True
     assert stored_inputs.rate_event_overlap(date(2026, 10, 22)) is False
@@ -178,7 +188,7 @@ def test_a_cpi_moved_into_the_window_overlaps_on_its_new_date():
 
 def test_an_older_sweep_answers_a_window_the_newest_does_not_span():
     """A past print: the newest sweep starts after its window, so the newest sweep that spans it answers."""
-    rawstore.write_rows("economic_calendar", [
+    _serve([
         *_rate_event_in_span(),                                                       # session Jan 15, CPI Jan 21
         _event("Jobs Report", "report", datetime(2026, 1, 26, 8, 30, tzinfo=NY), date(2026, 1, 23)),
         _event("GDP", "report", datetime(2026, 2, 6, 8, 30, tzinfo=NY), date(2026, 1, 23)),
@@ -189,7 +199,7 @@ def test_an_older_sweep_answers_a_window_the_newest_does_not_span():
 def test_sweeps_that_each_cover_half_the_window_are_none():
     """Two sweeps together span the window but neither does alone: no single calendar answers, so no veto."""
     start, end = WINDOW
-    rawstore.write_rows("economic_calendar", [
+    _serve([
         _event("Jobs Report", "report", datetime(start.year, start.month, start.day, 8, 30, tzinfo=NY),
                date(2026, 1, 9)),
         _event("CPI", "report", datetime(end.year, end.month, end.day, 8, 30, tzinfo=NY), date(2026, 1, 20)),
@@ -219,7 +229,7 @@ def _pipeline(ohlc, report=REPORT):
 def test_stored_dgs10_and_a_rate_event_veto_an_extreme_duration():
     ohlc, yields = _duration_ohlc_and_yields(duration=10.0)
     _seed_dgs10(yields)
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _serve(_rate_event_in_span())
     p = _pipeline(ohlc)
 
     p._warm_dgs10()
@@ -241,7 +251,7 @@ def test_stored_dgs10_and_a_rate_event_veto_an_extreme_duration():
 def test_a_report_outside_the_stored_span_keeps_the_badge_only():
     ohlc, yields = _duration_ohlc_and_yields(duration=10.0)
     _seed_dgs10(yields)
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _serve(_rate_event_in_span())
     p = _pipeline(ohlc, report=date(2026, 6, 16))
 
     p._warm_dgs10()
@@ -264,7 +274,7 @@ def test_the_raw_packet_carries_the_overlap():
     import json
     ohlc, yields = _duration_ohlc_and_yields(duration=10.0)
     _seed_dgs10(yields)
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _serve(_rate_event_in_span())
     p = _pipeline(ohlc)
     p._warm_dgs10()
     packet = json.loads(p._score("AAPL").raw_packet_json)
@@ -328,7 +338,7 @@ def test_a_noisy_extreme_beta_with_a_rate_event_is_a_badge_not_a_veto():
     beta, t = _ols_t(ohlc, yields)
     assert abs(beta) > 4 and abs(t) < 2                                 # the fixture is what its name says
     _seed_dgs10(yields)
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _serve(_rate_event_in_span())
     p = _pipeline(ohlc)
     p._warm_dgs10()
 
@@ -343,7 +353,7 @@ def test_a_noisy_extreme_beta_with_a_rate_event_is_a_badge_not_a_veto():
 
 def test_the_economic_calendar_is_read_once_per_run(monkeypatch):
     """Every card's overlap is a lookup in the run's one read, not a table read per card (review S6)."""
-    rawstore.write_rows("economic_calendar", _rate_event_in_span())
+    _serve(_rate_event_in_span())
     reads = []
     real = stored_inputs.rate_events
     monkeypatch.setattr(stored_inputs, "rate_events", lambda: reads.append(1) or real())

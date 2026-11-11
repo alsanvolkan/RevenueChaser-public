@@ -26,11 +26,11 @@ def market_roots(tmp_path, monkeypatch):
 
 @pytest.fixture
 def kinds_full():
-    """Every serving kind's automation at raw + Parquet + DuckDB: the hourly pass these tests were written for, from
-    before a kind with no ``kind_automation`` row read as off."""
-    from RevenueChaser.rcdata import ops, serving
-    for kind in serving.KINDS:
-        ops.kind_mode_set(kind, "full", by="test")
+    """Every dataset's own automation at raw + Parquet + DuckDB: the hourly pass these tests were written for, from
+    before a dataset with no ``dataset_automation`` row read as off (the file-level mode is gone, avo 10 Nov 2026)."""
+    from RevenueChaser.rcdata import build, ops
+    for name in build.DATASETS:
+        ops.dataset_mode_set(name, "full", by="test")
 
 
 class HttpMock:

@@ -11,8 +11,13 @@ from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.options import tables
 
 
-def test_the_options_kind_is_served_at_version_1():
-    assert serving.SERVING_SCHEMA_VERSION["options"] == 1
+def test_the_options_kind_is_served_at_version_2():
+    """2: the calendar fields on ``option_screener_daily``, ``option_far_print`` and ``earnings_tape`` (#644)."""
+    assert serving.SERVING_SCHEMA_VERSION["options"] == 2
+    assert {"option_far_print", "earnings_tape"} <= set(tables.TABLES)
+    assert {"expected_move_perc", "street_mean_est", "pre_earnings_close", "post_earnings_close", "report_time",
+            "full_name", "marketcap", "realized_volatility", "stock_volume"} <= set(
+        tables.TABLES["option_screener_daily"].columns)
     assert "options" in serving.KINDS
 
 
@@ -106,3 +111,64 @@ def test_a_table_whose_parquet_never_ran_is_built_empty():
     finally:
         con.close()
     assert keys == set(tables.TABLES)
+
+
+# ── Parquet written before a column was added (10 Nov 2026 whole build: "realized_volatility" not found) ─────────
+
+_NEW_SCREENER_COLUMNS = {"realized_volatility", "stock_volume", "expected_move_perc", "street_mean_est",
+                         "pre_earnings_close", "post_earnings_close", "full_name", "report_time"}
+
+
+def _screener_row(session: date, ticker: str, fetched_at: float, **extra) -> dict:
+    return {"session_date": session, "ticker": ticker, "close": 10.0, "source": "uw", "source_as_of": session,
+            "fetched_at": fetched_at, "run_id": "r", "observed": True, **extra}
+
+
+def _old_screener_partition(session: date, tickers=("AAPL",)):
+    """A screener partition in the shape options 1 wrote: none of the columns options 2 added."""
+    t = tables.TABLES["option_screener_daily"]
+    old = [(c, typ) for c, typ in t.schema if c not in _NEW_SCREENER_COLUMNS]
+    path = tables.partition_path(tables.SCREENER_SOURCE, t.name, session)
+    base.upsert_partition([_screener_row(session, k, 1.0) for k in tickers], old, list(t.key), path)
+    return t, path
+
+
+def test_a_build_over_only_old_screener_parquet_reads_the_new_columns_as_null():
+    _old_screener_partition(date(2026, 11, 9), ("AAPL", "MSFT"))
+    assert _build(["option_screener_daily"]) == {"option_screener_daily": 2}
+    with serving.open_read("options") as con:
+        got = con.execute("SELECT count(*), count(realized_volatility), count(stock_volume), "
+                          "count(expected_move_perc), min(close) FROM option_screener_daily").fetchone()
+    assert got == (2, 0, 0, 0, 10.0)
+
+
+def test_an_upsert_into_an_old_screener_partition_keeps_its_rows_and_adds_the_new_columns():
+    session = date(2026, 11, 9)
+    t, path = _old_screener_partition(session)
+    base.upsert_partition([_screener_row(session, "MSFT", 2.0, realized_volatility=0.25, stock_volume=1000.0)],
+                          t.schema, list(t.key), path)
+    con = duckdb.connect()
+    try:
+        src = f"read_parquet({base.sql_path(path)})"
+        rows = con.execute(f"SELECT ticker, realized_volatility, stock_volume FROM {src} ORDER BY ticker").fetchall()
+        cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
+    finally:
+        con.close()
+    assert rows == [("AAPL", None, None), ("MSFT", 0.25, 1000.0)]
+    assert set(t.columns) <= cols  # DuckDB adds the hive "date" column of the partition path
+
+
+def test_the_check_against_a_live_file_built_before_options_2_compares_the_columns_both_hold():
+    """The live file of 10 Nov still had the options 1 screener table: the check must not ask it for a new column."""
+    _old_screener_partition(date(2026, 11, 9), ("AAPL", "MSFT"))
+    _build(["option_screener_daily"])
+    con = duckdb.connect(str(serving.live_path("options")))
+    try:
+        for c in ("realized_volatility", "stock_volume"):
+            con.execute(f'ALTER TABLE option_screener_daily DROP COLUMN "{c}"')
+    finally:
+        con.close()
+    t = tables.TABLES["option_screener_daily"]
+    with serving.build("options") as b:
+        tables.build_tables(b.con, [t.name])
+        assert tables.compare_by_day(b.con, t) == (0, 0)

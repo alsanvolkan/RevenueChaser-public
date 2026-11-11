@@ -29,11 +29,13 @@ NEVER_CHECKED = "never_checked"
 STATUS_UNKNOWN = "status_unknown"
 DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
                     "spx_greek_expiry_strike": "uw/greek_expiry_strike",
+                    "economic_event": "uw/economic_calendar", "news_headline": "ibkr/news",
                     "security": "spine/security", "index_membership": "funds/index_holdings",
                     "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings", "etf": "spine/security",
                     "my_universe": "spine/security", "my_universe_changes": "spine/security"}
 KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market",
-                 "spx_greek_expiry_strike": "market", "security": "spine",
+                 "spx_greek_expiry_strike": "market", "economic_event": "market", "news_headline": "market",
+                 "security": "spine",
                  "index_membership": "spine", "fund": "spine", "etf_holdings": "spine", "etf": "spine",
                  "my_universe": "spine", "my_universe_changes": "spine"}
 # The ownership store (PR 16).
@@ -140,6 +142,45 @@ def market_series(series_ids: Iterable[str] = (), start=None, end=None, prefix: 
         sql += " AND obs_date <= ?"
         params.append(_day(end))
     return _rows("market_series", sql + " ORDER BY series_id, obs_date, source", params)
+
+
+def economic_calendar(snapshot_date=None) -> list[dict]:
+    """UW's economic calendar as of one snapshot day (default: the newest held), by event time.
+
+    A file built before market 3 has no ``economic_event``: that reads as no rows, not an error."""
+    where, params = "snapshot_date = (SELECT max(snapshot_date) FROM economic_event)", []
+    if snapshot_date is not None:
+        where, params = "snapshot_date = ?", [_day(snapshot_date)]
+    return _rows("economic_event", f"SELECT * FROM economic_event WHERE {where} ORDER BY event_ts, event, type",
+                 params, missing_table_ok=True)
+
+
+def economic_events(fetched_after: float | None = None) -> list[dict]:
+    """Every held snapshot day of the economic calendar, oldest fetch first; ``fetched_after`` (epoch seconds) keeps
+    only the rows of newer fetches. Each snapshot day holds that day's newest fetch (``uw/economic_calendar``).
+
+    A file built before market 3 has no ``economic_event``: that reads as no rows, not an error."""
+    sql, params = "SELECT * FROM economic_event", []
+    if fetched_after is not None:
+        sql, params = sql + " WHERE fetched_at > ?", [float(fetched_after)]
+    return _rows("economic_event", sql + " ORDER BY fetched_at, event_ts, event, type", params, missing_table_ok=True)
+
+
+def news_headlines(tickers: Iterable[str] | None = None, since=None) -> list[dict]:
+    """IBKR headlines, newest first; ``tickers`` (None: every name) narrows to those names, ``since`` (epoch seconds)
+    to newer ones.
+
+    A file built before market 3 has no ``news_headline``: that reads as no rows, not an error."""
+    sql, params = "SELECT * FROM news_headline WHERE TRUE", []
+    names = [str(t).upper() for t in tickers or ()]
+    if names:
+        sql += f" AND ticker IN ({', '.join('?' * len(names))})"
+        params += names
+    if since is not None:
+        sql += " AND published_at >= ?"
+        params.append(float(since))
+    return _rows("news_headline", sql + " ORDER BY published_at DESC, headline_id, ticker", params,
+                 missing_table_ok=True)
 
 
 def spx_expiry_strike(session_date, min_dte: int = 0, max_dte: int = 1) -> list[dict]:
@@ -1087,9 +1128,11 @@ def as_frame(rows: list[dict]):
 
 DATASET_OF_TABLE.update({**{t: "uw/option_list" for t in ("option_eod", "option_strike", "option_expiry",
                                                           "option_daily", "option_print", "iv_daily")},
-                         "option_screener_daily": "uw/option_screener", "er_options": "uw/option_screener"})
+                         **{t: "uw/option_screener" for t in ("option_screener_daily", "er_options",
+                                                              "option_far_print", "earnings_tape")}})
 KIND_OF_TABLE.update({t: "options" for t in ("option_eod", "option_strike", "option_expiry", "option_daily",
-                                             "option_print", "iv_daily", "option_screener_daily", "er_options")})
+                                             "option_print", "iv_daily", "option_screener_daily", "er_options",
+                                             "option_far_print", "earnings_tape")})
 # Rows a table shares between datasets: the earnings set (``set_name`` earnings) is uw/option_screener's, the IBKR
 # year of ``iv_daily`` (``source`` ibkr) is ibkr/iv_history's. Their ``status`` is that dataset's newest check.
 _SHARED_STATUS = (("set_name", "earnings", "uw/option_screener"), ("source", "ibkr", "ibkr/iv_history"))

@@ -62,3 +62,24 @@
 .ctl table.jt3 td.ssdc,.ctl table.jt3 th.ssdh,.ctl table.jt3 col.c3{display:none}}
 /* the three-column table keeps its SSD column from 640 px up, so the narrow SSD aside is for phones only */
 @media(min-width:640px){.ctl .journey .jpanel.jnarrow{display:none}}
+/* avo, 10 Nov 2026: a fourth column, the boards that read the file and the file each one writes; folder paths fold
+   to a 📁 that opens sideways. */
+.ctl table.jt.jt3.jtb col.c1{width:36%}
+.ctl table.jt.jt3.jtb col.c2{width:20%}
+.ctl table.jt.jt3.jtb col.c3{width:max(19%, 230px)}
+.ctl table.jt.jt3.jtb col.c4{width:25%}
+.ctl table.jtb td.bdc .btree>ul{columns:auto}
+.ctl table.jtb td.bdc .btree li.on{white-space:normal;overflow:visible;line-height:1.5;padding:1px 0}
+.ctl table.jtb td.bdc .btree code{display:inline-block;margin-left:6px;font-size:10px;padding:0 5px;border-radius:4px}
+.ctl table.jtb td.bdc .btree code.bfo{background:#6d7585;color:#fff}
+.ctl table.jtb td.bdc .btree code.bfa{color:var(--mut);border:1px dashed var(--line);opacity:.8}
+.ctl details.pf{display:inline-flex;align-items:baseline;vertical-align:baseline;min-width:0}
+.ctl details.pf>summary{list-style:none;cursor:pointer;padding:0 2px;border-radius:4px}
+.ctl details.pf>summary::-webkit-details-marker{display:none}
+.ctl details.pf>summary:hover,.ctl details.pf>summary:focus-visible{background:var(--acc2);outline:none}
+.ctl details.pf[open]>summary{color:var(--acc)}
+.ctl details.pf>code.p{display:inline;margin-left:3px;white-space:nowrap;font-size:10.5px;color:var(--mut);background:none;padding:0}
+.ctl .hl .hk{flex:0 0 auto;color:var(--mut);font-size:10.5px}
+.ctl .hl details.pf{flex:1 1 auto;overflow:hidden}
+/* a phone's press target is 44 px (CLAUDE.md, phone friendly): the 📁 fold grows to that, the path stays small */
+@media(max-width:640px){.ctl details.pf>summary{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px}}

@@ -243,11 +243,11 @@ def _build_line(batch: list[dict], rows: list[dict], seconds: float) -> str | No
 
 
 def _run_queue(dataset: str | None, once: bool, *, skip=(), only=None, by=None,
-               attended_ok: bool = False) -> int:
+               attended_ok: bool = False, fetch_only: bool = False) -> int:
     worst = 0
     while True:
         try:
-            req = ops.next_request(dataset, skip=skip, only=only, by=by)
+            req = ops.next_request(dataset, skip=skip, only=only, by=by, fetch_only=fetch_only)
         except ops.BUSY_ERRORS as e:
             # ops.sqlite held past busy_timeout (a long backup, a stuck writer), or Redis not answering: wait and ask
             # again, never die.
@@ -405,6 +405,12 @@ def main(argv: list[str] | None = None) -> int:
             print("builder not started: attended needs a terminal (a person logs in to WRDS and confirms Duo)",
                   file=sys.stderr)
             return 3
+        # #321: a request a killed run left `running` would hide here and keep the Fetch button at 409. Closing it
+        # needs no lock (#602: only a run whose own pid is gone), and the person is told to queue it again.
+        closed = ops.fail_dead_requests()[0]
+        if closed:
+            print(f"closed {closed} request(s) whose run was killed; press Fetch to queue it again",
+                  file=sys.stderr, flush=True)
         if not _attended_queued(args.dataset):
             # N2: otherwise it would sit on the writer turn for the whole wait and then exit without a word.
             print("no attended request queued", file=sys.stderr)
@@ -443,10 +449,11 @@ def main(argv: list[str] | None = None) -> int:
             for name in args.datasets:
                 mine = _own_requests_only(name)
                 rid = ops.enqueue(name, params, by="cli")
-                req = ops.next_request(name, by=mine)
+                # #502: a fetch-only run holds no builder lock, so it drains only fetch-only requests.
+                req = ops.next_request(name, by=mine, fetch_only=fetch_only)
                 while req is not None and req["id"] != rid:      # an older request of this dataset goes first
                     print(base.format_check(base.run_request(req)), flush=True)
-                    req = ops.next_request(name, by=mine)
+                    req = ops.next_request(name, by=mine, fetch_only=fetch_only)
                 row = base.run_request(req)
                 print(base.format_check(row), flush=True)
                 worst = max(worst, int(row["result"] == "failed"))
@@ -475,7 +482,7 @@ def main(argv: list[str] | None = None) -> int:
         # Without --dataset this is the hourly pass, which leaves the attended requests queued for the terminal
         # that may run them.
         skip = () if args.dataset else base.attended_names()
-        return max(_run_queue(args.dataset, args.once, skip=skip, by=mine), due_failed)
+        return max(_run_queue(args.dataset, args.once, skip=skip, by=mine, fetch_only=fetch_only), due_failed)
 
 
 if __name__ == "__main__":

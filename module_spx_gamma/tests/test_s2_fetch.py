@@ -9,6 +9,7 @@ import pytest
 
 from RevenueChaser.module_spx_gamma import raw_day, run as spx_run, snapshot as snap
 from RevenueChaser.module_spx_gamma.normalize import normalize_snapshot
+from RevenueChaser.module_spx_gamma import store as spx_store
 
 from .conftest import FakeUW, make_raw
 
@@ -65,7 +66,7 @@ def test_every_uw_call_goes_through_get_result_with_a_core_path(tmp_path, monkey
 def test_flow_per_strike_bare_list_is_kept(tmp_path):
     _, raw = _fetch(tmp_path)
     assert raw["flow_per_strike"] == {"data": [{"strike": "7800", "call_volume": 1}]}
-    assert (tmp_path / DAY / "flow_per_strike.json").exists()
+    assert "flow_per_strike.json" in spx_store.raw_files(DAY)
 
 
 def test_flow_per_strike_failure_is_only_a_warning(tmp_path):
@@ -75,7 +76,7 @@ def test_flow_per_strike_failure_is_only_a_warning(tmp_path):
         return _handler(path, params)
 
     _fetch(tmp_path, h)
-    man = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
+    man = spx_store.raw_manifest(DAY)
     assert any(w.startswith("flow_per_strike") for w in man["warnings"])
 
 
@@ -87,7 +88,7 @@ def test_a_malformed_payload_is_a_failed_call(tmp_path):
 
     _, raw = _fetch(tmp_path, h)
     assert "interpolated_iv" not in raw
-    man = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
+    man = spx_store.raw_manifest(DAY)
     assert any("interpolated_iv" in w and "malformed" in w for w in man["warnings"])
 
 
@@ -117,7 +118,7 @@ def test_an_injected_fetcher_failing_is_a_warning_not_an_abort(tmp_path):
 
     uw = FakeUW(_handler, prefix="")
     raw = snap.fetch_snapshot(uw, DAY, data_root=tmp_path, candle_fetcher=boom)
-    man = json.loads((tmp_path / DAY / "manifest.json").read_text(encoding="utf-8"))
+    man = spx_store.raw_manifest(DAY)
     assert any(w.startswith("SPX closes read failed") for w in man["warnings"])
     assert raw["ohlc"]["source"] == "unavailable"
 
@@ -142,7 +143,7 @@ def test_normalize_without_a_stamp_has_none_rather_than_now():
 
 def test_load_raw_day_round_trips_the_fetch(tmp_path):
     _, raw = _fetch(tmp_path, fetch_all_expiries=True)
-    loaded = raw_day.load_raw_day(tmp_path / DAY)
+    loaded = raw_day.load_raw_day(DAY)
     assert loaded["_meta"]["effective_date"] == DAY
     assert loaded["_meta"]["api_snapshot_time"]
     # The render reads the window, VIX and COT from the market store for the day (PR 3), so the two dicts it is
@@ -153,14 +154,13 @@ def test_load_raw_day_round_trips_the_fetch(tmp_path):
 
 def test_load_raw_day_keys_the_zero_dte_file_by_its_expiry(tmp_path):
     _fetch(tmp_path)
-    loaded = raw_day.load_raw_day(tmp_path / DAY)
+    loaded = raw_day.load_raw_day(DAY)
     assert list(loaded["strike_expiry"]) == [DAY]
 
 
 def test_load_raw_day_refuses_a_day_without_a_manifest(tmp_path):
-    (tmp_path / DAY).mkdir()
     with pytest.raises(FileNotFoundError):
-        raw_day.load_raw_day(tmp_path / DAY)
+        raw_day.load_raw_day(DAY)
 
 
 # ── Refresh: rebuild from the stored day, no network ───────────────────────
@@ -175,17 +175,17 @@ def _no_network(monkeypatch):
 
 
 def test_refresh_rebuilds_the_latest_day_from_disk(tmp_path, monkeypatch):
-    _fetch(tmp_path / "raw")
+    _fetch(tmp_path / "staging")
     _no_network(monkeypatch)
     out = spx_run.refresh(data_root=tmp_path)
     assert out["latest"]["asof_date"] == DAY
     assert (tmp_path / "parsed" / DAY / "snapshot.json").exists()
     assert (tmp_path / "reports" / DAY / "section.html").exists()
-    assert (tmp_path / "latest.json").exists()
+    assert spx_store.latest()["asof_date"] == DAY
 
 
 def test_refresh_of_a_named_day(tmp_path, monkeypatch):
-    _fetch(tmp_path / "raw")
+    _fetch(tmp_path / "staging")
     _no_network(monkeypatch)
     assert spx_run.refresh(DAY, data_root=tmp_path)["latest"]["asof_date"] == DAY
 
@@ -196,7 +196,7 @@ def test_refresh_without_any_stored_day_returns_none(tmp_path, monkeypatch):
 
 
 def test_refresh_does_not_backfill(tmp_path, monkeypatch):
-    _fetch(tmp_path / "raw")
+    _fetch(tmp_path / "staging")
     _no_network(monkeypatch)
     monkeypatch.setattr(spx_run, "_backfill_history",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("backfill")))
@@ -204,11 +204,11 @@ def test_refresh_does_not_backfill(tmp_path, monkeypatch):
 
 
 def test_refresh_keeps_the_raw_day_untouched(tmp_path, monkeypatch):
-    _fetch(tmp_path / "raw")
-    before = {p.name: p.read_bytes() for p in (tmp_path / "raw" / DAY).iterdir()}
+    _fetch(tmp_path / "staging")
+    before = (spx_store.raw_manifest(DAY), spx_store.raw_files(DAY))
     _no_network(monkeypatch)
     spx_run.refresh(data_root=tmp_path)
-    assert {p.name: p.read_bytes() for p in (tmp_path / "raw" / DAY).iterdir()} == before
+    assert (spx_store.raw_manifest(DAY), spx_store.raw_files(DAY)) == before
 
 
 # ── the job passes the dashboard's client through ──────────────────────────

@@ -67,6 +67,11 @@ KIND_MODES = ("off", "raw", "parquet", "full")
 #: The board's two switches (#527, avo 6 Nov 2026): ``fetch`` stops every fetch and build, ``backup`` every backup.
 #: A switch with no ``switch`` row, or with ``off_at`` NULL, is on.
 SWITCHES = ("fetch", "backup")
+#: One switch per served DuckDB file (avo, 10 Nov 2026: "main > midswitch > subswitches", and "Fetch de dursun"):
+#: ``file-<kind>`` off holds every dataset of that file, on its own or pressed by hand, under the fetch switch and
+#: over each dataset's own. The kinds are ``serving.KINDS`` (not imported here: serving imports duckdb).
+FILE_KINDS = ("market", "spine", "ownership", "prices", "fundamentals", "options")
+FILE_SWITCHES = tuple(f"file-{k}" for k in FILE_KINDS)
 # avo, 8 Nov 2026 ("B", #387): a resolved build issue is kept seven days; an open one until it is resolved.
 RESOLVED_ISSUE_DAYS = 7
 # The UW response headers sampled into uw_remaining: only UW's own, never a cookie or anything else the answer had.
@@ -336,6 +341,17 @@ def queue_view(finished: int = 20) -> dict:
     return {"active": [_request(r) for r in active], "finished": [_request(r) for r in done]}
 
 
+#: A request carrying any of these builds no serving file (``--no-duckdb``, ``--no-parquet``, the old ``--no-build``).
+FETCH_ONLY_PARAMS = ("no_duckdb", "no_parquet", "no_build")
+
+
+def is_fetch_only(params) -> bool:
+    """True for a request's params (a dict, its JSON text, or None) that build no serving file."""
+    if isinstance(params, str):
+        params = json.loads(params) if params else None
+    return any((params or {}).get(k) for k in FETCH_ONLY_PARAMS)
+
+
 def _request(row: sqlite3.Row | None) -> dict | None:
     if row is None:
         return None
@@ -346,7 +362,8 @@ def _request(row: sqlite3.Row | None) -> dict | None:
 
 @_routed
 def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
-                 only: Iterable[str] | None = None, by: str | None = None) -> dict | None:
+                 only: Iterable[str] | None = None, by: str | None = None,
+                 fetch_only: bool = False) -> dict | None:
     """Take the oldest queued request (of ``dataset``, when given) and mark it running; None when none is queued.
 
     ``skip`` leaves those datasets' requests in the queue, and ``only`` claims nothing else: that is how a request
@@ -357,6 +374,9 @@ def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
     ``by`` claims only what that requester queued. A person's ``backfill <attended>`` uses it so their run is
     their own: a request a page left for the attended runner is not theirs to spend the WRDS login and the day
     cap on (review SHOULD-2).
+
+    ``fetch_only`` claims only requests that build no serving file (``FETCH_ONLY_PARAMS``): a fetch-only process
+    holds no builder lock, so an ordinary request it drained would build and swap beside the real builder (#502).
     """
     skip = tuple(skip)
     if skip and only is not None:
@@ -373,6 +393,8 @@ def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
         if by is not None:
             sql += " AND requested_by = ?"
             args += (by,)
+        if fetch_only:
+            sql += " AND (" + " OR ".join(f"coalesce(json_extract(params, '$.{k}'), 0)" for k in FETCH_ONLY_PARAMS) + ")"
         if only is not None:
             names = tuple(only)
             if not names:
@@ -434,10 +456,10 @@ def fail_orphans(*, dead_pids_only: bool = False) -> tuple[int, int]:
     me = os.getpid()
     now, tail = time.time(), _orphan_tail(me, dead_pids_only)
     with _open() as con, _tx(con):
-        runs = [dict(r) for r in con.execute("SELECT run_id, dataset, pid, started_at FROM job_runs2 "
+        runs = [dict(r) for r in con.execute("SELECT run_id, dataset, pid, host, started_at FROM job_runs2 "
                                              "WHERE status = 'running' AND pid IS NOT ? ORDER BY started_at",
                                              (me,))]
-        alive = {r["run_id"]: _run_alive(r["pid"], dead_pids_only) for r in runs}
+        alive = {r["run_id"]: _run_alive(r["pid"], dead_pids_only, r["host"]) for r in runs}
         n_reqs = 0
         for req in con.execute("SELECT id, dataset, started_at FROM build_requests WHERE status = 'running' "
                                "ORDER BY id").fetchall():
@@ -468,10 +490,16 @@ def _orphan_tail(me: int, dead_pids_only: bool) -> str:
             else f"builder died; found running by the builder started as pid {me}")
 
 
-def _run_alive(pid: int | None, dead_pids_only: bool) -> bool:
-    """The builder's start asks whether the run's builder is alive; a reader asks only whether its pid is gone."""
+def _run_alive(pid: int | None, dead_pids_only: bool, host: str | None = None) -> bool:
+    """The builder's start asks whether the run's builder is alive; a reader asks only whether its pid is gone.
+
+    A reader never judges a run another host started (#611): that pid names nothing here. A row with no host (written
+    before the column was filled) is taken as this host's."""
     if dead_pids_only:
+        import socket
         from ..core import procs
+        if host and host != socket.gethostname():
+            return True
         return not pid or procs.pid_alive(pid)
     return _builder_alive(pid)
 
@@ -855,8 +883,8 @@ def kind_mode(kind: str) -> str:
     return (kind_mode_get(kind) or {}).get("mode") or "off"
 
 
-#: What a source's own Automated select sets (#527): ``file`` ("as the file") drops its row, so the kind's mode
-#: holds; any ``KIND_MODES`` value holds for that source only.
+#: What a source's own Automated select sets (#527): any ``KIND_MODES`` value. ``file`` (the old "as the file") still
+#: drops the row, which is ``off`` now: the hourly pass no longer reads the kind's mode (avo, 10 Nov 2026).
 AS_THE_FILE = "file"
 DATASET_MODES = (AS_THE_FILE, *KIND_MODES)
 
@@ -881,13 +909,30 @@ def dataset_mode_get(dataset: str) -> dict | None:
 
 
 def dataset_mode(dataset: str, kind: str) -> str:
-    """What the hourly pass runs for ``dataset``: its own row's mode, else its kind's (``kind_mode``)."""
-    return (dataset_mode_get(dataset) or {}).get("mode") or kind_mode(kind)
+    """What the hourly pass runs for ``dataset``: its own row's mode, ``off`` when it has none. ``kind`` is no longer
+    read (avo, 10 Nov 2026: the file-level setting is gone); the argument stays so the builder's call is unchanged."""
+    return (dataset_mode_get(dataset) or {}).get("mode") or "off"
+
+
+def copy_kind_modes(datasets: dict, *, by: str) -> list[tuple[str, str]]:
+    """The one-time step of the deploy that drops the file-level setting: each dataset with no row of its own gets
+    its kind's mode as its own, so the hourly pass runs exactly what it ran before. ``datasets`` is ``{name: object
+    with .kind}`` (``rcdata.build.DATASETS``). Returns ``[(dataset, mode)]`` it wrote; ``off`` kinds write nothing,
+    and running it twice writes nothing the second time."""
+    out = []
+    for name, ds in datasets.items():
+        if dataset_mode_get(name) is not None:
+            continue
+        mode = kind_mode(ds.kind)
+        if mode != "off":
+            dataset_mode_set(name, mode, by=by)
+            out.append((name, mode))
+    return out
 
 
 def _switch(name: str) -> str:
-    if name not in SWITCHES:
-        raise ValueError(f"unknown switch {name!r}; known: {', '.join(SWITCHES)}")
+    if name not in SWITCHES + FILE_SWITCHES:
+        raise ValueError(f"unknown switch {name!r}; known: {', '.join(SWITCHES + FILE_SWITCHES)}")
     return name
 
 
@@ -916,7 +961,8 @@ def switch_off(name: str) -> dict | None:
 
 def switch_words(name: str, row: dict) -> str:
     when = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(row["off_at"]))
-    return f"the {name} switch is off ({row.get('off_by') or '?'} at {when})"
+    what = f"{name.removeprefix('file-')}.duckdb" if name in FILE_SWITCHES else name
+    return f"the {what} switch is off ({row.get('off_by') or '?'} at {when})"
 
 
 # ── Read helpers for the Settings page (PR 2) ──────────────────────────────────────────────────────────────────
@@ -1093,6 +1139,14 @@ def run_started_at(run_id: str) -> float | None:
     """``job_runs2.started_at`` of ``run_id`` (epoch seconds), None when there is no such run."""
     rows = _select("SELECT started_at FROM job_runs2 WHERE run_id = ?", (run_id,))
     return rows[0]["started_at"] if rows else None
+
+
+@_routed
+def runs_between(start: float, end: float) -> list[dict]:
+    """The builder's runs that started in ``[start, end)`` (epoch seconds), oldest first: ``dataset``,
+    ``started_at``, ``status``. The Grafana RC Fetch board's heatmap over its time picker's range (avo, 10 Nov 2026)."""
+    return _select("SELECT dataset, started_at, status FROM job_runs2 WHERE started_at >= ? AND started_at < ? "
+                   "ORDER BY started_at, run_id", (float(start), float(end)))
 
 
 @_routed

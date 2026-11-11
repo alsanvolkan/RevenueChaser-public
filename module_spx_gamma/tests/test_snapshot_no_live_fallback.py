@@ -16,6 +16,7 @@ from RevenueChaser.core import calendar
 from RevenueChaser.core.providers import unusual_whales
 from RevenueChaser.module_spx_gamma import render, run as spx_run, snapshot as snap
 from RevenueChaser.rcdata.tests.conftest import http_mock  # noqa: F401  (the transport-level mock)
+from RevenueChaser.module_spx_gamma import store as spx_store
 
 from . import rcdata_fixture as fx
 
@@ -103,7 +104,7 @@ def _uw_requests(http_mock):  # noqa: F811
 
 
 def test_the_uw_requests_of_a_fetch_are_todays(uw, http_mock, rcdata_market, tmp_path):  # noqa: F811
-    snap.fetch_snapshot(uw, DAY, data_root=tmp_path / "raw", fetch_all_expiries=True)
+    snap.fetch_snapshot(uw, DAY, data_root=tmp_path / "staging", fetch_all_expiries=True)
     assert _uw_requests(http_mock) == TODAYS_UW_REQUESTS
     assert len(TODAYS_UW_REQUESTS) == 24, ("18 before, plus greek-flow (§4.1), the VIX option book (§17), the "
                                            "economic calendar (A8) and the SPY 30m bars (A5); the skew and target "
@@ -116,10 +117,9 @@ def test_a_fetch_with_nothing_stored_asks_no_live_source_and_says_not_stored(uw,
     out = spx_run.run(DAY, data_root=tmp_path, uw=uw)
     assert yfinance_calls == []
     assert {r.url.host for r in http_mock.requests} == {UW_HOST}, "no Socrata, no Yahoo, no other host"
-    day_dir = tmp_path / "raw" / DAY
-    assert (day_dir / "manifest.json").exists()
+    assert spx_store.has_day(DAY)
     for name in ("vix_family.json", "cftc_tff.json", "ohlc_8wk.json"):
-        assert not (day_dir / name).exists(), name
+        assert name not in spx_store.raw_files(DAY), name
     html = out["paths"]["report_html"].read_text(encoding="utf-8")
     for label in ("VIX family not stored for 2026-10-26", "CFTC COT not stored for 2026-10-26",
                   "SPX closes not stored for 2026-10-26", "0-1 DTE not stored for 2026-10-26"):
@@ -139,11 +139,11 @@ def test_a_fetch_reads_vix_cot_and_candles_from_the_store(uw, http_mock, yfinanc
     inputs = s["store_inputs"]
     assert {k: v["stored"] for k, v in inputs.items()} == {"vix": True, "cftc": True, "candles": True, "greek_grid": True,
                                                            "zero_one_dte": True}
-    manifest = json.loads((tmp_path / "raw" / DAY / "manifest.json").read_text(encoding="utf-8"))
+    manifest = spx_store.raw_manifest(DAY)
     assert manifest["input_sources"]["candles"]["source"] == "rcdata:market_series"
     assert manifest["input_sources"]["candles"]["status"] == "changed"
     assert not any(n in manifest["sha256"] for n in ("vix_family.json", "cftc_tff.json", "ohlc_8wk.json"))
-    latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    latest = spx_store.latest()
     assert set(latest["input_sources"]) == {"vix", "cftc", "candles", "zero_one_dte", "greek_grid"}
     assert latest["input_sources"]["greek_grid"]["source"] == "rcdata:spx_greek_expiry_strike"
     assert latest["input_sources"]["zero_one_dte"]["source"] == "rcdata:spx_gamma_expiry_strike"

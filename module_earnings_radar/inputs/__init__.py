@@ -1,6 +1,7 @@
 """The Earnings board's inputs steps (E0, #372; split per schedule in #620).
 
-``sweeps()`` is the step ``earnings`` of ``core/nightly_inputs.py`` (``STEPS``), all seven sweeps for a manual run.
+``sweeps()`` is the step ``earnings`` of ``core/nightly_inputs.py`` (``STEPS``), all six sweeps for a manual run (D37, the economic calendar, left in
+Nov 2026: the builder's ``uw/economic_calendar`` serves it hourly).
 The scheduled entries each run one smaller step (#620): ``calendar_sweeps`` (RC-Earnings-Calendar),
 ``short_interest_sweeps`` (RC-Short-Interest), ``daytime_sweeps`` (RC-Earnings-Daytime), ``macro_sweeps``
 (RC-Macro-Weekly) and ``cftc_sweeps`` (RC-CFTC-Weekly). Each sweep stores its inputs under the run's session, inside
@@ -11,9 +12,9 @@ from __future__ import annotations
 
 def sweeps():
     from RevenueChaser.module_earnings_radar.inputs import (
-        cftc_cot, earnings_calendar, economic, estimates, macro, short_interest, vol_index)
+        cftc_cot, earnings_calendar, estimates, macro, short_interest, vol_index)
 
-    return (earnings_calendar.SWEEP, economic.SWEEP, macro.SWEEP, short_interest.SWEEP, estimates.SWEEP,
+    return (earnings_calendar.SWEEP, macro.SWEEP, short_interest.SWEEP, estimates.SWEEP,
             vol_index.SWEEP, cftc_cot.SWEEP)
 
 
@@ -28,8 +29,8 @@ def short_interest_sweeps():
 
 
 def daytime_sweeps():
-    from RevenueChaser.module_earnings_radar.inputs import economic, estimates
-    return (economic.SWEEP, estimates.SWEEP)
+    from RevenueChaser.module_earnings_radar.inputs import estimates
+    return (estimates.SWEEP,)
 
 
 def macro_sweeps():

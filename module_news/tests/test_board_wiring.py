@@ -43,10 +43,9 @@ def test_the_job_builds_then_renders(monkeypatch, tmp_path):
     asked = []
     monkeypatch.setattr(headlines, "fetch", lambda names, **kw: asked.append(names) or
                         {"tickers": len(names), "stored": 0, "skipped": [], "error": "no API session"})
-    rawstore.write_rows("economic_calendar", [{
-        "session_date": "2026-11-09", "event_ts": 1794317400.0, "event": "CPI, M/M%", "type": "report",
-        "forecast": None, "prev": None, "reported_period": None, "raw_row": "{}", "source": "uw",
-        "fetched_at": 100.0, "run_id": "s", "run_at": 100.0}])
+    from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_economic
+    serve_economic({"2026-11-09": [{"event_ts": 1794317400.0, "event": "CPI, M/M%", "type": "report"}]},
+                   fetched_at=100.0)
     with pytest.raises(JobMessage):                   # a down gateway ends the job "done" with gaps, never failed
         runners.run_news()
     assert (tmp_path / "news_latest.html").exists()
@@ -74,3 +73,65 @@ def test_a_name_ibkr_does_not_know_is_no_banner(monkeypatch, tmp_path):
     monkeypatch.setattr(headlines, "fetch", lambda names, **kw:
                         {"tickers": len(names), "stored": 3, "skipped": ["BRK.B"], "error": None})
     assert 'class="rc-provider-health"' not in runners.run_news().read_text(encoding="utf-8")
+
+
+def test_the_listener_route_queues_the_headlines_job_once(monkeypatch):
+    captured = []
+    monkeypatch.setattr(dashboard.jobs, "submit", lambda module, params: captured.append(module) or "stubjob")
+    monkeypatch.setattr(dashboard.jobs, "active_id", lambda modules: None)
+    assert _client().post("/run/news_headlines").status_code == 202 and captured == ["news_headlines"]
+    monkeypatch.setattr(dashboard.jobs, "active_id", lambda modules: "busyjob")      # a pass still queued
+    r = _client().post("/run/news_headlines")
+    assert r.status_code == 409 and r.get_json()["job_id"] == "busyjob" and captured == ["news_headlines"]
+
+
+def test_the_headlines_job_loads_the_tape_then_renders_without_the_calendar(monkeypatch, tmp_path):
+    from RevenueChaser.module_news import calendar, headlines, report
+    monkeypatch.setattr(report, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(calendar, "build", lambda **kw: pytest.fail("the 5-minute pass builds no calendar"))
+    order = []
+    monkeypatch.setattr(headlines, "load_tape", lambda **kw: order.append("tape") or {"read": 2, "stored": 1})
+    monkeypatch.setattr(headlines, "load_x", lambda **kw: order.append("x") or
+                        {"mails": 1, "stored": 2, "refused": 0, "cut": 0})
+    monkeypatch.setattr(headlines, "fetch", lambda names, **kw: order.append("fetch") or
+                        {"tickers": len(names), "stored": 0, "skipped": [], "error": None})
+    assert runners.run_news_headlines().name == "news_latest.html" and order == ["tape", "x", "fetch"]
+
+
+def test_the_api_returns_headlines_stored_after_since_with_their_lane():
+    import json
+    import time
+    now = time.time()
+    rawstore.write_rows("news_headlines", [
+        {"headline_id": h, "provider": "ibkr", "published_at": now - 60, "headline": h, "source": "Dow Jones",
+         "tickers": json.dumps(t), "url": None, "fetched_at": now, "run_id": "r", "run_at": at}
+        for h, t, at in (("old", ["AAPL"], now - 600), ("market", [], now - 10), ("stock", ["NVDA"], now - 5))])
+    r = _client().get("/api/news/headlines", query_string={"since": now - 100})
+    rows = {x["headline"]: x for x in r.get_json()["rows"]}
+    assert set(rows) == {"market", "stock"}
+    assert rows["market"]["lane"] == "market" and rows["stock"]["lane"] == "stocks" and rows["stock"]["tickers"] == ["NVDA"]
+    assert _client().get("/api/news/headlines", query_string={"since": "x"}).status_code == 400
+
+
+def test_the_five_minute_pass_reloads_no_frame_and_a_down_gateway_raises_no_alert(monkeypatch, tmp_path):
+    from RevenueChaser.app import jobs
+    from RevenueChaser.module_news import headlines, report
+    assert jobs._PRODUCES["news_headlines"] == []              # the shell reloads what a job produces
+    monkeypatch.setattr(report, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(headlines, "load_tape", lambda **kw: {"read": 0, "stored": 0})
+    monkeypatch.setattr(headlines, "fetch", lambda names, **kw:
+                        {"tickers": len(names), "stored": 0, "skipped": [], "error": "no API session"})
+    page = runners.run_news_headlines().read_text(encoding="utf-8")   # no JobMessage: the shell alerts each one
+    assert page.count('class="rc-provider-health"') == 1
+
+
+def test_the_history_drops_the_five_minute_passes_first(monkeypatch):
+    from RevenueChaser.app import jobs
+    monkeypatch.setattr(jobs, "_JOBS", {})
+    monkeypatch.setattr(jobs, "_SEQ", {})
+    monkeypatch.setattr(jobs, "MAX_HISTORY", 3)
+    for i, module in enumerate(["earnings", "news_headlines", "news_headlines", "rotation"]):
+        jobs._JOBS[f"j{i}"] = {"id": f"j{i}", "module": module, "status": "done"}
+        jobs._SEQ[f"j{i}"] = i
+    jobs._trim_history()
+    assert sorted(jobs._JOBS) == ["j0", "j2", "j3"]

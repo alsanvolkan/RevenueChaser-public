@@ -333,13 +333,10 @@ def test_an_unknown_stage_is_refused_and_queues_nothing(client):
     assert r.status_code == 400 and "unknown stage" in r.get_json()["error"] and _rows() == []
 
 
-def test_automation_sets_a_kinds_mode_and_refuses_an_unknown_kind_or_mode(client):
+def test_the_file_level_automation_route_is_gone(client):
+    # avo, 10 Nov 2026: only a dataset's own mode counts, so nothing sets a kind's any more
     r = client.post("/api/build/automation/market", json={"mode": "raw"}, headers={"X-RC-Panel": "settings"})
-    assert r.status_code == 200 and r.get_json()["automation"]["mode"] == "raw"
-    assert ops.kind_mode_get("market")["set_by"] == "settings"
-    assert client.post("/api/build/automation/nope", json={"mode": "raw"}).status_code == 400
-    assert client.post("/api/build/automation/market", json={"mode": "everything"}).status_code == 400
-    assert ops.kind_mode("market") == "raw"
+    assert r.status_code in (404, 405) and ops.kind_mode_get("market") is None
 
 
 def test_switch_turns_fetch_or_backup_off_and_on_and_refuses_anything_else(client):

@@ -35,24 +35,9 @@ import duckdb
 
 from ..core import config
 
-# The serving schema of each kind. A change to a kind's tables bumps its number in its own PR (box rule).
-SERVING_SCHEMA_VERSION = {"market": 2, "spine": 6, "ownership": 1}
-# spine 2: ``fund``, the SEC fund file's share classes and the ETF rule (``build/spine/sec_tickers_mf.py``).
-# spine 3: ``etf_holdings``, the rotation board's ETFs read whole (``build/spine/etf_holdings.py``).
-# spine 4: ``etf``, the ETF universe from Alpha Vantage and N-CEN (``build/spine/etf.py``, #346).
-# spine 5: ``my_universe`` and ``my_universe_changes``, the names we keep and who entered or left
-#          (``build/spine/my_universe.py``, avo's rules of 4 Nov 2026).
-# spine 6: ``security.sic``, Compustat's company SIC, for the relatedness profile (#400, avo 10 Nov 2026).
-
-# PR 7 (G2): ``prices.duckdb``, the daily bars, corporate actions, shares and market cap (``build/prices/``).
-SERVING_SCHEMA_VERSION["prices"] = 1
-# PR 12 (G5): ``fundamentals.duckdb``, the facts, filings, earnings, estimates and checks (``build/fundamentals/``).
-SERVING_SCHEMA_VERSION["fundamentals"] = 2
-# fundamentals 2: ``earnings_reported``, the EPS a company reported as UW serves it, in a table of its own
-#                 (``build/fundamentals/uw_earnings.py``, avo's decision of 5 Nov 2026). Bumped before the kind's
-#                 first build, so no live file had to be checkpointed for it.
-# PR 18 (G8): ``options.duckdb``, the option chains, exposures, prints and IV (``build/options/``).
-SERVING_SCHEMA_VERSION["options"] = 1
+# The serving schema of each kind lives in ``serving_versions.py``, not here: this file is in every kind's rules
+# fingerprint (``build/dirty.py``), so a number kept here made one kind's bump a whole build of all six (#649).
+from .serving_versions import SERVING_SCHEMA_VERSION
 
 KINDS = tuple(SERVING_SCHEMA_VERSION)
 VERSION_TABLE = "serving_schema_version"
@@ -89,7 +74,9 @@ THREADS_DEFAULT = 3
 # The most a build may spill (``RC_DUCKDB_MAX_TEMP``, a DuckDB size): past it the build fails, it does not fill the disk.
 # DuckDB's own default is 90 % of the free space. 2010-2025 of history spilled 9.5 GB at its largest statement (#372).
 MAX_TEMP_DEFAULT = "200GB"
-_SIZE_UNITS = ("KB", "MB", "GB", "TB", "KIB", "MIB", "GIB", "TIB")
+_SIZE_BYTES = {"KIB": 2**10, "MIB": 2**20, "GIB": 2**30, "TIB": 2**40,
+               "KB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
+_SIZE_UNITS = tuple(_SIZE_BYTES)
 
 
 def _size(env: str, default: str) -> str:
@@ -97,23 +84,40 @@ def _size(env: str, default: str) -> str:
     return value if value[:1].isdigit() and value.upper().endswith(_SIZE_UNITS) else default
 
 
-def build_config() -> dict[str, str | int]:
+def _spill_cap(cap: str, spill_parent: Path) -> str:
+    """The smaller of ``cap`` and 90 % of the free space on ``spill_parent``'s disk (DuckDB's own default, which a set
+    cap replaces): a 200 GB cap must not let a spill moved to the SSD (``RC_DUCKDB_TEMP_DIR``, or ``MARKET_RAW_DIR``
+    falling back into the checkout) fill the disk the live stores share (#379)."""
+    unit = next(u for u in _SIZE_UNITS if cap.upper().endswith(u))
+    try:
+        cap_bytes = float(cap[:-len(unit)]) * _SIZE_BYTES[unit]
+    except ValueError:                        # not a number DuckDB reads either: it refuses it at connect
+        return cap
+    room = shutil.disk_usage(spill_parent).free * 0.9
+    return cap if cap_bytes <= room else f"{int(room) // 1000}KB"
+
+
+def build_config(spill_parent: Path | None = None) -> dict[str, str | int]:
     """``memory_limit``, ``threads`` and ``max_temp_directory_size`` for a build connection, from
-    ``RC_DUCKDB_MEMORY_LIMIT`` / ``RC_DUCKDB_THREADS`` / ``RC_DUCKDB_MAX_TEMP``."""
+    ``RC_DUCKDB_MEMORY_LIMIT`` / ``RC_DUCKDB_THREADS`` / ``RC_DUCKDB_MAX_TEMP``; given the spill folder's parent, the
+    spill cap is held to 90 % of that disk's free space (``_spill_cap``)."""
     try:
         threads = int(os.getenv("RC_DUCKDB_THREADS", "").strip())
     except ValueError:
         threads = THREADS_DEFAULT
+    max_temp = _size("RC_DUCKDB_MAX_TEMP", MAX_TEMP_DEFAULT)
     return {"memory_limit": _size("RC_DUCKDB_MEMORY_LIMIT", MEMORY_LIMIT_DEFAULT),
             "threads": threads if threads > 0 else THREADS_DEFAULT,
-            "max_temp_directory_size": _size("RC_DUCKDB_MAX_TEMP", MAX_TEMP_DEFAULT)}
+            "max_temp_directory_size": _spill_cap(max_temp, spill_parent) if spill_parent else max_temp}
 
 
 def spill_dir(path: Path) -> Path:
     """Where the build file ``path`` spills: under the raw root (the server's HDD), one folder per build, which DuckDB
     removes when the build closes. Not beside the build file: request 71 spilled 47 GB on the SSD the live files share
-    (#372)."""
-    return Path(config.MARKET_RAW_DIR) / "build_tmp" / f"{path.name}.tmp"
+    (#372). ``RC_DUCKDB_TEMP_DIR`` moves the parent folder (a later move to the SSD, once a build's logged spill peak
+    says it fits); unset or empty keeps the raw root."""
+    root = os.getenv("RC_DUCKDB_TEMP_DIR", "").strip()
+    return (Path(root) if root else Path(config.MARKET_RAW_DIR) / "build_tmp") / f"{path.name}.tmp"
 
 
 class SwapRefused(RuntimeError):
@@ -240,9 +244,11 @@ def _verify(kind: str, path: Path, expected_counts: dict[str, int], checks: list
 
 
 def sweep_builds(kind: str) -> list[Path]:
-    """Remove the build files of ``kind`` a killed builder left (``<kind>.<build_id>.duckdb`` and its ``.wal``);
-    never the live or the ``prev`` file. Called by the builder at start, while it holds the ``rcdata_build`` lock,
-    so no build of its own is in progress. Returns what it removed."""
+    """Remove the build files of ``kind`` a killed builder left (``<kind>.<build_id>.duckdb`` and its ``.wal``) and
+    their spill folders (``spill_dir``: DuckDB removes one only when its build closes, so an OOM-killed build left
+    19 GB of ownership and 22 GB of prices spill on homesrv, 10 Nov 2026); never the live or the ``prev`` file.
+    Called by the builder at start, while it holds the ``rcdata_build`` lock, so no build of its own is in progress.
+    Returns what it removed."""
     keep = {live_path(kind).name, prev_path(kind).name}
     removed = []
     for p in sorted(Path(config.MARKET_DIR).glob(f"{_kind(kind)}.*.duckdb*")):
@@ -251,6 +257,10 @@ def sweep_builds(kind: str) -> list[Path]:
             continue
         p.unlink(missing_ok=True)
         removed.append(p)
+    for d in sorted(spill_dir(Path(f"{_kind(kind)}.duckdb")).parent.glob(f"{kind}.*.duckdb.tmp")):
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+            removed.append(d)
     return removed
 
 
@@ -398,7 +408,7 @@ def build(kind: str, base: str = "fresh") -> Iterator[BuildFile]:
     spill.parent.mkdir(parents=True, exist_ok=True)               # DuckDB makes only the last level
     try:
         mode = _copy_live(kind, path) if base == "live" else "fresh"
-        con = duckdb.connect(str(path), config={**build_config(), "temp_directory": str(spill)})
+        con = duckdb.connect(str(path), config={**build_config(spill.parent), "temp_directory": str(spill)})
     except BaseException:
         _remove(path)      # a copy that broke mid-way is as large as the live file, on the live files' own disk
         raise

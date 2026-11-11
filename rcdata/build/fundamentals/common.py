@@ -196,7 +196,10 @@ def stage_glob(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str
     ``{src}``, as in ``spine.stage.create``. No file yet: an empty, typed table.
 
     ``ciks`` (a build on the live copy, :func:`dirty_ciks`) loads only those companies' partitions: the
-    ``cik=*`` of ``pattern`` is each of them in turn."""
+    ``cik=*`` of ``pattern`` is each of them in turn.
+
+    A ``schema`` column no file holds yet (a column added to the Parquet shape, written only by a re-type) is read as
+    NULL, so a build between the deploy and the re-type still runs (the fundamentals freeze, #645)."""
     cols = ", ".join(f'"{c}" {t}' for c, t in schema)
     con.execute(f"CREATE OR REPLACE TEMP TABLE {name} ({cols})")
     names = ", ".join(f'"{c}"' for c, _ in schema)
@@ -206,12 +209,13 @@ def stage_glob(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str
         files = [p for c in sorted(ciks) if folder.is_dir()
                  for p in sorted(folder.glob(pattern.replace("cik=*", f"cik={c}")))]
         if files:
-            src = f"read_parquet([{', '.join(base.sql_path(p) for p in files)}], union_by_name = true)"
+            src = base.with_all(con, schema, f"read_parquet([{', '.join(base.sql_path(p) for p in files)}], "
+                                             "union_by_name = true)")
             body = select.replace("{src}", src) if select else f"SELECT {names} FROM {src}"
             con.execute(f"INSERT INTO {name} SELECT {names} FROM ({body})")
         return count(con, name)
     if folder.is_dir() and next(folder.glob(pattern), None) is not None:
-        src = f"read_parquet({base.sql_path(folder / pattern)}, union_by_name = true)"
+        src = base.with_all(con, schema, f"read_parquet({base.sql_path(folder / pattern)}, union_by_name = true)")
         body = select.replace("{src}", src) if select else f"SELECT {names} FROM {src}"
         con.execute(f"INSERT INTO {name} SELECT {names} FROM ({body})")
     return count(con, name)

@@ -311,7 +311,8 @@ read_queue = queue_view
 
 
 def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
-                 only: Iterable[str] | None = None, by: str | None = None) -> dict | None:
+                 only: Iterable[str] | None = None, by: str | None = None,
+                 fetch_only: bool = False) -> dict | None:
     skip = tuple(skip)
     if skip and only is not None:
         raise ValueError("next_request takes skip or only, not both")
@@ -320,7 +321,8 @@ def next_request(dataset: str | None = None, *, skip: Iterable[str] = (),
     def work():
         for r in _active():
             if (r["status"] == "queued" and dataset in (None, r["dataset"]) and r["dataset"] not in skip
-                    and by in (None, r["requested_by"]) and (names is None or r["dataset"] in names)):
+                    and by in (None, r["requested_by"]) and (names is None or r["dataset"] in names)
+                    and (not fetch_only or ops.is_fetch_only(r.get("params")))):
                 row = {**r, "status": "running", "started_at": time.time()}
                 return ops._request(row), lambda p: _put(p, "build_requests", row)
         return None, None
@@ -353,7 +355,7 @@ def fail_orphans(*, dead_pids_only: bool = False) -> tuple[int, int]:
         runs = sorted((r for r in _fetch("job_runs2", _client().smembers(_key("job_runs2", "running")))
                        if r["status"] == "running" and r["pid"] != me),
                       key=lambda r: (r["started_at"] is not None, r["started_at"] or 0.0))
-        alive = {r["run_id"]: ops._run_alive(r["pid"], dead_pids_only) for r in runs}
+        alive = {r["run_id"]: ops._run_alive(r["pid"], dead_pids_only, r.get("host")) for r in runs}
         reqs, checks = [], []
         for req in (r for r in _active() if r["status"] == "running"):
             run = next((r for r in runs if r["dataset"] == req["dataset"]
@@ -525,6 +527,12 @@ def finish_run(run_id: str, status: str, error: str | None = None) -> None:
 def run_started_at(run_id: str) -> float | None:
     row = _one("job_runs2", run_id)
     return row["started_at"] if row else None
+
+
+def runs_between(start: float, end: float) -> list[dict]:
+    rows = _fetch("job_runs2", _client().zrangebyscore(_key("job_runs2"), float(start), f"({float(end)}"))
+    rows.sort(key=lambda r: (r["started_at"] or 0.0, r["run_id"]))
+    return [{c: r[c] for c in ("dataset", "started_at", "status")} for r in rows]
 
 
 def last_builder_run() -> dict | None:

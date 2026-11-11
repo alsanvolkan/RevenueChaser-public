@@ -258,8 +258,11 @@ jobs.register("daily_bars", runners.run_daily_bars, ["module_settings"], lane="l
 # Index lists (#302): three UW requests plus the SmallCap 600 list from the identity cache.
 jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane="long")
 jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
-# News (S9, S16): store-only; builds boards/news.duckdb from raw.economic_calendar, then renders.
+# News (S9, S16): store-only; builds boards/news.duckdb from market.economic_event, then renders.
 jobs.register("module_news", runners.run_news, ["module_news"], requires_uw=False)
+# News live (#673): the listener (module_news/tape.py) queues this every 5 minutes; headlines only, then the page.
+# produces nothing: the shell would reload the News frame (and alert a gap) every 5 minutes; the page polls itself.
+jobs.register("news_headlines", runners.run_news_headlines, [], requires_uw=False)
 # Welcome (decision A): store-only; builds boards/welcome.duckdb from stored inputs, then renders.
 jobs.register("module_welcome", runners.run_welcome, ["module_welcome"], requires_uw=False)
 
@@ -296,10 +299,9 @@ TABS = [
     {"type": "tab", "key": "module_leaps", "label": "LEAPS", "url": "/view/module_leaps", "sub": True},
     {"type": "header", "label": "Ops"},
     {"type": "tab", "key": "module_settings", "label": "Settings / Data health", "url": "/view/module_settings", "sub": True},
-    # Read-only: the dashboard's own log files (app/logview.py). No Fetch, no Refresh, no data date.
-    {"type": "tab", "key": "logs", "label": "Logs", "url": "/view/logs", "sub": True},
-    # Read-only: the job_runs rows every job and scheduled task leaves (app/runview.py, #26 PL5-b).
-    {"type": "tab", "key": "runs", "label": "Runs", "url": "/view/runs", "sub": True},
+    # avo, 10 Nov 2026: the runs and logs of every job by the board it feeds, and the watch lists (app/activity.py);
+    # it takes the place of Logs and Runs, whose pages still answer at /view/logs and /view/runs. No Fetch, no Refresh.
+    {"type": "tab", "key": "activity", "label": "Activity", "url": "/view/activity", "sub": True},
 ]
 
 
@@ -388,6 +390,9 @@ def view(mod: str):
         return _view_spxgamma()
     if mod == "module_uw_interaction":
         return _view_uw_interaction()
+    if mod == "activity":
+        from . import activity
+        return activity.render_page()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     if mod == "runs":
@@ -592,13 +597,7 @@ def _spxgamma_latest_report_file() -> Path | None:
 
 
 def _spxgamma_latest_payload() -> dict | None:
-    path = runners.spxgamma_latest_path()
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
+    return runners.spxgamma_latest()
 
 
 def _view_uw_interaction():
@@ -720,6 +719,26 @@ def run_leaps():
 @app.route("/run/module_news", methods=["POST"])
 def run_module_news():
     return _submit("module_news", {})
+
+
+@app.route("/run/news_headlines", methods=["POST"])
+def run_news_headlines():
+    """The listener's 5-minute pass (#673). One at a time: a pass still queued or running answers 409."""
+    refused = _busy(("news_headlines", "module_news"), "A News headlines pass is already queued or running.")
+    if refused:
+        return refused
+    return _submit("news_headlines", {})
+
+
+@app.route("/api/news/headlines")
+def api_news_headlines():
+    """The News and Welcome pages' 60 s poll (#673): headlines newer than ``since`` (epoch seconds). Read-only."""
+    from RevenueChaser.module_news import report as news_report
+    try:
+        since = float(request.args.get("since") or 0)
+    except ValueError:
+        return jsonify({"ok": False, "error": "since must be epoch seconds"}), 400
+    return jsonify({"ok": True, "rows": news_report.api_rows(since)})
 
 
 @app.route("/run/module_welcome", methods=["POST"])
@@ -1257,7 +1276,7 @@ def api_data_asof(mod: str):
     by downloaded data reports its own data date here.
     """
     from RevenueChaser.core import provenance
-    return jsonify({"module": mod, "data_as_of": provenance.data_as_of(mod)})
+    return jsonify({"module": mod, "data_as_of": provenance.data_as_of(mod), "last_run": provenance.last_run(mod)})
 
 
 @app.route("/needs")
@@ -1609,9 +1628,20 @@ def api_build_queue():
 @app.route("/api/build/datasets")
 def api_build_datasets():
     """Every dataset the builder knows: ``{name, kind, attended, providers}``, sorted by name. An allow-list for the
-    Grafana buttons (#527 plan B3), which may press Fetch / Pause / Resume only on a dataset named here."""
+    Grafana buttons (#527 plan B3), which may press Fetch / Pause / Resume only on a dataset named here.
+    ``?detail=1`` adds each one's health and fetch settings from the ops store (``metrics.datasets_detail``), for
+    the Grafana RC Fetch board's categories."""
     from RevenueChaser.module_settings import metrics
 
+    if request.args.get("detail") == "1":
+        # the Grafana picker's range, epoch milliseconds (${__from} / ${__to}); without both, no history
+        try:
+            span = (float(request.args["from"]) / 1000, float(request.args["to"]) / 1000)
+        except (KeyError, ValueError):
+            span = None
+        if span and not 0 <= span[0] < span[1]:
+            return jsonify({"ok": False, "error": "from must be before to"}), 400
+        return jsonify({"ok": True, "datasets": metrics.datasets_detail(span=span), "head": metrics.board_head()})
     return jsonify({"ok": True, "datasets": metrics.datasets_list()})
 
 
@@ -1663,25 +1693,11 @@ def api_build_schedule(dataset: str, action: str):
     return jsonify({"ok": True, "dataset": dataset, "schedule": ops.schedule_get(dataset), "cancelled": cancelled})
 
 
-@app.route("/api/build/automation/<kind>", methods=["POST"])
-def api_build_automation(kind: str):
-    """Set what the hourly pass queues for one serving kind's due datasets: ``{"mode": "off|raw|parquet|full"}``
-    (``ops.KIND_MODES``). 400 for an unknown kind or mode. A person's Fetch is not touched by it."""
-    from RevenueChaser.rcdata import ops, serving
-    if kind not in serving.KINDS:
-        return jsonify({"ok": False, "error": f"unknown kind {kind!r}; known: {', '.join(serving.KINDS)}"}), 400
-    mode = str((request.get_json(silent=True) or {}).get("mode") or "").strip()
-    if mode not in ops.KIND_MODES:
-        return jsonify({"ok": False, "error": f"unknown mode {mode!r}; known: {', '.join(ops.KIND_MODES)}"}), 400
-    ops.kind_mode_set(kind, mode, by=_requested_by())
-    return jsonify({"ok": True, "kind": kind, "automation": ops.kind_mode_get(kind)})
-
-
 @app.route("/api/build/automation-ds/<path:dataset>", methods=["POST"])
 def api_build_automation_ds(dataset: str):
-    """#527: one source's own automation, over its file's: ``{"mode": "file|off|raw|parquet|full"}``
-    (``ops.DATASET_MODES``); ``file`` drops the row, so the file's mode holds again. 400 for an unknown dataset or
-    mode. A person's Fetch is not touched by it."""
+    """#527: one source's own automation: ``{"mode": "off|raw|parquet|full"}`` (``ops.DATASET_MODES``; ``file`` drops
+    the row, which is ``off``: the file-level mode is gone, avo 10 Nov 2026). 400 for an unknown dataset or mode. A
+    person's Fetch is not touched by it."""
     from RevenueChaser.rcdata import ops
     from RevenueChaser.rcdata.build import DATASETS
     if dataset not in DATASETS:
@@ -1719,11 +1735,13 @@ def api_build_timer():
 
 @app.route("/api/build/switch/<name>", methods=["POST"])
 def api_build_switch(name: str):
-    """#527: turn the board's ``fetch`` or ``backup`` switch on or off: ``{"on": true|false}``. Off records who (the
-    panel header) and when; 400 for an unknown switch or a body without a boolean ``on``."""
+    """#527: turn the board's ``fetch`` or ``backup`` switch, or a file's ``file-<kind>`` switch, on or off:
+    ``{"on": true|false}``. Off records who (the panel header) and when; 400 for an unknown switch or a body without a
+    boolean ``on``."""
     from RevenueChaser.rcdata import ops
-    if name not in ops.SWITCHES:
-        return jsonify({"ok": False, "error": f"unknown switch {name!r}; known: {', '.join(ops.SWITCHES)}"}), 400
+    known = ops.SWITCHES + ops.FILE_SWITCHES
+    if name not in known:
+        return jsonify({"ok": False, "error": f"unknown switch {name!r}; known: {', '.join(known)}"}), 400
     on = (request.get_json(silent=True) or {}).get("on")
     if not isinstance(on, bool):
         return jsonify({"ok": False, "error": "on must be true or false"}), 400
@@ -1974,6 +1992,38 @@ def api_watchlist_kind_toggle(kind: str, ticker: str):
         return jsonify({"ok": False, "error": "bad ticker"}), 400
     on = ops.watch_toggle(kind, t, by=_requested_by())
     return jsonify({"ok": True, "list": kind, "ticker": t, "on": on})
+
+
+@app.route("/api/watchlist/<kind>/add/<ticker>", methods=["POST"])
+def api_watchlist_add(kind: str, ticker: str):
+    """Put ``ticker`` on one watch list (the Activity board's Add): ``{ok, list, ticker, added}``, where ``added`` is
+    false when it was there already (nothing is written then). Never removes, so an Add typed for a name someone else
+    just added cannot take it off, as the toggle would. 404 / 400 as the toggle."""
+    from RevenueChaser.rcdata import ops
+    if kind not in ops.WATCH_KINDS:
+        return jsonify({"ok": False, "error": f"unknown watch list {kind!r}"}), 404
+    t = (ticker or "").strip().upper()
+    if not _valid_ticker(t):
+        return jsonify({"ok": False, "error": "bad ticker"}), 400
+    added = ops.watch_add(kind, t, by=_requested_by())
+    return jsonify({"ok": True, "list": kind, "ticker": t, "added": added})
+
+
+@app.route("/api/activity/boards")
+def api_activity_boards():
+    """The Activity board's grouping (app/activity.py): each board with the scheduled jobs that feed it, worked out
+    from the code, and how many runs were pressed on it (the dashboard's own ``job_runs``). Read by homeops for the
+    Grafana boards rc-activity and rc-logs."""
+    from . import activity
+    out = activity.job_boards()
+    try:
+        pressed = activity.pressed_by_board(runview.read(limit=runview.MAX_LIMIT).get("rows") or [])
+    except Exception as e:  # noqa: BLE001 - the grouping still answers without the pressed counts
+        logger.warning("activity: runs not read: %s", e)
+        pressed = {}
+    for b in out["boards"]:
+        b["pressed"] = pressed.get(b["key"], {"runs": 0, "last": None, "bad": 0})
+    return jsonify({"ok": True, **out})
 
 
 @app.route("/api/watchlist/<kind>/remove/<ticker>", methods=["POST"])

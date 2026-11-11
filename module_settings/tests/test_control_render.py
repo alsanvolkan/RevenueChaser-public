@@ -16,8 +16,8 @@ from RevenueChaser.module_settings.tests.test_control_view import NOW, control_n
 from RevenueChaser.rcdata.needs import screen
 
 SECTIONS = ("sec-health", "sec-flow", "sec-crosscheck")
-#: the sections of the Data panel (#492 C1: the Fetch content moved in, one panel a file between flow and cross-check)
-DATA_SECTIONS = ("sec-health", "sec-flow", "sec-crosscheck")
+#: the sections of the Fetch/Health panel's board (avo, 10 Nov 2026: Database keeps only the flow and the file panels)
+DATA_SECTIONS = ("sec-health", "sec-crosscheck")
 
 
 def _page(nd=None) -> str:
@@ -37,20 +37,23 @@ def _section(html: str, sec: str) -> str:
 
 def test_the_board_is_in_the_designed_order_and_the_old_fold_is_gone():
     html = _page()
-    at = [html.index(f'id="{s}"') for s in DATA_SECTIONS]
-    assert at == sorted(at), "Health, the flow diagram, then cross-check"
-    assert html.index('id="sec-crosscheck"') < html.index('id="panel-health"') < html.index('id="ticker-drill"')
+    at = [html.index(f'id="{s}"') for s in ("sec-flow",) + DATA_SECTIONS]
+    assert at == sorted(at), "the flow diagram on Database, then Health and cross-check on Fetch/Health"
+    assert html.index('id="sec-flow"') < html.index('id="panel-health"') < html.index('id="sec-crosscheck"') \
+        < html.index('id="ticker-drill"')
     assert 'id="old-settings"' not in html and 'class="oldfold"' not in html
 
 
 def test_each_section_sits_in_one_panel_only_and_none_is_lost():
     html = _page()
     data = _between(html, 'id="panel-data"', 'id="panel-health"')
+    fetch = _between(html, 'id="panel-health"', 'id="needs"')
     for sec in SECTIONS:
         assert html.count(f'id="{sec}"') == 1, f"{sec} is rendered twice"
+    assert 'id="sec-flow"' in data
     for sec in DATA_SECTIONS:
-        assert f'id="{sec}"' in data, sec
-    assert html.count('id="universe"') == 1 and 'id="universe"' in data, "the universe rides in the spine's box"
+        assert f'id="{sec}"' in fetch, sec
+    assert html.count('id="universe"') == 1 and 'id="universe"' in fetch, "the universe sits once on Fetch/Health"
 
 
 def test_two_tabs_data_and_health_and_no_fetch_tab():
@@ -130,7 +133,7 @@ def test_the_script_uses_only_the_routes_the_page_names():
     js = control_render.CTL_JS
     assert "'/api/" not in js and '"/api/' not in js, "routes come from CTL.routes"
     assert set(control_render.ROUTES.values()) == {
-        "/api/build/request/", "/api/build/schedule/", "/api/build/automation/", "/api/build/automation-ds/",
+        "/api/build/request/", "/api/build/schedule/", "/api/build/automation-ds/",
         "/api/build/switch/", "/api/build/timer", "/api/build/queue",
         "/api/settings/board/module_settings",
         "/api/settings/sample/", "/api/job/", "/run/storage-picture"}
@@ -175,7 +178,7 @@ def test_every_hostile_string_is_escaped_and_the_scripts_parse(tmp_path):
     html = _page(nd)
     # the board's one panel, up to the Health tab (#492 C1: the status reason left the source box and the queue
     # table moved to the Health tab)
-    ctl = _between(html, '<section id="ctl"', 'id="panel-health"')
+    ctl = _between(html, '<section id="ctl"', 'id="needs"')
     for tag in ("label", "kind", "detail", "note", "col", "cell"):
         assert f"onerror=__x(&#x27;{tag}T&#x27;)" in ctl or tag in ("ticker",), tag
     assert_inert(html)

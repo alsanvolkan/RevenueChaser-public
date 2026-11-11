@@ -73,12 +73,8 @@ class TaskSettings:
         return self.time_limit_minutes if self.time_limit_minutes is not None else self.time_limit_hours * 60
 
     def summary(self) -> str:
-        parts = ["runs on battery" if self.allow_on_battery else "AC power only"]
-        if self.wake_to_run:
-            parts.append("wakes the PC")
-        if self.start_when_available:
-            parts.append("catches up a missed run")
-        parts.append("only when logged on" if self.run_only_when_logged_on else "logged on or not")
+        # only what the systemd timer and service honour (#579): Persistent= and TimeoutStartSec=
+        parts = ["catches up a missed run" if self.start_when_available else "skips a missed run"]
         parts.append("no time limit" if self.no_time_limit else
                      f"{self.time_limit_minutes} min limit" if self.time_limit_minutes is not None
                      else f"{self.time_limit_hours} h limit")
@@ -232,13 +228,13 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         tables_written=("short_interest",),
         settings=TaskSettings(wake_to_run=True)),
     AutomationEntry(
-        name="RC-Earnings-Daytime", label="Economic calendar and estimates (twice a week)",
+        name="RC-Earnings-Daytime", label="Analyst estimates (twice a week)",
         args=("-m", INPUTS_CLI, "earnings-daytime", *_EARNINGS_CAPS),
         time="13:00", days=("Tuesday", "Thursday"),
-        description="The Unusual Whales economic calendar of this week and next (D37) and the yfinance analyst "
-                    "estimates of the calendar tickers (D14), Tuesday and Thursday 13:00, keyed to the last complete "
-                    "US session. " + _EARNINGS_CAPS_TEXT + "; one sweep failing leaves the other. " + _EARNINGS_TAIL,
-        tables_written=("economic_calendar", "estimate_snapshots"),
+        description="The yfinance analyst estimates of the calendar tickers (D14), Tuesday and Thursday 13:00, "
+                    "keyed to the last complete US session. The economic calendar is the builder's hourly "
+                    "uw/economic_calendar. " + _EARNINGS_CAPS_TEXT + ". " + _EARNINGS_TAIL,
+        tables_written=("estimate_snapshots",),
         settings=TaskSettings(wake_to_run=True)),
     AutomationEntry(
         name="RC-Macro-Weekly", label="FRED and vol indices (weekly)",
@@ -307,8 +303,8 @@ REGISTRY: tuple[AutomationEntry, ...] = (
                     "Monday fetches Friday; without that close, or inside the US session, it exits 3 and calls "
                     "nothing. A missed run is not caught up. The Fetch runs in the dashboard (POST /run/spxgamma, "
                     "the one writer): the task only queues it and waits; with the dashboard down it exits 1 and "
-                    "nothing is fetched. The job writes the SPX Gamma tree (raw day, latest.json, GEX history), "
-                    "no table.",
+                    "nothing is fetched. The job writes the board file boards/spx_gamma.duckdb (raw day, Brier "
+                    "record, GEX record, latest pointer; module_spx_gamma/store.py).",
         settings=TaskSettings(start_when_available=False, restart_count=0, time_limit_minutes=30)),
 )
 _BY_NAME = {e.name: e for e in REGISTRY}
@@ -446,7 +442,7 @@ class UnavailableScheduler(Scheduler):
         return None
 
     def _no(self, *a, **k):
-        raise SchedulerUnavailable("Task Scheduler is not available on this host")
+        raise SchedulerUnavailable("No scheduler is available on this host")
 
     install = set_enabled = remove = run = _no
 
@@ -1045,7 +1041,7 @@ def apply(name: str, action: str, sched: Scheduler | None = None) -> dict:
         raise UnknownAction("unknown action")
     sched = sched or get_scheduler()
     if not sched.available:
-        raise SchedulerUnavailable("Task Scheduler is not available on this host")
+        raise SchedulerUnavailable("No scheduler is available on this host")
     if action == "install":
         sched.install(e)
     elif action == "enable":

@@ -1,8 +1,8 @@
 """Read the inputs the Earnings inputs sweeps stored (E5, #372; one registry entry per schedule since #620).
 
 The Earnings Fetch used to ask UW (and FRED) for everything it needed, every run. Since E0 the nightly job stores
-the same answers in ``raw.duckdb``: the earnings calendar (D26), short interest (D10), the economic calendar (D37) and the
-reaction window's daily bars.
+the same answers in ``raw.duckdb``: the earnings calendar (D26), short interest (D10) and the reaction window's daily
+bars. The economic calendar (D37) left raw in Nov 2026: R6 reads ``market.economic_event`` (``rate_events``).
 
 What left this module for the new stores: the 10-year yield and the analyst estimates, now read through
 ``store_reads`` (``macro.dgs10``, ``fundamentals.estimates``), the short interest, now FINRA's settlement series from
@@ -33,6 +33,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.rcdata import read as market_read
 
 logger = logging.getLogger(__name__)
 
@@ -255,9 +256,16 @@ def _is_rate_event(row: dict) -> bool:
 
 
 def rate_events() -> list[dict]:
-    """Every stored ``economic_calendar`` row (``session_date``, ``event_ts``, ``event``, ``type``): one read per
-    run, handed to :func:`rate_event_overlap` for each card. A missing table or a store error is an empty list."""
-    return _query("SELECT session_date, event_ts, event, type FROM economic_calendar", table="economic_calendar")
+    """Every served ``market.economic_event`` row (``session_date``, ``event_ts``, ``event``, ``type``): one read per
+    run, handed to :func:`rate_event_overlap` for each card. ``session_date`` is the row's snapshot day, the sweep a
+    row came from. A missing file or a read error is an empty list."""
+    try:
+        rows = market_read.economic_events()
+    except Exception as exc:  # noqa: BLE001 - a Fetch must never fail on the store
+        _note_once("economic_event", exc)
+        return []
+    return [{"session_date": r["snapshot_date"], "event_ts": r["event_ts"], "event": r["event"], "type": r["type"]}
+            for r in rows]
 
 
 def rate_event_window(report_date) -> tuple[date, date] | None:

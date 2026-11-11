@@ -15,7 +15,6 @@ to grow a funnel it does not emit.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 from RevenueChaser.core import board_settings
@@ -207,11 +206,10 @@ def _html(name: str) -> Path:
     return OUTPUT_DIR / f"{name}_latest.html"
 
 
-def _spx_latest() -> Path:
-    """SPX writes ``latest.json`` under its module data root, not ``.cache``."""
-    root = Path(os.environ.get("SPX_GAMMA_DATA_ROOT")
-                or Path(__file__).resolve().parent.parent / "module_spx_gamma" / "data")
-    return root / "latest.json"
+def _spx_latest() -> dict | None:
+    """SPX Gamma's latest pointer lives in its board file (``spx_meta``), not in a file (review F4)."""
+    from RevenueChaser.module_spx_gamma import store as spx_store
+    return spx_store.latest()
 
 
 def _board(key: str, label: str, tables: list[str], payload_path, *,
@@ -237,9 +235,9 @@ BOARD_INPUTS: list[dict] = [
             "news_events", "news_highlight"],
            lambda: _html("welcome"), price_basis="last stored closes, not live quotes",
            ops_tables=["watchlist_stock"]),
-    _board("module_news", "News", ["economic_calendar"], lambda: _html("news")),
+    _board("module_news", "News", [], lambda: _html("news")),      # reads market.economic_event
     _board("module_earnings_radar", "Earnings Radar",
-           ["earnings_calendar", "estimate_snapshots", "short_interest", "economic_calendar",
+           ["earnings_calendar", "estimate_snapshots", "short_interest",
             "macro_series", "vol_index_daily", "cftc_cot", "price_bars_daily"],
            lambda: _html("earnings_radar"),
            price_basis="daily price bars, nominal closes for reactions", ops_tables=["watchlist_stock"]),
@@ -314,16 +312,17 @@ def _card(entry: dict) -> dict:
     if entry.get("settings"):
         card["settings"] = entry["settings"]()
     path = _path_of(entry)
-    if path is None or not path.exists():
+    if path is None or (not isinstance(path, dict) and not path.exists()):
         card["state"] = "not_rendered"
         return card
     funnel_key = entry.get("funnel") or "funnel_steps"
     # An HTML board that emits no funnel has no JSON to parse. Existence is the
     # rendered signal; json.loads on the page would be a false error.
-    if funnel_key == NO_FUNNEL and path.suffix.lower() != ".json":
+    if funnel_key == NO_FUNNEL and not isinstance(path, dict) and path.suffix.lower() != ".json":
         return card
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        # A board whose payload is a store row hands the dict itself (SPX Gamma, spx_meta).
+        payload = path if isinstance(path, dict) else json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("payload JSON is not an object")
     except Exception as exc:  # noqa: BLE001 - a bad artifact is shown, never raised

@@ -35,7 +35,7 @@ its writer, and the rule by which it may claim freshness.
 The claim rule over `core.rawstore.MANIFEST`:
 
 - a change-history table (`MANIFEST` `changes_of`) is listed on the dataset that owns its base table;
-- every `history.duckdb` table — `result_runs` and each result-history mirror, eighteen in all — is
+- every `history.duckdb` table — `result_runs` and each result-history mirror, nineteen in all — is
   listed on `result_history`. `earnings_history` is not one of them: it is a raw change-history table;
 - every other `MANIFEST` table is listed on exactly one dataset;
 - `UNCLAIMED_ALLOWLIST` is empty, so a new `MANIFEST` table fails `core/tests/test_datasets.py`
