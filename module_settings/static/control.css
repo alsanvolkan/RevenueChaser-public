@@ -337,16 +337,20 @@
 .ctl .phoneonly{display:none}
 @media(max-width:760px){.ctl .flowwrap{display:none}
 .ctl .phoneonly{display:block}}
-/* #715: the phone's own flow — one folded picture per served file, opened by a press on its name. */
-.ctl details.pfrow{border:1px solid var(--line);border-radius:12px;background:var(--card);margin:0 0 10px}
-.ctl details.pfrow>summary{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;cursor:pointer;
-  list-style:none;font-size:13px}
-.ctl details.pfrow>summary::-webkit-details-marker{display:none}
-.ctl details.pfrow>summary::after{content:"\25b8";color:var(--mut);font-size:12px;order:3}
-.ctl details.pfrow[open]>summary::after{content:"\25be"}
-.ctl details.pfrow>summary i{display:inline-block;width:16px;height:3px;border-radius:2px;flex:none}
-.ctl details.pfrow>summary b{font-family:var(--f-mono,monospace);font-size:12.5px;overflow-wrap:anywhere}
-.ctl details.pfrow>summary span{color:var(--mut);font-size:11.5px;margin-left:auto;white-space:nowrap}
+/* #715: the phone's own flow — the six pictures side by side in one strip, swiped sideways. */
+.ctl .pftabs{display:flex;gap:6px;overflow-x:auto;padding:0 0 8px;scrollbar-width:none}
+.ctl .pftabs::-webkit-scrollbar{display:none}
+.ctl .pftab{flex:none;min-height:36px;padding:0 12px;border:1px solid var(--line);border-left:3px solid var(--fh);
+  border-radius:999px;background:var(--card);color:var(--fg);font:12px var(--f-mono,monospace);cursor:pointer}
+.ctl .pfdeck{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;align-items:flex-start;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none}
+.ctl .pfdeck::-webkit-scrollbar{display:none}
+.ctl .pfslide{flex:0 0 100%;scroll-snap-align:start;min-width:0;border:1px solid var(--line);border-radius:12px;
+  background:var(--card)}
+.ctl .pfhead{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;font-size:13px}
+.ctl .pfhead i{display:inline-block;width:16px;height:3px;border-radius:2px;flex:none}
+.ctl .pfhead b{font-family:var(--f-mono,monospace);font-size:12.5px;overflow-wrap:anywhere}
+.ctl .pfhead span{color:var(--mut);font-size:11.5px;margin-left:auto;white-space:nowrap}
 .ctl svg.pflow{display:block;width:100%;height:auto;padding:0 0 10px}
 .ctl svg.pflow .pt{fill:var(--fg);font:11px var(--f-body)}
 .ctl svg.pflow .ptf{fill:var(--fg);font:600 11.5px var(--f-mono,monospace);text-anchor:middle}
@@ -1205,3 +1209,4 @@
 .ctl code,.ctl table.stk td{overflow-wrap:anywhere;word-break:break-word;min-width:0}
 }
 .ctl table.bktbl code{overflow-wrap:anywhere;word-break:break-word}
+.ctl .pftab.on{border-color:var(--fh);background:var(--acc2)}

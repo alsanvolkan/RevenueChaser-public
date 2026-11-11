@@ -140,9 +140,11 @@ closed fold under it (`details#old-settings`), unchanged.
 - **The flow diagram on a phone.** The wide picture (`svg#flow2`, 1116 px of viewBox) is hidden under 760 px, where
   the page draws one small vertical diagram a served file instead (`control_render._phone_flow`): the file's
   sources above it, the boards that read it below, each line in the file's own colour and running in one trunk
-  rather than a fan. Each file's picture is folded behind its name (`details.pfrow`, 44 px summary) and the first
-  one is open; pressing the file in the picture opens that file's section, the same `data-pick` the wide diagram
-  and Health's By file use. Before #715 the phone got a paragraph of text a file instead, about 993 px of it.
+  rather than a fan. The six sit side by side in one strip (`div.pfdeck`, scroll-snapped), one picture to a
+  screen, swiped sideways; the name buttons above it (`button.pftab`) scroll the strip to a file and the strip
+  says which name is in sight. The strip is what scrolls, never the page. Pressing the file inside a picture
+  opens that file's section below, the same `data-pick` the wide diagram and Health's By file use. Before #715
+  the phone got a paragraph of text a file instead, about 993 px of it.
 - **Health tiles** count the dataset cards. The builder tile turns red when the builder has been
   silent for over 70 minutes; a provider's cap tile warns at 50% of its day cap and is red from 70%.
 - **Where the folder counts come from.** Every dataset's raw and Parquet folder line is the **disk picture**, not a

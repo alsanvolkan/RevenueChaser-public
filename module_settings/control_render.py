@@ -666,14 +666,14 @@ def _pchip(x: float, y: float, w: int, lines: list[str], cls: str) -> tuple[str,
             f'<text y="{y + _PLH + 1}" class="pt">{spans}</text>'), h
 
 
-def _phone_flow(f: dict, colour: str, own: dict, first: bool = False) -> str:
+def _phone_flow(f: dict, colour: str, own: dict) -> str:
     """One served file's flow, drawn for a phone: its sources above, the file, the boards that read it below.
 
     The desktop diagram is one picture of all six files side by side and does not fit 390 px, so under 760 px the
     page draws this instead (avo, 11 Nov 2026: "Telefon icin de ayni flow diagrami yapamaz miyiz"). Same colours,
-    same words; a press on the file opens that file's section, exactly as a press in the diagram does. Each file's
-    picture is folded behind its own name and opens on a press (avo, 11 Nov 2026: "Click to expand yap mutlaka");
-    the first one is open, so the reader sees a picture without pressing anything.
+    same words; a press on the file opens that file's section, exactly as a press in the diagram does. The six
+    pictures sit side by side in one swiped strip (avo, 11 Nov 2026: "Bunlar yan yana olsa tek bir yerde ve
+    soldan saga dogru kaydirilsa?"), one picture to a screen, so only one is ever in sight.
     """
     providers = sorted({p for d in f["datasets"] for p in d["providers"]})
     srcs = [screen.PROVIDERS[p].name for p in providers if p in screen.PROVIDERS] or ["built here"]
@@ -723,12 +723,12 @@ def _phone_flow(f: dict, colour: str, own: dict, first: bool = False) -> str:
                  f'<text x="{fx}" y="{fy + fh / 2 + 4:.1f}" class="ptf">{esc(f["name"])}</text></g>')
     h = int(y)
     name = esc(f["name"])
-    return (f'<details class="pfrow"{" open" if first else ""}><summary class="pfhead">'
+    return (f'<section class="pfslide" id="pfs-{esc(f["kind"])}"><div class="pfhead">'
             f'<i style="background:{esc(colour)}"></i><b>{name}</b>'
             f'<span>{len(srcs)} source{"" if len(srcs) == 1 else "s"} \u00b7 '
-            f'{len(readers)} board{"" if len(readers) == 1 else "s"}</span></summary>'
+            f'{len(readers)} board{"" if len(readers) == 1 else "s"}</span></div>'
             f'<svg class="pflow" viewBox="0 0 {_PW} {h}" role="img" aria-label="{name}: what it is read from and '
-            f'which boards read it">{"".join(parts)}</svg></details>')
+            f'which boards read it">{"".join(parts)}</svg></section>')
 
 
 def _flow(view: dict) -> str:
@@ -736,8 +736,12 @@ def _flow(view: dict) -> str:
     legend = "".join(f'<span><i style="background:{esc(f["line"])}"></i>{esc(f["name"])}</span>' for f in fl["files"])
     own = dict(fl["edges"].get("boardOwn") or [])
     colour = {f["name"]: f["line"] for f in fl["files"]}
-    phone = [_phone_flow(f, colour.get(f["name"], control.BOARD_COLOR), own, i == 0)
-             for i, f in enumerate(view["files"])]
+    # The phone's deck: the six pictures side by side in one strip, swiped sideways (avo, 11 Nov 2026:
+    # "Bunlar yan yana olsa tek bir yerde ve soldan saga dogru kaydirilsa?"). The names above it jump to one.
+    slides = "".join(_phone_flow(f, colour.get(f["name"], control.BOARD_COLOR), own) for f in view["files"])
+    tabs = "".join(f'<button type="button" class="pftab" data-deck="pfs-{esc(f["kind"])}" '
+                   f'style="--fh:{esc(colour.get(f["name"], control.BOARD_COLOR))}">{esc(f["name"])}</button>'
+                   for f in view["files"])
     return (
         '<details class="sec" id="sec-flow" open><summary><h2>Data flow</h2><span class="secs">source \u2192 SSD file \u2192 '
         'board \u2192 board file \u00b7 a press lights its lines \u00b7 a file opens its section below \u00b7 a board says what it reads '
@@ -750,8 +754,9 @@ def _flow(view: dict) -> str:
         f'<span><i style="background:{control.BOARD_COLOR}"></i>board</span>'
         '<span class="dim">Source icons: Tabler Icons (MIT licence).</span></div>'
         '<div class="phoneonly"><p class="fnote">On a phone, one file at a time instead of the wide diagram: '
-        'press a name to see where that file comes from and which boards read it.</p>'
-        f'{"".join(phone)}</div>'
+        'swipe sideways for the next file, or press a name.</p>'
+        f'<div class="pftabs">{tabs}</div>'
+        f'<div class="pfdeck" role="group" aria-label="the served files, one picture each">{slides}</div></div>'
         '</div></details>')
 
 
