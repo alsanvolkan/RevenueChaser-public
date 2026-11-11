@@ -632,22 +632,116 @@ def _picture_control(view: dict) -> str:
 
 # ── The flow diagram ──────────────────────────────────────────────────────────────────────────────────────────
 
+#: The phone flow's canvas: its width, the source chip's box, the board chip's box (#715, avo 11 Nov 2026).
+_PW, _PSX, _PSW, _PBX, _PBW = 358, 6, 150, 166, 186
+#: A chip's text line height, the padding above and below its lines, and the gap between two chips.
+_PLH, _PPAD, _PGAP = 13, 12, 6
+
+
+def _wrap(text: str, n: int, lines: int = 2) -> list[str]:
+    """Break a label into at most ``lines`` lines of about ``n`` characters, because SVG text does not wrap."""
+    out: list[str] = []
+    cur = ""
+    for w in text.split():
+        if cur and len(cur) + 1 + len(w) > n:
+            out.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}" if cur else w
+    if cur:
+        out.append(cur)
+    if not out:
+        return [""]
+    if len(out) > lines:
+        out = out[:lines]
+        out[-1] = out[-1][: n - 1].rstrip() + "\u2026"
+    return out
+
+
+def _pchip(x: float, y: float, w: int, lines: list[str], cls: str) -> tuple[str, int]:
+    """One chip of the phone flow, and how tall it came out."""
+    h = _PLH * len(lines) + _PPAD
+    spans = "".join(f'<tspan x="{x + 9}" dy="{_PLH if i else 0}">{esc(s)}</tspan>' for i, s in enumerate(lines))
+    return (f'<rect x="{x}" y="{y}" rx="7" width="{w}" height="{h}" class="{cls}"/>'
+            f'<text y="{y + _PLH + 1}" class="pt">{spans}</text>'), h
+
+
+def _phone_flow(f: dict, colour: str, own: dict, first: bool = False) -> str:
+    """One served file's flow, drawn for a phone: its sources above, the file, the boards that read it below.
+
+    The desktop diagram is one picture of all six files side by side and does not fit 390 px, so under 760 px the
+    page draws this instead (avo, 11 Nov 2026: "Telefon icin de ayni flow diagrami yapamaz miyiz"). Same colours,
+    same words; a press on the file opens that file's section, exactly as a press in the diagram does. Each file's
+    picture is folded behind its own name and opens on a press (avo, 11 Nov 2026: "Click to expand yap mutlaka");
+    the first one is open, so the reader sees a picture without pressing anything.
+    """
+    providers = sorted({p for d in f["datasets"] for p in d["providers"]})
+    srcs = [screen.PROVIDERS[p].name for p in providers if p in screen.PROVIDERS] or ["built here"]
+    readers = sorted({r["label"] for t in f["tables"] for r in t["readers"]})
+    parts: list[str] = []
+
+    y = 0.0
+    src_mid: list[float] = []
+    for s in srcs:
+        chip, h = _pchip(_PSX, y, _PSW, _wrap(s, 20), "psrc")
+        parts.append(chip)
+        src_mid.append(y + h / 2)
+        y += h + _PGAP
+
+    fy = y + 16
+    fh = _PLH + 18
+    fx = _PW / 2
+    # The lines run in one trunk rather than a fan: a fan of seven curves across 358 px crosses its own chips.
+    st, line = _PSX + _PSW + 10, f'" class="pe" style="stroke:{esc(colour)}"/>'
+    for m in src_mid:
+        parts.append(f'<path d="M{_PSX + _PSW} {m:.1f} H {st}{line}')
+    parts.append(f'<path d="M{st} {src_mid[0]:.1f} V {src_mid[-1]:.1f} M{st} {src_mid[-1]:.1f} '
+                 f'C {st} {fy - 6:.1f}, {fx - 36} {fy - 10:.1f}, {fx - 36} {fy}{line}')
+
+    y = fy + fh + 22
+    bt = _PBX - 18
+    bd_parts: list[str] = []
+    mids: list[float] = []
+    for r in readers:
+        lines = [_wrap(r, 28, 1)[0], _wrap(f"\u2192 {own[r]}", 28, 1)[0]] if r in own else _wrap(r, 28)
+        chip, h = _pchip(_PBX, y, _PBW, lines, "pbd")
+        mids.append(y + h / 2)
+        bd_parts.append(f'<path d="M{bt} {y + h / 2:.1f} H {_PBX}{line}' + chip)
+        y += h + _PGAP
+    if mids:  # the trunk goes in first, so a chip is never drawn under a line
+        bd_parts.insert(0, f'<path d="M{fx} {fy + fh} C {fx} {mids[0] - 16:.1f}, {bt} {mids[0] - 20:.1f}, '
+                           f'{bt} {mids[0]:.1f} V {mids[-1]:.1f}{line}')
+    if not readers:
+        chip, h = _pchip(_PBX, y, _PBW, ["no board yet"], "pbd off")
+        bd_parts.append(chip)
+        y += h + _PGAP
+
+    parts.extend(bd_parts)
+    parts.append(f'<g class="pfile" data-pick="{esc(f["name"])}" role="button" tabindex="0">'
+                 f'<rect x="{fx - 70}" y="{fy}" rx="8" width="140" height="{fh}" class="pfn" '
+                 f'style="stroke:{esc(colour)}"/>'
+                 f'<text x="{fx}" y="{fy + fh / 2 + 4:.1f}" class="ptf">{esc(f["name"])}</text></g>')
+    h = int(y)
+    name = esc(f["name"])
+    return (f'<details class="pfrow"{" open" if first else ""}><summary class="pfhead">'
+            f'<i style="background:{esc(colour)}"></i><b>{name}</b>'
+            f'<span>{len(srcs)} source{"" if len(srcs) == 1 else "s"} \u00b7 '
+            f'{len(readers)} board{"" if len(readers) == 1 else "s"}</span></summary>'
+            f'<svg class="pflow" viewBox="0 0 {_PW} {h}" role="img" aria-label="{name}: what it is read from and '
+            f'which boards read it">{"".join(parts)}</svg></details>')
+
+
 def _flow(view: dict) -> str:
     fl = view["flow"]
     legend = "".join(f'<span><i style="background:{esc(f["line"])}"></i>{esc(f["name"])}</span>' for f in fl["files"])
-    phone = []
     own = dict(fl["edges"].get("boardOwn") or [])
-    for f in view["files"]:
-        providers = sorted({p for d in f["datasets"] for p in d["providers"]})
-        names = " · ".join(screen.PROVIDERS[p].name for p in providers if p in screen.PROVIDERS) or "built here"
-        readers = sorted({r["label"] for t in f["tables"] for r in t["readers"]})
-        boards = ", ".join(esc(r) + (f' <code class="p">→ {esc(own[r])}</code>' if r in own else "") for r in readers)
-        phone.append(f'<div class="wrow"><span class="wv">{esc(names)} → <code class="p">{esc(f["name"])}</code> → '
-                     + (boards or "<b>no board yet</b>") + '</span></div>')
+    colour = {f["name"]: f["line"] for f in fl["files"]}
+    phone = [_phone_flow(f, colour.get(f["name"], control.BOARD_COLOR), own, i == 0)
+             for i, f in enumerate(view["files"])]
     return (
-        '<details class="sec" id="sec-flow" open><summary><h2>Data flow</h2><span class="secs">source → SSD file → '
-        'board → board file · a press lights its lines · a file opens its section below · a board says what it reads '
-        'and writes · a faint dashed line is a board reading another board\'s file</span></summary>'
+        '<details class="sec" id="sec-flow" open><summary><h2>Data flow</h2><span class="secs">source \u2192 SSD file \u2192 '
+        'board \u2192 board file \u00b7 a press lights its lines \u00b7 a file opens its section below \u00b7 a board says what it reads '
+        'and writes \u00b7 a faint dashed line is a board reading another board\'s file</span></summary>'
         '<div class="group" style="border-left-color:var(--acc)"><div class="scroll flowwrap"><svg class="flowsvg" '
         'id="flow2" viewBox="0 0 1116 900" role="group" aria-labelledby="flow2-title"></svg></div>'
         '<p class="bdmatch" id="bdmatch" aria-live="polite" hidden></p>'
@@ -655,7 +749,8 @@ def _flow(view: dict) -> str:
         f'<div class="flowlegend"><b>Colour:</b>{legend}<span><i style="background:#6f7b32"></i>source</span>'
         f'<span><i style="background:{control.BOARD_COLOR}"></i>board</span>'
         '<span class="dim">Source icons: Tabler Icons (MIT licence).</span></div>'
-        '<div class="phoneonly"><p class="fnote">On a phone, the same data as a list instead of the diagram.</p>'
+        '<div class="phoneonly"><p class="fnote">On a phone, one file at a time instead of the wide diagram: '
+        'press a name to see where that file comes from and which boards read it.</p>'
         f'{"".join(phone)}</div>'
         '</div></details>')
 

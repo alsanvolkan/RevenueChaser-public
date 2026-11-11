@@ -296,14 +296,6 @@
 .ctl .ln b.full{color:var(--bad)}
 .ctl .lbar{position:relative}
 .ctl .lbar::after{content:"";position:absolute;top:-2px;bottom:-2px;left:80%;width:1px;background:var(--mut);opacity:.6}
-.ctl .wrow{display:grid;grid-template-columns:140px minmax(0,1fr);gap:2px 12px;padding:8px 0;border-bottom:1px solid var(--line)}
-@media(max-width:560px){.ctl .wrow{grid-template-columns:1fr}}
-.ctl .wrow:last-child{border-bottom:0}
-.ctl .wk{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
-.ctl .wk.s1{color:var(--ssd)}
-.ctl .wk.s2{color:var(--hdd)}
-.ctl .wk.s3{color:var(--old)}
-.ctl .wv{font-size:12.5px;min-width:0}
 .ctl details.legacy{margin-top:6px;opacity:.85}
 .ctl details.legacy>summary{cursor:pointer;min-height:40px;display:flex;align-items:center;font-weight:600;font-size:13.5px}
 .ctl details.legacy details{margin:4px 0 4px 14px}
@@ -345,6 +337,24 @@
 .ctl .phoneonly{display:none}
 @media(max-width:760px){.ctl .flowwrap{display:none}
 .ctl .phoneonly{display:block}}
+/* #715: the phone's own flow — one folded picture per served file, opened by a press on its name. */
+.ctl details.pfrow{border:1px solid var(--line);border-radius:12px;background:var(--card);margin:0 0 10px}
+.ctl details.pfrow>summary{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;cursor:pointer;
+  list-style:none;font-size:13px}
+.ctl details.pfrow>summary::-webkit-details-marker{display:none}
+.ctl details.pfrow>summary::after{content:"\25b8";color:var(--mut);font-size:12px;order:3}
+.ctl details.pfrow[open]>summary::after{content:"\25be"}
+.ctl details.pfrow>summary i{display:inline-block;width:16px;height:3px;border-radius:2px;flex:none}
+.ctl details.pfrow>summary b{font-family:var(--f-mono,monospace);font-size:12.5px;overflow-wrap:anywhere}
+.ctl details.pfrow>summary span{color:var(--mut);font-size:11.5px;margin-left:auto;white-space:nowrap}
+.ctl svg.pflow{display:block;width:100%;height:auto;padding:0 0 10px}
+.ctl svg.pflow .pt{fill:var(--fg);font:11px var(--f-body)}
+.ctl svg.pflow .ptf{fill:var(--fg);font:600 11.5px var(--f-mono,monospace);text-anchor:middle}
+.ctl svg.pflow .psrc,.ctl svg.pflow .pbd{fill:var(--bg);stroke:var(--line)}
+.ctl svg.pflow .pbd.off{stroke-dasharray:3 3}
+.ctl svg.pflow .pfn{fill:var(--card);stroke-width:2}
+.ctl svg.pflow .pfile{cursor:pointer}
+.ctl svg.pflow .pe{fill:none;stroke-width:1.5;opacity:.55}
 .ctl .order{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 0}
 .ctl .ostep{display:flex;gap:6px;align-items:baseline;font-size:12.5px;border:1px solid var(--line);
   border-radius:10px;padding:5px 10px;min-height:36px;background:var(--card)}
