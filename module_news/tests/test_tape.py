@@ -125,6 +125,12 @@ def test_the_feed_list_comes_from_the_environment(monkeypatch):
     assert tape.feeds() == list(tape.DEFAULT_FEEDS)
 
 
+def test_the_default_feeds_leave_out_brfupdn():
+    # IBKR answers 200 "no security definition" for BRFUPDN:BRFUPDN_ALL: Analyst Actions has no broad tape,
+    # only per-ticker headlines (11 Nov 2026, Joker-6), so asking for it every RESUB_S is wasted.
+    assert tape.DEFAULT_FEEDS == ("BRFG", "DJNL")
+
+
 def _tape(lines, now=NOW, tail=""):
     p = tape.day_file(now)
     p.parent.mkdir(parents=True, exist_ok=True)
