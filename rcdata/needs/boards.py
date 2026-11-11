@@ -71,7 +71,8 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
     "module_news": ("market.economic_calendar",),
     # #490: ``engine.py`` reads the company records and the served filing texts.
     # #400 WP6: the B input adds the filing's XBRL major customers (``fundamentals.customers``).
-    "module_relatedness": ("identity.universe", "identity.security", "fundamentals.companies",
+    # ``identity.etf_holdings`` (#642 PR 2b): the theme-to-ETF ranks read the spine's holdings (D4, 9 Nov 2026).
+    "module_relatedness": ("identity.universe", "identity.security", "identity.etf_holdings", "fundamentals.companies",
                            "fundamentals.filings", "fundamentals.segments", "fundamentals.customers"),
 }
 
