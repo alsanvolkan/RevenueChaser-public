@@ -120,6 +120,7 @@ def test_the_dataset_stays_due_after_a_no_duckdb_run(stager):
 @pytest.mark.usefixtures("kinds_full")
 def test_the_hourly_pass_never_asks_for_no_duckdb(stager):
     """The switch is a person's: the schedule queues no params at all, so it cannot leave a kind unbuilt."""
+    ops.dataset_mode_set(stager.name, "full", by="test")   # a test dataset is not in build.DATASETS
     [(name, why, rid, error)] = due.enqueue_due({stager.name: stager})
     assert rid and not error, why
     req = next(r for r in ops.rows("build_requests") if r["id"] == rid)

@@ -1164,9 +1164,9 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `provider_calls_daily` | Calls, failures and 429s per provider and New York day |
 | `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists (D2): ticker, added at, added by (the board), note; and their history, one row per add or remove with an `id` that keeps its order (version 2 added `id` and `note` to the history). The toggle routes write them (`docs/data_retrieval.md`); `rcdata.read.watchlists()` reads them |
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
-| `kind_automation` | What the hourly pass queues for each serving kind: `off` (no row), `raw`, `parquet` or `full` (Settings, 6 Nov 2026) |
+| `kind_automation` | The old file-level mode (Settings, 6 Nov 2026): kept, no longer read; `ops.copy_kind_modes` moved it onto each dataset (10 Nov 2026) |
 | `switch` | The board's two switches (#527): `fetch` stops every fetch, build and RC timer task but the backups and the IBKR login check; `backup` stops the three backups. No row, or `off_at` NULL, is on |
-| `dataset_automation` | One source's own automation over its kind's (#527): `off`, `raw`, `parquet` or `full`; no row ("as the file") follows `kind_automation` |
+| `dataset_automation` | One source's own automation (#527): `off`, `raw`, `parquet` or `full`; no row is `off`. The only mode the hourly pass reads (avo, 10 Nov 2026) |
 
 **Day caps** (`rcdata/caps.py`, master plan Order 5, rule 3: only the quotas a provider publishes per day, each with
 its source): alphavantage 25 (its free tier, shared by the earnings calendar and the spine's
@@ -1241,8 +1241,9 @@ in; `open_read` opens and closes per call so each request sees the file live at 
 **What is due.** `run` without `--dataset` first queues every due dataset (`rcdata/build/due.py`, requested by
 `schedule`), then drains the queue. The request goes in through `ops.enqueue_once`, whose check and insert are one
 `BEGIN IMMEDIATE`, so a dataset with a request already queued or running gets no second one and two overlapping
-passes queue it once. A dataset whose serving kind's automation (`ops.kind_automation`, set per file on the Settings
-Data tab) is `off` — the default, no row — is not queued; `raw` and `parquet` queue the same partial run a Fetch's ▾
+passes queue it once. A dataset whose own automation (`ops.dataset_automation`, set per source on the Settings
+Fetch/Health tab) is `off` — the default, no row — is not queued (the file-level `kind_automation` is no longer read,
+avo 10 Nov 2026; `ops.copy_kind_modes` copied each kind's mode onto its datasets once at that deploy); `raw` and `parquet` queue the same partial run a Fetch's ▾
 asks for, and that run's own `skipped` check then counts as the run for the cadence; `full` queues the whole run. A
 person's Fetch is not touched by the setting. A paused dataset is not queued, and `dataset_schedule.next_due`, while later than today in New
 York, holds a dataset until that day. Otherwise a dataset never built, or whose last check failed or was skipped,

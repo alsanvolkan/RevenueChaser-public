@@ -69,7 +69,7 @@ def test_the_tree_lines_keep_their_colour_on_a_light_page():
     assert re.search(r"svg\.dtree \.vis\{stroke-width:1\.6;opacity:\.9", control_render.CTL_CSS)
 
 
-def test_each_source_has_an_automated_select_that_defaults_to_as_the_file():
+def test_each_source_has_an_automated_select_with_its_own_mode_and_no_file_choice():
     from RevenueChaser.module_settings.tests.test_control_view import NOW, control_nd
     from RevenueChaser.module_settings import control
     v = control.build(control_nd(), now=NOW, ibkr={"state": "up"}, switches=lambda: {},
@@ -82,6 +82,6 @@ def test_each_source_has_an_automated_select_that_defaults_to_as_the_file():
     html = control_render.render_fetch(v)
     box = html.split('data-dataset="market_series"', 1)[1]
     assert 'data-dsauto' in box and '<option value="full" selected>' in box.split("</select>", 1)[0]
-    assert "as the file (raw)" in box.split("</select>", 1)[0]
+    assert "as the file" not in box.split("</select>", 1)[0]
     assert '"automation_ds": "/api/build/automation-ds/"' in control_render.scripts(v) or \
         control_render.ROUTES["automation_ds"] == "/api/build/automation-ds/"

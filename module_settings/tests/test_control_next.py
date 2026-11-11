@@ -118,13 +118,3 @@ def test_a_partial_runs_own_skip_waits_for_its_next_check_like_a_build():
              "note": base.skip_note(1, raw_only=True)}
     assert not words(stage, mode="raw").startswith("due")
     assert words(stage, mode="full").startswith("due")
-
-
-def test_each_file_panel_carries_its_automation_and_the_page_draws_the_select():
-    from RevenueChaser.module_settings import control_render
-    modes = {"market": {"kind": "market", "mode": "raw", "set_at": 1.0, "set_by": "avo"}}
-    files = {f["kind"]: f for f in _build(kind_modes=lambda: modes)["files"]}
-    assert files["market"]["automation"]["mode"] == "raw" and files["prices"]["automation"]["mode"] == "off"
-    html = control_render._automation(files["market"], {"timer": {"minute": 7, "state": "off"}})
-    assert '<option value="raw" selected>' in html and 'data-kind="market"' in html
-    assert "set by avo" in html and "timer is off" in html
