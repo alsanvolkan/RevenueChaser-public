@@ -74,7 +74,7 @@ _AFTER_START_API = (_framed("15", "1", "DU000000")
 _WORKING = _framed("178", "20261023 23:40:00 CEST") + _AFTER_START_API
 
 
-def test_an_api_client_that_gets_next_valid_id_reads_logged_in_and_keeps_the_server_version():
+def test_an_answered_handshake_reads_logged_in_and_keeps_the_server_version():
     sock = _FakeSock(_WORKING)
     reading = ibkr_login.probe("127.0.0.1", 4001, connect=_connect(sock))
     assert reading.state == ibkr_login.UP
@@ -137,6 +137,7 @@ def test_next_valid_id_split_across_reads_still_reads_logged_in():
 
     reading = ibkr_login.probe("127.0.0.1", 4001, connect=_connect(_Trickle(first + _AFTER_START_API)))
     assert reading.state == ibkr_login.UP and reading.server_version == 178
+    assert f"id {ibkr_login.PROBE_CLIENT_ID}" in reading.detail, "UP must come from nextValidId, not the version alone"
 
 
 def test_a_silent_port_reads_api_silent_not_logged_in():
