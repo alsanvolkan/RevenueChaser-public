@@ -147,8 +147,11 @@ def save_profile(ticker: str, cik, profile: dict, cache_key_value: str,
 
 
 def load_profiles(tickers: list[str] | None = None) -> dict[str, dict]:
-    """``{ticker: {field: [str, ...]}}`` from the durable tables."""
-    want = {t.upper() for t in tickers} if tickers else None
+    """``{ticker: {field: [str, ...]}}`` from the durable tables: every stored profile when ``tickers`` is None, none
+    when it is empty (an empty list once read every profile, #642 PR 3)."""
+    if tickers is not None and not tickers:
+        return {}
+    want = {t.upper() for t in tickers} if tickers is not None else None
     attr: dict[str, dict] = {}
     for r in rawstore.get_all("relatedness_attributes"):
         t = r["ticker"]

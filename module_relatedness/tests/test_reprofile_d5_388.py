@@ -4,7 +4,7 @@ prompt is v2.
 - **Input hash:** a stored profile carries the hash of the exact prompt it was made from (``cache_key.input_hash``).
   ``build_profiles`` re-profiles a group whose filing text (or company name) changed since, and leaves one whose
   input is the same alone. Before D5 a usable profile in the current mode was never redone, whatever the filing said.
-- **Company name:** the prompt says ``Company: <name from equity_universe>``; it used to say the ticker
+- **Company name:** the prompt says ``Company: <the spine's name>``; it used to say the ticker
   (``chain_filings`` has no name column, so ``_filing_text`` fell back to it).
 - **v2:** ``PROMPT_VERSION`` moves to "v2", so every v1 profile reads stale (kept and badged until redone).
 
@@ -21,6 +21,7 @@ from RevenueChaser.module_relatedness.tests.test_relatedness import v3_reply
 from RevenueChaser.core.providers import deepseek
 from RevenueChaser.module_relatedness import config, engine, store
 from RevenueChaser.module_relatedness.tests.test_relatedness import _prof, _seed_universe, long_body
+from RevenueChaser.rcdata.tests import spine_fixture
 
 TICKERS = ["AAA", "BBB", "CCC"]
 
@@ -75,7 +76,7 @@ def test_a_new_filing_text_is_profiled_again(calls):
 def test_a_new_company_name_is_profiled_again(calls):
     engine.build_profiles(TICKERS)
     calls.clear()
-    rawstore.execute("UPDATE equity_universe SET name = 'Triple C Holdings' WHERE ticker = 'CCC'")
+    spine_fixture.write_security([{"ticker": "CCC", "name": "Triple C Holdings"}])
     engine.build_profiles(TICKERS)
     assert [(t, n) for t, n, _ in calls] == [("CCC", "Triple C Holdings")]
 
@@ -116,8 +117,8 @@ def test_the_prompt_names_the_company(rawstore_tmp_db, monkeypatch):
     assert users and users[0].startswith("Company: AAA Inc\n")
 
 
-def test_a_name_missing_from_the_universe_falls_back_to_the_ticker(calls):
-    rawstore.execute("DELETE FROM equity_universe WHERE ticker = 'AAA'")
+def test_a_name_missing_from_the_spine_falls_back_to_the_ticker(calls):
+    spine_fixture.write_security([{"ticker": t, "name": t + " Inc"} for t in ("BBB", "CCC")], replace=True)
     engine.build_profiles(["AAA"])
     assert calls[0][:2] == ("AAA", "AAA")
 

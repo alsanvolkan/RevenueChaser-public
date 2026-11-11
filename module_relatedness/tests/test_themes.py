@@ -319,6 +319,8 @@ def test_match_theme_etfs(rawstore_tmp_db):
         {"ticker": t, "market_cap": 1e11, "sector": "Technology"}
         for t in ("NVDA", "TSM", "AMD", "AVGO")
     ])
+    spine_fixture.write_security([{"ticker": t, "sector": "Technology"} for t in ("NVDA", "TSM", "AMD", "AVGO")],
+                                 replace=True)
     # The spine's whole lists (D4, 9 Nov 2026); raw.duckdb's etf_holdings is no longer read.
     spine_fixture.write_etf_holdings({"SMH": ["NVDA", "TSM", "AMD", "AVGO", "MU"],
                                       "XLK": ["NVDA", "AAPL", "MSFT"]})
@@ -357,6 +359,7 @@ def _seed_one_theme(run, sectors, spdr):
                          [{"ticker": t, "theme_id": tid, "weight": 1.0} for t in tickers])
     rawstore.replace_all("equity_universe", [
         {"ticker": t, "market_cap": 1e11, "sector": sec} for t, sec in zip(tickers, sectors)])
+    spine_fixture.write_security([{"ticker": t, "sector": sec} for t, sec in zip(tickers, sectors)], replace=True)
     spine_fixture.write_etf_holdings({spdr: ["OUTSIDE", tickers[0]]})
     return tid
 
@@ -552,6 +555,8 @@ def _seed_two_pair_giant(run, sec_a, sec_b):
     rawstore.write_rows("relatedness_themes", themes_rows)
     rawstore.replace_all("relatedness_theme_members", members)
     rawstore.replace_all("equity_universe", list(eu_by.values()))
+    spine_fixture.write_security([{"ticker": r["ticker"], "sector": r["sector"]} for r in eu_by.values()],
+                                 replace=True)
     rawstore.write_rows("theme_runs", [{
         "id": run, "created_at": "2020-01-01T00:00:00+00:00",
         "k_fine": 4, "k_medium": 4, "k_coarse": 1, "jaccard": 1.0, "is_current": 0,
@@ -644,6 +649,7 @@ def _seed_hub_giant(run, hub=6, core=20, uniq=10, outsiders=18, osize=2,
     rawstore.write_rows("relatedness_themes", rows)
     rawstore.replace_all("relatedness_theme_members", members)
     rawstore.replace_all("equity_universe", list(eu.values()))
+    spine_fixture.write_security([{"ticker": r["ticker"], "sector": r["sector"]} for r in eu.values()], replace=True)
     rawstore.write_rows("theme_runs", [{
         "id": run, "created_at": "2020-01-01T00:00:00+00:00",
         "k_fine": hub + outsiders, "k_medium": hub + outsiders, "k_coarse": 1,
