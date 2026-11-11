@@ -22,6 +22,8 @@ def old_pull_reads_its_own_table(monkeypatch):
                 r["quote"] = json.loads(r["quote"])
         return rows
     monkeypatch.setattr(uf, "_load_cached_universe", old_rows)
+    # ``engine`` aliases the function at import, so patching the source module alone leaves it bound to the spine's.
+    monkeypatch.setattr(agh, "_load_cached_universe", old_rows)
 
 
 def _financials(country="United States", exchange="NMS") -> dict:

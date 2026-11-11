@@ -20,6 +20,8 @@ from RevenueChaser.rcdata.build.spine import security
 # Every table the spine readers expect, but not ``my_universe``: an empty list there would keep no name.
 TABLES = ("security", "security_history", "gics_history", "index_membership")
 _COLS = [c for c, _ in security.SECURITY]
+# The source ``read.membership`` reads by default; anything else is the Compustat check, not the membership.
+_MEMBERSHIP_SOURCE = "funds/index_holdings"
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
@@ -78,3 +80,23 @@ def replace(rows: list[dict]) -> None:
     from RevenueChaser.core import rawstore
     rawstore.replace_all("equity_universe", list(rows))
     _write(list(rows), replace=True)
+
+
+def membership(slug: str, tickers) -> None:
+    """``tickers`` as the current members of index ``slug`` in the spine, replacing that slug's rows.
+
+    The shape ``read.membership`` asks for: the fund files' source and an open ``valid_to``. Since #642 PR 6 this
+    is the only thing ``core/index_registry`` reads, so a test that used to call ``index_lists.save_index`` seeds
+    here instead."""
+    con = _connect()
+    try:
+        con.execute("DELETE FROM index_membership WHERE index_slug = ? AND source = ?",
+                    [str(slug), _MEMBERSHIP_SOURCE])
+        for t in tickers:
+            con.execute("INSERT INTO index_membership (index_slug, ticker, source) VALUES (?, ?, ?)",
+                        [str(slug), str(t).strip().upper(), _MEMBERSHIP_SOURCE])
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
+    from RevenueChaser.core import spine_reads
+    spine_reads.clear()

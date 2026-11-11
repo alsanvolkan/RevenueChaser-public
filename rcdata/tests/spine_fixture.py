@@ -593,7 +593,8 @@ def write_etf_holdings(by_etf: dict, as_of: str = "2026-11-07", provider: str = 
 def write_security(rows: list[dict], replace: bool = False) -> None:
     """Add (or, by ticker, update) ``security`` rows in the live ``spine.duckdb``, creating the file and the table
     when absent; ``replace`` drops every other row first. Each row names any of the served columns (``ticker``,
-    ``name``, ``sector``, ``industry``, ``sic``, ...); the rest stay NULL. For the readers' tests."""
+    ``name``, ``sector``, ``industry``, ``sic``, ...); the rest stay NULL. ``tier`` defaults to ``A``, because the
+    readers filter by tier and a NULL would drop the row from every one of them. For the readers' tests."""
     import duckdb
 
     from RevenueChaser.rcdata import serving
@@ -612,6 +613,7 @@ def write_security(rows: list[dict], replace: bool = False) -> None:
             con.execute("DELETE FROM security")
         for r in rows:
             con.execute("DELETE FROM security WHERE ticker = ?", [r["ticker"]])
+            r = {**r, "tier": r.get("tier") or "A"}   # a NULL tier matches no tier filter, so the readers lose the row
             names = list(r)
             con.execute(f"INSERT INTO security ({', '.join(names)}) VALUES ({', '.join('?' * len(names))})",
                         [r[n] for n in names])

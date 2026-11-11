@@ -162,9 +162,11 @@ class TestFileSourceMigrators:
         _w(legacy / "indexes" / "sp500.json", ["AAPL", "MSFT"])
         _w(legacy / "indexes" / "dow.json", ["AAPL"])
         _migrate(legacy, "index_constituents")
-        from RevenueChaser.core import index_registry as ir
-        assert ir.load_index("sp500") == {"AAPL", "MSFT"}
-        assert ir.load_index("dow") == {"AAPL"}
+        # The migration fills the old ``index_constituents`` table; since #642 PR 6 the registry reads the spine,
+        # so the stored list is read back through its own reader.
+        from RevenueChaser.core import index_lists as il
+        assert il.stored_index("sp500") == {"AAPL", "MSFT"}
+        assert il.stored_index("dow") == {"AAPL"}
 
     def test_asymmetric_universe_rows_and_meta_sentinel(self, legacy):
         _w(legacy / "asymmetric_growth_universe.json",
