@@ -655,7 +655,7 @@ def _flow(view: dict) -> str:
         f'<div class="flowlegend"><b>Colour:</b>{legend}<span><i style="background:#6f7b32"></i>source</span>'
         f'<span><i style="background:{control.BOARD_COLOR}"></i>board</span>'
         '<span class="dim">Source icons: Tabler Icons (MIT licence).</span></div>'
-        '<div class="phoneonly"><p class="fnote">On a phone, the same data as a list instead of the diagram.</p>'
+        '<div class="phoneonly"><p class="fnote">The diagram above scrolls sideways on a phone; the same data as a list follows.</p>'
         f'{"".join(phone)}</div>'
         '</div></details>')
 

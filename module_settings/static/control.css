@@ -343,8 +343,9 @@
 .ctl .flowlegend i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:5px}
 .ctl .fnote{color:var(--mut);font-size:12.5px;margin:0 0 10px}
 .ctl .phoneonly{display:none}
-@media(max-width:760px){.ctl .flowwrap{display:none}
-.ctl .phoneonly{display:block}}
+/* avo, 11 Nov 2026: the same diagram on a phone, panned sideways rather than replaced by the list.
+   The SVG keeps its min-width and .flowwrap already scrolls; the list stays underneath it. */
+@media(max-width:760px){.ctl .phoneonly{display:block}}
 .ctl .order{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 0}
 .ctl .ostep{display:flex;gap:6px;align-items:baseline;font-size:12.5px;border:1px solid var(--line);
   border-radius:10px;padding:5px 10px;min-height:36px;background:var(--card)}
