@@ -236,18 +236,19 @@ def _x_groups(rows: list[dict]) -> str:
     return "".join(_group_li(k, v) for k, v in order)
 
 
-def _headlines(rows: list[dict]) -> str:
-    """Three cards: Piyasa (the broad tape), Hisseler (per ticker) and X (the Grok X mails, one group a ticker); the
-    page's poll adds to their lists."""
-    out = []
+def _headlines(rows: list[dict]) -> dict[str, str]:
+    """One card a lane: Piyasa (the broad tape), Hisseler (per ticker) and X (the Grok X mails, one group a ticker),
+    each with its row count; the page's poll adds to their lists."""
+    out = {}
     for key, (title, empty) in _LANES.items():
         mine = [r for r in rows if lane(r) == key]
         mine = (_curated(mine) if key == "x" else mine)[:HEADLINE_LIMIT]
         body = _x_groups(mine) if key == "x" else "".join(_head_li(r) for r in mine)
-        out.append(f'<section class="card"><h2 class="lbl">{title} · son {HEADLINE_HOURS} saat</h2>'
-                   f'<p class="empty"{" hidden" if mine else ""}>{empty}</p>'
-                   f'<ul class="list" id="heads-{key}">{body}</ul></section>')
-    return "".join(out)
+        out[key] = (f'<section class="card"><h2 class="lbl">{title} · son {HEADLINE_HOURS} saat</h2>'
+                    f'<p class="empty"{" hidden" if mine else ""}>{empty}</p>'
+                    f'<ul class="list" id="heads-{key}">{body}</ul></section>')
+        out[key + "_n"] = len(mine)
+    return out
 
 
 def api_rows(since: float, limit: int = 2 * HEADLINE_LIMIT) -> list[dict]:
@@ -284,6 +285,14 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
 .lbl{margin:0 0 10px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .tabs{display:flex;gap:8px;margin-bottom:12px}
+.ptabs{display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);overflow-x:auto}
+.ptabs button{min-height:44px;padding:0 16px;border:0;border-bottom:2px solid transparent;background:transparent;
+ color:var(--muted);font:inherit;font-weight:600;cursor:pointer;white-space:nowrap}
+.ptabs button[aria-selected="true"]{color:var(--bright);border-bottom-color:var(--amber)}
+.ptabs .n{margin-left:6px;padding:1px 7px;border-radius:999px;background:var(--input-bg);font-size:11.5px;
+ font-variant-numeric:tabular-nums}
+.cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+#pg-x{max-width:900px}
 .tabs button{min-height:44px;padding:0 18px;border-radius:10px;border:1px solid var(--border);background:transparent;
  color:var(--fg);font:inherit;cursor:pointer}
 .tabs button[aria-selected="true"]{background:var(--input-bg);color:var(--bright);border-color:var(--amber)}
@@ -358,7 +367,7 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
 .empty{color:var(--muted);margin:6px 0}
 .foot{margin-top:16px;color:var(--muted);font-size:12px}
 [hidden]{display:none!important}
-@media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}.feat{order:-1}}
+@media (max-width:900px){.grid,.cols{grid-template-columns:minmax(0,1fr)}.feat{order:-1}}
 @media (max-width:560px){.ev{grid-template-columns:60px 1fr}.vals{grid-column:2}.wrap{padding:12px}}
 """
 
@@ -414,8 +423,16 @@ function newsPoll(){
     }).catch(function(){});
 }
 setInterval(newsPoll, 60000);
+function pageTab(btn, keep){
+  newsTab(btn);
+  if(!keep){ try { localStorage.setItem('rc-news-page', btn.getAttribute('aria-controls')); } catch(e) {} }
+}
+(function(){
+  var want = null; try { want = localStorage.getItem('rc-news-page'); } catch(e) {}
+  var b = want && document.querySelector('.ptabs [aria-controls="' + want + '"]'); if(b) pageTab(b, true);
+})();
 function newsTab(btn){
-  var tabs = document.querySelectorAll('.tabs button');
+  var tabs = btn.parentNode.querySelectorAll('button');
   for(var i = 0; i < tabs.length; i++){
     var on = tabs[i] === btn;
     tabs[i].setAttribute('aria-selected', on ? 'true' : 'false');
@@ -449,6 +466,7 @@ def render_html(now: float | None = None, provider_health: dict | None = None) -
     today_html, week_html = _calendar(events, now, hl_key)
     n_today = sum(1 for e in events if local_day(e["event_ts"]) == today)
     updated = f"Veri {hm(stamp)}'de güncellendi" if stamp else "Veri henüz kurulmadı"
+    lanes = _headlines(heads)
     return f"""<!doctype html>
 <html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Haberler</title><script>{THEME_JS}</script><style>{THEME_CSS}{_CSS}</style></head>
@@ -457,14 +475,23 @@ def render_html(now: float | None = None, provider_health: dict | None = None) -
 <div class="muted">{WEEKDAYS[today.weekday()]} · bugün {n_today} veri</div></div>
 <div class="muted">{updated}</div></header>
 {provider_health_html(provider_health)}
-<div class="grid">
+<nav class="ptabs" role="tablist" aria-label="Bölümler">
+<button type="button" role="tab" aria-selected="true" aria-controls="pg-cal" onclick="pageTab(this)">Takvim</button>
+<button type="button" role="tab" aria-selected="false" aria-controls="pg-heads" onclick="pageTab(this)">Başlıklar
+<span class="n">{lanes["market_n"] + lanes["stocks_n"]}</span></button>
+<button type="button" role="tab" aria-selected="false" aria-controls="pg-x" onclick="pageTab(this)">X
+<span class="n">{lanes["x_n"]}</span></button>
+</nav>
+<div id="pg-cal" role="tabpanel"><div class="grid">
 <section class="card"><div class="tabs" role="tablist">
 <button type="button" role="tab" aria-selected="true" aria-controls="news-today" onclick="newsTab(this)">Bugün</button>
 <button type="button" role="tab" aria-selected="false" aria-controls="news-week" onclick="newsTab(this)">Bu hafta</button>
 </div><div id="news-today" role="tabpanel">{today_html}</div>
 <div id="news-week" role="tabpanel" hidden>{week_html}</div></section>
-<div class="side">{_highlight(hl)}{_headlines(heads)}</div>
-</div>
+<div class="side">{_highlight(hl)}</div>
+</div></div>
+<div id="pg-heads" role="tabpanel" hidden><div class="cols">{lanes["market"]}{lanes["stocks"]}</div></div>
+<div id="pg-x" role="tabpanel" hidden>{lanes["x"]}</div>
 <p class="foot">Kaynak: takvim Unusual Whales, başlıklar Dow Jones (IBKR), X kayıtları Grok özetleri · Saatler Europe/Amsterdam · Önem: ●●● yüksek ●●○ orta ●○○ düşük</p>
 {HELP}
 </div><script>var NEWS_SINCE = {since!r}, HEAD_LIMIT = {HEADLINE_LIMIT};{_JS}</script></body></html>"""
