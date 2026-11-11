@@ -258,7 +258,7 @@ jobs.register("daily_bars", runners.run_daily_bars, ["module_settings"], lane="l
 # Index lists (#302): three UW requests plus the SmallCap 600 list from the identity cache.
 jobs.register("index_lists", runners.run_index_lists, ["module_settings"], lane="long")
 jobs.register("module_oipd", runners.run_oipd, ["module_oipd"], requires_uw=True)
-# News (S9, S16): store-only; builds boards/news.duckdb from raw.economic_calendar, then renders.
+# News (S9, S16): store-only; builds boards/news.duckdb from market.economic_event, then renders.
 jobs.register("module_news", runners.run_news, ["module_news"], requires_uw=False)
 # News live (#673): the listener (module_news/tape.py) queues this every 5 minutes; headlines only, then the page.
 # produces nothing: the shell would reload the News frame (and alert a gap) every 5 minutes; the page polls itself.

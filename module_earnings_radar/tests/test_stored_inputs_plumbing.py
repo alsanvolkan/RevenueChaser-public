@@ -52,6 +52,7 @@ def test_a_locked_table_notes_once_and_reads_as_nothing(monkeypatch, caplog):
         raise RuntimeError("database is locked")
 
     monkeypatch.setattr(rawstore, "query", locked)
+    monkeypatch.setattr(stored_inputs.market_read, "economic_events", locked)
     with caplog.at_level(logging.INFO, logger=stored_inputs.__name__):
         assert stored_inputs.calendar_items([LATEST]) == ({}, None)
         assert stored_inputs.rate_events() == []
@@ -60,4 +61,4 @@ def test_a_locked_table_notes_once_and_reads_as_nothing(monkeypatch, caplog):
     notes = [r.getMessage() for r in caplog.records if r.getMessage().startswith("stored inputs:")]
     assert len(notes) == 2
     assert "earnings_calendar" in notes[0] and "database is locked" in notes[0]
-    assert "economic_calendar" in notes[1]
+    assert "economic_event" in notes[1]

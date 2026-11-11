@@ -136,6 +136,17 @@ def economic_calendar(snapshot_date=None) -> list[dict]:
                  params, missing_table_ok=True)
 
 
+def economic_events(fetched_after: float | None = None) -> list[dict]:
+    """Every held snapshot day of the economic calendar, oldest fetch first; ``fetched_after`` (epoch seconds) keeps
+    only the rows of newer fetches. Each snapshot day holds that day's newest fetch (``uw/economic_calendar``).
+
+    A file built before market 3 has no ``economic_event``: that reads as no rows, not an error."""
+    sql, params = "SELECT * FROM economic_event", []
+    if fetched_after is not None:
+        sql, params = sql + " WHERE fetched_at > ?", [float(fetched_after)]
+    return _rows("economic_event", sql + " ORDER BY fetched_at, event_ts, event, type", params, missing_table_ok=True)
+
+
 def news_headlines(tickers: Iterable[str] | None = None, since=None) -> list[dict]:
     """IBKR headlines, newest first; ``tickers`` (None: every name) narrows to those names, ``since`` (epoch seconds)
     to newer ones.

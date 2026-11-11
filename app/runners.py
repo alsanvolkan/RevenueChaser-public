@@ -1851,7 +1851,7 @@ def run_news(uw=None) -> Path:
     """The News board's Fetch: the incremental calendar build into ``boards/news.duckdb``, the Dow Jones headlines from
     the IBKR Gateway (watch list first, then the largest names), then the page.
 
-    The calendar reads ``raw.economic_calendar`` (the nightly sweep D37 writes it). The headlines are two gateway
+    The calendar reads ``market.economic_event`` (the builder's hourly ``uw/economic_calendar``). The headlines are two gateway
     requests a name and no UW call; a gateway that is down is a job note, never a failed Fetch.
     """
     from RevenueChaser.module_news import calendar, report

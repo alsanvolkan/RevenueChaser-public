@@ -36,6 +36,32 @@ def serve(observations: dict[str, float], *, series: str = "DGS10", as_of: date 
         ops.record_check(ms.NAME, check, run_id=RUN_ID, source_as_of=as_of.isoformat())
 
 
+def serve_economic(sweeps: dict, *, fetched_at: float = 1.0, check: str | None = "changed") -> None:
+    """Build ``market.economic_event`` from ``sweeps`` (snapshot day -> UW calendar items) the way the builder does: one
+    raw fetch per day written at ``fetched_at``, typed by ``uw/economic_calendar``'s own ``to_parquet_all``, then the
+    kind built and swapped in. A later call adds its days and replaces a day it names again (that day's newer fetch).
+    An item may give ``event_ts`` (epoch seconds) in place of UW's ``time`` text."""
+    from datetime import datetime, timezone
+
+    from RevenueChaser.rcdata.build import uw_economic_calendar as econ
+
+    ctx = base.RunContext(run_id=RUN_ID, dataset=econ.NAME, trigger="test", allow_shrink=True)
+    raws = []
+    for day, items in sorted(sweeps.items()):
+        day = day if isinstance(day, date) else date.fromisoformat(str(day))
+        body = [{**{k: v for k, v in i.items() if k != "event_ts"},
+                 "time": i.get("time") or datetime.fromtimestamp(float(i["event_ts"]), timezone.utc).isoformat()}
+                for i in items]
+        raw = econ.day_dir(day) / f"{int(fetched_at * 1000):015d}.json.gz"
+        raws.append(base.write_raw_json(raw, {"request": {"endpoint": econ.ENDPOINT}, "snapshot_date": day.isoformat(),
+                                              "fetched_at": fetched_at, "run_id": RUN_ID, "body": {"data": body}}))
+    econ.DATASET.to_parquet_all(ctx, raws)
+    base.parquet_root().mkdir(parents=True, exist_ok=True)
+    base.build_kind(ctx, econ.DATASET)
+    if check:
+        ops.record_check(econ.NAME, check, run_id=RUN_ID, source_as_of=max(raws).parent.name)
+
+
 def serve_estimates(rows: list[dict], *, as_of: date | None = None, check: str | None = "changed") -> None:
     """Build and swap in a ``fundamentals`` serving file whose ``estimate_latest`` holds ``rows``.
 

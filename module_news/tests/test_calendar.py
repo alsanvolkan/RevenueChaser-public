@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 import pytest
 
 from RevenueChaser.core import rawstore
+from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_economic
 from RevenueChaser.module_news import calendar as cal
 
 T0 = datetime(2026, 11, 10, 14, 30, tzinfo=cal.AMS).timestamp()     # Tue 10 Nov 14:30 Amsterdam
@@ -13,15 +14,13 @@ HOUR = 3600.0
 
 
 def _raw(rows, fetched_at, run_id="sweep"):
-    """One sweep's rows. The raw key carries the sweep's own session date (D37), one per fetch here."""
-    session = (date(2026, 11, 1) + timedelta(days=int(fetched_at // 100))).isoformat()
-    out = []
+    """One builder fetch served in ``market.economic_event``: its own snapshot day, one per fetch here."""
+    day = date(2026, 11, 1) + timedelta(days=int(fetched_at // 100))
+    items = []
     for ts, event, kind, *rest in rows:
-        fc = rest[0] if rest else None
-        out.append({"session_date": session, "event_ts": ts, "event": event, "type": kind,
-                    "forecast": fc, "prev": "0.3%", "reported_period": "October", "raw_row": "{}", "source": "uw",
-                    "fetched_at": fetched_at, "run_id": run_id, "run_at": fetched_at})
-    rawstore.write_rows("economic_calendar", out)
+        items.append({"event_ts": ts, "event": event, "type": kind, "forecast": rest[0] if rest else None,
+                      "prev": "0.3%", "reported_period": "October"})
+    serve_economic({day: items}, fetched_at=fetched_at)
 
 
 def _events():

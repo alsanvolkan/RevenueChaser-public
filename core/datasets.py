@@ -448,9 +448,11 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=("short_interest", "session_date"),
     ),
     DatasetSpec(
-        key="economic_calendar", label="Economic calendar",
+        key="economic_calendar", label="Economic calendar (retired)",
         tables=("economic_calendar",),
-        db="raw", source=Source.uw, writer="RC-Earnings-Daytime",
+        db="raw", source=Source.uw, writer=None,
+        writer_note=("retired 11 Nov 2026: no writer, the builder's hourly uw/economic_calendar serves "
+                     "market.economic_event; kept until its 14 days without reads (rcdata/needs/screen.py RETIRING)"),
         freshness=("economic_calendar", "session_date"),
     ),
     DatasetSpec(
@@ -653,7 +655,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="news_calendar", label="News: economic calendar and the day's highlight",
         tables=("news_events", "news_highlight", "news_meta"),
         db="news", source=Source.derived, writer=None,
-        writer_note=("built incrementally from raw.economic_calendar by module_news/calendar.py on the News board's "
+        writer_note=("built incrementally from market.economic_event by module_news/calendar.py on the News board's "
                      "Refresh; the hourly job comes in its own pull request"),
         freshness=("news_events", "run_at"),
     ),
