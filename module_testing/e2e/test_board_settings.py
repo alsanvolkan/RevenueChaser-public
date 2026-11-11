@@ -163,7 +163,9 @@ class TestLookupApi:
         assert r.json() == {"ok": False}
 
     def test_the_old_store_drill_route_is_gone(self, dashboard, seeded_settings):
+        """The seeded store holds AAPL, so a 404 here is the route being gone, not an empty store."""
         assert dashboard.get("/api/settings/ticker/AAPL").status_code == 404
+        assert dashboard.get("/api/settings/lookup/AAPL").status_code == 200
 
 
 class TestEmptyStore:

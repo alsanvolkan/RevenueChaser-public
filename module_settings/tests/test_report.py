@@ -885,6 +885,9 @@ def test_the_lookup_shows_the_identifiers_at_the_top():
     assert '<span class="dlbl">FIGI</span><span class="dval">BBG000BLNNH6</span>' in html
     assert '<span class="dlbl">Security id</span><span class="dval">sec:7</span>' in html
     assert '<span class="dlbl">CUSIP</span><span class="dval">—</span>' in html
+    rich = _drill_rows({"name": "Micron", "sector": "Technology", "industry": "Semiconductors", "files": []})
+    assert '<span class="dlbl">Sector</span><span class="dval">Technology</span>' in rich
+    assert '<span class="dlbl">Industry</span><span class="dval">Semiconductors</span>' in rich
 
 
 def test_the_lookup_escapes_a_hostile_identifier_and_table_name():
@@ -893,12 +896,6 @@ def test_the_lookup_escapes_a_hostile_identifier_and_table_name():
         {"kind": "prices", "name": bad, "title": bad, "looked_at": 1,
          "tables": [{"table": bad, "rows": 1, "first": None, "last": None}]}]})
     assert "<img" not in html and html.count("&lt;img") >= 5
-
-
-def test_the_lookup_shows_the_sector_and_the_industry_text():
-    html = _drill_rows({"name": "Micron", "sector": "Technology", "industry": "Semiconductors", "files": []})
-    assert '<span class="dlbl">Sector</span><span class="dval">Technology</span>' in html
-    assert '<span class="dlbl">Industry</span><span class="dval">Semiconductors</span>' in html
 
 
 def test_the_lookup_errors_are_listed_once_and_only_when_there_are_any():

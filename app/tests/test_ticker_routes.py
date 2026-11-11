@@ -101,8 +101,11 @@ class TestSettingsLookup:
         monkeypatch.setattr(ticker_lookup, "lookup", lambda t: None)
         assert client.get("/api/settings/lookup/ZZZZ").status_code == 404
 
-    def test_the_old_store_route_is_gone(self, client):
-        assert client.get("/api/settings/ticker/AAPL").status_code == 404
+    def test_the_old_store_route_is_gone(self):
+        """Not "it 404s" (an unseeded store answered that too): the rule itself is off the url map."""
+        rules = {str(r) for r in dashboard.app.url_map.iter_rules()}
+        assert "/api/settings/ticker/<ticker>" not in rules
+        assert "/api/settings/lookup/<ticker>" in rules
 
 
 class _OkUW:
