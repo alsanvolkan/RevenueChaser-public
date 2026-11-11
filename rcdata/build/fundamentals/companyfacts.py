@@ -61,6 +61,16 @@ def _newest_read(cik: str) -> date | None:
     return date.fromisoformat(raws[-1].name.split(".", 1)[0]) if raws else None
 
 
+def _untyped(cik: str) -> Path | None:
+    """The newest raw of ``cik`` when its Parquet was not typed from it: missing, or written before the raw."""
+    raws = _raws(cik)
+    if not raws:
+        return None
+    part = common.parquet_dir(NAME) / f"cik={cik}" / "company.parquet"
+    # shortcut: mtime order, not the as-of in company.parquet; a restore that bumps mtimes only retypes (no request).
+    return raws[-1] if not part.exists() or part.stat().st_mtime < raws[-1].stat().st_mtime else None
+
+
 def _absent_since(cik: str) -> date | None:
     folder = cik_dir(cik)
     marks = sorted(folder.glob("*.absent.json")) if folder.is_dir() else []
@@ -144,8 +154,13 @@ class CompanyFacts:
             raw = read_company(ctx, cik, as_of)
             if raw is not None:
                 out.append(raw)
+        # A raw file is the resume marker, so a re-read a stopped or raw-only run left untyped is neither due nor
+        # new again: type it here, with no request (#659).
+        untyped = [r for c in companies if c not in due and (r := _untyped(c)) and r not in out]
+        out += untyped
         ctx.notes.append(f"{len(due)} companies filed a statement, {min(len(new), NEW_PER_RUN)} new companies read"
-                         + (f", {len(new) - NEW_PER_RUN} new left for the next run" if len(new) > NEW_PER_RUN else ""))
+                         + (f", {len(new) - NEW_PER_RUN} new left for the next run" if len(new) > NEW_PER_RUN else "")
+                         + (f", {len(untyped)} read earlier typed now" if untyped else ""))
         if pending:
             ctx.notes.append(f"{len(pending)} accession(s) not in the XBRL API yet, asked again next run: "
                              + ", ".join(pending[:5]))
