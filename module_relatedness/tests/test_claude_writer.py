@@ -203,3 +203,11 @@ def test_a_claude_comparison_records_the_window_before_and_after(world, cli, mon
     assert out["method"] in ("embedding", "tags")
     for table in ("relatedness_profiles", "relatedness_attributes", "relatedness_scores"):
         assert rawstore.count(table) == 0
+
+
+def test_the_board_says_which_scorer_made_the_peers():
+    from RevenueChaser.module_relatedness import report
+    base = {"as_of": "2026-11-11T00:00:00+00:00", "model": "m", "n": 0, "companies": [], "peers": {},
+            "scores": [], "thinking_compare": {}, "fields": []}
+    assert "similarity v2 (embeddings)" in report.render_relatedness_dashboard({**base, "similarity": "embedding"})
+    assert "tag cosine (v1)" in report.render_relatedness_dashboard({**base, "similarity": "tags"})

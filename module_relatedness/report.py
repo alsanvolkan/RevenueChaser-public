@@ -84,6 +84,9 @@ def _summary_html(payload: dict) -> str:
     no_text = payload.get("no_text") or 0
     short_text = payload.get("short_text") or 0
     pairs = payload.get("n_pairs") or len(payload.get("scores") or [])
+    # Which scorer the peers came from (#669): the board looked the same either way, so it says so (WP0, 11 Nov 2026).
+    method = ("similarity v2 (embeddings)" if payload.get("similarity") == "embedding"
+              else "tag cosine (v1)")
     # The names without filing text are not pending (#388 D4): they wait for a 10-K text, not for the next run.
     # Nor are the ones whose Item 1 came out under the splitter's own floor (#313): too short to profile from.
     no_text_line = f'<div class="d">{no_text:,} without filing text</div>' if no_text else ""
@@ -97,7 +100,7 @@ def _summary_html(payload: dict) -> str:
         f'<div class="stat"><div class="v">{payload.get("universe_total") or 0}</div>'
         f'<div class="l">Universe</div><div class="d">operating companies, no market-cap floor</div></div>',
         f'<div class="stat"><div class="v">{pairs}</div>'
-        f'<div class="l">Pairs scored</div><div class="d">cosine sample</div></div>',
+        f'<div class="l">Pairs scored</div><div class="d">{method}</div></div>',
     ])
 
 
