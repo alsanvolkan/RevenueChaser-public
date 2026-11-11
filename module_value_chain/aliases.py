@@ -143,6 +143,40 @@ def spine_ticker(name: str, names: dict | None) -> str | None:
     return (names or {}).get(_key(name))
 
 
+def resolve(name: str, names: dict | None = None) -> dict | None:
+    """``{name, ticker}`` of the one company a free-text name means (a profile's customer or supplier, an XBRL
+    member's label), or None (#410 G1).
+
+    The hand-kept alias list and its rules come first (a product mention such as "Apple Pay" names no company);
+    then the spine's names (``spine_names``). A name that holds two companies ("Apple and Dell"), an anonymised one
+    ("Customer A") and a name two issuers share resolve to nothing; the caller keeps it as text.
+    """
+    hits = {h["ticker"]: h for h in find_aliases(name or "") if not h["context_only"]}
+    if hits:
+        return next(iter(hits.values())) if len(hits) == 1 else None
+    ticker = spine_ticker(name or "", names)
+    return {"name": name, "ticker": ticker} if ticker else None
+
+
+# The profile fields that name other companies (module_relatedness/profile_v3.py).
+PROFILE_PARTIES = ("customers", "suppliers", "named_competitors")
+
+
+def resolve_rate(profiles: dict[str, dict], names: dict | None) -> dict:
+    """How many of the profiles' named companies ``resolve`` gives a ticker, per field: ``{field: {names,
+    resolved, rate}}`` plus ``all``. Read only; the number #410 asks for before the profile edges are built."""
+    out = {}
+    for field in PROFILE_PARTIES:
+        got = [p if isinstance(p, str) else (p or {}).get("name") for prof in profiles.values()
+               for p in (prof.get(field) or [])]
+        got = [g for g in got if g]
+        out[field] = {"names": len(got), "resolved": sum(1 for g in got if resolve(g, names))}
+    out["all"] = {k: sum(v[k] for v in out.values()) for k in ("names", "resolved")}
+    for v in out.values():
+        v["rate"] = round(v["resolved"] / v["names"], 3) if v["names"] else None
+    return out
+
+
 def issuer(ticker: str) -> str:
     t = (ticker or "").upper()
     return SAME_ISSUER.get(t, t)

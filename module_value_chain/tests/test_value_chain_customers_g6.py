@@ -41,6 +41,8 @@ def layer(monkeypatch, http_mock):  # noqa: F811
     fx.run(filings.NAME, mode="backfill", to="2026-10-28")
     assert fundamentals_layer.reads_layer()
     assert {r[0] for r in fx.q("SELECT customer FROM customer_share")} == {"Apple Inc", "Customer B"}
+    # These tests write the filing's text themselves; the layer's own text is test_value_chain_layer_corpus's.
+    monkeypatch.setattr(engine, "_corpus_batches", lambda: iter([rawstore.get_all("chain_filings")]))
     return http_mock
 
 

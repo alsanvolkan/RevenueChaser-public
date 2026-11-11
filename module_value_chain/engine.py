@@ -41,6 +41,61 @@ def _cached_filings() -> dict[str, dict]:
     return {r["ticker"]: r for r in rawstore.get_all(_TABLE, columns=["ticker"])}
 
 
+# ── the corpus: the shared SEC layer, or chain_filings off it (plan 2026-11-11 F2) ──
+def _reads_layer() -> bool:
+    from RevenueChaser.core import fundamentals_layer
+    return fundamentals_layer.reads_layer()
+
+
+def _default_tickers() -> list[str]:
+    if config.USE_SHARED_UNIVERSE:
+        from RevenueChaser.core.universe import BOARD_OPERATING_ONLY, classification_universe
+        return classification_universe(operating_only=BOARD_OPERATING_ONLY["module_value_chain"])
+    return list(config.SEED)
+
+
+# Companies one layer read holds at once: a business section is up to ~120 KB of text (memory guard).
+_LAYER_BATCH = 200
+
+
+def _layer_filings(tickers: list[str] | None = None, text: bool = False):
+    """Batches of ``chain_filings``-shaped rows from the fundamentals layer: per ticker the newest annual report's
+    business section ``sec/filings`` serves (``filing_item``; the same splitter and cap as ``chain_filings``, and
+    the copy Relatedness reads). A ticker without a document is absent. ``text`` adds ``item_text``."""
+    from RevenueChaser.rcdata import read
+    tickers = _default_tickers() if tickers is None else tickers
+    by_cik: dict[str, list[str]] = {}
+    for c in read.fundamental_companies(tickers):
+        if c.get("cik"):
+            by_cik.setdefault(read._cik(c["cik"]), []).append(str(c["ticker"]).upper())
+    ciks = sorted(by_cik)
+    for i in range(0, len(ciks), _LAYER_BATCH):
+        batch = []
+        for d in read.filing_texts(ciks[i:i + _LAYER_BATCH], text=text):
+            row = {"cik": read._cik(d["cik"]), "form": d.get("form"), "filed": str(d.get("filing_date") or ""),
+                   "accession": d.get("accession"), "primary_doc": d.get("primary_document"),
+                   "quality": d.get("quality")}
+            if text:
+                row["item_text"] = d.get("text") or ""
+            batch.extend({"ticker": t, **row} for t in by_cik.get(row["cik"], []))
+        yield batch
+
+
+def _corpus_batches():
+    """The filings ``build_edges`` reads, in batches: the layer's when the board reads it, else ``chain_filings``."""
+    if _reads_layer():
+        yield from _layer_filings(text=True)
+    else:
+        yield rawstore.get_all(_TABLE)
+
+
+def _board_filings_rows() -> list[dict]:
+    """The board's filing list without the text, from the same corpus ``build_edges`` reads."""
+    if _reads_layer():
+        return [r for batch in _layer_filings() for r in batch]
+    return rawstore.get_all(_TABLE, columns=_LIGHT_COLUMNS)
+
+
 # ── the one write path for chain_filings (#116 C6) ──────────────────────────
 _DB = rawstore.MANIFEST[_TABLE].get("db", "raw")   # chain_filings and chain_meta share it
 # A slice is replaced only by one of the same rank or better. ``overrun`` still
@@ -203,14 +258,12 @@ def fetch_corpus(tickers: list[str] | None = None, no_fetch: bool = False,
     ``pending`` leaves out tickers with no CIK (``no_cik``) and recorded misses
     (``misses``). ``no_fetch`` computes it from reads only and writes nothing.
     """
-    if tickers is None:
-        if config.USE_SHARED_UNIVERSE:
-            from RevenueChaser.core.universe import BOARD_OPERATING_ONLY, classification_universe
-            tickers = classification_universe(operating_only=BOARD_OPERATING_ONLY["module_value_chain"])
-        else:
-            tickers = list(config.SEED)
-    else:
-        tickers = list(tickers)
+    tickers = _default_tickers() if tickers is None else list(tickers)
+    if _reads_layer():
+        # The layer (rcdata sec/filings) is the corpus: nothing is downloaded into chain_filings (plan F2, F3).
+        have = {r["ticker"] for batch in _layer_filings(tickers) for r in batch}
+        return {"requested": len(tickers), "cached": len(have), "pending": len(set(tickers) - have),
+                "fetched": 0, "failed": 0, "no_cik": 0, "misses": 0, "no_fetch": no_fetch, "corpus": "layer"}
     have = {} if force else _cached_filings()
     todo = [t for t in tickers if t not in have]
     if limit is not None:
@@ -283,15 +336,13 @@ def _xbrl_customer_edges(ticker: str, customers: list[dict], names: dict | None 
     """
     me, out = aliases.issuer(ticker), {}
     for c in customers:
-        hits = [h for h in aliases.find_aliases(c.get("customer") or "") if not h["context_only"]]
-        if not hits and (spine := aliases.spine_ticker(c.get("customer") or "", names)):
-            hits = [{"name": c.get("customer"), "ticker": spine}]
-        if len(hits) != 1 or aliases.issuer(hits[0]["ticker"]) == me or hits[0]["ticker"] in out:
+        hit = aliases.resolve(c.get("customer") or "", names)
+        if hit is None or aliases.issuer(hit["ticker"]) == me or hit["ticker"] in out:
             continue
         pct = round(float(c["share"]) * 100, 2)
         filed = str(c.get("document_date") or c.get("period_end") or "")
-        out[hits[0]["ticker"]] = {
-            "dst_name": hits[0]["name"], "dst_ticker": hits[0]["ticker"], "relation": "customer",
+        out[hit["ticker"]] = {
+            "dst_name": hit["name"], "dst_ticker": hit["ticker"], "relation": "customer",
             "snippet": (f"Annual report XBRL: {c['customer']} {pct:g}% of revenue (period ending {c.get('period_end')}"
                         + (f", {c['form']} {c['accession']})" if c.get("accession") else f", {c.get('source')})")),
             "filed": filed, "share_pct": pct}
@@ -367,25 +418,28 @@ def build_edges(info: dict | None = None) -> list[dict]:
 
     A caller that passes ``info`` (the result history, #387) learns how many filings were read (``filings``) and
     whether the stored edges were kept because none came out (``kept``)."""
-    rows = rawstore.get_all(_TABLE)
-    customers = _stored_customers(rows)
-    names = _spine_names() if customers else {}
     edges: list[dict] = []
-    for f in rows:
-        text = "" if f.get("quality") == "missing" else (f.get("item_text") or "")
-        if not text and f["ticker"] not in customers:
-            continue
-        edges.extend(filing_edges(f["ticker"], text, f.get("filed") or "", customers.get(f["ticker"]), names))
+    n_filings, names = 0, None
+    for rows in _corpus_batches():
+        n_filings += len(rows)
+        customers = _stored_customers(rows)
+        if customers and names is None:
+            names = _spine_names()
+        for f in rows:
+            text = "" if f.get("quality") == "missing" else (f.get("item_text") or "")
+            if not text and f["ticker"] not in customers:
+                continue
+            edges.extend(filing_edges(f["ticker"], text, f.get("filed") or "", customers.get(f["ticker"]), names))
     rawstore.ensure_table("chain_mentions")
     if info is not None:
-        info.update(filings=len(rows), kept=not edges)
+        info.update(filings=n_filings, kept=not edges)
     if not edges:
         # No filing yielded an edge (every row missing or text-less, an empty corpus): replace_all
         # would delete the stored edges and write none. Keep them and return what the store holds, so
         # the board, ``n_mentions`` and a later Refresh agree (#284).
         kept = rawstore.get_all("chain_mentions")
         logger.warning("value_chain: no edges came out of %d filings; kept the %d stored chain_mentions",
-                       len(rows), len(kept))
+                       n_filings, len(kept))
         return kept
     rawstore.replace_all("chain_mentions", edges)
     return edges
@@ -452,6 +506,7 @@ def _board_payload(filings: list[dict], edges: list[dict], as_of: str,
         "pending": pending,
         "misses": len(missed),
         "no_cik": len(no_cik),
+        "corpus": "layer" if _reads_layer() else _TABLE,
         # Hand-labelled fixture precision (file read only: no store, no network).
         "precision": precision_mod.gate(served=edges),
         # The Theme facet's vocabulary: the pinned theme run (#383 C1b), a store read.
@@ -471,11 +526,11 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
         # Rescanning Item 1/4 for the live universe would hang the request thread.
         rawstore.ensure_table("chain_mentions")
         edges = rawstore.get_all("chain_mentions")
-        filings = rawstore.get_all(_TABLE, columns=_LIGHT_COLUMNS)
+        filings = _board_filings_rows()
         return _board_payload(filings, edges, _stored_sync() or _now(), fetch)
     info: dict = {}
     edges = build_edges(info)
-    filings = rawstore.get_all(_TABLE, columns=_LIGHT_COLUMNS)
+    filings = _board_filings_rows()
     as_of = _now()
     rawstore.ensure_table("chain_meta")
     # write_rows, not replace_all: chain_meta is a "replace" table keyed by
@@ -511,7 +566,7 @@ def _stored_sync() -> str | None:
 
 def load_payload() -> dict:
     """Board payload from the store (zero network)."""
-    filings = rawstore.get_all(_TABLE, columns=_LIGHT_COLUMNS)
+    filings = _board_filings_rows()
     edges = rawstore.get_all("chain_mentions")
     return _board_payload(filings, edges, _stored_sync() or _now(), None)
 
