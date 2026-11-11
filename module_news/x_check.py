@@ -275,6 +275,14 @@ def chip(state: dict | None) -> str:
     return f"{s['ticker']} {strike}{s['right']} {s['expiry'][8:10]}.{s['expiry'][5:7]}"
 
 
+def _yaxis(ticks: list[tuple[float, str]], w: float) -> tuple[str, str]:
+    """A y axis for a stretched SVG: faint grid lines in the SVG and the labels as HTML to its right (``.ya``, top in
+    px), so the text keeps its size at any width."""
+    grid = "".join(f'<line class="gr" x1="0" y1="{y}" x2="{w:.0f}" y2="{y}"/>' for y, _ in ticks)
+    labels = "".join(f'<span class="ya" style="top:{y:.1f}px">{html.escape(t)}</span>' for y, t in ticks)
+    return grid, labels
+
+
 def chart_svg(state: dict | None, published_at: float) -> str:
     """The card's print chart: one bar a print over time, its height the premium, a buy (ask) above the line and a
     sell (bid) below it, mid prints as short grey ticks, and a dashed line at the tweet. Each bar's ``<title>`` is its
@@ -305,10 +313,11 @@ def chart_svg(state: dict | None, published_at: float) -> str:
         bars.append(f'<rect class="{"pa" if side == "ask" else "pb"}" x="{x(at) - 2}" y="{round(y, 1)}" width="4" '
                     f'height="{round(bh, 1)}" rx="2"><title>{tip}</title></rect>')
     tx = x(published_at)
-    return (f'<figure class="xc"><svg viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" role="img" '
-            f'aria-label="Kontratın işlemleri: üstte alım, altta satım, kesik çizgi tweet anı">'
+    grid, labels = _yaxis([(3.0, money(top)), (mid, "0"), (h - 3, money(top))], w)
+    return (f'<figure class="xc"><div class="plot"><svg viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" '
+            f'role="img" aria-label="Kontratın işlemleri: üstte alım, altta satım, kesik çizgi tweet anı">{grid}'
             f'<line class="xb" x1="0" y1="{mid}" x2="{w:.0f}" y2="{mid}"/>'
-            f'<line class="xt" x1="{tx}" y1="0" x2="{tx}" y2="{h:.0f}"/>{"".join(bars)}</svg>'
+            f'<line class="xt" x1="{tx}" y1="0" x2="{tx}" y2="{h:.0f}"/>{"".join(bars)}</svg>{labels}</div>'
             f'<figcaption><span>{_hm(lo)}</span><span class="lg"><i class="pa"></i>alım <i class="pb"></i>satım '
             f'<i class="xt"></i>tweet</span><span>{_hm(hi)}</span></figcaption></figure>')
 
@@ -391,8 +400,9 @@ def price_svg(px: list, marks: list[tuple[float, str]]) -> str:
                         f'title="{html.escape(tip, quote=True)} · {_price(v)}"></i>')
     first, last = pts[0][1], pts[-1][1]
     trend = "up" if last >= first else "down"
-    return (f'<figure class="xp"><svg viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" role="img" '
-            f'aria-label="Seansın 5 dakikalık fiyatı, noktalar tweet anları">'
-            f'<polyline class="ln {trend}" points="{line}"/>{hits}</svg>{"".join(dots)}'
-            f'<figcaption><span>{_hm(lo)}</span><span>düşük {_price(pmin)} · yüksek {_price(pmax)}</span>'
+    grid, labels = _yaxis([(y(v), _price(v)) for v in (pmax, (pmax + pmin) / 2, pmin)], w)
+    return (f'<figure class="xp"><div class="plot"><svg viewBox="0 0 {w:.0f} {h:.0f}" preserveAspectRatio="none" '
+            f'role="img" aria-label="Seansın 5 dakikalık fiyatı, noktalar tweet anları">{grid}'
+            f'<polyline class="ln {trend}" points="{line}"/>{hits}</svg>{"".join(dots)}{labels}</div>'
+            f'<figcaption><span>{_hm(lo)}</span>'
             f'<span class="lg"><i class="tw"></i>tweet</span><span>{_hm(hi)}</span></figcaption></figure>')

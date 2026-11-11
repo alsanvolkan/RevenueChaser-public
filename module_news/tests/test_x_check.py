@@ -160,5 +160,8 @@ def test_every_x_card_has_a_badge_and_each_ticker_a_group_with_its_price_line():
     assert page.count('class="xg"') == 2 and page.index('data-grp="SPY"') < page.index('data-grp="EL"')
     assert page.count('<figure class="xp">') == 1 and page.count('<i class="tw" style=') == 2   # both SPY tweets
     assert "UW teyitli" in page and "UW&#x27;de yok" in page and "X kimliği" in page
+    assert all(f'class="ya" style="top:{t}px">{v}<' in page for t, v in (("8.0", "725,00"), ("48.0", "717,50"),
+                                                                           ("88.0", "710,00")))   # price y axis
+    assert '<span class="ya" style="top:3.0px">$900 bin</span>' in page                         # prints y axis
     assert "1/1 UW teyitli" in page and "fiyat 722,00 → 725,00 (+0,42%)" in page
     assert x_check.badge(None)[2] == "X kimliği" and x_check.badge({"status": "pending"})[1] == "◷"

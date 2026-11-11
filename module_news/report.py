@@ -335,7 +335,11 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
 .xp .ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
 .xp .ln.up{stroke:var(--pos)}.xp .ln.down{stroke:var(--neg)}
 .xp .hit{fill:transparent}
-.xp>i.tw{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--amber);
+.plot{position:relative;margin-right:64px}
+.plot .ya{position:absolute;left:100%;padding-left:6px;transform:translateY(-50%);color:var(--muted);font-size:11px;
+ line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap}
+.xp .gr,.xc .gr{stroke:var(--border);stroke-width:1;stroke-dasharray:2 3;vector-effect:non-scaling-stroke}
+.plot>i.tw{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--amber);
  border:2px solid var(--card);cursor:default}
 .xp figcaption{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 8px;color:var(--muted);
  font-size:11.5px;font-variant-numeric:tabular-nums}
