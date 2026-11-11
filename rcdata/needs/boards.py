@@ -34,7 +34,7 @@ NOT_A_BOARD = frozenset({"module_testing", "module_settings"})
 UNDECLARED = frozenset({
     "module_asymmetric_growth", "module_comovement", "module_financials", "module_fundamentals", "module_leaps",
     "module_news", "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
-    "module_swing_potential", "module_uw_interaction", "module_value_chain", "module_welcome",
+    "module_swing_potential", "module_uw_interaction", "module_value_chain",
 })
 
 #: What each board not migrated yet will read: first from the catalog's need list of 29 Oct 2026

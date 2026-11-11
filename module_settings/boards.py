@@ -230,9 +230,10 @@ def _board(key: str, label: str, tables: list[str], payload_path, *,
 # writes; ``ops_tables`` the ops.sqlite tables it reads (the stock watch list, PR 4). ``funnel_steps`` only where the rendered payload emits that list.
 BOARD_INPUTS: list[dict] = [
     # Welcome (decision A) and News (S9, S16) write their own board files; these are the stored tables they read.
+    # #643 PR 5: the four market tiles read market.duckdb's ``market_series`` through their needs, so the three
+    # old series tables are gone from this record; the earnings card and the freshness card still read theirs.
     _board("module_welcome", "Welcome",
-           ["index_levels_daily", "vol_index_daily", "macro_series", "earnings_calendar", "job_runs",
-            "news_events", "news_highlight"],
+           ["earnings_calendar", "job_runs", "news_events", "news_highlight"],
            lambda: _html("welcome"), price_basis="last stored closes, not live quotes",
            ops_tables=["watchlist_stock"]),
     _board("module_news", "News", [], lambda: _html("news")),      # reads market.economic_event
