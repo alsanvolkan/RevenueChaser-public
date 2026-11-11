@@ -134,7 +134,9 @@ the code records (`rcdata/scaffold`, `rcdata/caps`, and the needs layer's `board
 closed fold under it (`details#old-settings`), unchanged.
 
 - **Order:** Health, Fetch (with the universe bar and the Backfill calendar), the flow diagram, Providers, Data
-  file by file, then the cross-check and the queue. Health, Fetch and the flow diagram start open.
+  file by file, then the queue (`details#sec-queue`), the cross-check and the weekly backups
+  (`details#sec-backups`). Health, Fetch and the flow diagram start open; the queue opens while something waits or
+  runs and the backups open while a copy is past its limit (#715 step 2).
 - **Health tiles** count the dataset cards. The builder tile turns red when the builder has been
   silent for over 70 minutes; a provider's cap tile warns at 50% of its day cap and is red from 70%.
 - **Where the folder counts come from.** Every dataset's raw and Parquet folder line is the **disk picture**, not a
@@ -287,7 +289,8 @@ chosen: the spine (the default, `RC_UNIVERSE_SOURCE` unset, or the variable set 
 variable set to anything else, `store` by convention), or the old store because the spine was asked for but is
 missing or its last build failed (in amber, with the reason).
 
-**Page-level cards:** the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
+**Page-level cards** (the queue and the weekly backups are drawn by `control_render` on the Fetch tab since
+#715 step 2; the rest are the older cards): the queue (queued and running requests, then the last 20 finished), spend (F6: calls per
 provider for the New York day and the week from Monday, from `provider_calls_daily`, against the day caps of
 `rcdata/caps.py`, and UW's newest `x-uw-*` sample from `uw_remaining`: its daily count, what is left of our own cap
 (computed) and the per-minute window), weekly backups (the weekly job's manifests under

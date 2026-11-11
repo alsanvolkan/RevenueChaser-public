@@ -2998,7 +2998,8 @@ DATA_HELP = help_html(
     "then one group a served file with its sources. <b>Fetch</b> puts "
     "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
     "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
-    "call and holds the dataset until <b>Resume</b>. Under the groups sit the need catalog by file, the board settings, the automations, the watch lists and the IBKR cards. "
+    "call and holds the dataset until <b>Resume</b>. Under the groups sit the <b>queue</b> with the last runs and the "
+    "<b>weekly backups</b>, then the need catalog by file, the board settings, the automations, the watch lists and the IBKR cards. "
     "The frame on top shows Fetch, Data health, the jobs by the board they feed and their run logs, from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )
