@@ -22,7 +22,7 @@ import time
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.config import OUTPUT_DIR
-from RevenueChaser.core import subscription_usage
+from RevenueChaser.core import fundamentals_layer, subscription_usage
 from RevenueChaser.core.providers import claude_code, deepseek, grok
 
 from . import config, embeddings, engine, locator, profile_v3, profiles, similarity, writers
@@ -73,7 +73,9 @@ def run(tickers: list[str], provider: str, model: str) -> dict:
     started, cache_before = time.time(), _llm_rows(model)
     budget = _budget(provider)
     names = engine._company_names(tickers)
-    ciks = engine._cik_for(tickers)
+    # Off the layer the CIK would come from SEC's ticker map, a network call the comparison never made; the CIK only
+    # adds the layer's context, so off the layer it is left empty.
+    ciks = engine._cik_for(tickers) if fundamentals_layer.reads_layer() else {}
     profs: dict[str, dict] = {}
     pjs: dict[str, dict] = {}
     no_text, short_text, empty, shell, stopped = [], [], [], [], None
