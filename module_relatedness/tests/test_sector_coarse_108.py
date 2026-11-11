@@ -12,6 +12,7 @@ import pytest
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_relatedness import themes
+from RevenueChaser.rcdata.tests import spine_fixture
 
 
 def _seed(run, mediums, sectors, coarse_parent="c0", current=0):
@@ -30,6 +31,7 @@ def _seed(run, mediums, sectors, coarse_parent="c0", current=0):
     rawstore.write_rows("relatedness_theme_members", members)
     rawstore.write_rows("equity_universe", [{"ticker": t, "market_cap": 1e9, "sector": s}
                                             for t, s in sectors.items()])
+    spine_fixture.write_security([{"ticker": t, "sector": s} for t, s in sectors.items()])   # the sectors (#642 PR 3)
     rawstore.write_rows("theme_runs", [{"id": run, "created_at": "2026-10-16T00:00:00+00:00",
                                         "k_fine": len(mediums), "k_medium": len(mediums), "k_coarse": 2,
                                         "jaccard": 0.74, "is_current": current}])

@@ -31,14 +31,10 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3        # an empty LLM answer is retried in at most 3 runs
 MAX_TRANSIENT_FAILURES = 5   # stop a run after this many non-auth LLM failures
 
-# The canonical spine is `equity_universe`; the rename lands in docs/plan_rest.md.
-_UNIVERSE = "equity_universe" if "equity_universe" in rawstore.MANIFEST else "equity_universe"
-
-
 class RunStopped(RuntimeError):
     """The profile run stopped early: ``peak`` (DeepSeek), ``allowance`` (SuperGrok, #388), ``auth``, ``transient``
-    (repeated), ``request`` (Grok answered a 4xx: endpoint, model or parameter wrong) or ``unusable`` (Grok's first
-    replies of a run were all unusable).
+    (repeated), ``request`` (Grok answered a 4xx: endpoint, model or parameter wrong), ``unusable`` (Grok's first
+    replies of a run were all unusable) or ``spine`` (no spine to name the companies from, #642 D3).
 
     Written profiles stay durable; the caller reloads them from the store.
     """
@@ -292,21 +288,9 @@ def _segment_note(cik: str | None, accession: str | None) -> str:
 
 def _context(ticker: str, cik: str | None, source: dict | None = None) -> dict:
     """What the v3 prompt is given beside the text (#400): SIC, sector, industry, the filing's segment note and the
-    company's ``chain_mentions`` names as candidates. Each part is optional; a missing table gives none of it."""
+    company's ``chain_mentions`` names as candidates. SIC, sector and industry are the spine's only (#642 PR 3); each
+    other part is optional, and a missing table gives none of it."""
     out: dict = {}
-    try:
-        row = rawstore.get("sec_company_sic", ticker) or {}
-        if row.get("sic"):
-            out["sic"] = str(row["sic"])
-    except Exception:  # noqa: BLE001 - optional context
-        pass
-    try:
-        rows = rawstore.query(f"SELECT sector, industry FROM {_UNIVERSE} WHERE ticker = ?", [ticker])
-        if rows:
-            out.update({k: rows[0][k] for k in ("sector", "industry") if rows[0].get(k)})
-    except Exception:  # noqa: BLE001
-        pass
-    # The spine's SIC (Compustat's), sector and industry win over the old tables (avo, 10 Nov 2026).
     spine = _spine_rows([ticker]).get(ticker.upper()) or {}
     out.update({k: str(spine[k]) for k in ("sic", "sector", "industry") if spine.get(k)})
     try:
@@ -344,28 +328,35 @@ FALLBACKS = ("item", "previous_filing", "whole_document")
 
 
 def _company_names(tickers: list[str]) -> dict[str, str]:
-    """``{ticker: name}`` from the shared universe (``equity_universe.name``), for the prompt (#388 D5).
+    """``{ticker: name}`` from the spine's ``security`` rows, for the prompt (#388 D5; the spine only since #642 PR 3).
 
-    ``chain_filings`` has no name column, so ``_filing_text``'s name is the ticker; the prompt used to say
-    ``Company: AAPL``."""
+    ``chain_filings`` has no name column, so a ticker the spine does not name is sent as itself."""
     if not tickers:
         return {}
-    rows = rawstore.query(f"SELECT ticker, name FROM {_UNIVERSE} WHERE ticker IN (SELECT unnest(?))",
-                          [list(tickers)])
-    out = {r["ticker"]: str(r["name"]) for r in rows if r.get("name")}
-    # The spine's name wins (avo, 10 Nov 2026: name, sector, industry and SIC from the new system before the 400 run):
-    # ``equity_universe`` cuts a name at about 31 characters, so 4,501 of 7,664 differed from the spine's.
-    out.update({t: str(r["name"]) for t, r in _spine_rows(tickers).items() if r.get("name")})
-    return out
+    return {t: str(r["name"]) for t, r in _spine_rows(tickers).items() if r.get("name")}
 
 
 def _spine_rows(tickers) -> dict[str, dict]:
-    """``{ticker: security row}`` from ``spine.duckdb``; none when the file or the table is not there."""
+    """``{ticker: security row}`` from ``spine.duckdb``. A read that fails raises: the name is part of every profile's
+    input hash, so a silent empty answer would re-key the whole run (#642 F7, D3); ``_spine_ready`` stops it first."""
     from RevenueChaser.rcdata import read
-    try:
-        return {r["ticker"]: r for r in read.identity(tickers)}
-    except Exception:  # noqa: BLE001 - optional: the old universe still answers
-        return {}
+    return {r["ticker"]: r for r in read.identity(tickers)}
+
+
+def _spine_ready() -> None:
+    """Stop a profile run (``RunStopped("spine")``) when the spine cannot name its companies: no ``spine.duckdb``, or
+    a read of it that fails (#642 D3). Without it every name would fall back to the ticker and every profile's input
+    hash would change, so the run would redo, and pay for, profiles that did not change."""
+    from RevenueChaser.rcdata import read
+    why = read.missing("spine")
+    if why is None:
+        try:
+            read.identity(["SPY"])
+        except Exception as exc:  # noqa: BLE001 - any failure is a stop, said in words
+            why = f"spine read failed: {exc}"
+    if why is not None:
+        logger.warning("relatedness profile run stopped: %s", why)
+        raise RunStopped("spine", None, why)
 
 
 # How many tickers' filing texts ``_input_hashes`` holds at once (each is up to ~50 KB of prose).
@@ -462,6 +453,8 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
     from . import store
 
     profiles_mod.llm(provider)                 # an unknown writer fails here, before anything is written
+    if use_llm:
+        _spine_ready()                         # no spine, no names: stop before anything is written (#642 D3)
     grok_run = provider == "grok"
     free_run = provider != "deepseek"          # EVREN and Grok (#360): no fee, a call count is the only cap
     w_model, w_thinking, w_effort = _writer(provider)
@@ -1185,8 +1178,8 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
     elif no_fetch:
         payload["provider_health"] = _stored_provider_health()
     if not no_fetch:
-        # Refresh is pure: relatedness_scores / run_registry change only on Fetch.
-        store.save_scores(payload["peers"])
+        # Refresh is pure: run_registry changes only on Fetch. ``relatedness_scores`` is no longer written: no board
+        # reads it (#594 DF65); the result history keeps each run's scores (the table stays until avo's "sil").
         rawstore.write_rows("run_registry", [{
             "key": "relatedness_run",
             "value": json.dumps({"as_of": payload["as_of"], "n": payload["n"],

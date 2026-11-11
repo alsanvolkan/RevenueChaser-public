@@ -36,6 +36,14 @@ def test_holdings_are_each_funds_newest_day_by_weight_with_name_and_weight():
     assert {str(r["as_of"]) for r in rows} == {"2026-11-07"}
 
 
+def test_a_spine_file_without_the_holdings_table_is_no_rows():
+    """The reader shares the table's name; a file built before the table existed must read as no rows, not as
+    DuckDB's replacement scan finding the Python function (#642 PR 3 CI, 11 Nov 2026)."""
+    fx.write_security([])
+    assert read.etf_holdings(["SMH"]) == []
+    assert read.etf_holding_tickers(["SMH"]) == {"SMH": set()}
+
+
 def test_holdings_of_nothing_or_no_spine_file_are_no_rows():
     assert read.etf_holdings(["SMH"]) == []
     assert read.etf_holdings([]) == []
