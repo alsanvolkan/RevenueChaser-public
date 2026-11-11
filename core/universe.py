@@ -170,6 +170,7 @@ def _spine_universe() -> list[dict]:
     the old rule, the spine's Tiers A and B whole. The list is read once a render
     (``spine_reads.my_universe_tickers``), and every caller below goes through this function, so the boards, the
     funnel of ``universe_counts`` and the peer ladder can never read different sets."""
+    from . import spine_reads
     ids = _universe_ids()
     if not ids:
         return []
