@@ -18,7 +18,8 @@ def test_listed_nasdaq_names_join_a_nasdaq_membership(monkeypatch):
 
 
 def test_an_unreadable_spine_file_gives_an_empty_provenance(monkeypatch):
-    monkeypatch.setattr(universe, "_spine", lambda: True)
+    serving.live_path("spine").parent.mkdir(parents=True, exist_ok=True)
+    serving.live_path("spine").touch()
 
     def broken(kind):
         raise duckdb.IOException("truncated file")

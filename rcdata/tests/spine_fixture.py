@@ -604,8 +604,10 @@ def write_security(rows: list[dict], replace: bool = False) -> None:
     try:
         con.execute(f"CREATE TABLE IF NOT EXISTS {serving.VERSION_TABLE} (kind TEXT, version INTEGER, "
                     "built_at DOUBLE, build_id TEXT)")
-        cols = ", ".join(f'"{c}" {t}' for c, t in sec.SECURITY)
-        con.execute(f"CREATE TABLE IF NOT EXISTS security ({cols})")
+        # Every table the spine readers expect (not ``my_universe``: an empty list there would keep no name).
+        for table in ("security", "security_history", "gics_history", "index_membership"):
+            cols = ", ".join(f'"{c}" {t}' for c, t in sec.SCHEMAS[table])
+            con.execute(f"CREATE TABLE IF NOT EXISTS {table} ({cols})")
         if replace:
             con.execute("DELETE FROM security")
         for r in rows:

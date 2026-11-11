@@ -50,7 +50,7 @@ def test_the_filter_meta_comes_from_the_registry_and_the_pinned_themes(rawstore_
     html = report.render_oipd_dashboard(engine._empty_payload("AAA", "x"))
     meta = json.loads(html.split("var META = ", 1)[1].split(";\n", 1)[0])
     assert meta["board"] == "oipd" and meta["earnings_mode"] == "filter"
-    assert meta["indexes"] and "S&P 500" in meta["indexes"]
+    assert meta["indexes"] == []                      # no spine here: the registry offers no index (#642 PR 6)
     assert meta["themes"] == {}                       # a fresh store has no pinned run
 
 

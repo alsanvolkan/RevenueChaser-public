@@ -84,7 +84,7 @@ def test_the_source_search_sees_a_need_named_in_the_board_and_not_one_named_in_i
 
 def test_which_boards_read_a_need_is_answered_from_the_same_record():
     assert "module_earnings_radar" in boards.readers_of("earnings.next")
-    assert boards.readers_of("prices.bars") == ()
+    assert boards.readers_of("prices.bars") == ("module_comovement",)
     with pytest.raises(needs.UnknownNeed):
         boards.readers_of("no.such.need")
 

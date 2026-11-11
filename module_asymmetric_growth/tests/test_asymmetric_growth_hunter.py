@@ -4,10 +4,24 @@ from __future__ import annotations
 import pytest
 
 from RevenueChaser.core import rawstore
-from RevenueChaser.core.universe import classification_universe
 from RevenueChaser.core import universe_fetch as uf
 from RevenueChaser.core.identity.sources import SourceResult
 from RevenueChaser.module_asymmetric_growth import engine as agh
+
+
+@pytest.fixture(autouse=True)
+def old_pull_reads_its_own_table(monkeypatch):
+    """The old universe pull (``core/universe_fetch``) is under test here, not the boards' universe: since #642 PR 6
+    ``load_cached_universe`` is the spine's, so the pull's tests read back the ``equity_universe`` rows it wrote."""
+    import json
+
+    def old_rows():
+        rows = rawstore.query("SELECT * FROM equity_universe")
+        for r in rows:
+            if isinstance(r.get("quote"), str):
+                r["quote"] = json.loads(r["quote"])
+        return rows
+    monkeypatch.setattr(uf, "_load_cached_universe", old_rows)
 
 
 def _financials(country="United States", exchange="NMS") -> dict:
@@ -614,7 +628,6 @@ def test_phase_b_backfills_null_cap_and_mu_survives_classification(monkeypatch, 
     assert mu["market_cap"] == pytest.approx(1.35e9 * 925.57)
     assert stats["cap_backfill"] == {"requested": 1, "filled": 1, "skipped": 0,
                                      "failed": 0, "deferred": 0, "rate_limited": False}
-    assert "MU" in classification_universe()
     assert "MU" in {r["ticker"] for r in rows}
 
 
