@@ -296,14 +296,6 @@
 .ctl .ln b.full{color:var(--bad)}
 .ctl .lbar{position:relative}
 .ctl .lbar::after{content:"";position:absolute;top:-2px;bottom:-2px;left:80%;width:1px;background:var(--mut);opacity:.6}
-.ctl .wrow{display:grid;grid-template-columns:140px minmax(0,1fr);gap:2px 12px;padding:8px 0;border-bottom:1px solid var(--line)}
-@media(max-width:560px){.ctl .wrow{grid-template-columns:1fr}}
-.ctl .wrow:last-child{border-bottom:0}
-.ctl .wk{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
-.ctl .wk.s1{color:var(--ssd)}
-.ctl .wk.s2{color:var(--hdd)}
-.ctl .wk.s3{color:var(--old)}
-.ctl .wv{font-size:12.5px;min-width:0}
 .ctl details.legacy{margin-top:6px;opacity:.85}
 .ctl details.legacy>summary{cursor:pointer;min-height:40px;display:flex;align-items:center;font-weight:600;font-size:13.5px}
 .ctl details.legacy details{margin:4px 0 4px 14px}
@@ -345,6 +337,28 @@
 .ctl .phoneonly{display:none}
 @media(max-width:760px){.ctl .flowwrap{display:none}
 .ctl .phoneonly{display:block}}
+/* #715: the phone's own flow — the six pictures side by side in one strip, swiped sideways. */
+.ctl .pftabs{display:flex;gap:6px;overflow-x:auto;padding:0 0 8px;scrollbar-width:none}
+.ctl .pftabs::-webkit-scrollbar{display:none}
+.ctl .pftab{flex:none;min-height:44px;padding:0 14px;border:1px solid var(--line);border-left:3px solid var(--fh);
+  border-radius:999px;background:var(--card);color:var(--fg);font:12px var(--f-mono,monospace);cursor:pointer}
+.ctl .pfdeck{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;align-items:flex-start;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none}
+.ctl .pfdeck::-webkit-scrollbar{display:none}
+.ctl .pfslide{flex:0 0 100%;scroll-snap-align:start;min-width:0;border:1px solid var(--line);border-radius:12px;
+  background:var(--card)}
+.ctl .pfhead{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;font-size:13px}
+.ctl .pfhead i{display:inline-block;width:16px;height:3px;border-radius:2px;flex:none}
+.ctl .pfhead b{font-family:var(--f-mono,monospace);font-size:12.5px;overflow-wrap:anywhere}
+.ctl .pfhead span{color:var(--mut);font-size:11.5px;margin-left:auto;white-space:nowrap}
+.ctl svg.pflow{display:block;width:100%;height:auto;padding:0 0 10px}
+.ctl svg.pflow .pt{fill:var(--fg);font:11px var(--f-body)}
+.ctl svg.pflow .ptf{fill:var(--fg);font:600 11.5px var(--f-mono,monospace);text-anchor:middle}
+.ctl svg.pflow .psrc,.ctl svg.pflow .pbd{fill:var(--bg);stroke:var(--line)}
+.ctl svg.pflow .pbd.off{stroke-dasharray:3 3}
+.ctl svg.pflow .pfn{fill:var(--card);stroke-width:2}
+.ctl svg.pflow .pfile{cursor:pointer}
+.ctl svg.pflow .pe{fill:none;stroke-width:1.5;opacity:.55}
 .ctl .order{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 0}
 .ctl .ostep{display:flex;gap:6px;align-items:baseline;font-size:12.5px;border:1px solid var(--line);
   border-radius:10px;padding:5px 10px;min-height:36px;background:var(--card)}
@@ -1195,3 +1209,4 @@
 .ctl code,.ctl table.stk td{overflow-wrap:anywhere;word-break:break-word;min-width:0}
 }
 .ctl table.bktbl code{overflow-wrap:anywhere;word-break:break-word}
+.ctl .pftab.on{border-color:var(--fh);background:var(--acc2)}

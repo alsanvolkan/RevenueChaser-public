@@ -1211,3 +1211,37 @@
     if (n) open(n.getAttribute('data-node').slice(5), true);
   });
 })();
+
+/* The phone's flow deck (#715): the six pictures sit side by side in one swiped strip, and the names above it
+   jump to one. The strip itself is what scrolls, never the page (avo, 11 Nov 2026). */
+(function () {
+  function tabs() { return document.querySelectorAll('.ctl .pftabs .pftab'); }
+  function mark(i) {
+    var t = tabs();
+    for (var k = 0; k < t.length; k++) { t[k].classList.toggle('on', k === i); }
+  }
+  function deck() { return document.querySelector('.ctl .pfdeck'); }
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var b = e.target.closest('.ctl .pftab[data-deck]');
+    if (!b) return;
+    var s = document.getElementById(b.getAttribute('data-deck'));
+    var d = deck();
+    if (!s || !d) return;
+    // by the rectangles, because offsetLeft is read against the offset parent, not the strip's content
+    d.scrollTo({left: d.scrollLeft + s.getBoundingClientRect().left - d.getBoundingClientRect().left,
+                behavior: 'smooth'});
+    mark(Array.prototype.indexOf.call(tabs(), b));
+  });
+  function watch() {
+    var d = deck();
+    if (!d || d.dataset.watched) return;
+    d.dataset.watched = '1';
+    mark(0);
+    d.addEventListener('scroll', function () {
+      mark(Math.round(d.scrollLeft / (d.clientWidth + 10)));
+    }, {passive: true});
+  }
+  watch();
+  window.addEventListener('load', watch);
+})();
