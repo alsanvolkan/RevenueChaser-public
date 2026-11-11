@@ -24,7 +24,7 @@ from RevenueChaser.rcdata.needs import boards
 UNDECLARED_CEILING = frozenset({
     "module_asymmetric_growth", "module_comovement", "module_financials", "module_fundamentals", "module_leaps",
     "module_news", "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
-    "module_swing_potential", "module_uw_interaction", "module_value_chain", "module_welcome",
+    "module_swing_potential", "module_uw_interaction", "module_value_chain",
 })
 
 #: ``{package: old-store tables its SQL names}`` on 11 Nov 2026 (main 34ac3e55).
@@ -41,7 +41,9 @@ OLD_TABLES = {
                         "job_runs", "price_bars_daily", "sec_exchange_file", "security_master", "swing_ohlc"},
     "module_swing_potential": {"swing_ohlc"},
     "module_value_chain": {"chain_meta", "edgar_documents", "equity_universe", "sec_company_tickers"},
-    "module_welcome": {"earnings_calendar", "index_levels_daily", "job_runs", "macro_series", "vol_index_daily"},
+    # #643 PR 5 took the four market tiles off ``index_levels_daily``, ``vol_index_daily`` and ``macro_series``;
+    # the earnings card (``earnings_calendar``) and the freshness card (``job_runs``) are its PR 5b and PR 6.
+    "module_welcome": {"earnings_calendar", "job_runs"},
 }
 
 #: ``{package: files (relative to it) that import core.providers}`` on 11 Nov 2026 (main 34ac3e55).

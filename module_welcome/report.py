@@ -25,6 +25,7 @@ from RevenueChaser.module_news.calendar import AMS, EVENTS, HIGHLIGHT, local_day
 from RevenueChaser.module_news.report import (HEADLINES, WEEKDAYS, _head_li, day_label, dots_html, esc, hm, long_date,
                                               vals_html)
 from RevenueChaser.module_welcome.build import EARNINGS, FRESHNESS, NY, SNAPSHOT, earnings_days
+from RevenueChaser.rcdata import read
 
 FILENAME = "welcome_latest.html"
 SESSION_DAYS = 8
@@ -176,8 +177,11 @@ def _snapshot_card() -> str:
         tiles.append(f'<div class="tile"><div class="muted">{esc(label)}</div><div class="val">{esc(value)}</div>'
                      f'{delta}{_spark(json.loads(r.get("spark") or "[]"))}'
                      f'<div class="muted small">{_short_date(r["session_date"])} kapanışı</div></div>')
+    # With no row the card used to say only "no stored close", which reads as "no data" when the real cause is a
+    # builder file that is not there yet (#642 F3, #643 PR 5): ``read.missing`` is that reason, in one line.
+    reason = read.missing("market") if not tiles else None
     body = ('<div class="tiles">' + "".join(tiles) + "</div>") if tiles else (
-        '<p class="empty">Saklı kapanış yok.</p>')
+        f'<p class="empty">Saklı kapanış yok{f" ({esc(reason)})" if reason else ""}.</p>')
     return ('<section class="card"><h2 class="lbl">Piyasa · son kapanış</h2>' + body +
             '<p class="muted note">Canlı fiyat değil: saklı son kapanış ve bir önceki seansa göre değişim.</p></section>')
 
