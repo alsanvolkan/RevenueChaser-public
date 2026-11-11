@@ -671,8 +671,9 @@ def focal_graph(edges: list[dict], ticker: str, depth: int = 2,
         links.append({"src": e["src"], "dst": e.get("dst_ticker") or e["dst_name"],
                       "dst_ticker": e.get("dst_ticker") or "",
                       "relation": e["relation"], "snippet": e.get("snippet") or "",
-                      "share_pct": e.get("share_pct"), "source": e.get("source"),
-                      "hop": hop, "incoming": incoming})
+                      "share_pct": e.get("share_pct"), "hop": hop, "incoming": incoming,
+                      # #410: the edge's source; absent on an edge stored before the column.
+                      **({"source": e["source"]} if e.get("source") else {})})
 
     first = [e for e in by_src.get(ticker, []) if e["relation"] in ("supplier", "customer")]
     for e in first:
