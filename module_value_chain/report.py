@@ -119,7 +119,7 @@ def _summary_html(payload: dict, n_filings: int, n_drawn: int) -> str:
     if pending is None:
         pending = fetch.get("pending") or 0
     # Tickers left out of Pending (#116 C26): a recorded miss or no CIK.
-    pending_d = "not yet fetched"
+    pending_d = "not in the SEC layer yet" if payload.get("corpus") == "layer" else "not yet fetched"
     misses, no_cik = int(payload.get("misses") or 0), int(payload.get("no_cik") or 0)
     if misses:
         pending_d += f" · {misses} with no 10-K / 20-F"

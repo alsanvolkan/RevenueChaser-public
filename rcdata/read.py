@@ -997,15 +997,16 @@ def filing_documents(cik, item: str = "business") -> list[dict]:
                                 "ORDER BY filing_date DESC, accession DESC", [_cik(cik), str(item)])
 
 
-def filing_texts(ciks: Iterable, item: str = "business") -> list[dict]:
+def filing_texts(ciks: Iterable, item: str = "business", text: bool = True) -> list[dict]:
     """``filing_text`` of several companies at once: per company the newest served document of ``item``, one row
-    each (a company with none is absent)."""
+    each (a company with none is absent). ``text=False`` leaves the text out (a board's filing list)."""
     wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
     if not wanted:
         return []
-    return _rows("filing_item", "SELECT * FROM filing_item WHERE kind = 'document' AND item = ? "
+    cols = "*" if text else "* EXCLUDE (text)"
+    return _rows("filing_item", f"SELECT {cols} FROM filing_item WHERE kind = 'document' AND item = ? "
                                 f"AND cik IN ({', '.join('?' * len(wanted))}) "
-                                "QUALIFY row_number() OVER (PARTITION BY cik ORDER BY filing_date DESC) = 1 "
+                                "QUALIFY row_number() OVER (PARTITION BY cik ORDER BY filing_date DESC, accession DESC) = 1 "
                                 "ORDER BY cik", [str(item), *wanted])
 
 

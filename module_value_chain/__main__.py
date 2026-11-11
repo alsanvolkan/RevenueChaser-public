@@ -5,6 +5,10 @@
     python -m RevenueChaser.module_value_chain --reslice-dry-run \\
         --edgar PATH --docs DIR [--out DIR]
     python -m RevenueChaser.module_value_chain --reslice-apply [--out DIR]
+    python -m RevenueChaser.module_value_chain --resolve-rate
+
+``--resolve-rate`` reads the stored Relatedness profiles and the spine and prints how many named customers,
+suppliers and competitors resolve to a ticker (#410; read only, no network).
 
 ``--floor`` (USD millions) and ``--tickers`` choose the names (#108 S0). Without either, both commands cover the
 whole classification universe as before, and the sync's submissions sweep covers every universe CIK (#299); with
@@ -18,7 +22,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import config, engine, reslice, sync
+from . import aliases, config, engine, reslice, sync
 
 
 def _print_summary(report: dict) -> None:
@@ -75,7 +79,15 @@ def main(argv: list[str] | None = None) -> int:
                            + warn)
     pick.add_argument("--tickers", default=None, metavar="A,B",
                       help="exactly these tickers, comma-separated." + warn)
+    p.add_argument("--resolve-rate", action="store_true",
+                   help="print the share of the profiles' named companies the spine-name resolver gives a ticker "
+                        "(read only)")
     args = p.parse_args(argv)
+    if args.resolve_rate:
+        from RevenueChaser.module_relatedness import store
+        from RevenueChaser.rcdata import read
+        print(json.dumps(aliases.resolve_rate(store.load_profile_json(), aliases.spine_names(read.identity()))))
+        return 0
     # The re-slice commands run before the selection, which (with --floor) would read the live store
     # through rawstore; the apply also refuses the flags that drive a fetch or a selection.
     if args.reslice_apply:
