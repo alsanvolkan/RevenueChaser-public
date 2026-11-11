@@ -146,7 +146,7 @@ def test_the_board_shows_the_check_and_one_card_for_a_print_two_accounts_tweeted
 
 
 def test_every_x_card_has_a_badge_and_each_ticker_a_group_with_its_price_line():
-    bars = [[round(TWEET - 3600 + i * 300), 710.0 + i] for i in range(16)]
+    bars = [[int(TWEET) - 3600 + i * 300, 710.0 + i] for i in range(16)]      # a bar starts at the tweet's second
     seen = {"ticker": "SPY", "strike": 759.0, "right": "C", "expiry": "2026-11-20", "occ": "SPY261120C00759000",
             "session": "2026-11-10", "status": "seen", "trades": 1, "contracts": 5000, "premium": 900000.0,
             "ask": 5000, "bid": 0, "mid": 0, "first": TWEET - 120, "last": TWEET - 120,
