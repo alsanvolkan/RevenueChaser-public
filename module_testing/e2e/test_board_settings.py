@@ -156,8 +156,9 @@ def served_spine(dashboard):
     try:
         con.execute("CREATE TABLE IF NOT EXISTS security (ticker VARCHAR, name VARCHAR, cik VARCHAR, "
                     "sector VARCHAR, industry VARCHAR, tier VARCHAR)")
-        # Named columns, not positional: ``seeded_settings`` may already have created this table with the
-        # spine's whole schema (``universe_store``), and then a positional insert counts the wrong columns.
+        # ``seeded_settings`` may already have created this table with the spine's whole schema and put AAPL in
+        # it (``universe_store``). So: name the columns, and replace the row rather than add a second one.
+        con.execute("DELETE FROM security WHERE ticker = 'AAPL'")
         con.execute("INSERT INTO security (ticker, name, cik, sector, industry, tier) "
                     "VALUES ('AAPL', 'Apple Inc.', '0000320193', 'Technology', 'Hardware', 'A')")
     finally:
