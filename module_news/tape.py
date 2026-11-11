@@ -29,8 +29,10 @@ log = logging.getLogger(__name__)
 
 # A client id of its own: 73 IV history, 74 the board's per-ticker fetch, 75 the builder's (326 refuses a repeat).
 CLIENT_ID = 76
-#: Broad-tape feeds asked for when ``RC_NEWS_TAPE_FEEDS`` is not set; which ones the paper user has is not measured.
-DEFAULT_FEEDS = ("BRFG", "BRFUPDN", "DJNL")
+#: Broad-tape feeds asked for when ``RC_NEWS_TAPE_FEEDS`` is not set. Both stream on the paper user (11 Nov 2026).
+#: BRFUPDN (Briefing.com Analyst Actions) is free but has no broad tape: IBKR answers 200 "no security definition"
+#: for BRFUPDN:BRFUPDN_ALL, so its headlines come only per ticker (module_news.headlines).
+DEFAULT_FEEDS = ("BRFG", "DJNL")
 TRIGGER_S = 300                      # avo: "5 dk cok yerinde"
 READ_WAIT_S = 5.0                    # a quiet socket returns this often, so the trigger is never late by more
 RETRY_S, RETRY_MAX_S = 30.0, 300.0
