@@ -588,3 +588,30 @@ def write_etf_holdings(by_etf: dict, as_of: str = "2026-11-07", provider: str = 
                             [as_of, fund, provider, line["ticker"], line.get("name"), line.get("weight")])
     finally:
         con.close()
+
+
+def write_security(rows: list[dict], replace: bool = False) -> None:
+    """Add (or, by ticker, update) ``security`` rows in the live ``spine.duckdb``, creating the file and the table
+    when absent; ``replace`` drops every other row first. Each row names any of the served columns (``ticker``,
+    ``name``, ``sector``, ``industry``, ``sic``, ...); the rest stay NULL. For the readers' tests."""
+    import duckdb
+
+    from RevenueChaser.rcdata import serving
+    from RevenueChaser.rcdata.build.spine import security as sec
+    path = serving.live_path("spine")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(path))
+    try:
+        con.execute(f"CREATE TABLE IF NOT EXISTS {serving.VERSION_TABLE} (kind TEXT, version INTEGER, "
+                    "built_at DOUBLE, build_id TEXT)")
+        cols = ", ".join(f'"{c}" {t}' for c, t in sec.SECURITY)
+        con.execute(f"CREATE TABLE IF NOT EXISTS security ({cols})")
+        if replace:
+            con.execute("DELETE FROM security")
+        for r in rows:
+            con.execute("DELETE FROM security WHERE ticker = ?", [r["ticker"]])
+            names = list(r)
+            con.execute(f"INSERT INTO security ({', '.join(names)}) VALUES ({', '.join('?' * len(names))})",
+                        [r[n] for n in names])
+    finally:
+        con.close()

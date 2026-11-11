@@ -1056,15 +1056,13 @@ _SECTOR_SPDR = {
 
 
 def _sector_by_ticker() -> dict[str, str]:
-    """``ticker -> Morningstar sector name`` for every spine row that has a sector value.
-
-    A store the identity master has not re-applied since #266 still holds the old GICS
-    spellings (``Information Technology``); ``canonical_sector`` reads them as their
-    Morningstar name, so both spellings count toward one sector.
-    """
+    """``ticker -> Morningstar sector name`` for every spine ``security`` row that has a sector value (#642 PR 3; it
+    read the old ``equity_universe`` before). ``canonical_sector`` maps an old GICS spelling (``Information
+    Technology``) to its Morningstar name, so both spellings count toward one sector. No spine file is no sectors."""
+    from RevenueChaser.rcdata import read
     return {
         r["ticker"]: canonical_sector(r["sector"])
-        for r in rawstore.query("SELECT ticker, sector FROM equity_universe")
+        for r in read.identity()
         if str(r.get("sector") or "").strip()
     }
 
@@ -1190,7 +1188,6 @@ def cutover_materialize(run_id: str) -> dict:
     rawstore.ensure_table("ticker_themes")
     rawstore.ensure_table("relatedness_themes")
     rawstore.ensure_table("relatedness_theme_members")
-    rawstore.ensure_table("equity_universe")
 
     prefix = f"{run_id}:"
     n_members = rawstore.query(

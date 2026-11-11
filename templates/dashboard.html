@@ -283,7 +283,7 @@ var ACTIVE = 'module_earnings_radar';
 // Fluid boards (fully width:100% pages with inner overflow wrappers): their
 // iframe FILLS the visible pane instead of being grown to a natural content
 // width like the intentionally-wide boards below (Earnings ~2600px).
-var FILL_WIDTH = {'module_spx_gamma': true, 'module_earnings_radar': true, 'module_oipd': true, 'logs': true, 'runs': true, 'activity': true,
+var FILL_WIDTH = {'module_spx_gamma': true, 'module_earnings_radar': true, 'module_oipd': true, 'logs': true, 'runs': true,
                   // Welcome and News lay themselves out in one or two columns: they fill the pane, never grow past it.
                   'module_welcome': true, 'module_news': true,
                   // #527: Data/Health keeps its own 1280 px column and scrolls a wide part inside its box; grown to its
@@ -413,7 +413,7 @@ function showTab(key){
   var rfBtn = document.getElementById('btn-refresh');
   // Logs and Runs are read-only views (the log files, the job_runs rows): both poll by themselves,
   // so there is nothing to refresh.
-  if(rfBtn) rfBtn.style.display = (key==='module_earnings_radar' || key==='logs' || key==='runs' || key==='activity') ? 'none' : 'inline-block';
+  if(rfBtn) rfBtn.style.display = (key==='module_earnings_radar' || key==='logs' || key==='runs') ? 'none' : 'inline-block';
   var ftBtn = document.getElementById('btn-fetch');
   if(ftBtn) ftBtn.style.display = (key==='module_leaps' || key==='module_sec_13f' || key==='module_financials' || key==='module_oipd' || key==='module_comovement' || key==='module_news' || key==='module_welcome') ? 'inline-block' : 'none';
   var ruBtn = document.getElementById('btn-refresh-universe');

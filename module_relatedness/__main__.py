@@ -60,7 +60,7 @@ import argparse
 import json
 
 from RevenueChaser.core import offpeak, rawstore, subscription_usage
-from RevenueChaser.core.providers import deepseek, evren, grok
+from RevenueChaser.core.providers import claude_code, deepseek, evren, grok
 
 from . import engine, writers
 from . import settings as rel_settings
@@ -222,7 +222,8 @@ def main(argv: list[str] | None = None) -> int:
                         "--name). Without it --run uses the board's writer (Settings, #360; EVREN by default) and "
                         "theme naming uses deepseek. deepseek is off-peak gated and capped by --cap USD; evren (no "
                         "fee) and grok (SuperGrok subscription, #388) have no off-peak gate and no call cap unless "
-                        "--limit N (avo, 2 Nov 2026); grok also stops at the allowance")
+                        "--limit N (avo, 2 Nov 2026); grok also stops at the allowance; claude (subscription via headless Claude Code, no API key) stops at "
+                        "RC_CLAUDE_CAP percent of the weekly window, 80 by default")
     p.add_argument("--grok-ping", action="store_true",
                    help="one live SuperGrok call with the profile prompt; writes nothing; exit 0 when it answers a "
                         "usable profile")
@@ -234,8 +235,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         run_writer, run_model = explicit or "deepseek", None
     grok_on = run_writer == "grok"
-    if explicit == "evren" and not args.run:
-        p.error("--provider evren goes with --run only")
+    if explicit in ("evren", "claude") and not args.run:
+        p.error(f"--provider {explicit} goes with --run only")
     if args.run and run_writer != "deepseek":
         if explicit and args.cap is not None:
             p.error(f"--cap is USD and DeepSeek's only; with --provider {explicit}, --limit N caps the calls")
@@ -271,6 +272,10 @@ def main(argv: list[str] | None = None) -> int:
     if grok_on or args.grok_ping:
         print(f"Grok (SuperGrok subscription, model {run_model or grok.MODEL}): no off-peak gate; the allowance is "
               f"read before each batch of {grok.GATE_EVERY} calls.")
+    elif run_writer == "claude":
+        print(f"Claude (subscription via headless Claude Code, model {run_model or claude_code.MODEL}): no API key; "
+              f"stops at {subscription_usage.claude_weekly_cap():.0f}% of the weekly window, read every "
+              f"{claude_code.GATE_EVERY} calls.")
     elif run_writer == "evren":
         print(f"EVREN (model {run_model or evren.MODEL}): no fee, no off-peak gate, no call cap"
               + (f" beyond --limit {args.limit}." if args.limit else "."))

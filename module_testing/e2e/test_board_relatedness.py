@@ -93,6 +93,9 @@ def _seed_universe(rawstore, tickers):
     rawstore.write_rows("equity_universe", [
         {"ticker": t, "name": t + " Inc", "market_cap": 1e10,
          "sector": "Technology", "industry": "Semiconductors"} for t in tickers])
+    from RevenueChaser.rcdata.tests import spine_fixture      # names and sectors: the spine's only (#642 PR 3)
+    spine_fixture.write_security([{"ticker": t, "name": t + " Inc", "sector": "Technology",
+                                   "industry": "Semiconductors"} for t in tickers])
     rawstore.write_rows("sec_exchange_file", [     # #115: the CIK map production reads (#301 D21)
         {"ticker": t, "cik": str(1000 + i), "name": t, "exchange": "Nasdaq", "valid_from": None, "status": "present",
          "source": "sec_exchange", "fetched_at": 1.0, "run_id": "seed", "run_at": 1.0}

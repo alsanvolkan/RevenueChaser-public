@@ -87,7 +87,7 @@ def browser(chrome):
         yield page
 
 
-def _open(browser, dashboard, size, scheme, tab="activity"):
+def _open(browser, dashboard, size, scheme, tab="module_settings"):
     if isinstance(size, Device):
         browser.emulate_device(size, scheme=scheme)
     else:
@@ -113,7 +113,7 @@ def _width(size) -> int:
 
 @pytest.mark.parametrize("phone", PHONES)
 @pytest.mark.parametrize("scheme", ["light", "dark"])
-@pytest.mark.parametrize("tab", ["activity", "module_settings", "module_earnings_radar"])
+@pytest.mark.parametrize("tab", ["module_settings", "module_earnings_radar"])
 def test_the_page_never_scrolls_sideways_on_a_phone(dashboard, browser, scheme, tab, phone):
     m = _open(browser, dashboard, phone, scheme, tab)
     assert m["vw"] == _width(phone)
@@ -145,7 +145,7 @@ def test_the_nav_is_reachable_through_the_drawer(dashboard, browser, scheme):
 @pytest.mark.parametrize("phone", PHONES)
 @pytest.mark.parametrize("scheme", ["light", "dark"])
 def test_the_shells_touch_targets_are_44_px_on_a_phone(dashboard, browser, scheme, phone):
-    for tab in ("activity", "module_earnings_radar", "module_sector_rotation"):
+    for tab in ("module_earnings_radar", "module_sector_rotation"):
         m = _open(browser, dashboard, phone, scheme, tab)
         assert not m["small"], f"{tab}: touch targets under 44 px: {m['small']}"
 
@@ -271,7 +271,7 @@ def test_the_summaries_keep_their_arrow_on_a_phone(dashboard, browser):
     assert all(h >= 44 for _, h in board), f"the help summary is under 44 px: {board}"
 
 
-@pytest.mark.parametrize("tab", ["activity", "module_earnings_radar", "module_sector_rotation", "module_spx_gamma",
+@pytest.mark.parametrize("tab", ["module_earnings_radar", "module_sector_rotation", "module_spx_gamma",
                                  "module_sec_13f", "module_financials"])
 def test_the_phone_top_bar_leaves_the_board_most_of_the_screen(dashboard, browser, tab):
     """#190 review: the top bar took 262 px of 844 on Earnings and 314 on Sector Rotation."""
@@ -287,12 +287,12 @@ FOCUS = ("(function(){ var a = document.activeElement; return {tag: a.tagName, i
 def test_the_drawer_works_from_the_keyboard(dashboard, browser):
     """#190 review: focus stayed on the menu button when the drawer opened, Tab went on into the board behind
     the scrim, and choosing a tab dropped focus to <body>."""
-    _open(browser, dashboard, PHONE, "dark", "activity")
+    _open(browser, dashboard, PHONE, "dark")
     browser.eval("document.getElementById('nav-toggle').focus()")
     browser.press("Enter")
     browser.settle()
     f = browser.eval(FOCUS)
-    assert f["inSidebar"] and f["tab"] == "activity", f"opening the drawer left focus on {f}"
+    assert f["inSidebar"] and f["tab"] == "module_settings", f"opening the drawer left focus on {f}"
     for _ in range(40):                       # well past every control in the drawer
         browser.press("Tab")
         f = browser.eval(FOCUS)
@@ -313,7 +313,7 @@ def test_the_drawer_works_from_the_keyboard(dashboard, browser):
 
 
 def test_the_browser_bar_follows_the_manual_choice(dashboard, browser):
-    _open(browser, dashboard, PHONE, "dark", "activity")
+    _open(browser, dashboard, PHONE, "dark")
     _click(browser, "#nav-toggle")
     _click(browser, "#theme-toggle")                           # dark -> light, on a dark device
     metas = browser.eval("Array.prototype.map.call(document.querySelectorAll('meta[name=theme-color]'),"
@@ -322,7 +322,7 @@ def test_the_browser_bar_follows_the_manual_choice(dashboard, browser):
 
 
 def test_an_open_drawer_closes_when_the_window_grows_past_the_breakpoint(dashboard, browser):
-    _open(browser, dashboard, PHONE, "dark", "activity")
+    _open(browser, dashboard, PHONE, "dark")
     _click(browser, "#nav-toggle")
     browser.emulate(*DESKTOP, scheme="dark")
     browser.wait_for("!document.body.classList.contains('nav-open')", timeout=5)
@@ -332,10 +332,10 @@ def test_an_open_drawer_closes_when_the_window_grows_past_the_breakpoint(dashboa
 def test_a_board_gets_the_choice_again_when_its_tab_is_shown(dashboard, browser):
     """A board that re-rendered its document since it loaded (the shell only marked it on load) is marked
     again when its tab comes back."""
-    _open(browser, dashboard, DESKTOP, "dark", "activity")
+    _open(browser, dashboard, DESKTOP, "dark")
     browser.eval("document.getElementById('theme-toggle').click()")          # light
     browser.eval("document.querySelector('.frame.on').contentDocument.documentElement.removeAttribute('data-theme')")
-    browser.eval("showTab('module_settings'); showTab('activity')")
+    browser.eval("showTab('module_earnings_radar'); showTab('module_settings')")
     assert browser.eval("document.querySelector('.frame.on').contentDocument.documentElement"
                         ".getAttribute('data-theme')") == "light"
 
@@ -388,7 +388,7 @@ def test_an_open_calendar_is_placed_again_when_the_window_changes(dashboard, bro
 def test_the_drawer_has_its_own_close_button(dashboard, browser):
     """#190 delta review: a touch screen reader cannot press Escape, and the scrim is not a control; the
     drawer needs a button of its own. A desktop, where the sidebar is a column, has none."""
-    _open(browser, dashboard, PHONE, "dark", "activity")
+    _open(browser, dashboard, PHONE, "dark")
     _click(browser, "#nav-toggle")
     b = browser.eval("(function(){ var e = document.getElementById('nav-close'); if(!e) return null;"
                      " var r = e.getBoundingClientRect(); return {w: r.width, h: r.height, l: r.left, t: r.top,"

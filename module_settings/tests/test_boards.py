@@ -199,7 +199,7 @@ def _data_board_keys() -> list[str]:
     from RevenueChaser.app import dashboard
 
     return [t["key"] for t in dashboard.TABS
-            if t["type"] == "tab" and t["key"] not in ("module_settings", "activity")]
+            if t["type"] == "tab" and t["key"] != "module_settings"]
 
 
 def test_every_data_board_has_a_board_inputs_entry():

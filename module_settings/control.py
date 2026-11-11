@@ -51,7 +51,7 @@ BOARD_MENU: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("Screeners", (("module_sector_rotation", "Sector Rotation"), ("module_asymmetric_growth", "Asymmetric Growth"),
                    ("module_swing_potential", "Swing Potential"), ("module_fundamentals", "Fundamentals"))),
     ("Ownership", (("module_sec_13f", "SEC 13F"), ("module_leaps", "LEAPS"))),
-    ("Ops", (("module_settings", "Settings / Data health"), ("activity", "Activity"))),
+    ("Ops", (("module_settings", "Settings / Data health"),)),
 )
 
 #: One hue per serving file (the design's colour key); a file's tables are darker shades of it.
