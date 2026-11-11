@@ -69,17 +69,22 @@ def _one(con, table: str, key: str, value: str, date_column: str | None) -> dict
             "first": None if first is None else str(first)[:10], "last": None if last is None else str(last)[:10]}
 
 
-def _scan(kind: str, ticker: str, security_id: str | None, cik: str | None) -> tuple[list[dict], str | None]:
-    """Every table of one served file that can speak about the name. The error is a line on the page, never a raise."""
+def _scan(kind: str, ticker: str, security_id: str | None,
+          cik: str | None) -> tuple[list[dict], str | None, bool]:
+    """Every table of one served file that can speak about the name, its note, and whether the read **failed**.
+
+    A file that is not built yet is not a failure: it is a line on its own group and nothing more, or an unknown
+    name would read as "could not tell" on a tree where half the files have never been built.
+    """
     try:
         con = serving.open_read(kind)
     except serving.ServingFileMissing:
-        return [], f"no {kind}.duckdb yet"
+        return [], f"no {kind}.duckdb yet", False
     except Exception as exc:  # noqa: BLE001 - one unreadable file must not take the lookup down
         logger.warning("ticker lookup could not open %s: %s", kind, exc)
-        return [], f"{type(exc).__name__}: {exc}"[:200]
+        return [], f"{type(exc).__name__}: {exc}"[:200], True
     out: list[dict] = []
-    error = None
+    error, hard = None, False
     try:
         con.execute("SET python_enable_replacements = false")
         for table in _tables(con):
@@ -98,10 +103,10 @@ def _scan(kind: str, ticker: str, security_id: str | None, cik: str | None) -> t
                             "first": None, "last": None, "error": f"{type(exc).__name__}: {exc}"[:200]})
     except Exception as exc:  # noqa: BLE001
         logger.warning("ticker lookup failed inside %s: %s", kind, exc)
-        error = f"{type(exc).__name__}: {exc}"[:200]
+        error, hard = f"{type(exc).__name__}: {exc}"[:200], True
     finally:
         con.close()
-    return out, error
+    return out, error, hard
 
 
 def _identity(ticker: str) -> tuple[dict, str | None]:
@@ -136,8 +141,8 @@ def lookup(ticker: str) -> dict | None:
 
     files, errors = [], ([spine_error] if spine_error else [])
     for kind in serving.KINDS:
-        tables, error = _scan(kind, t, security_id, cik)
-        if error:
+        tables, error, hard = _scan(kind, t, security_id, cik)
+        if hard:
             errors.append(f"{kind}: {error}")
         held = [x for x in tables if x.get("rows") or x.get("error")]
         files.append({"kind": kind, "name": f"{kind}.duckdb", "title": FILE_TITLES.get(kind, kind),

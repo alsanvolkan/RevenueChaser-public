@@ -1951,7 +1951,7 @@ def test_the_health_panel_holds_its_parts_in_order():
     health = _panel(html, "panel-health")
     order = ['id="live-frame"', "<h1>Data/Health · Fetch/Health</h1>", 'id="sec-health"', 'class="fgrps"',
              "<h1>Needs, boards and automations</h1>", "What am I looking at?",
-             'id="needs-catalog"', 'id="ticker-drill"', 'id="needs-log"', 'id="needs-routes"']
+             'id="needs-catalog"', 'id="needs-log"', 'id="needs-routes"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
     # avo, 11 Nov 2026: the Ticker lookup is on the Database tab now, not under the Grafana frame.
@@ -1990,8 +1990,7 @@ def test_the_four_parts_that_live_nowhere_else_sit_in_health_above_backups():
                                                  errors=[{"table": "ibkr", "where": "x", "error": "read failed"}]))
     health = _panel(html, "panel-health")
     # #527 step 9: the reads that failed and the backups lead; the login link is in the top bar (Data tab's copy)
-    marks = ['id="errors"', 'id="ticker-drill"', 'id="auto-body"', 'id="nd-watch-option"',
-             'id="nd-watch-stock"']
+    marks = ['id="errors"', 'id="auto-body"', 'id="nd-watch-option"', 'id="nd-watch-stock"']
     at = [health.index(m) for m in marks]
     assert at == sorted(at), marks
     assert html.count('<details class="help"><summary>What am I looking at?</summary>') == 1

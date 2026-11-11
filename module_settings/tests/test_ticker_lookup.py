@@ -138,10 +138,25 @@ def test_an_unreadable_file_is_a_named_line_never_a_raise(monkeypatch):
 
 
 def test_nothing_reads_the_old_store():
-    """HARD RULE: the lookup must not touch ``.store``; the module names neither it nor rawstore."""
-    source = (ticker_lookup.__file__ or "")
-    text = open(source, encoding="utf-8").read()
-    assert "rawstore" not in text and ".store" not in text
+    """HARD RULE: the lookup must not touch ``.store``.
+
+    The module's own code is judged, not its prose: the docstring names the old store to say what this
+    replaced, and a guard that forbade the word would push that explanation out of the file.
+    """
+    import ast as _ast
+    tree = _ast.parse(open(ticker_lookup.__file__, encoding="utf-8").read())
+    names = {n.id for n in _ast.walk(tree) if isinstance(n, _ast.Name)}
+    names |= {n.attr for n in _ast.walk(tree) if isinstance(n, _ast.Attribute)}
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.ImportFrom):
+            names |= {a.name for a in node.names} | set((node.module or "").split("."))
+        elif isinstance(node, _ast.Import):
+            names |= {a.name.split(".")[0] for a in node.names}
+    assert "rawstore" not in names and "inventory" not in names
+    docs = {_ast.get_docstring(n, clean=False) for n in _ast.walk(tree)
+            if isinstance(n, (_ast.Module, _ast.ClassDef, _ast.FunctionDef, _ast.AsyncFunctionDef))}
+    strings = {n.value for n in _ast.walk(tree) if isinstance(n, _ast.Constant) and isinstance(n.value, str)}
+    assert not [x for x in strings - docs if ".store" in x or "raw.duckdb" in x]
 
 
 @pytest.mark.parametrize("kind", ["spine", "prices", "fundamentals", "ownership", "options", "market"])
