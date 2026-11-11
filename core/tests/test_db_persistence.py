@@ -263,17 +263,6 @@ def test_sec13f_totals_populated(rawstore_tmp_db):
     assert row["entry"]["2026-03-31"]["holders"] == 2
 
 
-def test_etf_holdings_cache_populated(rawstore_tmp_db, monkeypatch):
-    from RevenueChaser.app import runners
-    import RevenueChaser.module_sector_rotation.etf_holdings as eh
-    monkeypatch.setattr(eh, "get_etf_holdings", lambda t, uw: [{"ticker": "AAPL", "weight": 0.2}])
-    from RevenueChaser.app.jobs import JobMessage
-    with pytest.raises(JobMessage, match="Holdings synced"):
-        runners.run_etf_holdings_sync(uw=None)
-    assert rawstore.get("etf_holdings", "XLK")["entry"] == [{"ticker": "AAPL", "weight": 0.2}]
-    assert rawstore.get("store_meta", "etf_holdings_generated_at") is not None
-
-
 def test_store_meta_populated(rawstore_tmp_db):
     from RevenueChaser.core import ticker_store
     ticker_store.write_from_cards([{"ticker": "AAPL", "name": "Apple"}], asof="2026-08-22")

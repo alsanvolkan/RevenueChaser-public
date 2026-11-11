@@ -52,7 +52,7 @@ def load_holdings_cache(ticker: str, any_age: bool = False) -> dict | None:
     """Cached ETF holdings + RS rows (None if absent, or not from today unless ``any_age``).
 
     The store-only holdings view passes ``any_age=True``: the last fetched rows
-    beat an empty row until the next "Fetch holdings".
+    beat an empty row until the next Rotation Fetch.
     """
     row = rawstore.get("rotation_holdings", ticker.upper())
     if not row:

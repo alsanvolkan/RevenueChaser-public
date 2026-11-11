@@ -1,20 +1,14 @@
-"""#303 (D25): the holdings job keeps a change history of the Rotation ETF holdings, and the Rotation Fetch reads them.
+"""#303 (D25), #642 PR 5: the Rotation Fetch reads the spine's holdings, and Data Health reports them.
 
-History redesign C: ``etf_holdings`` keeps its key (``ticker``, the ETF) and its readers; the store appends a rule-A row
-to ``etf_holdings_changes`` in the write's own transaction when an ETF's holdings or provider differ from its latest
-change row. The live row also says which provider answered and when (``provider``, ``fetched_at``). The Rotation
-Fetch no longer fetches holdings: it reads the stored ones and computes RS on them. Temp stores only, no network.
+The holdings job, its UW/yfinance chain and its change history are gone (#642 PR 5): the spine's
+``funds/etf_holdings`` is the one writer. The Rotation Fetch fetches no holdings: it reads the spine's lists and
+computes RS on them. Temp stores only, no network.
 """
 from __future__ import annotations
 
-import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
-import pytest
-
-from RevenueChaser.app import runners
-from RevenueChaser.app.jobs import JobMessage
-from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.core import rawstore
 from RevenueChaser.rcdata.tests import spine_fixture
 from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import engine
@@ -24,8 +18,6 @@ from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
 
 SYNCED = [t for t, i in ROTATION_ETFS.items() if i.get("group") in ("sector", "theme")]
 HOLD = [{"ticker": "NVDA", "name": "NVIDIA", "weight": 14.2}, {"ticker": "AAPL", "name": "Apple", "weight": 12.1}]
-# Saturday 2026-10-10 10:00 Amsterdam (the job's slot): rule B gives Friday's session.
-SAT = datetime(2026, 10, 10, 8, 0, tzinfo=timezone.utc)
 END = date(2026, 10, 9)
 
 
@@ -36,99 +28,6 @@ class _UW:
     def etf_holdings(self, ticker):
         self.holdings_calls.append(ticker)
         return self.rows
-
-
-def _changes(ticker: str | None = None) -> list[dict]:
-    where = f" WHERE ticker = '{ticker}'" if ticker else ""
-    rows = rawstore.query(f"SELECT * FROM etf_holdings_changes{where} ORDER BY run_at")
-    return [{**r, "entry": json.loads(r["entry"]) if isinstance(r["entry"], str) else r["entry"]} for r in rows]
-
-
-def _sync(monkeypatch, answer, now=SAT):
-    """Run the holdings job with ``answer(ticker)`` as the resolver and ``now`` as the clock; no RS (uw None)."""
-    monkeypatch.setattr(eh, "get_etf_holdings", lambda t, uw: answer(t))
-    monkeypatch.setattr(calendar, "_now", lambda: now)
-    with pytest.raises(JobMessage):
-        runners.run_etf_holdings_sync(uw=None)
-
-
-# ── the resolver says which provider answered ──────────────────────────────────────────────────────────────────────
-def test_uw_answer_is_tagged_uw(monkeypatch):
-    monkeypatch.setattr(eh, "fetch_from_yfinance", lambda t: pytest.fail("yfinance asked after UW answered"))
-    rows = eh.get_etf_holdings("XLK", _UW([{"ticker": "NVDA", "weight": "14.2"}]))
-    assert rows == [{"ticker": "NVDA", "name": "", "weight": 14.2}]
-    assert rows.provider == "uw"
-
-
-def test_yfinance_fallback_is_tagged_yfinance(monkeypatch):
-    monkeypatch.setattr(eh, "fetch_from_yfinance", lambda t: list(HOLD))
-    rows = eh.get_etf_holdings("SKYY", _UW([]))
-    assert rows == HOLD and rows.provider == "yfinance"
-
-
-def test_no_answer_has_no_provider(monkeypatch):
-    monkeypatch.setattr(eh, "fetch_from_yfinance", lambda t: [])
-    rows = eh.get_etf_holdings("SKYY", _UW([]))
-    assert rows == [] and rows.provider is None
-
-
-def test_the_answer_is_capped_at_ten(monkeypatch):
-    many = [{"ticker": f"T{i}", "weight": 20 - i} for i in range(15)]
-    rows = eh.get_etf_holdings("XLK", _UW(many))
-    assert len(rows) == 10 and rows.provider == "uw"
-
-
-# ── the job writes provider, fetched_at and one change row per ETF ─────────────────────────────────────────────────
-def test_a_sync_stores_provider_and_fetch_time(rawstore_tmp_db, monkeypatch):
-    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "yfinance" if t == "SKYY" else "uw"))
-    xlk, skyy = rawstore.get("etf_holdings", "XLK"), rawstore.get("etf_holdings", "SKYY")
-    assert xlk["entry"] == HOLD and xlk["provider"] == "uw" and skyy["provider"] == "yfinance"
-    assert xlk["fetched_at"] == pytest.approx(SAT.timestamp())
-
-
-def test_a_first_sync_appends_one_change_row_per_etf(rawstore_tmp_db, monkeypatch):
-    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "uw"))
-    rows = _changes()
-    assert sorted(r["ticker"] for r in rows) == sorted(SYNCED)
-    xlk = _changes("XLK")[0]
-    assert xlk["status"] == "present" and xlk["provider"] == "uw" and xlk["valid_from"] is not None
-    assert xlk["fetched_at"] == pytest.approx(SAT.timestamp())
-    as_of = {r["ticker"]: r for r in rawstore.changes_as_of("etf_holdings", xlk["run_at"])}
-    assert json.loads(as_of["XLK"]["entry"]) == HOLD and as_of["XLK"]["provider"] == "uw"
-
-
-def test_a_second_run_in_one_session_adds_nothing(rawstore_tmp_db, monkeypatch):
-    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "uw"))
-    before = len(_changes())
-    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "uw"), now=SAT + timedelta(hours=2))
-    assert len(_changes()) == before
-    # the live row still says when it was last fetched
-    assert rawstore.get("etf_holdings", "XLK")["fetched_at"] == pytest.approx((SAT + timedelta(hours=2)).timestamp())
-
-
-def test_a_changed_etf_appends_one_row_and_keeps_the_old_one(rawstore_tmp_db, monkeypatch):
-    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "uw"))
-    new = [{"ticker": "NVDA", "name": "NVIDIA", "weight": 15.0}]
-    _sync(monkeypatch, lambda t: eh.HoldingsList(new if t == "XLK" else HOLD, "uw"), now=SAT + timedelta(days=7))
-    xlk = _changes("XLK")
-    assert [r["entry"] for r in xlk] == [HOLD, new]
-    assert len(_changes()) == len(SYNCED) + 1
-
-
-def test_a_provider_switch_is_a_change(rawstore_tmp_db, monkeypatch):
-    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "uw"))
-    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "yfinance" if t == "XLK" else "uw"),
-          now=SAT + timedelta(days=7))
-    assert [r["provider"] for r in _changes("XLK")] == ["uw", "yfinance"]
-
-
-def test_a_failed_fetch_keeps_the_row_and_adds_no_change(rawstore_tmp_db, monkeypatch):
-    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "uw"))
-    before = len(_changes())
-    _sync(monkeypatch, lambda t: eh.HoldingsList([], None), now=SAT + timedelta(days=7))
-    assert len(_changes()) == before
-    row = rawstore.get("etf_holdings", "XLK")
-    assert row["entry"] == HOLD and row["fetched_at"] == pytest.approx(SAT.timestamp())
 
 
 # ── the Rotation Fetch reads the stored holdings ───────────────────────────────────────────────────────────────────
@@ -159,8 +58,6 @@ def test_a_rotation_fetch_makes_no_holdings_call(rawstore_tmp_db, monkeypatch):
     seed("SPY", END, start=start, closes=lambda i: 100.0)
     for t in ("NVDA", "AAPL"):
         seed(t, END, start=start, closes=lambda i: 100.0 + i)
-    monkeypatch.setattr(eh, "get_etf_holdings", lambda t, uw: pytest.fail("holdings fetched during a Rotation Fetch"))
-    monkeypatch.setattr(eh, "fetch_from_yfinance", lambda t: pytest.fail("yfinance holdings during a Rotation Fetch"))
     uw = _OhlcUW()
     out = engine.fetch_all_holdings(uw, [_snap("AIQ"), _snap("ARKQ")])
     assert uw.holdings_calls == []
@@ -170,11 +67,11 @@ def test_a_rotation_fetch_makes_no_holdings_call(rawstore_tmp_db, monkeypatch):
     assert uw.ohlc_calls == []                                          # no UW candle either (M-ROT-3)
 
 
-def test_a_rotation_fetch_writes_no_holdings(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("etf_holdings", [{"ticker": "AIQ", "entry": HOLD, "provider": "uw"}])
-    before = (rawstore.get("etf_holdings", "AIQ"), len(_changes()))
+def test_a_rotation_fetch_writes_no_raw_holdings(rawstore_tmp_db):
+    """The old ``raw.etf_holdings`` stays unwritten: nothing writes it since #642 PR 5."""
+    spine_fixture.write_etf_holdings({"AIQ": HOLD})
     engine.fetch_all_holdings(_OhlcUW(), [_snap("AIQ")])
-    assert (rawstore.get("etf_holdings", "AIQ"), len(_changes())) == before
+    assert rawstore.query("SELECT count(*) AS n FROM etf_holdings")[0]["n"] == 0
 
 
 # ── Data Health summary ────────────────────────────────────────────────────────────────────────────────────────────
@@ -184,40 +81,38 @@ def test_health_summary_on_an_empty_store(rawstore_tmp_db):
     assert h["stored"] == 0 and h["newest_session"] is None and h["missing"] == sorted(SYNCED)
 
 
-def test_health_summary_counts_the_newest_session_providers_and_rs(rawstore_tmp_db, monkeypatch):
+def _spine(provider_of=lambda t: "ssga", skip=("AIQ",), as_of="2026-10-09"):
+    """Every board ETF but ``skip`` gets ``HOLD`` on ``as_of``, one spine write per provider."""
+    by: dict[str, dict] = {}
+    for t in SYNCED:
+        if t not in skip:
+            by.setdefault(provider_of(t), {})[t] = HOLD
+    for provider, lists in by.items():
+        spine_fixture.write_etf_holdings(lists, as_of=as_of, provider=provider)
+
+
+def test_health_summary_counts_the_newest_day_providers_and_rs(rawstore_tmp_db):
     from RevenueChaser.module_sector_rotation import store as rotation_store
-    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "yfinance" if t in ("SKYY", "XLK") else "uw"))
-    # XLE: an older fetch (the session before), AIQ: no row at all
-    rawstore.write_rows("etf_holdings", [{"ticker": "XLE", "entry": HOLD, "provider": "uw",
-                                          "fetched_at": (SAT - timedelta(days=7)).timestamp()}])
-    rawstore.delete("etf_holdings", "AIQ")
+    _spine(lambda t: "uw" if t in ("SKYY", "AIQ") else "ssga", skip=("AIQ", "XLE"))
+    spine_fixture.write_etf_holdings({"XLE": HOLD}, as_of="2026-10-02", provider="ssga")   # an older day
     rotation_store.save_holdings_cache("ARKQ", [{"ticker": "NVDA", "rs_1m": 1.0}])
     h = eh.health_summary()
     assert h["newest_session"] == "2026-10-09"
     assert h["in_newest"] == len(SYNCED) - 2                          # XLE older, AIQ missing
     assert h["stored"] == len(SYNCED) - 1
-    assert h["providers"] == {"uw": len(SYNCED) - 3, "yfinance": 2}
+    assert h["lines"] == 2 * (len(SYNCED) - 1)
+    assert h["providers"] == {"ssga": len(SYNCED) - 2, "uw": 1}
     assert h["missing"] == ["AIQ"]
     assert h["themes"] == 23 and h["rs_stored"] == 1
 
 
-def test_health_summary_counts_an_empty_list_as_missing(rawstore_tmp_db, monkeypatch):
-    # every provider failed for AIQ and nothing was stored, so the job wrote [] with no provider (review S2)
-    _sync(monkeypatch, lambda t: eh.HoldingsList([], None) if t == "AIQ" else eh.HoldingsList(HOLD, "uw"))
-    assert rawstore.get("etf_holdings", "AIQ")["entry"] == []
-    h = eh.health_summary()
-    assert h["missing"] == ["AIQ"]
-    assert h["stored"] == h["in_newest"] == len(SYNCED) - 1
-    assert h["providers"] == {"uw": len(SYNCED) - 1}
-
-
 # ── the typed numbers (#124 S4) ───────────────────────────────────────────────────────────────────────────────────
-def test_health_is_the_summary_numbers_typed(rawstore_tmp_db, monkeypatch):
-    """Covered is the ETFs with stored holdings against the 34 the job resolves; the provider share is the
-    provider of every stored list. The newest fetch is the session, not a population."""
+def test_health_is_the_summary_numbers_typed(rawstore_tmp_db):
+    """Covered is the ETFs with spine holdings against the board's 34; the provider share is the provider of
+    every ETF's list. The newest day is the spine's, not a population."""
     from RevenueChaser.core import datahealth
 
-    _sync(monkeypatch, lambda t: eh.HoldingsList(HOLD, "yfinance" if t in ("SKYY", "XLK") else "uw"))
+    _spine(lambda t: "ishares" if t in ("SOXX", "IBB") else "ssga", skip=())
 
     n = eh.health_summary()
     h = eh.health()
@@ -226,24 +121,18 @@ def test_health_is_the_summary_numbers_typed(rawstore_tmp_db, monkeypatch):
     assert h.expected == n["expected"] == 34
     assert (h.newest, h.expected_as_of) == (n["newest_session"], None) == ("2026-10-09", None)
     assert h.source_share == {p: c / n["stored"] for p, c in n["providers"].items()}
-    assert h.source_share["yfinance"] == 2 / 34
     assert h.problems == ()
     assert datahealth.coverage_text(h) == "100.0% (34 of 34)"
 
 
-def test_health_counts_a_missing_etf_and_a_list_without_a_provider(rawstore_tmp_db, monkeypatch):
-    """An ETF with no row and one whose list is empty are both uncovered; a stored list with no provider is
-    counted as a stored list, so the provider shares sum to less than 1."""
+def test_health_counts_a_missing_etf(rawstore_tmp_db):
     from RevenueChaser.core import datahealth
 
-    _sync(monkeypatch, lambda t: eh.HoldingsList([], None) if t == "AIQ" else eh.HoldingsList(HOLD, "uw"))
-    rawstore.write_rows("etf_holdings", [{"ticker": "XLE", "entry": HOLD, "provider": None,
-                                          "fetched_at": SAT.timestamp()}])
+    _spine()
 
     n = eh.health_summary()
     h = eh.health()
 
     assert (h.covered, h.expected) == (n["stored"], n["expected"]) == (33, 34)
-    assert n["missing"] == ["AIQ"] and n["providers"] == {"uw": 32}
-    assert h.source_share == {"uw": 32 / 33}, "the denominator is every stored list, not only the tagged ones"
+    assert n["missing"] == ["AIQ"] and n["providers"] == {"ssga": 33}
     assert datahealth.coverage_text(h) == "97.1% (33 of 34)"

@@ -251,7 +251,7 @@ class TestSmallRoutes:
 # ── S8: B8 — two lanes and cancel ───────────────────────────────────────────
 class TestLanesAndCancel:
     def test_long_jobs_use_the_long_lane(self):
-        for m in ("module_sec_13f", "universe", "edgar_sync", "holdings"):
+        for m in ("module_sec_13f", "universe", "edgar_sync"):
             assert jobs._LANE.get(m) == "long", m
         assert jobs._LANE.get("module_leaps") == "short"
 
@@ -303,9 +303,9 @@ class TestHoldingsView:
         body = client.get("/view/module_sector_rotation/holdings?ticker=SMH").get_data(as_text=True)
         assert "AMD" in body and "+3.0%" in body
 
-    def test_nothing_stored_says_fetch_holdings(self, client, rawstore_tmp_db):
+    def test_nothing_stored_says_the_spine_holds_no_list(self, client, rawstore_tmp_db):
         body = client.get("/view/module_sector_rotation/holdings?ticker=SMH").get_data(as_text=True)
-        assert "Fetch holdings" in body
+        assert "the spine holds no list" in body and "Fetch holdings" not in body   # the button is gone (#642)
 
 
 # ── S10: decisions D1–D4 ────────────────────────────────────────────────────
@@ -334,6 +334,6 @@ class TestDecisions:
         html = client.get("/").get_data(as_text=True)
         assert "key==='module_comovement'" in html          # D1 Fetch button
         assert "module_relatedness: '/run/module_relatedness'" not in html  # D2
-        assert "btn-rot-holdings" in html                    # D3
+        assert "btn-rot-holdings" not in html                # D3's button went with the holdings job (#642 PR 5)
         assert "rc-job-submitted" in html and "/cancel" in html  # B7, B8
         assert "t && !t.textContent ||" not in html          # B15

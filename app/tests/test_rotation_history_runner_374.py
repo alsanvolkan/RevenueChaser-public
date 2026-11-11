@@ -73,6 +73,13 @@ def _headers(board):
 
 # ── Rotation ──
 
+def test_a_rotation_fetch_stores_each_etfs_rs_rows_for_the_holdings_view(rotation):
+    """#642 PR 5: the holdings job is gone, so the Fetch stores the RS rows the holdings view reads."""
+    runners.run_rotation_latest(_UW())
+    for etf, rows in HOLDINGS.items():
+        assert rotation_store.load_holdings_cache(etf, any_age=True) == rows
+
+
 def test_a_rotation_fetch_records_the_holdings_and_tree_under_the_job_id(rotation):
     runners.run_rotation_latest(_UW())
     (head,) = _headers("module_sector_rotation")

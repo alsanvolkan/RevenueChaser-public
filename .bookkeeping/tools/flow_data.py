@@ -36,7 +36,7 @@ MODES = {
 # db in raw | edgar | prices | files | none
 AREAS = [
  ("Prices", [
-  dict(id="D01", name="Daily price bars", readers="Swing, Fundamentals (price_bars_daily since #383 R3; swing_ohlc only for the SPY fallback); Asymmetric Growth (momentum from nominal bars since #380 S4); Co-movement, Relatedness peer market (price_bars_daily since #379); Rotation RRG, backfill, theme holdings RS and Money Flow (price_bars_daily since #374 M-ROT-2/3); the holdings job's RS, 13F; Earnings reaction window (price_bars_daily since #372 E5e)",
+  dict(id="D01", name="Daily price bars", readers="Swing, Fundamentals (price_bars_daily since #383 R3; swing_ohlc only for the SPY fallback); Asymmetric Growth (momentum from nominal bars since #380 S4); Co-movement, Relatedness peer market (price_bars_daily since #379); Rotation RRG, backfill, theme holdings RS and Money Flow (price_bars_daily since #374 M-ROT-2/3); 13F; Earnings reaction window (price_bars_daily since #372 E5e)",
    flows=[
     ("yfinance Ticker.history, 2y, no auto_adjust", "module_swing_potential/indicators.py:248",
      "Swing, Fundamentals SPY fallback · _write_ohlc, through the one writer ohlc_cache.write", "module_swing_potential/indicators.py:297",
@@ -44,7 +44,7 @@ AREAS = [
      "The one writer (C8, #383 R3), and since the #379 D01 switch the only path that writes swing_ohlc: the last write of a ticker wins; a short series over a longer stored one is kept out unless it is a new listing (#261, F2b). Since C12 the boards score every name from price_bars_daily; this path loads SPY only when D01 lacks SPY's latest complete session (screen_common.load_spy). Reused for 1 day, or less after a session closes: a Fetch also downloads a series again when its last bar is the latest complete session or older and it was cached before that session's close + 30 min. A Refresh never downloads.",
      "C2:126; module_swing_potential/config.py:15; module_swing_potential/indicators.py:227-233; core/ledger.py:162"),
    ],
-   note="UW ohlc/1d bars that Earnings (only for the names the store misses, E5e), OIPD, 13F and the holdings job's RS (D25) fetch (uw.py:924) are used during the run; no store write saves them (scan of every store write outside tests). Since #372 E5e the Earnings reaction window reads price_bars_daily first (module_earnings_radar/stored_inputs.ohlc_bars, one windowed prices.daily_bars read, nominal basis: the last 270 bars per ticker, oldest first) and calls UW only for a ticker whose newest stored bar is not the latest complete session, or, during the US session (09:30-16:30 New York), for a name reporting today or on the previous trading day, before or after its open (its Current and Since ER need today's bar). The Rotation Fetch fetches no candle since #374: the RRG (M-ROT-2), the theme holdings RS (module_sector_rotation/engine.py:250, :303) and Money Flow (module_sector_rotation/money_flow.py:29, :95; M-ROT-3) read price_bars_daily. The 13F board's Price and Price Δ read price_bars_daily since #375 F2: the last nominal close on or before each quarter end, within 10 days, one read bounded to those windows with the splits applied by prices.apply_events (module_sec_13f/enrich.py:72-107; the open-ended K8a window would read every bar since 2025).",
+   note="UW ohlc/1d bars that Earnings (only for the names the store misses, E5e), OIPD and 13F fetch (uw.py:924) are used during the run; no store write saves them (scan of every store write outside tests). Since #372 E5e the Earnings reaction window reads price_bars_daily first (module_earnings_radar/stored_inputs.ohlc_bars, one windowed prices.daily_bars read, nominal basis: the last 270 bars per ticker, oldest first) and calls UW only for a ticker whose newest stored bar is not the latest complete session, or, during the US session (09:30-16:30 New York), for a name reporting today or on the previous trading day, before or after its open (its Current and Since ER need today's bar). The Rotation Fetch fetches no candle since #374: the RRG (M-ROT-2), the theme holdings RS (module_sector_rotation/engine.py:250, :303) and Money Flow (module_sector_rotation/money_flow.py:29, :95; M-ROT-3) read price_bars_daily. The 13F board's Price and Price Δ read price_bars_daily since #375 F2: the last nominal close on or before each quarter end, within 10 days, one read bounded to those windows with the splits applied by prices.apply_events (module_sec_13f/enrich.py:72-107; the open-ended K8a window would read every bar since 2025).",
    planned="price_bars_daily in prices.duckdb is written (#156; its own file since 2026-10-09, with price_actions and the watermarks price_checks): core/prices.ensure_daily_bars (nightly job daily_bars, task RC-Daily-Bars 22:35), key (ticker, session_date), append (first write of a key wins, never rewritten); UW ohlc/1d rows with a yfinance fallback, adj_close from yfinance, later splits and dividends applied on read from price_actions. Swing and Fundamentals read it since #383 R3: every scored name's bars (C12, core/screen_common.py:187 load_bars_many, one windowed prices.daily_bars_bases read per 200 names; levels nominal, returns adjusted; a name with no bar of SPY's newest session drops as stale_bars), the freeze's check of the picks' bars (K8b, core/ledger.py:209 ohlc_gaps) and their data date (K7, core/provenance.py:70). Asymmetric Growth reads it since #380 S4: one windowed nominal read per 500-name batch (module_asymmetric_growth/engine.py _preload, start = the newest D01 SPY session - 380 days) feeds the momentum signal (price, 252-session High, 50-day mean, 10/63 volume), its data date is its scored names' D01 date (core/provenance.py) and SPY's bar for the session is the freeze anchor (module_asymmetric_growth/freeze.py). Co-movement and the Relatedness peer market read it since #379 (D01 switch): adjusted closes over the last 2 years before D01's newest session (module_comovement/ohlc.py:130 price_frame, windowed by SQL, K8a), their data date is their names' D01 date (core/provenance.py:58), and a Co-movement Fetch downloads nothing (ohlc.py:78 fetch_bulk reports D01's coverage)."),
   dict(id="D02", name="Weekly candles", readers="Rotation, Earnings rotation column",
    flows=[
@@ -370,15 +370,13 @@ AREAS = [
    planned="Written weekly (#302)."),
   dict(id="D25", name="ETF holdings", readers="Rotation",
    flows=[
-    ("UW /etfs/{t}/holdings, yfinance funds_data.top_holdings fallback (provider recorded per ETF)",
-     "core/providers/unusual_whales.py:897, :1049; module_sector_rotation/etf_holdings.py:72, :101",
-     "holdings job · run_etf_holdings_sync (manual, Fetch holdings; 34 sector and theme ETFs)", "app/runners.py:737, :772",
-     "raw", "etf_holdings", ":886", "ticker (the ETF)", "upsert",
-     "Latest per ETF here; the store appends each change of the list (tickers, names or weights) or the provider to etf_holdings_changes "
-     "(rule A, #303; core/rawstore.py:1855). The Rotation Fetch reads it and fetches no holdings "
-     "(module_sector_rotation/engine.py:319).", "C2:80"),
-    ("holdings job: RS on the stored holdings (UW candles)", "module_sector_rotation/engine.py:109",
-     "Rotation · save_holdings_cache", "module_sector_rotation/store.py:88",
+    ("none since #642 PR 5: the holdings job and its UW/yfinance chain are gone; the board reads the spine's "
+     "funds/etf_holdings (rcdata/read.py etf_holdings)", "module_sector_rotation/etf_holdings.py",
+     "no writer", "-",
+     "raw", "etf_holdings", ":886", "ticker (the ETF)", "kept, unwritten",
+     "The old rows and etf_holdings_changes stay in the store; nothing reads them.", "C2:80"),
+    ("Rotation Fetch: RS on the spine's holdings (D01 bars)", "module_sector_rotation/engine.py:195",
+     "Rotation · save_holdings_cache", "app/runners.py:539",
      "raw", "rotation_holdings", ":671", "ticker (the ETF)", "upsert", "Latest per ETF.", "C2:80"),
    ],
    note="06 D25 named a key change to (etf, session_date); design C keeps the key and adds the change table "
@@ -389,7 +387,7 @@ AREAS = [
         "(module_sector_rotation/engine.py:318): sector rows show the industry tree, so rotation_holdings_history "
         "holds no sector rows. Since M-ROT-3 (#374) it prices them from D01 (engine.holdings_rs_rows, "
         "module_sector_rotation/engine.py:250): a holding D01 holds no bar of keeps its row with n/a RS (it was "
-        "dropped before). The holdings job's RS (rotation_holdings) still uses UW candles.",
+        "dropped before). Since #642 PR 5 the Fetch also stores that RS in rotation_holdings for the holdings view.",
    planned="N-PORT via the D8 fund file is measured first (M18)."),
   dict(id="D26", name="Earnings dates", readers="Earnings, facets, LEAPS",
    flows=[

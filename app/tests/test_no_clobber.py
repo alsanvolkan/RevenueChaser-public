@@ -1,8 +1,9 @@
 """No empty-over-good writes (PL2 / N1).
 
 A provider failure used to arrive as ``[]`` / ``{}`` and be saved over the last
-good stored rows, and the job still ended "done". The sync runners now keep the
+good stored rows, and the job still ended "done". The runners now keep the
 stored rows and end with a ``JobMessage`` that names what was kept and why.
+(The holdings sync's cases went with the holdings job, #642 PR 5.)
 """
 from __future__ import annotations
 
@@ -12,49 +13,6 @@ import pytest
 
 from RevenueChaser.app import runners
 from RevenueChaser.app.jobs import JobMessage
-from RevenueChaser.core import rawstore
-
-_GOOD = [{"ticker": "AAPL", "weight": 0.2}]
-
-
-def _seed_holdings(tickers=("XLK", "XLE")):
-    rawstore.write_rows("etf_holdings", [{"ticker": t, "entry": _GOOD} for t in tickers])
-    rawstore.write_rows("store_meta", [{"key": "etf_holdings_generated_at",
-                                        "value": "2026-09-01T00:00:00"}])
-
-
-class TestEtfHoldingsSync:
-    def test_failed_fetch_keeps_every_stored_etf(self, rawstore_tmp_db, monkeypatch):
-        import RevenueChaser.module_sector_rotation.etf_holdings as eh
-        _seed_holdings()
-        monkeypatch.setattr(eh, "get_etf_holdings", lambda t, uw: [])
-        with pytest.raises(JobMessage, match=r"(?i)kept stored holdings") as exc:
-            runners.run_etf_holdings_sync(uw=None)
-        assert "XLK" in exc.value.message and "XLE" in exc.value.message
-        assert rawstore.get("etf_holdings", "XLK")["entry"] == _GOOD
-        assert rawstore.get("etf_holdings", "XLE")["entry"] == _GOOD
-        # Nothing was fetched, so the sync time must not claim fresh data.
-        assert rawstore.get("store_meta", "etf_holdings_generated_at")["value"] == "2026-09-01T00:00:00"
-
-    def test_partial_fetch_updates_good_rows_and_keeps_the_rest(self, rawstore_tmp_db, monkeypatch):
-        import RevenueChaser.module_sector_rotation.etf_holdings as eh
-        _seed_holdings()
-        fresh = [{"ticker": "XOM", "weight": 0.3}]
-        monkeypatch.setattr(eh, "get_etf_holdings", lambda t, uw: fresh if t == "XLE" else [])
-        with pytest.raises(JobMessage) as exc:
-            runners.run_etf_holdings_sync(uw=None)
-        assert "XLK" in exc.value.message
-        assert rawstore.get("etf_holdings", "XLE")["entry"] == fresh
-        assert rawstore.get("etf_holdings", "XLK")["entry"] == _GOOD
-        assert rawstore.get("store_meta", "etf_holdings_generated_at")["value"] != "2026-09-01T00:00:00"
-
-    def test_empty_fetch_with_nothing_stored_is_still_recorded(self, rawstore_tmp_db, monkeypatch):
-        import RevenueChaser.module_sector_rotation.etf_holdings as eh
-        monkeypatch.setattr(eh, "get_etf_holdings", lambda t, uw: [])
-        with pytest.raises(JobMessage):
-            runners.run_etf_holdings_sync(uw=None)
-        assert rawstore.get("etf_holdings", "XLK")["entry"] == []
-
 
 class TestMoneyFlow:
     def _patch_paths(self, tmp_path, monkeypatch):

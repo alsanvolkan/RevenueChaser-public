@@ -2,8 +2,6 @@
 
 Each test breaks one provider call through the mock server and drives the real dashboard:
 
-* SPY is absent from the prices store: the holdings sync keeps the stored RS (no zero rows) and names the theme
-  ETFs; since the RS reads the prices store it asks for no candle, so a broken SPY candle route cannot reach it;
 * Money Flow ranks the stored bars since M-ROT-3 (#374), the prices store's since PR 9: an ETF the store lacks flags
   the leaderboard partial on the board, it never replaces the newest complete leaderboard in result history, and no
   candle is asked for;
@@ -130,36 +128,6 @@ def _candle_calls(routes) -> list[str]:
 # ── SPY candles down ─────────────────────────────────────────────────────────────────────
 
 class TestSpyCandlesDown:
-    def test_the_holdings_sync_keeps_the_stored_rs_and_names_the_theme_etfs(self, dashboard, routes, monkeypatch):
-        """The holdings RS reads SPY from the prices store, so the store's own coverage decides, not a fetch.
-
-        Seeded, the theme ETFs get their RS rows and no candle is asked for; with SPY's bars dropped the run keeps
-        the rows it already stored (no zero rows) and names the ETFs, still without a candle.
-        """
-        _seed_bars(dashboard, monkeypatch)
-        healthy = dashboard.run_job("/run/holdings")
-        assert healthy.ok and "RS computed for 0 theme" not in healthy.message, healthy
-        stored = _query(dashboard, "SELECT ticker, rows FROM rotation_holdings ORDER BY ticker")
-        assert stored
-        assert _candle_calls(routes) == []
-
-        _drop_bars("SPY")
-        broken = dashboard.run_job("/run/holdings")
-        assert broken.ok, broken
-        assert "too few SPY sessions" in broken.message and "Kept stored RS for" in broken.message
-        assert _query(dashboard, "SELECT ticker, rows FROM rotation_holdings ORDER BY ticker") == stored
-        assert _candle_calls(routes) == []
-
-    def test_a_broken_spy_candle_route_cannot_reach_the_holdings_job(self, dashboard, routes, monkeypatch):
-        """What #166 asked of the job — ask for SPY once, survive a 500 — the prices store answers by construction:
-        the route is broken and the RS is computed anyway, because the job never calls it."""
-        _seed_bars(dashboard, monkeypatch)
-        _break(routes, "SPY")
-        res = dashboard.run_job("/run/holdings")
-        assert res.ok and "RS computed for 0 theme" not in res.message, res
-        assert "too few SPY sessions" not in (res.message or ""), res
-        assert _candle_calls(routes) == []
-
     def test_a_range_backfill_without_spy_in_the_prices_store_writes_no_day_and_says_so(
             self, dashboard, routes, monkeypatch):
         _seed_bars(dashboard, monkeypatch, skip={"SPY"})

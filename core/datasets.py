@@ -389,12 +389,12 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         writer_note="dashboard job POST /run/module_oipd; not an automations.REGISTRY entry",
         freshness=("oipd_meta", "as_of"),
     ),
-    # UW, then yfinance (module_sector_rotation/etf_holdings.py get_etf_holdings).
+    # No writer since #642 PR 5: the board reads the spine's funds/etf_holdings; these raw tables are kept, unwritten.
     DatasetSpec(
         key="etf_holdings", label="Rotation ETF holdings",
         tables=("etf_holdings", "etf_holdings_changes"),
         db="raw", source=Source.uw, writer=None,
-        writer_note="dashboard job POST /run/holdings; not an automations.REGISTRY entry",
+        writer_note="none since #642 PR 5 (the holdings job is gone); coverage reads the spine's funds/etf_holdings",
         freshness=("etf_holdings", "fetched_at"),
         coverage=_summary_health("module_sector_rotation.etf_holdings"),
         gap_kind=GapKind.ceiling,

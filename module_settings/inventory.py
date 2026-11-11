@@ -148,7 +148,6 @@ QUERIED_COLUMNS: list[tuple[str, str]] = [
     ("quote_snapshot", "market_cap"),
     ("sec13f_submissions", "period"),
     ("oipd_meta", "ticker"), ("oipd_meta", "as_of"),
-    ("etf_holdings", "ticker"), ("etf_holdings", "entry"), ("etf_holdings", "provider"), ("etf_holdings", "fetched_at"),
     ("rotation_holdings", "ticker"), ("rotation_holdings", "rows"),
     ("relatedness_profiles", "ticker"), ("relatedness_profiles", "fetched_at"),
     # identity health (issue #89)
@@ -701,17 +700,17 @@ def _quotes_row() -> dict:
     return default
 
 
-_HOLDINGS_PROVIDERS = (("uw", "Unusual Whales"), ("yfinance", "yfinance"))
+_HOLDINGS_PROVIDERS = (("ssga", "SPDR"), ("ishares", "iShares"), ("ark", "ARK"), ("uw", "Unusual Whales"))
 
 
 def _etf_holdings_row() -> dict:
-    """The "Rotation ETF holdings" row (#303, D25): ETFs fetched in the newest session vs the 34 the holdings job
-    resolves, the provider share, the ETFs with no holdings and the theme ETFs with stored RS. A failure is a note."""
+    """The "Rotation ETF holdings" row (#303, D25): the spine's lists for the board's 34 sector and theme ETFs (#642
+    PR 5: the holdings job and its ``raw.etf_holdings`` are gone): ETFs on the newest day, the provider share, the
+    ETFs with no holdings and the theme ETFs with stored RS. A failure is a note."""
     row = {
         "key": "etf_holdings", "label": "Rotation ETF holdings",
-        "tables": ["etf_holdings", "etf_holdings_changes"],
-        "rows": _count("etf_holdings"),
-        "last_date": _max_date(("etf_holdings", "fetched_at")),
+        "tables": ["spine etf_holdings"],
+        "rows": 0, "last_date": DASH,
         "holes": None, "hole_label": "ETFs with no holdings", "fetch": None, "note": "",
     }
     from RevenueChaser.module_sector_rotation import etf_holdings
@@ -722,8 +721,9 @@ def _etf_holdings_row() -> dict:
         row["note"] = "holdings summary failed (see the errors list)"
         return row
     row["holes"] = len(h["missing"])
+    row["rows"], row["last_date"] = h["lines"], h["newest_session"] or DASH
     if not h["stored"]:
-        row["note"] = "no holdings yet (the holdings job stores them)"
+        row["note"] = "no holdings yet (the spine's funds/etf_holdings build stores them)"
         return row
     known = dict(_HOLDINGS_PROVIDERS)
     share = " / ".join(f"{known.get(p, p)} {h['providers'][p]}"
