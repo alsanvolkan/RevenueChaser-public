@@ -63,7 +63,7 @@ def test_spx_gamma_is_the_second_migrated_board_and_leaves_the_plan():
                                          "market.vix")
     assert "module_spx_gamma" not in boards.UNDECLARED and "module_spx_gamma" not in boards.PLANNED_READS
     assert boards.reads_of("module_spx_gamma") == {"declared": True, "needs": reads["module_spx_gamma"]}
-    assert boards.readers_of("market.spx_close") == ("module_spx_gamma",)
+    assert boards.readers_of("market.spx_close") == ("module_spx_gamma", "module_welcome")   # #643 PR 5
 
 
 def test_no_board_names_a_need_it_has_not_declared():

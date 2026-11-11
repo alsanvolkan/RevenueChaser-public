@@ -27,7 +27,7 @@ off-peak).
 - `module_relatedness/engine.run`: catches `PeakHoursError` at the boundary, renders
   from the durable profiles already written, and returns `pending` + `next_off_peak`;
   records a `relatedness_run` marker in `run_registry`.
-- **$ hard-stop**: `config.USD_CAP` (env `RC_RELATEDNESS_USD_CAP`, default 8.0) caps
+- **$ hard-stop**: `config.USD_CAP` (env `RC_RELATEDNESS_USD_CAP`, default 25.0) caps
   LLM calls per run at `USD_CAP / EST_USD_PER_CALL`; the rest stay pending. `--cap 0`
   means no LLM call at all. The budget counts calls, the thinking retry included
   (`profiles.CallBudget`, #118 PR C).

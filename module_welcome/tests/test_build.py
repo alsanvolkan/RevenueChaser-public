@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_welcome import build as wb
+from RevenueChaser.rcdata.tests import market_fixture
 
 NY = wb.NY
 NOW = datetime(2026, 11, 10, 8, 0, tzinfo=NY).timestamp()          # Tue 10 Nov, before the open
@@ -17,27 +18,26 @@ DAYS = [date(2026, 10, 12) + timedelta(days=i) for i in range(29)]
 SESSIONS = [d for d in DAYS if d.weekday() < 5 and d <= date(2026, 11, 9)]
 
 
+def _series(series_id, sessions, values, source="test", fetched_at=1.0):
+    """One series in the builder's ``market_series`` (#643 PR 5)."""
+    rows = market_fixture.rows(series_id, list(sessions), list(values), source=source)
+    for r in rows:
+        r["fetched_at"] = fetched_at
+    market_fixture.write_series(rows)
+
+
 def _prices(sessions, base=6000.0):
-    rawstore.write_rows("index_levels_daily", [
-        {"symbol": "^GSPC", "session_date": d, "open": None, "high": None, "low": None, "close": base + i,
-         "volume": None, "source": "yfinance", "fetched_at": 1.0, "run_id": "s", "run_at": 1.0}
-        for i, d in enumerate(sessions)])
+    _series("SPX", sessions, [base + i for i in range(len(sessions))])
 
 
 def _vol(symbol, sessions, base):
-    rows = []
-    for i, d in enumerate(sessions):
-        for src, bump, at in (("cboe", 0.0, 1.0), ("uw", 0.5, 2.0)):          # two sources; the newest fetch wins
-            rows.append({"symbol": symbol, "session_date": d, "source": src, "open": None, "high": None, "low": None,
-                         "close": base + i + bump, "operator": None, "fetched_at": at, "run_id": "s", "run_at": at})
-    rawstore.write_rows("vol_index_daily", rows)
+    _series(symbol, sessions, [base + i for i in range(len(sessions))])
+    # Two sources for the same sessions: the newest fetch wins, as it did on the old table.
+    _series(symbol, sessions, [base + i + 0.5 for i in range(len(sessions))], source="uw", fetched_at=2.0)
 
 
 def _ten_year(sessions):
-    rawstore.write_rows("macro_series", [
-        {"series_id": "DGS10", "obs_date": d, "source": "fred", "value": 4.0 + i / 100, "frequency": "daily",
-         "proxy_for": None, "session_date": d, "fetched_at": 1.0, "run_id": "s", "run_at": 1.0}
-        for i, d in enumerate(sessions)])
+    _series("DGS10", sessions, [4.0 + i / 100 for i in range(len(sessions))])
 
 
 def _snap():
@@ -151,8 +151,13 @@ def test_the_build_writes_only_its_own_board_file():
 def test_a_corrected_close_for_the_stored_session_is_written():
     _ten_year(SESSIONS)
     wb.build(now=NOW)
-    rawstore.write_rows("macro_series", [
-        {"series_id": "DGS10", "obs_date": SESSIONS[-1], "source": "fred_revised", "value": 4.5, "frequency": "daily",
-         "proxy_for": None, "session_date": SESSIONS[-1], "fetched_at": 5.0, "run_id": "s", "run_at": 5.0}])
+    _series("DGS10", [SESSIONS[-1]], [4.5], source="fred_revised", fetched_at=5.0)
     assert wb.build(now=NOW + 60)["snapshot"] == 1
     assert _snap()["US10Y"]["close"] == 4.5
+
+
+def test_a_series_the_builder_does_not_hold_writes_no_row_and_stops_no_other():
+    """A missing market file is no rows, not a failure: the three series that are there still build (#643 PR 5)."""
+    _prices(SESSIONS)                                           # SPX only; VIX, MOVE and DGS10 have no rows
+    assert wb.build(now=NOW)["snapshot"] == 1
+    assert set(_snap()) == {"SPX"}
