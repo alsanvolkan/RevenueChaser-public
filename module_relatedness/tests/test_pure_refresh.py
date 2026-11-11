@@ -43,11 +43,12 @@ def test_refresh_leaves_scores_and_registry_untouched(seeded):
     assert (rawstore.count("relatedness_scores"), rawstore.count("run_registry")) == before
 
 
-def test_fetch_still_persists_scores_and_registry(seeded, monkeypatch):
+def test_fetch_persists_the_registry_and_no_latest_scores(seeded, monkeypatch):
+    """#642 PR 3 (DF65): a Fetch no longer writes ``relatedness_scores``; the history holds the scores."""
     monkeypatch.setattr(engine, "build_profiles",
                         lambda tickers, **k: store.load_profiles(tickers))
     engine.run(no_fetch=False, tickers=seeded)
-    assert rawstore.count("relatedness_scores") > 0
+    assert rawstore.count("relatedness_scores") == 0
     assert rawstore.get("run_registry", "relatedness_run")
 
 
