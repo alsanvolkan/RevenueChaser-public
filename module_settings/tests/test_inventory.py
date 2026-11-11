@@ -756,12 +756,12 @@ def test_corpus_note_is_empty_when_the_store_read_fails(rawstore_tmp_db, monkeyp
 
 
 @pytest.mark.parametrize("status,want,not_want", [
-    (404, "No stored data for", "Could not read"),
-    (400, "No stored data for", "Could not read"),
-    (500, "Could not read the store for", "No stored data")])
-def test_df98_drill_message_by_status(tmp_path, rawstore_tmp_db, status, want, not_want):
-    """DF98 under node: only an unknown or malformed ticker says 'No stored data'; a server failure says the store
-    could not be read."""
+    (404, "No served file holds a row for", "Could not read"),
+    (400, "No served file holds a row for", "Could not read"),
+    (500, "Could not read the served files for", "No served file holds")])
+def test_df98_lookup_message_by_status(tmp_path, rawstore_tmp_db, status, want, not_want):
+    """DF98 under node: only an unknown or malformed ticker says the files hold no row; a server failure says the
+    served files could not be read (#715 renamed both, the rule is unchanged)."""
     from RevenueChaser.core.tests.board_js import run_board_js
     from RevenueChaser.module_settings import report as sr
     html = sr.render_settings_dashboard(inventory.collect())
