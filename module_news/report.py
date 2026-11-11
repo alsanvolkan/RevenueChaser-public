@@ -16,6 +16,7 @@ from RevenueChaser.core.config import OUTPUT_DIR
 from RevenueChaser.core.html_safe import esc
 from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, provider_health_html, write_artifact
 from RevenueChaser.module_news.calendar import AMS, EVENTS, HIGHLIGHT, local_day, tr_value
+from RevenueChaser.module_news import x_check
 from RevenueChaser.module_news.x_feed import PROVIDER as X_PROVIDER
 
 FILENAME = "news_latest.html"
@@ -52,7 +53,8 @@ def _load(now: float) -> tuple[list[dict], dict | None, list[dict], float | None
         [start.timestamp(), end.timestamp()], db="news")
     hl = rawstore.query(f"SELECT * FROM {HIGHLIGHT} WHERE session_date = ?", [today.isoformat()], db="news")
     x = f"coalesce(provider, '') = '{X_PROVIDER}'"
-    lanes = (f"NOT {x} AND coalesce(tickers, '[]') = '[]'", f"NOT {x} AND coalesce(tickers, '[]') <> '[]'", x)
+    lanes = (f"NOT {x} AND coalesce(tickers, '[]') = '[]'", f"NOT {x} AND coalesce(tickers, '[]') <> '[]'",
+             f"{x} AND coalesce(kind, '') <> 'other'")        # the X lane leaves out what Grok filed as "other"
     heads = [r for cond in lanes for r in rawstore.query(      # each lane its own newest LIMIT
         f"SELECT * FROM {HEADLINES} WHERE published_at >= ? AND {cond} "
         f"ORDER BY published_at DESC LIMIT {HEADLINE_LIMIT}", [now - HEADLINE_HOURS * 3600], db="news")]
@@ -131,6 +133,38 @@ X_KINDS = {"news": "haber", "level": "seviye", "option": "opsiyon", "macro": "ma
            "other": "diğer"}
 
 
+def _check(r: dict) -> dict:
+    try:
+        return json.loads(r["x_check"]) if r.get("x_check") else {}
+    except ValueError:
+        return {}
+
+
+def x_lines(r: dict) -> tuple[str, str]:
+    """An X row's contract chip and its fact line: the UW check for an option tweet, else Grok's option field."""
+    state = _check(r)
+    return x_check.chip(state), (x_check.facts(state) or (r.get("option") or ""))
+
+
+def _curated(rows: list[dict]) -> list[dict]:
+    """The X lane: one card a contract and session (the same print tweeted by two accounts is one card, the
+    accounts joined), newest first."""
+    out, seen = [], {}
+    for r in rows:
+        state = _check(r)
+        key = (state.get("occ"), state.get("session")) if state.get("occ") else None
+        if key and key in seen:
+            first = seen[key]
+            if r.get("source") and r["source"] not in first["source"]:
+                first["source"] = f'{first["source"]}, {r["source"]}'
+            continue
+        r = dict(r)
+        out.append(r)
+        if key:
+            seen[key] = r
+    return out
+
+
 def _head_li(r: dict) -> str:
     tk = "".join(f'<span class="tk">{esc(t)}</span>' for t in _tickers(r.get("tickers")))
     kind = f'<span class="xk">{esc(X_KINDS.get(r.get("kind") or "", r.get("kind")))}</span>' if r.get("kind") else ""
@@ -138,7 +172,10 @@ def _head_li(r: dict) -> str:
     text = esc(r.get("headline"))
     if r.get("url") and str(r["url"]).startswith(("https://", "http://")):
         text = f'<a href="{esc(r["url"])}" target="_blank" rel="noopener noreferrer">{text}</a>'
-    opt = f'<div class="xo">{esc(r["option"])}</div>' if r.get("option") else ""
+    chip, line = x_lines(r) if lane(r) == "x" else ("", "")
+    if chip:
+        tk = f'<span class="tk">{esc(chip)}</span>'
+    opt = f'<div class="xo{" ok" if _check(r).get("status") == "seen" else ""}">{esc(line)}</div>' if line else ""
     return (f'<li class="hd" data-hid="{esc(r["headline_id"])}" data-at="{float(r["published_at"])}">'
             f'<div class="muted">{hm(r["published_at"])}{src} {kind}{tk}</div>'
             f'<div class="htext">{text}</div>{opt}</li>')
@@ -149,7 +186,8 @@ def _headlines(rows: list[dict]) -> str:
     their lists."""
     out = []
     for key, (title, empty) in _LANES.items():
-        mine = [r for r in rows if lane(r) == key][:HEADLINE_LIMIT]
+        mine = [r for r in rows if lane(r) == key]
+        mine = (_curated(mine) if key == "x" else mine)[:HEADLINE_LIMIT]
         out.append(f'<section class="card"><h2 class="lbl">{title} · son {HEADLINE_HOURS} saat</h2>'
                    f'<p class="empty"{" hidden" if mine else ""}>{empty}</p>'
                    f'<ul class="list" id="heads-{key}">{"".join(_head_li(r) for r in mine)}</ul></section>')
@@ -159,13 +197,16 @@ def _headlines(rows: list[dict]) -> str:
 def api_rows(since: float, limit: int = 2 * HEADLINE_LIMIT) -> list[dict]:
     """Headlines stored after ``since`` (their ``run_at``), newest first, as the poll draws them."""
     rows = rawstore.query(
-        f"SELECT headline_id, provider, published_at, headline, source, tickers, url, kind, option, run_at "
+        f"SELECT headline_id, provider, published_at, headline, source, tickers, url, kind, option, x_check, run_at "
         f"FROM {HEADLINES} "
         f"WHERE run_at > ? AND published_at >= ? ORDER BY published_at DESC LIMIT {int(limit)}",
         [float(since), time.time() - HEADLINE_HOURS * 3600], db="news")
+    rows = [r for r in rows if not (lane(r) == "x" and r.get("kind") == "other")]
     return [{"headline_id": r["headline_id"], "published_at": r["published_at"], "hm": hm(r["published_at"]),
-             "headline": r["headline"], "source": r.get("source") or "", "tickers": _tickers(r.get("tickers")),
-             "kind": X_KINDS.get(r.get("kind") or "", r.get("kind") or ""), "option": r.get("option") or "",
+             "headline": r["headline"], "source": r.get("source") or "",
+             "tickers": [x_lines(r)[0]] if lane(r) == "x" and x_lines(r)[0] else _tickers(r.get("tickers")),
+             "kind": X_KINDS.get(r.get("kind") or "", r.get("kind") or ""),
+             "option": x_lines(r)[1] if lane(r) == "x" else "",
              "url": r["url"] if str(r.get("url") or "").startswith(("https://", "http://")) else "",
              "lane": lane(r), "run_at": r["run_at"]} for r in rows]
 
@@ -209,7 +250,8 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
  color:var(--sky);font-size:11.5px}
 .xk{display:inline-block;margin-left:4px;padding:0 6px;border-radius:6px;border:1px solid var(--border);
  color:var(--amber);font-size:11.5px}
-.xo{margin-top:2px;color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.xo{margin-top:4px;color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.xo.ok{color:var(--fg);border-left:3px solid var(--amber);padding-left:8px}
 .empty{color:var(--muted);margin:6px 0}
 .foot{margin-top:16px;color:var(--muted);font-size:12px}
 [hidden]{display:none!important}
@@ -229,7 +271,8 @@ function _headLi(r){
   if(r.url){ var a = document.createElement('a'); a.href = r.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
     a.textContent = r.headline; h.appendChild(a); } else { h.textContent = r.headline; }
   li.appendChild(m); li.appendChild(h);
-  if(r.option){ var o = document.createElement('div'); o.className = 'xo'; o.textContent = r.option; li.appendChild(o); }
+  if(r.option){ var o = document.createElement('div'); o.className = r.option.indexOf('UW teyidi:') === 0 ? 'xo ok' : 'xo';
+    o.textContent = r.option; li.appendChild(o); }
   return li;
 }
 function _addHead(r){
@@ -263,8 +306,10 @@ function newsTab(btn){
 HELP = help_html(
     "<p>ABD ekonomik takvimi (bugün ve bu hafta, saatler Amsterdam) ve izleme listesindeki ve en büyük ABD "
     "şirketlerinin Dow Jones başlıkları (<b>Hisseler</b>), IBKR'nin piyasa geneli haber akışı (<b>Piyasa</b>) ve "
-    "Grok'un saatlik X özet maillerindeki paylaşımlar (<b>X</b>: tür, ticker ve opsiyon kodu; her kaydın X "
-    "kimliği kendi zamanıyla doğrulanır). "
+    "Grok'un saatlik X özet maillerindeki paylaşımlar (<b>X</b>; her kaydın X kimliği kendi zamanıyla doğrulanır, "
+    "\"diğer\" türü ve aynı kontratın tekrarları düşer). Bir opsiyon paylaşımının kontratı Unusual Whales'ta "
+    "aranır: tweet saatinin 4 saat öncesinden 15 dakika sonrasına kadar o kontratın $25B üstü işlemleri (adet, "
+    "kontrat, prim, ask/bid tarafı) ve ertesi gün açık pozisyon (OI) değişimi gösterilir. "
     "Gerçekleşen değer gösterilmez: beklenti ve önceki değer.</p>"
     "<p>Başlıklar 5 dakikada bir saklanır; sayfa açıkken dakikada bir yenileri kendisi ekler.</p>"
     "<p><b>Fetch</b> saklı takvimi <code>boards/news.duckdb</code> içine artımlı yazar (yeni ve değişen "

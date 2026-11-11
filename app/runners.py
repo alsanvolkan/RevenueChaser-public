@@ -1879,6 +1879,10 @@ def _news_headlines_pass(rid: str) -> dict | None:
     if x["mails"]:
         ledger.add_note(f"News X: {x['stored']} posts from {x['mails']} Grok mails ({x['refused']} rows refused, "
                         f"{x['cut']} mails cut short)")
+    from RevenueChaser.module_news import x_check
+    checked = x_check.run(UWClient)
+    if checked["calls"]:
+        ledger.add_note(f"News X: {checked['checked']} option posts checked against UW ({checked['calls']} calls)")
     names = headlines.tickers(_load_watchlist())
     got = headlines.fetch(names, run_id=rid)
     health = None

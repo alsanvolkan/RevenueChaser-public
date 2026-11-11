@@ -614,6 +614,17 @@ class UWClient:
         empty: a quiet tape) or ``failed`` (the list is an empty placeholder)."""
         return self._shaped(f"/stock/{_seg(uw_symbol(ticker))}/flow-recent", None, _list_rows)
 
+    def option_contract_flow_result(self, symbol: str, date: str = None, min_premium: int = None) -> ProviderResult:
+        """The newest 50 prints of one contract (OCC symbol) on ``date`` (default: the last session), at or above
+        ``min_premium``; the News board's X check (``module_news/x_check.py``)."""
+        params = {k: v for k, v in (("date", date), ("min_premium", min_premium)) if v is not None}
+        return self._shaped(f"/option-contract/{_seg(symbol)}/flow", params or None, _list_rows)
+
+    def option_contract_historic_result(self, symbol: str) -> ProviderResult:
+        """One contract's daily rows (volume, open interest, ...), ``{"chains": [...]}`` unwrapped."""
+        return self._shaped(f"/option-contract/{_seg(symbol)}/historic", None,
+                            lambda d: d.get("chains", []) if isinstance(d, dict) else [])
+
     def aggregate_flow(self, ticker: str, flow: list = None) -> dict:
         """The tape's premium in buckets. ``inst_call``/``inst_put``/``retail_*`` split by size only (size >= 10 is
         institutional; R8 and Swing read these). The R5 lean (docs/rules/redesign.md R5, review S4) reads only
