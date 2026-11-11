@@ -88,10 +88,13 @@ def test_market_4_builds_no_headlines_and_retires_the_live_table():
     assert DATASETS[econ.NAME].cadence == "hourly" and DATASETS[econ.NAME].kind == "market"
 
 
-def test_a_live_market_3_file_with_headlines_swaps_to_a_build_without_them(http_mock):
-    with serving.build("market") as b:
-        b.con.execute("CREATE TABLE news_headline AS SELECT range AS i FROM range(5)")
-        b.swap({"news_headline": 5})
+def test_a_live_market_3_file_with_headlines_swaps_to_a_build_without_them(http_mock, monkeypatch):
+    with monkeypatch.context() as m:                # the live file is the deployed market 3 one
+        m.setitem(serving.SERVING_SCHEMA_VERSION, "market", 3)
+        with serving.build("market") as b:
+            b.con.execute("CREATE TABLE news_headline AS SELECT range AS i FROM range(5)")
+            b.swap({"news_headline": 5})
+    assert serving.live_version("market") == 3
     http_mock.add("/market/economic-calendar", {"data": [CPI]}, headers=UW_HEADERS)
     assert _run(econ.NAME)["result"] == "changed"
     with serving.open_read("market") as con:
