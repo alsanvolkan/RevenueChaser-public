@@ -43,8 +43,13 @@ def _cached_filings() -> dict[str, dict]:
 
 # ── the corpus: the shared SEC layer, or chain_filings off it (plan 2026-11-11 F2) ──
 def _reads_layer() -> bool:
+    """The layer is the corpus once ``sec/filings`` has built too: ``reads_layer`` only asks for companyfacts, and an
+    unbuilt ``filing_item`` would let a Fetch replace every stored edge with none of the layer's."""
     from RevenueChaser.core import fundamentals_layer
-    return fundamentals_layer.reads_layer()
+    from RevenueChaser.rcdata import ops
+    from RevenueChaser.rcdata.build.fundamentals import filings
+    # shortcut: a partly built sec/filings still counts; add a coverage floor if a partial first build ever happens.
+    return fundamentals_layer.reads_layer() and ops.ever_built(filings.NAME)
 
 
 def _default_tickers() -> list[str]:

@@ -56,6 +56,14 @@ def test_a_fetch_downloads_nothing_on_the_layer(layer):
     assert rawstore.get_all("chain_filings") == []
 
 
+def test_the_layer_is_not_the_corpus_before_sec_filings_has_built(layer, monkeypatch):
+    from RevenueChaser.rcdata import ops
+    built = ops.ever_built
+    monkeypatch.setattr(ops, "ever_built", lambda name: name != filings.NAME and built(name))
+    assert fundamentals_layer.reads_layer() and engine._board_filings_rows() == []
+    assert engine.fetch_corpus(no_fetch=True).get("corpus") is None
+
+
 def test_off_the_layer_the_corpus_is_chain_filings():
     rawstore.write_rows("chain_filings", [{"ticker": "MSFT", "cik": "789019", "form": "10-K", "filed": "2025-07-30",
                                            "accession": "a", "primary_doc": "u", "item_text": STATED,

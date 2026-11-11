@@ -977,7 +977,7 @@ def filing_texts(ciks: Iterable, item: str = "business", text: bool = True) -> l
     cols = "*" if text else "* EXCLUDE (text)"
     return _rows("filing_item", f"SELECT {cols} FROM filing_item WHERE kind = 'document' AND item = ? "
                                 f"AND cik IN ({', '.join('?' * len(wanted))}) "
-                                "QUALIFY row_number() OVER (PARTITION BY cik ORDER BY filing_date DESC) = 1 "
+                                "QUALIFY row_number() OVER (PARTITION BY cik ORDER BY filing_date DESC, accession DESC) = 1 "
                                 "ORDER BY cik", [str(item), *wanted])
 
 
