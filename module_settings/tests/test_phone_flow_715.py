@@ -85,4 +85,4 @@ def test_the_phone_picture_is_drawn_inside_the_phone_s_width():
     css = control_render.CTL_CSS
     assert ".ctl svg.pflow{display:block;width:100%" in css, "and it scales to its card"
     assert "min-height:44px" in css[css.index(".ctl .pfhead{"):], "the name row is 44 px"
-    assert "min-height:36px" in css[css.index(".ctl .pftab{"):], "and a name button is a real target"
+    assert "min-height:44px" in css[css.index(".ctl .pftab{"):], "and a name button is a 44 px target too"

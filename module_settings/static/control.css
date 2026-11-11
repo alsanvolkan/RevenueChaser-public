@@ -340,7 +340,7 @@
 /* #715: the phone's own flow — the six pictures side by side in one strip, swiped sideways. */
 .ctl .pftabs{display:flex;gap:6px;overflow-x:auto;padding:0 0 8px;scrollbar-width:none}
 .ctl .pftabs::-webkit-scrollbar{display:none}
-.ctl .pftab{flex:none;min-height:36px;padding:0 12px;border:1px solid var(--line);border-left:3px solid var(--fh);
+.ctl .pftab{flex:none;min-height:44px;padding:0 14px;border:1px solid var(--line);border-left:3px solid var(--fh);
   border-radius:999px;background:var(--card);color:var(--fg);font:12px var(--f-mono,monospace);cursor:pointer}
 .ctl .pfdeck{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;align-items:flex-start;
   -webkit-overflow-scrolling:touch;scrollbar-width:none}
