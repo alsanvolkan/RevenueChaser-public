@@ -263,7 +263,8 @@ def test_only_the_first_file_section_is_open_and_none_is_hidden():
     html = control_render.render_data(_view())
     assert html.count('<details class="sec fpanel"') == 6
     assert len(re.findall(r'<details class="sec fpanel"[^>]* open>', html)) == 1
-    assert " hidden>" not in html[html.index('class="fpanels"'):]
+    opens = re.findall(r'<details class="sec fpanel"[^>]*>', html)
+    assert len(opens) == 6 and not [t for t in opens if "hidden" in t], "a section is folded, never hidden"
 
 
 def test_the_script_opens_a_file_from_the_diagram_and_from_by_file():
@@ -272,7 +273,7 @@ def test_the_script_opens_a_file_from_the_diagram_and_from_by_file():
     assert "details.fpanel" in blk and "p.open = true" in blk
     assert "data-node^=\"file:\"" in blk or "data-node^='file:'" in blk
     assert "data-pick" in blk and "scrollTo" in blk
-    assert "aria-selected" not in blk and "hidden" not in blk
+    assert "aria-selected" not in blk and ".hidden" not in blk and "removeAttribute" not in blk
 
 
 # ── One Data panel ───────────────────────────────────────────────────────────────────────────────────────────
