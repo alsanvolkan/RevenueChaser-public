@@ -1,5 +1,5 @@
-"""Market 3 (#643): ``uw/economic_calendar`` and ``ibkr/news`` through the builder, UW mocked at the HTTP boundary
-and the IBKR Gateway faked at its socket. Both are hourly datasets of the ``market`` kind."""
+"""Market 3 (#643): ``uw/economic_calendar`` through the builder, UW mocked at the HTTP boundary; an hourly dataset of
+the ``market`` kind. Market 4 dropped the IBKR headlines (``ibkr/news``, ``news_headline``) for ``boards/news.duckdb``."""
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
@@ -7,12 +7,9 @@ from datetime import date, datetime, timezone
 import pytest
 
 from RevenueChaser.core import calendar
-from RevenueChaser.core.providers import ibkr_tws as ibkr
 from RevenueChaser.core.providers import unusual_whales
 from RevenueChaser.rcdata import ops, read, serving
-from RevenueChaser.rcdata.build import DATASETS, base, due, ibkr_news, uw_economic_calendar as econ
-
-from .ibkr_fixture import FakeGateway, frame
+from RevenueChaser.rcdata.build import DATASETS, base, due, uw_economic_calendar as econ
 
 pytestmark = pytest.mark.usefixtures("kinds_full")
 
@@ -35,13 +32,6 @@ def env(monkeypatch):
 
 def _run(name: str) -> dict:
     return base.run_request({"dataset": name, "params": {}})
-
-
-def test_market_is_version_3_with_both_new_tables():
-    assert serving.SERVING_SCHEMA_VERSION["market"] == 3
-    assert econ.TABLE != "economic_calendar", "the old raw table's name, retired by needs/screen.py"
-    assert {econ.NAME, ibkr_news.NAME} <= set(DATASETS)
-    assert DATASETS[econ.NAME].cadence == DATASETS[ibkr_news.NAME].cadence == "hourly"
 
 
 # ── uw/economic_calendar ──────────────────────────────────────────────────────────────────────────────────────
@@ -81,105 +71,49 @@ def test_an_empty_or_failed_answer_is_a_failed_check_and_keeps_what_is_served(ht
 
 
 def test_no_market_file_reads_as_no_rows():
-    assert read.economic_calendar() == [] and read.news_headlines() == []
+    assert read.economic_calendar() == []
 
 
-# ── ibkr/news ─────────────────────────────────────────────────────────────────────────────────────────────────
+# ── market 4: the headlines left for the News board's own file ───────────────────────────────────────────────
 
-class NewsGateway(FakeGateway):
-    """reqContractDetails and reqHistoricalNews only (the News board's own fake, module_news/tests)."""
-
-    def __init__(self):
-        super().__init__(last_bar=date(2026, 11, 6))
-        self.con_ids = {"AAPL": 265598, "NVDA": 4815747}
-        self.news: dict[int, list[tuple]] = {}
-
-    def _answer(self, fields):
-        msg = fields[0]
-        if msg == "9":
-            req_id, symbol = fields[2], fields[4]
-            if symbol not in self.con_ids:
-                self._out += frame(4, 2, req_id, 200, "No security definition has been found", "")
-                return
-            self._out += frame(10, req_id, symbol, "STK", "", 0, "", "SMART", "USD", symbol, "NMS", symbol,
-                               self.con_ids[symbol], 0.01, "", "ACTIVETIM", "SMART,NASDAQ")
-            self._out += frame(52, 1, req_id)
-        elif msg == "86":
-            req_id, con_id = fields[1], int(fields[2])
-            for row in self.news.get(con_id, []):
-                self._out += frame(86, req_id, *row)
-            self._out += frame(87, req_id, 0)
-        else:
-            super()._answer(fields)
+def test_market_4_builds_no_headlines_and_retires_the_live_table():
+    """avo's option A (10 Nov 2026): ``boards/news.duckdb`` is the only home of the headlines, so the builder's
+    ``ibkr/news`` is gone and a live market 3 file's ``news_headline`` may leave the build."""
+    from RevenueChaser.rcdata import scaffold
+    assert serving.SERVING_SCHEMA_VERSION["market"] == 4
+    assert "ibkr/news" not in DATASETS and not hasattr(read, "news_headlines")
+    assert "news_headline" in serving.RETIRED_TABLES["market"]
+    assert "news_headline" not in scaffold.SCHEMA_OF_KIND["market"], "a retired table is still built"
+    assert econ.TABLE != "economic_calendar", "the old raw table's name, retired by needs/screen.py"
+    assert DATASETS[econ.NAME].cadence == "hourly" and DATASETS[econ.NAME].kind == "market"
 
 
-@pytest.fixture
-def gw(monkeypatch):
-    g = NewsGateway()
-    monkeypatch.setattr(ibkr, "CONNECT", g.connect)
-    g.news[265598] = [("2026-11-09 18:20:00.0", "DJ-N", "DJ-N$1", "{A:800015:L:en:K:n/a:C:0.97}!Apple Expands AI Deal"),
-                      ("2026-11-08 23:00:00.0", "DJ-RT", "DJ-RT$9", "Tech Stocks Rally as Yields Slip")]
-    g.news[4815747] = [("2026-11-09 18:25:00.0", "DJ-N", "DJ-N$3", "Nvidia, Apple Lead Gains"),
-                       ("2026-11-08 23:00:00.0", "DJ-N", "DJ-N$dup", "Tech Stocks Rally as Yields Slip")]
-    return g
+def test_a_live_market_3_file_with_headlines_swaps_to_a_build_without_them(http_mock, monkeypatch):
+    with monkeypatch.context() as m:                # the live file is the deployed market 3 one
+        m.setitem(serving.SERVING_SCHEMA_VERSION, "market", 3)
+        with serving.build("market") as b:
+            b.con.execute("CREATE TABLE news_headline AS SELECT range AS i FROM range(5)")
+            b.swap({"news_headline": 5})
+    assert serving.live_version("market") == 3
+    http_mock.add("/market/economic-calendar", {"data": [CPI]}, headers=UW_HEADERS)
+    assert _run(econ.NAME)["result"] == "changed"
+    with serving.open_read("market") as con:
+        names = {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables()").fetchall()}
+    assert "news_headline" not in names and econ.TABLE in names
 
 
-def test_headlines_land_one_row_a_story_and_name_by_utc_publish_day(gw):
-    row = _run(ibkr_news.NAME)
-    assert row["result"] == "changed" and row["rows"] == 4, row
-    assert gw.sent[0][2] == str(ibkr_news.CLIENT_ID) == "75"
-    got = read.news_headlines()
-    assert [r["headline"] for r in got][:2] == ["Nvidia, Apple Lead Gains", "Apple Expands AI Deal"]
-    rally = [r for r in got if r["headline"] == "Tech Stocks Rally as Yields Slip"]
-    assert {r["ticker"] for r in rally} == {"AAPL", "NVDA"} and len({r["headline_id"] for r in rally}) == 1
-    assert rally[0]["published_date"] == date(2026, 11, 8)
-    assert [r["ticker"] for r in read.news_headlines(["nvda"])] == ["NVDA", "NVDA"]
-    # The ten fixed names the fake gateway does not know are issues, not a failure.
-    assert sum(i["kind"] == "fetch_failed" for i in ops.rows("build_issues")) == len(ibkr_news.BASE_TICKERS) - 2
-
-
-def test_one_story_and_name_on_two_publish_days_serves_its_first_day_only(gw):
-    # The 10 Nov 16:05 builder pass: the same words for AAPL on two UTC days were two partitions holding one key,
-    # and the market build died on the news_headline primary key.
-    story = "Apple Shares Edge Higher"
-    gw.news[265598] = [("2026-11-08 23:50:00.0", "DJ-RT", "DJ-RT$1", story),
-                       ("2026-11-09 08:00:00.0", "DJ-N", "DJ-N$2", story)]
-    gw.news[4815747] = []
-    row = _run(ibkr_news.NAME)
-    assert row["result"] == "changed" and row["rows"] == 1, row
-    # A later pass brings it again on the second day: a build on the live copy keeps the first day too.
-    gw.news[265598] = [("2026-11-09 18:50:00.0", "DJ-N", "DJ-N$3", story)]
-    row = _run(ibkr_news.NAME)
-    assert row["result"] != "failed", row
-    got = [r for r in read.news_headlines() if r["ticker"] == "AAPL"]
-    assert [(r["headline"], r["published_date"]) for r in got] == [(story, date(2026, 11, 8))]
-
-
-def test_the_watch_list_comes_first(gw):
-    ops.watch_add("stock", "crwv", by="test")
-    assert ibkr_news.tickers(ops.watch_list("stock"))[:2] == ["CRWV", "AAPL"]
-
-
-def test_a_gateway_that_is_down_is_a_failed_check_and_writes_nothing(monkeypatch):
-    def refuse(*a, **k):
-        raise ConnectionRefusedError("no gateway")
-    monkeypatch.setattr(ibkr, "CONNECT", refuse)
-    row = _run(ibkr_news.NAME)
-    assert row["result"] == "failed" and "gateway" in row["note"].lower(), row
-    assert not ibkr_news.day_dir(date(2026, 11, 9)).exists()
-
-
-def test_an_hourly_dataset_is_due_again_an_hour_after_its_run(gw, monkeypatch):
-    _run(ibkr_news.NAME)
-    assert due.is_due(DATASETS[ibkr_news.NAME])[0] is False
-    started = ops.run_started_at(ops.latest_check(ibkr_news.NAME)["run_id"])
+def test_an_hourly_dataset_is_due_again_an_hour_after_its_run(http_mock, monkeypatch):
+    http_mock.add("/market/economic-calendar", {"data": [CPI]}, headers=UW_HEADERS)
+    _run(econ.NAME)
+    assert due.is_due(DATASETS[econ.NAME])[0] is False
+    started = ops.run_started_at(ops.latest_check(econ.NAME)["run_id"])
     monkeypatch.setattr(calendar, "_now", lambda: datetime.fromtimestamp(started + 3600, timezone.utc))
-    assert due.is_due(DATASETS[ibkr_news.NAME])[0] is True
+    assert due.is_due(DATASETS[econ.NAME])[0] is True
 
 
 def test_settings_reads_the_hourly_cadence_and_counts_it_like_a_daily_one():
     from RevenueChaser.module_settings import newdata
-    assert newdata._cadence(ibkr_news.NAME, None) == newdata._cadence(econ.NAME, None) == "hourly"
+    assert newdata._cadence(econ.NAME, None) == "hourly"
     check = {"result": "changed", "source_as_of": "2026-11-09", "checked_on": "2026-11-09", "coverage": None}
     assert newdata.status_of(econ.NAME, check, check, "hourly", NOW)[0] == "fresh"
 
