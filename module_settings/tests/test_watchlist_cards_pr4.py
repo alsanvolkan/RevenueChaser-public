@@ -149,3 +149,14 @@ def test_the_queued_line_is_one_span_the_remove_can_rewrite():
     opt = _card(_page(newdata_fixture()), "option")
     assert ('<span data-nd-queued>SPX and 1 name from this list: NVDA · the options build comes later '
             '(build-plan step 11)</span>') in opt
+
+
+def test_each_card_has_an_add_box_that_posts_the_add_route():
+    """11 Nov 2026: the Add box came over from the closed Activity page; Add never removes."""
+    from RevenueChaser.module_settings import report
+    for kind in ("option", "stock"):
+        card = report._nd_watch_card(kind, {"rows": []}, {})
+        form = re.search(rf'<form[^>]*data-nd-add="{kind}"[^>]*>.*?</form>', card, re.S).group(0)
+        assert 'aria-label="A ticker to add to the' in form and '<button type="submit" class="nd-btn">Add</button>' in form
+    assert "'/api/watchlist/' + list + '/add/'" in report.ND_JS and "form[data-nd-add]" in report.ND_JS
+    assert "/toggle/" not in report.ND_JS, "a toggle would take off a name someone else just added"
