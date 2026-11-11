@@ -1852,7 +1852,7 @@ name, and the earnings set of the evening. Built by the same builder, swapped th
 | `option_print` | session date, ticker, set, print id | The last 50 prints of the session, with `tags`, `nbbo_bid`/`nbbo_ask`, the side volumes, `multi_vol`, `upstream_condition_detail` and `report_flags`; `side` (`ask`, `bid` or `mid`: UW's side tag, else the side of the quote's midpoint the price is on, NULL without either) and `package` (a multi-leg or stock-tied trade condition); the rule is `core/option_prints.py`, the same one the Earnings Radar R5 lean reads from the live tape |
 | `iv_daily` | session date, ticker, source, days | Implied volatility per tenor: UW's interpolated IV (observed by the daily run) and IBKR's 30-day IV year (backfilled, `observed` false) |
 | `option_screener_daily` | session date, ticker | Every name reporting in the next 28 days, its report date and session, the calendar item's `expected_move_perc`, `street_mean_est`, `pre_earnings_close`, `post_earnings_close`, `report_time` and `full_name` (`marketcap` the calendar's when the screener has none), its screener row (or `screened` false), and whether it passes the Earnings Radar gates; `dollar_option_volume` is the day's call plus put premium as UW served it (NULL when not served, which fails the gate), not volume x 100 |
-| `er_options` | session date, ticker | The earnings set: one row per name fetched on the evening before its report, with the report date it was fetched for |
+| `er_options` | session date, ticker | The earnings set: one row per name and evening (each of the two before its report), with the report date it was fetched for |
 | `option_far_print` | session date, print id | The market's far-dated prints of the session (183 days or more, $50k premium or more, every underlying): the LEAPS scan's input, the print fields of `option_print` plus `next_earnings_date`; the last 5 sessions (the Parquet keeps every one) |
 | `earnings_tape` | session date, ticker, report date | `/earnings/{ticker}` of an earnings-set name on its evening: one row per report UW lists (EPS and estimate, expected move, the pre- and post-earnings moves, the straddle returns); a name fetched again lists its reports again, so a reader takes the newest session's row |
 
@@ -1869,7 +1869,7 @@ CLI or Settings):
   instead of storing part of it.
 - `uw/option_screener`: the earnings calendar of the next 28 days (`raw/uw/earnings_calendar/`, premarket and
   afterhours, 100 a page), the screener row of every name on it (`/screener/stocks`, 100 names a call), and the
-  earnings set: once per name, on the evening before its report, each name that passes the Earnings Radar gates and
+  earnings set: once per name an evening, on each of the two evenings before its report, each name that passes the Earnings Radar gates and
   is not on the option list gets spot exposures by strike, GEX levels, term structure, options volume, the last
   50 prints (not the chain) and its earnings tape (`/earnings/{ticker}`). Once a session it also asks
   `/option-trades` for the market's far prints (`min_dte` 183, `min_premium` 50,000, 500 a call), paged back with

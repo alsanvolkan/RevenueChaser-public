@@ -6,7 +6,7 @@ Three datasets, all daily and started by hand the first time:
 - ``uw/option_list`` (``uw_list.py``): the chain, the option stats and the last 50 prints of SPX and every name on
   the option watch list, once a session, in the observed window.
 - ``uw/option_screener`` (``uw_screener.py``): the earnings calendar of the next 28 days, the screener row of every
-  name on it (100 names a call), and the earnings set: once per name, on the evening before its report, every name
+  name on it (100 names a call), and the earnings set: once per name an evening, on each of the two evenings before its report, every name
   that passes the Earnings Radar gates and is not on the option list.
 - ``ibkr/iv_history`` (``ibkr_iv.py``): one year of IBKR's 30-day implied volatility, once per list name.
 
