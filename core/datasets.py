@@ -394,7 +394,8 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="etf_holdings", label="Rotation ETF holdings",
         tables=("etf_holdings", "etf_holdings_changes"),
         db="raw", source=Source.uw, writer=None,
-        writer_note="none since #642 PR 5 (the holdings job is gone); coverage reads the spine's funds/etf_holdings",
+        writer_note=("none since alsanvolkan/RevenueChaser-public#642 PR 5 (the holdings job is gone); coverage reads "
+                     "the spine's funds/etf_holdings"),
         freshness=("etf_holdings", "fetched_at"),
         coverage=_summary_health("module_sector_rotation.etf_holdings"),
         gap_kind=GapKind.ceiling,
