@@ -105,7 +105,8 @@ def test_a_store_row_without_the_measure_is_not_counted_as_non_usd_and_is_no_err
     payload = fp.run_scan()
 
     assert "non_usd_currency" not in payload["data_quality"]["dropped"]
-    assert payload["data_quality"]["dropped"]["no_edgar_annual"] == 1
+    # CCC, and BBB and DDD, which the layer holds no company for (#642 PR 6: no download, so no fetch failure).
+    assert payload["data_quality"]["dropped"]["no_edgar_annual"] == 3
     assert "non_usd_units" not in payload["data_quality"]
     # No row carried the measure, so the key is absent exactly as ``non_usd_units`` is; the board reads an absent
     # key as 0 and says in words that nothing was measured.

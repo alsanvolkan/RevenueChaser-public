@@ -737,7 +737,7 @@
    },
    "regime": "RISK-ON",
    "selection_version": "8",
-   "statements_source": "store",
+   "statements_source": "layer",
    "summary": {
     "data_short": 2,
     "distorted_count": 5,

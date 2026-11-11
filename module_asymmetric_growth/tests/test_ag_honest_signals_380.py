@@ -193,17 +193,19 @@ def test_the_stale_line_is_the_c18_limit(monkeypatch, rawstore_tmp_db):
 # fell out because their newer years carry no revenue figure, so the revenue anchor fell back years (AKAM: FY2017).
 
 def _gap(newest_year: int, month_day: str = "12-31") -> list[dict]:
-    """Revenue only in FY2017, like AKAM; FY2018 onwards carry the cash and balance-sheet fields only."""
-    first = dict(copy.deepcopy(_ANNUAL[0]), fiscal_year=2017, period_ends={"revenue": f"2017-{month_day}"})
+    """Revenue only in the oldest year, like AKAM (FY2017); the later years carry the cash and balance-sheet fields
+    only. Eight years in all: the layer serves a board ``fundamentals_layer.ANNUAL_YEARS`` (8) fiscal years."""
+    oldest = newest_year - 7
+    first = dict(copy.deepcopy(_ANNUAL[0]), fiscal_year=oldest, period_ends={"revenue": f"{oldest}-{month_day}"})
     return [first] + [{"fiscal_year": y, "operating_cash_flow": 300.0, "capex": 50.0, "total_debt": 10.0,
                        "cash": 200.0, "total_assets": 1000.0, "diluted_shares": 100.0,
                        "period_ends": {"total_assets": f"{y}-{month_day}", "operating_cash_flow": f"{y}-{month_day}"}}
-                      for y in range(2018, newest_year + 1)]
+                      for y in range(oldest + 1, newest_year + 1)]
 
 
 @pytest.fixture
 def gap_scan(rawstore_tmp_db, monkeypatch):
-    """GAP: newest record 2025-12-31 (fresh), revenue last in FY2017. OLDGAP: the same, but its newest record ended
+    """GAP: newest record 2025-12-31 (fresh), revenue last in FY2018. OLDGAP: the same, but its newest record ended
     2024-06-30 (837 days): a stale filer. FRESH: an ordinary name."""
     fund_store.put_edgar([
         _edgar("FRESH", _dated(_ANNUAL, 2025)), _edgar("GAP", _gap(2025)), _edgar("OLDGAP", _gap(2024, "06-30"))])
@@ -220,7 +222,7 @@ def test_a_fresh_filer_with_an_old_revenue_figure_keeps_its_card(gap_scan):
     cards = {c["ticker"]: c for c in gap_scan["cards"]}
     assert sorted(cards) == ["FRESH", "GAP"]
     gap = cards["GAP"]
-    assert (gap["anchor_fy"], gap["prior_fy"]) == (2025, 2024)      # the newest record, not FY2017
+    assert (gap["anchor_fy"], gap["prior_fy"]) == (2025, 2024)      # the newest record, not FY2018
     assert gap["rev_growth"] is None and gap["gross_margin"] is None
     assert "no_recent_revenue" in gap["flags"]
     assert gap["total_points"] == 6 and gap["tier"] is None          # survival 3 + momentum 3, still no tier
@@ -243,7 +245,7 @@ def test_score_ticker_judges_the_revenue_anchor_only_with_a_run_day():
     card = score_ticker("GAP", fin, _TECH, spine={}, as_of=RUN_DAY)
     assert card["anchor_fy"] == 2025 and "no_recent_revenue" in card["flags"] and card["tier"] is None
     plain = score_ticker("GAP", fin, _TECH, spine={})                # tests and research scripts: nothing judged
-    assert plain["anchor_fy"] == 2017 and "no_recent_revenue" not in plain["flags"]
+    assert plain["anchor_fy"] == 2018 and "no_recent_revenue" not in plain["flags"]
 
 
 def test_a_fresh_revenue_anchor_behind_the_newest_record_is_kept():

@@ -93,7 +93,6 @@ SPINE_ROW = {"ticker": TICKER, "cik": CIK, "name": "GROWTH CO", "exchange": "NYS
 def built(monkeypatch, http_mock):  # noqa: F811
     monkeypatch.setattr(sec_edgar, "SEC_DATA_BASE", "https://data.sec.test")
     monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
-    monkeypatch.delenv(layer.SOURCE_ENV, raising=False)
     fx.spine([SPINE_ROW])
     fx.sec_routes(http_mock, {CIK: grw_facts()})
     fx.run(companyfacts.NAME, mode="backfill", to="2026-10-26")
