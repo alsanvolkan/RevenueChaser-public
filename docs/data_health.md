@@ -133,8 +133,8 @@ the code records (`rcdata/scaffold`, `rcdata/caps`, and the needs layer's `board
 `static/control.css` and `static/control.js`. The old sections, the "New data system" below among them, sit in one
 closed fold under it (`details#old-settings`), unchanged.
 
-- **Order:** Health, Fetch (with the universe bar and the Backfill calendar), the flow diagram, Providers, Data
-  file by file, then the queue (`details#sec-queue`), the cross-check and the weekly backups
+- **Order:** Health, Fetch (with the universe bar and the Backfill calendar), the flow diagram, Data file by
+  file — one folded section a served file since #715 step 3, no picker and no tab under a tab — Providers, then the queue (`details#sec-queue`), the cross-check and the weekly backups
   (`details#sec-backups`). Health, Fetch and the flow diagram start open; the queue opens while something waits or
   runs and the backups open while a copy is past its limit (#715 step 2).
 - **Health tiles** count the dataset cards. The builder tile turns red when the builder has been
