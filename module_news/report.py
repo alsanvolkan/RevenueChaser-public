@@ -170,6 +170,11 @@ def _badge_html(state: dict) -> str:
     return f'<span class="vb {cls}" title="{esc(tip)}"><b aria-hidden="true">{icon}</b>{esc(label)}</span>'
 
 
+def _fold(label: str, chart: str) -> str:
+    """A chart closed until clicked (avo, 11 Nov 2026 08:34 Amsterdam: "Plotlar click to expand ile gosterilmeli")."""
+    return f'<details class="xd"><summary>{label}</summary>{chart}</details>' if chart else ""
+
+
 def _head_li(r: dict) -> str:
     tk = "".join(f'<span class="tk">{esc(t)}</span>' for t in _tickers(r.get("tickers")))
     kind = f'<span class="xk">{esc(X_KINDS.get(r.get("kind") or "", r.get("kind")))}</span>' if r.get("kind") else ""
@@ -188,7 +193,7 @@ def _head_li(r: dict) -> str:
     if x:
         move = x_check.price_move(state, float(r["published_at"]))
         opt += f'<div class="xm">{esc(move)}</div>' if move else ""
-        opt += x_check.chart_svg(state, float(r["published_at"]))
+        opt += _fold("İşlem grafiği", x_check.chart_svg(state, float(r["published_at"])))
     badge = _badge_html(state) if x else ""
     return (f'<li class="hd" data-hid="{esc(r["headline_id"])}" data-at="{float(r["published_at"])}">'
             f'<div class="muted meta">{hm(r["published_at"])}{src} {kind}{tk}{badge}</div>'
@@ -216,7 +221,7 @@ def _group_li(key: str, rows: list[dict]) -> str:
         session = x_check.session_day(float(newest["published_at"]))
         marks = [(float(r["published_at"]), f'{hm(r["published_at"])} {r.get("source") or ""}'.strip())
                  for r in rows if x_check.session_day(float(r["published_at"])) == session]
-        chart = x_check.price_svg(_check(newest)["px"], marks)
+        chart = _fold("Fiyat grafiği", x_check.price_svg(_check(newest)["px"], marks))
     name = f'<span class="sym">{esc(key)}</span>' if key else '<span class="sym gen">Genel</span>'
     return (f'<li class="xg" data-grp="{esc(key)}" data-at="{float(rows[0]["published_at"])}">'
             f'<div class="xgh">{name}<span class="muted">{len(rows)} kayıt · {esc(kinds)}{conf}</span></div>'
@@ -335,6 +340,11 @@ h1{margin:2px 0 0;color:var(--bright);font-size:22px}
 .xp .ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
 .xp .ln.up{stroke:var(--pos)}.xp .ln.down{stroke:var(--neg)}
 .xp .hit{fill:transparent}
+.xd>summary{min-height:44px;display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--sky);font-size:12.5px;
+ list-style:none}
+.xd>summary::-webkit-details-marker{display:none}
+.xd>summary::before{content:"▸";width:12px}
+.xd[open]>summary::before{content:"▾"}
 .plot{position:relative;margin-right:64px}
 .plot .ya{position:absolute;left:100%;padding-left:6px;transform:translateY(-50%);color:var(--muted);font-size:11px;
  line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap}

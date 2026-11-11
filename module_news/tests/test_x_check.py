@@ -163,5 +163,6 @@ def test_every_x_card_has_a_badge_and_each_ticker_a_group_with_its_price_line():
     assert all(f'class="ya" style="top:{t}px">{v}<' in page for t, v in (("8.0", "725,00"), ("48.0", "717,50"),
                                                                            ("88.0", "710,00")))   # price y axis
     assert '<span class="ya" style="top:3.0px">$900 bin</span>' in page                         # prints y axis
+    assert page.count('<details class="xd"><summary>') == 2                     # both charts closed until clicked
     assert "1/1 UW teyitli" in page and "fiyat 722,00 → 725,00 (+0,42%)" in page
     assert x_check.badge(None)[2] == "X kimliği" and x_check.badge({"status": "pending"})[1] == "◷"
