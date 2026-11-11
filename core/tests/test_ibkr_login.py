@@ -116,6 +116,13 @@ def test_a_refusal_keeps_the_gateways_own_error_words():
     assert "326: client id is already in use" in reading.detail
 
 
+def test_a_farm_notice_is_not_taken_for_the_reason_of_a_refusal():
+    sock = _FakeSock(_framed("178", "t") + _framed("4", "2", "-1", "2104", "Market data farm connection is OK"))
+    reading = ibkr_login.probe("127.0.0.1", 4001, connect=_connect(sock))
+    assert reading.state == ibkr_login.SILENT
+    assert "2104" not in reading.detail
+
+
 def test_a_gateway_that_never_sends_next_valid_id_is_not_logged_in():
     class _Stalls(_FakeSock):
         def recv(self, n):

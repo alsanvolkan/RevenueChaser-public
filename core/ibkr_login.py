@@ -80,6 +80,7 @@ MIN_CLIENT_VERSION = 157
 MAX_CLIENT_VERSION = 178
 
 # ``startApi`` and the two answers the probe looks at (``core/providers/ibkr_tws.py`` has the framing).
+# Error codes 2100-2199 are farm notices, never the reason a client was refused.
 START_API, NEXT_VALID_ID, ERR_MSG = 71, b"9", b"4"
 # The probe's own API client id: 73 IV history, 74 the News board, 75 the builder, 76 the news tape; a
 # second client with an id already in use is refused (326), so this one is used by nothing else.
@@ -184,7 +185,7 @@ def _start_api(sock, buf: bytes, host: str, port: int, version: int, timeout: fl
             if fields and fields[0] == NEXT_VALID_ID:
                 return Reading(UP, f"{where} answered the API handshake (server version {version}) and "
                                    f"accepted an API client (id {PROBE_CLIENT_ID})", version)
-            if fields and fields[0] == ERR_MSG and len(fields) >= 5:
+            if fields and fields[0] == ERR_MSG and len(fields) >= 5 and not fields[3].startswith(b"21"):
                 error = f" (gateway said {fields[3].decode(errors='replace')}: "\
                         f"{fields[4].decode(errors='replace')})"
             continue
