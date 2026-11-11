@@ -36,7 +36,7 @@ OLD_TABLES = {
     "module_leaps": {"leaps_footprint_history"},
     "module_relatedness": {"chain_mentions"},
     "module_sec_13f": {"price_actions", "price_bars_daily"},
-    "module_sector_rotation": {"equity_universe", "etf_holdings"},
+    "module_sector_rotation": {"etf_holdings"},
     "module_settings": {"edgar_documents", "equity_universe", "equity_universe_provenance", "identity_conflicts",
                         "identity_runs", "identity_source_cache", "index_constituents", "index_constituents_changes",
                         "job_runs", "price_bars_daily", "sec_exchange_file", "security_master", "swing_ohlc"},

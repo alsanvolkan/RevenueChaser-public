@@ -16,6 +16,7 @@ from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.module_sector_rotation import engine, store
 from RevenueChaser.module_sector_rotation.tests.bars_seed import FIRST, ny, pin_clock, seed
 from RevenueChaser.module_sector_rotation.universe import MACRO_SERIES
+from RevenueChaser.rcdata.tests import spine_fixture
 
 BASE = date(2026, 8, 14)
 
@@ -82,8 +83,7 @@ def test_fetch_all_holdings_reads_d01_once_for_the_whole_job(rawstore_tmp_db, mo
     reads, real = [], engine.bar_points
     monkeypatch.setattr(engine, "bar_points", lambda *a, **k: reads.append(a) or real(*a, **k))
     # #303: the holdings come from the store (the holdings job), not from a fetch
-    rawstore.write_rows("etf_holdings", [{"ticker": t, "entry": HOLDINGS}
-                                         for t in ("AIQ", "ARKQ", "IGV", "ROBO", "SKYY")])
+    spine_fixture.write_etf_holdings({t: HOLDINGS for t in ("AIQ", "ARKQ", "IGV", "ROBO", "SKYY")})
     snaps = [ETFRotationSnapshot(as_of_date=BASE, ticker=t, group_name="theme", close_price=1.0, rs_1w=0, rs_1m=0,
                                  rs_3m=0, rs_ratio=0, rs_momentum=0, rs_ratio_z=0, rs_momentum_z=0,
                                  rrg_quadrant="LEADING") for t in ("AIQ", "ARKQ", "IGV", "ROBO", "SKYY")]
@@ -96,7 +96,7 @@ def test_fetch_all_holdings_stores_nothing_when_spy_is_missing(rawstore_tmp_db):
     from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
     uw = _healthy()
     seed("BIG", BASE, start=BASE - timedelta(days=150))                 # D01 holds the holding, not SPY
-    rawstore.write_rows("etf_holdings", [{"ticker": "AIQ", "entry": HOLDINGS}])
+    spine_fixture.write_etf_holdings({"AIQ": HOLDINGS})
     snap = ETFRotationSnapshot(as_of_date=BASE, ticker="AIQ", group_name="theme", close_price=1.0, rs_1w=0, rs_1m=0,
                                rs_3m=0, rs_ratio=0, rs_momentum=0, rs_ratio_z=0, rs_momentum_z=0, rrg_quadrant="LEADING")
     assert engine.fetch_all_holdings(uw, [snap]) == {}

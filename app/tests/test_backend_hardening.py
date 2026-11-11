@@ -288,10 +288,9 @@ class TestLanesAndCancel:
 # ── S9: B9 — holdings view is store-only ────────────────────────────────────
 class TestHoldingsView:
     def test_no_network_and_no_key_needed(self, client, rawstore_tmp_db, monkeypatch):
-        from RevenueChaser.core import rawstore
         monkeypatch.setattr(dashboard, "UWClient", lambda: pytest.fail("no UW in a GET view"))
-        rawstore.write_rows("etf_holdings", [{"ticker": "SMH", "entry": [
-            {"ticker": "NVDA", "name": "NVIDIA <b>", "weight": 18.0}]}])
+        from RevenueChaser.rcdata.tests import spine_fixture
+        spine_fixture.write_etf_holdings({"SMH": [{"ticker": "NVDA", "name": "NVIDIA <b>", "weight": 18.0}]})
         body = client.get("/view/module_sector_rotation/holdings?ticker=SMH").get_data(as_text=True)
         assert "NVDA" in body and "—" in body
         assert "NVIDIA <b>" not in body  # escaped

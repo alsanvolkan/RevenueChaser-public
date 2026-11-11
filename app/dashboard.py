@@ -1925,10 +1925,9 @@ def view_rotation_holdings():
 
 
 def _load_holdings_bulk_cache(ticker: str):
-    """A ticker's raw holdings from the bulk ``etf_holdings`` sync (no RS, no network)."""
-    from RevenueChaser.core import rawstore
-    row = rawstore.get("etf_holdings", ticker.upper())
-    holdings = (row or {}).get("entry")
+    """A ticker's holdings from the spine's whole lists (no RS, no network; #642 PR 4)."""
+    from RevenueChaser.module_sector_rotation.etf_holdings import stored_holdings
+    holdings = stored_holdings(ticker)
     if not holdings:
         return None
     return [{"ticker": h.get("ticker"), "name": h.get("name") or "",
