@@ -46,9 +46,6 @@ from .identity.types import EXCLUDED_TYPES, OPERATING_TYPES
 if TYPE_CHECKING:
     from .gics_map import GicsPath
 
-# The last field this module still takes from the old table is ``quote`` (see ``_spine_universe``).
-_UNIVERSE_TABLE = "equity_universe"
-
 #: The tiers the old rule reads (avo, 29 Oct 2026), used when the spine holds no ``my_universe`` list.
 LISTED_TIERS = ("A", "B")
 #: Every tier, read when avo's list decides: it may name a Tier D company (no exchange in the SEC file), and the
@@ -179,7 +176,7 @@ def _spine_universe() -> list[dict]:
     # on the market store a name with no price bar has no cap at all, so it leaves every cap-filtered board. It
     # carries its own PR and its own decision (#706); this one only removes the switches.
     market = {r["ticker"]: r for r in rawstore.query(
-        f"SELECT ticker, market_cap, price, quote FROM {_UNIVERSE_TABLE}")}
+        "SELECT ticker, market_cap, price, quote FROM equity_universe")}
     latest = spine_reads.latest_market(r["ticker"] for r in ids)
     out = []
     for r in ids:
