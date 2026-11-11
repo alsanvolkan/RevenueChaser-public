@@ -116,7 +116,7 @@ def test_the_dte_column_keeps_uws_calendar_day_count(http_mock):
     # 2026-10-27 is the next trading session after 2026-10-26: 1 either way. 2026-11-20 is 25 calendar days
     # out but only 17 sessions, which is what the sibling dataset would have stored.
     assert by_expiry[date(2026, 11, 20)] == 25
-    assert version == ("market", 3)
+    assert version == ("market", 4)
 
 
 def test_every_greek_lands_typed_with_its_provenance(http_mock):
