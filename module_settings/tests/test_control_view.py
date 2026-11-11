@@ -182,15 +182,17 @@ def test_the_providers_are_sorted_nearest_their_cap_first():
 def test_every_line_of_the_flow_diagram_ends_at_a_box_it_draws():
     flow = _build()["flow"]
     sources = {f"{g['group']}|{i['name']}" for g in flow["sourceGroups"] for i in g["items"]}
-    steps = {s["id"] for s in flow["steps"]}
     tables = {t for f in flow["files"] for t in f["tables"]}
     boards = {b["name"] for g in flow["boardGroups"] for b in g["boards"]}
-    assert all(s in sources and t in steps for s, t in flow["edges"]["srcStep"])
-    assert all(s in steps and t in tables for s, t in flow["edges"]["stepTab"])
+    bfiles = {f["name"] for f in flow["boardFiles"]}
+    assert all(s in sources and t in tables for s, t in flow["edges"]["srcTab"])
     assert all(e[0] in tables and e[1] in boards for e in flow["edges"]["tabBoard"])
+    assert all(b in boards and f in bfiles for b, f in flow["edges"]["boardOwn"] + flow["edges"]["boardRead"])
     assert ["market_series", "Earnings Radar"] in flow["edges"]["tabBoard"]
     assert ["price_bar_daily", "Co-movement", "planned"] in flow["edges"]["tabBoard"]
-    assert flow["steps"][1]["label"] == "2 · Tiers · A 5,655 · B 2,015 · C 2,577 · D 183"
+    # the plan step column is gone (avo, 10 Nov 2026); its tiers sit under the spine's box
+    spine = next(f for f in flow["files"] if f["name"] == "spine.duckdb")
+    assert spine["note"].endswith("A 5,655 · B 2,015 · C 2,577 · D 183")
 
 
 def test_the_flow_sources_are_the_datasets_providers():

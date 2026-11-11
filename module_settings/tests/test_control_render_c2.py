@@ -75,12 +75,12 @@ def _two_steps() -> dict:
     return f
 
 
-def test_the_journey_has_three_columns_and_no_board_column():
+def test_the_journey_has_four_columns_the_last_the_boards_and_their_files():
+    # avo, 10 Nov 2026: the board column is back, each board with the file it writes
     html = control_render._journey(_two_steps())
-    assert len(re.findall(r"<col\b", html)) == 3
-    assert len(re.findall(r"<th\b", re.search(r"<thead>.*?</thead>", html).group(0))) == 3
-    for gone in ("bdh", "bdc", "jbd", "Who reads it today", "btree"):
-        assert gone not in html, gone
+    assert len(re.findall(r"<col\b", html)) == 4
+    assert len(re.findall(r"<th\b", re.search(r"<thead>.*?</thead>", html).group(0))) == 4
+    assert 'class="bdh"' in html and '<td class="bdc"' in html and 'class="btree"' in html
     assert 'class="jpanel jnarrow"' in html, "the narrow panel keeps its SSD part"
 
 
@@ -107,9 +107,11 @@ def test_a_build_row_has_from_chips_with_full_names():
 def test_the_heads_carry_the_roots_and_the_rootline_is_gone():
     html = control_render._journey(_two_steps())
     head = re.search(r"<thead>.*?</thead>", html).group(0)
-    assert re.search(r"📄 HDD raw · <code[^>]*>/hdd/raw</code>.*📦 Parquet · <code[^>]*>/hdd/parquet</code>"
-                     r".*files and size · not walked yet", head)
-    assert re.search(r"⚡ SSD live · served.*<code[^>]*>/ssd/live</code>", head)
+    # avo, 10 Nov 2026: each root folds to a folder mark that opens sideways
+    assert re.search(r'📄 HDD raw <details class="pf">.*<code class="p">/hdd/raw</code></details> · 📦 Parquet '
+                     r'<details class="pf">.*<code class="p">/hdd/parquet</code></details>.*files and size · not walked yet',
+                     head)
+    assert re.search(r'⚡ SSD live · served <details class="pf">.*<code class="p">/ssd/live</code>', head)
     assert "rootline" not in html and "Roots ·" not in html
     assert "🦆 fund.duckdb" in html
 

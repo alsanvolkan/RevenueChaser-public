@@ -846,6 +846,7 @@ function checkDataAsOf(key){
     .then(function(d){
       if(ACTIVE !== key) return;           // tab changed while in flight
       el.textContent = d.data_as_of || 'n/a';
+      if(d.last_run) document.getElementById('sync-label').textContent = fmtStamp(d.last_run);
       el.title = d.data_as_of
         ? 'Newest data this board is computed against'
         : (STORE_BACKED.indexOf(key) >= 0

@@ -234,9 +234,9 @@ RESOLVERS = {
     "module_news": _news_day,
     # Welcome summarises many datasets, each card stating its own session or time: no single date to stamp.
     "module_welcome": None,
-    # Settings / Data health is an inventory of many datasets, each reporting its
-    # own date on its row — there is no single downloaded dataset to stamp here.
-    "module_settings": None,
+    # Settings (avo, 10 Nov 2026: "su bolumlerde dogru gelmeli"): each dataset keeps its own date on its row; the
+    # header carries the universe's newest prices-store close, the session the Health "prices behind" card names.
+    "module_settings": _comovement_day,
     # interactive lab over the UW API: live state, no downloaded dataset
     "module_uw_interaction": None,
     # the dashboard's own log files: no downloaded dataset
@@ -245,6 +245,22 @@ RESOLVERS = {
     "activity": None,
     "runs": None,
 }
+
+
+def last_run(module: str) -> str | None:
+    """When the board's own run last started, ISO UTC; ``None`` when the shell's per-board reader says it.
+
+    Only Settings answers here: its run is the builder's (``ops.last_builder_run``). Never raises."""
+    if module != "module_settings":
+        return None
+    try:
+        from RevenueChaser.rcdata import ops
+        run = ops.last_builder_run() or {}
+        started = run.get("started_at")
+        return datetime.fromtimestamp(float(started), tz=timezone.utc).isoformat() if started else None
+    except Exception:  # noqa: BLE001 - a label is never worth an error
+        logger.debug("last_run(%s) failed", module, exc_info=True)
+        return None
 
 
 def data_as_of(module: str) -> str | None:

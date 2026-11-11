@@ -226,7 +226,7 @@
 (function () {
   var C = window.CTL, X = window.CTLX;
   if (!C || !X) return;
-  var segs = [].slice.call(document.querySelectorAll('#universe .useg:not(.uoff)')),
+  var segs = [].slice.call(document.querySelectorAll('#universe button.useg:not(.uoff)')),
       incs = [].slice.call(document.querySelectorAll('#universe .uinc'));
   if (!segs.length) return;
   var input = document.getElementById('uni-names'), add = document.getElementById('uni-add'),
@@ -616,18 +616,14 @@
     // a filter of an earlier panel leaves nothing hidden behind it
     [].forEach.call(document.querySelectorAll('.ctl .sgrid > .dset'), function (d) { d.hidden = false; });
     [].forEach.call(document.querySelectorAll('.ctl .sources .sgrid'), function (g) { g.hidden = false; });
-    // only the shown file panel counts; when it has no match and another panel has, that panel is shown first
-    var shown = document.querySelector('.ctl .fpanel:not([hidden])');
-    if (f && shown && ![].some.call(shown.querySelectorAll('.sgrid > .dset'), function (d) { return match(d, f); })) {
-      var other = [].filter.call(document.querySelectorAll('.ctl .fpanel'), function (p) {
-        return [].some.call(p.querySelectorAll('.sgrid > .dset'), function (d) { return match(d, f); });
-      })[0];
-      var fb = other && document.querySelector('#fpick .fpb[data-file="' + other.getAttribute('data-file') + '"]');
-      if (fb) { fb.click(); shown = other; }
-    }
-    var ds = shown ? [].slice.call(shown.querySelectorAll('.sgrid > .dset')) : [], n = 0;
+    // every file's group on Fetch/Health counts: a group with a match opens, one without folds away
+    var ds = [].slice.call(document.querySelectorAll('.ctl .fgrp .sgrid > .dset')), n = 0;
     ds.forEach(function (d) { var ok = !f || match(d, f); d.hidden = !ok; if (ok) n++; });
     [].forEach.call(document.querySelectorAll('.ctl .sources .sgrid'), function (g) { g.hidden = !!f && !g.querySelector('.dset:not([hidden])'); });
+    [].forEach.call(document.querySelectorAll('.ctl .fgrp'), function (g) {
+      var hit = !!g.querySelector('.sgrid > .dset:not([hidden])');
+      g.hidden = !!f && !hit; if (f && hit) g.open = true;
+    });
     [].forEach.call(document.querySelectorAll('#sec-health .tile[data-f]'), function (t) { if (NAME[t.getAttribute('data-f')]) t.setAttribute('aria-pressed', f && t.getAttribute('data-f') === f ? 'true' : 'false'); });
     if (!f) { bar.hidden = true; empty.hidden = true; return; }
     bar.hidden = false;
@@ -643,7 +639,7 @@
     var f = t.getAttribute('data-f');
     if (f === 'universe') { if (cur) { cur = null; filter(null); } X.scrollTo(document.getElementById('universe')); return; }
     if (f === 'queue' || f === 'builder') { var q = document.getElementById('sec-queue'); if (q) { X.reveal(q); q.open = true; X.scrollTo(q); } return; }
-    if (f === 'cap') { var p = document.querySelector('.ctl .fpanel:not([hidden]) details.provs'); if (p) { p.open = true; X.scrollTo(p); } return; }
+    if (f === 'cap') { var p = document.getElementById('sec-providers'); if (p) { p.open = true; X.scrollTo(p); } return; }
     cur = cur === f ? null : f; filter(cur);
     var s = document.getElementById('ffilter'); if (cur && s) X.scrollTo(s);
   });
@@ -675,19 +671,23 @@
     cv.font = '700 9.5px ' + BODY; return Math.ceil(cv.measureText(t.toUpperCase()).width + t.length * 0.76);
   }
 
-  var HUE = {}, fileOf = {}, tablesOf = {}, stateOf = {}, open = {};
+  var HUE = {}, fileOf = {}, tablesOf = {}, stateOf = {}, open = {}, BFC = {};
+  (D.boardFiles || []).forEach(function (f) { BFC[f.name] = f.color; });
   D.files.forEach(function (f) {
     HUE[f.name] = f.line; tablesOf[f.name] = f.tables; stateOf[f.name] = f.health.state;
     f.tables.forEach(function (t) { fileOf[t] = f.name; });
   });
   var OUT = {}, IN = {}, LOG = [];
   function link(a, b) { (OUT[a] = OUT[a] || []).push(b); (IN[b] = IN[b] || []).push(a); LOG.push([a, b]); }
-  D.edges.srcStep.forEach(function (e) { link('src:' + e[0], 'step:' + e[1]); });
-  D.edges.stepTab.forEach(function (e) { link('step:' + e[0], 'tab:' + e[1]); });
+  D.edges.srcTab.forEach(function (e) { link('src:' + e[0], 'tab:' + e[1]); });
   D.edges.tabBoard.forEach(function (e) { link('tab:' + e[0], 'bd:' + e[1]); });
   (D.edges.fileBoard || []).forEach(function (e) { link('file:' + e[0], 'bd:' + e[1]); });
+  // a board's own file is solid; a file of another board it reads is a faint dashed line (avo, 10 Nov 2026)
+  (D.edges.boardOwn || []).forEach(function (e) { link('bd:' + e[0], 'bf:' + e[1]); });
+  var BFR = {};
+  (D.edges.boardRead || []).forEach(function (e) { (BFR['bd:' + e[0]] = BFR['bd:' + e[0]] || []).push('bf:' + e[1]); });
 
-  var picks = { src: {}, step: {}, file: {}, bd: {} };
+  var picks = { src: {}, file: {}, bd: {}, bf: {} };
   function colOf(id) { return id.indexOf('tab:') === 0 ? 'file' : id.split(':')[0]; }
   function seedsOf(id) {
     if (id.indexOf('file:') !== 0) return [id];
@@ -696,6 +696,7 @@
   function reach(seeds) {
     var R = {};
     seeds.forEach(function (s) { R[s] = 1; });
+    seeds.forEach(function (s) { (BFR[s] || []).forEach(function (f) { R[f] = 1; }); });
     [OUT, IN].forEach(function (M) {
       var seen = {}, q = seeds.slice();
       while (q.length) {
@@ -736,24 +737,25 @@
   }
 
   function layout(width) {
-    var srcW = 0, stepW = 0, fileW = 0, bdW = 0;
+    var srcW = 0, fileW = 0, bdW = 0, bfW = 0;
     D.sourceGroups.forEach(function (g) {
       srcW = Math.max(srcW, hw(g.group));
       g.items.forEach(function (s) { s._w = tw(s.name + (s.plan ? ' · plan' : ''), '600 12px ' + BODY) + 35; srcW = Math.max(srcW, IN0 + s._w); });
     });
     srcW += 4;
-    D.steps.forEach(function (s) { s._w = tw(s.label) + 20; stepW = Math.max(stepW, s._w); });
     D.files.forEach(function (f) {
       fileW = Math.max(fileW, 24 + tw(f.name, '600 11px ' + MONOF) + 12 + BW + 4);
       f.tables.forEach(function (t) { fileW = Math.max(fileW, 18 + 10 + tw(t, '11px ' + MONOF) + 10); });
+      if (f.note) fileW = Math.max(fileW, tw(f.note, '10.5px ' + BODY) + 8);
     });
+    (D.boardFiles || []).forEach(function (f) { bfW = Math.max(bfW, 20 + tw(f.name, '600 11px ' + MONOF) + 12); });
     D.boardGroups.forEach(function (g) {
       bdW = Math.max(bdW, hw(g.group));
       g.boards.forEach(function (b) { b._w = tw(b.name, '600 12px ' + BODY) + 20; bdW = Math.max(bdW, IN0 + b._w); });
     });
     bdW += 4;
-    var gap = Math.max(GMIN, Math.min(GMAX, Math.floor((width - 2 * PAD - srcW - stepW - fileW - bdW) / 3)));
-    var X = { src: PAD }; X.step = X.src + srcW + gap; X.file = X.step + stepW + gap; X.bd = X.file + fileW + gap;
+    var gap = Math.max(GMIN, Math.min(GMAX, Math.floor((width - 2 * PAD - srcW - fileW - bdW - bfW) / 3)));
+    var X = { src: PAD }; X.file = X.src + srcW + gap; X.bd = X.file + fileW + gap; X.bf = X.bd + bdW + gap;
     var pos = {}, y = TOP, groups = [];
     D.sourceGroups.forEach(function (g) {
       var gr = { x: X.src, y: y, name: g.group, rows: [] }; y += GH;
@@ -766,15 +768,9 @@
     });
     var bottom = y;
     y = TOP;
-    D.steps.forEach(function (s) {
-      pos['step:' + s.id] = { x: X.step, y: y, w: s._w, h: H, cy: y + H / 2, ix: X.step, ox: X.step + s._w, kind: 'step' };
-      y += H + GAP;
-    });
-    bottom = Math.max(bottom, y);
-    y = TOP;
     D.files.forEach(function (f) {
       pos['file:' + f.name] = { x: X.file, y: y, w: fileW, h: H, cy: y + H / 2, ix: X.file, ox: X.file + fileW, kind: 'file' };
-      y += H + GAP;
+      y += H + GAP + (f.note ? 14 : 0);
       if (open[f.name]) {
         f.tables.forEach(function (t) {
           pos['tab:' + t] = { x: X.file + 18, y: y, w: fileW - 18, h: 20, cy: y + 10, ix: X.file + 18, ox: X.file + fileW, kind: 'tab' };
@@ -788,27 +784,33 @@
     D.boardGroups.forEach(function (g) {
       var gr = { x: X.bd, y: y, name: g.group, rows: [] }; y += GH;
       g.boards.forEach(function (b) {
-        pos['bd:' + b.name] = { x: X.bd, y: y, h: ROW, cy: y + ROW / 2, w: b._w, ix: X.bd + IN0, item: b, kind: 'bd' };
+        pos['bd:' + b.name] = { x: X.bd, y: y, h: ROW, cy: y + ROW / 2, w: b._w, ix: X.bd + IN0, ox: X.bd + IN0 + b._w,
+                                item: b, kind: 'bd' };
         gr.rows.push(y + ROW / 2); y += ROW;
       });
       groups.push(gr); y += 7;
     });
     bottom = Math.max(bottom, y);
-    return { pos: pos, groups: groups, X: X, width: Math.ceil(X.bd + bdW + PAD), height: bottom + 6 };
+    y = TOP;
+    (D.boardFiles || []).forEach(function (f) {
+      pos['bf:' + f.name] = { x: X.bf, y: y, w: bfW, h: H, cy: y + H / 2, ix: X.bf, ox: X.bf + bfW, item: f, kind: 'bf' };
+      y += H + GAP;
+    });
+    bottom = Math.max(bottom, y);
+    return { pos: pos, groups: groups, X: X, width: Math.ceil(X.bf + bfW + PAD), height: bottom + 6 };
   }
 
   function edges() {
     var out = {}, list = [];
-    function add(a, b, hue, la, lb, planned) {
+    function add(a, b, hue, la, lb, planned, read) {
       var k = a + '>' + b;
-      if (!out[k]) { out[k] = { a: a, b: b, hue: hue, under: [], planned: true }; list.push(out[k]); }
+      if (!out[k]) { out[k] = { a: a, b: b, hue: hue, under: [], planned: true, read: !!read }; list.push(out[k]); }
       out[k].under.push([la, lb]);
       if (!planned) out[k].planned = false;
     }
-    D.edges.srcStep.forEach(function (e) { add('src:' + e[0], 'step:' + e[1], '#8a9a6a', 'src:' + e[0], 'step:' + e[1]); });
-    D.edges.stepTab.forEach(function (e) {
+    D.edges.srcTab.forEach(function (e) {
       var f = fileOf[e[1]];
-      add('step:' + e[0], open[f] ? 'tab:' + e[1] : 'file:' + f, HUE[f] || '#98a0ad', 'step:' + e[0], 'tab:' + e[1]);
+      add('src:' + e[0], open[f] ? 'tab:' + e[1] : 'file:' + f, '#8a9a6a', 'src:' + e[0], 'tab:' + e[1]);
     });
     D.edges.tabBoard.forEach(function (e) {
       var f = fileOf[e[0]];
@@ -817,6 +819,10 @@
     });
     (D.edges.fileBoard || []).forEach(function (e) {
       add('file:' + e[0], 'bd:' + e[1], HUE[e[0]] || '#98a0ad', 'file:' + e[0], 'bd:' + e[1]);
+    });
+    (D.edges.boardOwn || []).forEach(function (e) { add('bd:' + e[0], 'bf:' + e[1], BFC[e[1]] || '#9aa3b2', 'bd:' + e[0], 'bf:' + e[1]); });
+    (D.edges.boardRead || []).forEach(function (e) {
+      add('bd:' + e[0], 'bf:' + e[1], BFC[e[1]] || '#9aa3b2', 'bd:' + e[0], 'bf:' + e[1], true, true);
     });
     return list;
   }
@@ -832,8 +838,9 @@
     svg.setAttribute('width', L.width);
     svg.setAttribute('height', L.height);
     var title = el('title', { id: 'flow2-title' }, svg);
-    title.textContent = 'Where the data comes from, which step builds it, which file holds it, which board reads it';
-    [['Source', L.X.src], ['Plan step', L.X.step], ['SSD file · ▸ opens its tables', L.X.file], ['Board that reads it', L.X.bd]]
+    title.textContent = 'Where the data comes from, which file holds it, which board reads it and which file the board writes';
+    [['Source', L.X.src], ['SSD file · ▸ opens its tables', L.X.file], ['Board that reads it', L.X.bd],
+     ['Board file · what it writes', L.X.bf]]
       .forEach(function (h) { text(svg, h[1], 16, h[0], 'fh'); });
 
     var gl = el('g', { class: 'tlines' }, svg);
@@ -851,8 +858,8 @@
       if (!A || !B) return;
       var x1 = A.ox, y1 = A.cy, x2 = B.ix, y2 = B.cy, mx = (x1 + x2) / 2;
       var p = el('path', {
-        class: 'flow-edge' + (e.planned ? ' planned' : ''), stroke: e.hue,
-        'stroke-dasharray': e.planned ? '5 4' : null,
+        class: 'flow-edge' + (e.planned ? ' planned' : '') + (e.read ? ' read' : ''), stroke: e.hue,
+        'stroke-dasharray': e.read ? '3 4' : e.planned ? '5 4' : null,
         d: 'M' + x1 + ',' + y1 + ' C' + mx + ',' + y1 + ' ' + mx + ',' + y2 + ' ' + x2 + ',' + y2
       }, ge);
       p._under = e.under;
@@ -873,11 +880,6 @@
         text(n, p.x + IN0 + 26, p.cy + 4, s.name + (s.plan ? ' · plan' : ''), 'bt');
       });
     });
-    D.steps.forEach(function (s) {
-      var p = pos['step:' + s.id], n = node('step:' + s.id, 'Step ' + s.label + ': press to pick', 'step');
-      el('rect', { x: p.x, y: p.y, width: p.w, height: p.h, rx: 6 }, n);
-      text(n, p.x + 10, p.cy + 4, s.label);
-    });
     D.files.forEach(function (f) {
       var p = pos['file:' + f.name], h = f.health, st = h.state;
       var n = node('file:' + f.name, f.name + (f.old ? ', the old store, being cut' : '') + ': press to pick',
@@ -885,6 +887,7 @@
       el('rect', { class: 'box', x: p.x, y: p.y, width: p.w, height: p.h, rx: 6, style: 'stroke:' + f.line,
                    'stroke-dasharray': f.old ? '4 3' : null }, n);
       text(n, p.x + 22, p.cy + 4, f.name, 'mono');
+      if (f.note) text(svg, p.x + 4, p.y + p.h + 11, f.note, 'fnote');
       if (f.tables.length) {
         var tg = el('g', { class: 'flow-tog', tabindex: '0', role: 'button', 'aria-expanded': open[f.name] ? 'true' : 'false',
                            'data-file': f.name, 'aria-label': (open[f.name] ? 'Close ' : 'Open ') + 'the ' + f.tables.length + ' tables of ' + f.name }, n);
@@ -913,6 +916,15 @@
         text(n, p.x + IN0 + 10, p.cy + 4, b.name, 'bt');
       });
     });
+    (D.boardFiles || []).forEach(function (f) {
+      var p = pos['bf:' + f.name];
+      var n = node('bf:' + f.name, f.name + ', ' + (f.owner ? 'written by ' + f.owner : 'written by a job, not a board') +
+                   ', ' + f.tables.length + ' tables: ' + f.tables.join(', ') + ': press to pick', 'bf');
+      el('rect', { class: 'box', x: p.x, y: p.y, width: p.w, height: p.h, rx: 6, style: 'stroke:' + f.color }, n);
+      el('rect', { class: 'bfdot', x: p.x + 6, y: p.cy - 4, width: 8, height: 8, rx: 2, style: 'fill:' + f.color }, n);
+      el('title', {}, n).textContent = f.tables.join(', ') || 'no table yet';
+      text(n, p.x + 20, p.cy + 4, f.name, 'mono');
+    });
     paint();
   }
 
@@ -920,7 +932,6 @@
   function label(id) {
     var c = colOf(id), v = id.slice(id.indexOf(':') + 1);
     if (c === 'src') return v.split('|')[1];
-    if (c === 'step') return 'step ' + v;
     return v;
   }
   function RM() { return window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'; }
@@ -977,10 +988,16 @@
         return '<span class="nch' + (f ? '' : ' nf') + '"' + (f ? ' style="background:' + HUE[f] + '"' : ' title="joined from several files"') + '>' + rcEsc(x) + '</span>';
       }).join('') : '<span class="dim">' + rcEsc(b.note || 'no data need') + '</span>';
       var tier = b.declared ? 'declared in the board (READS): measured' : 'planned: the board is not migrated yet';
+      var mine = (D.edges.boardOwn || []).filter(function (e) { return e[0] === n; }).map(function (e) { return e[1]; });
+      var also = (D.edges.boardRead || []).filter(function (e) { return e[0] === n; }).map(function (e) { return e[1]; });
+      var wch = mine.length ? mine.map(function (f) { return '<span class="bfile bown" style="background:' + (BFC[f] || '#6d7585') + '">' + rcEsc(f) + '</span>'; }).join('')
+        : '<span class="dim">no file of its own</span>';
+      if (also.length) wch += '<span class="dim"> · also reads </span>' + also.map(function (f) { return '<span class="bfile bread" style="border-color:' + (BFC[f] || '') + '">' + rcEsc(f) + '</span>'; }).join('');
       return '<div class="bdi"><div class="bdih"><span class="bch" style="background:' + (BC[n] || '#6d7585') + '">' + rcEsc(n) + '</span>' +
         '<span class="dim">' + rcEsc(GRP[n] || '') + '</span></div>' +
         '<div class="bdir"><span class="jk">reads these files</span><span class="bdiv">' + fch + '</span></div>' +
         '<div class="bdir"><span class="jk">needs · from the catalog</span><span class="bdiv">' + nch + '</span></div>' +
+        '<div class="bdir"><span class="jk">writes · board file</span><span class="bdiv">' + wch + '</span></div>' +
         '<div class="bdir"><span class="jk">record</span><span class="bdiv">' + tier + '</span></div></div>';
     }).join('');
   }

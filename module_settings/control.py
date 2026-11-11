@@ -24,6 +24,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import date, datetime, time, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -58,6 +59,9 @@ FILE_COLORS = {"spine": "#26a34a", "prices": "#d07a09", "fundamentals": "#765ed4
                "options": "#14a195", "market": "#2c94ea"}
 SOURCE_COLORS = ("#6f7b32", "#646e2d", "#586228", "#4d5523", "#41481e")
 BOARD_COLOR = "#6d7585"
+#: The board files' hues (Data flow, journey), apart from the six SSD files' colours; one a file, in board order.
+BOARD_FILE_COLORS = ("#0e9f8e", "#c2410c", "#7c3aed", "#0369a1", "#be185d", "#4d7c0f", "#b45309", "#1d4ed8",
+                     "#a21caf", "#0f766e", "#9f1239", "#475569")
 #: The source boxes of the flow diagram, by step: where a provider's datasets sit in the plan.
 SOURCE_GROUPS = (("Identity", (1, 2, 3, 4, 5, 7)), ("Index & fund holdings", (6,)), ("Prices", (8,)),
                  ("Fundamentals & earnings", (9,)), ("Ownership & short side", (10,)),
@@ -893,8 +897,45 @@ def calendars(nd: dict, universe_view: dict, provider_rows: list[dict]) -> dict:
 
 # ── The flow diagram ──────────────────────────────────────────────────────────────────────────────────────────
 
+@lru_cache(maxsize=1)
+def board_files() -> tuple[list[dict], list[list[str]], list[list[str]]]:
+    """The board files column of the Data flow (avo, 10 Nov 2026): ``(files, own, reads)``.
+
+    ``files`` is one ``{"name", "tables", "owner"}`` a board file (``rawstore.BOARD_DBS``, tables from its
+    MANIFEST ``"db"``); ``own`` is ``[board label, file]`` for the board package that writes it (``module_<db>``);
+    ``reads`` is ``[board label, file]`` for a board package whose source names a table of another board's file.
+    shortcut: a quoted table name in the package's code counts as a read; a READS declaration would be exact."""
+    from RevenueChaser.core import rawstore
+    tables: dict[str, list[str]] = {}
+    for name, m in rawstore.MANIFEST.items():
+        if m.get("db") in rawstore.BOARD_DBS:
+            tables.setdefault(m["db"], []).append(name)
+    labels = _board_labels()
+    order = list(labels.values())
+    files, own, reads = [], [], []
+    # in the board menu's order, so the lines from the board column run straight; a file no board writes goes last
+    for db in sorted(rawstore.BOARD_DBS, key=lambda d: (order.index(labels[f"module_{d}"])
+                                                       if f"module_{d}" in labels else len(order), d)):
+        owner = labels.get(f"module_{db}")
+        files.append({"name": f"{db}.duckdb", "tables": sorted(tables.get(db, [])), "owner": owner,
+                      "color": BOARD_FILE_COLORS[len(files) % len(BOARD_FILE_COLORS)]})
+        if owner:
+            own.append([owner, f"{db}.duckdb"])
+    root = Path(__file__).resolve().parents[1]
+    for key, label in labels.items():
+        pkg = root / key
+        if not pkg.is_dir():
+            continue
+        code = "".join(f.read_text(encoding="utf-8", errors="ignore") for f in sorted(pkg.rglob("*.py"))
+                       if "tests" not in f.relative_to(pkg).parts)
+        for db, ts in tables.items():
+            if key != f"module_{db}" and any(f'"{t}"' in code or f"'{t}'" in code for t in ts):
+                reads.append([label, f"{db}.duckdb"])
+    return files, own, reads
+
+
 def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dict) -> dict:
-    """``RC_FLOW``: source → plan step → serving file and its tables → board, every line from the code."""
+    """``RC_FLOW``: source → serving file and its tables → board → the board's own file, every line from the code."""
     labels = _board_labels()
     groups, src_step = [], []
     for group, steps in SOURCE_GROUPS:
@@ -919,14 +960,14 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
             for s in it["steps"]:
                 src_step.append([f"{group}|{it['name']}", s])
         groups.append({"group": group, "items": rows})
+    # the tickers and tiers sit on the spine's box now that the plan step column is gone (avo, 10 Nov 2026)
     counts = {s["key"]: s["n"] for s in universe_view["sets"]}
-    step_words = dict(screen.STEPS)
+    spine_note = ""
     if universe_view.get("total"):
-        step_words[1] = f"Security · {count(universe_view['total'])} tickers in"
         tiers = {"A": counts.get("A"), "B": (counts.get("E") or 0) + (counts.get("R") or 0),
                  "C": counts.get("C"), "D": counts.get("D")}
-        step_words[2] = "Tiers · " + " · ".join(f"{k} {count(v)}" for k, v in tiers.items())
-    steps = [{"id": str(k), "label": f"{k} · {w}"} for k, w in step_words.items()]
+        spine_note = (f"{count(universe_view['total'])} tickers · "
+                      + " · ".join(f"{k} {count(v)}" for k, v in tiers.items()))
     build_tables = {f["kind"]: [t["name"] for t in f["tables"]] for f in file_views}
     step_tab = []
     for name, ds in datasets.items():
@@ -959,6 +1000,7 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
     file_rows = [{"name": f["name"], "tables": [t["name"] for t in f["tables"]],
                   "health": {"fresh": f["health"]["fresh"], "total": f["health"]["total"],
                              "state": f["health"]["state"]},
+                  "note": spine_note if f["name"] == "spine.duckdb" else "",
                   "line": f["color"], "tables_color": [t["color"] for t in f["tables"]]} for f in file_views]
     board_groups = [{"group": g, "boards": [{"name": labels[key], "color": _shade(BOARD_COLOR, i, len(tabs) + 6)}
                                             for i, (key, _) in enumerate(tabs)]} for g, tabs in BOARD_MENU]
@@ -967,8 +1009,19 @@ def flow(file_views: list[dict], datasets: dict, reads: dict, universe_view: dic
     for key, label in labels.items():
         for t, needs in (reads.get(key) or {}).get("tables", {}).items():
             table_reads[f"{t}|{label}"] = list(needs)
-    return {"sourceGroups": groups, "steps": steps, "files": file_rows, "boardGroups": board_groups,
-            "edges": {"srcStep": src_step, "stepTab": step_tab, "tabBoard": tab_board, "fileBoard": file_board},
+    # source → table: the plan step between them is no longer drawn, so its two hops are joined here
+    step_tables: dict[str, list[str]] = {}
+    for st, t in step_tab:
+        step_tables.setdefault(st, []).append(t)
+    src_tab = []
+    for src, st in src_step:
+        for t in step_tables.get(st, []):
+            if [src, t] not in src_tab:
+                src_tab.append([src, t])
+    bfiles, own, bf_reads = board_files()
+    return {"sourceGroups": groups, "files": file_rows, "boardGroups": board_groups, "boardFiles": bfiles,
+            "edges": {"srcTab": src_tab, "tabBoard": tab_board, "fileBoard": file_board, "boardOwn": own,
+                      "boardRead": bf_reads},
             "boardInfo": board_info, "tableReads": table_reads, "needReader": need_reader}
 
 

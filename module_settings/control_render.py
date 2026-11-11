@@ -86,11 +86,11 @@ WIAL = ("<p>This page is the control board for every dataset the system holds. I
         "file and calls no provider.</p>")
 
 
-def _header(view: dict) -> str:
-    return (f'<h1>Data/Health · Data</h1>'
+def _header(view: dict, title: str = "Database") -> str:
+    return (f'<h1>Data/Health · {esc(title)}</h1>'
             f'<p class="sub"><b>Read {esc(view["read_at"])}</b> (Amsterdam) · source: <code>ops.sqlite</code> + the '
             f'serving files · after {STALE_MINUTES} minutes a strip on top says the numbers are old</p>'
-            f'<div class="stalebar" id="ctl-stale" hidden><b>Stale</b> · this page was read at {esc(view["read_at"])} · '
+            f'<div class="stalebar"{' id="ctl-stale"' if title == "Database" else ""} hidden><b>Stale</b> · this page was read at {esc(view["read_at"])} · '
             '<button type="button" class="lnk" data-reload>Refresh</button></div>')
 
 
@@ -562,8 +562,7 @@ def _sbox(d: dict, view: dict) -> str:
     if d["dataset"] == "spine/security":
         counts += (f'<span class="cnt uni-n"><span class="ck">in the universe</span>'
                    f'<b>{control.count(view["universe"]["size"])}</b></span>')
-    rest = (_universe(view) if d["dataset"] == "spine/security" else "")
-    rest += _sched_fields(d) + (_fill_row(d, view) if d["fill"]["cells"] else "") + _problems(d) + _acts(d, pause=False)
+    rest = _sched_fields(d) + (_fill_row(d, view) if d["fill"]["cells"] else "") + _problems(d) + _acts(d, pause=False)
     return (f'<div class="dset sbox" data-st="{esc(d["filter"])}" data-prob="{d["issues_open"]}" '
             f'data-tags="{esc(" ".join(d["tags"]))}" data-dataset="{esc(d["dataset"])}" '
             f'style="border-left-color:{edge}">{head}{state}<div class="sbody">'
@@ -575,20 +574,15 @@ def _sources(f: dict, view: dict) -> str:
     rows = f["datasets"]
     by = {k: sum(1 for d in rows if d["filter"] == k) for k in ("fresh", "late", "stale", "never")}
     head = (f'<div class="srch"><h3><span class="stn">1</span> Sources · {esc(f["name"])}</h3>'
-            f'<span class="dim">plan step {esc(str(f["steps"]).removeprefix("Steps ").removeprefix("Step "))} · {len(rows)} sources · {by["fresh"]} fresh · '
-            f'{by["late"]} late · {by["stale"]} stale · {by["never"]} never ran</span>'
+            f'<span class="dim">{esc(str(f["steps"]).split(" · ", 1)[-1])}</span>'
             '<span class="sract"><button type="button" class="btn" data-sb="shut">Collapse all</button>'
             '<button type="button" class="btn" data-sb="open">Open all</button></span></div>')
     state = f'<p class="fstate">🦆 {esc(f["name"])} · {esc(_fstate_words(f.get("state")))}</p>'
-    runs = (f'<p class="runs">runs on <b class="runs-on">{esc(view["universe_summary"])}</b> · set by the universe '
-            'in the spine/security box</p>' if f["runs_on_universe"] else f'<p class="runs">{esc(f["words"])}</p>')
+    runs = (f'<p class="runs">runs on <b class="runs-on">{esc(view["universe_summary"])}</b> · set by the Universe '
+            'at the top of this tab</p>' if f["runs_on_universe"] else f'<p class="runs">{esc(f["words"])}</p>')
     boxes = "".join(_sbox(d, view) for d in rows) or '<p class="dim">no dataset of this file is on record yet</p>'
-    # The universe rides in the spine/security box; with no such box on record it still sits in the spine's panel.
-    orphan = (_universe(view) if f["name"] == "spine.duckdb"
-              and not any(d["dataset"] == "spine/security" for d in rows) else "")
-    return (f'<div class="sources fgroup" data-file="{esc(f["name"])}">{head}{state}{runs}{_automation(f, view)}'
-            f'{_button_legend()}{_legend(view)}{orphan}<div class="sgrid">{boxes}</div>'
-            f'{_providers(view, sid=None)}</div>')
+    return (f'<div class="sources fgroup" data-file="{esc(f["name"])}">{head}{state}{runs}'
+            f'{_button_legend()}<div class="sgrid">{boxes}</div></div>')
 
 
 def _funnel(view: dict) -> str:
@@ -649,7 +643,7 @@ def _picture_control(view: dict) -> str:
     (``docs/data_health.md``: the Data section shows bars and no button), while the picture's age sits beside the
     counts it explains, on the Data section's roots line."""
     walked = next((f.get("walked_at") for f in view["files"]), None)
-    return ('<div class="pictrow"><span class="hm">The HDD folder counts above are not read live &middot; last count: '
+    return ('<div class="pictrow"><span class="hm">The HDD folder counts on the Database tab are not read live &middot; last count: '
             f'{esc(_walked(walked))}</span>'
             '<button type="button" class="btn" data-job="picture" title="Walks the HDD raw and Parquet folders and counts '
             'their files and bytes again (about half a minute, no provider call)">Recount folders</button>'
@@ -662,17 +656,18 @@ def _flow(view: dict) -> str:
     fl = view["flow"]
     legend = "".join(f'<span><i style="background:{esc(f["line"])}"></i>{esc(f["name"])}</span>' for f in fl["files"])
     phone = []
+    own = dict(fl["edges"].get("boardOwn") or [])
     for f in view["files"]:
         providers = sorted({p for d in f["datasets"] for p in d["providers"]})
         names = " · ".join(screen.PROVIDERS[p].name for p in providers if p in screen.PROVIDERS) or "built here"
         readers = sorted({r["label"] for t in f["tables"] for r in t["readers"]})
-        phone.append(f'<div class="wrow"><span class="wk s1">{esc(f["steps"])}</span><span class="wv">{esc(names)} → '
-                     f'<code class="p">{esc(f["name"])}</code> → '
-                     + (esc(", ".join(readers)) if readers else "<b>no board yet</b>") + '</span></div>')
+        boards = ", ".join(esc(r) + (f' <code class="p">→ {esc(own[r])}</code>' if r in own else "") for r in readers)
+        phone.append(f'<div class="wrow"><span class="wv">{esc(names)} → <code class="p">{esc(f["name"])}</code> → '
+                     + (boards or "<b>no board yet</b>") + '</span></div>')
     return (
-        '<details class="sec" id="sec-flow" open><summary><h2>Where it comes from, who fetches it, where it ends · flow '
-        'diagram</h2><span class="secs">source → plan step → SSD file → board · a press lights its lines · a file '
-        'picks its panel below · a board says what it reads</span></summary>'
+        '<details class="sec" id="sec-flow" open><summary><h2>Data flow</h2><span class="secs">source → SSD file → '
+        'board → board file · a press lights its lines · a file picks its panel below · a board says what it reads '
+        'and writes · a faint dashed line is a board reading another board\'s file</span></summary>'
         '<div class="group" style="border-left-color:var(--acc)"><div class="scroll flowwrap"><svg class="flowsvg" '
         'id="flow2" viewBox="0 0 1116 900" role="group" aria-labelledby="flow2-title"></svg></div>'
         '<p class="bdmatch" id="bdmatch" aria-live="polite" hidden></p>'
@@ -794,8 +789,8 @@ def _jrows(f: dict) -> tuple[str, list[str]]:
                 meta = "no folder yet"
             else:
                 meta = (f'{fo["files"]:,}{"+" if fo.get("capped") else ""} files · {_size(fo.get("bytes"))}')
-            where.append(f'<span class="hl"><span class="hi">{icon}</span><code class="p">{esc(d["dataset"])}/</code>'
-                         f'<span class="hm">{esc(meta)}</span></span>')
+            where.append(f'<span class="hl"><span class="hi">{icon}</span><span class="hk">{label}</span>'
+                         f'{_pfold(d["dataset"] + "/")}<span class="hm">{esc(meta)}</span></span>')
         tabs = " ".join(t["name"] for t in f["tables"] if d["dataset"] in t["writers"]) or \
             " ".join(t["name"] for t in f["tables"])
         chips = ""
@@ -823,6 +818,12 @@ def _jrows(f: dict) -> tuple[str, list[str]]:
     return "".join(rows), srcs
 
 
+def _pfold(path: str) -> str:
+    """A folder path folded to a 📁 that opens sideways on a press (avo, 10 Nov 2026: the paths took too much room)."""
+    return (f'<details class="pf"><summary title="{esc(path)}" aria-label="Show the folder {esc(path)}">📁</summary>'
+            f'<code class="p">{esc(path)}</code></details>')
+
+
 def _tchs(f: dict) -> str:
     out = []
     for t in f["tables"]:
@@ -847,13 +848,16 @@ def _btree(f: dict) -> str:
         for r in t["readers"]:
             by_board.setdefault(r["key"], []).append((t["name"], r))
     groups, reading = [], 0
+    bfiles, own, bf_reads = control.board_files()
+    mine, also, hue = dict(own), {}, {b["name"]: b["color"] for b in bfiles}
+    for b, bf in bf_reads:
+        also.setdefault(b, []).append(bf)
     for group, tabs in control.BOARD_MENU:
         items = []
         for key, label in tabs:
             label = control.PLAIN_LABELS.get(key, label)
             hits = by_board.get(key)
             if not hits:
-                items.append(f'<li class="off" title="reads no table of this file"><i></i>{esc(label)}</li>')
                 continue
             reading += 1
             tnames = " ".join(dict.fromkeys(t for t, _ in hits))
@@ -863,11 +867,18 @@ def _btree(f: dict) -> str:
                                                                                if planned else "")
             items.append(f'<li class="on{" planned" if planned else ""}" data-b="{esc(label)}" data-tabs="{esc(tnames)}"'
                          f' tabindex="0" role="button" aria-pressed="false" title="{esc(title)}">'
-                         f'<i style="background:{control.BOARD_COLOR}"></i>{esc(label)}</li>')
-        groups.append(f'<li class="tg"><span>{esc(group)}</span><ul>{"".join(items)}</ul></li>')
+                         f'<i style="background:{control.BOARD_COLOR}"></i>{esc(label)}'
+                         + (f'<code class="bfo" style="background:{esc(hue.get(mine[label], ""))}" '
+                            f'title="the file this board writes">→ {esc(mine[label])}</code>'
+                            if label in mine else "")
+                         + "".join(f'<code class="bfa" style="border-color:{esc(hue.get(x, ""))}" '
+                                   f'title="another board\'s file it reads">⇢ {esc(x)}</code>'
+                                   for x in also.get(label, [])) + '</li>')
+        if items:
+            groups.append(f'<li class="tg"><span>{esc(group)}</span><ul>{"".join(items)}</ul></li>')
     total = sum(len(t) for _, t in control.BOARD_MENU)
-    return (f'<div class="btree"><span class="tf">{esc(f["name"])} <span class="dim">{reading} / {total}</span></span>'
-            f'<ul>{"".join(groups)}</ul></div>')
+    body = "".join(groups) or '<li class="dim">no board reads this file yet</li>'
+    return (f'<div class="btree"><span class="tf">{reading} of {total} boards read it</span><ul>{body}</ul></div>')
 
 
 #: Characters of room beside the widest value of a journey meta column (#527: "a little bigger, easy on the eye").
@@ -896,17 +907,18 @@ def _journey(f: dict) -> str:
                 '</tr>')
         n = 1
     first, rest = rows.split("</tr>", 1)
-    rows = first + f'<td class="ssdc" rowspan="{n}">{ssd}</td></tr>' + rest
-    hdd = (f'<span class="jhl">📄 HDD raw · <code class="p">{esc(roots.get("raw", ""))}</code></span>'
-           f'<span class="jhl">📦 Parquet · <code class="p">{esc(roots.get("parquet", ""))}</code></span>'
-           f'<span class="jhm">files and size · {esc(_walked(f.get("walked_at")))}</span>')
-    ssdh = f'⚡ SSD live · served<span class="jhl"><code class="p">{esc(roots.get("ssd", ""))}</code></span>'
+    rows = (first + f'<td class="ssdc" rowspan="{n}">{ssd}</td><td class="bdc" rowspan="{n}">{_btree(f)}</td></tr>'
+            + rest)
+    hdd = (f'<span class="jhl">📄 HDD raw {_pfold(roots.get("raw", ""))} · 📦 Parquet {_pfold(roots.get("parquet", ""))}'
+           f'</span><span class="jhm">files and size · {esc(_walked(f.get("walked_at")))}</span>')
+    ssdh = f'⚡ SSD live · served {_pfold(roots.get("ssd", ""))}'
     return (
         '<div class="journey"><p class="colh">The journey of this data · one line a build step · press a line or a '
         'table: everything tied to it lights, press again to drop it</p>'
-        f'<div class="jleft"><table class="jt jt4 jt3" style="{_meta_widths(f)}"><colgroup><col class="c1"><col class="c2"><col class="c3">'
-        '</colgroup><thead><tr><th>Build step · status · role · how often</th>'
-        f'<th class="hddh">{hdd}</th><th class="ssdh">{ssdh}</th></tr></thead><tbody>{rows}</tbody></table></div>'
+        f'<div class="jleft"><table class="jt jt4 jt3 jtb" style="{_meta_widths(f)}"><colgroup><col class="c1">'
+        '<col class="c2"><col class="c3"><col class="c4"></colgroup><thead><tr><th>Build step · status · role · how often</th>'
+        f'<th class="hddh">{hdd}</th><th class="ssdh">{ssdh}</th><th class="bdh">📊 Boards · their own file</th></tr>'
+        f'</thead><tbody>{rows}</tbody></table></div>'
         f'<aside class="jpanel jnarrow"><div class="jssd"><span class="jph">⚡ SSD live · served</span>{ssd}</div>'
         '</aside></div>')
 
@@ -1078,9 +1090,9 @@ def client(view: dict) -> dict:
             "calendars": cals, "today": view["read_at_iso"][:10]}
 
 
-def _err(view: dict) -> str:
+def _err(view: dict, title: str = "Database") -> str:
     """The one line a panel is when the model could not be built."""
-    return ('<section class="ctl"><div class="wrap"><h1>Data/Health · Data</h1><div class="errbar"><b>Could not read</b> '
+    return (f'<section class="ctl"><div class="wrap"><h1>Data/Health · {esc(title)}</h1><div class="errbar"><b>Could not read</b> '
             f'· {esc(view["error"])}</div></div></section>')
 
 
@@ -1096,10 +1108,24 @@ INPUT_ROLES = ("first", "only source", "fills")
 
 
 def _panel(f: dict, view: dict, first: bool) -> str:
-    """One served file's panel: its sources, its journey, the disk picture press, its example rows and health."""
+    """One served file's panel on the Database tab: its journey, the folder recount press and its example rows. Its
+    sources and their runs are on the Fetch/Health tab (``_fetch_group``)."""
     return (f'<section class="fpanel" data-file="{esc(f["name"])}" id="fp-{esc(f["kind"])}" '
             f'style="--fh:{esc(f["color"])}"{"" if first else " hidden"}>'
-            f'{_sources(f, view)}{_journey(f)}{_picture_control(view)}{_samples(f)}{_health_table(f)}</section>')
+            f'{_journey(f)}{_samples(f)}</section>')
+
+
+def _fetch_group(f: dict, view: dict) -> str:
+    """One served file on the Fetch/Health tab, folded like a Jobs group: its sources with their presses and
+    schedules, then the last runs of each dataset. Open when one of its datasets is late or stale."""
+    rows = f["datasets"]
+    by = {k: sum(1 for d in rows if d["filter"] == k) for k in ("fresh", "late", "stale", "never")}
+    bad = by["late"] + by["stale"]
+    words = (f'{len(rows)} sources · <b class="s-ok">{by["fresh"]} fresh</b> · <b class="s-warn">{by["late"]} late</b>'
+             f' · <b class="s-bad">{by["stale"]} stale</b> · {by["never"]} never ran')
+    return (f'<details class="sec fgrp" data-file="{esc(f["name"])}" style="--fh:{esc(f["color"])}"'
+            f'{" open" if bad else ""}><summary><h2>🦆 {esc(f["name"])}</h2><span class="secs">{words}</span>'
+            f'</summary>{_sources(f, view)}{_health_table(f)}</details>')
 
 
 def render_data(view: dict) -> str:
@@ -1110,14 +1136,23 @@ def render_data(view: dict) -> str:
     view = _ready(view)
     panels = "".join(_panel(f, view, i == 0) for i, f in enumerate(view["files"]))
     return ('<section id="ctl" class="ctl" aria-label="Data/Health · Data control board"><div class="wrap">'
-            f'{_header(view)}{_topbar(view)}{_health(view)}{_flow(view)}{_picker(view)}'
-            '<div class="ffilter" id="ffilter" hidden></div><div class="emptyst" id="ffempty" hidden></div>'
-            f'<div class="fpanels">{panels}</div>{_cross(view)}</div></section>')
+            f'{_header(view)}{_flow(view)}{_picker(view)}<div class="fpanels">{panels}</div></div></section>')
 
 
 def render_fetch(view: dict) -> str:
-    """Kept as a thin alias while the shell still calls it: the Fetch content now lives in ``render_data``."""
-    return ""
+    """The Fetch/Health tab's top (avo, 10 Nov 2026): the switches, Health right now, then one folded group a served
+    file with its sources and runs, then Cross-check. The Health tab's parts follow it in the same panel."""
+    if view.get("error"):
+        return _err(view, "Fetch/Health")
+    view = _ready(view)
+    groups = "".join(_fetch_group(f, view) for f in view["files"])
+    return ('<section class="ctl" aria-label="Data/Health · Fetch/Health"><div class="wrap">'
+            f'{_header(view, "Fetch/Health")}{_topbar(view)}{_health(view)}{_providers(view)}'
+            f'<details class="sec" id="sec-universe" open><summary><h2>Universe</h2><span class="secs">'
+            f'{esc(view["universe_summary"])} · the tier sets the next fetches and fills use</span></summary>'
+            f'{_universe(view)}{_legend(view)}</details>'
+            '<div class="ffilter" id="ffilter" hidden></div><div class="emptyst" id="ffempty" hidden></div>'
+            f'<div class="fgrps">{groups}</div>{_picture_control(view)}{_cross(view)}</div></section>')
 
 
 def scripts(view: dict) -> str:
