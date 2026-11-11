@@ -27,7 +27,7 @@ _ENV_EXTRAS = ("RC_SEC_USER_AGENT",
                "RC_IBKR_LOGIN_CHECK", "RC_IBKR_HOST", "RC_IBKR_PORT",           # #162
                "RC_SCHEDULER",                                                  # #158
                "RC_HTTP_CONTACT",                                               # #206, the builder's User-Agent
-               "WRDS_USERNAME", "RC_UNIVERSE_SOURCE", "RC_WRDS_PYTHON",         # PR 5, the spine
+               "WRDS_USERNAME", "RC_WRDS_PYTHON",                               # PR 5, the spine
                "RC_UW_PRELIMINARY",                                             # PR 12, the fundamentals
                "RC_WRDS_UNATTENDED")                                            # #344, WRDS from the builder
 
@@ -301,7 +301,6 @@ def test_data_retrieval_says_spx_gamma_reads_through_the_needs_layer():
 
 def test_the_spine_section_states_what_the_code_owns():
     """PR 5: the spine's datasets, tables, views, tier rule version, issue kinds and the flag, as the code has them."""
-    from RevenueChaser.core import universe
     from RevenueChaser.rcdata.build import DATASETS
     from RevenueChaser.rcdata.build.spine import KIND, security, tier, views
     text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
@@ -316,8 +315,7 @@ def test_the_spine_section_states_what_the_code_owns():
     for kind in security.ISSUE_KINDS:
         assert f"`{kind}`" in section, kind
     assert f"**Tier rule v{tier.VERSION}**" in section
-    assert f"`{universe.SOURCE_ENV}={universe.SPINE}`" in section
-    assert f"`{universe.SOURCE_ENV}={universe.STORE}`" in section            # PR 6: the old store, the rollback
+    assert "RC_UNIVERSE_SOURCE=" not in section                             # the switch went with #642 PR 6
 
 
 def test_the_prices_section_states_what_the_code_owns():

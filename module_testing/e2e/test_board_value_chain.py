@@ -11,6 +11,7 @@ import time
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.module_value_chain import config
 
 _TEXT = (
@@ -187,7 +188,7 @@ class TestRecordedMisses:
         import RevenueChaser.core.rawstore as rawstore
 
         extra = {"MISSX": "9001", "PENDX": "9002"}
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": t, "market_cap": 1e12, "name": t} for t in (*config.SEED, *extra)])
         rawstore.write_rows("sec_exchange_file", [     # #115: the CIK map production reads (#301 D21)
             {"ticker": t, "cik": c, "name": t, "exchange": "Nasdaq", "valid_from": None, "status": "present",

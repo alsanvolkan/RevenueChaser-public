@@ -5,6 +5,7 @@ double-encoded ``edgar_financials.meta`` case went with that store), then a stor
 """
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 import time
 
 import pytest
@@ -29,7 +30,7 @@ def seeded_edgar_ticker(dashboard, monkeypatch):
     import RevenueChaser.core.rawstore as rawstore
 
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
-    rawstore.write_rows("equity_universe", [{
+    universe_store.put([{
         "ticker": "EDGR", "market_cap": 5e9, "sector": "Technology", "price": 100.0,
         "name": "Edgar Co", "quote": _QUOTE}])
     # yfinance payload carries only info: the annual set comes from EDGAR

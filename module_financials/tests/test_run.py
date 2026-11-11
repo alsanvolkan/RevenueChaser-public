@@ -9,6 +9,7 @@ FileNotFoundError that the caller could only swallow.
 """
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 import RevenueChaser.module_financials.run as fm
 
 
@@ -48,12 +49,11 @@ def test_run_no_fetch_requires_a_cached_payload(rawstore_tmp_db, tmp_path, monke
 
 
 def _run_comps(monkeypatch, financials, spine_sector, peers=()):
-    from RevenueChaser.core import rawstore
     from RevenueChaser.core.providers import cache as cache_manager
     rows = [_row("AAPL", 1e9, spine_sector)]
     rows += [_row(p, cap, spine_sector) for p, cap in peers]
     if spine_sector is not None:
-        rawstore.replace_all("equity_universe", rows)
+        universe_store.replace(rows)
     vendor = dict(financials, sector="Technology")                        # what yfinance says
     monkeypatch.setattr(cache_manager, "get_or_fetch", lambda t, fn, use_cache=True: vendor)
     # No store card for AAPL, so quick remarks would fall back to a live yfinance score: stub it (the same

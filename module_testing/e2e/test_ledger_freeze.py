@@ -21,6 +21,7 @@ import pytest
 
 from . import harness
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.module_testing.e2e.harness.screener_seed import seed_d01, seed_quote
 
 D = "2026-09-25"                                    # a Friday, in the past on any machine running this
@@ -64,7 +65,7 @@ def seeded(dashboard, monkeypatch):
     rawstore.ensure_all_tables()
     quote = {"regularMarketPrice": 130.0, "fiftyTwoWeekHigh": 135.0, "fiftyDayAverage": 120.0,
              "averageDailyVolume10Day": 2_000_000}
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": "ZETA", "cik": "", "name": "Zeta Corp", "market_cap": 2.0e9, "price": 130.0,
         "sector": "Information Technology", "industry": "Software",
         "industry_group": "Software & Services", "sub_industry": "Application Software",

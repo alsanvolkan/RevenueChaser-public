@@ -14,6 +14,7 @@ from datetime import date
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_settings import inventory
 
@@ -25,7 +26,7 @@ def _bars(ticker, *days):
 
 def _seed_every_dataset():
     """One ticker with a row in all five scoring datasets and in ``security_master``."""
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "MU", "market_cap": 1.0e9, "name": "Micron Technology"}])
     rawstore.write_rows("security_master", [
         {"ticker": "MU", "cik": "0000723125", "figi": "BBG000BLNNH6"}])
@@ -121,7 +122,7 @@ def test_the_identifiers_show_as_soon_as_the_columns_exist(rawstore_tmp_db):
 
 
 def test_the_master_cik_beats_the_fallback_but_a_missing_one_still_falls_back(rawstore_tmp_db):
-    rawstore.write_rows("equity_universe", [{"ticker": "MU", "name": "Micron"}])
+    universe_store.put([{"ticker": "MU", "name": "Micron"}])
     rawstore.write_rows("security_master", [{"ticker": "MU", "figi": "BBG000BLNNH6"}])
     rawstore.write_rows("chain_filings", [
         {"ticker": "MU", "cik": "0000723125", "form": "10-K", "filed": "2026-02-01"}])
@@ -247,7 +248,7 @@ def test_universe_membership_is_the_boards_own_cut_not_merely_a_row(rawstore_tmp
     The subject used to be a name below the $300M floor. There is no floor any more (avo, 29 Oct 2026), so the
     cut that is narrower than "a row exists" is the security type.
     """
-    rawstore.write_rows("equity_universe", [{"ticker": "TINY", "market_cap": 1.0e6}])
+    universe_store.put([{"ticker": "TINY", "market_cap": 1.0e6}])
     rawstore.write_rows("security_master", [{"ticker": "TINY", "security_type": "etp"}])
     rawstore.write_rows("price_bars_daily", _bars("TINY", "2026-02-02"))
 
@@ -418,7 +419,7 @@ def test_a_failed_table_list_of_a_file_the_check_reads_makes_an_unknown_name_unk
 
 def test_an_excluded_type_is_judged_on_the_whole_universe_for_a_board_that_reads_every_type(rawstore_tmp_db):
     """PR 2 review S2: the same ETF Swing cannot score is a universe name for a board whose type filter is off."""
-    rawstore.write_rows("equity_universe", [{"ticker": "TINY", "market_cap": 1.0e6}])
+    universe_store.put([{"ticker": "TINY", "market_cap": 1.0e6}])
     rawstore.write_rows("security_master", [{"ticker": "TINY", "security_type": "etp"}])
     rawstore.write_rows("price_bars_daily", _bars("TINY", "2026-02-02"))
 

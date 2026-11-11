@@ -100,7 +100,6 @@ def test_without_a_prices_store_the_old_table_is_read_as_before():
 def test_a_cap_from_the_prices_store_alone_is_a_loaded_cap(monkeypatch, built):
     """The header's "market caps: none loaded yet" (PR 6, Opus review N5) counts the prices store's caps: on the host
     the old table stays empty, so after the first prices build the caps are there although that table has none."""
-    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
     assert not universe.has_market_caps()
     assert "market caps: none loaded yet" in universe_provenance_html("2026-10-28T00:00:00Z", "Swing Potential")
     _write_prices()

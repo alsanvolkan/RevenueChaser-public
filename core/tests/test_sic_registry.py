@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore, sic_registry as sr
 
 
@@ -35,7 +36,7 @@ class _Client:
 
 
 def _seed_universe(tickers=("AAPL", "NVDA", "PRIVATE")):
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": t, "market_cap": 1.0e9, "sector": "", "price": 10.0,
          "name": t + " Inc", "industry": "", "industry_group": "", "sub_industry": "",
          "quote": {"symbol": t}}

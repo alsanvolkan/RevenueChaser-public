@@ -21,6 +21,7 @@ from datetime import date, datetime, timezone
 import pandas as pd
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import provenance, rawstore
 from RevenueChaser.core.tests import screen_parity as scn
 from RevenueChaser.core.tests.d01_seed import seed_d01
@@ -86,7 +87,7 @@ def test_co_movement_reads_the_prices_store_date_of_its_names(rawstore_tmp_db):
     _bars("module_comovement", "OUT", _days(D), EVENING)    # not in the universe: not this board's
     rawstore.write_rows("swing_ohlc", [{"ticker": "AAA", "ts": "2026-10-14T00:00:00", "open": 1.0, "high": 1.0,
                                         "low": 1.0, "close": 1.0, "volume": 1.0, "cached_at": EVENING}])
-    rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1.0e10, "sector": "Technology",
+    universe_store.replace([{"ticker": "AAA", "market_cap": 1.0e10, "sector": "Technology",
                                               "price": 10.0, "name": "AAA", "industry": "Software",
                                               "quote": {"symbol": "AAA"}}])
     assert provenance.data_as_of("module_comovement") == "2026-10-09"

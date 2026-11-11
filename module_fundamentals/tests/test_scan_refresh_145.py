@@ -15,6 +15,7 @@ import os
 import pandas as pd
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import rawstore, screen_common
 from RevenueChaser.core.screen_common import spy_summary
@@ -59,7 +60,7 @@ def seeded(rawstore_tmp_db, monkeypatch):
     """A stored universe of two scoreable names with D01 bars (SPY included), the clock on their last session."""
     rows = [{"ticker": t, "market_cap": 1e9, "price": 10.0, "name": t, "sector": "Technology"}
             for t in ("AAA", "BBB")]
-    rawstore.replace_all("equity_universe", rows)
+    universe_store.replace(rows)
     for mod in (fp, sp):
         monkeypatch.setattr(mod, "prefilter", lambda r: screen_common.Prefiltered(list(r)))
         monkeypatch.setattr(mod, "load_ticker_info", lambda *a, **k: {})

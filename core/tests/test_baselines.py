@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import baselines, calendar as cal, ledger, outcomes, prices, rawstore
 from RevenueChaser.core.tests.d01_seed import drop_d01, write_d01
 
@@ -76,7 +77,7 @@ def _seed(rows, *, tickers=None):
     """The bars, and the universe of those names (or ``tickers``) as ``D``'s membership."""
     write_d01(list(rows))
     names = tickers if tickers is not None else sorted({r["ticker"] for r in rows})
-    rawstore.write_rows("equity_universe", [{"ticker": t, "name": t, "market_cap": 1e9} for t in names])
+    universe_store.put([{"ticker": t, "name": t, "market_cap": 1e9} for t in names])
 
 
 def _dividend(ticker, day, value):
@@ -149,7 +150,7 @@ def test_the_universe_is_the_membership_of_the_freeze_date_not_today(rawstore_tm
     _seed(_series("AAA") + _series("BBB"))                       # both in the universe on D
     _freeze(["AAA"])
     clock.t = baselines.day_end(D) + 86400                       # the next evening's universe pull
-    rawstore.replace_all("equity_universe", [{"ticker": "CCC"}])  # BBB left, CCC joined
+    universe_store.replace([{"ticker": "CCC"}])  # BBB left, CCC joined
     baselines.run(now=NOW, run_id="r1")
     assert _row(h=30)["n"] == 2                                 # AAA and BBB, not CCC
 
@@ -159,7 +160,7 @@ def test_a_freeze_date_without_a_universe_snapshot_writes_zero_members(rawstore_
     today's list, and the run counts the date as one without a snapshot."""
     write_d01(_series("AAA"))
     clock.t = baselines.day_end(D) + 86400                       # membership is first recorded after D
-    rawstore.write_rows("equity_universe", [{"ticker": "AAA"}])
+    universe_store.put([{"ticker": "AAA"}])
     _freeze(["AAA"])
     out = baselines.run(now=NOW, run_id="r1")
     assert out["no_snapshot"] == 1

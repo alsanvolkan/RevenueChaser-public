@@ -1,6 +1,7 @@
 """Tests for the index membership registry (pure functions, no network)."""
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import index_registry as ir
 from RevenueChaser.core import index_lists as il
 from RevenueChaser.core import rawstore
@@ -57,7 +58,7 @@ def test_fetch_index_uses_cache(rawstore_tmp_db):
 
 
 def test_build_registry_merges_index_and_meta(rawstore_tmp_db):
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": "AAPL", "name": "Apple", "sector": "Information Technology"},
         {"ticker": "MSFT", "name": "Microsoft", "sector": "Information Technology"},
     ])

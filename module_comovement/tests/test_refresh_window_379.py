@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from RevenueChaser.core import rawstore
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.module_comovement import engine, ohlc
 from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_comovement.tests import test_recompute_parity as parity
@@ -64,7 +64,7 @@ def _edge_store(stale_spy: bool = False) -> list[str]:
     if stale_spy:
         prices_bars.delete_bars("SPY", idx[-5])
     names = [*tickers, *extra]
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": t, "market_cap": 1.0e10, "sector": "Technology", "price": 10.0, "name": t,
         "industry": (parity._INDUSTRIES[int(t[1])] if t[0] == "B" and t[1].isdigit() else "Unclassified"),
         "quote": {"symbol": t}} for t in names])

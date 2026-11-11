@@ -137,26 +137,17 @@ def bar_scope() -> list[str]:
     """The tickers the nightly keeps bars for (R8): the universe, the benchmarks and the
     sector/theme rotation ETFs, upper-cased, de-duplicated, benchmarks first.
 
-    The universe is the boards' (``core.universe``): while they read the identity spine, its names of
-    ``BAR_TIERS`` in tier order, Tier A (the names a board can screen; the prices store asks those,
-    ``rcdata.build.prices.scope``) before the rotation ETFs and Tiers B and C after them (#262); on the old store,
-    its ``equity_universe``. The run spends its UW cap (``UW_NIGHTLY_CAP``) and its new-name fills
-    (``MAX_NEW_FILL``) in this order, so the caps leave out Tier B and C first: a name past the UW cap still gets
-    Yahoo's bar, and a name the night's fills miss is filled on a later night."""
-    from RevenueChaser.core import universe as universe_mod
+    The universe is the identity spine's names of ``BAR_TIERS`` in tier order, Tier A (the names a board can screen;
+    the prices store asks those, ``rcdata.build.prices.scope``) before the rotation ETFs and Tiers B and C after them
+    (#262; the old ``equity_universe`` read went with #642 PR 6). The run spends its UW cap (``UW_NIGHTLY_CAP``) and
+    its new-name fills (``MAX_NEW_FILL``) in this order, so the caps leave out Tier B and C first: a name past the UW
+    cap still gets Yahoo's bar, and a name the night's fills miss is filled on a later night."""
     etfs = [str(t).strip().upper() for t, info in ROTATION_ETFS.items()
             if (info or {}).get("group") not in ("yield", "commodity")]
-    if universe_mod.universe_source() == universe_mod.SPINE:
-        from RevenueChaser.rcdata import read
-        rows = read.universe(tiers=BAR_TIERS)                       # by ticker
-        tier = {t: [r["ticker"] for r in rows if r["tier"] == t] for t in BAR_TIERS}
-        return _norm([*BENCHMARKS, *tier["A"], *etfs, *(x for t in BAR_TIERS[1:] for x in tier[t])])
-    try:
-        rows = rawstore.query("SELECT ticker FROM equity_universe")
-    except Exception:  # noqa: BLE001 - a missing table is "no universe", not a crash
-        rows = []
-    universe = [str(r["ticker"]).strip().upper() for r in rows if r.get("ticker")]
-    return _norm([*BENCHMARKS, *universe, *etfs])
+    from RevenueChaser.rcdata import read
+    rows = read.universe(tiers=BAR_TIERS)                           # by ticker
+    tier = {t: [r["ticker"] for r in rows if r["tier"] == t] for t in BAR_TIERS}
+    return _norm([*BENCHMARKS, *tier["A"], *etfs, *(x for t in BAR_TIERS[1:] for x in tier[t])])
 
 
 def _norm(tickers) -> list[str]:

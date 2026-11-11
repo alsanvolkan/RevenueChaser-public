@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore, universe
 from RevenueChaser.core.identity import types as id_types
 
 
 def _seed_universe(rows):
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": r["ticker"], "cik": "", "name": r.get("name") or r["ticker"],
         "market_cap": r.get("market_cap", 1.0e9), "price": 10.0,
         "sector": r.get("sector") or "Technology", "industry": r.get("industry", "x"),
@@ -219,7 +220,7 @@ def test_universe_counts_still_split_by_an_explicit_floor(rawstore_tmp_db):
 
 # ── R3 (#86): an unknown GICS value reads Unclassified (never the legacy "Other") ─────────────
 def test_filter_fields_reads_an_unknown_sector_as_unclassified(rawstore_tmp_db):
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": "LEG", "name": "Legacy", "market_cap": 1e9, "sector": "Other", "industry": "Other",
          "quote": {}},                                                                  # vendor fallback
         {"ticker": "MAS", "name": "Master", "market_cap": 1e9, "sector": "Unclassified",

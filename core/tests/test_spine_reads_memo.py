@@ -20,7 +20,6 @@ from RevenueChaser.rcdata.tests.test_spine_security import built, run_all  # noq
 
 @pytest.fixture
 def opens(monkeypatch, built):
-    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
     spine_reads.clear()
     seen = []
     real = serving.open_read

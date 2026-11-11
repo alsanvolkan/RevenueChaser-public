@@ -13,6 +13,7 @@ import time
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import job_lock, rawstore
 from RevenueChaser.core.identity import __main__ as cli
 from RevenueChaser.core.identity import refresh as R
@@ -24,7 +25,7 @@ from RevenueChaser.core.tests.lock_holders import lock_held
 def universe():
     """One universe row per test: without it ``_run`` stops before its first write, and a lock taken too late
     would pass this file's "writes nothing" assertions for the wrong reason."""
-    rawstore.write_rows("equity_universe", [{"ticker": t, "name": n, "market_cap": c} for t, n, c in UNIVERSE])
+    universe_store.put([{"ticker": t, "name": n, "market_cap": c} for t, n, c in UNIVERSE])
 
 
 # ── a held lock refuses, and writes nothing ──────────────────────────────────

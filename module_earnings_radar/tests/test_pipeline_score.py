@@ -6,6 +6,7 @@ ticker that had a price — leaving only excluded/no-data tickers in the report.
 These tests drive _score end-to-end with a fake client to ensure string prices
 are coerced and a card is always produced.
 """
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline, _safe_float
 from RevenueChaser.module_earnings_radar.models import TradeCard
 from RevenueChaser.module_earnings_radar.rules import rule5_positioning
@@ -167,8 +168,7 @@ class TestR5ShortInterestWiring:
     @staticmethod
     def _seed_spine(sectors):
         """The peer group is the spine's sector (``equity_universe``), the one the card is scored against (#272)."""
-        from RevenueChaser.core import rawstore
-        rawstore.replace_all("equity_universe", [{
+        universe_store.replace([{
             "ticker": t, "cik": "", "name": t, "market_cap": 1e9, "price": 10.0, "sector": sec, "industry": "x",
             "industry_group": None, "sub_industry": None, "quote": {"symbol": t}} for t, sec in sectors.items()])
 
@@ -492,7 +492,7 @@ class TestStoredOhlcWiring:
 
     def test_a_stored_year_of_bars_replaces_the_ohlc_request(self, monkeypatch):
         from datetime import date, datetime, timedelta, timezone
-        from RevenueChaser.core import calendar, rawstore
+        from RevenueChaser.core import calendar
         from RevenueChaser.module_earnings_radar import stored_inputs
         end = date(2026, 10, 14)
         monkeypatch.setattr(calendar, "_now", lambda: datetime(2026, 10, 14, 21, 0, tzinfo=timezone.utc))
@@ -558,8 +558,7 @@ class TestSectorIsTheSpine:
 
     @staticmethod
     def _seed_spine(rows):
-        from RevenueChaser.core import rawstore
-        rawstore.replace_all("equity_universe", [{
+        universe_store.replace([{
             "ticker": t, "cik": "", "name": t, "market_cap": 1e9, "price": 10.0,
             "sector": sec, "industry": ind, "industry_group": None, "sub_industry": None,
             "quote": {"symbol": t}} for t, sec, ind in rows])
@@ -626,8 +625,7 @@ class TestR5PeersAreTheTickersSector:
             for t, (si, fee, dtc) in self._ROWS.items()})
 
     def _pipeline(self, sectors):
-        from RevenueChaser.core import rawstore
-        rawstore.replace_all("equity_universe", [{
+        universe_store.replace([{
             "ticker": t, "cik": "", "name": t, "market_cap": 1e9, "price": 10.0,
             "sector": sec, "industry": "x", "industry_group": None, "sub_industry": None,
             "quote": {"symbol": t}} for t, sec in sectors.items()])

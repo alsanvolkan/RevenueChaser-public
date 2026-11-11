@@ -14,6 +14,7 @@ from datetime import date, datetime, timezone
 
 import duckdb
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore, universe
 from RevenueChaser.module_settings import inventory
 from RevenueChaser.rcdata import serving
@@ -48,7 +49,7 @@ def _price_row(payload: dict) -> dict:
 
 
 def _seed_universe() -> None:
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple"},
         {"ticker": "MU", "market_cap": 1.0e11, "name": "Micron Technology"},
     ])

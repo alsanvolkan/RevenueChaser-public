@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import index_lists as il
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.identity import apply as universe_apply
@@ -29,7 +30,7 @@ UNIVERSE = [("AAPL", "Apple Inc.", 3.0e12), ("PDI", "PIMCO Dynamic Income Fund",
 
 @pytest.fixture(autouse=True)
 def store():
-    rawstore.write_rows("equity_universe", [{"ticker": t, "name": n, "market_cap": c} for t, n, c in UNIVERSE])
+    universe_store.put([{"ticker": t, "name": n, "market_cap": c} for t, n, c in UNIVERSE])
     il.save_index("sp500", {"AAPL"})        # the SPDR check reads its members from here
 
 
@@ -320,7 +321,7 @@ def test_sec_submissions_delta_is_new_or_older_than_30_days_and_keyed_by_ticker(
 
 
 def test_a_shared_cik_is_fetched_once_and_cached_for_each_ticker(fk):
-    rawstore.write_rows("equity_universe", [{"ticker": "ZZZB", "name": "Zed B", "market_cap": 5e8}])
+    universe_store.put([{"ticker": "ZZZB", "name": "Zed B", "market_cap": 5e8}])
     fk.results["sec_exchange"] = ok("sec_exchange", fk.results["sec_exchange"].rows + [
         {"ticker": "ZZZB", "cik": "999", "name": "Zed", "exchange": "NYSE"}])
     run(fk)
@@ -579,7 +580,7 @@ def test_fdic_is_empty_dict_for_non_candidates_and_a_match_dict_for_candidates(f
 
 def test_a_healthy_source_not_listing_a_ticker_unfreezes_the_previous_value(fk):
     """Run 1 types XYZ as an ETP from the Nasdaq flag; run 2 Nasdaq answers without XYZ -> no longer frozen."""
-    rawstore.write_rows("equity_universe", [{"ticker": "XYZ", "name": "Xyz Holdings", "market_cap": 1e9}])
+    universe_store.put([{"ticker": "XYZ", "name": "Xyz Holdings", "market_cap": 1e9}])
     fk.results["nasdaq"] = ok("nasdaq", fk.results["nasdaq"].rows + [
         {"ticker": "XYZ", "security_name": "Xyz ETF", "is_etf": True, "exchange": "P"}])
     run(fk)
@@ -641,7 +642,7 @@ def test_an_empty_universe_is_an_error_run(fk):
 
 # ── Yahoo and conflicts ───────────────────────────────────────────────────────────────────────
 def test_yahoo_is_asked_only_for_tickers_without_a_uw_sector_and_respects_the_cap(fk):
-    rawstore.write_rows("equity_universe", [{"ticker": "NOUW2", "name": "No Uw Two", "market_cap": 5e8}])
+    universe_store.put([{"ticker": "NOUW2", "name": "No Uw Two", "market_cap": 5e8}])
     run(fk, yahoo_limit=1)
     assert fk.calls["yahoo"] == [(["ZZZ"],)], "AAPL and PDI have a UW sector; the larger cap goes first"
     run(fk, yahoo_limit=1)
@@ -664,7 +665,7 @@ def test_yahoo_is_capped_per_run_by_default(fk, monkeypatch):
     # A job run passes no yahoo_limit: it must still never ask Yahoo for the whole
     # universe in one go (docs/data_health.md); the default per-run cap applies.
     monkeypatch.setattr(R, "YAHOO_PER_RUN", 1)
-    rawstore.write_rows("equity_universe", [{"ticker": "NOUW2", "name": "No Uw Two", "market_cap": 5e8}])
+    universe_store.put([{"ticker": "NOUW2", "name": "No Uw Two", "market_cap": 5e8}])
     run(fk)
     assert fk.calls["yahoo"] == [(["ZZZ"],)], "default cap of 1 -> only the largest gap"
 
@@ -807,7 +808,7 @@ def test_spdr_agreement_counts_checked_and_agree_without_a_conflict(fk):
 
 def test_only_sp500_members_held_by_a_fund_and_present_in_the_master_are_compared(fk):
     """Members come from ``index_constituents`` (UW spelling, BRK.B); the others in the holdings are not compared."""
-    rawstore.write_rows("equity_universe", [{"ticker": "BRK-B", "name": "Berkshire Hathaway", "market_cap": 1e12},
+    universe_store.put([{"ticker": "BRK-B", "name": "Berkshire Hathaway", "market_cap": 1e12},
                                             {"ticker": "XYZ", "name": "Xyz", "market_cap": 1e9}])
     il.save_index("sp500", {"AAPL", "BRK.B", "NOTLISTED"})
     fk.results["uw"] = ok("uw_sector", fk.results["uw"].rows + [
@@ -935,7 +936,7 @@ def stagger_world(cached_at: dict | None = None, extra=()):
     """
     rawstore.execute("DELETE FROM equity_universe")
     names = list(STAGGER_TICKERS) + list(extra)
-    rawstore.write_rows("equity_universe", [{"ticker": t, "name": f"{t} Corp", "market_cap": 1e9} for t in names])
+    universe_store.put([{"ticker": t, "name": f"{t} Corp", "market_cap": 1e9} for t in names])
     _seed_exchange([{"ticker": t, "cik": str(1001 + i), "name": t, "exchange": "Nasdaq"}
                     for i, t in enumerate(names)])
     for i, t in enumerate(STAGGER_TICKERS):

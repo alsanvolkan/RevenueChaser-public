@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_settings import inventory
 
@@ -19,8 +20,7 @@ def _rows(payload=None) -> dict:
 
 
 def _universe(*tickers: str) -> None:
-    rawstore.write_rows("equity_universe",
-                        [{"ticker": t, "market_cap": 1e9, "name": t} for t in tickers])
+    universe_store.put([{"ticker": t, "market_cap": 1e9, "name": t} for t in tickers])
 
 
 def _filing(ticker: str, cik: str = "1") -> dict:

@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import baselines, calendar as cal, ledger, rawstore
 from RevenueChaser.core.tests.d01_seed import write_d01
 
@@ -59,8 +60,7 @@ def _seed(series, *, universe=None):
     """The bars, the universe of those names, and one pick on ``D`` — the ledger is what names a date to score."""
     rows = [r for s in series for r in s]
     write_d01(rows)
-    rawstore.write_rows("equity_universe",
-                        [{"ticker": t, "name": t, "market_cap": 1e9} for t in (universe or sorted({r["ticker"]
+    universe_store.put([{"ticker": t, "name": t, "market_cap": 1e9} for t in (universe or sorted({r["ticker"]
                                                                                               for r in rows}))])
     ledger.write_picks("swing", "Swing", [{"subject": series[0][0]["ticker"], "rank": 1}],
                        model_version="v1+abcd", forecast_date=D, run_id="freeze1")

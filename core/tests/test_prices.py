@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 import pandas as pd
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import calendar, job_lock, prices, rawstore
 from RevenueChaser.core.providers.result import ProviderResult
 from RevenueChaser.core.tests.d01_seed import write_d01
@@ -641,7 +642,7 @@ def test_t24_calendar_error_aborts(rawstore_tmp_db):
 # ── scope helper ─────────────────────────────────────────────────────────────
 
 def test_bar_scope_puts_the_benchmarks_first(rawstore_tmp_db):
-    rawstore.write_rows("equity_universe", [{"ticker": "aapl", "market_cap": 1e9},
+    universe_store.put([{"ticker": "aapl", "market_cap": 1e9},
                                             {"ticker": "MSFT", "market_cap": 1e9}])
     scope = prices.bar_scope()
     assert scope[:3] == ["SPY", "DIA", "QQQ"]
@@ -988,7 +989,7 @@ def test_health_is_the_summary_numbers_typed(rawstore_tmp_db):
     and the source share is the newest session's rows per source (Health stores a share, the dict a count)."""
     from RevenueChaser.core import datahealth
 
-    rawstore.write_rows("equity_universe", [{"ticker": "AAA", "market_cap": 1e9},
+    universe_store.put([{"ticker": "AAA", "market_cap": 1e9},
                                             {"ticker": "BBB", "market_cap": 1e9}])
     rawstore.write_rows("price_bars_daily", [bar_row("AAA", "2026-10-08", close=10.0, source="uw"),
                                              bar_row("BBB", "2026-10-08", close=11.0)])

@@ -10,7 +10,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
 
 from RevenueChaser.app import runners
 from RevenueChaser.module_swing_potential import report, screeners
@@ -31,13 +30,10 @@ def test_the_rules_table_says_seven_price_rules_decide_minervini():
     assert "RS rating ≥ 70 ranks, does not decide" in page
 
 
-@pytest.mark.parametrize("source, names", [("spine", "identity spine (names)"),
-                                           ("store", "old universe store (names)")])
-def test_the_footer_names_where_the_names_and_the_bars_come_from(monkeypatch, source, names):
-    monkeypatch.setattr(report._universe, "universe_source", lambda: source)
+def test_the_footer_names_where_the_names_and_the_bars_come_from():
     page = _page()
     assert "Yahoo Finance (universe + OHLCV)" not in page
-    assert f"Sources: {names}" in page
+    assert "Sources: identity spine (names)" in page
     assert "daily bars (Unusual Whales, yfinance fallback)" in page
 
 

@@ -9,6 +9,7 @@ never invent a value for.
 """
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 import json
 import time
 from datetime import datetime, timezone
@@ -33,7 +34,7 @@ def seeded_settings(dashboard, monkeypatch):
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
 
     monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # the prices store (G3)
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple Inc."},
         {"ticker": "MU", "market_cap": None, "name": "Micron Technology"},
         {"ticker": "NOCAP", "market_cap": None, "name": "No Cap Co"},
@@ -285,7 +286,7 @@ class TestBoardInputs:
 
         ret = cm._returns()
         tickers = list(ret.columns)
-        rawstore.replace_all("equity_universe", [{
+        universe_store.replace([{
             "ticker": t, "market_cap": 1.0e10, "sector": "Technology", "price": 10.0,
             "name": t + " Inc", "industry": cm._INDUSTRY.get(t, ""), "quote": {"symbol": t},
         } for t in tickers + [_FUND]])

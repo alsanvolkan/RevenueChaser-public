@@ -22,7 +22,7 @@ from RevenueChaser.rcdata.needs import boards
 
 #: ``boards.UNDECLARED`` on 11 Nov 2026. Remove a board here when it migrates; never add one.
 UNDECLARED_CEILING = frozenset({
-    "module_asymmetric_growth", "module_comovement", "module_financials", "module_fundamentals", "module_leaps",
+    "module_asymmetric_growth", "module_financials", "module_fundamentals", "module_leaps",
     "module_news", "module_oipd", "module_relatedness", "module_sec_13f", "module_sector_rotation",
     "module_swing_potential", "module_uw_interaction", "module_value_chain", "module_welcome",
 })

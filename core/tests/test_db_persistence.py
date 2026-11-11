@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 
 
@@ -321,7 +322,7 @@ def test_roundtrip_integrity_json_payload(rawstore_tmp_db):
                                           "fetched_at": 1.0, "fetched_at_iso": ""}])
     assert rawstore.get("ticker_payload_cache", "AAA")["payload"] == payload
     # typed equity_universe columns round-trip too
-    rawstore.write_rows("equity_universe", [{"ticker": "ETON", "market_cap": 1.8e9,
+    universe_store.put([{"ticker": "ETON", "market_cap": 1.8e9,
                                                  "sector": "Health Care", "price": 20.0,
                                                  "name": "Eton", "quote": {"x": 1}}])
     assert rawstore.get("equity_universe", "ETON")["market_cap"] == 1.8e9

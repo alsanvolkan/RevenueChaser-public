@@ -6,13 +6,14 @@ from datetime import date, datetime, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.identity import refresh as identity_refresh
 from RevenueChaser.module_settings import inventory
 
 
 def _seed():
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"},
         {"ticker": "MSFT", "market_cap": 3.0e9, "name": "Microsoft"},
         {"ticker": "NVDA", "market_cap": None, "name": "Nvidia"},
@@ -122,7 +123,7 @@ def test_collect_makes_no_provider_calls(rawstore_tmp_db, monkeypatch):
 
 
 def _seed_detail():
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "MU", "market_cap": None, "name": "Micron Technology",
          "price": 110.0, "sector": "Technology", "industry": "Semiconductors"},
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple Inc."},
@@ -181,7 +182,7 @@ def test_ticker_detail_reports_the_sector_and_the_industry_text(rawstore_tmp_db)
 def test_ticker_detail_reads_a_stored_pre_rename_sector_as_its_morningstar_name(rawstore_tmp_db):
     """A row `/run/identity` has not re-applied yet still holds a GICS spelling: the drill shows the UW name."""
     _seed_detail()
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "OLD", "market_cap": 1e9, "name": "Old Row", "sector": "Information Technology",
          "industry": "Semiconductors"},
         {"ticker": "LEG", "market_cap": 1e9, "name": "Legacy Row", "sector": "Other"}])
@@ -302,7 +303,7 @@ def test_ticker_detail_makes_no_provider_calls(rawstore_tmp_db, monkeypatch):
 
 def test_missing_counts_a_ticker_once_however_many_rows_it_has(rawstore_tmp_db):
     """OHLC has many bars per ticker; the hole count must still be per ticker."""
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": t, "market_cap": 3.0e9, "name": t} for t in ("AAPL", "MSFT", "NVDA")])
     rawstore.write_rows("swing_ohlc", [
         {"ticker": "AAPL", "ts": f"2026-02-0{d}", "close": 1.0} for d in range(1, 6)
@@ -312,7 +313,7 @@ def test_missing_counts_a_ticker_once_however_many_rows_it_has(rawstore_tmp_db):
 
 def test_a_table_created_after_one_collect_shows_on_the_next(isolate_rawstore):
     """No cache may survive a Refresh: the table list is re-read each time."""
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"}])
     first = _rows(inventory.collect())
     assert first["ohlc"]["rows"] is None and first["ohlc"]["holes"] is None
@@ -387,7 +388,7 @@ def test_queried_columns_list_covers_every_pair_in_the_source():
 
 # ── the one universe: the security-type filter reaches the Settings board (#87) ──
 def _seed_typed():
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple"},
         {"ticker": "FUND", "market_cap": 2.0e12, "name": "A Closed-End Fund"},
         {"ticker": "NOROW", "market_cap": 5.0e9, "name": "Untyped Co"},
@@ -445,7 +446,7 @@ def _run_row(run_id, started, status, sources, counts, finished=None):
 
 
 def _seed_identity(spdr_error_after=False, only_runs=None):
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": t, "name": t, "market_cap": cap} for t, cap, _, _ in MASTER if cap != "absent"])
     rawstore.write_rows("security_master", [
         {"ticker": t, "security_type": typ, "sector_source": src, "sector": "x"} for t, _, typ, src in MASTER])
@@ -520,7 +521,7 @@ def test_the_identity_row_counts_the_master_and_reports_the_last_run_and_unclass
 
 
 def test_the_identity_payload_is_empty_without_the_identity_tables_and_never_raises(isolate_rawstore):
-    rawstore.write_rows("equity_universe", [{"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"}])
+    universe_store.put([{"ticker": "AAPL", "market_cap": 3.0e9, "name": "Apple"}])
     payload = inventory.collect(now=FIXED)
     ident = payload["identity"]
     assert ident["last_run"] is None and ident["floor"] == 0
@@ -627,7 +628,7 @@ def test_top_conflicts_are_ordered_by_market_cap_with_no_cap_last_and_the_star_r
 
 def test_top_conflicts_are_capped_at_fifty_but_the_counts_are_not(rawstore_tmp_db):
     _seed_identity()
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": f"F{i:02d}", "name": "f", "market_cap": 1.0e6 * (i + 1)} for i in range(60)])
     rawstore.write_rows("identity_conflicts", [
         {"ticker": f"F{i:02d}", "kind": "sector", "field": "sector", "side_a": "a", "side_b": "b", "note": "",

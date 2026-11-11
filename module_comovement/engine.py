@@ -714,11 +714,13 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
 
     ret, dropped = returns_mod.log_returns(prices, window=eff.window,
                                            min_obs=eff.min_obs, horizon=horizon)
+    bench_short = bool(bench_ticker) and (bench_ticker in dropped or bench_ticker in ret.columns)
     dropped = [t for t in dropped if t in tickers]
     short_split = split_short_history(prices, dropped, eff.window, horizon, first=first)
 
     benchmark_applied = False
-    benchmark_status = "missing" if bench_ticker else "off"
+    # #392: "short" is a benchmark with prices but too few returns to remove the market with; "missing" has none.
+    benchmark_status = ("short" if bench_short else "missing") if bench_ticker else "off"
     universe_ret = ret
     market = None
     if bench_ticker and bench_ticker in ret.columns:

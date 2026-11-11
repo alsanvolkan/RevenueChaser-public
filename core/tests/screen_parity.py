@@ -22,6 +22,7 @@ import pandas as pd
 
 from datetime import date, datetime, timezone
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_fundamentals import pipeline as fp
@@ -128,7 +129,7 @@ def seed_quotes(session: date = SESSION) -> None:
 
 def seed() -> None:
     """Write the scenario's store. Call with an isolated, fully created rawstore."""
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": t, "market_cap": cap, "price": q["regularMarketPrice"], "name": f"{t} Inc",
          "sector": SPINE.get(t, ("Utilities",))[0],
          "industry_group": SPINE.get(t, (None, None, None))[1] if t in SPINE else None,

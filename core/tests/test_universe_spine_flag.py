@@ -1,7 +1,6 @@
-"""``core/universe.py`` and ``RC_UNIVERSE_SOURCE`` (build plan PR 5, default flipped in PR 6): unset reads the identity
-spine, membership, names, classification and types through ``rcdata.read`` and, with no prices store here, the market
-fields (cap, price, quote) from the old ``equity_universe`` (the prices store's: ``test_universe_market_prices``); any
-other value (``store``) reads ``raw.duckdb`` as before.
+"""``core/universe.py`` reads the identity spine only (#642 PR 6 removed ``RC_UNIVERSE_SOURCE`` and the old store
+path): membership, names, classification and types through ``rcdata.read`` and, with no prices store here, the market
+fields (cap, price, quote) from the old ``equity_universe`` (the prices store's: ``test_universe_market_prices``).
 
 Every test here is the **membership rule** that applies where the spine holds no ``my_universe`` list: Tiers A and B
 whole (PR 2, avo 30 Oct 2026). The test spine's ``spine/security`` build writes that list, so ``drop_my_universe``
@@ -29,24 +28,13 @@ def old_store():
                                             {"ticker": "OLDONLY", "security_type": "common"}])
 
 
-def test_the_default_is_the_spine(monkeypatch, built, old_store):
+def test_the_default_is_the_spine(built, old_store):
     drop_my_universe()
-    monkeypatch.delenv(universe.SOURCE_ENV, raising=False)
     assert universe.source_state() == {"requested": "spine", "effective": "spine", "reason": None, "variable": None}
     names = universe.classification_universe(0, operating_only=True)
     assert names[:3] == ["MSFT", "TM", "WFC"] and "OLDONLY" not in names
     assert universe.classification_universe(0)[:3] == ["MSFT", "SPY", "TM"]   # PR 2: every A+B type
-    monkeypatch.setenv(universe.SOURCE_ENV, "  ")                          # empty is unset
     assert universe.universe_source() == "spine"
-
-
-def test_the_old_value_is_the_old_store(monkeypatch, built, old_store):
-    monkeypatch.setenv(universe.SOURCE_ENV, universe.STORE)
-    assert universe.universe_source() == "store"
-    names = universe.classification_universe(0, operating_only=True)
-    assert names[0] == "MSFT" and "OLDONLY" in names and "SPY" not in names
-    assert "SPY" in universe.classification_universe(0)                          # PR 2: every type
-    assert universe.spine_gics(["MSFT"])["MSFT"].sector == "Unclassified"     # "Old Sector" is no Morningstar name
 
 
 def drop_my_universe() -> None:
@@ -69,10 +57,8 @@ def drop_my_universe() -> None:
 
 
 @pytest.fixture
-def spine(monkeypatch, built, old_store):
+def spine(built, old_store):
     drop_my_universe()
-    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
-    assert universe.universe_source() == "spine"
 
 
 @pytest.mark.usefixtures("spine")
@@ -123,44 +109,22 @@ def test_filter_fields_take_the_index_badges_from_the_spine_membership():
     assert fields["NOPE"]["sector"] == "Unclassified"
 
 
-def test_the_flag_without_a_spine_falls_back_to_the_store_and_says_so(monkeypatch, old_store, caplog):
-    """Should-fix 7: setting the flag a step early must not empty every screener."""
-    monkeypatch.setattr(universe, "_FALLBACK_LOGGED", set())          # once per process: start clean
-    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
-    with caplog.at_level("WARNING"):
-        assert universe.universe_source() == "store"
-    assert "OLDONLY" in universe.classification_universe(0)
-    state = universe.source_state()
-    assert state == {"requested": "spine", "effective": "store", "reason": "no spine.duckdb yet", "variable": "spine"}
-    assert any("RC_UNIVERSE_SOURCE=spine" in r.getMessage() and "falls back" in r.getMessage() for r in caplog.records)
+def test_without_a_spine_no_old_name_is_read_and_the_reason_is_said(old_store):
+    """#642 PR 6: the old ``equity_universe`` is never a fallback universe."""
+    assert universe.source_state() == {"requested": "spine", "effective": "spine", "reason": "no spine.duckdb yet",
+                                       "variable": None}
+    assert universe.classification_universe(0) == [] and not universe.has_universe()
 
 
-def test_the_flag_with_a_failed_spine_build_falls_back_to_the_store(monkeypatch, built, old_store):
+def test_a_failed_spine_build_is_said_and_the_last_good_spine_still_read(built, old_store):
     from RevenueChaser.rcdata import ops
-    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
-    assert universe.universe_source() == "spine"
+    drop_my_universe()
     ops.record_check("spine/security", "failed", note="boom")
-    assert universe.universe_source() == "store" and "OLDONLY" in universe.classification_universe(0)
     assert universe.source_state()["reason"] == "spine/security's last check failed"
+    names = universe.classification_universe(0)
+    assert "MSFT" in names and "OLDONLY" not in names
     ops.record_check("spine/security", "skipped", note="paused")          # a skip after the failure changes nothing
-    assert universe.universe_source() == "store"
-
-
-def test_unset_without_a_spine_falls_back_and_says_the_default_asked(monkeypatch, old_store, caplog):
-    monkeypatch.setattr(universe, "_FALLBACK_LOGGED", set())          # once per process: start clean
-    monkeypatch.delenv(universe.SOURCE_ENV, raising=False)
-    with caplog.at_level("WARNING"):
-        assert universe.source_state() == {"requested": "spine", "effective": "store",
-                                           "reason": "no spine.duckdb yet", "variable": None}
-    assert "OLDONLY" in universe.classification_universe(0)
-    assert any("by default" in r.getMessage() and "falls back" in r.getMessage() for r in caplog.records)
-
-
-def test_an_unknown_value_is_the_old_store(monkeypatch):
-    monkeypatch.setenv(universe.SOURCE_ENV, "Spine ")
-    assert universe.source_state()["requested"] == "spine"
-    monkeypatch.setenv(universe.SOURCE_ENV, "wrds")
-    assert universe.source_state() == {"requested": "store", "effective": "store", "reason": None, "variable": "wrds"}
+    assert universe.source_state()["reason"] == "spine/security's last check failed"
 
 
 @pytest.mark.usefixtures("spine")

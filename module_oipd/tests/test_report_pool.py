@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.core.tests.board_js import run_board_js
 from RevenueChaser.module_oipd import engine, report
 
 
 def _seed_pool():
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": t, "market_cap": cap, "name": t + " Inc", "price": 10.0,
          "sector": "Technology", "industry": "Software - Application", "quote": {"symbol": t}}
         for t, cap in (("AAA", 9e9), ("BBB", 8e9), ("FUND", 7e9))])
@@ -89,7 +90,7 @@ def test_no_filter_set_keeps_every_name_in_the_picker_pool(rawstore_tmp_db, tmp_
 
 def test_the_sector_filter_narrows_the_picker_pool(rawstore_tmp_db, tmp_path):
     """#266 on the kit: the pool is filtered at either of the two sector levels."""
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": t, "market_cap": 9e9, "name": t + " Inc", "price": 10.0, "sector": s, "industry": i,
          "quote": {"symbol": t}}
         for t, s, i in (("AAA", "Healthcare", "Biotechnology"), ("BBB", "Healthcare", "Medical Devices"),

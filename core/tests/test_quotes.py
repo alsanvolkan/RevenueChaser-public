@@ -10,6 +10,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import calendar, quotes, rawstore
 from RevenueChaser.core import universe_fetch as uf
 
@@ -67,7 +68,7 @@ def yahoo_quote(ticker, cap=1.0e9, price=10.0, shares=1.0e8, hi=12.0, lo=8.0):
 
 
 def seed_universe(*tickers):
-    rawstore.write_rows("equity_universe", [{"ticker": t, "name": t} for t in tickers])
+    universe_store.put([{"ticker": t, "name": t} for t in tickers])
 
 
 def snapshot(source=None):

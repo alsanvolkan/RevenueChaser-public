@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.module_testing.e2e.harness.screener_seed import bars_to, seed_d01, seed_quote
 
 _ANNUAL = [
@@ -35,7 +36,7 @@ def seeded(dashboard, monkeypatch):
     rawstore.ensure_all_tables()
     quote = {"regularMarketPrice": 130.0, "fiftyTwoWeekHigh": 135.0, "fiftyDayAverage": 120.0,
              "averageDailyVolume10Day": 2_000_000}
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": "ZETA", "cik": "", "name": "Zeta Corp", "market_cap": 2.0e9, "price": 130.0,
         "sector": "Technology", "industry": "Software - Application",
         "quote": quote}])
@@ -142,7 +143,6 @@ class TestRefreshIsStoreOnly:
         assert dashboard.table_count("fundamentals_scores") == 2
 
     def test_a_missing_spy_series_shows_no_regime(self, dashboard, seeded):
-        import RevenueChaser.core.rawstore as rawstore
         from RevenueChaser.core.tests.d01_seed import drop_d01
         drop_d01("SPY")
         _fetch(dashboard)                       # no D01 SPY: the fallback finds no cache, and the fake Yahoo no SPY
