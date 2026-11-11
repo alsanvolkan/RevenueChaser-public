@@ -263,15 +263,13 @@ def test_sec13f_totals_populated(rawstore_tmp_db):
     assert row["entry"]["2026-03-31"]["holders"] == 2
 
 
-def test_etf_holdings_cache_populated(rawstore_tmp_db, monkeypatch):
-    from RevenueChaser.app import runners
-    import RevenueChaser.module_sector_rotation.etf_holdings as eh
-    monkeypatch.setattr(eh, "get_etf_holdings", lambda t, uw: [{"ticker": "AAPL", "weight": 0.2}])
-    from RevenueChaser.app.jobs import JobMessage
-    with pytest.raises(JobMessage, match="Holdings synced"):
-        runners.run_etf_holdings_sync(uw=None)
+def test_etf_holdings_round_trip_records_its_change(rawstore_tmp_db):
+    """No writer since #642 PR 5 (the board reads the spine's lists). The tables stay, so the round trip is the
+    test: a write still appends its rule-A change row."""
+    rawstore.write_rows("etf_holdings", [{"ticker": "XLK", "entry": [{"ticker": "AAPL", "weight": 0.2}],
+                                          "provider": "uw"}])
     assert rawstore.get("etf_holdings", "XLK")["entry"] == [{"ticker": "AAPL", "weight": 0.2}]
-    assert rawstore.get("store_meta", "etf_holdings_generated_at") is not None
+    assert rawstore.query("SELECT count(*) AS n FROM etf_holdings_changes WHERE ticker = 'XLK'")[0]["n"] == 1
 
 
 def test_store_meta_populated(rawstore_tmp_db):
@@ -399,7 +397,7 @@ POPULATION: dict[str, str] = {
     "sec13f_security_meta": f"{_HERE}::test_sec13f_security_meta_populated",
     "sec13f_enrichment": f"{_HERE}::test_sec13f_enrichment_populated",
     "sec13f_edgar_backfill": f"{_HERE}::test_sec13f_edgar_backfill_populated",
-    "etf_holdings": f"{_HERE}::test_etf_holdings_cache_populated",
+    "etf_holdings": f"{_HERE}::test_etf_holdings_round_trip_records_its_change",
     "cusip_ticker": f"{_HERE}::test_cusip_ticker_populated",
     "sec13f_totals": f"{_HERE}::test_sec13f_totals_populated",
     "sec13f_ticker_names": f"{_HERE}::test_sec13f_ticker_names_populated",
@@ -480,8 +478,7 @@ POPULATION: dict[str, str] = {
     "board_settings_changes": "core/tests/test_change_capture.py::test_write_rows_replace_and_delete_are_recorded",
     "catalyst_events_changes": "core/tests/test_change_capture.py::test_write_rows_replace_and_delete_are_recorded",
     "orphan_designations_changes": "core/tests/test_change_capture.py::test_write_rows_replace_and_delete_are_recorded",
-    "etf_holdings_changes":
-        "module_sector_rotation/tests/test_holdings_history_303.py::test_a_first_sync_appends_one_change_row_per_etf",
+    "etf_holdings_changes": f"{_HERE}::test_etf_holdings_round_trip_records_its_change",
     "result_runs": "core/tests/test_history_store.py::test_recording_the_same_run_twice_writes_nothing_the_second_time",
     "ag_scores_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",
     "swing_scores_history": "core/tests/test_history_store.py::test_every_history_table_takes_a_full_row_through_record_run",

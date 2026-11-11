@@ -279,7 +279,7 @@ def my_universe_changes(limit: int = 200) -> list[dict]:
 
 
 def etf_holdings(etfs: Iterable[str]) -> list[dict]:
-    """Every line (``etf``, ``as_of``, ``ticker``, ``name``, ``weight``) of each of ``etfs`` (upper-cased) on that
+    """Every line (``etf``, ``as_of``, ``provider``, ``ticker``, ``name``, ``weight``) of each of ``etfs`` (upper-cased) on that
     fund's own newest day of ``etf_holdings``, by fund and weight (largest first). ``ticker`` is NULL for a line with
     no US ticker (a foreign listing) and ``weight`` for a fund that publishes none: both are kept, a board decides.
     No line, or no spine file at all, is no rows (#642 F9; Sector Rotation reads this)."""
@@ -287,7 +287,7 @@ def etf_holdings(etfs: Iterable[str]) -> list[dict]:
     if not wanted:
         return []
     marks = ", ".join("?" * len(wanted))
-    sql = (f"SELECT h.etf, h.as_of, h.ticker, h.name, h.weight FROM etf_holdings h JOIN (SELECT etf, max(as_of) AS "
+    sql = (f"SELECT h.etf, h.as_of, h.provider, h.ticker, h.name, h.weight FROM etf_holdings h JOIN (SELECT etf, max(as_of) AS "
            f"as_of FROM etf_holdings WHERE etf IN ({marks}) GROUP BY etf) d ON h.etf = d.etf AND h.as_of = d.as_of "
            "ORDER BY h.etf, h.weight DESC NULLS LAST, h.ticker NULLS LAST")
     return _rows("etf_holdings", sql, wanted, missing_table_ok=True)

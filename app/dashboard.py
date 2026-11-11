@@ -209,7 +209,6 @@ jobs.register("module_sec_13f", runners.build_sec13f, ["module_sec_13f"], requir
 # no deadline: fewer than 5 recorded runs (23 Oct); set from job_runs when measured
 jobs.register("rotation", runners.run_rotation_latest, ["module_sector_rotation"])
 jobs.register("moneyflow", runners.run_money_flow_latest, ["module_sector_rotation"])
-jobs.register("holdings", runners.run_etf_holdings_sync, ["module_sector_rotation"], lane="long")
 jobs.register("spxgamma", runners.run_spxgamma, ["module_spx_gamma"])
 jobs.register("spxgamma_stored", runners.run_spxgamma_stored, ["module_spx_gamma"], requires_uw=False)  # #179 D5
 # The 2-year history pull (D1): past raw days only, so no board reloads. Checkpoints between sessions.
@@ -808,11 +807,6 @@ def run_storage_picture():
 @app.route("/run/moneyflow", methods=["POST"])
 def run_moneyflow():
     return _submit("moneyflow", {})
-
-
-@app.route("/run/holdings", methods=["POST"])
-def run_holdings():
-    return _submit("holdings", {})
 
 
 @app.route("/run/spxgamma", methods=["POST"])
@@ -1912,15 +1906,14 @@ def view_rotation_holdings():
 
     # Store-only (backend B9): a GET view never calls the network and never
     # hides stored data behind an API key. RS-enriched rows come from the
-    # "holdings" job (Rotation → Fetch holdings); without them the bulk holdings
-    # list is shown with RS as "—".
+    # Rotation Fetch (#642 PR 5); without them the spine's holdings list is
+    # shown with RS as "—".
     rows = rotation_store.load_holdings_cache(ticker, any_age=True)
     if rows is None:
         rows = _load_holdings_bulk_cache(ticker)
     if not rows:
         return ('<td colspan="11" style="color:#8b949e;padding:10px 14px">'
-                'No stored holdings for this ETF yet — use <b>Fetch holdings</b> on the '
-                'Rotation board.</td>')
+                'No stored holdings for this ETF yet — the spine holds no list for it.</td>')
     return render_holdings_fragment(rows)
 
 

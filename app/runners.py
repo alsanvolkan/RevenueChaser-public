@@ -536,6 +536,10 @@ def run_rotation_latest(uw: UWClient, benchmark: str = "SPY", start: str = None,
     # only (ROT-4): sector rows expand to the sector -> industry tree
     # (cap-weighted, from the shared universe) rather than a 10-name ETF snapshot.
     holdings = fetch_all_holdings(uw, snapshots) if snapshots else {}
+    # The holdings view reads these RS rows (#642 PR 5: the Fetch stores them now that the holdings job is gone).
+    # An ETF the Fetch priced none for keeps what it stored.
+    for etf, rows in holdings.items():
+        rotation_store.save_holdings_cache(etf, rows)
     sector_holdings = sector_etf_trees() if snapshots else {}
     health = _uw_health(uw)
     html_path = export_rotation_dashboard(snapshots, filename=str(ROTATION_LATEST.relative_to(OUTPUT_DIR)),
@@ -959,78 +963,6 @@ def _record_13f(shown: dict, run: str, run_at: float, names_note: str | None,
     except Exception as exc:
         logger.exception("13F result history failed")
         ledger.add_note(f"13F result history was not recorded: {type(exc).__name__}: {exc}")
-
-
-def run_etf_holdings_sync(uw: UWClient) -> None:
-    """Bulk-resolve sector+theme ETF holdings via UW->yfinance, cache once."""
-    from datetime import datetime
-    from RevenueChaser.core import calendar, rawstore
-    from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
-    from RevenueChaser.module_sector_rotation.etf_holdings import get_etf_holdings, holdings_row
-
-    # ``get_etf_holdings`` returns [] when every source failed; that must not
-    # replace an ETF's last good holdings (PL2 / N1). Such ETFs keep their
-    # stored rows and are named in the job message.
-    stored = {r["ticker"]: r.get("entry") for r in rawstore.get_all("etf_holdings")}
-    cache, kept, fetched = {}, [], {}
-    for ticker, info in ROTATION_ETFS.items():
-        if info.get("group") not in ("sector", "theme"):
-            continue
-        rows = get_etf_holdings(ticker, uw)
-        if not rows and stored.get(ticker):
-            kept.append(ticker)
-            continue
-        cache[ticker], fetched[ticker] = rows, calendar._now().timestamp()
-    if cache:
-        rawstore.write_rows("etf_holdings", [  # #303: the store appends etf_holdings_changes on a change
-            holdings_row(t, rows, fetched[t]) for t, rows in cache.items()
-        ])
-    if any(cache.values()):
-        rawstore.write_rows("store_meta", [{
-            "key": "etf_holdings_generated_at",
-            "value": datetime.now().isoformat(),
-        }])
-    # The live RS enrichment that used to run inside the holdings GET view now
-    # runs here (backend D3/B9): theme ETFs get RS-vs-SPY rows stored for the
-    # view. Sector ETFs show the sector -> industry tree instead, so they are
-    # skipped (no wasted calls).
-    from datetime import timedelta
-    from RevenueChaser.module_sector_rotation import store as rotation_store
-    from RevenueChaser.module_sector_rotation.engine import (
-        HOLDINGS_READ_DAYS, SPY_MIN_CLOSES, bar_points, holdings_rs_rows,
-    )
-    enriched, rs_kept = 0, []
-    # One prices-store read of SPY and every holding for the whole job (the Rotation Fetch does the same,
-    # ``engine.fetch_all_holdings``): no candle is fetched here any more. Without enough SPY sessions in the store
-    # every RS would be 0.0, so the theme ETFs keep the RS they already have and are named.
-    themes = [t for t, info in ROTATION_ETFS.items() if info.get("group") == "theme" and cache.get(t)]
-    points, spy, as_of = {}, [], None
-    if themes:
-        try:
-            as_of = calendar.latest_complete_session()
-        except ValueError:
-            as_of = None
-    if as_of is not None:
-        wanted = sorted({h.get("ticker") for t in themes for h in cache[t] if h.get("ticker")} - {"SPY"})
-        points = bar_points(["SPY", *wanted], as_of - timedelta(days=HOLDINGS_READ_DAYS), as_of)
-        spy = points.get("SPY", [])
-    for ticker in themes:
-        if as_of is None or len(spy) < SPY_MIN_CLOSES:
-            rs_kept.append(ticker)
-            continue
-        rows = holdings_rs_rows(cache[ticker], points, spy, as_of)
-        if rows:
-            rotation_store.save_holdings_cache(ticker, rows)
-            enriched += 1
-    msg = (f"Holdings synced for {sum(1 for r in cache.values() if r)} ETFs; "
-           f"RS computed for {enriched} theme ETFs.")
-    if rs_kept:
-        msg += (f" Kept stored RS for {len(rs_kept)} theme ETF(s): the prices store has too few SPY "
-                f"sessions: {', '.join(rs_kept)}.")
-    if kept:
-        msg += (f" Kept stored holdings for {len(kept)} ETF(s) whose fetch returned nothing "
-                f"(provider failure): {', '.join(kept)}.")
-    raise JobMessage(msg)
 
 
 def spxgamma_latest() -> dict | None:

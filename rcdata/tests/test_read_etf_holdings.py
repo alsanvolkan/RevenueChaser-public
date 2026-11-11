@@ -34,6 +34,7 @@ def test_holdings_are_each_funds_newest_day_by_weight_with_name_and_weight():
         ("ARKQ", "TSLA", "TSLA NAME", 2.0), ("ARKQ", None, "NONE NAME", 1.0),
         ("SMH", "NVDA", "NVDA NAME", 2.0), ("SMH", "TSM", "TSM NAME", 1.0)]
     assert {str(r["as_of"]) for r in rows} == {"2026-11-07"}
+    assert {r["provider"] for r in rows} == {"test"}                   # Data Health's provider share reads it
 
 
 def test_a_spine_file_without_the_holdings_table_is_no_rows():

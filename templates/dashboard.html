@@ -175,7 +175,7 @@ button:disabled{opacity:.5;cursor:default}
   .topbar .ctl button,.topbar>button{padding:0 8px}
   /* Rotation's six controls in two rows instead of three: the short ones first, the range picker and Today after. */
   #rotation-ctl>*{order:2}
-  #btn-rot-fetch-today,#btn-rot-holdings,#rotation-ctl>.chk{order:1}
+  #btn-rot-fetch-today,#rotation-ctl>.chk{order:1}
   .status{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;flex-basis:100%;order:2}
   .topbar .sync{margin-left:0;font-size:12px}
   /* The page itself never scrolls sideways: a board wider than the pane scrolls inside its own frame. */
@@ -237,7 +237,6 @@ button:disabled{opacity:.5;cursor:default}
     </div>
     <div class="ctl" id="rotation-ctl" style="display:none">
       <button id="btn-rot-fetch-today" title="Fetch today's rotation snapshot from the API (money flow is refreshed right after)">Fetch Data Today</button>
-      <button id="btn-rot-holdings" title="Fetch ETF holdings and their RS vs SPY (long job; the holdings rows read the stored result)">Fetch holdings</button>
       <div class="range-dd" id="range-dd">
         <button class="dd-btn" id="range-btn" onclick="toggleCal('cal-popover')">Fetch Data Range ▾</button>
         <span id="range-label" style="font-size:12px;color:var(--sky)"></span>
@@ -1310,9 +1309,6 @@ document.getElementById('btn-fetch').addEventListener('click', function(){
 // Sector Rotation fetch buttons.
 document.getElementById('btn-rot-fetch-today').addEventListener('click', function(){
   fetchTab('/run/rotation', new URLSearchParams());
-});
-document.getElementById('btn-rot-holdings').addEventListener('click', function(){
-  fetchTab('/run/holdings', null);
 });
 // SPX Gamma Fetch: force refresh the currently selected date (from the picker button).
 document.getElementById('btn-spx-fetch').addEventListener('click', function(){

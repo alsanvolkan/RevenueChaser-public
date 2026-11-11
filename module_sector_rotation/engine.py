@@ -193,8 +193,8 @@ def fetch_all_holdings(uw, snapshots, max_holdings: int = 10, max_workers: int =
     """Top holdings (with SPY-relative RS) for every theme ticker.
 
     Used to embed holdings into the exported rotation map so it is self-contained
-    (no live server round-trip needed to expand a row). The holdings come from the store, written by the
-    holdings job (#303, D25); an ETF with no stored holdings gets none. Sector rows expand to the
+    (no live server round-trip needed to expand a row). The holdings come from the spine's lists
+    (``etf_holdings.stored_holdings``, #642); an ETF with none gets none. Sector rows expand to the
     sector -> industry tree (``sector_etf_trees``) instead, so their ETF holdings are not priced (ROT-4).
 
     The RS reads the prices store (M-ROT-3, PR 9): one ``rcdata.read.ticker_bars`` read of SPY and every holding up
