@@ -30,6 +30,7 @@ TABLE = "news_headlines"
 MIN_PREMIUM = 25_000          # a tweet is about a block print; this keeps UW's 50 newest prints to the large ones
 BEFORE_S, AFTER_S = 4 * 3600, 15 * 60
 MAX_CALLS = 20
+ROW_CALLS = 3                 # flow, historic and bars: the most one row asks in a pass
 MAX_TRIES = 3
 OI_EVERY_S = 3600             # the next day's open interest is asked at most hourly until UW has it
 RECHECK_DAYS = 3              # a row older than this is no longer checked (its OI change is asked within this)
@@ -212,7 +213,7 @@ def run(make_uw, now: float | None = None) -> dict:
     calls, done, px_cache = 0, [], {}
     try:
         for r in rows:
-            if calls >= MAX_CALLS:
+            if calls + ROW_CALLS > MAX_CALLS:      # a row can take up to ROW_CALLS; never pass the cap
                 break
             state, n = check(uw, r, now, px_cache)
             calls += n
