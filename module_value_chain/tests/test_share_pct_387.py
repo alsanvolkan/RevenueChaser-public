@@ -77,7 +77,7 @@ def test_the_first_store_call_adds_the_column_to_both_tables_and_old_rows_read_n
     rawstore.ensure_all_tables()                       # what the dashboard's first store call does
     assert _columns("edgar", "chain_mentions")["share_pct"] == "DOUBLE"
     assert _columns("history", "value_chain_edges_history")["share_pct"] == "DOUBLE"
-    assert rawstore.get_all("chain_mentions") == [{**_edge(), "share_pct": None}]
+    assert rawstore.get_all("chain_mentions") == [{**_edge(), "share_pct": None, "source": None}]
     (old,) = rawstore.query("SELECT * FROM value_chain_edges_history WHERE run_id = 'old'", db="history")
     assert old["share_pct"] is None and old["src"] == "AMKR"
     assert rawstore.schema_version() == "13", "the column came without a bump (13 is relatedness, #401)"
@@ -100,7 +100,7 @@ def test_the_first_fetch_on_an_old_store_writes_the_share_on_both_tables(old_sto
 # ── the selection version ──
 
 def test_the_selection_version_is_2_so_the_model_version_changes():
-    assert vc_history.SELECTION_VERSION == "3"      # 2 for #387 D7, 3 since G6 (XBRL customers)
+    assert vc_history.SELECTION_VERSION == "4"      # 2 for #387 D7, 3 since G6 (XBRL customers), 4 #410
     assert vc_history.model_version() != ledger.model_version("1", vc_history.effective_config())
 
 

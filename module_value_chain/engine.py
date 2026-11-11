@@ -350,7 +350,7 @@ def _xbrl_customer_edges(ticker: str, customers: list[dict], names: dict | None 
             "dst_name": hit["name"], "dst_ticker": hit["ticker"], "relation": "customer",
             "snippet": (f"Annual report XBRL: {c['customer']} {pct:g}% of revenue (period ending {c.get('period_end')}"
                         + (f", {c['form']} {c['accession']})" if c.get("accession") else f", {c.get('source')})")),
-            "filed": filed, "share_pct": pct}
+            "filed": filed, "share_pct": pct, "source": "xbrl"}
     return list(out.values())
 
 
@@ -398,7 +398,7 @@ def filing_edges(ticker: str, text: str, filed: str = "", customers: list[dict] 
     stated_dst = {c["dst_ticker"] for c in stated}
     out = [{"src": ticker, "dst_name": c["dst_name"], "dst_ticker": c["dst_ticker"],
             "relation": c["relation"], "snippet": c["snippet"], "filed": c["filed"],
-            "share_pct": c.get("share_pct")}
+            "share_pct": c.get("share_pct"), "source": c.get("source") or "regex"}
            for c in stated]
     for m in mentions_mod.find_mentions(text, filed):
         if aliases.issuer(m["dst_ticker"]) == me:
@@ -407,7 +407,7 @@ def filing_edges(ticker: str, text: str, filed: str = "", customers: list[dict] 
             continue
         out.append({"src": ticker, "dst_name": m["dst_name"], "dst_ticker": m["dst_ticker"],
                     "relation": m["relation"], "snippet": m["snippet"], "filed": m["filed"],
-                    "share_pct": None})
+                    "share_pct": None, "source": "regex"})
     # chain_mentions is keyed (src, dst_name, relation): keep the first per key.
     seen, uniq = set(), []
     for x in out:
@@ -418,23 +418,81 @@ def filing_edges(ticker: str, text: str, filed: str = "", customers: list[dict] 
     return uniq
 
 
+# A profile field and the relation its companies have to the filer (module_relatedness/profile_v3.py).
+_PROFILE_RELATIONS = (("customers", "customer"), ("suppliers", "supplier"), ("named_competitors", "competitor"))
+
+
+def _counterparty(edge: dict) -> str:
+    return aliases.issuer(edge["dst_ticker"]) if edge.get("dst_ticker") else aliases._key(edge.get("dst_name") or "")
+
+
+def profile_edges(ticker: str, profile: dict, filed: str = "", names: dict | None = None) -> list[dict]:
+    """``chain_mentions`` rows of one Relatedness profile (#410): each named customer, supplier and competitor, with
+    its quote and stated share, resolved to a ticker through ``aliases.resolve``; a name it cannot resolve stays as
+    text with an empty ``dst_ticker``. The filer itself is no edge."""
+    me, out = aliases.issuer(ticker), []
+    for field, relation in _PROFILE_RELATIONS:
+        for p in profile.get(field) or []:
+            p = {"name": p} if isinstance(p, str) else (p if isinstance(p, dict) else {})
+            name = str(p.get("name") or "").strip()
+            hit = aliases.resolve(name, names) if name else None
+            if not name or (hit and aliases.issuer(hit["ticker"]) == me):
+                continue
+            share = p.get("share")
+            out.append({"src": ticker, "dst_name": name, "dst_ticker": hit["ticker"] if hit else "",
+                        "relation": relation, "snippet": p.get("quote") or "", "filed": filed,
+                        "share_pct": round(float(share) * 100, 2) if isinstance(share, (int, float)) else None,
+                        "source": "profile"})
+    return out
+
+
+def merge_profile(regex_edges: list[dict], prof_edges: list[dict]) -> list[dict]:
+    """One filer's edges: the profile's first; a sentence, keyword or XBRL edge only for a counterparty the profile
+    does not name (#410: "prefers the profile row for a (filer, counterparty) pair"). A profile customer with no
+    share takes the XBRL or sentence share of the same company."""
+    if not prof_edges:
+        return regex_edges
+    by_party = {}
+    for e in prof_edges:
+        by_party.setdefault(_counterparty(e), e)
+    for e in regex_edges:
+        p = by_party.get(_counterparty(e))
+        if p is not None and p["share_pct"] is None and e.get("share_pct") is not None \
+                and e["relation"] == p["relation"]:
+            p["share_pct"] = e["share_pct"]
+    return prof_edges + [e for e in regex_edges if _counterparty(e) not in by_party]
+
+
+def _stored_profiles() -> dict[str, dict]:
+    """The stored Relatedness v3 profiles (``relatedness_profiles.profile_json``); empty when none can be read."""
+    from RevenueChaser.module_relatedness import store
+    try:
+        return store.load_profile_json()
+    except Exception:  # noqa: BLE001 - no profile table yet reads as "no profiles": the regex edges stand
+        logger.exception("value_chain: Relatedness profiles could not be read; regex edges only")
+        return {}
+
+
 def build_edges(info: dict | None = None) -> list[dict]:
     """Recompute mentions from the cached corpus and persist them.
 
     A caller that passes ``info`` (the result history, #387) learns how many filings were read (``filings``) and
     whether the stored edges were kept because none came out (``kept``)."""
     edges: list[dict] = []
-    n_filings, names = 0, None
+    profiles = _stored_profiles()
+    n_filings, names = 0, (_spine_names() if profiles else None)
     for rows in _corpus_batches():
         n_filings += len(rows)
         customers = _stored_customers(rows)
         if customers and names is None:
             names = _spine_names()
         for f in rows:
+            t, filed = f["ticker"], f.get("filed") or ""
             text = "" if f.get("quality") == "missing" else (f.get("item_text") or "")
-            if not text and f["ticker"] not in customers:
+            if not text and t not in customers and t not in profiles:
                 continue
-            edges.extend(filing_edges(f["ticker"], text, f.get("filed") or "", customers.get(f["ticker"]), names))
+            found = filing_edges(t, text, filed, customers.get(t), names)
+            edges.extend(merge_profile(found, profile_edges(t, profiles[t], filed, names)) if t in profiles else found)
     rawstore.ensure_table("chain_mentions")
     if info is not None:
         info.update(filings=n_filings, kept=not edges)
@@ -613,7 +671,7 @@ def focal_graph(edges: list[dict], ticker: str, depth: int = 2,
         links.append({"src": e["src"], "dst": e.get("dst_ticker") or e["dst_name"],
                       "dst_ticker": e.get("dst_ticker") or "",
                       "relation": e["relation"], "snippet": e.get("snippet") or "",
-                      "share_pct": e.get("share_pct"),
+                      "share_pct": e.get("share_pct"), "source": e.get("source"),
                       "hop": hop, "incoming": incoming})
 
     first = [e for e in by_src.get(ticker, []) if e["relation"] in ("supplier", "customer")]

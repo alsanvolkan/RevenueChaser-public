@@ -90,7 +90,7 @@ def test_off_the_layer_nothing_changes():
 
 
 def test_the_selection_version_moves_with_the_edges():
-    assert vc_history.SELECTION_VERSION == "3"
+    assert vc_history.SELECTION_VERSION == "4"
 
 
 def test_a_filing_without_text_still_gives_its_xbrl_customers(layer):
