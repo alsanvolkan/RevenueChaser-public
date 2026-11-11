@@ -16,7 +16,8 @@ in the read log. No serving file yet means no rows, not an error: the status say
 from __future__ import annotations
 
 import logging
-from datetime import date
+import re
+from datetime import date, timedelta
 from typing import Iterable
 
 from ..core import calendar
@@ -356,10 +357,13 @@ DATASET_OF_TABLE.update({"price_bar_daily": "wrds/prices", "security_symbol": "a
                          # The two second-source reports a cross-check reads (Karar 32-B): the monthly WRDS
                          # comparison, written by the attended WRDS run, and the revisions the serving build writes
                          # when a later run replaces a stored bar.
-                         "wrds_price_diff": "wrds/prices", "price_revision": "prices/serving"})
+                         "wrds_price_diff": "wrds/prices", "price_revision": "prices/serving",
+                         # The split factors the serving build derives from the actions (#646 PR 4 reads them to
+                         # put an old Form 4 share count into today's basis).
+                         "adj_factor": "prices/serving"})
 KIND_OF_TABLE.update({t: "prices" for t in ("price_bar_daily", "security_symbol", "market_cap_daily",
                                             "corporate_action", "shares_class", "wrds_price_diff",
-                                            "price_revision")})
+                                            "price_revision", "adj_factor")})
 BASES = ("nominal", "split", "total_return")
 # The factor period of a bar: ``valid_from <= session_date < valid_to`` (no row: factor 1), found by an ASOF join on
 # the nearest ``valid_to`` after the session: ``rcdata.build.prices.serving.AS_OF_PERIOD``, the same lookup and the
@@ -1293,3 +1297,280 @@ def earnings_options(start=None, end=None, tickers: Iterable[str] | None = None)
         sql += " AND session_date <= ?"
         params.append(_day(end))
     return _option_rows("er_options", sql + " ORDER BY session_date, ticker", params)
+
+
+# ── Insider %, reported from Form 4 (#646 PR 4) ──────────────────────────────────────────────────────────────
+# What the 13F board's Insider % column reads once Yahoo's ``heldPercentInsiders`` goes with the old store. The
+# rule was settled over four cross-reviews (Grok and Claude, 11 Nov 2026; ``claude-coordinator``
+# ``reviews/2026-11-11_2215_insider-pct-key-divisor-xreview-round4.md``), and what it mostly says is "do not
+# print a number you cannot stand behind":
+#
+# - Form 4 reports a holding only when it is traded, so this is the **last reported** share of the company, not
+#   today's. Its date and its coverage travel with it.
+# - Officers and directors count whatever their ten-percent flag says, so a founder's stake counts and an index
+#   fund's does not (the fund is in the board's 13F total already).
+# - One position per owner per **security key**, and the key has to keep apart what the title keeps apart:
+#   class, series, voting and a tracking stock's business name. Collapsing them was the blocker of two rounds.
+# - A class is divided by **its own** shares outstanding, never by another class's and never by the issuer's
+#   total. If any kept class has no figure of its own, the ticker has no number at all.
+
+#: A security the column is not about. Checked before the common test, so ``Class A Preferred Stock`` never
+#: reaches the key and cannot replace ``Class A Common Stock`` (round 2's blocker).
+_NOT_COMMON = re.compile(r"\b(preferred|warrant|option|note|notes|debenture|bond|phantom|restricted\s+stock\s+unit"
+                         r"|rsu|deferred\s+stock\s+unit|dsu|stock\s+appreciation)\b", re.I)
+#: Common equity, in the spellings this corpus actually uses: 6,283 distinct titles on 11 Nov 2026, of which the
+#: common ones are ``Common Stock``, ``Class A Common Stock``, ``Common Shares``, ``Ordinary Shares``, ``Common``,
+#: ``Capital Stock``, and the voting-share forms of the Canadian issuers.
+_COMMON = re.compile(r"\b(common|ordinary|capital|registered)\b"
+                     r"|\b(subordinate|multiple|limited)\s+voting\s+shares?\b"
+                     r"|\bclass\s+[a-z0-9]\b.*\bshares?\b", re.I)
+#: A depositary receipt. Kept apart from plain common on purpose: ``shares_class`` holds an ADR issuer's count
+#: **in ordinary shares, not in ADSs** (``rcdata/build/prices/serving.py:20-22``), so dividing an ADS holding by
+#: it is wrong by the depositary ratio. It gets its own key and matches only an ADR shares row.
+_DEPOSITARY = re.compile(r"\b(american\s+depositary|depositary\s+(share|receipt|unit))", re.I)
+#: The voting form, when the title says one. ``nonvoting`` and the Canadian ``subordinate`` / ``multiple``
+#: voting shares are different securities from plain common and from each other (one vote against ten), so the
+#: voting form is part of the key rather than a word the business name swallows.
+_VOTING = ((re.compile(r"\bnon[-\s]?voting\b", re.I), "nonvoting"),
+           (re.compile(r"\bsubordinate[d]?\s+voting\b", re.I), "subordinate"),
+           (re.compile(r"\bmultiple\s+voting\b", re.I), "multiple"),
+           (re.compile(r"\blimited\s+voting\b", re.I), "limited"))
+#: ``Class A``, ``Class A-1``, ``Class 1``. The letter or number is the key's class; ``A-1`` stays apart from ``A``.
+_CLASS = re.compile(r"\bclass\s+([a-z](?:-\d+)?|\d+)\b", re.I)
+#: ``Series A``, ``Series 1``. A series marker is not always a letter in this corpus (``Series 1 Common Stock``).
+_SERIES = re.compile(r"\bseries\s+([a-z](?:-\d+)?|\d+)\b", re.I)
+#: Words that say what kind of security it is, and the par-value tail. What is left over is the key's fourth
+#: part, and its job is to **detect** rather than to classify: measured over the whole corpus (6,283 titles,
+#: 11 Nov 2026) a leftover is as often the issuer's own name (``Disney Common Stock``, ``First BanCorp Common
+#: Stock``) as a tracking stock (``Series C Liberty SiriusXM Common Stock``), and no rule here can tell them
+#: apart. So one issuer whose titles leave different remainders under one (class, series, voting) is
+#: **ambiguous** and gets no number at all, instead of a merge that double counts or a split that deletes.
+_BOILERPLATE = re.compile(r"\b(class|series|common|ordinary|capital|stock|shares?|units?|voting|subordinate"
+                          r"|subordinated|multiple|limited|non|par|value|per|share|new|the|of|and|a"
+                          r"|no|without|stated|registered|nonvoting|non-voting"
+                          r"|american|depositary|receipts?)\b|[$%,.]|\d+(\.\d+)?", re.I)
+
+
+def security_key(title: str) -> tuple[str, str, str, str] | None:
+    """``(class, series, voting, business)`` for a Form 4 ``security_title`` that is common equity, else None.
+
+    None means "not the security this column is about" - a preferred, a warrant, an option, a note, a phantom or
+    restricted unit. Those are counted in the coverage line, never summed and never keyed, because a
+    ``Class A Preferred Stock`` keyed as ``class a`` replaced a real ``Class A Common Stock`` balance in an
+    earlier draft of this rule.
+
+    Every part of the key is a lower-cased token or empty. ``voting`` is ``nonvoting`` or empty; ``business`` is
+    whatever distinctive words are left once the kind words and the par value are gone, which is how a tracking
+    stock stays apart from the plain class of the same letter.
+    """
+    text = " ".join(str(title or "").split())
+    if not text or _NOT_COMMON.search(text):
+        return None
+    depositary = bool(_DEPOSITARY.search(text))
+    if not depositary and not _COMMON.search(text):
+        return None
+    klass = _CLASS.search(text)
+    series = _SERIES.search(text)
+    business = " ".join(sorted(w for w in _BOILERPLATE.sub(" ", text.lower()).split() if len(w) > 1))
+    if depositary:
+        business = ("ads " + business).strip()
+    voting = next((name for pattern, name in _VOTING if pattern.search(text)), "")
+    return (klass.group(1).lower() if klass else "",
+            series.group(1).lower() if series else "",
+            voting, business)
+
+
+#: ``class_member`` as the SEC covers tag it, to the key's class letter. ``CommonStockMember`` and a NULL tag are
+#: the issuer's single unlabelled figure: usable only when the issuer has one kept class (see ``insider_reported``).
+_CLASS_MEMBER = re.compile(r"CommonClass([A-Z])Member", re.I)
+_MEMBER_NONVOTING = re.compile(r"Non[-]?voting", re.I)
+_MEMBER_ADR = re.compile(r"AdrMember", re.I)
+#: Rows older than this are a filing error, not a holding: the corpus runs from year 12 to 2047.
+_FORM4_FROM = date(1990, 1, 1)
+#: A position whose newest filing is older than this is stale. It is **not** dropped - 82.6% of the reported
+#: shares are older, so a cut would delete most of the number (measured 11 Nov 2026). It is counted and shown.
+_STALE_DAYS = 730
+
+
+def _member_key(member: str | None) -> str | None:
+    """The key's class letter a ``class_member`` tag divides, ``""`` for the issuer's unlabelled figure, or None
+    for a tag this rule does not match (a preferred class, an unknown member)."""
+    if member is None or not str(member).strip():
+        return ""
+    text = str(member)
+    if _MEMBER_ADR.search(text):
+        return "ads"
+    if _MEMBER_NONVOTING.search(text):
+        return "nonvoting"
+    got = _CLASS_MEMBER.search(text)
+    if got:
+        return got.group(1).lower()
+    return "" if "CommonStockMember" in text else None
+
+
+def insider_reported(tickers: Iterable[str], as_of=None) -> dict[str, dict]:
+    """``{ticker: row}``: the share of each company its officers and directors **last reported** holding.
+
+    One row per ticker that has a number, plus one for every ticker that has none and why. The fields:
+
+    - ``pct``: the summed, split-adjusted shares over the matched shares outstanding, times 100, or None.
+    - ``owners`` / ``owners_recent``: officers and directors counted, and how many filed inside two years.
+    - ``newest_filed``: the newest filing the sum rests on.
+    - ``stale_share``: the fraction of the summed shares whose newest filing is older than two years. Over 0.5
+      the number is ``partial``: most of it was last confirmed years ago.
+    - ``state``: ``ok``, ``partial``, ``inconsistent`` (over 100%, shown and marked, never capped and never
+      blanked - a cap hides the fault and a blank only hides the loud ones), or a reason when ``pct`` is None:
+      ``no positions``, ``no shares outstanding``, ``unmatched class``, ``ambiguous titles``.
+    - ``other_securities``: positions dropped because they are not common equity (a preferred, a warrant, a
+      unit), so the cell can say what it left out.
+
+    Three things this cannot do, and says so rather than guessing: a holder whose only filing is a Form 3 is not
+    in the data at all; one block reported by two insiders (a trust and a spouse) is counted once per reporter;
+    a joint filing is attributed to its first owner. No network, one read of each serving file.
+    """
+    wanted = _tickers(tickers)
+    if not wanted:
+        return {}
+    today = _day(as_of) or date.today()
+    rows = [r for r in insider_transactions(wanted)
+            if r.get("tx_table") == "non_derivative" and r.get("shares_after") is not None
+            and (r.get("is_officer") or r.get("is_director"))
+            and r.get("transaction_date") is not None
+            and _FORM4_FROM <= _day(r["transaction_date"]) <= today + timedelta(days=7)]
+    out: dict[str, dict] = {t: {"ticker": t, "pct": None, "owners": 0, "owners_recent": 0, "newest_filed": None,
+                                "stale_share": None, "state": "no positions", "other_securities": 0}
+                            for t in wanted}
+    # Newest row per (ticker, owner, security key, direct/indirect). The order is the whole of the rule: a 4/A
+    # filed later corrects its original, and a same-day tranche in one filing keeps its last line, not its first.
+    newest: dict[tuple, dict] = {}
+    for r in rows:
+        key = security_key(r.get("security_title"))
+        if key is None:
+            out[r["ticker"]]["other_securities"] += 1
+            continue
+        at = (_day(r["transaction_date"]), _day(r.get("filed")) or _FORM4_FROM, str(r.get("accession") or ""),
+              int(r.get("line") or 0))
+        group = (r["ticker"], str(r.get("owner_cik") or ""), key, str(r.get("direct_indirect") or ""))
+        held = newest.get(group)
+        if held is None or at >= held["at"]:
+            newest[group] = {"at": at, "row": r, "key": key}
+    if not newest:
+        return out
+    ids = security_ids({t for t, *_ in newest})
+    factors = _split_factors(set(ids.values()))
+    divisors = _class_divisors(set(ids.values()))
+    per_ticker: dict[str, list[dict]] = {}
+    for (ticker, owner, key, _direct), got in newest.items():
+        per_ticker.setdefault(ticker, []).append({**got, "owner": owner, "key": key})
+    for ticker, positions in per_ticker.items():
+        out[ticker] = _insider_cell(ticker, positions, ids.get(ticker), factors, divisors, today,
+                                    out[ticker]["other_securities"])
+    return out
+
+
+def _split_factors(security_ids_set: set[str]) -> dict[str, list[dict]]:
+    """``{security_id: [adj_factor periods]}``, newest period last. ``split_factor`` is splits and stock
+    dividends only - ``tr_factor`` is the one that also carries cash dividends, and a dividend does not change a
+    share count (``rcdata/build/prices/serving.py:15-18``)."""
+    if not security_ids_set:
+        return {}
+    ids = sorted(security_ids_set)
+    out: dict[str, list[dict]] = {}
+    for r in _rows("adj_factor", f"SELECT security_id, valid_from, valid_to, split_factor FROM adj_factor "
+                                 f"WHERE security_id IN ({', '.join('?' * len(ids))}) "
+                                 "ORDER BY security_id, valid_from", ids):
+        out.setdefault(r["security_id"], []).append(r)
+    return out
+
+
+def _class_divisors(security_ids_set: set[str]) -> dict[str, dict[str, float]]:
+    """``{security_id: {class key part: newest outstanding}}``. The key part is the class letter, ``ads``,
+    ``nonvoting``, or ``""`` for the issuer's one unlabelled figure; a tag this rule does not know is left out
+    rather than matched to the wrong class."""
+    if not security_ids_set:
+        return {}
+    out: dict[str, dict[str, float]] = {}
+    for r in shares(security_ids_set, measure="outstanding"):
+        if r.get("value") is None or float(r["value"]) <= 0:
+            continue
+        part = _member_key(r.get("class_member"))
+        if part is None:
+            continue
+        out.setdefault(r["security_id"], {})[part] = float(r["value"])   # rows come oldest first: newest wins
+    return out
+
+
+def _adjust(shares_after: float, when: date, periods: list[dict]) -> float | None:
+    """``shares_after`` in today's share basis, or None when no factor period covers its day.
+
+    ``split_factor`` turns a nominal price of the period into today's, so shares - which move the other way -
+    are divided by it: a 2-for-1 split has factor 0.5 and turns 100 shares into 200.
+    """
+    for p in periods:
+        start, end = _day(p.get("valid_from")), _day(p.get("valid_to"))
+        if (start is None or when >= start) and (end is None or when < end):
+            factor = p.get("split_factor")
+            return float(shares_after) if not factor else float(shares_after) / float(factor)
+    return float(shares_after) if not periods else None
+
+
+def _insider_cell(ticker: str, positions: list[dict], security_id: str | None,
+                  factors: dict[str, list[dict]], divisors: dict[str, dict[str, float]],
+                  today: date, other: int) -> dict:
+    """One ticker's cell. Every kept class must have its own divisor, or the ticker has no number: a matched
+    subset printed as the company's figure is the error the fourth cross-review refused."""
+    cell = {"ticker": ticker, "pct": None, "owners": 0, "owners_recent": 0, "newest_filed": None,
+            "stale_share": None, "state": "no positions", "other_securities": other}
+    periods = factors.get(security_id or "", [])
+    stale_from = today - timedelta(days=_STALE_DAYS)
+    shares_by_class: dict[str, float] = {}
+    stale, total, owners, recent, newest_filed, unadjustable = 0.0, 0.0, set(), set(), None, 0
+    # One issuer whose titles leave different remainders under one (class, series, voting) is ambiguous: the
+    # remainder is as often its own name as a tracking stock, so neither merging nor splitting is safe.
+    remainders: dict[tuple, set[str]] = {}
+    for p in positions:
+        klass, series, voting, remainder = p["key"]
+        remainders.setdefault((klass, series, voting), set()).add(remainder)
+    if any(len(seen) > 1 for seen in remainders.values()):
+        cell["state"] = "ambiguous titles"
+        return cell
+    for p in positions:
+        row, (klass, _series, voting, business) = p["row"], p["key"]
+        adjusted = _adjust(float(row["shares_after"]), _day(row["transaction_date"]), periods)
+        if adjusted is None:
+            unadjustable += 1
+            continue
+        part = "ads" if business == "ads" else (voting or klass)
+        shares_by_class[part] = shares_by_class.get(part, 0.0) + adjusted
+        total += adjusted
+        owners.add(p["owner"])
+        filed = _day(row.get("filed"))
+        if newest_filed is None or (filed is not None and filed > newest_filed):
+            newest_filed = filed
+        if _day(row["transaction_date"]) >= stale_from:
+            recent.add(p["owner"])
+        else:
+            stale += adjusted
+    cell.update({"owners": len(owners), "owners_recent": len(recent), "newest_filed": newest_filed,
+                 "other_securities": other + unadjustable})
+    if not shares_by_class or total <= 0:
+        return cell
+    cell["stale_share"] = stale / total
+    held = divisors.get(security_id or "", {})
+    # The issuer's one unlabelled cover figure serves its single kept class, never one class of several.
+    outstanding = 0.0
+    for part in sorted(shares_by_class):
+        figure = held.get(part)
+        if figure is None and len(shares_by_class) == 1:
+            figure = held.get("")
+        if figure is None:
+            cell["state"] = "unmatched class"
+            return cell
+        outstanding += figure
+    if outstanding <= 0:
+        cell["state"] = "no shares outstanding"
+        return cell
+    cell["pct"] = 100.0 * total / outstanding
+    cell["state"] = ("inconsistent" if cell["pct"] > 100.0
+                     else "partial" if cell["stale_share"] > 0.5 else "ok")
+    return cell
