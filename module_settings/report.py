@@ -3166,11 +3166,11 @@ def render_settings_dashboard(payload: dict) -> str:
     # The payload's own ``newdata`` when the caller read it (tests, fixtures); else read here, per render.
     nd = payload["newdata"] if "newdata" in payload else _collect_newdata()
     view = _control_view(nd, payload)
-    control_html = control_render.render_data(view)
+    lookup_html = _ticker_drill(payload)
+    control_html = control_render.render_data(view, lookup_html)
     fetch_html = control_render.render_fetch(view)
     control_js = control_render.scripts(view)
     health_html = _health_panel(payload, nd)
-    lookup_html = _ticker_drill(payload)
     automations = payload.get("automations") or []
     automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
 
@@ -3194,7 +3194,6 @@ def render_settings_dashboard(payload: dict) -> str:
 {_tab_strip()}
 <div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
 <div class="ctl helpband"><div class="wrap helpwrap" style="max-width:var(--page-max,1280px);margin:0 auto;padding:12px 12px 0">{DATA_HELP}</div></div>
-<div class="ctl"><div class="wrap" style="max-width:var(--page-max,1280px);margin:0 auto;padding:0 12px">{lookup_html}</div></div>
 {control_html}
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
