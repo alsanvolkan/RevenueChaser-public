@@ -91,9 +91,11 @@ def test_the_headlines_job_loads_the_tape_then_renders_without_the_calendar(monk
     monkeypatch.setattr(calendar, "build", lambda **kw: pytest.fail("the 5-minute pass builds no calendar"))
     order = []
     monkeypatch.setattr(headlines, "load_tape", lambda **kw: order.append("tape") or {"read": 2, "stored": 1})
+    monkeypatch.setattr(headlines, "load_x", lambda **kw: order.append("x") or
+                        {"mails": 1, "stored": 2, "refused": 0, "cut": 0})
     monkeypatch.setattr(headlines, "fetch", lambda names, **kw: order.append("fetch") or
                         {"tickers": len(names), "stored": 0, "skipped": [], "error": None})
-    assert runners.run_news_headlines().name == "news_latest.html" and order == ["tape", "fetch"]
+    assert runners.run_news_headlines().name == "news_latest.html" and order == ["tape", "x", "fetch"]
 
 
 def test_the_api_returns_headlines_stored_after_since_with_their_lane():

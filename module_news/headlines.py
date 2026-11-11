@@ -11,6 +11,9 @@ name. A gateway that is down writes nothing, moves no mark and says why; a name 
 
 ``load_tape`` (#673) loads the market-wide headlines the listener (``module_news/tape.py``) appended since the last
 load: same ids, ``tickers`` empty (the page's "Piyasa" lane). A story also met under a name keeps that name.
+
+``load_x`` loads the Grok "X saatlik özet" mails the fetcher (``module_news/x_feed.py``) saved since the last load:
+one row per tweet, ``provider`` ``grok-x`` (the page's "X" lane), with the tweet's ``kind`` and ``option``.
 """
 from __future__ import annotations
 
@@ -19,15 +22,17 @@ import json
 import re
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
-from RevenueChaser.core import ibkr_login, rawstore
+from RevenueChaser.core import config, ibkr_login, rawstore
 from RevenueChaser.core.providers import ibkr_tws as ibkr
-from RevenueChaser.module_news import tape
+from RevenueChaser.module_news import tape, x_feed
 from RevenueChaser.module_news.calendar import META
 
 TABLE = "news_headlines"
 MARK_KEY = "headlines_mark"
 TAPE_MARK_KEY = "tape_mark"
+X_MARK_KEY = "x_mark"
 # A client id of its own: the IV history client is 73, and a second client with the same id is refused (326).
 CLIENT_ID = 74
 PROVIDERS = "DJ-N+DJ-RT"
@@ -92,50 +97,89 @@ def _merge_tickers(rows: list[dict]) -> None:
         r["tickers"] = json.dumps(sorted(set(old) | set(r["tickers"])))
 
 
-def load_tape(now: float | None = None, run_id: str | None = None) -> dict:
-    """Load the tape lines appended since the mark into ``news_headlines``. Returns ``read`` and ``stored``.
+def _new_lines(folder: Path, key: str, first: str) -> tuple[list[bytes], dict | None, dict | None]:
+    """The whole lines appended to ``folder/*.jsonl`` since the ``news_meta`` mark ``key``, and the old and new mark.
 
     The mark is ``{"file", "offset"}`` of the first byte not loaded; a line still being written (no newline yet)
-    waits for the next load. With no mark, only the files of the last ``WINDOW_S`` are read."""
-    now = time.time() if now is None else now
-    run_id = run_id or f"news-{int(now)}"
-    rows_m = rawstore.query(f"SELECT value FROM {META} WHERE key = ?", [TAPE_MARK_KEY], db="news")
+    waits for the next load. With no mark, files from ``first`` (a file name) on are read."""
+    rows_m = rawstore.query(f"SELECT value FROM {META} WHERE key = ?", [key], db="news")
     try:
         mark = json.loads(rows_m[0]["value"]) if rows_m else None
     except (TypeError, ValueError):
         mark = None
-    files = sorted(tape.tape_dir().glob("*.jsonl")) if tape.tape_dir().exists() else []
-    first = mark["file"] if mark else tape.day_file(now - WINDOW_S).name
-    found: dict[str, dict] = {}
-    read, new_mark = 0, mark
+    files = sorted(folder.glob("*.jsonl")) if folder.exists() else []
+    first = mark["file"] if mark else first
+    lines: list[bytes] = []
+    new_mark = mark
     for path in (f for f in files if f.name >= first):
         start = int(mark["offset"]) if mark and path.name == mark["file"] else 0
         with open(path, "rb") as f:
             f.seek(start)
             data = f.read()
         done = data[:data.rfind(b"\n") + 1]
-        for line in done.splitlines():
-            read += 1
-            try:
-                it = json.loads(line)
-                at = float(it["time_ms"]) / 1000.0
-            except (ValueError, TypeError, KeyError):
-                continue
-            text = clean(it.get("headline"))
-            if not text:
-                continue
-            found.setdefault(story_id(text), {
-                "headline_id": story_id(text), "provider": "ibkr", "published_at": at, "headline": text,
-                "source": SOURCE if str(it.get("provider", "")).startswith("DJ") else str(it.get("provider") or ""),
-                "tickers": [], "url": None, "fetched_at": now, "run_id": run_id, "run_at": now})
+        lines.extend(done.splitlines())
         new_mark = {"file": path.name, "offset": start + len(done)}
+    return lines, mark, new_mark
+
+
+def _move_mark(key: str, mark: dict | None, new_mark: dict | None, now: float) -> None:
+    if new_mark and new_mark != mark:
+        rawstore.write_rows(META, [{"key": key, "value": json.dumps(new_mark), "run_at": now}])
+
+
+def load_tape(now: float | None = None, run_id: str | None = None) -> dict:
+    """Load the tape lines appended since the mark into ``news_headlines``. Returns ``read`` and ``stored``.
+    With no mark, only the files of the last ``WINDOW_S`` are read."""
+    now = time.time() if now is None else now
+    run_id = run_id or f"news-{int(now)}"
+    lines, mark, new_mark = _new_lines(tape.tape_dir(), TAPE_MARK_KEY, tape.day_file(now - WINDOW_S).name)
+    found: dict[str, dict] = {}
+    for line in lines:
+        try:
+            it = json.loads(line)
+            at = float(it["time_ms"]) / 1000.0
+        except (ValueError, TypeError, KeyError):
+            continue
+        text = clean(it.get("headline"))
+        if not text:
+            continue
+        found.setdefault(story_id(text), {
+            "headline_id": story_id(text), "provider": "ibkr", "published_at": at, "headline": text,
+            "source": SOURCE if str(it.get("provider", "")).startswith("DJ") else str(it.get("provider") or ""),
+            "tickers": [], "url": None, "fetched_at": now, "run_id": run_id, "run_at": now})
     rows = list(found.values())
     _merge_tickers(rows)
     if rows:
         rawstore.write_rows(TABLE, rows)
-    if new_mark and new_mark != mark:
-        rawstore.write_rows(META, [{"key": TAPE_MARK_KEY, "value": json.dumps(new_mark), "run_at": now}])
-    return {"read": read, "stored": len(rows)}
+    _move_mark(TAPE_MARK_KEY, mark, new_mark, now)
+    return {"read": len(lines), "stored": len(rows)}
+
+
+def load_x(now: float | None = None, run_id: str | None = None) -> dict:
+    """Load the Grok X mails saved since the mark into ``news_headlines``. Returns ``mails``, ``stored``,
+    ``refused`` (rows ``x_feed.parse`` turned down) and ``cut`` (mails that declared more rows than they carried).
+    With no mark, every saved mail is read (the first load is the backfill)."""
+    now = time.time() if now is None else now
+    run_id = run_id or f"news-{int(now)}"
+    lines, mark, new_mark = _new_lines(x_feed.x_dir(config.MARKET_RAW_DIR), X_MARK_KEY, "")
+    found: dict[str, dict] = {}
+    mails = refused = cut = 0
+    for line in lines:
+        try:
+            text = str(json.loads(line)["text"])
+        except (ValueError, TypeError, KeyError):
+            continue
+        mails += 1
+        rows, bad = x_feed.parse(text, now, run_id)
+        refused += len(bad)
+        declared = x_feed.declared(text)
+        cut += declared is not None and declared > len(rows) + len(bad)
+        for r in rows:
+            found[r["headline_id"]] = {**r, "tickers": json.dumps(r["tickers"])}
+    if found:
+        rawstore.write_rows(TABLE, list(found.values()))
+    _move_mark(X_MARK_KEY, mark, new_mark, now)
+    return {"mails": mails, "stored": len(found), "refused": refused, "cut": int(cut)}
 
 
 # Contract ids do not change; kept for the dashboard process's life so a 5-minute pass asks one request a name.
