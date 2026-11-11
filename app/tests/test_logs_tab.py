@@ -35,12 +35,12 @@ def _api(client, query):
 
 # ── the tab ───────────────────────────────────────────────────────────────────
 
-def test_the_activity_board_took_the_tabs_place_in_the_menu(client):
-    """avo, 10 Nov 2026: Logs and Runs moved into the Activity board; /view/logs still answers."""
+def test_the_tab_is_out_of_the_menu_and_its_page_still_answers(client):
+    """avo, 10 Nov 2026: Logs and Runs left the menu; 11 Nov: so did Activity. /view/logs still answers."""
     keys = [t.get("key") for t in dashboard.TABS]
-    assert "logs" not in keys and "activity" in keys
+    assert "logs" not in keys and "activity" not in keys
     html = client.get("/").get_data(as_text=True)
-    assert 'data-tab="logs"' not in html and 'data-url="/view/activity"' in html
+    assert 'data-tab="logs"' not in html and 'data-url="/view/activity"' not in html
     assert client.get("/view/logs").status_code == 200
 
 

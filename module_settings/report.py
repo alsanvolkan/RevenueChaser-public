@@ -2164,6 +2164,7 @@ ND_CSS = ND_THEME_CSS + """
 #newdata .nd-list li{border-bottom:1px solid var(--border);padding:4px 0}
 #newdata .nd-watch-item{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px}
 #newdata .nd-watch-line{min-width:0;flex:1 1 12em}
+#newdata form.nd-actions input{flex:1 1 8em;min-width:0;max-width:16em;text-transform:uppercase}
 """
 
 
@@ -2573,10 +2574,10 @@ def _nd_retirement(rows: list[dict]) -> str:
 ND_WATCH_TITLES = {"option": "Option watch list", "stock": "Stock watch list"}
 ND_OPTIONS_LATER = "the options build comes later (build-plan step 11)"
 ND_WATCH_SUBS = {
-    "option": "The names the options build covers besides SPX (D2). Press <b>Opt</b> next to a ticker on any board "
-              "to add one.",
-    "stock": "The names LEAPS pins and scans, and Earnings treats as watched. Press <b>Stk</b> next to a ticker on "
-             "any board to add one.",
+    "option": "The names the options build covers besides SPX (D2). Add one here, or press <b>Opt</b> next "
+              "to a ticker on any board.",
+    "stock": "The names LEAPS pins and scans, and Earnings treats as watched. Add one here, or press <b>Stk</b> "
+             "next to a ticker on any board.",
 }
 
 
@@ -2605,6 +2606,10 @@ def _nd_watch_card(kind: str, wl: dict, ob: dict) -> str:
             f'{len(rows)}</span></h3>'
             f'<div class="nd-sub">{ND_WATCH_SUBS[kind]}</div>'
             + (f'<div class="nd-rows">{queued}</div>' if queued else "")
+            # Add never removes (the toggle would take off a name someone else just added)
+            + f'<form class="nd-actions" data-nd-add="{esc(kind)}"><input class="nd-date" name="t" maxlength="12" '
+              f'autocomplete="off" placeholder="Ticker" aria-label="A ticker to add to the '
+              f'{esc(ND_WATCH_TITLES[kind].lower())}"><button type="submit" class="nd-btn">Add</button></form>'
             + f'<ul class="nd-list nd-watch-list">{items or empty}</ul>'
             '<div class="nd-msg" aria-live="polite" data-nd-msg></div></div>')
 
@@ -2830,18 +2835,54 @@ function ndWatchRemove(btn){
       '</span>'); return; }
     var li = btn.closest('li');
     if(li && li.parentNode) li.parentNode.removeChild(li);
-    var items = card ? card.querySelectorAll('li.nd-watch-item') : [], left = items.length;
-    document.querySelectorAll('[data-nd-watch-count="' + list + '"]').forEach(function(el){
-      el.textContent = String(left); });
-    var q = list === 'option' && card ? card.querySelector('[data-nd-queued]') : null;
-    if(q){
-      var names = Array.prototype.map.call(items, function(i){ return i.getAttribute('data-ticker'); });
-      q.textContent = (ND.options_always || []).join(' + ') + ' and ' + left + (left === 1 ? ' name' : ' names') +
-        ' from this list' + (left ? ': ' + names.join(', ') : '') + ' · ' + ND.options_later;
-    }
+    ndWatchCount(card, list);
     say(rcEsc(t) + (res.d.removed ? ' removed.' : ' was no longer on the list.'));
   }).catch(function(e){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(String(e)) + '</span>'); });
 }
+// The card's count chips and the queued-names line, after a row came or went.
+function ndWatchCount(card, list){
+  var items = card ? card.querySelectorAll('li.nd-watch-item') : [], left = items.length;
+  document.querySelectorAll('[data-nd-watch-count="' + list + '"]').forEach(function(el){
+    el.textContent = String(left); });
+  var q = list === 'option' && card ? card.querySelector('[data-nd-queued]') : null;
+  if(q){
+    var names = Array.prototype.map.call(items, function(i){ return i.getAttribute('data-ticker'); });
+    q.textContent = (ND.options_always || []).join(' + ') + ' and ' + left + (left === 1 ? ' name' : ' names') +
+      ' from this list' + (left ? ': ' + names.join(', ') : '') + ' · ' + ND.options_later;
+  }
+}
+// The Add box (it came from the Activity page, 11 Nov 2026): POST .../add never removes a name.
+function ndWatchAdd(form){
+  var list = form.getAttribute('data-nd-add'), box = form.querySelector('input'), btn = form.querySelector('button');
+  var t = (box.value || '').trim().toUpperCase(), card = form.closest('.nd-watch');
+  var say = function(html){ var m = card && card.querySelector('[data-nd-msg]'); if(m) m.innerHTML = html; };
+  if(!t) return;
+  if(!new RegExp('^' + ND.ticker_pattern + '$').test(t)){ say('<span class="nd-bad">Not a ticker.</span>'); return; }
+  btn.disabled = true;
+  fetch('/api/watchlist/' + list + '/add/' + encodeURIComponent(t), {method: 'POST',
+        headers: {'X-RC-Panel': 'settings'}}).then(function(r){
+    return r.json().then(function(d){ return {status: r.status, d: d || {}}; });
+  }).then(function(res){
+    btn.disabled = false;
+    if(!res.d.ok){ say('<span class="nd-bad">' + rcEsc(res.d.error || ('HTTP ' + res.status)) + '</span>'); return; }
+    box.value = '';
+    if(!res.d.added){ say(rcEsc(t) + ' was already on the list.'); return; }
+    var ul = card.querySelector('.nd-watch-list'), none = ul.querySelector('.nd-watch-empty'), e = rcEsc(t);
+    if(none) ul.removeChild(none);
+    ul.insertAdjacentHTML('beforeend', '<li class="nd-watch-item" data-ticker="' + e + '"><div class="nd-watch-line"><b>' +
+      e + '</b> <span class="nd-k">added just now</span></div><button type="button" class="nd-btn" ' +
+      'data-nd-act="watch-remove" data-list="' + list + '" data-ticker="' + e + '" aria-label="Remove ' + e +
+      '">Remove</button></li>');
+    ndWatchCount(card, list);
+    say(e + ' added.');
+  }).catch(function(err){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(String(err)) + '</span>'); });
+}
+document.addEventListener('submit', function(ev){
+  var form = ev.target && ev.target.closest ? ev.target.closest('#newdata form[data-nd-add]') : null;
+  if(!form) return;
+  ev.preventDefault();
+  ndWatchAdd(form);
+});
 // A17-B: the cross-check press queues a run for the builder. The page sends one POST to its own dashboard and
 // calls no provider: the builder owns every provider call, and the queue is where a run is asked for.
 function ndCross(btn){
@@ -2995,7 +3036,7 @@ DATA_HELP = help_html(
     "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
     "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
     "call and holds the dataset until <b>Resume</b>. Under the groups sit the need catalog by file, the board settings, the automations, the watch lists, the IBKR cards, the ticker detail and "
-    "the backups. <b>Live</b> shows the queue, the running requests and the switches from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
+    "the backups. The frame on top shows Fetch, Data health, the jobs by the board they feed and their run logs, from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )
 
@@ -3076,7 +3117,9 @@ def _tab_strip() -> str:
 # home-server #222 (avo, 10 Nov 2026): the RC timers with the Jobs tab's own design, switches and fuse (board rc-jobs)
 # avo, 10 Nov 2026 ("iki tabdan daha fazlasi olmasin", "health/fetch kismi grafana arayuzu ile olmali"): no Live tab;
 # the frame opens the Fetch/Health tab, RC Fetch first.
-LIVE_BOARDS = (("rc-fetch", "Fetch"), ("rc-data-health", "Data health"), ("rc-jobs", "Jobs"))
+# avo, 11 Nov 2026 ("activity yi kapatmak istiyorum"): Jobs is the board Activity framed (rc-activity: the jobs of
+# rc-jobs, grouped by the board each feeds), and Logs (rc-logs) came over from it.
+LIVE_BOARDS = (("rc-fetch", "Fetch"), ("rc-data-health", "Data health"), ("rc-activity", "Jobs"), ("rc-logs", "Logs"))
 LIVE_CSS = """
 #live-board .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
   padding:0 12px}
@@ -3091,7 +3134,7 @@ LIVE_HTML = ('<div id="live-board"><div class="livebar" role="group" aria-label=
              + "".join(f'<button type="button" data-board="{uid}" aria-pressed="{"true" if i == 0 else "false"}">'
                        f'{label}</button>' for i, (uid, label) in enumerate(LIVE_BOARDS))
              + '<a id="live-open" target="_blank" rel="noopener">Open in Grafana</a></div>'
-             '<iframe id="live-frame" title="Live data health, fetch and jobs (Grafana)" loading="lazy"></iframe></div>')
+             '<iframe id="live-frame" title="Live data health, fetch, jobs and logs (Grafana)" loading="lazy"></iframe></div>')
 LIVE_JS = """
 (function(){
   var panel = document.getElementById('panel-health'), frame = document.getElementById('live-frame');
