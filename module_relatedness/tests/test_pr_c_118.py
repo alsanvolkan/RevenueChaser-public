@@ -28,12 +28,7 @@ def _prof(**kw):
     return out
 
 
-def _seed_universe(tickers):
-    rawstore.replace_all(engine._UNIVERSE, [{
-        "ticker": t, "cik": "", "name": t + " Inc", "market_cap": 1.0e10,
-        "price": 10.0, "sector": "Technology", "industry": "Semiconductors",
-        "quote": {"symbol": t},
-    } for t in tickers])
+from RevenueChaser.module_relatedness.tests.test_relatedness import _seed_universe  # noqa: E402 - one seed
 
 
 # ── C12: similarity percentile ───────────────────────────────────────────────

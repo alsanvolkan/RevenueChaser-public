@@ -22,6 +22,7 @@ from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import engine, money_flow
 from RevenueChaser.module_sector_rotation.tests.bars_seed import ny, pin_clock, seed, sessions
 from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
+from RevenueChaser.rcdata.tests import spine_fixture
 
 SESSION = date(2026, 10, 7)
 HOLDINGS = [{"ticker": "AAA", "name": "Alpha", "weight": 9.0},
@@ -56,7 +57,7 @@ def test_a_holding_with_no_d01_bars_shows_n_a_and_is_not_dropped(clock):
     seed("SPY", SESSION, closes=lambda i: 100.0 + i * 0.1)
     seed("AAA", SESSION, closes=lambda i: 50.0 + i * 0.2)
     seed("BBB", SESSION, closes=lambda i: 80.0)
-    rawstore.write_rows("etf_holdings", [{"ticker": "AIQ", "entry": HOLDINGS}])
+    spine_fixture.write_etf_holdings({"AIQ": HOLDINGS})
     out = engine.fetch_all_holdings(_NoUW(), [_snap("AIQ")])
     rows = {r["ticker"]: r for r in out["AIQ"]}
     assert [r["ticker"] for r in out["AIQ"]] == ["AAA", "ZZZ.L", "BBB"]          # weight order, nothing dropped
@@ -74,7 +75,7 @@ def test_a_holding_with_no_d01_bars_shows_n_a_and_is_not_dropped(clock):
 def test_holdings_rs_is_empty_when_spy_is_short_in_d01(clock):
     seed("SPY", SESSION, start=date(2026, 9, 1), closes=lambda i: 100.0)
     seed("AAA", SESSION)
-    rawstore.write_rows("etf_holdings", [{"ticker": "AIQ", "entry": HOLDINGS}])
+    spine_fixture.write_etf_holdings({"AIQ": HOLDINGS})
     assert engine.fetch_all_holdings(_NoUW(), [_snap("AIQ")]) == {}
 
 

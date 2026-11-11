@@ -98,10 +98,12 @@ def holdings_row(ticker: str, rows: list[dict], fetched_at: float) -> dict:
 
 
 def stored_holdings(ticker: str) -> list[dict]:
-    """An ETF's stored top holdings (no network); ``[]`` when the job has stored none."""
-    from RevenueChaser.core import rawstore
-    row = rawstore.get("etf_holdings", ticker.strip().upper())
-    return list((row or {}).get("entry") or [])
+    """An ETF's holdings (``ticker``, ``name``, ``weight``), largest first, from the spine's whole lists
+    (``rcdata.read.etf_holdings``, its newest day; #642 PR 4: the holdings job's ``raw.etf_holdings`` is no longer
+    read). A line with no US ticker is left out; ``[]`` when the spine holds none (no network)."""
+    from RevenueChaser.rcdata import read
+    return [{"ticker": r["ticker"], "name": r.get("name") or "", "weight": r.get("weight")}
+            for r in read.etf_holdings([ticker]) if r.get("ticker")]
 
 
 @datahealth.scoped

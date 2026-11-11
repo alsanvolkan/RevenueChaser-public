@@ -28,6 +28,7 @@ def _seed(monkeypatch):
     rawstore.write_rows("equity_universe", [
         {"ticker": t, "name": t + " Inc", "market_cap": 1e10,
          "sector": "Technology"} for t in profs])
+    spine_fixture.write_security([{"ticker": t, "name": t + " Inc", "sector": "Technology"} for t in profs])
     for t, p in profs.items():
         store.save_profile(t, "", p, "k", config.PROMPT_VERSION)
     spine_fixture.write_etf_holdings({"XLK": list(profs)[:20]})
@@ -116,6 +117,7 @@ def test_finalize_run_uniques_fine_and_medium_duplicates(rawstore_tmp_db):
     rawstore.write_rows("equity_universe", [
         {"ticker": f"G{i}", "name": f"G{i} Inc", "market_cap": 1e10,
          "sector": "Technology"} for i in range(6)])
+    spine_fixture.write_security([{"ticker": f"G{i}", "name": f"G{i} Inc", "sector": "Technology"} for i in range(6)])
     rawstore.write_rows("relatedness_themes", [
         {"theme_id": f"{run}:f0", "level": "fine", "parent_id": f"{run}:m0",
          "label": "Same Name", "size": 2},
@@ -161,6 +163,7 @@ def test_rebuild_summary_reports_unthemed_names(rawstore_tmp_db, monkeypatch, ca
     # In the universe, so the scoped fit (#108 S0) keeps them and they reach the unthemed count.
     rawstore.write_rows("equity_universe", [
         {"ticker": t, "name": t, "market_cap": 1e10, "sector": "Technology"} for t in ("LONE1", "LONE2")])
+    spine_fixture.write_security([{"ticker": t, "name": t, "sector": "Technology"} for t in ("LONE1", "LONE2")])
     cli.main(["--rebuild-themes", "--run-id", "rb8"])
     out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert out["unthemed"] == 2

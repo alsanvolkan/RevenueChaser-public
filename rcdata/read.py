@@ -29,12 +29,12 @@ NEVER_CHECKED = "never_checked"
 STATUS_UNKNOWN = "status_unknown"
 DATASET_OF_TABLE = {"market_series": "market_series", "spx_gamma_expiry_strike": "uw/spot_expiry_strike",
                     "spx_greek_expiry_strike": "uw/greek_expiry_strike",
-                    "economic_event": "uw/economic_calendar", "news_headline": "ibkr/news",
+                    "economic_event": "uw/economic_calendar",
                     "security": "spine/security", "index_membership": "funds/index_holdings",
                     "fund": "sec/company_tickers_mf", "etf_holdings": "funds/etf_holdings", "etf": "spine/security",
                     "my_universe": "spine/security", "my_universe_changes": "spine/security"}
 KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market",
-                 "spx_greek_expiry_strike": "market", "economic_event": "market", "news_headline": "market",
+                 "spx_greek_expiry_strike": "market", "economic_event": "market",
                  "security": "spine",
                  "index_membership": "spine", "fund": "spine", "etf_holdings": "spine", "etf": "spine",
                  "my_universe": "spine", "my_universe_changes": "spine"}
@@ -92,6 +92,9 @@ def _rows(table: str, sql: str, params: list, *, missing_table_ok: bool = False)
     except serving.ServingFileMissing:
         return []
     try:
+        # A table this module also names as a reader (``etf_holdings``) would otherwise resolve to the Python
+        # function through DuckDB's replacement scan, not to "does not exist", when the file lacks the table.
+        con.execute("SET python_enable_replacements = false")
         try:
             cur = con.execute(sql, params)
         except Exception as exc:  # noqa: BLE001 - duckdb's catalog error is not a public class here
@@ -164,23 +167,6 @@ def economic_events(fetched_after: float | None = None) -> list[dict]:
     if fetched_after is not None:
         sql, params = sql + " WHERE fetched_at > ?", [float(fetched_after)]
     return _rows("economic_event", sql + " ORDER BY fetched_at, event_ts, event, type", params, missing_table_ok=True)
-
-
-def news_headlines(tickers: Iterable[str] | None = None, since=None) -> list[dict]:
-    """IBKR headlines, newest first; ``tickers`` (None: every name) narrows to those names, ``since`` (epoch seconds)
-    to newer ones.
-
-    A file built before market 3 has no ``news_headline``: that reads as no rows, not an error."""
-    sql, params = "SELECT * FROM news_headline WHERE TRUE", []
-    names = [str(t).upper() for t in tickers or ()]
-    if names:
-        sql += f" AND ticker IN ({', '.join('?' * len(names))})"
-        params += names
-    if since is not None:
-        sql += " AND published_at >= ?"
-        params.append(float(since))
-    return _rows("news_headline", sql + " ORDER BY published_at DESC, headline_id, ticker", params,
-                 missing_table_ok=True)
 
 
 def spx_expiry_strike(session_date, min_dte: int = 0, max_dte: int = 1) -> list[dict]:
@@ -290,6 +276,21 @@ def my_universe_changes(limit: int = 200) -> list[dict]:
     """
     return _rows("my_universe_changes", "SELECT * FROM my_universe_changes ORDER BY as_of DESC, change, ticker "
                                         f"LIMIT {int(limit)}", [], missing_table_ok=True)
+
+
+def etf_holdings(etfs: Iterable[str]) -> list[dict]:
+    """Every line (``etf``, ``as_of``, ``ticker``, ``name``, ``weight``) of each of ``etfs`` (upper-cased) on that
+    fund's own newest day of ``etf_holdings``, by fund and weight (largest first). ``ticker`` is NULL for a line with
+    no US ticker (a foreign listing) and ``weight`` for a fund that publishes none: both are kept, a board decides.
+    No line, or no spine file at all, is no rows (#642 F9; Sector Rotation reads this)."""
+    wanted = sorted({str(e).strip().upper() for e in etfs if str(e or "").strip()})
+    if not wanted:
+        return []
+    marks = ", ".join("?" * len(wanted))
+    sql = (f"SELECT h.etf, h.as_of, h.ticker, h.name, h.weight FROM etf_holdings h JOIN (SELECT etf, max(as_of) AS "
+           f"as_of FROM etf_holdings WHERE etf IN ({marks}) GROUP BY etf) d ON h.etf = d.etf AND h.as_of = d.as_of "
+           "ORDER BY h.etf, h.weight DESC NULLS LAST, h.ticker NULLS LAST")
+    return _rows("etf_holdings", sql, wanted, missing_table_ok=True)
 
 
 def etf_holding_tickers(etfs: Iterable[str]) -> dict[str, set[str]]:
@@ -488,6 +489,34 @@ def latest_market(tickers: Iterable[str]) -> dict[str, dict]:
         WHERE s.valid_to IS NULL AND s.symbol IN ({', '.join('?' * len(wanted))})
         QUALIFY row_number() OVER (PARTITION BY s.symbol ORDER BY bar.price_session DESC, s.security_id) = 1"""
     return {r["ticker"]: r for r in _rows("market_cap_daily", sql, wanted)}
+
+
+VOLUME_SESSIONS = 20
+
+
+def latest_volume(tickers: Iterable[str], sessions: int = VOLUME_SESSIONS) -> dict[str, dict]:
+    """``{ticker: row}``: each ticker's newest close (``price``, on its ``session_date``) and its average daily volume
+    over its last ``sessions`` bars with a volume (``avg_volume``, ``volume_sessions`` = how many it had), the two a
+    screener prefilter tests together (price, then price times volume: ``core/screen_common.py``). Both are on
+    today's share basis (``split``), so a split inside the window moves neither. Only a bar at most
+    ``LATEST_WITHIN_DAYS`` before the store's newest session counts, as :func:`latest_market`; a ticker with no such
+    bar is absent. ``avg_volume`` is None when no bar in the window has a volume (#642 F9)."""
+    names = _bar_tickers(tickers)
+    if not names:
+        return {}
+    sql = f"""
+        WITH {_now_cte(len(names))},
+             since AS (SELECT max(session_date) - INTERVAL {int(LATEST_WITHIN_DAYS)} DAY AS d FROM price_bar_daily
+                       WHERE security_id NOT LIKE 'index:%'),
+             w AS (SELECT now.ticker, b.security_id, b.session_date, b.close * coalesce(a.split_factor, 1) AS close,
+                          b.volume / coalesce(a.split_factor, 1) AS volume
+                   FROM price_bar_daily b JOIN now USING (security_id) {_FACTOR_JOIN}
+                   WHERE b.close IS NOT NULL AND NOT isnan(b.close) AND b.session_date >= (SELECT d FROM since)
+                   QUALIFY row_number() OVER (PARTITION BY now.ticker ORDER BY b.session_date DESC) <= {int(sessions)})
+        SELECT ticker, security_id, arg_max(close, session_date) AS price, max(session_date) AS session_date,
+               avg(volume) AS avg_volume, count(volume) AS volume_sessions
+        FROM w GROUP BY ALL"""
+    return {r["ticker"]: r for r in _rows("price_bar_daily", sql, names)}
 
 
 # ── The price boards' by-ticker reads (G3: PR 8 Co-movement, PR 9 Sector Rotation, PR 11 Asymmetric Growth) ─────────

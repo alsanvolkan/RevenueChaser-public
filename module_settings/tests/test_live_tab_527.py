@@ -37,7 +37,7 @@ def test_the_frame_has_no_source_until_the_tab_opens():
 
 def test_the_boards_and_the_grafana_address():
     html = _page()
-    for uid in ("rc-data-health", "rc-fetch", "rc-jobs"):
+    for uid in ("rc-data-health", "rc-fetch", "rc-activity", "rc-logs"):
         assert f'data-board="{uid}"' in html
     js = report.LIVE_JS
     assert "location.hostname" in js and "':3000/d/'" in js, "same host as the page, Grafana's port"

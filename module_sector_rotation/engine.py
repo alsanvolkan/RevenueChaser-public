@@ -7,7 +7,6 @@ from typing import Optional
 import numpy as np
 
 from .universe import ROTATION_ETFS, MACRO_SERIES
-from RevenueChaser.core import rawstore
 from RevenueChaser.core.gics_map import UNCLASSIFIED, canonical_sector, is_unclassified
 from RevenueChaser.core.providers.unusual_whales import UWClient
 from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
@@ -76,17 +75,15 @@ def industry_buckets(rows: list[dict]) -> dict[tuple, list[dict]]:
 def sector_industry_tree(max_per_industry: int = 12) -> dict[str, list[dict]]:
     """Morningstar sector -> industry -> cap-weighted members.
 
-    Built from the shared universe in the store (``equity_universe``), so it
-    needs no network and stays consistent with every other board's sector and
-    industry labels. ``weight`` is each member's share of its own industry's
+    Built from the shared universe (``core.universe.load_cached_universe``: the spine's names, sectors and
+    industries, the prices store's caps; #642 PR 4), so it needs no network and stays consistent with every other
+    board's sector and industry labels. ``weight`` is each member's share of its own industry's
     market cap, so an industry's weights sum to ~100% (before the
     ``max_per_industry`` cut). Members without a market cap are dropped; an
     industry with none is omitted.
     """
-    rows = rawstore.query(
-        "SELECT ticker, name, sector, industry, market_cap "
-        "FROM equity_universe")
-    return build_industry_tree(rows, max_per_industry)
+    from RevenueChaser.core import universe
+    return build_industry_tree(universe.load_cached_universe(), max_per_industry)
 
 
 def build_industry_tree(rows: list[dict], max_per_industry: int = 12) -> dict[str, list[dict]]:
@@ -123,8 +120,8 @@ def sector_etf_trees(max_per_industry: int = 12) -> dict[str, list[dict]]:
 def etf_trees(tree: dict[str, list[dict]]) -> dict[str, list[dict]]:
     """``{sector ETF ticker: that sector's tree}`` from a ``sector_industry_tree`` result (pure).
 
-    A sector ETF is matched on its ``ROTATION_ETFS`` name, which is the Morningstar sector name stored in
-    ``equity_universe.sector``.
+    A sector ETF is matched on its ``ROTATION_ETFS`` name, which is the Morningstar sector name of the universe's
+    ``sector``.
     """
     out: dict[str, list[dict]] = {}
     for ticker, info in ROTATION_ETFS.items():

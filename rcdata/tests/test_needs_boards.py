@@ -166,8 +166,8 @@ def test_relatedness_plans_the_universe_and_the_fundamentals_needs_it_reads():
     """#490: ``engine.py`` calls ``read.fundamental_companies`` and ``read.filing_texts``, so the board has a plan
     entry now instead of none, and the control board draws its lines. #400: the v3 profile's segment note reads
     ``read.segments`` too, the B input (WP6) ``read.customers``, and the prompt's name, sector and industry
-    ``read.identity`` (10 Nov 2026)."""
-    want = ("identity.universe", "identity.security", "fundamentals.companies", "fundamentals.filings",
+    ``read.identity`` (10 Nov 2026). #642: its run's ETF scan calls ``read.etf_holding_tickers``."""
+    want = ("identity.universe", "identity.security", "identity.etf_holdings", "fundamentals.companies", "fundamentals.filings",
             "fundamentals.segments", "fundamentals.customers")
     assert boards.PLANNED_READS["module_relatedness"] == want
     assert boards.reads_of("module_relatedness") == {"declared": False, "needs": want}

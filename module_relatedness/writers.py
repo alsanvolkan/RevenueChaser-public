@@ -33,6 +33,9 @@ WRITERS: dict[str, Writer] = {
                        ("deepseek-flash",), "DEEPSEEK_API_KEY", paid=True),
     "grok": Writer("grok", "Grok (SuperGrok allowance)", "RevenueChaser.core.providers.grok",
                    ("grok-4.6",), "RC_XAI_AUTH_FILE"),
+    # Headless Claude Code on the subscription login, never an API key (avo, 11 Nov 2026: the first round).
+    "claude": Writer("claude", "Claude (subscription, stops at 80% weekly)", "RevenueChaser.core.providers.claude_code",
+                     ("claude-haiku-5-5", "claude-sonnet-5-5"), "RC_CLAUDE_CONFIG_DIR"),
 }
 DEFAULT = "evren"
 
@@ -67,6 +70,10 @@ def missing(slug: str) -> str | None:
         except subscription_usage.SubscriptionUsageError:
             return w.credential
         return None
+    if slug == "claude":
+        # Presence of the Claude Code login file only, no request (as Grok's).
+        from RevenueChaser.core import subscription_usage
+        return None if subscription_usage.claude_credentials_path().is_file() else w.credential
     return None if credentials.key_for(slug) else w.credential
 
 

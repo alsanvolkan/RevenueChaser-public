@@ -24,7 +24,7 @@ import webbrowser
 from datetime import date, timedelta
 from pathlib import Path
 
-from flask import Flask, Response, g, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, g, jsonify, redirect, render_template, request, send_from_directory
 from markupsafe import Markup
 
 from RevenueChaser.core import rawstore, reporting_common, templating
@@ -299,9 +299,6 @@ TABS = [
     {"type": "tab", "key": "module_leaps", "label": "LEAPS", "url": "/view/module_leaps", "sub": True},
     {"type": "header", "label": "Ops"},
     {"type": "tab", "key": "module_settings", "label": "Settings / Data health", "url": "/view/module_settings", "sub": True},
-    # avo, 10 Nov 2026: the runs and logs of every job by the board it feeds, and the watch lists (app/activity.py);
-    # it takes the place of Logs and Runs, whose pages still answer at /view/logs and /view/runs. No Fetch, no Refresh.
-    {"type": "tab", "key": "activity", "label": "Activity", "url": "/view/activity", "sub": True},
 ]
 
 
@@ -390,9 +387,8 @@ def view(mod: str):
         return _view_spxgamma()
     if mod == "module_uw_interaction":
         return _view_uw_interaction()
-    if mod == "activity":
-        from . import activity
-        return activity.render_page()
+    if mod == "activity":   # closed 11 Nov 2026 (avo): its jobs, logs and watch lists are on Settings' Fetch/Health tab
+        return redirect("/view/module_settings")
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     if mod == "runs":
@@ -1929,10 +1925,9 @@ def view_rotation_holdings():
 
 
 def _load_holdings_bulk_cache(ticker: str):
-    """A ticker's raw holdings from the bulk ``etf_holdings`` sync (no RS, no network)."""
-    from RevenueChaser.core import rawstore
-    row = rawstore.get("etf_holdings", ticker.upper())
-    holdings = (row or {}).get("entry")
+    """A ticker's holdings from the spine's whole lists (no RS, no network; #642 PR 4)."""
+    from RevenueChaser.module_sector_rotation.etf_holdings import stored_holdings
+    holdings = stored_holdings(ticker)
     if not holdings:
         return None
     return [{"ticker": h.get("ticker"), "name": h.get("name") or "",
@@ -1996,7 +1991,7 @@ def api_watchlist_kind_toggle(kind: str, ticker: str):
 
 @app.route("/api/watchlist/<kind>/add/<ticker>", methods=["POST"])
 def api_watchlist_add(kind: str, ticker: str):
-    """Put ``ticker`` on one watch list (the Activity board's Add): ``{ok, list, ticker, added}``, where ``added`` is
+    """Put ``ticker`` on one watch list (the Add box on Settings' watch-list cards): ``{ok, list, ticker, added}``, where ``added`` is
     false when it was there already (nothing is written then). Never removes, so an Add typed for a name someone else
     just added cannot take it off, as the toggle would. 404 / 400 as the toggle."""
     from RevenueChaser.rcdata import ops
@@ -2011,7 +2006,7 @@ def api_watchlist_add(kind: str, ticker: str):
 
 @app.route("/api/activity/boards")
 def api_activity_boards():
-    """The Activity board's grouping (app/activity.py): each board with the scheduled jobs that feed it, worked out
+    """The grouping by board (app/activity.py): each board with the scheduled jobs that feed it, worked out
     from the code, and how many runs were pressed on it (the dashboard's own ``job_runs``). Read by homeops for the
     Grafana boards rc-activity and rc-logs."""
     from . import activity

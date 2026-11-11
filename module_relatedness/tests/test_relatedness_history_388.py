@@ -50,13 +50,14 @@ def _unpack(cell):
     return cell if not isinstance(cell, str) else json.loads(cell)
 
 
-def test_a_fetch_records_the_scores_it_saved_and_the_payload(seeded):
+def test_a_fetch_records_the_scores_and_the_payload(seeded):
+    """#642 PR 3 (DF65): the run no longer writes ``relatedness_scores``; the history holds the scores."""
     payload = engine.run(no_fetch=False, tickers=seeded, run_id="r1")
     (head,) = _headers()
     assert head["run_id"] == "r1" and head["error"] is None and head["quality_note"] is None
-    latest = rawstore.query("SELECT ticker, peer, score FROM relatedness_scores ORDER BY ticker, peer", db="relatedness")
-    assert [{k: r[k] for k in ("ticker", "peer", "score")} for r in _rows("r1")] == latest and latest
-    assert json.loads(head["row_counts"]) == {TABLE: len(latest)}
+    rows = _rows("r1")
+    assert rows and rawstore.count("relatedness_scores") == 0
+    assert json.loads(head["row_counts"]) == {TABLE: len(rows)}
     stored = _unpack(head["payload"])
     assert stored["n"] == payload["n"] == len(seeded) and stored["peers"] == payload["peers"]
 
@@ -116,13 +117,13 @@ def test_a_run_that_scored_nothing_is_partial_and_the_latest_table_keeps_its_row
     assert second["quality"] == "partial" and "scored no pair" in second["quality_note"] and _rows("r2") == []
 
 
-def test_the_history_is_recorded_after_the_scores_are_saved(seeded, monkeypatch):
+def test_a_fetch_saves_no_latest_scores_and_records_the_history(seeded, monkeypatch):
+    """#642 PR 3 (DF65): ``store.save_scores`` is no longer called; the history is the record."""
     order = []
-    real_save = store.save_scores
-    monkeypatch.setattr(store, "save_scores", lambda peers: (order.append("save"), real_save(peers))[1])
+    monkeypatch.setattr(store, "save_scores", lambda peers: pytest.fail("relatedness_scores written"))
     monkeypatch.setattr(rel_history, "record", lambda *a, **k: order.append("history"))
     engine.run(no_fetch=False, tickers=seeded, run_id="r1")
-    assert order == ["save", "history"]
+    assert order == ["history"]
 
 
 def test_a_history_failure_is_a_job_note_and_the_run_still_returns(seeded, monkeypatch):
@@ -131,7 +132,7 @@ def test_a_history_failure_is_a_job_note_and_the_run_still_returns(seeded, monke
 
     monkeypatch.setattr(rel_history, "record", boom)
     payload = engine.run(no_fetch=False, tickers=seeded, run_id="r1")
-    assert payload["n"] == len(seeded) and rawstore.count("relatedness_scores") > 0
+    assert payload["n"] == len(seeded)
     assert any("Relatedness result history was not recorded" in n and "history file locked" in n
                for n in ledger.take_notes())
 

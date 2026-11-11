@@ -2,8 +2,8 @@
 
 Every table of ``market`` is a plain union of its Parquet partitions, and each partition holds exactly the rows of one
 key: ``uw/spot_expiry_strike`` and ``uw/greek_expiry_strike`` a session (``date=<YYYY-MM-DD>``, the rows'
-``session_date``), ``uw/economic_calendar`` a snapshot day (``date=``, ``snapshot_date``), ``ibkr/news`` a UTC
-publish day (``date=``, ``published_date``), ``market_series`` a source and a year (``<source>/<dir>/year=<YYYY>``, the rows' ``source`` and
+``session_date``), ``uw/economic_calendar`` a snapshot day (``date=``, ``snapshot_date``),
+``market_series`` a source and a year (``<source>/<dir>/year=<YYYY>``, the rows' ``source`` and
 ``year(obs_date)``). So a build on the live copy deletes the served rows of each dirty key and reads back that key's
 partition when it still exists (a gone one only deletes), and the check compares only those keys with the live file:
 every other row is the live file's own. A whole build (``ctx.incremental`` None) is the old ``CREATE`` and union.

@@ -105,7 +105,7 @@ def test_the_builder_cli_builds_market_series_and_a_second_run_calls_nothing(cli
     market = tmp_path / "market" / "market.duckdb"
     con = duckdb.connect(str(market), read_only=True)
     try:
-        assert con.execute("SELECT kind, version FROM serving_schema_version").fetchall() == [("market", 3)]
+        assert con.execute("SELECT kind, version FROM serving_schema_version").fetchall() == [("market", 4)]
         assert con.execute("SELECT count(DISTINCT source) FROM market_series").fetchone()[0] == 8
     finally:
         con.close()
