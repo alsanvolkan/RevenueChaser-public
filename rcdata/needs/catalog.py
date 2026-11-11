@@ -103,6 +103,9 @@ _NEEDS = (
     # The list we keep (avo, 4 Nov 2026). Its own need beside ``identity.universe``: that one is still the spine's
     # Tier A names, which the boards read today, and it is retired with them when they move over.
     Need("identity.my_universe", "my_universe", "my_universe", "source_as_of", "ticker", 5, providers=("sec",)),
+    # Each fund's newest day of lines, ticker/name/weight (#642 F9); the funds publish daily, so 5 sessions as above.
+    Need("identity.etf_holdings", "etf_holdings", "etf_holdings", "as_of", "etf", 5,
+         ask_param="etfs", normalize=TICKER, providers=("ssga", "ishares", "uw")),
     Need("identity.membership", "membership", "index_membership", "source_as_of", "ticker", 5,
          providers=("ssga", "ishares", "vanguard", "nasdaq", "invesco")),
     # ── The prices store (serving kind ``prices``; daily bars, share counts from filings) ────────────────────────
@@ -237,6 +240,9 @@ _NEEDS = (
          ask_param="security_ids", providers=("alpaca",)),
     # ``latest_market`` returns a row keyed ``ticker``; the table itself is keyed ``security_id``.
     Need("prices.latest", "latest_market", "market_cap_daily", "session_date", "ticker", 1,
+         table_key_column="security_id", ask_param="tickers", normalize=TICKER, providers=("alpaca",)),
+    # The screener prefilter's pair (#642 F9): newest close and average daily volume, keyed like ``prices.latest``.
+    Need("prices.volume", "latest_volume", "price_bar_daily", "session_date", "ticker", 1,
          table_key_column="security_id", ask_param="tickers", normalize=TICKER, providers=("alpaca",)),
     # The two second-source reports (Karar 32-B): the WRDS comparison is a monthly attended run, so its freshness
     # is counted in calendar days - a month-old report is not stale, and in sessions the number would mean

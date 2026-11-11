@@ -273,6 +273,21 @@ def my_universe_changes(limit: int = 200) -> list[dict]:
                                         f"LIMIT {int(limit)}", [], missing_table_ok=True)
 
 
+def etf_holdings(etfs: Iterable[str]) -> list[dict]:
+    """Every line (``etf``, ``as_of``, ``ticker``, ``name``, ``weight``) of each of ``etfs`` (upper-cased) on that
+    fund's own newest day of ``etf_holdings``, by fund and weight (largest first). ``ticker`` is NULL for a line with
+    no US ticker (a foreign listing) and ``weight`` for a fund that publishes none: both are kept, a board decides.
+    No line, or no spine file at all, is no rows (#642 F9; Sector Rotation reads this)."""
+    wanted = sorted({str(e).strip().upper() for e in etfs if str(e or "").strip()})
+    if not wanted:
+        return []
+    marks = ", ".join("?" * len(wanted))
+    sql = (f"SELECT h.etf, h.as_of, h.ticker, h.name, h.weight FROM etf_holdings h JOIN (SELECT etf, max(as_of) AS "
+           f"as_of FROM etf_holdings WHERE etf IN ({marks}) GROUP BY etf) d ON h.etf = d.etf AND h.as_of = d.as_of "
+           "ORDER BY h.etf, h.weight DESC NULLS LAST, h.ticker NULLS LAST")
+    return _rows("etf_holdings", sql, wanted, missing_table_ok=True)
+
+
 def etf_holding_tickers(etfs: Iterable[str]) -> dict[str, set[str]]:
     """The holding tickers of each of ``etfs`` (upper-cased) on that fund's own newest day of ``etf_holdings``, the
     whole lists ``funds/etf_holdings`` serves. A fund with no line, or no spine file at all, is an empty set; a line
@@ -469,6 +484,34 @@ def latest_market(tickers: Iterable[str]) -> dict[str, dict]:
         WHERE s.valid_to IS NULL AND s.symbol IN ({', '.join('?' * len(wanted))})
         QUALIFY row_number() OVER (PARTITION BY s.symbol ORDER BY bar.price_session DESC, s.security_id) = 1"""
     return {r["ticker"]: r for r in _rows("market_cap_daily", sql, wanted)}
+
+
+VOLUME_SESSIONS = 20
+
+
+def latest_volume(tickers: Iterable[str], sessions: int = VOLUME_SESSIONS) -> dict[str, dict]:
+    """``{ticker: row}``: each ticker's newest close (``price``, on its ``session_date``) and its average daily volume
+    over its last ``sessions`` bars with a volume (``avg_volume``, ``volume_sessions`` = how many it had), the two a
+    screener prefilter tests together (price, then price times volume: ``core/screen_common.py``). Both are on
+    today's share basis (``split``), so a split inside the window moves neither. Only a bar at most
+    ``LATEST_WITHIN_DAYS`` before the store's newest session counts, as :func:`latest_market`; a ticker with no such
+    bar is absent. ``avg_volume`` is None when no bar in the window has a volume (#642 F9)."""
+    names = _bar_tickers(tickers)
+    if not names:
+        return {}
+    sql = f"""
+        WITH {_now_cte(len(names))},
+             since AS (SELECT max(session_date) - INTERVAL {int(LATEST_WITHIN_DAYS)} DAY AS d FROM price_bar_daily
+                       WHERE security_id NOT LIKE 'index:%'),
+             w AS (SELECT now.ticker, b.security_id, b.session_date, b.close * coalesce(a.split_factor, 1) AS close,
+                          b.volume / coalesce(a.split_factor, 1) AS volume
+                   FROM price_bar_daily b JOIN now USING (security_id) {_FACTOR_JOIN}
+                   WHERE b.close IS NOT NULL AND NOT isnan(b.close) AND b.session_date >= (SELECT d FROM since)
+                   QUALIFY row_number() OVER (PARTITION BY now.ticker ORDER BY b.session_date DESC) <= {int(sessions)})
+        SELECT ticker, security_id, arg_max(close, session_date) AS price, max(session_date) AS session_date,
+               avg(volume) AS avg_volume, count(volume) AS volume_sessions
+        FROM w GROUP BY ALL"""
+    return {r["ticker"]: r for r in _rows("price_bar_daily", sql, names)}
 
 
 # ── The price boards' by-ticker reads (G3: PR 8 Co-movement, PR 9 Sector Rotation, PR 11 Asymmetric Growth) ─────────

@@ -22,3 +22,20 @@ def test_a_line_with_no_ticker_is_no_holding_and_an_unheld_fund_is_an_empty_set(
 def test_no_spine_file_is_every_fund_empty_not_an_error():
     assert read.etf_holding_tickers(["SMH"]) == {"SMH": set()}
     assert read.etf_holding_tickers([]) == {}
+
+
+# ── ``read.etf_holdings``: the lines themselves, ticker, name and weight (#642 F9) ──────────────────────────────
+
+def test_holdings_are_each_funds_newest_day_by_weight_with_name_and_weight():
+    fx.write_etf_holdings({"SMH": ["NVDA", "INTC"]}, as_of="2026-11-05")
+    fx.write_etf_holdings({"SMH": ["NVDA", "TSM"], "ARKQ": ["TSLA", None]}, as_of="2026-11-07")
+    rows = read.etf_holdings(["smh", "arkq", "KBE"])
+    assert [(r["etf"], r["ticker"], r["name"], r["weight"]) for r in rows] == [
+        ("ARKQ", "TSLA", "TSLA NAME", 2.0), ("ARKQ", None, "NONE NAME", 1.0),
+        ("SMH", "NVDA", "NVDA NAME", 2.0), ("SMH", "TSM", "TSM NAME", 1.0)]
+    assert {str(r["as_of"]) for r in rows} == {"2026-11-07"}
+
+
+def test_holdings_of_nothing_or_no_spine_file_are_no_rows():
+    assert read.etf_holdings(["SMH"]) == []
+    assert read.etf_holdings([]) == []
