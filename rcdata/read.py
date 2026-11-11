@@ -1347,7 +1347,7 @@ _SERIES = re.compile(r"\bseries\s+([a-z](?:-\d+)?|\d+)\b", re.I)
 #: **ambiguous** and gets no number at all, instead of a merge that double counts or a split that deletes.
 _BOILERPLATE = re.compile(r"\b(class|series|common|ordinary|capital|stock|shares?|units?|voting|subordinate"
                           r"|subordinated|multiple|limited|non|par|value|per|share|new|the|of|and|a"
-                          r"|no|without|stated|registered"
+                          r"|no|without|stated|registered|nonvoting|non-voting"
                           r"|american|depositary|receipts?)\b|[$%,.]|\d+(\.\d+)?", re.I)
 
 

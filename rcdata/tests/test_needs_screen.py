@@ -85,7 +85,8 @@ def test_every_table_a_need_names_has_a_written_column_or_no_date_at_all():
 #: 30 Oct 2026; ``sec13f_cusip_map`` left the list with G9, which gave it a reader and a kind. The set is the
 #: record of a gap that predates the test, not a target: a table added to a dataset must be answerable, not join
 #: this list.
-REFRESH_GAPS = {"adj_factor", "gics_history", "peer_group", "sec13f_filer_period",
+#: ``adj_factor`` left this list in #646 PR 4, which gave it a kind so the Insider % reader can read it.
+REFRESH_GAPS = {"gics_history", "peer_group", "sec13f_filer_period",
                 "sec13f_filings", "security_history"}
 
 
