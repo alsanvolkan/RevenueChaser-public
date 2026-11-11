@@ -119,10 +119,11 @@ def test_the_earnings_set_rule_on_its_own():
     rows = [{"ticker": "GOOD", "report_date": NEXT, "passes_gates": True},
             {"ticker": "LISTED", "report_date": NEXT, "passes_gates": True},
             {"ticker": "THIN", "report_date": NEXT, "passes_gates": False},
+            {"ticker": "SOON", "report_date": calendar.next_trading_day(NEXT), "passes_gates": True},
             {"ticker": "LATE", "report_date": LATER, "passes_gates": True},
             {"ticker": "SPX", "report_date": NEXT, "passes_gates": True}]
     got = names.earnings_set(SESSION, rows, on_list={"SPX", "LISTED"})
-    assert [r["ticker"] for r in got] == ["GOOD"]
+    assert [r["ticker"] for r in got] == ["GOOD", "SOON"]   # the next two report days (avo's D1), not the third
 
 
 def test_the_check_names_the_earnings_set_of_the_evening(uw_opts):

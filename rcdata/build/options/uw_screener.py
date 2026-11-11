@@ -19,7 +19,7 @@ contracts x 100 is 50,000; Earnings Radar review N3). So it is the stricter coun
 (2026-10-28, 310 screened names) 121 pass, against 125 under volume x 100. The 4 left out trade 500 or more
 contracts with under $50k of premium, or with no premium served, which fails the gate too.
 
-**The earnings set** (``names.earnings_set``): every screener-set name that reports on the next session, passes
+**The earnings set** (``names.earnings_set``): every screener-set name that reports on one of the next two sessions, passes
 the gates on S and is not in the list set (SPX and the option watch list, which have their full chain), once, on
 that evening: ``spot-exposures/strike?date=S`` (paged), ``gex-levels?date=S``, ``volatility/term-structure?date=S``,
 ``options-volume?limit=5`` (the row of S), ``flow-recent`` (the newest 50 prints of S) and ``/earnings/{ticker}`` (the
