@@ -196,7 +196,7 @@ def put_store_rows(bars=(), actions=(), *, built_at: float | None = None) -> Non
         for a in actions:
             put_action(a["ticker"], a["ex_date"], a["action"], a["value"], fetched_at=a.get("fetched_at"))
         if built_at is not None:
-            set_built_at(before)
+            set_built_at(max(before, built_at))     # bars-free puts never stamped the file
 
 
 def put_series(rows: list[dict]) -> None:
