@@ -62,10 +62,6 @@ def clean(headline: str) -> str:
     return _META_PREFIX.sub("", str(headline or "")).strip()
 
 
-def _ib_time(ts: float) -> str:
-    return datetime.fromtimestamp(ts, timezone.utc).strftime(_IB_TIME)
-
-
 def _epoch(text: str) -> float | None:
     try:
         return datetime.strptime(text.strip(), _IB_TIME).replace(tzinfo=timezone.utc).timestamp()
@@ -206,13 +202,13 @@ def fetch(names: list[str], now: float | None = None, run_id: str | None = None,
                         _CON_IDS[name] = client.con_id(req, ibkr.contract_for(name))
                     con_id = _CON_IDS[name]
                     req += 1
-                    items = client.news(req, con_id, PROVIDERS, _ib_time(since), "", PER_TICKER)
+                    items = client.news(req, con_id, PROVIDERS, "", "", PER_TICKER)   # the newest; see news()
                 except ibkr.HistoryError:
                     skipped.append(name)
                     continue
                 for it in items:
                     text, at = clean(it["headline"]), _epoch(it["time"])
-                    if not text or at is None:
+                    if not text or at is None or at < since:
                         continue
                     row = found.setdefault(story_id(text), {
                         "headline_id": story_id(text), "provider": "ibkr", "published_at": at,
