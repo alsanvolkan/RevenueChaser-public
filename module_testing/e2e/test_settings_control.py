@@ -35,8 +35,10 @@ def test_the_data_tab_is_on_top_and_the_old_sections_are_gone(dashboard, browser
     assert browser.eval("document.getElementById('panel-health').hidden") is True, "Database is the tab on open"
     fetch = browser.eval("Array.prototype.map.call(document.querySelectorAll('#panel-health .ctl .wrap > details.sec'),"
                          " function(d){ return d.id; }).filter(function(i){ return i; })")
-    assert fetch[0] == "sec-health" and fetch[-1] == "sec-crosscheck" and "sec-universe" in fetch, \
+    # #715 step 2: the queue is back before Cross-check and the weekly backups close the tab.
+    assert fetch[0] == "sec-health" and fetch[-1] == "sec-backups" and "sec-universe" in fetch, \
         f"the Fetch/Health tab: {fetch}"
+    assert fetch.index("sec-queue") < fetch.index("sec-crosscheck") < fetch.index("sec-backups"), fetch
     assert browser.eval("!document.getElementById('old-settings') && !document.getElementById('panel-fetch')")
     shown = browser.eval("Array.prototype.filter.call(document.querySelectorAll('#ctl .fpanel'),"
                          " function(p){ return !p.hidden; }).length")
