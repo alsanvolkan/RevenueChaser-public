@@ -361,7 +361,7 @@ def test_collect_includes_board_cards(rawstore_tmp_db):
     _seed()
     cards = inventory.collect()["boards"]
     want = [t["key"] for t in dashboard.TABS
-            if t["type"] == "tab" and t["key"] not in ("module_settings", "activity")]
+            if t["type"] == "tab" and t["key"] != "module_settings"]
     assert [c["key"] for c in cards] == want
 
 

@@ -41,7 +41,6 @@ WITHOUT_PAIR = {
     "module_settings": "the two watch-list cards live here; the dataset rows carry no ticker",
     "logs": "not a data board",
     "runs": "not a data board",
-    "activity": "not a data board: it holds the watch lists themselves",
     "module_sector_rotation_trail": "a chart of the same funds' trails; the board's own table carries their pair",
     "module_uw_interaction": "a lab: raw columns of whatever UW tool was run, not a board of names",
     "module_news": "a calendar and headlines; the tickers on a headline are a tag, not a row of names (follow-up)",
