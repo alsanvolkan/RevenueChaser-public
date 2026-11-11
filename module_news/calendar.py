@@ -1,8 +1,8 @@
-"""The incremental calendar build: ``raw.economic_calendar`` -> ``news.news_events`` and ``news.news_highlight``.
+"""The incremental calendar build: ``market.economic_event`` -> ``news.news_events`` and ``news.news_highlight``.
 
 Plan 2026-11-09 §5 and the incremental rule (DECISIONS S16, migration plan §10):
 
-- Only the raw rows fetched after the last build (``news_meta`` key ``calendar_mark``) are read.
+- Only the rows fetched after the last build (``news_meta`` key ``calendar_mark``) are read.
 - Each event key ``(event_ts, event, type)`` is upserted: its first sighting is kept, its last sighting, forecast and
   previous value move forward.
 - An event the newest fetch no longer lists, inside the time span that fetch covers, is marked ``retired_at``; it is
@@ -10,7 +10,8 @@ Plan 2026-11-09 §5 and the incremental rule (DECISIONS S16, migration plan §10
 - The highlight of an Amsterdam day is its most important live event; on a tie a release beats a Fed speech, then
   the earliest wins.
 
-No network: the nightly sweep D37 (and later the hourly News job) writes the raw rows.
+No network: the builder's hourly ``uw/economic_calendar`` serves the rows (avo, 11 Nov 2026: "Raw tamamen
+kalkmalı"; the raw ``economic_calendar`` table and its D37 sweep are retired).
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from RevenueChaser.core import econ_importance, rawstore
+from RevenueChaser.rcdata import read as market_read
 
 AMS = ZoneInfo("Europe/Amsterdam")
 MARK_KEY = "calendar_mark"
@@ -41,9 +43,7 @@ def _mark() -> float:
 
 
 def _new_raw(mark: float) -> list[dict]:
-    return rawstore.query(
-        "SELECT event_ts, event, type, forecast, prev, reported_period, fetched_at, run_id "
-        "FROM economic_calendar WHERE fetched_at > ? ORDER BY fetched_at, event_ts", [mark])
+    return market_read.economic_events(fetched_after=mark)
 
 
 def _stored(keys: list[tuple]) -> dict[tuple, dict]:

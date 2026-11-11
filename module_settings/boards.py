@@ -235,9 +235,9 @@ BOARD_INPUTS: list[dict] = [
             "news_events", "news_highlight"],
            lambda: _html("welcome"), price_basis="last stored closes, not live quotes",
            ops_tables=["watchlist_stock"]),
-    _board("module_news", "News", ["economic_calendar"], lambda: _html("news")),
+    _board("module_news", "News", [], lambda: _html("news")),      # reads market.economic_event
     _board("module_earnings_radar", "Earnings Radar",
-           ["earnings_calendar", "estimate_snapshots", "short_interest", "economic_calendar",
+           ["earnings_calendar", "estimate_snapshots", "short_interest",
             "macro_series", "vol_index_daily", "cftc_cot", "price_bars_daily"],
            lambda: _html("earnings_radar"),
            price_basis="daily price bars, nominal closes for reactions", ops_tables=["watchlist_stock"]),

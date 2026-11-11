@@ -228,13 +228,13 @@ REGISTRY: tuple[AutomationEntry, ...] = (
         tables_written=("short_interest",),
         settings=TaskSettings(wake_to_run=True)),
     AutomationEntry(
-        name="RC-Earnings-Daytime", label="Economic calendar and estimates (twice a week)",
+        name="RC-Earnings-Daytime", label="Analyst estimates (twice a week)",
         args=("-m", INPUTS_CLI, "earnings-daytime", *_EARNINGS_CAPS),
         time="13:00", days=("Tuesday", "Thursday"),
-        description="The Unusual Whales economic calendar of this week and next (D37) and the yfinance analyst "
-                    "estimates of the calendar tickers (D14), Tuesday and Thursday 13:00, keyed to the last complete "
-                    "US session. " + _EARNINGS_CAPS_TEXT + "; one sweep failing leaves the other. " + _EARNINGS_TAIL,
-        tables_written=("economic_calendar", "estimate_snapshots"),
+        description="The yfinance analyst estimates of the calendar tickers (D14), Tuesday and Thursday 13:00, "
+                    "keyed to the last complete US session. The economic calendar is the builder's hourly "
+                    "uw/economic_calendar. " + _EARNINGS_CAPS_TEXT + ". " + _EARNINGS_TAIL,
+        tables_written=("estimate_snapshots",),
         settings=TaskSettings(wake_to_run=True)),
     AutomationEntry(
         name="RC-Macro-Weekly", label="FRED and vol indices (weekly)",

@@ -11,10 +11,10 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.core import calendar
 from RevenueChaser.module_earnings_radar.pipeline import EarningsPipeline
 from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve as serve_market
-from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_estimates
+from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_economic, serve_estimates
 from RevenueChaser.module_earnings_radar.tests.test_rule1_drivers_e6 import FULL
 from RevenueChaser.module_earnings_radar.tests.test_stored_ohlc_e5e import _bars, _prints, _seed as _seed_bars
 from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_short_interest
@@ -59,9 +59,9 @@ def _seed_everything():
                          [{"ticker": "AAPL", "session_date": SESSION, "fee_rate": 10.0}])
     serve_estimates([{"ticker": "AAPL", "period": "0q", **FULL}])
     serve_market({(SESSION - timedelta(days=i)).isoformat(): 4.0 + i / 100 for i in range(1, 90)})
-    rawstore.write_rows("economic_calendar", [
-        {"session_date": SESSION, "event_ts": datetime(d.year, d.month, d.day, 8, 30, tzinfo=NY).timestamp(),
-         "event": "GDP", "type": "report", "source": "uw"} for d in (date(2026, 10, 15), date(2026, 10, 23))])
+    serve_economic({SESSION: [
+        {"event_ts": datetime(d.year, d.month, d.day, 8, 30, tzinfo=NY).timestamp(), "event": "GDP", "type": "report"}
+        for d in (date(2026, 10, 15), date(2026, 10, 23))]})
 
 
 def test_a_run_with_every_input_stored_asks_uw_and_fred_for_none_of_them():

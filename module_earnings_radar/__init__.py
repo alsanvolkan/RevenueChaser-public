@@ -1,2 +1,2 @@
-READS = ("earnings.next", "earnings.options", "fundamentals.estimates", "macro.dgs10", "ownership.short_interest",
-         "ownership.shortable")
+READS = ("earnings.next", "earnings.options", "fundamentals.estimates", "macro.dgs10", "market.economic_calendar",
+         "ownership.short_interest", "ownership.shortable")

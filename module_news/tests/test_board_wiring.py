@@ -43,10 +43,9 @@ def test_the_job_builds_then_renders(monkeypatch, tmp_path):
     asked = []
     monkeypatch.setattr(headlines, "fetch", lambda names, **kw: asked.append(names) or
                         {"tickers": len(names), "stored": 0, "skipped": [], "error": "no API session"})
-    rawstore.write_rows("economic_calendar", [{
-        "session_date": "2026-11-09", "event_ts": 1794317400.0, "event": "CPI, M/M%", "type": "report",
-        "forecast": None, "prev": None, "reported_period": None, "raw_row": "{}", "source": "uw",
-        "fetched_at": 100.0, "run_id": "s", "run_at": 100.0}])
+    from RevenueChaser.module_earnings_radar.tests.market_store_fixture import serve_economic
+    serve_economic({"2026-11-09": [{"event_ts": 1794317400.0, "event": "CPI, M/M%", "type": "report"}]},
+                   fetched_at=100.0)
     with pytest.raises(JobMessage):                   # a down gateway ends the job "done" with gaps, never failed
         runners.run_news()
     assert (tmp_path / "news_latest.html").exists()

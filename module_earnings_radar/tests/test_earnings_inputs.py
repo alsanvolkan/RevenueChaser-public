@@ -162,45 +162,11 @@ def test_the_step_is_registered_and_lists_its_sweeps():
     assert [s.name for s in N.load_step("earnings")] == [s.name for s in inputs.sweeps()]
 
 
-def test_the_scheduled_steps_split_the_seven_sweeps_once_each():
+def test_the_scheduled_steps_split_the_six_sweeps_once_each():
     """#620: one step per schedule; together they run every sweep of ``earnings`` exactly once."""
     split = [s.name for step in ("earnings-calendar", "short-interest", "earnings-daytime", "macro-weekly", "cftc")
              for s in N.load_step(step)]
     assert sorted(split) == sorted(s.name for s in inputs.sweeps())
-
-
-# --- D37 economic calendar (#307) -----------------------------------------------------------------------------------
-
-def _econ_routes(status=200, rows=None):
-    rows = rows if rows is not None else [
-        {"event": "PCE index", "forecast": None, "prev": "0.0%", "reported_period": "September",
-         "time": "2026-10-16 12:30:00+00:00", "type": "report"},
-        {"event": "Fed speaker: Powell", "forecast": None, "prev": None, "reported_period": None,
-         "time": "2026-10-15T18:00:00Z", "type": "fed-speaker"},
-        {"event": "no time", "forecast": "1", "prev": "1", "reported_period": "x", "time": None, "type": "report"},
-    ]
-    return {"/market/economic-calendar": lambda params: (status, {"data": rows} if status == 200 else {})}
-
-
-def test_d37_stores_the_week_with_the_event_time_as_epoch_seconds(rawstore_tmp_db, tmp_path):
-    from RevenueChaser.module_earnings_radar.inputs import economic as d37
-    fake = FakeUW(_econ_routes())
-    res = _run((d37.SWEEP,), tmp_path, fake=fake)
-    s = res["sweeps"]["D37"]
-    assert len(fake.calls) == 1 and s["status"] == "ok" and s["written"] == 2 and s["unkeyed"] == 1
-    rows = _rows("economic_calendar", "event_ts")
-    assert [r["event"] for r in rows] == ["Fed speaker: Powell", "PCE index"]
-    pce = rows[1]
-    assert pce["event_ts"] == datetime(2026, 10, 16, 12, 30, tzinfo=ZoneInfo("UTC")).timestamp()
-    assert pce["session_date"] == SESSION and pce["type"] == "report" and pce["source"] == "uw"
-    assert pce["forecast"] is None and pce["prev"] == "0.0%" and pce["reported_period"] == "September"
-    assert json.loads(pce["raw_row"])["time"] == "2026-10-16 12:30:00+00:00"
-
-
-def test_d37_a_failed_request_is_a_failed_sweep(rawstore_tmp_db, tmp_path):
-    from RevenueChaser.module_earnings_radar.inputs import economic as d37
-    res = _run((d37.SWEEP,), tmp_path, fake=FakeUW(_econ_routes(status=404)))
-    assert res["sweeps"]["D37"]["status"] == "failed" and _rows("economic_calendar") == []
 
 
 # --- D27 FRED macro series (#305, FRED part) ------------------------------------------------------------------------
@@ -562,8 +528,8 @@ def test_the_provider_reads_the_four_blocks_as_one_call(monkeypatch):
 
 # --- the scheduled entries (#620) ---------------------------------------------------------------------------------
 
-ALL_TABLES = ("earnings_calendar", "short_interest", "economic_calendar", "macro_series", "estimate_snapshots",
-              "vol_index_daily", "cftc_cot")
+ALL_TABLES = ("earnings_calendar", "short_interest", "macro_series", "estimate_snapshots", "vol_index_daily",
+              "cftc_cot")
 CAPS = ("--max-uw-calls", "unlimited", "--max-fred-calls", "12", "--max-yf-calls", "1000", "--max-cboe-calls", "20",
         "--max-cftc-calls", "5")
 
@@ -622,20 +588,25 @@ def _all_fakes(monkeypatch):
     monkeypatch.setattr(vol_index, "download_move", lambda download=None: (
         [{"session_date": _date(2026, 10, 13), "open": 18.0, "high": 19.0, "low": 17.0, "close": 18.5}], None))
     monkeypatch.setattr(cftc_cot, "fetch_rows", lambda: ([_cftc_row()], None))
-    return FakeUW({**_calendar_routes(), **_econ_routes(), **_si_routes(screener={"T1014P"})})
+    return FakeUW({**_calendar_routes(), **_si_routes(screener={"T1014P"})})
 
 
-def test_one_raising_sweep_leaves_the_other_four_written(rawstore_tmp_db, tmp_path, monkeypatch):
-    from RevenueChaser.module_earnings_radar.inputs import economic
+def test_one_raising_sweep_leaves_the_others_written(rawstore_tmp_db, tmp_path, monkeypatch):
+    from RevenueChaser.module_earnings_radar.inputs import cftc_cot
     fake = _all_fakes(monkeypatch)
-    monkeypatch.setattr(economic, "event_row", lambda *a: 1 / 0)
+    monkeypatch.setattr(cftc_cot, "fetch_rows", lambda: 1 / 0)
     res = _run(inputs.sweeps(), tmp_path, fake=fake)
-    assert res["sweeps"]["D37"]["status"] == "failed" and "ZeroDivisionError" in res["sweeps"]["D37"]["error"]
-    assert [n for n, s in res["sweeps"].items() if s["status"] != "failed"] == [
-        "D26", "D27", "D10", "D14", "D28", "D29"]
+    assert res["sweeps"]["D29"]["status"] == "failed" and "ZeroDivisionError" in res["sweeps"]["D29"]["error"]
+    assert [n for n, s in res["sweeps"].items() if s["status"] != "failed"] == ["D26", "D27", "D10", "D14", "D28"]
     counts = {t: len(_rows(t)) for t in ALL_TABLES}
-    assert counts["economic_calendar"] == 0 and all(counts[t] > 0 for t in ALL_TABLES if t != "economic_calendar")
+    assert counts["cftc_cot"] == 0 and all(counts[t] > 0 for t in ALL_TABLES if t != "cftc_cot")
     assert N.exit_code(res) == 1
+
+
+def test_the_economic_calendar_left_the_inputs_sweeps():
+    """avo, 11 Nov 2026 ("Raw tamamen kalkmalı"): the builder's hourly uw/economic_calendar serves it."""
+    assert "economic_calendar" not in {t for s in inputs.sweeps() for t in s.tables}
+    assert "D37" not in {s.name for s in inputs.sweeps()}
 
 
 def test_an_intraday_clock_writes_zero_rows_and_makes_no_call(rawstore_tmp_db, tmp_path, monkeypatch):
@@ -649,4 +620,4 @@ def test_the_uw_cap_holds_across_all_the_uw_sweeps(rawstore_tmp_db, tmp_path, mo
     fake = _all_fakes(monkeypatch)
     res = _run(inputs.sweeps(), tmp_path, fake=fake, uw=30)
     assert len(fake.calls) == 30 and res["calls"]["uw"]["used"] == 30
-    assert res["sweeps"]["D26"]["status"] == "partial" and res["sweeps"]["D37"]["status"] == "partial"
+    assert res["sweeps"]["D26"]["status"] == "partial" and res["sweeps"]["D10"]["status"] == "partial"

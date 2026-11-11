@@ -13,6 +13,7 @@ fetch, so the hourly cadence (``due.py``) is not stopped by the day's first file
 """
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -23,6 +24,8 @@ from ...core import calendar
 from . import base, partitions
 from . import dirty as dirty_set
 
+logger = logging.getLogger(__name__)
+
 NAME = "uw/economic_calendar"
 TABLE = "economic_event"
 ENDPOINT = "/market/economic-calendar"
@@ -31,6 +34,10 @@ SCHEMA = [("snapshot_date", "DATE"), ("event_ts", "DOUBLE"), ("event", "TEXT"), 
           ("source", "TEXT"), ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 KEY = ("snapshot_date", "event_ts", "event", "type")
 COMPARE = [c for c, _ in SCHEMA if c not in ("fetched_at", "run_id", "source_as_of")]
+# A transport failure (ConnectTimeout, ReadTimeout: no HTTP status) gets one more ladder after this pause. Measured on
+# homesrv 10-11 Nov 2026: the run's first UW call failed at :05:08-:05:56 three times while option_list answered at
+# :07:27 in the same run, so a glitch outlives the client's own ~46 s ladder but not a minute and a half more.
+TRANSPORT_RETRY_PAUSE_S = 90.0
 
 
 def day_dir(day: date) -> Path:
@@ -71,6 +78,11 @@ class UWEconomicCalendar:
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
         ctx.check_cap("uw")
         res = ctx.uw_client().get_result(ENDPOINT, {})
+        if res.status != "ok" and _transport_failure(res.error):
+            logger.warning("UW %s: %s, trying again in %.0f s", ENDPOINT, res.error.get("error"),
+                           TRANSPORT_RETRY_PAUSE_S)
+            ctx.sleep(TRANSPORT_RETRY_PAUSE_S)
+            res = ctx.uw_client().get_result(ENDPOINT, {})
         if res.status != "ok":
             raise base.SourceError(f"UW {ENDPOINT}: {res.error}")
         body = res.data
@@ -138,6 +150,12 @@ class UWEconomicCalendar:
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": as_of.isoformat(), "rows": rows, "added": added, "removed": removed,
                 "coverage": None}
+
+
+def _transport_failure(error: dict | None) -> bool:
+    """True for a failure with no HTTP answer (timeout, refused connection); never for an HTTP error or an open
+    breaker, which a second ladder would not change."""
+    return bool(error) and error.get("status") is None and error.get("error") != "breaker_open"
 
 
 def _where(key: str) -> str:

@@ -182,3 +182,29 @@ def test_settings_reads_the_hourly_cadence_and_counts_it_like_a_daily_one():
     assert newdata._cadence(ibkr_news.NAME, None) == newdata._cadence(econ.NAME, None) == "hourly"
     check = {"result": "changed", "source_as_of": "2026-11-09", "checked_on": "2026-11-09", "coverage": None}
     assert newdata.status_of(econ.NAME, check, check, "hourly", NOW)[0] == "fresh"
+
+
+def test_a_timeout_gets_a_second_ladder_after_a_pause_and_the_fetch_lands(http_mock, monkeypatch):
+    import httpx
+    monkeypatch.setattr(unusual_whales, "_sleep", lambda s: None)
+    pauses, sent = [], []
+
+    def answer(request):
+        sent.append(request)
+        if len(sent) <= unusual_whales.MAX_ATTEMPTS:            # the client's whole first ladder times out
+            raise httpx.ConnectTimeout("timed out", request=request)
+        return 200, {"data": [CPI]}, UW_HEADERS
+
+    http_mock.add("/market/economic-calendar", answer)
+    row = base.run_request({"dataset": econ.NAME, "params": {}}, sleep=pauses.append)
+    assert row["result"] == "changed", row
+    assert econ.TRANSPORT_RETRY_PAUSE_S in pauses
+    assert len(sent) == unusual_whales.MAX_ATTEMPTS + 1
+
+
+def test_an_http_error_is_not_retried_after_a_pause(http_mock, monkeypatch):
+    monkeypatch.setattr(unusual_whales, "_sleep", lambda s: None)
+    pauses = []
+    http_mock.add("/market/economic-calendar", {"error": "down"}, status=500, headers=UW_HEADERS)
+    assert base.run_request({"dataset": econ.NAME, "params": {}}, sleep=pauses.append)["result"] == "failed"
+    assert econ.TRANSPORT_RETRY_PAUSE_S not in pauses

@@ -64,6 +64,8 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
                             "fundamentals.filings", "earnings.next"),
     "module_sec_13f": ("ownership.holders_13f", "ownership.periods_13f", "prices.actions"),
     "module_leaps": ("options.daily",),
+    # 11 Nov 2026: the calendar build reads the builder's economic calendar, not raw.economic_calendar.
+    "module_news": ("market.economic_calendar",),
     # #490: ``engine.py`` reads the company records and the served filing texts.
     # #400 WP6: the B input adds the filing's XBRL major customers (``fundamentals.customers``).
     "module_relatedness": ("identity.universe", "identity.security", "fundamentals.companies",
