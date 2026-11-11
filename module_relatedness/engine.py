@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 
 from RevenueChaser.core import job_lock, ledger, rawstore
 from RevenueChaser.core.reporting_common import write_artifact
-from RevenueChaser.core.providers import deepseek, evren, grok
+from RevenueChaser.core.providers import claude_code, deepseek, evren, grok
 from RevenueChaser.module_value_chain import engine as vc_engine
 from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
@@ -429,6 +429,8 @@ def _writer(provider: str) -> tuple[str, bool, str]:
         return grok.MODEL, False, ""
     if provider == "evren":
         return evren.MODEL, False, ""
+    if provider == "claude":
+        return claude_code.MODEL, False, ""
     return deepseek.MODEL, False, ""         # v3 sends no thinking (#400)
 
 
@@ -527,6 +529,8 @@ def build_profiles(tickers: list[str], use_llm: bool = True,
             todo = dict(list(todo.items())[:max_calls])
         if grok_run:
             grok.reset_gate()                  # the first request of the run reads the allowance
+        if provider == "claude":
+            claude_code.reset_gate()
     else:
         cap = usd_cap if usd_cap is not None else config.USD_CAP
         max_calls = None
@@ -1053,9 +1057,9 @@ def run(no_fetch: bool = False, tickers: list[str] | None = None,
 
     ``provider`` is the profile writer (``writers.WRITERS``, #360): the CLI and the dashboard pass the board's
     (``settings.writer``); ``deepseek`` stays this function's default for its callers and tests. A free writer
-    (``evren``, ``grok``) writes the missing and stale profiles with no call cap unless ``max_calls`` is given (``limit``
-    slices the names). ``model`` is the board's model (``None``: the chat module's ``MODEL``). A Refresh (``no_fetch``)
-    shows only that writer's profiles: one writer per board."""
+    (``evren``, ``grok``, ``claude``) writes the missing and stale profiles with no call cap unless ``max_calls`` is given (``limit``
+    slices the names). ``model`` is the board's model (``None``: the chat module's ``MODEL``). Mixed writers (avo,
+    11 Nov 2026): every writer's current profile is shown and scored; each company names its writer."""
     if no_fetch:
         return _run(True, tickers, limit, usd_cap, provider=provider, model=model)
     # Scheduled (CLI) and dashboard Fetch runs must not overlap. Refresh writes
@@ -1103,8 +1107,11 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
     if limit:
         tickers = tickers[:limit]
     # A Grok run asks SEC nothing (review B M1): it profiles the filings already stored. The nightly writer (EVREN by
-    # default, #360, or DeepSeek) and the Value Chain sync fetch the rest.
-    vc_engine.fetch_corpus(tickers, no_fetch=no_fetch or provider == "grok")
+    # default, #360, or DeepSeek) and the Value Chain sync fetch the rest. On the layer Relatedness reads its texts
+    # from the layer (``_layer_documents``), so downloading ``chain_filings`` again is wasted (plan 11 Nov 2026, F3:
+    # about 4,970 SEC files for a full Fetch).
+    from RevenueChaser.core import fundamentals_layer
+    vc_engine.fetch_corpus(tickers, no_fetch=no_fetch or provider == "grok" or fundamentals_layer.reads_layer())
 
     next_off_peak = None
     stopped_reason = None
@@ -1132,13 +1139,16 @@ def _run(no_fetch: bool, tickers: list[str] | None, limit: int | None,
     if next_reset is not None:
         next_off_peak = None
 
-    # "Profiled" counts usable profiles only: empty / no_text / short_text rows are not done. One writer per board
-    # (#360): another writer's profiles stay in the store, out of the matrix, until this writer redoes them.
+    # "Profiled" counts usable profiles only: empty / no_text / short_text rows are not done. Mixed writers (avo,
+    # 11 Nov 2026): another writer's profiles stay current and in the matrix; the board names each one's writer.
     writer = (provider, model or _writer(provider)[0])
     other = store.other_writer_tickers(list(profiles), writer)
-    profiles = {t: p for t, p in profiles.items() if any(p.values()) and t not in other}
+    profiles = {t: p for t, p in profiles.items() if any(p.values())}
     payload = _payload(profiles, stale=store.stale_tickers(list(profiles), writer=writer), model=writer[1],
                        write=not no_fetch)
+    by_writer = store.profile_writers(list(profiles))
+    for c in payload.get("companies") or []:
+        c["writer"] = by_writer.get(c["ticker"])
     payload["other_writer"] = len(other)
     payload["writer"] = {"provider": writer[0], "model": writer[1]}
     # Pending is what a next run can still profile (#388 D4): a name whose filing has no text, or one too short to

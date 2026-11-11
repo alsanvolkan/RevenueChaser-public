@@ -91,7 +91,7 @@ def deepseek_calls(monkeypatch):
 
 def test_the_default_writer_is_evren(rawstore_tmp_db):
     assert settings.writer() == ("evren", "deepseek-v4.1-flash")
-    assert writers.DEFAULT == "evren" and set(writers.WRITERS) == {"evren", "deepseek", "grok"}
+    assert writers.DEFAULT == "evren" and set(writers.WRITERS) == {"evren", "deepseek", "grok", "claude"}
 
 
 def test_a_saved_writer_is_read_back(rawstore_tmp_db, monkeypatch):
@@ -174,19 +174,21 @@ def test_a_deepseek_run_names_its_writer_too(world, deepseek_calls):
     assert rawstore.get("relatedness_profiles", "AAA")["provider"] == "deepseek"
 
 
-def test_another_writers_profiles_are_stale_and_out_of_the_matrix(world, deepseek_calls):
+def test_another_writers_profiles_stay_current_and_in_the_matrix(world, deepseek_calls):
+    """Mixed writers (avo, 11 Nov 2026: "sadece ilk tur claude ile sonra deepseek e donebiliriz"), replacing #360."""
     engine.build_profiles(TICKERS)                           # DeepSeek profiles
     assert len(deepseek_calls) == 3
-    assert store.stale_tickers(TICKERS, writer=("evren", evren.MODEL)) == set(TICKERS)
+    assert store.stale_tickers(TICKERS, writer=("evren", evren.MODEL)) == set()
     refresh = engine.run(no_fetch=True, provider="evren")    # the board switched to EVREN, no run yet
-    assert refresh["n"] == 0 and refresh["other_writer"] == 3 and refresh["peers"] == {}
-    payload = engine.run(provider="evren")                   # the next run re-profiles every name
-    assert len(world.posts) == 3 and payload["n"] == 3 and payload["other_writer"] == 0
+    assert refresh["n"] == 3 and refresh["other_writer"] == 3
+    assert {c["writer"] for c in refresh["companies"]} == {f"deepseek/{deepseek.MODEL}"}
+    payload = engine.run(provider="evren")                   # nothing to redo: the input did not change
+    assert world.posts == [] and payload["n"] == 3 and payload["other_writer"] == 3
 
 
-def test_a_model_change_inside_one_provider_is_a_writer_change(world):
+def test_a_model_change_inside_one_provider_keeps_the_profiles_current(world):
     engine.run(provider="evren")
-    assert store.stale_tickers(TICKERS, writer=("evren", "glm-5.3")) == set(TICKERS)
+    assert store.stale_tickers(TICKERS, writer=("evren", "glm-5.3")) == set()
     assert store.stale_tickers(TICKERS, writer=("evren", evren.MODEL)) == set()
 
 
@@ -197,9 +199,10 @@ def test_the_scheduled_job_carries_the_10_usd_deepseek_cap():
 
 
 def test_the_same_model_name_under_another_provider_is_another_writer(world):
-    """The provider decides on its own: one model string served by two providers is still two writers."""
+    """The provider decides on its own: one model string served by two providers is still two writers (counted,
+    no longer stale)."""
     engine.run(provider="evren")
-    assert store.stale_tickers(TICKERS, writer=("grok", evren.MODEL)) == set(TICKERS)
+    assert store.stale_tickers(TICKERS, writer=("grok", evren.MODEL)) == set()
     assert store.other_writer_tickers(TICKERS, ("grok", evren.MODEL)) == set(TICKERS)
 
 
@@ -219,7 +222,7 @@ def test_a_refresh_with_another_model_changes_nothing_in_the_process(world):
     default = evren.MODEL
     engine.run(provider="evren", model="glm-5.3")
     refresh = engine.run(no_fetch=True, provider="evren", model="qwen3.8-flash-next")
-    assert refresh["n"] == 0 and refresh["other_writer"] == 3   # the glm profiles are another writer's
+    assert refresh["n"] == 3 and refresh["other_writer"] == 3   # the glm profiles are another writer's, still shown
     assert evren.MODEL == default
 
 
