@@ -36,6 +36,7 @@ from RevenueChaser.module_sector_rotation import store as rotation_store
 from RevenueChaser.module_sector_rotation.money_flow import get_money_flow_leaderboards
 from RevenueChaser.module_sector_rotation.tests.bars_seed import seed
 from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
+from RevenueChaser.rcdata.tests import spine_fixture
 
 COMPLETE = datetime(2026, 10, 6, 22, 0, tzinfo=timezone.utc).timestamp()   # Tuesday 18:00 ET: a complete session
 DAY = date(2026, 10, 6)
@@ -142,8 +143,8 @@ def test_a_range_fetch_over_three_stored_dates_renders_one_row_per_ticker_and_th
 # ── ROT-4: holdings RS for themes only; the sector tree survives ─────────────────────────────────────────────────────
 
 def test_fetch_all_holdings_asks_for_no_sector_etf(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("etf_holdings", [{"ticker": "XLK", "entry": [{"ticker": "SECX", "name": "S", "weight": "5"}]},
-                                         {"ticker": "AIQ", "entry": [{"ticker": "THMX", "name": "T", "weight": "5"}]}])
+    spine_fixture.write_etf_holdings({"XLK": [{"ticker": "SECX", "name": "S", "weight": 5.0}],
+                                      "AIQ": [{"ticker": "THMX", "name": "T", "weight": 5.0}]})
     for t in ("SPY", "SECX", "THMX"):                                        # the RS reads D01 (M-ROT-3, #374)
         seed(t, DAY, start=DAY - timedelta(days=150))
     asked, real = [], eh.stored_holdings
@@ -168,8 +169,7 @@ def test_a_sector_row_keeps_its_industry_tree_even_when_holdings_name_it(board):
 
 def test_a_live_fetch_with_a_full_rrg_stays_complete_and_records_theme_holdings_only(board, monkeypatch):
     _engine(monkeypatch, [_snap(t) for t in WANTED])
-    rawstore.write_rows("etf_holdings", [{"ticker": t, "entry": [{"ticker": f"H{t}", "name": t, "weight": "5"}]}
-                                         for t in SECTORS + THEMES])
+    spine_fixture.write_etf_holdings({t: [{"ticker": f"H{t}", "name": t, "weight": 5.0}] for t in SECTORS + THEMES})
     for t in ["SPY", *(f"H{t}" for t in SECTORS + THEMES)]:                 # the RS reads D01 (M-ROT-3, #374)
         seed(t, DAY, start=DAY - timedelta(days=150))
     tree = [{"industry": "Software", "holdings": [{"ticker": "MSFT", "name": "Microsoft", "market_cap": 3e12,

@@ -54,7 +54,10 @@ PLANNED_READS: dict[str, tuple[str, ...]] = {
     # #400 WP5: the XBRL customers are named by the spine's ``security`` names (``identity.security``).
     "module_value_chain": ("identity.universe", "identity.security", "fundamentals.segments",
                            "fundamentals.customers"),
-    "module_sector_rotation": ("identity.membership", "prices.bars", "market.series"),
+    # #642 PR 4: the industry tree reads the shared universe (spine names/sectors, prices-store caps) and the theme
+    # rows the spine's whole ETF holdings.
+    "module_sector_rotation": ("identity.membership", "identity.universe", "identity.etf_holdings", "prices.bars",
+                               "prices.latest", "market.series"),
     # #481: the 13F share's split factor reads ``prices.security_ids`` and ``prices.bars`` (basis "split").
     "module_asymmetric_growth": ("identity.universe", "prices.bars", "prices.security_ids",
                                  "fundamentals.statements", "fundamentals.companies", "fundamentals.earnings_event",

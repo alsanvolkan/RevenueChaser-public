@@ -15,6 +15,7 @@ import pytest
 from RevenueChaser.app import runners
 from RevenueChaser.app.jobs import JobMessage
 from RevenueChaser.core import calendar, rawstore
+from RevenueChaser.rcdata.tests import spine_fixture
 from RevenueChaser.module_sector_rotation.models import ETFRotationSnapshot
 from RevenueChaser.module_sector_rotation import engine
 from RevenueChaser.module_sector_rotation import etf_holdings as eh
@@ -153,7 +154,7 @@ def _snap(t, group="theme"):
 
 
 def test_a_rotation_fetch_makes_no_holdings_call(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("etf_holdings", [{"ticker": "AIQ", "entry": HOLD, "provider": "uw"}])
+    spine_fixture.write_etf_holdings({"AIQ": HOLD})                   # the spine's lists (#642 PR 4)
     start = END - timedelta(days=150)                                   # the RS reads D01 since M-ROT-3 (#374)
     seed("SPY", END, start=start, closes=lambda i: 100.0)
     for t in ("NVDA", "AAPL"):

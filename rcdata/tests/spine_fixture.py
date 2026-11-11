@@ -565,7 +565,8 @@ def add_ncen_routes(http_mock, quarters=("2026q3", "2026q2", "2026q1", "2025q4")
 
 def write_etf_holdings(by_etf: dict, as_of: str = "2026-11-07") -> None:
     """Add one day of ``etf_holdings`` lines (``{etf: [ticker, ...]}``) to the live ``spine.duckdb``, creating the
-    file and the table when absent: what ``funds/etf_holdings`` serves, for the readers' tests."""
+    file and the table when absent: what ``funds/etf_holdings`` serves, for the readers' tests. A line is a ticker
+    (named ``<TICKER> NAME``, weights falling from the list's length to 1) or a ``{ticker, name, weight}`` dict."""
     import duckdb
 
     from RevenueChaser.rcdata import serving
@@ -580,7 +581,9 @@ def write_etf_holdings(by_etf: dict, as_of: str = "2026-11-07") -> None:
         con.execute(f"CREATE TABLE IF NOT EXISTS {etf.TABLE} ({cols})")
         for fund, tickers in by_etf.items():
             for i, t in enumerate(tickers):
+                line = t if isinstance(t, dict) else {"ticker": t, "name": f"{t or 'NONE'} NAME",
+                                                      "weight": float(len(tickers) - i)}
                 con.execute(f"INSERT INTO {etf.TABLE} VALUES (?, ?, 'test', ?, NULL, ?, ?)",
-                            [as_of, fund, t, f"{t or 'NONE'} NAME", float(len(tickers) - i)])
+                            [as_of, fund, line["ticker"], line.get("name"), line.get("weight")])
     finally:
         con.close()
