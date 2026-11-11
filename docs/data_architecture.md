@@ -1019,7 +1019,7 @@ below; the ownership store, `ownership` (serving schema version `1`), under "The
 fundamentals layer, `fundamentals` (serving schema version `3`), under "Fundamentals" after it; and the options
 data, `options` (serving schema version `2`), under "The options data" last. The six numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
 (`rcdata/build/dirty.py`), so a bump makes only its own kind's next build whole (#649). The market data,
-`market` (serving schema version `3`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
+`market` (serving schema version `4`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
 `source`, `source_as_of`, `fetched_at`, `run_id`, `observed`), `spx_greek_expiry_strike` (the same key, the four
 greeks per side from `greek-exposure/strike-expiry` for every expiry of the chain, same provenance; where two
@@ -1029,16 +1029,17 @@ UW's **calendar**-day count, while `spx_gamma_expiry_strike.dte` counts NYSE ses
 different measures of different endpoints and are never substituted) and `market_series` (key series id, observation date,
 source; `value`, OHLC for the index files, `frequency`, `session_date`, provenance), `economic_event` (UW's economic
 calendar, hourly: key snapshot day, event time as epoch seconds, event, type; `forecast`, `prev` and
-`reported_period` as text; each day is the newest fetch of that New York day, so a same-day revision is kept) and
-`news_headline` (IBKR's Dow Jones headlines of the stock watch list and twelve large names, hourly: key headline id,
-ticker; `published_date` the UTC publish day, `published_at`, `headline`, `provider`; market 3, #643). `session_date` comes from
+`reported_period` as text; each day is the newest fetch of that New York day, so a same-day revision is kept). Market 3's
+`news_headline` (IBKR's Dow Jones headlines, #643) left in market 4: the headlines live only in the News board's
+`boards/news.duckdb` (avo's option A, 10 Nov 2026). `session_date` comes from
 `core/calendar.py` and is empty outside its 1993-2028 table (its rule C: no second calendar). The previous file
 stays as `<kind>.prev.duckdb`.
 
 **The swap rule.** A kind is built as a new file `<kind>.<build_id>.duckdb`, from Parquet only (no network), and
 checked before it replaces anything: its `serving_schema_version` row, the row count of every table, the run's
 `dataset_check` row (a `failed` one refuses the swap), and the live file: every live table must be in the build (except
-one the kind's code retired by name, `serving.RETIRED_TABLES`: `prices`' `crsp_unadjusted` since PR 382), and
+one the kind's code retired by name, `serving.RETIRED_TABLES`: `prices`' `crsp_unadjusted` since PR 382, `market`'s
+`news_headline` since market 4), and
 none may empty or lose more than 1% of its rows unless the request says `"allow_shrink": true` (the CLI's
 `--allow-shrink`), which relaxes only the asking dataset's own tables and the tables the kind derives from its sources
 (a dataset with no provider, such as `ownership/serve`), never another source dataset's table (`base.shrink_scope`).
