@@ -447,7 +447,7 @@ _CSS = """
   padding:0 var(--sp-2)}
 .wl-un .wl-badge,.wl-un .wl-nm{opacity:.62}
 .wl-un td[colspan]{text-align:left}
-.wl-xc{width:1%;text-align:right;white-space:nowrap}
+.wl-xc{width:1%;text-align:right;white-space:nowrap;padding-left:var(--sp-2);padding-right:var(--sp-2)}
 .wl th.wl-xc{padding:0}
 .wl-x{all:unset;cursor:pointer;color:var(--muted);opacity:0;padding:0 4px;border-radius:3px;font-size:var(--fs-sm)}
 .wl tr:hover .wl-x{opacity:.7}
@@ -490,11 +490,11 @@ _CSS = """
   .wl-sec .in{padding:0 var(--sp-2);font-size:9px;min-height:22px}
   .wl-sec .secttools{display:none}
   .wl-nosrc{font-size:9px;padding:0 3px}
-  .wl td.wl-xc{padding:0 var(--sp-2) 0 0}
-  /* No hover on a phone, so the × stays visible, and it is widened to a 36 px tap area (measured at 390 and
-     412 px). Short of 44 px on purpose: avo asked for every column to fit rather than for a taller row. */
-  .wl td.wl-xc .wl-x{display:inline-flex;align-items:center;justify-content:center;
-    min-width:24px;opacity:.7;padding:0 6px;font-size:13px}
+  /* No hover on a phone, so the × stays visible. avo, 12 Nov 2026: "X icin dokunma alani X harfinden cok az
+     daha buyuk olsun, geri kalan kisimlari uygun yerlestir" — the cell is the glyph and a hair around it, and
+     every pixel it does not take goes to the number columns, which are the ones he reads. */
+  .wl td.wl-xc{padding:0 3px 0 4px}
+  .wl td.wl-xc .wl-x{opacity:.7;padding:0 2px;font-size:11px}
 }
 """
 
