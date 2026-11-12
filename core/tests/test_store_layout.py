@@ -148,17 +148,19 @@ class TestRenderedBoardsLandInCache:
         assert path.exists()
         assert path.parent == tmp_path, f"LEAPS artifact escaped OUTPUT_DIR: {path}"
 
-    def test_leaps_dashboard_path_matches_what_the_dashboard_serves(self):
-        """Regression: the renderer wrote ``.store/leaps_latest.html`` while
-        ``_module_file("module_leaps")`` looked in ``.cache/``."""
+    def test_leaps_has_no_served_artifact_because_the_board_is_off(self):
+        """The old regression here was the renderer writing ``.store/leaps_latest.html`` while
+        ``_module_file`` looked in ``.cache/``. Since #730 the board is switched off: the tab serves one
+        fixed page, so there is no served artifact at all and nothing can escape ``.cache/``. The renderer
+        still writes under ``OUTPUT_DIR`` (the test above), which is what the rest of the rule is about."""
         from RevenueChaser.app import dashboard, runners
         import RevenueChaser.module_leaps.report as lr
         assert lr.OUTPUT_DIR == runners.OUTPUT_DIR
-        assert dashboard._module_file("module_leaps") == runners.LEAPS_LATEST
         assert runners.LEAPS_LATEST.parent == config.OUTPUT_DIR
+        assert dashboard._module_file("module_leaps") is None
 
     @pytest.mark.parametrize("mod", [
-        "module_earnings_radar", "module_leaps",
+        "module_earnings_radar",
         "module_sector_rotation", "module_sec_13f",
         "module_financials", "module_asymmetric_growth", "module_swing_potential",
         "module_fundamentals",
