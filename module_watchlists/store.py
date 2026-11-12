@@ -88,13 +88,17 @@ def sections(list_id: str) -> list[dict]:
 
 def items(list_id: str, section_id: str | None = None) -> list[dict]:
     """The symbols of a list, in avo's order; of one section when ``section_id`` is given."""
-    sql = (f"SELECT symbol, section_id, position, exchange, ticker, coverage, note, added_at, added_by "
-           f"FROM {ITEMS} WHERE list_id = ?")
+    # ``position`` counts inside a section, so the list's own order is the section's place first: ordering by
+    # ``position`` alone put the second symbol of every section before the third of the first one.
+    sql = (f"SELECT i.symbol, i.section_id, i.position, i.exchange, i.ticker, i.coverage, i.note, "
+           f"i.added_at, i.added_by FROM {ITEMS} i "
+           f"LEFT JOIN {SECTIONS} s ON s.list_id = i.list_id AND s.section_id = i.section_id "
+           f"WHERE i.list_id = ?")
     params: list = [list_id]
     if section_id is not None:
-        sql += " AND section_id = ?"
+        sql += " AND i.section_id = ?"
         params.append(section_id)
-    return _query(sql + " ORDER BY position, symbol", params)
+    return _query(sql + " ORDER BY s.position, i.position, i.symbol", params)
 
 
 def read_list(list_id: str) -> dict | None:

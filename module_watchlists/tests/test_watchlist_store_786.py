@@ -142,6 +142,18 @@ def test_symbols_keep_the_order_they_were_added_in_inside_their_section(a_list):
     assert store.symbols(a_list) == ["NASDAQ:CRDO", "NASDAQ:SITM", "NASDAQ:LSCC", "NASDAQ:NVDA"]
 
 
+def test_a_whole_list_reads_section_by_section_not_by_the_position_number(a_list):
+    """``position`` counts inside a section, so two sections both have a 0 and a 1. The list's own order is the
+    section's place first — otherwise the second symbol of every section came before the third of the first."""
+    chips = store.add_section(a_list, "AI ÇIPLERI")
+    quantum = store.add_section(a_list, "QUANTUM")
+    for ticker in ("NASDAQ:CRDO", "NASDAQ:SITM", "NASDAQ:NVDA"):
+        store.add_symbol(a_list, ticker, section_id=chips)
+    for ticker in ("NYSE:IONQ", "NASDAQ:QBTS"):
+        store.add_symbol(a_list, ticker, section_id=quantum)
+    assert store.symbols(a_list) == ["NASDAQ:CRDO", "NASDAQ:SITM", "NASDAQ:NVDA", "NYSE:IONQ", "NASDAQ:QBTS"]
+
+
 def test_a_symbol_put_in_a_section_of_another_list_is_refused(a_list):
     other = store.create_list("Energy")
     chips = store.add_section(a_list, "AI ÇIPLERI")
