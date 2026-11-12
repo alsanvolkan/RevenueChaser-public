@@ -260,8 +260,11 @@ WATCH_ICON = ('<svg class="rc-watch-ico" viewBox="0 0 24 24" aria-hidden="true" 
 _WATCH_TICKER_RE = re.compile(WATCH_TICKER_PATTERN)
 
 WATCHLIST_CSS = """<style>
-.rc-watch{display:inline-flex;align-items:center;vertical-align:middle;margin:0 6px 0 0;flex-wrap:nowrap}
-.rc-watch button{min-width:var(--tap,44px);min-height:var(--tap,44px);padding:0 6px;box-sizing:border-box;
+/* ``--rcw-tap`` is the one row height, compact for a mouse (avo, 12 Nov 2026: "daha compact olabilir") and
+   ``--tap`` wherever the finger is the pointer: the two media queries at the foot of this sheet. */
+.rc-watch,.rc-watch-menu{--rcw-tap:32px}
+.rc-watch{display:inline-flex;align-items:center;vertical-align:middle;margin:0 4px 0 0;flex-wrap:nowrap}
+.rc-watch button{min-width:var(--rcw-tap,32px);min-height:var(--rcw-tap,32px);padding:0 4px;box-sizing:border-box;
   display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
   border-radius:var(--r-sm,6px);border:1px solid var(--input-border,#2F434C);background:var(--input-bg,#101F33);
   color:var(--muted,#9C9DA1);font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -270,42 +273,49 @@ WATCHLIST_CSS = """<style>
 .rc-watch button:focus-visible{outline:2px solid var(--focus,var(--sky,#0EA5E9));outline-offset:2px}
 .rc-watch button:disabled{opacity:.6;cursor:progress}
 .rc-watch button[data-rc-watch-error]{border-color:var(--neg,#F87171)}
-.rc-watch-ico{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6}
+.rc-watch-ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6}
 .rc-watch button[data-rc-watch-on="1"] .rc-watch-ico{fill:currentColor}
 .rc-watch-row{display:flex;margin:4px 0 2px}
 .rc-watch-row .rc-watch{margin-left:0}
 /* The menu: one element for the whole page, moved to the pressed symbol. */
-.rc-watch-menu{position:absolute;z-index:70;min-width:15em;max-width:min(22em,calc(100vw - 2*var(--s4,16px)));
-  max-height:min(70vh,26em);overflow:auto;box-sizing:border-box;padding:var(--s2,8px);
+.rc-watch-menu{position:absolute;z-index:70;min-width:13em;max-width:min(20em,calc(100vw - 2*var(--s4,16px)));
+  max-height:min(70vh,24em);overflow:auto;box-sizing:border-box;padding:var(--s1,4px);
   background:var(--card,#0B1828);color:var(--fg,#C5C6C8);border:1px solid var(--border,rgba(197,198,200,.15));
   border-radius:var(--r-md,10px);box-shadow:var(--e-float,0 10px 24px rgba(0,0,0,.6));
-  font:400 13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  font:400 12px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif}
 .rc-watch-menu[hidden]{display:none}
-.rc-watch-menu h4{margin:var(--s2,8px) 0 2px;padding:0 var(--s2,8px);font-size:11px;font-weight:600;
+.rc-watch-menu h4{margin:var(--s1,4px) 0 1px;padding:0 var(--s1,4px);font-size:10px;font-weight:600;
   letter-spacing:.06em;text-transform:uppercase;color:var(--muted,#9C9DA1)}
 .rc-watch-menu h4:first-child{margin-top:0}
-.rc-watch-tick{margin:0 0 var(--s2,8px);padding:0 var(--s2,8px);font-weight:600;color:var(--bright,#F0F0F0)}
-.rc-watch-menu button{display:flex;align-items:center;gap:var(--s2,8px);width:100%;min-height:var(--tap,44px);
-  padding:0 var(--s2,8px);box-sizing:border-box;text-align:left;cursor:pointer;background:none;border:0;
+.rc-watch-tick{margin:0 0 var(--s1,4px);padding:0 var(--s1,4px);font-weight:600;color:var(--bright,#F0F0F0)}
+.rc-watch-menu button{display:flex;align-items:center;gap:var(--s1,4px);width:100%;min-height:var(--rcw-tap,32px);
+  padding:0 var(--s1,4px);box-sizing:border-box;text-align:left;cursor:pointer;background:none;border:0;
   border-radius:var(--r-sm,6px);color:inherit;font:inherit}
 .rc-watch-menu button:hover{background:var(--hover-faint,rgba(255,255,255,.04))}
 .rc-watch-menu button:focus-visible{outline:2px solid var(--focus,var(--sky,#0EA5E9));outline-offset:-2px}
 .rc-watch-menu button[disabled]{opacity:.6;cursor:progress}
-.rc-watch-menu .rc-box{flex:0 0 auto;width:18px;height:18px;border-radius:4px;
+.rc-watch-menu .rc-box{flex:0 0 auto;width:15px;height:15px;border-radius:4px;
   border:1px solid var(--input-border,#2F434C);background:var(--input-bg,#101F33)}
 .rc-watch-menu button[aria-checked="true"] .rc-box{background:var(--sky,#0EA5E9);border-color:var(--sky,#0EA5E9)}
-.rc-watch-menu .rc-watch-count{margin-left:auto;color:var(--muted,#9C9DA1);font-size:11px}
+.rc-watch-menu .rc-watch-count{margin-left:auto;color:var(--muted,#9C9DA1);font-size:10px}
 .rc-watch-menu .rc-watch-add{color:var(--sky,#0EA5E9);font-weight:600}
-.rc-watch-menu .rc-watch-err{margin:2px var(--s2,8px) 0;color:var(--neg,#F87171);font-size:11px}
-.rc-watch-new{display:flex;gap:var(--s1,4px);align-items:center;padding:0 var(--s2,8px) var(--s1,4px)}
-.rc-watch-new input{flex:1 1 auto;min-width:0;min-height:var(--tap,44px);box-sizing:border-box;padding:0 8px;
+.rc-watch-menu .rc-watch-err{margin:1px var(--s1,4px) 0;color:var(--neg,#F87171);font-size:11px}
+.rc-watch-new{display:flex;gap:var(--s1,4px);align-items:center;padding:0 var(--s1,4px) var(--s1,4px)}
+.rc-watch-new input{flex:1 1 auto;min-width:0;min-height:var(--rcw-tap,32px);box-sizing:border-box;padding:0 6px;
   border-radius:var(--r-sm,6px);border:1px solid var(--input-border,#2F434C);background:var(--input-bg,#101F33);
   color:inherit;font:inherit}
-.rc-watch-new button{width:auto;flex:0 0 auto;padding:0 10px;border:1px solid var(--input-border,#2F434C)}
+.rc-watch-new button{width:auto;flex:0 0 auto;padding:0 8px;border:1px solid var(--input-border,#2F434C)}
+@media (hover:none),(pointer:coarse){
+  /* A finger, whatever the screen is: every target back to the 44 px the project asks for. */
+  .rc-watch,.rc-watch-menu{--rcw-tap:var(--tap,44px)}
+}
 @media (max-width:480px){
   /* One phone-width sheet instead of a menu pinned to a symbol that may sit at the edge of the screen. */
+  .rc-watch,.rc-watch-menu{--rcw-tap:var(--tap,44px)}
   .rc-watch-menu{position:fixed;left:var(--s4,16px);right:var(--s4,16px);bottom:var(--s4,16px);top:auto;
-    width:auto;max-width:none;max-height:72vh}
+    width:auto;max-width:none;max-height:72vh;padding:var(--s2,8px);font-size:13px}
+  .rc-watch-menu h4,.rc-watch-tick,.rc-watch-menu button,.rc-watch-new{padding-left:var(--s2,8px);
+    padding-right:var(--s2,8px)}
 }
 </style>"""
 

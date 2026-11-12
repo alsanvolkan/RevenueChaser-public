@@ -214,25 +214,39 @@ one-screen intro.
 
 ---
 
-## 2c. The watch-list pair (PR 4)
+## 2c. The watch symbol and its menu (PR 4; the named lists, #774)
 
-Two 44 px toggles, **Opt** and **Stk**, next to a ticker: they put the name on the option watch list (what the
-options build covers besides SPX, D2) or the stock watch list (LEAPS, Earnings), or take it off. One shared snippet,
-`core/reporting_common.py`: `watch_buttons_html(ticker)` renders the pair on the server, `rcWatchButtons(ticker)` /
-`rcWatchRow(ticker)` (the pair on its own line, for a card) in a board's JS, and `watchlist_html(board)` mounts the
-CSS, the script and `rcWatchInit(board)` once per page. Which names are on the lists is read live
-(`GET /api/watchlists`) when the page loads, so a board rendered yesterday still shows today's lists. One
-capture-phase click handler reads `data-rc-watch` and `data-ticker` (never an interpolated value, ADR-X1), posts
-`/api/watchlist/<list>/toggle/<ticker>` with the board as `X-RC-Panel` (the row's `added_by`), and re-marks every
-pair of that ticker; a row or card that opens on click does not open when its pair is pressed. A ticker the
-dashboard's `_TICKER_RE` refuses gets no pair. Pressed is `aria-pressed="true"` in the sky token; a refused toggle
-leaves the state and says why in the button's title.
+One symbol before a ticker — a bookmark, filled while the name is on any list — opens a menu of the **named lists**
+of both groups: **Options** (what the options build covers besides SPX, D2) and **Stocks** (LEAPS, Earnings). Each
+list is a checkbox row; "+ New list" names a new list of that group and puts the open ticker on it at once. A job
+reads the **union** of a group's lists (avo, 12 Nov 2026), so a board only has to show whether the name is on the
+group at all: that is what the filled symbol says.
+
+One shared snippet, `core/reporting_common.py`: `watch_buttons_html(ticker, on=())` renders the symbol on the
+server, `rcWatchButtons(ticker)` / `rcWatchRow(ticker)` (the symbol on its own line, for a card) in a board's JS,
+and `watchlist_html(board)` mounts the CSS, the script and `rcWatchInit(board)` once per page — the names are the
+ones from PR 4, so no board changed when the pair became a menu. The lists and their members are read live
+(`GET /api/watchlists`, which answers each group's lists and the union) when the page loads, so a board rendered
+yesterday still shows today's lists.
+
+One capture-phase click handler reads `data-rc-watch-*` and `data-ticker` (never an interpolated value, ADR-X1)
+and posts with the board as `X-RC-Panel` (the row's `added_by`): `/api/watchlists/<list_id>/toggle/<ticker>` for a
+row, `POST /api/watchlists` for a new list. It then re-marks every symbol of that ticker on the page. A row or card
+that opens on click does not open when its symbol is pressed; Escape and a click outside close the menu. A ticker
+the dashboard's `_TICKER_RE` refuses gets no symbol. A refused toggle leaves the state and says why inside the menu.
+
+**Sizes.** One variable, `--rcw-tap`, is the height of the symbol, of every menu row and of the new-name input:
+32 px where the pointer is fine, and `--tap` (44 px) under `@media (hover:none),(pointer:coarse)` and below 480 px,
+so a finger always gets the project's 44 px while a mouse gets a compact menu (avo, 12 Nov 2026: "daha compact
+olabilir"). Below 480 px the menu is a sheet across the bottom of the screen instead of a box pinned to a symbol
+that may sit at the edge; the inline placement is cleared and skipped at that width, or it would beat the
+stylesheet.
 
 Where each board puts it (`core/tests/test_watchlist_boards_pr4.py` classifies every board):
 
 | Board | Where |
 |---|---|
-| LEAPS | The last column of every tier (it replaced the ★ pin; Stk is the pinned list) |
+| LEAPS | The last column of every tier (it replaced the ★ pin; the Stocks group is the pinned list) |
 | SEC 13F | Each row's ticker cell |
 | Asymmetric Growth, Swing, Fundamentals | Its own line under each card's ticker line |
 | Sector Rotation | Each fund's ticker cell (not a macro series), and every holding and industry member when expanded |
@@ -366,7 +380,7 @@ nested grouping). Count is `{n} names`.
 - [ ] Implied Probability uses in-board filters + combobox; no `#oipd-ticker` header box
 - [ ] Universal filters use the shared filter kit (`rc_filters`, `filters_bar_html` + `filters_meta`, `docs/dashboard_ui.md` §2b); no literal index list
 - [ ] Count string matches the grouping
-- [ ] Every ticker the board renders carries the watch-list pair (§2c), or the board is listed with a reason in
+- [ ] Every ticker the board renders carries the watch symbol (§2c), or the board is listed with a reason in
   `core/tests/test_watchlist_boards_pr4.py`
 - [ ] Unit tests assert chrome; e2e if fetch/refresh/routes change
 - [x] Earnings Radar v2 and ER v2 Calibration are gone (no tab, route, job, package)

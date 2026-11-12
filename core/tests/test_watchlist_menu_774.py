@@ -61,13 +61,24 @@ def test_a_board_that_knows_the_name_is_watched_renders_the_symbol_already_fille
     assert "data-rc-watch-on" not in rc.watch_buttons_html("NVDA", on=())
 
 
-def test_the_targets_are_44px_and_use_the_theme_tokens():
+def test_the_rows_are_compact_for_a_mouse_and_44px_for_a_finger():
+    """One height variable: 32 px where the pointer is fine, ``--tap`` under a finger (avo, 12 Nov 2026)."""
     css = rc.WATCHLIST_CSS
-    assert "min-width:var(--tap,44px)" in css and "min-height:var(--tap,44px)" in css
-    assert css.count("min-height:var(--tap,44px)") >= 3     # the symbol, every menu row, the new-name input
+    assert ".rc-watch,.rc-watch-menu{--rcw-tap:32px}" in css
+    assert "min-width:var(--rcw-tap,32px)" in css
+    # the symbol, every menu row and the new-name input all read the one variable
+    assert css.count("min-height:var(--rcw-tap,32px)") >= 3
+    assert "min-height:var(--tap,44px)" not in css            # no row is pinned to 44 px for a mouse
+    for query in ("@media (hover:none),(pointer:coarse){", "@media (max-width:480px){"):
+        at = css.index(query)
+        block = css[at:css.index("\n}\n", at)]
+        assert ".rc-watch,.rc-watch-menu{--rcw-tap:var(--tap,44px)}" in block, query
+
+
+def test_the_menu_uses_the_theme_tokens():
     for token in ("var(--card", "var(--border", "var(--fg", "var(--muted", "var(--sky", "var(--r-md",
-                  "var(--e-float", "var(--focus"):
-        assert token in css, token
+                  "var(--e-float", "var(--focus", "var(--s1", "var(--s2"):
+        assert token in rc.WATCHLIST_CSS, token
 
 
 def test_the_menu_is_a_phone_width_sheet_below_480px():
