@@ -3,13 +3,16 @@ database ihtiyacin var, duckdb onerim").
 
 The one module that writes the file. Four tables (``core/rawstore.py`` MANIFEST, ``"db": "watchlists"``):
 
-- ``watchlist``: one row per list — its name, avo's free-text description, where it sits in the list of lists, and
+- ``wl_list``: one row per list — its name, avo's free-text description, where it sits in the list of lists, and
   ``feeds``, which job group it serves (empty for now; the jobs still read ``ops.sqlite``'s two lists).
-- ``watchlist_section``: the ordered headings inside a list (avo's own, e.g. "AI ÇIPLERI — GPU VE ACCELERATOR").
+- ``wl_section``: the ordered headings inside a list (avo's own, e.g. "AI ÇIPLERI — GPU VE ACCELERATOR").
   A list with no headings has one section whose name is empty, so a reader never special-cases "no sections".
-- ``watchlist_item``: one row per symbol on a list, in its section, at its position, with avo's spelling kept
+- ``wl_item``: one row per symbol on a list, in its section, at its position, with avo's spelling kept
   exactly (``module_watchlists/symbols.py``).
-- ``watchlist_changes``: one row per add or remove, so a list that loses a name can say when and by whom.
+- ``wl_change``: one row per add or remove, so a list that loses a name can say when and by whom.
+
+The names are ``wl_*`` and not ``watchlist*`` because the old store already owns ``watchlist`` and
+``watchlist_changes`` (the pre-PR-4 tables, unwritten until their retirement).
 
 **This file is not a board result.** Nothing recomputes it: it is what avo typed, and losing it loses the lists.
 So no function here writes a table whole, every write is one list, one section or one symbol, and the file goes
@@ -35,10 +38,10 @@ from . import symbols as symbols_mod
 logger = logging.getLogger(__name__)
 
 DB = "watchlists"
-LISTS = "watchlist"
-SECTIONS = "watchlist_section"
-ITEMS = "watchlist_item"
-CHANGES = "watchlist_changes"
+LISTS = "wl_list"
+SECTIONS = "wl_section"
+ITEMS = "wl_item"
+CHANGES = "wl_change"
 
 #: The section every list has when avo gave no headings: one row, empty name, so a reader always walks sections.
 DEFAULT_SECTION = "_"
