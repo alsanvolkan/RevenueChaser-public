@@ -87,6 +87,7 @@
    title with its source icon, the status line, and raw and Parquet side by side. The folder press goes: its path is
    the step's code name, one press on the line away. The whole line is the touch target, so nothing inside needs 44. */
 @media(max-width:640px){
+.ctl details.sec.fpanel{margin-top:12px}
 .ctl table.jt3 tr.jr{padding:5px 0 6px}
 .ctl table.jt3 td.js{min-height:0;gap:3px 6px}
 .ctl table.jt3 .jttl{flex-direction:row;flex-wrap:wrap;align-items:center;gap:2px 6px}
