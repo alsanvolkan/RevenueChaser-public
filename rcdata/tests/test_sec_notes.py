@@ -32,7 +32,11 @@ import pytest
 
 from RevenueChaser.rcdata import sec_notes as notes
 
-from .sec_notes_fixture import (BROKEN_CHAIN, CHAIN_ELEMENT_INSIDE_ANOTHER_BLOCK,
+from .sec_notes_fixture import (BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN, BROKEN_CHAIN,
+                                CHAIN_ELEMENT_INSIDE_ANOTHER_BLOCK, CHAIN_INSIDE_ANOTHER_BLOCKS_CONTINUATION,
+                                ESCAPED_WITH_ATTRIBUTES, HEALTHY_NESTED_CHILD_CHAIN, KEPT_GRANDPARENT_EMPTY_PARENT,
+                                MUTUAL_PARENT_BLOCKS, THREE_BLOCKS_ONE_CONTINUATION, UNCLOSED_COVER_FACT,
+                                UNCLOSED_STYLE,
                                 CHAIN_INSIDE_EARLIER_CHAIN_ELEMENT, CHILD_CHAIN_LEAVES_ITS_PARENT,
                                 CONTINUATION_BEFORE_ITS_BLOCK, CONTINUATION_INSIDE_ITS_OWN_BLOCK,
                                 CONTINUATION_WITH_NO_ID, CONTINUED, DUPLICATE_AND_ORPHAN_CONTINUATIONS,
@@ -65,6 +69,21 @@ def test_a_healthy_document_counts_nothing_but_its_cover_facts():
     build report where every filing carries a fault is a build report nobody reads."""
     rows, counts = notes.parse(CONTINUED)
     assert counts == {"not_a_block": 3} and len(rows) == 1
+
+
+def test_an_ordinary_nested_note_with_a_chain_counts_nothing_either():
+    """The shape a real filing is full of: a child note with a continuation of its own, inside its parent, with
+    a paragraph of the parent between the two. The second round's fix reported ``continuation_overlap`` and
+    ``child_text_outside_parent`` on it, which would have put two faults on nearly every row of every filing --
+    both asked about strings and about any enclosing block, where the question is about the frames that fed this
+    row and the frames its own parent read. The whole dict is the assertion, because a count that fires here is
+    not a smaller version of a count that fires correctly; it makes the report useless."""
+    rows, counts = notes.parse(HEALTHY_NESTED_CHILD_CHAIN)
+    parent, child = rows
+    assert counts == {"not_a_block": 3}
+    assert child.parent_seq == parent.seq and not child.top_level
+    assert child.text == "Term loan.\nTerm loan continued."
+    assert notes.top_level_chars(rows) == parent.chars
 
 
 def test_a_document_with_no_inline_xbrl_gives_no_rows_and_no_counts():
@@ -180,6 +199,17 @@ def test_a_chain_element_inside_a_different_block_is_kept_in_both_rows_and_count
     assert all(n.top_level for n in by_name.values()), "enclosed by a continuation, not by the block itself"
 
 
+def test_the_overlap_is_seen_one_level_down_as_well():
+    """The same double count through a continuation instead of a block: the element sits inside *another block's*
+    continuation. The first version of this check asked only about block frames, so this one was silent -- which
+    is the exact failure the count exists to prevent. 36 of the 90 characters here are counted twice."""
+    by_name, counts = _by_name(CHAIN_INSIDE_ANOTHER_BLOCKS_CONTINUATION)
+    assert counts["continuation_overlap"] == 1
+    shared = "Text inside the leases chain."
+    assert shared in by_name["DebtDisclosureTextBlock"].text
+    assert shared in by_name["LeasesTextBlock"].text
+
+
 def test_a_child_whose_own_chain_reaches_outside_its_parent_is_counted():
     """The other direction, and the one that makes the acceptance sum *short*: the child's second paragraph is in
     no top-level row at all, because the parent's text stops where the parent's tags do. Nothing here can repair
@@ -233,7 +263,9 @@ def test_a_note_inside_a_cover_fact_is_top_level_because_a_cover_fact_is_not_a_r
 def test_every_parent_seq_names_a_row_that_exists_and_no_row_is_its_own_parent():
     for html in (NESTED, NESTED_IN_CONTINUATION, NESTED_IN_SECOND_CONTINUATION, UNCLOSED_BLOCK,
                  SHARED_CONTINUATION, CONTINUED, IFRS_AND_PREFIXES, EMPTY_PARENT_BLOCK,
-                 CHAIN_ELEMENT_INSIDE_ANOTHER_BLOCK, CHILD_CHAIN_LEAVES_ITS_PARENT, UNCLOSED_EXCLUDE):
+                 CHAIN_ELEMENT_INSIDE_ANOTHER_BLOCK, CHILD_CHAIN_LEAVES_ITS_PARENT, UNCLOSED_EXCLUDE,
+                 HEALTHY_NESTED_CHILD_CHAIN, KEPT_GRANDPARENT_EMPTY_PARENT, MUTUAL_PARENT_BLOCKS,
+                 BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN, THREE_BLOCKS_ONE_CONTINUATION, UNCLOSED_STYLE):
         rows, _ = notes.parse(html)
         seqs = {n.seq for n in rows}
         for n in rows:
@@ -267,6 +299,43 @@ def test_a_row_is_never_left_pointing_at_a_parent_that_was_dropped_as_empty():
     assert counts["empty"] == 1 and counts["parent_dropped_as_empty"] == 1
 
 
+def test_a_row_whose_parent_was_dropped_names_its_grandparent_and_not_nothing():
+    """The one shape where "nearest kept ancestor" and "top-level" differ, and the only thing that would notice a
+    re-point replaced by ``parent_seq = None``. The grandparent does hold the child's tags, so saying the child
+    is top-level would count its words twice in the acceptance sum."""
+    rows, counts = notes.parse(KEPT_GRANDPARENT_EMPTY_PARENT)
+    grandparent, child = rows
+    assert (grandparent.seq, child.seq) == (0, 2), "the dropped parent keeps its seq; the rows are not renumbered"
+    assert child.parent_seq == 0 and not child.top_level
+    assert counts["empty"] == 1 and counts["parent_dropped_as_empty"] == 1
+
+
+def test_two_blocks_that_are_each_other_s_parent_do_not_leave_the_filing_with_no_top_level_row():
+    """Each one tagged inside the continuation the other claims. Unbroken, neither is top-level and the whole
+    filing's text counts as zero characters -- which reads as "this filer tags nothing", the one wrong answer
+    that looks like an ordinary one. Broken at the lowest ``seq``, and counted."""
+    rows, counts = notes.parse(MUTUAL_PARENT_BLOCKS)
+    assert counts["parent_cycle"] == 1
+    assert [n.top_level for n in rows] == [True, False]
+    assert notes.top_level_chars(rows) > 0
+
+
+def test_a_block_claiming_the_continuation_it_sits_inside_is_not_its_own_parent():
+    """The owner map then names the block itself, and a row whose ``parent_seq`` is its own ``seq`` is a cycle of
+    one: #757 would store it, and the top-level sum would be zero."""
+    rows, _ = notes.parse(BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN)
+    (note,) = rows
+    assert note.parent_seq is None and note.top_level
+    assert note.seq == 1 and note.parent_seq != note.seq
+
+
+def test_three_blocks_on_one_continuation_count_the_continuation_once():
+    """``continuation_shared`` counts the text that is in more than one row, not the rows that hold it. Counting
+    per block instead gives 3 here, and gives 2 for one block on a two-element chain, which is not a number."""
+    rows, counts = notes.parse(THREE_BLOCKS_ONE_CONTINUATION)
+    assert len(rows) == 3 and counts["continuation_shared"] == 1
+
+
 def test_an_unclosed_exclude_is_counted_because_every_later_block_comes_out_empty():
     """The quietest fault in the document: after an ``ix:exclude`` the filer never closed, no text is collected
     at all, so a filing's remaining notes are simply absent and nothing about the rows says why."""
@@ -274,6 +343,17 @@ def test_an_unclosed_exclude_is_counted_because_every_later_block_comes_out_empt
     assert [n.local_name for n in rows] == ["DebtDisclosureTextBlock"]
     assert rows[0].text == "Note 7. Debt", "the words before the exclude are the only ones that survive"
     assert counts["unclosed_exclude"] == 1 and counts["empty"] == 1
+
+
+def test_an_unclosed_cover_fact_and_an_unclosed_stylesheet_are_each_counted():
+    """Named here because nothing else names them, and each is a different silence: a cover fact left open makes
+    every later block a child of something that is not a row, and a ``<style>`` left open puts ``html.parser``
+    into CDATA mode, so the rest of the document is never read at all."""
+    rows, counts = notes.parse(UNCLOSED_COVER_FACT)
+    assert counts["unclosed_cover_fact"] == 1 and rows[0].top_level
+    rows, counts = notes.parse(UNCLOSED_STYLE)
+    assert counts["unclosed_markup_tag"] == 1
+    assert [n.text for n in rows] == ["Note 7. Debt"], "what follows the stylesheet is never parsed"
 
 
 # ── the name, the kind, the period ─────────────────────────────────────────────────────────────────────────────
@@ -387,6 +467,28 @@ def test_escaped_markup_becomes_prose_and_a_doubly_escaped_entity_becomes_its_ch
     assert note.text == "Note 7. Debt\nWe borrowed money."
     assert "<p>" not in note.text and "&nbsp;" not in note.text
     assert counts["escaped_markup"] == 1
+
+
+def test_an_escaped_note_with_attributes_a_table_and_a_url_comes_out_as_prose():
+    """What pins the three parts of the escaped-markup rule, each of which a mutant otherwise walks through:
+
+    - the **attribute group** -- ``<p style="margin:0">`` and ``<span class="x">`` are tags; without it they stay
+      in the text;
+    - the **breadth of ``_HTML_TAGS``** -- an escaped ``<table>``, ``<tr>`` and ``<td align="right">``; with the
+      set cut back the table is stored as soup;
+    - the **per-entity second pass** -- ``?id=1&copy=2`` in the prose. ``html.unescape`` over the whole string
+      accepts a legacy entity name without its semicolon and writes a copyright sign into the URL.
+
+    And a ``<td nowrap>`` stays, on purpose: a valueless attribute is not in the pattern, because a pattern that
+    took one would also take ``<Table of Contents>``. It is counted rather than quietly left, which is the whole
+    difference between a row that is readable and a row that is clean.
+    """
+    rows, counts = notes.parse(ESCAPED_WITH_ATTRIBUTES)
+    (note,) = rows
+    assert note.text == ("Note 7. Debt\nFiled at x.test/f?id=1&copy=2 by us.\n"
+                         "<td nowrap>Term loan\n500\nThat is all.")
+    assert "font-weight" not in note.text, "an escaped stylesheet is markup here too, not the note's prose"
+    assert counts["escaped_markup"] == 1 and counts["escaped_markup_residue"] == 1
 
 
 def test_a_table_s_cells_do_not_run_together():

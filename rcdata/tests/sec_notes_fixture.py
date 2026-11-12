@@ -234,3 +234,79 @@ PROSE_THAT_LOOKS_LIKE_MARKUP = HEADER + """
   <p>The facility bears interest at a floor of &lt;LIBOR + 2%&gt;.</p>
   <p>We use &lt;b&gt; for bold in our own filings.</p>
   <p>Our site is &lt;www.example.com&gt; and the form was &lt;S-1&gt;.</p></ix:nonNumeric>""" + _END
+
+# ── shapes the third review round showed nothing reached ───────────────────────────────────────────────────────
+
+#: The ordinary shape of a nested note, and the one this file was missing: a child with a continuation of its own,
+#: inside its parent, with a paragraph of the parent between the two. Round 2's fix reported two faults on it --
+#: ``continuation_overlap`` and ``child_text_outside_parent`` -- so on a real filing, where this is the common
+#: case, every row would have carried a complaint.
+HEALTHY_NESTED_CHILD_CHAIN = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock"><p>Note 7. Debt</p>
+  <ix:nonNumeric contextRef="FY" name="us-gaap:LongTermDebtTextBlock" continuedAt="h2"><p>Term loan.</p>
+  </ix:nonNumeric><p>A parent paragraph in between.</p>
+  <ix:continuation id="h2"><p>Term loan continued.</p></ix:continuation></ix:nonNumeric>""" + _END
+
+#: The overlap one level down: the element is not inside another *block*, it is inside another block's
+#: *continuation*. Same double count, and round 2's check -- which asked only about block frames -- said nothing.
+CHAIN_INSIDE_ANOTHER_BLOCKS_CONTINUATION = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="over2"><p>Debt.</p>
+  </ix:nonNumeric>
+<ix:nonNumeric contextRef="FY" name="us-gaap:LeasesTextBlock" continuedAt="L2"><p>Leases.</p></ix:nonNumeric>
+<ix:continuation id="L2"><p>Leases continued.</p>
+  <ix:continuation id="over2"><p>Text inside the leases chain.</p></ix:continuation></ix:continuation>""" + _END
+
+#: Kept block, empty block, kept child: the only shape where "nearest kept ancestor" differs from "top-level".
+KEPT_GRANDPARENT_EMPTY_PARENT = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock"><p>Note 7. Debt</p>
+  <ix:nonNumeric contextRef="FY" name="us-gaap:ScheduleOfDebtTableTextBlock"><ix:nonNumeric contextRef="FY"
+    name="us-gaap:LongTermDebtTextBlock" continuedAt="g9"></ix:nonNumeric></ix:nonNumeric></ix:nonNumeric>
+<ix:continuation id="g9"><p>Term loan.</p></ix:continuation>""" + _END
+
+#: Two kept blocks, each tagged inside the continuation the other claims, so each is the other's parent and the
+#: filing has no top-level row at all: its whole text counts as zero characters.
+MUTUAL_PARENT_BLOCKS = HEADER + """
+<ix:continuation id="d1"><ix:nonNumeric contextRef="FY" name="us-gaap:LeasesTextBlock" continuedAt="d2">
+  <p>Leases.</p></ix:nonNumeric></ix:continuation>
+<ix:continuation id="d2"><ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock"
+  continuedAt="d1"><p>Debt.</p></ix:nonNumeric></ix:continuation>""" + _END
+
+#: A block claiming the continuation it is itself tagged inside, which makes the owner map name the block itself.
+BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN = HEADER + """
+<ix:continuation id="cz"><p>Text of the continuation.</p>
+  <ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock">
+    <ix:nonNumeric contextRef="FY" name="us-gaap:LongTermDebtTextBlock" continuedAt="cz"></ix:nonNumeric>
+  </ix:nonNumeric></ix:continuation>""" + _END
+
+#: Three blocks claiming one continuation. ``continuation_shared`` counts the continuation, not the blocks that
+#: reached it: the paragraph is one piece of text in three rows, however many rows that is.
+THREE_BLOCKS_ONE_CONTINUATION = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="s1"><p>A.</p></ix:nonNumeric>
+<ix:nonNumeric contextRef="FY" name="us-gaap:LeasesTextBlock" continuedAt="s1"><p>B.</p></ix:nonNumeric>
+<ix:nonNumeric contextRef="FY" name="us-gaap:SegmentReportingDisclosureTextBlock" continuedAt="s1">
+  <p>C.</p></ix:nonNumeric>
+<ix:continuation id="s1"><p>Shared.</p></ix:continuation>""" + _END
+
+#: An escaped note as a filer really writes one: attributes on the tags, a table, an escaped stylesheet, a URL
+#: whose ``&copy=`` must not become a copyright sign, and a ``<td nowrap>`` the tag pattern refuses on
+#: purpose -- widening it to take a valueless attribute would also take ``<Table of Contents>``, which is prose.
+#: The tags were escaped once by the filer, so their own entities arrive escaped twice (``&amp;amp;nbsp;``) --
+#: but the URL's ampersand was escaped only once, which is what filers do, and the second pass has to leave it
+#: alone: ``html.unescape`` over the whole string takes the legacy name ``&copy`` without its semicolon.
+ESCAPED_WITH_ATTRIBUTES = HEADER + """
+<ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
+&lt;style&gt;.n{font-weight:bold}&lt;/style&gt;&lt;p style="margin:0"&gt;Note 7. Debt&lt;/p&gt;
+&lt;p&gt;Filed&amp;nbsp;at x.test/f?id=1&amp;copy=2 by &lt;a href="https://x.test"&gt;us&lt;/a&gt;.&lt;/p&gt;
+&lt;table&gt;&lt;tr&gt;&lt;td nowrap&gt;Term loan&lt;/td&gt;&lt;td align="right"&gt;500&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;span class="x"&gt;That is &lt;b&gt;all&lt;/b&gt;.&lt;/span&gt;</ix:nonNumeric>""" + _END
+
+#: A cover fact and a ``<style>`` the filer never closed. Each is its own silence: the first swallows every later
+#: block as a child of something that is not a row, the second puts ``html.parser`` in CDATA mode so the rest of
+#: the document is never read at all.
+UNCLOSED_COVER_FACT = HEADER + """
+<ix:nonNumeric contextRef="COVER" name="dei:AuditorName">
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock"><p>Note 7. Debt</p></ix:nonNumeric>""" + _END
+UNCLOSED_STYLE = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock"><p>Note 7. Debt</p>
+<style>.n{font-weight:bold}
+<p>Never read, because the parser is still in the stylesheet.</p>""" + _END
