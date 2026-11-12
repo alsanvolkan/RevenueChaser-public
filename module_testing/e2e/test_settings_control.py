@@ -47,7 +47,8 @@ def test_the_data_tab_is_on_top_and_the_old_sections_are_gone(dashboard, browser
     # #715 step 3: the files are stacked folded sections, none hidden; the first one is open.
     files = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl details.fpanel'),"
                          " function(p){ return (p.hidden ? 'hidden:' : '') + (p.open ? 'open' : 'shut'); })")
-    assert files[0] == "open" and set(files[1:]) == {"shut"} and len(files) == 6, files
+    from RevenueChaser.rcdata import serving
+    assert files[0] == "open" and set(files[1:]) == {"shut"} and len(files) == len(serving.KINDS), files
     assert browser.eval("!document.getElementById('fpick')"), "no picker under the Database tab"
 
 

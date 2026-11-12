@@ -10,11 +10,14 @@ incremental test below adds a filing and asserts it **reaches the served table**
 from __future__ import annotations
 
 import shutil
+from datetime import date
 
+import duckdb
 import pytest
 
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import serving
+from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.fundamentals import common, filings
 from RevenueChaser.rcdata.build.sec_forms import forms
 from RevenueChaser.rcdata.needs import serve
@@ -23,6 +26,7 @@ from . import fund_fixture as fx
 from . import sec_notes_fixture as nf
 
 AS_OF = "2026-10-28"
+LATER = date(2026, 10, 29)
 MSFT = "789019"
 NEW_K = "0000789019-26-000100"
 
@@ -54,6 +58,20 @@ def _stored(sec, rows=None, documents=None) -> None:
     fx.filing_routes(sec, {MSFT: fx.submissions(789019, rows or fx.MSFT_FILINGS, "MICROSOFT CORP")},
                      {"msft-10k.htm": annual(), "msft-def14a.htm": fx.proxy(), **(documents or {})})
     fx.run(filings.NAME, mode="backfill", to=AS_OF)
+
+
+def _refiled(sec, rows, documents) -> None:
+    """A later day's filing list and the documents it names, on disk.
+
+    ``sec/filings`` keeps the list it already stored (``_subs_raws``), so a backfill run again would re-read the
+    old one and the new filing would never arrive. A later day's run is what fetches a new list, and this is that
+    run's two steps.
+    """
+    fx.filing_routes(sec, {MSFT: fx.submissions(789019, rows, "MICROSOFT CORP")}, documents)
+    ctx = base.RunContext(run_id="t-refiled", dataset="test")
+    raw = filings.read_list(ctx, MSFT, LATER)
+    filings.read_documents(ctx, MSFT, raw, LATER)
+    filings.DATASET.to_parquet_all(ctx, [raw])
 
 
 def _cut(**params) -> dict:
@@ -120,8 +138,8 @@ def test_a_new_filing_reaches_the_served_table(sec):
     _cut()
     assert q("SELECT count(*) FROM filing_section WHERE accession = ?", NEW_K) == [(0,)]
 
-    _stored(sec, rows=[(NEW_K, "10-K", "2026-07-30", "2026-06-30", "msft-10k-26.htm", ""), *fx.MSFT_FILINGS],
-            documents={"msft-10k-26.htm": annual(6_000)})
+    _refiled(sec, [(NEW_K, "10-K", "2026-07-30", "2026-06-30", "msft-10k-26.htm", ""), *fx.MSFT_FILINGS],
+             {"msft-10k-26.htm": annual(6_000)})
     check = _cut()
     assert check["result"] != "failed", check.get("note")
     assert q("SELECT section FROM filing_section WHERE accession = ? ORDER BY section", NEW_K) == [
@@ -129,25 +147,48 @@ def test_a_new_filing_reaches_the_served_table(sec):
     assert q("SELECT count(*) FROM filing_note WHERE accession = ?", NEW_K) == [(1,)]
 
 
-def test_a_company_whose_rows_hold_another_cutter_version_is_cut_again(sec, monkeypatch):
+def _age_the_stored_rows(version: str = "ours-0") -> None:
+    """Rewrite the stored sections partition as if an older rule had cut it.
+
+    Not ``monkeypatch`` on :data:`forms.SECTIONS_VERSION`: that constant is handed to ``sec_sections``, which
+    refuses a version it cannot cut with, so a made-up one fails the run instead of ageing the rows.
+    """
+    part = common.parquet_dir(forms.NAME) / f"cik={MSFT}" / forms.SECTIONS_PARQUET
+    con = duckdb.connect()
+    try:
+        cols = ", ".join(f"'{version}' AS rules_version" if c == "rules_version" else f'"{c}"'
+                         for c, _ in forms.SECTION)
+        # Into a table first: the write goes through a tmp file and a rename over the one being read.
+        con.execute(f"CREATE TABLE aged AS SELECT {cols} FROM read_parquet({base.sql_path(part)})")
+        base.write_parquet(con, "SELECT * FROM aged", part)
+    finally:
+        con.close()
+
+
+def test_a_company_whose_rows_hold_another_cutter_version_is_cut_again(sec):
     """What nothing else triggers: the documents on disk did not change, our own rule did."""
     _stored(sec)
     _cut()
-    monkeypatch.setattr(forms, "SECTIONS_VERSION", "ours-test")
+    _age_the_stored_rows()
+    assert MSFT in forms.held()[1], "the company holds a row of another version"
     check = _cut()
     assert "1 of" in (check.get("note") or ""), check.get("note")
-    assert q("SELECT DISTINCT rules_version FROM filing_section") == [("ours-test",)]
+    assert q("SELECT DISTINCT rules_version FROM filing_section") == [(forms.SECTIONS_VERSION,)]
 
 
 # ── the swap's own checks ───────────────────────────────────────────────────────────────────────────────────────
 
-def test_a_gone_partition_is_refused_until_the_shrink_is_allowed(sec):
+def test_a_gone_partition_is_cut_again_rather_than_shrinking_the_file(sec):
+    """The company's Parquet is gone but its documents are not, so the staleness rule cuts it again and the
+    served table is whole. This is the one place a serving kind can quietly lose rows -- its own ``fetch``
+    rebuilding what was removed is what stops the shrink guard from ever being the thing that notices."""
     _stored(sec)
     _cut()
+    before = q("SELECT count(*) FROM filing_section WHERE cik = ?", MSFT)[0][0]
     shutil.rmtree(common.parquet_dir(forms.NAME) / f"cik={MSFT}")
-    refused = _cut()
-    assert refused["result"] == "failed" and "filing_section shrinks" in (refused.get("note") or "")
-    assert q("SELECT count(*) FROM filing_section WHERE cik = ?", MSFT)[0][0] > 0, "the live file was not touched"
+    check = _cut()
+    assert check["result"] != "failed", check.get("note")
+    assert q("SELECT count(*) FROM filing_section WHERE cik = ?", MSFT)[0][0] == before
 
 
 def test_an_exhibits_business_row_is_served_with_the_aif_method(sec):
