@@ -105,13 +105,23 @@ def test_the_file_in_the_picture_is_a_44_px_touch_target():
     assert int(box.group(1)) == 44
 
 
-def test_a_build_step_is_three_tight_lines_on_a_phone():
+def test_a_build_step_is_two_lines_on_a_phone_with_its_parts_in_fixed_columns():
+    # avo on the preview, 13 Nov 2026: no raw and Parquet lines on a phone; icon, status, role and how often on one
+    # line, each in a column as wide as the widest value, so the steps line up under each other
     phone = _phone_rules(control_render.CTL_CSS)
-    assert ".ctl table.jt3 td.jh{display:flex;flex-wrap:wrap" in phone, "raw and Parquet side by side"
-    assert ".ctl table.jt3 td.jh .hl details.pf{display:none}" in phone, "no 44 px folder press on each of them"
-    assert ".ctl table.jt3 .jttl{flex-direction:row" in phone, "the source icon beside the title"
+    assert ".ctl table.jt3 td.jh{display:none}" in phone, "raw and Parquet are not drawn on a phone"
+    assert "grid-template-columns:var(--jw0,25px) var(--jw1,9ch) var(--jw2,9ch) minmax(0,1fr)" in phone
+    assert ".ctl table.jt3 .jttl,.ctl table.jt3 .jmeta{display:contents}" in phone, "their parts sit in the columns"
+    assert ".ctl table.jt3 .jsrc{grid-row:2;grid-column:1" in phone and ".ctl table.jt3 .jmeta>*{grid-row:2" in phone
     assert ".ctl details.sec.fpanel{margin-top:12px}" in phone, "and two file sections sit close"
     assert "#panel-data .rcf-clear::after{" in phone, "the lookup's clear press reaches 44 px"
+
+
+def test_the_icon_column_is_as_wide_as_the_step_with_the_most_icons():
+    f = control_render._ready(_view())["files"][0]
+    most = max(min(3, len(d["providers"])) for d in f["datasets"])
+    assert f"--jw0:{max(1, most) * control_render.ICON_COL}px" in control_render._meta_widths(f)
+    assert "--jw0:25px" in control_render._meta_widths({"datasets": []})
 
 
 def test_the_reference_parts_under_the_files_are_not_drawn_on_a_phone():

@@ -83,19 +83,24 @@
 .ctl .hl details.pf{flex:1 1 auto;overflow:hidden}
 /* a phone's press target is 44 px (CLAUDE.md, phone friendly): the 📁 fold grows to that, the path stays small */
 @media(max-width:640px){.ctl details.pf>summary{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px}}
-/* #715, avo 13 Nov 2026 ("çok ayrık ve kopuk ... daha kompakt"): on a phone a build step is three tight lines, the
-   title with its source icon, the status line, and raw and Parquet side by side. The folder press goes: its path is
-   the step's code name, one press on the line away. The whole line is the touch target, so nothing inside needs 44. */
+/* #715, avo 13 Nov 2026, on the phone ("çok ayrık ve kopuk ... daha kompakt", then on the preview: no raw and
+   Parquet lines there, and "hepsi tek satıra girebilir ... her biri bir kolon grubuna ait olsun, en geniş olana göre
+   fixle"): a build step is two lines. The title, then one line of four fixed columns, source icons, status, role
+   and how often, each as wide as the widest value of the file (--jw0..3), so the steps line up under each other.
+   The whole line is the touch target, so nothing inside needs 44. */
 @media(max-width:640px){
 .ctl details.sec.fpanel{margin-top:12px}
 .ctl table.jt3 tr.jr{padding:5px 0 6px}
-.ctl table.jt3 td.js{min-height:0;gap:3px 6px}
-.ctl table.jt3 .jttl{flex-direction:row;flex-wrap:wrap;align-items:center;gap:2px 6px}
-.ctl table.jt3 .jttl b{flex:0 1 auto}
-.ctl table.jt3 td.jh{display:flex;flex-wrap:wrap;gap:0 16px;padding:1px 0 0 33px}
-.ctl table.jt3 td.jh .hl{flex:0 1 auto;line-height:1.45}
-.ctl table.jt3 td.jh .hl details.pf{display:none}
-.ctl table.jt3 td.jh .hl .hm{font-size:11px}
+.ctl table.jt3 td.js{min-height:0;grid-template-columns:var(--jw0,25px) var(--jw1,9ch) var(--jw2,9ch) minmax(0,1fr);gap:4px 6px;align-items:center}
+.ctl table.jt3 td.js .jcar,.ctl table.jt3 td.js .stn{grid-row:1;grid-column:1;justify-self:start}
+.ctl table.jt3 td.js .stn{margin-left:12px}
+.ctl table.jt3 .jttl,.ctl table.jt3 .jmeta{display:contents}
+.ctl table.jt3 .jttl b{grid-row:1;grid-column:1/-1;padding-left:42px}
+.ctl table.jt3 .jsrc{grid-row:2;grid-column:1;flex-wrap:nowrap}
+.ctl table.jt3 .jmeta>*{grid-row:2;justify-self:start}
+.ctl table.jt3 .jfrom{grid-row:3;grid-column:1/-1}
+.ctl table.jt3 td.jh{display:none}
+.ctl table.jt3 td.js.dim{display:block}
 }
 /* The lookup's clear press is 24 px in the shared filter; here its touch area reaches 44 without moving anything. */
 @media(max-width:640px){#panel-data .rcf-clear::after{content:"";position:absolute;inset:-10px}}

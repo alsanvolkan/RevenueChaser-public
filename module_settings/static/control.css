@@ -1211,3 +1211,11 @@
 }
 .ctl table.bktbl code{overflow-wrap:anywhere;word-break:break-word}
 .ctl .pftab.on{border-color:var(--fh);background:var(--acc2)}
+/* #715: the board files block under the served files (avo, 13 Nov 2026) */
+.ctl .bfpanels{margin:34px 0 0}
+.ctl .bfpanels .bfph{margin:0 0 2px}
+.ctl .bfpanels details.tch>summary{min-height:28px;align-items:center}
+.ctl .bfpanels .tchs{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px;align-items:start}
+.ctl .bfpanels .bfwhere,.ctl .bfpanels .bfalso{margin:0 0 6px;font-size:12px;color:var(--mut)}
+@media(max-width:640px){.ctl .bfpanels{margin-top:22px}
+.ctl .bfpanels details.tch>summary{min-height:44px}}
