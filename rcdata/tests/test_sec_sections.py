@@ -19,6 +19,7 @@ import ast
 import hashlib
 import json
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -87,6 +88,30 @@ def test_the_board_config_re_exports_the_rule_module_s_constants(name):
     """Read as ``config.<name>`` by ``rcdata/build/fundamentals/filings.py``, ``module_relatedness/config.py`` and
     ``module_value_chain/history.py``, so they must keep resolving to one definition."""
     assert getattr(vc_config, name) is getattr(sec_sections, name)
+
+
+def test_the_cap_the_cut_reads_is_the_rules_own_and_not_the_board_alias():
+    """The cap is part of ``ours-1``, so the cut reads ``sec_sections.MAX_ITEM_CHARS``.
+
+    ``module_value_chain.config.MAX_ITEM_CHARS`` is that same value re-exported -- read by
+    ``rcdata/build/fundamentals/filings.py``, ``module_value_chain/history.py`` and ``module_relatedness`` to record
+    or report the limit -- and rebinding the board's alias must not move the cut, because a stored slice was cut at
+    the version's cap and nothing in ``filing_item`` says which cap that was. ``test_splitter_capped_260.py`` patches
+    the rule's cap for the same reason.
+    """
+    body = ("Item 1. Business\n" + "We make widgets and sell them to customers worldwide. " * 200
+            + "\nItem 1A. Risk Factors\n" + "risk text\n" * 300)
+    cap = 5_000  # under the body and over MIN_ITEM_CHARS, so the cut is capped rather than short
+    whole, quality = splitter.slice_item(body, "10-K")
+    assert quality == "ok" and whole is not None and len(whole) > cap
+
+    with mock.patch.object(vc_config, "MAX_ITEM_CHARS", cap):
+        item, quality = splitter.slice_item(body, "10-K")
+    assert (item, quality) == (whole, "ok"), "the board's alias must not be the cap the cut reads"
+
+    with mock.patch.object(sec_sections, "MAX_ITEM_CHARS", cap):
+        item, quality = splitter.slice_item(body, "10-K")
+    assert quality == "capped" and item is not None and len(item) == cap
 
 
 def test_the_board_config_keeps_its_private_aliases():
