@@ -1978,8 +1978,8 @@ dataset's check reports rows per `rules_version`, so a half-migrated table is vi
 
 **Which cutter version.** Sections are cut by `rcdata/sec_sections.py` at `ours-1` and notes read at `notes-1`,
 and every row carries the version that wrote it. `ours-2` (#755, #756) lifts the 200,000-character cap on the
-business section, fixes the five item defects, and carries its own 40-F rule: six start titles and nine stop
-titles instead of one each, a body minimum in place of the cap, and a label (ok / overrun / missing) read
+business section, fixes the five item defects, and carries its own 40-F rule: six start titles and ten stop
+titles instead of one each, a contents test and a body minimum in place of the cap, and a label (ok / overrun / missing) read
 through `cut_aif_business_q`. When it lands, the version constant moves to it and the rule above re-cuts
 every company in one build, with no re-fetch.
 
