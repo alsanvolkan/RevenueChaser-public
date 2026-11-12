@@ -158,14 +158,15 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bcard{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .bcard h3{margin:0 0 2px;font-size:15px}
 /* A card keeps this page's dark panel in every theme, so under the light theme its text must not inherit the light
-   scope's dark ink: measured 12 Nov 2026, the heading was rgb(29,36,48) on rgb(18,22,30) (#727). */
+   scope's dark ink: measured 12 Nov 2026, the heading was rgb(29,36,48) on rgb(18,22,30) (#727). The second rule
+   covers auto and a page with no data-theme yet (it is set from JavaScript), as needs.css falls back to light. */
 :root[data-theme="light"] .bcard{color:var(--text)}
-@media (prefers-color-scheme: light){:root[data-theme="auto"] .bcard{color:var(--text)}}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]) .bcard{color:var(--text)}}
 .bcard>details>summary{cursor:pointer}
 .bcard>details>summary h3{display:inline}
 .bcard .asof{color:var(--muted);font-size:12.5px;margin-bottom:8px}
 .bcard .tapefeed{border-top:1px solid var(--border);margin-top:8px;padding-top:8px}
-.bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0}
+.bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0;overflow-wrap:anywhere}
 .bcard .kv b{color:var(--text);font-weight:600}
 .btiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:8px 0 10px}
 .btile{border:1px solid var(--border);border-radius:10px;padding:8px 12px;min-width:0}
@@ -2024,6 +2025,9 @@ def _news_tape_card(tape: dict | None) -> str:
         return ""
     esc = _html.escape
     lines = []
+    if tape.get("lead"):        # the worst feed state first: a connected gateway alone would open the card green
+        cls = "st-warn" if tape.get("stale") else _TAPE_STATES.get(str(tape.get("state")), "st-warn")
+        lines.append(f'<div class="kv" id="news-tape-lead"><span class="{cls}">{esc(str(tape["lead"]))}</span></div>')
     if tape.get("gateway"):
         cls = "st-ok" if tape.get("gateway_state") == "connected" else "st-warn"
         lines.append(f'<div class="kv" id="news-tape-gateway"><span class="{cls}">{esc(str(tape["gateway"]))}</span></div>')

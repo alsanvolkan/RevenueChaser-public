@@ -136,3 +136,11 @@ def test_the_listener_tells_the_recorder_every_ask_refusal_and_headline(tmp_path
     v = {f["feed"]: f for f in _view(tmp_path, 90)["feeds"]}
     assert v["BRFG"]["state"] == "live" and v["DJNL"]["state"] == "refused" and v["DJNL"]["code"] == 10197
     assert _view(tmp_path, 90)["state"] == "refused", "one refused feed is what the card leads with"
+    assert _view(tmp_path, 90)["lead"] == "1 of 2 feeds refused: DJNL"
+
+
+def test_the_gateway_line_is_always_text_whatever_the_caller_hands_over(tmp_path):
+    # The record is written inside an OSError guard only; a value json cannot write would stop the listener.
+    rec = _rec(tmp_path, [T0])
+    rec.down("127.0.0.1:4001", ConnectionRefusedError("refused"))
+    assert tape_state.read(path=rec.path)["gateway"]["detail"] == "refused"

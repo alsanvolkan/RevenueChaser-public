@@ -591,8 +591,9 @@ session"), and only the unit's journal said so.
 `life-rc-news-tape` unit) is its own process and opens no DuckDB, so it writes
 `.cache/news_tape/state.json` (`module_news/tape_state.py`, written `tmp` + `replace`): on every
 connect and disconnect, on every ask and refusal, and with its 5-minute trigger. A headline is written
-through at most once a minute. The card (`section#news-tape`, ids `news-tape-*`) shows the connection
-line and one stacked block a feed:
+through at most once a minute. The card (`section#news-tape`, ids `news-tape-*`) opens on one lead line,
+the worst feed state in a few words (so a connected gateway with every feed refused does not open on
+green), then shows the connection line and one stacked block a feed:
 
 - **Refused** - IBKR's code and words, since when the streak began, how many times in a row, and when it
   is asked again (every 30 minutes). 10197 is explained in plain words: another session of the same IBKR

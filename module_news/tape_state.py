@@ -116,7 +116,8 @@ class Recorder:
         gw = self.rec["gateway"]
         if gw["state"] != state:
             gw["since"] = _iso(self.clock())
-        gw.update(state=state, target=target, detail=detail)
+        # Coerced here, not at the call site: a value json cannot write would raise outside write()'s OSError guard.
+        gw.update(state=state, target=str(target), detail=str(detail) if detail else None)
         self.write()
 
     def connected(self, target: str) -> None:
@@ -200,6 +201,7 @@ def collect(*, names: list[str], now: datetime | None = None, path: Path | None 
     written = _parse(rec["written_at"])
     if written is None:
         return {"state": UNKNOWN, "stale": False, "feeds": [], "gateway": "", "gateway_state": UNKNOWN, "hint": "",
+                "lead": "",
                 "written_text": "No record yet: the listener has not written one. It writes when it connects, on "
                                 "every ask and refusal, and every 5 minutes; a listener started before this card "
                                 "existed writes nothing until it is restarted."}
@@ -224,4 +226,23 @@ def collect(*, names: list[str], now: datetime | None = None, path: Path | None 
              else UNKNOWN if UNKNOWN in states else SUBSCRIBED if SUBSCRIBED in states else LIVE)
     hint = HINT_10197 if any(f["code"] == COMPETING_SESSION for f in feeds) else ""
     return {"state": worst, "stale": stale, "feeds": feeds, "gateway": gateway, "gateway_state": gw["state"],
-            "written_text": written_text, "hint": hint}
+            "written_text": written_text, "hint": hint, "lead": _lead(worst, feeds, ago if stale else "")}
+
+
+def _lead(worst: str, feeds: list[dict], stale_ago: str) -> str:
+    """The card's first line: the worst feed state in a few words, so a connected gateway with every feed refused
+    does not open the card on a green line. A stale record says it is the last known state, not the present one."""
+    refused = [f["feed"] for f in feeds if f["state"] == REFUSED]
+    if not feeds:
+        words = "The listener is set to ask for no feed"
+    elif worst == REFUSED:
+        words = f"{len(refused)} of {len(feeds)} feeds refused: {', '.join(refused)}"
+    elif worst == WAITING:
+        words = "No feed is arriving: the listener is not connected to the gateway"
+    elif worst == UNKNOWN:
+        words = "Not every feed has been asked for yet"
+    elif worst == SUBSCRIBED:
+        words = "No feed is refused; not every feed has sent a headline since it was asked for"
+    else:
+        words = "Every feed is live"
+    return f"Last known, {stale_ago} ago: {words}" if stale_ago else words
