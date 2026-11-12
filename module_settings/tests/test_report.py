@@ -1973,7 +1973,7 @@ def test_the_old_settings_fold_and_its_sections_are_gone():
 
 
 def test_the_tabs_map_data_and_health_and_old_choices_land_on_them():
-    assert report.SETTINGS_TABS["tabs"] == {"data": "panel-data", "health": "panel-health"}
+    assert report.SETTINGS_TABS["tabs"] == {"data": "panel-data", "health": "panel-health", "logs": "panel-logs"}
     assert report.SETTINGS_TABS["aliases"] == {"fetch": "data", "needs": "health", "live": "health"}
     assert "CFG.aliases[name]" in report.TABS_JS
 
