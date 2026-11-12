@@ -182,6 +182,15 @@ choice never flashes dark. The shell copies the choice onto
 each board iframe as `data-theme` on its `<html>`; a board follows it once it uses the shared tokens (one PR
 per board); the Runs tab does with the #131 pull request.
 
+Colour is only half of it. `THEME_SCALE` (#764) holds what does not change with the scheme and is written into
+the base `:root`: the space ladder `--s1`..`--s8` (4 → 64 px), `--r-sm` / `--r-md` / `--r-pill`, the type steps
+`--f-xs`..`--f-xl` with `--w-reg` / `--w-bold`, `--e-flat` and `--e-float` for elevation, `--focus`, `--motion`
+(0 ms under `prefers-reduced-motion`) and `--tap` (44 px). It also holds `--c1`..`--c6`, the categorical chart
+ramp: a **fixed order, never cycled** — a seventh series is "other". The ramp was validated against both board
+surfaces for lightness, chroma, adjacent-pair colour-vision separation and contrast, and reordering it fails
+that check, so the order is a contract. A board takes these names instead of its own pixel values in the same
+PR where it takes the palette.
+
 ### What am I looking at? — every dashboard
 
 Shared `help_html(body)` under the title, closed by default, same `.help`

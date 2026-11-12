@@ -107,15 +107,42 @@ THEME_TOKENS = {
 }
 
 
+# ── Scale tokens: one set, both schemes (#764) ──
+# Colour is per scheme; size, rhythm and timing are not, so these live outside ``THEME_TOKENS`` and are
+# written into the base ``:root`` only. Two of them point back at a colour token (``--focus`` at ``--sky``,
+# the float shadow at ``--shadow``), which is how they stay right in light without a second copy.
+# ``--c1``..``--c6`` is the categorical chart ramp: a fixed order, never cycled — a seventh series is
+# "other". The ramp was checked against both board surfaces for lightness band, chroma floor, colour-vision
+# separation of adjacent pairs and 3:1 contrast; reordering it fails the deutan check, so the order is the
+# contract, not a preference.
+THEME_SCALE = {
+    "s1": "4px", "s2": "8px", "s3": "12px", "s4": "16px",
+    "s5": "24px", "s6": "32px", "s7": "48px", "s8": "64px",
+    "r-sm": "6px", "r-md": "10px", "r-pill": "999px",
+    "f-xs": "12px", "f-sm": "13px", "f-md": "14px", "f-lg": "17px", "f-xl": "24px",
+    "w-reg": "400", "w-bold": "600",
+    "lh-body": "1.55", "lh-head": "1.2",
+    "e-flat": "0 0 0 1px var(--border)", "e-float": "0 10px 24px var(--shadow)",
+    "focus": "var(--sky)", "motion": "150ms ease", "tap": "44px",
+    "c1": "#0C87CC", "c2": "#C77C09", "c3": "#0A9E6E",
+    "c4": "#8B5CF6", "c5": "#E8445F", "c6": "#2F9E8F",
+}
+
+
 def _theme_vars(scheme: str) -> str:
     return ";".join(f"--{k}:{v}" for k, v in THEME_TOKENS[scheme].items()) + f";color-scheme:{scheme}"
 
 
+def _scale_vars() -> str:
+    return ";".join(f"--{k}:{v}" for k, v in THEME_SCALE.items())
+
+
 # Bare CSS (no <style>), so a page puts it inside its own style block.
 THEME_CSS = (
-    f":root{{{_theme_vars('dark')}}}\n"
+    f":root{{{_theme_vars('dark')};{_scale_vars()}}}\n"
     f"@media (prefers-color-scheme: light){{:root[data-theme=\"auto\"]{{{_theme_vars('light')}}}}}\n"
     f":root[data-theme=\"light\"]{{{_theme_vars('light')}}}\n"
+    "@media (prefers-reduced-motion: reduce){:root{--motion:0ms}}\n"
 )
 
 # Runs in <head>, before the page draws, so a light choice never flashes dark. ``rcThemeGet`` is the stored
