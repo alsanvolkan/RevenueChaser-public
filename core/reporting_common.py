@@ -182,11 +182,11 @@ _SUMMARY_TOUCH = """@media (max-width: 900px), (pointer: coarse){
 # Fallbacks: a board without the standard tokens (Earnings Radar, SPX Gamma, LEAPS) still gets the dark box
 # (#383 C3).
 HELP_CSS = """<style>
-.help{background:var(--panel,#12161e);border:1px solid var(--border,#232a38);border-radius:10px;margin-bottom:14px;color:var(--muted,#8a93a6);font-size:12.5px}
-.help summary{cursor:pointer;padding:9px 14px;font-weight:600;color:var(--accent,#0EA5E9)}
+.help{background:var(--card,#12161e);border:1px solid var(--border,#232a38);border-radius:10px;margin-bottom:14px;color:var(--muted,#8a93a6);font-size:12.5px}
+.help summary{cursor:pointer;padding:9px 14px;font-weight:600;color:var(--sky,#0EA5E9)}
 .help .body{padding:0 14px 12px;line-height:1.7}
-.help b{color:var(--text,#d7dce5)}
-.help code{color:var(--neon,#00e6a8)}
+.help b{color:var(--fg,#d7dce5)}
+.help code{color:var(--pos,#00e6a8)}
 """ + _SUMMARY_TOUCH % ".help" + """
 </style>"""
 
@@ -407,12 +407,12 @@ def help_html(body: str) -> str:
 
 # ── "Recorded sessions": what the result history holds for a board (#383 C7, K2) ──
 HISTORY_CSS = """<style>
-.rc-history{background:var(--panel,#12161e);border:1px solid var(--border,#232a38);border-radius:10px;margin:14px 0;color:var(--muted,#8a93a6);font-size:12.5px}
-.rc-history summary{cursor:pointer;padding:9px 14px;font-weight:600;color:var(--accent,#0EA5E9)}
+.rc-history{background:var(--card,#12161e);border:1px solid var(--border,#232a38);border-radius:10px;margin:14px 0;color:var(--muted,#8a93a6);font-size:12.5px}
+.rc-history summary{cursor:pointer;padding:9px 14px;font-weight:600;color:var(--sky,#0EA5E9)}
 .rc-history .body{padding:0 14px 12px;line-height:1.6;overflow-x:auto}
 .rc-history table{border-collapse:collapse;width:100%;font-size:12px}
 .rc-history th,.rc-history td{text-align:left;padding:4px 8px;border-top:1px solid var(--border,#232a38);vertical-align:top}
-.rc-history th{color:var(--text,#d7dce5);font-weight:600}
+.rc-history th{color:var(--fg,#d7dce5);font-weight:600}
 """ + _SUMMARY_TOUCH % ".rc-history" + """
 </style>"""
 _HISTORY_NOTES = 2          # recorded warnings shown per row; the rest are counted
