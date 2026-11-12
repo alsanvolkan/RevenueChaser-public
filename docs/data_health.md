@@ -990,6 +990,7 @@ code:
 | `rc_provider_day_cap` | `provider` | our day cap |
 | `rc_provider_failures_today` | `provider` | failed calls on the New York day |
 | `rc_provider_rate_limited_today` | `provider` | HTTP 429 answers on the New York day |
+| `rc_need_reads_today` | `need` | requests answered for a need on the New York day, every process together |
 | `rc_dataset_state` | `dataset`, `kind`, `state` | 1 for its state: fresh, unchanged, late, stale, never |
 | `rc_dataset_last_check_result` | `dataset`, `kind` | 0 changed or unchanged, 1 skipped, 2 failed |
 | `rc_dataset_checked_timestamp_seconds` | `dataset`, `kind` | the newest check's day |

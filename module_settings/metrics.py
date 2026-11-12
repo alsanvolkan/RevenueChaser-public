@@ -41,8 +41,10 @@ IBKR_STATES = ("up", "silent", "down", "unknown", "not_set")
 NEWS_STATES = ("refused", "live", "subscribed", "waiting", "unknown")
 # a feed id is an env value: only a plain one becomes a label (IBKR's provider codes carry a hyphen or a dot: DJ-N)
 _FEED_NAME = re.compile(r"[A-Za-z0-9_.-]{1,16}")
+#: A need's name as a label value: the read log is a file, so other text is left out rather than exported.
+_NEED_NAME = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 #: The parts ``collect`` reads one by one; each starts its error counter at 0 so a first failure is an increase.
-PARTS = ("queue", "providers", "datasets", "builder", "timer", "backups", "switches", "ibkr", "news")
+PARTS = ("queue", "providers", "needs", "datasets", "builder", "timer", "backups", "switches", "ibkr", "news")
 TIMER_EVERY_S = 60.0
 
 HELP = {
@@ -54,6 +56,8 @@ HELP = {
     "rc_provider_day_cap": ("gauge", "Our own day cap for a provider (absent: no cap)."),
     "rc_provider_failures_today": ("gauge", "Failed calls to a provider on the current New York day."),
     "rc_provider_rate_limited_today": ("gauge", "HTTP 429 answers from a provider on the current New York day."),
+    "rc_need_reads_today": ("gauge", "Requests answered for a need on the current New York day, every process "
+                                     "together."),
     "rc_dataset_state": ("gauge", "1 for the dataset's current state (fresh, unchanged, late, stale, never)."),
     "rc_dataset_last_check_result": ("gauge", "The newest check's result: 0 changed or unchanged, 1 skipped, "
                                      "2 failed (higher is worse)."),
@@ -195,6 +199,15 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
             if p.get("cap"):
                 out["rc_provider_day_cap"].append((name, p["cap"]))
 
+    def needs() -> None:
+        # #715: the Logs tab's daily counters. The read log holds a day, a process and a need; no single request.
+        day, total = ops._today(), {}
+        for r in ops.need_reads(day):
+            if r["day"] == day and _NEED_NAME.fullmatch(str(r["need"])):
+                total[r["need"]] = total.get(r["need"], 0) + r["reads"]
+        for need in sorted(total):
+            out["rc_need_reads_today"].append(({"need": need}, total[need]))
+
     def dataset_states() -> None:
         for name, ds in (datasets if datasets is not None else newdata._datasets()).items():
             # A dataset that cannot be read is counted and left out whole; the ones after it still report.
@@ -285,7 +298,7 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
         if written is not None:
             out["rc_news_tape_written_timestamp_seconds"].append(({}, written))
 
-    parts = {"queue": queue, "providers": providers, "datasets": dataset_states, "builder": builder,
+    parts = {"queue": queue, "providers": providers, "needs": needs, "datasets": dataset_states, "builder": builder,
              "timer": timer_part, "backups": backups, "switches": switches, "ibkr": gateway, "news": news_feeds}
     for name in PARTS:
         part(name, parts[name])
