@@ -1119,6 +1119,11 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
         # are the served ones rather than this card's.
         own = shares_out.get(c["ticker"]) or {}
         so, so_source = own.get("shares_outstanding"), own.get("shares_basis") or "stored"
+        if not so and c.get("market_cap") and c.get("price"):
+            # This board's last resort, kept: the served ladder reaches only names the prices store knows, and
+            # every card here has a cap and a price of its own. Without it, sharing the reader would have cost
+            # this board the names the store does not hold.
+            so, so_source = c["market_cap"] / c["price"], "market_cap/price"
         inst = _institutional(c["ticker"], totals, so, so_source, splits.get(c["ticker"], 1.0))
         # The 13F quarters the card read are period ends it read: they ride in ``period_ends`` (a JSON column of
         # ``ticker_scores``), so a Refresh shows them too (AG review SF-3).

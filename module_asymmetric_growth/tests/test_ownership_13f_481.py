@@ -185,9 +185,9 @@ def test_a_reverse_split_after_the_quarter_puts_the_13f_shares_on_todays_basis(r
     assert len(asked) == 1 and asked[0][3] == "split"            # one read per quarter, not one per card
 
 
-def test_an_unreadable_prices_store_costs_the_share_but_never_the_scan(rawstore_tmp_db, monkeypatch):
-    """Since #646 PR 1 the denominator is served too, so an unreadable store leaves the card without a share -
-    which is the honest answer - and the scan still finishes with its split factor at 1.0."""
+def test_an_unreadable_prices_store_falls_back_to_the_card_and_never_fails_the_scan(rawstore_tmp_db, monkeypatch):
+    """Since #646 PR 1 the denominator is served too. An unreadable store must cost neither the scan nor the
+    share: the board drops to its own last rung, the card's market cap over its price."""
     from RevenueChaser.rcdata import read
     _payload("AAA")
     _shares_out("AAA", 1000.0)
@@ -199,4 +199,7 @@ def test_an_unreadable_prices_store_costs_the_share_but_never_the_scan(rawstore_
 
     card = _cards(_scan(monkeypatch, ["AAA"]))["AAA"]
 
-    assert card["inst_ownership_pct"] is None and card["ownership"]["split_factor"] == 1.0
+    implied = card["market_cap"] / card["price"]
+    assert abs(card["inst_ownership_pct"] - 400.0 / implied) < 1e-12
+    assert card["ownership"]["shares_out"] == "market_cap/price"
+    assert card["ownership"]["split_factor"] == 1.0

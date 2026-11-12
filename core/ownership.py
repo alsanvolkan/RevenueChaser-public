@@ -194,6 +194,10 @@ def load_ownership(tickers) -> dict[str, dict]:
     ``ownership_snapshot`` carried a count for 1,636 of the 8,423 13F tickers (19.4%); the served path covers
     3,248 reported (38.6%) and 5,766 with the implied fallback (68.5%).
 
+    A name the prices store does not hold at all gets no ``shares_outstanding`` here. The 13F board then shows a
+    dash; Asymmetric Growth drops to its own last rung, the card's market cap over its price, which the store
+    cannot reach (``module_asymmetric_growth/engine.py``).
+
     ``insider_pct`` is still the old table's. It moves to ``rcdata.read.insider_reported`` in its own pull request
     (#646 PR 4 landed the reader), because that number changes what the board shows and needs its own look.
     """
