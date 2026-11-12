@@ -3096,10 +3096,11 @@ LIVE_BOARDS = (("panel-health", "rc-health", "live-frame", "Fetch controls and d
 LIVE_CSS = """
 .watchwrap{max-width:var(--page-max,1280px);margin:0 auto;padding:16px 12px 48px}
 .watchwrap .nd-sub{color:var(--muted);font-size:12.5px}
-.live-board .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
-  padding:0 12px;min-height:44px}
-.live-board .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px;min-height:44px;
-  display:inline-flex;align-items:center}
+/* avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": the link has no row of its own. It lies on the frame's
+   own first row, in the room left of Grafana's time and refresh pickers (they hug the right edge). */
+.live-board{position:relative}
+.live-board .livebar{position:absolute;top:11px;left:16px;z-index:1}
+.live-board .livebar a{color:var(--mut,inherit);font-size:13px;min-height:44px;display:inline-flex;align-items:center}
 .live-board iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
   background:var(--bg,transparent)}
 """

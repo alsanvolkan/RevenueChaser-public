@@ -449,8 +449,38 @@ def board_head(now: datetime | None = None, *, ibkr: Callable[[], dict] | None =
     except Exception:  # noqa: BLE001 - not known is drawn as not known
         feeds = None
     return {"switches": switches, "timer": timer.get("state"), "timer_fired": fired, "files": files, "news": feeds,
+            "last": _last_done(now),
             "gateway": {"cls": cls, "n": n, "label": label.replace("IBKR gateway · ", ""),
                         "login": report._ibkr_login_href(inventory._ibkr_login_url())}}
+
+
+def _last_done(now: datetime) -> dict:
+    """When the work behind the board's Fetch & Build and Backup switches was last done (avo, 12 Nov 2026: "onlarin
+    en son ne zaman oldugunu tam duzgun bir sekilde yaz"): the builder's newest run (its dataset and status) and the
+    newest good step of the weekly backup, each as ``12 Nov 23:46`` on the page's clock, or None when not known.
+    The ops store and the backup manifests only; no served DuckDB file is opened."""
+    def stamp(when: datetime) -> str:
+        when = control._local(when)
+        return f"{when.day} {when:%b %H:%M}"
+
+    out = {"fetch": None, "backup": None}
+    try:
+        from RevenueChaser.rcdata import ops
+        run = ops.last_builder_run()
+        at = (run or {}).get("finished_at") or (run or {}).get("started_at")
+        if at:
+            out["fetch"] = {"at": stamp(datetime.fromtimestamp(float(at), timezone.utc)),
+                            "dataset": run.get("dataset"), "status": run.get("status")}
+    except Exception:  # noqa: BLE001 - not known is drawn as not known
+        pass
+    try:
+        from RevenueChaser.module_settings import newdata
+        done = [datetime.fromisoformat(s["last_ok"]) for s in newdata._backups(now)["steps"] if s.get("last_ok")]
+        if done:
+            out["backup"] = {"at": stamp(max(done))}
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def board_status(now: datetime | None = None, *, spend: Callable[[], dict] | None = None,

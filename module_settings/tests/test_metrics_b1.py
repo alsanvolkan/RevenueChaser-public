@@ -370,6 +370,45 @@ def test_the_board_head_says_the_switches_the_timer_and_the_gateway(monkeypatch)
     assert metrics.board_head(NOW, ibkr=lambda: None)["gateway"]["login"] == "https://gateway.example/"
 
 
+def test_the_board_head_says_when_fetch_and_backup_were_last_done(monkeypatch):
+    """avo, 12 Nov 2026: "onlarin en son ne zaman oldugunu tam duzgun bir sekilde yaz" (the Grafana board's
+    Fetch & Build and Backup switches): the builder's newest run and the newest good backup step, on the page's
+    clock; not known is None, never a guess, and a read that raises does not take the head down."""
+    from RevenueChaser.module_settings import newdata
+    from RevenueChaser.rcdata import ops
+    assert metrics.board_head(NOW, ibkr=lambda: None)["last"] == {"fetch": None, "backup": None}
+    ran = datetime(2026, 11, 12, 22, 46, tzinfo=timezone.utc)
+    monkeypatch.setattr(ops, "last_builder_run", lambda: {"dataset": "prices/daily", "status": "ok",
+                                                          "started_at": ran.timestamp() - 60,
+                                                          "finished_at": ran.timestamp()})
+    monkeypatch.setattr(newdata, "_backups", lambda now: {"steps": [
+        {"step": "duckdb", "last_ok": "2026-11-08T02:10:00+00:00"}, {"step": "ops", "last_ok": None},
+        {"step": "boards", "last_ok": "2026-11-01T02:10:00+00:00"}]})
+    local = metrics.control._local
+    last = metrics.board_head(NOW, ibkr=lambda: None)["last"]
+    assert last["fetch"] == {"at": f"12 Nov {local(ran):%H:%M}", "dataset": "prices/daily", "status": "ok"}
+    assert last["backup"] == {"at": f"8 Nov {local(datetime(2026, 11, 8, 2, 10, tzinfo=timezone.utc)):%H:%M}"}
+    monkeypatch.setattr(ops, "last_builder_run", lambda: {"dataset": "a", "status": "running",
+                                                          "started_at": ran.timestamp(), "finished_at": None})
+    assert metrics.board_head(NOW, ibkr=lambda: None)["last"]["fetch"]["status"] == "running"
+
+    def boom(*a):
+        raise RuntimeError("store busy")
+    monkeypatch.setattr(ops, "last_builder_run", boom)
+    monkeypatch.setattr(newdata, "_backups", boom)
+    assert metrics.board_head(NOW, ibkr=lambda: None)["last"] == {"fetch": None, "backup": None}
+
+
+def test_the_grafana_link_has_no_row_of_its_own():
+    """avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": it lies on the frame's first row, left of Grafana's
+    pickers, and stays a 44 px target."""
+    from RevenueChaser.module_settings import report
+    assert ".live-board{position:relative}" in report.LIVE_CSS
+    assert ".live-board .livebar{position:absolute;top:11px;left:16px;z-index:1}" in report.LIVE_CSS
+    assert "min-height:44px" in report.LIVE_CSS.split(".live-board .livebar a{")[1].split("}")[0]
+    assert "margin:12px auto 8px" not in report.LIVE_CSS
+
+
 def test_the_board_head_carries_the_news_feeds_in_the_listener_s_words():
     """#727: the Grafana board says the feeds beside the gateway; the words come from module_news/tape_state."""
     view = {"state": "refused", "lead": "2 of 2 feeds refused: BRFG, DJNL", "feeds": []}
