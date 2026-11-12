@@ -143,7 +143,8 @@ V13 = ("relatedness_embeddings",)
 BOARD_TABLES = ("news_events", "news_highlight", "news_headlines", "news_meta",
                 "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta",
                 "spx_raw_days", "spx_raw_files", "spx_brier", "spx_gex_daily", "spx_meta",
-                "sec13f_board_cells", "sec13f_board_breaks", "sec13f_board_meta")
+                "sec13f_board_cells", "sec13f_board_breaks", "sec13f_board_meta",
+                "wl_list", "wl_section", "wl_item", "wl_change")
 
 
 def test_legacy_table_list_is_the_66_remaining_pre_g1_tables():
