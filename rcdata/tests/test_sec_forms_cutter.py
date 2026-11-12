@@ -564,6 +564,7 @@ def test_an_unreadable_document_is_charged_unless_the_corpus_itself_has_gone(fak
     asking about the file's own parent read a company whose folder had not been downloaded as an unmounted
     corpus -- and a failed run is remembered nowhere, so every hourly run stopped at that document for ever."""
     fake.append([cutter.DocumentUnreadable("this document cannot be read: FileNotFoundError")])
+    (tmp_path / "1234").mkdir()                  # a corpus with something in it, which is what "there" means
     with cutter.Cutter(corpus_root=tmp_path) as c:
         assert c.cut("0000-46", tmp_path / "1234" / "a.htm", "10-K") is None, "the corpus is there; charge it"
     assert cutter.tries_so_far("0000-46") == 1
@@ -573,12 +574,14 @@ def test_an_unreadable_document_is_charged_unless_the_corpus_itself_has_gone(fak
         with pytest.raises(cutter.CutterUnusable, match="not mounted where it should be"):
             c.cut("0000-47", tmp_path / "not-mounted" / "1234" / "a.htm", "10-K")
     assert cutter.tries_so_far("0000-47") == 0, "nothing in the corpus can be read, so no document is at fault"
+    assert cutter.stops_so_far("0000-47") == 1, "but the run it stopped is remembered, so it cannot stop them all"
 
 
 def test_without_a_corpus_root_an_unreadable_document_is_still_charged(fake, tmp_path):
     """The safe direction when the caller has not said where the corpus is: a charged document is retired after
     three runs and the sidecar says why, while a run that stops leaves no trace at all."""
     fake.append([cutter.DocumentUnreadable("this document cannot be read: BadGzipFile")])
+    (tmp_path / "1234").mkdir(exist_ok=True)
     with cutter.Cutter() as c:
         assert c.corpus_root is None
         assert c.cut("0000-48", tmp_path / "a.htm.gz", "10-K") is None
@@ -632,16 +635,23 @@ def test_a_negative_count_is_not_a_cut_document(tmp_path, monkeypatch):
     monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
     monkeypatch.setenv(cutter.PYTHON_ENV, sys.executable)
     script = tmp_path / "negative.py"
-    script.write_text('import json, sys\n'
+    # It writes the answer file first, as the real worker does -- it renames before it answers. Without that the
+    # "nothing is cached" assertion below holds for the script and not for the worker, because the client's own
+    # rescue path would hand the renamed file back as a cut document.
+    script.write_text('import gzip, json, sys\n'
                       'print(json.dumps({"edgar_version": "6.0.0"}), flush=True)\n'
                       'for line in sys.stdin:\n'
-                      '    print(json.dumps({"ok": True, "sections": -1, "chars": -1}), flush=True)\n',
+                      '    out = json.loads(line)["out"]\n'
+                      '    with gzip.open(out, "wt", encoding="utf-8") as fh:\n'
+                      '        fh.write(json.dumps({"item": "1", "text": "cannot be trusted"}) + "\\n")\n'
+                      '    print(json.dumps({"ok": True, "sections": -1, "chars": 7}), flush=True)\n',
                       encoding="utf-8")
     monkeypatch.setattr(cutter, "WORKER", script)
     with cutter.Cutter() as c:
         assert c.cut("0000-50", tmp_path / "a.htm", "10-K") is None
         assert "negative count" in c.failed["0000-50"]
-    assert not cutter.answer_path("0000-50").exists()
+        assert c.restarts == 1, "a count that cannot be true is the protocol, so the worker is replaced"
+    assert not cutter.answer_path("0000-50").exists(), "and the file it already renamed is not kept"
 
 
 def test_a_zero_byte_answer_file_is_not_a_cut_document(fake, tmp_path):
@@ -901,7 +911,8 @@ def test_a_cutter_unusable_raised_while_cutting_is_still_the_run_s_problem(fake,
     with cutter.Cutter() as c:
         with pytest.raises(cutter.CutterUnusable):
             c.cut("0000-19", tmp_path / "a.htm", "10-K")
-    assert cutter.tries_so_far("0000-19") == 0 and not cutter.failed_path("0000-19").exists()
+    assert cutter.tries_so_far("0000-19") == 0, "the box's fault costs the document no attempt"
+    assert cutter.stops_so_far("0000-19") == 1, "and the run it stopped is remembered"
 
 
 def test_a_library_that_prints_does_not_break_the_protocol(stub, tmp_path, monkeypatch):
@@ -1027,7 +1038,7 @@ def test_a_corpus_that_is_not_mounted_stops_the_run_through_the_real_worker(stub
         with pytest.raises(cutter.CutterUnusable, match="not mounted where it should be"):
             c.cut("0000-38", gone / "1234" / "a.htm", "10-K")
     assert cutter.tries_so_far("0000-38") == 0, "no attempt is charged for the box's fault"
-    assert not cutter.failed_path("0000-38").exists()
+    assert cutter.stops_so_far("0000-38") == 1
 
 
 def test_a_gz_file_that_is_not_gzip_is_that_document_s_own_failure(stub, tmp_path, monkeypatch):
@@ -1171,16 +1182,37 @@ def test_a_non_ascii_filing_keeps_its_characters(stub, tmp_path, monkeypatch):
     assert "Société Générale and Türk Telekom" in _answers(out)[0]["text"]
 
 
-def test_a_document_with_no_sections_is_cached_as_cut_and_counted(stub, tmp_path, monkeypatch):
-    """It is cut: the cutter read it and found nothing. But a form the library has no vocabulary for answers this
-    for every one of its filings, and the count is the only place that would ever show."""
+def test_a_document_with_no_sections_is_not_cached_as_a_cut_document(stub, tmp_path, monkeypatch):
+    """It used to be cached as cut, on the reasoning that the cutter had read it and found nothing. Round 4 of
+    the review measured what actually produces this answer: edgartools swallows an exception during detection and
+    returns nothing (``hybrid_section_detector.py:657, 672, 695``; ``toc_section_detector.py:179``), so a
+    document that failed to parse *inside* the library arrives as "ok, no sections" -- and cached, that is a
+    filing stored for ever as having no sections at all. A form with no vocabulary in the library answers the
+    same way and deserves a line in the report, not a cached empty file."""
     monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
     doc = tmp_path / "nothing.htm"
     doc.write_text("<html>nothing</html>", encoding="utf-8")
     with cutter.Cutter() as c:
-        out = c.cut("0000-22", doc, "40-F")
-        assert out is not None and _answers(out) == []
-        assert (c.empty, c.cut_now) == (1, 1)
+        assert c.cut("0000-22", doc, "40-F") is None
+        assert (c.empty, c.cut_now) == (1, 0)
+        assert "no section" in c.failed["0000-22"]
+    assert not cutter.answer_path("0000-22").exists(), "nothing is cached, so a later run can try again"
+    assert cutter.tries_so_far("0000-22") == 1
+
+
+def test_a_whole_form_cut_into_nothing_stops_the_run(stub, tmp_path, monkeypatch):
+    """A form the library has no vocabulary for, or detection failing inside it, answers this for every filing.
+    Writing the form off one filing at a time would retire all of them over three runs with no diagnosis
+    anywhere, so the fifth in a row stops the pass and the message says which two things to look at."""
+    monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
+    doc = tmp_path / "nothing.htm"
+    doc.write_text("<html>nothing</html>", encoding="utf-8")
+    with cutter.Cutter(break_after=5) as c:
+        for i in range(4):
+            assert c.cut(f"0000-n{i}", doc, "40-F") is None
+        with pytest.raises(cutter.CutterUnusable, match="no sections at all"):
+            c.cut("0000-n4", doc, "40-F")
+        assert c.empty == 5
 
 
 def test_sections_with_no_text_at_all_are_not_cached_as_a_cut_document(stub, tmp_path, monkeypatch):
@@ -1328,6 +1360,10 @@ def _worker_module():
     (errno.ENOENT, "it is not there", True),
     (errno.EISDIR, "it is a directory", True),
     (errno.ENOTDIR, "something in the path is a file", True),
+    (errno.ENAMETOOLONG, "the name is impossible", True),
+    (errno.ELOOP, "the symlinks go round", True),
+    (errno.EPERM, "not on the list at all", False),
+    (errno.ENOMEM, "the box has no memory", False),
     (errno.EACCES, "a restore with the wrong owner", False),
     (errno.EIO, "a flaky mount", False),
     (errno.ESTALE, "an NFS handle that went away", False),
@@ -1360,6 +1396,170 @@ def test_only_a_fault_about_the_file_itself_is_the_document_s_own(tmp_path, monk
     assert isinstance(caught, worker.BadDocument) is theirs, (
         f"errno {number} ({name}): raised {type(caught).__name__}, so 'the file's own problem' is "
         f"{not theirs} and should be {theirs}")
+
+
+@pytest.mark.parametrize("body,what", [
+    (b"", "a zero-byte file"),
+    (b"   \n", "whitespace and nothing else"),
+])
+def test_an_empty_document_is_refused_rather_than_cut_into_nothing(stub, tmp_path, monkeypatch, body, what):
+    """edgartools reads an empty file without complaining (``parser.py:123-131`` builds an empty document and
+    ``pattern_section_extractor.py:145`` answers ``{}``), so the answer would be "cut, no sections" -- and a
+    file that is empty because its download was cut off would be stored as a filing with nothing in it."""
+    monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
+    doc = tmp_path / "empty.htm"
+    doc.write_bytes(body)
+    with cutter.Cutter() as c:
+        assert c.cut("0000-52", doc, "10-K") is None
+        assert "empty" in c.failed["0000-52"]
+    assert cutter.tries_so_far("0000-52") == 1
+
+
+def test_a_gzip_document_that_stops_in_the_middle_is_that_document_s_own_failure(stub, tmp_path, monkeypatch):
+    """A download cut off part way. It raises ``EOFError``, which is **not** an ``OSError``, so the errno table
+    never sees it -- and the docstring that called ``BadGzipFile`` "a half-finished download" was describing this
+    case, which was the one it did not handle."""
+    monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
+    whole = tmp_path / "whole.htm.gz"
+    with gzip.open(whole, "wt", encoding="utf-8") as fh:
+        fh.write("<html>a filing</html>" * 200)
+    cut_off = tmp_path / "cut-off.htm.gz"
+    cut_off.write_bytes(whole.read_bytes()[:40])
+    with cutter.Cutter() as c:
+        assert c.cut("0000-53", cut_off, "10-K") is None
+        assert "EOFError" in c.failed["0000-53"]
+    assert cutter.tries_so_far("0000-53") == 1
+
+    # And it is a failure to *read* the file, not a parse: the two both charge an attempt, so the only thing that
+    # tells them apart is the question the read phase asks -- is the corpus still there? Left out of the except
+    # tuple, an ``EOFError`` falls through to the parse branch and this document would be charged while nothing
+    # in the corpus could be read at all.
+    with cutter.Cutter(corpus_root=tmp_path / "mountpoint") as c:
+        (tmp_path / "mountpoint").mkdir()
+        with pytest.raises(cutter.CutterUnusable, match="not mounted where it should be"):
+            c.cut("0000-53b", cut_off, "10-K")
+    assert cutter.tries_so_far("0000-53b") == 0
+
+
+def test_a_document_that_stops_three_runs_is_skipped_so_the_pass_can_go_on(fake, tmp_path):
+    """The counter the first three review rounds kept rediscovering the need for.
+
+    A ``CutterUnusable`` charges no attempt and was remembered nowhere, so *any* per-document cause of one
+    stopped every hourly run at the same document for ever, and nothing behind it was ever cut. Three rounds
+    found three such causes and each fix moved the boundary between "the filing's fault" and "the box's"; the
+    hole was the missing memory, not the boundary. The run still stops -- that is the right alarm when the box
+    really is broken -- and a document that has stopped three of them is passed over.
+    """
+    for run in range(3):
+        fake.append([cutter.CutterUnusable("the cutter could not write or read a.htm: OSError: [Errno 5] I/O "
+                                           "error")])
+        with cutter.Cutter() as c:
+            with pytest.raises(cutter.CutterUnusable, match="I/O error"):
+                c.cut("0000-54", tmp_path / "a.htm", "10-K")
+        assert cutter.stops_so_far("0000-54") == run + 1
+        assert cutter.tries_so_far("0000-54") == 0, "no attempt was ever spent on it"
+
+    fake.append(["ok"])
+    FakeWorker.made = []
+    with cutter.Cutter() as c:
+        assert c.cut("0000-54", tmp_path / "a.htm", "10-K") is None
+        assert c.skipped == 1 and "skipped" in c.failed["0000-54"]
+        assert not FakeWorker.made, "a skipped document is not sent to the worker at all"
+        assert c.cut("0000-55", tmp_path / "b.htm", "10-K") is not None, "and the pass carries on"
+
+
+def test_the_run_that_the_box_stopped_gives_the_breaker_s_attempts_back(fake, tmp_path):
+    """The breaker holds attempts for the documents before this one, and the run is ending for a reason that is
+    not any of theirs. Before this, those attempts were returned only when the breaker itself stopped the run, so
+    a pressured box charged three good documents and then ended the run on the fourth -- and three hours later
+    those three were retired."""
+    fake.append([cutter.WorkerLost("the cutter worker did not answer in 180s")])
+    fake.append([cutter.WorkerLost("the cutter worker did not answer in 180s")])
+    fake.append([cutter.CutterUnusable("the cutter could not write or read c.htm: MemoryError")])
+    with cutter.Cutter(break_after=5) as c:
+        assert c.cut("0000-56", tmp_path / "a.htm", "10-K") is None
+        assert c.cut("0000-57", tmp_path / "b.htm", "10-K") is None
+        assert [cutter.tries_so_far(n) for n in ("0000-56", "0000-57")] == [1, 1]
+        with pytest.raises(cutter.CutterUnusable, match="MemoryError"):
+            c.cut("0000-58", tmp_path / "c.htm", "10-K")
+    assert [cutter.tries_so_far(n) for n in ("0000-56", "0000-57")] == [0, 0], (
+        "the run ended for the box's reason, so the documents it was holding keep nothing")
+
+
+def test_a_handshake_that_fails_mid_pass_gives_the_breaker_s_attempts_back(fake, tmp_path, monkeypatch):
+    """The same rule for the other way a run ends: the worker could not be replaced. A venv upgraded underneath
+    an hourly pass does this, and the documents already charged had nothing to do with it."""
+    fake.append([cutter.WorkerLost("the cutter worker did not answer in 180s")])
+    with cutter.Cutter(break_after=5) as c:
+        assert c.cut("0000-59", tmp_path / "a.htm", "10-K") is None
+        assert cutter.tries_so_far("0000-59") == 1
+        monkeypatch.setattr(cutter, "_factory", lambda: (_ for _ in ()).throw(
+            cutter.CutterUnusable("the cutter venv has edgartools 6.1.0, not the pinned 6.0.0")))
+        with pytest.raises(cutter.CutterUnusable, match="not the pinned"):
+            c.cut("0000-60", tmp_path / "b.htm", "10-K")
+    assert cutter.tries_so_far("0000-59") == 0
+
+
+@pytest.mark.parametrize("body,what", [
+    ("null", "valid JSON that is not an object"),
+    ("[]", "a list"),
+    ('{"tries": "two"}', "a count that is not a number"),
+    ('{"tries": -4}', "a negative count"),
+    ('{"tries": NaN}', "a count that is not finite"),
+    ('{"tries": 1e999}', "a count too big to be one"),
+    ("{not json at all", "a truncated write"),
+])
+def test_a_sidecar_nobody_could_use_is_read_as_no_attempts_rather_than_crashing(fake, tmp_path, body, what):
+    """It is a file on disk that anybody can edit, and a run that crashes on it crashes at the same document in
+    every run. ``null`` used to reach the caller as an ``AttributeError`` out of ``Cutter.cut``, which promises
+    nothing but ``DocumentFailed`` and ``CutterUnusable``."""
+    cutter.answers_dir().mkdir(parents=True, exist_ok=True)
+    cutter.failed_path("0000-61").write_text(body, encoding="utf-8")
+    assert cutter.read_sidecar("0000-61") == {"tries": 0, "gave_back": 0, "stops": 0}
+    fake.append([cutter.DocumentFailed("the parser gave up on this filing")])
+    with cutter.Cutter() as c:
+        assert c.cut("0000-61", tmp_path / "a.htm", "10-K") is None
+    assert cutter.tries_so_far("0000-61") == 1, "it is charged from zero, not retired by an unreadable file"
+
+
+def test_a_corpus_root_that_is_a_file_or_empty_is_gone(tmp_path):
+    """``is_dir`` and not ``exists``, and empty counts as gone: an unmounted mountpoint is an empty directory,
+    and ``core/config.py:76`` recreates ``EDGAR_DOCS_DIR`` at import -- so a builder started while the disk is
+    not mounted makes the root exist before the cutter ever looks at it."""
+    a_file = tmp_path / "root-is-a-file"
+    a_file.write_text("not a corpus", encoding="utf-8")
+    empty = tmp_path / "mountpoint"
+    empty.mkdir()
+    full = tmp_path / "corpus"
+    (full / "1234").mkdir(parents=True)
+    dangling = tmp_path / "dangling"
+    dangling.symlink_to(tmp_path / "nowhere")
+    assert cutter.Cutter(corpus_root=a_file)._corpus_gone()
+    assert cutter.Cutter(corpus_root=empty)._corpus_gone(), "an empty mountpoint is not a corpus"
+    assert cutter.Cutter(corpus_root=dangling)._corpus_gone()
+    assert cutter.Cutter(corpus_root=tmp_path / "never-made")._corpus_gone()
+    assert not cutter.Cutter(corpus_root=full)._corpus_gone()
+    assert not cutter.Cutter()._corpus_gone(), "no root named is not a claim that it has gone"
+
+
+def test_a_parse_failure_is_charged_even_when_the_corpus_has_gone(fake, tmp_path):
+    """The corpus check belongs to the one failure it is about. A filing the parser refused is the filing's own
+    doing whatever the state of the mount, and treating every failure as the mount's would charge nothing, stop
+    the run, and leave the parse failure to be met again in the next run for ever."""
+    fake.append([cutter.DocumentFailed("the parser gave up on this filing")])
+    with cutter.Cutter(corpus_root=tmp_path / "not-mounted") as c:
+        assert c.cut("0000-62", tmp_path / "a.htm", "10-K") is None
+    assert cutter.tries_so_far("0000-62") == 1 and cutter.stops_so_far("0000-62") == 0
+
+
+def test_a_failure_note_that_cannot_be_removed_does_not_break_the_cut(fake, tmp_path, monkeypatch):
+    """Forgetting a note is housekeeping: the note only ever makes the cutter try one time fewer. Raising from
+    there would break what ``Cutter.cut`` promises its caller, for a file that the next attempt replaces."""
+    in_the_way = tmp_path / "a-directory.failed.json"
+    in_the_way.mkdir()
+    monkeypatch.setattr(cutter, "failed_path", lambda accession: in_the_way)
+    with cutter.Cutter() as c:
+        assert c.cut("0000-63", tmp_path / "a.htm", "10-K") is not None, "the document is cut; the note is noise"
 
 
 def test_a_document_the_box_had_no_memory_for_is_not_charged_to_the_filing(stub, tmp_path, monkeypatch):

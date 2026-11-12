@@ -242,17 +242,29 @@ def _read(html_path: str) -> str:
     """One document's HTML, gzipped or not.
 
     A failure to read it is :class:`BadDocument` when the reason is about this file (it is not there, it is a
-    directory, its name is impossible) and an ``OSError`` when it is about the box (``EACCES`` from a restore
-    with the wrong owner, ``EIO`` or ``ESTALE`` from a flaky mount, ``EMFILE``, ``ENOSPC``). ``BadGzipFile`` is a
-    ``gzip`` file that is not gzip -- a half-finished download -- and carries no ``errno``, which is this file's
-    own problem by definition. Whether it is *charged* to the document is the client's decision, not this one.
+    directory, its name is impossible, it is empty, it is not the gzip it is named as) and an ``OSError`` when it
+    is about the box (``EACCES`` from a restore with the wrong owner, ``EIO`` or ``ESTALE`` from a flaky mount,
+    ``EMFILE``, ``ENOSPC``). Whether either is *charged* to the document is the client's decision, not this one,
+    and the client remembers a run this document stopped either way.
+
+    ``BadGzipFile`` is a file named ``.gz`` that is not gzip at all, and ``EOFError`` is one that is gzip and
+    stops in the middle -- a download that was cut off. Neither carries an ``errno``. The docstring used to call
+    ``BadGzipFile`` "a half-finished download", which is the ``EOFError`` case and was not handled here at all.
+
+    An **empty** file is refused rather than parsed. edgartools reads it without complaining
+    (``parser.py:123-131`` builds an empty document and ``pattern_section_extractor.py:145`` answers ``{}``), so
+    the answer would be "cut, no sections" and the file would be cached as a cut document for good -- the silent
+    loss this layer exists to avoid.
     """
     opener = gzip.open if html_path.endswith(".gz") else open
     try:
         with opener(html_path, "rt", encoding="utf-8", errors="replace") as fh:
-            return fh.read()
-    except gzip.BadGzipFile as e:
-        raise BadDocument(f"this document cannot be read: BadGzipFile: {e}") from e
+            html = fh.read()
+        if not html.strip():
+            raise BadDocument("this document is empty")
+        return html
+    except (gzip.BadGzipFile, EOFError) as e:
+        raise BadDocument(f"this document cannot be read: {type(e).__name__}: {e}") from e
     except OSError as e:
         if e.errno in THEIR_FAULT:
             raise BadDocument(f"this document cannot be read: {type(e).__name__}: {e}") from e

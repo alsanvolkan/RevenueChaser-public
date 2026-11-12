@@ -64,6 +64,7 @@ HANDSHAKE_TIMEOUT_S = 60.0   # importing ~35 packages, cold; not a document, so 
 RECYCLE_N = 200          # documents before the worker is replaced
 MAX_TRIES = 3            # attempts at one document, counted across runs through its .failed.json
 BREAK_AFTER = 5          # consecutive failed documents before the run is called the box's fault, not theirs
+MAX_STOPS = 3            # runs one document may bring down with "the box's fault" before the pass skips it
 
 
 class CutterUnusable(base.SourceError):
@@ -145,13 +146,64 @@ def failed_path(accession: str) -> Path:
     return answers_dir() / f"{accession}.failed.json"
 
 
-def tries_so_far(accession: str) -> int:
-    """How many attempts earlier runs have already spent on this document. A sidecar we cannot read is treated as
-    zero rather than as "give up": a truncated file must not retire a document for good."""
+#: What a document's sidecar counts. ``tries`` are the attempts spent on it, ``gave_back`` the attempts the
+#: breaker returned, ``stops`` the runs it brought down with a reason that was called the box's fault.
+COUNTERS = ("tries", "gave_back", "stops")
+
+
+def _count(value: object) -> int:
+    """One counter, read from a file anybody can hand-edit. Anything that is not a whole number at least zero is
+    zero, never "give up": a truncated or edited sidecar must not retire a document for good, and must not raise
+    out of :meth:`Cutter.cut` either."""
     try:
-        return int(json.loads(failed_path(accession).read_text("utf-8"))["tries"])
-    except (OSError, ValueError, KeyError, TypeError, OverflowError):
+        n = int(value)                      # type: ignore[call-overload]
+    except (TypeError, ValueError, OverflowError):
         return 0
+    return max(n, 0)
+
+
+def read_sidecar(accession: str) -> dict[str, int]:
+    """This document's three counters. All zero when there is no sidecar, when it cannot be read, or when it is
+    not a JSON object -- a hand-edited ``null`` or ``[]`` used to reach the caller as an ``AttributeError``."""
+    try:
+        body = json.loads(failed_path(accession).read_text("utf-8"))
+        if not isinstance(body, dict):
+            raise ValueError("a sidecar is an object")
+    except (OSError, ValueError, TypeError):
+        body = {}
+    return {name: _count(body.get(name)) for name in COUNTERS}
+
+
+def tries_so_far(accession: str) -> int:
+    """How many attempts earlier runs have already spent on this document."""
+    return read_sidecar(accession)["tries"]
+
+
+def gave_back_before(accession: str) -> int:
+    """How many earlier runs gave this document's attempt back because the breaker stopped them.
+
+    It is the only memory of a given-back attempt, and without it the give-back had no end: a document that hangs
+    the worker was given its attempt back, the sidecar was removed, and the next run met a document with a clean
+    slate that hung again. Five of those in a row met the breaker in every run, for ever.
+    """
+    return read_sidecar(accession)["gave_back"]
+
+
+def stops_so_far(accession: str) -> int:
+    """How many runs this document has brought down with a failure that was called the box's fault.
+
+    **The counter the first three review rounds of this file kept rediscovering the need for.** A
+    :class:`CutterUnusable` charges no attempt and was remembered nowhere, so *any* per-document cause of one
+    stopped every hourly run at the same document for ever, with nothing after it ever cut. Three rounds found
+    three such causes -- an unreadable file, a company folder read as an unmounted corpus, ``EACCES`` on one
+    filing from a restore with the wrong owner -- and each fix moved the boundary rather than removing the hole,
+    because the hole is the missing memory and not the boundary.
+
+    So the run still stops, which is the right alarm when the box really is broken, and a document that has
+    stopped :data:`MAX_STOPS` runs is **skipped** from then on: not retired as a bad filing (no attempt was ever
+    spent on it) but passed over, counted and reported, so the pass gets to the other 5,148.
+    """
+    return read_sidecar(accession)["stops"]
 
 
 def _is_cut(out: Path) -> bool:
@@ -178,6 +230,16 @@ def _forget_failure(accession: str) -> None:
         pass
 
 
+def _forget_answer(out: Path) -> None:
+    """Remove an answer file we have decided not to trust. Swallows ``OSError`` for the reason
+    :func:`_forget_failure` does: a bare one out of :meth:`Cutter.cut` would break what the class promises its
+    caller, and the next attempt replaces the file anyway."""
+    try:
+        out.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _cleanup_tmp(out: Path, pid: int) -> None:
     """The partial file the worker left for this document, if it was killed before it could remove its own.
 
@@ -195,26 +257,19 @@ def _cleanup_tmp(out: Path, pid: int) -> None:
         pass
 
 
-def gave_back_before(accession: str) -> int:
-    """How many earlier runs gave this document's attempt back because the breaker stopped them.
+def _note_failure(accession: str, error: str, **counts: int) -> None:
+    """Write this document's sidecar, carrying forward every counter the call does not name.
 
-    It is the only memory of a given-back attempt, and without it the give-back had no end: a document that hangs
-    the worker was given its attempt back, the sidecar was removed, and the next run met a document with a clean
-    slate that hung again. Five of those in a row met the breaker in every run, for ever.
+    A failure to write it is a failed **run**: these counts are the only thing standing between a bad document
+    and an endless retry, and carrying on without them would silently turn the cap off for every document in the
+    pass. Carrying the unnamed ones forward is the other half -- the file is rewritten whole, so a writer that
+    named only ``tries`` erased the memory of a give-back, and the give-back became endless again.
     """
-    try:
-        return int(json.loads(failed_path(accession).read_text("utf-8")).get("gave_back") or 0)
-    except (OSError, ValueError, TypeError, OverflowError):
-        return 0
-
-
-def _note_failure(accession: str, tries: int, error: str, gave_back: int = 0) -> None:
-    """The sidecar that remembers this document's attempts. A failure to write it is a failed **run**: the count
-    is the only thing standing between a bad document and an endless retry, and carrying on without it would
-    silently turn the cap off for every document in the pass."""
     path = failed_path(accession)
-    body = {"tries": tries, "gave_back": gave_back, "error": error[:300],
-            "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}
+    body = dict(read_sidecar(accession))
+    body.update({name: max(int(value), 0) for name, value in counts.items() if name in COUNTERS})
+    body["error"] = error[:300]
+    body["at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     try:
         # The ``mkdir`` is inside the try with the write: it fails for the same reasons (a read-only mount, a
         # full disk, the raw root gone) and a ``FileExistsError`` out of this function would reach the caller as
@@ -370,7 +425,7 @@ class Worker:
                 # that cannot say what is in it -- and that path skips the empty-text check as well.
                 # ``OverflowError`` is in the list because ``json`` accepts ``Infinity`` and ``int(inf)`` raises
                 # it; ``tries_so_far`` has it for the same reason.
-                out.unlink(missing_ok=True)
+                _forget_answer(out)
                 raise self._stop(WorkerLost("the cutter worker said it cut a document without saying how much "
                                             f"({line.strip()[:80]!r})")) from None
             # Sections but no text at all is what a field whose name moved looks like, and the docstring used to
@@ -379,13 +434,13 @@ class Worker:
             # single filing can do it on its own; a moved field does it to every document, so the breaker stops
             # the run on the fifth and carries this text in its message.
             if sections < 0 or chars < 0:
-                out.unlink(missing_ok=True)
+                _forget_answer(out)
                 raise self._stop(WorkerLost(f"the cutter answered a negative count ({sections}, {chars})"))
             if sections and not chars:
                 # The worker has already written the file -- it renames before it answers -- so it is removed
                 # here. Leaving it would cache the very thing this check exists to refuse, and the next run
                 # would hand it back as a cut document.
-                out.unlink(missing_ok=True)
+                _forget_answer(out)
                 # This document's failure and not the run's, which is the opposite of what it was. A moved field
                 # does it to *every* document, so five in a row trip the breaker and the run stops with this
                 # text in the message -- the diagnosis arrives either way. But a single filing can do it on its
@@ -473,7 +528,8 @@ class Cutter:
     """
 
     def __init__(self, max_tries: int = MAX_TRIES, recycle_n: int = RECYCLE_N, break_after: int = BREAK_AFTER,
-                 corpus_root: Path | None = None):
+                 corpus_root: Path | None = None, max_stops: int = MAX_STOPS):
+        self.max_stops = max_stops
         #: Where the filings are, if the caller knows. It is read for one question only: when a document's own
         #: file cannot be read, is the corpus still there? A mount that has gone makes every file unreadable, and
         #: that must stop the run rather than charge 5,149 documents an attempt each. Left unset, every
@@ -486,7 +542,8 @@ class Cutter:
         self.worker: Worker | None = None
         self.cut_now = 0          # documents this run actually sent to the worker and got answers for
         self.cached = 0           # documents an earlier run had already cut
-        self.empty = 0            # documents the cutter read but found no section in; cached as cut, counted here
+        self.empty = 0            # documents the cutter read but found no section in
+        self.skipped = 0          # documents passed over because they had already stopped MAX_STOPS runs
         self.failed: dict[str, str] = {}      # accession -> the last error, for the run's report
         self.restarts = 0
         #: The current run of consecutive failures: ``(accession, the worker was lost)`` a document.
@@ -516,19 +573,40 @@ class Cutter:
             # it stays one run from the cap for the rest of the corpus's life.
             _forget_failure(accession)
             return out
-        spent = tries_so_far(accession)
+        counts = read_sidecar(accession)
+        spent, stops = counts["tries"], counts["stops"]
         if spent >= self.max_tries:
             self.failed[accession] = f"gave up after {spent} attempts in earlier runs"
             return None
-        worker = self._worker()             # may raise CutterUnusable: no attempt is charged
+        if stops >= self.max_stops:
+            # It has stopped this many runs with a reason that was called the box's fault, and no attempt was
+            # ever charged for any of them, so nothing else here would ever pass it over. See
+            # :func:`stops_so_far`: without this the pass could not reach the documents behind it.
+            self.skipped += 1
+            self.failed[accession] = f"skipped: it stopped {stops} runs with a failure called the box's fault"
+            return None
+        try:
+            worker = self._worker()         # may raise CutterUnusable: no attempt is charged
+        except CutterUnusable:
+            # The run is over for a reason that is not this document's. Whatever the breaker was holding for the
+            # documents before it has to go back, exactly as it does when the breaker itself stops the run.
+            self._give_back()
+            self._in_a_row = []
+            raise
         pid = worker.proc.pid               # kept now: a lost worker's own pid names the .tmp it left behind
         try:
             sections = worker.cut(html, form, out)
+        except CutterUnusable as e:
+            # The worker said the fault was the box's (writing the answer failed, or reading the document failed
+            # for a reason that was not about the file). The run stops, nothing is charged -- and this document
+            # is remembered as having stopped a run, so it cannot stop every run from now to the end of time.
+            raise self._the_box_stopped_us(accession, stops, str(e)) from e
         except DocumentFailed as e:
             if isinstance(e, DocumentUnreadable) and self._corpus_gone():
                 # Not this document's doing: nothing in the corpus can be read. No attempt, and the run stops.
-                raise CutterUnusable(f"the cutter could not read {html.name}, and {self.corpus_root} is not a "
-                                     f"readable directory: the corpus is not mounted where it should be") from e
+                raise self._the_box_stopped_us(
+                    accession, stops, f"the cutter could not read {html.name}, and {self.corpus_root} is not a "
+                    "readable directory: the corpus is not mounted where it should be") from e
             if isinstance(e, WorkerLost):
                 # Dead, hung or out of protocol: closed, not merely dropped, and replaced for the next document.
                 worker.kill()
@@ -544,9 +622,7 @@ class Cutter:
                 return out
             _cleanup_tmp(out, pid)
             # The attempt is charged here and nowhere else, which is what keeps the count honest across runs.
-            # ``gave_back`` is carried over, not defaulted: this sidecar replaces the one the give-back wrote,
-            # and losing that count would turn the give-back back into an endless one.
-            _note_failure(accession, spent + 1, str(e), gave_back=gave_back_before(accession))
+            _note_failure(accession, str(e), tries=spent + 1)
             self.failed[accession] = str(e)
             self._in_a_row.append((accession, isinstance(e, WorkerLost)))
             if len(self._in_a_row) >= self.break_after:
@@ -557,19 +633,59 @@ class Cutter:
                     "likely the box and not the filings, so the run stops here rather than working through the "
                     "corpus one failure at a time.")
             return None
+        if not sections:
+            # **Not** cached as a cut document, which it was until round 4 of the review measured what produces
+            # this answer. edgartools swallows an exception during detection and returns nothing
+            # (hybrid_section_detector.py:657, 672, 695; toc_section_detector.py:179), so a document that failed
+            # to parse for any reason inside it arrives here as "ok, no sections" -- and cached, that is a filing
+            # stored for ever as having no sections at all, which is the silent loss this layer exists to avoid.
+            # A filing of a form the library has no vocabulary for answers the same way and is equally worth a
+            # line in the report rather than a cached empty file.
+            _forget_answer(out)
+            self.empty += 1
+            _note_failure(accession, "the cutter found no section in it", tries=spent + 1)
+            self.failed[accession] = "the cutter found no section in it"
+            self._in_a_row.append((accession, False))
+            if len(self._in_a_row) >= self.break_after:
+                stopped, self._in_a_row = list(self._in_a_row), []
+                raise CutterUnusable(
+                    f"{len(stopped)} documents in a row were cut into no sections at all. Either this form has "
+                    "no vocabulary in edgartools, or detection is failing inside it; the run stops rather than "
+                    "writing the whole form off one filing at a time.")
+            return None
         self._in_a_row.clear()
         _forget_failure(accession)
         self.cut_now += 1
-        if not sections:
-            # Cached as cut, because it is: the cutter read the document and found nothing to cut. Counted, since
-            # a form the library has no vocabulary for would answer this for every one of its filings, and the
-            # count is the only place that would show.
-            self.empty += 1
         return out
 
+    def _the_box_stopped_us(self, accession: str, stops: int, error: str) -> CutterUnusable:
+        """Remember that this document brought a run down, give the breaker's attempts back, and hand the caller
+        the :class:`CutterUnusable` to raise. No attempt is charged: the fault was not the filing's."""
+        _note_failure(accession, error, stops=stops + 1)
+        self.failed[accession] = error
+        self._give_back()
+        self._in_a_row = []
+        left = self.max_stops - (stops + 1)
+        return CutterUnusable(f"{error}. The run stops here; this document is skipped after "
+                              f"{left} more run{'' if left == 1 else 's'} like this.")
+
     def _corpus_gone(self) -> bool:
+        """Whether the corpus root is unusable, rather than this one document being unreadable.
+
+        An **empty** directory counts as gone, which is the case a root's mere existence misses: an unmounted
+        mountpoint is an empty directory, and ``core/config.py:76`` recreates ``EDGAR_DOCS_DIR`` at import, so a
+        builder started while the disk is not mounted makes the root exist before the cutter ever looks at it.
+        Empty is also right on its own terms -- there is no corpus in an empty directory to cut anything from.
+        """
         root = self.corpus_root
-        return bool(root) and not (root.is_dir() and os.access(root, os.R_OK | os.X_OK))
+        if not root:
+            return False
+        try:
+            if not (root.is_dir() and os.access(root, os.R_OK | os.X_OK)):
+                return True
+            return not any(root.iterdir())
+        except OSError:
+            return True
 
     def _give_back(self) -> None:
         """Undo the attempts charged for the failures in this run that were **not** the filings' own doing.
@@ -602,8 +718,8 @@ class Cutter:
                 # retired like any other bad filing. Without this the give-back never ended: see
                 # :func:`gave_back_before`.
                 continue
-            _note_failure(accession, max(tries_so_far(accession) - 1, 0),
-                          "attempt given back: the run was stopped by the breaker", gave_back=given + 1)
+            _note_failure(accession, "attempt given back: the run was stopped by the breaker",
+                          tries=max(tries_so_far(accession) - 1, 0), gave_back=given + 1)
 
     def close(self) -> None:
         if self.worker is not None:
