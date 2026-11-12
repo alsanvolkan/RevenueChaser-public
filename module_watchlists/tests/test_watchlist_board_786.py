@@ -155,7 +155,7 @@ def test_the_remove_button_is_the_rows_last_cell_and_not_part_of_the_symbol(no_d
     list_id = store.create_list("Growth")
     store.add_symbol(list_id, "NASDAQ:NVDA")
     js = board.render_html(board.payload(list_id))
-    assert "'</div></td>' + cells +" in js, "the symbol cell closes before the numbers, with no button in it"
+    assert "</span></div></td>' + cells +" in js, "the symbol cell closes before the numbers, with no button in it"
     assert "'<td class=\"wl-xc\"><button class=\"wl-x\"" in js, "the × is the cell after the numbers"
     assert "+ '<th class=\"wl-xc\">" in js, "the header ends with its own cell"
     assert "(cols().length + 1)" in js, "a section heading spans the × column too"
