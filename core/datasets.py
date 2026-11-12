@@ -35,7 +35,8 @@ from importlib import import_module
 from RevenueChaser.core.datahealth import Health
 
 DBS = ("raw", "edgar", "prices", "history", "news", "welcome", "relatedness", "comovement", "asymmetric_growth",
-       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma", "sec_13f")  # all but the first four: board files (S9, S16)
+       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma", "sec_13f",
+       "watchlists")  # all but the first four: board files (S9, S16)
 
 FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
@@ -426,6 +427,17 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         writer_note=("the user enters it (board settings save); nothing fetches it. The watch lists are in "
                      "ops.sqlite since PR 4; watchlist and watchlist_changes here are unwritten"),
         freshness=("board_settings_changes", "run_at"),
+    ),
+
+    # Watch lists (#786, avo 12 Nov 2026): his own named lists in boards/watchlists.duckdb, typed by hand. Its own
+    # row and not part of "Your inputs" above, because those four tables are the retired raw ones.
+    DatasetSpec(
+        key="watchlists", label="Watch lists",
+        tables=("wl_list", "wl_section", "wl_item", "wl_change"),
+        db="watchlists", source=Source.manual, writer=None,
+        writer_note=("avo types them, through the board or the import command "
+                     "(module_watchlists/store.py is the one writer); nothing fetches them"),
+        freshness=("wl_change", "changed_at"),
     ),
 
     # --- extended: base tables the 19 rows do not own ---

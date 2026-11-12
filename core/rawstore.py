@@ -91,8 +91,12 @@ def _db_of(name: str) -> str:
 #: Board result files (DECISIONS S9, S16): ``<store>/boards/<board>.duckdb``, one writer per board package, written
 #: incrementally. The first, narrow step of the board-file plan (2026-11-08): only boards born with their own file are
 #: listed here (News, Welcome); the move of the older boards' tables (plan PR 0 and on) extends this tuple.
+#: ``watchlists`` is the one entry here that is not a board result: it is avo's own lists, typed by hand and not
+#: regenerable from any source (#786). It sits here because it wants exactly what a board file gets — one writer,
+#: the peer lock, the schema stamp and the ``boards`` backup step — and for nothing else. It is never rebuilt and
+#: never written whole.
 BOARD_DBS = ("news", "welcome", "relatedness", "comovement", "asymmetric_growth", "swing_potential",
-             "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma", "sec_13f")
+             "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma", "sec_13f", "watchlists")
 #: The folder of the board files, beside the raw store; ``rcdata/backup.py`` copies ``boards/*.duckdb``.
 BOARDS_DIRNAME = "boards"
 
@@ -2101,6 +2105,52 @@ MANIFEST: dict[str, dict] = {
         "key": ["key"],
         "columns": ["key TEXT PRIMARY KEY", "value TEXT", "updated_at DOUBLE"],
         "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "sec_13f", "sources": [],
+    },
+    # Watch lists (#786, avo 12 Nov 2026): his own named lists, each with ordered sections and the symbols as he
+    # writes them. Written only by module_watchlists/store.py into boards/watchlists.duckdb. Not a board result:
+    # nothing recomputes these rows, so they are only added to, changed and removed one at a time, never replaced.
+    # The names are ``wl_*`` and not ``watchlist*`` because the old store already owns ``watchlist`` and
+    # ``watchlist_changes`` (the pre-PR-4 tables, kept unwritten until their retirement): a second entry under
+    # either name would silently replace it in this dict.
+    "wl_list": {
+        "key": ["list_id"],
+        "columns": [
+            "list_id TEXT PRIMARY KEY", "name TEXT", "description TEXT", "position INTEGER",
+            # Which job group this list feeds, "" for none: the options build reads "option", LEAPS and Earnings
+            # read "stock" (several, comma separated). Empty until the bookmark menu lands; the jobs still read
+            # ops.sqlite's two lists today.
+            "feeds TEXT", "created_at DOUBLE", "created_by TEXT", "updated_at DOUBLE",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "watchlists", "sources": [],
+    },
+    "wl_section": {
+        "key": ["list_id", "section_id"],
+        "columns": [
+            "list_id TEXT", "section_id TEXT", "name TEXT", "position INTEGER", "created_at DOUBLE",
+            "PRIMARY KEY (list_id, section_id)",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "watchlists", "sources": [],
+    },
+    # ``symbol`` is avo's own spelling, kept exactly as he wrote it ("NASDAQ:NVDA", "TVC:US10Y-TVC:US02Y"), because
+    # it is what goes back out to TradingView. ``exchange`` and ``ticker`` are its two parts, and ``coverage`` says
+    # where its data comes from here: us_equity, etf, market_series, derived, or unsupported (#785).
+    "wl_item": {
+        "key": ["list_id", "symbol"],
+        "columns": [
+            "list_id TEXT", "symbol TEXT", "section_id TEXT", "position INTEGER", "exchange TEXT", "ticker TEXT",
+            "coverage TEXT", "note TEXT", "added_at DOUBLE", "added_by TEXT",
+            "PRIMARY KEY (list_id, symbol)",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "watchlists", "sources": [],
+    },
+    "wl_change": {
+        "key": ["list_id", "symbol", "changed_at", "action"],
+        "columns": [
+            "list_id TEXT", "symbol TEXT", "action TEXT", "changed_at DOUBLE", "changed_by TEXT", "note TEXT",
+            # ``at`` and ``by`` are DuckDB keywords: an unquoted ``at DOUBLE`` fails the whole manifest apply.
+            "PRIMARY KEY (list_id, symbol, changed_at, action)",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "change_history", "db": "watchlists", "sources": [],
     },
     "source_checks": {
         "key": ["dataset", "source", "key"],
