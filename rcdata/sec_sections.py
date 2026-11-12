@@ -240,8 +240,9 @@ _ITEM = _spaced("item")
 #:
 #: The spelling kept reads "a full stop, any spaces that are not a newline, then exactly two digits": the sub-item
 #: numbers filers write are .01 to .99, and the spaces it reaches over are **named one by one** -- a space, a
-#: tab, a no-break space, a narrow no-break space and an ideographic space -- the ones a tag or an entity
-#: becomes that a word boundary does not already stop. Everything else keeps its page number a page number:
+#: tab, a no-break space, a narrow no-break space and an ideographic space. Those five are a choice and not a
+#: complete set: ``&ensp;``, ``&emsp;`` and ``&thinsp;`` are entities too and are not on it, because
+#: :func:`strip_html` turns a tag into a space, a tab or a no-break space and nothing wider. Everything else keeps its page number a page number:
 #: "Item 1A.\f12\nRisk Factors" is the heading of Item 1A, and so are the versions written with a carriage
 #: return, a form feed, U+2028 or U+0085. A class spelled by exclusion (``[^\S\r\n\f\v]``) read as a space
 #: every separator it had not thought of, which is why this one lists what it allows instead. "Item 7. 2024 Results" and "Item 2. 3 properties" are items, as they are to ``ours-1``;
@@ -367,36 +368,111 @@ def _ref_ours_2(text: str, m: re.Match) -> bool:
     decide a cut (the closer taken from the far end of the window, the window cut at the first newline
     anywhere, and the before-text left unstripped before a blank line), and those are tests now.
 
-    Two really are equivalent, and a reader changing either should expect the tests to stay green:
+    The opening quote's direction belongs to that list, and an earlier round of this issue called it equivalent
+    on a measurement that could not see it: the fixture ended with the risk factors, so the titled fallback
+    reached the same stop either way. Put an item after them and searching from the far end finds the second
+    quoted pair's opener, reads the first pair's closer as unopened and gives ``ok`` on 41,064 characters with
+    every risk factor inside Item 1. It is a test now.
 
-    - ``<=`` for ``<`` in the comparison. ``closed == opened`` needs both to be -1, which ``closed >= 0``
-      has already excluded.
-    - the opening quote searched from the far end of the window. No shape was found where the first and the
-      last opening quote fall on different sides of the closing one.
-
-    A third, the window measured from the match's end rather than its start, only moves where the
-    200-character edge falls; it takes a quotation mark exactly 192 characters of filler past the number to
-    tell the two apart, and neither answer is the right one. The real question for all of this is how often
-    each shape occurs in filings, which is #763's hand-checked set and not a built string.
+    One really is equivalent: ``<=`` for ``<`` in the comparison, because ``closed == opened`` needs both to be
+    -1 and ``closed >= 0`` has already excluded that. One more, the window measured from the match's end rather
+    than its start, only moves where the 200-character edge falls; it takes a quotation mark exactly 192
+    characters of filler past the number to tell the two apart, and neither answer is the right one. The real
+    question for all of this is how often each shape occurs in filings, which is #763's hand-checked set and
+    not a built string.
     """
     if _REF_BEFORE.search(text[max(0, m.start() - 40):m.start()].rstrip()):
         return True
     line_end = text.find("\n", m.end())
+    if _cites_its_title(text, m, line_end):
+        return True
     window = text[m.start():min(m.start() + 200, line_end if line_end >= 0 else len(text))]
     opened, closed = window.find("“"), window.find("”")
     if closed < 0:
         return False
-    # The quoted thing is this item's own title: ``Item 1A, "Risk Factors," of this report``. The quote opens
-    # right after the number and closes after the title, so the unopened test alone reads it as a heading --
-    # and that is the citation style a 10-K uses for a cross-reference, which cost Item 1 half its text.
-    if _TITLE_QUOTED.match(text, m.end()):
-        return True
     return opened < 0 or closed < opened
 
 
-#: An opening quote that follows a heading's number with nothing but punctuation between: the quotation marks
-#: are around the item's **title**, which is how a filing cites an item it is not starting.
-_TITLE_QUOTED = re.compile(rf"[\s.,:;{_DASH}]{{0,12}}[“‘]")
+#: Just past the item's number inside a match, wherever the match itself ends. The four patterns end in
+#: different places -- the line-end one after the number, the starts and the stops after the **title** -- and
+#: every test below asks what follows the *number*, so each of them needs this and not ``m.end()``.
+_NUMBER = re.compile(rf"(?i)[^\S\n]*{_ITEM}s?\s{{0,3}}(?:[0-9]+[a-c]?|i[a-c]?)")
+
+
+def _after_number(text: str, m: re.Match) -> int:
+    """The offset just past the item number ``m`` begins with, or the end of the match when it has none."""
+    n = _NUMBER.match(text, m.start())
+    return n.end() if n else m.end()
+
+
+#: The words a filing puts between an item's number and the rest of the sentence when it is **citing** that
+#: item rather than starting it: "Item 1A entitled ...", "Item 7 of this report", "Item 1A below". A heading
+#: carries its own title in that place, and no item's title is one of these words.
+_CITED_PHRASE = re.compile(r"(?i)[\s.,:;()\[\]]{0,8}"
+                           r"(?:entitled|captioned|titled|under\s+the\s+(?:caption|heading)"
+                           r"|(?:of|in|to)\s+(?:this|our|the\s+(?:accompanying|attached))|hereof|above|below)\b")
+
+#: A quoted run right after the match, which :data:`_CITED_PHRASE` may then follow: ``Item 1. Business
+#: "Overview" of this report``. The run must begin within four spaces of the match's end, which is what keeps
+#: this away from a run-in heading whose first sentence defines a term further along ("Item 1A. Risk Factors
+#: You should consider the risks (the "Risks") below") -- there the match ends after the *number*, and the
+#: quotation mark is a title and a sentence away from it.
+_QUOTED_RUN = re.compile(r"[^\S\n]{0,4}[“‘\"][^\n”’\"]{0,80}[”’\"]")
+
+#: An opening quotation mark -- curly, single or straight -- with nothing but punctuation between it and the
+#: number, which is where a filing puts the item's **title** when it cites it: ``Item 1A, "Risk Factors," ...``.
+_CITED_QUOTE = re.compile(r"(?:[.,:;(\[\)]|[^\S\n]){0,12}([“‘\"])")
+_CLOSER = {"“": "”", "‘": "’", '"': '"'}
+
+
+def _cites_its_title(text: str, m: re.Match, line_end: int) -> bool:
+    """True when the words right after ``m``'s item number say the sentence is citing that item.
+
+    Two spellings, both measured on the shapes a 10-K really uses, and both asked of the text that follows the
+    **number** rather than the match (:func:`_after_number`):
+
+    - a reference word in place of the title (:data:`_CITED_PHRASE`): "Item 1A entitled", "Item 7 of this
+      report", "Item 1A below";
+    - the title in quotation marks after the item's own title, followed by such a phrase
+      (:data:`_QUOTED_RUN`): "Item 1. Business "Overview" of this report";
+    - the title in quotation marks (:data:`_CITED_QUOTE`), **and the line goes on after the closing one**. That
+      second half is what tells a citation from a filer who puts his own heading's title in quotation marks:
+      ``Item 1A. "Risk Factors"`` alone on its line is a heading, and reading it as a citation ran Item 1
+      through the risk factors and still called it ``ok``.
+
+    **What of this is pinned.** Each half decides a cut on a shape in
+    ``tests/test_sec_sections_ours_2.py``, and so does asking the question of the number instead of the match.
+    Two details are not, and a reader changing either should expect the tests to stay green: the bound on the
+    closing mark's search (see the comment below, which shows it cannot change an answer), and the four spaces
+    the quoted run may begin after the match. The second is a choice about distance, and the pattern path
+    recovers the same answer whichever distance is allowed on every sentence measured; the question of how far
+    a real filer's quotation mark sits from a heading belongs to the hand-checked set (#763).
+
+    What this does not catch, measured and left: ``Item 1A. Risk Factors, and the section "Forward-Looking
+    Statements" below.`` -- the title is in its usual place and the quotation marks are around something else,
+    so the line is read as the heading and Item 1 ends there (13,024 characters where ``ours-1`` gives 26,099).
+    A combined heading -- ``Item 1A. Risk Factors, and Item 1B. Unresolved Staff Comments`` -- is the same shape
+    with the opposite answer, so telling them apart is a question for the hand-checked set (#763).
+    """
+    a = _after_number(text, m)
+    if _CITED_PHRASE.match(text, a):
+        return True
+    # The title in quotation marks **after** the item's own title, and then a reference phrase: "Item 1.
+    # Business "Overview" of this report". Without the phrase this is a run-in heading whose first sentence
+    # defines a term -- "Item 1. Business "Acme," "we" and "our" refer to Acme Corp." -- which is the shape
+    # round 4 of this issue exists to keep.
+    run = _QUOTED_RUN.match(text, m.end())
+    if run is not None and _CITED_PHRASE.match(text, run.end()):
+        return True
+    q = _CITED_QUOTE.match(text, a)
+    if q is None:
+        return False
+    stop = line_end if line_end >= 0 else len(text)
+    # The bound on the search is a bound and not a rule: a closing mark past ``stop`` leaves nothing in
+    # ``text[close + 1:stop]``, so dropping it changes no answer. A quoted title that wraps onto the next line
+    # is not read as a citation either way, and :data:`_REF_BEFORE` is what catches those.
+    close = text.find(_CLOSER[q.group(1)], q.end(1), stop)
+    return close >= 0 and bool(text[close + 1:stop].strip())
 
 
 def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:

@@ -287,7 +287,7 @@ def test_all_four_of_ours_2_s_patterns_read_the_spaced_word_and_only_the_end_one
     # requires a title after the number, which a sub-item never carries.
     guard = sec_sections._NOT_SUBITEM
     assert guard == r"(?!\.[ \t\xa0\u202f\u3000]*\d\d\b)"
-    # The spaces it reaches over are named one by one: the three a tag becomes. A class spelled by exclusion
+    # The spaces it reaches over are named one by one: the five named in the pattern. A class spelled by exclusion
     # read every separator it had not thought of -- U+2028, U+0085 -- as a space, and ate the page number
     # printed under a heading as if it were a sub-item number.
     assert "^" not in guard, "the class lists what it allows, not what it forbids"
@@ -828,11 +828,15 @@ def test_two_quoted_runs_after_a_heading_are_read_from_the_first_quote_and_not_t
     """A heading followed by two quoted runs is still a heading: the first quotation mark after it opens a pair,
     so nothing was left unopened.
 
-    It does not pin "the opener is looked for from the start of the window": searching backwards gives the same
-    answer here, and on every shape measured, because the fallback reaches the same stop. That mutation is
-    named as equivalent in :func:`_ref_ours_2` rather than pinned by a test shaped to fit it.
+    It pins the opener's direction too, and that took the item **after** the risk factors. An earlier version
+    of this fixture ended with them, and there the titled fallback reached the same stop whichever end the
+    opener was searched from, so the mutation looked equivalent and was written down as equivalent. With an
+    Item 1B after them it is not: searching backwards finds the second pair's opener, reads the first pair's
+    closer as unopened, calls the real heading a mention and gives ``ok`` on 41,064 characters with every risk
+    factor inside Item 1.
     """
-    text = ("Item 1. Business\n" + BODY + "\nItem 1A. Risk Factors" + after + "Risks abound. " * 400)
+    text = ("Item 1. Business\n" + BODY + "\nItem 1A. Risk Factors" + after + "Risks abound. " * 400
+            + "\nItem 1B. Unresolved Staff Comments\nNone.\n")
     item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
     assert quality == "ok"
     assert "Risks abound" not in item and after.strip()[:12] not in item
@@ -860,10 +864,14 @@ def test_the_quote_window_is_two_hundred_characters_and_the_reference_window_is_
 
 
 @pytest.mark.parametrize("separator", ["\x0c", "\r", "\v", " ", " ", "\x85", "\x1c"])
-def test_only_the_three_spaces_a_tag_becomes_are_crossed_by_the_sub_item_guard(separator):
+def test_only_the_named_spaces_are_crossed_by_the_sub_item_guard(separator):
     """Every other separator keeps the number after it a page number. The class used to be spelled by
     exclusion, which read each of these as a space and ate the page number as a sub-item number -- U+2028 and
     U+0085 among them, which no list of line endings had thought of.
+
+    The class names five characters, and they are a choice and not a complete set: ``&ensp;``, ``&emsp;`` and
+    ``&thinsp;`` are entities too and are not on it, because :func:`strip_html` turns a tag into a space, a tab
+    or U+00A0 and nothing wider.
     """
     assert sec_sections._LINE_END_2.search("\nItem 1A." + separator + "12\nRisk Factors\n")
 
@@ -923,8 +931,11 @@ def test_an_item_cited_with_its_title_in_quotation_marks_is_a_mention(name, text
     :func:`_holds_another_item` and the start filter -- plus the 20-F path. The last two were never exercised
     before this review.
 
-    What marks a mention now is an opening quote that follows the number with nothing but punctuation between
-    it and the match (:data:`_TITLE_QUOTED`), whatever else the window holds.
+    What marks a mention now is :func:`_cites_its_title`, asked of the text that follows the item's **number**:
+    a reference word in the title's place, a quoted title and then such a word, or a quoted title next to the
+    number on a line that goes on after it. The review of a7e95d92 found the first spelling of this rule read
+    only one of the six citation styles below and the number's own position wrongly; the rows after this one
+    hold every style it measured.
     """
     old = sec_sections.cut_item(text, form, version=OURS_1)
     new = sec_sections.cut_item(text, form, version=OURS_2)
@@ -932,17 +943,108 @@ def test_an_item_cited_with_its_title_in_quotation_marks_is_a_mention(name, text
     assert new == old, name
 
 
-def test_a_real_heading_whose_title_is_in_quotation_marks_is_the_cost_of_that_rule():
-    """The other side of the row above, and the reason it is a cost and not a defect: a filer who puts his own
-    heading's title in quotation marks -- ``Item 1A. "Risk Factors"`` on its own line -- is read as citing it.
-    ``ours-1`` answers the same, and the label is ``overrun``, which says plainly that the slice did not end
-    where a heading said it should. An honest label on a long slice is the trade; a clean ``ok`` on half a
-    section, which is what the other spelling gave, is not.
+def test_a_heading_whose_title_is_in_quotation_marks_is_still_a_heading():
+    """A filer who puts his own heading's title in quotation marks -- ``Item 1A. "Risk Factors"`` alone on its
+    line -- has written a heading, and the line ending right after the closing mark is what says so: a citation
+    goes on ("of this report", "for more").
+
+    The first spelling of the citation rule read that line as a citation, and the cost was hidden by a fixture
+    that ended with Item 1A. Every real 10-K has an item after it, and with Item 1B there the slice ran through
+    the risk factors and was labelled ``ok`` -- the exact answer ``ours-2`` exists to stop giving. ``ours-1``
+    gives it too (``ok`` on 15,824 characters, 2,800 of them risk factors), so this is one of the places
+    ``ours-2`` is now right where the board is not; the board stays on ``ours-1`` all the same (#755 pins it).
     """
-    text = ("Item 1. Business\n" + _H + "\nItem 1A. “Risk Factors”\n" + "Risky. " * 400)
+    head = "Item 1. Business\n" + _H + "\nItem 1A. “Risk Factors”\n" + "Risky. " * 400
+    for name, text in [("the risk factors end the document", head),
+                       ("an Item 1B follows them",
+                        head + "\nItem 1B. Unresolved Staff Comments\nNone.\nItem 2. Properties\nNone.\n")]:
+        item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+        assert quality == "ok" and "Risky." not in item, name
+        assert len(item) == len(_H), name
+        old_item, _ = sec_sections.cut_item(text, "10-K", version=OURS_1)
+        assert "Risky." in old_item, f"{name}: ours-1 reads the quoted heading as a citation and runs past it"
+
+
+@pytest.mark.parametrize("citation,ours_1_is_right", [
+    ("Item 1A, “Risk Factors,” of this report.", True),
+    ("Item 1A entitled “Risk Factors” of this report.", True),
+    ("Item 1A under the caption “Risk Factors” of this report.", True),
+    ("Item 1A of this Annual Report, “Risk Factors,” for more.", True),
+    ("Item 1A (“Risk Factors”) of this report.", True),
+    ("Item 7 of this report under “Liquidity and Capital Resources” for more.", True),
+    # the citation with no quotation marks at all, and the two quote shapes a filer's HTML did not curl:
+    # ours-1 reads none of these three and stops Item 1 at the citation
+    ("Item 1A of this report.", False),
+    ('Item 1A, "Risk Factors," of this report.', False),
+    ("Item 1A, ‘Risk Factors,’ of this report.", False),
+])
+def test_every_citation_style_measured_is_a_mention_and_not_a_heading(citation, ours_1_is_right):
+    """The six styles the review of a7e95d92 measured, plus the unquoted one and the two quote shapes
+    ``ours-1`` cannot read. The first rule looked for a quotation mark within twelve punctuation characters of
+    the number, so anything between them -- "entitled", "under the caption", "of this Annual Report,", "(" --
+    fell through to the unopened-quote test, which read the citation as a heading: Item 1 cut to 13,024
+    characters of 26,0xx and still labelled ``ok``, on six of these nine rows.
+
+    ``ours_1_is_right`` says whether the board already answers this one. Where it does, the two versions must
+    agree; where it does not, ``ours-2`` must be the longer answer, because the board stops at the citation.
+    """
+    text = ("Item 1. Business\n" + _H + " as discussed in Part I,\n" + citation + " " + _H
+            + "\nItem 1A. Risk Factors\n" + "Risky. " * 400)
     old = sec_sections.cut_item(text, "10-K", version=OURS_1)
     new = sec_sections.cut_item(text, "10-K", version=OURS_2)
-    assert new == old and new[1] == "overrun"
+    assert new[1] == "ok" and "Risky." not in new[0]
+    assert len(new[0]) > 20_000, "the citation must not end the section"
+    if ours_1_is_right:
+        assert new == old
+    else:
+        assert len(new[0]) > len(old[0]) and len(old[0]) < 20_000
+
+
+@pytest.mark.parametrize("heading,form,mention", [
+    ("Item 1. Business “Acme,” “we” and “our” refer to Acme Corp.", "10-K",
+     " see “Item 1A. Risk Factors” for more. "),
+    ("Item 1. Business. “Acme,” “we” refer to Acme Corp.", "10-K",
+     " see “Item 1A. Risk Factors” for more. "),
+    ("Item 4. Information on the Company “Acme” means us.", "20-F",
+     " see “Item 5. Operating Results” below. "),
+    ("Item 1. Business Overview “Acme” refers to us.", "10-K",
+     " see “Item 1A. Risk Factors” for more. "),
+])
+def test_the_citation_rule_is_asked_of_the_number_and_not_of_the_end_of_the_match(heading, form, mention):
+    """A **start** pattern ends after the title, a line-end pattern after the number. The first spelling of the
+    citation rule read the text after the *match*, so at the start filter it tested what followed "Business" --
+    and a filer who defines his own names in the section's first sentence ("Item 1. Business "Acme," "we" and
+    "our" refer to Acme Corp.") had his real start thrown away. The pattern path then took over and stopped at
+    the first quoted mention in the body: 13,049 characters where the round before gave 26,081, which is the
+    run-in start fix of round 4 undone.
+
+    Every row is a run-in start whose first sentence defines a term, and the fourth has a two-word title so
+    that the number is further still from the quotation mark.
+    """
+    stop = "\nItem 1A. Risk Factors\n" if form == "10-K" else "\nItem 5. Operating Results\n"
+    text = "Cover page.\n" + heading + _H + mention + _H + stop + "Risky. " * 400
+    item, quality = sec_sections.cut_item(text, form, version=OURS_2)
+    assert quality == "ok" and "Risky." not in item
+    assert len(item) > 20_000, "the real start was thrown away and the pattern path stopped at the mention"
+
+
+def test_a_quoted_section_name_after_the_title_is_not_read_as_a_citation():
+    """The one citation style measured in the review of a7e95d92 that ``ours-2`` still reads as a heading, kept
+    here as a row rather than as prose: ``Item 1A. Risk Factors, and the section "Forward-Looking Statements"
+    below.`` The title is exactly where a heading's title goes and the quotation marks are around something
+    else, so neither the number's neighbourhood nor the quoted run says citation.
+
+    ``ours-1`` answers 26,099 here and ``ours-2`` 13,024, which is the only shape in this file where the board
+    is right and this version is not. A combined heading -- ``Item 1A. Risk Factors, and Item 1B. Unresolved
+    Staff Comments`` -- is the same shape with the opposite answer, and the words after the comma are all there
+    is to tell them apart, so the measurement belongs to the hand-checked set (#763) and not to a built string.
+    """
+    text = ("Item 1. Business\n" + _H + " as discussed in Part I,\nItem 1A. Risk Factors, and the section "
+            "“Forward-Looking Statements” below. " + _H + "\nItem 1A. Risk Factors\n" + "Risky. " * 400)
+    old = sec_sections.cut_item(text, "10-K", version=OURS_1)
+    new = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert new[1] == "ok" and len(new[0]) < 20_000, "the citation ends the slice, which is the cost"
+    assert len(old[0]) > 20_000, "and the board does read it as a citation"
 
 
 @pytest.mark.parametrize("name,text", [
