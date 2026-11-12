@@ -23,13 +23,15 @@ recut is what a bump costs.
               {"edgar_version": "6.0.0"}
               {"ok": false, "fatal": true, "error": "<type: message>"}      (and the worker exits)
     request   {"html": "<abs path>", "form": "10-K", "out": "<abs path>.jsonl.gz"}
-    answer    {"ok": true, "sections": <n>, "chars": <n>}
+    answer    {"ok": true, "sections": <n>, "chars": <n>, "swallowed": <n>}
               {"ok": false, "phase": "parse"|"read"|"io", "error": "<type: message>"}
 
-``phase`` is who is at fault, and it decides whether the document is charged an attempt: ``parse`` is this
-filing's own doing (a parser that gives up, a file of its own that cannot be read while the corpus around it is
-fine) and ``read``/``io`` is the box (the corpus root gone, the answer root read-only, a full disk), which fails
-the run instead of 5,149 documents one at a time.
+``phase`` is who is at fault, and it decides what the document is charged: ``parse`` is this filing's own doing
+and costs it an attempt, ``read`` is its own file (missing, a directory, a name too long), and ``io`` is the box
+(the answer root read-only, a full disk, no handles, no memory). A box fault costs no attempt -- it defers the
+document for a while and never retires it -- and five in a row stop the run, because by then it is the box and
+not 5,149 filings. ``swallowed`` is how many failures edgartools logged and carried on without, which is the
+only thing that tells a filing with no sections from a library that gave up on one (see :class:`_Swallowed`).
 
 **The answer file holds edgartools' own output, unmapped**: one JSON line per detected section, with the fields
 this worker can read off it and nothing of ours. Our mapping to ``quality`` / ``method`` / ``confidence`` /
@@ -59,6 +61,7 @@ from __future__ import annotations
 import errno
 import gzip
 import json
+import logging
 import os
 import socket
 import sys
@@ -271,8 +274,28 @@ def _read(html_path: str) -> str:
         raise
 
 
-def _cut(html_path: str, form: str, out: str) -> tuple[int, int]:
-    """Cut one document; ``(sections, characters)``.
+class _Swallowed(logging.Handler):
+    """Counts what edgartools logged and then carried on without.
+
+    Detection swallows every exception and returns nothing in its place
+    (``hybrid_section_detector.py:657, 672, 695``; ``toc_section_detector.py:178``), so a failure *inside* the
+    library -- including a ``MemoryError``, which is an ``Exception`` and so never reaches this worker's own
+    ``MemoryError`` branch -- arrives at the client as the one answer that is also the honest answer for a
+    filing with no sections in it: "ok, 0 sections". Each of those sites logs a warning first, which is the only
+    difference between the two, and the client needs it: a quiet zero is the filing's own doing and is charged an
+    attempt, while a zero the library complained about is of unknown cause and must not retire the filing.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.n = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.n += 1
+
+
+def _cut(html_path: str, form: str, out: str) -> tuple[int, int, int]:
+    """Cut one document; ``(sections, characters, swallowed warnings)``.
 
     Through ``parse_html`` and ``Document.sections``, which are both in ``edgar.documents.__all__`` -- not through
     ``HybridSectionDetector``, which lives in ``edgar.documents.extractors`` and is private to the library's own
@@ -290,10 +313,29 @@ def _cut(html_path: str, form: str, out: str) -> tuple[int, int]:
     The form is passed as ``ParserConfig(form=...)``, which the config's own comment calls "required for section
     detection": without it ``Document.sections`` has no form to route on.
     """
+    html = _read(html_path)
+    # On ``edgar`` and not the root logger: this counts what the library gave up on, and a warning out of our own
+    # code or the stdlib is not that. ``propagate`` is left alone, so a host that configured logging still sees
+    # the warning.
+    #
+    # The ``finally`` is housekeeping and not a rule, which is why the mutant that drops it is a known survivor
+    # of the battery: each document gets a handler of its own and only that one is read, so leaving the old ones
+    # attached reports the same counts -- it just has the logger hand every record to up to ``RECYCLE_N`` dead
+    # handlers before the worker is replaced. Nothing a test can see without the protocol carrying the length of
+    # a logger's handler list, which is not worth saying out loud in an answer.
+    swallowed = _Swallowed()
+    logging.getLogger("edgar").addHandler(swallowed)
+    try:
+        return _cut_with(html, form, out, swallowed)
+    finally:
+        logging.getLogger("edgar").removeHandler(swallowed)
+
+
+def _cut_with(html: str, form: str, out: str, swallowed: "_Swallowed") -> tuple[int, int, int]:
+    """The cut itself, with the library's logger already being watched."""
     from edgar.documents import parse_html  # noqa: PLC0415 - imported in the handshake; this is the cached module
     from edgar.documents.config import ParserConfig  # noqa: PLC0415
 
-    html = _read(html_path)
     document = parse_html(html, ParserConfig(form=form))
     # A tmp name carrying our pid, so two builder processes on one document cannot write each other's partial
     # file -- and so the loser of the race fails on its own file rather than on a name the winner already renamed.
@@ -322,11 +364,12 @@ def _cut(html_path: str, form: str, out: str) -> tuple[int, int]:
         # Nothing was detected, so nothing is put under the real name. The client refuses a zero-section answer
         # anyway, but it had to delete a file the worker had already renamed -- and between the rename and that
         # delete, a kill or a lost answer line left a file that the next run reads as a cut document with no
-        # sections in it. Not renaming it closes that window instead of cleaning up after it.
+        # sections in it. Not renaming it closes that window instead of cleaning up after it, and it is what
+        # lets the client read a file that IS there at that point as another pass's answer rather than its own.
         os.remove(tmp)
-        return 0, 0
+        return 0, 0, swallowed.n
     os.replace(tmp, out)
-    return n, chars
+    return n, chars, swallowed.n
 
 
 def main() -> int:
@@ -363,8 +406,8 @@ def main() -> int:
                 raise ValueError("the request names no form")
             # Whether the document is there is not checked here: ``_read`` opens it and decides whose fault any
             # failure to read it is, which is one decision in one place rather than this check and that one.
-            n, chars = _cut(html, str(form), out)
-            _say({"ok": True, "sections": n, "chars": chars})
+            n, chars, swallowed = _cut(html, str(form), out)
+            _say({"ok": True, "sections": n, "chars": chars, "swallowed": swallowed})
         except BadDocument as e:
             # This document's own file. The client decides whether to charge it, because only the client knows
             # whether the corpus root is still there -- a mount that has gone makes every file unreadable.
