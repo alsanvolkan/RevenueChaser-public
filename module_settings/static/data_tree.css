@@ -83,3 +83,16 @@
 .ctl .hl details.pf{flex:1 1 auto;overflow:hidden}
 /* a phone's press target is 44 px (CLAUDE.md, phone friendly): the 📁 fold grows to that, the path stays small */
 @media(max-width:640px){.ctl details.pf>summary{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px}}
+/* #715, avo 13 Nov 2026 ("çok ayrık ve kopuk ... daha kompakt"): on a phone a build step is three tight lines, the
+   title with its source icon, the status line, and raw and Parquet side by side. The folder press goes: its path is
+   the step's code name, one press on the line away. The whole line is the touch target, so nothing inside needs 44. */
+@media(max-width:640px){
+.ctl table.jt3 tr.jr{padding:5px 0 6px}
+.ctl table.jt3 td.js{min-height:0;gap:3px 6px}
+.ctl table.jt3 .jttl{flex-direction:row;flex-wrap:wrap;align-items:center;gap:2px 6px}
+.ctl table.jt3 .jttl b{flex:0 1 auto}
+.ctl table.jt3 td.jh{display:flex;flex-wrap:wrap;gap:0 16px;padding:1px 0 0 33px}
+.ctl table.jt3 td.jh .hl{flex:0 1 auto;line-height:1.45}
+.ctl table.jt3 td.jh .hl details.pf{display:none}
+.ctl table.jt3 td.jh .hl .hm{font-size:11px}
+}
