@@ -392,9 +392,13 @@ def _on_todays_basis(value, factor):
     return value / factor
 
 
-def _breaks(raw: list, quarters: list, settled: set, factors: dict) -> list[dict]:
+def _breaks(raw: list, quarters: list, settled: set, factors: dict, shares_by_q: dict | None = None) -> list[dict]:
     """The filer breaks of the board's settled quarters, one entry per quarter, newest first (#732): how many filers
-    started and stopped reporting the ticker, their shares on today's basis, and the largest of them by name."""
+    started and stopped reporting the ticker, their shares on today's basis, and the largest of them by name.
+
+    A quarter is kept only when the filers that started and stopped hold at least ``BREAK_MARK_SHARE`` of the
+    ticker's 13F shares that quarter (``shares_by_q``, today's basis): a large name sees a few small filers come and
+    go every quarter, and marking those put the warning on nearly every row (owner, 12 Nov 2026)."""
     by_q: dict[str, dict] = {}
     for b in raw or []:
         q = b.get("period")
@@ -406,10 +410,17 @@ def _breaks(raw: list, quarters: list, settled: set, factors: dict) -> list[dict
     for e in by_q.values():
         for kind in ("started", "stopped"):
             e[kind].sort(key=lambda f: -(f["shares"] or 0))
+    if shares_by_q is not None:
+        def material(e):
+            total = shares_by_q.get(e["period"])
+            moved = sum(f["shares"] or 0 for k in ("started", "stopped") for f in e[k])
+            return bool(total) and moved >= BREAK_MARK_SHARE * total
+        by_q = {q: e for q, e in by_q.items() if material(e)}
     return [by_q[q] for q in sorted(by_q, reverse=True)]
 
 
 BREAK_NAMES = 3     # the largest filers named per line of the break list
+BREAK_MARK_SHARE = 0.01   # a quarter's breaks are marked from 1% of the ticker's 13F shares (owner, 12 Nov 2026)
 
 
 def _break_lines(e: dict) -> list[str]:
@@ -596,7 +607,7 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
         settled_qs = {q for q in quarters if q not in still_arriving}
         entries.append({
             "ticker": t, "name": info.get("name", ""), "sector": _row_sector(info.get("sector")),
-            "breaks": _breaks(enr.get("breaks"), quarters, settled_qs, factors),
+            "breaks": _breaks(enr.get("breaks"), quarters, settled_qs, factors, dict(zip(quarters, shares))),
             "shares": shares, "chgs": chgs, "last": last, "last_period": last_period,
             "streak": streak, "accel": accel, "pct_out": pct_out,
             "price_delta": price_delta, "price": price,
@@ -634,6 +645,7 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
 
     The filter rows ride the payload, not the HTML, so a 14k-row board stays small.
     """
+    by_field = {r["ticker"]: r for r in (fields or [])}
     cols = ([f"sh_{q}" for q in quarters] + [f"ch_{q}" for q in quarters[1:]]
             + [c for c, _ in _SNAP_COLS])
     rows = []
@@ -683,8 +695,16 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
         cells.append(_cell(_f(e["accel"], 1, "pp"), e["accel"], _sign_class(e["accel"])))
         cells.append(_cell(_f(e["price_delta"]), e["price_delta"], _sign_class(e["price_delta"])))
         breaks = [[_qlabel(b["period"]), _break_lines(b)] for b in e.get("breaks") or []]
-        rows.append([e["ticker"], e["name"], e["sector"], cells, breaks])
-    return {"cols": cols, "rows": rows, "fields": {r["ticker"]: r for r in (fields or [])}}
+        rows.append([e["ticker"], e["name"], _sector(e, by_field), cells, breaks])
+    return {"cols": cols, "rows": rows, "fields": by_field}
+
+
+def _sector(entry: dict, by_field: dict) -> str:
+    """The row's sector: the equity spine's (``universe.filter_fields``, the same sector the Sector filter matches),
+    else the board's own name/sector meta (crypto, indices and names off the spine). The meta table alone left
+    every name ``Unclassified`` once it stopped being filled (owner's screenshot, 12 Nov 2026)."""
+    spine = _row_sector((by_field.get(entry["ticker"]) or {}).get("sector"))
+    return spine if spine != UNCLASSIFIED else entry["sector"]
 
 
 def board_payload(totals: dict, meta: dict, enrichment: dict = None, fields: list | None = None) -> dict:
