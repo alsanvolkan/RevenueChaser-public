@@ -678,7 +678,7 @@ class TestRefreshReadsStoreFetchReadsNetwork:
     """
 
     def test_the_leaps_tab_serves_the_no_data_page(self, rawstore_tmp_db, tmp_path, monkeypatch):
-        """#730: the only page the tab has. No key, no network, and no accumulation wording."""
+        """Nothing in ``option_far_contract`` yet (#746): the no-data page. No key, no network, no accumulation wording."""
         from RevenueChaser.core import rawstore
         from RevenueChaser.module_leaps.engine import save_cache
         rawstore.save_watchlist({"AAPL"})
@@ -687,8 +687,8 @@ class TestRefreshReadsStoreFetchReadsNetwork:
 
         body = dashboard.app.test_client().get("/view/module_leaps").get_data(as_text=True)
         assert "No data yet" in body
-        assert "#730" in body
-        assert "ACCUMULATION RADAR" not in body.upper()   # the board itself is never served
+        assert "#746" in body
+        assert "ACCUMULATION RADAR" not in body.upper()   # the old board is never served
         assert "AAPL" not in body                      # nor does a seeded footprint
 
     def test_a_cached_leaps_artifact_is_never_served_again(self, rawstore_tmp_db, tmp_path, monkeypatch):

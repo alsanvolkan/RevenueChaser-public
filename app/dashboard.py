@@ -200,14 +200,11 @@ def _no_cache(resp):
 # Register module runners with the job queue. ``produces`` lists which iframes
 # to reload when the job completes.
 jobs.register("earnings", runners.run_earnings_range, ["module_earnings_radar"])
-# The LEAPS scan is NOT registered: it is switched off (#730). The board itself stays (avo 12 Nov 2026:
-# "Kalsin board ama nasil olcum yapacagimiz bulalim"), waiting on a measurement. Measured, not argued: ``leaps_cache``, ``leaps_flow_prints`` and ``leaps_footprint_history``
-# hold 0 rows, the pinned universe (the stock watch list, ``module_leaps/scan.py``) is empty, and
-# ``/api/option-trades`` ignores ``page``, so a scan would keep the newest 250 prints and report a cap of
-# 1,250. Leaving the name out of the registry is the gate: ``jobs.submit`` has no runner for it, so no Fetch
-# button, no ``POST /run/module_leaps`` and no scheduled call can start one. ``runners.run_leaps_latest``
-# stays in place -- switching off is not deleting. Reopen condition: a join of each far-dated print to the
-# next session's open interest on the same contract.
+# The old LEAPS scan is NOT registered (#730) and stays off: the board is now built from the rcdata layer's
+# ``option_far_contract`` (#746), which the builder's ``uw/far_contracts`` dataset fills on its own schedule, so the
+# board has no Fetch of its own. Leaving the name out of the registry is the gate: ``jobs.submit`` has no runner for
+# it, so no Fetch button, no ``POST /run/module_leaps`` and no scheduled call can start the old scan.
+# ``runners.run_leaps_latest`` stays in place -- switching off is not deleting.
 # 13F Fetch = refresh the names/sectors and shares outstanding the dashboard owns, render the board (backend D4).
 # The numbers are the builder's (G9), so the Fetch asks the SEC for nothing. It needs no UW key — the
 # names/sectors step is best-effort and opens its own client (#206).
@@ -302,8 +299,7 @@ TABS = [
     {"type": "tab", "key": "module_fundamentals", "label": "Fundamentals", "url": "/view/module_fundamentals", "sub": True},
     {"type": "header", "label": "Ownership"},
     {"type": "tab", "key": "module_sec_13f", "label": "SEC 13F", "url": "/view/module_sec_13f", "sub": True},
-    # The board stays (#730, avo 12 Nov 2026: "Kalsin board ama nasil olcum yapacagimiz bulalim"), but it
-    # has no measurement yet, so it serves the "no data yet" page -- never the accumulation board.
+    # The board (#746): far-dated contracts from the rcdata layer, rendered in memory on each load.
     {"type": "tab", "key": "module_leaps", "label": "LEAPS", "url": "/view/module_leaps",
      "sub": True},
     {"type": "header", "label": "Ops"},
@@ -318,7 +314,7 @@ def _uw() -> UWClient:
 def _module_file(mod: str) -> Path:
     return {
         "module_earnings_radar": runners.EARNINGS_LATEST,
-        # No "module_leaps": the board has no measurement yet (#730), so no artifact and no payload.
+        # No "module_leaps": the board is rendered in memory from the rcdata layer (#746): no artifact, no payload.
         "module_sector_rotation": runners.ROTATION_LATEST,
         "module_sec_13f": runners.SEC_13F_LATEST,
         "module_financials": runners.QUICK_LATEST,
@@ -426,8 +422,8 @@ def view(mod: str):
         return _view_uw_interaction()
     if mod == "activity":   # closed 11 Nov 2026 (avo): its jobs, logs and watch lists are on Settings' Fetch/Health tab
         return redirect("/view/module_settings")
-    if mod == "module_leaps":          # no measurement yet (#730): never the board, whatever is cached on disk
-        return _view_leaps_waiting()
+    if mod == "module_leaps":          # #746: from the rcdata layer; never the old board cached on disk (#730)
+        return _view_leaps()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     if mod == "runs":
@@ -582,22 +578,24 @@ def _universe_loading(mod: str) -> bool:
     return not universe.has_universe()          # the universe the boards read (Opus review M1), not the old table
 
 
-def _view_leaps_waiting() -> str:
-    """The LEAPS tab's only page while the board has no measurement: what is missing, and what would fill it (#730).
+def _view_leaps() -> str:
+    """The LEAPS board (#746), or its "no data yet" page while ``option_far_contract`` holds no session.
 
-    Rendered in memory, like every transient state: nothing is written to ``.cache``, and a board artifact an
-    older build left on disk is never served again. The accumulation, conviction and tier wording of
-    ``module_leaps/report.py`` therefore reaches no screen: it was never earned from this data.
+    Rendered in memory on every load, like every transient state: nothing is written to ``.cache``, and the old
+    board an older build left on disk (``leaps_latest.html``) is never served again (#730). ``?session=`` picks a
+    stored session; an unknown one shows the newest.
     """
     from datetime import datetime, timezone
+    from RevenueChaser.module_leaps import board as leaps_board
+    data = leaps_board.payload(leaps_board.parse_session(request.args.get("session")))
+    if data is not None:
+        return leaps_board.render_html(data)
     return templating.render(
         "empty_board.html.j2", title="LEAPS",
-        message="No data yet: this board is waiting on a measurement.",
-        hint=("It has recorded no row, its pinned universe is empty, and the far-dated print feed carries no "
-              "opening marker, so \u201caccumulating\u201d could not be read from it. The scan is switched "
-              "off until each far-dated print can be joined to the next session\u2019s open interest on the "
-              "same contract (ticker, expiry, strike, right) \u2014 and the honest label is then "
-              "\u201cOI up\u201d, not \u201caccumulating\u201d. Issue #730."),
+        message="No data yet: the first session is still being collected.",
+        hint=("This board reads far-dated contracts (183 days or more, $50k premium or more) from the builder's "
+              "uw/far_contracts dataset, which sweeps each session after the New York close and reads its open "
+              "interest the next morning. The first session appears once that sweep has run. Issue #746."),
         stamp=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
 
@@ -765,9 +763,8 @@ def run_relatedness_compare():
 
 
 #: Why the LEAPS Fetch answers 409 instead of starting a scan (#730).
-LEAPS_OFF = ("LEAPS scan is switched off (#730): the board has recorded no rows, its pinned universe is empty, "
-             "and the far-print feed cannot say a position was opened. It returns with a same-contract "
-             "next-session open-interest join.")
+LEAPS_OFF = ("LEAPS has no Fetch: the old scan is switched off (#730), and the board is filled by the builder's "
+             "uw/far_contracts dataset (#746), which runs on its own schedule.")
 
 
 @app.route("/run/module_leaps", methods=["POST"])
