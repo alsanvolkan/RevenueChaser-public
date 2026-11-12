@@ -202,7 +202,7 @@ tr.detail:hover{background:none}
 .mini-title{color:var(--fg);font-size:var(--fs-sm);font-weight:600}
 .mini-exp{background:none;border:0;color:var(--accent);font:inherit;font-size:var(--fs-xs);cursor:pointer;min-height:28px;padding:0 4px}
 .mini-exp:hover{text-decoration:underline}
-.mini-plot{height:150px}
+.mini-plot{height:170px}
 .dstats{display:grid;grid-template-columns:auto auto;gap:4px var(--sp-3);margin:0;font-size:var(--fs-sm)}
 .dstats dt{color:var(--muted)}
 .dstats dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
@@ -210,6 +210,10 @@ tr.detail:hover{background:none}
 .dbreaks-head{color:var(--amber);font-weight:600;margin-bottom:4px}
 .dbreak{margin-top:4px}
 .dbreak b{color:var(--bright)}
+ul.brk{margin:2px 0 0;padding-left:18px;list-style:disc}
+ul.brk ul{margin:0;padding-left:18px;list-style:circle;color:var(--muted)}
+ul.brk li{margin:1px 0}
+ul.brk li::marker{color:var(--amber)}
 footer{margin-top:var(--sp-5);padding-top:12px;border-top:1px solid var(--border);color:var(--muted);font-size:var(--fs-xs);
   text-align:center}
 </style>"""
@@ -229,6 +233,21 @@ var BREAKS = {};
 var MARK_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 21h20L12 3z"></path>'
   + '<path d="M12 10v4"></path><path d="M12 17.5v.01"></path></svg>';
+function breakBullets(lines){
+  // One quarter's breaks as a bullet list: "N filers stopped filing, X shares", the largest filers nested under it.
+  var ul = document.createElement('ul'); ul.className = 'brk';
+  (lines || []).forEach(function(line){
+    var li = document.createElement('li');
+    li.appendChild(document.createTextNode(line[0]));
+    if((line[1] || []).length){
+      var sub = document.createElement('ul');
+      line[1].forEach(function(n){ var s = document.createElement('li'); s.textContent = n; sub.appendChild(s); });
+      li.appendChild(sub);
+    }
+    ul.appendChild(li);
+  });
+  return ul;
+}
 function openBreaks(ticker){
   // Where the ticker's filer flow breaks (#732), newest first; every string reaches the DOM as text.
   var list = document.getElementById('breaks-list');
@@ -240,12 +259,7 @@ function openBreaks(ticker){
     var b = document.createElement('b');
     b.textContent = items[i][0];
     li.appendChild(b);
-    var lines = items[i][1] || [];
-    for(var j = 0; j < lines.length; j++){
-      var d = document.createElement('div');
-      d.textContent = lines[j];
-      li.appendChild(d);
-    }
+    li.appendChild(breakBullets(items[i][1]));
     list.appendChild(li);
   }
   document.getElementById('breaks').classList.add('open');
@@ -296,7 +310,7 @@ function closeDetails(){
 function el(tag, cls, text){ var x = document.createElement(tag); if(cls){ x.className = cls; } if(text !== undefined && text !== null){ x.textContent = text; } return x; }
 function miniChart(host, xs, ys, kind, color){
   var cs = getComputedStyle(document.documentElement), v = function(n){ return cs.getPropertyValue(n).trim(); };
-  // Finance units (B, M, K) instead of Plotly's SI "G"; quarter labels short ("25 Q1") so they sit flat.
+  // Finance units (B, M, K) instead of Plotly's SI "G"; quarter labels short ("25 Q1") and slanted so every one fits.
   var top = Math.max.apply(null, ys.map(function(y){ return Math.abs(y || 0); }));
   var div = top >= 1e9 ? 1e9 : top >= 1e6 ? 1e6 : top >= 1e3 ? 1e3 : 1, suf = {1e9: 'B', 1e6: 'M', 1e3: 'K', 1: ''}[div];
   var raw = ys;
@@ -306,9 +320,9 @@ function miniChart(host, xs, ys, kind, color){
        hovertemplate: '%{x}: %{customdata:,.0f}<extra></extra>'}
     : {type: 'scatter', mode: 'lines+markers', x: xs, y: ys, customdata: raw, line: {color: color, width: 2},
        marker: {size: 5}, hovertemplate: '%{x}: %{customdata:,.0f}<extra></extra>'};
-  Plotly.react(host, [tr], {height: 150, margin: {l: 44, r: 8, t: 6, b: 26}, paper_bgcolor: 'rgba(0,0,0,0)',
+  Plotly.react(host, [tr], {height: 170, margin: {l: 44, r: 14, t: 6, b: 44}, paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)', showlegend: false, font: {color: v('--muted'), family: v('--font-sans'), size: 10},
-    xaxis: {type: 'category', gridcolor: 'rgba(0,0,0,0)', linecolor: v('--grid'), fixedrange: true, tickangle: 0},
+    xaxis: {type: 'category', gridcolor: 'rgba(0,0,0,0)', linecolor: v('--grid'), fixedrange: true, tickangle: -40, automargin: true},
     yaxis: {gridcolor: v('--grid'), zerolinecolor: v('--grid'), fixedrange: true, ticksuffix: suf, nticks: 4}},
     {displayModeBar: false, responsive: true, staticPlot: false});
 }
@@ -354,7 +368,7 @@ function toggleDetail(row){
     br.forEach(function(item){
       var q = el('div', 'dbreak');
       q.appendChild(el('b', null, item[0]));
-      (item[1] || []).forEach(function(line){ q.appendChild(el('div', null, line)); });
+      q.appendChild(breakBullets(item[1]));
       bx.appendChild(q);
     });
     side.appendChild(bx);
@@ -670,18 +684,21 @@ BREAK_NAMES = 3     # the largest filers named per line of the break list
 BREAK_MARK_SHARE = 0.01   # a quarter's breaks are marked from 1% of the ticker's 13F shares (owner, 12 Nov 2026)
 
 
-def _break_lines(e: dict) -> list[str]:
-    """The lines of one quarter in the break list: stopped first (the shares that left the count), then started."""
+def _break_lines(e: dict) -> list[list]:
+    """One quarter of the break list as bullets: ``[summary, [largest filer, ...]]``, stopped first (the shares that
+    left the count), then started. The filers stay a list so a name with a comma never splits into two bullets
+    (owner, 12 Nov 2026: "bullet ile goster")."""
     lines = []
     for kind, verb in (("stopped", "stopped filing"), ("started", "started filing")):
         filers = e[kind]
         if not filers:
             continue
         total = sum(f["shares"] or 0 for f in filers)
-        lines.append(f"{len(filers)} filer{'s' if len(filers) != 1 else ''} {verb}, {_fmt_shares(total)} shares")
-        named = ", ".join(f"{f['filer']} ({_fmt_shares(f['shares'])})" for f in filers[:BREAK_NAMES])
-        more = f" and {len(filers) - BREAK_NAMES} more" if len(filers) > BREAK_NAMES else ""
-        lines.append(f"Largest: {named}{more}")
+        summary = f"{len(filers)} filer{'s' if len(filers) != 1 else ''} {verb}, {_fmt_shares(total)} shares"
+        named = [f"{f['filer']} ({_fmt_shares(f['shares'])})" for f in filers[:BREAK_NAMES]]
+        if len(filers) > BREAK_NAMES:
+            named.append(f"and {len(filers) - BREAK_NAMES} more")
+        lines.append([summary, named])
     return lines
 
 
