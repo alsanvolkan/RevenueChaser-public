@@ -434,7 +434,10 @@ _CSS = """
 
 /* the table */
 .wl table{width:100%;border-collapse:collapse}
-.wl th,.wl td{padding:3px var(--sp-3);text-align:right;font-size:var(--fs-base);white-space:nowrap;
+/* The cell grid (avo, 13 Nov 2026, vault-memory rules/ui-tasarim.md "Cell grid"): every cell of a column is as wide
+   as the column's widest value (the table does that), and a cell's text sits where the cell stands: the symbol,
+   leftmost, to the left; the numbers between, centred; the ×, rightmost, to the right. */
+.wl th,.wl td{padding:3px var(--sp-3);text-align:center;font-size:var(--fs-base);white-space:nowrap;
   line-height:1.25}
 .wl th{padding:0;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1}
 .wl th:first-child,.wl td:first-child{text-align:left;width:26%}
@@ -444,7 +447,7 @@ _CSS = """
 .wl-rows-cozy td{padding-top:6px;padding-bottom:6px}
 .wl-rows-wide td{padding-top:10px;padding-bottom:10px}
 .wl th button{all:unset;cursor:pointer;box-sizing:border-box;display:flex;align-items:center;
-  justify-content:flex-end;gap:3px;width:100%;min-height:30px;padding:0 var(--sp-3);
+  justify-content:center;gap:3px;width:100%;min-height:30px;padding:0 var(--sp-3);
   font:500 var(--fs-sm)/1 inherit;color:var(--muted)}
 .wl th:first-child button{justify-content:flex-start}
 .wl th button:hover{background:var(--hover-faint);color:var(--fg)}
@@ -488,7 +491,6 @@ _CSS = """
 .wl-nosrc{font-size:var(--fs-xs);color:var(--muted);border:1px dashed var(--border);border-radius:4px;
   padding:0 var(--sp-2)}
 .wl-un .wl-badge,.wl-un .wl-nm{opacity:.62}
-.wl-un td[colspan]{text-align:left}
 .wl-xc{width:1%;text-align:right;white-space:nowrap;padding-left:var(--sp-2);padding-right:var(--sp-2)}
 .wl th.wl-xc{padding:0;position:relative}
 .wl-x{all:unset;cursor:pointer;color:var(--muted);opacity:0;padding:0 4px;border-radius:3px;font-size:var(--fs-sm)}
@@ -735,15 +737,18 @@ _JS = r"""
   function rowHtml(row, sectionId){
     var cells = '', set = cols(), un = row.cov !== 'us_equity' && row.cov !== 'market_series';
     if(un){
-      cells = '<td colspan="' + (set.length - 2) + '"><span class="wl-nosrc">No data source yet — ' +
-        rcEsc(data.issue) + '</span></td><td class="dash">—</td>';
+      // Each column keeps its own cell, empty of a number, so nothing moves sideways (the cell grid); the row
+      // says why under its symbol instead of across the numbers.
+      for(var j = 1; j < set.length; j++) cells += '<td class="dash">—</td>';
     } else {
       for(var i = 1; i < set.length; i++) cells += '<td>' + cell(row, set[i]) + '</td>';
     }
     return '<tr class="wl-row' + (un ? ' wl-un' : '') + '" data-sym="' + rcEsc(row.sym) + '" data-sec="' +
       rcEsc(sectionId) + '"><td><div class="wl-sym">' + grip('row', row.sym) +
-      '<span class="wl-badge" title="' + rcEsc(row.nm || row.sym) + '">' + rcEsc(row.t) + '</span>' +
-      '<span class="wl-nm">' + rcEsc(row.nm || row.sym) + '</span></div></td>' + cells +
+      '<span class="wl-badge" title="' + rcEsc(un ? row.sym : (row.nm || row.sym)) + '">' + rcEsc(row.t) + '</span>' +
+      (un ? '<span class="wl-nm" title="' + rcEsc(row.sym) + '"><span class="wl-nosrc">No source · ' +
+            rcEsc(data.issue) + '</span></span>'
+          : '<span class="wl-nm">' + rcEsc(row.nm || row.sym) + '</span>') + '</div></td>' + cells +
       '<td class="wl-xc"><button class="wl-x" type="button" data-remove="' + rcEsc(row.sym) +
       '" aria-label="Remove ' + rcEsc(row.t) + '">×</button></td></tr>';
   }

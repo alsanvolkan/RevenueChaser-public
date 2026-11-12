@@ -255,3 +255,17 @@ def test_beta_is_measured_over_the_sessions_the_two_series_share(monkeypatch, no
     row = board.columns(a_long_list, "risk")["values"]["NASDAQ:NVDA"]
     assert row["b1Y"] == pytest.approx(1.0, abs=1e-6)
     assert row["v1D"] == pytest.approx((1.02 - 0.98) / 0.98 * 100, rel=1e-6)
+
+
+def test_the_cells_follow_the_cell_grid(no_data):
+    """avo, 13 Nov 2026 (rules/ui-tasarim.md, "Cell grid"): the leftmost cell is left-aligned, a middle one centred,
+    the rightmost right-aligned; and a missing value leaves its own cell, so nothing spans the numbers."""
+    css = board._CSS
+    assert ".wl th,.wl td{padding:3px var(--sp-3);text-align:center;" in css, "the numbers sit in the middle"
+    assert ".wl th:first-child,.wl td:first-child{text-align:left;" in css, "the symbol sits left"
+    assert ".wl-xc{width:1%;text-align:right;" in css, "the × sits right"
+    list_id = store.create_list("Growth")
+    store.add_symbol(list_id, "BIST:THYAO")
+    js = board.render_html(board.payload(list_id))
+    assert "colspan=\"' + (set.length - 2)" not in js, "a symbol with no source keeps one cell per column"
+    assert "cells += '<td class=\"dash\">—</td>'" in js
