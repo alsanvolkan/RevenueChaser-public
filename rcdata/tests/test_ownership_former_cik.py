@@ -70,6 +70,8 @@ def test_a_filing_under_the_old_cik_is_named_by_it():
     named = common.issuer_tickers([(XOM_OLD, "XOM"), (XOM_OLD, None)], SPINE, FORMER)
     assert named[(XOM_OLD, "XOM")] == ("XOM", common.ISSUER_FORMER_CIK)
     assert named[(XOM_OLD, None)] == ("XOM", common.ISSUER_FORMER_CIK)
+    # Without the map (a spine that carries no history) nothing changes: what the boards show today.
+    assert common.issuer_tickers([(XOM_OLD, "XOM")], SPINE)[(XOM_OLD, "XOM")] == (None, None)
 
 
 def test_the_current_cik_still_names_by_the_symbol_and_an_unknown_cik_names_nothing():
@@ -82,10 +84,6 @@ def test_a_symbol_of_another_issuer_is_not_taken_from_a_former_cik():
     """The CIK decides, as before: a filing under XOM's old CIK that mistypes the symbol is still XOM's."""
     assert common.issuer_tickers([(XOM_OLD, "MSFT")], SPINE, FORMER)[(XOM_OLD, "MSFT")] == (
         "XOM", common.ISSUER_FORMER_CIK)
-
-
-def test_without_a_former_map_the_old_cik_names_nothing():
-    assert common.issuer_tickers([(XOM_OLD, "XOM")], SPINE)[(XOM_OLD, "XOM")] == (None, None)
 
 
 # ── The board (Form 4 through the real build) ──────────────────────────────────────────────────────────────────
@@ -122,9 +120,3 @@ def test_an_insider_row_filed_under_the_old_cik_is_served_under_the_ticker(feed)
                             sleep=lambda s: None)["result"] == "changed"
     assert _served(SQL) == [(XOM_OLD, "XOM", "XOM", common.ISSUER_FORMER_CIK)]
 
-
-def test_the_same_row_has_no_ticker_without_the_spines_history(feed):
-    """What the board shows today (#749): the rows are there, under no ticker."""
-    ox.make_spine(tickers=TICKERS, ciks=CIKS)
-    base.run_request({"dataset": form4.NAME, "params": {"as_of": "2026-10-28"}}, sleep=lambda s: None)
-    assert _served(SQL) == [(XOM_OLD, "XOM", None, None)]
