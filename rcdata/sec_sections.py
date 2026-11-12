@@ -421,10 +421,13 @@ _CITED_PHRASE = re.compile(r"(?i)(?:[.,:;()\[\]]|[^\S\n]){0,8}"
 _QUOTED_RUN = re.compile(r"[^\S\n]{0,4}[“‘\"][^\n”’\"]{0,80}[”’\"]")
 
 #: What a citation's closing mark may be followed by on its line, where a heading's may not. A letter is the
-#: sentence carrying on; a comma or a semicolon is a clause carrying on; a closing bracket that nothing on
-#: this line opened belongs to a parenthetical the sentence began before the number, which is the commonest
-#: cross-reference form there is: "(see Part I,\nItem 1A "Risk Factors")." A heading's line ends after the
-#: title, or with a page number, a full stop or a dash.
+#: sentence carrying on; a comma or a semicolon, with spaces allowed before it, is a clause carrying on; a
+#: closing bracket with no opening one **between it and the mark** belongs to a parenthetical the sentence
+#: began earlier, which is the commonest cross-reference form there is: "(see Part I,\nItem 1A "Risk
+#: Factors")." That test looks only at the tail, so ``Item 1A ("Risk Factors").``, whose bracket does open on
+#: that line, is a citation as well -- which is the right answer, by the bracket the tail ends with rather
+#: than the one it does not see. A heading's line ends after the title, or with a page number (bare, in
+#: brackets or after leaders), a full stop, a colon or a dash.
 _A_LETTER = re.compile(r"[^\W\d_]")
 _CLAUSE_GOES_ON = re.compile(r"[^\S\n]*[,;]")
 _UNOPENED_CLOSER = re.compile(r"[^([\n]*[)\]]")
@@ -449,17 +452,25 @@ def _cites_its_title(text: str, m: re.Match, line_end: int) -> bool:
       :func:`_holds_another_item` reads the same test, so the label was blind to it too;
     - the title in quotation marks after the item's own title, followed by such a phrase
       (:data:`_QUOTED_RUN`): "Item 1. Business "Overview" of this report";
-    - the title in quotation marks (:data:`_CITED_QUOTE`), with **any** of three things that a heading's own
+    - the title in quotation marks (:data:`_CITED_QUOTE`), with **any** of four things that a heading's own
       title does not carry: a comma between the number and the opening mark (a heading's number takes a full
-      stop or nothing), a full stop or comma inside the closing mark, or a line that goes on after it **in
-      words** (:data:`_A_LETTER`).
+      stop, a dash or nothing); a full stop, comma, semicolon or colon inside the closing mark; a line that
+      goes on after it in words (:data:`_A_LETTER`); or a tail that goes on in punctuation a heading's line
+      never ends with (:data:`_CLAUSE_GOES_ON`, :data:`_UNOPENED_CLOSER`).
 
-      Each of those three was measured. Without the first two, a citation that ends its paragraph --
+      Each of those was measured. Without the first two, a citation that ends its paragraph --
       ``see Part I, Item 1A, "Risk Factors."``, with the full stop inside the quotation marks as US
       punctuation puts it -- has nothing after the closing mark either, and was read as a heading: Item 1
       cut to 13,024 characters of 26,050 and labelled ``ok``. Without the third, a filer's own quoted
       heading -- ``Item 1A. "Risk Factors"`` alone on its line, or with a page number or a full stop after
-      it -- was read as a citation, and the slice ran through the risk factors and still said ``ok``.
+      it -- was read as a citation, and the slice ran through the risk factors and still said ``ok``. The
+      fourth came of the third: once only a letter counted, every parenthetical cross-reference became a
+      heading, because its tail is a bracket and a full stop.
+
+      A third cost belongs beside the two below: a citation whose sentence ends with the full stop **outside**
+      the mark and which starts its own line -- ``as discussed in Part I,\nItem 1A "Risk Factors".`` -- is
+      read as a heading, Item 1 cut to 13,024 characters of 26,049. It is the same line as the heading
+      ``Item 1A. "Risk Factors".``, which a test pins the other way, so again no rule can have both.
 
       What it costs, both sides of it the same size: a heading spelled ``Item 1A, "Risk Factors"``, with a
       comma where the full stop goes, and one spelled ``Item 1A. "Risk Factors."``, by a filer who ends his

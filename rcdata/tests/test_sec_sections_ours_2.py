@@ -1045,6 +1045,8 @@ def test_a_citation_that_ends_its_paragraph_is_still_a_citation(citation):
     "Item 1A (“Risk Factors”).",        # and one the citation opened itself
     "Item 1A “Risk Factors”,",          # a clause of a sentence that goes on below
     "Item 1A “Risk Factors”;",
+    "Item 1A “Risk Factors”]",         # the square bracket, which the closer class has to name
+    "Item 1A “Risk Factors” ,",        # and a clause whose comma the filer spaced away from the mark
     "Item 1A. “Risk Factors,”\nand elsewhere in this report.",   # the mark holds the comma
     "Item 1A. “Risk Factors;”",
     "Item 1A – “Risk Factors” of this report.",              # a dash in place of the full stop
@@ -1052,14 +1054,20 @@ def test_a_citation_that_ends_its_paragraph_is_still_a_citation(citation):
 ])
 def test_a_citation_whose_line_ends_in_punctuation_is_still_a_citation(citation):
     """"(see Part I,\nItem 1A "Risk Factors")." -- a parenthetical cross-reference, the commonest citation form
-    there is. Asking for a **letter** after the closing mark made every one of these a heading: Item 1 cut to
-    13,024 characters of 26,050 and labelled ``ok``, and :func:`_holds_another_item` reads the same test, so a
-    wrapped citation early in Item 1 turned the label to ``overrun`` as well.
+    there is. Asking for a **letter** after the closing mark made eleven of these thirteen rows headings: Item
+    1 cut to 13,024 characters of 26,050 and labelled ``ok``, and :func:`_holds_another_item` reads the same
+    test, so a wrapped citation early in Item 1 turned the label to ``overrun`` as well. The two rows whose
+    closing mark holds the punctuation were already right, and are here because they are what pins the set of
+    marks that counts inside it.
 
-    Three more things after the mark now say the line goes on, and none of them ends a heading's line: a comma
-    or a semicolon, a closing bracket nothing on that line opened, and (as before) a letter. The last two rows
-    are the dash a filer puts where the full stop goes, which neither signal could reach before, and
-    ``ours-1`` is right on all eleven.
+    Two more things after the mark now say the line goes on, and neither ends a heading's line: a comma or a
+    semicolon, spaces allowed before it, and a closing bracket with no opening one between it and the mark. The last two rows
+    are the dash a filer puts where the full stop goes, which neither signal could reach before.
+
+    ``ours-1`` answers every row here the same way, which is why they are asserted against it -- but only
+    because the rows are written with curly quotation marks, the ones a filer's HTML produces. The same
+    citation with straight ones (``Item 1A. "Risk Factors")``) is a heading to ``ours-1``: 13,024 characters
+    where ``ours-2`` gives 26,050.
     """
     text = ("Item 1. Business\n" + _H + " as discussed in Part I,\n" + citation + "\n" + _H
             + "\nItem 1A. Risk Factors\n" + "Risky. " * 400
@@ -1070,7 +1078,7 @@ def test_a_citation_whose_line_ends_in_punctuation_is_still_a_citation(citation)
     assert len(new[0]) > 20_000 and "Risky." not in new[0]
 
 
-@pytest.mark.parametrize("after", ["", ".", " 12", " (12)", " .......... 12", ":", " —"])
+@pytest.mark.parametrize("after", ["", ".", " 12", " (12)", " [12]", " .......... 12", ":", " —"])
 def test_what_may_follow_a_quoted_heading_and_still_leave_it_a_heading(after):
     """The other side of the row above, which is what keeps the two rules apart. A heading's line ends after
     the title, or with a full stop, a colon, a dash, or the page number a contents page prints -- in brackets
