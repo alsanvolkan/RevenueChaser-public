@@ -23,7 +23,10 @@
   holding it (``CONSENSUS_FILERS`` or more). A filer whose median ratio to those prices, over ``MIN_NAMES`` or more
   names, lies inside ``SCALE_BAND`` (1/3000 to 1/300, the old derive's band, which read closes instead) has its value
   read in thousands (``sec13f_filer_period.value_factor`` 1000), and one inside its inverse (300 to 3000) has it
-  divided by 1,000 (0.001). Shares never change.
+  divided by 1,000 (0.001). Shares never change. The test runs on every filing, before the rule change too
+  (#780): a filer that wrote dollars while the rule still said thousands was read 1,000 times too high, and a few
+  of them were enough to put the pre-2023 quarters' total value at $200-360T and AAPL's implied price at 6-41
+  times its close.
 - *Each CUSIP named*, per report period, by the first spine source that answers: (1) Compustat's dated identifier
   history (``security_history``, field ``cusip``, the period inside ``valid_from``..``valid_to``) with exactly one
   ticker: ``wrds/sec_idhist``; (2) the spine's current CUSIP of exactly one ticker: ``spine/security``; (2b) when
@@ -482,7 +485,7 @@ class OwnershipServe:
         _by_period(con, periods, "_ratio", """
             SELECT l.cik, l.period, count(DISTINCT l.cusip), median(l.value_usd / l.shares / p.px)
             FROM _long l JOIN _px p ON p.cusip = l.cusip AND p.period = l.period
-            WHERE l.period = ? AND l.shares > 0 AND l.value_usd > 0 AND l.value_scale = 1 GROUP BY ALL""",
+            WHERE l.period = ? AND l.shares > 0 AND l.value_usd > 0 GROUP BY ALL""",
                    [("cik", "TEXT"), ("period", "DATE"), ("names", "BIGINT"), ("ratio", "DOUBLE")])
         lo, hi = SCALE_BAND
         common.create_table(con, "sec13f_filer_period", FILER, f"""

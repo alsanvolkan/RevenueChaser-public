@@ -330,6 +330,26 @@ def test_a_filers_value_off_by_1000_is_rescaled_once_its_prices_agree(monkeypatc
     assert not any(k == "value_rescaled" and key.startswith("2000006") for k, key in issues)
 
 
+def test_a_filer_writing_dollars_before_the_rule_change_is_read_in_dollars(monkeypatch, http_mock):
+    """#780: before 2023-01-03 the rule said thousands (``value_scale`` 1,000), but some filers wrote dollars. The
+    1,000 test ran only on filings made after the change, so their value went in 1,000 times too high and the
+    pre-2023 quarters' totals with it (AAPL's implied price 6-41 times its close on the live store)."""
+    monkeypatch.setattr(sec, "_shared_pace", lambda: True)
+    monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    ox.make_spine()
+    e = ox.Edgar()
+    filers = [_f(f"000200000{i}-22-00000{i}", 2000000 + i, "2022-08-10", _book(scale=0.001), period="06-30-2022")
+              for i in range(1, 5)]                                                            # thousands, as ruled
+    filers.append(_f("0002000005-22-000005", 2000005, "2022-08-10", _book(), period="06-30-2022"))   # dollars
+    e.add_day("2022-08-10", filers)
+    e.install(http_mock)
+    _thirteen_f(as_of="2022-08-11")
+    _serve()
+    assert _served("SELECT cik, period, value_factor FROM sec13f_filer_period WHERE value_factor <> 1") == [
+        ("2000005", date(2022, 6, 30), 0.001)]
+    assert _served("SELECT value FROM sec13f_ticker_period WHERE ticker = 'MSFT'") == [(40_000.0 * 5,)]
+
+
 PER_QUARTER = ("_px", "_ratio", "_held", "_cp", "_m_hist", "_m_cur", "sec13f_cusip_map", "_filers", "_pos", "_tot",
                "_shape", "_pairs")
 SERVED_13F = {"sec13f_filer_period": "cik, period", "sec13f_cusip_map": "cusip, period",
