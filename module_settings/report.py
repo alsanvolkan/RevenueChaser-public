@@ -203,6 +203,9 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .sfield .ovr{color:var(--amber);font-size:11.5px;margin-left:6px}
 .sfield .ferr{grid-column:2/-1;color:var(--red);font-size:12px;white-space:normal}
 .sfield .ferr:empty{display:none}
+/* #715: the forms sit in a fold under Database; on a phone a field is its label and input, the range under them */
+@media(max-width:760px){.sfield{grid-template-columns:minmax(0,1fr) 110px}.sfield .rng{grid-column:1/-1;overflow-wrap:anywhere}
+.sfield input,.sfield select{height:44px}}
 .sderived{color:var(--muted);font-size:12px;padding:4px 0}
 .sderived b{color:var(--text)}
 details.fine{margin:8px 0}
@@ -2937,7 +2940,7 @@ SETTINGS_TABS = {"key": "rc.settings.tab",
                  "first": "watch",
                  "tabs": {"watch": "panel-watch", "data": "panel-data", "health": "panel-health",
                           "logs": "panel-logs"},
-                 "aliases": {"fetch": "data", "needs": "health", "live": "health"}}
+                 "aliases": {"fetch": "data", "needs": "data", "live": "health"}}
 
 TABS_JS = """
 (function(){
@@ -3008,13 +3011,14 @@ DATA_HELP = help_html(
     "what for one name, and since when), the Data flow from each source through the six SSD "
     "DuckDB files to the boards and the file each board writes, then for one served file the Build stage from HDD "
     "raw and Parquet to the SSD file, the boards that read it, and example rows. Nothing there starts a job. "
-    "Under it sit the need catalog by file and, folded, the routes, the board inputs and the automations. "
+    "Under it sit, each folded, the need catalog by file, the routes, the board inputs and the automations. "
     "<b>Fetch/Health</b> is the Grafana board: the alerts, the switches, each dataset with its <b>Fetch</b>, "
     "<b>Pause</b>, mode, cadence and hold, the queue, RevenueChaser's timers, the IBKR gateway, the providers' "
     "limits, the cross-check, board freshness and the backups. A press there needs the Grafana login; a press puts "
     "one request in the builder's queue, and the builder calls the provider, never this page. Under the board sit "
     "the few presses it does not carry yet: the <b>Universe</b>, the <b>Fill</b> and <b>Backfill</b> of the datasets "
-    "that have one, <b>Recount folders</b> and the IBKR login link. <b>Logs</b> is the Grafana log board. "
+    "that have one, <b>Recount folders</b>, the IBKR login link, and for each file the coverage, the open problems row "
+    "by row and the last three runs. <b>Logs</b> is the Grafana log board. "
     "<b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )

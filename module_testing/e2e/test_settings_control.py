@@ -140,6 +140,29 @@ def test_the_page_offers_no_one_off_fetch_and_no_switch(dashboard, browser, mark
     assert len(provider_routes.requests()) == before
 
 
+def test_fetch_the_universe_is_still_pressed_on_the_page_and_asks_no_provider(dashboard, browser, market,
+                                                                             provider_routes):
+    """The one queueing press left in HTML (#715): it answers with a pill beside the button, puts at most one row in
+    the builder's queue and never reaches a provider itself."""
+    before = len(provider_routes.requests())
+    _open(browser, dashboard)
+    _tab(browser, "health")
+    btn = "document.querySelector('#panel-health button[data-job=\"fetch\"]')"
+    dataset = browser.eval(btn + ".getAttribute('data-dataset')")
+    browser.eval(btn + ".click()")
+    said = ("(function(){ var b = " + btn + ", id = b.getAttribute('data-jid');"
+            " var p = id && document.querySelector('[data-for=\"' + id + '\"]'); return p ? p.className + ' ' + "
+            "p.textContent : ''; })()")
+    browser.wait_for(said + " !== ''")
+    pill = browser.eval(said)
+    rows = [(r["dataset"], r["status"], r["requested_by"]) for r in _requests(market)]
+    if pill.startswith("jst st-q queued"):
+        assert rows == [(dataset, "queued", "settings")], rows
+    else:
+        assert pill.startswith("jst st-f") and rows == [], f"neither queued nor refused: {pill} {rows}"
+    assert len(provider_routes.requests()) == before, "a request is not a fetch: no provider was asked"
+
+
 def test_fill_and_fill_this_range_are_off_by_default(dashboard, browser, market, provider_routes):
     before = len(provider_routes.requests())
     _open(browser, dashboard)

@@ -1978,7 +1978,7 @@ def test_the_tabs_map_data_and_health_and_old_choices_land_on_them():
     assert report.SETTINGS_TABS["tabs"] == {"watch": "panel-watch", "data": "panel-data", "health": "panel-health",
                                             "logs": "panel-logs"}
     assert report.SETTINGS_TABS["first"] == "watch" and "show(start || FIRST, false)" in report.TABS_JS
-    assert report.SETTINGS_TABS["aliases"] == {"fetch": "data", "needs": "health", "live": "health"}
+    assert report.SETTINGS_TABS["aliases"] == {"fetch": "data", "needs": "data", "live": "health"}
     assert "CFG.aliases[name]" in report.TABS_JS
 
 

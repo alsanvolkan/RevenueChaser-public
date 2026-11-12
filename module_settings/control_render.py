@@ -91,7 +91,7 @@ def _header(view: dict, title: str = "Database") -> str:
     return (f'<h1>Data/Health · {esc(title)}</h1>'
             f'<p class="sub"><b>Read {esc(view["read_at"])}</b> (Amsterdam) · source: <code>ops.sqlite</code> + the '
             f'serving files · after {STALE_MINUTES} minutes a strip on top says the numbers are old</p>'
-            f'<div class="stalebar"{' id="ctl-stale"' if title == "Database" else ""} hidden><b>Stale</b> · this page was read at {esc(view["read_at"])} · '
+            f'<div class="stalebar"{' id="ctl-stale"' if title == "Database" else ""} data-stale hidden><b>Stale</b> · this page was read at {esc(view["read_at"])} · '
             '<button type="button" class="lnk" data-reload>Refresh</button></div>')
 
 
@@ -289,14 +289,13 @@ def _legend(view: dict) -> str:
             else view["fill_off_why"])
     # #527 step 8b: one line visible, the rest behind a "?"
     return ('<div class="flegend"><span class="lg2 s-notpicked">a tier set: in the universe or not</span>'
-            '<span class="lg2 s-nodata">no tier choice · no button</span>'
             '<details class="lgq"><summary class="q" aria-label="What a Fill cell shows">?</summary>'
             f'<span class="dim">A Fill cell shows its set and whether the universe holds it. Where a dataset has days to pick (alpaca/bars), a press opens '
             f'its Backfill calendar with that set ticked, and the calendar says names, calls and nights before you '
             f'start. Fill: {esc(fill)}.</span>'
             '<div class="lgrow"><b>After a press</b> the button shows its request:<span class="lg3 st-q">queued</span>'
             '<span class="lg3 st-r">running</span><span class="lg3 st-d">done</span>'
-            '<span class="lg3 st-f">failed</span><span class="lg3 st-p">paused</span></div></details></div>')
+            '<span class="lg3 st-f">failed</span></div></details></div>')
 
 
 # ── Fetch: one row a dataset ──────────────────────────────────────────────────────────────────────────────────
@@ -1274,34 +1273,48 @@ def render_data(view: dict, lookup_html: str = "") -> str:
 
 
 def _fill_box(d: dict, view: dict) -> str:
-    """One dataset that takes a tier set or has a Backfill calendar: its name, then only those two presses. Its
-    Fetch, Pause, mode, cadence and hold are in the Grafana board above (#715 decision 4)."""
+    """One dataset's leftovers: its Fill by tier set and Backfill calendar, its coverage against the target and its
+    open problems row by row. Its Fetch, Pause, mode, cadence and hold are in the Grafana board above (#715
+    decision 4); the board shows a count of open problems and no coverage, so those two stay here."""
     provs = list(d["providers"])
     edge = _pcolor(view, provs[0]) if provs else "var(--mut)"
-    rest = (_fill_row(d, view) if d["fill"]["cells"] else "") + _acts(d, pause=False, cross=False)
+    c = d["coverage"]
+    meter = _meter("cov", c["cls"], "coverage", c["share"], c["text"], c["target"]) if c else ""
+    fills = ((_fill_row(d, view) if d["fill"]["cells"] else "") + _acts(d, pause=False, cross=False)
+             if _has_fill(d) else "")
     return (f'<div class="dset sbox" data-dataset="{esc(d["dataset"])}" style="border-left-color:{edge}">'
             f'<div class="sb1"><span class="sdot {esc(d["filter"])}" aria-hidden="true"></span>'
             f'<span class="dsname" title="{esc(d["dataset"])}">{esc(d["dataset"])}</span></div>'
-            f'<div class="sbody"><div class="sb5">{rest}</div></div></div>')
+            f'<div class="sbody">{f'<div class="sb3">{meter}</div>' if meter else ""}'
+            f'<div class="sb5">{fills}{_problems(d)}</div></div></div>')
+
+
+def _has_fill(d: dict) -> bool:
+    return bool(d["fill"]["cells"] or d["calendar"])
 
 
 def _fill_group(f: dict, view: dict) -> str:
-    """One served file's datasets that have a Fill or a Backfill; nothing when it has none."""
-    rows = [d for d in f["datasets"] if d["fill"]["cells"] or d["calendar"]]
-    if not rows:
-        return ""
+    """One served file: a box for each dataset that has a Fill, a Backfill, a coverage target or an open problem,
+    then the last three runs of every dataset (result, calls and note: the board shows only the last check)."""
+    rows = [d for d in f["datasets"] if _has_fill(d) or d["coverage"] or d["issues_open"]]
     boxes = "".join(_fill_box(d, view) for d in rows)
+    fills = sum(1 for d in rows if _has_fill(d))
+    probs = sum(d["issues_open"] for d in f["datasets"])
+    words = (f'{len(f["datasets"])} {"dataset" if len(f["datasets"]) == 1 else "datasets"} · {fills} with a Fill or '
+             f'a Backfill · open problems {probs:,} · the last runs')
+    grid = (f'<div class="sources fgroup" data-file="{esc(f["name"])}"><div class="sgrid">{boxes}</div></div>'
+            if boxes else "")
     return (f'<details class="sec fgrp" data-file="{esc(f["name"])}" style="--fh:{esc(f["color"])}">'
-            f'<summary><h2>🦆 {esc(f["name"])}</h2><span class="secs">{len(rows)} '
-            f'{"dataset takes" if len(rows) == 1 else "datasets take"} a Fill or a Backfill</span></summary>'
-            f'<div class="sources fgroup" data-file="{esc(f["name"])}"><div class="sgrid">{boxes}</div></div></details>')
+            f'<summary><h2>🦆 {esc(f["name"])}</h2><span class="secs">{words}</span></summary>'
+            f'{grid}{_health_table(f)}</details>')
 
 
 def render_fetch(view: dict) -> str:
     """Under the Fetch/Health frame: only what the Grafana board does not carry (#715, avo 12 Nov 2026: every Fetch
     control and all status live in Grafana). That is the Universe, the Fill and Backfill of the datasets that have
     one, the Recount folders press and the IBKR login link (home-server ``homeops/act.py``: "no Fill or Backfill
-    (they stay on the RC page)"). The switches, Health right now, the providers, each dataset's Fetch, Pause and
+    (they stay on the RC page)"), and three reads the board has no panel for: a dataset's coverage against its
+    target, its open problems row by row and its last three runs. The switches, Health right now, the providers, each dataset's Fetch, Pause and
     schedule, the queue, Cross-check and the weekly backups are drawn by the board above and no longer here."""
     if view.get("error"):
         return _err(view, "Universe and fills")
@@ -1310,7 +1323,8 @@ def render_fetch(view: dict) -> str:
     return ('<section class="ctl" aria-label="Data/Health · Universe and fills"><div class="wrap">'
             f'{_header(view, "Universe and fills")}'
             '<p class="sub">Everything else on this tab is the board above: the switches, each dataset&#39;s Fetch, '
-            'Pause and schedule, the queue, the limits and the backups. These presses have no place there yet.</p>'
+            'Pause and schedule, the queue, the limits and the backups. What follows has no place there yet: the universe, '
+            'the fills, and for each file the coverage, the open problems row by row and the last runs.</p>'
             f'<div class="topbar" role="group" aria-label="The IBKR gateway">{_gateway(view)}</div>'
             f'<details class="sec" id="sec-universe" open><summary><h2>Universe</h2><span class="secs">'
             f'{esc(view["universe_summary"])} · the tier sets the next fetches and fills use</span></summary>'

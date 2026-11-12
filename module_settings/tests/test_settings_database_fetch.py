@@ -33,14 +33,14 @@ def test_the_database_tab_starts_no_job():
 
 def test_fetch_health_keeps_the_universe_once_and_only_the_presses_grafana_does_not_carry():
     """#715 (avo, 12 Nov 2026): the switches, the one-off Fetch of a dataset and the providers are the framed
-    board's. Under the frame stay the universe's Fetch, the Recount and a group for a file that has a fill."""
+    board's. Under the frame stay the universe's Fetch, the Recount and one group a served file."""
     html = _page()
     fh = _between(html, 'id="panel-health"', 'id="panel-logs"')
     assert sorted(set(re.findall(r'data-job="([^"]+)"', fh))) == ["fetch", "picture"]
     assert html.count('id="universe"') == 1 and 'id="universe"' in fh
     assert 'id="sec-providers"' not in fh and 'id="needs"' not in fh
     groups = re.findall(r'<details class="sec fgrp" data-file="([a-z]+\.duckdb)"', fh)
-    assert groups and len(groups) == len(set(groups)), "one group a file, only for a file with a fill"
+    assert len(groups) == 6 and len(set(groups)) == 6, "one group a file: its fills, coverage, problems, last runs"
     assert "data-automation" not in fh, "the file-level Automated row is gone"
 
 
