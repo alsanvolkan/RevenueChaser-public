@@ -13,7 +13,8 @@
 - ``index_membership``: who is in each index and when, from the fund files (``funds/index_holdings``, voted) and
   from Compustat's constituents history (``wrds/idxcst_his``, the check);
 - ``etf``: the ETF universe, one row per ticker, from Alpha Vantage's listing status, the N-CEN data sets and the
-  ``etp`` rows of ``security`` (``etf.py``, #346).
+  ``etp`` rows of ``security`` (``etf.py``, #346), its asset class and newest AUM from N-PORT (#354);
+- ``etf_holdings_nport``: each ETF's newest month of holdings from the N-PORT data sets (``nport.py``, #354).
 
 Every period is ``valid_from`` inclusive and ``valid_to`` exclusive (the first day it no longer holds); ``valid_to``
 is NULL while it holds. Compustat's inclusive end dates (``effthru``, ``indthru``, ``thru``) are moved one day on.
@@ -44,7 +45,7 @@ from ....core.gics_map import UNCLASSIFIED, canonical_sector
 from ....core.identity import isin as isin_mod
 from ... import ops
 from .. import base
-from . import KIND, etf, stage, tier as tier_rule, views
+from . import KIND, etf, nport, stage, tier as tier_rule, views
 from .funds import NAME as FUNDS
 from .openfigi_map import NAME as OPENFIGI, PRESENT
 from .sec_tickers import NAME as SEC
@@ -52,7 +53,7 @@ from .sec_tickers_mf import NAME as SEC_MF
 from .wrds import CO_HGIC, IDXCST_HIS, INDEX_GVKEYX, SEC_IDHIST, norm_cik
 
 NAME = "spine/security"
-TABLES = ("security", "security_history", "gics_history", "index_membership", etf.TABLE)
+TABLES = ("security", "security_history", "gics_history", "index_membership", etf.TABLE, nport.TABLE)
 # Compustat ``exchg`` codes of the US exchanges the SEC file's listed rows trade on: NYSE, AMEX, Nasdaq.
 US_EXCHG = (11, 12, 14)
 # How far ahead of a fund day's SEC snapshot (the newest on or before the day) a line is looked for (delta S1): a fund
@@ -81,7 +82,7 @@ MEMBERSHIP = [("index_slug", "TEXT"), ("ticker", "TEXT"), ("cik", "TEXT"), ("gvk
               ("valid_from", "DATE"), ("valid_to", "DATE"), ("source", "TEXT"), ("files_held", "INTEGER"),
               ("files_counted", "INTEGER"), ("source_as_of", "DATE")]
 SCHEMAS = {"security": SECURITY, "security_history": HISTORY, "gics_history": GICS, "index_membership": MEMBERSHIP,
-           etf.TABLE: etf.SCHEMA}
+           etf.TABLE: etf.SCHEMA, nport.TABLE: nport.SERVED}
 
 # The plan's named problems, one kind each; ``key`` is the ticker unless the kind says otherwise.
 ISSUE_KINDS = {
@@ -427,6 +428,7 @@ class SpineSecurity:
         found += member_issues
         counts["index_membership"] = _create(con, "index_membership", members)
         counts[etf.TABLE] = _create(con, etf.TABLE, etf.rows(ctx, con))       # reads ``security``: after it
+        counts[nport.TABLE] = nport.serve(con)                                 # reads ``etf``: after it
         views.create(con)
         ctx.pending[NAME] = found
         return counts

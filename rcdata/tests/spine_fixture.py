@@ -541,3 +541,119 @@ def add_ncen_routes(http_mock, quarters=("2026q3", "2026q2", "2026q1", "2025q4")
     zips = {"2026q3": NCEN_Q3, "2026q2": NCEN_Q2, "2026q1": NCEN_Q1, "2025q4": NCEN_Q4}
     for q in quarters:
         http_mock.add(f"{q}_ncen.zip", zips[q])
+
+
+# ── The SEC's Form N-PORT data sets (``sec/nport``) ──────────────────────────────────────────────────────────
+
+#: The five tables ``sec/nport`` reads, with the real files' columns it uses, in their order (1 Nov 2026,
+#: ``nport_metadata.json`` of 2026q3; the real files carry more columns).
+NPORT_COLS = {
+    "SUBMISSION.tsv": ("ACCESSION_NUMBER", "FILING_DATE", "FILE_NUM", "SUB_TYPE", "REPORT_ENDING_PERIOD",
+                       "REPORT_DATE", "IS_LAST_FILING"),
+    "REGISTRANT.tsv": ("ACCESSION_NUMBER", "CIK", "REGISTRANT_NAME", "FILE_NUM", "LEI"),
+    "FUND_REPORTED_INFO.tsv": ("ACCESSION_NUMBER", "SERIES_NAME", "SERIES_ID", "SERIES_LEI", "TOTAL_ASSETS",
+                               "TOTAL_LIABILITIES", "NET_ASSETS"),
+    "FUND_REPORTED_HOLDING.tsv": ("ACCESSION_NUMBER", "HOLDING_ID", "ISSUER_NAME", "ISSUER_LEI", "ISSUER_TITLE",
+                                  "ISSUER_CUSIP", "BALANCE", "UNIT", "OTHER_UNIT_DESC", "CURRENCY_CODE",
+                                  "CURRENCY_VALUE", "EXCHANGE_RATE", "PERCENTAGE", "PAYOFF_PROFILE", "ASSET_CAT",
+                                  "OTHER_ASSET", "ISSUER_TYPE", "OTHER_ISSUER", "INVESTMENT_COUNTRY",
+                                  "IS_RESTRICTED_SECURITY", "FAIR_VALUE_LEVEL", "DERIVATIVE_CAT"),
+    "IDENTIFIERS.tsv": ("HOLDING_ID", "IDENTIFIERS_ID", "IDENTIFIER_ISIN", "IDENTIFIER_TICKER", "OTHER_IDENTIFIER",
+                        "OTHER_IDENTIFIER_DESC"),
+}
+
+
+def nport_filing(accession, cik, series, name, report, filed, net_assets, holdings, sub_type="NPORT-P") -> dict:
+    """One N-PORT: ``holdings`` are ``(name, cusip, pct, asset_cat, issuer_type, isin, ticker[, payoff])``; the value
+    is ``pct`` of ``net_assets`` and the balance a tenth of the value, as the real file's ``CURRENCY_VALUE`` is the
+    USD value (checked 1 Nov 2026: value / (pct x net assets) - 1 is 5e-13 at the median)."""
+    return {"accession": accession, "cik": cik, "series": series, "name": name, "report": report, "filed": filed,
+            "net_assets": net_assets, "holdings": holdings, "sub_type": sub_type}
+
+
+def nport_zip(filings) -> bytes:
+    """A quarter's zip in the real one's shape: tab-separated, a header row, ``DD-MON-YYYY`` dates, the readme."""
+    import zipfile
+
+    def tsv(name, rows):
+        cols = NPORT_COLS[name]
+        return "\n".join(["\t".join(cols)] + ["\t".join(str(r.get(c, "")) for c in cols) for r in rows]) + "\n"
+    sub, reg, info, hold, ident = [], [], [], [], []
+    hid = 1000
+    for f in filings:
+        a = f["accession"]
+        sub.append({"ACCESSION_NUMBER": a, "FILING_DATE": f["filed"], "SUB_TYPE": f["sub_type"],
+                    "REPORT_ENDING_PERIOD": "30-SEP-2026", "REPORT_DATE": f["report"], "IS_LAST_FILING": "N"})
+        reg.append({"ACCESSION_NUMBER": a, "CIK": f"{f['cik']:010d}", "REGISTRANT_NAME": f["name"] + " Trust"})
+        info.append({"ACCESSION_NUMBER": a, "SERIES_NAME": f["name"], "SERIES_ID": f["series"],
+                     "NET_ASSETS": f["net_assets"]})
+        for h in f["holdings"]:
+            hname, cusip, pct, cat, itype, isin, ticker, *payoff = h
+            hid += 1
+            value = pct / 100 * f["net_assets"]
+            hold.append({"ACCESSION_NUMBER": a, "HOLDING_ID": hid, "ISSUER_NAME": hname, "ISSUER_TITLE": hname,
+                         "ISSUER_CUSIP": cusip, "BALANCE": round(value / 10, 2), "UNIT": "NS", "CURRENCY_CODE": "USD",
+                         "CURRENCY_VALUE": value, "PERCENTAGE": pct, "PAYOFF_PROFILE": (payoff or ["Long"])[0],
+                         "ASSET_CAT": cat, "ISSUER_TYPE": itype, "INVESTMENT_COUNTRY": "US"})
+            if isin:
+                ident.append({"HOLDING_ID": hid, "IDENTIFIERS_ID": hid * 10, "IDENTIFIER_ISIN": isin})
+            if ticker:
+                ident.append({"HOLDING_ID": hid, "IDENTIFIERS_ID": hid * 10 + 1, "IDENTIFIER_TICKER": ticker})
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, rows in (("SUBMISSION.tsv", sub), ("REGISTRANT.tsv", reg), ("FUND_REPORTED_INFO.tsv", info),
+                           ("FUND_REPORTED_HOLDING.tsv", hold), ("IDENTIFIERS.tsv", ident)):
+            z.writestr(name, tsv(name, rows))
+        z.writestr("nport_readme.htm", "<html></html>")
+    return buf.getvalue()
+
+
+AAPL = ("Apple Inc", "037833100", 60.0, "EC", "CORP", "US0378331005", "AAPL")
+MSFT = ("Microsoft Corp", "594918104", 37.0, "EC", "CORP", "US5949181045", "MSFT")
+MMF = ("Example Government Money Market Fund", "000000000", 3.0, "STIV", "RF", None, None)
+#: 2026q3: XLK (N-CEN, equity, an amendment of its July report), TAPR (N-CEN, bond), CCOI (N-CEN, holds funds: their
+#: EC lines are not the fund's own equity), SOXL (N-CEN, swaps and cash), QYLD's series (not in N-CEN: linked by its
+#: Alpha Vantage name), and the Acorn fund (N-CEN, not an ETF: dropped).
+NPORT_Q3 = nport_zip([
+    nport_filing("0000001-26-000101", 1064641, "S000006408", "Technology Select Sector SPDR Fund", "31-JUL-2026",
+                 "25-AUG-2026", 90_000_000_000.0, [AAPL, MSFT, MMF]),
+    nport_filing("0000001-26-000199", 1064641, "S000006408", "Technology Select Sector SPDR Fund", "31-JUL-2026",
+                 "15-SEP-2026", 91_000_000_000.0,
+                 [("Apple Inc", "037833100", 61.0, "EC", "CORP", "US0378331005", "AAPL"), MSFT, MMF],
+                 sub_type="NPORT-P/A"),
+    nport_filing("0000001-26-000102", 3000001, "S000099101", "Example Tactical Rotation ETF", "30-JUN-2026",
+                 "20-AUG-2026", 40_000_000.0,
+                 [("US Treasury Note 4.25% 2030", "91282CJX0", 85.0, "DBT", "UST", "US91282CJX01", None),
+                  ("Microsoft Corp", "594918104", 10.0, "EC", "CORP", "US5949181045", "MSFT"),
+                  ("Repo with Example Bank", "N/A", 5.0, "RA", "CORP", None, None)]),
+    nport_filing("0000001-26-000103", 1415726, "S000099001", "Example Covered Call Option Income ETF", "31-JUL-2026",
+                 "28-AUG-2026", 60_000_000.0,
+                 [("Invesco QQQ Trust Series 1", "46090E103", 95.0, "EC", "RF", "US46090E1038", "QQQ"),
+                  ("QQQ Call 2026-08-21", None, -1.0, "DE", "CORP", None, None, "Short"), MMF]),
+    nport_filing("0000001-26-000104", 1424958, "S000024908", "Direxion Daily Semiconductor Bull 3X Shares",
+                 "31-JUL-2026", "27-AUG-2026", 11_500_000_000.0,
+                 [("Semiconductor index swap", None, 60.0, "DE", "CORP", None, None), MMF,
+                  ("Example Treasury Obligations Fund", None, 37.0, "STIV", "RF", None, None)]),
+    nport_filing("0000001-26-000105", 1424959, "S000042000", "Global X NASDAQ 100 Covered Call ETF", "31-JUL-2026",
+                 "29-AUG-2026", 8_000_000_000.0,
+                 [AAPL, ("Microsoft Corp", "594918104", 41.0, "EC", "CORP", "US5949181045", "MSFT"),
+                  ("NDX Call 2026-08-21", None, -1.0, "DE", "CORP", None, None, "Short")]),
+    nport_filing("0000001-26-000106", 2110, "S000009184", "Columbia Acorn Fund", "30-JUN-2026", "20-AUG-2026",
+                 900_000_000.0, [AAPL]),
+])
+#: 2026q2: XLK's April report (older than its July one) and SOXX, which files nothing in 2026q3.
+NPORT_Q2 = nport_zip([
+    nport_filing("0000001-26-000051", 1064641, "S000006408", "Technology Select Sector SPDR Fund", "30-APR-2026",
+                 "27-MAY-2026", 80_000_000_000.0, [AAPL, MSFT]),
+    nport_filing("0000001-26-000052", 1100663, "S000004348", "iShares Semiconductor ETF", "31-MAY-2026",
+                 "29-JUN-2026", 16_000_000_000.0,
+                 [("NVIDIA Corp", "67066G104", 9.0, "EC", "CORP", "US67066G1040", "NVDA"),
+                  ("Broadcom Inc", "11135F101", 8.0, "EC", "CORP", "US11135F1012", "AVGO")]),
+])
+
+
+def add_nport_routes(http_mock, quarters=("2026q3",)) -> None:
+    """Answer the named quarters' zips; any other quarter is the mock's 404, "not published"."""
+    zips = {"2026q3": NPORT_Q3, "2026q2": NPORT_Q2}
+    for q in quarters:
+        http_mock.add(f"{q}_nport.zip", zips[q])

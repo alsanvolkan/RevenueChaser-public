@@ -31,8 +31,9 @@ import duckdb
 from ....core.rotation_reference import ROTATION_ETFS
 from .. import base
 from .av_listing import STAGING as AV
-from . import ncen
+from . import ncen, nport
 from .ncen import FILERS, STAGING as NCEN
+from .nport import FUNDS as NPORT
 
 TABLE = "etf"
 SCHEMA = [("ticker", "TEXT PRIMARY KEY"), ("name", "TEXT"), ("series_id", "TEXT"), ("cik", "TEXT"),
@@ -41,9 +42,11 @@ SCHEMA = [("ticker", "TEXT PRIMARY KEY"), ("name", "TEXT"), ("series_id", "TEXT"
           ("is_cef", "BOOLEAN"), ("asset_class", "TEXT"), ("focus", "TEXT"), ("country", "TEXT"),
           ("is_index", "BOOLEAN"), ("is_lev_inverse", "BOOLEAN"), ("is_money_market", "BOOLEAN"),
           ("is_option_income", "BOOLEAN"), ("is_fund_of_funds", "BOOLEAN"), ("inception", "DATE"),
-          # aum: N-CEN's average net assets over the filing's fiscal year (daily, else monthly average), not a
-          # point-in-time AUM; aum_as_of is that year's end (review N4 of #349). A point-in-time AUM is a later PR's.
-          ("aum", "DOUBLE"), ("aum_as_of", "DATE"), ("adv_usd_20d", "DOUBLE"), ("expense_ratio", "DOUBLE"),
+          # aum: N-PORT's net assets at its newest month's end (aum_source 'nport'; #354) when that month is later
+          # than N-CEN's fiscal year, else N-CEN's average net assets over that year (daily, else monthly average;
+          # 'ncen'), not a point-in-time AUM; aum_as_of is the month's or the year's end (review N4 of #349).
+          ("aum", "DOUBLE"), ("aum_as_of", "DATE"), ("aum_source", "TEXT"), ("adv_usd_20d", "DOUBLE"),
+          ("expense_ratio", "DOUBLE"),
           ("sector_name", "TEXT"),
           ("source_as_of", "DATE"), ("fetched_at", "DOUBLE"), ("run_id", "TEXT")]
 
@@ -101,9 +104,13 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
                     QUALIFY row_number() OVER (PARTITION BY ticker
                                                ORDER BY filing_date DESC NULLS LAST, accession DESC, series_id) = 1),
              etp AS (SELECT ticker, cik, name, source_as_of, fetched_at FROM security WHERE security_type = 'etp'),
-             cef AS (SELECT ticker FROM security WHERE security_type = 'cef')
+             cef AS (SELECT ticker FROM security WHERE security_type = 'cef'),
+             npl AS (SELECT av_ticker, series_id FROM {NPORT} WHERE av_ticker IS NOT NULL
+                     QUALIFY row_number() OVER (PARTITION BY av_ticker ORDER BY report_date DESC, series_id) = 1)
         SELECT t.ticker, av.ticker IS NOT NULL AS in_av, nc.ticker IS NOT NULL AS in_nc,
                etp.ticker IS NOT NULL AS in_etp, cef.ticker IS NOT NULL AS is_cef,
+               coalesce(nc.series_id, npl.series_id) AS any_series_id, np.report_date AS np_date,
+               np.net_assets AS np_assets, np.equity_pct, np.bond_pct,
                av.name AS av_name, av.ipo_date, nc.fund_name, nc.series_id, nc.cik AS nc_cik, nc.is_index,
                nc.is_multi_inverse_index, nc.is_money_market, nc.is_fund_of_fund, nc.daily_avg_net_assets,
                nc.monthly_avg_net_assets, nc.report_end, etp.cik AS etp_cik, etp.name AS etp_name,
@@ -112,6 +119,8 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
         FROM (SELECT ticker FROM av UNION SELECT ticker FROM nc UNION SELECT ticker FROM etp) t
         LEFT JOIN av ON av.ticker = t.ticker LEFT JOIN nc ON nc.ticker = t.ticker
         LEFT JOIN etp ON etp.ticker = t.ticker LEFT JOIN cef ON cef.ticker = t.ticker
+        LEFT JOIN npl ON npl.av_ticker = t.ticker
+        LEFT JOIN {NPORT} np ON np.series_id = coalesce(nc.series_id, npl.series_id)
         ORDER BY t.ticker""")
     cols = [d[0] for d in cur.description]
     found = [dict(zip(cols, x)) for x in cur.fetchall()]      # before the next execute replaces the result
@@ -124,18 +133,22 @@ def rows(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> list[dict]:
         nc = r["in_nc"]
         etn = not nc and is_etn(*names)          # N-CEN's IS_ETF=Y is a registered fund's word: no note (N3)
         aum = r["daily_avg_net_assets"] if r["daily_avg_net_assets"] is not None else r["monthly_avg_net_assets"]
+        aum_as_of, aum_source = (r["report_end"], "ncen") if aum is not None else (None, None)
+        if r["np_assets"] is not None and (aum_as_of is None or r["np_date"] > aum_as_of):
+            aum, aum_as_of, aum_source = r["np_assets"], r["np_date"], "nport"
         commodity = r["in_etp"] and not nc and not etn and year_held and r["etp_cik"] not in filers
         out.append({
-            "ticker": r["ticker"], "name": next((n for n in names if n), None), "series_id": r["series_id"],
+            "ticker": r["ticker"], "name": next((n for n in names if n), None), "series_id": r["any_series_id"],
             "cik": r["nc_cik"] or r["etp_cik"],
             "source": "both" if r["in_av"] and nc else "av" if r["in_av"] else "ncen" if nc else "etp",
-            "is_etn": etn, "is_cef": r["is_cef"], "asset_class": "commodity" if commodity else None, "focus": None,
+            "is_etn": etn, "is_cef": r["is_cef"], "asset_class": "commodity" if commodity else nport.asset_class(r["equity_pct"], r["bond_pct"])
+            if r["np_date"] is not None else None, "focus": None,
             "country": None,
             "is_index": _flag(nc, r["is_index"]),
             "is_lev_inverse": True if is_lev_inverse(*names) else _flag(nc, r["is_multi_inverse_index"]),
             "is_money_market": _flag(nc, r["is_money_market"]), "is_option_income": is_option_income(*names),
             "is_fund_of_funds": _flag(nc, r["is_fund_of_fund"]), "inception": r["ipo_date"], "aum": aum,
-            "aum_as_of": r["report_end"] if aum is not None else None, "adv_usd_20d": None, "expense_ratio": None,
+            "aum_as_of": aum_as_of, "aum_source": aum_source, "adv_usd_20d": None, "expense_ratio": None,
             "sector_name": SECTOR_NAMES.get(r["ticker"]), "source_as_of": r["source_as_of"],
             # The newest of its sources' fetch times; run_id is the build that wrote the row (it is derived).
             "fetched_at": r["fetched_at"], "run_id": ctx.run_id})
