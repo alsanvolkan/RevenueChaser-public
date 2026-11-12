@@ -129,107 +129,104 @@ HELP = help_html(
     "table; it calls no provider.</p>")
 
 _CSS = """
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Inter,system-ui,-apple-system,'Segoe UI',sans-serif;
-  font-variant-numeric:tabular-nums}
-.lp{max-width:1600px;margin:0 auto;padding:16px;display:flex;flex-direction:column;gap:12px;box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:var(--fs-base)/1.4 var(--font-sans);font-variant-numeric:tabular-nums}
+.lp{max-width:1600px;margin:0 auto;padding:var(--sp-3);display:flex;flex-direction:column;gap:var(--sp-2);box-sizing:border-box}
 .lp *{box-sizing:border-box}
-.lp-top{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-.lp-top h1{margin:0;font-size:20px;font-weight:600;color:var(--bright)}
 .lp-muted{color:var(--muted)}
-.lp-small{font-size:12.5px}
-.lp-tiny{font-size:11px}
-.lp-collect{display:flex;flex-direction:column;gap:8px;padding:12px 16px;border-radius:10px;
-  background:var(--card-2,var(--hover));border:1px solid var(--border)}
-.lp-collect .head{display:flex;justify-content:space-between;align-items:baseline;color:var(--bright)}
-.lp-track{position:relative;height:6px;border-radius:999px;background:var(--grid,var(--hover-soft))}
-.lp-track>i{position:absolute;top:0;bottom:0;left:0;border-radius:999px;background:var(--data-1,var(--sky))}
-.lp-controls{display:flex;flex-direction:column;gap:8px}
-.lp select{height:44px;border-radius:6px;border:1px solid var(--input-border);background:var(--input-bg);
-  color:var(--bright);padding:0 12px;font:500 14px Inter,system-ui,sans-serif;min-width:0}
-.lp-counts{display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:8px}
-.lp-counts div{display:flex;flex-direction:column;padding:8px;border-radius:6px;background:var(--card);
-  border:1px solid var(--border)}
-.lp-counts b{font-size:16px;font-weight:600;color:var(--bright)}
+.lp-top{display:flex;align-items:center;gap:var(--sp-3);flex-wrap:wrap}
+.lp-top h1{margin:0;font-size:var(--fs-lg);font-weight:600;color:var(--bright)}
+.lp-top .sub{font-size:var(--fs-xs);color:var(--muted)}
+.lp-collect{display:flex;align-items:center;gap:var(--sp-2);margin-left:auto;font-size:var(--fs-sm);color:var(--bright)}
+.lp-track{position:relative;width:96px;height:6px;border-radius:var(--r-pill);background:var(--grid)}
+.lp-track>i{position:absolute;top:0;bottom:0;left:0;border-radius:var(--r-pill);background:var(--data-1)}
+.lp-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-2)}
+.lp-controls>#lp-session,.lp-seg,.lp-counts{grid-column:1/-1}
+.lp-pick{display:contents}
+.lp select{height:var(--touch);border-radius:var(--r-sm);border:1px solid var(--input-border);background:var(--input-bg);
+  color:var(--bright);padding:0 var(--sp-2);font:500 var(--fs-sm) var(--font-sans);min-width:0}
+.lp-seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;padding:2px;border-radius:var(--r-sm);
+  background:var(--card-2);border:1px solid var(--border)}
+.lp-seg button{min-height:40px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--fg);cursor:pointer;
+  font:500 var(--fs-sm) var(--font-sans)}
+.lp-seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.lp-seg button span{color:var(--muted);font-weight:400;margin-left:4px;font-size:var(--fs-xs)}
+.lp-counts{display:flex;flex-wrap:wrap;gap:2px var(--sp-3);font-size:var(--fs-xs);color:var(--muted)}
+.lp-counts b{color:var(--bright);font-weight:600}
 .lp-counts .warn b{color:var(--amber)}
-.lp-seg{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;padding:4px;border-radius:10px;
-  background:var(--card-2,var(--hover));border:1px solid var(--border)}
-.lp-seg button{height:44px;border:0;border-radius:6px;background:transparent;color:var(--fg);cursor:pointer;
-  font:500 14px Inter,system-ui,sans-serif}
-.lp-seg button[aria-pressed="true"]{background:var(--accent-soft,var(--nav-on));color:var(--accent,var(--sky));font-weight:600}
-.lp-seg button span{color:var(--muted);font-weight:400;margin-left:4px;font-size:12.5px}
-.lp-pick{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.lp button:focus-visible,.lp select:focus-visible{outline:2px solid var(--focus,var(--sky));outline-offset:2px}
+.lp button:focus-visible,.lp select:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .lp-head{display:none}
-.lp-rows{display:flex;flex-direction:column;gap:12px}
-.ct{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"w n p" "s s s" "x x x" "f f f";
-  gap:12px;align-items:center;padding:12px;border-radius:10px;background:var(--card);border:1px solid var(--border);
-  box-shadow:0 1px 2px var(--shadow)}
-.c-w{grid-area:w}.c-n{grid-area:n;min-width:0}.c-p{grid-area:p}.c-s{grid-area:s}.c-x{grid-area:x}.c-f{grid-area:f}
-.c-n,.c-p{display:flex;flex-direction:column}
-.c-n b,.c-p b{font-size:16px;font-weight:600;color:var(--bright)}
-.c-n span{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.c-p{align-items:flex-end}
-.c-p span{font-size:11px;color:var(--muted)}
-.lp .rc-watch{margin:0;gap:0;border:1px solid var(--input-border);border-radius:6px;overflow:hidden}
-.lp .rc-watch button{border:0;border-radius:0;min-width:44px;background:transparent}
+.lp-rows{display:flex;flex-direction:column;gap:var(--sp-2)}
+.ct{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"w n p" "s s s" "x x x";
+  gap:var(--sp-2);align-items:center;padding:var(--sp-2) var(--sp-3);border-radius:var(--r-md);background:var(--card);
+  border:1px solid var(--border)}
+.c-w{grid-area:w}.c-n{grid-area:n;min-width:0}.c-p{grid-area:p}.c-s{grid-area:s}.c-x{grid-area:x}.c-f{grid-column:1/-1}
+.c-n{display:flex;flex-direction:column;min-width:0}
+.c-n b,.c-p b{font-size:var(--fs-base);font-weight:600;color:var(--bright)}
+.c-n span{font-size:var(--fs-xs);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.c-p{text-align:right}
+/* The watch-list pair as symbols, the way 13F draws it (avo 12 Nov 2026: "OPT ve STK cok yer kapliyor sadece sembol
+   kullanarak coz"): the text is hidden, a mask icon in currentColor takes its place, the aria-label and title name
+   the list. 28 px halves with a mouse, 44 px on a touch screen. */
+.lp .rc-watch{margin:0;gap:0;border:1px solid var(--input-border);border-radius:var(--r-sm);overflow:hidden;flex:none}
+.lp .rc-watch button{border:0;border-radius:0;min-width:28px;min-height:28px;width:28px;height:28px;padding:0;font-size:0;
+  line-height:0;background:transparent;color:var(--muted);display:inline-flex;align-items:center;justify-content:center}
+.lp .rc-watch button::before{content:"";width:14px;height:14px;background:currentColor;
+  -webkit-mask:var(--ico) center/contain no-repeat;mask:var(--ico) center/contain no-repeat}
+.lp .rc-watch button[data-rc-watch="option"]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 2 4 14h7l-1 8 9-12h-7l1-8z'/%3E%3C/svg%3E")}
+.lp .rc-watch button[data-rc-watch="stock"]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20V10M10 20V4M16 20v-7M22 20H2'/%3E%3C/svg%3E")}
+@media (pointer:coarse){.lp .rc-watch button{min-width:44px;min-height:44px;width:44px;height:44px}
+  .lp .rc-watch button::before{width:18px;height:18px}}
 .lp .rc-watch button+button{border-left:1px solid var(--input-border)}
-.lp .rc-watch button[aria-pressed="true"]{background:var(--accent-soft,var(--nav-on));color:var(--accent,var(--sky))}
-.sh{display:flex;flex-direction:column;gap:4px}
-.sh .top{display:flex;justify-content:space-between;align-items:baseline}
-.sh .val{font-size:20px;font-weight:700;color:var(--bright)}
-.sh .bar{position:relative;height:8px;border-radius:999px;background:var(--grid,var(--hover-soft))}
-.sh .bar i{position:absolute;top:0;bottom:0;border-radius:999px;background:var(--data-1,var(--sky))}
-.sh .bar s{position:absolute;top:-4px;bottom:-4px;left:50%;width:1px;background:var(--muted)}
-.sh .ends{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
-.note{display:flex;gap:8px;align-items:center;padding:8px 12px;border-radius:6px;font-size:12.5px;
-  background:var(--card-2,var(--hover));color:var(--fg)}
-.note .short{display:none}
-.note i{width:8px;height:8px;flex:none;border-radius:999px;background:var(--muted)}
-.note.warn{background:var(--amber-soft,var(--hover));color:var(--amber)}
+.lp .rc-watch button[aria-pressed="true"]{background:var(--accent);color:var(--primary-fg)}
+.sh{display:flex;align-items:center;gap:var(--sp-2)}
+.sh .lab{font-size:var(--fs-xs);color:var(--muted);flex:none}
+.sh .val{font-size:var(--fs-base);font-weight:700;color:var(--bright);width:48px;text-align:right;flex:none}
+.sh .bar{position:relative;flex:1;height:6px;border-radius:var(--r-pill);background:var(--grid)}
+.sh .bar i{position:absolute;top:0;bottom:0;border-radius:var(--r-pill);background:var(--data-1)}
+.sh .bar s{position:absolute;top:-3px;bottom:-3px;left:50%;width:1px;background:var(--muted)}
+.note{display:flex;gap:var(--sp-2);align-items:center;padding:2px var(--sp-2);border-radius:var(--r-sm);
+  font-size:var(--fs-xs);background:var(--card-2);color:var(--fg)}
+.note i{width:6px;height:6px;flex:none;border-radius:var(--r-pill);background:var(--muted)}
+.note.warn{background:var(--amber-soft);color:var(--amber)}
 .note.warn i{background:var(--amber)}
-.c-x{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.c-x{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--sp-2)}
 .c-x div{display:flex;flex-direction:column;min-width:0}
-.c-x small{font-size:11px;color:var(--muted)}
-.c-x b{font-size:14px;font-weight:600;color:var(--bright);overflow-wrap:anywhere}
-.c-x em{font-style:normal;font-size:11px;color:var(--muted);white-space:nowrap}
-.c-f{display:flex;flex-wrap:wrap;gap:8px}
+.c-x small{font-size:var(--fs-xs);color:var(--muted)}
+.c-x b{font-size:var(--fs-sm);font-weight:600;color:var(--bright);overflow-wrap:anywhere}
+.c-x em{font-style:normal;font-size:var(--fs-xs);color:var(--muted);white-space:nowrap}
+.c-x em:empty{display:none}
+.c-f{display:flex;flex-wrap:wrap;gap:4px}
 .c-f:empty{display:none}
-.chip{padding:4px 8px;border-radius:999px;font-size:12.5px;font-weight:500;white-space:nowrap;
-  background:var(--accent-soft,var(--nav-on));color:var(--accent,var(--sky))}
-.chip.warn{background:var(--amber-soft,var(--hover));color:var(--amber)}
-.lp-more,.lp-index{min-height:44px;border-radius:10px;border:1px dashed var(--input-border);background:transparent;
-  color:var(--fg);font:500 14px Inter,system-ui,sans-serif;padding:8px 12px;cursor:pointer;display:flex;
-  justify-content:space-between;align-items:center;gap:8px;text-align:left}
+.chip{padding:1px var(--sp-2);border-radius:var(--r-sm);font-size:var(--fs-xs);font-weight:500;background:var(--accent-soft);
+  color:var(--accent)}
+.chip.warn{background:var(--amber-soft);color:var(--amber)}
+.lp-more,.lp-index{min-height:var(--touch);border-radius:var(--r-md);border:1px dashed var(--input-border);
+  background:transparent;color:var(--fg);font:500 var(--fs-sm) var(--font-sans);padding:var(--sp-2) var(--sp-3);
+  cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:var(--sp-2);text-align:left}
 .lp-more[hidden],.lp-index[hidden]{display:none}
-.lp-empty{padding:24px;text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:10px}
+.lp-empty{padding:var(--sp-5);text-align:center;color:var(--muted);border:1px dashed var(--border);border-radius:var(--r-md)}
 @media (min-width:900px){
-  .lp{padding:24px 32px;gap:16px}
-  .lp-top h1{font-size:26px}
-  .lp-controls{flex-direction:row;flex-wrap:wrap;align-items:center;gap:12px}
-  .lp-controls>select{min-width:280px}
-  .lp-seg{display:flex}.lp-seg button{padding:0 16px}
-  .lp-pick{display:flex;gap:12px}
-  .lp-counts{margin-left:auto;display:flex;gap:24px}
-  .lp-counts div{padding:0;border:0;background:none;align-items:flex-end}
-  .lp-table{border-radius:10px;background:var(--card);border:1px solid var(--border);box-shadow:0 1px 2px var(--shadow);
-    overflow:hidden}
-  .lp-head,.ct{display:grid;grid-template-columns:104px minmax(0,1.2fr) 84px minmax(0,1.4fr) minmax(0,2fr) minmax(0,1.2fr);
-    grid-template-areas:"w n p s x f";gap:16px;padding:8px 16px;align-items:center}
-  .lp-head{font-size:11px;color:var(--muted);background:var(--card-2,var(--hover));border-bottom:1px solid var(--border)}
+  .lp{padding:var(--sp-4) var(--sp-5);gap:var(--sp-3)}
+  .lp-controls{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2)}
+  .lp-controls>#lp-session{min-width:240px}
+  .lp-seg{display:flex}.lp-seg button{padding:0 var(--sp-3)}
+  .lp-counts{margin-left:auto}
+  .lp-table{border-radius:var(--r-md);background:var(--card);border:1px solid var(--border);overflow:hidden}
+  .lp-head,.ct{display:grid;grid-template-columns:60px minmax(0,1.7fr) 64px minmax(0,1.3fr) minmax(0,2fr) minmax(0,1.1fr);
+    grid-template-areas:"w n p s x f";gap:var(--sp-3);padding:4px var(--sp-3);align-items:center}
+  .lp-head{font-size:var(--fs-xs);color:var(--muted);background:var(--card-2);border-bottom:1px solid var(--border);
+    padding-top:6px;padding-bottom:6px}
   .lp-head .r{text-align:right}
-  .lp-head .x{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;text-align:right}
-  .note .long{display:none}.note .short{display:inline}
+  .lp-head .x{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--sp-2);text-align:right}
   .lp-rows{gap:0}
-  .ct{border:0;border-bottom:1px solid var(--border);border-radius:0;box-shadow:none;background:transparent}
-  .ct .sh{flex-direction:row;align-items:center;gap:12px}
-  .ct .sh .top span,.ct .sh .ends{display:none}
-  .ct .sh .val{font-size:14px;width:48px;text-align:right}
-  .ct .sh .bar{flex:1}
-  .c-x{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .ct{min-height:40px;border:0;border-bottom:1px solid var(--border);border-radius:0;background:transparent}
+  .ct:hover{background:var(--hover-faint)}
+  .c-n{flex-direction:row;align-items:baseline;gap:var(--sp-2)}
+  .ct .sh .lab{display:none}
   .c-x small{display:none}
   .c-x div{align-items:flex-end}
-  .c-f{gap:4px;min-width:0}.chip{font-size:11px;padding:2px 8px;white-space:normal;border-radius:6px}
-  .c-x em{white-space:normal}
+  .c-x b{font-weight:500}
+  .c-f{grid-area:f}
 }
 """
 
@@ -251,26 +248,27 @@ var LP_NOTES = {pending: ['', 'Open interest is read the next trading morning fr
 function lpCard(r){
   var e = rcEsc, mid;
   if(r.st === 'matched' && r.share != null){
-    mid = '<div class="sh"><div class="top"><span class="lp-small lp-muted">Opened share</span><b class="val">' +
-      lpShare(r.share) + '</b></div><div class="bar" role="img" aria-label="Opened share ' + lpShare(r.share) +
-      ' on a scale from minus 1 to plus 1"><s></s><i style="' + lpBar(r.share) + '"></i></div>' +
-      '<div class="ends"><span>−1 closed</span><span>0</span><span>+1 opened</span></div></div>';
+    mid = '<div class="sh"><span class="lab">Opened</span><div class="bar" role="img" aria-label="Opened share ' +
+      lpShare(r.share) + ' on a scale from minus 1 to plus 1"><s></s><i style="' + lpBar(r.share) + '"></i></div>' +
+      '<b class="val">' + lpShare(r.share) + '</b></div>';
   } else {
     var n = LP_NOTES[r.st === 'matched' ? 'noshare' : r.st] || LP_NOTES.pending;
-    mid = '<div class="note ' + n[0] + '" title="' + e(n[1]) + '"><i aria-hidden="true"></i><span class="long">' +
-      e(n[1]) + '</span><span class="short">' + e(n[2]) + '</span></div>';
+    mid = '<div class="note ' + n[0] + '" title="' + e(n[1]) + '"><i aria-hidden="true"></i><span>' + e(n[2]) +
+      '</span></div>';
   }
-  var oiSub = r.st === 'matched' && r.chg != null ? lpSigned(r.chg) + ' from ' + lpInt(r.oi)
-    : (r.st === 'pending' ? 'next morning' : '?');
-  var stats = [['Volume', lpInt(r.vol), ' '], ['Open int.', r.st === 'matched' && r.next != null ? lpInt(r.next) : lpInt(r.oi), oiSub],
-               ['At ask', lpPct(r.ask), ' '], ['Multi-leg', lpPct(r.multi), ' ']];
+  var oiSub = r.st === 'matched' && r.chg != null ? lpSigned(r.chg) : (r.st === 'pending' ? 'next morning' : '?');
+  var stats = [['Volume', lpInt(r.vol), ''], ['Open int.', r.st === 'matched' && r.next != null ? lpInt(r.next) : lpInt(r.oi), oiSub,
+                'Open interest before: ' + lpInt(r.oi)],
+               ['At ask', lpPct(r.ask), ''], ['Multi-leg', lpPct(r.multi), '']];
   var flags = (r.out ? '<span class="chip warn">Beyond ±1</span>' : '') +
               (r.roll ? '<span class="chip">Roll ↔ ' + e(r.roll) + '</span>' : '');
   return '<article class="ct" data-sym="' + e(r.sym) + '"><div class="c-w">' + rcWatchButtons(r.t) + '</div>' +
     '<div class="c-n"><b>' + e(r.t) + '</b><span>' + e(r.con) + '</span></div>' +
-    '<div class="c-p"><b>' + lpMoney(r.prem) + '</b><span>premium</span></div><div class="c-s">' + mid + '</div>' +
-    '<div class="c-x">' + stats.map(function(s){ return '<div><small>' + s[0] + '</small><b>' + e(s[1]) +
-      '</b><em>' + e(s[2]) + '</em></div>'; }).join('') + '</div><div class="c-f">' + flags + '</div></article>';
+    '<div class="c-p" title="Premium"><b>' + lpMoney(r.prem) + '</b></div><div class="c-s">' + mid + '</div>' +
+    '<div class="c-x">' + stats.map(function(s){ return '<div' + (s[3] ? ' title="' + e(s[3]) + '"' : '') +
+      '><small>' + s[0] + '</small><b>' + e(s[1]) +
+      '</b><em>' + e(s[2]) + '</em></div>'; }).join('') + '</div>' + (flags ? '<div class="c-f">' + flags + '</div>' : '') +
+    '</article>';
 }
 var LP_SORTS = {
   premium: function(r){ return -(r.prem || 0); },
@@ -330,15 +328,14 @@ def render_html(data: dict) -> str:
         f'{e(_session_label(s["date"]))} · {s["contracts"]:,} contracts</option>' for s in data["sessions"])
     stored, need = data["stored"], data["min_sessions"]
     if data["collecting"]:
-        state = (f'<section class="lp-collect" aria-label="Collecting"><div class="head"><b>Collecting</b>'
-                 f'<span>{stored} / {need} sessions</span></div><div class="lp-track" role="img" '
-                 f'aria-label="{stored} of {need} sessions stored"><i style="width:{min(100, stored * 100 // need)}%">'
-                 f'</i></div><span class="lp-small lp-muted">Raw numbers only until {need} sessions are stored and '
-                 f'tested.</span></section>')
+        state = (f'<div class="lp-collect" title="Raw numbers only until {need} sessions are stored and tested.">'
+                 f'<b>Collecting</b><span class="lp-track" role="img" aria-label="{stored} of {need} sessions stored">'
+                 f'<i style="width:{min(100, stored * 100 // need)}%"></i></span><span>{stored} / {need} sessions</span>'
+                 f'</div>')
     else:
-        state = f'<p class="lp-small lp-muted">{stored} sessions stored.</p>'
+        state = f'<div class="lp-collect lp-muted">{stored} sessions stored.</div>'
     counts = "".join(
-        f'<div{cls}><b>{n:,}</b><span class="lp-tiny lp-muted">{label}</span></div>'
+        f'<span{cls}><b>{n:,}</b> {label}</span>'
         for n, label, cls in ((c["contracts"], "contracts", ""), (c["names"], "names", ""),
                               (c["matched"], "matched", ""), (c["pending"], "waiting for open interest", ""),
                               (c["stale"], "stale or missing", ' class="warn"' if c["stale"] else ""))
@@ -349,8 +346,7 @@ def render_html(data: dict) -> str:
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LEAPS</title><script>{THEME_JS}</script><style>{THEME_CSS}{_CSS}</style></head>
 <body><main class="lp">
-<header class="lp-top"><h1>LEAPS</h1><span class="lp-small lp-muted">183+ days · $50k+ premium · every name</span></header>
-{state}
+<header class="lp-top"><h1>LEAPS</h1><span class="sub">183+ days · $50k+ premium · every name</span>{state}</header>
 <div class="lp-controls">
 <select id="lp-session" aria-label="Session">{options}</select>
 <div class="lp-seg" role="group" aria-label="Product">
