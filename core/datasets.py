@@ -697,7 +697,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         tables=("sec13f_board_cells", "sec13f_board_breaks", "sec13f_board_meta"),
         db="sec_13f", source=Source.derived, writer=None,
         writer_note=("written by module_sec_13f/store.py on the 13F Refresh and Fetch, from the ownership build, "
-                     "once per build or New York day; a closed quarter is never rewritten (#732)"),
+                     "once per build or New York day; a closed quarter is never rewritten"),
         freshness=("sec13f_board_cells", "period"),
     ),
     DatasetSpec(
