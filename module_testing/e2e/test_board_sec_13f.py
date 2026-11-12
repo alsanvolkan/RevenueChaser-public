@@ -266,7 +266,8 @@ class TestRowsInTheBrowser:
             capture_output=True, text=True, encoding="utf-8", timeout=harness.CHROME_TIMEOUT_S)
         dom = out.stdout
         assert "<html" in dom.lower(), f"Chrome dumped no DOM (exit {out.returncode}): {out.stderr[-1500:]}"
-        drawn = set(re.findall(r'<tr\b[^>]*\bdata-ticker="([^"]+)"', dom))
+        # Since #772 a ticker is one <tbody class="grp" data-ticker>, holding its shares row and its Δ% row.
+        drawn = set(re.findall(r'<tbody\b[^>]*\bdata-ticker="([^"]+)"', dom))
         assert {"NVDA", "AMD"} <= drawn, f"rows drawn: {sorted(drawn)}"
         assert "Loading rows" not in dom
         assert re.search(r'id="rc-filters"[^>]*>\s*<', dom), "the filter bar never mounted"
