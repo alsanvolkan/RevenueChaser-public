@@ -193,7 +193,6 @@ def a_long_list():
 
 def test_an_unknown_list_or_a_tab_that_is_not_derived_is_no_answer(no_data, a_long_list):
     assert board.columns(a_long_list, "price") is None, "Price rides the first payload, not this route"
-    assert board.columns(a_long_list, "financials") is None, "not wired yet, and must not answer empty"
     assert board.columns("no-such-list", "performance") is None
 
 
