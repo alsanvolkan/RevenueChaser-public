@@ -929,18 +929,60 @@ _H_SENTENCE_END = re.compile(rf"[.:;!?{_DASH}]\Z")
 #: ``strip_html`` collapses runs of ``[ \t]`` and leaves those alone (round 6).
 _H_CLOSERS = "\"'\u2019\u201d\u00bb)]}"
 
-#: The word that introduces an item number, with a word boundary in front of it so that "subitem" and "the line
-#: item" are not read as one (round 6).
-_H_ITEM = re.compile(r"\bitem\Z", re.IGNORECASE)
+#: The whitespace :func:`_rstrip_gap` strips, spelled out because :meth:`str.rstrip` takes characters and not a
+#: class. The horizontal spaces ``strip_html`` does **not** collapse are the point of the list: it folds runs of
+#: ``[ \t]`` and of ``&nbsp;``, measured, but leaves an em, en or thin space standing (round 7 corrected round
+#: 6's claim that a no-break space survives it).
+_H_WHITESPACE = " \t\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000"
+
+#: The word that introduces an item number. A **letter** in front of it disqualifies it, so that "subitem" is
+#: not read as an item number (round 6); a digit does not, because a page number is printed tight against the
+#: heading often enough -- round 7 measured ``completed.9ITEM 4:`` lost to a plain ``\b``, which treats the
+#: figure and the word as one word.
+_H_ITEM = re.compile(r"(?<![^\W\d_])item\Z", re.IGNORECASE)
 
 
 def _rstrip_gap(t: str) -> str:
-    """``t`` without the whitespace and the closing marks at its end, in either order and however mixed."""
+    """``t`` without the whitespace and the closing marks at its end, in either order and however mixed.
+
+    One :meth:`str.rstrip` over both sets rather than a loop over two: round 6 wrote the loop, and round 7
+    measured it quadratic on a gap of alternating ``")`` and a blank (0.23 s on 128,000, against 0.02 s).
+    :data:`_H_WHITESPACE` is spelled out because ``rstrip`` takes characters and not a class.
+    """
+    return t.rstrip(_H_WHITESPACE + _H_CLOSERS)
+
+
+def _figure_at_the_end(bare: str) -> tuple[int, int]:
+    """``(where the trailing page-or-item number begins, where it ends)`` in the line ``bare``.
+
+    One backward walk, so a figure of any length costs its own length and no more. It reads, from the end:
+    the mark the filer puts after a number, then the figure, then -- while a mark stands between two figures --
+    that mark and the figure before it, because ``2.5`` and ``12:30`` and ``Item 4.1`` are **one** number each.
+
+    **Round 7's first finding, and a regression round 6 introduced.** Round 6 took only the digits after the
+    last mark, so what was left ended in ``.`` or ``:``, :func:`_H_SENTENCE_END` accepted that as a sentence's
+    end, and nothing in front of the number was ever asked about. Round 4's own defect was back for every
+    decimal: "the Company had 2" ran on to 54,053 characters, as it should, while "had 2.5" cut at 27,020, and
+    so did "an interest of 49.9", "section 5.2", "at 12:30", "$1.5" and "the ratio was 1:2". It also defeated
+    round 6's own third fix, since "as discussed under Item 4.1" cut where "under Item 4" does not.
+
+    The cost it buys: a page number glued to a sentence that ends in a figure -- "in 2020.12" -- is read as one
+    number and refused, which is the same answer the other figure-before-figure shapes get.
+    """
+    i = len(bare)
+    while i and bare[i - 1] in _H_NUMBER_MARK:
+        i -= 1
+    end = i
     while True:
-        shorter = t.rstrip().rstrip(_H_CLOSERS)
-        if shorter == t:
-            return t
-        t = shorter
+        j = i
+        while j and bare[j - 1] in _H_FIGURE_CHARS:
+            j -= 1
+        if j == i:
+            return i, end
+        i = j
+        if not (i >= 2 and bare[i - 1] in _H_NUMBER_MARK and bare[i - 2].isdigit()):
+            return i, end
+        i -= 1
 
 
 def _line_start(text: str, at: int) -> int:
@@ -952,11 +994,21 @@ def _line_start(text: str, at: int) -> int:
     section ran to the end of the document -- 54,088 characters labelled ``overrun`` where ``\n`` gives 27,032
     of body. It also made the rule quadratic again, because every candidate sliced back to the last ``\n``:
     1,500 headings in a document with no ``\n`` in it cost 10.2 s where ``\n`` costs 0.02 s.
+
+    **Round 7's third finding: this is the slow way to ask.** Nine or ten of those characters are absent from a
+    real document, and :meth:`str.rfind` for an absent character walks the whole prefix, so every candidate cost
+    about nine times its own offset -- 1.04 s on 16,000 headings in an ordinary ``\n`` document against 0.04 s
+    before, and four times the input for ten to seventeen times the time. The quadratic had moved from ``\r``
+    documents to all of them rather than going away.
+
+    So the callers do not call this per candidate: :func:`_aif_ends` collects the line starts once with
+    :data:`_VERTICAL` and walks them with a forward-only cursor, the same way it walks the ends themselves. This
+    is kept for the one-off question and for the tests of it.
     """
     return max(text.rfind(ch, 0, at) for ch in _VERTICAL_CHARS) + 1
 
 
-def _introduced_as_a_heading(text: str, start: int) -> bool:
+def _introduced_as_a_heading(text: str, start: int, line_start: int | None = None) -> bool:
     """True when a run-in heading at ``start`` is introduced the way one is.
 
     This is asked only of a title whose prose begins on the **next** line, where the title's own line carries
@@ -964,11 +1016,17 @@ def _introduced_as_a_heading(text: str, start: int) -> bool:
 
     - **Its line's start**, or nothing but whitespace before it.
     - **An item number** -- EXK's ``No significant acquisitions were completed. 9 ITEM 4: RISK FACTORS``. The
-      word "item" is strong evidence, so what stands in front of it may be nothing, a page number, or the end of
-      a sentence. Round 5 asked nothing at all in front of it and round 6 measured that cost: "see Item 4:" and
-      "as discussed under Item 4" ended a section at a cross-reference, and "the line item 12" and "subitem 4"
-      at a noun. A page number counts here and nowhere else, because that is EXK's own shape behind a table row
-      ("Total 1,234 9 ITEM 4:") and a running footer.
+      word "item" is strong evidence and the one thing that can take it away is the module's own test for a
+      mention, :data:`_REF_BEFORE`: "see Item 4:" and "as discussed under Item 4" are cross-references and end
+      no section, which is round 6's third finding. Round 6 asked instead that something *introduce* the item
+      number, and round 7 measured what that refused -- ``(the "Acquisition") ITEM 4:``, a running footer's
+      ``Annual Information Form ITEM 4:`` and a list item's ``\u2022 gold and silver ITEM 4:``, each a real
+      shape and each losing 27,0xx characters of body to 54,0xx. The reference test is the same question this
+      module asks everywhere else, so it is the one asked here.
+
+      Its own cost, stated: "the line item 12" carries no reference word and is read as an item number. That is
+      a noun phrase nobody has counted in front of a stop title, and it goes to #763 rather than to a sixth
+      rule read off a built string.
     - **A bare page number**, and then what stands in front of it has to be nothing or a sentence's punctuation.
       Without that, any sentence ending in a figure introduced a heading -- "the Company had 2 MATERIAL
       PROPERTIES" ended a section at 27,030 characters where the same sentence written "two" ran on to 54,073
@@ -980,18 +1038,16 @@ def _introduced_as_a_heading(text: str, start: int) -> bool:
     "had 2 MATERIAL PROPERTIES". Round 6 chose one answer for all four rather than a fifth rule read off built
     strings; which answer is right is a count over real filings and belongs to #763's hand-checked set.
     """
-    bare = text[_line_start(text, start):start].rstrip()
+    line_start = _line_start(text, start) if line_start is None else line_start
+    bare = text[line_start:start].rstrip()
     if not bare:
         return True
-    if bare[-1] in _H_NUMBER_MARK:                       # the "." of "4." or the ":" of "ITEM 4:"
-        bare = bare[:-1]
-    cut = len(bare.rstrip(_H_FIGURE_CHARS))
-    if not any(ch.isdigit() for ch in bare[cut:]):       # no page or item number at the end of the line at all
+    at, end = _figure_at_the_end(bare)
+    if not any(ch.isdigit() for ch in bare[at:end]):     # no page or item number at the end of the line at all
         return False
-    before = _rstrip_gap(bare[:cut])
+    before = _rstrip_gap(bare[:at])
     if _H_ITEM.search(before):
-        before = _rstrip_gap(before[:-len("item")])
-        return not before or before[-1].isdigit() or _H_SENTENCE_END.search(before) is not None
+        return not _REF_BEFORE.search(_rstrip_gap(before[:-len("item")])[-40:])
     return not before or _H_SENTENCE_END.search(before) is not None
 
 
@@ -1019,7 +1075,7 @@ def _aif_contents_entry(text: str, m: re.Match) -> bool:
     return False
 
 
-def _inline_prose_follows(text: str, m) -> bool:
+def _inline_prose_follows(text: str, m, line_start: int) -> bool:
     """True when the prose of the section ``m`` names begins where a run-in heading's prose would begin.
 
     Two shapes count, and the difference between them is measured and not assumed.
@@ -1035,7 +1091,23 @@ def _inline_prose_follows(text: str, m) -> bool:
     if not _runs_into_prose(text, m.end()):
         return False
     gap = text[m.end():_H_AFTER.match(text, m.end()).end()]
-    return not _VERTICAL.search(gap) or _introduced_as_a_heading(text, m.start())
+    return not _VERTICAL.search(gap) or _introduced_as_a_heading(text, m.start(), line_start)
+
+
+def _aif_inline_ref(text: str, m: re.Match, line_start: int) -> bool:
+    """:func:`_inline_ref` with the AIF rule's own idea of where a line begins.
+
+    **Round 7's second finding**, and round 6's first finding one function further along the same ``and`` chain.
+    :func:`_inline_ref` keeps a heading that opens its own line, and it asks :func:`_starts_mid_line`, which is
+    still ``text.rfind("\n", ...)``. In a document whose lines end in ``\r`` or ``\x0c``, a heading alone on
+    its line after a line ending in "see" was therefore read as mid-line, refused as a reference, and the
+    section ran to the end of the document: 54,090 characters labelled ``overrun`` where ``\n`` gives 27,034.
+
+    :func:`_starts_mid_line` itself is **not** changed, because ``ours-2``'s item rule shares it (#755) and that
+    rule's answers are not this round's business. This is the AIF rule's own test, and it takes the line start
+    the caller already has.
+    """
+    return bool(text[line_start:m.start()].strip()) and _ref_ours_2(text, m)
 
 
 def _aif_ends(text: str) -> list[int]:
@@ -1068,9 +1140,15 @@ def _aif_ends(text: str) -> list[int]:
     same in every version of this rule and is a wart for #763's set, not something another built string settles.
     """
     out = [e.start() for e in _AIF_STOP_2.finditer(text) if not _ref_ours_2(text, e)]
-    out += [e.start() for e in _AIF_STOP_INLINE_2.finditer(text)
-            if _printed_as_a_heading(e.group(0)) and _inline_prose_follows(text, e)
-            and not _inline_ref(text, e)]
+    starts = [0] + [v.end() for v in _VERTICAL.finditer(text)]
+    seen = 0
+    for e in _AIF_STOP_INLINE_2.finditer(text):
+        while seen + 1 < len(starts) and starts[seen + 1] <= e.start():
+            seen += 1                    # matches arrive in document order, so the cursor only moves forward
+        line_start = starts[seen]
+        if (_printed_as_a_heading(e.group(0)) and _inline_prose_follows(text, e, line_start)
+                and not _aif_inline_ref(text, e, line_start)):
+            out.append(e.start())
     return sorted(out)
 
 

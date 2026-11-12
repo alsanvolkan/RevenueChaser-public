@@ -332,11 +332,11 @@ def test_which_titles_close_it(title):
 
 
 # ── what the mutant battery found the tests above could not see ────────────────────────────────────────────────
-# 95 mutants of the 40-F rule, each judged on whether the ANSWERS move -- the section, its label and ours-1's own
-# text over 157 inputs. Every start title and every stop title is dropped in turn, generated from the source and
-# not anchored by hand, because six rounds of rewriting moved all of their spellings and an anchor that no longer
-# matches is a mutant that never ran. Round 3 re-pointed twelve such anchors and added fifteen mutants, round 4
-# three and five, round 5 ten and seven, round 6 ten and twelve.
+# 110 mutants of the 40-F rule, each judged on whether the ANSWERS move -- the section, its label and ours-1's
+# own text over 163 inputs. Every start title and every stop title is dropped in turn, generated from the source
+# and not anchored by hand, because seven rounds of rewriting moved all of their spellings and an anchor that no
+# longer matches is a mutant that never ran. Round 3 re-pointed twelve such anchors and added fifteen mutants,
+# round 4 three and five, round 5 ten and seven, round 6 ten and twelve, round 7 twenty and sixteen.
 #
 # The battery audits these tests as much as the code, and has found what they did not say in every round it has
 # run.
@@ -355,8 +355,15 @@ def test_which_titles_close_it(title):
 #   * Round 6: five more missing inputs, each for a distinction the code makes and no document exercised -- a
 #     year in front of a page number, a gap made of a closing quote and a space together, a tab where a line
 #     ending would be, a figure glued to the word "item", and a comma after a page number.
+#   * Round 7: twenty of the battery's anchors no longer matched, because the rewrite replaced the pattern that
+#     read the text before a heading with :func:`_figure_at_the_end` and gave the inline loop its own line-start
+#     cursor. Twenty of the earlier mutants were re-pointed at the new code and sixteen added for its own
+#     decisions; four inputs were missing, and the first of them -- a decimal figure in front of a title -- is
+#     round 7's own first finding in its second spelling, so the battery would have found it had the mutant been
+#     re-pointed rather than silently skipped. **A skipped anchor is a mutant that never ran, and the battery
+#     now reports the count rather than printing it among the results.**
 #
-# Nine survive, in four classes, and each is explained rather than pinned:
+# Fourteen survive, in four classes, and each is explained rather than pinned:
 #
 # **A redundant alternative, subsumed by another pattern.** The third start title: ``DESCRIPTION OF BUSINESS``
 # is matched by the first, whose "the" and whose possessive word are both optional. It stays because the titles
@@ -370,7 +377,14 @@ def test_which_titles_close_it(title):
 #   * ``match`` in place of ``fullmatch`` in the contents test -- :data:`_AIF_HEADING_LINE` ends in
 #     :data:`_AIF_TAIL`, which ends in ``$``, so a line with anything behind the title fails either way;
 #   * dropping ``any(c.isalpha())`` from the heading test -- every inline match is letters, so it can only
-#     change the answer to a direct call, which the table above makes.
+#     change the answer to a direct call, which the table above makes;
+#   * :func:`_figure_at_the_end` returning the line's end rather than the end of the figure -- the characters
+#     between them are the number marks it peeled, and no mark is a digit, so the "is there a digit in the
+#     figure" test reads the same either way;
+#   * the reference window in front of the word "item" taken unbounded rather than as its last 40 characters --
+#     :data:`_REF_BEFORE` is anchored at the end of the string, and the longest alternative it can match is
+#     "refer to" plus a quote, so a wider window cannot reach a word a narrower one misses. It is a bound on
+#     the work and not on the answer, which is the next class.
 #
 # **Killed by a test and not by an answer over a document:** :data:`_DASH_CHARS` replaced by :data:`_DASH`, the
 # regex source leaking into the characters, which is round 5's first finding in its second spelling. Every
@@ -378,6 +392,13 @@ def test_which_titles_close_it(title):
 # digits) only ever join the figure that is being stripped off the end of a line and the figure keeps a digit
 # either way. ``test_the_two_spellings_of_the_dash_list_agree`` compares the two lists directly, which is the
 # only thing that can see it -- and it is exactly the kind of mistake that has now happened twice.
+#
+# **Killed by a test and not by an answer over a document**, second case: the gap between a reference word and
+# the word "item" stripped of its whitespace alone, without its closing marks. It needs a closing mark standing
+# directly between the two -- ``as set out under" ITEM 4:`` -- and no filing in the measurement prints that, so
+# every document shape gives the same answer. The two rows at the end of
+# ``test_what_may_stand_in_front_of_an_item_number`` are what see it, and the decision they pin is the one
+# :func:`_rstrip_gap` exists for: a quoted reference is still a reference.
 #
 # **Answer-invariant but not time-invariant**, which a battery comparing answers cannot see by construction, and
 # which is what the timing tests are for:
@@ -390,7 +411,12 @@ def test_which_titles_close_it(title):
 #     lookbehind, and round 6 replaced the search with an :meth:`str.rstrip` walk because patching the pattern
 #     had fixed one run shape at a time while costing answers (``-12-`` and ``completed.12``);
 #   * the line start found with ``rfind("\n")`` while any line ending counted as one (round 6: 10.2 s on 1,500
-#     headings in a document whose lines end in ``\r``, and a wrong label with it).
+#     headings in a document whose lines end in ``\r``, and a wrong label with it);
+#   * the line start sought for every inline candidate instead of once for the document -- round 7 measured
+#     :func:`_line_start` itself quadratic on an ordinary ``\n`` document, 1.04 s at 16,000 headings against
+#     0.19 s with the cursor, because each call scanned the whole text once per line ending it reads;
+#   * :func:`_rstrip_gap` written as a loop over two sets rather than one :meth:`str.rstrip` over both (round 7:
+#     0.23 s on a 128,000-character gap of alternating ``")`` and a blank, against 0.02 s).
 def test_a_title_that_ends_a_line_but_does_not_begin_one_is_not_a_heading():
     """The line anchor's other half. The ``$`` is what rejects ACB's sentence; this is what the ``^`` rejects --
     a sentence that happens to end on the title, which is the shape a running page footer leaves behind.
@@ -1078,7 +1104,7 @@ def test_where_a_title_case_stop_shows_the_line_branch_s_reference_test_deciding
 
 
 # ── round 6 of the review of 80986b48: four defects, all inside round 5's own fix ───────────────────────────────
-LINE_ENDINGS = ("\n", "\r", "\x0c", "\v", " ", "\u0085")
+LINE_ENDINGS = ("\n", "\r", "\x0c", "\v", "\u2028", "\u0085")   # escapes: a raw U+2028 reads as a space
 
 
 def test_a_heading_alone_on_its_line_is_read_whatever_ends_the_lines():
@@ -1118,8 +1144,10 @@ def test_the_gap_before_a_page_number_may_be_any_whitespace(gap):
     """**Round 6's second finding.** Round 5 wrote ``rstrip(_H_CLOSERS)`` where ``rstrip()`` had stood, and
     :data:`_H_CLOSERS` carried a space and a tab and nothing else. Every other gap was then left in front of the
     sentence-end test and refused it: an em space, a thin space, an en space and a no-break space each turned
-    27,019 characters into 54,054. ``strip_html`` collapses runs of ``[ \\t]`` and leaves those alone, which the
-    comment on the pattern above says in so many words.
+    27,019 characters into 54,054. ``strip_html`` collapses runs of ``[ \\t]`` **and of ``&nbsp;``** -- round 7
+    corrected round 6's claim that a no-break space survives it, measured -- and leaves an em, en or thin space
+    standing, so those three reach this code and the ``\\u00a0`` row is reachable only by text that has not been
+    through the stripper.
 
     Whitespace is stripped on its own now and the closers are a separate set.
     """
@@ -1134,21 +1162,41 @@ def test_the_gap_before_a_page_number_may_be_any_whitespace(gap):
     ("No significant acquisitions were completed. 9 ITEM 4: ", True),
     ("Total 1,234 9 ITEM 4: ", True),
     ("ITEM 4: ", True),
+    # round 7: real shapes round 6's "something has to introduce the item number" refused
+    ('(the "Acquisition") ITEM 4: ', True),
+    ("Annual Information Form ITEM 4: ", True),
+    ("\u2022 gold and silver ITEM 4: ", True),
+    ("No significant acquisitions were completed.9ITEM 4: ", True),
+    # a mention of the item, which is the one thing that takes the evidence away
     ("For the risks of our business see Item 4: ", False),
     ("as discussed under Item 4 ", False),
-    ("the line item 12 ", False),
+    ("refer to Item 4 ", False),
     ("subitem 4 ", False),
+    # the gap between the reference word and the word "item" is stripped of its closing marks as well as its
+    # whitespace, so a quoted or bracketed reference is still a reference
+    ("as set out under \u201d ITEM 4: ", False),
+    ("as described in\u00a0\u201d ITEM 4: ", False),
+    # the cost, kept as a row so that it is a decision and not an accident
+    ("the line item 12 ", True),
 ])
 def test_what_may_stand_in_front_of_an_item_number(head, ends_it):
-    """**Round 6's third finding.** Round 5 made the item number introduce itself and asked nothing at all about
-    what stood in front of it, which read a cross-reference as a heading: "see Item 4:" and "as discussed under
-    Item 4" each ended a section where the sentence is a reference, and "the line item 12" and "subitem 4" did
-    the same at a noun -- 27,0xx where the answer is 54,0xx. :func:`_inline_ref` cannot catch them, because the
-    reference word is not directly in front of the title; the item number stands between them.
+    """**Round 6's third finding and round 7's fourth**, which are the two halves of one question.
 
-    So the word "item" needs a word boundary, and what stands before it may be nothing, a page number, or the
-    end of a sentence. A page number counts in front of "item" and nowhere else, because that is EXK's own shape
-    behind a table row and a running footer.
+    Round 5 made the item number introduce itself and asked nothing at all about what stood in front of it,
+    which read a cross-reference as a heading: "see Item 4:" and "as discussed under Item 4" each ended a
+    section where the sentence is a reference. :func:`_inline_ref` cannot catch those, because the reference
+    word is not directly in front of the title; the item number stands between them.
+
+    Round 6 then asked that *something introduce* the item number -- nothing, a page number or a sentence's end
+    -- and round 7 measured what that refused: ``(the "Acquisition") ITEM 4:``, a running footer's
+    ``Annual Information Form ITEM 4:`` and a list item's ``\u2022 gold and silver ITEM 4:``, each a real shape
+    and each losing 27,0xx characters of body to 54,0xx. A plain ``\b`` also refused ``completed.9ITEM 4:``,
+    because the figure and the word read as one word.
+
+    So the question is the one this module asks everywhere else -- is this a mention? -- and the test is
+    :data:`_REF_BEFORE`. The last row is its cost: "the line item 12" carries no reference word and is read as
+    an item number. It is a noun phrase nobody has counted in front of a stop title, so it goes to #763 rather
+    than to a sixth rule read off a built string.
     """
     text = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\n" + head + "RISK FACTORS\nThe Company is risky. "
             + BODY + "\nMATERIAL PROPERTIES\n")
@@ -1213,3 +1261,90 @@ def test_the_two_spellings_of_the_line_ending_list_agree():
     for ch in LINE_ENDINGS:
         assert ch in sec_sections._VERTICAL_CHARS, repr(ch)
     assert sec_sections._VERTICAL.search("a b\tc") is None
+
+
+# ── round 7 of the review of 304b00d2: a regression in round 6's own fix, and its leftovers ────────────────────
+@pytest.mark.parametrize("figure", ["2", "2.5", "49.9", "5.2", "12:30", "1:2", "4.1.1", "1.0"])
+def test_a_figure_with_a_mark_inside_it_is_one_figure(figure):
+    """**Round 7's first finding, and a regression round 6 introduced.** Round 6 read the figure off the end of
+    the line with a :meth:`str.rstrip` over digits and dashes, which stops at the ``.`` of ``2.5``. What was
+    left then ended in ``.`` or ``:``, :data:`_H_SENTENCE_END` accepted that as a sentence's end, and nothing in
+    front of the number was asked about at all -- so round 4's own defect was back for every decimal:
+    "the Company had 2" ran on to 54,053 characters, as it should, while "had 2.5" cut at 27,020, and so did
+    "an interest of 49.9", "section 5.2", "at 12:30", "$1.5" and "the ratio was 1:2".
+
+    :func:`_figure_at_the_end` walks the mark and the figure before it as long as a digit stands on both sides,
+    so each of these is one number and each of these sentences keeps its section.
+    """
+    text = (AIF + "BUSINESS OVERVIEW\n" + BODY + f"\nthe Company reported {figure} MATERIAL PROPERTIES\n"
+            + "Both are in Ontario. " + BODY + "\nRISK FACTORS\n")
+    section, quality = _cut2(text)
+    assert quality == "ok" and "Both are in Ontario." in section, f"{figure!r} -> {len(section)}"
+
+
+def test_a_figure_glued_to_the_sentence_still_introduces_a_heading():
+    """The other side of the test above, which is what keeps it honest: the mark has to have a digit on **both**
+    sides to join the figure. ``completed.12`` is a sentence and then a page number, and ``-12-`` is a printed
+    page number, and both still read as one.
+    """
+    for head in ("No acquisitions were completed.12 ", "No acquisitions were completed. -12- ",
+                 "No acquisitions were completed. 9.. ", "No acquisitions were completed. 4.- "):
+        text = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\n" + head + "MATERIAL PROPERTIES\n"
+                + "Both are in Ontario. " + BODY + "\nRISK FACTORS\n")
+        section, quality = _cut2(text)
+        assert quality == "ok" and "Both are in Ontario." not in section, f"{head!r} -> {len(section)}"
+
+
+def test_a_reference_on_the_line_before_is_read_whatever_ends_the_lines():
+    """**Round 7's second finding**, which is round 6's first finding one function further along the same ``and``
+    chain. :func:`_inline_ref` keeps a heading that opens its own line and asks :func:`_starts_mid_line`, which
+    is still ``text.rfind("\\n", ...)``; in a document whose lines end in ``\\r`` or ``\\x0c`` a heading alone on
+    its line was therefore read as mid-line, refused as a reference, and the section ran to the end of the
+    document -- 54,090 characters labelled ``overrun`` where ``\\n`` gives 27,034.
+
+    ``test_a_heading_alone_on_its_line_is_read_whatever_ends_the_lines`` could not see it, because its previous
+    line ends in "completed." and not in a reference word. :func:`_starts_mid_line` is left alone --
+    ``ours-2``'s item rule shares it -- and :func:`_aif_inline_ref` is the AIF rule's own.
+    """
+    answers = set()
+    for ending in LINE_ENDINGS:
+        text = (AIF + "BUSINESS OVERVIEW\n" + BODY + ending + "For the risks of the business see" + ending
+                + "RISK FACTORS" + ending + "The Company is risky. " + BODY + ending + "MATERIAL PROPERTIES"
+                + ending)
+        section, quality = _cut2(text)
+        assert quality == "ok" and "The Company is risky." not in section, repr(ending)
+        answers.add(len(section))
+    assert len(answers) == 1, "the line ending's spelling may not change the answer"
+
+
+def test_the_line_starts_are_collected_once_and_not_sought_for_every_candidate():
+    """**Round 7's third finding.** :func:`_line_start` takes the greatest of ten :meth:`str.rfind` calls, and
+    nine or ten of those characters are absent from a real document -- and ``rfind`` for an absent character
+    walks the whole prefix. Every candidate therefore cost about nine times its own offset: 1.04 s on 16,000
+    headings in an ordinary ``\\n`` document, against 0.04 s before round 6, with four times the input costing
+    ten to seventeen times the time. The quadratic had moved from ``\\r`` documents to every document.
+
+    :func:`_aif_ends` collects the line starts once with :data:`_VERTICAL` and walks them with a forward-only
+    cursor, which is what it already does for the ends themselves. The timing test round 6 wrote could not see
+    this, because 2,000 candidates cost 0.03 s either way.
+    """
+    text = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\n"
+            + "No acquisitions were completed-.\nRISK FACTORS\nThe Company is risky and it stays so.\n" * 16_000)
+    started = time.monotonic()
+    _cut2(text)
+    assert time.monotonic() - started < 2.0
+
+
+def test_the_gap_before_a_page_number_is_stripped_in_one_pass():
+    """**Round 7's fifth item.** Round 6 stripped whitespace and the closing marks in a loop over two
+    :meth:`str.rstrip` calls, which is quadratic on a gap of alternating ``")`` and a blank: 0.23 s on 128,000
+    characters against 0.02 s before, twenty times the cost for four times the input. One ``rstrip`` over both
+    sets is linear, which is why :data:`_H_WHITESPACE` is spelled out.
+    """
+    head = "No acquisitions were completed." + '") ' * 60_000 + "12 "
+    text = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\n" + head + "MATERIAL PROPERTIES\n"
+            + "Both are in Ontario. " + BODY + "\nRISK FACTORS\n")
+    started = time.monotonic()
+    _cut2(text)
+    assert time.monotonic() - started < 2.0
+    assert sec_sections._rstrip_gap('completed. ” ") ') == "completed."
