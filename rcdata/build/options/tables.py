@@ -1,4 +1,4 @@
-"""The tables of ``options.duckdb`` (serving kind ``options``, version 2): their columns, keys, Parquet sources and
+"""The tables of ``options.duckdb`` (serving kind ``options``, version 3): their columns, keys, Parquet sources and
 windows, the Parquet partitions the datasets write, and the one build of a table from them.
 
 Every table is built from the Parquet partitions of its ``sources`` (``parquet/<source>/<table>/<part>/part-0.parquet``,
@@ -27,6 +27,7 @@ from .. import base
 LIST_SOURCE = "uw/option_list"
 SCREENER_SOURCE = "uw/option_screener"
 IBKR_SOURCE = "ibkr/iv_history"
+FAR_CONTRACT_SOURCE = "uw/far_contracts"
 SET_LIST, SET_EARNINGS = "list", "earnings"
 # option_eod serves this many sessions (the plan's "last 30 sessions"); its Parquet keeps them all.
 EOD_SESSIONS = 30
@@ -203,9 +204,29 @@ EARNINGS_TAPE = Table(
      ("ending_fiscal_quarter", "DATE"), ("report_source", "TEXT")] + _doubles(TAPE_DOUBLES) + PROVENANCE,
     ("session_date", "ticker", "report_date"), (SCREENER_SOURCE,))
 
+# /screener/option-contracts (min_dte 183, min_premium 50,000) of a session, and the next session's open interest of
+# each contract from its chain: one row per far-dated contract and session (#746). The fields are UW's screener row
+# under UW's names; the rest is ``uw_far_contracts.contract_rows``. Every session is served (about 2,200 rows each).
+FAR_CONTRACT_DOUBLES = ("premium", "avg_price", "open", "high", "low", "close", "chain_prev_close", "stock_price")
+FAR_CONTRACT_COUNTS = ("volume", "ask_side_volume", "bid_side_volume", "mid_volume", "no_side_volume",
+                       "multileg_volume", "stock_multi_leg_volume", "sweep_volume", "floor_volume", "cross_volume",
+                       "trades", "open_interest", "prev_oi")
+OPTION_FAR_CONTRACT = Table(
+    "option_far_contract",
+    [("session_date", "DATE"), ("option_symbol", "TEXT"), ("ticker", "TEXT"), ("option_type", "TEXT"),
+     ("expiry", "DATE"), ("strike", "DOUBLE"), ("days_to_expiry", "INTEGER"), ("issue_type", "TEXT"),
+     ("sector", "TEXT")]
+    + _doubles(FAR_CONTRACT_DOUBLES) + _counts(FAR_CONTRACT_COUNTS)
+    + [("last_fill", "TEXT"), ("next_earnings_date", "DATE"), ("ask_share", "DOUBLE"), ("multileg_share", "DOUBLE"),
+       ("oi_status", "TEXT"), ("oi_next", "BIGINT"), ("chain_prev_oi", "BIGINT"), ("oi_change", "BIGINT"),
+       ("opened_share", "DOUBLE"), ("out_of_range", "BOOLEAN"), ("roll", "BOOLEAN"), ("roll_partner", "TEXT"),
+       ("oi_fetched_at", "DOUBLE")]
+    + PROVENANCE,
+    ("session_date", "option_symbol"), (FAR_CONTRACT_SOURCE,))
+
 TABLES: dict[str, Table] = {t.name: t for t in (OPTION_EOD, OPTION_STRIKE, OPTION_EXPIRY, OPTION_DAILY, OPTION_PRINT,
                                                 IV_DAILY, OPTION_SCREENER_DAILY, ER_OPTIONS, OPTION_FAR_PRINT,
-                                                EARNINGS_TAPE)}
+                                                EARNINGS_TAPE, OPTION_FAR_CONTRACT)}
 
 # What makes a row "changed" in a check: its data, not when or by which run it was fetched.
 NOT_COMPARED = ("fetched_at", "run_id", "source_as_of")

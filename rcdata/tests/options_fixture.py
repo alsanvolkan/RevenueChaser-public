@@ -31,6 +31,10 @@ class UWOptions:
         self.screener: dict[str, dict] = {}        # ticker -> screener fields (step 3)
         self.calendar: dict[tuple[date, str], list[str]] = {}   # (report day, premarket|afterhours) -> tickers
         self.far: list[dict] = []                  # /option-trades rows, newest first (the far prints)
+        # /screener/option-contracts rows by side ("call", "put"), in UW's order (volume, descending): #746
+        self.contract_screener: dict[str, list[dict]] = {"call": [], "put": []}
+        # /stock/{t}/option-contracts without ``expiry`` (the far chain of #746): ticker -> rows
+        self.far_chain: dict[str, list[dict]] = {}
         self.requests: list[tuple[str, dict]] = []
 
     # ── the answers ──
@@ -84,6 +88,10 @@ class UWOptions:
                      "marketcap": "5000000000"}
                     for t in self.calendar.get((day, parts[2]), [])]
             return {"data": rows[page * limit:(page + 1) * limit]}
+        if path == "/screener/option-contracts":
+            page, limit = int((q.get("page") or ["0"])[0]), int((q.get("limit") or ["50"])[0])
+            rows = self.contract_screener.get((q.get("type") or [""])[0], [])
+            return {"data": rows[page * limit:(page + 1) * limit]}
         if path == "/option-trades":
             older = (q.get("older_than") or [None])[0]
             rows = [r for r in self.far if older is None or r["executed_at"] < older]
@@ -93,6 +101,12 @@ class UWOptions:
             # ``expires``, not the spec's ``expiry``: what UW sent in the first real sample (2026-10-28).
             return {"data": [{"expires": e.isoformat(), "chains": len(self.strikes) * 2, "open_interest": 1000,
                               "volume": 200} for e in self.expiries]}
+        if ep == "option-contracts" and "expiry" not in q:
+            rows = self.far_chain.get(ticker)
+            if rows is None:
+                return None
+            page, limit = int((q.get("page") or ["0"])[0]), int((q.get("limit") or ["500"])[0])
+            return {"data": rows[page * limit:(page + 1) * limit]}
         if ep == "option-contracts":
             rows = self._contracts(ticker, date.fromisoformat(q["expiry"][0]))
             page, limit = int((q.get("page") or ["0"])[0]), int((q.get("limit") or ["500"])[0])

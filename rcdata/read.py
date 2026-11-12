@@ -1189,10 +1189,11 @@ def as_frame(rows: list[dict]):
 DATASET_OF_TABLE.update({**{t: "uw/option_list" for t in ("option_eod", "option_strike", "option_expiry",
                                                           "option_daily", "option_print", "iv_daily")},
                          **{t: "uw/option_screener" for t in ("option_screener_daily", "er_options",
-                                                              "option_far_print", "earnings_tape")}})
+                                                              "option_far_print", "earnings_tape")},
+                         "option_far_contract": "uw/far_contracts"})
 KIND_OF_TABLE.update({t: "options" for t in ("option_eod", "option_strike", "option_expiry", "option_daily",
                                              "option_print", "iv_daily", "option_screener_daily", "er_options",
-                                             "option_far_print", "earnings_tape")})
+                                             "option_far_print", "earnings_tape", "option_far_contract")})
 # Rows a table shares between datasets: the earnings set (``set_name`` earnings) is uw/option_screener's, the IBKR
 # year of ``iv_daily`` (``source`` ibkr) is ibkr/iv_history's. Their ``status`` is that dataset's newest check.
 _SHARED_STATUS = (("set_name", "earnings", "uw/option_screener"), ("source", "ibkr", "ibkr/iv_history"))
@@ -1304,6 +1305,46 @@ def option_screener(session_date=None, passing_only: bool = False) -> list[dict]
         where += " AND passes_gates"
     return _option_rows("option_screener_daily",
                         f"SELECT * FROM option_screener_daily WHERE {where} ORDER BY ticker", params)
+
+
+def far_contracts(session_date=None, *, start=None, end=None, tickers: Iterable[str] | None = None) -> list[dict]:
+    """``option_far_contract`` (#746): the market's far-dated contracts (183 days or more, $50k premium or more), one
+    row per contract and session, with the next session's open interest and ``opened_share`` once ``oi_status`` is
+    ``matched``. One session (the newest when nothing is given), or ``start <= session_date <= end``; by session,
+    ticker and option symbol."""
+    sql, params = "SELECT * FROM option_far_contract WHERE true", []
+    if session_date is not None:
+        sql += " AND session_date = ?"
+        params.append(_day(session_date))
+    elif start is None and end is None:
+        sql += " AND session_date = (SELECT max(session_date) FROM option_far_contract)"
+    if start is not None:
+        sql += " AND session_date >= ?"
+        params.append(_day(start))
+    if end is not None:
+        sql += " AND session_date <= ?"
+        params.append(_day(end))
+    if tickers is not None:
+        names = _ticker_list(tickers)
+        if not names:
+            return []
+        sql += f" AND ticker IN ({', '.join('?' * len(names))})"
+        params += names
+    # A live file built before options 3 has no such table: "no rows yet", not a 500.
+    return _rows("option_far_contract", sql + " ORDER BY session_date, ticker, option_symbol", params,
+                 missing_table_ok=True)
+
+
+def far_contract_sessions() -> list[dict]:
+    """Per session of ``option_far_contract``: the contracts swept and how many have each ``oi_status``, newest
+    first; what a board says while it is collecting."""
+    return _rows("option_far_contract",
+                 "SELECT session_date, count(*) AS contracts, count(DISTINCT ticker) AS tickers, "
+                 "count(*) FILTER (WHERE oi_status = 'matched') AS matched, "
+                 "count(*) FILTER (WHERE oi_status = 'pending') AS pending, "
+                 "count(*) FILTER (WHERE oi_status = 'stale') AS stale, "
+                 "count(*) FILTER (WHERE oi_status = 'missing') AS missing "
+                 "FROM option_far_contract GROUP BY session_date ORDER BY session_date DESC", [], missing_table_ok=True)
 
 
 def earnings_options(start=None, end=None, tickers: Iterable[str] | None = None) -> list[dict]:
