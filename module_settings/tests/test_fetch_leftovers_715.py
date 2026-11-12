@@ -93,6 +93,8 @@ def test_every_string_under_the_frame_is_escaped():
             if d["coverage"]:
                 d["coverage"] = {**d["coverage"], "text": H("cov_text"), "cls": H("cov_cls")}
     html = control_render.render_fetch(view)
+    # the page as it is drawn now: these strings reach the slim boxes, not the old source boxes
+    assert "Data/Health · Universe and fills" in html and 'data-job="one"' not in html
     for tag in ("gw_cls", "gw_n", "gw_label", "gw_login", "file", "dataset", "filter", "kind", "detail", "key",
                 "checked", "result", "as_of", "note", "cov_text", "cov_cls"):
         assert f"onerror=__x(&#x27;{tag}T&#x27;)" in html, tag
