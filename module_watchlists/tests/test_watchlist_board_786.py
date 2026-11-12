@@ -164,7 +164,8 @@ def test_the_remove_button_is_the_rows_last_cell_and_not_part_of_the_symbol(no_d
 def test_the_phone_rule_fits_every_column_rather_than_scrolling_sideways():
     phone = board._CSS.split("@media (max-width:720px)", 1)[1]
     assert "overflow-x" not in phone, "the phone shows every column; nothing scrolls sideways"
-    assert ".wl-grip,.wl-nm{display:none}" in phone, "the handle and the company name are for the mouse"
+    assert ".wl-grip{display:none}" in phone, "the drag handle is for the mouse"
+    assert ".wl-nm{display:block;max-width:84px" in phone, "the company name stays, as a capped second line"
 
 
 # ── the derived tabs (#786 step 4b) ──────────────────────────────────────────
