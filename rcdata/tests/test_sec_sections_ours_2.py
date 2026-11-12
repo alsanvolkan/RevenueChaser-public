@@ -1023,10 +1023,10 @@ def test_a_citation_that_ends_its_paragraph_is_still_a_citation(citation):
     first spelling of "a quoted title with the line going on after it" therefore read every one of these as a
     heading: Item 1 cut to 13,024 characters of 26,050 and labelled ``ok``, where ``ours-1`` is right.
 
-    What tells them from a filer's own quoted heading is punctuation a title does not carry: the comma between
-    the number and the opening mark (rows 1, 4 and 5 -- a heading's number takes a full stop or nothing), or
-    the full stop inside the closing mark (rows 2 and 3). The last row is the same citation with the sentence
-    wrapped onto the next line, where the comma is the only signal left.
+    What tells them from a filer's own quoted heading is punctuation a title does not carry: a comma between
+    the number and the opening mark (a heading's number takes a full stop or nothing), or a full stop, comma,
+    semicolon or colon inside the closing mark. Rows 1 and 4 carry both, so the comma rule is pinned by row 5
+    alone -- the same citation with the sentence wrapped onto the next line, where nothing else is left.
     """
     text = ("Item 1. Business\n" + _H + " as discussed in Part I,\n" + citation + "\n" + _H
             + "\nItem 1A. Risk Factors\n" + "Risky. " * 400
@@ -1035,6 +1035,56 @@ def test_a_citation_that_ends_its_paragraph_is_still_a_citation(citation):
     new = sec_sections.cut_item(text, "10-K", version=OURS_2)
     assert new == old and new[1] == "ok"
     assert len(new[0]) > 20_000 and "Risky." not in new[0]
+
+
+@pytest.mark.parametrize("citation", [
+    "Item 1A “Risk Factors”).",         # the parenthetical closes after the citation
+    "Item 1A. “Risk Factors”)",
+    "Item 1A “Risk Factors”);",
+    "Item 1A “Risk Factors”.)",
+    "Item 1A (“Risk Factors”).",        # and one the citation opened itself
+    "Item 1A “Risk Factors”,",          # a clause of a sentence that goes on below
+    "Item 1A “Risk Factors”;",
+    "Item 1A. “Risk Factors,”\nand elsewhere in this report.",   # the mark holds the comma
+    "Item 1A. “Risk Factors;”",
+    "Item 1A – “Risk Factors” of this report.",              # a dash in place of the full stop
+    "Item 1A - “Risk Factors.”",
+])
+def test_a_citation_whose_line_ends_in_punctuation_is_still_a_citation(citation):
+    """"(see Part I,\nItem 1A "Risk Factors")." -- a parenthetical cross-reference, the commonest citation form
+    there is. Asking for a **letter** after the closing mark made every one of these a heading: Item 1 cut to
+    13,024 characters of 26,050 and labelled ``ok``, and :func:`_holds_another_item` reads the same test, so a
+    wrapped citation early in Item 1 turned the label to ``overrun`` as well.
+
+    Three more things after the mark now say the line goes on, and none of them ends a heading's line: a comma
+    or a semicolon, a closing bracket nothing on that line opened, and (as before) a letter. The last two rows
+    are the dash a filer puts where the full stop goes, which neither signal could reach before, and
+    ``ours-1`` is right on all eleven.
+    """
+    text = ("Item 1. Business\n" + _H + " as discussed in Part I,\n" + citation + "\n" + _H
+            + "\nItem 1A. Risk Factors\n" + "Risky. " * 400
+            + "\nItem 1B. Unresolved Staff Comments\nNone.\nItem 2. Properties\nNone.\n")
+    old = sec_sections.cut_item(text, "10-K", version=OURS_1)
+    new = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert new == old and new[1] == "ok"
+    assert len(new[0]) > 20_000 and "Risky." not in new[0]
+
+
+@pytest.mark.parametrize("after", ["", ".", " 12", " (12)", " .......... 12", ":", " —"])
+def test_what_may_follow_a_quoted_heading_and_still_leave_it_a_heading(after):
+    """The other side of the row above, which is what keeps the two rules apart. A heading's line ends after
+    the title, or with a full stop, a colon, a dash, or the page number a contents page prints -- in brackets
+    or after leaders. None of those is a sentence, a clause or an unopened bracket, so the line is over and
+    ``Item 1A. "Risk Factors"`` is the heading it looks like.
+
+    ``ours-1`` reads every row here as a citation and runs Item 1 through the risk factors.
+    """
+    text = ("Item 1. Business\n" + _H + "\nItem 1A. “Risk Factors”" + after + "\n" + "Risky. " * 400
+            + "\nItem 1B. Unresolved Staff Comments\nNone.\nItem 2. Properties\nNone.\n")
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and "Risky." not in item and len(item) == len(_H)
+    old_item, _ = sec_sections.cut_item(text, "10-K", version=OURS_1)
+    assert "Risky." in old_item, "ours-1 reads it as a citation"
 
 
 @pytest.mark.parametrize("heading", [

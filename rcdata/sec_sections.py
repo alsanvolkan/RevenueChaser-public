@@ -418,14 +418,20 @@ _CITED_PHRASE = re.compile(r"(?i)(?:[.,:;()\[\]]|[^\S\n]){0,8}"
 #: this away from a run-in heading whose first sentence defines a term further along ("Item 1A. Risk Factors
 #: You should consider the risks (the "Risks") below") -- there the match ends after the *number*, and the
 #: quotation mark is a title and a sentence away from it.
-#: A letter, as against a full stop or a page number: what tells a line that goes on from one that is over.
-_A_LETTER = re.compile(r"[^\W\d_]")
-
 _QUOTED_RUN = re.compile(r"[^\S\n]{0,4}[“‘\"][^\n”’\"]{0,80}[”’\"]")
+
+#: What a citation's closing mark may be followed by on its line, where a heading's may not. A letter is the
+#: sentence carrying on; a comma or a semicolon is a clause carrying on; a closing bracket that nothing on
+#: this line opened belongs to a parenthetical the sentence began before the number, which is the commonest
+#: cross-reference form there is: "(see Part I,\nItem 1A "Risk Factors")." A heading's line ends after the
+#: title, or with a page number, a full stop or a dash.
+_A_LETTER = re.compile(r"[^\W\d_]")
+_CLAUSE_GOES_ON = re.compile(r"[^\S\n]*[,;]")
+_UNOPENED_CLOSER = re.compile(r"[^([\n]*[)\]]")
 
 #: An opening quotation mark -- curly, single or straight -- with nothing but punctuation between it and the
 #: number, which is where a filing puts the item's **title** when it cites it: ``Item 1A, "Risk Factors," ...``.
-_CITED_QUOTE = re.compile(r"(?:[.,:;(\[\)]|[^\S\n]){0,12}([“‘\"])")
+_CITED_QUOTE = re.compile(rf"(?:[.,:;(\[\){_DASH}]|[^\S\n]){{0,12}}([“‘\"])")
 _CLOSER = {"“": "”", "‘": "’", '"': '"'}
 
 
@@ -455,8 +461,11 @@ def _cites_its_title(text: str, m: re.Match, line_end: int) -> bool:
       heading -- ``Item 1A. "Risk Factors"`` alone on its line, or with a page number or a full stop after
       it -- was read as a citation, and the slice ran through the risk factors and still said ``ok``.
 
-      What it costs: a heading spelled ``Item 1A, "Risk Factors"``, with a comma where the full stop goes,
-      is read as a citation. No filing measured for this issue writes one.
+      What it costs, both sides of it the same size: a heading spelled ``Item 1A, "Risk Factors"``, with a
+      comma where the full stop goes, and one spelled ``Item 1A. "Risk Factors."``, by a filer who ends his
+      titles with a full stop as "ITEM 1. BUSINESS." does, are both read as citations. The second is the same
+      line as a citation that ends its paragraph, so no rule can have them both; no filing measured for this
+      issue writes either.
 
     **What of this is pinned.** Each half decides a cut on a shape in
     ``tests/test_sec_sections_ours_2.py``, and so does asking the question of the number instead of the match.
@@ -498,7 +507,8 @@ def _cites_its_title(text: str, m: re.Match, line_end: int) -> bool:
         return True
     if text[close - 1] in ".,;:":
         return True
-    return bool(_A_LETTER.search(text[close + 1:stop]))
+    tail = text[close + 1:stop]
+    return bool(_CLAUSE_GOES_ON.match(tail) or _UNOPENED_CLOSER.match(tail) or _A_LETTER.search(tail))
 
 
 def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
