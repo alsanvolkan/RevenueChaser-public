@@ -235,13 +235,19 @@ def test_a_derived_tab_answers_one_row_per_symbol_the_page_can_draw(client, a_li
     assert answer["values"]["NASDAQ:NVDA"]["p1M"] > 0
 
 
+def _route_refusal(r) -> bool:
+    """The route's own 404 — a JSON ``{ok: False}`` — and not Flask's page for a path that does not exist, which a
+    bare status check cannot tell apart (red-on-base, 12 Nov 2026)."""
+    return r.status_code == 404 and r.is_json and r.get_json()["ok"] is False
+
+
 def test_the_price_tab_is_not_fetched_because_the_first_payload_carries_it(client, a_list):
-    assert client.get(f"/api/watchlists/{a_list}/columns/price").status_code == 404
+    assert _route_refusal(client.get(f"/api/watchlists/{a_list}/columns/price"))
 
 
 def test_an_unknown_tab_or_list_is_a_404(client, a_list):
-    assert client.get(f"/api/watchlists/{a_list}/columns/nope").status_code == 404
-    assert client.get("/api/watchlists/ghost/columns/risk").status_code == 404
+    assert _route_refusal(client.get(f"/api/watchlists/{a_list}/columns/nope"))
+    assert _route_refusal(client.get("/api/watchlists/ghost/columns/risk"))
 
 
 # ── the export and the search ────────────────────────────────────────────────
