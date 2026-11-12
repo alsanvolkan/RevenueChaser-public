@@ -159,15 +159,17 @@ def test_the_page_builds_one_row_per_payload_row_on_load(tmp_path):
                         "document.createElement = function(tag){ var e = _ce(tag); created.push([tag, e]); return e; };\n"
                         "var ROW_COUNT", 1)
     log = run_board_js(html, f"""
-var trs = created.filter(function(c){{ return c[0] === "tr"; }}).map(function(c){{ return c[1]; }});
-var tds = created.filter(function(c){{ return c[0] === "td"; }}).map(function(c){{ return c[1]; }});
+var groups = created.filter(function(c){{ return c[0] === "tbody"; }}).map(function(c){{ return c[1]; }});
+var tds = created.filter(function(c){{ return c[0] === "td"; }}).map(function(c){{ return c[1]; }})
+                 .filter(function(t){{ return t.getAttribute("data-col"); }});
 console.log(JSON.stringify({{
-  rows: trs.filter(function(t){{ return t.getAttribute("data-ticker"); }})
-           .map(function(t){{ return [t.getAttribute("data-ticker"), t.getAttribute("data-sector")]; }}),
+  rows: groups.filter(function(t){{ return t.getAttribute("data-ticker"); }})
+              .map(function(t){{ return [t.getAttribute("data-ticker"), t.getAttribute("data-sector")]; }}),
   cols: tds.slice(0, {2 + len(payload["cols"])}).map(function(t){{ return t.getAttribute("data-col"); }}),
   first: tds.slice(0, 4).map(function(t){{ return [t.getAttribute("data-val"), t.className, t.getAttribute("title"), t.textContent]; }})
 }}));
 """, tmp_path, payload=payload)
+    # One <tbody class="grp"> per ticker since #772; the row below it carries the same quarter's Δ%.
     assert log["rows"] == [["AAA", None], ["BBB", None], ["CCC", None]]
     assert log["cols"] == ["ticker", "sector"] + payload["cols"]
     assert log["first"][2] == ["100", "zero", "100 shares", "100"]          # sh_2025-03-30 of AAA

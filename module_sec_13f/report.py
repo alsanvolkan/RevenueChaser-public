@@ -286,8 +286,11 @@ function build(p){
   var rows = (p && p.rows) || [];
   var cols = (p && p.cols) || [];
   FIELDS = (p && p.fields) || {};
-  var nq = 0;
-  for(var c = 0; c < cols.length; c++){ if(cols[c].indexOf('sh_') === 0) nq++; }
+  var nq = 0, nch = 0;
+  for(var c = 0; c < cols.length; c++){
+    if(cols[c].indexOf('sh_') === 0) nq++;
+    else if(cols[c].indexOf('ch_') === 0) nch++;
+  }
   for(var i = 0; i < rows.length; i++){
     var r = rows[i];
     var body = document.createElement('tbody');
@@ -333,6 +336,9 @@ function build(p){
     trS.appendChild(tdS);
     trS.appendChild(rowLabel('shares'));
     trD.appendChild(rowLabel('Δ vs prior'));
+    // The oldest quarter has no change to show, and the Δ row still has to line up under it. The filler goes
+    // in before the loop: the DOM this runs against (tests included) has no childNodes to count afterwards.
+    if(nch === nq - 1){ trD.appendChild(cell(['—', null, 'zero'], 'ch_none')); }
     var cells = r[3] || [];
     for(var j = 0; j < cols.length; j++){
       var col = cols[j];
@@ -346,8 +352,6 @@ function build(p){
         trS.appendChild(td);
       }
     }
-    // The oldest quarter has no change to show, and the Δ row still has to line up under it.
-    if(trD.childNodes.length === nq){ trD.insertBefore(cell(['—', null, 'zero'], 'ch_none'), trD.childNodes[1]); }
     body.appendChild(trS);
     body.appendChild(trD);
     frag.appendChild(body);
