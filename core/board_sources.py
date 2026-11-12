@@ -42,7 +42,8 @@ _RANK = (BEHIND, ERROR, MISSING, ROLLED_BACK, OLD_STORE, NOT_RECORDED, CURRENT, 
 
 #: The need whose newest day stands for each file on the card ("last bar" for prices).
 DAY_NEED = {"prices": "prices.bars", "fundamentals": "fundamentals.filings", "ownership": "ownership.holders_13f",
-            "options": "options.daily", "spine": "identity.universe", "market": "market.series"}
+            "options": "options.daily", "spine": "identity.universe", "market": "market.series",
+            "sec_forms": "sec.whole"}
 
 
 def board_needs(board: str) -> tuple[str, ...]:

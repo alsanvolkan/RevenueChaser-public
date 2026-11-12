@@ -13,3 +13,7 @@ Nothing here connects to the SEC. Downloading and storing a filing is the fundam
 handed paths to documents that are already on disk, and the cutter worker has the socket primitives taken away
 from it before ``edgar`` is imported, so the library cannot reach out even by accident.
 """
+from __future__ import annotations
+
+#: The serving kind this layer builds (``sec_forms.duckdb``, #757).
+KIND = "sec_forms"

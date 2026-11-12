@@ -3,7 +3,7 @@
 avo, 11 Nov 2026: "Telefon icin de ayni flow diagrami yapamaz miyiz? Bir dusunelim", then "Bunlar yan yana
 olsa tek bir yerde ve soldan saga dogru kaydirilsa?". The wide diagram is hidden under 760 px and used to be
 replaced by a 993 px wall of text; it is now one small vertical diagram per served file -- sources, the file,
-the boards that read it -- six of them side by side in one strip, one picture to a screen.
+the boards that read it -- one per serving kind, side by side in one strip, one picture to a screen.
 """
 from __future__ import annotations
 
@@ -11,6 +11,10 @@ import re
 
 from RevenueChaser.module_settings import control, control_render
 from RevenueChaser.module_settings.tests.test_control_view import NOW, control_nd
+from RevenueChaser.rcdata import serving
+
+#: One picture per serving kind, from the registry: a kind added should not come back here as a count.
+FILES = len(serving.KINDS)
 
 
 def _view() -> dict:
@@ -25,9 +29,9 @@ def test_the_phone_gets_one_picture_for_each_served_file_in_one_strip():
     v = _view()
     phone = _phone(control_render._flow(control_render._ready(v)))
     ids = re.findall(r'<section class="pfslide" id="pfs-(\w+)">', phone)
-    assert ids == [f["kind"] for f in v["files"]] and len(ids) == 6
-    assert phone.count('<svg class="pflow"') == 6, "each file has its own picture, not one wide one"
-    assert phone.count('<div class="pfdeck"') == 1, "the six sit in one strip"
+    assert ids == [f["kind"] for f in v["files"]] and len(ids) == FILES
+    assert phone.count('<svg class="pflow"') == FILES, "each file has its own picture, not one wide one"
+    assert phone.count('<div class="pfdeck"') == 1, "they sit in one strip"
     assert "wrow" not in phone, "the wall of text is gone"
 
 
@@ -67,7 +71,7 @@ def test_a_file_nothing_feeds_says_built_here_and_a_file_no_board_reads_says_so(
 
 def test_pressing_the_file_in_the_picture_opens_that_file_s_section():
     phone = _phone(control_render._flow(control_render._ready(_view())))
-    assert phone.count('class="pfile" data-pick="') == 6, "the same data-pick the diagram and By file use"
+    assert phone.count('class="pfile" data-pick="') == FILES, "the same data-pick the diagram and By file use"
     assert 'data-pick="spine.duckdb"' in phone
 
 
