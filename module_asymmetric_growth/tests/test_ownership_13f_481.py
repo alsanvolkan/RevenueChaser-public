@@ -13,7 +13,10 @@ from __future__ import annotations
 import copy
 from datetime import datetime, timezone
 
+from datetime import date
+
 from RevenueChaser.core import ownership, rawstore
+from RevenueChaser.rcdata.tests import prices_store
 from RevenueChaser.core.providers import cache as cache_manager
 from RevenueChaser.module_asymmetric_growth import engine
 from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import universe
@@ -30,11 +33,29 @@ def _payload(ticker: str) -> None:
                                 "source": "yfinance"})
 
 
+#: The day the seeded cover-page count carries; any day the prices store can hold will do.
+_SHARES_AS_OF = date(2026, 1, 2)
+
+
 def _shares_out(ticker: str, shares: float, source: str = ownership.UW_INFO) -> None:
+    """The denominator, where the boards read it since #646 PR 1: the served cover-page count.
+
+    The old ``ownership_snapshot`` row goes in too, with its ``institutional_pct``, because these tests also prove
+    the card shows the 13F share and not that stored number.
+    """
     rawstore.write_rows(ownership.TABLE, [{
         "ticker": ticker, "source": source, "session_date": ownership.session_of(RUN_AT)[0],
         "shares_outstanding": shares, "insider_pct": None, "institutional_pct": 0.11,
         "fetched_at": RUN_AT, "run_id": "seed", "run_at": RUN_AT}])
+    prices_store.put_bars([{"ticker": ticker, "session_date": _SHARES_AS_OF, "close": 10.0}], replace=False)
+    con = prices_store._connect()
+    try:
+        con.execute("INSERT INTO shares_class (security_id, measure, as_of, value, symbol, source) "
+                    "VALUES (?, 'outstanding', ?, ?, ?, 'sec/cover_shares')",
+                    [f"sym:{ticker}", _SHARES_AS_OF, shares, ticker])
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
 
 
 def _q(shares: float, complete: bool = True) -> dict:
@@ -142,11 +163,13 @@ def _split_store(monkeypatch, factor: float) -> list:
     reverse split after it serves 25: today's shares are the quarter's ÷ 25). Returns the bar windows asked."""
     from RevenueChaser.rcdata import read
     asked = []
-    monkeypatch.setattr(read, "security_ids", lambda tickers: {t: f"sid:{t}" for t in tickers})
+    # The real ids, because the "% Out" denominator reads `shares_class` through the same mapping since
+    # #646 PR 1: a made-up id here would quietly cost the card its served count.
+    monkeypatch.setattr(read, "security_ids", lambda tickers: {t: f"sym:{t}" for t in tickers})
 
     def bars(ids, start=None, end=None, basis="nominal"):
         asked.append((sorted(ids), start, end, basis))
-        return [{"security_id": "sid:AAA", "session_date": end, "split_factor": factor}]
+        return [{"security_id": "sym:AAA", "session_date": end, "split_factor": factor}]
 
     monkeypatch.setattr(read, "bars", bars)
     return asked
@@ -164,7 +187,9 @@ def test_a_reverse_split_after_the_quarter_puts_the_13f_shares_on_todays_basis(r
     assert len(asked) == 1 and asked[0][3] == "split"            # one read per quarter, not one per card
 
 
-def test_an_unreadable_prices_store_leaves_the_shares_as_filed(rawstore_tmp_db, monkeypatch):
+def test_an_unreadable_prices_store_falls_back_to_the_card_and_never_fails_the_scan(rawstore_tmp_db, monkeypatch):
+    """Since #646 PR 1 the denominator is served too. An unreadable store must cost neither the scan nor the
+    share: the board drops to its own last rung, the card's market cap over its price."""
     from RevenueChaser.rcdata import read
     _payload("AAA")
     _shares_out("AAA", 1000.0)
@@ -176,4 +201,7 @@ def test_an_unreadable_prices_store_leaves_the_shares_as_filed(rawstore_tmp_db, 
 
     card = _cards(_scan(monkeypatch, ["AAA"]))["AAA"]
 
-    assert card["inst_ownership_pct"] == 0.4 and card["ownership"]["split_factor"] == 1.0
+    implied = card["market_cap"] / card["price"]
+    assert abs(card["inst_ownership_pct"] - 400.0 / implied) < 1e-12
+    assert card["ownership"]["shares_out"] == "market_cap/price"
+    assert card["ownership"]["split_factor"] == 1.0

@@ -43,6 +43,27 @@ def seeded_totals(serve_13f_totals):
     return serve_13f_totals(TOTALS)
 
 
+def _served_shares(dashboard, ticker: str, shares: float) -> None:
+    """The cover-page count where "% Out" divides since #646 PR 1.
+
+    Through ``rcdata/tests/prices_store``, which owns this file: the D01 seed below uses it too, and a table
+    created here by hand with fewer columns makes its ``_derive`` fail. The ``ownership_snapshot`` rows stay
+    beside it - they still carry insider %, and keeping them proves which of the two the board read.
+    """
+    from datetime import date
+
+    from RevenueChaser.rcdata.tests import prices_store
+    con = prices_store._connect()
+    try:
+        con.execute("DELETE FROM shares_class WHERE symbol = ?", [ticker])
+        con.execute("INSERT INTO shares_class (security_id, measure, as_of, value, symbol, source) "
+                    "VALUES (?, 'outstanding', ?, ?, ?, 'sec/cover_shares')",
+                    [f"sym:{ticker}", date(2026, 1, 2), shares, ticker])
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
+
+
 @pytest.fixture
 def seeded_inputs(dashboard, seeded_totals, monkeypatch):
     """The snapshot inputs the board reads since #375 F2: NVDA's shares outstanding (UW) and insider % (yfinance) in
@@ -61,6 +82,7 @@ def seeded_inputs(dashboard, seeded_totals, monkeypatch):
 
     rawstore.write_rows("ownership_snapshot", [own("uw_info", 24_000_000.0, None),
                                                own("yfinance", 30_000_000.0, 0.035)])
+    _served_shares(dashboard, "NVDA", 24_000_000.0)   # the denominator's home since #646 PR 1
     from RevenueChaser.core.tests.d01_seed import write_d01
     write_d01([
         {"ticker": "NVDA", "session_date": date.fromisoformat(d), "open": c, "high": c, "low": c, "close": c,
@@ -158,6 +180,7 @@ def seeded_inputs(dashboard, seeded_totals, monkeypatch):
 
     rawstore.write_rows("ownership_snapshot", [own("uw_info", 24_000_000.0, None),
                                                own("yfinance", 30_000_000.0, 0.035)])
+    _served_shares(dashboard, "NVDA", 24_000_000.0)   # the denominator's home since #646 PR 1
     from RevenueChaser.core.tests.d01_seed import write_d01
     write_d01([
         {"ticker": "NVDA", "session_date": date.fromisoformat(d), "open": c, "high": c, "low": c, "close": c,

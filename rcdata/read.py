@@ -495,6 +495,53 @@ def latest_market(tickers: Iterable[str]) -> dict[str, dict]:
     return {r["ticker"]: r for r in _rows("market_cap_daily", sql, wanted)}
 
 
+def shares_outstanding(tickers: Iterable[str]) -> dict[str, dict]:
+    """``{ticker: {"shares": float | None, "basis": str, "as_of": date | None}}``: the denominator of a "% of shares
+    out" cell, and which number it is, so a board can say so rather than imply a precision it does not have.
+
+    ``basis`` is one of:
+
+    - ``stored``: the newest ``shares_class`` count the SEC cover page gives for the security the ticker trades
+      under (``as_of`` is that day). The name is Asymmetric Growth's, whose own ladder this replaces. Measured on the 10 Nov 2026 copy: of the 8,423 tickers the 13F totals name,
+      3,248 have such a count and **every one of them has exactly one** outstanding row (3,134 of those carry no
+      class label at all), so "the security's newest outstanding row" is unambiguous and no class rule is needed.
+      Should a second class ever appear for one security, the newest row still wins and the cell still says
+      ``stored``; that is worth revisiting only when the count above stops being 1.
+    - ``market_cap/price``: no count, so the newest market cap over the newest close (``latest_market``), which is
+      shares by definition and is how the prices build derives the cap in the first place. ``as_of`` is the cap's
+      session. It covers names the SEC cover page does not reach (ETFs, many ADRs). Asymmetric Growth did this
+      itself off its own card (measured there 9 Nov 2026: a count for 1,219 of its 4,159 names); the difference is
+      that the cap and close are now the served ones, the same numbers the 13F board divides by.
+    - ``none``: neither, so ``shares`` is None and the cell shows a dash instead of a wrong percentage.
+
+    One read of each serving file, no network. A ticker with no row at all is left out of the answer.
+    """
+    wanted = sorted({str(t).strip().upper() for t in tickers if str(t or "").strip()})
+    if not wanted:
+        return {}
+    ids = security_ids(wanted)
+    by_id: dict[str, tuple[float, object]] = {}
+    for r in shares(set(ids.values()), measure="outstanding"):
+        if r.get("value") is None or float(r["value"]) <= 0:
+            continue
+        by_id[r["security_id"]] = (float(r["value"]), r.get("as_of"))   # rows come oldest first: newest wins
+    market = latest_market(wanted)
+    out: dict[str, dict] = {}
+    for ticker in wanted:
+        reported = by_id.get(ids.get(ticker, ""))
+        if reported is not None:
+            out[ticker] = {"shares": reported[0], "basis": "stored", "as_of": reported[1]}
+            continue
+        row = market.get(ticker) or {}
+        cap, price = row.get("market_cap"), row.get("price")
+        if cap is not None and price not in (None, 0):
+            out[ticker] = {"shares": float(cap) / float(price), "basis": "market_cap/price",
+                           "as_of": row.get("cap_session")}
+        elif ticker in ids or ticker in market:
+            out[ticker] = {"shares": None, "basis": "none", "as_of": None}
+    return out
+
+
 VOLUME_SESSIONS = 20
 
 

@@ -20,6 +20,7 @@ import pytest
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_sec_13f import engine, enrich, report
 from RevenueChaser.core.tests.d01_seed import write_d01
+from RevenueChaser.rcdata.tests import prices_store
 
 Q1, Q2 = "2025-03-31", "2025-06-30"
 
@@ -62,31 +63,52 @@ def _cells(payload, ticker):
 
 # ── the ownership reader ────────────────────────────────────────────────────
 
-def test_pct_out_comes_from_a_uw_info_row(rawstore_tmp_db):
-    rawstore.write_rows("ownership_snapshot", [_own("AAA", "uw_info", "2026-10-08", shares=1000.0)])
+_SHARES_SESSION = date(2026, 10, 1)
+
+
+def _served_shares(ticker: str, *, outstanding: float | None = None, close: float = 10.0,
+                   cap: float | None = None) -> None:
+    """The served numbers the "% Out" denominator reads since #646 PR 1: one bar, and a cover-page count or a cap."""
+    prices_store.put_bars([{"ticker": ticker, "session_date": _SHARES_SESSION, "close": close}], replace=False)
+    con = prices_store._connect()
+    try:
+        sid = f"sym:{ticker}"
+        if cap is not None:
+            con.execute("INSERT INTO market_cap_daily (security_id, session_date, close, market_cap, "
+                        "issuer_market_cap) VALUES (?, ?, ?, ?, ?)", [sid, _SHARES_SESSION, close, cap, cap])
+        if outstanding is not None:
+            con.execute("INSERT INTO shares_class (security_id, measure, as_of, value, symbol, source) "
+                        "VALUES (?, 'outstanding', ?, ?, ?, 'sec/cover_shares')",
+                        [sid, _SHARES_SESSION, outstanding, ticker])
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
+
+
+def test_pct_out_comes_from_the_cover_pages_count(rawstore_tmp_db):
+    """#646 PR 1: the denominator is the served count, not ``ownership_snapshot``'s."""
+    _served_shares("AAA", outstanding=1000.0)
     inputs = enrich.load_inputs(TOTALS)
     assert inputs["AAA"]["shares_outstanding"] == 1000.0
+    assert inputs["AAA"]["shares_basis"] == "stored"
     cells = _cells(report.board_payload(TOTALS, META, inputs), "AAA")
-    assert cells["pct_out"] == ["20.0%", pytest.approx(20.0), "zero", "as of 2025 Q2"]      # 200 of 1,000 shares
+    assert cells["pct_out"][:3] == ["20.0%", pytest.approx(20.0), "zero"]       # 200 of 1,000 shares
+    assert "cover page" in cells["pct_out"][3]
 
 
-def test_uw_wins_over_yfinance_and_yfinance_fills_a_name_uw_lacks(rawstore_tmp_db):
-    rawstore.write_rows("ownership_snapshot", [
-        _own("AAA", "yfinance", "2026-10-09", shares=4000.0, insider=0.014),
-        _own("AAA", "uw_info", "2026-10-08", shares=1000.0),
-        _own("BBB", "yfinance", "2026-10-09", shares=600.0, insider=0.5)])
+def test_without_a_count_the_cell_says_the_number_is_implied(rawstore_tmp_db):
+    _served_shares("AAA", close=10.0, cap=10_000.0)               # 1,000 shares implied
     inputs = enrich.load_inputs(TOTALS)
-    assert inputs["AAA"]["shares_outstanding"] == 1000.0           # UW first, even with a newer yfinance row
-    assert inputs["BBB"]["shares_outstanding"] == 600.0            # no UW row: yfinance
-    assert enrich.SHARES_ORDER == ("uw_info", enrich.SEC_DEI, "yfinance")
+    assert inputs["AAA"]["shares_outstanding"] == pytest.approx(1000.0)
+    assert inputs["AAA"]["shares_basis"] == "market_cap/price"
+    cells = _cells(report.board_payload(TOTALS, META, inputs), "AAA")
+    assert "implied" in cells["pct_out"][3]
 
 
-def test_the_newest_session_of_a_source_wins(rawstore_tmp_db):
-    rawstore.write_rows("ownership_snapshot", [
-        _own("AAA", "uw_info", "2026-10-07", shares=900.0),
-        _own("AAA", "uw_info", "2026-10-08", shares=1000.0),
-        _own("AAA", "uw_info", "2026-10-09")])                     # no shares that session: not a value
-    assert enrich.load_inputs(TOTALS)["AAA"]["shares_outstanding"] == 1000.0
+def test_the_old_snapshot_no_longer_feeds_the_denominator(rawstore_tmp_db):
+    """It still carries insider %, but a shares row there is not read any more (#646 PR 1)."""
+    rawstore.write_rows("ownership_snapshot", [_own("AAA", "uw_info", "2026-10-08", shares=1000.0)])
+    assert "shares_outstanding" not in enrich.load_inputs(TOTALS).get("AAA", {})
 
 
 def test_insider_pct_is_the_stored_fraction_in_percent(rawstore_tmp_db):
