@@ -166,9 +166,10 @@ def test_what_and_result_are_cut_to_a_length(log):
 
 def test_the_backup_leaves_the_request_log_out(log):
     from RevenueChaser.rcdata import backup
-    assert not backup._is_kept_ops_table("request_log")
+    log.bump("market_series")
+    log.flush()
+    assert "request_log" in ops.TABLES and len(ops.rows("request_log")) == 1     # it is a table with a row ...
+    assert not backup._is_kept_ops_table("request_log")                          # ... that no backup keeps
     if ops.backend() == "redis":
         from RevenueChaser.rcdata import ops_redis
-        log.bump("market_series")
-        log.flush()
         assert "request_log" not in ops_redis.snapshot()
