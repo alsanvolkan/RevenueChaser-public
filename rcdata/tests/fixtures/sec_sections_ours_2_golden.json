@@ -1,5 +1,5 @@
 {
- "_what": "Outputs of rcdata/sec_sections.py's ours-2 rule, captured 12 Nov 2026 over the inputs of rcdata/tests/sec_sections_cases.py. This is a BASELINE, not an independent truth: it records what ours-2 answers today so that a later edit which moves the text of a shared case cannot pass unnoticed. It says nothing about whether the slice is the right section -- that is #763's hand-checked set. The named-defect tests in test_sec_sections_ours_2.py are the ones that assert ours-2 is BETTER than ours-1; this file only asserts it has not drifted.",
+ "_what": "Outputs of rcdata/sec_sections.py's ours-2 rule, captured 12 Nov 2026 over the inputs of rcdata/tests/sec_sections_cases.py. This is a BASELINE, not an independent truth: it records what ours-2 answers today so that a later edit which moves the text of a shared case cannot pass unnoticed. It says nothing about whether the slice is the right section -- that is #763's hand-checked set. The named-defect tests in test_sec_sections_ours_2.py are the ones that assert ours-2 is BETTER than ours-1; this file only asserts it has not drifted. Two AIF rows were recaptured on 12 Nov 2026 for #756, which gave ours-2 its own 40-F business rule: aif_description_of_business (None -> 26,999, one of the 28 titles ours-1 does not know) and aif_over_the_cap (200,000 -> 239,999, the AIF cap removed). Nothing had stored ours-2 text.",
  "_how_to_recapture": "Run sec_sections.cut_item / cut_aif_business under version=OURS_2 over CASES and rewrite this file. Recapture only to ADD a case, or together with a deliberate, reviewed change to ours-2 while nothing has stored ours-2 text yet. Once a board reads ours-2, a changed expectation here is a new rules_version, not an edit of this file.",
  "captured_at": "2026-11-12",
  "rule_version": "ours-2",
@@ -155,8 +155,8 @@
    "item_sha256": null,
    "item_head": null,
    "item_tail": null,
-   "aif_business_chars": null,
-   "aif_business_sha256": null
+   "aif_business_chars": 26999,
+   "aif_business_sha256": "1fb66934a331ee75a944969c26e58b8423f59de20a7598fd857beb93d8d096ad"
   },
   "over_the_cap": {
    "form": "10-K",
@@ -243,8 +243,8 @@
    "item_sha256": null,
    "item_head": null,
    "item_tail": null,
-   "aif_business_chars": 200000,
-   "aif_business_sha256": "43116fc56c57b5a4ec6745f24264169a01c44b6b15efcf70db96cad1b77f551d"
+   "aif_business_chars": 239999,
+   "aif_business_sha256": "6a7e3ea0cea31db2f4a96ecb24142600beed204dcc5200262e40d582554203cb"
   }
  }
 }

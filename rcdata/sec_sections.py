@@ -146,7 +146,8 @@ def _before_regulation(text: str, start: int, end: int) -> int:
 # (10-K reading report A7). One start heading and one stop heading only, so it misses every form that titles the
 # section differently -- 28 of the 88 stored exhibits by the 12 Nov 2026 measurement, whose numbers and reasoning
 # are in issue #756, not in a file in this tree (of those 88, that measurement cuts 44 and misses 40: 28 with no
-# heading we know, 5 with no stop, 7 rejected as too short). Issue #756 is where the improvement will land.
+# heading we know, 5 with no stop, 7 rejected as too short). ``ours-2`` is where that improvement landed
+# (#756, the block at the end of this module); this one is the board's and does not move.
 _AIF = re.compile(r"(?i)annual\s+information\s+form")
 _AIF_START = re.compile(r"(?im)^[^\S\n]*general\s+development\s+of\s+(?:the\s+|our\s+)?business[^\S\n]*$")
 _AIF_END = re.compile(r"(?im)^[^\S\n]*risk\s+factors[^\S\n]*$")
@@ -696,6 +697,135 @@ def strip_html(html: str) -> str:
     return text.strip()
 
 
+# ── ours-2: the business section of an Annual Information Form (40-F), #756 ─────────────────────────────────
+#
+# The heading patterns below are **adapted** from edgartools, not imported, which is the owner's decision of
+# 12 Nov 2026 ("Evet bu sekilde uygula") for 40-F: 10-K and 20-F keep the pinned import, and here the six
+# start titles and nine stop titles are written out in our own code so that this rule's answers are ours to
+# change and ours to test.
+#
+#     Source:    edgar/company_reports/forty_f.py, lists ``_BUSINESS_STARTS`` (:244), ``_BUSINESS_ENDS``
+#                (:253) and ``_SECTION_PATTERNS`` (:266)
+#     Project:   edgartools -- https://github.com/dgunning/edgartools
+#     Version:   6.0.0 (479d350), read 12 Nov 2026
+#     Licence:   MIT -- Copyright (c) 2022-present Dwight Gunning (the upstream LICENSE file names
+#                the author's address; scripts/private_check.py refuses an address in this tree, and
+#                MIT asks for the notice, not for it)
+#     Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+#     associated documentation files (the "Software"), to deal in the Software without restriction, including
+#     without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#     copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+#     following conditions: the above copyright notice and this permission notice shall be included in all
+#     copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+#     ANY KIND, EXPRESS OR IMPLIED.
+#
+# **What is not adapted is the end of the section**, and that is the measurement's own conclusion
+# (``notes/revenuechaser/notes/2026-11-12_1200_sec-40f-business-section.md``): where both cutters fire,
+# edgartools' section is shorter every time, median four times shorter, because it ends at the next detected
+# heading of any kind -- and six of its eighty-six cuts are under 1,000 characters, BTG's being 338 where
+# ours takes the whole document. So the stops are a list of real section titles, and a pair whose body is
+# under :data:`_AIF_MIN` is **rejected and the next start tried**, rather than returned short.
+
+#: The six titles the NI 51-102 business block is written under. Line-anchored, because a title that shares
+#: its line with prose is a sentence about the business and not the heading of it, and allowed a number or an
+#: item number in front ("6. DESCRIPTION OF THE BUSINESS") and a colon, full stop or dash behind.
+#:
+#: The one tail allowed after the title is "AND OPERATIONS", because PBA's heading is "DESCRIPTION OF PEMBINA'S
+#: BUSINESS AND OPERATIONS" and the line anchor would otherwise lose it -- edgartools, searching anywhere in the
+#: text, needs no such clause. Any other tail leaves the line a sentence, which is the point of the anchor.
+_AIF_NUMBER = r"(?:(?:item[^\S\n]+)?\d{1,2}(?:\.\d{1,2})?[.)]?[^\S\n]+)?"
+_AIF_TITLES_2 = (
+    r"(?:narrative\s+)?description\s+of\s+(?:the\s+)?(?:\w[\w'’]*\s+)?business(?:es)?",
+    r"business\s+of\s+(?:the\s+)?[\w][\w'’]*(?:\s+[\w][\w'’]*){0,3}",
+    # Already matched by the first pattern (its "the" and its possessive word are both optional), so removing
+    # it changes no answer. Kept so that the six read one-to-one against the list named above.
+    r"description\s+of\s+business",
+    r"business\s+operations",
+    r"business\s+overview",
+    r"description\s+of\s+operations",
+)
+#: ``ours-1``'s one start title is the tenth: it is the stop list's first entry here, because a filing that
+#: carries both prints "GENERAL DEVELOPMENT OF THE BUSINESS" first and the description after it.
+_AIF_START_2 = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}(?:{'|'.join(_AIF_TITLES_2)})"
+                          rf"(?:[^\S\n]+and[^\S\n]+operations)?[^\S\n]*[:.{_DASH}]?[^\S\n]*$")
+
+#: The nine titles that end it. The first is where ``ours-1`` starts, and the last four are the parts of an
+#: Annual Information Form that follow the business block in NI 51-102's own order.
+_AIF_STOP_TITLES_2 = (
+    r"general\s+development\s+of\s+(?:the\s+)?(?:[\w\-][\w\-'’]*\s+)?business",
+    r"(?:three[\s-]year|3[\s-]year)\s+history",
+    r"description\s+of\s+capital\s+structure",
+    r"material\s+properties",
+    r"legal\s+(?:proceedings|matters)",
+    r"risk\s+factors",
+    r"code\s+of\s+business\s+conduct",
+    r"market\s+for\s+securities",
+    r"directors\s+and\s+(?:executive\s+officers|officers|executive)",
+)
+_AIF_STOP_2 = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}(?:{'|'.join(_AIF_STOP_TITLES_2)})"
+                         rf"[^\S\n]*[:.{_DASH}]?[^\S\n]*$")
+#: The same titles wherever they appear, for a filing whose headings do not begin their own lines. Five of the
+#: measurement's misses are a start with no line-start stop after it, and this is what ends those.
+_AIF_STOP_INLINE_2 = re.compile(rf"(?i)\b(?:{'|'.join(_AIF_STOP_TITLES_2)})\b")
+
+#: ``ours-1``'s only start title, kept as a **last resort**. The six titles above are preferred because a
+#: filing that carries both prints this one first and the description after it, and the description is the
+#: business block proper -- but 44 of the 88 stored exhibits are cut by ``ours-1`` today from this heading, and a
+#: version that answered nothing where ``ours-1`` answers a section would be a loss nobody measured. So it is
+#: tried only when no pair from the six survives, and it is a start here while it stays the first **stop**.
+_AIF_START_OURS_1_TITLE = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}"
+                                     r"general\s+development\s+of\s+(?:the\s+|our\s+)?business"
+                                     rf"[^\S\n]*[:.{_DASH}]?[^\S\n]*$")
+
+#: A body shorter than this is not the business block. ``ours-1``'s :data:`_BODY_MIN`, for the same reason.
+_AIF_MIN = _BODY_MIN
+
+
+def _aif_business_ours_2_q(text: str) -> tuple[str | None, str]:
+    """``(business section, quality)`` of an Annual Information Form in ``text``: ok / overrun / missing.
+
+    The rule, pair by pair: a line-start title from :data:`_AIF_START_2` that is neither a contents entry nor
+    a cross-reference, then the first stop that is neither -- a line-start one if there is one, an inline one
+    if there is not. When no pair of those survives, ``ours-1``'s own start title is tried the same way
+    (:data:`_AIF_START_OURS_1_TITLE`), so that this version answers a section wherever ``ours-1`` does. A pair whose body is shorter than :data:`_AIF_MIN` is **rejected**, and the next start is
+    tried; when no pair survives the answer is ``missing``, because a 338-character answer reads as a section
+    that was found and is in fact a table-of-contents line or a cross-reference that got through.
+
+    A start with no stop at all keeps its body, which then runs to the end of the document, and the label is
+    ``overrun``. Nothing is capped: five of the stored cuts sat at :data:`MAX_ITEM_CHARS`, which the
+    ``sec_forms`` storage decision removes, so the length has to be told plainly instead of trimmed.
+
+    The contents and cross-reference tests are ``ours-2``'s own (:data:`_TOC_NEXT` is an item rule and is not
+    one of them): :data:`_PAGE_NO` for a page number printed under the heading, and :func:`_ref_ours_2` for
+    "see", "under" and a quoted mention. ``ours-1`` asked only the first, of the start alone.
+    """
+    text = text or ""
+    if not _AIF.search(text):
+        return None, "missing"
+    for start_re in (_AIF_START_2, _AIF_START_OURS_1_TITLE):
+        for m in start_re.finditer(text):
+            if _PAGE_NO.match(text, m.end()) or _ref_ours_2(text, m):
+                continue
+            end = next((e.start() for e in _AIF_STOP_2.finditer(text, m.end())
+                        if not _ref_ours_2(text, e)), None)
+            if end is None:
+                end = next((e.start() for e in _AIF_STOP_INLINE_2.finditer(text, m.end())
+                            if not _inline_ref(text, e)), None)
+            closed = end is not None
+            if end is None:
+                end = len(text)
+            body = text[m.end():end].strip()
+            if len(body) < _AIF_MIN:
+                continue
+            return body, "ok" if closed else "overrun"
+    return None, "missing"
+
+
+def _aif_business_ours_2(text: str) -> str | None:
+    """The business section alone, for the caller that asks for text and not a label."""
+    return _aif_business_ours_2_q(text)[0]
+
+
 # ── the version table ───────────────────────────────────────────────────────────────────────────────────────
 @dataclass(frozen=True)
 class Rule:
@@ -707,16 +837,22 @@ class Rule:
     #: True while ``slice_item`` caps its text at :data:`MAX_ITEM_CHARS` and can therefore answer ``capped``.
     #: Nothing reads it yet: it is here for the ``sec_forms`` layer, which stores sections uncut, so a version it
     #: serves has this False and may not be labelled ``capped`` (issue #757). Until then it only records the fact.
-    #: It is about ``slice_item`` alone -- ``ours-2`` borrows ``ours-1``'s AIF block, which still caps, and #756
-    #: is where that block gets a version of its own.
+    #: It is about ``slice_item`` alone. ``ours-2``'s AIF block (#756) caps nothing either, and says so by
+    #: carrying :attr:`aif_business_q`; ``ours-1``'s does cap, at the same limit.
     caps: bool = True
+    #: ``(text, quality)`` where the version has a label for its AIF section, None where it has not.
+    #: ``ours-1``'s block answers text or nothing and the board never asked it for more, so inventing a label
+    #: for it here would be inventing behaviour. :func:`cut_aif_business_q` raises for such a version rather
+    #: than making one up.
+    aif_business_q: object | None = None
 
 
 RULES: dict[str, Rule] = {
     OURS_1: Rule(version=OURS_1, slice_item=_slice_item_ours_1, aif_business=_aif_business_ours_1, caps=True),
-    # ``ours-2`` keeps ``ours-1``'s AIF block for now: improving it is #756, and a version that changed two
-    # rules at once would leave nobody able to say which of them moved a stored section.
-    OURS_2: Rule(version=OURS_2, slice_item=_slice_item_ours_2, aif_business=_aif_business_ours_1, caps=False),
+    # ``ours-2``'s AIF block is its own since #756: six start titles and nine stop titles adapted from
+    # edgartools (the provenance block above it), our own section end, and a label.
+    OURS_2: Rule(version=OURS_2, slice_item=_slice_item_ours_2, aif_business=_aif_business_ours_2,
+                 caps=False, aif_business_q=_aif_business_ours_2_q),
 }
 
 
@@ -753,3 +889,15 @@ def cut_item(text: str, form: str = "10-K", *, version: str | None | object = _U
 def cut_aif_business(text: str, *, version: str | None | object = _UNSET) -> str | None:
     """The business section of an Annual Information Form in ``text``, cut by ``version``; None when it holds none."""
     return rule(version).aif_business(text)
+
+
+def cut_aif_business_q(text: str, *, version: str | None | object = _UNSET) -> tuple[str | None, str]:
+    """``(business section, quality)`` -- ok / overrun / missing -- for a version that labels it.
+
+    ``ValueError`` for one that does not, which is ``ours-1``: its block answers text or nothing, and a label
+    made up here would be a label no measurement stands behind.
+    """
+    r = rule(version)
+    if r.aif_business_q is None:
+        raise ValueError(f"{r.version} has no labelled AIF cutter; call cut_aif_business for its text")
+    return r.aif_business_q(text)
