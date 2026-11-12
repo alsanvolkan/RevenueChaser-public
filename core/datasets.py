@@ -428,6 +428,17 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=("board_settings_changes", "run_at"),
     ),
 
+    # Watch lists (#786, avo 12 Nov 2026): his own named lists in boards/watchlists.duckdb, typed by hand. Its own
+    # row and not part of "Your inputs" above, because those four tables are the retired raw ones.
+    DatasetSpec(
+        key="watchlists", label="Watch lists",
+        tables=("wl_list", "wl_section", "wl_item", "wl_change"),
+        db="watchlists", source=Source.manual, writer=None,
+        writer_note=("avo types them, through the board or the import command "
+                     "(module_watchlists/store.py is the one writer); nothing fetches them"),
+        freshness=("wl_change", "at"),
+    ),
+
     # --- extended: base tables the 19 rows do not own ---
     DatasetSpec(
         key="value_chain", label="Value Chain edges",
