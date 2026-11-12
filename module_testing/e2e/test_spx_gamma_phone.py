@@ -18,6 +18,12 @@ from RevenueChaser.core.reporting_common import THEME_TOKENS
 
 from .harness.cdp_browser import Page, find_chrome
 
+
+def _rgb(hex_colour: str) -> str:
+    """A ``#RRGGBB`` token as the ``rgb(r, g, b)`` the browser reports, so a theme pick moves no test (#761)."""
+    v = hex_colour.lstrip("#")
+    return "rgb({}, {}, {})".format(*(int(v[i:i + 2], 16) for i in (0, 2, 4)))
+
 MAP_SHORT = "document.querySelector('.chart-map .main-svg').getBoundingClientRect().height <= 0.7 * innerHeight + 1"
 PHONE = (390, 844)
 DESKTOP = (1280, 800)
@@ -280,14 +286,14 @@ def test_a_board_opened_directly_reads_the_stored_theme_before_it_paints(board, 
     first = browser.eval("window.__first")
     assert first == {"theme": choice, "body": False}, first
     bg = browser.eval("getComputedStyle(document.body).backgroundColor")
-    assert bg == "rgb(244, 246, 249)", bg
+    assert bg == _rgb(THEME_TOKENS["light"]["bg"]), bg
 
 
 def test_no_stored_theme_is_dark_on_a_light_device(board, browser):
     browser.emulate(*PHONE, scheme="light")
     browser.open(f"{board.url}/view/{TAB}")
     assert browser.eval("document.documentElement.getAttribute('data-theme')") == "dark"
-    assert browser.eval("getComputedStyle(document.body).backgroundColor") == "rgb(5, 17, 31)"
+    assert browser.eval("getComputedStyle(document.body).backgroundColor") == _rgb(THEME_TOKENS["dark"]["bg"])
 
 
 # ── #195 review SHOULD 3: tests that guarded nothing, now pinned to the rule they name ──

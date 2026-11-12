@@ -15,7 +15,7 @@ RAMP = ["#0C87CC", "#C77C09", "#0A9E6E", "#8B5CF6", "#E8445F", "#2F9E8F"]
 
 def _base_root() -> str:
     """The first ``:root{...}`` block of ``THEME_CSS`` — the one that is not scheme-specific."""
-    return re.match(r":root\{(.*?)\}\n", rc.THEME_CSS, re.S).group(1)
+    return re.search(r"^:root\{(.*?)\}\n", rc.THEME_CSS, re.S | re.M).group(1)   # after the @font-face (#761)
 
 
 def test_every_scale_token_is_in_the_base_root():
@@ -40,9 +40,11 @@ def test_chart_ramp_keeps_its_validated_order():
 
 
 def test_focus_and_float_shadow_follow_the_scheme():
-    # They point at colour tokens, so the light blocks do not need a second copy of them.
-    assert rc.THEME_SCALE["focus"] == "var(--sky)"
-    assert "var(--shadow)" in rc.THEME_SCALE["e-float"]
+    # Theme D (#761) makes --focus a colour token per scheme, the accent; the float shadow points at the dialog
+    # elevation, which reads --shadow, so the light blocks need no second copy of it.
+    for scheme in ("dark", "light"):
+        assert rc.THEME_TOKENS[scheme]["focus"] == rc.THEME_TOKENS[scheme]["accent"]
+    assert rc.THEME_SCALE["e-float"] == "var(--elev-2)" and "var(--shadow)" in rc.THEME_SCALE["elev-2"]
 
 
 def test_reduced_motion_stops_the_transition_duration():
