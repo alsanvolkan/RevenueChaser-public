@@ -297,9 +297,15 @@ def _read(html_path: str) -> str:
 #: Accepted residual: about twenty ``except Exception`` sites on the same path log at DEBUG or not at all
 #: (``utils/toc_analyzer.py`` has thirteen). A failure in one of those still arrives as a quiet zero and is
 #: charged to the filing. Raising the handler to DEBUG would count the library's ordinary chatter instead. An AST
-#: pass over the whole wheel says these five pairs are every WARNING-or-higher log call inside an ``except`` on
-#: the detection path, that each of the five functions holds exactly one such call, and that no other module in
-#: the package carries any of these three basenames -- which is what makes module-and-function enough.
+#: pass over the whole wheel says these six pairs are every WARNING-or-higher log call inside an ``except`` in
+#: the three detector modules, that each of those functions holds exactly one such call (``detect`` is two
+#: modules' and so one name for two pairs), and that no other module in the package carries any of these three
+#: basenames -- which is what makes module-and-function enough.
+#:
+#: Two more such calls are on the TOC path and are left out on purpose: ``toc_section_extractor.py:1230`` and
+#: ``:1549``, in ``_rescue_item_8_pointer_to_trailing_statements`` and
+#: ``_rescue_collapsed_incorporated_financials``. Each abandons one rescue of a boundary and leaves the
+#: boundaries already found as they were, so neither is a reason a filing comes back with nothing.
 SWALLOW_SITES = frozenset({
     ("hybrid_section_detector", "_try_heading_detection"),
     ("hybrid_section_detector", "_try_index_detection"),
