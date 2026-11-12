@@ -26,7 +26,7 @@ from datetime import date, timedelta
 
 from RevenueChaser.core.html_safe import ESC_JS, script_json
 from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html
-from RevenueChaser.module_watchlists import store, symbols
+from RevenueChaser.module_watchlists import indicators, store, symbols
 from RevenueChaser.rcdata import read
 
 #: This board's ``X-RC-Panel`` value, the ``added_by`` its own writes are recorded under.
@@ -35,9 +35,16 @@ BOARD = "watchlists"
 VOLUME_SESSIONS = 20
 #: Calendar days of bars read to find ``VOLUME_SESSIONS`` sessions plus the previous close, with room for holidays.
 BARS_WINDOW_DAYS = 70
-#: The column tabs. Only ``price`` has its columns wired; the rest arrive with the indicators step (#786 step 4b).
+#: The column tabs. ``financials`` is the one still to be wired: its numbers need the fundamentals datasets,
+#: not the bars the other three are derived from.
 TABS = (("price", "Price"), ("financials", "Financials"), ("performance", "Performance"), ("risk", "Risk"),
         ("technicals", "Technicals"))
+#: Sessions of history the derived tabs need at most (the 5-year window plus the bar it is measured from).
+HISTORY_SESSIONS = max(indicators.WINDOWS.values()) + 1
+#: Calendar days that covers, at five sessions a week, with room for holidays.
+HISTORY_DAYS = HISTORY_SESSIONS * 7 // 5 + 60
+#: The index the beta columns are against, as TradingView's are against the S&P 500.
+MARKET_TICKER = "SPY"
 #: The issue that is looking for a source for the symbols we cannot serve.
 NO_SOURCE_ISSUE = "#785"
 
@@ -153,8 +160,101 @@ def payload(list_id: str | None = None) -> dict | None:
                    "unsupported": sum(1 for p in parsed if not p.is_supported)},
         "session": sessions[-1] if sessions else None,
         "tabs": [{"key": k, "label": label} for k, label in TABS],
+        "tab": FIRST_TAB,
         "issue": NO_SOURCE_ISSUE,
     }
+
+
+# ── the derived tabs (#786 step 4b) ────────────────────────────────────────────────────────────────────────────
+# Performance, Risk and Technicals are all read off the same bar history, so they share one read and are worked
+# out by ``module_watchlists/indicators.py`` — the module that owns TradingView's method. They are NOT in the
+# first payload: the history they need is five years deep, and a board that opened on Price would pay for it
+# without showing it. The browser asks for a tab's numbers the first time that tab is opened.
+
+def _history(tickers: list[str]) -> dict[str, dict]:
+    """``{ticker: {"bars": [Bar, ...], "sessions": [date, ...]}}`` oldest first, from one prices-store read."""
+    if not tickers:
+        return {}
+    frame = read.ticker_bars(tickers, start=date.today() - timedelta(days=HISTORY_DAYS), basis="split")
+    out: dict[str, dict] = {}
+    if not len(frame):
+        return out
+    for ticker, rows in frame.sort_values("session_date").groupby("ticker", sort=False):
+        bars, sessions = [], []
+        for day, close, high, low, volume in zip(rows["session_date"], rows["close"], rows["high"], rows["low"],
+                                                 rows["volume"]):
+            value = _f(close)
+            if value is None:
+                continue
+            bars.append(indicators.Bar(close=value, high=_f(high), low=_f(low), volume=_f(volume)))
+            sessions.append(day.date())
+        out[str(ticker)] = {"bars": bars, "sessions": sessions}
+    return out
+
+
+def _aligned(mine: dict, market: dict) -> tuple[list, list]:
+    """The two series over the sessions they share, in order — what :func:`indicators.beta` asks its caller for.
+
+    A name that listed last year has fewer sessions than the index; pairing the two by position would measure its
+    returns against the index's returns of other days, which is not a beta at all.
+    """
+    if not mine or not market:
+        return [], []
+    theirs = dict(zip(market["sessions"], market["bars"]))
+    pairs = [(bar, theirs[day]) for day, bar in zip(mine["sessions"], mine["bars"]) if day in theirs]
+    return [a for a, _ in pairs], [b for _, b in pairs]
+
+
+def _performance(bars, sessions_this_year: int) -> dict:
+    out = {f"p{name}": indicators.performance(bars, n) for name, n in indicators.WINDOWS.items()}
+    out["pYTD"] = indicators.performance_ytd(bars, sessions_this_year)
+    return out
+
+
+def _risk(found: dict, market: dict) -> dict:
+    bars = found["bars"]
+    mine, theirs = _aligned(found, market)
+    return {"v1D": indicators.volatility(bars, 1), "v1W": indicators.volatility(bars, indicators.WINDOWS["1W"]),
+            "v1M": indicators.volatility(bars, indicators.WINDOWS["1M"]),
+            "b1Y": indicators.beta(mine, theirs, indicators.WINDOWS["1Y"]),
+            "b5Y": indicators.beta(mine, theirs, indicators.WINDOWS["5Y"])}
+
+
+def _technicals(bars) -> dict:
+    out = dict(indicators.ratings(bars))
+    out["rsi"] = indicators.rsi([b.close for b in bars])
+    out["mom"] = indicators.momentum([b.close for b in bars])
+    return out
+
+
+def columns(list_id: str, tab: str) -> dict | None:
+    """One derived tab's numbers for a list: ``{tab, values: {symbol: {...}}}``. None for an unknown list or tab.
+
+    Only the US listings get numbers. A market series has two observations a day at best, which is not a bar
+    series, and a symbol with no source has nothing at all; both are left out and show "—" as on the Price tab.
+    Beta is against ``MARKET_TICKER``, aligned by taking both series over the same window.
+    """
+    if tab not in DERIVED_TABS or store.get_list(list_id) is None:
+        return None
+    whole = store.read_list(list_id)
+    parsed = [symbols.parse(i["symbol"]) for s in whole["sections"] for i in s["items"]]
+    wanted = sorted({p.ticker for p in parsed if p.coverage == "us_equity"})
+    history = _history(sorted(set(wanted) | {MARKET_TICKER}))
+    market = history.get(MARKET_TICKER) or {}
+    this_year = date.today().year
+    values: dict[str, dict] = {}
+    for symbol in parsed:
+        found = history.get(symbol.ticker) if symbol.coverage == "us_equity" else None
+        if not found or not found["bars"]:
+            continue
+        if tab == "performance":
+            values[symbol.raw] = _performance(found["bars"],
+                                              sum(1 for d in found["sessions"] if d.year == this_year))
+        elif tab == "risk":
+            values[symbol.raw] = _risk(found, market)
+        else:
+            values[symbol.raw] = _technicals(found["bars"])
+    return {"tab": tab, "values": values}
 
 
 #: How many suggestions the add box offers.
@@ -208,6 +308,12 @@ HELP = help_html(
     "its market cap. A market series (VIX, the Treasury yields) shows its level and change only. A symbol we have "
     "no source for — a foreign listing, a future, an FX pair — keeps its place in the list and says so; "
     f"issue {NO_SOURCE_ISSUE} is the hunt for a source.</p>"
+    "<p><b>Performance</b>, <b>Risk</b> and <b>Technicals</b> are worked out here from the stored daily bars, by "
+    "TradingView's published method: fifteen moving averages and eleven oscillators vote, and the rating is the "
+    "mean of their votes. <b>They will not match TradingView digit for digit</b> — the bars are ours and the "
+    "session is ours — and a name whose history is too short for a window shows \u2014 rather than a number "
+    "made up from a shorter one. Beta is against SPY, over the sessions the two actually share. These three tabs "
+    "read five years of bars, so they are fetched the first time you open them, not on every load.</p>"
     "<p><b>Fetch</b> does nothing here and the board has no Fetch button: a watch list is yours, not downloaded, "
     "and the numbers beside it are whatever the price and spine datasets last stored. <b>Refresh</b> reloads the "
     "page, which reads the lists and those datasets again — there is no cached copy of this board to drop.</p>"
@@ -341,9 +447,12 @@ _CSS = """
   padding:0 var(--sp-2)}
 .wl-un .wl-badge,.wl-un .wl-nm{opacity:.62}
 .wl-un td[colspan]{text-align:left}
+.wl-xc{width:1%;text-align:right;white-space:nowrap;padding-left:var(--sp-2);padding-right:var(--sp-2)}
+.wl th.wl-xc{padding:0}
 .wl-x{all:unset;cursor:pointer;color:var(--muted);opacity:0;padding:0 4px;border-radius:3px;font-size:var(--fs-sm)}
 .wl tr:hover .wl-x{opacity:.7}
 .wl-x:hover{background:var(--neg-soft);color:var(--neg);opacity:1}
+.wl .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .wl tr.dragging td{background:var(--accent-soft);opacity:.95}
 .wl tr.dragging .wl-grip{opacity:1;color:var(--accent);cursor:grabbing}
 .wl tr.dropline td{height:0;padding:0;border-bottom:2px solid var(--accent)}
@@ -375,13 +484,21 @@ _CSS = """
   .wl td{padding:4px 2px;font-size:10.5px}
   .wl td:first-child{padding-left:var(--sp-2)}
   .wl th:first-child,.wl td:first-child{width:1%;white-space:nowrap}
-  .wl-grip,.wl-nm{display:none}
+  .wl-grip{display:none}
+  /* avo, 12 Nov 2026: "Sorun degil company name gozuksun" — the name comes back as a small second line under
+     the ticker, capped so a long name is cut rather than widening the column the numbers need. */
+  .wl-sym{flex-direction:column;align-items:flex-start;gap:1px}
+  .wl-nm{display:block;max-width:84px;font-size:8.5px;line-height:1.15;white-space:nowrap}
   .wl-badge{min-width:0;padding:1px 3px;font-size:9.5px}
   .wl-u{font-size:8.5px;margin-left:0}
   .wl-sec .in{padding:0 var(--sp-2);font-size:9px;min-height:22px}
   .wl-sec .secttools{display:none}
   .wl-nosrc{font-size:9px;padding:0 3px}
-  .wl-x{opacity:.7;padding:0 2px}
+  /* No hover on a phone, so the × stays visible. avo, 12 Nov 2026: "X icin dokunma alani X harfinden cok az
+     daha buyuk olsun, geri kalan kisimlari uygun yerlestir" — the cell is the glyph and a hair around it, and
+     every pixel it does not take goes to the number columns, which are the ones he reads. */
+  .wl td.wl-xc{padding:0 3px 0 4px}
+  .wl td.wl-xc .wl-x{opacity:.7;padding:0 2px;font-size:11px}
 }
 """
 
@@ -393,19 +510,35 @@ _GRIP = ('<svg viewBox="0 0 10 14" fill="currentColor" aria-hidden="true"><circl
          '<circle cx="7.5" cy="2" r="1.3"/><circle cx="2.5" cy="7" r="1.3"/><circle cx="7.5" cy="7" r="1.3"/>'
          '<circle cx="2.5" cy="12" r="1.3"/><circle cx="7.5" cy="12" r="1.3"/></svg>')
 
-#: The Price tab's columns: ``(key, label, unit)``. ``unit`` is the header's own "USD", said there instead of on
-#: every row (avo, 12 Nov 2026: "USD yazmana gerek yok her satira yukari yazsan yeterli").
-PRICE_COLUMNS = (("t", "Symbol", None), ("last", "Last", "USD"), ("chgp", "Chg%", None), ("chg", "Chg", "USD"),
-                 ("vol", "Volume", None), ("avol", "Avg vol", None), ("cap", "Mkt cap", "USD"))
+#: Each tab's columns: ``(key, label, unit, kind)``. ``unit`` is the header's own "USD" or "%", said there
+#: instead of on every row (avo, 12 Nov 2026: "USD yazmana gerek yok her satira yukari yazsan yeterli").
+#: ``kind`` is how the browser draws the value: ``sym`` the symbol cell, ``num`` a plain number, ``signed`` a
+#: number that takes a colour from its sign, ``pct`` a signed percent, ``big`` a T/B/M/K abbreviation,
+#: ``rating`` a word with its score in the title.
+COLUMNS = {
+    "price": (("t", "Symbol", None, "sym"), ("last", "Last", "USD", "num"), ("chgp", "Chg%", None, "pct"),
+              ("chg", "Chg", "USD", "signed"), ("vol", "Volume", None, "big"), ("avol", "Avg vol", None, "big"),
+              ("cap", "Mkt cap", "USD", "big")),
+    "performance": (("t", "Symbol", None, "sym"), ("p1W", "1W", "%", "pct"), ("p1M", "1M", "%", "pct"),
+                    ("p3M", "3M", "%", "pct"), ("pYTD", "YTD", "%", "pct"), ("p1Y", "1Y", "%", "pct"),
+                    ("p5Y", "5Y", "%", "pct")),
+    "risk": (("t", "Symbol", None, "sym"), ("v1D", "Vol 1D", "%", "num"), ("v1W", "Vol 1W", "%", "num"),
+             ("v1M", "Vol 1M", "%", "num"), ("b1Y", "Beta 1Y", None, "num"), ("b5Y", "Beta 5Y", None, "num")),
+    "technicals": (("t", "Symbol", None, "sym"), ("tech_label", "Tech rating", None, "rating"),
+                   ("ma_label", "MA rating", None, "rating"), ("os_label", "Os rating", None, "rating"),
+                   ("rsi", "RSI 14", None, "num"), ("mom", "Momentum 10", None, "signed")),
+}
+#: The tab the board opens on, and the one whose numbers ride the first payload.
+FIRST_TAB = "price"
+#: The tabs whose numbers are derived from the bar history, fetched when the tab is first opened.
+DERIVED_TABS = ("performance", "risk", "technicals")
+
+PRICE_COLUMNS = COLUMNS["price"]
 
 
-def _header_cells() -> str:
-    cells = []
-    for key, label, unit in PRICE_COLUMNS:
-        chip = f'<span class="wl-hu">{html.escape(unit)}</span>' if unit else ""
-        cells.append(f'<th data-col="{html.escape(key)}"><button type="button">{html.escape(label)}{chip}'
-                     f'<span class="wl-rank"></span>{_CARET}</button></th>')
-    return "".join(cells)
+#: What the panel says instead of a table on a tab whose numbers are not wired yet.
+SOON = ("The Financials columns need the fundamentals datasets, which this board does not read yet — issue "
+        "#786.")
 
 
 def render_html(data: dict) -> str:
@@ -453,8 +586,8 @@ def render_html(data: dict) -> str:
 <span class="right"><button class="wl-ghost" type="button" id="wl-newsec">
 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
 <path d="M12 5v14M5 12h14"/></svg>Section</button></span></div>
-<table><thead><tr>{_header_cells()}</tr></thead><tbody id="wl-body"></tbody></table>
-<div class="wl-soon" id="wl-soon" hidden>These columns arrive with the indicators step — issue #786.</div>
+<table><thead><tr id="wl-head"></tr></thead><tbody id="wl-body"></tbody></table>
+<div class="wl-soon" id="wl-soon" hidden>{e(SOON)}</div>
 </div>
 {HELP}
 </main>
@@ -465,10 +598,21 @@ var WL_DATA = {script_json(data)};
 
 _JS = r"""
 (function(){
-  var data = WL_DATA, body = document.getElementById('wl-body');
+  var data = WL_DATA, body = document.getElementById('wl-body'), head = document.getElementById('wl-head');
   var sort = [];                           // [{col, dir}], newest first; at most two columns
   var shut = {};                           // section id -> folded
   var into = data.sections.length ? data.sections[0].id : null;
+  var tab = data.tab;                      // which column set is open
+  var fetched = {price: true};             // tab -> true once its numbers are merged into the rows
+  var pending = null;                      // the tab whose numbers are on their way
+
+  function cols(){ return COLUMNS[tab] || COLUMNS.price; }
+  function colAt(i){ return cols()[i]; }
+  function rows(){
+    var all = [];
+    data.sections.forEach(function(s){ s.rows.forEach(function(r){ all.push(r); }); });
+    return all;
+  }
 
   function num(v, digits){
     if(v === null || v === undefined) return null;
@@ -487,18 +631,24 @@ _JS = r"""
     var text = (v < 0 ? '−' : '') + num(Math.abs(v), digits) + (suffix || '');
     return '<span class="' + cls + '">' + text + '</span>';
   }
+  var DASH = '<span class="dash">—</span>';
+  var RATING_WORDS = {strong_buy: 'Strong buy', buy: 'Buy', neutral: 'Neutral', sell: 'Sell',
+                      strong_sell: 'Strong sell'};
   function cell(row, col){
-    if(col === 'last'){
-      if(row.last === null) return '<span class="dash">—</span>';
-      return num(row.last, 2) + (row.unit ? '<span class="wl-u">' + row.unit + '</span>' : '');
+    var v = row[col.key];
+    if(v === null || v === undefined) return DASH;
+    if(col.kind === 'rating'){
+      var score = row[col.key.replace('_label', '')];
+      var word = RATING_WORDS[v] || v;
+      var cls = (v === 'buy' || v === 'strong_buy') ? 'pos' : ((v === 'sell' || v === 'strong_sell') ? 'neg' : '');
+      return '<span class="' + cls + '" title="' + (score === null || score === undefined ? '' :
+        num(score, 2)) + '">' + rcEsc(word) + '</span>';
     }
-    if(col === 'chgp') return signed(row.chgp, 2, '%');
-    if(col === 'chg') return signed(row.chg, 2, '');
-    if(col === 'vol' || col === 'avol' || col === 'cap'){
-      var v = big(row[col]);
-      return v === null ? '<span class="dash">—</span>' : v;
-    }
-    return '';
+    if(col.kind === 'big'){ var b = big(v); return b === null ? DASH : b; }
+    if(col.kind === 'pct') return signed(v, 2, '%');
+    if(col.kind === 'signed') return signed(v, 2, '');
+    // 'num': the row's own unit only where it has one (a yield's %, on the Price tab).
+    return num(v, 2) + (col.key === 'last' && row.unit ? '<span class="wl-u">' + row.unit + '</span>' : '');
   }
   function compare(a, b, col){
     var x = col === 't' ? a.t : a[col], y = col === 't' ? b.t : b[col];
@@ -524,26 +674,26 @@ _JS = r"""
       rcEsc(id) + '" aria-label="Reorder">' + GRIP + '</button>';
   }
   function rowHtml(row, sectionId){
-    var cells = '', un = row.cov !== 'us_equity' && row.cov !== 'market_series';
+    var cells = '', set = cols(), un = row.cov !== 'us_equity' && row.cov !== 'market_series';
     if(un){
-      cells = '<td colspan="5"><span class="wl-nosrc">No data source yet — ' + rcEsc(data.issue) +
-        '</span></td><td class="dash">—</td>';
+      cells = '<td colspan="' + (set.length - 2) + '"><span class="wl-nosrc">No data source yet — ' +
+        rcEsc(data.issue) + '</span></td><td class="dash">—</td>';
     } else {
-      for(var i = 1; i < COLS.length; i++) cells += '<td>' + cell(row, COLS[i]) + '</td>';
+      for(var i = 1; i < set.length; i++) cells += '<td>' + cell(row, set[i]) + '</td>';
     }
     return '<tr class="wl-row' + (un ? ' wl-un' : '') + '" data-sym="' + rcEsc(row.sym) + '" data-sec="' +
       rcEsc(sectionId) + '"><td><div class="wl-sym">' + grip('row', row.sym) +
       '<span class="wl-badge" title="' + rcEsc(row.nm || row.sym) + '">' + rcEsc(row.t) + '</span>' +
-      '<span class="wl-nm">' + rcEsc(row.nm || row.sym) + '</span>' +
-      '<button class="wl-x" type="button" data-remove="' + rcEsc(row.sym) + '" aria-label="Remove ' +
-      rcEsc(row.t) + '">×</button></div></td>' + cells + '</tr>';
+      '<span class="wl-nm">' + rcEsc(row.nm || row.sym) + '</span></div></td>' + cells +
+      '<td class="wl-xc"><button class="wl-x" type="button" data-remove="' + rcEsc(row.sym) +
+      '" aria-label="Remove ' + rcEsc(row.t) + '">×</button></td></tr>';
   }
   function sectionHtml(section){
     var folded = !!shut[section.id], n = section.rows.length;
     var none = section.rows.filter(function(r){ return r.cov !== 'us_equity' && r.cov !== 'market_series'; }).length;
     var count = none === n && n ? n + ' · no source' : String(n);
     return '<tr class="wl-sec' + (folded ? ' shut' : '') + '" data-sec="' + rcEsc(section.id) +
-      '"><td colspan="' + COLS.length + '"><div class="in">' + grip('sec', section.id) +
+      '"><td colspan="' + (cols().length + 1) + '"><div class="in">' + grip('sec', section.id) +
       '<button class="cap" type="button" data-fold="' + rcEsc(section.id) + '" aria-expanded="' +
       (folded ? 'false' : 'true') + '">' + CARET + rcEsc(section.name) +
       ' <span class="n">' + rcEsc(count) + '</span></button>' +
@@ -566,27 +716,33 @@ _JS = r"""
       if(section.name) html += sectionHtml(section);
       if(!shut[section.id]) sorted(section.rows).forEach(function(row){ html += rowHtml(row, section.id); });
     });
-    body.innerHTML = html || '<tr><td colspan="' + COLS.length +
+    body.innerHTML = html || '<tr><td colspan="' + cols().length +
       '"><div class="wl-empty">This list is empty. Type a ticker above to add one.</div></td></tr>';
-    document.querySelectorAll('.wl thead th').forEach(function(th, i){
+    drawHead();
+  }
+  function drawHead(){
+    // The header follows the open tab, so it is drawn rather than served: the five tabs do not share a shape.
+    head.innerHTML = cols().map(function(col){
       var at = -1;
-      for(var k = 0; k < sort.length; k++) if(sort[k].col === COLS[i]) at = k;
-      if(at < 0){ th.removeAttribute('aria-sort'); }
-      else { th.setAttribute('aria-sort', sort[at].dir === 'asc' ? 'ascending' : 'descending'); }
-      var rank = th.querySelector('.wl-rank');
-      if(rank) rank.textContent = (at >= 0 && sort.length > 1) ? String(at + 1) : '';
-    });
+      for(var k = 0; k < sort.length; k++) if(sort[k].col === col.key) at = k;
+      var sorted_by = at < 0 ? '' : ' aria-sort="' + (sort[at].dir === 'asc' ? 'ascending' : 'descending') + '"';
+      var unit = col.unit ? '<span class="wl-hu">' + rcEsc(col.unit) + '</span>' : '';
+      var rank = (at >= 0 && sort.length > 1) ? String(at + 1) : '';
+      return '<th data-col="' + rcEsc(col.key) + '"' + sorted_by + '><button type="button">' +
+        rcEsc(col.label) + unit + '<span class="wl-rank">' + rank + '</span>' + CARET + '</button></th>';
+    }).join('') + '<th class="wl-xc"><span class="sr">Remove</span></th>';   // avo, 12 Nov 2026: the × sits at the far right
   }
 
   // ── sorting: click a header, click again to turn it round; shift-click adds a second column ──
-  document.querySelectorAll('.wl thead th button').forEach(function(button, i){
-    button.addEventListener('click', function(ev){
-      var col = COLS[i], found = sort.filter(function(s){ return s.col === col; })[0];
-      if(found && (ev.shiftKey || sort.length === 1)){ found.dir = found.dir === 'asc' ? 'desc' : 'asc'; }
-      else if(!ev.shiftKey){ sort = [{col: col, dir: col === 't' ? 'asc' : 'desc'}]; }
-      else if(!found){ sort.push({col: col, dir: col === 't' ? 'asc' : 'desc'}); sort = sort.slice(-2); }
-      draw();
-    });
+  head.addEventListener('click', function(ev){
+    var button = ev.target.closest('button');
+    if(!button) return;
+    var col = button.parentNode.getAttribute('data-col');
+    var found = sort.filter(function(s){ return s.col === col; })[0];
+    if(found && (ev.shiftKey || sort.length === 1)){ found.dir = found.dir === 'asc' ? 'desc' : 'asc'; }
+    else if(!ev.shiftKey){ sort = [{col: col, dir: col === 't' ? 'asc' : 'desc'}]; }
+    else if(!found){ sort.push({col: col, dir: col === 't' ? 'asc' : 'desc'}); sort = sort.slice(-2); }
+    draw();
   });
 
   // ── the two menus and the density segment ──
@@ -621,15 +777,43 @@ _JS = r"""
     var dens = button.getAttribute('data-dens');
     if(dens !== 'compact') table.classList.add('wl-rows-' + dens);
   });
-  document.querySelectorAll('.wl-tab').forEach(function(tab){
-    tab.addEventListener('click', function(){
-      document.querySelectorAll('.wl-tab').forEach(function(t){
-        t.setAttribute('aria-selected', String(t === tab));
-      });
-      var price = tab.getAttribute('data-tab') === 'price';
-      document.querySelector('.wl table').hidden = !price;
-      document.getElementById('wl-soon').hidden = price;
+  var soon = document.getElementById('wl-soon'), SOON_TEXT = soon.textContent;
+  function showTab(key){
+    tab = key;
+    sort = [];                                   // a column of the old tab means nothing on the new one
+    document.querySelectorAll('.wl-tab').forEach(function(t){
+      t.setAttribute('aria-selected', String(t.getAttribute('data-tab') === key));
     });
+    var wired = !!COLUMNS[key];
+    document.querySelector('.wl table').hidden = !wired;
+    soon.hidden = wired;
+    if(!wired){ return; }
+    draw();
+    if(fetched[key] || pending === key) return;
+    pending = key;
+    soon.hidden = false;
+    soon.textContent = 'Reading the price history…';
+    fetch(LIST + '/columns/' + encodeURIComponent(key))
+      .then(function(r){ return r.json(); })
+      .then(function(answer){
+        pending = null;
+        soon.hidden = true;
+        soon.textContent = SOON_TEXT;
+        if(!answer || !answer.ok){ return; }
+        fetched[key] = true;
+        var values = answer.values || {};
+        rows().forEach(function(row){
+          var found = values[row.sym];
+          if(found) for(var k in found) row[k] = found[k];
+        });
+        if(tab === key) draw();
+      }, function(){
+        pending = null;
+        soon.textContent = 'The price history could not be read. Reload the page to try again.';
+      });
+  }
+  document.querySelectorAll('.wl-tab').forEach(function(button){
+    button.addEventListener('click', function(){ showTab(button.getAttribute('data-tab')); });
   });
 
   // ── the writes: every one goes to the store and then redraws from the answer ──
@@ -805,5 +989,5 @@ _JS = r"""
   draw();
 })();
 """
-_JS = (f"var COLS = {script_json([c[0] for c in PRICE_COLUMNS])};\n"
+_JS = (f"var COLUMNS = {script_json({tab: [{'key': k, 'label': lb, 'unit': u, 'kind': kd} for k, lb, u, kd in cols] for tab, cols in COLUMNS.items()})};\n"
        f"var CARET = {script_json(_CARET)};\nvar GRIP = {script_json(_GRIP)};\n" + ESC_JS + _JS)
