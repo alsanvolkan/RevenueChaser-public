@@ -87,7 +87,7 @@ tr:hover{background:var(--card)}
 tr[data-ticker]{cursor:pointer}
 .ticker{color:var(--bright);font-weight:700}
 .name{color:var(--muted);font-size:11px;font-weight:400}
-.pos{color:#34D399}.neg{color:#F87171}.zero{color:var(--muted)}
+.pos{color:var(--pos)}.neg{color:var(--neg)}.zero{color:var(--muted)}
 .empty{padding:40px;color:var(--muted)}
 #modal{position:fixed;inset:0;background:var(--scrim);display:none;align-items:center;justify-content:center;z-index:100}
 #modal.open{display:flex}
