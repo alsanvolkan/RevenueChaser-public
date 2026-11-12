@@ -53,7 +53,7 @@ HELP = {
     "rc_provider_calls_today": ("gauge", "Calls to a provider on the current New York day."),
     "rc_provider_day_cap": ("gauge", "Our own day cap for a provider (absent: no cap)."),
     "rc_provider_failures_today": ("gauge", "Failed calls to a provider on the current New York day."),
-    "rc_provider_http_429_today": ("gauge", "HTTP 429 answers from a provider on the current New York day."),
+    "rc_provider_rate_limited_today": ("gauge", "HTTP 429 answers from a provider on the current New York day."),
     "rc_dataset_state": ("gauge", "1 for the dataset's current state (fresh, unchanged, late, stale, never)."),
     "rc_dataset_last_check_result": ("gauge", "The newest check's result: 0 changed or unchanged, 1 skipped, "
                                      "2 failed (higher is worse)."),
@@ -191,7 +191,7 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
             name = {"provider": str(p["provider"])}
             out["rc_provider_calls_today"].append((name, p["today"]))
             out["rc_provider_failures_today"].append((name, p["failures_today"]))
-            out["rc_provider_http_429_today"].append((name, p["http_429_today"]))
+            out["rc_provider_rate_limited_today"].append((name, p["http_429_today"]))
             if p.get("cap"):
                 out["rc_provider_day_cap"].append((name, p["cap"]))
 

@@ -87,7 +87,7 @@ def test_provider_calls_and_the_day_cap():
                                                    ibkr=lambda: None)))
     assert 'rc_provider_calls_today{provider="uw"} 7' in fam["rc_provider_calls_today"]
     assert 'rc_provider_failures_today{provider="uw"} 1' in fam["rc_provider_failures_today"]
-    assert 'rc_provider_http_429_today{provider="uw"} 0' in fam["rc_provider_http_429_today"]
+    assert 'rc_provider_rate_limited_today{provider="uw"} 0' in fam["rc_provider_rate_limited_today"]
 
 
 def test_a_provider_s_429_answers_today_are_exported():
@@ -95,7 +95,7 @@ def test_a_provider_s_429_answers_today_are_exported():
     ops.count_calls("fmp", 3, failures=2, http_429=2)
     fam = _families(metrics.render(metrics.collect(datetime.now(timezone.utc), datasets=DS, timer={"state": "on"},
                                                    ibkr=lambda: None)))
-    assert 'rc_provider_http_429_today{provider="fmp"} 2' in fam["rc_provider_http_429_today"]
+    assert 'rc_provider_rate_limited_today{provider="fmp"} 2' in fam["rc_provider_rate_limited_today"]
     assert not any(l.startswith('rc_provider_day_cap{provider="uw"} ') for l in fam["rc_provider_day_cap"])  # no UW cap
     assert any(l.startswith('rc_provider_day_cap{provider="alphavantage"} ') for l in fam["rc_provider_day_cap"])
 
