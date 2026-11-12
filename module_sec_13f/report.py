@@ -15,7 +15,7 @@ Every share count on the board is on today's share basis (#732): a quarter's sha
 quarter end's split factor and its close multiplied by it, so a split reads as what it is, not as buying. The board
 shows the last ``WINDOW_QUARTERS`` settled quarters (owner, 12 Nov 2026), plus a quarter still arriving after them.
 """
-from RevenueChaser.core.reporting_common import (FILTERS_CSS, FILTERS_JS, PAYLOAD_JS, filters_bar_html,
+from RevenueChaser.core.reporting_common import (THEME_CSS, THEME_JS, FILTERS_CSS, FILTERS_JS, PAYLOAD_JS, filters_bar_html,
                                                  filters_meta, help_html, notice_html, provider_health_html,
                                                  recorded_sessions_html, watchlist_html, write_board)
 import math
@@ -63,59 +63,79 @@ def _kit_themes() -> dict:
         return {}
 
 
+# The board's own rules, on the shared theme's tokens (#761): ``THEME_CSS`` defines every ``var(--…)`` here, so the
+# board follows the shell's light or dark choice instead of carrying a palette of its own. The aliases on ``:root``
+# give the shared filter kit and history box (which read ``--panel``, ``--text``, ``--input`` …) the same tokens.
 CSS = """<style>
+:root{--panel:var(--card);--panel2:var(--card-2);--text:var(--fg);--input:var(--input-bg);--input-b:var(--input-border);
+  --neon:var(--pos);--rcf-pop-bg:var(--card)}
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',Consolas,monospace;padding:24px;font-size:13px}
-.header{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #21262d}
-.header h1{color:#3fb950;font-size:22px;letter-spacing:1px}
-.header .meta{color:#8b949e;font-size:12px;margin-top:4px}
+body{background:var(--bg);color:var(--fg);font-family:var(--font-sans);padding:var(--sp-5);font-size:13px;
+  font-variant-numeric:tabular-nums}
+.header{margin-bottom:var(--sp-4);padding-bottom:var(--sp-4);border-bottom:1px solid var(--border)}
+.header h1{color:var(--bright);font-size:var(--fs-lg);font-weight:600;letter-spacing:-.01em}
+.header .meta{color:var(--muted);font-size:var(--fs-sm);margin-top:var(--sp-1)}
 .board-search{margin:10px 0}
-.board-search input{background:#161b22;color:#c9d1d9;border:1px solid #21262d;padding:6px 10px;border-radius:8px;font-size:12px;width:260px}
-.board-search input:focus{outline:1px solid #58a6ff;border-color:#58a6ff}
-.kit-count{color:#8b949e;font-size:12px;margin:8px 0 12px;min-height:1.2em}
+.board-search input{background:var(--input-bg);color:var(--fg);border:1px solid var(--input-border);padding:0 12px;
+  height:36px;border-radius:var(--r-sm);font:inherit;font-size:var(--fs-sm);width:260px;max-width:100%}
+.board-search input:focus{outline:2px solid var(--focus);outline-offset:1px;border-color:var(--focus)}
+.kit-count{color:var(--muted);font-size:var(--fs-sm);margin:8px 0 12px;min-height:1.2em}
 .kit-hide{display:none}
-table{width:100%;border-collapse:collapse;font-size:12px}
-th{text-align:right;padding:8px 8px;color:#8b949e;font-size:11px;font-weight:600;letter-spacing:.3px;border-bottom:2px solid #21262d;cursor:pointer;white-space:nowrap}
-th:hover{color:#c9d1d9}
-th.group{cursor:default;color:#6e7681;text-align:center}
-th.sort-asc::after{content:' ▲';color:#58a6ff}
-th.sort-desc::after{content:' ▼';color:#58a6ff}
+table{width:100%;border-collapse:collapse;font-size:12px;background:var(--card);border:1px solid var(--border);
+  border-radius:var(--r-md);overflow:hidden}
+th{text-align:right;padding:8px;color:var(--muted);font-size:var(--fs-xs);font-weight:600;letter-spacing:.03em;
+  border-bottom:1px solid var(--border);background:var(--card-2);cursor:pointer;white-space:nowrap}
+th:hover{color:var(--fg)}
+th.group{cursor:default;color:var(--muted);text-align:center;text-transform:uppercase;letter-spacing:.06em}
+th.sort-asc::after{content:' ▲';color:var(--accent)}
+th.sort-desc::after{content:' ▼';color:var(--accent)}
 th.left,td.left{text-align:left}
-td{padding:8px 8px;border-bottom:1px solid #161b22;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
-tr:hover{background:#161b22}
+td{padding:8px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:right}
+tbody tr:hover{background:var(--hover)}
 tr[data-ticker]{cursor:pointer}
-.ticker{color:#F1F5F9;font-weight:700}
-.name{color:#8b949e;font-size:11px;font-weight:400}
-.pos{color:#34D399}.neg{color:#F87171}.zero{color:#8b949e}
-.empty{padding:40px;color:#8b949e}
-#modal{position:fixed;inset:0;background:rgba(5,17,31,.82);display:none;align-items:center;justify-content:center;z-index:100}
+.ticker{color:var(--bright);font-weight:600}
+.name{color:var(--muted);font-size:var(--fs-xs);font-weight:400}
+.pos{color:var(--pos)}.neg{color:var(--neg)}.zero{color:var(--muted)}
+.empty{padding:40px;color:var(--muted)}
+#modal{position:fixed;inset:0;background:var(--scrim);display:none;align-items:center;justify-content:center;z-index:100}
 #modal.open{display:flex}
-#modal-card{background:#0d1117;border:1px solid #30363d;border-radius:10px;width:min(900px,94vw);max-height:92vh;overflow:auto;padding:16px}
+#modal-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--elev-2);
+  width:min(900px,94vw);max-height:92vh;overflow:auto;padding:var(--sp-4)}
 #modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-#modal-title{color:#F1F5F9;font-size:16px;font-weight:700}
-#modal-close{background:transparent;border:0;color:#8b949e;font-size:20px;cursor:pointer}
+#modal-title{color:var(--bright);font-size:var(--fs-md);font-weight:600}
+#modal-close{width:44px;height:44px;background:transparent;border:0;color:var(--muted);font-size:20px;cursor:pointer}
 #chart{min-height:380px}
-.spin{display:block;width:16px;height:16px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:r .7s linear infinite;margin:40px auto}
+.spin{display:block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;
+  animation:r .7s linear infinite;margin:40px auto}
 @keyframes r{to{transform:rotate(360deg)}}
 .status{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
-.status span{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:14px;font-size:12px;font-weight:600}
-.status .closed{background:rgba(63,185,80,.14);color:#7ee787}
-.status .waiting{background:rgba(210,153,29,.14);color:#f0c674}
-.break-mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;margin:-12px 0 -12px 2px;border:0;border-radius:22px;background:transparent;color:#d2991d;cursor:pointer;vertical-align:middle}
-.break-mark:hover,.break-mark:focus-visible{background:rgba(210,153,29,.16);outline:none}
-#breaks{position:fixed;inset:0;background:rgba(5,17,31,.82);display:none;align-items:center;justify-content:center;z-index:110}
+.status span{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:var(--r-pill);
+  font-size:var(--fs-sm);font-weight:600}
+.status .closed{background:var(--pos-soft);color:var(--pos)}
+.status .waiting{background:var(--amber-soft);color:var(--amber)}
+.break-mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;margin:-12px 0 -12px 2px;
+  border:0;border-radius:22px;background:transparent;color:var(--amber);cursor:pointer;vertical-align:middle}
+.break-mark:hover,.break-mark:focus-visible{background:var(--amber-soft);outline:none}
+#breaks{position:fixed;inset:0;background:var(--scrim);display:none;align-items:center;justify-content:center;z-index:110}
 #breaks.open{display:flex}
-#breaks-card{background:#0d1117;border:1px solid #30363d;border-radius:10px;width:min(440px,94vw);max-height:86vh;overflow:auto;padding:16px}
+#breaks-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--elev-2);
+  width:min(440px,94vw);max-height:86vh;overflow:auto;padding:var(--sp-4)}
 #breaks-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-#breaks-title{color:#F1F5F9;font-size:15px;font-weight:700}
-#breaks-close{width:44px;height:44px;background:transparent;border:0;color:#8b949e;font-size:20px;cursor:pointer}
-#breaks-note{color:#8b949e;font-size:12px;margin:4px 0 12px;line-height:1.5}
+#breaks-title{color:var(--bright);font-size:15px;font-weight:600}
+#breaks-close{width:44px;height:44px;background:transparent;border:0;color:var(--muted);font-size:20px;cursor:pointer}
+#breaks-note{color:var(--muted);font-size:var(--fs-sm);margin:4px 0 12px;line-height:1.5}
 #breaks-list{list-style:none;display:flex;flex-direction:column;gap:8px}
-#breaks-list li{background:rgba(210,153,29,.08);border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.5;white-space:normal}
-#breaks-list b{color:#F1F5F9}
-.warn-box{background:rgba(210,153,29,.10);border:1px solid #d2991d;color:#f0c674;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;line-height:1.55}
-.warn-box b{color:#d2991d}
-footer{margin-top:24px;padding-top:12px;border-top:1px solid #21262d;color:#484f58;font-size:11px;text-align:center}
+#breaks-list li{background:var(--amber-soft);border-radius:var(--r-sm);padding:10px 12px;font-size:13px;line-height:1.5;
+  white-space:normal}
+#breaks-list b{color:var(--bright)}
+.warn-box{background:var(--amber-soft);border:1px solid var(--amber);color:var(--fg);border-radius:var(--r-sm);
+  padding:12px 16px;margin-bottom:14px;font-size:13px;line-height:1.55}
+.warn-box b{color:var(--amber)}
+.legend-note{color:var(--muted);font-size:var(--fs-xs);margin-top:8px;line-height:1.5}
+.legend-note b{color:var(--fg)}
+.warn-mark{color:var(--amber)}
+footer{margin-top:var(--sp-5);padding-top:12px;border-top:1px solid var(--border);color:var(--muted);font-size:var(--fs-xs);
+  text-align:center}
 </style>"""
 
 JS = """<script>
@@ -171,6 +191,26 @@ function sortTable(col, el){
   rows.forEach(function(r){ tbody.appendChild(r); });
   applyFilters();
 }
+// The figure is drawn on the page's theme (#761): its paper, text, grid and series colours are read from the tokens,
+// so the chart matches the light or dark board around it. Bars take data-1, lines data-2.
+function themedFig(fig){
+  var cs = getComputedStyle(document.documentElement), v = function(n){ return cs.getPropertyValue(n).trim(); };
+  var lay = fig.layout || {}, grid = v('--grid'), muted = v('--muted');
+  lay.paper_bgcolor = 'rgba(0,0,0,0)'; lay.plot_bgcolor = 'rgba(0,0,0,0)';
+  lay.font = Object.assign({}, lay.font || {}, {color: v('--fg'), family: v('--font-sans')});
+  lay.hoverlabel = {bgcolor: v('--card'), bordercolor: v('--border'), font: {color: v('--fg')}};
+  Object.keys(lay).forEach(function(k){
+    if(/^[xy]axis[0-9]*$/.test(k)){ lay[k] = Object.assign({}, lay[k], {gridcolor: grid, zerolinecolor: grid, linecolor: grid,
+      tickfont: {color: muted}}); }
+  });
+  (lay.annotations || []).forEach(function(a){ a.font = Object.assign({}, a.font || {}, {color: muted}); });
+  (fig.data || []).forEach(function(t){
+    var c = t.type === 'bar' ? v('--data-1') : v('--data-2');
+    if(t.type === 'bar'){ t.marker = Object.assign({}, t.marker || {}, {color: c}); }
+    else { t.line = Object.assign({}, t.line || {}, {color: c}); }
+  });
+  fig.layout = lay; return fig;
+}
 function openChart(ticker){
   var modal = document.getElementById('modal');
   modal.classList.add('open');
@@ -180,10 +220,10 @@ function openChart(ticker){
   fetch('/api/sec_13f/' + encodeURIComponent(ticker))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.fig){ chart.innerHTML = '<div style="color:#8b949e">No series data.</div>'; return; }
-      Plotly.react('chart', d.fig, {}, {displayModeBar: true, responsive: true});
+      if(!d.fig){ chart.innerHTML = '<div class="empty">No series data.</div>'; return; }
+      Plotly.react('chart', themedFig(d.fig), {}, {displayModeBar: true, responsive: true});
     })
-    .catch(function(){ chart.innerHTML = '<div style="color:#f85149">Failed to load chart.</div>'; });
+    .catch(function(){ chart.innerHTML = '<div class="empty neg">Failed to load chart.</div>'; });
 }
 function closeModal(){ document.getElementById('modal').classList.remove('open'); }
 function applyFilters(){
@@ -802,6 +842,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>RevenueChaser — SEC 13F Ownership</title>
+<script>{THEME_JS}</script><style>{THEME_CSS}</style>
 <script src="{PLOTLY_CDN_URL}"></script>
 {CSS}{FILTERS_CSS}</head><body>
 <div class="header"><h1>SEC 13F — Total Institutional Ownership</h1>
@@ -814,7 +855,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 <div class="kit-count" id="kit-count" aria-live="polite"></div>
 <div class="board-search"><input type="search" id="board-q" placeholder="Search ticker or name" autocomplete="off" spellcheck="false"></div>
 <table><thead>{header}</thead><tbody id="rows">{rows_html}</tbody></table>
-<div style="color:#8b949e;font-size:11px;margin-top:8px;line-height:1.5">
+<div class="legend-note">
 <b>Total ownership</b> = shares held by every 13F filer, on <b>today's share basis</b>: a quarter's count is divided
 by the split factor of its quarter end, so a split is not read as buying (hover a cell for the count as filed).
 The board shows the last {WINDOW_QUARTERS} settled quarters; the chart shows every stored one.
@@ -831,7 +872,7 @@ total, and its Herfindahl index), not of all shares outstanding.
 {arriving_legend}
 <b>Price Δ</b> = close change from the first to the last quarter end shown, on the same share basis.
 <b>Flows</b> (Δ%, Net flow, New/Exit) count only the filers that reported in both quarters; a filer that started or
-stopped filing is left out, and the <b style="color:#d2991d">⚠</b> beside a ticker lists those breaks by quarter.
+stopped filing is left out, and the <b class="warn-mark">⚠</b> beside a ticker lists those breaks by quarter.
 A quarter is <b>closed</b> once the SEC publishes the data set that covers its filing deadline; a closed quarter
 does not change.
 </div>
