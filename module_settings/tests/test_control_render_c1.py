@@ -5,6 +5,11 @@ import copy
 import re
 
 from RevenueChaser.module_settings import control, control_render
+from RevenueChaser.rcdata import serving
+
+#: One section, one "By file" line and one picture per serving kind: read from the registry, so the next kind
+#: added does not come back here as a count that is one short.
+FILES = len(serving.KINDS)
 from RevenueChaser.module_settings.tests.test_control_view import NOW, control_nd
 from RevenueChaser.module_settings.tests.legacy_fetch import old_fetch
 
@@ -224,10 +229,10 @@ def test_each_tile_sits_in_its_group_and_keeps_its_filter():
 def test_by_file_lines_under_data():
     html = _health(_grouped_view())
     by = html[html.index('class="byfile"'):]
-    assert "1 of 6 files on the disk" in by
-    assert by.count('class="bfl"') == 6
+    assert f"1 of {FILES} files on the disk" in by
+    assert by.count('class="bfl"') == FILES
     assert "🦆 on the disk · 9.8 MB · written 5 Nov 19:43 · 7 of 9 tables hold rows · empty: cik_map, lei" in by
-    assert by.count("no file yet") == 5
+    assert by.count("no file yet") == FILES - 1
     assert 'data-pick="spine.duckdb"' in by
     assert 'class="seg fresh"' in by
 
@@ -255,17 +260,17 @@ def test_each_served_file_is_its_own_folded_section_not_a_picker_box():
     html = control_render.render_data(v)
     assert 'id="fpick"' not in html and 'role="tab"' not in html and "aria-selected" not in html
     names = re.findall(r'<details class="sec fpanel" data-file="([^"]+)"', html)
-    assert names == [f["name"] for f in v["files"]] and len(names) == 6
-    assert "🦆 9.8 MB" in html and html.count("no file yet") == 5
+    assert names == [f["name"] for f in v["files"]] and len(names) == FILES
+    assert "🦆 9.8 MB" in html and html.count("no file yet") == FILES - 1
     assert "1 line" in html
 
 
 def test_only_the_first_file_section_is_open_and_none_is_hidden():
     html = control_render.render_data(_view())
-    assert html.count('<details class="sec fpanel"') == 6
+    assert html.count('<details class="sec fpanel"') == FILES
     assert len(re.findall(r'<details class="sec fpanel"[^>]* open>', html)) == 1
     opens = re.findall(r'<details class="sec fpanel"[^>]*>', html)
-    assert len(opens) == 6 and not [t for t in opens if "hidden" in t], "a section is folded, never hidden"
+    assert len(opens) == FILES and not [t for t in opens if "hidden" in t], "a section is folded, never hidden"
 
 
 def test_the_script_opens_a_file_from_the_diagram_and_from_by_file():
@@ -302,7 +307,7 @@ def test_one_section_per_file_in_plan_order_only_the_first_open():
     panels = re.findall(r'<details class="sec fpanel" data-file="([^"]+)" id="fp-\w+" style="--fh:#[0-9a-f]{6}"( open)?>',
                         html)
     assert [p[0] for p in panels] == [f["name"] for f in v["files"]]
-    assert [bool(p[1]) for p in panels] == [True] + [False] * 5
+    assert [bool(p[1]) for p in panels] == [True] + [False] * (FILES - 1)
     one = html[html.index('class="sec fpanel" data-file="prices.duckdb"'):html.index('class="sec fpanel" data-file="fund')]
     assert 'class="journey"' in one and 'class="sources' not in one and 'class="pictrow"' not in one
     fetch = old_fetch(v)
@@ -322,7 +327,7 @@ def test_the_old_controls_are_gone_and_the_universe_is_on_fetch_health_once():
 
 def test_render_data_renders_without_the_new_fields():
     html = control_render.render_data(control.build(control_nd(), now=NOW))
-    assert html.count('class="sec fpanel"') == 6 and 'id="fpick"' not in html
+    assert html.count('class="sec fpanel"') == FILES and 'id="fpick"' not in html
 
 
 # ── Layout ───────────────────────────────────────────────────────────────────────────────────────────────────

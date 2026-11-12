@@ -1026,12 +1026,12 @@ from `RC_DUCKDB_MAX_TEMP` (default `200GB`), held to 90 % of the spill disk's fr
 spill's parent folder (unset: `<MARKET_RAW_DIR>/build_tmp`). Each dataset's build logs one line with its seconds and
 its spill peak (`base.spill_peak`, sampled every 2 s), the measure for moving the spill to the SSD or chunking a kind.
 
-**Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`. Each kind is one
+**Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`, `sec_forms`. Each kind is one
 file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `6`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `2`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `3`), under "Fundamentals" after it; and the options
-data, `options` (serving schema version `3`), under "The options data" last. The six numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
+data, `options` (serving schema version `3`), under "The options data" after it; and the SEC form reader, `sec_forms` (serving schema version `1`), under "The SEC form reader" last. The seven numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
 (`rcdata/build/dirty.py`), so a bump makes only its own kind's next build whole (#649). The market data,
 `market` (serving schema version `4`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
@@ -1936,6 +1936,56 @@ per-session raw folders of `raw/uw/option_list/` and `raw/uw/er_options/` older 
 set: `RC_RAW_RETENTION_DAYS`, else the `dataset_schedule` row `retention_days` (`rcdata/retention.py`). It ships
 unset, so nothing is removed and the Settings card keeps its warning. The Parquet, the calendar, the screener
 answers and the IBKR raw files (the marker that a name has its year) are never removed.
+
+### The SEC form reader (`sec_forms.duckdb`, #757)
+
+One dataset, `sec/forms`, and two served tables (`sec_forms` serving schema version `1`). It **fetches nothing**:
+`sec/filings` has already stored every document it reads — the newest annual report of each company of the
+universe, its Annual Information Form exhibits, and the newest proxy — so this dataset's `fetch` is the cut itself,
+and what it returns is the stale companies' documents for `to_parquet_all` to cut. Nothing reads this file yet; the
+board cutovers are their own work.
+
+**Why a kind of its own.** A 10-K's text runs from 160,000 to 870,000 characters, so the stored annual reports are
+roughly 2.7 GB of text, and a schema bump rebuilds a kind whole (#649). Inside `fundamentals.duckdb` that text
+would be rebuilt every time the Fundamentals board's numbers changed.
+
+**Why one dataset and not two.** `dirty.dataset_dir` is `parquet/<source>/<name>` split on the first `/` only and
+the build manifest scans exactly those folders, so two datasets writing into one `parquet/sec/forms/` would leave
+both manifests empty and the served tables would freeze after the first build with every test green. One dataset,
+one folder, two Parquet files (`sections.parquet`, `notes.parquet`) per `cik=<cik>` partition.
+
+**Served tables.**
+
+- `filing_section` — one row per (filing, document, section): `cik`, `accession`, `document`, `form`,
+  `filing_date`, `report_date`, `section` (`whole`, `proxy`, `business`), `text`, `chars`, `quality`,
+  `start_char`, `end_char` (where the section sits in `whole`; NULL for an uncut row and for a cut the rule
+  altered), `method` (`uncut`, `header`, `aif` — how it was found, so a weak method can be withdrawn alone),
+  `rules_version`, and the provenance `source_as_of`, `fetched_at`, `run_id`. `document` is in the key because one
+  accession can hold more than one document this cuts: a 40-F's AIF exhibit is a second one.
+- `filing_note` — one row per (filing, document, text block), from the filer's own inline-XBRL text blocks
+  (`rcdata/sec_notes.py`): `concept` as filed, `taxonomy`, `local_name`, `kind` (`disclosure`, `table`, `policy`),
+  `seq`, `top_level` and `parent_seq` (filers tag a note and then its subsections, so the same sentence belongs to
+  two or three blocks; a character count that is not to be tripled sums the top-level rows), `context_ref`,
+  `period_end`, `text`, `chars`, `rules_version`, and the same provenance.
+
+**The staleness rule.** `dirty.py` reloads Parquet into DuckDB; it does not cut. So the rule is `fetch`'s own: a
+company is stale when the `(accession, document)` pairs on disk differ from the ones its `sections.parquet` holds,
+or when any of its rows was written by another cutter version. That covers the three cases nothing else triggers —
+our own rule version changing, a new proxy or 40-F exhibit appearing, and a document re-fetched under a new
+accession. A filing that legitimately yields **no** note rows (no inline XBRL: 0.6 % of the stored annual reports)
+does not read as stale on every run, which comparing expected rows against stored rows would have done. The
+dataset's check reports rows per `rules_version`, so a half-migrated table is visible rather than inferred.
+
+**Which cutter version.** Sections are cut by `rcdata/sec_sections.py` at `ours-1` and notes read at `notes-1`,
+and every row carries the version that wrote it. `ours-2` (#755, #756) lifts the 200,000-character cap on the
+business section and fixes the five item defects; when it lands, the version constant moves to it and the rule
+above re-cuts every company in one build, with no re-fetch.
+
+**Needs.** `sec.whole`, `sec.business`, `sec.proxy` and `sec.note`, each with its own reader and `ask_required`
+(the text is gigabytes: nothing is answered unless a company is named). The three section needs share one table
+keyed by `cik`, so each carries a `where` on its own `section`; without it a summary would read its state off
+another section's rows. `max_lag` is 400 **days** for all four, not sessions: an annual report is up to fifteen
+months old by design.
 
 ## Migration
 Two separate things, deliberately not conflated:

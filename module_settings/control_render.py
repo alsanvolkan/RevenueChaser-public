@@ -153,7 +153,9 @@ def _timer_box(view: dict) -> str:
 
 #: The Health groups (#492 C1): three side by side, then Data at full width.
 HEALTH_GROUPS = (("sources", "Sources"), ("scheduled", "Scheduled run"), ("build", "Build"))
-FILE_TOTAL = 6
+#: How many serving files there are, from the registry. It was the literal 6 until #757 added a seventh kind and
+#: the heading read "1 of 6" above seven rendered sections.
+FILE_TOTAL = len(screen.FILES)
 
 
 def _tile(t: dict) -> str:

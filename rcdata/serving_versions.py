@@ -43,3 +43,6 @@ SERVING_SCHEMA_VERSION["options"] = 2
 # options 3: ``option_far_contract``, the market's far-dated contracts of a session and the next session's open
 #            interest of each (``build/options/uw_far_contracts.py``, #746, avo's "A: Tum piyasa" of 12 Nov 2026).
 SERVING_SCHEMA_VERSION["options"] = 3
+# PR (#757): ``sec_forms.duckdb``, the sections and note blocks of the stored filings (``build/sec_forms/``). Its
+# first number, not a bump: there is no live file to checkpoint.
+SERVING_SCHEMA_VERSION["sec_forms"] = 1

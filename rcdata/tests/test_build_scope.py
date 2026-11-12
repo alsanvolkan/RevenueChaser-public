@@ -132,6 +132,7 @@ def test_every_dataset_either_honours_the_scope_or_is_named_here():
         "sec/filings": "the Tier A companies' own filing lists",
         "sec/form4": "the SEC daily index's Form 4 filers",
         "sec/fsds": "the SEC's quarterly financial-statement data sets",
+        "sec/forms": "cuts the documents already on disk, for every company of the universe at once",
         "sec/ftd": "one fails-to-deliver file for the whole market",
         "spine/security": "builds the spine, and its tiers, itself",
         "uw/earnings": "the fundamentals universe (its own PR)",
