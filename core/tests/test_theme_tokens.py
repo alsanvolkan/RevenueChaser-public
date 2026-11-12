@@ -12,17 +12,18 @@ import pytest
 
 from RevenueChaser.core import reporting_common as rc
 
-# The palette avo picked on 12 Nov 2026 (13F thread, option D "Full design system"). Dark is the default, so
+# The palette avo picked on 12 Nov 2026 (13F thread):
+# option D "Full design system" in the "Mürekkep" colours. Dark is the default, so
 # "dark when dark is chosen" means exactly these values; a change to them is a design decision, not a refactor.
 PICKED_DARK = {
-    "bg": "#1C1B19", "fg": "#D9D5CC", "bright": "#F3F0E8", "card": "#242320", "card-2": "#2C2A26",
-    "sidebar": "#201F1C", "pos": "#8CC5A2", "neg": "#E3988A", "amber": "#DDB066", "muted": "#A39E93",
-    "accent": "#D99272", "focus": "#D99272", "data-1": "#5E9AD0", "data-2": "#D9773F",
+    "bg": "#1B1A18", "fg": "#D9D5CC", "bright": "#F3F0E8", "card": "#232220", "card-2": "#282725",
+    "sidebar": "#201F1D", "pos": "#6CC497", "neg": "#E98A7F", "amber": "#E0B060", "muted": "#A29D92",
+    "accent": "#8DB8DA", "focus": "#8DB8DA", "data-1": "#4F93D2", "data-2": "#D9773F",
 }
 PICKED_LIGHT = {
-    "bg": "#F7F5F0", "fg": "#3B3833", "bright": "#1F1D1A", "card": "#FFFEFB", "card-2": "#F0EDE6",
-    "pos": "#2F6B4F", "neg": "#A3473B", "amber": "#8F5F14", "muted": "#68645C", "accent": "#A5522E",
-    "data-1": "#2F6FA8", "data-2": "#C0602E",
+    "bg": "#F6F5F1", "fg": "#2E2C28", "bright": "#1A1916", "card": "#FFFFFF", "card-2": "#F3F1EC",
+    "pos": "#2F7A55", "neg": "#B0443A", "amber": "#9A6212", "muted": "#67635B", "accent": "#2F6690",
+    "data-1": "#2A6FB0", "data-2": "#C0602E",
 }
 
 
