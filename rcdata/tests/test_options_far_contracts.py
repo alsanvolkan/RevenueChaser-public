@@ -338,6 +338,8 @@ def test_the_read_api_serves_the_newest_session_and_the_collecting_counts(uw_opt
     run()
     rows = read.far_contracts(tickers=["aaa"])
     assert [(r["ticker"], r["oi_status"], r["opened_share"]) for r in rows] == [("AAA", "matched", 0.4)]
-    assert read.far_contract_sessions() == [{"session_date": SESSION, "contracts": 2, "tickers": 2, "matched": 1,
-                                             "pending": 1, "stale": 0, "missing": 0}], \
+    sessions = read.far_contract_sessions()
+    assert [s.pop("status") for s in sessions] == ["changed"], "the dataset's newest check comes with the rows"
+    assert sessions == [{"session_date": SESSION, "contracts": 2, "tickers": 2, "matched": 1,
+                         "pending": 1, "stale": 0, "missing": 0}], \
         "a chain holding none of the swept contracts waits for the morning's cut-off"
