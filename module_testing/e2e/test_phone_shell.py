@@ -184,7 +184,8 @@ def test_the_toggle_overrides_the_device_and_is_remembered(dashboard, browser):
 
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])
-@pytest.mark.parametrize("size, width", [(DESKTOP, 64), ((1920, 1080), 240)])
+# avo's own two screens (12 Nov 2026: window.innerWidth 1187 and 1884) besides the 1280 default.
+@pytest.mark.parametrize("size, width", [(DESKTOP, 64), ((1187, 800), 64), ((1884, 1000), 240), ((1920, 1080), 240)])
 def test_a_desktop_keeps_its_sidebar(dashboard, browser, scheme, size, width):
     """Theme D (avo 12 Nov 2026, #761): a 64 px icon rail below 1440 px, the 240 px sidebar from 1440 px."""
     m = _open(browser, dashboard, size, scheme)
