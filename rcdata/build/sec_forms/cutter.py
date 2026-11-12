@@ -64,7 +64,25 @@ HANDSHAKE_TIMEOUT_S = 60.0   # importing ~35 packages, cold; not a document, so 
 RECYCLE_N = 200          # documents before the worker is replaced
 MAX_TRIES = 3            # attempts at one document, counted across runs through its .failed.json
 BREAK_AFTER = 5          # consecutive failed documents before the run is called the box's fault, not theirs
-MAX_STOPS = 3            # runs one document may bring down with "the box's fault" before the pass skips it
+MAX_STOPS = 3            # runs that may fail on one document for "the box's fault" before the pass skips it
+
+#: The forms **edgartools 6.0.0 has any section vocabulary for**, as base forms (a ``/A`` amendment and a
+#: ``424B5`` carry the same vocabulary as their base). Measured in the pinned wheel, not guessed:
+#: ``document.py:938`` routes ``10-K``, ``10-Q``, ``8-K``, ``20-F`` and every title-based form to the hybrid
+#: detector, ``form_schema.py:1205`` gives every other form ``DEFAULT_SCHEMA``, whose ``title_based`` is false,
+#: and ``pattern_section_extractor.py:105`` then holds patterns for eight forms and answers ``{}`` for the rest.
+#:
+#: So a **40-F** and a **10-KT** are cut into nothing by this library every time, for every filing, and both are
+#: in our corpus (``rcdata/build/fundamentals/filings.py:47``, the annual forms). That is a fact about the form
+#: and not about the filing: it is reported, remembered, charged nothing, and waits for the cutter of its own
+#: that the plan gives those two forms. Read by nothing but the zero-section branch of :meth:`Cutter.cut`.
+KNOWN_FORMS = frozenset({"10-K", "10-Q", "20-F", "8-K", "424B", "S-1", "S-3", "S-3ASR", "DEF 14A", "PRE 14A"})
+
+
+def _base_form(form: str) -> str:
+    """``10-K/A`` -> ``10-K``, ``424B5`` -> ``424B``, as the library's own ``base_form`` does before it routes."""
+    base = (form or "").strip().upper().split("/A")[0].strip()
+    return "424B" if base.startswith("424B") else base
 
 
 class CutterUnusable(base.SourceError):
@@ -147,8 +165,9 @@ def failed_path(accession: str) -> Path:
 
 
 #: What a document's sidecar counts. ``tries`` are the attempts spent on it, ``gave_back`` the attempts the
-#: breaker returned, ``stops`` the runs it brought down with a reason that was called the box's fault.
-COUNTERS = ("tries", "gave_back", "stops")
+#: breaker returned, ``stops`` the runs that failed on it for a reason called the box's fault, and
+#: ``no_vocabulary`` says the library has no sections for its form at all, which is terminal and costs nothing.
+COUNTERS = ("tries", "gave_back", "stops", "no_vocabulary")
 
 
 def _count(value: object) -> int:
@@ -514,17 +533,15 @@ class Cutter:
     run) and ``None`` when it is not, having already written the sidecar that remembers why. It raises only
     :class:`CutterUnusable`, which is the run's problem and not a document's.
 
-    **The breaker is the part that makes "a failed document" safe.** Charging an attempt per failure is only right
-    while the failures are the filings' own; a reason that belongs to the box fails all of them, and three runs
-    later the whole corpus is retired with nothing left to retry. The worker says which phase failed, so most of
-    those arrive as :class:`CutterUnusable` already -- but not every one can be told apart from inside the worker
-    (a library that fails on a missing data file of its own looks like a parse), so after
-    :data:`BREAK_AFTER` consecutive failures this stops the run. It also bounds the worst case in time: without
-    it, every document timing out costs 5,149 x 180 s, which is 257 hours, and the hourly builder would hold its
-    lock for all of them.
+    **No single document stops the run; a row of them does.** Every per-document outcome is written down and the
+    pass goes on, because the next document is the only evidence that tells a bad filing from a bad box -- a run
+    that ends on the first failure never gets it. After :data:`BREAK_AFTER` failures in a row
+    :meth:`_maybe_break` stops the run and :meth:`_give_back` returns what those documents were charged. That
+    also bounds the worst case in time: without it, every document timing out costs 5,149 x 180 s, which is 257
+    hours, and the hourly builder would hold its lock for all of them.
 
-    **Stopping the run gives back only the attempts of the documents whose worker was lost** -- see
-    :meth:`_give_back`, which has the stall that giving back all of them caused.
+    What a document is charged depends on whose failure it was, and :meth:`_give_back` has the three kinds and
+    the stalls that getting any of them wrong produced.
     """
 
     def __init__(self, max_tries: int = MAX_TRIES, recycle_n: int = RECYCLE_N, break_after: int = BREAK_AFTER,
@@ -543,7 +560,8 @@ class Cutter:
         self.cut_now = 0          # documents this run actually sent to the worker and got answers for
         self.cached = 0           # documents an earlier run had already cut
         self.empty = 0            # documents the cutter read but found no section in
-        self.skipped = 0          # documents passed over because they had already stopped MAX_STOPS runs
+        self.skipped = 0          # documents passed over because MAX_STOPS runs had failed on them
+        self.no_vocabulary = 0    # documents of a form edgartools detects no section in; terminal, not charged
         self.failed: dict[str, str] = {}      # accession -> the last error, for the run's report
         self.restarts = 0
         #: The current run of consecutive failures: ``(accession, the worker was lost)`` a document.
@@ -564,7 +582,19 @@ class Cutter:
         return self.worker
 
     def cut(self, accession: str, html: Path, form: str) -> Path | None:
-        """Cut one document, or say it could not be. Never raises for this document alone."""
+        """Cut one document, or say it could not be.
+
+        **No single document can stop the run.** Every per-document outcome -- a parse the library refused, a
+        file that cannot be read, a lost worker, a write that failed, a form with no vocabulary -- returns
+        ``None`` and is written down. Only :meth:`_maybe_break` raises, and only when ``break_after`` documents
+        in a row have failed, which is the one thing that really does say the box and not the filings.
+
+        That is the fifth and last shape of one bug. A :class:`CutterUnusable` about a single document charged it
+        no attempt and so was remembered nowhere, and every hourly run stopped at the same document for ever.
+        Four review rounds moved the line between "the filing's fault" and "the box's" instead of removing the
+        reason the line mattered: a run that ends on the first document never finds out whether the *next* one
+        cuts, which is the only evidence that tells a bad file from a bad box.
+        """
         out = answer_path(accession)
         if _is_cut(out):
             self.cached += 1
@@ -575,15 +605,19 @@ class Cutter:
             return out
         counts = read_sidecar(accession)
         spent, stops = counts["tries"], counts["stops"]
+        if counts["no_vocabulary"]:
+            # Terminal and free: edgartools has no sections for this form, which is a fact about the form and not
+            # about this filing, so there is nothing to retry and no attempt to spend. Remembered rather than
+            # measured again, because measuring it costs a parse of the whole document every hour.
+            self.no_vocabulary += 1
+            self.failed[accession] = f"edgartools 6.0.0 detects no section in a {form}"
+            return None
         if spent >= self.max_tries:
             self.failed[accession] = f"gave up after {spent} attempts in earlier runs"
             return None
         if stops >= self.max_stops:
-            # It has stopped this many runs with a reason that was called the box's fault, and no attempt was
-            # ever charged for any of them, so nothing else here would ever pass it over. See
-            # :func:`stops_so_far`: without this the pass could not reach the documents behind it.
             self.skipped += 1
-            self.failed[accession] = f"skipped: it stopped {stops} runs with a failure called the box's fault"
+            self.failed[accession] = f"skipped: {stops} runs failed on it for a reason called the box's fault"
             return None
         try:
             worker = self._worker()         # may raise CutterUnusable: no attempt is charged
@@ -597,16 +631,14 @@ class Cutter:
         try:
             sections = worker.cut(html, form, out)
         except CutterUnusable as e:
-            # The worker said the fault was the box's (writing the answer failed, or reading the document failed
-            # for a reason that was not about the file). The run stops, nothing is charged -- and this document
-            # is remembered as having stopped a run, so it cannot stop every run from now to the end of time.
-            raise self._the_box_stopped_us(accession, stops, str(e)) from e
+            # The worker says the fault was the box's: writing the answer failed, or reading the document failed
+            # for a reason that was not about the file (a permission, a flaky mount, no handles, no memory).
+            return self._box_fault(accession, stops, str(e))
         except DocumentFailed as e:
             if isinstance(e, DocumentUnreadable) and self._corpus_gone():
-                # Not this document's doing: nothing in the corpus can be read. No attempt, and the run stops.
-                raise self._the_box_stopped_us(
-                    accession, stops, f"the cutter could not read {html.name}, and {self.corpus_root} is not a "
-                    "readable directory: the corpus is not mounted where it should be") from e
+                return self._box_fault(accession, stops,
+                                       f"the cutter could not read {html.name}, and {self.corpus_root} is not a "
+                                       "readable directory: the corpus is not mounted where it should be")
             if isinstance(e, WorkerLost):
                 # Dead, hung or out of protocol: closed, not merely dropped, and replaced for the next document.
                 worker.kill()
@@ -621,53 +653,63 @@ class Cutter:
                 _forget_failure(accession)
                 return out
             _cleanup_tmp(out, pid)
-            # The attempt is charged here and nowhere else, which is what keeps the count honest across runs.
-            _note_failure(accession, str(e), tries=spent + 1)
-            self.failed[accession] = str(e)
-            self._in_a_row.append((accession, isinstance(e, WorkerLost)))
-            if len(self._in_a_row) >= self.break_after:
-                self._give_back()
-                stopped, self._in_a_row = list(self._in_a_row), []
-                raise CutterUnusable(
-                    f"{len(stopped)} documents in a row failed to cut, the last with {str(e)!r}. That is most "
-                    "likely the box and not the filings, so the run stops here rather than working through the "
-                    "corpus one failure at a time.")
-            return None
+            return self._document_failed(accession, spent, str(e), lost=isinstance(e, WorkerLost))
         if not sections:
             # **Not** cached as a cut document, which it was until round 4 of the review measured what produces
-            # this answer. edgartools swallows an exception during detection and returns nothing
+            # this answer: edgartools swallows an exception during detection and returns nothing
             # (hybrid_section_detector.py:657, 672, 695; toc_section_detector.py:179), so a document that failed
-            # to parse for any reason inside it arrives here as "ok, no sections" -- and cached, that is a filing
-            # stored for ever as having no sections at all, which is the silent loss this layer exists to avoid.
-            # A filing of a form the library has no vocabulary for answers the same way and is equally worth a
-            # line in the report rather than a cached empty file.
+            # to parse inside the library arrives here as "ok, no sections" -- and cached, that is a filing
+            # stored for ever as having no sections at all.
             _forget_answer(out)
             self.empty += 1
-            _note_failure(accession, "the cutter found no section in it", tries=spent + 1)
-            self.failed[accession] = "the cutter found no section in it"
-            self._in_a_row.append((accession, False))
-            if len(self._in_a_row) >= self.break_after:
-                stopped, self._in_a_row = list(self._in_a_row), []
-                raise CutterUnusable(
-                    f"{len(stopped)} documents in a row were cut into no sections at all. Either this form has "
-                    "no vocabulary in edgartools, or detection is failing inside it; the run stops rather than "
-                    "writing the whole form off one filing at a time.")
-            return None
+            if _base_form(form) not in KNOWN_FORMS:
+                # Not this filing's failure, and not something three more attempts would change: the library has
+                # no vocabulary for the form at all. Round 4 made this a charged failure, which round 5 measured
+                # as 2N/5 stopped runs for N such filings -- and the 40-F and the 10-KT are both in our corpus
+                # (``rcdata/build/fundamentals/filings.py:47``) and both answer this for every filing they have.
+                _note_failure(accession, f"edgartools 6.0.0 detects no section in a {form}", no_vocabulary=1)
+                self.no_vocabulary += 1
+                self.failed[accession] = f"edgartools 6.0.0 detects no section in a {form}"
+                return None
+            return self._document_failed(accession, spent, "the cutter found no section in it", lost=False)
         self._in_a_row.clear()
         _forget_failure(accession)
         self.cut_now += 1
         return out
 
-    def _the_box_stopped_us(self, accession: str, stops: int, error: str) -> CutterUnusable:
-        """Remember that this document brought a run down, give the breaker's attempts back, and hand the caller
-        the :class:`CutterUnusable` to raise. No attempt is charged: the fault was not the filing's."""
+    def _document_failed(self, accession: str, spent: int, error: str, lost: bool) -> None:
+        """This filing's own failure: the attempt is charged here and nowhere else, which is what keeps the count
+        honest across runs."""
+        _note_failure(accession, error, tries=spent + 1)
+        self.failed[accession] = error
+        self._in_a_row.append((accession, "lost" if lost else "parse"))
+        self._maybe_break(error)
+        return None
+
+    def _box_fault(self, accession: str, stops: int, error: str) -> None:
+        """A failure this document is not charged an attempt for, because the reason was not its own.
+
+        **The run carries on.** The next document is the evidence: if it cuts, the box is fine and this one
+        really is the problem, which is what the ``stops`` count remembers; if five in a row fail the same way,
+        :meth:`_maybe_break` stops the run and :meth:`_give_back` returns every stop it counted, so an outage
+        leaves the corpus exactly as it found it. Stopping on the first one could never tell those apart, which
+        is how a 48-hour outage used to skip sixteen documents -- ``hours // 3`` of them -- for good.
+        """
         _note_failure(accession, error, stops=stops + 1)
         self.failed[accession] = error
+        self._in_a_row.append((accession, "box"))
+        self._maybe_break(error)
+        return None
+
+    def _maybe_break(self, error: str) -> None:
+        if len(self._in_a_row) < self.break_after:
+            return
         self._give_back()
-        self._in_a_row = []
-        left = self.max_stops - (stops + 1)
-        return CutterUnusable(f"{error}. The run stops here; this document is skipped after "
-                              f"{left} more run{'' if left == 1 else 's'} like this.")
+        stopped, self._in_a_row = list(self._in_a_row), []
+        raise CutterUnusable(
+            f"{len(stopped)} documents in a row failed to cut, the last with {error!r}. That is most likely the "
+            "box and not the filings, so the run stops here rather than working through the corpus one failure "
+            "at a time.")
 
     def _corpus_gone(self) -> bool:
         """Whether the corpus root is unusable, rather than this one document being unreadable.
@@ -688,38 +730,35 @@ class Cutter:
             return True
 
     def _give_back(self) -> None:
-        """Undo the attempts charged for the failures in this run that were **not** the filings' own doing.
+        """Undo what this run charged the documents in the current run of failures, now that the run itself has
+        been called the box's fault.
 
-        Only the lost workers, and only the first time each: a document the worker answered about -- a parse it
-        refused, a file it could not read -- keeps its attempt and is retired after :data:`MAX_TRIES`, which is
-        what the cap is for, and a document that has already had one attempt back keeps the next one
-        (:func:`gave_back_before`). Both halves are there because each of them, on its own, was a stall with no
-        way out: the first gave every attempt back, so a bad filing never reached the cap, and the second gave a
-        hanging document its attempt back in every run for ever.
+        Three kinds, because they are not owed the same thing:
 
-        Giving every one of them back was a stall with no way out, and it is worth spelling out because a green
-        test suite covered it. Nothing outside this method clears the run of failures except a document this run
-        actually cut: a *cached* document does not, and on a resumed pass almost every good document is cached,
-        so the only documents the worker sees are the bad ones. Five uncapped bad filings anywhere in the corpus
-        therefore met the breaker in every run, got their attempts back, never reached the cap, and every
-        document after the fifth -- including every newly filed one -- was never cut again.
-
-        The trade-off, stated rather than hidden: a library that fails on a missing data file of its own looks
-        like a parse failure, and those documents now spend their attempts. The run still stops after five, so
-        it is an hour's worth of noise and not a corpus, and the sidecar says what each one said.
+        - **box** (a write that failed, a corpus that is not there): the stop goes back, always. Five in a row
+          *is* the box, and a document is only evidence against itself while the documents around it still cut.
+          Keeping them is how a 48-hour outage skipped sixteen documents for good, ``hours // 3`` of them.
+        - **lost** (a hung, dead or out-of-protocol worker): the attempt goes back, **once**, remembered in
+          ``gave_back``. Without that memory the give-back never ended: the document hung again in the next run,
+          with a clean slate, for ever.
+        - **parse** (the library answered, and refused the filing): nothing goes back. It is the filing's own
+          doing whatever else is wrong with the box, and that is what lets the cap retire it.
         """
-        for accession, lost in self._in_a_row:
-            if not lost:
-                continue
-            given = gave_back_before(accession)
-            if given >= 1:
-                # Once, and only once. A document that lost a worker, had the attempt back, and lost one again is
-                # telling us about itself rather than about the box, so this time it keeps the attempt and is
-                # retired like any other bad filing. Without this the give-back never ended: see
-                # :func:`gave_back_before`.
-                continue
-            _note_failure(accession, "attempt given back: the run was stopped by the breaker",
-                          tries=max(tries_so_far(accession) - 1, 0), gave_back=given + 1)
+        for accession, kind in self._in_a_row:
+            if kind == "box":
+                _note_failure(accession, "stop given back: the run was stopped by the breaker",
+                              stops=max(read_sidecar(accession)["stops"] - 1, 0))
+                self._drop_an_empty_note(accession)
+            elif kind == "lost" and gave_back_before(accession) == 0:
+                _note_failure(accession, "attempt given back: the run was stopped by the breaker",
+                              tries=max(tries_so_far(accession) - 1, 0), gave_back=1)
+
+    @staticmethod
+    def _drop_an_empty_note(accession: str) -> None:
+        """A sidecar whose every counter is zero says nothing, and a note on disk that says nothing is one more
+        thing for somebody to find later and wonder about."""
+        if not any(read_sidecar(accession).values()):
+            _forget_failure(accession)
 
     def close(self) -> None:
         if self.worker is not None:

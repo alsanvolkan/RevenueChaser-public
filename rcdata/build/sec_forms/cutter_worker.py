@@ -318,6 +318,13 @@ def _cut(html_path: str, form: str, out: str) -> tuple[int, int]:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
+    if n == 0:
+        # Nothing was detected, so nothing is put under the real name. The client refuses a zero-section answer
+        # anyway, but it had to delete a file the worker had already renamed -- and between the rename and that
+        # delete, a kill or a lost answer line left a file that the next run reads as a cut document with no
+        # sections in it. Not renaming it closes that window instead of cleaning up after it.
+        os.remove(tmp)
+        return 0, 0
     os.replace(tmp, out)
     return n, chars
 
