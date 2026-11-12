@@ -15,7 +15,8 @@ Every share count on the board is on today's share basis (#732): a quarter's sha
 quarter end's split factor and its close multiplied by it, so a split reads as what it is, not as buying. The board
 shows the last ``WINDOW_QUARTERS`` settled quarters (owner, 12 Nov 2026), plus a quarter still arriving after them.
 """
-from RevenueChaser.core.reporting_common import (THEME_CSS, THEME_JS, FILTERS_CSS, FILTERS_JS, PAYLOAD_JS, filters_bar_html,
+from RevenueChaser.core.reporting_common import (FILTERS_CSS, FILTERS_JS, PAYLOAD_JS, THEME_CSS,
+                                                 THEME_JS, THEME_SCALE, THEME_TOKENS, filters_bar_html,
                                                  filters_meta, help_html, notice_html, provider_health_html,
                                                  recorded_sessions_html, watchlist_html, write_board)
 import math
@@ -243,7 +244,7 @@ function sortTable(col, el){
   applyFilters();
 }
 // The figure is drawn on the page's theme (#761): its paper, text, grid and series colours are read from the tokens,
-// so the chart matches the light or dark board around it. Bars take data-1, lines data-2.
+// so the chart matches the light or dark board around it. The series keep the ramp colours the figure carries (#767).
 function themedFig(fig){
   var cs = getComputedStyle(document.documentElement), v = function(n){ return cs.getPropertyValue(n).trim(); };
   var lay = fig.layout || {}, grid = v('--grid'), muted = v('--muted');
@@ -255,11 +256,6 @@ function themedFig(fig){
       tickfont: {color: muted}}); }
   });
   (lay.annotations || []).forEach(function(a){ a.font = Object.assign({}, a.font || {}, {color: muted}); });
-  (fig.data || []).forEach(function(t){
-    var c = t.type === 'bar' ? v('--data-1') : v('--data-2');
-    if(t.type === 'bar'){ t.marker = Object.assign({}, t.marker || {}, {color: c}); }
-    else { t.line = Object.assign({}, t.line || {}, {color: c}); }
-  });
   fig.layout = lay; return fig;
 }
 function openChart(ticker){
@@ -611,24 +607,24 @@ def build_chart_fig(ticker: str, periods: dict, enrichment: dict = None) -> dict
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.10,
                         subplot_titles=(f"{ticker} — total shares & price (today's share basis)", "market value ($) & holders"),
                         specs=[[{"secondary_y": True}], [{"secondary_y": True}]])
-    fig.add_trace(go.Bar(x=labels, y=shares, name="Shares", marker=dict(color="#3fb950", pattern=pattern),
+    fig.add_trace(go.Bar(x=labels, y=shares, name="Shares", marker=dict(color=THEME_SCALE["c1"], pattern=pattern),
                          hovertemplate="%{y:,.0f}"), 1, 1)
     if price:
         fig.add_trace(go.Scatter(x=labels, y=price, name="Price",
-                                 line=dict(color="#58a6ff", width=2)), 1, 1, secondary_y=True)
-    fig.add_trace(go.Bar(x=labels, y=value, name="Value ($)", marker=dict(color="#d2991d", pattern=pattern),
+                                 line=dict(color=THEME_SCALE["c2"], width=2)), 1, 1, secondary_y=True)
+    fig.add_trace(go.Bar(x=labels, y=value, name="Value ($)", marker=dict(color=THEME_SCALE["c3"], pattern=pattern),
                          hovertemplate="%{y:,.0f}"), 2, 1)
     n = len(qs) - len(still_arriving)           # the settled quarters come first: the arriving set is a suffix
     fig.add_trace(go.Scatter(x=labels[:n], y=holders[:n], name="Holders",
-                             line=dict(color="#3fb950", width=2)), 2, 1, secondary_y=True)
+                             line=dict(color=THEME_SCALE["c4"], width=2)), 2, 1, secondary_y=True)
     if still_arriving:
         start = max(n - 1, 0)
         fig.add_trace(go.Scatter(x=labels[start:], y=holders[start:], name="Holders (filed so far)",
-                                 line=dict(color="#3fb950", width=2, dash="dash"), showlegend=False), 2, 1, secondary_y=True)
+                                 line=dict(color=THEME_SCALE["c4"], width=2, dash="dash"), showlegend=False), 2, 1, secondary_y=True)
         names = ", ".join(_qlabel(q) for q in sorted(still_arriving))
         fig.add_annotation(text=f"{ARRIVING_MARK} {names} still arriving: filed so far, not a drop",
                            xref="paper", yref="paper", x=0, y=-0.08, xanchor="left", yanchor="top",
-                           showarrow=False, font=dict(size=12, color="#8b949e"))
+                           showarrow=False, font=dict(size=12, color=THEME_TOKENS["dark"]["muted"]))
     fig.update_layout(template="plotly_dark", height=620, hovermode="x unified",
                       # Anchored at its bottom so a legend that wraps on a phone grows up into the margin, not over the title.
                       legend=dict(orientation="h", y=1.08, yanchor="bottom", x=0),
