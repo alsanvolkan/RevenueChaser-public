@@ -38,7 +38,9 @@ class _Handlers(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
-        if tag == "th" and "data-col" in a:
+        # Since #772 a quarter's two sorts (shares, and that quarter's Δ%) are buttons inside the <th>;
+        # the snapshot columns still sort from the <th> itself. Both carry data-col.
+        if tag in ("th", "button") and "data-col" in a:
             self.heads.append({"onclick": a.get("onclick", ""), "data": a["data-col"]})
 
 
