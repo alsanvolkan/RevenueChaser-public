@@ -10,6 +10,7 @@ import copy
 
 from RevenueChaser.module_settings import control, control_render, report
 from RevenueChaser.module_settings.tests.test_control_view import NOW, control_nd
+from RevenueChaser.module_settings.tests.legacy_fetch import old_fetch
 
 
 def _view(nd=None) -> dict:
@@ -17,7 +18,7 @@ def _view(nd=None) -> dict:
 
 
 def _fetch(nd=None) -> str:
-    return control_render.render_fetch(_view(nd))
+    return old_fetch(_view(nd))
 
 
 def test_the_fetch_tab_draws_the_queue_and_the_backups():

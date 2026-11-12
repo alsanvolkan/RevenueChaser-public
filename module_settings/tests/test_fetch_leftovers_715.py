@@ -53,6 +53,7 @@ def test_only_a_dataset_with_a_fill_or_a_backfill_gets_a_box():
 def test_a_view_that_could_not_be_built_is_one_line():
     html = control_render.render_fetch({"error": "ops.sqlite is locked"})
     assert "Could not read" in html and "ops.sqlite is locked" in html
+    assert "Data/Health · Universe and fills" in html, "the line names the part that is left, not the old tab"
 
 
 def test_the_reference_parts_and_the_forms_sit_folded_under_database():

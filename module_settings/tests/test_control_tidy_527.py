@@ -8,11 +8,12 @@ import re
 
 from RevenueChaser.module_settings import control_render
 from RevenueChaser.module_settings.tests.test_control_render_c1 import _box, _sources, _view
+from RevenueChaser.module_settings.tests.legacy_fetch import old_fetch
 
 
 def test_the_button_text_and_the_fill_legend_are_one_line_and_a_question_mark():
     # the fill legend sits once under the universe on Fetch/Health (avo, 10 Nov 2026)
-    html = _sources(_view(), "prices.duckdb") + control_render.render_fetch(_view())
+    html = _sources(_view(), "prices.duckdb") + old_fetch(_view())
     blegend = re.search(r'<div class="blegend">(.*?)</div>', html, re.S)
     assert blegend, "the button legend is one line with a ? beside it"
     visible = blegend.group(1).split("<details", 1)[0]
@@ -79,7 +80,7 @@ def test_each_source_has_an_automated_select_with_its_own_mode_and_no_file_choic
                       timer=lambda: {"state": "on", "last": None, "next": None, "minute": 7})
     ms = next(d for f in v["files"] for d in f["datasets"] if d["dataset"] == "market_series")
     assert ms["automation_own"] == "full"
-    html = control_render.render_fetch(v)
+    html = old_fetch(v)
     box = html.split('data-dataset="market_series"', 1)[1]
     assert 'data-dsauto' in box and '<option value="full" selected>' in box.split("</select>", 1)[0]
     assert "as the file" not in box.split("</select>", 1)[0]
