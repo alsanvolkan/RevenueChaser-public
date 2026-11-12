@@ -14,7 +14,9 @@ SERVING_SCHEMA_VERSION = {"market": 4, "spine": 6, "ownership": 2}
 #           10 Nov 2026), and the builder's ``ibkr/news`` is gone. ``build/__init__.py`` retires the table.
 # ownership 2: ``sec13f_ticker_period`` gains ``started_filers``, ``started_shares`` and ``stopped_shares``, its flows
 #              and new/exited holders count only the filers that reported both quarters, and ``sec13f_filer_breaks``
-#              lists the filers that started or stopped reporting (#732, owner's decision of 12 Nov 2026).
+#              lists the filers that started or stopped reporting; ``sec13f_data_sets`` (the SEC's 13F data sets
+#              as listed, ``sec/13f_sets_listed``) and ``closed`` on ``sec13f_periods`` and ``sec13f_ticker_period``:
+#              a quarter closes when the set holding its deadline is published (#732, owner's decisions of 12 Nov 2026).
 # spine 2: ``fund``, the SEC fund file's share classes and the ETF rule (``build/spine/sec_tickers_mf.py``).
 # spine 3: ``etf_holdings``, the rotation board's ETFs read whole (``build/spine/etf_holdings.py``).
 # spine 4: ``etf``, the ETF universe from Alpha Vantage and N-CEN (``build/spine/etf.py``, #346).

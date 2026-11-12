@@ -14,7 +14,7 @@ import pytest
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base
-from RevenueChaser.rcdata.build.ownership import common, finra, ibkr, sec, sec13f, serve
+from RevenueChaser.rcdata.build.ownership import common, finra, ibkr, sec, sec13f, sec13f_listing, serve
 from RevenueChaser.rcdata.build.spine import openfigi_map, wrds
 
 from . import ownership_fixture as ox
@@ -521,6 +521,51 @@ def test_a_quarter_still_arriving_lists_no_breaks(monkeypatch, http_mock):
     _thirteen_f(mode="backfill", **{"from": "2026-08-14", "to": "2026-08-14"})
     _serve(day="2026-10-28")
     assert _served("SELECT count(*) FROM sec13f_filer_breaks") == [(0,)]
+
+
+# ── A quarter closes on the SEC's data set (#732) ─────────────────────────────────────────────────────────────
+
+SUMMER_SET, SPRING_SET = "01jun2026-31aug2026_form13f.zip", "01mar2026-31may2026_form13f.zip"
+
+
+def _listed(name: str) -> dict:
+    first, last = sec13f_listing.sec13f_sets.window(name)
+    return {"name": name, "first_day": first, "last_day": last}
+
+
+def test_the_page_is_awaited_from_a_passed_deadline_until_a_set_holds_it():
+    # 30 Jun's deadline (14 Aug) has passed on 28 Oct, 30 Sep's (16 Nov) has not.
+    assert sec13f_listing.awaited(date(2026, 10, 28), []) == date(2026, 8, 14)
+    assert sec13f_listing.awaited(date(2026, 10, 28), [_listed(SPRING_SET)]) == date(2026, 8, 14)
+    assert sec13f_listing.awaited(date(2026, 10, 28), [_listed(SUMMER_SET)]) is None
+    # On 20 Nov the September quarter's deadline has passed: its set (Sep-Nov) is awaited until listed.
+    assert sec13f_listing.awaited(date(2026, 11, 20), [_listed(SUMMER_SET)]) == date(2026, 11, 16)
+    assert sec13f_listing.awaited(date(2026, 11, 20), [_listed(SUMMER_SET),
+                                                      _listed("01sep2026-30nov2026_form13f.zip")]) is None
+
+
+def test_a_quarter_closes_when_the_sec_lists_the_data_set_that_holds_its_deadline(store, built, monkeypatch):
+    built.routes.insert(0, (ox.SETS_PAGE_PATH, ox.sets_page([f"/files/structureddata/data/form-13f-data-sets/{n}"
+                                                             for n in (SUMMER_SET, SPRING_SET)]), 200, {}))
+    built.requests.clear()
+    request = {"dataset": sec13f_listing.NAME, "requested_by": "cli", "params": {"as_of": "2026-10-28"}}
+    assert base.run_request(request)["result"] == "changed"
+    assert len(built.calls(ox.SETS_PAGE_PATH)) == 1
+    base.run_request(request)                                    # the set is listed: nothing awaited, no call
+    assert len(built.calls(ox.SETS_PAGE_PATH)) == 1
+    assert not built.calls("_form13f.zip")                       # listed, never downloaded
+    _serve()
+    assert _served("SELECT period, data_set, closed FROM sec13f_periods WHERE period >= ? ORDER BY period", Q2) == [
+        (Q2, SUMMER_SET, True), (Q3, None, False)]
+    # Past 30 Sep's deadline the quarter is still not complete: its set is not published yet.
+    monkeypatch.setattr(read.calendar, "today_ny", lambda: date(2026, 11, 20))
+    assert [(r["period"], r["complete"]) for r in read.holders_13f(["msft"])][-2:] == [(Q2, True), (Q3, False)]
+
+
+def test_with_no_listing_read_a_quarter_falls_back_to_its_deadline(store, monkeypatch):
+    assert _served("SELECT DISTINCT closed FROM sec13f_ticker_period") == [(None,)]
+    monkeypatch.setattr(read.calendar, "today_ny", lambda: date(2026, 11, 20))
+    assert [r["complete"] for r in read.holders_13f(["msft"])][-1] is True
 
 
 # ── The short_interest bridge ────────────────────────────────────────────────────────────────────────────────

@@ -709,7 +709,9 @@ def _where(tickers: list[str] | None, day_col: str, start, end, extra: str = "")
 
 
 def _completed(rows: list[dict]) -> list[dict]:
-    """Mark each period ``complete`` when its filing deadline has passed in New York.
+    """Mark each period ``complete``: once the SEC has published the 13F data set that holds its filing deadline
+    (``closed``, #732, owner 12 Nov 2026: a quarter closes on the SEC's zip), or, where the store has not read the
+    SEC's data-set page yet (``closed`` NULL or absent), when its filing deadline has passed in New York.
 
     A period with **no** deadline counts as complete, and says so once: the flag exists so a reader can hold back
     a quarter that is still arriving, and reading "unknown" as "arriving" would hold back a whole board over
@@ -717,6 +719,9 @@ def _completed(rows: list[dict]) -> list[dict]:
     today = calendar.today_ny()
     unknown = 0
     for r in rows:
+        if r.get("closed") is not None:
+            r["complete"] = bool(r["closed"])
+            continue
         deadline = r.get("filing_deadline")
         r["complete"] = deadline is None or deadline < today
         unknown += deadline is None

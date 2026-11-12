@@ -23,5 +23,5 @@ def test_the_ownership_datasets_build_in_order_and_start_by_hand():
     from RevenueChaser.rcdata.build import DATASETS
     names = [n for n, d in DATASETS.items() if d.kind == "ownership"]
     assert names == ["finra/short_interest", "regsho/threshold", "ibkr/shortable", "sec/ftd", "sec/13f",
-                     "sec/form4", "sec/13dg", "ownership/serve"]
+                     "sec/13f_sets_listed", "sec/form4", "sec/13dg", "ownership/serve"]
     assert all(DATASETS[n].starts_by_hand for n in names)

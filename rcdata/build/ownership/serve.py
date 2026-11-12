@@ -59,7 +59,10 @@
   ticker and settled quarter, is a row of ``sec13f_filer_breaks`` (kind ``started`` or ``stopped``, its shares), so
   the board can list where the series broke.
 - *Completeness*: ``filing_deadline`` is the period end plus 45 days, rolled past weekends and Washington's Birthday
-  (``filing_deadline``); a quarter is complete once its deadline has passed. ``filed_through`` is its newest filing.
+  (``filing_deadline``). ``filed_through`` is its newest filing. A quarter is ``closed`` once the SEC has published
+  the 13F data set whose filing window holds its deadline (``sec/13f_sets_listed``; ``sec13f_periods.data_set`` and
+  ``data_set_seen`` name it and the day it was first listed; owner, 12 Nov 2026, #732). Before the store has read the
+  SEC's data-set page even once, ``closed`` is NULL and a reader falls back to the deadline.
 
 **Tables**: ``sec13f_cusip_map`` (CUSIP and period: its ticker and how, its long-equity value and holders),
 ``sec13f_filer_period`` (filer and period: its long-equity names and value, ``value_factor``), ``sec13f_ticker_period``
@@ -92,7 +95,7 @@ from ....core import calendar
 from ... import ops, serving
 from .. import base, dirty
 from ..spine import openfigi_map, wrds
-from . import KIND, common, sec13f
+from . import KIND, common, sec13f, sec13f_listing
 
 NAME = "ownership/serve"
 SPINE = "spine"
@@ -119,11 +122,11 @@ TICKER = [("ticker", "TEXT"), ("period", "DATE"), ("shares", "DOUBLE"), ("value"
           ("sell_flow", "DOUBLE"), ("started_filers", "INTEGER"), ("started_shares", "DOUBLE"),
           ("stopped_shares", "DOUBLE"), ("breadth", "DOUBLE"), ("breadth_chg", "DOUBLE"),
           ("prev_period", "DATE"), ("filers", "INTEGER"), ("cusips", "INTEGER"), ("filing_deadline", "DATE"),
-          ("filed_through", "DATE"), ("source", "TEXT")]
+          ("filed_through", "DATE"), ("closed", "BOOLEAN"), ("source", "TEXT")]
 PERIODS = [("period", "DATE"), ("filers", "INTEGER"), ("filings_active", "INTEGER"), ("value_total", "DOUBLE"),
            ("value_mapped", "DOUBLE"), ("coverage", "DOUBLE"), ("unmapped_cusips", "INTEGER"),
            ("refused_value", "DOUBLE"), ("rescaled_filers", "INTEGER"), ("filing_deadline", "DATE"),
-           ("filed_through", "DATE")]
+           ("filed_through", "DATE"), ("data_set", "TEXT"), ("data_set_seen", "DATE"), ("closed", "BOOLEAN")]
 BREAKS = [("ticker", "TEXT"), ("period", "DATE"), ("cik", "TEXT"), ("filer_name", "TEXT"), ("kind", "TEXT"),
           ("shares", "DOUBLE")]
 STARTED, STOPPED = "started", "stopped"
@@ -225,6 +228,24 @@ def active_accessions(rows) -> list[str]:
     return out + active
 
 
+def _closed(con: duckdb.DuckDBPyConnection) -> None:
+    """``_closed(period, data_set, data_set_seen, closed)`` (TEMP) for every period of ``_deadline``: the SEC data set
+    whose filing window holds the period's deadline, the day it was first listed, and whether the period is closed
+    (#732). With no listing read yet (``sec13f_data_sets`` absent or empty) ``closed`` is NULL: unknown, not open."""
+    have = {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables() "
+                                      "WHERE database_name = current_database()").fetchall()}
+    _empty(con, "_sets", sec13f_listing.SCHEMA)
+    if sec13f_listing.TABLE in have:
+        con.execute(f"INSERT INTO _sets SELECT * FROM {sec13f_listing.TABLE}")
+    known, oldest = con.execute("SELECT count(*) > 0, min(first_day) FROM _sets").fetchone()
+    # A deadline before the oldest set the page lists is closed by age: the SEC publishes no set that far back.
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE _closed AS
+        SELECT d.period, min(s.name) AS data_set, min(s.first_seen) AS data_set_seen,
+               CASE WHEN {bool(known)} THEN count(s.name) > 0 OR d.deadline < ? END AS closed
+        FROM _deadline d LEFT JOIN _sets s ON d.deadline BETWEEN s.first_day AND s.last_day
+        GROUP BY d.period, d.deadline""", [oldest])
+
+
 def _empty(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str, str]]) -> None:
     common.temp_rows(con, name, schema, [])
 
@@ -305,7 +326,7 @@ def _figi(con: duckdb.DuckDBPyConnection) -> None:
                     f"AND ticker IS NOT NULL")
 
 
-TEMPS = ("_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
+TEMPS = ("_closed", "_sets", "_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
          "_held",
          "_cp", "_m_hist", "_m_cur", "_m_owner", "_m_figi", "_filers", "_filed", "_deadline", "_tot", "_pos", "_shape",
          "_pairs", "_flow")
@@ -559,6 +580,7 @@ class OwnershipServe:
                           .fetchall()})
         common.temp_rows(con, "_deadline", [("period", "DATE"), ("deadline", "DATE")],
                          [{"period": p, "deadline": filing_deadline(p)} for p in periods])
+        _closed(con)
         # One position per ticker, period and filer (a ticker's CUSIPs summed).
         _by_period(con, held, "_pos", """
             SELECT m.ticker, h.period, h.cik, sum(h.shares)
@@ -627,7 +649,7 @@ class OwnershipServe:
                    CASE WHEN pf.filers IS NOT NULL THEN round(round(t.holders * 100.0 / f.filers, 4)
                         - round(coalesce(pt.holders, 0) * 100.0 / pf.filers, 4), 4) END AS breadth_chg,
                    t.prev_period, f.filers, t.cusips, d.deadline AS filing_deadline, fd.filed_through,
-                   '{NAME}' AS source
+                   cl.closed, '{NAME}' AS source
             FROM _tot t
             JOIN _shape s ON s.ticker = t.ticker AND s.period = t.period
             JOIN _filers f ON f.period = t.period
@@ -636,6 +658,7 @@ class OwnershipServe:
             LEFT JOIN _flow fl ON fl.ticker = t.ticker AND fl.period = t.period
             LEFT JOIN _deadline d ON d.period = t.period
             LEFT JOIN _filed fd ON fd.period = t.period
+            LEFT JOIN _closed cl ON cl.period = t.period
             ORDER BY t.ticker, t.period""")
 
     @staticmethod
@@ -645,7 +668,7 @@ class OwnershipServe:
                    CASE WHEN v.value_total > 0 THEN round(coalesce(v.value_mapped, 0) / v.value_total, 4)
                    END AS coverage,
                    v.unmapped_cusips, v.refused_value, r.rescaled_filers, d.deadline AS filing_deadline,
-                   fd.filed_through
+                   fd.filed_through, cl.data_set, cl.data_set_seen, cl.closed
             FROM _filers f
             LEFT JOIN (SELECT period, count(DISTINCT accession) AS filings_active FROM _long GROUP BY ALL) a
                    ON a.period = f.period
@@ -658,6 +681,7 @@ class OwnershipServe:
                        FROM sec13f_filer_period GROUP BY ALL) r ON r.period = f.period
             LEFT JOIN _deadline d ON d.period = f.period
             LEFT JOIN _filed fd ON fd.period = f.period
+            LEFT JOIN _closed cl ON cl.period = f.period
             ORDER BY f.period""")
 
     @staticmethod

@@ -61,6 +61,8 @@ DATASETS: dict[str, DatasetCard] = {
     'regsho/threshold': DatasetCard('Reg SHO threshold lists', step=10, role='first'),
     'sec/13dg': DatasetCard('5% owners (Schedules 13D and 13G)', step=10, role='first'),
     'sec/13f': DatasetCard('13F holdings (SEC data sets, then forms)', step=10, role='first'),
+    'sec/13f_sets_listed': DatasetCard('13F data sets the SEC has published (closes a quarter)', coverage_target=None,
+                                       step=10, role='first'),
     'sec/company_tickers_exchange': DatasetCard('SEC ticker and exchange file', step=1, role='first'),
     'sec/company_tickers_mf': DatasetCard('SEC fund file (the ETF universe)', step=1, role='first'),
     'sec/ncen': DatasetCard('Form N-CEN data sets: fund type, index, assets (SEC)', step=1, role='fills'),
