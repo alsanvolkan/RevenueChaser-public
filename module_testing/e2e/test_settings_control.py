@@ -19,8 +19,9 @@ def _open(browser, dashboard, scheme="dark"):
     browser.emulate(*PHONE, scheme=scheme)
     browser.open(f"{dashboard.url}/view/{_APP}", ready="!!document.getElementById('ctl') && !!window.CTL")
     browser.eval(f"document.documentElement.setAttribute('data-theme', {scheme!r})")
-    # A first visit opens on Watch lists (avo, 12 Nov 2026); these tests are about the board on Database.
-    assert browser.eval("document.getElementById('panel-watch').hidden") is False, "Watch lists is the tab on open"
+    # A first visit opens on Database (the Watch lists tab left for its own board, 13 Nov 2026).
+    assert browser.eval("document.getElementById('panel-data').hidden") is False, "Database is the tab on open"
+    assert browser.eval("!document.getElementById('panel-watch')")
     browser.eval("document.getElementById('tab-data').click()")
     browser.settle()
 

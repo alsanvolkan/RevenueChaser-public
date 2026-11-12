@@ -310,7 +310,11 @@ each old table the new data replaces, from `read_log` over 14 days, with the reg
 and the two watch-list cards (PR 4, below). A "verified running" line on top: the builder's last run
 (`job_runs2`), the last swap per kind and the `ops_schema` version; under it the watch-list counts.
 
-**The two watch-list cards (PR 4, D2).** The option list (what the options build covers besides SPX) and the stock
+**The two watch-list cards (PR 4, D2) left this page on 13 Nov 2026** (avo: "Watchlist panosuna bunlari ekle ...
+ve buradan yine de kaldir"). The two lists stand on the Watch lists board under "Read by the jobs", named by what
+they are fetched for (`module_watchlists/board.py` `JOB_LISTS`); the board reads and writes the same `ops.sqlite`
+rows, so the jobs read what the board shows. What follows describes the cards as they were, for the history.
+The option list (what the options build covers besides SPX) and the stock
 list (what LEAPS pins and scans and Earnings treats as watched), read through `rcdata.read.watchlists()`. Each name is
 a stacked row: ticker, added on (UTC), by (the board whose button added it), the note when one is set, and a
 **Remove** that posts `POST /api/watchlist/<list>/remove/<ticker>` (it never adds, so a stale page cannot put back a

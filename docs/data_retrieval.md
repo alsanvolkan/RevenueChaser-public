@@ -280,8 +280,10 @@ with its history row. No provider call, no DuckDB file.
 
 #### The Watch lists board's own routes (#786)
 
-These are avo's named lists (`boards/watchlists.duckdb`, `module_watchlists/store.py`), not the two shared
-`option` / `stock` lists above. Every write is store-only — one list, one section or one symbol — and answers
+These are avo's named lists (`boards/watchlists.duckdb`, `module_watchlists/store.py`). The two shared
+`option` / `stock` lists above are on the same board since 13 Nov 2026 as the list ids `jobs.option` and
+`jobs.stock`: of these routes only `symbol/add`, `symbol/remove` and `columns/<tab>` answer for them, and the two
+writes go to `ops.sqlite` (`ops.watch_add` / `ops.watch_remove`), not to the store. Every write is store-only — one list, one section or one symbol — and answers
 `{ok, payload}` with the list's whole payload again, so the page redraws from what was stored. Each needs
 `X-RC-Panel` like every non-GET.
 

@@ -2097,7 +2097,7 @@ def api_watchlist_kind_toggle(kind: str, ticker: str):
 
 @app.route("/api/watchlist/<kind>/add/<ticker>", methods=["POST"])
 def api_watchlist_add(kind: str, ticker: str):
-    """Put ``ticker`` on one watch list (the Add box on Settings' watch-list cards): ``{ok, list, ticker, added}``, where ``added`` is
+    """Put ``ticker`` on one watch list (the Add box Settings' watch-list cards had until 13 Nov 2026): ``{ok, list, ticker, added}``, where ``added`` is
     false when it was there already (nothing is written then). Never removes, so an Add typed for a name someone else
     just added cannot take it off, as the toggle would. 404 / 400 as the toggle."""
     from RevenueChaser.rcdata import ops
@@ -2129,7 +2129,7 @@ def api_activity_boards():
 
 @app.route("/api/watchlist/<kind>/remove/<ticker>", methods=["POST"])
 def api_watchlist_remove(kind: str, ticker: str):
-    """Take ``ticker`` off one watch list (the Settings cards' Remove): ``{ok, list, ticker, removed}``, where
+    """Take ``ticker`` off one watch list (the Remove Settings' watch-list cards had until 13 Nov 2026): ``{ok, list, ticker, removed}``, where
     ``removed`` is false when it was not there (nothing is written then). Never adds, so a Remove pressed on a stale
     page cannot put back a name removed elsewhere. 404 / 400 / 403 as the toggle."""
     from RevenueChaser.rcdata import ops

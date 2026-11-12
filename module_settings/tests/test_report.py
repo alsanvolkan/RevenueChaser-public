@@ -1975,10 +1975,10 @@ def test_the_old_settings_fold_and_its_sections_are_gone():
 
 
 def test_the_tabs_map_data_and_health_and_old_choices_land_on_them():
-    assert report.SETTINGS_TABS["tabs"] == {"watch": "panel-watch", "data": "panel-data", "health": "panel-health",
-                                            "logs": "panel-logs"}
-    assert report.SETTINGS_TABS["first"] == "watch" and "show(start || FIRST, false)" in report.TABS_JS
-    assert report.SETTINGS_TABS["aliases"] == {"fetch": "data", "needs": "data", "live": "health"}
+    assert report.SETTINGS_TABS["tabs"] == {"data": "panel-data", "health": "panel-health", "logs": "panel-logs"}
+    assert report.SETTINGS_TABS["first"] == "data" and "show(start || FIRST, false)" in report.TABS_JS
+    # a viewer whose remembered tab is the Watch lists one (12 Nov 2026 only) lands on Database
+    assert report.SETTINGS_TABS["aliases"] == {"fetch": "data", "needs": "data", "live": "health", "watch": "data"}
     assert "CFG.aliases[name]" in report.TABS_JS
 
 
@@ -1989,9 +1989,10 @@ def test_the_lookup_keeps_its_own_search_box():
     assert "Ticker lookup" in block
 
 
-def test_the_parts_that_live_nowhere_else_sit_under_database_and_the_watch_lists_in_their_own_first_tab():
+def test_the_parts_that_live_nowhere_else_sit_under_database_and_the_watch_lists_are_not_on_this_page():
     """avo, 6 Nov 2026 ("A"): the board settings, Automations and the IBKR cards move to Health. The watch lists went
-    with them until 12 Nov 2026 ("ayri bir sekmede yasamali, ilk sirada olsun"): they are a tab of their own now."""
+    with them, had a tab of their own for a day, and left for the Watch lists board on 13 Nov 2026 ("Watchlist
+    panosuna bunlari ekle ... ve buradan yine de kaldir")."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), automations=_autos(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/",
@@ -2003,14 +2004,13 @@ def test_the_parts_that_live_nowhere_else_sit_under_database_and_the_watch_lists
     at = [data.index(m) for m in marks]
     assert at == sorted(at), marks
     assert 'id="auto-body"' not in health and 'href="https://gateway.example/"' in health
-    watch = _panel(html, "panel-watch")
-    assert watch.index('id="nd-watch-option"') < watch.index('id="nd-watch-stock"')
-    assert 'id="nd-watch-option"' not in health and html.count('id="nd-watch-option"') == 1
-    assert html.index('id="panel-watch"') < html.index('id="panel-data"')
-    assert re.search(r'<div id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>', html)
-    assert not re.search(r'<div id="panel-watch"[^>]*hidden', html), "Watch lists is the tab the page is drawn on"
+    for gone in ('id="panel-watch"', 'id="tab-watch"', 'id="nd-watch-option"', 'id="nd-watch-stock"',
+                 "function ndWatchRemove", "function ndWatchAdd"):
+        assert gone not in html, gone
+    assert re.search(r'<div id="panel-data" role="tabpanel" aria-labelledby="tab-data">', html), \
+        "Database is the tab the page is drawn on"
     assert html.count('<details class="help"><summary>What am I looking at?</summary>') == 1
-    assert "function settingsSave" in html and "function autoInit" in html and "function ndWatchRemove" in html
+    assert "function settingsSave" in html and "function autoInit" in html
 
 
 def test_the_page_draws_in_the_shared_theme_and_has_no_palette_of_its_own():

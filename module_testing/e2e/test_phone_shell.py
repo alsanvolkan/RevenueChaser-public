@@ -279,8 +279,8 @@ def test_the_summaries_keep_their_arrow_on_a_phone(dashboard, browser):
     open/closed arrow on a phone or a touch screen. Every ``<details>`` now lives inside the board
     document; the shell itself carries none since the open-issues group was removed."""
     _open(browser, dashboard, PHONE, "dark", "module_settings")
-    # The help block lives on the Database tab, and Settings opens on Watch lists (#715): a hidden
-    # panel measures 0 px, so show the tab that holds it first.
+    # The help block lives on the Database tab, and a remembered choice may be another tab (#715): a
+    # hidden panel measures 0 px, so show the tab that holds it first.
     browser.eval("document.querySelector('.frame.on').contentDocument.getElementById('tab-data').click()")
     board = browser.eval("Array.prototype.map.call(document.querySelector('.frame.on').contentDocument"
                          ".querySelectorAll('details.help > summary'), function(s){"

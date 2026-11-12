@@ -22,7 +22,7 @@ def _fetch() -> str:
 
 def _panel(page: str, name: str) -> str:
     start = page.index(f'<div id="panel-{name}"')
-    nxt = [page.find(f'<div id="panel-{n}"', start + 1) for n in ("watch", "data", "health", "logs")]
+    nxt = [page.find(f'<div id="panel-{n}"', start + 1) for n in ("data", "health", "logs")]
     ends = [i for i in nxt if i > start] + [page.index("<script>", start)]
     return page[start:min(ends)]
 

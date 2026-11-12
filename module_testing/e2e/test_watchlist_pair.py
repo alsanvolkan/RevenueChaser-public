@@ -1,9 +1,9 @@
-"""PR 4: the watch-list pair, clicked in a real browser on a real board (SEC 13F), and the Settings cards after it.
+"""PR 4: the watch-list pair, clicked in a real browser on a real board (SEC 13F), and the Watch lists board after it.
 
 The name is pinned through the old route (the stock list now), one 13F Fetch renders its row from the seeded
 ownership store, and the page marks the pair from the live lists. A click on **Opt** puts it on the option list
-with ``sec_13f`` as ``added_by``; a click on **Stk** unpins it. Settings then lists it on the option card, under
-the names the next options build takes. On a 390 px phone each button is at least 44 x 44.
+with ``sec_13f`` as ``added_by``; a click on **Stk** unpins it. The Watch lists board then shows it on the option
+list the jobs read. On a 390 px phone each button is at least 44 x 44.
 
 It was pinned on LEAPS until 12 Nov 2026; that board serves no rows (#730), so the same clicks are made on
 13F, which renders the same shared pair.
@@ -74,7 +74,10 @@ def test_the_pair_on_a_board_puts_a_name_on_each_list_and_settings_shows_it(
     assert _history(dashboard, "option") == [("NVDA", "add", "sec_13f")]
     assert _history(dashboard, "stock") == [("NVDA", "add", "sec_13f"), ("NVDA", "remove", "sec_13f")]
 
-    html = dashboard.view("module_settings", refresh=True).text
-    card = html[html.index('id="nd-watch-option"'):]
-    card = card[:card.index("data-nd-msg></div></div>")]
-    assert "<b>NVDA</b>" in card and "by sec_13f" in card and "SPX and 1 name from this list: NVDA" in card
+    # The list the click wrote is the one the Watch lists board shows under "Read by the jobs" (13 Nov 2026; it was
+    # a card on Settings until then).
+    board = dashboard.client.get("/view/module_watchlists?list=jobs.option").text
+    data = board[board.index("var WL_DATA = "):]
+    assert '"id": "jobs.option"' in data or '"id":"jobs.option"' in data
+    assert '"sym": "NVDA"' in data or '"sym":"NVDA"' in data
+    assert 'id="nd-watch-option"' not in dashboard.view("module_settings", refresh=True).text
