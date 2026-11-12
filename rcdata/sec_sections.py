@@ -699,97 +699,171 @@ def strip_html(html: str) -> str:
 
 # ── ours-2: the business section of an Annual Information Form (40-F), #756 ─────────────────────────────────
 #
-# The heading patterns below are **adapted** from edgartools, not imported, which is the owner's decision of
-# 12 Nov 2026 ("Evet bu sekilde uygula") for 40-F: 10-K and 20-F keep the pinned import, and here the six
-# start titles and nine stop titles are written out in our own code so that this rule's answers are ours to
-# change and ours to test.
+# The heading titles below are **adapted** from edgartools, not imported, which is the owner's decision of
+# 12 Nov 2026 ("Evet bu sekilde uygula") for 40-F: 10-K and 20-F keep the pinned import, and here the start
+# and stop titles are written out in our own code so that this rule's answers are ours to change and ours to
+# test. The patterns around them -- the line anchor, the number in front, the distance a stop must keep -- are
+# ours and are not in the source.
 #
 #     Source:    edgar/company_reports/forty_f.py, lists ``_BUSINESS_STARTS`` (:244), ``_BUSINESS_ENDS``
 #                (:253) and ``_SECTION_PATTERNS`` (:266)
 #     Project:   edgartools -- https://github.com/dgunning/edgartools
 #     Version:   6.0.0 (479d350), read 12 Nov 2026
-#     Licence:   MIT -- Copyright (c) 2022-present Dwight Gunning (the upstream LICENSE file names
-#                the author's address; scripts/private_check.py refuses an address in this tree, and
-#                MIT asks for the notice, not for it)
+#     Licence:   MIT, from the upstream LICENSE.txt, reproduced whole below apart from the author's e-mail
+#                address, which ``scripts/private_check.py`` refuses in this tree:
+#
+#     Copyright (c) 2022-present Dwight Gunning
+#
 #     Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
 #     associated documentation files (the "Software"), to deal in the Software without restriction, including
 #     without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 #     copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
-#     following conditions: the above copyright notice and this permission notice shall be included in all
-#     copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-#     ANY KIND, EXPRESS OR IMPLIED.
+#     following conditions:
+#
+#     The above copyright notice and this permission notice shall be included in all copies or substantial
+#     portions of the Software.
+#
+#     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+#     LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+#     NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+#     WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+#     SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #
 # **What is not adapted is the end of the section**, and that is the measurement's own conclusion
 # (``notes/revenuechaser/notes/2026-11-12_1200_sec-40f-business-section.md``): where both cutters fire,
 # edgartools' section is shorter every time, median four times shorter, because it ends at the next detected
 # heading of any kind -- and six of its eighty-six cuts are under 1,000 characters, BTG's being 338 where
-# ours takes the whole document. So the stops are a list of real section titles, and a pair whose body is
-# under :data:`_AIF_MIN` is **rejected and the next start tried**, rather than returned short.
+# ours takes the whole document. A 338-character answer is a heading plus one paragraph: the next heading was
+# the *subheading* of the block, not its end. So a stop here has to stand at least :data:`_AIF_MIN` past the
+# body's start, which is ``ours-1``'s own rule, and a start whose furthest reachable body is still shorter
+# than that is not the business block at all and the next start is tried.
 
-#: The six titles the NI 51-102 business block is written under. Line-anchored, because a title that shares
-#: its line with prose is a sentence about the business and not the heading of it, and allowed a number or an
-#: item number in front ("6. DESCRIPTION OF THE BUSINESS") and a colon, full stop or dash behind.
+#: The titles the NI 51-102 business block is written under. Line-anchored, because a title that shares its
+#: line with prose is a sentence about the business and not the heading of it; the gaps inside a title are
+#: :data:`_H_SP` and never ``\s``, so a title cannot reach over the line ending and swallow the page number or
+#: the next heading (measured: ``BUSINESS OF THE COMPANY\n12`` took the page number as a title word).
 #:
 #: The one tail allowed after the title is "AND OPERATIONS", because PBA's heading is "DESCRIPTION OF PEMBINA'S
 #: BUSINESS AND OPERATIONS" and the line anchor would otherwise lose it -- edgartools, searching anywhere in the
 #: text, needs no such clause. Any other tail leaves the line a sentence, which is the point of the anchor.
-_AIF_NUMBER = r"(?:(?:item[^\S\n]+)?\d{1,2}(?:\.\d{1,2})?[.)]?[^\S\n]+)?"
+_H_SP = r"[^\S\n]+"
+#: What may stand in front of a title on its line: a number of up to three levels, with or without "item" in
+#: front of it, and the separator the filer chose. Measured shapes: "6. DESCRIPTION OF THE BUSINESS",
+#: "ITEM 4: RISK FACTORS" (EXK's own), "4 - BUSINESS OVERVIEW", "4.1.1 BUSINESS OVERVIEW". A roman numeral
+#: ("IV.") is **not** read: it was not in the measurement and a shape nobody counted is not a rule here.
+_AIF_NUMBER = (rf"(?:(?:item{_H_SP})?\d{{1,2}}(?:\.\d{{1,2}}){{0,2}}[.)]?"
+               rf"(?:[^\S\n]*[:{_DASH}])?{_H_SP})?")
+#: What may stand behind it: a colon, a full stop or a dash, and trailing blanks. One star of its own, because
+#: two adjacent ``[^\S\n]*`` make a failing line quadratic (measured: 0.56 s on a line of 8,000 spaces).
+_AIF_TAIL = rf"[^\S\n]*(?:[:.{_DASH}][^\S\n]*)?$"
 _AIF_TITLES_2 = (
-    r"(?:narrative\s+)?description\s+of\s+(?:the\s+)?(?:\w[\w'’]*\s+)?business(?:es)?",
-    r"business\s+of\s+(?:the\s+)?[\w][\w'’]*(?:\s+[\w][\w'’]*){0,3}",
+    rf"(?:narrative{_H_SP})?description{_H_SP}of{_H_SP}(?:the{_H_SP})?(?:\w[\w'’]*{_H_SP})?business(?:es)?",
+    rf"business{_H_SP}of{_H_SP}(?:the{_H_SP})?[\w][\w'’]*(?:{_H_SP}[\w][\w'’]*){{0,3}}",
     # Already matched by the first pattern (its "the" and its possessive word are both optional), so removing
-    # it changes no answer. Kept so that the six read one-to-one against the list named above.
-    r"description\s+of\s+business",
-    r"business\s+operations",
-    r"business\s+overview",
-    r"description\s+of\s+operations",
+    # it changes no answer. Kept so that the titles read one-to-one against the list named above.
+    rf"description{_H_SP}of{_H_SP}business",
+    rf"business{_H_SP}operations",
+    rf"business{_H_SP}overview",
+    rf"description{_H_SP}of{_H_SP}operations",
 )
-#: ``ours-1``'s one start title is the tenth: it is the stop list's first entry here, because a filing that
-#: carries both prints "GENERAL DEVELOPMENT OF THE BUSINESS" first and the description after it.
 _AIF_START_2 = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}(?:{'|'.join(_AIF_TITLES_2)})"
-                          rf"(?:[^\S\n]+and[^\S\n]+operations)?[^\S\n]*[:.{_DASH}]?[^\S\n]*$")
+                          rf"(?:{_H_SP}and{_H_SP}operations)?{_AIF_TAIL}")
 
-#: The nine titles that end it. The first is where ``ours-1`` starts, and the last four are the parts of an
-#: Annual Information Form that follow the business block in NI 51-102's own order.
+#: The titles that end it: the parts of an Annual Information Form around the business block in NI 51-102's own
+#: order. Two of them come **before** it -- general development of the business and the three-year history are
+#: item 4 -- and they are stops because a filing that carries them prints them first and the description after;
+#: the rest follow it. ``DIVIDENDS`` is item 5 and is in the source's own ``_SECTION_PATTERNS`` though not in
+#: its ``_BUSINESS_ENDS``; the two wordings with a tail (regulatory actions, of the company) are the real titles
+#: of items 12 and 10, which the line anchor would otherwise lose.
 _AIF_STOP_TITLES_2 = (
-    r"general\s+development\s+of\s+(?:the\s+)?(?:[\w\-][\w\-'’]*\s+)?business",
-    r"(?:three[\s-]year|3[\s-]year)\s+history",
-    r"description\s+of\s+capital\s+structure",
-    r"material\s+properties",
-    r"legal\s+(?:proceedings|matters)",
-    r"risk\s+factors",
-    r"code\s+of\s+business\s+conduct",
-    r"market\s+for\s+securities",
-    r"directors\s+and\s+(?:executive\s+officers|officers|executive)",
+    rf"general{_H_SP}development{_H_SP}of{_H_SP}(?:the{_H_SP})?(?:[\w\-][\w\-'’]*{_H_SP})?business",
+    rf"(?:three|3)[\s-]year{_H_SP}history",
+    rf"(?:description{_H_SP}of{_H_SP})?capital{_H_SP}structure",
+    rf"material{_H_SP}properties",
+    rf"legal{_H_SP}(?:proceedings|matters)(?:{_H_SP}and{_H_SP}regulatory{_H_SP}actions)?",
+    rf"risk{_H_SP}factors",
+    rf"code{_H_SP}of{_H_SP}business{_H_SP}conduct",
+    rf"market{_H_SP}for{_H_SP}securities",
+    rf"dividends(?:{_H_SP}and{_H_SP}distributions)?",
+    rf"directors{_H_SP}and{_H_SP}(?:executive{_H_SP}officers|officers|executive)"
+    rf"(?:{_H_SP}of{_H_SP}the{_H_SP}(?:company|corporation))?",
 )
-_AIF_STOP_2 = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}(?:{'|'.join(_AIF_STOP_TITLES_2)})"
-                         rf"[^\S\n]*[:.{_DASH}]?[^\S\n]*$")
+_AIF_STOP_2 = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}(?:{'|'.join(_AIF_STOP_TITLES_2)}){_AIF_TAIL}")
 #: The same titles wherever they appear, for a filing whose headings do not begin their own lines. Five of the
 #: measurement's misses are a start with no line-start stop after it, and this is what ends those.
 _AIF_STOP_INLINE_2 = re.compile(rf"(?i)\b(?:{'|'.join(_AIF_STOP_TITLES_2)})\b")
 
-#: ``ours-1``'s only start title, kept as a **last resort**. The six titles above are preferred because a
-#: filing that carries both prints this one first and the description after it, and the description is the
-#: business block proper -- but 44 of the 88 stored exhibits are cut by ``ours-1`` today from this heading, and a
-#: version that answered nothing where ``ours-1`` answers a section would be a loss nobody measured. So it is
-#: tried only when no pair from the six survives, and it is a start here while it stays the first **stop**.
-_AIF_START_OURS_1_TITLE = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}"
-                                     r"general\s+development\s+of\s+(?:the\s+|our\s+)?business"
-                                     rf"[^\S\n]*[:.{_DASH}]?[^\S\n]*$")
+#: ``ours-1``'s only start title, kept as a **last resort** and asked what ``ours-1`` asks of it: its own stop
+#: (a line-start ``RISK FACTORS``), ``ours-1``'s page-number test and ``ours-1``'s distance, and **no**
+#: reference test, because ``ours-1`` applies none -- round 1's review measured three shapes the first version
+#: of this lost by asking more. It is more generous than ``ours-1`` in one way only: the distance is a test of
+#: every candidate stop and not of the first one alone, where ``ours-1`` gives the start up. That direction is
+#: allowed; losing a section is not.
+#:
+#: The titles above are preferred because a filing that carries both prints this one first and the description
+#: after it, and the description is the business block proper; but 44 of the 88 stored exhibits are cut by
+#: ``ours-1`` today from this heading, so a version that answered nothing there would be a loss nobody
+#: measured. It is a start here while it stays the first stop above.
+#:
+#: It is ``ours-1``'s own compiled pattern and not a copy, which is the one place this module **reads** an
+#: ``ours-1`` object instead of adding its own: a copy could drift from it word by word, and the whole point is
+#: that the two read the same heading. ``ours-1``'s pattern is frozen (the golden file pins it), so the
+#: coupling only runs one way.
+_AIF_START_OURS_1_TITLE = _AIF_START
 
-#: A body shorter than this is not the business block. ``ours-1``'s :data:`_BODY_MIN`, for the same reason.
+#: A body shorter than this is not the business block, and a stop closer than this to the body's start is a
+#: subheading of it. ``ours-1``'s :data:`_BODY_MIN`, for the same reason.
 _AIF_MIN = _BODY_MIN
+
+
+def _printed_as_a_heading(s: str) -> bool:
+    """True when ``s`` is printed the way a heading is printed: no lower-case word in it.
+
+    The inline stop search reads the stop titles **wherever they appear**, and it is case-insensitive because
+    filers print headings in capitals and in title case alike. The cost, measured on round 1's review: "the
+    Company is exposed to a number of risk factors, including" ended a section after 6,038 characters and the
+    cut was labelled ``ok``. A heading is not written in the middle of a sentence in lower case, so this is
+    the test that separates the two -- not the position, which cannot tell them apart.
+    """
+    return all(w[:1] == w[:1].upper() for w in s.split() if w[:1].isalpha())
+
+
+def _aif_stop(text: str, body_start: int) -> int | None:
+    """The first real end of a body that starts at ``body_start``, or None when the document holds none.
+
+    Both searches obey the same two rules: a stop that is a cross-reference is not one, and a stop closer than
+    :data:`_AIF_MIN` to the body's start is a subheading and not the end (edgartools' 338-character BTG cut is
+    exactly that mistake). The line-start search decides when it finds anything; only when it finds nothing at
+    all are the same titles read inside lines, and there a title has to be printed as a heading.
+    """
+    line = next((e.start() for e in _AIF_STOP_2.finditer(text, body_start)
+                 if not _ref_ours_2(text, e) and e.start() - body_start >= _AIF_MIN), None)
+    if line is not None:
+        return line
+    if any(True for _ in _AIF_STOP_2.finditer(text, body_start)):
+        return None          # the document's stops are line-start ones; they are just all too close
+    return next((e.start() for e in _AIF_STOP_INLINE_2.finditer(text, body_start)
+                 if not _inline_ref(text, e) and _printed_as_a_heading(e.group(0))
+                 and e.start() - body_start >= _AIF_MIN), None)
 
 
 def _aif_business_ours_2_q(text: str) -> tuple[str | None, str]:
     """``(business section, quality)`` of an Annual Information Form in ``text``: ok / overrun / missing.
 
-    The rule, pair by pair: a line-start title from :data:`_AIF_START_2` that is neither a contents entry nor
-    a cross-reference, then the first stop that is neither -- a line-start one if there is one, an inline one
-    if there is not. When no pair of those survives, ``ours-1``'s own start title is tried the same way
-    (:data:`_AIF_START_OURS_1_TITLE`), so that this version answers a section wherever ``ours-1`` does. A pair whose body is shorter than :data:`_AIF_MIN` is **rejected**, and the next start is
-    tried; when no pair survives the answer is ``missing``, because a 338-character answer reads as a section
-    that was found and is in fact a table-of-contents line or a cross-reference that got through.
+    The rule, pair by pair: a line-start title from :data:`_AIF_START_2` that is neither a contents entry nor a
+    cross-reference, then its end from :func:`_aif_stop`. When no pair of those closes, ``ours-1``'s own start
+    title is tried with ``ours-1``'s own end (:data:`_AIF_START_OURS_1_TITLE`, :func:`_aif_end_ours_1`), so
+    that this version answers a section wherever ``ours-1`` does, and on the shapes where ``ours-1`` gives up
+    on a near heading, one more.
+
+    **A closed pair always wins.** Every start is tried before an unclosed one is returned, because a schedule
+    at the end of the document can carry a heading of its own and its tail is not the business section while a
+    real, closed block stands above it (round 1's review measured that: 5,999 characters of appendix returned
+    in place of 26,999 of body).
+
+    A pair whose body is shorter than :data:`_AIF_MIN` is **rejected** and the next start tried; when no pair
+    survives the answer is ``missing``, because a 338-character answer reads as a section that was found and is
+    in fact a table-of-contents line or a cross-reference that got through.
 
     A start with no stop at all keeps its body, which then runs to the end of the document, and the label is
     ``overrun``. Nothing is capped: five of the stored cuts sat at :data:`MAX_ITEM_CHARS`, which the
@@ -797,28 +871,35 @@ def _aif_business_ours_2_q(text: str) -> tuple[str | None, str]:
 
     The contents and cross-reference tests are ``ours-2``'s own (:data:`_TOC_NEXT` is an item rule and is not
     one of them): :data:`_PAGE_NO` for a page number printed under the heading, and :func:`_ref_ours_2` for
-    "see", "under" and a quoted mention. ``ours-1`` asked only the first, of the start alone.
+    "see", "under" and a quoted mention. ``ours-1`` asked only the first, of the start alone, and the last
+    resort is asked only what ``ours-1`` asks.
     """
     text = text or ""
     if not _AIF.search(text):
         return None, "missing"
+    overrun = None
     for start_re in (_AIF_START_2, _AIF_START_OURS_1_TITLE):
+        last_resort = start_re is _AIF_START_OURS_1_TITLE
         for m in start_re.finditer(text):
-            if _PAGE_NO.match(text, m.end()) or _ref_ours_2(text, m):
+            if _PAGE_NO.match(text, m.end()) or (not last_resort and _ref_ours_2(text, m)):
                 continue
-            end = next((e.start() for e in _AIF_STOP_2.finditer(text, m.end())
-                        if not _ref_ours_2(text, e)), None)
-            if end is None:
-                end = next((e.start() for e in _AIF_STOP_INLINE_2.finditer(text, m.end())
-                            if not _inline_ref(text, e)), None)
-            closed = end is not None
-            if end is None:
-                end = len(text)
-            body = text[m.end():end].strip()
+            end = _aif_end_ours_1(text, m) if last_resort else _aif_stop(text, m.end())
+            body = text[m.end():(len(text) if end is None else end)].strip()
             if len(body) < _AIF_MIN:
                 continue
-            return body, "ok" if closed else "overrun"
-    return None, "missing"
+            if end is not None:
+                return body, "ok"
+            if overrun is None:
+                overrun = body
+    return (overrun, "overrun") if overrun is not None else (None, "missing")
+
+
+def _aif_end_ours_1(text: str, m: re.Match) -> int | None:
+    """``ours-1``'s own end for ``ours-1``'s own start title: a line-start ``RISK FACTORS`` that is not a
+    reference, far enough past the heading. Its distance is measured from the **heading** and not from the
+    body, which is how ``ours-1`` measures it, so that the two answer the same text."""
+    return next((e.start() for e in _AIF_END.finditer(text, m.end())
+                 if not _is_ref(text, e) and e.start() - m.start() >= _BODY_MIN), None)
 
 
 def _aif_business_ours_2(text: str) -> str | None:
