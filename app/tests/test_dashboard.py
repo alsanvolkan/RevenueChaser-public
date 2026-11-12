@@ -193,6 +193,11 @@ class TestDashboardRoutes:
         assert r.status_code == 400
         data = r.get_json()
         assert data["ok"] is False
+        # The refusal must name the key, the file, and where to get one -- the old "UW API key not set."
+        # left the user with nothing to act on. Asserted on the LEAPS Fetch until #730 switched it off.
+        assert "UNUSUAL_WHALES_API_KEY" in data["error"]
+        assert ".env" in data["error"]
+        assert "https://unusualwhales.com/api" in data["error"]
 
     def test_run_returns_job_id(self, monkeypatch):
         import RevenueChaser.app.dashboard as d
@@ -734,19 +739,6 @@ class TestRefreshReadsStoreFetchReadsNetwork:
         """No runner, so no Fetch button, no scheduled call and no script can start a scan (#730)."""
         from RevenueChaser.app import jobs
         assert "module_leaps" not in jobs._RUNNERS
-
-    def test_a_live_fetch_is_gated_on_the_api_key(self, monkeypatch):
-        # "Fetch" is a live UW scan -> without a key it is refused before any network
-        monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
-        r = panel_test_client(dashboard.app).post("/run/module_oipd")
-        assert r.status_code == 400
-        assert r.get_json()["ok"] is False
-        # The refusal must name the key, the file, and where to get one — the
-        # old "UW API key not set." left the user with nothing to act on.
-        error = r.get_json()["error"]
-        assert "UNUSUAL_WHALES_API_KEY" in error
-        assert ".env" in error
-        assert "https://unusualwhales.com/api" in error
 
     def test_financials_refresh_renders_from_the_store_offline(self, rawstore_tmp_db,
                                                                tmp_path, monkeypatch):
