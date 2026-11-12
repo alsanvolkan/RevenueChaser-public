@@ -329,9 +329,10 @@ class TestEscaping:
         # Only the page's own three script blocks survive (board script, filter-kit script (KL #377), the
         # watch-list pair (PR 4)); the hostile ticker gets no button pair.
         assert html.count("<script") == 3 and html.count("</script>") == 3
-        # The pair's own stylesheet names those attributes in its selectors (#770), so this has to ask
-        # for a button, not for the string.
-        assert not re.search(r"<button[^>]*data-rc-watch=", html)
+        # The pair's stylesheet names those attributes in its selectors and its script carries the button
+        # template (#770), so the markup has to be read without the script and style blocks.
+        markup = re.sub(r"<(script|style)\b.*?</\1>", "", html, flags=re.S | re.I)
+        assert not re.search(r"<button[^>]*data-rc-watch=", markup)
         assert 'data-ticker="&quot;&gt;&lt;img' in html
 
 
