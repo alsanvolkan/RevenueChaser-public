@@ -150,10 +150,10 @@ def test_the_rule_words_follow_the_json(tmp_path):
     path.write_text(json.dumps(doc), encoding="utf-8")
     f = control_sources.funnel(_spine_nd(), rules_path=path)
     assert "tier A;" in f["stocks"][2]["step"] and "common, spac" in f["stocks"][2]["step"]
-    assert "250M USD" in f["etfs"][2]["step"] and "5M USD" in f["etfs"][2]["step"]
+    assert "$250M" in f["etfs"][2]["step"] and "$5M" in f["etfs"][2]["step"]
     assert "ETN" in f["etfs"][1]["step"] and "CEF" not in f["etfs"][1]["step"]
     default = control_sources.funnel(_spine_nd())
-    assert "tier A or D" in default["stocks"][2]["step"] and "100M USD" in default["etfs"][2]["step"]
+    assert "tier A or D" in default["stocks"][2]["step"] and "$100M" in default["etfs"][2]["step"]
 
 
 def test_the_board_carries_the_funnel():

@@ -176,7 +176,7 @@ def _relatedness_settings() -> dict:
     rows = {f["key"]: f for f in board_settings.describe(rel_settings.BOARD)}
     w = rows["WRITER"]
     w["choices"] = [[slug, writers.WRITERS[slug].label, writers.missing_text(slug)] for slug in w["choices"]]
-    w["range"] = "EVREN has no fee; DeepSeek is paid (off-peak, 10 USD a night); Grok uses the SuperGrok allowance"
+    w["range"] = "EVREN has no fee; DeepSeek is paid (off-peak, $10 a night); Grok uses the SuperGrok allowance"
     m = rows["WRITER_MODEL"]
     m["choices"] = [[model, f"{slug} · {model}", None] for slug, wr in writers.WRITERS.items() for model in wr.models]
     m["range"] = "a model of the chosen writer"

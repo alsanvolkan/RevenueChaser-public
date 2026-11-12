@@ -148,7 +148,8 @@ def columns_by_source(sample: dict, datasets: dict) -> list[str]:
 # ── The selection funnel ──────────────────────────────────────────────────────────────────────────────────────
 
 def _usd(value: float) -> str:
-    return f"{value / 1e6:,.0f}M USD"
+    # The symbol, not the code (avo, 13 Nov 2026, a rule for every board: it takes less room).
+    return f"${value / 1e6:,.0f}M"
 
 
 def _n(value) -> int | None:

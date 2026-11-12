@@ -615,8 +615,8 @@ def _my_universe_card(counts: dict | None) -> dict:
             "rule_text": {
                 "stocks": f"tier {' or '.join(rules.stock_tiers)}; "
                           f"{', '.join(rules.stock_types)}",
-                "etfs": f"AUM at or over {rules.etf_aum_floor / 1e6:,.0f}M USD, or no AUM and a 20-session average "
-                        f"daily dollar volume at or over {rules.etf_adv_floor / 1e6:,.0f}M USD"
+                "etfs": f"AUM at or over ${rules.etf_aum_floor / 1e6:,.0f}M, or no AUM and a 20-session average "
+                        f"daily dollar volume at or over ${rules.etf_adv_floor / 1e6:,.0f}M"
                         + ("; no ETN" if rules.exclude_etn else "") + ("; no CEF" if rules.exclude_cef else ""),
                 "delisted": "a delisted name never enters"},
             "manual": {"add": [{"ticker": r["ticker"], "reason": r["reason"]} for r in adds],
