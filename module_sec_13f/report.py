@@ -485,8 +485,9 @@ def _val(v):
 
 
 #: What a "% Out" cell says about its denominator (#646 PR 1).
-_SHARES_BASIS = {"reported": "shares outstanding as the SEC cover page reports them",
-                 "implied": "shares implied by the market cap over the close: the cover page has no count"}
+_SHARES_BASIS = {"stored": "shares outstanding as the SEC cover page reports them",
+                 "market_cap/price": "shares implied by the market cap over the close: "
+                                     "the cover page has no count"}
 
 
 def _pct_out_title(entry: dict, of: str | None) -> str | None:

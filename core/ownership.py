@@ -209,7 +209,13 @@ def load_ownership(tickers) -> dict[str, dict]:
     for r in sorted((r for r in rows if r["ticker"] in wanted), key=lambda r: _rank(r["source"])):
         if r["insider"] is not None:
             out.setdefault(r["ticker"], {}).setdefault("insider_pct", float(r["insider"]) * 100.0)
-    for ticker, row in rcread.shares_outstanding(wanted).items():
+    try:
+        served = rcread.shares_outstanding(wanted)
+    except Exception as exc:  # noqa: BLE001 - an unreadable prices store is "no denominator", never a failed board
+        logger.warning("shares outstanding unread, the %% Out cells stay empty: %s: %s",
+                       type(exc).__name__, exc)
+        served = {}
+    for ticker, row in served.items():
         entry = out.setdefault(ticker, {})
         if row.get("shares") is not None:
             entry["shares_outstanding"] = float(row["shares"])

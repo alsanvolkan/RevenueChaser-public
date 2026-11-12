@@ -42,11 +42,11 @@ def _clean_prices():
     yield
 
 
-def test_a_cover_page_count_is_the_reported_basis():
+def test_a_cover_page_count_is_the_stored_basis():
     _security("AAA", 10.0, cap=5_000.0, outstanding=1_000.0)
     row = read.shares_outstanding(["AAA"])["AAA"]
     assert row["shares"] == 1_000.0, "the cover page wins over the implied number"
-    assert row["basis"] == "reported"
+    assert row["basis"] == "stored"
     assert row["as_of"] == SESSION
 
 
@@ -54,7 +54,7 @@ def test_without_a_count_the_cap_over_the_close_stands_in():
     _security("BBB", 20.0, cap=4_000.0)
     row = read.shares_outstanding(["BBB"])["BBB"]
     assert row["shares"] == 200.0                      # 4,000 / 20
-    assert row["basis"] == "implied"
+    assert row["basis"] == "market_cap/price"
 
 
 def test_a_name_with_neither_says_so_rather_than_guessing():
@@ -81,14 +81,14 @@ def test_the_newest_count_wins_and_a_class_label_does_not_change_the_basis():
     finally:
         con.close()
     row = read.shares_outstanding(["DDD"])["DDD"]
-    assert row["shares"] == 2_000.0 and row["basis"] == "reported"
+    assert row["shares"] == 2_000.0 and row["basis"] == "stored"
     assert row["as_of"] == date(2026, 10, 2)
 
 
 def test_a_zero_or_negative_count_is_not_a_count():
     _security("EEE", 10.0, cap=3_000.0, outstanding=0.0)
     row = read.shares_outstanding(["EEE"])["EEE"]
-    assert row["basis"] == "implied" and row["shares"] == 300.0
+    assert row["basis"] == "market_cap/price" and row["shares"] == 300.0
 
 
 def test_no_tickers_is_no_read():

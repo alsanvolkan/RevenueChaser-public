@@ -1,6 +1,7 @@
-"""#375 F2 (13F-B): the 13F Fetch and Refresh render the board from ``ownership_snapshot`` and D01, through one path.
+"""#375 F2 (13F-B): the 13F Fetch and Refresh render the board from one path, through the store and D01.
 
-* the UW shares step runs before the render, so a Fetch's board shows the shares outstanding it stored;
+* the board's "% Out" denominator is the served cover-page count since #646 PR 1, not the UW shares step's row:
+  the step still writes it (retiring that is #646 PR 5) and the board no longer reads it;
 * a Refresh (``run_sec_13f_latest`` alone) builds the same payload from the store, with no enrichment read;
 * the history row records the % Out the board showed;
 * the ``/api/sec_13f/<t>`` chart takes its price line from D01, not from ``sec13f_enrichment``.
@@ -22,6 +23,24 @@ from RevenueChaser.core import rawstore
 from RevenueChaser.core.reporting_common import payload_path
 from RevenueChaser.module_sec_13f import enrich
 from RevenueChaser.core.tests.d01_seed import write_d01
+from RevenueChaser.rcdata.tests import prices_store
+
+#: The served cover-page count the board divides by, and the day it carries.
+SHARES_OUT = 1.5e10
+_SHARES_AS_OF = date(2026, 1, 2)
+
+
+def _served_shares(ticker: str, shares: float = SHARES_OUT) -> None:
+    """The denominator where the board reads it (#646 PR 1)."""
+    prices_store.put_bars([{"ticker": ticker, "session_date": _SHARES_AS_OF, "close": 10.0}], replace=False)
+    con = prices_store._connect()
+    try:
+        con.execute("INSERT INTO shares_class (security_id, measure, as_of, value, symbol, source) "
+                    "VALUES (?, 'outstanding', ?, ?, ?, 'sec/cover_shares')",
+                    [f"sym:{ticker}", _SHARES_AS_OF, shares, ticker])
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
 
 
 def _payload():
@@ -54,8 +73,9 @@ def no_enrichment(monkeypatch):
     monkeypatch.setattr(enrich, "load_enrichment", boom)
 
 
-def test_a_fetch_board_shows_the_shares_its_own_shares_step_stored(uw, monkeypatch, no_enrichment):  # noqa: F811
+def test_a_fetch_board_divides_by_the_served_count(uw, monkeypatch, no_enrichment):  # noqa: F811
     _at(monkeypatch, COMPLETE)
+    _served_shares("AAPL")
     runners.build_sec13f(None)
     assert uw.calls == ["AAPL"]
     pct_out = _cells(_payload(), "AAPL")["pct_out"]
@@ -66,6 +86,7 @@ def test_a_fetch_board_shows_the_shares_its_own_shares_step_stored(uw, monkeypat
 
 def test_a_refresh_builds_the_same_payload_as_the_fetch(uw, monkeypatch, no_enrichment):  # noqa: F811
     _at(monkeypatch, COMPLETE)
+    _served_shares("AAPL")
     write_d01([_bar("AAPL", "2026-03-31", 220.0)])
     runners.build_sec13f(None)
     fetched = _payload()

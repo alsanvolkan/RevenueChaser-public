@@ -1113,11 +1113,12 @@ def run_asymmetric_growth_hunter(uw=None, max_workers: int = 10,
     from RevenueChaser.module_asymmetric_growth import freeze
     version = freeze.model_version()        # the rows say which rules scored them (old-rows view, #380 S2)
     for c in cards:
-        so = (shares_out.get(c["ticker"]) or {}).get("shares_outstanding")
-        so_source = "stored"
-        if not so and c.get("market_cap") and c.get("price"):
-            # Measured 9 Nov 2026: the store held shares outstanding for 1,219 of 4,159 AG names; every card has these.
-            so, so_source = c["market_cap"] / c["price"], "market_cap/price"
+        # One ladder for this board and the 13F board since #646 PR 1: the cover page's count, else the served
+        # cap over the served close. The reader names which, in this board's own words (``stored`` /
+        # ``market_cap/price``), so the card reads as before; what changed is that the fallback's cap and close
+        # are the served ones rather than this card's.
+        own = shares_out.get(c["ticker"]) or {}
+        so, so_source = own.get("shares_outstanding"), own.get("shares_basis") or "stored"
         inst = _institutional(c["ticker"], totals, so, so_source, splits.get(c["ticker"], 1.0))
         # The 13F quarters the card read are period ends it read: they ride in ``period_ends`` (a JSON column of
         # ``ticker_scores``), so a Refresh shows them too (AG review SF-3).

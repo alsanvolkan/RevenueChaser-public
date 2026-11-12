@@ -90,7 +90,7 @@ def test_pct_out_comes_from_the_cover_pages_count(rawstore_tmp_db):
     _served_shares("AAA", outstanding=1000.0)
     inputs = enrich.load_inputs(TOTALS)
     assert inputs["AAA"]["shares_outstanding"] == 1000.0
-    assert inputs["AAA"]["shares_basis"] == "reported"
+    assert inputs["AAA"]["shares_basis"] == "stored"
     cells = _cells(report.board_payload(TOTALS, META, inputs), "AAA")
     assert cells["pct_out"][:3] == ["20.0%", pytest.approx(20.0), "zero"]       # 200 of 1,000 shares
     assert "cover page" in cells["pct_out"][3]
@@ -100,7 +100,7 @@ def test_without_a_count_the_cell_says_the_number_is_implied(rawstore_tmp_db):
     _served_shares("AAA", close=10.0, cap=10_000.0)               # 1,000 shares implied
     inputs = enrich.load_inputs(TOTALS)
     assert inputs["AAA"]["shares_outstanding"] == pytest.approx(1000.0)
-    assert inputs["AAA"]["shares_basis"] == "implied"
+    assert inputs["AAA"]["shares_basis"] == "market_cap/price"
     cells = _cells(report.board_payload(TOTALS, META, inputs), "AAA")
     assert "implied" in cells["pct_out"][3]
 

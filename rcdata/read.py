@@ -501,15 +501,17 @@ def shares_outstanding(tickers: Iterable[str]) -> dict[str, dict]:
 
     ``basis`` is one of:
 
-    - ``reported``: the newest ``shares_class`` count the SEC cover page gives for the security the ticker trades
-      under (``as_of`` is that day). Measured on the 10 Nov 2026 copy: of the 8,423 tickers the 13F totals name,
+    - ``stored``: the newest ``shares_class`` count the SEC cover page gives for the security the ticker trades
+      under (``as_of`` is that day). The name is Asymmetric Growth's, whose own ladder this replaces. Measured on the 10 Nov 2026 copy: of the 8,423 tickers the 13F totals name,
       3,248 have such a count and **every one of them has exactly one** outstanding row (3,134 of those carry no
       class label at all), so "the security's newest outstanding row" is unambiguous and no class rule is needed.
       Should a second class ever appear for one security, the newest row still wins and the cell still says
-      ``reported``; that is worth revisiting only when the count above stops being 1.
-    - ``implied``: no reported count, so the newest market cap over the newest close (``latest_market``), which is
+      ``stored``; that is worth revisiting only when the count above stops being 1.
+    - ``market_cap/price``: no count, so the newest market cap over the newest close (``latest_market``), which is
       shares by definition and is how the prices build derives the cap in the first place. ``as_of`` is the cap's
-      session. It covers names the SEC cover page does not reach (ETFs, many ADRs).
+      session. It covers names the SEC cover page does not reach (ETFs, many ADRs). Asymmetric Growth did this
+      itself off its own card (measured there 9 Nov 2026: a count for 1,219 of its 4,159 names); the difference is
+      that the cap and close are now the served ones, the same numbers the 13F board divides by.
     - ``none``: neither, so ``shares`` is None and the cell shows a dash instead of a wrong percentage.
 
     One read of each serving file, no network. A ticker with no row at all is left out of the answer.
@@ -528,12 +530,12 @@ def shares_outstanding(tickers: Iterable[str]) -> dict[str, dict]:
     for ticker in wanted:
         reported = by_id.get(ids.get(ticker, ""))
         if reported is not None:
-            out[ticker] = {"shares": reported[0], "basis": "reported", "as_of": reported[1]}
+            out[ticker] = {"shares": reported[0], "basis": "stored", "as_of": reported[1]}
             continue
         row = market.get(ticker) or {}
         cap, price = row.get("market_cap"), row.get("price")
         if cap is not None and price not in (None, 0):
-            out[ticker] = {"shares": float(cap) / float(price), "basis": "implied",
+            out[ticker] = {"shares": float(cap) / float(price), "basis": "market_cap/price",
                            "as_of": row.get("cap_session")}
         elif ticker in ids or ticker in market:
             out[ticker] = {"shares": None, "basis": "none", "as_of": None}

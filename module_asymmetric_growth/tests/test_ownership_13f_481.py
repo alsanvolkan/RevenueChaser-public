@@ -13,7 +13,10 @@ from __future__ import annotations
 import copy
 from datetime import datetime, timezone
 
+from datetime import date
+
 from RevenueChaser.core import ownership, rawstore
+from RevenueChaser.rcdata.tests import prices_store
 from RevenueChaser.core.providers import cache as cache_manager
 from RevenueChaser.module_asymmetric_growth import engine
 from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import universe
@@ -30,11 +33,29 @@ def _payload(ticker: str) -> None:
                                 "source": "yfinance"})
 
 
+#: The day the seeded cover-page count carries; any day the prices store can hold will do.
+_SHARES_AS_OF = date(2026, 1, 2)
+
+
 def _shares_out(ticker: str, shares: float, source: str = ownership.UW_INFO) -> None:
+    """The denominator, where the boards read it since #646 PR 1: the served cover-page count.
+
+    The old ``ownership_snapshot`` row goes in too, with its ``institutional_pct``, because these tests also prove
+    the card shows the 13F share and not that stored number.
+    """
     rawstore.write_rows(ownership.TABLE, [{
         "ticker": ticker, "source": source, "session_date": ownership.session_of(RUN_AT)[0],
         "shares_outstanding": shares, "insider_pct": None, "institutional_pct": 0.11,
         "fetched_at": RUN_AT, "run_id": "seed", "run_at": RUN_AT}])
+    prices_store.put_bars([{"ticker": ticker, "session_date": _SHARES_AS_OF, "close": 10.0}], replace=False)
+    con = prices_store._connect()
+    try:
+        con.execute("INSERT INTO shares_class (security_id, measure, as_of, value, symbol, source) "
+                    "VALUES (?, 'outstanding', ?, ?, ?, 'sec/cover_shares')",
+                    [f"sym:{ticker}", _SHARES_AS_OF, shares, ticker])
+        con.execute("CHECKPOINT")
+    finally:
+        con.close()
 
 
 def _q(shares: float, complete: bool = True) -> dict:
@@ -164,7 +185,9 @@ def test_a_reverse_split_after_the_quarter_puts_the_13f_shares_on_todays_basis(r
     assert len(asked) == 1 and asked[0][3] == "split"            # one read per quarter, not one per card
 
 
-def test_an_unreadable_prices_store_leaves_the_shares_as_filed(rawstore_tmp_db, monkeypatch):
+def test_an_unreadable_prices_store_costs_the_share_but_never_the_scan(rawstore_tmp_db, monkeypatch):
+    """Since #646 PR 1 the denominator is served too, so an unreadable store leaves the card without a share -
+    which is the honest answer - and the scan still finishes with its split factor at 1.0."""
     from RevenueChaser.rcdata import read
     _payload("AAA")
     _shares_out("AAA", 1000.0)
@@ -176,4 +199,4 @@ def test_an_unreadable_prices_store_leaves_the_shares_as_filed(rawstore_tmp_db, 
 
     card = _cards(_scan(monkeypatch, ["AAA"]))["AAA"]
 
-    assert card["inst_ownership_pct"] == 0.4 and card["ownership"]["split_factor"] == 1.0
+    assert card["inst_ownership_pct"] is None and card["ownership"]["split_factor"] == 1.0
