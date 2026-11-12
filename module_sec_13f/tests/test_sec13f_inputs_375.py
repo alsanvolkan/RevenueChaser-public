@@ -183,8 +183,9 @@ def test_the_board_quarters_start_at_the_engines_start_quarter(monkeypatch):
 
 
 def _header_columns(html: str) -> int:
-    second = html.split("</tr><tr>", 1)[1].split("</tr>", 1)[0]
-    return 2 + second.count("<th ")                 # Ticker and Sector span both header rows
+    first, second = html.split("</tr><tr>", 1)[0], html.split("</tr><tr>", 1)[1].split("</tr>", 1)[0]
+    # Ticker, Sector and the metric label span both header rows (#772); the rest are in the second row.
+    return first.count('rowspan="2"') + second.count("<th ")
 
 
 @pytest.mark.parametrize("totals", [TOTALS, {}], ids=["rows", "empty"])

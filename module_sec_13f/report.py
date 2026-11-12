@@ -343,7 +343,12 @@ function build(p){
     trD.appendChild(rowLabel('Δ vs prior'));
     // The oldest quarter has no change to show, and the Δ row still has to line up under it. The filler goes
     // in before the loop: the DOM this runs against (tests included) has no childNodes to count afterwards.
-    if(nch === nq - 1){ trD.appendChild(cell(['—', null, 'zero'], 'ch_none')); }
+    if(nch === nq - 1){
+      var gap = document.createElement('td');     // not a column: no data-col, so nothing sorts by it
+      gap.className = 'zero';
+      gap.textContent = '—';
+      trD.appendChild(gap);
+    }
     var cells = r[3] || [];
     for(var j = 0; j < cols.length; j++){
       var col = cols[j];
@@ -646,8 +651,10 @@ def build_chart_figs(ticker: str, periods: dict, enrichment: dict = None) -> lis
         fig.update_layout(template="plotly_dark", height=320, hovermode="x unified", title=dict(text=title, x=0),
                           # Anchored at its bottom so a legend that wraps on a phone grows up into the margin.
                           legend=dict(orientation="h", y=1.04, yanchor="bottom", x=0),
-                          margin=dict(l=60, r=60, t=86, b=70 if still_arriving else 40))
-        fig.update_xaxes(type="category")
+                          margin=dict(l=60, r=60, t=86, b=108 if still_arriving else 78))
+        # Every quarter is labelled, tilted: straight labels collide in a narrow pane and Plotly then drops
+        # some of them, which reads as missing quarters (owner, 12 Nov 2026).
+        fig.update_xaxes(type="category", tickangle=-45, dtick=1, automargin=True)
     return [top.to_dict(), bottom.to_dict()]
 
 

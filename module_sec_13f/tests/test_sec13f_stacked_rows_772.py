@@ -52,7 +52,9 @@ def test_the_rows_are_groups_of_two():
 
 def test_the_delta_row_lines_up_under_the_oldest_quarter():
     # The oldest quarter has no change; the row still needs a cell there or every Δ shifts one column left.
-    assert "trD.childNodes.length === nq" in report.JS
+    # The filler is placed from the column counts, before the loop, and carries no data-col of its own.
+    assert "if(nch === nq - 1)" in report.JS
+    assert "gap.textContent = '—'" in report.JS
 
 
 def test_the_watch_box_comes_before_the_ticker():
