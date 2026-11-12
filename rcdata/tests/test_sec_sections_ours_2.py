@@ -286,10 +286,11 @@ def test_all_four_of_ours_2_s_patterns_read_the_spaced_word_and_only_the_end_one
     # The guard belongs on the end pattern, which matches a bare number, and nowhere else: every start and stop
     # requires a title after the number, which a sub-item never carries.
     guard = sec_sections._NOT_SUBITEM
-    assert guard == r"(?!\.[^\S\r\n\f\v]*\d\d\b)"
-    # The spaces it reaches over are the ones a tag becomes, never the ones that end a line: every line ending
-    # is excluded from the class, or a page number printed under a heading would be eaten as a sub-item number.
-    assert r"[^\S\r\n\f\v]" in guard
+    assert guard == r"(?!\.[ \t\xa0]*\d\d\b)"
+    # The spaces it reaches over are named one by one: the three a tag becomes. A class spelled by exclusion
+    # read every separator it had not thought of -- U+2028, U+0085 -- as a space, and ate the page number
+    # printed under a heading as if it were a sub-item number.
+    assert "^" not in guard, "the class lists what it allows, not what it forbids"
     assert guard in sec_sections._LINE_END_2.pattern
     assert guard not in sec_sections._LINE_START_2["10-K"].pattern
     assert guard not in sec_sections._LINE_START_2["20-F"].pattern
@@ -741,12 +742,10 @@ def test_an_inline_start_with_no_stop_at_all_is_overrun_on_the_pattern_path_too(
 def test_a_quoted_term_on_the_following_line_belongs_to_that_line_and_not_to_the_heading():
     """The quote window stops at the end of the heading's own line, which is the scope the shared test uses.
 
-    **Known output-equivalent mutant.** Dropping that restriction changes no answer on any shape measured,
-    including this one: a defined term on the next line opens its quote before it closes it, and the unopened
-    test already keeps the heading. The restriction only decides a document where a quote opened *before* the
-    heading closes on the line after it, and no filing shape was found that does that. It is kept because "the
-    heading's own line" is the honest scope, not because a test can tell the difference -- and this paragraph is
-    here so the next review does not spend a round rediscovering that.
+    An earlier round called dropping this restriction output-equivalent. It is not: the window now ends at the
+    first line ending **at or after the match**, and a mention whose own title wraps
+    ("“Part I, Item\n1A. Risk Factors”") is the shape that tells the two apart -- the older spelling
+    cut the window inside the match and never saw the quote that closes it. That row is a test of its own below.
     """
     text = ("Item 1. Business\n" + BODY + " Item 1A. Risk Factors\nWe use the term (“Risks”) below. "
             + "Risks abound. " * 400)
@@ -773,3 +772,110 @@ def test_a_heading_broken_across_lines_is_judged_by_the_line_its_first_word_is_o
     assert quality == "ok"
     assert "more detail is given" in item, "the mention is part of the section"
     assert "Risks abound" not in item, "and the real heading, further down, is its end"
+
+
+# ── the review of f1091f84: the same quotation mark, on a run-in heading ───────────────────────────────────────
+@pytest.mark.parametrize("name,text,form", [
+    ("10-K", "Item 1. Business\n" + BODY + "\nItem 1A. Risk Factors You should consider the risks (the "
+     "“Risks”) below. " + "Risks abound. " * 1800 + "\nItem 1B. Unresolved Staff Comments\nNone.\n",
+     "10-K"),
+    ("20-F", "Item 4. Information on the Company\n" + BODY + "\nItem 5. Operating and Financial Review and "
+     "Prospects prepared under (“IFRS”). " + "Risks abound. " * 1800 + "\nItem 6. Directors\nNames.\n",
+     "20-F"),
+])
+def test_a_run_in_heading_with_a_defined_term_in_its_first_sentence_is_still_a_heading(name, text, form):
+    """A **run-in** heading shares its line with the section's first sentence, and filers define a term in that
+    sentence as a habit. The shared :func:`_is_ref` reads 200 characters of the heading's line, which for a
+    run-in heading is that sentence, so the heading became a reference to itself: the line-end search skipped
+    it, the slice closed on the item after next, :func:`_holds_another_item` skipped the same heading for the
+    same reason, and the answer was ``ok`` on 52,273 characters with every risk factor inside Item 1.
+
+    ``ours-1`` answers that too -- it is where the defect comes from -- so this is the one row in this file
+    where ``ours-2`` is asked to be better than the board rather than equal to it. :func:`_ref_ours_2` is the
+    corrected test and ``_is_ref`` keeps its own behaviour, because the board reads it.
+    """
+    old_item, old_quality = sec_sections.cut_item(text, form, version=OURS_1)
+    new_item, new_quality = sec_sections.cut_item(text, form, version=OURS_2)
+    assert "Risks abound" in old_item, f"{name}: ours-1's defect is the premise of this test"
+    assert new_quality == "ok" and "Risks abound" not in new_item, name
+    assert len(new_item) < len(old_item) / 1.5, name
+
+    straight = text.replace("“", '"').replace("”", '"')
+    assert sec_sections.cut_item(straight, form, version=OURS_2)[0] == new_item, \
+        f"{name}: the same filing with straight quotes was always cut right"
+
+
+def test_a_mention_whose_own_title_wraps_is_still_a_mention():
+    """The quote window ends at the first line ending at or after the match, not at the first one anywhere. A
+    mention the filer wrapped mid-title would otherwise have its window cut inside itself, and the quotation
+    mark that marks it a mention falls on the other side of the cut.
+    """
+    text = ("Item 1. Business\n" + BODY[:6000] + " as set out in the section “Part I, Item\n1A. Risk "
+            "Factors” of this report. " + BODY[:6000] + "\nItem 1A. Risk Factors\n" + "Risks abound. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert "as set out in the section" in item, "the wrapped mention belongs to the section"
+    assert "Risks abound" not in item
+
+
+@pytest.mark.parametrize("after", [
+    " and “Part II, Item 7. Management’s Discussion” of it. ",   # two quoted mentions in a row
+    " (“we”, “us”) use the term throughout. ",              # two opened pairs after a heading
+])
+def test_two_quoted_runs_after_a_heading_are_read_from_the_first_quote_and_not_the_last(after):
+    """The opener is looked for from the start of the window, not backwards from its end. Searching backwards
+    makes the last opening quote the one compared, so a heading followed by two quoted pairs looks as if its
+    quote was never opened -- and the heading is thrown away again.
+    """
+    text = ("Item 1. Business\n" + BODY + "\nItem 1A. Risk Factors" + after + "Risks abound. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert "Risks abound" not in item and after.strip()[:12] not in item
+
+
+def test_the_quote_window_is_two_hundred_characters_and_the_reference_window_is_forty():
+    """Both windows are pinned by a row that falls on each side of them: a stop with a quotation mark 300
+    characters away is a heading, and a reference word 12 spaces before a mention still marks it one. Without
+    these the two numbers can be changed in either direction with no test moving.
+    """
+    far = ("Item 1. Business\n" + BODY + " Item 1A. Risk Factors " + "x" * 300 + "” still open. "
+           + "Risks abound. " * 400)
+    assert "Risks abound" not in sec_sections.cut_item(far, "10-K", version=OURS_2)[0], \
+        "a quotation mark 300 characters past the heading says nothing about it"
+
+    near = ("Item 1. Business\n" + BODY[:6000] + " refer to" + " " * 12 + "Item 1A. Risk Factors for them. "
+            + BODY[:6000] + "\nItem 1A. Risk Factors\n" + "Risks abound. " * 400)
+    item = sec_sections.cut_item(near, "10-K", version=OURS_2)[0]
+    assert "refer to" in item, "a reference word 12 spaces before the mention still marks it one"
+    assert "Risks abound" not in item
+
+
+@pytest.mark.parametrize("separator", ["\x0c", "\r", "\v", " ", " ", "\x85", "\x1c"])
+def test_only_the_three_spaces_a_tag_becomes_are_crossed_by_the_sub_item_guard(separator):
+    """Every other separator keeps the number after it a page number. The class used to be spelled by
+    exclusion, which read each of these as a space and ate the page number as a sub-item number -- U+2028 and
+    U+0085 among them, which no list of line endings had thought of.
+    """
+    assert sec_sections._LINE_END_2.search("\nItem 1A." + separator + "12\nRisk Factors\n")
+
+
+def test_the_indented_heading_test_asserts_its_label():
+    """The earlier indented-heading test bound ``quality`` and never read it."""
+    text = ("Item 1. Business\n" + BODY + "\nSee\n   Item 1A. Risk Factors\n" + "Risks abound. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert "Risks abound" not in item
+
+
+def test_ours_1_s_reference_test_keeps_its_own_behaviour():
+    """The board's :func:`_is_ref` is untouched, and no golden case reaches its quote half -- the move's golden
+    reads one path per case, and none of them has a quotation mark near a heading. So the half is pinned here,
+    by the difference between the two versions on the input that found the defect: ``ours-1`` calls that run-in
+    heading a reference and ``ours-2`` does not. Both answers are deliberate.
+    """
+    text = ("Item 1A. Risk Factors You should consider the risks (the “Risks”) below. "
+            + "Risks abound. " * 10)
+    m = sec_sections._LINE_END.search(text)
+    assert m is not None
+    assert sec_sections._is_ref(text, m), "ours-1 reads any closing quote on the line as a reference"
+    assert not sec_sections._ref_ours_2(text, m), "ours-2 reads only one it did not see opened"

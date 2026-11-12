@@ -239,15 +239,19 @@ _ITEM = _spaced("item")
 #:   :func:`spaced` exists for, so the guard has to allow for it as the heading words do.
 #:
 #: The spelling kept reads "a full stop, any spaces that are not a newline, then exactly two digits": the sub-item
-#: numbers filers write are .01 to .99, and the spaces are the ones a tag becomes -- a space, a tab, a
-#: no-break space -- and not the ones that end a line. A newline, a carriage return and a form feed all keep
-#: their page number a page number: "Item 1A.\f12\nRisk Factors" is the heading of Item 1A. "Item 7. 2024 Results" and "Item 2. 3 properties" are items, as they are to ``ours-1``;
+#: numbers filers write are .01 to .99, and the spaces it reaches over are **named one by one** -- a space, a
+#: tab, a no-break space, the three a tag becomes. Everything else keeps its page number a page number:
+#: "Item 1A.\f12\nRisk Factors" is the heading of Item 1A, and so are the versions written with a carriage
+#: return, a form feed, U+2028 or U+0085. A class spelled by exclusion (``[^\S\r\n\f\v]``) read as a space
+#: every separator it had not thought of, which is why this one lists what it allows instead. "Item 7. 2024 Results" and "Item 2. 3 properties" are items, as they are to ``ours-1``;
 #: so now is "Item 2,3 and 4", because a comma never introduced a sub-item and the guard no longer mentions one.
 #:
-#: **What it costs:** "Item 2. 15 properties are leased" -- a body whose first word is a two-digit number -- is
-#: not read as a heading. A section whose text begins with such a number and whose heading carries no title is
-#: the price of reading the sub-item, which is the shape that was really measured.
-_NOT_SUBITEM = r"(?!\.[^\S\r\n\f\v]*\d\d\b)"
+#: **What it costs:** "Item 2. 15 properties are leased" -- a heading whose title opens with a two-digit
+#: number -- is not read as a heading, and "Item 16. 10-K Summary" is the most plausible real spelling of that.
+#: The other side of it is "Item 2 .01", a sub-item whose tag split before the full stop, which no spelling here
+#: rejects. Both reach every place this pattern is read, the end of a slice included, and not only
+#: :func:`_holds_another_item`; the price is paid for the sub-item shape that was really measured.
+_NOT_SUBITEM = r"(?!\.[ \t\xa0]*\d\d\b)"
 
 _LINE_START_2 = {
     "10-K": re.compile(rf"(?im)^[^\S\n]*{_ITEM}s?\s{{0,3}}(1|i)\b(?:\s*(?:and|&|,)\s*2\b)?"
@@ -325,12 +329,49 @@ def _inline_ref(text: str, m: re.Match) -> bool:
     not a regression; which answer is right is a question for the hand-checked set (#763), not for a shape
     built in a test.
     """
-    line_start = text.rfind("\n", 0, m.start()) + 1
-    if not text[line_start:m.start()].strip():
-        return False                      # a heading of its own, whatever the words around it look like
+    return _starts_mid_line(text, m) and _ref_ours_2(text, m)
+
+
+def _starts_mid_line(text: str, m: re.Match) -> bool:
+    """True when something other than whitespace precedes ``m`` on its own line."""
+    return bool(text[text.rfind("\n", 0, m.start()) + 1:m.start()].strip())
+
+
+def _ref_ours_2(text: str, m: re.Match) -> bool:
+    """``ours-2``'s reference test: the words before the match, and a closing quote it did not open.
+
+    Used wherever ``ours-2`` asks "is this heading really a heading" -- the start filter, the line-end search,
+    :func:`_holds_another_item` and, through :func:`_inline_ref`, the titled fallback. It is ``ours-1``'s
+    :func:`_is_ref` with the second half corrected, and it is a function of its own because ``_is_ref`` is the
+    board's and may not move.
+
+    **The correction.** ``_is_ref`` calls a heading a reference when any ``”`` appears in the 200
+    characters after it on the same line. That is right for a heading alone on its line and wrong for a
+    **run-in** heading, which shares its line with the section's first sentence -- and a filer who writes
+    "Item 1A. Risk Factors You should consider the risks (the “Risks”) below" has written a heading,
+    not a reference to one. Measured on that filing: the line-end search skipped the real Item 1A, the slice
+    closed on Item 1B, :func:`_holds_another_item` skipped the same heading for the same reason, and the answer
+    was ``ok`` on 52,273 characters with every risk factor inside Item 1. ``ours-1`` answers the same, so this
+    is a defect inherited and not caused -- and it is the exact shape ``ours-2`` exists to stop labelling
+    ``ok``. Only a quotation mark that closes one this window never saw opened marks a mention.
+
+    The window ends at the first line ending at or after the match, not at the first one anywhere: a heading
+    whose own title wraps ("“Part I, Item\n1A. Risk Factors”") would otherwise have its window cut
+    inside itself, and the quote that marks it a mention falls outside.
+
+    **How much of this half is pinned.** The quote test decides an answer only when the opening quote is not
+    immediately before the match -- anything closer than that is already a reference by :data:`_REF_BEFORE` --
+    and when neither the fallback nor the pattern path reaches the same stop by another route. Six mutations of
+    the details inside it (searching for either quote from the far end, ``<=`` for ``<``, the window measured
+    from the match's end, the window cut at the first newline anywhere, and the before-text left unstripped)
+    change no answer on any of the eleven shapes measured for #755, so no test here pins them. They are written
+    the way they are because that is what the sentences above describe; a reader changing one should expect the
+    tests to stay green and should measure on real filings (#763) instead.
+    """
     if _REF_BEFORE.search(text[max(0, m.start() - 40):m.start()].rstrip()):
         return True
-    window = text[m.start():m.start() + 200].split("\n", 1)[0]
+    line_end = text.find("\n", m.end())
+    window = text[m.start():min(m.start() + 200, line_end if line_end >= 0 else len(text))]
     opened, closed = window.find("“"), window.find("”")
     return closed >= 0 and (opened < 0 or closed < opened)
 
@@ -357,11 +398,11 @@ def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
     """
     stop_re = re.compile(STOP_PATTERNS_2[key], re.I)
     for m in _LINE_START_2[key].finditer(text):
-        if _TOC_NEXT.search(text[m.end():m.end() + 400]) or _PAGE_NO.match(text, m.end()) or _is_ref(text, m):
+        if _TOC_NEXT.search(text[m.end():m.end() + 400]) or _PAGE_NO.match(text, m.end()) or _ref_ours_2(text, m):
             continue
         own = m.group(1).lower()
         end = next((e.start() for e in _LINE_END_2.finditer(text, m.end() + MIN_ITEM_CHARS)
-                    if e.group(1).lower() != own and not _is_ref(text, e)), None)
+                    if e.group(1).lower() != own and not _ref_ours_2(text, e)), None)
         if end is None:
             end = next((t.start() for t in stop_re.finditer(text, m.end()) if not _inline_ref(text, t)), None)
         closed = end is not None
@@ -382,7 +423,8 @@ def _holds_another_item(item: str, own: str) -> bool:
     heading is not the section it claims to be, however it ended -- ``ours-1`` could only say so when no stop
     matched at all, and so labelled this one by its length instead.
     """
-    return any(m.group(1).lower() != own and not _is_ref(item, m) for m in _LINE_END_2.finditer(item))
+    return any(m.group(1).lower() != own and not _ref_ours_2(item, m)
+               for m in _LINE_END_2.finditer(item))
 
 
 def _quality_ours_2(item: str, own: str, closed: bool) -> str:
