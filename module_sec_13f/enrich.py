@@ -19,7 +19,7 @@ Per 13F ticker (``load_inputs``), in the shape ``report.board_entries`` reads:
   and flows by it and multiplies the close by it, so a split is not read as buying or selling. A quarter with no
   factor stays as filed.
 
-- ``breaks``: ``[{period, kind, shares, cik, filer_name}]`` from ``core.ownership.sec13f_filer_breaks`` (#732): the
+- ``breaks``: ``[{period, kind, shares, cik, filer_name}]`` from the board's own file (``store.read_breaks``, #732): the
   filers that started or stopped reporting the ticker in a settled quarter, which the flows leave out. The board
   marks the ticker and lists them, newest first.
 
@@ -135,6 +135,7 @@ def load_inputs(totals: dict) -> dict[str, dict]:
     wanted = {t: [q for q in periods if q >= engine.START_QUARTER] for t, periods in totals.items() if t}
     for ticker, factors in ownership.split_factors_13f(wanted).items():
         out.setdefault(ticker, {})["split_factor"] = factors
-    for ticker, breaks in ownership.sec13f_filer_breaks(tickers).items():
+    from RevenueChaser.module_sec_13f import store
+    for ticker, breaks in store.read_breaks(tickers).items():
         out.setdefault(ticker, {})["breaks"] = breaks
     return out

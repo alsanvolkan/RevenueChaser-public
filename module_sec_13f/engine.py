@@ -112,6 +112,8 @@ def normalize_period(raw: str) -> Optional[str]:
 
 
 def load_totals() -> dict:
-    """The served 13F per-ticker totals. One line, because the read itself is shared: Asymmetric Growth needs the
-    same rows (#16) and must not import this engine for them."""
-    return ownership.sec13f_totals()
+    """The 13F per-ticker totals the board shows: its own file (``store``, #732) while it is current, else the
+    builder's rows merged over the file's closed quarters. Asymmetric Growth reads the builder's rows directly
+    (``core.ownership.sec13f_totals``, #16) and must not import this engine for them."""
+    from RevenueChaser.module_sec_13f import store
+    return store.read_totals()
