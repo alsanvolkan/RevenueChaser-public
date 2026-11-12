@@ -703,7 +703,8 @@ def strip_html(html: str) -> str:
 # 12 Nov 2026 ("Evet bu sekilde uygula") for 40-F: 10-K and 20-F keep the pinned import, and here the start
 # and stop titles are written out in our own code so that this rule's answers are ours to change and ours to
 # test. The patterns around them -- the line anchor, the number in front, the distance a stop must keep -- are
-# ours and are not in the source.
+# ours and are not in the source: the line anchor, the number in front, the contents test, the body minimum
+# and the two tests an inline title has to pass.
 #
 #     Source:    edgar/company_reports/forty_f.py, lists ``_BUSINESS_STARTS`` (:244), ``_BUSINESS_ENDS``
 #                (:253) and ``_SECTION_PATTERNS`` (:266)
@@ -733,10 +734,12 @@ def strip_html(html: str) -> str:
 # (``notes/revenuechaser/notes/2026-11-12_1200_sec-40f-business-section.md``): where both cutters fire,
 # edgartools' section is shorter every time, median four times shorter, because it ends at the next detected
 # heading of any kind -- and six of its eighty-six cuts are under 1,000 characters, BTG's being 338 where
-# ours takes the whole document. A 338-character answer is a heading plus one paragraph: the next heading was
-# the *subheading* of the block, not its end. So a stop here has to stand at least :data:`_AIF_MIN` past the
-# body's start, which is ``ours-1``'s own rule, and a start whose furthest reachable body is still shorter
-# than that is not the business block at all and the next start is tried.
+# ours takes the whole document. So the stops here are a list of real section titles, and a pair whose body is
+# shorter than :data:`_AIF_MIN` is **rejected and the next start tried**, rather than returned short: a
+# 338-character answer reads as a section that was found, and what it found is a contents line or a heading
+# whose prose is printed somewhere else. (Round 1 of the review replaced that rejection with a distance a stop
+# had to keep; round 2 measured what it cost -- a contents block with no page numbers, and a genuinely short
+# section with its risk factors inside, both labelled ``ok`` -- and put the rejection back.)
 
 #: The titles the NI 51-102 business block is written under. Line-anchored, because a title that shares its
 #: line with prose is a sentence about the business and not the heading of it; the gaps inside a title are
@@ -830,23 +833,30 @@ _AIF_START_OURS_1_TITLE = _AIF_START
 #: the same reason. The pair is rejected and the next start tried.
 _AIF_MIN = _BODY_MIN
 
-#: The words a title may carry in lower case and still be a title. Everything else in it has to be capitalised,
-#: which is what separates a run-in heading from a sentence that names the section.
-_H_SMALL = frozenset("a an and at by for in of on or the to with".split())
-
-
 def _printed_as_a_heading(s: str) -> bool:
-    """True when ``s`` is printed the way a heading is printed: every word capitalised but its connectives.
+    """True when ``s`` is printed in capitals, which is how a run-in heading is printed in these exhibits.
 
-    The inline stop search reads the stop titles **wherever they appear**, and it is case-insensitive because
-    filers print headings in capitals and in title case alike. The cost, measured in round 1: "the Company is
-    exposed to a number of risk factors, including" ended a section after 6,038 characters and the cut was
-    labelled ``ok``. Round 2 then measured the first version of this test refusing most real title-case
-    headings -- ``Market for Securities``, ``Legal Proceedings and Regulatory Actions`` -- because of the
-    lower-case connective inside them, which is where :data:`_H_SMALL` comes from.
+    This is the inline search's own test and it is deliberately the strictest of the three rules this module
+    has tried, because round 3 measured what the looser ones cost. Round 1's was "no lower-case word in it",
+    which refused real title-case headings; round 2's allowed a lower-case connective, and once the inline
+    search was in play for every document (round 2's second finding) that accepted ordinary AIF prose --
+    "The Board has adopted a Code of Business Conduct. The Code applies to all employees", "See Description of
+    the Business - Risk Factors - Commodity Prices", "The Company maintains Directors and Officers Liability
+    Insurance". Each of those ended a section early or, inside the first 4,000 characters, lost it altogether.
+
+    **The cost, written down rather than guessed at:** a filer who prints a run-in heading in title case is not
+    read, and the section then runs to its next line-start stop or to the end of the document. The measurement
+    quotes one run-in heading, EXK's ``9 ITEM 4: RISK FACTORS``, and it is in capitals; a title-case run-in
+    heading is a shape nobody has counted, so it goes to #763's hand-checked set and not into this test.
     """
-    words = [w for w in s.split() if w[:1].isalpha()]
-    return all(w[:1] == w[:1].upper() or w.lower() in _H_SMALL for w in words) and bool(words)
+    return s == s.upper() and any(c.isalpha() for c in s)
+
+
+#: What may stand between an inline title and the first letter of its section: the filer's punctuation, a page
+#: number, and the line ending. Bounded and with one star over one class, because two adjacent
+#: ``[^\S\n]*`` make a failing input quadratic -- the same defect round 1 removed from :data:`_AIF_TAIL` and
+#: round 3 found again here (12.4 s on 32,000 blanks after the title).
+_H_AFTER = re.compile(rf"[\s.:{_DASH}\d]{{0,40}}([^\W\d_])")
 
 
 def _runs_into_prose(text: str, end: int) -> bool:
@@ -855,10 +865,34 @@ def _runs_into_prose(text: str, end: int) -> bool:
     A run-in heading is followed by prose that begins with a capital ("RISK FACTORS The Company's business is
     risky"); a sentence that merely names the section goes on in lower case ("the Risk Factors are described
     below", "Legal Proceedings are described in note 14"). That is the second half of the inline test, and it
-    is what the first half cannot do: ``Risk Factors`` is printed as a heading either way.
+    is what the first half cannot do on its own.
+
+    **The prose may begin on the next line.** ``strip_html`` turns ``<b>ITEM 4: RISK FACTORS</b><br>The
+    Company...`` into a title at the end of its line and the prose at the start of the next, which is EXK's own
+    shape in half of the ways a filer can mark it up; round 3 measured the same-line-only version returning
+    63,100 characters with every risk factor inside.
     """
-    m = re.compile(r"[^\S\n]*(?:[—–\-:.]|\d+)?[^\S\n]*([^\W\d_])").match(text, end)
+    m = _H_AFTER.match(text, end)
     return m is not None and m.group(1) == m.group(1).upper()
+
+
+#: What may stand between a run-in heading and the start of its line: the page number the filer prints there
+#: and the item number in front of the title. It has to carry a digit, because whitespace alone leaves a title
+#: at the end of an English sentence looking like a heading.
+_H_BEFORE = re.compile(rf"[^\S\n]*(?:item[^\S\n]+)?\d[\d.:{_DASH}]*[^\S\n]*$", re.IGNORECASE)
+
+
+def _introduced_as_a_heading(text: str, start: int) -> bool:
+    """True when a run-in heading at ``start`` is introduced the way one is: by its line's start, or by a page
+    or item number and nothing else.
+
+    This is asked only of a title whose prose begins on the **next** line, where the title's own line carries
+    no evidence after it. EXK's ``No significant acquisitions were completed. 9 ITEM 4: RISK FACTORS`` is
+    introduced by ``9 ITEM 4:``; ``We now turn to our RISK FACTORS`` is introduced by the rest of its sentence,
+    and a sentence that ends on the section's name is not a heading of it.
+    """
+    head = text[text.rfind("\n", 0, start) + 1:start]
+    return not head.strip() or _H_BEFORE.search(head) is not None
 
 
 def _aif_contents_entry(text: str, m: re.Match) -> bool:
@@ -885,6 +919,25 @@ def _aif_contents_entry(text: str, m: re.Match) -> bool:
     return False
 
 
+def _inline_prose_follows(text: str, m) -> bool:
+    """True when the prose of the section ``m`` names begins where a run-in heading's prose would begin.
+
+    Two shapes count, and the difference between them is measured and not assumed.
+
+    - **On the same line**, which is EXK's ``9 ITEM 4: RISK FACTORS The Company is risky.``
+    - **On the next line**, which is what :func:`strip_html` makes of
+      ``<b>ITEM 4: RISK FACTORS</b><br>The Company...`` -- but then the title has to **open** its own line
+      be introduced the way a heading is (:func:`_introduced_as_a_heading`), because a title at the end of a
+      prose line whose next line opens with a capital is a sentence that happens to end on the section's name
+      ("We now turn to our RISK FACTORS"). Round 3 asked only for the capital and measured that sentence
+      ending a 27,019-character body.
+    """
+    if not _runs_into_prose(text, m.end()):
+        return False
+    gap = text[m.end():_H_AFTER.match(text, m.end()).end()]
+    return "\n" not in gap or _introduced_as_a_heading(text, m.start())
+
+
 def _aif_ends(text: str) -> list[int]:
     """Every position in ``text`` where a section of an Annual Information Form could end, in order.
 
@@ -900,7 +953,7 @@ def _aif_ends(text: str) -> list[int]:
     """
     out = [e.start() for e in _AIF_STOP_2.finditer(text) if not _ref_ours_2(text, e)]
     out += [e.start() for e in _AIF_STOP_INLINE_2.finditer(text)
-            if _printed_as_a_heading(e.group(0)) and _runs_into_prose(text, e.end())
+            if _printed_as_a_heading(e.group(0)) and _inline_prose_follows(text, e)
             and not _inline_ref(text, e)]
     return sorted(out)
 
@@ -908,57 +961,89 @@ def _aif_ends(text: str) -> list[int]:
 def _aif_business_ours_2_q(text: str) -> tuple[str | None, str]:
     """``(business section, quality)`` of an Annual Information Form in ``text``: ok / overrun / missing.
 
-    The rule, pair by pair: a line-start title from :data:`_AIF_START_2` that is neither a contents entry
-    (:func:`_aif_contents_entry`, :data:`_PAGE_NO`) nor a cross-reference (:func:`_ref_ours_2`), then the first
-    end from :func:`_aif_ends` after it. A pair whose body is shorter than :data:`_AIF_MIN` is **rejected** and
-    the next start tried, because a 338-character answer reads as a section that was found and is in fact a
-    contents line or a cross-reference that got through -- which is also how edgartools' shortest cuts arise.
+    Two passes, and the first one that closes a pair answers.
 
-    When no pair of those closes, ``ours-1``'s own start title is tried with ``ours-1``'s own end
-    (:data:`_AIF_START_OURS_1_TITLE`, :func:`_aif_end_ours_1`) and ``ours-1``'s own tests, so that this version
-    answers a section wherever ``ours-1`` does, and on the shapes where ``ours-1`` gives up on a near heading,
-    one more.
+    **This version's own titles.** A line-start title from :data:`_AIF_START_2` that is neither a contents
+    entry (:func:`_aif_contents_entry`, :data:`_PAGE_NO`) nor a cross-reference (:func:`_ref_ours_2`), then the
+    first end from :func:`_aif_ends` after it. A pair whose body is shorter than :data:`_AIF_MIN` is
+    **rejected** and the next start tried, because a 338-character answer reads as a section that was found and
+    is in fact a contents line or a heading whose prose is printed elsewhere -- which is how edgartools'
+    shortest cuts arise, and what the measurement found behind 7 of its 40 misses.
+
+    **Then ``ours-1``'s own title** (:func:`_aif_pass_ours_1`), which is ``ours-1``'s rule exactly, so that
+    this version answers a section wherever ``ours-1`` does -- 44 of the 88 stored exhibits are cut from that
+    heading today. Rounds 1 and 3 each measured a shape that a last resort of our own devising got wrong where
+    ``ours-1`` is right, in both directions: asking more than ``ours-1`` lost three shapes, and asking less
+    (looking past a near stop instead of dropping the start, as ``ours-1`` does) returned a contents block.
+    So it asks neither more nor less.
 
     **A closed pair always wins**, and among unclosed ones the earliest start does. Every start is tried before
     an unclosed one is returned, because an appendix at the end of the document can carry a heading of its own
     and its tail is not the business section while a real, closed block stands above it (round 1 measured 5,999
-    characters of appendix returned in place of 26,999 of body; round 2 measured the same with both pairs
-    unclosed).
+    characters of appendix returned in place of 26,999 of body; round 2 the same with both pairs unclosed).
 
     A start with no end at all keeps its body, which then runs to the end of the document, and the label is
-    ``overrun``. Nothing is capped: five of the stored cuts sat at :data:`MAX_ITEM_CHARS`, which the
-    ``sec_forms`` storage decision removes, so the length has to be told plainly instead of trimmed.
+    ``overrun`` -- and such a body has to pass the minimum too, or a contents line at the end of a document
+    comes back as an empty string labelled ``overrun`` (round 3). Nothing is capped: five of the stored cuts sat
+    at :data:`MAX_ITEM_CHARS`, which the ``sec_forms`` storage decision removes, so the length has to be told
+    plainly instead of trimmed.
     """
     text = text or ""
     if not _AIF.search(text):
         return None, "missing"
     ends = _aif_ends(text)
     overrun: tuple[int, str] | None = None
-    for start_re in (_AIF_START_2, _AIF_START_OURS_1_TITLE):
-        last_resort = start_re is _AIF_START_OURS_1_TITLE
-        for m in start_re.finditer(text):
-            if _PAGE_NO.match(text, m.end()):
-                continue
-            if not last_resort and (_ref_ours_2(text, m) or _aif_contents_entry(text, m)):
-                continue
-            end = (_aif_end_ours_1(text, m) if last_resort
-                   else next((e for e in ends if e >= m.end()), None))
-            body = text[m.end():(len(text) if end is None else end)].strip()
-            if len(body) < _AIF_MIN and not last_resort:
-                continue
-            if end is not None:
-                return body, "ok"
-            if overrun is None or m.start() < overrun[0]:
-                overrun = (m.start(), body)
+    seen = 0                     # how far into ``ends`` the previous start looked; starts arrive in order, so
+    for m in _AIF_START_2.finditer(text):           # the cursor only ever moves forward (round 3 measured
+        if _PAGE_NO.match(text, m.end()):           # 2.3 s on a document holding 8,000 of each)
+            continue
+        if _ref_ours_2(text, m) or _aif_contents_entry(text, m):
+            continue
+        while seen < len(ends) and ends[seen] < m.end():
+            seen += 1
+        end = ends[seen] if seen < len(ends) else None
+        body = text[m.end():(len(text) if end is None else end)].strip()
+        if len(body) < _AIF_MIN:
+            continue
+        if end is not None:
+            return body, "ok"
+        if overrun is None:      # starts arrive in document order, so the first unclosed one is the earliest;
+            overrun = (m.start(), body)   # the comparison round 2 needed here was for one loop over two title
+    closed, open_ = _aif_pass_ours_1(text)   # sets, and round 3 split those into two passes
+    if closed is not None:
+        return closed, "ok"
+    if open_ is not None and (overrun is None or open_[0] < overrun[0]):
+        overrun = open_
     return (overrun[1], "overrun") if overrun is not None else (None, "missing")
 
 
-def _aif_end_ours_1(text: str, m: re.Match) -> int | None:
-    """``ours-1``'s own end for ``ours-1``'s own start title: a line-start ``RISK FACTORS`` that is not a
-    reference, far enough past the heading. Its distance is measured from the **heading** and not from the
-    body, which is how ``ours-1`` measures it, so that the two answer the same text."""
-    return next((e.start() for e in _AIF_END.finditer(text, m.end())
-                 if not _is_ref(text, e) and e.start() - m.start() >= _BODY_MIN), None)
+def _aif_pass_ours_1(text: str) -> tuple[str | None, tuple[int, str] | None]:
+    """``ours-1``'s own pass over ``ours-1``'s own start title: ``(closed section, unclosed candidate)``.
+
+    This is :func:`_aif_business_ours_1`'s rule, line for line, and deliberately not a line more: the page
+    number test and nothing else of the start, the **first** line-start ``RISK FACTORS`` that is not a
+    reference, the distance measured from the heading, and -- the part that matters -- the start **dropped**
+    when that first stop is too close, rather than the search going on to a later one.
+
+    That last line is what round 3 measured: looking past a near stop turned a contents block into a section,
+    because dropping the start is ``ours-1``'s own contents test ("an index block the contents check missed",
+    :data:`_BODY_MIN`). Round 1 had measured the opposite direction -- a subheading printed directly under the
+    heading, where ``ours-1``'s one stop is the far one and it answers 27,018 characters. Both shapes are right
+    only if this pass is ``ours-1``.
+
+    The one thing it adds is the ``overrun`` candidate: ``ours-1`` answers nothing for a start it never closes,
+    and this version says how long the text behind it is instead, provided it passes :data:`_AIF_MIN`.
+    """
+    for m in _AIF_START_OURS_1_TITLE.finditer(text):
+        if _PAGE_NO.match(text, m.end()):
+            continue
+        e = next((e for e in _AIF_END.finditer(text, m.end()) if not _is_ref(text, e)), None)
+        if e is None:
+            body = text[m.end():].strip()
+            return None, ((m.start(), body) if len(body) >= _AIF_MIN else None)
+        if e.start() - m.start() >= _BODY_MIN:
+            return text[m.end():e.start()].strip(), None
+    return None, None
 
 
 def _aif_business_ours_2(text: str) -> str | None:

@@ -222,15 +222,34 @@ def test_a_contents_entry_and_a_cross_reference_are_not_the_start_of_the_section
     assert _cut2(AIF + heading + "\n" + BODY + "\nRISK FACTORS\n") == (None, "missing"), why
 
 
-def test_a_cross_reference_to_the_risk_factors_does_not_end_the_section_early():
-    """The same test on the other end: a stop that is a mention is skipped and the next one taken, so the body
-    is not cut off at the first filing that happens to say "see Risk Factors" on a line of its own.
+def test_a_cross_reference_to_the_risk_factors_inside_a_line_does_not_end_the_section_early():
+    """The same test on the other end: a stop that is a mention **inside a line** is skipped and the next one
+    taken, so the body is not cut off at the first filing that happens to say "see RISK FACTORS" mid-sentence.
+    """
+    text = (AIF + "BUSINESS OF THE COMPANY\n" + BODY + " For the risks of our business see RISK FACTORS below. "
+            + BODY + "\nMATERIAL PROPERTIES\n")
+    section, quality = _cut2(text)
+    assert quality == "ok" and "see RISK FACTORS below" in section
+    assert section.endswith(BODY.strip()[-40:]), "the section runs on to the stop that is really one"
+
+
+def test_a_cross_reference_whose_title_begins_the_next_line_does_end_the_section():
+    """The second of this version's two known costs, and the one it shares with ``ours-2``'s item rule.
+
+    A page that ends on "see" and a next line that opens with the title is the same text as a cross-reference
+    broken across two lines. :func:`_inline_ref` keeps a title that begins its own line even so, because that
+    is what the item rule measured over nine rounds and what ``ours-1`` does in its pattern rule; the price is
+    this shape, where the section ends at a cross-reference 27,034 characters in rather than running on to
+    ``MATERIAL PROPERTIES``.
+
+    Position cannot tell a mention from a heading here, because the words that would settle it are on the
+    previous line. The count over real filings is #763's, and no further round of built strings is planned for
+    it -- the item rule reached the same place and stopped there.
     """
     text = (AIF + "BUSINESS OF THE COMPANY\n" + BODY + "\nFor the risks of our business see\nRISK FACTORS\n"
             + BODY + "\nMATERIAL PROPERTIES\n")
     section, quality = _cut2(text)
-    assert quality == "ok" and "RISK FACTORS" in section
-    assert section.endswith(BODY.strip()[-40:]), "the section runs on to the stop that is really one"
+    assert quality == "ok" and section.endswith("For the risks of our business see")
 
 
 # ── the version table ──────────────────────────────────────────────────────────────────────────────────────────
@@ -297,23 +316,33 @@ def test_which_titles_open_the_business_block(title):
     "THREE YEAR HISTORY",
 ])
 def test_which_titles_close_it(title):
-    """The ten stops, which are the parts of an Annual Information Form that follow the business block in NI
-    51-102's own order. A title that is not one of them leaves the section running, which is the ``overrun``
-    label and not a shorter cut.
+    """The ten stop titles, in the sixteen spellings this table reads them in. They are the parts of an Annual
+    Information Form that NI 51-102 places after the business block, and a title that is not one of them leaves
+    the section running -- which is the ``overrun`` label and not a shorter cut.
     """
     text = AIF + "BUSINESS OVERVIEW\n" + BODY + "\n" + title + "\n" + "After. " * 50
     section, quality = _cut2(text)
     assert quality == "ok" and section == BODY.strip()
-    # and through the line-start pattern itself: with the inline fallback behind it, eleven of these twelve
+    # and through the line-start pattern itself: with the inline search behind it, fifteen of these sixteen
     # rows passed when _AIF_STOP_2 was made never to match (round 1's review), so the path is asserted too.
     assert sec_sections._AIF_STOP_2.search("\n" + title + "\n") is not None
 
 
 # ── what the mutant battery found the tests above could not see ────────────────────────────────────────────────
-# 61 mutants of the 40-F rule, each judged on whether the ANSWERS move -- the section, its label and ours-1's own
-# text over 118 inputs. Every start title and every stop title is dropped in turn, generated from the source and
-# not anchored by hand, because two rounds of rewriting moved all of their spellings and an anchor that no longer
-# matches is a mutant that never ran. Seven survive, in three classes, and each is explained rather than pinned:
+# 73 mutants of the 40-F rule, each judged on whether the ANSWERS move -- the section, its label and ours-1's own
+# text over 127 inputs. Every start title and every stop title is dropped in turn, generated from the source and
+# not anchored by hand, because three rounds of rewriting moved all of their spellings and an anchor that no
+# longer matches is a mutant that never ran. Round 3's rewrite re-pointed twelve anchors that the two-pass rule
+# had made stale and added fifteen mutants of its own.
+#
+# The battery also audits these tests, and in round 3 it found two things they did not say. Nine inputs were
+# added for the first: the next-line run-in heading and what may introduce it, an unclosed body under the
+# minimum on ours-1's own title, the one stop the inline search does not read, and the two stop-title tails and
+# the article-less start spelling that no input had reached. The second was a redundancy in the code, not in the
+# tests -- the earliest-unclosed-start comparison, which round 2 needed when one loop walked two title sets and
+# which round 3's split into two passes made dead, since starts arrive in document order.
+#
+# Nine survive, in three classes, and each is explained rather than pinned:
 #
 # **A redundant alternative, subsumed by another pattern.** Dropping it changes no answer because something else
 # matches the same text at the same offset. They stay because the titles are adapted one-to-one from the list
@@ -322,16 +351,24 @@ def test_which_titles_close_it(title):
 #   * the third start title: ``DESCRIPTION OF BUSINESS`` is matched by the first, whose "the" and whose
 #     possessive word are both optional;
 #   * the two stop titles' tails (``...and Regulatory Actions``, ``...of the Company``): without them the line
-#     pattern fails, and the inline search then finds the title's first words at the same position.
+#     pattern fails, and the inline search then finds the title's first words at the same position -- measured
+#     in round 3, ``_aif_ends`` returns the same offset from either branch.
 #
 # **A provable equivalence**, where no input can tell the two apart:
 #   * ``_is_ref`` in place of ``_ref_ours_2`` at the start filter -- the two differ only on what follows the
-#     match on its line, and a start here is line-anchored, so both read the same empty window;
-#   * ``match`` in place of ``fullmatch`` in the contents test -- :data:`_AIF_HEADING_LINE` ends in ``$``, so a
-#     line with anything behind the title fails either way.
+#     match on its line, and a start here is line-anchored, so both read the same empty window; the one shape
+#     that reaches the filter at all, ``see\nDESCRIPTION OF THE BUSINESS``, is skipped by both;
+#   * ``match`` in place of ``fullmatch`` in the contents test -- :data:`_AIF_HEADING_LINE` ends in
+#     :data:`_AIF_TAIL`, which ends in ``$``, so a line with anything behind the title fails either way;
+#   * dropping ``any(c.isalpha())`` from the heading test -- every inline match is letters, so it can only
+#     change the answer to a direct call, which the table above makes.
 #
-# **Answer-invariant but not time-invariant:** the line tail's two adjacent stars. That is what the timing test
-# is for, and a battery that compares answers cannot see it by construction.
+# **Answer-invariant but not time-invariant**, which a battery comparing answers cannot see by construction, and
+# which is what the three timing tests are for:
+#   * the line tail's two adjacent stars (round 1);
+#   * the gap before an inline heading's prose, unbounded (round 3: 12.4 s on 32,000 blanks);
+#   * the ends read from their first entry for every start rather than from a forward-only cursor (round 3:
+#     2.3 s on 8,000 starts and 8,000 ends).
 def test_a_title_that_ends_a_line_but_does_not_begin_one_is_not_a_heading():
     """The line anchor's other half. The ``$`` is what rejects ACB's sentence; this is what the ``^`` rejects --
     a sentence that happens to end on the title, which is the shape a running page footer leaves behind.
@@ -351,8 +388,9 @@ def test_a_stop_title_that_ends_a_line_but_does_not_begin_one_does_not_end_the_s
 
 
 def test_a_quoted_mention_inside_a_line_is_not_the_inline_stop_either():
-    """The fallback's own filter. Once no line-start stop exists, the titles are read wherever they appear, and
-    a filing that says ``see "RISK FACTORS" below`` in its first paragraph would otherwise lose the whole body.
+    """The inline search's own filter. The titles are read wherever they appear -- in every document, not only
+    in one with no line-start stop in it (round 2's second finding) -- and a filing that says
+    ``see "RISK FACTORS" below`` in its first paragraph would otherwise lose the whole body.
     With nothing left to stop it the section runs to the end of the document, which is ``overrun`` -- the label
     says so instead of a short cut pretending to be a clean one.
     """
@@ -362,9 +400,11 @@ def test_a_quoted_mention_inside_a_line_is_not_the_inline_stop_either():
 
 
 def test_an_inline_stop_that_begins_its_line_is_a_heading_even_after_the_word_see():
-    """Why the fallback uses :func:`_inline_ref` and not the stricter test: a filer whose page ends on the word
-    "see" and whose next page opens with the heading has written a heading. The reference test applies to a
-    match **inside** a line only, which is the same correction ``ours-2``'s item rule carries.
+    """Why the inline search uses :func:`_inline_ref` and not the stricter test: a filer whose page ends on the
+    word "see" and whose next page opens with the heading has written a heading. The reference test applies to a
+    match **inside** a line only, which is the same correction ``ours-2``'s item rule carries -- and the cost of
+    that choice has its own test above
+    (``test_a_cross_reference_whose_title_begins_the_next_line_does_end_the_section``).
     """
     text = AIF + "BUSINESS OVERVIEW\n" + BODY + "\nsee\nRISK FACTORS The Company's business is risky. " + BODY
     section, quality = _cut2(text)
@@ -527,7 +567,7 @@ def test_a_title_that_is_not_a_stop_leaves_the_section_running():
 def test_a_real_item_title_with_its_tail_ends_the_section_where_it_stands(stop):
     """NI 51-102's own item titles, which the line anchor was losing: item 12 is "Legal Proceedings and
     Regulatory Actions" and item 10 "Directors and Executive Officers of the Company". Losing the tail does not
-    lose the section -- the inline fallback finds the title again -- but it ends the body at the **next** plain
+    lose the section -- the inline search finds the title again -- but it ends the body at the **next** plain
     stop instead, which is a whole section too much. The later stop here is what makes that visible.
     """
     text = AIF + "BUSINESS OVERVIEW\n" + BODY + "\n" + stop + "\n" + BODY + "\nMARKET FOR SECURITIES\n"
@@ -553,18 +593,33 @@ def test_the_earlier_of_the_two_kinds_of_end_is_the_end():
 
 @pytest.mark.parametrize("title,is_one", [
     ("RISK FACTORS", True),
-    ("Risk Factors", True),
-    ("Market for Securities", True),
-    ("Legal Proceedings and Regulatory Actions", True),
-    ("Description of Capital Structure", True),
+    ("MARKET FOR SECURITIES", True),
+    ("ITEM 4: RISK FACTORS", True),
+    ("Risk Factors", False),
+    ("Market for Securities", False),
+    ("Legal Proceedings and Regulatory Actions", False),
     ("Risk factors", False),
     ("risk factors", False),
+    ("1234", False),
 ])
 def test_which_titles_are_printed_the_way_a_heading_is_printed(title, is_one):
-    """**Round 2's fifth finding.** The first version of this test was "no lower-case word at all", which
-    refused ``Market for Securities``, ``Legal Proceedings and Regulatory Actions`` and five other real titles
-    because of the connective inside them -- and the measured cost was a section that ran past its real end to
-    a later title, 61,247 characters instead of 27,003. A connective may be lower case; nothing else may.
+    """**Round 3's first finding, and the third test this module has had for the same question.** Capitals and
+    nothing else.
+
+    Round 1 asked for "no lower-case word at all" and round 2 relaxed it to "no lower-case word but a
+    connective", so that ``Market for Securities`` and ``Legal Proceedings and Regulatory Actions`` would be
+    read. Round 2's second finding then put the inline search in play for **every** document rather than only
+    for one with no line-start stop in it, and round 3 measured what the relaxed test then accepted: ordinary
+    AIF prose. "The Board has adopted a Code of Business Conduct", "See Description of the Business - Risk
+    Factors - Commodity Prices", "The Company maintains Directors and Officers Liability Insurance" and "The
+    Company has two Material Properties" each ended a section early, or lost it outright when the sentence fell
+    inside the first 4,000 characters.
+
+    **The cost is written down and not argued away:** a filer who prints a run-in heading in title case is not
+    read, and the section runs on to its next line-start stop or to the end of the document -- a label of
+    ``overrun`` rather than a quiet short cut. Which way the count goes is a question about real filings, so it
+    belongs to #763's hand-checked set; the one run-in heading anybody has measured, EXK's
+    ``9 ITEM 4: RISK FACTORS``, is in capitals.
     """
     assert sec_sections._printed_as_a_heading(title) is is_one
 
@@ -573,19 +628,40 @@ def test_which_titles_are_printed_the_way_a_heading_is_printed(title, is_one):
     (" The Company's business is risky.", True),
     (" \u2014 The Company's business is risky.", True),
     (" 12 The Company's business is risky.", True),
+    ("\nThe Company's business is risky.", True),
     (" are described in note 14 of the financial statements.", False),
     (" of the Company are set out below.", False),
+    ("\nand the Company's business is risky.", False),
 ])
 def test_an_inline_title_has_to_run_into_its_section_s_first_sentence(after, ends_it):
-    """The other half of the inline test, and the half the first one cannot do: ``Risk Factors`` is printed as a
-    heading whichever way it is used. A run-in heading is followed by prose that begins with a capital; a
+    """The other half of the inline test, and the half the capitals cannot do: ``RISK FACTORS`` is printed in
+    capitals whichever way it is used. A run-in heading is followed by prose that begins with a capital; a
     sentence that merely names the section goes on in lower case ("Legal Proceedings are described in note 14"
     ended a section after 7,999 characters, measured in round 2).
+
+    **The prose may begin on the next line** (round 3's second finding): ``strip_html`` turns
+    ``<b>ITEM 4: RISK FACTORS</b><br>The Company...`` into exactly that, and the same-line-only test returned
+    63,100 characters with every risk factor inside it. The filer's punctuation and page number may stand in
+    between, which is the fourth row's ``12``.
     """
-    text = (AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + " 31 Risk Factors" + after + " " + "Risky. " * 2_000)
+    text = (AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + " 31 RISK FACTORS" + after + " " + "Risky. " * 2_000)
     section, quality = _cut2(text)
     assert (quality == "ok") is ends_it
     assert ("Risky." not in section) is ends_it
+
+
+def test_a_title_case_run_in_heading_is_not_read_which_is_this_version_s_one_known_cost():
+    """The cost of round 3's first finding, stated as a test so that it cannot be forgotten and so that a later
+    round that changes it has to change this file too.
+
+    The same shape as the first row above, printed ``Risk Factors`` instead of ``RISK FACTORS``: the inline
+    search does not read it, the section runs to the end of the document, and the label says ``overrun``
+    instead of claiming a clean cut. #763's hand-checked set is what decides whether that is the right trade.
+    """
+    text = (AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + " 31 Risk Factors The Company's business is risky. "
+            + "Risky. " * 2_000)
+    section, quality = _cut2(text)
+    assert quality == "overrun" and "Risky." in section
 
 
 def test_a_single_word_title_ends_a_section_only_on_a_line_of_its_own():
@@ -604,32 +680,52 @@ def test_a_single_word_title_ends_a_section_only_on_a_line_of_its_own():
 
 
 def test_a_sentence_cased_mention_is_not_a_heading_either():
-    """The heading test is "no lower-case word in it", not "some upper-case word in it". A filer who writes
-    "We discuss Risk factors in the next section" has capitalised a sentence, not printed a heading, and the
-    looser test would end the section there.
+    """A filer who writes "We discuss Risk factors in the next section" has capitalised a sentence, not printed
+    a heading. Under round 1's and round 2's tests this was the shape that argued for them; under round 3's it
+    is refused for the plainer reason that the title is not in capitals.
     """
     text = AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY[:6_000] + " We discuss Risk factors in the next section. " + BODY
     section, quality = _cut2(text)
     assert quality == "overrun" and "We discuss Risk factors" in section
     assert sec_sections._printed_as_a_heading("RISK FACTORS") is True
-    assert sec_sections._printed_as_a_heading("Risk Factors") is True
     assert sec_sections._printed_as_a_heading("Risk factors") is False
 
 
-def test_the_last_resort_looks_past_a_stop_that_is_too_close_where_ours_1_gives_up():
-    """``ours-1`` takes the **first** ``RISK FACTORS`` line that is not a cross-reference and then rejects the
-    whole start if that line is closer than 4,000 characters -- it does not go on to the next one. So a filing
-    whose business block opens under a risk-factors cross heading comes back empty from ``ours-1``.
+def test_the_last_resort_gives_up_on_a_near_stop_exactly_where_ours_1_gives_up():
+    """**Round 3's third finding, and the direct reversal of what round 1 put here.**
 
-    The last resort keeps ``ours-1``'s title, its page-number test and its distance, but the distance is a test
-    of each candidate stop and not of the first one alone. That is strictly more than ``ours-1`` answers, which
-    is the direction this version is allowed to move: it never loses a section, and here it gains one.
+    ``ours-1`` takes the **first** ``RISK FACTORS`` line that is not a cross-reference and, if it stands closer
+    than 4,000 characters, drops the whole start rather than looking for a later one. Round 1 read that as a
+    section ``ours-1`` loses and had the last resort look past the near stop -- strictly more than ``ours-1``
+    answers, which looked like the safe direction.
+
+    Round 3 measured what it actually gains: a contents block. Dropping the start **is** ``ours-1``'s own
+    contents test ("an index block the contents check missed", which is what ``_BODY_MIN`` is called in
+    ``ours-1``), and looking past the near stop turned a table of contents into a 33,902-character section
+    where ``ours-1`` answers 26,999 of real body from the heading further down. A rule that asks less than
+    ``ours-1`` here returns front matter; a rule that asks more loses the three shapes round 1 found. So it
+    asks exactly what ``ours-1`` asks, and this shape -- a business block opening under a risk-factors
+    cross heading -- comes back empty from both.
     """
     text = AIF + "GENERAL DEVELOPMENT OF THE BUSINESS\nRISK FACTORS\n" + BODY + "\nRISK FACTORS\n"
     assert sec_sections.cut_aif_business(text, version=OURS_1) is None, \
         "ours-1 stops at the near heading and gives up"
+    assert _cut2(text) == (None, "missing"), "and so does ours-2, which is the whole point of the pass"
+
+
+def test_the_contents_block_the_last_resort_would_have_returned_had_it_asked_less():
+    """The measurement behind the test above, kept as a test of its own because it is the shape that decided
+    it: a contents block with no page numbers, the front matter behind it, and the real heading further down.
+    ``ours-1`` answers the body; the version that looked past a near stop answered the contents.
+    """
+    text = (AIF + "TABLE OF CONTENTS\nCORPORATE STRUCTURE\nGENERAL DEVELOPMENT OF THE BUSINESS\nRISK FACTORS\n"
+            + "DIVIDENDS\nMARKET FOR SECURITIES\n" + "Forward-looking statements follow. " * 180
+            + "\nCORPORATE STRUCTURE\n" + "Incorporated in Alberta. " * 20
+            + "\nGENERAL DEVELOPMENT OF THE BUSINESS\n" + BODY + "\nRISK FACTORS\n")
+    old = sec_sections.cut_aif_business(text, version=OURS_1)
     section, quality = _cut2(text)
-    assert quality == "ok" and section.startswith("RISK FACTORS\nWe make widgets")
+    assert quality == "ok" and section == old
+    assert section.startswith("We make widgets") and "TABLE OF CONTENTS" not in section
 
 
 def test_the_last_resort_applies_no_body_minimum_because_ours_1_applies_none():
@@ -681,3 +777,92 @@ def test_a_document_full_of_mentions_is_scanned_once_and_not_once_per_start():
     section, quality = _cut2(text)
     assert time.monotonic() - started < 2.0
     assert quality == "overrun", "none of those mentions is a heading"
+
+
+# ── round 3 of the review of caf3f175: five findings, and the narrowing the fix for the second one needed ──────
+def test_a_run_in_heading_whose_prose_is_on_the_next_line_has_to_be_introduced_like_one():
+    """The narrowing that fixing round 3's second finding needed, and the shape that forced it.
+
+    Once the prose may begin on the next line, a title at the **end** of a prose line whose next line opens
+    with a capital reads exactly like a run-in heading: "We now turn to our RISK FACTORS" ended a
+    27,019-character body. The two cannot be told apart by the capital alone, so the title also has to be
+    introduced the way a heading is -- by its line's start, or by a page or item number and nothing else, which
+    is EXK's ``9 ITEM 4:``. A sentence is not a page number.
+    """
+    sentence = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\nWe now turn to our RISK FACTORS\n" + BODY
+                + "\nMATERIAL PROPERTIES\n")
+    section, quality = _cut2(sentence)
+    assert quality == "ok" and "We now turn to our RISK FACTORS" in section, "the sentence is not a heading"
+    assert section.endswith(BODY.strip()[-40:]), "and the section runs on to the real stop"
+
+    numbered = (AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY
+                + "\nNo significant acquisitions were completed. 9 ITEM 4: RISK FACTORS\n"
+                + "The Company's business is risky.\n" + "Risky. " * 2_000)
+    section, quality = _cut2(numbered)
+    assert quality == "ok" and "Risky." not in section, "and the page number plus item number is one"
+    assert len(section) == 27_054
+
+
+@pytest.mark.parametrize("head,is_one", [
+    ("", True),
+    ("   ", True),
+    ("No significant acquisitions were completed. 9 ITEM 4: ", True),
+    ("31 ", True),
+    ("We now turn to our ", False),
+    ("The Company has two ", False),
+])
+def test_what_may_introduce_a_run_in_heading(head, is_one):
+    """The table for the test above, read directly. Whitespace alone counts as a line start; prose does not,
+    and prose ending in a word is what distinguishes the two shapes above.
+    """
+    text = "previous line\n" + head + "RISK FACTORS"
+    assert sec_sections._introduced_as_a_heading(text, len(text) - len("RISK FACTORS")) is is_one
+
+
+def test_a_contents_line_at_the_end_of_a_document_is_missing_and_not_an_empty_overrun():
+    """**Round 3's fourth finding.** A start with no end keeps its body and is labelled ``overrun``, and the
+    body minimum was being applied only to a closed pair. A contents line as the document's last line then
+    came back as ``("", "overrun")`` -- a section of no characters, reported as one that was found and ran
+    long. The minimum applies to an unclosed body too, and the answer is ``missing``.
+    """
+    assert _cut2(AIF + "Corporate structure and history follow.\nDESCRIPTION OF THE BUSINESS\n") == (None, "missing")
+    assert _cut2(AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY)[1] == "overrun", "a real unclosed body still is one"
+
+
+def test_a_title_followed_by_blanks_does_not_take_quadratic_time():
+    """**Round 3's fifth finding, first half.** The test for the prose after an inline title was
+    ``[^\\S\\n]*(?:...)?[^\\S\\n]*``: two stars over one class, which is the same quadratic shape round 1
+    removed from the title tail and which nobody had looked for here. 32,000 blanks after a title cost 12.4 s.
+    The pattern is bounded now and has one star.
+    """
+    text = AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + " RISK FACTORS" + " " * 32_000
+    started = time.monotonic()
+    _cut2(text)
+    assert time.monotonic() - started < 2.0
+
+
+def test_the_ends_are_read_forward_only_and_not_from_the_start_for_every_start():
+    """**Round 3's fifth finding, second half.** Round 2 collected the ends once, which fixed the re-scan, but
+    every start then walked that list from its first entry; a document holding 8,000 starts and 8,000 ends cost
+    2.3 s. Starts arrive in document order, so the cursor into the ends only ever moves forward.
+
+    The walk could have been a bisect, and is not: ``bisect`` is an import, and this module's own test refuses
+    any import but ``re``, ``dataclasses``, ``html`` and ``__future__``.
+    """
+    text = AIF + ("BUSINESS OVERVIEW\nx\nRISK FACTORS\ny\n" * 8_000)
+    started = time.monotonic()
+    _cut2(text)
+    assert time.monotonic() - started < 3.0
+
+
+def test_the_two_passes_are_two_passes_and_the_first_one_to_close_answers():
+    """The shape of the rule after round 3, asserted rather than described: this version's own titles first,
+    then ``ours-1``'s, and a closed pair from either beats an unclosed one from both.
+    """
+    assert sec_sections._aif_pass_ours_1(AIF + "GENERAL DEVELOPMENT OF THE BUSINESS\n" + BODY
+                                        + "\nRISK FACTORS\n") == (BODY.strip(), None)
+    assert sec_sections._aif_pass_ours_1(AIF + "BUSINESS OVERVIEW\n" + BODY + "\nRISK FACTORS\n") == (None, None), \
+        "ours-1's pass reads ours-1's title and no other"
+    both = AIF + "BUSINESS OVERVIEW\n" + BODY + "\nGENERAL DEVELOPMENT OF THE BUSINESS\n" + BODY + "\nRISK FACTORS\n"
+    section, quality = _cut2(both)
+    assert quality == "ok" and section.startswith("We make widgets"), "this version's own title closes first"
