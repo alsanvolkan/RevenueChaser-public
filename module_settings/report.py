@@ -2974,11 +2974,13 @@ def _collect_newdata() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
-#: The page's two tabs (#492; avo, 10 Nov 2026: "iki tabdan daha fazlasi olmasin"): the key a viewer's choice is
-#: remembered under, and each tab's panel id. ``ALIASES`` maps a choice remembered from an older page (Data, Fetch,
-#: Needs, Live) onto the tab that now holds it.
+#: The page's three tabs (#492; avo, 12 Nov 2026: "bence uc sekme, database structurei anlatir, fetch/healt kismi
+#: kontroller ve duckdb sagligi, logs ise hem internal hem external requestlerin aktigi tablo", which replaces his
+#: 10 Nov "iki tabdan daha fazlasi olmasin"): the key a viewer's choice is remembered under, and each tab's panel
+#: id. ``ALIASES`` maps a choice remembered from an older page (Data, Fetch, Needs, Live) onto the tab that now
+#: holds it.
 SETTINGS_TABS = {"key": "rc.settings.tab",
-                 "tabs": {"data": "panel-data", "health": "panel-health"},
+                 "tabs": {"data": "panel-data", "health": "panel-health", "logs": "panel-logs"},
                  "aliases": {"fetch": "data", "needs": "health", "live": "health"}}
 
 TABS_JS = """
@@ -3132,6 +3134,8 @@ def _tab_strip() -> str:
             'aria-selected="true" tabindex="0">Database</button>'
             '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
             'aria-selected="false" tabindex="-1">Fetch/Health</button>'
+            '<button type="button" role="tab" id="tab-logs" data-tab="logs" aria-controls="panel-logs" '
+            'aria-selected="false" tabindex="-1">Logs</button>'
             '</div></nav>')
 
 
@@ -3144,54 +3148,76 @@ def _tab_strip() -> str:
 # the frame opens the Fetch/Health tab, RC Fetch first.
 # avo, 11 Nov 2026 ("activity yi kapatmak istiyorum"): Jobs is the board Activity framed (rc-activity: the jobs of
 # rc-jobs, grouped by the board each feeds), and Logs (rc-logs) came over from it.
-LIVE_BOARDS = (("rc-fetch", "Fetch"), ("rc-data-health", "Data health"), ("rc-activity", "Jobs"), ("rc-logs", "Logs"))
+# avo, 12 Nov 2026 ("Jobs aslinda timer i yoneten kisim degil mi ... onun grafana jobs panelindeki revenue chaser
+# kismini bizim fetch / health sekmesi altina gorebiliriz", "gomebiliriz"): Fetch/Health frames the controls, the
+# DuckDB health and the RC timers (rc-jobs: which job runs on its own, its switch and the app's fuse); the Logs tab
+# frames what flowed (rc-logs) and the runs grouped by the board they feed (rc-activity).
+#: The Fetch/Health tab's strip, RC Fetch first.
+LIVE_BOARDS = (("rc-fetch", "Fetch"), ("rc-data-health", "Data health"), ("rc-jobs", "Jobs"))
+#: The Logs tab's strip.
+LOGS_BOARDS = (("rc-logs", "Logs"), ("rc-activity", "Runs by board"))
 LIVE_CSS = """
-#live-board .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
+.live-board .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
   padding:0 12px}
-#live-board .livebar button{min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--line,#8884);
+.live-board .livebar button{min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--line,#8884);
   background:var(--card,transparent);color:var(--fg,inherit);font:inherit;cursor:pointer}
-#live-board .livebar button[aria-pressed="true"]{border-color:var(--acc,#4a86e8);color:var(--acc,#4a86e8);font-weight:600}
-#live-board .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px}
-#live-board iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
+.live-board .livebar button[aria-pressed="true"]{border-color:var(--acc,#4a86e8);color:var(--acc,#4a86e8);font-weight:600}
+.live-board .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px}
+.live-board iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
   background:var(--bg,transparent)}
 """
-LIVE_HTML = ('<div id="live-board"><div class="livebar" role="group" aria-label="Live board">'
-             + "".join(f'<button type="button" data-board="{uid}" aria-pressed="{"true" if i == 0 else "false"}">'
-                       f'{label}</button>' for i, (uid, label) in enumerate(LIVE_BOARDS))
-             + '<a id="live-open" target="_blank" rel="noopener">Open in Grafana</a></div>'
-             '<iframe id="live-frame" title="Live data health, fetch, jobs and logs (Grafana)" loading="lazy"></iframe></div>')
+def _live_strip(dom_id: str, boards, frame_id: str, open_id: str, group: str, title: str) -> str:
+    """One tab's board strip: a button a board, the "Open in Grafana" link and the frame the buttons swap. The frame
+    has no address until its tab opens (``LIVE_JS``), so a visit to another tab never loads Grafana."""
+    return ('<div class="live-board" id="' + dom_id + '"><div class="livebar" role="group" aria-label="'
+            + group + '">'
+            + "".join(f'<button type="button" data-board="{uid}" aria-pressed="{"true" if i == 0 else "false"}">'
+                      f'{label}</button>' for i, (uid, label) in enumerate(boards))
+            + '<a class="live-open" id="' + open_id + '" target="_blank" rel="noopener">Open in Grafana</a></div>'
+            + '<iframe class="live-frame" id="' + frame_id + '" title="' + title + '" loading="lazy"></iframe></div>')
+
+
+LIVE_HTML = _live_strip("live-board", LIVE_BOARDS, "live-frame", "live-open", "Live board",
+                        "Live fetch controls, data health and timers (Grafana)")
+LOGS_HTML = _live_strip("logs-board", LOGS_BOARDS, "logs-frame", "logs-open", "Logs board",
+                        "Logs: what flowed, and the runs by the board they feed (Grafana)")
 LIVE_JS = """
 (function(){
-  var panel = document.getElementById('panel-health'), frame = document.getElementById('live-frame');
-  if (!panel || !frame) return;
-  var buttons = [].slice.call(panel.querySelectorAll('[data-board]')), open = document.getElementById('live-open');
-  var board = buttons.length ? buttons[0].getAttribute('data-board') : 'rc-fetch';
+  var strips = [].slice.call(document.querySelectorAll('.live-board'));
+  if (!strips.length) return;
   function theme() {
     var t = document.documentElement.getAttribute('data-theme');
     if (t === 'light' || t === 'dark') return t;
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   }
-  function address(kiosk) {
+  function address(board, kiosk) {
     return location.protocol + '//' + location.hostname + ':3000/d/' + board + '/' + board + '?theme=' + theme()
       + (kiosk ? '&kiosk' : '');
   }
-  function load() {
-    if (panel.hidden) return;
-    var want = address(true);
-    if (frame.getAttribute('src') !== want) frame.setAttribute('src', want);
-    if (open) open.href = address(false);
-  }
-  buttons.forEach(function (b) {
-    b.addEventListener('click', function () {
-      board = b.getAttribute('data-board');
-      buttons.forEach(function (o) { o.setAttribute('aria-pressed', o === b ? 'true' : 'false'); });
-      load();
+  strips.forEach(function (strip) {
+    var panel = strip.closest('[role="tabpanel"]'), frame = strip.querySelector('iframe');
+    if (!panel || !frame) return;
+    var buttons = [].slice.call(strip.querySelectorAll('[data-board]')), open = strip.querySelector('.live-open');
+    if (!buttons.length) return;
+    var board = buttons[0].getAttribute('data-board');
+    function load() {
+      if (panel.hidden) return;
+      var want = address(board, true);
+      if (frame.getAttribute('src') !== want) frame.setAttribute('src', want);
+      if (open) open.href = address(board, false);
+    }
+    buttons.forEach(function (b) {
+      b.addEventListener('click', function () {
+        board = b.getAttribute('data-board');
+        buttons.forEach(function (o) { o.setAttribute('aria-pressed', o === b ? 'true' : 'false'); });
+        load();
+      });
     });
+    if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
+    var tab = document.getElementById(panel.getAttribute('aria-labelledby') || '');
+    if (tab) tab.addEventListener('click', function () { setTimeout(load, 0); });
+    load();
   });
-  if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
-  var tab = document.getElementById('tab-health');
-  if (tab) tab.addEventListener('click', function () { setTimeout(load, 0); });
-  load();
 })();
 """
 
@@ -3221,7 +3247,7 @@ def _ticker_drill(payload: dict) -> str:
 
 
 def render_settings_dashboard(payload: dict) -> str:
-    """The Data/Health page (#492): two tabs. Data is the control board (``control_render.render_data``); Health is
+    """The Data/Health page (#492): three tabs. Data is the control board (``control_render.render_data``); Health is
     ``_health_panel``. The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
     payload = payload or {}
     data_json = script_json(payload.get("tickers") or [])
@@ -3262,6 +3288,9 @@ def render_settings_dashboard(payload: dict) -> str:
 {LIVE_HTML}
 {fetch_html}
 {health_html}
+</div>
+<div id="panel-logs" role="tabpanel" aria-labelledby="tab-logs" hidden>
+{LOGS_HTML}
 </div>
 <script>{FILTERS_JS}</script>
 <script>
