@@ -185,24 +185,35 @@ def _rank(source: str) -> int:
 
 
 def load_ownership(tickers) -> dict[str, dict]:
-    """``{ticker: {"shares_outstanding": .., "insider_pct": ..}}`` from ``ownership_snapshot``; a field with no
-    stored value in any source is left out. Per ticker the newest non-NULL value of the first source in
-    :data:`SHARES_ORDER` that holds one (UW ``info``, then SEC dei via D11, then yfinance). One store read."""
+    """``{ticker: {"shares_outstanding": .., "shares_basis": .., "insider_pct": ..}}`` for the boards that divide
+    by shares out: the 13F board's "% Out" and Asymmetric Growth's own 13F share (#481), one rule for both (#646).
+
+    **Shares outstanding is the served one** (``rcdata.read.shares_outstanding``): the SEC cover page's count where
+    there is one, else the market cap over the close, and ``shares_basis`` says which (``reported`` / ``implied``),
+    so a cell can show the number and what it rests on. Measured on the 10 Nov 2026 copy: the old
+    ``ownership_snapshot`` carried a count for 1,636 of the 8,423 13F tickers (19.4%); the served path covers
+    3,248 reported (38.6%) and 5,766 with the implied fallback (68.5%).
+
+    ``insider_pct`` is still the old table's. It moves to ``rcdata.read.insider_reported`` in its own pull request
+    (#646 PR 4 landed the reader), because that number changes what the board shows and needs its own look.
+    """
+    from RevenueChaser.rcdata import read as rcread
     wanted = {str(t).upper() for t in tickers if t}
     if not wanted:
         return {}
     rows = rawstore.query(
         f"SELECT ticker, source, "
-        f"arg_max(shares_outstanding, session_date) FILTER (WHERE shares_outstanding IS NOT NULL) AS shares, "
         f"arg_max(insider_pct, session_date) FILTER (WHERE insider_pct IS NOT NULL) AS insider "
         f"FROM {TABLE} GROUP BY ticker, source")
     out: dict[str, dict] = {}
     for r in sorted((r for r in rows if r["ticker"] in wanted), key=lambda r: _rank(r["source"])):
-        entry = out.setdefault(r["ticker"], {})
-        if r["shares"] is not None:
-            entry.setdefault("shares_outstanding", float(r["shares"]))
         if r["insider"] is not None:
-            entry.setdefault("insider_pct", float(r["insider"]) * 100.0)
+            out.setdefault(r["ticker"], {}).setdefault("insider_pct", float(r["insider"]) * 100.0)
+    for ticker, row in rcread.shares_outstanding(wanted).items():
+        entry = out.setdefault(ticker, {})
+        if row.get("shares") is not None:
+            entry["shares_outstanding"] = float(row["shares"])
+            entry["shares_basis"] = row["basis"]
     return {t: e for t, e in out.items() if e}
 
 

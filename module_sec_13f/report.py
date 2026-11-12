@@ -444,6 +444,9 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
         so = enr.get("shares_outstanding")
         if so and last and last.get("shares"):
             pct_out = last["shares"] / so * 100.0
+        # #646 PR 1: the denominator is the SEC cover page's count where there is one, else the market cap over
+        # the close. The cell says which, because the two are not the same kind of number.
+        pct_out_basis = enr.get("shares_basis") if pct_out is not None else None
 
         price_delta = None
         px = enr.get("price") or {}
@@ -458,7 +461,7 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
         entries.append({
             "ticker": t, "name": info.get("name", ""), "sector": _row_sector(info.get("sector")),
             "shares": shares, "chgs": chgs, "last": last, "last_period": last_period,
-            "streak": streak, "accel": accel, "pct_out": pct_out,
+            "streak": streak, "accel": accel, "pct_out": pct_out, "pct_out_basis": pct_out_basis,
             "price_delta": price_delta, "short_pct": enr.get("short_pct"),
             "short_pct_as_of": enr.get("short_pct_as_of"),
             "insider_pct": enr.get("insider_pct"), "price": price,
@@ -479,6 +482,17 @@ def _val(v):
     if v is None or (isinstance(v, float) and not math.isfinite(v)):
         return None
     return v
+
+
+#: What a "% Out" cell says about its denominator (#646 PR 1).
+_SHARES_BASIS = {"reported": "shares outstanding as the SEC cover page reports them",
+                 "implied": "shares implied by the market cap over the close: the cover page has no count"}
+
+
+def _pct_out_title(entry: dict, of: str | None) -> str | None:
+    """The cell's hover text: the quarter it is as of, and which denominator the percentage used."""
+    parts = [x for x in (of, _SHARES_BASIS.get(entry.get("pct_out_basis") or "")) if x]
+    return " · ".join(parts) or None
 
 
 def _cell(text, val, cls, title=None):
@@ -519,7 +533,8 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
         # The snapshot is the last settled quarter's, which differs per row; each cell says which (#521).
         of = f"as of {_qlabel(e['last_period'])}" if e.get("last_period") else None
         cells.append(_cell(_fmt_money(last.get("value")), last.get("value"), "zero", of))
-        cells.append(_cell(_f(e["pct_out"], 1, "%", False), e["pct_out"], "zero", of))
+        cells.append(_cell(_f(e["pct_out"], 1, "%", False), e["pct_out"], "zero",
+                           _pct_out_title(e, of)))
         cells.append(_cell(str(_num(last.get("holders"))), last.get("holders"), "zero", of))
         cells.append(_cell(new_exit or "—", new_exit_val, "zero", of))
         breadth = last.get("breadth")
@@ -654,7 +669,8 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 <table><thead>{header}</thead><tbody id="rows">{rows_html}</tbody></table>
 <div style="color:#8b949e;font-size:11px;margin-top:8px;line-height:1.5">
 <b>Total ownership</b> = shares held by every 13F filer. <b>Δ% vs prior</b> = QoQ change in shares.
-<b>Value</b> = $ market value held. <b>% Out</b> = shares ÷ shares outstanding (newest stored).
+<b>Value</b> = $ market value held. <b>% Out</b> = shares ÷ shares outstanding: the SEC cover page's newest count,
+or, where it has none, the market cap over the close. Hover a cell to see which of the two it used.
 <b>New/Exit</b> = holders entered / exited vs prior quarter.
 <b>Breadth</b> = share of that quarter's 13F filers holding the name (holders ÷ filers), with the change in
 percentage points vs the name's own previous stored quarter, which is not necessarily the calendar quarter
