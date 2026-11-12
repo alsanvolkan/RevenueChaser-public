@@ -33,6 +33,11 @@ import pytest
 from RevenueChaser.rcdata import sec_notes as notes
 
 from .sec_notes_fixture import (BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN, BROKEN_CHAIN,
+                                CHAIN_ELEMENT_ENCLOSING_ITS_OWN_BLOCK,
+                                COEXTENSIVE_WITH_THE_GRANDCHILD_OUTERMOST,
+                                ESCAPED_CLOSINGS_THAT_DO_NOT_MATCH, ESCAPED_NOTE_WITH_AN_UNCLOSED_SCRIPT,
+                                ESCAPED_NOTE_WITH_A_DOTTED_CAPITAL_I, ESCAPED_WITH_AN_XML_DECLARATION,
+                                FOUR_DEEP_NESTING_WITH_A_CHAIN,
                                 CHAIN_ELEMENT_ENCLOSING_AN_EARLIER_ONE, CHILD_CHAIN_INSIDE_THE_GRANDPARENT,
                                 CHILD_CONTINUED_INSIDE_ONE_PARAGRAPH, CLEAN_ESCAPED_NOTE,
                                 COEXTENSIVE_CONTINUATIONS, EMPTY_CHAIN_ELEMENT_OUTSIDE_THE_PARENT,
@@ -211,17 +216,23 @@ def test_a_chain_element_inside_a_different_block_is_kept_in_both_rows_and_count
     (CHILD_CHAIN_INSIDE_THE_GRANDPARENT, "a grandchild whose chain leaves its parent but not its grandparent"),
     (CHILD_CONTINUED_INSIDE_ONE_PARAGRAPH, "a child continued inside one of the parent's own paragraphs"),
     (EMPTY_CHAIN_ELEMENT_OUTSIDE_THE_PARENT, "a child whose out-of-parent continuation carries no text"),
+    (FOUR_DEEP_NESTING_WITH_A_CHAIN, "four levels, the deepest chain ending in the top-level note's own page"),
+    (COEXTENSIVE_WITH_THE_GRANDCHILD_OUTERMOST, "two continuations wrapping the same text, the grandchild's "
+                                                "outermost"),
 ])
 def test_the_shapes_of_a_long_note_count_nothing(html, what):
-    """Five documents that are **fine**, each of which a version of this reader called a fault.
+    """Seven documents that are **fine**, each of which a version of this reader called a fault.
 
-    The two counts about nesting have now been wrong in four ways between them, and every one was found by a
+    The two counts about nesting have now been wrong in five ways between them, and every one was found by a
     healthy document rather than by a broken one: "inside any other block" (a child's parent is one), "a
     substring of the parent" (the stitch's own newline defeats it), "inside a frame enclosing this block" (a
-    parent that encloses its child through a continuation is not one -- and that is every multi-page note), and
-    "against the immediate parent" (a grandparent holding the words costs the sum nothing). The whole dict is
-    the assertion, because this is the failure mode that matters: a count that fires on the ordinary shape makes
-    every row of every filing carry a complaint, and then the report is not read at all.
+    parent that encloses its child through a continuation is not one -- and that is every multi-page note),
+    "against the immediate parent" (a grandparent holding the words costs the sum nothing), and the whole-string
+    form of the last one (a parent's own paragraph between the child's halves breaks the substring). The last
+    two documents go four levels deep and reach the top-level note's own page from the bottom one, because
+    nothing shallower notices a walk up the lineage that stops early. The whole dict is the assertion, because
+    this is the failure mode that matters: a count that fires on the ordinary shape makes every row of every
+    filing carry a complaint, and then the report is not read at all.
     """
     rows, counts = notes.parse(html)
     assert counts == {"not_a_block": 3}, what
@@ -270,6 +281,17 @@ def test_a_chain_element_that_encloses_an_earlier_one_stores_the_paragraph_twice
     rows, counts = notes.parse(CHAIN_ELEMENT_ENCLOSING_AN_EARLIER_ONE)
     (note,) = rows
     assert note.text.count("Inner paragraph.") == 2
+    assert counts == {"not_a_block": 3, "continuation_doubled": 1}
+
+
+def test_a_chain_element_that_encloses_the_block_itself_is_counted_too():
+    """The third direction, and the one the guard was blind to: the element does not enclose an *earlier element*
+    of the chain, it encloses the block. The block's own paragraph is then inside the element and the row stores
+    it twice. ``BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN`` has the same geometry with a block that cuts no text
+    of its own, so it counts nothing and could not pin this."""
+    rows, counts = notes.parse(CHAIN_ELEMENT_ENCLOSING_ITS_OWN_BLOCK)
+    (note,) = rows
+    assert note.text.count("Note 7. Debt of 500.") == 2 and "Tail." in note.text
     assert counts["continuation_doubled"] == 1
 
 
@@ -552,8 +574,9 @@ def test_a_clean_escaped_note_is_not_reported_as_unclean():
     """``escaped_markup_residue`` asked after the entity pass called every one of these a leftover tag: the pass
     turns the note's own ``&amp;lt;`` into a ``<``, so clean prose about a rate floor read as half-stripped
     markup. This document also pins the parts of the drop that no other case reaches -- a multi-line ``<STYLE
-    type="text/css">`` in the other case, an ``<article>``, two stylesheets with a paragraph between them that
-    must survive, and ``<style-guide>``, which is a word a note really uses and not an opening tag."""
+    type="text/css">`` whose opening runs over a line break, an ``<article>``, and two stylesheets with a
+    paragraph between them that must survive. It is the one case that asserts the row is *clean*: the whole dict
+    is compared, so a residue count that fires here fails rather than passing unread."""
     rows, counts = notes.parse(CLEAN_ESCAPED_NOTE)
     (note,) = rows
     assert note.text == ("A floor of <LIBOR + 2%> applies.\n"
@@ -579,6 +602,51 @@ def test_a_declaration_left_in_an_escaped_block_counts_as_residue():
     and known not to be clean, rather than quietly odd."""
     rows, counts = notes.parse(ESCAPED_WITH_A_DOCTYPE)
     assert "<!DOCTYPE html>" in rows[0].text and counts["escaped_markup_residue"] == 1
+
+
+def test_an_escaped_note_with_a_dotted_capital_i_keeps_its_amount():
+    """The drop found its stylesheet in a lower-cased copy of the text and cut the original at that offset.
+    ``"İ".lower()`` is **two** code points, so every dotted capital I before the stylesheet moved the cut one
+    character on, and ``$1,250 million`` was stored as ``,250 million`` -- a money figure quietly changed, with
+    the row counted as cleanly stripped. Two of them here, so the cut is two characters off if the offsets are
+    taken from the folded copy."""
+    rows, counts = notes.parse(ESCAPED_NOTE_WITH_A_DOTTED_CAPITAL_I)
+    (note,) = rows
+    assert note.text == "Turkcell İletişim and İş Bankası\n$1,250 million\nEnd."
+    assert counts == {"not_a_block": 3, "escaped_markup": 1}
+
+
+def test_an_unclosed_escaped_script_does_not_hide_the_stylesheet_after_it():
+    """A ``<script>`` nothing closes used to end the whole scan, so the ``<style>`` after it was stored as the
+    note's prose and the row read clean. The unclosed one is skipped instead: its own text stays, because nothing
+    in the document says where it ends, and the closed one after it still goes. ``var x;`` staying is the honest
+    answer and ``color:red`` leaving is the point."""
+    rows, counts = notes.parse(ESCAPED_NOTE_WITH_AN_UNCLOSED_SCRIPT)
+    (note,) = rows
+    assert note.text == "Note 7.\nvar x;\nDebt is 500.\nEnd."
+    assert "color:red" not in note.text
+    assert counts == {"not_a_block": 3, "escaped_markup": 1}
+
+
+def test_an_escaped_closing_only_closes_its_own_name():
+    """``</script>`` does not close a ``<style>``: if it did, the first stylesheet would end there and the
+    sentence after it would go with the second. And ``</style >`` with a space still closes, because filers write
+    it. Both stylesheets go, both sentences stay."""
+    rows, counts = notes.parse(ESCAPED_CLOSINGS_THAT_DO_NOT_MATCH)
+    (note,) = rows
+    assert note.text == "Note 7.\nEnd."
+    assert ".a{}" not in note.text and ".b{}" not in note.text
+    assert "Debt is 500." not in note.text, "the first stylesheet is closed by its own name, late"
+    assert counts["escaped_markup"] == 1
+
+
+def test_an_xml_declaration_left_in_an_escaped_block_counts_as_residue():
+    """``<?xml`` is not a tag the drop takes, the same as ``<!DOCTYPE``: it stays in the text and the row is
+    counted as not clean. The residue test asks for ``<?`` as well as ``</?letter``, which is the only thing that
+    tells this row from a clean one."""
+    rows, counts = notes.parse(ESCAPED_WITH_AN_XML_DECLARATION)
+    assert rows[0].text.startswith('<?xml version="1.0"?>') and "Note 7. Debt" in rows[0].text
+    assert counts["escaped_markup_residue"] == 1
 
 
 def test_a_table_s_cells_do_not_run_together():

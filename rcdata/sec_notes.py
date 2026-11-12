@@ -105,20 +105,37 @@ def _drop_escaped(raw: str) -> str:
     A scan rather than one ``re.sub`` with ``.*?``: a block holding many openings that nothing closes makes that
     pattern re-scan to the end of the text once per opening, which is quadratic -- measured at 12.7 s on a 176 KB
     block of 16,000 unclosed openings, and that is a shape a filer's broken HTML can reach in a 5,149-document
-    pass. Here each closing is found once, from where the last one ended, and an opening nothing closes ends the
-    scan and leaves the rest of the text exactly as it was.
+    pass. Here each closing is found once, from where the last one ended, and a name whose closing is nowhere in
+    the rest of the text is never asked about again, so the whole scan is linear in the text.
     """
-    low, out, at = raw.lower(), [], 0
+    out, keep, scan = [], 0, 0
+    # A name whose closing is nowhere in the rest of the text: never asked about again. Behaviour only
+    # changes in how long it takes -- the same text comes out either way -- so no assertion can pin it,
+    # and the number is here instead: on 368 KB of 16,000 unclosed openings, 0.01 s with it, 3.98 s
+    # without, the same 368,011 characters out.
+    dead: set[str] = set()
     while True:
-        open_at = _ESCAPED_DROP.search(raw, at)
+        open_at = _ESCAPED_DROP.search(raw, scan)
         if open_at is None:
             break
-        end = _ESCAPED_DROP_END[open_at.group(1).lower()].search(low, open_at.end())
+        name = open_at.group(1).lower()
+        if name in dead:
+            scan = open_at.end()
+            continue
+        # Searched in ``raw`` and not in a lower-cased copy: ``"\u0130".lower()`` is *two* code points, so an
+        # offset found in the copy lands one character late in the text for every one of those before it -- which
+        # silently ate the "$1" from "$1,250 million" in a note that also said "Turkcell \u0130leti\u015fim".
+        # The closing pattern is already case-insensitive, so the copy bought nothing.
+        end = _ESCAPED_DROP_END[name].search(raw, open_at.end())
         if end is None:
-            break
-        out.append(raw[at:open_at.start()])
-        at = end.end()
-    out.append(raw[at:])
+            # Nothing closes this one. Skipped rather than ending the scan, because a later ``<style>`` that *is*
+            # closed is still a stylesheet, and ending here stored it as the note's prose.
+            dead.add(name)
+            scan = open_at.end()
+            continue
+        out.append(raw[keep:open_at.start()])
+        keep = scan = end.end()
+    out.append(raw[keep:])
     return "".join(out)
 
 
@@ -579,7 +596,11 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
     for block in reader.blocks:
         parts = list(block["parts"])
         read_through = {block["fid"]}
-        read_ancestors: list[set[int]] = []
+        # The frames whose text this row already holds. The block's own enclosing frames are in it from the start
+        # **when the block cut text of its own**: a chain element that encloses the block already holds that text,
+        # which is the same doubling one level out, and the guard below could not see it. Only when the block cut
+        # text, because an empty block holds nothing to double.
+        read_ancestors: list[set[int]] = [set(block["ancestors"])] if any(p.strip() for p in parts) else []
         for cont in chains[block["seq"]]:
             ancestors = set(cont["ancestors"])
             # A chain element already inside this block, or inside an earlier element of the same chain, has
@@ -601,7 +622,8 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
                 parts.append("\n")
             parts.extend(cont["parts"])
             read_through.add(cont["fid"])
-            read_ancestors.append(ancestors)
+            if any(p.strip() for p in cont["parts"]):
+                read_ancestors.append(ancestors)      # an element that carried nothing can double nothing
         text = text_of(parts, counts)
         if not text:
             counts["empty"] = counts.get("empty", 0) + 1
@@ -625,7 +647,7 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
     # store as a dangling key. Re-point each row at its nearest kept ancestor instead, and if there is none it is
     # top-level -- which is true: no kept block holds its words.
     notes: list[Note] = []
-    by_seq = {b["seq"]: b for b in reader.blocks}
+    by_seq = by_block
     for seq in sorted(made):
         note, parent = made[seq], made[seq].parent_seq
         # ``parent == seq`` is reachable: a block claiming the continuation it sits inside makes the owner map
@@ -670,6 +692,7 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
     # sub-block that continues after a page break, and that is the ordinary shape of a long note. A line is the
     # unit the filer's own markup gives, and a line that is nowhere in the row above is text the sum has lost.
     rows = {n.seq: n for n in notes}
+    line_sets: dict[int, set[str]] = {}
     for note in notes:
         at, seen = note.parent_seq, {note.seq}
         while at is not None and at not in seen and not rows[at].top_level:
@@ -678,7 +701,12 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
         if at is None or at in seen:
             continue
         above = rows[at].text
-        if any(line and line not in above for line in note.text.split("\n")):
+        # One set of the row's lines, built once per top-level row. A child's line is almost always a whole line
+        # of the row above it, and a substring search for every line of every nested row is quadratic: measured
+        # at 18.4 s on one 2.4 MB note of 100 tables, against 1.8 s for a 0.6 MB one. The substring test stays as
+        # the fallback, because a line the parent joined into a longer one is still the child's words.
+        whole = line_sets.setdefault(at, set(above.split("\n")))
+        if any(line and line not in whole and line not in above for line in note.text.split("\n")):
             counts["child_text_outside_parent"] = counts.get("child_text_outside_parent", 0) + 1
     return notes, counts
 

@@ -377,10 +377,10 @@ CHAIN_ELEMENT_ENCLOSING_AN_EARLIER_ONE = HEADER + """
 <ix:continuation id="k"><p>Outer.</p>
   <ix:continuation id="e" continuedAt="k"><p>Inner paragraph.</p></ix:continuation></ix:continuation>""" + _END
 
-#: An escaped note that is clean: its own prose brackets arrive escaped twice, an ``<article>`` and a multi-line
-#: ``<STYLE>`` in the other case are markup, two stylesheets have a paragraph between them that must survive, and
-#: a note really does mention ``<style-guide>``, which is a word and not an opening tag. A ``<!DOCTYPE`` is a
-#: leftover: nothing here removes it, so the row is counted as not clean.
+#: An escaped note that is clean, and the only case that asserts so: its own prose brackets arrive escaped twice,
+#: a multi-line ``<STYLE type="text/css">`` and an ``<article>`` are markup and go, and two stylesheets have a
+#: paragraph between them that must survive. Nothing tag-shaped is left over, so ``escaped_markup_residue`` must
+#: stay silent -- which is what the row being *clean* means, as against merely readable.
 CLEAN_ESCAPED_NOTE = HEADER + """
 <ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
 &lt;STYLE type="text/css"&gt;.n{
@@ -398,6 +398,67 @@ ESCAPED_NOTE_MENTIONING_A_STYLE_TAG = HEADER + """
 &lt;p&gt;See our &lt;style-guide&gt; for house style.&lt;/p&gt;
 &lt;style&gt;.m{font-weight:bold}&lt;/style&gt;&lt;script&gt;alert(1)&lt;/script&gt;
 &lt;p&gt;That is all.&lt;/p&gt;</ix:nonNumeric>""" + _END
+#: An escaped note whose markup still carries a ``<!DOCTYPE``. It is not a tag the drop takes, so it stays in the
+#: text and the row is counted as not clean: readable, and known to carry something nothing took out.
 ESCAPED_WITH_A_DOCTYPE = HEADER + """
 <ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
 &lt;!DOCTYPE html&gt;&lt;p&gt;Note 7. Debt&lt;/p&gt;</ix:nonNumeric>""" + _END
+
+# ── shapes the fifth review round showed nothing reached ───────────────────────────────────────────────────────
+
+#: A chain element that encloses the **block itself**, not an earlier element of its chain: the block's own text is
+#: then inside the element and the row stores it twice. The guard saw one direction only, and this document --
+#: unlike ``BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN`` -- has a block that cuts text of its own, which is what
+#: makes the doubling real rather than a parent with nothing in it.
+CHAIN_ELEMENT_ENCLOSING_ITS_OWN_BLOCK = HEADER + """
+<ix:continuation id="k2"><ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="k2">
+  <p>Note 7. Debt of 500.</p></ix:nonNumeric><p>Tail.</p></ix:continuation>""" + _END
+
+#: An escaped note holding a Turkish dotted capital I. ``"İ".lower()`` is **two** code points, so an offset
+#: found in a lower-cased copy of the text lands one character late for every one of them before it -- which ate
+#: the ``$1`` out of ``$1,250 million`` and reported the row clean. The amount is the test.
+ESCAPED_NOTE_WITH_A_DOTTED_CAPITAL_I = HEADER + """
+<ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
+&lt;p&gt;Turkcell İletişim and İş Bankası&lt;/p&gt;&lt;style&gt;.n{}&lt;/style&gt;$1,250 million
+&lt;p&gt;End.&lt;/p&gt;</ix:nonNumeric>""" + _END
+
+#: An escaped ``<script>`` nothing closes, and after it a ``<style>`` that *is* closed. Ending the scan at the
+#: first unclosed opening stored the stylesheet as the note's prose; skipping it keeps both answers right and the
+#: scan linear. The unclosed script's own text stays, because nothing in the document says where it ends.
+ESCAPED_NOTE_WITH_AN_UNCLOSED_SCRIPT = HEADER + """
+<ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
+&lt;p&gt;Note 7.&lt;/p&gt;&lt;script&gt;var x;&lt;p&gt;Debt is 500.&lt;/p&gt;
+&lt;style&gt;.n{color:red}&lt;/style&gt;&lt;p&gt;End.&lt;/p&gt;</ix:nonNumeric>""" + _END
+
+#: An escaped ``<style>`` whose only closing carries the *other* name, and a ``</style >`` with a space in it. The
+#: first must not be treated as closed by ``</script>``; the second must still close.
+ESCAPED_CLOSINGS_THAT_DO_NOT_MATCH = HEADER + """
+<ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
+&lt;p&gt;Note 7.&lt;/p&gt;&lt;style&gt;.a{}&lt;/script&gt;&lt;p&gt;Debt is 500.&lt;/p&gt;
+&lt;style&gt;.b{}&lt;/style &gt;&lt;p&gt;End.&lt;/p&gt;</ix:nonNumeric>""" + _END
+
+#: An escaped note opening with an XML declaration, which is not a tag the pattern takes and so stays in the text.
+ESCAPED_WITH_AN_XML_DECLARATION = HEADER + """
+<ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
+&lt;?xml version="1.0"?&gt;&lt;p&gt;Note 7. Debt&lt;/p&gt;</ix:nonNumeric>""" + _END
+
+#: Four levels, with the deepest block's chain ending in the **top-level** note's own continuation. Nothing else
+#: here goes deeper than three, so nothing else would notice a lineage walk that stopped two levels up -- and that
+#: is the shape four versions of ``continuation_overlap`` got wrong, each time on a document that is fine.
+FOUR_DEEP_NESTING_WITH_A_CHAIN = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="t2"><p>Note 7. Debt</p>
+  <ix:nonNumeric contextRef="FY" name="us-gaap:LongTermDebtTextBlock"><p>Term loans.</p>
+    <ix:nonNumeric contextRef="FY" name="us-gaap:ScheduleOfDebtTableTextBlock"><p>Schedule.</p>
+      <ix:nonNumeric contextRef="FY" name="us-gaap:DebtInstrumentTextBlock" continuedAt="d4"><p>Facility A.</p>
+      </ix:nonNumeric></ix:nonNumeric></ix:nonNumeric></ix:nonNumeric>
+<ix:continuation id="t2"><p>Page two.</p>
+  <ix:continuation id="d4"><p>Facility A continued.</p></ix:continuation></ix:continuation>""" + _END
+
+#: Two continuations wrapping the same text with the **grandchild's** outermost: a row's line is not only its
+#: children but everything below it, however deep.
+COEXTENSIVE_WITH_THE_GRANDCHILD_OUTERMOST = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="g5"><p>Debt.</p>
+  <ix:nonNumeric contextRef="FY" name="us-gaap:LongTermDebtTextBlock"><p>Term loans.</p>
+    <ix:nonNumeric contextRef="FY" name="us-gaap:ScheduleOfDebtTableTextBlock" continuedAt="c5"><p>Schedule.</p>
+    </ix:nonNumeric></ix:nonNumeric></ix:nonNumeric>
+<ix:continuation id="c5"><ix:continuation id="g5"><p>Last page.</p></ix:continuation></ix:continuation>""" + _END
