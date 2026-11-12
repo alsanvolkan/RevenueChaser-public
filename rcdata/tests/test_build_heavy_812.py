@@ -114,16 +114,12 @@ def test_one_heavy_dataset_per_process_leaves_the_other_kinds_heavy_request_queu
     assert builds == ["market", "spine"]                  # the light one's kind is still built
 
 
-def test_the_pass_says_which_heavy_dataset_it_ran(fakes, capsys):
+def test_the_pass_says_which_heavy_dataset_it_ran_and_says_nothing_for_a_light_one(fakes, capsys):
     reg, log, builds = fakes
     ops.enqueue("m/heavy1", None, by="test")
     assert cli._run_queue(None, once=True) == 0
     said = [ln for ln in capsys.readouterr().err.splitlines() if "one heavy dataset per pass" in ln]
     assert len(said) == 1 and "m/heavy1" in said[0]
-
-
-def test_a_light_pass_says_nothing_about_the_heavy_rule(fakes, capsys):
-    reg, log, builds = fakes
     ops.enqueue("m/light1", None, by="test")
     assert cli._run_queue(None, once=True) == 0
     assert "one heavy dataset per pass" not in capsys.readouterr().err
@@ -132,19 +128,23 @@ def test_a_light_pass_says_nothing_about_the_heavy_rule(fakes, capsys):
 def test_a_dataset_named_on_the_command_line_runs_however_heavy_it_is(fakes):
     """``run --dataset X`` and ``backfill`` are a person's own run: the rule is the pass's, not theirs."""
     reg, log, builds = fakes
-    mine = ops.enqueue("m/heavy1", None, by="test")
-    assert cli._run_queue("m/heavy1", once=True) == 0
-    assert _status(mine) == "done"
+    first = ops.enqueue("m/heavy1", None, by="test")
     second = ops.enqueue("m/heavy2", None, by="test")
-    assert cli._run_queue("m/heavy2", once=True) == 0     # a second heavy run of the same process, asked for
+    assert cli._run_queue(None, once=True) == 0
+    assert _status(first) == "done" and _status(second) == "queued"
+    assert cli._run_queue("m/heavy2", once=True) == 0      # the same process, asked for by name
     assert _status(second) == "done"
 
 
-def test_the_attended_runner_is_not_held_off_by_the_heavy_rule(fakes, monkeypatch):
+def test_the_attended_runner_is_not_held_off_by_the_heavy_rule(fakes):
     """``attended`` claims with ``only=``, which ``next_request`` cannot take beside ``skip=``; nothing attended
     is heavy, so the rule must not reach that path."""
     reg, log, builds = fakes
     reg["m/light1"].attended = True
+    heavy = ops.enqueue("m/heavy1", None, by="test")
+    second = ops.enqueue("m/heavy2", None, by="test")
+    assert cli._run_queue(None, once=True) == 0             # a heavy pass, with the light one left to its runner
+    assert _status(heavy) == "done" and _status(second) == "queued"
     rid = ops.enqueue("m/light1", None, by="test")
     assert cli._run_queue(None, once=True, only={"m/light1"}, attended_ok=True) == 0
     assert _status(rid) == "done"
