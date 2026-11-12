@@ -138,6 +138,8 @@ tbody.grp tr:last-child td{padding-bottom:var(--s2)}
 #breaks-note{color:var(--muted);font-size:12px;margin:4px 0 12px;line-height:1.5}
 #breaks-list{list-style:none;display:flex;flex-direction:column;gap:8px}
 #breaks-list li{background:color-mix(in oklab, var(--amber) 8%, transparent);border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.5;white-space:normal}
+#breaks-list .bul{list-style:disc;margin:6px 0 0;padding-left:18px}
+#breaks-list .bul li{background:none;border-radius:0;padding:0;margin:3px 0;font-size:13px}
 #breaks-list b{color:var(--bright)}
 .warn-box{background:color-mix(in oklab, var(--amber) 10%, transparent);border:1px solid var(--amber);color:var(--amber);border-radius:8px;padding:var(--s3) 16px;margin-bottom:14px;font-size:13px;line-height:1.55}
 .warn-box b{color:var(--amber)}
@@ -168,11 +170,14 @@ function openBreaks(ticker){
     b.textContent = items[i][0];
     li.appendChild(b);
     var lines = items[i][1] || [];
+    var ul = document.createElement('ul');          // the lines read as a list, so they are one (owner, 12 Nov)
+    ul.className = 'bul';
     for(var j = 0; j < lines.length; j++){
-      var d = document.createElement('div');
+      var d = document.createElement('li');
       d.textContent = lines[j];
-      li.appendChild(d);
+      ul.appendChild(d);
     }
+    li.appendChild(ul);
     list.appendChild(li);
   }
   document.getElementById('breaks').classList.add('open');
