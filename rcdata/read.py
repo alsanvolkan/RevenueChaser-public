@@ -41,11 +41,12 @@ KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market",
                  "my_universe": "spine", "my_universe_changes": "spine"}
 # The ownership store (PR 16).
 DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_periods": "ownership/serve",
-                         "sec13f_cusip_map": "ownership/serve",
+                         "sec13f_cusip_map": "ownership/serve", "sec13f_filer_breaks": "ownership/serve",
                          "finra_short_interest": "finra/short_interest", "ibkr_shortable": "ibkr/shortable",
                          "regsho_threshold": "regsho/threshold", "sec_ftd": "sec/ftd",
                          "insider_transactions": "sec/form4", "beneficial_ownership": "sec/13dg"})
 KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_periods", "sec13f_cusip_map",
+                                               "sec13f_filer_breaks",
                                                "finra_short_interest",
                                                "ibkr_shortable", "regsho_threshold", "sec_ftd",
                                                "insider_transactions", "beneficial_ownership")})
@@ -762,6 +763,26 @@ def tickers_13f(period=None) -> list[str]:
         sql = "SELECT DISTINCT ticker FROM sec13f_ticker_period WHERE period = ? ORDER BY ticker"
         params = [_day(period)]
     return [r["ticker"] for r in _rows("sec13f_ticker_period", sql, params) if r.get("ticker")]
+
+
+def filer_breaks_13f(tickers: Iterable[str] | None = None, periods: Iterable | None = None) -> list[dict]:
+    """``sec13f_filer_breaks`` rows of ``tickers`` (every ticker when None) and ``periods`` (every period when None):
+    per ticker and settled quarter, each filer that started reporting (``kind`` ``started``: no holdings report in
+    the quarter before) or stopped (``stopped``: none in the quarter), with the shares it held. The flows leave these
+    filers out (#732), so this is where a ticker's series broke. By ticker, period, kind and shares, largest first.
+    A store built before the table existed gives no rows."""
+    wanted = _tickers(tickers)
+    if wanted == []:
+        return []
+    sql, params = _where(wanted, "period", None, None)
+    if periods is not None:
+        days = sorted({_day(p) for p in periods})
+        if not days:
+            return []
+        sql += f" AND period IN ({', '.join('?' * len(days))})"
+        params += days
+    return _rows("sec13f_filer_breaks", f"SELECT * FROM sec13f_filer_breaks{sql} "
+                 "ORDER BY ticker, period, kind, shares DESC, cik", params, missing_table_ok=True)
 
 
 def periods_13f() -> list[dict]:

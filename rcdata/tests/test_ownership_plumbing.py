@@ -5,8 +5,9 @@ from __future__ import annotations
 from RevenueChaser.rcdata import caps, serving
 
 
-def test_ownership_is_a_serving_kind_of_version_1():
-    assert serving.SERVING_SCHEMA_VERSION["ownership"] == 1
+def test_ownership_is_a_serving_kind_of_version_2():
+    """2: the continuing-filer flows and ``sec13f_filer_breaks`` (#732)."""
+    assert serving.SERVING_SCHEMA_VERSION["ownership"] == 2
     assert "ownership" in serving.KINDS
     assert serving.live_path("ownership").name == "ownership.duckdb"
 
