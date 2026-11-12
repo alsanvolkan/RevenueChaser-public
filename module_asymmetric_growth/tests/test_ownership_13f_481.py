@@ -163,11 +163,13 @@ def _split_store(monkeypatch, factor: float) -> list:
     reverse split after it serves 25: today's shares are the quarter's ÷ 25). Returns the bar windows asked."""
     from RevenueChaser.rcdata import read
     asked = []
-    monkeypatch.setattr(read, "security_ids", lambda tickers: {t: f"sid:{t}" for t in tickers})
+    # The real ids, because the "% Out" denominator reads `shares_class` through the same mapping since
+    # #646 PR 1: a made-up id here would quietly cost the card its served count.
+    monkeypatch.setattr(read, "security_ids", lambda tickers: {t: f"sym:{t}" for t in tickers})
 
     def bars(ids, start=None, end=None, basis="nominal"):
         asked.append((sorted(ids), start, end, basis))
-        return [{"security_id": "sid:AAA", "session_date": end, "split_factor": factor}]
+        return [{"security_id": "sym:AAA", "session_date": end, "split_factor": factor}]
 
     monkeypatch.setattr(read, "bars", bars)
     return asked
