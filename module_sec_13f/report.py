@@ -103,10 +103,20 @@ td[data-col="ticker"] .tk{display:flex;align-items:center;gap:var(--sp-2);white-
 td[data-col="ticker"] .who{min-width:0}
 td[data-col="ticker"] .tline{display:flex;align-items:center}
 td[data-col="ticker"] .break-mark{margin:-12px -10px -12px -6px}
+@media (pointer:fine){td[data-col="ticker"] .break-mark{width:28px;height:28px;margin:0 0 0 2px}}
 /* The watch-list pair as one box split in two (avo 12 Nov 2026); each half stays a 44 px target. */
 td[data-col="ticker"] .rc-watch{margin:0;gap:0;border:1px solid var(--input-border);border-radius:var(--r-sm);overflow:hidden;flex:none}
-td[data-col="ticker"] .rc-watch button{border:0;border-radius:0;min-width:44px;min-height:44px;padding:0 6px;font-size:11px;
-  background:transparent}
+/* Symbols only (avo 12 Nov 2026: "OPT ve STK cok yer kapliyor sadece sembol kullanarak coz"): the text is hidden and a
+   mask icon in currentColor takes its place, so pressed/unpressed colours still apply; the aria-label and title name the
+   list. 28 px halves with a mouse, 44 px on a touch screen. */
+td[data-col="ticker"] .rc-watch button{border:0;border-radius:0;min-width:28px;min-height:28px;width:28px;height:28px;padding:0;
+  font-size:0;line-height:0;background:transparent;display:inline-flex;align-items:center;justify-content:center}
+td[data-col="ticker"] .rc-watch button::before{content:"";width:14px;height:14px;background:currentColor;
+  -webkit-mask:var(--ico) center/contain no-repeat;mask:var(--ico) center/contain no-repeat}
+td[data-col="ticker"] .rc-watch button[data-rc-watch="option"]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 2 4 14h7l-1 8 9-12h-7l1-8z'/%3E%3C/svg%3E")}
+td[data-col="ticker"] .rc-watch button[data-rc-watch="stock"]{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20V10M10 20V4M16 20v-7M22 20H2'/%3E%3C/svg%3E")}
+@media (pointer:coarse){td[data-col="ticker"] .rc-watch button{min-width:44px;min-height:44px;width:44px;height:44px}
+  td[data-col="ticker"] .rc-watch button::before{width:18px;height:18px}}
 td[data-col="ticker"] .rc-watch button+button{border-left:1px solid var(--input-border)}
 td[data-col="ticker"] .rc-watch button[aria-pressed="true"]{background:var(--accent);color:var(--primary-fg)}
 .pos{color:var(--pos)}.neg{color:var(--neg)}.zero{color:var(--muted)}
