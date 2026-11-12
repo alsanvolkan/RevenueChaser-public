@@ -455,7 +455,7 @@ def _party_relation(edge: dict) -> tuple[str, str]:
     profile named the same company as a competitor (measured 12 Nov 2026: 0 of 265 ``customer_share`` rows of 121
     profiled tickers survived), and a profile edge in a second relation could never pick up a stated share.
     """
-    return _counterparty(edge), ""  # MUTATION M1 (#725): drop the relation from the key again
+    return _counterparty(edge), edge["relation"]
 
 
 def merge_profile(regex_edges: list[dict], prof_edges: list[dict]) -> list[dict]:
@@ -470,7 +470,7 @@ def merge_profile(regex_edges: list[dict], prof_edges: list[dict]) -> list[dict]
         by_party.setdefault(_party_relation(e), e)
     for e in regex_edges:
         p = by_party.get(_party_relation(e))
-        if p is not None and p["share_pct"] is None and e.get("share_pct") is not None:
+        if False and p is not None and p["share_pct"] is None and e.get("share_pct") is not None:  # MUTATION M2
             p["share_pct"] = e["share_pct"]
     return prof_edges + [e for e in regex_edges if _party_relation(e) not in by_party]
 
