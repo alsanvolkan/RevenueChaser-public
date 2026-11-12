@@ -363,7 +363,7 @@ def _phone_flow(f: dict, colour: str, own: dict) -> str:
         y += h + _PGAP
 
     fy = y + 16
-    fh = _PLH + 18
+    fh = 44   # the one press in the picture: a 44 px touch target (the picture is drawn 1:1 on a phone)
     fx = _PW / 2
     # The lines run in one trunk rather than a fan: a fan of seven curves across 358 px crosses its own chips.
     st, line = _PSX + _PSW + 10, f'" class="pe" style="stroke:{esc(colour)}"/>'

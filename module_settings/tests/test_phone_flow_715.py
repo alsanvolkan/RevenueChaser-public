@@ -90,3 +90,32 @@ def test_the_phone_picture_is_drawn_inside_the_phone_s_width():
     assert ".ctl svg.pflow{display:block;width:100%" in css, "and it scales to its card"
     assert "min-height:44px" in css[css.index(".ctl .pfhead{"):], "the name row is 44 px"
     assert "min-height:44px" in css[css.index(".ctl .pftab{"):], "and a name button is a 44 px target too"
+
+
+# ── avo, 13 Nov 2026, on the phone: "çok ayrık ve kopuk ... daha kompakt", and nothing under the files ──────────
+
+def _phone_rules(css: str) -> str:
+    """Every rule of ``css`` that sits inside a ``max-width:640px`` block."""
+    return "".join(m.group(1) for m in re.finditer(r"@media\(max-width:640px\)\{(.*?\})\s*\}", css, re.S))
+
+
+def test_the_file_in_the_picture_is_a_44_px_touch_target():
+    svg = control_render._phone_flow(control_render._ready(_view())["files"][0], "#3fb950", {})
+    box = re.search(r'<g class="pfile"[^>]*><rect [^>]*height="(\d+)"', svg)
+    assert int(box.group(1)) == 44
+
+
+def test_a_build_step_is_three_tight_lines_on_a_phone():
+    phone = _phone_rules(control_render.CTL_CSS)
+    assert ".ctl table.jt3 td.jh{display:flex;flex-wrap:wrap" in phone, "raw and Parquet side by side"
+    assert ".ctl table.jt3 td.jh .hl details.pf{display:none}" in phone, "no 44 px folder press on each of them"
+    assert ".ctl table.jt3 .jttl{flex-direction:row" in phone, "the source icon beside the title"
+    assert ".ctl details.sec.fpanel{margin-top:12px}" in phone, "and two file sections sit close"
+    assert "#panel-data .rcf-clear::after{" in phone, "the lookup's clear press reaches 44 px"
+
+
+def test_the_reference_parts_under_the_files_are_not_drawn_on_a_phone():
+    from RevenueChaser.module_settings import needs_tab
+    assert "#needs details.hfold{display:none}" in _phone_rules(needs_tab.NEEDS_CSS)
+    assert "#needs details.hfold{display:none}" not in needs_tab.NEEDS_CSS.replace(
+        "@media(max-width:640px){#needs details.hfold{display:none}}", ""), "the desk keeps them"
