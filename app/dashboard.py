@@ -2000,10 +2000,10 @@ def view_rotation_trail():
 # ── API ──
 @app.route("/api/sec_13f/<ticker>")
 def api_sec13f(ticker: str):
-    """Plotly figure for a ticker's SEC 13F total-ownership chart."""
+    """The two Plotly figures of a ticker's SEC 13F chart: shares + price, then value + holders."""
     from RevenueChaser.module_sec_13f import engine as module_sec_13f
     from RevenueChaser.module_sec_13f.enrich import load_inputs
-    from RevenueChaser.module_sec_13f.report import build_chart_fig
+    from RevenueChaser.module_sec_13f.report import build_chart_figs
     t = ticker.strip().upper()
     if not _valid_ticker(t):
         return jsonify({"ok": False, "error": "bad ticker"}), 400
@@ -2012,7 +2012,7 @@ def api_sec13f(ticker: str):
     if not periods:
         return jsonify({"ok": False, "error": "no series", "ticker": t}), 404
     enrich = load_inputs({t: periods}).get(t, {})       # the board's inputs (#375 F2): D01 closes, store only
-    return jsonify({"ok": True, "ticker": t, "fig": build_chart_fig(t, periods, enrich)})
+    return jsonify({"ok": True, "ticker": t, "figs": build_chart_figs(t, periods, enrich)})
 
 
 @app.route("/api/watchlist/<kind>/toggle/<ticker>", methods=["POST"])

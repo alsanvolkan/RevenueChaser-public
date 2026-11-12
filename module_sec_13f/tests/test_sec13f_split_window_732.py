@@ -78,9 +78,9 @@ def test_the_result_history_records_the_board_numbers(monkeypatch):
 
 
 def test_the_chart_is_on_the_same_basis():
-    fig = report.build_chart_fig("AAA", SPLIT_TOTALS["AAA"], SPLIT_INPUTS["AAA"])
-    (shares,) = [t for t in fig["data"] if t.get("name") == "Shares"]
-    (price,) = [t for t in fig["data"] if t.get("name") == "Price"]
+    top, _bottom = report.build_chart_figs("AAA", SPLIT_TOTALS["AAA"], SPLIT_INPUTS["AAA"])
+    (shares,) = [t for t in top["data"] if t.get("name") == "Shares"]
+    (price,) = [t for t in top["data"] if t.get("name") == "Price"]
     assert list(shares["y"]) == [pytest.approx(1000.0), pytest.approx(1000.0)]
     assert list(price["y"]) == [pytest.approx(10.0), pytest.approx(10.0)]
 

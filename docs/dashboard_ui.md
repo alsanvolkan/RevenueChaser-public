@@ -233,7 +233,7 @@ Where each board puts it (`core/tests/test_watchlist_boards_pr4.py` classifies e
 | Board | Where |
 |---|---|
 | LEAPS | The last column of every tier (it replaced the ★ pin; Stk is the pinned list) |
-| SEC 13F | Each row's ticker cell |
+| SEC 13F | Before the ticker, in the row group's ticker cell (#772) |
 | Asymmetric Growth, Swing, Fundamentals | Its own line under each card's ticker line |
 | Sector Rotation | Each fund's ticker cell (not a macro series), and every holding and industry member when expanded |
 | Earnings Radar | The ticker's drawer header (the table's ticker column is a 50 px sticky column) |

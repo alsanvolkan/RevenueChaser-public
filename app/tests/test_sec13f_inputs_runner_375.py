@@ -84,7 +84,8 @@ def test_the_chart_route_takes_its_price_from_d01(store, no_enrichment):  # noqa
     dashboard.app.config["TESTING"] = True
     r = dashboard.app.test_client().get("/api/sec_13f/AAPL")
     assert r.status_code == 200, r.data
-    (price,) = [t for t in r.get_json()["fig"]["data"] if t.get("name") == "Price"]
+    top = r.get_json()["figs"][0]          # shares + price is the first pane (#772)
+    (price,) = [t for t in top["data"] if t.get("name") == "Price"]
     assert list(price["y"]) == [220.0]
 
 

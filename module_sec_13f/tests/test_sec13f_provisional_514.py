@@ -221,8 +221,12 @@ def test_tickers_13f_is_the_newest_settled_period_and_ignores_the_old_table():
 # ── #521: the chart modal and the snapshot cells ────────────────────────────────────────────────────────────
 
 def _chart(ticker="AAPL"):
+    """Both panes as one record (#772 split the chart in two): the traces and annotations the assertions below
+    look for are the same, they just live in two figures now."""
     totals = sec_13f.load_totals()
-    return report.build_chart_fig(ticker, totals[ticker])
+    figs = report.build_chart_figs(ticker, totals[ticker])
+    return {"data": [t for f in figs for t in f["data"]],
+            "layout": {"annotations": [a for f in figs for a in f["layout"].get("annotations", [])]}}
 
 
 def _trace(fig, name):

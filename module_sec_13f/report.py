@@ -83,8 +83,22 @@ th.sort-asc::after{content:' ▲';color:var(--focus)}
 th.sort-desc::after{content:' ▼';color:var(--focus)}
 th.left,td.left{text-align:left}
 td{padding:var(--s2) 8px;border-bottom:1px solid var(--card);white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
-tr:hover{background:var(--card)}
-tr[data-ticker]{cursor:pointer}
+tbody.grp{border-bottom:1px solid var(--card)}
+tbody.grp:hover{background:var(--hover-faint);cursor:pointer}
+tbody.grp td{border-bottom:0}
+tbody.grp tr:first-child td{padding-top:var(--s2)}
+tbody.grp tr:last-child td{padding-bottom:var(--s2)}
+.rowlabel{text-align:left;color:var(--muted);font-size:11px;white-space:nowrap}
+.qhead{white-space:nowrap}
+.qsort,.dsort{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer}
+.dsort{margin-left:6px;color:var(--muted);border:1px solid var(--border);border-radius:4px;
+ padding:0 5px;line-height:1.5}
+.qsort:hover,.dsort:hover{color:var(--fg)}
+.qsort:focus-visible,.dsort:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.qsort.sort-asc::after{content:' ▲';color:var(--focus)}
+.qsort.sort-desc::after{content:' ▼';color:var(--focus)}
+.dsort.sort-asc,.dsort.sort-desc{color:var(--focus);border-color:var(--focus)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .ticker{color:var(--bright);font-weight:700}
 .name{color:var(--muted);font-size:11px;font-weight:400}
 .pos{color:#34D399}.neg{color:#F87171}.zero{color:var(--muted)}
@@ -95,7 +109,18 @@ tr[data-ticker]{cursor:pointer}
 #modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 #modal-title{color:var(--bright);font-size:16px;font-weight:700}
 #modal-close{background:transparent;border:0;color:var(--muted);font-size:20px;cursor:pointer}
-#chart{min-height:380px}
+.pane{border-top:1px solid var(--border)}
+.pane-head{display:flex;align-items:center;justify-content:space-between;gap:var(--s3);padding:var(--s3) 0 var(--s2)}
+.pane-title{color:var(--fg);font-size:13px}
+.expand{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 10px;background:transparent;
+ border:1px solid var(--input-border);border-radius:6px;color:var(--muted);font:inherit;font-size:12px;
+ cursor:pointer;transition:color 150ms ease,border-color 150ms ease}
+.expand:hover{color:var(--fg);border-color:var(--fg)}
+.expand:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.plot{min-height:320px}
+#modal-card[data-expanded] .plot{min-height:70vh}
+#modal-card[data-expanded="shares"] .pane[data-pane="value"],
+#modal-card[data-expanded="value"] .pane[data-pane="shares"]{display:none}
 .spin{display:block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--focus);border-radius:50%;animation:r .7s linear infinite;margin:40px auto}
 @keyframes r{to{transform:rotate(360deg)}}
 .status{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
@@ -154,13 +179,15 @@ function openBreaks(ticker){
   document.getElementById('breaks-close').focus();
 }
 function closeBreaks(){ document.getElementById('breaks').classList.remove('open'); }
-function cellVal(row, col){ var td = row.querySelector('td[data-col="'+col+'"]'); return td ? td.getAttribute('data-val') : ''; }
+function cellVal(group, col){ var td = group.querySelector('td[data-col="'+col+'"]'); return td ? td.getAttribute('data-val') : ''; }
 function sortTable(col, el){
   if(SORT_COL === col){ SORT_ASC = !SORT_ASC; } else { SORT_COL = col; SORT_ASC = false; }
-  document.querySelectorAll('th').forEach(function(th){ th.classList.remove('sort-asc','sort-desc'); });
+  document.querySelectorAll('.qsort,.dsort,th[data-col]').forEach(function(el2){
+    el2.classList.remove('sort-asc','sort-desc');
+  });
   el.classList.add(SORT_ASC ? 'sort-asc' : 'sort-desc');
-  var tbody = document.querySelector('tbody');
-  var rows = Array.from(tbody.querySelectorAll('tr[data-ticker]'));
+  var table = document.getElementById('board');
+  var rows = Array.from(table.querySelectorAll('tbody.grp'));
   rows.sort(function(a,b){
     var av = cellVal(a, col), bv = cellVal(b, col);
     var aNull = av === '', bNull = bv === '';
@@ -169,27 +196,66 @@ function sortTable(col, el){
     var r = (!isNaN(an) && !isNaN(bn)) ? an - bn : (av < bv ? -1 : (av > bv ? 1 : 0));
     return SORT_ASC ? r : -r;
   });
-  rows.forEach(function(r){ tbody.appendChild(r); });
+  rows.forEach(function(r){ table.appendChild(r); });
   applyFilters();
 }
+var PANES = [['shares', 'chart-shares'], ['value', 'chart-value']];
 function openChart(ticker){
   var modal = document.getElementById('modal');
   modal.classList.add('open');
   document.getElementById('modal-title').textContent = ticker;
-  var chart = document.getElementById('chart');
-  chart.innerHTML = '<span class="spin"></span>';
+  collapsePane();
+  for(var i = 0; i < PANES.length; i++){
+    document.getElementById(PANES[i][1]).innerHTML = '<span class="spin"></span>';
+  }
   fetch('/api/sec_13f/' + encodeURIComponent(ticker))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.fig){ chart.innerHTML = '<div class="zero">No series data.</div>'; return; }
-      Plotly.react('chart', d.fig, {}, {displayModeBar: true, responsive: true});
+      var figs = (d && d.figs) || [];
+      for(var i = 0; i < PANES.length; i++){
+        var el = document.getElementById(PANES[i][1]);
+        if(!figs[i]){ el.innerHTML = '<div class="zero">No series data.</div>'; continue; }
+        Plotly.react(PANES[i][1], figs[i], {}, {displayModeBar: true, responsive: true});
+      }
     })
-    .catch(function(){ chart.innerHTML = '<div class="neg">Failed to load chart.</div>'; });
+    .catch(function(){
+      for(var i = 0; i < PANES.length; i++){
+        document.getElementById(PANES[i][1]).innerHTML = '<div class="neg">Failed to load chart.</div>';
+      }
+    });
 }
-function closeModal(){ document.getElementById('modal').classList.remove('open'); }
+// A pane expands on its own (owner, 12 Nov 2026): the card goes wide, the other pane folds away, and the
+// figure is relaid out to the taller box. Pressing it again puts both panes back.
+function expandPane(pane){
+  var card = document.getElementById('modal-card');
+  card.setAttribute('data-expanded', pane);
+  document.querySelectorAll('.expand').forEach(function(b){
+    var on = b.getAttribute('data-pane-for') === pane;
+    b.setAttribute('aria-expanded', on ? 'true' : 'false');
+    b.querySelector('.expand-text').textContent = on ? 'Click to shrink' : 'Click to expand';
+  });
+  resizePanes();
+}
+function collapsePane(){
+  var card = document.getElementById('modal-card');
+  card.removeAttribute('data-expanded');
+  document.querySelectorAll('.expand').forEach(function(b){
+    b.setAttribute('aria-expanded', 'false');
+    b.querySelector('.expand-text').textContent = 'Click to expand';
+  });
+  resizePanes();
+}
+function resizePanes(){
+  if(typeof Plotly === 'undefined' || !Plotly.Plots) return;
+  for(var i = 0; i < PANES.length; i++){
+    var el = document.getElementById(PANES[i][1]);
+    if(el && el.querySelector('.plotly')){ Plotly.Plots.resize(el); }
+  }
+}
+function closeModal(){ collapsePane(); document.getElementById('modal').classList.remove('open'); }
 function applyFilters(){
   var kitOn = !!(RCF && RCF.active()), q = SEARCH_Q.toLowerCase();
-  var rows = document.querySelectorAll('tbody tr[data-ticker]');
+  var rows = document.querySelectorAll('tbody.grp');
   var shown = 0, total = rows.length;
   for(var i = 0; i < rows.length; i++){
     var r = rows[i], t = r.getAttribute('data-ticker'), f = FIELDS[t], ok = true;
@@ -212,20 +278,31 @@ function initKit(){
 }
 function build(p){
   // The rows come from the payload route (#429); every string reaches the DOM as text or an attribute, never markup.
-  // The filter rows ride the same payload (KF #375), not the HTML, so the page stays small.
-  var tbody = document.getElementById('rows');
+  // One ticker is one <tbody class="grp"> of two rows (#772): shares on the first, Δ% on the second, under the
+  // same quarter columns. The per-ticker cells (ticker, sector, the snapshot) span both rows.
+  var table = document.getElementById('board');
+  var msg = document.getElementById('rows');
   var frag = document.createDocumentFragment();
   var rows = (p && p.rows) || [];
   var cols = (p && p.cols) || [];
   FIELDS = (p && p.fields) || {};
+  var nq = 0;
+  for(var c = 0; c < cols.length; c++){ if(cols[c].indexOf('sh_') === 0) nq++; }
   for(var i = 0; i < rows.length; i++){
     var r = rows[i];
-    var tr = document.createElement('tr');
-    tr.setAttribute('data-ticker', r[0]);
+    var body = document.createElement('tbody');
+    body.className = 'grp';
+    body.setAttribute('data-ticker', r[0]);
+    var trS = document.createElement('tr');
+    var trD = document.createElement('tr');
     var tdT = document.createElement('td');
     tdT.className = 'left';
+    tdT.setAttribute('rowspan', '2');
     tdT.setAttribute('data-col', 'ticker');
     tdT.setAttribute('data-val', r[0]);
+    // The watch-list box comes before the ticker (owner, 12 Nov 2026); rcWatchButtons escapes, and gives
+    // nothing for a ticker the dashboard refuses.
+    tdT.insertAdjacentHTML('afterbegin', rcWatchButtons(r[0]));
     var spT = document.createElement('span');
     spT.className = 'ticker';
     spT.textContent = r[0];
@@ -241,39 +318,65 @@ function build(p){
       tdT.appendChild(mk);
     }
     if(r[1]){
-      tdT.appendChild(document.createTextNode(' '));
       var spN = document.createElement('span');
       spN.className = 'name';
       spN.textContent = r[1];
       tdT.appendChild(spN);
     }
-    // The shared watch-list pair (PR 4): rcWatchButtons escapes, and gives nothing for a ticker the dashboard refuses.
-    tdT.insertAdjacentHTML('beforeend', rcWatchButtons(r[0]));
-    tr.appendChild(tdT);
+    trS.appendChild(tdT);
     var tdS = document.createElement('td');
     tdS.className = 'left';
+    tdS.setAttribute('rowspan', '2');
     tdS.setAttribute('data-col', 'sector');
     tdS.setAttribute('data-val', r[2]);
     tdS.textContent = r[2];
-    tr.appendChild(tdS);
+    trS.appendChild(tdS);
+    trS.appendChild(rowLabel('shares'));
+    trD.appendChild(rowLabel('Δ vs prior'));
     var cells = r[3] || [];
     for(var j = 0; j < cols.length; j++){
-      var c = cells[j] || [];
-      var td = document.createElement('td');
-      td.setAttribute('data-col', cols[j]);
-      td.setAttribute('data-val', (c[1] === null || c[1] === undefined) ? '' : String(c[1]));
-      td.className = c[2] || '';
-      if(c[3] !== null && c[3] !== undefined){ td.setAttribute('title', c[3]); }
-      td.textContent = (c[0] === null || c[0] === undefined) ? '' : c[0];
-      tr.appendChild(td);
+      var col = cols[j];
+      var td = cell(cells[j] || [], col);
+      if(col.indexOf('sh_') === 0){
+        trS.appendChild(td);
+      } else if(col.indexOf('ch_') === 0){
+        trD.appendChild(td);
+      } else {
+        td.setAttribute('rowspan', '2');
+        trS.appendChild(td);
+      }
     }
-    frag.appendChild(tr);
+    // The oldest quarter has no change to show, and the Δ row still has to line up under it.
+    if(trD.childNodes.length === nq){ trD.insertBefore(cell(['—', null, 'zero'], 'ch_none'), trD.childNodes[1]); }
+    body.appendChild(trS);
+    body.appendChild(trD);
+    frag.appendChild(body);
   }
-  while(tbody.firstChild){ tbody.removeChild(tbody.firstChild); }
-  tbody.appendChild(frag);
+  var old = table.querySelectorAll('tbody.grp');
+  for(var k = 0; k < old.length; k++){ table.removeChild(old[k]); }
+  while(msg.firstChild){ msg.removeChild(msg.firstChild); }
+  table.appendChild(frag);
   initKit();
 }
+function rowLabel(text){
+  var td = document.createElement('td');
+  td.className = 'rowlabel';
+  td.textContent = text;
+  return td;
+}
+function cell(c, col){
+  var td = document.createElement('td');
+  td.setAttribute('data-col', col);
+  td.setAttribute('data-val', (c[1] === null || c[1] === undefined) ? '' : String(c[1]));
+  td.className = c[2] || '';
+  if(c[3] !== null && c[3] !== undefined){ td.setAttribute('title', c[3]); }
+  td.textContent = (c[0] === null || c[0] === undefined) ? '' : c[0];
+  return td;
+}
 function fail(e){
+  var table = document.getElementById('board');
+  var groups = table.querySelectorAll('tbody.grp');
+  for(var i = 0; i < groups.length; i++){ table.removeChild(groups[i]); }
   var tbody = document.getElementById('rows');
   while(tbody.firstChild){ tbody.removeChild(tbody.firstChild); }
   var tr = document.createElement('tr');
@@ -290,13 +393,21 @@ document.addEventListener('DOMContentLoaded', function(){
   if(q){
     q.addEventListener('input', function(e){ SEARCH_Q = e.target.value; applyFilters(); });
   }
-  document.getElementById('rows').addEventListener('click', function(e){
-    var tr = e.target.closest('tr[data-ticker]');
-    if(e.target.closest('.break-mark')){ if(tr){ openBreaks(tr.getAttribute('data-ticker')); } return; }
-    if(tr){ openChart(tr.getAttribute('data-ticker')); }
+  document.getElementById('board').addEventListener('click', function(e){
+    if(e.target.closest('.rc-watch') || e.target.closest('th')) return;
+    var grp = e.target.closest('tbody.grp');
+    if(e.target.closest('.break-mark')){ if(grp){ openBreaks(grp.getAttribute('data-ticker')); } return; }
+    if(grp){ openChart(grp.getAttribute('data-ticker')); }
   });
   document.getElementById('modal').addEventListener('click', function(e){ if(e.target === this) closeModal(); });
   document.getElementById('modal-close').addEventListener('click', closeModal);
+  document.getElementById('modal-card').addEventListener('click', function(e){
+    var btn = e.target.closest('.expand');
+    if(!btn) return;
+    var pane = btn.getAttribute('data-pane-for');
+    var card = document.getElementById('modal-card');
+    if(card.getAttribute('data-expanded') === pane){ collapsePane(); } else { expandPane(pane); }
+  });
   document.getElementById('breaks').addEventListener('click', function(e){ if(e.target === this) closeBreaks(); });
   document.getElementById('breaks-close').addEventListener('click', closeBreaks);
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape'){ closeModal(); closeBreaks(); } });
@@ -473,8 +584,11 @@ def _fmt_money(v):
     return f"${v:,.0f}"
 
 
-def build_chart_fig(ticker: str, periods: dict, enrichment: dict = None) -> dict:
-    """Shares + price (row 1) and $ value + holders (row 2) over quarters.
+def build_chart_figs(ticker: str, periods: dict, enrichment: dict = None) -> list[dict]:
+    """Two figures: shares + price, and $ value + holders, both over quarters.
+
+    They were one two-row subplot until #772. Each is its own figure now because each pane carries its own
+    "click to expand" (owner, 12 Nov 2026), and a subplot cannot be grown on its own.
 
     A quarter still arriving (#514) is drawn as what it is, a part of itself (#521): its bars are hatched, its
     label carries the board's mark, the holders line goes dashed into it, and a note names it."""
@@ -492,33 +606,40 @@ def build_chart_fig(ticker: str, periods: dict, enrichment: dict = None) -> dict
     if enrichment:
         px = (enrichment.get("price") or {})
         price = [px.get(q) * factors.get(q, 1.0) if px.get(q) is not None else None for q in qs]
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.10,
-                        subplot_titles=(f"{ticker} — total shares & price (today's share basis)", "market value ($) & holders"),
-                        specs=[[{"secondary_y": True}], [{"secondary_y": True}]])
-    fig.add_trace(go.Bar(x=labels, y=shares, name="Shares", marker=dict(color=THEME_SCALE["c1"], pattern=pattern),
-                         hovertemplate="%{y:,.0f}"), 1, 1)
+
+    top = make_subplots(specs=[[{"secondary_y": True}]])
+    top.add_trace(go.Bar(x=labels, y=shares, name="Shares", marker=dict(color=THEME_SCALE["c1"], pattern=pattern),
+                         hovertemplate="%{y:,.0f}"))
     if price:
-        fig.add_trace(go.Scatter(x=labels, y=price, name="Price",
-                                 line=dict(color=THEME_SCALE["c2"], width=2)), 1, 1, secondary_y=True)
-    fig.add_trace(go.Bar(x=labels, y=value, name="Value ($)", marker=dict(color=THEME_SCALE["c3"], pattern=pattern),
-                         hovertemplate="%{y:,.0f}"), 2, 1)
+        top.add_trace(go.Scatter(x=labels, y=price, name="Price",
+                                 line=dict(color=THEME_SCALE["c2"], width=2)), secondary_y=True)
+
+    bottom = make_subplots(specs=[[{"secondary_y": True}]])
+    bottom.add_trace(go.Bar(x=labels, y=value, name="Value ($)",
+                            marker=dict(color=THEME_SCALE["c3"], pattern=pattern),
+                            hovertemplate="%{y:,.0f}"))
     n = len(qs) - len(still_arriving)           # the settled quarters come first: the arriving set is a suffix
-    fig.add_trace(go.Scatter(x=labels[:n], y=holders[:n], name="Holders",
-                             line=dict(color=THEME_SCALE["c4"], width=2)), 2, 1, secondary_y=True)
+    bottom.add_trace(go.Scatter(x=labels[:n], y=holders[:n], name="Holders",
+                                line=dict(color=THEME_SCALE["c4"], width=2)), secondary_y=True)
     if still_arriving:
         start = max(n - 1, 0)
-        fig.add_trace(go.Scatter(x=labels[start:], y=holders[start:], name="Holders (filed so far)",
-                                 line=dict(color=THEME_SCALE["c4"], width=2, dash="dash"), showlegend=False), 2, 1, secondary_y=True)
+        bottom.add_trace(go.Scatter(x=labels[start:], y=holders[start:], name="Holders (filed so far)",
+                                    line=dict(color=THEME_SCALE["c4"], width=2, dash="dash"),
+                                    showlegend=False), secondary_y=True)
         names = ", ".join(_qlabel(q) for q in sorted(still_arriving))
-        fig.add_annotation(text=f"{ARRIVING_MARK} {names} still arriving: filed so far, not a drop",
-                           xref="paper", yref="paper", x=0, y=-0.08, xanchor="left", yanchor="top",
-                           showarrow=False, font=dict(size=12, color=THEME_TOKENS["dark"]["muted"]))
-    fig.update_layout(template="plotly_dark", height=620, hovermode="x unified",
-                      # Anchored at its bottom so a legend that wraps on a phone grows up into the margin, not over the title.
-                      legend=dict(orientation="h", y=1.08, yanchor="bottom", x=0),
-                      margin=dict(l=60, r=60, t=110, b=60 if still_arriving else 40))
-    fig.update_xaxes(type="category")
-    return fig.to_dict()
+        note = f"{ARRIVING_MARK} {names} still arriving: filed so far, not a drop"
+        for fig in (top, bottom):
+            fig.add_annotation(text=note, xref="paper", yref="paper", x=0, y=-0.14, xanchor="left",
+                               yanchor="top", showarrow=False,
+                               font=dict(size=12, color=THEME_TOKENS["dark"]["muted"]))
+    for fig, title in ((top, f"{ticker} — total shares & price (today's share basis)"),
+                       (bottom, "market value ($) & holders")):
+        fig.update_layout(template="plotly_dark", height=320, hovermode="x unified", title=dict(text=title, x=0),
+                          # Anchored at its bottom so a legend that wraps on a phone grows up into the margin.
+                          legend=dict(orientation="h", y=1.04, yanchor="bottom", x=0),
+                          margin=dict(l=60, r=60, t=86, b=70 if still_arriving else 40))
+        fig.update_xaxes(type="category")
+    return [top.to_dict(), bottom.to_dict()]
 
 
 _SNAP_COLS = [
@@ -739,20 +860,30 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
     default_sort = f"sh_{settled[-1]}" if settled else (f"sh_{quarters[-1]}" if quarters else "ticker")
     n = len(quarters)
     ns = len(_SNAP_COLS)
-    ncols = 2 + n + max(0, n - 1) + ns          # Ticker, Sector, shares per quarter, Δ%, the snapshot (13F-7)
+    ncols = 3 + n + ns          # Ticker, Sector, the metric label, one column per quarter, the snapshot
 
+    # Shares and Δ% share one quarter column each (owner, 12 Nov 2026): the quarter is written once in the
+    # header and the two numbers sit on two lines of the same row group, so the table is n + snapshot columns
+    # wide instead of n + (n-1) + snapshot. The quarter head sorts by shares; the small Δ beside it sorts by
+    # that quarter's change, which is the sort the old Δ% block carried.
     header = (
         '<tr>'
         '<th class="left" rowspan="2" data-col="ticker" onclick="sortTable(this.dataset.col,this)">Ticker</th>'
         '<th class="left" rowspan="2" data-col="sector" onclick="sortTable(this.dataset.col,this)">Sector</th>'
-        f'<th class="group" colspan="{n}">Total ownership (shares) per quarter</th>'
-        f'<th class="group" colspan="{max(0, n - 1)}">Δ% vs prior quarter</th>'
+        '<th class="rowhead" rowspan="2"><span class="sr-only">Metric</span></th>'
+        f'<th class="group" colspan="{n}">Shares held, and Δ% against the quarter before</th>'
         f'<th class="group" colspan="{ns}">Latest settled snapshot</th>'
         '</tr><tr>'
-        + ''.join(f'<th data-col="sh_{esc(q)}" onclick="sortTable(this.dataset.col,this)"'
-                  f' class="{("sort-desc " if settled and q == settled[-1] else "")}">{esc(q_labels[q])}</th>'
-                  for q in quarters)
-        + ''.join(f'<th data-col="ch_{esc(q)}" onclick="sortTable(this.dataset.col,this)">{esc(q_labels[q])}</th>' for q in quarters[1:])
+        + ''.join('<th class="qhead">'
+                  f'<button type="button" class="qsort{(" sort-desc" if settled and q == settled[-1] else "")}"'
+                  f' data-col="sh_{esc(q)}" onclick="sortTable(this.dataset.col,this)">{esc(q_labels[q])}</button>'
+                  + ('' if i == 0 else
+                     f'<button type="button" class="dsort" data-col="ch_{esc(q)}"'
+                     f' title="Sort by the change into {esc(_qlabel(q))}"'
+                     f' aria-label="Sort by the change into {esc(_qlabel(q))}"'
+                     ' onclick="sortTable(this.dataset.col,this)">Δ</button>')
+                  + '</th>'
+                  for i, q in enumerate(quarters))
         + ''.join(f'<th data-col="{c}" onclick="sortTable(this.dataset.col,this)">{label}</th>' for c, label in _SNAP_COLS)
         + '</tr>'
     )
@@ -815,7 +946,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 {filters_bar_html("rc-filters")}
 <div class="kit-count" id="kit-count" aria-live="polite"></div>
 <div class="board-search"><input type="search" id="board-q" placeholder="Search ticker or name" autocomplete="off" spellcheck="false"></div>
-<table><thead>{header}</thead><tbody id="rows">{rows_html}</tbody></table>
+<table id="board"><thead>{header}</thead><tbody id="rows">{rows_html}</tbody></table>
 <div class="legend">
 <b>Total ownership</b> = shares held by every 13F filer, on <b>today's share basis</b>: a quarter's count is divided
 by the split factor of its quarter end, so a split is not read as buying (hover a cell for the count as filed).
@@ -843,8 +974,11 @@ does not change.
 <ol id="breaks-list"></ol>
 </div></div>
 <div id="modal"><div id="modal-card">
-<div id="modal-head"><span id="modal-title"></span><button id="modal-close">×</button></div>
-<div id="chart"></div>
+<div id="modal-head"><span id="modal-title"></span><button id="modal-close" aria-label="Close">×</button></div>
+<div class="pane" data-pane="shares"><div class="pane-head"><span class="pane-title">Shares held &amp; price</span><button type="button" class="expand" data-pane-for="shares" aria-expanded="false"><span class="expand-text">Click to expand</span><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false"><path d="M9.5 2.5H13.5V6.5M6.5 13.5H2.5V9.5M13.5 2.5l-4.6 4.6M2.5 13.5l4.6-4.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+<div id="chart-shares" class="plot"></div></div>
+<div class="pane" data-pane="value"><div class="pane-head"><span class="pane-title">Market value &amp; holders</span><button type="button" class="expand" data-pane-for="value" aria-expanded="false"><span class="expand-text">Click to expand</span><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" focusable="false"><path d="M9.5 2.5H13.5V6.5M6.5 13.5H2.5V9.5M13.5 2.5l-4.6 4.6M2.5 13.5l4.6-4.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>
+<div id="chart-value" class="plot"></div></div>
 </div></div>
 <footer>RevenueChaser — SEC 13F · SEC EDGAR bulk data · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</footer>
 {payload_js}{meta_js}<script>{FILTERS_JS}</script>{watchlist_html("sec_13f")}{js}</body></html>"""
