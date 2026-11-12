@@ -92,7 +92,7 @@ def _db_of(name: str) -> str:
 #: incrementally. The first, narrow step of the board-file plan (2026-11-08): only boards born with their own file are
 #: listed here (News, Welcome); the move of the older boards' tables (plan PR 0 and on) extends this tuple.
 BOARD_DBS = ("news", "welcome", "relatedness", "comovement", "asymmetric_growth", "swing_potential",
-             "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma")
+             "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma", "sec_13f")
 #: The folder of the board files, beside the raw store; ``rcdata/backup.py`` copies ``boards/*.duckdb``.
 BOARDS_DIRNAME = "boards"
 
@@ -2075,6 +2075,32 @@ MANIFEST: dict[str, dict] = {
         "key": ["key"],
         "columns": ["key TEXT PRIMARY KEY", "value TEXT", "updated_at DOUBLE"],
         "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "spx_gamma", "sources": [],
+    },
+    # 13F board (#732, owner 12 Nov 2026): its own file boards/sec_13f.duckdb, written only by
+    # module_sec_13f/store.py. The board reads it until the ownership build or the New York date changes; a period
+    # stored as closed is never rewritten.
+    "sec13f_board_cells": {
+        "key": ["ticker", "period"],
+        "columns": [
+            "ticker TEXT", "period DATE", "shares DOUBLE", "value DOUBLE", "holders INTEGER", "top10_pct DOUBLE",
+            "hhi DOUBLE", "new_holders INTEGER", "exited_holders INTEGER", "buy_flow DOUBLE", "sell_flow DOUBLE",
+            "breadth DOUBLE", "breadth_chg DOUBLE", "complete BOOLEAN", "closed BOOLEAN", "stored_at DOUBLE",
+            "PRIMARY KEY (ticker, period)",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "event", "db": "sec_13f", "sources": [],
+    },
+    "sec13f_board_breaks": {
+        "key": ["ticker", "period", "kind", "cik"],
+        "columns": [
+            "ticker TEXT", "period DATE", "kind TEXT", "cik TEXT", "filer_name TEXT", "shares DOUBLE",
+            "stored_at DOUBLE", "PRIMARY KEY (ticker, period, kind, cik)",
+        ],
+        "kind": "tabular", "write": "upsert", "history_mode": "event", "db": "sec_13f", "sources": [],
+    },
+    "sec13f_board_meta": {
+        "key": ["key"],
+        "columns": ["key TEXT PRIMARY KEY", "value TEXT", "updated_at DOUBLE"],
+        "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "sec_13f", "sources": [],
     },
     "source_checks": {
         "key": ["dataset", "source", "key"],

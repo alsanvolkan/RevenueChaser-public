@@ -732,7 +732,16 @@ def run_sec_13f_latest(uw: UWClient | None = None, notice: str | None = None,
     from RevenueChaser.module_sec_13f import engine as sec_13f
     from RevenueChaser.module_sec_13f.enrich import load_inputs
     from RevenueChaser.module_sec_13f.report import export_sec13f_dashboard
+    from RevenueChaser.module_sec_13f import store as board_store
 
+    try:
+        # The board's own file (#732): brought up to the live ownership build once a build or a day, then read.
+        _t, _b, written = board_store.sync()
+        if written:
+            logger.info("13F board file updated from the ownership build")
+    except Exception as exc:                      # noqa: BLE001 - the board still renders from the builder
+        logger.exception("13F board file was not updated")
+        notice = "; ".join(n for n in (notice, f"13F board file not updated: {type(exc).__name__}") if n)
     totals = sec_13f.load_totals()
     if capture is not None:
         capture["totals"] = totals

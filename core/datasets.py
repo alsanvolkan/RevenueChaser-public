@@ -35,7 +35,7 @@ from importlib import import_module
 from RevenueChaser.core.datahealth import Health
 
 DBS = ("raw", "edgar", "prices", "history", "news", "welcome", "relatedness", "comovement", "asymmetric_growth",
-       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma")  # all but the first four: board files (S9, S16)
+       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma", "sec_13f")  # all but the first four: board files (S9, S16)
 
 FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
@@ -691,6 +691,14 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         writer_note=("derived from the stored days by module_spx_gamma/store.py on the SPX Gamma Fetch; "
                      "Refresh moves only spx_meta.latest"),
         freshness=("spx_gex_daily", "session_date"),
+    ),
+    DatasetSpec(
+        key="sec13f_board_file", label="13F board: its own file (cells as filed, filer breaks, source stamp)",
+        tables=("sec13f_board_cells", "sec13f_board_breaks", "sec13f_board_meta"),
+        db="sec_13f", source=Source.derived, writer=None,
+        writer_note=("written by module_sec_13f/store.py on the 13F Refresh and Fetch, from the ownership build, "
+                     "once per build or New York day; a closed quarter is never rewritten"),
+        freshness=("sec13f_board_cells", "period"),
     ),
     DatasetSpec(
         key="source_checks", label="Source check watermarks",

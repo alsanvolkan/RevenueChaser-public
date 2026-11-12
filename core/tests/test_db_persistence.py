@@ -514,6 +514,12 @@ POPULATION: dict[str, str] = {
     "spx_brier": "module_spx_gamma/tests/test_store.py::test_a_scored_brier_record_is_never_changed",
     "spx_gex_daily": "module_spx_gamma/tests/test_store.py::test_every_gex_day_is_kept",
     "spx_meta": "module_spx_gamma/tests/test_store.py::test_meta_round_trips",
+    "sec13f_board_cells":
+        "module_sec_13f/tests/test_sec13f_board_file_732.py::test_a_sync_writes_the_builders_rows_and_the_board_then_reads_the_file",
+    "sec13f_board_breaks":
+        "module_sec_13f/tests/test_sec13f_board_file_732.py::test_a_sync_writes_the_builders_rows_and_the_board_then_reads_the_file",
+    "sec13f_board_meta":
+        "module_sec_13f/tests/test_sec13f_board_file_732.py::test_a_sync_writes_the_builders_rows_and_the_board_then_reads_the_file",
 }
 
 _ROOT = Path(__file__).resolve().parent.parent.parent

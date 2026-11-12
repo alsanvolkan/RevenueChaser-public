@@ -171,8 +171,35 @@ def sec13f_totals() -> dict[str, dict]:
         # ``complete`` is not one of the store's metrics, and it is not optional either: a period whose filing
         # deadline has not passed holds a part of itself, so a reader that cannot tell shows a quarter still
         # arriving as a collapse (#514). ``rcdata.read`` computes it from the deadline; this used to drop it.
-        out.setdefault(r["ticker"], {})[r["period"].isoformat()] = {**{m: r[m] for m in SEC13F_METRICS},
-                                                                    "complete": r["complete"]}
+        # ``closed`` (#732): the SEC data set covering the period's deadline is published, so the quarter takes no
+        # more change. Left out when the store cannot say (nothing listed yet, or a store built before the column).
+        cell = {**{m: r[m] for m in SEC13F_METRICS}, "complete": r["complete"]}
+        if r.get("closed") is not None:
+            cell["closed"] = bool(r["closed"])
+        out.setdefault(r["ticker"], {})[r["period"].isoformat()] = cell
+    return out
+
+
+def sec13f_filer_breaks(tickers) -> dict[str, list[dict]]:
+    """``{ticker: [{"period", "kind", "shares", "cik", "filer_name"}]}``: where each ticker's 13F flow breaks, the
+    filers that started (``started``) or stopped (``stopped``) reporting it in a settled quarter (#732). The flows
+    leave these filers out, so the board marks the ticker and lists them. A store that cannot be read gives ``{}``
+    and a warning, never a failed board."""
+    from RevenueChaser.rcdata import read as rcread
+
+    wanted = sorted({str(t).strip().upper() for t in tickers if t})
+    if not wanted:
+        return {}
+    out: dict[str, list[dict]] = {}
+    try:
+        rows = rcread.filer_breaks_13f(wanted)
+    except Exception as exc:                      # noqa: BLE001 - a missing mark, never a failed board
+        logger.warning("13F filer breaks unreadable, no break marks: %s", exc)
+        return {}
+    for r in rows:
+        out.setdefault(r["ticker"], []).append({"period": r["period"].isoformat(), "kind": r["kind"],
+                                                "shares": r["shares"], "cik": r["cik"],
+                                                "filer_name": r.get("filer_name")})
     return out
 
 

@@ -97,6 +97,22 @@ tr[data-ticker]{cursor:pointer}
 #chart{min-height:380px}
 .spin{display:block;width:16px;height:16px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:r .7s linear infinite;margin:40px auto}
 @keyframes r{to{transform:rotate(360deg)}}
+.status{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.status span{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:14px;font-size:12px;font-weight:600}
+.status .closed{background:rgba(63,185,80,.14);color:#7ee787}
+.status .waiting{background:rgba(210,153,29,.14);color:#f0c674}
+.break-mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;margin:-12px 0 -12px 2px;border:0;border-radius:22px;background:transparent;color:#d2991d;cursor:pointer;vertical-align:middle}
+.break-mark:hover,.break-mark:focus-visible{background:rgba(210,153,29,.16);outline:none}
+#breaks{position:fixed;inset:0;background:rgba(5,17,31,.82);display:none;align-items:center;justify-content:center;z-index:110}
+#breaks.open{display:flex}
+#breaks-card{background:#0d1117;border:1px solid #30363d;border-radius:10px;width:min(440px,94vw);max-height:86vh;overflow:auto;padding:16px}
+#breaks-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#breaks-title{color:#F1F5F9;font-size:15px;font-weight:700}
+#breaks-close{width:44px;height:44px;background:transparent;border:0;color:#8b949e;font-size:20px;cursor:pointer}
+#breaks-note{color:#8b949e;font-size:12px;margin:4px 0 12px;line-height:1.5}
+#breaks-list{list-style:none;display:flex;flex-direction:column;gap:8px}
+#breaks-list li{background:rgba(210,153,29,.08);border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.5;white-space:normal}
+#breaks-list b{color:#F1F5F9}
 .warn-box{background:rgba(210,153,29,.10);border:1px solid #d2991d;color:#f0c674;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;line-height:1.55}
 .warn-box b{color:#d2991d}
 footer{margin-top:24px;padding-top:12px;border-top:1px solid #21262d;color:#484f58;font-size:11px;text-align:center}
@@ -110,6 +126,33 @@ var SORT_COL = __DEFAULT_SORT__;
 var SORT_ASC = false;
 var ROW_COUNT = __ROW_COUNT__;
 var NCOLS = __NCOLS__;
+var BREAKS = {};
+var MARK_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+  + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 21h20L12 3z"></path>'
+  + '<path d="M12 10v4"></path><path d="M12 17.5v.01"></path></svg>';
+function openBreaks(ticker){
+  // Where the ticker's filer flow breaks (#732), newest first; every string reaches the DOM as text.
+  var list = document.getElementById('breaks-list');
+  while(list.firstChild){ list.removeChild(list.firstChild); }
+  document.getElementById('breaks-title').textContent = ticker + ': where the filer flow breaks';
+  var items = BREAKS[ticker] || [];
+  for(var i = 0; i < items.length; i++){
+    var li = document.createElement('li');
+    var b = document.createElement('b');
+    b.textContent = items[i][0];
+    li.appendChild(b);
+    var lines = items[i][1] || [];
+    for(var j = 0; j < lines.length; j++){
+      var d = document.createElement('div');
+      d.textContent = lines[j];
+      li.appendChild(d);
+    }
+    list.appendChild(li);
+  }
+  document.getElementById('breaks').classList.add('open');
+  document.getElementById('breaks-close').focus();
+}
+function closeBreaks(){ document.getElementById('breaks').classList.remove('open'); }
 function cellVal(row, col){ var td = row.querySelector('td[data-col="'+col+'"]'); return td ? td.getAttribute('data-val') : ''; }
 function sortTable(col, el){
   if(SORT_COL === col){ SORT_ASC = !SORT_ASC; } else { SORT_COL = col; SORT_ASC = false; }
@@ -186,6 +229,16 @@ function build(p){
     spT.className = 'ticker';
     spT.textContent = r[0];
     tdT.appendChild(spT);
+    if(r[4] && r[4].length){
+      BREAKS[r[0]] = r[4];
+      var mk = document.createElement('button');
+      mk.type = 'button';
+      mk.className = 'break-mark';
+      mk.setAttribute('aria-label', 'Filer breaks for ' + r[0]);
+      mk.setAttribute('title', 'Filers started or stopped reporting ' + r[0] + ': open for the list');
+      mk.innerHTML = MARK_SVG;
+      tdT.appendChild(mk);
+    }
     if(r[1]){
       tdT.appendChild(document.createTextNode(' '));
       var spN = document.createElement('span');
@@ -238,11 +291,14 @@ document.addEventListener('DOMContentLoaded', function(){
   }
   document.getElementById('rows').addEventListener('click', function(e){
     var tr = e.target.closest('tr[data-ticker]');
+    if(e.target.closest('.break-mark')){ if(tr){ openBreaks(tr.getAttribute('data-ticker')); } return; }
     if(tr){ openChart(tr.getAttribute('data-ticker')); }
   });
   document.getElementById('modal').addEventListener('click', function(e){ if(e.target === this) closeModal(); });
   document.getElementById('modal-close').addEventListener('click', closeModal);
-  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeModal(); });
+  document.getElementById('breaks').addEventListener('click', function(e){ if(e.target === this) closeBreaks(); });
+  document.getElementById('breaks-close').addEventListener('click', closeBreaks);
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape'){ closeModal(); closeBreaks(); } });
 });
 if(ROW_COUNT > 0){ loadRows(); }
 </script>"""
@@ -334,6 +390,62 @@ def _on_todays_basis(value, factor):
     if value is None or not factor:
         return value
     return value / factor
+
+
+def _breaks(raw: list, quarters: list, settled: set, factors: dict) -> list[dict]:
+    """The filer breaks of the board's settled quarters, one entry per quarter, newest first (#732): how many filers
+    started and stopped reporting the ticker, their shares on today's basis, and the largest of them by name."""
+    by_q: dict[str, dict] = {}
+    for b in raw or []:
+        q = b.get("period")
+        if q not in settled or q not in quarters or b.get("kind") not in ("started", "stopped"):
+            continue
+        e = by_q.setdefault(q, {"period": q, "started": [], "stopped": []})
+        e[b["kind"]].append({"shares": _on_todays_basis(b.get("shares"), factors.get(q)),
+                             "filer": b.get("filer_name") or b.get("cik") or "?"})
+    for e in by_q.values():
+        for kind in ("started", "stopped"):
+            e[kind].sort(key=lambda f: -(f["shares"] or 0))
+    return [by_q[q] for q in sorted(by_q, reverse=True)]
+
+
+BREAK_NAMES = 3     # the largest filers named per line of the break list
+
+
+def _break_lines(e: dict) -> list[str]:
+    """The lines of one quarter in the break list: stopped first (the shares that left the count), then started."""
+    lines = []
+    for kind, verb in (("stopped", "stopped filing"), ("started", "started filing")):
+        filers = e[kind]
+        if not filers:
+            continue
+        total = sum(f["shares"] or 0 for f in filers)
+        lines.append(f"{len(filers)} filer{'s' if len(filers) != 1 else ''} {verb}, {_fmt_shares(total)} shares")
+        named = ", ".join(f"{f['filer']} ({_fmt_shares(f['shares'])})" for f in filers[:BREAK_NAMES])
+        more = f" and {len(filers) - BREAK_NAMES} more" if len(filers) > BREAK_NAMES else ""
+        lines.append(f"Largest: {named}{more}")
+    return lines
+
+
+def quarter_status(totals: dict, quarters: list) -> list[tuple[str, str]]:
+    """``[(css class, text)]`` for the header: the newest settled quarter's state and any quarter still arriving.
+
+    A quarter is ``closed`` when the SEC data set covering its filing deadline is published (#732, owner: "tam
+    sayılsın ve üzerinde daha değişiklik almayacak şekilde kapansın"); settled but not closed, it waits for that set.
+    A store that cannot say (no cell carries ``closed``) shows nothing for it."""
+    late = arriving(totals, quarters)
+    settled = [q for q in quarters if q not in late]
+    out = []
+    if settled:
+        q = settled[-1]
+        flags = {cell.get("closed") for periods in totals.values() if (cell := periods.get(q)) is not None}
+        if True in flags:
+            out.append(("closed", f"{_qlabel(q)} closed"))
+        elif False in flags:
+            out.append(("waiting", f"{_qlabel(q)} settled, waits for the SEC data set"))
+    for q in sorted(late):
+        out.append(("waiting", f"{_qlabel(q)} still arriving"))
+    return out
 
 
 def _fmt_money(v):
@@ -481,8 +593,10 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
             if fp and fp > 0:
                 price_delta = (lp / fp - 1) * 100.0
 
+        settled_qs = {q for q in quarters if q not in still_arriving}
         entries.append({
             "ticker": t, "name": info.get("name", ""), "sector": _row_sector(info.get("sector")),
+            "breaks": _breaks(enr.get("breaks"), quarters, settled_qs, factors),
             "shares": shares, "chgs": chgs, "last": last, "last_period": last_period,
             "streak": streak, "accel": accel, "pct_out": pct_out,
             "price_delta": price_delta, "price": price,
@@ -568,7 +682,8 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
         cells.append(_cell(str(e["streak"]) if e["streak"] is not None else "—", e["streak"], "zero"))
         cells.append(_cell(_f(e["accel"], 1, "pp"), e["accel"], _sign_class(e["accel"])))
         cells.append(_cell(_f(e["price_delta"]), e["price_delta"], _sign_class(e["price_delta"])))
-        rows.append([e["ticker"], e["name"], e["sector"], cells])
+        breaks = [[_qlabel(b["period"]), _break_lines(b)] for b in e.get("breaks") or []]
+        rows.append([e["ticker"], e["name"], e["sector"], cells, breaks])
     return {"cols": cols, "rows": rows, "fields": {r["ticker"]: r for r in (fields or [])}}
 
 
@@ -590,12 +705,13 @@ def render_sec13f_dashboard(totals: dict, meta: dict, enrichment: dict = None,
     quarters, entries = board_entries(totals, meta, enrichment)
     fields, kit_notice = _kit_rows(entries)
     return _render_page(quarters, entries, fields, kit_notice, provider_health, notice,
-                        arriving(totals, quarters))
+                        arriving(totals, quarters), quarter_status(totals, quarters))
 
 
 def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | None = None,
                  provider_health: dict | None = None, notice: str | None = None,
-                 still_arriving: set[str] | frozenset[str] = frozenset()) -> str:
+                 still_arriving: set[str] | frozenset[str] = frozenset(),
+                 status: list[tuple[str, str]] = ()) -> str:
     q_labels = {q: _qlabel(q) + (ARRIVING_MARK if q in still_arriving else "") for q in quarters}
     settled = [q for q in quarters if q not in still_arriving]
 
@@ -643,6 +759,9 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
                        "spine show as <b>Unclassified</b> with no market cap, so any cap filter hides them."})
     meta_js = f"<script>var META = {script_json(kit_meta)};</script>"
 
+    status_html = ("<div class=\"status\">" + "".join(f'<span class="{esc(c)}">{esc(t)}</span>' for c, t in status)
+                   + "</div>") if status else ""
+
     arriving_legend = ""
     if still_arriving:
         names = [_qlabel(q) for q in sorted(still_arriving)]
@@ -666,7 +785,8 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 <script src="{PLOTLY_CDN_URL}"></script>
 {CSS}{FILTERS_CSS}</head><body>
 <div class="header"><h1>SEC 13F — Total Institutional Ownership</h1>
-<div class="meta">{len(entries)} tickers · all 13F filers (incl. BlackRock/Vanguard/State Street) · quarterly · click a row for the chart</div></div>
+<div class="meta">{len(entries)} tickers · all 13F filers (incl. BlackRock/Vanguard/State Street) · quarterly · click a row for the chart</div>
+{status_html}</div>
 {provider_health_html(provider_health)}{notice_html(notice)}{notice_html(kit_notice)}
 {help_block}
 {recorded_sessions_html("module_sec_13f")}
@@ -690,7 +810,16 @@ total, and its Herfindahl index), not of all shares outstanding.
 <b>Accel</b> = Δ%(latest) − Δ%(prior).
 {arriving_legend}
 <b>Price Δ</b> = close change from the first to the last quarter end shown, on the same share basis.
+<b>Flows</b> (Δ%, Net flow, New/Exit) count only the filers that reported in both quarters; a filer that started or
+stopped filing is left out, and the <b style="color:#d2991d">⚠</b> beside a ticker lists those breaks by quarter.
+A quarter is <b>closed</b> once the SEC publishes the data set that covers its filing deadline; a closed quarter
+does not change.
 </div>
+<div id="breaks" role="dialog" aria-modal="true" aria-labelledby="breaks-title"><div id="breaks-card">
+<div id="breaks-head"><span id="breaks-title"></span><button type="button" id="breaks-close" aria-label="Close">×</button></div>
+<div id="breaks-note">These filers are left out of the flow. Newest first; shares on today's basis.</div>
+<ol id="breaks-list"></ol>
+</div></div>
 <div id="modal"><div id="modal-card">
 <div id="modal-head"><span id="modal-title"></span><button id="modal-close">×</button></div>
 <div id="chart"></div>
@@ -714,4 +843,4 @@ def export_sec13f_dashboard(totals: dict, meta: dict, enrichment: dict = None, f
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = _payload(quarters, entries, fields) if entries else None
     return write_board(path, _render_page(quarters, entries, fields, kit_notice, provider_health, notice,
-                                         arriving(totals, quarters)), payload)
+                                         arriving(totals, quarters), quarter_status(totals, quarters)), payload)
