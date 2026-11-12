@@ -51,6 +51,13 @@ WITHOUT_SYMBOL = {
 }
 
 _SERVER_BUTTON = re.compile(r'data-rc-watch-open="1" data-ticker="([^"]*)"')
+_SCRIPT = re.compile(r"(?s)<script.*?</script>")
+
+
+def _server_symbols(page: str) -> list[str]:
+    """The tickers the SERVER wrote a symbol for. The mounted snippet builds the same attributes in JS
+    (``data-ticker="' + rcEsc(t) + '"``), so the scripts are cut out before the page is scanned."""
+    return _SERVER_BUTTON.findall(_SCRIPT.sub("", page))
 
 
 def test_every_board_is_classified():
@@ -63,7 +70,8 @@ def test_the_board_mounts_the_symbol_once_with_its_own_key(key, tmp_path, monkey
     page = BOARDS[key].render(tmp_path, monkeypatch)
     assert page.count("rcWatchInit(") == 2, "the definition and exactly one mount"
     assert f'rcWatchInit("{WITH_SYMBOL[key]}");' in page
-    assert "min-width:var(--tap,44px);min-height:var(--tap,44px)" in page
+    # one height for the symbol: compact for a mouse, --tap under a finger (#774, avo 12 Nov 2026)
+    assert "min-width:var(--rcw-tap,32px);min-height:var(--rcw-tap,32px)" in page
     check_page(page)
 
 
@@ -71,7 +79,7 @@ def test_the_board_mounts_the_symbol_once_with_its_own_key(key, tmp_path, monkey
 def test_a_hostile_ticker_gets_no_symbol(key, tmp_path, monkeypatch, rawstore_tmp_db):
     from RevenueChaser.core.reporting_common import WATCH_TICKER_PATTERN
     page = BOARDS[key].render(tmp_path, monkeypatch)
-    tickers = _SERVER_BUTTON.findall(page)
+    tickers = _server_symbols(page)
     assert all(re.fullmatch(WATCH_TICKER_PATTERN, t) for t in tickers), tickers
 
 
@@ -99,7 +107,7 @@ CLIENT_CALL = {
 @pytest.mark.parametrize("key", sorted(SERVER_GOOD))
 def test_a_good_server_rendered_ticker_gets_its_symbol(key, tmp_path, monkeypatch, rawstore_tmp_db):
     page = BOARDS[key].render(tmp_path, monkeypatch)
-    assert SERVER_GOOD[key] in _SERVER_BUTTON.findall(page)
+    assert SERVER_GOOD[key] in _server_symbols(page)
 
 
 @pytest.mark.parametrize("key", sorted(CLIENT_CALL))
@@ -113,7 +121,7 @@ def test_implied_probability_shows_the_symbol_for_its_focal_ticker():
     page = render_oipd_dashboard({"ticker": "AAPL", "asof": "2026-09-01", "spot": 100.0, "n_contracts": 10,
                                   "horizon_days": 30, "risk_free": 0.04, "error": None, "warnings": [],
                                   "expiries": []})
-    assert _SERVER_BUTTON.findall(page) == ["AAPL"]
+    assert _server_symbols(page) == ["AAPL"]
     assert 'rcWatchInit("oipd");' in page
 
 
@@ -124,6 +132,6 @@ def test_financials_shows_the_symbol_for_the_company_and_each_peer():
              "multiples": {"pe": {"p25": 9.0, "p50": 10.0, "p75": 11.0}},
              "implied": {"equity_pe": 1.0e9, "per_share_pe": 50.0}}
     page = build_report_html({"ticker": "TEST", "financials": fin, "modules": {"comps": comps}, "warnings": []})
-    tickers = _SERVER_BUTTON.findall(page)
+    tickers = _server_symbols(page)
     assert "TEST" in tickers and "PEER" in tickers and len(tickers) == 2    # the hostile peer gets none
     assert "&lt;b&gt;x&lt;/b&gt;" in page and 'rcWatchInit("financials");' in page
