@@ -86,10 +86,6 @@ def test_every_hostile_string_is_escaped_and_the_scripts_parse(tmp_path):
     assert_scripts_parse(html, tmp_path)
 
 
-def _panels(html: str) -> str:
-    return _between(html, 'class="fpanels"', 'id="sec-crosscheck"')
-
-
 def test_the_fill_cells_of_a_calendar_dataset_open_its_calendar(monkeypatch):
     fetch = _under_frame(_page())
     cells = re.findall(r'<button type="button" class="fc [^"]*fopen" data-bf="alpaca-bars" data-g="(\w)"', fetch)

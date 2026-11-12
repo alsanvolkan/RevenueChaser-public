@@ -48,13 +48,6 @@ def _file(view, name):
     return next(f for f in view["files"] if f["name"] == name)
 
 
-def _box(html: str, ds: str) -> str:
-    a = html.index(f'data-dataset="{ds}" style="border-left-color')
-    a = html.rindex('<div class="dset sbox"', 0, a)
-    nxt = html.find('<div class="dset sbox"', a + 1)
-    return html[a:nxt if nxt > 0 else len(html)]
-
-
 # ── Stage 1: Sources ─────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -86,21 +79,6 @@ def test_the_sources_css_block_holds_the_grid_and_the_columns():
 
 
 # ── Health right now ─────────────────────────────────────────────────────────────────────────────────────────
-
-def _grouped_view():
-    v = _view()
-    groups = {"fresh": "data", "late": "data", "stale": "data", "never": "data", "problems": "data",
-              "session": "build", "queue": "scheduled", "builder": "build", "cap": "sources",
-              "backup": "build"}
-    for t in v["health"]["tiles"]:
-        if t["key"] in groups:
-            t["group"] = groups[t["key"]]
-    v["health"]["tiles"].append({"key": "timer", "cls": "ok", "n": "on", "label": "the hourly timer is on · next 18:05",
-                                 "filter": None, "group": "scheduled"})
-    v["health"]["tiles"].append({"key": "longest", "cls": "neu", "n": "41 min", "label": "the longest run today",
-                                 "filter": None, "group": "build"})
-    return v
-
 
 # ── The flow diagram and the file picker ─────────────────────────────────────────────────────────────────────
 

@@ -1,8 +1,7 @@
-"""#715 step 2: the queue and the weekly backups are drawn on the page itself.
+"""#715: the queue and the weekly backups are the Grafana board's, and the help text says where to look.
 
-avo, 11 Nov 2026, chose the page over Grafana for every control ("Sayfanın kendisinde"). Both were written
-(``control_render._queue``, ``report._newdata_section``) but nothing called them, while ``DATA_HELP`` promised
-them. These tests pin that the Fetch tab draws them, in the designed order, and that the help text says so.
+They were drawn on the page itself for a day (step 2, avo 11 Nov 2026); avo's 12 Nov decision moved every Fetch
+control and all status to the board, and the page's renderers went with the cleanup.
 """
 from __future__ import annotations
 

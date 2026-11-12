@@ -106,13 +106,6 @@ def _gateway(view: dict, with_id: bool = True) -> str:
             f'<span class="dim">{esc((g.get("label") or "").replace("IBKR gateway · ", ""))}</span>{login}</span>')
 
 
-#: The Health groups (#492 C1): three side by side, then Data at full width.
-HEALTH_GROUPS = (("sources", "Sources"), ("scheduled", "Scheduled run"), ("build", "Build"))
-#: How many serving files there are, from the registry. It was the literal 6 until #757 added a seventh kind and
-#: the heading read "1 of 6" above seven rendered sections.
-FILE_TOTAL = len(screen.FILES)
-
-
 # ── Fetch: the universe ───────────────────────────────────────────────────────────────────────────────────────
 
 def _universe(view: dict) -> str:
@@ -253,33 +246,6 @@ def _acts(d: dict, pause: bool = True, cross: bool = True) -> str:
     return f'<div class="acts">{"".join(parts)}<p class="cost">{" · ".join(cost)}</p></div>{cal}'
 
 
-# ── Stage 1: Sources, one panel a file (#492 C1) ─────────────────────────────────────────────────────────────
-
-#: The one button's legend line (#492 PR (ii): a Pause stops the dataset for real).
-BUTTON_LEGEND = ('One button for each dataset: <b>Fetch</b> asks for a whole run (raw, Parquet and the served DuckDB '
-                 'file); its <b>▾</b> asks for <b>Fetch raw</b> (the provider\'s answer into HDD raw only) or '
-                 '<b>Fetch raw + Parquet</b> (the served file stays as it is), and the next hourly pass builds the '
-                 'rest when this file\'s automation is raw + Parquet + DuckDB · <b>Pause</b> cancels a queued run, '
-                 'stops a running one before its next provider call and holds the dataset · <b>Resume</b> lets the '
-                 'hourly pass run it again')
-#: The line the button legend shows; the whole of ``BUTTON_LEGEND`` is behind its "?" (#527 step 8b).
-BUTTON_LINE = "One button for each dataset: <b>Fetch</b> · <b>Pause</b> · <b>Resume</b>"
-
-
-#: The two partial runs of a Fetch press's ▾ menu (``app/dashboard.py`` ``REQUEST_STAGES``).
-FETCH_STAGES = (("raw", "Fetch raw", "the provider's answer into HDD raw only; Parquet and DuckDB stay; the next "
-                 "hourly pass builds them when this file's automation is raw + Parquet + DuckDB"),
-                ("parquet", "Fetch raw + Parquet", "also stages Parquet; the served DuckDB file stays as it is "
-                 "until the next pass, when this file's automation is raw + Parquet + DuckDB"))
-#: The automation a served file's hourly pass runs (``ops.KIND_MODES``), as its select shows them.
-AUTOMATION_MODES = (("off", "off · Fetch only"), ("raw", "raw"), ("parquet", "raw + Parquet"),
-                    ("full", "raw + Parquet + DuckDB"))
-PROVIDERS_SOURCE = ('day caps and request windows: <code>rcdata/caps.py</code> (<code>DAY_CAPS</code>, '
-                    '<code>WINDOWS</code>) · what each provider brings, our pace and its rule: '
-                    '<code>rcdata/needs/screen.py</code> (<code>PROVIDERS</code>) · used today: '
-                    '<code>ops.provider_calls_daily</code>')
-
-
 def _pcolor(view: dict, pid: str) -> str:
     """A provider's colour, the same one its row in Providers and daily limits wears."""
     for i, p in enumerate(view.get("providers") or []):
@@ -314,10 +280,6 @@ def _funnel(view: dict) -> str:
             f'<div class="fcols">{col("Stocks", stocks)}{col("ETFs", etfs)}</div>'
             + (f'<p class="dim">added by hand: {esc(added if isinstance(added, str) else control.count(added))}</p>'
                if added is not None else "") + '</div>')
-
-
-#: ``next_run_words`` answers that are whole sentences, printed without the "next " prefix.
-_WHOLE_SENTENCES = ("skips until", "by hand", "next ", "due", "not before")
 
 
 def _uni_cards(view: dict) -> str:
@@ -735,10 +697,6 @@ def _health_table(f: dict) -> str:
 
 
 # ── Cross-check, queue ────────────────────────────────────────────────────────────────────────────────────────
-
-
-#: A queue note longer than this is cut to one line; the whole note is one tap away.
-NOTE_CUT = 120
 
 
 # ── The page's data and the whole section ─────────────────────────────────────────────────────────────────────
