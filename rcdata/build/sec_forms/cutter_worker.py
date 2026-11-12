@@ -70,16 +70,32 @@ class NetworkBlocked(OSError):
 def _block_network() -> None:
     """No socket, before ``edgar`` is imported and so before any module-level client it builds.
 
-    Both are replaced, because a name that is already resolved still needs ``connect`` and a client that resolves
-    first fails earlier with a clearer error. Nothing here is undone: this process only ever cuts local files.
+    Each of these was measured to be a way out on its own: ``connect`` and ``connect_ex`` for a resolved address,
+    ``create_connection`` for the convenience wrapper, ``getaddrinfo`` / ``gethostbyname`` / ``gethostbyname_ex``
+    / ``getnameinfo`` because a name lookup already leaves the box, and ``sendto`` / ``sendmsg`` because UDP needs
+    no ``connect`` at all (a datagram did arrive through the earlier version of this list).
+
+    **It is not a guarantee, and this docstring used to claim it was.** Two holes are left on purpose, because
+    closing them from inside the process is not possible: ``_socket.socket``, the C base class, can be reached
+    directly, and a child process starts with its own clean copy of everything. What rules those out is the
+    operating system, not Python -- the unit the server runs this under should carry ``PrivateNetwork=yes`` or
+    ``IPAddressDeny=any``. What this does buy is that the library's own code paths, which use the names above,
+    cannot reach the SEC by accident, and in 6.0.0 the only ``gethostbyname`` caller is ``edgar/diagnose_ssl``.
+
+    Nothing here is undone: this process only ever cuts local files.
     """
     def _refuse(*_a, **_k):
         raise NetworkBlocked("the section cutter worker has no network by design")
 
     socket.socket.connect = _refuse            # type: ignore[method-assign]
     socket.socket.connect_ex = _refuse         # type: ignore[method-assign]
+    socket.socket.sendto = _refuse             # type: ignore[method-assign]
+    socket.socket.sendmsg = _refuse            # type: ignore[method-assign]
     socket.create_connection = _refuse         # type: ignore[assignment]
     socket.getaddrinfo = _refuse               # type: ignore[assignment]
+    socket.gethostbyname = _refuse             # type: ignore[assignment]
+    socket.gethostbyname_ex = _refuse          # type: ignore[assignment]
+    socket.getnameinfo = _refuse               # type: ignore[assignment]
     os.environ.pop("EDGAR_IDENTITY", None)
 
 
@@ -110,7 +126,13 @@ def _say(answer: dict) -> None:
 
 
 def _error(e: BaseException) -> str:
-    """The failure for the answer line: type, message, capped. No path of ours and no environment value."""
+    """The failure for the answer line: type, message, capped at 300 characters.
+
+    It carries no *environment value*, which is the rule that matters: no key, no credential. It may well carry a
+    path, because an ``OSError``'s own message does and that path is usually the whole diagnosis -- an earlier
+    version of this docstring claimed otherwise and was wrong. Those paths reach ``<accession>.failed.json`` on
+    the same server, so nothing leaves the box; they must not reach an issue or a commit message.
+    """
     return f"{type(e).__name__}: {e}"[:300]
 
 
@@ -137,8 +159,17 @@ def _plain(value):
     return str(value)
 
 
+#: Every public field of ``edgar.documents.document.Section`` in 6.0.0, read from the wheel's own source. Stored
+#: verbatim, because getting a field back later costs the whole 5.5-hour pass: the answer files are the cache.
+#: ``covered_items`` is the one that would hurt most to lose -- a filer who writes "Items 1 and 2. Business and
+#: Properties" gets one section with ``item='1'`` and ``covered_items=('1', '2')``, so without it Item 2 is
+#: invisible to the mapping in ``cut.py`` and the business section of such a filing silently has no properties.
+SECTION_FIELDS = ("name", "title", "item", "part", "covered_items", "detection_method", "confidence", "validated",
+                  "warnings", "start_offset", "end_offset", "kind")
+
+
 def _text_of(section) -> str:
-    """``Section.text()`` as the measurement used it, and a plain ``text`` attribute where it is one."""
+    """``Section.text()``, which is a method in 6.0.0, and a plain ``text`` attribute where it is one."""
     value = _attr(section, "text")
     if callable(value):
         value = value()
@@ -146,8 +177,8 @@ def _text_of(section) -> str:
 
 
 def _sections(detected):
-    """Whatever ``detect_sections()`` returns, as a list. A mapping's key is kept as ``key``, because for a
-    mapping that is where the item number is; a list's entries carry their own."""
+    """``Document.sections`` as a list of ``(key, section)``. It is a ``Dict[str, Section]`` in 6.0.0, and the key
+    is the section's own name; a list is accepted too, so a future shape change is not a crash."""
     if detected is None:
         return []
     if hasattr(detected, "items"):
@@ -160,38 +191,71 @@ def _sections(detected):
 
 
 def _section(key, section) -> dict:
-    """One section as the answer file stores it: edgartools' own fields, unmapped."""
+    """One section as the answer file stores it: edgartools' own fields, under their own names, unmapped.
+
+    No alias chains. An earlier version guessed at several possible names per field and stored whichever answered,
+    which meant the file could not say which one did -- and a guess that is wrong everywhere reads as a document
+    full of nulls rather than as a mistake. The names here are the dataclass's, read from the pinned wheel.
+    """
     text = _text_of(section)
-    return {"key": key,
-            "item": _plain(_attr(section, "item", "item_number", "number", "name")) or key,
-            "part": _plain(_attr(section, "part", "part_number")),
-            "title": _plain(_attr(section, "title", "heading")),
-            "detection_method": _plain(_attr(section, "detection_method", "method")),
-            "confidence": _plain(_attr(section, "confidence", "score")),
-            "warnings": _plain(_attr(section, "warnings", "warning")) or [],
-            "chars": len(text),
-            "text": text}
+    row = {field: _plain(_attr(section, field)) for field in SECTION_FIELDS}
+    row["key"] = key
+    row["chars"] = len(text)
+    row["text"] = text
+    return row
 
 
-def _cut(html_path: str, form: str, out: str) -> int:
-    from edgar.documents import HybridSectionDetector, parse_html  # noqa: PLC0415 - after _block_network()
+def _cut(html_path: str, form: str, out: str) -> tuple[int, int]:
+    """Cut one document; ``(sections, characters)``.
+
+    Through ``parse_html`` and ``Document.sections``, which are both in ``edgar.documents.__all__`` -- not through
+    ``HybridSectionDetector``, which lives in ``edgar.documents.extractors`` and is private to the library's own
+    routing. Two reasons, and the first one is the whole reason this function was wrong before:
+
+    - **a private path is a guess.** An earlier version imported the detector from ``edgar.documents``, where it
+      is not; the handshake imports only ``edgar``, so the failure arrived once per document and retired all
+      5,149 of them after three runs each.
+    - **the library routes by form, and we must not override that.** ``Document.sections`` sends 10-K, 10-Q, 8-K,
+      20-F and title-based forms to the hybrid detector and everything else to the pattern extractor. The 20
+      document measurement that chose this library used 10-K and 20-F, so it measured exactly the hybrid path
+      this call still takes for them -- while a 40-F now gets the extractor the library thinks is right for it
+      instead of a detector with no vocabulary for that form.
+
+    The form is passed as ``ParserConfig(form=...)``, which the config's own comment calls "required for section
+    detection": without it ``Document.sections`` has no form to route on.
+    """
+    from edgar.documents import parse_html  # noqa: PLC0415 - imported in the handshake; this is the cached module
+    from edgar.documents.config import ParserConfig  # noqa: PLC0415
 
     opener = gzip.open if html_path.endswith(".gz") else open
     with opener(html_path, "rt", encoding="utf-8", errors="replace") as fh:
         html = fh.read()
-    detected = HybridSectionDetector(parse_html(html), form).detect_sections()
-    tmp, n = out + ".tmp", 0
+    document = parse_html(html, ParserConfig(form=form))
+    # A tmp name carrying our pid, so two builder processes on one document cannot write each other's partial
+    # file -- and so the loser of the race fails on its own file rather than on a name the winner already renamed.
+    # No assertion pins this one: it only shows when two processes cut the same document at the same instant, and
+    # a test that races two workers would pass or fail by timing. It is here for the same reason the sidecar's
+    # tmp name carries a pid, and the mutant that drops it is a known survivor of the battery.
+    tmp, n, chars = f"{out}.{os.getpid()}.tmp", 0, 0
     try:
         with gzip.open(tmp, "wt", encoding="utf-8") as fh:
-            for key, section in _sections(detected):
-                fh.write(json.dumps(_section(key, section), ensure_ascii=False) + "\n")
+            for key, section in _sections(document.sections):
+                row = _section(key, section)
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
                 n += 1
+                chars += row["chars"]
+            fh.flush()
+            # The rename is atomic, but without this the content need not be on disk when the name is: a
+            # power cut between the two leaves a file under the real name with nothing in it, which the
+            # client would read as "cut, no sections" for ever. Not pinnable by a test either -- it takes
+            # a crash of the box, not of the process -- so the battery lists it as a known survivor.
+            os.fsync(fh.fileno())
     except BaseException:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
     os.replace(tmp, out)
-    return n
+    return n, chars
 
 
 def main() -> int:
@@ -199,7 +263,11 @@ def main() -> int:
     _block_network()
     proto_in, _PROTO = _isolate_streams()
     try:
+        # Every import the cut needs, here: an import that fails is the *venv's* problem, and answering it here
+        # makes it fatal. Left to the first cut, it would arrive as a document failure, once per document.
         import edgar  # noqa: PLC0415 - the import itself is what the handshake reports on
+        from edgar.documents import parse_html  # noqa: PLC0415, F401 - imported for the handshake to prove it
+        from edgar.documents.config import ParserConfig  # noqa: PLC0415, F401
         _say({"edgar_version": str(getattr(edgar, "__version__", "") or "")})
     except BaseException as e:  # noqa: BLE001 - a venv that cannot import edgar fails the run, not a document
         _say({"ok": False, "fatal": True, "error": _error(e)})
@@ -207,11 +275,26 @@ def main() -> int:
     for line in proto_in:
         if not line.strip():
             continue
+        req = None
         try:
             req = json.loads(line)
-            _say({"ok": True, "sections": _cut(req["html"], req.get("form") or "10-K", req["out"])})
+            # The phase, so the client can tell "this filing is bad" from "this box is bad". Reading the document
+            # and writing the answer are I/O: a missing corpus mount or a full disk fails every document for a
+            # reason that has nothing to do with any of them, and charging each one an attempt would retire the
+            # whole corpus. Only the parse is the filing's own fault.
+            html, out = str(req["html"]), str(req["out"])
+            form = req.get("form")
+            if not form:
+                raise ValueError("the request names no form")
+            if not os.path.exists(html):
+                _say({"ok": False, "phase": "read", "error": "the document is not on disk"})
+                continue
+            n, chars = _cut(html, str(form), out)
+            _say({"ok": True, "sections": n, "chars": chars})
+        except OSError as e:   # a read or write failure, which is the box and not the filing
+            _say({"ok": False, "phase": "read" if req is None else "io", "error": _error(e)})
         except Exception as e:  # noqa: BLE001 - one document's failure is answered; the worker stays
-            _say({"ok": False, "error": _error(e)})
+            _say({"ok": False, "phase": "parse", "error": _error(e)})
     return 0
 
 

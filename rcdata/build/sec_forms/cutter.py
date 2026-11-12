@@ -60,8 +60,10 @@ WORKER = Path(__file__).with_name("cutter_worker.py")
 REQUIREMENTS = Path(__file__).resolve().parents[3] / "requirements-edgartools.txt"
 
 TIMEOUT_S = 180.0        # one document; the measured mean is 3.9 s, so this is a hang and not a slow filing
+HANDSHAKE_TIMEOUT_S = 60.0   # importing ~35 packages, cold; not a document, so it gets its own budget
 RECYCLE_N = 200          # documents before the worker is replaced
 MAX_TRIES = 3            # attempts at one document, counted across runs through its .failed.json
+BREAK_AFTER = 5          # consecutive failed documents before the run is called the box's fault, not theirs
 
 
 class CutterUnusable(base.SourceError):
@@ -70,7 +72,20 @@ class CutterUnusable(base.SourceError):
 
 
 class DocumentFailed(base.SourceError):
-    """This one document did not cut. The worker has been restarted; the next document is tried normally."""
+    """This one document did not cut, and the worker that said so is **alive and fine**: it answered in protocol,
+    the next document goes to the same one. It is the filing's own fault -- the parser refused it."""
+
+
+class WorkerLost(DocumentFailed):
+    """This one document did not cut and the worker cannot be trusted with another: it died, it timed out, or it
+    answered out of protocol. A subclass of :class:`DocumentFailed` because the document is charged the same
+    attempt either way; the difference is only whether the process is kept.
+
+    The distinction is why it exists: an earlier version replaced the worker on *every* failed document and only
+    dropped the reference, so each ordinary refusal left a live interpreter -- with pandas, pyarrow and lxml in
+    it -- parked by ``Popen.__del__`` with its pipes open, on the 15 GB box the dashboard shares. Measured at the
+    time: 15 failures left 15 processes in state ``S``, alive after ``gc.collect()`` and after ``Cutter.close()``.
+    """
 
 
 def pinned_version() -> str:
@@ -101,8 +116,14 @@ def mode() -> str:
 
 def answers_dir() -> Path:
     """Where one document's answer file lives. Under the raw root, because it is a source's own output kept
-    verbatim; our typing of it is the Parquet step."""
-    return base.raw_root() / "sec_forms" / f"cutter-{CUTTER_VERSION}"
+    verbatim; our typing of it is the Parquet step.
+
+    Named by **both** versions. Keyed by ``CUTTER_VERSION`` alone, bumping the pin and the venv without
+    remembering to bump ours would pass the handshake and then mix two edgartools' cuts in one directory, with
+    nothing in the files to say which cut which -- and that mixture is the thing the whole version pin exists to
+    prevent.
+    """
+    return base.raw_root() / "sec_forms" / f"cutter-{CUTTER_VERSION}-edgartools-{pinned_version()}"
 
 
 def answer_path(accession: str) -> Path:
@@ -118,26 +139,57 @@ def tries_so_far(accession: str) -> int:
     zero rather than as "give up": a truncated file must not retire a document for good."""
     try:
         return int(json.loads(failed_path(accession).read_text("utf-8"))["tries"])
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
         return 0
 
 
+def _is_cut(out: Path) -> bool:
+    """Whether this answer file counts as a cut document.
+
+    Not just "it exists": an empty file is what a crash between ``open`` and the first write leaves behind under
+    the real name on some filesystems, and ``gzip.open`` reads one as zero rows without complaining -- so a
+    document would be cached for ever as "cut, no sections". A gzip member is never zero bytes.
+    """
+    try:
+        return out.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _cleanup_tmp(out: Path) -> None:
+    """Our own partial file for this document, if the worker died before removing it. Only this process's: another
+    builder process's ``.tmp`` is its business, which is why the name carries a pid."""
+    try:
+        out.with_name(f"{out.name}.{os.getpid()}.tmp").unlink(missing_ok=True)
+    except OSError:                         # a read-only or full disk; the next attempt truncates it anyway
+        pass
+
+
 def _note_failure(accession: str, tries: int, error: str) -> None:
+    """The sidecar that remembers this document's attempts. A failure to write it is a failed **run**: the count
+    is the only thing standing between a bad document and an endless retry, and carrying on without it would
+    silently turn the cap off for every document in the pass."""
     path = failed_path(accession)
-    path.parent.mkdir(parents=True, exist_ok=True)
     body = {"tries": tries, "error": error[:300],
             "at": datetime.now(timezone.utc).replace(microsecond=0).isoformat()}
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(body), "utf-8")
-    os.replace(tmp, path)
+    try:
+        # The ``mkdir`` is inside the try with the write: it fails for the same reasons (a read-only mount, a
+        # full disk, the raw root gone) and a ``FileExistsError`` out of this function would reach the caller as
+        # a bare ``OSError`` instead of the failed run it is.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".json.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(body), "utf-8")
+        os.replace(tmp, path)
+    except OSError as e:
+        raise CutterUnusable(f"the cutter cannot write {path.name}: {type(e).__name__}: {e}") from e
 
 
 #: What the worker's environment keeps. A whitelist and not a copy: ~35 third-party packages run in there, and no
 #: provider key of the builder's (OpenFIGI, DeepSeek, the SEC user agent) has any business reaching them.
 #: ``EDGAR_IDENTITY`` is absent on purpose -- the worker removes it too, so neither side can identify us to the
-#: SEC -- and so is every ``RC_*`` but the mode, because the worker has no RevenueChaser config to read.
-_WORKER_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TZ", "TMPDIR", "PYTHONPATH", "SSL_CERT_FILE",
-               "SSL_CERT_DIR", "LD_LIBRARY_PATH")
+#: SEC -- and so is every ``RC_*``, the mode included, because the worker has no RevenueChaser config to read and
+#: the mode is the caller's decision about whether to start it at all.
+_WORKER_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "TZ", "TMPDIR", "PYTHONPATH")
 
 
 def worker_env() -> dict[str, str]:
@@ -148,6 +200,11 @@ def worker_env() -> dict[str, str]:
     what lets the suite run the real worker against a stub ``edgar``, which is the only way any of this is tested
     without edgartools installed. ``RC_*`` is **not** kept, not even the mode: the worker has no RevenueChaser
     config to read, and the mode is the caller's decision about whether to start it at all.
+
+    ``SSL_CERT_FILE``, ``SSL_CERT_DIR`` and ``LD_LIBRARY_PATH`` were carried over from ``spine/wrds.py`` and are
+    gone: WRDS needs them because it opens a TLS connection to Wharton, and a worker that must never open a
+    socket has no use for a certificate bundle. A whitelist is only worth having if every name on it is there for
+    a reason this worker has.
     """
     env = {k: v for k, v in os.environ.items() if k in _WORKER_ENV or k.startswith("LC_")}
     env["PYTHONNOUSERSITE"] = "1"       # ~/.local packages are not part of the pinned venv
@@ -182,7 +239,13 @@ class Worker:
         upgraded underneath us would otherwise write rows labelled 6.0.0 that another version cut, and nothing
         downstream could tell them apart."""
         try:
-            line = self.proc.stdout.readline()
+            # Through the same timed read as an answer: a venv whose import hangs (a stale NFS mount under
+            # site-packages) would otherwise block the builder for ever, and this runs at the start of the pass,
+            # at every recycle and after every lost worker -- about thirty times in a full pass, plus failures.
+            line = _read_line(self.proc, HANDSHAKE_TIMEOUT_S)
+        except TimeoutError:
+            raise self._stop(CutterUnusable(f"the cutter worker sent no handshake in {HANDSHAKE_TIMEOUT_S:.0f}s: "
+                                            "its venv is most likely unreadable or still importing"))
         except OSError as e:
             raise self._stop(CutterUnusable(f"the cutter worker is gone: {type(e).__name__}"))
         if not line:
@@ -196,7 +259,11 @@ class Worker:
             raise self._stop(CutterUnusable("the cutter worker's first line is not a handshake "
                                             f"({line.strip()[:80]!r})"))
         if hello.get("fatal") or "edgar_version" not in hello:
-            raise self._stop(CutterUnusable(f"the cutter worker could not start edgartools: {hello.get('error')}"))
+            # The error text is the whole diagnosis: "No module named 'edgar'" sends somebody to the venv and
+            # "cannot import name 'X' from 'edgar.documents'" sends them to this worker's own import line. A
+            # message without it sends them nowhere, which is where the first version of this sent them.
+            raise self._stop(CutterUnusable("the cutter worker could not import what the cut needs: "
+                                            f"{hello.get('error') or '(it said nothing)'}"))
         found = str(hello["edgar_version"])
         want = pinned_version()
         if found != want:
@@ -224,24 +291,55 @@ class Worker:
             self.proc.stdin.write(request)
             self.proc.stdin.flush()
         except (BrokenPipeError, OSError) as e:
-            raise self._stop(DocumentFailed(f"the cutter worker is gone: {type(e).__name__}"))
+            raise self._stop(WorkerLost(f"the cutter worker is gone: {type(e).__name__}"))
         try:
             line = _read_line(self.proc, TIMEOUT_S)
         except TimeoutError:
-            raise self._stop(DocumentFailed(f"the cutter worker did not answer in {TIMEOUT_S:.0f}s"))
+            raise self._stop(WorkerLost(f"the cutter worker did not answer in {TIMEOUT_S:.0f}s"))
         if not line:
-            raise self._stop(DocumentFailed(f"the cutter worker died on this document (exit {self.proc.poll()})"))
+            raise self._stop(WorkerLost(f"the cutter worker died on this document (exit {self.proc.poll()})"))
         try:
             answer = json.loads(line)
             if not isinstance(answer, dict):
                 raise ValueError("not an object")
         except ValueError:
             # Never read past a line that is not an answer: the next one could belong to the next document.
-            raise self._stop(DocumentFailed(f"the cutter worker answered out of protocol ({line.strip()[:80]!r})"))
+            raise self._stop(WorkerLost(f"the cutter worker answered out of protocol ({line.strip()[:80]!r})"))
         self.done += 1
         if answer.get("ok"):
-            return int(answer.get("sections") or 0)
-        raise DocumentFailed(str(answer.get("error") or "the cutter worker failed without saying why"))
+            # ``answer["sections"]`` and not ``.get(... ) or 0``: an answer that says it cut a document without
+            # saying how much of it is out of protocol, and ``spine/wrds.py`` reads its own count the same way.
+            # Out of protocol and not a ``KeyError`` out of this method, though: this class promises the caller
+            # only ``DocumentFailed`` and ``CutterUnusable``, and a count that is missing or is not a number is
+            # the same kind of fault as a progress bar on the pipe -- the worker cannot be trusted with the next
+            # document either.
+            try:
+                sections, chars = int(answer["sections"]), int(answer["chars"])
+            except (KeyError, TypeError, ValueError):
+                raise self._stop(WorkerLost("the cutter worker said it cut a document without saying how much "
+                                            f"({line.strip()[:80]!r})")) from None
+            # Sections but no text at all is not something a real filing does; it is what a field whose name moved
+            # looks like, and the docstring used to call it "the signal that a name moved" while nothing read the
+            # signal. Reading it here, on the first document, is what stops 5,149 files being cached as cut and
+            # empty -- and it fails the run, because every later document would be wrong the same way.
+            if sections and not chars:
+                # The worker has already written the file -- it renames before it answers -- so it is removed
+                # here. Leaving it would cache the very thing this check exists to refuse, and the next run
+                # would hand it back as a cut document.
+                out.unlink(missing_ok=True)
+                raise self._stop(CutterUnusable(
+                    f"the cutter answered {sections} sections and no text at all for {html.name}: a field this "
+                    "worker reads has most likely moved in edgartools. Nothing is cached; check SECTION_FIELDS "
+                    "in cutter_worker.py against the installed version."))
+            return sections
+        phase = str(answer.get("phase") or "parse")
+        error = str(answer.get("error") or "the cutter worker failed without saying why")
+        if phase != "parse":
+            # Reading the document or writing the answer failed. That is the box, not the filing: an unmounted
+            # corpus or a full disk would otherwise charge every one of 5,149 documents an attempt and retire the
+            # corpus in three runs, for a reason none of them had anything to do with.
+            raise CutterUnusable(f"the cutter could not {phase} {html.name}: {error}")
+        raise DocumentFailed(error)
 
     def close(self) -> None:
         try:
@@ -290,16 +388,28 @@ class Cutter:
     :meth:`cut` is the whole contract: it returns the answer path when the document is cut (now or by an earlier
     run) and ``None`` when it is not, having already written the sidecar that remembers why. It raises only
     :class:`CutterUnusable`, which is the run's problem and not a document's.
+
+    **The breaker is the part that makes "a failed document" safe.** Charging an attempt per failure is only right
+    while the failures are the filings' own; a reason that belongs to the box fails all of them, and three runs
+    later the whole corpus is retired with nothing left to retry. The worker says which phase failed, so most of
+    those arrive as :class:`CutterUnusable` already -- but not every one can be told apart from inside the worker
+    (a library that fails on a missing data file of its own looks like a parse), so after
+    :data:`BREAK_AFTER` consecutive failures this stops the run and gives those documents their attempts back. It
+    also bounds the worst case in time: without it, every document timing out costs 5,149 x 180 s, which is 257
+    hours, and the hourly builder would hold its lock for all of them.
     """
 
-    def __init__(self, max_tries: int = MAX_TRIES, recycle_n: int = RECYCLE_N):
+    def __init__(self, max_tries: int = MAX_TRIES, recycle_n: int = RECYCLE_N, break_after: int = BREAK_AFTER):
         self.max_tries = max_tries
         self.recycle_n = recycle_n
+        self.break_after = break_after
         self.worker: Worker | None = None
         self.cut_now = 0          # documents this run actually sent to the worker and got answers for
         self.cached = 0           # documents an earlier run had already cut
+        self.empty = 0            # documents the cutter read but found no section in; cached as cut, counted here
         self.failed: dict[str, str] = {}      # accession -> the last error, for the run's report
         self.restarts = 0
+        self._in_a_row: list[str] = []        # the accessions of the current run of consecutive failures
 
     def __enter__(self) -> "Cutter":
         return self
@@ -318,8 +428,12 @@ class Cutter:
     def cut(self, accession: str, html: Path, form: str) -> Path | None:
         """Cut one document, or say it could not be. Never raises for this document alone."""
         out = answer_path(accession)
-        if out.exists():
+        if _is_cut(out):
             self.cached += 1
+            # A document that failed and was then cut -- by another process, or by a run that was killed between
+            # the worker's rename and the client's bookkeeping -- must not keep the note that says it failed, or
+            # it stays one run from the cap for the rest of the corpus's life.
+            failed_path(accession).unlink(missing_ok=True)
             return out
         spent = tries_so_far(accession)
         if spent >= self.max_tries:
@@ -327,18 +441,52 @@ class Cutter:
             return None
         worker = self._worker()             # may raise CutterUnusable: no attempt is charged
         try:
-            worker.cut(html, form, out)
+            sections = worker.cut(html, form, out)
         except DocumentFailed as e:
-            # The worker is dead or suspect either way, so it is not reused. The attempt is charged here and
-            # nowhere else, which is what keeps the count honest across runs.
-            self.worker = None
-            self.restarts += 1
+            if isinstance(e, WorkerLost):
+                # Dead, hung or out of protocol: closed, not merely dropped, and replaced for the next document.
+                worker.kill()
+                self.worker = None
+                self.restarts += 1
+            if _is_cut(out):
+                # The worker renamed the file and then we lost it -- a timeout on the answer line, say. The
+                # document IS cut; calling it failed would have the caller write a fallback row over good data,
+                # and the next run would hand back the same file as cached anyway.
+                self.cut_now += 1
+                self._in_a_row.clear()
+                failed_path(accession).unlink(missing_ok=True)
+                return out
+            _cleanup_tmp(out)
+            # The attempt is charged here and nowhere else, which is what keeps the count honest across runs.
             _note_failure(accession, spent + 1, str(e))
             self.failed[accession] = str(e)
+            self._in_a_row.append(accession)
+            if len(self._in_a_row) >= self.break_after:
+                self._give_back()
+                stopped, self._in_a_row = list(self._in_a_row), []
+                raise CutterUnusable(
+                    f"{len(stopped)} documents in a row failed to cut, the last with {str(e)!r}. That is the box "
+                    "and not the filings, so the run stops and their attempts are given back rather than spent.")
             return None
+        self._in_a_row.clear()
         failed_path(accession).unlink(missing_ok=True)
         self.cut_now += 1
+        if not sections:
+            # Cached as cut, because it is: the cutter read the document and found nothing to cut. Counted, since
+            # a form the library has no vocabulary for would answer this for every one of its filings, and the
+            # count is the only place that would show.
+            self.empty += 1
         return out
+
+    def _give_back(self) -> None:
+        """Undo the attempts charged for the current run of consecutive failures. They were not the filings' doing,
+        so a run the breaker stopped must leave the corpus exactly as it found it."""
+        for accession in self._in_a_row:
+            spent = tries_so_far(accession)
+            if spent <= 1:
+                failed_path(accession).unlink(missing_ok=True)
+            else:
+                _note_failure(accession, spent - 1, "attempt given back: the run was stopped by the breaker")
 
     def close(self) -> None:
         if self.worker is not None:
