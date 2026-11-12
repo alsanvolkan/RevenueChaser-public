@@ -1,4 +1,4 @@
-# Data health — the store inventory and the Settings / Data health board
+# Data health — the store inventory and the Settings board
 
 This is the **built contract**, not a plan. It describes what the board does today, what each
 number on it means, and what it refuses to claim. Where the board shows words instead of a number,

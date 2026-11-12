@@ -45,7 +45,7 @@ def test_the_data_tab_is_on_top_and_the_old_sections_are_gone(dashboard, browser
     assert browser.eval("!!document.querySelector('#panel-health #live-frame')"), "the board's frame heads the tab"
     assert browser.eval("!document.getElementById('old-settings') && !document.getElementById('panel-fetch')")
     # #715 step 3: the files are stacked folded sections, none hidden; the first one is open.
-    files = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl details.fpanel'),"
+    files = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl details.fpanel:not(.bfp)'),"
                          " function(p){ return (p.hidden ? 'hidden:' : '') + (p.open ? 'open' : 'shut'); })")
     from RevenueChaser.rcdata import serving
     assert files[0] == "open" and set(files[1:]) == {"shut"} and len(files) == len(serving.KINDS), files

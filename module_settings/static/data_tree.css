@@ -90,7 +90,7 @@
    The whole line is the touch target, so nothing inside needs 44. */
 @media(max-width:640px){
 .ctl details.sec.fpanel{margin-top:12px}
-.ctl table.jt3 tr.jr{padding:5px 0 6px}
+.ctl table.jt3 tr.jr{padding:5px 0 6px;min-height:44px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}
 .ctl table.jt3 td.js{min-height:0;grid-template-columns:var(--jw0,25px) var(--jw1,9ch) var(--jw2,9ch) minmax(0,1fr);gap:4px 6px;align-items:center}
 .ctl table.jt3 td.js .jcar,.ctl table.jt3 td.js .stn{grid-row:1;grid-column:1;justify-self:start}
 .ctl table.jt3 td.js .stn{margin-left:12px}
