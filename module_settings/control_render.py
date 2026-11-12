@@ -113,18 +113,22 @@ def _topbar(view: dict, msg_id: str = "sw-msg") -> str:
     its login link (``RC_IBKR_LOGIN_URL``; no link when it is unset). ``msg_id`` keeps each copy's status line its
     own id."""
     sw = view.get("switches") or {}
+    return (f'<div class="topbar" role="group" aria-label="Switches and the IBKR gateway">'
+            f'{_switch("fetch", "Fetch", sw.get("fetch"))}{_switch("backup", "Backup", sw.get("backup"))}'
+            f'{_timer_box(view)}{_gateway(view, msg_id == "sw-msg")}'
+            f'<span role="status" class="dim" id="{esc(msg_id)}"></span></div>')
+
+
+def _gateway(view: dict, with_id: bool = True) -> str:
+    """The IBKR gateway's state with its login link (``RC_IBKR_LOGIN_URL``; no link when it is unset)."""
     g = view.get("gateway") or {}
-    # the old IBKR login card's link, its id kept on the Data tab's copy (one id a page)
-    lid = ' id="ibkr-login-link"' if msg_id == "sw-msg" else ""
+    # the old IBKR login card's link, its id kept on one copy (one id a page)
+    lid = ' id="ibkr-login-link"' if with_id else ""
     login = (f'<a class="lnk"{lid} href="{esc(g["login"])}" target="_blank" rel="noopener noreferrer" '
              'title="Opens the IBKR gateway login screen. The address comes from RC_IBKR_LOGIN_URL; this page '
              'makes no call to it">log in</a>' if g.get("login") else "")
-    gate = (f'<span class="swt gw {esc(g.get("cls") or "none")}"><b>IBKR gateway: {esc(g.get("n") or "unknown")}</b>'
+    return (f'<span class="swt gw {esc(g.get("cls") or "none")}"><b>IBKR gateway: {esc(g.get("n") or "unknown")}</b>'
             f'<span class="dim">{esc((g.get("label") or "").replace("IBKR gateway · ", ""))}</span>{login}</span>')
-    return (f'<div class="topbar" role="group" aria-label="Switches and the IBKR gateway">'
-            f'{_switch("fetch", "Fetch", sw.get("fetch"))}{_switch("backup", "Backup", sw.get("backup"))}'
-            f'{_timer_box(view)}{gate}'
-            f'<span role="status" class="dim" id="{esc(msg_id)}"></span></div>')
 
 
 def _timer_box(view: dict) -> str:
@@ -343,7 +347,7 @@ def _problems(d: dict) -> str:
             f'· <code>build_issues</code></span></summary><ol>{items}</ol></details>')
 
 
-def _acts(d: dict, pause: bool = True) -> str:
+def _acts(d: dict, pause: bool = True, cross: bool = True) -> str:
     parts, cost = [], []
     if d["calendar"]:
         key = _cal_key(d["dataset"])
@@ -356,7 +360,7 @@ def _acts(d: dict, pause: bool = True) -> str:
         parts.append(f'<button type="button" class="btn" data-job="pause" data-dataset="{esc(d["dataset"])}" '
                      f'aria-pressed="{"true" if paused else "false"}">{"Resume" if paused else "Pause"}</button>')
         cost.append("<b>Pause</b> 0 calls: the builder skips it until Resume")
-    if d["cross_check"]:
+    if cross and d["cross_check"]:
         parts.append('<button type="button" class="btn" data-goto="crosscheck">Cross-check</button>')
         cost.append("<b>Cross-check</b> 0 calls: it shows the report that exists")
     if not parts:
@@ -1269,22 +1273,50 @@ def render_data(view: dict, lookup_html: str = "") -> str:
             f'<div class="fpanels">{panels}</div></div></section>')
 
 
+def _fill_box(d: dict, view: dict) -> str:
+    """One dataset that takes a tier set or has a Backfill calendar: its name, then only those two presses. Its
+    Fetch, Pause, mode, cadence and hold are in the Grafana board above (#715 decision 4)."""
+    provs = list(d["providers"])
+    edge = _pcolor(view, provs[0]) if provs else "var(--mut)"
+    rest = (_fill_row(d, view) if d["fill"]["cells"] else "") + _acts(d, pause=False, cross=False)
+    return (f'<div class="dset sbox" data-dataset="{esc(d["dataset"])}" style="border-left-color:{edge}">'
+            f'<div class="sb1"><span class="sdot {esc(d["filter"])}" aria-hidden="true"></span>'
+            f'<span class="dsname" title="{esc(d["dataset"])}">{esc(d["dataset"])}</span></div>'
+            f'<div class="sbody"><div class="sb5">{rest}</div></div></div>')
+
+
+def _fill_group(f: dict, view: dict) -> str:
+    """One served file's datasets that have a Fill or a Backfill; nothing when it has none."""
+    rows = [d for d in f["datasets"] if d["fill"]["cells"] or d["calendar"]]
+    if not rows:
+        return ""
+    boxes = "".join(_fill_box(d, view) for d in rows)
+    return (f'<details class="sec fgrp" data-file="{esc(f["name"])}" style="--fh:{esc(f["color"])}">'
+            f'<summary><h2>🦆 {esc(f["name"])}</h2><span class="secs">{len(rows)} '
+            f'{"dataset takes" if len(rows) == 1 else "datasets take"} a Fill or a Backfill</span></summary>'
+            f'<div class="sources fgroup" data-file="{esc(f["name"])}"><div class="sgrid">{boxes}</div></div></details>')
+
+
 def render_fetch(view: dict) -> str:
-    """The Fetch/Health tab's top (avo, 10 Nov 2026): the switches, Health right now, then one folded group a served
-    file with its sources and runs, then the queue, Cross-check and the weekly backups (#715 step 2). The Health
-    tab's parts follow it in the same panel."""
+    """Under the Fetch/Health frame: only what the Grafana board does not carry (#715, avo 12 Nov 2026: every Fetch
+    control and all status live in Grafana). That is the Universe, the Fill and Backfill of the datasets that have
+    one, the Recount folders press and the IBKR login link (home-server ``homeops/act.py``: "no Fill or Backfill
+    (they stay on the RC page)"). The switches, Health right now, the providers, each dataset's Fetch, Pause and
+    schedule, the queue, Cross-check and the weekly backups are drawn by the board above and no longer here."""
     if view.get("error"):
-        return _err(view, "Fetch/Health")
+        return _err(view, "Universe and fills")
     view = _ready(view)
-    groups = "".join(_fetch_group(f, view) for f in view["files"])
-    return ('<section class="ctl" aria-label="Data/Health · Fetch/Health"><div class="wrap">'
-            f'{_header(view, "Fetch/Health")}{_topbar(view)}{_health(view)}{_providers(view)}'
+    groups = "".join(_fill_group(f, view) for f in view["files"])
+    return ('<section class="ctl" aria-label="Data/Health · Universe and fills"><div class="wrap">'
+            f'{_header(view, "Universe and fills")}'
+            '<p class="sub">Everything else on this tab is the board above: the switches, each dataset&#39;s Fetch, '
+            'Pause and schedule, the queue, the limits and the backups. These presses have no place there yet.</p>'
+            f'<div class="topbar" role="group" aria-label="The IBKR gateway">{_gateway(view)}</div>'
             f'<details class="sec" id="sec-universe" open><summary><h2>Universe</h2><span class="secs">'
             f'{esc(view["universe_summary"])} · the tier sets the next fetches and fills use</span></summary>'
             f'{_universe(view)}{_legend(view)}</details>'
             '<div class="ffilter" id="ffilter" hidden></div><div class="emptyst" id="ffempty" hidden></div>'
-            f'<div class="fgrps">{groups}</div>{_picture_control(view)}{_queue(view)}{_cross(view)}'
-            f'{_backups(view)}</div></section>')
+            f'<div class="fgrps">{groups}</div>{_picture_control(view)}</div></section>')
 
 
 def scripts(view: dict) -> str:
