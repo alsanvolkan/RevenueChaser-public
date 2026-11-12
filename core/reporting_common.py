@@ -426,7 +426,13 @@ function rcWatchDraw(){
 }
 function rcWatchPlace(btn){
   var el = rcWatchMenu();
-  if(!btn.getBoundingClientRect || !el.style) return;
+  if(!el.style) return;
+  // Below 480 px the stylesheet pins the menu as a sheet across the bottom; an inline top/left would beat it,
+  // so the placement is cleared first and skipped at that width. An unknown width counts as wide.
+  el.style.top = '';
+  el.style.left = '';
+  var w = window.innerWidth || 0;
+  if((w && w <= 480) || !btn.getBoundingClientRect) return;
   var r = btn.getBoundingClientRect();
   var top = r.bottom + (window.pageYOffset || 0) + 4;
   var left = Math.max(8, r.left + (window.pageXOffset || 0));

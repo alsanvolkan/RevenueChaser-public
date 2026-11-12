@@ -73,6 +73,8 @@ def test_the_targets_are_44px_and_use_the_theme_tokens():
 def test_the_menu_is_a_phone_width_sheet_below_480px():
     sheet = rc.WATCHLIST_CSS[rc.WATCHLIST_CSS.index("@media (max-width:480px)"):]
     assert "position:fixed" in sheet and "max-width:none" in sheet
+    # The inline placement would beat the stylesheet, so it is cleared and skipped at that width.
+    assert "w <= 480" in rc.WATCHLIST_JS and "el.style.top = '';" in rc.WATCHLIST_JS
 
 
 def test_the_mount_passes_the_board_as_json_and_defines_its_escaper():
@@ -135,7 +137,7 @@ var document = {
   createElement: function(){ return MENU; },
   body: {appendChild: function(){}}
 };
-var window = {pageYOffset: 0, pageXOffset: 0};
+var window = {pageYOffset: 0, pageXOffset: 0, innerWidth: 1280};
 var ANSWERS = {};
 function fetch(url, opts){
   calls.push({url: url, opts: opts || null});
@@ -193,6 +195,20 @@ def test_init_marks_a_symbol_from_the_union_of_its_groups_lists():
     # NVDA from the option group, CRSP from the second stock list: the union, not one named list.
     assert got["on"] == [True, True, False]
     assert got["read"] == "/api/watchlists"
+
+
+def test_on_a_phone_the_menu_is_left_to_the_stylesheet_instead_of_pinned_to_the_symbol():
+    got = _node(r"""
+      window.innerWidth = 412;
+      var a = new Btn({'data-rc-watch-open': '1', 'data-ticker': 'CRSP'});
+      BUTTONS = [a];
+      ANSWERS['/api/watchlists'] = LISTS;
+      rcWatchInit('sec_13f').then(function(){
+        click(a);
+        console.log(JSON.stringify({top: MENU.style.top, left: MENU.style.left, hidden: MENU.hidden}));
+      });
+    """)
+    assert got == {"top": "", "left": "", "hidden": False}
 
 
 def test_the_menu_lists_both_groups_with_a_checkbox_each_and_a_new_list_row():
