@@ -14,11 +14,17 @@ The shapes are the ones the measurements of 9-12 Nov 2026 name: a table of conte
 before the real heading (#116 C17), an Annual Information Form in a 40-F (CNQ) and one titled the other way
 (the 28 filings our one heading misses), a body past the 200,000 cap, and a body too short to be one.
 
-Four of the cases are here because the first sixteen left a branch unread, which the code review of PR 758 found
-by mutating the rule and watching the golden still pass: ``dash_headings`` is the only reader of the whole
-``DASH`` class, ``suspect_tail_cross_reference`` and ``suspect_inner_item_header`` are the only cases where
-``flag`` answers anything but the quality it was handed, and ``aif_over_the_cap`` is the only one that reaches the
-AIF path's own cap.
+Six of the cases are here because the first sixteen left a branch unread, which two review rounds on PR 758 found
+by mutating the rule and watching the golden still pass: the three dashed cases together are the only readers of
+the whole ``DASH`` class (see the comment on them -- one case reads one dash),
+``suspect_tail_cross_reference`` and ``suspect_inner_item_header`` are the only cases where ``flag`` answers
+anything but the quality it was handed, and ``aif_over_the_cap`` is the only one that reaches the AIF path's own
+cap.
+
+Which path a case takes is worth knowing before reading its expectation. ``_line_item`` -- headings on their own
+lines, a stop found by ``_LINE_END`` -- decides ``toc_then_body``, ``body_only``, ``dash_headings``,
+``item_1_01_in_exhibit_list``, ``quoted_cross_reference_first`` and ``suspect_inner_item_header``. The legacy
+START/STOP patterns decide the rest, either because the headings are inline or because the line rule declined.
 """
 from __future__ import annotations
 
@@ -57,9 +63,17 @@ CASES: tuple[tuple[str, str, str], ...] = (
      "annual information form\nDESCRIPTION OF THE BUSINESS\n" + BODY + "\nRISK FACTORS\n", "40-F"),
     ("over_the_cap", "Item 1. Business\n" + "w " * 120_000 + "\nItem 1A. Risk Factors\n", "10-K"),
     ("short_body", "Item 1. Business\nTiny.\nItem 1A. Risk Factors\n", "10-K"),
-    # A heading written with an em dash and a stop with an en dash: the only cases that read ``DASH`` through its
-    # whole range. Without them, dropping a dash from that class passes the golden.
+    # Three dashed headings, because one is not enough to read the ``DASH`` class. ``dash_headings`` has its
+    # headings on their own lines, so the line-start rule decides it and only the start's dash is read -- that
+    # rule's end pattern carries no dash class at all. The two inline cases have no line starts, so the legacy
+    # START/STOP patterns decide, and those are where ``DASH`` is actually used on both ends. Measured against
+    # ``origin/main``'s rule with the class mutated: dropping U+2212 breaks ``minus_dash_inline`` alone, dropping
+    # U+2010-U+2015 breaks ``dash_headings`` and ``minus_dash_inline``, and dropping the plain hyphen breaks
+    # ``hyphen_dash_inline`` alone. Together they fail on any member removed; ``dash_headings`` by itself does not.
     ("dash_headings", "Item 1 \u2014 Business\n" + BODY + "\nItem 1A \u2013 Risk Factors\nRisky.\n", "10-K"),
+    ("minus_dash_inline",
+     "part one Item 1 \u2212 Business " + BODY + " Item 1A \u2013 Risk Factors risky. ", "10-K"),
+    ("hyphen_dash_inline", "part one Item 1 - Business " + BODY + " Item 1A - Risk Factors risky. ", "10-K"),
     # The two cases that make ``flag`` answer anything but the quality it was given. Without them, replacing the
     # whole suspect block with ``return quality`` passes the golden.
     ("suspect_tail_cross_reference", "Item 1. Business\n" + BODY + " See\nItem 1A. Risk Factors\n", "10-K"),

@@ -2,13 +2,16 @@
 
 What these tests are for, and what they deliberately are not:
 
-- They pin the **seam**, not the rule. The rule's behaviour is already covered by the seven
+- They pin the **seam** first. The rule's behaviour is already covered by the seven
   ``module_value_chain/tests/test_splitter_*.py`` files, which were written against it and keep passing against
   ``module_value_chain.splitter`` unchanged. Re-asserting the same outputs here from the same functions would be
   the function compared with itself, which proves nothing about a move.
 - They pin what the move could silently break: the re-exported names are the **same objects**, the board's version
   is pinned rather than defaulted, an unknown version raises instead of falling back, and the rule module stays
   free of the builder's imports.
+- The golden check at the end of the file is the exception, and it is not a seam test: it holds ``ours-1``'s output
+  against what the pre-move code returned. It is here rather than beside the splitter tests because the version,
+  not the board, is what it pins.
 
 Red on the merge-base: ``rcdata.sec_sections`` does not exist there, so every test below fails at import. That is
 the honest red-first result for a move, and the PR report says so rather than claiming a behaviour difference.
@@ -69,6 +72,21 @@ def test_an_unknown_version_raises_and_names_what_exists():
     with pytest.raises(ValueError) as e:
         sec_sections.rule("ours-99")
     assert "ours-99" in str(e.value) and "ours-1" in str(e.value)
+
+
+def test_an_explicit_none_raises_and_is_not_the_default():
+    """A ``rules_version`` column read back as NULL arrives here as ``None``.
+
+    Leaving the argument out means :data:`DEFAULT_VERSION`, which is for a caller that only looks at a section.
+    Passing ``None`` is a caller that meant to name a version and had nothing to name, which is exactly the case
+    that must not quietly cut with whatever today's default is.
+    """
+    assert sec_sections.rule().version == sec_sections.DEFAULT_VERSION
+    for call in (lambda: sec_sections.rule(None),
+                 lambda: sec_sections.cut_item("Item 1. Business\nbody", "10-K", version=None),
+                 lambda: sec_sections.cut_aif_business("annual information form", version=None)):
+        with pytest.raises(ValueError):
+            call()
 
 
 def test_cut_item_and_cut_aif_business_refuse_an_unknown_version_too():
@@ -171,8 +189,8 @@ def test_the_rule_module_imports_nothing_but_the_standard_library():
 def test_every_package_init_on_the_way_in_imports_nothing_either():
     """Importing ``RevenueChaser.rcdata.sec_sections`` runs the package inits above it first, so an import added to
     one of them would reach every board through this module. Both are empty today; this test is where that is
-    noticed. The scan reads source, so it cannot see a dynamic ``importlib.import_module`` or a module
-    ``__getattr__`` -- a reviewer's point on PR 758, and the reason the files are kept empty rather than watched.
+    noticed -- ``rcdata/__init__.py`` is a docstring and the repo-root one is empty. The scan reads source, so it cannot see a dynamic ``importlib.import_module`` or a module
+    ``__getattr__`` -- a reviewer's point on PR 758, and the reason these files are kept bare rather than watched.
     """
     rcdata_init = Path(sec_sections.__file__).with_name("__init__.py")
     package_init = rcdata_init.parent.parent / "__init__.py"

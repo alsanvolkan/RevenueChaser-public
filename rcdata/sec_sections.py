@@ -19,8 +19,9 @@ stores a section names a version:
 
 - ``ours-1`` -- the rule exactly as it was on 12 Nov 2026, caps a section at :data:`MAX_ITEM_CHARS` and labels a
   capped one ``capped``. The boards stay on it, and this module must keep it byte-identical in behaviour.
-- later versions (the ``sec_forms`` layer's ``ours-2``, issues #755 and #756) arrive as new entries in
-  :data:`RULES`; ``ours-1`` is never edited again.
+- later versions arrive as new entries in :data:`RULES`; ``ours-1`` is never edited again. None exists yet:
+  :data:`VERSIONS` holds ``ours-1`` alone. The next one is the ``sec_forms`` layer's ``ours-2``, issues #755 and
+  #756, and the boards will not be moved onto it by that change.
 
   **What enforces that, honestly.** :class:`Rule` versions the two entry points and nothing below them: the
   patterns, ``_LINE_START``, ``_is_ref``, ``_before_regulation``, the two limits, :func:`flag` and
@@ -138,8 +139,9 @@ def _before_regulation(text: str, start: int, end: int) -> int:
 
 # A Canadian Annual Information Form in a 40-F's primary document (CNQ): "General Development" to "Risk Factors"
 # (10-K reading report A7). One start heading and one stop heading only, so it misses every form that titles the
-# section differently -- 28 of the 84 stored exhibits by the 12 Nov 2026 measurement, whose numbers and reasoning
-# are in issue #756, not in a file in this tree. Upgraded in ``ours-2``: #756.
+# section differently -- 28 of the 88 stored exhibits by the 12 Nov 2026 measurement, whose numbers and reasoning
+# are in issue #756, not in a file in this tree (of those 88, that measurement cuts 44 and misses 40: 28 with no
+# heading we know, 5 with no stop, 7 rejected as too short). Issue #756 is where the improvement will land.
 _AIF = re.compile(r"(?i)annual\s+information\s+form")
 _AIF_START = re.compile(r"(?im)^[^\S\n]*general\s+development\s+of\s+(?:the\s+|our\s+)?business[^\S\n]*$")
 _AIF_END = re.compile(r"(?im)^[^\S\n]*risk\s+factors[^\S\n]*$")
@@ -277,30 +279,36 @@ RULES: dict[str, Rule] = {
 }
 
 
-def rule(version: str | None = None) -> Rule:
+#: "no version given", which is not the same as ``None``. A row's ``rules_version`` read back as NULL arrives as
+#: ``None``, and that must raise rather than quietly cut with whatever the default is today.
+_UNSET: object = object()
+
+
+def rule(version: str | None | object = _UNSET) -> Rule:
     """The :class:`Rule` of ``version``; ``ValueError`` for one this module cannot cut with.
 
     Every caller that stores what it cuts names its version, so that adding a version cannot quietly move text a
-    board already stored; the boards do (``module_value_chain.splitter.VERSION``). ``None`` means
-    :data:`DEFAULT_VERSION` and is for a caller that only wants to look at a section, never one that writes a row.
-    It is resolved here, at the call, and not frozen into a default argument, so that a test can move the default
-    and see whether a caller was really naming its own.
+    board already stored; the boards do (``module_value_chain.splitter.VERSION``). Leaving the argument out means
+    :data:`DEFAULT_VERSION`, and is for a caller that only wants to look at a section, never one that writes a
+    row. The default is resolved here, at the call, rather than frozen into the signature, so that a test can move
+    it and see whether a caller was really naming its own version.
 
-    A stored section whose ``rules_version`` nobody can reproduce is worse than a failed run, which is why an
-    unknown name raises instead of falling back to the default.
+    An explicit ``None`` is **not** the default: it raises. A row's ``rules_version`` read back as NULL arrives as
+    ``None``, and a stored section whose version nobody can reproduce is worse than a failed run -- which is the
+    same reason an unknown name raises instead of falling back.
     """
-    name = DEFAULT_VERSION if version is None else str(version)
+    name = DEFAULT_VERSION if version is _UNSET else str(version)
     try:
         return RULES[name]
     except KeyError:
         raise ValueError(f"unknown section rule version {version!r}; known: {', '.join(VERSIONS)}") from None
 
 
-def cut_item(text: str, form: str = "10-K", *, version: str | None = None) -> tuple[str | None, str]:
+def cut_item(text: str, form: str = "10-K", *, version: str | None | object = _UNSET) -> tuple[str | None, str]:
     """``(item_text, quality)`` of the business item in ``text``, cut by ``version``."""
     return rule(version).slice_item(text, form)
 
 
-def cut_aif_business(text: str, *, version: str | None = None) -> str | None:
+def cut_aif_business(text: str, *, version: str | None | object = _UNSET) -> str | None:
     """The business section of an Annual Information Form in ``text``, cut by ``version``; None when it holds none."""
     return rule(version).aif_business(text)

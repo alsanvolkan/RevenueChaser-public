@@ -6,8 +6,8 @@ board's view of it and pins the version the board reads. Nothing here cuts text 
 The board stays on :data:`VERSION` (``ours-1``), the rule exactly as it was on 12 Nov 2026. That pin is the point:
 ``rcdata/build/fundamentals/filings.document_sections`` writes ``filing_item`` and ``edgar_text.slice_document``
 writes ``chain_filings``, neither with a version column, so a rule change reaching them would mix two rules in one
-table with no way to tell the rows apart, and would restale every Relatedness profile -- a paid model run. The improved rule (``ours-2``,
-issues #755 and #756) is used by the ``sec_forms`` layer only; moving a board onto it is its own change, with the
+table with no way to tell the rows apart, and would restale every Relatedness profile -- a paid model run. The improved rule (``ours-2``, issues #755 and #756) does not exist
+yet; when it does it will be the ``sec_forms`` layer's, and moving a board onto it is its own change, with the
 owner's before/after look at what the board shows.
 
 The names below are re-exported, not reimplemented: ``flag``, ``base``, ``strip_html`` and every helper are the
