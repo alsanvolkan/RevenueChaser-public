@@ -17,7 +17,6 @@ from pathlib import Path
 from RevenueChaser.core import board_settings
 from RevenueChaser.core.html_safe import esc, script_json
 from RevenueChaser.module_settings import control
-from RevenueChaser.rcdata import backup
 from RevenueChaser.rcdata.needs import screen
 
 _STATIC = Path(__file__).resolve().parent / "static"
@@ -95,30 +94,6 @@ def _header(view: dict, title: str = "Database") -> str:
             '<button type="button" class="lnk" data-reload>Refresh</button></div>')
 
 
-def _switch(name: str, label: str, st: dict | None) -> str:
-    st = st or {}
-    on = st.get("on")
-    if on is None:
-        return (f'<span class="swt none" data-name="{name}"><b>{label}: not known</b>'
-                '<span class="dim">the ops store could not be read</span></span>')
-    who = "" if on else f'<span class="dim">{esc(st.get("by") or "?")} {esc(st.get("at") or "")}</span>'
-    return (f'<button type="button" class="swt {"ok" if on else "bad"}" data-job="switch" data-name="{name}" '
-            f'data-on="{1 if on else 0}" aria-pressed="{"true" if on else "false"}" '
-            f'title="{label} switch: press to turn it {"off" if on else "on"}"><b>{label}: {"on" if on else "off"}'
-            f'</b>{who}</button>')
-
-
-def _topbar(view: dict, msg_id: str = "sw-msg") -> str:
-    """#527: always at the top of both tabs: the fetch switch, the backup switch and the IBKR gateway's state with
-    its login link (``RC_IBKR_LOGIN_URL``; no link when it is unset). ``msg_id`` keeps each copy's status line its
-    own id."""
-    sw = view.get("switches") or {}
-    return (f'<div class="topbar" role="group" aria-label="Switches and the IBKR gateway">'
-            f'{_switch("fetch", "Fetch", sw.get("fetch"))}{_switch("backup", "Backup", sw.get("backup"))}'
-            f'{_timer_box(view)}{_gateway(view, msg_id == "sw-msg")}'
-            f'<span role="status" class="dim" id="{esc(msg_id)}"></span></div>')
-
-
 def _gateway(view: dict, with_id: bool = True) -> str:
     """The IBKR gateway's state with its login link (``RC_IBKR_LOGIN_URL``; no link when it is unset)."""
     g = view.get("gateway") or {}
@@ -129,106 +104,6 @@ def _gateway(view: dict, with_id: bool = True) -> str:
              'makes no call to it">log in</a>' if g.get("login") else "")
     return (f'<span class="swt gw {esc(g.get("cls") or "none")}"><b>IBKR gateway: {esc(g.get("n") or "unknown")}</b>'
             f'<span class="dim">{esc((g.get("label") or "").replace("IBKR gateway · ", ""))}</span>{login}</span>')
-
-
-def _timer_box(view: dict) -> str:
-    """#527 step 11: the hourly builder timer's state; its on / off press is the Grafana ops panel's timer button
-    (``life-ctl life-rc-builder.timer on|off``), linked from ``RC_BUILDER_TIMER_URL``. The dashboard itself runs with
-    NoNewPrivileges, so it never switches the timer."""
-    st = (view.get("timer") or {}).get("state")
-    cls = {"on": "ok", "off": "none"}.get(st, "warn")
-    word = st if st in ("on", "off") else "not known"
-    why = {"on": "the hourly pass runs on its own", "off": "nothing runs on its own; a Fetch still queues"}.get(
-        st, "its state could not be read")
-    url = view.get("timer_url")
-    link = (f'<a class="lnk" href="{esc(url)}" target="_blank" rel="noopener noreferrer">on / off in Grafana ↗</a>'
-            if url else "")
-    # the press (avo chose it, 6 Nov 2026): POST /api/build/timer runs life-ctl life-rc-builder.timer on|off;
-    # no press while the state is not known, so it never guesses which way to switch
-    press = (f'<button type="button" class="btn sm" data-job="timer" data-on="{1 if st == "on" else 0}">'
-             f'{"Turn off" if st == "on" else "Turn on"}</button>' if st in ("on", "off") else "")
-    return (f'<span class="swt tmr {cls}"><b>Builder timer: {esc(word)}</b><span class="dim">{esc(why)}</span>'
-            f'{press}{link}</span>')
-
-
-#: The Health groups (#492 C1): three side by side, then Data at full width.
-HEALTH_GROUPS = (("sources", "Sources"), ("scheduled", "Scheduled run"), ("build", "Build"))
-#: How many serving files there are, from the registry. It was the literal 6 until #757 added a seventh kind and
-#: the heading read "1 of 6" above seven rendered sections.
-FILE_TOTAL = len(screen.FILES)
-
-
-def _tile(t: dict) -> str:
-    title = f'{t["n"]} · {t["label"]}'
-    inner = f'<span class="n">{esc(t["n"])}</span><span class="l">{esc(t["label"])}</span>'
-    if t.get("filter"):
-        return (f'<button type="button" class="tile {esc(t["cls"])}" data-f="{esc(t["filter"])}" '
-                f'title="{esc(title)}">{inner}</button>')
-    return f'<div class="tile {esc(t["cls"])} static" title="{esc(title)}">{inner}</div>'
-
-
-def _segbar(counts) -> str:
-    """A file's fresh / late / stale / never bar, with its counts."""
-    c = counts if isinstance(counts, dict) else {}
-    total = c.get("total")
-    if not total:
-        return '<span class="segbar none" title="no dataset counted"></span><span class="segn dim">no dataset</span>'
-    segs = "".join(f'<i class="seg {k}" style="flex-grow:{int(c.get(k) or 0)}" title="{int(c.get(k) or 0)} {w}"></i>'
-                   for k, w in (("fresh", "fresh"), ("late", "late"), ("stale", "stale"), ("never", "never ran"))
-                   if c.get(k))
-    words = " · ".join(f'{int(c.get(k) or 0)} {w}' for k, w in (("fresh", "fresh"), ("late", "late"),
-                                                               ("stale", "stale"), ("never", "never ran")))
-    return f'<span class="segbar">{segs}</span><span class="segn">{esc(words)}</span>'
-
-
-def _byfile(view: dict) -> str:
-    rows = (view.get("health") or {}).get("files")
-    if rows is None:
-        rows = [{"name": f["name"], "state": f.get("state")} for f in view.get("files") or []]
-    if not rows:
-        return ""
-    on_disk = sum(1 for r in rows if isinstance(r.get("state"), dict) and r["state"].get("exists"))
-    known = any(isinstance(r.get("state"), dict) and r["state"].get("exists") is not None for r in rows)
-    head = f"{on_disk} of {FILE_TOTAL} files on the disk" if known else "files on the disk: not known"
-    lines = []
-    for r in rows:
-        st = r.get("state") if isinstance(r.get("state"), dict) else {}
-        words = _fstate_words(st or None)
-        lines.append(f'<button type="button" class="bfl" data-pick="{esc(r.get("name"))}"><span class="bfn">'
-                     f'{esc(r.get("name"))}</span>{_segbar(st.get("counts"))}<span class="bfs">'
-                     f'{"🦆 " if st.get("exists") else ""}{esc(words)}</span></button>')
-    return f'<div class="byfile"><h4 class="hgh">{esc(head)}</h4>{"".join(lines)}</div>'
-
-
-def _health(view: dict) -> str:
-    h = view["health"]
-    by_group: dict[str, list[str]] = {}
-    for t in h["tiles"]:
-        g = t.get("group") if t.get("group") in ("sources", "scheduled", "build") else "data"
-        by_group.setdefault(g, []).append(_tile(t))
-    total = view.get("datasets_total")
-    if total is None:
-        total = sum(len(f["datasets"]) for f in view.get("files") or [])
-    top = "".join(f'<div class="hgrp" data-group="{k}"><h3 class="hgh">{w}</h3><div class="strip">'
-                  f'{"".join(by_group.get(k, [])) or """<span class="dim">no tile yet</span>"""}</div></div>'
-                  for k, w in HEALTH_GROUPS)
-    data = (f'<div class="hgrp hdata" data-group="data"><h3 class="hgh">Data · {total} datasets</h3>'
-            f'<div class="strip">{"".join(by_group.get("data", []))}</div>{_byfile(view)}</div>')
-    c = h["counts"]
-    summ = (f'<b class="s-ok">{c["fresh"]} fresh</b> · <b class="s-warn">{c["late"]} late</b> · '
-            f'<b class="s-bad">{c["stale"]} stale</b> · {c["never"]} never ran · {h["problems"]} open problems')
-    al = h.get("alerts")
-    if al is None:                      # a view built before #527: the tiles as they were
-        return ('<details class="sec" id="sec-health" open><summary><h2>Health right now</h2>'
-                f'<span class="secs">{summ}</span></summary><div class="hgrps">{top}</div>{data}</details>')
-    cards = ("".join(f'<div class="tile {esc(a["cls"])} static alert" data-key="{esc(a["key"])}">'
-                     f'<span class="n">{esc(a["n"])}</span><span class="l">{esc(a["label"])}</span></div>' for a in al)
-             if al else '<p class="calm s-ok"><b>Nothing needs you right now.</b></p>')
-    return ('<details class="sec" id="sec-health" open><summary><h2>Health right now</h2>'
-            f'<span class="secs">{len(al)} to look at</span></summary>'
-            f'<div class="alerts">{cards}</div><p class="allgood"><b>All good:</b> {esc(h.get("allgood") or "")}</p>'
-            f'<details class="htiles"><summary>Every tile</summary><div class="hgrps">{top}</div>{data}</details>'
-            '</details>')
 
 
 # ── Fetch: the universe ───────────────────────────────────────────────────────────────────────────────────────
@@ -371,203 +246,12 @@ def _acts(d: dict, pause: bool = True, cross: bool = True) -> str:
     return f'<div class="acts">{"".join(parts)}<p class="cost">{" · ".join(cost)}</p></div>{cal}'
 
 
-# ── Stage 1: Sources, one panel a file (#492 C1) ─────────────────────────────────────────────────────────────
-
-#: The one button's legend line (#492 PR (ii): a Pause stops the dataset for real).
-BUTTON_LEGEND = ('One button for each dataset: <b>Fetch</b> asks for a whole run (raw, Parquet and the served DuckDB '
-                 'file); its <b>▾</b> asks for <b>Fetch raw</b> (the provider\'s answer into HDD raw only) or '
-                 '<b>Fetch raw + Parquet</b> (the served file stays as it is), and the next hourly pass builds the '
-                 'rest when this file\'s automation is raw + Parquet + DuckDB · <b>Pause</b> cancels a queued run, '
-                 'stops a running one before its next provider call and holds the dataset · <b>Resume</b> lets the '
-                 'hourly pass run it again')
-#: The line the button legend shows; the whole of ``BUTTON_LEGEND`` is behind its "?" (#527 step 8b).
-BUTTON_LINE = "One button for each dataset: <b>Fetch</b> · <b>Pause</b> · <b>Resume</b>"
-
-
-def _button_legend() -> str:
-    return (f'<div class="blegend">{BUTTON_LINE}<details class="lgq"><summary class="q" '
-            f'aria-label="What the buttons do">?</summary><p class="dim">{BUTTON_LEGEND}</p></details></div>')
-
-
-#: The two partial runs of a Fetch press's ▾ menu (``app/dashboard.py`` ``REQUEST_STAGES``).
-FETCH_STAGES = (("raw", "Fetch raw", "the provider's answer into HDD raw only; Parquet and DuckDB stay; the next "
-                 "hourly pass builds them when this file's automation is raw + Parquet + DuckDB"),
-                ("parquet", "Fetch raw + Parquet", "also stages Parquet; the served DuckDB file stays as it is "
-                 "until the next pass, when this file's automation is raw + Parquet + DuckDB"))
-#: The automation a served file's hourly pass runs (``ops.KIND_MODES``), as its select shows them.
-AUTOMATION_MODES = (("off", "off · Fetch only"), ("raw", "raw"), ("parquet", "raw + Parquet"),
-                    ("full", "raw + Parquet + DuckDB"))
-PROVIDERS_SOURCE = ('day caps and request windows: <code>rcdata/caps.py</code> (<code>DAY_CAPS</code>, '
-                    '<code>WINDOWS</code>) · what each provider brings, our pace and its rule: '
-                    '<code>rcdata/needs/screen.py</code> (<code>PROVIDERS</code>) · used today: '
-                    '<code>ops.provider_calls_daily</code>')
-
-
 def _pcolor(view: dict, pid: str) -> str:
     """A provider's colour, the same one its row in Providers and daily limits wears."""
     for i, p in enumerate(view.get("providers") or []):
         if p.get("id") == pid:
             return control.SOURCE_COLORS[i % len(control.SOURCE_COLORS)]
     return control.SOURCE_COLORS[0]
-
-
-def _written(at) -> str:
-    if not at:
-        return "not known"
-    d = control.day_words(at)
-    t = control._clock(at)
-    return d if t == "—" else f"{d} {t}"
-
-
-def _fstate_words(st) -> str:
-    """"on the disk · 9.8 MB · written 5 Nov 19:43 · 9 of 9 tables hold rows · empty: a, b", or "no file yet"."""
-    if not isinstance(st, dict) or st.get("exists") is None:
-        return "not known"
-    if not st.get("exists"):
-        return "no file yet"
-    size = _size(st.get("bytes")) if st.get("bytes") is not None else "size not known"
-    tables = (f'{st["tables_with_rows"]} of {st["tables"]} tables hold rows'
-              if st.get("tables") is not None and st.get("tables_with_rows") is not None
-              else "tables not counted yet")
-    empty = st.get("empty") or []
-    return (f'on the disk · {size} · written {_written(st.get("written_at"))} · {tables}'
-            + (f' · {st["uncounted"]} not counted' if st.get("uncounted") else "")
-            + (f' · empty: {", ".join(str(e) for e in empty)}' if empty else ""))
-
-
-def _active(view: dict, name: str):
-    """The queue row holding ``name`` (queued or running), else None."""
-    for r in (view.get("queue") or {}).get("active") or []:
-        if r.get("dataset") == name and r.get("status") in ("queued", "running"):
-            return r
-    return None
-
-
-def _one_button(d: dict, view: dict) -> str:
-    """Fetch, Pause or Resume: one button a dataset, in the state the dataset is in."""
-    name = d["dataset"]
-    if d["attended"]:
-        return (f'<button type="button" class="btn" data-job="copy" data-cmd="{esc(d["command"] or "")}">'
-                'Copy the command</button><button type="button" class="btn" disabled>Fetch</button>')
-    if not d["fetch"]["self"]:
-        return ('<span class="dbnote">fetched by <button type="button" class="lnk" data-goto="universe">Fetch the '
-                'universe</button></span>')
-    act = _active(view, name)
-    if d["paused"]:
-        state, word, pill = "resume", "Resume", ""
-    elif act is not None:
-        state, word = "pause", "Pause"
-        st = act.get("status")
-        pill = f'<span class="lg3 {"st-r" if st == "running" else "st-q"}">{esc(st)}</span>'
-    else:
-        state, word, pill = "fetch", "Fetch", ""
-    cls = "btn go" if state == "fetch" else "btn"
-    # always drawn, hidden away from Fetch, so the script can show it again after a Resume or a finished run
-    items = "".join(f'<button type="button" role="menuitem" class="btn" data-job="stage" data-stage="{k}" '
-                    f'title="{esc(why)}">{esc(label)}</button>' for k, label, why in FETCH_STAGES)
-    menu = (f'<button type="button" class="btn fmenu" data-job="fmenu" aria-haspopup="menu" aria-expanded="false" '
-            f'aria-label="Fetch only part of the run: {esc(name)}"{"" if state == "fetch" else " hidden"}>▾</button>'
-            f'<span class="fmenul" role="menu" hidden>{items}</span>')
-    # #527 decision A: Pause on an idle dataset too, so the hourly pass skips it until Resume; a queued or running
-    # dataset's one button is Pause already, and a paused one's is Resume
-    idle = (f'<button type="button" class="btn sm idlep" data-job="stop" data-dataset="{esc(name)}" '
-            'title="Hold this dataset: the hourly pass skips it until Resume">Pause</button>'
-            '<span class="dim" role="status"></span>' if state == "fetch" else "")
-    return (f'{pill}<span class="onewrap"><button type="button" class="{cls} one" data-job="one" data-state="{state}" '
-            f'data-dataset="{esc(name)}" data-scope="{1 if d["fetch"]["honours_scope"] else 0}">{word}</button>'
-            f'{menu}</span>{idle}')
-
-
-def _local_clock(at) -> str:
-    return control._local(datetime.fromtimestamp(float(at), timezone.utc)).strftime("%d %b %H:%M")
-
-
-def _ds_automation(d: dict, key: str) -> str:
-    """#527: this source's own Automated select; ``off`` when it has no row (avo, 10 Nov 2026: no file-level mode)."""
-    mine = d.get("automation_own") or "off"
-    opts = "".join(f'<option value="{m}"{" selected" if m == mine else ""}>{esc(w)}</option>'
-                   for m, w in AUTOMATION_MODES)
-    return ('<div class="schedset">'
-            f'<label for="dsauto-{key}">Automated</label><select id="dsauto-{key}" data-dsauto>{opts}</select>'
-            f'<button type="button" class="btn" data-job="automation" data-dataset="{esc(d["dataset"])}">Save</button>'
-            '<span class="dim" role="status"></span></div>')
-
-
-def _sched_fields(d: dict) -> str:
-    """#472, moved from the old Fetch card: how often the schedule runs the dataset and a hold until a day, sent
-    together by one press (``/api/build/schedule/<ds>/cadence``), so a schedule is never half applied."""
-    cadence = str(d.get("cadence_effective") or "daily")
-    key = esc(str(d["dataset"]).replace("/", "-"))          # a dataset name carries slashes; an id must not
-    hold = d.get("next_due")
-    opts = "".join(f'<option value="{o}"{" selected" if o == cadence else ""}>{o}</option>'
-                   for o in ("daily", "weekly", "monthly"))
-    own = "" if d.get("cadence_own") else '<span class="dim">the default</span>'
-    return (_ds_automation(d, key) + '<div class="schedset">'
-            f'<label for="cad-{key}">How often</label><select id="cad-{key}" data-cadence>{opts}</select>{own}'
-            f'<label for="hold-{key}">Hold until</label><input type="date" id="hold-{key}" data-hold'
-            + (f' value="{esc(hold)}"' if hold else "") + '>'
-            f'<button type="button" class="btn" data-job="cadence" data-dataset="{esc(d["dataset"])}">Save schedule'
-            '</button><span class="dim" role="status"></span></div>')
-
-
-def _sbox(d: dict, view: dict) -> str:
-    """One source box: five slots in the same place in every box (head, state, meters, counts, the rest)."""
-    provs = list(d["providers"])
-    badges = "".join(
-        f'<span class="srcb" style="background:{_pcolor(view, p)}"><svg viewBox="0 0 24 24" aria-hidden="true">'
-        f'<path d="{esc(control.ICONS.get(p, ""))}"/></svg>'
-        f'{esc(screen.PROVIDERS[p].name if p in screen.PROVIDERS else p)}</span>' for p in provs)
-    edge = _pcolor(view, provs[0]) if provs else "var(--mut)"
-    word = control.STATUS_PILL.get(d["status"], ("p-bad", d["status"]))[1]
-    tags = ""
-    if d["attended"]:
-        tags += '<span class="pill p-src">hand-run</span>'
-    if d["build"]:
-        tags += '<span class="pill p-new">build</span>'
-    head = (f'<div class="sb1"><button type="button" class="sbtog" aria-expanded="true" aria-label="Fold '
-            f'{esc(d["dataset"])}">▾</button><span class="sdot {esc(d["filter"])}" aria-hidden="true"></span>'
-            f'{badges}<span class="dsname" title="{esc(d["dataset"])}">{esc(d["dataset"])}</span>{tags}'
-            f'<span class="sbbtn">{_one_button(d, view)}</span></div>')
-    nxt = d.get("next_words")
-    since = d.get("since_words")
-    state = (f'<div class="sb2"><span class="pill {esc(d["pill"])}">{esc(word)}</span>'
-             f'<span class="pill cad">⏱ {esc(d["cadence"] or "not known")}</span>'
-             f'<span class="snext">{esc(_next_words(nxt))}</span>'
-             f'<span class="ssince">{esc(since) if since else "since: not known"}</span></div>')
-    meters = ""
-    if d["coverage"]:
-        c = d["coverage"]
-        meters += _meter("cov", c["cls"], "coverage", c["share"], c["text"], c["target"])
-    a = d["age"]
-    meters += _meter("age", a["cls"], "since the last check", a["share"], a["text"])
-    counts = f'<span class="cnt"><span class="ck">rows</span><b>{control.count(d["rows"])}</b></span>'
-    if d["added"] is not None or d["removed"] is not None:
-        counts += (f'<span class="cnt"><span class="ck">last run</span><b>+{control.count(d["added"])} / '
-                   f'−{control.count(d["removed"])}</b></span>')
-    if d["dataset"] == "spine/security":
-        counts += (f'<span class="cnt uni-n"><span class="ck">in the universe</span>'
-                   f'<b>{control.count(view["universe"]["size"])}</b></span>')
-    rest = _sched_fields(d) + (_fill_row(d, view) if d["fill"]["cells"] else "") + _problems(d) + _acts(d, pause=False)
-    return (f'<div class="dset sbox" data-st="{esc(d["filter"])}" data-prob="{d["issues_open"]}" '
-            f'data-tags="{esc(" ".join(d["tags"]))}" data-dataset="{esc(d["dataset"])}" '
-            f'style="border-left-color:{edge}">{head}{state}<div class="sbody">'
-            f'<div class="sb3">{meters}</div><div class="sb4">{counts}</div><div class="sb5">{rest}</div></div></div>')
-
-
-def _sources(f: dict, view: dict) -> str:
-    """Stage 1 of a file's panel: its sources, one box a dataset, with the one button, then the providers."""
-    rows = f["datasets"]
-    by = {k: sum(1 for d in rows if d["filter"] == k) for k in ("fresh", "late", "stale", "never")}
-    head = (f'<div class="srch"><h3><span class="stn">1</span> Sources · {esc(f["name"])}</h3>'
-            f'<span class="dim">{esc(str(f["steps"]).split(" · ", 1)[-1])}</span>'
-            '<span class="sract"><button type="button" class="btn" data-sb="shut">Collapse all</button>'
-            '<button type="button" class="btn" data-sb="open">Open all</button></span></div>')
-    state = f'<p class="fstate">🦆 {esc(f["name"])} · {esc(_fstate_words(f.get("state")))}</p>'
-    runs = (f'<p class="runs">runs on <b class="runs-on">{esc(view["universe_summary"])}</b> · set by the Universe '
-            'at the top of this tab</p>' if f["runs_on_universe"] else f'<p class="runs">{esc(f["words"])}</p>')
-    boxes = "".join(_sbox(d, view) for d in rows) or '<p class="dim">no dataset of this file is on record yet</p>'
-    return (f'<div class="sources fgroup" data-file="{esc(f["name"])}">{head}{state}{runs}'
-            f'{_button_legend()}<div class="sgrid">{boxes}</div></div>')
 
 
 def _funnel(view: dict) -> str:
@@ -596,21 +280,6 @@ def _funnel(view: dict) -> str:
             f'<div class="fcols">{col("Stocks", stocks)}{col("ETFs", etfs)}</div>'
             + (f'<p class="dim">added by hand: {esc(added if isinstance(added, str) else control.count(added))}</p>'
                if added is not None else "") + '</div>')
-
-
-#: ``next_run_words`` answers that are whole sentences, printed without the "next " prefix.
-_WHOLE_SENTENCES = ("skips until", "by hand", "next ", "due", "not before")
-
-
-def _next_words(nxt) -> str:
-    """``next <when>`` for a time ("every trading day, …", "Fri 13 Nov, …"); a whole sentence ("skips until Resume",
-    "by hand only", "next pass not known", "due · …") stands alone, after any "timer off · " it carries."""
-    if not nxt:
-        return "next: not known"
-    words = str(nxt)
-    off = "timer off · " if words.startswith("timer off · ") else ""
-    core = words[len(off):]
-    return words if core.startswith(_WHOLE_SENTENCES) else f"{off}next {core}"
 
 
 def _uni_cards(view: dict) -> str:
@@ -781,45 +450,6 @@ def _file_words(f: dict) -> str:
 
 
 # ── Providers ─────────────────────────────────────────────────────────────────────────────────────────────────
-
-def _providers(view: dict, sid: str | None = "sec-providers") -> str:
-    rows = []
-    for i, p in enumerate(view["providers"]):
-        color = control.SOURCE_COLORS[i % len(control.SOURCE_COLORS)]
-        if p["cap"] is None:
-            bar = '<span class="lbar none"></span><span class="ln">no cap · counted, never stopped</span>'
-            cap = '<span class="pk none"><span class="jk">our day cap</span>no cap</span>'
-        else:
-            share = p["share"] or 0.0
-            word = "near the limit" if share > control.CAP_BAD else ("half" if share >= control.CAP_WARN
-                                                                      else "comfortable")
-            bcls = {"warn": "near", "bad": "full"}.get(p["cls"], "")
-            bar = (f'<span class="lbar"><i class="{esc(p["cls"])}" style="width:{min(share, 1.0) * 100:.1f}%"></i>'
-                   f'</span><span class="ln">{control.count(p["used"])} / {control.count(p["cap"])} today'
-                   f'<b class="{bcls}">{share:.0%} · {word}</b></span>')
-            cap = f'<span class="pk"><span class="jk">our day cap</span>{control.count(p["cap"])} a day</span>'
-        pace_cls = " none" if p["pace"] == "none" else ""
-        rule_cls = " none" if p["rule"].startswith("none") else ""
-        rows.append(
-            f'<div class="plim"><span class="pp"><span class="srcb" style="background:{color}"><svg viewBox="0 0 24 24" '
-            f'aria-hidden="true"><path d="{esc(p["icon"])}"/></svg>{esc(p["name"])}</span>'
-            f'<span class="pw">{esc(p["what"])}</span></span><span class="pu">{bar}</span>{cap}'
-            f'<span class="pk{pace_cls}"><span class="jk">our pace</span>{esc(p["pace"])}</span>'
-            f'<span class="pk{rule_cls}"><span class="jk">provider\'s rule</span>{esc(p["rule"])}</span></div>')
-    near = [p for p in view["providers"] if p["share"] is not None and p["share"] >= control.CAP_WARN]
-    secs = f'{len(view["providers"])} providers · day cap, pace and the provider\'s rule' + (
-        " · " + ", ".join(f'{p["name"]} at {p["share"]:.0%}' for p in near) if near else "")
-    ident = f' id="{sid}"' if sid else ""
-    return (f'<details class="sec provs"{ident}><summary><h2>Providers and daily limits</h2>'
-            f'<span class="secs">{esc(secs)}</span></summary><div class="group" style="border-left-color:var(--l-src)">'
-            f'<p class="psrc">{PROVIDERS_SOURCE}</p>'
-            '<div class="plims"><div class="plim ph" aria-hidden="true"><span>Provider</span><span>Used today against '
-            'our day cap</span><span>Our day cap</span><span>Our pace</span><span>Provider\'s own rule</span></div>'
-            f'{"".join(rows)}</div><p class="hint">Three kinds of limit, side by side: <b>our day cap</b> '
-            '(<code>rcdata/caps.py</code>; the builder does not start a dataset once its provider reached the cap for '
-            'the New York day, counted in <code>provider_calls_daily</code>), <b>our pace</b> (each source\'s own '
-            'pacer) and <b>the provider\'s own rule</b>, where the code quotes one. "No cap" means none is set, never '
-            'zero. The bar turns amber at half and red past 70%.</p></div></details>')
 
 
 # ── Data, file by file ────────────────────────────────────────────────────────────────────────────────────────
@@ -1068,131 +698,6 @@ def _health_table(f: dict) -> str:
 
 # ── Cross-check, queue ────────────────────────────────────────────────────────────────────────────────────────
 
-def _xsource(c: dict, view: dict) -> str:
-    """The second source as the journey shows a source: its provider badge, or a grey pill when there is none."""
-    name = c.get("second_source")
-    if not name:
-        return '<span class="pill p-mut">no second source</span>'
-    pid = c.get("provider")
-    icon = (f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{esc(control.ICONS.get(pid, ""))}"/></svg>'
-            if pid in control.ICONS else "")
-    return f'<span class="srcb" style="background:{_pcolor(view, pid)}">{icon}{esc(name)}</span>'
-
-
-def _differs(n) -> str:
-    if n is None:
-        return '<span class="dim">—</span>'
-    return f'<span class="pill p-ok">0 differ</span>' if not n else f'<span class="pill p-bad">{int(n):,} differ</span>'
-
-
-def _cross(view: dict) -> str:
-    """#527 step 8b: the same badges, pills and fonts as the journey table; the short columns never wrap."""
-    rows = []
-    for c in view["cross_check"]:
-        rows.append(f'<tr><td data-label="Field"><b>{esc(c.get("field"))}</b> <code class="p">{esc(c.get("need") or "")}'
-                    f'</code></td><td data-label="Second source">{_xsource(c, view)}</td>'
-                    f'<td data-label="Compared">{esc(c.get("checked") or "—")}</td>'
-                    f'<td data-label="Differs">{_differs(c.get("differs"))}</td>'
-                    f'<td data-label="Largest deviation">{esc(c.get("worst") or "—")}</td>'
-                    f'<td data-label="When">{esc(c.get("as_of") or "none yet")}</td></tr>')
-        if c.get("command"):
-            rows.append(f'<tr><td colspan="6" class="dim">hand-run: <code>{esc(c["command"])}</code></td></tr>')
-    body = "".join(rows) or '<tr><td colspan="6" class="dim">no cross-check recorded</td></tr>'
-    return ('<details class="sec" id="sec-crosscheck"><summary><h2>Cross-check · first ↔ second source</h2>'
-            f'<span class="secs">{len(view["cross_check"])} reports</span></summary>'
-            '<div class="group" style="border-left-color:var(--new)"><div class="scroll"><table class="stk xck">'
-            '<thead><tr><th>Field</th><th>Second source</th><th>Compared</th><th>Differs</th><th>Largest deviation</th>'
-            f'<th>When</th></tr></thead><tbody>{body}</tbody></table></div><p class="hint">Where a field has no second '
-            'source the row says so; no source is invented. The report shown is the one that exists: this page makes '
-            'no new call.</p></div></details>')
-
-
-#: A queue note longer than this is cut to one line; the whole note is one tap away.
-NOTE_CUT = 120
-
-
-def _note(text) -> str:
-    t = str(text or "—")
-    if len(t) <= NOTE_CUT:
-        return esc(t)
-    return f'<details class="note"><summary>{esc(t[:NOTE_CUT])}…</summary>{esc(t)}</details>'
-
-
-def _queue(view: dict) -> str:
-    q = view["queue"]
-    lines = {r.get("id"): r for r in view.get("running") or []}
-    rows = []
-    for r in list(q.get("active") or []) + list(q.get("finished") or [])[:10]:
-        stop = (f'<button type="button" class="btn" data-job="stop" data-dataset="{esc(r.get("dataset"))}" '
-                f'data-status="{esc(r.get("status"))}">Stop</button><span class="dim" role="status"></span>'
-                if r.get("status") in ("queued", "running") else "")
-        run = lines.get(r.get("id"))
-        run_line = (f'<span class="runl {esc(run.get("cls") or "")}">{esc(run["line"].split(" · ", 1)[-1])}</span>'
-                    if run else "")
-        when = control._clock(r.get("requested_at")) if r.get("requested_at") else "—"
-        rows.append(f'<tr><td data-label="Dataset"><code class="dsn">{esc(r.get("dataset"))}</code>{run_line}</td>'
-                    f'<td data-label="Status"><span class="stbtn">{esc(r.get("status"))}{stop}</span></td>'
-                    f'<td data-label="Asked">{esc(r.get("requested_by") or "—")} · {esc(when)}</td>'
-                    f'<td data-label="Note">{_note(r.get("note"))}</td></tr>')
-    body = "".join(rows) or '<tr><td colspan="4" class="dim">nothing queued, nothing run yet</td></tr>'
-    waiting = len(q.get("active") or [])
-    # #527: open while something waits or runs, so a running job's line is in sight; closed when the queue is empty
-    return (f'<details class="sec" id="sec-queue"{" open" if waiting else ""}><summary><h2>Queue and last runs</h2>'
-            f'<span class="secs">{waiting} waiting or running · the last finished requests</span></summary>'
-            '<div class="group" style="border-left-color:var(--mut)"><div class="scroll"><table class="stk qtbl" '
-            'id="ctl-queue"><thead><tr><th>Dataset</th><th>Status</th><th>Asked</th><th>Note</th></tr>'
-            f'</thead><tbody>{body}</tbody></table></div><p class="hint">Stop pauses the dataset: a queued request '
-            'is cancelled, a running fetch stops before its next provider call (the files it fetched stay), and '
-            'the hourly pass skips the dataset until Resume. A running line reads time so far / its limit · who '
-            'started it; a Claude session\'s command is cut at 2 h.</p></div></details>')
-
-
-def _bcls(row: dict) -> str:
-    """A backup row's colour: red past the alert age or with nothing kept, amber past the warn age."""
-    return "s-bad" if row.get("alert") else ("s-warn" if row.get("warn") else "s-ok")
-
-
-def _backups(view: dict) -> str:
-    """The weekly backup, on the page itself (#715 step 2; avo, 11 Nov 2026). One row a step, one row a served
-    file: how old the newest copy is and how many are kept. It reads what the backup job recorded and starts
-    nothing."""
-    b = view.get("backups") or {}
-    rows, bad = [], 0
-    if not b:
-        return ""
-    if not b.get("configured"):
-        rows.append('<tr><td data-label="What">Backup folder</td>'
-                    '<td data-label="State" class="s-bad">not set: RAW_STORE_BACKUP_DIR is empty</td></tr>')
-        bad += 1
-    elif b.get("root"):
-        rows.append('<tr><td data-label="What">Backup folder</td>'
-                    f'<td data-label="State"><code>{esc(b.get("root"))}</code></td></tr>')
-    for st in b.get("steps") or []:
-        age = st.get("age_days")
-        text = "never ran" if age is None else f"last good run {age} d ago · {esc(st.get('last_ok') or '—')}"
-        if st.get("error"):
-            text += f" · last run failed: {esc(st['error'])}"
-        bad += 1 if st.get("alert") else 0
-        rows.append(f'<tr><td data-label="What">Step {esc(st.get("step"))}</td>'
-                    f'<td data-label="State" class="{_bcls(st)}">{text}</td></tr>')
-    for k in b.get("kinds") or []:
-        age = k.get("age_days")
-        text = ("no copy" if age is None else f"{age} d old · {esc(k.get('newest') or '—')}") \
-            + f" · {esc(k.get('copies') or 0)} kept"
-        bad += 1 if k.get("alert") else 0
-        rows.append(f'<tr><td data-label="What">Newest {esc(k.get("kind"))} copy</td>'
-                    f'<td data-label="State" class="{_bcls(k)}">{text}</td></tr>')
-    body = "".join(rows) or '<tr><td colspan="2" class="dim">no backup recorded</td></tr>'
-    words = (f'{bad} past its limit' if bad else "every copy inside its limit")
-    return (f'<details class="sec" id="sec-backups"{" open" if bad else ""}><summary><h2>Weekly backups</h2>'
-            f'<span class="secs">{words}</span></summary>'
-            '<div class="group" style="border-left-color:var(--mut)"><div class="scroll">'
-            '<table class="stk bktbl"><thead><tr><th>What</th><th>State</th></tr></thead>'
-            f'<tbody>{body}</tbody></table></div><p class="hint">One job every Sunday 03:30 keeps the newest '
-            f'{backup.KEEP} copies of every file on the HDD. Amber past '
-            f'{esc(b.get("warn_days") or "?")} days, red past {esc(b.get("alert_days") or "?")}. This page only reads what that '
-            'job recorded; it copies nothing.</p></div></details>')
-
 
 # ── The page's data and the whole section ─────────────────────────────────────────────────────────────────────
 
@@ -1243,19 +748,6 @@ def _panel(f: dict, view: dict, first: bool) -> str:
             f'style="--fh:{esc(f["color"])}"{" open" if first else ""}>'
             f'<summary><h2>🦆 {esc(f["name"])}</h2><span class="secs">{esc(_file_words(f))}</span></summary>'
             f'<div class="fpbody">{_journey(f)}{_samples(f)}</div></details>')
-
-
-def _fetch_group(f: dict, view: dict) -> str:
-    """One served file on the Fetch/Health tab, folded like a Jobs group: its sources with their presses and
-    schedules, then the last runs of each dataset. Open when one of its datasets is late or stale."""
-    rows = f["datasets"]
-    by = {k: sum(1 for d in rows if d["filter"] == k) for k in ("fresh", "late", "stale", "never")}
-    bad = by["late"] + by["stale"]
-    words = (f'{len(rows)} sources · <b class="s-ok">{by["fresh"]} fresh</b> · <b class="s-warn">{by["late"]} late</b>'
-             f' · <b class="s-bad">{by["stale"]} stale</b> · {by["never"]} never ran')
-    return (f'<details class="sec fgrp" data-file="{esc(f["name"])}" style="--fh:{esc(f["color"])}"'
-            f'{" open" if bad else ""}><summary><h2>🦆 {esc(f["name"])}</h2><span class="secs">{words}</span>'
-            f'</summary>{_sources(f, view)}{_health_table(f)}</details>')
 
 
 def render_data(view: dict, lookup_html: str = "") -> str:

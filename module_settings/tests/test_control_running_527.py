@@ -6,8 +6,7 @@ builder), a process under the Claude Code session's unit has the 2 h cap a backg
 is "unknown". A running row whose process is gone reads "probably lost"; closing it stays the sweep's job."""
 from __future__ import annotations
 
-from RevenueChaser.module_settings import control, control_render
-from RevenueChaser.module_settings.tests.test_control_render_c1 import _view
+from RevenueChaser.module_settings import control
 from RevenueChaser.module_settings.tests.test_control_view import NOW, control_nd
 
 T = NOW.timestamp()
@@ -68,18 +67,3 @@ def test_an_unknown_starter_and_a_lost_process_say_so():
     got, _ = _running(nd, [_run(999, "sec/13dg", 200), _run(303, "sec/form4", 10)])
     assert got[1]["who"] == "process gone · probably lost" and got[1]["cls"] == "none"
     assert got[2]["who"] == "unknown" and got[2]["limit_s"] is None
-
-
-def test_the_queue_table_is_readable():
-    v = _view()
-    long_note = "skipped: " + "x" * 400
-    v["queue"] = {"active": [_req(1, "sec/13dg", 30)],
-                  "finished": [{"id": 2, "dataset": "sec/13f", "status": "skipped", "requested_by": "cli",
-                                "requested_at": T - 600, "note": long_note}]}
-    v["running"] = [{"id": 1, "line": "sec/13dg · 30 min / 2 h · Claude session", "cls": "ok"}]
-    q = control_render._queue(v)
-    assert q.count("<th>Asked") == 1 and "<th>Asked by</th>" not in q, "one Asked column: who and when"
-    assert '<code class="dsn">sec/13dg</code>' in q
-    assert '<span class="stbtn">running' in q, "Stop sits beside the status"
-    assert "30 min / 2 h · Claude session" in q
-    assert "<details class=\"note\"><summary>" in q and long_note in q, "a long note is cut, the whole is one tap away"
