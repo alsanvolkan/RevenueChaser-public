@@ -144,9 +144,11 @@ def test_the_page_says_the_unit_once_in_the_header_and_never_on_a_row(monkeypatc
                         lambda *a, **k: _bars([("NVDA", date.today(), 110.0, 5.0)]))
     html = board.render_html(board.payload(list_id))
     # The header follows the open tab, so the browser draws it from this column set rather than the server.
-    assert [c[0] for c in board.COLUMNS["price"] if c[2] == "USD"] == ["last", "chg", "cap"]
-    assert '"unit": "USD"' in html or '"unit":"USD"' in html, "the unit reaches the page in the column set"
-    assert '<span class="wl-u">USD</span>' not in html, "a row never repeats the unit"
+    assert [c[0] for c in board.COLUMNS["price"] if c[2] == "$"] == ["last", "chg", "cap"]
+    assert '"unit": "$"' in html or '"unit":"$"' in html, "the unit reaches the page in the column set"
+    assert '<span class="wl-u">$</span>' not in html, "a row never repeats the unit"
+    assert not [c for cols in board.COLUMNS.values() for c in cols if c[2] == "USD"], \
+        "a currency is its symbol, not its code (avo, 13 Nov 2026)"
 
 
 def test_the_remove_button_is_the_rows_last_cell_and_not_part_of_the_symbol(no_data):

@@ -10,7 +10,7 @@ What a row's numbers are, by the symbol's ``coverage`` (``module_watchlists/symb
   before it, that session's volume and the average over the last ``VOLUME_SESSIONS`` bars with a volume. The market
   cap is the newest one of the class (``prices.latest``). The company name is the spine's (``identity.security``).
 - ``market_series`` — the series' own newest two observations (``market.series``): a level and its change, with no
-  volume and no cap. A yield carries ``%`` as its unit, so the column header's "USD" does not read over it.
+  volume and no cap. A yield carries ``%`` as its unit, so the column header's "$" does not read over it.
 - ``derived`` and ``unsupported`` — no number at all. The row stays, because the list is avo's and must come back
   out of an export whole; it says "No data source yet" and names issue #785.
 
@@ -560,22 +560,24 @@ _GRIP = ('<svg viewBox="0 0 10 14" fill="currentColor" aria-hidden="true"><circl
          '<circle cx="7.5" cy="2" r="1.3"/><circle cx="2.5" cy="7" r="1.3"/><circle cx="7.5" cy="7" r="1.3"/>'
          '<circle cx="2.5" cy="12" r="1.3"/><circle cx="7.5" cy="12" r="1.3"/></svg>')
 
-#: Each tab's columns: ``(key, label, unit, kind)``. ``unit`` is the header's own "USD" or "%", said there
-#: instead of on every row (avo, 12 Nov 2026: "USD yazmana gerek yok her satira yukari yazsan yeterli").
+#: Each tab's columns: ``(key, label, unit, kind)``. ``unit`` is the header's own "$" or "%", said there
+#: instead of on every row (avo, 12 Nov 2026: "USD yazmana gerek yok her satira yukari yazsan yeterli"), and as
+#: the currency's symbol, not its code (avo, 13 Nov 2026: "Dolar için USD kullanmana gerek yok ... simge kullanırsan
+#: daha az yer kaplarlar"; vault-memory rules/ui-tasarim.md).
 #: ``kind`` is how the browser draws the value: ``sym`` the symbol cell, ``num`` a plain number, ``signed`` a
 #: number that takes a colour from its sign, ``pct`` a signed percent, ``big`` a T/B/M/K abbreviation,
 #: ``rating`` a word with its score in the title.
 COLUMNS = {
-    "price": (("t", "Symbol", None, "sym"), ("last", "Last", "USD", "num"), ("chgp", "Chg%", None, "pct"),
-              ("chg", "Chg", "USD", "signed"), ("vol", "Volume", None, "big"), ("avol", "Avg vol", None, "big"),
-              ("cap", "Mkt cap", "USD", "big")),
+    "price": (("t", "Symbol", None, "sym"), ("last", "Last", "$", "num"), ("chgp", "Chg%", None, "pct"),
+              ("chg", "Chg", "$", "signed"), ("vol", "Volume", None, "big"), ("avol", "Avg vol", None, "big"),
+              ("cap", "Mkt cap", "$", "big")),
     "performance": (("t", "Symbol", None, "sym"), ("p1W", "1W", "%", "pct"), ("p1M", "1M", "%", "pct"),
                     ("p3M", "3M", "%", "pct"), ("pYTD", "YTD", "%", "pct"), ("p1Y", "1Y", "%", "pct"),
                     ("p5Y", "5Y", "%", "pct")),
     "risk": (("t", "Symbol", None, "sym"), ("v1D", "Vol 1D", "%", "num"), ("v1W", "Vol 1W", "%", "num"),
              ("v1M", "Vol 1M", "%", "num"), ("b1Y", "Beta 1Y", None, "num"), ("b5Y", "Beta 5Y", None, "num")),
-    "financials": (("t", "Symbol", None, "sym"), ("rev", "Revenue", "USD", "big"), ("eps", "EPS", "USD", "num"),
-                   ("pe", "P/E", None, "num"), ("beta", "Beta", None, "num"), ("div", "Dividend", "USD", "num"),
+    "financials": (("t", "Symbol", None, "sym"), ("rev", "Revenue", "$", "big"), ("eps", "EPS", "$", "num"),
+                   ("pe", "P/E", None, "num"), ("beta", "Beta", None, "num"), ("div", "Dividend", "$", "num"),
                    ("yld", "Yield", "%", "num")),
     "technicals": (("t", "Symbol", None, "sym"), ("tech_label", "Tech rating", None, "rating"),
                    ("ma_label", "MA rating", None, "rating"), ("os_label", "Os rating", None, "rating"),
