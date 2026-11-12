@@ -580,6 +580,33 @@ nothing is recorded, and the card says so and names the variable. `RC_IBKR_HOST`
 then default to `127.0.0.1` and `4001` — loopback, because the gateway's API port should not be
 reachable off its own machine.
 
+### 3.2a IBKR news feeds (#727)
+
+Sits right after the login state card and answers "are the broad-tape feeds (BRFG, DJNL) arriving, and if
+not, why and since when?". A logged-in gateway is not enough for that: on 11 Nov 2026 the gateway was up
+all day while both feeds were refused with IBKR error 10197 ("No market data during competing live
+session"), and only the unit's journal said so.
+
+**The card reads a record, not the gateway.** The listener (`module_news/tape.py`, the
+`life-rc-news-tape` unit) is its own process and opens no DuckDB, so it writes
+`.cache/news_tape/state.json` (`module_news/tape_state.py`, written `tmp` + `replace`): on every
+connect and disconnect, on every ask and refusal, and with its 5-minute trigger. A headline is written
+through at most once a minute. The card (`section#news-tape`, ids `news-tape-*`) opens on one lead line,
+the worst feed state in a few words (so a connected gateway with every feed refused does not open on
+green), then shows the connection line and one stacked block a feed:
+
+- **Refused** - IBKR's code and words, since when the streak began, how many times in a row, and when it
+  is asked again (every 30 minutes). 10197 is explained in plain words: another session of the same IBKR
+  user holds the live market data.
+- **Live** - a headline has arrived since the last ask.
+- **Subscribed** - asked, not refused within a minute, no headline yet. IBKR sends no confirmation of a
+  news subscription, so a quiet feed and a working one look the same until a headline comes.
+- **Waiting** - the listener is not connected to the gateway.
+
+A record older than 15 minutes says the listener is probably not running, and no record at all says so
+in words: neither is drawn as a refusal. A listener started before this card existed writes nothing until
+it is restarted.
+
 ### 3.3 Backups
 
 Built from the backup job's own records in the local backup folder: both folder sizes, and the last

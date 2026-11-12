@@ -24,6 +24,7 @@ import httpx
 
 from RevenueChaser.core import config, ibkr_login
 from RevenueChaser.core.providers import ibkr_tws as ibkr
+from RevenueChaser.module_news import tape_state
 
 log = logging.getLogger(__name__)
 
@@ -75,13 +76,16 @@ def trigger(post=httpx.post) -> str:
     return "queued" if r.status_code == 202 else f"refused {r.status_code}"
 
 
-def listen(client, names: list[str], *, clock=time.time, post=httpx.post, until=None, state: dict | None = None) -> None:
+def listen(client, names: list[str], *, clock=time.time, post=httpx.post, until=None, state: dict | None = None,
+           rec=None) -> None:
     """Subscribe ``names`` on ``client`` and run until the connection fails (``TWSError``) or ``until()`` is true.
 
     ``state["next_trigger"]`` outlives a reconnect, so a gateway that keeps dropping the socket does not turn the
     5-minute pass into one per reconnect. A refused feed is asked again after ``RESUB_S`` (a competing session ends);
-    an error for a request id no longer held is logged and ignored."""
+    an error for a request id no longer held is logged and ignored. ``rec`` (``tape_state.Recorder``) is told every
+    ask, refusal and headline, and beats with the trigger, so the Settings card can say which feed is refused."""
     state = {} if state is None else state
+    rec = tape_state.Silent() if rec is None else rec
     state.setdefault("next_trigger", clock())
     by_req: dict[int, str] = {}
     retry: dict[str, float] = {name: 0.0 for name in names}      # feed -> when to (re)subscribe
@@ -94,9 +98,11 @@ def listen(client, names: list[str], *, clock=time.time, post=httpx.post, until=
                 client.subscribe_news(req, ibkr.news_contract(name))
                 by_req[req] = name
                 del retry[name]
+                rec.asked(name)
         if now >= state["next_trigger"]:
             log.info("news tape: %s (%d feeds live)", trigger(post), len(by_req))
             state["next_trigger"] = now + TRIGGER_S
+            rec.beat()
         try:
             item = client.next_news()
         except ibkr.HistoryError as e:
@@ -107,23 +113,29 @@ def listen(client, names: list[str], *, clock=time.time, post=httpx.post, until=
                 log.warning("news tape: feed %s refused (%s); asked again in %d min", feed, e, RESUB_S // 60)
                 client.cancel_news(e.req_id)        # if the gateway kept it, asking again must not add a second line
                 retry[feed] = clock() + RESUB_S
+                rec.refused(feed, getattr(e, "code", None), getattr(e, "text", str(e)), retry[feed])
             continue
         if item and item.get("headline") and item["req_id"] in by_req:
             append(item, by_req[item["req_id"]], clock())
+            rec.headline(by_req[item["req_id"]])
 
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     names, wait, state = feeds(), RETRY_S, {}
+    rec = tape_state.Recorder()
+    rec.keep(names)
     while True:
         host, port = ibkr_login.target()
         opened = time.time()
         try:
             with ibkr.TWSClient(host, port, client_id=CLIENT_ID, timeout=READ_WAIT_S) as client:
                 log.info("news tape: connected to %s:%s, feeds %s", host, port, ",".join(names))
-                listen(client, names, state=state)
+                rec.connected(f"{host}:{port}")
+                listen(client, names, state=state, rec=rec)
         except ibkr.TWSError as e:
             log.warning("news tape: gateway %s:%s: %s; retry in %.0f s", host, port, e, wait)
+            rec.down(f"{host}:{port}", str(e))
         if time.time() - opened >= RETRY_MAX_S:      # a connection that held a while starts the backoff over
             wait = RETRY_S
         time.sleep(wait)

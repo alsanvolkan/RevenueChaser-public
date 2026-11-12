@@ -439,6 +439,16 @@ def test_data_health_states_the_control_boards_values_the_code_owns():
     assert f"{newdata.SAMPLE_ROWS} rows" in section
 
 
+def test_data_health_states_the_news_tape_values_the_code_owns():
+    """#727: the listener's beat, its re-ask interval and the card's staleness, as the code has them."""
+    from RevenueChaser.module_news import tape, tape_state
+    text = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
+    section = " ".join(text[text.index("### 3.2a IBKR news feeds"):text.index("### 3.3 Backups")].split())
+    assert f"with its {tape.TRIGGER_S // 60}-minute trigger" in section
+    assert f"asked again (every {tape.RESUB_S // 60} minutes)" in section
+    assert f"A record older than {tape_state.STALE_MINUTES} minutes" in section
+
+
 def test_the_metrics_table_in_data_health_matches_the_code():
     """#527 plan B1: the /metrics names are a contract with the Grafana boards; the doc lists exactly the code's."""
     from RevenueChaser.module_settings import metrics

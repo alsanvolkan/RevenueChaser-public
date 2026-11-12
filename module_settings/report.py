@@ -157,10 +157,16 @@ select,input[type=text],input[type=number]{background:#10151f;border:1px solid #
 h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bcard{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .bcard h3{margin:0 0 2px;font-size:15px}
+/* A card keeps this page's dark panel in every theme, so under the light theme its text must not inherit the light
+   scope's dark ink: measured 12 Nov 2026, the heading was rgb(29,36,48) on rgb(18,22,30) (#727). The second rule
+   covers auto and a page with no data-theme yet (it is set from JavaScript), as needs.css falls back to light. */
+:root[data-theme="light"] .bcard{color:var(--text)}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]) .bcard{color:var(--text)}}
 .bcard>details>summary{cursor:pointer}
 .bcard>details>summary h3{display:inline}
 .bcard .asof{color:var(--muted);font-size:12.5px;margin-bottom:8px}
-.bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0}
+.bcard .tapefeed{border-top:1px solid var(--border);margin-top:8px;padding-top:8px}
+.bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0;overflow-wrap:anywhere}
 .bcard .kv b{color:var(--text);font-weight:600}
 .btiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:8px 0 10px}
 .btile{border:1px solid var(--border);border-radius:10px;padding:8px 12px;min-width:0}
@@ -2004,6 +2010,51 @@ def _ibkr_state_card(ibkr: dict | None) -> str:
             + "".join(lines) + changes + "</div></section>")
 
 
+# The news tape's two broad feeds (#727; avo, 12 Nov 2026: "Evet bir kart ekleyelim"). On 11 Nov BRFG and DJNL were refused
+# with IBKR 10197 all day and only the unit's journal said so. Every value comes from ``module_news.tape_state``,
+# the listener's own record: like the login card above, this opens no socket. One block a feed, stacked, so it
+# reads the same on a phone; ids are the ``news-tape-*`` namespace.
+_TAPE_STATES = {"live": "st-ok", "subscribed": "st-ok", "refused": "st-bad", "waiting": "st-warn",
+                "unknown": "st-warn"}
+
+
+def _news_tape_card(tape: dict | None) -> str:
+    """The IBKR news feeds: connected or not, and for each feed live / refused (with IBKR's code and words, since
+    when, how many times, when it is asked again) and the last headline. No key, no card."""
+    if not tape:
+        return ""
+    esc = _html.escape
+    lines = []
+    if tape.get("lead"):        # the worst feed state first: a connected gateway alone would open the card green
+        cls = "st-warn" if tape.get("stale") else _TAPE_STATES.get(str(tape.get("state")), "st-warn")
+        lines.append(f'<div class="kv" id="news-tape-lead"><span class="{cls}">{esc(str(tape["lead"]))}</span></div>')
+    if tape.get("gateway"):
+        cls = "st-ok" if tape.get("gateway_state") == "connected" else "st-warn"
+        lines.append(f'<div class="kv" id="news-tape-gateway"><span class="{cls}">{esc(str(tape["gateway"]))}</span></div>')
+    for f in tape.get("feeds") or []:
+        name = str(f.get("feed") or "")
+        cls = _TAPE_STATES.get(str(f.get("state")), "st-warn")
+        part = [f'<div class="kv"><b>{esc(name)}</b>: <span class="{cls}">{esc(str(f.get("text") or ""))}</span></div>']
+        if f.get("since"):
+            part.append(f'<div class="kv">Since {esc(str(f["since"]))}</div>')
+        if f.get("last_headline"):
+            part.append(f'<div class="kv">{esc(str(f["last_headline"]))}</div>')
+        if f.get("detail"):
+            part.append(f'<div class="kv note">{esc(str(f["detail"]))}</div>')
+        lines.append(f'<div class="tapefeed" id="news-tape-feed-{esc(name.lower(), quote=True)}" '
+                     f'data-state="{esc(str(f.get("state") or ""), quote=True)}">{"".join(part)}</div>')
+    if tape.get("hint"):
+        lines.append(f'<div class="kv note tapefeed" id="news-tape-hint">{esc(str(tape["hint"]))}</div>')
+    cls_w = "st-warn" if tape.get("stale") or not tape.get("feeds") else ""
+    lines.append(f'<div class="kv" id="news-tape-written"><span class="{cls_w}">'
+                 f'{esc(str(tape.get("written_text") or ""))}</span></div>')
+    return ('<section id="news-tape"><div class="bcard" id="news-tape-card"><h3>IBKR news feeds</h3>'
+            '<div class="asof" id="news-tape-note">Read from the news listener\'s own record, not from the gateway: '
+            "this page opens no connection. The listener holds one gateway connection and asks for the broad-tape "
+            "feeds; a refused feed is asked again every 30 minutes.</div>"
+            + "".join(lines) + "</div></section>")
+
+
 _BACKUP_STATES = {"ok": "st-ok", "warn": "st-warn", "bad": "st-bad", "unknown": "st-warn", "not set": "st-bad"}
 
 
@@ -3041,6 +3092,7 @@ def _health_panel(payload: dict, nd: dict | None = None) -> str:
     # The ticker lookup is on the Database tab now (avo, 11 Nov 2026): it says what the data is, not what to press.
     moved = (_automations_section(payload.get("automations") or [])
              + _ibkr_state_card(payload.get("ibkr_login_state"))
+             + _news_tape_card(payload.get("news_tape_state"))
              + _boards_section(payload.get("boards") or [], payload.get("rows") or [])
              + _watch_section(nd))
     # One ``#needs`` frame and palette for the whole tab.
