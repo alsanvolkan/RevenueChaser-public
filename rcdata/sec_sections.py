@@ -6,18 +6,29 @@ rule itself); both now re-export from here, so there is one copy to fix and one 
 a section.
 
 **Why it lives in ``rcdata`` and not in ``rcdata.build``.** ``rcdata/__init__.py`` is a docstring only and this
-module imports nothing but ``re``, so a board importing it costs nothing. ``rcdata.build.__init__`` builds the
-dataset registry and pulls in duckdb and httpx, which a board must not pay for just to slice a filing.
+module imports nothing but ``re``, ``dataclasses`` and (lazily, in :func:`strip_html`) ``html``, so a board
+importing it costs nothing. ``rcdata.build.__init__`` builds the dataset registry and pulls in duckdb and httpx,
+which a board must not pay for just to slice a filing.
 
-**Why the rule is versioned.** ``module_value_chain/edgar_text.py`` and ``rcdata/build/fundamentals/filings.py``
-both cut live text with it, and the table they write (``filing_item``) has no version column. So improving the
-rule in place would change what Value Chain and Relatedness read, make that table an unlabelled mixture of two
-rules, and restale the Relatedness profiles -- which is a paid model run. Instead every caller names a version:
+**Why the rule is versioned.** Two callers cut live text with it and store what they cut, neither with a version
+column to say which rule did it: ``rcdata/build/fundamentals/filings.py`` writes ``filing_item``, and
+``module_value_chain/edgar_text.py`` writes ``chain_filings``, which the Relatedness profile writer reads. So
+improving the rule in place would change what Value Chain and Relatedness read, make those tables an unlabelled
+mixture of two rules, and restale the Relatedness profiles -- which is a paid model run. Instead every caller that
+stores a section names a version:
 
 - ``ours-1`` -- the rule exactly as it was on 12 Nov 2026, caps a section at :data:`MAX_ITEM_CHARS` and labels a
   capped one ``capped``. The boards stay on it, and this module must keep it byte-identical in behaviour.
 - later versions (the ``sec_forms`` layer's ``ours-2``, issues #755 and #756) arrive as new entries in
   :data:`RULES`; ``ours-1`` is never edited again.
+
+  **What enforces that, honestly.** :class:`Rule` versions the two entry points and nothing below them: the
+  patterns, ``_LINE_START``, ``_is_ref``, ``_before_regulation``, the two limits, :func:`flag` and
+  :func:`strip_html` are module-level and shared, so an ``ours-2`` author editing one in place would move
+  ``ours-1`` too. The only guard is the golden check in ``rcdata/tests/test_sec_sections.py``, which compares
+  ``ours-1``'s output against what the pre-move code returned. So ``ours-2`` adds its own helpers next to these
+  rather than changing them, and if it ever needs to change one, the shared one is copied first. ``flag`` deserves
+  the same care as the cut: its signals ride in the stored ``quality`` text.
 
 ``VERSIONS`` is the tuple of what exists. A caller that names an unknown version gets a ``ValueError``, because a
 section stored under a version string nobody can reproduce is worse than a failed run.
@@ -126,9 +137,9 @@ def _before_regulation(text: str, start: int, end: int) -> int:
 
 
 # A Canadian Annual Information Form in a 40-F's primary document (CNQ): "General Development" to "Risk Factors"
-# (10-K reading report A7). shortcut: one start heading and one stop heading only, which the 12 Nov 2026
-# measurement shows misses 40 of the 84 stored exhibits a contents-first reader cuts
-# (notes/revenuechaser/notes/2026-11-12_1200_sec-40f-business-section.md); upgrade in ``ours-2``, issue #756.
+# (10-K reading report A7). One start heading and one stop heading only, so it misses every form that titles the
+# section differently -- 28 of the 84 stored exhibits by the 12 Nov 2026 measurement, whose numbers and reasoning
+# are in issue #756, not in a file in this tree. Upgraded in ``ours-2``: #756.
 _AIF = re.compile(r"(?i)annual\s+information\s+form")
 _AIF_START = re.compile(r"(?im)^[^\S\n]*general\s+development\s+of\s+(?:the\s+|our\s+)?business[^\S\n]*$")
 _AIF_END = re.compile(r"(?im)^[^\S\n]*risk\s+factors[^\S\n]*$")
@@ -255,8 +266,9 @@ class Rule:
     version: str
     slice_item: object
     aif_business: object
-    #: True while the rule caps its text at :data:`MAX_ITEM_CHARS` and can therefore answer ``capped``. The
-    #: ``sec_forms`` layer stores sections uncut, so a version it serves must have this False (issue #757).
+    #: True while the rule caps its text at :data:`MAX_ITEM_CHARS` and can therefore answer ``capped``. Nothing
+    #: reads it yet: it is here for the ``sec_forms`` layer, which stores sections uncut, so a version it serves
+    #: has this False and may not be labelled ``capped`` (issue #757). Until then it only records the fact.
     caps: bool = True
 
 
@@ -265,24 +277,30 @@ RULES: dict[str, Rule] = {
 }
 
 
-def rule(version: str = DEFAULT_VERSION) -> Rule:
+def rule(version: str | None = None) -> Rule:
     """The :class:`Rule` of ``version``; ``ValueError`` for one this module cannot cut with.
 
-    A caller names its version rather than taking a default, so that adding a version cannot quietly move text a
-    board already stored. A stored section whose ``rules_version`` nobody can reproduce is worse than a failed run,
-    which is why an unknown name raises instead of falling back.
+    Every caller that stores what it cuts names its version, so that adding a version cannot quietly move text a
+    board already stored; the boards do (``module_value_chain.splitter.VERSION``). ``None`` means
+    :data:`DEFAULT_VERSION` and is for a caller that only wants to look at a section, never one that writes a row.
+    It is resolved here, at the call, and not frozen into a default argument, so that a test can move the default
+    and see whether a caller was really naming its own.
+
+    A stored section whose ``rules_version`` nobody can reproduce is worse than a failed run, which is why an
+    unknown name raises instead of falling back to the default.
     """
+    name = DEFAULT_VERSION if version is None else str(version)
     try:
-        return RULES[str(version)]
+        return RULES[name]
     except KeyError:
         raise ValueError(f"unknown section rule version {version!r}; known: {', '.join(VERSIONS)}") from None
 
 
-def cut_item(text: str, form: str = "10-K", *, version: str = DEFAULT_VERSION) -> tuple[str | None, str]:
+def cut_item(text: str, form: str = "10-K", *, version: str | None = None) -> tuple[str | None, str]:
     """``(item_text, quality)`` of the business item in ``text``, cut by ``version``."""
     return rule(version).slice_item(text, form)
 
 
-def cut_aif_business(text: str, *, version: str = DEFAULT_VERSION) -> str | None:
+def cut_aif_business(text: str, *, version: str | None = None) -> str | None:
     """The business section of an Annual Information Form in ``text``, cut by ``version``; None when it holds none."""
     return rule(version).aif_business(text)

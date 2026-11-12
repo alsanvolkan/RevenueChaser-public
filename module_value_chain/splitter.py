@@ -4,14 +4,16 @@
 board's view of it and pins the version the board reads. Nothing here cuts text of its own.
 
 The board stays on :data:`VERSION` (``ours-1``), the rule exactly as it was on 12 Nov 2026. That pin is the point:
-``edgar_text.slice_document`` and ``rcdata/build/fundamentals/filings.document_sections`` write ``filing_item``,
-which has no version column, so a rule change reaching them would mix two rules in one table with no way to tell
-the rows apart, and would restale every Relatedness profile -- a paid model run. The improved rule (``ours-2``,
+``rcdata/build/fundamentals/filings.document_sections`` writes ``filing_item`` and ``edgar_text.slice_document``
+writes ``chain_filings``, neither with a version column, so a rule change reaching them would mix two rules in one
+table with no way to tell the rows apart, and would restale every Relatedness profile -- a paid model run. The improved rule (``ours-2``,
 issues #755 and #756) is used by the ``sec_forms`` layer only; moving a board onto it is its own change, with the
 owner's before/after look at what the board shows.
 
-The names below are re-exported, not reimplemented: ``slice_item`` is the same function object the rule module
-holds, so a caller cannot get a different answer here than there.
+The names below are re-exported, not reimplemented: ``flag``, ``base``, ``strip_html`` and every helper are the
+rule module's own objects, so a caller cannot get a different answer here than there. ``slice_item`` and
+``aif_business`` are the two exceptions, and they are wrappers for one reason: to name :data:`VERSION`. They do
+nothing else, and ``rcdata/tests/test_sec_sections.py`` holds them to that.
 """
 from __future__ import annotations
 

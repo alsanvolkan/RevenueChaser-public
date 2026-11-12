@@ -38,6 +38,28 @@ def test_the_board_is_pinned_to_ours_1_and_not_to_the_default():
     assert "VERSION = _rule.OURS_1" in source, "the board must pin its version, not inherit DEFAULT_VERSION"
 
 
+def test_the_board_passes_its_version_and_does_not_ride_the_default():
+    """Dropping ``version=VERSION`` from the wrapper must fail here, and nowhere else would notice.
+
+    ``DEFAULT_VERSION`` is ``ours-1`` today, so a wrapper that forgot to name its version would return exactly the
+    same text and every other test in this file would pass. That is the one mistake this PR exists to prevent, so
+    it is tested by making the default a version that answers differently: if the board reads the default, it gets
+    the sentinel's answer; if it reads its pin, it gets ``ours-1``'s.
+    """
+    sentinel = sec_sections.Rule(version="sentinel", slice_item=lambda text, form="10-K": ("SENTINEL", "ok"),
+                                 aif_business=lambda text: "SENTINEL", caps=False)
+    text = ("Item 1. Business\n" + "We make widgets and sell them to customers worldwide. " * 200
+            + "\nItem 1A. Risk Factors\nRisky.\n")
+    with mock.patch.dict(sec_sections.RULES, {"sentinel": sentinel}, clear=False), \
+            mock.patch.object(sec_sections, "DEFAULT_VERSION", "sentinel"):
+        assert sec_sections.cut_item(text, "10-K") == ("SENTINEL", "ok"), "the sentinel has to be reachable"
+        item, quality = splitter.slice_item(text, "10-K")
+        assert (item, quality) != ("SENTINEL", "ok"), "the board must name its version, not take the default"
+        assert quality == "ok" and item is not None and item.startswith("We make widgets")
+        assert splitter.aif_business("annual information form\nDESCRIPTION OF THE BUSINESS\n" + "x " * 3000
+                                     + "\nRISK FACTORS\n") != "SENTINEL"
+
+
 def test_ours_1_caps_its_text_because_the_boards_still_read_a_capped_slice():
     """``sec_forms`` stores sections uncut (#757), so the flag that says which versions cap has to be true here."""
     assert sec_sections.rule("ours-1").caps is True
@@ -146,21 +168,33 @@ def test_the_rule_module_imports_nothing_but_the_standard_library():
         f"{sorted(_imported_names(Path(sec_sections.__file__)) - _ALLOWED_IMPORTS)} would reach a board import"
 
 
-def test_the_rcdata_package_init_imports_nothing_either():
-    """Importing ``RevenueChaser.rcdata.sec_sections`` runs ``rcdata/__init__.py`` first, so an import added there
-    would reach every board through this module. It is a docstring today; this test is where that is noticed."""
-    init = Path(sec_sections.__file__).with_name("__init__.py")
-    assert _imported_names(init) <= _ALLOWED_IMPORTS, \
-        f"rcdata/__init__.py now imports {sorted(_imported_names(init) - _ALLOWED_IMPORTS)}"
+def test_every_package_init_on_the_way_in_imports_nothing_either():
+    """Importing ``RevenueChaser.rcdata.sec_sections`` runs the package inits above it first, so an import added to
+    one of them would reach every board through this module. Both are empty today; this test is where that is
+    noticed. The scan reads source, so it cannot see a dynamic ``importlib.import_module`` or a module
+    ``__getattr__`` -- a reviewer's point on PR 758, and the reason the files are kept empty rather than watched.
+    """
+    rcdata_init = Path(sec_sections.__file__).with_name("__init__.py")
+    package_init = rcdata_init.parent.parent / "__init__.py"
+    for init in (rcdata_init, package_init):
+        extra = _imported_names(init) - _ALLOWED_IMPORTS
+        assert not extra, f"{init.parent.name}/__init__.py now imports {sorted(extra)}"
 
 
 # ── the golden check: ours-1 still gives what main's own code gave ─────────────────────────────────────────────
 # Captured by running ``origin/main``'s ``module_value_chain/splitter.py`` against the inputs of
 # ``sec_sections_cases.py`` on 12 Nov 2026, before the move. So these numbers come from the code being replaced,
 # not from the replacement, which is what makes the check worth running. Three of them record a defect rather than
-# a success -- ``split_word_item_1a`` is VFF's overrun (#755), ``aif_description_of_business`` is one of the 28
+# a success -- ``split_word_item_1a`` is VFF's overrun (#755): the filer splits the word in its stop heading, our
+# pattern does not see it, and the slice runs on into Item 1A. ``aif_description_of_business`` is one of the 28
 # Annual Information Forms our single heading misses (#756), ``over_the_cap`` is the cap ``sec_forms`` removes
 # (#757). The move must keep those too: changing them is a later, versioned change, not a side effect of a move.
+#
+# What the golden does NOT hold is worth saying, because it bounds what a green run here means: it reads one path
+# per case and no stored filing, so a rule change inside a branch no case reaches would pass. PR 758's review found
+# four such branches by mutating the rule, and the four cases added for them (the dash class, the two suspect
+# signals, the AIF cap) close those; the real accuracy question -- is the slice the right section -- is #763's
+# hand-checked set, not this file.
 _GOLDEN = json.loads((Path(__file__).parent / "fixtures" / "sec_sections_ours_1_golden.json").read_text(encoding="utf-8"))
 
 

@@ -1,4 +1,9 @@
-"""The inputs of the ``ours-1`` golden check (#752). One definition, shared by the test and the capture script.
+"""The inputs of the ``ours-1`` golden check (#752).
+
+This file is the one definition of them: the test reads it, and so did the capture that produced the golden. That
+capture is not a file in the tree (research scripts are not part of this repository, AGENTS.md): it exec'd
+``origin/main``'s own ``module_value_chain/splitter.py`` against these inputs. The golden's ``_how_to_recapture``
+says how to do it again, and it is only ever done to ADD a case.
 
 Each input is built from the two blocks below rather than written out, so the file stays small; the golden file
 pins each input's SHA-256, so an accidental edit here is caught instead of silently changing what is compared.
@@ -8,6 +13,12 @@ The shapes are the ones the measurements of 9-12 Nov 2026 name: a table of conte
 "Item 1.01" (PCVX), a 20-F whose Item 4.B runs into a regulation chapter (PDD, BABA), a quoted cross-reference
 before the real heading (#116 C17), an Annual Information Form in a 40-F (CNQ) and one titled the other way
 (the 28 filings our one heading misses), a body past the 200,000 cap, and a body too short to be one.
+
+Four of the cases are here because the first sixteen left a branch unread, which the code review of PR 758 found
+by mutating the rule and watching the golden still pass: ``dash_headings`` is the only reader of the whole
+``DASH`` class, ``suspect_tail_cross_reference`` and ``suspect_inner_item_header`` are the only cases where
+``flag`` answers anything but the quality it was handed, and ``aif_over_the_cap`` is the only one that reaches the
+AIF path's own cap.
 """
 from __future__ import annotations
 
@@ -26,7 +37,10 @@ CASES: tuple[tuple[str, str, str], ...] = (
     ("body_only", "Item 1. Business\n" + BODY + _TAIL, "10-K"),
     ("toc_only", TOC, "10-K"),
     ("no_stop_header", "Item 1. Business\n" + BODY, "10-K"),
-    ("split_word_item_1a", "ITE M 1A. Risk Factors\nItem 1. Business\n" + BODY, "10-K"),
+    # The stop comes after the body on purpose: a stop the filer split is a stop our pattern does not see, so
+    # the slice runs on into Item 1A. With the split line in front of the start instead, the case would read
+    # ``overrun`` for the ordinary reason -- no stop at all -- and prove nothing about the split word.
+    ("split_word_item_1a", "Item 1. Business\n" + BODY + "\nITE M 1A. Risk Factors\nRisky.\n", "10-K"),
     ("item_1_01_in_exhibit_list",
      "Item 1.01 Entry into a Material Definitive Agreement\nItem 1. Business\n" + BODY + "\nItem 2. Properties\n",
      "10-K"),
@@ -43,6 +57,17 @@ CASES: tuple[tuple[str, str, str], ...] = (
      "annual information form\nDESCRIPTION OF THE BUSINESS\n" + BODY + "\nRISK FACTORS\n", "40-F"),
     ("over_the_cap", "Item 1. Business\n" + "w " * 120_000 + "\nItem 1A. Risk Factors\n", "10-K"),
     ("short_body", "Item 1. Business\nTiny.\nItem 1A. Risk Factors\n", "10-K"),
+    # A heading written with an em dash and a stop with an en dash: the only cases that read ``DASH`` through its
+    # whole range. Without them, dropping a dash from that class passes the golden.
+    ("dash_headings", "Item 1 \u2014 Business\n" + BODY + "\nItem 1A \u2013 Risk Factors\nRisky.\n", "10-K"),
+    # The two cases that make ``flag`` answer anything but the quality it was given. Without them, replacing the
+    # whole suspect block with ``return quality`` passes the golden.
+    ("suspect_tail_cross_reference", "Item 1. Business\n" + BODY + " See\nItem 1A. Risk Factors\n", "10-K"),
+    ("suspect_inner_item_header",
+     "Item 1. Business\nItem 3. Legal Proceedings\nWe litigate.\n" + BODY + _TAIL, "10-K"),
+    # The AIF path has a cap of its own, on a different line from the item cap, and nothing else reaches it.
+    ("aif_over_the_cap",
+     "annual information form\nGENERAL DEVELOPMENT OF THE BUSINESS\n" + "w " * 120_000 + "\nRISK FACTORS\n", "40-F"),
 )
 
 #: One document for ``strip_html``: a script, a style, entities, a non-breaking space, and the tags it turns into
