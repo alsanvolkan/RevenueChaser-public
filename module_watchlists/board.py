@@ -532,8 +532,12 @@ _CSS = """
   /* avo, 12 Nov 2026: "Sorun degil company name gozuksun" — the name comes back as a small second line under
      the ticker, capped so a long name is cut rather than widening the column the numbers need. */
   .wl-sym{flex-direction:column;align-items:flex-start;gap:1px}
-  .wl-nm{display:block;max-width:76px;font-size:8.5px;line-height:1.15;white-space:nowrap}
-  .wl-badge{min-width:0;padding:1px 3px;font-size:9.5px}
+  .wl-nm{display:block;max-width:70px;font-size:8.5px;line-height:1.15;white-space:nowrap}
+  /* A long symbol (FRED:BAMLH0A0HYM2, TVC:US10Y-TVC:US02Y) is cut like the name, at the name's width: on the
+     index list its full width pushed the table 5 px past a 390 px phone (live, 12 Nov 2026). The full symbol
+     stays in the badge's title. */
+  .wl-badge{min-width:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 3px;
+    font-size:9.5px}
   .wl-u{font-size:8.5px;margin-left:0}
   .wl-sec .in{padding:0 var(--sp-2);font-size:9px;min-height:22px}
   .wl-sec .secttools{display:none}

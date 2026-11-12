@@ -165,7 +165,9 @@ def test_the_phone_rule_fits_every_column_rather_than_scrolling_sideways():
     phone = board._CSS.split("@media (max-width:720px)", 1)[1]
     assert "overflow-x" not in phone, "the phone shows every column; nothing scrolls sideways"
     assert ".wl-grip{display:none}" in phone, "the drag handle is for the mouse"
-    assert ".wl-nm{display:block;max-width:76px" in phone, "the company name stays, as a capped second line"
+    assert ".wl-nm{display:block;max-width:70px" in phone, "the company name stays, as a capped second line"
+    assert ".wl-badge{min-width:0;max-width:70px;overflow:hidden;text-overflow:ellipsis" in phone, \
+        "a long symbol (FRED:BAMLH0A0HYM2) is cut at the name's width, not left to widen the table"
     assert ".wl td.wl-xc{padding:0 2px}" in phone, "the × column takes no more than its glyph and two pixels a side"
 
 
