@@ -2928,21 +2928,26 @@ def _collect_newdata() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
-#: The page's three tabs (#715; avo, 12 Nov 2026: Database · Fetch/Health · Logs, and no tab holds another tab):
+#: The page's four tabs. #715 (avo, 12 Nov 2026): Database · Fetch/Health · Logs, and no tab holds another tab. The same
+#: day, 14:51 Amsterdam: "bu watchlistler settings/health panosunun icinde ayri bir sekmede yasamali, ilk sirada
+#: olsun", so Watch lists is a tab of its own, the first one and the one a first visit opens (``first``):
 #: the key a viewer's choice is remembered under, and each tab's panel id. ``ALIASES`` maps a choice remembered
 #: from an older page (Data, Fetch, Needs, Live) onto the tab that now holds it.
 SETTINGS_TABS = {"key": "rc.settings.tab",
-                 "tabs": {"data": "panel-data", "health": "panel-health", "logs": "panel-logs"},
+                 "first": "watch",
+                 "tabs": {"watch": "panel-watch", "data": "panel-data", "health": "panel-health",
+                          "logs": "panel-logs"},
                  "aliases": {"fetch": "data", "needs": "health", "live": "health"}}
 
 TABS_JS = """
 (function(){
   var CFG = window.RC_SETTINGS_TABS || {key: '', tabs: {}};
+  var FIRST = CFG.first || 'data';
   var tabs = [].slice.call(document.querySelectorAll('#settings-tabs [role="tab"]'));
   if (!tabs.length) return;
   function show(name, save) {
     if (CFG.aliases && CFG.aliases[name]) name = CFG.aliases[name];
-    if (!CFG.tabs[name]) name = 'data';
+    if (!CFG.tabs[name]) name = FIRST;
     var panel = document.getElementById(CFG.tabs[name]), wasHidden = panel && panel.hidden;
     tabs.forEach(function (t) {
       var on = t.getAttribute('data-tab') === name;
@@ -2964,7 +2969,7 @@ TABS_JS = """
   }
   var start = fromHash();
   if (!start) { try { start = localStorage.getItem(CFG.key); } catch (e) { start = null; } }
-  show(start || 'data', false);
+  show(start || FIRST, false);
   tabs.forEach(function (t, i) {
     t.addEventListener('click', function () { show(t.getAttribute('data-tab'), true); });
     t.addEventListener('keydown', function (e) {
@@ -3033,10 +3038,15 @@ def _watch_section(nd: dict | None) -> str:
             + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES) + "</section>")
 
 
+def _watch_panel(nd: dict | None) -> str:
+    """The Watch lists tab: the two lists and nothing else. A read that failed is one line, never an empty tab."""
+    body = _watch_section(nd) or '<p class="nd-sub">The watch lists could not be read.</p>'
+    return f'<div class="watchwrap">{body}</div>'
+
+
 def _health_panel(payload: dict, nd: dict | None = None) -> str:
     """The Health tab (#492): the Needs head, the catalog, the request log and the routes, then the ticker
-    detail, the four parts that live nowhere else (the board settings, Automations, the watch lists, the IBKR
-    cards) and the backups, in that order."""
+    detail, the three parts that live nowhere else (the board settings, Automations, the IBKR cards) and the backups, in that order."""
     model = _needs_model(payload)
     catalog, rest = needs_tab.sections(model)
     # One ``#needs`` scope (needs.css) around the head and the Needs parts.
@@ -3046,8 +3056,7 @@ def _health_panel(payload: dict, nd: dict | None = None) -> str:
     # The ticker lookup is on the Database tab now (avo, 11 Nov 2026): it says what the data is, not what to press.
     moved = (_automations_section(payload.get("automations") or [])
              + _ibkr_state_card(payload.get("ibkr_login_state"))
-             + _boards_section(payload.get("boards") or [], payload.get("rows") or [])
-             + _watch_section(nd))
+             + _boards_section(payload.get("boards") or [], payload.get("rows") or []))
     # One ``#needs`` frame and palette for the whole tab.
     errs = _errors_list(payload.get("errors") or [])
     return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Needs, boards and automations")}</div>'
@@ -3081,8 +3090,10 @@ def _folded(rest: str) -> str:
 
 def _tab_strip() -> str:
     return ('<nav id="settings-tabs" aria-label="Settings tabs"><div class="tabs" role="tablist">'
+            '<button type="button" role="tab" id="tab-watch" data-tab="watch" aria-controls="panel-watch" '
+            'aria-selected="true" tabindex="0">Watch lists</button>'
             '<button type="button" role="tab" id="tab-data" data-tab="data" aria-controls="panel-data" '
-            'aria-selected="true" tabindex="0">Database</button>'
+            'aria-selected="false" tabindex="-1">Database</button>'
             '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
             'aria-selected="false" tabindex="-1">Fetch/Health</button>'
             '<button type="button" role="tab" id="tab-logs" data-tab="logs" aria-controls="panel-logs" '
@@ -3099,6 +3110,8 @@ def _tab_strip() -> str:
 LIVE_BOARDS = (("panel-health", "rc-health", "live-frame", "Fetch controls and data health (Grafana)"),
                ("panel-logs", "rc-logs", "logs-frame", "Job run logs (Grafana)"))
 LIVE_CSS = """
+.watchwrap{max-width:var(--page-max,1280px);margin:0 auto;padding:16px 12px 48px}
+.watchwrap .nd-sub{color:var(--muted);font-size:12.5px}
 .live-board .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
   padding:0 12px;min-height:44px}
 .live-board .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px;min-height:44px;
@@ -3171,7 +3184,7 @@ def _ticker_drill(payload: dict) -> str:
 
 
 def render_settings_dashboard(payload: dict) -> str:
-    """The Data/Health page (#715): three tabs. Database is the control board (``control_render.render_data``);
+    """The Data/Health page (#715): four tabs. Watch lists is ``_watch_panel``, first; Database is the control board (``control_render.render_data``);
     Fetch/Health is the framed ``rc-health`` board above ``_health_panel``; Logs is the framed ``rc-logs`` board. The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
     payload = payload or {}
     data_json = script_json(payload.get("tickers") or [])
@@ -3204,7 +3217,10 @@ def render_settings_dashboard(payload: dict) -> str:
 <body>
 {provider_health_html(payload.get("provider_health"))}
 {_tab_strip()}
-<div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
+<div id="panel-watch" role="tabpanel" aria-labelledby="tab-watch">
+{_watch_panel(nd)}
+</div>
+<div id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>
 <div class="ctl helpband"><div class="wrap helpwrap" style="max-width:var(--page-max,1280px);margin:0 auto;padding:12px 12px 0">{DATA_HELP}</div></div>
 {control_html}
 </div>
