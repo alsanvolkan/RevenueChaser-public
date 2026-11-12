@@ -56,6 +56,7 @@ Standard library and ``edgar`` only: **this file must not import the RevenueChas
 """
 from __future__ import annotations
 
+import errno
 import gzip
 import json
 import os
@@ -228,21 +229,34 @@ class BadDocument(Exception):
     """
 
 
+#: The ``errno`` values that say *this file* is the problem. Everything else -- a permission, a flaky mount, no
+#: more file handles, no memory -- is the box's, whatever directory it happened in, and must not be charged to a
+#: filing. An earlier version decided this by asking whether the file's own directory was readable, which looked
+#: right and was not: the corpus is one directory per CIK (``core/edgar_docs.py:31``), so a company whose folder
+#: had not been downloaded read as "the corpus is not mounted" and stopped every hourly run at that document for
+#: ever. The directory a file sits in says nothing about the mount above it.
+THEIR_FAULT = frozenset({errno.ENOENT, errno.EISDIR, errno.ENOTDIR, errno.ENAMETOOLONG, errno.ELOOP})
+
+
 def _read(html_path: str) -> str:
-    """One document's HTML, gzipped or not."""
+    """One document's HTML, gzipped or not.
+
+    A failure to read it is :class:`BadDocument` when the reason is about this file (it is not there, it is a
+    directory, its name is impossible) and an ``OSError`` when it is about the box (``EACCES`` from a restore
+    with the wrong owner, ``EIO`` or ``ESTALE`` from a flaky mount, ``EMFILE``, ``ENOSPC``). ``BadGzipFile`` is a
+    ``gzip`` file that is not gzip -- a half-finished download -- and carries no ``errno``, which is this file's
+    own problem by definition. Whether it is *charged* to the document is the client's decision, not this one.
+    """
     opener = gzip.open if html_path.endswith(".gz") else open
     try:
         with opener(html_path, "rt", encoding="utf-8", errors="replace") as fh:
             return fh.read()
+    except gzip.BadGzipFile as e:
+        raise BadDocument(f"this document cannot be read: BadGzipFile: {e}") from e
     except OSError as e:
-        # The one place that decides whose fault an unreadable document is, for every reason it can be one: not
-        # there, not gzip, a directory, a permission. The decision used to be made twice -- here and again on an
-        # existence check in :func:`main` -- and the copy here could then never be reached for a missing mount,
-        # so a mutant that called an unmounted corpus the filing's own fault survived the battery.
-        here = os.path.dirname(html_path) or "."
-        if os.path.isdir(here) and os.access(here, os.R_OK):
+        if e.errno in THEIR_FAULT:
             raise BadDocument(f"this document cannot be read: {type(e).__name__}: {e}") from e
-        raise OSError(f"{here} is not a readable directory: the corpus is not mounted where it should be") from e
+        raise
 
 
 def _cut(html_path: str, form: str, out: str) -> tuple[int, int]:
@@ -323,7 +337,7 @@ def main() -> int:
             # The phase, so the client can tell "this filing is bad" from "this box is bad". Reading the document
             # and writing the answer are I/O: a missing corpus mount or a full disk fails every document for a
             # reason that has nothing to do with any of them, and charging each one an attempt would retire the
-            # whole corpus. Only the parse is the filing's own fault.
+            # whole corpus. ``parse`` and ``read`` are the filing's own; ``io`` is the box's.
             html, out = str(req["html"]), str(req["out"])
             form = req.get("form")
             if not form:
@@ -332,8 +346,15 @@ def main() -> int:
             # failure to read it is, which is one decision in one place rather than this check and that one.
             n, chars = _cut(html, str(form), out)
             _say({"ok": True, "sections": n, "chars": chars})
-        except OSError as e:   # a read or write failure, which is the box and not the filing
-            _say({"ok": False, "phase": "read" if req is None else "io", "error": _error(e)})
+        except BadDocument as e:
+            # This document's own file. The client decides whether to charge it, because only the client knows
+            # whether the corpus root is still there -- a mount that has gone makes every file unreadable.
+            _say({"ok": False, "phase": "read", "error": _error(e)})
+        except (OSError, MemoryError) as e:
+            # The box: writing the answer failed, or reading it failed for a reason that was not about the file.
+            # ``MemoryError`` is here and not in the parse branch below because this runs on the 15 GB box the
+            # dashboard shares, and a filing is not at fault for arriving when the box is full.
+            _say({"ok": False, "phase": "io", "error": _error(e)})
         except Exception as e:  # noqa: BLE001 - one document's failure is answered; the worker stays
             _say({"ok": False, "phase": "parse", "error": _error(e)})
     return 0
