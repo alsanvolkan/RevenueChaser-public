@@ -87,14 +87,28 @@ th{text-align:right;padding:8px;color:var(--muted);font-size:var(--fs-xs);font-w
   border-bottom:1px solid var(--border);background:var(--card-2);cursor:pointer;white-space:nowrap}
 th:hover{color:var(--fg)}
 th.group{cursor:default;color:var(--muted);text-align:center;text-transform:uppercase;letter-spacing:.06em}
-th.sort-asc::after{content:' ▲';color:var(--accent)}
-th.sort-desc::after{content:' ▼';color:var(--accent)}
+th.sort-asc::after,.chg-sort.sort-asc::after{content:' ▲';color:var(--accent)}
+th.sort-desc::after,.chg-sort.sort-desc::after{content:' ▼';color:var(--accent)}
+.chg-sort{display:block;margin:2px 0 0 auto;padding:0;border:0;background:none;color:var(--muted);font:inherit;
+  font-size:10.5px;font-weight:500;cursor:pointer}
+.chg-sort:hover{color:var(--fg)}
+td .chg{display:block;font-size:var(--fs-xs);line-height:1.3;margin-top:1px}
 th.left,td.left{text-align:left}
 td{padding:8px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:right}
 tbody tr:hover{background:var(--hover)}
 tr[data-ticker]{cursor:pointer}
 .ticker{color:var(--bright);font-weight:600}
-.name{color:var(--muted);font-size:var(--fs-xs);font-weight:400}
+.name{color:var(--muted);font-size:var(--fs-xs);font-weight:400;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+td[data-col="ticker"] .tk{display:flex;align-items:center;gap:var(--sp-2);white-space:nowrap}
+td[data-col="ticker"] .who{min-width:0}
+td[data-col="ticker"] .tline{display:flex;align-items:center}
+td[data-col="ticker"] .break-mark{margin:-12px -10px -12px -6px}
+/* The watch-list pair as one box split in two (avo 12 Nov 2026); each half stays a 44 px target. */
+td[data-col="ticker"] .rc-watch{margin:0;gap:0;border:1px solid var(--input-border);border-radius:var(--r-sm);overflow:hidden;flex:none}
+td[data-col="ticker"] .rc-watch button{border:0;border-radius:0;min-width:44px;min-height:44px;padding:0 6px;font-size:11px;
+  background:transparent}
+td[data-col="ticker"] .rc-watch button+button{border-left:1px solid var(--input-border)}
+td[data-col="ticker"] .rc-watch button[aria-pressed="true"]{background:var(--accent);color:var(--primary-fg)}
 .pos{color:var(--pos)}.neg{color:var(--neg)}.zero{color:var(--muted)}
 .empty{padding:40px;color:var(--muted)}
 #modal{position:fixed;inset:0;background:var(--scrim);display:none;align-items:center;justify-content:center;z-index:100}
@@ -173,10 +187,10 @@ function openBreaks(ticker){
   document.getElementById('breaks-close').focus();
 }
 function closeBreaks(){ document.getElementById('breaks').classList.remove('open'); }
-function cellVal(row, col){ var td = row.querySelector('td[data-col="'+col+'"]'); return td ? td.getAttribute('data-val') : ''; }
+function cellVal(row, col){ var el = row.querySelector('[data-col="'+col+'"]'); return el ? el.getAttribute('data-val') : ''; }
 function sortTable(col, el){
   if(SORT_COL === col){ SORT_ASC = !SORT_ASC; } else { SORT_COL = col; SORT_ASC = false; }
-  document.querySelectorAll('th').forEach(function(th){ th.classList.remove('sort-asc','sort-desc'); });
+  document.querySelectorAll('th, .chg-sort').forEach(function(th){ th.classList.remove('sort-asc','sort-desc'); });
   el.classList.add(SORT_ASC ? 'sort-asc' : 'sort-desc');
   var tbody = document.querySelector('tbody');
   var rows = Array.from(tbody.querySelectorAll('tr[data-ticker]'));
@@ -265,10 +279,22 @@ function build(p){
     tdT.className = 'left';
     tdT.setAttribute('data-col', 'ticker');
     tdT.setAttribute('data-val', r[0]);
+    // The watch-list pair comes first, one box split in two (avo 12 Nov 2026: icons before the ticker); then the ticker
+    // with its ⚠, and the name on a small second line, so the column stays narrow.
+    var tk = document.createElement('div');
+    tk.className = 'tk';
+    tk.insertAdjacentHTML('beforeend', rcWatchButtons(r[0]));
+    tdT.appendChild(tk);
+    var who = document.createElement('div');
+    who.className = 'who';
+    var line1 = document.createElement('div');
+    line1.className = 'tline';
     var spT = document.createElement('span');
     spT.className = 'ticker';
     spT.textContent = r[0];
-    tdT.appendChild(spT);
+    line1.appendChild(spT);
+    who.appendChild(line1);
+    tk.appendChild(who);
     if(r[4] && r[4].length){
       BREAKS[r[0]] = r[4];
       var mk = document.createElement('button');
@@ -277,17 +303,15 @@ function build(p){
       mk.setAttribute('aria-label', 'Filer breaks for ' + r[0]);
       mk.setAttribute('title', 'Filers started or stopped reporting ' + r[0] + ': open for the list');
       mk.innerHTML = MARK_SVG;
-      tdT.appendChild(mk);
+      line1.appendChild(mk);
     }
     if(r[1]){
-      tdT.appendChild(document.createTextNode(' '));
-      var spN = document.createElement('span');
+      var spN = document.createElement('div');
       spN.className = 'name';
       spN.textContent = r[1];
-      tdT.appendChild(spN);
+      spN.setAttribute('title', r[1]);
+      who.appendChild(spN);
     }
-    // The shared watch-list pair (PR 4): rcWatchButtons escapes, and gives nothing for a ticker the dashboard refuses.
-    tdT.insertAdjacentHTML('beforeend', rcWatchButtons(r[0]));
     tr.appendChild(tdT);
     var tdS = document.createElement('td');
     tdS.className = 'left';
@@ -296,7 +320,10 @@ function build(p){
     tdS.textContent = r[2];
     tr.appendChild(tdS);
     var cells = r[3] || [];
+    var chg = {};
+    for(var j = 0; j < cols.length; j++){ if(cols[j].indexOf('ch_') === 0){ chg[cols[j].slice(3)] = cells[j] || []; } }
     for(var j = 0; j < cols.length; j++){
+      if(cols[j].indexOf('ch_') === 0) continue;          // drawn under its quarter's shares, not as its own column
       var c = cells[j] || [];
       var td = document.createElement('td');
       td.setAttribute('data-col', cols[j]);
@@ -304,6 +331,17 @@ function build(p){
       td.className = c[2] || '';
       if(c[3] !== null && c[3] !== undefined){ td.setAttribute('title', c[3]); }
       td.textContent = (c[0] === null || c[0] === undefined) ? '' : c[0];
+      if(cols[j].indexOf('sh_') === 0){
+        var d = chg[cols[j].slice(3)];
+        if(d){
+          var sp = document.createElement('span');
+          sp.className = 'chg ' + (d[2] || '');
+          sp.setAttribute('data-col', 'ch_' + cols[j].slice(3));
+          sp.setAttribute('data-val', (d[1] === null || d[1] === undefined) ? '' : String(d[1]));
+          sp.textContent = (d[0] === null || d[0] === undefined) ? '' : d[0];
+          td.appendChild(sp);
+        }
+      }
       tr.appendChild(td);
     }
     frag.appendChild(tr);
@@ -778,20 +816,23 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
     default_sort = f"sh_{settled[-1]}" if settled else (f"sh_{quarters[-1]}" if quarters else "ticker")
     n = len(quarters)
     ns = len(_SNAP_COLS)
-    ncols = 2 + n + max(0, n - 1) + ns          # Ticker, Sector, shares per quarter, Δ%, the snapshot (13F-7)
+    ncols = 2 + n + ns          # Ticker, Sector, one cell per quarter (shares over Δ%, avo 12 Nov 2026), the snapshot
 
     header = (
         '<tr>'
         '<th class="left" rowspan="2" data-col="ticker" onclick="sortTable(this.dataset.col,this)">Ticker</th>'
         '<th class="left" rowspan="2" data-col="sector" onclick="sortTable(this.dataset.col,this)">Sector</th>'
-        f'<th class="group" colspan="{n}">Total ownership (shares) per quarter</th>'
-        f'<th class="group" colspan="{max(0, n - 1)}">Δ% vs prior quarter</th>'
+        f'<th class="group" colspan="{n}">Total ownership (shares) per quarter · Δ% vs prior below</th>'
         f'<th class="group" colspan="{ns}">Latest settled snapshot</th>'
         '</tr><tr>'
+        # One header per quarter: the label sorts by shares, the small Δ% under it by the change (avo 12 Nov 2026:
+        # shares and Δ% stacked in one cell, "daha az yer kaplar ve okumasi kolay olur").
         + ''.join(f'<th data-col="sh_{esc(q)}" onclick="sortTable(this.dataset.col,this)"'
-                  f' class="{("sort-desc " if settled and q == settled[-1] else "")}">{esc(q_labels[q])}</th>'
-                  for q in quarters)
-        + ''.join(f'<th data-col="ch_{esc(q)}" onclick="sortTable(this.dataset.col,this)">{esc(q_labels[q])}</th>' for q in quarters[1:])
+                  f' class="{("sort-desc " if settled and q == settled[-1] else "")}">{esc(q_labels[q])}'
+                  + (f'<button type="button" class="chg-sort" data-col="ch_{esc(q)}"'
+                     f' onclick="event.stopPropagation();sortTable(this.dataset.col,this)">Δ%</button>' if i else '')
+                  + '</th>'
+                  for i, q in enumerate(quarters))
         + ''.join(f'<th data-col="{c}" onclick="sortTable(this.dataset.col,this)">{label}</th>' for c, label in _SNAP_COLS)
         + '</tr>'
     )
@@ -859,7 +900,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 <b>Total ownership</b> = shares held by every 13F filer, on <b>today's share basis</b>: a quarter's count is divided
 by the split factor of its quarter end, so a split is not read as buying (hover a cell for the count as filed).
 The board shows the last {WINDOW_QUARTERS} settled quarters; the chart shows every stored one.
-<b>Δ% vs prior</b> = QoQ change in shares.
+<b>Δ% vs prior</b> = QoQ change in shares, shown small under each quarter's count (click Δ% in the header to sort by it).
 <b>Value</b> = $ market value held. <b>% Out</b> = shares ÷ shares outstanding (newest stored).
 <b>New/Exit</b> = holders entered / exited vs prior quarter.
 <b>Breadth</b> = share of that quarter's 13F filers holding the name (holders ÷ filers), with the change in
