@@ -165,7 +165,15 @@ def test_the_phone_rule_fits_every_column_rather_than_scrolling_sideways():
     phone = board._CSS.split("@media (max-width:720px)", 1)[1]
     assert "overflow-x" not in phone, "the phone shows every column; nothing scrolls sideways"
     assert ".wl-grip{display:none}" in phone, "the drag handle is for the mouse"
-    assert ".wl-nm{display:block;max-width:84px" in phone, "the company name stays, as a capped second line"
+    assert ".wl-nm{display:block;max-width:76px" in phone, "the company name stays, as a capped second line"
+    assert ".wl td.wl-xc{padding:0 2px}" in phone, "the × column takes no more than its glyph and two pixels a side"
+
+
+def test_the_hidden_remove_label_is_pinned_inside_its_own_header_cell():
+    """Live on 12 Nov 2026 the 1 px "Remove" label sat at 392 px on a 390 px phone and made the page scroll
+    sideways. Pinned to its cell (``position:relative`` on the cell, ``left:0`` on the label) it cannot."""
+    assert ".wl th.wl-xc{padding:0;position:relative}" in board._CSS
+    assert ".wl .sr{position:absolute;left:0;top:0;" in board._CSS
 
 
 # ── the derived tabs (#786 step 4b) ──────────────────────────────────────────

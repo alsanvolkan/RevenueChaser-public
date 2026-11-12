@@ -490,11 +490,13 @@ _CSS = """
 .wl-un .wl-badge,.wl-un .wl-nm{opacity:.62}
 .wl-un td[colspan]{text-align:left}
 .wl-xc{width:1%;text-align:right;white-space:nowrap;padding-left:var(--sp-2);padding-right:var(--sp-2)}
-.wl th.wl-xc{padding:0}
+.wl th.wl-xc{padding:0;position:relative}
 .wl-x{all:unset;cursor:pointer;color:var(--muted);opacity:0;padding:0 4px;border-radius:3px;font-size:var(--fs-sm)}
 .wl tr:hover .wl-x{opacity:.7}
 .wl-x:hover{background:var(--neg-soft);color:var(--neg);opacity:1}
-.wl .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+/* The header's hidden "Remove" is pinned inside its own cell: left to its static place it sat one pixel past
+   the table's right edge, and on a 390 px phone that was a sideways scroll (live, 12 Nov 2026). */
+.wl .sr{position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .wl tr.dragging td{background:var(--accent-soft);opacity:.95}
 .wl tr.dragging .wl-grip{opacity:1;color:var(--accent);cursor:grabbing}
 .wl tr.dropline td{height:0;padding:0;border-bottom:2px solid var(--accent)}
@@ -530,7 +532,7 @@ _CSS = """
   /* avo, 12 Nov 2026: "Sorun degil company name gozuksun" — the name comes back as a small second line under
      the ticker, capped so a long name is cut rather than widening the column the numbers need. */
   .wl-sym{flex-direction:column;align-items:flex-start;gap:1px}
-  .wl-nm{display:block;max-width:84px;font-size:8.5px;line-height:1.15;white-space:nowrap}
+  .wl-nm{display:block;max-width:76px;font-size:8.5px;line-height:1.15;white-space:nowrap}
   .wl-badge{min-width:0;padding:1px 3px;font-size:9.5px}
   .wl-u{font-size:8.5px;margin-left:0}
   .wl-sec .in{padding:0 var(--sp-2);font-size:9px;min-height:22px}
@@ -539,7 +541,7 @@ _CSS = """
   /* No hover on a phone, so the × stays visible. avo, 12 Nov 2026: "X icin dokunma alani X harfinden cok az
      daha buyuk olsun, geri kalan kisimlari uygun yerlestir" — the cell is the glyph and a hair around it, and
      every pixel it does not take goes to the number columns, which are the ones he reads. */
-  .wl td.wl-xc{padding:0 3px 0 4px}
+  .wl td.wl-xc{padding:0 2px}
   .wl td.wl-xc .wl-x{opacity:.7;padding:0 2px;font-size:11px}
 }
 """
