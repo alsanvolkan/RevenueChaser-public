@@ -1,4 +1,4 @@
-"""The Watch lists board (#786): avo's named lists, their sections and the Price columns.
+"""The Watch lists board (#786): avo's named lists, their sections and their five column tabs.
 
 Read-only and rendered in memory on every load, as the LEAPS board is: nothing is written to ``.cache``, no
 artifact is kept and no job fills it. The lists themselves live in ``boards/watchlists.duckdb``
@@ -24,9 +24,10 @@ from __future__ import annotations
 import html
 from datetime import date, timedelta
 
+from RevenueChaser.core import fundamentals_layer
 from RevenueChaser.core.html_safe import ESC_JS, script_json
 from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html
-from RevenueChaser.module_watchlists import indicators, store, symbols
+from RevenueChaser.module_watchlists import financials, indicators, store, symbols
 from RevenueChaser.rcdata import read
 
 #: This board's ``X-RC-Panel`` value, the ``added_by`` its own writes are recorded under.
@@ -35,14 +36,15 @@ BOARD = "watchlists"
 VOLUME_SESSIONS = 20
 #: Calendar days of bars read to find ``VOLUME_SESSIONS`` sessions plus the previous close, with room for holidays.
 BARS_WINDOW_DAYS = 70
-#: The column tabs. ``financials`` is the one still to be wired: its numbers need the fundamentals datasets,
-#: not the bars the other three are derived from.
+#: The column tabs. Price rides the first payload; the other four are asked for when first opened.
 TABS = (("price", "Price"), ("financials", "Financials"), ("performance", "Performance"), ("risk", "Risk"),
         ("technicals", "Technicals"))
 #: Sessions of history the derived tabs need at most (the 5-year window plus the bar it is measured from).
 HISTORY_SESSIONS = max(indicators.WINDOWS.values()) + 1
 #: Calendar days that covers, at five sessions a week, with room for holidays.
 HISTORY_DAYS = HISTORY_SESSIONS * 7 // 5 + 60
+#: The Financials tab's beta is the one-year one, so it reads a year of bars and not five.
+FINANCIALS_DAYS = (indicators.WINDOWS["1Y"] + 1) * 7 // 5 + 60
 #: The index the beta columns are against, as TradingView's are against the S&P 500.
 MARKET_TICKER = "SPY"
 #: The issue that is looking for a source for the symbols we cannot serve.
@@ -171,11 +173,11 @@ def payload(list_id: str | None = None) -> dict | None:
 # first payload: the history they need is five years deep, and a board that opened on Price would pay for it
 # without showing it. The browser asks for a tab's numbers the first time that tab is opened.
 
-def _history(tickers: list[str]) -> dict[str, dict]:
+def _history(tickers: list[str], days: int = HISTORY_DAYS) -> dict[str, dict]:
     """``{ticker: {"bars": [Bar, ...], "sessions": [date, ...]}}`` oldest first, from one prices-store read."""
     if not tickers:
         return {}
-    frame = read.ticker_bars(tickers, start=date.today() - timedelta(days=HISTORY_DAYS), basis="split")
+    frame = read.ticker_bars(tickers, start=date.today() - timedelta(days=days), basis="split")
     out: dict[str, dict] = {}
     if not len(frame):
         return out
@@ -227,8 +229,42 @@ def _technicals(bars) -> dict:
     return out
 
 
+def _financials(parsed: list, wanted: list[str]) -> dict[str, dict]:
+    """``{symbol: Financials values}`` for the US listings of a list (``module_watchlists/financials.py``).
+
+    Four reads for the whole list, whatever its length: the statements (two, inside ``records_many``), the newest
+    closes, a year of bars for the beta, and the dividends of the last year.
+    """
+    statements = fundamentals_layer.records_many(wanted)
+    prices = read.latest_market(wanted)
+    history = _history(sorted(set(wanted) | {MARKET_TICKER}), days=FINANCIALS_DAYS)
+    market = history.get(MARKET_TICKER) or {}
+    ids = read.security_ids(wanted)
+    today = date.today()
+    actions_of: dict[str, list[dict]] = {}
+    for a in read.actions(ids.values(), start=today - timedelta(days=financials.DIVIDEND_DAYS)):
+        actions_of.setdefault(str(a["security_id"]), []).append(a)
+    values: dict[str, dict] = {}
+    for symbol in parsed:
+        if symbol.coverage != "us_equity":
+            continue
+        annual, quarterly, _meta = statements.get(symbol.ticker, ([], [], {}))
+        found = financials.statements(annual, quarterly)
+        price = _f((prices.get(symbol.ticker) or {}).get("price"))
+        dividend = financials.dividends_per_share(actions_of.get(ids.get(symbol.ticker, ""), []), today)
+        bars = history.get(symbol.ticker)
+        beta = None
+        if bars and bars["bars"]:
+            mine, theirs = _aligned(bars, market)
+            beta = indicators.beta(mine, theirs, indicators.WINDOWS["1Y"])
+        row = financials.row(found, price, dividend, beta)
+        if any(v is not None for k, v in row.items() if k != "fb"):
+            values[symbol.raw] = row
+    return values
+
+
 def columns(list_id: str, tab: str) -> dict | None:
-    """One derived tab's numbers for a list: ``{tab, values: {symbol: {...}}}``. None for an unknown list or tab.
+    """One tab's numbers for a list: ``{tab, values: {symbol: {...}}}``. None for an unknown list or tab.
 
     Only the US listings get numbers. A market series has two observations a day at best, which is not a bar
     series, and a symbol with no source has nothing at all; both are left out and show "—" as on the Price tab.
@@ -239,6 +275,8 @@ def columns(list_id: str, tab: str) -> dict | None:
     whole = store.read_list(list_id)
     parsed = [symbols.parse(i["symbol"]) for s in whole["sections"] for i in s["items"]]
     wanted = sorted({p.ticker for p in parsed if p.coverage == "us_equity"})
+    if tab == "financials":
+        return {"tab": tab, "values": _financials(parsed, wanted)}
     history = _history(sorted(set(wanted) | {MARKET_TICKER}))
     market = history.get(MARKET_TICKER) or {}
     this_year = date.today().year
@@ -314,6 +352,10 @@ HELP = help_html(
     "session is ours — and a name whose history is too short for a window shows \u2014 rather than a number "
     "made up from a shorter one. Beta is against SPY, over the sessions the two actually share. These three tabs "
     "read five years of bars, so they are fetched the first time you open them, not on every load.</p>"
+    "<p><b>Financials</b> reads the SEC statements the fundamentals layer holds: revenue and EPS over the trailing "
+    "twelve months where a 10-Q follows the fiscal year, the fiscal year otherwise (hover a number to see which). "
+    "P/E is the last close over that EPS, and a loss shows \u2014. Dividend is the cash paid per share over the "
+    "last year, specials left out, and Yield is that over the last close. Beta is the one-year one against SPY.</p>"
     "<p><b>Fetch</b> does nothing here and the board has no Fetch button: a watch list is yours, not downloaded, "
     "and the numbers beside it are whatever the price and spine datasets last stored. <b>Refresh</b> reloads the "
     "page, which reads the lists and those datasets again — there is no cached copy of this board to drop.</p>"
@@ -448,11 +490,13 @@ _CSS = """
 .wl-un .wl-badge,.wl-un .wl-nm{opacity:.62}
 .wl-un td[colspan]{text-align:left}
 .wl-xc{width:1%;text-align:right;white-space:nowrap;padding-left:var(--sp-2);padding-right:var(--sp-2)}
-.wl th.wl-xc{padding:0}
+.wl th.wl-xc{padding:0;position:relative}
 .wl-x{all:unset;cursor:pointer;color:var(--muted);opacity:0;padding:0 4px;border-radius:3px;font-size:var(--fs-sm)}
 .wl tr:hover .wl-x{opacity:.7}
 .wl-x:hover{background:var(--neg-soft);color:var(--neg);opacity:1}
-.wl .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+/* The header's hidden "Remove" is pinned inside its own cell: left to its static place it sat one pixel past
+   the table's right edge, and on a 390 px phone that was a sideways scroll (live, 12 Nov 2026). */
+.wl .sr{position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .wl tr.dragging td{background:var(--accent-soft);opacity:.95}
 .wl tr.dragging .wl-grip{opacity:1;color:var(--accent);cursor:grabbing}
 .wl tr.dropline td{height:0;padding:0;border-bottom:2px solid var(--accent)}
@@ -488,7 +532,7 @@ _CSS = """
   /* avo, 12 Nov 2026: "Sorun degil company name gozuksun" — the name comes back as a small second line under
      the ticker, capped so a long name is cut rather than widening the column the numbers need. */
   .wl-sym{flex-direction:column;align-items:flex-start;gap:1px}
-  .wl-nm{display:block;max-width:84px;font-size:8.5px;line-height:1.15;white-space:nowrap}
+  .wl-nm{display:block;max-width:76px;font-size:8.5px;line-height:1.15;white-space:nowrap}
   .wl-badge{min-width:0;padding:1px 3px;font-size:9.5px}
   .wl-u{font-size:8.5px;margin-left:0}
   .wl-sec .in{padding:0 var(--sp-2);font-size:9px;min-height:22px}
@@ -497,7 +541,7 @@ _CSS = """
   /* No hover on a phone, so the × stays visible. avo, 12 Nov 2026: "X icin dokunma alani X harfinden cok az
      daha buyuk olsun, geri kalan kisimlari uygun yerlestir" — the cell is the glyph and a hair around it, and
      every pixel it does not take goes to the number columns, which are the ones he reads. */
-  .wl td.wl-xc{padding:0 3px 0 4px}
+  .wl td.wl-xc{padding:0 2px}
   .wl td.wl-xc .wl-x{opacity:.7;padding:0 2px;font-size:11px}
 }
 """
@@ -524,21 +568,24 @@ COLUMNS = {
                     ("p5Y", "5Y", "%", "pct")),
     "risk": (("t", "Symbol", None, "sym"), ("v1D", "Vol 1D", "%", "num"), ("v1W", "Vol 1W", "%", "num"),
              ("v1M", "Vol 1M", "%", "num"), ("b1Y", "Beta 1Y", None, "num"), ("b5Y", "Beta 5Y", None, "num")),
+    "financials": (("t", "Symbol", None, "sym"), ("rev", "Revenue", "USD", "big"), ("eps", "EPS", "USD", "num"),
+                   ("pe", "P/E", None, "num"), ("beta", "Beta", None, "num"), ("div", "Dividend", "USD", "num"),
+                   ("yld", "Yield", "%", "num")),
     "technicals": (("t", "Symbol", None, "sym"), ("tech_label", "Tech rating", None, "rating"),
                    ("ma_label", "MA rating", None, "rating"), ("os_label", "Os rating", None, "rating"),
                    ("rsi", "RSI 14", None, "num"), ("mom", "Momentum 10", None, "signed")),
 }
 #: The tab the board opens on, and the one whose numbers ride the first payload.
 FIRST_TAB = "price"
-#: The tabs whose numbers are derived from the bar history, fetched when the tab is first opened.
-DERIVED_TABS = ("performance", "risk", "technicals")
+#: The tabs whose numbers are fetched when the tab is first opened: Financials from the statements, the other three
+#: from the bar history.
+DERIVED_TABS = ("financials", "performance", "risk", "technicals")
 
 PRICE_COLUMNS = COLUMNS["price"]
 
 
-#: What the panel says instead of a table on a tab whose numbers are not wired yet.
-SOON = ("The Financials columns need the fundamentals datasets, which this board does not read yet — issue "
-        "#786.")
+#: What the panel says while a tab's numbers are on their way.
+SOON = "Reading the numbers for this tab…"
 
 
 def render_html(data: dict) -> str:
@@ -644,11 +691,19 @@ _JS = r"""
       return '<span class="' + cls + '" title="' + (score === null || score === undefined ? '' :
         num(score, 2)) + '">' + rcEsc(word) + '</span>';
     }
-    if(col.kind === 'big'){ var b = big(v); return b === null ? DASH : b; }
+    if(col.kind === 'big'){
+      var b = big(v);
+      if(b === null) return DASH;
+      return col.key === 'rev' && row.fb ? '<span title="' + rcEsc(row.fb) + '">' + b + '</span>' : b;
+    }
     if(col.kind === 'pct') return signed(v, 2, '%');
     if(col.kind === 'signed') return signed(v, 2, '');
-    // 'num': the row's own unit only where it has one (a yield's %, on the Price tab).
-    return num(v, 2) + (col.key === 'last' && row.unit ? '<span class="wl-u">' + row.unit + '</span>' : '');
+    // 'num': the row's own unit only where it has one (a yield's %, on the Price tab). A loss's EPS reads with a
+    // true minus, as TradingView writes it. Revenue and EPS say in their title which year they are (TTM or FY).
+    var text = (v < 0 ? '−' : '') + num(Math.abs(v), 2)
+      + (col.key === 'last' && row.unit ? '<span class="wl-u">' + row.unit + '</span>' : '');
+    if(col.key === 'eps' && row.fb) return '<span title="' + rcEsc(row.fb) + '">' + text + '</span>';
+    return text;
   }
   function compare(a, b, col){
     var x = col === 't' ? a.t : a[col], y = col === 't' ? b.t : b[col];
@@ -792,13 +847,12 @@ _JS = r"""
     if(fetched[key] || pending === key) return;
     pending = key;
     soon.hidden = false;
-    soon.textContent = 'Reading the price history…';
+    soon.textContent = SOON_TEXT;
     fetch(LIST + '/columns/' + encodeURIComponent(key))
       .then(function(r){ return r.json(); })
       .then(function(answer){
         pending = null;
         soon.hidden = true;
-        soon.textContent = SOON_TEXT;
         if(!answer || !answer.ok){ return; }
         fetched[key] = true;
         var values = answer.values || {};
@@ -809,7 +863,7 @@ _JS = r"""
         if(tab === key) draw();
       }, function(){
         pending = null;
-        soon.textContent = 'The price history could not be read. Reload the page to try again.';
+        soon.textContent = 'The numbers could not be read. Reload the page to try again.';
       });
   }
   document.querySelectorAll('.wl-tab').forEach(function(button){

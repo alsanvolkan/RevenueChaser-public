@@ -292,10 +292,13 @@ These are avo's named lists (`boards/watchlists.duckdb`, `module_watchlists/stor
 - **`POST /api/watchlists/<list_id>/delete`** — the list, its sections and its symbols; the `wl_change` rows stay.
 - **`GET /api/watchlists/<list_id>/export.txt`** — the list in TradingView's one-line format, its own spelling.
 - **`GET /api/watchlists/<list_id>/columns/<tab>`** -> `{ok, tab, values}`, keyed by the symbol as avo wrote it:
-  one derived tab's numbers (`performance`, `risk`, `technicals`). Not in the first payload, because those three
-  read five years of bars that a board opened on Price would pay for without showing; the page asks the first
-  time the tab is opened and keeps the answer. 404 for an unknown list, for `price` (the first payload carries
-  it) and for `financials` (not wired yet). Only the US listings get a row.
+  one tab's numbers (`financials`, `performance`, `risk`, `technicals`). Not in the first payload, because
+  the last three read five years of bars and Financials reads the SEC statements, which a board opened on Price
+  would pay for without showing; the page asks the first time the tab is opened and keeps the answer. 404 for an
+  unknown list and for `price` (the first payload carries it). Only the US listings get a row. Financials
+  (`module_watchlists/financials.py`): revenue and EPS over the trailing twelve months where a 10-Q follows the
+  fiscal year, else the fiscal year (`fb` says which), P/E on the newest close (none for a loss), the year's cash
+  dividends per share without specials, split-adjusted, their yield, and the one-year beta against SPY.
 - **`POST /api/watchlists/<list_id>/symbol/add`** `{symbol, section_id?}`, **`/symbol/remove`** `{symbol}`,
   **`/symbol/move`** `{symbol, section_id, order?}` (a dropped row: its section, then that section's new order).
 - **`POST /api/watchlists/<list_id>/section/add`** `{name}`, **`/section/rename`** `{section_id, name}`,
