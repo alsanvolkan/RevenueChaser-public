@@ -27,15 +27,18 @@ def _options_schemas() -> dict[str, list[tuple[str, str]]]:
 
 
 def _ownership_schemas() -> dict[str, list[tuple[str, str]]]:
-    """The ownership kind's tables: the 13F serve module's four, plus one per provider module.
+    """The ownership kind's tables: the 13F serve module's four, plus the ones each provider module serves.
 
     Each provider module names its served columns (``SERVED``: the raw schema with ``ticker`` and ``source`` added),
-    and only those modules know them, so they are read from there rather than restated.
+    and only those modules know them, so they are read from there rather than restated. A module that serves more
+    than one table (``uw/institutions``: the institution map and its successions) names them in ``SCHEMAS``.
     """
     from .build.ownership import finra, form4, ftd, ibkr, regsho, sched13dg, sec13f, sec13f_listing, serve
+    from .build.ownership import uw_institutions
     out = {t: list(s) for t, s in serve.SCHEMAS.items()}
-    for mod in (finra, ibkr, regsho, ftd, form4, sched13dg, sec13f, sec13f_listing):
-        out[mod.TABLE] = list(mod.SERVED)
+    for mod in (finra, ibkr, regsho, ftd, form4, sched13dg, sec13f, sec13f_listing, uw_institutions):
+        for table, columns in (getattr(mod, "SCHEMAS", None) or {mod.TABLE: mod.SERVED}).items():
+            out[table] = list(columns)
     return out
 
 

@@ -82,6 +82,8 @@ DATASETS: dict[str, DatasetCard] = {
     # shortcut: the hourly dataset's card (#643) says daily, so the screen reads it late after a day without a run,
     # not an hour; an "hourly" card cadence needs newdata's CYCLE_DAYS to learn it first.
     'uw/economic_calendar': DatasetCard('Economic calendar, this week and next (Unusual Whales)', step=11, role='only source'),
+    'uw/institutions': DatasetCard('Every 13F institution, its tags and its successions (Unusual Whales)',
+                                  cadence='quarterly', step=10, role='only source'),
     'uw/greek_expiry_strike': DatasetCard('SPX greek exposure by expiry and strike, whole chain (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/total_float': DatasetCard('Float check (Unusual Whales)', step=8, role='cross-check'),
     'wrds/co_hgic': DatasetCard('Compustat GICS history (WRDS)', step=5, role='fills'),
@@ -150,6 +152,8 @@ WRITTEN_COLUMN: dict[str, str] = {
     'shares_class': 'as_of',
     'spx_gamma_expiry_strike': 'session_date',
     'spx_greek_expiry_strike': 'session_date',
+    'uw_institution': 'snapshot_date',
+    'uw_institution_succession': 'snapshot_date',
     'wrds_price_diff': 'as_of',
 }
 
@@ -164,7 +168,7 @@ RETIRING: dict[str, str] = {
 }
 RETIREMENT_DAYS = 14
 #: How many days a weekly or a monthly dataset may go without a run before its card says "late".
-CYCLE_DAYS = {"weekly": 8, "monthly": 35}
+CYCLE_DAYS = {"weekly": 8, "monthly": 35, "quarterly": 100}
 #: Worst first, so a sort on this puts what needs attention at the top of the screen.
 STATUS_ORDER = ("stale", "never", "late", "unchanged", "fresh")
 
