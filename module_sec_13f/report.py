@@ -96,6 +96,7 @@ th.sort-desc::after,.chg-sort.sort-desc::after{content:' ▼';color:var(--accent
 td .chg{display:block;font-size:var(--fs-xs);line-height:1.3;margin-top:1px}
 th.left,td.left{text-align:left}
 td{padding:8px;border-bottom:1px solid var(--border);white-space:nowrap;text-align:right}
+td[data-col="sector"]{white-space:normal;width:100px;min-width:100px;max-width:110px;color:var(--muted);font-size:var(--fs-xs);line-height:1.3}
 tbody tr:hover{background:var(--hover)}
 tr[data-ticker]{cursor:pointer}
 .ticker{color:var(--bright);font-weight:600}
@@ -179,12 +180,36 @@ td[data-col="ticker"] .rc-watch button[aria-pressed="true"]{background:var(--acc
   td[data-label]::before{content:attr(data-label);display:block;color:var(--muted);font-size:10.5px;font-weight:600;
     letter-spacing:.03em;text-transform:uppercase}
   td.q{font-size:13px}
+  tbody tr.detail{display:block;margin-top:calc(-1 * var(--sp-3))}
+  tbody tr.detail td{display:block;border:1px solid var(--border);border-top:0;border-radius:0 0 var(--r-md) var(--r-md)}
+  tr.detail .dwrap,tr.detail .dcharts{grid-template-columns:minmax(0,1fr)}
+  tbody tr.open{border-radius:var(--r-md) var(--r-md) 0 0}
+  tbody tr.open[data-ticker],tbody tr.open[data-ticker]:hover{background:var(--hover)}
+  tbody tr.open td{background:none}
   td[data-col="value"],td[data-col="value"]~td{display:flex;justify-content:space-between;align-items:baseline;
     grid-column:span 2;padding:3px 0;font-size:12.5px}
   td[data-col="value"],td[data-col="value"]+td{border-top:1px solid var(--border);margin-top:var(--sp-2);padding-top:var(--sp-2)}
   td[data-col="value"]::before,td[data-col="value"]~td::before{display:inline;font-size:var(--fs-xs);text-transform:none;
     letter-spacing:0;font-weight:500}
 }
+tr.open td{background:var(--hover)}
+tr.detail td{padding:0;background:var(--card-2);white-space:normal;text-align:left;cursor:default}
+tr.detail:hover{background:none}
+.dwrap{display:grid;grid-template-columns:minmax(0,2fr) minmax(220px,1fr);gap:var(--sp-4);padding:var(--sp-4);align-items:start}
+.dcharts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--sp-3);align-items:start}
+.mini{background:var(--card);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--sp-2) var(--sp-3);min-width:0}
+.mini-head{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-2)}
+.mini-title{color:var(--fg);font-size:var(--fs-sm);font-weight:600}
+.mini-exp{background:none;border:0;color:var(--accent);font:inherit;font-size:var(--fs-xs);cursor:pointer;min-height:28px;padding:0 4px}
+.mini-exp:hover{text-decoration:underline}
+.mini-plot{height:150px}
+.dstats{display:grid;grid-template-columns:auto auto;gap:4px var(--sp-3);margin:0;font-size:var(--fs-sm)}
+.dstats dt{color:var(--muted)}
+.dstats dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.dbreaks{margin-top:var(--sp-3);background:var(--amber-soft);border-radius:var(--r-sm);padding:var(--sp-2) var(--sp-3);font-size:var(--fs-sm)}
+.dbreaks-head{color:var(--amber);font-weight:600;margin-bottom:4px}
+.dbreak{margin-top:4px}
+.dbreak b{color:var(--bright)}
 footer{margin-top:var(--sp-5);padding-top:12px;border-top:1px solid var(--border);color:var(--muted);font-size:var(--fs-xs);
   text-align:center}
 </style>"""
@@ -197,7 +222,9 @@ var SORT_COL = __DEFAULT_SORT__;
 var SORT_ASC = false;
 var ROW_COUNT = __ROW_COUNT__;
 var NCOLS = __NCOLS__;
-var COL_LABELS = __COL_LABELS__;          // a cell's header text, shown beside it when a phone stacks the row as a card
+var COL_LABELS = __COL_LABELS__;
+var TABLE_SNAP = __TABLE_SNAP__;          // snapshot columns drawn in the table; the rest go to the row's detail panel
+var DETAIL = {};                          // ticker -> [[label, text, cls, title], ...] for the detail panel          // a cell's header text, shown beside it when a phone stacks the row as a card
 var BREAKS = {};
 var MARK_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 21h20L12 3z"></path>'
@@ -227,6 +254,7 @@ function openBreaks(ticker){
 function closeBreaks(){ document.getElementById('breaks').classList.remove('open'); }
 function cellVal(row, col){ var el = row.querySelector('[data-col="'+col+'"]'); return el ? el.getAttribute('data-val') : ''; }
 function sortTable(col, el){
+  closeDetails();
   if(SORT_COL === col){ SORT_ASC = !SORT_ASC; } else { SORT_COL = col; SORT_ASC = false; }
   document.querySelectorAll('th, .chg-sort').forEach(function(th){ th.classList.remove('sort-asc','sort-desc'); });
   el.classList.add(SORT_ASC ? 'sort-asc' : 'sort-desc');
@@ -258,6 +286,103 @@ function themedFig(fig){
   (lay.annotations || []).forEach(function(a){ a.font = Object.assign({}, a.font || {}, {color: muted}); });
   fig.layout = lay; return fig;
 }
+// The row's detail panel (avo 12 Nov 2026): two small charts, one y-axis each (shares as bars, holders as a line),
+// each with "Click to expand" to the full chart; the snapshot values the table leaves out; and the filer breaks.
+// Every string reaches the DOM as text.
+function closeDetails(){
+  document.querySelectorAll('tr.detail').forEach(function(d){ d.parentNode.removeChild(d); });
+  document.querySelectorAll('tr.open').forEach(function(r){ r.classList.remove('open'); });
+}
+function el(tag, cls, text){ var x = document.createElement(tag); if(cls){ x.className = cls; } if(text !== undefined && text !== null){ x.textContent = text; } return x; }
+function miniChart(host, xs, ys, kind, color){
+  var cs = getComputedStyle(document.documentElement), v = function(n){ return cs.getPropertyValue(n).trim(); };
+  // Finance units (B, M, K) instead of Plotly's SI "G"; quarter labels short ("25 Q1") so they sit flat.
+  var top = Math.max.apply(null, ys.map(function(y){ return Math.abs(y || 0); }));
+  var div = top >= 1e9 ? 1e9 : top >= 1e6 ? 1e6 : top >= 1e3 ? 1e3 : 1, suf = {1e9: 'B', 1e6: 'M', 1e3: 'K', 1: ''}[div];
+  var raw = ys;
+  ys = ys.map(function(y){ return y === null || y === undefined ? null : y / div; });
+  xs = xs.map(function(x){ return String(x).replace(/^20([0-9][0-9]) /, '$1 '); });
+  var tr = kind === 'bar' ? {type: 'bar', x: xs, y: ys, customdata: raw, marker: {color: color},
+       hovertemplate: '%{x}: %{customdata:,.0f}<extra></extra>'}
+    : {type: 'scatter', mode: 'lines+markers', x: xs, y: ys, customdata: raw, line: {color: color, width: 2},
+       marker: {size: 5}, hovertemplate: '%{x}: %{customdata:,.0f}<extra></extra>'};
+  Plotly.react(host, [tr], {height: 150, margin: {l: 44, r: 8, t: 6, b: 26}, paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)', showlegend: false, font: {color: v('--muted'), family: v('--font-sans'), size: 10},
+    xaxis: {type: 'category', gridcolor: 'rgba(0,0,0,0)', linecolor: v('--grid'), fixedrange: true, tickangle: 0},
+    yaxis: {gridcolor: v('--grid'), zerolinecolor: v('--grid'), fixedrange: true, ticksuffix: suf, nticks: 4}},
+    {displayModeBar: false, responsive: true, staticPlot: false});
+}
+function toggleDetail(row){
+  var t = row.getAttribute('data-ticker'), was = row.classList.contains('open');
+  closeDetails();
+  if(was){ return; }
+  row.classList.add('open');
+  var d = el('tr', 'detail'), td = el('td');
+  td.setAttribute('colspan', String(NCOLS));
+  var wrap = el('div', 'dwrap');
+  var charts = el('div', 'dcharts');
+  var boxes = [['Shares, today’s basis', 'bar', 'Shares'], ['Holders', 'line', 'Holders']].map(function(spec){
+    var box = el('div', 'mini');
+    var head = el('div', 'mini-head');
+    head.appendChild(el('span', 'mini-title', spec[0]));
+    var b = el('button', 'mini-exp', 'Click to expand');
+    b.type = 'button'; b.setAttribute('data-expand', t);
+    head.appendChild(b);
+    box.appendChild(head);
+    var plot = el('div', 'mini-plot');
+    plot.appendChild(el('span', 'spin'));
+    box.appendChild(plot);
+    charts.appendChild(box);
+    return [plot, spec];
+  });
+  wrap.appendChild(charts);
+  var side = el('div', 'dside');
+  var stats = DETAIL[t] || [];
+  if(stats.length){
+    var dl = el('dl', 'dstats');
+    stats.forEach(function(s){
+      var dt = el('dt', null, s[0]), dd = el('dd', s[2] || '', s[1]);
+      if(s[3]){ dd.setAttribute('title', s[3]); }
+      dl.appendChild(dt); dl.appendChild(dd);
+    });
+    side.appendChild(dl);
+  }
+  var br = BREAKS[t] || [];
+  if(br.length){
+    var bx = el('div', 'dbreaks');
+    bx.appendChild(el('div', 'dbreaks-head', '⚠ Where the filer flow breaks'));
+    br.forEach(function(item){
+      var q = el('div', 'dbreak');
+      q.appendChild(el('b', null, item[0]));
+      (item[1] || []).forEach(function(line){ q.appendChild(el('div', null, line)); });
+      bx.appendChild(q);
+    });
+    side.appendChild(bx);
+  }
+  wrap.appendChild(side);
+  td.appendChild(wrap);
+  d.appendChild(td);
+  row.parentNode.insertBefore(d, row.nextSibling);
+  fetch('/api/sec_13f/' + encodeURIComponent(t))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      var data = (res && res.fig && res.fig.data) || [];
+      boxes.forEach(function(pair){
+        var plot = pair[0], spec = pair[1];
+        var xs = [], ys = [], color = null;
+        data.forEach(function(tr){
+          if(tr.name === spec[2] || (spec[2] === 'Holders' && tr.name === 'Holders (filed so far)')){
+            (tr.x || []).forEach(function(x, i){ if(xs.indexOf(x) === -1){ xs.push(x); ys.push((tr.y || [])[i]); } });
+            color = color || (tr.marker && tr.marker.color) || (tr.line && tr.line.color);
+          }
+        });
+        plot.innerHTML = '';
+        if(!xs.length){ plot.appendChild(el('div', 'empty', 'No series data.')); return; }
+        miniChart(plot, xs, ys, spec[1], color || getComputedStyle(document.documentElement).getPropertyValue('--data-1').trim());
+      });
+    })
+    .catch(function(){ boxes.forEach(function(p){ p[0].innerHTML = ''; p[0].appendChild(el('div', 'empty neg', 'Failed to load chart.')); }); });
+}
 function openChart(ticker){
   var modal = document.getElementById('modal');
   modal.classList.add('open');
@@ -274,6 +399,7 @@ function openChart(ticker){
 }
 function closeModal(){ document.getElementById('modal').classList.remove('open'); }
 function applyFilters(){
+  closeDetails();
   var kitOn = !!(RCF && RCF.active()), q = SEARCH_Q.toLowerCase();
   var rows = document.querySelectorAll('tbody tr[data-ticker]');
   var shown = 0, total = rows.length;
@@ -358,6 +484,10 @@ function build(p){
     for(var j = 0; j < cols.length; j++){
       if(cols[j].indexOf('ch_') === 0) continue;          // drawn under its quarter's shares, not as its own column
       var c = cells[j] || [];
+      if(cols[j].indexOf('sh_') !== 0 && TABLE_SNAP.indexOf(cols[j]) === -1){
+        (DETAIL[r[0]] = DETAIL[r[0]] || []).push([COL_LABELS[cols[j]] || cols[j], c[0], c[2], c[3]]);
+        continue;
+      }
       var td = document.createElement('td');
       td.setAttribute('data-col', cols[j]);
       if(COL_LABELS[cols[j]]){ td.setAttribute('data-label', COL_LABELS[cols[j]]); }
@@ -404,8 +534,12 @@ document.addEventListener('DOMContentLoaded', function(){
   }
   document.getElementById('rows').addEventListener('click', function(e){
     var tr = e.target.closest('tr[data-ticker]');
+    if(e.target.closest('.rc-watch')){ return; }
+    var exp = e.target.closest('[data-expand]');
+    if(exp){ openChart(exp.getAttribute('data-expand')); return; }
+    if(e.target.closest('tr.detail')){ return; }
     if(e.target.closest('.break-mark')){ if(tr){ openBreaks(tr.getAttribute('data-ticker')); } return; }
-    if(tr){ openChart(tr.getAttribute('data-ticker')); }
+    if(tr){ toggleDetail(tr); }
   });
   document.getElementById('modal').addEventListener('click', function(e){ if(e.target === this) closeModal(); });
   document.getElementById('modal-close').addEventListener('click', closeModal);
@@ -633,6 +767,10 @@ def build_chart_fig(ticker: str, periods: dict, enrichment: dict = None) -> dict
     return fig.to_dict()
 
 
+#: The snapshot columns the table keeps (avo 12 Nov 2026: the board must fit his 1187 px laptop with no sideways
+#: scroll). The other snapshot values ride the payload as before and are shown in the row's detail panel.
+_TABLE_SNAP = ("value", "pct_out", "netflow", "streak")
+
 _SNAP_COLS = [
     ("value", "Value ($)"),
     ("pct_out", "% Out"),
@@ -850,7 +988,8 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 
     default_sort = f"sh_{settled[-1]}" if settled else (f"sh_{quarters[-1]}" if quarters else "ticker")
     n = len(quarters)
-    ns = len(_SNAP_COLS)
+    table_snap = [(c, label) for c, label in _SNAP_COLS if c in _TABLE_SNAP]
+    ns = len(table_snap)
     ncols = 2 + n + ns          # Ticker, Sector, one cell per quarter (shares over Δ%, avo 12 Nov 2026), the snapshot
 
     header = (
@@ -858,7 +997,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
         '<th class="left" rowspan="2" data-col="ticker" onclick="sortTable(this.dataset.col,this)">Ticker</th>'
         '<th class="left" rowspan="2" data-col="sector" onclick="sortTable(this.dataset.col,this)">Sector</th>'
         f'<th class="group" colspan="{n}">Total ownership (shares) per quarter · Δ% vs prior below</th>'
-        f'<th class="group" colspan="{ns}">Latest settled snapshot</th>'
+        f'<th class="group" colspan="{ns}">Latest settled snapshot · more on click</th>'
         '</tr><tr>'
         # One header per quarter: the label sorts by shares, the small Δ% under it by the change (avo 12 Nov 2026:
         # shares and Δ% stacked in one cell, "daha az yer kaplar ve okumasi kolay olur").
@@ -868,7 +1007,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
                      f' onclick="event.stopPropagation();sortTable(this.dataset.col,this)">Δ%</button>' if i else '')
                   + '</th>'
                   for i, q in enumerate(quarters))
-        + ''.join(f'<th data-col="{c}" onclick="sortTable(this.dataset.col,this)">{label}</th>' for c, label in _SNAP_COLS)
+        + ''.join(f'<th data-col="{c}" onclick="sortTable(this.dataset.col,this)">{label}</th>' for c, label in table_snap)
         + '</tr>'
     )
 
@@ -883,7 +1022,8 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
     col_labels = {**{f"sh_{q}": q_labels[q] for q in quarters}, **{c: label for c, label in _SNAP_COLS}}
     js = fill(JS, {"__DEFAULT_SORT__": script_json(default_sort),
                    "__ROW_COUNT__": script_json(len(entries)), "__NCOLS__": script_json(ncols),
-                   "__COL_LABELS__": script_json(col_labels)})
+                   "__COL_LABELS__": script_json(col_labels),
+                   "__TABLE_SNAP__": script_json(list(_TABLE_SNAP))})
     payload_js = f"<script>{PAYLOAD_JS}</script>"
 
     # Shared filter kit (KF, #375 Card E): Index, Market cap, Sector, Theme. No Earnings facet.
