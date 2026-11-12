@@ -149,6 +149,18 @@ def test_the_page_says_the_unit_once_in_the_header_and_never_on_a_row(monkeypatc
     assert '<span class="wl-u">USD</span>' not in html, "a row never repeats the unit"
 
 
+def test_the_remove_button_is_the_rows_last_cell_and_not_part_of_the_symbol(no_data):
+    """avo, 12 Nov 2026: "Listeden cikarma dugmesini en saga koy" — the × is a column of its own at the far
+    right, not a mark crowding the ticker, and the header carries a cell above it so the grid stays square."""
+    list_id = store.create_list("Growth")
+    store.add_symbol(list_id, "NASDAQ:NVDA")
+    js = board.render_html(board.payload(list_id))
+    assert "'</div></td>' + cells +" in js, "the symbol cell closes before the numbers, with no button in it"
+    assert "'<td class=\"wl-xc\"><button class=\"wl-x\"" in js, "the × is the cell after the numbers"
+    assert "+ '<th class=\"wl-xc\">" in js, "the header ends with its own cell"
+    assert "(cols().length + 1)" in js, "a section heading spans the × column too"
+
+
 def test_the_phone_rule_fits_every_column_rather_than_scrolling_sideways():
     phone = board._CSS.split("@media (max-width:720px)", 1)[1]
     assert "overflow-x" not in phone, "the phone shows every column; nothing scrolls sideways"

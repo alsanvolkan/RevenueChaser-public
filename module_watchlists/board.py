@@ -447,9 +447,12 @@ _CSS = """
   padding:0 var(--sp-2)}
 .wl-un .wl-badge,.wl-un .wl-nm{opacity:.62}
 .wl-un td[colspan]{text-align:left}
+.wl-xc{width:1%;text-align:right;white-space:nowrap}
+.wl th.wl-xc{padding:0}
 .wl-x{all:unset;cursor:pointer;color:var(--muted);opacity:0;padding:0 4px;border-radius:3px;font-size:var(--fs-sm)}
 .wl tr:hover .wl-x{opacity:.7}
 .wl-x:hover{background:var(--neg-soft);color:var(--neg);opacity:1}
+.wl .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .wl tr.dragging td{background:var(--accent-soft);opacity:.95}
 .wl tr.dragging .wl-grip{opacity:1;color:var(--accent);cursor:grabbing}
 .wl tr.dropline td{height:0;padding:0;border-bottom:2px solid var(--accent)}
@@ -487,7 +490,11 @@ _CSS = """
   .wl-sec .in{padding:0 var(--sp-2);font-size:9px;min-height:22px}
   .wl-sec .secttools{display:none}
   .wl-nosrc{font-size:9px;padding:0 3px}
-  .wl-x{opacity:.7;padding:0 2px}
+  .wl td.wl-xc{padding:0 var(--sp-2) 0 0}
+  /* No hover on a phone, so the × stays visible, and it is widened to a 36 px tap area (measured at 390 and
+     412 px). Short of 44 px on purpose: avo asked for every column to fit rather than for a taller row. */
+  .wl td.wl-xc .wl-x{display:inline-flex;align-items:center;justify-content:center;
+    min-width:24px;opacity:.7;padding:0 6px;font-size:13px}
 }
 """
 
@@ -673,16 +680,16 @@ _JS = r"""
     return '<tr class="wl-row' + (un ? ' wl-un' : '') + '" data-sym="' + rcEsc(row.sym) + '" data-sec="' +
       rcEsc(sectionId) + '"><td><div class="wl-sym">' + grip('row', row.sym) +
       '<span class="wl-badge" title="' + rcEsc(row.nm || row.sym) + '">' + rcEsc(row.t) + '</span>' +
-      '<span class="wl-nm">' + rcEsc(row.nm || row.sym) + '</span>' +
-      '<button class="wl-x" type="button" data-remove="' + rcEsc(row.sym) + '" aria-label="Remove ' +
-      rcEsc(row.t) + '">×</button></div></td>' + cells + '</tr>';
+      '<span class="wl-nm">' + rcEsc(row.nm || row.sym) + '</span></div></td>' + cells +
+      '<td class="wl-xc"><button class="wl-x" type="button" data-remove="' + rcEsc(row.sym) +
+      '" aria-label="Remove ' + rcEsc(row.t) + '">×</button></td></tr>';
   }
   function sectionHtml(section){
     var folded = !!shut[section.id], n = section.rows.length;
     var none = section.rows.filter(function(r){ return r.cov !== 'us_equity' && r.cov !== 'market_series'; }).length;
     var count = none === n && n ? n + ' · no source' : String(n);
     return '<tr class="wl-sec' + (folded ? ' shut' : '') + '" data-sec="' + rcEsc(section.id) +
-      '"><td colspan="' + cols().length + '"><div class="in">' + grip('sec', section.id) +
+      '"><td colspan="' + (cols().length + 1) + '"><div class="in">' + grip('sec', section.id) +
       '<button class="cap" type="button" data-fold="' + rcEsc(section.id) + '" aria-expanded="' +
       (folded ? 'false' : 'true') + '">' + CARET + rcEsc(section.name) +
       ' <span class="n">' + rcEsc(count) + '</span></button>' +
@@ -719,7 +726,7 @@ _JS = r"""
       var rank = (at >= 0 && sort.length > 1) ? String(at + 1) : '';
       return '<th data-col="' + rcEsc(col.key) + '"' + sorted_by + '><button type="button">' +
         rcEsc(col.label) + unit + '<span class="wl-rank">' + rank + '</span>' + CARET + '</button></th>';
-    }).join('');
+    }).join('') + '<th class="wl-xc"><span class="sr">Remove</span></th>';   // avo, 12 Nov 2026: the × sits at the far right
   }
 
   // ── sorting: click a header, click again to turn it round; shift-click adds a second column ──
