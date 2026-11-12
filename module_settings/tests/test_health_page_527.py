@@ -64,31 +64,35 @@ def test_the_data_page_has_one_what_am_i_looking_at():
     assert "What a press does." in data, "the board's own help moved into the shared box"
 
 
-def test_the_top_bar_heads_the_fetch_health_tab_and_carries_the_gateway_login_link():
-    """#527 B4 left one top bar; avo, 10 Nov 2026 moved it with every control to Fetch/Health."""
+def test_the_gateway_login_link_stays_under_the_frame_and_the_switches_are_gone_from_the_page():
+    """#527 B4 left one top bar; #715 (avo, 12 Nov 2026): the switches live in Grafana, the gateway chip and its
+    login link stay under the frame because Grafana carries no link."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
     part = _panel(html, "panel-health")
     assert part.count('class="topbar"') == 1 and 'class="topbar"' not in _panel(html, "panel-data")
     assert 'href="https://gateway.example/"' in part.split('class="topbar"', 1)[1].split("</div>", 1)[0]
-    assert html.count('class="topbar"') == 1 and html.count('id="sw-msg"') == 1
-    assert "btn.closest('.topbar')" in control_render.CTL_JS
+    assert html.count('class="topbar"') == 1 and 'id="sw-msg"' not in html and 'data-job="switch"' not in part
 
 
-def test_the_health_tab_puts_what_needs_avo_first_and_folds_the_reference_parts():
+def test_the_reference_parts_are_folded_under_the_database_board():
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
-    order = ['id="live-frame"', "<h1>Data/Health · Fetch/Health</h1>", "<h1>Needs, boards and automations</h1>",
-             'id="needs-catalog"', 'id="needs-log"', 'id="needs-routes"']
+    order = ['id="live-frame"', "<h1>Data/Health · Universe and fills</h1>", 'id="sec-universe"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
-    assert 'id="ibkr-login-card"' not in health, "the login link is in the top bar now"
-    for part in ("needs-log", "needs-routes"):
+    assert 'id="ibkr-login-card"' not in html, "the login link is beside the gateway chip"
+    data = _panel(html, "panel-data")
+    order = ['id="database-more"', 'id="needs-catalog"', 'id="needs-routes"']
+    at = [data.index(x) for x in order]
+    assert at == sorted(at), order
+    assert "Needs, boards and automations" not in html and 'id="needs-log"' not in html
+    for part in ("needs-catalog", "needs-routes"):
         assert re.search(rf'<details class="hfold"><summary>[^<]*</summary>\s*<section class="part" id="{part}"',
-                         health), part
+                         data), part
 
 
 def test_both_tabs_share_one_centred_column():

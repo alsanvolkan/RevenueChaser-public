@@ -432,7 +432,7 @@ FRAME_LAYOUT = r"""(function(tab){
     var r = el.getBoundingClientRect(); return r.width > 0 && r.right > vw + 0.5;
   }).filter(function(el){ return !el.parentElement || el.parentElement.getBoundingClientRect().right <= vw + 0.5; })
     .map(function(el){ return el.tagName + (el.id ? '#' + el.id : '') + '.' + el.className; });
-  var col = d.querySelector(tab === 'data' ? '#ctl > .wrap' : '#needs > .wrap');
+  var col = d.querySelector(tab === 'data' ? '#ctl > .wrap' : '#panel-health .ctl > .wrap');
   var r = col.getBoundingClientRect();
   return {vw: vw, scroll: de.scrollWidth, body: d.body.scrollWidth, wide: wide.slice(0, 8),
           left: r.left, right: vw - r.right, width: r.width};

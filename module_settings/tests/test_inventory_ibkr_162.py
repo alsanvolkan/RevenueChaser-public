@@ -151,17 +151,22 @@ def test_the_card_escapes_what_it_is_given(on):
     assert "&lt;script&gt;" in html
 
 
-def test_the_rendered_page_carries_the_card(rawstore_tmp_db, on):
+def test_the_payload_carries_the_state_and_the_page_leaves_the_card_to_the_grafana_board(rawstore_tmp_db, on):
+    """#715 (avo, 12 Nov 2026): the login's state is drawn by the framed board (rc-health, "IBKR"), so the page
+    reads it into the payload but draws no card of its own."""
     _seed()
     _record(on, ibkr_login.UP, NOW - timedelta(hours=2), version=178)
-    html = report.render_settings_dashboard(inventory.collect(now=NOW))
-    assert 'id="ibkr-state-card"' in html and "Logged in" in html
+    payload = inventory.collect(now=NOW)
+    card = report._ibkr_state_card(payload["ibkr_login_state"])
+    assert 'id="ibkr-state-card"' in card and "Logged in" in card
+    html = report.render_settings_dashboard(payload)
+    assert 'id="ibkr-state-card"' not in html and 'id="live-frame"' in html
 
 
 def test_the_page_carries_no_card_when_the_switch_is_off_but_says_so(rawstore_tmp_db, monkeypatch):
     monkeypatch.delenv("RC_IBKR_LOGIN_CHECK", raising=False)
     _seed()
-    html = report.render_settings_dashboard(inventory.collect(now=NOW))
+    html = report._ibkr_state_card(inventory.collect(now=NOW)["ibkr_login_state"])
     assert 'id="ibkr-state-card"' in html, "the card itself stays, so the switch is discoverable"
     assert "RC_IBKR_LOGIN_CHECK" in html
 
@@ -183,23 +188,22 @@ def test_a_silent_port_is_painted_as_a_warning_not_as_an_error_or_a_login(on):
     assert "st-warn" in state and "st-ok" not in state
 
 
-def test_the_two_ibkr_cards_share_a_page_without_sharing_an_id(rawstore_tmp_db, on, monkeypatch):
-    """The shortcut (`ibkr_login_url`, the link that logs you in) and this card (the state of that
-    login) both render. One id in two places would be invalid HTML, and an assertion on it would
-    pass against the wrong card."""
+def test_the_shortcut_and_the_state_card_never_share_an_id(rawstore_tmp_db, on, monkeypatch):
+    """The shortcut (`ibkr_login_url`, the link that logs you in) is on the page; the state card is drawn by the
+    Grafana board since #715. Their ids stay two namespaces, so drawing both again can never repeat one."""
     import re
 
     monkeypatch.setenv("RC_IBKR_LOGIN_URL", "https://gateway.example:5000/login")
     _seed()
     _record(on, ibkr_login.UP, NOW - timedelta(hours=2), version=178)
-    html = report.render_settings_dashboard(inventory.collect(now=NOW))
+    payload = inventory.collect(now=NOW)
+    html = report.render_settings_dashboard(payload)
 
-    assert 'id="ibkr-login-link"' in html, "the shortcut (#527: in the top bar) is gone"
-    assert 'id="ibkr-state-card"' in html, "the state card is gone"
-    ids = re.findall(r'id="(ibkr[a-z0-9-]*)"', html)
-    assert len(ids) == len(set(ids)), f"duplicate id on the page: {sorted(i for i in ids if ids.count(i) > 1)}"
-    # Two namespaces, no overlap: the shortcut owns ibkr-login / ibkr-login-*, this card ibkr-state*.
-    # Before the rename this card's own div was id="ibkr-login", which is the shortcut's <section> id.
-    for one in ids:
-        assert one == "ibkr-login" or one.startswith(("ibkr-login-", "ibkr-state")), one
-    assert {i for i in ids if i.startswith("ibkr-state")} and {i for i in ids if i.startswith("ibkr-login")}
+    assert 'id="ibkr-login-link"' in html, "the shortcut (#527: beside the gateway chip) is gone"
+    page_ids = re.findall(r'id="(ibkr[a-z0-9-]*)"', html)
+    card_ids = re.findall(r'id="(ibkr[a-z0-9-]*)"', report._ibkr_state_card(payload["ibkr_login_state"]))
+    ids = page_ids + card_ids
+    assert len(ids) == len(set(ids)), f"duplicate id: {sorted(i for i in ids if ids.count(i) > 1)}"
+    # Two namespaces, no overlap: the shortcut owns ibkr-login / ibkr-login-*, the card ibkr-state*.
+    assert all(i == "ibkr-login" or i.startswith("ibkr-login-") for i in page_ids), page_ids
+    assert card_ids and all(i.startswith("ibkr-state") for i in card_ids), card_ids

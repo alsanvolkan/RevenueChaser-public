@@ -75,8 +75,9 @@ def test_the_board_says_where_the_backup_values_come_from():
 
 
 def test_the_help_text_names_the_queue_and_the_backups():
-    assert "<b>queue</b> with the last runs" in report.DATA_HELP
-    assert "<b>weekly backups</b>" in report.DATA_HELP
+    # #715 (avo, 12 Nov 2026): both are the Grafana board's now, and the help says where to look
+    board = report.DATA_HELP.split("<b>Fetch/Health</b> is the Grafana board:", 1)[1].split("Under the board", 1)[0]
+    assert "the queue" in board and "the backups" in board
 
 
 def test_the_view_carries_the_backups_it_was_read_with():

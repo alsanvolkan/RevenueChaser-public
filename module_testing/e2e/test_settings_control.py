@@ -39,10 +39,10 @@ def test_the_data_tab_is_on_top_and_the_old_sections_are_gone(dashboard, browser
     assert browser.eval("document.getElementById('panel-health').hidden") is True, "Fetch/Health is not shown beside Database"
     fetch = browser.eval("Array.prototype.map.call(document.querySelectorAll('#panel-health .ctl .wrap > details.sec'),"
                          " function(d){ return d.id; }).filter(function(i){ return i; })")
-    # #715 step 2: the queue is back before Cross-check and the weekly backups close the tab.
-    assert fetch[0] == "sec-health" and fetch[-1] == "sec-backups" and "sec-universe" in fetch, \
-        f"the Fetch/Health tab: {fetch}"
-    assert fetch.index("sec-queue") < fetch.index("sec-crosscheck") < fetch.index("sec-backups"), fetch
+    # #715 (avo, 12 Nov 2026): Health, the queue, Cross-check and the backups are the framed Grafana board's;
+    # under the frame the HTML keeps the universe (and a group for a file that has a fill, which has no id).
+    assert fetch == ["sec-universe"], f"the Fetch/Health tab: {fetch}"
+    assert browser.eval("!!document.querySelector('#panel-health #live-frame')"), "the board's frame heads the tab"
     assert browser.eval("!document.getElementById('old-settings') && !document.getElementById('panel-fetch')")
     # #715 step 3: the files are stacked folded sections, none hidden; the first one is open.
     files = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl details.fpanel'),"
@@ -93,7 +93,7 @@ def test_the_board_is_one_column_on_a_phone_with_44px_targets_and_no_sideways_sc
 def test_the_board_follows_the_shells_theme_both_ways(dashboard, browser):
     _open(browser, dashboard, "light")
     look = "(function(){ var c = getComputedStyle(document.getElementById('ctl')); return [c.color, " \
-           "getComputedStyle(document.querySelector('#panel-health .ctl .tile')).backgroundColor]; })()"
+           "getComputedStyle(document.querySelector('#panel-health .ctl .swt')).backgroundColor]; })()"
     light = browser.eval(look)
     browser.eval("document.documentElement.setAttribute('data-theme', 'dark')")
     dark = browser.eval(look)
@@ -126,22 +126,18 @@ def test_a_tier_press_only_drafts_and_apply_saves_the_universe(dashboard, browse
     assert len(provider_routes.requests()) == before
 
 
-def test_fetch_queues_one_request_and_asks_no_provider(dashboard, browser, market, provider_routes):
+def test_the_page_offers_no_one_off_fetch_and_no_switch(dashboard, browser, market, provider_routes):
+    """#715 (avo, 12 Nov 2026): a dataset's Fetch, Pause and the switches are pressed in the framed Grafana board
+    (it needs avo's Grafana login), so the HTML under the frame offers none of them and queues nothing."""
     before = len(provider_routes.requests())
     _open(browser, dashboard)
     _tab(browser, "health")
-    browser.eval("document.querySelector('#panel-health .fgrp[data-file=\"market.duckdb\"]').open = true")
-    # wait on the button itself, not on any queued pill: another dataset's queue row may show one at render
-    one = ("document.querySelector('#panel-health .fgrp[data-file=\"market.duckdb\"] button[data-job=\"one\"]"
-           "[data-dataset=\"market_series\"]')")
-    browser.eval(one + ".click()")
-    browser.wait_for(one + ".getAttribute('data-state') === 'pause'")
-    pill = browser.eval("(function(){ var b = " + one + "; var p = document.querySelector('[data-for=\"' + "
-                        "b.getAttribute('data-jid') + '\"]'); return p ? p.className + ' ' + p.textContent : ''; })()")
-    assert pill.startswith("lg3 st-q queued"), pill
-    rows = _requests(market)
-    assert [(r["dataset"], r["status"], r["requested_by"]) for r in rows] == [("market_series", "queued", "settings")]
-    assert len(provider_routes.requests()) == before, "a request is not a fetch: no provider was asked"
+    left = browser.eval("Array.prototype.map.call(document.querySelectorAll('#panel-health button[data-job]'),"
+                        " function(b){ return b.getAttribute('data-job'); })")
+    assert set(left) <= {"fetch", "picture", "fill", "copy"} and "fetch" in left, left
+    assert browser.eval("document.querySelectorAll('#panel-health .swt[data-name], #panel-health #sec-queue').length") == 0
+    assert _requests(market) == [], "opening the tab queues nothing"
+    assert len(provider_routes.requests()) == before
 
 
 def test_fill_and_fill_this_range_are_off_by_default(dashboard, browser, market, provider_routes):
