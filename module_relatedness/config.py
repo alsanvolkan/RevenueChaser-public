@@ -26,7 +26,10 @@ MIN_INPUT_CHARS = vc_config.MIN_ITEM_CHARS
 # redone by the next run of the board's writer. v2 (#388 D5) named the company instead of the ticker.
 # v3b (#400 10-K package, avo "basla" 10 Nov 2026): the B input -- the new Item 1 cut, without its non-business
 # sections, with the filing's customer sentences and XBRL customers in the prompt. Every v3 profile reads stale.
-PROMPT_VERSION = "v3b"
+# v3c (#717, avo "prompt degisikligini de yap" 11 Nov 2026): a customer or supplier also carries the listed
+# ``parent`` the text names and whether the text presents it as ``public``. Bumped before R1 on purpose: it makes
+# the 388 profiles of today stale (about $1), where the same change after R1 would restale ~4,750 (about $14).
+PROMPT_VERSION = "v3c"
 
 # $ hard-stop: cap the number of LLM calls per run (~1.5x the expected spend).
 # The cap's cost per call, measured on deepseek-flash: the 10 Nov 2026 pilot wrote 400 names in 668 calls for about
