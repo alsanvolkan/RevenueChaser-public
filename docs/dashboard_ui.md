@@ -182,6 +182,17 @@ choice never flashes dark. The shell copies the choice onto
 each board iframe as `data-theme` on its `<html>`; a board follows it once it uses the shared tokens (one PR
 per board); the Runs tab does with the #131 pull request.
 
+Colour is only half of it. `THEME_SCALE` holds what does not change with the scheme. Theme D (#761, avo 12 Nov
+2026) names it `--fs-*` (11 / 12.5 / 14 / 16 / 20 / 26 px, Inter), `--sp-1`..`--sp-7`, `--r-sm` / `--r-md` / `--r-lg`
+and `--elev-1` / `--elev-2`; use those. The #764 names below stay as aliases of them. #764's set is written into
+the base `:root`: the space ladder `--s1`..`--s8` (4 → 64 px), `--r-sm` / `--r-md` / `--r-pill`, the type steps
+`--f-xs`..`--f-xl` with `--w-reg` / `--w-bold`, `--e-flat` and `--e-float` for elevation, `--focus`, `--motion`
+(0 ms under `prefers-reduced-motion`) and `--tap` (44 px). It also holds `--c1`..`--c6`, the categorical chart
+ramp: a **fixed order, never cycled** — a seventh series is "other". The ramp was validated against both board
+surfaces for lightness, chroma, adjacent-pair colour-vision separation and contrast, and reordering it fails
+that check, so the order is a contract. A board takes these names instead of its own pixel values in the same
+PR where it takes the palette.
+
 ### What am I looking at? — every dashboard
 
 Shared `help_html(body)` under the title, closed by default, same `.help`

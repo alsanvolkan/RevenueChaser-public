@@ -115,9 +115,15 @@ THEME_TOKENS = {
 }
 
 
-# The scales that go with the palette, the same in both schemes: one type scale, a 4 px spacing scale, three
-# radii and three elevations (0 = border only, 1 = card, 2 = dialog / popover). A board uses the names
-# (``var(--fs-base)``, ``var(--sp-4)``, ``var(--elev-1)``) instead of its own pixel values.
+# The scales that go with the palette, the same in both schemes (theme D, avo 12 Nov 2026): one type scale, a 4 px
+# spacing scale, three radii and three elevations (0 = border only, 1 = card, 2 = dialog / popover). A board uses
+# the names (``var(--fs-base)``, ``var(--sp-4)``, ``var(--elev-1)``) instead of its own pixel values.
+# #764 landed a parallel set the same day (``--s1``.., ``--f-*``, ``--e-*``); those names stay as aliases of D's,
+# so a board written against either set gets the same values, and D's names are the ones to use. ``--focus`` is
+# a colour token per scheme here (it follows ``--accent``), not a scale token.
+# ``--c1``..``--c6`` (#764) is the categorical chart ramp for more than two series: a fixed order, never cycled — a
+# seventh series is "other"; reordering it fails the deutan check, so the order is the contract. Two series use
+# ``--data-1`` / ``--data-2``.
 THEME_SCALE = {
     "font-sans": "Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif",
     "fs-xs": "11px", "fs-sm": "12.5px", "fs-base": "14px", "fs-md": "16px", "fs-lg": "20px", "fs-xl": "26px",
@@ -125,11 +131,26 @@ THEME_SCALE = {
     "r-sm": "6px", "r-md": "10px", "r-lg": "14px", "r-pill": "999px",
     "elev-1": "0 1px 2px var(--shadow)", "elev-2": "0 12px 32px var(--shadow)",
     "touch": "44px",
+    # #764's names, as aliases of D's (the space ladder keeps its own values, which are D's, plus 64 px).
+    "s1": "4px", "s2": "8px", "s3": "12px", "s4": "16px",
+    "s5": "24px", "s6": "32px", "s7": "48px", "s8": "64px",
+    "f-xs": "var(--fs-xs)", "f-sm": "var(--fs-sm)", "f-md": "var(--fs-base)", "f-lg": "var(--fs-md)",
+    "f-xl": "var(--fs-lg)",
+    "w-reg": "400", "w-bold": "600",
+    "lh-body": "1.55", "lh-head": "1.2",
+    "e-flat": "0 0 0 1px var(--border)", "e-float": "var(--elev-2)",
+    "motion": "150ms ease", "tap": "var(--touch)",
+    "c1": "#0C87CC", "c2": "#C77C09", "c3": "#0A9E6E",
+    "c4": "#8B5CF6", "c5": "#E8445F", "c6": "#2F9E8F",
 }
 
 
 def _theme_vars(scheme: str) -> str:
     return ";".join(f"--{k}:{v}" for k, v in THEME_TOKENS[scheme].items()) + f";color-scheme:{scheme}"
+
+
+def _scale_vars() -> str:
+    return ";".join(f"--{k}:{v}" for k, v in THEME_SCALE.items())
 
 
 # Bare CSS (no <style>), so a page puts it inside its own style block.
@@ -138,9 +159,10 @@ THEME_CSS = (
     # boards look the same offline and on a phone, which would otherwise fall back to its own sans.
     "@font-face{font-family:Inter;font-style:normal;font-weight:100 900;font-display:swap;"
     "src:url(/static/fonts/InterVariable.woff2) format('woff2')}\n"
-    ":root{" + "".join(f"--{k}:{v};" for k, v in THEME_SCALE.items()) + _theme_vars("dark") + "}\n"
+    f":root{{{_scale_vars()};{_theme_vars('dark')}}}\n"
     f"@media (prefers-color-scheme: light){{:root[data-theme=\"auto\"]{{{_theme_vars('light')}}}}}\n"
     f":root[data-theme=\"light\"]{{{_theme_vars('light')}}}\n"
+    "@media (prefers-reduced-motion: reduce){:root{--motion:0ms}}\n"
 )
 
 # Runs in <head>, before the page draws, so a light choice never flashes dark. ``rcThemeGet`` is the stored
