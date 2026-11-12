@@ -180,12 +180,24 @@ def _next_position(table: str, where: str, params: list) -> int:
 
 # ── writes ───────────────────────────────────────────────────────────────────
 
+def _ensure_file() -> None:
+    """Create all four tables, not just the one the next write touches.
+
+    ``lists()`` counts a list's symbols with a LEFT JOIN on ``wl_item``, so a file that holds a list but no item
+    table makes that read raise — and ``_query`` turns a raise into no rows, which reads as "no lists at all".
+    A list is created before anything else, so the whole file is built here once and no read can meet half of it.
+    """
+    for table in (LISTS, SECTIONS, ITEMS, CHANGES):
+        rawstore.ensure_table(table)
+
+
 def create_list(name: str, *, description: str = "", by: str = "avo", feeds: str = "",
                 list_id: str | None = None) -> str:
     """Make a list and its default section. Returns the list's id. A name already taken is an error, not a second
     list of the same name: two lists called "Energy" cannot be told apart in a menu."""
     name = _clean_name(name)
     description = (description or "").strip()[:MAX_DESCRIPTION]
+    _ensure_file()
     taken = _taken_list_ids()
     if any(r["name"] == name for r in _query(f"SELECT name FROM {LISTS}")):
         raise WatchlistError(f"a watch list called {name!r} is already there")
