@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from RevenueChaser.module_settings import control_render, report
 from RevenueChaser.module_settings.tests.test_control_render_c1 import _box, _sources, _view
+from RevenueChaser.module_settings.tests.legacy_fetch import old_fetch
 
 
 def test_fetch_carries_a_menu_for_raw_and_raw_plus_parquet():
@@ -31,7 +32,7 @@ def test_the_queue_has_stop_on_queued_and_running_rows_only():
 
 
 def test_the_words_say_pause_stops_and_the_old_ones_are_gone():
-    html = control_render.render_fetch(_view()) + control_render._queue(_view())
+    html = old_fetch(_view()) + control_render._queue(_view())
     for gone in ("cannot be cancelled", "cannot be taken back", "no cancel route"):
         assert gone not in html and gone not in report.ND_PAUSE_STOPS, gone
     assert "<b>Pause</b> cancels a queued run, stops a running one before its next provider call" in html

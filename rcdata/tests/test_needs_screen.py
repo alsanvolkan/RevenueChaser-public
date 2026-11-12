@@ -137,8 +137,8 @@ def test_compustat_serves_the_daily_prices_and_alpaca_is_the_tester():
 
 def test_a_kinds_steps_sit_inside_its_files_steps():
     from RevenueChaser.rcdata.build import DATASETS
-    spans = {"spine": range(1, 8), "prices": (8,), "fundamentals": (9,), "ownership": (10,), "options": (11,),
-             "market": (11,)}
+    spans = {"spine": range(1, 8), "prices": (8,), "fundamentals": (9,), "sec_forms": (9,), "ownership": (10,),
+             "options": (11,), "market": (11,)}
     for name, ds in DATASETS.items():
         assert screen.DATASETS[name].step in spans[ds.kind], f"{name} ({ds.kind}): step {screen.DATASETS[name].step}"
 
@@ -146,7 +146,7 @@ def test_a_kinds_steps_sit_inside_its_files_steps():
 def test_the_files_are_every_serving_kind_in_build_order():
     from RevenueChaser.rcdata import serving
     assert set(screen.FILES) == set(serving.KINDS)
-    assert list(screen.FILES) == ["spine", "prices", "fundamentals", "ownership", "options", "market"]
+    assert list(screen.FILES) == ["spine", "prices", "fundamentals", "sec_forms", "ownership", "options", "market"]
 
 
 def test_a_dataset_that_does_not_fill_by_tier_has_words_for_why():

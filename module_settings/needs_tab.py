@@ -31,7 +31,7 @@ STATES = ("fresh", "stale", "missing", UNREADABLE)
 BOARD_PREFIX = "module_"
 #: The served duckdb files, in the order the catalog groups its needs by (#492). A need's file is its table's
 #: serving kind (``catalog.Need.kind``, ``rcdata.read.KIND_OF_TABLE``); a need of no served file goes last.
-SERVED_FILES = ("spine", "prices", "fundamentals", "ownership", "options", "market")
+SERVED_FILES = ("spine", "prices", "fundamentals", "sec_forms", "ownership", "options", "market")
 OTHER_FILE = "other"
 
 #: The routes, with one example each, so a reader can try them. The example needs are checked against the catalog
@@ -344,7 +344,7 @@ def _routes_section(model: dict) -> str:
     return (f'<section class="part" id="needs-routes" aria-labelledby="needs-routes-h">'
             f'<h2 id="needs-routes-h">The routes <span class="secs">read-only · no provider · no write</span></h2>'
             f'<div class="routes">{cards}</div>'
-            '<p class="legend">A route read is a request like any other: it is counted in the log above.</p>'
+            '<p class="legend">A route read is a request like any other: it is counted on the Logs tab.</p>'
             '</section>')
 
 
@@ -363,6 +363,14 @@ def sections(model: dict) -> tuple[str, str]:
     if model.get("error"):
         return f'<p class="warn">The Needs tab could not be read: {esc(model["error"])}</p>', ""
     return _catalog_section(model), _log_section(model) + _routes_section(model)
+
+
+def parts(model: dict) -> tuple[str, str, str]:
+    """``(catalog, request log, routes)``, each on its own, so a page can draw some and leave one out. A model with
+    ``error`` is one line, in the first part."""
+    if model.get("error"):
+        return sections(model)[0], "", ""
+    return _catalog_section(model), _log_section(model), _routes_section(model)
 
 
 def render(model: dict) -> str:

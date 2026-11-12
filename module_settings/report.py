@@ -203,6 +203,9 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .sfield .ovr{color:var(--amber);font-size:11.5px;margin-left:6px}
 .sfield .ferr{grid-column:2/-1;color:var(--red);font-size:12px;white-space:normal}
 .sfield .ferr:empty{display:none}
+/* #715: the forms sit in a fold under Database; on a phone a field is its label and input, the range under them */
+@media(max-width:760px){.sfield{grid-template-columns:minmax(0,1fr) 110px}.sfield .rng{grid-column:1/-1;overflow-wrap:anywhere}
+.sfield input,.sfield select{height:44px}}
 .sderived{color:var(--muted);font-size:12px;padding:4px 0}
 .sderived b{color:var(--text)}
 details.fine{margin:8px 0}
@@ -2937,7 +2940,7 @@ SETTINGS_TABS = {"key": "rc.settings.tab",
                  "first": "watch",
                  "tabs": {"watch": "panel-watch", "data": "panel-data", "health": "panel-health",
                           "logs": "panel-logs"},
-                 "aliases": {"fetch": "data", "needs": "health", "live": "health"}}
+                 "aliases": {"fetch": "data", "needs": "data", "live": "health"}}
 
 TABS_JS = """
 (function(){
@@ -2982,11 +2985,6 @@ TABS_JS = """
     });
   });
   window.addEventListener('hashchange', function () { var h = fromHash(); if (h) show(h, true); });
-  var w = document.querySelector('#panel-health .wiali'), box = document.getElementById('needs-wial');
-  if (w && box) w.addEventListener('click', function () {
-    box.hidden = !box.hidden;
-    w.setAttribute('aria-expanded', box.hidden ? 'false' : 'true');
-  });
 })();
 """
 
@@ -3013,13 +3011,15 @@ DATA_HELP = help_html(
     "what for one name, and since when), the Data flow from each source through the six SSD "
     "DuckDB files to the boards and the file each board writes, then for one served file the Build stage from HDD "
     "raw and Parquet to the SSD file, the boards that read it, and example rows. Nothing there starts a job. "
-    "<b>Fetch/Health</b> holds every control: the switches, Health right now, the providers' limits, the universe, "
-    "then one group a served file with its sources. <b>Fetch</b> puts "
-    "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
-    "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
-    "call and holds the dataset until <b>Resume</b>. Under the groups sit the <b>queue</b> with the last runs and the "
-    "<b>weekly backups</b>, then the need catalog by file, the board settings, the automations, the watch lists and the IBKR cards. "
-    "The frame on top shows Fetch, Data health, the jobs by the board they feed and their run logs, from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
+    "Under it sit, each folded, the need catalog by file, the routes, the board inputs and the automations. "
+    "<b>Fetch/Health</b> is the Grafana board: the alerts, the switches, each dataset with its <b>Fetch</b>, "
+    "<b>Pause</b>, mode, cadence and hold, the queue, RevenueChaser's timers, the IBKR gateway, the providers' "
+    "limits, the cross-check, board freshness and the backups. A press there needs the Grafana login; a press puts "
+    "one request in the builder's queue, and the builder calls the provider, never this page. Under the board sit "
+    "the few presses it does not carry yet: the <b>Universe</b>, the <b>Fill</b> and <b>Backfill</b> of the datasets "
+    "that have one, <b>Recount folders</b>, the IBKR login link, and for each file the coverage, the open problems row "
+    "by row and the last three runs. <b>Logs</b> is the Grafana log board. "
+    "<b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )
 
@@ -3044,48 +3044,32 @@ def _watch_panel(nd: dict | None) -> str:
     return f'<div class="watchwrap">{body}</div>'
 
 
-def _health_panel(payload: dict, nd: dict | None = None) -> str:
-    """The Health tab (#492): the Needs head, the catalog, the request log and the routes, then the ticker
-    detail, the three parts that live nowhere else (the board settings, Automations, the IBKR cards) and the backups, in that order."""
+def _hfold(words: str, body: str) -> str:
+    """One part closed behind its own one-line summary; nothing when the part is empty."""
+    return f'<details class="hfold"><summary>{words}</summary>{body}</details>' if body else ""
+
+
+def _database_more(payload: dict) -> str:
+    """Under the Database board (#715): the reads that failed, then the reference parts and the forms, each folded:
+    the need catalog, the routes, the board inputs and the automations. They sat on the Fetch/Health tab until the
+    Grafana board took that tab over; they say what the data is or are forms, so they belong here (decision 8).
+
+    Not drawn any more, because the Grafana boards carry them: the Needs head, Board freshness (rc-health, "Limits,
+    cross-check and board freshness"), the IBKR state card (rc-health, "IBKR") and the request log (rc-logs)."""
     model = _needs_model(payload)
-    catalog, rest = needs_tab.sections(model)
-    # One ``#needs`` scope (needs.css) around the head and the Needs parts.
-    # #527 step 9 and B4: what needs avo first (the reads that failed, the backups, the catalog
-    # with its problem groups open), then the parts he looks things up in, then the reference parts folded. The
-    # IBKR login card is gone: its link is in the top bar.
-    # The ticker lookup is on the Database tab now (avo, 11 Nov 2026): it says what the data is, not what to press.
-    moved = (_automations_section(payload.get("automations") or [])
-             + _ibkr_state_card(payload.get("ibkr_login_state"))
-             + _boards_section(payload.get("boards") or [], payload.get("rows") or []))
-    # One ``#needs`` frame and palette for the whole tab.
+    catalog, _log, routes = needs_tab.parts(model)
     errs = _errors_list(payload.get("errors") or [])
-    return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Needs, boards and automations")}</div>'
-            + (f'<div class="wrap">{errs}</div>' if errs else "")
-            + f'<div class="wrap">{_freshness_part(payload)}</div>'
-            + f'<div class="wrap">{catalog}</div>'
-            f'<div class="wrap" id="health-more">{moved}{_folded(rest)}</div></div>')
-
-
-def _freshness_part(payload: dict) -> str:
-    """#566: the Board freshness part, read now; the board cards' labels name the boards."""
-    from RevenueChaser.module_settings import freshness_tab
-    labels = {str(c.get("key")): str(c.get("label")) for c in payload.get("boards") or []
-              if isinstance(c, dict) and c.get("key") and c.get("label")}
-    return freshness_tab.section(freshness_tab.collect(), labels)
-
-
-def _folded(rest: str) -> str:
-    """#527: the request log and the routes, each closed behind its own one-line summary."""
-    out = rest
-    for part, words in (("needs-log", "The request log: which need was asked, by whom, how often"),
-                        ("needs-routes", "The routes: the read-only addresses a board asks")):
-        mark = f'<section class="part" id="{part}"'
-        if mark in out:
-            start = out.index(mark)
-            end = out.index("</section>", start) + len("</section>")
-            out = (out[:start] + f'<details class="hfold"><summary>{words}</summary>' + out[start:end] + '</details>'
-                   + out[end:])
-    return out
+    # a Needs read that failed is one line and stays in sight; the catalog itself is long (one row a need)
+    catalog = catalog if model.get("error") else _hfold(
+        "The need catalog: what a board can ask the store for, and how fresh it is", catalog)
+    return ('<div id="needs"><div class="wrap" id="database-more">'
+            f'{errs}{catalog}'
+            + _hfold("The routes: the read-only addresses a board asks", routes)
+            + _hfold("Board inputs: what each board reads and its settings",
+                     _boards_section(payload.get("boards") or [], payload.get("rows") or []))
+            + _hfold("Automations: the scheduled tasks RevenueChaser owns",
+                     _automations_section(payload.get("automations") or []))
+            + '</div></div>')
 
 
 def _tab_strip() -> str:
@@ -3184,8 +3168,10 @@ def _ticker_drill(payload: dict) -> str:
 
 
 def render_settings_dashboard(payload: dict) -> str:
-    """The Data/Health page (#715): four tabs. Watch lists is ``_watch_panel``, first; Database is the control board (``control_render.render_data``);
-    Fetch/Health is the framed ``rc-health`` board above ``_health_panel``; Logs is the framed ``rc-logs`` board. The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
+    """The Data/Health page (#715): four tabs. Watch lists is ``_watch_panel``, first; Database is the control board
+    (``control_render.render_data``) above ``_database_more``; Fetch/Health is the framed ``rc-health`` board above
+    the few presses Grafana does not carry (``control_render.render_fetch``); Logs is the framed ``rc-logs`` board.
+    The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
     payload = payload or {}
     data_json = script_json(payload.get("tickers") or [])
     # The payload's own ``newdata`` when the caller read it (tests, fixtures); else read here, per render.
@@ -3195,7 +3181,7 @@ def render_settings_dashboard(payload: dict) -> str:
     control_html = control_render.render_data(view, lookup_html)
     fetch_html = control_render.render_fetch(view)
     control_js = control_render.scripts(view)
-    health_html = _health_panel(payload, nd)
+    more_html = _database_more(payload)
     automations = payload.get("automations") or []
     automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
 
@@ -3223,11 +3209,11 @@ def render_settings_dashboard(payload: dict) -> str:
 <div id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>
 <div class="ctl helpband"><div class="wrap helpwrap" style="max-width:var(--page-max,1280px);margin:0 auto;padding:12px 12px 0">{DATA_HELP}</div></div>
 {control_html}
+{more_html}
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
 {_live_board("panel-health")}
 {fetch_html}
-{health_html}
 </div>
 <div id="panel-logs" role="tabpanel" aria-labelledby="tab-logs" hidden>
 {_live_board("panel-logs")}
