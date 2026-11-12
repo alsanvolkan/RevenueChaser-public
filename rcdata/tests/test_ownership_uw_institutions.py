@@ -45,7 +45,13 @@ def party(cik: str, name: str, when: str | None = None) -> dict:
 
 def paged(http_mock, pages: list, fail: dict | None = None) -> None:
     """Answer page ``n`` with ``{"data": pages[n]}``; a page past the end is empty. ``fail`` maps a page to a
-    status, and a ``dict`` page is sent as it is (an answer that carries no list of rows)."""
+    status, and a ``dict`` page is sent as it is (an answer that carries no list of rows).
+
+    A second call **replaces** the route: ``HttpMock.add`` answers the first route that matches, so appending one
+    would leave the earlier answer in place and a test of two snapshots would read the same list twice.
+    """
+    http_mock.routes[:] = [r for r in http_mock.routes if r[0] != "/institutions"]
+
     def answer(request):
         q = parse_qs(request.url.query.decode())
         page = int(q.get("page", ["0"])[0])
