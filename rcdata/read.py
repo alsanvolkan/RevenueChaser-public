@@ -44,12 +44,15 @@ DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_peri
                          "sec13f_cusip_map": "ownership/serve", "sec13f_filer_breaks": "ownership/serve",
                          "finra_short_interest": "finra/short_interest", "ibkr_shortable": "ibkr/shortable",
                          "regsho_threshold": "regsho/threshold", "sec_ftd": "sec/ftd",
-                         "insider_transactions": "sec/form4", "beneficial_ownership": "sec/13dg"})
+                         "insider_transactions": "sec/form4", "beneficial_ownership": "sec/13dg",
+                         "uw_institution": "uw/institutions",
+                         "uw_institution_succession": "uw/institutions"})
 KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_periods", "sec13f_cusip_map",
                                                "sec13f_filer_breaks",
                                                "finra_short_interest",
                                                "ibkr_shortable", "regsho_threshold", "sec_ftd",
-                                               "insider_transactions", "beneficial_ownership")})
+                                               "insider_transactions", "beneficial_ownership",
+                                               "uw_institution", "uw_institution_succession")})
 
 
 def missing(kind: str, dataset: str | None = None) -> str | None:

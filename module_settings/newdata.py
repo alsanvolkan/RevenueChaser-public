@@ -165,12 +165,16 @@ def _iso_utc(epoch) -> str | None:
 
 # ── Status ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+#: The cadences a card is read by: ``CYCLE_DAYS`` has to know one for ``_missed`` to count it.
+CARD_CADENCES = ("hourly", "daily", "weekly", "monthly", "quarterly")
+
+
 def _cadence(dataset: str, schedule: dict | None) -> str:
     c = (schedule or {}).get("cadence")
-    if c in ("hourly", "daily", "weekly", "monthly"):
+    if c in CARD_CADENCES:
         return c
     own = getattr(_datasets().get(dataset), "cadence", None)
-    return own if own in ("hourly", "daily", "weekly", "monthly") else CADENCE.get(dataset, "daily")
+    return own if own in CARD_CADENCES else CADENCE.get(dataset, "daily")
 
 
 def _missed(cadence: str, check: dict, now: datetime) -> int:

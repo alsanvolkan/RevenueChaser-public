@@ -1029,7 +1029,7 @@ its spill peak (`base.spill_peak`, sampled every 2 s), the measure for moving th
 **Files.** Serving kinds: `market`, `spine`, `prices`, `ownership`, `fundamentals`, `options`, `sec_forms`. Each kind is one
 file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema version `6`), is described under
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
-below; the ownership store, `ownership` (serving schema version `2`), under "The ownership store" below; the
+below; the ownership store, `ownership` (serving schema version `3`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `3`), under "Fundamentals" after it; and the options
 data, `options` (serving schema version `3`), under "The options data" after it; and the SEC form reader, `sec_forms` (serving schema version `1`), under "The SEC form reader" last. The seven numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
 (`rcdata/build/dirty.py`), so a bump makes only its own kind's next build whole (#649). The market data,
@@ -1667,6 +1667,7 @@ never writes it. Nothing here writes `raw.duckdb`: the old 13F, short and inside
 | `sec/13f_sets_listed` | daily (asks only while a set is awaited) | The SEC's Form 13F data-set page: which sets are published, read once a day from the day after a filing deadline until a listed set covers it (#732); nothing is downloaded | `sec13f_data_sets` |
 | `sec/form4` | daily | The SEC's Insider Transactions data sets (the first fill), then Form 4 and 4/A through the EDGAR daily index | `insider_transactions` |
 | `sec/13dg` | daily | Schedules 13D and 13G, old (`SC 13G`) and new (`SCHEDULE 13G`, XML since 2024-12-18) names | `beneficial_ownership` |
+| `uw/institutions` | quarterly | Unusual Whales' `GET /institutions` without a name: every 13F institution by value, 500 to a page (18 pages, 8,875 CIKs on 12 Nov 2026), with its tags, `is_hedge_fund` and its succession | `uw_institution`, `uw_institution_succession` |
 | `ownership/serve` | daily | none: derives the 13F totals from the 13F tables and the spine | the four 13F tables below |
 
 **Starts by hand.** Every ownership dataset is not due until it has built once, so the first hourly pass after a
@@ -1694,7 +1695,19 @@ first 13F day is not served; `filing_deadline` (period end + 45 days, rolled pas
 Birthday) says when a quarter is complete; `exited_confidential` and `exited_no_filing` count the exits that may not
 be sales.
 
-**Served tables** (`ownership` serving schema version `2`; 2 since #732: the continuing-filer flows and `sec13f_filer_breaks`):
+**The institution map** (`uw/institutions`, #775; owner's decisions A and B of 12 Nov 2026: UW's tags may be stored,
+and the read is quarterly). The key is the CIK, which `sec13f_filer_period` already carries per quarter, so an
+investor-type slice of a 13F metric needs no per-ticker provider call. Each read is kept whole as its own snapshot
+(`snapshot_date`), so a slice can say which snapshot it rests on. Paging is by `limit=500` and `page=N` until a
+short or empty page; UW orders the list by value, so a CIK on two pages is kept once (its first row) and counted in
+a `moved` build issue, and over 1% of the rows repeating fails the run rather than keeping a moved list. Successions
+are read from **both** sides UW names — an institution's `succession.predecessors` and its own
+`succession.succeeded_by` — because they do not cover the same pairs: on 12 Nov 2026 only two rows of the whole list
+carried a `succeeded_by`, while HPS Investment Partners → BlackRock (effective 2025-09-30) was in BlackRock's
+`predecessors` alone.
+
+**Served tables** (`ownership` serving schema version `3`; 3 since #775: `uw_institution` and
+`uw_institution_succession`; 2 since #732: the continuing-filer flows and `sec13f_filer_breaks`):
 
 | Table | Rows |
 |---|---|
@@ -1710,6 +1723,8 @@ be sales.
 | `sec13f_ticker_period` | one per ticker and period: shares, value, holders, top-10 %, HHI, new / exited holders, buy / sell flow, breadth and its change, `prev_period`, `filing_deadline`. The period is the calendar quarter end; a filing's period that is not one (09-29 for the September quarter) counts in its quarter, and `sec13f_filings` keeps it as written |
 | `sec13f_periods` | one per period: filers, value, value mapped, `coverage`, unmapped CUSIPs, refused value, rescaled filers |
 | `sec13f_filer_breaks` | one per ticker, settled period and filer that started (`started`: no report in the quarter before) or stopped (`stopped`: none in the quarter) reporting it, with its shares; the flows leave these filers out (#732) |
+| `uw_institution` | one per snapshot day and CIK: `name`, `short_name`, `tags` (sorted), `is_hedge_fund`, the report and filing dates, total and share value, `succeeded_by_cik` with its `succeeded_by_report_date`, and `current_holder_cik` |
+| `uw_institution_succession` | one per snapshot day, predecessor CIK, successor CIK and `effective_report_date`, with both names and `origin` (`predecessors`, `succeeded_by` or `both`) |
 | `sec13f_data_sets` | one per 13F data set the SEC page ever listed: `name`, `first_day`, `last_day`, `url`, `first_seen`; a period is `closed` once a listed set's window holds its filing deadline (#732) |
 
 **The bridge (D4).** Views under the old `raw.duckdb` names: `sec13f_totals` (ticker, `entry` JSON keyed by period

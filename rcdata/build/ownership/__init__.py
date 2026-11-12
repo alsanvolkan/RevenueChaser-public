@@ -8,7 +8,9 @@ Each source dataset fetches raw files, types them to Parquet and builds its own 
 - ``ibkr/shortable``: IBKR's public short-stock file (borrow fee, rebate, shares available), once a session;
 - ``sec/ftd``: the SEC's fails-to-deliver data, one file per half month;
 - ``sec/13f``, ``sec/form4``, ``sec/13dg``: Form 13F, Form 4 and Schedules 13D and 13G as they arrive, walked
-  through the EDGAR daily index (``edgar.Feed``), each request paced for the SEC (``sec.Pacer``).
+  through the EDGAR daily index (``edgar.Feed``), each request paced for the SEC (``sec.Pacer``);
+- ``uw/institutions``: Unusual Whales' map of every 13F institution and its tags, keyed by CIK, once a quarter,
+  with the predecessor and successor pairs of that map in a second table (#775).
 
 ``ownership/serve`` is built last: the 13F totals per ticker and quarter, each CUSIP named through the spine, and
 the views under the old table names (``sec13f_totals``, ``short_interest``).

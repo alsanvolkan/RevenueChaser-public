@@ -38,7 +38,9 @@ def test_every_dataset_the_store_knows_has_a_card():
 def test_a_card_carries_a_label_a_cadence_and_a_share_or_nothing():
     for name, card in screen.DATASETS.items():
         assert card.label and card.label != name, f"{name}: a card needs a label in plain words"
-        assert card.cadence in ("daily", "weekly", "monthly"), f"{name}: {card.cadence!r}"
+        assert card.cadence in ("daily", "weekly", "monthly", "quarterly"), f"{name}: {card.cadence!r}"
+        assert card.cadence == "daily" or card.cadence in screen.CYCLE_DAYS, \
+            f"{name}: {card.cadence!r} has no cycle length, so the screen cannot count it late"
         assert card.coverage_target is None or 0 < card.coverage_target <= 1, f"{name}: {card.coverage_target!r}"
 
 
@@ -107,7 +109,7 @@ def test_the_rows_day_and_the_written_column_are_allowed_to_differ():
 
 
 def test_the_screens_own_numbers_live_here_too():
-    assert screen.CYCLE_DAYS == {"weekly": 8, "monthly": 35}
+    assert screen.CYCLE_DAYS == {"weekly": 8, "monthly": 35, "quarterly": 100}
     assert screen.RETIREMENT_DAYS == 14
     assert screen.STATUS_ORDER == ("stale", "never", "late", "unchanged", "fresh")
     assert screen.STATUS_ORDER[0] == "stale", "the worst status sorts first"
