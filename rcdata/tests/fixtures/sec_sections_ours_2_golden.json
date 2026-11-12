@@ -1,0 +1,250 @@
+{
+ "_what": "Outputs of rcdata/sec_sections.py's ours-2 rule, captured 12 Nov 2026 over the inputs of rcdata/tests/sec_sections_cases.py. This is a BASELINE, not an independent truth: it records what ours-2 answers today so that a later edit which moves the text of a shared case cannot pass unnoticed. It says nothing about whether the slice is the right section -- that is #763's hand-checked set. The named-defect tests in test_sec_sections_ours_2.py are the ones that assert ours-2 is BETTER than ours-1; this file only asserts it has not drifted.",
+ "_how_to_recapture": "Run sec_sections.cut_item / cut_aif_business under version=OURS_2 over CASES and rewrite this file. Recapture only to ADD a case, or together with a deliberate, reviewed change to ours-2 while nothing has stored ours-2 text yet. Once a board reads ours-2, a changed expectation here is a new rules_version, not an edit of this file.",
+ "captured_at": "2026-11-12",
+ "rule_version": "ours-2",
+ "cases": {
+  "empty": {
+   "form": "10-K",
+   "input_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "quality": "missing",
+   "item_chars": null,
+   "item_sha256": null,
+   "item_head": null,
+   "item_tail": null,
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "blank": {
+   "form": "10-K",
+   "input_sha256": "0aad7da77d2ed59c396c99a74e49f3a4524dcdbcb5163251b1433d640247aeb4",
+   "quality": "missing",
+   "item_chars": null,
+   "item_sha256": null,
+   "item_head": null,
+   "item_tail": null,
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "no_item_headers": {
+   "form": "10-K",
+   "input_sha256": "cce997626632681c97953c47defa62e58b203e01fac9465d52329fdb2edee9ed",
+   "quality": "missing",
+   "item_chars": null,
+   "item_sha256": null,
+   "item_head": null,
+   "item_tail": null,
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "toc_then_body": {
+   "form": "10-K",
+   "input_sha256": "ca7d0d29309c52c9c2da4df2841fb76ca4779e445f46bbe40dd2f5bea5d015fe",
+   "quality": "ok",
+   "item_chars": 30324,
+   "item_sha256": "465e1e81299c7a711e3eb1c0fca1bf8cd1d52749dc63f0b9a21c235b4ff26f0a",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": "dy. More body. More body. More body. More body. More body. More body. More body.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "body_only": {
+   "form": "10-K",
+   "input_sha256": "b4008b70c0635aba1fd8255205e4beef8210d828536af233137fe6dd468a141e",
+   "quality": "ok",
+   "item_chars": 30324,
+   "item_sha256": "465e1e81299c7a711e3eb1c0fca1bf8cd1d52749dc63f0b9a21c235b4ff26f0a",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": "dy. More body. More body. More body. More body. More body. More body. More body.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "toc_only": {
+   "form": "10-K",
+   "input_sha256": "ee2f26d8cb658ea118fc6b5f73717322787961b37938abd18f1f9112e893a1ae",
+   "quality": "short",
+   "item_chars": 1,
+   "item_sha256": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+   "item_head": "3",
+   "item_tail": "3",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "no_stop_header": {
+   "form": "10-K",
+   "input_sha256": "21fbd2f03e51ea83494c9e5321671c45d05ed0af0cd5a8a0aca7b0900b8456ae",
+   "quality": "overrun",
+   "item_chars": 26999,
+   "item_sha256": "1fb66934a331ee75a944969c26e58b8423f59de20a7598fd857beb93d8d096ad",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": "em to customers worldwide. We make widgets and sell them to customers worldwide.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "split_word_item_1a": {
+   "form": "10-K",
+   "input_sha256": "c78529635410c2ab05d5172a383cc2bac4476e9779663c6304bdb21bd0747895",
+   "quality": "ok",
+   "item_chars": 26999,
+   "item_sha256": "1fb66934a331ee75a944969c26e58b8423f59de20a7598fd857beb93d8d096ad",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": "em to customers worldwide. We make widgets and sell them to customers worldwide.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "item_1_01_in_exhibit_list": {
+   "form": "10-K",
+   "input_sha256": "87c23c24501147ed828f30ccc2ee6ce90cf7b9f2741d500dc1cd68d14887cc80",
+   "quality": "ok",
+   "item_chars": 26999,
+   "item_sha256": "1fb66934a331ee75a944969c26e58b8423f59de20a7598fd857beb93d8d096ad",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": "em to customers worldwide. We make widgets and sell them to customers worldwide.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "foreign_20f": {
+   "form": "20-F",
+   "input_sha256": "071a6535fd00848208b2859ab6645a2ae20ad18e72d988cddff45df5c9b6c9fb",
+   "quality": "ok",
+   "item_chars": 26999,
+   "item_sha256": "1fb66934a331ee75a944969c26e58b8423f59de20a7598fd857beb93d8d096ad",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": "em to customers worldwide. We make widgets and sell them to customers worldwide.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "foreign_20f_regulation_chapter": {
+   "form": "20-F",
+   "input_sha256": "d9c43d7e6bb30d49e7de49016fa70d1ad94b65c5e7828a27be3cabee4266e35f",
+   "quality": "ok",
+   "item_chars": 27020,
+   "item_sha256": "bd849282c2280cda3107bb003630ffc36e262b81a181295171b1ebc451d4d5f0",
+   "item_head": "B. Business Overview\nWe make widgets and sell them to customers worldwide. We ma",
+   "item_tail": "em to customers worldwide. We make widgets and sell them to customers worldwide.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "quoted_cross_reference_first": {
+   "form": "10-K",
+   "input_sha256": "0a9e1388e8755a79533dc686b915ef78fd24af8dba9dcfbe59e58c8f533bf3c9",
+   "quality": "ok",
+   "item_chars": 26999,
+   "item_sha256": "1fb66934a331ee75a944969c26e58b8423f59de20a7598fd857beb93d8d096ad",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": "em to customers worldwide. We make widgets and sell them to customers worldwide.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "aif_general_development": {
+   "form": "40-F",
+   "input_sha256": "65c6a043235234a96b6907a38b135a804ebf540dc67626ffb3bad6952fe574b4",
+   "quality": "missing",
+   "item_chars": null,
+   "item_sha256": null,
+   "item_head": null,
+   "item_tail": null,
+   "aif_business_chars": 26999,
+   "aif_business_sha256": "1fb66934a331ee75a944969c26e58b8423f59de20a7598fd857beb93d8d096ad"
+  },
+  "aif_description_of_business": {
+   "form": "40-F",
+   "input_sha256": "afe88fa6bbd5bb26669063f3e4cad53c86861dd033fdd9640bbbc41543b8dc13",
+   "quality": "missing",
+   "item_chars": null,
+   "item_sha256": null,
+   "item_head": null,
+   "item_tail": null,
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "over_the_cap": {
+   "form": "10-K",
+   "input_sha256": "58f6d5b8424bf180b03d82391cb5547024eef98c55b147ab6f44ec83f51f5f6f",
+   "quality": "ok",
+   "item_chars": 239999,
+   "item_sha256": "6a7e3ea0cea31db2f4a96ecb24142600beed204dcc5200262e40d582554203cb",
+   "item_head": "w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w ",
+   "item_tail": " w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w w",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "short_body": {
+   "form": "10-K",
+   "input_sha256": "b80dfff00523cc3df6e912496e226665e313dafe150b08dae62cb76a82720381",
+   "quality": "short",
+   "item_chars": 5,
+   "item_sha256": "9c27eabda9c16e608cee38bffb3b72887d63b35badbca7a4872e54cafc9fc044",
+   "item_head": "Tiny.",
+   "item_tail": "Tiny.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "dash_headings": {
+   "form": "10-K",
+   "input_sha256": "15d0b71218ab4eef3693f5e060da8a5cd398d7a26a9bfd0f44414b7b37d82389",
+   "quality": "ok",
+   "item_chars": 26999,
+   "item_sha256": "1fb66934a331ee75a944969c26e58b8423f59de20a7598fd857beb93d8d096ad",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": "em to customers worldwide. We make widgets and sell them to customers worldwide.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "minus_dash_inline": {
+   "form": "10-K",
+   "input_sha256": "5b04f431b54481133779e8554ff4d5ff67614c44a5d1e8e41da334cf4969cdd2",
+   "quality": "ok",
+   "item_chars": 26999,
+   "item_sha256": "1fb66934a331ee75a944969c26e58b8423f59de20a7598fd857beb93d8d096ad",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": "em to customers worldwide. We make widgets and sell them to customers worldwide.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "hyphen_dash_inline": {
+   "form": "10-K",
+   "input_sha256": "bd4fff02f7edb39c5ce3e90c535cf6a13350d55271c64ae667cd2582a472ed3a",
+   "quality": "ok",
+   "item_chars": 26999,
+   "item_sha256": "1fb66934a331ee75a944969c26e58b8423f59de20a7598fd857beb93d8d096ad",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": "em to customers worldwide. We make widgets and sell them to customers worldwide.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "suspect_tail_cross_reference": {
+   "form": "10-K",
+   "input_sha256": "d201f702779f65d9cfb2d4a6daf25ca00b86f31940509d46a78c8464e67af5ae",
+   "quality": "ok",
+   "item_chars": 27004,
+   "item_sha256": "5ce99363b8d4757d002901aef929fcca3355ec02213234cd5f2fc312d649aef9",
+   "item_head": "We make widgets and sell them to customers worldwide. We make widgets and sell t",
+   "item_tail": " customers worldwide. We make widgets and sell them to customers worldwide.  See",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "suspect_inner_item_header": {
+   "form": "10-K",
+   "input_sha256": "c886c06e5b103d02bf3c8b6d1235128132f96a132441a33df3be73044f880e9c",
+   "quality": "overrun",
+   "item_chars": 30363,
+   "item_sha256": "9be61b2b3283f3afeb1e28b7e2ccb44e6f91fb1226e85525958c3e616f1822df",
+   "item_head": "Item 3. Legal Proceedings\nWe litigate.\nWe make widgets and sell them to customer",
+   "item_tail": "dy. More body. More body. More body. More body. More body. More body. More body.",
+   "aif_business_chars": null,
+   "aif_business_sha256": null
+  },
+  "aif_over_the_cap": {
+   "form": "40-F",
+   "input_sha256": "4c8b5f2a11207da5bb236f1030830d69645ebf44393bbfd2746a04c87b5f5042",
+   "quality": "missing",
+   "item_chars": null,
+   "item_sha256": null,
+   "item_head": null,
+   "item_tail": null,
+   "aif_business_chars": 200000,
+   "aif_business_sha256": "43116fc56c57b5a4ec6745f24264169a01c44b6b15efcf70db96cad1b77f551d"
+  }
+ }
+}

@@ -225,25 +225,34 @@ _ITEM = _spaced("item")
 
 #: **A sub-item is not its item.** PCVX's exhibit list quotes "Item 1.01 Entry into a Material Definitive
 #: Agreement" (an 8-K's item), which must not be read as Item 1. The number may be followed by a full stop, by a
-#: colon or by nothing -- but not by a digit, which is what makes "1.01" a different item from "1".
-_NOT_SUBITEM = r"(?![.,]\s*\d)"
+#: colon or by nothing -- but not *immediately* by a digit, which is what makes "1.01" a different item from "1".
+#:
+#: **No ``\s*`` between the stop and the digit.** An earlier spelling, ``(?![.,]\s*\d)``, let the lookahead reach
+#: over the newline of "Item 1A.\n12\nRisk Factors" -- a heading with its page number under it -- and threw the
+#: heading away. The slice then ran past Item 1A and still said ``ok``, because :func:`_holds_another_item` reads
+#: the same pattern and was blind to the same heading. Only a digit glued to the stop makes a sub-item: "Item 2.
+#: 3 properties" and "Item 7. 2024 Results" are items, and ``ours-1``'s :data:`_LINE_END` reads all three.
+_NOT_SUBITEM = r"(?![.,]\d)"
 
 _LINE_START_2 = {
-    "10-K": re.compile(rf"(?im)^[^\S\n]*{_ITEM}s?\s{{0,3}}(1|i)\b{_NOT_SUBITEM}(?:\s*(?:and|&|,)\s*2\b)?"
+    "10-K": re.compile(rf"(?im)^[^\S\n]*{_ITEM}s?\s{{0,3}}(1|i)\b(?:\s*(?:and|&|,)\s*2\b)?"
                        rf"\s*[.:]?\s*(?:[{DASH}]+\s*)?(?:(?:description\s+of|our)\s+(?:the\s+)?)?"
                        rf"{spaced('business')}"),
-    "20-F": re.compile(rf"(?im)^[^\S\n]*{_ITEM}\s{{0,3}}(4)\b{_NOT_SUBITEM}\s*[.:]?\s*(?:[{DASH}]+\s*)?"
+    "20-F": re.compile(rf"(?im)^[^\S\n]*{_ITEM}\s{{0,3}}(4)\b\s*[.:]?\s*(?:[{DASH}]+\s*)?"
                        rf"{spaced('information')}\s+(?:on|about|of)\s+(?:the\s+)?"
                        r"(?!(?:our\s+)?executive)[\w&.-]+"),
 }
 _LINE_END_2 = re.compile(rf"(?im)^[^\S\n]*{_ITEM}\s{{0,3}}(1[abc]|[2-9][abc]?|1[0-9])\b{_NOT_SUBITEM}")
 
-#: ``ours-1``'s :data:`START_PATTERNS` and :data:`STOP_PATTERNS`, spelled with :data:`_ITEM` and
-#: :data:`_NOT_SUBITEM`. Copies and not edits of those two, because the boards read them (module docstring).
+#: ``ours-1``'s :data:`START_PATTERNS` and :data:`STOP_PATTERNS`, spelled with :data:`_ITEM`. Copies and not
+#: edits of those two, because the boards read them (module docstring). :data:`_NOT_SUBITEM` is **not** on them:
+#: every branch here requires a title after the number ("business", "risk factors", "propert"), which a sub-item
+#: like "Item 1.01 Entry into a Material Definitive Agreement" never carries. It is on :data:`_LINE_END_2` alone,
+#: which matches a bare number and so needs it.
 START_PATTERNS_2 = {
-    "10-K": (rf"\b{_ITEM}s?\s*1\s*{_NOT_SUBITEM}\.?\s*(?:(?:and|&|,)\s*2\s*\.?\s*)?[\:{_DASH}]*\s*"
+    "10-K": (rf"\b{_ITEM}s?\s*1\s*\.?\s*(?:(?:and|&|,)\s*2\s*\.?\s*)?[\:{_DASH}]*\s*"
              rf"(?:(?:description\s+of|our)\s+(?:the\s+)?)?{_spaced('business')}"),
-    "20-F": (rf"\b{_ITEM}\s*4\s*{_NOT_SUBITEM}[\.\:{_DASH}\s]\s*[{_DASH}]?\s*"
+    "20-F": (rf"\b{_ITEM}\s*4\s*[\.\:{_DASH}\s]\s*[{_DASH}]?\s*"
              r"information\s+on\s+the\s+(?:company|group)"),
 }
 STOP_PATTERNS_2 = {
@@ -271,14 +280,28 @@ def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
 
     The difference from ``ours-1``'s :func:`_line_item`: a start with no closing heading is **not** given up on.
     ``ours-1`` returned None there and let the pattern path decide, which is where its cap came in; nothing is
-    capped here, so the body simply runs to the end of the document and says that it did.
+    capped here, so the slice is kept and labelled instead.
+
+    **Three ways it can end, in this order.** A line-start heading of another item is the real end. Failing that,
+    a titled stop -- :data:`STOP_PATTERNS_2`, the same inline patterns ``ours-1``'s pattern path stops on -- ends
+    it just as well: "Item 1A. Risk Factors" is where Item 1 stops whether or not it begins a line, and reading
+    it is the only thing that keeps the slice as short as ``ours-1``'s. Only when neither is there does the body
+    run to the end of the document, and then ``closed`` is False and the label is ``overrun``.
     """
+    stop_re = re.compile(STOP_PATTERNS_2[key], re.I)
     for m in _LINE_START_2[key].finditer(text):
         if _TOC_NEXT.search(text[m.end():m.end() + 400]) or _PAGE_NO.match(text, m.end()) or _is_ref(text, m):
             continue
         own = m.group(1).lower()
         end = next((e.start() for e in _LINE_END_2.finditer(text, m.end() + MIN_ITEM_CHARS)
                     if e.group(1).lower() != own and not _is_ref(text, e)), None)
+        if end is None:
+            # Past :data:`MIN_ITEM_CHARS`, like the line-end search above it and for the same reason: the
+            # heading a filer repeats in the first paragraph ("the risks are in Item 1A. Risk Factors below")
+            # would otherwise end Item 1 a few hundred characters in, and the slice that survived would be the
+            # introduction rather than the section.
+            titled = stop_re.search(text, m.end() + MIN_ITEM_CHARS)
+            end = titled.start() if titled else None
         closed = end is not None
         if end is None:
             end = len(text)
@@ -317,9 +340,12 @@ def _slice_item_ours_2(text: str, form: str = "10-K") -> tuple[str | None, str]:
     - **VFF's "ITE M 1A"** -- ``item`` is spelled with :func:`_spaced` like every other heading word, so the
       stop heading is found and the slice ends where Item 1 ends.
     - **VFF's label** -- a slice that holds another item's own title line is ``overrun``, whether a heading
-      closed it or the document ran out. ``ours-1`` had only its cap to say this with, and so called it
-      ``capped``, which reads as "this is the start of a long section" when it is really the wrong section.
-    - **PCVX's "Item 1.01"** -- an item number followed by a digit is a different item (:data:`_NOT_SUBITEM`).
+      closed it or the document ran out. ``ours-1`` could say so only when no stop matched at all, and otherwise
+      labelled such a slice by its length: ``capped`` on the 111,000-character filing the census recorded, and
+      ``ok`` on one that stays under the cap. Neither reads as "this is the wrong section", which it is.
+    - **PCVX's "Item 2.01"** -- an item number followed immediately by a digit is a different item
+      (:data:`_NOT_SUBITEM`). The filing's exhibit list carries 8-K item titles, and "Item 2.01 Completion of
+      Acquisition" was ``ours-1``'s end of Item 1: 5,305 characters of 10,599.
     - **the pointer items** -- a body that is a cross-reference is ``pointer`` and not ``short``: there is no
       prose to find there, so a later run should not keep looking for it.
     - **PCVX and GLUE's long Item 1** -- nothing is capped, because this version serves a layer that stores a
@@ -375,7 +401,15 @@ def base(quality) -> str | None:
 
 
 def flag(quality: str, text: str, item: str | None, form: str = "10-K") -> str:
-    """``quality`` with ``;suspect:<signals>`` added when an ``ok`` slice of ``text`` still looks wrong."""
+    """``quality`` with ``;suspect:<signals>`` added when an ``ok`` slice of ``text`` still looks wrong.
+
+    **This is ``ours-1``'s flagger, and the only one there is.** S6 reads :data:`_LINE_END`, so a sub-item is a
+    heading to it: it marks PCVX's correctly cut Item 1 ``ok;suspect:S6``, undoing at the label what ``ours-2``
+    fixed in the cut. S8 compares the slice against :data:`MAX_ITEM_CHARS`, which ``ours-2`` does not cap at, so
+    every long ``ours-2`` slice is ``ok;suspect:S8``. The right place for a per-version flagger is a ``flag``
+    member on :class:`Rule`, and the caller that needs it is the ``sec_forms`` layer (#757); until then nothing
+    calls this on an ``ours-2`` slice, and a caller that starts to must read this paragraph first.
+    """
     if quality != "ok":
         return quality
     item, text = item or "", text or ""
@@ -418,9 +452,11 @@ class Rule:
     version: str
     slice_item: object
     aif_business: object
-    #: True while the rule caps its text at :data:`MAX_ITEM_CHARS` and can therefore answer ``capped``. Nothing
-    #: reads it yet: it is here for the ``sec_forms`` layer, which stores sections uncut, so a version it serves
-    #: has this False and may not be labelled ``capped`` (issue #757). Until then it only records the fact.
+    #: True while ``slice_item`` caps its text at :data:`MAX_ITEM_CHARS` and can therefore answer ``capped``.
+    #: Nothing reads it yet: it is here for the ``sec_forms`` layer, which stores sections uncut, so a version it
+    #: serves has this False and may not be labelled ``capped`` (issue #757). Until then it only records the fact.
+    #: It is about ``slice_item`` alone -- ``ours-2`` borrows ``ours-1``'s AIF block, which still caps, and #756
+    #: is where that block gets a version of its own.
     caps: bool = True
 
 

@@ -2,10 +2,12 @@
 
 Each test is named after the filing the defect was measured on, and every one of them is a **difference between
 the two versions on the same input**: the input is the thing that was really seen, ``ours-1``'s answer is what the
-census recorded, and ``ours-2``'s is what this issue promises. Four of the inputs are already in
+census recorded, and ``ours-2``'s is what this issue promises. Three of the inputs are taken from
 ``sec_sections_cases.py``, because the move's golden file records those defects rather than hiding them
-(``split_word_item_1a``, ``item_1_01_in_exhibit_list``, ``over_the_cap``, ``short_body``); taking them from there
-keeps one copy of each and lets the golden go on proving that ``ours-1`` did not move.
+(``split_word_item_1a``, ``over_the_cap``, ``short_body``); taking them from there keeps one copy of each and
+lets the golden go on proving that ``ours-1`` did not move. The PCVX test builds its own text instead: the shared
+``item_1_01_in_exhibit_list`` case puts the sub-item *before* Item 1, where it tests nothing about ending a
+slice, and the defect was a sub-item inside the body.
 
 **What these tests cannot do.** The filings themselves are not in this tree and no test fetches one -- an SEC
 request needs the owner's word. So the inputs are the shapes the census describes, built here, and a passing run
@@ -16,6 +18,10 @@ Red on the merge-base: ``sec_sections.OURS_2`` does not exist there, so every te
 the first ``version=OURS_2``.
 """
 from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
@@ -256,3 +262,261 @@ def test_ours_2_adds_its_own_patterns_rather_than_editing_the_shared_ones():
     assert sec_sections.STOP_PATTERNS_2 is not sec_sections.STOP_PATTERNS
     assert "item" in sec_sections.START_PATTERNS["10-K"], "ours-1 still spells the word literally"
     assert sec_sections.spaced("item") in sec_sections.START_PATTERNS_2["10-K"]
+
+
+def test_all_four_of_ours_2_s_patterns_read_the_spaced_word_and_only_the_end_one_guards_sub_items():
+    """Structural, and deliberately so. ``ours-2`` has two paths -- the line rule and the pattern rule -- and on
+    the shapes in this file they answer alike, so putting the literal ``"item"`` back in any ONE pattern changes
+    no output: the other path finds the same section. That redundancy is a property worth having, and it is also
+    what hides a half-finished fix, which the review of ``c3fc0d5`` showed by mutating each pattern in turn. So
+    the spelling is asserted on the objects themselves.
+
+    The behavioural tests above cover :data:`_LINE_END_2` (the heading VFF splits) and the fallback's stop copy;
+    these assertions cover all four, and the sub-item guard's one legitimate home.
+    """
+    spaced_item = sec_sections.spaced("item")
+    assert spaced_item in sec_sections._LINE_START_2["10-K"].pattern
+    assert spaced_item in sec_sections._LINE_START_2["20-F"].pattern
+    assert spaced_item in sec_sections._LINE_END_2.pattern
+    for form in ("10-K", "20-F"):
+        assert spaced_item in sec_sections.START_PATTERNS_2[form], form
+        assert spaced_item in sec_sections.STOP_PATTERNS_2[form], form
+        assert "item" not in sec_sections.START_PATTERNS_2[form].replace(spaced_item, ""), form
+
+    # The guard belongs on the end pattern, which matches a bare number, and nowhere else: every start and stop
+    # requires a title after the number, which a sub-item never carries.
+    guard = sec_sections._NOT_SUBITEM
+    assert guard == r"(?![.,]\d)" and r"\s" not in guard, "no whitespace: it would reach over a page number"
+    assert guard in sec_sections._LINE_END_2.pattern
+    assert guard not in sec_sections._LINE_START_2["10-K"].pattern
+    assert guard not in sec_sections._LINE_START_2["20-F"].pattern
+    for form in ("10-K", "20-F"):
+        assert guard not in sec_sections.START_PATTERNS_2[form], form
+        assert guard not in sec_sections.STOP_PATTERNS_2[form], form
+
+
+# ── the review of c3fc0d5: three ways ours-2 answered WORSE than ours-1 ────────────────────────────────────────
+# Each of these was measured on the commit under review, where ours-2 lost to ours-1 on the same input. They are
+# here as named tests and not only as golden rows because the golden records "what ours-2 answers", while these
+# say which answer is the right one and why -- and because a rule change that moved them would then have to argue
+# with a sentence, not just recapture a file.
+def test_a_line_start_with_no_line_start_stop_still_ends_at_the_titled_stop():
+    """The worst of the three. "Item 1A. Risk Factors" written inline -- mid-line, after a page footer, behind a
+    "PART I" -- is where Item 1 ends, and ``ours-1``'s pattern path stopped there. ``ours-2``'s line rule accepts
+    a start that ``ours-1`` gave up on, so on this input it had no line-start heading to stop at and ran to the
+    end of the filing: 55,022 characters where ``ours-1`` gave 26,999, all of it Item 1A and beyond. On a real
+    filing, with no cap left to catch it, that is the whole document stored as Item 1.
+
+    The label was honest (``overrun``), which is why only a length check finds this.
+    """
+    risk = "Risks abound. " * 2000
+    for tail in (" Item 1A. Risk Factors ", "\nPART I Item 1A. Risk Factors\n"):
+        text = "Item 1. Business\n" + BODY + tail + risk
+        old_item, old_quality = sec_sections.cut_item(text, "10-K", version=OURS_1)
+        new_item, new_quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+        assert old_quality == "ok"
+        assert (new_quality, len(new_item)) == (old_quality, len(old_item)), tail
+        assert "Risks abound" not in new_item, tail
+
+
+def test_a_heading_with_its_page_number_under_it_still_ends_the_slice():
+    """"Item 1A.\\n12\\nRisk Factors" -- a heading and the page number the filer printed beneath it. The guard
+    that keeps "Item 1.01" from being read as Item 1 was spelled ``(?![.,]\\s*\\d)``, and ``\\s*`` crossed that
+    newline, so the heading was not a heading: the slice ran through the risk factors and still said ``ok``,
+    because :func:`_holds_another_item` reads the same pattern and was blind to the same heading.
+
+    A clean label on a wrong slice is worse than ``overrun`` on one, which is what makes this the second fix.
+    """
+    text = ("Item 1. Business\n" + BODY + "\nItem 1A.\n12\nRisk Factors\n" + "Risks abound. " * 2000
+            + "\nItem 2. Properties\n" + BODY)
+    old_item, old_quality = sec_sections.cut_item(text, "10-K", version=OURS_1)
+    new_item, new_quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert (new_quality, len(new_item)) == ("ok", len(old_item)) and old_quality == "ok"
+    assert "Risks abound" not in new_item
+
+
+@pytest.mark.parametrize("heading,is_an_item", [
+    ("\nItem 1A.\n12\nRisk Factors\n", True),   # the shape above: a page number on the next line
+    ("\nItem 2.\n34\n", True),                  # the same, with nothing but the number after it
+    ("\nItem 7. 2024 Results\n", True),         # a year is not a sub-item number
+    ("\nItem 2, 3 and 4\n", True),              # combined items
+    ("\nItem 1.01 Entry into a Material Definitive Agreement\n", False),   # an 8-K sub-item
+    ("\nItem 2.01 Completion of Acquisition\n", False),                    # PCVX's, the defect of #755
+])
+def test_only_a_digit_glued_to_the_stop_makes_a_sub_item(heading, is_an_item):
+    """The guard's whole job, as a table. ``ours-1``'s end pattern reads every row above as a heading, which is
+    the PCVX defect on the last two; ``ours-2`` must reject exactly those two and keep the rest.
+    """
+    assert bool(sec_sections._LINE_END_2.search(heading)) is is_an_item
+
+
+def test_items_1_and_2_written_with_a_comma_is_still_a_start():
+    """"Items 1, 2. Business and Properties", one of the three spellings ``START_PATTERNS``'s ``(?:and|&|,)``
+    branch exists for. The sub-item guard was on the start patterns too, where it rejected "1, 2" and made that
+    branch dead: ``ours-2`` answered ``missing`` on a filing ``ours-1`` cut cleanly. A start needs no guard --
+    every start pattern requires a title after the number ("business", "information on the company"), which
+    "Item 1.01 Entry into a Material Definitive Agreement" never carries.
+    """
+    text = "Items 1, 2. Business and Properties\n" + BODY + "\nItem 1A. Risk Factors\n" + "Risky. " * 100
+    old = sec_sections.cut_item(text, "10-K", version=OURS_1)
+    new = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert old[1] == "ok" and new[1] == "ok"
+    assert len(new[0]) == len(old[0])
+    assert "_NOT_SUBITEM" not in sec_sections.START_PATTERNS_2["10-K"]
+    for pattern in sec_sections.START_PATTERNS_2.values():
+        assert "(?![.,]" not in pattern, "the guard belongs on the end pattern alone"
+
+
+# ── the ours-2 baseline: every shared case's text, not just its label ──────────────────────────────────────────
+# The review of c3fc0d5 found this gap and the first finding above hid in it. ``test_no_input_at_all_makes_ours_2
+# _answer_capped`` asserts a label *set* over CASES, so ours-2's text on a shared case could move freely: dropping
+# the contents-page skip or the 20-F regulation stop from ours-2 changes what it cuts and still passes. This file
+# pins the text itself.
+#
+# It is a BASELINE and not a truth: it records what ours-2 answers today, captured from this very code, so it
+# proves no answer is right. What it proves is that the next edit to ours-2 cannot move a shared case's text
+# without a human seeing the number change. The three rows where it differs from ours-1's golden are the three
+# named defects above, and the test below says so by name rather than letting them pass as mere difference.
+_OURS_2_GOLDEN = json.loads(
+    (Path(__file__).parent / "fixtures" / "sec_sections_ours_2_golden.json").read_text(encoding="utf-8"))
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def test_the_ours_2_baseline_covers_every_case_and_nothing_else():
+    assert set(_OURS_2_GOLDEN["cases"]) == {name for name, _, _ in CASES}
+    assert _OURS_2_GOLDEN["rule_version"] == OURS_2
+
+
+@pytest.mark.parametrize("name,text,form", CASES, ids=[c[0] for c in CASES])
+def test_ours_2_still_cuts_every_shared_case_the_way_it_was_captured(name, text, form):
+    want = _OURS_2_GOLDEN["cases"][name]
+    assert _sha(text) == want["input_sha256"], \
+        f"the input {name!r} changed since the baseline was captured; recapture it or leave it alone"
+
+    item, quality = sec_sections.cut_item(text, form, version=OURS_2)
+    assert quality == want["quality"]
+    if want["item_chars"] is None:
+        assert item is None
+    else:
+        assert item is not None and len(item) == want["item_chars"]
+        assert _sha(item) == want["item_sha256"]
+        assert item[:80] == want["item_head"] and item[-80:] == want["item_tail"]
+
+    aif = sec_sections.cut_aif_business(text, version=OURS_2)
+    if want["aif_business_chars"] is None:
+        assert aif is None
+    else:
+        assert aif is not None and len(aif) == want["aif_business_chars"]
+        assert _sha(aif) == want["aif_business_sha256"]
+
+
+def test_the_only_cases_where_ours_2_differs_from_ours_1_are_the_three_named_defects():
+    """The baseline against the move's golden, row by row. A fourth row moving is a side effect nobody asked
+    for, and this is the test that would say so -- the per-case numbers above would move together with the
+    recapture that caused it, and the label-set property test would not notice at all.
+    """
+    ours_1 = json.loads((Path(__file__).parent / "fixtures" / "sec_sections_ours_1_golden.json")
+                        .read_text(encoding="utf-8"))["cases"]
+    moved = {name for name in ours_1
+             if (ours_1[name]["quality"], ours_1[name]["item_chars"], ours_1[name]["aif_business_chars"])
+             != (_OURS_2_GOLDEN["cases"][name]["quality"], _OURS_2_GOLDEN["cases"][name]["item_chars"],
+                 _OURS_2_GOLDEN["cases"][name]["aif_business_chars"])}
+    assert moved == {
+        "split_word_item_1a",        # VFF's "ITE M 1A": overrun 27,030 -> ok 26,999
+        "over_the_cap",              # the cap is gone: capped 200,000 -> ok 239,999
+        "suspect_inner_item_header",  # same text, honest label: ok -> overrun
+    }
+
+
+def test_the_titled_fallback_skips_a_stop_heading_named_in_the_first_paragraph():
+    """The fallback searches past :data:`MIN_ITEM_CHARS`, as the line-end search does. A filer who writes "see
+    Item 1A. Risk Factors below" in the opening paragraph would otherwise end Item 1 there, and what got stored
+    as the business section would be the introduction.
+
+    The mention has to sit more than 400 characters past the start, or the contents-page check skips the start
+    altogether and the pattern path -- which has no such offset, in either version -- decides instead.
+    """
+    text = ("Item 1. Business\nWe begin. " + "Opening paragraph. " * 30
+            + "See Item 1A. Risk Factors below for the risks.\n" + BODY
+            + " Item 1A. Risk Factors " + "Risky. " * 100)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert len(item) > sec_sections.MIN_ITEM_CHARS
+    assert "We begin" in item and "Risky." not in item
+
+
+@pytest.mark.parametrize("name,text,form,needle", [
+    # the line-start pattern: VFF's own spelling, but in the heading that OPENS the section
+    ("line start", "ITE M 1. Business\n" + BODY + "\nItem 1A. Risk Factors\n" + "Risky. " * 100,
+     "10-K", "Risky."),
+    # the titled fallback's stop copy: the start begins a line, the stop does not, and its word is split
+    ("stop copy", "Item 1. Business\n" + BODY + " Ite m 1A. Risk Factors " + "Risky. " * 100,
+     "10-K", "Risky."),
+    # the 20-F pattern start, reached because nothing here starts a line
+    ("20-F start copy", "Cover page. Ite m 4. Information on the Company " + BODY
+     + " Item 5. Operating Results " + "Results. " * 100, "20-F", "Results."),
+])
+def test_every_pattern_spells_item_the_spaced_way_not_just_the_end_one(name, text, form, needle):
+    """Defect 1 is "``item`` is spelled with :func:`spaced` like every other heading word", and the filing it
+    was measured on splits the word in its *stop* heading. The rule has four patterns that read the word, and a
+    test on one of them lets the other three fall back to the literal spelling without a red run -- the review
+    of ``c3fc0d5`` found exactly that, by putting ``"item"`` back in each of them in turn.
+    """
+    item, quality = sec_sections.cut_item(text, form, version=OURS_2)
+    assert item is not None, name
+    assert sec_sections.base(quality) in {"ok", "overrun"}, (name, quality)
+    assert needle not in item, f"{name}: the slice ran past the heading whose word is split"
+
+
+@pytest.mark.parametrize("spelling", ["Items 1,2. Business and Properties", "Items 1, 2. Business and Properties"])
+def test_combined_items_are_a_start_with_or_without_a_space_after_the_comma(spelling):
+    """The sub-item guard belongs on the end pattern alone, and both spellings show why. With the guard on a
+    start, "1,2" is rejected outright and "1, 2" was rejected by the older ``\\s*`` spelling -- which is why the
+    fix to that spelling masks this one unless both are tested.
+    """
+    text = spelling + "\n" + BODY + "\nItem 1A. Risk Factors\n" + "Risky. " * 100
+    old = sec_sections.cut_item(text, "10-K", version=OURS_1)
+    new = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert old[1] == "ok" and new[1] == "ok", spelling
+    assert len(new[0]) == len(old[0]), spelling
+
+
+# A line starting with "Item 1. Business" is not always the section's heading, and the line rule has three
+# skips that say so. The contents-page one is pinned by the shared cases; these two were not, and ours-2's
+# line rule is reached far more often than ours-1's because it no longer gives up on an unclosed start.
+_FILLER = "Forward-looking statements follow. " * 20 + "\n"   # over 400 characters, and no item heading in it
+
+
+def test_a_contents_line_whose_page_number_is_underneath_it_is_not_the_heading():
+    """"Item 1. Business" with "3" on the next line is a contents entry. The check for the item heading within
+    400 characters does not see this one -- the contents page lists nothing else nearby -- so the page number is
+    what gives it away. Taking it would start the slice in the contents page.
+    """
+    text = ("Item 1. Business\n3\n" + _FILLER + "Item 1. Business\n" + BODY
+            + "\nItem 1A. Risk Factors\n" + "Risky. " * 100)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert item.startswith(BODY[:40]), "the slice begins at the real heading, not in the contents page"
+    assert "Forward-looking" not in item
+
+
+def test_a_cross_reference_broken_across_two_lines_is_not_the_heading_either():
+    """A sentence the HTML-to-text conversion broke after "refer to" leaves "Item 1. Business, above." at the
+    start of its own line, which the start pattern matches. What says it is a reference and not a heading is the
+    line before it, which this skip reads past the newline.
+
+    The decoy has to be a line-start match for the skip to be tested at all: a mention inside a line, such as
+    ``See "Item 1. Business" for ...``, never matches the pattern and so proves nothing about it.
+    """
+    text = ("For a description of our operations, refer to\nItem 1. Business, above.\n" + _FILLER
+            + "Item 1. Business\n" + BODY + "\nItem 1A. Risk Factors\n" + "Risky. " * 100)
+    decoy = sec_sections._LINE_START_2["10-K"].search(text)
+    assert sec_sections._is_ref(text, decoy), "the decoy must be a line-start match, or the skip is untested"
+
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert item.startswith(BODY[:40])
+    assert "Forward-looking" not in item
