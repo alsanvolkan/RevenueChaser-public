@@ -32,7 +32,7 @@ from pathlib import Path
 import duckdb
 
 from ....core import calendar
-from .. import base
+from .. import base, cik_history
 from .. import dirty as dirty_set
 from . import KIND, common, facts, sec_index
 
@@ -107,6 +107,22 @@ def read_company(ctx: base.RunContext, cik: str, as_of: date, wanted: set[str] =
     return base.write_raw_json(raw, body)
 
 
+def _with_predecessors(ctx: base.RunContext, rows: list[dict], companies: list[str]) -> list[str]:
+    """``companies`` and the CIKs they used to file under (#749), in number order.
+
+    A company that reorganised or redomiciled keeps its older statements under the predecessor's CIK, and the SEC
+    serves them only there: asked for as a company of its own, the file is read once like any new company's, and
+    ``tables._facts`` serves its older periods under the successor. The pairs and their source:
+    ``build/cik_history.py``.
+    """
+    pairs = common.predecessor_ciks(rows)
+    extra = sorted({c for pres in pairs.values() for c in pres} - set(companies), key=int)
+    if extra:
+        ctx.notes.append(f"{len(extra)} predecessor CIK(s) of {len(pairs)} company(ies) read as well "
+                         f"({cik_history.SEED_SOURCE})")
+    return sorted(set(companies) | set(extra), key=int)
+
+
 class CompanyFacts:
     name = NAME
     kind = KIND
@@ -120,10 +136,12 @@ class CompanyFacts:
         return calendar.today_ny()
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
-        companies = common.ciks(common.universe())
+        rows = common.universe()
+        companies = common.ciks(rows)
         if not companies:
             ctx.notes.append("no Tier A companies yet (no spine file)")
             return []
+        companies = _with_predecessors(ctx, rows, companies)
         tier_a = set(companies)
         wanted: dict[str, set[str]] = {}
         days = sec_index.lookback(ctx, NAME, as_of, lambda: min(filter(None, map(_newest_read, companies)),
@@ -159,8 +177,9 @@ class CompanyFacts:
 
     def backfill(self, ctx: base.RunContext, start: date | None, end: date) -> None:
         # The facts answer holds a company's whole history: a backfill reads every company not read yet.
+        rows = common.universe()
         out, read = [], 0
-        for cik in common.ciks(common.universe()):
+        for cik in _with_predecessors(ctx, rows, common.ciks(rows)):
             held = _raws(cik)
             if held:
                 # Typed again from raw, with no request: a change of the extraction rules (#271) reaches a company
