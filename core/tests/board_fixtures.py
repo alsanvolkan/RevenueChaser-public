@@ -393,6 +393,7 @@ def _watchlists(tmp_path, monkeypatch):
         "counts": {"symbols": 2, "sections": 1, "unsupported": 1},
         "session": "2026-11-11",
         "tabs": [{"key": "price", "label": "Price"}],
+        "tab": "price",
         "issue": H("issue"),
     })
 

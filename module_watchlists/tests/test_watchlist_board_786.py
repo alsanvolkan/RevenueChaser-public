@@ -143,7 +143,9 @@ def test_the_page_says_the_unit_once_in_the_header_and_never_on_a_row(monkeypatc
     monkeypatch.setattr(board.read, "ticker_bars",
                         lambda *a, **k: _bars([("NVDA", date.today(), 110.0, 5.0)]))
     html = board.render_html(board.payload(list_id))
-    assert html.count('<span class="wl-hu">USD</span>') == sum(1 for _, _, u in board.PRICE_COLUMNS if u) == 3
+    # The header follows the open tab, so the browser draws it from this column set rather than the server.
+    assert [c[0] for c in board.COLUMNS["price"] if c[2] == "USD"] == ["last", "chg", "cap"]
+    assert '"unit": "USD"' in html or '"unit":"USD"' in html, "the unit reaches the page in the column set"
     assert '<span class="wl-u">USD</span>' not in html, "a row never repeats the unit"
 
 
@@ -151,3 +153,83 @@ def test_the_phone_rule_fits_every_column_rather_than_scrolling_sideways():
     phone = board._CSS.split("@media (max-width:720px)", 1)[1]
     assert "overflow-x" not in phone, "the phone shows every column; nothing scrolls sideways"
     assert ".wl-grip,.wl-nm{display:none}" in phone, "the handle and the company name are for the mouse"
+
+
+# ── the derived tabs (#786 step 4b) ──────────────────────────────────────────
+
+def _series(ticker: str, closes: list[float], start: date):
+    """One bar a day from ``start`` for one ticker."""
+    return [(ticker, start + timedelta(days=i), c, 1_000_000.0) for i, c in enumerate(closes)]
+
+
+def _frame_with_ranges(rows: list[tuple]):
+    """A ``ticker_bars`` frame that also carries ``high`` and ``low`` — what the risk tab reads."""
+    import pandas as pd
+    return pd.DataFrame([{"ticker": t, "session_date": pd.Timestamp(d), "close": c,
+                          "high": c * 1.02, "low": c * 0.98, "volume": v} for t, d, c, v in rows])
+
+
+@pytest.fixture
+def a_long_list():
+    list_id = store.create_list("Growth")
+    store.add_symbol(list_id, "NASDAQ:NVDA")
+    store.add_symbol(list_id, "TVC:VIX")
+    store.add_symbol(list_id, "BIST:THYAO")
+    return list_id
+
+
+def test_an_unknown_list_or_a_tab_that_is_not_derived_is_no_answer(no_data, a_long_list):
+    assert board.columns(a_long_list, "price") is None, "Price rides the first payload, not this route"
+    assert board.columns(a_long_list, "financials") is None, "not wired yet, and must not answer empty"
+    assert board.columns("no-such-list", "performance") is None
+
+
+def test_performance_gives_every_window_and_none_where_the_history_is_too_short(monkeypatch, no_data, a_long_list):
+    start = date(2026, 1, 2)
+    closes = [100.0 + i for i in range(300)]                       # 300 sessions: a 1Y window, not a 5Y one
+    monkeypatch.setattr(board.read, "ticker_bars",
+                        lambda *a, **k: _frame_with_ranges(_series("NVDA", closes, start)))
+    values = board.columns(a_long_list, "performance")["values"]
+    row = values["NASDAQ:NVDA"]
+    assert row["p1W"] == pytest.approx((closes[-1] - closes[-6]) / closes[-6] * 100)
+    assert row["p1Y"] is not None
+    assert row["p5Y"] is None, "a name with 300 sessions has no 5-year number"
+    assert "pYTD" in row
+
+
+def test_only_a_us_listing_gets_derived_numbers(monkeypatch, no_data, a_long_list):
+    monkeypatch.setattr(board.read, "ticker_bars",
+                        lambda *a, **k: _frame_with_ranges(_series("NVDA", [100.0 + i for i in range(60)],
+                                                                   date(2026, 1, 2))))
+    values = board.columns(a_long_list, "technicals")["values"]
+    assert set(values) == {"NASDAQ:NVDA"}, "a market series is not a bar series, and #785 has no source at all"
+
+
+def test_the_technicals_tab_carries_the_three_ratings_with_their_words(monkeypatch, no_data, a_long_list):
+    rising = [100.0 * (1.004 ** i) for i in range(300)]
+    monkeypatch.setattr(board.read, "ticker_bars",
+                        lambda *a, **k: _frame_with_ranges(_series("NVDA", rising, date(2026, 1, 2))))
+    row = board.columns(a_long_list, "technicals")["values"]["NASDAQ:NVDA"]
+    assert row["tech_label"] in ("strong_buy", "buy"), "a series that only rises is not a sell"
+    assert row["ma_label"] and row["os_label"]
+    assert row["rsi"] is not None and row["mom"] is not None
+
+
+def test_beta_is_measured_over_the_sessions_the_two_series_share(monkeypatch, no_data, a_long_list):
+    """The name trades every second day of the index's calendar.
+
+    Paired by position its returns would sit against the index's returns of other days, which is not a beta.
+    Aligned, the two move together on every shared session, so the beta is 1.
+    """
+    start = date(2026, 1, 2)
+    spy_closes, nvda_closes = [100.0], [50.0]
+    for i in range(1, 700):
+        step = 1.01 if i % 3 else 0.99
+        spy_closes.append(spy_closes[-1] * step)
+        nvda_closes.append(nvda_closes[-1] * step)                 # same move, so an aligned beta is 1
+    spy = _series("SPY", spy_closes, start)
+    nvda = [row for i, row in enumerate(_series("NVDA", nvda_closes, start)) if i % 2 == 0]
+    monkeypatch.setattr(board.read, "ticker_bars", lambda *a, **k: _frame_with_ranges(spy + nvda))
+    row = board.columns(a_long_list, "risk")["values"]["NASDAQ:NVDA"]
+    assert row["b1Y"] == pytest.approx(1.0, abs=1e-6)
+    assert row["v1D"] == pytest.approx((1.02 - 0.98) / 0.98 * 100, rel=1e-6)

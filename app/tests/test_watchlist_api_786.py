@@ -208,6 +208,42 @@ def test_a_write_to_a_list_that_is_not_there_is_a_404_or_a_400_never_a_silent_ok
     assert client.post("/api/watchlists/ghost/sections/order", json={"order": []}).status_code == 404
 
 
+# ── the derived tabs ─────────────────────────────────────────────────────────
+
+def test_a_derived_tab_answers_one_row_per_symbol_the_page_can_draw(client, a_list, monkeypatch):
+    """The route's shape: the symbol as avo wrote it is the key, so the page can put the row where it belongs.
+
+    The numbers themselves are the board's own tests (``module_watchlists/tests``); what matters here is that the
+    lazy fetch hands the page a row for each symbol it has already drawn.
+    """
+    import datetime as dt
+
+    import pandas as pd
+    from RevenueChaser.module_watchlists import board
+    start = dt.date(2026, 1, 2)
+    rows = [{"ticker": t, "session_date": pd.Timestamp(start + dt.timedelta(days=i)),
+             "close": 100.0 + i, "high": 101.0 + i, "low": 99.0 + i, "volume": 1_000_000.0}
+            for t in ("NVDA", "AMD", "SPY") for i in range(120)]
+    monkeypatch.setattr(board.read, "ticker_bars", lambda *a, **k: pd.DataFrame(rows))
+    store.add_symbol(a_list, "NASDAQ:NVDA")
+    store.add_symbol(a_list, "NASDAQ:AMD")
+    r = client.get(f"/api/watchlists/{a_list}/columns/performance")
+    assert r.status_code == 200
+    answer = r.get_json()
+    assert answer["ok"] is True and answer["tab"] == "performance"
+    assert set(answer["values"]) == {"NASDAQ:NVDA", "NASDAQ:AMD"}
+    assert answer["values"]["NASDAQ:NVDA"]["p1M"] > 0
+
+
+def test_the_price_tab_is_not_fetched_because_the_first_payload_carries_it(client, a_list):
+    assert client.get(f"/api/watchlists/{a_list}/columns/price").status_code == 404
+
+
+def test_an_unknown_tab_or_list_is_a_404(client, a_list):
+    assert client.get(f"/api/watchlists/{a_list}/columns/nope").status_code == 404
+    assert client.get("/api/watchlists/ghost/columns/risk").status_code == 404
+
+
 # ── the export and the search ────────────────────────────────────────────────
 
 def test_the_export_is_tradingviews_own_format_with_avos_spelling(client, a_list):

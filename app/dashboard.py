@@ -2247,6 +2247,21 @@ def api_watchlists_export(list_id: str):
         "Content-Disposition": f'attachment; filename="{safe}.txt"'})
 
 
+@app.route("/api/watchlists/<list_id>/columns/<tab>")
+def api_watchlists_columns(list_id: str, tab: str):
+    """One derived tab's numbers for a list (#786 step 4b): ``{ok, tab, values}``, keyed by symbol.
+
+    Not in the board's first payload: Performance, Risk and Technicals read five years of bars, which a board
+    opened on Price would pay for without showing. The page asks the first time the tab is opened. 404 for an
+    unknown list or a tab that is not derived from the bars.
+    """
+    from RevenueChaser.module_watchlists import board as wl_board
+    found = wl_board.columns(list_id, tab)
+    if found is None:
+        return jsonify({"ok": False, "error": "unknown watch list or tab"}), 404
+    return jsonify({"ok": True, **found})
+
+
 @app.route("/api/watchlists/<list_id>/symbol/add", methods=["POST"])
 def api_watchlists_symbol_add(list_id: str):
     """Put one symbol on a list, in the section the body names. A symbol already there is no error and no write."""
