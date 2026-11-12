@@ -55,12 +55,21 @@ def test_an_unknown_list_in_the_query_opens_the_first_one_rather_than_404(client
 
 # ── the writes ───────────────────────────────────────────────────────────────
 
-def test_a_write_without_the_panel_header_is_refused_and_stores_nothing(a_list):
+def test_a_write_without_the_panel_header_is_refused_and_stores_nothing(client, a_list):
+    """The same call twice: refused without the header, accepted with it.
+
+    Both halves matter. The refusal alone proves nothing — ``_local_only`` runs before routing, so a path that
+    does not exist at all is refused the same way — so the test says the route is there and that the header is
+    what divides the two.
+    """
     dashboard.app.config["TESTING"] = True
     bare = dashboard.app.test_client()
-    r = bare.post(f"/api/watchlists/{a_list}/symbol/add", json={"symbol": "NASDAQ:NVDA"})
-    assert r.status_code == 403
+    refused = bare.post(f"/api/watchlists/{a_list}/symbol/add", json={"symbol": "NASDAQ:NVDA"})
+    assert refused.status_code == 403
     assert store.symbols(a_list) == []
+    accepted = client.post(f"/api/watchlists/{a_list}/symbol/add", json={"symbol": "NASDAQ:NVDA"})
+    assert accepted.status_code == 200
+    assert store.symbols(a_list) == ["NASDAQ:NVDA"]
 
 
 def test_adding_a_symbol_stores_it_and_answers_with_the_whole_list(client, a_list):
