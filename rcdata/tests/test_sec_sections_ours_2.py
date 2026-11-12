@@ -286,13 +286,18 @@ def test_all_four_of_ours_2_s_patterns_read_the_spaced_word_and_only_the_end_one
     # The guard belongs on the end pattern, which matches a bare number, and nowhere else: every start and stop
     # requires a title after the number, which a sub-item never carries.
     guard = sec_sections._NOT_SUBITEM
-    assert guard == r"(?![.,]\d)" and r"\s" not in guard, "no whitespace: it would reach over a page number"
+    assert guard == r"(?!\.[^\S\n]*\d\d\b)"
+    assert r"[^\S\n]" in guard, "the spaces it allows for must exclude the newline, or a page number is eaten"
     assert guard in sec_sections._LINE_END_2.pattern
     assert guard not in sec_sections._LINE_START_2["10-K"].pattern
     assert guard not in sec_sections._LINE_START_2["20-F"].pattern
     for form in ("10-K", "20-F"):
         assert guard not in sec_sections.START_PATTERNS_2[form], form
-        assert guard not in sec_sections.STOP_PATTERNS_2[form], form
+    # The 10-K stops carry a title after the number, so they need no guard. The 20-F stop does not, and a
+    # sub-item can end a 20-F section there; that is a change to the cut and is measured on its own, so the
+    # gap is asserted here rather than hidden.
+    assert guard not in sec_sections.STOP_PATTERNS_2["10-K"]
+    assert guard not in sec_sections.STOP_PATTERNS_2["20-F"], "still open: see this pattern's note"
 
 
 # ── the review of c3fc0d5: three ways ours-2 answered WORSE than ours-1 ────────────────────────────────────────
@@ -361,8 +366,7 @@ def test_items_1_and_2_written_with_a_comma_is_still_a_start():
     old = sec_sections.cut_item(text, "10-K", version=OURS_1)
     new = sec_sections.cut_item(text, "10-K", version=OURS_2)
     assert old[1] == "ok" and new[1] == "ok"
-    assert len(new[0]) == len(old[0])
-    assert "_NOT_SUBITEM" not in sec_sections.START_PATTERNS_2["10-K"]
+    assert new[0] == old[0]
     for pattern in sec_sections.START_PATTERNS_2.values():
         assert "(?![.,]" not in pattern, "the guard belongs on the end pattern alone"
 
@@ -420,10 +424,9 @@ def test_the_only_cases_where_ours_2_differs_from_ours_1_are_the_three_named_def
     """
     ours_1 = json.loads((Path(__file__).parent / "fixtures" / "sec_sections_ours_1_golden.json")
                         .read_text(encoding="utf-8"))["cases"]
+    keys = ("quality", "item_chars", "item_sha256", "aif_business_chars", "aif_business_sha256")
     moved = {name for name in ours_1
-             if (ours_1[name]["quality"], ours_1[name]["item_chars"], ours_1[name]["aif_business_chars"])
-             != (_OURS_2_GOLDEN["cases"][name]["quality"], _OURS_2_GOLDEN["cases"][name]["item_chars"],
-                 _OURS_2_GOLDEN["cases"][name]["aif_business_chars"])}
+             if any(ours_1[name][k] != _OURS_2_GOLDEN["cases"][name][k] for k in keys)}
     assert moved == {
         "split_word_item_1a",        # VFF's "ITE M 1A": overrun 27,030 -> ok 26,999
         "over_the_cap",              # the cap is gone: capped 200,000 -> ok 239,999
@@ -481,7 +484,10 @@ def test_combined_items_are_a_start_with_or_without_a_space_after_the_comma(spel
     old = sec_sections.cut_item(text, "10-K", version=OURS_1)
     new = sec_sections.cut_item(text, "10-K", version=OURS_2)
     assert old[1] == "ok" and new[1] == "ok", spelling
-    assert len(new[0]) == len(old[0]), spelling
+    assert new[0] == old[0], spelling
+    # both paths read the comma branch, so each masks the other's loss: count it in both.
+    assert sec_sections._LINE_START_2["10-K"].pattern.count("(?:and|&|,)") == 1
+    assert sec_sections.START_PATTERNS_2["10-K"].count("(?:and|&|,)") == 1
 
 
 # A line starting with "Item 1. Business" is not always the section's heading, and the line rule has three
@@ -520,3 +526,107 @@ def test_a_cross_reference_broken_across_two_lines_is_not_the_heading_either():
     assert quality == "ok"
     assert item.startswith(BODY[:40])
     assert "Forward-looking" not in item
+
+
+# ── the review of a8847db8: what the titled fallback itself gets right ─────────────────────────────────────────
+def test_a_genuinely_short_item_1_ends_at_its_real_stop_and_is_short_not_ok():
+    """The fallback's own defect, found in the round that added it. It used to start searching at
+    :data:`MIN_ITEM_CHARS`, so a filing whose Item 1 is shorter than that had its real inline "Item 1A. Risk
+    Factors" walked past; the slice closed on the Item 2 stop instead and said ``ok`` with every risk factor
+    inside it. ``ours-1`` answered ``short`` on this filing, which is the honest answer and is what it means:
+    the section really is this short.
+    """
+    short_body = "We make things. " * 94
+    text = ("Item 1. Business\n" + short_body + " Item 1A. Risk Factors " + "Risks abound. " * 2000
+            + " Item 1B. Unresolved Staff Comments None. Item 2. Properties " + BODY)
+    old_item, old_quality = sec_sections.cut_item(text, "10-K", version=OURS_1)
+    new_item, new_quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert (old_quality, new_quality) == ("short", "short")
+    assert new_item == old_item
+    assert "Risks abound" not in new_item
+
+
+def test_the_fallback_stops_at_the_first_heading_and_not_a_later_one():
+    """Three stops follow the body; the section ends at the first. Taking the last would store Item 1A and
+    Item 1B as part of Item 1 and still call it ``ok``, because every stop closes the slice.
+    """
+    text = ("Item 1. Business\n" + BODY + " Item 1A. Risk Factors " + "Risky. " * 400
+            + " Item 1B. Unresolved Staff Comments None. Item 2. Properties " + "Land. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert "Risky." not in item and "Land." not in item
+
+
+def test_the_fallback_works_on_a_20_f_as_well_as_a_10_k():
+    """Both forms have a stop list, and the 20-F path is the one no shared case reaches. Without the fallback
+    here, a 20-F whose Item 5 does not begin a line runs to the end of the document.
+    """
+    text = ("Item 4. Information on the Company\n" + BODY + " Item 5. Operating Results " + "Results. " * 400)
+    item, quality = sec_sections.cut_item(text, "20-F", version=OURS_2)
+    assert quality == "ok"
+    assert "Results." not in item
+    assert len(item) < len(text) - 2000
+
+
+def test_a_mention_in_the_body_does_not_end_the_slice_when_a_real_heading_follows():
+    """``See "Item 1A. Risk Factors" of this report`` in the middle of Item 1 is a cross-reference. The
+    fallback reads the words before a stop (:func:`_inline_ref`), not its position, which is what lets it keep
+    this and still end a short Item 1 at its real stop.
+    """
+    text = ("Item 1. Business\n" + BODY[:3000] + " as discussed under “Item 1A. Risk Factors” of this "
+            "report, which follows. " + BODY[:3000] + " Item 1A. Risk Factors " + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert "as discussed under" in item, "the mention is part of the section, not its end"
+    assert "Risky." not in item
+
+
+def test_a_heading_on_its_own_line_is_kept_even_when_the_words_before_it_read_as_a_reference():
+    """"See" as a page's last word and the heading as the next page's first line. :func:`_is_ref` strips the
+    newline and so calls that heading a reference; the line test in :func:`_inline_ref` is what keeps it, and
+    the shared ``suspect_tail_cross_reference`` case is the one that would move without it.
+    """
+    text, form = _BY_NAME["suspect_tail_cross_reference"]
+    assert sec_sections.cut_item(text, form, version=OURS_2) == \
+        sec_sections.cut_item(text, form, version=OURS_1)
+
+
+@pytest.mark.parametrize("heading,is_an_item", [
+    ("\nItem 2. 01 Completion of Acquisition\n", False),   # strip_html's spaces: PCVX's exhibit list again
+    ("\nItem 5. 02 Departure of Directors\n", False),
+    ("\nItem 2,3 and 4\n", True),            # a comma never introduced a sub-item
+    ("\nItem 2. 15 properties are leased\n", False),   # the cost of the two above, written down
+])
+def test_a_tag_split_sub_item_number_is_still_a_sub_item(heading, is_an_item):
+    """:func:`strip_html` turns a tag into a space, so "Item 2.</b><b>01" arrives with one in it. The guard
+    allows for that the way :func:`spaced` allows for it in the heading words -- and the last row is what that
+    costs: a section whose text opens with a two-digit number is not read as a heading.
+    """
+    assert bool(sec_sections._LINE_END_2.search(heading)) is is_an_item
+
+
+def test_every_branch_of_every_stop_list_reads_the_spaced_word_and_is_still_there():
+    """Three of ``STOP_PATTERNS_2``'s four 10-K and 20-F branches were unpinned: putting the literal ``"item"``
+    into the 1B, Item 2 or 20-F Item 5 branch, or deleting any of them, moved no test. Asserting "the spaced
+    word appears in this pattern" is satisfied by one branch of three, so this counts them.
+    """
+    spaced_item = sec_sections.spaced("item")
+    for form, branches in (("10-K", 3), ("20-F", 2)):
+        pattern = sec_sections.STOP_PATTERNS_2[form]
+        assert pattern.count(spaced_item) == branches, form
+        assert "item" not in pattern.replace(spaced_item, ""), f"{form}: a branch kept the literal word"
+    assert "1a" in sec_sections.STOP_PATTERNS_2["10-K"] and "1b" in sec_sections.STOP_PATTERNS_2["10-K"]
+    assert "4a" in sec_sections.STOP_PATTERNS_2["20-F"]
+
+
+def test_the_pattern_path_reads_ours_2_s_own_stops_and_not_ours_1_s():
+    """An all-inline 10-K whose stop heading splits the word: only ``ours-2``'s stop copy sees it, and the
+    pattern path has to be the one reading it. Pointing that path at ``ours-1``'s ``STOP_PATTERNS`` moved no
+    test before this one.
+    """
+    text = ("Cover. Item 1. Business " + BODY + " Ite m 1A. Risk Factors " + "Risky. " * 400)
+    assert sec_sections._line_item_ours_2(text, "10-K") is None, "this must reach the pattern path"
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert "Risky." not in item
+    assert sec_sections.base(quality) == "ok"
+    assert "Risky." in sec_sections.cut_item(text, "10-K", version=OURS_1)[0], "ours-1 cannot see that stop"

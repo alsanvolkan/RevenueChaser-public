@@ -227,12 +227,26 @@ _ITEM = _spaced("item")
 #: Agreement" (an 8-K's item), which must not be read as Item 1. The number may be followed by a full stop, by a
 #: colon or by nothing -- but not *immediately* by a digit, which is what makes "1.01" a different item from "1".
 #:
-#: **No ``\s*`` between the stop and the digit.** An earlier spelling, ``(?![.,]\s*\d)``, let the lookahead reach
-#: over the newline of "Item 1A.\n12\nRisk Factors" -- a heading with its page number under it -- and threw the
-#: heading away. The slice then ran past Item 1A and still said ``ok``, because :func:`_holds_another_item` reads
-#: the same pattern and was blind to the same heading. Only a digit glued to the stop makes a sub-item: "Item 2.
-#: 3 properties" and "Item 7. 2024 Results" are items, and ``ours-1``'s :data:`_LINE_END` reads all three.
-_NOT_SUBITEM = r"(?![.,]\d)"
+#: **A full stop, then two digits, and no newline crossed.** Three spellings were tried and the first two were
+#: wrong, each in its own way:
+#:
+#: - ``(?![.,]\s*\d)`` let the lookahead reach over the newline of "Item 1A.\n12\nRisk Factors" -- a heading with
+#:   its page number printed under it -- and threw the heading away. The slice ran past Item 1A and still said
+#:   ``ok``, because :func:`_holds_another_item` reads this pattern too and was blind to the same heading.
+#: - ``(?![.,]\d)`` fixed that and lost the defect it exists for: :func:`strip_html` turns every tag into a
+#:   space, so a filer's ``<b>Item 2.</b><b>01</b> Completion of Acquisition`` arrives as "Item 2. 01
+#:   Completion" -- which is PCVX's exhibit list again, with a space in it. That is the same tag-splitting
+#:   :func:`spaced` exists for, so the guard has to allow for it as the heading words do.
+#:
+#: The spelling kept reads "a full stop, any spaces that are not a newline, then exactly two digits": the sub-item
+#: numbers filers write are .01 to .99, and the pattern stops at the line, so the page number on the next line is
+#: still a page number. "Item 7. 2024 Results" and "Item 2. 3 properties" are items, as they are to ``ours-1``;
+#: so now is "Item 2,3 and 4", because a comma never introduced a sub-item and the guard no longer mentions one.
+#:
+#: **What it costs:** "Item 2. 15 properties are leased" -- a body whose first word is a two-digit number -- is
+#: not read as a heading. A section whose text begins with such a number and whose heading carries no title is
+#: the price of reading the sub-item, which is the shape that was really measured.
+_NOT_SUBITEM = r"(?!\.[^\S\n]*\d\d\b)"
 
 _LINE_START_2 = {
     "10-K": re.compile(rf"(?im)^[^\S\n]*{_ITEM}s?\s{{0,3}}(1|i)\b(?:\s*(?:and|&|,)\s*2\b)?"
@@ -245,10 +259,14 @@ _LINE_START_2 = {
 _LINE_END_2 = re.compile(rf"(?im)^[^\S\n]*{_ITEM}\s{{0,3}}(1[abc]|[2-9][abc]?|1[0-9])\b{_NOT_SUBITEM}")
 
 #: ``ours-1``'s :data:`START_PATTERNS` and :data:`STOP_PATTERNS`, spelled with :data:`_ITEM`. Copies and not
-#: edits of those two, because the boards read them (module docstring). :data:`_NOT_SUBITEM` is **not** on them:
-#: every branch here requires a title after the number ("business", "risk factors", "propert"), which a sub-item
-#: like "Item 1.01 Entry into a Material Definitive Agreement" never carries. It is on :data:`_LINE_END_2` alone,
-#: which matches a bare number and so needs it.
+#: edits of those two, because the boards read them (module docstring). :data:`_NOT_SUBITEM` is **not** on them,
+#: and that is right for every branch but one: each requires a title after the number ("business", "risk
+#: factors", "propert"), which a sub-item like "Item 1.01 Entry into a Material Definitive Agreement" never
+#: carries. **The exception is the 20-F stop**, ``item 4a`` or ``item 5`` followed by punctuation and nothing
+#: else, which "Item 5.02 Departure of Directors" matches: a 20-F whose Item 4 quotes an 8-K item ends there.
+#: Adding the guard to it is a change to what the cut returns, so it is measured and made on its own (#755's
+#: follow-up), not slipped in with a comment. :data:`_LINE_END_2` matches a bare number everywhere and carries
+#: the guard for that reason.
 START_PATTERNS_2 = {
     "10-K": (rf"\b{_ITEM}s?\s*1\s*\.?\s*(?:(?:and|&|,)\s*2\s*\.?\s*)?[\:{_DASH}]*\s*"
              rf"(?:(?:description\s+of|our)\s+(?:the\s+)?)?{_spaced('business')}"),
@@ -275,6 +293,31 @@ _POINTER = re.compile(r"(?i)\b(?:incorporated\s+(?:herein\s+)?by\s+reference"
                       r"|required\s+by\s+this\s+item\s+(?:is|are)\s+(?:set\s+forth|contained|included))")
 
 
+def _inline_ref(text: str, m: re.Match) -> bool:
+    """True when ``m`` is a mention of an item inside a line, rather than a heading of its own.
+
+    The titled fallback below needs this and the line-end search does not, because the headings it reads are
+    **inline** patterns: they match "Item 1A. Risk Factors" wherever it appears, including in the middle of a
+    sentence that only talks about Item 1A.
+
+    Two tests, and both are needed.
+
+    - :func:`_is_ref` is the shared reference test: "see", "under", "refer to" or an opening quote right before.
+    - **A heading that starts its own line is kept even so.** ``_is_ref`` reads the forty characters before the
+      match with the newline stripped off, so a filer who writes "See\nItem 1A. Risk Factors" as a page's last
+      word and the next page's heading looks like a reference to it. ``ours-1`` rejects that heading in its line
+      rule and then stops on it in its pattern rule, and ends Item 1 in the right place; this keeps that answer
+      (the shared ``suspect_tail_cross_reference`` case).
+
+    **Not applied without the line test, deliberately.** An inline mention that no reference word precedes --
+    "...of this report. Item 1A. Risk Factors" in a filing served as one paragraph -- is indistinguishable from
+    a heading here, and ends the slice. ``ours-1`` does the same, so this is parity and not a regression; which
+    answer is right is a question for the hand-checked set (#763), not for a shape built in a test.
+    """
+    line_start = text.rfind("\n", 0, m.start()) + 1
+    return bool(text[line_start:m.start()].strip()) and _is_ref(text, m)
+
+
 def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
     """``(body start, body end, a heading closed it)`` of the line-start rule, or None when it finds no body.
 
@@ -287,6 +330,13 @@ def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
     it just as well: "Item 1A. Risk Factors" is where Item 1 stops whether or not it begins a line, and reading
     it is the only thing that keeps the slice as short as ``ours-1``'s. Only when neither is there does the body
     run to the end of the document, and then ``closed`` is False and the label is ``overrun``.
+
+    The titled stop is taken from the start of the body, with no minimum length, and the mentions are filtered
+    out by :func:`_inline_ref` instead. An earlier version searched from ``MIN_ITEM_CHARS`` on, to walk past the
+    heading a filer names in his first paragraph -- and so walked past a **real** stop in a filing whose Item 1
+    is genuinely short, closed the slice on the next stop instead, and called the result ``ok`` with Item 1A
+    inside it. ``ours-1`` answered ``short`` on that filing. Position cannot tell a mention from a heading; the
+    words around it can.
     """
     stop_re = re.compile(STOP_PATTERNS_2[key], re.I)
     for m in _LINE_START_2[key].finditer(text):
@@ -296,12 +346,7 @@ def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
         end = next((e.start() for e in _LINE_END_2.finditer(text, m.end() + MIN_ITEM_CHARS)
                     if e.group(1).lower() != own and not _is_ref(text, e)), None)
         if end is None:
-            # Past :data:`MIN_ITEM_CHARS`, like the line-end search above it and for the same reason: the
-            # heading a filer repeats in the first paragraph ("the risks are in Item 1A. Risk Factors below")
-            # would otherwise end Item 1 a few hundred characters in, and the slice that survived would be the
-            # introduction rather than the section.
-            titled = stop_re.search(text, m.end() + MIN_ITEM_CHARS)
-            end = titled.start() if titled else None
+            end = next((t.start() for t in stop_re.finditer(text, m.end()) if not _inline_ref(text, t)), None)
         closed = end is not None
         if end is None:
             end = len(text)
@@ -364,8 +409,10 @@ def _slice_item_ours_2(text: str, form: str = "10-K") -> tuple[str | None, str]:
         return text[start:end].strip(), _quality_ours_2(text[start:end].strip(), own, closed)
 
     # The pattern path, for a document whose headings do not start their own lines (a filing served as one long
-    # paragraph). The same starts and stops as ``ours-1``, spelled so that ``item`` may be split and a sub-item
-    # is not the item, and with no cap: an unstopped start runs to the end of the document and is ``overrun``.
+    # paragraph). The same starts and stops as ``ours-1``, spelled so that ``item`` may be split, and with no
+    # cap: an unstopped start runs to the end of the document and is ``overrun``. The sub-item guard is not
+    # here -- these patterns require a title after the number, and :data:`STOP_PATTERNS_2`'s 20-F branch, which
+    # does not, is the one place a sub-item can still end a section (see that pattern's own note).
     start_re = re.compile(START_PATTERNS_2[key], re.I)
     stop_re = re.compile(STOP_PATTERNS_2[key], re.I)
 
