@@ -1984,7 +1984,8 @@ Two separate things, deliberately not conflated:
     exist, and every `<RC_STORE_DIR>/boards/<board>.duckdb` (DECISIONS S6). Each is first `CHECKPOINT`ed through
     `rawstore`'s peer-lock budget (a dashboard holding the file is waited out), so the `.wal` is in the main file,
     then copied and verified like a `duckdb` copy; the manifest records the file's `store_schema` version.
-  - `ops` — the operational state, only the tables worth keeping: the watch lists (`watchlist_*` and their changes),
+  - `ops` — the operational state, only the tables worth keeping: the named watch lists (`watch_list`) and
+    their members and history (`watchlist_option`, `watchlist_stock` and their `_changes`),
     `dataset_schedule`, `switch`, `kind_automation`, `dataset_automation`, `job_runs2`. The queue, the read log, the
     counters and the check rows are left empty in the copy. On `ops.sqlite` SQLite's online backup API, built on
     local storage and copied once finished; on Redis a filtered snapshot written in one transaction and compared row

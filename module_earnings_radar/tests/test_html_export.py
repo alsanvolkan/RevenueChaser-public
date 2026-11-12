@@ -945,9 +945,11 @@ class TestContentFitWidths:
         card = _minimal_card()
         content = export_html([card], [{"ticker": "AAPL"}],
                               {"AAPL": {"nrc": 50, "tier": "Ignore"}}).read_text(encoding="utf-8")
-        # The data table fills the pane; the computed widths act as minimums.
+        # The data table fills the pane; the computed widths act as minimums. The shared watch menu brings its
+        # own ``width:auto`` rules (#774), which say nothing about this table, so they are cut out first.
+        from RevenueChaser.core.reporting_common import WATCHLIST_CSS
         assert "table-layout:fixed;width:100%;min-width:0" in content
-        assert "width:auto" not in content
+        assert "width:auto" not in content.replace(WATCHLIST_CSS, "")
         assert "min-width:1712px" not in content
         assert "min-width:2600px" not in content
 

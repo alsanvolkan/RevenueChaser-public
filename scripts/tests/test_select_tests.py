@@ -25,7 +25,7 @@ def _runs(sel, test: str) -> bool:
 def test_rcdata_ops_reaches_the_e2e_tests_that_broke_on_pr_381():
     """PR #381 changed rcdata/ops.py and these three e2e tests failed; none of them imports ops directly."""
     reached = mod.reached_tests(["rcdata/ops.py"])
-    for name in ("test_settings_newdata.py", "test_spx_gamma_rcdata.py", "test_watchlist_pair.py"):
+    for name in ("test_settings_newdata.py", "test_spx_gamma_rcdata.py", "test_watchlist_menu.py"):
         assert f"module_testing/e2e/{name}" in reached, name
     assert mod.select(["rcdata/ops.py"]).mode == "FULL"  # the root conftest imports ops
 
