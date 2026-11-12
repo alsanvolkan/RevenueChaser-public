@@ -317,6 +317,8 @@ var ACTIVE = 'module_earnings_radar';
 var FILL_WIDTH = {'module_spx_gamma': true, 'module_earnings_radar': true, 'module_oipd': true, 'logs': true, 'runs': true,
                   // Welcome and News lay themselves out in one or two columns: they fill the pane, never grow past it.
                   'module_welcome': true, 'module_news': true,
+                  // 13F lays itself out to the pane since #761: fewer columns at 1187 px, cards on a phone.
+                  'module_sec_13f': true,
                   // #527: Data/Health keeps its own 1280 px column and scrolls a wide part inside its box; grown to its
                   // natural width it ran past a 969 px pane (avo 6 Nov 2026: "boyutu fixed olmali").
                   'module_settings': true};

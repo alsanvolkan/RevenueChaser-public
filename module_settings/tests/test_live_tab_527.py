@@ -16,13 +16,17 @@ def _page() -> str:
     return report.render_settings_dashboard({"newdata": {"error": "not read in this test"}, "tickers": []})
 
 
-def test_three_tabs_and_each_grafana_tab_frames_one_board():
+def test_four_tabs_watch_lists_first_and_each_grafana_tab_frames_one_board():
     """#715 (avo, 12 Nov 2026): Database · Fetch/Health · Logs, and no tab holds another tab, so the board picker
-    above the frame is gone: Fetch/Health is the one board rc-health, Logs is rc-logs."""
+    above the frame is gone: Fetch/Health is the one board rc-health, Logs is rc-logs. The same day: the watch lists
+    get a tab of their own, the first one."""
     html = _page()
     strip = html[html.index('id="settings-tabs"'):html.index("</nav>")]
-    assert re.findall(r'role="tab" id="(tab-[a-z]+)"', strip) == ["tab-data", "tab-health", "tab-logs"]
-    assert re.findall(r">([^<]+)</button>", strip) == ["Database", "Fetch/Health", "Logs"]
+    assert re.findall(r'role="tab" id="(tab-[a-z]+)"', strip) == ["tab-watch", "tab-data", "tab-health", "tab-logs"]
+    assert re.findall(r'aria-selected="(true|false)"', strip) == ["true", "false", "false", "false"]
+    assert re.findall(r">([^<]+)</button>", strip) == ["Watch lists", "Database", "Fetch/Health", "Logs"]
+    watch = html[html.index('id="panel-watch"'):html.index('id="panel-data"')]
+    assert "The watch lists could not be read." in watch, "a failed read is one line, never an empty tab"
     assert 'id="panel-live"' not in html and "live" not in report.SETTINGS_TABS["tabs"]
     health = html[html.index('id="panel-health"'):html.index('id="panel-logs"')]
     logs = html[html.index('id="panel-logs"'):html.index("<script>", html.index('id="panel-logs"'))]
