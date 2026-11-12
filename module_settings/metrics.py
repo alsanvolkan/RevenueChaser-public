@@ -487,6 +487,33 @@ def board_status(now: datetime | None = None, *, spend: Callable[[], dict] | Non
             "boards": read(boards if boards is not None else freshness)}
 
 
+#: The most rows one ``/api/settings/requests`` answer carries.
+REQUESTS_MAX = 1000
+
+
+def request_rows(after=0, limit=200) -> dict:
+    """``GET /api/settings/requests``: the newest rows of the per-request log (#715), newest first, for the Grafana
+    Logs board. ``after``: only rows with an id above it (a panel that has rows asks for the newer ones).
+
+    This process's own unwritten rows are written first, so the dashboard's reads are there at once; another
+    process (the builder) writes its rows at most a minute after it made them. Read-only otherwise, ops store only.
+    """
+    from RevenueChaser.rcdata import ops
+    try:
+        after, limit = max(0, int(after or 0)), min(REQUESTS_MAX, max(1, int(limit or 200)))
+    except (TypeError, ValueError):
+        raise ValueError("after and limit are whole numbers") from None
+    try:
+        ops.read_log.requests.flush()
+    except Exception:  # noqa: BLE001 - the rows wait for the next flush; what is stored is still answered
+        pass
+    rows = ops.recent_requests(after, limit)
+    for r in rows:
+        r["time"] = datetime.fromtimestamp(r["at"], timezone.utc).isoformat(timespec="milliseconds")
+    return {"rows": rows, "keep": ops.REQUEST_LOG_KEEP, "on": ops.request_log_on(),
+            "dropped": ops.read_log.requests.dropped}
+
+
 def datasets_list(datasets: dict | None = None) -> list[dict]:
     """``GET /api/build/datasets``: every dataset the builder knows, for an allow-list (Grafana buttons, B3)."""
     from RevenueChaser.module_settings import newdata

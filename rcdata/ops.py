@@ -47,6 +47,7 @@ from contextlib import closing, contextmanager
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
+from urllib.parse import urlsplit
 
 from ..core import calendar, config
 
@@ -84,6 +85,15 @@ UW_MINUTE_REMAINING_HEADER = "x-uw-req-per-minute-remaining"
 UW_MINUTE_RESET_HEADER = "x-uw-req-per-minute-reset"
 UW_TOKEN_LIMIT_HEADER = "x-uw-token-req-limit"
 READ_LOG_FLUSH_S = 60.0
+#: The per-request log (#715): one row a read, a need ask and a provider call, newest ``REQUEST_LOG_KEEP`` kept
+#: (about seven days at the volume measured on 12 Nov 2026: some 8,000 reads and 9,000 calls a day).
+REQUEST_KINDS = ("read", "need", "call")
+REQUEST_LOG_KEEP = 100_000
+#: Rows a process holds between two flushes; past it the oldest are dropped and counted, never the read failed.
+REQUEST_LOG_BUFFER = 5_000
+REQUEST_WHAT_MAX = 200
+#: ``RC_REQUEST_LOG=0`` turns the per-request log off (the daily counters go on): the rollback without a revert.
+REQUEST_LOG_ENV = "RC_REQUEST_LOG"
 # The Redis that holds this state instead of ops.sqlite (redis://host:port/db). Unset: ops.sqlite.
 REDIS_URL_ENV = "RC_REDIS_URL"
 
@@ -131,6 +141,11 @@ _DDL = {
     # #527: one source's own automation, over its kind's; no row follows the kind. A new table: no upgrade step.
     "dataset_automation": """CREATE TABLE IF NOT EXISTS dataset_automation (
         dataset TEXT PRIMARY KEY, mode TEXT NOT NULL, set_at REAL, set_by TEXT)""",
+    # #715, the per-request log. A new table, no upgrade step; trimmed to its newest REQUEST_LOG_KEEP rows by every
+    # write, and never part of a backup (a log, not state).
+    "request_log": """CREATE TABLE IF NOT EXISTS request_log (
+        id INTEGER PRIMARY KEY, at REAL NOT NULL, kind TEXT NOT NULL, process TEXT NOT NULL, what TEXT NOT NULL,
+        dataset TEXT, result TEXT, ms INTEGER)""",
 }
 TABLES = tuple(_DDL)
 _INDEXES = (
@@ -676,20 +691,101 @@ def _process_name() -> str:
     return stem or "python"
 
 
+def safe_url(url: str) -> str:
+    """``host/path`` of ``url`` for the request log: never the query, the fragment or a ``user:password@``, which
+    are where a key travels (FRED's ``api_key=``), and a path segment that looks like a token is cut to ``~``."""
+    try:
+        parts = urlsplit(str(url))
+        host = parts.hostname or ""
+    except ValueError:
+        return "unreadable url"
+    path = "/".join("~" if _TOKEN_LIKE.fullmatch(seg) else seg for seg in parts.path.split("/"))
+    return f"{host}{path}" if host else path
+
+
+#: 32 or more key-alphabet characters in one path segment: longer than any accession number or ticker we ask for.
+_TOKEN_LIKE = re.compile(r"[A-Za-z0-9_\-]{32,}")
+
+
+def request_log_on() -> bool:
+    return os.getenv(REQUEST_LOG_ENV, "").strip().lower() not in ("0", "off", "false", "no")
+
+
+class RequestLog:
+    """One row a request (#715), held in this process and written with the read log's flush (and at exit).
+
+    ``add`` never raises and never writes: it appends to a list. Past ``REQUEST_LOG_BUFFER`` unwritten rows the
+    oldest go and are counted in ``dropped``, so a store that stays down costs log rows, not memory or a read.
+    """
+
+    def __init__(self, process: str | None = None, now: Callable[[], float] = time.time):
+        self.process = process
+        self.dropped = 0
+        self._now = now
+        self._rows: list[tuple] = []
+        self._lock = threading.Lock()
+
+    def add(self, kind: str, what: str, *, dataset: str | None = None, result: str | None = None,
+            ms: float | None = None) -> None:
+        if kind not in REQUEST_KINDS:
+            raise ValueError(f"unknown request kind {kind!r}; one of {REQUEST_KINDS}")
+        if not request_log_on():
+            return
+        row = (self._now(), kind, str(what)[:REQUEST_WHAT_MAX], dataset,
+               None if result is None else str(result)[:REQUEST_WHAT_MAX], None if ms is None else int(round(ms)))
+        with self._lock:
+            self._rows.append(row)
+            self._cap()
+
+    def _cap(self) -> None:
+        over = len(self._rows) - REQUEST_LOG_BUFFER
+        if over > 0:
+            del self._rows[:over]
+            self.dropped += over
+
+    def flush(self) -> int:
+        """Write the held rows; how many. A failed write puts them back (oldest first, capped) and raises."""
+        with self._lock:
+            rows, self._rows = self._rows, []
+        if not rows:
+            return 0
+        try:
+            _add_requests(self.process or _process_name(), rows)
+        except Exception:
+            with self._lock:
+                self._rows[:0] = rows
+                self._cap()
+            raise
+        return len(rows)
+
+
 class ReadLog:
-    """Reads per table, counted in this process and written at most once a minute (and at exit)."""
+    """Reads per table, counted in this process and written at most once a minute (and at exit).
+
+    Every bump is also one row of ``requests`` (the per-request log, #715), written by the same flush.
+    """
 
     def __init__(self, process: str | None = None, clock: Callable[[], float] = time.monotonic):
         self.process = process
+        self.requests = RequestLog(process)
         self._clock = clock
         self._counts: dict[tuple[str, str], int] = {}
         self._last = clock()
         self._lock = threading.Lock()
 
     def bump(self, table: str) -> None:
+        if table.startswith(NEED_READ_PREFIX):
+            self.requests.add("need", table[len(NEED_READ_PREFIX):])
+        else:
+            self.requests.add("read", table)
         with self._lock:
             key = (_today(), table)
             self._counts[key] = self._counts.get(key, 0) + 1
+        self.flush_if_due()
+
+    def flush_if_due(self) -> None:
+        """Flush when a minute has passed since the last one; a failed flush is logged and never raised."""
+        with self._lock:
             due = self._clock() - self._last >= READ_LOG_FLUSH_S
         if due:
             try:
@@ -701,6 +797,10 @@ class ReadLog:
         with self._lock:
             counts, self._counts = self._counts, {}
             self._last = self._clock()
+        try:
+            self.requests.flush()
+        except Exception as exc:  # noqa: BLE001 - the request log is a log: its rows wait, the counts still go
+            logging.getLogger(__name__).warning("request log flush failed, kept for the next one: %s", exc)
         if not counts:
             return
         try:
@@ -720,6 +820,31 @@ def _add_reads(process: str, counts: list[tuple[str, str, int]]) -> None:
         con.executemany("INSERT INTO read_log (day, process, table_name, reads) VALUES (?, ?, ?, ?) "
                         "ON CONFLICT (day, process, table_name) DO UPDATE SET reads = reads + excluded.reads",
                         [(day, process, table, n) for day, table, n in counts])
+
+
+@_routed
+def _add_requests(process: str, entries: list[tuple]) -> None:
+    """Append ``(at, kind, what, dataset, result, ms)`` rows to ``request_log`` for ``process`` and drop all but the
+    newest ``REQUEST_LOG_KEEP``, in one transaction."""
+    with _open() as con, _tx(con):
+        con.executemany("INSERT INTO request_log (at, kind, process, what, dataset, result, ms) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        [(at, kind, process, what, dataset, result, ms) for at, kind, what, dataset, result, ms in entries])
+        con.execute("DELETE FROM request_log WHERE id <= (SELECT max(id) FROM request_log) - ?", (REQUEST_LOG_KEEP,))
+
+
+@_routed
+def recent_requests(after: int = 0, limit: int = 200) -> list[dict]:
+    """The newest ``limit`` rows of ``request_log`` with an id above ``after``, newest first. Never creates the file."""
+    return _select("SELECT * FROM request_log WHERE id > ? ORDER BY id DESC LIMIT ?", (int(after), max(0, int(limit))))
+
+
+def log_call(provider: str, what: str | None = None, *, dataset: str | None = None, result: str | None = None,
+             ms: float | None = None) -> None:
+    """One provider call into the per-request log: ``provider`` and, when given, ``what`` (pass a URL through
+    ``safe_url`` first). Held in memory; written by the next flush, which this asks for when a minute has passed."""
+    read_log.requests.add("call", f"{provider} {what}" if what else provider, dataset=dataset, result=result, ms=ms)
+    read_log.flush_if_due()
 
 
 read_log = ReadLog()

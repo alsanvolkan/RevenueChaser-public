@@ -455,3 +455,25 @@ def test_the_status_route_answers_with_the_three_parts(client):
     assert body["ok"] is True and {"providers", "cross_check", "boards", "read_at"} <= set(body)
     uw = [p for p in body["providers"]["providers"] if p["provider"] == "uw"][0]
     assert uw["today"] == 4 and uw["http_429_today"] == 1
+
+
+def test_the_requests_route_answers_the_newest_rows_with_this_process_own_first(client):
+    """#715: the per-request log for the Grafana Logs board; a read made just now is there without waiting a minute."""
+    ops.read_log.bump("market_series")
+    ops.log_call("uw", "GET api.test/x", dataset="options/uw", result="HTTP 200", ms=12.4)
+    body = client.get("/api/settings/requests?limit=5").get_json()
+    assert body["ok"] is True and body["keep"] == ops.REQUEST_LOG_KEEP and body["on"] is True and body["dropped"] == 0
+    mine = [(r["kind"], r["what"], r["result"], r["ms"]) for r in body["rows"]
+            if r["what"] in ("uw GET api.test/x", "market_series")]
+    assert mine == [("call", "uw GET api.test/x", "HTTP 200", 12), ("read", "market_series", None, None)]
+    assert all(r["time"].endswith("+00:00") for r in body["rows"])
+    ids = [r["id"] for r in body["rows"]]
+    assert ids == sorted(ids, reverse=True)
+    later = client.get(f"/api/settings/requests?after={ids[0]}").get_json()["rows"]
+    assert all(r["id"] > ids[0] for r in later)
+    assert len(client.get("/api/settings/requests?limit=1").get_json()["rows"]) == 1
+
+
+def test_the_requests_route_refuses_words_for_numbers(client):
+    got = client.get("/api/settings/requests?after=abc")
+    assert got.status_code == 400 and got.get_json()["ok"] is False
