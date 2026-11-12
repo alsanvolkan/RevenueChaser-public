@@ -71,8 +71,9 @@ function boardSettingsReset(btn, out, board){
 # The shell (templates/dashboard.html) renders ``THEME_CSS`` and ``THEME_JS``; a board adopts them in its own PR
 # (one per board) by using these names instead of its own palette. Dark is the default on every device (avo,
 # 25 Oct 2026). The palette is the warm-neutral "full design system" avo picked on 12 Nov 2026 (13F thread,
-# option D of four skill mocks) in the "Mürekkep" colours he picked the same day from three families: warm paper /
-# charcoal neutrals, one ink-blue ``accent`` for selection, sort and focus, muted ``pos`` / ``neg`` / ``amber``,
+# option D of four skill mocks) in the "Mürekkep" colours he picked the same day from three families: warm paper
+# neutrals in light, a navy-black "Gece" dark (his second pick, 12 Nov 13:50 Amsterdam, of three dark options), one
+# ink-blue ``accent`` for selection, sort and focus, muted ``pos`` / ``neg`` / ``amber``,
 # and ``data-1`` / ``data-2`` for chart series. Light applies when the reader chooses Light, or chooses Auto on a
 # device that prefers light. The choice is ``localStorage[THEME_STORAGE_KEY]`` ("light" / "auto"; absent = dark),
 # set as ``data-theme`` on ``<html>`` ("dark" / "light" / "auto"). The shell copies that attribute onto every
@@ -80,20 +81,20 @@ function boardSettingsReset(btn, out, board){
 THEME_STORAGE_KEY = "rc-theme"
 THEME_TOKENS = {
     "dark": {
-        "bg": "#1B1A18", "fg": "#D9D5CC", "bright": "#F3F0E8", "card": "#232220", "card-2": "#282725",
-        "border": "rgba(243,240,232,.10)", "sidebar": "#201F1D", "pos": "#6CC497", "neg": "#E98A7F",
-        "amber": "#E0B060", "sky": "#8DB8DA", "muted": "#A29D92", "accent": "#8DB8DA",
+        "bg": "#11161D", "fg": "#D5DBE3", "bright": "#F1F4F8", "card": "#192029", "card-2": "#1F2731",
+        "border": "rgba(213,219,227,.10)", "sidebar": "#141A22", "pos": "#6CC497", "neg": "#E98A7F",
+        "amber": "#E0B060", "sky": "#8DB8DA", "muted": "#98A2AF", "accent": "#8DB8DA",
         "accent-soft": "rgba(141,184,218,.14)", "pos-soft": "rgba(108,196,151,.12)",
         "neg-soft": "rgba(233,138,127,.12)", "amber-soft": "rgba(224,176,96,.12)", "focus": "#8DB8DA",
-        "input-bg": "#2A2926", "input-border": "#3D3B37", "hover": "#2C2B28", "topbar": "rgba(27,26,24,.85)",
-        "nav-fg": "rgba(243,240,232,.72)", "nav-on": "#2E2D2A", "hover-faint": "rgba(255,255,255,.03)",
-        "frame-bg": "#1B1A18", "overlay": "rgba(27,26,24,.72)", "scroll-thumb": "#4A4843",
-        "scroll-thumb-hover": "#5C5A54", "scroll-track": "#201F1D", "primary-bg": "#ECE8DF",
-        "primary-fg": "#1B1A18", "oi-bg": "rgba(35,34,32,.6)", "scrim": "rgba(0,0,0,.5)",
-        "shadow": "rgba(0,0,0,.35)", "badge-blue": "#8DB8DA", "badge-gray": "#A8A398",
+        "input-bg": "#1E2631", "input-border": "#323C49", "hover": "#212A35", "topbar": "rgba(17,22,29,.85)",
+        "nav-fg": "rgba(241,244,248,.72)", "nav-on": "#26303C", "hover-faint": "rgba(255,255,255,.03)",
+        "frame-bg": "#11161D", "overlay": "rgba(17,22,29,.72)", "scroll-thumb": "#3C4655",
+        "scroll-thumb-hover": "#4C5767", "scroll-track": "#141A22", "primary-bg": "#E6EBF1",
+        "primary-fg": "#11161D", "oi-bg": "rgba(25,32,41,.6)", "scrim": "rgba(0,0,0,.5)",
+        "shadow": "rgba(0,0,0,.35)", "badge-blue": "#8DB8DA", "badge-gray": "#A3ACB8",
         "hover-soft": "rgba(255,255,255,.05)", "hover-day": "rgba(255,255,255,.08)",
         "gex-pos-bg": "rgba(108,196,151,.20)", "gex-pos-fg": "#CDEEDC", "gex-neg-bg": "rgba(233,138,127,.20)",
-        "gex-neg-fg": "#F6D3CE", "data-1": "#4F93D2", "data-2": "#D9773F", "grid": "rgba(243,240,232,.07)",
+        "gex-neg-fg": "#F6D3CE", "data-1": "#4F93D2", "data-2": "#D9773F", "grid": "rgba(213,219,227,.07)",
     },
     "light": {
         "bg": "#F6F5F1", "fg": "#2E2C28", "bright": "#1A1916", "card": "#FFFFFF", "card-2": "#F3F1EC",

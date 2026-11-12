@@ -13,11 +13,11 @@ import pytest
 from RevenueChaser.core import reporting_common as rc
 
 # The palette avo picked on 12 Nov 2026 (13F thread):
-# option D "Full design system" in the "Mürekkep" colours. Dark is the default, so
+# option D "Full design system" in the "Mürekkep" colours, with the navy-black "Gece" dark. Dark is the default, so
 # "dark when dark is chosen" means exactly these values; a change to them is a design decision, not a refactor.
 PICKED_DARK = {
-    "bg": "#1B1A18", "fg": "#D9D5CC", "bright": "#F3F0E8", "card": "#232220", "card-2": "#282725",
-    "sidebar": "#201F1D", "pos": "#6CC497", "neg": "#E98A7F", "amber": "#E0B060", "muted": "#A29D92",
+    "bg": "#11161D", "fg": "#D5DBE3", "bright": "#F1F4F8", "card": "#192029", "card-2": "#1F2731",
+    "sidebar": "#141A22", "pos": "#6CC497", "neg": "#E98A7F", "amber": "#E0B060", "muted": "#98A2AF",
     "accent": "#8DB8DA", "focus": "#8DB8DA", "data-1": "#4F93D2", "data-2": "#D9773F",
 }
 PICKED_LIGHT = {
