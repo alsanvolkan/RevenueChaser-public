@@ -462,17 +462,24 @@ def merge_profile(regex_edges: list[dict], prof_edges: list[dict]) -> list[dict]
     """One filer's edges: the profile's first; a sentence, keyword or XBRL edge only for a
     (counterparty, relation) pair the profile does not name (#410: "prefers the profile row for a (filer,
     counterparty) pair", narrowed to the store's own key by #725). A profile edge with no share takes the XBRL or
-    sentence share stated for the same company in the same relation."""
+    sentence share stated for the same company in the same relation.
+
+    A display-only ``other`` edge (``mentions``: the name appeared with no relation verb) is the one exception to
+    the per-relation key: it states no relation at all, so a profile that names that company in *any* relation
+    already says more, and the ``other`` row would only double the company on the board.
+    """
     if not prof_edges:
         return regex_edges
-    by_party = {}
+    by_party, parties = {}, set()
     for e in prof_edges:
         by_party.setdefault(_party_relation(e), e)
+        parties.add(_counterparty(e))
     for e in regex_edges:
         p = by_party.get(_party_relation(e))
         if p is not None and p["share_pct"] is None and e.get("share_pct") is not None:
             p["share_pct"] = e["share_pct"]
-    return prof_edges + [e for e in regex_edges if _party_relation(e) not in by_party]
+    return prof_edges + [e for e in regex_edges if _party_relation(e) not in by_party
+                         and not (e["relation"] == "other" and _counterparty(e) in parties)]
 
 
 def _stored_profiles() -> dict[str, dict]:

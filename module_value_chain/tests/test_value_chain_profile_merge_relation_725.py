@@ -61,3 +61,16 @@ def test_a_sentence_share_reaches_the_second_relation_of_the_same_company():
     assert set(got) == {("INTC", "customer"), ("INTC", "supplier")}
     assert got[("INTC", "supplier")]["share_pct"] == 11.5
     assert got[("INTC", "supplier")]["source"] == "profile"
+
+
+def test_a_display_only_other_edge_still_loses_to_the_profile():
+    """``other`` states no relation (``mentions``: no relation verb near the name), so a profile naming that company
+    in any relation already says more and the ``other`` row is dropped, as it was before #725."""
+    text = "Direct sales to Apple accounted for 29.8% of our net sales."
+    regex = engine.filing_edges("AMKR", text, "2026-02-01")
+    assert ("AAPL", "other") in _by_key(regex)               # the keyword window really emits it
+
+    profile = {"customers": [{"name": "Apple Inc.", "share": None, "quote": "Apple is our largest"}]}
+    got = _by_key(engine.merge_profile(regex, engine.profile_edges("AMKR", profile, "2026-02-01")))
+    assert set(got) == {("AAPL", "customer")}
+    assert got[("AAPL", "customer")]["share_pct"] == 29.8
