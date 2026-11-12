@@ -286,7 +286,7 @@ def test_all_four_of_ours_2_s_patterns_read_the_spaced_word_and_only_the_end_one
     # The guard belongs on the end pattern, which matches a bare number, and nowhere else: every start and stop
     # requires a title after the number, which a sub-item never carries.
     guard = sec_sections._NOT_SUBITEM
-    assert guard == r"(?!\.[ \t\xa0]*\d\d\b)"
+    assert guard == r"(?!\.[ \t\xa0\u202f\u3000]*\d\d\b)"
     # The spaces it reaches over are named one by one: the three a tag becomes. A class spelled by exclusion
     # read every separator it had not thought of -- U+2028, U+0085 -- as a space, and ate the page number
     # printed under a heading as if it were a sub-item number.
@@ -348,6 +348,8 @@ def test_a_heading_with_its_page_number_under_it_still_ends_the_slice():
     ("\nItem 2.\n34\n", True),                  # the same, with nothing but the number after it
     ("\nItem 7. 2024 Results\n", True),         # a year is not a sub-item number
     ("\nItem 2, 3 and 4\n", True),              # combined items
+    ("\nItem 2,10 and 11. Properties\n", True),  # the same, with two-digit numbers: a comma never introduces
+                                                #   a sub-item, so the guard must not read one after it
     ("\nItem 1.01 Entry into a Material Definitive Agreement\n", False),   # an 8-K sub-item
     ("\nItem 2.01 Completion of Acquisition\n", False),                    # PCVX's, the defect of #755
 ])
@@ -742,10 +744,10 @@ def test_an_inline_start_with_no_stop_at_all_is_overrun_on_the_pattern_path_too(
 def test_a_quoted_term_on_the_following_line_belongs_to_that_line_and_not_to_the_heading():
     """The quote window stops at the end of the heading's own line, which is the scope the shared test uses.
 
-    An earlier round called dropping this restriction output-equivalent. It is not: the window now ends at the
-    first line ending **at or after the match**, and a mention whose own title wraps
-    ("“Part I, Item\n1A. Risk Factors”") is the shape that tells the two apart -- the older spelling
-    cut the window inside the match and never saw the quote that closes it. That row is a test of its own below.
+    This row does **not** pin the window's line restriction, though an earlier round said it did: "Item" sits
+    mid-line here, so the line-end pattern never matches at the mention and the question never reaches the
+    quote test. The shape that tells those two spellings apart is in
+    ``test_the_details_inside_the_reference_test_each_decide_a_cut``.
     """
     text = ("Item 1. Business\n" + BODY + " Item 1A. Risk Factors\nWe use the term (“Risks”) below. "
             + "Risks abound. " * 400)
@@ -823,9 +825,12 @@ def test_a_mention_whose_own_title_wraps_is_still_a_mention():
     " (“we”, “us”) use the term throughout. ",              # two opened pairs after a heading
 ])
 def test_two_quoted_runs_after_a_heading_are_read_from_the_first_quote_and_not_the_last(after):
-    """The opener is looked for from the start of the window, not backwards from its end. Searching backwards
-    makes the last opening quote the one compared, so a heading followed by two quoted pairs looks as if its
-    quote was never opened -- and the heading is thrown away again.
+    """A heading followed by two quoted runs is still a heading: the first quotation mark after it opens a pair,
+    so nothing was left unopened.
+
+    It does not pin "the opener is looked for from the start of the window": searching backwards gives the same
+    answer here, and on every shape measured, because the fallback reaches the same stop. That mutation is
+    named as equivalent in :func:`_ref_ours_2` rather than pinned by a test shaped to fit it.
     """
     text = ("Item 1. Business\n" + BODY + "\nItem 1A. Risk Factors" + after + "Risks abound. " * 400)
     item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
@@ -834,9 +839,13 @@ def test_two_quoted_runs_after_a_heading_are_read_from_the_first_quote_and_not_t
 
 
 def test_the_quote_window_is_two_hundred_characters_and_the_reference_window_is_forty():
-    """Both windows are pinned by a row that falls on each side of them: a stop with a quotation mark 300
-    characters away is a heading, and a reference word 12 spaces before a mention still marks it one. Without
-    these the two numbers can be changed in either direction with no test moving.
+    """Two rows about the windows' sizes, and what they are worth: a stop with a quotation mark 300 characters
+    away is a heading, and a reference word 12 spaces before a mention still marks it one.
+
+    Neither row pins its number from both sides. Shrinking the quote window to 40 or growing it to 300, or
+    moving the reference window between 10 and 400, leaves both answers as they are -- only a quote window of
+    2,000 is caught, by the first row. Where exactly those edges belong is a question for real filings (#763);
+    these rows say only that each window exists and reaches as far as the shape it is measured on.
     """
     far = ("Item 1. Business\n" + BODY + " Item 1A. Risk Factors " + "x" * 300 + "” still open. "
            + "Risks abound. " * 400)
@@ -879,3 +888,85 @@ def test_ours_1_s_reference_test_keeps_its_own_behaviour():
     assert m is not None
     assert sec_sections._is_ref(text, m), "ours-1 reads any closing quote on the line as a reference"
     assert not sec_sections._ref_ours_2(text, m), "ours-2 reads only one it did not see opened"
+
+
+# ── the review of 00385d7e: a cited item carries its title in quotation marks ──────────────────────────────────
+_H = BODY[:13000]
+
+
+@pytest.mark.parametrize("name,text,form,want_quality", [
+    ("a mention the filer wrapped before the number",
+     "Item 1. Business\n" + _H + " as discussed in Part I,\nItem 1A, “Risk Factors,” of this report. "
+     + _H + "\nItem 1A. Risk Factors\n" + "Risky. " * 400, "10-K", "ok"),
+    ("a paragraph that opens with the citation",
+     "Item 1. Business\n" + _H + "\nItem 7, “Management's Discussion and Analysis,” contains more. "
+     + _H + "\nItem 1A. Risk Factors\n" + "Risky. " * 400, "10-K", "ok"),
+    ("inside the first 2,000 characters, where only the label can go wrong",
+     "Item 1. Business\n" + BODY[:1000] + "\nItem 1A, “Risk Factors,” of this report. " + _H
+     + "\nItem 1B. Unresolved\nNone.\n", "10-K", "ok"),
+    ("before the real start, where it would move where the slice begins",
+     "Contents. as set out in Part I,\nItem 1. Business “Overview” of this report. " + _H[:5000]
+     + "\nItem 1. Business\n" + _H + "\nItem 1A. Risk Factors\n" + "Risky. " * 400, "10-K", "ok"),
+    ("a 20-F citing its own Item 5",
+     "Item 4. Information on the Company\n" + _H + " described in Part I,\nItem 5. “Operating and "
+     "Financial Review and Prospects” below. " + _H + "\nItem 5. Operating Results\n" + "Risky. " * 400,
+     "20-F", "ok"),
+])
+def test_an_item_cited_with_its_title_in_quotation_marks_is_a_mention(name, text, form, want_quality):
+    """The citation style a 10-K uses for an item it is not starting: ``Item 1A, "Risk Factors," of this
+    report``. The quotation marks are around the **title**, so they open after the number and close after it --
+    and the unopened-quote test read that as a heading, because the quote it saw was opened. Measured cost
+    before this row existed: Item 1 cut in half (13,024 characters of 26,066) and still labelled ``ok``, on
+    four of these five shapes, and a false ``overrun`` on the fifth.
+
+    The five rows are the four places ``ours-2`` asks the question -- the line-end search, the titled fallback,
+    :func:`_holds_another_item` and the start filter -- plus the 20-F path. The last two were never exercised
+    before this review.
+
+    What marks a mention now is an opening quote that follows the number with nothing but punctuation between
+    it and the match (:data:`_TITLE_QUOTED`), whatever else the window holds.
+    """
+    old = sec_sections.cut_item(text, form, version=OURS_1)
+    new = sec_sections.cut_item(text, form, version=OURS_2)
+    assert new[1] == want_quality, name
+    assert new == old, name
+
+
+def test_a_real_heading_whose_title_is_in_quotation_marks_is_the_cost_of_that_rule():
+    """The other side of the row above, and the reason it is a cost and not a defect: a filer who puts his own
+    heading's title in quotation marks -- ``Item 1A. "Risk Factors"`` on its own line -- is read as citing it.
+    ``ours-1`` answers the same, and the label is ``overrun``, which says plainly that the slice did not end
+    where a heading said it should. An honest label on a long slice is the trade; a clean ``ok`` on half a
+    section, which is what the other spelling gave, is not.
+    """
+    text = ("Item 1. Business\n" + _H + "\nItem 1A. “Risk Factors”\n" + "Risky. " * 400)
+    old = sec_sections.cut_item(text, "10-K", version=OURS_1)
+    new = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert new == old and new[1] == "overrun"
+
+
+@pytest.mark.parametrize("name,text", [
+    ("the closer is taken from the far end of the window",
+     "Item 1. Business\n" + _H + " “Part I,\nItem 1A. Risk Factors” and “Item 7. MD&A” of "
+     "this report. " + _H + "\nItem 1A. Risk Factors\n" + "Risky. " * 400),
+    ("the window stops at the first newline anywhere",
+     "Item 1. Business\n" + _H + " “Part I,\nItem\n1A. Risk Factors” of this report. " + _H
+     + "\nItem 1A. Risk Factors\n" + "Risky. " * 400),
+    ("the text before the match is not stripped",
+     "Item 1. Business\n" + _H + "\nsee\n\nItem 1A of this report. " + _H + "\nItem 1A. Risk Factors\n"
+     + "Risky. " * 400),
+])
+def test_the_details_inside_the_reference_test_each_decide_a_cut(name, text):
+    """An earlier note said six mutations inside this test changed no measured answer. Three of them do, and
+    these are the shapes that show it -- each one a mention that stops being a mention, which costs the section
+    half its text.
+
+    A fourth, moving the window's start from the match to its end, only moves where a 200-character window
+    falls: it takes a quotation mark exactly 192 characters of filler past the number to tell the two apart,
+    and neither side of that boundary is more right than the other. It is not pinned here, and the two
+    genuinely equivalent ones are named in the function itself.
+    """
+    new = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert new[1] == "ok", name
+    assert len(new[0]) > 20000, f"{name}: the mention must not end the section"
+    assert "Risky." not in new[0], name

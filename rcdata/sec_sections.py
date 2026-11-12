@@ -240,7 +240,8 @@ _ITEM = _spaced("item")
 #:
 #: The spelling kept reads "a full stop, any spaces that are not a newline, then exactly two digits": the sub-item
 #: numbers filers write are .01 to .99, and the spaces it reaches over are **named one by one** -- a space, a
-#: tab, a no-break space, the three a tag becomes. Everything else keeps its page number a page number:
+#: tab, a no-break space, a narrow no-break space and an ideographic space -- the ones a tag or an entity
+#: becomes that a word boundary does not already stop. Everything else keeps its page number a page number:
 #: "Item 1A.\f12\nRisk Factors" is the heading of Item 1A, and so are the versions written with a carriage
 #: return, a form feed, U+2028 or U+0085. A class spelled by exclusion (``[^\S\r\n\f\v]``) read as a space
 #: every separator it had not thought of, which is why this one lists what it allows instead. "Item 7. 2024 Results" and "Item 2. 3 properties" are items, as they are to ``ours-1``;
@@ -251,7 +252,7 @@ _ITEM = _spaced("item")
 #: The other side of it is "Item 2 .01", a sub-item whose tag split before the full stop, which no spelling here
 #: rejects. Both reach every place this pattern is read, the end of a slice included, and not only
 #: :func:`_holds_another_item`; the price is paid for the sub-item shape that was really measured.
-_NOT_SUBITEM = r"(?!\.[ \t\xa0]*\d\d\b)"
+_NOT_SUBITEM = r"(?!\.[ \t\xa0\u202f\u3000]*\d\d\b)"
 
 _LINE_START_2 = {
     "10-K": re.compile(rf"(?im)^[^\S\n]*{_ITEM}s?\s{{0,3}}(1|i)\b(?:\s*(?:and|&|,)\s*2\b)?"
@@ -361,19 +362,41 @@ def _ref_ours_2(text: str, m: re.Match) -> bool:
 
     **How much of this half is pinned.** The quote test decides an answer only when the opening quote is not
     immediately before the match -- anything closer than that is already a reference by :data:`_REF_BEFORE` --
-    and when neither the fallback nor the pattern path reaches the same stop by another route. Six mutations of
-    the details inside it (searching for either quote from the far end, ``<=`` for ``<``, the window measured
-    from the match's end, the window cut at the first newline anywhere, and the before-text left unstripped)
-    change no answer on any of the eleven shapes measured for #755, so no test here pins them. They are written
-    the way they are because that is what the sentences above describe; a reader changing one should expect the
-    tests to stay green and should measure on real filings (#763) instead.
+    and when neither the fallback nor the pattern path reaches the same stop by another route. An earlier round
+    called six mutations of the details inside it unpinned; measuring further found that three of them each
+    decide a cut (the closer taken from the far end of the window, the window cut at the first newline
+    anywhere, and the before-text left unstripped before a blank line), and those are tests now.
+
+    Two really are equivalent, and a reader changing either should expect the tests to stay green:
+
+    - ``<=`` for ``<`` in the comparison. ``closed == opened`` needs both to be -1, which ``closed >= 0``
+      has already excluded.
+    - the opening quote searched from the far end of the window. No shape was found where the first and the
+      last opening quote fall on different sides of the closing one.
+
+    A third, the window measured from the match's end rather than its start, only moves where the
+    200-character edge falls; it takes a quotation mark exactly 192 characters of filler past the number to
+    tell the two apart, and neither answer is the right one. The real question for all of this is how often
+    each shape occurs in filings, which is #763's hand-checked set and not a built string.
     """
     if _REF_BEFORE.search(text[max(0, m.start() - 40):m.start()].rstrip()):
         return True
     line_end = text.find("\n", m.end())
     window = text[m.start():min(m.start() + 200, line_end if line_end >= 0 else len(text))]
     opened, closed = window.find("“"), window.find("”")
-    return closed >= 0 and (opened < 0 or closed < opened)
+    if closed < 0:
+        return False
+    # The quoted thing is this item's own title: ``Item 1A, "Risk Factors," of this report``. The quote opens
+    # right after the number and closes after the title, so the unopened test alone reads it as a heading --
+    # and that is the citation style a 10-K uses for a cross-reference, which cost Item 1 half its text.
+    if _TITLE_QUOTED.match(text, m.end()):
+        return True
+    return opened < 0 or closed < opened
+
+
+#: An opening quote that follows a heading's number with nothing but punctuation between: the quotation marks
+#: are around the item's **title**, which is how a filing cites an item it is not starting.
+_TITLE_QUOTED = re.compile(rf"[\s.,:;{_DASH}]{{0,12}}[“‘]")
 
 
 def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
