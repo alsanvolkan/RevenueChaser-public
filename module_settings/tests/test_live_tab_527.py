@@ -30,7 +30,7 @@ def test_four_tabs_watch_lists_first_and_each_grafana_tab_frames_one_board():
     assert 'id="panel-live"' not in html and "live" not in report.SETTINGS_TABS["tabs"]
     health = html[html.index('id="panel-health"'):html.index('id="panel-logs"')]
     logs = html[html.index('id="panel-logs"'):html.index("<script>", html.index('id="panel-logs"'))]
-    assert health.index('id="live-frame"') < health.index("<h1>Data/Health · Universe and fills</h1>")
+    assert health.index('id="live-frame"') < health.index("<h1>Settings · Universe and fills</h1>")
     assert re.findall(r'data-board="([a-z-]+)"', health) == ["rc-health"]
     assert re.findall(r'data-board="([a-z-]+)"', logs) == ["rc-logs"]
     assert "<button" not in health[:health.index('id="live-frame"')], "no picker: a tab holds no other tab"

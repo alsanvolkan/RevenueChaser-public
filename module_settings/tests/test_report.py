@@ -1950,9 +1950,9 @@ def test_the_health_panel_holds_the_frame_and_what_grafana_does_not_carry():
     universe and the fills; the catalog and the routes are folded under the Database board."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd()))
-    assert "<title>Data/Health</title>" in html
+    assert "<title>Settings</title>" in html
     health = _panel(html, "panel-health")
-    order = ['id="live-frame"', "<h1>Data/Health · Universe and fills</h1>", 'id="sec-universe"', 'class="fgrps"']
+    order = ['id="live-frame"', "<h1>Settings · Universe and fills</h1>", 'id="sec-universe"', 'class="fgrps"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
     for gone in ('id="sec-health"', 'id="needs-catalog"', 'id="needs-routes"', "Needs, boards and automations"):

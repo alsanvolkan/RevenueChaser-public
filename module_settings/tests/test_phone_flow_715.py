@@ -131,3 +131,14 @@ def test_the_reference_parts_under_the_files_are_not_drawn_on_a_phone():
     assert "#needs details.hfold{display:none}" in _phone_rules(needs_tab.NEEDS_CSS)
     assert "#needs details.hfold{display:none}" not in needs_tab.NEEDS_CSS.replace(
         "@media(max-width:640px){#needs details.hfold{display:none}}", ""), "the desk keeps them"
+
+
+def test_a_fill_box_on_a_phone_is_its_name_and_one_coverage_line():
+    """avo, 12 Nov 2026 (phone, the Fetch/Health leftovers): "biraz daha kompakt": the label, the bar and the share
+    of a coverage meter share one line, and the boxes stand closer."""
+    from pathlib import Path
+    css = (Path(control_render.__file__).parent / "static" / "control.css").read_text(encoding="utf-8")
+    phone = _phone_rules(css)
+    assert ".ctl .fgroup .meter.cov{grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px}" in phone
+    assert ".ctl .fgroup .sgrid{gap:6px;margin:6px 0}" in phone
+    assert ".ctl .fgroup .dset{margin-top:0;padding:6px 10px}" in phone

@@ -14,7 +14,7 @@ from RevenueChaser.module_settings.tests.test_control_render_c1 import FILES, _v
 
 def test_render_data_holds_its_parts_in_order_and_no_fetch_control():
     html = control_render.render_data(_view())
-    marks = ['<h1>Data/Health · Database</h1>', 'id="sec-flow"', 'class="sec fpanel" data-file="spine.duckdb"']
+    marks = ['<h1>Settings · Database</h1>', 'id="sec-flow"', 'class="sec fpanel" data-file="spine.duckdb"']
     at = [html.index(m) for m in marks]
     assert at == sorted(at)
     assert 'id="sec-health"' not in html and 'id="sec-crosscheck"' not in html and "data-job=" not in html

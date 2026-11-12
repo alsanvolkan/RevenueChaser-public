@@ -81,7 +81,7 @@ def test_the_reference_parts_are_folded_under_the_database_board():
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
-    order = ['id="live-frame"', "<h1>Data/Health · Universe and fills</h1>", 'id="sec-universe"']
+    order = ['id="live-frame"', "<h1>Settings · Universe and fills</h1>", 'id="sec-universe"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
     assert 'id="ibkr-login-card"' not in html, "the login link is beside the gateway chip"

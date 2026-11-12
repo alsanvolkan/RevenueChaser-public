@@ -87,7 +87,7 @@ WIAL = ("<p>This page is the control board for every dataset the system holds. I
 
 
 def _header(view: dict, title: str = "Database") -> str:
-    return (f'<h1>Data/Health · {esc(title)}</h1>'
+    return (f'<h1>Settings · {esc(title)}</h1>'
             f'<p class="sub"><b>Read {esc(view["read_at"])}</b> (Amsterdam) · source: <code>ops.sqlite</code> + the '
             f'serving files · after {STALE_MINUTES} minutes a strip on top says the numbers are old</p>'
             f'<div class="stalebar"{' id="ctl-stale"' if title == "Database" else ""} data-stale hidden><b>Stale</b> · this page was read at {esc(view["read_at"])} · '
@@ -728,7 +728,7 @@ def client(view: dict) -> dict:
 
 def _err(view: dict, title: str = "Database") -> str:
     """The one line a panel is when the model could not be built."""
-    return (f'<section class="ctl"><div class="wrap"><h1>Data/Health · {esc(title)}</h1><div class="errbar"><b>Could not read</b> '
+    return (f'<section class="ctl"><div class="wrap"><h1>Settings · {esc(title)}</h1><div class="errbar"><b>Could not read</b> '
             f'· {esc(view["error"])}</div></div></section>')
 
 
@@ -801,7 +801,7 @@ def render_data(view: dict, lookup_html: str = "") -> str:
         return _err(view) + lookup_html
     view = _ready(view)
     panels = "".join(_panel(f, view, i == 0) for i, f in enumerate(view["files"]))
-    return ('<section id="ctl" class="ctl" aria-label="Data/Health · Data control board"><div class="wrap">'
+    return ('<section id="ctl" class="ctl" aria-label="Settings · Data control board"><div class="wrap">'
             f'{_header(view)}{lookup_html}{_flow(view)}'
             f'<div class="fpanels">{panels}</div>{_board_panels(view.get("board_cards") or [])}</div></section>')
 
@@ -854,7 +854,7 @@ def render_fetch(view: dict) -> str:
         return _err(view, "Universe and fills")
     view = _ready(view)
     groups = "".join(_fill_group(f, view) for f in view["files"])
-    return ('<section class="ctl" aria-label="Data/Health · Universe and fills"><div class="wrap">'
+    return ('<section class="ctl" aria-label="Settings · Universe and fills"><div class="wrap">'
             f'{_header(view, "Universe and fills")}'
             '<p class="sub">Everything else on this tab is the board above: the switches, each dataset&#39;s Fetch, '
             'Pause and schedule, the queue, the limits and the backups. What follows has no place there yet: the universe, '

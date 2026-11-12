@@ -307,7 +307,7 @@ TABS = [
     {"type": "tab", "key": "module_leaps", "label": "LEAPS", "url": "/view/module_leaps",
      "sub": True},
     {"type": "header", "label": "Ops"},
-    {"type": "tab", "key": "module_settings", "label": "Settings / Data health", "url": "/view/module_settings", "sub": True},
+    {"type": "tab", "key": "module_settings", "label": "Settings", "url": "/view/module_settings", "sub": True},
 ]
 
 

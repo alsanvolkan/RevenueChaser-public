@@ -135,7 +135,7 @@ def test_the_nav_is_reachable_through_the_drawer(dashboard, browser, scheme):
     assert m["sidebar"]["l"] >= 0 and m["sidebar"]["r"] <= m["vw"], f"the drawer is not on screen: {m['sidebar']}"
     assert not m["small"], f"touch targets under 44 px: {m['small']}"
     m = _click(browser, '.nav-item[data-tab="module_settings"]')
-    assert m["active"] == "module_settings" and m["title"] == "Settings / Data health"
+    assert m["active"] == "module_settings" and m["title"] == "Settings"
     assert m["expanded"] == "false" and m["sidebar"]["r"] <= 0, "choosing a tab closes the drawer"
     m = _click(browser, "#nav-toggle")
     m = _click(browser, "#nav-scrim")

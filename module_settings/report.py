@@ -3191,7 +3191,7 @@ def render_settings_dashboard(payload: dict) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Data/Health</title>
+<title>Settings</title>
 <style>{THEME_CSS}{CSS}</style>
 <style>{ND_CSS}</style>
 <style>{_UCARDS_CSS}</style>

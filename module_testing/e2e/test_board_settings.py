@@ -70,7 +70,7 @@ class TestView:
     def test_the_tab_is_in_the_shell(self, dashboard):
         r = dashboard.get("/")
         assert r.status_code == 200
-        assert "Settings / Data health" in r.text
+        assert "Settings" in r.text
 
 
 class TestRefreshIsOfflineAndFaithful:
@@ -93,7 +93,7 @@ class TestRefreshIsOfflineAndFaithful:
         assert not dashboard.artifact(_ARTIFACT).exists()
         r = dashboard.view(_APP, refresh=True)
         assert r.status_code == 200
-        assert "Settings / Data health" in r.text
+        assert "Settings" in r.text
         # Serving 200 is not enough: Refresh must re-derive and re-write the
         # artifact. Without this, a refresh that answered from memory (or from a
         # stale handle) would still look green while leaving no file on disk.
@@ -118,7 +118,7 @@ class TestRefreshIsOfflineAndFaithful:
         dashboard.restart()
         r = dashboard.view(_APP, refresh=True)
         assert r.status_code == 200
-        assert "Settings / Data health" in r.text
+        assert "Settings" in r.text
 
 
 class TestStatsFetch:
@@ -198,7 +198,7 @@ class TestEmptyStore:
     def test_a_board_with_no_data_renders_an_empty_state(self, dashboard):
         r = dashboard.view(_APP)
         assert r.status_code == 200
-        assert "Settings / Data health" in r.text
+        assert "Settings" in r.text
 
 
 def _verdicts(html: str, bodies: list) -> list:

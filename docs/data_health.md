@@ -109,9 +109,9 @@ The payload keys: `rows`, `tickers`, `boards`, `identity`, `automations`, `backu
 
 ---
 
-## 2. The Settings / Data health board
+## 2. The Settings board
 
-The tab is `/view/module_settings`, labelled **Settings / Data health**. Its Refresh job is
+The tab is `/view/module_settings`, labelled **Settings**. Its Refresh job is
 `settings_refresh` (`app/runners.py` `run_settings`). It is an ops inventory of the local `.store/`,
 not an equity board.
 
@@ -999,7 +999,7 @@ code:
 | `rc_dataset_open_issues` | `dataset`, `kind` | open build issues |
 | `rc_builder_last_run_timestamp_seconds` | | when the builder last started a run |
 | `rc_builder_timer_on` | | 1 on, 0 off, absent when not known |
-| `rc_backup_newest_timestamp_seconds` | `kind` | the newest backup of a kind |
+| `rc_backup_newest_timestamp_seconds` | `kind`, `step` | the newest backup of a kind, per backup step (`duckdb`, `boards`, `ops`, `uw-raw`, `edgar-docs`); the old store's files are not reported |
 | `rc_switch_on` | `name` | the fetch and backup switches |
 | `rc_ibkr_state` | `state` | 1 for the gateway's login state: up, silent (port open, API not answering), down, unknown, not_set; any other text reads unknown |
 | `rc_news_feed_state` | `feed`, `state` | 1 for an IBKR news feed's state from the listener's record: refused, live, subscribed, waiting, unknown; any other text reads unknown |
