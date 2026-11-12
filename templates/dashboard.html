@@ -299,7 +299,7 @@ var STORE_BACKED = ['module_sec_13f','module_sector_rotation',
                     'module_oipd','module_settings','module_spx_gamma','module_news','module_welcome'];
 var RUN_URLS = {
   module_earnings_radar: '/run/earnings',
-  module_leaps: '/run/module_leaps',
+  // module_leaps has no Fetch: the scan is switched off (#730), and the route answers 409.
   module_sec_13f: '/run/module_sec_13f',
   module_sector_rotation: '/run/rotation',
   module_spx_gamma: '/run/spxgamma',
@@ -415,7 +415,7 @@ function showTab(key){
   // so there is nothing to refresh.
   if(rfBtn) rfBtn.style.display = (key==='module_earnings_radar' || key==='logs' || key==='runs') ? 'none' : 'inline-block';
   var ftBtn = document.getElementById('btn-fetch');
-  if(ftBtn) ftBtn.style.display = (key==='module_leaps' || key==='module_sec_13f' || key==='module_financials' || key==='module_oipd' || key==='module_comovement' || key==='module_news' || key==='module_welcome') ? 'inline-block' : 'none';
+  if(ftBtn) ftBtn.style.display = (key==='module_sec_13f' || key==='module_financials' || key==='module_oipd' || key==='module_comovement' || key==='module_news' || key==='module_welcome') ? 'inline-block' : 'none';
   var ruBtn = document.getElementById('btn-refresh-universe');
   if(ruBtn) ruBtn.style.display = (UNIVERSE_TABS.indexOf(key) >= 0) ? 'inline-block' : 'none';
   checkDataAsOf(key);

@@ -200,7 +200,14 @@ def _no_cache(resp):
 # Register module runners with the job queue. ``produces`` lists which iframes
 # to reload when the job completes.
 jobs.register("earnings", runners.run_earnings_range, ["module_earnings_radar"])
-jobs.register("module_leaps", runners.run_leaps_latest, ["module_leaps"])  # live UW scan (Fetch)
+# The LEAPS scan is NOT registered: the board is switched off (#730, avo 12 Nov 2026 08:36, decision card
+# "B: Kapat"). Measured, not argued: ``leaps_cache``, ``leaps_flow_prints`` and ``leaps_footprint_history``
+# hold 0 rows, the pinned universe (the stock watch list, ``module_leaps/scan.py``) is empty, and
+# ``/api/option-trades`` ignores ``page``, so a scan would keep the newest 250 prints and report a cap of
+# 1,250. Leaving the name out of the registry is the gate: ``jobs.submit`` has no runner for it, so no Fetch
+# button, no ``POST /run/module_leaps`` and no scheduled call can start one. ``runners.run_leaps_latest``
+# stays in place -- switching off is not deleting. Reopen condition: a join of each far-dated print to the
+# next session's open interest on the same contract.
 # 13F Fetch = refresh the names/sectors and shares outstanding the dashboard owns, render the board (backend D4).
 # The numbers are the builder's (G9), so the Fetch asks the SEC for nothing. It needs no UW key — the
 # names/sectors step is best-effort and opens its own client (#206).
@@ -706,9 +713,20 @@ def run_relatedness_compare():
     return _submit("relatedness_compare", {"provider": provider, "model": model, "tickers": names})
 
 
+#: Why the LEAPS Fetch answers 409 instead of starting a scan (#730).
+LEAPS_OFF = ("LEAPS scan is switched off (#730): the board has recorded no rows, its pinned universe is empty, "
+             "and the far-print feed cannot say a position was opened. It returns with a same-contract "
+             "next-session open-interest join.")
+
+
 @app.route("/run/module_leaps", methods=["POST"])
 def run_leaps():
-    return _submit("module_leaps", {})
+    """Refused, and refused before any provider call: the scan is switched off (#730).
+
+    409, not 404: the route exists and the answer is a reason, so an old bookmark or a script gets the
+    sentence rather than a blank wall. The job is not registered either, so nothing else can start it.
+    """
+    return jsonify({"ok": False, "error": LEAPS_OFF}), 409
 
 
 @app.route("/run/module_news", methods=["POST"])
