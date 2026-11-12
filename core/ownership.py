@@ -176,6 +176,44 @@ def sec13f_totals() -> dict[str, dict]:
     return out
 
 
+SPLIT_LOOKBACK_DAYS = 10    # a quarter end on a weekend or a holiday still finds the session before it
+
+
+def split_factors_13f(periods: dict) -> dict[str, dict[str, float]]:
+    """``{ticker: {period: split_factor}}`` for ``periods`` (``{ticker: [ISO period, ...]}``): the prices store's
+    factor that turns a share count of that quarter end into today's share basis (shares ÷ factor; a 1-for-25 reverse
+    split after it serves 25, a 2-for-1 split serves 0.5). The factor of the last bar on or before the quarter end,
+    at most ``SPLIT_LOOKBACK_DAYS`` earlier: Compustat's and Alpaca's splits, applied the way every board's split
+    basis is (``rcdata.read.bars``). One bar read per quarter, not one per ticker.
+
+    The one split rule for 13F share counts: the 13F board puts every quarter on today's basis with it (#732) and
+    Asymmetric Growth its institutional share. A ticker or a quarter the store cannot place has no entry, so its
+    shares stay as filed; a store it cannot read gives ``{}`` and a warning, never a failed board.
+    """
+    from datetime import timedelta
+
+    from RevenueChaser.rcdata import read
+    out: dict[str, dict[str, float]] = {}
+    try:
+        ids = read.security_ids(periods)
+        by_period: dict[str, list[str]] = {}
+        for t, ps in periods.items():
+            if t in ids:
+                for p in ps:
+                    by_period.setdefault(str(p)[:10], []).append(t)
+        for period, tickers in sorted(by_period.items()):
+            end = date.fromisoformat(period)
+            sid_to = {ids[t]: t for t in tickers}
+            # Rows come by security and session, so the last one on or before the quarter end wins.
+            for b in read.bars(sid_to, start=end - timedelta(days=SPLIT_LOOKBACK_DAYS), end=end, basis="split"):
+                if b.get("split_factor"):
+                    out.setdefault(sid_to[b["security_id"]], {})[period] = float(b["split_factor"])
+    except Exception as exc:  # noqa: BLE001 - no prices store is "no factor", never a failed board
+        logger.warning("13F split factors unread, shares stay as filed: %s: %s", type(exc).__name__, exc)
+        return {}
+    return out
+
+
 SEC_DEI = "sec_dei"          # the D11 slot of the readers' order; no writer stores it yet (#161)
 SHARES_ORDER = (UW_INFO, SEC_DEI, YFINANCE)
 

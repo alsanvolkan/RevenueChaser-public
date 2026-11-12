@@ -139,7 +139,7 @@ AREAS = [
      "O2:43; module_leaps/engine.py:313-324, :341, :367, :431, :438"),
    ],
    planned="Stays leaps_flow_prints in raw.duckdb, event, key id (06_interface §3 D09); its four stamps are written since #295."),
-   dict(id="D10", name="Short interest", readers="13F Short%, Earnings R5",
+   dict(id="D10", name="Short interest", readers="Earnings R5 (13F Short% hidden since #732)",
     flows=[
      ("yfinance .info shortPercentOfFloat (stored before #300)", "module_sec_13f/enrich.py:1-11 (pre-F2)",
       "none: the writer save_enrichment was retired (#300)", "module_sec_13f/enrich.py:7-11",
@@ -151,7 +151,7 @@ AREAS = [
       "Kept, growing: one row per ticker and session, the first write wins; UW has no past-date call, so a night not stored is lost (#296). Tickers: the stored calendar's, then the 13F tickers (never or longest ago stored first), inside the night's 200 UW calls. Values as served (si_float a fraction); source uw_short_screener, uw_interest_float or yfinance (si_float and total_float only, the rest NULL); payload keeps the source row.",
       "module_earnings_radar/inputs/short_interest.py:1-20"),
     ],
-    note="#375 F6: the 13F board's Short% column reads short_interest (module_sec_13f/enrich.load_short_interest): newest non-null si_float per ticker, shown as percent. The Earnings Fetch no longer reads it (#287, owner's B): R5 reads FINRA's twice-monthly settlement series from the ownership store (module_earnings_radar/store_reads.short_interest, need ownership.short_interest, 35 calendar days) and asks UW nothing.",
+    note="#732 (owner, 12 Nov 2026): the 13F board no longer reads short_interest and hides its Short% column until the FINRA reader lands (#576, #646 PR 3); enrich.load_short_interest is kept for that return. The Earnings Fetch no longer reads it (#287, owner's B): R5 reads FINRA's twice-monthly settlement series from the ownership store (module_earnings_radar/store_reads.short_interest, need ownership.short_interest, 35 calendar days) and asks UW nothing.",
     planned="sec13f_enrichment.short_pct is retired for the 13F board; Earnings R5 reads short_interest since #372 E5c."),
  ]),
  ("Fundamentals and filings", [
