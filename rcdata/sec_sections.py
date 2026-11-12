@@ -408,15 +408,19 @@ def _after_number(text: str, m: re.Match) -> int:
 #: The words a filing puts between an item's number and the rest of the sentence when it is **citing** that
 #: item rather than starting it: "Item 1A entitled ...", "Item 7 of this report", "Item 1A below". A heading
 #: carries its own title in that place, and no item's title is one of these words.
-_CITED_PHRASE = re.compile(r"(?i)[\s.,:;()\[\]]{0,8}"
-                           r"(?:entitled|captioned|titled|under\s+the\s+(?:caption|heading)"
-                           r"|(?:of|in|to)\s+(?:this|our|the\s+(?:accompanying|attached))|hereof|above|below)\b")
+_CITED_PHRASE = re.compile(r"(?i)(?:[.,:;()\[\]]|[^\S\n]){0,8}"
+                           r"(?:entitled|captioned|titled|under[^\S\n]+the[^\S\n]+(?:caption|heading)"
+                           r"|(?:of|in|to)[^\S\n]+(?:this|our|the[^\S\n]+(?:accompanying|attached))"
+                           r"|hereof|above|below)\b")
 
 #: A quoted run right after the match, which :data:`_CITED_PHRASE` may then follow: ``Item 1. Business
 #: "Overview" of this report``. The run must begin within four spaces of the match's end, which is what keeps
 #: this away from a run-in heading whose first sentence defines a term further along ("Item 1A. Risk Factors
 #: You should consider the risks (the "Risks") below") -- there the match ends after the *number*, and the
 #: quotation mark is a title and a sentence away from it.
+#: A letter, as against a full stop or a page number: what tells a line that goes on from one that is over.
+_A_LETTER = re.compile(r"[^\W\d_]")
+
 _QUOTED_RUN = re.compile(r"[^\S\n]{0,4}[“‘\"][^\n”’\"]{0,80}[”’\"]")
 
 #: An opening quotation mark -- curly, single or straight -- with nothing but punctuation between it and the
@@ -428,23 +432,39 @@ _CLOSER = {"“": "”", "‘": "’", '"': '"'}
 def _cites_its_title(text: str, m: re.Match, line_end: int) -> bool:
     """True when the words right after ``m``'s item number say the sentence is citing that item.
 
-    Two spellings, both measured on the shapes a 10-K really uses, and both asked of the text that follows the
+    Three spellings, all measured on the shapes a 10-K really uses, and all asked of the text that follows the
     **number** rather than the match (:func:`_after_number`):
 
     - a reference word in place of the title (:data:`_CITED_PHRASE`): "Item 1A entitled", "Item 7 of this
-      report", "Item 1A below";
+      report", "Item 1A below". Nothing in that pattern crosses a line ending. Spelled with ``\\s`` it did,
+      and a heading that carries only its number on its line -- the title printed underneath -- became a
+      citation whenever the next line opened with one of these words ("Item 1A.\\nIn our business we face
+      risks"): ``ok`` on 15,840 characters with the risk factors inside, where ``ours-1`` gives 13,000, and
+      :func:`_holds_another_item` reads the same test, so the label was blind to it too;
     - the title in quotation marks after the item's own title, followed by such a phrase
       (:data:`_QUOTED_RUN`): "Item 1. Business "Overview" of this report";
-    - the title in quotation marks (:data:`_CITED_QUOTE`), **and the line goes on after the closing one**. That
-      second half is what tells a citation from a filer who puts his own heading's title in quotation marks:
-      ``Item 1A. "Risk Factors"`` alone on its line is a heading, and reading it as a citation ran Item 1
-      through the risk factors and still called it ``ok``.
+    - the title in quotation marks (:data:`_CITED_QUOTE`), with **any** of three things that a heading's own
+      title does not carry: a comma between the number and the opening mark (a heading's number takes a full
+      stop or nothing), a full stop or comma inside the closing mark, or a line that goes on after it **in
+      words** (:data:`_A_LETTER`).
+
+      Each of those three was measured. Without the first two, a citation that ends its paragraph --
+      ``see Part I, Item 1A, "Risk Factors."``, with the full stop inside the quotation marks as US
+      punctuation puts it -- has nothing after the closing mark either, and was read as a heading: Item 1
+      cut to 13,024 characters of 26,050 and labelled ``ok``. Without the third, a filer's own quoted
+      heading -- ``Item 1A. "Risk Factors"`` alone on its line, or with a page number or a full stop after
+      it -- was read as a citation, and the slice ran through the risk factors and still said ``ok``.
+
+      What it costs: a heading spelled ``Item 1A, "Risk Factors"``, with a comma where the full stop goes,
+      is read as a citation. No filing measured for this issue writes one.
 
     **What of this is pinned.** Each half decides a cut on a shape in
     ``tests/test_sec_sections_ours_2.py``, and so does asking the question of the number instead of the match.
-    Two details are not, and a reader changing either should expect the tests to stay green: the bound on the
-    closing mark's search (see the comment below, which shows it cannot change an answer), and the four spaces
-    the quoted run may begin after the match. The second is a choice about distance, and the pattern path
+    Three details are not, and a reader changing one should expect the tests to stay green: the bound on the
+    closing mark's search (see the comment below, which shows it cannot change an answer), the four spaces the
+    quoted run may begin after the match, and the line restriction on the gaps **inside** a phrase, which no
+    heading carries at all -- a filer who wraps a citation between "under" and "the caption" has still
+    written one, and that shape is not read as a citation here. The second is a choice about distance, and the pattern path
     recovers the same answer whichever distance is allowed on every sentence measured; the question of how far
     a real filer's quotation mark sits from a heading belongs to the hand-checked set (#763).
 
@@ -472,7 +492,13 @@ def _cites_its_title(text: str, m: re.Match, line_end: int) -> bool:
     # ``text[close + 1:stop]``, so dropping it changes no answer. A quoted title that wraps onto the next line
     # is not read as a citation either way, and :data:`_REF_BEFORE` is what catches those.
     close = text.find(_CLOSER[q.group(1)], q.end(1), stop)
-    return close >= 0 and bool(text[close + 1:stop].strip())
+    if close < 0:
+        return False
+    if "," in q.group(0):
+        return True
+    if text[close - 1] in ".,;:":
+        return True
+    return bool(_A_LETTER.search(text[close + 1:stop]))
 
 
 def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:

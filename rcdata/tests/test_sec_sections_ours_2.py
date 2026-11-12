@@ -954,15 +954,25 @@ def test_a_heading_whose_title_is_in_quotation_marks_is_still_a_heading():
     gives it too (``ok`` on 15,824 characters, 2,800 of them risk factors), so this is one of the places
     ``ours-2`` is now right where the board is not; the board stays on ``ours-1`` all the same (#755 pins it).
     """
+    tail = "\nItem 1B. Unresolved Staff Comments\nNone.\nItem 2. Properties\nNone.\n"
+    # A quotation mark the filer never closed on that line says nothing either way, so the heading stands.
+    unclosed = "Item 1. Business\n" + _H + "\nItem 1A. “Risk Factors\n" + "Risky. " * 400 + tail
     head = "Item 1. Business\n" + _H + "\nItem 1A. “Risk Factors”\n" + "Risky. " * 400
+    # The last two are what the line having to go on **in words** is for: a full stop or a page number after
+    # the closing mark is not a sentence carrying on, and before that test both were read as citations.
     for name, text in [("the risk factors end the document", head),
-                       ("an Item 1B follows them",
-                        head + "\nItem 1B. Unresolved Staff Comments\nNone.\nItem 2. Properties\nNone.\n")]:
+                       ("an Item 1B follows them", head + tail),
+                       ("a full stop after the closing mark",
+                        "Item 1. Business\n" + _H + "\nItem 1A. “Risk Factors”.\n" + "Risky. " * 400 + tail),
+                       ("the page number on the heading's line",
+                        "Item 1. Business\n" + _H + "\nItem 1A. “Risk Factors” 12\n" + "Risky. " * 400 + tail),
+                       ("an opening mark the filer never closed", unclosed)]:
         item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
         assert quality == "ok" and "Risky." not in item, name
         assert len(item) == len(_H), name
-        old_item, _ = sec_sections.cut_item(text, "10-K", version=OURS_1)
-        assert "Risky." in old_item, f"{name}: ours-1 reads the quoted heading as a citation and runs past it"
+        if text is not unclosed:
+            old_item, _ = sec_sections.cut_item(text, "10-K", version=OURS_1)
+            assert "Risky." in old_item, f"{name}: ours-1 reads the quoted heading as a citation and runs past it"
 
 
 @pytest.mark.parametrize("citation,ours_1_is_right", [
@@ -998,6 +1008,57 @@ def test_every_citation_style_measured_is_a_mention_and_not_a_heading(citation, 
         assert new == old
     else:
         assert len(new[0]) > len(old[0]) and len(old[0]) < 20_000
+
+
+@pytest.mark.parametrize("citation", [
+    "Item 1A, “Risk Factors.”",
+    "Item 1A. “Risk Factors.”",
+    "Item 1A “Risk Factors.”",
+    "Item 7, “Management's Discussion and Analysis.”",
+    "Item 1A, “Risk Factors”\nof this report.",
+])
+def test_a_citation_that_ends_its_paragraph_is_still_a_citation(citation):
+    """US punctuation puts the full stop **inside** the quotation marks, so a citation that closes a paragraph
+    -- ``For more, see Part I, Item 1A, "Risk Factors."`` -- has nothing after the closing mark either. The
+    first spelling of "a quoted title with the line going on after it" therefore read every one of these as a
+    heading: Item 1 cut to 13,024 characters of 26,050 and labelled ``ok``, where ``ours-1`` is right.
+
+    What tells them from a filer's own quoted heading is punctuation a title does not carry: the comma between
+    the number and the opening mark (rows 1, 4 and 5 -- a heading's number takes a full stop or nothing), or
+    the full stop inside the closing mark (rows 2 and 3). The last row is the same citation with the sentence
+    wrapped onto the next line, where the comma is the only signal left.
+    """
+    text = ("Item 1. Business\n" + _H + " as discussed in Part I,\n" + citation + "\n" + _H
+            + "\nItem 1A. Risk Factors\n" + "Risky. " * 400
+            + "\nItem 1B. Unresolved Staff Comments\nNone.\nItem 2. Properties\nNone.\n")
+    old = sec_sections.cut_item(text, "10-K", version=OURS_1)
+    new = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert new == old and new[1] == "ok"
+    assert len(new[0]) > 20_000 and "Risky." not in new[0]
+
+
+@pytest.mark.parametrize("heading", [
+    "Item 1A.\nIn our business we face risks.\n",
+    "Item 1A.\nBelow is a summary of risk factors.\n",
+    "Item 1A “Risk Factors”\nIn this section we describe them.\n",
+])
+def test_a_reference_word_on_the_next_line_does_not_make_a_heading_a_citation(heading):
+    """The reference-word half of the citation test is asked of the text after the number, and its leading
+    class was spelled with ``\\s``, which crosses a newline. A heading that carries only its number on its
+    line -- the title printed underneath, or on the same line in quotation marks -- was then a citation
+    whenever the next line opened with "In our", "Below" or another of those words, and the slice ran through
+    the risk factors: ``ok`` on 15,840 characters where ``ours-1`` gives 13,000. :func:`_holds_another_item`
+    reads the same test, so the label was blind to it too.
+
+    The class now allows only the spaces that keep to the match's line. The third row is the same reach
+    through the quoted-run spelling, and there ``ours-2`` is now shorter than ``ours-1`` -- right, because the
+    risk factors do not belong to Item 1.
+    """
+    text = ("Item 1. Business\n" + _H + "\n" + heading + "Risky. " * 400
+            + "\nItem 1B. Unresolved Staff Comments\nNone.\nItem 2. Properties\nNone.\n")
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and "Risky." not in item
+    assert len(item) == len(_H), "the heading on the next line is the end of Item 1"
 
 
 @pytest.mark.parametrize("heading,form,mention", [
@@ -1055,7 +1116,9 @@ def test_a_quoted_section_name_after_the_title_is_not_read_as_a_citation():
      "Item 1. Business\n" + _H + " “Part I,\nItem\n1A. Risk Factors” of this report. " + _H
      + "\nItem 1A. Risk Factors\n" + "Risky. " * 400),
     ("the text before the match is not stripped",
-     "Item 1. Business\n" + _H + "\nsee\n\nItem 1A of this report. " + _H + "\nItem 1A. Risk Factors\n"
+     # "for more" and not "of this report": the citation rule reads the second on its own, so with it this row
+     # stayed green whether or not the before-text was stripped, and pinned nothing (round 7).
+     "Item 1. Business\n" + _H + "\nsee\n\nItem 1A for more. " + _H + "\nItem 1A. Risk Factors\n"
      + "Risky. " * 400),
 ])
 def test_the_details_inside_the_reference_test_each_decide_a_cut(name, text):
@@ -1065,8 +1128,8 @@ def test_the_details_inside_the_reference_test_each_decide_a_cut(name, text):
 
     A fourth, moving the window's start from the match to its end, only moves where a 200-character window
     falls: it takes a quotation mark exactly 192 characters of filler past the number to tell the two apart,
-    and neither side of that boundary is more right than the other. It is not pinned here, and the two
-    genuinely equivalent ones are named in the function itself.
+    and neither side of that boundary is more right than the other. It is not pinned here, and the one
+    genuinely equivalent mutation is named in the function itself.
     """
     new = sec_sections.cut_item(text, "10-K", version=OURS_2)
     assert new[1] == "ok", name
