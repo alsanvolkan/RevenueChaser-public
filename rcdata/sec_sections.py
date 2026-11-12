@@ -913,7 +913,8 @@ def _runs_into_prose(text: str, end: int) -> bool:
 #: The parts, in the order they are peeled off the end of the line: the mark a filer puts after a number
 #: (:data:`_H_NUMBER_MARK`), the figure itself (:data:`_H_FIGURE_CHARS`, digits and dashes -- not ``.`` or
 #: ``:``, which belong to the sentence in front of it), and then the gap (:data:`_H_CLOSERS`).
-_H_FIGURE_CHARS = "0123456789" + _DASH_CHARS
+_H_DIGITS = "0123456789"
+_H_FIGURE_CHARS = _H_DIGITS + _DASH_CHARS
 _H_NUMBER_MARK = ".:"
 
 #: The punctuation a sentence ends on, as a compiled class. **Not a string tested with ``in``:** :data:`_DASH`
@@ -933,13 +934,38 @@ _H_CLOSERS = "\"'\u2019\u201d\u00bb)]}"
 #: class. The horizontal spaces ``strip_html`` does **not** collapse are the point of the list: it folds runs of
 #: ``[ \t]`` and of ``&nbsp;``, measured, but leaves an em, en or thin space standing (round 7 corrected round
 #: 6's claim that a no-break space survives it).
-_H_WHITESPACE = " \t\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000"
+#:
+#: **Spelling a list out is how a list loses a member**, which round 8 measured: round 6's bare
+#: :meth:`str.rstrip` stripped ``\x1f``, Python counting the four information separators as whitespace, and
+#: round 7's hand-written list did not, so ``completed.\x1f9 RISK FACTORS`` went from a heading at 27,013
+#: characters to no heading at 54,026. The other three (``\x1c``, ``\x1d``, ``\x1e``) are in
+#: :data:`_VERTICAL_CHARS` instead, because they end a line rather than stand inside one.
+#: ``test_the_whitespace_this_module_spells_out_is_all_of_python_s`` compares the two spellings, which is the
+#: third time this module has needed such a test and the second time one was missing when it was needed.
+_H_WHITESPACE = " \t\x1f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000"
 
 #: The word that introduces an item number. A **letter** in front of it disqualifies it, so that "subitem" is
 #: not read as an item number (round 6); a digit does not, because a page number is printed tight against the
 #: heading often enough -- round 7 measured ``completed.9ITEM 4:`` lost to a plain ``\b``, which treats the
 #: figure and the word as one word.
 _H_ITEM = re.compile(r"(?<![^\W\d_])item\Z", re.IGNORECASE)
+
+#: The words that make the sentence in front of an item number a cross-reference. :data:`_REF_BEFORE` is
+#: ``ours-1``'s and anchored tight against the match, which is right where it is used -- the reference word
+#: sits directly in front of the title. In front of an **item number** it does not: "see also Item 4",
+#: "pursuant to Item 4", "as described in this Item 4" and "refer to our Item 4" each put a word of filler
+#: between the two, and round 8 measured every one of them ending a section at 27,0xx where round 6 ran on to
+#: 54,0xx. So this is the same question asked over a short run of filler words, and it is its own pattern
+#: because ``_REF_BEFORE`` is read by ``ours-1``'s :func:`_is_ref` and may not move.
+#:
+#: The filler list is closed on purpose: a determiner, a possessive, "also", and the words a filing uses to
+#: point at a place in itself. **"line" is not in it**, which is what keeps the cost row
+#: "the line item 12" a heading -- and that remains a cost, not a result, until #763's set counts it.
+_REF_BEFORE_ITEM = re.compile(r"(?i)\b(?:see|in|under|refer(?:red)?[^\S\n]+to|pursuant[^\S\n]+to"
+                              r"|described[^\S\n]+in|set[^\S\n]+out[^\S\n]+in|herein)"
+                              r"(?:[^\S\n]+(?:also|the|this|that|these|those|our|its|their|such"
+                              r"|above|below|section|part|item)){0,4}"
+                              r"[^\S\n]*[\u201c\"\u2018]?[^\S\n]*$")
 
 
 def _rstrip_gap(t: str) -> str:
@@ -958,6 +984,14 @@ def _figure_at_the_end(bare: str) -> tuple[int, int]:
     One backward walk, so a figure of any length costs its own length and no more. It reads, from the end:
     the mark the filer puts after a number, then the figure, then -- while a mark stands between two figures --
     that mark and the figure before it, because ``2.5`` and ``12:30`` and ``Item 4.1`` are **one** number each.
+
+    **What "two figures" asks is a digit in front of the mark and a figure character behind it**, not a digit on
+    both sides: a printed page number takes a dash as readily as a digit (``-12-`` is one, measured in round 6),
+    so ``4.-`` is one figure too. Round 8 read the older wording as a claim about digits and reported the dash
+    as a defect; the wording was wrong and the behaviour is the measured one. The digit it does ask for is an
+    **ASCII** digit, which round 8 found it was not: :meth:`str.isdigit` is true of ``\u00b2``, so
+    "about 5 km\u00b2.12" joined into one figure and the heading behind it was lost -- 54,061 characters where
+    round 6 gives 27,015.
 
     **Round 7's first finding, and a regression round 6 introduced.** Round 6 took only the digits after the
     last mark, so what was left ended in ``.`` or ``:``, :func:`_H_SENTENCE_END` accepted that as a sentence's
@@ -980,7 +1014,7 @@ def _figure_at_the_end(bare: str) -> tuple[int, int]:
         if j == i:
             return i, end
         i = j
-        if not (i >= 2 and bare[i - 1] in _H_NUMBER_MARK and bare[i - 2].isdigit()):
+        if not (i >= 2 and bare[i - 1] in _H_NUMBER_MARK and bare[i - 2] in _H_DIGITS):
             return i, end
         i -= 1
 
@@ -1047,7 +1081,7 @@ def _introduced_as_a_heading(text: str, start: int, line_start: int | None = Non
         return False
     before = _rstrip_gap(bare[:at])
     if _H_ITEM.search(before):
-        return not _REF_BEFORE.search(_rstrip_gap(before[:-len("item")])[-40:])
+        return not _REF_BEFORE_ITEM.search(_rstrip_gap(before[:-len("item")])[-80:])
     return not before or _H_SENTENCE_END.search(before) is not None
 
 
@@ -1094,7 +1128,7 @@ def _inline_prose_follows(text: str, m, line_start: int) -> bool:
     return not _VERTICAL.search(gap) or _introduced_as_a_heading(text, m.start(), line_start)
 
 
-def _aif_inline_ref(text: str, m: re.Match, line_start: int) -> bool:
+def _aif_inline_ref(text: str, m: re.Match, line_start: int, line_end: int) -> bool:
     """:func:`_inline_ref` with the AIF rule's own idea of where a line begins.
 
     **Round 7's second finding**, and round 6's first finding one function further along the same ``and`` chain.
@@ -1106,8 +1140,23 @@ def _aif_inline_ref(text: str, m: re.Match, line_start: int) -> bool:
     :func:`_starts_mid_line` itself is **not** changed, because ``ours-2``'s item rule shares it (#755) and that
     rule's answers are not this round's business. This is the AIF rule's own test, and it takes the line start
     the caller already has.
+
+    **Round 8's first finding: that fixed half of it and handed the other half straight back.** For a heading
+    that does share its line, this calls :func:`_ref_ours_2`, and two things in there read lines with ``\n``
+    alone: :data:`_CITED_PHRASE`'s ``[^\\S\\n]`` crosses every other line ending, and the 200-character quote
+    window is cut at ``text.find("\n", ...)``, which returns -1. So in a ``\r``-delimited document a run-in
+    heading whose **next line** opens "In this", "Below", "In our" or "Above" was read as "RISK FACTORS below"
+    -- a citation -- and the section ran to the end of the document: 54,125 characters labelled ``overrun``
+    where ``\n`` gives 27,042, and 54,086 against 26,999 where the heading carries only a page number.
+
+    The fix is to hand :func:`_ref_ours_2` the text **cut at the end of this heading's own line**, which the
+    caller has from the same cursor. Every offset in front of the match is unchanged, so ``m`` stays valid;
+    ``find("\n", ...)`` then returns -1 and the window ends where the line ends, which is what it meant all
+    along. :func:`_ref_ours_2` is not touched, because ``ours-2``'s item rule reads it (#755).
     """
-    return bool(text[line_start:m.start()].strip()) and _ref_ours_2(text, m)
+    if not text[line_start:m.start()].strip():
+        return False
+    return _ref_ours_2(text[:line_end], m)
 
 
 def _aif_ends(text: str) -> list[int]:
@@ -1140,14 +1189,17 @@ def _aif_ends(text: str) -> list[int]:
     same in every version of this rule and is a wart for #763's set, not something another built string settles.
     """
     out = [e.start() for e in _AIF_STOP_2.finditer(text) if not _ref_ours_2(text, e)]
-    starts = [0] + [v.end() for v in _VERTICAL.finditer(text)]
+    breaks = list(_VERTICAL.finditer(text))
+    starts = [0] + [v.end() for v in breaks]       # where each line begins
+    ends = [v.start() for v in breaks]             # and where the line before it ends
     seen = 0
     for e in _AIF_STOP_INLINE_2.finditer(text):
         while seen + 1 < len(starts) and starts[seen + 1] <= e.start():
             seen += 1                    # matches arrive in document order, so the cursor only moves forward
         line_start = starts[seen]
+        line_end = ends[seen] if seen < len(ends) else len(text)
         if (_printed_as_a_heading(e.group(0)) and _inline_prose_follows(text, e, line_start)
-                and not _aif_inline_ref(text, e, line_start)):
+                and not _aif_inline_ref(text, e, line_start, line_end)):
             out.append(e.start())
     return sorted(out)
 
