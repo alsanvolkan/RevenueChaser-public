@@ -457,6 +457,25 @@ def test_a_re_read_a_raw_only_run_left_untyped_is_typed_by_the_next_run_with_no_
                 "AND field = 'revenue' AND period_type = 'quarterly'") == [(fx.Q27,)]
 
 
+def test_a_raw_the_typing_cannot_read_is_an_issue_and_the_other_companies_are_still_typed(sec):
+    # F8 of the #704 review: an unreadable raw is handed to ``to_parquet_all`` again every run (``_untyped``), so
+    # without a per-company guard it would stop every cik sorted after it, every run, for good.
+    import gzip
+    import shutil
+    _answers(sec)
+    fx.run(companyfacts.NAME, mode="backfill", to="2026-10-28", no_duckdb=True)
+    for cik in ("1094517", "46619", "789019"):
+        shutil.rmtree(companyfacts.common.parquet_dir(companyfacts.NAME) / f"cik={cik}")
+    broken = companyfacts._raws("1094517")[-1]                         # sorts before the other two ciks
+    broken.write_bytes(gzip.compress(b"{ not json"))
+    check = fx.run(companyfacts.NAME, mode="backfill", to="2026-10-29")
+    assert len(sec.calls("companyfacts")) == 4                         # nobody asked again
+    assert "1 company(ies) not typed from their raw: 1094517" in check["note"]
+    assert [r["key"] for r in ops.rows("build_issues") if r["kind"] == "type_failed"] == ["1094517"]
+    served = {r[0] for r in fx.q("SELECT DISTINCT cik FROM fundamental_fact")}
+    assert {"46619", "789019"} <= served and "1094517" not in served
+
+
 def test_the_statement_older_than_120_days_check(sec):
     _answers(sec, msft=fx.msft_facts(with_new_quarter=True))
     check = fx.run(companyfacts.NAME, mode="backfill", to="2026-10-28")

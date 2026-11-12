@@ -202,27 +202,43 @@ class CompanyFacts:
                 newest[cik] = raw
         out = []
         dropped = 0
+        failed = []
         for cik, raw in sorted(newest.items()):
-            meta = base.read_raw_json(common.meta_path(raw))
-            rows, company, counts = facts.fact_rows(base.read_raw_json(raw), cik)
-            dropped += counts.get("no_provenance", 0)
-            stamps = {"preliminary": False, "source": facts.SOURCE, "source_as_of": date.fromisoformat(meta["as_of"]),
-                      "fetched_at": float(meta["fetched_at"]), "run_id": meta["run_id"]}
-            folder = common.parquet_dir(NAME) / f"cik={cik}"
-            con = duckdb.connect()
             try:
-                base.rows_table(con, "rows", facts.FACT, [{**r, **stamps} for r in rows])
-                out.append(base.write_parquet(con, "SELECT * FROM rows ORDER BY field, period_type, period_end",
-                                              folder / "part-0.parquet"))
-                base.rows_table(con, "company", facts.COMPANY, [{
-                    **company, "facts_as_of": stamps["source_as_of"], "fetched_at": stamps["fetched_at"],
-                    "run_id": stamps["run_id"]}])
-                out.append(base.write_parquet(con, "SELECT * FROM company", folder / "company.parquet"))
-            finally:
-                con.close()
+                dropped += self._type_company(cik, raw, out)
+            except Exception as e:  # noqa: BLE001 - one company's unreadable raw must not stop the others
+                # A raw the typing cannot read (a truncated or half-written file, a shape the rules refuse) is
+                # returned by ``_untyped`` every run: without this guard that one company would stop every later
+                # cik of every run. It is counted, recorded and the run goes on.
+                failed.append(cik)
+                ctx.issue("type_failed", cik, f"{raw.name}: {type(e).__name__}: {e}"[:400])
         if dropped:
             ctx.notes.append(f"{dropped} value(s) without an accession left out")
+        if failed:
+            ctx.notes.append(f"{len(failed)} company(ies) not typed from their raw: " + ", ".join(failed[:5]))
         return out
+
+    @staticmethod
+    def _type_company(cik: str, raw: Path, out: list[Path]) -> int:
+        """Write one company's two Parquet files from ``raw``; the number of values without an accession."""
+        meta = base.read_raw_json(common.meta_path(raw))
+        rows, company, counts = facts.fact_rows(base.read_raw_json(raw), cik)
+        stamps = {"preliminary": False, "source": facts.SOURCE, "source_as_of": date.fromisoformat(meta["as_of"]),
+                  "fetched_at": float(meta["fetched_at"]), "run_id": meta["run_id"]}
+        folder = common.parquet_dir(NAME) / f"cik={cik}"
+        con = duckdb.connect()
+        try:
+            base.rows_table(con, "rows", facts.FACT, [{**r, **stamps} for r in rows])
+            written = [base.write_parquet(con, "SELECT * FROM rows ORDER BY field, period_type, period_end",
+                                          folder / "part-0.parquet")]
+            base.rows_table(con, "company", facts.COMPANY, [{
+                **company, "facts_as_of": stamps["source_as_of"], "fetched_at": stamps["fetched_at"],
+                "run_id": stamps["run_id"]}])
+            written.append(base.write_parquet(con, "SELECT * FROM company", folder / "company.parquet"))
+        finally:
+            con.close()
+        out.extend(written)
+        return counts.get("no_provenance", 0)
 
     def build(self, ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         folder = common.parquet_dir(NAME)
