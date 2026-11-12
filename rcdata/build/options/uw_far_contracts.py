@@ -28,9 +28,11 @@ on the morning after D, so its ``open_interest`` is never already the next sessi
 - Per contract: the chain row counts only when its ``prev_oi`` equals the sweep row's ``open_interest`` (both are the
   open interest at the start of D); then ``oi_next`` is the chain row's ``open_interest``. Else the row is ``stale``.
 - Per ticker, UW has not updated the name yet, so no file is written and the next run asks again inside the window,
-  when either holds: one swept contract is provably not updated (its chain row has the sweep's ``open_interest``
-  and ``prev_oi`` while those two differ), or ``STALE_TICKER_MIN`` or more swept contracts are in the chain and
-  every one of them still has its sweep ``open_interest``.
+  when one swept contract is provably not updated (its chain row has the sweep's ``open_interest`` and ``prev_oi``
+  while those two differ). Until ``ACCEPT_FROM`` New York on the first read day the name also waits while none of
+  its swept contracts is provably updated (every one found still has the sweep's ``open_interest`` and none shows
+  ``prev_oi`` moved to it), which includes a chain holding none of them; after that it is taken as it is (a name
+  whose open interest did not move at all is then ``matched`` with a change of 0).
 - When the window ends, ``closed.json.gz`` marks the session; a ticker never read is then ``stale`` too.
 
 **The numbers, raw, none clipped** (``contract_rows``): ``oi_change = oi_next - open_interest``,
@@ -72,9 +74,10 @@ CHAIN_MIN_DTE = 175             # 183 less a long weekend: UW counts min_dte fro
 CHAIN_LIMIT = uw.PAGE_LIMIT     # 500
 OI_FROM = dtime(7, 30)          # New York; UW's open-interest update is about 06:45
 OI_UNTIL = dtime(6, 0)          # New York, two trading days on: before UW's next update moves prev_oi on
-STALE_TICKER_MIN = 3
+ACCEPT_FROM = dtime(12, 0)      # New York, first read day: a name with no proof either way is taken as it is
 ROLL_MIN_SHARE = 0.25            # the issue's NVDA roll: the closing leg's share was -0.39
 ROLL_VOLUME_RATIO = 1.25
+RETYPE_SESSIONS = 20            # the newest sessions whose files are compared with their Parquet each run
 OPEN_SESSIONS = 5               # sweep folders looked at for open interest still to read or close
 TICKER_FIELDS = ("ticker_symbol", "ticker", "underlying_symbol")
 STATUSES = ("pending", "matched", "stale", "missing")
@@ -174,17 +177,22 @@ def tickers_of(sweep: dict[str, dict]) -> dict[str, list[str]]:
     return out
 
 
-def not_updated(contracts: list[str], sweep: dict[str, dict], chain: dict[str, dict]) -> bool:
-    """True when UW has not moved a ticker's open interest to the next session yet (see the module doc)."""
+def not_updated(contracts: list[str], sweep: dict[str, dict], chain: dict[str, dict], patient: bool) -> bool:
+    """True when UW has not moved a ticker's open interest to the next session yet (see the module doc);
+    ``patient`` is before ``ACCEPT_FROM``."""
     found = [s for s in contracts if s in chain]
 
-    def same(s: str, f: str) -> bool:
-        return tables.to_int(chain[s].get(f)) == tables.to_int(sweep[s].get(f))
+    def val(row: dict, f: str) -> int | None:
+        return tables.to_int(row.get(f))
+    updated = False
     for s in found:
-        oi, prev = tables.to_int(sweep[s].get("open_interest")), tables.to_int(sweep[s].get("prev_oi"))
-        if oi is not None and prev is not None and oi != prev and same(s, "open_interest") and same(s, "prev_oi"):
-            return True
-    return len(found) >= STALE_TICKER_MIN and all(same(s, "open_interest") for s in found)
+        oi, prev = val(sweep[s], "open_interest"), val(sweep[s], "prev_oi")
+        c_oi, c_prev = val(chain[s], "open_interest"), val(chain[s], "prev_oi")
+        if oi is not None and prev is not None and oi != prev and c_oi == oi and c_prev == prev:
+            return True                             # provably not updated
+        if c_oi != oi or (c_prev == oi and oi != prev):
+            updated = True                          # provably updated
+    return patient and not updated
 
 
 def _share(part, whole) -> float | None:
@@ -315,6 +323,7 @@ class UWFarContracts:
             return
         sweep = swept(session)
         today = calendar.today_ny()
+        patient = now < datetime.combine(start.date(), ACCEPT_FROM, tzinfo=calendar.NY)
         for ticker, contracts in sorted(tickers_of(sweep).items()):
             path = oi_path(session, ticker)
             if path.exists():
@@ -341,7 +350,7 @@ class UWFarContracts:
                 ctx.issue("filter_broken", f"{session} {ticker}", f"the chain broke its filter: {broken}"[:300])
                 continue
             chain = {str(r["option_symbol"]).upper(): r for r in data}
-            if not_updated(contracts, sweep, chain):
+            if not_updated(contracts, sweep, chain, patient):
                 state["waiting"].append(ticker)
                 continue
             self._write(ctx, path, {"session_date": session.isoformat(), "ticker": ticker,
@@ -362,12 +371,21 @@ class UWFarContracts:
                                               "pages": {}, "written": set()})
         try:
             # The sweep first: it can be made only this evening, a chain can be read again by the next run.
+            # A sweep that fails still lets this run read the chains left over, then fails the run.
+            failed: base.SourceError | None = None
             if sweep_open(as_of):
-                self._sweep(ctx, as_of, state)
+                try:
+                    self._sweep(ctx, as_of, state)
+                except base.CapReached:
+                    raise
+                except base.SourceError as e:
+                    failed = e
             elif not sweep_path(as_of).exists():
                 state["stopped"] = "outside the sweep window: no sweep"
             for session in self.open_sessions(as_of):
                 self._open_interest(ctx, session, state)
+            if failed is not None:
+                raise failed
         except base.CapReached as e:
             state["stopped"] = str(e)
         return self._raws(as_of, state)
@@ -377,7 +395,7 @@ class UWFarContracts:
         killed between its fetch and its typing)."""
         out = []
         root = base.raw_root() / "uw" / "far_contracts"
-        for p in sorted(root.glob("*/sweep.json.gz")) if root.exists() else []:
+        for p in (sorted(root.glob("*/sweep.json.gz"))[-RETYPE_SESSIONS:] if root.exists() else []):
             session = date.fromisoformat(p.parent.name)
             part = tables.partition_path(SOURCE, OWNED[0], session)
             newest = max(f.stat().st_mtime for f in p.parent.rglob("*.json.gz"))

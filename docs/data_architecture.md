@@ -1877,8 +1877,8 @@ CLI or Settings):
   page from page 0 until a short page, and never after 06:00 New York the next morning (UW's open-interest update
   would already show in it); from 07:30 New York on the next trading day until 06:00 the trading day after (before
   UW's next update), each swept ticker's chain, `/stock/{ticker}/option-contracts` with `min_dte` 175 (UW counts it from the day
-  of the read), 500 a page. Every returned row is checked against its filter and one that breaks it fails the run,
-  because UW drops a parameter it does not honour without an error. A chain row counts only when its `prev_oi`
+  of the read), 500 a page. Every returned row is checked against its filter, because UW drops a parameter it does
+  not honour without an error: a sweep row that breaks it fails the run, a chain row fails that name. A chain row counts only when its `prev_oi`
   equals the sweep's `open_interest`; a name UW has not updated yet is asked again by the next run, and a chain that
   breaks its filter or is refused fails that name only. About 420 to
   435 UW calls a session (10 for the sweep, one or two a ticker). The rule is the module doc of

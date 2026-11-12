@@ -224,6 +224,35 @@ def test_a_name_with_one_contract_uw_has_provably_not_updated_waits(uw_opts, mon
     assert query("SELECT oi_status, oi_change FROM option_far_contract") == [("matched", 300)]
 
 
+def test_a_name_with_no_proof_either_way_waits_until_noon_then_is_taken_as_it_is(uw_opts, monkeypatch):
+    """Open interest unchanged the day before and again on the session: the chain looks the same before and after
+    UW's update, so the name waits until ``ACCEPT_FROM`` and is then matched with a change of 0. A chain holding
+    none of the swept contracts is the same case, and ends ``missing``."""
+    a = contract("FLAT", "C", 100, oi=100, prev_oi=100)
+    b = contract("GONE", "C", 100)
+    _swept(uw_opts, [a, b])
+    uw_opts.far_chain = {"FLAT": [chain_row(a, oi=100)], "GONE": []}
+    at(monkeypatch, MORNING)
+    row = run()
+    assert "UW not updated yet: FLAT, GONE" in row["note"]
+    assert query("SELECT DISTINCT oi_status FROM option_far_contract") == [("pending",)]
+    at(monkeypatch, datetime(2026, 10, 27, 16, 5, tzinfo=timezone.utc))     # 12:05 New York
+    run()
+    assert dict(query("SELECT ticker, oi_status FROM option_far_contract")) == {"FLAT": "matched", "GONE": "missing"}
+    assert query("SELECT oi_change, opened_share FROM option_far_contract WHERE ticker = 'FLAT'") == [(0, 0.0)]
+
+
+def test_a_failed_sweep_still_reads_the_chains_left_over(uw_opts, monkeypatch):
+    a = contract("AAA", "C", 100, volume=1000, oi=100)
+    _swept(uw_opts, [a])
+    uw_opts.far_chain = {"AAA": [chain_row(a, oi=600)]}
+    uw_opts.contract_screener = {"call": [], "put": []}                     # the next evening's sweep comes back empty
+    at(monkeypatch, NEXT_EVENING)
+    row = run()
+    assert row["result"] == "failed" and "no far-dated contract" in row["note"]
+    assert far.oi_path(SESSION, "AAA").exists(), "the chain was read before the run failed"
+
+
 def test_no_sweep_after_uw_s_morning_update(uw_opts, monkeypatch):
     """After about 06:45 New York the screener's open interest is the next session's: the evening's sweep is over."""
     uw_opts.contract_screener["call"] = [contract("AAA", "C", 100)]
@@ -310,4 +339,5 @@ def test_the_read_api_serves_the_newest_session_and_the_collecting_counts(uw_opt
     rows = read.far_contracts(tickers=["aaa"])
     assert [(r["ticker"], r["oi_status"], r["opened_share"]) for r in rows] == [("AAA", "matched", 0.4)]
     assert read.far_contract_sessions() == [{"session_date": SESSION, "contracts": 2, "tickers": 2, "matched": 1,
-                                             "pending": 0, "stale": 0, "missing": 1}]
+                                             "pending": 1, "stale": 0, "missing": 0}], \
+        "a chain holding none of the swept contracts waits for the morning's cut-off"
