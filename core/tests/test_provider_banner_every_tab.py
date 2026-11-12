@@ -14,8 +14,9 @@ from RevenueChaser.core.tests.test_help_every_tab import HELP_TABS
 
 BANNER = 'class="rc-provider-health"'
 #: Tabs that call no provider, so have no run that can fail: Welcome reads only stored data (its Fetch is a build);
-#: LEAPS reads the builder's stored ``option_far_contract`` and has no Fetch at all (#746).
-NO_PROVIDER = {"module_welcome", "module_leaps"}
+#: LEAPS reads the builder's stored ``option_far_contract`` and has no Fetch at all (#746); Watch lists are avo's
+#: own typed lists with no Fetch and no run of any kind (#786).
+NO_PROVIDER = {"module_welcome", "module_leaps", "module_watchlists"}
 
 
 @pytest.mark.parametrize("key", [k for k in HELP_TABS if k not in NO_PROVIDER])

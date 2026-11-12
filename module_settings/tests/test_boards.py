@@ -207,7 +207,7 @@ def test_every_data_board_has_a_board_inputs_entry():
     want = _data_board_keys()
     got = [e["key"] for e in boards.BOARD_INPUTS]
     assert got == want
-    assert len(got) == 16
+    assert len(got) == 17
 
 
 # Boards whose rendered payload emits ``funnel_steps`` (core.funnel). The rest
@@ -307,6 +307,18 @@ def test_the_swing_params_are_read_from_the_effective_settings_at_call_time(
 
 
 # ── PR 4: the stock watch list is read from ops.sqlite, not the raw store ──
+
+def test_the_watch_lists_card_reads_the_lists_themselves_and_not_an_artifact(rawstore_tmp_db):
+    """#786: the board has no payload file, so its card is "not rendered" until avo has a list, then it carries
+    the newest list write as its as-of. Its tables are the four of its own file, never an ops watch list."""
+    entry = _entry("module_watchlists")
+    assert entry["tables"] == ["wl_list", "wl_section", "wl_item", "wl_change"]
+    assert _card("module_watchlists")["state"] == "not_rendered"
+    from RevenueChaser.module_watchlists import store as wl_store
+    wl_store.create_list("Growth")
+    card = _card("module_watchlists")
+    assert card["state"] == "ok" and card["as_of"] and card["as_of"].startswith("20")
+
 
 def test_leaps_and_earnings_name_the_stock_watch_list_in_ops_not_the_store_table():
     leaps, er = _entry("module_leaps"), _entry("module_earnings_radar")

@@ -281,6 +281,10 @@ TABS = [
     # The opening screen (decision A, avo 9 Nov 2026 17:26: "welcome gelsin").
     {"type": "header", "label": "Home"},
     {"type": "tab", "key": "module_welcome", "label": "Welcome", "url": "/view/module_welcome", "sub": True},
+    # avo's own named lists (#786), the screen he opens first after Welcome: not downloaded data, so it sits in
+    # Home beside it rather than under Research.
+    {"type": "tab", "key": "module_watchlists", "label": "Watch lists", "url": "/view/module_watchlists",
+     "sub": True},
     {"type": "header", "label": "Research"},
     {"type": "tab", "key": "module_news", "label": "News", "url": "/view/module_news", "sub": True},
     {"type": "tab", "key": "module_earnings_radar", "label": "Earnings Radar", "url": "/view/module_earnings_radar", "sub": True},
@@ -336,6 +340,7 @@ def _module_file(mod: str) -> Path:
 # reader and as its hover title. A tab without an entry gets ``NAV_ICON_DEFAULT``.
 NAV_ICONS = {
     "module_welcome": "M3 11l9-8 9 8M5 10v10h14V10",
+    "module_watchlists": "M6 4h12v16l-6-4-6 4zM9 9h6",
     "module_news": "M4 5h13v14H6a2 2 0 0 1-2-2zM17 9h3v8a2 2 0 0 1-2 2M8 9h5M8 13h5",
     "module_earnings_radar": "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 12l6-6",
     "module_spx_gamma": "M3 12c3-6 6-6 9 0s6 6 9 0",
@@ -424,6 +429,8 @@ def view(mod: str):
         return redirect("/view/module_settings")
     if mod == "module_leaps":          # #746: from the rcdata layer; never the old board cached on disk (#730)
         return _view_leaps()
+    if mod == "module_watchlists":     # #786: avo's own lists, read from their own board file on every load
+        return _view_watchlists()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     if mod == "runs":
@@ -596,6 +603,27 @@ def _view_leaps() -> str:
         hint=("This board reads far-dated contracts (183 days or more, $50k premium or more) from the builder's "
               "uw/far_contracts dataset, which sweeps each session after the New York close and reads its open "
               "interest the next morning. The first session appears once that sweep has run. Issue #746."),
+        stamp=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+
+
+def _view_watchlists() -> str:
+    """The Watch lists board (#786), or its empty page while no list has been made.
+
+    Rendered in memory on every load, like LEAPS: the lists are read from ``boards/watchlists.duckdb`` and the
+    numbers from the rcdata layer, nothing is cached and nothing is written. ``?list=`` picks a list; an unknown
+    one opens the first.
+    """
+    from datetime import datetime, timezone
+    from RevenueChaser.module_watchlists import board as wl_board
+    data = wl_board.payload((request.args.get("list") or "").strip() or None)
+    if data is not None:
+        return wl_board.render_html(data)
+    return templating.render(
+        "empty_board.html.j2", title="Watch lists",
+        message="No watch list yet.",
+        hint=("A watch list is yours, not downloaded: nothing fetches one. Import your TradingView exports with "
+              "`python -m RevenueChaser.module_watchlists import <folder> --apply`, or make an empty list from "
+              "the Settings page, and this board shows it with its sections and Price columns. Issue #786."),
         stamp=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
 
@@ -2132,6 +2160,214 @@ def api_watchlist_toggle(ticker: str):
         return jsonify({"ok": False, "error": "bad ticker"}), 400
     in_watchlist = rawstore.toggle_watchlist(t, by=_requested_by())     # this ticker only, one transaction
     return jsonify({"ok": True, "ticker": t, "in_watchlist": in_watchlist})
+
+
+# ── The Watch lists board's own writes (#786) ──────────────────────────────────────────────────────────────────
+# Every one is a store-only write of one list, one section or one symbol: no provider call, no job, no network.
+# The answer carries the list's whole payload again, so the page redraws from what was actually stored rather
+# than from what it hoped would be stored. ``X-RC-Panel`` is required by ``_local_only`` as for every POST.
+
+def _wl_body() -> dict:
+    """The POSTed JSON object, or an empty one. A body that is not an object reads as empty, never as an error."""
+    found = request.get_json(silent=True)
+    return found if isinstance(found, dict) else {}
+
+
+def _wl_payload(list_id: str):
+    """``{ok, payload}`` for ``list_id`` after a write; 404 when the list is gone."""
+    from RevenueChaser.module_watchlists import board as wl_board
+    data = wl_board.payload(list_id)
+    if data is None or data["list"]["id"] != list_id:
+        return jsonify({"ok": False, "error": "no such watch list"}), 404
+    return jsonify({"ok": True, "payload": data})
+
+
+def _wl_text(body: dict, field: str, *, required: bool = True) -> tuple[str | None, str | None]:
+    value = body.get(field)
+    if value is None:
+        return (None, f"{field} is required") if required else (None, None)
+    if not isinstance(value, str):
+        return None, f"{field} must be text"
+    text = value.strip()
+    if required and not text:
+        return None, f"{field} cannot be empty"
+    return text, None
+
+
+@app.route("/api/watchlists/search")
+def api_watchlists_search():
+    """The add box's suggestions for ``?q=``: the spine's names whose ticker or name matches, best first."""
+    from RevenueChaser.module_watchlists import board as wl_board
+    q = (request.args.get("q") or "").strip()
+    return jsonify({"ok": True, "q": q, "rows": wl_board.search(q)})
+
+
+@app.route("/api/watchlists/new", methods=["POST"])
+def api_watchlists_new():
+    """Make a list. ``{ok, list_id}``; 400 for an empty name or one already taken."""
+    from RevenueChaser.module_watchlists import store
+    name, error = _wl_text(_wl_body(), "name")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    try:
+        list_id = store.create_list(name, description=(_wl_body().get("description") or ""),
+                                    by=_requested_by())
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "list_id": list_id})
+
+
+@app.route("/api/watchlists/<list_id>", methods=["POST"])
+def api_watchlists_update(list_id: str):
+    """Rename a list or give it a description. Only what the body names changes."""
+    from RevenueChaser.module_watchlists import store
+    body = _wl_body()
+    name, error = _wl_text(body, "name", required=False)
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    description = body.get("description")
+    if description is not None and not isinstance(description, str):
+        return jsonify({"ok": False, "error": "description must be text"}), 400
+    try:
+        store.update_list(list_id, name=name, description=description)
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/delete", methods=["POST"])
+def api_watchlists_delete(list_id: str):
+    """Delete a list, its sections and its symbols. The change rows stay, so what it held is still readable."""
+    from RevenueChaser.module_watchlists import store
+    removed = store.delete_list(list_id, by=_requested_by())
+    if not removed:
+        return jsonify({"ok": False, "error": "no such watch list"}), 404
+    return jsonify({"ok": True, "list_id": list_id, "deleted": True})
+
+
+@app.route("/api/watchlists/<list_id>/export.txt")
+def api_watchlists_export(list_id: str):
+    """The list in TradingView's own one-line format, the spelling it came in with."""
+    from RevenueChaser.module_watchlists import importer, store
+    if store.get_list(list_id) is None:
+        return "no such watch list", 404, {"Content-Type": "text/plain; charset=utf-8"}
+    text = importer.export_list(list_id)
+    # The id is a slug by construction, but the header is built from a path parameter: keep only what a file name
+    # may hold, so no quote or newline of a crafted link can reach the response header.
+    safe = re.sub(r"[^A-Za-z0-9._-]", "", list_id)[:60] or "watchlist"
+    return Response(text, mimetype="text/plain; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="{safe}.txt"'})
+
+
+@app.route("/api/watchlists/<list_id>/symbol/add", methods=["POST"])
+def api_watchlists_symbol_add(list_id: str):
+    """Put one symbol on a list, in the section the body names. A symbol already there is no error and no write."""
+    from RevenueChaser.module_watchlists import store
+    body = _wl_body()
+    symbol, error = _wl_text(body, "symbol")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    section_id, section_error = _wl_text(body, "section_id", required=False)
+    if section_error:
+        return jsonify({"ok": False, "error": section_error}), 400
+    try:
+        store.add_symbol(list_id, symbol, section_id=section_id or store.DEFAULT_SECTION, by=_requested_by())
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/symbol/remove", methods=["POST"])
+def api_watchlists_symbol_remove(list_id: str):
+    """Take one symbol off a list. A symbol that was not there is no error and no write."""
+    from RevenueChaser.module_watchlists import store
+    symbol, error = _wl_text(_wl_body(), "symbol")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    store.remove_symbol(list_id, symbol, by=_requested_by())
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/symbol/move", methods=["POST"])
+def api_watchlists_symbol_move(list_id: str):
+    """A dropped row: the symbol's section, then the section's new order (``order``, symbols by name)."""
+    from RevenueChaser.module_watchlists import store
+    body = _wl_body()
+    symbol, error = _wl_text(body, "symbol")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    section_id, section_error = _wl_text(body, "section_id")
+    if section_error:
+        return jsonify({"ok": False, "error": section_error}), 400
+    order = body.get("order") or []
+    if not isinstance(order, list) or any(not isinstance(s, str) for s in order):
+        return jsonify({"ok": False, "error": "order must be a list of symbols"}), 400
+    try:
+        store.move_symbol(list_id, symbol, section_id=section_id)
+        if order:
+            store.reorder(list_id, section_id, order)
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/section/add", methods=["POST"])
+def api_watchlists_section_add(list_id: str):
+    """Add a heading at the end of the list. A heading the list already has returns that one, with no write."""
+    from RevenueChaser.module_watchlists import store
+    name, error = _wl_text(_wl_body(), "name")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    try:
+        store.add_section(list_id, name)
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/section/rename", methods=["POST"])
+def api_watchlists_section_rename(list_id: str):
+    """Re-word one heading. Its id and its symbols do not move."""
+    from RevenueChaser.module_watchlists import store
+    body = _wl_body()
+    section_id, error = _wl_text(body, "section_id")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    name, name_error = _wl_text(body, "name")
+    if name_error:
+        return jsonify({"ok": False, "error": name_error}), 400
+    try:
+        store.rename_section(list_id, section_id, name)
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/section/delete", methods=["POST"])
+def api_watchlists_section_delete(list_id: str):
+    """Remove one heading; its symbols move to the first remaining section. The last section cannot go."""
+    from RevenueChaser.module_watchlists import store
+    section_id, error = _wl_text(_wl_body(), "section_id")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    try:
+        store.delete_section(list_id, section_id)
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/sections/order", methods=["POST"])
+def api_watchlists_sections_order(list_id: str):
+    """A dropped heading: the list's sections in their new order (``order``, section ids)."""
+    from RevenueChaser.module_watchlists import store
+    order = _wl_body().get("order") or []
+    if not isinstance(order, list) or any(not isinstance(s, str) for s in order):
+        return jsonify({"ok": False, "error": "order must be a list of section ids"}), 400
+    if store.get_list(list_id) is None:
+        return jsonify({"ok": False, "error": "no such watch list"}), 404
+    store.reorder_sections(list_id, order)
+    return _wl_payload(list_id)
 
 
 @app.route("/manifest.json")

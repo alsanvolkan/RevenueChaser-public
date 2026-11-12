@@ -88,6 +88,7 @@ no downloaded state worth re-deriving, so they keep a "click Fetch" empty state.
 | Fundamentals | `/run/module_fundamentals` | `refresh_universe`, `no_fetch` | model-only |
 | SEC 13F | `/run/module_sec_13f` (Fetch: names/sectors → shares outstanding → render; no UW key needed, and no SEC call since G9 — the builder owns the numbers) | — | store |
 | LEAPS | *(the scan is switched off, #730: `/run/module_leaps` answers `409` and the job is not registered; the tab serves a "no data yet" page)* | — | model-only |
+| Watch lists | *(none, #786: a watch list is typed, not downloaded; the board has no Fetch and no job)* | — | store — avo's lists from `boards/watchlists.duckdb`, the numbers beside them from the rcdata layer (`prices.bars`, `prices.latest`, `identity.security`, `market.series`) |
 | Forwards Testing | *(none)* | — | always live from files |
 | **Universe** (header) | `/run/universe` | — | n/a — SEC member list + market data into `equity_universe`; not a tab |
 | **Universe caps** (Settings) | `/run/universe-stats` | — | store → `.cache/` — fills only the NULL `equity_universe.market_cap` rows (Phase B alone) |
@@ -276,6 +277,25 @@ with its history row. No provider call, no DuckDB file.
   The read itself never creates `ops.sqlite`; the read log it counts into is flushed to it once a minute, which
   may, as for every `rcdata.read` call. A flush that fails keeps its counts for the next one and never fails the
   read (#228).
+
+#### The Watch lists board's own routes (#786)
+
+These are avo's named lists (`boards/watchlists.duckdb`, `module_watchlists/store.py`), not the two shared
+`option` / `stock` lists above. Every write is store-only — one list, one section or one symbol — and answers
+`{ok, payload}` with the list's whole payload again, so the page redraws from what was stored. Each needs
+`X-RC-Panel` like every non-GET.
+
+- **`GET /api/watchlists/search?q=`**: `{ok, q, rows}` — the add box's suggestions from the spine
+  (`identity.security`), a ticker that starts with the query first.
+- **`POST /api/watchlists/new`** `{name, description?}` -> `{ok, list_id}`; 400 for an empty or taken name.
+- **`POST /api/watchlists/<list_id>`** `{name?, description?}` — rename the list or re-word its description.
+- **`POST /api/watchlists/<list_id>/delete`** — the list, its sections and its symbols; the `wl_change` rows stay.
+- **`GET /api/watchlists/<list_id>/export.txt`** — the list in TradingView's one-line format, its own spelling.
+- **`POST /api/watchlists/<list_id>/symbol/add`** `{symbol, section_id?}`, **`/symbol/remove`** `{symbol}`,
+  **`/symbol/move`** `{symbol, section_id, order?}` (a dropped row: its section, then that section's new order).
+- **`POST /api/watchlists/<list_id>/section/add`** `{name}`, **`/section/rename`** `{section_id, name}`,
+  **`/section/delete`** `{section_id}` (its symbols move to the first remaining section; the last one cannot go),
+  **`/sections/order`** `{order}`.
 
 ### Known deviation (fixed 2026-09-30)
 

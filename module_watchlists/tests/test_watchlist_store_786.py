@@ -85,6 +85,16 @@ def test_lists_come_back_in_the_order_they_were_made_with_their_symbol_counts(a_
     assert [(r["list_id"], r["symbol_count"]) for r in rows] == [(a_list, 2), (second, 1)]
 
 
+def test_a_list_with_no_symbol_yet_is_still_one_of_the_lists(a_list):
+    """The whole file is built when the first list is made.
+
+    ``lists()`` joins ``wl_item``, so before this a file holding a list and no item row made that read raise, and
+    the board answered "no watch list yet" for a list avo had just created (CI, 12 Nov 2026).
+    """
+    assert [(r["list_id"], r["symbol_count"]) for r in store.lists()] == [(a_list, 0)]
+    assert store.sections(a_list) and store.items(a_list) == [] and store.changes(a_list) == []
+
+
 # ── sections ─────────────────────────────────────────────────────────────────
 
 def test_sections_keep_avos_order_not_the_alphabet(a_list):
