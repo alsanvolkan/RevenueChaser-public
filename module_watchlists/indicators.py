@@ -49,7 +49,7 @@ def label(score: float | None) -> str | None:
     if score is None:
         return None
     for edge, name, closed in BANDS:
-        if score >= edge if closed else score > edge:
+        if (score >= edge) if closed else (score > edge):
             return name
     return STRONG_SELL
 
