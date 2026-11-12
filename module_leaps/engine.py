@@ -1,5 +1,14 @@
 """LEAPS / institutional accumulation — far-dated options OI + IV footprint.
 
+SWITCHED OFF since 12 Nov 2026 (#730, avo: "B: Kapat"). No scan runs: the Fetch job is not registered and
+the tab serves a "switched off" page, so none of the labels below reaches a screen. The one live reader
+left is the Earnings Radar, which reads ``load_cache`` and shows nothing when it is empty -- and
+``leaps_cache`` holds 0 rows. The rest is kept, unrun, because switching off is not deleting. The reason they are not trusted: the stored
+far-print tape carries no opening or closing marker in any column, tag or report flag, and 52% of its
+prints are ``package``, so "Accumulating" cannot be derived from it. It returns only with a join of each
+far-dated print to the next session's open interest on the same contract, and the label would then read
+"OI up".
+
 Thesis ("ne degerse, iz birakir"): big money builds positions via LEAPS
 (far-dated options), leaving a footprint of rising far-dated call OI, rising
 IV, and aggressive far-dated call sweeps.

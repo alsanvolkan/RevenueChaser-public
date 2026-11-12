@@ -292,7 +292,9 @@ BOARD_INPUTS: list[dict] = [
     _board("module_sec_13f", "SEC 13F",
            ["sec13f_holdings", "sec13f_submissions", "sec13f_totals", "equity_universe"],
            lambda: _html("sec_13f")),
-    _board("module_leaps", "LEAPS",
+    # The tab is switched off (issue 730) and no job writes these two tables any more; the card stays so the
+    # page still accounts for them instead of leaving them unclaimed.
+    _board("module_leaps", "LEAPS (off)",
            ["leaps_flow_prints", "leaps_cache"],
            lambda: _html("leaps"), ops_tables=["watchlist_stock"]),
 ]

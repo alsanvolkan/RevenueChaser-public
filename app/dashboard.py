@@ -302,7 +302,10 @@ TABS = [
     {"type": "tab", "key": "module_fundamentals", "label": "Fundamentals", "url": "/view/module_fundamentals", "sub": True},
     {"type": "header", "label": "Ownership"},
     {"type": "tab", "key": "module_sec_13f", "label": "SEC 13F", "url": "/view/module_sec_13f", "sub": True},
-    {"type": "tab", "key": "module_leaps", "label": "LEAPS", "url": "/view/module_leaps", "sub": True},
+    # Switched off (#730): the tab stays in the nav so the name does not vanish without a word, and it
+    # serves the "switched off" page -- never the accumulation board.
+    {"type": "tab", "key": "module_leaps", "label": "LEAPS (off)", "url": "/view/module_leaps",
+     "sub": True},
     {"type": "header", "label": "Ops"},
     {"type": "tab", "key": "module_settings", "label": "Settings / Data health", "url": "/view/module_settings", "sub": True},
 ]
@@ -315,7 +318,7 @@ def _uw() -> UWClient:
 def _module_file(mod: str) -> Path:
     return {
         "module_earnings_radar": runners.EARNINGS_LATEST,
-        "module_leaps": runners.LEAPS_LATEST,
+        # No "module_leaps": the board is switched off (#730), so it has no page and no payload.
         "module_sector_rotation": runners.ROTATION_LATEST,
         "module_sec_13f": runners.SEC_13F_LATEST,
         "module_financials": runners.QUICK_LATEST,
@@ -395,6 +398,8 @@ def view(mod: str):
         return _view_uw_interaction()
     if mod == "activity":   # closed 11 Nov 2026 (avo): its jobs, logs and watch lists are on Settings' Fetch/Health tab
         return redirect("/view/module_settings")
+    if mod == "module_leaps":          # switched off (#730): never the board, whatever is cached on disk
+        return _view_leaps_off()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     if mod == "runs":
@@ -509,7 +514,6 @@ _MODEL_ONLY_RENDERERS = {
     "module_swing_potential": lambda: _import_runners().run_swing(None, no_fetch=True),
     "module_fundamentals": lambda: _import_runners().run_fundamentals(None, no_fetch=True),
     "module_asymmetric_growth": lambda: _import_runners().run_asymmetric_growth(None, no_fetch=True),
-    "module_leaps": lambda: _import_runners().run_leaps_cached(),
     "module_financials": lambda: _import_runners().run_quick_cached(),
     "module_comovement": lambda: _import_runners().run_comovement(None, no_fetch=True),
     "module_value_chain": lambda: _import_runners().run_value_chain(None, no_fetch=True),
@@ -548,6 +552,25 @@ def _universe_loading(mod: str) -> bool:
         return False
     from RevenueChaser.core import universe
     return not universe.has_universe()          # the universe the boards read (Opus review M1), not the old table
+
+
+def _view_leaps_off() -> str:
+    """The LEAPS tab's only page: a plain sentence saying the board is off and what would bring it back (#730).
+
+    Rendered in memory, like every transient state: nothing is written to ``.cache``, and a board artifact an
+    older build left on disk is never served again. The accumulation, conviction and tier wording of
+    ``module_leaps/report.py`` therefore reaches no screen.
+    """
+    from datetime import datetime, timezone
+    return templating.render(
+        "empty_board.html.j2", title="LEAPS",
+        message="This board is switched off.",
+        hint=("It never recorded a row, its pinned universe is empty, and the far-dated print feed carries no "
+              "opening marker, so \u201caccumulating\u201d could not be read from it. It returns when each "
+              "far-dated print can be joined to the next session\u2019s open interest on the same contract "
+              "(ticker, expiry, strike, right) \u2014 and the label would then be \u201cOI up\u201d, not "
+              "\u201caccumulating\u201d. Issue #730."),
+        stamp=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
 
 def _universe_loading_view(mod: str) -> str:

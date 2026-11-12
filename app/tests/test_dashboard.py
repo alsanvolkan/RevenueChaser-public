@@ -667,58 +667,46 @@ class TestRefreshReadsStoreFetchReadsNetwork:
       - "Fetch" runs the live provider scan OVER THE NETWORK (requires the UW
         API key) and writes a fresh artifact.
 
-    These tests pin the split on the LEAPS board.
+    The split itself is pinned on Financials (``test_quick_refresh_*``) and on the screeners
+    (``test_screener_refresh_145.py``); the LEAPS board, which used to pin it here, is switched off (#730)
+    and these tests now hold that nothing re-renders it.
     """
 
-    def test_leaps_refresh_renders_from_the_store_offline(self, rawstore_tmp_db,
-                                                          tmp_path, monkeypatch):
+    def test_the_leaps_tab_serves_the_switched_off_page(self, rawstore_tmp_db, tmp_path, monkeypatch):
+        """#730: the only page the tab has. No key, no network, and no accumulation wording."""
         from RevenueChaser.core import rawstore
         from RevenueChaser.module_leaps.engine import save_cache
         rawstore.save_watchlist({"AAPL"})
-        save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating",
-                            "score": 50, "as_of": "2026-09-01"})
-
-        # No artifact on disk -> the view must regenerate from the store.
-        import RevenueChaser.app.runners as rn
-        import RevenueChaser.module_leaps.report as lr
-        monkeypatch.setattr(rn, "OUTPUT_DIR", tmp_path)
-        monkeypatch.setattr(lr, "OUTPUT_DIR", tmp_path)
-        monkeypatch.setattr(rn, "LEAPS_LATEST", tmp_path / "leaps_latest.html")
-        monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())  # refresh must not need a key
-
-        body = dashboard.app.test_client().get("/view/module_leaps").get_data(as_text=True)
-        assert "LEAPS ACCUMULATION RADAR" in body  # board rendered from seeded store data
-        assert "AAPL" in body
-        assert "No LEAPS data yet" not in body
-        # network is globally blocked (conftest) — reaching here proves refresh is offline
-
-    def test_refresh_ignores_stale_artifact_on_any_store_backed_board(
-            self, rawstore_tmp_db, tmp_path, monkeypatch):
-        """Refresh is a general rule, not a Financials special case: on any
-        store-backed board, ?refresh=1 drops the cached html and recomputes from
-        .store even when a stale artifact already exists."""
-        from RevenueChaser.core import rawstore
-        from RevenueChaser.module_leaps.engine import save_cache
-        rawstore.save_watchlist({"AAPL"})
-        save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating",
-                            "score": 50, "as_of": "2026-09-01"})
-
-        import RevenueChaser.app.runners as rn
-        import RevenueChaser.module_leaps.report as lr
-        monkeypatch.setattr(rn, "OUTPUT_DIR", tmp_path)
-        monkeypatch.setattr(lr, "OUTPUT_DIR", tmp_path)
-        monkeypatch.setattr(rn, "LEAPS_LATEST", tmp_path / "leaps_latest.html")
+        save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating", "score": 50, "as_of": "2026-09-01"})
         monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
 
-        # Stale artifact for a DIFFERENT state than the store holds.
-        (tmp_path / "leaps_latest.html").write_text("<h1>STALE board</h1>", encoding="utf-8")
+        body = dashboard.app.test_client().get("/view/module_leaps").get_data(as_text=True)
+        assert "switched off" in body
+        assert "#730" in body
+        assert "ACCUMULATION RADAR" not in body.upper()   # the board itself is never served
+        assert "AAPL" not in body                      # nor does a seeded footprint
 
-        body = dashboard.app.test_client().get("/view/module_leaps?refresh=1").get_data(as_text=True)
-        assert "LEAPS ACCUMULATION RADAR" in body       # recomputed from the store
-        assert "AAPL" in body
-        assert "STALE board" not in body                # cached html was ignored
-        fresh = (tmp_path / "leaps_latest.html").read_text(encoding="utf-8")
-        assert "STALE board" not in fresh               # artifact overwritten too
+    def test_a_cached_leaps_artifact_is_never_served_again(self, rawstore_tmp_db, tmp_path, monkeypatch):
+        """An older build left ``leaps_latest.html`` in .cache/: the switched-off page wins, on a Refresh too."""
+        import RevenueChaser.app.runners as rn
+        monkeypatch.setattr(rn, "OUTPUT_DIR", tmp_path)
+        monkeypatch.setattr(rn, "LEAPS_LATEST", tmp_path / "leaps_latest.html")
+        (tmp_path / "leaps_latest.html").write_text("<h1>LEAPS ACCUMULATION RADAR</h1>", encoding="utf-8")
+        monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
+
+        c = dashboard.app.test_client()
+        for url in ("/view/module_leaps", "/view/module_leaps?refresh=1"):
+            body = c.get(url).get_data(as_text=True)
+            assert "switched off" in body, url
+            assert "ACCUMULATION RADAR" not in body, url
+        # The board is off, so it has no payload either.
+        assert c.get("/view/module_leaps/payload.json").status_code == 404
+
+    def test_the_tab_says_it_is_off_in_the_nav(self):
+        entry = next(t for t in dashboard.TABS if t.get("key") == "module_leaps")
+        assert entry["label"] == "LEAPS (off)"
+        assert "module_leaps" not in dashboard._MODEL_ONLY_RENDERERS
+        assert "module_leaps" not in dashboard._STORE_REFRESHABLE
 
     def test_leaps_fetch_is_switched_off(self, monkeypatch):
         """The LEAPS scan is off (#730): the route refuses with a reason and probes no key."""
