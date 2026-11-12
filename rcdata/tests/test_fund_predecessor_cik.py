@@ -144,7 +144,10 @@ def _con(served: list[dict], staged: list[dict]) -> duckdb.DuckDBPyConnection:
 
 
 def _row(cik, field, end, value, period_type="annual"):
+    """One served or staged fact. A non-preliminary row carries an accession and a filed date, which the served
+    table's CHECK constraint requires; the copy keeps the predecessor's own."""
     return {"cik": cik, "field": field, "period_type": period_type, "period_end": end, "value": value,
+            "accn": f"{int(cik):010d}-{end.year % 100}-000001", "filed": date(end.year + 1, 2, 10),
             "derived": False, "preliminary": False, "source": facts.SOURCE}
 
 
