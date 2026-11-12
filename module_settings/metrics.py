@@ -37,10 +37,11 @@ WHO = ("systemd", "claude", "unknown", "lost")
 STATES = ("fresh", "unchanged", "late", "stale", "never")
 #: The IBKR gateway's login states (core/ibkr_login.py), as label values; anything else reads ``unknown``.
 IBKR_STATES = ("up", "silent", "down", "unknown", "not_set")
-#: The parts ``collect`` reads one by one; each starts its error counter at 0 so a first failure is an increase.
 #: An IBKR news feed's states (module_news/tape_state.py), as label values; anything else reads ``unknown``.
 NEWS_STATES = ("refused", "live", "subscribed", "waiting", "unknown")
-_FEED_NAME = re.compile(r"[A-Z0-9_]{1,16}")      # a feed id is an env value: only a plain one becomes a label
+# a feed id is an env value: only a plain one becomes a label (IBKR's provider codes carry a hyphen or a dot: DJ-N)
+_FEED_NAME = re.compile(r"[A-Za-z0-9_.-]{1,16}")
+#: The parts ``collect`` reads one by one; each starts its error counter at 0 so a first failure is an increase.
 PARTS = ("queue", "providers", "datasets", "builder", "timer", "backups", "switches", "ibkr", "news")
 TIMER_EVERY_S = 60.0
 
@@ -266,15 +267,19 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
 
     def news_feeds() -> None:
         # #727: the listener's record (module_news/tape_state.py), read as the Settings page read it: no socket
-        got = news() if news is not None else _news_tape(now)
-        for f in (got or {}).get("feeds") or []:
+        got = (news() if news is not None else _news_tape(now)) or {}
+        if got.get("unreadable"):             # a file that is there and cannot be read is a failed read, not "no record"
+            raise ValueError("the news listener's record cannot be read")
+        for f in got.get("feeds") or []:
             name = str(f.get("feed") or "")
             if not _FEED_NAME.fullmatch(name):
                 continue
-            state = f.get("state") if f.get("state") in NEWS_STATES else "unknown"
+            # a record the listener stopped writing (tape_state.STALE_MINUTES) is what it last knew, not the present:
+            # a feed must not stay "live" for as long as the listener is dead
+            state = f.get("state") if f.get("state") in NEWS_STATES and not got.get("stale") else "unknown"
             for s in NEWS_STATES:
                 out["rc_news_feed_state"].append(({"feed": name, "state": s}, 1 if s == state else 0))
-        written = _iso_epoch((got or {}).get("written_at"))
+        written = _iso_epoch(got.get("written_at"))
         if written is not None:
             out["rc_news_tape_written_timestamp_seconds"].append(({}, written))
 

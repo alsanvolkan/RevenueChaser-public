@@ -3,8 +3,9 @@
 #727; avo, 12 Nov 2026: "Evet bir kart ekleyelim". On 11 Nov the two broad-tape feeds (BRFG, DJNL) were refused with IBKR
 error 10197 ("No market data during competing live session") 32 times in a row, and the only place that said so was
 the unit's journal. The listener (``tape.py``) is its own process and opens no DuckDB, so it writes this small JSON
-file instead, whole and atomically; ``collect`` turns it into the words the Data health card shows. Like the login
-check's record (``core/ibkr_login.py``) the card reads the file only: it opens no socket and asks the gateway nothing.
+file instead, whole and atomically; ``collect`` turns it into the words and states the dashboard serves (the metrics
+and the Grafana board head, ``module_settings/metrics.py``; the Settings card of #728 is gone, #715). Like the login
+check's record (``core/ibkr_login.py``) the reader reads the file only: it opens no socket and asks the gateway nothing.
 
 A feed has no "you are subscribed" answer from IBKR: the gateway either refuses the request or says nothing until
 the first headline. So the record keeps three moments a feed (asked, refused, last headline) and ``collect`` reads
@@ -27,7 +28,7 @@ FLUSH_S = 60.0
 #: A fresh ask is not called "subscribed" until the gateway has had this long to refuse it (it refuses in a second).
 GRACE_S = 60.0
 COMPETING_SESSION = 10197
-#: Said once on the card when a feed is refused with 10197, not once a feed.
+#: Said once when a feed is refused with 10197, not once a feed.
 HINT_10197 = ("10197 means another session of this IBKR user holds the live market data: Trader Workstation, the "
               "Client Portal website or the IBKR mobile app, or the live user a paper user borrows its data from. "
               "Logging that session out frees the feeds; the listener asks again by itself.")
@@ -62,15 +63,18 @@ def _count(value) -> int:
 
 
 def read(*, path: Path | None = None) -> dict:
-    """The record as it stands. A missing, unreadable or malformed file reads as no record, never as a refusal."""
+    """The record as it stands. A missing, unreadable or malformed file reads as no record, never as a refusal;
+    ``unreadable`` says a file is there and could not be read, so a broken record is not taken for "never started"."""
     out = {"written_at": None, "gateway": {"state": UNKNOWN, "since": None, "target": None, "detail": None},
-           "feeds": {}}
+           "feeds": {}, "unreadable": False}
     try:
         stored = json.loads(Path(path or state_path()).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return out
     except (OSError, ValueError):
-        return out
+        return {**out, "unreadable": True}
     if not isinstance(stored, dict):
-        return out
+        return {**out, "unreadable": True}
     out["written_at"] = _text(stored.get("written_at"))
     gw = stored.get("gateway") if isinstance(stored.get("gateway"), dict) else {}
     if gw.get("state") in ("connected", "down"):
@@ -127,7 +131,7 @@ class Recorder:
         self._gateway("down", target, detail)
 
     def keep(self, names: list[str]) -> None:
-        """Forget a feed the listener no longer asks for, so the card never shows a feed that was switched off."""
+        """Forget a feed the listener no longer asks for, so the view never shows a feed that was switched off."""
         self.rec["feeds"] = {n: f for n, f in self.rec["feeds"].items() if n in names}
 
     def asked(self, name: str) -> None:
@@ -192,7 +196,7 @@ def _feed_view(name: str, f: dict, now: datetime, connected: bool) -> dict:
 
 
 def collect(*, names: list[str], now: datetime | None = None, path: Path | None = None) -> dict:
-    """What the Data health card shows for ``names``, the feeds the listener is set to ask for. Reads the record
+    """What the dashboard says about ``names``, the feeds the listener is set to ask for. Reads the record
     only - no socket, no gateway."""
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
@@ -201,10 +205,11 @@ def collect(*, names: list[str], now: datetime | None = None, path: Path | None 
     written = _parse(rec["written_at"])
     if written is None:
         return {"state": UNKNOWN, "stale": False, "feeds": [], "gateway": "", "gateway_state": UNKNOWN, "hint": "",
-                "lead": "", "written_at": None,
-                "written_text": "No record yet: the listener has not written one. It writes when it connects, on "
-                                "every ask and refusal, and every 5 minutes; a listener started before this card "
-                                "existed writes nothing until it is restarted."}
+                "lead": "", "written_at": None, "unreadable": rec["unreadable"],
+                "written_text": ("The listener's record is there but cannot be read." if rec["unreadable"] else
+                                 "No record yet: the listener has not written one. It writes when it connects, on "
+                                 "every ask and refusal, and every 5 minutes; a listener started before the record "
+                                 "existed writes nothing until it is restarted.")}
     stale = (now - written).total_seconds() > STALE_MINUTES * 60
     ago = for_how_long(rec["written_at"], now)
     written_text = (f"The listener last wrote {ago} ago, longer than the {STALE_MINUTES} minutes expected: it is "
@@ -227,12 +232,12 @@ def collect(*, names: list[str], now: datetime | None = None, path: Path | None 
     hint = HINT_10197 if any(f["code"] == COMPETING_SESSION for f in feeds) else ""
     return {"state": worst, "stale": stale, "feeds": feeds, "gateway": gateway, "gateway_state": gw["state"],
             "written_text": written_text, "hint": hint, "lead": _lead(worst, feeds, ago if stale else ""),
-            "written_at": rec["written_at"]}
+            "written_at": rec["written_at"], "unreadable": False}
 
 
 def _lead(worst: str, feeds: list[dict], stale_ago: str) -> str:
-    """The card's first line: the worst feed state in a few words, so a connected gateway with every feed refused
-    does not open the card on a green line. A stale record says it is the last known state, not the present one."""
+    """The first line: the worst feed state in a few words, so a connected gateway with every feed refused does not
+    open on a green line. A stale record says it is the last known state, not the present one."""
     refused = [f["feed"] for f in feeds if f["state"] == REFUSED]
     if not feeds:
         words = "The listener is set to ask for no feed"

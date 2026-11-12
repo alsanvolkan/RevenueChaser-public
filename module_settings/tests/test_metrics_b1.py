@@ -136,6 +136,35 @@ def test_the_listener_s_last_write_is_exported_and_absent_without_a_record():
     assert fam["rc_news_tape_written_timestamp_seconds"] == []
 
 
+def test_a_feed_id_with_a_hyphen_or_a_dot_is_still_reported():
+    # IBKR's own provider codes: DJ-N, DJ-RT, BRFUPDN; dropping one silently would hide a refused feed
+    fam = _families(metrics.render(_collect(news=_tape([{"feed": "DJ-N", "state": "refused"}]))))
+    assert 'rc_news_feed_state{feed="DJ-N",state="refused"} 1' in fam["rc_news_feed_state"]
+
+
+def test_a_record_the_listener_stopped_writing_reads_unknown_not_its_last_state():
+    """Review of #742: a listener that died while its feeds were live would have read live for ever."""
+    stale = lambda: {"feeds": [{"feed": "BRFG", "state": "live"}], "stale": True,   # noqa: E731
+                     "written_at": "2026-11-11T09:40:00+00:00"}
+    fam = _families(metrics.render(_collect(news=stale)))
+    assert [l for l in fam["rc_news_feed_state"] if l.endswith(" 1")] == ['rc_news_feed_state{feed="BRFG",state="unknown"} 1']
+    assert fam["rc_news_tape_written_timestamp_seconds"], "when it last wrote is still said"
+
+
+def test_a_record_file_that_is_there_and_broken_is_a_failed_read_and_a_missing_one_is_not(tmp_path, monkeypatch):
+    """Review of #742: the reader took a corrupt file for "the listener never started", so the counter never moved."""
+    from RevenueChaser.module_news import tape_state
+    path = tmp_path / "state.json"
+    monkeypatch.setattr(tape_state, "state_path", lambda: path)
+    before = metrics._errors["news"]
+    assert _families(metrics.render(_collect()))["rc_news_feed_state"] == []
+    assert metrics._errors["news"] == before, "no record yet is not an error"
+    path.write_text("{not json", encoding="utf-8")
+    assert _families(metrics.render(_collect()))["rc_news_feed_state"] == []
+    assert metrics._errors["news"] == before + 1
+    assert "cannot be read" in metrics.board_head(NOW, ibkr=lambda: None)["news"]["written_text"]
+
+
 def test_a_news_record_that_cannot_be_read_is_counted_and_the_rest_still_reports():
     def boom():
         raise RuntimeError("tape read exploded")

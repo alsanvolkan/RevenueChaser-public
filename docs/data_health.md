@@ -595,7 +595,8 @@ through at most once a minute.
 **It is shown on the Grafana Fetch/Health board, not on this page** (avo, 12 Nov 2026: status lives in
 Grafana; the page draws no card for it). The dashboard gives the board two things, both read from the
 record and neither opening a socket: the metric `rc_news_feed_state` (section 9), which an alert can
-watch, and the `news` field of the board head (`metrics.board_head`), which carries the words: one lead
+watch, and the `news` field of the board head (`metrics.board_head`), which carries the words (the board
+draws the states today; the words are served and not drawn yet, home-server follow-up): one lead
 line, the worst feed state in a few words (so a connected gateway with every feed refused does not read
 as green), the connection line and for each feed its state:
 
@@ -608,9 +609,12 @@ as green), the connection line and for each feed its state:
 - **Waiting** - the listener is not connected to the gateway.
 
 A record older than 15 minutes says the listener is probably not running, and no record at all says so
-in words: neither reads as a refusal (`rc_news_tape_written_timestamp_seconds` is the record's age; it
-is absent while there is no record). A listener started before the record existed writes nothing until it
-is restarted.
+in words: neither reads as a refusal. In the metric a record that old reads `unknown` for every feed, so
+a feed does not stay `live` while the listener is dead; with no record there is no `rc_news_feed_state`
+series at all, and a record that is there but cannot be read counts under
+`rc_metrics_read_errors_total{part="news"}`. `rc_news_tape_written_timestamp_seconds` is when the record
+was last written (its age is `time()` minus it); it is absent while there is no record. A listener
+started before the record existed writes nothing until it is restarted.
 
 ### 3.3 Backups
 
