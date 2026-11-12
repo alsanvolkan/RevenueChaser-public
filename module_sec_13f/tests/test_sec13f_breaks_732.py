@@ -44,16 +44,15 @@ def test_a_ticker_with_breaks_carries_them_newest_first_and_one_without_carries_
     payload = report.board_payload(TOTALS, META, BREAKS)
     breaks = _row(payload, "AAA")[4]
     assert [b[0] for b in breaks] == ["2026 Q2", "2026 Q1"]
-    assert breaks[0][1][0] == "2 filers stopped filing, 10 shares"
-    assert breaks[0][1][1] == "Largest: Big Fund (8), Small Fund (2)"
-    assert breaks[0][1][2] == "1 filer started filing, 1 shares"
+    assert breaks[0][1][0] == ["2 filers stopped filing, 10 shares", ["Big Fund (8)", "Small Fund (2)"]]
+    assert breaks[0][1][1][0] == "1 filer started filing, 1 shares"
     assert _row(payload, "BBB")[4] == []
 
 
 def test_the_break_shares_are_on_todays_basis():
     inputs = {"AAA": {**BREAKS["AAA"], "split_factor": {Q1: 0.5, Q2: 0.5}}}      # a 2-for-1 split after both
     breaks = _row(report.board_payload(TOTALS, META, inputs), "AAA")[4]
-    assert breaks[0][1][0] == "2 filers stopped filing, 20 shares"
+    assert breaks[0][1][0][0] == "2 filers stopped filing, 20 shares"
 
 
 def test_a_break_of_a_quarter_still_arriving_or_outside_the_window_is_not_listed():
