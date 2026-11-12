@@ -702,9 +702,8 @@ def strip_html(html: str) -> str:
 # The heading titles below are **adapted** from edgartools, not imported, which is the owner's decision of
 # 12 Nov 2026 ("Evet bu sekilde uygula") for 40-F: 10-K and 20-F keep the pinned import, and here the start
 # and stop titles are written out in our own code so that this rule's answers are ours to change and ours to
-# test. The patterns around them -- the line anchor, the number in front, the distance a stop must keep -- are
-# ours and are not in the source: the line anchor, the number in front, the contents test, the body minimum
-# and the two tests an inline title has to pass.
+# test. The patterns around them are ours and are not in the source: the line anchor, the number in front, the
+# contents test, the body minimum, and the three tests an inline title has to pass.
 #
 #     Source:    edgar/company_reports/forty_f.py, lists ``_BUSINESS_STARTS`` (:244), ``_BUSINESS_ENDS``
 #                (:253) and ``_SECTION_PATTERNS`` (:266)
@@ -810,12 +809,16 @@ _AIF_HEADING_LINE = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}"
                                rf"(?:{'|'.join(_AIF_TITLES_2 + _AIF_STOP_TITLES_2)})"
                                rf"(?:{_H_SP}and{_H_SP}operations)?{_AIF_TAIL}")
 
-#: ``ours-1``'s only start title, kept as a **last resort** and asked what ``ours-1`` asks of it: its own stop
-#: (a line-start ``RISK FACTORS``), ``ours-1``'s page-number test and ``ours-1``'s distance, **no** reference
-#: test and **no** body minimum, because ``ours-1`` applies none of the three -- rounds 1 and 2 each measured
-#: shapes that asking more had lost. It is more generous than ``ours-1`` in one way: the distance is a test of
-#: every candidate stop and not of the first one alone, where ``ours-1`` gives the start up. That direction is
-#: allowed; losing a section is not.
+#: ``ours-1``'s only start title, kept as a **last resort** and asked exactly what ``ours-1`` asks of it: its
+#: own stop (a line-start ``RISK FACTORS``), ``ours-1``'s page-number test, ``ours-1``'s distance from the
+#: heading and -- the part round 3 had to put back -- the start **dropped** when that first stop is too close,
+#: rather than a later stop looked for. No reference test, and no body minimum on a closed pair, because
+#: ``ours-1`` applies neither; an unclosed body still has to pass the minimum, or a contents line at the end of
+#: a document comes back as an empty string labelled ``overrun`` (round 3's fourth finding).
+#:
+#: Neither more nor less than ``ours-1``, which is a position both directions were measured into: round 1 lost
+#: three shapes by asking more, and round 3 returned a contents block by asking less. :func:`_aif_pass_ours_1`
+#: is where that rule lives.
 #:
 #: The titles above are preferred because a filing that carries both prints this one first and the description
 #: after it, and the description is the business block proper; but 44 of the 88 stored exhibits are cut by
@@ -877,9 +880,18 @@ def _runs_into_prose(text: str, end: int) -> bool:
 
 
 #: What may stand between a run-in heading and the start of its line: the page number the filer prints there
-#: and the item number in front of the title. It has to carry a digit, because whitespace alone leaves a title
-#: at the end of an English sentence looking like a heading.
-_H_BEFORE = re.compile(rf"[^\S\n]*(?:item[^\S\n]+)?\d[\d.:{_DASH}]*[^\S\n]*$", re.IGNORECASE)
+#: and the item number in front of the title, which is EXK's ``9 ITEM 4:``. It has to carry a digit, because
+#: whitespace alone leaves a title at the end of an English sentence looking like a heading.
+#:
+#: A page number may stand in front of the item number, as EXK's ``9 ITEM 4:`` does, but only there: left
+#: optional on its own it read the year out of "Production fell in 2025. 12" and left the sentence in front of
+#: it, which is the opposite of what the test below is for.
+#:
+#: Anchored at the end with ``\Z`` and with no leading star, which round 4 found this pattern needed twice over.
+#: The star made it quadratic on a run of horizontal blanks -- 21.9 s on 32,000, the same defect round 3 removed
+#: from :data:`_H_AFTER` and reintroduced here -- and ``strip_html`` collapses runs of ``[ \t]`` but not of
+#: ``&emsp;``, so the run reaches this code.
+_H_BEFORE = re.compile(rf"(?:(?:\d[\d.:{_DASH}]*[^\S\n]+)?item[^\S\n]+)?\d[\d.:{_DASH}]*\Z", re.IGNORECASE)
 
 
 def _introduced_as_a_heading(text: str, start: int) -> bool:
@@ -890,9 +902,20 @@ def _introduced_as_a_heading(text: str, start: int) -> bool:
     no evidence after it. EXK's ``No significant acquisitions were completed. 9 ITEM 4: RISK FACTORS`` is
     introduced by ``9 ITEM 4:``; ``We now turn to our RISK FACTORS`` is introduced by the rest of its sentence,
     and a sentence that ends on the section's name is not a heading of it.
+
+    **The number has to be introduced too** (round 4): a page number stands at a line's start or after the
+    sentence the page ends on, so what comes before it is nothing or a sentence's punctuation. Without that
+    test, any sentence ending in a figure introduced a heading -- "the Company had 2 MATERIAL PROPERTIES" ended
+    a section at 27,030 characters where the same sentence written "two" runs on to 54,073.
     """
-    head = text[text.rfind("\n", 0, start) + 1:start]
-    return not head.strip() or _H_BEFORE.search(head) is not None
+    bare = text[text.rfind("\n", 0, start) + 1:start].rstrip()
+    if not bare:
+        return True
+    m = _H_BEFORE.search(bare)
+    if m is None:
+        return False
+    before = bare[:m.start()].rstrip()
+    return not before or before[-1] in ".:;!?" + _DASH
 
 
 def _aif_contents_entry(text: str, m: re.Match) -> bool:
@@ -926,7 +949,7 @@ def _inline_prose_follows(text: str, m) -> bool:
 
     - **On the same line**, which is EXK's ``9 ITEM 4: RISK FACTORS The Company is risky.``
     - **On the next line**, which is what :func:`strip_html` makes of
-      ``<b>ITEM 4: RISK FACTORS</b><br>The Company...`` -- but then the title has to **open** its own line
+      ``<b>ITEM 4: RISK FACTORS</b><br>The Company...`` -- but then the title also has to
       be introduced the way a heading is (:func:`_introduced_as_a_heading`), because a title at the end of a
       prose line whose next line opens with a capital is a sentence that happens to end on the section's name
       ("We now turn to our RISK FACTORS"). Round 3 asked only for the capital and measured that sentence
@@ -950,6 +973,14 @@ def _aif_ends(text: str) -> list[int]:
     first, which round 2 measured returning every risk factor when a filing's run-in heading was followed by a
     numbered line stop further on. A line-start stop has to pass the reference test; an inline one has to pass
     it, be printed as a heading, and run into prose.
+
+    **The two branches can reach the same offset, and then the inline one decides** (round 4). A title in
+    capitals, alone on its line, with a capital on the next line is found by both; :func:`_ref_ours_2` refuses
+    it after "see" and :func:`_inline_ref` keeps it, because a heading that opens its own line is kept even
+    after a reference word -- which is ``ours-2``'s item rule's own measured correction and ``ours-1``'s
+    behaviour in its pattern rule. So the reference test on the line branch decides only where the inline
+    branch does not match: a stop the inline search does not read (``dividends``), or one whose next line opens
+    in lower case. Both are pinned by tests.
     """
     out = [e.start() for e in _AIF_STOP_2.finditer(text) if not _ref_ours_2(text, e)]
     out += [e.start() for e in _AIF_STOP_INLINE_2.finditer(text)

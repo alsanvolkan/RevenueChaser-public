@@ -316,43 +316,49 @@ def test_which_titles_open_the_business_block(title):
     "THREE YEAR HISTORY",
 ])
 def test_which_titles_close_it(title):
-    """The ten stop titles, in the sixteen spellings this table reads them in. They are the parts of an Annual
-    Information Form that NI 51-102 places after the business block, and a title that is not one of them leaves
-    the section running -- which is the ``overrun`` label and not a shorter cut.
+    """The ten stop titles, in the eighteen spellings this table reads them in. They are the other parts of an
+    Annual Information Form under NI 51-102 -- most of them printed after the business block, two of them (the
+    three-year history, and the general development of the business where a filing prints both headings) before
+    it or inside it, which is why the start is chosen first and a stop is only ever looked for after it. A title
+    that is not one of them leaves the section running, which is the ``overrun`` label and not a shorter cut.
     """
     text = AIF + "BUSINESS OVERVIEW\n" + BODY + "\n" + title + "\n" + "After. " * 50
     section, quality = _cut2(text)
     assert quality == "ok" and section == BODY.strip()
-    # and through the line-start pattern itself: with the inline search behind it, fifteen of these sixteen
-    # rows passed when _AIF_STOP_2 was made never to match (round 1's review), so the path is asserted too.
+    # and through the line-start pattern itself: with the inline search behind it, fifteen of these eighteen
+    # rows pass when _AIF_STOP_2 is made never to match (round 1's review, measured again in round 4; the three
+    # that fail are ITEM 8. RISK FACTORS, DIVIDENDS and DIVIDENDS AND DISTRIBUTIONS), so the path is asserted.
     assert sec_sections._AIF_STOP_2.search("\n" + title + "\n") is not None
 
 
 # ── what the mutant battery found the tests above could not see ────────────────────────────────────────────────
-# 73 mutants of the 40-F rule, each judged on whether the ANSWERS move -- the section, its label and ours-1's own
-# text over 127 inputs. Every start title and every stop title is dropped in turn, generated from the source and
-# not anchored by hand, because three rounds of rewriting moved all of their spellings and an anchor that no
-# longer matches is a mutant that never ran. Round 3's rewrite re-pointed twelve anchors that the two-pass rule
-# had made stale and added fifteen mutants of its own.
+# 78 mutants of the 40-F rule, each judged on whether the ANSWERS move -- the section, its label and ours-1's own
+# text over 134 inputs. Every start title and every stop title is dropped in turn, generated from the source and
+# not anchored by hand, because four rounds of rewriting moved all of their spellings and an anchor that no
+# longer matches is a mutant that never ran. Round 3 re-pointed twelve such anchors and added fifteen mutants;
+# round 4 re-pointed three more and added five.
 #
-# The battery also audits these tests, and in round 3 it found two things they did not say. Nine inputs were
-# added for the first: the next-line run-in heading and what may introduce it, an unclosed body under the
-# minimum on ours-1's own title, the one stop the inline search does not read, and the two stop-title tails and
-# the article-less start spelling that no input had reached. The second was a redundancy in the code, not in the
-# tests -- the earliest-unclosed-start comparison, which round 2 needed when one loop walked two title sets and
-# which round 3's split into two passes made dead, since starts arrive in document order.
+# The battery audits these tests as much as the code, and has twice found what they did not say.
+#   * Round 3: nine inputs missing (the next-line run-in heading and what may introduce it, an unclosed body
+#     under the minimum on ours-1's own title, the one stop the inline search does not read, two stop-title
+#     tails and the article-less start spelling), and one redundancy in the code -- the earliest-unclosed-start
+#     comparison, which round 2 needed when one loop walked two title sets and which round 3's split into two
+#     passes made dead, since starts arrive in document order.
+#   * Round 4: the two stop-title tails were in the "redundant alternative" class below on a measurement that
+#     held only for the rows the battery carried -- every one of them in capitals and unnumbered. Since round
+#     3's first finding the inline search does not read title case at all, so with both tails dropped
+#     ``Legal Proceedings and Regulatory Actions`` goes from 26,999 characters to 54,041 and
+#     ``Directors and Executive Officers of the Company`` to 54,048, while a numbered
+#     ``12. LEGAL PROCEEDINGS AND REGULATORY ACTIONS`` goes to 27,004 with its body ending in ``\n12.``. The
+#     tails decide the answer. Three rows and three inputs were added, the mutants are killed, and they are out
+#     of that class.
 #
-# Nine survive, in three classes, and each is explained rather than pinned:
+# Eight survive, in three classes, and each is explained rather than pinned:
 #
-# **A redundant alternative, subsumed by another pattern.** Dropping it changes no answer because something else
-# matches the same text at the same offset. They stay because the titles are adapted one-to-one from the list
-# named in the provenance block, and a list that silently drops an entry is a list nobody can check against its
-# source.
-#   * the third start title: ``DESCRIPTION OF BUSINESS`` is matched by the first, whose "the" and whose
-#     possessive word are both optional;
-#   * the two stop titles' tails (``...and Regulatory Actions``, ``...of the Company``): without them the line
-#     pattern fails, and the inline search then finds the title's first words at the same position -- measured
-#     in round 3, ``_aif_ends`` returns the same offset from either branch.
+# **A redundant alternative, subsumed by another pattern.** The third start title: ``DESCRIPTION OF BUSINESS``
+# is matched by the first, whose "the" and whose possessive word are both optional. It stays because the titles
+# are adapted one-to-one from the list named in the provenance block, and a list that silently drops an entry is
+# a list nobody can check against its source.
 #
 # **A provable equivalence**, where no input can tell the two apart:
 #   * ``_is_ref`` in place of ``_ref_ours_2`` at the start filter -- the two differ only on what follows the
@@ -361,14 +367,18 @@ def test_which_titles_close_it(title):
 #   * ``match`` in place of ``fullmatch`` in the contents test -- :data:`_AIF_HEADING_LINE` ends in
 #     :data:`_AIF_TAIL`, which ends in ``$``, so a line with anything behind the title fails either way;
 #   * dropping ``any(c.isalpha())`` from the heading test -- every inline match is letters, so it can only
-#     change the answer to a direct call, which the table above makes.
+#     change the answer to a direct call, which the table above makes;
+#   * dropping the leading ``\d`` from :data:`_H_BEFORE` -- the class behind it accepts the same punctuation
+#     the test in front of it looks for, so the full stop of "...completed." is consumed by the match and the
+#     character before it is a letter either way. Measured in round 4 on three sentences.
 #
 # **Answer-invariant but not time-invariant**, which a battery comparing answers cannot see by construction, and
-# which is what the three timing tests are for:
+# which is what the four timing tests are for:
 #   * the line tail's two adjacent stars (round 1);
 #   * the gap before an inline heading's prose, unbounded (round 3: 12.4 s on 32,000 blanks);
 #   * the ends read from their first entry for every start rather than from a forward-only cursor (round 3:
-#     2.3 s on 8,000 starts and 8,000 ends).
+#     2.3 s on 8,000 starts and 8,000 ends);
+#   * the text before an inline heading, with a leading star (round 4: 21.9 s on 32,000 blanks).
 def test_a_title_that_ends_a_line_but_does_not_begin_one_is_not_a_heading():
     """The line anchor's other half. The ``$`` is what rejects ACB's sentence; this is what the ``^`` rejects --
     a sentence that happens to end on the title, which is the shape a running page footer leaves behind.
@@ -563,6 +573,11 @@ def test_a_title_that_is_not_a_stop_leaves_the_section_running():
     "LEGAL PROCEEDINGS AND REGULATORY ACTIONS",
     "DIRECTORS AND EXECUTIVE OFFICERS OF THE COMPANY",
     "DIVIDENDS",
+    # added in round 4: the spellings where the tail is what decides, because the inline search cannot stand in
+    # for the line pattern here -- title case is not read, and a number in front leaves it in the body.
+    "Legal Proceedings and Regulatory Actions",
+    "Directors and Executive Officers of the Company",
+    "12. LEGAL PROCEEDINGS AND REGULATORY ACTIONS",
 ])
 def test_a_real_item_title_with_its_tail_ends_the_section_where_it_stands(stop):
     """NI 51-102's own item titles, which the line anchor was losing: item 12 is "Legal Proceedings and
@@ -642,7 +657,7 @@ def test_an_inline_title_has_to_run_into_its_section_s_first_sentence(after, end
     **The prose may begin on the next line** (round 3's second finding): ``strip_html`` turns
     ``<b>ITEM 4: RISK FACTORS</b><br>The Company...`` into exactly that, and the same-line-only test returned
     63,100 characters with every risk factor inside it. The filer's punctuation and page number may stand in
-    between, which is the fourth row's ``12``.
+    between, which is the third row's ``12``.
     """
     text = (AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + " 31 RISK FACTORS" + after + " " + "Risky. " * 2_000)
     section, quality = _cut2(text)
@@ -810,6 +825,11 @@ def test_a_run_in_heading_whose_prose_is_on_the_next_line_has_to_be_introduced_l
     ("31 ", True),
     ("We now turn to our ", False),
     ("The Company has two ", False),
+    # added in round 4: a sentence ending in a figure is not a page number
+    ("At year end the Company had 2 ", False),
+    ("Our mines, all 3 ", False),
+    ("x 12 ", False),
+    ("Production fell in 2025. 12 ", True),
 ])
 def test_what_may_introduce_a_run_in_heading(head, is_one):
     """The table for the test above, read directly. Whitespace alone counts as a line start; prose does not,
@@ -825,6 +845,10 @@ def test_a_contents_line_at_the_end_of_a_document_is_missing_and_not_an_empty_ov
     came back as ``("", "overrun")`` -- a section of no characters, reported as one that was found and ran
     long. The minimum applies to an unclosed body too, and the answer is ``missing``.
     """
+    # Round 4: the second of these three passes on the previous commit as well, because pass 1 always applied
+    # the minimum. The defect was on ``ours-1``'s own title, where the pass had none -- that is the first line.
+    assert _cut2(AIF + "Corporate structure and history follow.\nGENERAL DEVELOPMENT OF THE BUSINESS\n") \
+        == (None, "missing"), 'this answered ("", "overrun") before the fix'
     assert _cut2(AIF + "Corporate structure and history follow.\nDESCRIPTION OF THE BUSINESS\n") == (None, "missing")
     assert _cut2(AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY)[1] == "overrun", "a real unclosed body still is one"
 
@@ -849,10 +873,12 @@ def test_the_ends_are_read_forward_only_and_not_from_the_start_for_every_start()
     The walk could have been a bisect, and is not: ``bisect`` is an import, and this module's own test refuses
     any import but ``re``, ``dataclasses``, ``html`` and ``__future__``.
     """
-    text = AIF + ("BUSINESS OVERVIEW\nx\nRISK FACTORS\ny\n" * 8_000)
+    # Round 4: 8,000 pairs and a 3.0 s limit could not fail on the code this guards -- the pre-fix walk took
+    # 1.19 s there. 16,000 pairs quadruples that and the limit is tighter than the pre-fix cost.
+    text = AIF + ("BUSINESS OVERVIEW\nx\nRISK FACTORS\ny\n" * 16_000)
     started = time.monotonic()
     _cut2(text)
-    assert time.monotonic() - started < 3.0
+    assert time.monotonic() - started < 2.0
 
 
 def test_the_two_passes_are_two_passes_and_the_first_one_to_close_answers():
@@ -866,3 +892,68 @@ def test_the_two_passes_are_two_passes_and_the_first_one_to_close_answers():
     both = AIF + "BUSINESS OVERVIEW\n" + BODY + "\nGENERAL DEVELOPMENT OF THE BUSINESS\n" + BODY + "\nRISK FACTORS\n"
     section, quality = _cut2(both)
     assert quality == "ok" and section.startswith("We make widgets"), "this version's own title closes first"
+
+
+# ── round 4 of the review of e810512c: the fix for round 3's second finding carried two defects of its own ─────
+def test_the_text_before_a_run_in_heading_does_not_take_quadratic_time():
+    """**Round 4's first finding, and the same defect round 3 had just removed from the other side of the
+    title.** :data:`_H_BEFORE` opened with ``[^\\S\\n]*`` and was matched with ``search``, so a run of n blanks
+    before the title was retried from each of n positions: 21.9 s on 32,000 blanks, 5.5 s on 16,000.
+
+    It is reachable. ``strip_html`` collapses runs of ``[ \\t]`` but not of ``&emsp;``, which arrives as its own
+    character -- 16,000 of them leave a 16,001-character run and cost 7.1 s. The pattern is anchored with
+    ``\\Z`` now and the head is stripped before it is read, so the run is walked once.
+
+    The timing test for :data:`_H_AFTER` above does not cover this: its blanks fall **after** the title, where
+    this code is never asked anything.
+    """
+    text = (AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\nx" + " " * 32_000
+            + "RISK FACTORS\nThe Company is risky.\n" + "Risky. " * 100)
+    started = time.monotonic()
+    section, quality = _cut2(text)
+    assert time.monotonic() - started < 2.0
+    assert quality == "overrun", "and the answer is the one it had before"
+
+
+def test_a_sentence_that_ends_in_a_figure_does_not_introduce_a_heading():
+    """**Round 4's third finding.** :data:`_H_BEFORE` was anchored at its end only, so any prose ending in a
+    number passed as "a page number and nothing else" -- "the Company had 2 MATERIAL PROPERTIES" ended a
+    section at 27,030 characters where the same sentence written "two" ran on to 54,073. Two spellings of one
+    sentence, two answers.
+
+    A page number stands at a line's start or after the sentence whose page it ends, so what comes before it
+    has to be nothing or a sentence's punctuation. EXK's ``...were completed. 9 ITEM 4:`` passes on the full
+    stop; a sentence that merely counts something does not.
+    """
+    answers = set()
+    for figure in ("2", "two"):
+        text = (AIF + "BUSINESS OVERVIEW\n" + BODY + f"\nAt year end the Company had {figure} MATERIAL PROPERTIES\n"
+                + "Both are in Ontario. " + BODY + "\nRISK FACTORS\n")
+        section, quality = _cut2(text)
+        assert quality == "ok" and f"had {figure} MATERIAL PROPERTIES" in section
+        answers.add(len(section) - len(figure))
+    assert len(answers) == 1, "the figure's spelling may not change the answer"
+
+
+def test_where_the_line_branch_s_reference_test_still_decides():
+    """**Round 4's second finding**, which is a correction to this file and not to the rule.
+
+    The two branches of :func:`_aif_ends` can reach the same offset, and where they do the inline one decides:
+    :func:`_ref_ours_2` refuses a line stop after "see" and :func:`_inline_ref` keeps a title that opens its own
+    line, which is ``ours-2``'s item rule's own measured correction. So the reference test on the line branch
+    decides only where the inline search does not match, and this test pins both of those places rather than
+    leaving the earlier docstring's claim that "a line-start stop has to pass the reference test" standing.
+
+    - ``DIVIDENDS`` is the one stop the inline search does not read at all, so the line test decides it.
+    - A stop whose next line opens in lower case fails :func:`_runs_into_prose`, so the line test decides that
+      too.
+    """
+    dividends = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\nFor our distributions see\nDIVIDENDS\n"
+                 + BODY + "\nMARKET FOR SECURITIES\n")
+    section, quality = _cut2(dividends)
+    assert quality == "ok" and "see\nDIVIDENDS" in section, "the reference is skipped and the real stop taken"
+
+    lower = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\nFor the risks of our business see\nRISK FACTORS\n"
+             + "and the related uncertainties are set out below. " + BODY + "\nMATERIAL PROPERTIES\n")
+    section, quality = _cut2(lower)
+    assert quality == "ok" and "see\nRISK FACTORS" in section
