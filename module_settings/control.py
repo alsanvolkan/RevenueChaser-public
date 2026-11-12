@@ -42,7 +42,7 @@ LOCAL = ZoneInfo("Europe/Amsterdam")
 #: ``app.dashboard.TABS`` in short; importing the dashboard from a render would pull in the whole app, so the copy is
 #: held equal to it by ``test_the_board_menu_is_the_dashboards``.
 BOARD_MENU: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("Home", (("module_welcome", "Welcome"),)),
+    ("Home", (("module_welcome", "Welcome"), ("module_watchlists", "Watch lists"))),
     ("Research", (("module_news", "News"), ("module_earnings_radar", "Earnings Radar"), ("module_spx_gamma", "SPX Gamma"),
                   ("module_oipd", "Implied Probability"), ("module_financials", "Financials"),
                   ("module_uw_interaction", "UW Interaction (lab)"))),
