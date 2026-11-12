@@ -317,7 +317,8 @@ def test_a_filers_value_off_by_1000_is_rescaled_once_its_prices_agree(monkeypatc
     row = _serve()
     assert _served("SELECT cik, names, value_factor FROM sec13f_filer_period WHERE value_factor <> 1 ORDER BY cik") == [
         ("2000005", 6, 1000.0), ("2000007", 6, 0.001)]
-    assert _served("SELECT value FROM sec13f_ticker_period WHERE ticker = 'MSFT'") == [(40_000.0 * 6 + 40.0,)]
+    # The filer with too few names for the median test has its lines read at the consensus price instead (#780).
+    assert _served("SELECT value FROM sec13f_ticker_period WHERE ticker = 'MSFT'") == [(40_000.0 * 7,)]
     assert "2 filer-quarters' VALUE off by a factor of 1,000 against the 13F's own prices: rescaled" in row["note"]
     # Review S2: the largest money change the store makes is on the issues board, one row per filer and quarter.
     issues = _issues()
@@ -348,6 +349,78 @@ def test_a_filer_writing_dollars_before_the_rule_change_is_read_in_dollars(monke
     assert _served("SELECT cik, period, value_factor FROM sec13f_filer_period WHERE value_factor <> 1") == [
         ("2000005", date(2022, 6, 30), 0.001)]
     assert _served("SELECT value FROM sec13f_ticker_period WHERE ticker = 'MSFT'") == [(40_000.0 * 5,)]
+
+
+def _book_day(http_mock, days: dict[str, list[tuple[float, str]]]) -> None:
+    """Each index day's filers, ``(scale, period)`` each, ingested one day at a time."""
+    ox.make_spine()
+    e = ox.Edgar()
+    n = 0
+    for day, books in days.items():
+        rows = []
+        for scale, period in books:
+            n += 1
+            rows.append(_f(f"0002{n:06d}-22-{n:06d}", 2000000 + n, day, _book(scale=scale), period=period))
+        e.add_day(day, rows)
+    e.install(http_mock)
+    for day in days:
+        _thirteen_f(mode="backfill", **{"from": day, "to": day})
+
+
+def test_a_filer_off_by_a_million_is_rescaled_too(monkeypatch, http_mock):
+    """#780, live 12 Nov 2026: Palisades (2014 Q2) and SPX Equities (2018 Q2) sat at a median ratio of 1,000,000,
+    outside the 1,000 band, and alone carried $56T and $147T."""
+    monkeypatch.setattr(sec, "_shared_pace", lambda: True)
+    monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    _book_day(http_mock, {"2026-10-27": [(1.0, "09-30-2026")] * 4 + [(1_000_000.0, "09-30-2026")]})
+    row = _serve()
+    assert _served("SELECT cik, value_factor FROM sec13f_filer_period WHERE value_factor <> 1") == [
+        ("2000005", 0.000001)]
+    assert _served("SELECT value FROM sec13f_ticker_period WHERE ticker = 'MSFT'") == [(40_000.0 * 5,)]
+    assert _issues()[("value_rescaled", "2000005|2026-09-30")].startswith(
+        "MANAGER 2000005, 2026-09-30: VALUE read as 1,000,000 times too high")
+    assert "1 filer-quarters' VALUE off" in row["note"]
+
+
+def test_a_quarters_consensus_price_1000_times_off_both_neighbours_is_moved_back(monkeypatch, http_mock):
+    """#780, live 2022 Q3: most holders already wrote dollars while their filings were read in thousands, so the
+    median price was 1,000 times too high and a filer writing thousands as ruled (Sanders Capital, $36B) was rescaled
+    to $36T. The quarters beside it set the price right; then the dollar writers are the ones rescaled."""
+    monkeypatch.setattr(sec, "_shared_pace", lambda: True)
+    monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    thousands, dollars = 0.001, 1.0
+    _book_day(http_mock, {
+        "2022-08-10": [(thousands, "06-30-2022")] * 5,
+        "2022-11-10": [(dollars, "09-30-2022")] * 3 + [(thousands, "09-30-2022")] * 2,
+        "2023-02-10": [(dollars, "12-31-2022")] * 5})
+    row = _serve()
+    q3 = date(2022, 9, 30)
+    assert _served("SELECT cik, value_factor FROM sec13f_filer_period WHERE period = ? ORDER BY cik", q3) == [
+        ("2000006", 0.001), ("2000007", 0.001), ("2000008", 0.001), ("2000009", 1.0), ("2000010", 1.0)]
+    assert _served("SELECT period, value FROM sec13f_ticker_period WHERE ticker = 'MSFT' ORDER BY period") == [
+        (date(2022, 6, 30), 200_000.0), (q3, 200_000.0), (date(2022, 12, 31), 200_000.0)]
+    assert "6 consensus prices 1,000 times off the quarters beside them: moved back" in row["note"]
+
+
+def test_one_holding_far_from_its_price_in_a_clean_filer_is_read_at_that_price(monkeypatch, http_mock):
+    """#780, live 2018 Q3: SPX Equities' median ratio was 1.02, but a few of its lines put $258T on the quarter."""
+    monkeypatch.setattr(sec, "_shared_pace", lambda: True)
+    monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    ox.make_spine()
+    e = ox.Edgar()
+    filers = [_f(f"000200000{i}-26-00000{i}", 2000000 + i, "2026-10-27", _book()) for i in range(1, 5)]
+    odd = _book()
+    odd[0] = _h("ISSUER 594918104", "594918104", 40_000 * 10_000.0, 100)              # MSFT line x10,000
+    filers.append(_f("0002000005-26-000005", 2000005, "2026-10-27", odd))
+    e.add_day("2026-10-27", filers)
+    e.install(http_mock)
+    _thirteen_f(as_of="2026-10-28")
+    row = _serve()
+    assert _served("SELECT value_factor FROM sec13f_filer_period WHERE cik = '2000005'") == [(1.0,)]
+    assert _served("SELECT value FROM sec13f_ticker_period WHERE ticker = 'MSFT'") == [(40_000.0 * 5,)]
+    assert _issues()[("value_row_replaced", "2000005|2026-09-30|594918104")] == (
+        "MANAGER 2000005, 2026-09-30, 594918104: $400,000,000 read at the 13F's own price, $40,000")
+    assert "1 holdings 300 times or more from the 13F's own price: read at that price" in row["note"]
 
 
 PER_QUARTER = ("_px", "_ratio", "_held", "_cp", "_m_hist", "_m_cur", "sec13f_cusip_map", "_filers", "_pos", "_tot",

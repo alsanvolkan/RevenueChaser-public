@@ -1709,8 +1709,10 @@ on the seventh after the close (#252), and that session's IBKR fee, rebate and s
 NULL).
 
 **Build issues** (`ownership/serve`): `spine_missing`, `cusip_owner_differs`, `cusip_unmapped_large`,
-`filings_unparsed`, `value_rescaled` (the 50 filer-quarters whose VALUE rescale moved the most dollars, keyed
-`cik|period`, with the median ratio and the names it rests on).
+`filings_unparsed`, `value_rescaled` (the 50 filer-quarters whose VALUE rescale, by 1,000 or 1,000,000, moved the
+most dollars, keyed `cik|period`, with the median ratio and the names it rests on) and `value_row_replaced` (the 50
+holdings, keyed `cik|period|cusip`, whose value lay 300 times or more from the 13F's own price and was read at that
+price, #780).
 
 **Reading it.** `rcdata.read.holders_13f(tickers, periods)`, `periods_13f()` (both with `complete`),
 `finra_short_interest(tickers, start, end)`, `shortable(tickers, session)`, `threshold_list(on)`,
