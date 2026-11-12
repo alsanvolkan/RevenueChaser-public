@@ -18,14 +18,19 @@ symbol on two pages fails the side too (the answer moved while paging). Raw:
 every ticker of D's sweep (the option-list names too: their ``option_eod`` of the next session is fetched only after
 that session's close, which would tie this table to another dataset's timing). ``min_dte`` is 175 here, not 183,
 because UW counts it from the day of the read, up to a long weekend after D. From ``OI_FROM`` New York on the trading
-day after D (UW updates open interest about 06:45) until ``OI_FROM`` on the trading day after that. A chain row is
-checked against its filter like the sweep's. Raw: ``raw/uw/far_contracts/<D>/oi/<TICKER>.json.gz``.
+day after D (UW updates open interest about 06:45) until ``OI_UNTIL`` on the trading day after that, before UW's
+next update would make the chain's ``prev_oi`` the next session's. A chain row is checked against its filter like
+the sweep's; one that breaks it fails that ticker for the run (the sweep is never held up by a chain). A refused
+chain (4xx) is not stored either, so it ends ``stale`` at the close, never ``missing``. Raw:
+``raw/uw/far_contracts/<D>/oi/<TICKER>.json.gz``. The sweep is made before any chain, and only until ``OI_UNTIL``
+on the morning after D, so its ``open_interest`` is never already the next session's.
 
 - Per contract: the chain row counts only when its ``prev_oi`` equals the sweep row's ``open_interest`` (both are the
   open interest at the start of D); then ``oi_next`` is the chain row's ``open_interest``. Else the row is ``stale``.
-- Per ticker: when ``STALE_TICKER_MIN`` or more of a ticker's swept contracts are in the chain and every one of them
-  still has its sweep ``open_interest``, UW has not updated the name yet: no file is written and the next run asks
-  again, inside the window.
+- Per ticker, UW has not updated the name yet, so no file is written and the next run asks again inside the window,
+  when either holds: one swept contract is provably not updated (its chain row has the sweep's ``open_interest``
+  and ``prev_oi`` while those two differ), or ``STALE_TICKER_MIN`` or more swept contracts are in the chain and
+  every one of them still has its sweep ``open_interest``.
 - When the window ends, ``closed.json.gz`` marks the session; a ticker never read is then ``stale`` too.
 
 **The numbers, raw, none clipped** (``contract_rows``): ``oi_change = oi_next - open_interest``,
@@ -66,6 +71,7 @@ SIDES = ("call", "put")
 CHAIN_MIN_DTE = 175             # 183 less a long weekend: UW counts min_dte from the day of the read
 CHAIN_LIMIT = uw.PAGE_LIMIT     # 500
 OI_FROM = dtime(7, 30)          # New York; UW's open-interest update is about 06:45
+OI_UNTIL = dtime(6, 0)          # New York, two trading days on: before UW's next update moves prev_oi on
 STALE_TICKER_MIN = 3
 ROLL_MIN_SHARE = 0.25            # the issue's NVDA roll: the closing leg's share was -0.39
 ROLL_VOLUME_RATIO = 1.25
@@ -99,7 +105,14 @@ def oi_window(session: date) -> tuple[datetime, datetime]:
     first = calendar.next_trading_day(session)
     second = calendar.next_trading_day(first)
     return (datetime.combine(first, OI_FROM, tzinfo=calendar.NY),
-            datetime.combine(second, OI_FROM, tzinfo=calendar.NY))
+            datetime.combine(second, OI_UNTIL, tzinfo=calendar.NY))
+
+
+def sweep_open(session: date) -> bool:
+    """True while ``session`` can be swept: its observed window, and before ``OI_UNTIL`` on the next trading day
+    (after UW's open-interest update the screener's ``open_interest`` would be the next session's already)."""
+    return uw.observed(session) and calendar.now_ny() < datetime.combine(
+        calendar.next_trading_day(session), OI_UNTIL, tzinfo=calendar.NY)
 
 
 def ticker_of(item: dict) -> str:
@@ -162,11 +175,16 @@ def tickers_of(sweep: dict[str, dict]) -> dict[str, list[str]]:
 
 
 def not_updated(contracts: list[str], sweep: dict[str, dict], chain: dict[str, dict]) -> bool:
-    """True when ``STALE_TICKER_MIN`` or more of a ticker's contracts are in its chain and each still has its sweep
-    ``open_interest``: UW has not moved that name's open interest to the next session yet."""
+    """True when UW has not moved a ticker's open interest to the next session yet (see the module doc)."""
     found = [s for s in contracts if s in chain]
-    return len(found) >= STALE_TICKER_MIN and all(
-        tables.to_int(chain[s].get("open_interest")) == tables.to_int(sweep[s].get("open_interest")) for s in found)
+
+    def same(s: str, f: str) -> bool:
+        return tables.to_int(chain[s].get(f)) == tables.to_int(sweep[s].get(f))
+    for s in found:
+        oi, prev = tables.to_int(sweep[s].get("open_interest")), tables.to_int(sweep[s].get("prev_oi"))
+        if oi is not None and prev is not None and oi != prev and same(s, "open_interest") and same(s, "prev_oi"):
+            return True
+    return len(found) >= STALE_TICKER_MIN and all(same(s, "open_interest") for s in found)
 
 
 def _share(part, whole) -> float | None:
@@ -276,8 +294,13 @@ class UWFarContracts:
                     raise FilterBroken(f"the {side} sweep of {session} broke its filter: {why}")
             body[side] = answer["data"]
             state["pages"][side] = answer["pages"]
+        if not any(body.values()):
+            # Every session has far-dated contracts above the floor (2,174 on 11 Nov 2026); none at all is an answer
+            # that went wrong (a 200 without a list reads as no rows), and a sweep file is never asked again.
+            raise base.SourceError(f"UW answered no far-dated contract for the sweep of {session}")
         self._write(ctx, sweep_path(session), {"session_date": session.isoformat(), "body": body,
                                                "pages": dict(state["pages"])}, before)
+        state["written"].add(session)
 
     def _open_interest(self, ctx: base.RunContext, session: date, state: dict) -> None:
         """The chains of ``session``'s tickers not read yet, inside the read window; the close marker after it."""
@@ -307,38 +330,44 @@ class UWFarContracts:
                 state["failed"].append(ticker)
                 ctx.issue("fetch_failed", f"{session} {ticker}", str(e)[:300])
                 continue
-            data = (answer or {}).get("data") or []
-            for item in data:
-                why = check_chain_row(today, item)
-                if why:
-                    raise FilterBroken(f"the chain of {ticker} for {session} broke its filter: {why}")
+            if answer is None:
+                state["failed"].append(ticker)
+                ctx.issue("part_empty", f"{session} {ticker}", f"UW refused the chain: {errors.get('chain')}")
+                continue
+            data = answer.get("data") or []
+            broken = next((why for why in map(lambda r: check_chain_row(today, r), data) if why), None)
+            if broken:
+                state["failed"].append(ticker)
+                ctx.issue("filter_broken", f"{session} {ticker}", f"the chain broke its filter: {broken}"[:300])
+                continue
             chain = {str(r["option_symbol"]).upper(): r for r in data}
             if not_updated(contracts, sweep, chain):
                 state["waiting"].append(ticker)
                 continue
-            if errors:
-                ctx.issue("part_empty", f"{session} {ticker}", f"UW refused: {errors['chain']}")
             self._write(ctx, path, {"session_date": session.isoformat(), "ticker": ticker,
-                                    "read_on": today.isoformat(), "body": data, "errors": errors}, before)
+                                    "read_on": today.isoformat(), "body": data}, before)
             state["written"].add(session)
 
     def open_sessions(self, as_of: date) -> list[date]:
-        """The newest ``OPEN_SESSIONS`` swept sessions up to ``as_of`` without a close marker."""
+        """The newest ``OPEN_SESSIONS`` swept sessions up to ``as_of`` still open: no close marker, and a ticker whose
+        chain is not read yet."""
         root = base.raw_root() / "uw" / "far_contracts"
         days = sorted(date.fromisoformat(p.parent.name) for p in root.glob("*/sweep.json.gz")
                       if p.parent.name <= as_of.isoformat()) if root.exists() else []
-        return [d for d in days[-OPEN_SESSIONS:] if not closed_path(d).exists()]
+        return [d for d in days[-OPEN_SESSIONS:] if not closed_path(d).exists()
+                and any(not oi_path(d, t).exists() for t in tickers_of(swept(d)))]
 
     def fetch(self, ctx: base.RunContext, as_of: date) -> list[Path]:
         state = ctx.pending.setdefault(NAME, {"stopped": None, "start": ctx.clock(), "failed": [], "waiting": [],
                                               "pages": {}, "written": set()})
         try:
+            # The sweep first: it can be made only this evening, a chain can be read again by the next run.
+            if sweep_open(as_of):
+                self._sweep(ctx, as_of, state)
+            elif not sweep_path(as_of).exists():
+                state["stopped"] = "outside the sweep window: no sweep"
             for session in self.open_sessions(as_of):
                 self._open_interest(ctx, session, state)
-            if uw.observed(as_of):
-                self._sweep(ctx, as_of, state)
-            else:
-                state["stopped"] = state["stopped"] or "outside the observed window: no sweep"
         except base.CapReached as e:
             state["stopped"] = str(e)
         return self._raws(as_of, state)
@@ -352,8 +381,7 @@ class UWFarContracts:
             session = date.fromisoformat(p.parent.name)
             part = tables.partition_path(SOURCE, OWNED[0], session)
             newest = max(f.stat().st_mtime for f in p.parent.rglob("*.json.gz"))
-            if session in state.get("written", ()) or session == as_of or not part.exists() \
-                    or newest > part.stat().st_mtime:
+            if session in state.get("written", ()) or not part.exists() or newest > part.stat().st_mtime:
                 out.append(p)
         return out
 
@@ -424,9 +452,9 @@ class UWFarContracts:
             note.append("failed: " + ", ".join(state["failed"][:10]))
         if state.get("stopped"):
             note.append(f"stopped: {state['stopped']}")
-        # Again the same session while its sweep can still be made or any session's open interest is still to read.
-        open_oi = any(not closed_path(s).exists() for s in self.open_sessions(as_of))
-        again = (not have_sweep and uw.observed(as_of)) or open_oi
+        # Again the same session while its sweep can still be made or a session still has a chain to read (the
+        # morning read waits for 07:30, and ``due.py`` compares days only, so the hourly pass is what reaches it).
+        again = (not have_sweep and sweep_open(as_of)) or bool(self.open_sessions(as_of))
         return {"dataset": NAME, "result": "changed" if added or removed else "unchanged",
                 "source_as_of": as_of.isoformat(),
                 "rows": int(con.execute("SELECT count(*) FROM option_far_contract").fetchone()[0]),

@@ -86,10 +86,11 @@ def test_the_sweep_pages_each_side_to_a_short_page_with_the_filters_of_the_rule(
 
 def test_a_sweep_row_carries_the_screener_fields_and_the_shares(uw_opts):
     uw_opts.contract_screener["call"] = [contract("NVDA", "C", 110, volume=3000, multileg_volume="0")]
+    uw_opts.contract_screener["put"] = [contract("NVDA", "P", 50)]
     run()
     assert query("SELECT option_symbol, ticker, option_type, expiry, strike, days_to_expiry, volume, "
                  "ask_side_volume, ask_share, multileg_share, premium, open_interest, prev_oi, issue_type, "
-                 "next_earnings_date FROM option_far_contract") == [
+                 "next_earnings_date FROM option_far_contract WHERE option_type = 'call'") == [
         ("NVDA280121C00110000", "NVDA", "call", EXPIRY, 110.0, (EXPIRY - SESSION).days, 3000, 1500, 0.5, 0.0,
          75000.0, 100, 90, "Common Stock", date(2027, 1, 28))]
 
@@ -105,6 +106,7 @@ def test_one_row_that_breaks_a_filter_fails_the_run_and_keeps_nothing(uw_opts, b
     bad = dict(bad)
     odd = contract("ODD", bad.pop("cp", "C"), 100, **bad)
     uw_opts.contract_screener["call"] = [contract("GOOD", "C", 100), odd]
+    uw_opts.contract_screener["put"] = [contract("GOOD", "P", 100)]
     row = run()
     assert row["result"] == "failed" and why in row["note"]
     assert not far.sweep_path(SESSION).exists()
@@ -113,6 +115,7 @@ def test_one_row_that_breaks_a_filter_fails_the_run_and_keeps_nothing(uw_opts, b
 def test_a_symbol_on_two_pages_fails_the_sweep(uw_opts):
     rows = [contract(f"C{i:03d}", "C", 100) for i in range(250)]
     uw_opts.contract_screener["call"] = rows + [rows[3]]
+    uw_opts.contract_screener["put"] = [contract("GOOD", "P", 100)]
     row = run()
     assert row["result"] == "failed" and "repeated across pages" in row["note"]
     assert not far.sweep_path(SESSION).exists()
@@ -132,6 +135,7 @@ def _swept(uw_opts, rows):
     uw_opts.contract_screener = {"call": [r for r in rows if r["option_symbol"][-9] == "C"],
                                  "put": [r for r in rows if r["option_symbol"][-9] == "P"]}
     assert run()["result"] != "failed"
+    uw_opts.requests.clear()
 
 
 def test_no_chain_is_asked_before_the_morning_margin(uw_opts, monkeypatch):
@@ -166,6 +170,7 @@ def test_the_morning_reads_each_ticker_s_chain_and_computes_the_opened_share(uw_
                    d["option_symbol"]: ["missing", None, None, None, None],
                    e["option_symbol"]: ["matched", 700, -300, -3.0, True]}, "raw, not clipped"
     assert "open interest of the newest read session: 3 matched, 1 stale, 1 missing" in row["note"]
+    assert row["next_check_due"] == calendar.next_trading_day(SESSION).isoformat(), "nothing left: not due again"
     uw_opts.requests.clear()
     run()
     assert uw_opts.calls("/option-contracts") == [], "a ticker's chain is read once a session"
@@ -184,15 +189,56 @@ def test_a_ticker_uw_has_not_updated_is_asked_again_by_the_next_run(uw_opts, mon
     assert query("SELECT DISTINCT oi_status, oi_change FROM option_far_contract") == [("matched", 50)]
 
 
-def test_a_chain_row_outside_its_filter_fails_the_run(uw_opts, monkeypatch):
-    a = contract("AAA", "C", 100)
-    _swept(uw_opts, [a])
+def test_a_chain_row_outside_its_filter_fails_that_ticker_not_the_run(uw_opts, monkeypatch):
+    a, b = contract("AAA", "C", 100), contract("BBB", "C", 100)
+    _swept(uw_opts, [a, b])
     near = {"option_symbol": occ("AAA", date(2027, 1, 15), "C", 100), "open_interest": "5", "prev_oi": "5"}
-    uw_opts.far_chain = {"AAA": [chain_row(a, oi=200), near]}
+    uw_opts.far_chain = {"AAA": [chain_row(a, oi=200), near], "BBB": [chain_row(b, oi=300)]}
     at(monkeypatch, MORNING)
     row = run()
-    assert row["result"] == "failed" and "broke its filter" in row["note"]
-    assert not far.oi_path(SESSION, "AAA").exists()
+    assert row["result"] != "failed" and "failed: AAA" in row["note"]
+    assert not far.oi_path(SESSION, "AAA").exists() and far.oi_path(SESSION, "BBB").exists()
+    assert dict(query("SELECT ticker, oi_status FROM option_far_contract")) == {"AAA": "pending", "BBB": "matched"}
+
+
+def test_a_refused_chain_is_not_stored_and_ends_stale_not_missing(uw_opts, monkeypatch):
+    _swept(uw_opts, [contract("AAA", "C", 100)])
+    uw_opts.fail["/stock/AAA/option-contracts"] = 404
+    at(monkeypatch, MORNING)
+    row = run()
+    assert "failed: AAA" in row["note"] and not far.oi_path(SESSION, "AAA").exists()
+    at(monkeypatch, AFTER_WINDOW)
+    run()
+    assert query("SELECT oi_status FROM option_far_contract") == [("stale",)]
+
+
+def test_a_name_with_one_contract_uw_has_provably_not_updated_waits(uw_opts, monkeypatch):
+    """Its chain row still has the sweep's open interest and previous open interest, which differ: not updated."""
+    a = contract("ONE", "C", 100, oi=100, prev_oi=90)
+    _swept(uw_opts, [a])
+    uw_opts.far_chain = {"ONE": [chain_row(a, oi=100, prev_oi=90)]}
+    at(monkeypatch, MORNING)
+    assert "UW not updated yet: ONE" in run()["note"] and not far.oi_path(SESSION, "ONE").exists()
+    uw_opts.far_chain = {"ONE": [chain_row(a, oi=400)]}
+    run()
+    assert query("SELECT oi_status, oi_change FROM option_far_contract") == [("matched", 300)]
+
+
+def test_no_sweep_after_uw_s_morning_update(uw_opts, monkeypatch):
+    """After about 06:45 New York the screener's open interest is the next session's: the evening's sweep is over."""
+    uw_opts.contract_screener["call"] = [contract("AAA", "C", 100)]
+    base.parquet_root().mkdir(parents=True)
+    at(monkeypatch, MORNING)
+    row = run()
+    assert uw_opts.requests == [] and "outside the sweep window" in row["note"]
+    at(monkeypatch, datetime(2026, 10, 27, 9, 30, tzinfo=timezone.utc))     # 05:30 New York: still the evening's
+    assert run()["result"] != "failed" and far.sweep_path(SESSION).exists()
+
+
+def test_an_empty_sweep_fails_and_is_asked_again(uw_opts):
+    row = run()
+    assert row["result"] == "failed" and "no far-dated contract" in row["note"]
+    assert not far.sweep_path(SESSION).exists()
 
 
 def test_the_next_evening_reads_what_the_morning_missed_and_sweeps_its_own_session(uw_opts, monkeypatch):

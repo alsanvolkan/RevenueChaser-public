@@ -267,10 +267,11 @@ def test_the_raw_retention_warning_is_on_until_a_retention_is_set(monkeypatch):
 
 
 def test_the_options_datasets_have_a_card_each_with_their_label_and_target():
-    """G8: the three options datasets are cards (never built yet: held until their first build by hand), and the
-    eight options tables are counted by their session date."""
+    """G8: the options datasets are cards (never built yet: held until their first build by hand), and every
+    options table is counted by its session date."""
     data = newdata.collect(NOW)
-    for name, target in (("uw/option_list", 0.95), ("uw/option_screener", 0.95), ("ibkr/iv_history", None)):
+    for name, target in (("uw/option_list", 0.95), ("uw/option_screener", 0.95), ("uw/far_contracts", 0.95),
+                         ("ibkr/iv_history", None)):
         card = _card(data, name)
         assert card["label"] == newdata.LABELS[name] and card["label"] != name
         assert card["status"] == "never" and card["coverage_target"] == target
