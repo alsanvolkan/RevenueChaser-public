@@ -21,7 +21,7 @@ PICKED_DARK = {
 }
 PICKED_LIGHT = {
     "bg": "#F7F5F0", "fg": "#3B3833", "bright": "#1F1D1A", "card": "#FFFEFB", "card-2": "#F0EDE6",
-    "pos": "#2F6B4F", "neg": "#A3473B", "amber": "#8F5F14", "muted": "#68645C", "accent": "#A9542F",
+    "pos": "#2F6B4F", "neg": "#A3473B", "amber": "#8F5F14", "muted": "#68645C", "accent": "#A5522E",
     "data-1": "#2F6FA8", "data-2": "#C0602E",
 }
 
@@ -33,12 +33,13 @@ def test_the_palette_is_the_one_avo_picked(scheme, picked):
 
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])
-@pytest.mark.parametrize("name", ["fg", "muted", "pos", "neg", "amber", "accent", "sky"])
-def test_every_text_colour_reads_on_a_card(scheme, name):
-    """WCAG AA, 4.5:1, on both the card and the page background."""
+def test_every_text_colour_reads_on_a_card(scheme):
+    """WCAG AA, 4.5:1, on the card, the second card and the page background: text, the accent and the chart
+    series colours, which the picked palette adds."""
     t = rc.THEME_TOKENS[scheme]
-    for ground in ("card", "bg"):
-        assert _contrast(_rgba(t[name])[:3], _rgba(t[ground])[:3]) >= 4.5, (scheme, name, ground)
+    for name in ("fg", "muted", "pos", "neg", "amber", "sky", "accent", "data-1"):
+        for ground in ("card", "card-2", "bg"):
+            assert _contrast(_rgba(t[name])[:3], _rgba(t[ground])[:3]) >= 4.5, (scheme, name, ground)
 
 
 def test_the_scales_are_one_set_for_both_schemes():

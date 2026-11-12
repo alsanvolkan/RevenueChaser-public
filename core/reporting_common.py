@@ -97,9 +97,9 @@ THEME_TOKENS = {
     "light": {
         "bg": "#F7F5F0", "fg": "#3B3833", "bright": "#1F1D1A", "card": "#FFFEFB", "card-2": "#F0EDE6",
         "border": "rgba(31,29,26,.11)", "sidebar": "#FBFAF6", "pos": "#2F6B4F", "neg": "#A3473B",
-        "amber": "#8F5F14", "sky": "#3C6688", "muted": "#68645C", "accent": "#A9542F",
-        "accent-soft": "rgba(169,84,47,.10)", "pos-soft": "rgba(47,107,79,.09)",
-        "neg-soft": "rgba(163,71,59,.09)", "amber-soft": "rgba(143,95,20,.10)", "focus": "#A9542F",
+        "amber": "#8F5F14", "sky": "#3C6688", "muted": "#68645C", "accent": "#A5522E",
+        "accent-soft": "rgba(165,82,46,.10)", "pos-soft": "rgba(47,107,79,.09)",
+        "neg-soft": "rgba(163,71,59,.09)", "amber-soft": "rgba(143,95,20,.10)", "focus": "#A5522E",
         "input-bg": "#FFFEFB", "input-border": "rgba(31,29,26,.18)", "hover": "#F3F0E9",
         "topbar": "rgba(247,245,240,.88)", "nav-fg": "#4A463F", "nav-on": "#EDE9E0",
         "hover-faint": "rgba(31,29,26,.03)", "frame-bg": "#F7F5F0", "overlay": "rgba(247,245,240,.75)",
