@@ -87,7 +87,7 @@ no downloaded state worth re-deriving, so they keep a "click Fetch" empty state.
 | Swing Potential | `/run/swing` | `refresh_universe`, `no_fetch` | model-only |
 | Fundamentals | `/run/module_fundamentals` | `refresh_universe`, `no_fetch` | model-only |
 | SEC 13F | `/run/module_sec_13f` (Fetch: names/sectors → shares outstanding → render; no UW key needed, and no SEC call since G9 — the builder owns the numbers) | — | store |
-| LEAPS | *(switched off, #730: `/run/module_leaps` answers `409` and the job is not registered)* | — | model-only |
+| LEAPS | *(the scan is switched off, #730: `/run/module_leaps` answers `409` and the job is not registered; the tab serves a "no data yet" page)* | — | model-only |
 | Forwards Testing | *(none)* | — | always live from files |
 | **Universe** (header) | `/run/universe` | — | n/a — SEC member list + market data into `equity_universe`; not a tab |
 | **Universe caps** (Settings) | `/run/universe-stats` | — | store → `.cache/` — fills only the NULL `equity_universe.market_cap` rows (Phase B alone) |
@@ -315,7 +315,7 @@ over it can write. It widens that check alone — the server still binds `127.0.
 by that name needs something that forwards the port.
 
 A board cached before this rule has the old script baked in: open it once with
-`?refresh=1` (Settings, Co-movement and LEAPS cache their page).
+`?refresh=1` (Settings and Co-movement cache their page; LEAPS no longer serves a cached page, #730).
 
 Terminal states:
 
