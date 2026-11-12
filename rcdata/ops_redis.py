@@ -591,20 +591,25 @@ def _add_reads(process: str, counts: list[tuple[str, str, int]]) -> None:
 
 
 def _add_requests(process: str, entries: list[tuple]) -> None:
-    """The rows, then the trim to the newest ``ops.REQUEST_LOG_KEEP``: ids are given out in order, so the rows to
-    drop are the ids at or under ``last - KEEP``, as in SQLite."""
+    """The rows in one ``MULTI`` (all or none, so a failed write that is retried never stores a row twice), then the
+    trim to the newest ``ops.REQUEST_LOG_KEEP``: ids are given out in order, so the rows to drop are the ids at or
+    under ``last - KEEP``, as in SQLite. A trim that fails is left to the next write's."""
+    if not entries:
+        return
     _ready()
     ids = _new_ids("request_log", len(entries))
-    rows = [{"id": i, "at": at, "kind": kind, "process": process, "what": what, "dataset": dataset, "result": result,
-             "ms": ms} for i, (at, kind, what, dataset, result, ms) in zip(ids, entries)]
-    for start in range(0, len(rows), 1000):
-        _write("request_log", *rows[start:start + 1000])
-    old = _client().zrangebyscore(_key("request_log"), "-inf", ids[-1] - ops.REQUEST_LOG_KEEP) if ids else []
-    for start in range(0, len(old), 1000):
-        with _client().pipeline(transaction=True) as p:
-            for pk in old[start:start + 1000]:
-                _delete(p, "request_log", {"id": int(pk)})
-            p.execute()
+    _write("request_log", *({"id": i, "at": at, "kind": kind, "process": process, "what": what, "dataset": dataset,
+                             "result": result, "ms": ms}
+                            for i, (at, kind, what, dataset, result, ms) in zip(ids, entries)))
+    try:
+        old = _client().zrangebyscore(_key("request_log"), "-inf", ids[-1] - ops.REQUEST_LOG_KEEP)
+        for start in range(0, len(old), 1000):
+            with _client().pipeline(transaction=True) as p:
+                for pk in old[start:start + 1000]:
+                    _delete(p, "request_log", {"id": int(pk)})
+                p.execute()
+    except redis.RedisError:
+        pass
 
 
 def recent_requests(after: int = 0, limit: int = 200) -> list[dict]:

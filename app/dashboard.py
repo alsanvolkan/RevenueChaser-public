@@ -1710,11 +1710,11 @@ def api_settings_status():
 
 @app.route("/api/settings/requests")
 def api_settings_requests():
-    """The per-request log, newest first, for the Grafana Logs board (#715): ``?after=<id>&limit=<n>``."""
+    """The per-request log, newest first, for the Grafana Logs board (#715): ``?limit=<n>``."""
     from RevenueChaser.module_settings import metrics
 
     try:
-        got = metrics.request_rows(request.args.get("after"), request.args.get("limit"))
+        got = metrics.request_rows(request.args.get("limit"))
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     return jsonify({"ok": True, **got})

@@ -467,13 +467,11 @@ def test_the_requests_route_answers_the_newest_rows_with_this_process_own_first(
             if r["what"] in ("uw GET api.test/x", "market_series")]
     assert mine == [("call", "uw GET api.test/x", "HTTP 200", 12), ("read", "market_series", None, None)]
     assert all(r["time"].endswith("+00:00") for r in body["rows"])
-    ids = [r["id"] for r in body["rows"]]
-    assert ids == sorted(ids, reverse=True)
-    later = client.get(f"/api/settings/requests?after={ids[0]}").get_json()["rows"]
-    assert all(r["id"] > ids[0] for r in later)
+    times = [r["at"] for r in body["rows"]]
+    assert times == sorted(times, reverse=True)
     assert len(client.get("/api/settings/requests?limit=1").get_json()["rows"]) == 1
 
 
 def test_the_requests_route_refuses_words_for_numbers(client):
-    got = client.get("/api/settings/requests?after=abc")
+    got = client.get("/api/settings/requests?limit=abc")
     assert got.status_code == 400 and got.get_json()["ok"] is False

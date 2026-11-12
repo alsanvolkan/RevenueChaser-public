@@ -693,18 +693,25 @@ def _process_name() -> str:
 
 def safe_url(url: str) -> str:
     """``host/path`` of ``url`` for the request log: never the query, the fragment or a ``user:password@``, which
-    are where a key travels (FRED's ``api_key=``), and a path segment that looks like a token is cut to ``~``."""
+    are where a key travels (FRED's ``api_key=``); a ``;parameter`` is cut off a path segment, and a segment that
+    looks like a token is written ``~``."""
     try:
         parts = urlsplit(str(url))
         host = parts.hostname or ""
     except ValueError:
         return "unreadable url"
-    path = "/".join("~" if _TOKEN_LIKE.fullmatch(seg) else seg for seg in parts.path.split("/"))
+    path = "/".join("~" if _token_like(seg) else seg for seg in (s.split(";", 1)[0] for s in parts.path.split("/")))
     return f"{host}{path}" if host else path
 
 
 #: 32 or more key-alphabet characters in one path segment: longer than any accession number or ticker we ask for.
-_TOKEN_LIKE = re.compile(r"[A-Za-z0-9_\-]{32,}")
+_TOKEN_LIKE = re.compile(r"[A-Za-z0-9_\-+=%:~]{32,}")
+
+
+def _token_like(segment: str) -> bool:
+    """A path segment that may be a key: 32+ key characters, ``<id>:<token>``, or three dotted parts (a JWT)."""
+    return bool(_TOKEN_LIKE.fullmatch(segment) or (":" in segment and len(segment) >= 20)
+                or (segment.count(".") >= 2 and len(segment) >= 40))
 
 
 def request_log_on() -> bool:
@@ -797,20 +804,20 @@ class ReadLog:
         with self._lock:
             counts, self._counts = self._counts, {}
             self._last = self._clock()
+        if counts:
+            try:
+                _add_reads(self.process or _process_name(), [(day, table, n) for (day, table), n in counts.items()])
+            except Exception:
+                # Review S1 (#356): the counts go back, so the next flush retries them; the retirement count reads
+                # them. The request rows are not tried against a store that just failed: they wait in memory.
+                with self._lock:
+                    for key, n in counts.items():
+                        self._counts[key] = self._counts.get(key, 0) + n
+                raise
         try:
             self.requests.flush()
-        except Exception as exc:  # noqa: BLE001 - the request log is a log: its rows wait, the counts still go
+        except Exception as exc:  # noqa: BLE001 - the request log is a log: its rows wait, the counts are written
             logging.getLogger(__name__).warning("request log flush failed, kept for the next one: %s", exc)
-        if not counts:
-            return
-        try:
-            _add_reads(self.process or _process_name(), [(day, table, n) for (day, table), n in counts.items()])
-        except Exception:
-            # Review S1 (#356): the counts go back, so the next flush retries them; the retirement count reads them.
-            with self._lock:
-                for key, n in counts.items():
-                    self._counts[key] = self._counts.get(key, 0) + n
-            raise
 
 
 @_routed
@@ -835,7 +842,9 @@ def _add_requests(process: str, entries: list[tuple]) -> None:
 
 @_routed
 def recent_requests(after: int = 0, limit: int = 200) -> list[dict]:
-    """The newest ``limit`` rows of ``request_log`` with an id above ``after``, newest first. Never creates the file."""
+    """The ``limit`` rows of ``request_log`` with the highest ids above ``after``, highest first. Never creates the
+    file. Ids are given in the order rows are *written*, and a process writes its rows up to a minute after it made
+    them, so id order is not time order and ``after`` is no cursor to page a live log with: sort by ``at``."""
     return _select("SELECT * FROM request_log WHERE id > ? ORDER BY id DESC LIMIT ?", (int(after), max(0, int(limit))))
 
 

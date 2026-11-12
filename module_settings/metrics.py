@@ -491,23 +491,24 @@ def board_status(now: datetime | None = None, *, spend: Callable[[], dict] | Non
 REQUESTS_MAX = 1000
 
 
-def request_rows(after=0, limit=200) -> dict:
-    """``GET /api/settings/requests``: the newest rows of the per-request log (#715), newest first, for the Grafana
-    Logs board. ``after``: only rows with an id above it (a panel that has rows asks for the newer ones).
+def request_rows(limit=200) -> dict:
+    """``GET /api/settings/requests``: the newest rows of the per-request log (#715), newest first by the time the
+    request was made, for the Grafana Logs board.
 
-    This process's own unwritten rows are written first, so the dashboard's reads are there at once; another
-    process (the builder) writes its rows at most a minute after it made them. Read-only otherwise, ops store only.
+    This process's own unwritten rows are written first (the one write this route makes), so the dashboard's reads
+    are there at once; another process (the builder) writes its rows at most a minute after it made them, which is
+    why the answer is sorted by time and takes no "after this id". Ops store only.
     """
     from RevenueChaser.rcdata import ops
     try:
-        after, limit = max(0, int(after or 0)), min(REQUESTS_MAX, max(1, int(limit or 200)))
+        limit = min(REQUESTS_MAX, max(1, int(limit or 200)))
     except (TypeError, ValueError):
-        raise ValueError("after and limit are whole numbers") from None
+        raise ValueError("limit is a whole number") from None
     try:
         ops.read_log.requests.flush()
     except Exception:  # noqa: BLE001 - the rows wait for the next flush; what is stored is still answered
         pass
-    rows = ops.recent_requests(after, limit)
+    rows = sorted(ops.recent_requests(0, limit), key=lambda r: (r["at"], r["id"]), reverse=True)
     for r in rows:
         r["time"] = datetime.fromtimestamp(r["at"], timezone.utc).isoformat(timespec="milliseconds")
     return {"rows": rows, "keep": ops.REQUEST_LOG_KEEP, "on": ops.request_log_on(),

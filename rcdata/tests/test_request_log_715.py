@@ -67,7 +67,7 @@ def test_only_the_newest_rows_are_kept(log, monkeypatch):
     assert [r["what"] for r in ops.recent_requests()] == [f"t{i}" for i in range(11, 6, -1)]
 
 
-def test_a_store_that_stays_down_costs_log_rows_never_memory(log, monkeypatch):
+def test_the_rows_a_process_holds_are_capped_and_the_dropped_are_counted(log, monkeypatch):
     monkeypatch.setattr(ops, "REQUEST_LOG_BUFFER", 3)
     for i in range(5):
         log.bump(f"t{i}")
@@ -115,6 +115,8 @@ def test_an_unknown_kind_is_refused(log):
     ("https://www.sec.gov/Archives/edgar/data/320193/0000320193-24-000123.txt",
      "www.sec.gov/Archives/edgar/data/320193/0000320193-24-000123.txt"),
     ("https://host.test", "host.test"),
+    ("https://api.test/bot123456:SECRETKEY-abcdefgh/send;key=SECRETKEY", "api.test/~/send"),
+    ("https://api.test/v1/eyJhbGciOi.SECRETKEYSECRETKEYSECRETKEY.c2lnbmF0dXJl/x", "api.test/v1/~/x"),
 ])
 def test_a_url_is_logged_as_host_and_path_only(url, want):
     assert ops.safe_url(url) == want and "SECRETKEY" not in ops.safe_url(url)
@@ -173,3 +175,47 @@ def test_the_backup_leaves_the_request_log_out(log):
     if ops.backend() == "redis":
         from RevenueChaser.rcdata import ops_redis
         assert "request_log" not in ops_redis.snapshot()
+
+
+def test_a_process_that_only_calls_still_writes_once_a_minute(log):
+    """The builder makes calls and no reads: ``log_call`` asks for the flush itself."""
+    ops.log_call("uw", "GET api.test/a")
+    assert ops.rows("request_log") == []
+    log.tick(61)
+    ops.log_call("uw", "GET api.test/b")
+    assert [w for _, w, _ in _stored()] == ["uw GET api.test/a", "uw GET api.test/b"]
+
+
+def test_a_call_and_a_read_go_through_while_the_store_is_down_and_a_flush_is_due(log, http_mock, monkeypatch):
+    def down(*a, **k):
+        raise OSError("store is down")
+    real_requests, real_reads = ops._add_requests, ops._add_reads
+    monkeypatch.setattr(ops, "_add_requests", down)
+    monkeypatch.setattr(ops, "_add_reads", down)
+    http_mock.add("ok.test", b"fine")
+    ctx = base.RunContext(run_id="r", dataset="d", sleep=lambda s: None)
+    log.tick(61)
+    assert base.http_get(ctx, "cboe", "https://ok.test/x.csv").status_code == 200        # the due flush fails inside
+    ctx.count("ibkr", calls=1)
+    log.tick(61)
+    log.bump("market_series")                                                           # and inside a read
+    assert ctx.calls == {"cboe": [1, 0, 0], "ibkr": [1, 0, 0]}
+    monkeypatch.setattr(ops, "_add_requests", real_requests)
+    monkeypatch.setattr(ops, "_add_reads", real_reads)
+    log.flush()
+    assert [w for _, w, _ in _stored()] == ["cboe GET ok.test/x.csv", "ibkr", "market_series"]
+    assert [r["reads"] for r in ops.rows("read_log")] == [1]
+
+
+def test_a_store_that_fails_the_counters_is_not_asked_again_for_the_rows(log, monkeypatch):
+    """One wait on a store that is down, not two: the request rows stay in memory when the counter write failed."""
+    asked = []
+
+    def down(*a, **k):
+        raise OSError("store is down")
+    monkeypatch.setattr(ops, "_add_reads", down)
+    monkeypatch.setattr(ops, "_add_requests", lambda *a, **k: asked.append(a))
+    log.bump("market_series")
+    with pytest.raises(OSError):
+        log.flush()
+    assert asked == []
