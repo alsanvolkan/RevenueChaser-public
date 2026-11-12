@@ -1015,5 +1015,10 @@ the files live now). A part that cannot be read is `{"error": ...}` and the othe
 DuckDB files, which the scrape never does, so it is asked when the panel is looked at and is not part of
 `/metrics`.
 
+`GET /api/settings/requests?limit=<n>` (`metrics.request_rows`) is the per-request log, newest first by the time
+the request was made (at most 1,000 rows an answer): the table the Grafana Logs board flows. It writes the
+dashboard's own unwritten rows first, so the page's reads are there at once; the builder's rows arrive at most a
+minute after they were made. The daily counters beside it are unchanged.
+
 `GET /api/build/datasets` lists every dataset the builder knows (`name`, `kind`, `attended`, `providers`): the
 allow-list for the Grafana buttons.

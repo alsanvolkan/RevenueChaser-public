@@ -111,6 +111,7 @@ class _Meter:
         n = self.used - self._counted
         if n > 0:
             ops.count_calls("uw", n)
+            ops.log_call("uw", result="sent" if n == 1 else f"{n} calls sent")
             self._counted += n
 
     @property

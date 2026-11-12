@@ -220,7 +220,15 @@ class RunContext:
     _pause_read_at: float | None = None                             # the clock when the pause was last read
     _paused: str | None = None                                      # once seen, every later call stops too
 
-    def count(self, provider: str, calls: int = 0, failures: int = 0, http_429: int = 0) -> None:
+    def count(self, provider: str, calls: int = 0, failures: int = 0, http_429: int = 0, *,
+              logged: bool = False) -> None:
+        """Count for ``provider``; ``logged``: the caller writes its own request-log row (``http_get``, with the URL
+        and the answer). Every other client gets a row here: the provider, and "sent" or "failed"."""
+        if not logged:
+            if calls:
+                ops.log_call(provider, dataset=self.dataset, result="sent" if calls == 1 else f"{calls} calls sent")
+            if failures:
+                ops.log_call(provider, dataset=self.dataset, result="failed")
         for book in (self.calls, self._pending):
             c = book.setdefault(provider, [0, 0, 0])
             c[0] += calls
@@ -506,6 +514,13 @@ def refusal_note(keyed: bool = False) -> str:
             if not (os.getenv(CONTACT_ENV) or "").strip() else " (refused although a contact is set)")
 
 
+def _log_http(ctx: RunContext, provider: str, method: str, url: str, result: str, started: float) -> None:
+    """One request-log row for one attempt: the method, ``host/path`` (never the query, the headers or the body), the
+    status or the error's name, and how long it took."""
+    ops.log_call(provider, f"{method} {ops.safe_url(url)}", dataset=ctx.dataset, result=result,
+                 ms=(time.monotonic() - started) * 1000)
+
+
 def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = None,
              headers: dict | None = None, keyed: bool = False, accept: tuple[int, ...] = ()) -> httpx.Response:
     """GET with the keyless retry ladder; every attempt is counted for ``provider``. Raises ``SourceError``.
@@ -518,12 +533,15 @@ def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = Non
     last = ""
     for attempt in range(1, HTTP_ATTEMPTS + 1):
         ctx.check_cap(provider)
-        ctx.count(provider, calls=1)        # counted when sent: a request cut off by a kill was still made
+        ctx.count(provider, calls=1, logged=True)   # counted when sent: a request cut off by a kill was still made
+        started = time.monotonic()
         try:
             r = ctx.http.get(url, params=params, headers=headers)
         except httpx.HTTPError as e:
             last = type(e).__name__
+            _log_http(ctx, provider, "GET", url, last, started)
         else:
+            _log_http(ctx, provider, "GET", url, f"HTTP {r.status_code}", started)
             if r.status_code == 429:
                 ctx.count(provider, http_429=1)
             if r.status_code < 400 or r.status_code in accept:
@@ -535,7 +553,7 @@ def http_get(ctx: RunContext, provider: str, url: str, params: dict | None = Non
                 break
         if attempt < HTTP_ATTEMPTS:
             ctx.sleep(HTTP_BACKOFF_S * 2 ** (attempt - 1))
-    ctx.count(provider, failures=1)
+    ctx.count(provider, failures=1, logged=True)
     raise SourceError(f"{provider} {url}: {last}")
 
 
@@ -551,13 +569,16 @@ def http_post(ctx: RunContext, provider: str, url: str, json: Any = None, header
         ctx.check_cap(provider)
         if pacer is not None:
             pacer.wait()
-        ctx.count(provider, calls=1)
+        ctx.count(provider, calls=1, logged=True)
         wait = HTTP_BACKOFF_S * 2 ** (attempt - 1)
+        started = time.monotonic()
         try:
             r = ctx.http.post(url, json=json, headers=headers)
         except httpx.HTTPError as e:
             last = type(e).__name__
+            _log_http(ctx, provider, "POST", url, last, started)
         else:
+            _log_http(ctx, provider, "POST", url, f"HTTP {r.status_code}", started)
             if r.status_code < 400:
                 return r
             last = f"HTTP {r.status_code}"
@@ -569,7 +590,7 @@ def http_post(ctx: RunContext, provider: str, url: str, json: Any = None, header
                 break
         if attempt < HTTP_ATTEMPTS:
             ctx.sleep(wait)
-    ctx.count(provider, failures=1)
+    ctx.count(provider, failures=1, logged=True)
     raise SourceError(f"{provider} {url}: {last}")
 
 

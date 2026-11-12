@@ -1182,6 +1182,7 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `kind_automation` | The old file-level mode (Settings, 6 Nov 2026): kept, no longer read; `ops.copy_kind_modes` moved it onto each dataset (10 Nov 2026) |
 | `switch` | The board's two switches (#527): `fetch` stops every fetch, build and RC timer task but the backups and the IBKR login check; `backup` stops the three backups. No row, or `off_at` NULL, is on |
 | `dataset_automation` | One source's own automation (#527): `off`, `raw`, `parquet` or `full`; no row is `off`. The only mode the hourly pass reads (avo, 10 Nov 2026) |
+| `request_log` | The per-request log (#715): one row a read (`kind` `read`), a need ask (`need`) and a provider call (`call`), with the time, the process, what was asked (a table, a need, or the provider and for an HTTP call the method and `host/path`, never the query, a header or a body), the dataset of a build, the answer (an HTTP status, an error's name, `sent`, `failed`) and the milliseconds of an HTTP call. Collected in memory and written with the read log's flush (once a minute and at exit); every write keeps only the newest 100,000 rows (`ops.REQUEST_LOG_KEEP`, about seven days). Not in any backup. `RC_REQUEST_LOG=0` turns it off. Read by `GET /api/settings/requests` |
 
 **Day caps** (`rcdata/caps.py`, master plan Order 5, rule 3: only the quotas a provider publishes per day, each with
 its source): alphavantage 25 (its free tier, shared by the earnings calendar and the spine's

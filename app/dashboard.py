@@ -1708,6 +1708,18 @@ def api_settings_status():
     return jsonify({"ok": True, **metrics.board_status()})
 
 
+@app.route("/api/settings/requests")
+def api_settings_requests():
+    """The per-request log, newest first, for the Grafana Logs board (#715): ``?limit=<n>``."""
+    from RevenueChaser.module_settings import metrics
+
+    try:
+        got = metrics.request_rows(request.args.get("limit"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, **got})
+
+
 @app.route("/metrics", endpoint="metrics")
 def prometheus_metrics():
     """Prometheus text format for Grafana on homesrv (#527 plan B1). Cheap readers only, no store session."""
