@@ -189,17 +189,22 @@ class TestDashboardRoutes:
     def test_run_no_api_key(self, monkeypatch):
         c = self._client()
         monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
-        r = c.post("/run/module_leaps")  # Fetch = live UW scan -> gated on the key
+        r = c.post("/run/module_oipd")  # Fetch = live UW scan -> gated on the key
         assert r.status_code == 400
         data = r.get_json()
         assert data["ok"] is False
+        # The refusal must name the key, the file, and where to get one -- the old "UW API key not set."
+        # left the user with nothing to act on. Asserted on the LEAPS Fetch until #730 switched it off.
+        assert "UNUSUAL_WHALES_API_KEY" in data["error"]
+        assert ".env" in data["error"]
+        assert "https://unusualwhales.com/api" in data["error"]
 
     def test_run_returns_job_id(self, monkeypatch):
         import RevenueChaser.app.dashboard as d
         monkeypatch.setattr(d, "UWClient", lambda: _FakeUW())
         monkeypatch.setattr(d.jobs, "submit", lambda module, params: "stubjob")
         c = self._client()
-        r = c.post("/run/module_leaps")
+        r = c.post("/run/module_oipd")
         assert r.status_code == 202
         data = r.get_json()
         assert data["ok"] is True
@@ -720,18 +725,20 @@ class TestRefreshReadsStoreFetchReadsNetwork:
         fresh = (tmp_path / "leaps_latest.html").read_text(encoding="utf-8")
         assert "STALE board" not in fresh               # artifact overwritten too
 
-    def test_leaps_fetch_is_gated_on_the_api_key(self, monkeypatch):
-        # "Fetch" is a live UW scan -> without a key it is refused before any network
-        monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
+    def test_leaps_fetch_is_switched_off(self, monkeypatch):
+        """The LEAPS scan is off (#730): the route refuses with a reason and probes no key."""
+        monkeypatch.setattr(dashboard, "UWClient",
+                            lambda: pytest.fail("a switched-off board must not reach the provider"))
         r = panel_test_client(dashboard.app).post("/run/module_leaps")
-        assert r.status_code == 400
-        assert r.get_json()["ok"] is False
-        # The refusal must name the key, the file, and where to get one — the
-        # old "UW API key not set." left the user with nothing to act on.
-        error = r.get_json()["error"]
-        assert "UNUSUAL_WHALES_API_KEY" in error
-        assert ".env" in error
-        assert "https://unusualwhales.com/api" in error
+        assert r.status_code == 409
+        body = r.get_json()
+        assert body["ok"] is False
+        assert "switched off" in body["error"] and "#730" in body["error"]
+
+    def test_the_leaps_job_is_not_registered(self):
+        """No runner, so no Fetch button, no scheduled call and no script can start a scan (#730)."""
+        from RevenueChaser.app import jobs
+        assert "module_leaps" not in jobs._RUNNERS
 
     def test_financials_refresh_renders_from_the_store_offline(self, rawstore_tmp_db,
                                                                tmp_path, monkeypatch):

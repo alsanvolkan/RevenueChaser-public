@@ -87,7 +87,7 @@ no downloaded state worth re-deriving, so they keep a "click Fetch" empty state.
 | Swing Potential | `/run/swing` | `refresh_universe`, `no_fetch` | model-only |
 | Fundamentals | `/run/module_fundamentals` | `refresh_universe`, `no_fetch` | model-only |
 | SEC 13F | `/run/module_sec_13f` (Fetch: names/sectors → shares outstanding → render; no UW key needed, and no SEC call since G9 — the builder owns the numbers) | — | store |
-| LEAPS | `/run/module_leaps` | — | model-only |
+| LEAPS | *(switched off, #730: `/run/module_leaps` answers `409` and the job is not registered)* | — | model-only |
 | Forwards Testing | *(none)* | — | always live from files |
 | **Universe** (header) | `/run/universe` | — | n/a — SEC member list + market data into `equity_universe`; not a tab |
 | **Universe caps** (Settings) | `/run/universe-stats` | — | store → `.cache/` — fills only the NULL `equity_universe.market_cap` rows (Phase B alone) |
@@ -292,7 +292,7 @@ id; a single background worker (`app/jobs.py`) drains the queue one job at a
 time, so two scans never race on the writer lock or the same API quota.
 
 ```
-curl -X POST -H "X-RC-Panel: cli" http://127.0.0.1:8000/run/module_leaps
+curl -X POST -H "X-RC-Panel: cli" http://127.0.0.1:8000/run/module_sec_13f
                             -> 202 {"ok": true, "job_id": "ab12cd34"}
 GET  /api/job/ab12cd34      -> {"job": {"status": "running"}}
 GET  /api/job/ab12cd34      -> {"job": {"status": "done", "message": null}}
