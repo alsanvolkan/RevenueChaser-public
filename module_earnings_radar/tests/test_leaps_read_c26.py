@@ -85,6 +85,29 @@ def test_no_cache_reads_n_a_and_writes_nothing(monkeypatch):
     assert uw.leaps_calls == []
 
 
+def test_a_missing_footprint_leaves_the_score_and_the_oi_counts_unknown(monkeypatch):
+    """#730 item 3: no cache row means nothing was measured, so the card keeps None -- never a 0.
+
+    The board hides the LEAPS row while the label is N/A, so the 0 was invisible there and still went into
+    ``earnings_cards_history`` as if a scan had counted it.
+    """
+    uw = _LeapsUW()
+    monkeypatch.setattr(pl, "leaps_load_cache", lambda t: None)
+    card = _pipeline(uw)._score("AAPL")
+    assert card.leaps_score is None
+    assert card.leaps_far_call_oi is None and card.leaps_far_put_oi is None
+
+
+def test_a_footprint_without_counts_keeps_them_unknown_and_keeps_a_real_zero(monkeypatch):
+    """A payload that carries the label but no counts: unknown stays unknown, a measured 0 stays 0."""
+    uw = _LeapsUW()
+    monkeypatch.setattr(pl, "leaps_load_cache", lambda t: {
+        "latest": {"label": "Quiet", "as_of": "2026-10-10", "score": 0, "far_put_oi": 0}})
+    card = _pipeline(uw)._score("AAPL")
+    assert card.leaps_score == 0 and card.leaps_far_put_oi == 0     # measured zeros
+    assert card.leaps_far_call_oi is None                           # never served
+
+
 def test_the_drawer_carries_the_as_of_and_age():
     card = TradeCard(ticker="AAPL", name="Apple", cluster="Technology",
                      earnings_date=date(2026, 8, 11), leaps_label="Accumulating",
