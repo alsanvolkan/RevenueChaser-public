@@ -253,6 +253,60 @@ def add_section(list_id: str, name: str, *, section_id: str | None = None, posit
     return section_id
 
 
+def rename_section(list_id: str, section_id: str, name: str) -> None:
+    """Give one heading another name. The id stays as it is, so the symbols under it do not move and an export
+    keeps the same id for a heading avo only re-worded."""
+    if not _query(f"SELECT 1 AS x FROM {SECTIONS} WHERE list_id = ? AND section_id = ?", [list_id, section_id]):
+        raise WatchlistError(f"no section {section_id!r} on watch list {list_id!r}")
+    name = _clean_name(name, what="section name")
+    clash = _query(f"SELECT section_id FROM {SECTIONS} WHERE list_id = ? AND name = ? AND section_id <> ?",
+                   [list_id, name, section_id])
+    if clash:
+        raise WatchlistError(f"the watch list {list_id!r} already has a section called {name!r}")
+    rawstore.execute(f"UPDATE {SECTIONS} SET name = ? WHERE list_id = ? AND section_id = ?",
+                     [name, list_id, section_id], db=DB)
+    _touch(list_id)
+
+
+def delete_section(list_id: str, section_id: str) -> int:
+    """Remove one heading and move its symbols to the list's first remaining section, at the end of it.
+
+    The symbols are kept, never deleted with the heading: a list is avo's and a heading is only how it is read.
+    Returns how many symbols moved. The last section of a list cannot go, because every symbol lives under one.
+    """
+    rows = sections(list_id)
+    if not any(s["section_id"] == section_id for s in rows):
+        raise WatchlistError(f"no section {section_id!r} on watch list {list_id!r}")
+    rest = [s for s in rows if s["section_id"] != section_id]
+    if not rest:
+        raise WatchlistError("a watch list keeps at least one section")
+    into = rest[0]["section_id"]
+    moved = [r["symbol"] for r in items(list_id, section_id)]
+    at = _next_position(ITEMS, "list_id = ? AND section_id = ?", [list_id, into])
+    with rawstore.transaction(db=DB) as tx:
+        for step, symbol in enumerate(moved):
+            tx.execute(f"UPDATE {ITEMS} SET section_id = ?, position = ? WHERE list_id = ? AND symbol = ?",
+                       [into, at + step, list_id, symbol])
+        tx.execute(f"DELETE FROM {SECTIONS} WHERE list_id = ? AND section_id = ?", [list_id, section_id])
+        for position, section in enumerate(rest):
+            tx.execute(f"UPDATE {SECTIONS} SET position = ? WHERE list_id = ? AND section_id = ?",
+                       [position, list_id, section["section_id"]])
+    _touch(list_id)
+    return len(moved)
+
+
+def reorder_sections(list_id: str, ordered: list[str]) -> None:
+    """Give a list's sections the order of ``ordered``; a section not named keeps its place after them."""
+    current = [s["section_id"] for s in sections(list_id)]
+    wanted = [s for s in ordered if s in current]
+    rest = [s for s in current if s not in wanted]
+    with rawstore.transaction(db=DB) as tx:
+        for at, section_id in enumerate(wanted + rest):
+            tx.execute(f"UPDATE {SECTIONS} SET position = ? WHERE list_id = ? AND section_id = ?",
+                       [at, list_id, section_id])
+    _touch(list_id)
+
+
 def add_symbol(list_id: str, symbol: str, *, section_id: str = DEFAULT_SECTION, by: str = "avo",
                note: str | None = None, position: int | None = None) -> bool:
     """Put one symbol on a list. False when it was already on that list — a second add is not an error, because a

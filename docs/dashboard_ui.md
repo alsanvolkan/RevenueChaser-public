@@ -248,6 +248,7 @@ Where each board puts it (`core/tests/test_watchlist_boards_pr4.py` classifies e
 | Co-movement | The found name's line after a Find (each name is itself a chip button) |
 | Value Chain | The focal company's filing line |
 | Relatedness | The focal company in the panel title, and each peer row |
+| Watch lists | None (avo, 12 Nov 2026: "bu liste icin bookmark simgesine gerek yok"): a row of a named list is already on a list. #786 step 5 goes the other way — a menu on the other boards that puts a ticker on one of these lists |
 | SPX Gamma, UW Interaction, the Rotation trail, Settings, Logs, Runs | None: SPX is always built; a lab of raw columns; a chart of the funds the table already carries; the cards themselves; not data boards |
 
 ## 3. Theme cascade (coarse → medium → fine)
