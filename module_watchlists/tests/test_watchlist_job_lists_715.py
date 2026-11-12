@@ -113,6 +113,7 @@ def test_a_spread_or_a_series_is_refused_on_a_job_list_and_nothing_is_written(cl
     ops.watch_add("option", "AMD", by="test")
     answer = client.post("/api/watchlists/jobs.option/symbol/add", json={"symbol": "TVC:US10Y-TVC:US02Y"})
     assert answer.status_code == 400
+    assert answer.get_json()["error"] == "a job list takes a plain ticker"
     assert read.watched("option") == {"AMD"}
 
 
@@ -121,6 +122,8 @@ def test_a_job_list_cannot_be_renamed_or_deleted(client):
     assert client.post("/api/watchlists/jobs.option", json={"name": "Mine"}).status_code in (400, 404)
     assert client.post("/api/watchlists/jobs.option/delete", json={}).status_code in (400, 404)
     assert read.watched("option") == {"AMD"}
+    assert board.payload("jobs.option")["list"]["name"] == board.JOB_LISTS["jobs.option"]["name"], \
+        "the list is still there under its own name"
 
 
 def test_a_derived_tab_answers_for_a_job_list(monkeypatch, no_data):
