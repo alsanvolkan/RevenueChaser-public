@@ -327,9 +327,9 @@ class TestEscaping:
         html = ld.render_leaps_dashboard([snap], [dict(snap)]).read_text(encoding="utf-8")
         assert "<img" not in html
         # Only the page's own three script blocks survive (board script, filter-kit script (KL #377), the
-        # watch-list pair (PR 4)); the hostile ticker gets no button pair.
+        # watch symbol and its menu (PR 4, #774)); the hostile ticker gets no symbol.
         assert html.count("<script") == 3 and html.count("</script>") == 3
-        assert not re.search(r"data-rc-watch=\"(option|stock)\"", html)
+        assert "data-rc-watch-open" not in html
         assert 'data-ticker="&quot;&gt;&lt;img' in html
 
 

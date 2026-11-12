@@ -260,21 +260,31 @@ provider, write nothing and open no second DuckDB writer, so a page may ask them
   need's state without naming a ticker; `limit=N` bounds the rows, never above 5,000. 404 for an unknown need,
   400 for an unknown parameter or for a need that must be asked for something (`market.series`).
 
-### The watch-list routes (PR 4)
+### The watch-list routes (PR 4, the named lists #774)
 
-The two watch lists (D2) live in `ops.sqlite` (`rcdata/ops.py`); each write is one `BEGIN IMMEDIATE` transaction
-with its history row. No provider call, no DuckDB file.
+The watch lists (D2) live in `ops.sqlite` (`rcdata/ops.py`); each write is one `BEGIN IMMEDIATE` transaction
+with its history row. No provider call, no DuckDB file. There are two **groups** (`option` and `stock`), each
+holding one or more **named lists**; a job reads the union of a group's lists (avo, 12 Nov 2026).
 
-- **`POST /api/watchlist/<option|stock>/toggle/<ticker>`**: puts the ticker on that list or takes it off;
-  `{ok, list, ticker, on}`. The `X-RC-Panel` value (the board) is the row's `added_by` and the history row's `by`.
-  404 for another list, 400 for a ticker `_valid_ticker` refuses, 403 without the panel header; none writes.
-- **`POST /api/watchlist/<option|stock>/remove/<ticker>`**: the Settings cards' Remove; `{ok, list, ticker,
-  removed}`. It never adds, so a Remove on a stale page cannot put back a name removed elsewhere.
-- **`POST /api/watchlist/toggle/<ticker>`**: the pre-PR 4 route, now the stock list; answers `{ok, ticker,
-  in_watchlist}` as before. `rawstore.toggle_watchlist`, `load_watchlist` and `save_watchlist` are the stock list too.
-- **`GET /api/watchlists`**: `{ok, option: [tickers], stock: [tickers]}`, what the board buttons show as pressed.
-  The read itself never creates `ops.sqlite`; the read log it counts into is flushed to it once a minute, which
-  may, as for every `rcdata.read` call. A flush that fails keeps its counts for the next one and never fails the
+- **`POST /api/watchlists/<list_id>/toggle/<ticker>`**: puts the ticker on that one named list or takes it off;
+  `{ok, list_id, kind, list, ticker, on}`. The same ticker on another list of the group is untouched. The
+  `X-RC-Panel` value (the board) is the row's `added_by` and the history row's `by`. 404 for a list that does not
+  exist, 400 for a ticker `_valid_ticker` refuses, 403 without the panel header; none writes.
+- **`POST /api/watchlists`**: makes a list in one group (the menu's "+ New list"), `{kind, name}` as JSON or form;
+  `{ok, list: {id, kind, name}, created}`. `created` is false for a name the group already has, and that list comes
+  back, so two clicks make one list. 400 for an unknown group or a name that is empty or over `ops.WATCH_NAME_MAX`.
+- **`POST /api/watchlist/<option|stock>/toggle/<ticker>`**: the pre-#774 route, now the group's **default** list
+  (its oldest); `{ok, list, ticker, on}`, 404 for another group.
+- **`POST /api/watchlist/<option|stock>/remove/<ticker>`**: the Settings cards' Remove, on the default list;
+  `{ok, list, ticker, removed}`. It never adds, so a Remove on a stale page cannot put back a name removed elsewhere.
+- **`POST /api/watchlist/toggle/<ticker>`**: the pre-PR 4 route, now the stock group's default list; answers
+  `{ok, ticker, in_watchlist}` as before. `rawstore.toggle_watchlist`, `load_watchlist` and `save_watchlist` are the
+  stock group too.
+- **`GET /api/watchlists`**: `{ok, option: [tickers], stock: [tickers], groups: {option: [{id, kind, name,
+  tickers}], stock: [...]}}`. `option` and `stock` are the union of each group's lists, which is what a board's
+  watch symbol shows as on; `groups` is what the dropdown ticks. The read itself never creates `ops.sqlite`, so a
+  store with no file answers with empty groups and the menu offers "+ New list" alone; the read log it counts into
+  is flushed to it once a minute, which may, as for every `rcdata.read` call. A flush that fails keeps its counts for the next one and never fails the
   read (#228).
 
 ### Known deviation (fixed 2026-09-30)

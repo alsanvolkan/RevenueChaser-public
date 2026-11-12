@@ -84,7 +84,10 @@ LEGACY_BOARD_FILES = ("raw", "edgar", "history", "prices")
 BOARDS_DIRNAME = "boards"
 #: The ops tables a backup keeps. The queue (``build_requests``), the read log, the call counters, the UW header
 #: samples and the check/issue rows are left empty in the copy (avo, 8 Nov 2026: "gerek olmayanlari tutma").
-OPS_BACKUP_TABLES = ("dataset_schedule", "kind_automation", "dataset_automation", "switch", "job_runs2")
+OPS_BACKUP_TABLES = ("dataset_schedule", "kind_automation", "dataset_automation", "switch", "job_runs2",
+                     # #774: the names of the watch lists. Without it a restore would bring the membership
+                     # rows back with no list to belong to.
+                     "watch_list")
 OPS_BACKUP_PREFIXES = ("watchlist_",)
 #: The SPX Gamma tree's two files rewritten in place: a damaged JSON must never replace a good copy (avo, Q5).
 SPX_JSON_GUARD = True

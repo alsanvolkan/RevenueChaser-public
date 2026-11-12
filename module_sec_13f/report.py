@@ -246,7 +246,7 @@ function build(p){
       spN.textContent = r[1];
       tdT.appendChild(spN);
     }
-    // The shared watch-list pair (PR 4): rcWatchButtons escapes, and gives nothing for a ticker the dashboard refuses.
+    // The shared watch symbol (PR 4): rcWatchButtons escapes, and gives nothing for a ticker the dashboard refuses.
     tdT.insertAdjacentHTML('beforeend', rcWatchButtons(r[0]));
     tr.appendChild(tdT);
     var tdS = document.createElement('td');

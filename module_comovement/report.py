@@ -952,7 +952,7 @@ function jumpTo(r){
   var g = DATA.filter(function(x){ return x.cut === BOARD.cut && x.cluster_id === r.cluster_id; });
   strip.style.display = "block";
   strip.innerHTML = '<b>' + rcEsc(r.ticker) + '</b> (' + rcEsc(r.name || r.ticker) + ') is in <b>' + rcEsc(r.cluster_label) + '</b> at the ' + rcEsc(cutWord(BOARD.cut)) + ' level, with ' + plural(Math.max(0, g.length - 1), "other name") + '.'
-    + rcWatchRow(r.ticker);       // the found name's watch-list pair (PR 4); a chip is itself a button
+    + rcWatchRow(r.ticker);       // the found name's watch symbol (PR 4, #774); a chip is itself a button
   if(card){
     var d = card.querySelector('.chip[data-t="' + r.ticker.replace(/"/g, "") + '"]').closest("details");
     if(d) d.open = true;

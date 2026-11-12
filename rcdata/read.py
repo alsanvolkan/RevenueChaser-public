@@ -192,14 +192,34 @@ def spx_greek_expiry_strike(session_date, min_dte: int = 0, max_dte: int = 3_650
 
 
 def watchlists() -> dict[str, list[dict]]:
-    """The two watch lists (D2) from ``ops.sqlite``: ``{"option": rows, "stock": rows}``, each by ticker, a row
-    ``{ticker, added_at, added_by, note}``. Operational state, not market data: no provenance and no ``status``. No
+    """The two watch-list **groups** (D2) from ``ops.sqlite``: ``{"option": rows, "stock": rows}``, each by ticker, a
+    row ``{ticker, added_at, added_by, note, list_id, lists}``.
+
+    One row per ticker whichever of the group's named lists holds it (#774), so a caller that only asks "is it
+    watched" reads the same answer as before. Operational state, not market data: no provenance and no ``status``. No
     ops file yet reads as two empty lists. The read itself never creates it; the read log it counts into is
     written to ops.sqlite once a minute (``ops.ReadLog``), and that flush does, as for every read here."""
     out = {}
     for kind in ops.WATCH_KINDS:
         ops.read_log.bump(f"watchlist_{kind}")
         out[kind] = ops.watch_rows(kind)
+    return out
+
+
+def watch_groups() -> dict[str, list[dict]]:
+    """What the watch-list menu draws (#774): ``{kind: [{id, name, created_at, created_by, tickers: [...]}, ...]}``,
+    the named lists of each group, oldest first, with the tickers of each.
+
+    A read like ``watchlists``: it never creates ``ops.sqlite``, so a store with no file yet answers with two empty
+    groups and the menu offers "+ New list" alone. A group's default list is made by the first write."""
+    out: dict[str, list[dict]] = {}
+    for kind in ops.WATCH_KINDS:
+        ops.read_log.bump(f"watchlist_{kind}")
+        holds: dict[int, list[str]] = {}
+        rows = ops.watch_lists(kind)
+        for lst in rows:
+            holds[lst["id"]] = ops.watch_tickers(kind, lst["id"])
+        out[kind] = [{**lst, "tickers": holds.get(lst["id"], [])} for lst in rows]
     return out
 
 

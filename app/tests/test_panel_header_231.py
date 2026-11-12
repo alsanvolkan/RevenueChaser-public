@@ -18,8 +18,10 @@ from RevenueChaser.core import rawstore
 
 REFUSED = {"ok": False, "error": "panel header required: reload this board"}
 _SAFE = {"GET", "HEAD", "OPTIONS"}
+#: A value per rule argument, so the walked path matches its rule and reaches ``_local_only``. An argument with a
+#: converter (``<int:list_id>``, #774) needs one of that type, or the path would 404 before the header check.
 _ARGS = {"ticker": "AAPL", "name": "RC-Daily-Bars", "action": "install",
-         "board": "module_comovement", "job_id": "abc123"}
+         "board": "module_comovement", "job_id": "abc123", "list_id": "7"}
 
 
 def _path(rule) -> str:
@@ -58,8 +60,10 @@ def untouched(monkeypatch):
 
 def test_the_walk_sees_every_write_route():
     """28 on e83aa26, all POST; a count that drops means the walk went blind."""
-    assert len(WRITES) >= 28 and {m for m, _ in WRITES} == {"POST"}
+    assert len(WRITES) >= 30 and {m for m, _ in WRITES} == {"POST"}
     assert ("POST", "/run/uw") in WRITES and ("POST", "/api/watchlist/toggle/AAPL") in WRITES
+    # #774: the two named-list routes are walked too, each with a value its converter accepts.
+    assert ("POST", "/api/watchlists") in WRITES and ("POST", "/api/watchlists/7/toggle/AAPL") in WRITES
 
 
 @pytest.mark.parametrize("method,path", WRITES, ids=_IDS)

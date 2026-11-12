@@ -1155,9 +1155,12 @@ With `RC_REDIS_URL` unset the app runs on `ops.sqlite` as below; that is the rol
 written while Redis is on.
 
 **`ops.sqlite`** (SQLite WAL, `busy_timeout` 5000 ms on every open; `rcdata/ops.py` owns every statement;
-ops schema version `2` (Redis keeps the same stamp in `<ns>:ops_schema`); `ensure` upgrades an older file in place, in one transaction, and refuses a file stamped
-newer. Rolling back to version 1 code is `DELETE FROM ops_schema WHERE version = 2` with every ops process stopped:
-version 1 runs on the version 2 tables, and the next upgrade leaves a history table that already has `id` alone):
+ops schema version `3` (Redis keeps the same stamp in `<ns>:ops_schema`); `ensure` upgrades an older file in place, in one transaction, and refuses a file stamped
+newer. Rolling back to the previous code is `DELETE FROM ops_schema WHERE version = <n>` with every ops process
+stopped, and that code runs on the newer tables; the upgrade step of each version leaves a table it has already
+rewritten alone, so the rollback is not copied twice. Version 3 (#774) is the one rollback that needs more than the
+stamp: version 2 code reads a membership table keyed by `ticker` alone, so going back to it means restoring the ops
+tables from the backup taken before the upgrade):
 
 | Table | Holds |
 |---|---|
@@ -1169,7 +1172,8 @@ version 1 runs on the version 2 tables, and the next upgrade leaves a history ta
 | `read_log` | Reads per day, process and table (counted in memory, written once a minute) |
 | `uw_remaining` | UW's `x-uw-*` rate headers, sampled once a run: `x-uw-daily-req-count` as `daily_req_count`, `daily_remaining_computed` = our cap (`rcdata/caps.py`) minus it, the per-minute window, and `x-uw-token-req-limit` as sent (it is not the daily cap) |
 | `provider_calls_daily` | Calls, failures and 429s per provider and New York day |
-| `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | The two watch lists (D2): ticker, added at, added by (the board), note; and their history, one row per add or remove with an `id` that keeps its order (version 2 added `id` and `note` to the history). The toggle routes write them (`docs/data_retrieval.md`); `rcdata.read.watchlists()` reads them |
+| `watch_list` | The named watch lists (version 3, #774): `id`, `kind` (the group: `option` or `stock`), `name`, created at and by; `UNIQUE (kind, name)`. A group with no list gets one named `Main` on its first write (a read makes nothing) |
+| `watchlist_option`, `watchlist_stock`, `watchlist_option_changes`, `watchlist_stock_changes` | Which ticker is on which list (D2): `list_id`, ticker, added at, added by (the board), note, keyed `(list_id, ticker)`; and their history, one row per add or remove with an `id` that keeps its order (version 2 added `id` and `note` to the history, version 3 `list_id` to both). The toggle routes write them (`docs/data_retrieval.md`); `rcdata.read.watchlists()` reads one row per ticker and `rcdata.read.watch_groups()` the lists themselves. A job reads the **union** of a group's lists (`ops.watch_list(kind)`, avo 12 Nov 2026), so several named lists feed one build |
 | `dataset_schedule` | Cadence and pause state per dataset (Pause / Resume on Settings, PR 2) |
 | `kind_automation` | The old file-level mode (Settings, 6 Nov 2026): kept, no longer read; `ops.copy_kind_modes` moved it onto each dataset (10 Nov 2026) |
 | `switch` | The board's two switches (#527): `fetch` stops every fetch, build and RC timer task but the backups and the IBKR login check; `backup` stops the three backups. No row, or `off_at` NULL, is on |

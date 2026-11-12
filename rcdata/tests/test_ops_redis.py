@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(not os.getenv("RC_REDIS_URL"), reason="needs a R
 
 # Wall-clock columns: two runs never write the same instant, so the parity test compares everything else.
 _TIME_COLUMNS = {"requested_at", "started_at", "ended_at", "finished_at", "added_at", "at", "paused_at", "sampled_at",
-                 "host"}
+                 "created_at", "host"}
 
 
 def _drop_times(value):
@@ -69,10 +69,17 @@ def _script() -> dict:
     for t in ("market_series", "market_series", "macro_series", "need:prices.bars"):
         log.bump(t)
     log.flush()
+    # #774: a second list in one group, and a write that names it; the group's own default list is made by the
+    # first write of each kind below, so both backends must give out the same ids in the same order.
+    core = ops.watch_list_new("stock", "Core", by="avo")
+    out["lists"] = [core, ops.watch_list_new("stock", "Core", by="avo"), ops.watch_list_row(core["id"]),
+                    ops.watch_list_row(999)]
     out["watch"] = [ops.watch_add("option", "nvda", by="avo", note="earnings"), ops.watch_add("option", "NVDA", by="x"),
                     ops.watch_toggle("stock", "aapl", by="board"), ops.watch_toggle("stock", "AAPL", by="board"),
                     ops.watch_toggle("stock", "msft", by="board"), ops.watch_remove("option", "NVDA", by="avo"),
-                    ops.watch_remove("option", "NVDA", by="avo"), ops.watch_replace("option", ["spy", "QQQ", ""], by="r")]
+                    ops.watch_remove("option", "NVDA", by="avo"), ops.watch_replace("option", ["spy", "QQQ", ""], by="r"),
+                    ops.watch_add("stock", "CRSP", by="avo", list_id=core["id"]),
+                    ops.watch_toggle("stock", "AAPL", by="avo", list_id=core["id"])]
     ops.schedule_set("market_series", "daily", "2026-10-28")
     ops.schedule_pause("market_series", by="avo")
     ops.schedule_pause("prices/serving", by="avo")
@@ -95,7 +102,9 @@ def _script() -> dict:
         "between": [(r["dataset"], r["status"]) for r in ops.runs_between(0, 4e9)] + [ops.runs_between(0, 1)],
         "last_run": ops.last_builder_run(), "watch": [ops.watch_count("option"), ops.watch_count("stock"),
                                                       ops.watch_list("option"), ops.watch_list("stock"),
-                                                      ops.watch_rows("stock"), ops.watch_last_change() is not None],
+                                                      ops.watch_rows("stock"), ops.watch_last_change() is not None,
+                                                      ops.watch_lists(), ops.watch_lists("stock"),
+                                                      ops.watch_tickers("stock", 1), ops.watch_rows("stock", 1)],
         "schema": ops.schema_version(),
         # smembers has no order: sorted, so the two backends compare (#539 review).
         "running": sorted(ops.running_runs(), key=lambda r: r["run_id"]),

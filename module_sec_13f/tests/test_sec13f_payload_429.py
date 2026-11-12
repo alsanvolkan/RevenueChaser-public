@@ -188,8 +188,9 @@ def test_a_refresh_with_no_totals_drops_the_old_payload(tmp_path, monkeypatch):
     assert page.exists() and not payload_path(page).exists()
 
 
-def test_each_built_row_carries_the_watch_list_pair_for_its_ticker(tmp_path):
-    """PR 4: the ticker cell gets the shared pair (``rcWatchButtons``), reading ``data-ticker``, from the payload."""
+def test_each_built_row_carries_the_watch_symbol_for_its_ticker(tmp_path):
+    """PR 4, #774: the ticker cell gets the shared watch symbol (``rcWatchButtons``), reading ``data-ticker``, from
+    the payload; the menu behind it is built on the click."""
     totals, meta = _three()
     payload = report.board_payload(totals, meta, {})
     html = report.render_sec13f_dashboard(totals, meta, {})
@@ -205,5 +206,5 @@ console.log(JSON.stringify(tds.map(function(c){ return c[1].innerHTML; })));
 """, tmp_path, payload=payload)
     assert len(log) == 3
     for t, cell in zip(("AAA", "BBB", "CCC"), log):
-        assert f'data-rc-watch="option" data-ticker="{t}"' in cell and f'data-rc-watch="stock" data-ticker="{t}"' in cell
+        assert f'data-rc-watch-open="1" data-ticker="{t}"' in cell and cell.count("<button") == 1
     assert 'rcWatchInit("sec_13f")' in html

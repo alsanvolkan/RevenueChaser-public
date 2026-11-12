@@ -231,14 +231,47 @@ def ensure(path: Path | None = None) -> None:
     stamp. Redis needs no tables, so an older stamp is brought up by writing the new one.
 
     A namespace never stamped is a new store: refused (``OpsNotCopied``) while ``ops.sqlite`` of this root holds rows,
-    so switching Redis on before the copy, or losing the namespace, cannot start the day from zero."""
-    if _client().get(_key("ops_schema")) is None:
+    so switching Redis on before the copy, or losing the namespace, cannot start the day from zero.
+
+    One exception to "no tables": schema 3 (#774) changed the shape of the watch-list rows, so a namespace stamped
+    lower is rewritten by ``_upgrade_to_3`` before the new stamp."""
+    found = _client().get(_key("ops_schema"))
+    if found is None:
         held = _rows_in_file(ops.ops_path())
         if held:
             raise ops.OpsNotCopied(f"Redis namespace {namespace()} is empty and {ops.ops_path()} holds {held} rows: "
                                    f"copy it first (python -m RevenueChaser.rcdata.ops_copy), or unset "
                                    f"{ops.REDIS_URL_ENV} to stay on the file")
+    elif int(found) < 3 <= ops.OPS_SCHEMA_VERSION:
+        _upgrade_to_3()
     _stamp()
+
+
+def _upgrade_to_3() -> None:
+    """v2 -> v3 (#774) in Redis: every watch-list row moves onto its group's default list.
+
+    A membership row was keyed by its ticker and is re-keyed ``<list_id>|<ticker>``; a history row keeps its id and
+    gains ``list_id``. Idempotent: a row that already carries ``list_id`` is left alone, so a namespace stamped back
+    down to 2 (the rollback) is not rewritten twice.
+    """
+    r = _client()
+    for kind in ops.WATCH_KINDS:
+        members, changes = f"watchlist_{kind}", f"watchlist_{kind}_changes"
+        old_keys = [m for m in r.zrange(_key(members), 0, -1) if "|" not in m]
+        stale = [c for c in r.zrange(_key(changes), 0, -1) if not r.hexists(_key(changes, "row", c), "list_id")]
+        if not old_keys and not stale:
+            continue
+        lid = int(_new_default_list(kind)["id"])
+        with r.pipeline(transaction=True) as p:
+            for ticker in old_keys:
+                row = _decode(members, r.hgetall(_key(members, "row", ticker)))
+                p.delete(_key(members, "row", ticker))
+                p.zrem(_key(members), ticker)
+                _put(p, members, {**row, "list_id": lid})
+            for pk in stale:
+                p.hset(_key(changes, "row", pk), "list_id", str(lid))
+                p.incr(_key(changes, "v"))
+            p.execute()
 
 
 def _rows_in_file(path: Path) -> int:
@@ -611,27 +644,83 @@ def need_reads(first_day: str) -> list[dict]:
 
 # ── Watch lists and the schedule ───────────────────────────────────────────────────────────────────────────────
 
-def _watch_change(kind: str, ticker: str, action: str, by: str, note: str | None, now: float) -> list:
-    """The writes of one add or remove: the list row and its history row (with a new id)."""
-    change = {"id": _new_ids(f"watchlist_{kind}_changes")[0], "ticker": ticker, "action": action, "at": now,
-              "by": by, "note": note}
-    row = {"ticker": ticker, "added_at": now, "added_by": by, "note": note}
+def _watch_change(kind: str, list_id: int, ticker: str, action: str, by: str, note: str | None,
+                  now: float) -> list:
+    """The writes of one add or remove on one list: the membership row and its history row (with a new id)."""
+    change = {"id": _new_ids(f"watchlist_{kind}_changes")[0], "list_id": list_id, "ticker": ticker, "action": action,
+              "at": now, "by": by, "note": note}
+    row = {"list_id": list_id, "ticker": ticker, "added_at": now, "added_by": by, "note": note}
     head = ((lambda p: _put(p, f"watchlist_{kind}", row)) if action == "add"
             else (lambda p: _delete(p, f"watchlist_{kind}", row)))
     return [head, lambda p: _put(p, f"watchlist_{kind}_changes", change)]
 
 
 def _watch_tables(kind: str) -> list[str]:
-    return [f"watchlist_{kind}", f"watchlist_{kind}_changes"]
+    return ["watch_list", f"watchlist_{kind}", f"watchlist_{kind}_changes"]
 
 
-def _watch_run(kind: str, plan: Callable[[set[str]], tuple[Any, list[tuple[str, str]]]], by: str,
-               note: str | None = None) -> Any:
-    """``plan(tickers on the list)`` -> ``(result, [(ticker, action)])``; the moves are written in one step."""
+def _members(kind: str, list_id: int) -> set[str]:
+    """The tickers of one list, read from the table's key set (``<list_id>|<ticker>``)."""
+    head = f"{list_id}|"
+    return {m[len(head):] for m in _client().zrange(_key(f"watchlist_{kind}"), 0, -1) if m.startswith(head)}
+
+
+def _lists(kind: str | None = None) -> list[dict]:
+    rows = sorted(_all("watch_list"), key=lambda r: (r["kind"], r["id"]))
+    return [r for r in rows if kind is None or r["kind"] == kind]
+
+
+def _default_list(kind: str) -> dict:
+    """The group's oldest list, made now (``ops.DEFAULT_WATCH_LIST``) when the group holds none; see
+    ``ops._default_list_id``."""
     def work():
-        result, moves = plan(set(_client().zrange(_key(f"watchlist_{kind}"), 0, -1)))
+        got = _lists(kind)
+        if got:
+            return got[0], None
+        row = _default_row(kind)
+        return row, lambda p: _put(p, "watch_list", row)
+    return _transaction(["watch_list"], work)
+
+
+def _default_row(kind: str) -> dict:
+    return {"id": _new_ids("watch_list")[0], "kind": kind, "name": ops.DEFAULT_WATCH_LIST,
+            "created_at": time.time(), "created_by": "schema"}
+
+
+def _new_default_list(kind: str) -> dict:
+    """``_default_list`` without ``_transaction``: it is called from ``ensure``'s upgrade, and ``_transaction``
+    would call ``_ready`` -> ``ensure`` again. One optimistic write is enough there, because the upgrade runs
+    before this process serves anything."""
+    got = _lists(kind)
+    if got:
+        return got[0]
+    row = _default_row(kind)
+    with _client().pipeline(transaction=True) as p:
+        _put(p, "watch_list", row)
+        p.execute()
+    return row
+
+
+def _list_id(kind: str, list_id: int | None) -> int:
+    if list_id is None:
+        return int(_default_list(kind)["id"])
+    row = _one("watch_list", int(list_id))
+    if row is None:
+        raise ops.UnknownWatchList(f"no watch list {int(list_id)}")
+    if row["kind"] != kind:
+        raise ops.UnknownWatchList(f"watch list {int(list_id)} is a {row['kind']} list, not {kind}")
+    return int(list_id)
+
+
+def _watch_run(kind: str, list_id: int | None, plan: Callable[[set[str]], tuple[Any, list[tuple[str, str]]]],
+               by: str, note: str | None = None) -> Any:
+    """``plan(tickers on that list)`` -> ``(result, [(ticker, action)])``; the moves are written in one step."""
+    lid = _list_id(kind, list_id)
+
+    def work():
+        result, moves = plan(_members(kind, lid))
         now = time.time()
-        writes = [w for t, action in moves for w in _watch_change(kind, t, action, by, note, now)]
+        writes = [w for t, action in moves for w in _watch_change(kind, lid, t, action, by, note, now)]
 
         def run(p):
             for w in writes:
@@ -640,40 +729,82 @@ def _watch_run(kind: str, plan: Callable[[set[str]], tuple[Any, list[tuple[str, 
     return _transaction(_watch_tables(kind), work)
 
 
-def watch_add(kind: str, ticker: str, *, by: str, note: str | None = None) -> bool:
+def watch_lists(kind: str | None = None) -> list[dict]:
+    """A read: no list is made here, as on the file (``ops.watch_lists``)."""
+    return _lists(None if kind is None else ops._watch_kind(kind))
+
+
+def watch_list_new(kind: str, name: str, *, by: str) -> dict:
+    kind, name = ops._watch_kind(kind), ops._watch_name(name)
+
+    def work():
+        for row in _lists(kind):
+            if row["name"] == name:
+                return {**row, "created": False}, None
+        row = {"id": _new_ids("watch_list")[0], "kind": kind, "name": name, "created_at": time.time(),
+               "created_by": by}
+        return {**row, "created": True}, lambda p: _put(p, "watch_list", row)
+    return _transaction(["watch_list"], work)
+
+
+def watch_list_row(list_id: int) -> dict | None:
+    return _one("watch_list", int(list_id))
+
+
+def watch_add(kind: str, ticker: str, *, by: str, note: str | None = None, list_id: int | None = None) -> bool:
     kind, ticker = ops._watch_kind(kind), ticker.strip().upper()
-    return _watch_run(kind, lambda have: (False, []) if ticker in have else (True, [(ticker, "add")]), by, note)
+    return _watch_run(kind, list_id, lambda have: (False, []) if ticker in have else (True, [(ticker, "add")]),
+                      by, note)
 
 
-def watch_remove(kind: str, ticker: str, *, by: str) -> bool:
+def watch_remove(kind: str, ticker: str, *, by: str, list_id: int | None = None) -> bool:
     kind, ticker = ops._watch_kind(kind), ticker.strip().upper()
-    return _watch_run(kind, lambda have: (True, [(ticker, "remove")]) if ticker in have else (False, []), by)
+    return _watch_run(kind, list_id,
+                      lambda have: (True, [(ticker, "remove")]) if ticker in have else (False, []), by)
 
 
-def watch_toggle(kind: str, ticker: str, *, by: str) -> bool:
+def watch_toggle(kind: str, ticker: str, *, by: str, list_id: int | None = None) -> bool:
     kind, ticker = ops._watch_kind(kind), ticker.strip().upper()
-    return _watch_run(kind, lambda have: ((False, [(ticker, "remove")]) if ticker in have
-                                          else (True, [(ticker, "add")])), by)
+    return _watch_run(kind, list_id, lambda have: ((False, [(ticker, "remove")]) if ticker in have
+                                                   else (True, [(ticker, "add")])), by)
 
 
-def watch_replace(kind: str, tickers, *, by: str) -> tuple[int, int]:
+def watch_replace(kind: str, tickers, *, by: str, list_id: int | None = None) -> tuple[int, int]:
     kind = ops._watch_kind(kind)
     want = {str(t).strip().upper() for t in tickers if str(t).strip()}
-    return _watch_run(kind, lambda have: ((len(want - have), len(have - want)),
-                                          [(t, "remove") for t in sorted(have - want)]
-                                          + [(t, "add") for t in sorted(want - have)]), by)
+    return _watch_run(kind, list_id, lambda have: ((len(want - have), len(have - want)),
+                                                   [(t, "remove") for t in sorted(have - want)]
+                                                   + [(t, "add") for t in sorted(want - have)]), by)
 
 
 def watch_list(kind: str) -> list[str]:
-    return sorted(_client().zrange(_key(f"watchlist_{ops._watch_kind(kind)}"), 0, -1))
+    """Every ticker of the group, once: the union of its lists (``ops.watch_list``)."""
+    return sorted({r["ticker"] for r in _all(f"watchlist_{ops._watch_kind(kind)}")})
+
+
+def watch_tickers(kind: str, list_id: int) -> list[str]:
+    return sorted(_members(ops._watch_kind(kind), int(list_id)))
 
 
 def watch_count(kind: str) -> int:
-    return _client().zcard(_key(f"watchlist_{ops._watch_kind(kind)}"))
+    return len(watch_list(kind))
 
 
-def watch_rows(kind: str) -> list[dict]:
-    return sorted(_all(f"watchlist_{ops._watch_kind(kind)}"), key=lambda r: r["ticker"])
+def watch_rows(kind: str, list_id: int | None = None) -> list[dict]:
+    kind = ops._watch_kind(kind)
+    names = {r["id"]: r["name"] for r in _lists(kind)}
+    rows = [r for r in _all(f"watchlist_{kind}") if list_id is None or r["list_id"] == int(list_id)]
+    out: dict[str, dict] = {}
+    for r in sorted(rows, key=lambda r: (r["ticker"], r["added_at"], r["list_id"])):
+        name = names.get(r["list_id"])
+        got = out.get(r["ticker"])
+        if got is None:
+            out[r["ticker"]] = {**r, "lists": [name] if name else []}
+        elif name and name not in got["lists"]:
+            got["lists"].append(name)
+    for row in out.values():
+        row["lists"].sort()
+    return [out[t] for t in sorted(out)]
 
 
 def watch_last_change() -> float | None:

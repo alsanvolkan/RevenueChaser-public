@@ -22,9 +22,12 @@ The tables and what writes them:
 - ``uw_remaining``: UW's rate headers, sampled once a run: the daily count UW reports, what is left of our own cap
   (computed), the per-minute window, and the token limit as sent (not a daily cap).
 - ``provider_calls_daily``: calls per provider and New York day; the day cap (``caps``) reads it.
-- ``watchlist_option`` / ``watchlist_stock``: the two watch lists (D2), one row per ticker with when, by which board
-  and an optional note; ``watchlist_*_changes`` is their history, one row per add or remove. The dashboard's toggle
-  routes write them (PR 4); the option list is what the options build will cover besides SPX.
+- ``watch_list``: the named watch lists since schema 3 (#774), one row per list, in one of the two groups
+  (``WATCH_KINDS``: Options and Stocks).
+- ``watchlist_option`` / ``watchlist_stock``: the membership of those lists (D2), one row per list and ticker with
+  when, by which board and an optional note; ``watchlist_*_changes`` is their history, one row per add or remove.
+  The dashboard's toggle routes write them (PR 4, #774); what the options build covers besides SPX, and what LEAPS
+  and Earnings read, is the **union** of a group's lists (``watch_list(kind)``).
 - ``dataset_schedule``: cadence and pause state per dataset.
 - ``kind_automation``: what the hourly pass queues on its own for each serving kind (``KIND_MODES``); no row is off.
 
@@ -50,7 +53,7 @@ from typing import Any, Callable, Iterable, Iterator
 
 from ..core import calendar, config
 
-OPS_SCHEMA_VERSION = 2
+OPS_SCHEMA_VERSION = 3
 BUSY_TIMEOUT_MS = 5000
 #: How long a thread waits for another thread of the same process to finish its write transaction (``_tx``). The
 #: threads queue on ``_WRITE_LOCK`` and are woken when it is released, so this is patience for a stuck transaction,
@@ -61,6 +64,13 @@ FILE_NAME = "ops.sqlite"
 REQUEST_STATUSES = ("queued", "running", "done", "failed", "skipped")
 CHECK_RESULTS = ("changed", "unchanged", "failed", "skipped")
 WATCH_KINDS = ("option", "stock")
+#: Several named lists per kind since schema 3 (#774, avo 12 Nov 2026: "acilir menu yarat bunlar icin, birden fazla
+#: watchlist ayni grup altinda olabilmeli"). A kind is a *group* (Options / Stocks) holding one or more lists; the
+#: list the kind had before the upgrade keeps its rows under this name, and a call that names no list means it.
+DEFAULT_WATCH_LIST = "Main"
+#: A list name as typed: one line, no control character, trimmed, at most this long. The name is shown, never
+#: interpolated into SQL or HTML by this module.
+WATCH_NAME_MAX = 40
 #: What the hourly pass queues for a kind's due datasets (avo, 6 Nov 2026): nothing, a raw-only fetch, raw + Parquet,
 #: or the whole run up to the served DuckDB file. A kind with no ``kind_automation`` row is off.
 KIND_MODES = ("off", "raw", "parquet", "full")
@@ -114,12 +124,21 @@ _DDL = {
     "provider_calls_daily": """CREATE TABLE IF NOT EXISTS provider_calls_daily (
         provider TEXT NOT NULL, ny_day TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0,
         failures INTEGER NOT NULL DEFAULT 0, http_429 INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (provider, ny_day))""",
+    # Version 3 (#774): the named lists of both groups, one row per list; its ``id`` is what a membership row and a
+    # history row carry. ``UNIQUE (kind, name)`` is the rule the API's "+ New list" answers with ``created: false``.
+    "watch_list": """CREATE TABLE IF NOT EXISTS watch_list (
+        id INTEGER PRIMARY KEY, kind TEXT NOT NULL, name TEXT NOT NULL, created_at REAL NOT NULL, created_by TEXT,
+        UNIQUE (kind, name))""",
+    # Version 3: ``list_id`` joins the primary key, so one ticker can sit on several lists of its group.
     **{f"watchlist_{k}": f"""CREATE TABLE IF NOT EXISTS watchlist_{k} (
-        ticker TEXT PRIMARY KEY, added_at REAL NOT NULL, added_by TEXT, note TEXT)""" for k in WATCH_KINDS},
+        list_id INTEGER NOT NULL, ticker TEXT NOT NULL, added_at REAL NOT NULL, added_by TEXT, note TEXT,
+        PRIMARY KEY (list_id, ticker))""" for k in WATCH_KINDS},
     # Version 2: an ``id`` that keeps the history's order (a bare rowid may be renumbered by VACUUM), and the note.
+    # Version 3: ``list_id``, so the history says which list of the group moved.
     **{f"watchlist_{k}_changes": f"""CREATE TABLE IF NOT EXISTS watchlist_{k}_changes (
-        id INTEGER PRIMARY KEY, ticker TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add','remove')),
-        at REAL NOT NULL, by TEXT, note TEXT)""" for k in WATCH_KINDS},
+        id INTEGER PRIMARY KEY, list_id INTEGER NOT NULL, ticker TEXT NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('add','remove')), at REAL NOT NULL, by TEXT, note TEXT)"""
+       for k in WATCH_KINDS},
     "dataset_schedule": """CREATE TABLE IF NOT EXISTS dataset_schedule (
         dataset TEXT PRIMARY KEY, cadence TEXT, next_due TEXT, paused_at REAL, paused_by TEXT)""",
     # A new table, no upgrade step: ``ensure`` makes it in an older file too, and an older checkout ignores it.
@@ -138,6 +157,8 @@ _INDEXES = (
     "CREATE INDEX IF NOT EXISTS dataset_check_dataset ON dataset_check (dataset, id)",
     *(f"CREATE INDEX IF NOT EXISTS watchlist_{k}_changes_ticker ON watchlist_{k}_changes (ticker, id)"
       for k in WATCH_KINDS),
+    *(f"CREATE INDEX IF NOT EXISTS watchlist_{k}_ticker ON watchlist_{k} (ticker)" for k in WATCH_KINDS),
+    "CREATE INDEX IF NOT EXISTS watch_list_kind ON watch_list (kind, id)",
 )
 
 
@@ -235,6 +256,14 @@ _ENSURED: set[str] = set()
 _ENSURE_LOCK = threading.Lock()
 
 
+#: The v2 shape of a history table, written out here because that is what this step makes: a v1 file is brought to
+#: version 2 and then to 3 by ``_upgrade_to_3``, so this step must not reach for today's ``_DDL`` (which has
+#: ``list_id NOT NULL``, a column v1 has nothing to fill).
+_V2_CHANGES_DDL = """CREATE TABLE watchlist_{k}_changes (
+    id INTEGER PRIMARY KEY, ticker TEXT NOT NULL, action TEXT NOT NULL CHECK (action IN ('add','remove')),
+    at REAL NOT NULL, by TEXT, note TEXT)"""
+
+
 def _upgrade_to_2(con: sqlite3.Connection) -> None:
     """v1 -> v2: each ``watchlist_*_changes`` gets ``id INTEGER PRIMARY KEY`` and ``note``; its rows are copied in
     the order they were written. The list tables themselves are unchanged.
@@ -248,14 +277,56 @@ def _upgrade_to_2(con: sqlite3.Connection) -> None:
         if "id" in {r[1] for r in con.execute(f"PRAGMA table_info({name})")}:
             continue
         con.execute(f"ALTER TABLE {name} RENAME TO {name}_v1")
-        con.execute(_DDL[name])
+        con.execute(_V2_CHANGES_DDL.format(k=k))
         con.execute(f"INSERT INTO {name} (ticker, action, at, by) SELECT ticker, action, at, by FROM {name}_v1 "
                     "ORDER BY rowid")
         con.execute(f"DROP TABLE {name}_v1")
 
 
+def _default_list_id(con: sqlite3.Connection, kind: str) -> int:
+    """The id of the list a call that names none writes to: the group's oldest list, or a new
+    ``DEFAULT_WATCH_LIST`` when the group holds no list at all (a fresh file, or the v2 upgrade).
+
+    The oldest, not the one named ``Main``: a group whose only list was given another name stays one group with
+    one list, and the next click must land on it rather than make a second list behind the user's back.
+    """
+    row = con.execute("SELECT min(id) FROM watch_list WHERE kind = ?", (kind,)).fetchone()
+    if row is not None and row[0] is not None:
+        return int(row[0])
+    cur = con.execute("INSERT INTO watch_list (kind, name, created_at, created_by) VALUES (?, ?, ?, ?)",
+                      (kind, DEFAULT_WATCH_LIST, time.time(), "schema"))
+    return int(cur.lastrowid)
+
+
+def _upgrade_to_3(con: sqlite3.Connection) -> None:
+    """v2 -> v3 (#774): the ``watch_list`` table, and ``list_id`` on each membership and history table.
+
+    Every row the file holds moves onto its group's default list, so the two lists of v2 become
+    ``Options/Main`` and ``Stocks/Main`` and no ticker is lost. A table that already has ``list_id`` is left
+    alone, so a v3 file stamped back down to 2 (the rollback) is not copied twice.
+    """
+    con.execute(_DDL["watch_list"])
+    for k in WATCH_KINDS:
+        members, changes = f"watchlist_{k}", f"watchlist_{k}_changes"
+        if not any(con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (members,))):
+            continue
+        if "list_id" in {r[1] for r in con.execute(f"PRAGMA table_info({members})")}:
+            continue
+        default = _default_list_id(con, k)
+        con.execute(f"ALTER TABLE {members} RENAME TO {members}_v2")
+        con.execute(_DDL[members])
+        con.execute(f"INSERT INTO {members} (list_id, ticker, added_at, added_by, note) "
+                    f"SELECT ?, ticker, added_at, added_by, note FROM {members}_v2 ORDER BY ticker", (default,))
+        con.execute(f"DROP TABLE {members}_v2")
+        con.execute(f"ALTER TABLE {changes} RENAME TO {changes}_v2")
+        con.execute(_DDL[changes])
+        con.execute(f"INSERT INTO {changes} (id, list_id, ticker, action, at, by, note) "
+                    f"SELECT id, ?, ticker, action, at, by, note FROM {changes}_v2 ORDER BY id", (default,))
+        con.execute(f"DROP TABLE {changes}_v2")
+
+
 # The step that brings a file stamped ``n - 1`` to ``n``; ``ensure`` runs every step past the stamp it finds.
-_UPGRADES: dict[int, Callable[[sqlite3.Connection], None]] = {2: _upgrade_to_2}
+_UPGRADES: dict[int, Callable[[sqlite3.Connection], None]] = {2: _upgrade_to_2, 3: _upgrade_to_3}
 
 
 @_routed
@@ -743,67 +814,153 @@ def _watch_kind(kind: str) -> str:
     return kind
 
 
-def _watch_write(con: sqlite3.Connection, kind: str, ticker: str, action: str, by: str, note: str | None) -> bool:
-    """Add or remove ``ticker`` and write its history row, inside the caller's transaction; False when nothing moved."""
+class UnknownWatchList(ValueError):
+    """A ``list_id`` no ``watch_list`` row carries, or one that belongs to the other group."""
+
+
+def _watch_name(name: str) -> str:
+    """A list name as it is stored: trimmed, one line, at most ``WATCH_NAME_MAX`` characters."""
+    out = " ".join(str(name or "").split())
+    if not out or len(out) > WATCH_NAME_MAX:
+        raise ValueError(f"a watch list name is 1 to {WATCH_NAME_MAX} characters, not {out!r}")
+    return out
+
+
+def _list_id(con: sqlite3.Connection, kind: str, list_id: int | None) -> int:
+    """The list a write lands on: ``list_id`` when it is a list of ``kind``, else the group's default."""
+    if list_id is None:
+        return _default_list_id(con, kind)
+    row = con.execute("SELECT kind FROM watch_list WHERE id = ?", (int(list_id),)).fetchone()
+    if row is None:
+        raise UnknownWatchList(f"no watch list {int(list_id)}")
+    if row[0] != kind:
+        raise UnknownWatchList(f"watch list {int(list_id)} is a {row[0]} list, not {kind}")
+    return int(list_id)
+
+
+def _watch_write(con: sqlite3.Connection, kind: str, list_id: int, ticker: str, action: str, by: str,
+                 note: str | None) -> bool:
+    """Add or remove ``ticker`` on one list and write its history row, inside the caller's transaction; False when
+    nothing moved."""
     now = time.time()
     if action == "add":
-        cur = con.execute(f"INSERT OR IGNORE INTO watchlist_{kind} VALUES (?, ?, ?, ?)", (ticker, now, by, note))
+        cur = con.execute(f"INSERT OR IGNORE INTO watchlist_{kind} VALUES (?, ?, ?, ?, ?)",
+                          (list_id, ticker, now, by, note))
     else:
-        cur = con.execute(f"DELETE FROM watchlist_{kind} WHERE ticker = ?", (ticker,))
+        cur = con.execute(f"DELETE FROM watchlist_{kind} WHERE list_id = ? AND ticker = ?", (list_id, ticker))
     if not cur.rowcount:
         return False
-    con.execute(f"INSERT INTO watchlist_{kind}_changes (ticker, action, at, by, note) VALUES (?, ?, ?, ?, ?)",
-                (ticker, action, now, by, note))
+    con.execute(f"INSERT INTO watchlist_{kind}_changes (list_id, ticker, action, at, by, note) "
+                "VALUES (?, ?, ?, ?, ?, ?)", (list_id, ticker, action, now, by, note))
     return True
 
 
 @_routed
-def watch_add(kind: str, ticker: str, *, by: str, note: str | None = None) -> bool:
-    """Add ``ticker`` (upper-cased) to a watch list and its history; False when it was already there."""
-    kind, ticker = _watch_kind(kind), ticker.strip().upper()
-    with _open() as con, _tx(con):
-        return _watch_write(con, kind, ticker, "add", by, note)
+def watch_lists(kind: str | None = None) -> list[dict]:
+    """The named lists, oldest first: ``{id, kind, name, created_at, created_by}``; ``kind`` narrows to one group.
+
+    A read, so it never creates ``ops.sqlite``: a store with no file at all answers with no list, and the menu
+    offers "+ New list" alone. The group's default list is made by the first write (``_default_list_id``).
+    """
+    where, args = ("", ()) if kind is None else (" WHERE kind = ?", (_watch_kind(kind),))
+    return _select(f"SELECT id, kind, name, created_at, created_by FROM watch_list{where} ORDER BY kind, id", args)
 
 
 @_routed
-def watch_remove(kind: str, ticker: str, *, by: str) -> bool:
-    kind, ticker = _watch_kind(kind), ticker.strip().upper()
+def watch_list_new(kind: str, name: str, *, by: str) -> dict:
+    """Make a list in one group: ``{id, kind, name, created_at, created_by, created}``.
+
+    ``created`` is false for a name the group already has, and then the row that is already there comes back: two
+    people pressing "+ New list" with the same name share one list instead of raising.
+    """
+    kind, name = _watch_kind(kind), _watch_name(name)
     with _open() as con, _tx(con):
-        return _watch_write(con, kind, ticker, "remove", by, None)
+        row = con.execute("SELECT id, kind, name, created_at, created_by FROM watch_list WHERE kind = ? AND name = ?",
+                          (kind, name)).fetchone()
+        if row is not None:
+            return {**dict(row), "created": False}
+        now = time.time()
+        cur = con.execute("INSERT INTO watch_list (kind, name, created_at, created_by) VALUES (?, ?, ?, ?)",
+                          (kind, name, now, by))
+        return {"id": int(cur.lastrowid), "kind": kind, "name": name, "created_at": now, "created_by": by,
+                "created": True}
 
 
 @_routed
-def watch_toggle(kind: str, ticker: str, *, by: str) -> bool:
-    """Add ``ticker`` when it is not on the list, else remove it; whether it is on the list now.
+def watch_list_row(list_id: int) -> dict | None:
+    """One list by id, or None: how a route that is given only a ``list_id`` learns its group."""
+    rows = _select("SELECT id, kind, name, created_at, created_by FROM watch_list WHERE id = ?", [int(list_id)])
+    return rows[0] if rows else None
 
-    The read and the write are one ``BEGIN IMMEDIATE`` transaction, so two clicks that race flip it twice, in turn,
-    and each writes its own history row.
+
+@_routed
+def watch_add(kind: str, ticker: str, *, by: str, note: str | None = None, list_id: int | None = None) -> bool:
+    """Add ``ticker`` (upper-cased) to one list of a group and its history; False when it was already there.
+
+    ``list_id`` names the list; without it the group's default list (``_default_list_id``) takes the row, which is
+    what every pre-#774 caller means.
     """
     kind, ticker = _watch_kind(kind), ticker.strip().upper()
     with _open() as con, _tx(con):
-        there = con.execute(f"SELECT 1 FROM watchlist_{kind} WHERE ticker = ?", (ticker,)).fetchone() is not None
-        _watch_write(con, kind, ticker, "remove" if there else "add", by, None)
+        return _watch_write(con, kind, _list_id(con, kind, list_id), ticker, "add", by, note)
+
+
+@_routed
+def watch_remove(kind: str, ticker: str, *, by: str, list_id: int | None = None) -> bool:
+    kind, ticker = _watch_kind(kind), ticker.strip().upper()
+    with _open() as con, _tx(con):
+        return _watch_write(con, kind, _list_id(con, kind, list_id), ticker, "remove", by, None)
+
+
+@_routed
+def watch_toggle(kind: str, ticker: str, *, by: str, list_id: int | None = None) -> bool:
+    """Add ``ticker`` when it is not on that list, else remove it; whether it is on the list now.
+
+    The read and the write are one ``BEGIN IMMEDIATE`` transaction, so two clicks that race flip it twice, in turn,
+    and each writes its own history row. One list only: the same ticker on another list of the group is untouched.
+    """
+    kind, ticker = _watch_kind(kind), ticker.strip().upper()
+    with _open() as con, _tx(con):
+        lid = _list_id(con, kind, list_id)
+        there = con.execute(f"SELECT 1 FROM watchlist_{kind} WHERE list_id = ? AND ticker = ?",
+                            (lid, ticker)).fetchone() is not None
+        _watch_write(con, kind, lid, ticker, "remove" if there else "add", by, None)
         return not there
 
 
 @_routed
-def watch_replace(kind: str, tickers, *, by: str) -> tuple[int, int]:
-    """Make the list exactly ``tickers`` in one transaction; ``(added, removed)``, each with its history row."""
+def watch_replace(kind: str, tickers, *, by: str, list_id: int | None = None) -> tuple[int, int]:
+    """Make one list exactly ``tickers`` in one transaction; ``(added, removed)``, each with its history row."""
     kind = _watch_kind(kind)
     want = {str(t).strip().upper() for t in tickers if str(t).strip()}
     with _open() as con, _tx(con):
-        have = {r[0] for r in con.execute(f"SELECT ticker FROM watchlist_{kind}")}
+        lid = _list_id(con, kind, list_id)
+        have = {r[0] for r in con.execute(f"SELECT ticker FROM watchlist_{kind} WHERE list_id = ?", (lid,))}
         for t in sorted(have - want):
-            _watch_write(con, kind, t, "remove", by, None)
+            _watch_write(con, kind, lid, t, "remove", by, None)
         for t in sorted(want - have):
-            _watch_write(con, kind, t, "add", by, None)
+            _watch_write(con, kind, lid, t, "add", by, None)
     return len(want - have), len(have - want)
 
 
 @_routed
 def watch_list(kind: str) -> list[str]:
+    """Every ticker of a group, once, whichever of its lists holds it: the **union** a job reads (avo, 12 Nov 2026).
+
+    So the options build and LEAPS keep reading one answer per group while the UI gains several named lists.
+    ``list_id`` narrows it to one list: ``watch_tickers``.
+    """
     with _open() as con:
-        return [r[0] for r in con.execute(f"SELECT ticker FROM watchlist_{_watch_kind(kind)} ORDER BY ticker")]
+        return [r[0] for r in con.execute(
+            f"SELECT DISTINCT ticker FROM watchlist_{_watch_kind(kind)} ORDER BY ticker")]
+
+
+@_routed
+def watch_tickers(kind: str, list_id: int) -> list[str]:
+    """The tickers of one named list, by ticker."""
+    with _open() as con:
+        return [r[0] for r in con.execute(
+            f"SELECT ticker FROM watchlist_{_watch_kind(kind)} WHERE list_id = ? ORDER BY ticker", (int(list_id),))]
 
 
 @_routed
@@ -1158,7 +1315,8 @@ def last_builder_run() -> dict | None:
 
 @_routed
 def watch_count(kind: str) -> int:
-    rows = _select(f"SELECT count(*) AS n FROM watchlist_{_watch_kind(kind)}")
+    """How many distinct tickers the whole group holds (the union, as ``watch_list``)."""
+    rows = _select(f"SELECT count(DISTINCT ticker) AS n FROM watchlist_{_watch_kind(kind)}")
     return rows[0]["n"] if rows else 0
 
 
@@ -1171,9 +1329,29 @@ def watch_last_change() -> float | None:
 
 
 @_routed
-def watch_rows(kind: str) -> list[dict]:
-    """The rows of one watch list, by ticker: ``ticker``, ``added_at`` (epoch seconds), ``added_by``, ``note``."""
-    return _select(f"SELECT ticker, added_at, added_by, note FROM watchlist_{_watch_kind(kind)} ORDER BY ticker")
+def watch_rows(kind: str, list_id: int | None = None) -> list[dict]:
+    """One row per ticker of a group, by ticker: ``ticker``, ``added_at`` (epoch seconds), ``added_by``, ``note``,
+    ``list_id`` and ``lists`` (the names of every list of the group holding it, by name).
+
+    A ticker on two lists is one row, the oldest add, so the Settings card and ``read.watchlists`` show a name once
+    as they did before #774. ``list_id`` narrows to one named list, and then ``lists`` is that one name.
+    """
+    kind = _watch_kind(kind)
+    where, args = ("", ()) if list_id is None else (" WHERE m.list_id = ?", (int(list_id),))
+    rows = _select(f"SELECT m.ticker, m.added_at, m.added_by, m.note, m.list_id, l.name AS list_name "
+                   f"FROM watchlist_{kind} m LEFT JOIN watch_list l ON l.id = m.list_id{where} "
+                   "ORDER BY m.ticker, m.added_at, m.list_id", args)
+    out: dict[str, dict] = {}
+    for r in rows:
+        name = r.pop("list_name", None)
+        got = out.get(r["ticker"])
+        if got is None:
+            out[r["ticker"]] = {**r, "lists": [name] if name else []}
+        elif name and name not in got["lists"]:
+            got["lists"].append(name)
+    for row in out.values():
+        row["lists"].sort()
+    return list(out.values())
 
 
 # ── Whole tables, either backend (the one-time copy, the backup and the tests) ─────────────────────────────────

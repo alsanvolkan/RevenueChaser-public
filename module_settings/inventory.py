@@ -770,7 +770,7 @@ def _inputs_row() -> dict:
         "tables": ["board_settings"],
         "rows": watched + (overrides or 0),
         "last_date": last, "holes": None, "hole_label": "", "fetch": None,
-        "note": "no inputs yet (press Opt or Stk next to a ticker on any board, or save a board setting)",
+        "note": "no inputs yet (open the watch symbol next to a ticker on any board, or save a board setting)",
     }
     if last != DASH or watched or overrides:
         row["note"] = (f"watch lists: {lists['option']} option, {lists['stock']} stock (ops.sqlite); "

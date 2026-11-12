@@ -324,10 +324,12 @@ def newdata_fixture() -> dict:
         "retention": {"warn": True, "text": "kept without a limit", "source": "src"},
         "retirement": [{"table": "macro_series", "replaced_by": "market_series", "reads_14d": 2,
                         "writers": ["RC-Macro-Weekly"]}],
+        # One row per ticker, with the named lists of its group holding it (#774); MSFT is on two.
         "watchlists": {"option": {"count": 1, "rows": [{"ticker": "NVDA", "added_on": "2026-10-28T10:00:00+00:00",
-                                                        "added_by": "leaps", "note": "note"}]},
+                                                        "added_by": "leaps", "note": "note", "lists": ["Main"]}]},
                        "stock": {"count": 1, "rows": [{"ticker": "MSFT", "added_on": "2026-10-28T10:00:00+00:00",
-                                                       "added_by": "sec_13f", "note": None}]}},
+                                                       "added_by": "sec_13f", "note": None,
+                                                       "lists": ["Biotech", "Main"]}]}},
         "options_build": {"always": ["SPX"], "queued": ["NVDA"]},
     }
 

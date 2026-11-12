@@ -8,7 +8,7 @@ Layout: a pinned Watchlist table on top, then collapsible score tiers
 (🔥 High ≥50 / ⚡ Emerging 20–49 / 💤 Quiet <20) for the market scan. Rows are a
 scannable grid: [Ticker | Footprint | Flow | Net Notional | Prints | Ask % | ⚠ | ★].
 
-Near-term earnings are an orange ⚠ tag (not a drop). Every row carries the shared watch-list pair
+Near-term earnings are an orange ⚠ tag (not a drop). Every row carries the shared watch symbol
 (``core/reporting_common.py``, PR 4): **Stk** puts the name on the stock watch list, which is the list this
 board pins on top and scans; **Opt** puts it on the option watch list.
 """
@@ -177,7 +177,7 @@ def _row(snapshot: dict, pinned: bool) -> str:
     net_cls = "pos" if (net or 0) > 0 else ("neg" if (net or 0) < 0 else "zero")
     warn = '<span class="warn" title="earnings within 7 days">⚠</span>' if near else ""
     # Ticker, name and label arrive from UW / meta strings: escape for text and
-    # attributes alike (the watch-list pair reads data-ticker, so no value sits inside JS).
+    # attributes alike (the watch symbol reads data-ticker, so no value sits inside JS).
     lbl_cls = _label_cls(label)
     data_label = _html.escape(str(label), quote=True)     # the label filter chips read this back (L2)
     t, name, label = (_html.escape(str(v), quote=True) for v in (t, name, label))
@@ -216,7 +216,7 @@ _COLGROUP = ('<colgroup>'
              '<col style="width:8%">'    # Prints
              '<col style="width:8%">'    # Ask %
              '<col style="width:16%">'   # Signal
-             '<col style="width:112px">'  # the watch-list pair: two 44 px buttons
+             '<col style="width:112px">'  # the watch symbol: one 44 px button
              '</colgroup>')
 
 
@@ -352,8 +352,9 @@ def render_leaps_dashboard(watched: list[dict], unwatched: list[dict],
              '<div class="lg-row"><b>Ask %</b> — premium-weighted share of that flow executed on the ask '
              '(buyer lifting offers) vs the bid (seller hitting bids). 100% = all aggressive buying.</div>'
              '<div class="lg-row"><b>⚠</b> = earnings within 7 days (tagged, not dropped) · '
-             '<b>Opt</b> / <b>Stk</b> = put the name on (or take it off) the option or the stock watch list; '
-             'the stock list is the Watchlist pinned on top and scanned here.</div></div>')
+             'the bookmark = the watch lists: it opens a menu of named lists under Options and Stocks, each with '
+             'a checkbox, plus "+ New list" (#774). The Stocks group is the Watchlist pinned on top and scanned '
+             'here: every list of it, together.</div></div>')
     body += '<footer>RevenueChaser LEAPS radar — Unusual Whales API — far-dated flow prints + delta</footer>'
 
     kit_meta = filters_meta("leaps", facets=["index", "mc", "gics", "theme"], themes=_kit_themes())

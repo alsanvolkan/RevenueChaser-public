@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from RevenueChaser.core.html_safe import ESC_JS
+# The one rule for how long a watch-list name may be lives with the store that keeps it (#774); the menu's
+# ``maxlength`` is that same number, so the input cannot offer what the route would refuse.
+from RevenueChaser.rcdata.ops import WATCH_NAME_MAX
 
 # ── Job poller + board-settings reset, shared by Settings and Co-movement ──
 # One truthful verdict for every status of ``/api/job/<id>`` (#37): a job that
@@ -237,134 +240,323 @@ def combobox_html(input_id: str, label_id: str, placeholder: str) -> str:
             f'<ul id="{i}-list" class="rcf-list" role="listbox" aria-label="Matching names" hidden></ul></div>')
 
 
-# ── The watch-list button pair (PR 4, D2) ──
-# Two 44 px toggles next to a ticker: the option watch list (what the options build covers besides SPX) and the stock
-# watch list (LEAPS, Earnings). A board renders them with ``watch_buttons_html`` (server-side) or ``rcWatchButtons``
-# (its JS), and mounts ``watchlist_html(board)`` once. One delegated click handler reads ``data-rc-watch`` and
-# ``data-ticker`` (never an interpolated value, ADR-X1), POSTs ``/api/watchlist/<list>/toggle/<ticker>`` with the
-# board as ``X-RC-Panel`` (the row's ``added_by``), and marks every pair of that ticker on the page. Which tickers are
-# on the lists is read live (``GET /api/watchlists``) when the page loads, not baked in when the board was rendered.
-# A ticker the dashboard's rule (``app/dashboard.py`` ``_TICKER_RE``) refuses gets no buttons.
+# ── The watch-list symbol and its dropdown (PR 4, D2; the dropdown is #774) ──
+# One 44 px symbol next to a ticker opens a menu of named lists in two groups: Options (what the options build covers
+# besides SPX) and Stocks (LEAPS, Earnings). Each list is a checkbox; "+ New list" names a new one and puts the
+# ticker on it at once. A job reads the union of a group's lists (avo, 12 Nov 2026), so a board only has to show
+# whether the ticker is on the group at all: that is what the symbol's filled state says.
+# A board renders the symbol with ``watch_buttons_html`` (server-side) or ``rcWatchButtons`` (its JS) — the names
+# from PR 4, so no board changed — and mounts ``watchlist_html(board)`` once. One delegated click handler reads
+# ``data-rc-watch-*`` and ``data-ticker`` (never an interpolated value, ADR-X1), POSTs with the board as
+# ``X-RC-Panel`` (the row's ``added_by``), and re-marks every symbol of that ticker on the page. The lists and their
+# members are read live (``GET /api/watchlists``) when the page loads, not baked in when the board was rendered.
+# A ticker the dashboard's rule (``app/dashboard.py`` ``_TICKER_RE``) refuses gets no symbol.
 WATCH_TICKER_PATTERN = r"[A-Z0-9][A-Z0-9.\-]{0,9}"
-WATCH_LABELS = {"option": ("Opt", "option watch list"), "stock": ("Stk", "stock watch list")}
+#: The two groups as the menu heads them, in menu order.
+WATCH_GROUP_LABELS = {"option": "Options", "stock": "Stocks"}
+#: The bookmark: hollow while the ticker is on no list of either group, filled by the CSS once it is.
+WATCH_ICON = ('<svg class="rc-watch-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+              '<path d="M6 3.75h12a1 1 0 0 1 1 1V21l-7-4.2L5 21V4.75a1 1 0 0 1 1-1z"/></svg>')
 _WATCH_TICKER_RE = re.compile(WATCH_TICKER_PATTERN)
 
 WATCHLIST_CSS = """<style>
-.rc-watch{display:inline-flex;gap:4px;align-items:center;vertical-align:middle;margin:0 0 0 6px;flex-wrap:nowrap}
-.rc-watch button{min-width:44px;min-height:44px;padding:0 8px;box-sizing:border-box;border-radius:8px;cursor:pointer;
-  border:1px solid var(--input-border,#2F434C);background:var(--input-bg,#101F33);color:var(--muted,#9C9DA1);
-  font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif;letter-spacing:.02em}
-.rc-watch button[aria-pressed="true"]{background:var(--sky,#0EA5E9);border-color:var(--sky,#0EA5E9);
-  color:var(--primary-fg,#0A1420)}
-.rc-watch button:focus-visible{outline:2px solid var(--sky,#0EA5E9);outline-offset:2px}
+.rc-watch{display:inline-flex;align-items:center;vertical-align:middle;margin:0 6px 0 0;flex-wrap:nowrap}
+.rc-watch button{min-width:var(--tap,44px);min-height:var(--tap,44px);padding:0 6px;box-sizing:border-box;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  border-radius:var(--r-sm,6px);border:1px solid var(--input-border,#2F434C);background:var(--input-bg,#101F33);
+  color:var(--muted,#9C9DA1);font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif}
+.rc-watch button[aria-expanded="true"]{border-color:var(--sky,#0EA5E9)}
+.rc-watch button[data-rc-watch-on="1"]{color:var(--sky,#0EA5E9);border-color:var(--sky,#0EA5E9)}
+.rc-watch button:focus-visible{outline:2px solid var(--focus,var(--sky,#0EA5E9));outline-offset:2px}
 .rc-watch button:disabled{opacity:.6;cursor:progress}
 .rc-watch button[data-rc-watch-error]{border-color:var(--neg,#F87171)}
+.rc-watch-ico{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6}
+.rc-watch button[data-rc-watch-on="1"] .rc-watch-ico{fill:currentColor}
 .rc-watch-row{display:flex;margin:4px 0 2px}
 .rc-watch-row .rc-watch{margin-left:0}
+/* The menu: one element for the whole page, moved to the pressed symbol. */
+.rc-watch-menu{position:absolute;z-index:70;min-width:15em;max-width:min(22em,calc(100vw - 2*var(--s4,16px)));
+  max-height:min(70vh,26em);overflow:auto;box-sizing:border-box;padding:var(--s2,8px);
+  background:var(--card,#0B1828);color:var(--fg,#C5C6C8);border:1px solid var(--border,rgba(197,198,200,.15));
+  border-radius:var(--r-md,10px);box-shadow:var(--e-float,0 10px 24px rgba(0,0,0,.6));
+  font:400 13px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+.rc-watch-menu[hidden]{display:none}
+.rc-watch-menu h4{margin:var(--s2,8px) 0 2px;padding:0 var(--s2,8px);font-size:11px;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--muted,#9C9DA1)}
+.rc-watch-menu h4:first-child{margin-top:0}
+.rc-watch-tick{margin:0 0 var(--s2,8px);padding:0 var(--s2,8px);font-weight:600;color:var(--bright,#F0F0F0)}
+.rc-watch-menu button{display:flex;align-items:center;gap:var(--s2,8px);width:100%;min-height:var(--tap,44px);
+  padding:0 var(--s2,8px);box-sizing:border-box;text-align:left;cursor:pointer;background:none;border:0;
+  border-radius:var(--r-sm,6px);color:inherit;font:inherit}
+.rc-watch-menu button:hover{background:var(--hover-faint,rgba(255,255,255,.04))}
+.rc-watch-menu button:focus-visible{outline:2px solid var(--focus,var(--sky,#0EA5E9));outline-offset:-2px}
+.rc-watch-menu button[disabled]{opacity:.6;cursor:progress}
+.rc-watch-menu .rc-box{flex:0 0 auto;width:18px;height:18px;border-radius:4px;
+  border:1px solid var(--input-border,#2F434C);background:var(--input-bg,#101F33)}
+.rc-watch-menu button[aria-checked="true"] .rc-box{background:var(--sky,#0EA5E9);border-color:var(--sky,#0EA5E9)}
+.rc-watch-menu .rc-watch-count{margin-left:auto;color:var(--muted,#9C9DA1);font-size:11px}
+.rc-watch-menu .rc-watch-add{color:var(--sky,#0EA5E9);font-weight:600}
+.rc-watch-menu .rc-watch-err{margin:2px var(--s2,8px) 0;color:var(--neg,#F87171);font-size:11px}
+.rc-watch-new{display:flex;gap:var(--s1,4px);align-items:center;padding:0 var(--s2,8px) var(--s1,4px)}
+.rc-watch-new input{flex:1 1 auto;min-width:0;min-height:var(--tap,44px);box-sizing:border-box;padding:0 8px;
+  border-radius:var(--r-sm,6px);border:1px solid var(--input-border,#2F434C);background:var(--input-bg,#101F33);
+  color:inherit;font:inherit}
+.rc-watch-new button{width:auto;flex:0 0 auto;padding:0 10px;border:1px solid var(--input-border,#2F434C)}
+@media (max-width:480px){
+  /* One phone-width sheet instead of a menu pinned to a symbol that may sit at the edge of the screen. */
+  .rc-watch-menu{position:fixed;left:var(--s4,16px);right:var(--s4,16px);bottom:var(--s4,16px);top:auto;
+    width:auto;max-width:none;max-height:72vh}
+}
 </style>"""
 
 WATCHLIST_JS = ESC_JS + r"""
-var RC_WATCH = {board: 'board', lists: {option: {}, stock: {}}, loaded: false, toggled: {}};
+var RC_WATCH = {board: 'board', groups: {option: [], stock: []}, lists: {}, loaded: false, toggled: {},
+                open: null, menu: null, adding: null, error: ''};
 var RC_WATCH_RE = /^""" + WATCH_TICKER_PATTERN + r"""$/;
-var RC_WATCH_LABELS = """ + json.dumps({k: list(v) for k, v in WATCH_LABELS.items()}) + r""";
+var RC_WATCH_GROUPS = """ + json.dumps(WATCH_GROUP_LABELS) + r""";
+var RC_WATCH_KINDS = """ + json.dumps(list(WATCH_GROUP_LABELS)) + r""";
+var RC_WATCH_ICON = """ + json.dumps(WATCH_ICON) + r""";
+var RC_WATCH_NAME_MAX = """ + str(WATCH_NAME_MAX) + r""";
 function rcWatchTicker(t){ t = String(t == null ? '' : t).trim().toUpperCase(); return RC_WATCH_RE.test(t) ? t : ''; }
-// On a card, the pair gets its own line under the ticker (a ticker line that clips a long name must not clip it).
+// Is the ticker on any list of this group? That is what the symbol shows, and what a job reads (the union).
+function rcWatchOn(kind, t){
+  var lists = RC_WATCH.groups[kind] || [];
+  for(var i = 0; i < lists.length; i++){
+    var m = RC_WATCH.lists[lists[i].id];
+    if(m && m[t]) return true;
+  }
+  return false;
+}
+function rcWatchAnyOn(t){
+  for(var i = 0; i < RC_WATCH_KINDS.length; i++) if(rcWatchOn(RC_WATCH_KINDS[i], t)) return true;
+  return false;
+}
+// On a card, the symbol gets its own line under the ticker (a ticker line that clips a long name must not clip it).
 function rcWatchRow(ticker){ var b = rcWatchButtons(ticker); return b ? '<div class="rc-watch-row">' + b + '</div>' : ''; }
 function rcWatchButtons(ticker){
   var t = rcWatchTicker(ticker);
   if(!t) return '';
-  return '<span class="rc-watch">' + ['option', 'stock'].map(function(list){
-    var on = !!RC_WATCH.lists[list][t], lab = RC_WATCH_LABELS[list];
-    return '<button type="button" data-rc-watch="' + list + '" data-ticker="' + rcEsc(t) + '" aria-pressed="' +
-      (on ? 'true' : 'false') + '" aria-label="' + rcEsc(t + ' on the ' + lab[1]) + '" title="' +
-      rcEsc((on ? 'Remove ' : 'Add ') + t + (on ? ' from the ' : ' to the ') + lab[1]) + '">' + rcEsc(lab[0]) + '</button>';
-  }).join('') + '</span>';
+  var on = rcWatchAnyOn(t);
+  return '<span class="rc-watch"><button type="button" data-rc-watch-open="1" data-ticker="' + rcEsc(t) + '"' +
+    (on ? ' data-rc-watch-on="1"' : '') + ' aria-haspopup="true" aria-expanded="false" aria-label="' +
+    rcEsc(t + ' watch lists') + '" title="' + rcEsc(t + ' watch lists') + '">' + RC_WATCH_ICON + '</button></span>';
 }
 function rcWatchMark(btn){
-  var list = btn.getAttribute('data-rc-watch'), t = rcWatchTicker(btn.getAttribute('data-ticker'));
-  var lab = RC_WATCH_LABELS[list];
-  if(!t || !lab) return;
-  var on = !!RC_WATCH.lists[list][t];
-  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-  btn.setAttribute('title', (on ? 'Remove ' : 'Add ') + t + (on ? ' from the ' : ' to the ') + lab[1]);
+  var t = rcWatchTicker(btn.getAttribute('data-ticker'));
+  if(!t) return;
+  if(rcWatchAnyOn(t)) btn.setAttribute('data-rc-watch-on', '1'); else btn.removeAttribute('data-rc-watch-on');
 }
 function rcWatchSync(root){
-  var all = (root || document).querySelectorAll('[data-rc-watch]');
+  var all = (root || document).querySelectorAll('[data-rc-watch-open]');
   for(var i = 0; i < all.length; i++) rcWatchMark(all[i]);
+  if(RC_WATCH.open) rcWatchDraw();
+}
+function rcWatchLoad(d){
+  var groups = (d && d.groups) || {};
+  RC_WATCH_KINDS.forEach(function(kind){
+    var lists = groups[kind] || [];
+    RC_WATCH.groups[kind] = lists.map(function(l){ return {id: l.id, name: String(l.name == null ? '' : l.name)}; });
+    lists.forEach(function(l){
+      // A toggle that answered before this read is newer than it: keep the toggle's state for that pair.
+      var mine = RC_WATCH.lists[l.id] || {}, next = {};
+      (l.tickers || []).forEach(function(t){ next[String(t)] = true; });
+      Object.keys(RC_WATCH.toggled).forEach(function(key){
+        var at = key.indexOf(':'), t = key.slice(at + 1);
+        if(key.slice(0, at) !== String(l.id)) return;
+        if(mine[t]) next[t] = true; else delete next[t];
+      });
+      RC_WATCH.lists[l.id] = next;
+    });
+  });
+  RC_WATCH.loaded = true;
 }
 function rcWatchInit(board){
   RC_WATCH.board = String(board || 'board');
   return fetch('/api/watchlists', {cache: 'no-store', credentials: 'same-origin'}).then(function(r){ return r.json(); })
     .then(function(d){
       if(!d || !d.ok) return;
-      ['option', 'stock'].forEach(function(list){
-        // A toggle that answered before this read is newer than it: keep the toggle's state for that pair.
-        var mine = RC_WATCH.lists[list], next = {};
-        (d[list] || []).forEach(function(t){ next[String(t)] = true; });
-        Object.keys(RC_WATCH.toggled).forEach(function(key){
-          var at = key.indexOf(':'), t = key.slice(at + 1);
-          if(key.slice(0, at) !== list) return;
-          if(mine[t]) next[t] = true; else delete next[t];
-        });
-        RC_WATCH.lists[list] = next;
-      });
-      RC_WATCH.loaded = true;
+      rcWatchLoad(d);
       rcWatchSync(document);
     }).catch(function(){});
 }
+// ── The menu ──
+function rcWatchMenu(){
+  if(!RC_WATCH.menu){
+    var el = document.createElement('div');
+    el.className = 'rc-watch-menu';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-label', 'Watch lists');
+    el.hidden = true;
+    document.body.appendChild(el);
+    RC_WATCH.menu = el;
+  }
+  return RC_WATCH.menu;
+}
+function rcWatchMenuHtml(t){
+  var out = '<p class="rc-watch-tick">' + rcEsc(t) + '</p>';
+  RC_WATCH_KINDS.forEach(function(kind){
+    out += '<h4>' + rcEsc(RC_WATCH_GROUPS[kind]) + '</h4>';
+    (RC_WATCH.groups[kind] || []).forEach(function(l){
+      var m = RC_WATCH.lists[l.id] || {}, on = !!m[t];
+      out += '<button type="button" role="menuitemcheckbox" data-rc-watch-list="' + rcEsc(String(l.id)) +
+        '" data-ticker="' + rcEsc(t) + '" aria-checked="' + (on ? 'true' : 'false') + '" title="' +
+        rcEsc((on ? 'Remove ' : 'Add ') + t + (on ? ' from ' : ' to ') + l.name) +
+        '"><span class="rc-box"></span><span class="rc-watch-name">' + rcEsc(l.name) +
+        '</span><span class="rc-watch-count">' + rcEsc(String(Object.keys(m).length)) + '</span></button>';
+    });
+    if(RC_WATCH.adding === kind){
+      out += '<div class="rc-watch-new"><input type="text" data-rc-watch-name="' + rcEsc(kind) +
+        '" maxlength="' + RC_WATCH_NAME_MAX + '" placeholder="List name" aria-label="' +
+        rcEsc('New ' + RC_WATCH_GROUPS[kind] + ' list') + '"><button type="button" data-rc-watch-create="' +
+        rcEsc(kind) + '" data-ticker="' + rcEsc(t) + '">Add</button></div>';
+    } else {
+      out += '<button type="button" class="rc-watch-add" data-rc-watch-new="' + rcEsc(kind) +
+        '" data-ticker="' + rcEsc(t) + '">+ New list</button>';
+    }
+  });
+  if(RC_WATCH.error) out += '<p class="rc-watch-err">' + rcEsc(RC_WATCH.error) + '</p>';
+  return out;
+}
+function rcWatchDraw(){
+  var t = RC_WATCH.open;
+  if(!t) return;
+  var el = rcWatchMenu();
+  el.innerHTML = rcWatchMenuHtml(t);
+  el.hidden = false;
+}
+function rcWatchPlace(btn){
+  var el = rcWatchMenu();
+  if(!btn.getBoundingClientRect || !el.style) return;
+  var r = btn.getBoundingClientRect();
+  var top = r.bottom + (window.pageYOffset || 0) + 4;
+  var left = Math.max(8, r.left + (window.pageXOffset || 0));
+  el.style.top = top + 'px';
+  el.style.left = left + 'px';
+}
+function rcWatchOpen(btn){
+  var t = rcWatchTicker(btn.getAttribute('data-ticker'));
+  if(!t) return;
+  var same = RC_WATCH.open === t && !rcWatchMenu().hidden;
+  rcWatchClose();
+  if(same) return;
+  RC_WATCH.open = t;
+  RC_WATCH.adding = null;
+  RC_WATCH.error = '';
+  rcWatchDraw();
+  rcWatchPlace(btn);
+  btn.setAttribute('aria-expanded', 'true');
+}
+function rcWatchClose(){
+  RC_WATCH.open = null;
+  RC_WATCH.adding = null;
+  RC_WATCH.error = '';
+  if(RC_WATCH.menu){ RC_WATCH.menu.hidden = true; RC_WATCH.menu.innerHTML = ''; }
+  var open = document.querySelectorAll('[data-rc-watch-open][aria-expanded="true"]');
+  for(var i = 0; i < open.length; i++) open[i].setAttribute('aria-expanded', 'false');
+}
+// ── The writes ──
+function rcWatchFail(what){
+  RC_WATCH.error = 'Not changed: ' + String(what);
+  rcWatchDraw();
+}
 function rcWatchToggle(btn){
-  var list = btn.getAttribute('data-rc-watch'), t = rcWatchTicker(btn.getAttribute('data-ticker'));
-  if(!t || !RC_WATCH_LABELS[list]) return null;
+  var id = String(btn.getAttribute('data-rc-watch-list') || '');
+  var t = rcWatchTicker(btn.getAttribute('data-ticker'));
+  if(!t || !/^[0-9]+$/.test(id)) return null;
   btn.disabled = true;
-  return fetch('/api/watchlist/' + encodeURIComponent(list) + '/toggle/' + encodeURIComponent(t),
+  return fetch('/api/watchlists/' + encodeURIComponent(id) + '/toggle/' + encodeURIComponent(t),
                {method: 'POST', headers: {'X-RC-Panel': RC_WATCH.board}, credentials: 'same-origin'})
     .then(function(r){ return r.json().then(function(d){ return {status: r.status, d: d || {}}; }); })
     .then(function(res){
       btn.disabled = false;
-      if(!res.d.ok){
-        btn.setAttribute('data-rc-watch-error', '1');
-        btn.setAttribute('title', 'Not changed: ' + String(res.d.error || ('HTTP ' + res.status)));
-        return;
-      }
-      btn.removeAttribute('data-rc-watch-error');
-      RC_WATCH.toggled[list + ':' + t] = true;
-      if(res.d.on) RC_WATCH.lists[list][t] = true; else delete RC_WATCH.lists[list][t];
+      if(!res.d.ok){ rcWatchFail(res.d.error || ('HTTP ' + res.status)); return; }
+      RC_WATCH.error = '';
+      RC_WATCH.toggled[id + ':' + t] = true;
+      var m = RC_WATCH.lists[id] || (RC_WATCH.lists[id] = {});
+      if(res.d.on) m[t] = true; else delete m[t];
       rcWatchSync(document);
-    }).catch(function(e){
-      btn.disabled = false;
-      btn.setAttribute('data-rc-watch-error', '1');
-      btn.setAttribute('title', 'Not changed: ' + String(e));
-    });
+    }).catch(function(e){ btn.disabled = false; rcWatchFail(e); });
 }
-// Capture phase: a row or card that opens on click must not also open when its ticker's button is pressed.
+function rcWatchCreate(btn){
+  var kind = String(btn.getAttribute('data-rc-watch-create') || '');
+  var t = rcWatchTicker(btn.getAttribute('data-ticker'));
+  if(!RC_WATCH_GROUPS[kind]) return null;
+  var box = RC_WATCH.menu && RC_WATCH.menu.querySelector('[data-rc-watch-name="' + kind + '"]');
+  var name = box ? String(box.value || '').replace(/\s+/g, ' ').trim() : '';
+  if(!name){ rcWatchFail('a list needs a name'); return null; }
+  btn.disabled = true;
+  return fetch('/api/watchlists', {method: 'POST', credentials: 'same-origin',
+      headers: {'X-RC-Panel': RC_WATCH.board, 'Content-Type': 'application/json'},
+      body: JSON.stringify({kind: kind, name: name})})
+    .then(function(r){ return r.json().then(function(d){ return {status: r.status, d: d || {}}; }); })
+    .then(function(res){
+      btn.disabled = false;
+      if(!res.d.ok || !res.d.list){ rcWatchFail(res.d.error || ('HTTP ' + res.status)); return; }
+      var list = res.d.list;
+      var known = (RC_WATCH.groups[kind] || []).some(function(l){ return String(l.id) === String(list.id); });
+      if(!known) RC_WATCH.groups[kind] = (RC_WATCH.groups[kind] || []).concat([{id: list.id, name: list.name}]);
+      if(!RC_WATCH.lists[list.id]) RC_WATCH.lists[list.id] = {};
+      RC_WATCH.adding = null;
+      RC_WATCH.error = '';
+      rcWatchDraw();
+      // The ticker the menu was opened on goes straight onto the new list: that is why the list was made.
+      if(!t || RC_WATCH.lists[list.id][t]) { rcWatchSync(document); return; }
+      var item = RC_WATCH.menu && RC_WATCH.menu.querySelector('[data-rc-watch-list="' + list.id + '"]');
+      if(item) return rcWatchToggle(item);
+      rcWatchSync(document);
+    }).catch(function(e){ btn.disabled = false; rcWatchFail(e); });
+}
+// Capture phase: a row or card that opens on click must not also open when its ticker's symbol is pressed.
 document.addEventListener('click', function(ev){
-  var btn = ev.target && ev.target.closest ? ev.target.closest('[data-rc-watch]') : null;
-  if(!btn) return;
+  var el = ev.target && ev.target.closest ? ev.target : null;
+  if(!el) return;
+  var open = el.closest('[data-rc-watch-open]');
+  var item = el.closest('[data-rc-watch-list]');
+  var fresh = el.closest('[data-rc-watch-new]');
+  var make = el.closest('[data-rc-watch-create]');
+  if(!open && !item && !fresh && !make){
+    if(RC_WATCH.open && !el.closest('.rc-watch-menu')) rcWatchClose();
+    return;
+  }
   ev.preventDefault();
   ev.stopPropagation();
-  if(!btn.disabled) rcWatchToggle(btn);
+  if(open){ if(!open.disabled) rcWatchOpen(open); return; }
+  if(item){ if(!item.disabled) rcWatchToggle(item); return; }
+  if(fresh){ RC_WATCH.adding = fresh.getAttribute('data-rc-watch-new'); RC_WATCH.error = ''; rcWatchDraw();
+             var box = RC_WATCH.menu && RC_WATCH.menu.querySelector('[data-rc-watch-name]');
+             if(box && box.focus) box.focus();
+             return; }
+  if(make && !make.disabled) rcWatchCreate(make);
+}, true);
+document.addEventListener('keydown', function(ev){
+  if(ev.key === 'Escape' && RC_WATCH.open){ rcWatchClose(); return; }
+  if(ev.key !== 'Enter' || !RC_WATCH.adding) return;
+  var el = ev.target;
+  if(!el || !el.getAttribute || !el.getAttribute('data-rc-watch-name')) return;
+  ev.preventDefault();
+  var make = RC_WATCH.menu && RC_WATCH.menu.querySelector('[data-rc-watch-create]');
+  if(make && !make.disabled) rcWatchCreate(make);
 }, true);
 """
 
 
 def watch_buttons_html(ticker, on=()) -> str:
-    """The button pair for one ticker, rendered on the server. ``on`` names the lists the board already knows the
-    ticker is on (LEAPS knows its stock list); ``rcWatchInit`` re-marks every pair from the live lists anyway."""
+    """The watch symbol for one ticker, rendered on the server. ``on`` names the groups the board already knows the
+    ticker is on (LEAPS knows its stock list); ``rcWatchInit`` re-marks every symbol from the live lists anyway, and
+    the menu itself is built in the browser from ``GET /api/watchlists``."""
     t = str(ticker if ticker is not None else "").strip().upper()
     if not _WATCH_TICKER_RE.fullmatch(t):
         return ""
     e = html.escape(t, quote=True)
-    buttons = "".join(
-        f'<button type="button" data-rc-watch="{lst}" data-ticker="{e}" '
-        f'aria-pressed="{"true" if lst in on else "false"}" aria-label="{e} on the {name}" '
-        f'title="{"Remove" if lst in on else "Add"} {e} {"from" if lst in on else "to"} the {name}">{label}</button>'
-        for lst, (label, name) in WATCH_LABELS.items())
-    return f'<span class="rc-watch">{buttons}</span>'
+    mark = ' data-rc-watch-on="1"' if any(k in on for k in WATCH_GROUP_LABELS) else ""
+    return (f'<span class="rc-watch"><button type="button" data-rc-watch-open="1" data-ticker="{e}"{mark} '
+            f'aria-haspopup="true" aria-expanded="false" aria-label="{e} watch lists" '
+            f'title="{e} watch lists">{WATCH_ICON}</button></span>')
 
 
 def watchlist_html(board: str) -> str:
-    """Mount the pair on a board once: the CSS, the snippet and ``rcWatchInit(board)``. ``board`` becomes the
-    ``X-RC-Panel`` value, so the list rows say which board added them."""
+    """Mount the symbol and its menu on a board once: the CSS, the snippet and ``rcWatchInit(board)``. ``board``
+    becomes the ``X-RC-Panel`` value, so the list rows say which board added them."""
     from .html_safe import script_json
     return f"{WATCHLIST_CSS}\n<script>{WATCHLIST_JS}\nrcWatchInit({script_json(str(board))});\n</script>"
 
@@ -386,7 +578,8 @@ def filters_meta(board: str, **fields) -> dict:
 __all__ = [
     "FILTERS_JS", "FILTERS_CSS", "filters_bar_html", "control_html", "combobox_html",
     "filters_meta",
-    "WATCHLIST_JS", "WATCHLIST_CSS", "WATCH_LABELS", "watch_buttons_html", "watchlist_html",
+    "WATCHLIST_JS", "WATCHLIST_CSS", "WATCH_GROUP_LABELS", "WATCH_ICON", "watch_buttons_html",
+    "watchlist_html",
     "JOB_JS",
     "HELP_CSS", "help_html",
     "THEME_TOKENS", "THEME_CSS", "THEME_JS", "THEME_STORAGE_KEY",

@@ -51,9 +51,10 @@ CASES = {
          "/api/settings/board/module_comovement",
          "/api/automations/RC-Daily-Bars/install"]),
     "module_leaps": (
-        "rcWatchToggle(_btn({'data-rc-watch': 'stock', 'data-ticker': 'AAPL'}));"
-        "rcWatchToggle(_btn({'data-rc-watch': 'option', 'data-ticker': 'AAPL'}));",
-        ["/api/watchlist/stock/toggle/AAPL", "/api/watchlist/option/toggle/AAPL"]),
+        # The watch menu's rows (#774): one named list each, so the POST names the list and not the group.
+        "rcWatchToggle(_btn({'data-rc-watch-list': '7', 'data-ticker': 'AAPL'}));"
+        "rcWatchToggle(_btn({'data-rc-watch-list': '3', 'data-ticker': 'AAPL'}));",
+        ["/api/watchlists/7/toggle/AAPL", "/api/watchlists/3/toggle/AAPL"]),
     "module_uw_interaction": (
         """
         document.getElementById('uw-tool').value = 'flow_alerts';

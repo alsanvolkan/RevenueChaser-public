@@ -2017,9 +2017,12 @@ def api_sec13f(ticker: str):
 
 @app.route("/api/watchlist/<kind>/toggle/<ticker>", methods=["POST"])
 def api_watchlist_kind_toggle(kind: str, ticker: str):
-    """Put ``ticker`` on the ``option`` or ``stock`` watch list, or take it off (PR 4, D2). The board that sent the
-    click (its ``X-RC-Panel``) is the row's ``added_by`` and the history row's ``by``. 404 for another list, 400 for a
-    ticker ``_valid_ticker`` refuses; nothing is written for either."""
+    """Put ``ticker`` on the ``option`` or ``stock`` group's **default** list, or take it off (PR 4, D2).
+
+    The pre-#774 route, kept for a caller that names a group and not a list; the named lists are
+    ``/api/watchlists/<list_id>/toggle/<ticker>``. The board that sent the click (its ``X-RC-Panel``) is the row's
+    ``added_by`` and the history row's ``by``. 404 for another group, 400 for a ticker ``_valid_ticker`` refuses;
+    nothing is written for either."""
     from RevenueChaser.rcdata import ops
     if kind not in ops.WATCH_KINDS:
         return jsonify({"ok": False, "error": f"unknown watch list {kind!r}"}), 404
@@ -2079,11 +2082,57 @@ def api_watchlist_remove(kind: str, ticker: str):
 
 @app.route("/api/watchlists")
 def api_watchlists():
-    """Both watch lists' tickers, ``{ok, option: [...], stock: [...]}``: what a board's button pair shows as pressed.
-    The read itself never creates ``ops.sqlite`` (the read log's minute flush may, as for every rcdata read)."""
+    """Every watch list, by group: ``{ok, option: [...], stock: [...], groups: {option: [list], stock: [list]}}``,
+    where a ``list`` is ``{id, kind, name, tickers: [...]}`` (#774).
+
+    ``option`` and ``stock`` stay the **union** of their group's lists, which is what a board's watch symbol shows as
+    on and what a job reads; ``groups`` is what the dropdown ticks. The read itself never creates ``ops.sqlite`` (the
+    read log's minute flush may, as for every rcdata read), so a store with no file answers with empty groups and the
+    menu offers "+ New list" alone."""
     from RevenueChaser.rcdata import read
-    lists = read.watchlists()
-    return jsonify({"ok": True, **{k: [r["ticker"] for r in rows] for k, rows in lists.items()}})
+    groups = read.watch_groups()
+    union = {k: sorted({t for lst in lists for t in lst["tickers"]}) for k, lists in groups.items()}
+    return jsonify({"ok": True, **union,
+                    "groups": {k: [{"id": l["id"], "kind": k, "name": l["name"], "tickers": l["tickers"]}
+                                   for l in lists] for k, lists in groups.items()}})
+
+
+@app.route("/api/watchlists", methods=["POST"])
+def api_watchlist_new():
+    """Make a named list in one group (the menu's "+ New list"): ``{ok, list: {id, kind, name}, created}``.
+
+    ``kind`` and ``name`` come as JSON or as form fields. ``created`` is false for a name the group already has, and
+    the list already there comes back, so two clicks do not make two lists. 400 for an unknown group or a name that
+    is empty or longer than ``ops.WATCH_NAME_MAX``."""
+    from RevenueChaser.rcdata import ops
+    body = request.get_json(silent=True) or request.form or {}
+    kind = str(body.get("kind") or "").strip()
+    if kind not in ops.WATCH_KINDS:
+        return jsonify({"ok": False, "error": f"unknown watch list group {kind!r}"}), 400
+    try:
+        row = ops.watch_list_new(kind, str(body.get("name") or ""), by=_requested_by())
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    return jsonify({"ok": True, "created": bool(row.pop("created", False)),
+                    "list": {"id": row["id"], "kind": row["kind"], "name": row["name"]}})
+
+
+@app.route("/api/watchlists/<int:list_id>/toggle/<ticker>", methods=["POST"])
+def api_watchlist_list_toggle(list_id: int, ticker: str):
+    """Put ``ticker`` on one named list, or take it off (#774): ``{ok, list_id, kind, list, ticker, on}``.
+
+    One list only: the same ticker on another list of the group is untouched. The board that sent the click (its
+    ``X-RC-Panel``) is the row's ``added_by``. 404 for a list that does not exist, 400 for a ticker
+    ``_valid_ticker`` refuses; nothing is written for either."""
+    from RevenueChaser.rcdata import ops
+    row = ops.watch_list_row(list_id)
+    if row is None:
+        return jsonify({"ok": False, "error": f"no watch list {list_id}"}), 404
+    t = (ticker or "").strip().upper()
+    if not _valid_ticker(t):
+        return jsonify({"ok": False, "error": "bad ticker"}), 400
+    on = ops.watch_toggle(row["kind"], t, by=_requested_by(), list_id=list_id)
+    return jsonify({"ok": True, "list_id": list_id, "kind": row["kind"], "list": row["name"], "ticker": t, "on": on})
 
 
 @app.route("/api/watchlist/toggle/<ticker>", methods=["POST"])

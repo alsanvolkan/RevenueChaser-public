@@ -1,8 +1,9 @@
-"""PR 4 step 5: the two watch-list cards of Settings / "New data system" (D2, F7 A).
+"""PR 4 step 5 (#774): the two watch-list cards of Settings / "New data system" (D2, F7 A).
 
-Each card lists its names (ticker, added on, by, note) with a Remove that posts the remove route, never the toggle;
-the counts are in the section's summary line too, and the option card says which names wait for the next options
-build. Stacked rows (no table), 44 px buttons, every string escaped, handlers read ``data-list`` / ``data-ticker``.
+One card per **group**: it lists the group's names (ticker, added on, by, note, and the named lists holding it when
+there is more than one) with a Remove that posts the remove route, never the toggle; the counts are in the section's
+summary line too, and the option card says which names wait for the next options build. Stacked rows (no table),
+44 px buttons, every string escaped, handlers read ``data-list`` / ``data-ticker``.
 """
 from __future__ import annotations
 
@@ -37,6 +38,8 @@ def test_each_card_lists_its_names_with_added_on_by_and_a_remove():
     assert ('data-nd-act="watch-remove" data-list="option" data-ticker="NVDA"' in opt
             and 'aria-label="Remove NVDA from the option watch list"' in opt)
     assert "<b>MSFT</b>" in stk and "by sec_13f" in stk and 'data-list="stock" data-ticker="MSFT"' in stk
+    assert "on Biotech, Main" in stk                     # the named lists of the group holding it (#774)
+    assert "on Main" not in opt                          # one list is the group itself: not spelled out
     assert "<table" not in opt + stk
 
 
@@ -79,12 +82,25 @@ def test_collect_reads_both_lists_from_ops_and_the_card_shows_them():
     html = _page(nd)
     assert "SPX and 1 name from this list: NVDA" in html
     assert "13F breadth up" in _card(html, "stock") and "by sec_13f" in _card(html, "stock")
+    assert "the watch symbol next to a ticker on any board" in _card(html, "stock")
 
 
 def test_collect_on_no_ops_file_shows_empty_cards_and_does_not_create_it():
     nd = newdata.collect(datetime(2026, 10, 28, 15, tzinfo=timezone.utc))
     assert nd["watchlists"] == {"option": {"count": 0, "rows": []}, "stock": {"count": 0, "rows": []}}
     assert not ops.ops_path().exists()
+
+
+def test_a_name_on_two_lists_of_one_group_is_one_row_that_names_them(tmp_path):
+    """#774: the card is the group, so the union is what it lists, with the lists each name sits on."""
+    core = ops.watch_list_new("stock", "Core", by="settings")
+    bio = ops.watch_list_new("stock", "Biotech", by="settings")
+    ops.watch_add("stock", "MSFT", by="settings", list_id=core["id"])
+    ops.watch_add("stock", "MSFT", by="leaps", list_id=bio["id"])
+    nd = newdata.collect(datetime(2026, 10, 28, 15, tzinfo=timezone.utc))
+    assert nd["watchlists"]["stock"]["count"] == 1
+    assert nd["watchlists"]["stock"]["rows"][0]["lists"] == ["Biotech", "Core"]
+    assert "on Biotech, Core" in _card(_page(nd), "stock")
 
 
 def test_the_cards_css_is_phone_friendly():

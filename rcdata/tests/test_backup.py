@@ -240,6 +240,8 @@ def test_the_ops_copy_holds_the_kept_tables_and_empties_the_rest(sqlite_ops, bac
         con.close()
     assert set(counts) == set(ops.TABLES)                                        # every table is there (ops_copy reads it)
     assert counts["watchlist_stock"] == 1 and counts["watchlist_stock_changes"] == 1
+    # #774: the names of the lists are kept too, or the membership rows would come back belonging to nothing.
+    assert counts["watch_list"] == 1
     assert counts["kind_automation"] == 1 and counts["ops_schema"] >= 1
     assert counts["build_requests"] == 0 and counts["build_issues"] == 0 and counts["provider_calls_daily"] == 0
     entry = _manifest(backup_dir / "ops")["files"][copy.name]

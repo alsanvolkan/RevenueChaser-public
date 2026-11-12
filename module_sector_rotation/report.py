@@ -268,7 +268,7 @@ function toggleHoldings(ticker) {
     if (caret) caret.textContent = '▾';
     if (ROTATION_HOLDINGS && ROTATION_HOLDINGS[ticker]) {
         det.innerHTML = ROTATION_HOLDINGS[ticker];
-        rcWatchSync(det);                       // the fragment's watch-list pairs show the live lists (PR 4)
+        rcWatchSync(det);                       // the fragment's watch symbols show the live lists (PR 4)
         return;
     }
     // Try the current route first, then the legacy route (covers servers that
@@ -942,7 +942,7 @@ def export_rotation_dashboard(snapshots: list[ETFRotationSnapshot], filename: st
 
         rows += f'<tr data-group="{esc(s.group_name)}" data-ticker="{esc(s.ticker)}">'
         caret = f'<span class="hold-caret" id="caret-{esc(s.ticker)}">▸</span> ' if s.group_name in ("sector", "theme") else ''
-        # The watch-list pair (PR 4) for a fund; a macro series (a yield, an index level) is no name to watch.
+        # The watch symbol (PR 4) for a fund; a macro series (a yield, an index level) is no name to watch.
         pair = "" if s.ticker in MACRO_SERIES else watch_buttons_html(s.ticker)
         rows += f'<td class="ticker td-g1">{caret}{et_badge}{esc(s.ticker)}{pair}</td>'
         rows += f'<td class="td-g1"><span class="group" style="color:{color}">{esc(info.get("name", s.ticker))}</span></td>'

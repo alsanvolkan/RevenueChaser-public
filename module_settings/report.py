@@ -1065,7 +1065,7 @@ OPS_TABLE_LABELS = {"watchlist_stock": "Stock watch list", "watchlist_option": "
 
 def _ops_flow_row(table: str) -> str:
     t = _html.escape(str(table))
-    return (f'<li class="bflow-row"><span class="prov">You (Opt / Stk)</span>'
+    return (f'<li class="bflow-row"><span class="prov">You (watch lists)</span>'
             f'<span class="arrow" aria-hidden="true">→</span>'
             f'<span class="ds">{_html.escape(OPS_TABLE_LABELS.get(str(table), str(table)))}</span>'
             f'<span class="tbl">({t})</span>'
@@ -2550,10 +2550,12 @@ def _nd_retirement(rows: list[dict]) -> str:
 ND_WATCH_TITLES = {"option": "Option watch list", "stock": "Stock watch list"}
 ND_OPTIONS_LATER = "the options build comes later (build-plan step 11)"
 ND_WATCH_SUBS = {
-    "option": "The names the options build covers besides SPX (D2). Add one here, or press <b>Opt</b> next "
-              "to a ticker on any board.",
-    "stock": "The names LEAPS pins and scans, and Earnings treats as watched. Add one here, or press <b>Stk</b> "
-             "next to a ticker on any board.",
+    "option": "The names the options build covers besides SPX (D2): every named list of this group, together. "
+              "Add one here, or open the watch symbol next to a ticker on any board and tick a list (#774). "
+              "Add and Remove here write the group's first list.",
+    "stock": "The names LEAPS pins and scans, and Earnings treats as watched: every named list of this group, "
+             "together. Add one here, or open the watch symbol next to a ticker on any board and tick a list "
+             "(#774). Add and Remove here write the group's first list.",
 }
 
 
@@ -2564,7 +2566,10 @@ def _nd_watch_card(kind: str, wl: dict, ob: dict) -> str:
         f'<li class="nd-watch-item" data-ticker="{esc(r.get("ticker"))}">'
         f'<div class="nd-watch-line"><b>{_nd(r.get("ticker"))}</b>'
         f' <span class="nd-k">added {_nd(r.get("added_on"))} by {_nd(r.get("added_by"))}</span>'
-        + (f' · {_nd(r.get("note"))}' if r.get("note") else "") + "</div>"
+        + (f' · {_nd(r.get("note"))}' if r.get("note") else "")
+        # Which named lists of the group hold it (#774); one list and it is the group itself, so it is left out.
+        + (f' · <span class="nd-k">on {", ".join(_nd(n) for n in r.get("lists") or [])}</span>'
+           if len(r.get("lists") or []) > 1 else "") + "</div>"
         f'<button type="button" class="nd-btn" data-nd-act="watch-remove" data-list="{esc(kind)}" '
         f'data-ticker="{esc(r.get("ticker"))}" aria-label="Remove {esc(r.get("ticker"))} from the '
         f'{esc(ND_WATCH_TITLES[kind].lower())}">Remove</button></li>' for r in rows)

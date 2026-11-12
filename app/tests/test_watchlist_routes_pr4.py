@@ -1,7 +1,8 @@
-"""The two watch-list routes (PR 4, D2): toggle per list, the old route on the stock list, the read for the buttons.
+"""The watch-list routes (PR 4, D2; the named lists #774): toggle per group and per named list, "+ New list", the
+old route on the stock group, and the read the menu draws from.
 
-Every write goes through ``ops.watch_toggle``; a refused request (no panel header, an unknown list, a ticker
-``_valid_ticker`` refuses) writes nothing and does not even create ``ops.sqlite``.
+Every write goes through ``ops.watch_toggle`` / ``ops.watch_list_new``; a refused request (no panel header, an
+unknown group or list, a ticker ``_valid_ticker`` refuses) writes nothing and does not even create ``ops.sqlite``.
 """
 from __future__ import annotations
 
@@ -87,13 +88,78 @@ def test_rawstore_watchlist_accessors_are_the_stock_list():
     assert rawstore.load_watchlist() == set() and ops.watch_list("option") == []
 
 
-def test_the_lists_read_is_both_tickers_lists_and_never_creates_the_file(client):
-    assert client.get("/api/watchlists").get_json() == {"ok": True, "option": [], "stock": []}
+def test_the_lists_read_is_both_unions_with_their_groups_and_never_creates_the_file(client):
+    assert client.get("/api/watchlists").get_json() == {"ok": True, "option": [], "stock": [],
+                                                        "groups": {"option": [], "stock": []}}
     assert not ops.ops_path().exists()
     client.post("/api/watchlist/option/toggle/NVDA")
     client.post("/api/watchlist/stock/toggle/MSFT")
     client.post("/api/watchlist/stock/toggle/AAPL")
-    assert client.get("/api/watchlists").get_json() == {"ok": True, "option": ["NVDA"], "stock": ["AAPL", "MSFT"]}
+    got = client.get("/api/watchlists").get_json()
+    assert got["option"] == ["NVDA"] and got["stock"] == ["AAPL", "MSFT"]
+    stock = ops.watch_lists("stock")[0]["id"]
+    assert got["groups"]["stock"] == [{"id": stock, "kind": "stock", "name": ops.DEFAULT_WATCH_LIST,
+                                       "tickers": ["AAPL", "MSFT"]}]
+
+
+# ── The named lists (#774) ────────────────────────────────────────────────────────────
+
+def test_new_list_makes_one_per_name_per_group_and_the_second_press_answers_created_false(client):
+    r = client.post("/api/watchlists", json={"kind": "stock", "name": "  Biotech  "},
+                    headers={"X-RC-Panel": "sec_13f"})
+    assert r.status_code == 200
+    made = r.get_json()
+    assert made["ok"] is True and made["created"] is True
+    assert made["list"]["kind"] == "stock" and made["list"]["name"] == "Biotech"
+    again = client.post("/api/watchlists", json={"kind": "stock", "name": "Biotech"}).get_json()
+    assert again["created"] is False and again["list"] == made["list"]
+    assert [l["name"] for l in ops.watch_lists("stock")] == ["Biotech"]
+    assert ops.watch_lists("option") == []
+    assert [r["created_by"] for r in ops.watch_lists("stock")] == ["sec_13f"]
+
+
+@pytest.mark.parametrize("body", [{"kind": "bond", "name": "x"}, {"kind": "stock", "name": " "},
+                                  {"kind": "stock"}, {"name": "x"},
+                                  {"kind": "stock", "name": "y" * 41}])
+def test_new_list_refuses_an_unknown_group_or_a_name_the_store_would_refuse(client, body):
+    r = client.post("/api/watchlists", json=body)
+    assert r.status_code == 400 and r.get_json()["ok"] is False
+    assert not ops.ops_path().exists()
+
+
+def test_new_list_without_the_panel_header_writes_nothing():
+    raw = dashboard.app.test_client()
+    assert raw.post("/api/watchlists", json={"kind": "stock", "name": "Core"}).status_code == 403
+    assert not ops.ops_path().exists()
+
+
+def test_a_list_toggle_moves_that_list_only_and_the_union_still_holds_the_name(client):
+    core = client.post("/api/watchlists", json={"kind": "stock", "name": "Core"}).get_json()["list"]
+    bio = client.post("/api/watchlists", json={"kind": "stock", "name": "Biotech"}).get_json()["list"]
+    r = client.post(f"/api/watchlists/{core['id']}/toggle/msft", headers={"X-RC-Panel": "sec_13f"})
+    assert r.get_json() == {"ok": True, "list_id": core["id"], "kind": "stock", "list": "Core",
+                            "ticker": "MSFT", "on": True}
+    client.post(f"/api/watchlists/{bio['id']}/toggle/MSFT", headers={"X-RC-Panel": "sec_13f"})
+    assert client.post(f"/api/watchlists/{bio['id']}/toggle/MSFT").get_json()["on"] is False
+    assert ops.watch_tickers("stock", core["id"]) == ["MSFT"]          # the other list is untouched
+    assert ops.watch_list("stock") == ["MSFT"]                         # the union a job reads
+    assert _history("stock") == [("MSFT", "add", "sec_13f"), ("MSFT", "add", "sec_13f"),
+                                 ("MSFT", "remove", "test")]
+
+
+def test_a_list_toggle_refuses_an_unknown_list_a_bad_ticker_and_a_missing_header(client):
+    assert client.post("/api/watchlists/9999/toggle/NVDA").status_code == 404
+    core = client.post("/api/watchlists", json={"kind": "stock", "name": "Core"}).get_json()["list"]
+    assert client.post(f"/api/watchlists/{core['id']}/toggle/%3Cb%3E").status_code == 400
+    assert dashboard.app.test_client().post(f"/api/watchlists/{core['id']}/toggle/NVDA").status_code == 403
+    assert ops.watch_list("stock") == [] and _history("stock") == []
+
+
+def test_the_group_toggle_writes_the_groups_oldest_list(client):
+    core = client.post("/api/watchlists", json={"kind": "stock", "name": "Core"}).get_json()["list"]
+    client.post("/api/watchlists", json={"kind": "stock", "name": "Biotech"})
+    client.post("/api/watchlist/stock/toggle/NVDA", headers={"X-RC-Panel": "leaps"})
+    assert ops.watch_tickers("stock", core["id"]) == ["NVDA"]
 
 
 def test_remove_takes_a_name_off_and_never_adds_it(client):
