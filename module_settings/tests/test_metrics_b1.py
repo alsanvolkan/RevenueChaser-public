@@ -100,6 +100,20 @@ def test_a_provider_s_429_answers_today_are_exported():
     assert any(l.startswith('rc_provider_day_cap{provider="alphavantage"} ') for l in fam["rc_provider_day_cap"])
 
 
+def test_the_requests_answered_per_need_today_are_exported():
+    """#715 (avo, 12 Nov 2026): the Logs tab starts with daily counters. The read log keeps a day, a process and a
+    need, so the count is per need and day, every process together; a name that is not a need's is left out."""
+    for need, n in (("prices.daily", 3), ("fundamentals.income", 1), ('bad"name', 2)):
+        for _ in range(n):
+            ops.read_log.bump(f"need:{need}")
+    ops.read_log.bump("some_table")
+    ops.read_log.flush()
+    fam = _families(metrics.render(metrics.collect(datetime.now(timezone.utc), datasets=DS, timer={"state": "on"},
+                                                   ibkr=lambda: None)))
+    assert fam["rc_need_reads_today"] == ['rc_need_reads_today{need="fundamentals.income"} 1',
+                                          'rc_need_reads_today{need="prices.daily"} 3']
+
+
 def test_the_timer_unknown_leaves_its_family_empty_not_zero():
     assert _families(metrics.render(_collect(timer={"state": None})))["rc_builder_timer_on"] == []
     assert _families(metrics.render(_collect(timer={"state": "off"})))["rc_builder_timer_on"] == ["rc_builder_timer_on 0"]

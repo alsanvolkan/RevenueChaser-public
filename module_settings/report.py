@@ -2928,11 +2928,11 @@ def _collect_newdata() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
-#: The page's two tabs (#492; avo, 10 Nov 2026: "iki tabdan daha fazlasi olmasin"): the key a viewer's choice is
-#: remembered under, and each tab's panel id. ``ALIASES`` maps a choice remembered from an older page (Data, Fetch,
-#: Needs, Live) onto the tab that now holds it.
+#: The page's three tabs (#715; avo, 12 Nov 2026: Database · Fetch/Health · Logs, and no tab holds another tab):
+#: the key a viewer's choice is remembered under, and each tab's panel id. ``ALIASES`` maps a choice remembered
+#: from an older page (Data, Fetch, Needs, Live) onto the tab that now holds it.
 SETTINGS_TABS = {"key": "rc.settings.tab",
-                 "tabs": {"data": "panel-data", "health": "panel-health"},
+                 "tabs": {"data": "panel-data", "health": "panel-health", "logs": "panel-logs"},
                  "aliases": {"fetch": "data", "needs": "health", "live": "health"}}
 
 TABS_JS = """
@@ -3085,66 +3085,63 @@ def _tab_strip() -> str:
             'aria-selected="true" tabindex="0">Database</button>'
             '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
             'aria-selected="false" tabindex="-1">Fetch/Health</button>'
+            '<button type="button" role="tab" id="tab-logs" data-tab="logs" aria-controls="panel-logs" '
+            'aria-selected="false" tabindex="-1">Logs</button>'
             '</div></nav>')
 
 
-# #527: the live view of data health and fetching is two Grafana boards on homesrv (home-server
-# grafana/make_dashboards.py rc_data_health / rc_fetch), framed here rather than shown as Grafana tabs (avo, 8 Nov
-# 2026: "bunlar revenue chaser app icine gomulu olmaliydi"). Grafana allows only this app's origin to frame it. The
-# frame has no address until the tab opens, so a Data/Health visit never loads Grafana.
-# home-server #222 (avo, 10 Nov 2026): the RC timers with the Jobs tab's own design, switches and fuse (board rc-jobs)
-# avo, 10 Nov 2026 ("iki tabdan daha fazlasi olmasin", "health/fetch kismi grafana arayuzu ile olmali"): no Live tab;
-# the frame opens the Fetch/Health tab, RC Fetch first.
-# avo, 11 Nov 2026 ("activity yi kapatmak istiyorum"): Jobs is the board Activity framed (rc-activity: the jobs of
-# rc-jobs, grouped by the board each feeds), and Logs (rc-logs) came over from it.
-LIVE_BOARDS = (("rc-fetch", "Fetch"), ("rc-data-health", "Data health"), ("rc-activity", "Jobs"), ("rc-logs", "Logs"))
+# #527 (avo, 8 Nov 2026: "bunlar revenue chaser app icine gomulu olmaliydi"): the live view is Grafana on homesrv
+# (home-server grafana/make_dashboards.py), framed here rather than opened as a separate site. Grafana allows only
+# this app's origin to frame it. A frame has no address until its tab opens, so a Database visit never loads Grafana.
+# #715 (avo, 12 Nov 2026): three tabs, no tab holds another tab. Fetch/Health is one board (rc-health: the controls
+# beside the DuckDB health, RevenueChaser's timers, IBKR, provider limits, backups); Logs is its own tab (rc-logs).
+# The board picker that sat above the frame is gone with the boards it chose between.
+LIVE_BOARDS = (("panel-health", "rc-health", "live-frame", "Fetch controls and data health (Grafana)"),
+               ("panel-logs", "rc-logs", "logs-frame", "Job run logs (Grafana)"))
 LIVE_CSS = """
-#live-board .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
-  padding:0 12px}
-#live-board .livebar button{min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--line,#8884);
-  background:var(--card,transparent);color:var(--fg,inherit);font:inherit;cursor:pointer}
-#live-board .livebar button[aria-pressed="true"]{border-color:var(--acc,#4a86e8);color:var(--acc,#4a86e8);font-weight:600}
-#live-board .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px}
-#live-board iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
+.live-board .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
+  padding:0 12px;min-height:44px}
+.live-board .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px;min-height:44px;
+  display:inline-flex;align-items:center}
+.live-board iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
   background:var(--bg,transparent)}
 """
-LIVE_HTML = ('<div id="live-board"><div class="livebar" role="group" aria-label="Live board">'
-             + "".join(f'<button type="button" data-board="{uid}" aria-pressed="{"true" if i == 0 else "false"}">'
-                       f'{label}</button>' for i, (uid, label) in enumerate(LIVE_BOARDS))
-             + '<a id="live-open" target="_blank" rel="noopener">Open in Grafana</a></div>'
-             '<iframe id="live-frame" title="Live data health, fetch, jobs and logs (Grafana)" loading="lazy"></iframe></div>')
+
+
+def _live_board(panel: str) -> str:
+    """The Grafana frame of one tab; it has no address until its tab opens (``LIVE_JS``)."""
+    uid, frame, title = next((u, f, t) for p, u, f, t in LIVE_BOARDS if p == panel)
+    return (f'<div class="live-board" data-board="{uid}"><div class="livebar">'
+            '<a class="live-open" target="_blank" rel="noopener">Open in Grafana</a></div>'
+            f'<iframe id="{frame}" title="{title}" loading="lazy"></iframe></div>')
+
+
 LIVE_JS = """
 (function(){
-  var panel = document.getElementById('panel-health'), frame = document.getElementById('live-frame');
-  if (!panel || !frame) return;
-  var buttons = [].slice.call(panel.querySelectorAll('[data-board]')), open = document.getElementById('live-open');
-  var board = buttons.length ? buttons[0].getAttribute('data-board') : 'rc-fetch';
   function theme() {
     var t = document.documentElement.getAttribute('data-theme');
     if (t === 'light' || t === 'dark') return t;
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   }
-  function address(kiosk) {
-    return location.protocol + '//' + location.hostname + ':3000/d/' + board + '/' + board + '?theme=' + theme()
-      + (kiosk ? '&kiosk' : '');
-  }
-  function load() {
-    if (panel.hidden) return;
-    var want = address(true);
-    if (frame.getAttribute('src') !== want) frame.setAttribute('src', want);
-    if (open) open.href = address(false);
-  }
-  buttons.forEach(function (b) {
-    b.addEventListener('click', function () {
-      board = b.getAttribute('data-board');
-      buttons.forEach(function (o) { o.setAttribute('aria-pressed', o === b ? 'true' : 'false'); });
-      load();
-    });
+  [].slice.call(document.querySelectorAll('.live-board[data-board]')).forEach(function (box) {
+    var panel = box.closest('[role="tabpanel"]'), frame = box.querySelector('iframe');
+    var open = box.querySelector('.live-open'), board = box.getAttribute('data-board');
+    if (!panel || !frame) return;
+    function address(kiosk) {
+      return location.protocol + '//' + location.hostname + ':3000/d/' + board + '/' + board + '?theme=' + theme()
+        + (kiosk ? '&kiosk' : '');
+    }
+    function load() {
+      if (panel.hidden) return;
+      var want = address(true);
+      if (frame.getAttribute('src') !== want) frame.setAttribute('src', want);
+      if (open) open.href = address(false);
+    }
+    if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
+    var tab = document.getElementById(panel.getAttribute('aria-labelledby'));
+    if (tab) tab.addEventListener('click', function () { setTimeout(load, 0); });
+    load();
   });
-  if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
-  var tab = document.getElementById('tab-health');
-  if (tab) tab.addEventListener('click', function () { setTimeout(load, 0); });
-  load();
 })();
 """
 
@@ -3174,8 +3171,8 @@ def _ticker_drill(payload: dict) -> str:
 
 
 def render_settings_dashboard(payload: dict) -> str:
-    """The Data/Health page (#492): two tabs. Data is the control board (``control_render.render_data``); Health is
-    ``_health_panel``. The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
+    """The Data/Health page (#715): three tabs. Database is the control board (``control_render.render_data``);
+    Fetch/Health is the framed ``rc-health`` board above ``_health_panel``; Logs is the framed ``rc-logs`` board. The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
     payload = payload or {}
     data_json = script_json(payload.get("tickers") or [])
     # The payload's own ``newdata`` when the caller read it (tests, fixtures); else read here, per render.
@@ -3212,9 +3209,12 @@ def render_settings_dashboard(payload: dict) -> str:
 {control_html}
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
-{LIVE_HTML}
+{_live_board("panel-health")}
 {fetch_html}
 {health_html}
+</div>
+<div id="panel-logs" role="tabpanel" aria-labelledby="tab-logs" hidden>
+{_live_board("panel-logs")}
 </div>
 <script>{FILTERS_JS}</script>
 <script>
