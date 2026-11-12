@@ -135,6 +135,7 @@ WRITTEN_COLUMN: dict[str, str] = {
     'price_revision': 'session_date',
     'regsho_threshold': 'list_date',
     'sec13f_cusip_map': 'period',
+    'sec13f_filer_breaks': 'period',
     'sec13f_filer_period': 'period',
     'sec13f_filings': 'filed',
     'sec13f_periods': 'period',

@@ -433,9 +433,10 @@ def test_a_period_that_is_not_a_quarter_end_is_read_as_its_calendar_quarter(monk
     assert _served(f"SELECT period FROM {sec13f.TABLE} WHERE accession = '0005000002-26-000012'") == [
         (date(2026, 9, 29),)]
     assert _served("SELECT period, filers FROM sec13f_periods ORDER BY period") == [(Q2, 1), (Q3, 3)]
-    assert _served("SELECT period, shares, holders, new_holders, exited_holders, breadth, filers "
+    # #732: the two filers with no report in the June quarter started filing; they are not new holders.
+    assert _served("SELECT period, shares, holders, new_holders, exited_holders, started_filers, breadth, filers "
                    "FROM sec13f_ticker_period WHERE ticker = 'MSFT' ORDER BY period") == [
-        (Q2, 100.0, 1, None, None, 100.0, 1), (Q3, 1130.0, 3, 2, 0, 100.0, 3)]
+        (Q2, 100.0, 1, None, None, None, 100.0, 1), (Q3, 1130.0, 3, 0, 0, 2, 100.0, 3)]
     assert _served("SELECT period, cusips FROM sec13f_filer_period WHERE cik = '5000002' ORDER BY period") == [
         (Q2, 1), (Q3, 1)]
 
