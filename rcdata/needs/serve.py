@@ -230,7 +230,7 @@ def summary(need: str, *, sample: int = 0, count: bool = True) -> dict:
         ops.read_log.bump(f"need:{need}")
     # A need that names its own rows inside a shared table counts only those (the review's C2).
     s = read.table_summary(spec.table, day_column=spec.day_column, key_column=spec.summary_key, sample=sample,
-                           key_values=spec.filter_values, key_prefix=spec.filter_prefix)
+                           key_values=spec.filter_values, key_prefix=spec.filter_prefix, where=spec.where)
 
     as_of = s["newest_day"]
     lag = lag_in(spec.max_lag_unit, as_of, reference_session()) if as_of is not None else None

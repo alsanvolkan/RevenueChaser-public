@@ -31,7 +31,7 @@ STATES = ("fresh", "stale", "missing", UNREADABLE)
 BOARD_PREFIX = "module_"
 #: The served duckdb files, in the order the catalog groups its needs by (#492). A need's file is its table's
 #: serving kind (``catalog.Need.kind``, ``rcdata.read.KIND_OF_TABLE``); a need of no served file goes last.
-SERVED_FILES = ("spine", "prices", "fundamentals", "ownership", "options", "market")
+SERVED_FILES = ("spine", "prices", "fundamentals", "sec_forms", "ownership", "options", "market")
 OTHER_FILE = "other"
 
 #: The routes, with one example each, so a reader can try them. The example needs are checked against the catalog

@@ -70,7 +70,7 @@ SWITCHES = ("fetch", "backup")
 #: One switch per served DuckDB file (avo, 10 Nov 2026: "main > midswitch > subswitches", and "Fetch de dursun"):
 #: ``file-<kind>`` off holds every dataset of that file, on its own or pressed by hand, under the fetch switch and
 #: over each dataset's own. The kinds are ``serving.KINDS`` (not imported here: serving imports duckdb).
-FILE_KINDS = ("market", "spine", "ownership", "prices", "fundamentals", "options")
+FILE_KINDS = ("market", "spine", "ownership", "prices", "fundamentals", "options", "sec_forms")
 FILE_SWITCHES = tuple(f"file-{k}" for k in FILE_KINDS)
 # avo, 8 Nov 2026 ("B", #387): a resolved build issue is kept seven days; an open one until it is resolved.
 RESOLVED_ISSUE_DAYS = 7
