@@ -71,3 +71,6 @@ def test_a_crowded_source_box_wraps_its_buttons_instead_of_pushing_them_past_the
     css = control_render.CTL_CSS.split("kaydirdin", 1)[-1]
     assert ".ctl .sb1 .dsname{flex-shrink:1000}" in css
     assert re.search(r"\.ctl \.sb1 \.sbbtn\{flex:0 1 auto;min-width:min-content;flex-wrap:wrap", css)
+    # the deploy of that fix still measured 1197: the badges were the one part left that could not give way
+    assert ".ctl .sb1 .srcb{flex:0 1 auto;min-width:24px;overflow:hidden}" in css
+    assert css.index(".ctl .sb1 .srcb{flex:0 1 auto") > css.index(".ctl .sb1 .sbbtn,.ctl .sb1 .srcb{flex:none}")
