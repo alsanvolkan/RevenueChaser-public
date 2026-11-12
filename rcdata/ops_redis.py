@@ -602,7 +602,7 @@ def _add_requests(process: str, entries: list[tuple]) -> None:
                              "result": result, "ms": ms}
                             for i, (at, kind, what, dataset, result, ms) in zip(ids, entries)))
     try:
-        old = _client().zrangebyscore(_key("request_log"), "-inf", -1)
+        old = _client().zrangebyscore(_key("request_log"), "-inf", ids[-1] - ops.REQUEST_LOG_KEEP)
         for start in range(0, len(old), 1000):
             with _client().pipeline(transaction=True) as p:
                 for pk in old[start:start + 1000]:

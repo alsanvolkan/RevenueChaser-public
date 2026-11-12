@@ -837,6 +837,7 @@ def _add_requests(process: str, entries: list[tuple]) -> None:
         con.executemany("INSERT INTO request_log (at, kind, process, what, dataset, result, ms) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?)",
                         [(at, kind, process, what, dataset, result, ms) for at, kind, what, dataset, result, ms in entries])
+        con.execute("DELETE FROM request_log WHERE id <= (SELECT max(id) FROM request_log) - ?", (REQUEST_LOG_KEEP,))
 
 
 @_routed
