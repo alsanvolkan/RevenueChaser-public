@@ -1131,7 +1131,8 @@ def _summary_filter(key_column: str | None, key_values, key_prefix) -> tuple[str
 
 
 def table_summary(table: str, day_column: str | None = None, key_column: str | None = None,
-                  sample: int = 0, key_values: Iterable[str] = (), key_prefix: str | None = None) -> dict:
+                  sample: int = 0, key_values: Iterable[str] = (), key_prefix: str | None = None,
+                  where: str | None = None) -> dict:
     """How much one serving table holds and how new it is: ``row_count``, ``key_count``, ``newest_day``, ``status``.
 
     ``sample`` asks for that many whole rows as well (``sample_rows``, newest first where the table has a day), so a
@@ -1156,7 +1157,12 @@ def table_summary(table: str, day_column: str | None = None, key_column: str | N
     parts.append(f"max({day_column}) AS newest_day" if day_column else "NULL AS newest_day")
     # The caller's own rows inside a table several of them share (``market_series``): counting the whole table
     # would let one caller's dead series read as fresh on another's current one.
-    where, where_params = _summary_filter(key_column, key_values, key_prefix)
+    clause, where_params = _summary_filter(key_column, key_values, key_prefix)
+    # A need whose rows are told apart by a column that is **not** the key column (``section`` of
+    # ``filing_section``): the catalog owns the text, which is why it is a SQL fragment and never a caller's input.
+    if where:
+        clause = f"{clause} AND ({where})" if clause else f" WHERE {where}"
+    where = clause
     rows: list[dict] = []
     try:
         try:
@@ -1644,3 +1650,72 @@ def _insider_cell(ticker: str, positions: list[dict], security_id: str | None,
     cell["state"] = ("inconsistent" if cell["pct"] > 100.0
                      else "partial" if cell["stale_share"] > 0.5 else "ok")
     return cell
+
+
+# ── The SEC form reader (#757): ``sec_forms.duckdb`` ──────────────────────────────────────────────────────────
+
+DATASET_OF_TABLE.update({"filing_section": "sec/forms", "filing_note": "sec/forms"})
+KIND_OF_TABLE.update({t: "sec_forms" for t in ("filing_section", "filing_note")})
+
+#: What ``filing_section.section`` can hold. ``risk_factors`` and ``mdna`` are in the plan's schema and have no
+#: rule yet, so no row carries them: a reader that asks for one gets no rows, not an error.
+FORM_SECTIONS = ("whole", "proxy", "business")
+
+
+def form_sections(ciks: Iterable = (), *, section: str, text: bool = True) -> list[dict]:
+    """Per company the newest ``section`` row of ``sec_forms``, one each (a company with none is absent).
+
+    ``text=False`` leaves the text out, for a list that only needs the lengths and the quality. A 40-F whose
+    business section is an exhibit has two documents under one accession, so the newest **document** of the newest
+    filing wins, as ``filing_texts`` picks the newest accession.
+    """
+    wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
+    if not wanted:
+        return []
+    cols = "*" if text else "* EXCLUDE (text)"
+    return _rows("filing_section",
+                 f"SELECT {cols} FROM filing_section WHERE section = ? "
+                 f"AND cik IN ({', '.join('?' * len(wanted))}) "
+                 "QUALIFY row_number() OVER (PARTITION BY cik ORDER BY filing_date DESC, accession DESC, "
+                 "document DESC) = 1 ORDER BY cik", [str(section), *wanted])
+
+
+def form_whole(ciks: Iterable = (), text: bool = True) -> list[dict]:
+    """The whole text of each company's newest annual report (``sec.whole``)."""
+    return form_sections(ciks, section="whole", text=text)
+
+
+def form_business(ciks: Iterable = (), text: bool = True) -> list[dict]:
+    """The business section of each company's newest annual report (``sec.business``)."""
+    return form_sections(ciks, section="business", text=text)
+
+
+def form_proxy(ciks: Iterable = (), text: bool = True) -> list[dict]:
+    """The whole text of each company's newest proxy statement (``sec.proxy``)."""
+    return form_sections(ciks, section="proxy", text=text)
+
+
+def form_notes(ciks: Iterable = (), local_name: str | None = None, kind: str | None = None,
+               text: bool = True) -> list[dict]:
+    """The note blocks of each company's newest annual report (``sec.note``), by company and document order.
+
+    ``local_name`` is the tag without its prefix (``DebtDisclosureTextBlock``), so one ask reaches ``us-gaap``,
+    ``ifrs-full`` and a filer's own prefix alike; ``kind`` is ``disclosure``, ``table`` or ``policy``. Only the
+    newest filing's blocks: an older year's note is a row of its own and is asked for by accession.
+    """
+    wanted = sorted({_cik(c) for c in ciks if str(c or "").strip()})
+    if not wanted:
+        return []
+    cols = "*" if text else "* EXCLUDE (text)"
+    sql = (f"SELECT {cols} FROM filing_note WHERE cik IN ({', '.join('?' * len(wanted))})")
+    params: list = list(wanted)
+    if local_name is not None:
+        sql += " AND local_name = ?"
+        params.append(str(local_name))
+    if kind is not None:
+        sql += " AND kind = ?"
+        params.append(str(kind))
+    sql += (" QUALIFY dense_rank() OVER (PARTITION BY cik ORDER BY filing_date DESC, accession DESC) = 1 "
+            "ORDER BY cik, document, seq")
+    return _rows("filing_note", sql, params)
+

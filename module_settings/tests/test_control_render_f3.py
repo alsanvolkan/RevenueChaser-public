@@ -5,6 +5,7 @@ import re
 
 from RevenueChaser.module_settings import control_render
 from RevenueChaser.module_settings.tests.test_control_render_c1 import _file, _view
+from RevenueChaser.module_settings.tests.legacy_fetch import old_fetch
 
 
 def test_next_words_prefix_only_a_time():
@@ -18,7 +19,7 @@ def test_next_words_prefix_only_a_time():
 
 def test_the_disk_picture_status_is_found_from_its_button_not_a_repeated_id():
     # avo, 10 Nov 2026: one Recount folders press, on Fetch/Health, and none on Database
-    html = control_render.render_fetch(_view())
+    html = old_fetch(_view())
     assert 'id="picout"' not in html
     assert html.count('class="hm picout" role="status"') == 1
     assert 'class="hm picout"' not in control_render.render_data(_view())

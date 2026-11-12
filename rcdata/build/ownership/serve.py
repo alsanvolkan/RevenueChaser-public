@@ -26,7 +26,11 @@
   divided by 1,000 (0.001). Shares never change. The test runs on every filing, before the rule change too
   (#780): a filer that wrote dollars while the rule still said thousands was read 1,000 times too high, and a few
   of them were enough to put the pre-2023 quarters' total value at $200-360T and AAPL's implied price at 6-41
-  times its close.
+  times its close. Three more guards (#780, after that fix ran live): a filer off by 1,000,000 (median ratio
+  inside the band around it, ``SCALE_STEPS``) is rescaled the same way; a CUSIP's consensus price 300-3,000 times
+  off **both** quarters beside it is moved back by 1,000 first (2022 Q3, when most holders already wrote dollars
+  that were read as thousands); and one holding 300 times or more (``ROW_BAND``) from its consensus price, after its
+  filer's factor, is read at that price (``value_row_replaced`` on the issues board).
 - *Each CUSIP named*, per report period, by the first spine source that answers: (1) Compustat's dated identifier
   history (``security_history``, field ``cusip``, the period inside ``valid_from``..``valid_to``) with exactly one
   ticker: ``wrds/sec_idhist``; (2) the spine's current CUSIP of exactly one ticker: ``spine/security``; (2b) when
@@ -107,6 +111,10 @@ OWNER = "compustat/owner"
 CONSENSUS_FILERS = 3
 MIN_NAMES = 5
 SCALE_BAND = (1.0 / 3000.0, 1.0 / 300.0)
+SCALE_STEPS = (1000.0, 1_000_000.0)      # a filer off by one or two steps of 1,000 (#780: 2014 Q2, 2018 Q2 x1,000,000)
+ROW_BAND = 300.0                         # one holding this far from its consensus price is read at that price (#780)
+NEIGHBOUR_DAYS = 100                     # a consensus price is checked against the quarters on either side (#780)
+ROWS_TOP = 50
 DEADLINE_DAYS = 45
 UNMAPPED_TOP = 50
 RESCALED_TOP = 50
@@ -145,7 +153,10 @@ ISSUE_KINDS = {
                            "give the CUSIP to in that period (a reused ticker or CUSIP)",
     "cusip_unmapped_large": "one of the newest complete quarter's largest long-equity CUSIPs no spine source names",
     "filings_unparsed": "13F filings of an index day whose documents did not parse",
-    "value_rescaled": "one of the largest filer-quarters whose VALUE was off by a factor of 1,000 and was rescaled",
+    "value_rescaled": "one of the largest filer-quarters whose VALUE was off by a factor of 1,000 (or 1,000,000) and "
+                      "was rescaled",
+    "value_row_replaced": "one of the largest holdings whose value lay 300 times or more from the 13F's own price "
+                          "for it and was read at that price",
 }
 
 # FINRA publishes a settlement date's short interest on the seventh business day after it (FINRA's equity short
@@ -257,6 +268,44 @@ def _periods_of(con: duckdb.DuckDBPyConnection, table: str) -> list:
     return [r[0] for r in con.execute(f"SELECT DISTINCT period FROM {table} ORDER BY period").fetchall()]
 
 
+def _factor_sql() -> str:
+    """A filer-quarter's ``value_factor`` from its median ratio to the consensus prices: one or two steps of 1,000 up
+    or down when the ratio lies inside ``SCALE_BAND`` around that step and rests on ``MIN_NAMES`` names, else 1."""
+    lo, hi = SCALE_BAND
+    arms = []
+    for step in SCALE_STEPS:
+        arms.append(f"WHEN names >= {MIN_NAMES} AND ratio > {lo * 1000.0 / step!r} AND ratio < {hi * 1000.0 / step!r} "
+                    f"THEN {step!r}")
+        arms.append(f"WHEN names >= {MIN_NAMES} AND ratio > {step / (hi * 1000.0)!r} "
+                    f"AND ratio < {step / (lo * 1000.0)!r} THEN {1.0 / step!r}")
+    return "CASE " + " ".join(arms) + " ELSE 1.0 END"
+
+
+def _consensus_guard(con: duckdb.DuckDBPyConnection) -> None:
+    """A CUSIP's consensus price for a quarter that lies 300-3,000 times above or below BOTH quarters beside it (each
+    within ``NEIGHBOUR_DAYS``) is moved back by 1,000; the moves are kept in ``_pxfix``. Both sides must agree, so a
+    clean quarter next to a broken one is never moved, and the first and newest quarters are never moved.
+
+    #780, 2022 Q3: filers could already write dollars while their filings, made before 2023-01-03, were still read
+    in thousands; where most holders of a name did, the median price was 1,000 times too high, and a filer who wrote
+    thousands as ruled (Sanders Capital) looked 1,000 times too low and was rescaled to $36T."""
+    lo, hi = SCALE_BAND
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE _pxfix AS
+        WITH n AS (
+            SELECT cusip, period, px,
+                   CASE WHEN period - lag(period) OVER w <= {NEIGHBOUR_DAYS} THEN lag(px) OVER w END AS before,
+                   CASE WHEN lead(period) OVER w - period <= {NEIGHBOUR_DAYS} THEN lead(px) OVER w END AS after
+            FROM _px WINDOW w AS (PARTITION BY cusip ORDER BY period)),
+        r AS (SELECT cusip, period, px, px / before AS rb, px / after AS ra FROM n
+              WHERE before > 0 AND after > 0)
+        SELECT cusip, period, px AS old_px,
+               CASE WHEN rb > {1 / hi!r} THEN px / 1000.0 ELSE px * 1000.0 END AS px
+        FROM r
+        WHERE (rb > {1 / hi!r} AND rb < {1 / lo!r} AND ra > {1 / hi!r} AND ra < {1 / lo!r})
+           OR (rb > {lo!r} AND rb < {hi!r} AND ra > {lo!r} AND ra < {hi!r})""")
+    con.execute("UPDATE _px SET px = f.px FROM _pxfix f WHERE _px.cusip = f.cusip AND _px.period = f.period")
+
+
 def _by_period(con: duckdb.DuckDBPyConnection, periods: list, table: str, select: str,
                schema: list[tuple[str, str]] | None = None) -> None:
     """``table`` filled by ``select`` (its one ``?`` the period) one quarter at a time, as a TEMP table of ``schema``
@@ -330,7 +379,7 @@ def _figi(con: duckdb.DuckDBPyConnection) -> None:
 
 
 TEMPS = ("_closed", "_sets", "_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
-         "_held",
+         "_pxfix", "_fac", "_rowfix", "_held",
          "_cp", "_m_hist", "_m_cur", "_m_owner", "_m_figi", "_filers", "_filed", "_deadline", "_tot", "_pos", "_shape",
          "_pairs", "_flow")
 
@@ -436,6 +485,8 @@ class OwnershipServe:
             counts["sec13f_filer_breaks"] = self._breaks(con, ctx.as_of or self.default_as_of())
             found += self._issues(con, ctx.as_of or self.default_as_of())
             summary["rescaled"] = common.count(con, "sec13f_filer_period", "value_factor <> 1")
+            summary["px_fixed"] = common.count(con, "_pxfix")
+            summary["rows_replaced"] = common.count(con, "_rowfix")
             if left_out:
                 summary["left_out"] = left_out
             if spine_on:
@@ -482,23 +533,35 @@ class OwnershipServe:
             WHERE period = ? AND shares > 0 AND value_usd > 0
             GROUP BY ALL HAVING count(DISTINCT cik) >= {CONSENSUS_FILERS}""",
                    [("cusip", "TEXT"), ("period", "DATE"), ("px", "DOUBLE")])
+        _consensus_guard(con)
         _by_period(con, periods, "_ratio", """
             SELECT l.cik, l.period, count(DISTINCT l.cusip), median(l.value_usd / l.shares / p.px)
             FROM _long l JOIN _px p ON p.cusip = l.cusip AND p.period = l.period
             WHERE l.period = ? AND l.shares > 0 AND l.value_usd > 0 GROUP BY ALL""",
                    [("cik", "TEXT"), ("period", "DATE"), ("names", "BIGINT"), ("ratio", "DOUBLE")])
-        lo, hi = SCALE_BAND
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE _fac AS
+            SELECT cik, period, names, ratio, {_factor_sql()} AS factor FROM _ratio""")
+        # One holding far from its price inside a filer whose median is clean (#780: 2018 Q3, a few lines of one
+        # filer worth $258T), or in a filer with too few names for the median test, is read at the consensus price.
+        _by_period(con, periods, "_rowfix", f"""
+            SELECT l.rowid, l.cik, l.period, l.cusip, min(l.filer_name), l.value_usd * coalesce(x.factor, 1.0),
+                   l.shares * p.px, coalesce(x.factor, 1.0)
+            FROM _long l JOIN _px p ON p.cusip = l.cusip AND p.period = l.period
+            LEFT JOIN _fac x ON x.cik = l.cik AND x.period = l.period
+            WHERE l.period = ? AND l.shares > 0 AND l.value_usd > 0
+              AND (l.value_usd * coalesce(x.factor, 1.0) > {ROW_BAND!r} * l.shares * p.px
+                   OR l.value_usd * coalesce(x.factor, 1.0) * {ROW_BAND!r} < l.shares * p.px)
+            GROUP BY ALL""",
+                   [("rid", "BIGINT"), ("cik", "TEXT"), ("period", "DATE"), ("cusip", "TEXT"),
+                    ("filer_name", "TEXT"), ("old_value", "DOUBLE"), ("new_value", "DOUBLE"), ("factor", "DOUBLE")])
+        con.execute("UPDATE _long SET value_usd = r.new_value / r.factor FROM _rowfix r WHERE _long.rowid = r.rid")
         common.create_table(con, "sec13f_filer_period", FILER, f"""
             SELECT l.cik, l.period, max(l.filer_name) AS filer_name, count(DISTINCT l.accession) AS filings,
                    count(DISTINCT l.cusip) AS cusips, sum(l.value_usd) * coalesce(x.factor, 1) AS value, x.names,
                    round(x.ratio, 6) AS median_ratio, coalesce(x.factor, 1) AS value_factor,
                    c.omitted AS confidential_omitted
             FROM _long l
-            LEFT JOIN (SELECT cik, period, names, ratio,
-                              CASE WHEN names >= {MIN_NAMES} AND ratio > {lo!r} AND ratio < {hi!r} THEN 1000.0
-                                   WHEN names >= {MIN_NAMES} AND ratio > {1 / hi!r} AND ratio < {1 / lo!r}
-                                   THEN 0.001 ELSE 1.0 END AS factor FROM _ratio) x
-                   ON x.cik = l.cik AND x.period = l.period
+            LEFT JOIN _fac x ON x.cik = l.cik AND x.period = l.period
             LEFT JOIN _conf c ON c.cik = l.cik AND c.period = l.period
             GROUP BY l.cik, l.period, x.factor, x.names, x.ratio, c.omitted ORDER BY l.period, l.cik""")
         _by_period(con, periods, "_held", """
@@ -747,10 +810,16 @@ class OwnershipServe:
                 SELECT cik, period, filer_name, value_factor, median_ratio, names, value FROM sec13f_filer_period
                 WHERE value_factor <> 1 ORDER BY abs(value - value / value_factor) DESC, cik, period
                 LIMIT {RESCALED_TOP}""").fetchall():
-            how = "read in thousands" if factor > 1 else "read as 1,000 times too high"
+            how = (f"read in {'thousands' if factor < 1e6 else 'millions'}" if factor > 1
+                   else f"read as {1 / factor:,.0f} times too high")
             found.append(("value_rescaled", f"{cik}|{period}",
                           f"{name or cik}, {period}: VALUE {how} (median ratio {ratio:g} to the 13F's own prices over "
                           f"{names} names): ${value / factor:,.0f} read as ${value:,.0f}"))
+        for cik, period, cusip, name, old, new in con.execute(f"""
+                SELECT cik, period, cusip, filer_name, old_value, new_value FROM _rowfix
+                ORDER BY abs(old_value - new_value) DESC, cik, period, cusip LIMIT {ROWS_TOP}""").fetchall():
+            found.append(("value_row_replaced", f"{cik}|{period}|{cusip}",
+                          f"{name or cik}, {period}, {cusip}: ${old:,.0f} read at the 13F's own price, ${new:,.0f}"))
         for day, n, acc, why in con.execute(f"""
                 SELECT index_day, count(*), min(accession), any_value(detail) FROM {sec13f.TABLE}
                 WHERE status = 'unparsed' GROUP BY index_day ORDER BY index_day""").fetchall():
@@ -786,6 +855,11 @@ class OwnershipServe:
         if summary.get("rescaled"):
             ctx.notes.append(f"{summary['rescaled']} filer-quarters' VALUE off by a factor of 1,000 against the 13F's "
                              "own prices: rescaled")
+        if summary.get("px_fixed"):
+            ctx.notes.append(f"{summary['px_fixed']} consensus prices 1,000 times off the quarters beside them: moved back")
+        if summary.get("rows_replaced"):
+            ctx.notes.append(f"{summary['rows_replaced']} holdings 300 times or more from the 13F's own price: read at "
+                             "that price")
         if summary.get("left_out"):
             n, quarters, first = summary["left_out"]
             ctx.notes.append(f"{n} filings of {quarters} quarters whose filing deadline passed before the first 13F "

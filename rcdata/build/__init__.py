@@ -69,3 +69,8 @@ from .options import uw_screener as _options_uw_screener  # noqa: E402
 
 DATASETS.update({d.name: d for d in (_options_uw_list.DATASET, _options_uw_screener.DATASET,
                                      _options_uw_far_contracts.DATASET, _options_ibkr_iv.DATASET)})
+
+# The SEC form reader (#757, serving kind ``sec_forms``): one dataset, cutting what ``sec/filings`` already stored.
+from .sec_forms import forms as sec_forms_forms  # noqa: E402
+
+DATASETS.update({sec_forms_forms.DATASET.name: sec_forms_forms.DATASET})

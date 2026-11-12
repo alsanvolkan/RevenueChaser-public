@@ -71,6 +71,8 @@ DATASETS: dict[str, DatasetCard] = {
     'sec/filings': DatasetCard('SEC filing lists, 8-K items and report texts', step=9, role='first'),
     'sec/form4': DatasetCard('Insider transactions (Form 4)', step=10, role='first'),
     'sec/fsds': DatasetCard('SEC Financial Statement Data Sets (the check)', step=9, role='fills'),
+    'sec/forms': DatasetCard('Filing sections and note blocks, cut from the stored documents (no request)',
+                             coverage_target=None, step=9, role='build'),
     'sec/ftd': DatasetCard('Fails to deliver (SEC)', step=10, role='first'),
     'spine/security': DatasetCard('Identity spine (security, tiers, history)', coverage_target=0.98, step=7, role='build'),
     'uw/earnings': DatasetCard('Reported EPS and its surprise (Unusual Whales)', step=9, role='fills'),
@@ -113,6 +115,8 @@ WRITTEN_COLUMN: dict[str, str] = {
     'etf': 'source_as_of',
     'etf_holdings': 'as_of',
     'filing_item': 'filing_date',
+    'filing_note': 'filing_date',
+    'filing_section': 'filing_date',
     'finra_short_interest': 'settlement_date',
     'fund': 'source_as_of',
     'fundamental_company': 'facts_as_of',
@@ -209,6 +213,8 @@ FILES: dict[str, FileCard] = {
                        True),
     "fundamentals": FileCard("Step 9 · fundamentals and earnings", "runs on the universe at the top of this section",
                              True),
+    "sec_forms": FileCard("Step 9 · filing sections and notes",
+                          "runs on the universe at the top of this section", True),
     "ownership": FileCard("Step 10 · the short side and ownership",
                           "not tied to a tier: every filing is read, its CUSIP or symbol is matched to the spine",
                           False),
@@ -226,6 +232,8 @@ NO_TIER_WORDS: dict[str, str] = {
     "ownership": "whole-market files (13F sets, FINRA, Reg SHO, fails to deliver, Form 4): every name at once.",
     "options": "the option list (SPX and the watch list), not a tier set.",
     "market": "series, not names.",
+    "sec_forms": "this dataset reads the documents already on disk, so a request's tiers are noted on its check, "
+                 "not used.",
 }
 NO_TIER_DATASET_WORDS: dict[str, str] = {
     "alphavantage/earnings_calendar": "one call brings the whole calendar, every name at once.",

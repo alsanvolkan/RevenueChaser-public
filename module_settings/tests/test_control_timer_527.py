@@ -31,11 +31,16 @@ def test_the_top_bar_shows_the_builder_timer_and_its_link():
 def test_the_link_comes_from_the_variable_and_a_bad_value_shows_none(monkeypatch):
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     monkeypatch.setenv("RC_BUILDER_TIMER_URL", "https://grafana.example/d/home")
-    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd()))
+    # #715: the timer box left the page with the top bar (the framed board has the timer); the part still reads
+    # its link from the view, so the rule is checked on the part.
+    from RevenueChaser.module_settings.tests.legacy_fetch import old_fetch
+    html = old_fetch(report._control_view(control_nd(), {}))
     assert 'href="https://grafana.example/d/home"' in html
     monkeypatch.setenv("RC_BUILDER_TIMER_URL", "javascript:alert(1)")
-    html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd()))
+    html = old_fetch(report._control_view(control_nd(), {}))
     assert "javascript:alert" not in html and "on / off in Grafana" not in html
+    page = report.render_settings_dashboard(dict(_payload(), newdata=control_nd()))
+    assert "javascript:alert" not in page and "on / off in Grafana" not in page
 
 
 def test_the_timer_box_has_a_press_that_says_what_it_does():

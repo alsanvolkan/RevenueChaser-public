@@ -32,8 +32,10 @@
 
   /* the page's age: past CTL.stale_ms the strip on top says so (checked when the page is shown again) */
   function age() {
-    var read = Date.parse(C.read_at), bar = document.getElementById('ctl-stale');
-    if (bar && !isNaN(read)) bar.hidden = Date.now() - read < C.stale_ms;
+    var read = Date.parse(C.read_at);
+    if (isNaN(read)) return;
+    /* one strip a panel (#715): the one under the Fetch/Health frame heads the universe's Apply */
+    document.querySelectorAll('[data-stale]').forEach(function (bar) { bar.hidden = Date.now() - read < C.stale_ms; });
   }
   document.addEventListener('visibilitychange', function () { if (!document.hidden) age(); });
   window.addEventListener('focus', age);
@@ -91,9 +93,9 @@
         if (!row) { pill(btn, 'st-q', 'queued · the queue no longer lists it'); back(btn); return; }
         if (row.status === 'queued') { pill(btn, 'st-q', 'queued · ' + nth(pos) + ' in line'); follow(btn, rid, left - 1); }
         else if (row.status === 'running') { pill(btn, 'st-r', 'running'); follow(btn, rid, left - 1); }
-        else if (row.status === 'done') { pill(btn, 'st-d', 'done · ' + (row.note || 'see Queue and last runs')); btn.hidden = false; back(btn); }
-        else if (row.status === 'skipped') { pill(btn, 'st-p', 'skipped · ' + (row.note || 'see Queue and last runs')); btn.hidden = false; back(btn); }
-        else { pill(btn, 'st-f', row.status + ' · ' + (row.note || 'see Open problems')); btn.hidden = false; back(btn); }
+        else if (row.status === 'done') { pill(btn, 'st-d', 'done · ' + (row.note || 'see the queue in the board above')); btn.hidden = false; back(btn); }
+        else if (row.status === 'skipped') { pill(btn, 'st-p', 'skipped · ' + (row.note || 'see the queue in the board above')); btn.hidden = false; back(btn); }
+        else { pill(btn, 'st-f', row.status + ' · ' + (row.note || 'see the open problems of its file')); btn.hidden = false; back(btn); }
       }, function () { follow(btn, rid, left - 1); });
     }, 15000);
   }

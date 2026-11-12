@@ -30,7 +30,7 @@ def test_four_tabs_watch_lists_first_and_each_grafana_tab_frames_one_board():
     assert 'id="panel-live"' not in html and "live" not in report.SETTINGS_TABS["tabs"]
     health = html[html.index('id="panel-health"'):html.index('id="panel-logs"')]
     logs = html[html.index('id="panel-logs"'):html.index("<script>", html.index('id="panel-logs"'))]
-    assert health.index('id="live-frame"') < health.index("<h1>Data/Health · Fetch/Health</h1>")
+    assert health.index('id="live-frame"') < health.index("<h1>Data/Health · Universe and fills</h1>")
     assert re.findall(r'data-board="([a-z-]+)"', health) == ["rc-health"]
     assert re.findall(r'data-board="([a-z-]+)"', logs) == ["rc-logs"]
     assert "<button" not in health[:health.index('id="live-frame"')], "no picker: a tab holds no other tab"
@@ -68,12 +68,11 @@ def test_the_health_tab_no_longer_draws_the_live_parts():
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/"))
     health = _panel(html, "panel-health")
-    # #715 step 2 (avo, 11 Nov 2026: every control on the page itself) brought the queue back, under the
-    # Fetch groups of the same panel; the Health tab's own old queue card stays gone.
-    assert 'id="health-queue"' not in health
-    assert health.index('class="fgrps"') < health.index('id="sec-queue"') < health.index('id="needs"')
-    # avo, 10 Nov 2026: the switches moved with every control to Fetch/Health, once
+    # #715 (avo, 12 Nov 2026, "Karşılığı olanı şimdi kaldır"): the queue, the switches and the reference parts are
+    # the framed board's; under the frame stay the gateway's login link, the universe and the fills.
+    for gone in ('id="health-queue"', 'id="sec-queue"', 'id="needs"', 'id="sw-msg"', 'id="health-live-link"'):
+        assert gone not in health, gone
+    assert health.index('id="live-frame"') < health.index('id="sec-universe"') < health.index('class="fgrps"')
     assert health.count('class="topbar"') == 1 and "sw-msg-h" not in health
-    assert 'id="health-live-link"' not in health and 'id="live-frame"' in health
     data = _panel(html, "panel-data")
     assert 'class="topbar"' not in data and 'href="https://gateway.example/"' in health

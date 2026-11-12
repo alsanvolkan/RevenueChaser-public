@@ -1,0 +1,10 @@
+# The section cutter's own venv (rcdata/build/sec_forms/cutter_worker.py), NOT the builder's.
+#
+# It is not in requirements.txt on purpose: edgartools brings about 35 packages (pandas, pyarrow, lxml, rich) and
+# needs Python 3.11+, while the builder runs 3.14. On the server it is installed into a venv of its own and
+# RC_EDGARTOOLS_PYTHON names that venv's python.
+#
+# This file is the ONE place the pinned version is written. rcdata/build/sec_forms/cutter.py reads it and fails
+# the run when the venv answers a different version, so there is no second literal to forget. How to bump it:
+# cutter_worker.py's docstring, under "How to update the pin".
+edgartools==6.0.0

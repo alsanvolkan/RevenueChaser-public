@@ -590,6 +590,35 @@ def _add_reads(process: str, counts: list[tuple[str, str, int]]) -> None:
     _transaction(["read_log"], work)
 
 
+def _add_requests(process: str, entries: list[tuple]) -> None:
+    """The rows in one ``MULTI`` (all or none, so a failed write that is retried never stores a row twice), then the
+    trim to the newest ``ops.REQUEST_LOG_KEEP``: ids are given out in order, so the rows to drop are the ids at or
+    under ``last - KEEP``, as in SQLite. A trim that fails is left to the next write's."""
+    if not entries:
+        return
+    _ready()
+    ids = _new_ids("request_log", len(entries))
+    _write("request_log", *({"id": i, "at": at, "kind": kind, "process": process, "what": what, "dataset": dataset,
+                             "result": result, "ms": ms}
+                            for i, (at, kind, what, dataset, result, ms) in zip(ids, entries)))
+    try:
+        old = _client().zrangebyscore(_key("request_log"), "-inf", ids[-1] - ops.REQUEST_LOG_KEEP)
+        for start in range(0, len(old), 1000):
+            with _client().pipeline(transaction=True) as p:
+                for pk in old[start:start + 1000]:
+                    _delete(p, "request_log", {"id": int(pk)})
+                p.execute()
+    except redis.RedisError:
+        pass
+
+
+def recent_requests(after: int = 0, limit: int = 200) -> list[dict]:
+    if int(limit) <= 0:
+        return []
+    return _fetch("request_log", _client().zrevrangebyscore(_key("request_log"), "+inf", f"({int(after)}", start=0,
+                                                            num=int(limit)))
+
+
 def reads_since(first_day: str, tables) -> dict[str, int]:
     names = list(tables)
     if not names:
@@ -806,7 +835,8 @@ def snapshot() -> dict[str, list[dict]]:
     One Lua script reads them all inside Redis, which runs nothing else meanwhile: a steady writer cannot make it
     start over, as it did a WATCHed read (review S1: 106 tries in 15 s, never done). Redis is blocked for that read,
     once a night: 0.31 s for 30,000 issue rows (measured 3 Nov 2026, Redis 7.0 on the build box)."""
-    tables = [t for t in ops.TABLES if t != "ops_schema"]
+    # The request log is left out: up to 100,000 rows nobody restores, read while Redis is blocked.
+    tables = [t for t in ops.TABLES if t not in ("ops_schema", "request_log")]
     got = _client().eval(_SNAPSHOT_LUA, 1, namespace(), *tables)
     out = {}
     for t, raw in zip(tables, got):

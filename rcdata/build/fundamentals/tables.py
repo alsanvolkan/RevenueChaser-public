@@ -204,8 +204,9 @@ def _ensure_staging(con: duckdb.DuckDBPyConnection) -> None:
 # ── The served tables ─────────────────────────────────────────────────────────────────────────────────────────
 
 def _facts(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
-    """``fundamental_fact``: the SEC facts, one row per (company, field, period type, period end), and UW's
-    preliminary quarters after the company's newest SEC quarter (``uw_financials``; only when that is on).
+    """``fundamental_fact``: the SEC facts, one row per (company, field, period type, period end), the periods a
+    company's predecessor CIK filed (#749), and UW's preliminary quarters after the company's newest SEC quarter
+    (``uw_financials``; only when that is on).
 
     A company's UW rows depend only on its own SEC rows, so a dirty company reloads both, and no other company's."""
     _clear(con, "fundamental_fact", ciks, "dirty")
@@ -213,6 +214,7 @@ def _facts(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
     con.execute(f"""INSERT INTO fundamental_fact SELECT {names} FROM {companyfacts.STAGING['facts']}
                     QUALIFY row_number() OVER (PARTITION BY cik, field, period_type, period_end
                                                ORDER BY filed DESC, accn DESC) = 1""")
+    _predecessor_facts(con, ciks)
     if uw_financials.enabled():
         con.execute(f"""
             INSERT INTO fundamental_fact SELECT {", ".join(f"u.{c}" for c in names.split(", "))}
@@ -221,6 +223,46 @@ def _facts(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
                   WHERE NOT preliminary AND period_type = '{facts.QUARTERLY}' GROUP BY cik) s ON s.cik = u.cik
             WHERE u.period_type = '{facts.QUARTERLY}' AND u.period_end > s.sec_end + {uw_financials.MARGIN_DAYS}""")
     return common.count(con, "fundamental_fact")
+
+
+def _predecessor_facts(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
+    """The periods a company filed under an older CIK, served under the company's own CIK (#749); how many rows.
+
+    A reorganisation or a redomicile gives the new registrant a new CIK, and the SEC serves everything filed before
+    it only under the old one (Exxon Mobil: 20 annual years under CIK 34088, none under the successor). The
+    predecessor's file is fetched as a company of its own (``companyfacts._with_predecessors``) and its rows stay
+    under its own CIK as well; this adds a copy under the successor.
+
+    **The guard is per field and period type**: only a period that ends *before* the successor's earliest period of
+    that field and period type is taken, and every period of a field the successor never filed. So a restatement
+    never replaces what the company itself reported, and the two never give one period two rows. The copied row
+    keeps the predecessor's own ``accn``, ``form`` and ``filed``, which say which registrant filed it.
+
+    A dirty build reaches here only for a dirty successor, because a changed predecessor partition marks its
+    successor dirty (``common.dirty_ciks``), whose rows were just cleared and rebuilt above.
+    """
+    pairs = common.predecessor_ciks()
+    if ciks is not None:
+        pairs = {c: p for c, p in pairs.items() if c in ciks}
+    rows = [{"predecessor_cik": pre, "cik": cik} for cik, pres in pairs.items() for pre in pres]
+    if not rows:
+        return 0
+    base.rows_table(con, "_predecessor", [("predecessor_cik", "TEXT"), ("cik", "TEXT")], rows)
+    cols = ", ".join(f'f."{c}"' for c, _ in SCHEMAS["fundamental_fact"] if c != "cik")
+    before = common.count(con, "fundamental_fact")
+    con.execute(f"""
+        INSERT INTO fundamental_fact
+        SELECT m.cik, {cols}
+        FROM (SELECT * FROM {companyfacts.STAGING['facts']}
+              QUALIFY row_number() OVER (PARTITION BY cik, field, period_type, period_end
+                                         ORDER BY filed DESC, accn DESC) = 1) f
+        JOIN _predecessor m ON m.predecessor_cik = f.cik
+        LEFT JOIN (SELECT cik, field, period_type, min(period_end) AS earliest FROM fundamental_fact
+                   GROUP BY cik, field, period_type) s
+               ON s.cik = m.cik AND s.field = f.field AND s.period_type = f.period_type
+        WHERE s.earliest IS NULL OR f.period_end < s.earliest""")
+    con.execute("DROP TABLE _predecessor")
+    return common.count(con, "fundamental_fact") - before
 
 
 def _filing_items(con: duckdb.DuckDBPyConnection, ciks=None) -> int:
