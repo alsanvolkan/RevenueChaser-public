@@ -286,8 +286,10 @@ def test_all_four_of_ours_2_s_patterns_read_the_spaced_word_and_only_the_end_one
     # The guard belongs on the end pattern, which matches a bare number, and nowhere else: every start and stop
     # requires a title after the number, which a sub-item never carries.
     guard = sec_sections._NOT_SUBITEM
-    assert guard == r"(?!\.[^\S\n]*\d\d\b)"
-    assert r"[^\S\n]" in guard, "the spaces it allows for must exclude the newline, or a page number is eaten"
+    assert guard == r"(?!\.[^\S\r\n\f\v]*\d\d\b)"
+    # The spaces it reaches over are the ones a tag becomes, never the ones that end a line: every line ending
+    # is excluded from the class, or a page number printed under a heading would be eaten as a sub-item number.
+    assert r"[^\S\r\n\f\v]" in guard
     assert guard in sec_sections._LINE_END_2.pattern
     assert guard not in sec_sections._LINE_START_2["10-K"].pattern
     assert guard not in sec_sections._LINE_START_2["20-F"].pattern
@@ -435,12 +437,13 @@ def test_the_only_cases_where_ours_2_differs_from_ours_1_are_the_three_named_def
 
 
 def test_the_titled_fallback_skips_a_stop_heading_named_in_the_first_paragraph():
-    """The fallback searches past :data:`MIN_ITEM_CHARS`, as the line-end search does. A filer who writes "see
-    Item 1A. Risk Factors below" in the opening paragraph would otherwise end Item 1 there, and what got stored
-    as the business section would be the introduction.
+    """A filer who writes "see Item 1A. Risk Factors below" in his opening paragraph has not ended Item 1
+    there, and what got stored as the business section would otherwise be the introduction. What saves it is
+    the reference word, not the mention's position: an earlier version of the fallback started its search at
+    :data:`MIN_ITEM_CHARS` instead, and that is the version this file's "genuinely short item 1" test rejects.
 
     The mention has to sit more than 400 characters past the start, or the contents-page check skips the start
-    altogether and the pattern path -- which has no such offset, in either version -- decides instead.
+    altogether and the pattern path decides instead.
     """
     text = ("Item 1. Business\nWe begin. " + "Opening paragraph. " * 30
             + "See Item 1A. Risk Factors below for the risks.\n" + BODY
@@ -630,3 +633,143 @@ def test_the_pattern_path_reads_ours_2_s_own_stops_and_not_ours_1_s():
     assert "Risky." not in item
     assert sec_sections.base(quality) == "ok"
     assert "Risky." in sec_sections.cut_item(text, "10-K", version=OURS_1)[0], "ours-1 cannot see that stop"
+
+
+# ── the review of f5699673: the quotation mark that made a real heading a mention ──────────────────────────────
+@pytest.mark.parametrize("name,text,form", [
+    ("a quoted term in the next item's first sentence",
+     "Item 1. Business\n" + BODY + " Item 1A. Risk Factors You should consider the risks (the “Risks”) "
+     "below. " + "Risks abound. " * 1800
+     + " Item 1B. Unresolved Staff Comments None. Item 2. Properties " + BODY, "10-K"),
+    ("the same with no later stop at all",
+     "Item 1. Business\n" + BODY + " Item 1A. Risk Factors You should consider the risks (the “Risks”) "
+     "below. " + "Risks abound. " * 1800, "10-K"),
+    ("a 20-F whose Item 5 heading is followed by a defined term",
+     "Item 4. Information on the Company\n" + BODY + " Item 5. Operating and Financial Review and Prospects "
+     "prepared under (“IFRS”). " + "Risks abound. " * 1800, "20-F"),
+])
+def test_a_quoted_term_after_an_inline_heading_does_not_make_it_a_mention(name, text, form):
+    """:func:`_is_ref` calls a heading a reference when a closing quotation mark follows within 200 characters
+    of the same line. For a heading that begins a line, that line is the heading. For an **inline** one those
+    200 characters are the next item's prose, so one defined term in its first sentence -- and filers define a
+    term in the first sentence of Item 1A as a habit -- turned the real heading into a mention: the slice ran
+    on and still said ``ok``, with every risk factor inside it.
+
+    That is why :func:`_inline_ref` counts only a quotation mark it did not see opened, instead of calling the
+    shared test. The filing is cut right here, and the same filing with straight quotes was always cut right,
+    which is how the cause was found.
+    """
+    old_item, old_quality = sec_sections.cut_item(text, form, version=OURS_1)
+    new_item, new_quality = sec_sections.cut_item(text, form, version=OURS_2)
+    assert (new_quality, new_item) == (old_quality, old_item), name
+    assert "Risks abound" not in new_item, name
+
+
+@pytest.mark.parametrize("mention", [
+    " as discussed under “Item 1A. Risk Factors” of this report. ",
+    " the “Item 1A. Risk Factors” section describes them. ",
+    " see “Part I, Item 1A. Risk Factors”. ",
+])
+def test_a_mention_in_quotation_marks_is_still_skipped(mention):
+    """The other half of the row above: a quotation mark the mention opened itself still marks it a mention,
+    whether or not a reference word comes first. Without this the fix would have been "ignore quotes".
+    """
+    text = ("Item 1. Business\n" + BODY[:3000] + mention + BODY[:3000] + " Item 1A. Risk Factors "
+            + "Risks abound. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert mention.strip()[:20] in item, "the mention belongs to the section, not to its end"
+    assert "Risks abound" not in item
+
+
+def test_an_opening_paragraph_mention_with_no_reference_word_ends_the_slice_like_ours_1_does():
+    """The cost of reading the words instead of the position, written down. "Our risks are listed in the
+    section Item 1A. Risk Factors below" carries no "see", "under" or quotation mark, so it is a heading as far
+    as this rule can tell, and Item 1 is ``short``. ``ours-1`` answers the same, so this is parity and not a
+    regression; telling this mention from a heading needs the hand-checked set (#763).
+    """
+    text = ("Item 1. Business\nOur risks are listed in the section Item 1A. Risk Factors below. "
+            + BODY + " Item 1A. Risk Factors " + "Risks abound. " * 400)
+    assert sec_sections.cut_item(text, "10-K", version=OURS_2) == \
+        sec_sections.cut_item(text, "10-K", version=OURS_1)
+    assert sec_sections.cut_item(text, "10-K", version=OURS_2)[1] == "short"
+
+
+def test_an_indented_heading_still_counts_as_starting_its_own_line():
+    """The line test strips what it finds before the match, so a heading a filer indents is still a heading and
+    not a mention -- which matters because the words before it, across the newline, read as a reference.
+    """
+    text = ("Item 1. Business\n" + BODY + "\nSee\n   Item 1A. Risk Factors\n" + "Risks abound. " * 400)
+    decoy = sec_sections.STOP_PATTERNS_2["10-K"]
+    import re as _re
+    m = _re.compile(decoy, _re.I).search(text, 100)
+    assert not sec_sections._inline_ref(text, m), "indentation is not text before the heading"
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert "Risks abound" not in item
+
+
+@pytest.mark.parametrize("heading,is_an_item", [
+    ("\nItem 1A.\x0c12\nRisk Factors\n", True),    # a form feed is a page break, so the 12 is a page number
+    ("\nItem 1A.\r12\nRisk Factors\n", True),      # and so is a bare carriage return
+    ("\nItem 2.\t01 Completion of Acquisition\n", False),   # a tab is what a tag became
+    ("\nItem 2.\xa001 Completion of Acquisition\n", False),  # and so is a no-break space
+    ("\nItem 2.  01 Completion of Acquisition\n", False),
+    ("\nItem 16. 10-K Summary\n", False),          # the cost: a title opening with a two-digit token
+    ("\nItem 2 .01 Completion of Acquisition\n", True),      # and the sub-item this guard cannot reach
+])
+def test_the_guard_reaches_over_the_spaces_a_tag_becomes_and_not_over_a_page_break(heading, is_an_item):
+    """Which whitespace the guard may cross, and the two costs of the answer. ``ours-1``'s end pattern reads
+    every row here as a heading; the middle three are the sub-item it exists to reject, the first two are page
+    numbers it must not eat, and the last two are what the spelling cannot do: a title whose first token is a
+    two-digit number is lost, and a sub-item whose tag split *before* the full stop is still read as an item.
+    Both only matter to :func:`_holds_another_item`, because Item 15 and Item 16 never follow Item 1.
+    """
+    assert bool(sec_sections._LINE_END_2.search(heading)) is is_an_item
+
+
+def test_an_inline_start_with_no_stop_at_all_is_overrun_on_the_pattern_path_too():
+    """The pattern path's ``closed`` is read by the same label function, and nothing asserted it. A filing
+    served as one paragraph, with a start and no stop anywhere, is the rest of the document.
+    """
+    text = "Cover page. Item 1. Business " + BODY
+    assert sec_sections._line_item_ours_2(text, "10-K") is None, "this must reach the pattern path"
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "overrun"
+    assert item.endswith(BODY.strip()[-40:])
+
+
+def test_a_quoted_term_on_the_following_line_belongs_to_that_line_and_not_to_the_heading():
+    """The quote window stops at the end of the heading's own line, which is the scope the shared test uses.
+
+    **Known output-equivalent mutant.** Dropping that restriction changes no answer on any shape measured,
+    including this one: a defined term on the next line opens its quote before it closes it, and the unopened
+    test already keeps the heading. The restriction only decides a document where a quote opened *before* the
+    heading closes on the line after it, and no filing shape was found that does that. It is kept because "the
+    heading's own line" is the honest scope, not because a test can tell the difference -- and this paragraph is
+    here so the next review does not spend a round rediscovering that.
+    """
+    text = ("Item 1. Business\n" + BODY + " Item 1A. Risk Factors\nWe use the term (“Risks”) below. "
+            + "Risks abound. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert "Risks abound" not in item and "We use the term" not in item
+
+
+def test_a_heading_broken_across_lines_is_judged_by_the_line_its_first_word_is_on():
+    """A stop pattern may match across a newline ("under Item\\n1A. Risk Factors"), because the heading's
+    words are allowed to be split. The line this match belongs to is the one its **first** character sits on --
+    the one carrying "given under" -- and not the one its tail happens to end on. Measuring from the match's
+    end instead puts the line start inside the match, so the words before it read as empty and every such
+    mention becomes a heading.
+    """
+    import re as _re
+    text = ("Item 1. Business\n" + BODY + " more detail is given under Item\n1A. Risk Factors of this report. "
+            + BODY[:2000] + "\nItem 1A. Risk Factors\n" + "Risks abound. " * 400)
+    m = _re.compile(sec_sections.STOP_PATTERNS_2["10-K"], _re.I).search(text, 100)
+    assert "\n" in m.group(), "the fixture must be a heading broken across lines"
+    assert sec_sections._inline_ref(text, m), "its first word sits after 'given under'"
+
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert "more detail is given" in item, "the mention is part of the section"
+    assert "Risks abound" not in item, "and the real heading, further down, is its end"

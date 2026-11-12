@@ -239,14 +239,15 @@ _ITEM = _spaced("item")
 #:   :func:`spaced` exists for, so the guard has to allow for it as the heading words do.
 #:
 #: The spelling kept reads "a full stop, any spaces that are not a newline, then exactly two digits": the sub-item
-#: numbers filers write are .01 to .99, and the pattern stops at the line, so the page number on the next line is
-#: still a page number. "Item 7. 2024 Results" and "Item 2. 3 properties" are items, as they are to ``ours-1``;
+#: numbers filers write are .01 to .99, and the spaces are the ones a tag becomes -- a space, a tab, a
+#: no-break space -- and not the ones that end a line. A newline, a carriage return and a form feed all keep
+#: their page number a page number: "Item 1A.\f12\nRisk Factors" is the heading of Item 1A. "Item 7. 2024 Results" and "Item 2. 3 properties" are items, as they are to ``ours-1``;
 #: so now is "Item 2,3 and 4", because a comma never introduced a sub-item and the guard no longer mentions one.
 #:
 #: **What it costs:** "Item 2. 15 properties are leased" -- a body whose first word is a two-digit number -- is
 #: not read as a heading. A section whose text begins with such a number and whose heading carries no title is
 #: the price of reading the sub-item, which is the shape that was really measured.
-_NOT_SUBITEM = r"(?!\.[^\S\n]*\d\d\b)"
+_NOT_SUBITEM = r"(?!\.[^\S\r\n\f\v]*\d\d\b)"
 
 _LINE_START_2 = {
     "10-K": re.compile(rf"(?im)^[^\S\n]*{_ITEM}s?\s{{0,3}}(1|i)\b(?:\s*(?:and|&|,)\s*2\b)?"
@@ -300,22 +301,38 @@ def _inline_ref(text: str, m: re.Match) -> bool:
     **inline** patterns: they match "Item 1A. Risk Factors" wherever it appears, including in the middle of a
     sentence that only talks about Item 1A.
 
-    Two tests, and both are needed.
+    Three tests, and each is here for a measured reason.
 
-    - :func:`_is_ref` is the shared reference test: "see", "under", "refer to" or an opening quote right before.
-    - **A heading that starts its own line is kept even so.** ``_is_ref`` reads the forty characters before the
-      match with the newline stripped off, so a filer who writes "See\nItem 1A. Risk Factors" as a page's last
-      word and the next page's heading looks like a reference to it. ``ours-1`` rejects that heading in its line
-      rule and then stops on it in its pattern rule, and ends Item 1 in the right place; this keeps that answer
-      (the shared ``suspect_tail_cross_reference`` case).
+    - **The words before it.** :data:`_REF_BEFORE` -- "see", "under", "refer to" or an opening quote, right
+      before the match. This is the half that does the work.
+    - **A heading that starts its own line is kept even so.** The before-test reads the forty characters before
+      the match with the newline stripped off, so a filer who writes "See\nItem 1A. Risk Factors" as a page's
+      last word and the next page's heading looks like a reference to it. ``ours-1`` rejects that heading in its
+      line rule and then stops on it in its pattern rule, and ends Item 1 in the right place; the line test
+      keeps that answer (the shared ``suspect_tail_cross_reference`` case).
+    - **A closing quotation mark after it, but only an unopened one.** ``...under "Item 1A. Risk Factors" of
+      this report`` closes a quote it did not open, and that is what marks it a mention. :func:`_is_ref` -- the
+      shared test, which ``ours-1`` applies to headings that begin a line -- looks for any ``”`` in the
+      next 200 characters of the line, and **this function may not reuse it**: for an inline stop those 200
+      characters are the next item's prose, so one quoted term in its first sentence ("...the risks (the
+      “Risks”) below") made the real Item 1A heading a mention. Measured: ``ok`` on a 52,273-character
+      slice with every risk factor in it, where ``ours-1`` answers ``ok`` on 26,999. With straight quotes the
+      same filing was already right, which is how the cause was found.
 
-    **Not applied without the line test, deliberately.** An inline mention that no reference word precedes --
-    "...of this report. Item 1A. Risk Factors" in a filing served as one paragraph -- is indistinguishable from
-    a heading here, and ends the slice. ``ours-1`` does the same, so this is parity and not a regression; which
-    answer is right is a question for the hand-checked set (#763), not for a shape built in a test.
+    **The before-test is not applied without the line test, deliberately.** An inline mention that no reference
+    word precedes -- "...of this report. Item 1A. Risk Factors" in a filing served as one paragraph -- is
+    indistinguishable from a heading here, and ends the slice. ``ours-1`` does the same, so this is parity and
+    not a regression; which answer is right is a question for the hand-checked set (#763), not for a shape
+    built in a test.
     """
     line_start = text.rfind("\n", 0, m.start()) + 1
-    return bool(text[line_start:m.start()].strip()) and _is_ref(text, m)
+    if not text[line_start:m.start()].strip():
+        return False                      # a heading of its own, whatever the words around it look like
+    if _REF_BEFORE.search(text[max(0, m.start() - 40):m.start()].rstrip()):
+        return True
+    window = text[m.start():m.start() + 200].split("\n", 1)[0]
+    opened, closed = window.find("“"), window.find("”")
+    return closed >= 0 and (opened < 0 or closed < opened)
 
 
 def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
