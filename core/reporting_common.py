@@ -71,12 +71,12 @@ function boardSettingsReset(btn, out, board){
 # The shell (templates/dashboard.html) renders ``THEME_CSS`` and ``THEME_JS``; a board adopts them in its own PR
 # (one per board) by using these names instead of its own palette. Dark is the default on every device (avo,
 # 25 Oct 2026). The palette is the warm-neutral "full design system" avo picked on 12 Nov 2026 (13F thread,
-# option D of four skill mocks): warm paper / charcoal neutrals and, picked the same day from three colour families ("Mürekkep"), one ink-blue
-# ``accent`` for selection, sort and focus,
-# muted ``pos`` / ``neg`` / ``amber``, and ``data-1`` / ``data-2`` for chart series. Light applies when the reader chooses
-# Light, or chooses Auto on a device that prefers light. The choice is ``localStorage[THEME_STORAGE_KEY]``
-# ("light" / "auto"; absent = dark), set as ``data-theme`` on ``<html>`` ("dark" / "light" / "auto"). The
-# shell copies that attribute onto every board iframe (same origin).
+# option D of four skill mocks) in the "Mürekkep" colours he picked the same day from three families: warm paper /
+# charcoal neutrals, one ink-blue ``accent`` for selection, sort and focus, muted ``pos`` / ``neg`` / ``amber``,
+# and ``data-1`` / ``data-2`` for chart series. Light applies when the reader chooses Light, or chooses Auto on a
+# device that prefers light. The choice is ``localStorage[THEME_STORAGE_KEY]`` ("light" / "auto"; absent = dark),
+# set as ``data-theme`` on ``<html>`` ("dark" / "light" / "auto"). The shell copies that attribute onto every
+# board iframe (same origin).
 THEME_STORAGE_KEY = "rc-theme"
 THEME_TOKENS = {
     "dark": {
