@@ -43,6 +43,34 @@ def seeded_totals(serve_13f_totals):
     return serve_13f_totals(TOTALS)
 
 
+def _served_shares(dashboard, ticker: str, shares: float) -> None:
+    """The cover-page count in the dashboard's own served prices file: where "% Out" divides since #646 PR 1.
+
+    The ``ownership_snapshot`` rows stay beside it - they still carry insider %, and keeping them proves the
+    board reads this number and not that one.
+    """
+    from datetime import date
+
+    import duckdb
+    path = Path(dashboard.env["RC_MARKET_DIR"]) / "prices.duckdb"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(path))
+    try:
+        con.execute("CREATE TABLE IF NOT EXISTS security_symbol (security_id VARCHAR, symbol VARCHAR, "
+                    "valid_from DATE, valid_to DATE, source VARCHAR)")
+        con.execute("CREATE TABLE IF NOT EXISTS shares_class (security_id VARCHAR, measure VARCHAR, as_of DATE, "
+                    "value DOUBLE, symbol VARCHAR, cik VARCHAR, class_member VARCHAR, source VARCHAR)")
+        con.execute("DELETE FROM security_symbol WHERE symbol = ?", [ticker])
+        con.execute("DELETE FROM shares_class WHERE symbol = ?", [ticker])
+        con.execute("INSERT INTO security_symbol (security_id, symbol, valid_from, source) VALUES (?, ?, ?, ?)",
+                    [f"sym:{ticker}", ticker, date(2026, 1, 2), "alpaca/bars"])
+        con.execute("INSERT INTO shares_class (security_id, measure, as_of, value, symbol, source) "
+                    "VALUES (?, 'outstanding', ?, ?, ?, 'sec/cover_shares')",
+                    [f"sym:{ticker}", date(2026, 1, 2), shares, ticker])
+    finally:
+        con.close()
+
+
 @pytest.fixture
 def seeded_inputs(dashboard, seeded_totals, monkeypatch):
     """The snapshot inputs the board reads since #375 F2: NVDA's shares outstanding (UW) and insider % (yfinance) in
@@ -61,6 +89,7 @@ def seeded_inputs(dashboard, seeded_totals, monkeypatch):
 
     rawstore.write_rows("ownership_snapshot", [own("uw_info", 24_000_000.0, None),
                                                own("yfinance", 30_000_000.0, 0.035)])
+    _served_shares(dashboard, "NVDA", 24_000_000.0)   # the denominator's home since #646 PR 1
     from RevenueChaser.core.tests.d01_seed import write_d01
     write_d01([
         {"ticker": "NVDA", "session_date": date.fromisoformat(d), "open": c, "high": c, "low": c, "close": c,
@@ -158,6 +187,7 @@ def seeded_inputs(dashboard, seeded_totals, monkeypatch):
 
     rawstore.write_rows("ownership_snapshot", [own("uw_info", 24_000_000.0, None),
                                                own("yfinance", 30_000_000.0, 0.035)])
+    _served_shares(dashboard, "NVDA", 24_000_000.0)   # the denominator's home since #646 PR 1
     from RevenueChaser.core.tests.d01_seed import write_d01
     write_d01([
         {"ticker": "NVDA", "session_date": date.fromisoformat(d), "open": c, "high": c, "low": c, "close": c,
