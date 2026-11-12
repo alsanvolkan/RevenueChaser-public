@@ -30,7 +30,9 @@ BOARD, TABLE = "module_sec_13f", "sec13f_metrics_history"
 # 6: the metrics and the CUSIP map come from the ownership serving store, not the retired derive (G9).
 # 7: streak, accel and % out skip a quarter still arriving, and the recorded quarter is the one they are from
 #    (#514). effective_config sees none of those, which is what this version is for.
-SELECTION_VERSION = "7"
+# 8: shares, flows and the close on today's share basis through the split factor of each quarter end, and the board's
+#    quarters a rolling window of the last 6 settled ones (#732, owner 12 Nov 2026). Short % is no longer read.
+SELECTION_VERSION = "8"
 _LAST = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow", "sell_flow",
          "breadth", "breadth_chg")
 _ENTRY = ("name", "sector", "streak", "accel", "pct_out", "price", "price_delta", "shares_outstanding",
@@ -41,7 +43,7 @@ def effective_config() -> dict:
     """The settings the board's quarters are chosen with. The totals' own rules are the builder's (G9), and its
     serving schema version says when they change."""
     from RevenueChaser.rcdata import serving
-    return {"START_QUARTER": engine.START_QUARTER,
+    return {"START_QUARTER": engine.START_QUARTER, "WINDOW_QUARTERS": report.WINDOW_QUARTERS,
             "OWNERSHIP_SERVING_SCHEMA": serving.SERVING_SCHEMA_VERSION["ownership"]}
 
 
