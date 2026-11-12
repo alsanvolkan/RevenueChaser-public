@@ -84,7 +84,9 @@ def test_the_source_search_sees_a_need_named_in_the_board_and_not_one_named_in_i
 
 def test_which_boards_read_a_need_is_answered_from_the_same_record():
     assert "module_earnings_radar" in boards.readers_of("earnings.next")
-    assert boards.readers_of("prices.bars") == ("module_comovement",)
+    # The Watch lists board joined this need in #786: its Performance, Risk and Technicals columns are derived
+    # from the same daily bars, and the record is the one place that says so.
+    assert boards.readers_of("prices.bars") == ("module_comovement", "module_watchlists")
     with pytest.raises(needs.UnknownNeed):
         boards.readers_of("no.such.need")
 
