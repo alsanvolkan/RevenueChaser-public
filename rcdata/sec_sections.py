@@ -861,6 +861,13 @@ def _printed_as_a_heading(s: str) -> bool:
 #: round 3 found again here (12.4 s on 32,000 blanks after the title).
 _H_AFTER = re.compile(rf"[\s.:{_DASH}\d]{{0,40}}([^\W\d_])")
 
+#: What ends a line. :data:`_H_AFTER` crosses a line ending with ``\s``, so the test for "the prose is on the
+#: next line" has to read the same set: round 5 found it asking for ``"\n"`` alone, which let a form feed or a
+#: carriage return put the prose on another line while the introduction test was skipped
+#: ("We now turn to our RISK FACTORS" ended a section at 27,019 characters behind a ``\x0c``).
+#: ``strip_html`` does not remove either character.
+_VERTICAL = re.compile(r"[\n\r\v\f\x1c-\x1e\u0085\u2028\u2029]")
+
 
 def _runs_into_prose(text: str, end: int) -> bool:
     """True when what follows an inline title reads like the start of its section's first sentence.
@@ -880,33 +887,54 @@ def _runs_into_prose(text: str, end: int) -> bool:
 
 
 #: What may stand between a run-in heading and the start of its line: the page number the filer prints there
-#: and the item number in front of the title, which is EXK's ``9 ITEM 4:``. It has to carry a digit, because
-#: whitespace alone leaves a title at the end of an English sentence looking like a heading.
+#: and the item number in front of the title, which is EXK's ``9 ITEM 4:``. One of the two has to be there,
+#: because whitespace alone leaves a title at the end of an English sentence looking like a heading.
 #:
 #: A page number may stand in front of the item number, as EXK's ``9 ITEM 4:`` does, but only there: left
 #: optional on its own it read the year out of "Production fell in 2025. 12" and left the sentence in front of
-#: it, which is the opposite of what the test below is for.
+#: it (round 4).
 #:
-#: Anchored at the end with ``\Z`` and with no leading star, which round 4 found this pattern needed twice over.
-#: The star made it quadratic on a run of horizontal blanks -- 21.9 s on 32,000, the same defect round 3 removed
-#: from :data:`_H_AFTER` and reintroduced here -- and ``strip_html`` collapses runs of ``[ \t]`` but not of
-#: ``&emsp;``, so the run reaches this code.
-_H_BEFORE = re.compile(rf"(?:(?:\d[\d.:{_DASH}]*[^\S\n]+)?item[^\S\n]+)?\d[\d.:{_DASH}]*\Z", re.IGNORECASE)
+#: Anchored at the end with ``\Z``, with no leading star and with a lookbehind in front of each figure, which
+#: round 4 and round 5 each found this pattern needed. The star made it quadratic on a run of horizontal blanks
+#: -- 21.9 s on 32,000, the same defect round 3 removed from :data:`_H_AFTER` and reintroduced here -- and
+#: ``strip_html`` collapses runs of ``[ \t]`` but not of ``&emsp;``, so the run reaches this code. Without the
+#: lookbehind the search restarted inside a run of **digits** and ran to its end each time: 15.1 s on 32,000,
+#: which round 5 measured as the same shape in the one place the ``\Z`` anchor had not reached.
+_H_BEFORE = re.compile(rf"(?:(?:(?<![\d.:{_DASH}])\d[\d.:{_DASH}]*[^\S\n]+)?(?P<item>item)[^\S\n]+)?"
+                       rf"(?<![\d.:{_DASH}])\d[\d.:{_DASH}]*\Z", re.IGNORECASE)
+
+#: The punctuation a sentence ends on, as a compiled class. **Not a string tested with ``in``:** :data:`_DASH`
+#: is a regex class fragment, so ``".:;!?" + _DASH`` is the characters ``. : ; ! ? \ - u 0 1 2 5`` -- it
+#: accepts the letter ``u`` and four digits and refuses a real en or em dash. Round 5 measured what that cost:
+#: "had mines in Peru 2 MATERIAL PROPERTIES" ended a section where "in Chile" ran on, and
+#: "...completed <em dash> 9 ITEM 4:" lost its heading where an ASCII hyphen kept it.
+_H_SENTENCE_END = re.compile(rf"[.:;!?{_DASH}]\Z")
+
+#: What may stand after a sentence's punctuation and before the page number: the marks that close a quotation
+#: or a bracket, which do not un-end the sentence they follow.
+_H_CLOSERS = " \t\"'\u2019\u201d)]\u00bb"
 
 
 def _introduced_as_a_heading(text: str, start: int) -> bool:
-    """True when a run-in heading at ``start`` is introduced the way one is: by its line's start, or by a page
-    or item number and nothing else.
+    """True when a run-in heading at ``start`` is introduced the way one is.
 
     This is asked only of a title whose prose begins on the **next** line, where the title's own line carries
-    no evidence after it. EXK's ``No significant acquisitions were completed. 9 ITEM 4: RISK FACTORS`` is
-    introduced by ``9 ITEM 4:``; ``We now turn to our RISK FACTORS`` is introduced by the rest of its sentence,
-    and a sentence that ends on the section's name is not a heading of it.
+    no evidence after it.
 
-    **The number has to be introduced too** (round 4): a page number stands at a line's start or after the
-    sentence the page ends on, so what comes before it is nothing or a sentence's punctuation. Without that
-    test, any sentence ending in a figure introduced a heading -- "the Company had 2 MATERIAL PROPERTIES" ended
-    a section at 27,030 characters where the same sentence written "two" runs on to 54,073.
+    - **Its line's start**, or nothing but blanks before it.
+    - **An item number**, which is EXK's ``No significant acquisitions were completed. 9 ITEM 4: RISK
+      FACTORS``. The word "item" is itself the introduction and nothing in front of it is asked about -- round
+      5's second finding was this test being applied to the ``ITEM n`` form as well, where it then lost the
+      heading behind a closing quote, a bracket, a table row, a running footer or a list item, each of which
+      returned the section with every risk factor inside it.
+    - **A bare page number**, and then what stands in front of it is asked about, because a page number stands
+      at a line's start or after the sentence whose page it ends. Without that, any sentence ending in a figure
+      introduced a heading -- "the Company had 2 MATERIAL PROPERTIES" ended a section at 27,030 characters
+      where the same sentence written "two" ran on to 54,073 (round 4).
+
+    **The cost, which is not guessed at:** a bare page number after a running footer or a table row -- "Annual
+    Information Form 12 RISK FACTORS" -- is refused, because nothing in the text separates it from "had 2
+    MATERIAL PROPERTIES". Counting that shape is #763's work.
     """
     bare = text[text.rfind("\n", 0, start) + 1:start].rstrip()
     if not bare:
@@ -914,8 +942,10 @@ def _introduced_as_a_heading(text: str, start: int) -> bool:
     m = _H_BEFORE.search(bare)
     if m is None:
         return False
-    before = bare[:m.start()].rstrip()
-    return not before or before[-1] in ".:;!?" + _DASH
+    if m.group("item"):
+        return True
+    before = bare[:m.start()].rstrip(_H_CLOSERS)
+    return not before or _H_SENTENCE_END.search(before) is not None
 
 
 def _aif_contents_entry(text: str, m: re.Match) -> bool:
@@ -958,7 +988,7 @@ def _inline_prose_follows(text: str, m) -> bool:
     if not _runs_into_prose(text, m.end()):
         return False
     gap = text[m.end():_H_AFTER.match(text, m.end()).end()]
-    return "\n" not in gap or _introduced_as_a_heading(text, m.start())
+    return not _VERTICAL.search(gap) or _introduced_as_a_heading(text, m.start())
 
 
 def _aif_ends(text: str) -> list[int]:
@@ -974,13 +1004,21 @@ def _aif_ends(text: str) -> list[int]:
     numbered line stop further on. A line-start stop has to pass the reference test; an inline one has to pass
     it, be printed as a heading, and run into prose.
 
-    **The two branches can reach the same offset, and then the inline one decides** (round 4). A title in
-    capitals, alone on its line, with a capital on the next line is found by both; :func:`_ref_ours_2` refuses
-    it after "see" and :func:`_inline_ref` keeps it, because a heading that opens its own line is kept even
-    after a reference word -- which is ``ours-2``'s item rule's own measured correction and ``ours-1``'s
-    behaviour in its pattern rule. So the reference test on the line branch decides only where the inline
-    branch does not match: a stop the inline search does not read (``dividends``), or one whose next line opens
-    in lower case. Both are pinned by tests.
+    **Where both branches reach the same offset the inline one decides** (round 4). A title in capitals, alone
+    on its line, with a capital on the next line is found by both; :func:`_ref_ours_2` refuses it after "see"
+    and :func:`_inline_ref` keeps it, because a heading that opens its own line is kept even after a reference
+    word -- which is ``ours-2``'s item rule's own measured correction and ``ours-1``'s behaviour in its pattern
+    rule. So the reference test on the line branch decides where the inline branch does not match the same
+    offset, and round 5 counted three such places rather than the two this said before:
+
+    - a stop the inline search does not read at all (``dividends``);
+    - a stop whose next line opens in lower case, which fails :func:`_runs_into_prose`;
+    - a stop in **title case**, which fails :func:`_printed_as_a_heading` -- the third, and the one the earlier
+      wording missed.
+
+    A **numbered** stop reaches two different offsets: the line stop at the number is refused as a reference and
+    the inline stop at the title is taken, so the body ends on a dangling ``12.`` or ``ITEM 12:``. That is the
+    same in every version of this rule and is a wart for #763's set, not something another built string settles.
     """
     out = [e.start() for e in _AIF_STOP_2.finditer(text) if not _ref_ours_2(text, e)]
     out += [e.start() for e in _AIF_STOP_INLINE_2.finditer(text)
