@@ -70,60 +70,76 @@ function boardSettingsReset(btn, out, board){
 # ── Theme tokens: one palette per scheme, defined here only (#184) ──
 # The shell (templates/dashboard.html) renders ``THEME_CSS`` and ``THEME_JS``; a board adopts them in its own PR
 # (one per board) by using these names instead of its own palette. Dark is the default on every device (avo,
-# 25 Oct 2026) and is the shell's look before #184, value for value. Light applies when the reader chooses
-# Light, or chooses Auto on a device that prefers light. The choice is ``localStorage[THEME_STORAGE_KEY]``
-# ("light" / "auto"; absent = dark), set as ``data-theme`` on ``<html>`` ("dark" / "light" / "auto"). The
-# shell copies that attribute onto every board iframe (same origin).
+# 25 Oct 2026). The palette is the warm-neutral "full design system" avo picked on 12 Nov 2026 (13F thread,
+# option D of four skill mocks) in the "Mürekkep" colours he picked the same day from three families: warm paper
+# neutrals in light, a navy-black "Gece" dark (his second pick, 12 Nov 13:50 Amsterdam, of three dark options), one
+# ink-blue ``accent`` for selection, sort and focus, muted ``pos`` / ``neg`` / ``amber``,
+# and ``data-1`` / ``data-2`` for chart series. Light applies when the reader chooses Light, or chooses Auto on a
+# device that prefers light. The choice is ``localStorage[THEME_STORAGE_KEY]`` ("light" / "auto"; absent = dark),
+# set as ``data-theme`` on ``<html>`` ("dark" / "light" / "auto"). The shell copies that attribute onto every
+# board iframe (same origin).
 THEME_STORAGE_KEY = "rc-theme"
 THEME_TOKENS = {
     "dark": {
-        "bg": "#05111F", "fg": "#C5C6C8", "bright": "#F0F0F0", "card": "#0B1828",
-        "border": "rgba(197,198,200,.15)", "sidebar": "#0B1828", "pos": "#34D399", "neg": "#F87171",
-        "amber": "#FBBF24", "sky": "#0EA5E9", "muted": "#9C9DA1",
-        "input-bg": "#101F33", "input-border": "#2F434C", "hover": "#18293a", "topbar": "rgba(12,20,24,.8)",
-        "nav-fg": "rgba(224,233,235,.75)", "nav-on": "#101F33", "hover-faint": "rgba(255,255,255,.04)",
-        "frame-bg": "#12131c", "overlay": "rgba(5,17,31,.7)", "scroll-thumb": "#5b7a8c",
-        "scroll-thumb-hover": "#6f93a7", "scroll-track": "#0b1620", "primary-bg": "#E2E3E5",
-        "primary-fg": "#0A1420", "oi-bg": "rgba(11,24,40,.55)", "scrim": "rgba(0,0,0,.55)",
-        "shadow": "rgba(0,0,0,.6)", "badge-blue": "#38BDF8", "badge-gray": "#94A3B8",
-        "hover-soft": "rgba(255,255,255,.06)", "hover-day": "rgba(255,255,255,.08)",
-        "gex-pos-bg": "rgba(52,211,153,.35)", "gex-pos-fg": "#eafff5",
-        "gex-neg-bg": "rgba(248,113,113,.35)", "gex-neg-fg": "#ffd9d9",
+        "bg": "#11161D", "fg": "#D5DBE3", "bright": "#F1F4F8", "card": "#192029", "card-2": "#1F2731",
+        "border": "rgba(213,219,227,.10)", "sidebar": "#141A22", "pos": "#6CC497", "neg": "#E98A7F",
+        "amber": "#E0B060", "sky": "#8DB8DA", "muted": "#98A2AF", "accent": "#8DB8DA",
+        "accent-soft": "rgba(141,184,218,.14)", "pos-soft": "rgba(108,196,151,.12)",
+        "neg-soft": "rgba(233,138,127,.12)", "amber-soft": "rgba(224,176,96,.12)", "focus": "#8DB8DA",
+        "input-bg": "#1E2631", "input-border": "#323C49", "hover": "#212A35", "topbar": "rgba(17,22,29,.85)",
+        "nav-fg": "rgba(241,244,248,.72)", "nav-on": "#26303C", "hover-faint": "rgba(255,255,255,.03)",
+        "frame-bg": "#11161D", "overlay": "rgba(17,22,29,.72)", "scroll-thumb": "#3C4655",
+        "scroll-thumb-hover": "#4C5767", "scroll-track": "#141A22", "primary-bg": "#E6EBF1",
+        "primary-fg": "#11161D", "oi-bg": "rgba(25,32,41,.6)", "scrim": "rgba(0,0,0,.5)",
+        "shadow": "rgba(0,0,0,.35)", "badge-blue": "#8DB8DA", "badge-gray": "#A3ACB8",
+        "hover-soft": "rgba(255,255,255,.05)", "hover-day": "rgba(255,255,255,.08)",
+        "gex-pos-bg": "rgba(108,196,151,.20)", "gex-pos-fg": "#CDEEDC", "gex-neg-bg": "rgba(233,138,127,.20)",
+        "gex-neg-fg": "#F6D3CE", "data-1": "#4F93D2", "data-2": "#D9773F", "grid": "rgba(213,219,227,.07)",
     },
     "light": {
-        "bg": "#F4F6F9", "fg": "#2A3340", "bright": "#0B1220", "card": "#FFFFFF",
-        "border": "rgba(15,23,42,.14)", "sidebar": "#FFFFFF", "pos": "#047857", "neg": "#B91C1C",
-        "amber": "#B45309", "sky": "#0369A1", "muted": "#5B6472",
-        "input-bg": "#FFFFFF", "input-border": "#C3CCD8", "hover": "#E8EDF3", "topbar": "rgba(255,255,255,.85)",
-        "nav-fg": "#3A4452", "nav-on": "#E3EEF8", "hover-faint": "rgba(15,23,42,.05)",
-        "frame-bg": "#FFFFFF", "overlay": "rgba(244,246,249,.75)", "scroll-thumb": "#9AA8B6",
-        "scroll-thumb-hover": "#7D8D9E", "scroll-track": "#E6EBF0", "primary-bg": "#0B1220",
-        "primary-fg": "#FFFFFF", "oi-bg": "rgba(255,255,255,.7)", "scrim": "rgba(15,23,42,.35)",
-        "shadow": "rgba(15,23,42,.18)", "badge-blue": "#0369A1", "badge-gray": "#475569",
-        "hover-soft": "rgba(15,23,42,.06)", "hover-day": "rgba(15,23,42,.09)",
-        "gex-pos-bg": "rgba(4,120,87,.16)", "gex-pos-fg": "#065F46",
-        "gex-neg-bg": "rgba(185,28,28,.14)", "gex-neg-fg": "#991B1B",
+        "bg": "#F6F5F1", "fg": "#2E2C28", "bright": "#1A1916", "card": "#FFFFFF", "card-2": "#F3F1EC",
+        "border": "rgba(40,36,30,.12)", "sidebar": "#EFEDE7", "pos": "#2F7A55", "neg": "#B0443A",
+        "amber": "#9A6212", "sky": "#2F6690", "muted": "#67635B", "accent": "#2F6690",
+        "accent-soft": "rgba(47,102,144,.10)", "pos-soft": "rgba(47,122,85,.10)",
+        "neg-soft": "rgba(176,68,58,.09)", "amber-soft": "rgba(154,98,18,.10)", "focus": "#2F6690",
+        "input-bg": "#FFFFFF", "input-border": "#D6D2C8", "hover": "#EFECE5", "topbar": "rgba(246,245,241,.85)",
+        "nav-fg": "#4A4741", "nav-on": "#E9E5DC", "hover-faint": "rgba(40,36,30,.04)", "frame-bg": "#F6F5F1",
+        "overlay": "rgba(246,245,241,.75)", "scroll-thumb": "#C4BFB3", "scroll-thumb-hover": "#A9A396",
+        "scroll-track": "#EEEBE4", "primary-bg": "#2E2C28", "primary-fg": "#FAF9F6",
+        "oi-bg": "rgba(255,255,255,.7)", "scrim": "rgba(30,28,24,.32)", "shadow": "rgba(30,28,24,.10)",
+        "badge-blue": "#2F6690", "badge-gray": "#67635B", "hover-soft": "rgba(40,36,30,.06)",
+        "hover-day": "rgba(40,36,30,.09)", "gex-pos-bg": "rgba(47,122,85,.14)", "gex-pos-fg": "#1F5A3D",
+        "gex-neg-bg": "rgba(176,68,58,.12)", "gex-neg-fg": "#8A3128", "data-1": "#2A6FB0", "data-2": "#C0602E",
+        "grid": "rgba(40,36,30,.08)",
     },
 }
 
 
-# ── Scale tokens: one set, both schemes (#764) ──
-# Colour is per scheme; size, rhythm and timing are not, so these live outside ``THEME_TOKENS`` and are
-# written into the base ``:root`` only. Two of them point back at a colour token (``--focus`` at ``--sky``,
-# the float shadow at ``--shadow``), which is how they stay right in light without a second copy.
-# ``--c1``..``--c6`` is the categorical chart ramp: a fixed order, never cycled — a seventh series is
-# "other". The ramp was checked against both board surfaces for lightness band, chroma floor, colour-vision
-# separation of adjacent pairs and 3:1 contrast; reordering it fails the deutan check, so the order is the
-# contract, not a preference.
+# The scales that go with the palette, the same in both schemes (theme D, avo 12 Nov 2026): one type scale, a 4 px
+# spacing scale, three radii and three elevations (0 = border only, 1 = card, 2 = dialog / popover). A board uses
+# the names (``var(--fs-base)``, ``var(--sp-4)``, ``var(--elev-1)``) instead of its own pixel values.
+# #764 landed a parallel set the same day (``--s1``.., ``--f-*``, ``--e-*``); those names stay as aliases of D's,
+# so a board written against either set gets the same values, and D's names are the ones to use. ``--focus`` is
+# a colour token per scheme here (it follows ``--accent``), not a scale token.
+# ``--c1``..``--c6`` (#764) is the categorical chart ramp for more than two series: a fixed order, never cycled — a
+# seventh series is "other"; reordering it fails the deutan check, so the order is the contract. Two series use
+# ``--data-1`` / ``--data-2``.
 THEME_SCALE = {
+    "font-sans": "Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif",
+    "fs-xs": "11px", "fs-sm": "12.5px", "fs-base": "14px", "fs-md": "16px", "fs-lg": "20px", "fs-xl": "26px",
+    "sp-1": "4px", "sp-2": "8px", "sp-3": "12px", "sp-4": "16px", "sp-5": "24px", "sp-6": "32px", "sp-7": "48px",
+    "r-sm": "6px", "r-md": "10px", "r-lg": "14px", "r-pill": "999px",
+    "elev-1": "0 1px 2px var(--shadow)", "elev-2": "0 12px 32px var(--shadow)",
+    "touch": "44px",
+    # #764's names, as aliases of D's (the space ladder keeps its own values, which are D's, plus 64 px).
     "s1": "4px", "s2": "8px", "s3": "12px", "s4": "16px",
     "s5": "24px", "s6": "32px", "s7": "48px", "s8": "64px",
-    "r-sm": "6px", "r-md": "10px", "r-pill": "999px",
-    "f-xs": "12px", "f-sm": "13px", "f-md": "14px", "f-lg": "17px", "f-xl": "24px",
+    "f-xs": "var(--fs-xs)", "f-sm": "var(--fs-sm)", "f-md": "var(--fs-base)", "f-lg": "var(--fs-md)",
+    "f-xl": "var(--fs-lg)",
     "w-reg": "400", "w-bold": "600",
     "lh-body": "1.55", "lh-head": "1.2",
-    "e-flat": "0 0 0 1px var(--border)", "e-float": "0 10px 24px var(--shadow)",
-    "focus": "var(--sky)", "motion": "150ms ease", "tap": "44px",
+    "e-flat": "0 0 0 1px var(--border)", "e-float": "var(--elev-2)",
+    "motion": "150ms ease", "tap": "var(--touch)",
     "c1": "#0C87CC", "c2": "#C77C09", "c3": "#0A9E6E",
     "c4": "#8B5CF6", "c5": "#E8445F", "c6": "#2F9E8F",
 }
@@ -139,7 +155,11 @@ def _scale_vars() -> str:
 
 # Bare CSS (no <style>), so a page puts it inside its own style block.
 THEME_CSS = (
-    f":root{{{_theme_vars('dark')};{_scale_vars()}}}\n"
+    # Inter, served by the dashboard itself (app/static/fonts, SIL OFL 1.1 in Inter-OFL.txt): no font host, so the
+    # boards look the same offline and on a phone, which would otherwise fall back to its own sans.
+    "@font-face{font-family:Inter;font-style:normal;font-weight:100 900;font-display:swap;"
+    "src:url(/static/fonts/InterVariable.woff2) format('woff2')}\n"
+    f":root{{{_scale_vars()};{_theme_vars('dark')}}}\n"
     f"@media (prefers-color-scheme: light){{:root[data-theme=\"auto\"]{{{_theme_vars('light')}}}}}\n"
     f":root[data-theme=\"light\"]{{{_theme_vars('light')}}}\n"
     "@media (prefers-reduced-motion: reduce){:root{--motion:0ms}}\n"
@@ -182,11 +202,11 @@ _SUMMARY_TOUCH = """@media (max-width: 900px), (pointer: coarse){
 # Fallbacks: a board without the standard tokens (Earnings Radar, SPX Gamma, LEAPS) still gets the dark box
 # (#383 C3).
 HELP_CSS = """<style>
-.help{background:var(--panel,#12161e);border:1px solid var(--border,#232a38);border-radius:10px;margin-bottom:14px;color:var(--muted,#8a93a6);font-size:12.5px}
-.help summary{cursor:pointer;padding:9px 14px;font-weight:600;color:var(--accent,#0EA5E9)}
+.help{background:var(--card,#12161e);border:1px solid var(--border,#232a38);border-radius:10px;margin-bottom:14px;color:var(--muted,#8a93a6);font-size:12.5px}
+.help summary{cursor:pointer;padding:9px 14px;font-weight:600;color:var(--sky,#0EA5E9)}
 .help .body{padding:0 14px 12px;line-height:1.7}
-.help b{color:var(--text,#d7dce5)}
-.help code{color:var(--neon,#00e6a8)}
+.help b{color:var(--fg,#d7dce5)}
+.help code{color:var(--pos,#00e6a8)}
 """ + _SUMMARY_TOUCH % ".help" + """
 </style>"""
 
@@ -389,7 +409,7 @@ __all__ = [
     "WATCHLIST_JS", "WATCHLIST_CSS", "WATCH_LABELS", "watch_buttons_html", "watchlist_html",
     "JOB_JS",
     "HELP_CSS", "help_html",
-    "THEME_TOKENS", "THEME_CSS", "THEME_JS", "THEME_STORAGE_KEY",
+    "THEME_TOKENS", "THEME_SCALE", "THEME_CSS", "THEME_JS", "THEME_STORAGE_KEY",
     "universe_provenance_html",
     "provider_health_html",
     "notice_html",
@@ -407,12 +427,12 @@ def help_html(body: str) -> str:
 
 # ── "Recorded sessions": what the result history holds for a board (#383 C7, K2) ──
 HISTORY_CSS = """<style>
-.rc-history{background:var(--panel,#12161e);border:1px solid var(--border,#232a38);border-radius:10px;margin:14px 0;color:var(--muted,#8a93a6);font-size:12.5px}
-.rc-history summary{cursor:pointer;padding:9px 14px;font-weight:600;color:var(--accent,#0EA5E9)}
+.rc-history{background:var(--card,#12161e);border:1px solid var(--border,#232a38);border-radius:10px;margin:14px 0;color:var(--muted,#8a93a6);font-size:12.5px}
+.rc-history summary{cursor:pointer;padding:9px 14px;font-weight:600;color:var(--sky,#0EA5E9)}
 .rc-history .body{padding:0 14px 12px;line-height:1.6;overflow-x:auto}
 .rc-history table{border-collapse:collapse;width:100%;font-size:12px}
 .rc-history th,.rc-history td{text-align:left;padding:4px 8px;border-top:1px solid var(--border,#232a38);vertical-align:top}
-.rc-history th{color:var(--text,#d7dce5);font-weight:600}
+.rc-history th{color:var(--fg,#d7dce5);font-weight:600}
 """ + _SUMMARY_TOUCH % ".rc-history" + """
 </style>"""
 _HISTORY_NOTES = 2          # recorded warnings shown per row; the rest are counted

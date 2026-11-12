@@ -123,7 +123,7 @@ not an equity board.
 | Refresh | re-reads `.store/` with zero network: instant and always safe |
 | Fetch | per dataset, one existing asynchronous job; it hits a provider and can take minutes |
 
-Same tokens as the rest of the app (`--bg #05111F`, `--accent #0EA5E9`). There is deliberately no
+Same tokens as the rest of the app (`THEME_TOKENS` in `core/reporting_common.py`). There is deliberately no
 "fetch everything" button: the locks, the provider quotas and the hours make it a trap.
 
 ### 2.0a The control board (design v28, 30 Oct 2026)

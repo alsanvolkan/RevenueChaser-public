@@ -12,23 +12,55 @@ import pytest
 
 from RevenueChaser.core import reporting_common as rc
 
-# The shell's :root before #184 (templates/dashboard.html:12-16 on 3d6ad16) plus the colours it hard-coded
-# elsewhere. "Dark when dark is chosen" means exactly these values.
-SHELL_DARK_BEFORE = {
-    "bg": "#05111F", "fg": "#C5C6C8", "bright": "#F0F0F0", "card": "#0B1828",
-    "border": "rgba(197,198,200,.15)", "sidebar": "#0B1828", "pos": "#34D399", "neg": "#F87171",
-    "amber": "#FBBF24", "sky": "#0EA5E9", "muted": "#9C9DA1",
-    "input-bg": "#101F33", "input-border": "#2F434C", "hover": "#18293a", "topbar": "rgba(12,20,24,.8)",
-    "nav-fg": "rgba(224,233,235,.75)", "nav-on": "#101F33", "hover-faint": "rgba(255,255,255,.04)",
-    "frame-bg": "#12131c", "overlay": "rgba(5,17,31,.7)", "scroll-thumb": "#5b7a8c",
-    "scroll-thumb-hover": "#6f93a7", "scroll-track": "#0b1620", "primary-bg": "#E2E3E5",
-    "primary-fg": "#0A1420", "oi-bg": "rgba(11,24,40,.55)",
+# The palette avo picked on 12 Nov 2026 (13F thread):
+# option D "Full design system" in the "Mürekkep" colours, with the navy-black "Gece" dark. Dark is the default, so
+# "dark when dark is chosen" means exactly these values; a change to them is a design decision, not a refactor.
+PICKED_DARK = {
+    "bg": "#11161D", "fg": "#D5DBE3", "bright": "#F1F4F8", "card": "#192029", "card-2": "#1F2731",
+    "sidebar": "#141A22", "pos": "#6CC497", "neg": "#E98A7F", "amber": "#E0B060", "muted": "#98A2AF",
+    "accent": "#8DB8DA", "focus": "#8DB8DA", "data-1": "#4F93D2", "data-2": "#D9773F",
+}
+PICKED_LIGHT = {
+    "bg": "#F6F5F1", "fg": "#2E2C28", "bright": "#1A1916", "card": "#FFFFFF", "card-2": "#F3F1EC",
+    "pos": "#2F7A55", "neg": "#B0443A", "amber": "#9A6212", "muted": "#67635B", "accent": "#2F6690",
+    "data-1": "#2A6FB0", "data-2": "#C0602E",
 }
 
 
-def test_dark_is_the_shell_palette_value_for_value():
-    for name, value in SHELL_DARK_BEFORE.items():
-        assert rc.THEME_TOKENS["dark"][name] == value, f"--{name} changed in dark"
+@pytest.mark.parametrize("scheme, picked", [("dark", PICKED_DARK), ("light", PICKED_LIGHT)])
+def test_the_palette_is_the_one_avo_picked(scheme, picked):
+    for name, value in picked.items():
+        assert rc.THEME_TOKENS[scheme][name] == value, f"--{name} changed in {scheme}"
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_every_text_colour_reads_on_a_card(scheme):
+    """WCAG AA, 4.5:1, on the card, the second card and the page background: text, the accent and the chart
+    series colours, which the picked palette adds."""
+    t = rc.THEME_TOKENS[scheme]
+    for name in ("fg", "muted", "pos", "neg", "amber", "sky", "accent", "data-1"):
+        for ground in ("card", "card-2", "bg"):
+            assert _contrast(_rgba(t[name])[:3], _rgba(t[ground])[:3]) >= 4.5, (scheme, name, ground)
+
+
+def test_the_scales_are_one_set_for_both_schemes():
+    """Type, spacing, radius and elevation are scheme-independent and ride the default :root block."""
+    scale = rc.THEME_SCALE
+    assert [scale[f"fs-{k}"] for k in ("xs", "sm", "base", "md", "lg", "xl")] == \
+        ["11px", "12.5px", "14px", "16px", "20px", "26px"]
+    assert [scale[f"sp-{i}"] for i in range(1, 8)] == ["4px", "8px", "12px", "16px", "24px", "32px", "48px"]
+    assert scale["touch"] == "44px"
+    root = _block(rc.THEME_CSS, ":root")
+    for name, value in scale.items():
+        assert f"--{name}:{value}" in root, name
+
+
+def test_inter_is_served_by_the_dashboard_not_a_font_host():
+    from pathlib import Path
+    assert "url(/static/fonts/InterVariable.woff2)" in rc.THEME_CSS
+    assert "fonts.googleapis" not in rc.THEME_CSS
+    static = Path(rc.__file__).resolve().parent.parent / "app" / "static" / "fonts"
+    assert (static / "InterVariable.woff2").is_file() and (static / "Inter-OFL.txt").is_file()
 
 
 def test_both_schemes_define_the_same_tokens():
@@ -57,7 +89,7 @@ def test_the_css_is_dark_by_default_on_any_device_and_obeys_the_choice():
     """avo, 25 Oct 2026: the default is dark. A light device shows light only when the reader chose Auto."""
     css = rc.THEME_CSS
     dark = _block(css, ":root")
-    assert "--bg:#05111F" in dark and "color-scheme:dark" in dark
+    assert "--bg:" + rc.THEME_TOKENS["dark"]["bg"] in dark and "color-scheme:dark" in dark
     m = re.search(r"@media\s*\(prefers-color-scheme:\s*light\)\s*\{(.*?)\}\s*\}", css, re.S)
     assert m, "no prefers-color-scheme: light block"
     selector = m.group(1).split("{")[0].strip()
@@ -175,12 +207,6 @@ def test_the_spx_calendar_days_are_readable(scheme, sign):
     t = rc.THEME_TOKENS[scheme]
     cell = _over(t[f"gex-{sign}-bg"], t["card"])
     assert _contrast(_rgba(t[f"gex-{sign}-fg"])[:3], cell) >= 4.5, (scheme, sign)
-
-
-def test_the_dark_spx_calendar_keeps_its_colours():
-    dark = rc.THEME_TOKENS["dark"]
-    assert (dark["gex-pos-bg"], dark["gex-pos-fg"]) == ("rgba(52,211,153,.35)", "#eafff5")
-    assert (dark["gex-neg-bg"], dark["gex-neg-fg"]) == ("rgba(248,113,113,.35)", "#ffd9d9")
 
 
 def test_the_touch_sized_summaries_keep_their_arrow():

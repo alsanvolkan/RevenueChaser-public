@@ -15,7 +15,8 @@ Every share count on the board is on today's share basis (#732): a quarter's sha
 quarter end's split factor and its close multiplied by it, so a split reads as what it is, not as buying. The board
 shows the last ``WINDOW_QUARTERS`` settled quarters (owner, 12 Nov 2026), plus a quarter still arriving after them.
 """
-from RevenueChaser.core.reporting_common import (FILTERS_CSS, FILTERS_JS, PAYLOAD_JS, filters_bar_html,
+from RevenueChaser.core.reporting_common import (FILTERS_CSS, FILTERS_JS, PAYLOAD_JS, THEME_CSS,
+                                                 THEME_JS, THEME_SCALE, THEME_TOKENS, filters_bar_html,
                                                  filters_meta, help_html, notice_html, provider_health_html,
                                                  recorded_sessions_html, watchlist_html, write_board)
 import math
@@ -65,57 +66,57 @@ def _kit_themes() -> dict:
 
 CSS = """<style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0d1117;color:#c9d1d9;font-family:'Segoe UI',Consolas,monospace;padding:24px;font-size:13px}
-.header{margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid #21262d}
-.header h1{color:#3fb950;font-size:22px;letter-spacing:1px}
-.header .meta{color:#8b949e;font-size:12px;margin-top:4px}
+body{background:var(--bg);color:var(--fg);font-family:'Segoe UI',Consolas,monospace;padding:var(--s5);font-size:13px}
+.header{margin-bottom:var(--s4);padding-bottom:16px;border-bottom:1px solid var(--border)}
+.header h1{color:var(--bright);font-size:22px;letter-spacing:1px}
+.header .meta{color:var(--muted);font-size:12px;margin-top:4px}
 .board-search{margin:10px 0}
-.board-search input{background:#161b22;color:#c9d1d9;border:1px solid #21262d;padding:6px 10px;border-radius:8px;font-size:12px;width:260px}
-.board-search input:focus{outline:1px solid #58a6ff;border-color:#58a6ff}
-.kit-count{color:#8b949e;font-size:12px;margin:8px 0 12px;min-height:1.2em}
+.board-search input{background:var(--card);color:var(--fg);border:1px solid var(--border);padding:6px 10px;border-radius:8px;font-size:12px;width:260px}
+.board-search input:focus{outline:1px solid var(--focus);border-color:var(--focus)}
+.kit-count{color:var(--muted);font-size:12px;margin:8px 0 12px;min-height:1.2em}
 .kit-hide{display:none}
 table{width:100%;border-collapse:collapse;font-size:12px}
-th{text-align:right;padding:8px 8px;color:#8b949e;font-size:11px;font-weight:600;letter-spacing:.3px;border-bottom:2px solid #21262d;cursor:pointer;white-space:nowrap}
-th:hover{color:#c9d1d9}
-th.group{cursor:default;color:#6e7681;text-align:center}
-th.sort-asc::after{content:' ▲';color:#58a6ff}
-th.sort-desc::after{content:' ▼';color:#58a6ff}
+th{text-align:right;padding:var(--s2) 8px;color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.3px;border-bottom:2px solid var(--border);cursor:pointer;white-space:nowrap}
+th:hover{color:var(--fg)}
+th.group{cursor:default;color:var(--muted);text-align:center}
+th.sort-asc::after{content:' ▲';color:var(--focus)}
+th.sort-desc::after{content:' ▼';color:var(--focus)}
 th.left,td.left{text-align:left}
-td{padding:8px 8px;border-bottom:1px solid #161b22;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
-tr:hover{background:#161b22}
+td{padding:var(--s2) 8px;border-bottom:1px solid var(--card);white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
+tr:hover{background:var(--card)}
 tr[data-ticker]{cursor:pointer}
-.ticker{color:#F1F5F9;font-weight:700}
-.name{color:#8b949e;font-size:11px;font-weight:400}
-.pos{color:#34D399}.neg{color:#F87171}.zero{color:#8b949e}
-.empty{padding:40px;color:#8b949e}
-#modal{position:fixed;inset:0;background:rgba(5,17,31,.82);display:none;align-items:center;justify-content:center;z-index:100}
+.ticker{color:var(--bright);font-weight:700}
+.name{color:var(--muted);font-size:11px;font-weight:400}
+.pos{color:var(--pos)}.neg{color:var(--neg)}.zero{color:var(--muted)}
+.empty{padding:40px;color:var(--muted)}
+#modal{position:fixed;inset:0;background:var(--scrim);display:none;align-items:center;justify-content:center;z-index:100}
 #modal.open{display:flex}
-#modal-card{background:#0d1117;border:1px solid #30363d;border-radius:10px;width:min(900px,94vw);max-height:92vh;overflow:auto;padding:16px}
+#modal-card{background:var(--card);border:1px solid var(--border);border-radius:10px;width:min(900px,94vw);max-height:92vh;overflow:auto;padding:var(--s4)}
 #modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-#modal-title{color:#F1F5F9;font-size:16px;font-weight:700}
-#modal-close{background:transparent;border:0;color:#8b949e;font-size:20px;cursor:pointer}
+#modal-title{color:var(--bright);font-size:16px;font-weight:700}
+#modal-close{background:transparent;border:0;color:var(--muted);font-size:20px;cursor:pointer}
 #chart{min-height:380px}
-.spin{display:block;width:16px;height:16px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:r .7s linear infinite;margin:40px auto}
+.spin{display:block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--focus);border-radius:50%;animation:r .7s linear infinite;margin:40px auto}
 @keyframes r{to{transform:rotate(360deg)}}
 .status{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .status span{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:14px;font-size:12px;font-weight:600}
-.status .closed{background:rgba(63,185,80,.14);color:#7ee787}
-.status .waiting{background:rgba(210,153,29,.14);color:#f0c674}
-.break-mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;margin:-12px 0 -12px 2px;border:0;border-radius:22px;background:transparent;color:#d2991d;cursor:pointer;vertical-align:middle}
-.break-mark:hover,.break-mark:focus-visible{background:rgba(210,153,29,.16);outline:none}
-#breaks{position:fixed;inset:0;background:rgba(5,17,31,.82);display:none;align-items:center;justify-content:center;z-index:110}
+.status .closed{background:color-mix(in oklab, var(--pos) 14%, transparent);color:var(--pos)}
+.status .waiting{background:color-mix(in oklab, var(--amber) 14%, transparent);color:var(--amber)}
+.break-mark{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;margin:-12px 0 -12px 2px;border:0;border-radius:22px;background:transparent;color:var(--amber);cursor:pointer;vertical-align:middle}
+.break-mark:hover,.break-mark:focus-visible{background:color-mix(in oklab, var(--amber) 16%, transparent);outline:none}
+#breaks{position:fixed;inset:0;background:var(--scrim);display:none;align-items:center;justify-content:center;z-index:110}
 #breaks.open{display:flex}
-#breaks-card{background:#0d1117;border:1px solid #30363d;border-radius:10px;width:min(440px,94vw);max-height:86vh;overflow:auto;padding:16px}
+#breaks-card{background:var(--card);border:1px solid var(--border);border-radius:10px;width:min(440px,94vw);max-height:86vh;overflow:auto;padding:var(--s4)}
 #breaks-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-#breaks-title{color:#F1F5F9;font-size:15px;font-weight:700}
-#breaks-close{width:44px;height:44px;background:transparent;border:0;color:#8b949e;font-size:20px;cursor:pointer}
-#breaks-note{color:#8b949e;font-size:12px;margin:4px 0 12px;line-height:1.5}
+#breaks-title{color:var(--bright);font-size:15px;font-weight:700}
+#breaks-close{width:44px;height:44px;background:transparent;border:0;color:var(--muted);font-size:20px;cursor:pointer}
+#breaks-note{color:var(--muted);font-size:12px;margin:4px 0 12px;line-height:1.5}
 #breaks-list{list-style:none;display:flex;flex-direction:column;gap:8px}
-#breaks-list li{background:rgba(210,153,29,.08);border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.5;white-space:normal}
-#breaks-list b{color:#F1F5F9}
-.warn-box{background:rgba(210,153,29,.10);border:1px solid #d2991d;color:#f0c674;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;line-height:1.55}
-.warn-box b{color:#d2991d}
-footer{margin-top:24px;padding-top:12px;border-top:1px solid #21262d;color:#484f58;font-size:11px;text-align:center}
+#breaks-list li{background:color-mix(in oklab, var(--amber) 8%, transparent);border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.5;white-space:normal}
+#breaks-list b{color:var(--bright)}
+.warn-box{background:color-mix(in oklab, var(--amber) 10%, transparent);border:1px solid var(--amber);color:var(--amber);border-radius:8px;padding:var(--s3) 16px;margin-bottom:14px;font-size:13px;line-height:1.55}
+.warn-box b{color:var(--amber)}
+footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;text-align:center}
 </style>"""
 
 JS = """<script>
@@ -180,10 +181,10 @@ function openChart(ticker){
   fetch('/api/sec_13f/' + encodeURIComponent(ticker))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      if(!d.fig){ chart.innerHTML = '<div style="color:#8b949e">No series data.</div>'; return; }
+      if(!d.fig){ chart.innerHTML = '<div class="zero">No series data.</div>'; return; }
       Plotly.react('chart', d.fig, {}, {displayModeBar: true, responsive: true});
     })
-    .catch(function(){ chart.innerHTML = '<div style="color:#f85149">Failed to load chart.</div>'; });
+    .catch(function(){ chart.innerHTML = '<div class="neg">Failed to load chart.</div>'; });
 }
 function closeModal(){ document.getElementById('modal').classList.remove('open'); }
 function applyFilters(){
@@ -494,24 +495,24 @@ def build_chart_fig(ticker: str, periods: dict, enrichment: dict = None) -> dict
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.10,
                         subplot_titles=(f"{ticker} — total shares & price (today's share basis)", "market value ($) & holders"),
                         specs=[[{"secondary_y": True}], [{"secondary_y": True}]])
-    fig.add_trace(go.Bar(x=labels, y=shares, name="Shares", marker=dict(color="#3fb950", pattern=pattern),
+    fig.add_trace(go.Bar(x=labels, y=shares, name="Shares", marker=dict(color=THEME_SCALE["c1"], pattern=pattern),
                          hovertemplate="%{y:,.0f}"), 1, 1)
     if price:
         fig.add_trace(go.Scatter(x=labels, y=price, name="Price",
-                                 line=dict(color="#58a6ff", width=2)), 1, 1, secondary_y=True)
-    fig.add_trace(go.Bar(x=labels, y=value, name="Value ($)", marker=dict(color="#d2991d", pattern=pattern),
+                                 line=dict(color=THEME_SCALE["c2"], width=2)), 1, 1, secondary_y=True)
+    fig.add_trace(go.Bar(x=labels, y=value, name="Value ($)", marker=dict(color=THEME_SCALE["c3"], pattern=pattern),
                          hovertemplate="%{y:,.0f}"), 2, 1)
     n = len(qs) - len(still_arriving)           # the settled quarters come first: the arriving set is a suffix
     fig.add_trace(go.Scatter(x=labels[:n], y=holders[:n], name="Holders",
-                             line=dict(color="#3fb950", width=2)), 2, 1, secondary_y=True)
+                             line=dict(color=THEME_SCALE["c4"], width=2)), 2, 1, secondary_y=True)
     if still_arriving:
         start = max(n - 1, 0)
         fig.add_trace(go.Scatter(x=labels[start:], y=holders[start:], name="Holders (filed so far)",
-                                 line=dict(color="#3fb950", width=2, dash="dash"), showlegend=False), 2, 1, secondary_y=True)
+                                 line=dict(color=THEME_SCALE["c4"], width=2, dash="dash"), showlegend=False), 2, 1, secondary_y=True)
         names = ", ".join(_qlabel(q) for q in sorted(still_arriving))
         fig.add_annotation(text=f"{ARRIVING_MARK} {names} still arriving: filed so far, not a drop",
                            xref="paper", yref="paper", x=0, y=-0.08, xanchor="left", yanchor="top",
-                           showarrow=False, font=dict(size=12, color="#8b949e"))
+                           showarrow=False, font=dict(size=12, color=THEME_TOKENS["dark"]["muted"]))
     fig.update_layout(template="plotly_dark", height=620, hovermode="x unified",
                       # Anchored at its bottom so a legend that wraps on a phone grows up into the margin, not over the title.
                       legend=dict(orientation="h", y=1.08, yanchor="bottom", x=0),
@@ -803,6 +804,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>RevenueChaser — SEC 13F Ownership</title>
 <script src="{PLOTLY_CDN_URL}"></script>
+<script>{THEME_JS}</script><style>{THEME_CSS}</style>
 {CSS}{FILTERS_CSS}</head><body>
 <div class="header"><h1>SEC 13F — Total Institutional Ownership</h1>
 <div class="meta">{len(entries)} tickers · all 13F filers (incl. BlackRock/Vanguard/State Street) · quarterly · click a row for the chart</div>
@@ -814,7 +816,7 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 <div class="kit-count" id="kit-count" aria-live="polite"></div>
 <div class="board-search"><input type="search" id="board-q" placeholder="Search ticker or name" autocomplete="off" spellcheck="false"></div>
 <table><thead>{header}</thead><tbody id="rows">{rows_html}</tbody></table>
-<div style="color:#8b949e;font-size:11px;margin-top:8px;line-height:1.5">
+<div class="legend">
 <b>Total ownership</b> = shares held by every 13F filer, on <b>today's share basis</b>: a quarter's count is divided
 by the split factor of its quarter end, so a split is not read as buying (hover a cell for the count as filed).
 The board shows the last {WINDOW_QUARTERS} settled quarters; the chart shows every stored one.
@@ -831,7 +833,7 @@ total, and its Herfindahl index), not of all shares outstanding.
 {arriving_legend}
 <b>Price Δ</b> = close change from the first to the last quarter end shown, on the same share basis.
 <b>Flows</b> (Δ%, Net flow, New/Exit) count only the filers that reported in both quarters; a filer that started or
-stopped filing is left out, and the <b style="color:#d2991d">⚠</b> beside a ticker lists those breaks by quarter.
+stopped filing is left out, and the <b class="warn-mark">⚠</b> beside a ticker lists those breaks by quarter.
 A quarter is <b>closed</b> once the SEC publishes the data set that covers its filing deadline; a closed quarter
 does not change.
 </div>

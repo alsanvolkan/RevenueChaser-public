@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from RevenueChaser.core.reporting_common import THEME_CSS
 from RevenueChaser.module_spx_gamma import render, run
 from .conftest import make_snapshot
 
@@ -92,6 +93,10 @@ def test_normal_data_renders_the_same_tags_and_text_as_before():
     block = render.recorded_sessions_html("module_spx_gamma") + "\n"
     assert html.count(block) == 1
     html = html.replace(block, "")
+    # The shared theme CSS is the shell's, not this board's, and changes with every theme pick (#761); the golden
+    # was cut with it taken out, so it is taken out here too.
+    assert html.count(THEME_CSS) == 1
+    html = html.replace(THEME_CSS, "")
     got = sequence(html)
     want = sequence((GOLDEN / "position_map.base.html").read_text(encoding="utf-8"))
     assert len(got) == len(want)

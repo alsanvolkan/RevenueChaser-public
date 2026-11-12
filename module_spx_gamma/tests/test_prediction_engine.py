@@ -276,9 +276,11 @@ def test_html_injects_prediction_banner(snapshot):
     assert "OI:" in html and "Vol:" in html
     # CSS variables must survive so the iframe never breaks styling
     # (the palette is the shell's: reporting_common.THEME_CSS, dark by default; the board's names alias it)
-    assert "--pos:#34D399" in html and "--neg:#F87171" in html and "--amber:#FBBF24" in html
+    from RevenueChaser.core.reporting_common import THEME_TOKENS
+    dark = THEME_TOKENS["dark"]
+    for name in ("pos", "neg", "amber", "bg"):
+        assert f"--{name}:{dark[name]}" in html, name
     assert "--green:var(--pos)" in html and "--red:var(--neg)" in html
-    assert "--bg:#05111F" in html
 
 
 def test_html_prediction_absent_degrades():
