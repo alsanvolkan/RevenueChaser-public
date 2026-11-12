@@ -53,6 +53,7 @@ HELP = {
     "rc_provider_calls_today": ("gauge", "Calls to a provider on the current New York day."),
     "rc_provider_day_cap": ("gauge", "Our own day cap for a provider (absent: no cap)."),
     "rc_provider_failures_today": ("gauge", "Failed calls to a provider on the current New York day."),
+    "rc_provider_rate_limited_today": ("gauge", "HTTP 429 answers from a provider on the current New York day."),
     "rc_dataset_state": ("gauge", "1 for the dataset's current state (fresh, unchanged, late, stale, never)."),
     "rc_dataset_last_check_result": ("gauge", "The newest check's result: 0 changed or unchanged, 1 skipped, "
                                      "2 failed (higher is worse)."),
@@ -190,6 +191,7 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
             name = {"provider": str(p["provider"])}
             out["rc_provider_calls_today"].append((name, p["today"]))
             out["rc_provider_failures_today"].append((name, p["failures_today"]))
+            out["rc_provider_rate_limited_today"].append((name, p["http_429_today"]))
             if p.get("cap"):
                 out["rc_provider_day_cap"].append((name, p["cap"]))
 
@@ -436,6 +438,40 @@ def board_head(now: datetime | None = None, *, ibkr: Callable[[], dict] | None =
     return {"switches": switches, "timer": timer.get("state"), "timer_fired": fired, "files": files, "news": feeds,
             "gateway": {"cls": cls, "n": n, "label": label.replace("IBKR gateway · ", ""),
                         "login": report._ibkr_login_href(inventory._ibkr_login_url())}}
+
+
+def board_status(now: datetime | None = None, *, spend: Callable[[], dict] | None = None,
+                 cross: Callable[[dict], dict] | None = None, boards: Callable[[], dict] | None = None) -> dict:
+    """``GET /api/settings/status``: the status the Settings page used to draw as HTML cards, for the Grafana
+    Fetch/Health board (#715 decision 8; avo, 12 Nov 2026: status lives in Grafana, the page explains the data).
+
+    Three parts, each read on its own, each ``{"error": ...}`` when it cannot be read, never a raise:
+    ``providers`` (calls, failures and HTTP 429 today, the week, our day cap, the newest UW sample), ``cross_check``
+    (the stored second-source report per field) and ``boards`` (each board's newest run against the files live now).
+
+    Unlike the scrape this opens served DuckDB files (the stored cross-check report, the run history), so it is a
+    route a panel asks when it is looked at, and not part of ``/metrics``."""
+    from RevenueChaser.module_settings import newdata
+    now = now or datetime.now(timezone.utc)
+
+    def read(fn):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - one unreadable part is one line on the board
+            return {"error": f"{type(exc).__name__}: {exc}"[:300]}
+
+    providers = read(spend if spend is not None else lambda: newdata._spend(now))
+    rows = providers.get("providers") if isinstance(providers, dict) else None
+    used = {str(p["provider"]): int(p.get("today") or 0) for p in rows or []}
+
+    def freshness() -> dict:
+        from RevenueChaser.module_settings import freshness_tab
+        return freshness_tab.collect()
+
+    return {"read_at": now.isoformat(timespec="seconds"), "providers": providers,
+            "cross_check": read((lambda: cross(used)) if cross is not None
+                                else lambda: newdata.cross_check(now, {}, used)),
+            "boards": read(boards if boards is not None else freshness)}
 
 
 def datasets_list(datasets: dict | None = None) -> list[dict]:

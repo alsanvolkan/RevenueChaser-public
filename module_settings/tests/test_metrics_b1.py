@@ -87,6 +87,15 @@ def test_provider_calls_and_the_day_cap():
                                                    ibkr=lambda: None)))
     assert 'rc_provider_calls_today{provider="uw"} 7' in fam["rc_provider_calls_today"]
     assert 'rc_provider_failures_today{provider="uw"} 1' in fam["rc_provider_failures_today"]
+    assert 'rc_provider_rate_limited_today{provider="uw"} 0' in fam["rc_provider_rate_limited_today"]
+
+
+def test_a_provider_s_429_answers_today_are_exported():
+    """#715: the provider limits card leaves the page; a 429 was on that card and on no metric."""
+    ops.count_calls("fmp", 3, failures=2, http_429=2)
+    fam = _families(metrics.render(metrics.collect(datetime.now(timezone.utc), datasets=DS, timer={"state": "on"},
+                                                   ibkr=lambda: None)))
+    assert 'rc_provider_rate_limited_today{provider="fmp"} 2' in fam["rc_provider_rate_limited_today"]
     assert not any(l.startswith('rc_provider_day_cap{provider="uw"} ') for l in fam["rc_provider_day_cap"])  # no UW cap
     assert any(l.startswith('rc_provider_day_cap{provider="alphavantage"} ') for l in fam["rc_provider_day_cap"])
 
@@ -392,3 +401,43 @@ def test_a_backup_kind_that_exists_in_two_steps_gets_two_distinct_series(monkeyp
     fam = _families(metrics.render(_collect()))["rc_backup_newest_timestamp_seconds"]
     labels = sorted(re.search(r'\{kind="([^"]+)"\}', line).group(1) for line in fam)
     assert labels == ["market", "prices (boards)", "prices (duckdb)"]
+
+
+def test_the_status_the_page_drew_as_cards_is_served_as_three_parts():
+    """#715 decision 8 (avo, 12 Nov 2026: status lives on the Grafana board): provider limits, the cross-check and
+    board freshness, each read on its own."""
+    spend = {"day": "2026-11-11", "providers": [{"provider": "uw", "today": 7, "cap": None, "http_429_today": 1}]}
+    seen = {}
+
+    def cross(used):
+        seen["used"] = used
+        return {"fields": [{"field": "prices", "differs": 0}]}
+
+    got = metrics.board_status(NOW, spend=lambda: spend, cross=cross, boards=lambda: {"boards": []})
+    assert got["providers"] == spend and got["boards"] == {"boards": []}
+    assert got["cross_check"]["fields"][0]["field"] == "prices"
+    assert seen["used"] == {"uw": 7}, "the cross-check is told what each provider has used today"
+    assert got["read_at"].startswith("2026-")
+
+
+def test_a_status_part_that_cannot_be_read_says_so_and_the_others_still_answer():
+    def boom(*_a):
+        raise RuntimeError("history file is locked")
+
+    got = metrics.board_status(NOW, spend=lambda: {"providers": []}, cross=boom, boards=boom)
+    assert got["providers"] == {"providers": []}
+    assert got["cross_check"] == {"error": "RuntimeError: history file is locked"}
+    assert got["boards"] == {"error": "RuntimeError: history file is locked"}
+    got = metrics.board_status(NOW, spend=boom, cross=lambda used: {"fields": [], "used": used},
+                               boards=lambda: {"boards": []})
+    assert "error" in got["providers"] and got["cross_check"]["used"] == {}
+
+
+def test_the_status_route_answers_with_the_three_parts(client):
+    ops.count_calls("uw", 4, http_429=1)
+    got = client.get("/api/settings/status")
+    assert got.status_code == 200
+    body = got.get_json()
+    assert body["ok"] is True and {"providers", "cross_check", "boards", "read_at"} <= set(body)
+    uw = [p for p in body["providers"]["providers"] if p["provider"] == "uw"][0]
+    assert uw["today"] == 4 and uw["http_429_today"] == 1

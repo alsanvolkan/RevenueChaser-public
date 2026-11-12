@@ -989,6 +989,7 @@ code:
 | `rc_provider_calls_today` | `provider` | calls on the New York day |
 | `rc_provider_day_cap` | `provider` | our day cap |
 | `rc_provider_failures_today` | `provider` | failed calls on the New York day |
+| `rc_provider_rate_limited_today` | `provider` | HTTP 429 answers on the New York day |
 | `rc_dataset_state` | `dataset`, `kind`, `state` | 1 for its state: fresh, unchanged, late, stale, never |
 | `rc_dataset_last_check_result` | `dataset`, `kind` | 0 changed or unchanged, 1 skipped, 2 failed |
 | `rc_dataset_checked_timestamp_seconds` | `dataset`, `kind` | the newest check's day |
@@ -1004,6 +1005,13 @@ code:
 | `rc_threshold` | `name` | the page's alarm thresholds, from `control.py`, so an alert rule does not retype them |
 | `rc_metrics_read_errors_total` | `part` | readers that failed since the dashboard started |
 | `rc_metrics_build_seconds` | | what the scrape cost |
+
+`GET /api/settings/status` (`metrics.board_status`) is the status the page used to draw as cards, as JSON for the
+Fetch/Health board (#715): `providers` (calls, failures and HTTP 429 today, the week, our day cap, the newest UW
+sample), `cross_check` (the stored second-source report per field) and `boards` (each board's newest run against
+the files live now). A part that cannot be read is `{"error": ...}` and the others still answer. It opens served
+DuckDB files, which the scrape never does, so it is asked when the panel is looked at and is not part of
+`/metrics`.
 
 `GET /api/build/datasets` lists every dataset the builder knows (`name`, `kind`, `attended`, `providers`): the
 allow-list for the Grafana buttons.
