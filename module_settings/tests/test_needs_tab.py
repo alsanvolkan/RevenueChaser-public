@@ -226,20 +226,25 @@ def _tokens(css: str, selector_start: str) -> dict[str, str]:
     return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", block))
 
 
-def test_the_tokens_are_the_control_boards_in_light_and_dark():
+def test_the_tokens_are_the_control_boards_and_both_are_names_of_the_shared_theme():
+    """Theme D (avo, 12 Nov 2026: "Yeni design principlelarini burada da uygula"): the tab strip, the Needs tab and
+    the control board carry no palette of their own. Their short names are aliases of the shared tokens, so light and
+    dark come from ``THEME_CSS`` alone."""
+    from RevenueChaser.core.reporting_common import THEME_SCALE, THEME_TOKENS
     from RevenueChaser.module_settings import control_render
     ctl, nds = control_render.CTL_CSS, needs_tab.NEEDS_CSS
-    light_c, light_n = _tokens(ctl, ".ctl{"), _tokens(nds, "#needs,#settings-tabs{")
-    dark_c = _tokens(ctl, ':root[data-theme="dark"] .ctl{')
-    dark_n = _tokens(nds, ':root[data-theme="dark"] #needs')
-    auto_n = _tokens(nds, ':root:not([data-theme="light"]) #needs')
-    assert light_n and dark_n
-    for k, v in light_n.items():
-        assert light_c[k].strip() == v.strip(), k
-    for k, v in dark_n.items():
-        assert dark_c[k].strip() == v.strip(), k
-    assert auto_n == dark_n, "the auto-dark block and the forced-dark block say the same"
-    assert "@media (prefers-color-scheme: dark)" in nds
+    names_c, names_n = _tokens(ctl, ".ctl{"), _tokens(nds, "#needs,#settings-tabs{")
+    assert names_n
+    shared = set(THEME_TOKENS["dark"]) | set(THEME_SCALE)
+    assert set(THEME_TOKENS["dark"]) == set(THEME_TOKENS["light"])
+    for k, v in names_n.items():
+        assert names_c[k].strip() == v.strip(), k
+        if k != "--f-mono":
+            m = re.fullmatch(r"var\(--([\w-]+)\)", v.strip())
+            assert m and m.group(1) in shared, f"{k} is not a shared theme name: {v}"
+    for own in ("--bg", "--card", "--fg"):
+        assert own not in names_c and own not in names_n, f"{own} comes from the shared theme, not from this page"
+    assert "data-theme" not in nds and "prefers-color-scheme" not in nds
 
 
 def test_phone_rules_44px_tabs_and_tables_stack_under_600px():

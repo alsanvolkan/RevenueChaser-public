@@ -1,19 +1,10 @@
 /* The Settings page's tab strip (#settings-tabs) and its Needs tab (#needs), #331.
-   The tokens are the control board's own (static/control.css, .ctl), light by default and dark under the shell's
-   choice: data-theme="dark", or "auto" on a dark device. test_needs_tab holds the values equal to control.css. */
-#needs,#settings-tabs{--bg:#f6f7f9; --card:#fcfcfd; --fg:#1d2430; --mut:#667085; --line:#e3e7ee;
-  --acc:#0e7bd6; --acc2:#e9f3fc;
-  --ok:#1a7f37; --okb:#e6f4ea; --warn:#9a6700; --warnb:#fff4d6; --bad:#b42318; --badb:#fde8e7;
-  --f-body:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+   The short names are aliases of the shared theme tokens (THEME_CSS, theme D), the same aliases as the control
+   board's (static/control.css, .ctl): no palette here, so light and dark come from the theme alone. */
+#needs,#settings-tabs{--mut:var(--muted); --line:var(--border); --acc:var(--accent); --acc2:var(--accent-soft);
+  --ok:var(--pos); --okb:var(--pos-soft); --warn:var(--amber); --warnb:var(--amber-soft); --bad:var(--neg); --badb:var(--neg-soft);
+  --f-body:var(--font-sans);
   --f-mono:ui-monospace,Menlo,Consolas,monospace;}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) #needs,:root:not([data-theme="light"]) #settings-tabs{
-  --bg:#0d1117; --card:#151b23; --fg:#e6edf3; --mut:#8b949e; --line:#2a313c;
-  --acc:#4aa3f0; --acc2:#132536;
-  --ok:#56d364; --okb:#12261a; --warn:#e3b341; --warnb:#2b230f; --bad:#ff7b72; --badb:#2d1414; color-scheme:dark}}
-:root[data-theme="dark"] #needs,:root[data-theme="dark"] #settings-tabs{
-  --bg:#0d1117; --card:#151b23; --fg:#e6edf3; --mut:#8b949e; --line:#2a313c;
-  --acc:#4aa3f0; --acc2:#132536;
-  --ok:#56d364; --okb:#12261a; --warn:#e3b341; --warnb:#2b230f; --bad:#ff7b72; --badb:#2d1414; color-scheme:dark}
 
 /* ── The tab strip ── */
 #settings-tabs{background:var(--bg);color:var(--fg);font:15px/1.55 var(--f-body);border-bottom:1px solid var(--line);
