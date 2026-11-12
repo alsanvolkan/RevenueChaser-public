@@ -2109,7 +2109,10 @@ MANIFEST: dict[str, dict] = {
     # Watch lists (#786, avo 12 Nov 2026): his own named lists, each with ordered sections and the symbols as he
     # writes them. Written only by module_watchlists/store.py into boards/watchlists.duckdb. Not a board result:
     # nothing recomputes these rows, so they are only added to, changed and removed one at a time, never replaced.
-    "watchlist": {
+    # The names are ``wl_*`` and not ``watchlist*`` because the old store already owns ``watchlist`` and
+    # ``watchlist_changes`` (the pre-PR-4 tables, kept unwritten until their retirement): a second entry under
+    # either name would silently replace it in this dict.
+    "wl_list": {
         "key": ["list_id"],
         "columns": [
             "list_id TEXT PRIMARY KEY", "name TEXT", "description TEXT", "position INTEGER",
@@ -2120,7 +2123,7 @@ MANIFEST: dict[str, dict] = {
         ],
         "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "watchlists", "sources": [],
     },
-    "watchlist_section": {
+    "wl_section": {
         "key": ["list_id", "section_id"],
         "columns": [
             "list_id TEXT", "section_id TEXT", "name TEXT", "position INTEGER", "created_at DOUBLE",
@@ -2131,7 +2134,7 @@ MANIFEST: dict[str, dict] = {
     # ``symbol`` is avo's own spelling, kept exactly as he wrote it ("NASDAQ:NVDA", "TVC:US10Y-TVC:US02Y"), because
     # it is what goes back out to TradingView. ``exchange`` and ``ticker`` are its two parts, and ``coverage`` says
     # where its data comes from here: us_equity, etf, market_series, derived, or unsupported (#785).
-    "watchlist_item": {
+    "wl_item": {
         "key": ["list_id", "symbol"],
         "columns": [
             "list_id TEXT", "symbol TEXT", "section_id TEXT", "position INTEGER", "exchange TEXT", "ticker TEXT",
@@ -2140,7 +2143,7 @@ MANIFEST: dict[str, dict] = {
         ],
         "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "watchlists", "sources": [],
     },
-    "watchlist_changes": {
+    "wl_change": {
         "key": ["list_id", "symbol", "at", "action"],
         "columns": [
             "list_id TEXT", "symbol TEXT", "action TEXT", "at DOUBLE", "by TEXT", "note TEXT",
