@@ -565,7 +565,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="leaps", label="LEAPS flow",
         tables=("leaps_flow_prints", "leaps_cache"),
         db="leaps", source=Source.uw, writer=None,
-        writer_note="dashboard job POST /run/module_leaps; not an automations.REGISTRY entry",
+        writer_note="no writer: the LEAPS scan is switched off, so nothing writes these tables",
         freshness=("leaps_flow_prints", "session_date"),
     ),
     DatasetSpec(

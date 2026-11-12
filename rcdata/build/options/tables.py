@@ -181,8 +181,9 @@ ER_OPTIONS = Table(
     + _doubles(GEX_LEVEL_FIELDS) + _doubles(VOLUME_DOUBLES) + _counts(VOLUME_COUNTS) + PROVENANCE,
     ("session_date", "ticker"), (SCREENER_SOURCE,))
 
-# /option-trades with min_dte and min_premium: the market's far-dated prints of the session (LEAPS scan, G3 G5), every
-# underlying, keyed by UW's print id.
+# /option-trades with min_dte and min_premium: the market's far-dated prints, every underlying, keyed by UW's print
+# id (G3 G5). The newest ones only: the feed is newest-first and a session's three pages hit the 3 x 500 ceiling, so
+# the rows are the end of the session, not all of it (#730 item 4).
 OPTION_FAR_PRINT = Table(
     "option_far_print",
     [("session_date", "DATE"), ("print_id", "TEXT"), ("ticker", "TEXT"), ("executed_at", "TEXT"),
