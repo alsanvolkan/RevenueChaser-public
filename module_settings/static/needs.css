@@ -15,7 +15,8 @@
 #settings-tabs [role="tab"]:hover{color:var(--fg)}
 #settings-tabs [role="tab"][aria-selected="true"]{color:var(--acc);border-bottom-color:var(--acc)}
 #settings-tabs [role="tab"]:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
-@media(max-width:600px){#settings-tabs [role="tab"]{flex:1 1 0}}
+/* Four tabs on a 412 px phone: each takes its own width and stays on one line. */
+@media(max-width:600px){#settings-tabs [role="tab"]{flex:1 1 auto;padding:0 8px;white-space:nowrap}}
 [role="tabpanel"][hidden]{display:none}
 
 /* ── The Needs tab ── */

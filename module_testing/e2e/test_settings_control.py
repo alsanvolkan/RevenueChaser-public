@@ -19,6 +19,10 @@ def _open(browser, dashboard, scheme="dark"):
     browser.emulate(*PHONE, scheme=scheme)
     browser.open(f"{dashboard.url}/view/{_APP}", ready="!!document.getElementById('ctl') && !!window.CTL")
     browser.eval(f"document.documentElement.setAttribute('data-theme', {scheme!r})")
+    # A first visit opens on Watch lists (avo, 12 Nov 2026); these tests are about the board on Database.
+    assert browser.eval("document.getElementById('panel-watch').hidden") is False, "Watch lists is the tab on open"
+    browser.eval("document.getElementById('tab-data').click()")
+    browser.settle()
 
 
 def _tab(browser, name: str):
@@ -32,7 +36,7 @@ def test_the_data_tab_is_on_top_and_the_old_sections_are_gone(dashboard, browser
     order = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl .wrap > details.sec'),"
                          " function(d){ return d.id + (d.open ? '+' : ''); })")
     assert order == ["sec-flow+"], "the Database tab"
-    assert browser.eval("document.getElementById('panel-health').hidden") is True, "Database is the tab on open"
+    assert browser.eval("document.getElementById('panel-health').hidden") is True, "Fetch/Health is not shown beside Database"
     fetch = browser.eval("Array.prototype.map.call(document.querySelectorAll('#panel-health .ctl .wrap > details.sec'),"
                          " function(d){ return d.id; }).filter(function(i){ return i; })")
     # #715 step 2: the queue is back before Cross-check and the weekly backups close the tab.
