@@ -26,7 +26,7 @@ import duckdb
 from ....core import calendar
 from ....core.identity.sources import norm_ticker
 from ... import serving
-from .. import base, dirty
+from .. import base, cik_history, dirty
 from ..spine.security import squash
 
 SPINE = "spine"
@@ -177,27 +177,37 @@ def spine_ciks() -> dict[str, str | None] | None:
 
 
 def spine_former_ciks() -> dict[str, str]:
-    """``{former cik: ticker}`` from the live spine's ``security_history``: a CIK a ticker filed under in an older
-    SEC snapshot and no longer does (#749). Empty with no spine file and with a spine that carries no history yet.
+    """``{former cik: ticker}``: a CIK a ticker filed under before a reorganisation or a redomicile and no longer
+    does (#749). Empty with no spine file.
 
-    Two guards, because a ticker can be reused by another company: a CIK that is any ticker's **current** CIK is
-    left out (so a ticker that only left a snapshot and came back under the same CIK names nothing new), and a CIK
-    that several tickers once filed under is left out as well.
+    Two sources. The live spine's ``security_history`` (the CIK per ticker per stored SEC snapshot) covers every
+    company, as far back as our snapshots go; a spine that carries no history yet gives nothing. The seed file
+    (``build/cik_history.py``, pairs from edgartools) covers changes older than our snapshots, and names a ticker
+    only through the successor CIK the spine holds today.
+
+    Two guards either way, because a ticker can be reused by another company: a CIK that is any ticker's
+    **current** CIK is left out (so a ticker that only left a snapshot and came back under the same CIK names
+    nothing new), and a CIK that several tickers once filed under is left out as well.
     """
     try:
         con = serving.open_read(SPINE)
     except serving.ServingFileMissing:
         return {}
     try:
+        current = {c: t for c, t in con.execute(
+            "SELECT cik, min(ticker) FROM security WHERE cik IS NOT NULL GROUP BY cik HAVING count(*) = 1"
+        ).fetchall()}
+        all_ciks = {r[0] for r in con.execute("SELECT DISTINCT cik FROM security WHERE cik IS NOT NULL").fetchall()}
+        out = {pre: current[cik] for pre, cik in cik_history.former_ciks(current).items() if pre not in all_ciks}
         if not has_table(con, "security_history"):
-            return {}
+            return out
         rows = con.execute("""
             WITH former AS (SELECT DISTINCT value AS cik, ticker FROM security_history
                             WHERE field = 'cik' AND valid_to IS NOT NULL AND value IS NOT NULL)
             SELECT f.cik, min(f.ticker) FROM former f
             WHERE NOT EXISTS (SELECT 1 FROM security s WHERE s.cik = f.cik)
             GROUP BY f.cik HAVING count(*) = 1""").fetchall()
-        return {c: t for c, t in rows}
+        return {**out, **{c: t for c, t in rows}}
     finally:
         con.close()
 

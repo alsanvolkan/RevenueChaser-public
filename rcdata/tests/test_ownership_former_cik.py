@@ -60,6 +60,15 @@ def test_a_period_that_still_holds_is_not_a_former_cik():
     assert _spine(history=(("XOM", "cik", XOM_OLD, date(2014, 1, 6), None),)) == {}
 
 
+def test_a_seed_pair_names_the_ticker_even_with_no_history_in_the_spine():
+    """The seed (edgartools' pairs, ``build/cik_history.py``) reaches back further than our SEC snapshots."""
+    from RevenueChaser.rcdata.build import cik_history
+    pre, suc = next(iter(cik_history.seed().items()))
+    ox.make_spine(tickers=("SUC",), ciks={"SUC": suc})
+    assert common.spine_former_ciks()[pre] == "SUC"
+
+
+
 # ── How a pair is named ────────────────────────────────────────────────────────────────────────────────────────
 
 SPINE = {"XOM": XOM_NEW, "MSFT": "789019", "GME": "1326380"}
