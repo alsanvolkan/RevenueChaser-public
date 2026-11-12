@@ -158,6 +158,32 @@ td[data-col="ticker"] .rc-watch button[aria-pressed="true"]{background:var(--acc
 .legend-note{color:var(--muted);font-size:var(--fs-xs);margin-top:8px;line-height:1.5}
 .legend-note b{color:var(--fg)}
 .warn-mark{color:var(--amber)}
+/* Phone (412 px, avo's realme GT2 Pro): each ticker is a full-width card, no sideways scroll. The header goes;
+   every cell carries its column name (data-label). The quarters sit in a 3-wide grid (shares over Δ%), the
+   snapshot as label / value lines. */
+@media (max-width: 640px){
+  body{padding:var(--sp-3)}
+  .board-search input{width:100%}
+  table{display:block;background:none;border:0;overflow:visible}
+  thead{display:none}
+  tbody{display:flex;flex-direction:column;gap:var(--sp-3)}
+  tbody tr[data-ticker]{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0 var(--sp-3);background:var(--card);
+    border:1px solid var(--border);border-radius:var(--r-md);padding:var(--sp-3);box-shadow:var(--elev-1)}
+  tbody tr[data-ticker]:hover{background:var(--card)}
+  td{display:block;border:0;padding:var(--sp-1) 0;text-align:left;white-space:normal;min-width:0}
+  td[data-col="ticker"]{grid-column:1/-1;padding-bottom:var(--sp-1)}
+  td[data-col="ticker"] .name{max-width:none}
+  td[data-col="sector"]{grid-column:1/-1;color:var(--muted);font-size:var(--fs-xs);padding:0 0 var(--sp-2);
+    border-bottom:1px solid var(--border);margin-bottom:var(--sp-1)}
+  td[data-label]::before{content:attr(data-label);display:block;color:var(--muted);font-size:10.5px;font-weight:600;
+    letter-spacing:.03em;text-transform:uppercase}
+  td.q{font-size:13px}
+  td[data-col="value"],td[data-col="value"]~td{display:flex;justify-content:space-between;align-items:baseline;
+    grid-column:span 2;padding:3px 0;font-size:12.5px}
+  td[data-col="value"],td[data-col="value"]+td{border-top:1px solid var(--border);margin-top:var(--sp-2);padding-top:var(--sp-2)}
+  td[data-col="value"]::before,td[data-col="value"]~td::before{display:inline;font-size:var(--fs-xs);text-transform:none;
+    letter-spacing:0;font-weight:500}
+}
 footer{margin-top:var(--sp-5);padding-top:12px;border-top:1px solid var(--border);color:var(--muted);font-size:var(--fs-xs);
   text-align:center}
 </style>"""
@@ -170,6 +196,7 @@ var SORT_COL = __DEFAULT_SORT__;
 var SORT_ASC = false;
 var ROW_COUNT = __ROW_COUNT__;
 var NCOLS = __NCOLS__;
+var COL_LABELS = __COL_LABELS__;          // a cell's header text, shown beside it when a phone stacks the row as a card
 var BREAKS = {};
 var MARK_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
   + 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 21h20L12 3z"></path>'
@@ -337,8 +364,10 @@ function build(p){
       var c = cells[j] || [];
       var td = document.createElement('td');
       td.setAttribute('data-col', cols[j]);
+      if(COL_LABELS[cols[j]]){ td.setAttribute('data-label', COL_LABELS[cols[j]]); }
+      if(cols[j].indexOf('sh_') === 0){ td.className = 'q'; }
       td.setAttribute('data-val', (c[1] === null || c[1] === undefined) ? '' : String(c[1]));
-      td.className = c[2] || '';
+      td.className = ((td.className ? td.className + ' ' : '') + (c[2] || '')).trim();
       if(c[3] !== null && c[3] !== undefined){ td.setAttribute('title', c[3]); }
       td.textContent = (c[0] === null || c[0] === undefined) ? '' : c[0];
       if(cols[j].indexOf('sh_') === 0){
@@ -855,8 +884,10 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
         rows_html = (f'<tr><td colspan="{ncols}" class="empty">No SEC 13F data stored yet. Press Fetch to '
                      'download and ingest the newest SEC Form 13F data set.</td></tr>')
 
+    col_labels = {**{f"sh_{q}": q_labels[q] for q in quarters}, **{c: label for c, label in _SNAP_COLS}}
     js = fill(JS, {"__DEFAULT_SORT__": script_json(default_sort),
-                   "__ROW_COUNT__": script_json(len(entries)), "__NCOLS__": script_json(ncols)})
+                   "__ROW_COUNT__": script_json(len(entries)), "__NCOLS__": script_json(ncols),
+                   "__COL_LABELS__": script_json(col_labels)})
     payload_js = f"<script>{PAYLOAD_JS}</script>"
 
     # Shared filter kit (KF, #375 Card E): Index, Market cap, Sector, Theme. No Earnings facet.
