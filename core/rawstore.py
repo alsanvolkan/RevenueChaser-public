@@ -2144,10 +2144,11 @@ MANIFEST: dict[str, dict] = {
         "kind": "tabular", "write": "upsert", "history_mode": "operational", "db": "watchlists", "sources": [],
     },
     "wl_change": {
-        "key": ["list_id", "symbol", "at", "action"],
+        "key": ["list_id", "symbol", "changed_at", "action"],
         "columns": [
-            "list_id TEXT", "symbol TEXT", "action TEXT", "at DOUBLE", "by TEXT", "note TEXT",
-            "PRIMARY KEY (list_id, symbol, at, action)",
+            "list_id TEXT", "symbol TEXT", "action TEXT", "changed_at DOUBLE", "changed_by TEXT", "note TEXT",
+            # ``at`` and ``by`` are DuckDB keywords: an unquoted ``at DOUBLE`` fails the whole manifest apply.
+            "PRIMARY KEY (list_id, symbol, changed_at, action)",
         ],
         "kind": "tabular", "write": "upsert", "history_mode": "change_history", "db": "watchlists", "sources": [],
     },

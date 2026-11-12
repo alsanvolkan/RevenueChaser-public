@@ -128,12 +128,12 @@ def coverage_counts(list_id: str | None = None) -> dict[str, int]:
 
 
 def changes(list_id: str | None = None, limit: int = 200) -> list[dict]:
-    sql = f"SELECT list_id, symbol, action, at, by, note FROM {CHANGES}"
+    sql = f"SELECT list_id, symbol, action, changed_at, changed_by, note FROM {CHANGES}"
     params: list = []
     if list_id is not None:
         sql += " WHERE list_id = ?"
         params.append(list_id)
-    return _query(sql + " ORDER BY at DESC LIMIT ?", params + [int(limit)])
+    return _query(sql + " ORDER BY changed_at DESC LIMIT ?", params + [int(limit)])
 
 
 # ── names and ids ────────────────────────────────────────────────────────────
@@ -339,7 +339,7 @@ def reorder(list_id: str, section_id: str, ordered: list[str]) -> None:
 
 def _record(list_id: str, symbol: str, action: str, by: str, note: str | None) -> None:
     rawstore.write_rows(CHANGES, [{
-        "list_id": list_id, "symbol": symbol, "action": action, "at": time.time(), "by": by, "note": note,
+        "list_id": list_id, "symbol": symbol, "action": action, "changed_at": time.time(), "changed_by": by, "note": note,
     }])
 
 
