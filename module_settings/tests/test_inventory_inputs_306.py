@@ -29,7 +29,7 @@ def test_inputs_row_on_an_empty_store_and_no_ops_file(rawstore_tmp_db):
     assert row["label"] == "Your inputs (watchlist, board settings)"
     assert row["tables"] == ["board_settings"]
     assert row["rows"] == 0 and row["last_date"] == "—" and row["fetch"] is None
-    assert row["note"] == ("no inputs yet (press Opt or Stk next to a ticker on any board, or save a board "
+    assert row["note"] == ("no inputs yet (press a watch-list icon next to a ticker on any board, or save a board "
                            "setting)")
     assert not ops.ops_path().exists()                  # the row reads ops.sqlite, it never creates it
 

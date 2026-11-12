@@ -227,8 +227,12 @@ CSS, the script and `rcWatchInit(board)` once per page. Which names are on the l
 capture-phase click handler reads `data-rc-watch` and `data-ticker` (never an interpolated value, ADR-X1), posts
 `/api/watchlist/<list>/toggle/<ticker>` with the board as `X-RC-Panel` (the row's `added_by`), and re-marks every
 pair of that ticker; a row or card that opens on click does not open when its pair is pressed. A ticker the
-dashboard's `_TICKER_RE` refuses gets no pair. Pressed is `aria-pressed="true"` in the sky token; a refused toggle
-leaves the state and says why in the button's title.
+dashboard's `_TICKER_RE` refuses gets no pair. Since #770 the pair is **one box split by a hairline**, stock on the
+left, option on the right, with a glyph in each half (bars, and a contract sheet) instead of the old `Stk` / `Opt`
+text; the text stays in `aria-label` and `title`, so the control is never icon-only to a screen reader. Pressed is
+`aria-pressed="true"`, filled in the sky token for the stock list and the amber one for the option list, so the two
+lists differ by shape and position before colour; a refused toggle leaves the state and says why in the button's
+title.
 
 Where each board puts it (`core/tests/test_watchlist_boards_pr4.py` classifies every board):
 

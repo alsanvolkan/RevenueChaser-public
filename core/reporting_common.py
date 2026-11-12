@@ -266,17 +266,36 @@ def combobox_html(input_id: str, label_id: str, placeholder: str) -> str:
 # on the lists is read live (``GET /api/watchlists``) when the page loads, not baked in when the board was rendered.
 # A ticker the dashboard's rule (``app/dashboard.py`` ``_TICKER_RE``) refuses gets no buttons.
 WATCH_TICKER_PATTERN = r"[A-Z0-9][A-Z0-9.\-]{0,9}"
-WATCH_LABELS = {"option": ("Opt", "option watch list"), "stock": ("Stk", "stock watch list")}
+# Stock first, then option: the owner's order (12 Nov 2026). The text label is gone from the surface but
+# stays the accessible name, so nothing here is icon-only to a screen reader.
+WATCH_LABELS = {"stock": ("Stk", "stock watch list"), "option": ("Opt", "option watch list")}
+# Bars for the stock list, a contract sheet for the option list: two different shapes, so the lists are told
+# apart without colour.
+WATCH_ICONS = {
+    "stock": ('<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">'
+              '<path d="M2 11.5h2.6v3H2zM6.7 6h2.6v8.5H6.7zM11.4 2.5H14v12h-2.6z" fill="none" '
+              'stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>'),
+    "option": ('<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">'
+               '<path d="M4 1.8h5.2L13 5.5v8.7H4z" fill="none" stroke="currentColor" stroke-width="1.3" '
+               'stroke-linejoin="round"/><path d="M9 2v4h4" fill="none" stroke="currentColor" '
+               'stroke-width="1.3" stroke-linejoin="round"/><path d="M6.3 9.4h4.2M6.3 11.6h2.8" '
+               'stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>'),
+}
 _WATCH_TICKER_RE = re.compile(WATCH_TICKER_PATTERN)
 
 WATCHLIST_CSS = """<style>
-.rc-watch{display:inline-flex;gap:4px;align-items:center;vertical-align:middle;margin:0 0 0 6px;flex-wrap:nowrap}
-.rc-watch button{min-width:44px;min-height:44px;padding:0 8px;box-sizing:border-box;border-radius:8px;cursor:pointer;
-  border:1px solid var(--input-border,#2F434C);background:var(--input-bg,#101F33);color:var(--muted,#9C9DA1);
-  font:600 12px/1 system-ui,-apple-system,"Segoe UI",sans-serif;letter-spacing:.02em}
-.rc-watch button[aria-pressed="true"]{background:var(--sky,#0EA5E9);border-color:var(--sky,#0EA5E9);
-  color:var(--primary-fg,#0A1420)}
-.rc-watch button:focus-visible{outline:2px solid var(--sky,#0EA5E9);outline-offset:2px}
+.rc-watch{display:inline-flex;align-items:center;vertical-align:middle;margin:0 6px 0 0;flex-wrap:nowrap;
+  border:1px solid var(--input-border,#2F434C);border-radius:8px;overflow:hidden}
+.rc-watch button{display:flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:0;
+  box-sizing:border-box;border:0;cursor:pointer;background:var(--input-bg,#101F33);color:var(--muted,#9C9DA1);
+  transition:color 150ms ease,background-color 150ms ease}
+.rc-watch button + button{border-left:1px solid var(--input-border,#2F434C)}
+.rc-watch button:hover{color:var(--fg,#C5C6C8);background:var(--hover,#18293a)}
+.rc-watch button[data-rc-watch="stock"][aria-pressed="true"]{color:var(--sky,#0EA5E9);
+  background:color-mix(in oklab, var(--sky,#0EA5E9) 16%, var(--input-bg,#101F33))}
+.rc-watch button[data-rc-watch="option"][aria-pressed="true"]{color:var(--amber,#FBBF24);
+  background:color-mix(in oklab, var(--amber,#FBBF24) 16%, var(--input-bg,#101F33))}
+.rc-watch button:focus-visible{outline:2px solid var(--focus,var(--sky,#0EA5E9));outline-offset:-2px}
 .rc-watch button:disabled{opacity:.6;cursor:progress}
 .rc-watch button[data-rc-watch-error]{border-color:var(--neg,#F87171)}
 .rc-watch-row{display:flex;margin:4px 0 2px}
@@ -287,17 +306,19 @@ WATCHLIST_JS = ESC_JS + r"""
 var RC_WATCH = {board: 'board', lists: {option: {}, stock: {}}, loaded: false, toggled: {}};
 var RC_WATCH_RE = /^""" + WATCH_TICKER_PATTERN + r"""$/;
 var RC_WATCH_LABELS = """ + json.dumps({k: list(v) for k, v in WATCH_LABELS.items()}) + r""";
+var RC_WATCH_ICONS = """ + json.dumps(WATCH_ICONS) + r""";
 function rcWatchTicker(t){ t = String(t == null ? '' : t).trim().toUpperCase(); return RC_WATCH_RE.test(t) ? t : ''; }
 // On a card, the pair gets its own line under the ticker (a ticker line that clips a long name must not clip it).
 function rcWatchRow(ticker){ var b = rcWatchButtons(ticker); return b ? '<div class="rc-watch-row">' + b + '</div>' : ''; }
 function rcWatchButtons(ticker){
   var t = rcWatchTicker(ticker);
   if(!t) return '';
-  return '<span class="rc-watch">' + ['option', 'stock'].map(function(list){
+  return '<span class="rc-watch">' + ['stock', 'option'].map(function(list){
     var on = !!RC_WATCH.lists[list][t], lab = RC_WATCH_LABELS[list];
     return '<button type="button" data-rc-watch="' + list + '" data-ticker="' + rcEsc(t) + '" aria-pressed="' +
       (on ? 'true' : 'false') + '" aria-label="' + rcEsc(t + ' on the ' + lab[1]) + '" title="' +
-      rcEsc((on ? 'Remove ' : 'Add ') + t + (on ? ' from the ' : ' to the ') + lab[1]) + '">' + rcEsc(lab[0]) + '</button>';
+      rcEsc((on ? 'Remove ' : 'Add ') + t + (on ? ' from the ' : ' to the ') + lab[1]) + '">' +
+      RC_WATCH_ICONS[list] + '</button>';
   }).join('') + '</span>';
 }
 function rcWatchMark(btn){
@@ -377,7 +398,8 @@ def watch_buttons_html(ticker, on=()) -> str:
     buttons = "".join(
         f'<button type="button" data-rc-watch="{lst}" data-ticker="{e}" '
         f'aria-pressed="{"true" if lst in on else "false"}" aria-label="{e} on the {name}" '
-        f'title="{"Remove" if lst in on else "Add"} {e} {"from" if lst in on else "to"} the {name}">{label}</button>'
+        f'title="{"Remove" if lst in on else "Add"} {e} {"from" if lst in on else "to"} the {name}">'
+        f'{WATCH_ICONS[lst]}</button>'
         for lst, (label, name) in WATCH_LABELS.items())
     return f'<span class="rc-watch">{buttons}</span>'
 
@@ -406,7 +428,7 @@ def filters_meta(board: str, **fields) -> dict:
 __all__ = [
     "FILTERS_JS", "FILTERS_CSS", "filters_bar_html", "control_html", "combobox_html",
     "filters_meta",
-    "WATCHLIST_JS", "WATCHLIST_CSS", "WATCH_LABELS", "watch_buttons_html", "watchlist_html",
+    "WATCHLIST_JS", "WATCHLIST_CSS", "WATCH_LABELS", "WATCH_ICONS", "watch_buttons_html", "watchlist_html",
     "JOB_JS",
     "HELP_CSS", "help_html",
     "THEME_TOKENS", "THEME_SCALE", "THEME_CSS", "THEME_JS", "THEME_STORAGE_KEY",
