@@ -45,8 +45,8 @@ def test_every_board_that_records_has_a_refresh_path_here():
     covered = {k.split(":")[0] for k in _refresh_paths()}
     writers = {s["board"] for s in rawstore.MANIFEST.values() if s.get("db") == "history" and "board" in s}
     live_only = {"module_earnings_radar", "module_money_flow"}      # no store-only renderer: Fetch only
-    # Switched off (#730): the tab serves one fixed page, so the board has no renderer at all -- neither a
-    # Fetch nor a Refresh can reach ``record_run``, which is more than this rule asks for.
+    # No measurement yet (#730): the tab serves one fixed page, so the board has no renderer at all --
+    # neither a Fetch nor a Refresh can reach ``record_run``, which is more than this rule asks for.
     off = {"module_leaps"}
     assert writers - live_only - off <= covered
-    assert off & covered == set(), "a switched-off board must have no refresh path"
+    assert off & covered == set(), "a board with no renderer must have no refresh path"

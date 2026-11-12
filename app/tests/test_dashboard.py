@@ -673,11 +673,11 @@ class TestRefreshReadsStoreFetchReadsNetwork:
         API key) and writes a fresh artifact.
 
     The split itself is pinned on Financials (``test_quick_refresh_*``) and on the screeners
-    (``test_screener_refresh_145.py``); the LEAPS board, which used to pin it here, is switched off (#730)
-    and these tests now hold that nothing re-renders it.
+    (``test_screener_refresh_145.py``); the LEAPS board, which used to pin it here, has no measurement yet
+    (#730) and these tests now hold that nothing re-renders it.
     """
 
-    def test_the_leaps_tab_serves_the_switched_off_page(self, rawstore_tmp_db, tmp_path, monkeypatch):
+    def test_the_leaps_tab_serves_the_no_data_page(self, rawstore_tmp_db, tmp_path, monkeypatch):
         """#730: the only page the tab has. No key, no network, and no accumulation wording."""
         from RevenueChaser.core import rawstore
         from RevenueChaser.module_leaps.engine import save_cache
@@ -686,13 +686,13 @@ class TestRefreshReadsStoreFetchReadsNetwork:
         monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
 
         body = dashboard.app.test_client().get("/view/module_leaps").get_data(as_text=True)
-        assert "switched off" in body
+        assert "No data yet" in body
         assert "#730" in body
         assert "ACCUMULATION RADAR" not in body.upper()   # the board itself is never served
         assert "AAPL" not in body                      # nor does a seeded footprint
 
     def test_a_cached_leaps_artifact_is_never_served_again(self, rawstore_tmp_db, tmp_path, monkeypatch):
-        """An older build left ``leaps_latest.html`` in .cache/: the switched-off page wins, on a Refresh too."""
+        """An older build left ``leaps_latest.html`` in .cache/: the no-data page wins, on a Refresh too."""
         import RevenueChaser.app.runners as rn
         monkeypatch.setattr(rn, "OUTPUT_DIR", tmp_path)
         monkeypatch.setattr(rn, "LEAPS_LATEST", tmp_path / "leaps_latest.html")
@@ -702,14 +702,15 @@ class TestRefreshReadsStoreFetchReadsNetwork:
         c = dashboard.app.test_client()
         for url in ("/view/module_leaps", "/view/module_leaps?refresh=1"):
             body = c.get(url).get_data(as_text=True)
-            assert "switched off" in body, url
+            assert "No data yet" in body, url
             assert "ACCUMULATION RADAR" not in body, url
-        # The board is off, so it has no payload either.
+        # The board serves no artifact, so it has no payload either.
         assert c.get("/view/module_leaps/payload.json").status_code == 404
 
-    def test_the_tab_says_it_is_off_in_the_nav(self):
+    def test_the_tab_stays_in_the_nav_under_its_own_name(self):
+        """avo 12 Nov 2026: the board stays, so the tab is a plain LEAPS entry, not an "(off)" one (#730)."""
         entry = next(t for t in dashboard.TABS if t.get("key") == "module_leaps")
-        assert entry["label"] == "LEAPS (off)"
+        assert entry["label"] == "LEAPS"
         assert "module_leaps" not in dashboard._MODEL_ONLY_RENDERERS
         assert "module_leaps" not in dashboard._STORE_REFRESHABLE
 

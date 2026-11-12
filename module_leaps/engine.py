@@ -1,7 +1,8 @@
 """LEAPS / institutional accumulation — far-dated options OI + IV footprint.
 
-SWITCHED OFF since 12 Nov 2026 (#730, avo: "B: Kapat"). No scan runs: the Fetch job is not registered and
-the tab serves a "switched off" page, so none of the labels below reaches a screen. The one live reader
+NOT RUNNING since 12 Nov 2026 (#730). The board stays (avo: "Kalsin board ama nasil olcum yapacagimiz
+bulalim") but has no measurement yet: the scan is switched off, the Fetch job is not registered and the tab
+serves a "no data yet" page, so none of the labels below reaches a screen. The one live reader
 left is the Earnings Radar, which reads ``load_cache`` and shows nothing when it is empty -- and
 ``leaps_cache`` holds 0 rows. The rest is kept, unrun, because switching off is not deleting. The reason they are not trusted: the stored
 far-print tape carries no opening or closing marker in any column, tag or report flag, and 52% of its

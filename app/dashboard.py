@@ -200,8 +200,8 @@ def _no_cache(resp):
 # Register module runners with the job queue. ``produces`` lists which iframes
 # to reload when the job completes.
 jobs.register("earnings", runners.run_earnings_range, ["module_earnings_radar"])
-# The LEAPS scan is NOT registered: the board is switched off (#730, avo 12 Nov 2026 08:36, decision card
-# "B: Kapat"). Measured, not argued: ``leaps_cache``, ``leaps_flow_prints`` and ``leaps_footprint_history``
+# The LEAPS scan is NOT registered: it is switched off (#730). The board itself stays (avo 12 Nov 2026:
+# "Kalsin board ama nasil olcum yapacagimiz bulalim"), waiting on a measurement. Measured, not argued: ``leaps_cache``, ``leaps_flow_prints`` and ``leaps_footprint_history``
 # hold 0 rows, the pinned universe (the stock watch list, ``module_leaps/scan.py``) is empty, and
 # ``/api/option-trades`` ignores ``page``, so a scan would keep the newest 250 prints and report a cap of
 # 1,250. Leaving the name out of the registry is the gate: ``jobs.submit`` has no runner for it, so no Fetch
@@ -302,9 +302,9 @@ TABS = [
     {"type": "tab", "key": "module_fundamentals", "label": "Fundamentals", "url": "/view/module_fundamentals", "sub": True},
     {"type": "header", "label": "Ownership"},
     {"type": "tab", "key": "module_sec_13f", "label": "SEC 13F", "url": "/view/module_sec_13f", "sub": True},
-    # Switched off (#730): the tab stays in the nav so the name does not vanish without a word, and it
-    # serves the "switched off" page -- never the accumulation board.
-    {"type": "tab", "key": "module_leaps", "label": "LEAPS (off)", "url": "/view/module_leaps",
+    # The board stays (#730, avo 12 Nov 2026: "Kalsin board ama nasil olcum yapacagimiz bulalim"), but it
+    # has no measurement yet, so it serves the "no data yet" page -- never the accumulation board.
+    {"type": "tab", "key": "module_leaps", "label": "LEAPS", "url": "/view/module_leaps",
      "sub": True},
     {"type": "header", "label": "Ops"},
     {"type": "tab", "key": "module_settings", "label": "Settings / Data health", "url": "/view/module_settings", "sub": True},
@@ -318,7 +318,7 @@ def _uw() -> UWClient:
 def _module_file(mod: str) -> Path:
     return {
         "module_earnings_radar": runners.EARNINGS_LATEST,
-        # No "module_leaps": the board is switched off (#730), so it has no page and no payload.
+        # No "module_leaps": the board has no measurement yet (#730), so no artifact and no payload.
         "module_sector_rotation": runners.ROTATION_LATEST,
         "module_sec_13f": runners.SEC_13F_LATEST,
         "module_financials": runners.QUICK_LATEST,
@@ -398,8 +398,8 @@ def view(mod: str):
         return _view_uw_interaction()
     if mod == "activity":   # closed 11 Nov 2026 (avo): its jobs, logs and watch lists are on Settings' Fetch/Health tab
         return redirect("/view/module_settings")
-    if mod == "module_leaps":          # switched off (#730): never the board, whatever is cached on disk
-        return _view_leaps_off()
+    if mod == "module_leaps":          # no measurement yet (#730): never the board, whatever is cached on disk
+        return _view_leaps_waiting()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     if mod == "runs":
@@ -554,22 +554,22 @@ def _universe_loading(mod: str) -> bool:
     return not universe.has_universe()          # the universe the boards read (Opus review M1), not the old table
 
 
-def _view_leaps_off() -> str:
-    """The LEAPS tab's only page: a plain sentence saying the board is off and what would bring it back (#730).
+def _view_leaps_waiting() -> str:
+    """The LEAPS tab's only page while the board has no measurement: what is missing, and what would fill it (#730).
 
     Rendered in memory, like every transient state: nothing is written to ``.cache``, and a board artifact an
     older build left on disk is never served again. The accumulation, conviction and tier wording of
-    ``module_leaps/report.py`` therefore reaches no screen.
+    ``module_leaps/report.py`` therefore reaches no screen: it was never earned from this data.
     """
     from datetime import datetime, timezone
     return templating.render(
         "empty_board.html.j2", title="LEAPS",
-        message="This board is switched off.",
-        hint=("It never recorded a row, its pinned universe is empty, and the far-dated print feed carries no "
-              "opening marker, so \u201caccumulating\u201d could not be read from it. It returns when each "
-              "far-dated print can be joined to the next session\u2019s open interest on the same contract "
-              "(ticker, expiry, strike, right) \u2014 and the label would then be \u201cOI up\u201d, not "
-              "\u201caccumulating\u201d. Issue #730."),
+        message="No data yet: this board is waiting on a measurement.",
+        hint=("It has recorded no row, its pinned universe is empty, and the far-dated print feed carries no "
+              "opening marker, so \u201caccumulating\u201d could not be read from it. The scan is switched "
+              "off until each far-dated print can be joined to the next session\u2019s open interest on the "
+              "same contract (ticker, expiry, strike, right) \u2014 and the honest label is then "
+              "\u201cOI up\u201d, not \u201caccumulating\u201d. Issue #730."),
         stamp=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
 

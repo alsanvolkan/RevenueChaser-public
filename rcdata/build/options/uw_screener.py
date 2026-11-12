@@ -33,7 +33,7 @@ far-dated prints, paged back with ``older_than`` (UW ignores ``page``, M5), at m
 page brings no new print. Not the whole session: the feed is newest-first and both stored sessions sat on the
 3 x 500 ceiling, so what the table holds is the **end** of the session, nothing earlier (#730 item 4). Raw:
 ``raw/uw/far_prints/<S>/prints.json.gz``. ``option_far_print``: one row per print id, its last
-``tables.FAR_PRINT_SESSIONS`` sessions served. It was the LEAPS scan's input; that board is switched off (#730).
+``tables.FAR_PRINT_SESSIONS`` sessions served. It was the LEAPS scan's input; that scan is switched off (#730).
 
 All of it takes a ``date`` or is fetched in the observed window (``uw.observed``) like the rest of the options data, so
 the screener row, the calendar and the earnings set of an evening are one moment. A run stops starting calls after

@@ -56,7 +56,7 @@ def locked_store(store_file, serve_13f_totals):
         yield
 
 
-# No "module_leaps": it is switched off (#730) and its page reads no store, so it cannot meet the lock.
+# No "module_leaps": it has no measurement yet (#730) and its page reads no store, so it cannot meet the lock.
 BOARDS = ["module_sector_rotation", "module_sec_13f", "module_financials"]
 
 

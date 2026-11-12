@@ -1,6 +1,6 @@
 """LEAPS accumulation dashboard — standalone HTML view.
 
-SWITCHED OFF since 12 Nov 2026 (#730): the dashboard never serves this render, so the tier names, the
+NOT SERVED since 12 Nov 2026 (#730): the dashboard never serves this render, so the tier names, the
 legend and the Accumulating / Distributing / Quiet labels are not visible anywhere. See
 ``module_leaps/engine.py`` for why, and ``app/dashboard.py`` for what the tab shows instead.
 

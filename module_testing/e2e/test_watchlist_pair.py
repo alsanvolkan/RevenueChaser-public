@@ -5,7 +5,7 @@ ownership store, and the page marks the pair from the live lists. A click on **O
 with ``sec_13f`` as ``added_by``; a click on **Stk** unpins it. Settings then lists it on the option card, under
 the names the next options build takes. On a 390 px phone each button is at least 44 x 44.
 
-It was pinned on LEAPS until 12 Nov 2026; that board is switched off (#730), so the same clicks are made on
+It was pinned on LEAPS until 12 Nov 2026; that board serves no rows (#730), so the same clicks are made on
 13F, which renders the same shared pair.
 """
 from __future__ import annotations
