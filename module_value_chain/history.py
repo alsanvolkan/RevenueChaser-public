@@ -19,19 +19,20 @@ from RevenueChaser.core import history, ledger
 from RevenueChaser.module_value_chain import config, precision
 
 BOARD, TABLE = "module_value_chain", "value_chain_edges_history"
-# Bump when the extraction changes in a way the config hash does not see (``mentions``' relation patterns,
-# ``concentration``, ``aliases``, the splitter's patterns), not a setting.
+# Bump when the extraction changes in a way the config hash does not see (``aliases``, the splitter's patterns),
+# not a setting.
 # 2: a concentration edge keeps the share its sentence states (``share_pct``, #387 D7).
 # 3: the annual report's XBRL major customers (``customer_share``) are edges too, on the fundamentals layer (G6).
 # 4: the Relatedness profile's customers, suppliers and competitors are edges, preferred per counterparty (#410).
-SELECTION_VERSION = "4"
+# 5: the two text scans are gone (#748); a filing gives its XBRL customers only.
+SELECTION_VERSION = "5"
 
 
 def effective_config() -> dict:
     """The settings the filings are sliced and the edges extracted and gated with."""
     return {
         "MIN_ITEM_CHARS": config.MIN_ITEM_CHARS, "MAX_ITEM_CHARS": config.MAX_ITEM_CHARS,
-        "MENTION_WINDOW": config.MENTION_WINDOW, "MISS_RETRY_DAYS": config.MISS_RETRY_DAYS,
+        "MISS_RETRY_DAYS": config.MISS_RETRY_DAYS,
         "USE_SHARED_UNIVERSE": config.USE_SHARED_UNIVERSE, "MIN_PRECISION": precision.MIN_PRECISION,
         "MIN_LABELED_N": precision.MIN_LABELED_N, "MAX_EDGES_PER_TICKER": precision.MAX_EDGES_PER_TICKER,
     }

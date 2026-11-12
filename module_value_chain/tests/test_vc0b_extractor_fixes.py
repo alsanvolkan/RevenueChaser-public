@@ -1,88 +1,14 @@
-"""Value Chain VC0b extractor fixes (#61): CRM phrase, sentence-bounded relation
-window, C16 name guards, MICROCHIP case, precision-tile coverage. No network, no store."""
+"""Value Chain VC0b fixes (#61) that outlived the text scans (#748): the C16 name guards and the MICROCHIP case of
+the alias table, which the name resolver still reads, and the precision-tile coverage. No network, no store."""
 from __future__ import annotations
 
 import pytest
 
-from RevenueChaser.module_value_chain import aliases, concentration, mentions, precision, report
-
-
-def _pairs(text):
-    return {(m["dst_ticker"], m["relation"]) for m in mentions.find_mentions(text)}
+from RevenueChaser.module_value_chain import aliases, precision, report
 
 
 def _tickers(text):
     return {h["ticker"] for h in aliases.find_aliases(text) if not h["context_only"]}
-
-
-# ── CRM phrase ─────────────────────────────────────────────────────────────
-@pytest.mark.parametrize("text", [
-    "We integrate with Salesforce customer relationship management software.",
-    "We integrate with Salesforce customer-relationship-management software.",
-    "Salesforce offers customer relationship management (CRM) tools.",
-])
-def test_customer_relationship_management_is_not_a_customer_cue(text):
-    assert _pairs(text) == {("CRM", "other")}
-
-
-@pytest.mark.parametrize("text", [
-    "We have long-standing customer relationships with Salesforce.",
-    "Our customers include Salesforce.",
-    "Salesforce is one of our largest customers.",
-])
-def test_customer_cue_still_labels_the_name(text):
-    assert _pairs(text) == {("CRM", "customer")}
-
-
-# ── sentence-bounded relation window ──────────────────────────────────────
-@pytest.mark.parametrize("text", [
-    "Apple is a long-time partner. Our suppliers ship daily.",
-    "Our suppliers ship daily. Apple is a long-time partner.",
-    "Apple is a long-time partner; Suppliers ship daily.",
-    "We compete on price. Apple is a long-time partner. Our customers vary.",
-])
-def test_a_verb_in_another_sentence_does_not_label_the_name(text):
-    assert _pairs(text) == {("AAPL", "other")}
-
-
-def test_the_verb_in_the_same_sentence_still_labels_the_name():
-    text = "Our customers vary. We purchase wafers from TSMC. Apple is a partner."
-    assert ("TSM", "supplier") in _pairs(text)
-    assert ("AAPL", "other") in _pairs(text)
-
-
-def test_a_legal_form_abbreviation_does_not_end_the_sentence():
-    # "Inc." is not a sentence end, so "We sell to" still reaches Qualcomm.
-    assert _pairs("We sell to Example Inc. Qualcomm buys modules too.") == {("QCOM", "customer")}
-
-
-def test_a_newline_does_not_end_the_sentence():
-    assert _pairs("Our largest customers are\nQualcomm and others.") == {("QCOM", "customer")}
-
-
-def test_the_snippet_still_spans_the_mention_window():
-    text = "Our suppliers ship daily. Apple is a long-time partner."
-    (m,) = mentions.find_mentions(text)
-    assert m["snippet"] == text
-
-
-def test_sentence_spans_match_the_concentration_split():
-    from RevenueChaser.module_value_chain import sentences
-    text = "Apple Inc. is big. Dell Inc. buys; Others sell. U.S. sales grew. tail"
-    spans = sentences.spans(text)
-    assert [text[a:b] for a, b in spans] == list(concentration._sentences(text))
-    assert [text[a:b] for a, b in spans] == [
-        "Apple Inc. is big.", "Dell Inc. buys;", "Others sell.", "U.S. sales grew. tail"]
-
-
-def test_sentence_bounds_cover_every_position():
-    from RevenueChaser.module_value_chain import sentences
-    text = "One. Two three. Four"
-    b = sentences.Bounds(text)
-    assert b.at(0) == (0, 4)
-    assert b.at(6) == (5, 15)
-    assert b.at(len(text) - 1) == (16, 20)
-    assert sentences.Bounds("").at(0) == (0, 0)
 
 
 # ── C16 name guards ────────────────────────────────────────────────────────
@@ -92,16 +18,7 @@ def test_sentence_bounds_cover_every_position():
     "Our customers include Eaton Vance funds.",
 ])
 def test_c16_names_are_not_the_company(text):
-    assert _pairs(text) == set()
-
-
-@pytest.mark.parametrize("text", [
-    "Cadence Bank accounted for 12% of our revenues.",
-    "Apple Hospitality REIT accounted for 12% of our revenues.",
-    "Eaton Vance accounted for 12% of our revenues.",
-])
-def test_c16_names_are_not_concentration_customers(text):
-    assert concentration.find(text) == []
+    assert _tickers(text) == set()
 
 
 @pytest.mark.parametrize("text,ticker", [
@@ -110,12 +27,7 @@ def test_c16_names_are_not_concentration_customers(text):
     ("Our customers include Apple.", "AAPL"),
 ])
 def test_c16_positive_controls_stay_customers(text, ticker):
-    assert _pairs(text) == {(ticker, "customer")}
-
-
-def test_c16_positive_control_concentration():
-    (c,) = concentration.find("Eaton Corporation accounted for 11% of our net sales.")
-    assert (c["dst_ticker"], c["relation"], c["share_pct"]) == ("ETN", "customer", 11.0)
+    assert _tickers(text) == {ticker}
 
 
 # ── MICROCHIP case ─────────────────────────────────────────────────────────

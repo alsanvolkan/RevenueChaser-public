@@ -17,10 +17,8 @@ from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import opens  # #566: pooled reads count for this run
 
 from . import aliases
-from . import concentration
 from . import config
 from . import edgar_text
-from . import mentions as mentions_mod
 from . import precision as precision_mod
 from . import splitter
 
@@ -375,47 +373,20 @@ def _spine_names() -> dict:
 
 def filing_edges(ticker: str, text: str, filed: str = "", customers: list[dict] | None = None,
                  names: dict | None = None) -> list[dict]:
-    """Edges one filing states: concentration sentences first, then keyword mentions.
+    """Edges one filing states on its own, without a model: its XBRL major customers.
 
-    A concentration sentence ("Apple accounted for 29.8% of our net sales")
-    states relation and direction, so it replaces any keyword-window guess for
-    the same counterparty, and its share rides on the edge as ``share_pct``
-    (#387 D7; None on a keyword edge). A company naming itself (or its other
-    share class) is not an edge.
+    ``customers`` (the filer's ``customer_share`` rows, G6) each give a ``customer`` edge with the share of revenue
+    the filer tagged. A company naming itself (or its other share class) is not an edge.
 
-    ``customers`` (the filer's ``customer_share`` rows, G6) are stated too: a named major customer is a ``customer``
-    edge with its share of revenue; when a sentence already states that customer, the sentence stays and gains the
-    share it did not give.
+    The two text scans that used to feed this -- the keyword window (``mentions``) and the share sentences
+    (``concentration``) -- are gone (#748): the first scored 31 of 80 on its own labelled fixture, and of the 27
+    shares the second put on the board 9 were right. ``text`` is kept in the signature for the callers; nothing
+    reads it here.
     """
-    me = aliases.issuer(ticker)
-    stated = [c for c in concentration.find(text, filed) if aliases.issuer(c["dst_ticker"]) != me]
-    for x in _xbrl_customer_edges(ticker, customers or [], names):
-        same = next((c for c in stated if c["dst_ticker"] == x["dst_ticker"] and c["relation"] == "customer"), None)
-        if same is None:
-            stated.append(x)
-        elif same.get("share_pct") is None:
-            same["share_pct"] = x["share_pct"]
-    stated_dst = {c["dst_ticker"] for c in stated}
-    out = [{"src": ticker, "dst_name": c["dst_name"], "dst_ticker": c["dst_ticker"],
-            "relation": c["relation"], "snippet": c["snippet"], "filed": c["filed"],
-            "share_pct": c.get("share_pct"), "source": c.get("source") or "regex"}
-           for c in stated]
-    for m in mentions_mod.find_mentions(text, filed):
-        if aliases.issuer(m["dst_ticker"]) == me:
-            continue
-        if m["dst_ticker"] in stated_dst and m["relation"] in ("supplier", "customer"):
-            continue
-        out.append({"src": ticker, "dst_name": m["dst_name"], "dst_ticker": m["dst_ticker"],
-                    "relation": m["relation"], "snippet": m["snippet"], "filed": m["filed"],
-                    "share_pct": None, "source": "regex"})
-    # chain_mentions is keyed (src, dst_name, relation): keep the first per key.
-    seen, uniq = set(), []
-    for x in out:
-        k = (x["src"], x["dst_name"], x["relation"])
-        if k not in seen:
-            seen.add(k)
-            uniq.append(x)
-    return uniq
+    return [{"src": ticker, "dst_name": c["dst_name"], "dst_ticker": c["dst_ticker"],
+             "relation": c["relation"], "snippet": c["snippet"], "filed": c["filed"],
+             "share_pct": c.get("share_pct"), "source": c.get("source") or "xbrl"}
+            for c in _xbrl_customer_edges(ticker, customers or [], names)]
 
 
 # A profile field and the relation its companies have to the filer (module_relatedness/profile_v3.py).
@@ -459,12 +430,12 @@ def _party_relation(edge: dict) -> tuple[str, str]:
 
 
 def merge_profile(regex_edges: list[dict], prof_edges: list[dict]) -> list[dict]:
-    """One filer's edges: the profile's first; a sentence, keyword or XBRL edge only for a
+    """One filer's edges: the profile's first; a filing edge (XBRL since #748) only for a
     (counterparty, relation) pair the profile does not name (#410: "prefers the profile row for a (filer,
-    counterparty) pair", narrowed to the store's own key by #725). A profile edge with no share takes the XBRL or
-    sentence share stated for the same company in the same relation.
+    counterparty) pair", narrowed to the store's own key by #725). A profile edge with no share takes the XBRL
+    share stated for the same company in the same relation.
 
-    A display-only ``other`` edge (``mentions``: the name appeared with no relation verb) is the one exception to
+    A display-only ``other`` edge (written by the keyword scan until #748; stored rows may still hold some) is the one exception to
     the per-relation key: it states no relation at all, so a profile that names that company in *any* relation
     already says more, and the ``other`` row would only double the company on the board.
     """
@@ -685,8 +656,8 @@ def focal_graph(edges: list[dict], ticker: str, depth: int = 2,
     links: list[dict] = []
 
     def _add(e, hop, incoming=False):
-        # ``share_pct``: the share of the filer's (``src``'s) sales or purchases a concentration sentence states
-        # (#387 D7); None on a keyword edge and on an edge stored before the column.
+        # ``share_pct``: the share of the filer's (``src``'s) sales the edge states (#387 D7); None when it states
+        # none and on an edge stored before the column.
         links.append({"src": e["src"], "dst": e.get("dst_ticker") or e["dst_name"],
                       "dst_ticker": e.get("dst_ticker") or "",
                       "relation": e["relation"], "snippet": e.get("snippet") or "",
