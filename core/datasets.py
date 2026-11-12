@@ -693,6 +693,14 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=("spx_gex_daily", "session_date"),
     ),
     DatasetSpec(
+        key="sec13f_board_file", label="13F board: its own file (cells as filed, filer breaks, source stamp)",
+        tables=("sec13f_board_cells", "sec13f_board_breaks", "sec13f_board_meta"),
+        db="sec_13f", source=Source.derived, writer=None,
+        writer_note=("written by module_sec_13f/store.py on the 13F Refresh and Fetch, from the ownership build, "
+                     "once per build or New York day; a closed quarter is never rewritten (#732)"),
+        freshness=("sec13f_board_cells", "period"),
+    ),
+    DatasetSpec(
         key="source_checks", label="Source check watermarks",
         tables=("source_checks",),
         db="raw", source=Source.store, writer=None,
