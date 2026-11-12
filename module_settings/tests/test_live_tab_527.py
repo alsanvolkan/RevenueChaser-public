@@ -1,5 +1,8 @@
-"""#527: the RC Data Health and RC Fetch Grafana boards live inside the app, at the head of the Fetch/Health tab
-(avo, 10 Nov 2026: "iki tabdan daha fazlasi olmasin"; the Live tab is gone).
+"""#527: the RC Grafana boards live inside the app, at the head of the tab that owns them.
+
+avo, 12 Nov 2026 ("bence uc sekme ...", "gomebiliriz"): three tabs. Fetch/Health frames the fetch controls, the
+DuckDB health and the RC timers (rc-jobs); Logs frames what flowed (rc-logs) and the runs by the board they feed
+(rc-activity).
 
 avo, 8 Nov 2026: "bunlarin ne isi var burada? bunlar revenue chaser app icine gomulu olmaliydi". Grafana runs on
 the same host as the dashboard, port 3000, and allows only this app's origin to frame it (home-server units/
@@ -16,15 +19,30 @@ def _page() -> str:
     return report.render_settings_dashboard({"newdata": {"error": "not read in this test"}, "tickers": []})
 
 
-def test_two_tabs_only_and_the_frame_heads_fetch_health_with_rc_fetch_first():
+def test_three_tabs_and_the_frame_heads_fetch_health_with_rc_fetch_first():
     html = _page()
     strip = html[html.index('id="settings-tabs"'):html.index("</nav>")]
-    assert re.findall(r'role="tab" id="(tab-[a-z]+)"', strip) == ["tab-data", "tab-health"]
+    assert re.findall(r'role="tab" id="(tab-[a-z]+)"', strip) == ["tab-data", "tab-health", "tab-logs"]
     assert 'id="panel-live"' not in html and "live" not in report.SETTINGS_TABS["tabs"]
     health = html[html.index('id="panel-health"'):]
     assert health.index('id="live-frame"') < health.index("<h1>Data/Health · Fetch/Health</h1>")
     assert report.LIVE_BOARDS[0][0] == "rc-fetch"
-    assert "getElementById('panel-health')" in report.LIVE_JS
+    # one script drives every strip: it finds each one's panel, so a third tab needs no second copy
+    assert "querySelectorAll('.live-board')" in report.LIVE_JS
+    assert "aria-labelledby" in report.LIVE_JS
+
+
+def test_the_logs_tab_frames_what_flowed_and_the_runs():
+    """avo, 12 Nov 2026: "logs ise hem internal hem external requestlerin aktigi tablo"."""
+    html = _page()
+    logs = html[html.index('id="panel-logs"'):]
+    assert re.search(r'<div id="panel-logs" role="tabpanel" aria-labelledby="tab-logs" hidden', html), \
+        "the Logs panel is a tab panel and starts hidden"
+    assert [uid for uid, _ in report.LOGS_BOARDS] == ["rc-logs", "rc-activity"]
+    frame = re.search(r"<iframe[^>]*id=\"logs-frame\"[^>]*>", logs).group(0)
+    assert " src=" not in frame and 'loading="lazy"' in frame
+    # the runs and the log lines leave the Fetch/Health strip
+    assert "rc-activity" not in report.LIVE_HTML and "rc-logs" not in report.LIVE_HTML
 
 
 def test_the_frame_has_no_source_until_the_tab_opens():
@@ -37,12 +55,14 @@ def test_the_frame_has_no_source_until_the_tab_opens():
 
 def test_the_boards_and_the_grafana_address():
     html = _page()
-    for uid in ("rc-data-health", "rc-fetch", "rc-activity", "rc-logs"):
+    for uid in ("rc-data-health", "rc-fetch", "rc-jobs", "rc-activity", "rc-logs"):
         assert f'data-board="{uid}"' in html
     js = report.LIVE_JS
     assert "location.hostname" in js and "':3000/d/'" in js, "same host as the page, Grafana's port"
     assert "kiosk" in js and "theme=" in js
     assert "rc-data-health" in report.LIVE_HTML and "rc-fetch" in report.LIVE_HTML
+    # home-server #222: the RC part of the Jobs board, with its switches and fuse, under Fetch/Health
+    assert "rc-jobs" in report.LIVE_HTML
 
 
 
