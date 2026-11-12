@@ -26,8 +26,9 @@ from typing import NamedTuple, Sequence
 # ── the bands ────────────────────────────────────────────────────────────────
 
 STRONG_SELL, SELL, NEUTRAL, BUY, STRONG_BUY = "strong_sell", "sell", "neutral", "buy", "strong_buy"
-#: The lower edge of each label, as TradingView draws them.
-BANDS = ((0.5, STRONG_BUY), (0.1, BUY), (-0.1, NEUTRAL), (-0.5, SELL))
+#: The lower edge of each label, as TradingView draws them. The edges are symmetric around zero: a score of
+#: +0.1 is already a buy and -0.1 is already a sell, so only the two buy edges include their own value.
+BANDS = ((0.5, STRONG_BUY, True), (0.1, BUY, True), (-0.1, NEUTRAL, False), (-0.5, SELL, False))
 
 #: Sessions in a trading week, month, quarter and year — the windows the Performance tab uses. A year is 252
 #: sessions, the usual count of US trading days.
@@ -47,8 +48,8 @@ def label(score: float | None) -> str | None:
     """The word for a rating between -1 and 1."""
     if score is None:
         return None
-    for edge, name in BANDS:
-        if score >= edge:
+    for edge, name, closed in BANDS:
+        if score >= edge if closed else score > edge:
             return name
     return STRONG_SELL
 
