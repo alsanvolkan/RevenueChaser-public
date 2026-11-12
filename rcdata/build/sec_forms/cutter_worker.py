@@ -15,7 +15,9 @@ three filings our rule threw away as a table of contents. It needs Python 3.11+ 
 that result file (``random.Random(20261112)``), and read the item-length table against the stored one. A length
 that changed on a filing that was right before **stops the update**. Only if the table holds: bump the version
 here, bump ``CUTTER_VERSION`` in ``cutter.py``, and recut -- the cached answers are keyed by that version, so a
-recut is what a bump costs.
+recut is what a bump costs. **Check :data:`SWALLOW_SITES` against the new wheel in the same pass**: it names
+functions of the library's own, and a renamed one stops counting silently, which charges filings for failures
+inside the library again.
 
 **Protocol**, one JSON object per line on a private copy of stdin/stdout:
 
@@ -280,22 +282,29 @@ def _read(html_path: str) -> str:
 #: worker that a version bump has to be checked against by hand -- a renamed function silently stops counting:
 #:
 #: - ``hybrid_section_detector.py:657, 672, 695`` -- the three strategies, each an ``except Exception``
+#: - ``hybrid_section_detector.py:770`` -- one heading whose section could not be built, which is how
+#:   ``_try_heading_detection`` comes back with nothing while every heading it needed was there
 #: - ``toc_section_detector.py:179`` and ``index_section_detector.py:122`` -- the detectors the first two call
 #:
 #: **Counting every warning instead does not work**, which is what review round 7 measured: the detector's own
 #: ordinary "no sections here" exit logs one too (``hybrid_section_detector.py:128``, "All detection strategies
-#: failed, no sections found"), and so do several harmless things about a filing's XBRL and its table of contents
+#: failed, no sections found", logged from ``detect_sections`` and not from ``detect``), and so do several
+#: harmless things about a filing's XBRL and its table of contents
 #: (``strategies/xbrl_extraction.py:544``, ``parser.py:372``, ``utils/toc_analyzer.py:361``,
 #: ``extractors/toc_section_extractor.py:1583, 1650``). A count of all of them says "something was swallowed"
 #: about every sectionless filing in the corpus, which is the opposite of a signal.
 #:
 #: Accepted residual: about twenty ``except Exception`` sites on the same path log at DEBUG or not at all
 #: (``utils/toc_analyzer.py`` has thirteen). A failure in one of those still arrives as a quiet zero and is
-#: charged to the filing. Raising the handler to DEBUG would count the library's ordinary chatter instead.
+#: charged to the filing. Raising the handler to DEBUG would count the library's ordinary chatter instead. An AST
+#: pass over the whole wheel says these five pairs are every WARNING-or-higher log call inside an ``except`` on
+#: the detection path, that each of the five functions holds exactly one such call, and that no other module in
+#: the package carries any of these three basenames -- which is what makes module-and-function enough.
 SWALLOW_SITES = frozenset({
     ("hybrid_section_detector", "_try_heading_detection"),
     ("hybrid_section_detector", "_try_index_detection"),
     ("hybrid_section_detector", "_try_pattern_detection"),
+    ("hybrid_section_detector", "_extract_section_from_heading"),
     ("toc_section_detector", "detect"),
     ("index_section_detector", "detect"),
 })

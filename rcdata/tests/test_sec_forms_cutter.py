@@ -196,6 +196,16 @@ class Document:
             _warn_as("edgar.documents.extractors.hybrid_section_detector", "_try_pattern_detection",
                      "Pattern detection failed: boom")
             return {}
+        if "heading" in self.html:
+            # The fourth swallow site: one heading whose section could not be built
+            # (hybrid_section_detector.py:770). It is how ``_try_heading_detection`` comes back with nothing
+            # while every heading it needed was there, and it logs at WARNING like the other four -- so a
+            # residual paragraph that called the uncounted sites "DEBUG or nothing at all" was wrong about it.
+            _warn_as("edgar.documents.extractors.hybrid_section_detector", "_extract_section_from_heading",
+                     "Failed to extract section from heading: boom")
+            _warn_as("edgar.documents.extractors.hybrid_section_detector", "detect_sections",
+                     "All detection strategies failed, no sections found")
+            return {}
         if "benign" in self.html:
             # A warning about something else entirely: an inline-XBRL format the library does not support
             # (strategies/xbrl_extraction.py:544), which says nothing at all about detection. Round 7 measured
@@ -209,7 +219,7 @@ class Document:
             # (hybrid_section_detector.py:128), which is the whole reason the worker cannot simply count them.
             # Round 7 measured what a plain count does with this: every sectionless filing in the corpus is
             # called a swallowed failure, deferred, and re-parsed every back-off for ever.
-            _warn_as("edgar.documents.extractors.hybrid_section_detector", "detect",
+            _warn_as("edgar.documents.extractors.hybrid_section_detector", "detect_sections",
                      "All detection strategies failed, no sections found")
             return {}
         if "aslist" in self.html:
@@ -1306,6 +1316,11 @@ def test_a_zero_section_answer_the_library_complained_about_is_not_the_filing_s_
         assert "swallowed" in c.failed["0000-75"] and "not this filing's" in c.failed["0000-75"]
         assert c.cut("0000-76", docs["nothing"], "10-K") is None
         assert c.cut("0000-81", docs["benign"], "10-K") is None
+        heading = tmp_path / "heading.htm"
+        heading.write_text("<html>heading</html>", encoding="utf-8")
+        assert c.cut("0000-87", heading, "10-K") is None, (
+            "and the fourth site counts even though the detector then logged its ordinary zero exit too")
+    assert cutter.tries_so_far("0000-87") == 0 and cutter.stops_so_far("0000-87") == 1
     assert cutter.tries_so_far("0000-75") == 0, "the cause is unknown, so the filing is not charged for it"
     assert cutter.stops_so_far("0000-75") == 1, "it is deferred instead, and tried again after the back-off"
 
@@ -1348,16 +1363,20 @@ def test_a_form_with_no_vocabulary_is_terminal_whatever_the_library_logged_on_th
 def test_which_log_records_count_as_a_swallowed_failure():
     """The table is a copy of the library's ``except Exception`` sites on the detection path, so it is worth
     saying out loud what is on each side of it. The ordinary "no sections found" exit is a warning from
-    ``detect`` of the same module as two of the sites, which is why the function and not only the module decides.
+    ``detect_sections`` -- the same module as four of the sites -- which is why the function and not only the
+    module decides, and why the name has to be the one the library really logs from: a stub that said ``detect``
+    there would leave the whole of round 7's finding free to come back unseen.
     """
     sites = _worker_module().SWALLOW_SITES
     for module, func in [("hybrid_section_detector", "_try_pattern_detection"),
                          ("hybrid_section_detector", "_try_heading_detection"),
                          ("hybrid_section_detector", "_try_index_detection"),
+                         ("hybrid_section_detector", "_extract_section_from_heading"),
                          ("toc_section_detector", "detect"),
                          ("index_section_detector", "detect")]:
         assert (module, func) in sites
-    for module, func in [("hybrid_section_detector", "detect"),        # ":128", no sections found: not swallowed
+    for module, func in [("hybrid_section_detector", "detect_sections"),   # ":128": looked, found nothing
+                         ("hybrid_section_detector", "detect"),            # not a function the library has
                          ("xbrl_extraction", "extract"),               # nothing to do with detection
                          ("toc_analyzer", "analyze"),
                          ("parser", "parse")]:
