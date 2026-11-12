@@ -1,8 +1,10 @@
 /* The control board's own styles (design v28), scoped to .ctl so the old Settings sections keep theirs.
-   Light by default, dark under the shell's choice: data-theme="dark", or "auto" on a dark device. */
-.ctl{--bg:#f6f7f9; --card:#fcfcfd; --fg:#1d2430; --mut:#667085; --line:#e3e7ee;
-  --acc:#0e7bd6; --acc2:#e9f3fc;
-  --ok:#1a7f37; --okb:#e6f4ea; --warn:#9a6700; --warnb:#fff4d6; --bad:#b42318; --badb:#fde8e7;
+   The core names (--mut, --line, --acc, --ok, --warn, --bad) are aliases of the shared theme tokens (THEME_CSS,
+   theme D); --bg, --card and --fg are the theme's own. The section, source and provider tints below are still this
+   board's: light by default, dark under data-theme="dark", or "auto" on a dark device. */
+.ctl{--mut:var(--muted); --line:var(--border);
+  --acc:var(--accent); --acc2:var(--accent-soft);
+  --ok:var(--pos); --okb:var(--pos-soft); --warn:var(--amber); --warnb:var(--amber-soft); --bad:var(--neg); --badb:var(--neg-soft);
   --new:#5b3fd0; --newb:#efeafe;
   --s-who:#f3f4f6; --l-who:#4b5260;   
   --src:#5f6a2a; --srcb:#f3f5ea;      
@@ -14,22 +16,16 @@
   --ssd:#1a7f37; --hdd:#6f6a63; --old:#98a0ad;
   --pv-build:#f1f3f5; --pv-sec:#e8f0fb; --pv-rule:#eaf3ea; --pv-wrds:#fdf0e0; --pv-figi:#efe9fb;
   --pv-alpaca:#e9f3fc; --pv-uw:#f3ecfb; --pv-yf:#fdf1f4;
-  --f-body:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-body:var(--font-sans);
   --f-mono:ui-monospace,Menlo,Consolas,monospace;}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .ctl{--bg:#0d1117; --card:#151b23; --fg:#e6edf3; --mut:#8b949e; --line:#2a313c;
-  --acc:#4aa3f0; --acc2:#132536;
-  --ok:#56d364; --okb:#12261a; --warn:#e3b341; --warnb:#2b230f; --bad:#ff7b72; --badb:#2d1414;
-  --new:#a89bff; --newb:#1f1a3a;
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .ctl{--new:#a89bff; --newb:#1f1a3a;
   --s-who:#1a1d23; --l-who:#aab2c0; --src:#b5c27a; --srcb:#1d2112; --s-src:#201a11; --l-src:#f0a35a;
   --s-dat:#10201a; --l-dat:#56d364; --s-hlt:#241618; --l-hlt:#ff7b72;
   --s-ex:#0f1e1c; --l-ex:#4fc1b3; --s-not:#1a1f27; --l-not:#6e7681;
   --ssd:#56d364; --hdd:#a8a29a; --old:#6e7681;
   --pv-build:#1e242c; --pv-sec:#16233a; --pv-rule:#17301f; --pv-wrds:#3a2a14; --pv-figi:#2a2140;
   --pv-alpaca:#132536; --pv-uw:#231b3a; --pv-yf:#2d1820; color-scheme:dark}}
-:root[data-theme="dark"] .ctl{--bg:#0d1117; --card:#151b23; --fg:#e6edf3; --mut:#8b949e; --line:#2a313c;
-  --acc:#4aa3f0; --acc2:#132536;
-  --ok:#56d364; --okb:#12261a; --warn:#e3b341; --warnb:#2b230f; --bad:#ff7b72; --badb:#2d1414;
-  --new:#a89bff; --newb:#1f1a3a;
+:root[data-theme="dark"] .ctl{--new:#a89bff; --newb:#1f1a3a;
   --s-who:#1a1d23; --l-who:#aab2c0; --src:#b5c27a; --srcb:#1d2112; --s-src:#201a11; --l-src:#f0a35a;
   --s-dat:#10201a; --l-dat:#56d364; --s-hlt:#241618; --l-hlt:#ff7b72;
   --s-ex:#0f1e1c; --l-ex:#4fc1b3; --s-not:#1a1f27; --l-not:#6e7681;
@@ -654,7 +650,7 @@
 .ctl .bfmode{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:999px;overflow:hidden}
 .ctl .chipb{font:inherit;font-size:12px;min-height:36px;padding:0 12px;border:0;background:var(--card);color:var(--fg);cursor:pointer}
 .ctl .bfmode .chipb+.chipb{border-left:1px solid var(--line)}
-.ctl .chipb[aria-pressed="true"]{background:var(--acc);color:#fff}
+.ctl .chipb[aria-pressed="true"]{background:var(--acc);color:var(--bg)}
 .ctl .chipb.bfreset{border:1px solid var(--line);border-radius:999px}
 .ctl .bfcrumb{display:flex;align-items:center;gap:4px;font-size:12.5px;color:var(--mut)}
 .ctl .bfcr{font:inherit;font-size:12.5px;background:none;border:0;color:var(--acc);cursor:pointer;min-height:36px;padding:0 4px}
@@ -673,16 +669,16 @@
 .ctl .bfx .mb i{display:block;height:100%}
 .ctl .bfx .mb .f{background:#fff}
 .ctl .bfx .mb .p{background:rgba(255,255,255,.55)}
-.ctl .bfx .bff{position:absolute;top:3px;right:4px;min-width:16px;height:16px;border-radius:8px;background:#b42318;color:#fff;font-size:10px;
+.ctl .bfx .bff{position:absolute;top:3px;right:4px;min-width:16px;height:16px;border-radius:8px;background:var(--fill-bad);color:#fff;font-size:10px;
  font-weight:700;line-height:16px;text-align:center;padding:0 3px;box-shadow:0 0 0 1.5px var(--card)}
 .ctl .bfx.blank{background:none;border:0;cursor:default}
-.ctl .s-filled{background:#1a7f37}
-.ctl .s-partly{background:#9a6700}
-.ctl .s-failed{background:#b42318}
+.ctl .s-filled{background:var(--fill-ok)}
+.ctl .s-partly{background:var(--fill-warn)}
+.ctl .s-failed{background:var(--fill-bad)}
 .ctl .bfx.s-missing,.ctl .lg.s-missing{background:transparent;color:var(--fg);border:1.5px dashed var(--old)}
 .ctl .bfx.s-missing .mb{background:var(--line)}
-.ctl .bfx.s-missing .mb .f{background:#1a7f37}
-.ctl .bfx.s-missing .mb .p{background:#9a6700}
+.ctl .bfx.s-missing .mb .f{background:var(--fill-ok)}
+.ctl .bfx.s-missing .mb .p{background:var(--fill-warn)}
 .ctl .bfx.s-partly .mb .f{background:#fff}
 .ctl .bfx.s-notoff,.ctl .lg.s-notoff{color:var(--mut);background:repeating-linear-gradient(135deg,var(--line) 0 4px,transparent 4px 8px);border:1px solid var(--line)}
 .ctl .bfx.s-nosess,.ctl .lg.s-nosess{background:none;color:var(--mut);border:1px solid var(--line);opacity:.55}
@@ -703,9 +699,9 @@
 .ctl .bfth .k.x{color:var(--bad)}
 .ctl .bfbar{display:flex;height:10px;border-radius:99px;background:var(--line);overflow:hidden;margin-top:4px}
 .ctl .bfbar i{display:block;height:100%}
-.ctl .bfbar .f{background:#1a7f37}
-.ctl .bfbar .p{background:#9a6700}
-.ctl .bfbar .x{background:#b42318}
+.ctl .bfbar .f{background:var(--fill-ok)}
+.ctl .bfbar .p{background:var(--fill-warn)}
+.ctl .bfbar .x{background:var(--fill-bad)}
 .ctl .bfpick{margin:10px 0 0;padding:8px 10px;border-radius:10px;background:var(--acc2);font-size:12.5px}
 .ctl .bfpick .dim{display:block;color:var(--mut);font-size:11px;margin-top:2px}
 .ctl .bfgo{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:10px 0 0}
@@ -898,10 +894,8 @@
 @media(max-width:620px){.ctl .uhd .uact{width:100%}
 .ctl .uhd .uact .btn{min-height:44px}}
 @media(min-width:621px){.ctl .ubar .useg{min-width:max-content}}
-.ctl{--acc:#0a6cc0;--ok:#187634;--warn:#8f6000;--old-text:#6b7483;
-  --fill-ok:#1a7f37;--fill-warn:#9a6700;--fill-bad:#b42318;--track:color-mix(in srgb,var(--mut) 22%,transparent)}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .ctl{--old-text:#8b949e}}
-:root[data-theme="dark"] .ctl{--old-text:#8b949e}
+.ctl{--old-text:var(--muted);
+  --fill-ok:#2F7A55;--fill-warn:#9A6212;--fill-bad:#B0443A;--track:color-mix(in srgb,var(--mut) 22%,transparent)}
 .ctl details.sec{margin-top:40px}
 .ctl .wrap>details.sec:first-of-type{margin-top:18px}
 .ctl details.sec>summary h2{font-weight:700;color:var(--fg)}

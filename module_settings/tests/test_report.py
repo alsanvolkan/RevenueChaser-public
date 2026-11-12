@@ -1998,3 +1998,14 @@ def test_the_four_parts_that_live_nowhere_else_sit_in_health_above_backups():
     assert at == sorted(at), marks
     assert html.count('<details class="help"><summary>What am I looking at?</summary>') == 1
     assert "function settingsSave" in html and "function autoInit" in html and "function ndWatchRemove" in html
+
+
+def test_the_page_draws_in_the_shared_theme_and_has_no_palette_of_its_own():
+    """Theme D (avo, 12 Nov 2026): the page embeds ``THEME_CSS`` and its old names are aliases of the shared tokens."""
+    from RevenueChaser.core.reporting_common import THEME_CSS
+    html = report.render_settings_dashboard(_payload())
+    assert THEME_CSS in html
+    assert ":root{--panel:var(--card);--panel2:var(--card-2);--text:var(--fg);" in report.CSS
+    assert not re.search(r":root\{[^}]*--(bg|border|muted|accent|amber):", report.CSS)
+    assert "font-family:var(--font-sans)" in report.CSS
+    assert ".rcf-combo{--rcf-input:var(--input-bg)" in report.CSS

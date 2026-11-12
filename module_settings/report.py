@@ -37,11 +37,12 @@ from RevenueChaser.core.reporting_common import (
 DASH = "—"
 
 CSS = """
-:root{--bg:#05111F;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
---text:#d7dce5;--muted:#8a93a6;--accent:#0EA5E9;--green:#2ecc71;--amber:#f1c40f;
---neon:#00e6a8;--red:#e74c3c;}
+/* The page's old names, as aliases of the shared theme tokens (THEME_CSS, theme D): no palette of its own. */
+:root{--panel:var(--card);--panel2:var(--card-2);--text:var(--fg);--input:var(--input-bg);--input-b:var(--input-border);--green:var(--pos);--neon:var(--pos);--red:var(--neg)}
+/* The ticker combobox sits outside a filter bar here, so it gets the kit's names from the theme itself. */
+.rcf-combo{--rcf-input:var(--input-bg);--rcf-input-b:var(--input-border);--rcf-text:var(--fg);--rcf-muted:var(--muted);--rcf-panel:var(--card);--rcf-panel2:var(--card-2);--rcf-border:var(--border);--rcf-accent:var(--accent);--rcf-focus:var(--focus)}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans);font-variant-numeric:tabular-nums;font-size:14px;line-height:1.5}
 .wrap{max-width:100%;margin:0 auto;padding:20px 24px 60px}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:14px}
 .topbar h1{margin:0;font-size:22px;letter-spacing:-.4px}
@@ -120,8 +121,8 @@ table.inv tr.detail .dline b{color:var(--text);font-weight:600;margin-right:6px}
   font:600 10.5px/1.2 inherit;padding:1px 6px;margin-left:6px;cursor:pointer;text-transform:none;letter-spacing:0}
 .grp:hover,.grp[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
 .hlabel{color:var(--muted);font-size:11px;margin-left:6px}
-.fetch-btn,.set-btn{background:rgba(14,165,233,.12);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 10px;font:600 12px/1.2 inherit;cursor:pointer}
-.fetch-btn:hover,.set-btn:hover{background:rgba(14,165,233,.22)}
+.fetch-btn,.set-btn{background:var(--accent-soft);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 10px;font:600 12px/1.2 inherit;cursor:pointer}
+.fetch-btn:hover,.set-btn:hover{background:var(--hover)}
 .fetch-btn:disabled,.set-btn:disabled{opacity:.55;cursor:default}
 .fetchmsg{color:var(--muted);font-size:11.5px;margin-left:8px}
 /* G5 (#124): the summary tiles above the table, counted from the rows already collected. */
@@ -132,7 +133,7 @@ table.inv tr.detail .dline b{color:var(--text);font-weight:600;margin-right:6px}
 .empty{background:var(--panel);border:1px solid var(--border);border-radius:12px;color:var(--muted);font-size:13px;padding:24px;text-align:center}
 .frow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
 .flbl{color:var(--muted);font-size:12px;font-weight:600}
-select,input[type=text],input[type=number]{background:#10151f;border:1px solid #2a3345;color:var(--text);border-radius:6px;height:34px;padding:0 10px;font:500 13px/1 inherit}
+select,input[type=text],input[type=number]{background:var(--input-bg);border:1px solid var(--input-border);color:var(--text);border-radius:6px;height:34px;padding:0 10px;font:500 13px/1 inherit}
 .drillpick .rcf-combo{width:300px}
 .drill{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .drill-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 26px}
@@ -157,9 +158,8 @@ select,input[type=text],input[type=number]{background:#10151f;border:1px solid #
 h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bcard{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .bcard h3{margin:0 0 2px;font-size:15px}
-/* A card keeps this page's dark panel in every theme, so under the light theme its text must not inherit the light
-   scope's dark ink: measured 12 Nov 2026, the heading was rgb(29,36,48) on rgb(18,22,30) (#727). The second rule
-   covers auto and a page with no data-theme yet (it is set from JavaScript), as needs.css falls back to light. */
+/* A card's panel follows the shared theme, and its text is the theme's ink in every scheme (#727: under the light
+   theme the heading once inherited a scope's dark ink on a dark panel). */
 :root[data-theme="light"] .bcard{color:var(--text)}
 @media (prefers-color-scheme: light){:root:not([data-theme="dark"]) .bcard{color:var(--text)}}
 .bcard>details>summary{cursor:pointer}
@@ -195,7 +195,7 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .frow2 .tag{color:var(--muted);font-size:11.5px;margin-left:6px}
 .bset{border-top:1px solid var(--border);margin-top:12px;padding-top:10px}
 .bset h4{margin:0 0 8px;font-size:13px;display:flex;align-items:center;gap:8px}
-.bset .custom{background:rgba(241,196,15,.12);border:1px solid rgba(241,196,15,.4);color:var(--amber);border-radius:99px;padding:0 8px;font-size:11px;font-weight:600}
+.bset .custom{background:var(--amber-soft);border:1px solid var(--amber);color:var(--amber);border-radius:99px;padding:0 8px;font-size:11px;font-weight:600}
 .sfield{display:grid;grid-template-columns:minmax(200px,260px) 110px 1fr;gap:4px 12px;align-items:center;padding:4px 0;font-size:12.5px}
 .sfield label{color:var(--text)}
 .sfield input,.sfield select{width:100%;height:30px}
@@ -241,9 +241,9 @@ details.fine>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-we
 .auto-item{border-bottom:1px solid var(--border)}
 .auto-item:last-child{border-bottom:none}
 .auto-item>summary{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(160px,1.1fr) minmax(120px,max-content) minmax(150px,1fr) minmax(170px,1.1fr);gap:12px;align-items:baseline;padding:8px 10px;cursor:pointer;list-style:none}
-.auto-item>summary:hover{background:rgba(255,255,255,.03)}
+.auto-item>summary:hover{background:var(--hover-faint)}
 .auto-item>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.auto-item[open]>summary{background:rgba(14,165,233,.06);box-shadow:inset 2px 0 0 var(--accent)}
+.auto-item[open]>summary{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
 .auto-item>summary::-webkit-details-marker{display:none}
 .auto-caret::before{content:"▸ "}
 .auto-item[open] .auto-caret::before{content:"▾ "}
@@ -275,7 +275,7 @@ details.fine>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-we
 .fchip{background:var(--panel2);border:1px solid var(--border);border-radius:99px;color:var(--text);
   font:600 12px/1.2 inherit;padding:4px 10px;cursor:pointer}
 .fchip:hover{border-color:var(--accent)}
-.fchip[aria-pressed="true"]{background:rgba(14,165,233,.18);border-color:var(--accent);color:var(--accent)}
+.fchip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 .fchip[aria-pressed="true"]::before{content:"✓ "}
 .fcount{color:var(--text);font-size:12.5px;font-variant-numeric:tabular-nums}
 .fclear{background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);
@@ -3192,7 +3192,7 @@ def render_settings_dashboard(payload: dict) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Data/Health</title>
-<style>{CSS}</style>
+<style>{THEME_CSS}{CSS}</style>
 <style>{ND_CSS}</style>
 <style>{_UCARDS_CSS}</style>
 <style>{control_render.CTL_CSS}</style>
