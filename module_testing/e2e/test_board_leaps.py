@@ -36,10 +36,10 @@ class TestScanIsSwitchedOff:
         assert dashboard.table_count("leaps_cache") == 0
 
     def test_the_tab_serves_the_no_data_page(self, dashboard):
-        """No scan can run, so the tab says so -- 200 with a reason, not a 500 and not the board."""
+        """No far-dated session is stored yet (#746), so the tab says so -- 200 with a reason, not a 500."""
         r = dashboard.view("module_leaps")
         assert r.status_code == 200
-        assert "No data yet" in r.text and "#730" in r.text
+        assert "No data yet" in r.text and "#746" in r.text
         assert "ACCUMULATION RADAR" not in r.text.upper()   # the board itself is never served
 
     def test_the_board_has_no_payload(self, dashboard):
