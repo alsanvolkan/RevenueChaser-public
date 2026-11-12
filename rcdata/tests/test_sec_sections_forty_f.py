@@ -332,33 +332,31 @@ def test_which_titles_close_it(title):
 
 
 # ── what the mutant battery found the tests above could not see ────────────────────────────────────────────────
-# 83 mutants of the 40-F rule, each judged on whether the ANSWERS move -- the section, its label and ours-1's own
-# text over 144 inputs. Every start title and every stop title is dropped in turn, generated from the source and
-# not anchored by hand, because five rounds of rewriting moved all of their spellings and an anchor that no
-# longer matches is a mutant that never ran. Round 3 re-pointed twelve such anchors and added fifteen mutants,
-# round 4 three and five, round 5 ten and seven.
+# 95 mutants of the 40-F rule, each judged on whether the ANSWERS move -- the section, its label and ours-1's own
+# text over 157 inputs. Every start title and every stop title is dropped in turn, generated from the source and
+# not anchored by hand, because six rounds of rewriting moved all of their spellings and an anchor that no longer
+# matches is a mutant that never ran. Round 3 re-pointed twelve such anchors and added fifteen mutants, round 4
+# three and five, round 5 ten and seven, round 6 ten and twelve.
 #
-# The battery audits these tests as much as the code, and has found what they did not say in all three rounds it
-# has run.
-#   * Round 3: nine inputs missing (the next-line run-in heading and what may introduce it, an unclosed body
-#     under the minimum on ours-1's own title, the one stop the inline search does not read, two stop-title
-#     tails and the article-less start spelling), and one redundancy in the code -- the earliest-unclosed-start
-#     comparison, which round 2 needed when one loop walked two title sets and which round 3's split into two
-#     passes made dead, since starts arrive in document order.
+# The battery audits these tests as much as the code, and has found what they did not say in every round it has
+# run.
+#   * Round 3: nine inputs missing, and one redundancy in the code -- the earliest-unclosed-start comparison,
+#     which round 2 needed when one loop walked two title sets and which round 3's split into two passes made
+#     dead, since starts arrive in document order.
 #   * Round 4: the two stop-title tails were in the "redundant alternative" class on a measurement that held
 #     only for the rows the battery carried -- every one of them in capitals and unnumbered. Since round 3's
 #     first finding the inline search does not read title case at all, so with both tails dropped
 #     ``Legal Proceedings and Regulatory Actions`` goes from 26,999 characters to 54,041 and
 #     ``Directors and Executive Officers of the Company`` to 54,048, while a numbered
-#     ``12. LEGAL PROCEEDINGS AND REGULATORY ACTIONS`` goes to 27,004 with its body ending in ``\n12.``. Three
-#     rows and three inputs were added, the mutants are killed, and they are out of that class.
-#   * Round 5: the leading ``\d`` of :data:`_H_BEFORE` was in the "provable equivalence" class below, and the
-#     review measured that it was not -- the mutant differed on every head ending in the class's own
-#     punctuation with no figure ("...completed. - ", "as follows: - "), 54,081 characters against 27,046
-#     through the cut. It was a live mutant with no test. Round 5's own fix (a lookbehind in front of each
-#     figure) kills it, and the row is in the table above either way, which is where it should have been.
+#     ``12. LEGAL PROCEEDINGS AND REGULATORY ACTIONS`` goes to 27,004. Three rows and three inputs were added.
+#   * Round 5: the leading ``\d`` of the pattern that read the text before a heading was in the "provable
+#     equivalence" class and the review measured that it was not -- a live mutant with no test, 54,081
+#     characters against 27,046 through the cut.
+#   * Round 6: five more missing inputs, each for a distinction the code makes and no document exercised -- a
+#     year in front of a page number, a gap made of a closing quote and a space together, a tab where a line
+#     ending would be, a figure glued to the word "item", and a comma after a page number.
 #
-# Eight survive, in three classes, and each is explained rather than pinned:
+# Nine survive, in four classes, and each is explained rather than pinned:
 #
 # **A redundant alternative, subsumed by another pattern.** The third start title: ``DESCRIPTION OF BUSINESS``
 # is matched by the first, whose "the" and whose possessive word are both optional. It stays because the titles
@@ -374,14 +372,25 @@ def test_which_titles_close_it(title):
 #   * dropping ``any(c.isalpha())`` from the heading test -- every inline match is letters, so it can only
 #     change the answer to a direct call, which the table above makes.
 #
+# **Killed by a test and not by an answer over a document:** :data:`_DASH_CHARS` replaced by :data:`_DASH`, the
+# regex source leaking into the characters, which is round 5's first finding in its second spelling. Every
+# document shape tried gives the same answer, because the characters the leak adds (``\``, ``u`` and four
+# digits) only ever join the figure that is being stripped off the end of a line and the figure keeps a digit
+# either way. ``test_the_two_spellings_of_the_dash_list_agree`` compares the two lists directly, which is the
+# only thing that can see it -- and it is exactly the kind of mistake that has now happened twice.
+#
 # **Answer-invariant but not time-invariant**, which a battery comparing answers cannot see by construction, and
-# which is what the five timing tests are for:
+# which is what the timing tests are for:
 #   * the line tail's two adjacent stars (round 1);
 #   * the gap before an inline heading's prose, unbounded (round 3: 12.4 s on 32,000 blanks);
 #   * the ends read from their first entry for every start rather than from a forward-only cursor (round 3:
 #     2.3 s on 8,000 starts and 8,000 ends);
-#   * the text before an inline heading, with a leading star (round 4: 21.9 s on 32,000 blanks);
-#   * the same text with no lookbehind, restarting inside a run of digits (round 5: 15.1 s on 32,000 digits).
+#   * the text before an inline heading, searched over the whole line instead of stripped off its end -- round 4
+#     measured 21.9 s on 32,000 blanks and anchored it, round 5 measured 15.1 s on 32,000 digits and added a
+#     lookbehind, and round 6 replaced the search with an :meth:`str.rstrip` walk because patching the pattern
+#     had fixed one run shape at a time while costing answers (``-12-`` and ``completed.12``);
+#   * the line start found with ``rfind("\n")`` while any line ending counted as one (round 6: 10.2 s on 1,500
+#     headings in a document whose lines end in ``\r``, and a wrong label with it).
 def test_a_title_that_ends_a_line_but_does_not_begin_one_is_not_a_heading():
     """The line anchor's other half. The ``$`` is what rejects ACB's sentence; this is what the ``^`` rejects --
     a sentence that happens to end on the title, which is the shape a running page footer leaves behind.
@@ -1047,7 +1056,8 @@ def test_the_prose_may_begin_on_a_line_ended_by_any_line_ending():
     removes neither character.
     """
     answers = set()
-    for ending in ("\n", "\r", "\x0c", "\v", " "):
+    for ending in ("\n", "\r", "\x0c", "\v", "\u2028"):   # written as an escape: a raw U+2028 here
+        # reads as a space, and an editor that normalises it turns this into the same-line shape (round 6)
         text = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\nWe now turn to our RISK FACTORS" + ending
                 + BODY + "\nMATERIAL PROPERTIES\n")
         section, quality = _cut2(text)
@@ -1065,3 +1075,141 @@ def test_where_a_title_case_stop_shows_the_line_branch_s_reference_test_deciding
             + "The Company is risky. " + BODY + "\nMATERIAL PROPERTIES\n")
     section, quality = _cut2(text)
     assert quality == "ok" and "see\nRisk Factors" in section, "the reference is skipped and the real stop taken"
+
+
+# ── round 6 of the review of 80986b48: four defects, all inside round 5's own fix ───────────────────────────────
+LINE_ENDINGS = ("\n", "\r", "\x0c", "\v", " ", "\u0085")
+
+
+def test_a_heading_alone_on_its_line_is_read_whatever_ends_the_lines():
+    """**Round 6's first finding, and the worst of the six rounds' crop.** Round 5 made :data:`_VERTICAL` the
+    answer to "is the prose on the next line?" and left the answer to "where does this line begin?" as
+    ``text.rfind("\\n", ...)``. The two then disagreed: in a document whose lines end in ``\\r`` or ``\\x0c``, a
+    heading alone on its own line was measured against the **previous** line, refused, and the section ran to
+    the end of the document -- 54,088 characters labelled ``overrun`` where ``\\n`` gives 27,032 of body.
+
+    One answer for every line ending, which is what :func:`_line_start` is for.
+    """
+    answers = set()
+    for ending in LINE_ENDINGS:
+        text = (AIF + "BUSINESS OVERVIEW\n" + BODY + ending + "No acquisitions were completed." + ending
+                + "RISK FACTORS" + ending + "The Company is risky. " + BODY + ending + "MATERIAL PROPERTIES"
+                + ending)
+        section, quality = _cut2(text)
+        assert quality == "ok" and "The Company is risky." not in section, repr(ending)
+        answers.add(len(section))
+    assert len(answers) == 1, "the line ending's spelling may not change the answer"
+
+
+def test_many_candidates_in_a_document_with_no_newline_do_not_take_quadratic_time():
+    """The other half of round 6's first finding. Each candidate sliced the text back to the last ``\\n`` and
+    searched it, so a document whose lines end in ``\\r`` was walked from its start for every heading in it:
+    1,500 of them cost 10.2 s, and 4,000 cost 49.2 s, where the same document written with ``\\n`` costs 0.02 s.
+    """
+    text = (AIF + "BUSINESS OVERVIEW\n" + BODY
+            + "\r" + ("We now turn to our RISK FACTORS\rThe Company is risky and it stays so.\r" * 2_000))
+    started = time.monotonic()
+    _cut2(text)
+    assert time.monotonic() - started < 2.0
+
+
+@pytest.mark.parametrize("gap", [" ", "\t", "  ", " ", " ", " ", " "])
+def test_the_gap_before_a_page_number_may_be_any_whitespace(gap):
+    """**Round 6's second finding.** Round 5 wrote ``rstrip(_H_CLOSERS)`` where ``rstrip()`` had stood, and
+    :data:`_H_CLOSERS` carried a space and a tab and nothing else. Every other gap was then left in front of the
+    sentence-end test and refused it: an em space, a thin space, an en space and a no-break space each turned
+    27,019 characters into 54,054. ``strip_html`` collapses runs of ``[ \\t]`` and leaves those alone, which the
+    comment on the pattern above says in so many words.
+
+    Whitespace is stripped on its own now and the closers are a separate set.
+    """
+    text = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\nNo acquisitions were completed." + gap
+            + "12 RISK FACTORS\nThe Company is risky. " + BODY + "\nMATERIAL PROPERTIES\n")
+    section, quality = _cut2(text)
+    assert quality == "ok" and "The Company is risky." not in section
+    assert len(section) < 30_000
+
+
+@pytest.mark.parametrize("head,ends_it", [
+    ("No significant acquisitions were completed. 9 ITEM 4: ", True),
+    ("Total 1,234 9 ITEM 4: ", True),
+    ("ITEM 4: ", True),
+    ("For the risks of our business see Item 4: ", False),
+    ("as discussed under Item 4 ", False),
+    ("the line item 12 ", False),
+    ("subitem 4 ", False),
+])
+def test_what_may_stand_in_front_of_an_item_number(head, ends_it):
+    """**Round 6's third finding.** Round 5 made the item number introduce itself and asked nothing at all about
+    what stood in front of it, which read a cross-reference as a heading: "see Item 4:" and "as discussed under
+    Item 4" each ended a section where the sentence is a reference, and "the line item 12" and "subitem 4" did
+    the same at a noun -- 27,0xx where the answer is 54,0xx. :func:`_inline_ref` cannot catch them, because the
+    reference word is not directly in front of the title; the item number stands between them.
+
+    So the word "item" needs a word boundary, and what stands before it may be nothing, a page number, or the
+    end of a sentence. A page number counts in front of "item" and nowhere else, because that is EXK's own shape
+    behind a table row and a running footer.
+    """
+    text = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\n" + head + "RISK FACTORS\nThe Company is risky. "
+            + BODY + "\nMATERIAL PROPERTIES\n")
+    section, quality = _cut2(text)
+    assert quality == "ok"
+    assert ("The Company is risky." not in section) is ends_it, f"{head!r} -> {len(section)}"
+
+
+@pytest.mark.parametrize("head,ends_it", [
+    ("No acquisitions were completed. -12- ", True),
+    ("-12- ", True),
+    ("No acquisitions were completed.12 ", True),
+    ("No acquisitions were completed. 12 ", True),
+    ("No acquisitions were completed.” 12 ", True),
+    # the documented cost: a figure introduced by another figure, whichever it is
+    ("No acquisitions were completed.1 12 ", False),
+    ("Production fell in 2020 12 ", False),
+    ("The Company had mines in Peru 2 ", False),
+])
+def test_which_printed_page_numbers_introduce_a_heading(head, ends_it):
+    """**Round 6's fourth finding**, and the cost it chose deliberately.
+
+    Round 5's lookbehind refused a page number that touched the character before it, so ``-12-`` -- an ordinary
+    printed page-number form -- and ``completed.12`` were both lost: 54,0xx where the answer is 27,0xx. The
+    figure is read off the end of the line with :meth:`str.rstrip` now, which has no restart to guard against,
+    so the lookbehind is gone and both forms are back.
+
+    The last three rows are **one answer chosen for four shapes that the text cannot separate**: a footnote
+    mark, a year, a table row's last cell and a running footer's page count all leave a figure in front of the
+    page number, and so does "had 2 MATERIAL PROPERTIES", which is the shape round 4 was fixing. A fifth rule
+    read off built strings would only move which of them is wrong, so the count goes to #763's hand-checked set.
+    """
+    text = (AIF + "BUSINESS OVERVIEW\n" + BODY + "\n" + head + "MATERIAL PROPERTIES\nBoth are in Ontario. "
+            + BODY + "\nRISK FACTORS\n")
+    section, quality = _cut2(text)
+    assert quality == "ok"
+    assert ("Both are in Ontario." not in section) is ends_it, f"{head!r} -> {len(section)}"
+
+
+def test_the_two_spellings_of_the_dash_list_agree():
+    """:data:`_DASH` is the inside of a regex class and :data:`_DASH_CHARS` is the same characters as plain
+    text, because round 5's first finding was the first used as if it were the second. Two spellings of one list
+    drift unless something compares them, and this is that something.
+    """
+    import re as _re
+    klass = _re.compile(f"[{sec_sections._DASH}]")
+    for ch in sec_sections._DASH_CHARS:
+        assert klass.fullmatch(ch), f"{ch!r} is in the character string and not in the class"
+    for ch in "-‐‑‒–—―−":
+        assert ch in sec_sections._DASH_CHARS, f"{ch!r} is in the class's range and not in the string"
+    for ch in "u0125\\ x":
+        assert ch not in sec_sections._DASH_CHARS, f"{ch!r} is the regex source leaking into the characters"
+
+
+def test_the_two_spellings_of_the_line_ending_list_agree():
+    """The same for :data:`_VERTICAL`, which is built from :data:`_VERTICAL_CHARS` so that the pattern and the
+    character string cannot disagree -- :func:`_line_start` reads the string and
+    :func:`_inline_prose_follows` reads the pattern, and round 6's first finding was those two disagreeing.
+    """
+    for ch in sec_sections._VERTICAL_CHARS:
+        assert sec_sections._VERTICAL.fullmatch(ch), repr(ch)
+    for ch in LINE_ENDINGS:
+        assert ch in sec_sections._VERTICAL_CHARS, repr(ch)
+    assert sec_sections._VERTICAL.search("a b\tc") is None

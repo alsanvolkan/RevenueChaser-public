@@ -59,7 +59,14 @@ MIN_ITEM_CHARS = 2000
 MAX_ITEM_CHARS = 200_000
 
 #: hyphen-minus, U+2010..U+2015 dashes, minus sign -- a filer writes "Item 1 — Business" with any of them.
+#:
+#: Two spellings of one list, and a test asserts they agree. :data:`_DASH` is the **inside of a regex class**
+#: and is what every pattern here uses; :data:`_DASH_CHARS` is the same characters as plain text, for the code
+#: that strips or compares them. Round 5's first finding was :data:`_DASH` used as if it were the second: read
+#: as a string of characters it is ``\ - u 2 0 1 5`` and so accepts the letter ``u`` and four digits while
+#: refusing every real dash.
 _DASH = r"\-\u2010-\u2015\u2212"
+_DASH_CHARS = "-\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
 DASH = _DASH
 
 
@@ -866,7 +873,8 @@ _H_AFTER = re.compile(rf"[\s.:{_DASH}\d]{{0,40}}([^\W\d_])")
 #: carriage return put the prose on another line while the introduction test was skipped
 #: ("We now turn to our RISK FACTORS" ended a section at 27,019 characters behind a ``\x0c``).
 #: ``strip_html`` does not remove either character.
-_VERTICAL = re.compile(r"[\n\r\v\f\x1c-\x1e\u0085\u2028\u2029]")
+_VERTICAL_CHARS = "\n\r\v\f\x1c\x1d\x1e\u0085\u2028\u2029"
+_VERTICAL = re.compile("[" + re.escape(_VERTICAL_CHARS) + "]")
 
 
 def _runs_into_prose(text: str, end: int) -> bool:
@@ -894,14 +902,19 @@ def _runs_into_prose(text: str, end: int) -> bool:
 #: optional on its own it read the year out of "Production fell in 2025. 12" and left the sentence in front of
 #: it (round 4).
 #:
-#: Anchored at the end with ``\Z``, with no leading star and with a lookbehind in front of each figure, which
-#: round 4 and round 5 each found this pattern needed. The star made it quadratic on a run of horizontal blanks
-#: -- 21.9 s on 32,000, the same defect round 3 removed from :data:`_H_AFTER` and reintroduced here -- and
-#: ``strip_html`` collapses runs of ``[ \t]`` but not of ``&emsp;``, so the run reaches this code. Without the
-#: lookbehind the search restarted inside a run of **digits** and ran to its end each time: 15.1 s on 32,000,
-#: which round 5 measured as the same shape in the one place the ``\Z`` anchor had not reached.
-_H_BEFORE = re.compile(rf"(?:(?:(?<![\d.:{_DASH}])\d[\d.:{_DASH}]*[^\S\n]+)?(?P<item>item)[^\S\n]+)?"
-                       rf"(?<![\d.:{_DASH}])\d[\d.:{_DASH}]*\Z", re.IGNORECASE)
+#: **Read by hand, not by a search over the whole head.** Rounds 4 and 5 each found this pattern quadratic --
+#: 21.9 s on a run of 32,000 blanks, then 15.1 s on a run of 32,000 digits -- because a ``search`` for an
+#: end-anchored pattern restarts at every position of the run in front of it. A ``\Z`` anchor and then a
+#: lookbehind each fixed one shape and left the other, so round 6 stopped patching the pattern and reads the
+#: trailing figure off the end of the line with :meth:`str.rstrip`, which walks the run once. Round 6 also
+#: measured what the lookbehind had cost in answers: ``-12-``, an ordinary printed page number, and
+#: ``completed.12`` were both refused.
+#:
+#: The parts, in the order they are peeled off the end of the line: the mark a filer puts after a number
+#: (:data:`_H_NUMBER_MARK`), the figure itself (:data:`_H_FIGURE_CHARS`, digits and dashes -- not ``.`` or
+#: ``:``, which belong to the sentence in front of it), and then the gap (:data:`_H_CLOSERS`).
+_H_FIGURE_CHARS = "0123456789" + _DASH_CHARS
+_H_NUMBER_MARK = ".:"
 
 #: The punctuation a sentence ends on, as a compiled class. **Not a string tested with ``in``:** :data:`_DASH`
 #: is a regex class fragment, so ``".:;!?" + _DASH`` is the characters ``. : ; ! ? \ - u 0 1 2 5`` -- it
@@ -910,41 +923,75 @@ _H_BEFORE = re.compile(rf"(?:(?:(?<![\d.:{_DASH}])\d[\d.:{_DASH}]*[^\S\n]+)?(?P<
 #: "...completed <em dash> 9 ITEM 4:" lost its heading where an ASCII hyphen kept it.
 _H_SENTENCE_END = re.compile(rf"[.:;!?{_DASH}]\Z")
 
-#: What may stand after a sentence's punctuation and before the page number: the marks that close a quotation
-#: or a bracket, which do not un-end the sentence they follow.
-_H_CLOSERS = " \t\"'\u2019\u201d)]\u00bb"
+#: The marks that close a quotation or a bracket, which do not un-end the sentence they follow. Whitespace is
+#: **not** in this string and is stripped separately, because round 5 wrote ``rstrip(_H_CLOSERS)`` where
+#: ``rstrip()`` had been and so refused every gap made of an em space, a thin space or a no-break space --
+#: ``strip_html`` collapses runs of ``[ \t]`` and leaves those alone (round 6).
+_H_CLOSERS = "\"'\u2019\u201d\u00bb)]}"
+
+#: The word that introduces an item number, with a word boundary in front of it so that "subitem" and "the line
+#: item" are not read as one (round 6).
+_H_ITEM = re.compile(r"\bitem\Z", re.IGNORECASE)
+
+
+def _rstrip_gap(t: str) -> str:
+    """``t`` without the whitespace and the closing marks at its end, in either order and however mixed."""
+    while True:
+        shorter = t.rstrip().rstrip(_H_CLOSERS)
+        if shorter == t:
+            return t
+        t = shorter
+
+
+def _line_start(text: str, at: int) -> int:
+    """Where the line holding ``at`` begins, reading **every** line ending :data:`_VERTICAL` reads.
+
+    Round 6's first finding: :data:`_VERTICAL` made "the prose is on the next line" true of a form feed and a
+    carriage return, and this was still ``text.rfind("\n", 0, at)``. A heading alone on its own line in a
+    document whose lines end in ``\r`` was then measured against the **previous** line, refused, and the
+    section ran to the end of the document -- 54,088 characters labelled ``overrun`` where ``\n`` gives 27,032
+    of body. It also made the rule quadratic again, because every candidate sliced back to the last ``\n``:
+    1,500 headings in a document with no ``\n`` in it cost 10.2 s where ``\n`` costs 0.02 s.
+    """
+    return max(text.rfind(ch, 0, at) for ch in _VERTICAL_CHARS) + 1
 
 
 def _introduced_as_a_heading(text: str, start: int) -> bool:
     """True when a run-in heading at ``start`` is introduced the way one is.
 
     This is asked only of a title whose prose begins on the **next** line, where the title's own line carries
-    no evidence after it.
+    no evidence after it. The line is read from its end backwards: the mark after a number, the figure, the gap.
 
-    - **Its line's start**, or nothing but blanks before it.
-    - **An item number**, which is EXK's ``No significant acquisitions were completed. 9 ITEM 4: RISK
-      FACTORS``. The word "item" is itself the introduction and nothing in front of it is asked about -- round
-      5's second finding was this test being applied to the ``ITEM n`` form as well, where it then lost the
-      heading behind a closing quote, a bracket, a table row, a running footer or a list item, each of which
-      returned the section with every risk factor inside it.
-    - **A bare page number**, and then what stands in front of it is asked about, because a page number stands
-      at a line's start or after the sentence whose page it ends. Without that, any sentence ending in a figure
-      introduced a heading -- "the Company had 2 MATERIAL PROPERTIES" ended a section at 27,030 characters
-      where the same sentence written "two" ran on to 54,073 (round 4).
+    - **Its line's start**, or nothing but whitespace before it.
+    - **An item number** -- EXK's ``No significant acquisitions were completed. 9 ITEM 4: RISK FACTORS``. The
+      word "item" is strong evidence, so what stands in front of it may be nothing, a page number, or the end of
+      a sentence. Round 5 asked nothing at all in front of it and round 6 measured that cost: "see Item 4:" and
+      "as discussed under Item 4" ended a section at a cross-reference, and "the line item 12" and "subitem 4"
+      at a noun. A page number counts here and nowhere else, because that is EXK's own shape behind a table row
+      ("Total 1,234 9 ITEM 4:") and a running footer.
+    - **A bare page number**, and then what stands in front of it has to be nothing or a sentence's punctuation.
+      Without that, any sentence ending in a figure introduced a heading -- "the Company had 2 MATERIAL
+      PROPERTIES" ended a section at 27,030 characters where the same sentence written "two" ran on to 54,073
+      (round 4).
 
-    **The cost, which is not guessed at:** a bare page number after a running footer or a table row -- "Annual
-    Information Form 12 RISK FACTORS" -- is refused, because nothing in the text separates it from "had 2
-    MATERIAL PROPERTIES". Counting that shape is #763's work.
+    **The costs, written down rather than argued away.** A bare figure introduced by another figure is refused,
+    whichever it is: a running footer's page count, a table row's last cell, a footnote mark ("completed.1 12"),
+    and a year ("fell in 2020 12") all give the same answer, because nothing in the text separates them from
+    "had 2 MATERIAL PROPERTIES". Round 6 chose one answer for all four rather than a fifth rule read off built
+    strings; which answer is right is a count over real filings and belongs to #763's hand-checked set.
     """
-    bare = text[text.rfind("\n", 0, start) + 1:start].rstrip()
+    bare = text[_line_start(text, start):start].rstrip()
     if not bare:
         return True
-    m = _H_BEFORE.search(bare)
-    if m is None:
+    if bare[-1] in _H_NUMBER_MARK:                       # the "." of "4." or the ":" of "ITEM 4:"
+        bare = bare[:-1]
+    cut = len(bare.rstrip(_H_FIGURE_CHARS))
+    if not any(ch.isdigit() for ch in bare[cut:]):       # no page or item number at the end of the line at all
         return False
-    if m.group("item"):
-        return True
-    before = bare[:m.start()].rstrip(_H_CLOSERS)
+    before = _rstrip_gap(bare[:cut])
+    if _H_ITEM.search(before):
+        before = _rstrip_gap(before[:-len("item")])
+        return not before or before[-1].isdigit() or _H_SENTENCE_END.search(before) is not None
     return not before or _H_SENTENCE_END.search(before) is not None
 
 
