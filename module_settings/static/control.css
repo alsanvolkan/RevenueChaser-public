@@ -1185,6 +1185,9 @@
    buttons 79 px past the page. The name gives way first; then the buttons wrap inside the box, never past it. */
 .ctl .sb1 .dsname{flex-shrink:1000}
 .ctl .sb1 .sbbtn{flex:0 1 auto;min-width:min-content;flex-wrap:wrap;justify-content:flex-end}
+/* Live again at 1187 px after that fix: 10 px past the page. With the name at zero and the buttons wrapped, the
+   provider badges were the one part left that could not give way. They clip down to their icon last. */
+.ctl .sb1 .srcb{flex:0 1 auto;min-width:24px;overflow:hidden}
 @media(max-width:760px){.ctl .sb1{flex-wrap:wrap}.ctl .sb1 .dsname{white-space:normal;overflow-wrap:anywhere}}
 /* The Data tab's "What am I looking at?" box sits in a .ctl band of its own, so it takes the board's themed tokens
    instead of the page's old dark-only ones (seen in the #539 screenshots: dark in light). */

@@ -1973,7 +1973,9 @@ def test_the_old_settings_fold_and_its_sections_are_gone():
 
 
 def test_the_tabs_map_data_and_health_and_old_choices_land_on_them():
-    assert report.SETTINGS_TABS["tabs"] == {"data": "panel-data", "health": "panel-health", "logs": "panel-logs"}
+    assert report.SETTINGS_TABS["tabs"] == {"watch": "panel-watch", "data": "panel-data", "health": "panel-health",
+                                            "logs": "panel-logs"}
+    assert report.SETTINGS_TABS["first"] == "watch" and "show(start || FIRST, false)" in report.TABS_JS
     assert report.SETTINGS_TABS["aliases"] == {"fetch": "data", "needs": "health", "live": "health"}
     assert "CFG.aliases[name]" in report.TABS_JS
 
@@ -1985,17 +1987,24 @@ def test_the_lookup_keeps_its_own_search_box():
     assert "Ticker lookup" in block
 
 
-def test_the_four_parts_that_live_nowhere_else_sit_in_health_above_backups():
-    """avo, 6 Nov 2026 ("A"): the board settings, Automations, the watch lists and the IBKR cards move to Health."""
+def test_the_parts_that_live_nowhere_else_sit_in_health_and_the_watch_lists_in_their_own_first_tab():
+    """avo, 6 Nov 2026 ("A"): the board settings, Automations and the IBKR cards move to Health. The watch lists went
+    with them until 12 Nov 2026 ("ayri bir sekmede yasamali, ilk sirada olsun"): they are a tab of their own now."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), automations=_autos(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/",
                                                  errors=[{"table": "ibkr", "where": "x", "error": "read failed"}]))
     health = _panel(html, "panel-health")
     # #527 step 9: the reads that failed and the backups lead; the login link is in the top bar (Data tab's copy)
-    marks = ['id="errors"', 'id="auto-body"', 'id="nd-watch-option"', 'id="nd-watch-stock"']
+    marks = ['id="errors"', 'id="auto-body"']
     at = [health.index(m) for m in marks]
     assert at == sorted(at), marks
+    watch = _panel(html, "panel-watch")
+    assert watch.index('id="nd-watch-option"') < watch.index('id="nd-watch-stock"')
+    assert 'id="nd-watch-option"' not in health and html.count('id="nd-watch-option"') == 1
+    assert html.index('id="panel-watch"') < html.index('id="panel-data"')
+    assert re.search(r'<div id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>', html)
+    assert not re.search(r'<div id="panel-watch"[^>]*hidden', html), "Watch lists is the tab the page is drawn on"
     assert html.count('<details class="help"><summary>What am I looking at?</summary>') == 1
     assert "function settingsSave" in html and "function autoInit" in html and "function ndWatchRemove" in html
 
