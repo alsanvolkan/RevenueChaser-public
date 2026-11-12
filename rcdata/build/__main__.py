@@ -5,7 +5,9 @@
                                         take queued requests in order (FIFO) and run each; without --dataset, every
                                         dataset that is due (``due.py``) is queued first (by "schedule", once);
                                         with --dataset, a dataset with nothing queued (or any, with --as-of) is
-                                        queued first (by "cli"); --once stops when the queue is empty
+                                        queued first (by "cli"); --once stops when the queue is empty.
+                                        A pass runs at most ONE heavy dataset (``base.heavy``, #812): the others
+                                        stay queued for the next pass, which starts with the memory back
     backfill <dataset> [<dataset> ...] [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--allow-shrink]
              [--no-duckdb] [--no-parquet]
              [--tiers A,B] [--names KO,MSFT]
@@ -196,7 +198,12 @@ def _take_the_turn(stack: contextlib.ExitStack, wait: float) -> tuple[bool, str 
 
 def _claim_kind(req: dict, *, skip=(), only=None, by=None) -> list[dict]:
     """``req`` and every other request of its kind queued now, in registry order (PR A): the pass builds the
-    kind's file once for all of them. A request queued after this moment waits for the next turn of its kind."""
+    kind's file once for all of them. A request queued after this moment waits for the next turn of its kind.
+
+    At most one heavy dataset is claimed (#812): a batch is fetched member by member in one process, so two heavy
+    members added their gigabytes together — on homesrv that was the global OOM kill. The heavy one left behind
+    stays queued for the next pass, which starts with the memory back.
+    """
     from . import DATASETS
     ds = DATASETS.get(req["dataset"])
     if ds is None:
@@ -204,6 +211,8 @@ def _claim_kind(req: dict, *, skip=(), only=None, by=None) -> list[dict]:
     allowed = set(only) if only is not None else None
     names = [d.name for d in base.kind_datasets(ds.kind)
              if d.name != req["dataset"] and d.name not in skip and (allowed is None or d.name in allowed)]
+    if base.heavy(ds):
+        names = [n for n in names if not base.heavy(DATASETS.get(n))]
     batch = [req]
     try:
         while names:
@@ -217,6 +226,8 @@ def _claim_kind(req: dict, *, skip=(), only=None, by=None) -> list[dict]:
                 break
             batch.append(more)
             names.remove(more["dataset"])       # one request per dataset: the batch keys by dataset
+            if base.heavy(DATASETS.get(more["dataset"])):
+                names = [n for n in names if not base.heavy(DATASETS.get(n))]
     except BaseException as e:
         for r in batch:                         # a kill while claiming ends what was claimed (as B7)
             base._abort(None, r, e)
@@ -244,10 +255,20 @@ def _build_line(batch: list[dict], rows: list[dict], seconds: float) -> str | No
 
 def _run_queue(dataset: str | None, once: bool, *, skip=(), only=None, by=None,
                attended_ok: bool = False, fetch_only: bool = False) -> int:
+    """Drain the queue: one batch per turn, and **one heavy dataset per process** (#812).
+
+    After a batch that ran a heavy dataset (``base.heavy``), the rest of this process leaves every heavy request
+    in the queue and goes on with the others, so the next heavy one runs in the next pass with this process's
+    gigabytes given back. A dataset named on the command line (``run --dataset X``, ``backfill``) is a person's own
+    run and keeps its turn, and the attended runner (``only=...``) is untouched: nothing attended is heavy.
+    """
     worst = 0
+    ran_heavy: list[str] = []                   # the heavy datasets this process has run (#812)
     while True:
+        # ``next_request`` takes skip or only, never both; the attended runner is the only caller with ``only``.
+        skip_now = tuple({*skip, *base.heavy_names()}) if ran_heavy and only is None and dataset is None else skip
         try:
-            req = ops.next_request(dataset, skip=skip, only=only, by=by, fetch_only=fetch_only)
+            req = ops.next_request(dataset, skip=skip_now, only=only, by=by, fetch_only=fetch_only)
         except ops.BUSY_ERRORS as e:
             # ops.sqlite held past busy_timeout (a long backup, a stuck writer), or Redis not answering: wait and ask
             # again, never die.
@@ -260,7 +281,14 @@ def _run_queue(dataset: str | None, once: bool, *, skip=(), only=None, by=None,
                 return worst
             time.sleep(POLL_S)
             continue
-        batch = [req] if dataset is not None else _claim_kind(req, skip=skip, only=only, by=by)
+        batch = [req] if dataset is not None else _claim_kind(req, skip=skip_now, only=only, by=by)
+        from . import DATASETS as registry          # read here, so a test's registry is this loop's too
+        mine = [r["dataset"] for r in batch if base.heavy(registry.get(r["dataset"]))]
+        if mine and not ran_heavy:
+            # The memory is spent whatever this batch ends as, so the rule is set before the run, not after it.
+            ran_heavy += mine
+            print(f"one heavy dataset per pass (#812): running {', '.join(mine)}; another heavy dataset's "
+                  "request stays queued for the next pass", file=sys.stderr, flush=True)
         started = time.monotonic()
         try:
             rows = base.run_batch(batch, attended_ok=attended_ok)

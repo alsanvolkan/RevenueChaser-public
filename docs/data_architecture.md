@@ -1213,6 +1213,15 @@ commands (`backfill`, `attended`, and `run --dataset X`) wait 1800 s by default 
 dataset) waits none, because its timer brings the next pass anyway. It exits 3 only when the wait runs out, and
 names the holder it is waiting for, again whenever that changes.
 
+**One heavy dataset per pass (#812).** A dataset whose own run needs gigabytes of the machine's memory carries
+`heavy = True` (`rcdata/build/base.py`, `heavy()`): today `sec/companyfacts`, `fundamentals/tables` and
+`ownership/serve`. A batch claims at most one of them, and once a builder process has run one, every other heavy
+request stays queued for the next pass, which starts with that process's memory given back; the pass prints one
+line saying so. Measured on homesrv on 12 Nov 2026: a `sec/companyfacts` run reached 6.4-6.8 GB resident, and the
+kernel OOM-killed the builder twice while it ran beside `fundamentals/tables` of its own kind — both kills with
+`constraint=CONSTRAINT_NONE`, the whole machine, so the unit's `MemoryMax` was no protection. A dataset named on
+the command line (`run --dataset X`, `backfill`) is a person's own run and keeps its turn whatever its weight.
+
 `attended` refuses a runner with no terminal (`sys.stdin.isatty()`), because the WRDS login and the Duo push need a
 person, and it says so and exits 0 when no attended request is queued rather than waiting for a turn it has no use
 for. A person's `backfill <dataset>` and `run --dataset X` run **their own** request for an attended dataset

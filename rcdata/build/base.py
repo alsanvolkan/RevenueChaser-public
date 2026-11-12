@@ -790,6 +790,8 @@ class Dataset(Protocol):
     #   after_swap(ctx)             runs once the kind's new file is live (the spine's build-issue sync)
     #   honours_scope: bool         the fetch asks the names ``ctx.scope`` names (#265); without it a request that
     #                               carried a scope gets a note saying this dataset ignored it
+    #   heavy: bool                 this dataset's own run needs gigabytes of the machine's memory: one heavy
+    #                               dataset per builder process, never two in one batch (#812, ``heavy``)
 
 
 ATTENDED_BY = "cli"
@@ -818,6 +820,23 @@ def attended_names() -> frozenset[str]:
     """
     from . import DATASETS
     return frozenset(name for name, ds in DATASETS.items() if attended(ds))
+
+
+def heavy(ds) -> bool:
+    """Whether one run of ``ds`` needs gigabytes of this machine's memory (``heavy = True`` on the dataset, #812).
+
+    Measured on homesrv (15.4 GB RAM, swap full) on 12 Nov 2026: a ``sec/companyfacts`` run reached 6.4-6.8 GB
+    resident, and the two global OOM kills of that evening both hit a pass that ran it beside another heavy
+    dataset of its own kind. The flag is what ``run`` serialises on: one heavy dataset per batch and per builder
+    process, so the next one starts in a fresh process with the memory back.
+    """
+    return bool(getattr(ds, "heavy", False))
+
+
+def heavy_names() -> frozenset[str]:
+    """The heavy datasets. The pass leaves their requests in the queue once it has run one of them (#812)."""
+    from . import DATASETS
+    return frozenset(name for name, ds in DATASETS.items() if heavy(ds))
 
 
 def live_columns(con: duckdb.DuckDBPyConnection, table: str, columns: list[str]) -> list[str]:

@@ -385,6 +385,8 @@ TEMPS = ("_closed", "_sets", "_sp_security", "_sp_hist", "_sp_sp500", "_owners",
 
 
 class OwnershipServe:
+    #: #812: a whole rebuild took 2,352-2,540 s with a 22.9-23.8 GB DuckDB spill peak (homesrv, 12 Nov 2026).
+    heavy = True
     name = NAME
     kind = KIND
     providers: tuple[str, ...] = ()

@@ -124,6 +124,9 @@ def _with_predecessors(ctx: base.RunContext, rows: list[dict], companies: list[s
 
 
 class CompanyFacts:
+    #: #812: a run reached 6.4-6.8 GB resident on homesrv (12 Nov 2026) and two global OOM kills hit the pass
+    #: that ran it beside another heavy dataset. One heavy dataset per batch and per builder process.
+    heavy = True
     name = NAME
     kind = KIND
     providers = (common.SEC,)

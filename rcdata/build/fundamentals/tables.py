@@ -565,6 +565,9 @@ def _issues(con: duckdb.DuckDBPyConnection, as_of: date) -> list[tuple[str, str,
 
 
 class FundamentalsTables:
+    #: #812: the whole-universe build (5,352 Tier A tickers, 5.9 M facts on 12 Nov 2026) is the other half of
+    #: the pass that was OOM-killed beside ``sec/companyfacts``.
+    heavy = True
     name = NAME
     kind = KIND
     providers: tuple[str, ...] = ()
