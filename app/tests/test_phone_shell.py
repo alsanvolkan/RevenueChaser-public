@@ -175,3 +175,23 @@ def test_the_calendar_hover_tints_are_tokens(shell):
     css = _style(shell).replace(rc.THEME_CSS, "")
     assert "rgba(255,255,255,.06)" not in css and "rgba(255,255,255,.08)" not in css
     assert "var(--hover-soft)" in css and "var(--hover-day)" in css
+
+
+def test_a_pc_under_1440_px_gets_an_icon_rail(shell):
+    """Theme D (avo 12 Nov 2026, #761): 64 px rail between the phone drawer and 1440 px; the sidebar above."""
+    css = _style(shell)
+    m = re.search(r"@media \(min-width: 901px\) and \(max-width: 1439px\)\{(.*?)\n\}", css, re.S)
+    assert m, "no rail block"
+    rail = m.group(1)
+    assert "grid-template-columns:64px" in rail
+    assert re.search(r"\.nav-item,\.nav-item\.sub\{[^}]*width:44px;height:44px", rail)
+
+
+def test_every_board_has_its_own_rail_icon(shell):
+    from RevenueChaser.app import dashboard as d
+    keys = [t["key"] for t in d.TABS if t["type"] == "tab"]
+    missing = [k for k in keys if k not in d.NAV_ICONS]
+    assert not missing, f"boards without an icon fall back to a dot: {missing}"
+    assert len({d.NAV_ICONS[k] for k in keys}) == len(keys), "two boards share an icon"
+    for k in keys:
+        assert f'data-tab="{k}"' in shell and d.NAV_ICONS[k] in shell, k

@@ -54,10 +54,14 @@ body{background:var(--bg);color:var(--fg);font-family:var(--font-sans);font-size
 .nav-group.collapsed .nav-items{display:none}
 .nav-item{display:flex;align-items:center;gap:10px;height:38px;padding:0 12px;border-radius:6px;
   color:var(--nav-fg);cursor:pointer;user-select:none;font-weight:500}
-.nav-item.sub{padding-left:24px;font-weight:400;font-size:13px}
+.nav-item.sub{padding-left:16px;font-weight:400;font-size:13px}
 .nav-item:hover{background:var(--hover-faint)}
 .nav-item.on{background:var(--nav-on);color:var(--bright);box-shadow:inset 2px 0 0 var(--accent)}
 .nav-item .job-badge{margin-left:auto;font-size:10px;color:var(--amber);font-weight:600}
+.nav-item .ico{flex:none;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.6;
+  stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.nav-item.on .ico{color:var(--accent);opacity:1}
+.nav-item .lbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .cnt,.count,.stat .v,.big,.pct,.nav-item .job-badge{font-variant-numeric:tabular-nums}
 @media (prefers-reduced-motion: reduce){
@@ -148,6 +152,32 @@ button:disabled{opacity:.5;cursor:default}
 .cal-day.weekend{opacity:.35;cursor:default}
 .cal-day.out{opacity:.2;cursor:default}
 .cal-day:not(.weekend):not(.out):hover{background:var(--hover-day)}
+/* A PC narrower than 1440 px (the owner's 1280 screen): the sidebar is a 64 px rail of icons, so a board gets
+   the width (theme D, avo 12 Nov 2026, #761). Groups show as thin rules, every item stays visible (a collapsed
+   group would hide its icons with no header to open it), and each item's name is its hover title. 1440 px and
+   up keep the 240 px sidebar; a phone keeps its drawer (below). */
+@media (min-width: 901px) and (max-width: 1439px){
+  body{grid-template-columns:64px minmax(0,1fr)}
+  .sidebar{padding:12px 0}
+  .brand{padding:0 0 10px}
+  .brand .logo,.brand .logo img{width:40px;height:40px}
+  .brand .logo img{border-radius:10px;box-shadow:none}
+  .brand .tag,.nav-header,.side-foot .foot-text{display:none}
+  .nav{padding:0 10px 4px;gap:2px;align-items:center}
+  .nav-group{margin:0;padding:6px 0;border-top:1px solid var(--border);width:100%;display:flex;flex-direction:column;align-items:center}
+  .nav-group:first-child{border-top:0}
+  .nav-group.collapsed .nav-items{display:flex}
+  .nav-items{display:flex;flex-direction:column;gap:2px;align-items:center}
+  .nav-item,.nav-item.sub{width:44px;height:44px;padding:0;justify-content:center;position:relative;border-radius:10px}
+  .nav-item .ico{width:20px;height:20px}
+  .nav-item.on{box-shadow:none}
+  .nav-item .lbl{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .nav-item .job-badge{position:absolute;top:2px;right:2px;margin:0;font-size:0;width:8px;height:8px;border-radius:50%;
+    background:var(--amber)}
+  .side-foot{padding:10px 10px 2px}
+  .theme-toggle{width:44px;height:44px;padding:0;margin:0 auto;font-size:0;text-align:center}
+  .theme-toggle::before{content:"\25D0";font-size:18px;line-height:44px}
+}
 /* Phone and small tablet (#184, docs/mocks/shell-phone.html). The menu button and the tab's name exist only
    here; the badges and sync times are one wrapping line of their own, and the theme toggle sits last on a
    desktop and on the first line on a phone. */
@@ -204,7 +234,8 @@ button:disabled{opacity:.5;cursor:default}
       <button class="nav-header" type="button" aria-expanded="true">{{ g.label }}<span class="caret" aria-hidden="true"></span></button>
       <div class="nav-items">
         {% for t in g['tabs'] %}
-        <div class="nav-item{% if t.sub %} sub{% endif %}" data-tab="{{ t.key }}" data-url="{{ t.url }}" role="button" tabindex="0">{{ t.label }}</div>
+        <div class="nav-item{% if t.sub %} sub{% endif %}" data-tab="{{ t.key }}" data-url="{{ t.url }}" role="button" tabindex="0"
+             title="{{ t.label }}"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="{{ t.icon }}"/></svg><span class="lbl">{{ t.label }}</span></div>
         {% endfor %}
       </div>
     </div>
@@ -213,7 +244,7 @@ button:disabled{opacity:.5;cursor:default}
   <div class="side-foot">
     <button id="theme-toggle" class="theme-toggle" type="button"
             aria-label="Theme: dark. Change it" title="Theme: dark">Theme: Dark</button>
-    Local dashboard · iframe tabs<br>on-demand fetch per module</div>
+    <span class="foot-text">Local dashboard · iframe tabs<br>on-demand fetch per module</span></div>
 </aside>
 <div class="scrim" id="nav-scrim"></div>
 <div class="main">

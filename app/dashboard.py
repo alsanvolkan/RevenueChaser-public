@@ -335,6 +335,32 @@ def _module_file(mod: str) -> Path:
     }.get(mod)
 
 
+# One outline icon per board (24 px box, stroke drawn by the shell). Below 1440 px wide the sidebar is a 64 px
+# rail that shows only these (theme D, avo 12 Nov 2026, #761); the label stays as the item's name for a screen
+# reader and as its hover title. A tab without an entry gets ``NAV_ICON_DEFAULT``.
+NAV_ICONS = {
+    "module_welcome": "M3 11l9-8 9 8M5 10v10h14V10",
+    "module_news": "M4 5h13v14H6a2 2 0 0 1-2-2zM17 9h3v8a2 2 0 0 1-2 2M8 9h5M8 13h5",
+    "module_earnings_radar": "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 12l6-6",
+    "module_spx_gamma": "M3 12c3-6 6-6 9 0s6 6 9 0",
+    "module_oipd": "M3 19h18M4 18c3 0 4-12 8-12s5 12 8 12",
+    "module_financials": "M5 20V10M10 20V4M15 20v-8M20 20v-5",
+    "module_uw_interaction": "M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3",
+    "module_comovement": "M3 16l5-5 4 3 9-8M3 20l5-4 4 2 9-6",
+    "module_value_chain": "M10 14l4-4M8 17l-2 2a3 3 0 0 1-4-4l3-3a3 3 0 0 1 4 0M16 7l2-2a3 3 0 0 1 4 4l-3 3a3 3 0 0 1-4 0",
+    "module_relatedness": "M4 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M16 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0"
+                          "a2 2 0 1 0-4 0M7 8l4 8M17 8l-4 8M8 6h8",
+    "module_sector_rotation": "M20 12a8 8 0 0 1-14 5M4 12a8 8 0 0 1 14-5M18 3v4h-4M6 21v-4h4",
+    "module_asymmetric_growth": "M3 17l6-6 4 4 8-8M15 7h6v6",
+    "module_swing_potential": "M3 14l4-6 4 8 4-10 4 6 2-2",
+    "module_fundamentals": "M6 3h9l4 4v14H6zM9 12h7M9 16h7M9 8h3",
+    "module_sec_13f": "M3 21h18M5 21V9l7-5 7 5v12M9 21v-6h6v6",
+    "module_leaps": "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4",
+    "module_settings": "M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2",
+}
+NAV_ICON_DEFAULT = "M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0"
+
+
 def _nav_groups(tabs: list[dict]) -> list[dict]:
     """Fold the flat ``TABS`` list into single-level collapsible groups.
 
@@ -345,10 +371,12 @@ def _nav_groups(tabs: list[dict]) -> list[dict]:
     for t in tabs:
         if t["type"] == "header":
             groups.append({"label": t["label"], "tabs": []})
-        elif groups:
-            groups[-1]["tabs"].append(t)
         else:
-            groups.append({"label": "", "tabs": [t]})
+            t = {**t, "icon": NAV_ICONS.get(t["key"], NAV_ICON_DEFAULT)}
+            if groups:
+                groups[-1]["tabs"].append(t)
+            else:
+                groups.append({"label": "", "tabs": [t]})
     return groups
 
 

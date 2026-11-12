@@ -184,11 +184,25 @@ def test_the_toggle_overrides_the_device_and_is_remembered(dashboard, browser):
 
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])
-def test_a_desktop_keeps_its_sidebar(dashboard, browser, scheme):
-    m = _open(browser, dashboard, DESKTOP, scheme)
-    assert m["sidebar"]["l"] == 0 and round(m["sidebar"]["w"]) == 240, "the sidebar is a column on a desktop"
+@pytest.mark.parametrize("size, width", [(DESKTOP, 64), ((1920, 1080), 240)])
+def test_a_desktop_keeps_its_sidebar(dashboard, browser, scheme, size, width):
+    """Theme D (avo 12 Nov 2026, #761): a 64 px icon rail below 1440 px, the 240 px sidebar from 1440 px."""
+    m = _open(browser, dashboard, size, scheme)
+    assert m["sidebar"]["l"] == 0 and round(m["sidebar"]["w"]) == width, m["sidebar"]
     assert not m["toggleShown"], "no menu button on a desktop"
     assert m["docScroll"] <= m["vw"]
+
+
+def test_every_rail_item_is_a_44_px_icon_with_its_name(dashboard, browser):
+    _open(browser, dashboard, DESKTOP, "dark")
+    items = browser.eval("""Array.prototype.map.call(document.querySelectorAll('.sidebar .nav-item'), function(n){
+      var r = n.getBoundingClientRect(), i = n.querySelector('svg.ico').getBoundingClientRect();
+      return {w: r.width, h: r.height, icon: i.width, title: n.getAttribute('title'),
+              name: n.querySelector('.lbl').textContent}; })""")
+    assert items, "no nav items"
+    for it in items:
+        assert round(it["w"]) >= 44 and round(it["h"]) >= 44 and it["icon"] > 0, it
+        assert it["title"] and it["title"] == it["name"], it
 
 
 def _pixel(browser, x: float, y: float) -> tuple[int, int, int]:
