@@ -2,10 +2,9 @@
 
 The annual report's inline XBRL names its major customers and their share of revenue (``customer_share``, served
 by ``sec/filings``). On the fundamentals layer a named customer the alias list knows becomes a ``customer`` edge of
-the filer with that share, even when the Item 1 text never says it; a text concentration edge for the same customer
-keeps its sentence and gains the share when it stated none; a keyword guess for that name gives way, as it does to
-a stated sentence. An anonymised customer ("Customer A") names no company and is no edge. Off the layer nothing
-changes. The selection version moves to 3, because a run's edges now carry the XBRL customers.
+the filer with that share, whatever the Item 1 text says: since #748 the text is not scanned for edges, so a share
+sentence or a keyword near the same name changes nothing. An anonymised customer ("Customer A") names no company and
+is no edge. Off the layer a filing gives no edge. The selection version moves with what a run's edges carry.
 """
 from __future__ import annotations
 
@@ -52,7 +51,7 @@ def _filing(text: str) -> None:
 
 
 def _customers(edges, relations=("customer", "supplier")):
-    """MSFT's edges to Apple that state a direction (a keyword ``other`` stays beside a stated one, as before)."""
+    """MSFT's edges to Apple in ``relations``."""
     return [e for e in edges if e["src"] == "MSFT" and e["dst_ticker"] == "AAPL" and e["relation"] in relations]
 
 
@@ -64,17 +63,15 @@ def test_a_named_xbrl_customer_is_an_edge_with_its_share(layer):
     assert not [e for e in engine.build_edges() if "Customer B" in (e.get("dst_name") or "")]
 
 
-def test_a_text_concentration_edge_keeps_its_sentence_and_gains_the_share(layer):
-    # Two names, two shares, no "respectively": the sentence states no share of Apple's own.
-    _filing("Sales to Apple and Dell accounted for 20% and 15% of our net sales.")
+@pytest.mark.parametrize("text", [
+    "Sales to Apple and Dell accounted for 20% and 15% of our net sales.",     # a joint sentence
+    "Direct sales to Apple accounted for 29.8% of our net sales.",              # a share of Apple's own
+])
+def test_a_share_sentence_in_the_text_does_not_touch_the_xbrl_edge(layer, text):
+    """#748: the filer's tagged 12% is the edge; the sentence path that used to overwrite it is gone."""
+    _filing(text)
     (edge,) = _customers(engine.build_edges())
-    assert "Sales to Apple" in edge["snippet"] and edge["share_pct"] == pytest.approx(12.0)
-
-
-def test_a_stated_share_in_the_text_is_kept(layer):
-    _filing("Direct sales to Apple accounted for 29.8% of our net sales.")
-    (edge,) = _customers(engine.build_edges())
-    assert edge["share_pct"] == pytest.approx(29.8) and "Direct sales to Apple" in edge["snippet"]
+    assert edge["share_pct"] == pytest.approx(12.0) and edge["source"] == "xbrl" and "Annual report XBRL" in edge["snippet"]
 
 
 def test_a_keyword_guess_gives_way_to_the_xbrl_customer(layer):
@@ -89,7 +86,7 @@ def test_off_the_layer_nothing_changes():
 
 
 def test_the_selection_version_moves_with_the_edges():
-    assert vc_history.SELECTION_VERSION == "4"
+    assert vc_history.SELECTION_VERSION == "5"
 
 
 def test_a_filing_without_text_still_gives_its_xbrl_customers(layer):

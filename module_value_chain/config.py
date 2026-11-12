@@ -54,7 +54,6 @@ STOP_PATTERNS = {
 
 MIN_ITEM_CHARS = 2000
 MAX_ITEM_CHARS = 200_000      # cap stored text; a missed stop-regex can be huge
-MENTION_WINDOW = 120          # chars around a name scanned for a relation verb
 MAX_HOP2 = 40                 # cap edges followed on the second hop
 
 # A ticker whose CIK has no usable annual filing (none, or a 40-F) is recorded as

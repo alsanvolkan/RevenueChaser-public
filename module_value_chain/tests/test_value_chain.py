@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
-from RevenueChaser.module_value_chain import aliases, engine, mentions, splitter
+from RevenueChaser.module_value_chain import aliases, engine, splitter
 
 _FILLER = ("We operate in a highly competitive industry and invest heavily in "
            "research and development across our product lines and geographies. ") * 30
@@ -67,20 +67,6 @@ def test_strip_html_drops_markup_and_unescapes():
     assert "R&D" in text and "spend" in text and "x()" not in text
 
 
-# ── mentions ────────────────────────────────────────────────────────────────
-def test_mentions_relations():
-    found = {(m["dst_ticker"], m["relation"]) for m in mentions.find_mentions(_TEN_K)}
-    assert ("TSM", "supplier") in found
-    assert ("MSFT", "customer") in found
-    assert ("AMD", "competitor") in found
-
-
-def test_20f_mentions():
-    found = {(m["dst_ticker"], m["relation"]) for m in mentions.find_mentions(_TWENTY_F)}
-    assert ("NVDA", "customer") in found
-    assert ("ASML", "supplier") in found
-
-
 # ── engine / graph ──────────────────────────────────────────────────────────
 def test_focal_graph_two_hops_resolved_only():
     edges = [
@@ -114,12 +100,11 @@ def test_run_persists_corpus_and_edges(rawstore_tmp_db, monkeypatch):
     payload = engine.run(no_fetch=False, tickers=["NVDA", "TSM"])
     assert payload["fetch"]["fetched"] == 2
     assert rawstore.count("chain_filings") == 2
-    assert rawstore.count("chain_mentions") > 0
+    assert rawstore.count("chain_mentions") == 0          # #748: a filing's text alone states no edge any more
     assert rawstore.count("chain_meta") == 3
 
     loaded = engine.load_payload()
     assert {f["ticker"] for f in loaded["filings"]} == {"NVDA", "TSM"}
-    assert any(e["dst_ticker"] == "TSM" for e in loaded["edges"])
     assert "name" in loaded["filings"][0]
     assert "universe_total" in loaded
 
@@ -148,7 +133,7 @@ def test_run_no_fetch_reuses_stored_mentions(rawstore_tmp_db, monkeypatch):
     def _boom(*a, **k):  # pragma: no cover - must not run
         raise AssertionError("no_fetch must not rescan filings")
 
-    monkeypatch.setattr(engine.mentions_mod, "find_mentions", _boom)
+    monkeypatch.setattr(engine, "filing_edges", _boom)
     payload = engine.run(no_fetch=True, tickers=["NVDA"])
     assert payload["fetch"]["no_fetch"] is True
     assert any(e.get("snippet") == "from store" for e in payload["edges"])
