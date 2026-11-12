@@ -98,8 +98,8 @@ def test_a_fetch_records_a_header_and_one_row_per_board_row(store):
 def test_the_header_carries_model_version_and_params(store):
     sec13f_history.record(SHOWN, run_id="r1", run_at=COMPLETE)
     (head,) = _headers()
-    # 7: streak/accel/% out skip a quarter still arriving and the recorded quarter is the settled one (#514).
-    assert head["model_version"] == sec13f_history.model_version() and head["model_version"].startswith("7+")
+    # 8: counts on today's split basis and a window of the last 6 settled quarters (#732).
+    assert head["model_version"] == sec13f_history.model_version() and head["model_version"].startswith("8+")
     assert json.loads(head["params"])["START_QUARTER"] == engine.START_QUARTER
 
 
