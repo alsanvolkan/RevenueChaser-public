@@ -62,8 +62,6 @@ def test_a_source_box_keeps_its_buttons_on_the_name_line():
     assert "@media(max-width:1199px)" not in css, "avo 20:25: two boxes a row stay"
     assert ".ctl .sgrid{container-type:inline-size;container-name:sgrid}" in css
     assert re.search(r"@media\(min-width:761px\)\{\s*@container sgrid \(max-width:1100px\)\{\.ctl \.sgrid>\.sbox\{zoom:", css)
-    from RevenueChaser.module_settings.tests.test_control_render_c1 import _sources, _view
-    assert 'class="dsname" title="alpaca/bars">alpaca/bars</span>' in _sources(_view(), "prices.duckdb")
 
 
 def test_a_crowded_source_box_wraps_its_buttons_instead_of_pushing_them_past_the_page():

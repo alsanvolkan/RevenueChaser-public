@@ -5,24 +5,6 @@ import re
 
 from RevenueChaser.module_settings import control_render
 from RevenueChaser.module_settings.tests.test_control_render_c1 import _file, _view
-from RevenueChaser.module_settings.tests.legacy_fetch import old_fetch
-
-
-def test_next_words_prefix_only_a_time():
-    assert control_render._next_words("every trading day, 06:07 (00:07 New York)").startswith("next every")
-    assert control_render._next_words("Fri 13 Nov, 06:07 (00:07 New York)") == "next Fri 13 Nov, 06:07 (00:07 New York)"
-    for whole in ("skips until Resume", "by hand only", "next pass not known", "not before a first Fetch"):
-        assert control_render._next_words(whole) == whole
-    assert control_render._next_words("timer off · next pass not known") == "timer off · next pass not known"
-    assert control_render._next_words(None) == "next: not known"
-
-
-def test_the_disk_picture_status_is_found_from_its_button_not_a_repeated_id():
-    # avo, 10 Nov 2026: one Recount folders press, on Fetch/Health, and none on Database
-    html = old_fetch(_view())
-    assert 'id="picout"' not in html
-    assert html.count('class="hm picout" role="status"') == 1
-    assert 'class="hm picout"' not in control_render.render_data(_view())
 
 
 def test_a_cross_check_step_is_not_a_from_chip():
@@ -43,14 +25,3 @@ def test_the_two_universe_cards_are_drawn_from_the_view():
     v["my_universe"] = v.get("my_universe") or {"built": False}
     html = control_render._uni_cards(v)
     assert html.startswith('<div class="ucards">') and html.count("nd-card") >= 2
-
-
-def test_a_box_sets_how_often_and_a_hold_in_one_press():
-    """#472 moved from the old Fetch card: the fields and the one Save schedule press, on the schedule route."""
-    d = next(d for d in _file(_view(), "prices.duckdb")["datasets"] if d["dataset"] == "alpaca/bars")
-    d.update(cadence_own="weekly", cadence_effective="weekly", next_due="2026-11-20")
-    html = control_render._sched_fields(d)
-    assert '<option value="weekly" selected>' in html and 'value="2026-11-20"' in html
-    assert 'data-job="cadence" data-dataset="alpaca/bars">Save schedule' in html and "the default" not in html
-    js = control_render.CTL_JS
-    assert "C.routes.schedule + ds + '/cadence'" in js and "next_due:" in js

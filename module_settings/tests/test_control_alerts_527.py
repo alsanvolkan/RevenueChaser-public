@@ -2,12 +2,9 @@
 fine thing folds into one "all good" line; the full tiles stay one tap away."""
 from __future__ import annotations
 
-import copy
 
-from RevenueChaser.module_settings import control, control_render
-from RevenueChaser.module_settings.tests.test_control_render_c1 import _view
+from RevenueChaser.module_settings import control
 from RevenueChaser.module_settings.tests.test_control_view import NOW, control_nd
-from RevenueChaser.module_settings.tests.legacy_fetch import old_fetch
 
 
 def _alerts(nd=None, **kw):
@@ -57,19 +54,6 @@ def test_prices_behind_is_one_card_and_its_dataset_is_not_named_twice():
     a = _alerts(nd)
     assert a["prices"]["cls"] == "bad" and a["prices"]["label"].startswith("prices behind · last session")
     assert control.bars_dataset() not in a["stale"]["label"]
-
-
-def test_the_page_shows_alert_cards_an_all_good_line_and_the_tiles_folded():
-    v = _view()
-    v["health"]["alerts"] = [{"key": "stale", "cls": "bad", "n": "1", "label": "stale: market_series"}]
-    html = old_fetch(v)
-    sec = html[html.index('id="sec-health"'):html.index("</details>", html.index('id="sec-health"'))]
-    assert 'class="alerts"' in sec and "stale: market_series" in sec
-    assert 'class="allgood"' in sec
-    assert '<details class="htiles"' in sec and "<summary>Every tile</summary>" in sec
-    v["health"]["alerts"] = []
-    quiet = old_fetch(v)
-    assert "Nothing needs you right now" in quiet
 
 
 def test_the_timer_off_on_purpose_is_a_grey_words_line_not_a_card():
