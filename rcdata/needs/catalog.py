@@ -205,6 +205,9 @@ _NEEDS = (
          ask_param="tickers", normalize=TICKER, providers=("sec",)),
     Need("ownership.periods_13f", "periods_13f", "sec13f_periods", "filed_through", "period", 65,
          providers=("sec",)),
+    # Where a ticker's 13F flow breaks: the filers that started or stopped reporting it in a settled quarter (#732).
+    Need("ownership.filer_breaks_13f", "filer_breaks_13f", "sec13f_filer_breaks", "period", "ticker", 65,
+         ask_param="tickers", normalize=TICKER, providers=("sec",)),
     Need("ownership.shortable", "shortable", "ibkr_shortable", "session_date", "ticker", 1,
          ask_param="tickers", normalize=TICKER, providers=("ibkr",)),
     Need("ownership.threshold", "threshold_list", "regsho_threshold", "list_date", "ticker", 1,
