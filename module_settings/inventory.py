@@ -1103,20 +1103,6 @@ def _ibkr_login_state(now: datetime) -> dict | None:
         return None
 
 
-def _news_tape_state(now: datetime) -> dict | None:
-    """The IBKR news feeds card's data: the listener's own record (``module_news.tape_state``), nothing else.
-
-    No socket and no store read, for the same reason as the login state above. A failed read is recorded (F4) and
-    the card is left out: it must never look live or vanish without a trace.
-    """
-    try:
-        from RevenueChaser.module_news import tape, tape_state
-        return tape_state.collect(names=tape.feeds(), now=now)
-    except Exception as exc:  # noqa: BLE001 - recorded (F4), the card is omitted
-        _record("ibkr", "_news_tape_state", exc)
-        return None
-
-
 def _provider_health() -> dict | None:
     """The banner's health: ``history.last_run(BOARD)["provider_health"]``. Store-only; None when nothing is recorded."""
     from RevenueChaser.core import history
@@ -2087,7 +2073,6 @@ def _collect(now: datetime) -> dict:
         # #162: the IBKR Gateway login state, read from the login check's record. Never probed here.
         # Named to pair with ``ibkr_login_url`` above it, the shortcut that opens the login screen.
         "ibkr_login_state": _ibkr_login_state(now),
-        "news_tape_state": _news_tape_state(now),
         "ibkr_login_url": _ibkr_login_url(),
         # S6 (#124): the backstop for a MANIFEST table no dataset claims. Built before the errors
         # list, so a failed read here is reported like any other.

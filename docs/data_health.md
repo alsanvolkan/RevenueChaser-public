@@ -582,18 +582,22 @@ reachable off its own machine.
 
 ### 3.2a IBKR news feeds (#727)
 
-Sits right after the login state card and answers "are the broad-tape feeds (BRFG, DJNL) arriving, and if
-not, why and since when?". A logged-in gateway is not enough for that: on 11 Nov 2026 the gateway was up
-all day while both feeds were refused with IBKR error 10197 ("No market data during competing live
+Answers "are the broad-tape feeds (BRFG, DJNL) arriving, and if not, why and since when?". A logged-in
+gateway is not enough for that: on 11 Nov 2026 the gateway was up all day while both feeds were refused with IBKR error 10197 ("No market data during competing live
 session"), and only the unit's journal said so.
 
-**The card reads a record, not the gateway.** The listener (`module_news/tape.py`, the
+**The dashboard reads a record, not the gateway.** The listener (`module_news/tape.py`, the
 `life-rc-news-tape` unit) is its own process and opens no DuckDB, so it writes
 `.cache/news_tape/state.json` (`module_news/tape_state.py`, written `tmp` + `replace`): on every
 connect and disconnect, on every ask and refusal, and with its 5-minute trigger. A headline is written
-through at most once a minute. The card (`section#news-tape`, ids `news-tape-*`) opens on one lead line,
-the worst feed state in a few words (so a connected gateway with every feed refused does not open on
-green), then shows the connection line and one stacked block a feed:
+through at most once a minute.
+
+**It is shown on the Grafana Fetch/Health board, not on this page** (avo, 12 Nov 2026: status lives in
+Grafana; the page draws no card for it). The dashboard gives the board two things, both read from the
+record and neither opening a socket: the metric `rc_news_feed_state` (section 9), which an alert can
+watch, and the `news` field of the board head (`metrics.board_head`), which carries the words: one lead
+line, the worst feed state in a few words (so a connected gateway with every feed refused does not read
+as green), the connection line and for each feed its state:
 
 - **Refused** - IBKR's code and words, since when the streak began, how many times in a row, and when it
   is asked again (every 30 minutes). 10197 is explained in plain words: another session of the same IBKR
@@ -604,8 +608,9 @@ green), then shows the connection line and one stacked block a feed:
 - **Waiting** - the listener is not connected to the gateway.
 
 A record older than 15 minutes says the listener is probably not running, and no record at all says so
-in words: neither is drawn as a refusal. A listener started before this card existed writes nothing until
-it is restarted.
+in words: neither reads as a refusal (`rc_news_tape_written_timestamp_seconds` is the record's age; it
+is absent while there is no record). A listener started before the record existed writes nothing until it
+is restarted.
 
 ### 3.3 Backups
 
@@ -990,6 +995,8 @@ code:
 | `rc_backup_newest_timestamp_seconds` | `kind` | the newest backup of a kind |
 | `rc_switch_on` | `name` | the fetch and backup switches |
 | `rc_ibkr_state` | `state` | 1 for the gateway's login state: up, silent (port open, API not answering), down, unknown, not_set; any other text reads unknown |
+| `rc_news_feed_state` | `feed`, `state` | 1 for an IBKR news feed's state from the listener's record: refused, live, subscribed, waiting, unknown; any other text reads unknown |
+| `rc_news_tape_written_timestamp_seconds` | | when the news listener last wrote its record; absent while there is none |
 | `rc_threshold` | `name` | the page's alarm thresholds, from `control.py`, so an alert rule does not retype them |
 | `rc_metrics_read_errors_total` | `part` | readers that failed since the dashboard started |
 | `rc_metrics_build_seconds` | | what the scrape cost |

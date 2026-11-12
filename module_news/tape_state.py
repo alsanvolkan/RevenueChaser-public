@@ -1,4 +1,4 @@
-"""What the news tape listener last knew about its gateway and its feeds, as a record the Settings page reads.
+"""What the news tape listener last knew about its gateway and its feeds, as a record the dashboard reads.
 
 #727; avo, 12 Nov 2026: "Evet bir kart ekleyelim". On 11 Nov the two broad-tape feeds (BRFG, DJNL) were refused with IBKR
 error 10197 ("No market data during competing live session") 32 times in a row, and the only place that said so was
@@ -201,7 +201,7 @@ def collect(*, names: list[str], now: datetime | None = None, path: Path | None 
     written = _parse(rec["written_at"])
     if written is None:
         return {"state": UNKNOWN, "stale": False, "feeds": [], "gateway": "", "gateway_state": UNKNOWN, "hint": "",
-                "lead": "",
+                "lead": "", "written_at": None,
                 "written_text": "No record yet: the listener has not written one. It writes when it connects, on "
                                 "every ask and refusal, and every 5 minutes; a listener started before this card "
                                 "existed writes nothing until it is restarted."}
@@ -226,7 +226,8 @@ def collect(*, names: list[str], now: datetime | None = None, path: Path | None 
              else UNKNOWN if UNKNOWN in states else SUBSCRIBED if SUBSCRIBED in states else LIVE)
     hint = HINT_10197 if any(f["code"] == COMPETING_SESSION for f in feeds) else ""
     return {"state": worst, "stale": stale, "feeds": feeds, "gateway": gateway, "gateway_state": gw["state"],
-            "written_text": written_text, "hint": hint, "lead": _lead(worst, feeds, ago if stale else "")}
+            "written_text": written_text, "hint": hint, "lead": _lead(worst, feeds, ago if stale else ""),
+            "written_at": rec["written_at"]}
 
 
 def _lead(worst: str, feeds: list[dict], stale_ago: str) -> str:

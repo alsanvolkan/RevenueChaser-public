@@ -106,6 +106,46 @@ def test_ibkr_state_is_one_of_a_closed_set(state, label):
     assert len(fam["rc_ibkr_state"]) == len(metrics.IBKR_STATES)
 
 
+def _tape(feeds, written_at="2026-11-11T09:40:00+00:00"):
+    return lambda: {"feeds": feeds, "written_at": written_at}
+
+
+def test_a_news_feed_s_state_is_one_of_a_closed_set_and_every_state_is_always_there():
+    """#727: on 11 Nov 2026 both feeds were refused all day behind a green gateway. Each feed carries every state,
+    0 or 1, so an alert on ``refused`` never sees a gap; text that is not a state reads ``unknown``."""
+    fam = _families(metrics.render(_collect(news=_tape([{"feed": "BRFG", "state": "live"},
+                                                        {"feed": "DJNL", "state": "refused"},
+                                                        {"feed": "FLY", "state": "words from a file"}]))))
+    ones = [l for l in fam["rc_news_feed_state"] if l.endswith(" 1")]
+    assert ones == ['rc_news_feed_state{feed="BRFG",state="live"} 1',
+                    'rc_news_feed_state{feed="DJNL",state="refused"} 1',
+                    'rc_news_feed_state{feed="FLY",state="unknown"} 1']
+    assert len(fam["rc_news_feed_state"]) == 3 * len(metrics.NEWS_STATES)
+
+
+def test_a_feed_name_that_is_not_a_plain_id_never_becomes_a_label():
+    fam = _families(metrics.render(_collect(news=_tape([{"feed": 'BR"FG} 1\nrc_x', "state": "live"},
+                                                        {"feed": "", "state": "live"}]))))
+    assert fam["rc_news_feed_state"] == []
+
+
+def test_the_listener_s_last_write_is_exported_and_absent_without_a_record():
+    fam = _families(metrics.render(_collect(news=_tape([]))))
+    assert fam["rc_news_tape_written_timestamp_seconds"] == ["rc_news_tape_written_timestamp_seconds 1794390000.0"]
+    fam = _families(metrics.render(_collect(news=_tape([], written_at=None))))
+    assert fam["rc_news_tape_written_timestamp_seconds"] == []
+
+
+def test_a_news_record_that_cannot_be_read_is_counted_and_the_rest_still_reports():
+    def boom():
+        raise RuntimeError("tape read exploded")
+
+    before = metrics._errors["news"]
+    fam = _families(metrics.render(_collect(news=boom)))
+    assert fam["rc_news_feed_state"] == [] and metrics._errors["news"] == before + 1
+    assert fam["rc_ibkr_state"], "the other parts are still read"
+
+
 def test_a_running_request_names_who_from_a_closed_set():
     ops.enqueue("market_series", by="settings")
     ops.next_request()
@@ -276,6 +316,18 @@ def test_the_board_head_says_the_switches_the_timer_and_the_gateway(monkeypatch)
     assert head["gateway"] == {"cls": "ok", "n": "open", "label": "logged in", "login": None}
     monkeypatch.setenv("RC_IBKR_LOGIN_URL", "https://gateway.example/")
     assert metrics.board_head(NOW, ibkr=lambda: None)["gateway"]["login"] == "https://gateway.example/"
+
+
+def test_the_board_head_carries_the_news_feeds_in_the_listener_s_words():
+    """#727: the Grafana board says the feeds beside the gateway; the words come from module_news/tape_state."""
+    view = {"state": "refused", "lead": "2 of 2 feeds refused: BRFG, DJNL", "feeds": []}
+    assert metrics.board_head(NOW, ibkr=lambda: None, news=lambda: view)["news"] == view
+
+    def boom():
+        raise RuntimeError("tape read exploded")
+
+    assert metrics.board_head(NOW, ibkr=lambda: None, news=boom)["news"] is None
+    assert metrics.board_head(NOW, ibkr=lambda: None)["news"]["state"] == "unknown", "no record yet reads as unknown"
 
 
 def test_the_detail_route_takes_the_pickers_range_and_refuses_a_backwards_one(client):
