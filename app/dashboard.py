@@ -1652,6 +1652,14 @@ def api_build_datasets():
     return jsonify({"ok": True, "datasets": metrics.datasets_list()})
 
 
+@app.route("/api/settings/status")
+def api_settings_status():
+    """Provider limits, the cross-check and board freshness as JSON, for the Grafana Fetch/Health board (#715)."""
+    from RevenueChaser.module_settings import metrics
+
+    return jsonify({"ok": True, **metrics.board_status()})
+
+
 @app.route("/metrics", endpoint="metrics")
 def prometheus_metrics():
     """Prometheus text format for Grafana on homesrv (#527 plan B1). Cheap readers only, no store session."""
