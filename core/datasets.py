@@ -436,7 +436,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         db="watchlists", source=Source.manual, writer=None,
         writer_note=("avo types them, through the board or the import command "
                      "(module_watchlists/store.py is the one writer); nothing fetches them"),
-        freshness=("wl_change", "at"),
+        freshness=("wl_change", "changed_at"),
     ),
 
     # --- extended: base tables the 19 rows do not own ---

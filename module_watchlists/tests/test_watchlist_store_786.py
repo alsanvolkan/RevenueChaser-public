@@ -204,7 +204,7 @@ def test_every_add_and_remove_leaves_a_change_row(a_list):
     store.add_symbol(a_list, "NASDAQ:NVDA", by="avo")
     store.remove_symbol(a_list, "NASDAQ:NVDA", by="avo")
     rows = store.changes(a_list)
-    assert [(r["symbol"], r["action"], r["by"]) for r in rows] == [
+    assert [(r["symbol"], r["action"], r["changed_by"]) for r in rows] == [
         ("NASDAQ:NVDA", "remove", "avo"), ("NASDAQ:NVDA", "add", "avo")]
 
 
