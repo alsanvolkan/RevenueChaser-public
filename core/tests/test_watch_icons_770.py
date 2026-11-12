@@ -26,11 +26,15 @@ def test_each_half_is_a_glyph_and_not_a_word():
         assert not re.search(r">\s*[A-Za-z]", re.sub(r"<svg.*?</svg>", "", b, flags=re.S)), "no text label"
 
 
-def test_the_accessible_name_still_says_which_list():
+def test_the_name_moved_into_the_label_rather_than_being_dropped():
+    """The visible word is gone from the button; the same words have to still be its accessible name."""
     html = rc.watch_buttons_html("NVDA", on=("stock",))
     assert 'aria-label="NVDA on the stock watch list"' in html
     assert 'aria-label="NVDA on the option watch list"' in html
     assert 'aria-pressed="true"' in html and 'aria-pressed="false"' in html
+    for b in _buttons(html):
+        body = re.sub(r"<svg.*?</svg>", "", b, flags=re.S)
+        assert re.search(r">\s*</button>$", body), "the glyph is the whole button body"
 
 
 def test_the_js_twin_keeps_the_same_order_and_icons():
