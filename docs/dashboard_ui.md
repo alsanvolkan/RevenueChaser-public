@@ -201,7 +201,7 @@ one-screen intro.
 - Treating Theme as a third sector select, or falling back to a hard-coded theme list.
 - A literal index list in a board or in the component: the registry owns it (`filters_meta`).
 - A Linear/Vercel visual clone — keep RevenueChaser tokens
-  (`--bg #05111F`, `--accent #0EA5E9`, `--neon`).
+  (`THEME_TOKENS` in `core/reporting_common.py`: warm neutrals, clay `--accent`).
 
 ---
 

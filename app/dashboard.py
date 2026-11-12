@@ -2105,8 +2105,8 @@ def manifest():
         "short_name": "REVENUE CHASER",
         "start_url": "/",
         "display": "standalone",
-        "background_color": "#05111F",
-        "theme_color": "#05111F",
+        "background_color": reporting_common.THEME_TOKENS["dark"]["bg"],
+        "theme_color": reporting_common.THEME_TOKENS["dark"]["bg"],
         "icons": [
             {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
             {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},

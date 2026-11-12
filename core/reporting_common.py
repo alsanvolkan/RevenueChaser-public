@@ -70,40 +70,59 @@ function boardSettingsReset(btn, out, board){
 # ── Theme tokens: one palette per scheme, defined here only (#184) ──
 # The shell (templates/dashboard.html) renders ``THEME_CSS`` and ``THEME_JS``; a board adopts them in its own PR
 # (one per board) by using these names instead of its own palette. Dark is the default on every device (avo,
-# 25 Oct 2026) and is the shell's look before #184, value for value. Light applies when the reader chooses
+# 25 Oct 2026). The palette is the warm-neutral "full design system" avo picked on 12 Nov 2026 (13F thread,
+# option D of four skill mocks): warm paper / charcoal neutrals, one clay ``accent`` for selection, sort and focus,
+# muted ``pos`` / ``neg`` / ``amber``, and ``data-1`` / ``data-2`` for chart series. Light applies when the reader chooses
 # Light, or chooses Auto on a device that prefers light. The choice is ``localStorage[THEME_STORAGE_KEY]``
 # ("light" / "auto"; absent = dark), set as ``data-theme`` on ``<html>`` ("dark" / "light" / "auto"). The
 # shell copies that attribute onto every board iframe (same origin).
 THEME_STORAGE_KEY = "rc-theme"
 THEME_TOKENS = {
     "dark": {
-        "bg": "#05111F", "fg": "#C5C6C8", "bright": "#F0F0F0", "card": "#0B1828",
-        "border": "rgba(197,198,200,.15)", "sidebar": "#0B1828", "pos": "#34D399", "neg": "#F87171",
-        "amber": "#FBBF24", "sky": "#0EA5E9", "muted": "#9C9DA1",
-        "input-bg": "#101F33", "input-border": "#2F434C", "hover": "#18293a", "topbar": "rgba(12,20,24,.8)",
-        "nav-fg": "rgba(224,233,235,.75)", "nav-on": "#101F33", "hover-faint": "rgba(255,255,255,.04)",
-        "frame-bg": "#12131c", "overlay": "rgba(5,17,31,.7)", "scroll-thumb": "#5b7a8c",
-        "scroll-thumb-hover": "#6f93a7", "scroll-track": "#0b1620", "primary-bg": "#E2E3E5",
-        "primary-fg": "#0A1420", "oi-bg": "rgba(11,24,40,.55)", "scrim": "rgba(0,0,0,.55)",
-        "shadow": "rgba(0,0,0,.6)", "badge-blue": "#38BDF8", "badge-gray": "#94A3B8",
-        "hover-soft": "rgba(255,255,255,.06)", "hover-day": "rgba(255,255,255,.08)",
-        "gex-pos-bg": "rgba(52,211,153,.35)", "gex-pos-fg": "#eafff5",
-        "gex-neg-bg": "rgba(248,113,113,.35)", "gex-neg-fg": "#ffd9d9",
+        "bg": "#1C1B19", "fg": "#D9D5CC", "bright": "#F3F0E8", "card": "#242320", "card-2": "#2C2A26",
+        "border": "rgba(243,240,232,.10)", "sidebar": "#201F1C", "pos": "#8CC5A2", "neg": "#E3988A",
+        "amber": "#DDB066", "sky": "#9DBEDB", "muted": "#A39E93", "accent": "#D99272",
+        "accent-soft": "rgba(217,146,114,.14)", "pos-soft": "rgba(140,197,162,.12)",
+        "neg-soft": "rgba(227,152,138,.12)", "amber-soft": "rgba(221,176,102,.12)", "focus": "#D99272",
+        "input-bg": "#2C2A26", "input-border": "rgba(243,240,232,.16)", "hover": "#2A2824",
+        "topbar": "rgba(28,27,25,.85)", "nav-fg": "rgba(243,240,232,.72)", "nav-on": "#2C2A26",
+        "hover-faint": "rgba(243,240,232,.03)", "frame-bg": "#1C1B19", "overlay": "rgba(28,27,25,.72)",
+        "scroll-thumb": "#5A564F", "scroll-thumb-hover": "#716C63", "scroll-track": "#201F1C",
+        "primary-bg": "#EDE8DD", "primary-fg": "#1C1B19", "oi-bg": "rgba(36,35,32,.6)",
+        "scrim": "rgba(10,9,8,.55)", "shadow": "rgba(0,0,0,.45)", "badge-blue": "#9DBEDB",
+        "badge-gray": "#A39E93", "hover-soft": "rgba(243,240,232,.05)", "hover-day": "rgba(243,240,232,.08)",
+        "gex-pos-bg": "rgba(140,197,162,.28)", "gex-pos-fg": "#EAF6EE", "gex-neg-bg": "rgba(227,152,138,.28)",
+        "gex-neg-fg": "#FBE7E3", "data-1": "#5E9AD0", "data-2": "#D9773F", "grid": "rgba(243,240,232,.08)",
     },
     "light": {
-        "bg": "#F4F6F9", "fg": "#2A3340", "bright": "#0B1220", "card": "#FFFFFF",
-        "border": "rgba(15,23,42,.14)", "sidebar": "#FFFFFF", "pos": "#047857", "neg": "#B91C1C",
-        "amber": "#B45309", "sky": "#0369A1", "muted": "#5B6472",
-        "input-bg": "#FFFFFF", "input-border": "#C3CCD8", "hover": "#E8EDF3", "topbar": "rgba(255,255,255,.85)",
-        "nav-fg": "#3A4452", "nav-on": "#E3EEF8", "hover-faint": "rgba(15,23,42,.05)",
-        "frame-bg": "#FFFFFF", "overlay": "rgba(244,246,249,.75)", "scroll-thumb": "#9AA8B6",
-        "scroll-thumb-hover": "#7D8D9E", "scroll-track": "#E6EBF0", "primary-bg": "#0B1220",
-        "primary-fg": "#FFFFFF", "oi-bg": "rgba(255,255,255,.7)", "scrim": "rgba(15,23,42,.35)",
-        "shadow": "rgba(15,23,42,.18)", "badge-blue": "#0369A1", "badge-gray": "#475569",
-        "hover-soft": "rgba(15,23,42,.06)", "hover-day": "rgba(15,23,42,.09)",
-        "gex-pos-bg": "rgba(4,120,87,.16)", "gex-pos-fg": "#065F46",
-        "gex-neg-bg": "rgba(185,28,28,.14)", "gex-neg-fg": "#991B1B",
+        "bg": "#F7F5F0", "fg": "#3B3833", "bright": "#1F1D1A", "card": "#FFFEFB", "card-2": "#F0EDE6",
+        "border": "rgba(31,29,26,.11)", "sidebar": "#FBFAF6", "pos": "#2F6B4F", "neg": "#A3473B",
+        "amber": "#8F5F14", "sky": "#3C6688", "muted": "#68645C", "accent": "#A9542F",
+        "accent-soft": "rgba(169,84,47,.10)", "pos-soft": "rgba(47,107,79,.09)",
+        "neg-soft": "rgba(163,71,59,.09)", "amber-soft": "rgba(143,95,20,.10)", "focus": "#A9542F",
+        "input-bg": "#FFFEFB", "input-border": "rgba(31,29,26,.18)", "hover": "#F3F0E9",
+        "topbar": "rgba(247,245,240,.88)", "nav-fg": "#4A463F", "nav-on": "#EDE9E0",
+        "hover-faint": "rgba(31,29,26,.03)", "frame-bg": "#F7F5F0", "overlay": "rgba(247,245,240,.75)",
+        "scroll-thumb": "#C4BFB4", "scroll-thumb-hover": "#A9A396", "scroll-track": "#EFECE5",
+        "primary-bg": "#2B2925", "primary-fg": "#FFFEFB", "oi-bg": "rgba(255,254,251,.7)",
+        "scrim": "rgba(31,29,26,.30)", "shadow": "rgba(31,29,26,.10)", "badge-blue": "#3C6688",
+        "badge-gray": "#68645C", "hover-soft": "rgba(31,29,26,.05)", "hover-day": "rgba(31,29,26,.08)",
+        "gex-pos-bg": "rgba(47,107,79,.14)", "gex-pos-fg": "#1F4A36", "gex-neg-bg": "rgba(163,71,59,.13)",
+        "gex-neg-fg": "#6E2A21", "data-1": "#2F6FA8", "data-2": "#C0602E", "grid": "rgba(31,29,26,.08)",
     },
+}
+
+
+# The scales that go with the palette, the same in both schemes: one type scale, a 4 px spacing scale, three
+# radii and three elevations (0 = border only, 1 = card, 2 = dialog / popover). A board uses the names
+# (``var(--fs-base)``, ``var(--sp-4)``, ``var(--elev-1)``) instead of its own pixel values.
+THEME_SCALE = {
+    "font-sans": "Inter,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif",
+    "fs-xs": "11px", "fs-sm": "12.5px", "fs-base": "14px", "fs-md": "16px", "fs-lg": "20px", "fs-xl": "26px",
+    "sp-1": "4px", "sp-2": "8px", "sp-3": "12px", "sp-4": "16px", "sp-5": "24px", "sp-6": "32px", "sp-7": "48px",
+    "r-sm": "6px", "r-md": "10px", "r-lg": "14px", "r-pill": "999px",
+    "elev-1": "0 1px 2px var(--shadow)", "elev-2": "0 12px 32px var(--shadow)",
+    "touch": "44px",
 }
 
 
@@ -113,7 +132,11 @@ def _theme_vars(scheme: str) -> str:
 
 # Bare CSS (no <style>), so a page puts it inside its own style block.
 THEME_CSS = (
-    f":root{{{_theme_vars('dark')}}}\n"
+    # Inter, served by the dashboard itself (app/static/fonts, SIL OFL 1.1 in Inter-OFL.txt): no font host, so the
+    # boards look the same offline and on a phone, which would otherwise fall back to its own sans.
+    "@font-face{font-family:Inter;font-style:normal;font-weight:100 900;font-display:swap;"
+    "src:url(/static/fonts/InterVariable.woff2) format('woff2')}\n"
+    ":root{" + "".join(f"--{k}:{v};" for k, v in THEME_SCALE.items()) + _theme_vars("dark") + "}\n"
     f"@media (prefers-color-scheme: light){{:root[data-theme=\"auto\"]{{{_theme_vars('light')}}}}}\n"
     f":root[data-theme=\"light\"]{{{_theme_vars('light')}}}\n"
 )
@@ -362,7 +385,7 @@ __all__ = [
     "WATCHLIST_JS", "WATCHLIST_CSS", "WATCH_LABELS", "watch_buttons_html", "watchlist_html",
     "JOB_JS",
     "HELP_CSS", "help_html",
-    "THEME_TOKENS", "THEME_CSS", "THEME_JS", "THEME_STORAGE_KEY",
+    "THEME_TOKENS", "THEME_SCALE", "THEME_CSS", "THEME_JS", "THEME_STORAGE_KEY",
     "universe_provenance_html",
     "provider_health_html",
     "notice_html",

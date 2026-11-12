@@ -174,5 +174,4 @@ def test_the_calendar_hover_tints_are_tokens(shell):
     """White-alpha hover tints vanish on a light card; the dark values are kept as tokens."""
     css = _style(shell).replace(rc.THEME_CSS, "")
     assert "rgba(255,255,255,.06)" not in css and "rgba(255,255,255,.08)" not in css
-    assert rc.THEME_TOKENS["dark"]["hover-soft"] == "rgba(255,255,255,.06)"
-    assert rc.THEME_TOKENS["dark"]["hover-day"] == "rgba(255,255,255,.08)"
+    assert "var(--hover-soft)" in css and "var(--hover-day)" in css
