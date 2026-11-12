@@ -101,6 +101,9 @@
 .ctl table.jt3 .jfrom{grid-row:3;grid-column:1/-1}
 .ctl table.jt3 td.jh{display:none}
 .ctl table.jt3 td.js.dim{display:block}
+/* avo on the preview, 13 Nov 2026: no colour legend and no explanation lines under it on a phone. The icons'
+   licence line stays in the page and on the desk. */
+.ctl #sec-flow .flowlegend,.ctl #sec-flow .phoneonly .fnote{display:none}
 }
 /* The lookup's clear press is 24 px in the shared filter; here its touch area reaches 44 without moving anything. */
 @media(max-width:640px){#panel-data .rcf-clear::after{content:"";position:absolute;inset:-10px}}

@@ -115,6 +115,8 @@ def test_a_build_step_is_two_lines_on_a_phone_with_its_parts_in_fixed_columns():
     assert ".ctl table.jt3 .jsrc{grid-row:2;grid-column:1" in phone and ".ctl table.jt3 .jmeta>*{grid-row:2" in phone
     assert ".ctl details.sec.fpanel{margin-top:12px}" in phone, "and two file sections sit close"
     assert "#panel-data .rcf-clear::after{" in phone, "the lookup's clear press reaches 44 px"
+    assert ".ctl #sec-flow .flowlegend,.ctl #sec-flow .phoneonly .fnote{display:none}" in phone, \
+        "no colour legend and no explanation lines on a phone"
 
 
 def test_the_icon_column_is_as_wide_as_the_step_with_the_most_icons():
