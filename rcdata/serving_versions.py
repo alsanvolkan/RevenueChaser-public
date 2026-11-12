@@ -35,3 +35,6 @@ SERVING_SCHEMA_VERSION["options"] = 2
 # options 2: the calendar item's fields on ``option_screener_daily`` (and the screener's ``realized_volatility``,
 #            ``stock_volume``), ``option_far_print`` (the LEAPS market scan) and ``earnings_tape`` (``/earnings/{t}``
 #            of the earnings set); group 3's one structure PR (#644, avo's D2 of 10 Nov 2026).
+# options 3: ``option_far_contract``, the market's far-dated contracts of a session and the next session's open
+#            interest of each (``build/options/uw_far_contracts.py``, #746, avo's "A: Tum piyasa" of 12 Nov 2026).
+SERVING_SCHEMA_VERSION["options"] = 3

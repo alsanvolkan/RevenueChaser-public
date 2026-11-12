@@ -1017,7 +1017,7 @@ file, `<MARKET_DIR>/<kind>.duckdb`. The identity spine, `spine` (serving schema 
 "The identity spine" below; the prices store, `prices` (serving schema version `1`), under "The prices store"
 below; the ownership store, `ownership` (serving schema version `1`), under "The ownership store" below; the
 fundamentals layer, `fundamentals` (serving schema version `3`), under "Fundamentals" after it; and the options
-data, `options` (serving schema version `2`), under "The options data" last. The six numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
+data, `options` (serving schema version `3`), under "The options data" last. The six numbers live in `rcdata/serving_versions.py`, outside the builder's rules fingerprint
 (`rcdata/build/dirty.py`), so a bump makes only its own kind's next build whole (#649). The market data,
 `market` (serving schema version `4`): `serving_schema_version` (one row: kind, version, build time, build id, build mode),
 `spx_gamma_expiry_strike` (key session date, expiry, strike; every numeric field UW serves, typed DOUBLE; provenance
@@ -1852,8 +1852,9 @@ name, and the earnings set of the evening. Built by the same builder, swapped th
 | `er_options` | session date, ticker | The earnings set: one row per name and evening (each of the two before its report), with the report date it was fetched for |
 | `option_far_print` | session date, print id | The market's far-dated prints (183 days or more, $50k premium or more, every underlying): the print fields of `option_print` plus `next_earnings_date`; the last 5 sessions (the Parquet keeps every one). **The end of the session, not all of it** — the feed is newest-first and a session's three pages hit the 3 x 500 ceiling (#730 item 4). It was the LEAPS scan's input; that scan is switched off (#730) |
 | `earnings_tape` | session date, ticker, report date | `/earnings/{ticker}` of an earnings-set name on its evening: one row per report UW lists (EPS and estimate, expected move, the pre- and post-earnings moves, the straddle returns); a name fetched again lists its reports again, so a reader takes the newest session's row |
+| `option_far_contract` | session date, option symbol | The market's far-dated contracts of a session (#746): every contract the contract screener returns at 183 days or more and $50k premium or more, every underlying, with its volume by side, multi-leg volume, premium and the open interest at the session's start; then, read from the name's chain the next morning, `oi_next` and `oi_change`, `opened_share` (`oi_change / volume`, raw, not clipped; `out_of_range` when the change is larger than the volume), `ask_share`, `multileg_share`, and the `roll` flag with its `roll_partner`. `oi_status` is `pending`, `matched`, `stale` or `missing`; only `matched` rows carry the open-interest numbers. Every session is served. No label, no score |
 
-**Datasets.** Three, all daily and all `starts_by_hand` (no automatic first run: the first one is started from the
+**Datasets.** Four, all daily and all `starts_by_hand` (no automatic first run: the first one is started from the
 CLI or Settings):
 
 - `uw/option_list`: SPX and the option watch list, read at each run through `rcdata.read.watched("option")`. Per
@@ -1871,6 +1872,15 @@ CLI or Settings):
   50 prints (not the chain) and its earnings tape (`/earnings/{ticker}`). Once a session it also asks
   `/option-trades` for the market's far prints (`min_dte` 183, `min_premium` 50,000, 500 a call), paged back with
   `older_than` (UW ignores `page`), at most 3 calls.
+- `uw/far_contracts` (#746, avo's universe "A: Tum piyasa" of 12 Nov 2026): in a session's observed window the
+  sweep, `/screener/option-contracts` with `min_dte` 183 and `min_premium` 50,000, `type` call then put, 250 a
+  page from page 0 until a short page; from 07:30 New York on the next trading day until 07:30 the trading day
+  after, each swept ticker's chain, `/stock/{ticker}/option-contracts` with `min_dte` 175 (UW counts it from the day
+  of the read), 500 a page. Every returned row is checked against its filter and one that breaks it fails the run,
+  because UW drops a parameter it does not honour without an error. A chain row counts only when its `prev_oi`
+  equals the sweep's `open_interest`; a name UW has not updated yet is asked again by the next run. About 420 to
+  435 UW calls a session (10 for the sweep, one or two a ticker). The rule is the module doc of
+  `rcdata/build/options/uw_far_contracts.py`.
 - `ibkr/iv_history`: one year of IBKR's daily 30-day option implied volatility per list name, once (a name added
   later gets its year on the next run). Through `core/providers/ibkr_tws.py`, a minimal TWS socket client that sends
   only the handshake, `startApi` and `reqHistoricalData`: market data only, never an account, a position or an
@@ -1879,7 +1889,7 @@ CLI or Settings):
 
 The first week's raw size per list name is in each `uw/option_list` check note ("raw N KB a name"), the plan's F5
 measure. Read through `rcdata.read`: `option_chain`, `option_strikes`, `option_expiries`, `option_daily`,
-`option_prints`, `iv_history`, `option_screener`, `earnings_options`; a row of the earnings set carries
+`option_prints`, `iv_history`, `option_screener`, `earnings_options`, `far_contracts`, `far_contract_sessions`; a row of the earnings set carries
 `uw/option_screener`'s status, an IBKR row of `iv_daily` `ibkr/iv_history`'s.
 
 **The cards' earnings date (G6).** The next earnings date on the Asymmetric Growth, Fundamentals and Swing cards,
