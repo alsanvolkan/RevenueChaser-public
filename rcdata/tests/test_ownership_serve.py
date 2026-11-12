@@ -14,7 +14,7 @@ import pytest
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import ops, read, serving
 from RevenueChaser.rcdata.build import base
-from RevenueChaser.rcdata.build.ownership import common, finra, ibkr, sec, sec13f, serve
+from RevenueChaser.rcdata.build.ownership import common, finra, ibkr, sec, sec13f, sec13f_listing, serve
 from RevenueChaser.rcdata.build.spine import openfigi_map, wrds
 
 from . import ownership_fixture as ox
@@ -155,7 +155,9 @@ def test_the_metrics_compare_with_the_calendar_quarter_before(store):
     rows = {(t, p): r for t, p, *r in _served(f"SELECT ticker, period, {cols} FROM sec13f_ticker_period")}
     assert rows[("MSFT", Q3)] == [100.0, 6503.6, 0, 0, 250.0, 0.0, 50.0, -50.0, Q2, 4]
     assert rows[("ETN", Q3)] == [100.0, 10000.0, 0, 1, 0.0, 100.0, 25.0, -75.0, Q2, 4]
-    assert rows[("NVR", Q3)] == [100.0, 10000.0, 1, 0, 50.0, 0.0, 25.0, 25.0, Q2, 4]
+    # NVR's one holder is filer 1000003, which filed no report for the June quarter: it started reporting, so it is
+    # neither a new holder nor a buy (#732).
+    assert rows[("NVR", Q3)] == [100.0, 10000.0, 0, 0, 0.0, 0.0, 25.0, 25.0, Q2, 4]
     # The quarter before 30 Jun 2026 is not in the store: what it would compare with is unknown, never 0.
     assert rows[("MSFT", Q2)] == [100.0, 6449.7, None, None, None, None, 100.0, None, date(2026, 3, 31), 2]
     assert rows[("MSFT", date(2001, 9, 30))][6:] == [100.0, None, date(2001, 6, 30), 1]
@@ -431,9 +433,10 @@ def test_a_period_that_is_not_a_quarter_end_is_read_as_its_calendar_quarter(monk
     assert _served(f"SELECT period FROM {sec13f.TABLE} WHERE accession = '0005000002-26-000012'") == [
         (date(2026, 9, 29),)]
     assert _served("SELECT period, filers FROM sec13f_periods ORDER BY period") == [(Q2, 1), (Q3, 3)]
-    assert _served("SELECT period, shares, holders, new_holders, exited_holders, breadth, filers "
+    # #732: the two filers with no report in the June quarter started filing; they are not new holders.
+    assert _served("SELECT period, shares, holders, new_holders, exited_holders, started_filers, breadth, filers "
                    "FROM sec13f_ticker_period WHERE ticker = 'MSFT' ORDER BY period") == [
-        (Q2, 100.0, 1, None, None, 100.0, 1), (Q3, 1130.0, 3, 2, 0, 100.0, 3)]
+        (Q2, 100.0, 1, None, None, None, 100.0, 1), (Q3, 1130.0, 3, 0, 0, 2, 100.0, 3)]
     assert _served("SELECT period, cusips FROM sec13f_filer_period WHERE cik = '5000002' ORDER BY period") == [
         (Q2, 1), (Q3, 1)]
 
@@ -464,10 +467,106 @@ def test_an_exit_whose_filer_omitted_holdings_in_confidence_or_did_not_file_is_c
         ("3000001", Q3, False), ("3000002", Q3, True)]
     assert _served("SELECT cik, confidential_omitted FROM sec13f_filer_period WHERE period = ? ORDER BY cik",
                    Q3) == [("3000001", False), ("3000002", True)]
-    assert _served("SELECT holders, exited_holders, exited_confidential, exited_no_filing, sell_flow "
-                   "FROM sec13f_ticker_period WHERE ticker = 'MSFT' AND period = ?", Q3) == [(1, 2, 1, 1, 200.0)]
+    # 3000003 stopped reporting: counted apart, not an exit and not a sale (#732); 3000002 reported and left MSFT
+    # out in confidence: an exit, counted as one that may not be a sale.
+    assert _served("SELECT holders, exited_holders, exited_confidential, exited_no_filing, sell_flow, stopped_shares "
+                   "FROM sec13f_ticker_period WHERE ticker = 'MSFT' AND period = ?", Q3) == [(1, 1, 1, 1, 100.0, 100.0)]
     assert _served("SELECT exited_holders, exited_confidential, exited_no_filing FROM sec13f_ticker_period "
                    "WHERE ticker = 'MSFT' AND period = ?", Q2) == [(None, None, None)]
+
+
+def test_a_filer_that_starts_or_stops_reporting_is_not_a_trade_and_is_listed(monkeypatch, http_mock):
+    """#732 (owner, 12 Nov 2026): the flows and new/exited holders count only filers that reported both quarters. A
+    first report is not a buy of the whole position and a missing report is not a sale; both are counted apart and
+    listed per ticker and settled quarter in ``sec13f_filer_breaks``."""
+    monkeypatch.setattr(sec, "_shared_pace", lambda: True)
+    monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    ox.make_spine()
+    e = ox.Edgar()
+    e.add_day("2026-08-14", [
+        _f("0004000001-26-000001", 4000001, "2026-08-14", [_h("MICROSOFT CORP", "594918104", 40_000, 100)],
+           period="06-30-2026"),
+        _f("0004000002-26-000002", 4000002, "2026-08-14", [_h("MICROSOFT CORP", "594918104", 120_000, 300)],
+           period="06-30-2026")])
+    e.add_day("2026-10-27", [
+        # 4000001 bought 50; 4000003 files its first report; 4000002 has no report for the quarter.
+        _f("0004000001-26-000011", 4000001, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 60_000, 150)]),
+        _f("0004000003-26-000013", 4000003, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 200_000, 500)])])
+    e.install(http_mock)
+    _thirteen_f(as_of="2026-10-28")
+    _thirteen_f(mode="backfill", **{"from": "2026-08-14", "to": "2026-08-14"})
+    _serve(day="2026-11-20")                                     # after the 30 Sep deadline (16 Nov): settled
+    assert _served("SELECT holders, new_holders, exited_holders, buy_flow, sell_flow, started_filers, started_shares, "
+                   "exited_no_filing, stopped_shares FROM sec13f_ticker_period WHERE ticker = 'MSFT' AND period = ?",
+                   Q3) == [(2, 0, 0, 50.0, 0.0, 1, 500.0, 1, 300.0)]
+    assert _served("SELECT ticker, period, cik, kind, shares FROM sec13f_filer_breaks ORDER BY kind") == [
+        ("MSFT", Q3, "4000003", "started", 500.0), ("MSFT", Q3, "4000002", "stopped", 300.0)]
+    assert [(r["cik"], r["kind"]) for r in read.filer_breaks_13f(["msft"])] == [("4000003", "started"),
+                                                                               ("4000002", "stopped")]
+    assert read.filer_breaks_13f(["msft"], periods=[Q2]) == []      # the quarter before Q2 is not in the store
+
+
+def test_a_quarter_still_arriving_lists_no_breaks(monkeypatch, http_mock):
+    """Before its deadline every filer that has not filed yet would read as stopped: no rows until it settles."""
+    monkeypatch.setattr(sec, "_shared_pace", lambda: True)
+    monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    ox.make_spine()
+    e = ox.Edgar()
+    e.add_day("2026-08-14", [
+        _f("0004000002-26-000002", 4000002, "2026-08-14", [_h("MICROSOFT CORP", "594918104", 120_000, 300)],
+           period="06-30-2026")])
+    e.add_day("2026-10-27", [
+        _f("0004000001-26-000011", 4000001, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 60_000, 150)])])
+    e.install(http_mock)
+    _thirteen_f(as_of="2026-10-28")
+    _thirteen_f(mode="backfill", **{"from": "2026-08-14", "to": "2026-08-14"})
+    _serve(day="2026-10-28")
+    assert _served("SELECT count(*) FROM sec13f_filer_breaks") == [(0,)]
+
+
+# ── A quarter closes on the SEC's data set (#732) ─────────────────────────────────────────────────────────────
+
+SUMMER_SET, SPRING_SET = "01jun2026-31aug2026_form13f.zip", "01mar2026-31may2026_form13f.zip"
+
+
+def _listed(name: str) -> dict:
+    first, last = sec13f_listing.sec13f_sets.window(name)
+    return {"name": name, "first_day": first, "last_day": last}
+
+
+def test_the_page_is_awaited_from_a_passed_deadline_until_a_set_holds_it():
+    # 30 Jun's deadline (14 Aug) has passed on 28 Oct, 30 Sep's (16 Nov) has not.
+    assert sec13f_listing.awaited(date(2026, 10, 28), []) == date(2026, 8, 14)
+    assert sec13f_listing.awaited(date(2026, 10, 28), [_listed(SPRING_SET)]) == date(2026, 8, 14)
+    assert sec13f_listing.awaited(date(2026, 10, 28), [_listed(SUMMER_SET)]) is None
+    # On 20 Nov the September quarter's deadline has passed: its set (Sep-Nov) is awaited until listed.
+    assert sec13f_listing.awaited(date(2026, 11, 20), [_listed(SUMMER_SET)]) == date(2026, 11, 16)
+    assert sec13f_listing.awaited(date(2026, 11, 20), [_listed(SUMMER_SET),
+                                                      _listed("01sep2026-30nov2026_form13f.zip")]) is None
+
+
+def test_a_quarter_closes_when_the_sec_lists_the_data_set_that_holds_its_deadline(store, built, monkeypatch):
+    built.routes.insert(0, (ox.SETS_PAGE_PATH, ox.sets_page([f"/files/structureddata/data/form-13f-data-sets/{n}"
+                                                             for n in (SUMMER_SET, SPRING_SET)]), 200, {}))
+    built.requests.clear()
+    request = {"dataset": sec13f_listing.NAME, "requested_by": "cli", "params": {"as_of": "2026-10-28"}}
+    assert base.run_request(request)["result"] == "changed"
+    assert len(built.calls(ox.SETS_PAGE_PATH)) == 1
+    base.run_request(request)                                    # the set is listed: nothing awaited, no call
+    assert len(built.calls(ox.SETS_PAGE_PATH)) == 1
+    assert not built.calls("_form13f.zip")                       # listed, never downloaded
+    _serve()
+    assert _served("SELECT period, data_set, closed FROM sec13f_periods WHERE period >= ? ORDER BY period", Q2) == [
+        (Q2, SUMMER_SET, True), (Q3, None, False)]
+    # Past 30 Sep's deadline the quarter is still not complete: its set is not published yet.
+    monkeypatch.setattr(read.calendar, "today_ny", lambda: date(2026, 11, 20))
+    assert [(r["period"], r["complete"]) for r in read.holders_13f(["msft"])][-2:] == [(Q2, True), (Q3, False)]
+
+
+def test_with_no_listing_read_a_quarter_falls_back_to_its_deadline(store, monkeypatch):
+    assert _served("SELECT DISTINCT closed FROM sec13f_ticker_period") == [(None,)]
+    monkeypatch.setattr(read.calendar, "today_ny", lambda: date(2026, 11, 20))
+    assert [r["complete"] for r in read.holders_13f(["msft"])][-1] is True
 
 
 # ── The short_interest bridge ────────────────────────────────────────────────────────────────────────────────

@@ -32,9 +32,9 @@ def _ownership_schemas() -> dict[str, list[tuple[str, str]]]:
     Each provider module names its served columns (``SERVED``: the raw schema with ``ticker`` and ``source`` added),
     and only those modules know them, so they are read from there rather than restated.
     """
-    from .build.ownership import finra, form4, ftd, ibkr, regsho, sched13dg, sec13f, serve
+    from .build.ownership import finra, form4, ftd, ibkr, regsho, sched13dg, sec13f, sec13f_listing, serve
     out = {t: list(s) for t, s in serve.SCHEMAS.items()}
-    for mod in (finra, ibkr, regsho, ftd, form4, sched13dg, sec13f):
+    for mod in (finra, ibkr, regsho, ftd, form4, sched13dg, sec13f, sec13f_listing):
         out[mod.TABLE] = list(mod.SERVED)
     return out
 

@@ -622,7 +622,8 @@ def sched_filing(accession, form, filed, issuer, filer, xml=None) -> bytes:
 TICKER_PERIOD_DDL = (
     "CREATE TABLE IF NOT EXISTS sec13f_ticker_period (ticker TEXT, period DATE, shares DOUBLE, value DOUBLE, "
     "holders INTEGER, top10_pct DOUBLE, hhi DOUBLE, new_holders INTEGER, exited_holders INTEGER, "
-    "exited_confidential INTEGER, exited_no_filing INTEGER, buy_flow DOUBLE, sell_flow DOUBLE, breadth DOUBLE, "
+    "exited_confidential INTEGER, exited_no_filing INTEGER, buy_flow DOUBLE, sell_flow DOUBLE, "
+    "started_filers INTEGER, started_shares DOUBLE, stopped_shares DOUBLE, breadth DOUBLE, "
     "breadth_chg DOUBLE, prev_period DATE, filers INTEGER, cusips INTEGER, filing_deadline DATE, "
     "filed_through DATE, source TEXT)")
 CUSIP_MAP_DDL = ("CREATE TABLE IF NOT EXISTS sec13f_cusip_map (cusip TEXT, period DATE, ticker TEXT, "

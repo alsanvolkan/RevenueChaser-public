@@ -51,12 +51,23 @@
   treatment (``isConfidentialOmitted``; a later ``NEW HOLDINGS`` amendment adds them back), and ``exited_no_filing``,
   the filer has no holdings report for the quarter (not filed yet, a notice that another manager reports them, or no
   longer filing).
+- *Continuing filers only* (#732, owner 12 Nov 2026): new and exited holders and the buy and sell flow count only the
+  filers with a holdings report in **both** quarters. A filer with no report in the quarter before (a first report,
+  or one back after a gap) is not buying, and one with no report in the quarter is not selling: they are counted
+  apart, ``started_filers`` and ``started_shares``, and ``exited_no_filing`` with ``stopped_shares``. Before, a filer
+  that crossed the reporting threshold read as a new holder and a buy of its whole position. Each such filer, per
+  ticker and settled quarter, is a row of ``sec13f_filer_breaks`` (kind ``started`` or ``stopped``, its shares), so
+  the board can list where the series broke.
 - *Completeness*: ``filing_deadline`` is the period end plus 45 days, rolled past weekends and Washington's Birthday
-  (``filing_deadline``); a quarter is complete once its deadline has passed. ``filed_through`` is its newest filing.
+  (``filing_deadline``). ``filed_through`` is its newest filing. A quarter is ``closed`` once the SEC has published
+  the 13F data set whose filing window holds its deadline (``sec/13f_sets_listed``; ``sec13f_periods.data_set`` and
+  ``data_set_seen`` name it and the day it was first listed; owner, 12 Nov 2026, #732). Before the store has read the
+  SEC's data-set page even once, ``closed`` is NULL and a reader falls back to the deadline.
 
 **Tables**: ``sec13f_cusip_map`` (CUSIP and period: its ticker and how, its long-equity value and holders),
 ``sec13f_filer_period`` (filer and period: its long-equity names and value, ``value_factor``), ``sec13f_ticker_period``
-(the metrics) and ``sec13f_periods`` (per period: filers, value, value mapped, coverage).
+(the metrics), ``sec13f_periods`` (per period: filers, value, value mapped, coverage) and ``sec13f_filer_breaks``
+(ticker, settled period and filer: a filer that started or stopped reporting, with its shares).
 
 **Views** under the old ``raw.duckdb`` names, with the old columns (D4): ``sec13f_totals`` (ticker, ``entry`` JSON
 ``{period: {shares, value, holders, ...}}``) and ``short_interest``: one row per ticker and session (an IBKR snapshot
@@ -84,7 +95,7 @@ from ....core import calendar
 from ... import ops, serving
 from .. import base, dirty
 from ..spine import openfigi_map, wrds
-from . import KIND, common, sec13f
+from . import KIND, common, sec13f, sec13f_listing
 
 NAME = "ownership/serve"
 SPINE = "spine"
@@ -98,6 +109,7 @@ UNMAPPED_TOP = 50
 RESCALED_TOP = 50
 SP500, FUNDS = "sp500", "funds/index_holdings"
 QE = common.quarter_end("period")
+PREV = "CAST(date_trunc('quarter', p.period) - INTERVAL 1 DAY AS DATE)"     # the calendar quarter before p's
 
 MAP = [("cusip", "TEXT"), ("period", "DATE"), ("ticker", "TEXT"), ("map_source", "TEXT"),
        ("candidate_ticker", "TEXT"), ("issuer_name", "TEXT"), ("value", "DOUBLE"), ("holders", "INTEGER")]
@@ -107,15 +119,19 @@ FILER = [("cik", "TEXT"), ("period", "DATE"), ("filer_name", "TEXT"), ("filings"
 TICKER = [("ticker", "TEXT"), ("period", "DATE"), ("shares", "DOUBLE"), ("value", "DOUBLE"), ("holders", "INTEGER"),
           ("top10_pct", "DOUBLE"), ("hhi", "DOUBLE"), ("new_holders", "INTEGER"), ("exited_holders", "INTEGER"),
           ("exited_confidential", "INTEGER"), ("exited_no_filing", "INTEGER"), ("buy_flow", "DOUBLE"),
-          ("sell_flow", "DOUBLE"), ("breadth", "DOUBLE"), ("breadth_chg", "DOUBLE"),
+          ("sell_flow", "DOUBLE"), ("started_filers", "INTEGER"), ("started_shares", "DOUBLE"),
+          ("stopped_shares", "DOUBLE"), ("breadth", "DOUBLE"), ("breadth_chg", "DOUBLE"),
           ("prev_period", "DATE"), ("filers", "INTEGER"), ("cusips", "INTEGER"), ("filing_deadline", "DATE"),
-          ("filed_through", "DATE"), ("source", "TEXT")]
+          ("filed_through", "DATE"), ("closed", "BOOLEAN"), ("source", "TEXT")]
 PERIODS = [("period", "DATE"), ("filers", "INTEGER"), ("filings_active", "INTEGER"), ("value_total", "DOUBLE"),
            ("value_mapped", "DOUBLE"), ("coverage", "DOUBLE"), ("unmapped_cusips", "INTEGER"),
            ("refused_value", "DOUBLE"), ("rescaled_filers", "INTEGER"), ("filing_deadline", "DATE"),
-           ("filed_through", "DATE")]
+           ("filed_through", "DATE"), ("data_set", "TEXT"), ("data_set_seen", "DATE"), ("closed", "BOOLEAN")]
+BREAKS = [("ticker", "TEXT"), ("period", "DATE"), ("cik", "TEXT"), ("filer_name", "TEXT"), ("kind", "TEXT"),
+          ("shares", "DOUBLE")]
+STARTED, STOPPED = "started", "stopped"
 SCHEMAS = {"sec13f_cusip_map": MAP, "sec13f_filer_period": FILER, "sec13f_ticker_period": TICKER,
-           "sec13f_periods": PERIODS}
+           "sec13f_periods": PERIODS, "sec13f_filer_breaks": BREAKS}
 TABLES = tuple(SCHEMAS)
 # The old sec13f_totals entry's keys, in its order (module_sec_13f/engine.py compute_period_metrics).
 METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow",
@@ -212,6 +228,24 @@ def active_accessions(rows) -> list[str]:
     return out + active
 
 
+def _closed(con: duckdb.DuckDBPyConnection) -> None:
+    """``_closed(period, data_set, data_set_seen, closed)`` (TEMP) for every period of ``_deadline``: the SEC data set
+    whose filing window holds the period's deadline, the day it was first listed, and whether the period is closed
+    (#732). With no listing read yet (``sec13f_data_sets`` absent or empty) ``closed`` is NULL: unknown, not open."""
+    have = {r[0] for r in con.execute("SELECT table_name FROM duckdb_tables() "
+                                      "WHERE database_name = current_database()").fetchall()}
+    _empty(con, "_sets", sec13f_listing.SCHEMA)
+    if sec13f_listing.TABLE in have:
+        con.execute(f"INSERT INTO _sets SELECT * FROM {sec13f_listing.TABLE}")
+    known, oldest = con.execute("SELECT count(*) > 0, min(first_day) FROM _sets").fetchone()
+    # A deadline before the oldest set the page lists is closed by age: the SEC publishes no set that far back.
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE _closed AS
+        SELECT d.period, min(s.name) AS data_set, min(s.first_seen) AS data_set_seen,
+               CASE WHEN {bool(known)} THEN count(s.name) > 0 OR d.deadline < ? END AS closed
+        FROM _deadline d LEFT JOIN _sets s ON d.deadline BETWEEN s.first_day AND s.last_day
+        GROUP BY d.period, d.deadline""", [oldest])
+
+
 def _empty(con: duckdb.DuckDBPyConnection, name: str, schema: list[tuple[str, str]]) -> None:
     common.temp_rows(con, name, schema, [])
 
@@ -292,7 +326,7 @@ def _figi(con: duckdb.DuckDBPyConnection) -> None:
                     f"AND ticker IS NOT NULL")
 
 
-TEMPS = ("_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
+TEMPS = ("_closed", "_sets", "_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
          "_held",
          "_cp", "_m_hist", "_m_cur", "_m_owner", "_m_figi", "_filers", "_filed", "_deadline", "_tot", "_pos", "_shape",
          "_pairs", "_flow")
@@ -396,6 +430,7 @@ class OwnershipServe:
             counts["sec13f_cusip_map"] = self._map(con)
             counts["sec13f_ticker_period"] = self._metrics(con)
             counts["sec13f_periods"] = self._periods(con)
+            counts["sec13f_filer_breaks"] = self._breaks(con, ctx.as_of or self.default_as_of())
             found += self._issues(con, ctx.as_of or self.default_as_of())
             summary["rescaled"] = common.count(con, "sec13f_filer_period", "value_factor <> 1")
             if left_out:
@@ -545,6 +580,7 @@ class OwnershipServe:
                           .fetchall()})
         common.temp_rows(con, "_deadline", [("period", "DATE"), ("deadline", "DATE")],
                          [{"period": p, "deadline": filing_deadline(p)} for p in periods])
+        _closed(con)
         # One position per ticker, period and filer (a ticker's CUSIPs summed).
         _by_period(con, held, "_pos", """
             SELECT m.ticker, h.period, h.cik, sum(h.shares)
@@ -579,14 +615,23 @@ class OwnershipServe:
                    [("ticker", "TEXT"), ("period", "DATE"), ("cik", "TEXT"), ("now_s", "DOUBLE"), ("prev_s", "DOUBLE")])
         # An exit may not be a sale: the filer left holdings out under confidential treatment, or has no holdings
         # report for the quarter (not filed yet, a notice that another manager reports them, or no longer filing).
-        con.execute("""CREATE OR REPLACE TEMP TABLE _flow AS
-            SELECT p.ticker, p.period, count(*) FILTER (WHERE p.prev_s IS NULL) AS new_holders,
-                   count(*) FILTER (WHERE p.now_s IS NULL) AS exited_holders,
+        # Only a filer with a holdings report in both quarters trades (#732): ``c`` is its report of the quarter,
+        # ``cp`` of the quarter before; a filer missing one of them started or stopped reporting.
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE _flow AS
+            SELECT p.ticker, p.period,
+                   count(*) FILTER (WHERE p.prev_s IS NULL AND cp.cik IS NOT NULL) AS new_holders,
+                   count(*) FILTER (WHERE p.now_s IS NULL AND c.cik IS NOT NULL) AS exited_holders,
                    count(*) FILTER (WHERE p.now_s IS NULL AND c.omitted) AS exited_confidential,
                    count(*) FILTER (WHERE p.now_s IS NULL AND c.cik IS NULL) AS exited_no_filing,
-                   sum(greatest(coalesce(p.now_s, 0) - coalesce(p.prev_s, 0), 0)) AS buy,
-                   sum(greatest(coalesce(p.prev_s, 0) - coalesce(p.now_s, 0), 0)) AS sell
-            FROM _pairs p LEFT JOIN _conf c ON c.cik = p.cik AND c.period = p.period GROUP BY ALL""")
+                   coalesce(sum(greatest(coalesce(p.now_s, 0) - coalesce(p.prev_s, 0), 0))
+                            FILTER (WHERE c.cik IS NOT NULL AND cp.cik IS NOT NULL), 0) AS buy,
+                   coalesce(sum(greatest(coalesce(p.prev_s, 0) - coalesce(p.now_s, 0), 0))
+                            FILTER (WHERE c.cik IS NOT NULL AND cp.cik IS NOT NULL), 0) AS sell,
+                   count(*) FILTER (WHERE p.prev_s IS NULL AND cp.cik IS NULL) AS started_filers,
+                   coalesce(sum(p.now_s) FILTER (WHERE p.prev_s IS NULL AND cp.cik IS NULL), 0) AS started_shares,
+                   coalesce(sum(p.prev_s) FILTER (WHERE p.now_s IS NULL AND c.cik IS NULL), 0) AS stopped_shares
+            FROM _pairs p LEFT JOIN _conf c ON c.cik = p.cik AND c.period = p.period
+            LEFT JOIN _conf cp ON cp.cik = p.cik AND cp.period = {PREV} GROUP BY ALL""")
         return common.create_table(con, "sec13f_ticker_period", TICKER, f"""
             SELECT t.ticker, t.period, t.shares, t.value, t.holders,
                    CASE WHEN t.shares > 0 THEN round(s.top10 / t.shares * 100, 2) END AS top10_pct,
@@ -597,11 +642,14 @@ class OwnershipServe:
                    CASE WHEN pf.filers IS NOT NULL THEN fl.exited_no_filing END AS exited_no_filing,
                    CASE WHEN pf.filers IS NOT NULL THEN round(fl.buy, 1) END AS buy_flow,
                    CASE WHEN pf.filers IS NOT NULL THEN round(fl.sell, 1) END AS sell_flow,
+                   CASE WHEN pf.filers IS NOT NULL THEN fl.started_filers END AS started_filers,
+                   CASE WHEN pf.filers IS NOT NULL THEN round(fl.started_shares, 1) END AS started_shares,
+                   CASE WHEN pf.filers IS NOT NULL THEN round(fl.stopped_shares, 1) END AS stopped_shares,
                    round(t.holders * 100.0 / f.filers, 4) AS breadth,
                    CASE WHEN pf.filers IS NOT NULL THEN round(round(t.holders * 100.0 / f.filers, 4)
                         - round(coalesce(pt.holders, 0) * 100.0 / pf.filers, 4), 4) END AS breadth_chg,
                    t.prev_period, f.filers, t.cusips, d.deadline AS filing_deadline, fd.filed_through,
-                   '{NAME}' AS source
+                   cl.closed, '{NAME}' AS source
             FROM _tot t
             JOIN _shape s ON s.ticker = t.ticker AND s.period = t.period
             JOIN _filers f ON f.period = t.period
@@ -610,6 +658,7 @@ class OwnershipServe:
             LEFT JOIN _flow fl ON fl.ticker = t.ticker AND fl.period = t.period
             LEFT JOIN _deadline d ON d.period = t.period
             LEFT JOIN _filed fd ON fd.period = t.period
+            LEFT JOIN _closed cl ON cl.period = t.period
             ORDER BY t.ticker, t.period""")
 
     @staticmethod
@@ -619,7 +668,7 @@ class OwnershipServe:
                    CASE WHEN v.value_total > 0 THEN round(coalesce(v.value_mapped, 0) / v.value_total, 4)
                    END AS coverage,
                    v.unmapped_cusips, v.refused_value, r.rescaled_filers, d.deadline AS filing_deadline,
-                   fd.filed_through
+                   fd.filed_through, cl.data_set, cl.data_set_seen, cl.closed
             FROM _filers f
             LEFT JOIN (SELECT period, count(DISTINCT accession) AS filings_active FROM _long GROUP BY ALL) a
                    ON a.period = f.period
@@ -632,7 +681,30 @@ class OwnershipServe:
                        FROM sec13f_filer_period GROUP BY ALL) r ON r.period = f.period
             LEFT JOIN _deadline d ON d.period = f.period
             LEFT JOIN _filed fd ON fd.period = f.period
+            LEFT JOIN _closed cl ON cl.period = f.period
             ORDER BY f.period""")
+
+    @staticmethod
+    def _breaks(con: duckdb.DuckDBPyConnection, as_of: date) -> int:
+        """``sec13f_filer_breaks``: per ticker and **settled** quarter (deadline before ``as_of``; a quarter still
+        arriving has every filer not yet filed in it), each filer holding the ticker that started reporting (no
+        holdings report in the quarter before, one now) or stopped (one before, none now), with its shares. Only a
+        quarter whose quarter before is in the store: before the store's first quarter nothing is known (#732)."""
+        common.create_table(con, "sec13f_filer_breaks", BREAKS)
+        con.execute(f"""INSERT INTO sec13f_filer_breaks
+            SELECT p.ticker, p.period, p.cik, coalesce(fn.filer_name, fb.filer_name),
+                   CASE WHEN p.prev_s IS NULL THEN '{STARTED}' ELSE '{STOPPED}' END, coalesce(p.now_s, p.prev_s)
+            FROM _pairs p
+            JOIN _filers f ON f.period = p.period
+            JOIN _filers pf ON pf.period = {PREV}
+            JOIN _deadline d ON d.period = p.period
+            LEFT JOIN _conf c ON c.cik = p.cik AND c.period = p.period
+            LEFT JOIN _conf cp ON cp.cik = p.cik AND cp.period = {PREV}
+            LEFT JOIN sec13f_filer_period fn ON fn.cik = p.cik AND fn.period = p.period
+            LEFT JOIN sec13f_filer_period fb ON fb.cik = p.cik AND fb.period = {PREV}
+            WHERE d.deadline < ? AND ((p.prev_s IS NULL AND cp.cik IS NULL) OR (p.now_s IS NULL AND c.cik IS NULL))
+            ORDER BY p.ticker, p.period, 5, 6 DESC, p.cik""", [as_of])
+        return common.count(con, "sec13f_filer_breaks")
 
     @staticmethod
     def _issues(con: duckdb.DuckDBPyConnection, as_of: date) -> list[tuple[str, str, str]]:
