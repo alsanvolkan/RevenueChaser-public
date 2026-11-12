@@ -455,7 +455,7 @@ def _party_relation(edge: dict) -> tuple[str, str]:
     profile named the same company as a competitor (measured 12 Nov 2026: 0 of 265 ``customer_share`` rows of 121
     profiled tickers survived), and a profile edge in a second relation could never pick up a stated share.
     """
-    return _counterparty(edge), edge["relation"]
+    return _counterparty(edge), ""  # MUTATION M1 (#725): drop the relation from the key again
 
 
 def merge_profile(regex_edges: list[dict], prof_edges: list[dict]) -> list[dict]:
