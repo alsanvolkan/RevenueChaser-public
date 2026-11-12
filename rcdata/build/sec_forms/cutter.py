@@ -156,12 +156,20 @@ def _is_cut(out: Path) -> bool:
         return False
 
 
-def _cleanup_tmp(out: Path) -> None:
-    """Our own partial file for this document, if the worker died before removing it. Only this process's: another
-    builder process's ``.tmp`` is its business, which is why the name carries a pid."""
+def _cleanup_tmp(out: Path, pid: int) -> None:
+    """The partial file the worker left for this document, if it was killed before it could remove its own.
+
+    ``pid`` is the **worker's**, which is the whole point: this used to build the name from the client's pid and
+    so removed a file that never existed under that name, while the comment claimed the next attempt would
+    truncate it -- which it does not either, because every replacement worker has a new pid. A killed worker is
+    the only way one survives (the worker removes its own on any ordinary failure), and a timeout during
+    detection is exactly that: ``Document.sections`` is evaluated with the tmp file already open.
+
+    Only that worker's: another builder process's ``.tmp`` is its business, which is why the name carries a pid.
+    """
     try:
-        out.with_name(f"{out.name}.{os.getpid()}.tmp").unlink(missing_ok=True)
-    except OSError:                         # a read-only or full disk; the next attempt truncates it anyway
+        out.with_name(f"{out.name}.{pid}.tmp").unlink(missing_ok=True)
+    except OSError:                         # a read-only or full disk; there is nothing else to be done here
         pass
 
 
@@ -285,7 +293,13 @@ class Worker:
     def cut(self, html: Path, form: str, out: Path) -> int:
         """One document. The answer's own timeout kills the worker, because a hung parser does not answer a
         second request either; the caller starts a new one."""
-        out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            # The answer root, made once a document. A read-only mount or a raw root that is not there reached
+            # the caller from here as a bare ``OSError`` -- on the first document, before any of the phase
+            # machinery below could say it was the box's fault.
+            out.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise CutterUnusable(f"the cutter cannot write into {out.parent}: {type(e).__name__}: {e}") from e
         request = json.dumps({"html": str(html), "form": form, "out": str(out)}) + "\n"
         try:
             self.proc.stdin.write(request)
@@ -315,7 +329,13 @@ class Worker:
             # document either.
             try:
                 sections, chars = int(answer["sections"]), int(answer["chars"])
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
+                # The file goes too. The worker renames before it answers, so leaving it would have the client's
+                # own rescue path ("it wrote the file and then we lost it") hand back a file written by a worker
+                # that cannot say what is in it -- and that path skips the empty-text check as well.
+                # ``OverflowError`` is in the list because ``json`` accepts ``Infinity`` and ``int(inf)`` raises
+                # it; ``tries_so_far`` has it for the same reason.
+                out.unlink(missing_ok=True)
                 raise self._stop(WorkerLost("the cutter worker said it cut a document without saying how much "
                                             f"({line.strip()[:80]!r})")) from None
             # Sections but no text at all is not something a real filing does; it is what a field whose name moved
@@ -327,10 +347,18 @@ class Worker:
                 # here. Leaving it would cache the very thing this check exists to refuse, and the next run
                 # would hand it back as a cut document.
                 out.unlink(missing_ok=True)
-                raise self._stop(CutterUnusable(
-                    f"the cutter answered {sections} sections and no text at all for {html.name}: a field this "
-                    "worker reads has most likely moved in edgartools. Nothing is cached; check SECTION_FIELDS "
-                    "in cutter_worker.py against the installed version."))
+                # This document's failure and not the run's, which is the opposite of what it was. A moved field
+                # does it to *every* document, so five in a row trip the breaker and the run stops with this
+                # text in the message -- the diagnosis arrives either way. But a single filing can do it on its
+                # own: in edgartools 6.0.0 a TOC section's text is ``""`` when its anchor is missing or its
+                # boundary pair is inverted (toc_section_extractor.py:1885, 1927; toc_section_detector.py:145),
+                # so a small filing whose only detected sections are all empty would otherwise have stopped
+                # every hourly pass for the rest of the corpus's life.
+                raise DocumentFailed(
+                    f"the cutter answered {sections} sections and no text at all for {html.name}: either this "
+                    "filing's sections are all empty, or a field this worker reads has moved in edgartools. "
+                    "Nothing is cached; if the whole pass says this, check SECTION_FIELDS in cutter_worker.py "
+                    "against the installed version.")
             return sections
         phase = str(answer.get("phase") or "parse")
         error = str(answer.get("error") or "the cutter worker failed without saying why")
@@ -394,9 +422,12 @@ class Cutter:
     later the whole corpus is retired with nothing left to retry. The worker says which phase failed, so most of
     those arrive as :class:`CutterUnusable` already -- but not every one can be told apart from inside the worker
     (a library that fails on a missing data file of its own looks like a parse), so after
-    :data:`BREAK_AFTER` consecutive failures this stops the run and gives those documents their attempts back. It
-    also bounds the worst case in time: without it, every document timing out costs 5,149 x 180 s, which is 257
-    hours, and the hourly builder would hold its lock for all of them.
+    :data:`BREAK_AFTER` consecutive failures this stops the run. It also bounds the worst case in time: without
+    it, every document timing out costs 5,149 x 180 s, which is 257 hours, and the hourly builder would hold its
+    lock for all of them.
+
+    **Stopping the run gives back only the attempts of the documents whose worker was lost** -- see
+    :meth:`_give_back`, which has the stall that giving back all of them caused.
     """
 
     def __init__(self, max_tries: int = MAX_TRIES, recycle_n: int = RECYCLE_N, break_after: int = BREAK_AFTER):
@@ -409,7 +440,8 @@ class Cutter:
         self.empty = 0            # documents the cutter read but found no section in; cached as cut, counted here
         self.failed: dict[str, str] = {}      # accession -> the last error, for the run's report
         self.restarts = 0
-        self._in_a_row: list[str] = []        # the accessions of the current run of consecutive failures
+        #: The current run of consecutive failures: ``(accession, the worker was lost)`` a document.
+        self._in_a_row: list[tuple[str, bool]] = []
 
     def __enter__(self) -> "Cutter":
         return self
@@ -440,6 +472,7 @@ class Cutter:
             self.failed[accession] = f"gave up after {spent} attempts in earlier runs"
             return None
         worker = self._worker()             # may raise CutterUnusable: no attempt is charged
+        pid = worker.proc.pid               # kept now: a lost worker's own pid names the .tmp it left behind
         try:
             sections = worker.cut(html, form, out)
         except DocumentFailed as e:
@@ -456,17 +489,18 @@ class Cutter:
                 self._in_a_row.clear()
                 failed_path(accession).unlink(missing_ok=True)
                 return out
-            _cleanup_tmp(out)
+            _cleanup_tmp(out, pid)
             # The attempt is charged here and nowhere else, which is what keeps the count honest across runs.
             _note_failure(accession, spent + 1, str(e))
             self.failed[accession] = str(e)
-            self._in_a_row.append(accession)
+            self._in_a_row.append((accession, isinstance(e, WorkerLost)))
             if len(self._in_a_row) >= self.break_after:
                 self._give_back()
                 stopped, self._in_a_row = list(self._in_a_row), []
                 raise CutterUnusable(
-                    f"{len(stopped)} documents in a row failed to cut, the last with {str(e)!r}. That is the box "
-                    "and not the filings, so the run stops and their attempts are given back rather than spent.")
+                    f"{len(stopped)} documents in a row failed to cut, the last with {str(e)!r}. That is most "
+                    "likely the box and not the filings, so the run stops here rather than working through the "
+                    "corpus one failure at a time.")
             return None
         self._in_a_row.clear()
         failed_path(accession).unlink(missing_ok=True)
@@ -479,9 +513,25 @@ class Cutter:
         return out
 
     def _give_back(self) -> None:
-        """Undo the attempts charged for the current run of consecutive failures. They were not the filings' doing,
-        so a run the breaker stopped must leave the corpus exactly as it found it."""
-        for accession in self._in_a_row:
+        """Undo the attempts charged for the failures in this run that were **not** the filings' own doing.
+
+        Only the lost workers: a document the worker answered about, saying the parse was at fault, keeps its
+        attempt and is retired after :data:`MAX_TRIES` -- which is what the cap is for.
+
+        Giving every one of them back was a stall with no way out, and it is worth spelling out because a green
+        test suite covered it. Nothing outside this method clears the run of failures except a document this run
+        actually cut: a *cached* document does not, and on a resumed pass almost every good document is cached,
+        so the only documents the worker sees are the bad ones. Five uncapped bad filings anywhere in the corpus
+        therefore met the breaker in every run, got their attempts back, never reached the cap, and every
+        document after the fifth -- including every newly filed one -- was never cut again.
+
+        The trade-off, stated rather than hidden: a library that fails on a missing data file of its own looks
+        like a parse failure, and those documents now spend their attempts. The run still stops after five, so
+        it is an hour's worth of noise and not a corpus, and the sidecar says what each one said.
+        """
+        for accession, lost in self._in_a_row:
+            if not lost:
+                continue
             spent = tries_so_far(accession)
             if spent <= 1:
                 failed_path(accession).unlink(missing_ok=True)

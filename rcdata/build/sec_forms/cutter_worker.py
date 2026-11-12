@@ -23,8 +23,13 @@ recut is what a bump costs.
               {"edgar_version": "6.0.0"}
               {"ok": false, "fatal": true, "error": "<type: message>"}      (and the worker exits)
     request   {"html": "<abs path>", "form": "10-K", "out": "<abs path>.jsonl.gz"}
-    answer    {"ok": true, "sections": <n>}
-              {"ok": false, "error": "<type: message>"}
+    answer    {"ok": true, "sections": <n>, "chars": <n>}
+              {"ok": false, "phase": "parse"|"read"|"io", "error": "<type: message>"}
+
+``phase`` is who is at fault, and it decides whether the document is charged an attempt: ``parse`` is this
+filing's own doing (a parser that gives up, a file of its own that cannot be read while the corpus around it is
+fine) and ``read``/``io`` is the box (the corpus root gone, the answer root read-only, a full disk), which fails
+the run instead of 5,149 documents one at a time.
 
 **The answer file holds edgartools' own output, unmapped**: one JSON line per detected section, with the fields
 this worker can read off it and nothing of ours. Our mapping to ``quality`` / ``method`` / ``confidence`` /
@@ -205,6 +210,41 @@ def _section(key, section) -> dict:
     return row
 
 
+class BadDocument(Exception):
+    """This one file cannot be read, and the corpus directory around it is fine.
+
+    The distinction is the whole reason this class exists. Every unreadable file used to be answered as ``read``
+    or ``io`` -- the box's fault, so the run stops and no attempt is charged -- and a single bad file in the
+    corpus then stopped *every* hourly run at the same document for ever, with nothing remembered and nothing
+    after it ever cut. A ``.gz`` that is not gzip is an ``OSError`` (``gzip.BadGzipFile``), so is a directory
+    where a filing should be, and so is a file that is not there: all three are one document's problem when the
+    directory holding it is readable, and all three are the box's problem when it is not.
+
+    The cost of the rule, stated rather than hidden: a corpus half way through an rsync has readable directories
+    and missing files, so those documents are charged an attempt each and are retired after three runs. The run
+    reports them, the sidecar says why, and deleting it retries them. The alternative -- a pass that stops at the
+    same document every hour for the rest of the corpus's life -- is worse, and the caller should not hand over a
+    path that is not on disk in the first place.
+    """
+
+
+def _read(html_path: str) -> str:
+    """One document's HTML, gzipped or not."""
+    opener = gzip.open if html_path.endswith(".gz") else open
+    try:
+        with opener(html_path, "rt", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError as e:
+        # The one place that decides whose fault an unreadable document is, for every reason it can be one: not
+        # there, not gzip, a directory, a permission. The decision used to be made twice -- here and again on an
+        # existence check in :func:`main` -- and the copy here could then never be reached for a missing mount,
+        # so a mutant that called an unmounted corpus the filing's own fault survived the battery.
+        here = os.path.dirname(html_path) or "."
+        if os.path.isdir(here) and os.access(here, os.R_OK):
+            raise BadDocument(f"this document cannot be read: {type(e).__name__}: {e}") from e
+        raise OSError(f"{here} is not a readable directory: the corpus is not mounted where it should be") from e
+
+
 def _cut(html_path: str, form: str, out: str) -> tuple[int, int]:
     """Cut one document; ``(sections, characters)``.
 
@@ -227,9 +267,7 @@ def _cut(html_path: str, form: str, out: str) -> tuple[int, int]:
     from edgar.documents import parse_html  # noqa: PLC0415 - imported in the handshake; this is the cached module
     from edgar.documents.config import ParserConfig  # noqa: PLC0415
 
-    opener = gzip.open if html_path.endswith(".gz") else open
-    with opener(html_path, "rt", encoding="utf-8", errors="replace") as fh:
-        html = fh.read()
+    html = _read(html_path)
     document = parse_html(html, ParserConfig(form=form))
     # A tmp name carrying our pid, so two builder processes on one document cannot write each other's partial
     # file -- and so the loser of the race fails on its own file rather than on a name the winner already renamed.
@@ -263,8 +301,12 @@ def main() -> int:
     _block_network()
     proto_in, _PROTO = _isolate_streams()
     try:
-        # Every import the cut needs, here: an import that fails is the *venv's* problem, and answering it here
-        # makes it fatal. Left to the first cut, it would arrive as a document failure, once per document.
+        # The imports *this module* needs, here: an import that fails is the venv's problem, and answering it
+        # here makes it fatal. Left to the first cut, it would arrive as a document failure, once per document.
+        # Not "every import the cut needs", which an earlier version of this comment claimed: the library itself
+        # imports lazily, inside ``Document.sections`` (document.py:937, 943, 951) and inside ``Section.text()``
+        # (:154), and nothing here can make those happen early. One of those failing arrives as a parse failure
+        # per document, which the client's breaker stops after five -- loud, but not at the handshake.
         import edgar  # noqa: PLC0415 - the import itself is what the handshake reports on
         from edgar.documents import parse_html  # noqa: PLC0415, F401 - imported for the handshake to prove it
         from edgar.documents.config import ParserConfig  # noqa: PLC0415, F401
@@ -286,9 +328,8 @@ def main() -> int:
             form = req.get("form")
             if not form:
                 raise ValueError("the request names no form")
-            if not os.path.exists(html):
-                _say({"ok": False, "phase": "read", "error": "the document is not on disk"})
-                continue
+            # Whether the document is there is not checked here: ``_read`` opens it and decides whose fault any
+            # failure to read it is, which is one decision in one place rather than this check and that one.
             n, chars = _cut(html, str(form), out)
             _say({"ok": True, "sections": n, "chars": chars})
         except OSError as e:   # a read or write failure, which is the box and not the filing

@@ -23,7 +23,7 @@ import os
 import re
 import subprocess
 import sys
-import time
+import types
 
 import pytest
 
@@ -91,7 +91,10 @@ for _what, _call in (("connect", lambda: _socket().connect(("127.0.0.1", 9))),
                      ("create_connection", lambda: socket.create_connection(("127.0.0.1", 9), 0.5)),
                      ("getaddrinfo", lambda: socket.getaddrinfo("localhost", 9)),
                      ("gethostbyname", lambda: socket.gethostbyname("localhost")),
-                     ("sendto", lambda: _socket().sendto(b"x", ("127.0.0.1", 9)))):
+                     ("sendto", lambda: _socket().sendto(b"x", ("127.0.0.1", 9))),
+                     ("sendmsg", lambda: _socket().sendmsg([b"x"], [], 0, ("127.0.0.1", 9))),
+                     ("gethostbyname_ex", lambda: socket.gethostbyname_ex("localhost")),
+                     ("getnameinfo", lambda: socket.getnameinfo(("127.0.0.1", 9), 0))):
     try:
         _call()
         _tried[_what] = "open"
@@ -126,6 +129,13 @@ class _Broken(_Section):
         raise RuntimeError("this section's text cannot be read")
 
 
+class _Slow(_Section):
+    def text(self):
+        import time
+        time.sleep(60)
+        return "never"
+
+
 class Document:
     def __init__(self, html, form):
         self.html, self.form = html, form
@@ -146,6 +156,12 @@ class Document:
             # cannot tell a worker that cleans up from one that does not.
             return {"item_1": _Section("item_1", "Business", item="1", body="Fine."),
                     "item_1a": _Broken("item_1a", "Risk Factors", item="1A")}
+        if "hangmid" in self.html:
+            # The tmp file is already open and one row is in it when this hangs, which is what a filer's
+            # pathological table does: ``Document.sections`` and every ``text()`` are read inside the ``with``.
+            # A worker killed here cannot remove its own tmp, so the client has to.
+            return {"item_1": _Section("item_1", "Business", item="1", body="Fine."),
+                    "item_1a": _Slow("item_1a", "Risk Factors", item="1A")}
         if "hang" in self.html:
             import time
             time.sleep(60)
@@ -185,9 +201,14 @@ def stub(tmp_path, monkeypatch):
     (pkg / "__init__.py").write_text(STUB_DOCUMENTS, encoding="utf-8")
     (pkg / "config.py").write_text(STUB_CONFIG, encoding="utf-8")
     log = tmp_path / "stub.jsonl"
-    # Prepended and not set: the root ``conftest.py`` puts ``module_testing/netguard`` on ``PYTHONPATH`` so a
-    # Python child the suite starts gets the same offline guard, and replacing the variable would take that guard
-    # off this subprocess -- the one place in the suite that runs a third-party library's import path.
+    # Prepended and not set: the root ``conftest.py`` puts ``module_testing/netguard`` on ``PYTHONPATH`` for
+    # every Python child the suite starts, and a test that replaces the variable takes it off all of them.
+    #
+    # It does not guard *this* child, and the comment that said it did was wrong: the guard installs only on
+    # ``RC_NETGUARD=1`` (module_testing/netguard/sitecustomize.py:89) and ``worker_env()`` drops every ``RC_*``
+    # on purpose, so what keeps this subprocess offline is the worker's own ``_block_network`` and nothing else.
+    # That is the thing under test, so it is just as well -- but the variable is still prepended rather than
+    # replaced, because a fixture that quietly disarms a suite-wide guard is a trap whoever copies it next.
     before = os.environ.get("PYTHONPATH", "")
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join([str(tmp_path / "stub"), *([before] if before else [])]))
     monkeypatch.setenv("TMPDIR", str(tmp_path))
@@ -306,6 +327,9 @@ class FakeWorker:
     def __init__(self, plan=None):
         self.plan = list(plan or [])
         self.done = 0
+        # The client reads the worker's pid to name the ``.tmp`` a killed worker leaves behind. A pid of its own
+        # and not this process's, so a test cannot pass by cleaning up a file the client itself named.
+        self.proc = types.SimpleNamespace(pid=4242)
         self.closed = self.killed = False
         self.seen: list[tuple[str, str]] = []
         FakeWorker.made.append(self)
@@ -425,15 +449,10 @@ def test_a_lost_worker_is_killed_and_replaced(fake, tmp_path):
     assert FakeWorker.made[0].killed, "a lost worker is killed, not left for the garbage collector"
 
 
-def test_five_failures_in_a_row_stop_the_run_and_give_the_attempts_back(fake, tmp_path):
-    """Charging an attempt per failure is only right while the failures are the filings' own. A reason that
-    belongs to the box fails all of them, and three runs later the corpus is retired with nothing left to retry
-    -- so a run of consecutive failures is called the box's fault and the attempts are returned.
-
-    It also bounds the worst case in time: without it, every document timing out costs 5,149 x 180 s, which is
-    257 hours of the hourly builder holding its lock.
-    """
-    fake.append([cutter.DocumentFailed("the library lost its own data file")] * 5)
+def test_five_failures_in_a_row_stop_the_run(fake, tmp_path):
+    """It bounds the worst case in time: without it, every document timing out costs 5,149 x 180 s, which is 257
+    hours of the hourly builder holding its lock."""
+    fake.append([cutter.DocumentFailed("the parser gave up on this filing")] * 5)
     names = [f"0000-b{i}" for i in range(5)]
     with cutter.Cutter(break_after=5) as c:
         for name in names[:4]:
@@ -441,8 +460,69 @@ def test_five_failures_in_a_row_stop_the_run_and_give_the_attempts_back(fake, tm
         assert all(cutter.tries_so_far(n) == 1 for n in names[:4])
         with pytest.raises(cutter.CutterUnusable, match="in a row"):
             c.cut(names[4], tmp_path / "a.htm", "10-K")
+
+
+def test_the_stopped_run_keeps_the_attempts_of_the_filings_that_were_answered_about(fake, tmp_path):
+    """The stall this replaced, and it is the most expensive thing a green suite has hidden here.
+
+    Giving every attempt back meant a filing the parser refuses never reached the cap, because the only thing
+    that clears the run of failures is a document *this run* cut -- and on a resumed pass almost every good
+    document is cached, so the worker sees only the bad ones. Five of them anywhere in the corpus stopped every
+    hourly run at the same five documents, gave their attempts back, and nothing after the fifth was ever cut
+    again. Charged, they retire after three runs and the pass goes on.
+    """
+    fake.append([cutter.DocumentFailed("the parser gave up on this filing")] * 5)
+    names = [f"0000-k{i}" for i in range(5)]
+    with cutter.Cutter(break_after=5) as c:
+        for name in names[:4]:
+            c.cut(name, tmp_path / "a.htm", "10-K")
+        with pytest.raises(cutter.CutterUnusable, match="in a row"):
+            c.cut(names[4], tmp_path / "a.htm", "10-K")
+    assert [cutter.tries_so_far(n) for n in names] == [1, 1, 1, 1, 1], "the filings' own failures are spent"
+    assert all(cutter.failed_path(n).exists() for n in names)
+
+
+def test_the_stopped_run_gives_back_the_attempts_of_the_documents_whose_worker_was_lost(fake, tmp_path):
+    """The other half. A worker that hangs or dies says nothing about the filing it was holding: five of those in
+    a row is the box, and a box that fails every document must leave the corpus as it found it, or three runs
+    retire all 5,149 for a reason none of them had anything to do with."""
+    # One plan a worker, not one plan of five: a lost worker is replaced, so each document meets a new one.
+    for _ in range(5):
+        fake.append([cutter.WorkerLost("the cutter worker did not answer in 180s")])
+    names = [f"0000-l{i}" for i in range(5)]
+    with cutter.Cutter(break_after=5) as c:
+        for name in names[:4]:
+            c.cut(name, tmp_path / "a.htm", "10-K")
+        assert all(cutter.tries_so_far(n) == 1 for n in names[:4])
+        with pytest.raises(cutter.CutterUnusable, match="in a row"):
+            c.cut(names[4], tmp_path / "a.htm", "10-K")
     assert [cutter.tries_so_far(n) for n in names] == [0, 0, 0, 0, 0], "the run left the corpus as it found it"
     assert not any(cutter.failed_path(n).exists() for n in names)
+
+
+def test_a_resumed_pass_whose_good_documents_are_all_cached_still_retires_its_bad_ones(fake, tmp_path):
+    """The shape of every run after the first: the worker is handed nothing but the documents that failed before.
+    Three of those runs must retire them, and the fourth must get past them."""
+    cutter.answers_dir().mkdir(parents=True, exist_ok=True)
+    for i in range(9):                       # the corpus's good documents, cut by an earlier run
+        with gzip.open(cutter.answer_path(f"0000-g{i}"), "wt", encoding="utf-8") as fh:
+            fh.write("{}\n")
+    bad = [f"0000-m{i}" for i in range(2)]
+    for attempt in range(cutter.MAX_TRIES):
+        fake.append([cutter.DocumentFailed("the parser gave up on this filing")] * 2)
+        with cutter.Cutter(break_after=5) as c:
+            for i in range(9):
+                assert c.cut(f"0000-g{i}", tmp_path / "a.htm", "10-K") is not None
+            for name in bad:
+                assert c.cut(name, tmp_path / "a.htm", "10-K") is None
+            assert c.cached == 9
+        assert [cutter.tries_so_far(n) for n in bad] == [attempt + 1] * 2, "a cached document charges nothing"
+    FakeWorker.made = []
+    with cutter.Cutter(break_after=5) as c:
+        for name in bad:
+            assert c.cut(name, tmp_path / "a.htm", "10-K") is None
+            assert "gave up after" in c.failed[name]
+        assert not FakeWorker.made, "a retired document is not sent to the worker at all"
 
 
 def test_a_document_that_cuts_breaks_the_run_of_failures(fake, tmp_path):
@@ -644,12 +724,16 @@ def test_the_worker_has_no_network_and_no_identity(stub, tmp_path, monkeypatch):
     # place by then, because a library builds its module-level clients on import.
     assert said[0] == {"at_import": "NetworkBlocked"}, (
         f"{said[0]}: the network must already be gone when the handshake imports edgar")
+    # Every primitive the worker replaces, and nothing less: a block line nobody probes can be deleted, which is
+    # what the battery found for ``sendmsg``, ``gethostbyname_ex`` and ``getnameinfo``.
     assert set(said[1]) == {"connect", "connect_ex", "create_connection", "getaddrinfo", "gethostbyname",
-                            "sendto"}
+                            "gethostbyname_ex", "getnameinfo", "sendto", "sendmsg"}
     assert set(said[1].values()) == {"NetworkBlocked"}, (
-        f"{said[1]}: every primitive must raise what the worker installed. 'NetworkAccessAttempted' means the "
-        "suite's own guard answered first and the worker's own block is untested; 'open' means neither did. A "
-        "name lookup already leaves the box, and a datagram needs no connect at all.")
+        f"{said[1]}: every primitive must raise what the worker installed, and nothing else can answer first. "
+        "The suite's own child guard is *not* behind this one: it installs on ``RC_NETGUARD=1`` "
+        "(module_testing/netguard/sitecustomize.py:89) and the client's whitelist drops every ``RC_*``, so this "
+        "subprocess has only what the worker put there. 'open' means it put nothing there. A name lookup "
+        "already leaves the box, and a datagram needs no connect at all.")
     assert said[2] == {"identity": None, "figi": False, "mode": None}
 
 
@@ -781,6 +865,28 @@ def test_a_hung_document_is_killed_at_the_timeout_and_the_pass_goes_on(stub, tmp
         assert c.cut("0000-15", good, "10-K") is not None
 
 
+def test_the_partial_file_a_killed_worker_leaves_is_removed_by_the_client(stub, tmp_path, monkeypatch):
+    """A worker killed at a timeout cannot remove its own ``.tmp``, and the tmp is open for the whole of
+    detection -- ``Document.sections`` and every ``text()`` are read inside the ``with``. 5,149 documents in a
+    pass, so one leftover a hang is a directory of them.
+
+    This is also the test the name itself needed: ``_cleanup_tmp`` built the name from the *client's* pid while
+    the worker writes its own, so it removed a file that never existed, and nothing noticed because the two
+    failures that were tested are both cleaned up by the worker itself.
+    """
+    monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
+    monkeypatch.setattr(cutter, "TIMEOUT_S", 3.0)
+    slow = tmp_path / "hangmid.htm"
+    slow.write_text("<html>hangmid</html>", encoding="utf-8")
+    with cutter.Cutter() as c:
+        pid = c._worker().proc.pid
+        assert c.cut("0000-45", slow, "10-K") is None
+        left = sorted(q.name for q in cutter.answers_dir().glob("*.tmp"))
+        assert not left, f"the worker's own partial file is still there: {left}"
+    assert not cutter.answer_path("0000-45").exists()
+    assert pid                                   # the worker that left it had a pid of its own, not the client's
+
+
 def test_an_answer_out_of_protocol_stops_the_worker_instead_of_being_read_past(tmp_path, monkeypatch):
     """The next line could belong to the next document, so a row of one filing's text would be stored as
     another's. ``spine/wrds.py`` stops for the same reason; here the worker is replaced rather than the run
@@ -798,32 +904,67 @@ def test_an_answer_out_of_protocol_stops_the_worker_instead_of_being_read_past(t
         assert "out of protocol" in c.failed["0000-16"]
 
 
-def test_a_document_that_is_not_on_disk_is_the_box_and_not_the_filing(stub, tmp_path, monkeypatch):
-    """The whole point of the phase. A corpus mount that is not there answers this for all 5,149 documents, and
-    charging each one an attempt would retire the corpus in three runs with nothing left to retry.
+def test_one_file_missing_from_a_readable_directory_is_that_document_s_own_failure(stub, tmp_path, monkeypatch):
+    """What the phase is *for*, and the rule that round 2 of the review corrected.
 
-    Through the real worker, which is the half the fake-worker test cannot reach: that one hands the client a
-    ``CutterUnusable`` it made itself, so it would pass just as well if the worker called every missing file a
-    parse failure. Both mutants that do exactly that survived the battery until this test existed.
+    Answered as the box's fault, a single bad file stopped the run -- and a ``CutterUnusable`` is remembered
+    nowhere, so the next hourly run met the same document and stopped again, for ever, with nothing after it ever
+    cut. The directory holding it decides: readable, and this file is this document's problem.
     """
     monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
     with cutter.Cutter() as c:
-        with pytest.raises(cutter.CutterUnusable, match="not on disk"):
-            c.cut("0000-37", tmp_path / "never-written.htm", "10-K")
-    assert cutter.tries_so_far("0000-37") == 0, "no attempt is charged for the box's fault"
-    assert not cutter.failed_path("0000-37").exists()
+        assert c.cut("0000-37", tmp_path / "never-written.htm", "10-K") is None
+        assert "FileNotFoundError" in c.failed["0000-37"]
+        assert c.worker is not None, "the worker had nothing to do with it and is kept"
+    assert cutter.tries_so_far("0000-37") == 1, "charged, so three runs retire it and the pass goes on"
 
 
-def test_a_document_the_worker_cannot_read_is_the_box_and_not_the_filing(stub, tmp_path, monkeypatch):
-    """A path that exists and cannot be read -- a directory where a filing should be, which is what an
-    interrupted download or a wrongly built corpus index leaves. ``read`` is the missing file; this is ``io``,
-    the other half of the same rule, and neither may be charged to the filing."""
+def test_a_corpus_directory_that_is_not_mounted_is_the_box_and_stops_the_run(stub, tmp_path, monkeypatch):
+    """The other side of the same rule: the directory is not there, so this is not one document's problem. An
+    unmounted corpus would otherwise charge every one of 5,149 documents an attempt and retire the lot in three
+    runs, for a reason none of them had anything to do with."""
+    monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
+    with cutter.Cutter() as c:
+        with pytest.raises(cutter.CutterUnusable, match="not mounted where it should be"):
+            c.cut("0000-38", tmp_path / "no-such-mount" / "a.htm", "10-K")
+    assert cutter.tries_so_far("0000-38") == 0, "no attempt is charged for the box's fault"
+    assert not cutter.failed_path("0000-38").exists()
+
+
+def test_a_gz_file_that_is_not_gzip_is_that_document_s_own_failure(stub, tmp_path, monkeypatch):
+    """``gzip.BadGzipFile`` is an ``OSError``, so a truncated download used to read as the box's fault and stop
+    every run at the same file. Measured: ``issubclass(gzip.BadGzipFile, OSError)``."""
+    monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
+    truncated = tmp_path / "half-downloaded.htm.gz"
+    truncated.write_bytes(b"<html>not gzip at all</html>")
+    with cutter.Cutter() as c:
+        assert c.cut("0000-42", truncated, "10-K") is None
+        assert "cannot be read" in c.failed["0000-42"]
+    assert cutter.tries_so_far("0000-42") == 1
+
+
+def test_a_directory_where_a_filing_should_be_is_that_document_s_own_failure(stub, tmp_path, monkeypatch):
+    """What an interrupted download or a wrongly built corpus index leaves behind. ``IsADirectoryError`` is an
+    ``OSError`` too, so this took the same path as an unmounted corpus before."""
     monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
     (tmp_path / "a-directory.htm").mkdir()
     with cutter.Cutter() as c:
-        with pytest.raises(cutter.CutterUnusable, match="could not io a-directory.htm"):
-            c.cut("0000-38", tmp_path / "a-directory.htm", "10-K")
-    assert cutter.tries_so_far("0000-38") == 0
+        assert c.cut("0000-43", tmp_path / "a-directory.htm", "10-K") is None
+        assert "cannot be read" in c.failed["0000-43"]
+    assert cutter.tries_so_far("0000-43") == 1
+
+
+def test_an_answer_directory_that_cannot_be_written_stops_the_run_on_the_first_document(fake, tmp_path,
+                                                                                       monkeypatch):
+    """A read-only mount or a raw root that is not there. It reached the caller as a bare ``OSError`` from
+    ``Worker.cut``'s own ``mkdir``, which sits before every phase, so the class's promise -- only
+    ``CutterUnusable`` and ``DocumentFailed`` leave it -- was broken on the very first document."""
+    blocked = tmp_path / "a-file-not-a-directory"
+    blocked.write_text("the raw root is a file here", encoding="utf-8")
+    monkeypatch.setattr(cutter, "answers_dir", lambda: blocked / "answers")
+    with pytest.raises(cutter.CutterUnusable, match="cannot write into"):
+        cutter.Worker.cut(cutter.Worker.__new__(cutter.Worker), tmp_path / "a.htm", "10-K",
+                          cutter.answer_path("0000-44"))
 
 
 def test_a_venv_that_never_answers_the_handshake_fails_the_run_at_a_timeout(tmp_path, monkeypatch):
@@ -835,28 +976,45 @@ def test_a_venv_that_never_answers_the_handshake_fails_the_run_at_a_timeout(tmp_
     script = tmp_path / "mute.py"
     script.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
     monkeypatch.setattr(cutter, "WORKER", script)
-    started = time.monotonic()
     with pytest.raises(cutter.CutterUnusable, match="sent no handshake"):
         cutter.Worker()
-    assert time.monotonic() - started < 60, "it gave up at its own timeout, not at the document timeout"
 
 
-def test_an_answer_that_claims_a_cut_without_a_count_is_out_of_protocol(tmp_path, monkeypatch):
+@pytest.mark.parametrize("answer,what", [
+    ('{"ok": true}', "no count at all"),
+    # ``json`` accepts ``Infinity`` and ``int(float("inf"))`` raises ``OverflowError``, which is not a
+    # ``ValueError`` -- so it escaped the first version of the guard and reached the caller as itself.
+    # ``tries_so_far`` has ``OverflowError`` in its list for the same reason.
+    ('{"ok": true, "sections": Infinity, "chars": 1}', "a count that is not a number"),
+])
+def test_an_answer_that_claims_a_cut_without_a_count_is_out_of_protocol(tmp_path, monkeypatch, answer, what):
     """``{"ok": true}`` and nothing else. Read leniently as "cut, 0 sections", the document would be cached for
     ever as a filing with no sections in it -- the same silent loss as the empty-text answer, arriving through a
     different hole. It is the worker's protocol that is broken, so it is replaced rather than trusted again."""
     monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
     monkeypatch.setenv(cutter.PYTHON_ENV, sys.executable)
     script = tmp_path / "countless.py"
-    script.write_text('import json, sys\n'
+    # It writes the answer file first, which is what the real worker does -- it renames before it answers. The
+    # first version of this test used a script that wrote nothing, so "nothing is cached" held for the script and
+    # not for the worker: the client's own rescue path ("it wrote the file and then we lost it") would have
+    # handed back a file written by a worker that could not say what was in it, and that path skips the
+    # empty-text check too.
+    script.write_text('import gzip, json, sys\n'
                       'print(json.dumps({"edgar_version": "6.0.0"}), flush=True)\n'
                       'for line in sys.stdin:\n'
-                      '    print(json.dumps({"ok": True}), flush=True)\n', encoding="utf-8")
+                      '    out = json.loads(line)["out"]\n'
+                      '    with gzip.open(out, "wt", encoding="utf-8") as fh:\n'
+                      '        fh.write(json.dumps({"item": "1", "text": "cannot be trusted"}) + "\\n")\n'
+                      f'    print({answer!r}, flush=True)\n', encoding="utf-8")
     monkeypatch.setattr(cutter, "WORKER", script)
+    out = cutter.answer_path("0000-39")
     with cutter.Cutter() as c:
         assert c.cut("0000-39", tmp_path / "a.htm", "10-K") is None
         assert "without saying how much" in c.failed["0000-39"]
         assert c.empty == 0 and c.cut_now == 0, "nothing is cached as a document with no sections in it"
+        assert c.restarts == 1, "the protocol is broken, so the worker is replaced and not asked again"
+    assert not out.exists(), "a file by a worker that cannot say what is in it is not kept"
+    assert cutter.tries_so_far("0000-39") == 1
 
 
 def test_the_answer_directory_carries_the_pin_so_two_versions_cannot_mix(monkeypatch, tmp_path):
@@ -926,19 +1084,44 @@ def test_a_document_with_no_sections_is_cached_as_cut_and_counted(stub, tmp_path
         assert (c.empty, c.cut_now) == (1, 1)
 
 
-def test_sections_with_no_text_at_all_fails_the_run_rather_than_caching_5149_empty_files(stub, tmp_path,
-                                                                                        monkeypatch):
+def test_sections_with_no_text_at_all_are_not_cached_as_a_cut_document(stub, tmp_path, monkeypatch):
     """What a field whose name moved looks like from here, and the reason this check exists rather than a
     docstring saying "a document whose sections are all null is the signal": nothing read the signal, so the
-    files were cached under the cutter version and the whole corpus read as cut and empty."""
+    files were cached under the cutter version and the whole corpus read as cut and empty.
+
+    One document's failure and not the run's, which is round 2 of the review's correction: in edgartools 6.0.0 a
+    TOC section's text is ``""`` when its anchor is missing or its boundary pair is inverted
+    (``toc_section_extractor.py:1885, 1927``; ``toc_section_detector.py:145``), so a single small filing can
+    answer this on its own -- and as a failed *run* it would have stopped every hourly pass for ever. A moved
+    field does it to every document, so five in a row still stop the run, with this text in the message.
+    """
     monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
     doc = tmp_path / "silent.htm"
     doc.write_text("<html>silent</html>", encoding="utf-8")
+    good = tmp_path / "ok.htm"
+    good.write_text("<html>a filing</html>", encoding="utf-8")
     with cutter.Cutter() as c:
-        with pytest.raises(cutter.CutterUnusable, match="no text at all"):
-            c.cut("0000-23", doc, "10-K")
-    assert not cutter.answer_path("0000-23").exists(), "nothing of a run that cannot be trusted is cached"
-    assert cutter.tries_so_far("0000-23") == 0
+        assert c.cut("0000-23", doc, "10-K") is None
+        assert "no text at all" in c.failed["0000-23"]
+        assert c.empty == 0, "it is not a document with no sections in it; it is a document we refuse"
+        assert c.cut("0000-24a", good, "10-K") is not None, "the worker is kept: it answered correctly"
+    assert not cutter.answer_path("0000-23").exists(), "nothing a run cannot trust is cached"
+    assert cutter.tries_so_far("0000-23") == 1
+
+
+def test_a_moved_field_still_stops_the_run_through_the_breaker(stub, tmp_path, monkeypatch):
+    """The diagnosis the empty-text check exists for has to survive its downgrade to a document failure: a field
+    this worker reads under a name the library moved makes *every* document answer with sections and no text, so
+    the fifth one stops the pass and the message says what to check."""
+    monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
+    doc = tmp_path / "silent.htm"
+    doc.write_text("<html>silent</html>", encoding="utf-8")
+    with cutter.Cutter(break_after=5) as c:
+        for i in range(4):
+            assert c.cut(f"0000-v{i}", doc, "10-K") is None
+        with pytest.raises(cutter.CutterUnusable, match="in a row") as caught:
+            c.cut("0000-v4", doc, "10-K")
+    assert "SECTION_FIELDS" in str(caught.value), "the breaker carries the last failure's own diagnosis"
 
 
 def test_a_list_of_sections_is_read_too(stub, tmp_path, monkeypatch):
