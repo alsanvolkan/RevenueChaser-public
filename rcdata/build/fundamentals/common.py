@@ -262,7 +262,7 @@ def compare_live(con: duckdb.DuckDBPyConnection, select_new: str, table: str, co
 #: The datasets partitioned by company (``cik=<cik>``). On a build over the live copy their staging holds only the
 #: dirty companies, and every served row of those companies is replaced; every other dataset is small and is
 #: reloaded whole (``tables.py``).
-KEYED = ("sec/companyfacts", "sec/filings", "uw/financials")
+KEYED = ("sec/companyfacts", "sec/filings")
 #: The build connection's TEMP table of the dirty companies, one ``cik`` a row.
 DIRTY_TABLE = "_dirty_cik"
 
@@ -301,11 +301,10 @@ def _gone_companies(con: duckdb.DuckDBPyConnection) -> set[str]:
     goes in practice. shortcut: a lone file deleted inside a folder that stays (``documents.parquet``) between the
     live file's build and this one is not seen, now or later; it can only happen once, on the first build after
     the manifest landed, and ``RC_BUILD_WHOLE=1`` clears it. Upgrade only if a source starts deleting single files."""
-    from . import companyfacts, filings, uw_financials
+    from . import companyfacts, filings
     served = {
         companyfacts.NAME: f"SELECT DISTINCT cik FROM fundamental_fact WHERE source = '{facts_source()}'",
         filings.NAME: "SELECT DISTINCT cik FROM filing_item",
-        uw_financials.NAME: f"SELECT DISTINCT cik FROM fundamental_fact WHERE source = '{uw_financials.NAME}'",
     }
     gone: set[str] = set()
     for name, sql in served.items():

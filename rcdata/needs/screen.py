@@ -72,7 +72,6 @@ DATASETS: dict[str, DatasetCard] = {
     'sec/ftd': DatasetCard('Fails to deliver (SEC)', step=10, role='first'),
     'spine/security': DatasetCard('Identity spine (security, tiers, history)', coverage_target=0.98, step=7, role='build'),
     'uw/earnings': DatasetCard('Reported EPS and its surprise (Unusual Whales)', step=9, role='fills'),
-    'uw/financials': DatasetCard('Preliminary quarters (Unusual Whales, off by default)', step=9, role='fills'),
     'uw/option_list': DatasetCard('Options of SPX and the option list (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/option_screener': DatasetCard('Earnings options: calendar, screener and earnings set (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/spot_expiry_strike': DatasetCard('SPX expiry-strike (Unusual Whales)', coverage_target=0.95, step=11, role='first'),

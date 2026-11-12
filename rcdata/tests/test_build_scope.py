@@ -134,7 +134,6 @@ def test_every_dataset_either_honours_the_scope_or_is_named_here():
         "sec/ftd": "one fails-to-deliver file for the whole market",
         "spine/security": "builds the spine, and its tiers, itself",
         "uw/earnings": "the fundamentals universe (its own PR)",
-        "uw/financials": "the fundamentals universe (its own PR)",
         "uw/option_list": "UW's own list of optionable names",
         "uw/option_screener": "UW's screener pages the whole market",
         "uw/greek_expiry_strike": "SPX only",

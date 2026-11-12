@@ -14,6 +14,7 @@ from datetime import date
 import duckdb
 import pytest
 
+from RevenueChaser.module_value_chain import config as vc_config
 from RevenueChaser.rcdata import serving
 from RevenueChaser.rcdata.build import base, dirty
 from RevenueChaser.rcdata.build.fundamentals import common, companyfacts, earnings, facts, filings, tables, wrds_fund
@@ -216,7 +217,8 @@ def test_a_whole_reloaded_source_is_reloaded_on_the_live_copy(monkeypatch):
 def test_a_change_of_the_build_rules_builds_whole(monkeypatch):
     _seed()
     _build()
-    monkeypatch.setenv("RC_UW_PRELIMINARY", "1")                # a rules_state() of uw/financials
+    # ``fundamentals/tables``' own rules_state(): the document cap the filing_item CHECK embeds.
+    monkeypatch.setattr(vc_config, "MAX_ITEM_CHARS", vc_config.MAX_ITEM_CHARS + 1)
     check = _build()
     assert "built whole: the build code of fundamentals changed" in _note(check), _note(check)
 

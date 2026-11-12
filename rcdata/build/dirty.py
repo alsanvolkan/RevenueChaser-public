@@ -204,7 +204,7 @@ def scan(datasets: Iterable[Any]) -> dict[str, tuple[int, float]]:
 
 def rules_fingerprint(datasets: Iterable[Any]) -> str:
     """A hash of every Python file in the packages that hold ``datasets``' code, and of each dataset's
-    ``rules_state()`` (a switch read from the environment that changes what is served, ``RC_UW_PRELIMINARY``): a
+    ``rules_state()`` (a setting outside the package that changes what is served, the ``filing_item`` text cap): a
     change to the extraction or the table rules restates rows no Parquet file marks as changed."""
     datasets = list(datasets)
     folders = set()
