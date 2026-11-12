@@ -153,8 +153,10 @@ def test_the_runs_table_stays_a_table_on_a_desktop(browser, runs_page):
 # ── Settings → Automations, the same problem one tab over ─────────────────────
 
 AUTOMATIONS = r"""(function(){
-  var tab = document.getElementById("tab-health"); if (tab) tab.click();   // #492: Automations sit in Health
+  // #715: Automations sit folded under the Database board, so open the tab and the fold as a viewer does
+  var tab = document.getElementById("tab-data"); if (tab) tab.click();
   var s = document.querySelector(".auto-item>summary"), panel = s.closest(".panel");
+  for (var f = s.closest("details.hfold"); f; f = f.parentElement.closest("details.hfold")) f.open = true;
   var btns = Array.prototype.map.call(document.querySelectorAll(".auto-btn"), function(b){
     var r = b.getBoundingClientRect(); return [b.textContent, Math.round(r.width), Math.round(r.height)];
   });

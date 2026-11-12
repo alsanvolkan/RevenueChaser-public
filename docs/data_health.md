@@ -156,8 +156,8 @@ closed fold under it (`details#old-settings`), unchanged.
   ceiling. The serving file's own size beside it **is** read live: that is four stats of the SSD. Until the job has
   run on a box the lines read "not walked yet", which is not the same as a dataset whose folder is missing
   ("no folder yet"), and past a day the line says how old the picture is.
-- **What can be pressed where.** Fetch, Pause, Fill and **Recount folders** are in the Fetch section only;
-  the Data cards show bars and
+- **What can be pressed where.** Fetch and Pause are pressed in the Grafana board framed on the Fetch/Health tab
+  (#715); the universe, Fill and **Recount folders** are under that frame; the Data cards show bars and
   no button. A press on a tier set only drafts; **Apply** saves the universe as the Settings board's
   `UNIVERSE_SETS` and `UNIVERSE_INCLUDE` (`POST /api/settings/board/module_settings`) and fetches nothing. C and D are
   shown greyed and are never offered. The default universe (A and all of B) asks no scope: it is the daily run.
@@ -184,7 +184,8 @@ was asked. Both board panels carry `class="ctl"`, which is what `static/control.
 as the one board it was.
 
 The strip is `role="tablist"`; the arrow keys move between the tabs, the choice is remembered per viewer
-(`localStorage`, key `rc.settings.tab`), and `#data`, `#fetch` or `#needs` in the URL opens that tab. With no
+(`localStorage`, key `rc.settings.tab`), and `#data` or `#health` in the URL opens that tab (the old `#fetch`
+and `#needs` open Database, `#live` Fetch/Health). With no
 script the Data tab shows. A tab that becomes visible sends a `resize`, because the flow diagram lays itself out
 from a width that is 0 while hidden. A press that points into the other panel (the Cross-check button, "Fetch the
 universe") opens that tab first, through `window.RC_SETTINGS_SHOW_PANEL`.

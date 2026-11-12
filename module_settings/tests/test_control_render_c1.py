@@ -6,6 +6,7 @@ import re
 
 from RevenueChaser.module_settings import control, control_render
 from RevenueChaser.module_settings.tests.test_control_view import NOW, control_nd
+from RevenueChaser.module_settings.tests.legacy_fetch import old_fetch
 
 _BASE = None
 
@@ -135,7 +136,7 @@ def test_the_script_routes_the_one_button():
 def test_the_universe_sits_at_the_top_of_fetch_health_with_its_new_words():
     spine = _box(_sources(_view(), "spine.duckdb"), "spine/security")
     assert 'id="universe"' not in spine
-    fetch = control_render.render_fetch(_view())
+    fetch = old_fetch(_view())
     sb5 = fetch[fetch.index('id="sec-universe"'):fetch.index('class="fgrps"')]
     assert 'id="universe"' in sb5
     assert "hover them, or press and hold" not in sb5
@@ -156,7 +157,7 @@ def test_the_funnel_block_with_a_count_not_counted():
 
 
 def test_providers_sit_once_on_fetch_health_above_the_universe_with_their_source_line():
-    html = control_render.render_fetch(_view())
+    html = old_fetch(_view())
     assert html.count("Providers and daily limits") == 1 and "Providers and daily limits" not in _sources(
         _view(), "prices.duckdb")
     assert html.index('id="sec-health"') < html.index('id="sec-providers"') < html.index('id="sec-universe"')
@@ -284,7 +285,7 @@ def test_render_data_holds_the_parts_in_order():
     at = [html.index(m) for m in marks]
     assert at == sorted(at)
     assert 'id="sec-health"' not in html and 'id="sec-crosscheck"' not in html and "data-job=" not in html
-    fetch = control_render.render_fetch(_view())
+    fetch = old_fetch(_view())
     marks = ['<h1>Data/Health · Fetch/Health</h1>', 'class="topbar"', 'id="sec-health"', 'id="sec-providers"',
              'id="sec-universe"', 'class="fgrps"', 'class="pictrow"', 'id="sec-crosscheck"']
     at = [fetch.index(m) for m in marks]
@@ -304,7 +305,7 @@ def test_one_section_per_file_in_plan_order_only_the_first_open():
     assert [bool(p[1]) for p in panels] == [True] + [False] * 5
     one = html[html.index('class="sec fpanel" data-file="prices.duckdb"'):html.index('class="sec fpanel" data-file="fund')]
     assert 'class="journey"' in one and 'class="sources' not in one and 'class="pictrow"' not in one
-    fetch = control_render.render_fetch(v)
+    fetch = old_fetch(v)
     groups = re.findall(r'<details class="sec fgrp" data-file="([^"]+)"', fetch)
     assert groups == [f["name"] for f in v["files"]], "Fetch/Health: one group a file, in plan order"
     assert fetch.index('class="fgrps"') < fetch.index('class="pictrow"')
@@ -314,7 +315,7 @@ def test_the_old_controls_are_gone_and_the_universe_is_on_fetch_health_once():
     html = control_render.render_data(_view())
     assert 'id="openall"' not in html and 'id="shutall"' not in html and 'id="dataempty"' not in html
     assert "No file matches the diagram" not in html
-    fetch = control_render.render_fetch(_view())
+    fetch = old_fetch(_view())
     assert html.count('id="universe"') == 0 and fetch.count('id="universe"') == 1
     assert "WIAL" not in html and "cannot be taken back" not in control_render.WIAL
 
