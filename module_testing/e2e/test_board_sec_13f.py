@@ -44,29 +44,22 @@ def seeded_totals(serve_13f_totals):
 
 
 def _served_shares(dashboard, ticker: str, shares: float) -> None:
-    """The cover-page count in the dashboard's own served prices file: where "% Out" divides since #646 PR 1.
+    """The cover-page count where "% Out" divides since #646 PR 1.
 
-    The ``ownership_snapshot`` rows stay beside it - they still carry insider %, and keeping them proves the
-    board reads this number and not that one.
+    Through ``rcdata/tests/prices_store``, which owns this file: the D01 seed below uses it too, and a table
+    created here by hand with fewer columns makes its ``_derive`` fail. The ``ownership_snapshot`` rows stay
+    beside it - they still carry insider %, and keeping them proves which of the two the board read.
     """
     from datetime import date
 
-    import duckdb
-    path = Path(dashboard.env["RC_MARKET_DIR"]) / "prices.duckdb"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(str(path))
+    from RevenueChaser.rcdata.tests import prices_store
+    con = prices_store._connect()
     try:
-        con.execute("CREATE TABLE IF NOT EXISTS security_symbol (security_id VARCHAR, symbol VARCHAR, "
-                    "valid_from DATE, valid_to DATE, source VARCHAR)")
-        con.execute("CREATE TABLE IF NOT EXISTS shares_class (security_id VARCHAR, measure VARCHAR, as_of DATE, "
-                    "value DOUBLE, symbol VARCHAR, cik VARCHAR, class_member VARCHAR, source VARCHAR)")
-        con.execute("DELETE FROM security_symbol WHERE symbol = ?", [ticker])
         con.execute("DELETE FROM shares_class WHERE symbol = ?", [ticker])
-        con.execute("INSERT INTO security_symbol (security_id, symbol, valid_from, source) VALUES (?, ?, ?, ?)",
-                    [f"sym:{ticker}", ticker, date(2026, 1, 2), "alpaca/bars"])
         con.execute("INSERT INTO shares_class (security_id, measure, as_of, value, symbol, source) "
                     "VALUES (?, 'outstanding', ?, ?, ?, 'sec/cover_shares')",
                     [f"sym:{ticker}", date(2026, 1, 2), shares, ticker])
+        con.execute("CHECKPOINT")
     finally:
         con.close()
 
