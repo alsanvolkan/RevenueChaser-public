@@ -182,7 +182,9 @@ choice never flashes dark. The shell copies the choice onto
 each board iframe as `data-theme` on its `<html>`; a board follows it once it uses the shared tokens (one PR
 per board); the Runs tab does with the #131 pull request.
 
-Colour is only half of it. `THEME_SCALE` (#764) holds what does not change with the scheme and is written into
+Colour is only half of it. `THEME_SCALE` holds what does not change with the scheme. Theme D (#761, avo 12 Nov
+2026) names it `--fs-*` (11 / 12.5 / 14 / 16 / 20 / 26 px, Inter), `--sp-1`..`--sp-7`, `--r-sm` / `--r-md` / `--r-lg`
+and `--elev-1` / `--elev-2`; use those. The #764 names below stay as aliases of them. #764's set is written into
 the base `:root`: the space ladder `--s1`..`--s8` (4 → 64 px), `--r-sm` / `--r-md` / `--r-pill`, the type steps
 `--f-xs`..`--f-xl` with `--w-reg` / `--w-bold`, `--e-flat` and `--e-float` for elevation, `--focus`, `--motion`
 (0 ms under `prefers-reduced-motion`) and `--tap` (44 px). It also holds `--c1`..`--c6`, the categorical chart
@@ -210,7 +212,7 @@ one-screen intro.
 - Treating Theme as a third sector select, or falling back to a hard-coded theme list.
 - A literal index list in a board or in the component: the registry owns it (`filters_meta`).
 - A Linear/Vercel visual clone — keep RevenueChaser tokens
-  (`--bg #05111F`, `--accent #0EA5E9`, `--neon`).
+  (`THEME_TOKENS` in `core/reporting_common.py`: warm neutrals, clay `--accent`).
 
 ---
 
