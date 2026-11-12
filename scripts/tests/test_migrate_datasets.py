@@ -407,6 +407,8 @@ class TestEveryManifestDatasetHasARoundTripTest:
                     "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta",
                     # the SPX Gamma board file: filled by a Fetch or by --import-tree from its own old tree
                     "spx_raw_days", "spx_raw_files", "spx_brier", "spx_gex_daily", "spx_meta",
+                    # the 13F board file (#732): written by module_sec_13f/store.py from the ownership build
+                    "sec13f_board_cells", "sec13f_board_breaks", "sec13f_board_meta",
                     # #25 HR-1: derived from the universe snapshot and the bars by core/baselines.py
                     "forecast_baselines"}
         # composite SQLite targets are covered through their source dataset

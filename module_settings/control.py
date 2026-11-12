@@ -61,7 +61,7 @@ SOURCE_COLORS = ("#6f7b32", "#646e2d", "#586228", "#4d5523", "#41481e")
 BOARD_COLOR = "#6d7585"
 #: The board files' hues (Data flow, journey), apart from the six SSD files' colours; one a file, in board order.
 BOARD_FILE_COLORS = ("#0e9f8e", "#c2410c", "#7c3aed", "#0369a1", "#be185d", "#4d7c0f", "#b45309", "#1d4ed8",
-                     "#a21caf", "#0f766e", "#9f1239", "#475569")
+                     "#a21caf", "#0f766e", "#9f1239", "#475569", "#a16207")
 #: The source boxes of the flow diagram, by step: where a provider's datasets sit in the plan.
 SOURCE_GROUPS = (("Identity", (1, 2, 3, 4, 5, 7)), ("Index & fund holdings", (6,)), ("Prices", (8,)),
                  ("Fundamentals & earnings", (9,)), ("Ownership & short side", (10,)),
