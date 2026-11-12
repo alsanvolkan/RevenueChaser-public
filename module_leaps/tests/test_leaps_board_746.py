@@ -14,6 +14,7 @@ import pytest
 from RevenueChaser.core import calendar
 from RevenueChaser.core.providers import unusual_whales
 from RevenueChaser.module_leaps import board
+from RevenueChaser.rcdata.tests.conftest import http_mock, market_roots  # noqa: F401
 from RevenueChaser.rcdata.tests.options_fixture import SESSION, UWOptions
 from RevenueChaser.rcdata.tests.test_options_far_contracts import (AFTER_CLOSE, MORNING, _swept, at, chain_row,
                                                                    contract)
@@ -65,8 +66,8 @@ def test_each_contract_falls_in_one_of_three_groups(ticker, issue_type, want):
 
 
 def test_a_roll_partner_is_named_short_enough_for_a_chip():
-    assert board.partner_label("NVDA271217C00100000") == "C100 Dec 27"
-    assert board.partner_label("SPXW290119P05012500") == "P5,012.5 Jan 29"
+    assert board.partner_label("NVDA271217C00100000") == "C100 Dec 2027"
+    assert board.partner_label("SPXW290119P05012500") == "P5,012.5 Jan 2029"
     assert board.partner_label("not-an-occ") == "not-an-occ"
 
 
@@ -95,9 +96,9 @@ def test_a_row_carries_what_the_card_draws(stored):
     assert far["con"] == "Call 110 · 19 Jan 2029" and far["side"] == "C" and far["prod"] == "stocks"
     assert (far["prem"], far["vol"], far["oi"], far["next"], far["chg"]) == (2_500_000.0, 3000, 130, 3584, 3454)
     assert far["st"] == "matched" and far["share"] == pytest.approx(1.1513, abs=1e-4) and far["out"] is True
-    assert far["roll"] == "C100 Dec 27"
+    assert far["roll"] == "C100 Dec 2027"
     near = rows[stored["near"]["option_symbol"]]
-    assert near["share"] == pytest.approx(-0.386, abs=1e-3) and near["out"] is False and near["roll"] == "C110 Jan 29"
+    assert near["share"] == pytest.approx(-0.386, abs=1e-3) and near["out"] is False and near["roll"] == "C110 Jan 2029"
     assert rows[stored["stale"]["option_symbol"]]["st"] == "stale"
     assert rows[stored["stale"]["option_symbol"]]["share"] is None
     assert rows[stored["etf"]["option_symbol"]]["prod"] == "etfs"
@@ -117,7 +118,8 @@ def test_the_page_says_collecting_and_carries_the_session(stored):
     assert "Collecting" in page and "1 / 20 sessions" in page
     assert f'<option value="{SESSION.isoformat()}" selected>' in page
     assert _data_of(page)["rows"][0]["t"] == "NVDA"
-    assert "rcWatchInit(" in page and '"module_leaps"' in page, "the shared watch-list pair, as this board"
+    assert 'rcWatchInit("leaps");' in page, "the shared watch-list pair, under the board's old panel name"
+    assert "Sort: opened share" not in page, "while collecting nothing is ranked by the measure"
     for word in ("Accumulat", "conviction", "Tier"):
         assert word not in page, "a measurement, not a label"
 
@@ -156,3 +158,15 @@ def test_the_tab_never_serves_the_old_board_left_on_disk(stored, tmp_path, monke
     (tmp_path / "leaps_latest.html").write_text("<h1>LEAPS ACCUMULATION RADAR</h1>", encoding="utf-8")
     body = dashboard.app.test_client().get("/view/module_leaps").get_data(as_text=True)
     assert "ACCUMULATION RADAR" not in body and "Collecting" in body
+
+
+def test_after_twenty_sessions_the_board_stops_collecting_and_offers_the_share_sort(stored):
+    data = dict(board.payload(), stored=20, collecting=False)
+    page = board.render_html(data)
+    assert "Collecting" not in page and "20 sessions stored." in page and "Sort: opened share" in page
+
+
+def test_the_counts_say_how_many_wait_for_their_open_interest(stored):
+    data = board.payload()
+    data["counts"] = dict(data["counts"], matched=0, pending=6, stale=0)
+    assert "waiting for open interest" in board.render_html(data)

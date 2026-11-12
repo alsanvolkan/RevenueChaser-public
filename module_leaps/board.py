@@ -25,7 +25,7 @@ from RevenueChaser.core.html_safe import script_json
 from RevenueChaser.core.reporting_common import THEME_CSS, THEME_JS, help_html, watchlist_html
 from RevenueChaser.rcdata import read
 
-BOARD = "module_leaps"
+BOARD = "leaps"          # the X-RC-Panel value of its watch-list pair, as before (#730)
 MIN_SESSIONS = 20
 PAGE_ROWS = 100
 # UW's issue_type for an index option; these roots are index products whatever the field says.
@@ -54,12 +54,12 @@ def _expiry_text(d: date) -> str:
 
 
 def partner_label(symbol) -> str:
-    """``NVDA271217C00100000`` -> ``C100 Dec 27``: a roll partner, short enough for a chip."""
+    """``NVDA271217C00100000`` -> ``C100 Dec 2027``: a roll partner, short enough for a chip."""
     m = _OCC.match(str(symbol or ""))
     if not m:
         return str(symbol or "")
     k = int(m["k"]) / 1000
-    return f"{m['cp']}{_strike_text(k)} {_MONTHS[int(m['m']) - 1]} {m['y']}"
+    return f"{m['cp']}{_strike_text(k)} {_MONTHS[int(m['m']) - 1]} 20{m['y']}"
 
 
 def _num(v):
@@ -123,7 +123,10 @@ HELP = help_html(
     "did not line up with this session, so no share is shown. A <b>roll</b> pairs a closing contract with an "
     "opening one of the same name and side on the same day.</p>"
     "<p>Not answered here: who traded, and whether the opener bought or sold. Until 20 sessions are stored "
-    "and tested the board shows raw numbers only, with no ranking or label.</p>")
+    "and tested the board shows raw numbers only, with no ranking or label.</p>"
+    "<p>There is no <b>Fetch</b> on this tab: the builder sweeps each session after the New York close and reads "
+    "its open interest the next morning, on its own schedule. <b>Refresh</b> redraws the page from the stored "
+    "table; it calls no provider.</p>")
 
 _CSS = """
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Inter,system-ui,-apple-system,'Segoe UI',sans-serif;
@@ -204,13 +207,13 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Inter,system-u
   .lp-top h1{font-size:26px}
   .lp-controls{flex-direction:row;flex-wrap:wrap;align-items:center;gap:12px}
   .lp-controls>select{min-width:280px}
-  .lp-seg{display:flex}.lp-seg button{height:36px;padding:0 16px}
+  .lp-seg{display:flex}.lp-seg button{padding:0 16px}
   .lp-pick{display:flex;gap:12px}
   .lp-counts{margin-left:auto;display:flex;gap:24px}
   .lp-counts div{padding:0;border:0;background:none;align-items:flex-end}
   .lp-table{border-radius:10px;background:var(--card);border:1px solid var(--border);box-shadow:0 1px 2px var(--shadow);
     overflow:hidden}
-  .lp-head,.ct{display:grid;grid-template-columns:112px minmax(140px,1.2fr) 88px minmax(200px,1.4fr) minmax(300px,2fr) minmax(200px,1.2fr);
+  .lp-head,.ct{display:grid;grid-template-columns:104px minmax(0,1.2fr) 84px minmax(0,1.4fr) minmax(0,2fr) minmax(0,1.2fr);
     grid-template-areas:"w n p s x f";gap:16px;padding:8px 16px;align-items:center}
   .lp-head{font-size:11px;color:var(--muted);background:var(--card-2,var(--hover));border-bottom:1px solid var(--border)}
   .lp-head .r{text-align:right}
@@ -225,7 +228,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Inter,system-u
   .c-x{grid-template-columns:repeat(4,minmax(0,1fr))}
   .c-x small{display:none}
   .c-x div{align-items:flex-end}
-  .c-f{gap:4px;min-width:0}.chip{font-size:11px;padding:2px 8px}
+  .c-f{gap:4px;min-width:0}.chip{font-size:11px;padding:2px 8px;white-space:normal}
+  .c-x em{white-space:normal}
 }
 """
 
@@ -242,7 +246,8 @@ function lpBar(v){ var c = Math.max(-1, Math.min(1, v)), w = Math.abs(c) * 50;
   return 'left:' + (c >= 0 ? 50 : 50 - w) + '%;width:' + w + '%'; }
 var LP_NOTES = {pending: ['', 'Open interest is read the next trading morning from 07:30 New York.', 'Read next morning, 07:30 NY'],
   stale: ['warn', 'Stale: the next-morning read did not line up with this session, so no share is shown.', 'Stale: read did not match'],
-  missing: ['warn', 'Missing: the contract was not in the next-morning chain, so no share is shown.', 'Missing from next chain']};
+  missing: ['warn', 'Missing: the contract was not in the next-morning chain, so no share is shown.', 'Missing from next chain'],
+  noshare: ['', 'Open interest was read, but the day has no volume to divide by, so no share is shown.', 'No volume: no share']};
 function lpCard(r){
   var e = rcEsc, mid;
   if(r.st === 'matched' && r.share != null){
@@ -251,12 +256,13 @@ function lpCard(r){
       ' on a scale from minus 1 to plus 1"><s></s><i style="' + lpBar(r.share) + '"></i></div>' +
       '<div class="ends"><span>−1 closed</span><span>0</span><span>+1 opened</span></div></div>';
   } else {
-    var n = LP_NOTES[r.st] || LP_NOTES.pending;
+    var n = LP_NOTES[r.st === 'matched' ? 'noshare' : r.st] || LP_NOTES.pending;
     mid = '<div class="note ' + n[0] + '" title="' + e(n[1]) + '"><i aria-hidden="true"></i><span class="long">' +
       e(n[1]) + '</span><span class="short">' + e(n[2]) + '</span></div>';
   }
-  var oiSub = r.st === 'matched' ? lpSigned(r.chg) + ' from ' + lpInt(r.oi) : (r.st === 'pending' ? 'next morning' : '?');
-  var stats = [['Volume', lpInt(r.vol), ' '], ['Open int.', r.st === 'matched' ? lpInt(r.next) : lpInt(r.oi), oiSub],
+  var oiSub = r.st === 'matched' && r.chg != null ? lpSigned(r.chg) + ' from ' + lpInt(r.oi)
+    : (r.st === 'pending' ? 'next morning' : '?');
+  var stats = [['Volume', lpInt(r.vol), ' '], ['Open int.', r.st === 'matched' && r.next != null ? lpInt(r.next) : lpInt(r.oi), oiSub],
                ['At ask', lpPct(r.ask), ' '], ['Multi-leg', lpPct(r.multi), ' ']];
   var flags = (r.out ? '<span class="chip warn">Beyond ±1</span>' : '') +
               (r.roll ? '<span class="chip">Roll ↔ ' + e(r.roll) + '</span>' : '');
@@ -334,8 +340,11 @@ def render_html(data: dict) -> str:
     counts = "".join(
         f'<div{cls}><b>{n:,}</b><span class="lp-tiny lp-muted">{label}</span></div>'
         for n, label, cls in ((c["contracts"], "contracts", ""), (c["names"], "names", ""),
-                              (c["matched"], "matched", ""), (c["stale"], "stale or missing",
-                                                              ' class="warn"' if c["stale"] else "")))
+                              (c["matched"], "matched", ""),
+                              (c["pending"], "waiting for open interest", "") if c["pending"] else
+                              (c["stale"], "stale or missing", ' class="warn"' if c["stale"] else "")))
+    # While collecting nothing is ranked by the measure itself, so the opened-share sort comes with the 20th session.
+    share_sort = "" if data["collecting"] else '<option value="share">Sort: opened share</option>'
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>LEAPS</title><script>{THEME_JS}</script><style>{THEME_CSS}{_CSS}</style></head>
@@ -351,7 +360,7 @@ def render_html(data: dict) -> str:
 <div class="lp-pick"><select id="lp-side" aria-label="Side"><option value="all">Calls and puts</option>
 <option value="C">Calls</option><option value="P">Puts</option></select>
 <select id="lp-sort" aria-label="Sort"><option value="premium">Sort: premium</option>
-<option value="share">Sort: opened share</option><option value="volume">Sort: volume</option>
+{share_sort}<option value="volume">Sort: volume</option>
 <option value="change">Sort: open interest change</option></select></div>
 <div class="lp-counts">{counts}</div>
 </div>

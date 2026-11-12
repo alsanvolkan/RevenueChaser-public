@@ -83,6 +83,7 @@ SERVER_GOOD = {"module_sector_rotation": "XLK"}
 # A board whose rows the browser builds: the call where the ticker is rendered (its own tests run it where they can).
 CLIENT_CALL = {
     "module_sec_13f": "rcWatchButtons(r[0])",
+    "module_leaps": "rcWatchButtons(r.t)",
     "module_asymmetric_growth": "rcWatchRow(c.ticker)",
     "module_swing_potential": "rcWatchRow(c.ticker)",
     "module_fundamentals": "rcWatchRow(c.ticker)",
