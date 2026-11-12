@@ -57,9 +57,9 @@ import os
 import socket
 import sys
 
-#: What the client pins against. A mismatch fails the run rather than writing rows labelled one version that
-#: another version cut.
-PINNED = "6.0.0"
+#: This worker does not know what version it is supposed to be. It reports what it has and the client compares
+#: that against ``requirements-edgartools.txt``, which is the one place the pin is written -- a second literal
+#: here is a second thing to forget on a bump, and the handshake would then pass on a venv nobody meant.
 
 
 class NetworkBlocked(OSError):
