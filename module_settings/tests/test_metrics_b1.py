@@ -87,6 +87,15 @@ def test_provider_calls_and_the_day_cap():
                                                    ibkr=lambda: None)))
     assert 'rc_provider_calls_today{provider="uw"} 7' in fam["rc_provider_calls_today"]
     assert 'rc_provider_failures_today{provider="uw"} 1' in fam["rc_provider_failures_today"]
+    assert 'rc_provider_rate_limited_today{provider="uw"} 0' in fam["rc_provider_rate_limited_today"]
+
+
+def test_a_provider_s_429_answers_today_are_exported():
+    """#715: the provider limits card leaves the page; a 429 was on that card and on no metric."""
+    ops.count_calls("fmp", 3, failures=2, http_429=2)
+    fam = _families(metrics.render(metrics.collect(datetime.now(timezone.utc), datasets=DS, timer={"state": "on"},
+                                                   ibkr=lambda: None)))
+    assert 'rc_provider_rate_limited_today{provider="fmp"} 2' in fam["rc_provider_rate_limited_today"]
     assert not any(l.startswith('rc_provider_day_cap{provider="uw"} ') for l in fam["rc_provider_day_cap"])  # no UW cap
     assert any(l.startswith('rc_provider_day_cap{provider="alphavantage"} ') for l in fam["rc_provider_day_cap"])
 
@@ -104,6 +113,75 @@ def test_ibkr_state_is_one_of_a_closed_set(state, label):
     fam = _families(metrics.render(_collect(ibkr=lambda: {"state": state})))
     assert [l for l in fam["rc_ibkr_state"] if l.endswith(" 1")] == [f'rc_ibkr_state{{state="{label}"}} 1']
     assert len(fam["rc_ibkr_state"]) == len(metrics.IBKR_STATES)
+
+
+def _tape(feeds, written_at="2026-11-11T09:40:00+00:00"):
+    return lambda: {"feeds": feeds, "written_at": written_at}
+
+
+def test_a_news_feed_s_state_is_one_of_a_closed_set_and_every_state_is_always_there():
+    """#727: on 11 Nov 2026 both feeds were refused all day behind a green gateway. Each feed carries every state,
+    0 or 1, so an alert on ``refused`` never sees a gap; text that is not a state reads ``unknown``."""
+    fam = _families(metrics.render(_collect(news=_tape([{"feed": "BRFG", "state": "live"},
+                                                        {"feed": "DJNL", "state": "refused"},
+                                                        {"feed": "FLY", "state": "words from a file"}]))))
+    ones = [l for l in fam["rc_news_feed_state"] if l.endswith(" 1")]
+    assert ones == ['rc_news_feed_state{feed="BRFG",state="live"} 1',
+                    'rc_news_feed_state{feed="DJNL",state="refused"} 1',
+                    'rc_news_feed_state{feed="FLY",state="unknown"} 1']
+    assert len(fam["rc_news_feed_state"]) == 3 * len(metrics.NEWS_STATES)
+
+
+def test_a_feed_name_that_is_not_a_plain_id_never_becomes_a_label():
+    fam = _families(metrics.render(_collect(news=_tape([{"feed": 'BR"FG} 1\nrc_x', "state": "live"},
+                                                        {"feed": "", "state": "live"}]))))
+    assert fam["rc_news_feed_state"] == []
+
+
+def test_the_listener_s_last_write_is_exported_and_absent_without_a_record():
+    fam = _families(metrics.render(_collect(news=_tape([]))))
+    assert fam["rc_news_tape_written_timestamp_seconds"] == ["rc_news_tape_written_timestamp_seconds 1794390000.0"]
+    fam = _families(metrics.render(_collect(news=_tape([], written_at=None))))
+    assert fam["rc_news_tape_written_timestamp_seconds"] == []
+
+
+def test_a_feed_id_with_a_hyphen_or_a_dot_is_still_reported():
+    # IBKR's own provider codes: DJ-N, DJ-RT, BRFUPDN; dropping one silently would hide a refused feed
+    fam = _families(metrics.render(_collect(news=_tape([{"feed": "DJ-N", "state": "refused"}]))))
+    assert 'rc_news_feed_state{feed="DJ-N",state="refused"} 1' in fam["rc_news_feed_state"]
+
+
+def test_a_record_the_listener_stopped_writing_reads_unknown_not_its_last_state():
+    """Review of #742: a listener that died while its feeds were live would have read live for ever."""
+    stale = lambda: {"feeds": [{"feed": "BRFG", "state": "live"}], "stale": True,   # noqa: E731
+                     "written_at": "2026-11-11T09:40:00+00:00"}
+    fam = _families(metrics.render(_collect(news=stale)))
+    assert [l for l in fam["rc_news_feed_state"] if l.endswith(" 1")] == ['rc_news_feed_state{feed="BRFG",state="unknown"} 1']
+    assert fam["rc_news_tape_written_timestamp_seconds"], "when it last wrote is still said"
+
+
+def test_a_record_file_that_is_there_and_broken_is_a_failed_read_and_a_missing_one_is_not(tmp_path, monkeypatch):
+    """Review of #742: the reader took a corrupt file for "the listener never started", so the counter never moved."""
+    from RevenueChaser.module_news import tape_state
+    path = tmp_path / "state.json"
+    monkeypatch.setattr(tape_state, "state_path", lambda: path)
+    before = metrics._errors["news"]
+    assert _families(metrics.render(_collect()))["rc_news_feed_state"] == []
+    assert metrics._errors["news"] == before, "no record yet is not an error"
+    path.write_text("{not json", encoding="utf-8")
+    assert _families(metrics.render(_collect()))["rc_news_feed_state"] == []
+    assert metrics._errors["news"] == before + 1
+    assert "cannot be read" in metrics.board_head(NOW, ibkr=lambda: None)["news"]["written_text"]
+
+
+def test_a_news_record_that_cannot_be_read_is_counted_and_the_rest_still_reports():
+    def boom():
+        raise RuntimeError("tape read exploded")
+
+    before = metrics._errors["news"]
+    fam = _families(metrics.render(_collect(news=boom)))
+    assert fam["rc_news_feed_state"] == [] and metrics._errors["news"] == before + 1
+    assert fam["rc_ibkr_state"], "the other parts are still read"
 
 
 def test_a_running_request_names_who_from_a_closed_set():
@@ -278,6 +356,18 @@ def test_the_board_head_says_the_switches_the_timer_and_the_gateway(monkeypatch)
     assert metrics.board_head(NOW, ibkr=lambda: None)["gateway"]["login"] == "https://gateway.example/"
 
 
+def test_the_board_head_carries_the_news_feeds_in_the_listener_s_words():
+    """#727: the Grafana board says the feeds beside the gateway; the words come from module_news/tape_state."""
+    view = {"state": "refused", "lead": "2 of 2 feeds refused: BRFG, DJNL", "feeds": []}
+    assert metrics.board_head(NOW, ibkr=lambda: None, news=lambda: view)["news"] == view
+
+    def boom():
+        raise RuntimeError("tape read exploded")
+
+    assert metrics.board_head(NOW, ibkr=lambda: None, news=boom)["news"] is None
+    assert metrics.board_head(NOW, ibkr=lambda: None)["news"]["state"] == "unknown", "no record yet reads as unknown"
+
+
 def test_the_detail_route_takes_the_pickers_range_and_refuses_a_backwards_one(client):
     body = client.get("/api/build/datasets?detail=1&from=1000&to=5000").get_json()
     assert body["ok"] and "head" in body and all("history" in d for d in body["datasets"] if "error" not in d)
@@ -311,3 +401,43 @@ def test_a_backup_kind_that_exists_in_two_steps_gets_two_distinct_series(monkeyp
     fam = _families(metrics.render(_collect()))["rc_backup_newest_timestamp_seconds"]
     labels = sorted(re.search(r'\{kind="([^"]+)"\}', line).group(1) for line in fam)
     assert labels == ["market", "prices (boards)", "prices (duckdb)"]
+
+
+def test_the_status_the_page_drew_as_cards_is_served_as_three_parts():
+    """#715 decision 8 (avo, 12 Nov 2026: status lives on the Grafana board): provider limits, the cross-check and
+    board freshness, each read on its own."""
+    spend = {"day": "2026-11-11", "providers": [{"provider": "uw", "today": 7, "cap": None, "http_429_today": 1}]}
+    seen = {}
+
+    def cross(used):
+        seen["used"] = used
+        return {"fields": [{"field": "prices", "differs": 0}]}
+
+    got = metrics.board_status(NOW, spend=lambda: spend, cross=cross, boards=lambda: {"boards": []})
+    assert got["providers"] == spend and got["boards"] == {"boards": []}
+    assert got["cross_check"]["fields"][0]["field"] == "prices"
+    assert seen["used"] == {"uw": 7}, "the cross-check is told what each provider has used today"
+    assert got["read_at"].startswith("2026-")
+
+
+def test_a_status_part_that_cannot_be_read_says_so_and_the_others_still_answer():
+    def boom(*_a):
+        raise RuntimeError("history file is locked")
+
+    got = metrics.board_status(NOW, spend=lambda: {"providers": []}, cross=boom, boards=boom)
+    assert got["providers"] == {"providers": []}
+    assert got["cross_check"] == {"error": "RuntimeError: history file is locked"}
+    assert got["boards"] == {"error": "RuntimeError: history file is locked"}
+    got = metrics.board_status(NOW, spend=boom, cross=lambda used: {"fields": [], "used": used},
+                               boards=lambda: {"boards": []})
+    assert "error" in got["providers"] and got["cross_check"]["used"] == {}
+
+
+def test_the_status_route_answers_with_the_three_parts(client):
+    ops.count_calls("uw", 4, http_429=1)
+    got = client.get("/api/settings/status")
+    assert got.status_code == 200
+    body = got.get_json()
+    assert body["ok"] is True and {"providers", "cross_check", "boards", "read_at"} <= set(body)
+    uw = [p for p in body["providers"]["providers"] if p["provider"] == "uw"][0]
+    assert uw["today"] == 4 and uw["http_429_today"] == 1

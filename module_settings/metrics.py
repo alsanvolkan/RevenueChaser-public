@@ -20,6 +20,7 @@ change on both sides.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 import threading
@@ -36,8 +37,12 @@ WHO = ("systemd", "claude", "unknown", "lost")
 STATES = ("fresh", "unchanged", "late", "stale", "never")
 #: The IBKR gateway's login states (core/ibkr_login.py), as label values; anything else reads ``unknown``.
 IBKR_STATES = ("up", "silent", "down", "unknown", "not_set")
+#: An IBKR news feed's states (module_news/tape_state.py), as label values; anything else reads ``unknown``.
+NEWS_STATES = ("refused", "live", "subscribed", "waiting", "unknown")
+# a feed id is an env value: only a plain one becomes a label (IBKR's provider codes carry a hyphen or a dot: DJ-N)
+_FEED_NAME = re.compile(r"[A-Za-z0-9_.-]{1,16}")
 #: The parts ``collect`` reads one by one; each starts its error counter at 0 so a first failure is an increase.
-PARTS = ("queue", "providers", "datasets", "builder", "timer", "backups", "switches", "ibkr")
+PARTS = ("queue", "providers", "datasets", "builder", "timer", "backups", "switches", "ibkr", "news")
 TIMER_EVERY_S = 60.0
 
 HELP = {
@@ -48,6 +53,7 @@ HELP = {
     "rc_provider_calls_today": ("gauge", "Calls to a provider on the current New York day."),
     "rc_provider_day_cap": ("gauge", "Our own day cap for a provider (absent: no cap)."),
     "rc_provider_failures_today": ("gauge", "Failed calls to a provider on the current New York day."),
+    "rc_provider_rate_limited_today": ("gauge", "HTTP 429 answers from a provider on the current New York day."),
     "rc_dataset_state": ("gauge", "1 for the dataset's current state (fresh, unchanged, late, stale, never)."),
     "rc_dataset_last_check_result": ("gauge", "The newest check's result: 0 changed or unchanged, 1 skipped, "
                                      "2 failed (higher is worse)."),
@@ -61,6 +67,10 @@ HELP = {
     "rc_switch_on": ("gauge", "1 when a switch (fetch, backup) is on."),
     "rc_ibkr_state": ("gauge", "1 for the IBKR gateway's current login state (up, silent, down, unknown, "
                       "not_set)."),
+    "rc_news_feed_state": ("gauge", "1 for an IBKR news feed's current state (refused, live, subscribed, waiting, "
+                           "unknown), by feed, from the news listener's own record."),
+    "rc_news_tape_written_timestamp_seconds": ("gauge", "When the news listener last wrote its record, epoch "
+                                               "seconds (absent: no record yet)."),
     "rc_threshold": ("gauge", "The thresholds the Data/Health page alarms at, from module_settings/control.py."),
     "rc_metrics_read_errors_total": ("counter", "Readers that failed since the dashboard started, by part."),
     "rc_metrics_build_seconds": ("gauge", "How long building this answer took."),
@@ -137,8 +147,16 @@ def _iso_epoch(value) -> float | None:
     return (when if when.tzinfo else when.replace(tzinfo=timezone.utc)).timestamp()
 
 
+def _news_tape(now: datetime) -> dict:
+    """The IBKR news feeds as the listener's record has them. A function-level import, so Settings gains no
+    module-level dependency on a board package."""
+    from RevenueChaser.module_news import tape, tape_state
+    return tape_state.collect(names=tape.feeds(), now=now)
+
+
 def collect(now: datetime | None = None, *, datasets: dict | None = None, timer: dict | None = None,
-            ibkr: Callable[[], dict | None] | None = None, cgroup=None, alive=None) -> dict[str, list]:
+            ibkr: Callable[[], dict | None] | None = None, cgroup=None, alive=None,
+            news: Callable[[], dict | None] | None = None) -> dict[str, list]:
     """``{family: [(labels, value), ...]}``. Each part is read on its own; a part that fails is left empty and
     counted, and a dataset that fails is left out of the dataset families and counted under ``datasets``.
     ``timer`` is the builder timer's reading (default: ``TIMER.get()``)."""
@@ -173,6 +191,7 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
             name = {"provider": str(p["provider"])}
             out["rc_provider_calls_today"].append((name, p["today"]))
             out["rc_provider_failures_today"].append((name, p["failures_today"]))
+            out["rc_provider_rate_limited_today"].append((name, p["http_429_today"]))
             if p.get("cap"):
                 out["rc_provider_day_cap"].append((name, p["cap"]))
 
@@ -248,8 +267,26 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
         for s in IBKR_STATES:
             out["rc_ibkr_state"].append(({"state": s}, 1 if s == state else 0))
 
+    def news_feeds() -> None:
+        # #727: the listener's record (module_news/tape_state.py), read as the Settings page read it: no socket
+        got = (news() if news is not None else _news_tape(now)) or {}
+        if got.get("unreadable"):             # a file that is there and cannot be read is a failed read, not "no record"
+            raise ValueError("the news listener's record cannot be read")
+        for f in got.get("feeds") or []:
+            name = str(f.get("feed") or "")
+            if not _FEED_NAME.fullmatch(name):
+                continue
+            # a record the listener stopped writing (tape_state.STALE_MINUTES) is what it last knew, not the present:
+            # a feed must not stay "live" for as long as the listener is dead
+            state = f.get("state") if f.get("state") in NEWS_STATES and not got.get("stale") else "unknown"
+            for s in NEWS_STATES:
+                out["rc_news_feed_state"].append(({"feed": name, "state": s}, 1 if s == state else 0))
+        written = _iso_epoch(got.get("written_at"))
+        if written is not None:
+            out["rc_news_tape_written_timestamp_seconds"].append(({}, written))
+
     parts = {"queue": queue, "providers": providers, "datasets": dataset_states, "builder": builder,
-             "timer": timer_part, "backups": backups, "switches": switches, "ibkr": gateway}
+             "timer": timer_part, "backups": backups, "switches": switches, "ibkr": gateway, "news": news_feeds}
     for name in PARTS:
         part(name, parts[name])
     for key, value in (("run_alert_share", control.RUN_ALERT), ("cap_alert_share", control.CAP_ALERT),
@@ -362,7 +399,8 @@ def datasets_detail(now: datetime | None = None, *, datasets: dict | None = None
     return out
 
 
-def board_head(now: datetime | None = None, *, ibkr: Callable[[], dict] | None = None) -> dict:
+def board_head(now: datetime | None = None, *, ibkr: Callable[[], dict] | None = None,
+               news: Callable[[], dict | None] | None = None) -> dict:
     """The Grafana RC Fetch board's head strip (avo, 10 Nov 2026: "bu main switchlerde icinde olsun"): the Fetch and
     Backup switches (on, off, or None when not known), the builder timer's state and the IBKR gateway as the RC page's
     top bar shows it, with its login address when ``RC_IBKR_LOGIN_URL`` holds a valid one. Never raises."""
@@ -391,9 +429,49 @@ def board_head(now: datetime | None = None, *, ibkr: Callable[[], dict] | None =
         files = {k: (rows.get(f"file-{k}") or {}).get("off_at") is None for k in ops.FILE_KINDS}
     except Exception:  # noqa: BLE001 - files not known: the board draws no file switch rather than a guessed one
         files = None
-    return {"switches": switches, "timer": timer.get("state"), "timer_fired": fired, "files": files,
+    # #727 (avo, 12 Nov 2026: status lives on the Grafana board): the news feeds in the listener's own words, so the
+    # board can say "2 of 2 feeds refused" with IBKR's code beside the gateway. None when it cannot be read.
+    try:
+        feeds = news() if news is not None else _news_tape(now)
+    except Exception:  # noqa: BLE001 - not known is drawn as not known
+        feeds = None
+    return {"switches": switches, "timer": timer.get("state"), "timer_fired": fired, "files": files, "news": feeds,
             "gateway": {"cls": cls, "n": n, "label": label.replace("IBKR gateway · ", ""),
                         "login": report._ibkr_login_href(inventory._ibkr_login_url())}}
+
+
+def board_status(now: datetime | None = None, *, spend: Callable[[], dict] | None = None,
+                 cross: Callable[[dict], dict] | None = None, boards: Callable[[], dict] | None = None) -> dict:
+    """``GET /api/settings/status``: the status the Settings page used to draw as HTML cards, for the Grafana
+    Fetch/Health board (#715 decision 8; avo, 12 Nov 2026: status lives in Grafana, the page explains the data).
+
+    Three parts, each read on its own, each ``{"error": ...}`` when it cannot be read, never a raise:
+    ``providers`` (calls, failures and HTTP 429 today, the week, our day cap, the newest UW sample), ``cross_check``
+    (the stored second-source report per field) and ``boards`` (each board's newest run against the files live now).
+
+    Unlike the scrape this opens served DuckDB files (the stored cross-check report, the run history), so it is a
+    route a panel asks when it is looked at, and not part of ``/metrics``."""
+    from RevenueChaser.module_settings import newdata
+    now = now or datetime.now(timezone.utc)
+
+    def read(fn):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 - one unreadable part is one line on the board
+            return {"error": f"{type(exc).__name__}: {exc}"[:300]}
+
+    providers = read(spend if spend is not None else lambda: newdata._spend(now))
+    rows = providers.get("providers") if isinstance(providers, dict) else None
+    used = {str(p["provider"]): int(p.get("today") or 0) for p in rows or []}
+
+    def freshness() -> dict:
+        from RevenueChaser.module_settings import freshness_tab
+        return freshness_tab.collect()
+
+    return {"read_at": now.isoformat(timespec="seconds"), "providers": providers,
+            "cross_check": read((lambda: cross(used)) if cross is not None
+                                else lambda: newdata.cross_check(now, {}, used)),
+            "boards": read(boards if boards is not None else freshness)}
 
 
 def datasets_list(datasets: dict | None = None) -> list[dict]:
