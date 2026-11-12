@@ -63,13 +63,19 @@ def _stored(sec, rows=None, documents=None) -> None:
 def _refiled(sec, rows, documents) -> None:
     """A later day's filing list and the documents it names, on disk.
 
-    ``sec/filings`` keeps the list it already stored (``_subs_raws``), so a backfill run again would re-read the
-    old one and the new filing would never arrive. A later day's run is what fetches a new list, and this is that
-    run's two steps.
+    ``sec/filings`` keeps the list it already stored (``_subs_raws``), so running its backfill again re-reads the
+    old one and a new filing never arrives. A later day's run is what fetches a new list, and this is that run's
+    steps -- except that the **list is written rather than answered**: ``HttpMock`` serves the first route whose
+    substring matches the URL, so a second route for the submissions URL can never win over the one the first run
+    added. The documents are new URLs, so those are ordinary routes.
     """
-    fx.filing_routes(sec, {MSFT: fx.submissions(789019, rows, "MICROSOFT CORP")}, documents)
+    for name, html in documents.items():
+        sec.add(f"/{name}", html)
+    raw = filings._subs_dir(MSFT) / f"{LATER.isoformat()}.json.gz"
+    base.write_raw_json(common.meta_path(raw), {"cik": MSFT, "as_of": LATER.isoformat(), "fetched_at": 2.0,
+                                                "run_id": "t-refiled"})
+    base.write_raw_json(raw, fx.submissions(789019, rows, "MICROSOFT CORP"))
     ctx = base.RunContext(run_id="t-refiled", dataset="test")
-    raw = filings.read_list(ctx, MSFT, LATER)
     filings.read_documents(ctx, MSFT, raw, LATER)
     filings.DATASET.to_parquet_all(ctx, [raw])
 
@@ -140,7 +146,9 @@ def test_a_new_filing_reaches_the_served_table(sec):
 
     _refiled(sec, [(NEW_K, "10-K", "2026-07-30", "2026-06-30", "msft-10k-26.htm", ""), *fx.MSFT_FILINGS],
              {"msft-10k-26.htm": annual(6_000)})
+    assert filings._doc_path(MSFT, NEW_K).exists(), "sec/filings stored the new document before anything is cut"
     check = _cut()
+    assert "1 of" in (check.get("note") or ""), check.get("note")
     assert check["result"] != "failed", check.get("note")
     assert q("SELECT section FROM filing_section WHERE accession = ? ORDER BY section", NEW_K) == [
         ("business",), ("whole",)]
