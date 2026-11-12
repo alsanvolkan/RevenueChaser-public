@@ -28,10 +28,12 @@ Raw: ``raw/uw/er_options/<S>/<TICKER>.json.gz``, the name's resume marker. ``er_
 inputs, the GEX levels and the option volume; its strikes, term structure and prints go to ``option_strike``,
 ``option_expiry`` and ``option_print`` as set ``earnings``, its tape to ``earnings_tape``.
 
-**The far prints** (the LEAPS market scan, group 3 G5): ``/option-trades?min_dte=183&min_premium=50000&limit=500``,
-the whole market's far-dated prints of the session, paged back with ``older_than`` (UW ignores ``page``, M5), at most
-``FAR_CALLS`` calls, until a page brings no new print. Raw: ``raw/uw/far_prints/<S>/prints.json.gz``.
-``option_far_print``: one row per print id, its last ``tables.FAR_PRINT_SESSIONS`` sessions served.
+**The far prints** (group 3 G5): ``/option-trades?min_dte=183&min_premium=50000&limit=500``, the market's
+far-dated prints, paged back with ``older_than`` (UW ignores ``page``, M5), at most ``FAR_CALLS`` calls, until a
+page brings no new print. Not the whole session: the feed is newest-first and both stored sessions sat on the
+3 x 500 ceiling, so what the table holds is the **end** of the session, nothing earlier (#730 item 4). Raw:
+``raw/uw/far_prints/<S>/prints.json.gz``. ``option_far_print``: one row per print id, its last
+``tables.FAR_PRINT_SESSIONS`` sessions served. It was the LEAPS scan's input; that board is switched off (#730).
 
 All of it takes a ``date`` or is fetched in the observed window (``uw.observed``) like the rest of the options data, so
 the screener row, the calendar and the earnings set of an evening are one moment. A run stops starting calls after
