@@ -146,7 +146,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Inter,system-u
 .lp-controls{display:flex;flex-direction:column;gap:8px}
 .lp select{height:44px;border-radius:6px;border:1px solid var(--input-border);background:var(--input-bg);
   color:var(--bright);padding:0 12px;font:500 14px Inter,system-ui,sans-serif;min-width:0}
-.lp-counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.lp-counts{display:grid;grid-template-columns:repeat(auto-fit,minmax(72px,1fr));gap:8px}
 .lp-counts div{display:flex;flex-direction:column;padding:8px;border-radius:6px;background:var(--card);
   border:1px solid var(--border)}
 .lp-counts b{font-size:16px;font-weight:600;color:var(--bright)}
@@ -190,7 +190,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Inter,system-u
 .c-x{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .c-x div{display:flex;flex-direction:column;min-width:0}
 .c-x small{font-size:11px;color:var(--muted)}
-.c-x b{font-size:14px;font-weight:600;color:var(--bright)}
+.c-x b{font-size:14px;font-weight:600;color:var(--bright);overflow-wrap:anywhere}
 .c-x em{font-style:normal;font-size:11px;color:var(--muted);white-space:nowrap}
 .c-f{display:flex;flex-wrap:wrap;gap:8px}
 .c-f:empty{display:none}
@@ -228,7 +228,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 Inter,system-u
   .c-x{grid-template-columns:repeat(4,minmax(0,1fr))}
   .c-x small{display:none}
   .c-x div{align-items:flex-end}
-  .c-f{gap:4px;min-width:0}.chip{font-size:11px;padding:2px 8px;white-space:normal}
+  .c-f{gap:4px;min-width:0}.chip{font-size:11px;padding:2px 8px;white-space:normal;border-radius:6px}
   .c-x em{white-space:normal}
 }
 """
@@ -310,7 +310,7 @@ document.getElementById('lp-side').addEventListener('change', function(ev){ LP.s
 document.getElementById('lp-sort').addEventListener('change', function(ev){ LP.sort = ev.target.value; lpDraw(); });
 document.getElementById('lp-more').addEventListener('click', function(){ LP.shown += PAGE_ROWS; lpDraw(); });
 document.getElementById('lp-session').addEventListener('change', function(ev){
-  location.search = '?session=' + encodeURIComponent(ev.target.value); });
+  if(ev.target.value && ev.target.value !== LP_DATA.session) location.search = '?session=' + encodeURIComponent(ev.target.value); });
 if(!LP_COUNT.stocks){ LP.product = LP_COUNT.etfs ? 'etfs' : (LP_COUNT.index ? 'index' : 'stocks'); }
 lpDraw();
 """
@@ -340,9 +340,9 @@ def render_html(data: dict) -> str:
     counts = "".join(
         f'<div{cls}><b>{n:,}</b><span class="lp-tiny lp-muted">{label}</span></div>'
         for n, label, cls in ((c["contracts"], "contracts", ""), (c["names"], "names", ""),
-                              (c["matched"], "matched", ""),
-                              (c["pending"], "waiting for open interest", "") if c["pending"] else
-                              (c["stale"], "stale or missing", ' class="warn"' if c["stale"] else "")))
+                              (c["matched"], "matched", ""), (c["pending"], "waiting for open interest", ""),
+                              (c["stale"], "stale or missing", ' class="warn"' if c["stale"] else ""))
+        if label != "waiting for open interest" or n)
     # While collecting nothing is ranked by the measure itself, so the opened-share sort comes with the 20th session.
     share_sort = "" if data["collecting"] else '<option value="share">Sort: opened share</option>'
     return f"""<!doctype html>

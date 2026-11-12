@@ -169,4 +169,6 @@ def test_after_twenty_sessions_the_board_stops_collecting_and_offers_the_share_s
 def test_the_counts_say_how_many_wait_for_their_open_interest(stored):
     data = board.payload()
     data["counts"] = dict(data["counts"], matched=0, pending=6, stale=0)
-    assert "waiting for open interest" in board.render_html(data)
+    page = board.render_html(data)
+    assert "waiting for open interest" in page and "stale or missing" in page, "a partial read keeps both counts"
+    assert "waiting for open interest" not in board.render_html(board.payload()), "shown only while some wait"
