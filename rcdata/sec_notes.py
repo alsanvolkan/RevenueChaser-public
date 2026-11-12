@@ -90,14 +90,40 @@ _ENTITY = re.compile(r"&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31
 #: What a tag still looks like after the escaped-markup pass. The pattern above is deliberately narrow -- it
 #: refuses a valueless attribute (``<td nowrap>``) and an HTML comment, and widening it to take them would also
 #: take ``<Table of Contents>``, which is somebody's sentence. So the leftovers stay in the text and are counted.
-_TAGGISH = re.compile(r"</?[a-zA-Z]|<!--")
-#: An escaped ``<style>`` or ``<script>`` and the text inside it. The real-markup path drops that text through
-#: :data:`_DROP_TAGS`; without this the escaped path would store a stylesheet as a note's prose.
-_ESCAPED_DROP = re.compile(r"<(script|style|noscript)\b[^<>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
+_TAGGISH = re.compile(r"</?[a-zA-Z]|<[!?]")
+#: An escaped ``<style>`` or ``<script>`` opening. The real-markup path drops the text inside one through
+#: :data:`_DROP_TAGS`; without :func:`_drop_escaped` the escaped path would store a stylesheet as a note's prose.
+#: The name must be the whole name, so ``<style-guide>`` -- which a note really does mention -- is not an opening.
+_ESCAPED_DROP = re.compile(r"<(script|style|noscript)(?:\s[^<>]*)?>", re.IGNORECASE)
+#: Its closing, one pattern per name, so a ``<style>`` is not closed by a ``</script>``.
+_ESCAPED_DROP_END = {n: re.compile(r"</%s\s*>" % n, re.IGNORECASE) for n in ("script", "style", "noscript")}
+
+
+def _drop_escaped(raw: str) -> str:
+    """``raw`` without its escaped ``<style>`` / ``<script>`` blocks, including the text inside them.
+
+    A scan rather than one ``re.sub`` with ``.*?``: a block holding many openings that nothing closes makes that
+    pattern re-scan to the end of the text once per opening, which is quadratic -- measured at 12.7 s on a 176 KB
+    block of 16,000 unclosed openings, and that is a shape a filer's broken HTML can reach in a 5,149-document
+    pass. Here each closing is found once, from where the last one ended, and an opening nothing closes ends the
+    scan and leaves the rest of the text exactly as it was.
+    """
+    low, out, at = raw.lower(), [], 0
+    while True:
+        open_at = _ESCAPED_DROP.search(raw, at)
+        if open_at is None:
+            break
+        end = _ESCAPED_DROP_END[open_at.group(1).lower()].search(low, open_at.end())
+        if end is None:
+            break
+        out.append(raw[at:open_at.start()])
+        at = end.end()
+    out.append(raw[at:])
+    return "".join(out)
 
 
 def local(qname: str | None) -> str:
-    """``us-gaap:DebtDisclosureTextBlock`` -> ``DebtDisclosureTextBlock``; also ``ix11:nonNumeric`` -> ``nonNumeric``."""
+    """``us-gaap:DebtDisclosureTextBlock`` -> ``DebtDisclosureTextBlock``; ``ix11:nonNumeric`` -> ``nonNumeric``."""
     return str(qname or "").rsplit(":", 1)[-1]
 
 
@@ -153,7 +179,7 @@ def text_of(parts: list[str], counts: dict | None = None) -> str:
         found = [m for m in _ESCAPED_TAG.finditer(raw) if m.group(2).lower() in _HTML_TAGS]
         structural = any(m.group(2).lower() in _STRUCTURAL_TAGS for m in found)
         if found and structural:
-            raw = _ESCAPED_DROP.sub("", raw)
+            raw = _drop_escaped(raw)
             found = [m for m in _ESCAPED_TAG.finditer(raw) if m.group(2).lower() in _HTML_TAGS]
             out, at = [], 0
             for m in found:
@@ -161,10 +187,14 @@ def text_of(parts: list[str], counts: dict | None = None) -> str:
                 out.append("\n" if m.group(2).lower() in _BREAK_TAGS else "")
                 at = m.end()
             out.append(raw[at:])
-            raw = _ENTITY.sub(lambda m: _html.unescape(m.group(0)), "".join(out))
+            stripped = "".join(out)
+            raw = _ENTITY.sub(lambda m: _html.unescape(m.group(0)), stripped)
             if counts is not None:
                 counts["escaped_markup"] = counts.get("escaped_markup", 0) + 1
-                if _TAGGISH.search(raw):
+                # Asked of the text *before* the entity pass, which turns the note's own ``&lt;`` into a ``<``:
+                # "a floor of &lt;LIBOR + 2%&gt;" is a clean block whose prose happens to end up with brackets in
+                # it, and asking afterwards called every one of those a leftover tag.
+                if _TAGGISH.search(stripped):
                     # The block was treated as a document and still holds something tag-shaped: a valueless
                     # attribute, an HTML comment, a prefixed tag, a name this module does not know. Its text is
                     # stored with that in it, so the row is readable but not clean, and a build report that said
@@ -419,20 +449,22 @@ def _chain(block: dict, conts: dict[str, dict], counts: dict) -> list[dict]:
     return out
 
 
-def _foreign(frames: set[int], seq: int, own_seqs: set[int], block_fids: set[int],
-             cont_owner: dict[int, int | None]) -> bool:
-    """Is any of ``frames`` a frame that belongs to a row other than this block or one enclosing it?
+def _foreign(frames: set[int], related: set[int], row_of_fid: dict[int, int]) -> bool:
+    """Is any of ``frames`` a frame belonging to a row this block is not related to?
 
-    A frame is another row's either because it is that row's own element, or because it is a continuation that
-    another block claims -- which is the case the first version of this check missed: it asked only about block
-    frames, so a chain element nested inside *another block's continuation* was counted twice in silence, which
-    is the exact thing the count exists to make visible.
+    A frame belongs to a row either as that row's own element or as a continuation the row claims. ``related``
+    holds this block and its whole line -- every row above it and every row below it -- because a note's own
+    subsections and the note they are part of share their text by design, and that is not an overlap. Only a
+    frame belonging to a row *off* this line means the same words are in two unrelated top-level rows.
+
+    Both earlier versions of this check asked the wrong question and were caught by a healthy document: the
+    first asked only about block frames, so an element inside another block's *continuation* was silent; the
+    second asked about the frames enclosing this block, which a parent that encloses its child through a
+    continuation is not -- so every multi-page note whose sub-block crosses a page break was reported as a fault.
     """
     for fid in frames:
-        if fid in block_fids:
-            return True
-        other = cont_owner.get(fid)
-        if other is not None and other != seq and other not in own_seqs:
+        row = row_of_fid.get(fid)
+        if row is not None and row not in related:
             return True
     return False
 
@@ -453,14 +485,17 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
 
     What the chain did: ``continuation_missing``, ``continuation_loop`` (per block that walks into one),
     ``continuation_duplicate_id``, ``continuation_no_id``, ``continuation_shared`` (per continuation two blocks
-    both claim, so its text is in both rows and the top-level sum is long), ``continuation_orphan`` (a
+    both claim, so its text is in both rows and the top-level sum is long), ``continuation_doubled`` (a chain
+    element enclosing an earlier element of its own chain, so one paragraph is stored twice in this row),
+    ``continuation_orphan`` (a
     continuation no chain reaches, so its text is in none), ``continuation_overlap`` (a chain element sitting
-    inside a different kept block, same effect as shared).
+    inside a frame belonging to a row off this block's line, same effect as shared).
 
-    What the nesting did: ``parent_cycle`` (two kept blocks each the other's parent, broken at the lowest
-    ``seq``, which would otherwise leave the filing with no top-level row at all), ``parent_dropped_as_empty`` (a parent that cut no text, so the row was re-pointed at
-    its nearest kept ancestor), ``child_text_outside_parent`` (a child whose own chain reached outside its
-    parent, so part of its text is in no top-level row and the sum is short).
+    What the nesting did: ``parent_cycle`` (two kept blocks each the other's parent, broken at the lowest ``seq``
+    of the cycle, which would otherwise leave the filing with no top-level row at all),
+    ``parent_dropped_as_empty`` (a parent that cut no text, so the row was re-pointed at its nearest kept
+    ancestor), ``child_text_outside_parent`` (a line of a child's text that is nowhere in the top-level row above
+    it, so the sum is short by that much).
 
     What the document did: ``unclosed`` (blocks or continuations still open at the end -- a truncated file, after
     which every later block is a child of one of them), ``unclosed_cover_fact``, ``unclosed_exclude`` (after
@@ -496,6 +531,8 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
     if orphans:
         counts["continuation_orphan"] = counts.get("continuation_orphan", 0) + len(orphans)
 
+    by_block = {b["seq"]: b for b in reader.blocks}
+
     def parent_of(block: dict) -> int | None:
         """The innermost kept block enclosing this one.
 
@@ -517,38 +554,54 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
             where = cont["enclosing"] if cont is not None else None
         return None
 
-    block_fids = {b["fid"] for b in reader.blocks}
-    #: The block each continuation element belongs to, by frame rather than by id, so that "this element is inside
-    #: a frame that belongs to another row" can be asked of a continuation and not only of a block.
-    cont_owner = {c["fid"]: owner.get(cid) for cid, c in reader.conts.items()}
-    seq_of_fid = {b["fid"]: b["seq"] for b in reader.blocks}
+    #: The row every frame belongs to: a block's own element, and each continuation the owner map gives a block.
+    row_of_fid = {b["fid"]: b["seq"] for b in reader.blocks}
+    for cid, cont in reader.conts.items():
+        at = owner.get(cid)
+        if at is not None:
+            row_of_fid[cont["fid"]] = at
+    #: Each block's whole line: itself, every row above it, every row below it. Computed once, from the parents
+    #: alone, and bounded -- a document can put two blocks in each other's line, and this runs before the cycle
+    #: among kept rows is broken.
+    lineage: dict[int, set[int]] = {}
+    for block in reader.blocks:
+        at, up = parent_of(block), {block["seq"]}
+        while at is not None and at not in up:
+            up.add(at)
+            at = parent_of(by_block[at])
+        lineage[block["seq"]] = up
+    related: dict[int, set[int]] = {b["seq"]: set(lineage[b["seq"]]) for b in reader.blocks}
+    for seq, up in lineage.items():
+        for above in up:
+            related[above].add(seq)
+
     made: dict[int, Note] = {}
     for block in reader.blocks:
         parts = list(block["parts"])
         read_through = {block["fid"]}
-        #: The frames this block is itself inside. An element in one of them is **not** an overlap: a child note
-        #: and its chain live inside their parent, which is ordinary nesting and the common shape in a filing.
-        own = set(block["ancestors"])
-        own_seqs = {seq_of_fid[f] for f in own if f in seq_of_fid}
-        used: list[set[int]] = []
+        read_ancestors: list[set[int]] = []
         for cont in chains[block["seq"]]:
             ancestors = set(cont["ancestors"])
             # A chain element already inside this block, or inside an earlier element of the same chain, has
             # been collected once through that frame; appending it again would store the paragraph twice.
             if read_through & ancestors:
                 continue
-            if _foreign(ancestors - read_through - own, block["seq"], own_seqs, block_fids, cont_owner):
-                # The element sits inside a frame belonging to a block that is not this one and does not enclose
-                # it, so its words are in two top-level rows and the document does not say which. Kept in both, as
-                # the page reads, and counted: the top-level sum is long by that much.
+            if any(cont["fid"] in anc for anc in read_ancestors):
+                # The other way round, and the one the guard above cannot see: this element *encloses* an element
+                # of the same chain that was read earlier, so its own text already holds that paragraph and
+                # appending it stores the paragraph twice. Stored as the chain reads it, because dropping either
+                # piece would lose the rest of this element, and counted -- this row's ``chars`` is long.
+                counts["continuation_doubled"] = counts.get("continuation_doubled", 0) + 1
+            if _foreign(ancestors - read_through, related[block["seq"]], row_of_fid):
+                # The element sits inside a frame belonging to a row off this block's line, so its words are in
+                # two unrelated top-level rows and the document does not say which. Kept in both, as the page
+                # reads, and counted: the top-level sum is long by that much.
                 counts["continuation_overlap"] = counts.get("continuation_overlap", 0) + 1
             if parts and cont["parts"]:
                 parts.append("\n")
             parts.extend(cont["parts"])
             read_through.add(cont["fid"])
-            used.append(ancestors)
-        block["covers"] = set(read_through)
-        block["used"] = [own] + used
+            read_ancestors.append(ancestors)
         text = text_of(parts, counts)
         if not text:
             counts["empty"] = counts.get("empty", 0) + 1
@@ -600,21 +653,32 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
         while at is not None and at not in seen:
             seen.add(at)
             at = final.get(at)
-        if at is not None:
+        if at == note.seq:
+            # ``at is not None`` is a different question: it is true for a row that merely *leads into* a cycle,
+            # and cutting that row loose leaves the cycle standing and counts its text twice.
             counts["parent_cycle"] = counts.get("parent_cycle", 0) + 1
             notes[i] = replace(note, parent_seq=None, top_level=True)
             final[note.seq] = None
 
-    # A child's own chain can reach outside its parent, so part of its text is in no top-level row at all and the
-    # acceptance sum is short. Asked of the frames and not of the strings: a child's words are inside its parent
-    # when every frame that fed the child sits inside a frame the parent itself read through. A substring test
-    # looks like the same question and is not -- the stitch's own "\n" between two chain elements is enough to
-    # defeat it, and then every ordinary nested note with a continuation is reported as a fault.
+    # A child's own chain can reach outside the row that holds it, so part of its text is in no top-level row at
+    # all and the acceptance sum is short by that much. Which is the claim, so it is the thing measured: the
+    # child's words against the **top-level** row above it, not against its immediate parent -- a grandchild
+    # whose chain leaves its parent but stays inside the grandparent costs the sum nothing.
+    #
+    # Asked one line at a time, and not of the child's text as one string. The child's words can be in the row
+    # above it without being contiguous there -- the parent has its own paragraph between the two halves of a
+    # sub-block that continues after a page break, and that is the ordinary shape of a long note. A line is the
+    # unit the filer's own markup gives, and a line that is nowhere in the row above is text the sum has lost.
+    rows = {n.seq: n for n in notes}
     for note in notes:
-        if note.parent_seq is None:
+        at, seen = note.parent_seq, {note.seq}
+        while at is not None and at not in seen and not rows[at].top_level:
+            seen.add(at)
+            at = rows[at].parent_seq
+        if at is None or at in seen:
             continue
-        covers = by_seq[note.parent_seq]["covers"]
-        if any(not (frames & covers) for frames in by_seq[note.seq]["used"]):
+        above = rows[at].text
+        if any(line and line not in above for line in note.text.split("\n")):
             counts["child_text_outside_parent"] = counts.get("child_text_outside_parent", 0) + 1
     return notes, counts
 

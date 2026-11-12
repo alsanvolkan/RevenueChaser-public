@@ -297,7 +297,8 @@ ESCAPED_WITH_ATTRIBUTES = HEADER + """
 <ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
 &lt;style&gt;.n{font-weight:bold}&lt;/style&gt;&lt;p style="margin:0"&gt;Note 7. Debt&lt;/p&gt;
 &lt;p&gt;Filed&amp;nbsp;at x.test/f?id=1&amp;copy=2 by &lt;a href="https://x.test"&gt;us&lt;/a&gt;.&lt;/p&gt;
-&lt;table&gt;&lt;tr&gt;&lt;td nowrap&gt;Term loan&lt;/td&gt;&lt;td align="right"&gt;500&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
+&lt;table&gt;&lt;tr&gt;&lt;td nowrap&gt;Term loan&lt;/td&gt;
+&lt;td align="right"&gt;500&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;
 &lt;span class="x"&gt;That is &lt;b&gt;all&lt;/b&gt;.&lt;/span&gt;</ix:nonNumeric>""" + _END
 
 #: A cover fact and a ``<style>`` the filer never closed. Each is its own silence: the first swallows every later
@@ -310,3 +311,93 @@ UNCLOSED_STYLE = HEADER + """
 <ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock"><p>Note 7. Debt</p>
 <style>.n{font-weight:bold}
 <p>Never read, because the parser is still in the stylesheet.</p>""" + _END
+
+# ── shapes the fourth review round showed nothing reached ──────────────────────────────────────────────────────
+
+#: A long note over three pages, with a sub-block whose table starts on page two and ends on page three. The
+#: child's chain is inside the *parent's continuation*, not inside the parent's own element -- which is what
+#: every multi-page note looks like, and what round 3's fix reported as ``continuation_overlap``.
+MULTI_PAGE_NOTE_WITH_A_SUB_BLOCK = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="g2"><p>Note 7. Debt</p>
+  </ix:nonNumeric>
+<ix:continuation id="g2" continuedAt="g3"><p>Page two.</p>
+  <ix:nonNumeric contextRef="FY" name="us-gaap:ScheduleOfDebtTableTextBlock" continuedAt="c2"><p>Table top.</p>
+  </ix:nonNumeric></ix:continuation>
+<ix:continuation id="g3"><ix:continuation id="c2"><p>Table bottom.</p></ix:continuation>
+  <p>Page three.</p></ix:continuation>""" + _END
+
+#: Parent and child continued by two elements that wrap the same text, with the child's outermost. Nothing in
+#: the spec orders those two, and round 3's fix answered differently depending on which came first.
+COEXTENSIVE_CONTINUATIONS = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="g2"><p>Debt.</p>
+  <ix:nonNumeric contextRef="FY" name="us-gaap:ScheduleOfDebtTableTextBlock" continuedAt="c2"><p>Table top.</p>
+  </ix:nonNumeric></ix:nonNumeric>
+<ix:continuation id="c2"><ix:continuation id="g2"><p>Table bottom.</p></ix:continuation></ix:continuation>""" + _END
+
+#: A grandchild whose chain leaves its parent but stays inside the grandparent. Its words are in a top-level row,
+#: so the acceptance sum is not short and nothing should be counted.
+CHILD_CHAIN_INSIDE_THE_GRANDPARENT = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="G"><p>Note 7. Debt</p>
+  <ix:nonNumeric contextRef="FY" name="us-gaap:ScheduleOfDebtTableTextBlock"><p>Table.</p>
+    <ix:nonNumeric contextRef="FY" name="us-gaap:LongTermDebtTextBlock" continuedAt="k"><p>Loan.</p>
+    </ix:nonNumeric></ix:nonNumeric></ix:nonNumeric>
+<ix:continuation id="G"><ix:continuation id="k"><p>Loan continued.</p></ix:continuation></ix:continuation>""" + _END
+
+#: A child continued inside one of the parent's own paragraphs, so the parent reads it as one sentence and the
+#: child is stored as two lines. The difference is the stitch's newline and nothing else.
+CHILD_CONTINUED_INSIDE_ONE_PARAGRAPH = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock">Note 7. The loan
+  <ix:nonNumeric contextRef="FY" name="us-gaap:LongTermDebtTextBlock" continuedAt="s2">bears interest
+  </ix:nonNumeric><ix:continuation id="s2">at 5%.</ix:continuation> It matures in 2029.
+  </ix:nonNumeric>""" + _END
+
+#: A child whose out-of-parent continuation carries no text at all: nothing is missing from the row above it.
+EMPTY_CHAIN_ELEMENT_OUTSIDE_THE_PARENT = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock"><p>Note 7. Debt</p>
+  <ix:nonNumeric contextRef="FY" name="us-gaap:LongTermDebtTextBlock" continuedAt="c2"><p>Term loan.</p>
+  </ix:nonNumeric></ix:nonNumeric>
+<ix:continuation id="c2"></ix:continuation>""" + _END
+
+#: A row that merely *leads into* a cycle: 0 -> 1 -> 2 -> 1. Breaking it at the row with the lowest ``seq``
+#: rather than at a row on the cycle leaves the cycle standing and counts row 0's text twice.
+TAIL_INTO_A_PARENT_CYCLE = HEADER + """
+<ix:continuation id="x"><ix:nonNumeric contextRef="FY" name="us-gaap:LeasesTextBlock"><p>Zero.</p>
+  </ix:nonNumeric></ix:continuation>
+<ix:continuation id="d1"><ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock"
+  continuedAt="d2"><p>One.</p></ix:nonNumeric></ix:continuation>
+<ix:continuation id="d2" continuedAt="x"><ix:nonNumeric contextRef="FY" name="us-gaap:LongTermDebtTextBlock"
+  continuedAt="d1"><p>Two.</p></ix:nonNumeric></ix:continuation>""" + _END
+
+#: The chain's first element nested inside its second, so the second's own text already holds the first's: one
+#: paragraph lands in the row twice. The mirror of ``CONTINUATION_INSIDE_ITS_OWN_BLOCK``, and the direction the
+#: doubling guard could not see.
+CHAIN_ELEMENT_ENCLOSING_AN_EARLIER_ONE = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="e"><p>Note 7. Debt</p>
+  </ix:nonNumeric>
+<ix:continuation id="k"><p>Outer.</p>
+  <ix:continuation id="e" continuedAt="k"><p>Inner paragraph.</p></ix:continuation></ix:continuation>""" + _END
+
+#: An escaped note that is clean: its own prose brackets arrive escaped twice, an ``<article>`` and a multi-line
+#: ``<STYLE>`` in the other case are markup, two stylesheets have a paragraph between them that must survive, and
+#: a note really does mention ``<style-guide>``, which is a word and not an opening tag. A ``<!DOCTYPE`` is a
+#: leftover: nothing here removes it, so the row is counted as not clean.
+CLEAN_ESCAPED_NOTE = HEADER + """
+<ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
+&lt;STYLE type="text/css"&gt;.n{
+font-weight:bold}&lt;/style&gt;&lt;article&gt;&lt;p&gt;A floor of &amp;lt;LIBOR + 2%&amp;gt; applies.&lt;/p&gt;
+&lt;p&gt;It holds while a &lt; b, whatever the filer escaped.&lt;/p&gt;&lt;style&gt;.m{}&lt;/style&gt;
+&lt;p&gt;That is all.&lt;/p&gt;&lt;/article&gt;</ix:nonNumeric>""" + _END
+
+#: An escaped note that mentions ``<style-guide>``, which is a word a note really uses and not an opening tag,
+#: and that holds an escaped ``<script>`` as well as an escaped ``<style>``. The word must survive: a stripper
+#: whose opening is "``<style``, then anything" would take it and eat the sentence up to the real stylesheet's
+#: close. It stays in the text, and because it is tag-shaped the row is counted as not clean, which is honest --
+#: this row is readable and we know it carries something we did not take out.
+ESCAPED_NOTE_MENTIONING_A_STYLE_TAG = HEADER + """
+<ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
+&lt;p&gt;See our &lt;style-guide&gt; for house style.&lt;/p&gt;
+&lt;style&gt;.m{font-weight:bold}&lt;/style&gt;&lt;script&gt;alert(1)&lt;/script&gt;
+&lt;p&gt;That is all.&lt;/p&gt;</ix:nonNumeric>""" + _END
+ESCAPED_WITH_A_DOCTYPE = HEADER + """
+<ix:nonNumeric contextRef="FY" escape="true" name="us-gaap:DebtDisclosureTextBlock">
+&lt;!DOCTYPE html&gt;&lt;p&gt;Note 7. Debt&lt;/p&gt;</ix:nonNumeric>""" + _END

@@ -33,6 +33,12 @@ import pytest
 from RevenueChaser.rcdata import sec_notes as notes
 
 from .sec_notes_fixture import (BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN, BROKEN_CHAIN,
+                                CHAIN_ELEMENT_ENCLOSING_AN_EARLIER_ONE, CHILD_CHAIN_INSIDE_THE_GRANDPARENT,
+                                CHILD_CONTINUED_INSIDE_ONE_PARAGRAPH, CLEAN_ESCAPED_NOTE,
+                                COEXTENSIVE_CONTINUATIONS, EMPTY_CHAIN_ELEMENT_OUTSIDE_THE_PARENT,
+                                ESCAPED_NOTE_MENTIONING_A_STYLE_TAG, ESCAPED_WITH_A_DOCTYPE,
+                                MULTI_PAGE_NOTE_WITH_A_SUB_BLOCK,
+                                TAIL_INTO_A_PARENT_CYCLE,
                                 CHAIN_ELEMENT_INSIDE_ANOTHER_BLOCK, CHAIN_INSIDE_ANOTHER_BLOCKS_CONTINUATION,
                                 ESCAPED_WITH_ATTRIBUTES, HEALTHY_NESTED_CHILD_CHAIN, KEPT_GRANDPARENT_EMPTY_PARENT,
                                 MUTUAL_PARENT_BLOCKS, THREE_BLOCKS_ONE_CONTINUATION, UNCLOSED_COVER_FACT,
@@ -199,6 +205,31 @@ def test_a_chain_element_inside_a_different_block_is_kept_in_both_rows_and_count
     assert all(n.top_level for n in by_name.values()), "enclosed by a continuation, not by the block itself"
 
 
+@pytest.mark.parametrize("html,what", [
+    (MULTI_PAGE_NOTE_WITH_A_SUB_BLOCK, "a sub-block whose table crosses a page break"),
+    (COEXTENSIVE_CONTINUATIONS, "two continuations wrapping the same text, the child's outermost"),
+    (CHILD_CHAIN_INSIDE_THE_GRANDPARENT, "a grandchild whose chain leaves its parent but not its grandparent"),
+    (CHILD_CONTINUED_INSIDE_ONE_PARAGRAPH, "a child continued inside one of the parent's own paragraphs"),
+    (EMPTY_CHAIN_ELEMENT_OUTSIDE_THE_PARENT, "a child whose out-of-parent continuation carries no text"),
+])
+def test_the_shapes_of_a_long_note_count_nothing(html, what):
+    """Five documents that are **fine**, each of which a version of this reader called a fault.
+
+    The two counts about nesting have now been wrong in four ways between them, and every one was found by a
+    healthy document rather than by a broken one: "inside any other block" (a child's parent is one), "a
+    substring of the parent" (the stitch's own newline defeats it), "inside a frame enclosing this block" (a
+    parent that encloses its child through a continuation is not one -- and that is every multi-page note), and
+    "against the immediate parent" (a grandparent holding the words costs the sum nothing). The whole dict is
+    the assertion, because this is the failure mode that matters: a count that fires on the ordinary shape makes
+    every row of every filing carry a complaint, and then the report is not read at all.
+    """
+    rows, counts = notes.parse(html)
+    assert counts == {"not_a_block": 3}, what
+    assert len(rows) >= 2 and rows[0].top_level
+    for note in rows[1:]:
+        assert note.parent_seq is not None, "these are nested notes; none of them is top-level"
+
+
 def test_the_overlap_is_seen_one_level_down_as_well():
     """The same double count through a continuation instead of a block: the element sits inside *another block's*
     continuation. The first version of this check asked only about block frames, so this one was silent -- which
@@ -229,6 +260,17 @@ def test_a_continuation_with_no_id_at_all_is_counted_and_its_text_reaches_no_blo
     (note,) = rows
     assert note.text == "Note 7. Debt" and "no id to reach it by" not in note.text
     assert counts["continuation_no_id"] == 1 and counts["continuation_missing"] == 1
+
+
+def test_a_chain_element_that_encloses_an_earlier_one_stores_the_paragraph_twice_and_says_so():
+    """The mirror of a chain element inside its own block, and the direction the doubling guard could not see:
+    the chain's first element is nested inside its second, so the second's own text already holds the first's.
+    Both pieces are kept, because dropping either loses the rest of that element, and ``chars`` is long by one
+    paragraph -- which only a count can say."""
+    rows, counts = notes.parse(CHAIN_ELEMENT_ENCLOSING_AN_EARLIER_ONE)
+    (note,) = rows
+    assert note.text.count("Inner paragraph.") == 2
+    assert counts["continuation_doubled"] == 1
 
 
 # ── nesting ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -265,7 +307,9 @@ def test_every_parent_seq_names_a_row_that_exists_and_no_row_is_its_own_parent()
                  SHARED_CONTINUATION, CONTINUED, IFRS_AND_PREFIXES, EMPTY_PARENT_BLOCK,
                  CHAIN_ELEMENT_INSIDE_ANOTHER_BLOCK, CHILD_CHAIN_LEAVES_ITS_PARENT, UNCLOSED_EXCLUDE,
                  HEALTHY_NESTED_CHILD_CHAIN, KEPT_GRANDPARENT_EMPTY_PARENT, MUTUAL_PARENT_BLOCKS,
-                 BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN, THREE_BLOCKS_ONE_CONTINUATION, UNCLOSED_STYLE):
+                 BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN, THREE_BLOCKS_ONE_CONTINUATION, UNCLOSED_STYLE,
+                 MULTI_PAGE_NOTE_WITH_A_SUB_BLOCK, COEXTENSIVE_CONTINUATIONS, CHILD_CHAIN_INSIDE_THE_GRANDPARENT,
+                 TAIL_INTO_A_PARENT_CYCLE, CHILD_CONTINUED_INSIDE_ONE_PARAGRAPH):
         rows, _ = notes.parse(html)
         seqs = {n.seq for n in rows}
         for n in rows:
@@ -320,13 +364,26 @@ def test_two_blocks_that_are_each_other_s_parent_do_not_leave_the_filing_with_no
     assert notes.top_level_chars(rows) > 0
 
 
+def test_a_row_that_only_leads_into_a_cycle_is_not_the_one_cut_loose():
+    """``0 -> 1 -> 2 -> 1``: row 0 is not on the cycle. Cutting the lowest ``seq`` that *reaches* a repeat
+    detaches row 0, leaves 1 and 2 pointing at each other, and counts row 0's text twice. One break, on the
+    cycle, is the whole job."""
+    rows, counts = notes.parse(TAIL_INTO_A_PARENT_CYCLE)
+    assert counts["parent_cycle"] == 1
+    assert [n.top_level for n in rows] == [False, True, False]
+    assert notes.top_level_chars(rows) == rows[1].chars == 15
+
+
 def test_a_block_claiming_the_continuation_it_sits_inside_is_not_its_own_parent():
     """The owner map then names the block itself, and a row whose ``parent_seq`` is its own ``seq`` is a cycle of
     one: #757 would store it, and the top-level sum would be zero."""
-    rows, _ = notes.parse(BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN)
+    rows, counts = notes.parse(BLOCK_CLAIMING_THE_CONTINUATION_IT_SITS_IN)
     (note,) = rows
     assert note.parent_seq is None and note.top_level
     assert note.seq == 1 and note.parent_seq != note.seq
+    # The whole dict, because the rows alone come out the same whether the walk leaves on ``parent == seq`` or
+    # the cycle pass cleans up afterwards -- and the second one reports a ``parent_cycle`` that did not happen.
+    assert counts == {"not_a_block": 3, "empty": 1, "parent_dropped_as_empty": 1}
 
 
 def test_three_blocks_on_one_continuation_count_the_continuation_once():
@@ -489,6 +546,39 @@ def test_an_escaped_note_with_attributes_a_table_and_a_url_comes_out_as_prose():
                          "<td nowrap>Term loan\n500\nThat is all.")
     assert "font-weight" not in note.text, "an escaped stylesheet is markup here too, not the note's prose"
     assert counts["escaped_markup"] == 1 and counts["escaped_markup_residue"] == 1
+
+
+def test_a_clean_escaped_note_is_not_reported_as_unclean():
+    """``escaped_markup_residue`` asked after the entity pass called every one of these a leftover tag: the pass
+    turns the note's own ``&amp;lt;`` into a ``<``, so clean prose about a rate floor read as half-stripped
+    markup. This document also pins the parts of the drop that no other case reaches -- a multi-line ``<STYLE
+    type="text/css">`` in the other case, an ``<article>``, two stylesheets with a paragraph between them that
+    must survive, and ``<style-guide>``, which is a word a note really uses and not an opening tag."""
+    rows, counts = notes.parse(CLEAN_ESCAPED_NOTE)
+    (note,) = rows
+    assert note.text == ("A floor of <LIBOR + 2%> applies.\n"
+                         "It holds while a < b, whatever the filer escaped.\n"
+                         "That is all.")
+    assert counts == {"not_a_block": 3, "escaped_markup": 1}
+
+
+def test_a_note_that_mentions_a_style_tag_keeps_the_sentence_and_is_counted_as_unclean():
+    """``<style-guide>`` is a word, and an opening of "``<style``, then anything" takes it and eats the sentence
+    up to the real stylesheet's close. It stays, and because it is tag-shaped the row is counted as not clean --
+    readable, and known to carry something nothing took out. The escaped ``<script>`` beside it is markup and
+    goes, which is why a drop that knows only ``<style>`` is not enough."""
+    rows, counts = notes.parse(ESCAPED_NOTE_MENTIONING_A_STYLE_TAG)
+    (note,) = rows
+    assert note.text == "See our <style-guide> for house style.\nThat is all."
+    assert "alert(1)" not in note.text and "font-weight" not in note.text
+    assert counts["escaped_markup_residue"] == 1
+
+
+def test_a_declaration_left_in_an_escaped_block_counts_as_residue():
+    """``<!DOCTYPE`` is not a tag the pattern takes, so it stays in the text. Counted, so the row is readable
+    and known not to be clean, rather than quietly odd."""
+    rows, counts = notes.parse(ESCAPED_WITH_A_DOCTYPE)
+    assert "<!DOCTYPE html>" in rows[0].text and counts["escaped_markup_residue"] == 1
 
 
 def test_a_table_s_cells_do_not_run_together():
