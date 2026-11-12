@@ -36,8 +36,9 @@ name makes one.
 """
 from __future__ import annotations
 
+import html as _html
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from html.parser import HTMLParser
 
@@ -62,13 +63,29 @@ _SPACES = re.compile(r"[^\S\n]+")
 #: Runs of line breaks become one. The breaks come from the filer's markup, and one either way means a block's
 #: ``chars`` says the same thing however deep the tags went.
 _NEWLINES = re.compile(r"\n+")
+#: The HTML tags a filer's note is written with. A name outside this set is not markup, whatever it looks like:
+#: ``<LIBOR + 2%>`` and ``<Table of Contents>`` are prose, and the first two attempts at this module deleted both.
+_HTML_TAGS = frozenset((
+    "a", "b", "big", "blockquote", "br", "caption", "center", "col", "colgroup", "dd", "div", "dl", "dt", "em",
+    "font", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "i", "img", "label", "li", "nobr", "ol", "p", "pre", "s",
+    "script", "section", "small", "span", "strike", "strong", "style", "sub", "sup", "table", "tbody", "td",
+    "tfoot", "th", "thead", "tr", "u", "ul",
+))
+#: A tag whose presence means the block really is a document: a filer's escaped note has paragraphs or a table.
+#: Without one of these, a lone ``<b>`` is somebody writing about markup, and the text is left exactly as filed.
+_STRUCTURAL_TAGS = frozenset(("p", "div", "br", "table", "tr", "td", "th", "li", "ul", "ol", "blockquote"))
 #: A tag-shaped run, for the rare block whose markup arrived **escaped** (``&lt;p&gt;``) and so reached us as
-#: text. Deliberately narrow, because prose keeps its own angle brackets: no space is allowed between the ``<``
-#: and the name, and the name must start with a letter. So ``<p>``, ``</p>``, ``<br/>`` and ``<span class="x">``
-#: match, while "customers below < 5% of revenue", "margins > 30%" and "a < b and b > c" do not. An earlier
-#: version of this module ran ``sec_sections.strip_html`` over every block and deleted everything between a prose
-#: ``<`` and the next ``>``, which took two paragraphs out of a debt note and counted nothing.
-_ESCAPED_TAG = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9]*)(?:\s[^<>]*?)?/?>")
+#: text. Narrow on three counts, because every character between two angle brackets may be somebody's sentence:
+#: the ``<`` is followed immediately by the name, the name must be in :data:`_HTML_TAGS`, and anything after it
+#: must be attribute-shaped (``name="value"``). So ``<p>``, ``</p>``, ``<br/>`` and ``<span class="x">`` match,
+#: while ``a<b and c>d``, ``EBITDA<x and leverage>y``, ``<LIBOR + 2%>``, ``a < b``, ``<=``, ``<3`` and ``<1>`` do
+#: not. Both earlier versions of this module ate at least one of those and counted the loss as a success.
+_ESCAPED_TAG = re.compile(r"""<(/?)([a-zA-Z][a-zA-Z0-9]{0,9})
+                              ((?:\s+[a-zA-Z_:][\w.:-]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>]*))*)\s*/?>""",
+                          re.VERBOSE)
+#: One entity, with its semicolon. ``html.unescape`` also accepts the legacy names without one, which turns the
+#: query string ``?id=1&copy=2`` into ``?id=1©=2``; the second pass must not do that to a note.
+_ENTITY = re.compile(r"&(#\d{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]{1,31});")
 
 
 def local(qname: str | None) -> str:
@@ -108,26 +125,37 @@ def kind_of(qname: str | None) -> str:
 def text_of(parts: list[str], counts: dict | None = None) -> str:
     """The parts of one block as stored text: no tags, no repeated line breaks, no trailing space on a line.
 
-    The parser has already taken the real tags out, so what arrives here is prose. The one exception is a filer
-    that **escaped** its own markup, which reaches us as the text ``<p>``; a tag-shaped run is turned into a line
-    break or dropped, and counted as ``escaped_markup``. Nothing else that looks like an angle bracket is touched:
-    a note may say "customers below < 5% of revenue", and that is not markup.
+    The parser has already taken the real tags out, so what arrives here is prose, and prose keeps its angle
+    brackets: a note says "customers below < 5% of revenue", "EBITDA<x and leverage>y", "a floor of
+    <LIBOR + 2%>". None of that is markup and none of it is touched.
+
+    The one exception is a filer that **escaped** its own markup, which reaches us as the text ``<p>``. A block is
+    treated as that only when it holds a tag-shaped run (see :data:`_ESCAPED_TAG`) whose name is a real HTML tag
+    **and** at least one of those is structural -- a paragraph, a line break, a table, a list item. A lone
+    ``<b>`` in a sentence about markup is not a document, so nothing is removed and the text is stored as filed.
+    What was recognised is counted either way: ``escaped_markup`` when the block was treated as a document,
+    ``tag_shaped_text`` when it was left alone, so neither decision is invisible in a build report.
 
     A block that was escaped was escaped whole, so its entities were escaped twice (``&amp;nbsp;``) and the parser
-    undid one pass. The second pass runs here, and **only** where a tag-shaped run proves the block really was
-    escaped -- unescaping every block twice would turn a note that writes ``&amp;lt;b&amp;gt;`` on purpose into
-    one that appears to contain a tag.
+    undid one pass. The second pass runs here, and only on that block, and only on entities written with their
+    semicolon -- ``html.unescape`` over the whole string would turn ``?id=1&copy=2`` into ``?id=1©=2``.
     """
     raw = "".join(parts)
     if "<" in raw:
-        def _tag(m: re.Match) -> str:
-            return "\n" if m.group(2).lower() in _BREAK_TAGS else ""
-        raw, found = _ESCAPED_TAG.subn(_tag, raw)
-        if found:
-            import html as _html
-            raw = _html.unescape(raw)
+        found = [m for m in _ESCAPED_TAG.finditer(raw) if m.group(2).lower() in _HTML_TAGS]
+        structural = any(m.group(2).lower() in _STRUCTURAL_TAGS for m in found)
+        if found and structural:
+            out, at = [], 0
+            for m in found:
+                out.append(raw[at:m.start()])
+                out.append("\n" if m.group(2).lower() in _BREAK_TAGS else "")
+                at = m.end()
+            out.append(raw[at:])
+            raw = _ENTITY.sub(lambda m: _html.unescape(m.group(0)), "".join(out))
             if counts is not None:
                 counts["escaped_markup"] = counts.get("escaped_markup", 0) + 1
+        elif found and counts is not None:
+            counts["tag_shaped_text"] = counts.get("tag_shaped_text", 0) + 1
     lines = [_SPACES.sub(" ", line).strip() for line in raw.split("\n")]
     return _NEWLINES.sub("\n", "\n".join(lines)).strip()
 
@@ -143,6 +171,7 @@ class Note:
     seq: int
     top_level: bool         #: no kept block encloses it, so its text is counted once
     parent_seq: int | None  #: the enclosing kept block's ``seq``, or None when ``top_level``
+    context_ref: str | None  #: the fact's own ``contextRef``, as filed
     period_end: date | None
     text: str
     chars: int
@@ -153,11 +182,17 @@ class Note:
         ``document`` is in the key because ``seq`` counts within one file: an accession can hold more than one
         inline-XBRL document, each starting again at 0, and without it the second one's rows would collide with
         the first's (#754 parses one document at a time and passes its name).
+
+        ``context_ref`` is stored but not in the key, because it is the only thing that tells two otherwise
+        identical rows apart: a combined-registrant filing tags the same concept once per legal entity, same
+        period end, differing only by context. Nothing here resolves a context to its entity -- that needs the
+        dimensions, and this layer stores text.
         """
         return {"cik": int(cik), "accession": str(accession), "document": str(document), "concept": self.concept,
                 "taxonomy": self.taxonomy, "local_name": self.local_name, "kind": self.kind, "seq": self.seq,
-                "top_level": self.top_level, "parent_seq": self.parent_seq, "period_end": self.period_end,
-                "text": self.text, "chars": self.chars, "rules_version": NOTES_VERSION}
+                "top_level": self.top_level, "parent_seq": self.parent_seq, "context_ref": self.context_ref,
+                "period_end": self.period_end, "text": self.text, "chars": self.chars,
+                "rules_version": NOTES_VERSION}
 
 
 def _day(text: str | None) -> date | None:
@@ -328,11 +363,25 @@ class _Reader(HTMLParser):
                 return
 
     def finish(self) -> None:
-        """What the document left open. An unclosed block swallows every later block as its child, so the whole
-        filing's top-level sum is wrong -- a truncated stored file does this, and it must not be silent."""
+        """What the document left open, which is how a truncated stored file shows up.
+
+        An unclosed block swallows every later block as its child, so the whole filing's top-level sum is wrong.
+        An unclosed ``ix:exclude`` is worse and quieter: every later block comes out empty, because nothing after
+        it is collected at all. An unclosed ``<style>`` puts ``html.parser`` in CDATA mode and the rest of the
+        document is never parsed. None of the three can be repaired here; all three are counted, and a key is
+        added only when it happened, so ``unclosed: 0`` never appears in a report.
+        """
         self.close()
-        if self._stack:
-            self._count("unclosed", len([f for f in self._stack if f["what"] != "skip"]))
+        left = len([f for f in self._stack if f["what"] != "skip"])
+        skipped = len([f for f in self._stack if f["what"] == "skip"])
+        if left:
+            self._count("unclosed", left)
+        if skipped:
+            self._count("unclosed_cover_fact", skipped)
+        if self._exclude:
+            self._count("unclosed_exclude", self._exclude)
+        if self._drop:
+            self._count("unclosed_markup_tag", self._drop)
 
 
 def _chain(block: dict, conts: dict[str, dict], counts: dict) -> list[dict]:
@@ -358,12 +407,30 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
     """``(notes, counts)`` -- the note blocks of one inline-XBRL document, and what was left out and why.
 
     ``counts`` is the build report's half of the answer, and every key is a thing a reader could otherwise lose
-    silently: ``not_a_block`` (an ``ix:nonNumeric`` that is a cover fact), ``nil``, ``empty`` (a kept block whose
-    text is blank once stitched), ``excluded`` (an ``ix:exclude``, the spec's page header), ``escaped_markup``,
-    ``unclosed``, ``context_missing`` (a ``contextRef`` naming no context we read), ``period_end_missing``, and
-    five chain faults: ``continuation_missing``, ``continuation_loop``, ``continuation_duplicate_id``,
-    ``continuation_no_id``, ``continuation_shared`` (two blocks claiming one continuation, so its text is in both)
-    and ``continuation_orphan`` (a continuation no chain reaches, so its text is in none).
+    silently. A key appears only when it happened.
+
+    What was left out: ``not_a_block`` (an ``ix:nonNumeric`` that is a cover fact), ``nil``, ``empty`` (a kept
+    block whose text is blank once stitched), ``excluded`` (an ``ix:exclude``, the spec's page furniture).
+
+    What the text did: ``escaped_markup`` (per block, a block whose markup arrived escaped and was turned back
+    into prose), ``tag_shaped_text`` (a block holding something tag-shaped that was **not** treated as markup, so
+    its text is stored exactly as filed).
+
+    What the chain did: ``continuation_missing``, ``continuation_loop`` (per block that walks into one),
+    ``continuation_duplicate_id``, ``continuation_no_id``, ``continuation_shared`` (per continuation two blocks
+    both claim, so its text is in both rows and the top-level sum is long), ``continuation_orphan`` (a
+    continuation no chain reaches, so its text is in none), ``continuation_overlap`` (a chain element sitting
+    inside a different kept block, same effect as shared).
+
+    What the nesting did: ``parent_dropped_as_empty`` (a parent that cut no text, so the row was re-pointed at
+    its nearest kept ancestor), ``child_text_outside_parent`` (a child whose own chain reached outside its
+    parent, so part of its text is in no top-level row and the sum is short).
+
+    What the document did: ``unclosed`` (blocks or continuations still open at the end -- a truncated file, after
+    which every later block is a child of one of them), ``unclosed_cover_fact``, ``unclosed_exclude`` (after
+    which no text is collected at all), ``unclosed_markup_tag`` (``html.parser`` stays in CDATA mode and the rest
+    of the document is never read), ``context_missing`` (a ``contextRef`` naming no context in the document,
+    which also counts under the next one), ``period_end_missing``.
     """
     counts = counts if counts is not None else {}
     reader = _Reader()
@@ -377,15 +444,18 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
     owner: dict[str, int] = {}
     chains: dict[int, list[dict]] = {}
     claimed: set[int] = set()
+    shared: set[str] = set()
     for block in reader.blocks:
         chain = _chain(block, reader.conts, counts)
         chains[block["seq"]] = chain
         for cont in chain:
             claimed.add(cont["fid"])
             if cont["id"] is not None:
-                if cont["id"] in owner:
-                    counts["continuation_shared"] = counts.get("continuation_shared", 0) + 1
+                if cont["id"] in owner and owner[cont["id"]] != block["seq"]:
+                    shared.add(cont["id"])   # counted per continuation, not per block that reached it
                 owner.setdefault(cont["id"], block["seq"])
+    if shared:
+        counts["continuation_shared"] = counts.get("continuation_shared", 0) + len(shared)
     orphans = [c for c in reader.conts.values() if c["fid"] not in claimed]
     if orphans:
         counts["continuation_orphan"] = counts.get("continuation_orphan", 0) + len(orphans)
@@ -411,15 +481,22 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
             where = cont["enclosing"] if cont is not None else None
         return None
 
-    notes: list[Note] = []
+    block_fids = {b["fid"] for b in reader.blocks}
+    made: dict[int, Note] = {}
     for block in reader.blocks:
         parts = list(block["parts"])
         read_through = {block["fid"]}
         for cont in chains[block["seq"]]:
+            ancestors = set(cont["ancestors"])
             # A chain element already inside this block, or inside an earlier element of the same chain, has
             # been collected once through that frame; appending it again would store the paragraph twice.
-            if read_through & set(cont["ancestors"]):
+            if read_through & ancestors:
                 continue
+            if ancestors & (block_fids - read_through):
+                # The element sits inside a *different* kept block, so its words belong to two top-level rows and
+                # the document does not say which. Kept in both, as the page reads, and counted: the top-level
+                # sum is long by that much, and a count is the only honest way to say so.
+                counts["continuation_overlap"] = counts.get("continuation_overlap", 0) + 1
             if parts and cont["parts"]:
                 parts.append("\n")
             parts.extend(cont["parts"])
@@ -430,14 +507,40 @@ def parse(html: str, counts: dict | None = None) -> tuple[list[Note], dict]:
             continue
         ref = block["context"] or ""
         if ref and ref not in reader.contexts:
+            # Implies ``period_end_missing`` as well, and is counted apart because only this one means the
+            # document is wrong rather than the period being an instant or open-ended.
             counts["context_missing"] = counts.get("context_missing", 0) + 1
         end = reader.contexts.get(ref)
         if end is None:
             counts["period_end_missing"] = counts.get("period_end_missing", 0) + 1
         concept = str(block["concept"] or "")
-        notes.append(Note(concept=concept, taxonomy=taxonomy(concept), local_name=local(concept),
-                          kind=kind_of(concept), seq=int(block["seq"]), top_level=parent_of(block) is None,
-                          parent_seq=parent_of(block), period_end=end, text=text, chars=len(text)))
+        parent = parent_of(block)
+        made[block["seq"]] = Note(concept=concept, taxonomy=taxonomy(concept), local_name=local(concept),
+                                  kind=kind_of(concept), seq=int(block["seq"]), top_level=parent is None,
+                                  parent_seq=parent, context_ref=ref or None, period_end=end, text=text,
+                                  chars=len(text))
+
+    # A parent dropped as empty would leave ``parent_seq`` naming a row that does not exist, which #757 would
+    # store as a dangling key. Re-point each row at its nearest kept ancestor instead, and if there is none it is
+    # top-level -- which is true: no kept block holds its words.
+    notes: list[Note] = []
+    by_seq = {b["seq"]: b for b in reader.blocks}
+    for seq in sorted(made):
+        note, parent = made[seq], made[seq].parent_seq
+        seen: set[int] = set()
+        while parent is not None and parent not in made and parent not in seen:
+            seen.add(parent)
+            parent = parent_of(by_seq[parent])
+        if parent != note.parent_seq:
+            counts["parent_dropped_as_empty"] = counts.get("parent_dropped_as_empty", 0) + 1
+            note = replace(note, parent_seq=parent, top_level=parent is None)
+        notes.append(note)
+
+    # A child's own chain can reach outside its parent, so its words are in no top-level row at all. Nothing can
+    # be done about it here either, and the count is what stops the acceptance sum looking merely low.
+    for note in notes:
+        if note.parent_seq is not None and note.text not in made[note.parent_seq].text:
+            counts["child_text_outside_parent"] = counts.get("child_text_outside_parent", 0) + 1
     return notes, counts
 
 

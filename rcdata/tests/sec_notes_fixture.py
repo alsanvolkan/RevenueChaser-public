@@ -177,3 +177,60 @@ INSIDE_A_COVER_FACT = HEADER + """
 
 #: A document with no inline XBRL at all: 0.6% of the stored annual reports (the census).
 NO_IXBRL = "<html><body><p>Item 1. Business</p><p>We make widgets.</p></body></html>"
+
+# ── shapes the second review round showed nothing reached ──────────────────────────────────────────────────────
+
+#: A chain element sitting inside a *different* kept block. Its words then belong to two top-level rows and the
+#: document does not say which, so the stored total is long by that much.
+CHAIN_ELEMENT_INSIDE_ANOTHER_BLOCK = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="over">
+  <p>Debt.</p></ix:nonNumeric>
+<ix:nonNumeric contextRef="FY" name="us-gaap:LeasesTextBlock"><p>Leases.</p>
+  <ix:continuation id="over"><p>Text inside the leases note.</p></ix:continuation></ix:nonNumeric>""" + _END
+
+#: The other direction: a child's own chain reaches outside its parent, so part of the child's text is in no
+#: top-level row and the stored total is short.
+CHILD_CHAIN_LEAVES_ITS_PARENT = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="a2">
+  <p>Debt.</p></ix:nonNumeric>
+<ix:continuation id="a2"><p>Debt continued.</p>
+  <ix:nonNumeric contextRef="FY" name="us-gaap:LongTermDebtTextBlock" continuedAt="b2"><p>Term loan.</p>
+  </ix:nonNumeric></ix:continuation>
+<ix:continuation id="b2"><p>Term loan continued.</p></ix:continuation>""" + _END
+
+#: A parent that cuts no text of its own, so it is dropped as empty. Its child must not be left pointing at it.
+#: The child's words are all in its continuation, which sits outside the parent, so the parent really does
+#: enclose nothing -- a parent wrapped around a child with inline text would inherit that text and not be empty.
+EMPTY_PARENT_BLOCK = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock"><ix:nonNumeric contextRef="FY"
+  name="us-gaap:LongTermDebtTextBlock" continuedAt="c9"></ix:nonNumeric></ix:nonNumeric>
+<ix:continuation id="c9"><p>The term loan matures in 2029.</p></ix:continuation>""" + _END
+
+#: An ``ix:exclude`` the filer never closed: after it, nothing is collected and every later block comes out empty.
+UNCLOSED_EXCLUDE = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock"><p>Note 7. Debt</p>
+  <ix:exclude><p>Acme | 87</p></ix:nonNumeric>
+<ix:nonNumeric contextRef="FY" name="us-gaap:LeasesTextBlock"><p>We lease.</p></ix:nonNumeric>""" + _END
+
+#: The chain's second element nested inside its first, which is itself outside the block. The only shape that
+#: pins the stitch's memory of what it has already read.
+CHAIN_INSIDE_EARLIER_CHAIN_ELEMENT = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="e1">
+  <p>Note 7. Debt</p></ix:nonNumeric>
+<ix:continuation id="e1" continuedAt="e2"><p>One.</p>
+  <ix:continuation id="e2"><p>Two.</p></ix:continuation></ix:continuation>""" + _END
+
+#: A continuation with no id at all: nothing can name it, so its text reaches no block.
+CONTINUATION_WITH_NO_ID = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock" continuedAt="nowhere">
+  <p>Note 7. Debt</p></ix:nonNumeric>
+<ix:continuation><p>Text with no id to reach it by.</p></ix:continuation>""" + _END
+
+#: Sentences that look like markup and are not. Every one of these was eaten by a version of this reader: the
+#: first by an HTML stripper, the second by a tag pattern that allowed free text after the tag name.
+PROSE_THAT_LOOKS_LIKE_MARKUP = HEADER + """
+<ix:nonNumeric contextRef="FY" name="us-gaap:DebtDisclosureTextBlock">
+  <p>Covenant holds where EBITDA&lt;x and leverage&gt;y for the period.</p>
+  <p>The facility bears interest at a floor of &lt;LIBOR + 2%&gt;.</p>
+  <p>We use &lt;b&gt; for bold in our own filings.</p>
+  <p>Our site is &lt;www.example.com&gt; and the form was &lt;S-1&gt;.</p></ix:nonNumeric>""" + _END

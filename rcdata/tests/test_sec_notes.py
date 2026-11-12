@@ -14,7 +14,11 @@ What is pinned here, and why each one is worth a test:
 - **The text is prose, and prose keeps its angle brackets.** The one test here that found a real defect is
   ``test_a_note_s_own_angle_brackets_are_not_markup``: the first version of this reader ran an HTML stripper over
   every block and deleted everything between a prose "<" and the next ">", which took two sentences out of a
-  concentration note and counted nothing.
+  concentration note and counted nothing. The second round found the *fix* still eating ``EBITDA<x and
+  leverage>y`` and ``a floor of <LIBOR + 2%>``, so the cases that look most like markup are parametrized out.
+- **The counts asserted whole, once.** Every other test here reads one key, and none of them would notice a
+  reader that reported a fault on a document that is fine, so one test compares the whole dict on a healthy
+  document.
 
 Red on the merge-base: ``rcdata.sec_notes`` does not exist there, so every test below fails at import.
 """
@@ -28,12 +32,15 @@ import pytest
 
 from RevenueChaser.rcdata import sec_notes as notes
 
-from .sec_notes_fixture import (BROKEN_CHAIN, CONTINUATION_BEFORE_ITS_BLOCK, CONTINUATION_INSIDE_ITS_OWN_BLOCK,
-                                CONTINUED, DUPLICATE_AND_ORPHAN_CONTINUATIONS, ESCAPED, EXCLUDED_PAGE_FURNITURE,
-                                IFRS_AND_PREFIXES, INSIDE_A_COVER_FACT, NESTED, NESTED_IN_CONTINUATION,
+from .sec_notes_fixture import (BROKEN_CHAIN, CHAIN_ELEMENT_INSIDE_ANOTHER_BLOCK,
+                                CHAIN_INSIDE_EARLIER_CHAIN_ELEMENT, CHILD_CHAIN_LEAVES_ITS_PARENT,
+                                CONTINUATION_BEFORE_ITS_BLOCK, CONTINUATION_INSIDE_ITS_OWN_BLOCK,
+                                CONTINUATION_WITH_NO_ID, CONTINUED, DUPLICATE_AND_ORPHAN_CONTINUATIONS,
+                                EMPTY_PARENT_BLOCK, ESCAPED, EXCLUDED_PAGE_FURNITURE, IFRS_AND_PREFIXES,
+                                INSIDE_A_COVER_FACT, NESTED, NESTED_IN_CONTINUATION,
                                 NESTED_IN_SECOND_CONTINUATION, NO_IXBRL, NO_PERIOD_END, OTHER_IX_PREFIX,
-                                PROSE_WITH_ANGLE_BRACKETS, SHARED_CONTINUATION, TABLE_CELLS, TWO_STEP_LOOP,
-                                UGLY_MARKUP, UNCLOSED_BLOCK)
+                                PROSE_THAT_LOOKS_LIKE_MARKUP, PROSE_WITH_ANGLE_BRACKETS, SHARED_CONTINUATION,
+                                TABLE_CELLS, TWO_STEP_LOOP, UGLY_MARKUP, UNCLOSED_BLOCK, UNCLOSED_EXCLUDE)
 
 FY_END = date(2025, 12, 31)
 
@@ -50,6 +57,14 @@ def test_the_cover_facts_are_left_out_and_counted():
     rows, counts = notes.parse(CONTINUED)
     assert [n.local_name for n in rows] == ["DebtDisclosureTextBlock"]
     assert counts["not_a_block"] == 3
+
+
+def test_a_healthy_document_counts_nothing_but_its_cover_facts():
+    """The counts asserted whole, not by key. Every other test here says "this key is 3"; none of them would
+    notice a reader that also reported ``continuation_missing`` or ``empty`` on a document that is fine, and a
+    build report where every filing carries a fault is a build report nobody reads."""
+    rows, counts = notes.parse(CONTINUED)
+    assert counts == {"not_a_block": 3} and len(rows) == 1
 
 
 def test_a_document_with_no_inline_xbrl_gives_no_rows_and_no_counts():
@@ -144,6 +159,48 @@ def test_a_chain_element_inside_its_own_block_is_not_appended_twice():
     assert note.text.count("Inner one.") == 1 and note.text.count("Inner two.") == 1
 
 
+def test_a_chain_element_inside_an_earlier_element_of_the_same_chain_is_not_appended_twice():
+    """The second half of the same rule, and the only shape that pins the stitch's memory of what it has read:
+    the chain's second element is nested inside its first, which is itself outside the block. Without that
+    memory ``Two.`` is stored twice and ``chars`` is long by its length."""
+    rows, counts = notes.parse(CHAIN_INSIDE_EARLIER_CHAIN_ELEMENT)
+    (note,) = rows
+    assert note.text == "Note 7. Debt\nOne.\nTwo."
+    assert counts == {"not_a_block": 3}
+
+
+def test_a_chain_element_inside_a_different_block_is_kept_in_both_rows_and_counted():
+    """Not the same as :data:`SHARED_CONTINUATION`: here one block claims the element and another *encloses* it,
+    so the text is in both rows for two different reasons. The document does not say which note the paragraph
+    belongs to, so it stays in both and the count says the top-level sum is long by that much."""
+    by_name, counts = _by_name(CHAIN_ELEMENT_INSIDE_ANOTHER_BLOCK)
+    assert by_name["DebtDisclosureTextBlock"].text == "Debt.\nText inside the leases note."
+    assert by_name["LeasesTextBlock"].text == "Leases.\nText inside the leases note."
+    assert counts["continuation_overlap"] == 1
+    assert all(n.top_level for n in by_name.values()), "enclosed by a continuation, not by the block itself"
+
+
+def test_a_child_whose_own_chain_reaches_outside_its_parent_is_counted():
+    """The other direction, and the one that makes the acceptance sum *short*: the child's second paragraph is in
+    no top-level row at all, because the parent's text stops where the parent's tags do. Nothing here can repair
+    that; the count is what stops a low total looking like a quiet filing."""
+    rows, counts = notes.parse(CHILD_CHAIN_LEAVES_ITS_PARENT)
+    parent, child = rows
+    assert child.parent_seq == parent.seq and child.text not in parent.text
+    assert child.text == "Term loan.\nTerm loan continued."
+    assert counts["child_text_outside_parent"] == 1
+    assert notes.top_level_chars(rows) == parent.chars < sum(n.chars for n in rows)
+
+
+def test_a_continuation_with_no_id_at_all_is_counted_and_its_text_reaches_no_block():
+    """``id`` is the only way to name a continuation, so without one the paragraph is unreachable. It is not an
+    orphan -- an orphan is in the map and nobody claims it -- so it gets a count of its own."""
+    rows, counts = notes.parse(CONTINUATION_WITH_NO_ID)
+    (note,) = rows
+    assert note.text == "Note 7. Debt" and "no id to reach it by" not in note.text
+    assert counts["continuation_no_id"] == 1 and counts["continuation_missing"] == 1
+
+
 # ── nesting ────────────────────────────────────────────────────────────────────────────────────────────────────
 def test_a_note_tagged_inside_another_names_its_parent_and_is_not_top_level():
     rows, _ = notes.parse(NESTED)
@@ -175,7 +232,8 @@ def test_a_note_inside_a_cover_fact_is_top_level_because_a_cover_fact_is_not_a_r
 
 def test_every_parent_seq_names_a_row_that_exists_and_no_row_is_its_own_parent():
     for html in (NESTED, NESTED_IN_CONTINUATION, NESTED_IN_SECOND_CONTINUATION, UNCLOSED_BLOCK,
-                 SHARED_CONTINUATION, CONTINUED, IFRS_AND_PREFIXES):
+                 SHARED_CONTINUATION, CONTINUED, IFRS_AND_PREFIXES, EMPTY_PARENT_BLOCK,
+                 CHAIN_ELEMENT_INSIDE_ANOTHER_BLOCK, CHILD_CHAIN_LEAVES_ITS_PARENT, UNCLOSED_EXCLUDE):
         rows, _ = notes.parse(html)
         seqs = {n.seq for n in rows}
         for n in rows:
@@ -196,6 +254,26 @@ def test_a_document_that_ends_inside_a_block_is_counted_as_unclosed():
     rows, counts = notes.parse(UNCLOSED_BLOCK)
     assert counts["unclosed"] == 1
     assert rows[1].parent_seq == 0 and "Page footer." in rows[0].text
+
+
+def test_a_row_is_never_left_pointing_at_a_parent_that_was_dropped_as_empty():
+    """A parent that cuts no text of its own is not stored, and #757 would write its ``seq`` as a dangling key.
+    The child is re-pointed at its nearest kept ancestor -- here there is none, so it is top-level, which is
+    true: no stored block holds its words."""
+    rows, counts = notes.parse(EMPTY_PARENT_BLOCK)
+    (note,) = rows
+    assert (note.seq, note.top_level, note.parent_seq) == (1, True, None)
+    assert note.text == "The term loan matures in 2029."
+    assert counts["empty"] == 1 and counts["parent_dropped_as_empty"] == 1
+
+
+def test_an_unclosed_exclude_is_counted_because_every_later_block_comes_out_empty():
+    """The quietest fault in the document: after an ``ix:exclude`` the filer never closed, no text is collected
+    at all, so a filing's remaining notes are simply absent and nothing about the rows says why."""
+    rows, counts = notes.parse(UNCLOSED_EXCLUDE)
+    assert [n.local_name for n in rows] == ["DebtDisclosureTextBlock"]
+    assert rows[0].text == "Note 7. Debt", "the words before the exclude are the only ones that survive"
+    assert counts["unclosed_exclude"] == 1 and counts["empty"] == 1
 
 
 # ── the name, the kind, the period ─────────────────────────────────────────────────────────────────────────────
@@ -258,11 +336,47 @@ def test_a_note_s_own_angle_brackets_are_not_markup():
     assert "escaped_markup" not in counts, "prose is not markup, and must not be counted as it"
 
 
-@pytest.mark.parametrize("prose", ["If a < b and b > c then a < c.", "Revenue fell < 5% and costs rose > 2%.",
-                                   "The ratio is <1 in both years.", "Customers < 5%"])
+@pytest.mark.parametrize("prose", [
+    # Every one of these opens a bracket with a letter straight after it, which is what a tag looks like. A
+    # pattern that stops at "<" plus a letter eats all of them, and the second review round caught it doing
+    # exactly that to the first two.
+    "Covenant holds where EBITDA<x and leverage>y.",
+    "A floor of <LIBOR + 2%> applies.",
+    "See <Table of Contents> above.",
+    "Revenue<n> is reported in millions.",
+    "Our site is <www.example.com>.",
+    "The form was <S-1>.",
+    "Debt fell 5<x<10 and y>3.",
+    "The ratio is <1 in both years.",
+    "Customers < 5%",
+])
 def test_text_of_leaves_prose_angle_brackets_alone(prose):
     counts: dict = {}
-    assert notes.text_of([prose], counts) == prose and counts == {}
+    assert notes.text_of([prose], counts) == prose
+    assert counts == {}, "nothing tag-shaped was found, so there is nothing to report either"
+
+
+def test_a_real_tag_name_in_a_sentence_is_left_alone_and_said_so():
+    """``<b>`` is a tag name, and this sentence is still prose: a filer writing *about* its own markup. The test
+    of a document is a structural tag -- a paragraph, a table, a list item -- and there is none here, so nothing
+    is removed. The count is there because the decision went the other way on the same input shape."""
+    counts: dict = {}
+    prose = "We use <b> for bold in our own filings."
+    assert notes.text_of([prose], counts) == prose
+    assert counts == {"tag_shaped_text": 1}
+
+
+def test_four_sentences_that_look_like_markup_survive_a_whole_block():
+    """The same thing through ``parse``, because ``text_of`` is not where a filing's text comes from."""
+    rows, counts = notes.parse(PROSE_THAT_LOOKS_LIKE_MARKUP)
+    (note,) = rows
+    assert note.text.splitlines() == [
+        "Covenant holds where EBITDA<x and leverage>y for the period.",
+        "The facility bears interest at a floor of <LIBOR + 2%>.",
+        "We use <b> for bold in our own filings.",
+        "Our site is <www.example.com> and the form was <S-1>.",
+    ]
+    assert "escaped_markup" not in counts and counts["tag_shaped_text"] == 1
 
 
 def test_escaped_markup_becomes_prose_and_a_doubly_escaped_entity_becomes_its_character():
@@ -310,6 +424,7 @@ def test_the_row_carries_the_whole_key_including_the_document():
     assert row["document"] == "aapl-20251231.htm"
     assert row["rules_version"] == notes.NOTES_VERSION == "notes-1"
     assert row["top_level"] is True and row["parent_seq"] is None and row["period_end"] == FY_END
+    assert row["context_ref"] == "FY", "the only thing that tells two rows of a combined filing apart"
     assert row["text"] == rows[0].text and row["chars"] == 87
 
 
