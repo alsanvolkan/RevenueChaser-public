@@ -7,9 +7,13 @@ Inputs:
   ``totals`` = ``{ticker: {period: {shares, value, holders, new_holders,
                  exited_holders, top10_pct, hhi, buy_flow, sell_flow}}}``
   ``meta``  = ``{ticker: {"name": str, "sector": str}}``
-  ``enrichment`` = ``{ticker: {price, shares_outstanding, insider_pct, short_pct, short_pct_as_of, float_shares}}``
-                   (optional): the snapshot inputs, ``enrich.load_inputs`` (#375 F2: ``ownership_snapshot`` and D01;
-                   #375 F6: D10 ``short_interest``). ``short_pct`` is short interest as % of float.
+  ``enrichment`` = ``{ticker: {price, shares_outstanding, split_factor, float_shares}}`` (optional): the snapshot
+                   inputs, ``enrich.load_inputs`` (#375 F2: ``ownership_snapshot`` and D01; #732: the split factor
+                   per quarter end from the prices store).
+
+Every share count on the board is on today's share basis (#732): a quarter's shares and flows are divided by that
+quarter end's split factor and its close multiplied by it, so a split reads as what it is, not as buying. The board
+shows the last ``WINDOW_QUARTERS`` settled quarters (owner, 12 Nov 2026), plus a quarter still arriving after them.
 """
 from RevenueChaser.core.reporting_common import (FILTERS_CSS, FILTERS_JS, PAYLOAD_JS, filters_bar_html,
                                                  filters_meta, help_html, notice_html, provider_health_html,
@@ -309,11 +313,27 @@ def arriving(totals: dict, quarters: list) -> set[str]:
     return set(quarters[quarters.index(min(flagged)):])
 
 
+#: The settled quarters the board shows: a rolling window, not every quarter since ``engine.START_QUARTER`` (owner,
+#: 12 Nov 2026: "A son 6 çeyrek"). The chart keeps every stored quarter.
+WINDOW_QUARTERS = 6
+
+
 def _quarters(totals: dict) -> list:
+    """The board's quarter columns: the newest ``WINDOW_QUARTERS`` settled quarters, then any still arriving."""
     qs = set()
     for periods in totals.values():
         qs.update(periods.keys())
-    return sorted(q for q in qs if q >= engine.START_QUARTER)
+    qs = sorted(q for q in qs if q >= engine.START_QUARTER)
+    late = arriving(totals, qs)
+    keep = set([q for q in qs if q not in late][-WINDOW_QUARTERS:]) | late
+    return [q for q in qs if q in keep]
+
+
+def _on_todays_basis(value, factor):
+    """A share count (or a flow) of a quarter end on today's share basis: ÷ that day's split factor (#732)."""
+    if value is None or not factor:
+        return value
+    return value / factor
 
 
 def _fmt_money(v):
@@ -340,15 +360,16 @@ def build_chart_fig(ticker: str, periods: dict, enrichment: dict = None) -> dict
     still_arriving = arriving({ticker: periods}, qs)
     labels = [_qlabel(q) + (ARRIVING_MARK if q in still_arriving else "") for q in qs]
     pattern = dict(shape=["/" if q in still_arriving else "" for q in qs], fgopacity=0.6)
-    shares = [periods[q].get("shares") or 0 for q in qs]
+    factors = (enrichment or {}).get("split_factor") or {}
+    shares = [_on_todays_basis(periods[q].get("shares") or 0, factors.get(q)) for q in qs]
     value = [periods[q].get("value") or 0 for q in qs]
     holders = [periods[q].get("holders") or 0 for q in qs]
     price = None
     if enrichment:
         px = (enrichment.get("price") or {})
-        price = [px.get(q) for q in qs]
+        price = [px.get(q) * factors.get(q, 1.0) if px.get(q) is not None else None for q in qs]
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.10,
-                        subplot_titles=(f"{ticker} — total shares & price", "market value ($) & holders"),
+                        subplot_titles=(f"{ticker} — total shares & price (today's share basis)", "market value ($) & holders"),
                         specs=[[{"secondary_y": True}], [{"secondary_y": True}]])
     fig.add_trace(go.Bar(x=labels, y=shares, name="Shares", marker=dict(color="#3fb950", pattern=pattern),
                          hovertemplate="%{y:,.0f}"), 1, 1)
@@ -387,8 +408,6 @@ _SNAP_COLS = [
     ("netflow", "Net flow"),
     ("streak", "Streak"),
     ("accel", "Accel"),
-    ("insider", "Insider%"),
-    ("short", "Short%"),
     ("price_delta", "Price Δ"),
 ]
 
@@ -401,6 +420,8 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
     enrichment = enrichment or {}
     entries = []
     for t, periods in totals.items():
+        factors = (enrichment.get(t) or {}).get("split_factor") or {}
+        filed = []
         shares = []
         chgs = []
         prev = None
@@ -408,7 +429,9 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
         last_period = None
         for i, q in enumerate(quarters):
             cell = periods.get(q)
-            s = cell["shares"] if cell else None
+            s_filed = cell["shares"] if cell else None
+            filed.append(s_filed)
+            s = _on_todays_basis(s_filed, factors.get(q))
             shares.append(s)
             # No change against a quarter still arriving, in either direction: it holds a part of itself, so the
             # comparison is a measurement of how much of it has been filed (#514).
@@ -419,8 +442,10 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
             prev = s
             if cell and q not in still_arriving:
                 # The snapshot block (holders, breadth, value, the flows) is the last *settled* quarter's, for the
-                # same reason.
-                last, last_period = cell, q
+                # same reason. Its share counts go on today's basis like the columns (#732).
+                f = factors.get(q)
+                last = {**cell, **{k: _on_todays_basis(cell.get(k), f) for k in ("shares", "buy_flow", "sell_flow")}}
+                last_period = q
         info = meta.get(t, {})
         enr = enrichment.get(t, {})
 
@@ -450,7 +475,8 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
 
         price_delta = None
         px = enr.get("price") or {}
-        prices = {q: px.get(q) for q in quarters if px.get(q) is not None}
+        # The close on the same basis as the shares: × the quarter end's split factor (#732).
+        prices = {q: px[q] * factors.get(q, 1.0) for q in quarters if px.get(q) is not None}
         price = prices[max(prices)] if prices else None     # the newest quarter-end price the board has
         if len(prices) >= 2:
             pq = sorted(prices)
@@ -462,9 +488,11 @@ def board_entries(totals: dict, meta: dict, enrichment: dict = None) -> tuple[li
             "ticker": t, "name": info.get("name", ""), "sector": _row_sector(info.get("sector")),
             "shares": shares, "chgs": chgs, "last": last, "last_period": last_period,
             "streak": streak, "accel": accel, "pct_out": pct_out, "pct_out_basis": pct_out_basis,
-            "price_delta": price_delta, "short_pct": enr.get("short_pct"),
-            "short_pct_as_of": enr.get("short_pct_as_of"),
-            "insider_pct": enr.get("insider_pct"), "price": price,
+            "price_delta": price_delta, "price": price,
+            # Not shown since #732 (owner, 12 Nov 2026); kept on the entry for the result history only.
+            "short_pct": enr.get("short_pct"), "short_pct_as_of": enr.get("short_pct_as_of"),
+            "insider_pct": enr.get("insider_pct"),
+            "shares_filed": filed, "split_factor": {q: factors[q] for q in quarters if q in factors},
             "shares_outstanding": so, "float_shares": enr.get("float_shares"),
         })
 
@@ -521,9 +549,13 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
         new_exit_val = ((last.get("new_holders") or 0) - (last.get("exited_holders") or 0)
                         if last.get("new_holders") is not None else None)
         cells = []
-        for s in e["shares"]:
+        for q, s, s_filed in zip(quarters, e["shares"], e.get("shares_filed") or e["shares"]):
             if s is None:
                 cells.append(_cell("—", None, "zero"))
+            elif s_filed is not None and s_filed != s:
+                cells.append(_cell(_fmt_shares(s), s, "zero",
+                                   f"{s:,.0f} shares on today's basis; {s_filed:,.0f} as filed, split factor "
+                                   f"{e['split_factor'].get(q)}"))
             else:
                 cells.append(_cell(_fmt_shares(s), s, "zero", f"{s:,.0f} shares"))
         for c in e["chgs"][1:]:
@@ -551,8 +583,6 @@ def _payload(quarters: list, entries: list, fields: dict | None = None) -> dict:
         cells.append(_cell(_fmt_shares(netflow), netflow, _sign_class(netflow), of))
         cells.append(_cell(str(e["streak"]) if e["streak"] is not None else "—", e["streak"], "zero"))
         cells.append(_cell(_f(e["accel"], 1, "pp"), e["accel"], _sign_class(e["accel"])))
-        cells.append(_cell(_f(e["insider_pct"], 1, "%", False), e["insider_pct"], "zero"))
-        cells.append(_cell(_f(e["short_pct"], 1, "%", False), e["short_pct"], "zero"))
         cells.append(_cell(_f(e["price_delta"]), e["price_delta"], _sign_class(e["price_delta"])))
         rows.append([e["ticker"], e["name"], e["sector"], cells])
     return {"cols": cols, "rows": rows, "fields": {r["ticker"]: r for r in (fields or [])}}
@@ -629,11 +659,6 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
                        "spine show as <b>Unclassified</b> with no market cap, so any cap filter hides them."})
     meta_js = f"<script>var META = {script_json(kit_meta)};</script>"
 
-    short_as_of = None
-    for e in entries:
-        d = e.get("short_pct_as_of")
-        if d is not None and (short_as_of is None or d > short_as_of):
-            short_as_of = d
     arriving_legend = ""
     if still_arriving:
         names = [_qlabel(q) for q in sorted(still_arriving)]
@@ -642,9 +667,6 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
             "the filing deadline has not passed, so the shares are what has been filed so far. No change, streak "
             "or acceleration is computed against it, and the snapshot columns are the last settled quarter's, named "
             "on each cell (#514).")
-    short_legend = (
-        "<b>Short%</b> = short interest as % of float from UW short screener → UW interest-float → yfinance "
-        f"(D10, weeknightly RC-Short-Interest); as of {short_as_of.isoformat() if short_as_of else '—'}.")
 
     help_block = help_html(
         "Every fund manager with more than $100M files a <b>Form 13F</b> each quarter listing its stock "
@@ -669,18 +691,22 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
 <div class="board-search"><input type="search" id="board-q" placeholder="Search ticker or name" autocomplete="off" spellcheck="false"></div>
 <table><thead>{header}</thead><tbody id="rows">{rows_html}</tbody></table>
 <div style="color:#8b949e;font-size:11px;margin-top:8px;line-height:1.5">
-<b>Total ownership</b> = shares held by every 13F filer. <b>Δ% vs prior</b> = QoQ change in shares.
+<b>Total ownership</b> = shares held by every 13F filer, on <b>today's share basis</b>: a quarter's count is divided
+by the split factor of its quarter end, so a split is not read as buying (hover a cell for the count as filed).
+The board shows the last {WINDOW_QUARTERS} settled quarters; the chart shows every stored one.
+<b>Δ% vs prior</b> = QoQ change in shares.
 <b>Value</b> = $ market value held. <b>% Out</b> = shares ÷ shares outstanding: the SEC cover page's newest count,
 or, where it has none, the market cap over the close. Hover a cell to see which of the two it used.
 <b>New/Exit</b> = holders entered / exited vs prior quarter.
 <b>Breadth</b> = share of that quarter's 13F filers holding the name (holders ÷ filers), with the change in
 percentage points vs the name's own previous stored quarter, which is not necessarily the calendar quarter
 before it; as of quarter-end, filed up to 45 days later.
-<b>Top10%/HHI</b> = ownership concentration.
+<b>Top10%/HHI</b> = concentration among the 13F filers' own holdings (the top 10 filers' share of the 13F
+total, and its Herfindahl index), not of all shares outstanding.
 <b>Net flow</b> = shares bought − sold (holder-level deltas). <b>Streak</b> = consecutive quarters of net accumulation.
-<b>Accel</b> = Δ%(latest) − Δ%(prior). <b>Insider%</b> = newest stored snapshot. {short_legend}
+<b>Accel</b> = Δ%(latest) − Δ%(prior).
 {arriving_legend}
-<b>Price Δ</b> = close change since the first quarter end.
+<b>Price Δ</b> = close change from the first to the last quarter end shown, on the same share basis.
 </div>
 <div id="modal"><div id="modal-card">
 <div id="modal-head"><span id="modal-title"></span><button id="modal-close">×</button></div>

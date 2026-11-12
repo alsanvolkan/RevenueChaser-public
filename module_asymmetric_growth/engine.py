@@ -817,30 +817,12 @@ def _settled(periods: dict) -> list:
 
 
 def _split_factors(latest: dict[str, str]) -> dict[str, float]:
-    """``{ticker: split_factor}`` of each ticker's 13F quarter end (``latest``: ticker -> ISO period): the prices
-    store's factor that turns a share count of that day into today's basis (shares ÷ factor; a 1-for-25 reverse split
-    after it serves 25). Compustat's and Alpaca's splits, applied the way every board's split basis is
-    (``rcdata.read.bars``). One bar read per quarter. A ticker the store cannot place, or a store it cannot read,
-    has no factor: its shares stay as filed."""
-    from RevenueChaser.rcdata import read
-    out: dict[str, float] = {}
-    try:
-        ids = read.security_ids(latest)
-        by_period: dict[str, list[str]] = {}
-        for t, period in latest.items():
-            if t in ids:
-                by_period.setdefault(period, []).append(t)
-        for period, tickers in by_period.items():
-            end = date.fromisoformat(str(period)[:10])
-            sid_to = {ids[t]: t for t in tickers}
-            # The last bar on or before the quarter end: rows come by security and session, so the last one wins.
-            for b in read.bars(sid_to, start=end - timedelta(days=10), end=end, basis="split"):
-                if b.get("split_factor"):
-                    out[sid_to[b["security_id"]]] = float(b["split_factor"])
-    except Exception as exc:  # noqa: BLE001 - no prices store is "no factor", never a failed scan
-        logger.warning("AG 13F split factors unread, shares stay as filed: %s: %s", type(exc).__name__, exc)
-        return {}
-    return out
+    """``{ticker: split_factor}`` of each ticker's 13F quarter end (``latest``: ticker -> ISO period): the factor that
+    turns a share count of that day into today's basis (shares ÷ factor; a 1-for-25 reverse split after it serves
+    25). The rule is the shared one, ``core.ownership.split_factors_13f`` (the 13F board uses it too, #732). A ticker
+    the store cannot place, or a store it cannot read, has no factor: its shares stay as filed."""
+    by = ownership.split_factors_13f({t: [p] for t, p in latest.items()})
+    return {t: f for t, p in latest.items() if (f := (by.get(t) or {}).get(str(p)[:10])) is not None}
 
 
 def _institutional(ticker: str, totals: dict, shares_outstanding: float | None = None,

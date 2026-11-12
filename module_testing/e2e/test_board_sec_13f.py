@@ -239,8 +239,8 @@ class TestFilterKit:
 
 
 class TestSnapshotInputs:
-    """#375 F2: % Out, Insider% and Price Δ come from ``ownership_snapshot`` and D01, through one path for Refresh
-    and Fetch; a Refresh makes no network call."""
+    """#375 F2: % Out and Price Δ come from ``ownership_snapshot`` and D01, through one path for Refresh and Fetch; a
+    Refresh makes no network call. Insider% and Short% are off the board since #732 (owner, 12 Nov 2026)."""
 
     def test_refresh_reads_the_stored_inputs_with_no_network(self, seeded_inputs, provider_routes, clear_cache):
         clear_cache()
@@ -250,12 +250,11 @@ class TestSnapshotInputs:
             f"refresh reached the network: {[q.path for q in provider_routes.requests()[before:]]}")
         nvda = _cells(seeded_inputs, "NVDA")
         assert nvda["pct_out"][:2] == ["22.5%", 22.5]           # 5.4M 13F shares of UW's 24M outstanding
-        assert nvda["insider"][:2] == ["3.5%", pytest.approx(3.5)]   # the stored fraction 0.035, in %
-        assert nvda["short"][:2] == ["4.8%", pytest.approx(4.8)]     # si_float 0.048 in %
         assert nvda["price_delta"][:2] == ["+50.0%", 50.0]
-        assert "short" in _payload(seeded_inputs)["cols"]
+        cols = _payload(seeded_inputs)["cols"]
+        assert "short" not in cols and "insider" not in cols
         amd = _cells(seeded_inputs, "AMD")
-        assert [amd[c][0] for c in ("pct_out", "insider", "short", "price_delta")] == ["—", "—", "—", "—"]
+        assert [amd[c][0] for c in ("pct_out", "price_delta")] == ["—", "—"]
 
     def test_a_refresh_shows_the_numbers_the_fetch_showed(self, seeded_inputs, clear_cache):
         assert seeded_inputs.run_job("/run/module_sec_13f").ok

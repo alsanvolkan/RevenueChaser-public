@@ -54,7 +54,7 @@ def test_the_cols_are_the_numbers_the_page_sorts_on():
     payload = report.board_payload(totals, meta, {})
     assert payload["cols"] == ["sh_2025-03-31", "sh_2025-06-30", "ch_2025-06-30",
                                "value", "pct_out", "holders", "new_exit", "breadth", "top10", "hhi", "netflow",
-                               "streak", "accel", "insider", "short", "price_delta"]
+                               "streak", "accel", "price_delta"]                     # no insider or short (#732)
 
 
 def test_the_rows_are_in_board_order_most_shares_first():
@@ -141,8 +141,8 @@ def test_a_non_finite_number_reaches_the_page_as_an_empty_sort_value(tmp_path, m
     path = report.export_sec13f_dashboard(totals, meta, enrich, filename="sec_13f_latest.html")
     stored = _strict(gzip.decompress(payload_path(path).read_bytes()).decode("utf-8"))
     cells = _cells(stored, "AAA")
-    assert cells["insider"] == [report._f(float("inf"), 1, "%", False), None, "zero"]
     assert cells["pct_out"][1] is None
+    assert "insider" not in cells                                                   # read, not shown (#732)
 
 
 def test_the_page_builds_one_row_per_payload_row_on_load(tmp_path):

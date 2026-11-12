@@ -109,42 +109,27 @@ def test_the_chart_route_takes_its_price_from_d01(store, no_enrichment):  # noqa
     assert list(price["y"]) == [220.0]
 
 
-def test_fetch_refresh_and_chart_route_agree_on_short_pct(uw, monkeypatch, no_enrichment):  # noqa: F811
+def test_fetch_refresh_and_chart_route_show_no_short_pct(uw, monkeypatch, no_enrichment):  # noqa: F811
+    """Short % is off the board since #732 (owner, 12 Nov 2026): neither Fetch nor Refresh reads ``short_interest``,
+    and the chart route still answers."""
     _at(monkeypatch, COMPLETE)
     rawstore.write_rows("short_interest", [_short("AAPL", "2026-10-15", 0.048)])
+
+    def refuse(tickers):
+        raise AssertionError("the 13F board read short_interest")
+
+    monkeypatch.setattr(enrich, "load_short_interest", refuse)
     runners.build_sec13f(None)
-    fetched = _cells(_payload(), "AAPL")["short"]
-    assert fetched[:2] == ["4.8%", pytest.approx(4.8)]
+    assert "short" not in _cells(_payload(), "AAPL")
 
     payload_path(runners.SEC_13F_LATEST).unlink()
     runners.SEC_13F_LATEST.unlink()
     uw.calls, uw.built = [], 0
     runners.run_sec_13f_latest(None)
-    assert _cells(_payload(), "AAPL")["short"] == fetched
+    assert "short" not in _cells(_payload(), "AAPL") and uw.calls == [] and uw.built == 0
 
     from RevenueChaser.app import dashboard
     dashboard.app.config["TESTING"] = True
     r = dashboard.app.test_client().get("/api/sec_13f/AAPL")
     assert r.status_code == 200, r.data
     assert r.get_json()["ok"] is True
-
-
-def test_refresh_reads_the_same_short_interest_path_with_no_network(uw, monkeypatch, no_enrichment):  # noqa: F811
-    _at(monkeypatch, COMPLETE)
-    rawstore.write_rows("short_interest", [_short("AAPL", "2026-10-15", 0.048)])
-    runners.build_sec13f(None)
-    payload_path(runners.SEC_13F_LATEST).unlink()
-    runners.SEC_13F_LATEST.unlink()
-    uw.calls, uw.built = [], 0
-
-    seen = []
-    real = enrich.load_short_interest
-
-    def spy(tickers):
-        seen.append("load_short_interest")
-        return real(tickers)
-
-    monkeypatch.setattr(enrich, "load_short_interest", spy)
-    runners.run_sec_13f_latest(None)
-    assert _cells(_payload(), "AAPL")["short"][:2] == ["4.8%", pytest.approx(4.8)]
-    assert seen == ["load_short_interest"] and uw.calls == [] and uw.built == 0
