@@ -47,12 +47,10 @@ def test_a_split_between_two_quarters_is_not_read_as_buying():
     assert cells["streak"][1] == 0
     assert cells["price_delta"][1] == pytest.approx(0.0)            # 100 × 0.1 = 10, then 10
     assert cells["pct_out"][1] == pytest.approx(25.0)               # 1,000 of 4,000
-
-
-def test_without_a_factor_the_board_shows_the_split_as_the_old_board_did():
-    cells = _cells(report.board_payload(SPLIT_TOTALS, META, {"AAA": {"price": {Q1: 100.0, Q2: 10.0}}}))
-    assert cells[f"ch_{Q2}"][1] == pytest.approx(900.0)
-    assert cells["price_delta"][1] == pytest.approx(-90.0)
+    # Without a factor (the prices store unreadable) the board shows the split as the old board did.
+    bare = _cells(report.board_payload(SPLIT_TOTALS, META, {"AAA": {"price": {Q1: 100.0, Q2: 10.0}}}))
+    assert bare[f"ch_{Q2}"][1] == pytest.approx(900.0)
+    assert bare["price_delta"][1] == pytest.approx(-90.0)
 
 
 def test_the_cell_says_what_was_filed():
