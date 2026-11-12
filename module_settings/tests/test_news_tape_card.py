@@ -58,3 +58,11 @@ def test_no_record_yet_is_said_in_words_not_drawn_as_a_refusal(tmp_path):
     state = tape_state.collect(names=["BRFG", "DJNL"], path=tmp_path / "none.json")
     card = _card(report.render_settings_dashboard(dict(_payload(), news_tape_state=state)))
     assert "No record yet" in card and "news-tape-feed-" not in card and "st-bad" not in card
+
+
+def test_a_card_s_text_stays_light_on_its_dark_panel_under_the_light_theme():
+    # Measured in Chromium, 12 Nov 2026: with data-theme="light" the heading of every .bcard on the Health tab was
+    # rgb(29,36,48) on the panel's rgb(18,22,30). The panel is dark in every theme, so its ink is pinned.
+    html = report.render_settings_dashboard(_payload())
+    assert ':root[data-theme="light"] .bcard{color:var(--text)}' in html
+    assert '@media (prefers-color-scheme: light){:root[data-theme="auto"] .bcard{color:var(--text)}}' in html

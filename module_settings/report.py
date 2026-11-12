@@ -157,6 +157,10 @@ select,input[type=text],input[type=number]{background:#10151f;border:1px solid #
 h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bcard{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .bcard h3{margin:0 0 2px;font-size:15px}
+/* A card keeps this page's dark panel in every theme, so under the light theme its text must not inherit the light
+   scope's dark ink: measured 12 Nov 2026, the heading was rgb(29,36,48) on rgb(18,22,30) (#727). */
+:root[data-theme="light"] .bcard{color:var(--text)}
+@media (prefers-color-scheme: light){:root[data-theme="auto"] .bcard{color:var(--text)}}
 .bcard>details>summary{cursor:pointer}
 .bcard>details>summary h3{display:inline}
 .bcard .asof{color:var(--muted);font-size:12.5px;margin-bottom:8px}
