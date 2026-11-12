@@ -234,18 +234,27 @@ def gave_back_before(accession: str) -> int:
     return read_sidecar(accession)["gave_back"]
 
 
-def deferred_for(accession: str, now: float | None = None) -> float:
+def deferred_for(accession: str, max_stops: int = MAX_STOPS, now: float | None = None) -> float:
     """How many more seconds this document is passed over for, 0 when it is not.
 
-    A clock that has gone backwards (an NTP step, a container with a wrong clock) gives a stamp in the future and
-    would otherwise defer the document for as long as the clock is wrong: a stamp later than now is read as now,
-    so the document is tried in the next run.
+    **A stamp later than now defers nothing at all.** A clock that has gone backwards -- an NTP step, a container
+    whose clock was wrong when the stop was written -- would otherwise hold the document for the whole back-off
+    in every run, for as long as the stamp stays ahead of the clock: review round 7 measured a stamp ten days
+    ahead holding a document for ten days and six hours, and a hand-edited ``stopped_at`` of 10**30 holding one
+    for good. Reading it as "now" was not enough, because ``now + STOP_BACKOFF_S - now`` is the whole back-off.
+    The probe that follows writes the stamp from the current clock, so one run undoes it.
+
+    ``max_stops`` is the caller's, not the module's: a ``Cutter`` built with another cap would otherwise defer by
+    one number and feed its breaker by another -- below the module's cap nothing would ever be deferred while the
+    probes went on for ever, and above it a deferred document would still be counted as evidence about the box.
     """
     counts = read_sidecar(accession)
-    if counts["stops"] < MAX_STOPS:
+    if counts["stops"] < max_stops:
         return 0.0
     now = time.time() if now is None else now
-    return max(min(counts["stopped_at"], now) + STOP_BACKOFF_S - now, 0.0)
+    if counts["stopped_at"] > now:
+        return 0.0
+    return max(counts["stopped_at"] + STOP_BACKOFF_S - now, 0.0)
 
 
 def stops_so_far(accession: str) -> int:
@@ -665,7 +674,7 @@ class Cutter:
         if spent >= self.max_tries:
             self.failed[accession] = f"gave up after {spent} attempts in earlier runs"
             return None
-        waiting = deferred_for(accession)
+        waiting = deferred_for(accession, self.max_stops)
         if waiting:
             # Passed over for now, and tried again after the back-off. It is **not** retired: nothing a document
             # is not charged an attempt for may end its life, because the reasons behind a stop are the box's --
@@ -731,17 +740,15 @@ class Cutter:
                 _forget_failure(accession)
                 return out
             self.empty += 1
-            if swallowed:
-                # The library logged that it gave up and then returned nothing in its place
-                # (``hybrid_section_detector.py:657, 672, 695``; ``toc_section_detector.py:178``, every one an
-                # ``except Exception``, which a ``MemoryError`` is). Cause unknown, so it is not charged: a box
-                # short of memory for a few hours would otherwise retire about 5N/3 filings as "no sections".
-                return self._box_fault(accession, stops,
-                                       f"the cutter found no section in {html.name} and edgartools logged "
-                                       f"{swallowed} failure(s) it swallowed: the cause is not this filing's")
             if _base_form(form) not in KNOWN_FORMS:
-                # A quiet zero on a form the library has no patterns for. Not this filing's failure, and not
-                # something three more attempts would change: the library has
+                # The form is asked **first**, before anything the library logged: it has no patterns for this
+                # form at all, so whatever else went wrong on the way to zero, zero is the only answer this form
+                # was ever going to get. Round 7 measured the other order: a 40-F that happens to log one of the
+                # library's harmless warnings about its XBRL or its table of contents became a box fault, which
+                # is a full parse of it every back-off for ever -- round 5's finding back for a subset of them.
+                #
+                # Not this filing's failure either, and not something three more attempts would change: the
+                # library has
                 # no vocabulary for the form at all. Round 4 made this a charged failure, which round 5 measured
                 # as 2N/5 stopped runs for N such filings -- and the 40-F and the 10-KT are both in our corpus
                 # (``rcdata/build/fundamentals/filings.py:47``) and both answer this for every filing they have.
@@ -749,6 +756,16 @@ class Cutter:
                 self.no_vocabulary += 1
                 self.failed[accession] = f"edgartools 6.0.0 detects no section in a {form}"
                 return None
+            if swallowed:
+                # A known form, and the library caught a failure on the detection path and returned nothing in
+                # its place (``cutter_worker.SWALLOW_SITES``). Cause unknown, so the filing is not charged for
+                # it: a box short of memory for a few hours would otherwise retire about 5N/3 filings as "no
+                # sections in them", because every one of those failures is an ``except Exception`` and a
+                # ``MemoryError`` is one.
+                return self._box_fault(accession, stops,
+                                       f"the cutter found no section in {html.name} and edgartools swallowed "
+                                       f"{swallowed} failure(s) on the way there: the cause is not this filing's")
+            # A zero the library reached by looking and finding nothing, which is this filing's own answer.
             return self._document_failed(accession, spent, "the cutter found no section in it", lost=False)
         self._in_a_row.clear()
         _forget_failure(accession)

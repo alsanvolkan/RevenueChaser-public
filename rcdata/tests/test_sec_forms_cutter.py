@@ -107,6 +107,14 @@ _log({"identity": os.environ.get("EDGAR_IDENTITY"), "figi": "OPENFIGI_API_KEY" i
       "mode": os.environ.get("RC_SEC_FORMS_CUTTER")})
 
 
+def _warn_as(logger_name, func, message):
+    """Log a warning that carries ``func`` as its ``funcName``, the way the library's own call at that site
+    does. ``logging`` takes ``funcName`` from the frame, so the record is made by hand."""
+    import logging
+    logger = logging.getLogger(logger_name)
+    logger.handle(logger.makeRecord(logger_name, logging.WARNING, "edgartools.py", 1, message, (), None, func))
+
+
 class _Section:
     """``edgar.documents.document.Section``'s public fields, under its own names and with its own defaults."""
 
@@ -180,14 +188,29 @@ class Document:
         if "silent" in self.html:
             return {"item_1": _Section("item_1", "Business", item="1", body="")}
         if "swallowed" in self.html:
-            # What a failure *inside* detection looks like from outside it: every swallow site in 6.0.0 is an
-            # ``except Exception`` that logs a warning and returns nothing in its place
-            # (hybrid_section_detector.py:657, 672, 695; toc_section_detector.py:178). Under the library's own
-            # logger name, because that is what the worker watches.
-            import logging
-            logging.getLogger("edgar.documents.extractors.hybrid").warning("Pattern detection failed: boom")
+            # What a failure *inside* detection looks like from outside it: an ``except Exception`` that logs a
+            # warning and returns nothing in its place (hybrid_section_detector.py:695). Logged the way the
+            # library logs it -- its own logger name and its own function -- because that pair is what the
+            # worker counts, and a stub that logged it from anywhere would agree with a worker that counted
+            # anything.
+            _warn_as("edgar.documents.extractors.hybrid_section_detector", "_try_pattern_detection",
+                     "Pattern detection failed: boom")
+            return {}
+        if "benign" in self.html:
+            # A warning about something else entirely: an inline-XBRL format the library does not support
+            # (strategies/xbrl_extraction.py:544), which says nothing at all about detection. Round 7 measured
+            # what counting it costs: a 40-F that happens to log one became a box fault, and a full parse of it
+            # every back-off for ever.
+            _warn_as("edgar.documents.strategies.xbrl_extraction", "extract",
+                     "Unsupported inline XBRL format")
             return {}
         if "nothing" in self.html:
+            # The library's ordinary "there are no sections in this filing" exit **also logs a warning**
+            # (hybrid_section_detector.py:128), which is the whole reason the worker cannot simply count them.
+            # Round 7 measured what a plain count does with this: every sectionless filing in the corpus is
+            # called a swallowed failure, deferred, and re-parsed every back-off for ever.
+            _warn_as("edgar.documents.extractors.hybrid_section_detector", "detect",
+                     "All detection strategies failed, no sections found")
             return {}
         if "aslist" in self.html:
             return [_Section("item_1", "Business", item="1", body="A list, not a mapping.")]
@@ -1274,17 +1297,112 @@ def test_a_zero_section_answer_the_library_complained_about_is_not_the_filing_s_
     worker counts them (``cutter_worker._Swallowed``) and a zero the library complained about is charged nothing.
     """
     monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
-    noisy, quiet = tmp_path / "swallowed.htm", tmp_path / "nothing.htm"
-    noisy.write_text("<html>swallowed</html>", encoding="utf-8")
-    quiet.write_text("<html>nothing</html>", encoding="utf-8")
+    docs = {}
+    for name in ("swallowed", "nothing", "benign"):
+        docs[name] = tmp_path / f"{name}.htm"
+        docs[name].write_text(f"<html>{name}</html>", encoding="utf-8")
     with cutter.Cutter() as c:
-        assert c.cut("0000-75", noisy, "10-K") is None
+        assert c.cut("0000-75", docs["swallowed"], "10-K") is None
         assert "swallowed" in c.failed["0000-75"] and "not this filing's" in c.failed["0000-75"]
-        assert c.cut("0000-76", quiet, "10-K") is None
+        assert c.cut("0000-76", docs["nothing"], "10-K") is None
+        assert c.cut("0000-81", docs["benign"], "10-K") is None
     assert cutter.tries_so_far("0000-75") == 0, "the cause is unknown, so the filing is not charged for it"
     assert cutter.stops_so_far("0000-75") == 1, "it is deferred instead, and tried again after the back-off"
-    assert cutter.tries_so_far("0000-76") == 1, "while a quiet zero is this filing's own doing, as it was"
+
+    # The two zeros that must stay the filing's own, and the reason a plain count of warnings cannot be the
+    # signal: **both of these log one too.** The library's ordinary "no sections found" exit does
+    # (hybrid_section_detector.py:128), and so do several harmless things about a filing's XBRL and its table of
+    # contents. Counting every warning calls every sectionless filing in the corpus a swallowed failure, defers
+    # it, and re-parses it every back-off for ever -- which is a retry for ever with the wrong reason in the
+    # report, in place of the retirement after three attempts that a sectionless filing is owed.
+    assert cutter.tries_so_far("0000-76") == 1, "a zero the library reached by looking is this filing's own"
     assert cutter.stops_so_far("0000-76") == 0
+    assert cutter.tries_so_far("0000-81") == 1, "and a warning about something else is not about detection"
+    assert cutter.stops_so_far("0000-81") == 0
+
+
+@pytest.mark.parametrize("body", ["benign", "swallowed", "nothing"])
+def test_a_form_with_no_vocabulary_is_terminal_whatever_the_library_logged_on_the_way(body, stub, tmp_path,
+                                                                                     monkeypatch):
+    """The order of the two questions, and the form is asked first.
+
+    A 40-F gets no sections because the library has no patterns for the form at all
+    (``pattern_section_extractor.py:105`` holds them for eight forms and ``:145`` answers ``{}`` for the rest),
+    and that is true whatever else happened on the way: a warning about the filing's XBRL, a failure the library
+    caught and carried on without, or nothing at all. Zero is the only answer this form was ever going to get,
+    so it is terminal and free, which is the one outcome that costs the hourly pass nothing.
+
+    Asking about the log first is what round 6 did, and it put every such filing that logged anything into the
+    other branch: not charged, but three runs in the breaker's row and then a full parse of it every back-off
+    for the rest of the corpus's life, for a form whose answer cannot change.
+    """
+    monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
+    doc = tmp_path / f"{body}.htm"
+    doc.write_text(f"<html>{body}</html>", encoding="utf-8")
+    with cutter.Cutter() as c:
+        assert c.cut("0000-82", doc, "40-F") is None
+        assert c.no_vocabulary == 1 and "detects no section in a 40-F" in c.failed["0000-82"]
+    assert (cutter.tries_so_far("0000-82"), cutter.stops_so_far("0000-82")) == (0, 0)
+
+
+def test_which_log_records_count_as_a_swallowed_failure():
+    """The table is a copy of the library's ``except Exception`` sites on the detection path, so it is worth
+    saying out loud what is on each side of it. The ordinary "no sections found" exit is a warning from
+    ``detect`` of the same module as two of the sites, which is why the function and not only the module decides.
+    """
+    sites = _worker_module().SWALLOW_SITES
+    for module, func in [("hybrid_section_detector", "_try_pattern_detection"),
+                         ("hybrid_section_detector", "_try_heading_detection"),
+                         ("hybrid_section_detector", "_try_index_detection"),
+                         ("toc_section_detector", "detect"),
+                         ("index_section_detector", "detect")]:
+        assert (module, func) in sites
+    for module, func in [("hybrid_section_detector", "detect"),        # ":128", no sections found: not swallowed
+                         ("xbrl_extraction", "extract"),               # nothing to do with detection
+                         ("toc_analyzer", "analyze"),
+                         ("parser", "parse")]:
+        assert (module, func) not in sites
+
+
+def test_a_stop_stamped_in_the_future_defers_nothing(tmp_path, monkeypatch):
+    """Round 7's measurement. Reading a stamp later than now as "now" looks like the safe thing and is not:
+    ``now + STOP_BACKOFF_S - now`` is the whole back-off, recomputed in every run, so a clock ten days fast held
+    a document for ten days and six hours and a hand-edited ``10**30`` held one for good."""
+    monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
+    cutter.answers_dir().mkdir(parents=True, exist_ok=True)
+    for name, stamp in (("0000-83", int(time.time()) + 10 * 86400), ("0000-84", 10 ** 30)):
+        cutter._note_failure(name, "the box", stops=cutter.MAX_STOPS, stopped_at=stamp)
+        assert cutter.deferred_for(name) == 0, "it is probed in the next run, which stamps it from this clock"
+
+
+def test_the_deferral_reads_the_cap_the_cutter_was_built_with(tmp_path, monkeypatch):
+    """Two numbers for one rule is two rules. With the module's cap read here and the cutter's read by the
+    breaker, a cutter built with a smaller cap deferred nothing while its probes went on for ever, and one built
+    with a larger cap fed its breaker with documents the pass had already deferred."""
+    monkeypatch.setattr(cutter, "answers_dir", lambda: tmp_path / "answers")
+    cutter.answers_dir().mkdir(parents=True, exist_ok=True)
+    cutter._note_failure("0000-85", "the box", stops=1, stopped_at=int(time.time()))
+    assert cutter.deferred_for("0000-85", 1) > 0, "one stop is the cap this caller set"
+    assert cutter.deferred_for("0000-85", 5) == 0
+    assert cutter.deferred_for("0000-85") == 0, "and the module's cap is 3"
+
+
+def test_a_cutter_built_with_its_own_cap_defers_at_that_cap(fake, tmp_path):
+    """And the cap the cutter was built with is the one its own pass reads. With the module's read in the
+    deferral, a cutter built with ``max_stops=1`` charged a stop, deferred nothing, and probed the same document
+    in every run for ever -- while its breaker went on counting those probes as evidence about the box."""
+    fake.append([cutter.CutterUnusable("the cutter could not write or read a.htm: OSError: [Errno 5] I/O "
+                                       "error")])
+    with cutter.Cutter(break_after=5, max_stops=1) as c:
+        assert c.cut("0000-86", tmp_path / "a.htm", "10-K") is None
+        assert c.skipped == 0, "the stop is charged on the way in, not read on the way in"
+    assert cutter.stops_so_far("0000-86") == 1
+    assert cutter.deferred_for("0000-86", 1) > 0
+    FakeWorker.made = []
+    fake.append(["ok"])
+    with cutter.Cutter(break_after=5, max_stops=1) as c:
+        assert c.cut("0000-86", tmp_path / "a.htm", "10-K") is None
+        assert c.skipped == 1 and not FakeWorker.made
 
 
 def test_a_note_that_says_no_vocabulary_cannot_retire_a_form_the_library_knows(fake, tmp_path):

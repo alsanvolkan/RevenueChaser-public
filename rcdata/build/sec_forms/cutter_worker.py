@@ -30,8 +30,9 @@ recut is what a bump costs.
 and costs it an attempt, ``read`` is its own file (missing, a directory, a name too long), and ``io`` is the box
 (the answer root read-only, a full disk, no handles, no memory). A box fault costs no attempt -- it defers the
 document for a while and never retires it -- and five in a row stop the run, because by then it is the box and
-not 5,149 filings. ``swallowed`` is how many failures edgartools logged and carried on without, which is the
-only thing that tells a filing with no sections from a library that gave up on one (see :class:`_Swallowed`).
+not 5,149 filings. ``swallowed`` is how many failures edgartools caught on the detection path and carried
+on without -- counted at the sites in :data:`SWALLOW_SITES` and nowhere else -- which is the only thing that
+tells a filing with no sections from a library that gave up on one (see :class:`_Swallowed`).
 
 **The answer file holds edgartools' own output, unmapped**: one JSON line per detected section, with the fields
 this worker can read off it and nothing of ours. Our mapping to ``quality`` / ``method`` / ``confidence`` /
@@ -274,16 +275,40 @@ def _read(html_path: str) -> str:
         raise
 
 
-class _Swallowed(logging.Handler):
-    """Counts what edgartools logged and then carried on without.
+#: **Where edgartools 6.0.0 catches an exception on the detection path and returns nothing in its place**, as
+#: ``(module, function)`` of the log record each one writes. Read from the pinned wheel, and the one part of this
+#: worker that a version bump has to be checked against by hand -- a renamed function silently stops counting:
+#:
+#: - ``hybrid_section_detector.py:657, 672, 695`` -- the three strategies, each an ``except Exception``
+#: - ``toc_section_detector.py:179`` and ``index_section_detector.py:122`` -- the detectors the first two call
+#:
+#: **Counting every warning instead does not work**, which is what review round 7 measured: the detector's own
+#: ordinary "no sections here" exit logs one too (``hybrid_section_detector.py:128``, "All detection strategies
+#: failed, no sections found"), and so do several harmless things about a filing's XBRL and its table of contents
+#: (``strategies/xbrl_extraction.py:544``, ``parser.py:372``, ``utils/toc_analyzer.py:361``,
+#: ``extractors/toc_section_extractor.py:1583, 1650``). A count of all of them says "something was swallowed"
+#: about every sectionless filing in the corpus, which is the opposite of a signal.
+#:
+#: Accepted residual: about twenty ``except Exception`` sites on the same path log at DEBUG or not at all
+#: (``utils/toc_analyzer.py`` has thirteen). A failure in one of those still arrives as a quiet zero and is
+#: charged to the filing. Raising the handler to DEBUG would count the library's ordinary chatter instead.
+SWALLOW_SITES = frozenset({
+    ("hybrid_section_detector", "_try_heading_detection"),
+    ("hybrid_section_detector", "_try_index_detection"),
+    ("hybrid_section_detector", "_try_pattern_detection"),
+    ("toc_section_detector", "detect"),
+    ("index_section_detector", "detect"),
+})
 
-    Detection swallows every exception and returns nothing in its place
-    (``hybrid_section_detector.py:657, 672, 695``; ``toc_section_detector.py:178``), so a failure *inside* the
-    library -- including a ``MemoryError``, which is an ``Exception`` and so never reaches this worker's own
-    ``MemoryError`` branch -- arrives at the client as the one answer that is also the honest answer for a
-    filing with no sections in it: "ok, 0 sections". Each of those sites logs a warning first, which is the only
-    difference between the two, and the client needs it: a quiet zero is the filing's own doing and is charged an
-    attempt, while a zero the library complained about is of unknown cause and must not retire the filing.
+
+class _Swallowed(logging.Handler):
+    """Counts the failures edgartools caught on the detection path and carried on without.
+
+    A failure *inside* the library -- including a ``MemoryError``, which is an ``Exception`` and so never reaches
+    this worker's own ``MemoryError`` branch -- arrives at the client as the one answer that is also the honest
+    answer for a filing with no sections in it: "ok, 0 sections". These sites are the difference between the two,
+    and the client needs it: a zero from a swallowed failure is of unknown cause and must not retire the filing,
+    while a zero the library reached by looking and finding nothing is the filing's own and is charged an attempt.
     """
 
     def __init__(self) -> None:
@@ -291,7 +316,8 @@ class _Swallowed(logging.Handler):
         self.n = 0
 
     def emit(self, record: logging.LogRecord) -> None:
-        self.n += 1
+        if (record.name.rsplit(".", 1)[-1], record.funcName) in SWALLOW_SITES:
+            self.n += 1
 
 
 def _cut(html_path: str, form: str, out: str) -> tuple[int, int, int]:
