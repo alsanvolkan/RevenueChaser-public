@@ -144,3 +144,14 @@ def test_the_gateway_line_is_always_text_whatever_the_caller_hands_over(tmp_path
     rec = _rec(tmp_path, [T0])
     rec.down("127.0.0.1:4001", ConnectionRefusedError("refused"))
     assert tape_state.read(path=rec.path)["gateway"]["detail"] == "refused"
+
+
+def test_a_file_that_is_there_and_cannot_be_parsed_is_unreadable_and_a_missing_one_is_not(tmp_path):
+    """Review of #742: both read as "no record", so a corrupt record looked like a listener that never started."""
+    assert tape_state.read(path=tmp_path / "state.json")["unreadable"] is False
+    assert _view(tmp_path, 0)["unreadable"] is False
+    for broken in ("{not json", "[1, 2]"):
+        (tmp_path / "state.json").write_text(broken, encoding="utf-8")
+        assert tape_state.read(path=tmp_path / "state.json")["unreadable"] is True
+        v = _view(tmp_path, 0)
+        assert v["unreadable"] is True and v["feeds"] == [] and "cannot be read" in v["written_text"]
