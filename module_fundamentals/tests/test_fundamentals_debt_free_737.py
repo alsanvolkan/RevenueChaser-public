@@ -107,8 +107,8 @@ def test_every_debt_line_the_store_can_carry_is_checked():
 
 
 @pytest.mark.parametrize("field, ticker, owed", [
-    ("debt_combined_total", "TRN", 5_442.0),       # reached the card as "net cash", ND/EBITDA -0.15
-    ("debt_combined_total", "CENX", 548.0),        # reached the card as "net cash", ND/EBITDA -0.71
+    ("debt_combined_total", "TRN", 5_442.0),       # read as "net cash", ND/EBITDA -0.15
+    ("debt_combined_total", "CENX", 548.0),        # read as "net cash", ND/EBITDA -0.71
     ("notes_and_loans_payable", "KBH", 1_693.0),
     ("unsecured_debt", "TLNC", 1.0),
     ("debt_instrument_carrying_amount", "ENB", 45_000.0),
@@ -116,7 +116,8 @@ def test_every_debt_line_the_store_can_carry_is_checked():
 ])
 def test_a_filer_that_tags_a_borrowing_under_a_presence_only_concept_stays_unknown(field, ticker, owed):
     """These six do owe money and tag it, under a concept no total of this project sums. Without this check the
-    rule called every one of them debt-free, and TRN and CENX showed "net cash" on the card."""
+    rule called every one of them debt-free, and read TRN and CENX as net cash. None of the six passes a gate, so
+    none was rendered -- the defect was in the reading, not on a screen."""
     q = pipeline._quality_metrics(_year(**{field: owed}))
     assert q["debt_basis"] is None
     assert q["net_debt_ebitda"] is None
@@ -129,7 +130,7 @@ def test_a_filer_that_tags_a_borrowing_under_a_presence_only_concept_stays_unkno
     ("interest_expense_other", "ROG", 0.4),
 ])
 def test_interest_tagged_under_a_label_the_ladder_does_not_read_still_takes_the_filer_out(field, ticker, paid):
-    """Four of the 300 write their interest under one of these two concepts (measured 13 Nov 2026). They are read
+    """Four names write their interest under one of these two concepts (measured 13 Nov 2026). They are read
     here and nowhere else: ``interest_expense`` feeds the interest-cover and tax-rate engines, whose served
     figures must not move."""
     q = pipeline._quality_metrics(_year(**{field: paid}))
@@ -160,6 +161,48 @@ def test_every_presence_only_field_is_a_field_the_store_can_carry():
     assert set(debt.PRESENCE_ONLY_FIELDS) | set(debt.INTEREST_FIELDS) <= set(sec_edgar.CONCEPTS)
     assert set(debt.PRESENCE_ONLY_FIELDS) <= sec_edgar._DEBT_COMPONENT_FIELDS   # never sums, never a record
     assert set(debt.INTEREST_FIELDS) <= sec_edgar._NEVER_A_RECORD | sec_edgar._LAYER_ONLY_FIELDS
+
+
+def test_a_negative_interest_expense_is_still_debt_free():
+    """``<= 0``, not ``== 0``: a credit tagged under an expense concept is not a company paying interest."""
+    assert pipeline._quality_metrics(_year(interest_expense=-3.0))["debt_basis"] == debt.INFERRED_NONE
+
+
+def test_every_debt_component_field_is_either_summed_or_watched():
+    """Fable review F6: ``PRESENCE_ONLY_FIELDS`` is written by hand, so a debt concept added to the extractor and
+    to neither list would be invisible to the rule. The leases are the one deliberate exemption -- EBITDA is
+    already after rent and a lease liability on its own is not a borrowing (#239)."""
+    from RevenueChaser.core.providers import sec_edgar
+    leases = {f for f in sec_edgar._DEBT_COMPONENT_FIELDS if f.startswith(("finance_lease", "operating_lease"))}
+    unwatched = set(sec_edgar._DEBT_COMPONENT_FIELDS) - set(debt.tag_fields()) - set(debt.PRESENCE_ONLY_FIELDS)
+    assert unwatched == leases
+
+
+# ── The note on the rules that rest on the inference (Fable review F3) ──
+
+
+def test_the_growth_or_roic_rule_says_so_when_roic_rests_on_an_inferred_zero():
+    """An inferred zero makes ROIC known as well as the ratio, and Quality can pass on the ROIC half alone."""
+    q = pipeline._quality_metrics(_year())
+    gate = evaluate_quality({"net_debt_ebitda": q["net_debt_ebitda"], "net_cash": q.get("net_cash"),
+                             "roic": q["roic"], "debt_basis": q["debt_basis"]})
+    gor = next(r for r in gate["rules"] if r["id"] == "growth_or_roic")
+    assert INFERRED_DEBT_NOTE in gor["label"]
+
+
+def test_growth_alone_carries_no_note():
+    """Growth never rests on the debt reading, so a record with no ROIC says nothing about an inference."""
+    gate = evaluate_quality({"net_debt_ebitda": None, "net_cash": None, "roic": None,
+                             "rev_growth_ttm": 0.3, "debt_basis": debt.INFERRED_NONE})
+    gor = next(r for r in gate["rules"] if r["id"] == "growth_or_roic")
+    assert INFERRED_DEBT_NOTE not in gor["label"]
+
+
+def test_a_filed_total_leaves_both_labels_clean():
+    q = pipeline._quality_metrics(_year(total_debt=500.0))
+    gate = evaluate_quality({"net_debt_ebitda": q["net_debt_ebitda"], "net_cash": q.get("net_cash"),
+                             "roic": q["roic"], "debt_basis": q["debt_basis"]})
+    assert all(INFERRED_DEBT_NOTE not in r["label"] for r in gate["rules"])
 
 
 # ── The trailing year (rule 4: the same rule, read on the quarter the balance sheet comes from) ──
@@ -219,7 +262,7 @@ def test_interest_on_the_year_stops_the_trailing_year_inference():
     ("senior_notes_current", "GMED", 0.0),
 ])
 def test_a_debt_tag_on_the_anchor_year_stops_the_trailing_year_inference(field, ticker, owed):
-    """The other half of rule 4, found by the 13 Nov measurement: 7 of the 300 tagged debt on the annual record
+    """The other half of rule 4, found by the 13 Nov measurement: 7 names tagged debt on the annual record
     and nothing on the later quarter, so the TTM path -- which reads the quarter -- called them debt-free anyway.
     A quarter that did not repeat the tag does not say the borrowing was repaid."""
     annual, quarterly = _ttm_pair(year_over={field: owed})
@@ -239,6 +282,34 @@ def test_a_later_quarter_that_tags_debt_stops_the_fiscal_year_inference():
     q = pipeline._quality_metrics(annual, quarterly)
     assert q["quality_basis"] == "FY"
     assert q["debt_basis"] is None and q["net_debt_ebitda"] is None and q["net_cash"] is None
+
+
+def test_a_quarter_between_the_year_and_the_trailing_year_is_read_too():
+    """Fable review F2: the guard reads every quarter after the year end, not the newest one. A borrowing tagged
+    in one quarter and not repeated in the next has not been repaid, and both bases have to see it."""
+    annual, quarterly = _ttm_pair()
+    quarterly.insert(1, _q("2025-12-31", {}, {"cash": 600.0, "total_equity": 900.0, "senior_notes": 300.0},
+                           "2025-10-01", months=3))
+    q = pipeline._quality_metrics(annual, quarterly)
+    assert q["debt_basis"] is None and q["net_debt_ebitda"] is None
+
+
+def test_a_preliminary_newest_quarter_does_not_hide_the_quarter_behind_it():
+    """After a press release the newest quarterly record is the one UW filled, which tags no balance line at all.
+    Reading only that record would call a filer debt-free that tagged a borrowing in its last 10-Q."""
+    annual = [_fy(2025, {"revenue": 1000.0, "gross_profit": 750.0, "ebit": 200.0, "depreciation": 50.0},
+                  {"cash": 600.0, "total_equity": 900.0})]
+    quarterly = [{"period": "2026-03-31", "cash": 500.0, "total_equity": 900.0, "senior_notes": 300.0},
+                 {"period": "2026-06-30", "preliminary": ["revenue"]}]     # no balance sheet on it at all
+    q = pipeline._quality_metrics(annual, quarterly)
+    assert q["debt_basis"] is None and q["net_debt_ebitda"] is None
+
+
+def test_a_trailing_year_whose_quarter_record_is_missing_is_not_inferred():
+    """``_quarter_at`` finds nothing when the record the trailing year was built from is not in the list: no
+    balance sheet to read the tags off, so there is no inference to make."""
+    assert pipeline._quarter_at([{"period": "2026-06-30"}], "2026-09-30") is None
+    assert pipeline._quarter_at([{"period": "2026-06-30"}], None) is None
 
 
 def test_a_later_quarter_that_tags_nothing_leaves_the_inference_standing():

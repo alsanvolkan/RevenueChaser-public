@@ -337,8 +337,9 @@ def _quality_of(a: dict, debt_free: bool = False) -> dict:
 
     ``debt_free`` is the caller's answer to #737 (``module_fundamentals.debt``): this record tags no debt line at
     all and reports no positive interest expense, so the total debt the facts leave NULL is read as 0 here. The
-    reading is kept apart from a filed figure in ``debt_basis`` (``filed`` / ``inferred_none`` / None), which the
-    card shows, so an inferred zero is never presented as the filer's own.
+    reading is kept apart from a filed figure in ``debt_basis`` (``filed`` / ``inferred_none`` / None). The rules
+    that rest on it carry a note on their label, which the Q modal shows, and the basis itself rides in the board
+    payload, so an inferred zero is never presented as the filer's own.
     """
     out = {"gross_margin": None, "roic": None, "net_debt_ebitda": None, "net_cash": None,
            "net_income": None, "total_equity": None, "debt_basis": None}
@@ -390,13 +391,20 @@ def _quarter_at(quarterly: list[dict], end: str | None) -> dict | None:
     return next((q for q in quarterly if str(q.get("period"))[:10] == str(end)[:10]), None)
 
 
-def _newest_quarter_after(quarterly: list[dict], year_end) -> dict | None:
-    """The newest quarterly record that ends after the anchor year (#737's guard), or None."""
+def _quarters_after(quarterly: list[dict], year_end, upto=None) -> list[dict]:
+    """Every quarterly record ending after the anchor year end, up to and including ``upto`` (#737's guard).
+
+    **Every** one, not the newest: a filer that tagged a borrowing in Q1 and did not repeat it in Q2 has not said
+    it repaid, and after a press release the newest record is the preliminary one UW filled, which tags nothing at
+    all and would otherwise hide the 10-Q behind it (Fable review F2, 13 Nov 2026).
+    """
     if not year_end:
-        return None
+        return []
     e0 = year_end.isoformat() if hasattr(year_end, "isoformat") else str(year_end)[:10]
-    later = [q for q in quarterly if str(q.get("period"))[:10] > e0]
-    return max(later, key=lambda q: str(q.get("period"))[:10]) if later else None
+    out = [q for q in quarterly if str(q.get("period"))[:10] > e0]
+    if upto:
+        out = [q for q in out if str(q.get("period"))[:10] <= str(upto)[:10]]
+    return out
 
 
 def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) -> dict:
@@ -412,21 +420,24 @@ def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) ->
     a = annual[i]
     end = fiscal_year.period_end(a)
     # #737. The year is counted debt-free only when its own balance sheet tags nothing and it paid no interest AND
-    # no later quarter tags a debt line: the board shows one leverage figure per name, and a name whose newest
-    # balance sheet carries notes is not debt-free on it, whatever the older year end said.
-    newest_q = _newest_quarter_after(quarterly or [], end)
-    fy = _quality_of(a, debt_free=_debt.debt_free(a) and (newest_q is None or _debt.tags_no_debt(newest_q)))
+    # no quarter after it does either: the board shows one leverage figure per name, and a name whose later balance
+    # sheets carry notes is not debt-free on them, whatever the older year end said.
+    fy = _quality_of(a, debt_free=_debt.debt_free(a)
+                     and all(_debt.debt_free(q) for q in _quarters_after(quarterly or [], end)))
     out = {**fy, "quality_basis": "FY", "quality_period_end": end.isoformat() if end else None}
     ttm_rec = _quality_ttm(annual, quarterly or [], i)
     if ttm_rec is not None:
         # The same rule on the trailing year, read on the quarter its balance sheet comes from: the debt tags are a
         # balance sheet's, so they are that quarter's and never the year's. The anchor year has to clear the rule
-        # too. Measured 13 Nov 2026 on the real store: 7 of the 300 inferred names tag debt on the annual record
-        # and nothing on the later quarter, EXPD (``ShortTermBankLoansAndNotesPayable`` 30.3 m) and IOVA
-        # (``NotesPayableCurrent`` 1.0 m) with a real borrowing. A filer that tagged debt at its year end is not a
-        # filer that tagged nothing, and a quarter that simply did not repeat the tag does not say it repaid.
+        # too, and so does every quarter between the two. Measured 13 Nov 2026 on the real store: 7 of the 300
+        # inferred names tag debt on the annual record and nothing on the later quarter, EXPD
+        # (``ShortTermBankLoansAndNotesPayable`` 30.3 m) and IOVA (``NotesPayableCurrent`` 1.0 m) with a real
+        # borrowing. A filer that tagged debt at its year end is not a filer that tagged nothing, and a quarter
+        # that simply did not repeat the tag does not say it repaid.
         q = _quarter_at(quarterly or [], ttm_rec["period"])
-        ttm = _quality_of(ttm_rec, debt_free=_debt.debt_free(q) and _debt.debt_free(a))
+        ttm = _quality_of(ttm_rec, debt_free=_debt.debt_free(q) and _debt.debt_free(a)
+                          and all(_debt.debt_free(x)
+                                  for x in _quarters_after(quarterly or [], end, ttm_rec["period"])))
         # The year's net income stays (P/E reads its own TTM, ``_ttm_metrics``); P/B reads the newest equity.
         if all(ttm[k] is not None or fy[k] is None for k in ("gross_margin", "roic", "net_debt_ebitda", "net_cash")):
             out = {**ttm, "net_income": fy["net_income"], "quality_basis": "TTM",
@@ -736,6 +747,9 @@ def build_payload(results: list[dict], top_n: int | None = None, run_stats: dict
             "quality_basis": r.get("quality_basis"), "quality_period_end": r.get("quality_period_end"),
             "statements": r.get("statements"),
             "pe": m.get("pe"), "pb": m.get("pb"), "roic": m.get("roic"),
+            # #737 (Fable review F3): the payload carries ``roic``, which an inferred zero can make known, so it
+            # carries the basis of that zero beside it.
+            "debt_basis": m.get("debt_basis"),
             "distorted": distorted,
             "info_stale": bool(r.get("info_stale")),
             "gates": gates,

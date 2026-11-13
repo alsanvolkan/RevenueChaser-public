@@ -330,8 +330,8 @@ CONCEPTS = {
     # from "this filer tagged debt we do not sum". They are measured, 13 Nov 2026 on the stored companyfacts
     # (claude-coordinator notes/revenuechaser/notes/2026-11-13_1515_737-debt-free-inference-measurement.md): six
     # of the 307 names the inference would have called debt-free do tag a borrowing, under one of these concepts
-    # -- TRN and CENX (5,442 m and 548 m combined debt, 272.8 m and 36.6 m interest paid) reached the card as
-    # "net cash". They are NOT in ``facts.DEBT_LINES`` or ``facts.FALLBACK_DEBT_LINES``, so no ``total_debt``
+    # -- TRN and CENX (5,442 m and 548 m combined debt, 272.8 m and 36.6 m interest paid) were read as net cash,
+    # though neither passes a gate, so neither was ever rendered. They are NOT in ``facts.DEBT_LINES`` or ``facts.FALLBACK_DEBT_LINES``, so no ``total_debt``
     # moves: ``module_fundamentals/debt.py`` reads them only to take a name OUT of the inference.
     # ``DebtInstrumentCarryingAmount`` is one instrument's carrying amount, not a balance (see the comment above
     # and ``rcdata/.../facts.py``), so it stays out of every total -- but a filer that tags it has debt.
@@ -365,7 +365,7 @@ CONCEPTS = {
                        "MethodInvestments"], "USD"),
     "interest_expense": (["InterestExpense", "InterestExpenseNonoperating", "InterestExpenseDebt",
                           "InterestAndDebtExpense"], "USD"),
-    # #737, interest-PRESENCE signals. Four names of the 300 the debt-free inference reads write their interest
+    # #737, interest-PRESENCE signals. Four names the debt-free inference read write their interest
     # under a label the ladder above does not carry (measured 13 Nov 2026 on the stored companyfacts: GENI
     # ``InterestExpenseBorrowings`` 5.4 m, KYMR / ROG / GLUE ``InterestExpenseOther`` 4.2 / 0.4 / 0.14 m). They are
     # NOT added to ``interest_expense``: that field feeds the interest-cover and tax-rate engines (#645), and

@@ -23,8 +23,10 @@ Two conditions, both required:
 **The presence-only fields.** The measurement of 13 Nov 2026 on the real store
 (claude-coordinator ``notes/revenuechaser/notes/2026-11-13_1515_737-debt-free-inference-measurement.md``) read
 every name this rule would call debt-free against its raw companyfacts and found **6 of 307** that do tag a
-borrowing, under a concept neither list carries. Two of them, TRN and CENX, reached a card as "net cash" with a
-negative net debt / EBITDA while the filer owed 5,442 m and 548 m and had paid 272.8 m and 36.6 m of interest.
+borrowing, under a concept neither list carries -- TRN and CENX owed 5,442 m and 548 m and had paid 272.8 m and
+36.6 m of interest, and the rule read each of them as net cash. None of the six was ever rendered: a name reaches
+a card only by passing a gate, and only CP passes one (Momentum), where it has no EBITDA and its leverage row
+reads unknown either way. The defect was real; it was not visible.
 ``PRESENCE_ONLY_FIELDS`` closes that: the four concepts are read into the record
 (``core/providers/sec_edgar.py``) and consulted **here only**. They enter no total, in this layer or any other --
 ``DebtInstrumentCarryingAmount`` in particular is one instrument's carrying amount and would make a total worse
@@ -36,10 +38,10 @@ zero as a tag, so it goes back to unknown although the zero is the filer saying 
 as written and as #264 / #825 read a zero everywhere else -- 1 name in 2,148, a reading lost rather than a wrong
 one printed.
 
-**What is left.** One name of the 300, PCAR, tags no debt at all and reports no interest expense; only
+**What is left.** One name of the 289, PCAR, tags no debt at all and reports no interest expense; only
 ``InterestPaid`` (692.8 m) betrays it, and 49 of the 307 paid some interest (MNST 5.3 m, CPRT 1.9 m), so a rule on
 interest *paid* needs a threshold, a measured reason and avo's decision. It is deliberately not invented here, and
-PCAR's reading does not reach a card (no EBITDA, so the leverage rule stays unknown either way).
+PCAR passes no gate, so its reading reaches no card.
 
 **What this cannot see.** ``interest_expense`` reads ``InterestExpense`` and its three neighbours
 (``core/providers/sec_edgar.py``). A bank or an insurer writes interest under other labels (deposit interest,

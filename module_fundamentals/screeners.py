@@ -66,9 +66,11 @@ def evaluate_rule_of_40(m: dict) -> dict:
     }
 
 
-# #737 (avo, 13 Nov 2026): the note a card carries when the leverage figure rests on an inferred zero rather than
-# on a debt total the filer tagged. It is on the label, so it travels with the rule into ``fundamentals_gates`` and
-# onto the card, and it says why -- a filed zero carries no note at all.
+# #737 (avo, 13 Nov 2026): the note a rule carries when its figure rests on an inferred zero rather than on a debt
+# total the filer tagged. It is on the label, so it travels with the rule onto the Q modal, where the rules are
+# rendered, and it says why -- a filed zero carries no note at all. It does NOT reach ``fundamentals_gates``, whose
+# rows hold ``passed``, ``actual`` and ``unit`` only (``scores.gate_rows``); the payload carries ``debt_basis``
+# instead (Fable review F3, 13 Nov 2026).
 INFERRED_DEBT_NOTE = "debt not tagged, no interest: counted 0"
 
 
@@ -97,9 +99,14 @@ def evaluate_quality(m: dict) -> dict:
 
     growth_ok = tri.rule((growth,), lambda g: g >= config.GROWTH_MIN)
     roic_ok = tri.rule((roic,), lambda r: r >= config.ROIC_MIN)
+    # #737, Fable review F3: an inferred zero makes ROIC known as well as the leverage ratio, so when ROIC is in
+    # play this rule rests on the same inference and says so. Growth alone never does.
+    gor_label = "Growth ≥20% or ROIC ≥15%"
+    if roic is not None and m.get("debt_basis") == debt.INFERRED_NONE:
+        gor_label += f" ({INFERRED_DEBT_NOTE})"
     rules = [
         # One missing half cannot fail the rule, and cannot decide it unless the other half already passed.
-        _rule("growth_or_roic", "Growth ≥20% or ROIC ≥15%", "pct",
+        _rule("growth_or_roic", gor_label, "pct",
               tri.either(growth_ok, roic_ok), growth if growth_ok else roic, "≥20% / ≥15%"),
         _rule("gross_margin", "Gross margin ≥30%", "pct",
               tri.rule((gm,), lambda g: g >= config.GM_MIN), gm, "≥ 30%"),
