@@ -255,20 +255,46 @@ _ITEM = _spaced("item")
 #: :func:`_holds_another_item`; the price is paid for the sub-item shape that was really measured.
 _NOT_SUBITEM = r"(?!\.[ \t\xa0\u202f\u3000]*\d\d\b)"
 
+#: ``ours-2``'s gap inside a heading: whitespace, or a zero-width character. :func:`strip_html` turns a tag into
+#: a space but leaves ``&#8203;`` as it found it, and Southern Missouri Bancorp prints its headings as
+#: "Item 1. \u200b \u200b Description of Business" -- where ``\s*`` stops and the heading is missed, leaving a
+#: 155,000-character Item 1 uncut (13 Nov 2026 full-disk check). ``strip_html`` is the board's and may not move,
+#: so the gap is spelled here instead.
+_GAP = r"[\s\u200b\u200c\u200d\ufeff]"
+#: What may stand between the word *item* and its number. ``ours-1`` allows a gap only, so "ITEM. 1 BUSINESS"
+#: (Eos Energy) and "ITEM - 1. Business" (FB Financial) are not headings to it and both filings cut to nothing.
+_NUM_SEP = rf"{_GAP}{{0,3}}(?:[.:|{_DASH}]{_GAP}{{0,3}})?"
+#: ... and between the number and the title. AIG prints "ITEM 1 | Business" as the heading **and** as every
+#: page's running header; ``ours-1`` found no heading at all there and cut 58,722 characters out of a
+#: cross-reference instead, labelled ``ok`` (13 Nov 2026 full-disk check).
+_TITLE_SEP = rf"{_GAP}*[.:|]?{_GAP}*(?:[{_DASH}]+{_GAP}*)?"
+#: The number itself. ``l`` is the lower-case letter: BRT Apartments writes "Item l. Business." with an ell for
+#: the one, which no later run will ever spell differently. :func:`_item_no` keeps it as read, so it matches no
+#: stop and only ever starts a slice.
+_ONE = r"(1|i|l)"
+
 _LINE_START_2 = {
     # "Items 1. and 2." -- a full stop after the first number (Cheniere, 13 Nov 2026 real-filing check)
-    "10-K": re.compile(rf"(?im)^[^\S\n]*{_ITEM}s?\s{{0,3}}(1|i)\b(?:\s*\.?\s*(?:and|&|,)\s*2\b)?"
-                       rf"\s*[.:]?\s*(?:[{DASH}]+\s*)?(?:(?:description\s+of|our)\s+(?:the\s+)?)?"
+    "10-K": re.compile(rf"(?im)^[^\S\n]*{_ITEM}s?{_NUM_SEP}{_ONE}\b(?:\s*\.?\s*(?:and|&|,)\s*2\b)?"
+                       rf"{_TITLE_SEP}(?:(?:description\s+of|our)\s+(?:the\s+)?)?"
                        rf"{spaced('business')}"),
-    "20-F": re.compile(rf"(?im)^[^\S\n]*{_ITEM}\s{{0,3}}(4)\b\s*[.:]?\s*(?:[{DASH}]+\s*)?"
+    "20-F": re.compile(rf"(?im)^[^\S\n]*{_ITEM}{_NUM_SEP}(4)\b{_TITLE_SEP}"
                        rf"{spaced('information')}\s+(?:on|about|of)\s+(?:the\s+)?"
                        r"(?!(?:our\s+)?executive)[\w&.-]+"),
 }
+#: Item 1 is the first item of Part I, so a line-start "Item 1" on the line after a "PART I" line is its heading
+#: whatever title follows underneath. Exelon prints "PART I \n ITEM 1. \n General" -- the title in its contents
+#: is "BUSINESS" and the one over the body is not -- and ``ours-1`` cut 38,817 characters out of a
+#: cross-reference instead, labelled ``ok``. Read only when the titled pattern above finds no heading, and the
+#: contents page's own "PART I / ITEM 1." is thrown out by the guards that already stand there. 10-K only: a
+#: 20-F's Item 4 is not the first item of its part.
+_PART_I_ITEM_1 = re.compile(rf"(?im)^[^\S\n]*part{_GAP}{{1,3}}i{_GAP}*[.:]?[^\S\n]*\n"
+                            rf"[^\S\n]*{_ITEM}s?{_NUM_SEP}{_ONE}\b[^\S\n]*[.:|]?[^\S\n]*$")
 #: The letter may stand apart from its number: Tempus AI writes "Item\u20091 A. Risk Fact ors" (13 Nov 2026 real-filing
 #: check), and without the gap allowed Item 1A was no heading, the slice ran through the risk factors to Item 1B and
 #: still said ``ok``. The gap counts only with the full stop, colon or dash a heading puts after the letter, so a
 #: tag-split "Item 1 B usiness" stays its own item's title (Fable review). :func:`_item_no` drops the gap again.
-_LINE_END_2 = re.compile(rf"(?im)^[^\S\n]*{_ITEM}\s{{0,3}}(1[abc]|1[^\S\n][abc](?=[.:{DASH}])|[2-9](?:[abc]|[^\S\n][abc](?=[.:{DASH}]))?|1[0-9])\b{_NOT_SUBITEM}")
+_LINE_END_2 = re.compile(rf"(?im)^[^\S\n]*{_ITEM}{_NUM_SEP}(1[abc]|1[^\S\n][abc](?=[.:{DASH}])|[2-9](?:[abc]|[^\S\n][abc](?=[.:{DASH}]))?|1[0-9])\b{_NOT_SUBITEM}")
 
 
 def _item_no(m: re.Match) -> str:
@@ -444,7 +470,7 @@ def _ref_ours_2(text: str, m: re.Match, key: str = "10-K") -> bool:
 #: Just past the item's number inside a match, wherever the match itself ends. The four patterns end in
 #: different places -- the line-end one after the number, the starts and the stops after the **title** -- and
 #: every test below asks what follows the *number*, so each of them needs this and not ``m.end()``.
-_NUMBER = re.compile(rf"(?i)[^\S\n]*{_ITEM}s?\s{{0,3}}(?:[0-9]+(?:[a-c]|[^\S\n][a-c](?=[.:{_DASH}]))?|i[a-c]?)")
+_NUMBER = re.compile(rf"(?i)[^\S\n]*{_ITEM}s?{_NUM_SEP}(?:[0-9]+(?:[a-c]|[^\S\n][a-c](?=[.:{_DASH}]))?|i[a-c]?)")
 
 
 def _after_number(text: str, m: re.Match) -> int:
@@ -570,6 +596,22 @@ def _cites_its_title(text: str, m: re.Match, line_end: int) -> bool:
     return bool(_CLAUSE_GOES_ON.match(tail) or _UNOPENED_CLOSER.match(tail) or _A_LETTER.search(tail))
 
 
+def _toc_next_ours_2(text: str, m: re.Match, key: str = "10-K") -> bool:
+    """True when a later item is **listed** right after ``m``, as a contents page lists it.
+
+    ``ours-1``'s test is the bare appearance of a later item's number within 400 characters
+    (:data:`_TOC_NEXT`), which also throws away a real heading whose own first sentence names another item:
+    Southern Missouri Bancorp opens with "Item 1. Description of Business \n The disclosures set forth in this
+    Item 1. are qualified by Item 1A. Risk Factors", and that was the filing's only line-start heading. With it
+    gone the cut fell through to the pattern path and ran 199,999 characters -- the whole of the risk factors
+    and beyond (13 Nov 2026 full-disk check). A contents entry begins its own line or follows another entry; a
+    mention inside a sentence is preceded by a word that says so, which is what :func:`_words_before_ref`
+    reads.
+    """
+    return any(not _words_before_ref(text, n, key)
+               for n in _TOC_NEXT.finditer(text, m.end(), m.end() + 400))
+
+
 def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
     """``(body start, body end, a heading closed it)`` of the line-start rule, or None when it finds no body.
 
@@ -591,8 +633,13 @@ def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
     words around it can.
     """
     stop_re = re.compile(STOP_PATTERNS_2[key], re.I)
-    for m in _LINE_START_2[key].finditer(text):
-        if _TOC_NEXT.search(text[m.end():m.end() + 400]) or _PAGE_NO.match(text, m.end()) or _ref_ours_2(text, m, key):
+    starts = list(_LINE_START_2[key].finditer(text))
+    if key == "10-K":
+        # The titleless heading is read only when no titled one is left, so a filing that spells its heading in
+        # full is cut exactly as before (:data:`_PART_I_ITEM_1`).
+        starts += list(_PART_I_ITEM_1.finditer(text))
+    for m in starts:
+        if _toc_next_ours_2(text, m, key) or _PAGE_NO.match(text, m.end()) or _ref_ours_2(text, m, key):
             continue
         own = m.group(1).lower()
         end = next((e.start() for e in _LINE_END_2.finditer(text, m.end() + MIN_ITEM_CHARS)
@@ -621,10 +668,23 @@ def _holds_another_item(item: str, own: str) -> bool:
                for m in _LINE_END_2.finditer(item))
 
 
-def _quality_ours_2(item: str, own: str, closed: bool) -> str:
+#: An annual report filed **as** the Form 10-K or 20-F, with a table mapping each item number to places in that
+#: report rather than item sections of its own. Five of them were read on 13 Nov 2026 and none can be cut by
+#: item: McDonald's index gives a page number and no caption at all ("Item 1 Business Page 3"), and Barclays',
+#: Pearson's, Santander's and HSBC's map Item 4.B to scattered ranges and notes -- "ii (Market and other data),
+#: 14-24, 186-188, 300-313, 355-357 (Note 2)" -- so there is no one span to cut and no caption to find it by.
+#: ``crossref`` says that, where ``short`` and ``missing`` read as a cut that went wrong and invite another try.
+#: The ``whole`` row still holds the document, so nothing is lost by not cutting it.
+_INDEXED = re.compile(r"(?i)(?:cross[\s-]{0,3}reference|item\s{1,3}number)[\s\S]{0,120}?form\s{0,3}(?:10-k|20-f)"
+                      r"|form\s{0,3}(?:10-k|20-f)[\s\S]{0,60}?(?:cross[\s-]{0,3}reference|item\s{1,3}number)")
+
+
+def _quality_ours_2(item: str, own: str, closed: bool, text: str = "") -> str:
     """The label for a slice ``ours-2`` has already cut. Never ``capped``: nothing here caps."""
     if len(item) < MIN_ITEM_CHARS:
-        return "pointer" if _POINTER.search(item) else "short"
+        if _POINTER.search(item):
+            return "pointer"
+        return "crossref" if _INDEXED.search(text) else "short"
     if not closed or _holds_another_item(item, own):
         return "overrun"
     return "ok"
@@ -663,7 +723,7 @@ def _slice_item_ours_2(text: str, form: str = "10-K") -> tuple[str | None, str]:
     line = _line_item_ours_2(text, key)
     if line is not None:
         start, end, closed = line
-        return text[start:end].strip(), _quality_ours_2(text[start:end].strip(), own, closed)
+        return text[start:end].strip(), _quality_ours_2(text[start:end].strip(), own, closed, text)
 
     # The pattern path, for a document whose headings do not start their own lines (a filing served as one long
     # paragraph). The same starts and stops as ``ours-1``, spelled so that ``item`` may be split, and with no
@@ -694,8 +754,8 @@ def _slice_item_ours_2(text: str, form: str = "10-K") -> tuple[str | None, str]:
         if best is None or len(item) > len(best):
             best, closed = item, stop_m is not None
     if best is None:
-        return None, "missing"
-    return best, _quality_ours_2(best, own, closed)
+        return None, ("crossref" if _INDEXED.search(text) else "missing")
+    return best, _quality_ours_2(best, own, closed, text)
 
 
 # ── suspect flags (#400 10-K package WP2) ───────────────────────────────────────────────────────────────────
