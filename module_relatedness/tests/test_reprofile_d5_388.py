@@ -50,7 +50,7 @@ def calls(rawstore_tmp_db, monkeypatch):
 
 
 def test_the_prompt_is_v3():
-    assert config.PROMPT_VERSION == "v3c" and store.PROMPT_VERSION == "v3c"   # #717 (v3b was #400, v2 #388 D5)
+    assert config.PROMPT_VERSION == "v3d" and store.PROMPT_VERSION == "v3d"   # #841 (v3c #717, v3b #400, v2 #388 D5)
 
 
 def test_the_same_input_is_not_profiled_again(calls):

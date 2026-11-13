@@ -40,7 +40,6 @@ def calls(monkeypatch):
     monkeypatch.setattr(profiles.deepseek, "complete", fake)
     monkeypatch.setattr(engine, "_cik_for", lambda ts: {t: t for t in ts})
     monkeypatch.setattr(engine, "_filing_source", lambda t: None)
-    monkeypatch.setattr(engine, "_previous_filing", lambda t: None)
     monkeypatch.setattr(engine, "_whole_document", lambda t: None)
     monkeypatch.setattr(engine, "_context", lambda t, cik, source=None: {})
     seen.fake = fake
@@ -57,7 +56,7 @@ def test_a_v3_profile_is_stored_whole_with_its_attribute_rows(rawstore_tmp_db, m
     assert len(calls) == 1 and calls[0]["json_mode"] is True and calls[0]["thinking"] is False
     assert calls[0]["system"] == profile_v3.system_prompt()
     row = rawstore.get("relatedness_profiles", "NVDA")
-    assert row["status"] == "ok" and row["prompt_version"] == "v3c"
+    assert row["status"] == "ok" and row["prompt_version"] == "v3d"
     assert row["profile_json"]["customers"][0] == {"name": "Dell", "type": "oem", "quote": "Dell accounted for 10%.",
                                                    "parent": "", "public": None, "share": 0.1}
     assert row["label_source"]["summary"] == "chunk:0" and row["label_source"]["input"] == "item"
@@ -97,18 +96,10 @@ def test_a_long_item_is_read_in_chunks_and_merged(rawstore_tmp_db, monkeypatch, 
     assert store.input_hash(row["cache_key"]) == profiles.input_hash("HON", text)
 
 
-def test_a_short_item_falls_back_to_the_previous_filing_then_the_whole_document(rawstore_tmp_db, monkeypatch,
-                                                                                calls):
+def test_a_short_item_falls_back_to_the_whole_document(rawstore_tmp_db, monkeypatch, calls):
+    """#841: the previous year's filing is no longer a link (the form reader serves the newest filing only)."""
     _text(monkeypatch, "Item 1. Business. See page 4.")
-    monkeypatch.setattr(engine, "_previous_filing", lambda t: {"text": long_body("last year we made gpus"),
-                                                               "source": {"cik": "1", "accession": "old"}})
-    engine.build_profiles(["NVDA"], usd_cap=1.0)
-    row = rawstore.get("relatedness_profiles", "NVDA")
-    assert row["status"] == "ok" and row["label_source"]["input"] == "previous_filing"
-    assert "last year we made gpus" in calls[-1]["user"]
-    assert store.profile_source(row["cache_key"])["accession"] == "old"
-
-    monkeypatch.setattr(engine, "_previous_filing", lambda t: None)
+    assert "previous_filing" not in engine.FALLBACKS and not hasattr(engine, "_previous_filing")
     monkeypatch.setattr(engine, "_whole_document", lambda t: {"text": long_body("the whole 10-K"), "source": None})
     engine.build_profiles(["AMD"], usd_cap=1.0)
     row = rawstore.get("relatedness_profiles", "AMD")
@@ -176,7 +167,7 @@ def test_an_unparseable_reply_is_retried_once_uncached(rawstore_tmp_db, monkeypa
 def test_the_board_mode_has_no_thinking():
     assert not hasattr(config, "THINKING") and not hasattr(config, "THINKING_SAMPLE")
     assert not hasattr(config, "PILOT_N") and not hasattr(config, "MAX_INPUT_CHARS")
-    assert config.PROMPT_VERSION == "v3c"
+    assert config.PROMPT_VERSION == "v3d"
     assert store.mode_stamp()["thinking"] is False
 
 

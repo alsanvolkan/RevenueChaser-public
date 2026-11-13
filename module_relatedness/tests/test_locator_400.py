@@ -74,7 +74,6 @@ def world(monkeypatch):
     monkeypatch.setattr(profiles.deepseek, "complete", fake)
     monkeypatch.setattr(engine, "_cik_for", lambda ts: {t: t for t in ts})
     monkeypatch.setattr(engine, "_context", lambda t, cik, source=None: {})
-    monkeypatch.setattr(engine, "_previous_filing", lambda t: None)
     monkeypatch.setattr(engine, "_whole_document", lambda t: {"text": DOC, "source": {"accession": "acc"}})
     rawstore.write_rows("chain_filings", [{"ticker": "NVDA", "cik": "1", "form": "10-K", "filed": "2026-01-01",
                                            "accession": "acc", "primary_doc": "u",
