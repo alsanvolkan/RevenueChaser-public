@@ -28,7 +28,7 @@ import pytest
 from RevenueChaser.module_value_chain import splitter
 from RevenueChaser.rcdata import sec_sections
 
-from .sec_sections_cases import BODY, CASES
+from .sec_sections_cases import BODY, CASES, TOC
 
 OURS_1, OURS_2 = sec_sections.OURS_1, sec_sections.OURS_2
 _BY_NAME = {name: (text, form) for name, text, form in CASES}
