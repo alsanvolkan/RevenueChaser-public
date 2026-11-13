@@ -243,13 +243,15 @@ def test_the_note_need_answers_by_local_name_across_taxonomies(sec):
 # ── the suspect flag on the business row (#835) ─────────────────────────────────────────────────────────────────
 
 def _k_ending_in_a_cross_reference() -> str:
-    """A 10-K whose Item 1 ends on 'See Item 1A' -- the shape the 10-K reading report found labelled ``ok`` while
-    the cut was wrong (``_TAIL_REF``/S4). Built from the note fixture's header so the build still reads its one
-    note, with the business body replaced."""
-    body = ("<p>Item 1. Business</p><p>Item 1A. Risk Factors</p><p>PART I</p><p>Item 1. Business</p>"
-            "<p>We develop software and cloud services. Our customers include enterprises. " * 80
-            + " See</p><p>Item 1A. Risk Factors</p><p>Risks.</p></body></html>")
-    return nf.CONTINUED.replace("\n</body></html>", body.split("</body></html>")[0])
+    """A 10-K whose Item 1 ends on a bare "See" in front of the Item 1A heading -- the shape the 10-K reading
+    report found labelled ``ok`` while the cut was wrong (``_TAIL_REF``/S4, the shared
+    ``suspect_tail_cross_reference`` case). Built on the note fixture's header, as :func:`annual` is, so the build
+    still reads its one note."""
+    paragraph = "<p>We develop software and cloud services. Our customers include enterprises.</p>"
+    k = ("<html><body><p>Item 1. Business</p><p>Item 1A. Risk Factors</p>"
+         "<p>PART I</p><p>Item 1. Business</p>" + paragraph * 80
+         + "<p>See</p><p>Item 1A. Risk Factors</p><p>Risks.</p></body></html>")
+    return nf.CONTINUED.replace("\n</body></html>", k.split("<body>", 1)[1])
 
 
 def test_the_business_row_carries_the_suspect_flag_when_the_cut_ends_in_a_reference(sec):
