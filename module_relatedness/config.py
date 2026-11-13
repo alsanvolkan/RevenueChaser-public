@@ -34,14 +34,14 @@ MIN_INPUT_CHARS = vc_config.MIN_ITEM_CHARS
 # the input hash, so without a bump they would reach only freshly profiled companies.
 PROMPT_VERSION = "v3d"
 
-# The most of a business section a profile reads (#841). ``ours-2`` stores the section uncut (p99 264,822
-# characters, max 488,947 on the 5,131 stored annual reports, 13 Nov 2026), and a profile is one call per 60,000
-# characters, so the reader caps. At this value 72 companies lose the far end of their section and a full round
-# is 8,139 first-attempt calls, against 8,128 under the 200,000 cap ``ours-1`` stored with. The value is inside
-# the hashed text: changing it later restales every company over it.
-# Not the ``MAX_INPUT_CHARS`` v2 cut every text at (removed by v3, #400): that one shortened every filing to one
-# call; this one bounds the 72 longest sections and leaves the rest whole.
-MAX_BUSINESS_CHARS = 240_000
+# The most of a business section a profile reads (#841), or None for no cap. ``ours-2`` stores the section uncut
+# (p99 264,822 characters, max 488,947 on the 5,131 stored annual reports, 13 Nov 2026) and a profile is one call
+# per 60,000 characters. The owner's decision, 13 Nov 2026 ("maliyet onemli degil"): no cap, so no company's
+# section is cut; a full round is 8,366 first-attempt calls against 8,128 under the 200,000 cap ``ours-1`` stored
+# with (240,000 would have been 8,139 calls and cut 72 companies). The value is inside the hashed text: setting
+# one later restales every company over it.
+# Not the ``MAX_INPUT_CHARS`` v2 cut every text at (removed by v3, #400).
+MAX_BUSINESS_CHARS: int | None = None
 
 # The rule version the business sections must be cut with before a profile run reads them (``_forms_ready``,
 # #841). None turns the check off.

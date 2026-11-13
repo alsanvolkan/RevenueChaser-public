@@ -133,9 +133,15 @@ def test_a_section_over_the_cap_is_read_to_the_cap(rawstore_tmp_db, monkeypatch)
     assert len(profile_v3.split_chunks(inp["text"])) == 1
 
 
-def test_the_cap_is_what_the_owner_was_shown():
-    # 72 of the 4,954 companies with usable text are over it; a round is 8,139 first-attempt calls (13 Nov 2026).
-    assert config.MAX_BUSINESS_CHARS == 240_000
+def test_no_section_is_cut_by_default(rawstore_tmp_db):
+    """The owner's decision, 13 Nov 2026: no cap. A section longer than the 200,000 characters ``ours-1`` stored
+    is read whole, in as many calls as it needs."""
+    assert config.MAX_BUSINESS_CHARS is None
+    sentence = "We design and sell accelerated computing platforms.\n"
+    text = sentence * 5_000                                     # 260,000 characters
+    _seed("NVDA", text)
+    inp = engine._filing_input("NVDA")
+    assert inp["text"] == engine.clean_input(text) and len(inp["text"]) > 200_000
 
 
 def test_the_hash_pass_hashes_what_the_profile_call_sends(rawstore_tmp_db, monkeypatch):

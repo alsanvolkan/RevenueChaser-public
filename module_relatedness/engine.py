@@ -153,9 +153,11 @@ def _unprofilable(quality) -> bool:
 
 
 def _capped(text: str) -> str:
-    """The business text a profile reads: its first ``config.MAX_BUSINESS_CHARS``. ``ours-2`` stores the section
-    uncut, so the reader caps (#841); applied before ``clean_input``, the order the fallback branch uses."""
-    return (text or "")[:config.MAX_BUSINESS_CHARS]
+    """The business text a profile reads: its first ``config.MAX_BUSINESS_CHARS``, or all of it when that is None
+    (the owner's choice, 13 Nov 2026). ``ours-2`` stores the section uncut, so a cap is the reader's (#841);
+    applied before ``clean_input``, the order the fallback branch uses."""
+    cap = config.MAX_BUSINESS_CHARS
+    return (text or "") if cap is None else (text or "")[:cap]
 
 
 def _filing_input(ticker: str) -> dict:
