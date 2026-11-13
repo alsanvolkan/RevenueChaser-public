@@ -226,6 +226,23 @@ def sec13f_type_holdings(tag: str) -> list[dict]:
              "snapshot_date": r["snapshot_date"].isoformat() if r.get("snapshot_date") else None} for r in rows]
 
 
+def sec13f_type_filers() -> dict[str, int]:
+    """``{tag: filers}``: each investor type's 13F filers in its newest stored quarter (#760), for the board's picker
+    to show how thin a type is (13 Nov 2026: 4 energy investors, no ESG one). ``{}`` when the store cannot be read."""
+    from RevenueChaser.rcdata import read as rcread
+
+    try:
+        rows = rcread.type_holdings_13f()
+    except Exception as exc:                      # noqa: BLE001 - no counts, never a failed board
+        logger.warning("13F investor-type counts unreadable: %s", exc)
+        return {}
+    newest: dict[str, tuple] = {}
+    for r in rows:
+        if r["tag"] not in newest or r["period"] > newest[r["tag"]][0]:
+            newest[r["tag"]] = (r["period"], int(r.get("type_filers") or 0))
+    return {tag: filers for tag, (_, filers) in newest.items()}
+
+
 def sec13f_open_periods() -> set[str]:
     """The 13F report periods still arriving (their filing deadline not passed, nor their data set published), as
     ISO dates; ``set()`` when the store cannot be read."""

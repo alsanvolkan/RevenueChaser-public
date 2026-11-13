@@ -81,6 +81,24 @@ def test_the_reader_gives_no_rows_when_the_store_cannot_be_read(monkeypatch):
     assert ownership.sec13f_type_holdings("energy") == []
 
 
+def test_each_type_shows_its_filers_and_a_type_with_none_cannot_be_picked():
+    html = report.types_section_html({"all": 8743, "value_investor": 69, "energy": 4})
+    assert '<option value="value_investor" selected>Value (69)</option>' in html
+    assert '<option value="energy">Energy (4)</option>' in html
+    assert '<option value="all">All (8,743)</option>' in html
+    assert '<option value="esg" disabled>ESG (0)</option>' in html
+
+
+def test_the_counts_are_each_types_newest_quarter(monkeypatch):
+    from RevenueChaser.rcdata import read as rcread
+    from datetime import date
+    monkeypatch.setattr(rcread, "type_holdings_13f", lambda *a, **kw: [
+        {"tag": "energy", "period": date(2026, 6, 30), "type_filers": 5},
+        {"tag": "energy", "period": date(2026, 9, 30), "type_filers": 4},
+        {"tag": "all", "period": date(2026, 9, 30), "type_filers": 8743}])
+    assert ownership.sec13f_type_filers() == {"energy": 4, "all": 8743}
+
+
 def test_the_board_carries_the_collapsed_section_with_every_type_and_value_picked():
     page = report.render_sec13f_dashboard({}, {})
     assert '<details class="types" id="types">' in page

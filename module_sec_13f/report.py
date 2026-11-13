@@ -574,7 +574,7 @@ document.addEventListener('DOMContentLoaded', function(){
   if(types && pick){
     try {
       var saved = localStorage.getItem(TYPE_KEY);
-      if(saved && Array.prototype.some.call(pick.options, function(o){ return o.value === saved; })){ pick.value = saved; }
+      if(saved && Array.prototype.some.call(pick.options, function(o){ return o.value === saved && !o.disabled; })){ pick.value = saved; }
     } catch(e) {}
     types.addEventListener('toggle', function(){ if(types.open && !types.dataset.loaded){ types.dataset.loaded = '1'; loadType(pick.value); } });
     pick.addEventListener('change', function(){ loadType(pick.value); });
@@ -1083,12 +1083,19 @@ def render_sec13f_dashboard(totals: dict, meta: dict, enrichment: dict = None,
 DEFAULT_TYPE = "value_investor"     # the owner's example (12 Nov 2026: UW's "Value / Energy Investors" chart)
 
 
-def types_section_html() -> str:
+def types_section_html(filers: dict[str, int] | None = None) -> str:
     """The collapsed "Top holdings by investor type" section (#760): a type picker and the chart host. The chart is
-    fetched from ``/api/sec_13f/types/<tag>`` when the section is opened, so a closed section costs nothing."""
+    fetched from ``/api/sec_13f/types/<tag>`` when the section is opened, so a closed section costs nothing. Each
+    option carries its type's filers in the newest quarter (``filers``; owner's pick of 13 Nov 2026), and a type with
+    none is shown disabled; with no counts at all (a store that cannot say) the options are bare."""
     from RevenueChaser.core.ownership import SEC13F_TYPES
-    options = "".join(f'<option value="{esc(tag)}"{" selected" if tag == DEFAULT_TYPE else ""}>{esc(label)}</option>'
-                      for tag, label in SEC13F_TYPES)
+
+    def option(tag: str, label: str) -> str:
+        n = (filers or {}).get(tag, 0) if filers else None
+        text = label if n is None else f"{label} ({n:,})"
+        state = " disabled" if n == 0 else (" selected" if tag == DEFAULT_TYPE else "")
+        return f'<option value="{esc(tag)}"{state}>{esc(text)}</option>'
+    options = "".join(option(tag, label) for tag, label in SEC13F_TYPES)
     return ('<details class="types" id="types"><summary>Top holdings by investor type</summary>'
             '<div class="types-body"><div class="types-pick"><label for="type-pick">Investor type</label>'
             f'<select id="type-pick">{options}</select></div>'
@@ -1153,7 +1160,8 @@ def _render_page(quarters: list, entries: list, fields: list, kit_notice: str | 
                        "spine show as <b>Unclassified</b> with no market cap, so any cap filter hides them."})
     meta_js = f"<script>var META = {script_json(kit_meta)};</script>"
 
-    types_html = types_section_html()
+    from RevenueChaser.core.ownership import sec13f_type_filers
+    types_html = types_section_html(sec13f_type_filers())
     status_html = ("<div class=\"status\">" + "".join(f'<span class="{esc(c)}">{esc(t)}</span>' for c, t in status)
                    + "</div>") if status else ""
 
