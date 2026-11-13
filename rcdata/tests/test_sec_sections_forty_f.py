@@ -316,7 +316,7 @@ def test_which_titles_open_the_business_block(title):
     "THREE YEAR HISTORY",
 ])
 def test_which_titles_close_it(title):
-    """The ten stop titles, in the eighteen spellings this table reads them in. They are the other parts of an
+    """The stop titles, in the eighteen spellings this table reads them in. They are the other parts of an
     Annual Information Form under NI 51-102 -- most of them printed after the business block, two of them (the
     three-year history, and the general development of the business where a filing prints both headings) before
     it or inside it, which is why the start is chosen first and a stop is only ever looked for after it. A title
@@ -548,7 +548,8 @@ def test_which_numbering_styles_may_stand_in_front_of_a_title(number):
 
 
 def test_a_roman_numeral_in_front_of_a_title_is_not_read():
-    """And is written down rather than quietly fixed: "IV. DESCRIPTION OF THE BUSINESS" is a plausible shape
+    """Unless "item" stands in front of it, which IMG's real "ITEM III:" put in on 13 Nov (see the real-title
+    rows at the end). A bare numeral is still not read, and is written down rather than quietly fixed: "IV. DESCRIPTION OF THE BUSINESS" is a plausible shape
     that the 12 Nov measurement did not count, and a rule for a shape nobody measured is a guess. It belongs to
     #763's hand-checked set, with the four title variants the review listed (``OUR BUSINESS``, ``GENERAL
     DESCRIPTION OF THE BUSINESS``, ``DESCRIPTION OF THE BUSINESS OF THE COMPANY``, and a "(continued)" tail).
@@ -1552,3 +1553,88 @@ def test_the_filler_window_covers_the_longest_chain_the_pattern_can_match():
     head = longest + "Item 4: "
     text = "previous line\n" + head + "RISK FACTORS"
     assert sec_sections._introduced_as_a_heading(text, len(text) - len("RISK FACTORS")) is False, head
+
+
+# ── the 225 stored 40-F documents, 13 Nov 2026 (claude-coordinator PR #541) ───────────────────────────────────
+# The first run of this rule over real filings: 70 of 88 exhibits cut, 7 cuts wrong and 13 exhibits missed with
+# a business heading in plain sight. Each row below is the heading as the filing prints it, typed, not copied.
+@pytest.mark.parametrize("title", [
+    "ITEM III: Description of the Business",             # IMG
+    "OUR BUSINESS",                                      # PD
+    "Our business",                                      # CCJ
+    "About our Business",                                # EGO
+    "GENERAL DEVELOPMENT AND BUSINESS OF THE COMPANY",   # ERO
+    "ThE\nONGOING BUSINESS OF THE COMPANY",              # DPRO
+    "Description of CGI\u2019s\nBusiness",                # GIB
+    "DESCRIPTION OF THE BUSINESS General",               # SNDL
+    "ITEM 5 \u2013 Narrative Description of the Business",  # RCI
+])
+def test_real_titles_that_open_the_business_block(title):
+    assert _cut2(AIF + title + "\n" + BODY + "\nRISK FACTORS\n") == (BODY.strip(), "ok")
+
+
+@pytest.mark.parametrize("stop", [
+    "4. ENTERPRISE RISK FACTORS",                       # AQN: every risk factor came back inside, labelled ok
+    "3. Capital Structure and Market for Shares",       # EFLVF
+    "4. Dividend Policy",                               # EFLVF
+    "CAPITAL STRUCTURE OF PEMBINA",                     # PBA
+    "RISKS RELATED TO THE BUSINESS",                    # EQX
+    "Risks that can affect our business",               # CCJ
+    "RISK\nFACTORS",                                    # DPRO
+    "4.1 Directors\nand Officers",                       # CG
+])
+def test_real_titles_that_close_it(stop):
+    text = AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\n" + stop + "\n" + "After. " * 400
+    assert _cut2(text) == (BODY.strip(), "ok")
+
+
+def test_a_three_year_history_in_title_case_inside_the_business_block_does_not_end_it():
+    """MX prints "Three-Year History" under its "BUSINESS OF THE COMPANY", and the stop cut 3,661 characters of a
+    60,715-character block; HBM prints "THREE YEAR HISTORY" as a part of its own, and there it is still a stop.
+    """
+    text = AIF + "BUSINESS OF THE COMPANY\n" + BODY[:3_000] + "\nThree-Year History\n" + BODY + "\nRISK FACTORS\n"
+    section, quality = _cut2(text)
+    assert quality == "ok" and section.endswith(BODY.strip()) and "Three-Year History" in section
+
+
+def test_code_of_business_conduct_ends_the_section_only_in_capitals():
+    """CNR's "Code of Business Conduct" is a sub-heading of its social policies, inside item 4 (4,824 characters
+    cut of about 28,600); BN's "CODE OF BUSINESS CONDUCT AND ETHICS" is a part of its own after the block.
+    """
+    sub = AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\nCode of Business Conduct\n" + BODY + "\nRISK FACTORS\n"
+    assert len(_cut2(sub)[0]) > 2 * len(BODY.strip())
+    own = AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\nCODE OF BUSINESS CONDUCT\n" + BODY + "\nRISK FACTORS\n"
+    assert _cut2(own) == (BODY.strip(), "ok")
+
+
+def test_slf_a_contents_line_with_its_page_number_is_not_a_title():
+    """SLF's contents line "Business of Sun Life 5" read the page number as a title word, and the section began
+    in the contents. The words after "business of" begin with a letter now.
+    """
+    assert sec_sections._AIF_START_2.search("\nBusiness of Sun Life 5\n") is None
+    assert sec_sections._AIF_START_2.search("\nBusiness of Sun Life\n") is not None
+
+
+def test_or_a_running_header_over_the_heading_is_not_a_contents_block():
+    """OR prints "15 DESCRIPTION OF BUSINESS" as the page header directly over "Description of the Business";
+    both were read as a contents block and the exhibit came back missing.
+    """
+    text = AIF + "15 DESCRIPTION OF BUSINESS\nDescription of the Business\n" + BODY + "\nRISK FACTORS\n"
+    assert _cut2(text) == (BODY.strip(), "ok")
+
+
+def test_eqx_a_run_in_start_behind_a_page_footer_is_read_when_nothing_else_answers():
+    """EQX prints each page as one line: "... Annual Information Form - 13 - DESCRIPTION OF THE BUSINESS Equinox
+    Gold is ...". Its contents is one line too, of capital titles and page numbers, which this does not read.
+    """
+    contents = "CORPORATE STRUCTURE 6 DESCRIPTION OF THE BUSINESS 13 RISK FACTORS 16\n"
+    text = AIF + contents + "Annual Information Form - 13 - DESCRIPTION OF THE BUSINESS " + BODY + "\nRISK FACTORS\n"
+    assert _cut2(text) == (BODY.strip(), "ok")
+    assert _cut2(AIF + contents + BODY) == (None, "missing")
+
+
+def test_a_stop_split_over_two_lines_leaves_no_fragment_at_the_end():
+    """PBA's "DESCRIPTION OF THE" over "CAPITAL STRUCTURE OF PEMBINA", and HSLV's "ITEM" over "7: RISK FACTORS"."""
+    for split in ("-68-\nDESCRIPTION OF THE\nCAPITAL STRUCTURE OF PEMBINA\n", "9\nITEM\n7: RISK FACTORS\n"):
+        section, quality = _cut2(AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\n" + split + "After. " * 400)
+        assert quality == "ok" and not section.endswith(("THE", "ITEM")), split
