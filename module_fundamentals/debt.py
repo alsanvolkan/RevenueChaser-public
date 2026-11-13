@@ -16,8 +16,9 @@ Two conditions, both required:
    record. A filer that tags only a current line is therefore **out of scope** and stays unknown: it has debt, and
    #239's rule that a current line alone is not the whole means the size of it is not readable. This rule does not
    change that.
-2. **No positive interest expense.** ``interest_expense`` absent or ``<= 0``. A filer that pays interest owes
-   something, whatever it tagged, so a positive figure takes the name out of scope.
+2. **No positive interest expense.** ``interest_expense`` absent or ``<= 0``, and the same for the two
+   presence-only labels of ``INTEREST_FIELDS``. A filer that pays interest owes something, whatever it tagged, so
+   a positive figure takes the name out of scope.
 
 **The presence-only fields.** The measurement of 13 Nov 2026 on the real store
 (claude-coordinator ``notes/revenuechaser/notes/2026-11-13_1515_737-debt-free-inference-measurement.md``) read
@@ -30,7 +31,12 @@ negative net debt / EBITDA while the filer owed 5,442 m and 548 m and had paid 2
 than the NULL it replaces -- but a filer that tags one of them is not a filer that tagged nothing, so the name
 leaves the inference and stays unknown, which is the honest answer.
 
-**What is left.** One name of the 307, PCAR, tags no debt at all and reports no interest expense; only
+**The cost, measured.** ORKA tags ``DebtLongtermAndShorttermCombinedAmount`` at **zero**: rule 1 counts a tagged
+zero as a tag, so it goes back to unknown although the zero is the filer saying it owes nothing. That is the rule
+as written and as #264 / #825 read a zero everywhere else -- 1 name in 2,148, a reading lost rather than a wrong
+one printed.
+
+**What is left.** One name of the 300, PCAR, tags no debt at all and reports no interest expense; only
 ``InterestPaid`` (692.8 m) betrays it, and 49 of the 307 paid some interest (MNST 5.3 m, CPRT 1.9 m), so a rule on
 interest *paid* needs a threshold, a measured reason and avo's decision. It is deliberately not invented here, and
 PCAR's reading does not reach a card (no EBITDA, so the leverage rule stays unknown either way).
@@ -64,6 +70,11 @@ def tag_fields() -> tuple[str, ...]:
 PRESENCE_ONLY_FIELDS = ("notes_and_loans_payable", "debt_combined_total", "unsecured_debt",
                         "debt_instrument_carrying_amount")
 
+#: Interest labels the ``interest_expense`` ladder does not carry, read for the same reason and in the same way.
+#: They are not added to ``interest_expense`` itself: that field feeds the interest-cover and tax-rate engines
+#: (#645) and widening its ladder would move figures those boards already serve.
+INTEREST_FIELDS = ("interest_expense", "interest_expense_borrowings", "interest_expense_other")
+
 FILED = "filed"                  # ``total_debt`` came from the facts (a sum of tagged lines), zero included
 INFERRED_NONE = "inferred_none"  # no total in the facts; this module read it as 0
 
@@ -89,11 +100,10 @@ def tags_no_debt(rec: dict | None) -> bool:
 
 
 def no_interest(rec: dict | None) -> bool:
-    """True when the record reports no interest expense, or reports one that is not positive."""
+    """True when the record reports no interest expense under any of ``INTEREST_FIELDS``, or none that is positive."""
     if not rec:
         return False
-    ie = _float(rec.get("interest_expense"))
-    return ie is None or ie <= 0
+    return all((ie := _float(rec.get(f))) is None or ie <= 0 for f in INTEREST_FIELDS)
 
 
 def debt_free(rec: dict | None) -> bool:

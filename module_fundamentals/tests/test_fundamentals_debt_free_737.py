@@ -123,6 +123,25 @@ def test_a_filer_that_tags_a_borrowing_under_a_presence_only_concept_stays_unkno
     assert _leverage(q)["passed"] is None
 
 
+@pytest.mark.parametrize("field, ticker, paid", [
+    ("interest_expense_borrowings", "GENI", 5.4),     # the label says *borrowings*
+    ("interest_expense_other", "KYMR", 4.2),
+    ("interest_expense_other", "ROG", 0.4),
+])
+def test_interest_tagged_under_a_label_the_ladder_does_not_read_still_takes_the_filer_out(field, ticker, paid):
+    """Four of the 300 write their interest under one of these two concepts (measured 13 Nov 2026). They are read
+    here and nowhere else: ``interest_expense`` feeds the interest-cover and tax-rate engines, whose served
+    figures must not move."""
+    q = pipeline._quality_metrics(_year(**{field: paid}))
+    assert q["debt_basis"] is None and q["net_debt_ebitda"] is None
+
+
+@pytest.mark.parametrize("field", [f for f in debt.INTEREST_FIELDS if f != "interest_expense"])
+def test_a_zero_under_one_of_those_labels_is_still_debt_free(field):
+    """The rule is about a positive figure, not about the tag: a zero says it paid nothing."""
+    assert pipeline._quality_metrics(_year(**{field: 0.0}))["debt_basis"] == debt.INFERRED_NONE
+
+
 @pytest.mark.parametrize("field", debt.PRESENCE_ONLY_FIELDS)
 def test_a_presence_only_field_tagged_at_zero_is_still_a_tag(field):
     assert pipeline._quality_metrics(_year(**{field: 0.0}))["debt_basis"] is None
@@ -138,8 +157,9 @@ def test_a_presence_only_field_enters_no_total_anywhere():
 def test_every_presence_only_field_is_a_field_the_store_can_carry():
     """A typo here would silently switch the check off, which is how the six got through in the first place."""
     from RevenueChaser.core.providers import sec_edgar
-    assert set(debt.PRESENCE_ONLY_FIELDS) <= set(sec_edgar.CONCEPTS)
+    assert set(debt.PRESENCE_ONLY_FIELDS) | set(debt.INTEREST_FIELDS) <= set(sec_edgar.CONCEPTS)
     assert set(debt.PRESENCE_ONLY_FIELDS) <= sec_edgar._DEBT_COMPONENT_FIELDS   # never sums, never a record
+    assert set(debt.INTEREST_FIELDS) <= sec_edgar._NEVER_A_RECORD | sec_edgar._LAYER_ONLY_FIELDS
 
 
 # ── The trailing year (rule 4: the same rule, read on the quarter the balance sheet comes from) ──
@@ -191,6 +211,21 @@ def test_interest_on_the_year_stops_the_trailing_year_inference():
     annual, quarterly = _ttm_pair(year_over={"interest_expense": 20.0})
     q = pipeline._quality_metrics(annual, quarterly)
     assert q["quality_basis"] == "TTM" and q["debt_basis"] is None and q["net_debt_ebitda"] is None
+
+
+@pytest.mark.parametrize("field, ticker, owed", [
+    ("short_term_bank_loans", "EXPD", 30.3),
+    ("notes_payable_current", "IOVA", 1.0),
+    ("senior_notes_current", "GMED", 0.0),
+])
+def test_a_debt_tag_on_the_anchor_year_stops_the_trailing_year_inference(field, ticker, owed):
+    """The other half of rule 4, found by the 13 Nov measurement: 7 of the 300 tagged debt on the annual record
+    and nothing on the later quarter, so the TTM path -- which reads the quarter -- called them debt-free anyway.
+    A quarter that did not repeat the tag does not say the borrowing was repaid."""
+    annual, quarterly = _ttm_pair(year_over={field: owed})
+    q = pipeline._quality_metrics(annual, quarterly)
+    assert q["quality_basis"] == "TTM"
+    assert q["debt_basis"] is None and q["net_debt_ebitda"] is None
 
 
 def test_a_later_quarter_that_tags_debt_stops_the_fiscal_year_inference():

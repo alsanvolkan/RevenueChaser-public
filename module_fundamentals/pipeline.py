@@ -420,10 +420,13 @@ def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) ->
     ttm_rec = _quality_ttm(annual, quarterly or [], i)
     if ttm_rec is not None:
         # The same rule on the trailing year, read on the quarter its balance sheet comes from: the debt tags are a
-        # balance sheet's, so they are that quarter's and never the year's. The year's interest expense has to be
-        # non-positive too -- a quarter that simply did not tag interest says nothing about the year that did.
+        # balance sheet's, so they are that quarter's and never the year's. The anchor year has to clear the rule
+        # too. Measured 13 Nov 2026 on the real store: 7 of the 300 inferred names tag debt on the annual record
+        # and nothing on the later quarter, EXPD (``ShortTermBankLoansAndNotesPayable`` 30.3 m) and IOVA
+        # (``NotesPayableCurrent`` 1.0 m) with a real borrowing. A filer that tagged debt at its year end is not a
+        # filer that tagged nothing, and a quarter that simply did not repeat the tag does not say it repaid.
         q = _quarter_at(quarterly or [], ttm_rec["period"])
-        ttm = _quality_of(ttm_rec, debt_free=_debt.debt_free(q) and _debt.no_interest(a))
+        ttm = _quality_of(ttm_rec, debt_free=_debt.debt_free(q) and _debt.debt_free(a))
         # The year's net income stays (P/E reads its own TTM, ``_ttm_metrics``); P/B reads the newest equity.
         if all(ttm[k] is not None or fy[k] is None for k in ("gross_margin", "roic", "net_debt_ebitda", "net_cash")):
             out = {**ttm, "net_income": fy["net_income"], "quality_basis": "TTM",

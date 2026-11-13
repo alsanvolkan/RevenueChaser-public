@@ -365,6 +365,14 @@ CONCEPTS = {
                        "MethodInvestments"], "USD"),
     "interest_expense": (["InterestExpense", "InterestExpenseNonoperating", "InterestExpenseDebt",
                           "InterestAndDebtExpense"], "USD"),
+    # #737, interest-PRESENCE signals. Four names of the 300 the debt-free inference reads write their interest
+    # under a label the ladder above does not carry (measured 13 Nov 2026 on the stored companyfacts: GENI
+    # ``InterestExpenseBorrowings`` 5.4 m, KYMR / ROG / GLUE ``InterestExpenseOther`` 4.2 / 0.4 / 0.14 m). They are
+    # NOT added to ``interest_expense``: that field feeds the interest-cover and tax-rate engines (#645), and
+    # widening its ladder would move figures those boards already serve. Read here, consulted by
+    # ``module_fundamentals/debt.py`` alone, they only take a name out of the inference.
+    "interest_expense_borrowings": (["InterestExpenseBorrowings"], "USD"),
+    "interest_expense_other": (["InterestExpenseOther"], "USD"),
     "diluted_shares": (["WeightedAverageNumberOfDilutedSharesOutstanding"], "shares"),
     "basic_shares": (["WeightedAverageNumberOfSharesOutstandingBasic"], "shares"),
 }
@@ -391,12 +399,14 @@ _DEBT_COMPONENT_FIELDS = frozenset({
 # Fields whose concept list is a strict priority order, resolved period by period.
 _PRIORITY_FIELDS = frozenset({"cost_of_revenue", "marketable_securities_noncurrent",
                               "long_term_investments", "share_repurchases",
-                              "share_based_compensation", "pretax_income", "interest_expense"}) | _DEBT_COMPONENT_FIELDS
+                              "share_based_compensation", "pretax_income", "interest_expense",
+                              "interest_expense_borrowings", "interest_expense_other"}) | _DEBT_COMPONENT_FIELDS
 
 # #271: the fields only the fundamentals layer reads (its D&A rungs, the current lines), so no old record moves.
 _LAYER_ONLY_FIELDS = frozenset({"depreciation_and_amortization", "depreciation_tangible", "amortization_intangibles",
                                 "current_assets", "current_liabilities",
-                                "income_tax_expense", "pretax_income", "interest_expense"})
+                                "income_tax_expense", "pretax_income", "interest_expense",
+                                "interest_expense_borrowings", "interest_expense_other"})
 
 # The two bank top lines of #450, grouped so the sets below name them once.
 _BANK_TOP_LINE_FIELDS = frozenset({"revenue_net_of_interest_expense", "interest_and_dividend_income"})
