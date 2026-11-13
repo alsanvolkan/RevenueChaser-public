@@ -2959,11 +2959,10 @@ def _tab_strip() -> str:
 LIVE_BOARDS = (("panel-health", "rc-health", "live-frame", "Fetch controls and data health (Grafana)"),
                ("panel-logs", "rc-logs", "logs-frame", "Job run logs (Grafana)"))
 LIVE_CSS = """
-/* avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": the link has no row above the frame. It first lay on
-   the frame's own first row, but the frame scrolls inside itself, so the link ended up printed over whatever row
-   had scrolled under it (avo's phone, 13 Nov 2026). It is now a short line under the frame, where nothing scrolls. */
-.live-board .livebar{display:flex;justify-content:flex-end;padding:0 16px}
-.live-board .livebar a{color:var(--mut,inherit);font-size:13px;min-height:44px;display:inline-flex;align-items:center}
+/* avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor". The link had a row above the frame, then one under it,
+   and on 13 Nov it moved inside the board itself: each RC board carries it as a Grafana dashboard link, which
+   Grafana draws in its controls row beside the time picker (home-server #316). So the page keeps no row for it,
+   and nothing is printed over a frame that scrolls inside itself. */
 .live-board iframe{display:block;width:100%;height:calc(100vh - 184px);min-height:560px;border:0;
   background:var(--bg,transparent)}
 """
@@ -2973,8 +2972,7 @@ def _live_board(panel: str) -> str:
     """The Grafana frame of one tab; it has no address until its tab opens (``LIVE_JS``)."""
     uid, frame, title = next((u, f, t) for p, u, f, t in LIVE_BOARDS if p == panel)
     return (f'<div class="live-board" data-board="{uid}">'
-            f'<iframe id="{frame}" title="{title}" loading="lazy"></iframe><div class="livebar">'
-            '<a class="live-open" target="_blank" rel="noopener">Open in Grafana</a></div></div>')
+            f'<iframe id="{frame}" title="{title}" loading="lazy"></iframe></div>')
 
 
 LIVE_JS = """
@@ -2986,17 +2984,16 @@ LIVE_JS = """
   }
   [].slice.call(document.querySelectorAll('.live-board[data-board]')).forEach(function (box) {
     var panel = box.closest('[role="tabpanel"]'), frame = box.querySelector('iframe');
-    var open = box.querySelector('.live-open'), board = box.getAttribute('data-board');
+    var board = box.getAttribute('data-board');
     if (!panel || !frame) return;
-    function address(kiosk) {
+    function address() {
       return location.protocol + '//' + location.hostname + ':3000/d/' + board + '/' + board + '?theme=' + theme()
-        + (kiosk ? '&kiosk' : '');
+        + '&kiosk';
     }
     function load() {
       if (panel.hidden) return;
-      var want = address(true);
+      var want = address();
       if (frame.getAttribute('src') !== want) frame.setAttribute('src', want);
-      if (open) open.href = address(false);
     }
     if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
     var tab = document.getElementById(panel.getAttribute('aria-labelledby'));
