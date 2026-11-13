@@ -21,8 +21,10 @@ stores a section names a version:
   capped one ``capped``. The boards stay on it, and this module must keep it byte-identical in behaviour.
 - ``ours-2`` -- the ``sec_forms`` layer's rule (#755): the word *Item* may be split like any other heading word,
   a sub-item number is not the item, **nothing is capped**, a cross-reference body is labelled ``pointer``, and a
-  slice holding another item's own title line is ``overrun`` however it ended. No board reads it, and moving one
-  onto it is its own change.
+  slice holding another item's own title line is ``overrun`` however it ended. #828 adds the heading spellings
+  six real filings use (a pipe, a stop before the number, a dash, an ell for the one, a zero-width space, no
+  title at all under "PART I") and the ``crossref`` label for an annual report that carries a Form 10-K/20-F
+  item index instead of item sections. No board reads it, and moving one onto it is its own change.
 - later versions arrive as new entries in :data:`RULES`; an older one is never edited again.
 
   **What enforces that, honestly.** :class:`Rule` versions the two entry points and nothing below them: the
@@ -691,7 +693,7 @@ def _quality_ours_2(item: str, own: str, closed: bool, text: str = "") -> str:
 
 
 def _slice_item_ours_2(text: str, form: str = "10-K") -> tuple[str | None, str]:
-    """``(item_text, quality)``: ok / short / overrun / pointer / missing. **Never ``capped``**.
+    """``(item_text, quality)``: ok / short / overrun / pointer / crossref / missing. **Never ``capped``**.
 
     The five fixes of #755, each named after the filing it was measured on:
 
