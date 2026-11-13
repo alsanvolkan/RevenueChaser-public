@@ -14,7 +14,8 @@ def _year(ebit, debt, cash):
 
 
 def _rule(q: dict) -> dict:
-    gate = evaluate_quality({"net_debt_ebitda": q["net_debt_ebitda"], "net_cash": q.get("net_cash")})
+    gate = evaluate_quality({"net_debt_ebitda": q["net_debt_ebitda"], "net_cash": q.get("net_cash"),
+                             "debt_basis": q.get("debt_basis")})
     return next(r for r in gate["rules"] if r["id"] == "net_debt_ebitda")
 
 
@@ -38,7 +39,16 @@ def test_a_positive_ebitda_keeps_the_ratio():
 
 
 def test_missing_debt_or_cash_is_not_net_cash():
-    q = _quality_metrics(_year(ebit=-80.0, debt=None, cash=300.0))
+    """#737 narrowed what "missing debt" means here. A record that tags **no** debt line at all and reports no
+    interest is now counted debt-free, so the case this test was written for is one where the total is unknown
+    although the filer does tag debt: a current line alone, whose size #239 will not read as the whole. Missing
+    cash is unchanged -- there is nothing to compare the debt with."""
+    unknown_debt = _year(ebit=-80.0, debt=None, cash=300.0)
+    unknown_debt[0]["lt_debt_current"] = 40.0
+    q = _quality_metrics(unknown_debt)
+    assert q["net_cash"] is None and _rule(q)["passed"] is None
+
+    q = _quality_metrics(_year(ebit=-80.0, debt=100.0, cash=None))
     assert q["net_cash"] is None and _rule(q)["passed"] is None
 
 
