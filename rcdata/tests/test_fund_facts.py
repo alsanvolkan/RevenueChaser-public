@@ -151,9 +151,11 @@ def test_total_debt_falls_back_to_the_balances_a_filer_tags_instead(tags, total)
     ({"LineOfCredit": 0}, None, "and leaves the total unknown rather than zero"),
     # TOL, 31 Dec 2025: the revolver was skipped for a smaller whole line earlier in the ladder.
     ({"NotesPayable": 1_742, "LineOfCredit": 2_326}, 2_326, "the larger whole line wins"),
-    # OCC, 31 Oct 2025: the larger current line, and a zero noncurrent line that gives no total on its own.
-    ({"LongTermLoansPayable": 0, "LoansPayableCurrent": 3, "NotesPayableCurrent": 6}, None,
-     "a zero noncurrent line is no long-term line, so a current line alone is still not the whole"),
+    # OCC, 31 Oct 2025: the larger of two current lines. Written as None while a zero line was dropped outright;
+    # since ab25e2d the zero LongTermLoansPayable keeps its slot beside them, which is what gives OCC a total
+    # again (#830, the five real debts). 6 and not 3 + 6: two lines of one ladder are never summed.
+    ({"LongTermLoansPayable": 0, "LoansPayableCurrent": 3, "NotesPayableCurrent": 6}, 6,
+     "the larger current line, beside a zero noncurrent line that keeps its slot"),
 ])
 def test_the_fallback_ladder_takes_the_largest_positive_line(tags, total, why):
     rows = _by_key(facts.fact_rows(_balance_sheet(**tags), "1")[0])
