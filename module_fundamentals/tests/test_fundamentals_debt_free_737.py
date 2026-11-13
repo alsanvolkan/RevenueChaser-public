@@ -288,8 +288,9 @@ def test_a_quarter_between_the_year_and_the_trailing_year_is_read_too():
     """Fable review F2: the guard reads every quarter after the year end, not the newest one. A borrowing tagged
     in one quarter and not repeated in the next has not been repaid, and both bases have to see it."""
     annual, quarterly = _ttm_pair()
-    quarterly.insert(1, _q("2025-12-31", {}, {"cash": 600.0, "total_equity": 900.0, "senior_notes": 300.0},
-                           "2025-10-01", months=3))
+    # Between the anchor year end (2025-12-31) and the quarter the trailing year is read on (2026-06-30).
+    quarterly.insert(1, _q("2026-03-31", {}, {"cash": 600.0, "total_equity": 900.0, "senior_notes": 300.0},
+                           "2026-01-01", months=3))
     q = pipeline._quality_metrics(annual, quarterly)
     assert q["debt_basis"] is None and q["net_debt_ebitda"] is None
 
