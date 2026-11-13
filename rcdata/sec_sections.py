@@ -796,7 +796,7 @@ _AIF_START_2B = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}(?:{'|'.join(_AIF_TITLE
 #: are item 4 -- and they are stops because a filing that carries them prints them first and the description
 #: after; the rest follow it. Also from the 225 stored 40-F documents (13 Nov): the numbered "4. ENTERPRISE RISK FACTORS" (AQN), "Capital Structure and Market for Shares"
 #: and "Dividend Policy" (EFLVF), "CAPITAL STRUCTURE OF PEMBINA" (PBA), and the risk headings that do not say
-#: "factors" (EQX, PD, CCJ, EGO), and DPRO's "RISK" over "FACTORS" and CG's "Directors" over "and Officers" on
+#: "factors" (EQX, CCJ), and DPRO's "RISK" over "FACTORS" and CG's "Directors" over "and Officers" on
 #: two lines -- each of which let a section run on through the parts behind it. ``DIVIDENDS`` is item 5 and is in the source's own ``_SECTION_PATTERNS`` though
 #: not in its ``_BUSINESS_ENDS``; the two wordings with a tail (regulatory actions, of the company) are the real
 #: titles of items 12 and 10, which the line anchor would otherwise lose.
@@ -804,18 +804,22 @@ _AIF_START_2B = re.compile(rf"(?im)^[^\S\n]*{_AIF_NUMBER}(?:{'|'.join(_AIF_TITLE
 #: ``DIVIDENDS`` is the one title of a single word, and that is why it is a **line** stop only (see
 #: :data:`_AIF_STOP_INLINE_2`). A line that holds nothing but the word -- a table's row label among its
 #: figures -- still ends the section, which #763's hand-checked set is where it gets judged.
+#: The gap in front of an optional tail is a plain blank: ``_H_SP`` also crosses ``\r`` and a form feed, and the
+#: inline search would then read "CAPITAL STRUCTURE" plus the next line's first words as one title in mixed
+#: case and refuse it -- round 8's ``\r`` shapes, which the first run of these tails failed in CI.
+_H_TAIL_SP = r"[ \t\u00a0]+"
 _AIF_STOP_TITLES_2 = (
     rf"general{_H_SP}development{_H_SP}of{_H_SP}(?:the{_H_SP})?(?:[\w\-][\w\-'’]*{_H_SP})?business",
     rf"(?:three|3)(?:[^\S\n]|-)+year{_H_SP}history",
     rf"(?:description{_H_SP}of{_H_SP}(?:the{_H_SP})?)?capital{_H_SP}structure"
-    rf"(?:{_H_SP}and{_H_SP}market{_H_SP}for{_H_SP}(?:securities|shares)|{_H_SP}of{_H_SP}[^\W\d_][\w'’]*)?",
+    rf"(?:{_H_TAIL_SP}and{_H_SP}market{_H_SP}for{_H_SP}(?:securities|shares)|{_H_TAIL_SP}of{_H_SP}[^\W\d_][\w'’]*)?",
     rf"material{_H_SP}properties",
     rf"legal{_H_SP}(?:proceedings|matters)(?:{_H_SP}and{_H_SP}regulatory{_H_SP}actions)?",
-    rf"(?:enterprise{_H_SP})?risk{_H_WRAP}factors(?:{_H_SP}in{_H_SP}our{_H_SP}business)?",
+    rf"(?:enterprise{_H_SP})?risk{_H_WRAP}factors",
     rf"risks{_H_SP}(?:related{_H_SP}to|relating{_H_SP}to|in|that{_H_SP}can{_H_SP}affect){_H_SP}(?:the|our){_H_SP}business",
     rf"code{_H_SP}of{_H_SP}business{_H_SP}conduct",
     rf"market{_H_SP}for{_H_SP}securities",
-    rf"dividends?(?:{_H_SP}and{_H_SP}distributions|{_H_SP}policy)?",
+    rf"dividends?(?:{_H_SP}and{_H_SP}distributions|{_H_TAIL_SP}policy)?",
     rf"directors{_H_WRAP}and{_H_SP}(?:executive{_H_SP}officers|officers|executive)"
     rf"(?:{_H_SP}of{_H_SP}the{_H_SP}(?:company|corporation))?",
 )
