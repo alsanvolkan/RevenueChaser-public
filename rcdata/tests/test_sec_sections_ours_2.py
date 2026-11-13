@@ -1261,3 +1261,25 @@ def test_a_tag_split_title_of_item_1_is_not_item_1b():
             + "\nItem 1A. Risk Factors\n" + "Risky. " * 400)
     item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
     assert quality == "ok" and "(continued)" in item and "Risky." not in item
+
+
+@pytest.mark.parametrize("before,ends_there", [
+    ("in Part II.\n Item 8. Notes to Consolidated Financial Statements.", False),   # indented: still a mention
+    ("is set forth in Part I.\nItem 1A. Risk Factors", True),     # Item 1's own part, a sentence's end
+    ("refer to Part I.\nItem 1A. Risk Factors", False),           # ... unless the words say it is a reference
+])
+def test_a_part_before_a_line_start_item_is_read_with_the_item_s_own_part(before, ends_there):
+    """Fable review, round 2: the part test read no indented line, and Part I hid Item 1's real end."""
+    text = ("Item 1. Business\n" + BODY[:3000] + " This " + before + "\n" + BODY[:3000]
+            + "\nItem 1A. Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert "Risky." not in item
+    assert item.endswith(BODY[:3000].strip()) is not ends_there
+
+
+def test_a_20_f_is_not_read_with_a_10_k_s_parts():
+    """In a 20-F Item 5 is Part I; "in Part II." before it ends a sentence, and Item 5 is Item 4's real end."""
+    text = ("Item 4. Information on the Company\n" + BODY + "\nas described in Part II.\n"
+            "Item 5. Operating and Financial Review and Prospects\n" + "Results. " * 400)
+    item, quality = sec_sections.cut_item(text, "20-F", version=OURS_2)
+    assert "Results." not in item

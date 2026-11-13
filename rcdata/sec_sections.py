@@ -314,27 +314,33 @@ _POINTER = re.compile(r"(?i)\b(?:incorporated\s+(?:herein\s+)?by\s+reference"
 #: Note 15 – Segment Reporting in Part II.\nItem 8. Notes to Consolidated Financial Statements" starts a line, so
 #: only the words before it say it is a mention; without this Item 1 ended there, 4,153 characters, ``ok`` (13 Nov
 #: 2026 real-filing check). A copy, because ``_REF_BEFORE`` is the board's.
-_REF_BEFORE_2 = re.compile(r"(?i)\b(?:see|in|under|refer to)\s*part\s+([ivx]+)\s*[.,]?[^\S\n]*[“\"‘]?[^\S\n]*$")
+_REF_BEFORE_2 = re.compile(r"(?i)\b(see|in|under|refer to)\s*part\s+([ivx]+)\s*([.,]?)[^\S\n]*[“\"‘]?[^\S\n]*$")
 #: Only when the part is the item's own: "in Part III.\nItem 1A. Risk Factors" ends a sentence about Part III and
 #: is followed by a real heading, which a part-blind test hid from both the cut and the label (Fable review).
 _PART_OF = {"i": ("1", "2", "3", "4"), "ii": ("5", "6", "7", "8", "9"), "iii": ("10", "11", "12", "13", "14"),
             "iv": ("15", "16")}
-_ITEM_NO = re.compile(rf"(?i){_ITEM}s?\s{{0,3}}(\d+)")
+_ITEM_NO = re.compile(rf"(?i)[^\S\n]*{_ITEM}s?\s{{0,3}}(\d+)")
 
 
-def _part_ref(text: str, m: re.Match, before: str) -> bool:
-    """True when ``before`` names the part that ``m``'s item belongs to (a 10-K's parts)."""
+def _part_ref(text: str, m: re.Match, before: str, key: str = "10-K") -> bool:
+    """True when ``before`` names the part that ``m``'s item belongs to. A 10-K's parts only: a 20-F numbers its
+    parts differently (Item 5 is Part I there), and none of the measured 20-F cuts needed this (Fable review).
+
+    Part I is Item 1's own part, so "...set forth in Part I.\nItem 1A." can be a sentence ending before the real
+    end of Item 1: for Part I only "see" / "refer to", or a comma ("in Part I, Item 1A"), make a reference."""
     p, n = _REF_BEFORE_2.search(before), _ITEM_NO.match(text, m.start())
-    return bool(p and n and n.group(1).lstrip("0") in _PART_OF.get(p.group(1).lower(), ()))
+    if key != "10-K" or not (p and n) or n.group(1).lstrip("0") not in _PART_OF.get(p.group(2).lower(), ()):
+        return False
+    return p.group(2).lower() != "i" or p.group(1).lower() != "in" or p.group(3) == ","
 
 
-def _words_before_ref(text: str, m: re.Match) -> bool:
+def _words_before_ref(text: str, m: re.Match, key: str = "10-K") -> bool:
     """True when a reference word, an opening quote or the item's own part comes right before ``m`` mid-line."""
     before = text[max(0, m.start() - 40):m.start()].rstrip()
-    return _starts_mid_line(text, m) and (bool(_REF_BEFORE.search(before)) or _part_ref(text, m, before))
+    return _starts_mid_line(text, m) and (bool(_REF_BEFORE.search(before)) or _part_ref(text, m, before, key))
 
 
-def _inline_ref(text: str, m: re.Match) -> bool:
+def _inline_ref(text: str, m: re.Match, key: str = "10-K") -> bool:
     """True when ``m`` is a mention of an item inside a line, rather than a heading of its own.
 
     The titled fallback below needs this and the line-end search does not, because the headings it reads are
@@ -365,7 +371,7 @@ def _inline_ref(text: str, m: re.Match) -> bool:
     not a regression; which answer is right is a question for the hand-checked set (#763), not for a shape
     built in a test.
     """
-    return _starts_mid_line(text, m) and _ref_ours_2(text, m)
+    return _starts_mid_line(text, m) and _ref_ours_2(text, m, key)
 
 
 def _starts_mid_line(text: str, m: re.Match) -> bool:
@@ -373,7 +379,7 @@ def _starts_mid_line(text: str, m: re.Match) -> bool:
     return bool(text[text.rfind("\n", 0, m.start()) + 1:m.start()].strip())
 
 
-def _ref_ours_2(text: str, m: re.Match) -> bool:
+def _ref_ours_2(text: str, m: re.Match, key: str = "10-K") -> bool:
     """``ours-2``'s reference test: the words before the match, and a closing quote it did not open.
 
     Used wherever ``ours-2`` asks "is this heading really a heading" -- the start filter, the line-end search,
@@ -416,7 +422,7 @@ def _ref_ours_2(text: str, m: re.Match) -> bool:
     not a built string.
     """
     before = text[max(0, m.start() - 40):m.start()].rstrip()
-    if _REF_BEFORE.search(before) or _part_ref(text, m, before):
+    if _REF_BEFORE.search(before) or _part_ref(text, m, before, key):
         return True
     line_end = text.find("\n", m.end())
     if _cites_its_title(text, m, line_end):
@@ -579,13 +585,13 @@ def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
     """
     stop_re = re.compile(STOP_PATTERNS_2[key], re.I)
     for m in _LINE_START_2[key].finditer(text):
-        if _TOC_NEXT.search(text[m.end():m.end() + 400]) or _PAGE_NO.match(text, m.end()) or _ref_ours_2(text, m):
+        if _TOC_NEXT.search(text[m.end():m.end() + 400]) or _PAGE_NO.match(text, m.end()) or _ref_ours_2(text, m, key):
             continue
         own = m.group(1).lower()
         end = next((e.start() for e in _LINE_END_2.finditer(text, m.end() + MIN_ITEM_CHARS)
-                    if _item_no(e) != own and not _ref_ours_2(text, e)), None)
+                    if _item_no(e) != own and not _ref_ours_2(text, e, key)), None)
         if end is None:
-            end = next((t.start() for t in stop_re.finditer(text, m.end()) if not _inline_ref(text, t)), None)
+            end = next((t.start() for t in stop_re.finditer(text, m.end()) if not _inline_ref(text, t, key)), None)
         closed = end is not None
         if end is None:
             end = len(text)
@@ -604,7 +610,7 @@ def _holds_another_item(item: str, own: str) -> bool:
     heading is not the section it claims to be, however it ended -- ``ours-1`` could only say so when no stop
     matched at all, and so labelled this one by its length instead.
     """
-    return any(_item_no(m) != own and not _ref_ours_2(item, m)
+    return any(_item_no(m) != own and not _ref_ours_2(item, m, "20-F" if own == "4" else "10-K")
                for m in _LINE_END_2.finditer(item))
 
 
@@ -668,7 +674,7 @@ def _slice_item_ours_2(text: str, form: str = "10-K") -> tuple[str | None, str]:
         # thousand characters (13 Nov 2026 real-filing check).
         # Only the words before it: in a document served as one line the quote half of :func:`_ref_ours_2` reads
         # the rest of the filing as the stop's line, and calls a quoted heading a citation (Fable review).
-        stop_m = next((s for s in stop_re.finditer(text, start_m.end()) if not _words_before_ref(text, s)), None)
+        stop_m = next((s for s in stop_re.finditer(text, start_m.end()) if not _words_before_ref(text, s, key)), None)
         item = text[start_m.end():stop_m.start() if stop_m else len(text)].strip()
         if len(item) >= MIN_ITEM_CHARS:
             best, closed = item, stop_m is not None
