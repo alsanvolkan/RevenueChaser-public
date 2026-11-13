@@ -102,7 +102,7 @@ from ....core import calendar
 from ... import ops, serving
 from .. import base, dirty
 from ..spine import openfigi_map, wrds
-from . import KIND, common, sec13f, sec13f_listing
+from . import KIND, common, sec13f, sec13f_listing, uw_institutions
 
 NAME = "ownership/serve"
 SPINE = "spine"
@@ -306,6 +306,32 @@ def _consensus_guard(con: duckdb.DuckDBPyConnection) -> None:
     con.execute("UPDATE _px SET px = f.px FROM _pxfix f WHERE _px.cusip = f.cusip AND _px.period = f.period")
 
 
+def _successions(con: duckdb.DuckDBPyConnection) -> None:
+    """``_succ`` (TEMP): ``predecessor`` and ``successor`` (13F CIKs, as filed) and the ``period`` the successor
+    took over its reporting, from UW's newest succession snapshot (``uw/institutions``, #775).
+
+    A pair counts only when the filings say the same: the predecessor has a holdings report in the quarter before
+    and none in ``period``, and the successor has one in ``period``. A succession whose date does not line up with
+    the stop stays a stop, so a real exit and a mis-dated hand-over are never merged silently (#776). Without the
+    table (UW not read yet) the set is empty and every stop stays a stop."""
+    _empty(con, "_succ", [("predecessor", "TEXT"), ("successor", "TEXT"), ("period", "DATE")])
+    table = uw_institutions.SUCCESSION_TABLE
+    if not common.has_table(con, table):
+        return
+    con.execute(f"""INSERT INTO _succ
+        WITH u AS (
+            SELECT DISTINCT ltrim(predecessor_cik, '0') AS pre, ltrim(successor_cik, '0') AS suc,
+                   {common.quarter_end('effective_report_date')} AS period
+            FROM {table} WHERE snapshot_date = (SELECT max(snapshot_date) FROM {table})
+              AND predecessor_cik IS NOT NULL AND successor_cik IS NOT NULL AND effective_report_date IS NOT NULL),
+        k AS (SELECT DISTINCT cik, ltrim(cik, '0') AS bare, period FROM _conf)
+        SELECT DISTINCT kp.cik, ks.cik, u.period
+        FROM u
+        JOIN k kp ON kp.bare = u.pre AND kp.period = CAST(date_trunc('quarter', u.period) - INTERVAL 1 DAY AS DATE)
+        JOIN k ks ON ks.bare = u.suc AND ks.period = u.period
+        WHERE NOT EXISTS (SELECT 1 FROM k WHERE k.bare = u.pre AND k.period = u.period)""")
+
+
 def _by_period(con: duckdb.DuckDBPyConnection, periods: list, table: str, select: str,
                schema: list[tuple[str, str]] | None = None) -> None:
     """``table`` filled by ``select`` (its one ``?`` the period) one quarter at a time, as a TEMP table of ``schema``
@@ -379,7 +405,7 @@ def _figi(con: duckdb.DuckDBPyConnection) -> None:
 
 
 TEMPS = ("_closed", "_sets", "_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
-         "_pxfix", "_fac", "_rowfix", "_held",
+         "_pxfix", "_fac", "_rowfix", "_held", "_succ",
          "_cp", "_m_hist", "_m_cur", "_m_owner", "_m_figi", "_filers", "_filed", "_deadline", "_tot", "_pos", "_shape",
          "_pairs", "_flow")
 
@@ -489,6 +515,7 @@ class OwnershipServe:
             summary["rescaled"] = common.count(con, "sec13f_filer_period", "value_factor <> 1")
             summary["px_fixed"] = common.count(con, "_pxfix")
             summary["rows_replaced"] = common.count(con, "_rowfix")
+            summary["succeeded"] = common.count(con, "_succ")
             if left_out:
                 summary["left_out"] = left_out
             if spine_on:
@@ -669,16 +696,21 @@ class OwnershipServe:
                   FROM _pos WHERE period = ?) p
             JOIN _tot t ON t.ticker = p.ticker AND t.period = p.period GROUP BY ALL""",
                    [("ticker", "TEXT"), ("period", "DATE"), ("top10", "DOUBLE"), ("h", "DOUBLE")])
+        _successions(con)
         # Each filer's position against its position in the calendar quarter before (FULL JOIN: new and exited),
-        # per quarter a pair lands in: a quarter held, or the one after it.
+        # per quarter a pair lands in: a quarter held, or the one after it. A filer succeeded in a quarter (``_succ``)
+        # is its successor in the quarter before, so the two are one filer across the hand-over (#776).
         nxt = "CAST(date_trunc('quarter', period) + INTERVAL 6 MONTH - INTERVAL 1 DAY AS DATE)"
         pairs = sorted({r[0] for r in con.execute(f"SELECT period FROM _pos UNION SELECT {nxt} FROM _pos").fetchall()})
         _by_period(con, pairs, "_pairs", f"""
             SELECT coalesce(a.ticker, b.ticker), coalesce(a.period, b.next_period), coalesce(a.cik, b.cik),
                    a.shares, b.shares
             FROM (SELECT * FROM _pos WHERE period = ?) a
-            FULL OUTER JOIN (SELECT * FROM (SELECT ticker, cik, shares, {nxt} AS next_period FROM _pos)
-                             WHERE next_period = ?) b
+            FULL OUTER JOIN (SELECT ticker, coalesce(s.successor, q.cik) AS cik, sum(q.shares) AS shares,
+                                    q.next_period
+                             FROM (SELECT ticker, cik, shares, {nxt} AS next_period FROM _pos) q
+                             LEFT JOIN _succ s ON s.predecessor = q.cik AND s.period = q.next_period
+                             WHERE q.next_period = ? GROUP BY ALL) b
               ON a.ticker = b.ticker AND a.cik = b.cik AND a.period = b.next_period""",
                    [("ticker", "TEXT"), ("period", "DATE"), ("cik", "TEXT"), ("now_s", "DOUBLE"), ("prev_s", "DOUBLE")])
         # An exit may not be a sale: the filer left holdings out under confidential treatment, or has no holdings
@@ -699,7 +731,9 @@ class OwnershipServe:
                    coalesce(sum(p.now_s) FILTER (WHERE p.prev_s IS NULL AND cp.cik IS NULL), 0) AS started_shares,
                    coalesce(sum(p.prev_s) FILTER (WHERE p.now_s IS NULL AND c.cik IS NULL), 0) AS stopped_shares
             FROM _pairs p LEFT JOIN _conf c ON c.cik = p.cik AND c.period = p.period
-            LEFT JOIN _conf cp ON cp.cik = p.cik AND cp.period = {PREV} GROUP BY ALL""")
+            LEFT JOIN (SELECT cik, period FROM _conf
+                       UNION SELECT DISTINCT successor, {PREV} FROM _succ p) cp
+                   ON cp.cik = p.cik AND cp.period = {PREV} GROUP BY ALL""")
         return common.create_table(con, "sec13f_ticker_period", TICKER, f"""
             SELECT t.ticker, t.period, t.shares, t.value, t.holders,
                    CASE WHEN t.shares > 0 THEN round(s.top10 / t.shares * 100, 2) END AS top10_pct,
@@ -767,7 +801,9 @@ class OwnershipServe:
             JOIN _filers pf ON pf.period = {PREV}
             JOIN _deadline d ON d.period = p.period
             LEFT JOIN _conf c ON c.cik = p.cik AND c.period = p.period
-            LEFT JOIN _conf cp ON cp.cik = p.cik AND cp.period = {PREV}
+            LEFT JOIN (SELECT cik, period FROM _conf
+                       UNION SELECT DISTINCT successor, {PREV} FROM _succ p) cp
+                   ON cp.cik = p.cik AND cp.period = {PREV}
             LEFT JOIN sec13f_filer_period fn ON fn.cik = p.cik AND fn.period = p.period
             LEFT JOIN sec13f_filer_period fb ON fb.cik = p.cik AND fb.period = {PREV}
             WHERE d.deadline < ? AND ((p.prev_s IS NULL AND cp.cik IS NULL) OR (p.now_s IS NULL AND c.cik IS NULL))
@@ -862,6 +898,9 @@ class OwnershipServe:
         if summary.get("rows_replaced"):
             ctx.notes.append(f"{summary['rows_replaced']} holdings 300 times or more from the 13F's own price: read at "
                              "that price")
+        if summary.get("succeeded"):
+            ctx.notes.append(f"{summary['succeeded']} filers succeeded by another (UW's successions): counted as their "
+                             "successor across the hand-over, not as a stop")
         if summary.get("left_out"):
             n, quarters, first = summary["left_out"]
             ctx.notes.append(f"{n} filings of {quarters} quarters whose filing deadline passed before the first 13F "

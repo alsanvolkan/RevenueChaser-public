@@ -599,6 +599,68 @@ def test_a_filer_that_starts_or_stops_reporting_is_not_a_trade_and_is_listed(mon
     assert read.filer_breaks_13f(["msft"], periods=[Q2]) == []      # the quarter before Q2 is not in the store
 
 
+def _handover(monkeypatch, http_mock, effective: str) -> dict:
+    """#776 (AON, 2025 Q3 on the live board): HPS (4000002) is succeeded by BlackRock (4000001), which UW lists only
+    in BlackRock's ``predecessors``. BlackRock's Q3 holds its own 100, HPS's 300 and 50 bought; 4000003 starts
+    reporting and 4000004 really stops."""
+    from RevenueChaser.core.providers import unusual_whales
+    from RevenueChaser.rcdata.build.ownership import uw_institutions as uwi
+    monkeypatch.setattr(sec, "_shared_pace", lambda: True)
+    monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
+    monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key")
+    monkeypatch.setattr(unusual_whales, "BASE", "https://uw.test/api")
+    monkeypatch.setattr(unusual_whales, "_sleep", lambda _s: None)
+    ox.make_spine()
+    e = ox.Edgar()
+    e.add_day("2026-08-14", [
+        _f("0004000001-26-000001", 4000001, "2026-08-14", [_h("MICROSOFT CORP", "594918104", 40_000, 100)],
+           period="06-30-2026"),
+        _f("0004000002-26-000002", 4000002, "2026-08-14", [_h("MICROSOFT CORP", "594918104", 120_000, 300)],
+           period="06-30-2026"),
+        _f("0004000004-26-000004", 4000004, "2026-08-14", [_h("MICROSOFT CORP", "594918104", 80_000, 200)],
+           period="06-30-2026")])
+    e.add_day("2026-10-27", [
+        _f("0004000001-26-000011", 4000001, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 180_000, 450)]),
+        _f("0004000003-26-000013", 4000003, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 200_000, 500)])])
+    e.install(http_mock)
+    blackrock = {"cik": "0004000001", "name": "BLACKROCK, INC.", "tags": [], "is_hedge_fund": False,
+                 "date": "2026-09-30", "filing_date": "2026-10-27", "total_value": "1", "share_value": "1",
+                 "succession": {"predecessors": [{"cik": "0004000002", "name": "HPS INVESTMENT PARTNERS, LLC",
+                                                  "effective_report_date": effective}],
+                                "current_holder": None, "succeeded_by": None}}
+
+    def answer(request):
+        page = request.url.query.decode()
+        rows = [blackrock] if "page=" not in page or "page=0" in page else []
+        return 200, json.dumps({"data": rows}), {"content-type": "application/json"}
+    http_mock.add("/institutions", answer)
+    assert base.run_request({"dataset": uwi.NAME, "params": {"as_of": "2026-11-12"}},
+                            sleep=lambda s: None)["result"] == "changed"
+    _thirteen_f(as_of="2026-10-28")
+    _thirteen_f(mode="backfill", **{"from": "2026-08-14", "to": "2026-08-14"})
+    return _serve(day="2026-11-20")                              # after the 30 Sep deadline (16 Nov): settled
+
+
+def test_a_filer_succeeded_in_the_quarter_it_stops_is_its_successor_not_a_stop(monkeypatch, http_mock):
+    row = _handover(monkeypatch, http_mock, "2026-09-30")
+    # BlackRock 450 against its own 100 plus HPS's 300: 50 bought, not 350; only 4000004 stopped.
+    assert _served("SELECT holders, new_holders, exited_holders, buy_flow, sell_flow, started_filers, started_shares, "
+                   "exited_no_filing, stopped_shares FROM sec13f_ticker_period WHERE ticker = 'MSFT' AND period = ?",
+                   Q3) == [(2, 0, 0, 50.0, 0.0, 1, 500.0, 1, 200.0)]
+    assert _served("SELECT cik, kind, shares FROM sec13f_filer_breaks ORDER BY kind") == [
+        ("4000003", "started", 500.0), ("4000004", "stopped", 200.0)]
+    assert "1 filers succeeded by another" in row["note"]
+    # The quarter before keeps both filers as they reported.
+    assert _served("SELECT holders FROM sec13f_ticker_period WHERE ticker = 'MSFT' AND period = ?", Q2) == [(3,)]
+
+
+def test_a_succession_dated_another_quarter_leaves_the_stop_a_stop(monkeypatch, http_mock):
+    """A hand-over UW dates to a quarter the filings do not show is never merged silently (#776)."""
+    _handover(monkeypatch, http_mock, "2026-06-30")
+    assert _served("SELECT cik, kind FROM sec13f_filer_breaks ORDER BY kind, cik") == [
+        ("4000003", "started"), ("4000002", "stopped"), ("4000004", "stopped")]
+
+
 def test_a_quarter_still_arriving_lists_no_breaks(monkeypatch, http_mock):
     """Before its deadline every filer that has not filed yet would read as stopped: no rows until it settles."""
     monkeypatch.setattr(sec, "_shared_pace", lambda: True)
