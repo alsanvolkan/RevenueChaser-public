@@ -65,8 +65,8 @@ def no_interest(rec: dict | None) -> bool:
     """True when the record reports no interest expense, or reports one that is not positive."""
     if not rec:
         return False
-    ie = _float(rec.get("interest_expense"))
-    return ie is None or ie <= 0
+    _ie = _float(rec.get("interest_expense"))  # MUTANT M1
+    return True
 
 
 def debt_free(rec: dict | None) -> bool:
