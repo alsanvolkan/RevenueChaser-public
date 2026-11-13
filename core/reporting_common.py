@@ -523,8 +523,11 @@ document.addEventListener('keydown', function(ev){
   else next = (at + (ev.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
   items[next].focus();
 });
-window.addEventListener('resize', function(){ if(RC_WATCH.open) rcWatchPlace(rcWatchMenuEl(), RC_WATCH.open.btn); });
-window.addEventListener('scroll', function(){ if(RC_WATCH.open) rcWatchPlace(rcWatchMenuEl(), RC_WATCH.open.btn); }, true);
+// Guarded: a board's own tests run the page under a small fake DOM that may have no window events.
+if(typeof window !== 'undefined' && window.addEventListener){
+  window.addEventListener('resize', function(){ if(RC_WATCH.open) rcWatchPlace(rcWatchMenuEl(), RC_WATCH.open.btn); });
+  window.addEventListener('scroll', function(){ if(RC_WATCH.open) rcWatchPlace(rcWatchMenuEl(), RC_WATCH.open.btn); }, true);
+}
 """
 
 

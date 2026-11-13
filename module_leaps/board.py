@@ -164,7 +164,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:var(--fs-base)/1.4 var(-
 .c-n b,.c-p b{font-size:var(--fs-base);font-weight:600;color:var(--bright)}
 .c-n span{font-size:var(--fs-xs);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .c-p{text-align:right}
-/* The "add to list" bookmark (#786 step 5): the shared component draws it; the board only sizes it,
+/* The "add to list" bookmark (watch lists, step 5): the shared component draws it; the board only sizes it,
    28 px with a mouse, 44 px on a touch screen. */
 .lp .rc-watch{margin:0;flex:none}
 .lp .rc-watch button{min-width:28px;min-height:28px;height:28px;padding:0 4px;border-radius:var(--r-sm)}
