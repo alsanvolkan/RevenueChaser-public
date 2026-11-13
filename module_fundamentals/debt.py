@@ -75,7 +75,8 @@ PRESENCE_ONLY_FIELDS = ("notes_and_loans_payable", "debt_combined_total", "unsec
                         # Three current-debt spellings ``facts.FALLBACK_CURRENT_DEBT`` does not carry. A current
                         # line alone is unreadable as a size (#239), so these take a name out of the inference the
                         # same way, where no floor can reach it: TR, CUE and DUOT leaked through this hole.
-                        )  # MUTANT 3
+                        "loans_payable_to_bank_current", "other_loans_payable_current",
+                        "other_notes_payable_current")
 
 #: Interest labels the ``interest_expense`` ladder does not carry, read for the same reason and in the same way.
 #: They are not added to ``interest_expense`` itself: that field feeds the interest-cover and tax-rate engines
@@ -134,8 +135,8 @@ def no_interest(rec: dict | None, *, quarterly: bool = False) -> bool:
     """
     if not rec:
         return False
-    scale = 1  # MUTANT 1
-    return all((ie := _float(rec.get(f))) is None or ie * scale < INTEREST_FLOOR_USD for f in INTEREST_FIELDS)  # MUTANT 2
+    scale = 4 if quarterly else 1
+    return all((ie := _float(rec.get(f))) is None or ie * scale <= INTEREST_FLOOR_USD for f in INTEREST_FIELDS)
 
 
 def debt_free(rec: dict | None, *, quarterly: bool = False) -> bool:
