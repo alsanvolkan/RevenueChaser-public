@@ -161,6 +161,31 @@ def test_the_fallback_ladder_takes_the_largest_positive_line(tags, total, why):
     assert (row and row["value"]) == total, why
 
 
+# #737, the second real-data check of 13 Nov 2026 (#830): dropping a zero line outright took five real totals
+# back to NULL. A zero long-term line is the filer's own statement that nothing is due beyond the year WHEN a
+# positive current line stands beside it; on its own it is just a tag carried at zero.
+@pytest.mark.parametrize("tags, total, why", [
+    # OKTA, 31 Jan 2026: nothing due beyond the year, the convertible notes are the whole debt.
+    ({"ConvertibleDebtNoncurrent": 0, "ConvertibleNotesPayableCurrent": 350_000}, 350_000,
+     "a zero noncurrent line beside a positive current line keeps the slot"),
+    # QTWO, 31 Dec 2025: the same shape.
+    ({"ConvertibleDebtNoncurrent": 0, "ConvertibleNotesPayableCurrent": 303_400}, 303_400, "QTWO"),
+    # ASAN, 31 Jan 2026: the current line is the standard tag, the zero is in a fallback ladder.
+    ({"SecuredLongTermDebt": 0, "LongTermDebtCurrent": 40_800}, 40_800, "ASAN"),
+    # MHO, 31 Dec 2025: a positive line in the same ladder still wins over the zero, as before.
+    ({"LineOfCredit": 0, "OtherLongTermDebt": 52}, 52, "a positive line of the ladder still beats the zero"),
+    # Nothing positive anywhere: a balance sheet of zeros says nothing, so the total stays unknown.
+    ({"LineOfCredit": 0}, None, "a zero alone leaves the total unknown"),
+    ({"ConvertibleDebtNoncurrent": 0, "LinesOfCreditCurrent": 0}, None, "two zeros are still no reading"),
+    # No long-term or whole line at all, not even a zero one: a current line alone is still not the whole.
+    ({"LinesOfCreditCurrent": 25}, None, "the rule of #239 is unchanged"),
+])
+def test_a_zero_fallback_line_counts_only_beside_a_positive_current_line(tags, total, why):
+    rows = _by_key(facts.fact_rows(_balance_sheet(**tags), "1")[0])
+    row = rows.get(("total_debt", "annual", date(2025, 12, 31)))
+    assert (row and row["value"]) == total, why
+
+
 def test_a_zero_debt_line_of_the_first_pass_still_counts():
     """The zero skip belongs to the fallback only: NVIDIA's restated ``LongTermDebt`` of 0 beside its convertible
     notes is a filer's own statement and keeps the #264 behaviour."""

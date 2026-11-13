@@ -1789,8 +1789,10 @@ tags none of those lines at all, a second pass reads the balances it may tag ins
 `ConvertibleDebt`, `SecuredDebt`, `NotesPayable`, `LongTermLoansPayable`, `LinesOfCreditCurrent` and their
 neighbours, `rcdata/build/fundamentals/facts.py` `FALLBACK_*`), in the same three slots. One line of each ladder
 is taken, the largest positive one and never a sum (which of these tags overlap is not readable from the facts); a
-zero line is skipped there, because a `total_debt` of 0 reads as debt-free while a NULL does not; a current line
-alone is still not the whole; and the pass runs only where the first one gives nothing, so no total that exists
+zero line is passed over for a positive one of the same ladder, because a `total_debt` of 0 reads as debt-free
+while a NULL does not, but it keeps its slot when a positive current line stands beside it, which is the filer
+saying nothing is due beyond the year (OKTA's `ConvertibleDebtNoncurrent` 0 next to 350 m of convertible notes);
+a second-pass total of 0 is never served; a current line alone is still not the whole; and the pass runs only where the first one gives nothing, so no total that exists
 today moves. Measured over the board's 2,131 anchor years on 13 Nov 2026: 157 years gain a total, 0 change value
 and 0 are lost (#737). A tag that is a schedule or a contra item
 (`FinanceLeaseLiabilityUndiscountedExcessAmount`, `DebtInstrumentCarryingAmount`, `LongTermDebtMaturities...`) is

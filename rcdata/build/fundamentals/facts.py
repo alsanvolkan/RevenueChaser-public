@@ -262,8 +262,13 @@ def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) ->
     carry no total, and 104 of them carry one of these balances. The rule that a current line alone is not the
     whole is **kept** in both passes, so a year whose only fallback line is a current one still has no total.
     """
-    return (_lines_on_one_sheet(out, index, balance_end, DEBT_LINES, fallback=False)
-            or _lines_on_one_sheet(out, index, balance_end, DEBT_LINES + FALLBACK_DEBT_LINES, fallback=True))
+    first = _lines_on_one_sheet(out, index, balance_end, DEBT_LINES, fallback=False)
+    if first:
+        return first
+    second = _lines_on_one_sheet(out, index, balance_end, DEBT_LINES + FALLBACK_DEBT_LINES, fallback=True)
+    # A second-pass total of 0 would say "debt-free", which these tags cannot support: no line of the first pass
+    # was tagged, so a zero here is the absence of a reading, not a filer's own zero. The total stays unknown.
+    return second if sum(r["value"] for r in second) > 0 else []
 
 
 def _best_of(lines: dict[str, dict], fields: tuple[str, ...]) -> dict | None:
@@ -278,10 +283,29 @@ def _best_of(lines: dict[str, dict], fields: tuple[str, ...]) -> dict | None:
     **A zero line is skipped.** ``total_debt = 0`` is read downstream as debt-free, which a NULL is not, and a tag
     carried at zero said nothing: 26 of the 157 gains were zero totals, MHO's off a ``LineOfCredit`` of 0 while it
     carried ``OtherLongTermDebt`` 52 m. This applies to the fallback ladders only — a zero in the lines of #239 is
-    a filer's own statement and still counts (NVIDIA's restated ``LongTermDebt`` of 0, #264).
+    a filer's own statement and still counts (NVIDIA's restated ``LongTermDebt`` of 0, #264). Nor is it absolute
+    in the fallback: see ``_zero_long_term`` for the zero that does carry a meaning.
     """
     found = [lines[f] for f in fields if f in lines and lines[f]["value"] > 0]
     return max(found, key=lambda r: r["value"]) if found else None
+
+
+def _zero_long_term(lines: dict[str, dict], current: list[dict]) -> dict | None:
+    """A fallback long-term or whole line the filer tagged at exactly **zero**, but only when a positive current or
+    short-term line stands beside it (#737, the second real-data check of 13 Nov 2026).
+
+    ``_best_of`` drops a zero because a zero line usually hides a larger one: MHO tags ``LineOfCredit`` 0 next to
+    ``OtherLongTermDebt`` 52 m, and serving 0 would call it debt-free. Dropped on its own, though, the zero took
+    five real totals back to NULL: OKTA tags ``ConvertibleDebtNoncurrent`` 0 and ``ConvertibleNotesPayableCurrent``
+    350.0 m, and there the zero is the filer's own statement that nothing is due beyond the year, so the current
+    line is the whole debt (QTWO, ASAN, CRCL and OCC are the same shape). The two are told apart by what stands
+    beside the zero: a positive current line makes the structure a statement, nothing beside it leaves the total
+    unknown rather than zero.
+    """
+    if not any(r["value"] > 0 for r in current):
+        return None
+    return next((lines[f] for f in FALLBACK_WHOLE_DEBT + FALLBACK_LONG_TERM_DEBT
+                 if f in lines and lines[f]["value"] == 0), None)
 
 
 def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | None, fields: tuple[str, ...],
@@ -294,6 +318,14 @@ def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | 
     short = (lines.get("short_term_borrowings") or _tagged(index, COMMERCIAL_PAPER, balance_end)
              or (_best_of(lines, FALLBACK_SHORT_TERM_DEBT) if fallback else None))
     short = [short] if short else []
+    convertible = lines.get("convertible_debt_current")
+    # #264: convertible notes due within the year are the current line only when no other current line is tagged
+    # (DebtCurrent and LongTermDebtCurrent hold them when they are), so they are never read twice.
+    current_line = (lines.get("lt_debt_current") or convertible
+                    or (_best_of(lines, FALLBACK_CURRENT_DEBT) if fallback else None))
+    # DebtCurrent is the short-term borrowings and the current portion together, so nothing is added beside it.
+    current = ([lines["debt_current"]] if "debt_current" in lines
+               else ([current_line] if current_line else []) + short)
     long_term = next((lines[f] for f in LONG_TERM_DEBT if f in lines), None)
     whole = lines.get("lt_debt_total") or _tagged(index, WHOLE_LONG_TERM_DEBT, balance_end)
     if fallback and long_term is None and whole is None:
@@ -304,14 +336,8 @@ def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | 
         # debt only in the first, and reading the second would quietly drop the 20 due within the year.
         whole = _best_of(lines, FALLBACK_WHOLE_DEBT)
         if whole is None:
-            long_term = _best_of(lines, FALLBACK_LONG_TERM_DEBT)
-    convertible = lines.get("convertible_debt_current")
+            long_term = _best_of(lines, FALLBACK_LONG_TERM_DEBT) or _zero_long_term(lines, current)
     if long_term is not None:
-        # #264: convertible notes due within the year are the current line only when no other current line is
-        # tagged (DebtCurrent and LongTermDebtCurrent hold them when they are), so they are never read twice.
-        current_line = (lines.get("lt_debt_current") or convertible
-                        or (_best_of(lines, FALLBACK_CURRENT_DEBT) if fallback else None))
-        current = [lines["debt_current"]] if "debt_current" in lines else ([current_line] if current_line else []) + short
         return [long_term] + current
     if not whole:
         return []
