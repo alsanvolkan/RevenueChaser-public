@@ -96,14 +96,14 @@ def tags_no_debt(rec: dict | None) -> bool:
     """
     if not rec:
         return False
-    return all(_float(rec.get(f)) is None for f in tag_fields())   # MUTANT M6
+    return all(_float(rec.get(f)) is None for f in tag_fields() + PRESENCE_ONLY_FIELDS)
 
 
 def no_interest(rec: dict | None) -> bool:
     """True when the record reports no interest expense under any of ``INTEREST_FIELDS``, or none that is positive."""
     if not rec:
         return False
-    return all((ie := _float(rec.get(f))) is None or ie <= 0 for f in ("interest_expense",))   # MUTANT M7
+    return all((ie := _float(rec.get(f))) is None or ie <= 0 for f in INTEREST_FIELDS)
 
 
 def debt_free(rec: dict | None) -> bool:
