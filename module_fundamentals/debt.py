@@ -16,9 +16,10 @@ Two conditions, both required:
    record. A filer that tags only a current line is therefore **out of scope** and stays unknown: it has debt, and
    #239's rule that a current line alone is not the whole means the size of it is not readable. This rule does not
    change that.
-2. **No positive interest expense.** ``interest_expense`` absent or ``<= 0``, and the same for the two
-   presence-only labels of ``INTEREST_FIELDS``. A filer that pays interest owes something, whatever it tagged, so
-   a positive figure takes the name out of scope.
+2. **No interest expense above the floor.** ``interest_expense`` absent, negative, or at or below
+   ``INTEREST_FLOOR_USD`` once annualised, and the same for the two presence-only labels of ``INTEREST_FIELDS``.
+   A filer that pays interest owes something, whatever it tagged -- but a few thousand dollars is not a balance
+   sheet, so avo put a floor under it on 13 Nov 2026 and the value was measured (see ``INTEREST_FLOOR_USD``).
 
 **The presence-only fields.** The measurement of 13 Nov 2026 on the real store
 (claude-coordinator ``notes/revenuechaser/notes/2026-11-13_1515_737-debt-free-inference-measurement.md``) read
@@ -70,12 +71,36 @@ def tag_fields() -> tuple[str, ...]:
 #: ``facts._debt_lines``, not in ``sec_edgar.extract_annual`` -- and exist so ``tags_no_debt`` can tell a filer
 #: that tagged nothing from one that tagged debt this project does not add up (the module docstring).
 PRESENCE_ONLY_FIELDS = ("notes_and_loans_payable", "debt_combined_total", "unsecured_debt",
-                        "debt_instrument_carrying_amount")
+                        "debt_instrument_carrying_amount",
+                        # Three current-debt spellings ``facts.FALLBACK_CURRENT_DEBT`` does not carry. A current
+                        # line alone is unreadable as a size (#239), so these take a name out of the inference the
+                        # same way, where no floor can reach it: TR, CUE and DUOT leaked through this hole.
+                        "loans_payable_to_bank_current", "other_loans_payable_current",
+                        "other_notes_payable_current")
 
 #: Interest labels the ``interest_expense`` ladder does not carry, read for the same reason and in the same way.
 #: They are not added to ``interest_expense`` itself: that field feeds the interest-cover and tax-rate engines
 #: (#645) and widening its ladder would move figures those boards already serve.
 INTEREST_FIELDS = ("interest_expense", "interest_expense_borrowings", "interest_expense_other")
+
+#: avo, 13 Nov 2026 ("taban koy", and on the value: "ben nereden bileyim mantikli bir sey secelim"): an interest
+#: expense at or below this, **annualised**, is not evidence of debt. Measured the same day on the real store
+#: (claude-coordinator ``notes/revenuechaser/notes/2026-11-13_1752_737-interest-floor-measurement.md``), over the
+#: 126 names that tag no debt at all and are kept out by interest alone:
+#:
+#: * **The distribution gives no anchor.** Annualised interest / revenue runs from 0.0005 % to 659 %, median
+#:   0.12 %, and the widest step at the low end is x2.1 with 3 names below it. There is no cliff to put the floor
+#:   on, so it is chosen by headroom instead: the sweep is clean at 100 k and 150 k and the first real borrower
+#:   (CUE, ``OtherLoansPayableCurrent`` 0.7 m) leaks at 200 k. 100 k is 2x headroom.
+#: * **Absolute, not a ratio, because of the 18.** 18 of the 126 report no revenue at all in the period that
+#:   blocks them (pre-revenue biotech: ACHV, CAPR, MAZE, RVMD, VKTX and the rest) -- exactly the population whose
+#:   interest line is a few thousand dollars. A ratio floor can never judge them; an absolute one judges them on
+#:   the same terms as everyone else.
+#: * **What it costs.** 19 names come back (UMAC 1,472, ASST 4,656, MF 697, WEYS, WFCF, STOK, EDU, WMK and the
+#:   rest), 4 of them newly pass Quality, and **none of the 19 carries a debt balance this module cannot read.**
+#:   Against it: QUBT pays 65,000 on 682,000 of revenue -- 9.5 %, which a ratio floor would catch and this one
+#:   does not. It tags no debt and has no unread balance, so it is a reading, not a wrong one.
+INTEREST_FLOOR_USD = 100_000.0
 
 FILED = "filed"                  # ``total_debt`` came from the facts (a sum of tagged lines), zero included
 INFERRED_NONE = "inferred_none"  # no total in the facts; this module read it as 0
@@ -101,13 +126,19 @@ def tags_no_debt(rec: dict | None) -> bool:
     return all(_float(rec.get(f)) is None for f in tag_fields() + PRESENCE_ONLY_FIELDS)
 
 
-def no_interest(rec: dict | None) -> bool:
-    """True when the record reports no interest expense under any of ``INTEREST_FIELDS``, or none that is positive."""
+def no_interest(rec: dict | None, *, quarterly: bool = False) -> bool:
+    """True when no ``INTEREST_FIELDS`` label reports interest above ``INTEREST_FLOOR_USD``, annualised.
+
+    ``quarterly`` says the record covers three months, so its figure is multiplied by four before the comparison:
+    the floor is one number for the whole board and a quarter's line is not a year's. A negative or absent figure
+    passes as it always did.
+    """
     if not rec:
         return False
-    return all((ie := _float(rec.get(f))) is None or ie <= 0 for f in INTEREST_FIELDS)
+    scale = 4 if quarterly else 1
+    return all((ie := _float(rec.get(f))) is None or ie * scale <= INTEREST_FLOOR_USD for f in INTEREST_FIELDS)
 
 
-def debt_free(rec: dict | None) -> bool:
-    """Both conditions on one record (the module docstring)."""
-    return tags_no_debt(rec) and no_interest(rec)
+def debt_free(rec: dict | None, *, quarterly: bool = False) -> bool:
+    """Both conditions on one record (the module docstring). ``quarterly`` annualises the interest figure."""
+    return tags_no_debt(rec) and no_interest(rec, quarterly=quarterly)

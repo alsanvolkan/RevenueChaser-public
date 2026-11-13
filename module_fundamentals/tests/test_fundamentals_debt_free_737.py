@@ -7,7 +7,8 @@ passes only when every rule is known. PANW, ZS, CPRT and MNST are in that group 
 
 Two conditions, both of them (``module_fundamentals/debt.py``). The record must tag **none** of the debt lines
 (#239's and #825's fallback balances alike), so a filer with only a current line is out of scope and stays
-unknown; and its interest expense must be absent or not positive. The reading is marked ``inferred_none`` and the
+unknown; and its interest expense must be absent, negative, or at or below ``debt.INTEREST_FLOOR_USD``
+annualised (avo, 13 Nov 2026: "taban koy", value measured). The reading is marked ``inferred_none`` and the
 leverage rule says so on its label, so it can never be read as a zero the filer filed.
 """
 from __future__ import annotations
@@ -53,9 +54,13 @@ def test_a_zero_interest_expense_is_still_debt_free():
     assert q["debt_basis"] == debt.INFERRED_NONE
 
 
-def test_a_positive_interest_expense_takes_the_filer_out_of_scope():
-    """It pays interest, so it owes something whatever it tagged: the total stays unknown."""
-    q = pipeline._quality_metrics(_year(interest_expense=12.0))
+def test_an_interest_expense_above_the_floor_takes_the_filer_out_of_scope():
+    """It pays real interest, so it owes something whatever it tagged: the total stays unknown.
+
+    ``INTEREST_FLOOR_USD`` is an absolute figure in dollars, so every interest amount in this file is a dollar
+    amount while the rest of the fixture keeps its toy scale. The rule never relates the two.
+    """
+    q = pipeline._quality_metrics(_year(interest_expense=250_000.0))
     assert q["debt_basis"] is None and q["net_debt_ebitda"] is None and q["net_cash"] is None
     assert _leverage(q)["passed"] is None
 
@@ -125,9 +130,9 @@ def test_a_filer_that_tags_a_borrowing_under_a_presence_only_concept_stays_unkno
 
 
 @pytest.mark.parametrize("field, ticker, paid", [
-    ("interest_expense_borrowings", "GENI", 5.4),     # the label says *borrowings*
-    ("interest_expense_other", "KYMR", 4.2),
-    ("interest_expense_other", "ROG", 0.4),
+    ("interest_expense_borrowings", "GENI", 5_400_000.0),   # the label says *borrowings*
+    ("interest_expense_other", "KYMR", 4_200_000.0),
+    ("interest_expense_other", "ROG", 400_000.0),
 ])
 def test_interest_tagged_under_a_label_the_ladder_does_not_read_still_takes_the_filer_out(field, ticker, paid):
     """Four names write their interest under one of these two concepts (measured 13 Nov 2026). They are read
@@ -164,8 +169,61 @@ def test_every_presence_only_field_is_a_field_the_store_can_carry():
 
 
 def test_a_negative_interest_expense_is_still_debt_free():
-    """``<= 0``, not ``== 0``: a credit tagged under an expense concept is not a company paying interest."""
+    """A credit tagged under an expense concept is not a company paying interest."""
     assert pipeline._quality_metrics(_year(interest_expense=-3.0))["debt_basis"] == debt.INFERRED_NONE
+
+
+# ── The floor (avo, 13 Nov 2026 "taban koy"; the value measured, see ``debt.INTEREST_FLOOR_USD``) ──
+
+
+def test_the_floor_is_the_measured_one():
+    """A silent change to this number changes what the board says about 19 companies."""
+    assert debt.INTEREST_FLOOR_USD == 100_000.0
+
+
+@pytest.mark.parametrize("interest, inferred", [
+    (debt.INTEREST_FLOOR_USD, True),            # at the floor: still debt-free
+    (debt.INTEREST_FLOOR_USD + 0.01, False),    # one cent over: out
+])
+def test_the_floor_is_inclusive_on_a_year(interest, inferred):
+    q = pipeline._quality_metrics(_year(interest_expense=interest))
+    assert (q["debt_basis"] == debt.INFERRED_NONE) is inferred
+
+
+@pytest.mark.parametrize("ticker, quarterly_interest", [("UMAC", 368.0), ("ASST", 1_164.0)])
+def test_the_two_names_avo_named_come_back(ticker, quarterly_interest):
+    """The names that made avo ask for a floor: a few hundred dollars a quarter, no debt tag anywhere."""
+    assert debt.debt_free({"interest_expense": quarterly_interest}, quarterly=True)
+
+
+@pytest.mark.parametrize("quarterly_interest, inferred", [
+    (debt.INTEREST_FLOOR_USD / 4, True),           # 100,000 annualised: at the floor
+    (debt.INTEREST_FLOOR_USD / 4 + 0.01, False),   # over it once the quarter is annualised
+])
+def test_a_quarter_is_annualised_before_the_floor(quarterly_interest, inferred):
+    """A quarter's line is not a year's: the floor is one number for the whole board, so the quarter is x4."""
+    rec = {"interest_expense": quarterly_interest}
+    assert debt.debt_free(rec, quarterly=True) is inferred
+    assert debt.debt_free(rec) is True   # the same figure read as a year stays under the floor
+
+
+def test_the_floor_does_not_reach_a_debt_tag():
+    """It is a floor on interest only. A filer that tags a borrowing is out however little interest it reports."""
+    q = pipeline._quality_metrics(_year(notes_payable_current=40.0, interest_expense=1.0))
+    assert q["debt_basis"] is None
+
+
+@pytest.mark.parametrize("field, ticker, owed", [
+    ("loans_payable_to_bank_current", "TR", 1_000_000.0),
+    ("other_loans_payable_current", "CUE", 700_000.0),
+    ("other_notes_payable_current", "DUOT", 1.0),
+])
+def test_a_current_debt_spelling_the_facts_layer_misses_still_takes_the_filer_out(field, ticker, owed):
+    """Measured 13 Nov 2026: these three names tag a current borrowing under a spelling
+    ``facts.FALLBACK_CURRENT_DEBT`` does not carry, so they were the only names a 1 m floor let through. Read as
+    presence signals they are out under rule 1, where no floor reaches them."""
+    q = pipeline._quality_metrics(_year(**{field: owed}))
+    assert q["debt_basis"] is None and q["net_debt_ebitda"] is None
 
 
 def test_every_debt_component_field_is_either_summed_or_watched():
@@ -251,7 +309,7 @@ def test_a_debt_tag_on_the_quarter_stops_the_trailing_year_inference():
 
 def test_interest_on_the_year_stops_the_trailing_year_inference():
     """A quarter that simply did not tag interest says nothing about the year that did: both have to be clean."""
-    annual, quarterly = _ttm_pair(year_over={"interest_expense": 20.0})
+    annual, quarterly = _ttm_pair(year_over={"interest_expense": 2_000_000.0})
     q = pipeline._quality_metrics(annual, quarterly)
     assert q["quality_basis"] == "TTM" and q["debt_basis"] is None and q["net_debt_ebitda"] is None
 

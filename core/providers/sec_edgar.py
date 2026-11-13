@@ -339,6 +339,16 @@ CONCEPTS = {
     "debt_combined_total": (["DebtLongtermAndShorttermCombinedAmount"], "USD"),
     "unsecured_debt": (["UnsecuredDebt"], "USD"),
     "debt_instrument_carrying_amount": (["DebtInstrumentCarryingAmount"], "USD"),
+    # Three current-debt spellings ``facts.FALLBACK_CURRENT_DEBT`` does not carry (it has ``line_of_credit_current``,
+    # ``loans_payable_current``, ``senior_notes_current`` and ``notes_payable_current``). Measured 13 Nov 2026
+    # (claude-coordinator notes/revenuechaser/notes/2026-11-13_1752_737-interest-floor-measurement.md): TR
+    # (``LoansPayableToBankCurrent`` 1.0 m), CUE (``OtherLoansPayableCurrent`` 0.7 m) and DUOT
+    # (``OtherNotesPayableCurrent``) tag a borrowing under these and nothing else, so the inference could not see
+    # them. Read here as presence signals only: like a current line anywhere else (#239) they say "this filer has
+    # debt, and its size is not readable", which takes the name out of the inference and leaves it unknown.
+    "loans_payable_to_bank_current": (["LoansPayableToBankCurrent"], "USD"),
+    "other_loans_payable_current": (["OtherLoansPayableCurrent"], "USD"),
+    "other_notes_payable_current": (["OtherNotesPayableCurrent"], "USD"),
     "finance_lease_noncurrent": (["FinanceLeaseLiabilityNoncurrent"], "USD"),
     "finance_lease_current": (["FinanceLeaseLiabilityCurrent"], "USD"),
     "operating_lease_noncurrent": (["OperatingLeaseLiabilityNoncurrent"], "USD"),
@@ -394,6 +404,7 @@ _DEBT_COMPONENT_FIELDS = frozenset({
     "senior_notes_current", "short_term_bank_loans",
     # #737's presence signals. Collected like the rest, summed nowhere, read only by the debt-free inference.
     "notes_and_loans_payable", "debt_combined_total", "unsecured_debt", "debt_instrument_carrying_amount",
+    "loans_payable_to_bank_current", "other_loans_payable_current", "other_notes_payable_current",
     "operating_lease_noncurrent", "operating_lease_current"})
 
 # Fields whose concept list is a strict priority order, resolved period by period.

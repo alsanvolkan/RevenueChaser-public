@@ -423,7 +423,8 @@ def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) ->
     # no quarter after it does either: the board shows one leverage figure per name, and a name whose later balance
     # sheets carry notes is not debt-free on them, whatever the older year end said.
     fy = _quality_of(a, debt_free=_debt.debt_free(a)
-                     and all(_debt.debt_free(q) for q in _quarters_after(quarterly or [], end)))
+                     and all(_debt.debt_free(q, quarterly=True)
+                             for q in _quarters_after(quarterly or [], end)))
     out = {**fy, "quality_basis": "FY", "quality_period_end": end.isoformat() if end else None}
     ttm_rec = _quality_ttm(annual, quarterly or [], i)
     if ttm_rec is not None:
@@ -435,8 +436,8 @@ def _quality_metrics(annual: list[dict], quarterly: list[dict] | None = None) ->
         # borrowing. A filer that tagged debt at its year end is not a filer that tagged nothing, and a quarter
         # that simply did not repeat the tag does not say it repaid.
         q = _quarter_at(quarterly or [], ttm_rec["period"])
-        ttm = _quality_of(ttm_rec, debt_free=_debt.debt_free(q) and _debt.debt_free(a)
-                          and all(_debt.debt_free(x)
+        ttm = _quality_of(ttm_rec, debt_free=_debt.debt_free(q, quarterly=True) and _debt.debt_free(a)
+                          and all(_debt.debt_free(x, quarterly=True)
                                   for x in _quarters_after(quarterly or [], end, ttm_rec["period"])))
         # The year's net income stays (P/E reads its own TTM, ``_ttm_metrics``); P/B reads the newest equity.
         if all(ttm[k] is not None or fy[k] is None for k in ("gross_margin", "roic", "net_debt_ebitda", "net_cash")):
