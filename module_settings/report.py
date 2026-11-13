@@ -176,7 +176,7 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bkv dt{color:var(--muted)}
 .bkv dd{margin:0;overflow-wrap:anywhere}
 .bcard .bfoot{font-size:11.5px;margin:6px 0 0}
-@media(max-width:760px){.btiles{grid-template-columns:1fr}.bkv{grid-template-columns:1fr}}
+@media(max-width:900px){.btiles{grid-template-columns:1fr}.bkv{grid-template-columns:1fr}}
 /* G8 (#124): a folder path shown in full, in monospace; it wraps rather than being shortened. */
 .bpath{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--text);
   background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:1px 6px;
@@ -204,7 +204,7 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .sfield .ferr{grid-column:2/-1;color:var(--red);font-size:12px;white-space:normal}
 .sfield .ferr:empty{display:none}
 /* #715: the forms sit in a fold under Database; on a phone a field is its label and input, the range under them */
-@media(max-width:760px){.sfield{grid-template-columns:minmax(0,1fr) 110px}.sfield .rng{grid-column:1/-1;overflow-wrap:anywhere}
+@media(max-width:900px){.sfield{grid-template-columns:minmax(0,1fr) 110px}.sfield .rng{grid-column:1/-1;overflow-wrap:anywhere}
 .sfield input,.sfield select{height:44px}}
 .sderived{color:var(--muted);font-size:12px;padding:4px 0}
 .sderived b{color:var(--text)}

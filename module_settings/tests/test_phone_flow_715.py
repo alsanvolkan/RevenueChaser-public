@@ -95,8 +95,8 @@ def test_the_phone_picture_is_drawn_inside_the_phone_s_width():
 # ── avo, 13 Nov 2026, on the phone: "çok ayrık ve kopuk ... daha kompakt", and nothing under the files ──────────
 
 def _phone_rules(css: str) -> str:
-    """Every rule of ``css`` that sits inside a ``max-width:760px`` block."""
-    return "".join(m.group(1) for m in re.finditer(r"@media\(max-width:760px\)\{(.*?\})\s*\}", css, re.S))
+    """Every rule of ``css`` that sits inside a ``max-width:900px`` block."""
+    return "".join(m.group(1) for m in re.finditer(r"@media\(max-width:900px\)\{(.*?\})\s*\}", css, re.S))
 
 
 def test_the_file_in_the_picture_is_a_44_px_touch_target():
@@ -130,7 +130,7 @@ def test_the_reference_parts_under_the_files_are_not_drawn_on_a_phone():
     from RevenueChaser.module_settings import needs_tab
     assert "#needs details.hfold{display:none}" in _phone_rules(needs_tab.NEEDS_CSS)
     assert "#needs details.hfold{display:none}" not in needs_tab.NEEDS_CSS.replace(
-        "@media(max-width:760px){#needs details.hfold{display:none}}", ""), "the desk keeps them"
+        "@media(max-width:900px){#needs details.hfold{display:none}}", ""), "the desk keeps them"
 
 
 def test_a_fill_box_on_a_phone_is_its_name_and_one_coverage_line():
@@ -144,13 +144,14 @@ def test_a_fill_box_on_a_phone_is_its_name_and_one_coverage_line():
     assert ".ctl .fgroup .dset{margin-top:0;padding:6px 10px}" in phone
 
 
-def test_the_phone_rules_reach_a_720_px_phone():
-    """avo, 13 Nov 2026: none of the phone work above reached his phone. It reports 720 CSS px and every block
-    written for it stopped at 640. The page's own table layout already turns phone-shaped at 760, so the two
-    breakpoints become one: a width that stacks the journey table also gets the compact step lines."""
+def test_the_phone_rules_reach_the_width_he_actually_browses_at():
+    """avo, 13 Nov 2026: none of the phone work above reached his phone. The blocks written for it stopped at 640,
+    then at 760, and his page still showed the desk layout at 02:16 (the Grafana board's rows gave it away). His
+    width is not fixed — it moves with Chrome's display size — so the page has one narrow breakpoint, 900, wide
+    enough to catch every state of it; a desk window is wider than that anyway."""
     from RevenueChaser.module_settings import needs_tab
     for css in (control_render.CTL_CSS, needs_tab.NEEDS_CSS):
-        assert "max-width:640px" not in css, "one phone breakpoint, and it is 760"
+        assert "max-width:640px" not in css and "max-width:760px" not in css, "one narrow breakpoint, and it is 900"
     phone = _phone_rules(control_render.CTL_CSS)
     assert ".ctl table.jt3 td.jh{display:none}" in phone
     assert ".ctl #sec-flow .flowlegend,.ctl #sec-flow .phoneonly .fnote{display:none}" in phone
