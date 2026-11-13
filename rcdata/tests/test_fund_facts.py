@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import duckdb
 import pytest
 
+from RevenueChaser.core import edgar_bulk
 from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.rcdata import ops
 from RevenueChaser.rcdata.build import base
@@ -62,7 +63,7 @@ def _balance_sheet(**tags):
     return {"cik": 1, "entityName": "X", "facts": {"us-gaap": gaap}}
 
 
-@pytest.mark.parametrize("tags, total", [
+_DEBT_LINE_CASES = [
     # The balance sheets of the real-data check of 2026-10-28 (PR 249), values in USD millions or thousands.
     ({"LongTermDebtNoncurrent": 78_328, "LongTermDebtCurrent": 12_350, "CommercialPaper": 7_979}, 98_657),  # AAPL
     ({"LongTermNotesPayable": 122_342, "DebtCurrent": 7_199}, 129_541),                                       # ORCL
@@ -84,11 +85,85 @@ def _balance_sheet(**tags):
     ({"LongTermDebt": 0, "ConvertibleDebtCurrent": 1_413_000_000}, 1_413_000_000),   # NVDA FY2016 as restated
     ({"LongTermDebt": 1_413_000_000, "ConvertibleDebtCurrent": 1_413_000_000}, 1_413_000_000),  # as first filed
     ({"ConvertibleDebtCurrent": 40}, None),                                  # still no long-term line: unknown
-])
+]
+
+
+@pytest.mark.parametrize("tags, total", _DEBT_LINE_CASES)
 def test_total_debt_reads_the_debt_lines_the_filer_uses(tags, total):
     rows = _by_key(facts.fact_rows(_balance_sheet(**tags), "1")[0])
     row = rows.get(("total_debt", "annual", date(2025, 12, 31)))
     assert (row and row["value"]) == total
+
+
+# #737. One case per tag the fallback ladders add: the filer tags no line of #239 on that balance sheet, so the
+# total is NULL today. The company named beside each row is one real filer that tags it (stored companyfacts,
+# measured 13 Nov 2026); the figures are the shape of the balance sheet, not that filer's own numbers.
+@pytest.mark.parametrize("tags, total", [
+    # Whole lines (the current portion is inside them), so no current line is added beside them.
+    ({"DebtAndCapitalLeaseObligations": 900, "LoansPayableCurrent": 50}, 900),
+    ({"ConvertibleDebt": 300}, 300),
+    ({"ConvertibleNotesPayable": 250}, 250),
+    ({"SeniorNotes": 500}, 500),
+    ({"SecuredDebt": 420}, 420),
+    ({"NotesPayable": 180}, 180),
+    ({"LineOfCredit": 75}, 75),
+    ({"OtherLongTermDebt": 60}, 60),
+    # Noncurrent lines, each with the current line the ladder adds to it.
+    ({"ConvertibleDebtNoncurrent": 200, "LinesOfCreditCurrent": 25}, 225),
+    ({"SeniorLongTermNotes": 700, "SeniorNotesCurrent": 40}, 740),
+    ({"LongTermLoansPayable": 310, "LoansPayableCurrent": 90}, 400),
+    ({"SecuredLongTermDebt": 150, "NotesPayableCurrent": 10}, 160),
+    ({"LongTermLoansFromBank": 220, "ShortTermBankLoansAndNotesPayable": 30}, 250),
+    ({"LongTermLineOfCredit": 480}, 480),
+    ({"OtherLongTermDebtNoncurrent": 95, "LinesOfCreditCurrent": 5}, 100),
+    # The current and short-term lines the ladders add never make a total on their own: the rule that a current
+    # line alone is not the whole is unchanged (#239, JPM's short-term borrowings against its 461 bn long line).
+    ({"LinesOfCreditCurrent": 19}, None),
+    ({"LoansPayableCurrent": 10}, None),
+    ({"SeniorNotesCurrent": 6}, None),
+    ({"ShortTermBankLoansAndNotesPayable": 6}, None),
+    ({"NotesPayableCurrent": 7_625}, None),
+    # A whole line wins over a noncurrent one of the same borrowing: the two are never summed.
+    ({"ConvertibleDebt": 300, "ConvertibleDebtNoncurrent": 280}, 300),
+    ({"SeniorNotes": 500, "SeniorLongTermNotes": 460, "SeniorNotesCurrent": 40}, 500),
+    # One current line only, taken in ladder order; two of them are never summed.
+    ({"LongTermLoansPayable": 100, "LinesOfCreditCurrent": 20, "LoansPayableCurrent": 30}, 120),
+    # DebtCurrent holds the short-term borrowings too, so nothing is added beside it (#239).
+    ({"SeniorLongTermNotes": 700, "DebtCurrent": 55, "SeniorNotesCurrent": 40,
+      "ShortTermBankLoansAndNotesPayable": 30}, 755),
+])
+def test_total_debt_falls_back_to_the_balances_a_filer_tags_instead(tags, total):
+    rows = _by_key(facts.fact_rows(_balance_sheet(**tags), "1")[0])
+    row = rows.get(("total_debt", "annual", date(2025, 12, 31)))
+    assert (row and row["value"]) == total
+
+
+# #737: the fallback must never move a total that exists today. Every balance sheet of the #239 table above, with
+# every fallback tag added on top, keeps exactly the value it has without them.
+@pytest.mark.parametrize("tags, total", [c for c in _DEBT_LINE_CASES if c[1] is not None])
+def test_a_company_that_has_a_total_keeps_it_when_the_fallback_tags_are_there_too(tags, total):
+    extra = {tag: 7.0 for f in facts.FALLBACK_DEBT_LINES for tag in sec_edgar.CONCEPTS[f][0]}
+    rows = _by_key(facts.fact_rows(_balance_sheet(**{**extra, **tags}), "1")[0])
+    row = rows.get(("total_debt", "annual", date(2025, 12, 31)))
+    assert row["value"] == total
+
+
+def test_the_fallback_tags_are_balances_and_never_a_schedule_or_a_contra_item():
+    """The mapping edgartools files under its debt lines is not taken as it stands: its most frequent hits are a
+    lease schedule's imputed interest and a repayment schedule, which would be added to 101 and 36 companies'
+    debt (measurement of 12 Nov 2026). No tag of that shape is read."""
+    tags = {tag for f in facts.FALLBACK_DEBT_LINES for tag in sec_edgar.CONCEPTS[f][0]}
+    refused = {"FinanceLeaseLiabilityUndiscountedExcessAmount", "DebtInstrumentCarryingAmount",
+               "LineOfCreditFacilityFairValueOfAmountOutstanding", "UnamortizedDebtIssuanceExpense",
+               "HedgedLiabilityFairValueHedgeCumulativeIncreaseDecrease"}
+    assert not tags & refused
+    assert not [t for t in tags if t.startswith(("LongTermDebtMaturities", "DebtInstrumentUnamortizedDiscount",
+                                                 "DeferredFinanceCosts"))]
+    # A lease liability on its own is not a borrowing; only the combined debt-and-capital-lease line is read, as
+    # ``lt_debt_and_lease_noncurrent`` already is in the first pass (#239).
+    assert not [t for t in tags if t.startswith(("FinanceLeaseLiability", "OperatingLeaseLiability",
+                                                 "CapitalLeaseObligations"))]
+    assert tags <= set(edgar_bulk.USED_CONCEPTS)            # the bulk reader keeps every tag we read
 
 
 def test_commercial_paper_filed_later_still_gives_a_whole_annual_row():

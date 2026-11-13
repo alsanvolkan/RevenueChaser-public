@@ -1784,8 +1784,15 @@ uses (`LongTermDebtNoncurrent`, `LongTermDebtAndCapitalLeaseObligations` or `Lon
 else the current portion plus `ShortTermBorrowings` or `CommercialPaper`; a long-term line that includes its current
 portion plus the short-term line; no total without a long-term line; #239, measured on the real-data check of
 2026-10-28 in PR 249; convertible notes due within the year are the current line when no other current line is
-tagged, and are added beside a whole long-term line only when that line is below them, #264), and EPS
-(basic and diluted) is read too. An accession the SEC's XBRL API does not hold yet after the re-read is asked again
+tagged, and are added beside a whole long-term line only when that line is below them, #264). When the filer
+tags none of those lines at all, a second pass reads the balances it may tag instead (`SeniorNotes`,
+`ConvertibleDebt`, `SecuredDebt`, `NotesPayable`, `LongTermLoansPayable`, `LinesOfCreditCurrent` and their
+neighbours, `rcdata/build/fundamentals/facts.py` `FALLBACK_*`), in the same three slots and under the same rules:
+each ladder is a strict priority and never a sum, a current line alone is still not the whole, and the pass runs
+only where the first one gives nothing, so no total that exists today moves (#737, measured 12 Nov 2026: 104 of the
+654 scored years without a total carry such a balance). A tag that is a schedule or a contra item
+(`FinanceLeaseLiabilityUndiscountedExcessAmount`, `DebtInstrumentCarryingAmount`, `LongTermDebtMaturities...`) is
+not read, although edgartools' mapping files it under its debt lines. EPS (basic and diluted) is read too. An accession the SEC's XBRL API does not hold yet after the re-read is asked again
 by the next day's run (the run's note says `pending`), so a statement reaches the served table on its filing day or
 the day after, never months late (the Fundamentals review's F3).
 

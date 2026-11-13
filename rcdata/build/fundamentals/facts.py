@@ -23,7 +23,10 @@ today. What this layer adds:
   ``DebtCurrent`` nor ``LongTermDebtCurrent`` is tagged, and are added to a whole long-term line only when that line
   is below them, so it cannot hold them (#264: NVIDIA's restated 0 for 31 Jan 2016). A line of credit is not
   added: the filers that tag one carry it inside their long-term line. With no long-term line tagged there is no
-  total: a current line alone is not the whole. Measured on the real-data check of 2026-10-28 (PR 249): the earlier
+  total: a current line alone is not the whole. **When none of those lines is tagged at all** (#737), a second pass
+  reads the balances a filer may tag instead (``FALLBACK_*``, ``_debt_lines``): a whole or noncurrent line of its
+  own ladder, plus a current and a short-term line. The second pass never runs for a company the first one answers,
+  so no total that exists today moves. Measured on the real-data check of 2026-10-28 (PR 249): the earlier
   three-term sum served HEI 3.4 million instead of 2.17 billion (its long-term line is
   ``LongTermDebtAndCapitalLeaseObligations``), no total for ORCL (``LongTermNotesPayable`` + ``DebtCurrent``), AAPL
   without its 7.98 billion of commercial paper, and JPM its 72 billion of short-term borrowings alone (its 461
@@ -58,6 +61,20 @@ COMMERCIAL_PAPER = "CommercialPaper"
 WHOLE_LONG_TERM_DEBT = "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities"
 DEBT_LINES = LONG_TERM_DEBT + ("lt_debt_total", "debt_current", "lt_debt_current", "short_term_borrowings",
                                "convertible_debt_current")
+# #737: the debt balances read ONLY when the lines above give no total at all. Each tuple is a strict priority, not
+# a sum: two of these tags can describe one borrowing (``SeniorNotes`` beside ``SecuredDebt``), and the filers that
+# tag several are not countable from the facts, so the first one found is taken and the rest are left out. "Other"
+# is last in each ladder: it is a residual by definition, so it is the weakest statement of the whole.
+FALLBACK_WHOLE_DEBT = ("debt_and_lease_total", "convertible_debt", "convertible_notes_payable", "senior_notes",
+                       "secured_debt", "notes_payable", "line_of_credit", "other_lt_debt")
+FALLBACK_LONG_TERM_DEBT = ("convertible_debt_noncurrent", "senior_notes_noncurrent", "loans_payable_noncurrent",
+                           "secured_debt_noncurrent", "bank_loans_noncurrent", "line_of_credit_noncurrent",
+                           "other_lt_debt_noncurrent")
+FALLBACK_CURRENT_DEBT = ("line_of_credit_current", "loans_payable_current", "senior_notes_current",
+                         "notes_payable_current")
+FALLBACK_SHORT_TERM_DEBT = ("short_term_bank_loans",)
+FALLBACK_DEBT_LINES = (FALLBACK_WHOLE_DEBT + FALLBACK_LONG_TERM_DEBT + FALLBACK_CURRENT_DEBT
+                       + FALLBACK_SHORT_TERM_DEBT)
 EPS_CONCEPTS = {
     "eps_basic": (["EarningsPerShareBasic", "EarningsPerShareBasicAndDiluted"], "USD/shares"),
     "eps_diluted": (["EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted"], "USD/shares"),
@@ -233,22 +250,46 @@ def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) ->
     Every line comes from the one balance sheet dated ``balance_end`` (the record's ``total_assets`` end; the newest
     debt line's end when it has none). An annual record is keyed by calendar year and each field keeps its own end,
     so a filer that moved its year end holds two balance dates in one record; a line of the other date is left out,
-    as ``sec_edgar._fill_gross_profit`` leaves out a cost of another period (the Opus review's M1)."""
-    lines = {f: r for f, r in out.items() if f in DEBT_LINES}
+    as ``sec_edgar._fill_gross_profit`` leaves out a cost of another period (the Opus review's M1).
+
+    Two passes (#737). The first reads the lines of #239 and is unchanged, so **a company that has a total today
+    keeps exactly the value it has today**: the second pass runs only when the first returns nothing. The second
+    adds the fallback ladders (``FALLBACK_*``), the balances a filer may tag instead of ``LongTermDebtNoncurrent``
+    and its neighbours. Measured on the stored companyfacts, 12 Nov 2026 (claude-coordinator
+    ``notes/revenuechaser/2026-11-12_1400_fundamentals-tags-and-ifrs-measurement.md``): 654 scored fiscal years
+    carry no total, and 104 of them carry one of these balances. The rule that a current line alone is not the
+    whole is **kept** in both passes, so a year whose only fallback line is a current one still has no total.
+    """
+    return (_lines_on_one_sheet(out, index, balance_end, DEBT_LINES, fallback=False)
+            or _lines_on_one_sheet(out, index, balance_end, DEBT_LINES + FALLBACK_DEBT_LINES, fallback=True))
+
+
+def _first_of(lines: dict[str, dict], fields: tuple[str, ...]) -> dict | None:
+    return next((lines[f] for f in fields if f in lines), None)
+
+
+def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | None, fields: tuple[str, ...],
+                        fallback: bool) -> list[dict]:
+    """One pass of ``_debt_lines`` over ``fields``; ``fallback`` adds the #737 ladders to each of the three slots."""
+    lines = {f: r for f, r in out.items() if f in fields}
     if balance_end is None and lines:
         balance_end = max(r["period_end"] for r in lines.values()).isoformat()
     lines = {f: r for f, r in lines.items() if r["period_end"] == _day(balance_end)}
-    short = lines.get("short_term_borrowings") or _tagged(index, COMMERCIAL_PAPER, balance_end)
+    short = (lines.get("short_term_borrowings") or _tagged(index, COMMERCIAL_PAPER, balance_end)
+             or (_first_of(lines, FALLBACK_SHORT_TERM_DEBT) if fallback else None))
     short = [short] if short else []
-    long_term = next((lines[f] for f in LONG_TERM_DEBT if f in lines), None)
+    long_term = (_first_of(lines, LONG_TERM_DEBT)
+                 or (_first_of(lines, FALLBACK_LONG_TERM_DEBT) if fallback else None))
     convertible = lines.get("convertible_debt_current")
     if long_term is not None:
         # #264: convertible notes due within the year are the current line only when no other current line is
         # tagged (DebtCurrent and LongTermDebtCurrent hold them when they are), so they are never read twice.
-        current_line = lines.get("lt_debt_current") or convertible
+        current_line = (lines.get("lt_debt_current") or convertible
+                        or (_first_of(lines, FALLBACK_CURRENT_DEBT) if fallback else None))
         current = [lines["debt_current"]] if "debt_current" in lines else ([current_line] if current_line else []) + short
         return [long_term] + current
-    whole = lines.get("lt_debt_total") or _tagged(index, WHOLE_LONG_TERM_DEBT, balance_end)
+    whole = (lines.get("lt_debt_total") or _tagged(index, WHOLE_LONG_TERM_DEBT, balance_end)
+             or (_first_of(lines, FALLBACK_WHOLE_DEBT) if fallback else None))
     if not whole:
         return []
     # A whole long-term line holds its current portion, so it is never below the convertible notes due within the

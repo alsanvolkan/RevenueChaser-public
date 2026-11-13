@@ -303,6 +303,29 @@ CONCEPTS = {
     "notes_payable_current": (["NotesPayableCurrent"], "USD"),
     "line_of_credit": (["LineOfCredit"], "USD"),
     "line_of_credit_noncurrent": (["LongTermLineOfCredit"], "USD"),
+    # #737: debt balances a filer may tag instead of the lines above. Read ONLY as a fallback, when those give no
+    # total at all (``rcdata/build/fundamentals/facts.py`` ``_debt_lines``): measured 12 Nov 2026 on the stored
+    # companyfacts, 104 of the 654 scored years without a total carry one of these. Mapped-but-not-a-balance tags
+    # (``FinanceLeaseLiabilityUndiscountedExcessAmount``, ``DebtInstrumentCarryingAmount``,
+    # ``LongTermDebtMaturities...``, the unamortized-discount and issuance-cost contras) are deliberately absent:
+    # they are a schedule or a contra item, not what the company owes. Whole lines (current portion included):
+    "convertible_debt": (["ConvertibleDebt"], "USD"),
+    "convertible_notes_payable": (["ConvertibleNotesPayable"], "USD"),
+    "senior_notes": (["SeniorNotes"], "USD"),
+    "secured_debt": (["SecuredDebt"], "USD"),
+    "notes_payable": (["NotesPayable"], "USD"),
+    "other_lt_debt": (["OtherLongTermDebt"], "USD"),
+    # Noncurrent lines:
+    "senior_notes_noncurrent": (["SeniorLongTermNotes"], "USD"),
+    "loans_payable_noncurrent": (["LongTermLoansPayable"], "USD"),
+    "secured_debt_noncurrent": (["SecuredLongTermDebt"], "USD"),
+    "bank_loans_noncurrent": (["LongTermLoansFromBank"], "USD"),
+    "other_lt_debt_noncurrent": (["OtherLongTermDebtNoncurrent"], "USD"),
+    # Current lines, and a short-term borrowing line:
+    "line_of_credit_current": (["LinesOfCreditCurrent"], "USD"),
+    "loans_payable_current": (["LoansPayableCurrent"], "USD"),
+    "senior_notes_current": (["SeniorNotesCurrent"], "USD"),
+    "short_term_bank_loans": (["ShortTermBankLoansAndNotesPayable"], "USD"),
     "finance_lease_noncurrent": (["FinanceLeaseLiabilityNoncurrent"], "USD"),
     "finance_lease_current": (["FinanceLeaseLiabilityCurrent"], "USD"),
     "operating_lease_noncurrent": (["OperatingLeaseLiabilityNoncurrent"], "USD"),
@@ -343,6 +366,11 @@ _DEBT_COMPONENT_FIELDS = frozenset({
     "lt_debt_and_lease_noncurrent", "convertible_debt_noncurrent", "convertible_debt_current",
     "notes_payable_noncurrent", "notes_payable_current", "line_of_credit", "line_of_credit_noncurrent",
     "finance_lease_noncurrent", "finance_lease_current",
+    # #737, the fallback balances. Like the fields above they are collected wide and never summed here.
+    "convertible_debt", "convertible_notes_payable", "senior_notes", "secured_debt", "notes_payable",
+    "other_lt_debt", "senior_notes_noncurrent", "loans_payable_noncurrent", "secured_debt_noncurrent",
+    "bank_loans_noncurrent", "other_lt_debt_noncurrent", "line_of_credit_current", "loans_payable_current",
+    "senior_notes_current", "short_term_bank_loans",
     "operating_lease_noncurrent", "operating_lease_current"})
 
 # Fields whose concept list is a strict priority order, resolved period by period.
