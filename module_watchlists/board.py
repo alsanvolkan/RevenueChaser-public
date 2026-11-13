@@ -10,7 +10,7 @@ What a row's numbers are, by the symbol's ``coverage`` (``module_watchlists/symb
   before it, that session's volume and the average over the last ``VOLUME_SESSIONS`` bars with a volume. The market
   cap is the newest one of the class (``prices.latest``). The company name is the spine's (``identity.security``).
 - ``market_series`` — the series' own newest two observations (``market.series``): a level and its change, with no
-  volume and no cap. A yield carries ``%`` as its unit, so the column header's "USD" does not read over it.
+  volume and no cap. A yield carries ``%`` as its unit, so the column header's "$" does not read over it.
 - ``derived`` and ``unsupported`` — no number at all. The row stays, because the list is avo's and must come back
   out of an export whole; it says "No data source yet" and names issue #785.
 
@@ -501,7 +501,10 @@ _CSS = """
 
 /* the table */
 .wl table{width:100%;border-collapse:collapse}
-.wl th,.wl td{padding:3px var(--sp-3);text-align:right;font-size:var(--fs-base);white-space:nowrap;
+/* The cell grid (avo, 13 Nov 2026, vault-memory rules/ui-tasarim.md "Cell grid"): every cell of a column is as wide
+   as the column's widest value (the table does that), and a cell's text sits where the cell stands: the symbol,
+   leftmost, to the left; the numbers between, centred; the ×, rightmost, to the right. */
+.wl th,.wl td{padding:3px var(--sp-3);text-align:center;font-size:var(--fs-base);white-space:nowrap;
   line-height:1.25}
 .wl th{padding:0;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:1}
 .wl th:first-child,.wl td:first-child{text-align:left;width:26%}
@@ -511,7 +514,7 @@ _CSS = """
 .wl-rows-cozy td{padding-top:6px;padding-bottom:6px}
 .wl-rows-wide td{padding-top:10px;padding-bottom:10px}
 .wl th button{all:unset;cursor:pointer;box-sizing:border-box;display:flex;align-items:center;
-  justify-content:flex-end;gap:3px;width:100%;min-height:30px;padding:0 var(--sp-3);
+  justify-content:center;gap:3px;width:100%;min-height:30px;padding:0 var(--sp-3);
   font:500 var(--fs-sm)/1 inherit;color:var(--muted)}
 .wl th:first-child button{justify-content:flex-start}
 .wl th button:hover{background:var(--hover-faint);color:var(--fg)}
@@ -555,7 +558,6 @@ _CSS = """
 .wl-nosrc{font-size:var(--fs-xs);color:var(--muted);border:1px dashed var(--border);border-radius:4px;
   padding:0 var(--sp-2)}
 .wl-un .wl-badge,.wl-un .wl-nm{opacity:.62}
-.wl-un td[colspan]{text-align:left}
 .wl-xc{width:1%;text-align:right;white-space:nowrap;padding-left:var(--sp-2);padding-right:var(--sp-2)}
 .wl th.wl-xc{padding:0;position:relative}
 .wl-x{all:unset;cursor:pointer;color:var(--muted);opacity:0;padding:0 4px;border-radius:3px;font-size:var(--fs-sm)}
@@ -599,8 +601,12 @@ _CSS = """
   /* avo, 12 Nov 2026: "Sorun degil company name gozuksun" — the name comes back as a small second line under
      the ticker, capped so a long name is cut rather than widening the column the numbers need. */
   .wl-sym{flex-direction:column;align-items:flex-start;gap:1px}
-  .wl-nm{display:block;max-width:76px;font-size:8.5px;line-height:1.15;white-space:nowrap}
-  .wl-badge{min-width:0;padding:1px 3px;font-size:9.5px}
+  .wl-nm{display:block;max-width:70px;font-size:8.5px;line-height:1.15;white-space:nowrap}
+  /* A long symbol (FRED:BAMLH0A0HYM2, TVC:US10Y-TVC:US02Y) is cut like the name, at the name's width: on the
+     index list its full width pushed the table 5 px past a 390 px phone (live, 12 Nov 2026). The full symbol
+     stays in the badge's title. */
+  .wl-badge{min-width:0;max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:1px 3px;
+    font-size:9.5px}
   .wl-u{font-size:8.5px;margin-left:0}
   .wl-sec .in{padding:0 var(--sp-2);font-size:9px;min-height:22px}
   .wl-sec .secttools{display:none}
@@ -621,22 +627,24 @@ _GRIP = ('<svg viewBox="0 0 10 14" fill="currentColor" aria-hidden="true"><circl
          '<circle cx="7.5" cy="2" r="1.3"/><circle cx="2.5" cy="7" r="1.3"/><circle cx="7.5" cy="7" r="1.3"/>'
          '<circle cx="2.5" cy="12" r="1.3"/><circle cx="7.5" cy="12" r="1.3"/></svg>')
 
-#: Each tab's columns: ``(key, label, unit, kind)``. ``unit`` is the header's own "USD" or "%", said there
-#: instead of on every row (avo, 12 Nov 2026: "USD yazmana gerek yok her satira yukari yazsan yeterli").
+#: Each tab's columns: ``(key, label, unit, kind)``. ``unit`` is the header's own "$" or "%", said there
+#: instead of on every row (avo, 12 Nov 2026: "USD yazmana gerek yok her satira yukari yazsan yeterli"), and as
+#: the currency's symbol, not its code (avo, 13 Nov 2026: "Dolar için USD kullanmana gerek yok ... simge kullanırsan
+#: daha az yer kaplarlar"; vault-memory rules/ui-tasarim.md).
 #: ``kind`` is how the browser draws the value: ``sym`` the symbol cell, ``num`` a plain number, ``signed`` a
 #: number that takes a colour from its sign, ``pct`` a signed percent, ``big`` a T/B/M/K abbreviation,
 #: ``rating`` a word with its score in the title.
 COLUMNS = {
-    "price": (("t", "Symbol", None, "sym"), ("last", "Last", "USD", "num"), ("chgp", "Chg%", None, "pct"),
-              ("chg", "Chg", "USD", "signed"), ("vol", "Volume", None, "big"), ("avol", "Avg vol", None, "big"),
-              ("cap", "Mkt cap", "USD", "big")),
+    "price": (("t", "Symbol", None, "sym"), ("last", "Last", "$", "num"), ("chgp", "Chg%", None, "pct"),
+              ("chg", "Chg", "$", "signed"), ("vol", "Volume", None, "big"), ("avol", "Avg vol", None, "big"),
+              ("cap", "Mkt cap", "$", "big")),
     "performance": (("t", "Symbol", None, "sym"), ("p1W", "1W", "%", "pct"), ("p1M", "1M", "%", "pct"),
                     ("p3M", "3M", "%", "pct"), ("pYTD", "YTD", "%", "pct"), ("p1Y", "1Y", "%", "pct"),
                     ("p5Y", "5Y", "%", "pct")),
     "risk": (("t", "Symbol", None, "sym"), ("v1D", "Vol 1D", "%", "num"), ("v1W", "Vol 1W", "%", "num"),
              ("v1M", "Vol 1M", "%", "num"), ("b1Y", "Beta 1Y", None, "num"), ("b5Y", "Beta 5Y", None, "num")),
-    "financials": (("t", "Symbol", None, "sym"), ("rev", "Revenue", "USD", "big"), ("eps", "EPS", "USD", "num"),
-                   ("pe", "P/E", None, "num"), ("beta", "Beta", None, "num"), ("div", "Dividend", "USD", "num"),
+    "financials": (("t", "Symbol", None, "sym"), ("rev", "Revenue", "$", "big"), ("eps", "EPS", "$", "num"),
+                   ("pe", "P/E", None, "num"), ("beta", "Beta", None, "num"), ("div", "Dividend", "$", "num"),
                    ("yld", "Yield", "%", "num")),
     "technicals": (("t", "Symbol", None, "sym"), ("tech_label", "Tech rating", None, "rating"),
                    ("ma_label", "MA rating", None, "rating"), ("os_label", "Os rating", None, "rating"),
@@ -806,15 +814,18 @@ _JS = r"""
   function rowHtml(row, sectionId){
     var cells = '', set = cols(), un = row.cov !== 'us_equity' && row.cov !== 'market_series';
     if(un){
-      cells = '<td colspan="' + (set.length - 2) + '"><span class="wl-nosrc">No data source yet — ' +
-        rcEsc(data.issue) + '</span></td><td class="dash">—</td>';
+      // Each column keeps its own cell, empty of a number, so nothing moves sideways (the cell grid); the row
+      // says why under its symbol instead of across the numbers.
+      for(var j = 1; j < set.length; j++) cells += '<td class="dash">—</td>';
     } else {
       for(var i = 1; i < set.length; i++) cells += '<td>' + cell(row, set[i]) + '</td>';
     }
     return '<tr class="wl-row' + (un ? ' wl-un' : '') + '" data-sym="' + rcEsc(row.sym) + '" data-sec="' +
       rcEsc(sectionId) + '"><td><div class="wl-sym">' + grip('row', row.sym) +
-      '<span class="wl-badge" title="' + rcEsc(row.nm || row.sym) + '">' + rcEsc(row.t) + '</span>' +
-      '<span class="wl-nm">' + rcEsc(row.nm || row.sym) + '</span></div></td>' + cells +
+      '<span class="wl-badge" title="' + rcEsc(un ? row.sym : (row.nm || row.sym)) + '">' + rcEsc(row.t) + '</span>' +
+      (un ? '<span class="wl-nm" title="' + rcEsc(row.sym) + '"><span class="wl-nosrc">No source · ' +
+            rcEsc(data.issue) + '</span></span>'
+          : '<span class="wl-nm">' + rcEsc(row.nm || row.sym) + '</span>') + '</div></td>' + cells +
       '<td class="wl-xc"><button class="wl-x" type="button" data-remove="' + rcEsc(row.sym) +
       '" aria-label="Remove ' + rcEsc(row.t) + '">×</button></td></tr>';
   }
