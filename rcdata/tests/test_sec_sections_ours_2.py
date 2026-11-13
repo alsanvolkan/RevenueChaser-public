@@ -1545,11 +1545,16 @@ def test_a_correct_aif_of_a_long_40_f_is_not_suspect(version):
 @pytest.mark.parametrize("version", [OURS_1, OURS_2])
 def test_the_aif_set_still_raises_the_signals_that_read_the_text(version):
     """Dropping S3 and S6 is not switching the flag off: a block that ends mid cross-reference is still
-    ``ok;suspect:S4`` on the AIF path, and S2 rides along as context rather than as the reason."""
-    text = _LONG_40F.replace("\nRISK FACTORS\n", " For a description of our mines, see\nRISK FACTORS\n", 1)
-    aif = sec_sections.cut_aif_business(text, version=version)
-    assert aif is not None
-    flagged = sec_sections.cut_flag("ok", text, aif, "40-F", version=version, aif=True)
+    ``ok;suspect:S4`` on the AIF path, and S2 rides along as context rather than as the reason.
+
+    The truncated block is handed to the flagger rather than cut out of a doctored document: a stop title with
+    "see" in front of it is a cross-reference to BOTH AIF rules, so editing the document moves the cut instead of
+    the ending, and what is under test here is the signal set, not the cutter.
+    """
+    whole = sec_sections.cut_aif_business(_LONG_40F, version=version)
+    assert whole is not None
+    ends_in_a_reference = whole.rstrip() + " For a description of our mineral properties, see"
+    flagged = sec_sections.cut_flag("ok", _LONG_40F, ends_in_a_reference, "40-F", version=version, aif=True)
     assert flagged.startswith("ok;suspect:") and "S4" in flagged, flagged
     assert "S3" not in flagged and "S6" not in flagged, flagged
 
