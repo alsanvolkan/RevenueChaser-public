@@ -27,15 +27,18 @@ def _options_schemas() -> dict[str, list[tuple[str, str]]]:
 
 
 def _ownership_schemas() -> dict[str, list[tuple[str, str]]]:
-    """The ownership kind's tables: the 13F serve module's four, plus one per provider module.
+    """The ownership kind's tables: the 13F serve module's four, plus the ones each provider module serves.
 
     Each provider module names its served columns (``SERVED``: the raw schema with ``ticker`` and ``source`` added),
-    and only those modules know them, so they are read from there rather than restated.
+    and only those modules know them, so they are read from there rather than restated. A module that serves more
+    than one table (``uw/institutions``: the institution map and its successions) names them in ``SCHEMAS``.
     """
-    from .build.ownership import finra, form4, ftd, ibkr, regsho, sched13dg, sec13f, serve
+    from .build.ownership import finra, form4, ftd, ibkr, regsho, sched13dg, sec13f, sec13f_listing, serve
+    from .build.ownership import uw_institutions
     out = {t: list(s) for t, s in serve.SCHEMAS.items()}
-    for mod in (finra, ibkr, regsho, ftd, form4, sched13dg, sec13f):
-        out[mod.TABLE] = list(mod.SERVED)
+    for mod in (finra, ibkr, regsho, ftd, form4, sched13dg, sec13f, sec13f_listing, uw_institutions):
+        for table, columns in (getattr(mod, "SCHEMAS", None) or {mod.TABLE: mod.SERVED}).items():
+            out[table] = list(columns)
     return out
 
 
@@ -49,6 +52,7 @@ def _schema_of_kind() -> dict[str, dict[str, list[tuple[str, str]]]]:
     from .build.uw_greek_expiry_strike import SCHEMA as SPX_GREEK_SCHEMA, TABLE as SPX_GREEK_TABLE
     from .build.uw_spot_expiry_strike import SCHEMA as SPX_SCHEMA, TABLE as SPX_TABLE
     from .build import uw_economic_calendar
+    from .build.sec_forms import forms as sec_forms_forms
 
     return {
         "market": {MARKET_SERIES_TABLE: list(MARKET_SERIES_SCHEMA), SPX_TABLE: list(SPX_SCHEMA),
@@ -63,6 +67,7 @@ def _schema_of_kind() -> dict[str, dict[str, list[tuple[str, str]]]]:
         "fundamentals": {t: list(s) for t, s in fundamentals_tables.SCHEMAS.items()},
         "ownership": _ownership_schemas(),
         "options": _options_schemas(),
+        "sec_forms": {t: list(sc) for t, sc in sec_forms_forms.SCHEMAS.items()},
     }
 
 

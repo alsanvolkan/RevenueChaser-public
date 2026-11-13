@@ -407,6 +407,11 @@ class TestEveryManifestDatasetHasARoundTripTest:
                     "welcome_snapshot", "welcome_earnings", "welcome_freshness", "welcome_meta",
                     # the SPX Gamma board file: filled by a Fetch or by --import-tree from its own old tree
                     "spx_raw_days", "spx_raw_files", "spx_brier", "spx_gex_daily", "spx_meta",
+                    # the 13F board file (#732): written by module_sec_13f/store.py from the ownership build
+                    "sec13f_board_cells", "sec13f_board_breaks", "sec13f_board_meta",
+                    # the watch-list file (#786): avo's own lists, written by module_watchlists/store.py
+                    # and imported from his TradingView exports; there is no legacy source to migrate
+                    "wl_list", "wl_section", "wl_item", "wl_change",
                     # #25 HR-1: derived from the universe snapshot and the bars by core/baselines.py
                     "forecast_baselines"}
         # composite SQLite targets are covered through their source dataset

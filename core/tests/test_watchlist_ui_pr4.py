@@ -47,7 +47,9 @@ def test_the_pair_is_two_labelled_toggles_with_data_ticker_and_no_inline_handler
 def test_the_targets_are_44px_and_use_the_theme_tokens():
     css = rc.WATCHLIST_CSS
     assert "min-width:44px" in css and "min-height:44px" in css
-    assert "var(--input-bg" in css and "var(--sky" in css and "var(--primary-fg" in css
+    # Since #770 a pressed half is tinted rather than filled solid, so the pressed text colour
+    # (--primary-fg) is gone; stock takes --sky and option --amber.
+    assert "var(--input-bg" in css and "var(--sky" in css and "var(--amber" in css
 
 
 def test_the_mount_passes_the_board_as_json_and_defines_its_escaper():

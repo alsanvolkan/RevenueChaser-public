@@ -26,7 +26,7 @@ import duckdb
 from ....core import calendar
 from ....core.identity.sources import norm_ticker
 from ... import serving
-from .. import base, dirty
+from .. import base, cik_history, dirty
 from ..spine.security import squash
 
 SPINE = "spine"
@@ -159,6 +159,9 @@ def session_before(d: date, n: int = 1) -> date:
 # ── Issuers named by CIK and symbol (Form 4, Schedule 13D/G) ───────────────────────────────────────────────────
 
 ISSUER_CIK = "spine:cik"
+# The issuer was named by a CIK the ticker no longer files under (a reorganisation or a redomicile gives the new
+# registrant a new CIK, the ticker moves to it, and filers go on citing the old one; #749).
+ISSUER_FORMER_CIK = "spine:cik_former"
 
 
 def spine_ciks() -> dict[str, str | None] | None:
@@ -173,11 +176,48 @@ def spine_ciks() -> dict[str, str | None] | None:
         con.close()
 
 
-def issuer_tickers(pairs: Iterable[tuple[str | None, str | None]], spine: dict[str, str | None] | None
-                   ) -> dict[tuple, tuple[str | None, str | None]]:
+def spine_former_ciks() -> dict[str, str]:
+    """``{former cik: ticker}``: a CIK a ticker filed under before a reorganisation or a redomicile and no longer
+    does (#749). Empty with no spine file.
+
+    Two sources. The live spine's ``security_history`` (the CIK per ticker per stored SEC snapshot) covers every
+    company, as far back as our snapshots go; a spine that carries no history yet gives nothing. The seed file
+    (``build/cik_history.py``, pairs from edgartools) covers changes older than our snapshots, and names a ticker
+    only through the successor CIK the spine holds today.
+
+    Two guards either way, because a ticker can be reused by another company: a CIK that is any ticker's
+    **current** CIK is left out (so a ticker that only left a snapshot and came back under the same CIK names
+    nothing new), and a CIK that several tickers once filed under is left out as well.
+    """
+    try:
+        con = serving.open_read(SPINE)
+    except serving.ServingFileMissing:
+        return {}
+    try:
+        current = {c: t for c, t in con.execute(
+            "SELECT cik, min(ticker) FROM security WHERE cik IS NOT NULL GROUP BY cik HAVING count(*) = 1"
+        ).fetchall()}
+        all_ciks = {r[0] for r in con.execute("SELECT DISTINCT cik FROM security WHERE cik IS NOT NULL").fetchall()}
+        out = {pre: current[cik] for pre, cik in cik_history.former_ciks(current).items() if pre not in all_ciks}
+        if not has_table(con, "security_history"):
+            return out
+        rows = con.execute("""
+            WITH former AS (SELECT DISTINCT value AS cik, ticker FROM security_history
+                            WHERE field = 'cik' AND valid_to IS NOT NULL AND value IS NOT NULL)
+            SELECT f.cik, min(f.ticker) FROM former f
+            WHERE NOT EXISTS (SELECT 1 FROM security s WHERE s.cik = f.cik)
+            GROUP BY f.cik HAVING count(*) = 1""").fetchall()
+        return {**out, **{c: t for c, t in rows}}
+    finally:
+        con.close()
+
+
+def issuer_tickers(pairs: Iterable[tuple[str | None, str | None]], spine: dict[str, str | None] | None,
+                   former: dict[str, str] | None = None) -> dict[tuple, tuple[str | None, str | None]]:
     """``{(issuer cik, symbol): (ticker, ticker_source)}``: the symbol's ticker (exact or squashed) when the spine's
-    CIK for it is the issuer's (or the filing names no CIK), else the issuer CIK's one ticker in the spine, else
-    none. A symbol that belongs to another issuer is never taken: filers mistype symbols, CIKs they do not."""
+    CIK for it is the issuer's (or the filing names no CIK), else the issuer CIK's one ticker in the spine, else the
+    ticker that CIK is a former CIK of (``former``, :func:`spine_former_ciks`), else none. A symbol that belongs to
+    another issuer is never taken: filers mistype symbols, CIKs they do not."""
     if not spine:
         return {p: (None, None) for p in pairs}
     by_cik: dict[str, list[str]] = {}
@@ -193,6 +233,8 @@ def issuer_tickers(pairs: Iterable[tuple[str | None, str | None]], spine: dict[s
             out[(cik, symbol)] = (hit, src)
         elif cik and len(by_cik.get(cik, [])) == 1:
             out[(cik, symbol)] = (by_cik[cik][0], ISSUER_CIK)
+        elif cik and (former or {}).get(cik):
+            out[(cik, symbol)] = (former[cik], ISSUER_FORMER_CIK)
         else:
             out[(cik, symbol)] = (None, None)
     return out
@@ -205,7 +247,7 @@ def issuer_map(con: duckdb.DuckDBPyConnection, pairs_sql: str, notes: list[str],
     spine = spine_ciks()
     if spine is None and pairs:
         notes.append(f"{label}: no spine file yet, so no issuer is named a ticker")
-    named = issuer_tickers(pairs, spine)
+    named = issuer_tickers(pairs, spine, spine_former_ciks())
     temp_rows(con, "_issuer_map", [("issuer_cik", "TEXT"), ("symbol", "TEXT"), ("ticker", "TEXT"),
                                    ("ticker_source", "TEXT")],
               [{"issuer_cik": c, "symbol": s, "ticker": t, "ticker_source": src} for (c, s), (t, src) in named.items()])
@@ -235,7 +277,7 @@ def cusip_issuer_map(con: duckdb.DuckDBPyConnection, pairs_sql: str, notes: list
     by_cusip, spine = spine_cusips(), spine_ciks()
     if spine is None and pairs:
         notes.append(f"{label}: no spine file yet, so no issuer is named a ticker")
-    by_cik = issuer_tickers([(c, None) for c, _ in pairs], spine)
+    by_cik = issuer_tickers([(c, None) for c, _ in pairs], spine, spine_former_ciks())
     rows = []
     for cik, cusip in pairs:
         hit = (by_cusip or {}).get(cusip) if cusip else None

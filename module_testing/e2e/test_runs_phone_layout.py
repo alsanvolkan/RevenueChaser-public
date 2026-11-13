@@ -153,8 +153,13 @@ def test_the_runs_table_stays_a_table_on_a_desktop(browser, runs_page):
 # ── Settings → Automations, the same problem one tab over ─────────────────────
 
 AUTOMATIONS = r"""(function(){
-  var tab = document.getElementById("tab-health"); if (tab) tab.click();   // #492: Automations sit in Health
+  // #715: Automations sit folded under the Database board, so open the tab and the fold as a viewer does
+  var tab = document.getElementById("tab-data"); if (tab) tab.click();
   var s = document.querySelector(".auto-item>summary"), panel = s.closest(".panel");
+  var fold = s.closest("details.hfold");
+  if (fold && getComputedStyle(fold).display === "none")
+    return {hidden: true, docScroll: document.documentElement.scrollWidth, vw: document.documentElement.clientWidth};
+  for (var f = s.closest("details.hfold"); f; f = f.parentElement.closest("details.hfold")) f.open = true;
   var btns = Array.prototype.map.call(document.querySelectorAll(".auto-btn"), function(b){
     var r = b.getBoundingClientRect(); return [b.textContent, Math.round(r.width), Math.round(r.height)];
   });
@@ -182,6 +187,14 @@ def test_an_automation_row_fits_a_phone(browser, settings_page):
     browser.emulate(*PHONE, scheme="dark")
     browser.open(settings_page)
     m = browser.eval(AUTOMATIONS)
+    if m.get("hidden"):
+        # avo, 13 Nov 2026 (#715): on a phone the Database tab ends after the data flow; the folds under it
+        # (need catalog, routes, automations) are a desk's. Nothing of them may widen the page.
+        assert m["docScroll"] <= m["vw"], m
+        browser.emulate(*DESKTOP, scheme="dark")
+        browser.open(settings_page)
+        assert not browser.eval(AUTOMATIONS).get("hidden"), "a desk keeps the Automations fold"
+        return
     assert m["panelScroll"] <= m["panelW"], f"the Automations panel scrolls sideways: {m}"
     assert m["summaryH"] >= 44, "the row's summary is the touch target that opens it"
     small = [b for b in m["buttons"] if b[2] < 44]

@@ -1026,9 +1026,9 @@ class EarningsPipeline:
             agh_dilution=bool(agh.get("agh_dilution")),
             leaps_label=leaps.get("label", "N/A"),
             leaps_as_of=str(leaps.get("as_of") or ""),
-            leaps_score=int(leaps.get("score", 0) or 0),
-            leaps_far_call_oi=int(leaps.get("far_call_oi", 0) or 0),
-            leaps_far_put_oi=int(leaps.get("far_put_oi", 0) or 0),
+            leaps_score=_leaps_int(leaps.get("score")),
+            leaps_far_call_oi=_leaps_int(leaps.get("far_call_oi")),
+            leaps_far_put_oi=_leaps_int(leaps.get("far_put_oi")),
             leaps_far_call_share=leaps.get("far_call_share"),
             leaps_growth_1d_pct=leaps.get("far_oi_growth_1d_pct"),
             leaps_growth_q_pct=leaps.get("far_oi_growth_q_pct"),
@@ -1742,6 +1742,20 @@ def _safe_float(v):
     """
     try:
         return float(v) if v not in (None, "") else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _leaps_int(v):
+    """A LEAPS count or score as an int, or ``None`` when the footprint has none (#730 item 3).
+
+    Not ``int(v or 0)``: the LEAPS cache holds no row for most names, and a 0 recorded in the card history
+    reads as a measured zero. A real 0 the cache does carry stays 0.
+    """
+    if v in (None, ""):
+        return None
+    try:
+        return int(v)
     except (ValueError, TypeError):
         return None
 

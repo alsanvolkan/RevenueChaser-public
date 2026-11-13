@@ -62,5 +62,13 @@ def test_a_source_box_keeps_its_buttons_on_the_name_line():
     assert "@media(max-width:1199px)" not in css, "avo 20:25: two boxes a row stay"
     assert ".ctl .sgrid{container-type:inline-size;container-name:sgrid}" in css
     assert re.search(r"@media\(min-width:761px\)\{\s*@container sgrid \(max-width:1100px\)\{\.ctl \.sgrid>\.sbox\{zoom:", css)
-    from RevenueChaser.module_settings.tests.test_control_render_c1 import _sources, _view
-    assert 'class="dsname" title="alpaca/bars">alpaca/bars</span>' in _sources(_view(), "prices.duckdb")
+
+
+def test_a_crowded_source_box_wraps_its_buttons_instead_of_pushing_them_past_the_page():
+    """Live page at 1187 px, 12 Nov 2026: scrollWidth 1266, the one cause a box's Fetch menu beside its Pause."""
+    css = control_render.CTL_CSS.split("kaydirdin", 1)[-1]
+    assert ".ctl .sb1 .dsname{flex-shrink:1000}" in css
+    assert re.search(r"\.ctl \.sb1 \.sbbtn\{flex:0 1 auto;min-width:min-content;flex-wrap:wrap", css)
+    # the deploy of that fix still measured 1197: the badges were the one part left that could not give way
+    assert ".ctl .sb1 .srcb{flex:0 1 auto;min-width:24px;overflow:hidden}" in css
+    assert css.index(".ctl .sb1 .srcb{flex:0 1 auto") > css.index(".ctl .sb1 .sbbtn,.ctl .sb1 .srcb{flex:none}")

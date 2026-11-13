@@ -35,7 +35,8 @@ from importlib import import_module
 from RevenueChaser.core.datahealth import Health
 
 DBS = ("raw", "edgar", "prices", "history", "news", "welcome", "relatedness", "comovement", "asymmetric_growth",
-       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma")  # all but the first four: board files (S9, S16)
+       "swing_potential", "fundamentals", "sector_rotation", "leaps", "oipd", "forecast", "spx_gamma", "sec_13f",
+       "watchlists")  # all but the first four: board files (S9, S16)
 
 FROM_RUN_LOG = "from_run_log"
 NO_CLAIM = "no_claim"
@@ -428,6 +429,17 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         freshness=("board_settings_changes", "run_at"),
     ),
 
+    # Watch lists (#786, avo 12 Nov 2026): his own named lists in boards/watchlists.duckdb, typed by hand. Its own
+    # row and not part of "Your inputs" above, because those four tables are the retired raw ones.
+    DatasetSpec(
+        key="watchlists", label="Watch lists",
+        tables=("wl_list", "wl_section", "wl_item", "wl_change"),
+        db="watchlists", source=Source.manual, writer=None,
+        writer_note=("avo types them, through the board or the import command "
+                     "(module_watchlists/store.py is the one writer); nothing fetches them"),
+        freshness=("wl_change", "changed_at"),
+    ),
+
     # --- extended: base tables the 19 rows do not own ---
     DatasetSpec(
         key="value_chain", label="Value Chain edges",
@@ -565,7 +577,7 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         key="leaps", label="LEAPS flow",
         tables=("leaps_flow_prints", "leaps_cache"),
         db="leaps", source=Source.uw, writer=None,
-        writer_note="dashboard job POST /run/module_leaps; not an automations.REGISTRY entry",
+        writer_note="no writer: the LEAPS scan is switched off, so nothing writes these tables",
         freshness=("leaps_flow_prints", "session_date"),
     ),
     DatasetSpec(
@@ -691,6 +703,14 @@ REGISTRY: tuple[DatasetSpec, ...] = (
         writer_note=("derived from the stored days by module_spx_gamma/store.py on the SPX Gamma Fetch; "
                      "Refresh moves only spx_meta.latest"),
         freshness=("spx_gex_daily", "session_date"),
+    ),
+    DatasetSpec(
+        key="sec13f_board_file", label="13F board: its own file (cells as filed, filer breaks, source stamp)",
+        tables=("sec13f_board_cells", "sec13f_board_breaks", "sec13f_board_meta"),
+        db="sec_13f", source=Source.derived, writer=None,
+        writer_note=("written by module_sec_13f/store.py on the 13F Refresh and Fetch, from the ownership build, "
+                     "once per build or New York day; a closed quarter is never rewritten"),
+        freshness=("sec13f_board_cells", "period"),
     ),
     DatasetSpec(
         key="source_checks", label="Source check watermarks",

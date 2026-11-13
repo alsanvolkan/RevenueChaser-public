@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from .. import serving
 from . import market_series, uw_economic_calendar, uw_greek_expiry_strike, uw_spot_expiry_strike
-from .ownership import finra, form4, ftd, ibkr, regsho, sched13dg, sec13f, serve as ownership_serve
+from .ownership import finra, form4, ftd, ibkr, regsho, sched13dg, sec13f, sec13f_listing, uw_institutions
+from .ownership import serve as ownership_serve
 from .spine import av_listing, etf_holdings as spine_etf_holdings, funds, ncen, openfigi_map, sec_tickers, sec_tickers_mf, security, wrds
 
 DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, uw_greek_expiry_strike.DATASET,
@@ -20,7 +21,8 @@ DATASETS = {d.name: d for d in (uw_spot_expiry_strike.DATASET, uw_greek_expiry_s
                                 spine_etf_holdings.DATASET, av_listing.DATASET, ncen.DATASET, security.DATASET)}
 # The ownership store (PR 16): its sources, then ``ownership/serve``, which derives from their tables (last).
 DATASETS.update({d.name: d for d in (finra.DATASET, regsho.DATASET, ibkr.DATASET, ftd.DATASET, sec13f.DATASET,
-                                     form4.DATASET, sched13dg.DATASET, ownership_serve.DATASET)})
+                                     sec13f_listing.DATASET, form4.DATASET, sched13dg.DATASET,
+                                     uw_institutions.DATASET, ownership_serve.DATASET)})
 
 # Market 4: the headlines live only in the News board's ``boards/news.duckdb`` (avo's option A, 10 Nov 2026), so the
 # live market file's ``news_headline`` may leave the build. Kept here, not in ``serving.py``: an edit there would
@@ -60,7 +62,13 @@ DATASETS.update({d.name: d for d in (fundamentals_companyfacts.DATASET, fundamen
 
 # The options data (G8, serving kind ``options``), in a block of its own.
 from .options import ibkr_iv as _options_ibkr_iv, uw_list as _options_uw_list  # noqa: E402
+from .options import uw_far_contracts as _options_uw_far_contracts  # noqa: E402
 from .options import uw_screener as _options_uw_screener  # noqa: E402
 
 DATASETS.update({d.name: d for d in (_options_uw_list.DATASET, _options_uw_screener.DATASET,
-                                     _options_ibkr_iv.DATASET)})
+                                     _options_uw_far_contracts.DATASET, _options_ibkr_iv.DATASET)})
+
+# The SEC form reader (#757, serving kind ``sec_forms``): one dataset, cutting what ``sec/filings`` already stored.
+from .sec_forms import forms as sec_forms_forms  # noqa: E402
+
+DATASETS.update({sec_forms_forms.DATASET.name: sec_forms_forms.DATASET})

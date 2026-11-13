@@ -105,7 +105,8 @@ def test_the_spx_close_need_names_the_spx_series_so_a_board_never_does(monkeypat
 def test_a_filtered_needs_summary_counts_its_own_series_only(monkeypatch):
     seen = {}
 
-    def fake_summary(table, day_column=None, key_column=None, sample=0, key_values=(), key_prefix=None):
+    def fake_summary(table, day_column=None, key_column=None, sample=0, key_values=(), key_prefix=None,
+                     where=None):
         seen.update(table=table, key_values=tuple(key_values), key_prefix=key_prefix)
         return {"row_count": 0, "key_count": 0, "newest_day": None, "status": "never checked", "dataset": None,
                 "sample_rows": []}

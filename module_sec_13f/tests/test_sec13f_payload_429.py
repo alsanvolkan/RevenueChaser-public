@@ -54,7 +54,7 @@ def test_the_cols_are_the_numbers_the_page_sorts_on():
     payload = report.board_payload(totals, meta, {})
     assert payload["cols"] == ["sh_2025-03-31", "sh_2025-06-30", "ch_2025-06-30",
                                "value", "pct_out", "holders", "new_exit", "breadth", "top10", "hhi", "netflow",
-                               "streak", "accel", "insider", "short", "price_delta"]
+                               "streak", "accel", "price_delta"]                     # no insider or short (#732)
 
 
 def test_the_rows_are_in_board_order_most_shares_first():
@@ -141,15 +141,19 @@ def test_a_non_finite_number_reaches_the_page_as_an_empty_sort_value(tmp_path, m
     path = report.export_sec13f_dashboard(totals, meta, enrich, filename="sec_13f_latest.html")
     stored = _strict(gzip.decompress(payload_path(path).read_bytes()).decode("utf-8"))
     cells = _cells(stored, "AAA")
-    assert cells["insider"] == [report._f(float("inf"), 1, "%", False), None, "zero"]
     assert cells["pct_out"][1] is None
+    assert "insider" not in cells                                                   # read, not shown (#732)
 
 
 def test_the_page_builds_one_row_per_payload_row_on_load(tmp_path):
     """#429/KF: the page loads the payload by itself and builds every row (ticker, sector cells, every cell) from it,
-    then mounts the filter kit. Rows no longer carry ``data-sector``; the kit filters via ``FIELDS``."""
+    then mounts the filter kit. Rows no longer carry ``data-sector``; the kit filters via ``FIELDS``.
+
+    Since #763 a row has one cell per quarter (its Δ% stacked inside the shares cell) and only the ``_TABLE_SNAP``
+    snapshot columns; the other snapshot values go to the row's detail panel."""
     totals, meta = _three()
     payload = report.board_payload(totals, meta, {})
+    drawn = [c for c in payload["cols"] if c.startswith("sh_") or c in report._TABLE_SNAP]
     html = report.render_sec13f_dashboard(totals, meta, {})
     # The shared DOM stub has no fragment or text node; these two are enough for ``build``.
     html = html.replace("var ROW_COUNT", "var created = [];\n"
@@ -164,13 +168,13 @@ var tds = created.filter(function(c){{ return c[0] === "td"; }}).map(function(c)
 console.log(JSON.stringify({{
   rows: trs.filter(function(t){{ return t.getAttribute("data-ticker"); }})
            .map(function(t){{ return [t.getAttribute("data-ticker"), t.getAttribute("data-sector")]; }}),
-  cols: tds.slice(0, {2 + len(payload["cols"])}).map(function(t){{ return t.getAttribute("data-col"); }}),
+  cols: tds.slice(0, {2 + len(drawn)}).map(function(t){{ return t.getAttribute("data-col"); }}),
   first: tds.slice(0, 4).map(function(t){{ return [t.getAttribute("data-val"), t.className, t.getAttribute("title"), t.textContent]; }})
 }}));
 """, tmp_path, payload=payload)
     assert log["rows"] == [["AAA", None], ["BBB", None], ["CCC", None]]
-    assert log["cols"] == ["ticker", "sector"] + payload["cols"]
-    assert log["first"][2] == ["100", "zero", "100 shares", "100"]          # sh_2025-03-30 of AAA
+    assert log["cols"] == ["ticker", "sector"] + drawn
+    assert log["first"][2] == ["100", "q zero", "100 shares", "100"]          # sh_2025-03-30 of AAA
 
 
 def test_a_refresh_with_no_totals_drops_the_old_payload(tmp_path, monkeypatch):
@@ -189,7 +193,8 @@ def test_a_refresh_with_no_totals_drops_the_old_payload(tmp_path, monkeypatch):
 
 
 def test_each_built_row_carries_the_watch_list_pair_for_its_ticker(tmp_path):
-    """PR 4: the ticker cell gets the shared pair (``rcWatchButtons``), reading ``data-ticker``, from the payload."""
+    """PR 4: the ticker cell gets the shared pair (``rcWatchButtons``), reading ``data-ticker``, from the payload.
+    Since #763 the pair sits first in the cell's ``.tk`` box, before the ticker."""
     totals, meta = _three()
     payload = report.board_payload(totals, meta, {})
     html = report.render_sec13f_dashboard(totals, meta, {})
@@ -200,7 +205,7 @@ def test_each_built_row_carries_the_watch_list_pair_for_its_ticker(tmp_path):
                         "document.createElement = function(tag){ var e = _ce(tag); created.push([tag, e]); return e; };\n"
                         "var ROW_COUNT", 1)
     log = run_board_js(html, """
-var tds = created.filter(function(c){ return c[0] === "td" && c[1].getAttribute("data-col") === "ticker"; });
+var tds = created.filter(function(c){ return c[0] === "div" && c[1].className === "tk"; });
 console.log(JSON.stringify(tds.map(function(c){ return c[1].innerHTML; })));
 """, tmp_path, payload=payload)
     assert len(log) == 3

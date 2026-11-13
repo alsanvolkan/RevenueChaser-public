@@ -1,13 +1,16 @@
 """The options data layer (build plan PR 18, group G8): SPX and the option watch list, the screener set of every
 reporting name, and the earnings set of the evening, served from ``options.duckdb`` (serving kind ``options``).
 
-Three datasets, all daily and started by hand the first time:
+Four datasets, all daily and started by hand the first time:
 
 - ``uw/option_list`` (``uw_list.py``): the chain, the option stats and the last 50 prints of SPX and every name on
   the option watch list, once a session, in the observed window.
 - ``uw/option_screener`` (``uw_screener.py``): the earnings calendar of the next 28 days, the screener row of every
   name on it (100 names a call), and the earnings set: once per name an evening, on each of the two evenings before its report, every name
   that passes the Earnings Radar gates and is not on the option list.
+- ``uw/far_contracts`` (``uw_far_contracts.py``, #746): the market's far-dated contracts of a session (the contract
+  screener) and, the next morning, each one's next-session open interest from its name's chain: what share of the
+  day's volume became open interest. Not in ``uw_calls_a_session``: about 420 to 435 calls of its own a session.
 - ``ibkr/iv_history`` (``ibkr_iv.py``): one year of IBKR's 30-day implied volatility, once per list name.
 
 The tables are in ``tables.py``, the reads in ``rcdata/read.py``.

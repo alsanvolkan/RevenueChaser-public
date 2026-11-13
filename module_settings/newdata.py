@@ -165,12 +165,16 @@ def _iso_utc(epoch) -> str | None:
 
 # ── Status ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+#: The cadences a card is read by: ``CYCLE_DAYS`` has to know one for ``_missed`` to count it.
+CARD_CADENCES = ("hourly", "daily", "weekly", "monthly", "quarterly")
+
+
 def _cadence(dataset: str, schedule: dict | None) -> str:
     c = (schedule or {}).get("cadence")
-    if c in ("hourly", "daily", "weekly", "monthly"):
+    if c in CARD_CADENCES:
         return c
     own = getattr(_datasets().get(dataset), "cadence", None)
-    return own if own in ("hourly", "daily", "weekly", "monthly") else CADENCE.get(dataset, "daily")
+    return own if own in CARD_CADENCES else CADENCE.get(dataset, "daily")
 
 
 def _missed(cadence: str, check: dict, now: datetime) -> int:
@@ -615,8 +619,8 @@ def _my_universe_card(counts: dict | None) -> dict:
             "rule_text": {
                 "stocks": f"tier {' or '.join(rules.stock_tiers)}; "
                           f"{', '.join(rules.stock_types)}",
-                "etfs": f"AUM at or over {rules.etf_aum_floor / 1e6:,.0f}M USD, or no AUM and a 20-session average "
-                        f"daily dollar volume at or over {rules.etf_adv_floor / 1e6:,.0f}M USD"
+                "etfs": f"AUM at or over ${rules.etf_aum_floor / 1e6:,.0f}M, or no AUM and a 20-session average "
+                        f"daily dollar volume at or over ${rules.etf_adv_floor / 1e6:,.0f}M"
                         + ("; no ETN" if rules.exclude_etn else "") + ("; no CEF" if rules.exclude_cef else ""),
                 "delisted": "a delisted name never enters"},
             "manual": {"add": [{"ticker": r["ticker"], "reason": r["reason"]} for r in adds],

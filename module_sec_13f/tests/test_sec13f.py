@@ -131,12 +131,11 @@ class TestDashboard:
         assert "New/Exit" in h
         assert "Top10%" in h
         assert "Net flow" in h
-        assert "Short%" in h
-        assert "Insider%" in h
+        assert "Short%" not in h and "Insider%" not in h            # hidden since #732 (owner, 12 Nov 2026)
         assert "RKT" not in h                                        # the row lives in the payload (#429)
         cells = dict(zip(board_payload(totals, meta, enrich)["cols"],
                          board_payload(totals, meta, enrich)["rows"][0][3]))
-        assert cells["short"][:2] == ["5.2%", pytest.approx(5.2)]
+        assert "short" not in cells and "insider" not in cells
         assert [row[0] for row in board_payload(totals, meta, enrich)["rows"]] == ["RKT"]
 
     def test_render_suppresses_delta_for_missing_quarter(self):

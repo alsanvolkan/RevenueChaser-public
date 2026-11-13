@@ -135,7 +135,7 @@ def test_the_nav_is_reachable_through_the_drawer(dashboard, browser, scheme):
     assert m["sidebar"]["l"] >= 0 and m["sidebar"]["r"] <= m["vw"], f"the drawer is not on screen: {m['sidebar']}"
     assert not m["small"], f"touch targets under 44 px: {m['small']}"
     m = _click(browser, '.nav-item[data-tab="module_settings"]')
-    assert m["active"] == "module_settings" and m["title"] == "Settings / Data health"
+    assert m["active"] == "module_settings" and m["title"] == "Settings"
     assert m["expanded"] == "false" and m["sidebar"]["r"] <= 0, "choosing a tab closes the drawer"
     m = _click(browser, "#nav-toggle")
     m = _click(browser, "#nav-scrim")
@@ -184,11 +184,26 @@ def test_the_toggle_overrides_the_device_and_is_remembered(dashboard, browser):
 
 
 @pytest.mark.parametrize("scheme", ["light", "dark"])
-def test_a_desktop_keeps_its_sidebar(dashboard, browser, scheme):
-    m = _open(browser, dashboard, DESKTOP, scheme)
-    assert m["sidebar"]["l"] == 0 and round(m["sidebar"]["w"]) == 240, "the sidebar is a column on a desktop"
+# avo's own two screens (12 Nov 2026: window.innerWidth 1187 and 1884) besides the 1280 default.
+@pytest.mark.parametrize("size, width", [(DESKTOP, 64), ((1187, 800), 64), ((1884, 1000), 240), ((1920, 1080), 240)])
+def test_a_desktop_keeps_its_sidebar(dashboard, browser, scheme, size, width):
+    """Theme D (avo 12 Nov 2026, #761): a 64 px icon rail below 1440 px, the 240 px sidebar from 1440 px."""
+    m = _open(browser, dashboard, size, scheme)
+    assert m["sidebar"]["l"] == 0 and round(m["sidebar"]["w"]) == width, m["sidebar"]
     assert not m["toggleShown"], "no menu button on a desktop"
     assert m["docScroll"] <= m["vw"]
+
+
+def test_every_rail_item_is_a_44_px_icon_with_its_name(dashboard, browser):
+    _open(browser, dashboard, DESKTOP, "dark")
+    items = browser.eval("""Array.prototype.map.call(document.querySelectorAll('.sidebar .nav-item'), function(n){
+      var r = n.getBoundingClientRect(), i = n.querySelector('svg.ico').getBoundingClientRect();
+      return {w: r.width, h: r.height, icon: i.width, title: n.getAttribute('title'),
+              name: n.querySelector('.lbl').textContent}; })""")
+    assert items, "no nav items"
+    for it in items:
+        assert round(it["w"]) >= 44 and round(it["h"]) >= 44 and it["icon"] > 0, it
+        assert it["title"] and it["title"] == it["name"], it
 
 
 def _pixel(browser, x: float, y: float) -> tuple[int, int, int]:
@@ -264,6 +279,9 @@ def test_the_summaries_keep_their_arrow_on_a_phone(dashboard, browser):
     open/closed arrow on a phone or a touch screen. Every ``<details>`` now lives inside the board
     document; the shell itself carries none since the open-issues group was removed."""
     _open(browser, dashboard, PHONE, "dark", "module_settings")
+    # The help block lives on the Database tab, and a remembered choice may be another tab (#715): a
+    # hidden panel measures 0 px, so show the tab that holds it first.
+    browser.eval("document.querySelector('.frame.on').contentDocument.getElementById('tab-data').click()")
     board = browser.eval("Array.prototype.map.call(document.querySelector('.frame.on').contentDocument"
                          ".querySelectorAll('details.help > summary'), function(s){"
                          " var r = s.getBoundingClientRect(); return [getComputedStyle(s).display, r.height]; })")
@@ -414,7 +432,7 @@ FRAME_LAYOUT = r"""(function(tab){
     var r = el.getBoundingClientRect(); return r.width > 0 && r.right > vw + 0.5;
   }).filter(function(el){ return !el.parentElement || el.parentElement.getBoundingClientRect().right <= vw + 0.5; })
     .map(function(el){ return el.tagName + (el.id ? '#' + el.id : '') + '.' + el.className; });
-  var col = d.querySelector(tab === 'data' ? '#ctl > .wrap' : '#needs > .wrap');
+  var col = d.querySelector(tab === 'data' ? '#ctl > .wrap' : '#panel-health .ctl > .wrap');
   var r = col.getBoundingClientRect();
   return {vw: vw, scroll: de.scrollWidth, body: d.body.scrollWidth, wide: wide.slice(0, 8),
           left: r.left, right: vw - r.right, width: r.width};

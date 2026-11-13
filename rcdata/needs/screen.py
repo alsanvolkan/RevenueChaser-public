@@ -61,6 +61,8 @@ DATASETS: dict[str, DatasetCard] = {
     'regsho/threshold': DatasetCard('Reg SHO threshold lists', step=10, role='first'),
     'sec/13dg': DatasetCard('5% owners (Schedules 13D and 13G)', step=10, role='first'),
     'sec/13f': DatasetCard('13F holdings (SEC data sets, then forms)', step=10, role='first'),
+    'sec/13f_sets_listed': DatasetCard('13F data sets the SEC has published (closes a quarter)', coverage_target=None,
+                                       step=10, role='first'),
     'sec/company_tickers_exchange': DatasetCard('SEC ticker and exchange file', step=1, role='first'),
     'sec/company_tickers_mf': DatasetCard('SEC fund file (the ETF universe)', step=1, role='first'),
     'sec/ncen': DatasetCard('Form N-CEN data sets: fund type, index, assets (SEC)', step=1, role='fills'),
@@ -69,15 +71,20 @@ DATASETS: dict[str, DatasetCard] = {
     'sec/filings': DatasetCard('SEC filing lists, 8-K items and report texts', step=9, role='first'),
     'sec/form4': DatasetCard('Insider transactions (Form 4)', step=10, role='first'),
     'sec/fsds': DatasetCard('SEC Financial Statement Data Sets (the check)', step=9, role='fills'),
+    'sec/forms': DatasetCard('Filing sections and note blocks, cut from the stored documents (no request)',
+                             coverage_target=None, step=9, role='build'),
     'sec/ftd': DatasetCard('Fails to deliver (SEC)', step=10, role='first'),
     'spine/security': DatasetCard('Identity spine (security, tiers, history)', coverage_target=0.98, step=7, role='build'),
     'uw/earnings': DatasetCard('Reported EPS and its surprise (Unusual Whales)', step=9, role='fills'),
     'uw/option_list': DatasetCard('Options of SPX and the option list (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
+    'uw/far_contracts': DatasetCard('Far-dated contracts and their next-day open interest (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/option_screener': DatasetCard('Earnings options: calendar, screener and earnings set (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/spot_expiry_strike': DatasetCard('SPX expiry-strike (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     # shortcut: the hourly dataset's card (#643) says daily, so the screen reads it late after a day without a run,
     # not an hour; an "hourly" card cadence needs newdata's CYCLE_DAYS to learn it first.
     'uw/economic_calendar': DatasetCard('Economic calendar, this week and next (Unusual Whales)', step=11, role='only source'),
+    'uw/institutions': DatasetCard('Every 13F institution, its tags and its successions (Unusual Whales)',
+                                  cadence='quarterly', step=10, role='only source'),
     'uw/greek_expiry_strike': DatasetCard('SPX greek exposure by expiry and strike, whole chain (Unusual Whales)', coverage_target=0.95, step=11, role='first'),
     'uw/total_float': DatasetCard('Float check (Unusual Whales)', step=8, role='cross-check'),
     'wrds/co_hgic': DatasetCard('Compustat GICS history (WRDS)', step=5, role='fills'),
@@ -107,6 +114,8 @@ WRITTEN_COLUMN: dict[str, str] = {
     'etf': 'source_as_of',
     'etf_holdings': 'as_of',
     'filing_item': 'filing_date',
+    'filing_note': 'filing_date',
+    'filing_section': 'filing_date',
     'finra_short_interest': 'settlement_date',
     'fund': 'source_as_of',
     'fundamental_company': 'facts_as_of',
@@ -124,6 +133,7 @@ WRITTEN_COLUMN: dict[str, str] = {
     'option_daily': 'session_date',
     'option_eod': 'session_date',
     'option_expiry': 'session_date',
+    'option_far_contract': 'session_date',
     'option_far_print': 'session_date',
     'option_print': 'session_date',
     'option_screener_daily': 'session_date',
@@ -132,6 +142,7 @@ WRITTEN_COLUMN: dict[str, str] = {
     'price_revision': 'session_date',
     'regsho_threshold': 'list_date',
     'sec13f_cusip_map': 'period',
+    'sec13f_filer_breaks': 'period',
     'sec13f_filer_period': 'period',
     'sec13f_filings': 'filed',
     'sec13f_periods': 'period',
@@ -144,6 +155,8 @@ WRITTEN_COLUMN: dict[str, str] = {
     'shares_class': 'as_of',
     'spx_gamma_expiry_strike': 'session_date',
     'spx_greek_expiry_strike': 'session_date',
+    'uw_institution': 'snapshot_date',
+    'uw_institution_succession': 'snapshot_date',
     'wrds_price_diff': 'as_of',
 }
 
@@ -158,7 +171,7 @@ RETIRING: dict[str, str] = {
 }
 RETIREMENT_DAYS = 14
 #: How many days a weekly or a monthly dataset may go without a run before its card says "late".
-CYCLE_DAYS = {"weekly": 8, "monthly": 35}
+CYCLE_DAYS = {"weekly": 8, "monthly": 35, "quarterly": 100}
 #: Worst first, so a sort on this puts what needs attention at the top of the screen.
 STATUS_ORDER = ("stale", "never", "late", "unchanged", "fresh")
 
@@ -199,6 +212,8 @@ FILES: dict[str, FileCard] = {
                        True),
     "fundamentals": FileCard("Step 9 · fundamentals and earnings", "runs on the universe at the top of this section",
                              True),
+    "sec_forms": FileCard("Step 9 · filing sections and notes",
+                          "runs on the universe at the top of this section", True),
     "ownership": FileCard("Step 10 · the short side and ownership",
                           "not tied to a tier: every filing is read, its CUSIP or symbol is matched to the spine",
                           False),
@@ -216,6 +231,8 @@ NO_TIER_WORDS: dict[str, str] = {
     "ownership": "whole-market files (13F sets, FINRA, Reg SHO, fails to deliver, Form 4): every name at once.",
     "options": "the option list (SPX and the watch list), not a tier set.",
     "market": "series, not names.",
+    "sec_forms": "this dataset reads the documents already on disk, so a request's tiers are noted on its check, "
+                 "not used.",
 }
 NO_TIER_DATASET_WORDS: dict[str, str] = {
     "alphavantage/earnings_calendar": "one call brings the whole calendar, every name at once.",

@@ -37,11 +37,12 @@ from RevenueChaser.core.reporting_common import (
 DASH = "—"
 
 CSS = """
-:root{--bg:#05111F;--panel:#12161e;--panel2:#1a1f2b;--border:#232a38;
---text:#d7dce5;--muted:#8a93a6;--accent:#0EA5E9;--green:#2ecc71;--amber:#f1c40f;
---neon:#00e6a8;--red:#e74c3c;}
+/* The page's old names, as aliases of the shared theme tokens (THEME_CSS, theme D): no palette of its own. */
+:root{--panel:var(--card);--panel2:var(--card-2);--text:var(--fg);--input:var(--input-bg);--input-b:var(--input-border);--green:var(--pos);--neon:var(--pos);--red:var(--neg)}
+/* The ticker combobox sits outside a filter bar here, so it gets the kit's names from the theme itself. */
+.rcf-combo{--rcf-input:var(--input-bg);--rcf-input-b:var(--input-border);--rcf-text:var(--fg);--rcf-muted:var(--muted);--rcf-panel:var(--card);--rcf-panel2:var(--card-2);--rcf-border:var(--border);--rcf-accent:var(--accent);--rcf-focus:var(--focus)}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans);font-variant-numeric:tabular-nums;font-size:14px;line-height:1.5}
 .wrap{max-width:100%;margin:0 auto;padding:20px 24px 60px}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:14px}
 .topbar h1{margin:0;font-size:22px;letter-spacing:-.4px}
@@ -120,8 +121,8 @@ table.inv tr.detail .dline b{color:var(--text);font-weight:600;margin-right:6px}
   font:600 10.5px/1.2 inherit;padding:1px 6px;margin-left:6px;cursor:pointer;text-transform:none;letter-spacing:0}
 .grp:hover,.grp[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
 .hlabel{color:var(--muted);font-size:11px;margin-left:6px}
-.fetch-btn,.set-btn{background:rgba(14,165,233,.12);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 10px;font:600 12px/1.2 inherit;cursor:pointer}
-.fetch-btn:hover,.set-btn:hover{background:rgba(14,165,233,.22)}
+.fetch-btn,.set-btn{background:var(--accent-soft);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 10px;font:600 12px/1.2 inherit;cursor:pointer}
+.fetch-btn:hover,.set-btn:hover{background:var(--hover)}
 .fetch-btn:disabled,.set-btn:disabled{opacity:.55;cursor:default}
 .fetchmsg{color:var(--muted);font-size:11.5px;margin-left:8px}
 /* G5 (#124): the summary tiles above the table, counted from the rows already collected. */
@@ -132,7 +133,7 @@ table.inv tr.detail .dline b{color:var(--text);font-weight:600;margin-right:6px}
 .empty{background:var(--panel);border:1px solid var(--border);border-radius:12px;color:var(--muted);font-size:13px;padding:24px;text-align:center}
 .frow{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
 .flbl{color:var(--muted);font-size:12px;font-weight:600}
-select,input[type=text],input[type=number]{background:#10151f;border:1px solid #2a3345;color:var(--text);border-radius:6px;height:34px;padding:0 10px;font:500 13px/1 inherit}
+select,input[type=text],input[type=number]{background:var(--input-bg);border:1px solid var(--input-border);color:var(--text);border-radius:6px;height:34px;padding:0 10px;font:500 13px/1 inherit}
 .drillpick .rcf-combo{width:300px}
 .drill{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .drill-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 26px}
@@ -157,10 +158,14 @@ select,input[type=text],input[type=number]{background:#10151f;border:1px solid #
 h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .bcard{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .bcard h3{margin:0 0 2px;font-size:15px}
+/* A card's panel follows the shared theme, and its text is the theme's ink in every scheme (#727: under the light
+   theme the heading once inherited a scope's dark ink on a dark panel). */
+:root[data-theme="light"] .bcard{color:var(--text)}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]) .bcard{color:var(--text)}}
 .bcard>details>summary{cursor:pointer}
 .bcard>details>summary h3{display:inline}
 .bcard .asof{color:var(--muted);font-size:12.5px;margin-bottom:8px}
-.bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0}
+.bcard .kv{color:var(--muted);font-size:12.5px;margin:2px 0;overflow-wrap:anywhere}
 .bcard .kv b{color:var(--text);font-weight:600}
 .btiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:8px 0 10px}
 .btile{border:1px solid var(--border);border-radius:10px;padding:8px 12px;min-width:0}
@@ -190,7 +195,7 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .frow2 .tag{color:var(--muted);font-size:11.5px;margin-left:6px}
 .bset{border-top:1px solid var(--border);margin-top:12px;padding-top:10px}
 .bset h4{margin:0 0 8px;font-size:13px;display:flex;align-items:center;gap:8px}
-.bset .custom{background:rgba(241,196,15,.12);border:1px solid rgba(241,196,15,.4);color:var(--amber);border-radius:99px;padding:0 8px;font-size:11px;font-weight:600}
+.bset .custom{background:var(--amber-soft);border:1px solid var(--amber);color:var(--amber);border-radius:99px;padding:0 8px;font-size:11px;font-weight:600}
 .sfield{display:grid;grid-template-columns:minmax(200px,260px) 110px 1fr;gap:4px 12px;align-items:center;padding:4px 0;font-size:12.5px}
 .sfield label{color:var(--text)}
 .sfield input,.sfield select{width:100%;height:30px}
@@ -198,6 +203,9 @@ h2.sec{font-size:15px;margin:22px 0 10px;letter-spacing:-.2px}
 .sfield .ovr{color:var(--amber);font-size:11.5px;margin-left:6px}
 .sfield .ferr{grid-column:2/-1;color:var(--red);font-size:12px;white-space:normal}
 .sfield .ferr:empty{display:none}
+/* #715: the forms sit in a fold under Database; on a phone a field is its label and input, the range under them */
+@media(max-width:760px){.sfield{grid-template-columns:minmax(0,1fr) 110px}.sfield .rng{grid-column:1/-1;overflow-wrap:anywhere}
+.sfield input,.sfield select{height:44px}}
 .sderived{color:var(--muted);font-size:12px;padding:4px 0}
 .sderived b{color:var(--text)}
 details.fine{margin:8px 0}
@@ -236,9 +244,9 @@ details.fine>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-we
 .auto-item{border-bottom:1px solid var(--border)}
 .auto-item:last-child{border-bottom:none}
 .auto-item>summary{display:grid;grid-template-columns:minmax(220px,1.5fr) minmax(160px,1.1fr) minmax(120px,max-content) minmax(150px,1fr) minmax(170px,1.1fr);gap:12px;align-items:baseline;padding:8px 10px;cursor:pointer;list-style:none}
-.auto-item>summary:hover{background:rgba(255,255,255,.03)}
+.auto-item>summary:hover{background:var(--hover-faint)}
 .auto-item>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.auto-item[open]>summary{background:rgba(14,165,233,.06);box-shadow:inset 2px 0 0 var(--accent)}
+.auto-item[open]>summary{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
 .auto-item>summary::-webkit-details-marker{display:none}
 .auto-caret::before{content:"▸ "}
 .auto-item[open] .auto-caret::before{content:"▾ "}
@@ -270,7 +278,7 @@ details.fine>summary{cursor:pointer;color:var(--accent);font-size:12.5px;font-we
 .fchip{background:var(--panel2);border:1px solid var(--border);border-radius:99px;color:var(--text);
   font:600 12px/1.2 inherit;padding:4px 10px;cursor:pointer}
 .fchip:hover{border-color:var(--accent)}
-.fchip[aria-pressed="true"]{background:rgba(14,165,233,.18);border-color:var(--accent);color:var(--accent)}
+.fchip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
 .fchip[aria-pressed="true"]::before{content:"✓ "}
 .fcount{color:var(--text);font-size:12.5px;font-variant-numeric:tabular-nums}
 .fclear{background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);
@@ -2139,8 +2147,6 @@ ND_CSS = ND_THEME_CSS + """
 #newdata .nd-msg{color:var(--muted);font-size:12.5px;min-height:1em}
 #newdata .nd-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
 #newdata .nd-list li{border-bottom:1px solid var(--border);padding:4px 0}
-#newdata .nd-watch-item{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px}
-#newdata .nd-watch-line{min-width:0;flex:1 1 12em}
 #newdata form.nd-actions input{flex:1 1 8em;min-width:0;max-width:16em;text-transform:uppercase}
 """
 
@@ -2542,49 +2548,7 @@ def _nd_retirement(rows: list[dict]) -> str:
             f'<div class="nd-rows">{body}</div></div>')
 
 
-ND_WATCH_TITLES = {"option": "Option watch list", "stock": "Stock watch list"}
 ND_OPTIONS_LATER = "the options build comes later (build-plan step 11)"
-ND_WATCH_SUBS = {
-    "option": "The names the options build covers besides SPX (D2). Add one here, or press <b>Opt</b> next "
-              "to a ticker on any board.",
-    "stock": "The names LEAPS pins and scans, and Earnings treats as watched. Add one here, or press <b>Stk</b> "
-             "next to a ticker on any board.",
-}
-
-
-def _nd_watch_card(kind: str, wl: dict, ob: dict) -> str:
-    """One watch list's card: its names (ticker, added on, by, note) with a Remove each; stacked rows, no table."""
-    rows = wl.get("rows") or []
-    items = "".join(
-        f'<li class="nd-watch-item" data-ticker="{esc(r.get("ticker"))}">'
-        f'<div class="nd-watch-line"><b>{_nd(r.get("ticker"))}</b>'
-        f' <span class="nd-k">added {_nd(r.get("added_on"))} by {_nd(r.get("added_by"))}</span>'
-        + (f' · {_nd(r.get("note"))}' if r.get("note") else "") + "</div>"
-        f'<button type="button" class="nd-btn" data-nd-act="watch-remove" data-list="{esc(kind)}" '
-        f'data-ticker="{esc(r.get("ticker"))}" aria-label="Remove {esc(r.get("ticker"))} from the '
-        f'{esc(ND_WATCH_TITLES[kind].lower())}">Remove</button></li>' for r in rows)
-    empty = '<li class="nd-k nd-watch-empty">No names yet.</li>'
-    queued = ""
-    if kind == "option":
-        names = ob.get("queued") or []
-        always = " + ".join(_nd(a) for a in ob.get("always") or [])
-        queued = _nd_row("Names queued for the next options build",
-                         f"<span data-nd-queued>{always} and {len(names)} name{'' if len(names) == 1 else 's'} "
-                         "from this list" + (f": {', '.join(_nd(n) for n in names)}" if names else "")
-                         + f" · {ND_OPTIONS_LATER}</span>")
-    return (f'<div class="nd-card nd-watch" id="nd-watch-{esc(kind)}" data-list="{esc(kind)}">'
-            f'<h3>{esc(ND_WATCH_TITLES[kind])} <span class="nd-chip" data-nd-watch-count="{esc(kind)}">'
-            f'{len(rows)}</span></h3>'
-            f'<div class="nd-sub">{ND_WATCH_SUBS[kind]}</div>'
-            + (f'<div class="nd-rows">{queued}</div>' if queued else "")
-            # Add never removes (the toggle would take off a name someone else just added)
-            + f'<form class="nd-actions" data-nd-add="{esc(kind)}"><input class="nd-date" name="t" maxlength="12" '
-              f'autocomplete="off" placeholder="Ticker" aria-label="A ticker to add to the '
-              f'{esc(ND_WATCH_TITLES[kind].lower())}"><button type="submit" class="nd-btn">Add</button></form>'
-            + f'<ul class="nd-list nd-watch-list">{items or empty}</ul>'
-            '<div class="nd-msg" aria-live="polite" data-nd-msg></div></div>')
-
-
 def _nd_filters(cards: list) -> str:
     """One link per status, carrying the filter in the address bar (S14), so "4 late" can be linked to.
 
@@ -2635,15 +2599,10 @@ def _newdata_section(nd: dict | None) -> str:
     cards = "".join(_nd_dataset_card(c, open_=(i == 0))
                     for i, c in enumerate(nd.get("datasets") or []))
     ret = nd.get("retention") or {}
-    wl = nd.get("watchlists") or {}
-    ob = nd.get("options_build") or {}
-    counts = " · ".join(f'{esc(k)} <span data-nd-watch-count="{esc(k)}">{_nd((wl.get(k) or {}).get("count", 0))}'
-                        f'</span>' for k in ND_WATCH_TITLES)
     return (
         '<section id="newdata" aria-labelledby="newdata-h">'
         '<h2 id="newdata-h">New data system</h2>'
         f'{verified_html}'
-        f'<div class="nd-sub" id="nd-watch-summary">Watch lists: {counts}</div>'
         '<div class="nd-sub">Read when this page was rendered. Fetch, Backfill and Pause / Resume only put a request '
         'in the queue; the builder runs it. Remove takes a name off a watch list. Nothing on this page writes market '
         f'data. {esc(ND_PAUSE_STOPS)}</div>'
@@ -2665,7 +2624,6 @@ def _newdata_section(nd: dict | None) -> str:
         + (_nd_row("Set by", _nd(ret.get("source"))) if ret.get("source") else "") + "</div></div>"
         f'{_nd_cross_check(nd.get("cross_check"))}'
         f'{_nd_retirement(nd.get("retirement") or [])}'
-        + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES)
         + "</section>")
 
 
@@ -2792,68 +2750,6 @@ function ndCadence(btn){
     ndSay(c, 'Schedule saved: ' + text + '. ' + rcEsc(ND.next_pass) + '.');
   });
 }
-function ndWatchRemove(btn){
-  var list = btn.getAttribute('data-list'), t = btn.getAttribute('data-ticker');
-  var card = btn.closest('.nd-watch'), say = function(html){ var m = card && card.querySelector('[data-nd-msg]');
-    if(m) m.innerHTML = html; };
-  if((list !== 'option' && list !== 'stock') || !new RegExp('^' + ND.ticker_pattern + '$').test(t || '')) return;
-  btn.disabled = true;
-  fetch('/api/watchlist/' + list + '/remove/' + encodeURIComponent(t), {method: 'POST',
-        headers: {'X-RC-Panel': 'settings'}}).then(function(r){
-    return r.json().then(function(d){ return {status: r.status, d: d || {}}; });
-  }).then(function(res){
-    if(!res.d.ok){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(res.d.error || ('HTTP ' + res.status)) +
-      '</span>'); return; }
-    var li = btn.closest('li');
-    if(li && li.parentNode) li.parentNode.removeChild(li);
-    ndWatchCount(card, list);
-    say(rcEsc(t) + (res.d.removed ? ' removed.' : ' was no longer on the list.'));
-  }).catch(function(e){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(String(e)) + '</span>'); });
-}
-// The card's count chips and the queued-names line, after a row came or went.
-function ndWatchCount(card, list){
-  var items = card ? card.querySelectorAll('li.nd-watch-item') : [], left = items.length;
-  document.querySelectorAll('[data-nd-watch-count="' + list + '"]').forEach(function(el){
-    el.textContent = String(left); });
-  var q = list === 'option' && card ? card.querySelector('[data-nd-queued]') : null;
-  if(q){
-    var names = Array.prototype.map.call(items, function(i){ return i.getAttribute('data-ticker'); });
-    q.textContent = (ND.options_always || []).join(' + ') + ' and ' + left + (left === 1 ? ' name' : ' names') +
-      ' from this list' + (left ? ': ' + names.join(', ') : '') + ' · ' + ND.options_later;
-  }
-}
-// The Add box (it came from the Activity page, 11 Nov 2026): POST .../add never removes a name.
-function ndWatchAdd(form){
-  var list = form.getAttribute('data-nd-add'), box = form.querySelector('input'), btn = form.querySelector('button');
-  var t = (box.value || '').trim().toUpperCase(), card = form.closest('.nd-watch');
-  var say = function(html){ var m = card && card.querySelector('[data-nd-msg]'); if(m) m.innerHTML = html; };
-  if(!t) return;
-  if(!new RegExp('^' + ND.ticker_pattern + '$').test(t)){ say('<span class="nd-bad">Not a ticker.</span>'); return; }
-  btn.disabled = true;
-  fetch('/api/watchlist/' + list + '/add/' + encodeURIComponent(t), {method: 'POST',
-        headers: {'X-RC-Panel': 'settings'}}).then(function(r){
-    return r.json().then(function(d){ return {status: r.status, d: d || {}}; });
-  }).then(function(res){
-    btn.disabled = false;
-    if(!res.d.ok){ say('<span class="nd-bad">' + rcEsc(res.d.error || ('HTTP ' + res.status)) + '</span>'); return; }
-    box.value = '';
-    if(!res.d.added){ say(rcEsc(t) + ' was already on the list.'); return; }
-    var ul = card.querySelector('.nd-watch-list'), none = ul.querySelector('.nd-watch-empty'), e = rcEsc(t);
-    if(none) ul.removeChild(none);
-    ul.insertAdjacentHTML('beforeend', '<li class="nd-watch-item" data-ticker="' + e + '"><div class="nd-watch-line"><b>' +
-      e + '</b> <span class="nd-k">added just now</span></div><button type="button" class="nd-btn" ' +
-      'data-nd-act="watch-remove" data-list="' + list + '" data-ticker="' + e + '" aria-label="Remove ' + e +
-      '">Remove</button></li>');
-    ndWatchCount(card, list);
-    say(e + ' added.');
-  }).catch(function(err){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(String(err)) + '</span>'); });
-}
-document.addEventListener('submit', function(ev){
-  var form = ev.target && ev.target.closest ? ev.target.closest('#newdata form[data-nd-add]') : null;
-  if(!form) return;
-  ev.preventDefault();
-  ndWatchAdd(form);
-});
 // A17-B: the cross-check press queues a run for the builder. The page sends one POST to its own dashboard and
 // calls no provider: the builder owns every provider call, and the queue is where a run is asked for.
 function ndCross(btn){
@@ -2874,7 +2770,6 @@ document.addEventListener('click', function(ev){
   else if(act === 'pause' || act === 'resume') ndSchedule(btn, act);
   else if(act === 'cadence') ndCadence(btn);
   else if(act === 'cross') ndCross(btn);
-  else if(act === 'watch-remove') ndWatchRemove(btn);
 });
 ndPageStale();
 // Checked when the page is read and again whenever the reader comes back to the tab, which is exactly when a page
@@ -2923,21 +2818,26 @@ def _collect_newdata() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
-#: The page's two tabs (#492; avo, 10 Nov 2026: "iki tabdan daha fazlasi olmasin"): the key a viewer's choice is
-#: remembered under, and each tab's panel id. ``ALIASES`` maps a choice remembered from an older page (Data, Fetch,
-#: Needs, Live) onto the tab that now holds it.
+#: The page's three tabs. #715 (avo, 12 Nov 2026): Database · Fetch/Health · Logs, and no tab holds another tab. The
+#: two watch lists the jobs read had a tab of their own here, first in the strip, for one day; on 13 Nov 2026 they
+#: moved to the Watch lists board ("Watchlist panosuna bunlari ekle ... ve buradan yine de kaldir",
+#: ``module_watchlists.board.JOB_LISTS``). ``first`` is the tab a first visit opens, ``key`` the one a viewer's
+#: choice is remembered under, ``tabs`` each tab's panel id. ``aliases`` maps a choice remembered from an older
+#: page (Data, Fetch, Needs, Live, Watch lists) onto the tab that now holds it.
 SETTINGS_TABS = {"key": "rc.settings.tab",
-                 "tabs": {"data": "panel-data", "health": "panel-health"},
-                 "aliases": {"fetch": "data", "needs": "health", "live": "health"}}
+                 "first": "data",
+                 "tabs": {"data": "panel-data", "health": "panel-health", "logs": "panel-logs"},
+                 "aliases": {"fetch": "data", "needs": "data", "live": "health", "watch": "data"}}
 
 TABS_JS = """
 (function(){
   var CFG = window.RC_SETTINGS_TABS || {key: '', tabs: {}};
+  var FIRST = CFG.first || 'data';
   var tabs = [].slice.call(document.querySelectorAll('#settings-tabs [role="tab"]'));
   if (!tabs.length) return;
   function show(name, save) {
     if (CFG.aliases && CFG.aliases[name]) name = CFG.aliases[name];
-    if (!CFG.tabs[name]) name = 'data';
+    if (!CFG.tabs[name]) name = FIRST;
     var panel = document.getElementById(CFG.tabs[name]), wasHidden = panel && panel.hidden;
     tabs.forEach(function (t) {
       var on = t.getAttribute('data-tab') === name;
@@ -2959,7 +2859,7 @@ TABS_JS = """
   }
   var start = fromHash();
   if (!start) { try { start = localStorage.getItem(CFG.key); } catch (e) { start = null; } }
-  show(start || 'data', false);
+  show(start || FIRST, false);
   tabs.forEach(function (t, i) {
     t.addEventListener('click', function () { show(t.getAttribute('data-tab'), true); });
     t.addEventListener('keydown', function (e) {
@@ -2972,11 +2872,6 @@ TABS_JS = """
     });
   });
   window.addEventListener('hashchange', function () { var h = fromHash(); if (h) show(h, true); });
-  var w = document.querySelector('#panel-health .wiali'), box = document.getElementById('needs-wial');
-  if (w && box) w.addEventListener('click', function () {
-    box.hidden = !box.hidden;
-    w.setAttribute('aria-expanded', box.hidden ? 'false' : 'true');
-  });
 })();
 """
 
@@ -3003,75 +2898,45 @@ DATA_HELP = help_html(
     "what for one name, and since when), the Data flow from each source through the six SSD "
     "DuckDB files to the boards and the file each board writes, then for one served file the Build stage from HDD "
     "raw and Parquet to the SSD file, the boards that read it, and example rows. Nothing there starts a job. "
-    "<b>Fetch/Health</b> holds every control: the switches, Health right now, the providers' limits, the universe, "
-    "then one group a served file with its sources. <b>Fetch</b> puts "
-    "one request in the builder's queue (its ▾ asks for raw only, or raw and Parquet); the builder calls the "
-    "provider, never this page. <b>Pause</b> cancels a queued run, stops a running one before its next provider "
-    "call and holds the dataset until <b>Resume</b>. Under the groups sit the <b>queue</b> with the last runs and the "
-    "<b>weekly backups</b>, then the need catalog by file, the board settings, the automations, the watch lists and the IBKR cards. "
-    "The frame on top shows Fetch, Data health, the jobs by the board they feed and their run logs, from Grafana. <b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
+    "Under it sit, each folded, the need catalog by file, the routes, the board inputs and the automations. "
+    "<b>Fetch/Health</b> is the Grafana board: the alerts, the switches, each dataset with its <b>Fetch</b>, "
+    "<b>Pause</b>, mode, cadence and hold, the queue, RevenueChaser's timers, the IBKR gateway, the providers' "
+    "limits, the cross-check, board freshness and the backups. A press there needs the Grafana login; a press puts "
+    "one request in the builder's queue, and the builder calls the provider, never this page. Under the board sit "
+    "the few presses it does not carry yet: the <b>Universe</b>, the <b>Fill</b> and <b>Backfill</b> of the datasets "
+    "that have one, <b>Recount folders</b>, the IBKR login link, and for each file the coverage, the open problems row "
+    "by row and the last three runs. <b>Logs</b> is the Grafana log board. "
+    "<b>Refresh</b> re-reads the page with no provider call: it is instant and always safe."
     + control_render.WIAL
 )
 
 
-def _watch_section(nd: dict | None) -> str:
-    """The two watch lists with their Remove (PR 4), moved out of the old New data system section (#492). The
-    ``#newdata`` scope keeps their styles (``ND_CSS``) and their script (``ND_JS``)."""
-    if not nd or nd.get("error"):
-        return ""
-    wl = nd.get("watchlists") or {}
-    ob = nd.get("options_build") or {}
-    counts = " · ".join(f'{esc(k)} <span data-nd-watch-count="{esc(k)}">{_nd((wl.get(k) or {}).get("count", 0))}'
-                        f'</span>' for k in ND_WATCH_TITLES)
-    return ('<section id="newdata" class="ndwatch" aria-labelledby="newdata-h"><h2 id="newdata-h">Watch lists</h2>'
-            f'<div class="nd-sub" id="nd-watch-summary">Watch lists: {counts}</div>'
-            + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES) + "</section>")
+def _hfold(words: str, body: str) -> str:
+    """One part closed behind its own one-line summary; nothing when the part is empty."""
+    return f'<details class="hfold"><summary>{words}</summary>{body}</details>' if body else ""
 
 
-def _health_panel(payload: dict, nd: dict | None = None) -> str:
-    """The Health tab (#492): the Needs head, the catalog, the request log and the routes, then the ticker
-    detail, the four parts that live nowhere else (the board settings, Automations, the watch lists, the IBKR
-    cards) and the backups, in that order."""
+def _database_more(payload: dict) -> str:
+    """Under the Database board (#715): the reads that failed, then the reference parts and the forms, each folded:
+    the need catalog, the routes, the board inputs and the automations. They sat on the Fetch/Health tab until the
+    Grafana board took that tab over; they say what the data is or are forms, so they belong here (decision 8).
+
+    Not drawn any more, because the Grafana boards carry them: the Needs head, Board freshness (rc-health, "Limits,
+    cross-check and board freshness"), the IBKR state card (rc-health, "IBKR") and the request log (rc-logs)."""
     model = _needs_model(payload)
-    catalog, rest = needs_tab.sections(model)
-    # One ``#needs`` scope (needs.css) around the head and the Needs parts.
-    # #527 step 9 and B4: what needs avo first (the reads that failed, the backups, the catalog
-    # with its problem groups open), then the parts he looks things up in, then the reference parts folded. The
-    # IBKR login card is gone: its link is in the top bar.
-    # The ticker lookup is on the Database tab now (avo, 11 Nov 2026): it says what the data is, not what to press.
-    moved = (_automations_section(payload.get("automations") or [])
-             + _ibkr_state_card(payload.get("ibkr_login_state"))
-             + _boards_section(payload.get("boards") or [], payload.get("rows") or [])
-             + _watch_section(nd))
-    # One ``#needs`` frame and palette for the whole tab.
+    catalog, _log, routes = needs_tab.parts(model)
     errs = _errors_list(payload.get("errors") or [])
-    return (f'<div id="needs"><div class="wrap">{needs_tab.head(model, "Needs, boards and automations")}</div>'
-            + (f'<div class="wrap">{errs}</div>' if errs else "")
-            + f'<div class="wrap">{_freshness_part(payload)}</div>'
-            + f'<div class="wrap">{catalog}</div>'
-            f'<div class="wrap" id="health-more">{moved}{_folded(rest)}</div></div>')
-
-
-def _freshness_part(payload: dict) -> str:
-    """#566: the Board freshness part, read now; the board cards' labels name the boards."""
-    from RevenueChaser.module_settings import freshness_tab
-    labels = {str(c.get("key")): str(c.get("label")) for c in payload.get("boards") or []
-              if isinstance(c, dict) and c.get("key") and c.get("label")}
-    return freshness_tab.section(freshness_tab.collect(), labels)
-
-
-def _folded(rest: str) -> str:
-    """#527: the request log and the routes, each closed behind its own one-line summary."""
-    out = rest
-    for part, words in (("needs-log", "The request log: which need was asked, by whom, how often"),
-                        ("needs-routes", "The routes: the read-only addresses a board asks")):
-        mark = f'<section class="part" id="{part}"'
-        if mark in out:
-            start = out.index(mark)
-            end = out.index("</section>", start) + len("</section>")
-            out = (out[:start] + f'<details class="hfold"><summary>{words}</summary>' + out[start:end] + '</details>'
-                   + out[end:])
-    return out
+    # a Needs read that failed is one line and stays in sight; the catalog itself is long (one row a need)
+    catalog = catalog if model.get("error") else _hfold(
+        "The need catalog: what a board can ask the store for, and how fresh it is", catalog)
+    return ('<div id="needs"><div class="wrap" id="database-more">'
+            f'{errs}{catalog}'
+            + _hfold("The routes: the read-only addresses a board asks", routes)
+            + _hfold("Board inputs: what each board reads and its settings",
+                     _boards_section(payload.get("boards") or [], payload.get("rows") or []))
+            + _hfold("Automations: the scheduled tasks RevenueChaser owns",
+                     _automations_section(payload.get("automations") or []))
+            + '</div></div>')
 
 
 def _tab_strip() -> str:
@@ -3080,66 +2945,64 @@ def _tab_strip() -> str:
             'aria-selected="true" tabindex="0">Database</button>'
             '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
             'aria-selected="false" tabindex="-1">Fetch/Health</button>'
+            '<button type="button" role="tab" id="tab-logs" data-tab="logs" aria-controls="panel-logs" '
+            'aria-selected="false" tabindex="-1">Logs</button>'
             '</div></nav>')
 
 
-# #527: the live view of data health and fetching is two Grafana boards on homesrv (home-server
-# grafana/make_dashboards.py rc_data_health / rc_fetch), framed here rather than shown as Grafana tabs (avo, 8 Nov
-# 2026: "bunlar revenue chaser app icine gomulu olmaliydi"). Grafana allows only this app's origin to frame it. The
-# frame has no address until the tab opens, so a Data/Health visit never loads Grafana.
-# home-server #222 (avo, 10 Nov 2026): the RC timers with the Jobs tab's own design, switches and fuse (board rc-jobs)
-# avo, 10 Nov 2026 ("iki tabdan daha fazlasi olmasin", "health/fetch kismi grafana arayuzu ile olmali"): no Live tab;
-# the frame opens the Fetch/Health tab, RC Fetch first.
-# avo, 11 Nov 2026 ("activity yi kapatmak istiyorum"): Jobs is the board Activity framed (rc-activity: the jobs of
-# rc-jobs, grouped by the board each feeds), and Logs (rc-logs) came over from it.
-LIVE_BOARDS = (("rc-fetch", "Fetch"), ("rc-data-health", "Data health"), ("rc-activity", "Jobs"), ("rc-logs", "Logs"))
+# #527 (avo, 8 Nov 2026: "bunlar revenue chaser app icine gomulu olmaliydi"): the live view is Grafana on homesrv
+# (home-server grafana/make_dashboards.py), framed here rather than opened as a separate site. Grafana allows only
+# this app's origin to frame it. A frame has no address until its tab opens, so a Database visit never loads Grafana.
+# #715 (avo, 12 Nov 2026): three tabs, no tab holds another tab. Fetch/Health is one board (rc-health: the controls
+# beside the DuckDB health, RevenueChaser's timers, IBKR, provider limits, backups); Logs is its own tab (rc-logs).
+# The board picker that sat above the frame is gone with the boards it chose between.
+LIVE_BOARDS = (("panel-health", "rc-health", "live-frame", "Fetch controls and data health (Grafana)"),
+               ("panel-logs", "rc-logs", "logs-frame", "Job run logs (Grafana)"))
 LIVE_CSS = """
-#live-board .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
-  padding:0 12px}
-#live-board .livebar button{min-height:44px;padding:0 16px;border-radius:8px;border:1px solid var(--line,#8884);
-  background:var(--card,transparent);color:var(--fg,inherit);font:inherit;cursor:pointer}
-#live-board .livebar button[aria-pressed="true"]{border-color:var(--acc,#4a86e8);color:var(--acc,#4a86e8);font-weight:600}
-#live-board .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px}
-#live-board iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
+/* avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": the link has no row above the frame. It first lay on
+   the frame's own first row, but the frame scrolls inside itself, so the link ended up printed over whatever row
+   had scrolled under it (avo's phone, 13 Nov 2026). It is now a short line under the frame, where nothing scrolls. */
+.live-board .livebar{display:flex;justify-content:flex-end;padding:0 16px}
+.live-board .livebar a{color:var(--mut,inherit);font-size:13px;min-height:44px;display:inline-flex;align-items:center}
+.live-board iframe{display:block;width:100%;height:calc(100vh - 184px);min-height:560px;border:0;
   background:var(--bg,transparent)}
 """
-LIVE_HTML = ('<div id="live-board"><div class="livebar" role="group" aria-label="Live board">'
-             + "".join(f'<button type="button" data-board="{uid}" aria-pressed="{"true" if i == 0 else "false"}">'
-                       f'{label}</button>' for i, (uid, label) in enumerate(LIVE_BOARDS))
-             + '<a id="live-open" target="_blank" rel="noopener">Open in Grafana</a></div>'
-             '<iframe id="live-frame" title="Live data health, fetch, jobs and logs (Grafana)" loading="lazy"></iframe></div>')
+
+
+def _live_board(panel: str) -> str:
+    """The Grafana frame of one tab; it has no address until its tab opens (``LIVE_JS``)."""
+    uid, frame, title = next((u, f, t) for p, u, f, t in LIVE_BOARDS if p == panel)
+    return (f'<div class="live-board" data-board="{uid}">'
+            f'<iframe id="{frame}" title="{title}" loading="lazy"></iframe><div class="livebar">'
+            '<a class="live-open" target="_blank" rel="noopener">Open in Grafana</a></div></div>')
+
+
 LIVE_JS = """
 (function(){
-  var panel = document.getElementById('panel-health'), frame = document.getElementById('live-frame');
-  if (!panel || !frame) return;
-  var buttons = [].slice.call(panel.querySelectorAll('[data-board]')), open = document.getElementById('live-open');
-  var board = buttons.length ? buttons[0].getAttribute('data-board') : 'rc-fetch';
   function theme() {
     var t = document.documentElement.getAttribute('data-theme');
     if (t === 'light' || t === 'dark') return t;
     return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   }
-  function address(kiosk) {
-    return location.protocol + '//' + location.hostname + ':3000/d/' + board + '/' + board + '?theme=' + theme()
-      + (kiosk ? '&kiosk' : '');
-  }
-  function load() {
-    if (panel.hidden) return;
-    var want = address(true);
-    if (frame.getAttribute('src') !== want) frame.setAttribute('src', want);
-    if (open) open.href = address(false);
-  }
-  buttons.forEach(function (b) {
-    b.addEventListener('click', function () {
-      board = b.getAttribute('data-board');
-      buttons.forEach(function (o) { o.setAttribute('aria-pressed', o === b ? 'true' : 'false'); });
-      load();
-    });
+  [].slice.call(document.querySelectorAll('.live-board[data-board]')).forEach(function (box) {
+    var panel = box.closest('[role="tabpanel"]'), frame = box.querySelector('iframe');
+    var open = box.querySelector('.live-open'), board = box.getAttribute('data-board');
+    if (!panel || !frame) return;
+    function address(kiosk) {
+      return location.protocol + '//' + location.hostname + ':3000/d/' + board + '/' + board + '?theme=' + theme()
+        + (kiosk ? '&kiosk' : '');
+    }
+    function load() {
+      if (panel.hidden) return;
+      var want = address(true);
+      if (frame.getAttribute('src') !== want) frame.setAttribute('src', want);
+      if (open) open.href = address(false);
+    }
+    if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
+    var tab = document.getElementById(panel.getAttribute('aria-labelledby'));
+    if (tab) tab.addEventListener('click', function () { setTimeout(load, 0); });
+    load();
   });
-  if (window.MutationObserver) new MutationObserver(load).observe(panel, {attributes: true, attributeFilter: ['hidden']});
-  var tab = document.getElementById('tab-health');
-  if (tab) tab.addEventListener('click', function () { setTimeout(load, 0); });
-  load();
 })();
 """
 
@@ -3169,8 +3032,10 @@ def _ticker_drill(payload: dict) -> str:
 
 
 def render_settings_dashboard(payload: dict) -> str:
-    """The Data/Health page (#492): two tabs. Data is the control board (``control_render.render_data``); Health is
-    ``_health_panel``. The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
+    """The Settings page (#715): three tabs. Database is the control board
+    (``control_render.render_data``) above ``_database_more``; Fetch/Health is the framed ``rc-health`` board above
+    the few presses Grafana does not carry (``control_render.render_fetch``); Logs is the framed ``rc-logs`` board.
+    The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
     payload = payload or {}
     data_json = script_json(payload.get("tickers") or [])
     # The payload's own ``newdata`` when the caller read it (tests, fixtures); else read here, per render.
@@ -3180,7 +3045,7 @@ def render_settings_dashboard(payload: dict) -> str:
     control_html = control_render.render_data(view, lookup_html)
     fetch_html = control_render.render_fetch(view)
     control_js = control_render.scripts(view)
-    health_html = _health_panel(payload, nd)
+    more_html = _database_more(payload)
     automations = payload.get("automations") or []
     automations_js = (AUTOMATIONS_JS + AUTOMATIONS_BOOT) if automations else ""
 
@@ -3189,8 +3054,8 @@ def render_settings_dashboard(payload: dict) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Data/Health</title>
-<style>{CSS}</style>
+<title>Settings</title>
+<style>{THEME_CSS}{CSS}</style>
 <style>{ND_CSS}</style>
 <style>{_UCARDS_CSS}</style>
 <style>{control_render.CTL_CSS}</style>
@@ -3205,11 +3070,14 @@ def render_settings_dashboard(payload: dict) -> str:
 <div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
 <div class="ctl helpband"><div class="wrap helpwrap" style="max-width:var(--page-max,1280px);margin:0 auto;padding:12px 12px 0">{DATA_HELP}</div></div>
 {control_html}
+{more_html}
 </div>
 <div id="panel-health" role="tabpanel" aria-labelledby="tab-health" hidden>
-{LIVE_HTML}
+{_live_board("panel-health")}
 {fetch_html}
-{health_html}
+</div>
+<div id="panel-logs" role="tabpanel" aria-labelledby="tab-logs" hidden>
+{_live_board("panel-logs")}
 </div>
 <script>{FILTERS_JS}</script>
 <script>

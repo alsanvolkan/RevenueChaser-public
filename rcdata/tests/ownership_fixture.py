@@ -26,8 +26,13 @@ SPINE_CUSIPS = {"MSFT": "594918104", "BF-A": "115637100", "BF-B": "115637209", "
                 "AAPL": "037833100", "GME": "36467W109"}
 
 
-def make_spine(tickers=SPINE_TICKERS, ciks=SPINE_CIKS) -> None:
-    """A live ``spine.duckdb`` whose ``security`` table holds ``tickers`` (the columns the ownership build reads)."""
+def make_spine(tickers=SPINE_TICKERS, ciks=SPINE_CIKS, history=()) -> None:
+    """A live ``spine.duckdb`` whose ``security`` table holds ``tickers`` (the columns the ownership build reads).
+
+    ``history`` adds a ``security_history`` table (the columns the ownership build reads) from
+    ``[(ticker, field, value, valid_from, valid_to)]``; with none, the file carries no such table, as a spine built
+    before #749's reader did.
+    """
     path = serving.live_path("spine")
     path.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(path))
@@ -35,6 +40,11 @@ def make_spine(tickers=SPINE_TICKERS, ciks=SPINE_CIKS) -> None:
         con.execute("CREATE TABLE security (ticker TEXT, cik TEXT, gvkey TEXT, iid TEXT, cusip TEXT, tier TEXT)")
         con.executemany("INSERT INTO security VALUES (?, ?, NULL, NULL, ?, 'A')",
                         [[t, (ciks or {}).get(t), SPINE_CUSIPS.get(t)] for t in tickers])
+        if history:
+            con.execute("CREATE TABLE security_history (ticker TEXT, cik TEXT, field TEXT, value TEXT, "
+                        "valid_from DATE, valid_to DATE, source TEXT)")
+            con.executemany("INSERT INTO security_history VALUES (?, ?, ?, ?, ?, ?, 'sec/company_tickers')",
+                            [[t, v, f, v, fr, to] for t, f, v, fr, to in history])
     finally:
         con.close()
 
@@ -622,7 +632,8 @@ def sched_filing(accession, form, filed, issuer, filer, xml=None) -> bytes:
 TICKER_PERIOD_DDL = (
     "CREATE TABLE IF NOT EXISTS sec13f_ticker_period (ticker TEXT, period DATE, shares DOUBLE, value DOUBLE, "
     "holders INTEGER, top10_pct DOUBLE, hhi DOUBLE, new_holders INTEGER, exited_holders INTEGER, "
-    "exited_confidential INTEGER, exited_no_filing INTEGER, buy_flow DOUBLE, sell_flow DOUBLE, breadth DOUBLE, "
+    "exited_confidential INTEGER, exited_no_filing INTEGER, buy_flow DOUBLE, sell_flow DOUBLE, "
+    "started_filers INTEGER, started_shares DOUBLE, stopped_shares DOUBLE, breadth DOUBLE, "
     "breadth_chg DOUBLE, prev_period DATE, filers INTEGER, cusips INTEGER, filing_deadline DATE, "
     "filed_through DATE, source TEXT)")
 CUSIP_MAP_DDL = ("CREATE TABLE IF NOT EXISTS sec13f_cusip_map (cusip TEXT, period DATE, ticker TEXT, "

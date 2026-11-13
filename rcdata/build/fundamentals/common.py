@@ -22,7 +22,7 @@ import duckdb
 import httpx
 
 from ....core import sec_throttle
-from .. import base
+from .. import base, cik_history
 from . import KIND
 
 SEC = "sec"
@@ -165,6 +165,16 @@ def ciks(rows: Iterable[dict]) -> list[str]:
     return sorted({c for r in rows if (c := norm_cik(r.get("cik")))}, key=int)
 
 
+def predecessor_ciks(rows: Iterable[dict] | None = None) -> dict[str, list[str]]:
+    """``{company cik: [the CIKs it filed under before]}`` for the universe's companies (#749).
+
+    A company that reorganised or redomiciled files its history under a CIK the spine no longer holds, and the SEC
+    serves that history only under the old CIK. The pairs come from ``build/cik_history.py`` (the seed file,
+    ``cik_history.SEED_SOURCE``); a company with no such pair is not in the result.
+    """
+    return cik_history.predecessors(ciks(universe() if rows is None else rows))
+
+
 def tickers_by_cik(rows: Iterable[dict]) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     for r in rows:
@@ -285,7 +295,11 @@ def dirty_ciks(ctx: base.RunContext, con: duckdb.DuckDBPyConnection) -> frozense
         served = {r[0] for r in con.execute("SELECT DISTINCT cik FROM fundamental_company").fetchall()}
         if plan.fallback:
             keys |= _gone_companies(con)
-        keys |= {c for c in ciks(universe()) if c not in served}
+        rows = universe()
+        keys |= {c for c in ciks(rows) if c not in served}
+        # A company whose predecessor's partition changed is dirty too: its served facts hold that predecessor's
+        # older periods (``tables._facts``), so they have to be built again (#749).
+        keys |= {cik for cik, pres in predecessor_ciks(rows).items() if keys & set(pres)}
         con.execute(f"CREATE OR REPLACE TEMP TABLE {DIRTY_TABLE} (cik TEXT PRIMARY KEY)")
         if keys:
             con.execute(f"INSERT INTO {DIRTY_TABLE} SELECT unnest(?)", (sorted(keys),))

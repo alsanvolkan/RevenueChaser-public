@@ -31,9 +31,9 @@ def test_without_a_spine_the_card_still_states_the_rules_the_next_build_applies(
     card = newdata.collect(NOW)["my_universe"]
     assert card["built"] is False and card["total"] is None
     assert "tier A or D" in card["rule_text"]["stocks"]
-    assert "100M USD" in card["rule_text"]["etfs"] and "10M USD" in card["rule_text"]["etfs"]
+    assert "$100M" in card["rule_text"]["etfs"] and "$10M" in card["rule_text"]["etfs"]
     text = _text(card)
-    assert "has not built the list yet" in text and "100M USD" in text
+    assert "has not built the list yet" in text and "$100M" in text
 
 
 @pytest.mark.usefixtures("built")

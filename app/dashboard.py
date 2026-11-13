@@ -200,7 +200,11 @@ def _no_cache(resp):
 # Register module runners with the job queue. ``produces`` lists which iframes
 # to reload when the job completes.
 jobs.register("earnings", runners.run_earnings_range, ["module_earnings_radar"])
-jobs.register("module_leaps", runners.run_leaps_latest, ["module_leaps"])  # live UW scan (Fetch)
+# The old LEAPS scan is NOT registered (#730) and stays off: the board is now built from the rcdata layer's
+# ``option_far_contract`` (#746), which the builder's ``uw/far_contracts`` dataset fills on its own schedule, so the
+# board has no Fetch of its own. Leaving the name out of the registry is the gate: ``jobs.submit`` has no runner for
+# it, so no Fetch button, no ``POST /run/module_leaps`` and no scheduled call can start the old scan.
+# ``runners.run_leaps_latest`` stays in place -- switching off is not deleting.
 # 13F Fetch = refresh the names/sectors and shares outstanding the dashboard owns, render the board (backend D4).
 # The numbers are the builder's (G9), so the Fetch asks the SEC for nothing. It needs no UW key — the
 # names/sectors step is best-effort and opens its own client (#206).
@@ -277,6 +281,10 @@ TABS = [
     # The opening screen (decision A, avo 9 Nov 2026 17:26: "welcome gelsin").
     {"type": "header", "label": "Home"},
     {"type": "tab", "key": "module_welcome", "label": "Welcome", "url": "/view/module_welcome", "sub": True},
+    # avo's own named lists (#786), the screen he opens first after Welcome: not downloaded data, so it sits in
+    # Home beside it rather than under Research.
+    {"type": "tab", "key": "module_watchlists", "label": "Watch lists", "url": "/view/module_watchlists",
+     "sub": True},
     {"type": "header", "label": "Research"},
     {"type": "tab", "key": "module_news", "label": "News", "url": "/view/module_news", "sub": True},
     {"type": "tab", "key": "module_earnings_radar", "label": "Earnings Radar", "url": "/view/module_earnings_radar", "sub": True},
@@ -295,9 +303,11 @@ TABS = [
     {"type": "tab", "key": "module_fundamentals", "label": "Fundamentals", "url": "/view/module_fundamentals", "sub": True},
     {"type": "header", "label": "Ownership"},
     {"type": "tab", "key": "module_sec_13f", "label": "SEC 13F", "url": "/view/module_sec_13f", "sub": True},
-    {"type": "tab", "key": "module_leaps", "label": "LEAPS", "url": "/view/module_leaps", "sub": True},
+    # The board (#746): far-dated contracts from the rcdata layer, rendered in memory on each load.
+    {"type": "tab", "key": "module_leaps", "label": "LEAPS", "url": "/view/module_leaps",
+     "sub": True},
     {"type": "header", "label": "Ops"},
-    {"type": "tab", "key": "module_settings", "label": "Settings / Data health", "url": "/view/module_settings", "sub": True},
+    {"type": "tab", "key": "module_settings", "label": "Settings", "url": "/view/module_settings", "sub": True},
 ]
 
 
@@ -308,7 +318,7 @@ def _uw() -> UWClient:
 def _module_file(mod: str) -> Path:
     return {
         "module_earnings_radar": runners.EARNINGS_LATEST,
-        "module_leaps": runners.LEAPS_LATEST,
+        # No "module_leaps": the board is rendered in memory from the rcdata layer (#746): no artifact, no payload.
         "module_sector_rotation": runners.ROTATION_LATEST,
         "module_sec_13f": runners.SEC_13F_LATEST,
         "module_financials": runners.QUICK_LATEST,
@@ -325,6 +335,33 @@ def _module_file(mod: str) -> Path:
     }.get(mod)
 
 
+# One outline icon per board (24 px box, stroke drawn by the shell). Below 1440 px wide the sidebar is a 64 px
+# rail that shows only these (theme D, avo 12 Nov 2026, #761); the label stays as the item's name for a screen
+# reader and as its hover title. A tab without an entry gets ``NAV_ICON_DEFAULT``.
+NAV_ICONS = {
+    "module_welcome": "M3 11l9-8 9 8M5 10v10h14V10",
+    "module_watchlists": "M6 4h12v16l-6-4-6 4zM9 9h6",
+    "module_news": "M4 5h13v14H6a2 2 0 0 1-2-2zM17 9h3v8a2 2 0 0 1-2 2M8 9h5M8 13h5",
+    "module_earnings_radar": "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0M12 12l6-6",
+    "module_spx_gamma": "M3 12c3-6 6-6 9 0s6 6 9 0",
+    "module_oipd": "M3 19h18M4 18c3 0 4-12 8-12s5 12 8 12",
+    "module_financials": "M5 20V10M10 20V4M15 20v-8M20 20v-5",
+    "module_uw_interaction": "M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3",
+    "module_comovement": "M3 16l5-5 4 3 9-8M3 20l5-4 4 2 9-6",
+    "module_value_chain": "M10 14l4-4M8 17l-2 2a3 3 0 0 1-4-4l3-3a3 3 0 0 1 4 0M16 7l2-2a3 3 0 0 1 4 4l-3 3a3 3 0 0 1-4 0",
+    "module_relatedness": "M4 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M16 6a2 2 0 1 0 4 0a2 2 0 1 0-4 0M10 18a2 2 0 1 0 4 0"
+                          "a2 2 0 1 0-4 0M7 8l4 8M17 8l-4 8M8 6h8",
+    "module_sector_rotation": "M20 12a8 8 0 0 1-14 5M4 12a8 8 0 0 1 14-5M18 3v4h-4M6 21v-4h4",
+    "module_asymmetric_growth": "M3 17l6-6 4 4 8-8M15 7h6v6",
+    "module_swing_potential": "M3 14l4-6 4 8 4-10 4 6 2-2",
+    "module_fundamentals": "M6 3h9l4 4v14H6zM9 12h7M9 16h7M9 8h3",
+    "module_sec_13f": "M3 21h18M5 21V9l7-5 7 5v12M9 21v-6h6v6",
+    "module_leaps": "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4",
+    "module_settings": "M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2",
+}
+NAV_ICON_DEFAULT = "M8 12a4 4 0 1 0 8 0a4 4 0 1 0-8 0"
+
+
 def _nav_groups(tabs: list[dict]) -> list[dict]:
     """Fold the flat ``TABS`` list into single-level collapsible groups.
 
@@ -335,10 +372,12 @@ def _nav_groups(tabs: list[dict]) -> list[dict]:
     for t in tabs:
         if t["type"] == "header":
             groups.append({"label": t["label"], "tabs": []})
-        elif groups:
-            groups[-1]["tabs"].append(t)
         else:
-            groups.append({"label": "", "tabs": [t]})
+            t = {**t, "icon": NAV_ICONS.get(t["key"], NAV_ICON_DEFAULT)}
+            if groups:
+                groups[-1]["tabs"].append(t)
+            else:
+                groups.append({"label": "", "tabs": [t]})
     return groups
 
 
@@ -388,6 +427,10 @@ def view(mod: str):
         return _view_uw_interaction()
     if mod == "activity":   # closed 11 Nov 2026 (avo): its jobs, logs and watch lists are on Settings' Fetch/Health tab
         return redirect("/view/module_settings")
+    if mod == "module_leaps":          # #746: from the rcdata layer; never the old board cached on disk (#730)
+        return _view_leaps()
+    if mod == "module_watchlists":     # #786: avo's own lists, read from their own board file on every load
+        return _view_watchlists()
     if mod == "logs":
         return logview.render_page(logview.page_payload())
     if mod == "runs":
@@ -502,7 +545,6 @@ _MODEL_ONLY_RENDERERS = {
     "module_swing_potential": lambda: _import_runners().run_swing(None, no_fetch=True),
     "module_fundamentals": lambda: _import_runners().run_fundamentals(None, no_fetch=True),
     "module_asymmetric_growth": lambda: _import_runners().run_asymmetric_growth(None, no_fetch=True),
-    "module_leaps": lambda: _import_runners().run_leaps_cached(),
     "module_financials": lambda: _import_runners().run_quick_cached(),
     "module_comovement": lambda: _import_runners().run_comovement(None, no_fetch=True),
     "module_value_chain": lambda: _import_runners().run_value_chain(None, no_fetch=True),
@@ -541,6 +583,48 @@ def _universe_loading(mod: str) -> bool:
         return False
     from RevenueChaser.core import universe
     return not universe.has_universe()          # the universe the boards read (Opus review M1), not the old table
+
+
+def _view_leaps() -> str:
+    """The LEAPS board (#746), or its "no data yet" page while ``option_far_contract`` holds no session.
+
+    Rendered in memory on every load, like every transient state: nothing is written to ``.cache``, and the old
+    board an older build left on disk (``leaps_latest.html``) is never served again (#730). ``?session=`` picks a
+    stored session; an unknown one shows the newest.
+    """
+    from datetime import datetime, timezone
+    from RevenueChaser.module_leaps import board as leaps_board
+    data = leaps_board.payload(leaps_board.parse_session(request.args.get("session")))
+    if data is not None:
+        return leaps_board.render_html(data)
+    return templating.render(
+        "empty_board.html.j2", title="LEAPS",
+        message="No data yet: the first session is still being collected.",
+        hint=("This board reads far-dated contracts (183 days or more, $50k premium or more) from the builder's "
+              "uw/far_contracts dataset, which sweeps each session after the New York close and reads its open "
+              "interest the next morning. The first session appears once that sweep has run. Issue #746."),
+        stamp=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+
+
+def _view_watchlists() -> str:
+    """The Watch lists board (#786), or its empty page while no list has been made.
+
+    Rendered in memory on every load, like LEAPS: the lists are read from ``boards/watchlists.duckdb`` and the
+    numbers from the rcdata layer, nothing is cached and nothing is written. ``?list=`` picks a list; an unknown
+    one opens the first.
+    """
+    from datetime import datetime, timezone
+    from RevenueChaser.module_watchlists import board as wl_board
+    data = wl_board.payload((request.args.get("list") or "").strip() or None)
+    if data is not None:
+        return wl_board.render_html(data)
+    return templating.render(
+        "empty_board.html.j2", title="Watch lists",
+        message="No watch list yet.",
+        hint=("A watch list is yours, not downloaded: nothing fetches one. Import your TradingView exports with "
+              "`python -m RevenueChaser.module_watchlists import <folder> --apply`, or make an empty list from "
+              "the Settings page, and this board shows it with its sections and Price columns. Issue #786."),
+        stamp=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
 
 def _universe_loading_view(mod: str) -> str:
@@ -706,9 +790,19 @@ def run_relatedness_compare():
     return _submit("relatedness_compare", {"provider": provider, "model": model, "tickers": names})
 
 
+#: Why the LEAPS Fetch answers 409 instead of starting a scan (#730).
+LEAPS_OFF = ("LEAPS has no Fetch: the old scan is switched off (#730), and the board is filled by the builder's "
+             "uw/far_contracts dataset (#746), which runs on its own schedule.")
+
+
 @app.route("/run/module_leaps", methods=["POST"])
 def run_leaps():
-    return _submit("module_leaps", {})
+    """Refused, and refused before any provider call: the scan is switched off (#730).
+
+    409, not 404: the route exists and the answer is a reason, so an old bookmark or a script gets the
+    sentence rather than a blank wall. The job is not registered either, so nothing else can start it.
+    """
+    return jsonify({"ok": False, "error": LEAPS_OFF}), 409
 
 
 @app.route("/run/module_news", methods=["POST"])
@@ -1634,6 +1728,26 @@ def api_build_datasets():
     return jsonify({"ok": True, "datasets": metrics.datasets_list()})
 
 
+@app.route("/api/settings/status")
+def api_settings_status():
+    """Provider limits, the cross-check and board freshness as JSON, for the Grafana Fetch/Health board (#715)."""
+    from RevenueChaser.module_settings import metrics
+
+    return jsonify({"ok": True, **metrics.board_status()})
+
+
+@app.route("/api/settings/requests")
+def api_settings_requests():
+    """The per-request log, newest first, for the Grafana Logs board (#715): ``?limit=<n>``."""
+    from RevenueChaser.module_settings import metrics
+
+    try:
+        got = metrics.request_rows(request.args.get("limit"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, **got})
+
+
 @app.route("/metrics", endpoint="metrics")
 def prometheus_metrics():
     """Prometheus text format for Grafana on homesrv (#527 plan B1). Cheap readers only, no store session."""
@@ -1983,7 +2097,7 @@ def api_watchlist_kind_toggle(kind: str, ticker: str):
 
 @app.route("/api/watchlist/<kind>/add/<ticker>", methods=["POST"])
 def api_watchlist_add(kind: str, ticker: str):
-    """Put ``ticker`` on one watch list (the Add box on Settings' watch-list cards): ``{ok, list, ticker, added}``, where ``added`` is
+    """Put ``ticker`` on one watch list (the Add box Settings' watch-list cards had until 13 Nov 2026): ``{ok, list, ticker, added}``, where ``added`` is
     false when it was there already (nothing is written then). Never removes, so an Add typed for a name someone else
     just added cannot take it off, as the toggle would. 404 / 400 as the toggle."""
     from RevenueChaser.rcdata import ops
@@ -2015,7 +2129,7 @@ def api_activity_boards():
 
 @app.route("/api/watchlist/<kind>/remove/<ticker>", methods=["POST"])
 def api_watchlist_remove(kind: str, ticker: str):
-    """Take ``ticker`` off one watch list (the Settings cards' Remove): ``{ok, list, ticker, removed}``, where
+    """Take ``ticker`` off one watch list (the Remove Settings' watch-list cards had until 13 Nov 2026): ``{ok, list, ticker, removed}``, where
     ``removed`` is false when it was not there (nothing is written then). Never adds, so a Remove pressed on a stale
     page cannot put back a name removed elsewhere. 404 / 400 / 403 as the toggle."""
     from RevenueChaser.rcdata import ops
@@ -2048,6 +2162,259 @@ def api_watchlist_toggle(ticker: str):
     return jsonify({"ok": True, "ticker": t, "in_watchlist": in_watchlist})
 
 
+# ── The Watch lists board's own writes (#786) ──────────────────────────────────────────────────────────────────
+# Every one is a store-only write of one list, one section or one symbol: no provider call, no job, no network.
+# The answer carries the list's whole payload again, so the page redraws from what was actually stored rather
+# than from what it hoped would be stored. ``X-RC-Panel`` is required by ``_local_only`` as for every POST.
+
+def _wl_body() -> dict:
+    """The POSTed JSON object, or an empty one. A body that is not an object reads as empty, never as an error."""
+    found = request.get_json(silent=True)
+    return found if isinstance(found, dict) else {}
+
+
+def _wl_payload(list_id: str):
+    """``{ok, payload}`` for ``list_id`` after a write; 404 when the list is gone."""
+    from RevenueChaser.module_watchlists import board as wl_board
+    data = wl_board.payload(list_id)
+    if data is None or data["list"]["id"] != list_id:
+        return jsonify({"ok": False, "error": "no such watch list"}), 404
+    return jsonify({"ok": True, "payload": data})
+
+
+def _wl_job_kind(list_id: str) -> str | None:
+    """``option`` or ``stock`` when ``list_id`` is one of the two lists the jobs read, shown on the Watch lists
+    board beside avo's own (``module_watchlists.board.JOB_LISTS``); None for one of his lists."""
+    from RevenueChaser.module_watchlists import board as wl_board
+    return wl_board.job_kind(list_id)
+
+
+def _wl_job_ticker(symbol: str) -> str | None:
+    """The ticker a job list stores for what the add box sent (``NASDAQ:NVDA`` or ``NVDA``), or None when it is
+    not a plain ticker: the jobs ask the providers by ticker, so a spread or a series has no place there."""
+    from RevenueChaser.module_watchlists import symbols
+    ticker = symbols.split(symbol)[1]
+    return ticker if _valid_ticker(ticker) else None
+
+
+def _wl_text(body: dict, field: str, *, required: bool = True) -> tuple[str | None, str | None]:
+    value = body.get(field)
+    if value is None:
+        return (None, f"{field} is required") if required else (None, None)
+    if not isinstance(value, str):
+        return None, f"{field} must be text"
+    text = value.strip()
+    if required and not text:
+        return None, f"{field} cannot be empty"
+    return text, None
+
+
+@app.route("/api/watchlists/search")
+def api_watchlists_search():
+    """The add box's suggestions for ``?q=``: the spine's names whose ticker or name matches, best first."""
+    from RevenueChaser.module_watchlists import board as wl_board
+    q = (request.args.get("q") or "").strip()
+    return jsonify({"ok": True, "q": q, "rows": wl_board.search(q)})
+
+
+@app.route("/api/watchlists/new", methods=["POST"])
+def api_watchlists_new():
+    """Make a list. ``{ok, list_id}``; 400 for an empty name or one already taken."""
+    from RevenueChaser.module_watchlists import store
+    name, error = _wl_text(_wl_body(), "name")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    try:
+        list_id = store.create_list(name, description=(_wl_body().get("description") or ""),
+                                    by=_requested_by())
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify({"ok": True, "list_id": list_id})
+
+
+@app.route("/api/watchlists/<list_id>", methods=["POST"])
+def api_watchlists_update(list_id: str):
+    """Rename a list or give it a description. Only what the body names changes."""
+    from RevenueChaser.module_watchlists import store
+    body = _wl_body()
+    name, error = _wl_text(body, "name", required=False)
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    description = body.get("description")
+    if description is not None and not isinstance(description, str):
+        return jsonify({"ok": False, "error": "description must be text"}), 400
+    try:
+        store.update_list(list_id, name=name, description=description)
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/delete", methods=["POST"])
+def api_watchlists_delete(list_id: str):
+    """Delete a list, its sections and its symbols. The change rows stay, so what it held is still readable."""
+    from RevenueChaser.module_watchlists import store
+    removed = store.delete_list(list_id, by=_requested_by())
+    if not removed:
+        return jsonify({"ok": False, "error": "no such watch list"}), 404
+    return jsonify({"ok": True, "list_id": list_id, "deleted": True})
+
+
+@app.route("/api/watchlists/<list_id>/export.txt")
+def api_watchlists_export(list_id: str):
+    """The list in TradingView's own one-line format, the spelling it came in with."""
+    from RevenueChaser.module_watchlists import importer, store
+    if store.get_list(list_id) is None:
+        return "no such watch list", 404, {"Content-Type": "text/plain; charset=utf-8"}
+    text = importer.export_list(list_id)
+    # The id is a slug by construction, but the header is built from a path parameter: keep only what a file name
+    # may hold, so no quote or newline of a crafted link can reach the response header.
+    safe = re.sub(r"[^A-Za-z0-9._-]", "", list_id)[:60] or "watchlist"
+    return Response(text, mimetype="text/plain; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="{safe}.txt"'})
+
+
+@app.route("/api/watchlists/<list_id>/columns/<tab>")
+def api_watchlists_columns(list_id: str, tab: str):
+    """One derived tab's numbers for a list (#786 step 4b): ``{ok, tab, values}``, keyed by symbol.
+
+    Not in the board's first payload: Performance, Risk and Technicals read five years of bars, which a board
+    opened on Price would pay for without showing. The page asks the first time the tab is opened. 404 for an
+    unknown list or a tab that is not derived from the bars.
+    """
+    from RevenueChaser.module_watchlists import board as wl_board
+    found = wl_board.columns(list_id, tab)
+    if found is None:
+        return jsonify({"ok": False, "error": "unknown watch list or tab"}), 404
+    return jsonify({"ok": True, **found})
+
+
+@app.route("/api/watchlists/<list_id>/symbol/add", methods=["POST"])
+def api_watchlists_symbol_add(list_id: str):
+    """Put one symbol on a list, in the section the body names. A symbol already there is no error and no write."""
+    from RevenueChaser.module_watchlists import store
+    body = _wl_body()
+    symbol, error = _wl_text(body, "symbol")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    section_id, section_error = _wl_text(body, "section_id", required=False)
+    if section_error:
+        return jsonify({"ok": False, "error": section_error}), 400
+    kind = _wl_job_kind(list_id)
+    if kind:                               # one of the two lists the jobs read: a board button's write
+        from RevenueChaser.rcdata import ops
+        ticker = _wl_job_ticker(symbol)
+        if not ticker:
+            return jsonify({"ok": False, "error": "a job list takes a plain ticker"}), 400
+        ops.watch_add(kind, ticker, by=_requested_by())
+        return _wl_payload(list_id)
+    try:
+        store.add_symbol(list_id, symbol, section_id=section_id or store.DEFAULT_SECTION, by=_requested_by())
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/symbol/remove", methods=["POST"])
+def api_watchlists_symbol_remove(list_id: str):
+    """Take one symbol off a list. A symbol that was not there is no error and no write."""
+    from RevenueChaser.module_watchlists import store
+    symbol, error = _wl_text(_wl_body(), "symbol")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    kind = _wl_job_kind(list_id)
+    if kind:
+        from RevenueChaser.rcdata import ops
+        ticker = _wl_job_ticker(symbol)
+        if ticker:
+            ops.watch_remove(kind, ticker, by=_requested_by())
+        return _wl_payload(list_id)
+    store.remove_symbol(list_id, symbol, by=_requested_by())
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/symbol/move", methods=["POST"])
+def api_watchlists_symbol_move(list_id: str):
+    """A dropped row: the symbol's section, then the section's new order (``order``, symbols by name)."""
+    from RevenueChaser.module_watchlists import store
+    body = _wl_body()
+    symbol, error = _wl_text(body, "symbol")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    section_id, section_error = _wl_text(body, "section_id")
+    if section_error:
+        return jsonify({"ok": False, "error": section_error}), 400
+    order = body.get("order") or []
+    if not isinstance(order, list) or any(not isinstance(s, str) for s in order):
+        return jsonify({"ok": False, "error": "order must be a list of symbols"}), 400
+    try:
+        store.move_symbol(list_id, symbol, section_id=section_id)
+        if order:
+            store.reorder(list_id, section_id, order)
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/section/add", methods=["POST"])
+def api_watchlists_section_add(list_id: str):
+    """Add a heading at the end of the list. A heading the list already has returns that one, with no write."""
+    from RevenueChaser.module_watchlists import store
+    name, error = _wl_text(_wl_body(), "name")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    try:
+        store.add_section(list_id, name)
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/section/rename", methods=["POST"])
+def api_watchlists_section_rename(list_id: str):
+    """Re-word one heading. Its id and its symbols do not move."""
+    from RevenueChaser.module_watchlists import store
+    body = _wl_body()
+    section_id, error = _wl_text(body, "section_id")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    name, name_error = _wl_text(body, "name")
+    if name_error:
+        return jsonify({"ok": False, "error": name_error}), 400
+    try:
+        store.rename_section(list_id, section_id, name)
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/section/delete", methods=["POST"])
+def api_watchlists_section_delete(list_id: str):
+    """Remove one heading; its symbols move to the first remaining section. The last section cannot go."""
+    from RevenueChaser.module_watchlists import store
+    section_id, error = _wl_text(_wl_body(), "section_id")
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    try:
+        store.delete_section(list_id, section_id)
+    except store.WatchlistError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return _wl_payload(list_id)
+
+
+@app.route("/api/watchlists/<list_id>/sections/order", methods=["POST"])
+def api_watchlists_sections_order(list_id: str):
+    """A dropped heading: the list's sections in their new order (``order``, section ids)."""
+    from RevenueChaser.module_watchlists import store
+    order = _wl_body().get("order") or []
+    if not isinstance(order, list) or any(not isinstance(s, str) for s in order):
+        return jsonify({"ok": False, "error": "order must be a list of section ids"}), 400
+    if store.get_list(list_id) is None:
+        return jsonify({"ok": False, "error": "no such watch list"}), 404
+    store.reorder_sections(list_id, order)
+    return _wl_payload(list_id)
+
+
 @app.route("/manifest.json")
 def manifest():
     """PWA manifest — installs RevenueChaser as the 'REVENUE CHASER' app window."""
@@ -2056,8 +2423,8 @@ def manifest():
         "short_name": "REVENUE CHASER",
         "start_url": "/",
         "display": "standalone",
-        "background_color": "#05111F",
-        "theme_color": "#05111F",
+        "background_color": reporting_common.THEME_TOKENS["dark"]["bg"],
+        "theme_color": reporting_common.THEME_TOKENS["dark"]["bg"],
         "icons": [
             {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
             {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},

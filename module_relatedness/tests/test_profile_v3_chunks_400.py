@@ -146,8 +146,18 @@ def test_customers_and_suppliers_union_by_resolved_name():
     assert [c["name"] for c in merged["customers"]] == ["Apple Inc.", "Dell"]
     apple = merged["customers"][0]
     assert apple["share"] == 0.12 and apple["type"] == "oem" and apple["quote"] == "Apple Inc. accounted ..."
-    assert merged["suppliers"] == [{"name": "TSMC", "type": "foundry", "quote": "q1"}]
+    assert merged["suppliers"] == [{"name": "TSMC", "type": "foundry", "quote": "q1", "parent": "", "public": None}]
     assert labels["customers"] == "union"
+
+
+def test_parent_and_public_survive_the_chunk_merge():       # v3c, #717
+    a = _p(customers=[{"name": "AWS", "type": "", "share": None, "quote": "", "parent": "", "public": False}])
+    b = _p(customers=[{"name": "aws", "type": "", "share": None, "quote": "", "parent": "Amazon.com",
+                       "public": True}])
+    merged, _ = v3.merge_chunks([(a, 10), (b, 10)])
+    aws = merged["customers"][0]
+    # The first chunk that said anything wins, and ``False`` is something it said.
+    assert aws["parent"] == "Amazon.com" and aws["public"] is False
 
 
 def test_enum_fields_come_from_the_longest_chunk():

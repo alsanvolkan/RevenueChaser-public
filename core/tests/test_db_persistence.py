@@ -514,6 +514,21 @@ POPULATION: dict[str, str] = {
     "spx_brier": "module_spx_gamma/tests/test_store.py::test_a_scored_brier_record_is_never_changed",
     "spx_gex_daily": "module_spx_gamma/tests/test_store.py::test_every_gex_day_is_kept",
     "spx_meta": "module_spx_gamma/tests/test_store.py::test_meta_round_trips",
+    "sec13f_board_cells":
+        "module_sec_13f/tests/test_sec13f_board_file_732.py::test_a_sync_writes_the_builders_rows_and_the_board_then_reads_the_file",
+    "sec13f_board_breaks":
+        "module_sec_13f/tests/test_sec13f_board_file_732.py::test_a_sync_writes_the_builders_rows_and_the_board_then_reads_the_file",
+    "sec13f_board_meta":
+        "module_sec_13f/tests/test_sec13f_board_file_732.py::test_a_sync_writes_the_builders_rows_and_the_board_then_reads_the_file",
+    # The watch-list file (#786): avo types these, so the writer is the only thing that fills them.
+    "wl_list":
+        "module_watchlists/tests/test_watchlist_store_786.py::test_a_new_list_gets_a_slug_id_a_description_and_a_default_section",
+    "wl_section":
+        "module_watchlists/tests/test_watchlist_store_786.py::test_sections_keep_avos_order_not_the_alphabet",
+    "wl_item":
+        "module_watchlists/tests/test_watchlist_store_786.py::test_a_symbol_is_stored_as_avo_wrote_it_split_into_its_parts",
+    "wl_change":
+        "module_watchlists/tests/test_watchlist_store_786.py::test_every_add_and_remove_leaves_a_change_row",
 }
 
 _ROOT = Path(__file__).resolve().parent.parent.parent

@@ -1945,21 +1945,23 @@ def _panel(html: str, ident: str) -> str:
     return html[start:nxt if nxt > 0 else len(html)]
 
 
-def test_the_health_panel_holds_its_parts_in_order():
-    """#492 (i), reordered by #527 step 9, B4 and #715: the head, the link to the live parts, the backups and the catalog, then
-    the request log and the routes folded."""
+def test_the_health_panel_holds_the_frame_and_what_grafana_does_not_carry():
+    """#492 (i), reordered by #527 step 9, B4 and #715: Fetch/Health is the framed board and, under it, only the
+    universe and the fills; the catalog and the routes are folded under the Database board."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), newdata=control_nd()))
-    assert "<title>Data/Health</title>" in html
+    assert "<title>Settings</title>" in html
     health = _panel(html, "panel-health")
-    order = ['id="live-frame"', "<h1>Data/Health · Fetch/Health</h1>", 'id="sec-health"', 'class="fgrps"',
-             "<h1>Needs, boards and automations</h1>", "What am I looking at?",
-             'id="needs-catalog"', 'id="needs-log"', 'id="needs-routes"']
+    order = ['id="live-frame"', "<h1>Settings · Universe and fills</h1>", 'id="sec-universe"', 'class="fgrps"']
     at = [health.index(x) for x in order]
     assert at == sorted(at), order
+    for gone in ('id="sec-health"', 'id="needs-catalog"', 'id="needs-routes"', "Needs, boards and automations"):
+        assert gone not in health, gone
+    assert 'id="needs-log"' not in html, "the request log is the Logs tab's board now"
     # avo, 11 Nov 2026: the Ticker lookup is on the Database tab now, not under the Grafana frame.
     data = _panel(html, "panel-data")
     assert 'id="drill"' in data and 'id="ticker-combo"' in data
+    assert data.index('id="drill"') < data.index('id="needs-catalog"') < data.index('id="needs-routes"')
     assert 'id="ticker-drill"' not in health and 'id="backups"' not in data
     assert 'id="ctl-fetch"' not in html, "the Fetch panel is no longer drawn here"
 
@@ -1973,8 +1975,10 @@ def test_the_old_settings_fold_and_its_sections_are_gone():
 
 
 def test_the_tabs_map_data_and_health_and_old_choices_land_on_them():
-    assert report.SETTINGS_TABS["tabs"] == {"data": "panel-data", "health": "panel-health"}
-    assert report.SETTINGS_TABS["aliases"] == {"fetch": "data", "needs": "health", "live": "health"}
+    assert report.SETTINGS_TABS["tabs"] == {"data": "panel-data", "health": "panel-health", "logs": "panel-logs"}
+    assert report.SETTINGS_TABS["first"] == "data" and "show(start || FIRST, false)" in report.TABS_JS
+    # a viewer whose remembered tab is the Watch lists one (12 Nov 2026 only) lands on Database
+    assert report.SETTINGS_TABS["aliases"] == {"fetch": "data", "needs": "data", "live": "health", "watch": "data"}
     assert "CFG.aliases[name]" in report.TABS_JS
 
 
@@ -1985,16 +1989,36 @@ def test_the_lookup_keeps_its_own_search_box():
     assert "Ticker lookup" in block
 
 
-def test_the_four_parts_that_live_nowhere_else_sit_in_health_above_backups():
-    """avo, 6 Nov 2026 ("A"): the board settings, Automations, the watch lists and the IBKR cards move to Health."""
+def test_the_parts_that_live_nowhere_else_sit_under_database_and_the_watch_lists_are_not_on_this_page():
+    """avo, 6 Nov 2026 ("A"): the board settings, Automations and the IBKR cards move to Health. The watch lists went
+    with them, had a tab of their own for a day, and left for the Watch lists board on 13 Nov 2026 ("Watchlist
+    panosuna bunlari ekle ... ve buradan yine de kaldir")."""
     from RevenueChaser.module_settings.tests.test_control_view import control_nd
     html = report.render_settings_dashboard(dict(_payload(), automations=_autos(), newdata=control_nd(),
                                                  ibkr_login_url="https://gateway.example/",
                                                  errors=[{"table": "ibkr", "where": "x", "error": "read failed"}]))
     health = _panel(html, "panel-health")
-    # #527 step 9: the reads that failed and the backups lead; the login link is in the top bar (Data tab's copy)
-    marks = ['id="errors"', 'id="auto-body"', 'id="nd-watch-option"', 'id="nd-watch-stock"']
-    at = [health.index(m) for m in marks]
+    # #715: the reads that failed and the forms sit under the Database board; the login link stays under the frame
+    data = _panel(html, "panel-data")
+    marks = ['id="errors"', 'id="auto-body"']
+    at = [data.index(m) for m in marks]
     assert at == sorted(at), marks
+    assert 'id="auto-body"' not in health and 'href="https://gateway.example/"' in health
+    for gone in ('id="panel-watch"', 'id="tab-watch"', 'id="nd-watch-option"', 'id="nd-watch-stock"',
+                 "function ndWatchRemove", "function ndWatchAdd"):
+        assert gone not in html, gone
+    assert re.search(r'<div id="panel-data" role="tabpanel" aria-labelledby="tab-data">', html), \
+        "Database is the tab the page is drawn on"
     assert html.count('<details class="help"><summary>What am I looking at?</summary>') == 1
-    assert "function settingsSave" in html and "function autoInit" in html and "function ndWatchRemove" in html
+    assert "function settingsSave" in html and "function autoInit" in html
+
+
+def test_the_page_draws_in_the_shared_theme_and_has_no_palette_of_its_own():
+    """Theme D (avo, 12 Nov 2026): the page embeds ``THEME_CSS`` and its old names are aliases of the shared tokens."""
+    from RevenueChaser.core.reporting_common import THEME_CSS
+    html = report.render_settings_dashboard(_payload())
+    assert THEME_CSS in html
+    assert ":root{--panel:var(--card);--panel2:var(--card-2);--text:var(--fg);" in report.CSS
+    assert not re.search(r":root\{[^}]*--(bg|border|muted|accent|amber):", report.CSS)
+    assert "font-family:var(--font-sans)" in report.CSS
+    assert ".rcf-combo{--rcf-input:var(--input-bg)" in report.CSS

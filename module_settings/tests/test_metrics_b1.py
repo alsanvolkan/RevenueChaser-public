@@ -87,8 +87,31 @@ def test_provider_calls_and_the_day_cap():
                                                    ibkr=lambda: None)))
     assert 'rc_provider_calls_today{provider="uw"} 7' in fam["rc_provider_calls_today"]
     assert 'rc_provider_failures_today{provider="uw"} 1' in fam["rc_provider_failures_today"]
+    assert 'rc_provider_rate_limited_today{provider="uw"} 0' in fam["rc_provider_rate_limited_today"]
+
+
+def test_a_provider_s_429_answers_today_are_exported():
+    """#715: the provider limits card leaves the page; a 429 was on that card and on no metric."""
+    ops.count_calls("fmp", 3, failures=2, http_429=2)
+    fam = _families(metrics.render(metrics.collect(datetime.now(timezone.utc), datasets=DS, timer={"state": "on"},
+                                                   ibkr=lambda: None)))
+    assert 'rc_provider_rate_limited_today{provider="fmp"} 2' in fam["rc_provider_rate_limited_today"]
     assert not any(l.startswith('rc_provider_day_cap{provider="uw"} ') for l in fam["rc_provider_day_cap"])  # no UW cap
     assert any(l.startswith('rc_provider_day_cap{provider="alphavantage"} ') for l in fam["rc_provider_day_cap"])
+
+
+def test_the_requests_answered_per_need_today_are_exported():
+    """#715 (avo, 12 Nov 2026): the Logs tab starts with daily counters. The read log keeps a day, a process and a
+    need, so the count is per need and day, every process together; a name that is not a need's is left out."""
+    for need, n in (("prices.daily", 3), ("fundamentals.income", 1), ('bad"name', 2)):
+        for _ in range(n):
+            ops.read_log.bump(f"need:{need}")
+    ops.read_log.bump("some_table")
+    ops.read_log.flush()
+    fam = _families(metrics.render(metrics.collect(datetime.now(timezone.utc), datasets=DS, timer={"state": "on"},
+                                                   ibkr=lambda: None)))
+    assert fam["rc_need_reads_today"] == ['rc_need_reads_today{need="fundamentals.income"} 1',
+                                          'rc_need_reads_today{need="prices.daily"} 3']
 
 
 def test_the_timer_unknown_leaves_its_family_empty_not_zero():
@@ -104,6 +127,75 @@ def test_ibkr_state_is_one_of_a_closed_set(state, label):
     fam = _families(metrics.render(_collect(ibkr=lambda: {"state": state})))
     assert [l for l in fam["rc_ibkr_state"] if l.endswith(" 1")] == [f'rc_ibkr_state{{state="{label}"}} 1']
     assert len(fam["rc_ibkr_state"]) == len(metrics.IBKR_STATES)
+
+
+def _tape(feeds, written_at="2026-11-11T09:40:00+00:00"):
+    return lambda: {"feeds": feeds, "written_at": written_at}
+
+
+def test_a_news_feed_s_state_is_one_of_a_closed_set_and_every_state_is_always_there():
+    """#727: on 11 Nov 2026 both feeds were refused all day behind a green gateway. Each feed carries every state,
+    0 or 1, so an alert on ``refused`` never sees a gap; text that is not a state reads ``unknown``."""
+    fam = _families(metrics.render(_collect(news=_tape([{"feed": "BRFG", "state": "live"},
+                                                        {"feed": "DJNL", "state": "refused"},
+                                                        {"feed": "FLY", "state": "words from a file"}]))))
+    ones = [l for l in fam["rc_news_feed_state"] if l.endswith(" 1")]
+    assert ones == ['rc_news_feed_state{feed="BRFG",state="live"} 1',
+                    'rc_news_feed_state{feed="DJNL",state="refused"} 1',
+                    'rc_news_feed_state{feed="FLY",state="unknown"} 1']
+    assert len(fam["rc_news_feed_state"]) == 3 * len(metrics.NEWS_STATES)
+
+
+def test_a_feed_name_that_is_not_a_plain_id_never_becomes_a_label():
+    fam = _families(metrics.render(_collect(news=_tape([{"feed": 'BR"FG} 1\nrc_x', "state": "live"},
+                                                        {"feed": "", "state": "live"}]))))
+    assert fam["rc_news_feed_state"] == []
+
+
+def test_the_listener_s_last_write_is_exported_and_absent_without_a_record():
+    fam = _families(metrics.render(_collect(news=_tape([]))))
+    assert fam["rc_news_tape_written_timestamp_seconds"] == ["rc_news_tape_written_timestamp_seconds 1794390000.0"]
+    fam = _families(metrics.render(_collect(news=_tape([], written_at=None))))
+    assert fam["rc_news_tape_written_timestamp_seconds"] == []
+
+
+def test_a_feed_id_with_a_hyphen_or_a_dot_is_still_reported():
+    # IBKR's own provider codes: DJ-N, DJ-RT, BRFUPDN; dropping one silently would hide a refused feed
+    fam = _families(metrics.render(_collect(news=_tape([{"feed": "DJ-N", "state": "refused"}]))))
+    assert 'rc_news_feed_state{feed="DJ-N",state="refused"} 1' in fam["rc_news_feed_state"]
+
+
+def test_a_record_the_listener_stopped_writing_reads_unknown_not_its_last_state():
+    """Review of #742: a listener that died while its feeds were live would have read live for ever."""
+    stale = lambda: {"feeds": [{"feed": "BRFG", "state": "live"}], "stale": True,   # noqa: E731
+                     "written_at": "2026-11-11T09:40:00+00:00"}
+    fam = _families(metrics.render(_collect(news=stale)))
+    assert [l for l in fam["rc_news_feed_state"] if l.endswith(" 1")] == ['rc_news_feed_state{feed="BRFG",state="unknown"} 1']
+    assert fam["rc_news_tape_written_timestamp_seconds"], "when it last wrote is still said"
+
+
+def test_a_record_file_that_is_there_and_broken_is_a_failed_read_and_a_missing_one_is_not(tmp_path, monkeypatch):
+    """Review of #742: the reader took a corrupt file for "the listener never started", so the counter never moved."""
+    from RevenueChaser.module_news import tape_state
+    path = tmp_path / "state.json"
+    monkeypatch.setattr(tape_state, "state_path", lambda: path)
+    before = metrics._errors["news"]
+    assert _families(metrics.render(_collect()))["rc_news_feed_state"] == []
+    assert metrics._errors["news"] == before, "no record yet is not an error"
+    path.write_text("{not json", encoding="utf-8")
+    assert _families(metrics.render(_collect()))["rc_news_feed_state"] == []
+    assert metrics._errors["news"] == before + 1
+    assert "cannot be read" in metrics.board_head(NOW, ibkr=lambda: None)["news"]["written_text"]
+
+
+def test_a_news_record_that_cannot_be_read_is_counted_and_the_rest_still_reports():
+    def boom():
+        raise RuntimeError("tape read exploded")
+
+    before = metrics._errors["news"]
+    fam = _families(metrics.render(_collect(news=boom)))
+    assert fam["rc_news_feed_state"] == [] and metrics._errors["news"] == before + 1
+    assert fam["rc_ibkr_state"], "the other parts are still read"
 
 
 def test_a_running_request_names_who_from_a_closed_set():
@@ -278,6 +370,59 @@ def test_the_board_head_says_the_switches_the_timer_and_the_gateway(monkeypatch)
     assert metrics.board_head(NOW, ibkr=lambda: None)["gateway"]["login"] == "https://gateway.example/"
 
 
+def test_the_board_head_says_when_fetch_and_backup_were_last_done(monkeypatch):
+    """avo, 12 Nov 2026: "onlarin en son ne zaman oldugunu tam duzgun bir sekilde yaz" (the Grafana board's
+    Fetch & Build and Backup switches): the builder's newest run and the newest good backup step, on the page's
+    clock; not known is None, never a guess, and a read that raises does not take the head down."""
+    from RevenueChaser.module_settings import newdata
+    from RevenueChaser.rcdata import ops
+    assert metrics.board_head(NOW, ibkr=lambda: None)["last"] == {"fetch": None, "backup": None}
+    ran = datetime(2026, 11, 12, 22, 46, tzinfo=timezone.utc)
+    monkeypatch.setattr(ops, "last_builder_run", lambda: {"dataset": "prices/daily", "status": "ok",
+                                                          "started_at": ran.timestamp() - 60,
+                                                          "finished_at": ran.timestamp()})
+    monkeypatch.setattr(newdata, "_backups", lambda now: {"steps": [
+        {"step": "duckdb", "last_ok": "2026-11-08T02:10:00+00:00"}, {"step": "ops", "last_ok": None},
+        {"step": "boards", "last_ok": "2026-11-01T02:10:00+00:00"}]})
+    local = metrics.control._local
+    last = metrics.board_head(NOW, ibkr=lambda: None)["last"]
+    assert last["fetch"] == {"at": f"12 Nov {local(ran):%H:%M}", "dataset": "prices/daily", "status": "ok"}
+    assert last["backup"] == {"at": f"8 Nov {local(datetime(2026, 11, 8, 2, 10, tzinfo=timezone.utc)):%H:%M}"}
+    monkeypatch.setattr(ops, "last_builder_run", lambda: {"dataset": "a", "status": "running",
+                                                          "started_at": ran.timestamp(), "finished_at": None})
+    assert metrics.board_head(NOW, ibkr=lambda: None)["last"]["fetch"]["status"] == "running"
+
+    def boom(*a):
+        raise RuntimeError("store busy")
+    monkeypatch.setattr(ops, "last_builder_run", boom)
+    monkeypatch.setattr(newdata, "_backups", boom)
+    assert metrics.board_head(NOW, ibkr=lambda: None)["last"] == {"fetch": None, "backup": None}
+
+
+def test_the_grafana_link_sits_under_the_frame():
+    """avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": no row above the frame. It is not laid over the
+    frame either: the frame scrolls inside itself, so an overlay ends up printed on the rows scrolling under it
+    (avo's phone, 13 Nov 2026). It is a line after the frame, and stays a 44 px target."""
+    from RevenueChaser.module_settings import report
+    assert "position:absolute" not in report.LIVE_CSS
+    board = report._live_board("panel-health")
+    assert board.index("<iframe") < board.index('class="livebar"')
+    assert "min-height:44px" in report.LIVE_CSS.split(".live-board .livebar a{")[1].split("}")[0]
+    assert "margin:12px auto 8px" not in report.LIVE_CSS
+
+
+def test_the_board_head_carries_the_news_feeds_in_the_listener_s_words():
+    """#727: the Grafana board says the feeds beside the gateway; the words come from module_news/tape_state."""
+    view = {"state": "refused", "lead": "2 of 2 feeds refused: BRFG, DJNL", "feeds": []}
+    assert metrics.board_head(NOW, ibkr=lambda: None, news=lambda: view)["news"] == view
+
+    def boom():
+        raise RuntimeError("tape read exploded")
+
+    assert metrics.board_head(NOW, ibkr=lambda: None, news=boom)["news"] is None
+    assert metrics.board_head(NOW, ibkr=lambda: None)["news"]["state"] == "unknown", "no record yet reads as unknown"
+
+
 def test_the_detail_route_takes_the_pickers_range_and_refuses_a_backwards_one(client):
     body = client.get("/api/build/datasets?detail=1&from=1000&to=5000").get_json()
     assert body["ok"] and "head" in body and all("history" in d for d in body["datasets"] if "error" not in d)
@@ -299,15 +444,104 @@ def test_datasets_list_marks_attended():
 
 
 def test_a_backup_kind_that_exists_in_two_steps_gets_two_distinct_series(monkeypatch):
-    """homesrv, 9 Nov 2026: ``prices`` is both a builder DuckDB kind (step duckdb) and a legacy board file (step
-    boards), so rc_backup_newest_timestamp_seconds{kind="prices"} was written twice and Prometheus kept one at
-    random. A repeated kind now carries its step in the label; a unique kind keeps its plain name."""
+    """homesrv, 9 Nov 2026: a name that is both a builder DuckDB kind (step duckdb) and a board file (step boards)
+    was written twice under one label and Prometheus kept one at random. Each series now carries its step as a
+    label of its own. avo, 12 Nov 2026: the old store's files (raw, edgar, history, prices in the boards step) are
+    not reported at all: "iliskisi kesilen eski database'ler"."""
     from RevenueChaser.module_settings import newdata
     rows = [{"kind": "prices", "step": "duckdb", "newest": "2026-11-08T03:30:00+00:00"},
             {"kind": "prices", "step": "boards", "newest": "2026-11-01T03:30:00+00:00"},
+            {"kind": "raw", "step": "boards", "newest": "2026-11-01T03:30:00+00:00"},
+            {"kind": "edgar", "step": "boards", "newest": "2026-11-01T03:30:00+00:00"},
+            {"kind": "history", "step": "boards", "newest": "2026-11-01T03:30:00+00:00"},
+            {"kind": "fundamentals", "step": "duckdb", "newest": "2026-11-08T03:30:00+00:00"},
+            {"kind": "fundamentals", "step": "boards", "newest": "2026-11-08T03:30:00+00:00"},
             {"kind": "market", "step": "duckdb", "newest": "2026-11-08T03:30:00+00:00"},
             {"kind": "ops", "step": "ops", "newest": None}]
     monkeypatch.setattr(newdata, "_backups", lambda now: {"kinds": rows})
     fam = _families(metrics.render(_collect()))["rc_backup_newest_timestamp_seconds"]
-    labels = sorted(re.search(r'\{kind="([^"]+)"\}', line).group(1) for line in fam)
-    assert labels == ["market", "prices (boards)", "prices (duckdb)"]
+    labels = sorted((re.search(r'kind="([^"]+)"', line).group(1), re.search(r'step="([^"]+)"', line).group(1))
+                    for line in fam)
+    assert labels == [("fundamentals", "boards"), ("fundamentals", "duckdb"), ("market", "duckdb"),
+                      ("prices", "duckdb")]
+
+
+def test_the_status_the_page_drew_as_cards_is_served_as_three_parts():
+    """#715 decision 8 (avo, 12 Nov 2026: status lives on the Grafana board): provider limits, the cross-check and
+    board freshness, each read on its own."""
+    spend = {"day": "2026-11-11", "providers": [{"provider": "uw", "today": 7, "cap": None, "http_429_today": 1}]}
+    seen = {}
+
+    def cross(used):
+        seen["used"] = used
+        return {"fields": [{"field": "prices", "differs": 0}]}
+
+    got = metrics.board_status(NOW, spend=lambda: spend, cross=cross, boards=lambda: {"boards": []})
+    assert got["providers"] == spend and got["boards"] == {"boards": []}
+    assert got["cross_check"]["fields"][0]["field"] == "prices"
+    assert seen["used"] == {"uw": 7}, "the cross-check is told what each provider has used today"
+    assert got["read_at"].startswith("2026-")
+
+
+def test_each_provider_of_the_status_names_the_served_files_it_feeds(monkeypatch):
+    """avo, 12 Nov 2026: "Bunu DuckDB'lerin lojistik sirasina gore ayir" (provider limits on the Grafana board):
+    from the dataset registry, no store read; a provider no dataset names feeds none."""
+    from RevenueChaser.module_settings import newdata
+    reg = {"a": SimpleNamespace(kind="spine", providers=("uw", "sec")),
+           "b": SimpleNamespace(kind="prices", providers=("uw",)), "c": SimpleNamespace(kind="market", providers=())}
+    monkeypatch.setattr(newdata, "_datasets", lambda: reg)
+    spend = {"providers": [{"provider": "uw", "today": 1}, {"provider": "sec", "today": 0},
+                           {"provider": "deepseek", "today": 2}]}
+    got = metrics.board_status(NOW, spend=lambda: spend, cross=lambda used: {}, boards=lambda: {})
+    assert [(p["provider"], p["files"]) for p in got["providers"]["providers"]] == [
+        ("uw", ["prices", "spine"]), ("sec", ["spine"]), ("deepseek", [])]
+
+    def boom():
+        raise RuntimeError("registry import failed")
+    monkeypatch.setattr(newdata, "_datasets", boom)
+    spend = {"providers": [{"provider": "uw", "today": 1}]}
+    got = metrics.board_status(NOW, spend=lambda: spend, cross=lambda used: {}, boards=lambda: {})
+    assert got["providers"]["providers"] == [{"provider": "uw", "today": 1}]
+
+
+def test_a_status_part_that_cannot_be_read_says_so_and_the_others_still_answer():
+    def boom(*_a):
+        raise RuntimeError("history file is locked")
+
+    got = metrics.board_status(NOW, spend=lambda: {"providers": []}, cross=boom, boards=boom)
+    assert got["providers"] == {"providers": []}
+    assert got["cross_check"] == {"error": "RuntimeError: history file is locked"}
+    assert got["boards"] == {"error": "RuntimeError: history file is locked"}
+    got = metrics.board_status(NOW, spend=boom, cross=lambda used: {"fields": [], "used": used},
+                               boards=lambda: {"boards": []})
+    assert "error" in got["providers"] and got["cross_check"]["used"] == {}
+
+
+def test_the_status_route_answers_with_the_three_parts(client):
+    ops.count_calls("uw", 4, http_429=1)
+    got = client.get("/api/settings/status")
+    assert got.status_code == 200
+    body = got.get_json()
+    assert body["ok"] is True and {"providers", "cross_check", "boards", "read_at"} <= set(body)
+    uw = [p for p in body["providers"]["providers"] if p["provider"] == "uw"][0]
+    assert uw["today"] == 4 and uw["http_429_today"] == 1
+
+
+def test_the_requests_route_answers_the_newest_rows_with_this_process_own_first(client):
+    """#715: the per-request log for the Grafana Logs board; a read made just now is there without waiting a minute."""
+    ops.read_log.bump("market_series")
+    ops.log_call("uw", "GET api.test/x", dataset="options/uw", result="HTTP 200", ms=12.4)
+    body = client.get("/api/settings/requests?limit=5").get_json()
+    assert body["ok"] is True and body["keep"] == ops.REQUEST_LOG_KEEP and body["on"] is True and body["dropped"] == 0
+    mine = [(r["kind"], r["what"], r["result"], r["ms"]) for r in body["rows"]
+            if r["what"] in ("uw GET api.test/x", "market_series")]
+    assert mine == [("call", "uw GET api.test/x", "HTTP 200", 12), ("read", "market_series", None, None)]
+    assert all(r["time"].endswith("+00:00") for r in body["rows"])
+    times = [r["at"] for r in body["rows"]]
+    assert times == sorted(times, reverse=True)
+    assert len(client.get("/api/settings/requests?limit=1").get_json()["rows"]) == 1
+
+
+def test_the_requests_route_refuses_words_for_numbers(client):
+    got = client.get("/api/settings/requests?limit=abc")
+    assert got.status_code == 400 and got.get_json()["ok"] is False

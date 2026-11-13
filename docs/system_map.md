@@ -119,7 +119,7 @@ flowchart LR
         B_CLASS["Co-movement · Value Chain · Relatedness"]
         B_SCREEN["Sector Rotation · Asymmetric Growth · Swing Potential · Fundamentals"]
         B_OWN["SEC 13F · LEAPS"]
-        B_OPS["Settings / Data health · Logs"]
+        B_OPS["Settings · Logs"]
     end
 
     UW --> MKT & SCR & ERN & OWN & UNI

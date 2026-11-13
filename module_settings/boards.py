@@ -15,6 +15,7 @@ to grow a funnel it does not emit.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from RevenueChaser.core import board_settings
@@ -175,7 +176,7 @@ def _relatedness_settings() -> dict:
     rows = {f["key"]: f for f in board_settings.describe(rel_settings.BOARD)}
     w = rows["WRITER"]
     w["choices"] = [[slug, writers.WRITERS[slug].label, writers.missing_text(slug)] for slug in w["choices"]]
-    w["range"] = "EVREN has no fee; DeepSeek is paid (off-peak, 10 USD a night); Grok uses the SuperGrok allowance"
+    w["range"] = "EVREN has no fee; DeepSeek is paid (off-peak, $10 a night); Grok uses the SuperGrok allowance"
     m = rows["WRITER_MODEL"]
     m["choices"] = [[model, f"{slug} · {model}", None] for slug, wr in writers.WRITERS.items() for model in wr.models]
     m["range"] = "a model of the chosen writer"
@@ -204,6 +205,17 @@ def _json(*parts: str) -> Path:
 
 def _html(name: str) -> Path:
     return OUTPUT_DIR / f"{name}_latest.html"
+
+
+def _watchlists_latest() -> dict | None:
+    """Watch lists has no artifact: the lists themselves are the board (#786). The newest list write is its as-of,
+    and a store with no list yet reads as "not rendered", which is what the page should say."""
+    from RevenueChaser.module_watchlists import store as wl_store
+    rows = wl_store.lists()
+    if not rows:
+        return None
+    newest = max(float(r.get("updated_at") or 0.0) for r in rows)
+    return {"as_of": datetime.fromtimestamp(newest, tz=timezone.utc).isoformat() if newest else None}
 
 
 def _spx_latest() -> dict | None:
@@ -236,6 +248,12 @@ BOARD_INPUTS: list[dict] = [
            ["earnings_calendar", "job_runs", "news_events", "news_highlight"],
            lambda: _html("welcome"), price_basis="last stored closes, not live quotes",
            ops_tables=["watchlist_stock"]),
+    # Watch lists (#786) is avo's own typed data, not a board result: nothing recomputes it, there is no artifact
+    # and no Fetch. Its card accounts for the four tables of ``boards/watchlists.duckdb``; the numbers beside each
+    # symbol come from the rcdata needs the package declares (``module_watchlists/__init__.py`` READS).
+    _board("module_watchlists", "Watch lists",
+           ["wl_list", "wl_section", "wl_item", "wl_change"], _watchlists_latest,
+           price_basis="last stored closes through rcdata, not live quotes"),
     _board("module_news", "News", [], lambda: _html("news")),      # reads market.economic_event
     _board("module_earnings_radar", "Earnings Radar",
            ["earnings_calendar", "estimate_snapshots", "short_interest",
@@ -292,6 +310,8 @@ BOARD_INPUTS: list[dict] = [
     _board("module_sec_13f", "SEC 13F",
            ["sec13f_holdings", "sec13f_submissions", "sec13f_totals", "equity_universe"],
            lambda: _html("sec_13f")),
+    # The scan is switched off (issue 730), so no job writes these two tables any more; the card stays so
+    # the page still accounts for them instead of leaving them unclaimed.
     _board("module_leaps", "LEAPS",
            ["leaps_flow_prints", "leaps_cache"],
            lambda: _html("leaps"), ops_tables=["watchlist_stock"]),

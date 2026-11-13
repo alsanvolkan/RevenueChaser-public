@@ -189,17 +189,22 @@ class TestDashboardRoutes:
     def test_run_no_api_key(self, monkeypatch):
         c = self._client()
         monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
-        r = c.post("/run/module_leaps")  # Fetch = live UW scan -> gated on the key
+        r = c.post("/run/module_oipd")  # Fetch = live UW scan -> gated on the key
         assert r.status_code == 400
         data = r.get_json()
         assert data["ok"] is False
+        # The refusal must name the key, the file, and where to get one -- the old "UW API key not set."
+        # left the user with nothing to act on. Asserted on the LEAPS Fetch until #730 switched it off.
+        assert "UNUSUAL_WHALES_API_KEY" in data["error"]
+        assert ".env" in data["error"]
+        assert "https://unusualwhales.com/api" in data["error"]
 
     def test_run_returns_job_id(self, monkeypatch):
         import RevenueChaser.app.dashboard as d
         monkeypatch.setattr(d, "UWClient", lambda: _FakeUW())
         monkeypatch.setattr(d.jobs, "submit", lambda module, params: "stubjob")
         c = self._client()
-        r = c.post("/run/module_leaps")
+        r = c.post("/run/module_oipd")
         assert r.status_code == 202
         data = r.get_json()
         assert data["ok"] is True
@@ -667,71 +672,62 @@ class TestRefreshReadsStoreFetchReadsNetwork:
       - "Fetch" runs the live provider scan OVER THE NETWORK (requires the UW
         API key) and writes a fresh artifact.
 
-    These tests pin the split on the LEAPS board.
+    The split itself is pinned on Financials (``test_quick_refresh_*``) and on the screeners
+    (``test_screener_refresh_145.py``); the LEAPS board, which used to pin it here, has no measurement yet
+    (#730) and these tests now hold that nothing re-renders it.
     """
 
-    def test_leaps_refresh_renders_from_the_store_offline(self, rawstore_tmp_db,
-                                                          tmp_path, monkeypatch):
+    def test_the_leaps_tab_serves_the_no_data_page(self, rawstore_tmp_db, tmp_path, monkeypatch):
+        """Nothing in ``option_far_contract`` yet (#746): the no-data page. No key, no network, no accumulation wording."""
         from RevenueChaser.core import rawstore
         from RevenueChaser.module_leaps.engine import save_cache
         rawstore.save_watchlist({"AAPL"})
-        save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating",
-                            "score": 50, "as_of": "2026-09-01"})
-
-        # No artifact on disk -> the view must regenerate from the store.
-        import RevenueChaser.app.runners as rn
-        import RevenueChaser.module_leaps.report as lr
-        monkeypatch.setattr(rn, "OUTPUT_DIR", tmp_path)
-        monkeypatch.setattr(lr, "OUTPUT_DIR", tmp_path)
-        monkeypatch.setattr(rn, "LEAPS_LATEST", tmp_path / "leaps_latest.html")
-        monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())  # refresh must not need a key
+        save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating", "score": 50, "as_of": "2026-09-01"})
+        monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
 
         body = dashboard.app.test_client().get("/view/module_leaps").get_data(as_text=True)
-        assert "LEAPS ACCUMULATION RADAR" in body  # board rendered from seeded store data
-        assert "AAPL" in body
-        assert "No LEAPS data yet" not in body
-        # network is globally blocked (conftest) — reaching here proves refresh is offline
+        assert "No data yet" in body
+        assert "#746" in body
+        assert "ACCUMULATION RADAR" not in body.upper()   # the old board is never served
+        assert "AAPL" not in body                      # nor does a seeded footprint
 
-    def test_refresh_ignores_stale_artifact_on_any_store_backed_board(
-            self, rawstore_tmp_db, tmp_path, monkeypatch):
-        """Refresh is a general rule, not a Financials special case: on any
-        store-backed board, ?refresh=1 drops the cached html and recomputes from
-        .store even when a stale artifact already exists."""
-        from RevenueChaser.core import rawstore
-        from RevenueChaser.module_leaps.engine import save_cache
-        rawstore.save_watchlist({"AAPL"})
-        save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating",
-                            "score": 50, "as_of": "2026-09-01"})
-
+    def test_a_cached_leaps_artifact_is_never_served_again(self, rawstore_tmp_db, tmp_path, monkeypatch):
+        """An older build left ``leaps_latest.html`` in .cache/: the no-data page wins, on a Refresh too."""
         import RevenueChaser.app.runners as rn
-        import RevenueChaser.module_leaps.report as lr
         monkeypatch.setattr(rn, "OUTPUT_DIR", tmp_path)
-        monkeypatch.setattr(lr, "OUTPUT_DIR", tmp_path)
         monkeypatch.setattr(rn, "LEAPS_LATEST", tmp_path / "leaps_latest.html")
+        (tmp_path / "leaps_latest.html").write_text("<h1>LEAPS ACCUMULATION RADAR</h1>", encoding="utf-8")
         monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
 
-        # Stale artifact for a DIFFERENT state than the store holds.
-        (tmp_path / "leaps_latest.html").write_text("<h1>STALE board</h1>", encoding="utf-8")
+        c = dashboard.app.test_client()
+        for url in ("/view/module_leaps", "/view/module_leaps?refresh=1"):
+            body = c.get(url).get_data(as_text=True)
+            assert "No data yet" in body, url
+            assert "ACCUMULATION RADAR" not in body, url
+        # The board serves no artifact, so it has no payload either.
+        assert c.get("/view/module_leaps/payload.json").status_code == 404
 
-        body = dashboard.app.test_client().get("/view/module_leaps?refresh=1").get_data(as_text=True)
-        assert "LEAPS ACCUMULATION RADAR" in body       # recomputed from the store
-        assert "AAPL" in body
-        assert "STALE board" not in body                # cached html was ignored
-        fresh = (tmp_path / "leaps_latest.html").read_text(encoding="utf-8")
-        assert "STALE board" not in fresh               # artifact overwritten too
+    def test_the_tab_stays_in_the_nav_under_its_own_name(self):
+        """avo 12 Nov 2026: the board stays, so the tab is a plain LEAPS entry, not an "(off)" one (#730)."""
+        entry = next(t for t in dashboard.TABS if t.get("key") == "module_leaps")
+        assert entry["label"] == "LEAPS"
+        assert "module_leaps" not in dashboard._MODEL_ONLY_RENDERERS
+        assert "module_leaps" not in dashboard._STORE_REFRESHABLE
 
-    def test_leaps_fetch_is_gated_on_the_api_key(self, monkeypatch):
-        # "Fetch" is a live UW scan -> without a key it is refused before any network
-        monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
+    def test_leaps_fetch_is_switched_off(self, monkeypatch):
+        """The LEAPS scan is off (#730): the route refuses with a reason and probes no key."""
+        monkeypatch.setattr(dashboard, "UWClient",
+                            lambda: pytest.fail("a switched-off board must not reach the provider"))
         r = panel_test_client(dashboard.app).post("/run/module_leaps")
-        assert r.status_code == 400
-        assert r.get_json()["ok"] is False
-        # The refusal must name the key, the file, and where to get one — the
-        # old "UW API key not set." left the user with nothing to act on.
-        error = r.get_json()["error"]
-        assert "UNUSUAL_WHALES_API_KEY" in error
-        assert ".env" in error
-        assert "https://unusualwhales.com/api" in error
+        assert r.status_code == 409
+        body = r.get_json()
+        assert body["ok"] is False
+        assert "switched off" in body["error"] and "#730" in body["error"]
+
+    def test_the_leaps_job_is_not_registered(self):
+        """No runner, so no Fetch button, no scheduled call and no script can start a scan (#730)."""
+        from RevenueChaser.app import jobs
+        assert "module_leaps" not in jobs._RUNNERS
 
     def test_financials_refresh_renders_from_the_store_offline(self, rawstore_tmp_db,
                                                                tmp_path, monkeypatch):
@@ -1261,7 +1257,7 @@ class TestSettingsDataHealthBoard:
         r = self._client().get("/view/module_settings")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
-        assert "Settings / Data health" in body
+        assert "Settings" in body
         assert "equity_universe" in body
 
     def test_refresh_rerenders_from_store_without_network(
@@ -1280,7 +1276,7 @@ class TestSettingsDataHealthBoard:
         r = self._client().get("/view/module_settings?refresh=1")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
-        assert "Settings / Data health" in body
+        assert "Settings" in body
         assert "equity_universe" in body
         assert runners.SETTINGS_LATEST.exists()
 

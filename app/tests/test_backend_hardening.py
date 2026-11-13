@@ -253,7 +253,7 @@ class TestLanesAndCancel:
     def test_long_jobs_use_the_long_lane(self):
         for m in ("module_sec_13f", "universe", "edgar_sync"):
             assert jobs._LANE.get(m) == "long", m
-        assert jobs._LANE.get("module_leaps") == "short"
+        assert jobs._LANE.get("module_oipd") == "short"
 
     def test_a_long_job_does_not_block_a_short_one(self, monkeypatch):
         import queue, time

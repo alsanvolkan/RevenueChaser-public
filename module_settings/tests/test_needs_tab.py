@@ -196,9 +196,10 @@ def test_the_page_has_the_tab_strip_and_both_panels_and_stays_inert():
     data = html[html.index('id="panel-data"'):html.index('id="panel-health"')]
     assert 'id="sec-flow"' in data and 'id="sec-health"' not in data
     assert 'id="old-settings"' not in html and "oldfold" not in html
-    health = html[html.index('id="panel-health"'):]
-    for part in ("needs-catalog", "needs-log", "needs-routes"):
-        assert f'id="{part}"' in health, part
+    # #715: the catalog and the routes are folded under the Database board; the request log is the Logs tab's board
+    for part in ("needs-catalog", "needs-routes"):
+        assert f'id="{part}"' in data, part
+    assert 'id="needs-log"' not in html and 'id="needs-catalog"' not in html[html.index('id="panel-health"'):]
 
 
 def test_the_pages_scripts_parse_with_the_tab_switch(tmp_path):
@@ -215,7 +216,7 @@ def test_the_page_still_renders_when_the_tab_cannot_be_built(monkeypatch):
     monkeypatch.setattr(needs_tab, "build", lambda **kw: (_ for _ in ()).throw(RuntimeError("catalog import")))
     html = report.render_settings_dashboard({"newdata": control_nd()})
     assert "The Needs tab could not be read" in html and "RuntimeError: catalog import" in html
-    assert 'id="sec-health"' in html
+    assert 'id="sec-flow"' in html and 'id="sec-universe"' in html
 
 
 # ── Phone and theme ────────────────────────────────────────────────────────────────────────────────────────────
@@ -226,20 +227,25 @@ def _tokens(css: str, selector_start: str) -> dict[str, str]:
     return dict(re.findall(r"(--[\w-]+):\s*([^;]+);", block))
 
 
-def test_the_tokens_are_the_control_boards_in_light_and_dark():
+def test_the_tokens_are_the_control_boards_and_both_are_names_of_the_shared_theme():
+    """Theme D (avo, 12 Nov 2026: "Yeni design principlelarini burada da uygula"): the tab strip, the Needs tab and
+    the control board carry no palette of their own. Their short names are aliases of the shared tokens, so light and
+    dark come from ``THEME_CSS`` alone."""
+    from RevenueChaser.core.reporting_common import THEME_SCALE, THEME_TOKENS
     from RevenueChaser.module_settings import control_render
     ctl, nds = control_render.CTL_CSS, needs_tab.NEEDS_CSS
-    light_c, light_n = _tokens(ctl, ".ctl{"), _tokens(nds, "#needs,#settings-tabs{")
-    dark_c = _tokens(ctl, ':root[data-theme="dark"] .ctl{')
-    dark_n = _tokens(nds, ':root[data-theme="dark"] #needs')
-    auto_n = _tokens(nds, ':root:not([data-theme="light"]) #needs')
-    assert light_n and dark_n
-    for k, v in light_n.items():
-        assert light_c[k].strip() == v.strip(), k
-    for k, v in dark_n.items():
-        assert dark_c[k].strip() == v.strip(), k
-    assert auto_n == dark_n, "the auto-dark block and the forced-dark block say the same"
-    assert "@media (prefers-color-scheme: dark)" in nds
+    names_c, names_n = _tokens(ctl, ".ctl{"), _tokens(nds, "#needs,#settings-tabs{")
+    assert names_n
+    shared = set(THEME_TOKENS["dark"]) | set(THEME_SCALE)
+    assert set(THEME_TOKENS["dark"]) == set(THEME_TOKENS["light"])
+    for k, v in names_n.items():
+        assert names_c[k].strip() == v.strip(), k
+        if k != "--f-mono":
+            m = re.fullmatch(r"var\(--([\w-]+)\)", v.strip())
+            assert m and m.group(1) in shared, f"{k} is not a shared theme name: {v}"
+    for own in ("--bg", "--card", "--fg"):
+        assert own not in names_c and own not in names_n, f"{own} comes from the shared theme, not from this page"
+    assert "data-theme" not in nds and "prefers-color-scheme" not in nds
 
 
 def test_phone_rules_44px_tabs_and_tables_stack_under_600px():
@@ -271,8 +277,8 @@ def test_the_board_fixture_carries_the_hostile_payload_into_the_needs_tab(tmp_pa
     from RevenueChaser.core.tests.board_fixtures import BOARDS
     html = BOARDS["module_settings"].render(tmp_path, monkeypatch)
     assert_inert(html)
-    needs = html[html.index('<div id="panel-health" role="tabpanel"'):]
-    for tag in ("need", "table", "dataset", "declared", "planned", "error", "process", "ask_param",
+    needs = html[html.index('id="database-more"'):html.index('<div id="panel-health" role="tabpanel"')]
+    for tag in ("need", "table", "dataset", "declared", "planned", "error", "ask_param",
                 "route_path", "route_what", "route_example", "readers_error"):
         assert f"&lt;img src=x onerror=__x(&#x27;{tag}T&#x27;)" in needs, tag
 

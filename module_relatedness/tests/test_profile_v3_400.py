@@ -31,8 +31,9 @@ def test_parse_normalises_every_field():
     assert seg[0]["products"] == ["gpu", "networking"] and seg[0]["end_markets"] == ["data center"]
     assert [c["name"] for c in p["customers"]] == ["Foxconn Inc.", "Dell Technologies"]   # Foxconn once
     assert p["customers"][0] == {"name": "Foxconn Inc.", "type": "oem", "quote": "Customer A, Foxconn ...",
-                                 "share": 0.12}
-    assert p["suppliers"] == [{"name": "TSMC", "type": "foundry", "quote": "We rely on TSMC."}]
+                                 "parent": "", "public": None, "share": 0.12}
+    assert p["suppliers"] == [{"name": "TSMC", "type": "foundry", "quote": "We rely on TSMC.",
+                               "parent": "", "public": None}]
     assert p["named_competitors"] == ["AMD", "Intel Corporation"]
     assert (p["business_model"], p["channel"], p["geography"], p["stage"]) == ("product", "mixed", "global", "mature")
     assert len(p["keywords"]) == v3.MAX_KEYWORDS == 15
@@ -74,7 +75,7 @@ def test_attributes_feed_the_board_fields():
 
 
 def test_prompt_carries_version_context_and_part():
-    assert v3.system_prompt().endswith("Prompt version: v3b.")
+    assert v3.system_prompt().endswith("Prompt version: v3c.")
     user = v3.build_user("NVIDIA Corp", "TEXT", {"sic": "3674", "sector": "Technology", "industry": "Semis",
                                                  "segment_note": "Compute 78%", "candidates": ["Dell", "HP"]},
                          part=(1, 3))
@@ -87,3 +88,19 @@ def test_prompt_carries_version_context_and_part():
 def test_a_quote_is_capped():
     p = v3.parse(json.dumps({"customers": [{"name": "Dell", "quote": "x" * 2000}]}))
     assert len(p["customers"][0]["quote"]) == v3.MAX_QUOTE == 300
+
+
+def test_parent_and_public_are_parsed_and_never_guessed():      # v3c, #717
+    reply = {**REPLY, "customers": [
+        {"name": "AWS", "quote": "q", "parent": "Amazon.com, Inc.", "public": False},
+        {"name": "Acme", "quote": "q", "public": "yes"},            # not a boolean: no answer
+        {"name": "Beta", "quote": "q"},                             # silent filing: no answer
+    ]}
+    got = {c["name"]: (c["parent"], c["public"]) for c in v3.parse(json.dumps(reply))["customers"]}
+    assert got["AWS"] == ("Amazon.com, Inc.", False)
+    assert got["Acme"] == ("", None) and got["Beta"] == ("", None)
+
+
+def test_the_prompt_tells_the_writer_not_to_guess_them():       # v3c, #717
+    assert "parent is the larger company the text says this party belongs to" in v3.SYSTEM
+    assert "Never guess parent or public" in v3.SYSTEM
