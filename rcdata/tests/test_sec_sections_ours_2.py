@@ -621,7 +621,9 @@ def test_every_branch_of_every_stop_list_reads_the_spaced_word_and_is_still_ther
         pattern = sec_sections.STOP_PATTERNS_2[form]
         assert pattern.count(spaced_item) == branches, form
         assert "item" not in pattern.replace(spaced_item, ""), f"{form}: a branch kept the literal word"
-    assert "1a" in sec_sections.STOP_PATTERNS_2["10-K"] and "1b" in sec_sections.STOP_PATTERNS_2["10-K"]
+    # the letter may stand apart from the number on the same line ("Item 1 A.", Tempus AI, #820)
+    assert r"1[^\S\n]?a" in sec_sections.STOP_PATTERNS_2["10-K"]
+    assert r"1[^\S\n]?b" in sec_sections.STOP_PATTERNS_2["10-K"]
     assert "4a" in sec_sections.STOP_PATTERNS_2["20-F"]
 
 
@@ -1148,22 +1150,21 @@ def test_the_citation_rule_is_asked_of_the_number_and_not_of_the_end_of_the_matc
 
 
 def test_a_quoted_section_name_after_the_title_is_not_read_as_a_citation():
-    """The one citation style measured in the review of a7e95d92 that ``ours-2`` still reads as a heading, kept
-    here as a row rather than as prose: ``Item 1A. Risk Factors, and the section "Forward-Looking Statements"
-    below.`` The title is exactly where a heading's title goes and the quotation marks are around something
-    else, so neither the number's neighbourhood nor the quoted run says citation.
-
-    ``ours-1`` answers 26,099 here and ``ours-2`` 13,024, which is the only shape in this file where the board
-    is right and this version is not. A combined heading -- ``Item 1A. Risk Factors, and Item 1B. Unresolved
-    Staff Comments`` -- is the same shape with the opposite answer, and the words after the comma are all there
-    is to tell them apart, so the measurement belongs to the hand-checked set (#763) and not to a built string.
+    """``Item 1A. Risk Factors, and the section "Forward-Looking Statements" below.`` The title is exactly where a
+    heading's title goes and the quotation marks are around something else, so neither the number's
+    neighbourhood nor the quoted run says citation. This row used to pin that as the cost: ``ours-2`` cut 13,024
+    where ``ours-1`` gives 26,099. #820's part test now reads "in Part I," with its comma as a reference to Item
+    1A's own part, so this spelling is a citation; the same line without the part is still the cost.
     """
     text = ("Item 1. Business\n" + _H + " as discussed in Part I,\nItem 1A. Risk Factors, and the section "
             "“Forward-Looking Statements” below. " + _H + "\nItem 1A. Risk Factors\n" + "Risky. " * 400)
     old = sec_sections.cut_item(text, "10-K", version=OURS_1)
     new = sec_sections.cut_item(text, "10-K", version=OURS_2)
-    assert new[1] == "ok" and len(new[0]) < 20_000, "the citation ends the slice, which is the cost"
+    assert new[1] == "ok" and len(new[0]) > 20_000 and "Risky." not in new[0]
     assert len(old[0]) > 20_000, "and the board does read it as a citation"
+    without_part = text.replace(" as discussed in Part I,\n", " as discussed below.\n")
+    cost = sec_sections.cut_item(without_part, "10-K", version=OURS_2)
+    assert cost[1] == "ok" and len(cost[0]) < 20_000, "without the part, the citation still ends the slice"
 
 
 @pytest.mark.parametrize("name,text", [
@@ -1283,3 +1284,25 @@ def test_a_20_f_is_not_read_with_a_10_k_s_parts():
             "Item 5. Operating and Financial Review and Prospects\n" + "Results. " * 400)
     item, quality = sec_sections.cut_item(text, "20-F", version=OURS_2)
     assert "Results." not in item
+
+
+def test_xtl_a_quoted_mention_of_the_start_is_not_the_start_on_the_pattern_path():
+    """With mention stops skipped, a start at '“Item 4. Information on the Company,” “Item 5. ...”' no longer ended
+    at once and was passed over: it ran to the real stop and won (XTL 20-F, full-disk check). Mention starts are
+    skipped by the same words-before test."""
+    text = ("as described in “Item 3. Key Information—D. Risk Factors,” “Item 4. Information on the Company,” “Item 5."
+            " Operating and Financial Review and Prospects” and elsewhere. " + BODY[:3000]
+            + " A. ITEM 4. INFORMATION ON THE COMPANY A. History and Development. " + BODY[:3000]
+            + " ITEM 4A. UNRESOLVED STAFF COMMENTS None. ITEM 5. OPERATING " + "Results. " * 400)
+    item, quality = sec_sections.cut_item(text, "20-F", version=OURS_2)
+    assert quality == "ok" and item.startswith("A. History and Development")
+
+
+def test_a_bank_s_qualified_by_mention_does_not_end_item_1():
+    """First Hawaiian, Cullen/Frost, Valley and Park National open Item 1 with "The disclosures set forth in this
+    item are qualified by Item 1A. Risk Factors and the section captioned ..." on the pattern path."""
+    text = ("PART I ITEM 1. BUSINESS The disclosures set forth in this item are qualified by Item 1A. Risk Factors and"
+            " the section captioned “Forward-Looking Statements” of this report. " + BODY[:3000]
+            + " ITEM 1A. RISK FACTORS " + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.endswith(BODY[:3000].strip())

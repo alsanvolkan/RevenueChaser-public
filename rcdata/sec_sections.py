@@ -334,10 +334,17 @@ def _part_ref(text: str, m: re.Match, before: str, key: str = "10-K") -> bool:
     return p.group(2).lower() != "i" or p.group(1).lower() != "in" or p.group(3) == ","
 
 
+#: Two more reference words, read on the pattern path only: "The disclosures set forth in this item are qualified
+#: by Item 1A. Risk Factors" (First Hawaiian, Cullen/Frost, Valley, Park National) and 'please read "Item 4 –
+#: Information on the Company' (Teekay) -- 13 Nov 2026 full-disk check.
+_BY_BEFORE = re.compile(r"(?i)\b(?:by|read)[^\S\n]*[“\"‘]?[^\S\n]*$")
+
+
 def _words_before_ref(text: str, m: re.Match, key: str = "10-K") -> bool:
     """True when a reference word, an opening quote or the item's own part comes right before ``m`` mid-line."""
     before = text[max(0, m.start() - 40):m.start()].rstrip()
-    return _starts_mid_line(text, m) and (bool(_REF_BEFORE.search(before)) or _part_ref(text, m, before, key))
+    return _starts_mid_line(text, m) and (bool(_REF_BEFORE.search(before) or _BY_BEFORE.search(before))
+                                          or _part_ref(text, m, before, key))
 
 
 def _inline_ref(text: str, m: re.Match, key: str = "10-K") -> bool:
@@ -669,6 +676,11 @@ def _slice_item_ours_2(text: str, form: str = "10-K") -> tuple[str | None, str]:
     best: str | None = None
     closed = False
     for start_m in start_re.finditer(text):
+        # Nor a start: with mention stops skipped, a start at a quoted mention ("“Item 4. Information on the
+        # Company,” “Item 5. ...”") no longer ends at once and is passed over; it runs to the real stop and wins
+        # (XTL, Frontline and Teekay 20-Fs, 13 Nov 2026 full-disk check).
+        if _words_before_ref(text, start_m, key):
+            continue
         # A mention is no stop here either: Cheniere's "described in Item 1A. Risk Factors ." and U.S.
         # GoldMining's 'See\n“ Item 2. Properties” for further information' each ended Item 1 at a few
         # thousand characters (13 Nov 2026 real-filing check).
