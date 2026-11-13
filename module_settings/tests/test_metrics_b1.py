@@ -399,12 +399,14 @@ def test_the_board_head_says_when_fetch_and_backup_were_last_done(monkeypatch):
     assert metrics.board_head(NOW, ibkr=lambda: None)["last"] == {"fetch": None, "backup": None}
 
 
-def test_the_grafana_link_has_no_row_of_its_own():
-    """avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": it lies on the frame's first row, left of Grafana's
-    pickers, and stays a 44 px target."""
+def test_the_grafana_link_sits_under_the_frame():
+    """avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": no row above the frame. It is not laid over the
+    frame either: the frame scrolls inside itself, so an overlay ends up printed on the rows scrolling under it
+    (avo's phone, 13 Nov 2026). It is a line after the frame, and stays a 44 px target."""
     from RevenueChaser.module_settings import report
-    assert ".live-board{position:relative}" in report.LIVE_CSS
-    assert ".live-board .livebar{position:absolute;top:11px;left:16px;z-index:1}" in report.LIVE_CSS
+    assert "position:absolute" not in report.LIVE_CSS
+    board = report._live_board("panel-health")
+    assert board.index("<iframe") < board.index('class="livebar"')
     assert "min-height:44px" in report.LIVE_CSS.split(".live-board .livebar a{")[1].split("}")[0]
     assert "margin:12px auto 8px" not in report.LIVE_CSS
 

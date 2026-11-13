@@ -2959,12 +2959,12 @@ def _tab_strip() -> str:
 LIVE_BOARDS = (("panel-health", "rc-health", "live-frame", "Fetch controls and data health (Grafana)"),
                ("panel-logs", "rc-logs", "logs-frame", "Job run logs (Grafana)"))
 LIVE_CSS = """
-/* avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": the link has no row of its own. It lies on the frame's
-   own first row, in the room left of Grafana's time and refresh pickers (they hug the right edge). */
-.live-board{position:relative}
-.live-board .livebar{position:absolute;top:11px;left:16px;z-index:1}
+/* avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": the link has no row above the frame. It first lay on
+   the frame's own first row, but the frame scrolls inside itself, so the link ended up printed over whatever row
+   had scrolled under it (avo's phone, 13 Nov 2026). It is now a short line under the frame, where nothing scrolls. */
+.live-board .livebar{display:flex;justify-content:flex-end;padding:0 16px}
 .live-board .livebar a{color:var(--mut,inherit);font-size:13px;min-height:44px;display:inline-flex;align-items:center}
-.live-board iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
+.live-board iframe{display:block;width:100%;height:calc(100vh - 184px);min-height:560px;border:0;
   background:var(--bg,transparent)}
 """
 
@@ -2972,9 +2972,9 @@ LIVE_CSS = """
 def _live_board(panel: str) -> str:
     """The Grafana frame of one tab; it has no address until its tab opens (``LIVE_JS``)."""
     uid, frame, title = next((u, f, t) for p, u, f, t in LIVE_BOARDS if p == panel)
-    return (f'<div class="live-board" data-board="{uid}"><div class="livebar">'
-            '<a class="live-open" target="_blank" rel="noopener">Open in Grafana</a></div>'
-            f'<iframe id="{frame}" title="{title}" loading="lazy"></iframe></div>')
+    return (f'<div class="live-board" data-board="{uid}">'
+            f'<iframe id="{frame}" title="{title}" loading="lazy"></iframe><div class="livebar">'
+            '<a class="live-open" target="_blank" rel="noopener">Open in Grafana</a></div></div>')
 
 
 LIVE_JS = """
