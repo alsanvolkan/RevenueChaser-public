@@ -171,8 +171,9 @@ def test_relatedness_plans_the_universe_and_the_fundamentals_needs_it_reads():
     entry now instead of none, and the control board draws its lines. #400: the v3 profile's segment note reads
     ``read.segments`` too, the B input (WP6) ``read.customers``, and the prompt's name, sector and industry
     ``read.identity`` (10 Nov 2026). #642: its run's ETF scan calls ``read.etf_holding_tickers``."""
-    want = ("identity.universe", "identity.security", "identity.etf_holdings", "fundamentals.companies", "fundamentals.filings",
-            "fundamentals.segments", "fundamentals.customers")
+    # #841: the filing texts come from the SEC form reader (``read.form_business`` / ``form_whole`` / ``form_notes``).
+    want = ("identity.universe", "identity.security", "identity.etf_holdings", "fundamentals.companies",
+            "fundamentals.segments", "fundamentals.customers", "sec.business", "sec.whole", "sec.note")
     assert boards.PLANNED_READS["module_relatedness"] == want
     assert boards.reads_of("module_relatedness") == {"declared": False, "needs": want}
 
@@ -235,7 +236,8 @@ def test_a_needs_own_reader_is_covered_only_by_that_need_not_by_a_sibling_over_i
 def test_the_call_scan_sees_the_real_boards_reads_so_an_empty_scan_cannot_pass():
     """The review's 2: a scan that found nothing would make the board-wide test pass on every board."""
     assert {"changed_at", "bar_facts", "ticker_bars"} <= set(boards.read_calls("module_comovement"))
-    assert {"fundamental_companies", "filing_texts"} <= set(boards.read_calls("module_relatedness"))
+    assert {"fundamental_companies", "form_business", "form_whole", "form_notes"} <= set(
+        boards.read_calls("module_relatedness"))
 
 
 def test_every_board_not_migrated_yet_plans_every_need_its_code_reads():

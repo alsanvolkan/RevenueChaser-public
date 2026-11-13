@@ -176,9 +176,8 @@ def test_a_long_crossref_body_is_still_not_profiled_from(rawstore_tmp_db, monkey
     inp = engine._filing_input("SNN")
     assert inp["fallback"] not in engine.FALLBACKS and inp["locate"] is None
 
-
-def test_a_suspect_ok_cut_still_asks_the_locator(rawstore_tmp_db, monkeypatch):
-    """#835: the form reader's row carries the flag, and the flag keeps its meaning here."""
+    # The guard that a suspect ``ok`` cut (#835: the form reader's row carries the flag) still asks the locator
+    # lives here, not in a test of its own: on the merge-base it passes, so alone it would prove nothing.
     _seed("NVDA", long_body("We design gpus"), "ok;suspect:S4")
     monkeypatch.setattr(engine, "_whole_document", lambda t: {"text": WHOLE, "source": None})
     inp = engine._filing_input("NVDA")
