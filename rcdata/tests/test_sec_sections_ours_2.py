@@ -1246,10 +1246,18 @@ def test_cheniere_items_1_and_2_with_a_full_stop_after_the_first_number_is_a_lin
     assert "these rigorous" in item and item.endswith(BODY[:3000].strip())
 
 
-def test_mcdonalds_an_item_whose_body_is_a_page_number_is_a_pointer():
-    """McDonald's files in its own layout with a cross-reference index at the end: "Item 1 Business Page 3". There
-    is no prose to find, so the answer is ``pointer`` and not ``short``."""
-    text = (BODY + "\nCross-Reference Index Page reference\nPart I\nItem 1 Business\nPage 3\n"
-            "Item 1A Risk Factors\nPage 27\n")
-    assert sec_sections.cut_item(text, "10-K", version=OURS_2) == ("Page 3", "pointer")
-    assert sec_sections.cut_item(text, "10-K", version=OURS_1)[1] == "short"
+def test_a_mention_of_another_part_right_before_a_real_heading_does_not_hide_it():
+    """The other side of Cal-Maine (Fable review): "... is set forth in Part III." ends a sentence about Part III,
+    and the Item 1A heading on the next line is real. A part is a reference only when the item belongs to it."""
+    text = ("Item 1. Business\n" + BODY + "\nInformation about our executive officers is set forth in Part III.\n"
+            "Item 1A. Risk Factors\n" + "Risky. " * 3000 + "\nItem 1B. Unresolved Staff Comments\nNone.\n")
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and "Risky." not in item
+
+
+def test_a_tag_split_title_of_item_1_is_not_item_1b():
+    """Fable review: "Item 1 B usiness" is Item 1's own title split by a tag; only "1 B." / "1 B:" / "1 B—" is 1B."""
+    text = ("Item 1. Business\n" + BODY + "\nItem 1 B usiness (continued)\n" + BODY[:3000]
+            + "\nItem 1A. Risk Factors\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and "(continued)" in item and "Risky." not in item
