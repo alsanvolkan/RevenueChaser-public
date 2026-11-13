@@ -49,7 +49,8 @@ base = _rule.base
 #: which is ``ours-1``'s set; a caller that STORES the label calls :data:`cut_flag` with its own
 #: :data:`VERSION` instead, so that bumping ``VERSION`` moves the flagger with the cut (#835).
 flag = _rule.flag
-#: ``quality`` with the flags the named version defines (#835).
+#: ``quality`` with the flags the named version defines for the cutter that made the text: pass ``aif=True``
+#: for a block of :data:`aif_business`, because the two sets differ (#835, #838).
 cut_flag = _rule.cut_flag
 #: Crude HTML -> text (scripts/styles dropped, entities unescaped).
 strip_html = _rule.strip_html

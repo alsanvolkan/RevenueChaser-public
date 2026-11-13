@@ -1479,8 +1479,8 @@ def test_ours_2_still_raises_the_signals_it_defines():
 def test_the_signal_sets_are_the_versions_own_and_s6_s8_are_ours_1_only():
     """The sets are declared, not inferred: ``ours-1`` keeps every signal (so every existing caller of ``flag``
     is unchanged), and ``ours-2`` drops exactly S6 and S8."""
-    assert sec_sections.rule(OURS_1).signals == sec_sections.SIGNALS_OURS_1
-    assert sec_sections.rule(OURS_2).signals == sec_sections.SIGNALS_OURS_2
+    assert sec_sections.rule(OURS_1).item_signals == sec_sections.SIGNALS_OURS_1
+    assert sec_sections.rule(OURS_2).item_signals == sec_sections.SIGNALS_OURS_2
     assert set(sec_sections.SIGNALS_OURS_1) - set(sec_sections.SIGNALS_OURS_2) == {"S6", "S8"}
 
 
@@ -1499,3 +1499,68 @@ def test_cut_flag_defaults_to_ours_1_and_equals_bare_flag_there(name):
     flagged = sec_sections.flag(quality, text, item, form)
     assert flagged.startswith("ok;suspect:"), flagged
     assert sec_sections.cut_flag(quality, text, item, form) == flagged
+
+
+# ── the AIF cutter's own signal set (#838) ──────────────────────────────────────────────────────────────────────
+#
+# A version has two cutters and #835 gave it one signal set, so the ``sec_forms`` layer asked a 40-F's Annual
+# Information Form the questions it asks a 10-K's Item 1. S3 (does the slice carry ``competition``, ``human
+# capital``, ``employees`` or ``available information``) and S6 (does it hold a line-start item number other than
+# Item 1) are item-shaped; NI 51-102 Form 51-102F2 asks an AIF for none of them. ``flag`` trips on ``S2 and S3``
+# and S2 -- a small share of a big document -- is what the AIF of a long 40-F is by construction, so a correct
+# AIF read ``ok;suspect:S2,S3``. ``module_relatedness.locator.asks`` fires on any ``;suspect``, so that sent a
+# correct business row to the writer model: a paid call per 40-F on a board running a paid provider.
+#
+# The case below is the shape measured during the #837 review: a 40-F past the 150,000-character S2 threshold
+# whose AIF business block is about 2.5% of it and carries no US heading. It is built, not a stored filing,
+# because the suite is offline; the rate on the real documents is in the PR report.
+
+#: An AIF business block just over :data:`sec_sections._BODY_MIN` (4,000) and over ``MIN_ITEM_CHARS``, so the cut
+#: is a real ``ok`` one and S1 stays quiet. No 10-K heading in it, which is the whole point: an AIF has none.
+_AIF_BODY = "We make widgets and sell them to customers worldwide. " * 80
+#: Filler that is neither an AIF title nor a 10-K heading, one sentence per line and no page numbers, so the
+#: contents-entry check does not read it as a table of contents.
+_40F_FILLER = "The registrant files this annual report with the Commission.\n" * 1_300
+#: The long 40-F: the AIF block sits between the two halves of the filler, so S5 reads ordinary prose in front
+#: of it and S2's "small share of a big document" is true -- which is what an AIF of a long 40-F always is.
+_LONG_40F = (_40F_FILLER + "annual information form\nGENERAL DEVELOPMENT OF THE BUSINESS\n"
+             + _AIF_BODY + "\nRISK FACTORS\nWe face risks.\n" + _40F_FILLER)
+
+
+@pytest.mark.parametrize("version", [OURS_1, OURS_2])
+def test_a_correct_aif_of_a_long_40_f_is_not_suspect(version):
+    """The bug and the fix in one case, for both versions, because ``ours-1`` is what ``sec_forms`` stores with
+    today: asked with the ITEM set the block is ``ok;suspect:S2,S3``, asked with its own cutter's set it is a
+    bare ``ok``. The cut is the same text either way -- only the label moves."""
+    aif = sec_sections.cut_aif_business(_LONG_40F, version=version)
+    assert aif is not None and len(aif) >= sec_sections.MIN_ITEM_CHARS
+    assert len(_LONG_40F) > 150_000 and len(aif) < 0.03 * len(_LONG_40F), "the case must reach S2"
+
+    assert sec_sections.cut_flag("ok", _LONG_40F, aif, "40-F", version=version, aif=True) == "ok"
+    # What the layer asked before #838, and still asks for an item cut: the two item-shaped signals fire.
+    item_set = sec_sections.cut_flag("ok", _LONG_40F, aif, "40-F", version=version)
+    assert item_set == "ok;suspect:S2,S3", item_set
+
+
+@pytest.mark.parametrize("version", [OURS_1, OURS_2])
+def test_the_aif_set_still_raises_the_signals_that_read_the_text(version):
+    """Dropping S3 and S6 is not switching the flag off: a block that ends mid cross-reference is still
+    ``ok;suspect:S4`` on the AIF path, and S2 rides along as context rather than as the reason."""
+    text = _LONG_40F.replace("\nRISK FACTORS\n", " For a description of our mines, see\nRISK FACTORS\n", 1)
+    aif = sec_sections.cut_aif_business(text, version=version)
+    assert aif is not None
+    flagged = sec_sections.cut_flag("ok", text, aif, "40-F", version=version, aif=True)
+    assert flagged.startswith("ok;suspect:") and "S4" in flagged, flagged
+    assert "S3" not in flagged and "S6" not in flagged, flagged
+
+
+def test_the_aif_sets_are_the_versions_own_and_drop_exactly_the_item_shaped_signals():
+    """Declared, like the item sets: each version's AIF set is its item set without S3 and S6, and ``ours-1``
+    keeps S8 because its AIF block caps while ``ours-2``'s does not."""
+    assert sec_sections.rule(OURS_1).aif_signals == sec_sections.AIF_SIGNALS_OURS_1
+    assert sec_sections.rule(OURS_2).aif_signals == sec_sections.AIF_SIGNALS_OURS_2
+    for item_set, aif_set in ((sec_sections.SIGNALS_OURS_1, sec_sections.AIF_SIGNALS_OURS_1),
+                              (sec_sections.SIGNALS_OURS_2, sec_sections.AIF_SIGNALS_OURS_2)):
+        assert set(item_set) - set(aif_set) == {"S3", "S6"} & set(item_set)
+        assert not set(aif_set) - set(item_set), "the AIF set adds no signal of its own"
+    assert "S8" in sec_sections.AIF_SIGNALS_OURS_1 and "S8" not in sec_sections.AIF_SIGNALS_OURS_2

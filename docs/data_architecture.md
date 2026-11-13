@@ -1987,10 +1987,13 @@ one folder, two Parquet files (`sections.parquet`, `notes.parquet`) per `cik=<ci
   `rules_version`, and the provenance `source_as_of`, `fetched_at`, `run_id`.
   A `business` row's `quality` may carry suspect flags after the label — `ok;suspect:S2,S4` — so **read it
   through `sec_sections.base()`, never by comparing the whole string** (#835). The flags are the ones the row's
-  `rules_version` defines (`sec_sections.Rule.signals`). One caveat: the flags were added to this table while
-  `ours-1` kept its name, and the layer re-cuts a company only when its documents change or the version string
-  moves, so `ours-1` rows written before that change carry no flags and are indistinguishable from unflagged
-  ones. The population becomes uniform when `SECTIONS_VERSION` next moves and re-cuts everything. `document` is in the key because one
+  `rules_version` defines for the cutter that made the row: `sec_sections.Rule.item_signals` for a `header`
+  row, `Rule.aif_signals` for an `aif` one. The two are not the same list — S3 and S6 ask a 10-K item question
+  that an Annual Information Form has no answer to, so a correctly cut AIF read `ok;suspect:S2,S3` until #838
+  split them. Two caveats, both of the same shape: the flags were added to this table while `ours-1` kept its
+  name, and #838 changed `ours-1`'s AIF set under the same name, and the layer re-cuts a company only when its
+  documents change or the version string moves — so `ours-1` rows written before those changes carry no flags,
+  or the item set's answer for an AIF, and are indistinguishable from rows written after. The population becomes uniform when `SECTIONS_VERSION` next moves and re-cuts everything. `document` is in the key because one
   accession can hold more than one document this cuts: a 40-F's AIF exhibit is a second one.
 - `filing_note` — one row per (filing, document, text block), from the filer's own inline-XBRL text blocks
   (`rcdata/sec_notes.py`): `concept` as filed, `taxonomy`, `local_name`, `kind` (`disclosure`, `table`, `policy`),

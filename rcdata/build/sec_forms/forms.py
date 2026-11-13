@@ -126,15 +126,19 @@ def _span(whole: str, part: str) -> tuple[int | None, int | None]:
     return (i, i + len(part)) if i >= 0 else (None, None)
 
 
-def _flag(quality: str, text: str, item: str | None, form: str) -> str:
+def _flag(quality: str, text: str, item: str | None, form: str, *, aif: bool = False) -> str:
     """``quality`` with :data:`SECTIONS_VERSION`'s own ``;suspect`` flags (#835).
 
     Every business row carries them, not the 40-F's alone: ``module_relatedness.locator.asks`` and Value Chain
     read this column, and a 10-K whose cut is wrong but labelled ``ok`` is the case the flags exist for -- 24 of
     the 29 wrong cuts of the 10-K reading report were labelled ``ok``. Which signals a version defines is
-    :attr:`sec_sections.Rule.signals`, so the row's ``rules_version`` says what was computed.
+    :attr:`sec_sections.Rule.item_signals` and :attr:`sec_sections.Rule.aif_signals`, so the row's
+    ``rules_version`` says what was computed -- for a row written after #838, which is what split the two.
+
+    ``aif`` is True for the one row this layer cuts with :func:`sec_sections.cut_aif_business`, because which
+    cutter made the text is what picks the set and the form string does not say it (#838).
     """
-    return sec_sections.cut_flag(quality, text, item, form, version=SECTIONS_VERSION)
+    return sec_sections.cut_flag(quality, text, item, form, version=SECTIONS_VERSION, aif=aif)
 
 
 def sections_of(html: str, form: str, *, exhibit: bool = False, by_name: object = None) -> list[tuple]:
@@ -158,7 +162,7 @@ def sections_of(html: str, form: str, *, exhibit: bool = False, by_name: object 
         # section is the Annual Information Form block when the primary document keeps one.
         aif = sec_sections.cut_aif_business(text, version=SECTIONS_VERSION)
         if aif:
-            out.append((BUSINESS, aif, _flag("ok", text, aif, form), AIF, *_span(text, aif)))
+            out.append((BUSINESS, aif, _flag("ok", text, aif, form, aif=True), AIF, *_span(text, aif)))
         return out
     item, quality = sec_sections.cut_item(text, form, version=SECTIONS_VERSION)
     if item:
