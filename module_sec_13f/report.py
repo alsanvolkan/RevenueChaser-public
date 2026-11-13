@@ -419,21 +419,26 @@ function openChart(ticker){
 function closeModal(){ document.getElementById('modal').classList.remove('open'); }
 // Top holdings by investor type (#760): the type's stacked shares per quarter, loaded when the section is opened
 // and again when the type changes. The pick is remembered in this browser only, if storage allows.
-var TYPE_KEY = 'rc.sec13f.type';
+var TYPE_KEY = 'rc.sec13f.type', TYPE_SEQ = 0;
 function loadType(tag){
-  var host = document.getElementById('type-chart'), note = document.getElementById('type-note');
+  var host = document.getElementById('type-chart'), note = document.getElementById('type-note'), seq = ++TYPE_SEQ;
   try { localStorage.setItem(TYPE_KEY, tag); } catch(e) {}
   note.textContent = '';
+  // Purged before the spinner replaces it: Plotly.react on a host whose nodes were wiped draws nothing.
+  Plotly.purge(host);
   host.innerHTML = '<span class="spin"></span>';
   fetch('/api/sec_13f/types/' + encodeURIComponent(tag))
     .then(function(r){ return r.json(); })
     .then(function(d){
-      note.textContent = d.note || '';
-      if(!d.fig){ host.innerHTML = ''; return; }
+      if(seq !== TYPE_SEQ){ return; }           // a later pick is on its way: this answer is stale
       host.innerHTML = '';
-      Plotly.react(host, themedFig(d.fig), {}, {displayModeBar: false, responsive: true});
+      note.textContent = d.note || d.error || '';
+      if(d.fig){ Plotly.newPlot(host, themedFig(d.fig).data, d.fig.layout, {displayModeBar: false, responsive: true}); }
     })
-    .catch(function(){ host.innerHTML = ''; note.textContent = 'The investor-type chart could not be loaded.'; });
+    .catch(function(){
+      if(seq !== TYPE_SEQ){ return; }
+      host.innerHTML = ''; note.textContent = 'The investor-type chart could not be loaded.';
+    });
 }
 function applyFilters(){
   closeDetails();
@@ -567,7 +572,10 @@ function loadRows(){ rcPayload("module_sec_13f").then(build).catch(fail); }
 document.addEventListener('DOMContentLoaded', function(){
   var types = document.getElementById('types'), pick = document.getElementById('type-pick');
   if(types && pick){
-    try { var saved = localStorage.getItem(TYPE_KEY); if(saved && pick.querySelector('option[value="' + saved + '"]')){ pick.value = saved; } } catch(e) {}
+    try {
+      var saved = localStorage.getItem(TYPE_KEY);
+      if(saved && Array.prototype.some.call(pick.options, function(o){ return o.value === saved; })){ pick.value = saved; }
+    } catch(e) {}
     types.addEventListener('toggle', function(){ if(types.open && !types.dataset.loaded){ types.dataset.loaded = '1'; loadType(pick.value); } });
     pick.addEventListener('change', function(){ loadType(pick.value); });
   }
@@ -817,13 +825,13 @@ TYPE_SERIES = 6          # the categorical ramp has six hues (``--c1``..``--c6``
 OTHER_LABEL = "Other"
 
 
-def build_type_fig(label: str, rows: list[dict]) -> tuple[dict | None, str]:
+def build_type_fig(label: str, rows: list[dict], still_arriving=frozenset()) -> tuple[dict | None, str]:
     """``(figure, note)`` for one investor type (#760): a stacked area of each quarter's share (%) of the type's 13F
-    portfolio, for the ``TYPE_SERIES`` tickers with the largest share in any stored quarter, and every other name
-    as "Other", so each quarter adds up to 100. A ticker outside the type's stored top ten in a quarter is part of
-    that quarter's rest (``sec13f_type_holdings``), so it draws 0 there and its share sits in "Other". The colour
-    follows the ticker (the ramp in the order the names are ranked), never its place in one quarter. None when the
-    type has no rows."""
+    portfolio, for the ``TYPE_SERIES`` tickers with the largest share in the newest quarter (then in any quarter,
+    when the newest names fewer), and every other name as "Other", so each quarter adds up to 100. A ticker outside
+    the type's stored top (``TYPE_TOP``) in a quarter is part of that quarter's rest, so it draws 0 there. The
+    colour follows the ticker (the ramp in the order the names are ranked), never its place in one quarter. A
+    quarter ``still_arriving`` carries the board's mark and the note names it. None when the type has no rows."""
     import plotly.graph_objects as go
     qs = sorted({r["period"] for r in rows})
     if not qs:
@@ -832,8 +840,9 @@ def build_type_fig(label: str, rows: list[dict]) -> tuple[dict | None, str]:
     for r in rows:
         if r.get("ticker"):
             share.setdefault(r["ticker"], {})[r["period"]] = float(r.get("share") or 0)
-    names = sorted(share, key=lambda t: (-max(share[t].values()), t))[:TYPE_SERIES]
-    labels = [_qlabel(q) for q in qs]
+    newest = qs[-1]
+    names = sorted(share, key=lambda t: (-share[t].get(newest, 0.0), -max(share[t].values()), t))[:TYPE_SERIES]
+    labels = [_qlabel(q) + (ARRIVING_MARK if q in still_arriving else "") for q in qs]
     fig = go.Figure()
     for i, t in enumerate(names):
         fig.add_trace(go.Scatter(x=labels, y=[share[t].get(q, 0.0) for q in qs], name=t, mode="lines",
@@ -843,17 +852,19 @@ def build_type_fig(label: str, rows: list[dict]) -> tuple[dict | None, str]:
     fig.add_trace(go.Scatter(x=labels, y=rest, name=OTHER_LABEL, mode="lines", stackgroup="one",
                              line=dict(width=1, color="rgba(128,128,128,0.55)"), fillcolor="rgba(128,128,128,0.22)",
                              hovertemplate=f"{OTHER_LABEL}: %{{y:.1f}}%<extra></extra>"))
-    fig.update_layout(height=360, hovermode="x unified", showlegend=True,
-                      legend=dict(orientation="h", y=1.02, yanchor="bottom", x=0),
-                      margin=dict(l=48, r=16, t=40, b=56))
+    # The legend sits under the plot: seven names wrap on a phone, and above it they would cover the plot.
+    fig.update_layout(height=400, hovermode="x unified", showlegend=True,
+                      legend=dict(orientation="h", y=-0.22, yanchor="top", x=0),
+                      margin=dict(l=48, r=16, t=16, b=40))
     fig.update_xaxes(type="category", tickangle=-40, automargin=True)
     fig.update_yaxes(range=[0, 100], ticksuffix="%", nticks=6)
-    newest = qs[-1]
     last = next((r for r in rows if r["period"] == newest), {})
     filers, value, snap = last.get("type_filers"), last.get("type_value"), last.get("snapshot_date")
     note = (f"{label}: {filers or 0:,} filers, {_fmt_money(value)} in mapped stocks in {_qlabel(newest)}. "
             "Share of the type's 13F portfolio per quarter; names outside its top ten that quarter are in Other."
-            + (f" Types are Unusual Whales' institution tags as of {snap}, applied to every quarter." if snap else ""))
+            + (f" Types are Unusual Whales' institution tags as of {snap}, applied to every quarter." if snap else "")
+            + (f" {ARRIVING_MARK} {', '.join(_qlabel(q) for q in sorted(still_arriving))}: still arriving, filed "
+               "so far." if still_arriving else ""))
     return fig.to_dict(), note
 
 

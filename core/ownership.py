@@ -226,6 +226,18 @@ def sec13f_type_holdings(tag: str) -> list[dict]:
              "snapshot_date": r["snapshot_date"].isoformat() if r.get("snapshot_date") else None} for r in rows]
 
 
+def sec13f_open_periods() -> set[str]:
+    """The 13F report periods still arriving (their filing deadline not passed, nor their data set published), as
+    ISO dates; ``set()`` when the store cannot be read."""
+    from RevenueChaser.rcdata import read as rcread
+
+    try:
+        return {r["period"].isoformat() for r in rcread.periods_13f() if not r.get("complete")}
+    except Exception as exc:                      # noqa: BLE001 - no mark, never a failed board
+        logger.warning("13F periods unreadable, no still-arriving mark: %s", exc)
+        return set()
+
+
 SPLIT_LOOKBACK_DAYS = 10    # a quarter end on a weekend or a holiday still finds the session before it
 
 

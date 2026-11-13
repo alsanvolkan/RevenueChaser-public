@@ -2090,7 +2090,7 @@ def api_sec13f_types(tag: str):
     t = (tag or "").strip().lower()
     if t not in labels:
         return jsonify({"ok": False, "error": "unknown investor type"}), 404
-    fig, note = build_type_fig(labels[t], ownership.sec13f_type_holdings(t))
+    fig, note = build_type_fig(labels[t], ownership.sec13f_type_holdings(t), ownership.sec13f_open_periods())
     return jsonify({"ok": True, "tag": t, "label": labels[t], "fig": fig, "note": note})
 
 

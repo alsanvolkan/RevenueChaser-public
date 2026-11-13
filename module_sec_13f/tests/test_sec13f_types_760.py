@@ -29,21 +29,27 @@ def _rows() -> list[dict]:
     return q2 + [_row(Q2, None, 20.0)] + q3 + [_row(Q3, None, 24.0)]
 
 
-def test_the_figure_stacks_the_six_largest_names_and_the_rest_as_other():
+def test_the_figure_stacks_the_newest_quarters_six_largest_names_and_the_rest_as_other():
     fig, note = report.build_type_fig("Value", _rows())
     traces = fig["data"]
-    # Ranked by the largest share in any quarter: H (30 in Q2) stays a series although Q3's top leaves it out.
-    assert [t["name"] for t in traces] == ["A", "H", "B", "C", "D", "E", "Other"]
+    # Ranked by the newest quarter's share: H, the largest in Q2 and out of Q3's top, is in Other, not a series.
+    assert [t["name"] for t in traces] == ["A", "B", "C", "D", "E", "F", "Other"]
     assert all(t["stackgroup"] == "one" for t in traces)
     by = {t["name"]: list(t["y"]) for t in traces}
-    assert by["H"] == [30.0, 0.0] and by["A"] == [20.0, 40.0]
-    # Other is what the six leave of 100 in each quarter (G in Q2, F and the stored rest in Q3).
-    assert by["Other"] == pytest.approx([21.0, 26.0])
+    assert by["F"] == [0.0, 2.0] and by["A"] == [20.0, 40.0]
+    # Other is what the six leave of 100 in each quarter (H, G and the stored rest in Q2; the stored rest in Q3).
+    assert by["Other"] == pytest.approx([51.0, 24.0])
     assert [sum(v[i] for v in by.values()) for i in range(2)] == pytest.approx([100.0, 100.0])
     # The colour follows the name in the ramp's fixed order, never cycled; Other is neutral.
     assert [t["line"]["color"] for t in traces[:6]] == [THEME_SCALE[f"c{i}"] for i in range(1, 7)]
     assert list(fig["layout"]["yaxis"]["range"]) == [0, 100]
     assert "42 filers" in note and "2026-11-12" in note and "Q3" in note
+
+
+def test_a_quarter_still_arriving_is_marked_on_the_axis_and_named_in_the_note():
+    fig, note = report.build_type_fig("Value", _rows(), still_arriving={Q3})
+    assert list(fig["data"][0]["x"]) == [report._qlabel(Q2), report._qlabel(Q3) + report.ARRIVING_MARK]
+    assert "still arriving" in note
 
 
 def test_a_type_with_no_rows_draws_nothing_and_says_so():
@@ -55,6 +61,7 @@ def test_the_route_answers_a_type_the_board_offers_and_refuses_another(monkeypat
     from RevenueChaser.app import dashboard
     asked = []
     monkeypatch.setattr(ownership, "sec13f_type_holdings", lambda tag: asked.append(tag) or _rows())
+    monkeypatch.setattr(ownership, "sec13f_open_periods", lambda: set())
     dashboard.app.config["TESTING"] = True
     client = dashboard.app.test_client()
     r = client.get("/api/sec_13f/types/Value_Investor")
