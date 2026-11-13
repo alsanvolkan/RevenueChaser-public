@@ -55,7 +55,7 @@ def _float(v):
 
 
 def tags_no_debt(rec: dict | None) -> bool:
-    """True when the record tags none of ``DEBT_TAG_FIELDS``. A tagged zero counts as a tag: the filer stated it."""
+    """True when the record tags none of ``tag_fields()``. A tagged zero counts as a tag: the filer stated it."""
     if not rec:
         return False
     return all(_float(rec.get(f)) is None for f in tag_fields())
