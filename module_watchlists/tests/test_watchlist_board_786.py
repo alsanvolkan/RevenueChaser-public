@@ -144,9 +144,11 @@ def test_the_page_says_the_unit_once_in_the_header_and_never_on_a_row(monkeypatc
                         lambda *a, **k: _bars([("NVDA", date.today(), 110.0, 5.0)]))
     html = board.render_html(board.payload(list_id))
     # The header follows the open tab, so the browser draws it from this column set rather than the server.
-    assert [c[0] for c in board.COLUMNS["price"] if c[2] == "USD"] == ["last", "chg", "cap"]
-    assert '"unit": "USD"' in html or '"unit":"USD"' in html, "the unit reaches the page in the column set"
-    assert '<span class="wl-u">USD</span>' not in html, "a row never repeats the unit"
+    assert [c[0] for c in board.COLUMNS["price"] if c[2] == "$"] == ["last", "chg", "cap"]
+    assert '"unit": "$"' in html or '"unit":"$"' in html, "the unit reaches the page in the column set"
+    assert '<span class="wl-u">$</span>' not in html, "a row never repeats the unit"
+    assert not [c for cols in board.COLUMNS.values() for c in cols if c[2] == "USD"], \
+        "a currency is its symbol, not its code (avo, 13 Nov 2026)"
 
 
 def test_the_remove_button_is_the_rows_last_cell_and_not_part_of_the_symbol(no_data):
@@ -155,7 +157,7 @@ def test_the_remove_button_is_the_rows_last_cell_and_not_part_of_the_symbol(no_d
     list_id = store.create_list("Growth")
     store.add_symbol(list_id, "NASDAQ:NVDA")
     js = board.render_html(board.payload(list_id))
-    assert "</span></div></td>' + cells +" in js, "the symbol cell closes before the numbers, with no button in it"
+    assert "'</div></td>' + cells +" in js, "the symbol cell closes before the numbers, with no button in it"
     assert "'<td class=\"wl-xc\"><button class=\"wl-x\"" in js, "the × is the cell after the numbers"
     assert "+ '<th class=\"wl-xc\">" in js, "the header ends with its own cell"
     assert "(cols().length + 1)" in js, "a section heading spans the × column too"
@@ -165,7 +167,9 @@ def test_the_phone_rule_fits_every_column_rather_than_scrolling_sideways():
     phone = board._CSS.split("@media (max-width:720px)", 1)[1]
     assert "overflow-x" not in phone, "the phone shows every column; nothing scrolls sideways"
     assert ".wl-grip{display:none}" in phone, "the drag handle is for the mouse"
-    assert ".wl-nm{display:block;max-width:76px" in phone, "the company name stays, as a capped second line"
+    assert ".wl-nm{display:block;max-width:70px" in phone, "the company name stays, as a capped second line"
+    assert ".wl-badge{min-width:0;max-width:70px;overflow:hidden;text-overflow:ellipsis" in phone, \
+        "a long symbol (FRED:BAMLH0A0HYM2) is cut at the name's width, not left to widen the table"
     assert ".wl td.wl-xc{padding:0 2px}" in phone, "the × column takes no more than its glyph and two pixels a side"
 
 
@@ -253,3 +257,17 @@ def test_beta_is_measured_over_the_sessions_the_two_series_share(monkeypatch, no
     row = board.columns(a_long_list, "risk")["values"]["NASDAQ:NVDA"]
     assert row["b1Y"] == pytest.approx(1.0, abs=1e-6)
     assert row["v1D"] == pytest.approx((1.02 - 0.98) / 0.98 * 100, rel=1e-6)
+
+
+def test_the_cells_follow_the_cell_grid(no_data):
+    """avo, 13 Nov 2026 (rules/ui-tasarim.md, "Cell grid"): the leftmost cell is left-aligned, a middle one centred,
+    the rightmost right-aligned; and a missing value leaves its own cell, so nothing spans the numbers."""
+    css = board._CSS
+    assert ".wl th,.wl td{padding:3px var(--sp-3);text-align:center;" in css, "the numbers sit in the middle"
+    assert ".wl th:first-child,.wl td:first-child{text-align:left;" in css, "the symbol sits left"
+    assert ".wl-xc{width:1%;text-align:right;" in css, "the × sits right"
+    list_id = store.create_list("Growth")
+    store.add_symbol(list_id, "BIST:THYAO")
+    js = board.render_html(board.payload(list_id))
+    assert "colspan=\"' + (set.length - 2)" not in js, "a symbol with no source keeps one cell per column"
+    assert "cells += '<td class=\"dash\">—</td>'" in js
