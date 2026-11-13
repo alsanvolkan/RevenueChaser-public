@@ -146,8 +146,8 @@ def test_the_version_the_guard_waits_for_is_ours_2():
 def test_off_the_layer_the_guard_checks_nothing(monkeypatch):
     def layer_read(*a, **k):
         raise AssertionError("the guard read the layer off the layer")
-    monkeypatch.setattr(read, "missing", layer_read)
-    monkeypatch.setattr(read, "form_business", layer_read)
+    monkeypatch.setattr(read, "form_business", layer_read)       # (``reads_layer`` itself asks ``read.missing``)
+    monkeypatch.setattr(engine.config, "FORMS_RULES_VERSION", "next-rules")
     engine._forms_ready(["AAA"])
 
 
