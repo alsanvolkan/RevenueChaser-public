@@ -1411,7 +1411,16 @@ def test_a_contents_page_spelled_the_way_the_heading_is_is_still_a_contents_page
 def test_a_sentence_that_names_the_form_is_not_a_cross_reference_index():
     """A bank's Guide 3 index -- "This cross-reference index to Guide 3 disclosures in this Annual Report on
     Form 10-K" -- is a sentence, not the table. Read unanchored it turned a wrongly-short cut into ``crossref``,
-    which tells the next run there is nothing to find (Fable review of this change)."""
-    text = ("Our business. This cross-reference index to Guide 3 disclosures in this Annual Report on Form 10-K"
-            " is provided for convenience. " + BODY[:5000])
-    assert sec_sections.cut_item(text, "10-K", version=OURS_2)[1] == "missing"
+    which tells the next run there is nothing to find (Fable review of this change).
+
+    The two halves are one test on purpose. The second alone proves nothing: the merge-base has no
+    ``crossref`` label at all, so "this is not crossref" is true there for the wrong reason. The first half is
+    what makes the pair red on the base, and the second is what pins the anchoring.
+    """
+    index = "Form 10-K Cross-Reference Index\nPart I\nItem 1 Business Page 3\n"
+    sentence = ("Our business. This cross-reference index to Guide 3 disclosures in this Annual Report on"
+                " Form 10-K is provided for convenience. ")
+    assert sec_sections.cut_item("About us.\n" + BODY[:5000] + "\n" + index, "10-K",
+                                 version=OURS_2)[1] == "crossref"
+    assert sec_sections.cut_item("About us. " + sentence + BODY[:5000], "10-K",
+                                 version=OURS_2)[1] == "missing"
