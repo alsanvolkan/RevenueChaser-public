@@ -775,8 +775,11 @@ _AIF_TAIL = rf"[^\S\n]*(?:[:.{_DASH}][^\S\n]*)?$"
 _H_WRAP = rf"(?:{_H_SP}|[^\S\n]*\n[^\S\n]*)"
 _AIF_TITLES_2 = (
     rf"(?:narrative{_H_SP})?description{_H_SP}of{_H_SP}(?:the{_H_SP})?(?:\w[\w'’]*{_H_WRAP})?business(?:es)?",
-    rf"(?:the{_H_WRAP}[^\W\d_]+{_H_SP}|general{_H_SP}development{_H_SP}and{_H_SP})?business{_H_SP}of{_H_SP}"
+    rf"(?:general{_H_SP}development{_H_SP}and{_H_SP})?business{_H_SP}of{_H_SP}"
     rf"(?:the{_H_SP})?[^\W\d_][\w'’]*(?:{_H_SP}[^\W\d_][\w'’]*){{0,3}}",
+    # DPRO's "ThE\nONGOING BUSINESS OF THE COMPANY". Capital BUSINESS and nothing after the company, because
+    # "The principal business of the Company is mining." is a sentence on a line of its own (round 2 review).
+    rf"the{_H_WRAP}[^\W\d_]+{_H_SP}(?-i:BUSINESS){_H_SP}of{_H_SP}(?:the{_H_SP})?[^\W\d_][\w'’]*",
     # Already matched by the first pattern (its "the" and its possessive word are both optional), so removing
     # it changes no answer. Kept so that the titles read one-to-one against the list named above.
     rf"description{_H_SP}of{_H_SP}business",
@@ -824,7 +827,8 @@ _AIF_STOP_TITLES_2 = (
     rf"(?:{_H_SP}and{_H_SP}uncertainties)?",
     rf"code{_H_SP}of{_H_SP}business{_H_SP}conduct",
     rf"market{_H_SP}for{_H_SP}securities",
-    rf"dividends?(?:{_H_SP}and{_H_SP}distributions|{_H_TAIL_SP}policy)?",
+    rf"dividends(?:{_H_SP}and{_H_SP}distributions|{_H_TAIL_SP}policy)?",
+    rf"dividend{_H_TAIL_SP}policy",
     rf"directors{_H_WRAP}and{_H_SP}(?:executive{_H_SP}officers|officers|executive)"
     rf"(?:{_H_SP}of{_H_SP}the{_H_SP}(?:company|corporation))?",
 )
@@ -1280,12 +1284,16 @@ def _aif_business_ours_2_q(text: str) -> tuple[str | None, str]:
     text = text or ""
     if not _AIF.search(text):
         return None, "missing"
-    if _aif_is_mda(text):
-        return None, "missing"
     ends = _aif_unlisted_ends(text, _aif_ends(text))
+    # item 4's own three-year history is a part of it, not the end of it (TECK prints it in capitals)
+    item_4 = [e for e in ends if "history" not in _aif_stop_key(text, e)]
     overrun: tuple[int, str] | None = None
     short: str | None = None
     for starts in (_AIF_START_2, _AIF_START_2B):
+        # An MD&A is read no further than the AIF's own titles: GIL's carried only "3.0 OUR BUSINESS", and a
+        # document holding both an MD&A and an AIF keeps the AIF's description (round 2 review).
+        if starts is _AIF_START_2B and _aif_is_mda(text):
+            return None, "missing"
         for m, end, body in _aif_pairs(text, ends, starts):
             if len(body) < _AIF_MIN:
                 if short is None and _aif_short_item(text, m, end, body):
@@ -1302,12 +1310,14 @@ def _aif_business_ours_2_q(text: str) -> tuple[str | None, str]:
         # cut at the first of its stops past the minimum, because a sub-heading straight under the heading is
         # the shape round 1 measured. Not material properties, which a mining filer describes inside its
         # business block (BTG).
+        # ``ours-1``'s title is item 4, so its three-year history does not end it either; and a stop inside a
+        # line has to be introduced the way a heading is, because "described under the heading RISK FACTORS. The"
+        # cut a 27,000-character block at 6,038 (round 2 review) where ``ours-1`` answers the whole of it.
         at = text.find(closed)
-        inside = next((e for e in ends if at + _AIF_MIN <= e < at + len(closed)
-                       and "material" not in text[e:e + 40].lower()), None)
+        inside = next((e for e in item_4 if at + _AIF_MIN <= e < at + len(closed)
+                       and "material" not in text[e:e + 40].lower()
+                       and (_AIF_STOP_2.match(text, e) or _introduced_as_a_heading(text, e))), None)
         return _aif_trim(closed if inside is None else text[at:inside].strip()), "ok"
-    # item 4's own three-year history is a part of it here, not the end of it (TECK prints it in capitals)
-    item_4 = [e for e in ends if "history" not in _aif_stop_key(text, e)]
     for m, end, body in _aif_pairs(text, item_4, _AIF_START_2C):
         if end is not None and len(body) >= _AIF_MIN:
             return _aif_trim(body), "ok"
@@ -1360,20 +1370,30 @@ def _aif_stop_key(text: str, at: int) -> str:
 
 
 def _aif_unlisted_ends(text: str, ends: list[int]) -> list[int]:
-    """``ends`` without a title-case stop whose part the document already printed in capitals before its first
-    business title.
+    """``ends`` without a title-case stop whose part the document already printed before its business heading.
 
-    GIB prints "CAPITAL STRUCTURE" as a part of its own on page 2, before its business on page 5, and its
+    GIB prints "Capital Structure" as a part of its own on page 2, before its business on page 5, and its
     three-year history -- which its own cross-references file under the business section -- has a title-case
     "Capital Structure" sub-heading that cut the section there. A part printed before the business block is not
     what ends it. Only the title-case printing is dropped, because asked of every printing this dropped the risk
-    factors of eight exhibits whose contents (all before the business title) list them.
+    factors of eight exhibits whose contents (all before the business title) list them. And "before" is the
+    business **heading** and a **part** -- not a contents entry, and not the first mention of a business title:
+    the round 2 review measured a caps contents line "RISK FACTORS 20" before a prose "business of the
+    Company" dropping the body's "Risk Factors", and every risk factor came back inside.
     """
-    first = _AIF_START_INLINE_2.search(text)
+    first = next((m for p in (_AIF_START_2, _AIF_START_2B, _AIF_START_2C) for m in p.finditer(text)
+                  if not _PAGE_NO.match(text, m.end()) and not _aif_contents_entry(text, m)), None)
     if first is None:
         return ends
-    before = {_aif_stop_key(text, e) for e in ends if e < first.start() and _aif_caps_at(text, e)}
+    before = {_aif_stop_key(text, e) for e in ends if e < first.start() and _aif_part_at(text, e)}
     return [e for e in ends if e < first.start() or _aif_caps_at(text, e) or _aif_stop_key(text, e) not in before]
+
+
+def _aif_part_at(text: str, at: int) -> bool:
+    """A stop printed as a part of its own: alone on its line, and not a contents entry. In either case, because
+    GIB prints its parts in title case and only its contents in capitals."""
+    m = _AIF_STOP_2.match(text, at)
+    return m is not None and not _PAGE_NO.match(text, m.end()) and not _aif_contents_entry(text, m)
 
 
 def _aif_caps_at(text: str, at: int) -> bool:
@@ -1393,8 +1413,8 @@ def _aif_short_item(text: str, m: re.Match, end: int | None, body: str) -> bool:
             and _AIF_ITEM_LINE.match(m.group(0)) is not None and _AIF_ITEM_LINE.match(text, end) is not None)
 
 
-_AIF_SUB_NUMBERED = re.compile(r"(?im)^[^\S\n]*(?:item[^\S\n]+(\d{1,2})|(?:item[^\S\n]+)?(\d{1,2})\.\d{1,2})"
-                               r"[.):]?[^\S\n]+[^\W\d_]")
+_AIF_SUB_NUMBERED = re.compile(r"(?im)^[^\S\n]*(?:item[^\S\n]+(\d{1,2})|(?:item[^\S\n]+)?(\d{1,2})\.(\d{1,2}))"
+                               r"[.):]?[^\S\n]+[^\W\d_][^\n.]{0,80}$")
 
 
 def _aif_item_goes_on(text: str, m: re.Match, end: int, ends: list[int]) -> bool:
@@ -1407,30 +1427,37 @@ def _aif_item_goes_on(text: str, m: re.Match, end: int, ends: list[int]) -> bool
     n = (re.match(r"[^\S\n]*(?:item[^\S\n]+)?(\d{1,2})\b", m.group(0), re.I)   # CNR prints "ITEM 4" on the line
          or re.search(r"(?i)\bitem[^\S\n]+(\d{1,2})[^\S\n]*[.:]?[^\S\n]*\n[^\S\n]*\Z",  # above its title
                       text[max(0, m.start() - 40):m.start()]))
-    if (n is None or "risk" in _aif_stop_key(text, end)       # risk factors are 5.2 of item 5 and still its end
-            or not re.match(rf"[^\S\n]*(?:item[^\S\n]+)?{n.group(1)}\.\d", text[end:end + 20], re.I)):
+    own = re.match(rf"[^\S\n]*(?:item[^\S\n]+)?{n.group(1)}\.(\d{{1,2}})", text[end:end + 20], re.I) if n else None
+    if own is None or "risk" in _aif_stop_key(text, end):   # risk factors are 5.2 of item 5 and still its end
         return False
-    nxt = _AIF_SUB_NUMBERED.search(text, end + 1)               # the next numbered part after the end's own line
-    return nxt is not None and (nxt.group(1) or nxt.group(2)) == n.group(1)
+    # The next numbered line after the end's own: a heading (no full stop, short) numbered after the end inside
+    # the same item. "4.5 million dollars." under "4.8 LEGAL MATTERS" is a figure (round 2 review).
+    nxt = _AIF_SUB_NUMBERED.search(text, end + 1)
+    return (nxt is not None and nxt.group(2) == n.group(1) and int(nxt.group(3)) > int(own.group(1)))
 
 
 #: A start title in capitals in the middle of a line, behind a printed page number and followed by prose: EQX
 #: prints its pages as single lines, "... Annual Information Form - 13 - DESCRIPTION OF THE BUSINESS Equinox Gold
 #: is ...". The next word has to hold a lower-case letter, because that same document's contents is one line
 #: of capital titles and page numbers. Read only when nothing else answered, so no line-start cut moves.
-_AIF_START_INLINE_2 = re.compile(rf"(?i)\b(?:{'|'.join(_AIF_TITLES_2)})\b")
+#: Title 2 reads one word after "business of (the)" here: inline nothing ends the title, so its three optional
+#: words took the prose ("BUSINESS OF THE COMPANY Acme Gold is") and failed the capitals test (round 2 review).
+_AIF_START_INLINE_2 = re.compile(rf"(?i)\b(?:{'|'.join(_AIF_TITLES_2).replace('{0,3}', '{0}')})\b")
 _AIF_PAGE_BEFORE = re.compile(rf"\d{{1,3}}[^\S\n]*[{_DASH}]?[^\S\n]*$")
 _AIF_PROSE_AFTER = re.compile(r"[^\S\n]+([^\W\d_]+)")
 
 
 def _aif_inline_start(text: str, ends: list[int]) -> tuple[str | None, str]:
     """The last resort: a run-in start title (:data:`_AIF_START_INLINE_2`) and the first end after it."""
+    seen = 0                     # matches arrive in order, so the cursor into ``ends`` only moves forward
     for m in _AIF_START_INLINE_2.finditer(text):
         word = _AIF_PROSE_AFTER.match(text, m.end())
         if not (_printed_as_a_heading(m.group(0)) and word and word.group(1) != word.group(1).upper()
                 and _AIF_PAGE_BEFORE.search(text, max(0, m.start() - 20), m.start())):
             continue
-        end = next((e for e in ends if e >= m.end()), None)
+        while seen < len(ends) and ends[seen] < m.end():
+            seen += 1
+        end = ends[seen] if seen < len(ends) else None
         body = text[m.end():(len(text) if end is None else end)].strip()
         if len(body) >= _AIF_MIN:
             return _aif_trim(body), ("ok" if end is not None else "overrun")
@@ -1438,12 +1465,20 @@ def _aif_inline_start(text: str, ends: list[int]) -> tuple[str | None, str]:
 
 
 #: What a stop split over two lines leaves at the end of the section: "DESCRIPTION OF THE" over PBA's
-#: "CAPITAL STRUCTURE OF PEMBINA", "ITEM" over HSLV's "7: RISK FACTORS", and the page number above either.
-_AIF_DANGLING = re.compile(rf"(?i)(?:\n[^\S\n]*(?:item|description{_H_SP}of(?:{_H_SP}the)?|\d{{1,3}})[^\S\n]*)+\Z")
+#: "CAPITAL STRUCTURE OF PEMBINA", "ITEM" over HSLV's "7: RISK FACTORS", and then the page number above either.
+#: A figure alone is never trimmed -- a table's last cell is a figure -- and nothing repeats, because a repeated
+#: group ending in ``\Z`` was quadratic on a run of figure lines (91 s on 20,000, round 2 review).
+_AIF_DANGLING = re.compile(rf"(?i)\n[^\S\n]*(?:item|description{_H_SP}of(?:{_H_SP}the)?)[^\S\n]*\Z")
+_AIF_PAGE_LINE = re.compile(rf"\n[^\S\n]*[{_DASH}]?\d{{1,3}}[{_DASH}]?[^\S\n]*\Z")
 
 
 def _aif_trim(body: str) -> str:
-    return _AIF_DANGLING.sub("", body).rstrip()
+    cut = _AIF_DANGLING.search(body)
+    if cut is None:
+        return body.rstrip()
+    body = body[:cut.start()]
+    page = _AIF_PAGE_LINE.search(body)
+    return (body[:page.start()] if page else body).rstrip()
 
 
 def _aif_pass_ours_1(text: str) -> tuple[str | None, tuple[int, str] | None]:

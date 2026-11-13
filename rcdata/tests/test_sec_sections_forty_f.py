@@ -1631,6 +1631,8 @@ def test_eqx_a_run_in_start_behind_a_page_footer_is_read_when_nothing_else_answe
     text = AIF + contents + "Annual Information Form - 13 - DESCRIPTION OF THE BUSINESS " + BODY + "\nRISK FACTORS\n"
     assert _cut2(text) == (BODY.strip(), "ok")
     assert _cut2(AIF + contents + BODY) == (None, "missing")
+    capitals = AIF + "Annual Information Form - 13 - DESCRIPTION OF THE BUSINESS GENERAL " + BODY.upper() + "\nRISK FACTORS\n"
+    assert _cut2(capitals) == (None, "missing"), "a word in capitals after the title is another title, not prose"
 
 
 def test_a_stop_split_over_two_lines_leaves_no_fragment_at_the_end():
@@ -1638,6 +1640,8 @@ def test_a_stop_split_over_two_lines_leaves_no_fragment_at_the_end():
     for split in ("-68-\nDESCRIPTION OF THE\nCAPITAL STRUCTURE OF PEMBINA\n", "9\nITEM\n7: RISK FACTORS\n"):
         section, quality = _cut2(AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\n" + split + "After. " * 400)
         assert quality == "ok" and not section.endswith(("THE", "ITEM")), split
+    table = AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\nEmployees at year end\n850\nRISK FACTORS\n"
+    assert _cut2(table)[0].endswith("\n850"), "a table's last figure is not a page number (round 2 review)"
 
 
 # ── round 2 over the 225 stored 40-F documents, 13 Nov 2026 ────────────────────────────────────────────────────
@@ -1676,6 +1680,11 @@ def test_rci_a_short_numbered_item_closed_by_the_next_is_a_short_section():
     assert _cut2(text) == (pointers.strip(), "short")
     unnumbered = AIF + "DESCRIPTION OF THE BUSINESS\n" + pointers + "RISK FACTORS\n" + "Risky. " * 400
     assert _cut2(unnumbered) == (None, "missing"), "a short body needs both numbers to be read as an item"
+    # and the floor itself: a pair of items 600 characters apart is a contents entry, not a section
+    entry = "Narrative description of the business, general and specialized. " * 9
+    assert len(entry) < sec_sections._AIF_ITEM_MIN
+    tiny = AIF + "ITEM 5 \u2013 Narrative Description of the Business\n" + entry + "\nITEM 6 \u2013 RISK FACTORS\n" + "X. " * 400
+    assert _cut2(tiny) == (None, "missing")
 
 
 def test_cnr_an_end_inside_the_start_s_own_numbered_item_is_short():
@@ -1714,3 +1723,79 @@ def test_obe_a_run_in_capitalization_part_ends_the_section():
             + "Shares. " * 400)
     section, quality = _cut2(text)
     assert quality == "ok" and section.startswith(BODY.strip()) and "Shares." not in section
+
+
+# ── the round 2 Fable reviews, 13 Nov 2026: each shape returned the wrong section before its fix ──────────────
+def test_a_sentence_on_a_line_of_its_own_is_not_a_the_x_business_of_title():
+    text = (AIF + "CORPORATE STRUCTURE\nThe principal business of the Company is mining.\n" + BODY[:4_500]
+            + "\nDESCRIPTION OF THE BUSINESS\n" + BODY + "\nRISK FACTORS\n")
+    assert _cut2(text) == (BODY.strip(), "ok")
+
+
+def test_a_contents_line_or_a_prose_mention_is_not_a_part_printed_before_the_business():
+    """``_aif_unlisted_ends`` once took "before" from the first **mention** of a business title, so a prose
+    "business of the Company" ahead of a capitals contents line dropped the body's "Risk Factors", and the cut
+    came back ``overrun`` with every risk factor inside.
+    """
+    text = (AIF + "TABLE OF CONTENTS\nCORPORATE STRUCTURE 3\nOUR BUSINESS 5\nRISK FACTORS 20\nDIVIDENDS 30\n"
+            + "Forward-looking statements concern the business of the Company. " * 60 + "\nOUR BUSINESS\n" + BODY
+            + "\nRisk Factors\n" + "Risky. " * 2_000)
+    assert _cut2(text) == (BODY.strip(), "ok")
+    reprinted = (AIF + "Capital Structure\n" + "Shares. " * 200 + "\nDESCRIPTION OF THE BUSINESS\n" + BODY
+                 + "\nCAPITAL STRUCTURE\n" + "Shares. " * 400)
+    assert _cut2(reprinted) == (BODY.strip(), "ok"), "a part reprinted in capitals still ends the section"
+
+
+def test_the_ours_1_cut_keeps_item_4_s_history_and_skips_a_run_in_mention():
+    history = (AIF + "GENERAL DEVELOPMENT OF THE BUSINESS\nOVERVIEW\n" + BODY[:5_000] + "\nTHREE-YEAR HISTORY\n"
+               + BODY + "\nRISK FACTORS\n")
+    assert _cut2(history) == (sec_sections.cut_aif_business(history, version=OURS_1), "ok")
+    mention = (AIF + "GENERAL DEVELOPMENT OF THE BUSINESS\n" + BODY[:6_000]
+               + " These are described under the heading RISK FACTORS. The Company also " + BODY + "\nRISK FACTORS\n")
+    assert _cut2(mention) == (sec_sections.cut_aif_business(mention, version=OURS_1), "ok")
+    near = (AIF + "GENERAL DEVELOPMENT OF THE BUSINESS\n" + BODY[:2_000] + "\nDESCRIPTION OF CAPITAL STRUCTURE\n"
+            + BODY + "\nRISK FACTORS\n")
+    assert _cut2(near) == (sec_sections.cut_aif_business(near, version=OURS_1), "ok"), \
+        "a stop under the minimum from the heading does not cut it (round 1's sub-heading shape)"
+
+
+def test_a_figure_numbered_like_a_sub_item_does_not_make_an_item_go_on():
+    text = (AIF + "ITEM 4 DESCRIPTION OF THE BUSINESS\n" + BODY + "\n4.8 LEGAL MATTERS\nThe claim was for\n"
+            + "4.5 million dollars.\nITEM 5 DIVIDENDS\nNone.\n")
+    assert _cut2(text) == (BODY.strip(), "ok")
+
+
+def test_a_run_in_business_of_title_is_read_without_the_prose_behind_it():
+    text = (AIF + "Annual Information Form - 13 - BUSINESS OF THE COMPANY Acme Gold is a mining company. " + BODY
+            + "\nRISK FACTORS\n")
+    assert _cut2(text) == (("Acme Gold is a mining company. " + BODY).strip(), "ok")
+
+
+def test_an_aif_that_carries_an_md_and_a_ahead_of_it_keeps_its_description():
+    text = ("ANNUAL REPORT\nMANAGEMENT'S DISCUSSION AND ANALYSIS\n" + "MD&A prose. " * 150 + AIF
+            + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\nRISK FACTORS\n")
+    assert _cut2(text) == (BODY.strip(), "ok")
+
+
+def test_a_singular_dividend_line_is_a_table_label_and_not_a_stop():
+    text = (AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY[:8_000] + "\nDividend\n0.50 per share\n" + BODY
+            + "\nRISK FACTORS\n")
+    assert len(_cut2(text)[0]) > 30_000
+
+
+def test_teck_s_title_is_read_after_ours_1_s():
+    """``_AIF_START_2C`` comes after ``ours-1``'s pass: with both titles, ``ours-1``'s answers."""
+    text = (AIF + "DEVELOPMENT OF THE BUSINESS\n" + "Early. " * 800 + "\nRISK FACTORS\n" + "Risky. " * 100
+            + "\nGENERAL DEVELOPMENT OF THE BUSINESS\n" + BODY + "\nRISK FACTORS\n")
+    assert _cut2(text) == (BODY.strip(), "ok")
+
+
+@pytest.mark.parametrize("text", [
+    AIF + "x 12 - BUSINESS OVERVIEW is\nRISK FACTORS\n" * 8_000,
+    AIF + "DESCRIPTION OF THE BUSINESS\n" + BODY + "\n12" * 20_000 + "\nText\nRISK FACTORS\n",
+])
+def test_the_round_2_patterns_do_not_crawl(text):
+    """91 s and 2 s before the round 2 review's fixes; the bound is the shape, not the runner."""
+    started = time.monotonic()
+    _cut2(text)
+    assert time.monotonic() - started < 4.0
