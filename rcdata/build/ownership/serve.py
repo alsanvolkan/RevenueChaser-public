@@ -73,8 +73,17 @@
 
 **Tables**: ``sec13f_cusip_map`` (CUSIP and period: its ticker and how, its long-equity value and holders),
 ``sec13f_filer_period`` (filer and period: its long-equity names and value, ``value_factor``), ``sec13f_ticker_period``
-(the metrics), ``sec13f_periods`` (per period: filers, value, value mapped, coverage) and ``sec13f_filer_breaks``
-(ticker, settled period and filer: a filer that started or stopped reporting, with its shares).
+(the metrics), ``sec13f_periods`` (per period: filers, value, value mapped, coverage), ``sec13f_filer_breaks``
+(ticker, settled period and filer: a filer that started or stopped reporting, with its shares) and
+``sec13f_type_holdings`` (investor type and period: its ``TYPE_TOP`` largest names and the rest, #760).
+
+- *Investor types* (#760, owner 12 Nov 2026): a filer's types are the ``tags`` Unusual Whales gives its CIK in the
+  newest ``uw_institution`` snapshot (``value_investor``, ``energy``, ``tiger_club``, ...; a filer can carry several),
+  plus ``all`` for every filer. Per type and quarter the type's combined portfolio is the long-equity value of its
+  filers' holdings that map to a ticker; each of its ``TYPE_TOP`` largest tickers is a row with its ``share`` (%) of
+  that portfolio, and the rest is one row with ``ticker`` NULL. A ticker outside the top in a quarter is in that
+  quarter's rest, so every quarter's shares add up to 100. One snapshot types every quarter: a filer's type is what
+  UW says it is now, not what it was then.
 
 **Views** under the old ``raw.duckdb`` names, with the old columns (D4): ``sec13f_totals`` (ticker, ``entry`` JSON
 ``{period: {shares, value, holders, ...}}``) and ``short_interest``: one row per ticker and session (an IBKR snapshot
@@ -140,9 +149,14 @@ PERIODS = [("period", "DATE"), ("filers", "INTEGER"), ("filings_active", "INTEGE
            ("filed_through", "DATE"), ("data_set", "TEXT"), ("data_set_seen", "DATE"), ("closed", "BOOLEAN")]
 BREAKS = [("ticker", "TEXT"), ("period", "DATE"), ("cik", "TEXT"), ("filer_name", "TEXT"), ("kind", "TEXT"),
           ("shares", "DOUBLE")]
+TYPES = [("tag", "TEXT"), ("period", "DATE"), ("ticker", "TEXT"), ("rank", "INTEGER"), ("value", "DOUBLE"),
+         ("holders", "INTEGER"), ("share", "DOUBLE"), ("type_value", "DOUBLE"), ("type_filers", "INTEGER"),
+         ("snapshot_date", "DATE")]
+TYPE_TOP = 10                            # names per investor type and quarter; the rest is one row (#760)
+ALL_TYPE = "all"                         # every filer, whatever UW tags it
 STARTED, STOPPED = "started", "stopped"
 SCHEMAS = {"sec13f_cusip_map": MAP, "sec13f_filer_period": FILER, "sec13f_ticker_period": TICKER,
-           "sec13f_periods": PERIODS, "sec13f_filer_breaks": BREAKS}
+           "sec13f_periods": PERIODS, "sec13f_filer_breaks": BREAKS, "sec13f_type_holdings": TYPES}
 TABLES = tuple(SCHEMAS)
 # The old sec13f_totals entry's keys, in its order (module_sec_13f/engine.py compute_period_metrics).
 METRICS = ("shares", "value", "holders", "top10_pct", "hhi", "new_holders", "exited_holders", "buy_flow",
@@ -407,7 +421,7 @@ def _figi(con: duckdb.DuckDBPyConnection) -> None:
 TEMPS = ("_closed", "_sets", "_sp_security", "_sp_hist", "_sp_sp500", "_owners", "_figi", "_active", "_conf", "_long", "_px", "_ratio",
          "_pxfix", "_fac", "_rowfix", "_held", "_succ",
          "_cp", "_m_hist", "_m_cur", "_m_owner", "_m_figi", "_filers", "_filed", "_deadline", "_tot", "_pos", "_shape",
-         "_pairs", "_flow")
+         "_pairs", "_flow", "_tag")
 
 
 class OwnershipServe:
@@ -511,6 +525,7 @@ class OwnershipServe:
             counts["sec13f_ticker_period"] = self._metrics(con)
             counts["sec13f_periods"] = self._periods(con)
             counts["sec13f_filer_breaks"] = self._breaks(con, ctx.as_of or self.default_as_of())
+            counts["sec13f_type_holdings"] = self._types(con)
             found += self._issues(con, ctx.as_of or self.default_as_of())
             summary["rescaled"] = common.count(con, "sec13f_filer_period", "value_factor <> 1")
             summary["px_fixed"] = common.count(con, "_pxfix")
@@ -785,6 +800,47 @@ class OwnershipServe:
             LEFT JOIN _filed fd ON fd.period = f.period
             LEFT JOIN _closed cl ON cl.period = f.period
             ORDER BY f.period""")
+
+    @staticmethod
+    def _types(con: duckdb.DuckDBPyConnection) -> int:
+        """``sec13f_type_holdings``: per investor type and quarter, the type's ``TYPE_TOP`` largest tickers by the
+        value its filers hold, each with its share of the type's mapped portfolio, and the rest as one row with
+        ``ticker`` NULL (#760). The types are the newest ``uw_institution`` snapshot's tags, matched on the CIK with
+        its zeros dropped (UW pads to ten digits, a 13F filing does not), plus ``all``; without the table only
+        ``all`` is served."""
+        _empty(con, "_tag", [("cik", "TEXT"), ("tag", "TEXT")])
+        table, snapshot = uw_institutions.TABLE, None
+        if common.has_table(con, table):
+            snapshot = con.execute(f"SELECT max(snapshot_date) FROM {table}").fetchone()[0]
+        if snapshot is not None:
+            con.execute(f"""INSERT INTO _tag
+                SELECT DISTINCT k.cik, u.tag
+                FROM (SELECT ltrim(cik, '0') AS bare, unnest(tags) AS tag FROM {table}
+                      WHERE snapshot_date = ? AND tags IS NOT NULL) u
+                JOIN (SELECT DISTINCT cik, ltrim(cik, '0') AS bare FROM sec13f_filer_period) k ON k.bare = u.bare
+                WHERE u.tag IS NOT NULL AND u.tag <> '{ALL_TYPE}'""", [snapshot])
+        snap = f"DATE '{snapshot}'" if snapshot is not None else "CAST(NULL AS DATE)"
+        common.create_table(con, "sec13f_type_holdings", TYPES)
+        _by_period(con, _periods_of(con, "_held"), "sec13f_type_holdings", f"""
+            WITH pos AS (SELECT m.ticker, h.period, h.cik, sum(h.value) AS value
+                         FROM _held h JOIN sec13f_cusip_map m ON m.cusip = h.cusip AND m.period = h.period
+                         WHERE h.period = ? AND m.ticker IS NOT NULL GROUP BY ALL HAVING sum(h.value) > 0),
+                 tg AS (SELECT cik, tag FROM _tag UNION ALL SELECT DISTINCT cik, '{ALL_TYPE}' FROM pos),
+                 v AS (SELECT tg.tag, pos.period, pos.ticker, sum(pos.value) AS value,
+                              count(DISTINCT pos.cik) AS holders
+                       FROM pos JOIN tg ON tg.cik = pos.cik GROUP BY ALL),
+                 t AS (SELECT tg.tag, sum(pos.value) AS type_value, count(DISTINCT pos.cik) AS type_filers
+                       FROM pos JOIN tg ON tg.cik = pos.cik GROUP BY ALL),
+                 r AS (SELECT *, row_number() OVER (PARTITION BY tag ORDER BY value DESC, ticker) AS rn FROM v),
+                 o AS (SELECT tag, period, ticker, rn, value, holders FROM r WHERE rn <= {TYPE_TOP}
+                       UNION ALL
+                       SELECT tag, min(period), NULL, NULL, sum(value), NULL FROM r WHERE rn > {TYPE_TOP}
+                       GROUP BY tag)
+            SELECT o.tag, o.period, o.ticker, o.rn, o.value, o.holders, round(o.value / t.type_value * 100, 4),
+                   t.type_value, t.type_filers, {snap}
+            FROM o JOIN t ON t.tag = o.tag
+            ORDER BY o.tag, o.rn NULLS LAST""")
+        return common.count(con, "sec13f_type_holdings")
 
     @staticmethod
     def _breaks(con: duckdb.DuckDBPyConnection, as_of: date) -> int:

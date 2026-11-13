@@ -599,17 +599,39 @@ def test_a_filer_that_starts_or_stops_reporting_is_not_a_trade_and_is_listed(mon
     assert read.filer_breaks_13f(["msft"], periods=[Q2]) == []      # the quarter before Q2 is not in the store
 
 
-def _handover(monkeypatch, http_mock, effective: str, also: list[dict] = ()) -> dict:
-    """#776 (AON, 2025 Q3 on the live board): HPS (4000002) is succeeded by BlackRock (4000001), which UW lists only
-    in BlackRock's ``predecessors``. BlackRock's Q3 holds its own 100, HPS's 300 and 50 bought; 4000003 starts
-    reporting and 4000004 really stops."""
+def _uw_ready(monkeypatch) -> None:
     from RevenueChaser.core.providers import unusual_whales
-    from RevenueChaser.rcdata.build.ownership import uw_institutions as uwi
     monkeypatch.setattr(sec, "_shared_pace", lambda: True)
     monkeypatch.setenv("RC_HTTP_CONTACT", "ops@example.org")
     monkeypatch.setenv("UNUSUAL_WHALES_API_KEY", "test-key")
     monkeypatch.setattr(unusual_whales, "BASE", "https://uw.test/api")
     monkeypatch.setattr(unusual_whales, "_sleep", lambda _s: None)
+
+
+def _uw_institutions(http_mock, rows: list[dict]) -> None:
+    """UW's ``/institutions`` answering ``rows`` on its first page, read once as of 12 Nov 2026."""
+    from RevenueChaser.rcdata.build.ownership import uw_institutions as uwi
+
+    def answer(request):
+        page = request.url.query.decode()
+        return 200, json.dumps({"data": rows if "page=" not in page or "page=0" in page else []}), \
+            {"content-type": "application/json"}
+    http_mock.add("/institutions", answer)
+    assert base.run_request({"dataset": uwi.NAME, "params": {"as_of": "2026-11-12"}},
+                            sleep=lambda s: None)["result"] == "changed"
+
+
+def _institution(cik: str, tags: list[str], predecessors: list[dict] = ()) -> dict:
+    return {"cik": cik, "name": f"MANAGER {cik}", "tags": tags, "is_hedge_fund": False, "date": "2026-09-30",
+            "filing_date": "2026-10-27", "total_value": "1", "share_value": "1",
+            "succession": {"predecessors": list(predecessors), "current_holder": None, "succeeded_by": None}}
+
+
+def _handover(monkeypatch, http_mock, effective: str, also: list[dict] = ()) -> dict:
+    """#776 (AON, 2025 Q3 on the live board): HPS (4000002) is succeeded by BlackRock (4000001), which UW lists only
+    in BlackRock's ``predecessors``. BlackRock's Q3 holds its own 100, HPS's 300 and 50 bought; 4000003 starts
+    reporting and 4000004 really stops."""
+    _uw_ready(monkeypatch)
     ox.make_spine()
     e = ox.Edgar()
     e.add_day("2026-08-14", [
@@ -623,19 +645,9 @@ def _handover(monkeypatch, http_mock, effective: str, also: list[dict] = ()) -> 
         _f("0004000001-26-000011", 4000001, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 180_000, 450)]),
         _f("0004000003-26-000013", 4000003, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 200_000, 500)])])
     e.install(http_mock)
-    blackrock = {"cik": "0004000001", "name": "BLACKROCK, INC.", "tags": [], "is_hedge_fund": False,
-                 "date": "2026-09-30", "filing_date": "2026-10-27", "total_value": "1", "share_value": "1",
-                 "succession": {"predecessors": [{"cik": "0004000002", "name": "HPS INVESTMENT PARTNERS, LLC",
-                                                  "effective_report_date": effective}],
-                                "current_holder": None, "succeeded_by": None}}
-
-    def answer(request):
-        page = request.url.query.decode()
-        rows = [blackrock, *also] if "page=" not in page or "page=0" in page else []
-        return 200, json.dumps({"data": rows}), {"content-type": "application/json"}
-    http_mock.add("/institutions", answer)
-    assert base.run_request({"dataset": uwi.NAME, "params": {"as_of": "2026-11-12"}},
-                            sleep=lambda s: None)["result"] == "changed"
+    blackrock = _institution("0004000001", [], [{"cik": "0004000002", "name": "HPS INVESTMENT PARTNERS, LLC",
+                                                 "effective_report_date": effective}])
+    _uw_institutions(http_mock, [blackrock, *also])
     _thirteen_f(as_of="2026-10-28")
     _thirteen_f(mode="backfill", **{"from": "2026-08-14", "to": "2026-08-14"})
     return _serve(day="2026-11-20")                              # after the 30 Sep deadline (16 Nov): settled
@@ -657,14 +669,43 @@ def test_a_filer_succeeded_in_the_quarter_it_stops_is_its_successor_not_a_stop(m
 def test_a_succession_dated_another_quarter_leaves_the_stop_a_stop(monkeypatch, http_mock):
     """A hand-over UW dates to a quarter the filings do not show is never merged silently (#776): HPS's is dated
     Q2, when both filers still reported, so HPS stays a stop; 4000004's, dated Q3 to 4000003, is taken."""
-    other = {"cik": "0004000003", "name": "OTHER ADVISERS LLC", "tags": [], "is_hedge_fund": False,
-             "date": "2026-09-30", "filing_date": "2026-10-27", "total_value": "1", "share_value": "1",
-             "succession": {"predecessors": [{"cik": "0004000004", "name": "OLD ADVISERS LLC",
-                                              "effective_report_date": "2026-09-30"}],
-                            "current_holder": None, "succeeded_by": None}}
+    other = _institution("0004000003", [], [{"cik": "0004000004", "name": "OLD ADVISERS LLC",
+                                             "effective_report_date": "2026-09-30"}])
     row = _handover(monkeypatch, http_mock, "2026-06-30", also=[other])
     assert _served("SELECT cik, kind FROM sec13f_filer_breaks ORDER BY kind, cik") == [("4000002", "stopped")]
     assert "1 filers succeeded by another" in row["note"]
+
+
+def test_each_investor_type_lists_its_largest_names_and_the_rest_per_quarter(monkeypatch, http_mock):
+    """#760: a type is a tag UW gives the filer's CIK (padded to ten digits there, not in a 13F filing), plus ``all``.
+    4000001 is a value and an energy investor, 4000002 a value investor, 4000003 untagged. With the top cut to one
+    name, the rest is one row with no ticker and every type's quarter adds up to 100 %."""
+    _uw_ready(monkeypatch)
+    monkeypatch.setattr(serve, "TYPE_TOP", 1)
+    ox.make_spine()
+    e = ox.Edgar()
+    e.add_day("2026-10-27", [
+        _f("0004000001-26-000011", 4000001, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 400_000, 1000),
+                                                         _h("APPLE INC", "037833100", 200_000, 1000)]),
+        _f("0004000002-26-000012", 4000002, "2026-10-27", [_h("APPLE INC", "037833100", 600_000, 3000)]),
+        _f("0004000003-26-000013", 4000003, "2026-10-27", [_h("MICROSOFT CORP", "594918104", 4_000_000, 10_000)])])
+    e.install(http_mock)
+    _uw_institutions(http_mock, [_institution("0004000001", ["energy", "value_investor"]),
+                                 _institution("0004000002", ["value_investor"]),
+                                 _institution("0004000009", ["activist"])])          # files no 13F here
+    _thirteen_f(as_of="2026-10-28")
+    _serve(day="2026-11-20")
+    assert _served("SELECT tag, ticker, rank, value, holders, share, type_value, type_filers, snapshot_date "
+                   "FROM sec13f_type_holdings WHERE period = ? ORDER BY tag, rank NULLS LAST", Q3) == [
+        ("all", "MSFT", 1, 4_400_000.0, 2, 84.6154, 5_200_000.0, 3, date(2026, 11, 12)),
+        ("all", None, None, 800_000.0, None, 15.3846, 5_200_000.0, 3, date(2026, 11, 12)),
+        ("energy", "MSFT", 1, 400_000.0, 1, 66.6667, 600_000.0, 1, date(2026, 11, 12)),
+        ("energy", None, None, 200_000.0, None, 33.3333, 600_000.0, 1, date(2026, 11, 12)),
+        ("value_investor", "AAPL", 1, 800_000.0, 2, 66.6667, 1_200_000.0, 2, date(2026, 11, 12)),
+        ("value_investor", None, None, 400_000.0, None, 33.3333, 1_200_000.0, 2, date(2026, 11, 12))]
+    assert [(r["ticker"], r["share"]) for r in read.type_holdings_13f(["Value_Investor"], periods=[Q3])] == [
+        ("AAPL", 66.6667), (None, 33.3333)]
+    assert read.type_holdings_13f(["activist"]) == []
 
 
 def test_a_quarter_still_arriving_lists_no_breaks(monkeypatch, http_mock):

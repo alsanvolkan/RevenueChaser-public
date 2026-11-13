@@ -42,13 +42,14 @@ KIND_OF_TABLE = {"market_series": "market", "spx_gamma_expiry_strike": "market",
 # The ownership store (PR 16).
 DATASET_OF_TABLE.update({"sec13f_ticker_period": "ownership/serve", "sec13f_periods": "ownership/serve",
                          "sec13f_cusip_map": "ownership/serve", "sec13f_filer_breaks": "ownership/serve",
+                         "sec13f_type_holdings": "ownership/serve",
                          "finra_short_interest": "finra/short_interest", "ibkr_shortable": "ibkr/shortable",
                          "regsho_threshold": "regsho/threshold", "sec_ftd": "sec/ftd",
                          "insider_transactions": "sec/form4", "beneficial_ownership": "sec/13dg",
                          "uw_institution": "uw/institutions",
                          "uw_institution_succession": "uw/institutions"})
 KIND_OF_TABLE.update({t: "ownership" for t in ("sec13f_ticker_period", "sec13f_periods", "sec13f_cusip_map",
-                                               "sec13f_filer_breaks",
+                                               "sec13f_filer_breaks", "sec13f_type_holdings",
                                                "finra_short_interest",
                                                "ibkr_shortable", "regsho_threshold", "sec_ftd",
                                                "insider_transactions", "beneficial_ownership",
@@ -791,6 +792,29 @@ def filer_breaks_13f(tickers: Iterable[str] | None = None, periods: Iterable | N
         params += days
     return _rows("sec13f_filer_breaks", f"SELECT * FROM sec13f_filer_breaks{sql} "
                  "ORDER BY ticker, period, kind, shares DESC, cik", params, missing_table_ok=True)
+
+
+def type_holdings_13f(tags: Iterable[str] | None = None, periods: Iterable | None = None) -> list[dict]:
+    """``sec13f_type_holdings`` rows of investor ``tags`` (every type when None; ``all`` is every filer) and
+    ``periods`` (every period when None): per type and quarter its largest tickers by value with their ``share`` (%)
+    of the type's portfolio, and the rest as one row whose ``ticker`` is None (#760). The types are Unusual Whales'
+    institution tags of the ``snapshot_date`` snapshot. By tag, period and rank, the rest last. A store built before
+    the table existed gives no rows."""
+    sql, params = " WHERE true", []
+    if tags is not None:
+        wanted = sorted({str(t).strip().lower() for t in tags if str(t).strip()})
+        if not wanted:
+            return []
+        sql += f" AND tag IN ({', '.join('?' * len(wanted))})"
+        params += wanted
+    if periods is not None:
+        days = sorted({_day(p) for p in periods})
+        if not days:
+            return []
+        sql += f" AND period IN ({', '.join('?' * len(days))})"
+        params += days
+    return _rows("sec13f_type_holdings", f"SELECT * FROM sec13f_type_holdings{sql} "
+                 "ORDER BY tag, period, rank NULLS LAST", params, missing_table_ok=True)
 
 
 def periods_13f() -> list[dict]:
