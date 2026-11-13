@@ -812,14 +812,37 @@ SIGNALS_OURS_1 = ("S1", "S2", "S3", "S4", "S5", "S6", "S8")
 #:   (``ITEM 1A``, ``ITEM 4A``), so all five are false alarms. The signal is dropped on that measurement, not on
 #:   the identity of the two predicates.
 #:
-#: **What this set does not say.** A version has two cutters -- :attr:`Rule.slice_item` and
-#: :attr:`Rule.aif_business` -- and one signal set between them, so the ``sec_forms`` layer flags a 40-F's
-#: Annual Information Form from this list too. S3 and S6 are item-shaped: S3 looks for a 10-K's own section
-#: headings (competition, human capital, employees, available information), which NI 51-102 does not ask an AIF
-#: to carry, so a correctly cut AIF of a long 40-F reads ``ok;suspect:S2,S3``. That predates #835 -- the 40-F row
-#: already went through :func:`flag` -- and it survives here because S3 stays in the set. It is not fixed in
-#: #835, whose measurement is 10-K/20-F only; a per-cutter set is the shape that would fix it.
+#: S6 and S8 are dropped here, so this is the set :attr:`Rule.item_signals` names for ``ours-2``.
 SIGNALS_OURS_2 = ("S1", "S2", "S3", "S4", "S5")
+
+# ── the AIF cutter's own sets (#838) ────────────────────────────────────────────────────────────────────────
+#
+# A version has **two** cutters -- :attr:`Rule.slice_item` and :attr:`Rule.aif_business` -- and #835 gave it one
+# signal set between them, so the ``sec_forms`` layer asked a 40-F's Annual Information Form the questions it
+# asks a 10-K's Item 1. Two of the signals are item-shaped and cannot be asked of an AIF at all:
+#
+# - **S3** looks for a 10-K's own section headings (competition, human capital, employees, available
+#   information). An Annual Information Form is written to NI 51-102 Form 51-102F2, which asks for none of them,
+#   so S3 is true of a correct AIF about as often as of a wrong one: it carries no information here.
+# - **S6** asks whether the slice holds a line-start item number other than ``own``. ``own`` is ``"1"`` for a
+#   40-F only because :func:`flag` maps every non-20 form onto the ``10-K`` key; an AIF numbers nothing that way.
+#
+# Together they are the whole of the mislabel: ``flag`` trips on ``S2 and S3``, and S2 -- a small share of a big
+# document -- is what an AIF of a long 40-F is by construction, so a correctly cut AIF read ``ok;suspect:S2,S3``.
+# ``module_relatedness.locator.asks`` fires on any ``;suspect``, so that sent a correct business row to the
+# writer model, which is a paid call per 40-F on a board running a paid provider.
+#
+# What stays is the four signals that read the TEXT rather than the item structure: S1 (the slice is tiny), S4
+# (it ends mid cross-reference), S5 (it starts right after one) and, where the cutter caps, S8. S2 stays in the
+# set but can no longer trip on its own -- it only ever acted together with S3 -- so it is recorded as context
+# beside a signal that did trip, never as the reason for one.
+#
+#: The AIF signals ``ours-1`` raises. S8 is in: ``ours-1``'s AIF block caps at :data:`MAX_ITEM_CHARS`, the same
+#: limit its item cutter uses (:attr:`Rule.caps`), so the length against the cap means something there.
+AIF_SIGNALS_OURS_1 = ("S1", "S2", "S4", "S5", "S8")
+#: And ``ours-2``'s. S8 goes for the same reason it goes from :data:`SIGNALS_OURS_2`: ``ours-2`` caps nothing,
+#: so a slice at the cap says only that the filer wrote a long one.
+AIF_SIGNALS_OURS_2 = ("S1", "S2", "S4", "S5")
 
 
 def flag(quality: str, text: str, item: str | None, form: str = "10-K", *,
@@ -1721,13 +1744,19 @@ class Rule:
     #: for it here would be inventing behaviour. :func:`cut_aif_business_q` raises for such a version rather
     #: than making one up.
     aif_business_q: object | None = None
-    #: The suspect signals :func:`flag` may raise for this version's slices (#835). The version is what says
-    #: which are defined, so no second column is needed to record which flags were computed -- but only for a row
-    #: written **after** the flagger of that version last changed: the flags went onto the ``sec_forms`` business
-    #: rows while :data:`OURS_1` kept its name, so an ``ours-1`` row stored before #835 carries no flag and says
-    #: the same ``rules_version`` as one stored after it. That population is mixed until the layer re-cuts, which
-    #: its staleness rule does only when the version string moves. See ``sec_forms.forms._flag``.
-    signals: tuple[str, ...] = SIGNALS_OURS_1
+    #: The suspect signals :func:`flag` may raise for a slice of this version's :attr:`slice_item` (#835). The
+    #: version is what says which are defined, so no second column is needed to record which flags were computed
+    #: -- but only for a row written **after** the flagger of that version last changed: the flags went onto the
+    #: ``sec_forms`` business rows while :data:`OURS_1` kept its name, so an ``ours-1`` row stored before #835
+    #: carries no flag and says the same ``rules_version`` as one stored after it, and one stored before #838
+    #: carries the item set's answer for an AIF. That population is mixed until the layer re-cuts, which its
+    #: staleness rule does only when the version string moves. See ``sec_forms.forms._flag``.
+    item_signals: tuple[str, ...] = SIGNALS_OURS_1
+    #: And for a block of its :attr:`aif_business` (#838). A version has two cutters, and S3 and S6 ask an item
+    #: question that an Annual Information Form has no answer to, so the two sets are not the same list: see the
+    #: block above :data:`AIF_SIGNALS_OURS_1`. :func:`cut_flag` picks between them on its ``aif`` argument,
+    #: because the caller is what knows which cutter produced the text -- the form string does not say.
+    aif_signals: tuple[str, ...] = AIF_SIGNALS_OURS_1
 
 
 RULES: dict[str, Rule] = {
@@ -1735,7 +1764,8 @@ RULES: dict[str, Rule] = {
     # ``ours-2``'s AIF block is its own since #756: six start titles and ten stop titles adapted from
     # edgartools (the provenance block above it), our own section end, and a label.
     OURS_2: Rule(version=OURS_2, slice_item=_slice_item_ours_2, aif_business=_aif_business_ours_2,
-                 caps=False, aif_business_q=_aif_business_ours_2_q, signals=SIGNALS_OURS_2),
+                 caps=False, aif_business_q=_aif_business_ours_2_q,
+                 item_signals=SIGNALS_OURS_2, aif_signals=AIF_SIGNALS_OURS_2),
 }
 
 
@@ -1770,14 +1800,20 @@ def cut_item(text: str, form: str = "10-K", *, version: str | None | object = _U
 
 
 def cut_flag(quality: str, text: str, item: str | None, form: str = "10-K", *,
-             version: str | None | object = _UNSET) -> str:
+             version: str | None | object = _UNSET, aif: bool = False) -> str:
     """``quality`` with ``version``'s own ``;suspect`` flags -- what a layer that stores the row calls.
 
-    :func:`flag` raises every signal, which is ``ours-1``'s set; this picks the set the version defines
-    (:attr:`Rule.signals`). What it does **not** give is a way to tell, from a stored row, whether the flagger
-    had already landed when that row was written: see :attr:`Rule.signals`.
+    :func:`flag` raises every signal, which is ``ours-1``'s item set; this picks the set the version defines for
+    the cutter that produced ``item``: :attr:`Rule.aif_signals` when ``aif`` is True -- the text came from
+    :attr:`Rule.aif_business` -- and :attr:`Rule.item_signals` otherwise (#838). The caller says which, because
+    ``form`` cannot: a 40-F reaches this both ways, as an uncut exhibit and as a cut AIF block, and the item
+    sets' S3 and S6 are false alarms on the second (see the block above :data:`AIF_SIGNALS_OURS_1`).
+
+    What it does **not** give is a way to tell, from a stored row, whether the flagger had already landed when
+    that row was written: see :attr:`Rule.item_signals`.
     """
-    return flag(quality, text, item, form, signals=rule(version).signals)
+    r = rule(version)
+    return flag(quality, text, item, form, signals=r.aif_signals if aif else r.item_signals)
 
 
 def cut_aif_business(text: str, *, version: str | None | object = _UNSET) -> str | None:

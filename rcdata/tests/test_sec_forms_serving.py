@@ -272,3 +272,23 @@ def test_the_business_row_carries_the_suspect_flag_when_the_cut_ends_in_a_refere
     # it (as PR 827 found). A short, well-formed 10-K has no signal to raise (S2 needs a huge filing).
     clean = [r for r in forms.sections_of(fx.ten_k(), "10-K") if r[0] == forms.BUSINESS][0]
     assert clean[2] == "ok", clean[2]
+
+
+# ── the AIF business row carries the AIF cutter's flags, not the item cutter's (#838) ───────────────────────────
+
+def test_the_aif_business_row_of_a_long_40_f_is_not_flagged_suspect():
+    """The layer cuts a 40-F's business row with :func:`sec_sections.cut_aif_business` and flagged it from the
+    ITEM signal set, so S3 -- does the slice carry a 10-K's own section headings -- was asked of a Canadian
+    Annual Information Form, which NI 51-102 never asks for one. Together with S2 (an AIF is a small share of a
+    long 40-F) that tripped the flag, and ``module_relatedness.locator.asks`` fires on any ``;suspect``, so a
+    correct business row went to the writer model: a paid call per 40-F where the board runs a paid provider.
+
+    The call site is what says which cutter made the text (``_flag(..., aif=True)``), so this reads the layer
+    rather than :func:`sec_sections.cut_flag`, whose own cases are in ``test_sec_sections_ours_2``.
+    """
+    from .test_sec_sections_ours_2 import _LONG_40F
+
+    rows = {r[0]: r for r in forms.sections_of(_LONG_40F, "40-F")}
+    business = rows[forms.BUSINESS]
+    assert business[3] == forms.AIF, business[3]
+    assert business[2] == "ok", business[2]
