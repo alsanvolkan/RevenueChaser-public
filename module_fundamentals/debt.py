@@ -26,10 +26,19 @@ EDGAR is read (``pipeline._score_row``). That exclusion, not this module, is wha
 """
 from __future__ import annotations
 
-from RevenueChaser.rcdata.build.fundamentals.facts import DEBT_LINES, FALLBACK_DEBT_LINES
+from functools import lru_cache
 
-# Every debt line the store can carry, each name once and in a fixed order.
-DEBT_TAG_FIELDS: tuple[str, ...] = tuple(dict.fromkeys(DEBT_LINES + FALLBACK_DEBT_LINES))
+
+@lru_cache(maxsize=1)
+def tag_fields() -> tuple[str, ...]:
+    """Every debt line the store can carry, each name once, read from the facts layer so there is one list.
+
+    The import is **inside** the function on purpose: ``rcdata.build`` imports every dataset module as its package
+    body, so importing it at the top of this file would put the whole builder on the board's import path.
+    ``module_fundamentals.events`` defers its rcdata imports for the same reason.
+    """
+    from RevenueChaser.rcdata.build.fundamentals.facts import DEBT_LINES, FALLBACK_DEBT_LINES
+    return tuple(dict.fromkeys(DEBT_LINES + FALLBACK_DEBT_LINES))
 
 FILED = "filed"                  # ``total_debt`` came from the facts (a sum of tagged lines), zero included
 INFERRED_NONE = "inferred_none"  # no total in the facts; this module read it as 0
@@ -49,7 +58,7 @@ def tags_no_debt(rec: dict | None) -> bool:
     """True when the record tags none of ``DEBT_TAG_FIELDS``. A tagged zero counts as a tag: the filer stated it."""
     if not rec:
         return False
-    return all(_float(rec.get(f)) is None for f in DEBT_TAG_FIELDS)
+    return all(_float(rec.get(f)) is None for f in tag_fields())
 
 
 def no_interest(rec: dict | None) -> bool:

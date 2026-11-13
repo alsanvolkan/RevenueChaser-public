@@ -98,8 +98,9 @@ def test_every_debt_line_the_store_can_carry_is_checked():
     """The list is the facts layer's, not a copy: a tag added to #239's lines or to #825's fallback ladders is in
     scope here the day it lands, and never has to be added twice."""
     from RevenueChaser.rcdata.build.fundamentals import facts
-    assert set(debt.DEBT_TAG_FIELDS) == set(facts.DEBT_LINES) | set(facts.FALLBACK_DEBT_LINES)
-    assert len(debt.DEBT_TAG_FIELDS) == len(set(debt.DEBT_TAG_FIELDS))
+    fields = debt.tag_fields()
+    assert set(fields) == set(facts.DEBT_LINES) | set(facts.FALLBACK_DEBT_LINES)
+    assert len(fields) == len(set(fields))
 
 
 # ── The trailing year (rule 4: the same rule, read on the quarter the balance sheet comes from) ──
