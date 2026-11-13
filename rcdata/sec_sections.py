@@ -256,14 +256,23 @@ _ITEM = _spaced("item")
 _NOT_SUBITEM = r"(?!\.[ \t\xa0\u202f\u3000]*\d\d\b)"
 
 _LINE_START_2 = {
-    "10-K": re.compile(rf"(?im)^[^\S\n]*{_ITEM}s?\s{{0,3}}(1|i)\b(?:\s*(?:and|&|,)\s*2\b)?"
+    # "Items 1. and 2." -- a full stop after the first number (Cheniere, 13 Nov 2026 real-filing check)
+    "10-K": re.compile(rf"(?im)^[^\S\n]*{_ITEM}s?\s{{0,3}}(1|i)\b(?:\s*\.?\s*(?:and|&|,)\s*2\b)?"
                        rf"\s*[.:]?\s*(?:[{DASH}]+\s*)?(?:(?:description\s+of|our)\s+(?:the\s+)?)?"
                        rf"{spaced('business')}"),
     "20-F": re.compile(rf"(?im)^[^\S\n]*{_ITEM}\s{{0,3}}(4)\b\s*[.:]?\s*(?:[{DASH}]+\s*)?"
                        rf"{spaced('information')}\s+(?:on|about|of)\s+(?:the\s+)?"
                        r"(?!(?:our\s+)?executive)[\w&.-]+"),
 }
-_LINE_END_2 = re.compile(rf"(?im)^[^\S\n]*{_ITEM}\s{{0,3}}(1[abc]|[2-9][abc]?|1[0-9])\b{_NOT_SUBITEM}")
+#: The letter may stand apart from its number: Tempus AI writes "Item\u20091 A. Risk Fact ors" (13 Nov 2026 real-filing
+#: check), and without the gap allowed Item 1A was no heading, the slice ran through the risk factors to Item 1B and
+#: still said ``ok``. :func:`_item_no` drops the gap again before a number is compared.
+_LINE_END_2 = re.compile(rf"(?im)^[^\S\n]*{_ITEM}\s{{0,3}}(1[^\S\n]?[abc]|[2-9](?:[^\S\n]?[abc])?|1[0-9])\b{_NOT_SUBITEM}")
+
+
+def _item_no(m: re.Match) -> str:
+    """The item number ``m`` read, lower case and without the gap :data:`_LINE_END_2` allows: "1 A" -> "1a"."""
+    return re.sub(r"\s", "", m.group(1)).lower()
 
 #: ``ours-1``'s :data:`START_PATTERNS` and :data:`STOP_PATTERNS`, spelled with :data:`_ITEM`. Copies and not
 #: edits of those two, because the boards read them (module docstring). :data:`_NOT_SUBITEM` is **not** on them,
@@ -281,8 +290,8 @@ START_PATTERNS_2 = {
              r"information\s+on\s+the\s+(?:company|group)"),
 }
 STOP_PATTERNS_2 = {
-    "10-K": (rf"\b{_ITEM}\s*1a\s*[\.\:{_DASH}\s]*\s*{_spaced('risk')}\s+{_spaced('factors')}"
-             rf"|\b{_ITEM}\s*1b\s*[\.\:{_DASH}\s]*\s*{_spaced('unresolved')}"
+    "10-K": (rf"\b{_ITEM}\s*1\s?a\s*[\.\:{_DASH}\s]*\s*{_spaced('risk')}\s+{_spaced('factors')}"
+             rf"|\b{_ITEM}\s*1\s?b\s*[\.\:{_DASH}\s]*\s*{_spaced('unresolved')}"
              rf"|\b{_ITEM}\s*2\s*[\.\:{_DASH}\s]*\s*(?:description\s+of\s+)?{_spaced('propert')}"),
     "20-F": rf"\b{_ITEM}\s*4a\s*[\.\:{_DASH}\s]|\b{_ITEM}\s*5\s*[\.\:{_DASH}\s]",
 }
@@ -297,7 +306,17 @@ _POINTER = re.compile(r"(?i)\b(?:incorporated\s+(?:herein\s+)?by\s+reference"
                       r"|reference\s+is\s+(?:hereby\s+)?made"
                       r"|(?:are|is)\s+set\s+forth\s+(?:beginning\s+)?on\s+page"
                       r"|(?:appears?|appearing|begins?)\s+on\s+page"
-                      r"|required\s+by\s+this\s+item\s+(?:is|are)\s+(?:set\s+forth|contained|included))")
+                      r"|required\s+by\s+this\s+item\s+(?:is|are)\s+(?:set\s+forth|contained|included))"
+                      # the whole body a page number: McDonald's cross-reference index, "Item 1 Business Page 3"
+                      r"|^\W*pages?[^\S\n]+[\w\-–,]{1,12}\W*$")
+
+
+#: ``ours-1``'s :data:`_REF_BEFORE` with a part named between the reference word and the item: Cal-Maine's "see
+#: Note 15 – Segment Reporting in Part II.\nItem 8. Notes to Consolidated Financial Statements" starts a line, so
+#: only the words before it say it is a mention; without this Item 1 ended there, 4,153 characters, ``ok`` (13 Nov
+#: 2026 real-filing check). A copy, because ``_REF_BEFORE`` is the board's.
+_REF_BEFORE_2 = re.compile(r"(?i)([“‘]|\b(see|in|under|refer to)(?:\s*part\s+[ivx]+\s*[.,]?)?[^\S\n]*[“\"‘]?)"
+                           r"[^\S\n]*$")
 
 
 def _inline_ref(text: str, m: re.Match) -> bool:
@@ -381,7 +400,7 @@ def _ref_ours_2(text: str, m: re.Match) -> bool:
     question for all of this is how often each shape occurs in filings, which is #763's hand-checked set and
     not a built string.
     """
-    if _REF_BEFORE.search(text[max(0, m.start() - 40):m.start()].rstrip()):
+    if _REF_BEFORE_2.search(text[max(0, m.start() - 40):m.start()].rstrip()):
         return True
     line_end = text.find("\n", m.end())
     if _cites_its_title(text, m, line_end):
@@ -396,7 +415,7 @@ def _ref_ours_2(text: str, m: re.Match) -> bool:
 #: Just past the item's number inside a match, wherever the match itself ends. The four patterns end in
 #: different places -- the line-end one after the number, the starts and the stops after the **title** -- and
 #: every test below asks what follows the *number*, so each of them needs this and not ``m.end()``.
-_NUMBER = re.compile(rf"(?i)[^\S\n]*{_ITEM}s?\s{{0,3}}(?:[0-9]+[a-c]?|i[a-c]?)")
+_NUMBER = re.compile(rf"(?i)[^\S\n]*{_ITEM}s?\s{{0,3}}(?:[0-9]+(?:[a-c]|[^\S\n][a-c]\b)?|i[a-c]?)")
 
 
 def _after_number(text: str, m: re.Match) -> int:
@@ -548,7 +567,7 @@ def _line_item_ours_2(text: str, key: str) -> tuple[int, int, bool] | None:
             continue
         own = m.group(1).lower()
         end = next((e.start() for e in _LINE_END_2.finditer(text, m.end() + MIN_ITEM_CHARS)
-                    if e.group(1).lower() != own and not _ref_ours_2(text, e)), None)
+                    if _item_no(e) != own and not _ref_ours_2(text, e)), None)
         if end is None:
             end = next((t.start() for t in stop_re.finditer(text, m.end()) if not _inline_ref(text, t)), None)
         closed = end is not None
@@ -569,7 +588,7 @@ def _holds_another_item(item: str, own: str) -> bool:
     heading is not the section it claims to be, however it ended -- ``ours-1`` could only say so when no stop
     matched at all, and so labelled this one by its length instead.
     """
-    return any(m.group(1).lower() != own and not _ref_ours_2(item, m)
+    return any(_item_no(m) != own and not _ref_ours_2(item, m)
                for m in _LINE_END_2.finditer(item))
 
 
@@ -600,6 +619,11 @@ def _slice_item_ours_2(text: str, form: str = "10-K") -> tuple[str | None, str]:
       prose to find there, so a later run should not keep looking for it.
     - **PCVX and GLUE's long Item 1** -- nothing is capped, because this version serves a layer that stores a
       section whole and lets its reader cap (165 such reports in the census).
+    And from the 13 Nov 2026 check on 383 real 10-Ks, where three wrong cuts still said ``ok``: a
+    mention through a part ("in Part II.\nItem 8.", Cal-Maine; :data:`_REF_BEFORE_2`), a mention on the pattern
+    path (Cheniere, U.S. GoldMining), "Item 1 A." with its letter set apart (Tempus AI; :data:`_LINE_END_2`) and
+    "Items 1. and 2." as a line start (Cheniere), and a body that is only a page number is ``pointer``
+    (McDonald's; :data:`_POINTER`).
     """
     text = text or ""
     if not text.strip():
@@ -624,7 +648,10 @@ def _slice_item_ours_2(text: str, form: str = "10-K") -> tuple[str | None, str]:
     best: str | None = None
     closed = False
     for start_m in start_re.finditer(text):
-        stop_m = stop_re.search(text, start_m.end())
+        # A mention is no stop here either: Cheniere's "described in Item 1A. Risk Factors ." and U.S.
+        # GoldMining's 'See\n“ Item 2. Properties” for further information' each ended Item 1 at a few
+        # thousand characters (13 Nov 2026 real-filing check).
+        stop_m = next((s for s in stop_re.finditer(text, start_m.end()) if not _inline_ref(text, s)), None)
         item = text[start_m.end():stop_m.start() if stop_m else len(text)].strip()
         if len(item) >= MIN_ITEM_CHARS:
             best, closed = item, stop_m is not None

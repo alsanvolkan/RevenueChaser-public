@@ -1193,3 +1193,63 @@ def test_the_details_inside_the_reference_test_each_decide_a_cut(name, text):
     assert new[1] == "ok", name
     assert len(new[0]) > 20000, f"{name}: the mention must not end the section"
     assert "Risky." not in new[0], name
+
+
+# ── the 13 Nov 2026 real-filing check ──────────────────────────────────────────────────────────────────────────
+# ours-2 over 383 real 10-Ks on homesrv (claude-coordinator notes/revenuechaser/reviews/2026-11-13_0114_10k-section-
+# cutter-real-filings.md): five wrong cuts, three of them ``ok``, and a sixth (AES) found by the fix. Each shape below
+# is the filing's own boundary text, transcribed; the filler around it is built. Red on the merge-base: each of these
+# ends Item 1 at the mention, or (Tempus) runs past the real stop, or (McDonald's) answers ``short``.
+def test_cal_maine_a_mention_through_part_ii_that_starts_a_line_does_not_end_item_1():
+    """"see Note 15 – Segment Reporting in Part II. / Item 8. Notes to ..." -- the filer's HTML breaks every few
+    words, so "Item 8." starts a line and only the words before it ("in Part II.") say it is a mention."""
+    text = ("ITEM 1. BUSINESS\nOverview\n" + BODY[:3000] + "\nsee \n Note 15 – Segment Reporting \nin \nPart II. "
+            "\nItem \n8. Notes \nto \nConsolidated \nFinancial \n Statements. \n" + BODY[:3000]
+            + "\nITEM 1A. RISK FACTORS\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert "Segment Reporting" in item and item.endswith(BODY[:3000].strip())
+
+
+def test_cheniere_and_goldmining_a_mention_on_the_pattern_path_is_not_a_stop():
+    """The pattern path took the first titled stop, mention or not: Cheniere's "described in Item 1A. Risk
+    Factors ." and U.S. GoldMining's 'See\\n“ Item 2. Properties” for further information'."""
+    for mention in ("uncertainties described in Item 1A. Risk Factors . ",
+                    "in Alaska. See\n“ Item 2. Properties” for further information. "):
+        # "PART I Item 1." on one line: no line-start heading, so this is the pattern path
+        text = ("PART I Item 1. Business Overview " + BODY[:3000] + mention + BODY[:3000]
+                + " Item 1A. Risk Factors " + "Risky. " * 400)
+        item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+        assert quality == "ok", mention
+        assert item.endswith(BODY[:3000].strip()), f"{mention!r} ended the section"
+
+
+def test_tempus_an_item_letter_set_apart_from_its_number_still_ends_item_1():
+    """"Item\\u20091 A. Risk Fact ors" on its own line. Unseen, the slice ran through all of Item 1A to Item 1B,
+    535,001 characters, and still said ``ok``."""
+    text = ("PART I\nItem 1. Business\n" + BODY + "\nItem 1 A. Risk Fact ors \nA description of the risks\n"
+            + "Risky. " * 400 + "\nItem 1B. Unresolved Staff Comments\nNone.\n")
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok"
+    assert "Risky." not in item
+
+
+def test_cheniere_items_1_and_2_with_a_full_stop_after_the_first_number_is_a_line_start():
+    """"ITEMS 1. AND 2. BUSINESS AND PROPERTIES" was no line-start heading, so Cheniere went to the pattern path,
+    and a mention with no reference word before it ("within Item 1A. Risk Factors, these ...") ended Item 1 there.
+    The line rule keeps only a stop that starts its own line."""
+    text = ("ITEMS 1. AND 2. BUSINESS AND PROPERTIES\n" + BODY[:3000] + " As further described in Risks Relating to"
+            " Regulations within Item 1A. Risk Factors, these rigorous regulatory requirements apply. " + BODY[:3000]
+            + "\nITEM 1A. RISK FACTORS\n" + "Risky. " * 400)
+    item, quality = sec_sections.cut_item(text, "10-K", version=OURS_2)
+    assert quality == "ok" and item.startswith("AND PROPERTIES")
+    assert "these rigorous" in item and item.endswith(BODY[:3000].strip())
+
+
+def test_mcdonalds_an_item_whose_body_is_a_page_number_is_a_pointer():
+    """McDonald's files in its own layout with a cross-reference index at the end: "Item 1 Business Page 3". There
+    is no prose to find, so the answer is ``pointer`` and not ``short``."""
+    text = (BODY + "\nCross-Reference Index Page reference\nPart I\nItem 1 Business\nPage 3\n"
+            "Item 1A Risk Factors\nPage 27\n")
+    assert sec_sections.cut_item(text, "10-K", version=OURS_2) == ("Page 3", "pointer")
+    assert sec_sections.cut_item(text, "10-K", version=OURS_1)[1] == "short"
