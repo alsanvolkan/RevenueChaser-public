@@ -13,6 +13,7 @@ from __future__ import annotations
 from RevenueChaser.core import tristate as tri
 
 from . import config
+from . import debt
 
 
 def _rule(id: str, label: str, unit: str, passed: bool | None, actual, threshold: str) -> dict:
@@ -65,12 +66,25 @@ def evaluate_rule_of_40(m: dict) -> dict:
     }
 
 
-def _leverage_rule(nde, net_cash) -> dict:
+# #737 (avo, 13 Nov 2026): the note a card carries when the leverage figure rests on an inferred zero rather than
+# on a debt total the filer tagged. It is on the label, so it travels with the rule into ``fundamentals_gates`` and
+# onto the card, and it says why -- a filed zero carries no note at all.
+INFERRED_DEBT_NOTE = "debt not tagged, no interest: counted 0"
+
+
+def _leverage_rule(nde, net_cash, debt_basis=None) -> dict:
     """Net Debt / EBITDA < 3×. Review N1: a firm with more cash than debt passes even when EBITDA ≤ 0 leaves the
-    ratio undefined (shown as "Net cash"); net debt with EBITDA ≤ 0 stays unknown."""
+    ratio undefined (shown as "Net cash"); net debt with EBITDA ≤ 0 stays unknown.
+
+    ``debt_basis`` is #737's: ``inferred_none`` means the filer tagged no debt line and reported no interest, so
+    the board read its total debt as 0 (``module_fundamentals.debt``). The label then says so. A filed total,
+    zero included, is ``filed`` and reads exactly as it did before."""
+    label = "Net Debt / EBITDA < 3×"
+    if debt_basis == debt.INFERRED_NONE:
+        label += f" ({INFERRED_DEBT_NOTE})"
     if nde is None and net_cash is True:
-        return _rule("net_debt_ebitda", "Net Debt / EBITDA < 3×", "text", True, "Net cash", "< 3.0×")
-    return _rule("net_debt_ebitda", "Net Debt / EBITDA < 3×", "ratio",
+        return _rule("net_debt_ebitda", label, "text", True, "Net cash", "< 3.0×")
+    return _rule("net_debt_ebitda", label, "ratio",
                  tri.rule((nde,), lambda n: n < config.ND_EBITDA_MAX), nde, "< 3.0×")
 
 
@@ -89,7 +103,7 @@ def evaluate_quality(m: dict) -> dict:
               tri.either(growth_ok, roic_ok), growth if growth_ok else roic, "≥20% / ≥15%"),
         _rule("gross_margin", "Gross margin ≥30%", "pct",
               tri.rule((gm,), lambda g: g >= config.GM_MIN), gm, "≥ 30%"),
-        _leverage_rule(nde, m.get("net_cash")),
+        _leverage_rule(nde, m.get("net_cash"), m.get("debt_basis")),
     ]
     return _counted("Quality", rules)
 
