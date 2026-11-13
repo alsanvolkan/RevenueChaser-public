@@ -1362,7 +1362,8 @@ def _aif_business_ours_2_q(text: str) -> tuple[str | None, str]:
                     short = body
                 continue
             if end is not None:
-                return _aif_trim(body), ("short" if _aif_item_goes_on(text, m, end, ends) else "ok")
+                return _aif_trim(body), ("short" if _aif_item_goes_on(text, m, end, ends)
+                                         or _aif_ends_at_item_4_early(text, m, body, end, ends) else "ok")
             if overrun is None:  # starts arrive in document order, so the first unclosed one is the earliest;
                 overrun = (m.start(), body)   # the comparison round 2 needed here was for one loop over two title
     closed, open_ = _aif_pass_ours_1(text)   # sets, and round 3 split those into two passes
@@ -1477,6 +1478,27 @@ def _aif_short_item(text: str, m: re.Match, end: int | None, body: str) -> bool:
 
 _AIF_SUB_NUMBERED = re.compile(r"(?im)^[^\S\n]*(?:item[^\S\n]+(\d{1,2})|(?:item[^\S\n]+)?(\d{1,2})\.(\d{1,2}))"
                                r"[.):]?[^\S\n]+[^\W\d_][^\n.]{0,80}$")
+
+
+#: A body under this share of the way to the next part is suspect when item 4 ended it (see below).
+_AIF_ITEM_4_SHARE = 0.025
+
+
+def _aif_ends_at_item_4_early(text: str, m: re.Match, body: str, end: int, ends: list[int]) -> bool:
+    """True when the section ends at "general development of the business" and is a sliver of what lies before
+    the next part: a description printed **ahead of** item 4 whose own content goes on under item 4.
+
+    AG's "DESCRIPTION OF BUSINESS" is 4,838 characters and the next part, RISK FACTORS, begins 314,686 characters
+    after its heading: 1.5%. Its contents lists nothing under the description and its principal markets and
+    material properties under item 4, but nothing in the text tells that from EMA (50%) and MOON (4.9%), whose
+    item 4 is history alone -- which is why this is a label and not a later end. The share is set between AG
+    and MOON, the two measured shapes either side of it; no other stored cut ends at item 4 below 50%.
+    """
+    if not _aif_stop_key(text, end).startswith("general development"):
+        return False
+    nxt = next((e for e in ends if e > end and not re.match(r"general development|.*history", _aif_stop_key(text, e))),
+               len(text))
+    return len(body) < _AIF_ITEM_4_SHARE * (nxt - m.start())
 
 
 def _aif_item_goes_on(text: str, m: re.Match, end: int, ends: list[int]) -> bool:
