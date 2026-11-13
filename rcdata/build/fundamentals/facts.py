@@ -268,7 +268,7 @@ def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) ->
     second = _lines_on_one_sheet(out, index, balance_end, DEBT_LINES + FALLBACK_DEBT_LINES, fallback=True)
     # A second-pass total of 0 would say "debt-free", which these tags cannot support: no line of the first pass
     # was tagged, so a zero here is the absence of a reading, not a filer's own zero. The total stays unknown.
-    return second if sum(r["value"] for r in second) > 0 else []
+    return second
 
 
 def _best_of(lines: dict[str, dict], fields: tuple[str, ...]) -> dict | None:
@@ -302,8 +302,6 @@ def _zero_long_term(lines: dict[str, dict], current: list[dict]) -> dict | None:
     beside the zero: a positive current line makes the structure a statement, nothing beside it leaves the total
     unknown rather than zero.
     """
-    if not any(r["value"] > 0 for r in current):
-        return None
     return next((lines[f] for f in FALLBACK_WHOLE_DEBT + FALLBACK_LONG_TERM_DEBT
                  if f in lines and lines[f]["value"] == 0), None)
 
@@ -336,7 +334,7 @@ def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | 
         # debt only in the first, and reading the second would quietly drop the 20 due within the year.
         whole = _best_of(lines, FALLBACK_WHOLE_DEBT)
         if whole is None:
-            long_term = _best_of(lines, FALLBACK_LONG_TERM_DEBT) or _zero_long_term(lines, current)
+            long_term = _best_of(lines, FALLBACK_LONG_TERM_DEBT)
     if long_term is not None:
         return [long_term] + current
     if not whole:
