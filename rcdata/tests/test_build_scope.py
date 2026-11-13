@@ -116,6 +116,7 @@ def test_every_dataset_either_honours_the_scope_or_is_named_here():
         "ibkr/shortable": "IBKR's one shortable-shares file",
         "market_series": "series, not names",
         "uw/economic_calendar": "a calendar, no names",
+        "uw/institutions": "one list of every 13F institution at once, keyed by CIK, not by ticker",
         "openfigi/map": "the spine rows with no FIGI yet",
         "ownership/serve": "no fetch",
         "prices/serving": "no fetch",
