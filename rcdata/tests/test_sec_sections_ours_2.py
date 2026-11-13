@@ -1484,8 +1484,18 @@ def test_the_signal_sets_are_the_versions_own_and_s6_s8_are_ours_1_only():
     assert set(sec_sections.SIGNALS_OURS_1) - set(sec_sections.SIGNALS_OURS_2) == {"S6", "S8"}
 
 
-def test_cut_flag_defaults_to_ours_1_and_equals_bare_flag_there():
+@pytest.mark.parametrize("name", ["suspect_tail_cross_reference", "suspect_inner_item_header"])
+def test_cut_flag_defaults_to_ours_1_and_equals_bare_flag_there(name):
     """``cut_flag`` with no version is ``DEFAULT_VERSION`` (``ours-1``), whose signal set is every signal, so it
-    is byte-identical to the bare :func:`flag` every current caller uses."""
-    item, quality = sec_sections.cut_item(_LONG_K, "10-K", version=OURS_1)
-    assert sec_sections.cut_flag(quality, _LONG_K, item) == sec_sections.flag(quality, _LONG_K, item)
+    is byte-identical to the bare :func:`flag` every current caller uses.
+
+    The two inputs are the shared cases where ``flag`` answers something other than the label it was handed, so
+    the comparison reaches the signal dict and the filter. An input whose label is not ``ok`` would compare two
+    early returns and pass however ``cut_flag`` were written -- which is what the first version of this test did.
+    """
+    text, form = _BY_NAME[name]
+    item, quality = sec_sections.cut_item(text, form, version=OURS_1)
+    assert quality == "ok", "the case must reach the flagger, not the quality != ok early return"
+    flagged = sec_sections.flag(quality, text, item, form)
+    assert flagged.startswith("ok;suspect:"), flagged
+    assert sec_sections.cut_flag(quality, text, item, form) == flagged

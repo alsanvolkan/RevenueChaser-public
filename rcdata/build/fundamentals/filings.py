@@ -267,11 +267,13 @@ def document_sections(html: str, form: str) -> list[tuple[str, str, str]]:
         # plus the business section of an Annual Information Form kept in the primary document (CNQ, #400 WP3).
         aif = splitter.aif_business(text)
         if aif:
-            out.append(("business", aif, CAPPED if len(aif) >= cap else splitter.flag("ok", text, aif, form)))
+            out.append(("business", aif, CAPPED if len(aif) >= cap
+                        else splitter.cut_flag("ok", text, aif, form, version=splitter.VERSION)))
         return out
     item, quality = splitter.slice_item(text, form)
     item = item or ""
-    out.append(("business", item, CAPPED if len(item) >= cap else splitter.flag(quality, text, item, form)))
+    out.append(("business", item, CAPPED if len(item) >= cap
+                else splitter.cut_flag(quality, text, item, form, version=splitter.VERSION)))
     return out
 
 

@@ -802,10 +802,23 @@ SIGNALS_OURS_1 = ("S1", "S2", "S3", "S4", "S5", "S6", "S8")
 #:
 #: - **S8** compares the slice against :data:`MAX_ITEM_CHARS`. ``ours-2`` caps nothing (:attr:`Rule.caps` is
 #:   False), so the length means nothing there: it would flag every long section, right or wrong.
-#: - **S6** asks whether the slice holds another item's heading. ``ours-2`` asks that in the **cut**
-#:   (:func:`_holds_another_item` in :func:`_quality_ours_2`) and answers ``overrun``, so no ``ok`` slice of its
-#:   can hold one and the signal is dead on arrival -- while ``ours-1``'s own reading of it (:data:`_LINE_END`,
-#:   which takes a sub-item for a heading) is live and wrong, marking PCVX's correctly cut Item 1 suspect.
+#: - **S6** asks whether the slice holds another item's heading. The question is already answered in the
+#:   ``ours-2`` **cut**: :func:`_holds_another_item` inside :func:`_quality_ours_2` labels such a slice
+#:   ``overrun``, and on the 4,994 stored 10-K/20-F documents (13 Nov 2026) **0** of ``ours-2``'s 4,926 ``ok``
+#:   cuts satisfy that reading. S6 is not the same predicate, though -- it reads headings with ``ours-1``'s
+#:   :data:`_LINE_END` and :func:`_is_ref`, which take a sub-item for a heading -- so it can still fire here, and
+#:   on those documents it fires **5** times. All five were read at both ends against the stored filing (Sanofi
+#:   1121404, Sensus 1494891, 16160, 763901, 886744): every one starts at its item and stops at the next part
+#:   (``ITEM 1A``, ``ITEM 4A``), so all five are false alarms. The signal is dropped on that measurement, not on
+#:   the identity of the two predicates.
+#:
+#: **What this set does not say.** A version has two cutters -- :attr:`Rule.slice_item` and
+#: :attr:`Rule.aif_business` -- and one signal set between them, so the ``sec_forms`` layer flags a 40-F's
+#: Annual Information Form from this list too. S3 and S6 are item-shaped: S3 looks for a 10-K's own section
+#: headings (competition, human capital, employees, available information), which NI 51-102 does not ask an AIF
+#: to carry, so a correctly cut AIF of a long 40-F reads ``ok;suspect:S2,S3``. That predates #835 -- the 40-F row
+#: already went through :func:`flag` -- and it survives here because S3 stays in the set. It is not fixed in
+#: #835, whose measurement is 10-K/20-F only; a per-cutter set is the shape that would fix it.
 SIGNALS_OURS_2 = ("S1", "S2", "S3", "S4", "S5")
 
 
@@ -829,9 +842,13 @@ def flag(quality: str, text: str, item: str | None, form: str = "10-K", *,
         "S3": key == "10-K" and not _SECTION.search(item),
         "S4": bool(_TAIL_REF.search(item[-220:].rstrip())),
         "S5": at > 0 and bool(_START_REF.search(text[max(0, at - 120):at].rstrip())),
-        "S6": any(m.group(1).lower() != own and not _is_ref(item, m) for m in _LINE_END.finditer(item)),
-        "S8": len(item) >= MAX_ITEM_CHARS,
     }
+    # S6 walks the whole slice, and a version that caps nothing leaves that slice as long as the filing: computed
+    # only where it is defined, so a version that does not raise it does not pay for it either.
+    if "S6" in signals:
+        s["S6"] = any(m.group(1).lower() != own and not _is_ref(item, m) for m in _LINE_END.finditer(item))
+    if "S8" in signals:
+        s["S8"] = len(item) >= MAX_ITEM_CHARS
     s = {k: v for k, v in s.items() if k in signals}
     on = [k for k, v in s.items() if v]
     if any(s.get(k) for k in ("S1", "S4", "S5", "S6", "S8")) or (s.get("S2") and s.get("S3")):
@@ -1705,8 +1722,11 @@ class Rule:
     #: than making one up.
     aif_business_q: object | None = None
     #: The suspect signals :func:`flag` may raise for this version's slices (#835). The version is what says
-    #: which are defined, so a stored row's ``rules_version`` names its flagger as well as its cut, and no
-    #: second column is needed to record which flags were computed.
+    #: which are defined, so no second column is needed to record which flags were computed -- but only for a row
+    #: written **after** the flagger of that version last changed: the flags went onto the ``sec_forms`` business
+    #: rows while :data:`OURS_1` kept its name, so an ``ours-1`` row stored before #835 carries no flag and says
+    #: the same ``rules_version`` as one stored after it. That population is mixed until the layer re-cuts, which
+    #: its staleness rule does only when the version string moves. See ``sec_forms.forms._flag``.
     signals: tuple[str, ...] = SIGNALS_OURS_1
 
 
@@ -1754,7 +1774,8 @@ def cut_flag(quality: str, text: str, item: str | None, form: str = "10-K", *,
     """``quality`` with ``version``'s own ``;suspect`` flags -- what a layer that stores the row calls.
 
     :func:`flag` raises every signal, which is ``ours-1``'s set; this picks the set the version defines
-    (:attr:`Rule.signals`). A row written through here can be read back by its ``rules_version`` alone.
+    (:attr:`Rule.signals`). What it does **not** give is a way to tell, from a stored row, whether the flagger
+    had already landed when that row was written: see :attr:`Rule.signals`.
     """
     return flag(quality, text, item, form, signals=rule(version).signals)
 

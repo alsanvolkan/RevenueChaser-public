@@ -79,7 +79,7 @@ def slice_document(ticker: str, cik, filing: dict, html: str, fetched_at: float 
         "accession": filing["accession"],
         "primary_doc": url,
         "item_text": item or "",
-        "quality": splitter.flag(quality, text, item, filing["form"]),
+        "quality": splitter.cut_flag(quality, text, item, filing["form"], version=splitter.VERSION),
         "fetched_at": time.time() if fetched_at is None else float(fetched_at),
     }
 
