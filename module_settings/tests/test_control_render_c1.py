@@ -75,7 +75,7 @@ def test_the_sources_css_block_holds_the_grid_and_the_columns():
     blk = css[css.index("/* #492 C1 */"):]
     assert "minmax(0,1fr) minmax(0,.9fr) max-content minmax(0,.75fr) minmax(0,1.6fr)" in blk
     assert "grid-template-columns:repeat(2,minmax(0,1fr))" in blk
-    assert "@media(max-width:760px)" in blk
+    assert "@media(max-width:900px)" in blk
 
 
 # ── Health right now ─────────────────────────────────────────────────────────────────────────────────────────

@@ -58,7 +58,7 @@ def test_a_source_box_keeps_its_buttons_on_the_name_line():
     assert ".ctl .sb1{flex-wrap:nowrap}" in css
     assert re.search(r"\.ctl \.sb1 \.dsname\{[^}]*min-width:0[^}]*text-overflow:ellipsis", css)
     assert re.search(r"\.ctl \.sb1 \.sbbtn,\.ctl \.sb1 \.srcb\{flex:none", css)
-    assert re.search(r"@media\(max-width:760px\)\{\.ctl \.sb1\{flex-wrap:wrap\}", css)
+    assert re.search(r"@media\(max-width:900px\)\{\.ctl \.sb1\{flex-wrap:wrap\}", css)
     assert "@media(max-width:1199px)" not in css, "avo 20:25: two boxes a row stay"
     assert ".ctl .sgrid{container-type:inline-size;container-name:sgrid}" in css
     assert re.search(r"@media\(min-width:761px\)\{\s*@container sgrid \(max-width:1100px\)\{\.ctl \.sgrid>\.sbox\{zoom:", css)

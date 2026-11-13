@@ -116,7 +116,7 @@ def test_the_old_needs_address_opens_database_where_the_catalog_is():
 
 def test_a_board_settings_field_is_two_columns_on_a_phone():
     """Review of #800, measured at 390 px with a settings card open: the range hints reached 440 px."""
-    assert ("@media(max-width:760px){.sfield{grid-template-columns:minmax(0,1fr) 110px}"
+    assert ("@media(max-width:900px){.sfield{grid-template-columns:minmax(0,1fr) 110px}"
             ".sfield .rng{grid-column:1/-1;overflow-wrap:anywhere}") in report.CSS
 
 

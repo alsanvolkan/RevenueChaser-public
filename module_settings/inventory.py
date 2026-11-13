@@ -754,27 +754,25 @@ def _plural(n: int, word: str) -> str:
 
 
 def _inputs_row() -> dict:
-    """The "Your inputs" row (#306, D36): the two watch lists (ops.sqlite since PR 4, read without creating it) and
-    the present board-settings rows, and the newest change of any of them, a removal included. Nothing here can be
-    fetched: the user enters it."""
-    from RevenueChaser.rcdata import ops
+    """The "Your inputs" row (#306, D36): the present board-settings rows and their newest change, a removal
+    included. Nothing here can be fetched: the user enters it.
 
-    lists = {k: ops.watch_count(k) for k in ops.WATCH_KINDS}
+    The two job watch lists were counted here as well until avo, 13 Nov 2026 ("Watchlist panosuna bunları ekle ...
+    ve buradan yine de kaldır onları"): they are named lists on the Watch lists board, which says in each name what
+    reads it, so Settings no longer keeps a second, shorter copy of them. The universe chip that adds the watched
+    names to a Fetch is a control, not a copy, and stays."""
     overrides = _count("board_settings")
-    watch_last = _fmt_date(ops.watch_last_change())
-    dates = [d for d in (_max_date(("board_settings_changes", "run_at")), watch_last) if d != DASH]
-    last = max(dates) if dates else DASH
-    watched = sum(lists.values())
+    last = _max_date(("board_settings_changes", "run_at"))
     row = {
-        "key": "inputs", "label": "Your inputs (watchlist, board settings)",
+        "key": "inputs", "label": "Your inputs (board settings)",
         "tables": ["board_settings"],
-        "rows": watched + (overrides or 0),
+        "rows": overrides or 0,
         "last_date": last, "holes": None, "hole_label": "", "fetch": None,
-        "note": "no inputs yet (press a watch-list icon next to a ticker on any board, or save a board setting)",
+        "note": "no inputs yet (save a board setting; the watch lists are on the Watch lists board)",
     }
-    if last != DASH or watched or overrides:
-        row["note"] = (f"watch lists: {lists['option']} option, {lists['stock']} stock (ops.sqlite); "
-                       f"{_plural(overrides or 0, 'setting override')}; last change {last}")
+    if last != DASH or overrides:
+        row["note"] = (f"{_plural(overrides or 0, 'setting override')}; last change {last} · "
+                       "the watch lists are on the Watch lists board")
     return row
 
 
