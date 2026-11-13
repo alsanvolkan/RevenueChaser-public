@@ -6,6 +6,7 @@
 |---|---|---|---|
 | [plotly.js](https://github.com/plotly/plotly.js) | 2.35.2 | MIT | [`app/static/vendor/plotly.min.js.LICENSE.txt`](app/static/vendor/plotly.min.js.LICENSE.txt) |
 | [Tabler Icons](https://github.com/tabler/tabler-icons) | outline paths, as drawn in the v28 design | MIT | the source icons of the Settings / Data board (`module_settings/control.py`, `ICONS`); Copyright (c) 2020-2024 Paweł Kuna, MIT licence |
+| [edgartools](https://github.com/dgunning/edgartools) | `edgar/reference/data/successor_registrants.csv` at `479d350` | MIT | copied column for column as [`rcdata/build/successor_ciks.csv`](rcdata/build/successor_ciks.csv): ten hand-reviewed predecessor/successor SEC CIK pairs, read by `rcdata/build/cik_history.py` (#749); Copyright (c) Dwight Gunning, MIT licence |
 
 Everything else in this repository is the project's own code, under the MIT
 licence in [`LICENSE`](LICENSE).

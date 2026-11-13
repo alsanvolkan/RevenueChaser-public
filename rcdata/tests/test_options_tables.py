@@ -11,10 +11,13 @@ from RevenueChaser.rcdata.build import base
 from RevenueChaser.rcdata.build.options import tables
 
 
-def test_the_options_kind_is_served_at_version_2():
-    """2: the calendar fields on ``option_screener_daily``, ``option_far_print`` and ``earnings_tape`` (#644)."""
-    assert serving.SERVING_SCHEMA_VERSION["options"] == 2
-    assert {"option_far_print", "earnings_tape"} <= set(tables.TABLES)
+def test_the_options_kind_is_served_at_version_3():
+    """2: the calendar fields on ``option_screener_daily``, ``option_far_print`` and ``earnings_tape`` (#644).
+    3: ``option_far_contract``, the far-dated contracts and their next-session open interest (#746)."""
+    assert serving.SERVING_SCHEMA_VERSION["options"] == 3
+    assert {"option_far_print", "earnings_tape", "option_far_contract"} <= set(tables.TABLES)
+    assert tables.TABLES["option_far_contract"].key == ("session_date", "option_symbol")
+    assert tables.TABLES["option_far_contract"].window is None, "every session is served"
     assert {"expected_move_perc", "street_mean_est", "pre_earnings_close", "post_earnings_close", "report_time",
             "full_name", "marketcap", "realized_volatility", "stock_volume"} <= set(
         tables.TABLES["option_screener_daily"].columns)

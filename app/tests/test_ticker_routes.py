@@ -70,34 +70,42 @@ class TestWatchlistToggle:
         assert rawstore.load_watchlist() == set()
 
 
-class TestSettingsDrill:
+class TestSettingsLookup:
+    """GET /api/settings/lookup/<t>: the Database tab's Ticker lookup, served files only (#715)."""
+
     @pytest.mark.parametrize("ticker", ["<x>", "X<IMG SRC=X ONERROR=ALERT(1)>", "TOOLONGTICKER"])
     def test_bad_ticker_is_400(self, client, monkeypatch, ticker):
         from urllib.parse import quote
 
-        from RevenueChaser.module_settings import inventory
+        from RevenueChaser.module_settings import ticker_lookup
         calls = []
-        monkeypatch.setattr(inventory, "ticker_detail", lambda t: calls.append(t))
-        r = client.get("/api/settings/ticker/" + quote(ticker, safe=""))
+        monkeypatch.setattr(ticker_lookup, "lookup", lambda t: calls.append(t))
+        r = client.get("/api/settings/lookup/" + quote(ticker, safe=""))
         assert r.status_code == 400
         assert r.get_json() == {"ok": False, "error": "bad ticker"}
         assert calls == []
 
-    def test_a_failed_store_read_is_a_500_not_an_unknown_ticker(self, client, monkeypatch):
+    def test_a_failed_read_is_a_500_not_an_unknown_ticker(self, client, monkeypatch):
         """DF98: a read error must not look like the 404 an unknown ticker gets."""
-        from RevenueChaser.module_settings import inventory
+        from RevenueChaser.module_settings import ticker_lookup
 
         def boom(t):
             raise RuntimeError("database is locked")
-        monkeypatch.setattr(inventory, "ticker_detail", boom)
-        r = client.get("/api/settings/ticker/AAPL")
+        monkeypatch.setattr(ticker_lookup, "lookup", boom)
+        r = client.get("/api/settings/lookup/AAPL")
         assert r.status_code == 500
-        assert r.get_json()["error"] == "store read failed"
+        assert r.get_json()["error"] == "serving read failed"
 
     def test_an_unknown_ticker_is_still_a_404(self, client, monkeypatch):
-        from RevenueChaser.module_settings import inventory
-        monkeypatch.setattr(inventory, "ticker_detail", lambda t: None)
-        assert client.get("/api/settings/ticker/ZZZZ").status_code == 404
+        from RevenueChaser.module_settings import ticker_lookup
+        monkeypatch.setattr(ticker_lookup, "lookup", lambda t: None)
+        assert client.get("/api/settings/lookup/ZZZZ").status_code == 404
+
+    def test_the_old_store_route_is_gone(self):
+        """Not "it 404s" (an unseeded store answered that too): the rule itself is off the url map."""
+        rules = {str(r) for r in dashboard.app.url_map.iter_rules()}
+        assert "/api/settings/ticker/<ticker>" not in rules
+        assert "/api/settings/lookup/<ticker>" in rules
 
 
 class _OkUW:

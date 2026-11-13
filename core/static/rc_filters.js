@@ -267,7 +267,7 @@
   function explain(meta) {
     var floor = meta.floor_mc || 0;
     var d = {
-      index: "<b>S&amp;P 500</b>, <b>Dow Jones</b> and <b>S&amp;P SmallCap 600</b> are index constituents; <b>Nasdaq-listed</b> means listed on the Nasdaq exchange (not the Nasdaq-100). Source: Unusual Whales (SmallCap 600: the S&amp;P 1500 list), cached in <code>index_constituents</code>; an index shows here once it is stored." +
+      index: "<b>S&amp;P 500</b> and <b>S&amp;P SmallCap 600</b> are index constituents, read from the index funds' daily holdings files; <b>Nasdaq-listed</b> means listed on the Nasdaq exchange (not the Nasdaq-100). Source: the identity spine; an index shows here once some name carries it. The Dow Jones is not offered: no source the spine reads has it." +
         "<div class='rcf-now'>Counts are names <b>on this board</b> that pass your other filters, not the size of the index.</div>",
       mc: "Latest market value from <code>equity_universe</code>. Pick one or more size buckets, or type a custom range in $ millions (min ≤ cap &lt; max)." +
         (floor ? "<div class='rcf-now'>This board only covers names <b>≥ " + rcEsc(fmtCap(floor)) + "</b>, so smaller buckets are empty here.</div>" : ""),

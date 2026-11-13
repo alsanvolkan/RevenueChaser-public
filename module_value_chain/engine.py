@@ -446,21 +446,40 @@ def profile_edges(ticker: str, profile: dict, filed: str = "", names: dict | Non
     return out
 
 
+def _party_relation(edge: dict) -> tuple[str, str]:
+    """The key a ``chain_mentions`` row really has: the counterparty *and* the relation (#725).
+
+    ``(src, dst_name, relation)`` is the store's key (``core/rawstore.py``), so one company can be both a customer
+    and a competitor of the same filer. Keying the merge by the company alone made the profile's first edge swallow
+    every other relation of that company: an XBRL customer edge with its share of revenue vanished whenever the
+    profile named the same company as a competitor (measured 12 Nov 2026: 0 of 265 ``customer_share`` rows of 121
+    profiled tickers survived), and a profile edge in a second relation could never pick up a stated share.
+    """
+    return _counterparty(edge), edge["relation"]
+
+
 def merge_profile(regex_edges: list[dict], prof_edges: list[dict]) -> list[dict]:
-    """One filer's edges: the profile's first; a sentence, keyword or XBRL edge only for a counterparty the profile
-    does not name (#410: "prefers the profile row for a (filer, counterparty) pair"). A profile customer with no
-    share takes the XBRL or sentence share of the same company."""
+    """One filer's edges: the profile's first; a sentence, keyword or XBRL edge only for a
+    (counterparty, relation) pair the profile does not name (#410: "prefers the profile row for a (filer,
+    counterparty) pair", narrowed to the store's own key by #725). A profile edge with no share takes the XBRL or
+    sentence share stated for the same company in the same relation.
+
+    A display-only ``other`` edge (``mentions``: the name appeared with no relation verb) is the one exception to
+    the per-relation key: it states no relation at all, so a profile that names that company in *any* relation
+    already says more, and the ``other`` row would only double the company on the board.
+    """
     if not prof_edges:
         return regex_edges
-    by_party = {}
+    by_party, parties = {}, set()
     for e in prof_edges:
-        by_party.setdefault(_counterparty(e), e)
+        by_party.setdefault(_party_relation(e), e)
+        parties.add(_counterparty(e))
     for e in regex_edges:
-        p = by_party.get(_counterparty(e))
-        if p is not None and p["share_pct"] is None and e.get("share_pct") is not None \
-                and e["relation"] == p["relation"]:
+        p = by_party.get(_party_relation(e))
+        if p is not None and p["share_pct"] is None and e.get("share_pct") is not None:
             p["share_pct"] = e["share_pct"]
-    return prof_edges + [e for e in regex_edges if _counterparty(e) not in by_party]
+    return prof_edges + [e for e in regex_edges if _party_relation(e) not in by_party
+                         and not (e["relation"] == "other" and _counterparty(e) in parties)]
 
 
 def _stored_profiles() -> dict[str, dict]:

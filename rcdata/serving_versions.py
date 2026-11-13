@@ -7,11 +7,20 @@ compare in ``dirty.full_rebuild_reason`` and ``serving._copy_live``. ``serving.S
 from __future__ import annotations
 
 # The serving schema of each kind. A change to a kind's tables bumps its number in its own PR (box rule).
-SERVING_SCHEMA_VERSION = {"market": 4, "spine": 6, "ownership": 1}
+SERVING_SCHEMA_VERSION = {"market": 4, "spine": 6, "ownership": 3}
 # market 3: ``economic_event``, UW's economic calendar by snapshot day (``build/uw_economic_calendar.py``), and
 #           ``news_headline``, IBKR's Dow Jones headlines (``build/ibkr_news.py``); #643, avo's D4 of 10 Nov 2026.
 # market 4: ``news_headline`` leaves; headlines live only in the News board's ``boards/news.duckdb`` (avo's option A,
 #           10 Nov 2026), and the builder's ``ibkr/news`` is gone. ``build/__init__.py`` retires the table.
+# ownership 2: ``sec13f_ticker_period`` gains ``started_filers``, ``started_shares`` and ``stopped_shares``, its flows
+#              and new/exited holders count only the filers that reported both quarters, and ``sec13f_filer_breaks``
+#              lists the filers that started or stopped reporting; ``sec13f_data_sets`` (the SEC's 13F data sets
+#              as listed, ``sec/13f_sets_listed``) and ``closed`` on ``sec13f_periods`` and ``sec13f_ticker_period``:
+#              a quarter closes when the set holding its deadline is published (#732, owner's decisions of 12 Nov 2026).
+# ownership 3: ``uw_institution``, Unusual Whales' map of every 13F institution per snapshot day (CIK, tags,
+#              ``is_hedge_fund``, the report and filing dates, total and share value), and
+#              ``uw_institution_succession``, the predecessor and successor pairs of that map
+#              (``build/ownership/uw_institutions.py``, #775, owner's decisions A and B of 12 Nov 2026).
 # spine 2: ``fund``, the SEC fund file's share classes and the ETF rule (``build/spine/sec_tickers_mf.py``).
 # spine 3: ``etf_holdings``, the rotation board's ETFs read whole (``build/spine/etf_holdings.py``).
 # spine 4: ``etf``, the ETF universe from Alpha Vantage and N-CEN (``build/spine/etf.py``, #346).
@@ -35,3 +44,9 @@ SERVING_SCHEMA_VERSION["options"] = 2
 # options 2: the calendar item's fields on ``option_screener_daily`` (and the screener's ``realized_volatility``,
 #            ``stock_volume``), ``option_far_print`` (the LEAPS market scan) and ``earnings_tape`` (``/earnings/{t}``
 #            of the earnings set); group 3's one structure PR (#644, avo's D2 of 10 Nov 2026).
+# options 3: ``option_far_contract``, the market's far-dated contracts of a session and the next session's open
+#            interest of each (``build/options/uw_far_contracts.py``, #746, avo's "A: Tum piyasa" of 12 Nov 2026).
+SERVING_SCHEMA_VERSION["options"] = 3
+# PR (#757): ``sec_forms.duckdb``, the sections and note blocks of the stored filings (``build/sec_forms/``). Its
+# first number, not a bump: there is no live file to checkpoint.
+SERVING_SCHEMA_VERSION["sec_forms"] = 1

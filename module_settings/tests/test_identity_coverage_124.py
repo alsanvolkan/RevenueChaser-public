@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import funnel as funnel_mod
 from RevenueChaser.core import rawstore
 from RevenueChaser.core import universe
@@ -38,7 +39,7 @@ def _seed() -> None:
     market cap; 1 exchange-traded fund. With no floor and every type kept (PR 2) the funnel keeps AAPL, MU,
     SMALL, NOCAP and FUND — exactly ``classification_universe()``; FUND is a type note, not a drop.
     """
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple"},
         {"ticker": "MU", "market_cap": 1.0e11, "name": "Micron Technology"},
         {"ticker": "SMALL", "market_cap": 2.0e8, "name": "Too Small"},
@@ -167,7 +168,7 @@ def test_every_drop_is_named_in_plain_words_and_carries_its_count(rawstore_tmp_d
 def test_a_kept_name_the_sec_file_does_not_list_is_said_not_counted(rawstore_tmp_db):
     """A name the classification rule keeps that the file does not list is a note, never a dropped name."""
     _seed()
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple"},
         {"ticker": "MU", "market_cap": 1.0e11, "name": "Micron Technology"},
         {"ticker": "SMALL", "market_cap": 2.0e8, "name": "Too Small"},

@@ -13,6 +13,7 @@ import pytest
 
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import ledger, rawstore, screen_common
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 D = date(2026, 10, 14)                                         # the 14 Oct session (#402)
 NOW = datetime(2026, 10, 14, 21, 45, tzinfo=timezone.utc)      # 17:45 EDT, after RC-Daily-Bars
@@ -24,7 +25,7 @@ def _sessions(end: date, n: int) -> list[date]:
 
 
 def _seed_d01(ticker: str, days: list[date], *, fetched_at: float = FETCHED, close=None):
-    rawstore.write_rows("price_bars_daily", [{
+    write_d01([{
         "ticker": ticker, "session_date": d, "open": c, "high": c * 1.01, "low": c * 0.99, "close": c,
         "adj_close": None, "volume": 1.0e6, "split_ratio": None, "adj_source": None, "source": "uw",
         "fetched_at": fetched_at, "run_id": "seed", "run_at": fetched_at}
@@ -106,7 +107,7 @@ def test_the_baseline_is_dividend_adjusted_like_yfinance_auto_adjust(rawstore_tm
     days = _sessions(D, 300)
     _seed_d01("SPY", days, close=lambda i: 400.0)
     ex = days[-10]
-    rawstore.write_rows("price_actions", [{
+    write_d01([], [{
         "ticker": "SPY", "ex_date": ex, "action": "dividend", "value": 4.0, "session_date": ex,
         "source": "yfinance", "fetched_at": FETCHED, "run_id": "seed", "run_at": FETCHED}])
     spy = screen_common.load_spy(_Fallback())

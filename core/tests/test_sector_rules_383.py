@@ -6,13 +6,13 @@ names and AG flags them in their own waves.
 """
 from __future__ import annotations
 
-from RevenueChaser.core import rawstore
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core.gics_map import SECTORS_11
 from RevenueChaser.module_asymmetric_growth import sector_rules
 
 
 def _spine(rows):
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": t, "sector": s, "industry": "", "name": t, "market_cap": 1e9} for t, s in rows])
 
 

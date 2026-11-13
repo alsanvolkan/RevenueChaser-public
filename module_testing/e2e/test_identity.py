@@ -18,6 +18,7 @@ Every identity source is pointed at the mock provider server through its ``RC_*_
 """
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 import hashlib
 import json
 from dataclasses import dataclass
@@ -131,7 +132,7 @@ def seeded(dashboard, provider_routes, monkeypatch):
 
 def _seed(mock) -> None:
     import RevenueChaser.core.rawstore as rawstore
-    rawstore.write_rows("equity_universe", [{"ticker": t, "name": n, "market_cap": c} for t, n, c in _UNIVERSE])
+    universe_store.put([{"ticker": t, "name": n, "market_cap": c} for t, n, c in _UNIVERSE])
     rawstore.write_rows("index_constituents", [{"slug": "sp500", "ticker": "AAPL"}])      # the SPDR check's members
     # #301 D21: the nightly step stores the exchange file and the identity run reads those rows, so the
     # PRIMARY path is a seeded sec_exchange_file — not the pull the mock still routes for other callers.

@@ -25,6 +25,7 @@ from RevenueChaser.module_news.calendar import AMS, EVENTS, HIGHLIGHT, local_day
 from RevenueChaser.module_news.report import (HEADLINES, WEEKDAYS, _head_li, day_label, dots_html, esc, hm, long_date,
                                               vals_html)
 from RevenueChaser.module_welcome.build import EARNINGS, FRESHNESS, NY, SNAPSHOT, earnings_days
+from RevenueChaser.rcdata import read
 
 FILENAME = "welcome_latest.html"
 SESSION_DAYS = 8
@@ -176,8 +177,11 @@ def _snapshot_card() -> str:
         tiles.append(f'<div class="tile"><div class="muted">{esc(label)}</div><div class="val">{esc(value)}</div>'
                      f'{delta}{_spark(json.loads(r.get("spark") or "[]"))}'
                      f'<div class="muted small">{_short_date(r["session_date"])} kapanışı</div></div>')
+    # With no row the card used to say only "no stored close", which reads as "no data" when the real cause is a
+    # builder file that is not there yet (#642 F3, #643 PR 5): ``read.missing`` is that reason, in one line.
+    reason = read.missing("market") if not tiles else None
     body = ('<div class="tiles">' + "".join(tiles) + "</div>") if tiles else (
-        '<p class="empty">Saklı kapanış yok.</p>')
+        f'<p class="empty">Saklı kapanış yok{f" ({esc(reason)})" if reason else ""}.</p>')
     return ('<section class="card"><h2 class="lbl">Piyasa · son kapanış</h2>' + body +
             '<p class="muted note">Canlı fiyat değil: saklı son kapanış ve bir önceki seansa göre değişim.</p></section>')
 
@@ -192,7 +196,7 @@ def _freshness_card(now: float, labels: dict[str, str]) -> str:
     rows.sort(key=lambda r: (not failing(r), -float(r["last_finished_at"])))
     head = '<section class="card"><h2 class="lbl">Veri tazeliği · son 7 gün</h2>'
     if not rows:
-        return head + '<p class="empty">Son 7 günde biten iş yok.</p>' + _open_tab("module_settings", "Data health") + \
+        return head + '<p class="empty">Son 7 günde biten iş yok.</p>' + _open_tab("module_settings", "Settings") + \
             "</section>"
     n_bad = sum(1 for r in rows if failing(r))
     out = [head, f'<div class="big">{n_bad} işte sorun</div>' if n_bad else '<div class="big">Hepsi tamam</div>',
@@ -205,7 +209,7 @@ def _freshness_card(now: float, labels: dict[str, str]) -> str:
         err = f'<div class="muted small err">{esc(r["last_error"])}</div>' if bad and r.get("last_error") else ""
         out.append(f'<li class="row fr"><div><div class="name">{esc(labels.get(r["job"], r["job"]))}</div>{err}</div>'
                    f'{state}<span class="muted small">{_ago(r["last_finished_at"], now)}</span></li>')
-    out.append("</ul>" + _open_tab("module_settings", "Data health") + "</section>")
+    out.append("</ul>" + _open_tab("module_settings", "Settings") + "</section>")
     return "".join(out)
 
 

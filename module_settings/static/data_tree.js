@@ -10,7 +10,7 @@
   var PHONE = 640;
 
   function host(j) {
-    var f = j.closest ? j.closest('section.fpanel') : null;
+    var f = j.closest ? j.closest('.fpanel') : null;
     return f || j.parentElement;
   }
   function shown(el) { return !!el && el.getClientRects && el.getClientRects().length > 0; }

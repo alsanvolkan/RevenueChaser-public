@@ -24,21 +24,16 @@ press-release figure the SEC has not filed yet).
 What the rebuilt shape does not carry: the extraction's per-period flags (``<field>_suspect``,
 ``short_term_investments_basis``), which the layer does not serve and no board reads.
 
-**The source** (the pattern of ``core/universe.py``): ``RC_FUNDAMENTALS_SOURCE`` unset (or ``layer``) reads the
-layer; any other value (``store`` by convention) reads the old ``edgar_financials`` rows, the escape hatch kept until
-the old path is retired (plan PR 21). With the layer asked for but no ``fundamentals.duckdb``, or no
-``sec/companyfacts`` build yet, the old store is read and a warning is logged once (``source_state``); a failed
-newest check keeps the layer's last good build.
+**The source** (#642 PR 6): the boards read the layer only. ``RC_FUNDAMENTALS_SOURCE`` and the old
+``edgar_financials`` fallback are gone; no ``fundamentals.duckdb`` reads as no company, and ``source_state()["reason"]``
+says why (``rcdata.read.missing``).
 """
 from __future__ import annotations
 
 import logging
-import os
 from datetime import date, timedelta
 
-SOURCE_ENV = "RC_FUNDAMENTALS_SOURCE"
 LAYER = "layer"
-STORE = "store"
 FACTS_DATASET = "sec/companyfacts"
 
 # How much history a board record carries. Fundamentals reads an anchor year, the year before it and the trailing
@@ -54,43 +49,21 @@ QUARTER_GAP_DAYS = (80, 102)
 NEXT_START_DAYS = (1, 7)
 
 logger = logging.getLogger(__name__)
-_FALLBACK_LOGGED: set[tuple[str, str]] = set()
 
 
 def source_state() -> dict:
-    """``{requested, effective, reason, variable}`` of the statements source, read at call time (``core.universe``'s
-    rule): unset or ``layer`` asks for the layer, honoured while ``fundamentals.duckdb`` is there and
-    ``sec/companyfacts`` has built it at least once; any other value asks for the old store.
-
-    Unlike the universe's rule, a failed newest check does not send the boards back (Opus review S3): the served
-    file is then still the last good build, and the old ``edgar_financials`` rows are never refreshed at all. The
-    failure is logged once. Default chosen, change if avo prefers the universe's stricter rule."""
-    variable = (os.getenv(SOURCE_ENV) or "").strip() or None
-    if variable is not None and variable.lower() != LAYER:
-        return {"requested": STORE, "effective": STORE, "reason": None, "variable": variable}
-    from ..rcdata import ops, serving
-    reason = None
-    asked = (f"{SOURCE_ENV}={LAYER} is set" if variable
-             else f"The fundamentals boards read the layer by default ({SOURCE_ENV} unset)")
-    if not serving.live_path("fundamentals").exists():
-        reason = "no fundamentals.duckdb yet"
-    elif not ops.ever_built(FACTS_DATASET):
-        reason = f"{FACTS_DATASET} has not built yet"
-    else:
-        last = ops.latest_unskipped_check(FACTS_DATASET)
-        if last and last["result"] not in ("changed", "unchanged"):
-            note = f"{FACTS_DATASET}'s last check {last['result']}"
-            if (asked, note) not in _FALLBACK_LOGGED:
-                _FALLBACK_LOGGED.add((asked, note))
-                logger.warning("%s; %s, so they read its last good build", asked, note)
-    if reason and (asked, reason) not in _FALLBACK_LOGGED:
-        _FALLBACK_LOGGED.add((asked, reason))
-        logger.warning("%s, but they fall back to the old store: %s", asked, reason)
-    return {"requested": LAYER, "effective": STORE if reason else LAYER, "reason": reason, "variable": variable}
+    """``{requested, effective, reason, variable}`` of the statements source: always the layer since #642 PR 6;
+    ``reason`` says why it gives no rows, if it does not."""
+    from ..rcdata import read
+    return {"requested": LAYER, "effective": LAYER, "reason": read.missing("fundamentals", FACTS_DATASET),
+            "variable": None}
 
 
 def reads_layer() -> bool:
-    return source_state()["effective"] == LAYER
+    """The layer is served: ``fundamentals.duckdb`` is there and ``sec/companyfacts`` has built it. Only Relatedness
+    and Value Chain still ask: without it they read Value Chain's own ``chain_filings`` corpus (its lane's to retire,
+    #645), never the old ``edgar_financials`` store."""
+    return source_state()["reason"] is None
 
 
 def _iso(value) -> str | None:

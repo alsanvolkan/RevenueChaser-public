@@ -10,6 +10,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 
+from RevenueChaser.rcdata.tests import spine_fixture, universe_store
 from RevenueChaser.core import calendar, quotes, rawstore
 from RevenueChaser.core import universe_fetch as uf
 
@@ -67,7 +68,7 @@ def yahoo_quote(ticker, cap=1.0e9, price=10.0, shares=1.0e8, hi=12.0, lo=8.0):
 
 
 def seed_universe(*tickers):
-    rawstore.write_rows("equity_universe", [{"ticker": t, "name": t} for t in tickers])
+    universe_store.put([{"ticker": t, "name": t} for t in tickers])
 
 
 def snapshot(source=None):
@@ -366,6 +367,8 @@ def pull(monkeypatch, rawstore_tmp_db):
         rows = [{"ticker": t, "cik": str(i), "name": t, "exchange": "Nasdaq"} for i, t in enumerate(members)]
         monkeypatch.setattr(sec, "exchange_map",
                             lambda *a, **k: SourceResult("sec_exchange", "ok", rows, None))
+        # Since #642 PR 6 the pull returns the spine's listed names, which the SEC list builds on the live box.
+        spine_fixture.write_security([dict(r) for r in rows], replace=True)
 
         def screen(query, offset=None, size=None, **kw):
             if during_screen:

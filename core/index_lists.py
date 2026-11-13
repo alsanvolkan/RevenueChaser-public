@@ -16,11 +16,10 @@ Each list is cached to the ``index_constituents`` table of ``raw.duckdb``. The `
 ``rawstore._VIEWS``) joins membership to ``equity_universe`` for ``name`` / ``sector``. A partial fetch is never
 written (guarded by a completeness floor), so a rate-limited run can't shrink the stored list.
 
-**Only the old universe path reads these lists** (build plan PR 6). The boards read index membership through
-``core.index_registry``, which takes it from the identity spine (``rcdata.read.membership``) unless
-``RC_UNIVERSE_SOURCE`` selects the old store. The weekly step keeps running so that the rollback (selecting the old
-store again) finds a current list; it costs three Unusual Whales requests a week. This module goes, whole, when the
-old universe path is retired (plan PR 21).
+**No board reads these lists** since #642 PR 6: ``core.index_registry`` takes index membership from the identity
+spine (``rcdata.read.membership``) only. The identity refresh's SPDR check still reads the stored S&P 500 list, so the
+weekly step keeps running (three Unusual Whales requests a week). This module goes, whole, with the old universe
+tables (plan PR 21).
 """
 from __future__ import annotations
 

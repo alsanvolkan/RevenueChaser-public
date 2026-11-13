@@ -11,6 +11,7 @@ import pytest
 from RevenueChaser.core import calendar as cal
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.core.tests.d01_seed import seed_d01
+from RevenueChaser.rcdata.tests import prices_store
 
 D = date(2026, 10, 2)          # a Friday and a normal session
 
@@ -295,11 +296,12 @@ def _close_plus(minutes):
 
 def test_ohlc_complete_needs_the_session_as_last_bar_and_a_post_close_write(rawstore_tmp_db):
     _seed_bars("OK", "2026-10-02", _close_plus(45))
-    _seed_bars("INTRADAY", "2026-10-02", _close_plus(-270))        # written 11:30 ET on D
     _seed_bars("OLD", "2026-10-01", _close_plus(45))               # last bar is the day before
     _seed_bars("TEXTDATE", "2026-10-02", _close_plus(45), ts_suffix="")
-    ok = ledger.ohlc_complete(D, ["OK", "INTRADAY", "OLD", "TEXTDATE", "MISSING"])
-    assert ok == {"OK", "TEXTDATE"}
+    assert ledger.ohlc_complete(D, ["OK", "OLD", "TEXTDATE", "MISSING"]) == {"OK", "TEXTDATE"}
+    # The served file stamps every bar with its build (#642 PR 6): built at 11:30 ET on D, no D bar is complete.
+    prices_store.set_built_at(_close_plus(-270))
+    assert ledger.ohlc_complete(D, ["OK", "TEXTDATE"]) == set()
 
 
 def test_ohlc_complete_with_no_tickers_is_empty(rawstore_tmp_db):
@@ -309,13 +311,15 @@ def test_ohlc_complete_with_no_tickers_is_empty(rawstore_tmp_db):
 def test_ohlc_gaps_name_why_each_incomplete_ticker_is_incomplete(rawstore_tmp_db):
     _seed_bars("OK", "2026-10-02", _close_plus(45))
     _seed_bars("TEXTDATE", "2026-10-02", _close_plus(45), ts_suffix="")
-    _seed_bars("INTRADAY", "2026-10-02", _close_plus(-270))        # the D bar was cached at 11:30 ET on D
-    _seed_bars("STALE", "2026-10-01", _close_plus(-270))           # ends D-1, written before D's close + 30
     _seed_bars("HALTED", "2026-10-01", _close_plus(45))            # ends D-1, written after: nothing newer exists
-    gaps = ledger.ohlc_gaps(D, ["OK", "TEXTDATE", "INTRADAY", "STALE", "HALTED", "MISSING"])
+    assert ledger.ohlc_gaps(D, ["OK", "TEXTDATE", "HALTED", "MISSING"]) == {
+        "HALTED": ledger.NO_SESSION_BAR, "MISSING": ledger.NO_SESSION_BAR}
+    # The served file built at 11:30 ET on D (its build stamps every bar, #642 PR 6): the D bar is partial
+    # (INTRADAY) and the D-1 one predates D's close + 30 (STALE).
+    prices_store.set_built_at(_close_plus(-270))
     # Option A: a D bar cached before close + 30 is a refetch away, exactly like an older last bar.
-    assert gaps == {"INTRADAY": ledger.NEEDS_REFETCH, "STALE": ledger.NEEDS_REFETCH,
-                    "HALTED": ledger.NO_SESSION_BAR, "MISSING": ledger.NO_SESSION_BAR}
+    assert ledger.ohlc_gaps(D, ["OK", "HALTED", "MISSING"]) == {
+        "OK": ledger.NEEDS_REFETCH, "HALTED": ledger.NEEDS_REFETCH, "MISSING": ledger.NO_SESSION_BAR}
 
 
 def test_the_gap_causes_are_two_different_things_and_the_old_third_one_is_gone():
@@ -395,6 +399,7 @@ def test_spy_anchor_problem_names_the_reason(rawstore_tmp_db):
     _seed_bars("SPY", "2026-10-01", _close_plus(45))
     assert "2026-10-01" in ledger.spy_anchor_problem(D)
     _seed_bars("SPY", "2026-10-02", _close_plus(-270))
+    prices_store.set_built_at(_close_plus(-270))               # the served file's one stamp (#642 PR 6)
     why = ledger.spy_anchor_problem(D)
     assert "before the close" in why and "intraday" in why
     assert "reuses" not in why and "refetch" in why            # option A: the next Fetch refetches them

@@ -3,7 +3,7 @@
 Phase 1 (#266): classification is UW's two levels, so the old sector -> industry group -> sub-industry tree is
 sector -> industry now. (The file keeps its old name: it is the test file of the sector-row tree.)
 """
-from RevenueChaser.core import rawstore
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core.gics_map import MORNINGSTAR_SECTORS
 from RevenueChaser.module_sector_rotation.engine import (
     etf_trees, sector_etf_trees, sector_industry_tree,
@@ -22,7 +22,7 @@ SECTOR_ETF = {
 
 
 def _seed_universe():
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         # Technology -> Semiconductors (three names, one unweightable)
         {"ticker": "NVDA", "name": "NVIDIA", "sector": "Technology",
          "industry": "Semiconductors", "market_cap": 300.0},
@@ -68,7 +68,7 @@ class TestTree:
             assert set(industry) == {"industry", "holdings"}      # no industry group, no sub-industry level
 
     def test_max_per_industry_cuts_the_list_but_not_the_weight_base(self, rawstore_tmp_db):
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": "AAA", "name": "A", "sector": "Technology", "industry": "Semiconductors", "market_cap": 60.0},
             {"ticker": "BBB", "name": "B", "sector": "Technology", "industry": "Semiconductors", "market_cap": 30.0},
             {"ticker": "CCC", "name": "C", "sector": "Technology", "industry": "Semiconductors", "market_cap": 10.0},
@@ -77,7 +77,7 @@ class TestTree:
         assert [(m["ticker"], m["weight"]) for m in semis["holdings"]] == [("AAA", 60.0), ("BBB", 30.0)]
 
     def test_industry_text_is_trimmed_and_blank_text_is_unclassified(self, rawstore_tmp_db):
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": "AAA", "name": "A", "sector": "Technology", "industry": "Semiconductors", "market_cap": 10.0},
             {"ticker": "BBB", "name": "B", "sector": "Technology", "industry": " Semiconductors ", "market_cap": 10.0},
             {"ticker": "CCC", "name": "C", "sector": "Technology", "industry": "   ", "market_cap": 10.0},
@@ -93,7 +93,7 @@ class TestTree:
         assert "ZZZZ" not in tickers
 
     def test_zero_cap_members_are_dropped_and_an_industry_with_none_left_is_omitted(self, rawstore_tmp_db):
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": "AAA", "name": "A", "sector": "Technology", "industry": "Semiconductors", "market_cap": 10.0},
             {"ticker": "ZERO", "name": "Zero", "sector": "Technology", "industry": "Semiconductors",
              "market_cap": 0.0},
@@ -112,7 +112,7 @@ class TestTree:
     def test_legacy_gics_sector_spelling_lands_under_the_morningstar_name(self, rawstore_tmp_db):
         # A store the identity apply has not reached yet still holds the GICS spellings; the sector is read
         # through the one alias table, as every other board does.
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": "OLDT", "name": "Old Tech", "sector": "Information Technology",
              "industry": "Software - Application", "market_cap": 10.0},
             {"ticker": "OLDH", "name": "Old Health", "sector": "Health Care",
@@ -142,7 +142,7 @@ class TestSectorEtfTrees:
     def test_every_sector_etf_finds_its_tree(self, rawstore_tmp_db):
         # The six GICS-named rows (XLK, XLV, XLF, XLB, XLY, XLP) used to stop matching: one name from
         # each of the 11 Morningstar sectors must reach its ETF row.
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": f"T{n:02d}", "name": f"Co {n}", "sector": sector, "industry": f"Industry {n}",
              "market_cap": 10.0}
             for n, sector in enumerate(MORNINGSTAR_SECTORS)])
@@ -214,7 +214,7 @@ class TestUnclassified:
     """R3 (#86): the master's ``Unclassified`` (and the legacy ``Other`` / blank) share one bucket, sorted last."""
 
     def _seed(self):
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": "NEE", "name": "NextEra", "sector": "Utilities",
              "industry": "Utilities - Regulated Electric", "market_cap": 100.0},
             {"ticker": "UNK1", "name": "Unknown 1", "sector": "Utilities",
@@ -251,7 +251,7 @@ class TestUnclassified:
         tree = sector_industry_tree()
         assert [i["industry"] for i in tree["Utilities"]] == ["Utilities - Regulated Electric", "Unclassified"]
         # alphabetically "Unclassified" sorts before "Utilities - Water": it must still come last
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": "WTR", "name": "Water", "sector": "Utilities",
              "industry": "Utilities - Water", "market_cap": 5.0}])
         assert [i["industry"] for i in sector_industry_tree()["Utilities"]] == [

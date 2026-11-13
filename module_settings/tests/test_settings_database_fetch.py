@@ -1,5 +1,5 @@
 """The two Settings tabs (avo, 10 Nov 2026): Database says what the data is and where it goes, with no press that
-starts a job; Fetch/Health holds every control, the universe once at the top, and one folded group a served file."""
+starts a job; Fetch/Health is the framed Grafana board and, under it, the universe once and the fills (#715)."""
 from __future__ import annotations
 
 import re
@@ -31,14 +31,16 @@ def test_the_database_tab_starts_no_job():
     assert 'id="sec-flow"' in db and "<h2>Data flow</h2>" in db and "plan step" not in db.lower()
 
 
-def test_fetch_health_holds_the_controls_the_universe_once_and_one_group_a_file():
+def test_fetch_health_keeps_the_universe_once_and_only_the_presses_grafana_does_not_carry():
+    """#715 (avo, 12 Nov 2026): the switches, the one-off Fetch of a dataset and the providers are the framed
+    board's. Under the frame stay the universe's Fetch, the Recount and one group a served file."""
     html = _page()
-    fh = _between(html, 'id="panel-health"', 'id="needs"')
-    for job in ("one", "switch", "picture", "fetch"):
-        assert f'data-job="{job}"' in fh, job
+    fh = _between(html, 'id="panel-health"', 'id="panel-logs"')
+    assert sorted(set(re.findall(r'data-job="([^"]+)"', fh))) == ["fetch", "picture"]
     assert html.count('id="universe"') == 1 and 'id="universe"' in fh
-    assert fh.index('id="sec-providers"') < fh.index('id="sec-universe"'), "providers sit above the universe"
-    assert len(re.findall(r'<details class="sec fgrp" data-file="[a-z]+\.duckdb"', fh)) == 6
+    assert 'id="sec-providers"' not in fh and 'id="needs"' not in fh
+    groups = re.findall(r'<details class="sec fgrp" data-file="([a-z]+\.duckdb)"', fh)
+    assert len(groups) == 6 and len(set(groups)) == 6, "one group a file: its fills, coverage, problems, last runs"
     assert "data-automation" not in fh, "the file-level Automated row is gone"
 
 

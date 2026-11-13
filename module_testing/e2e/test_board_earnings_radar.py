@@ -184,7 +184,9 @@ class TestFilterKit:
             self, dashboard, provider_routes, tmp_path, monkeypatch):
         import RevenueChaser.core.rawstore as rawstore
         monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
-        rawstore.write_rows("index_constituents", [{"slug": "sp500", "ticker": "NVDA"}])
+        # Since #642 PR 6 the index filter reads the spine's membership, not the old cached lists.
+        from RevenueChaser.rcdata.tests import universe_store
+        universe_store.membership("sp500", {"NVDA"})
         provider_routes.route("/api/earnings/premarket", payload={"data": [
             _event("NVDA", "NVIDIA Corp"), _event("AMD", "Advanced Micro Devices")]})
         result = dashboard.run_job("/run/earnings", start=DAY, end=DAY)

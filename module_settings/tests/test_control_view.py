@@ -151,8 +151,9 @@ def test_a_declared_read_is_solid_and_a_planned_one_is_marked():
     radar = next(r for r in series["readers"] if r["key"] == "module_earnings_radar")
     assert radar["declared"] is True and "macro.dgs10" in radar["needs"]
     bars = next(t for t in files["prices"]["tables"] if t["name"] == "price_bar_daily")
-    comov = next(r for r in bars["readers"] if r["key"] == "module_comovement")
-    assert comov["declared"] is False
+    assert next(r for r in bars["readers"] if r["key"] == "module_comovement")["declared"] is True   # #642 PR 6
+    swing = next(r for r in bars["readers"] if r["key"] == "module_swing_potential")
+    assert swing["declared"] is False
 
 
 def test_the_fill_row_follows_the_scope_the_dataset_honours():
@@ -189,7 +190,8 @@ def test_every_line_of_the_flow_diagram_ends_at_a_box_it_draws():
     assert all(e[0] in tables and e[1] in boards for e in flow["edges"]["tabBoard"])
     assert all(b in boards and f in bfiles for b, f in flow["edges"]["boardOwn"] + flow["edges"]["boardRead"])
     assert ["market_series", "Earnings Radar"] in flow["edges"]["tabBoard"]
-    assert ["price_bar_daily", "Co-movement", "planned"] in flow["edges"]["tabBoard"]
+    assert ["price_bar_daily", "Co-movement"] in flow["edges"]["tabBoard"]               # declared since #642 PR 6
+    assert ["price_bar_daily", "Swing Potential", "planned"] in flow["edges"]["tabBoard"]
     # the plan step column is gone (avo, 10 Nov 2026); its tiers sit under the spine's box
     spine = next(f for f in flow["files"] if f["name"] == "spine.duckdb")
     assert spine["note"].endswith("A 5,655 · B 2,015 · C 2,577 · D 183")

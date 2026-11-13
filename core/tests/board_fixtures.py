@@ -363,15 +363,39 @@ def _sec_13f(tmp_path, monkeypatch):
 
 
 def _leaps(tmp_path, monkeypatch):
-    import RevenueChaser.module_leaps.report as ld
-    monkeypatch.setattr(ld, "OUTPUT_DIR", tmp_path)
-    snap = {"ticker": "ABC", "name": "Abc Corp", "label": "Accumulating", "score": 70,
-            "frequency": 4, "notional": 400000.0, "net_notional": 100000.0,
-            "ask_share": 0.7, "near_term_event": False}
-    hs = hostile(snap)
-    hs["label"] = H("label")
-    out = ld.render_leaps_dashboard([hs], [dict(hs)], provider_health=health("leaps"))
-    return out.read_text(encoding="utf-8") if hasattr(out, "read_text") else out
+    """The LEAPS board (#746): one session of far-dated contracts, the rows drawn by the browser from LP_DATA."""
+    from RevenueChaser.module_leaps import board
+    row = {"t": H("ticker"), "sym": H("sym"), "side": "C", "con": H("con"), "dte": 400, "prod": "stocks",
+           "prem": 75000.0, "vol": 1000, "oi": 100, "next": 700, "chg": 600, "st": "matched", "share": 0.6,
+           "ask": 0.5, "multi": 0.1, "out": False, "roll": H("roll")}
+    return board.render_html({"session": "2026-10-26", "stored": 1, "min_sessions": 20, "collecting": True,
+                              "sessions": [{"date": "2026-10-26", "contracts": 1}],
+                              "counts": {"contracts": 1, "names": 1, "matched": 1, "pending": 0, "stale": 0},
+                              "rows": [row]})
+
+
+def _watchlists(tmp_path, monkeypatch):
+    """The Watch lists board (#786): one list, one section, one row, drawn by the browser from WL_DATA.
+
+    The list's name, its description, a section's name and a symbol's own spelling are all avo's free text, so
+    every one of them carries a hostile value here.
+    """
+    from RevenueChaser.module_watchlists import board
+    row = {"sym": H("sym"), "t": H("ticker"), "ex": H("exchange"), "cov": "us_equity", "nm": H("name"),
+           "last": 173.73, "chg": 4.84, "chgp": 2.87, "vol": 339e6, "avol": 232e6, "cap": 4.19e12,
+           "unit": None, "note": H("note")}
+    none = {**row, "sym": H("un_sym"), "t": H("un_ticker"), "cov": "unsupported", "nm": None,
+            "last": None, "chg": None, "chgp": None, "vol": None, "avol": None, "cap": None}
+    return board.render_html({
+        "lists": [{"id": H("list_id"), "name": H("list_name"), "symbols": 2}],
+        "list": {"id": H("list_id"), "name": H("list_name"), "description": H("description")},
+        "sections": [{"id": H("section_id"), "name": H("section_name"), "rows": [row, none]}],
+        "counts": {"symbols": 2, "sections": 1, "unsupported": 1},
+        "session": "2026-11-11",
+        "tabs": [{"key": "price", "label": "Price"}],
+        "tab": "price",
+        "issue": H("issue"),
+    })
 
 
 def _financials(tmp_path, monkeypatch):
@@ -584,6 +608,7 @@ BOARDS: dict[str, Board] = {
     "module_fundamentals": Board(_fundamentals),
     "module_sec_13f": Board(_sec_13f),
     "module_leaps": Board(_leaps),
+    "module_watchlists": Board(_watchlists),
     # Executes nothing, but "<!--<script>" in a name still breaks its script.
     "module_settings": Board(_settings),
     # Not a data board: the dashboard's own log files, whose request lines carry attacker-chosen paths.

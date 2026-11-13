@@ -171,8 +171,73 @@ def sec13f_totals() -> dict[str, dict]:
         # ``complete`` is not one of the store's metrics, and it is not optional either: a period whose filing
         # deadline has not passed holds a part of itself, so a reader that cannot tell shows a quarter still
         # arriving as a collapse (#514). ``rcdata.read`` computes it from the deadline; this used to drop it.
-        out.setdefault(r["ticker"], {})[r["period"].isoformat()] = {**{m: r[m] for m in SEC13F_METRICS},
-                                                                    "complete": r["complete"]}
+        # ``closed`` (#732): the SEC data set covering the period's deadline is published, so the quarter takes no
+        # more change. Left out when the store cannot say (nothing listed yet, or a store built before the column).
+        cell = {**{m: r[m] for m in SEC13F_METRICS}, "complete": r["complete"]}
+        if r.get("closed") is not None:
+            cell["closed"] = bool(r["closed"])
+        out.setdefault(r["ticker"], {})[r["period"].isoformat()] = cell
+    return out
+
+
+def sec13f_filer_breaks(tickers) -> dict[str, list[dict]]:
+    """``{ticker: [{"period", "kind", "shares", "cik", "filer_name"}]}``: where each ticker's 13F flow breaks, the
+    filers that started (``started``) or stopped (``stopped``) reporting it in a settled quarter (#732). The flows
+    leave these filers out, so the board marks the ticker and lists them. A store that cannot be read gives ``{}``
+    and a warning, never a failed board."""
+    from RevenueChaser.rcdata import read as rcread
+
+    wanted = sorted({str(t).strip().upper() for t in tickers if t})
+    if not wanted:
+        return {}
+    out: dict[str, list[dict]] = {}
+    try:
+        rows = rcread.filer_breaks_13f(wanted)
+    except Exception as exc:                      # noqa: BLE001 - a missing mark, never a failed board
+        logger.warning("13F filer breaks unreadable, no break marks: %s", exc)
+        return {}
+    for r in rows:
+        out.setdefault(r["ticker"], []).append({"period": r["period"].isoformat(), "kind": r["kind"],
+                                                "shares": r["shares"], "cik": r["cik"],
+                                                "filer_name": r.get("filer_name")})
+    return out
+
+
+SPLIT_LOOKBACK_DAYS = 10    # a quarter end on a weekend or a holiday still finds the session before it
+
+
+def split_factors_13f(periods: dict) -> dict[str, dict[str, float]]:
+    """``{ticker: {period: split_factor}}`` for ``periods`` (``{ticker: [ISO period, ...]}``): the prices store's
+    factor that turns a share count of that quarter end into today's share basis (shares ÷ factor; a 1-for-25 reverse
+    split after it serves 25, a 2-for-1 split serves 0.5). The factor of the last bar on or before the quarter end,
+    at most ``SPLIT_LOOKBACK_DAYS`` earlier: Compustat's and Alpaca's splits, applied the way every board's split
+    basis is (``rcdata.read.bars``). One bar read per quarter, not one per ticker.
+
+    The one split rule for 13F share counts: the 13F board puts every quarter on today's basis with it (#732) and
+    Asymmetric Growth its institutional share. A ticker or a quarter the store cannot place has no entry, so its
+    shares stay as filed; a store it cannot read gives ``{}`` and a warning, never a failed board.
+    """
+    from datetime import timedelta
+
+    from RevenueChaser.rcdata import read
+    out: dict[str, dict[str, float]] = {}
+    try:
+        ids = read.security_ids(periods)
+        by_period: dict[str, list[str]] = {}
+        for t, ps in periods.items():
+            if t in ids:
+                for p in ps:
+                    by_period.setdefault(str(p)[:10], []).append(t)
+        for period, tickers in sorted(by_period.items()):
+            end = date.fromisoformat(period)
+            sid_to = {ids[t]: t for t in tickers}
+            # Rows come by security and session, so the last one on or before the quarter end wins.
+            for b in read.bars(sid_to, start=end - timedelta(days=SPLIT_LOOKBACK_DAYS), end=end, basis="split"):
+                if b.get("split_factor"):
+                    out.setdefault(sid_to[b["security_id"]], {})[period] = float(b["split_factor"])
+    except Exception as exc:  # noqa: BLE001 - no prices store is "no factor", never a failed board
+        logger.warning("13F split factors unread, shares stay as filed: %s: %s", type(exc).__name__, exc)
+        return {}
     return out
 
 

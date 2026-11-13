@@ -62,6 +62,11 @@ class Need:
     #: fields). Both are filters on ``summary_key``, and ``ask`` asks the reader for exactly them.
     filter_values: tuple[str, ...] = ()
     filter_prefix: str | None = None
+    #: The rows this need is about when what tells them apart is **not** the key column: the three
+    #: ``filing_section`` needs are one ``section`` each, keyed by ``cik`` like each other. A SQL fragment this
+    #: file owns, never a caller's input, passed to ``read.table_summary``; without it ``summary("sec.proxy")``
+    #: would read its state off every section's rows.
+    where: str | None = None
     normalize: str = IDENTIFIER
     providers: tuple[str, ...] = ()
     fallbacks: tuple[str, ...] = ()
@@ -198,6 +203,21 @@ _NEEDS = (
     Need("fundamentals.peers", "peers", "peer_group", None, "cik", 65,
          ask_param="cik", ask_list=False, providers=("sec",)),
     Need("fundamentals.revision", "revisions", "fundamental_revision", "datadate", "cik", 65, providers=("wrds",)),
+    # ── The SEC form reader (#757, serving kind ``sec_forms``) ───────────────────────────────────────────────────
+    # An annual report is up to fifteen months old by design -- a 10-K filed in February covers the year before --
+    # so these four are counted in calendar days and not in sessions, and 400 days is the same bound the
+    # fundamentals layer already uses for an annual-only filer (``annual_statement_older_than_400_days``).
+    # Each has a reader of its own and a ``where``: a need filters on its key column, and three of them share one
+    # table keyed by ``cik``, so without it ``sec.proxy`` would read fresh off a ``whole`` row. ``ask_required``
+    # because the text is gigabytes: nothing is answered unless a company is named.
+    Need("sec.whole", "form_whole", "filing_section", "filing_date", "cik", 400, max_lag_unit=DAYS,
+         ask_param="ciks", ask_required=True, where="section = 'whole'", providers=("sec",)),
+    Need("sec.business", "form_business", "filing_section", "filing_date", "cik", 400, max_lag_unit=DAYS,
+         ask_param="ciks", ask_required=True, where="section = 'business'", providers=("sec",)),
+    Need("sec.proxy", "form_proxy", "filing_section", "filing_date", "cik", 400, max_lag_unit=DAYS,
+         ask_param="ciks", ask_required=True, where="section = 'proxy'", providers=("sec",)),
+    Need("sec.note", "form_notes", "filing_note", "filing_date", "cik", 400, max_lag_unit=DAYS,
+         ask_param="ciks", ask_required=True, providers=("sec",)),
     # ── Ownership ───────────────────────────────────────────────────────────────────────────────────────────────
     # The 13F period tables are quarterly by construction: a filing deadline 45 days after a quarter end means the
     # newest period is routinely a quarter old, which is the data, not staleness.
@@ -205,6 +225,9 @@ _NEEDS = (
          ask_param="tickers", normalize=TICKER, providers=("sec",)),
     Need("ownership.periods_13f", "periods_13f", "sec13f_periods", "filed_through", "period", 65,
          providers=("sec",)),
+    # Where a ticker's 13F flow breaks: the filers that started or stopped reporting it in a settled quarter (#732).
+    Need("ownership.filer_breaks_13f", "filer_breaks_13f", "sec13f_filer_breaks", "period", "ticker", 65,
+         ask_param="tickers", normalize=TICKER, providers=("sec",)),
     Need("ownership.shortable", "shortable", "ibkr_shortable", "session_date", "ticker", 1,
          ask_param="tickers", normalize=TICKER, providers=("ibkr",)),
     Need("ownership.threshold", "threshold_list", "regsho_threshold", "list_date", "ticker", 1,

@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 from datetime import datetime, timezone
 
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.core import rawstore, vendor_data
 from RevenueChaser.core.providers import cache as cache_manager
 from RevenueChaser.module_asymmetric_growth import engine
@@ -43,7 +44,7 @@ def _stored(table):
 
 
 def test_a_fetch_stores_valuation_for_every_fetched_name_and_statements_without_edgar(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("EDG")])
+    fund_store.put_edgar([_edgar("EDG")])
     yahoo = _DatedYahoo(monkeypatch)
     _run(monkeypatch, ["EDG", "NOE"])
     assert sorted(yahoo.info_calls) == ["EDG"] and sorted(yahoo.full_calls) == ["NOE"]
@@ -64,7 +65,7 @@ def test_a_second_fetch_of_unchanged_statements_appends_nothing(rawstore_tmp_db,
 
 
 def test_a_refresh_stores_nothing(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [_edgar("EDG")])
+    fund_store.put_edgar([_edgar("EDG")])
     yahoo = _DatedYahoo(monkeypatch)
     _run(monkeypatch, ["EDG"], no_fetch=True)
     assert yahoo.info_calls == [] and yahoo.full_calls == []

@@ -93,7 +93,6 @@ SPINE_ROW = {"ticker": TICKER, "cik": CIK, "name": "GROWTH CO", "exchange": "NYS
 def built(monkeypatch, http_mock):  # noqa: F811
     monkeypatch.setattr(sec_edgar, "SEC_DATA_BASE", "https://data.sec.test")
     monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
-    monkeypatch.delenv(layer.SOURCE_ENV, raising=False)
     fx.spine([SPINE_ROW])
     fx.sec_routes(http_mock, {CIK: grw_facts()})
     fx.run(companyfacts.NAME, mode="backfill", to="2026-10-26")
@@ -142,44 +141,33 @@ def test_a_board_on_the_layer_never_downloads_facts(built):
     assert set(many) == {TICKER} and many[TICKER][0] == annual
 
 
-def test_without_a_layer_the_old_rows_are_read(monkeypatch):
-    monkeypatch.delenv(layer.SOURCE_ENV, raising=False)
+def test_without_a_layer_no_rows_are_read_and_the_reason_is_said():
+    # #642 PR 6: the old edgar_financials rows are never a fallback.
     rawstore.write_rows("edgar_financials", [{"ticker": TICKER, "annual": [{"fiscal_year": 2020, "revenue": 1.0}],
                                               "quarterly": [], "meta": {"source": "sec_edgar"}, "fetched_at": 1.0}])
     state = layer.source_state()
-    assert state["effective"] == layer.STORE and state["reason"] == "no fundamentals.duckdb yet"
-    assert sec_edgar.get_annual(TICKER, no_fetch=True)[0] == [{"fiscal_year": 2020, "revenue": 1.0}]
+    assert state["effective"] == layer.LAYER and state["reason"] == "no fundamentals.duckdb yet"
+    assert not layer.reads_layer()
+    assert sec_edgar.get_annual(TICKER, no_fetch=True)[0] == []
 
 
-def test_a_failed_facts_check_keeps_the_last_good_build(built, monkeypatch, caplog):
+def test_a_failed_facts_check_keeps_the_last_good_build(built):
     # Opus review S3: one failed ``sec/companyfacts`` run (an SEC 403, a timeout) leaves the served file the last
-    # good build, so the boards keep reading it, never the old rows nobody refreshes; the failure is logged.
+    # good build, so the boards keep reading it.
     from RevenueChaser.rcdata import ops
-    monkeypatch.delenv(layer.SOURCE_ENV, raising=False)
-    layer._FALLBACK_LOGGED.clear()
     ops.record_check(layer.FACTS_DATASET, "failed", note="HTTP 403")
-    with caplog.at_level("WARNING"):
-        state = layer.source_state()
+    state = layer.source_state()
     assert state["effective"] == layer.LAYER and state["reason"] is None
-    assert "failed" in caplog.text and "last good build" in caplog.text
     assert sec_edgar.get_annual(TICKER, no_fetch=True)[1]["layer"]
 
 
-def test_without_any_good_facts_check_the_old_rows_are_read(market_roots, monkeypatch):  # noqa: F811
+def test_without_any_good_facts_check_the_reason_says_so(market_roots):  # noqa: F811
     from RevenueChaser.rcdata import ops, serving
-    monkeypatch.delenv(layer.SOURCE_ENV, raising=False)
     serving.live_path("fundamentals").parent.mkdir(parents=True, exist_ok=True)
     serving.live_path("fundamentals").touch()
     assert layer.source_state()["reason"] == f"{layer.FACTS_DATASET} has not built yet"
     ops.record_check(layer.FACTS_DATASET, "failed", note="HTTP 403")
     assert layer.source_state()["reason"] == f"{layer.FACTS_DATASET} has not built yet"
-
-
-def test_the_escape_hatch_reads_the_old_rows(built, monkeypatch):
-    monkeypatch.setenv(layer.SOURCE_ENV, "store")
-    assert layer.source_state()["effective"] == layer.STORE
-    assert sec_edgar.get_annual(TICKER, no_fetch=True) == ([], {"source": "sec_edgar", "entity_name": "",
-                                                                "is_us": True, "available": False})
 
 
 def test_a_batch_read_keeps_a_window_per_company(built):

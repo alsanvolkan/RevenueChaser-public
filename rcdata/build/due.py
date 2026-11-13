@@ -30,7 +30,7 @@ A dataset is due (``is_due``) when nothing holds it and its last run is old enou
   run that wrote the last check started ``HOURLY_MIN`` minutes ago or more (``job_runs2.started_at`` through the
   check's ``run_id``; ``dataset_check`` holds only a day). Start, not finish: a run that took ten minutes would
   otherwise miss every second hourly pass. A check with no run behind it is due;
-- ``weekly`` / ``monthly``: due 7 / 30 days after the last check's ``checked_on``. The cadence is the
+- ``weekly`` / ``monthly`` / ``quarterly``: due 7 / 30 / 91 days after the last check's ``checked_on``. The cadence is the
   ``dataset_schedule`` row's, else the dataset's own ``cadence`` attribute (the spine's weekly sources), else daily.
 
 The request goes in through ``ops.enqueue_once`` (check and insert in one ``BEGIN IMMEDIATE``), so a dataset that
@@ -45,9 +45,11 @@ from ...core import calendar
 from .. import ops
 from . import base
 
-CADENCES = ("hourly", "daily", "weekly", "monthly")
+CADENCES = ("hourly", "daily", "weekly", "monthly", "quarterly")
 DEFAULT_CADENCE = "daily"
-CYCLE_DAYS = {"weekly": 7, "monthly": 30}
+#: ``quarterly`` (#775, for the 13F institution map): 91 days, the shortest calendar quarter, so a
+#: dataset that ran on the first day of a quarter is due again inside the next one.
+CYCLE_DAYS = {"weekly": 7, "monthly": 30, "quarterly": 91}
 #: Under 60 so a pass that starts a few minutes early (timer jitter, a long pass before it) still finds it due.
 HOURLY_MIN = 55
 REQUESTED_BY = "schedule"

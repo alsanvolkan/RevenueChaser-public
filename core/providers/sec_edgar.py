@@ -1042,39 +1042,11 @@ def extract_quarterly(facts: dict, non_usd: set[str] | None = None) -> list[dict
     return quarterly
 
 
-def _stored_fundamentals(row: dict | None) -> tuple[list[dict], list[dict], dict] | None:
-    """``(annual, quarterly, meta)`` of a stored ``edgar_financials`` row, None when it holds no usable lists."""
-    if not row:
-        return None
-    annual = row.get("annual") or []
-    quarterly = row.get("quarterly") or []
-    meta = row.get("meta")
-    if not isinstance(meta, dict):
-        meta = {}  # callers .get() on it; a stray string must not crash them (#202)
-    if isinstance(annual, list) and isinstance(quarterly, list):
-        return annual, quarterly, meta
-    return None
-
-
 def stored_fundamentals_many(tickers) -> dict[str, tuple[list[dict], list[dict], dict]]:
-    """``{ticker: (annual, quarterly, meta)}`` for the stored rows ``get_fundamentals(no_fetch=True)`` would return,
-    in one query.
-
-    A ticker with no usable stored row is absent: ``get_fundamentals`` would have to go online for it. On the
-    fundamentals layer (``core/fundamentals_layer``, G6) the rows are the layer's, and a ticker it holds no company
-    for is absent.
-    """
+    """``{ticker: (annual, quarterly, meta)}`` from the fundamentals layer (``core/fundamentals_layer``, G6) in two
+    reads: what ``get_fundamentals`` returns per ticker. A ticker it holds no company for is absent."""
     from .. import fundamentals_layer
-    if fundamentals_layer.reads_layer():
-        return fundamentals_layer.records_many(tickers)
-    rows = rawstore.get_many("edgar_financials", [t.upper() for t in tickers],
-                             columns=["annual", "quarterly", "meta"])
-    out = {}
-    for ticker, row in rows.items():
-        stored = _stored_fundamentals(row)
-        if stored:
-            out[ticker] = stored
-    return out
+    return fundamentals_layer.records_many(tickers)
 
 
 def stored_annual_many(tickers) -> dict[str, tuple[list[dict], dict]]:
@@ -1083,69 +1055,14 @@ def stored_annual_many(tickers) -> dict[str, tuple[list[dict], dict]]:
 
 
 def get_fundamentals(ticker: str, no_fetch: bool = False) -> tuple[list[dict], list[dict], dict]:
-    """Ticker için EDGAR yıllık + çeyreklik finansallar; (annual, quarterly, meta). Cache'li.
+    """Ticker için EDGAR yıllık + çeyreklik finansallar; (annual, quarterly, meta).
 
-    ``no_fetch=True`` — yalnızca cache'den okur; cache yoksa boş döner (ağ yok).
-
-    On the fundamentals layer (G6, ``core/fundamentals_layer``; the default once ``fundamentals.duckdb`` is built)
-    the records are the layer's, re-read by the builder on the filing day, and nothing is downloaded here whatever
-    ``no_fetch`` says: the builder owns the SEC reads (D1).
+    The fundamentals layer's records (G6, ``core/fundamentals_layer``), re-read by the builder on the filing day;
+    nothing is downloaded here whatever ``no_fetch`` says: the builder owns the SEC reads (D1). The old
+    ``edgar_financials`` path, its download and its write went with #642 PR 6.
     """
-    ticker = ticker.upper()
     from .. import fundamentals_layer
-    if fundamentals_layer.reads_layer():
-        return fundamentals_layer.records(ticker)
-    stored = _stored_fundamentals(rawstore.get("edgar_financials", ticker))
-    if stored:
-        return stored
-
-    if no_fetch:
-        return [], [], {"source": "sec_edgar", "entity_name": "", "is_us": True, "available": False}
-
-    row = _cik_map().get(ticker)
-    if not row:
-        return [], [], {"source": "sec_edgar", "entity_name": "", "is_us": True, "available": False}
-
-    try:
-        facts = _fetch_facts(row["cik"])
-    except Exception as exc:  # pragma: no cover - network
-        logger.debug("edgar %s: %s", ticker, exc)
-        # ``fetch_failed``: the download failed, which is not "EDGAR has nothing" (Fundamentals' edgar_fetch_failed
-        # funnel step, #386 review). Callers that only read ``available`` see no change.
-        return [], [], {"source": "sec_edgar", "entity_name": row.get("name", ""), "is_us": True, "available": False,
-                        "fetch_failed": True}
-    fetched_at = time.time()          # the facts download, stamped on the row (K6, #383 R1)
-
-    if not facts:
-        return [], [], {"source": "sec_edgar", "entity_name": row.get("name", ""), "is_us": True, "available": False,
-                        "downloaded": True}
-
-    non_usd: set[str] = set()         # #46: the other currencies the money concepts were tagged in
-    annual = extract_annual(facts, non_usd)
-    quarterly = extract_quarterly(facts, non_usd)
-    meta = {
-        "source": "sec_edgar",
-        "entity_name": facts.get("entityName") or row.get("name", ""),
-        "is_us": _is_us_filer(facts),
-        "available": True,
-        "extract_version": EXTRACT_VERSION,
-        # #46: every currency seen while reading this filer's money concepts, the annual and quarterly passes
-        # sharing one set — NOT "this filer reports in EUR". A scorable USD filer with one EUR-only concept
-        # lands here too; the only reader is the scan, which looks at the key when the annual series is empty.
-        # A row extracted before this measure has no key, which means "not measured", never "USD", and a stored
-        # row is never re-extracted (``_stored_fundamentals``): only a re-extraction can tell the two apart.
-        "non_usd_units": sorted(non_usd),
-    }
-    rawstore.write_rows("edgar_financials", [{
-        "ticker": ticker,
-        "annual": annual,
-        "quarterly": quarterly,
-        "meta": meta,
-        "fetched_at": fetched_at,
-    }])
-    # ``downloaded``: this call reached the SEC and it answered (review N5, the caller's provider health counts
-    # it). Returned only, never stored: a later read of the stored row made no call.
-    return annual, quarterly, {**meta, "downloaded": True}
+    return fundamentals_layer.records(ticker.upper())
 
 
 def get_annual(ticker: str, no_fetch: bool = False) -> tuple[list[dict], dict]:

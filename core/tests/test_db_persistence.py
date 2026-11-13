@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 
 
@@ -321,7 +322,7 @@ def test_roundtrip_integrity_json_payload(rawstore_tmp_db):
                                           "fetched_at": 1.0, "fetched_at_iso": ""}])
     assert rawstore.get("ticker_payload_cache", "AAA")["payload"] == payload
     # typed equity_universe columns round-trip too
-    rawstore.write_rows("equity_universe", [{"ticker": "ETON", "market_cap": 1.8e9,
+    universe_store.put([{"ticker": "ETON", "market_cap": 1.8e9,
                                                  "sector": "Health Care", "price": 20.0,
                                                  "name": "Eton", "quote": {"x": 1}}])
     assert rawstore.get("equity_universe", "ETON")["market_cap"] == 1.8e9
@@ -513,6 +514,21 @@ POPULATION: dict[str, str] = {
     "spx_brier": "module_spx_gamma/tests/test_store.py::test_a_scored_brier_record_is_never_changed",
     "spx_gex_daily": "module_spx_gamma/tests/test_store.py::test_every_gex_day_is_kept",
     "spx_meta": "module_spx_gamma/tests/test_store.py::test_meta_round_trips",
+    "sec13f_board_cells":
+        "module_sec_13f/tests/test_sec13f_board_file_732.py::test_a_sync_writes_the_builders_rows_and_the_board_then_reads_the_file",
+    "sec13f_board_breaks":
+        "module_sec_13f/tests/test_sec13f_board_file_732.py::test_a_sync_writes_the_builders_rows_and_the_board_then_reads_the_file",
+    "sec13f_board_meta":
+        "module_sec_13f/tests/test_sec13f_board_file_732.py::test_a_sync_writes_the_builders_rows_and_the_board_then_reads_the_file",
+    # The watch-list file (#786): avo types these, so the writer is the only thing that fills them.
+    "wl_list":
+        "module_watchlists/tests/test_watchlist_store_786.py::test_a_new_list_gets_a_slug_id_a_description_and_a_default_section",
+    "wl_section":
+        "module_watchlists/tests/test_watchlist_store_786.py::test_sections_keep_avos_order_not_the_alphabet",
+    "wl_item":
+        "module_watchlists/tests/test_watchlist_store_786.py::test_a_symbol_is_stored_as_avo_wrote_it_split_into_its_parts",
+    "wl_change":
+        "module_watchlists/tests/test_watchlist_store_786.py::test_every_add_and_remove_leaves_a_change_row",
 }
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
@@ -573,11 +589,3 @@ def test_swing_info_ttl_from_cached_at(rawstore_tmp_db):
                                   "cached_at": time.time() - 1000}])
     from RevenueChaser.module_swing_potential.indicators import load_ticker_info
     assert load_ticker_info("AAAA", no_fetch=True) == {"sector": "Tech"}
-
-
-def test_sec_facts_no_ttl_returns_regardless_of_age(rawstore_tmp_db):
-    rawstore.write_rows("edgar_financials", [{"ticker": "OLD", "annual": [], "quarterly": [],
-                                       "meta": {"available": True}}])
-    from RevenueChaser.core.providers import sec_edgar
-    annual, _, meta = sec_edgar.get_fundamentals("OLD", no_fetch=True)
-    assert meta.get("available") is True

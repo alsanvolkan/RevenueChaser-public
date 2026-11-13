@@ -27,9 +27,10 @@ _ENV_EXTRAS = ("RC_SEC_USER_AGENT",
                "RC_IBKR_LOGIN_CHECK", "RC_IBKR_HOST", "RC_IBKR_PORT",           # #162
                "RC_SCHEDULER",                                                  # #158
                "RC_HTTP_CONTACT",                                               # #206, the builder's User-Agent
-               "WRDS_USERNAME", "RC_UNIVERSE_SOURCE", "RC_WRDS_PYTHON",         # PR 5, the spine
+               "WRDS_USERNAME", "RC_WRDS_PYTHON",                               # PR 5, the spine
                "RC_UW_PRELIMINARY",                                             # PR 12, the fundamentals
-               "RC_WRDS_UNATTENDED")                                            # #344, WRDS from the builder
+               "RC_WRDS_UNATTENDED",                                            # #344, WRDS from the builder
+               "RC_EDGARTOOLS_PYTHON", "RC_SEC_FORMS_CUTTER")                  # #754, the sec_forms cutter
 
 
 def _env_example_lines() -> list[str]:
@@ -155,17 +156,17 @@ def test_data_architecture_names_no_scheduled_job_or_history_the_code_does_not_h
     assert "RC-Backup-Weekly" in ps1 and "RC-Store-Backup" not in ps1 and "RC-ValueChain-Sync" not in ps1
 
 
-def test_data_health_drill_line_names_the_500_store_read_failed_case():
-    """#358: the Settings ticker drill answers 500 "store read failed" (DF98), not only 404."""
+def test_data_health_lookup_line_names_the_500_case_and_the_served_files():
+    """#715: the Ticker lookup answers 500 "serving read failed" (DF98), not only 404, and names no old store."""
     from pathlib import Path
 
     text = (Path(__file__).resolve().parents[2] / "docs" / "data_health.md").read_text(encoding="utf-8")
-    line = next(l for l in text.splitlines() if "Per-ticker drill `GET /api/settings/ticker/<t>`" in l)
+    line = next(l for l in text.splitlines() if "Ticker lookup `GET /api/settings/lookup/<t>`" in l)
     start = text.index(line)
     end = text.find("\n- ", start + 1)
     block = text[start:end]
-    assert "500" in block and "store read failed" in block
-
+    assert "500" in block and "serving read failed" in block and "404" in block
+    assert "/api/settings/ticker/<t>` is gone" in block
 
 # Every Markdown file a test reads by path. tests.yml drops ``**.md``, so each one has to be added back to the
 # path filter of both triggers, or a docs-only PR that edits it skips CI and cannot go red against its test.
@@ -301,7 +302,6 @@ def test_data_retrieval_says_spx_gamma_reads_through_the_needs_layer():
 
 def test_the_spine_section_states_what_the_code_owns():
     """PR 5: the spine's datasets, tables, views, tier rule version, issue kinds and the flag, as the code has them."""
-    from RevenueChaser.core import universe
     from RevenueChaser.rcdata.build import DATASETS
     from RevenueChaser.rcdata.build.spine import KIND, security, tier, views
     text = (_REPO / "docs" / "data_architecture.md").read_text(encoding="utf-8")
@@ -316,8 +316,7 @@ def test_the_spine_section_states_what_the_code_owns():
     for kind in security.ISSUE_KINDS:
         assert f"`{kind}`" in section, kind
     assert f"**Tier rule v{tier.VERSION}**" in section
-    assert f"`{universe.SOURCE_ENV}={universe.SPINE}`" in section
-    assert f"`{universe.SOURCE_ENV}={universe.STORE}`" in section            # PR 6: the old store, the rollback
+    assert "RC_UNIVERSE_SOURCE=" not in section                             # the switch went with #642 PR 6
 
 
 def test_the_prices_section_states_what_the_code_owns():
@@ -394,9 +393,7 @@ def test_the_fundamentals_section_states_what_the_code_owns():
                "revisions", "statements_many", "fundamental_companies", "filing_items", "filing_texts",
                "customer_shares"):
         assert f"`rcdata.read.{fn}(" in section, fn
-    # G6: the boards' switch, and the rollback value.
-    from RevenueChaser.core import fundamentals_layer
-    assert f"`{fundamentals_layer.SOURCE_ENV}={fundamentals_layer.STORE}`" in section
+    assert "RC_FUNDAMENTALS_SOURCE" not in section        # G6's switch went with #642 PR 6
     health = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
     for name in newdata.WRDS_DIFFERENCE:
         assert f"`{name}`" in health, name
@@ -441,6 +438,16 @@ def test_data_health_states_the_control_boards_values_the_code_owns():
     assert f"`{screen.FILL_ENV}`" in section
     assert f"`GET {control_render.ROUTES['sample']}<table>`" in section
     assert f"{newdata.SAMPLE_ROWS} rows" in section
+
+
+def test_data_health_states_the_news_tape_values_the_code_owns():
+    """#727: the listener's beat, its re-ask interval and the card's staleness, as the code has them."""
+    from RevenueChaser.module_news import tape, tape_state
+    text = (_REPO / "docs" / "data_health.md").read_text(encoding="utf-8")
+    section = " ".join(text[text.index("### 3.2a IBKR news feeds"):text.index("### 3.3 Backups")].split())
+    assert f"with its {tape.TRIGGER_S // 60}-minute trigger" in section
+    assert f"asked again (every {tape.RESUB_S // 60} minutes)" in section
+    assert f"A record older than {tape_state.STALE_MINUTES} minutes" in section
 
 
 def test_the_metrics_table_in_data_health_matches_the_code():

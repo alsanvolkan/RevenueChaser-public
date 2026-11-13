@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import edgar_docs, rawstore
 from RevenueChaser.module_value_chain import engine, sync
 
@@ -30,7 +31,7 @@ def _subs(accession, form="10-K", filed="2026-02-01"):
 
 
 def _seed_sync(monkeypatch, subs, html, tickers=(("NVDA", "1045810"),)):
-    rawstore.replace_all("equity_universe", [{"ticker": t, "market_cap": 1e9, "name": t}
+    universe_store.replace([{"ticker": t, "market_cap": 1e9, "name": t}
                                              for t, _ in tickers])
     rawstore.write_rows("sec_exchange_file", [{"ticker": t, "cik": c, "name": t, "status": "present", "run_at": 1.0}
                                                 for t, c in tickers])

@@ -1,0 +1,240 @@
+"""The ``sec_forms`` serving kind (#757): the two tables, the four needs, and the staleness rule that decides
+which company is cut again.
+
+The build is driven the way production drives it -- ``sec/filings`` fetches the documents, then ``sec/forms`` cuts
+what is on disk -- because the one trap this layer can fall into is invisible from a unit call: two datasets
+writing into one ``parquet/sec/forms/`` folder would leave both build manifests empty, every later build would
+read "nothing changed", and the served tables would freeze after the first build with every test green. So the
+incremental test below adds a filing and asserts it **reaches the served table**.
+"""
+from __future__ import annotations
+
+import shutil
+from datetime import date
+
+import duckdb
+import pytest
+
+from RevenueChaser.core.providers import sec_edgar
+from RevenueChaser.rcdata import serving
+from RevenueChaser.rcdata.build import base
+from RevenueChaser.rcdata.build.fundamentals import common, filings
+from RevenueChaser.rcdata.build.sec_forms import forms
+from RevenueChaser.rcdata.needs import serve
+
+from . import fund_fixture as fx
+from . import sec_notes_fixture as nf
+
+AS_OF = "2026-10-28"
+LATER = date(2026, 10, 29)
+MSFT = "789019"
+NEW_K = "0000789019-26-000100"
+
+
+@pytest.fixture
+def sec(monkeypatch, http_mock):
+    monkeypatch.setattr(sec_edgar, "SEC_WWW_BASE", "https://sec.test")
+    monkeypatch.setattr(sec_edgar, "SEC_DATA_BASE", "https://data.sec.test")
+    fx.spine()
+    return http_mock
+
+
+def q(sql: str, *params) -> list[tuple]:
+    con = serving.open_read("sec_forms")
+    try:
+        return con.execute(sql, list(params)).fetchall()
+    finally:
+        con.close()
+
+
+def annual(body_chars: int = 5_000) -> str:
+    """A 10-K the item cutter can cut **and** the note reader can read: the note fixture's inline-XBRL header and
+    its one continued debt note, then the item headings and the business body."""
+    return nf.CONTINUED.replace("\n</body></html>", fx.ten_k(body_chars).split("<body>", 1)[1])
+
+
+def _stored(sec, rows=None, documents=None) -> None:
+    """The documents on disk, fetched by ``sec/filings`` as in production."""
+    fx.filing_routes(sec, {MSFT: fx.submissions(789019, rows or fx.MSFT_FILINGS, "MICROSOFT CORP")},
+                     {"msft-10k.htm": annual(), "msft-def14a.htm": fx.proxy(), **(documents or {})})
+    fx.run(filings.NAME, mode="backfill", to=AS_OF)
+
+
+def _refiled(sec, rows, documents) -> None:
+    """A later day's filing list and the documents it names, on disk.
+
+    ``sec/filings`` keeps the list it already stored (``_subs_raws``), so running its backfill again re-reads the
+    old one and a new filing never arrives. A later day's run is what fetches a new list, and this is that run's
+    steps -- except that the **list is written rather than answered**: ``HttpMock`` serves the first route whose
+    substring matches the URL, so a second route for the submissions URL can never win over the one the first run
+    added. The documents are new URLs, so those are ordinary routes.
+    """
+    for name, html in documents.items():
+        sec.add(f"/{name}", html)
+    raw = filings._subs_dir(MSFT) / f"{LATER.isoformat()}.json.gz"
+    base.write_raw_json(common.meta_path(raw), {"cik": MSFT, "as_of": LATER.isoformat(), "fetched_at": 2.0,
+                                                "run_id": "t-refiled"})
+    base.write_raw_json(raw, fx.submissions(789019, rows, "MICROSOFT CORP"))
+    ctx = base.RunContext(run_id="t-refiled", dataset="test")
+    filings.read_documents(ctx, MSFT, raw, LATER)
+    filings.DATASET.to_parquet_all(ctx, [raw])
+
+
+def _cut(**params) -> dict:
+    check = fx.run(forms.NAME, AS_OF, **params)
+    return check
+
+
+# ── a fresh build ───────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_a_fresh_build_serves_the_sections_with_the_method_that_found_each(sec):
+    _stored(sec)
+    check = _cut()
+    assert check["result"] != "failed", check.get("note")
+    assert dict(q("SELECT section, method FROM filing_section WHERE cik = ? ORDER BY section", MSFT)) == {
+        "business": forms.HEADER, "proxy": forms.UNCUT, "whole": forms.UNCUT}
+    # Every row says which rule wrote it, so a half-finished migration to ``ours-2`` is visible, not inferred.
+    assert q("SELECT DISTINCT rules_version FROM filing_section") == [(forms.SECTIONS_VERSION,)]
+    assert f"sections {forms.SECTIONS_VERSION} {check['rows']}" in check["note"], check["note"]
+
+
+def test_the_business_row_is_the_item_and_its_span_in_the_whole_document(sec):
+    _stored(sec)
+    _cut()
+    whole, = q("SELECT text FROM filing_section WHERE cik = ? AND section = 'whole'", MSFT)
+    item, chars, start, end = q("SELECT text, chars, start_char, end_char FROM filing_section "
+                                "WHERE cik = ? AND section = 'business'", MSFT)[0]
+    assert "We develop software and cloud services." in item and chars == len(item)
+    assert whole[0][start:end] == item, "the span points at the section inside the whole document"
+
+
+def test_the_note_blocks_of_the_annual_report_are_served_with_their_chain_joined(sec):
+    _stored(sec)
+    _cut()
+    rows = q("SELECT local_name, taxonomy, kind, seq, top_level, text FROM filing_note WHERE cik = ? "
+             "ORDER BY seq", MSFT)
+    assert [(r[0], r[1], r[2], r[4]) for r in rows] == [("DebtDisclosureTextBlock", "us-gaap", "disclosure", True)]
+    # The chain is the text: the block and the two continuations it names, in order.
+    assert "We borrowed money." in rows[0][5] and "The revolver is undrawn." in rows[0][5]
+    assert "belongs to no block" not in rows[0][5]
+    assert q("SELECT DISTINCT rules_version FROM filing_note") == [(forms.NOTES_VERSION,)]
+
+
+def test_a_proxy_is_never_read_for_notes(sec):
+    """The proxy has no inline XBRL and is not an annual report: a note row keyed to it would be a cut of the
+    wrong document."""
+    _stored(sec)
+    _cut()
+    assert q("SELECT count(*) FROM filing_note WHERE form = 'DEF 14A'") == [(0,)]
+
+
+# ── the staleness rule ──────────────────────────────────────────────────────────────────────────────────────────
+
+def test_a_second_run_cuts_nothing(sec):
+    _stored(sec)
+    _cut()
+    again = _cut()
+    assert "0 of" in (again.get("note") or ""), again.get("note")
+
+
+def test_a_new_filing_reaches_the_served_table(sec):
+    """The one-dataset trap: with two datasets in one Parquet folder both manifests stay empty and this row never
+    arrives, with every other test still green."""
+    _stored(sec)
+    _cut()
+    assert q("SELECT count(*) FROM filing_section WHERE accession = ?", NEW_K) == [(0,)]
+
+    _refiled(sec, [(NEW_K, "10-K", "2026-07-30", "2026-06-30", "msft-10k-26.htm", ""), *fx.MSFT_FILINGS],
+             {"msft-10k-26.htm": annual(6_000)})
+    assert filings._doc_path(MSFT, NEW_K).exists(), "sec/filings stored the new document before anything is cut"
+    check = _cut()
+    assert "1 of" in (check.get("note") or ""), check.get("note")
+    assert check["result"] != "failed", check.get("note")
+    assert q("SELECT section FROM filing_section WHERE accession = ? ORDER BY section", NEW_K) == [
+        ("business",), ("whole",)]
+    assert q("SELECT count(*) FROM filing_note WHERE accession = ?", NEW_K) == [(1,)]
+
+
+def _age_the_stored_rows(version: str = "ours-0") -> None:
+    """Rewrite the stored sections partition as if an older rule had cut it.
+
+    Not ``monkeypatch`` on :data:`forms.SECTIONS_VERSION`: that constant is handed to ``sec_sections``, which
+    refuses a version it cannot cut with, so a made-up one fails the run instead of ageing the rows.
+    """
+    part = common.parquet_dir(forms.NAME) / f"cik={MSFT}" / forms.SECTIONS_PARQUET
+    con = duckdb.connect()
+    try:
+        cols = ", ".join(f"'{version}' AS rules_version" if c == "rules_version" else f'"{c}"'
+                         for c, _ in forms.SECTION)
+        # Into a table first: the write goes through a tmp file and a rename over the one being read.
+        con.execute(f"CREATE TABLE aged AS SELECT {cols} FROM read_parquet({base.sql_path(part)})")
+        base.write_parquet(con, "SELECT * FROM aged", part)
+    finally:
+        con.close()
+
+
+def test_a_company_whose_rows_hold_another_cutter_version_is_cut_again(sec):
+    """What nothing else triggers: the documents on disk did not change, our own rule did."""
+    _stored(sec)
+    _cut()
+    _age_the_stored_rows()
+    assert MSFT in forms.held()[1], "the company holds a row of another version"
+    check = _cut()
+    assert "1 of" in (check.get("note") or ""), check.get("note")
+    assert q("SELECT DISTINCT rules_version FROM filing_section") == [(forms.SECTIONS_VERSION,)]
+
+
+# ── the swap's own checks ───────────────────────────────────────────────────────────────────────────────────────
+
+def test_a_gone_partition_is_cut_again_rather_than_shrinking_the_file(sec):
+    """The company's Parquet is gone but its documents are not, so the staleness rule cuts it again and the
+    served table is whole. This is the one place a serving kind can quietly lose rows -- its own ``fetch``
+    rebuilding what was removed is what stops the shrink guard from ever being the thing that notices."""
+    _stored(sec)
+    _cut()
+    before = q("SELECT count(*) FROM filing_section WHERE cik = ?", MSFT)[0][0]
+    shutil.rmtree(common.parquet_dir(forms.NAME) / f"cik={MSFT}")
+    check = _cut()
+    assert check["result"] != "failed", check.get("note")
+    assert q("SELECT count(*) FROM filing_section WHERE cik = ?", MSFT)[0][0] == before
+
+
+def test_an_exhibits_business_row_is_served_with_the_aif_method(sec):
+    """The row the fundamentals layer drops: ``filings.py`` keeps an exhibit's text under the item name ``aif``
+    and skips every other section of it, so no board can ask for "the business section" and reach a 40-F filer's
+    Annual Information Form. Here it is a ``business`` row whose ``method`` says how it was found.
+    """
+    fx.filing_routes(sec, {"1094517": fx.submissions(1094517, [
+        ("0001193125-25-150000", "40-F", "2025-06-25", "2025-03-31", "tm-40f.htm", "")])})
+    sec.add("tm-40f.htm", fx.ten_k(20_000))
+    sec.add("index.json", {"directory": {"item": [{"name": "tm-40f.htm", "size": "900000"},
+                                                  {"name": "ex99-1aif.htm", "size": "500000"}]}})
+    sec.add("ex99-1aif.htm", fx.ten_k(9_000))
+    fx.run(filings.NAME, mode="backfill", to=AS_OF)
+    _cut()
+    rows = q("SELECT section, method, document FROM filing_section WHERE cik = '1094517' ORDER BY section, document")
+    assert ("business", forms.AIF, "0001193125-25-150000.ex99-1aif.htm.gz") in rows, rows
+    assert ("whole", forms.UNCUT, "0001193125-25-150000.html.gz") in rows
+
+
+# ── the needs ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+def test_the_business_need_answers_and_each_section_need_counts_only_its_own_rows(sec):
+    _stored(sec)
+    _cut()
+    answer = serve.ask("sec.business", ciks=[MSFT])
+    assert len(answer.rows) == 1 and answer.rows[0]["section"] == "business"
+
+    # Without the need's ``where`` each of the three would count the whole table and read its state off another
+    # section's rows.
+    assert serve.summary("sec.proxy")["row_count"] == 1
+    assert serve.summary("sec.whole")["row_count"] == 1
+    assert serve.summary("sec.business")["row_count"] == 1
+    assert q("SELECT count(*) FROM filing_section")[0][0] == 3
+
+
+def test_the_note_need_answers_by_local_name_across_taxonomies(sec):
+    _stored(sec)
+    _cut()
+    assert serve.ask("sec.note", ciks=[MSFT], local_name="DebtDisclosureTextBlock").rows
+    assert not serve.ask("sec.note", ciks=[MSFT], local_name="SegmentReportingDisclosureTextBlock").rows

@@ -17,8 +17,9 @@ import random
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.app import dashboard, runners
-from RevenueChaser.core import rawstore, reporting_common as rc, ticker_store
+from RevenueChaser.core import reporting_common as rc, ticker_store
 from RevenueChaser.core.tests.board_js import run_board_js
 from RevenueChaser.module_asymmetric_growth import engine, freeze
 from RevenueChaser.module_asymmetric_growth import report
@@ -86,7 +87,7 @@ def out(tmp_path, monkeypatch, rawstore_tmp_db):
     monkeypatch.setattr(runners, "ASYMMETRIC_GROWTH_LATEST", folder / "asymmetric_growth_latest.html")
     monkeypatch.setattr(freeze, "freeze_result", lambda *a, **k: None)
     monkeypatch.setattr(runners, "_freeze_run_id", lambda: "fetch-1")
-    rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
+    universe_store.replace([{"ticker": "AAA", "market_cap": 1e9, "price": 10.0, "name": "A"}])
     return folder
 
 

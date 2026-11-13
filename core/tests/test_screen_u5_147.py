@@ -17,6 +17,7 @@ from RevenueChaser.module_fundamentals import pipeline as fp
 from RevenueChaser.module_fundamentals.report import render_fundamental_dashboard
 from RevenueChaser.module_swing_potential import pipeline as sp
 from RevenueChaser.module_swing_potential.report import render_swing_dashboard
+from RevenueChaser.core.tests.d01_seed import drop_d01, write_d01
 
 BOARDS = [pytest.param(fp, "fundamentals", render_fundamental_dashboard, id="fundamentals"),
           pytest.param(sp, "swing", render_swing_dashboard, id="swing")]
@@ -30,8 +31,7 @@ def scenario(rawstore_tmp_db, monkeypatch):
 
 def _short_spy(bars: int):
     """SPY's D01 series cut to its last ``bars`` sessions (the baseline reads D01 since U1, the scenario since C12)."""
-    with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM price_bars_daily WHERE ticker = 'SPY'")
+    drop_d01("SPY")
     scn.seed_d01("SPY", scn._bars("up", 0.0015, bars))
 
 

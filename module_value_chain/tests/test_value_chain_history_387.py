@@ -12,6 +12,7 @@ import zlib
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import ledger, rawstore
 from RevenueChaser.module_value_chain import config, engine, history as vc_history, precision, sync
 from RevenueChaser.module_value_chain.tests.test_sync import _seed as _seed_sync, _subs
@@ -152,7 +153,7 @@ def test_a_sync_records_the_rebuilt_edges_without_a_payload(store, monkeypatch):
 
 def test_a_sync_stopped_by_sec_is_partial(store, monkeypatch):
     from RevenueChaser.core.providers import sec_edgar
-    rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1e9, "name": "AAA"}])
+    universe_store.replace([{"ticker": "AAA", "market_cap": 1e9, "name": "AAA"}])
     rawstore.write_rows("sec_exchange_file", [{"ticker": "AAA", "cik": "1", "name": "AAA", "status": "present", "run_at": 1.0}])
 
     def _blocked(url, client=None):

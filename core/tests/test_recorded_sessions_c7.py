@@ -90,15 +90,18 @@ def test_a_failed_read_is_shown_not_raised(store, monkeypatch):
     assert "second line" not in html
 
 
-HISTORY_BOARDS = sorted({s["board"] for s in rawstore.MANIFEST.values()
-                         if s.get("db") == "history" and s.get("board")} & set(BOARDS))
+# LEAPS keeps its old history tables (the scan that is switched off, #730), but its page is now the far-dated contracts
+# board (#746): one stored session at a time with a session picker of its own, and none of those recorded scans.
+NOT_SHOWN = {"module_leaps"}
+HISTORY_BOARDS = sorted(({s["board"] for s in rawstore.MANIFEST.values()
+                          if s.get("db") == "history" and s.get("board")} & set(BOARDS)) - NOT_SHOWN)
 
 
 def test_every_history_board_is_covered():
     # Money Flow is a panel of the Rotation tab (its own board id, no page of its own): its block is on Rotation.
     boards = {s["board"] for s in rawstore.MANIFEST.values() if s.get("db") == "history" and s.get("board")}
     assert boards - set(BOARDS) == {"module_money_flow"}
-    assert len(HISTORY_BOARDS) == 12
+    assert len(HISTORY_BOARDS) == 11 and NOT_SHOWN <= boards
 
 
 def test_the_rotation_tab_also_shows_the_money_flow_block(tmp_path, monkeypatch, store):

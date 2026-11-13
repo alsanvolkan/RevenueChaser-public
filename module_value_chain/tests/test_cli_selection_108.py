@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import pytest
 
-from RevenueChaser.core import rawstore
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.module_value_chain import __main__ as cli
 
 
 @pytest.fixture
 def spies(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": t, "name": t, "market_cap": cap} for t, cap in (("BIG", 1e10), ("MID", 1e8), ("TINY", 1e7))])
     calls = {"sync": [], "fetch": []}
     monkeypatch.setattr(cli.sync, "sync_filings",

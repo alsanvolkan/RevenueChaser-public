@@ -12,9 +12,8 @@ No source the spine reads carries the Dow Jones, so on the spine no card carries
 it. Each slug with a label in ``LABELS`` shows under that label; a slug without one (``sp400``, ``ndx`` today) is
 read by ``load_index`` but shows no badge, so the filter is unchanged by the move.
 
-``RC_UNIVERSE_SOURCE`` set to anything but ``spine`` (or a spine that is missing or whose last build failed, see
-``universe.source_state``) reads the old store instead: the ``index_constituents`` table the weekly Unusual Whales
-step writes (``core.index_lists``). That module, not this one, fetches and writes; this one only reads.
+The old store's ``index_constituents`` path (the weekly Unusual Whales lists) is no longer read here (#642 PR 6): no
+spine file reads as no membership. This module only reads.
 """
 from __future__ import annotations
 
@@ -31,11 +30,6 @@ SHORT_LABELS: dict[str, str] = {"Nasdaq Composite": "Nasdaq-listed"}
 
 # The slug of the listed-on-Nasdaq names, which the spine derives from the exchange rather than reads from a fund file.
 NASDAQ = "nasdaq"
-
-
-def _spine() -> bool:
-    from .universe import SPINE, universe_source
-    return universe_source() == SPINE
 
 
 def _spine_members(listed: list[dict] | None = None) -> dict[str, set[str]]:
@@ -57,11 +51,7 @@ def _listed_on_nasdaq(listed: list[dict]) -> set[str]:
 def load_index(slug: str) -> set[str] | None:
     """The current members of ``slug`` (upper-cased tickers), or None when it has none.
 
-    On the spine: the fund files' current members (``nasdaq``: the listed Nasdaq names); ``dow`` is always None
-    there. On the old store: its ``index_constituents`` rows (``index_lists.stored_index``)."""
-    if not _spine():
-        from .index_lists import stored_index
-        return stored_index(slug)
+    The spine's fund files' current members (``nasdaq``: the listed Nasdaq names); ``dow`` is always None."""
     from . import spine_reads
     if slug == NASDAQ:
         tickers = _listed_on_nasdaq(spine_reads.universe(("A", "B")))
@@ -81,11 +71,7 @@ def _index_memberships(indexes: dict[str, set[str]]) -> dict[str, list[str]]:
 
 def load_registry() -> dict | None:
     """``{ticker: {index: [labels], name, sector}}`` of every ticker with at least one labelled index, the labels in
-    ``LABELS`` order; None when there is none. On the spine the name and sector are the spine's; on the old store they
-    come from its ``index_tickers`` VIEW (``index_lists.stored_registry``)."""
-    if not _spine():
-        from .index_lists import stored_registry
-        return stored_registry()
+    ``LABELS`` order; None when there is none. The name and sector are the spine's."""
     from . import spine_reads
     listed = spine_reads.universe(("A", "B"))
     by = {str(r["ticker"]).upper(): r for r in listed}
@@ -102,15 +88,10 @@ def load_registry() -> dict | None:
 def filter_labels() -> list[str]:
     """The index labels the shared filter offers, in display order (K1, #214).
 
-    On the spine, a label is listed only while some name carries it, so the filter never offers an index no card can
-    carry (the Dow Jones, which the spine has no source for). On the old store, a ``FIRST_FILL_GATED`` slug is listed
-    only once it has rows and the other slugs always are, as before."""
-    if _spine():
-        have = set(_spine_members())
-        return [lbl for slug, lbl in LABELS.items() if slug in have]
-    from .index_lists import FIRST_FILL_GATED, stored_slugs
-    have = stored_slugs()
-    return [lbl for slug, lbl in LABELS.items() if slug not in FIRST_FILL_GATED or slug in have]
+    A label is listed only while some name carries it, so the filter never offers an index no card can carry (the Dow
+    Jones, which the spine has no source for)."""
+    have = set(_spine_members())
+    return [lbl for slug, lbl in LABELS.items() if slug in have]
 
 
 def index_for(ticker: str, registry: dict | None = None) -> list[str]:
@@ -133,7 +114,7 @@ def _main(argv: list[str]) -> int:
         from RevenueChaser.scripts import index_lists
         return index_lists.main(["--weekly"])
     reg = load_registry() or {}
-    print(f"registry: {len(reg)} tickers ({'the identity spine' if _spine() else 'the old store, index_tickers'})")
+    print(f"registry: {len(reg)} tickers (the identity spine)")
     return 0
 
 

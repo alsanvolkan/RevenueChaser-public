@@ -6,7 +6,7 @@ pass the momentum signal; nothing on the board said how many cards that is. The 
 """
 from __future__ import annotations
 
-from RevenueChaser.core import rawstore
+from RevenueChaser.rcdata.tests import fund_store
 from RevenueChaser.module_asymmetric_growth import engine
 from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 import (
     edgar, row, seed_momentum, steps, universe)
@@ -14,7 +14,7 @@ from RevenueChaser.module_asymmetric_growth.tests.test_ag_dated_momentum_380 imp
 
 def test_cards_with_unknown_momentum_are_counted_and_shown(rawstore_tmp_db, monkeypatch):
     seed_momentum(["HASBARS"])
-    rawstore.write_rows("edgar_financials", [edgar("HASBARS"), edgar("QUOTEONLY")])
+    fund_store.put_edgar([edgar("HASBARS"), edgar("QUOTEONLY")])
     universe(monkeypatch, [row("HASBARS", quote={}), row("QUOTEONLY", quote={"regularMarketPrice": 42.0})])
     res = engine.run_asymmetric_growth_hunter(None, max_workers=1, no_fetch=True)
     assert res["summary"]["momentum_unknown"] == 1

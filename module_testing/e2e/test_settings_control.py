@@ -19,6 +19,11 @@ def _open(browser, dashboard, scheme="dark"):
     browser.emulate(*PHONE, scheme=scheme)
     browser.open(f"{dashboard.url}/view/{_APP}", ready="!!document.getElementById('ctl') && !!window.CTL")
     browser.eval(f"document.documentElement.setAttribute('data-theme', {scheme!r})")
+    # A first visit opens on Database (the Watch lists tab left for its own board, 13 Nov 2026).
+    assert browser.eval("document.getElementById('panel-data').hidden") is False, "Database is the tab on open"
+    assert browser.eval("!document.getElementById('panel-watch')")
+    browser.eval("document.getElementById('tab-data').click()")
+    browser.settle()
 
 
 def _tab(browser, name: str):
@@ -32,15 +37,20 @@ def test_the_data_tab_is_on_top_and_the_old_sections_are_gone(dashboard, browser
     order = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl .wrap > details.sec'),"
                          " function(d){ return d.id + (d.open ? '+' : ''); })")
     assert order == ["sec-flow+"], "the Database tab"
-    assert browser.eval("document.getElementById('panel-health').hidden") is True, "Database is the tab on open"
+    assert browser.eval("document.getElementById('panel-health').hidden") is True, "Fetch/Health is not shown beside Database"
     fetch = browser.eval("Array.prototype.map.call(document.querySelectorAll('#panel-health .ctl .wrap > details.sec'),"
                          " function(d){ return d.id; }).filter(function(i){ return i; })")
-    assert fetch[0] == "sec-health" and fetch[-1] == "sec-crosscheck" and "sec-universe" in fetch, \
-        f"the Fetch/Health tab: {fetch}"
+    # #715 (avo, 12 Nov 2026): Health, the queue, Cross-check and the backups are the framed Grafana board's;
+    # under the frame the HTML keeps the universe (and a group for a file that has a fill, which has no id).
+    assert fetch == ["sec-universe"], f"the Fetch/Health tab: {fetch}"
+    assert browser.eval("!!document.querySelector('#panel-health #live-frame')"), "the board's frame heads the tab"
     assert browser.eval("!document.getElementById('old-settings') && !document.getElementById('panel-fetch')")
-    shown = browser.eval("Array.prototype.filter.call(document.querySelectorAll('#ctl .fpanel'),"
-                         " function(p){ return !p.hidden; }).length")
-    assert shown == 1, "one file panel at a time"
+    # #715 step 3: the files are stacked folded sections, none hidden; the first one is open.
+    files = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl details.fpanel:not(.bfp)'),"
+                         " function(p){ return (p.hidden ? 'hidden:' : '') + (p.open ? 'open' : 'shut'); })")
+    from RevenueChaser.rcdata import serving
+    assert files[0] == "open" and set(files[1:]) == {"shut"} and len(files) == len(serving.KINDS), files
+    assert browser.eval("!document.getElementById('fpick')"), "no picker under the Database tab"
 
 
 LAYOUT = r"""(function(){
@@ -85,7 +95,7 @@ def test_the_board_is_one_column_on_a_phone_with_44px_targets_and_no_sideways_sc
 def test_the_board_follows_the_shells_theme_both_ways(dashboard, browser):
     _open(browser, dashboard, "light")
     look = "(function(){ var c = getComputedStyle(document.getElementById('ctl')); return [c.color, " \
-           "getComputedStyle(document.querySelector('#panel-health .ctl .tile')).backgroundColor]; })()"
+           "getComputedStyle(document.querySelector('#panel-health .ctl .swt')).backgroundColor]; })()"
     light = browser.eval(look)
     browser.eval("document.documentElement.setAttribute('data-theme', 'dark')")
     dark = browser.eval(look)
@@ -118,21 +128,40 @@ def test_a_tier_press_only_drafts_and_apply_saves_the_universe(dashboard, browse
     assert len(provider_routes.requests()) == before
 
 
-def test_fetch_queues_one_request_and_asks_no_provider(dashboard, browser, market, provider_routes):
+def test_the_page_offers_no_one_off_fetch_and_no_switch(dashboard, browser, market, provider_routes):
+    """#715 (avo, 12 Nov 2026): a dataset's Fetch, Pause and the switches are pressed in the framed Grafana board
+    (it needs avo's Grafana login), so the HTML under the frame offers none of them and queues nothing."""
     before = len(provider_routes.requests())
     _open(browser, dashboard)
     _tab(browser, "health")
-    browser.eval("document.querySelector('#panel-health .fgrp[data-file=\"market.duckdb\"]').open = true")
-    # wait on the button itself, not on any queued pill: another dataset's queue row may show one at render
-    one = ("document.querySelector('#panel-health .fgrp[data-file=\"market.duckdb\"] button[data-job=\"one\"]"
-           "[data-dataset=\"market_series\"]')")
-    browser.eval(one + ".click()")
-    browser.wait_for(one + ".getAttribute('data-state') === 'pause'")
-    pill = browser.eval("(function(){ var b = " + one + "; var p = document.querySelector('[data-for=\"' + "
-                        "b.getAttribute('data-jid') + '\"]'); return p ? p.className + ' ' + p.textContent : ''; })()")
-    assert pill.startswith("lg3 st-q queued"), pill
-    rows = _requests(market)
-    assert [(r["dataset"], r["status"], r["requested_by"]) for r in rows] == [("market_series", "queued", "settings")]
+    left = browser.eval("Array.prototype.map.call(document.querySelectorAll('#panel-health button[data-job]'),"
+                        " function(b){ return b.getAttribute('data-job'); })")
+    assert set(left) <= {"fetch", "picture", "fill", "copy"} and "fetch" in left, left
+    assert browser.eval("document.querySelectorAll('#panel-health .swt[data-name], #panel-health #sec-queue').length") == 0
+    assert _requests(market) == [], "opening the tab queues nothing"
+    assert len(provider_routes.requests()) == before
+
+
+def test_fetch_the_universe_is_still_pressed_on_the_page_and_asks_no_provider(dashboard, browser, market,
+                                                                             provider_routes):
+    """The one queueing press left in HTML (#715): it answers with a pill beside the button, puts at most one row in
+    the builder's queue and never reaches a provider itself."""
+    before = len(provider_routes.requests())
+    _open(browser, dashboard)
+    _tab(browser, "health")
+    btn = "document.querySelector('#panel-health button[data-job=\"fetch\"]')"
+    dataset = browser.eval(btn + ".getAttribute('data-dataset')")
+    browser.eval(btn + ".click()")
+    said = ("(function(){ var b = " + btn + ", id = b.getAttribute('data-jid');"
+            " var p = id && document.querySelector('[data-for=\"' + id + '\"]'); return p ? p.className + ' ' + "
+            "p.textContent : ''; })()")
+    browser.wait_for(said + " !== ''")
+    pill = browser.eval(said)
+    rows = [(r["dataset"], r["status"], r["requested_by"]) for r in _requests(market)]
+    if pill.startswith("jst st-q queued"):
+        assert rows == [(dataset, "queued", "settings")], rows
+    else:
+        assert pill.startswith("jst st-f") and rows == [], f"neither queued nor refused: {pill} {rows}"
     assert len(provider_routes.requests()) == before, "a request is not a fetch: no provider was asked"
 
 

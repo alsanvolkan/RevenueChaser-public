@@ -10,7 +10,7 @@ from RevenueChaser.core import calendar
 from RevenueChaser.core.providers import ibkr_tws, unusual_whales
 from RevenueChaser.rcdata import ops, read
 from RevenueChaser.rcdata.build import base
-from RevenueChaser.rcdata.build.options import ibkr_iv, uw_list, uw_screener
+from RevenueChaser.rcdata.build.options import ibkr_iv, uw_far_contracts, uw_list, uw_screener
 
 from .ibkr_fixture import FakeGateway
 from .options_fixture import SESSION, UWOptions
@@ -47,7 +47,7 @@ def test_every_options_table_has_a_dataset_and_the_options_kind():
     from RevenueChaser.rcdata.build.options import tables
     for name in tables.TABLES:
         assert read.KIND_OF_TABLE[name] == "options"
-        assert read.DATASET_OF_TABLE[name] in (uw_list.NAME, uw_screener.NAME)
+        assert read.DATASET_OF_TABLE[name] in (uw_list.NAME, uw_screener.NAME, uw_far_contracts.NAME)
 
 
 def test_no_options_file_yet_reads_as_no_rows():

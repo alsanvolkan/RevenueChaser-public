@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.app import dashboard, runners
 from RevenueChaser.core.tests.panel_client import panel_test_client
 
@@ -188,17 +189,22 @@ class TestDashboardRoutes:
     def test_run_no_api_key(self, monkeypatch):
         c = self._client()
         monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
-        r = c.post("/run/module_leaps")  # Fetch = live UW scan -> gated on the key
+        r = c.post("/run/module_oipd")  # Fetch = live UW scan -> gated on the key
         assert r.status_code == 400
         data = r.get_json()
         assert data["ok"] is False
+        # The refusal must name the key, the file, and where to get one -- the old "UW API key not set."
+        # left the user with nothing to act on. Asserted on the LEAPS Fetch until #730 switched it off.
+        assert "UNUSUAL_WHALES_API_KEY" in data["error"]
+        assert ".env" in data["error"]
+        assert "https://unusualwhales.com/api" in data["error"]
 
     def test_run_returns_job_id(self, monkeypatch):
         import RevenueChaser.app.dashboard as d
         monkeypatch.setattr(d, "UWClient", lambda: _FakeUW())
         monkeypatch.setattr(d.jobs, "submit", lambda module, params: "stubjob")
         c = self._client()
-        r = c.post("/run/module_leaps")
+        r = c.post("/run/module_oipd")
         assert r.status_code == 202
         data = r.get_json()
         assert data["ok"] is True
@@ -462,8 +468,7 @@ class TestDashboardRoutes:
         assert "NVDA" in r.get_data(as_text=True)
 
     def test_holdings_route_sector_uses_the_industry_tree(self, rawstore_tmp_db):
-        from RevenueChaser.core import rawstore
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": "NVDA", "name": "NVIDIA", "sector": "Technology",
              "industry": "Semiconductors", "market_cap": 300.0},
             {"ticker": "AMD", "name": "AMD", "sector": "Technology",
@@ -478,13 +483,12 @@ class TestDashboardRoutes:
     def test_holdings_route_every_sector_etf_finds_its_tree(self, rawstore_tmp_db):
         # XLK/XLV/XLF/XLB/XLY/XLP used to fall silently back to the ETF top 10 once the stored sector
         # carried a Morningstar name; every sector row must find its tree.
-        from RevenueChaser.core import rawstore
         from RevenueChaser.core.gics_map import MORNINGSTAR_SECTORS
         from RevenueChaser.module_sector_rotation.universe import ROTATION_ETFS
         import RevenueChaser.module_sector_rotation.store as rs
         sector_etfs = {i["name"]: t for t, i in ROTATION_ETFS.items() if i["group"] == "sector"}
         assert set(sector_etfs) == set(MORNINGSTAR_SECTORS)
-        rawstore.write_rows("equity_universe", [
+        universe_store.put([
             {"ticker": f"Q{n:02d}", "name": f"Co {n}", "sector": s, "industry": "Some Industry",
              "market_cap": 10.0} for n, s in enumerate(MORNINGSTAR_SECTORS)])
         for etf in sector_etfs.values():       # a cached ETF top 10 would win if the tree were missed
@@ -668,71 +672,62 @@ class TestRefreshReadsStoreFetchReadsNetwork:
       - "Fetch" runs the live provider scan OVER THE NETWORK (requires the UW
         API key) and writes a fresh artifact.
 
-    These tests pin the split on the LEAPS board.
+    The split itself is pinned on Financials (``test_quick_refresh_*``) and on the screeners
+    (``test_screener_refresh_145.py``); the LEAPS board, which used to pin it here, has no measurement yet
+    (#730) and these tests now hold that nothing re-renders it.
     """
 
-    def test_leaps_refresh_renders_from_the_store_offline(self, rawstore_tmp_db,
-                                                          tmp_path, monkeypatch):
+    def test_the_leaps_tab_serves_the_no_data_page(self, rawstore_tmp_db, tmp_path, monkeypatch):
+        """Nothing in ``option_far_contract`` yet (#746): the no-data page. No key, no network, no accumulation wording."""
         from RevenueChaser.core import rawstore
         from RevenueChaser.module_leaps.engine import save_cache
         rawstore.save_watchlist({"AAPL"})
-        save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating",
-                            "score": 50, "as_of": "2026-09-01"})
-
-        # No artifact on disk -> the view must regenerate from the store.
-        import RevenueChaser.app.runners as rn
-        import RevenueChaser.module_leaps.report as lr
-        monkeypatch.setattr(rn, "OUTPUT_DIR", tmp_path)
-        monkeypatch.setattr(lr, "OUTPUT_DIR", tmp_path)
-        monkeypatch.setattr(rn, "LEAPS_LATEST", tmp_path / "leaps_latest.html")
-        monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())  # refresh must not need a key
+        save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating", "score": 50, "as_of": "2026-09-01"})
+        monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
 
         body = dashboard.app.test_client().get("/view/module_leaps").get_data(as_text=True)
-        assert "LEAPS ACCUMULATION RADAR" in body  # board rendered from seeded store data
-        assert "AAPL" in body
-        assert "No LEAPS data yet" not in body
-        # network is globally blocked (conftest) — reaching here proves refresh is offline
+        assert "No data yet" in body
+        assert "#746" in body
+        assert "ACCUMULATION RADAR" not in body.upper()   # the old board is never served
+        assert "AAPL" not in body                      # nor does a seeded footprint
 
-    def test_refresh_ignores_stale_artifact_on_any_store_backed_board(
-            self, rawstore_tmp_db, tmp_path, monkeypatch):
-        """Refresh is a general rule, not a Financials special case: on any
-        store-backed board, ?refresh=1 drops the cached html and recomputes from
-        .store even when a stale artifact already exists."""
-        from RevenueChaser.core import rawstore
-        from RevenueChaser.module_leaps.engine import save_cache
-        rawstore.save_watchlist({"AAPL"})
-        save_cache("AAPL", {"ticker": "AAPL", "label": "Accumulating",
-                            "score": 50, "as_of": "2026-09-01"})
-
+    def test_a_cached_leaps_artifact_is_never_served_again(self, rawstore_tmp_db, tmp_path, monkeypatch):
+        """An older build left ``leaps_latest.html`` in .cache/: the no-data page wins, on a Refresh too."""
         import RevenueChaser.app.runners as rn
-        import RevenueChaser.module_leaps.report as lr
         monkeypatch.setattr(rn, "OUTPUT_DIR", tmp_path)
-        monkeypatch.setattr(lr, "OUTPUT_DIR", tmp_path)
         monkeypatch.setattr(rn, "LEAPS_LATEST", tmp_path / "leaps_latest.html")
+        (tmp_path / "leaps_latest.html").write_text("<h1>LEAPS ACCUMULATION RADAR</h1>", encoding="utf-8")
         monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
 
-        # Stale artifact for a DIFFERENT state than the store holds.
-        (tmp_path / "leaps_latest.html").write_text("<h1>STALE board</h1>", encoding="utf-8")
+        c = dashboard.app.test_client()
+        for url in ("/view/module_leaps", "/view/module_leaps?refresh=1"):
+            body = c.get(url).get_data(as_text=True)
+            assert "No data yet" in body, url
+            assert "ACCUMULATION RADAR" not in body, url
+        # The board serves no artifact, so it has no payload either.
+        assert c.get("/view/module_leaps/payload.json").status_code == 404
 
-        body = dashboard.app.test_client().get("/view/module_leaps?refresh=1").get_data(as_text=True)
-        assert "LEAPS ACCUMULATION RADAR" in body       # recomputed from the store
-        assert "AAPL" in body
-        assert "STALE board" not in body                # cached html was ignored
-        fresh = (tmp_path / "leaps_latest.html").read_text(encoding="utf-8")
-        assert "STALE board" not in fresh               # artifact overwritten too
+    def test_the_tab_stays_in_the_nav_under_its_own_name(self):
+        """avo 12 Nov 2026: the board stays, so the tab is a plain LEAPS entry, not an "(off)" one (#730)."""
+        entry = next(t for t in dashboard.TABS if t.get("key") == "module_leaps")
+        assert entry["label"] == "LEAPS"
+        assert "module_leaps" not in dashboard._MODEL_ONLY_RENDERERS
+        assert "module_leaps" not in dashboard._STORE_REFRESHABLE
 
-    def test_leaps_fetch_is_gated_on_the_api_key(self, monkeypatch):
-        # "Fetch" is a live UW scan -> without a key it is refused before any network
-        monkeypatch.setattr(dashboard, "UWClient", lambda: _NoKey())
+    def test_leaps_fetch_is_switched_off(self, monkeypatch):
+        """The LEAPS scan is off (#730): the route refuses with a reason and probes no key."""
+        monkeypatch.setattr(dashboard, "UWClient",
+                            lambda: pytest.fail("a switched-off board must not reach the provider"))
         r = panel_test_client(dashboard.app).post("/run/module_leaps")
-        assert r.status_code == 400
-        assert r.get_json()["ok"] is False
-        # The refusal must name the key, the file, and where to get one — the
-        # old "UW API key not set." left the user with nothing to act on.
-        error = r.get_json()["error"]
-        assert "UNUSUAL_WHALES_API_KEY" in error
-        assert ".env" in error
-        assert "https://unusualwhales.com/api" in error
+        assert r.status_code == 409
+        body = r.get_json()
+        assert body["ok"] is False
+        assert "switched off" in body["error"] and "#730" in body["error"]
+
+    def test_the_leaps_job_is_not_registered(self):
+        """No runner, so no Fetch button, no scheduled call and no script can start a scan (#730)."""
+        from RevenueChaser.app import jobs
+        assert "module_leaps" not in jobs._RUNNERS
 
     def test_financials_refresh_renders_from_the_store_offline(self, rawstore_tmp_db,
                                                                tmp_path, monkeypatch):
@@ -741,7 +736,6 @@ class TestRefreshReadsStoreFetchReadsNetwork:
         Data on storage (a cached yfinance payload + a ticker_scores card) must be
         enough for Refresh to produce the report — no network, no empty state.
         """
-        from RevenueChaser.core import rawstore
         from RevenueChaser.core import ticker_store
         from RevenueChaser.core.providers import cache as cache_manager
 
@@ -1259,22 +1253,18 @@ class TestSettingsDataHealthBoard:
         assert hasattr(runners, "run_settings")
 
     def test_view_settings_renders_the_inventory(self, rawstore_tmp_db):
-        from RevenueChaser.core import rawstore
-        rawstore.write_rows("equity_universe",
-                            [{"ticker": "AAPL", "market_cap": 3.0e9}])
+        universe_store.put([{"ticker": "AAPL", "market_cap": 3.0e9}])
         r = self._client().get("/view/module_settings")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
-        assert "Settings / Data health" in body
+        assert "Settings" in body
         assert "equity_universe" in body
 
     def test_refresh_rerenders_from_store_without_network(
             self, rawstore_tmp_db, monkeypatch):
-        from RevenueChaser.core import rawstore
         from RevenueChaser.core.providers import sec_edgar
 
-        rawstore.write_rows("equity_universe",
-                            [{"ticker": "AAPL", "market_cap": 3.0e9}])
+        universe_store.put([{"ticker": "AAPL", "market_cap": 3.0e9}])
         runners.SETTINGS_LATEST.unlink(missing_ok=True)
 
         def boom(*args, **kwargs):
@@ -1286,7 +1276,7 @@ class TestSettingsDataHealthBoard:
         r = self._client().get("/view/module_settings?refresh=1")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
-        assert "Settings / Data health" in body
+        assert "Settings" in body
         assert "equity_universe" in body
         assert runners.SETTINGS_LATEST.exists()
 
@@ -1366,7 +1356,7 @@ class TestUniverseStats:
         from RevenueChaser.app.jobs import JobMessage
         from RevenueChaser.core import rawstore
 
-        rawstore.write_rows("equity_universe", [{"ticker": "MU", "market_cap": None}])
+        universe_store.put([{"ticker": "MU", "market_cap": None}])
         calls = []
         monkeypatch.setattr(yf, "Ticker", self._fake_ticker(calls))
         monkeypatch.setattr("time.sleep", lambda *_a, **_k: None)
@@ -1464,10 +1454,9 @@ class TestUniverseStats:
 
     def test_runner_rerenders_settings(self, monkeypatch, rawstore_tmp_db):
         from RevenueChaser.app.jobs import JobMessage
-        from RevenueChaser.core import rawstore
         from RevenueChaser.core import universe_fetch
 
-        rawstore.write_rows("equity_universe", [{"ticker": "AAPL", "market_cap": 3.0e9}])
+        universe_store.put([{"ticker": "AAPL", "market_cap": 3.0e9}])
         monkeypatch.setattr(universe_fetch, "backfill_universe_caps", lambda **kw: self._counts())
         runners.SETTINGS_LATEST.unlink(missing_ok=True)
 
@@ -1475,50 +1464,6 @@ class TestUniverseStats:
             runners.run_universe_stats()
 
         assert runners.SETTINGS_LATEST.exists()
-
-
-class TestSettingsDrillApi:
-    """GET /api/settings/ticker/<t>: the store-only per-ticker drill."""
-
-    def _client(self):
-        dashboard.app.config["TESTING"] = True
-        return panel_test_client(dashboard.app)
-
-    @staticmethod
-    def _seed():
-        from RevenueChaser.core import rawstore
-        rawstore.write_rows("equity_universe", [
-            {"ticker": "MU", "market_cap": None, "name": "Micron Technology"},
-        ])
-        rawstore.write_rows("chain_filings", [
-            {"ticker": "MU", "cik": "0000723125", "form": "10-K",
-             "filed": "2026-02-01", "accession": "acc-mu", "quality": "ok"},
-        ])
-
-    def test_200_shape(self, rawstore_tmp_db):
-        self._seed()
-        r = self._client().get("/api/settings/ticker/MU")
-        assert r.status_code == 200
-        body = r.get_json()
-        assert body["ok"] is True
-        assert body["ticker"] == "MU"
-        assert body["name"] == "Micron Technology"
-        assert body["market_cap"] is None
-        assert body["filing"]["form"] == "10-K"
-        # No market-cap floor (avo, 29 Oct 2026): a NULL cap no longer keeps a name out of the universe.
-        assert body["presence"]["in_classification_universe"] is True
-
-    def test_unknown_ticker_404(self, rawstore_tmp_db):
-        self._seed()
-        r = self._client().get("/api/settings/ticker/ZZZZ")
-        assert r.status_code == 404
-        assert r.get_json() == {"ok": False}
-
-    def test_case_insensitive(self, rawstore_tmp_db):
-        self._seed()
-        r = self._client().get("/api/settings/ticker/mu")
-        assert r.status_code == 200
-        assert r.get_json()["ticker"] == "MU"
 
 
 class TestPerTabOverlay:
@@ -1655,7 +1600,7 @@ class TestOipdTickerOutsideThePool:
 
     def _seed(self):
         from RevenueChaser.core import rawstore
-        rawstore.replace_all("equity_universe", [
+        universe_store.replace([
             {"ticker": t, "market_cap": 1e9, "name": t, "price": 1.0, "quote": {"symbol": t}}
             for t in ("AAA", "FUND")])
         rawstore.ensure_table("security_master")
@@ -1706,7 +1651,7 @@ class TestOipdTickerOutsideThePool:
 
 def test_api_universe_reports_count_and_provenance(rawstore_tmp_db):
     from RevenueChaser.core import rawstore
-    rawstore.replace_all("equity_universe", [
+    universe_store.replace([
         {"ticker": "AAA", "market_cap": 1e9, "sector": "Energy", "quote": {}},
         {"ticker": "BBB", "market_cap": 2e9, "sector": "Energy", "quote": {}},
         {"ticker": "CCC", "market_cap": 1e8, "sector": "Energy", "quote": {}},

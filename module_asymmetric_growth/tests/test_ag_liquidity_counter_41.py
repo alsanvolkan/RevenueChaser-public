@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import copy
 
-from RevenueChaser.core import funnel, rawstore
+from RevenueChaser.rcdata.tests import fund_store
+from RevenueChaser.core import funnel
 from RevenueChaser.core.providers import cache as cache_manager
 from RevenueChaser.module_asymmetric_growth import engine
 from RevenueChaser.module_asymmetric_growth.report import render_asymmetric_growth_hunter_html
@@ -43,7 +44,7 @@ def _seed_bars(volumes: dict[str, float]) -> None:
 
 
 def _edgar_rows(*tickers) -> None:
-    rawstore.write_rows("edgar_financials", [_edgar(t) for t in tickers])
+    fund_store.put_edgar([_edgar(t) for t in tickers])
 
 
 def _yahoo_rows(*tickers) -> None:
@@ -107,7 +108,7 @@ def test_a_name_that_is_both_thin_and_non_edgar_is_counted_in_both(rawstore_tmp_
 def test_the_funnel_still_adds_up_with_both_figures(rawstore_tmp_db, monkeypatch):
     """THIN1 is thin; YF1 is non-EDGAR; BOTH is thin AND non-EDGAR (counted in both); GHOST has no data;
     FORN is a foreign filer."""
-    rawstore.write_rows("edgar_financials", [_edgar("THIN1"), _edgar("FORN", is_us=False)])
+    fund_store.put_edgar([_edgar("THIN1"), _edgar("FORN", is_us=False)])
     _yahoo_rows("YF1", "BOTH")
     _seed_bars({"THIN1": THIN_VOLUME, "YF1": LIQUID_VOLUME, "BOTH": THIN_VOLUME, "FORN": LIQUID_VOLUME})
 

@@ -125,12 +125,9 @@ market_cap, gics:[sector, industry], theme_ids:[id], earnings_date}`. `theme_ids
 pinned theme run (`core.universe.current_theme_run`, the one lookup); an empty list is unthemed.
 
 **Index list.** The labels are `index_registry.LABELS`: S&P 500, Dow Jones, S&P SmallCap 600 and Nasdaq
-Composite (shown as "Nasdaq-listed"), in that order. On the identity spine (the default since PR 6) a label is listed
-only while some name carries it: the spine's current fund-file members, `nasdaq` from the listed names on Nasdaq.
-No source the spine reads has the Dow Jones, so it is not offered there. On the old store
-(`RC_UNIVERSE_SOURCE=store`) the S&P SmallCap 600 is listed only once `index_constituents` holds its rows (its first
-fill is a weekly-step run the user names, `index_lists.refresh_lists(first_fill=["sp600"])`, never a board) and the
-other labels always are.
+Composite (shown as "Nasdaq-listed"), in that order. A label is listed only while some name carries it, from the
+identity spine (the only source since #642 PR 6): the spine's current fund-file members, `nasdaq` from the listed names
+on Nasdaq. No source the spine reads has the Dow Jones, so it is not offered.
 
 State lives in localStorage (`rc.filters.v1`, shared by every board unless the user unlinks it) and in the URL
 hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/test_rc_filters.py`).
@@ -162,7 +159,7 @@ hash. The pure logic is `RCFilters.core`, unit-tested under node (`core/tests/te
 | Financials | yes | Filters only pick the name, they do not slice statements. |
 | Sector Rotation | **no** stock bar | ETF RRG. Reuse the Theme widgets only to focus mapped ETF dots (`relatedness_theme_etfs` at the selected level). |
 | SPX Gamma, UW Interaction | **no** | Date-only / non-equity. |
-| Settings / Data health | **no** | Ops inventory, not an equity board; its ticker drill uses the kit's combobox (C1b). Plan: [`data_health.md`](data_health.md). |
+| Settings | **no** | Ops inventory, not an equity board; its Ticker lookup uses the kit's combobox (C1b). Plan: [`data_health.md`](data_health.md). |
 | Logs | **no** | The dashboard's own log files (`app/logview.py`), read-only: no Fetch, no Refresh, no data date. |
 | Runs | **no** | The run log over `job_runs` (`app/runview.py`), read-only: no Fetch, no Refresh, no data date. One row per job and per scheduled task, newest first, with the trigger as stored (a dash only on rows from before #83; a `running` row the server lost is closed as `lost`, #82). **Problems only** and the name box filter in SQL, not in the page, so the count beneath the table is of the matching runs in the table and not of the page that was read; the line says so when a read hits its limit. **Show** picks the newest 200 or the newest 1000 (`runview.DEFAULT_LIMIT` / `MAX_LIMIT`). On a phone (under 640 px) each run is a card, one cell per line, and the controls are 44 px; it is dark unless the shell's Theme choice is Light, or Auto on a light device. |
 
@@ -185,6 +182,17 @@ choice never flashes dark. The shell copies the choice onto
 each board iframe as `data-theme` on its `<html>`; a board follows it once it uses the shared tokens (one PR
 per board); the Runs tab does with the #131 pull request.
 
+Colour is only half of it. `THEME_SCALE` holds what does not change with the scheme. Theme D (#761, avo 12 Nov
+2026) names it `--fs-*` (11 / 12.5 / 14 / 16 / 20 / 26 px, Inter), `--sp-1`..`--sp-7`, `--r-sm` / `--r-md` / `--r-lg`
+and `--elev-1` / `--elev-2`; use those. The #764 names below stay as aliases of them. #764's set is written into
+the base `:root`: the space ladder `--s1`..`--s8` (4 → 64 px), `--r-sm` / `--r-md` / `--r-pill`, the type steps
+`--f-xs`..`--f-xl` with `--w-reg` / `--w-bold`, `--e-flat` and `--e-float` for elevation, `--focus`, `--motion`
+(0 ms under `prefers-reduced-motion`) and `--tap` (44 px). It also holds `--c1`..`--c6`, the categorical chart
+ramp: a **fixed order, never cycled** — a seventh series is "other". The ramp was validated against both board
+surfaces for lightness, chroma, adjacent-pair colour-vision separation and contrast, and reordering it fails
+that check, so the order is a contract. A board takes these names instead of its own pixel values in the same
+PR where it takes the palette.
+
 ### What am I looking at? — every dashboard
 
 Shared `help_html(body)` under the title, closed by default, same `.help`
@@ -204,7 +212,7 @@ one-screen intro.
 - Treating Theme as a third sector select, or falling back to a hard-coded theme list.
 - A literal index list in a board or in the component: the registry owns it (`filters_meta`).
 - A Linear/Vercel visual clone — keep RevenueChaser tokens
-  (`--bg #05111F`, `--accent #0EA5E9`, `--neon`).
+  (`THEME_TOKENS` in `core/reporting_common.py`: warm neutrals, clay `--accent`).
 
 ---
 
@@ -219,8 +227,12 @@ CSS, the script and `rcWatchInit(board)` once per page. Which names are on the l
 capture-phase click handler reads `data-rc-watch` and `data-ticker` (never an interpolated value, ADR-X1), posts
 `/api/watchlist/<list>/toggle/<ticker>` with the board as `X-RC-Panel` (the row's `added_by`), and re-marks every
 pair of that ticker; a row or card that opens on click does not open when its pair is pressed. A ticker the
-dashboard's `_TICKER_RE` refuses gets no pair. Pressed is `aria-pressed="true"` in the sky token; a refused toggle
-leaves the state and says why in the button's title.
+dashboard's `_TICKER_RE` refuses gets no pair. Since #770 the pair is **one box split by a hairline**, stock on the
+left, option on the right, with a glyph in each half (bars, and a contract sheet) instead of the old `Stk` / `Opt`
+text; the text stays in `aria-label` and `title`, so the control is never icon-only to a screen reader. Pressed is
+`aria-pressed="true"`, filled in the sky token for the stock list and the amber one for the option list, so the two
+lists differ by shape and position before colour; a refused toggle leaves the state and says why in the button's
+title.
 
 Where each board puts it (`core/tests/test_watchlist_boards_pr4.py` classifies every board):
 
@@ -236,6 +248,7 @@ Where each board puts it (`core/tests/test_watchlist_boards_pr4.py` classifies e
 | Co-movement | The found name's line after a Find (each name is itself a chip button) |
 | Value Chain | The focal company's filing line |
 | Relatedness | The focal company in the panel title, and each peer row |
+| Watch lists | None (avo, 12 Nov 2026: "bu liste icin bookmark simgesine gerek yok"): a row of a named list is already on a list. #786 step 5 goes the other way — a menu on the other boards that puts a ticker on one of these lists |
 | SPX Gamma, UW Interaction, the Rotation trail, Settings, Logs, Runs | None: SPX is always built; a lab of raw columns; a chart of the funds the table already carries; the cards themselves; not data boards |
 
 ## 3. Theme cascade (coarse → medium → fine)

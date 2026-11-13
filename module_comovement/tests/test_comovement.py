@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_comovement.tests import prices_bars
 from RevenueChaser.module_comovement import (cluster, config, engine, label, noise,
@@ -351,7 +352,7 @@ def test_fetch_bulk_no_fetch_never_downloads(rawstore_tmp_db):
 
 # ── engine ──────────────────────────────────────────────────────────────────
 def _seed_universe(tickers):
-    rawstore.replace_all("equity_universe", [{
+    universe_store.replace([{
         "ticker": t, "market_cap": 1.0e10, "sector": "Technology",
         "price": 10.0, "name": t, "industry": "Semiconductors",
         "quote": {"symbol": t},
@@ -991,6 +992,24 @@ def test_report_header_uses_prices_through_not_compute_time():
         benchmark_status="applied"))
     assert "Prices through <b>Thursday, September 17, 2026 EOD</b>" in html
     assert "September 25" not in html
+
+
+def test_an_empty_board_names_no_date_and_no_fallback():
+    """#392: with no run, the header says there is no data instead of printing the render's date, and no alert
+    claims the board fell back to raw returns: there are no groups to fall back for."""
+    from RevenueChaser.module_comovement import report
+    html = report.render_comovement_dashboard({"as_of": "2026-09-17T00:00:00+00:00", "clusters": {}, "cuts": [],
+                                               "benchmark": "spy", "benchmark_status": "missing"})
+    assert "Prices: <b>no data yet</b>" in html and "September 17" not in html
+    assert "fell back to raw returns" not in html and "No clusters yet" in html
+
+
+def test_a_benchmark_with_too_few_returns_is_not_called_missing():
+    """#392: SPY has prices but fewer than the minimum returns: the alert says so, not "no usable prices"."""
+    from RevenueChaser.module_comovement import report
+    html = report.render_comovement_dashboard(_report_payload(benchmark_applied=False, benchmark_status="short"))
+    assert "too few returns in the window" in html and "no usable prices" not in html
+    assert "fell back to raw returns" in html
 
 
 def test_report_missing_benchmark_note_is_truthful():

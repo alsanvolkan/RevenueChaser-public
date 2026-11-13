@@ -119,7 +119,7 @@ flowchart LR
         B_CLASS["Co-movement · Value Chain · Relatedness"]
         B_SCREEN["Sector Rotation · Asymmetric Growth · Swing Potential · Fundamentals"]
         B_OWN["SEC 13F · LEAPS"]
-        B_OPS["Settings / Data health · Logs"]
+        B_OPS["Settings · Logs"]
     end
 
     UW --> MKT & SCR & ERN & OWN & UNI
@@ -180,7 +180,7 @@ no `plans/` tree and no `.hermes/` here (work orders live in the private reposit
 | [`data_architecture.md`](data_architecture.md) | `platform-store` | The storage contract: `.store/` vs `.cache/`, the per-table schema, migration and backup rules |
 | [`data_retrieval.md`](data_retrieval.md) | `platform-app`, `providers` | Fetch vs Refresh, the routes, the credential and base-URL seams |
 | [`dashboard_ui.md`](dashboard_ui.md) | `shared-ui` | The filter kit and the searchable ticker picker |
-| [`data_health.md`](data_health.md) | `data-health` | Store coverage, refetch and 10-K freshness; the Settings ticker drill |
+| [`data_health.md`](data_health.md) | `data-health` | Store coverage, refetch and 10-K freshness; the Settings Ticker lookup |
 | [`testing_framework.md`](testing_framework.md) | `quality` | Reading guide to the unit tier: what each module's tests guarantee |
 | [`e2e_testing.md`](e2e_testing.md) | `quality` | The end-to-end tier and its harness |
 | [`classification_design.md`](classification_design.md) | `classification` | The classification data-model work order (see the note below) |

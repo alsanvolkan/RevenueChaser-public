@@ -38,7 +38,9 @@ def test_every_dataset_the_store_knows_has_a_card():
 def test_a_card_carries_a_label_a_cadence_and_a_share_or_nothing():
     for name, card in screen.DATASETS.items():
         assert card.label and card.label != name, f"{name}: a card needs a label in plain words"
-        assert card.cadence in ("daily", "weekly", "monthly"), f"{name}: {card.cadence!r}"
+        assert card.cadence in ("daily", "weekly", "monthly", "quarterly"), f"{name}: {card.cadence!r}"
+        assert card.cadence == "daily" or card.cadence in screen.CYCLE_DAYS, \
+            f"{name}: {card.cadence!r} has no cycle length, so the screen cannot count it late"
         assert card.coverage_target is None or 0 < card.coverage_target <= 1, f"{name}: {card.coverage_target!r}"
 
 
@@ -85,7 +87,8 @@ def test_every_table_a_need_names_has_a_written_column_or_no_date_at_all():
 #: 30 Oct 2026; ``sec13f_cusip_map`` left the list with G9, which gave it a reader and a kind. The set is the
 #: record of a gap that predates the test, not a target: a table added to a dataset must be answerable, not join
 #: this list.
-REFRESH_GAPS = {"adj_factor", "gics_history", "peer_group", "sec13f_filer_period",
+#: ``adj_factor`` left this list in #646 PR 4, which gave it a kind so the Insider % reader can read it.
+REFRESH_GAPS = {"gics_history", "peer_group", "sec13f_data_sets", "sec13f_filer_period",
                 "sec13f_filings", "security_history"}
 
 
@@ -106,7 +109,7 @@ def test_the_rows_day_and_the_written_column_are_allowed_to_differ():
 
 
 def test_the_screens_own_numbers_live_here_too():
-    assert screen.CYCLE_DAYS == {"weekly": 8, "monthly": 35}
+    assert screen.CYCLE_DAYS == {"weekly": 8, "monthly": 35, "quarterly": 100}
     assert screen.RETIREMENT_DAYS == 14
     assert screen.STATUS_ORDER == ("stale", "never", "late", "unchanged", "fresh")
     assert screen.STATUS_ORDER[0] == "stale", "the worst status sorts first"
@@ -136,8 +139,8 @@ def test_compustat_serves_the_daily_prices_and_alpaca_is_the_tester():
 
 def test_a_kinds_steps_sit_inside_its_files_steps():
     from RevenueChaser.rcdata.build import DATASETS
-    spans = {"spine": range(1, 8), "prices": (8,), "fundamentals": (9,), "ownership": (10,), "options": (11,),
-             "market": (11,)}
+    spans = {"spine": range(1, 8), "prices": (8,), "fundamentals": (9,), "sec_forms": (9,), "ownership": (10,),
+             "options": (11,), "market": (11,)}
     for name, ds in DATASETS.items():
         assert screen.DATASETS[name].step in spans[ds.kind], f"{name} ({ds.kind}): step {screen.DATASETS[name].step}"
 
@@ -145,7 +148,7 @@ def test_a_kinds_steps_sit_inside_its_files_steps():
 def test_the_files_are_every_serving_kind_in_build_order():
     from RevenueChaser.rcdata import serving
     assert set(screen.FILES) == set(serving.KINDS)
-    assert list(screen.FILES) == ["spine", "prices", "fundamentals", "ownership", "options", "market"]
+    assert list(screen.FILES) == ["spine", "prices", "fundamentals", "sec_forms", "ownership", "options", "market"]
 
 
 def test_a_dataset_that_does_not_fill_by_tier_has_words_for_why():

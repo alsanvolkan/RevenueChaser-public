@@ -17,8 +17,7 @@ WHEN = "2026-10-28T09:00:00+00:00"
 
 
 @pytest.fixture
-def spine(monkeypatch, built):
-    monkeypatch.setenv(universe.SOURCE_ENV, "spine")
+def spine(built):
     assert universe.universe_source() == "spine"
 
 
@@ -71,13 +70,6 @@ def test_the_build_time_is_the_spines_own_not_a_datasets_check():
 @pytest.mark.usefixtures("spine")
 def test_the_board_name_is_escaped():
     assert "<img" not in universe_provenance_html(WHEN, "<img src=x>")
-
-
-def test_the_old_store_keeps_the_old_line(monkeypatch, built):
-    monkeypatch.setenv(universe.SOURCE_ENV, "store")
-    assert universe.spine_provenance() is None
-    line = universe_provenance_html(WHEN, "Swing Potential", partial=True)
-    assert "Universe refreshed by" in line and "partial fetch" in line and "spine" not in line
 
 
 @pytest.mark.usefixtures("spine")

@@ -14,8 +14,18 @@ Per 13F ticker (``load_inputs``), in the shape ``report.board_entries`` reads:
   why not the open-ended K8a window). The board's Price Δ is the change between the first and the last of these
   closes.
 
-Short % is not read: the column stays hidden until D10 (``short_interest``) has rows (F6). A ticker with no value
-for a field has no key for it, so the board shows "—", never 0.
+- ``split_factor``: ``{quarter_end: factor}`` from the prices store (``core.ownership.split_factors_13f``, #732):
+  the factor that puts a share count of that quarter end on today's basis. The board divides every quarter's shares
+  and flows by it and multiplies the close by it, so a split is not read as buying or selling. A quarter with no
+  factor stays as filed.
+
+- ``breaks``: ``[{period, kind, shares, cik, filer_name}]`` from the board's own file (``store.read_breaks``, #732): the
+  filers that started or stopped reporting the ticker in a settled quarter, which the flows leave out. The board
+  marks the ticker and lists them, newest first.
+
+Short % and Insider % are not shown (owner, 12 Nov 2026, #732: both read old tables, and they come back with their
+new readers, #646 and #576). ``load_short_interest`` stays for that return and is not called here. A ticker with no
+value for a field has no key for it, so the board shows "—", never 0.
 
 The Fetch (after its shares step), the store-only Refresh and the ``/api/sec_13f/<t>`` chart all read these inputs
 here, so every number comes out of the same path.
@@ -120,9 +130,12 @@ def load_inputs(totals: dict) -> dict[str, dict]:
     tickers = [t for t in totals if t]
     quarters = sorted({q for periods in totals.values() for q in periods if q >= engine.START_QUARTER})
     out = load_ownership(tickers)
-    shorts, _ = load_short_interest(tickers)
-    for ticker, s in shorts.items():
-        out.setdefault(ticker, {}).update(s)
     for ticker, px in quarter_end_closes(tickers, quarters).items():
         out.setdefault(ticker, {})["price"] = px
+    wanted = {t: [q for q in periods if q >= engine.START_QUARTER] for t, periods in totals.items() if t}
+    for ticker, factors in ownership.split_factors_13f(wanted).items():
+        out.setdefault(ticker, {})["split_factor"] = factors
+    from RevenueChaser.module_sec_13f import store
+    for ticker, breaks in store.read_breaks(tickers).items():
+        out.setdefault(ticker, {})["breaks"] = breaks
     return out

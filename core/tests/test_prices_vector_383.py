@@ -22,6 +22,7 @@ import pytest
 
 from RevenueChaser.core import prices, rawstore
 from RevenueChaser.core.prices import _BAR_COLUMNS, _f, _placeholders, _read, _threshold_epoch
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 
 # ── the per-row implementation before #383 K8a speed (main a81f8de), verbatim but for names ──────────────────
@@ -112,9 +113,12 @@ def _old_read_series(tickers: list[str], start: date | None = None):
                    f"COALESCE((SELECT MAX(p.session_date) FROM price_bars_daily p "
                    f"WHERE p.ticker = b.ticker AND p.session_date < ?), ?)")
         bar_params = [*tickers, start, start]
-    for r in _read(bar_sql, bar_params):
+    # The rows the code reads: the builder's served file (#642 PR 6), so both sides read one input.
+    for r in _read(bar_sql, bar_params, layer=True):
         bars.setdefault(r["ticker"], []).append(r)
-    for r in _read(f"SELECT * FROM price_actions WHERE ticker IN ({marks})", list(tickers)):
+    # In the store's key order: the view's rows come in no order, and the product of the factors is order-sensitive
+    for r in _read(f"SELECT * FROM price_actions WHERE ticker IN ({marks}) ORDER BY ticker, ex_date, action",
+                   list(tickers), layer=True):
         actions.setdefault(r["ticker"], []).append(r)
     return bars, actions
 
@@ -377,8 +381,8 @@ def bounded(rawstore_tmp_db):
         bars.append(_bar("TTT", d, 100.0 + i, fill if i < 30 else _ts(days[55])))
         if i not in (40, 41):
             bars.append(_bar("UUU", d, 20.0 + 0.1 * i, _ts(d)))
-    rawstore.write_rows("price_bars_daily", bars)
-    rawstore.write_rows("price_actions", [
+    write_d01(bars)
+    write_d01([], [
         _act("TTT", days[30], "split", 2.0, _ts(days[30])),
         _act("TTT", days[50], "split", 3.0, _ts(days[58])),            # fetched later: bars after its open stay
         _act("TTT", days[10], "dividend", 1.0, _ts(days[10])),
@@ -434,8 +438,8 @@ def test_an_end_bounded_read_equals_the_per_row_code_on_random_stores(rawstore_t
         rows = _random_bars(rng, t, span, store_like=True)
         bars += rows
         actions += _random_actions(rng, t, rows, span, store_like=True)
-    rawstore.write_rows("price_bars_daily", bars)
-    rawstore.write_rows("price_actions", actions)
+    write_d01(bars)
+    write_d01([], actions)
     names = ["AAA", "BBB", "CCC", "DDD", "EEE", "NONE"]
     for _ in range(25):
         start, end = _edge(rng, span), _day(rng.randrange(-3, span + 3))

@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_relatedness import config, engine, profiles as profiles_mod
 from RevenueChaser.module_relatedness import store, themes
@@ -118,7 +119,7 @@ def test_cutover_keeps_older_runs(rawstore_tmp_db):
 
 
 def test_cutover_does_not_copy_legacy_keyword(rawstore_tmp_db):
-    rawstore.replace_all("equity_universe", [{"ticker": "ZZZ", "market_cap": 1e9}])
+    universe_store.replace([{"ticker": "ZZZ", "market_cap": 1e9}])
     rawstore.write_rows("ticker_themes", [
         {"ticker": "ZZZ", "theme_id": "kw-banks", "theme": "Banks",
          "level": "legacy", "theme_run_id": "legacy-keyword"}])

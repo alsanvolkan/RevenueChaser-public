@@ -1,35 +1,16 @@
-"""Common K6 (#383 R1, C14, DF104 #161): every ``edgar_financials`` and ``chain_filings`` write carries ``fetched_at``.
+"""Common K6 (#383 R1, C14, DF104 #161): every ``chain_filings`` write carries ``fetched_at``. (The
+``edgar_financials`` half went with that store's write, #642 PR 6.)
 
-- ``sec_edgar.get_fundamentals`` stamps the row with the time of the facts download.
 - ``chain_filings``: a downloaded filing is stamped with its download (the ``edgar_documents`` row's ``fetched_at``);
   a re-slice of a stored document carries that document's own stamp, else the write time.
-- Old rows are untouched: a stored row is served as it is, and a kept slice keeps its stamp.
+- A kept slice keeps its old stamp.
 Offline, temp store (no SEC request).
 """
 from __future__ import annotations
 
 from RevenueChaser.core import edgar_docs, rawstore
-from RevenueChaser.core.providers import sec_edgar
 from RevenueChaser.module_value_chain import sync
 from RevenueChaser.module_value_chain.tests.test_slice_guard import GOOD_HTML, _row, _seed_sync, _subs
-
-_FACTS = {"entityName": "Acme", "facts": {}}
-
-
-def test_a_fetched_edgar_financials_row_carries_fetched_at(rawstore_tmp_db, monkeypatch):
-    monkeypatch.setattr(sec_edgar, "_cik_map", lambda: {"ACME": {"cik": "1", "name": "Acme"}})
-    monkeypatch.setattr(sec_edgar, "_fetch_facts", lambda cik: _FACTS)
-    monkeypatch.setattr(sec_edgar.time, "time", lambda: 1_790_000_000.0)
-    sec_edgar.get_fundamentals("ACME")
-    assert rawstore.get("edgar_financials", "ACME")["fetched_at"] == 1_790_000_000.0
-
-
-def test_a_stored_edgar_financials_row_is_untouched(rawstore_tmp_db, monkeypatch):
-    rawstore.write_rows("edgar_financials", [{"ticker": "OLD", "annual": [{"fiscal_year": 2024, "revenue": 1.0}],
-                                              "quarterly": [], "meta": {"source": "sec_edgar"}}])
-    monkeypatch.setattr(sec_edgar, "_fetch_facts", lambda cik: (_ for _ in ()).throw(AssertionError("fetched")))
-    sec_edgar.get_fundamentals("OLD")
-    assert rawstore.get("edgar_financials", "OLD")["fetched_at"] is None
 
 
 def test_a_downloaded_filing_is_stamped_with_its_download(rawstore_tmp_db, monkeypatch):

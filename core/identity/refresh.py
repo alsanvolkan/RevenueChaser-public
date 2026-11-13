@@ -529,8 +529,8 @@ def _gate(res: SourceResult):
 
 def _spdr_check(res: SourceResult, master_rows: list[dict]) -> tuple[list[dict], dict]:
     """``(conflicts, counts)`` of the SPDR check: each S&P 500 member of the stored list
-    (``index_lists.stored_index("sp500")``, its spelling normalised; the old path's own list, whatever
-    ``RC_UNIVERSE_SOURCE`` says) that a fund holds and the master has is compared with the master sector. Flag only.
+    (``index_lists.stored_index("sp500")``, its spelling normalised; the old path's own list, not the spine's) that
+    a fund holds and the master has is compared with the master sector. Flag only.
     ``spdr_members`` is the list's size: 0 means nothing was checked, never "checked and clean"."""
     hold = _rows_of(res)
     members = {norm_ticker(t) for t in index_lists.stored_index("sp500") or ()}

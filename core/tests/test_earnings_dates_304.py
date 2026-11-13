@@ -116,7 +116,8 @@ def test_ag_scores_the_stored_date_and_falls_back_to_yahoo(rawstore_tmp_db):
 
     today = calendar.today_ny()
     day = today + timedelta(days=6)
-    rawstore.write_rows("edgar_financials", [edgar("AAA"), edgar("BBB")])
+    from RevenueChaser.rcdata.tests import fund_store
+    fund_store.put_edgar([edgar("AAA"), edgar("BBB")])
     rawstore.write_rows("earnings_calendar", [
         {"session_date": today, "earnings_date": day, "ticker": "AAA", "report_session": "pm", "item": {},
          "source": "uw"}])

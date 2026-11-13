@@ -9,7 +9,9 @@ never invent a value for.
 """
 from __future__ import annotations
 
+from RevenueChaser.rcdata.tests import universe_store
 import json
+import pathlib
 import time
 from datetime import datetime, timezone
 
@@ -33,7 +35,7 @@ def seeded_settings(dashboard, monkeypatch):
     monkeypatch.setattr(rawstore, "DB_PATH", dashboard.store_dir / "raw.duckdb")
 
     monkeypatch.setattr("RevenueChaser.core.config.MARKET_DIR", dashboard.env["RC_MARKET_DIR"])  # the prices store (G3)
-    rawstore.write_rows("equity_universe", [
+    universe_store.put([
         {"ticker": "AAPL", "market_cap": 3.0e12, "name": "Apple Inc."},
         {"ticker": "MU", "market_cap": None, "name": "Micron Technology"},
         {"ticker": "NOCAP", "market_cap": None, "name": "No Cap Co"},
@@ -68,7 +70,7 @@ class TestView:
     def test_the_tab_is_in_the_shell(self, dashboard):
         r = dashboard.get("/")
         assert r.status_code == 200
-        assert "Settings / Data health" in r.text
+        assert "Settings" in r.text
 
 
 class TestRefreshIsOfflineAndFaithful:
@@ -91,7 +93,7 @@ class TestRefreshIsOfflineAndFaithful:
         assert not dashboard.artifact(_ARTIFACT).exists()
         r = dashboard.view(_APP, refresh=True)
         assert r.status_code == 200
-        assert "Settings / Data health" in r.text
+        assert "Settings" in r.text
         # Serving 200 is not enough: Refresh must re-derive and re-write the
         # artifact. Without this, a refresh that answered from memory (or from a
         # stale handle) would still look green while leaving no file on disk.
@@ -116,7 +118,7 @@ class TestRefreshIsOfflineAndFaithful:
         dashboard.restart()
         r = dashboard.view(_APP, refresh=True)
         assert r.status_code == 200
-        assert "Settings / Data health" in r.text
+        assert "Settings" in r.text
 
 
 class TestStatsFetch:
@@ -140,35 +142,63 @@ class TestStatsFetch:
             f"the standalone stats job must not call the screener: {calls}")
 
 
-class TestDrillApi:
-    def test_drill_api_is_offline(self, dashboard, seeded_settings, provider_routes):
+@pytest.fixture
+def served_spine(dashboard):
+    """A one-row ``spine.duckdb`` in the dashboard's own market dir: the lookup reads served files only.
+
+    ``seeded_settings`` fills the old store, which this lookup never opens, so without this a known name
+    would answer 404 and the offline check would prove nothing about a real answer.
+    """
+    import duckdb
+    path = pathlib.Path(dashboard.env["RC_MARKET_DIR"]) / "spine.duckdb"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect(str(path))
+    try:
+        con.execute("CREATE TABLE IF NOT EXISTS security (ticker VARCHAR, name VARCHAR, cik VARCHAR, "
+                    "sector VARCHAR, industry VARCHAR, tier VARCHAR)")
+        # ``seeded_settings`` may already have created this table with the spine's whole schema and put AAPL in
+        # it (``universe_store``). So: name the columns, and replace the row rather than add a second one.
+        con.execute("DELETE FROM security WHERE ticker = 'AAPL'")
+        con.execute("INSERT INTO security (ticker, name, cik, sector, industry, tier) "
+                    "VALUES ('AAPL', 'Apple Inc.', '0000320193', 'Technology', 'Hardware', 'A')")
+    finally:
+        con.close()
+    return path
+
+
+class TestLookupApi:
+    def test_lookup_api_is_offline(self, dashboard, seeded_settings, served_spine, provider_routes):
         before_provider = provider_routes.request_count
         before_yf = dashboard.yf_calls()
-        r = dashboard.get("/api/settings/ticker/AAPL")
+        r = dashboard.get("/api/settings/lookup/AAPL")
         assert r.status_code == 200
         body = r.json()
         assert body["ok"] is True
         assert body["ticker"] == "AAPL"
-        assert body["name"] == "Apple Inc."
-        assert body["filing"]["form"] == "10-K"
+        assert [f["kind"] for f in body["files"]], "one group a served file"
         assert provider_routes.request_count == before_provider, (
-            "the drill reached the network: "
+            "the lookup reached the network: "
             f"{[q.path for q in provider_routes.requests()[before_provider:]]}")
         assert dashboard.yf_calls() == before_yf, (
-            "the drill reached yfinance: "
+            "the lookup reached yfinance: "
             f"{dashboard.yf_calls()[len(before_yf):]}")
 
-    def test_drill_api_unknown_is_404(self, dashboard, seeded_settings):
-        r = dashboard.get("/api/settings/ticker/ZZZZ")
+    def test_lookup_api_unknown_is_404(self, dashboard, seeded_settings, served_spine):
+        r = dashboard.get("/api/settings/lookup/ZZZZ")
         assert r.status_code == 404
         assert r.json() == {"ok": False}
+
+    def test_the_old_store_drill_route_is_gone(self, dashboard, seeded_settings, served_spine):
+        """The served spine holds AAPL, so a 404 here is the route being gone, not an empty store."""
+        assert dashboard.get("/api/settings/ticker/AAPL").status_code == 404
+        assert dashboard.get("/api/settings/lookup/AAPL").status_code == 200
 
 
 class TestEmptyStore:
     def test_a_board_with_no_data_renders_an_empty_state(self, dashboard):
         r = dashboard.view(_APP)
         assert r.status_code == 200
-        assert "Settings / Data health" in r.text
+        assert "Settings" in r.text
 
 
 def _verdicts(html: str, bodies: list) -> list:
@@ -285,7 +315,7 @@ class TestBoardInputs:
 
         ret = cm._returns()
         tickers = list(ret.columns)
-        rawstore.replace_all("equity_universe", [{
+        universe_store.replace([{
             "ticker": t, "market_cap": 1.0e10, "sector": "Technology", "price": 10.0,
             "name": t + " Inc", "industry": cm._INDUSTRY.get(t, ""), "quote": {"symbol": t},
         } for t in tickers + [_FUND]])

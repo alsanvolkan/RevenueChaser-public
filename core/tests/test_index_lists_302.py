@@ -62,10 +62,12 @@ def test_sp600_has_a_label_but_is_not_fetched_from_a_board():
     assert ir.LABELS["sp600"] == "S&P SmallCap 600"
 
 
-def test_an_sp600_member_gets_its_label_on_a_card(lists):
+def test_the_stored_lists_label_no_card(lists):
+    """#642 PR 6: the cards' index labels are the spine's only (``test_filters_meta_383``); the weekly lists are not
+    read for them."""
     il.refresh_lists(run_id="r1", first_fill=["sp600"])
     cards = ir.annotate_cards([{"ticker": "M0001"}, {"ticker": "S0001"}])
-    assert cards[0]["index"] == ["S&P SmallCap 600"] and cards[1]["index"] == ["S&P 500"]
+    assert cards[0]["index"] == [] and cards[1]["index"] == []
 
 
 # ── the weekly run ──────────────────────────────────────────────────────────────────────────────────────────────

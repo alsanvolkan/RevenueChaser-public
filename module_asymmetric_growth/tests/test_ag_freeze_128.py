@@ -34,13 +34,15 @@ def _result(cards, *, universe_total=None, excluded=0, errors=0, **kw):
 def _spy_bar(minutes=45):
     """SPY's D01 bar for D, written ``minutes`` after the close: the freeze's anchor (#380 S4, decision 4)."""
     from RevenueChaser.core.tests.d01_seed import seed_d01
-    seed_d01("SPY", [D], (cal.session_close(D) + timedelta(minutes=minutes)).timestamp())
+    from RevenueChaser.rcdata.tests import prices_store
+    at = (cal.session_close(D) + timedelta(minutes=minutes)).timestamp()
+    seed_d01("SPY", [D], at)
+    prices_store.set_built_at(at)              # the served file's one build stamp (#642 PR 6), as given
 
 
 def _no_bars():
-    from RevenueChaser.core import rawstore
-    with rawstore.connect(db=rawstore.MANIFEST["price_bars_daily"].get("db", "raw")) as conn:
-        conn.execute("DELETE FROM price_bars_daily")
+    from RevenueChaser.core.tests.d01_seed import drop_d01
+    drop_d01()
 
 
 def _stored():

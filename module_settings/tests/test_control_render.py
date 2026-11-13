@@ -16,12 +16,17 @@ from RevenueChaser.module_settings.tests.test_control_view import NOW, control_n
 from RevenueChaser.rcdata.needs import screen
 
 SECTIONS = ("sec-health", "sec-flow", "sec-crosscheck")
-#: the sections of the Fetch/Health panel's board (avo, 10 Nov 2026: Database keeps only the flow and the file panels)
+#: the sections of the old Fetch/Health HTML, off the page since #715 (the framed Grafana board carries them)
 DATA_SECTIONS = ("sec-health", "sec-crosscheck")
 
 
 def _page(nd=None) -> str:
     return report.render_settings_dashboard({"newdata": control_nd() if nd is None else nd})
+
+
+def _under_frame(html: str) -> str:
+    """What the page still draws under the Grafana frame: the gateway, the universe and the fills."""
+    return _between(html, 'id="panel-health"', 'id="panel-logs"')
 
 
 def _between(html: str, start: str, end: str) -> str:
@@ -35,27 +40,6 @@ def _section(html: str, sec: str) -> str:
     return html[a:min(n for n in nxt if n > a)]
 
 
-def test_the_board_is_in_the_designed_order_and_the_old_fold_is_gone():
-    html = _page()
-    at = [html.index(f'id="{s}"') for s in ("sec-flow",) + DATA_SECTIONS]
-    assert at == sorted(at), "the flow diagram on Database, then Health and cross-check on Fetch/Health"
-    assert html.index('id="sec-flow"') < html.index('id="panel-health"') < html.index('id="sec-crosscheck"') \
-        < html.index('id="ticker-drill"')
-    assert 'id="old-settings"' not in html and 'class="oldfold"' not in html
-
-
-def test_each_section_sits_in_one_panel_only_and_none_is_lost():
-    html = _page()
-    data = _between(html, 'id="panel-data"', 'id="panel-health"')
-    fetch = _between(html, 'id="panel-health"', 'id="needs"')
-    for sec in SECTIONS:
-        assert html.count(f'id="{sec}"') == 1, f"{sec} is rendered twice"
-    assert 'id="sec-flow"' in data
-    for sec in DATA_SECTIONS:
-        assert f'id="{sec}"' in fetch, sec
-    assert html.count('id="universe"') == 1 and 'id="universe"' in fetch, "the universe sits once on Fetch/Health"
-
-
 def test_two_tabs_data_and_health_and_no_fetch_tab():
     html = _page()
     strip = _between(html, 'id="settings-tabs"', "</nav>")
@@ -64,35 +48,46 @@ def test_two_tabs_data_and_health_and_no_fetch_tab():
     assert re.search(r'<div[^>]*id="panel-health"[^>]*role="tabpanel"[^>]*hidden', html), "Health starts hidden"
 
 
-def test_health_fetch_and_the_flow_open_the_rest_closed():
+def test_the_board_is_in_the_designed_order_and_the_old_fold_is_gone():
     html = _page()
-    for sec in SECTIONS:
-        tag = re.search(r'<details class="sec" id="' + sec + r'"( open)?>', html)
-        assert tag, sec
-        assert bool(tag.group(1)) == (sec in ("sec-health", "sec-flow")), sec
+    # #715: the Ticker lookup heads the Database panel, above the flow diagram; the universe is under the frame.
+    assert html.index('id="ticker-drill"') < html.index('id="sec-flow"') < html.index('id="panel-health"') \
+        < html.index('id="sec-universe"')
+    assert 'id="old-settings"' not in html and 'class="oldfold"' not in html
 
 
-def _panels(html: str) -> str:
-    return _between(html, 'class="fpanels"', 'id="sec-crosscheck"')
+def test_each_section_sits_in_one_panel_only_and_the_grafana_parts_are_off_the_page():
+    html = _page()
+    data = _between(html, 'id="panel-data"', 'id="panel-health"')
+    fetch = _under_frame(html)
+    assert html.count('id="sec-flow"') == 1 and 'id="sec-flow"' in data
+    for sec in DATA_SECTIONS + ("sec-queue", "sec-backups", "sec-providers"):
+        assert f'id="{sec}"' not in html, f"{sec} is the framed board's now (#715)"
+    assert html.count('id="universe"') == 1 and 'id="universe"' in fetch, "the universe sits once on Fetch/Health"
 
 
-def test_the_file_panels_show_bars():
-    assert "meter cov" in _panels(_page())
-
-
-def test_the_one_button_carries_its_dataset_and_the_scope_flag():
-    fetch = _panels(_page())
-    bars = re.search(r'<button type="button" class="btn go one" data-job="one" data-state="fetch" '
-                     r'data-dataset="alpaca/bars" data-scope="(\d)">Fetch</button>', fetch)
-    assert bars and bars.group(1) == "1", "alpaca/bars asks the names a scope names (honours_scope)"
-    assert 'data-dataset="sec/13f" data-scope="0"' in fetch
-    assert 'data-job="pause"' not in fetch, "no separate Pause button is left"
-    assert 'data-dataset="wrds/prices" data-scope' not in fetch, "a hand-run dataset has no live Fetch"
-    assert 'data-job="copy"' in fetch
+def test_every_hostile_string_is_escaped_and_the_scripts_parse(tmp_path):
+    nd = control_nd()
+    for c in nd["datasets"]:
+        c["label"] = H("label")
+        c["status_reason"] = H("reason")
+        c["issues"] = [{"kind": H("kind"), "key": H("key"), "detail": H("detail"), "found_on": "2026-10-28"}]
+        c["recent"] = [{"checked_on": H("checked"), "result": H("result"), "note": H("note")}]
+        c["samples"] = [{"table": "price_bar_daily", "built": True, "columns": [{"name": H("col"), "type": "TEXT"}],
+                         "rows": [[H("cell")]], "notes": (H("sample_note"),)}]
+    nd["queue"]["active"][0]["note"] = H("queue_note")
+    nd["universe"]["tickers"]["E"] = [H("ticker")]
+    html = _page(nd)
+    ctl = _between(html, '<section id="ctl"', 'id="needs"')
+    for tag in ("label", "col", "cell"):
+        assert f"onerror=__x(&#x27;{tag}T&#x27;)" in ctl, tag
+    assert_inert(html)
+    check_page(html)
+    assert_scripts_parse(html, tmp_path)
 
 
 def test_the_fill_cells_of_a_calendar_dataset_open_its_calendar(monkeypatch):
-    fetch = _panels(_page())
+    fetch = _under_frame(_page())
     cells = re.findall(r'<button type="button" class="fc [^"]*fopen" data-bf="alpaca-bars" data-g="(\w)"', fetch)
     assert cells == ["A", "E", "R"]
     assert '<div class="bfcal" id="bf-alpaca-bars" data-bf="alpaca-bars" hidden></div>' in fetch
@@ -114,10 +109,10 @@ def test_a_fill_cell_without_a_calendar_is_disabled_until_the_switch(monkeypatch
     nd = control_nd()
     nd["datasets"].append({**nd["datasets"][0], "dataset": "yfinance/float", "label": "Float (Yahoo)"})
     monkeypatch.delenv(screen.FILL_ENV, raising=False)
-    off = _panels(_page(nd))
+    off = _under_frame(_page(nd))
     assert re.search(r'data-job="fill" data-dataset="yfinance/float" data-g="A" disabled', off)
     monkeypatch.setenv(screen.FILL_ENV, "1")
-    on = _panels(_page(nd))
+    on = _under_frame(_page(nd))
     assert re.search(r'data-job="fill" data-dataset="yfinance/float" data-g="A" aria-label', on)
 
 
@@ -162,28 +157,6 @@ def test_no_timer_repeats_and_every_storage_access_is_guarded():
     for m in re.finditer(r"localStorage\.\w+\(", js):
         before = js[:m.start()]
         assert before.rfind("try") > before.rfind("}"), f"unguarded {m.group(0)}"
-
-
-def test_every_hostile_string_is_escaped_and_the_scripts_parse(tmp_path):
-    nd = control_nd()
-    for c in nd["datasets"]:
-        c["label"] = H("label")
-        c["status_reason"] = H("reason")
-        c["issues"] = [{"kind": H("kind"), "key": H("key"), "detail": H("detail"), "found_on": "2026-10-28"}]
-        c["recent"] = [{"checked_on": H("checked"), "result": H("result"), "note": H("note")}]
-        c["samples"] = [{"table": "price_bar_daily", "built": True, "columns": [{"name": H("col"), "type": "TEXT"}],
-                         "rows": [[H("cell")]], "notes": (H("sample_note"),)}]
-    nd["queue"]["active"][0]["note"] = H("queue_note")
-    nd["universe"]["tickers"]["E"] = [H("ticker")]
-    html = _page(nd)
-    # the board's one panel, up to the Health tab (#492 C1: the status reason left the source box and the queue
-    # table moved to the Health tab)
-    ctl = _between(html, '<section id="ctl"', 'id="needs"')
-    for tag in ("label", "kind", "detail", "note", "col", "cell"):
-        assert f"onerror=__x(&#x27;{tag}T&#x27;)" in ctl or tag in ("ticker",), tag
-    assert_inert(html)
-    check_page(html)
-    assert_scripts_parse(html, tmp_path)
 
 
 def test_the_css_is_scoped_to_the_board_and_themed_both_ways():

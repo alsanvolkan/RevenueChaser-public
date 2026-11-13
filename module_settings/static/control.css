@@ -1,8 +1,10 @@
 /* The control board's own styles (design v28), scoped to .ctl so the old Settings sections keep theirs.
-   Light by default, dark under the shell's choice: data-theme="dark", or "auto" on a dark device. */
-.ctl{--bg:#f6f7f9; --card:#fcfcfd; --fg:#1d2430; --mut:#667085; --line:#e3e7ee;
-  --acc:#0e7bd6; --acc2:#e9f3fc;
-  --ok:#1a7f37; --okb:#e6f4ea; --warn:#9a6700; --warnb:#fff4d6; --bad:#b42318; --badb:#fde8e7;
+   The core names (--mut, --line, --acc, --ok, --warn, --bad) are aliases of the shared theme tokens (THEME_CSS,
+   theme D); --bg, --card and --fg are the theme's own. The section, source and provider tints below are still this
+   board's: light by default, dark under data-theme="dark", or "auto" on a dark device. */
+.ctl{--mut:var(--muted); --line:var(--border);
+  --acc:var(--accent); --acc2:var(--accent-soft);
+  --ok:var(--pos); --okb:var(--pos-soft); --warn:var(--amber); --warnb:var(--amber-soft); --bad:var(--neg); --badb:var(--neg-soft);
   --new:#5b3fd0; --newb:#efeafe;
   --s-who:#f3f4f6; --l-who:#4b5260;   
   --src:#5f6a2a; --srcb:#f3f5ea;      
@@ -14,22 +16,16 @@
   --ssd:#1a7f37; --hdd:#6f6a63; --old:#98a0ad;
   --pv-build:#f1f3f5; --pv-sec:#e8f0fb; --pv-rule:#eaf3ea; --pv-wrds:#fdf0e0; --pv-figi:#efe9fb;
   --pv-alpaca:#e9f3fc; --pv-uw:#f3ecfb; --pv-yf:#fdf1f4;
-  --f-body:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-body:var(--font-sans);
   --f-mono:ui-monospace,Menlo,Consolas,monospace;}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .ctl{--bg:#0d1117; --card:#151b23; --fg:#e6edf3; --mut:#8b949e; --line:#2a313c;
-  --acc:#4aa3f0; --acc2:#132536;
-  --ok:#56d364; --okb:#12261a; --warn:#e3b341; --warnb:#2b230f; --bad:#ff7b72; --badb:#2d1414;
-  --new:#a89bff; --newb:#1f1a3a;
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .ctl{--new:#a89bff; --newb:#1f1a3a;
   --s-who:#1a1d23; --l-who:#aab2c0; --src:#b5c27a; --srcb:#1d2112; --s-src:#201a11; --l-src:#f0a35a;
   --s-dat:#10201a; --l-dat:#56d364; --s-hlt:#241618; --l-hlt:#ff7b72;
   --s-ex:#0f1e1c; --l-ex:#4fc1b3; --s-not:#1a1f27; --l-not:#6e7681;
   --ssd:#56d364; --hdd:#a8a29a; --old:#6e7681;
   --pv-build:#1e242c; --pv-sec:#16233a; --pv-rule:#17301f; --pv-wrds:#3a2a14; --pv-figi:#2a2140;
   --pv-alpaca:#132536; --pv-uw:#231b3a; --pv-yf:#2d1820; color-scheme:dark}}
-:root[data-theme="dark"] .ctl{--bg:#0d1117; --card:#151b23; --fg:#e6edf3; --mut:#8b949e; --line:#2a313c;
-  --acc:#4aa3f0; --acc2:#132536;
-  --ok:#56d364; --okb:#12261a; --warn:#e3b341; --warnb:#2b230f; --bad:#ff7b72; --badb:#2d1414;
-  --new:#a89bff; --newb:#1f1a3a;
+:root[data-theme="dark"] .ctl{--new:#a89bff; --newb:#1f1a3a;
   --s-who:#1a1d23; --l-who:#aab2c0; --src:#b5c27a; --srcb:#1d2112; --s-src:#201a11; --l-src:#f0a35a;
   --s-dat:#10201a; --l-dat:#56d364; --s-hlt:#241618; --l-hlt:#ff7b72;
   --s-ex:#0f1e1c; --l-ex:#4fc1b3; --s-not:#1a1f27; --l-not:#6e7681;
@@ -296,14 +292,6 @@
 .ctl .ln b.full{color:var(--bad)}
 .ctl .lbar{position:relative}
 .ctl .lbar::after{content:"";position:absolute;top:-2px;bottom:-2px;left:80%;width:1px;background:var(--mut);opacity:.6}
-.ctl .wrow{display:grid;grid-template-columns:140px minmax(0,1fr);gap:2px 12px;padding:8px 0;border-bottom:1px solid var(--line)}
-@media(max-width:560px){.ctl .wrow{grid-template-columns:1fr}}
-.ctl .wrow:last-child{border-bottom:0}
-.ctl .wk{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
-.ctl .wk.s1{color:var(--ssd)}
-.ctl .wk.s2{color:var(--hdd)}
-.ctl .wk.s3{color:var(--old)}
-.ctl .wv{font-size:12.5px;min-width:0}
 .ctl details.legacy{margin-top:6px;opacity:.85}
 .ctl details.legacy>summary{cursor:pointer;min-height:40px;display:flex;align-items:center;font-weight:600;font-size:13.5px}
 .ctl details.legacy details{margin:4px 0 4px 14px}
@@ -345,6 +333,28 @@
 .ctl .phoneonly{display:none}
 @media(max-width:760px){.ctl .flowwrap{display:none}
 .ctl .phoneonly{display:block}}
+/* #715: the phone's own flow — the six pictures side by side in one strip, swiped sideways. */
+.ctl .pftabs{display:flex;gap:6px;overflow-x:auto;padding:0 0 8px;scrollbar-width:none}
+.ctl .pftabs::-webkit-scrollbar{display:none}
+.ctl .pftab{flex:none;min-height:44px;padding:0 14px;border:1px solid var(--line);border-left:3px solid var(--fh);
+  border-radius:999px;background:var(--card);color:var(--fg);font:12px var(--f-mono,monospace);cursor:pointer}
+.ctl .pfdeck{display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x mandatory;align-items:flex-start;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none}
+.ctl .pfdeck::-webkit-scrollbar{display:none}
+.ctl .pfslide{flex:0 0 100%;scroll-snap-align:start;min-width:0;border:1px solid var(--line);border-radius:12px;
+  background:var(--card)}
+.ctl .pfhead{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;font-size:13px}
+.ctl .pfhead i{display:inline-block;width:16px;height:3px;border-radius:2px;flex:none}
+.ctl .pfhead b{font-family:var(--f-mono,monospace);font-size:12.5px;overflow-wrap:anywhere}
+.ctl .pfhead span{color:var(--mut);font-size:11.5px;margin-left:auto;white-space:nowrap}
+.ctl svg.pflow{display:block;width:100%;height:auto;padding:0 0 10px}
+.ctl svg.pflow .pt{fill:var(--fg);font:11px var(--f-body)}
+.ctl svg.pflow .ptf{fill:var(--fg);font:600 11.5px var(--f-mono,monospace);text-anchor:middle}
+.ctl svg.pflow .psrc,.ctl svg.pflow .pbd{fill:var(--bg);stroke:var(--line)}
+.ctl svg.pflow .pbd.off{stroke-dasharray:3 3}
+.ctl svg.pflow .pfn{fill:var(--card);stroke-width:2}
+.ctl svg.pflow .pfile{cursor:pointer}
+.ctl svg.pflow .pe{fill:none;stroke-width:1.5;opacity:.55}
 .ctl .order{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 0}
 .ctl .ostep{display:flex;gap:6px;align-items:baseline;font-size:12.5px;border:1px solid var(--line);
   border-radius:10px;padding:5px 10px;min-height:36px;background:var(--card)}
@@ -640,7 +650,7 @@
 .ctl .bfmode{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:999px;overflow:hidden}
 .ctl .chipb{font:inherit;font-size:12px;min-height:36px;padding:0 12px;border:0;background:var(--card);color:var(--fg);cursor:pointer}
 .ctl .bfmode .chipb+.chipb{border-left:1px solid var(--line)}
-.ctl .chipb[aria-pressed="true"]{background:var(--acc);color:#fff}
+.ctl .chipb[aria-pressed="true"]{background:var(--acc);color:var(--bg)}
 .ctl .chipb.bfreset{border:1px solid var(--line);border-radius:999px}
 .ctl .bfcrumb{display:flex;align-items:center;gap:4px;font-size:12.5px;color:var(--mut)}
 .ctl .bfcr{font:inherit;font-size:12.5px;background:none;border:0;color:var(--acc);cursor:pointer;min-height:36px;padding:0 4px}
@@ -659,16 +669,16 @@
 .ctl .bfx .mb i{display:block;height:100%}
 .ctl .bfx .mb .f{background:#fff}
 .ctl .bfx .mb .p{background:rgba(255,255,255,.55)}
-.ctl .bfx .bff{position:absolute;top:3px;right:4px;min-width:16px;height:16px;border-radius:8px;background:#b42318;color:#fff;font-size:10px;
+.ctl .bfx .bff{position:absolute;top:3px;right:4px;min-width:16px;height:16px;border-radius:8px;background:var(--fill-bad);color:#fff;font-size:10px;
  font-weight:700;line-height:16px;text-align:center;padding:0 3px;box-shadow:0 0 0 1.5px var(--card)}
 .ctl .bfx.blank{background:none;border:0;cursor:default}
-.ctl .s-filled{background:#1a7f37}
-.ctl .s-partly{background:#9a6700}
-.ctl .s-failed{background:#b42318}
+.ctl .s-filled{background:var(--fill-ok)}
+.ctl .s-partly{background:var(--fill-warn)}
+.ctl .s-failed{background:var(--fill-bad)}
 .ctl .bfx.s-missing,.ctl .lg.s-missing{background:transparent;color:var(--fg);border:1.5px dashed var(--old)}
 .ctl .bfx.s-missing .mb{background:var(--line)}
-.ctl .bfx.s-missing .mb .f{background:#1a7f37}
-.ctl .bfx.s-missing .mb .p{background:#9a6700}
+.ctl .bfx.s-missing .mb .f{background:var(--fill-ok)}
+.ctl .bfx.s-missing .mb .p{background:var(--fill-warn)}
 .ctl .bfx.s-partly .mb .f{background:#fff}
 .ctl .bfx.s-notoff,.ctl .lg.s-notoff{color:var(--mut);background:repeating-linear-gradient(135deg,var(--line) 0 4px,transparent 4px 8px);border:1px solid var(--line)}
 .ctl .bfx.s-nosess,.ctl .lg.s-nosess{background:none;color:var(--mut);border:1px solid var(--line);opacity:.55}
@@ -689,9 +699,9 @@
 .ctl .bfth .k.x{color:var(--bad)}
 .ctl .bfbar{display:flex;height:10px;border-radius:99px;background:var(--line);overflow:hidden;margin-top:4px}
 .ctl .bfbar i{display:block;height:100%}
-.ctl .bfbar .f{background:#1a7f37}
-.ctl .bfbar .p{background:#9a6700}
-.ctl .bfbar .x{background:#b42318}
+.ctl .bfbar .f{background:var(--fill-ok)}
+.ctl .bfbar .p{background:var(--fill-warn)}
+.ctl .bfbar .x{background:var(--fill-bad)}
 .ctl .bfpick{margin:10px 0 0;padding:8px 10px;border-radius:10px;background:var(--acc2);font-size:12.5px}
 .ctl .bfpick .dim{display:block;color:var(--mut);font-size:11px;margin-top:2px}
 .ctl .bfgo{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:10px 0 0}
@@ -884,10 +894,8 @@
 @media(max-width:620px){.ctl .uhd .uact{width:100%}
 .ctl .uhd .uact .btn{min-height:44px}}
 @media(min-width:621px){.ctl .ubar .useg{min-width:max-content}}
-.ctl{--acc:#0a6cc0;--ok:#187634;--warn:#8f6000;--old-text:#6b7483;
-  --fill-ok:#1a7f37;--fill-warn:#9a6700;--fill-bad:#b42318;--track:color-mix(in srgb,var(--mut) 22%,transparent)}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .ctl{--old-text:#8b949e}}
-:root[data-theme="dark"] .ctl{--old-text:#8b949e}
+.ctl{--old-text:var(--muted);
+  --fill-ok:#2F7A55;--fill-warn:#9A6212;--fill-bad:#B0443A;--track:color-mix(in srgb,var(--mut) 22%,transparent)}
 .ctl details.sec{margin-top:40px}
 .ctl .wrap>details.sec:first-of-type{margin-top:18px}
 .ctl details.sec>summary h2{font-weight:700;color:var(--fg)}
@@ -1071,14 +1079,10 @@
 .ctl .bfs{min-width:0}
 @media(max-width:900px){.ctl .hgrps{grid-template-columns:1fr}}
 @media(max-width:760px){.ctl .bfl{grid-template-columns:1fr 1fr}.ctl .bfs{grid-column:1/-1}}
-.ctl #fpick{display:flex;align-items:stretch;overflow-x:auto;max-width:100%;padding:4px 2px 8px;margin:12px 0}
-.ctl #fpick .fpar{align-self:center;font-size:1.5rem;margin:0 6px;color:var(--mut);flex:0 0 auto}
-.ctl #fpick .fpb{flex:1 0 140px;display:flex;flex-direction:column;gap:2px;min-height:44px;padding:8px 10px;text-align:left;
-  background:var(--card);color:var(--fg);border:1px solid var(--line);border-top:4px solid var(--fh,var(--acc));border-radius:10px;font:inherit;font-size:12px;cursor:pointer}
-.ctl #fpick .fpb[aria-selected="true"]{box-shadow:0 0 0 2px var(--fh,var(--acc));font-weight:600}
-.ctl #fpick .fpb.nofile{border-style:dashed;color:var(--mut)}
-.ctl #fpick .fpn{font-family:var(--f-mono,monospace);font-weight:700}
-.ctl #fpick .fpd,.ctl #fpick .fpl{color:var(--mut)}
+/* #715 step 3: the six served files are stacked folded sections, not a picker strip. Each keeps its file's
+   colour on the left edge; the body is indented like the Fetch tab's groups. */
+.ctl details.fpanel>summary h2{font-family:var(--f-mono,monospace)}
+.ctl details.fpanel>summary{min-height:44px}
 .ctl .wrap{max-width:1280px;margin:0;padding-left:max(12px,env(safe-area-inset-left,0px))}
 .ctl .wrap>*{max-width:100%;min-width:0}
 .ctl details.sec>summary{min-height:44px;align-items:center;padding:6px 0;border-bottom:2px solid var(--line)}
@@ -1177,6 +1181,13 @@
 .ctl .sb1{flex-wrap:nowrap}
 .ctl .sb1 .dsname{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .ctl .sb1 .sbbtn,.ctl .sb1 .srcb{flex:none}
+/* Measured on the live page, 12 Nov 2026, at avo's 1187 px: a half-width box with a Fetch menu and a Pause pushed its
+   buttons 79 px past the page. The name gives way first; then the buttons wrap inside the box, never past it. */
+.ctl .sb1 .dsname{flex-shrink:1000}
+.ctl .sb1 .sbbtn{flex:0 1 auto;min-width:min-content;flex-wrap:wrap;justify-content:flex-end}
+/* Live again at 1187 px after that fix: 10 px past the page. With the name at zero and the buttons wrapped, the
+   provider badges were the one part left that could not give way. They clip down to their icon last. */
+.ctl .sb1 .srcb{flex:0 1 auto;min-width:24px;overflow:hidden}
 @media(max-width:760px){.ctl .sb1{flex-wrap:wrap}.ctl .sb1 .dsname{white-space:normal;overflow-wrap:anywhere}}
 /* The Data tab's "What am I looking at?" box sits in a .ctl band of its own, so it takes the board's themed tokens
    instead of the page's old dark-only ones (seen in the #539 screenshots: dark in light). */
@@ -1188,3 +1199,32 @@
 .ctl.helpband{display:flow-root}
 /* the read-only universe bar (Fetch/Health): a set in the universe is filled, as a pressed button was */
 .ctl .useg[data-on="1"]:not(button){background:var(--c);border:1.5px solid var(--c);color:#fff}
+
+/* #715 step 2: the weekly backups table on the Fetch tab colours its state cell by age. */
+.ctl table.bktbl td.s-ok{color:var(--ok)}
+.ctl table.bktbl td.s-warn{color:var(--warn)}
+.ctl table.bktbl td.s-bad{color:var(--bad)}
+/* #715 step 2: a path, a dataset id or a command has no spaces, so on a phone it wraps instead of widening
+   the page. The queue, the cross-check and the weekly backups all print such strings. */
+@media (max-width:680px){
+.ctl code,.ctl table.stk td{overflow-wrap:anywhere;word-break:break-word;min-width:0}
+}
+.ctl table.bktbl code{overflow-wrap:anywhere;word-break:break-word}
+.ctl .pftab.on{border-color:var(--fh);background:var(--acc2)}
+/* #715: the board files block under the served files (avo, 13 Nov 2026) */
+.ctl .bfpanels{margin:34px 0 0}
+.ctl .bfpanels .bfph{margin:0 0 2px}
+.ctl .bfpanels details.tch>summary{min-height:28px;align-items:center}
+.ctl .bfpanels .tchs{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px;align-items:start}
+.ctl .bfpanels .bfwhere,.ctl .bfpanels .bfalso{margin:0 0 6px;font-size:12px;color:var(--mut)}
+@media(max-width:640px){.ctl .bfpanels{margin-top:22px}
+.ctl .bfpanels details.tch>summary{min-height:44px}}
+/* avo, 12 Nov 2026 (phone, the Fetch/Health leftovers): "biraz daha kompakt". A dataset box is its name, then its
+   coverage on one line (label, bar, share), with less air around and between the boxes. */
+@media(max-width:640px){
+.ctl .fgroup{padding:6px 8px 8px}
+.ctl .fgroup .sgrid{gap:6px;margin:6px 0}
+.ctl .fgroup .dset{margin-top:0;padding:6px 10px}
+.ctl .fgroup .sb3{margin:4px 0 2px}
+.ctl .fgroup .meter.cov{grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px}
+}

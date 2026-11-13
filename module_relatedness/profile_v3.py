@@ -5,11 +5,17 @@ the SIC, sector and industry, and the company's ``chain_mentions`` names (Value 
 filing) as candidates, and returns one JSON object:
 
 ``summary`` (one or two sentences), ``segments`` (``name``, ``share``, ``source``, ``products``, ``end_markets``),
-``customers`` (``name``, ``type``, ``share``, ``quote``), ``suppliers`` (``name``, ``type``, ``quote``),
-``named_competitors``, ``business_model``, ``channel``, ``geography``, ``stage`` and ``keywords`` (at most 15).
+``customers`` (``name``, ``type``, ``share``, ``quote``, ``parent``, ``public``), ``suppliers`` (the same without
+``share``), ``named_competitors``, ``business_model``, ``channel``, ``geography``, ``stage`` and ``keywords``
+(at most 15).
 
 ``quote`` (the sentence a customer or supplier is named in) is read by Value Chain (#410): one extraction for both
-boards. The object is stored whole in ``relatedness_profiles.profile_json`` (schema 13, #401); the board's filters
+boards. ``parent`` and ``public`` (v3c, #717) are hints for that board's name resolver, never an answer on their
+own: a ``parent`` counts only when it matches a spine name, and ``public`` only narrows a search. 83.8% of the
+party names a profile writes down have no row in the equity universe (measured 11 Nov 2026), and a subsidiary
+named instead of its listed parent is the part of that a filing can itself resolve.
+
+The object is stored whole in ``relatedness_profiles.profile_json`` (schema 13, #401); the board's filters
 keep reading the attribute rows ``to_attributes`` derives from it (``config.PROFILE_FIELDS``).
 
 Every function here is pure: no store, no network.
@@ -19,7 +25,7 @@ from __future__ import annotations
 import json
 import re
 
-PROMPT_VERSION = "v3b"
+PROMPT_VERSION = "v3c"
 MAX_KEYWORDS = 15
 MAX_LIST = 30
 # A customer's or supplier's quote: one sentence, kept short so a reply of 30 parties fits ``token_budget``.
@@ -42,8 +48,10 @@ SYSTEM = (
     "{\"summary\": \"one or two plain sentences\",\n"
     " \"segments\": [{\"name\": str, \"share\": number or null, \"source\": \"table\" | \"text\", "
     "\"products\": [tag], \"end_markets\": [tag]}],\n"
-    " \"customers\": [{\"name\": str, \"type\": tag, \"share\": number or null, \"quote\": str}],\n"
-    " \"suppliers\": [{\"name\": str, \"type\": tag, \"quote\": str}],\n"
+    " \"customers\": [{\"name\": str, \"type\": tag, \"share\": number or null, \"quote\": str, "
+    "\"parent\": str or null, \"public\": true | false | null}],\n"
+    " \"suppliers\": [{\"name\": str, \"type\": tag, \"quote\": str, \"parent\": str or null, "
+    "\"public\": true | false | null}],\n"
     " \"named_competitors\": [str],\n"
     f" \"business_model\": one of {list(BUSINESS_MODELS)},\n"
     f" \"channel\": one of {list(CHANNELS)},\n"
@@ -54,7 +62,11 @@ SYSTEM = (
     "source is \"table\" only when the share comes from a segment table or note. A customer's or supplier's name is "
     "a named company, never a category; its type says what it is (\"distributor\", \"oem\", \"government\"); its "
     "share is the stated fraction of sales or purchases, else null; quote is the one sentence that names it, "
-    f"copied as written (at most {MAX_QUOTE} characters). Candidates, when given, are company names a keyword scan "
+    f"copied as written (at most {MAX_QUOTE} characters). parent is the larger company the text says this party "
+    "belongs to (\"Amazon Web Services, a subsidiary of Amazon.com\" -> \"Amazon.com\"), null when the text says "
+    "nothing; public is true only when the text presents the party as a publicly traded company, false when it "
+    "calls it private, and null when the text does not say. Never guess parent or public from what you know of the "
+    f"company: null is the right answer when this filing is silent. Candidates, when given, are company names a keyword scan "
     "of this filing found: list one only when the text names it as a customer, supplier or competitor. A blank-check company or one with no operations has stage \"shell\"."
 )
 
@@ -122,6 +134,11 @@ def _text(value, cap: int = 1000) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:cap]
 
 
+def _flag(value) -> bool | None:
+    """A party's ``public`` (v3c): the reply's boolean, or None for anything else, "unknown" included."""
+    return value if isinstance(value, bool) else None
+
+
 def _share(value) -> float | None:
     """A fraction 0..1; a percent (1 < x <= 100) is read as one. Anything else is None."""
     if isinstance(value, str):
@@ -169,7 +186,8 @@ def _parties(values, with_share: bool) -> list[dict]:
         if not key or key in seen:
             continue
         seen.add(key)
-        row = {"name": name, "type": _tag(p.get("type")), "quote": _text(p.get("quote"), MAX_QUOTE)}
+        row = {"name": name, "type": _tag(p.get("type")), "quote": _text(p.get("quote"), MAX_QUOTE),
+               "parent": _name(p.get("parent")), "public": _flag(p.get("public"))}
         if with_share:
             row["share"] = _share(p.get("share"))
         out.append(row)
@@ -349,10 +367,13 @@ def _union_parties(profs, key: str, with_share: bool) -> list[dict]:
             k = resolve_key(c.get("name"))
             if not k:
                 continue
-            row = by.setdefault(k, {"name": c["name"], "type": "", "quote": "", **({"share": None} if with_share
-                                                                                   else {})})
+            row = by.setdefault(k, {"name": c["name"], "type": "", "quote": "", "parent": "", "public": None,
+                                    **({"share": None} if with_share else {})})
             row["type"] = row["type"] or c.get("type") or ""
             row["quote"] = row["quote"] or c.get("quote") or ""
+            row["parent"] = row["parent"] or c.get("parent") or ""
+            if row["public"] is None:           # False is an answer; only None means no chunk said anything
+                row["public"] = c.get("public") if isinstance(c.get("public"), bool) else None
             if with_share and c.get("share") is not None:
                 row["share"] = c["share"] if row["share"] is None else max(row["share"], c["share"])
     return list(by.values())[:MAX_LIST]

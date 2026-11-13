@@ -87,7 +87,8 @@ no downloaded state worth re-deriving, so they keep a "click Fetch" empty state.
 | Swing Potential | `/run/swing` | `refresh_universe`, `no_fetch` | model-only |
 | Fundamentals | `/run/module_fundamentals` | `refresh_universe`, `no_fetch` | model-only |
 | SEC 13F | `/run/module_sec_13f` (Fetch: names/sectors → shares outstanding → render; no UW key needed, and no SEC call since G9 — the builder owns the numbers) | — | store |
-| LEAPS | `/run/module_leaps` | — | model-only |
+| LEAPS | *(the scan is switched off, #730: `/run/module_leaps` answers `409` and the job is not registered; the tab serves a "no data yet" page)* | — | model-only |
+| Watch lists | *(none, #786: a watch list is typed, not downloaded; the board has no Fetch and no job)* | — | store — avo's lists from `boards/watchlists.duckdb`, the numbers beside them from the rcdata layer (`prices.bars`, `prices.latest`, `identity.security`, `market.series`) |
 | Forwards Testing | *(none)* | — | always live from files |
 | **Universe** (header) | `/run/universe` | — | n/a — SEC member list + market data into `equity_universe`; not a tab |
 | **Universe caps** (Settings) | `/run/universe-stats` | — | store → `.cache/` — fills only the NULL `equity_universe.market_cap` rows (Phase B alone) |
@@ -277,6 +278,35 @@ with its history row. No provider call, no DuckDB file.
   may, as for every `rcdata.read` call. A flush that fails keeps its counts for the next one and never fails the
   read (#228).
 
+#### The Watch lists board's own routes (#786)
+
+These are avo's named lists (`boards/watchlists.duckdb`, `module_watchlists/store.py`). The two shared
+`option` / `stock` lists above are on the same board since 13 Nov 2026 as the list ids `jobs.option` and
+`jobs.stock`: of these routes only `symbol/add`, `symbol/remove` and `columns/<tab>` answer for them, and the two
+writes go to `ops.sqlite` (`ops.watch_add` / `ops.watch_remove`), not to the store. Every write is store-only — one list, one section or one symbol — and answers
+`{ok, payload}` with the list's whole payload again, so the page redraws from what was stored. Each needs
+`X-RC-Panel` like every non-GET.
+
+- **`GET /api/watchlists/search?q=`**: `{ok, q, rows}` — the add box's suggestions from the spine
+  (`identity.security`), a ticker that starts with the query first.
+- **`POST /api/watchlists/new`** `{name, description?}` -> `{ok, list_id}`; 400 for an empty or taken name.
+- **`POST /api/watchlists/<list_id>`** `{name?, description?}` — rename the list or re-word its description.
+- **`POST /api/watchlists/<list_id>/delete`** — the list, its sections and its symbols; the `wl_change` rows stay.
+- **`GET /api/watchlists/<list_id>/export.txt`** — the list in TradingView's one-line format, its own spelling.
+- **`GET /api/watchlists/<list_id>/columns/<tab>`** -> `{ok, tab, values}`, keyed by the symbol as avo wrote it:
+  one tab's numbers (`financials`, `performance`, `risk`, `technicals`). Not in the first payload, because
+  the last three read five years of bars and Financials reads the SEC statements, which a board opened on Price
+  would pay for without showing; the page asks the first time the tab is opened and keeps the answer. 404 for an
+  unknown list and for `price` (the first payload carries it). Only the US listings get a row. Financials
+  (`module_watchlists/financials.py`): revenue and EPS over the trailing twelve months where a 10-Q follows the
+  fiscal year, else the fiscal year (`fb` says which), P/E on the newest close (none for a loss), the year's cash
+  dividends per share without specials, split-adjusted, their yield, and the one-year beta against SPY.
+- **`POST /api/watchlists/<list_id>/symbol/add`** `{symbol, section_id?}`, **`/symbol/remove`** `{symbol}`,
+  **`/symbol/move`** `{symbol, section_id, order?}` (a dropped row: its section, then that section's new order).
+- **`POST /api/watchlists/<list_id>/section/add`** `{name}`, **`/section/rename`** `{section_id, name}`,
+  **`/section/delete`** `{section_id}` (its symbols move to the first remaining section; the last one cannot go),
+  **`/sections/order`** `{order}`.
+
 ### Known deviation (fixed 2026-09-30)
 
 `module_sec_13f` used to refresh by unlinking the artifact and returning HTML
@@ -292,7 +322,7 @@ id; a single background worker (`app/jobs.py`) drains the queue one job at a
 time, so two scans never race on the writer lock or the same API quota.
 
 ```
-curl -X POST -H "X-RC-Panel: cli" http://127.0.0.1:8000/run/module_leaps
+curl -X POST -H "X-RC-Panel: cli" http://127.0.0.1:8000/run/module_sec_13f
                             -> 202 {"ok": true, "job_id": "ab12cd34"}
 GET  /api/job/ab12cd34      -> {"job": {"status": "running"}}
 GET  /api/job/ab12cd34      -> {"job": {"status": "done", "message": null}}
@@ -315,7 +345,7 @@ over it can write. It widens that check alone — the server still binds `127.0.
 by that name needs something that forwards the port.
 
 A board cached before this rule has the old script baked in: open it once with
-`?refresh=1` (Settings, Co-movement and LEAPS cache their page).
+`?refresh=1` (Settings and Co-movement cache their page; LEAPS no longer serves a cached page, #730).
 
 Terminal states:
 

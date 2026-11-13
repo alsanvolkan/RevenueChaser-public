@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from RevenueChaser.rcdata.tests import universe_store
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_comovement import config, engine, ohlc
 from RevenueChaser.module_comovement import returns as returns_mod
@@ -190,7 +191,7 @@ def test_the_data_date_is_the_stores_date_of_its_names(rawstore_tmp_db):
     prices_bars.write_bars(_swing_rows("AAA", _walk(pd.bdate_range(end="2026-10-13", periods=5), 13))
                         + _swing_rows("OTHER", _walk(pd.bdate_range(end="2026-10-14", periods=5), 14)))
     rawstore.write_rows("swing_ohlc", _swing_rows("AAA", _walk(pd.bdate_range(end="2026-10-15", periods=5), 15)))
-    rawstore.replace_all("equity_universe", [{"ticker": "AAA", "market_cap": 1.0e10, "sector": "Technology",
+    universe_store.replace([{"ticker": "AAA", "market_cap": 1.0e10, "sector": "Technology",
                                               "price": 10.0, "name": "AAA", "industry": "Software",
                                               "quote": {"symbol": "AAA"}}])
     assert provenance.data_as_of("module_comovement") == "2026-10-13"

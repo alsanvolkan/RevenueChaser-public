@@ -2,10 +2,10 @@
 
 * shares outstanding (and so % Out) from ``ownership_snapshot``, in the readers' order: UW ``info``, then SEC dei,
   then yfinance; the newest session of the first source that has a value;
-* Insider % from ``ownership_snapshot.insider_pct`` (a stored fraction, shown in %);
+* Insider % from ``ownership_snapshot.insider_pct`` (a stored fraction, in %), read but not shown since #732;
 * Price and Price Δ from D01 (``price_bars_daily``) through the K8a windowed read: the last close on or before
   each quarter end;
-* a name with no row shows "—", never 0; the Short% column is hidden until D10 (F6);
+* a name with no row shows "—", never 0; Short% is neither read nor shown since #732 (owner, 12 Nov 2026);
 * ``START_QUARTER`` is the engine's constant and the empty-state colspan is the header's column count.
 
 Offline; temp stores.
@@ -19,6 +19,7 @@ import pytest
 
 from RevenueChaser.core import rawstore
 from RevenueChaser.module_sec_13f import engine, enrich, report
+from RevenueChaser.core.tests.d01_seed import write_d01
 
 Q1, Q2 = "2025-03-31", "2025-06-30"
 
@@ -94,7 +95,7 @@ def test_insider_pct_is_the_stored_fraction_in_percent(rawstore_tmp_db):
         _own("AAA", "yfinance", "2026-10-09", shares=4000.0, insider=0.014)])
     inputs = enrich.load_inputs(TOTALS)
     assert inputs["AAA"]["insider_pct"] == pytest.approx(1.4)
-    assert _cells(report.board_payload(TOTALS, META, inputs), "AAA")["insider"][:2] == ["1.4%", pytest.approx(1.4)]
+    assert "insider" not in _cells(report.board_payload(TOTALS, META, inputs), "AAA")     # not shown (#732)
 
 
 def test_a_ticker_outside_the_totals_is_not_read_into_the_inputs(rawstore_tmp_db):
@@ -105,7 +106,7 @@ def test_a_ticker_outside_the_totals_is_not_read_into_the_inputs(rawstore_tmp_db
 # ── the D01 price reader ────────────────────────────────────────────────────
 
 def test_price_is_the_last_d01_close_on_or_before_each_quarter_end(rawstore_tmp_db):
-    rawstore.write_rows("price_bars_daily", [
+    write_d01([
         _bar("AAA", "2025-03-27", 9.0), _bar("AAA", "2025-03-28", 10.0),     # Fri before Q1 (Mon 03-31 missing)
         _bar("AAA", "2025-06-27", 11.0), _bar("AAA", "2025-06-30", 12.0),
         _bar("AAA", "2025-07-01", 99.0)])                                    # after the quarter: never read
@@ -116,15 +117,15 @@ def test_price_is_the_last_d01_close_on_or_before_each_quarter_end(rawstore_tmp_
 
 
 def test_a_close_older_than_the_lookback_is_no_quarter_end_price(rawstore_tmp_db):
-    rawstore.write_rows("price_bars_daily", [_bar("AAA", "2025-03-28", 10.0), _bar("AAA", "2025-05-01", 11.0)])
+    write_d01([_bar("AAA", "2025-03-28", 10.0), _bar("AAA", "2025-05-01", 11.0)])
     assert enrich.load_inputs(TOTALS)["AAA"]["price"] == {Q1: 10.0}
 
 
 def test_a_split_after_the_quarter_end_divides_a_close_fetched_before_it(rawstore_tmp_db):
     """The nominal series is ``prices.daily_bars``': a 2:1 split on 2025-05-01 halves the Q1 close fetched in March."""
     from RevenueChaser.core import prices
-    rawstore.write_rows("price_bars_daily", [_bar("AAA", "2025-03-31", 20.0), _bar("AAA", "2025-06-30", 12.0)])
-    rawstore.write_rows("price_actions", [{"ticker": "AAA", "ex_date": date(2025, 5, 1), "action": "split",
+    write_d01([_bar("AAA", "2025-03-31", 20.0), _bar("AAA", "2025-06-30", 12.0)])
+    write_d01([], [{"ticker": "AAA", "ex_date": date(2025, 5, 1), "action": "split",
                                            "value": 2.0, "source": "yfinance", "fetched_at": 0.0,
                                            "run_id": "seed", "run_at": 0.0}])
     closes = enrich.load_inputs(TOTALS)["AAA"]["price"]
@@ -136,7 +137,7 @@ def test_a_split_after_the_quarter_end_divides_a_close_fetched_before_it(rawstor
 def test_the_price_read_is_bounded_to_the_quarter_end_windows(rawstore_tmp_db, monkeypatch):
     """Only the bars inside the quarter-end windows are read, never the whole D01 history of the 13F universe."""
     from RevenueChaser.core import prices
-    rawstore.write_rows("price_bars_daily", [_bar("AAA", d, 10.0) for d in
+    write_d01([_bar("AAA", d, 10.0) for d in
                                              ("2025-03-28", "2025-04-15", "2025-06-30", "2025-08-01", "2026-10-01")])
     seen = []
     real = prices.apply_events
@@ -154,49 +155,25 @@ def test_the_price_read_is_bounded_to_the_quarter_end_windows(rawstore_tmp_db, m
 def test_a_name_with_no_row_shows_a_dash_never_zero(rawstore_tmp_db):
     inputs = enrich.load_inputs(TOTALS)
     cells = _cells(report.board_payload(TOTALS, META, inputs), "BBB")
-    for col in ("pct_out", "insider", "short", "price_delta"):
+    for col in ("pct_out", "price_delta"):
         assert cells[col][0] == "—" and cells[col][1] is None, col
 
 
-# ── the D10 short-interest reader ───────────────────────────────────────────
+# ── Short % and Insider % are off the board (#732, owner 12 Nov 2026: both read old tables) ──────────────────
 
-def test_short_pct_is_the_stored_si_float_in_percent(rawstore_tmp_db):
+def test_the_board_reads_no_short_interest_and_shows_neither_column(rawstore_tmp_db, monkeypatch):
     rawstore.write_rows("short_interest", [_short("AAA", "2026-10-15", 0.052)])
+
+    def refuse(tickers):
+        raise AssertionError("the 13F board read short_interest")
+
+    monkeypatch.setattr(enrich, "load_short_interest", refuse)
     inputs = enrich.load_inputs(TOTALS)
-    assert inputs["AAA"]["short_pct"] == pytest.approx(5.2)
-    cells = _cells(report.board_payload(TOTALS, META, inputs), "AAA")
-    assert cells["short"][:2] == ["5.2%", pytest.approx(5.2)]
-
-
-def test_the_newest_short_interest_row_wins(rawstore_tmp_db):
-    rawstore.write_rows("short_interest", [
-        _short("AAA", "2026-10-14", 0.010),
-        _short("AAA", "2026-10-15", 0.052),
-        _short("AAA", "2026-10-13", 0.090)])
-    assert enrich.load_inputs(TOTALS)["AAA"]["short_pct"] == pytest.approx(5.2)
-
-
-def test_a_null_si_float_row_does_not_win(rawstore_tmp_db):
-    rawstore.write_rows("short_interest", [
-        _short("AAA", "2026-10-15", None),
-        _short("AAA", "2026-10-14", 0.040)])
-    assert enrich.load_inputs(TOTALS)["AAA"]["short_pct"] == pytest.approx(4.0)
-
-
-def test_a_ticker_outside_the_totals_is_not_read_into_short_interest(rawstore_tmp_db):
-    rawstore.write_rows("short_interest", [_short("ZZZ", "2026-10-15", 0.100)])
-    assert "ZZZ" not in enrich.load_inputs(TOTALS)
-
-
-def test_short_pct_column_is_shown_when_d10_has_rows(rawstore_tmp_db):
-    rawstore.write_rows("short_interest", [_short("AAA", "2026-10-15", 0.052)])
-    inputs = enrich.load_inputs(TOTALS)
+    assert "short_pct" not in inputs.get("AAA", {})
     payload = report.board_payload(TOTALS, META, inputs)
-    assert "short" in payload["cols"]
+    assert "short" not in payload["cols"] and "insider" not in payload["cols"]
     html = report.render_sec13f_dashboard(TOTALS, META, inputs)
-    assert 'data-col="short"' in html and ">Short%<" in html
-    assert "short interest as % of float" in html
-    assert "as of 2026-10-15" in html
+    assert ">Short%<" not in html and ">Insider%<" not in html and "short interest as % of float" not in html
 
 
 def test_the_board_quarters_start_at_the_engines_start_quarter(monkeypatch):

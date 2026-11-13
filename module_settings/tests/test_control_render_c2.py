@@ -132,7 +132,7 @@ def test_the_tree_css_sets_the_widths_and_keeps_paths_on_one_line():
 
 def test_the_tree_draws_box_lines_build_lines_and_hit_twins():
     js = control_render.TREE_JS
-    for part in ("section.fpanel", ".dset[data-dataset", "tr.jr[data-ds]", "createElementNS", "stroke-dasharray",
+    for part in (".fpanel", ".dset[data-dataset", "tr.jr[data-ds]", "createElementNS", "stroke-dasharray",
                  "pointer-events", "stroke", "--fh", "resize", "toggle", "change", "3.4", "44", "0.45"):
         assert part in js, part
     assert "setInterval" not in js
