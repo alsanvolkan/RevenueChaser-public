@@ -262,8 +262,7 @@ def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) ->
     carry no total, and 104 of them carry one of these balances. The rule that a current line alone is not the
     whole is **kept** in both passes, so a year whose only fallback line is a current one still has no total.
     """
-    return (_lines_on_one_sheet(out, index, balance_end, DEBT_LINES, fallback=False)
-            or _lines_on_one_sheet(out, index, balance_end, DEBT_LINES + FALLBACK_DEBT_LINES, fallback=True))
+    return _lines_on_one_sheet(out, index, balance_end, DEBT_LINES + FALLBACK_DEBT_LINES, fallback=True)
 
 
 def _best_of(lines: dict[str, dict], fields: tuple[str, ...]) -> dict | None:
@@ -280,8 +279,8 @@ def _best_of(lines: dict[str, dict], fields: tuple[str, ...]) -> dict | None:
     carried ``OtherLongTermDebt`` 52 m. This applies to the fallback ladders only — a zero in the lines of #239 is
     a filer's own statement and still counts (NVIDIA's restated ``LongTermDebt`` of 0, #264).
     """
-    found = [lines[f] for f in fields if f in lines and lines[f]["value"] > 0]
-    return max(found, key=lambda r: r["value"]) if found else None
+    found = [lines[f] for f in fields if f in lines]
+    return found[0] if found else None
 
 
 def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | None, fields: tuple[str, ...],
