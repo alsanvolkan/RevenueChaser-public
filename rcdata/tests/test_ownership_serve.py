@@ -692,6 +692,7 @@ def test_each_investor_type_lists_its_largest_names_and_the_rest_per_quarter(mon
     e.install(http_mock)
     _uw_institutions(http_mock, [_institution("0004000001", ["energy", "value_investor"]),
                                  _institution("0004000002", ["value_investor"]),
+                                 _institution("0004000003", ["all"]),                # not a second "all"
                                  _institution("0004000009", ["activist"])])          # files no 13F here
     _thirteen_f(as_of="2026-10-28")
     _serve(day="2026-11-20")
