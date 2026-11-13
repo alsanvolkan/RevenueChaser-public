@@ -278,8 +278,17 @@ def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | 
     short = (lines.get("short_term_borrowings") or _tagged(index, COMMERCIAL_PAPER, balance_end)
              or (_first_of(lines, FALLBACK_SHORT_TERM_DEBT) if fallback else None))
     short = [short] if short else []
-    long_term = (_first_of(lines, LONG_TERM_DEBT)
-                 or (_first_of(lines, FALLBACK_LONG_TERM_DEBT) if fallback else None))
+    long_term = _first_of(lines, LONG_TERM_DEBT)
+    whole = lines.get("lt_debt_total") or _tagged(index, WHOLE_LONG_TERM_DEBT, balance_end)
+    if fallback and long_term is None and whole is None:
+        # The fallback asks for a WHOLE line before a noncurrent one, the other way round from the lines above.
+        # There, the current portion has its own standard tag (``DebtCurrent``, ``LongTermDebtCurrent``) and a
+        # noncurrent line plus that tag is the more exact pair. Here it has not: a filer that tags
+        # ``ConvertibleDebt`` 300 and ``ConvertibleDebtNoncurrent`` 280 and no current tag at all states its whole
+        # debt only in the first, and reading the second would quietly drop the 20 due within the year.
+        whole = _first_of(lines, FALLBACK_WHOLE_DEBT)
+        if whole is None:
+            long_term = _first_of(lines, FALLBACK_LONG_TERM_DEBT)
     convertible = lines.get("convertible_debt_current")
     if long_term is not None:
         # #264: convertible notes due within the year are the current line only when no other current line is
@@ -288,8 +297,6 @@ def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | 
                         or (_first_of(lines, FALLBACK_CURRENT_DEBT) if fallback else None))
         current = [lines["debt_current"]] if "debt_current" in lines else ([current_line] if current_line else []) + short
         return [long_term] + current
-    whole = (lines.get("lt_debt_total") or _tagged(index, WHOLE_LONG_TERM_DEBT, balance_end)
-             or (_first_of(lines, FALLBACK_WHOLE_DEBT) if fallback else None))
     if not whole:
         return []
     # A whole long-term line holds its current portion, so it is never below the convertible notes due within the
