@@ -103,6 +103,45 @@ def test_every_debt_line_the_store_can_carry_is_checked():
     assert len(fields) == len(set(fields))
 
 
+# ── The presence-only fields (measured 13 Nov 2026 on the real store; 6 of 307 were wrong without them) ──
+
+
+@pytest.mark.parametrize("field, ticker, owed", [
+    ("debt_combined_total", "TRN", 5_442.0),       # reached the card as "net cash", ND/EBITDA -0.15
+    ("debt_combined_total", "CENX", 548.0),        # reached the card as "net cash", ND/EBITDA -0.71
+    ("notes_and_loans_payable", "KBH", 1_693.0),
+    ("unsecured_debt", "TLNC", 1.0),
+    ("debt_instrument_carrying_amount", "ENB", 45_000.0),
+    ("debt_instrument_carrying_amount", "CP", 14_691.0),
+])
+def test_a_filer_that_tags_a_borrowing_under_a_presence_only_concept_stays_unknown(field, ticker, owed):
+    """These six do owe money and tag it, under a concept no total of this project sums. Without this check the
+    rule called every one of them debt-free, and TRN and CENX showed "net cash" on the card."""
+    q = pipeline._quality_metrics(_year(**{field: owed}))
+    assert q["debt_basis"] is None
+    assert q["net_debt_ebitda"] is None
+    assert _leverage(q)["passed"] is None
+
+
+@pytest.mark.parametrize("field", debt.PRESENCE_ONLY_FIELDS)
+def test_a_presence_only_field_tagged_at_zero_is_still_a_tag(field):
+    assert pipeline._quality_metrics(_year(**{field: 0.0}))["debt_basis"] is None
+
+
+def test_a_presence_only_field_enters_no_total_anywhere():
+    """They say "there is debt", never "this much debt": neither the facts layer's ladders nor the extractor's own
+    ``total_debt`` may carry one, or a per-instrument carrying amount would become a balance."""
+    from RevenueChaser.rcdata.build.fundamentals import facts
+    assert not set(debt.PRESENCE_ONLY_FIELDS) & (set(facts.DEBT_LINES) | set(facts.FALLBACK_DEBT_LINES))
+
+
+def test_every_presence_only_field_is_a_field_the_store_can_carry():
+    """A typo here would silently switch the check off, which is how the six got through in the first place."""
+    from RevenueChaser.core.providers import sec_edgar
+    assert set(debt.PRESENCE_ONLY_FIELDS) <= set(sec_edgar.CONCEPTS)
+    assert set(debt.PRESENCE_ONLY_FIELDS) <= sec_edgar._DEBT_COMPONENT_FIELDS   # never sums, never a record
+
+
 # ── The trailing year (rule 4: the same rule, read on the quarter the balance sheet comes from) ──
 
 FLOWS = ("revenue", "gross_profit", "ebit", "depreciation")

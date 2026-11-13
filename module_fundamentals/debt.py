@@ -11,12 +11,29 @@ where a missing total is turned into a reading, and the reading carries its own 
 
 Two conditions, both required:
 
-1. **No debt tag at all.** None of ``facts.DEBT_LINES`` (the lines of #239) and none of
-   ``facts.FALLBACK_DEBT_LINES`` (the balances #825 added) is tagged on the record. A filer that tags only a
-   current line is therefore **out of scope** and stays unknown: it has debt, and #239's rule that a current line
-   alone is not the whole means the size of it is not readable. This rule does not change that.
+1. **No debt tag at all.** None of ``facts.DEBT_LINES`` (the lines of #239), none of
+   ``facts.FALLBACK_DEBT_LINES`` (the balances #825 added) and none of ``PRESENCE_ONLY_FIELDS`` is tagged on the
+   record. A filer that tags only a current line is therefore **out of scope** and stays unknown: it has debt, and
+   #239's rule that a current line alone is not the whole means the size of it is not readable. This rule does not
+   change that.
 2. **No positive interest expense.** ``interest_expense`` absent or ``<= 0``. A filer that pays interest owes
    something, whatever it tagged, so a positive figure takes the name out of scope.
+
+**The presence-only fields.** The measurement of 13 Nov 2026 on the real store
+(claude-coordinator ``notes/revenuechaser/notes/2026-11-13_1515_737-debt-free-inference-measurement.md``) read
+every name this rule would call debt-free against its raw companyfacts and found **6 of 307** that do tag a
+borrowing, under a concept neither list carries. Two of them, TRN and CENX, reached a card as "net cash" with a
+negative net debt / EBITDA while the filer owed 5,442 m and 548 m and had paid 272.8 m and 36.6 m of interest.
+``PRESENCE_ONLY_FIELDS`` closes that: the four concepts are read into the record
+(``core/providers/sec_edgar.py``) and consulted **here only**. They enter no total, in this layer or any other --
+``DebtInstrumentCarryingAmount`` in particular is one instrument's carrying amount and would make a total worse
+than the NULL it replaces -- but a filer that tags one of them is not a filer that tagged nothing, so the name
+leaves the inference and stays unknown, which is the honest answer.
+
+**What is left.** One name of the 307, PCAR, tags no debt at all and reports no interest expense; only
+``InterestPaid`` (692.8 m) betrays it, and 49 of the 307 paid some interest (MNST 5.3 m, CPRT 1.9 m), so a rule on
+interest *paid* needs a threshold, a measured reason and avo's decision. It is deliberately not invented here, and
+PCAR's reading does not reach a card (no EBITDA, so the leverage rule stays unknown either way).
 
 **What this cannot see.** ``interest_expense`` reads ``InterestExpense`` and its three neighbours
 (``core/providers/sec_edgar.py``). A bank or an insurer writes interest under other labels (deposit interest,
@@ -40,6 +57,13 @@ def tag_fields() -> tuple[str, ...]:
     from RevenueChaser.rcdata.build.fundamentals.facts import DEBT_LINES, FALLBACK_DEBT_LINES
     return tuple(dict.fromkeys(DEBT_LINES + FALLBACK_DEBT_LINES))
 
+
+#: Fields that say "this filer tagged a borrowing" and nothing more. They are summed nowhere -- not in
+#: ``facts._debt_lines``, not in ``sec_edgar.extract_annual`` -- and exist so ``tags_no_debt`` can tell a filer
+#: that tagged nothing from one that tagged debt this project does not add up (the module docstring).
+PRESENCE_ONLY_FIELDS = ("notes_and_loans_payable", "debt_combined_total", "unsecured_debt",
+                        "debt_instrument_carrying_amount")
+
 FILED = "filed"                  # ``total_debt`` came from the facts (a sum of tagged lines), zero included
 INFERRED_NONE = "inferred_none"  # no total in the facts; this module read it as 0
 
@@ -55,10 +79,13 @@ def _float(v):
 
 
 def tags_no_debt(rec: dict | None) -> bool:
-    """True when the record tags none of ``tag_fields()``. A tagged zero counts as a tag: the filer stated it."""
+    """True when the record tags none of ``tag_fields()`` and none of ``PRESENCE_ONLY_FIELDS``.
+
+    A tagged zero counts as a tag: the filer stated it.
+    """
     if not rec:
         return False
-    return all(_float(rec.get(f)) is None for f in tag_fields())
+    return all(_float(rec.get(f)) is None for f in tag_fields() + PRESENCE_ONLY_FIELDS)
 
 
 def no_interest(rec: dict | None) -> bool:

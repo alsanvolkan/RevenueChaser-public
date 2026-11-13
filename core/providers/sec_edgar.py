@@ -326,6 +326,19 @@ CONCEPTS = {
     "loans_payable_current": (["LoansPayableCurrent"], "USD"),
     "senior_notes_current": (["SeniorNotesCurrent"], "USD"),
     "short_term_bank_loans": (["ShortTermBankLoansAndNotesPayable"], "USD"),
+    # #737, debt-PRESENCE signals. These four are read so the board can tell "this filer tagged no debt at all"
+    # from "this filer tagged debt we do not sum". They are measured, 13 Nov 2026 on the stored companyfacts
+    # (claude-coordinator notes/revenuechaser/notes/2026-11-13_1515_737-debt-free-inference-measurement.md): six
+    # of the 307 names the inference would have called debt-free do tag a borrowing, under one of these concepts
+    # -- TRN and CENX (5,442 m and 548 m combined debt, 272.8 m and 36.6 m interest paid) reached the card as
+    # "net cash". They are NOT in ``facts.DEBT_LINES`` or ``facts.FALLBACK_DEBT_LINES``, so no ``total_debt``
+    # moves: ``module_fundamentals/debt.py`` reads them only to take a name OUT of the inference.
+    # ``DebtInstrumentCarryingAmount`` is one instrument's carrying amount, not a balance (see the comment above
+    # and ``rcdata/.../facts.py``), so it stays out of every total -- but a filer that tags it has debt.
+    "notes_and_loans_payable": (["NotesAndLoansPayable"], "USD"),
+    "debt_combined_total": (["DebtLongtermAndShorttermCombinedAmount"], "USD"),
+    "unsecured_debt": (["UnsecuredDebt"], "USD"),
+    "debt_instrument_carrying_amount": (["DebtInstrumentCarryingAmount"], "USD"),
     "finance_lease_noncurrent": (["FinanceLeaseLiabilityNoncurrent"], "USD"),
     "finance_lease_current": (["FinanceLeaseLiabilityCurrent"], "USD"),
     "operating_lease_noncurrent": (["OperatingLeaseLiabilityNoncurrent"], "USD"),
@@ -371,6 +384,8 @@ _DEBT_COMPONENT_FIELDS = frozenset({
     "other_lt_debt", "senior_notes_noncurrent", "loans_payable_noncurrent", "secured_debt_noncurrent",
     "bank_loans_noncurrent", "other_lt_debt_noncurrent", "line_of_credit_current", "loans_payable_current",
     "senior_notes_current", "short_term_bank_loans",
+    # #737's presence signals. Collected like the rest, summed nowhere, read only by the debt-free inference.
+    "notes_and_loans_payable", "debt_combined_total", "unsecured_debt", "debt_instrument_carrying_amount",
     "operating_lease_noncurrent", "operating_lease_current"})
 
 # Fields whose concept list is a strict priority order, resolved period by period.
