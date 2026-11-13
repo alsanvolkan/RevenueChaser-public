@@ -276,7 +276,13 @@ def _filing_extras(cik: str | None, text: str) -> dict:
     if sents:
         out["filing_sentences"] = sents
     for key, local_name in NOTE_BLOCKS:
-        block = _note_block(cik, local_name)
+        # Each block on its own: a notes read that fails must not take the customer lines below with it, and
+        # ``_prepare`` drops the whole of this function's answer on an exception (review of PR #842, finding 7).
+        try:
+            block = _note_block(cik, local_name)
+        except Exception as exc:  # noqa: BLE001 - optional context, said aloud
+            logger.warning("relatedness: no %s for cik %s: %s", key, cik, exc)
+            continue
         if block:
             out[key] = block
     rows = read.customers(cik)
@@ -406,11 +412,13 @@ def _forms_ready(tickers: list[str]) -> None:
     why = read.missing("sec_forms", "sec/forms")
     if why is None and config.FORMS_RULES_VERSION:
         ciks = {c for c in _cik_for(tickers).values() if c}
-        other = sorted({str(r.get("rules_version")) for r in read.form_business(ciks, text=False)}
-                       - {config.FORMS_RULES_VERSION})
-        if other:
-            why = (f"sec/forms business sections are cut with {', '.join(other)}, "
-                   f"not {config.FORMS_RULES_VERSION}")
+        rows = read.form_business(ciks, text=False)
+        off = [r for r in rows if str(r.get("rules_version")) != config.FORMS_RULES_VERSION]
+        if off:
+            other = ", ".join(sorted({str(r.get("rules_version")) for r in off}))
+            first = ", ".join(sorted(str(r.get("cik")) for r in off)[:5])
+            why = (f"{len(off)} of {len(rows)} sec/forms business sections are cut with {other}, not "
+                   f"{config.FORMS_RULES_VERSION} (first CIKs: {first})")
     if why is not None:
         logger.warning("relatedness profile run stopped: %s", why)
         raise RunStopped("forms", None, why)

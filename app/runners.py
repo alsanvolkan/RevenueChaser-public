@@ -1744,6 +1744,8 @@ def run_relatedness(uw=None, no_fetch: bool = False) -> Path:
         parts = [f"{payload.get('n') or 0} profiled, {pending} pending"]
         if payload.get("stopped_reason"):
             parts.append(f"stopped: {payload['stopped_reason']}")
+        if payload.get("stopped_reason") in ("spine", "forms") and payload.get("error"):
+            parts.append(str(payload["error"]))        # a stop no later run fixes by itself: say why (#841)
         if payload.get("next_off_peak"):
             parts.append(f"next off-peak {payload['next_off_peak']} UTC")
         raise JobMessage("; ".join(parts))

@@ -25,6 +25,9 @@ BUSINESS = "We build cloud software and developer tools for enterprises. " * 40
 # cik 845982, 20-F, ``ours-2`` label ``crossref``: the opening of the 1,212-character body, a page index.
 SNN_INDEX = ("A – History and Development of the Company Corporate Headquaters and Regional Office 298\n"
              "Note 1 'Basis of preparation' 215\nGroup Information 274\nAbout Smith+Nephew 297")
+# An empty ``crossref`` body (America Movil) is a row ``filing_item`` keeps and ``filing_section`` does not write
+# (``forms.sections_of`` appends a business row only for a non-empty cut), so on the layer the rule below reaches
+# the companies whose body is not empty: about 20 of the 42. The empty case is kept for the off-layer path.
 CROSSREF_BODIES = {"DBD": "4", "SNN": SNN_INDEX, "AMX": ""}
 
 WHOLE = ("Annual Report and Accounts\nStrategic report\nWe make orthopaedic implants and wound dressings.\n"
@@ -108,11 +111,43 @@ def test_a_run_stops_when_the_sections_are_cut_with_another_rule_version(layer, 
     assert len(writer) == 1 and rawstore.get("relatedness_profiles", "MSFT")["status"] == "ok"
 
 
+def test_a_stopped_run_leaves_the_mode_stamp_alone_and_names_the_rows(layer, writer, monkeypatch):
+    """The guard runs before ``store.set_mode``: a halted run writes nothing, and its reason counts the rows."""
+    from RevenueChaser.module_relatedness import store
+    before = store.get_mode()
+    monkeypatch.setattr(config, "FORMS_RULES_VERSION", "next-rules")
+    asked = []
+    real = read.form_business
+    monkeypatch.setattr(read, "form_business", lambda ciks=(), text=True: asked.append(text) or real(ciks, text=text))
+    with pytest.raises(engine.RunStopped) as stopped:
+        engine.build_profiles(["MSFT"], usd_cap=1.0)
+    assert store.get_mode() == before
+    assert "1 of 1" in str(stopped.value) and "789019" in str(stopped.value)
+    assert asked == [False]                                    # the lengths and labels only, never every text
+
+
+def test_the_comparison_job_stops_at_the_same_guard(filings_only, writer):
+    """Review of PR #842, finding 6: ``compare.run`` prepared its inputs without the board's guard."""
+    from RevenueChaser.module_relatedness import compare, writers
+    provider = "deepseek"
+    out = compare.run(["MSFT"], provider, writers.get(provider).models[0])
+    assert out["stopped_reason"] == "forms" and out["usable"] == 0 and writer == []
+
+
+def test_a_forms_stop_fails_the_scheduled_task():
+    from RevenueChaser.module_relatedness import __main__ as cli
+    assert "forms" in cli._FAILED_STOP_REASONS
+
+
 def test_the_version_the_guard_waits_for_is_ours_2():
     assert config.FORMS_RULES_VERSION == "ours-2"
 
 
-def test_off_the_layer_the_guard_checks_nothing():
+def test_off_the_layer_the_guard_checks_nothing(monkeypatch):
+    def layer_read(*a, **k):
+        raise AssertionError("the guard read the layer off the layer")
+    monkeypatch.setattr(read, "missing", layer_read)
+    monkeypatch.setattr(read, "form_business", layer_read)
     engine._forms_ready(["AAA"])
 
 
@@ -154,6 +189,10 @@ def test_the_hash_pass_hashes_what_the_profile_call_sends(rawstore_tmp_db, monke
     sent = engine._prepare("NVDA", "Nvidia", "1")
     assert engine._input_hashes({"1": ["NVDA"]}, {"NVDA": "Nvidia"}) == {"1": sent["hash"]}
     assert sent["hash"] == profiles.input_hash("Nvidia", engine.clean_input(sentence * 100))
+
+    monkeypatch.setattr(config, "MAX_BUSINESS_CHARS", None)     # the default: the two still agree, on the whole text
+    whole = engine._prepare("NVDA", "Nvidia", "1")
+    assert engine._input_hashes({"1": ["NVDA"]}, {"NVDA": "Nvidia"}) == {"1": whole["hash"]} != {"1": sent["hash"]}
 
 
 # ── a cut the cutter says is in another document ────────────────────────────────────────────────────────────────
@@ -223,6 +262,36 @@ def test_the_extras_offer_both_blocks_and_leave_out_an_absent_one(layer, monkeyp
         [{"text": "We report one segment."}] if local_name == "SegmentReportingDisclosureTextBlock" else []))
     extras = engine._filing_extras("789019", BUSINESS)
     assert extras["segment_block"] == "We report one segment." and "concentration_block" not in extras
+
+
+def test_a_failed_notes_read_keeps_the_customer_lines(layer, monkeypatch):
+    """Review of PR #842, finding 7: one failed notes read dropped the filing sentences and the XBRL customers of
+    a profile that is then paid for and never redone (the context is outside the input hash)."""
+    def broken(*a, **k):
+        raise RuntimeError("no filing_note table")
+    monkeypatch.setattr(read, "form_notes", broken)
+    monkeypatch.setattr(read, "customers", lambda cik: [{"customer": "Acme", "share": 0.2, "benchmark": "revenue",
+                                                         "period_end": "2025-06-30"}])
+    extras = engine._filing_extras("789019", BUSINESS)
+    assert extras["xbrl_customers"] == ["Acme: 20.0% of revenue"]
+    assert "segment_block" not in extras and "concentration_block" not in extras
+
+
+def test_the_note_blocks_are_outside_the_input_hash(rawstore_tmp_db, monkeypatch):
+    """Why ``v3d`` exists: a block that arrives later does not restale the profile, so only a version bump sends it
+    to the companies already profiled."""
+    _seed("NVDA", long_body("We design gpus"))
+    monkeypatch.setattr(engine, "_context", lambda t, cik, source=None: {})
+    monkeypatch.setattr(engine, "_filing_extras", lambda cik, text: {})
+    bare = engine._prepare("NVDA", "Nvidia", "1")
+    monkeypatch.setattr(engine, "_filing_extras", lambda cik, text: {"segment_block": "Two segments."})
+    with_block = engine._prepare("NVDA", "Nvidia", "1")
+    assert with_block["context"] == {"segment_block": "Two segments."} and with_block["hash"] == bare["hash"]
+
+
+def test_the_two_notes_asked_for_are_the_filings_own_tag_names():
+    assert dict(engine.NOTE_BLOCKS) == {"segment_block": "SegmentReportingDisclosureTextBlock",
+                                        "concentration_block": "ConcentrationRiskDisclosureTextBlock"}
 
 
 def test_a_stored_profile_reads_stale_after_the_version_bump():

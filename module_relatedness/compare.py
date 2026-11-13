@@ -68,6 +68,11 @@ def run(tickers: list[str], provider: str, model: str) -> dict:
     w = writers.get(provider)
     if model not in w.models:
         raise ValueError(f"model {model!r} is not one of {provider}'s: {', '.join(w.models)}")
+    try:
+        engine._forms_ready(tickers)                   # the board's guard (#841): no call on a text it would refuse
+    except engine.RunStopped as exc:
+        return {"provider": provider, "model": model, "tickers": tickers, "usable": 0, "attempts": 0,
+                "stopped_reason": exc.reason, "error": str(exc)}
     if provider == "grok":
         grok.reset_gate()                              # the first request reads the allowance
     if provider == "claude":

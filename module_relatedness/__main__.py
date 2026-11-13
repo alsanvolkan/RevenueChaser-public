@@ -70,7 +70,9 @@ from . import settings as rel_settings
 # credential and repeated transient failures; with Grok also a rejected request (endpoint, model) and a run whose
 # first replies were all unusable. Peak, the SuperGrok allowance, the cost cap and names still pending (no filing text
 # yet) are the normal night-to-night state, so they exit 0 and the scheduled task stays green (C-F1).
-_FAILED_STOP_REASONS = frozenset({"auth", "transient", "request", "unusable"})
+# ``forms`` (#841): the SEC form reader cannot serve the business text; every run stops until ``sec/forms`` builds
+# with the awaited rule version, so a green task would hide a board that no longer refreshes.
+_FAILED_STOP_REASONS = frozenset({"auth", "transient", "request", "unusable", "forms"})
 _GROK_FAILURES = (deepseek.DeepSeekAuthError, grok.GrokAuthError, grok.GrokRequestError)
 # The ping's company: a made-up, public-domain-style description (no real issuer, no store read).
 _PING_TEXT = ("Example Semiconductor Corp designs graphics processors and networking chips sold to cloud data "
