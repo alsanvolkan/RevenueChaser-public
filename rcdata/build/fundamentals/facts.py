@@ -62,9 +62,11 @@ WHOLE_LONG_TERM_DEBT = "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMa
 DEBT_LINES = LONG_TERM_DEBT + ("lt_debt_total", "debt_current", "lt_debt_current", "short_term_borrowings",
                                "convertible_debt_current")
 # #737: the debt balances read ONLY when the lines above give no total at all. Each tuple is a strict priority, not
-# a sum: two of these tags can describe one borrowing (``SeniorNotes`` beside ``SecuredDebt``), and the filers that
-# tag several are not countable from the facts, so the first one found is taken and the rest are left out. "Other"
-# is last in each ladder: it is a residual by definition, so it is the weakest statement of the whole.
+# a sum: two of these tags can describe one borrowing (``SeniorNotes`` beside ``SecuredDebt``), and which pairs
+# overlap is not countable from the facts. One line of a ladder is taken, the LARGEST positive one (``_best_of``),
+# so the order below is only the grouping, never a preference. A filer that tags several genuinely different
+# borrowings from one ladder is therefore still understated: that is a known gap, measured on 13 Nov 2026 and
+# written up in the PR, not something this rule claims to solve.
 FALLBACK_WHOLE_DEBT = ("debt_and_lease_total", "convertible_debt", "convertible_notes_payable", "senior_notes",
                        "secured_debt", "notes_payable", "line_of_credit", "other_lt_debt")
 FALLBACK_LONG_TERM_DEBT = ("convertible_debt_noncurrent", "senior_notes_noncurrent", "loans_payable_noncurrent",
@@ -264,8 +266,22 @@ def _debt_lines(out: dict[str, dict], index: _Index, balance_end: str | None) ->
             or _lines_on_one_sheet(out, index, balance_end, DEBT_LINES + FALLBACK_DEBT_LINES, fallback=True))
 
 
-def _first_of(lines: dict[str, dict], fields: tuple[str, ...]) -> dict | None:
-    return next((lines[f] for f in fields if f in lines), None)
+def _best_of(lines: dict[str, dict], fields: tuple[str, ...]) -> dict | None:
+    """The largest positive line of a fallback ladder, or None (#737, the real-data check of 13 Nov 2026).
+
+    **Largest, not first.** The ladder's own order says nothing about size, and a filer that tags several of these
+    is served only one of them, so taking the first understated 14 of the 157 companies the fallback fills: BABA
+    tags ``SeniorLongTermNotes`` 17.0 bn, ``ConvertibleDebtNoncurrent`` 8.1 bn and ``LongTermLoansFromBank`` 6.9 bn
+    on 31 Mar 2026, and the first of those in the ladder is the 8.1 bn one. The largest is never a double count:
+    whichever two of these tags overlap, the larger is the more complete statement of the same borrowing.
+
+    **A zero line is skipped.** ``total_debt = 0`` is read downstream as debt-free, which a NULL is not, and a tag
+    carried at zero said nothing: 26 of the 157 gains were zero totals, MHO's off a ``LineOfCredit`` of 0 while it
+    carried ``OtherLongTermDebt`` 52 m. This applies to the fallback ladders only — a zero in the lines of #239 is
+    a filer's own statement and still counts (NVIDIA's restated ``LongTermDebt`` of 0, #264).
+    """
+    found = [lines[f] for f in fields if f in lines and lines[f]["value"] > 0]
+    return max(found, key=lambda r: r["value"]) if found else None
 
 
 def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | None, fields: tuple[str, ...],
@@ -276,9 +292,9 @@ def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | 
         balance_end = max(r["period_end"] for r in lines.values()).isoformat()
     lines = {f: r for f, r in lines.items() if r["period_end"] == _day(balance_end)}
     short = (lines.get("short_term_borrowings") or _tagged(index, COMMERCIAL_PAPER, balance_end)
-             or (_first_of(lines, FALLBACK_SHORT_TERM_DEBT) if fallback else None))
+             or (_best_of(lines, FALLBACK_SHORT_TERM_DEBT) if fallback else None))
     short = [short] if short else []
-    long_term = _first_of(lines, LONG_TERM_DEBT)
+    long_term = next((lines[f] for f in LONG_TERM_DEBT if f in lines), None)
     whole = lines.get("lt_debt_total") or _tagged(index, WHOLE_LONG_TERM_DEBT, balance_end)
     if fallback and long_term is None and whole is None:
         # The fallback asks for a WHOLE line before a noncurrent one, the other way round from the lines above.
@@ -286,15 +302,15 @@ def _lines_on_one_sheet(out: dict[str, dict], index: _Index, balance_end: str | 
         # noncurrent line plus that tag is the more exact pair. Here it has not: a filer that tags
         # ``ConvertibleDebt`` 300 and ``ConvertibleDebtNoncurrent`` 280 and no current tag at all states its whole
         # debt only in the first, and reading the second would quietly drop the 20 due within the year.
-        whole = _first_of(lines, FALLBACK_WHOLE_DEBT)
+        whole = _best_of(lines, FALLBACK_WHOLE_DEBT)
         if whole is None:
-            long_term = _first_of(lines, FALLBACK_LONG_TERM_DEBT)
+            long_term = _best_of(lines, FALLBACK_LONG_TERM_DEBT)
     convertible = lines.get("convertible_debt_current")
     if long_term is not None:
         # #264: convertible notes due within the year are the current line only when no other current line is
         # tagged (DebtCurrent and LongTermDebtCurrent hold them when they are), so they are never read twice.
         current_line = (lines.get("lt_debt_current") or convertible
-                        or (_first_of(lines, FALLBACK_CURRENT_DEBT) if fallback else None))
+                        or (_best_of(lines, FALLBACK_CURRENT_DEBT) if fallback else None))
         current = [lines["debt_current"]] if "debt_current" in lines else ([current_line] if current_line else []) + short
         return [long_term] + current
     if not whole:

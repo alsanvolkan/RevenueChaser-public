@@ -1787,10 +1787,12 @@ portion plus the short-term line; no total without a long-term line; #239, measu
 tagged, and are added beside a whole long-term line only when that line is below them, #264). When the filer
 tags none of those lines at all, a second pass reads the balances it may tag instead (`SeniorNotes`,
 `ConvertibleDebt`, `SecuredDebt`, `NotesPayable`, `LongTermLoansPayable`, `LinesOfCreditCurrent` and their
-neighbours, `rcdata/build/fundamentals/facts.py` `FALLBACK_*`), in the same three slots and under the same rules:
-each ladder is a strict priority and never a sum, a current line alone is still not the whole, and the pass runs
-only where the first one gives nothing, so no total that exists today moves (#737, measured 12 Nov 2026: 104 of the
-654 scored years without a total carry such a balance). A tag that is a schedule or a contra item
+neighbours, `rcdata/build/fundamentals/facts.py` `FALLBACK_*`), in the same three slots. One line of each ladder
+is taken, the largest positive one and never a sum (which of these tags overlap is not readable from the facts); a
+zero line is skipped there, because a `total_debt` of 0 reads as debt-free while a NULL does not; a current line
+alone is still not the whole; and the pass runs only where the first one gives nothing, so no total that exists
+today moves. Measured over the board's 2,131 anchor years on 13 Nov 2026: 157 years gain a total, 0 change value
+and 0 are lost (#737). A tag that is a schedule or a contra item
 (`FinanceLeaseLiabilityUndiscountedExcessAmount`, `DebtInstrumentCarryingAmount`, `LongTermDebtMaturities...`) is
 not read, although edgartools' mapping files it under its debt lines. EPS (basic and diluted) is read too. An accession the SEC's XBRL API does not hold yet after the re-read is asked again
 by the next day's run (the run's note says `pending`), so a statement reaches the served table on its filing day or

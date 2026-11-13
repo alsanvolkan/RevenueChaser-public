@@ -126,8 +126,8 @@ def test_total_debt_reads_the_debt_lines_the_filer_uses(tags, total):
     # A whole line wins over a noncurrent one of the same borrowing: the two are never summed.
     ({"ConvertibleDebt": 300, "ConvertibleDebtNoncurrent": 280}, 300),
     ({"SeniorNotes": 500, "SeniorLongTermNotes": 460, "SeniorNotesCurrent": 40}, 500),
-    # One current line only, taken in ladder order; two of them are never summed.
-    ({"LongTermLoansPayable": 100, "LinesOfCreditCurrent": 20, "LoansPayableCurrent": 30}, 120),
+    # One current line only, the largest of the ladder; two of them are never summed.
+    ({"LongTermLoansPayable": 100, "LinesOfCreditCurrent": 20, "LoansPayableCurrent": 30}, 130),
     # DebtCurrent holds the short-term borrowings too, so nothing is added beside it (#239).
     ({"SeniorLongTermNotes": 700, "DebtCurrent": 55, "SeniorNotesCurrent": 40,
       "ShortTermBankLoansAndNotesPayable": 30}, 755),
@@ -136,6 +136,36 @@ def test_total_debt_falls_back_to_the_balances_a_filer_tags_instead(tags, total)
     rows = _by_key(facts.fact_rows(_balance_sheet(**tags), "1")[0])
     row = rows.get(("total_debt", "annual", date(2025, 12, 31)))
     assert (row and row["value"]) == total
+
+
+# #737, the real-data check of 13 Nov 2026 (claude-coordinator
+# ``notes/revenuechaser/notes/2026-11-13_0930_737-debt-tags-before-after.md``): the two defects it found in a
+# first-of ladder, each with the company it was found on.
+@pytest.mark.parametrize("tags, total, why", [
+    # BABA, 31 Mar 2026: three different borrowings in one ladder. First-of served 8,098 of about 32,000; the
+    # largest is 17,032. The sum is NOT claimed here — which of these tags overlap is not readable from the facts.
+    ({"SeniorLongTermNotes": 17_032, "ConvertibleDebtNoncurrent": 8_098, "LongTermLoansFromBank": 6_879},
+     17_032, "the largest line of a ladder, not the first"),
+    # MHO, 31 Dec 2025: first-of served total_debt = 0 off a LineOfCredit of 0, which reads as debt-free.
+    ({"LineOfCredit": 0, "OtherLongTermDebt": 52}, 52, "a zero fallback line says nothing and is skipped"),
+    ({"LineOfCredit": 0}, None, "and leaves the total unknown rather than zero"),
+    # TOL, 31 Dec 2025: the revolver was skipped for a smaller whole line earlier in the ladder.
+    ({"NotesPayable": 1_742, "LineOfCredit": 2_326}, 2_326, "the larger whole line wins"),
+    # OCC, 31 Oct 2025: the larger current line, and a zero noncurrent line that gives no total on its own.
+    ({"LongTermLoansPayable": 0, "LoansPayableCurrent": 3, "NotesPayableCurrent": 6}, None,
+     "a zero noncurrent line is no long-term line, so a current line alone is still not the whole"),
+])
+def test_the_fallback_ladder_takes_the_largest_positive_line(tags, total, why):
+    rows = _by_key(facts.fact_rows(_balance_sheet(**tags), "1")[0])
+    row = rows.get(("total_debt", "annual", date(2025, 12, 31)))
+    assert (row and row["value"]) == total, why
+
+
+def test_a_zero_debt_line_of_the_first_pass_still_counts():
+    """The zero skip belongs to the fallback only: NVIDIA's restated ``LongTermDebt`` of 0 beside its convertible
+    notes is a filer's own statement and keeps the #264 behaviour."""
+    rows = _by_key(facts.fact_rows(_balance_sheet(LongTermDebt=0, ConvertibleDebtCurrent=1_413), "1")[0])
+    assert rows[("total_debt", "annual", date(2025, 12, 31))]["value"] == 1_413
 
 
 # #737: the fallback must never move a total that exists today. Every balance sheet of the #239 table above, with
