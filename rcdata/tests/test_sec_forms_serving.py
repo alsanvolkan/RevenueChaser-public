@@ -238,3 +238,37 @@ def test_the_note_need_answers_by_local_name_across_taxonomies(sec):
     _cut()
     assert serve.ask("sec.note", ciks=[MSFT], local_name="DebtDisclosureTextBlock").rows
     assert not serve.ask("sec.note", ciks=[MSFT], local_name="SegmentReportingDisclosureTextBlock").rows
+
+
+# ── the suspect flag on the business row (#835) ─────────────────────────────────────────────────────────────────
+
+def _k_ending_in_a_cross_reference() -> str:
+    """A 10-K whose Item 1 ends on a bare "See" in front of the Item 1A heading -- the shape the 10-K reading
+    report found labelled ``ok`` while the cut was wrong (``_TAIL_REF``/S4, the shared
+    ``suspect_tail_cross_reference`` case). Built on the note fixture's header, as :func:`annual` is, so the build
+    still reads its one note."""
+    paragraph = "<p>We develop software and cloud services. Our customers include enterprises.</p>"
+    k = ("<html><body><p>Item 1. Business</p><p>Item 1A. Risk Factors</p>"
+         "<p>PART I</p><p>Item 1. Business</p>" + paragraph * 80
+         + "<p>See</p><p>Item 1A. Risk Factors</p><p>Risks.</p></body></html>")
+    return nf.CONTINUED.replace("\n</body></html>", k.split("<body>", 1)[1])
+
+
+def test_the_business_row_carries_the_suspect_flag_when_the_cut_ends_in_a_reference(sec):
+    """#835: ``sec_forms`` wrote the 10-K/20-F business row with the cutter's bare label and no ``;suspect`` flag,
+    so a wrong-but-``ok`` cut reached Relatedness and Value Chain with nothing telling them to look again. The row
+    now carries :data:`forms.SECTIONS_VERSION`'s own flags; a cut that ends on a cross-reference is ``ok;suspect:S4``.
+    """
+    _stored(sec, documents={"msft-10k.htm": _k_ending_in_a_cross_reference()})
+    _cut()
+    quality, = q("SELECT quality FROM filing_section WHERE cik = ? AND section = 'business'", MSFT)[0]
+    assert quality.startswith("ok;suspect:"), quality
+    assert "S4" in quality, quality
+    # The flag rides in the label text; the cut itself is unchanged, so a reader that only wants the cut strips it.
+    assert forms.sec_sections.base(quality) == "ok"
+
+    # The guard that a clean cut stays a bare ``ok`` lives here, not in a test of its own: on the merge-base a
+    # clean cut is bare before and after, so a standalone guard would pass there and ``red-on-base`` would refuse
+    # it (as PR 827 found). A short, well-formed 10-K has no signal to raise (S2 needs a huge filing).
+    clean = [r for r in forms.sections_of(fx.ten_k(), "10-K") if r[0] == forms.BUSINESS][0]
+    assert clean[2] == "ok", clean[2]
