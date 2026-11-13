@@ -1,4 +1,4 @@
-# Data health — the store inventory and the Settings / Data health board
+# Data health — the store inventory and the Settings board
 
 This is the **built contract**, not a plan. It describes what the board does today, what each
 number on it means, and what it refuses to claim. Where the board shows words instead of a number,
@@ -109,9 +109,9 @@ The payload keys: `rows`, `tickers`, `boards`, `identity`, `automations`, `backu
 
 ---
 
-## 2. The Settings / Data health board
+## 2. The Settings board
 
-The tab is `/view/module_settings`, labelled **Settings / Data health**. Its Refresh job is
+The tab is `/view/module_settings`, labelled **Settings**. Its Refresh job is
 `settings_refresh` (`app/runners.py` `run_settings`). It is an ops inventory of the local `.store/`,
 not an equity board.
 
@@ -310,7 +310,11 @@ each old table the new data replaces, from `read_log` over 14 days, with the reg
 and the two watch-list cards (PR 4, below). A "verified running" line on top: the builder's last run
 (`job_runs2`), the last swap per kind and the `ops_schema` version; under it the watch-list counts.
 
-**The two watch-list cards (PR 4, D2).** The option list (what the options build covers besides SPX) and the stock
+**The two watch-list cards (PR 4, D2) left this page on 13 Nov 2026** (avo: "Watchlist panosuna bunlari ekle ...
+ve buradan yine de kaldir"). The two lists stand on the Watch lists board under "Read by the jobs", named by what
+they are fetched for (`module_watchlists/board.py` `JOB_LISTS`); the board reads and writes the same `ops.sqlite`
+rows, so the jobs read what the board shows. What follows describes the cards as they were, for the history.
+The option list (what the options build covers besides SPX) and the stock
 list (what LEAPS pins and scans and Earnings treats as watched), read through `rcdata.read.watchlists()`. Each name is
 a stacked row: ticker, added on (UTC), by (the board whose button added it), the note when one is set, and a
 **Remove** that posts `POST /api/watchlist/<list>/remove/<ticker>` (it never adds, so a stale page cannot put back a
@@ -999,7 +1003,7 @@ code:
 | `rc_dataset_open_issues` | `dataset`, `kind` | open build issues |
 | `rc_builder_last_run_timestamp_seconds` | | when the builder last started a run |
 | `rc_builder_timer_on` | | 1 on, 0 off, absent when not known |
-| `rc_backup_newest_timestamp_seconds` | `kind` | the newest backup of a kind |
+| `rc_backup_newest_timestamp_seconds` | `kind`, `step` | the newest backup of a kind, per backup step (`duckdb`, `boards`, `ops`, `uw-raw`, `edgar-docs`); the old store's files are not reported |
 | `rc_switch_on` | `name` | the fetch and backup switches |
 | `rc_ibkr_state` | `state` | 1 for the gateway's login state: up, silent (port open, API not answering), down, unknown, not_set; any other text reads unknown |
 | `rc_news_feed_state` | `feed`, `state` | 1 for an IBKR news feed's state from the listener's record: refused, live, subscribed, waiting, unknown; any other text reads unknown |

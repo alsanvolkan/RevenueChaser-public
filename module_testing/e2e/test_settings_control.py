@@ -19,8 +19,9 @@ def _open(browser, dashboard, scheme="dark"):
     browser.emulate(*PHONE, scheme=scheme)
     browser.open(f"{dashboard.url}/view/{_APP}", ready="!!document.getElementById('ctl') && !!window.CTL")
     browser.eval(f"document.documentElement.setAttribute('data-theme', {scheme!r})")
-    # A first visit opens on Watch lists (avo, 12 Nov 2026); these tests are about the board on Database.
-    assert browser.eval("document.getElementById('panel-watch').hidden") is False, "Watch lists is the tab on open"
+    # A first visit opens on Database (the Watch lists tab left for its own board, 13 Nov 2026).
+    assert browser.eval("document.getElementById('panel-data').hidden") is False, "Database is the tab on open"
+    assert browser.eval("!document.getElementById('panel-watch')")
     browser.eval("document.getElementById('tab-data').click()")
     browser.settle()
 
@@ -45,7 +46,7 @@ def test_the_data_tab_is_on_top_and_the_old_sections_are_gone(dashboard, browser
     assert browser.eval("!!document.querySelector('#panel-health #live-frame')"), "the board's frame heads the tab"
     assert browser.eval("!document.getElementById('old-settings') && !document.getElementById('panel-fetch')")
     # #715 step 3: the files are stacked folded sections, none hidden; the first one is open.
-    files = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl details.fpanel'),"
+    files = browser.eval("Array.prototype.map.call(document.querySelectorAll('#ctl details.fpanel:not(.bfp)'),"
                          " function(p){ return (p.hidden ? 'hidden:' : '') + (p.open ? 'open' : 'shut'); })")
     from RevenueChaser.rcdata import serving
     assert files[0] == "open" and set(files[1:]) == {"shut"} and len(files) == len(serving.KINDS), files

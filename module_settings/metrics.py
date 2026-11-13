@@ -21,7 +21,6 @@ change on both sides.
 from __future__ import annotations
 
 import re
-from collections import Counter
 
 import threading
 import time
@@ -253,15 +252,18 @@ def collect(now: datetime | None = None, *, datasets: dict | None = None, timer:
             out["rc_builder_timer_on"].append(({}, 1 if state == "on" else 0))
 
     def backups() -> None:
-        kinds = newdata._backups(now)["kinds"]
-        # a name that two steps share (prices: a builder DuckDB file and a legacy board file) would be one label
-        # twice, and Prometheus keeps one of them at random; such a kind carries its step
-        counts = Counter(k["kind"] for k in kinds)
-        for k in kinds:
+        from RevenueChaser.rcdata import backup
+        # a name that two steps share (fundamentals: a builder DuckDB file and a board file) is told apart by its
+        # step, a label of its own, so the board can list the served files and the board files apart and in order.
+        # The old store's files (raw, edgar, history, prices) are left out: nothing reads them any more (avo,
+        # 12 Nov 2026: "iliskisi kesilen eski database'ler. Bunlarin burada olmamasi lazim"); the weekly job still
+        # copies them while they exist.
+        for k in newdata._backups(now)["kinds"]:
+            if k["step"] == backup.STEP_BOARDS and k["kind"] in backup.LEGACY_BOARD_FILES:
+                continue
             when = _iso_epoch(k.get("newest"))
             if when is not None:
-                label = k["kind"] if counts[k["kind"]] == 1 else f"{k['kind']} ({k['step']})"
-                out["rc_backup_newest_timestamp_seconds"].append(({"kind": label}, when))
+                out["rc_backup_newest_timestamp_seconds"].append(({"kind": k["kind"], "step": k["step"]}, when))
 
     def switches() -> None:
         for name, view in control.switches_view(control._read_switches(), now).items():
@@ -449,8 +451,38 @@ def board_head(now: datetime | None = None, *, ibkr: Callable[[], dict] | None =
     except Exception:  # noqa: BLE001 - not known is drawn as not known
         feeds = None
     return {"switches": switches, "timer": timer.get("state"), "timer_fired": fired, "files": files, "news": feeds,
+            "last": _last_done(now),
             "gateway": {"cls": cls, "n": n, "label": label.replace("IBKR gateway · ", ""),
                         "login": report._ibkr_login_href(inventory._ibkr_login_url())}}
+
+
+def _last_done(now: datetime) -> dict:
+    """When the work behind the board's Fetch & Build and Backup switches was last done (avo, 12 Nov 2026: "onlarin
+    en son ne zaman oldugunu tam duzgun bir sekilde yaz"): the builder's newest run (its dataset and status) and the
+    newest good step of the weekly backup, each as ``12 Nov 23:46`` on the page's clock, or None when not known.
+    The ops store and the backup manifests only; no served DuckDB file is opened."""
+    def stamp(when: datetime) -> str:
+        when = control._local(when)
+        return f"{when.day} {when:%b %H:%M}"
+
+    out = {"fetch": None, "backup": None}
+    try:
+        from RevenueChaser.rcdata import ops
+        run = ops.last_builder_run()
+        at = (run or {}).get("finished_at") or (run or {}).get("started_at")
+        if at:
+            out["fetch"] = {"at": stamp(datetime.fromtimestamp(float(at), timezone.utc)),
+                            "dataset": run.get("dataset"), "status": run.get("status")}
+    except Exception:  # noqa: BLE001 - not known is drawn as not known
+        pass
+    try:
+        from RevenueChaser.module_settings import newdata
+        done = [datetime.fromisoformat(s["last_ok"]) for s in newdata._backups(now)["steps"] if s.get("last_ok")]
+        if done:
+            out["backup"] = {"at": stamp(max(done))}
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def board_status(now: datetime | None = None, *, spend: Callable[[], dict] | None = None,
@@ -476,6 +508,17 @@ def board_status(now: datetime | None = None, *, spend: Callable[[], dict] | Non
     providers = read(spend if spend is not None else lambda: newdata._spend(now))
     rows = providers.get("providers") if isinstance(providers, dict) else None
     used = {str(p["provider"]): int(p.get("today") or 0) for p in rows or []}
+    # avo, 12 Nov 2026: "Bunu DuckDB'lerin lojistik sirasina gore ayir": each provider names the served files its
+    # datasets build (from the registry, no store is read), so the board can list it under its file
+    try:
+        feeds: dict[str, set] = {}
+        for ds in newdata._datasets().values():
+            for name in getattr(ds, "providers", ()) or ():
+                feeds.setdefault(str(name), set()).add(str(getattr(ds, "kind", "") or ""))
+        for p in rows or []:
+            p["files"] = sorted(feeds.get(str(p["provider"]), set()) - {""})
+    except Exception:  # noqa: BLE001 - without it the board lists the providers ungrouped
+        pass
 
     def freshness() -> dict:
         from RevenueChaser.module_settings import freshness_tab

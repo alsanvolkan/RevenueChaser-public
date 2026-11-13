@@ -307,7 +307,7 @@ TABS = [
     {"type": "tab", "key": "module_leaps", "label": "LEAPS", "url": "/view/module_leaps",
      "sub": True},
     {"type": "header", "label": "Ops"},
-    {"type": "tab", "key": "module_settings", "label": "Settings / Data health", "url": "/view/module_settings", "sub": True},
+    {"type": "tab", "key": "module_settings", "label": "Settings", "url": "/view/module_settings", "sub": True},
 ]
 
 
@@ -2097,7 +2097,7 @@ def api_watchlist_kind_toggle(kind: str, ticker: str):
 
 @app.route("/api/watchlist/<kind>/add/<ticker>", methods=["POST"])
 def api_watchlist_add(kind: str, ticker: str):
-    """Put ``ticker`` on one watch list (the Add box on Settings' watch-list cards): ``{ok, list, ticker, added}``, where ``added`` is
+    """Put ``ticker`` on one watch list (the Add box Settings' watch-list cards had until 13 Nov 2026): ``{ok, list, ticker, added}``, where ``added`` is
     false when it was there already (nothing is written then). Never removes, so an Add typed for a name someone else
     just added cannot take it off, as the toggle would. 404 / 400 as the toggle."""
     from RevenueChaser.rcdata import ops
@@ -2129,7 +2129,7 @@ def api_activity_boards():
 
 @app.route("/api/watchlist/<kind>/remove/<ticker>", methods=["POST"])
 def api_watchlist_remove(kind: str, ticker: str):
-    """Take ``ticker`` off one watch list (the Settings cards' Remove): ``{ok, list, ticker, removed}``, where
+    """Take ``ticker`` off one watch list (the Remove Settings' watch-list cards had until 13 Nov 2026): ``{ok, list, ticker, removed}``, where
     ``removed`` is false when it was not there (nothing is written then). Never adds, so a Remove pressed on a stale
     page cannot put back a name removed elsewhere. 404 / 400 / 403 as the toggle."""
     from RevenueChaser.rcdata import ops
@@ -2180,6 +2180,21 @@ def _wl_payload(list_id: str):
     if data is None or data["list"]["id"] != list_id:
         return jsonify({"ok": False, "error": "no such watch list"}), 404
     return jsonify({"ok": True, "payload": data})
+
+
+def _wl_job_kind(list_id: str) -> str | None:
+    """``option`` or ``stock`` when ``list_id`` is one of the two lists the jobs read, shown on the Watch lists
+    board beside avo's own (``module_watchlists.board.JOB_LISTS``); None for one of his lists."""
+    from RevenueChaser.module_watchlists import board as wl_board
+    return wl_board.job_kind(list_id)
+
+
+def _wl_job_ticker(symbol: str) -> str | None:
+    """The ticker a job list stores for what the add box sent (``NASDAQ:NVDA`` or ``NVDA``), or None when it is
+    not a plain ticker: the jobs ask the providers by ticker, so a spread or a series has no place there."""
+    from RevenueChaser.module_watchlists import symbols
+    ticker = symbols.split(symbol)[1]
+    return ticker if _valid_ticker(ticker) else None
 
 
 def _wl_text(body: dict, field: str, *, required: bool = True) -> tuple[str | None, str | None]:
@@ -2285,6 +2300,14 @@ def api_watchlists_symbol_add(list_id: str):
     section_id, section_error = _wl_text(body, "section_id", required=False)
     if section_error:
         return jsonify({"ok": False, "error": section_error}), 400
+    kind = _wl_job_kind(list_id)
+    if kind:                               # one of the two lists the jobs read: a board button's write
+        from RevenueChaser.rcdata import ops
+        ticker = _wl_job_ticker(symbol)
+        if not ticker:
+            return jsonify({"ok": False, "error": "a job list takes a plain ticker"}), 400
+        ops.watch_add(kind, ticker, by=_requested_by())
+        return _wl_payload(list_id)
     try:
         store.add_symbol(list_id, symbol, section_id=section_id or store.DEFAULT_SECTION, by=_requested_by())
     except store.WatchlistError as exc:
@@ -2299,6 +2322,13 @@ def api_watchlists_symbol_remove(list_id: str):
     symbol, error = _wl_text(_wl_body(), "symbol")
     if error:
         return jsonify({"ok": False, "error": error}), 400
+    kind = _wl_job_kind(list_id)
+    if kind:
+        from RevenueChaser.rcdata import ops
+        ticker = _wl_job_ticker(symbol)
+        if ticker:
+            ops.watch_remove(kind, ticker, by=_requested_by())
+        return _wl_payload(list_id)
     store.remove_symbol(list_id, symbol, by=_requested_by())
     return _wl_payload(list_id)
 

@@ -22,7 +22,7 @@ def _fetch() -> str:
 
 def _panel(page: str, name: str) -> str:
     start = page.index(f'<div id="panel-{name}"')
-    nxt = [page.find(f'<div id="panel-{n}"', start + 1) for n in ("watch", "data", "health", "logs")]
+    nxt = [page.find(f'<div id="panel-{n}"', start + 1) for n in ("data", "health", "logs")]
     ends = [i for i in nxt if i > start] + [page.index("<script>", start)]
     return page[start:min(ends)]
 
@@ -94,7 +94,7 @@ def test_every_string_under_the_frame_is_escaped():
                 d["coverage"] = {**d["coverage"], "text": H("cov_text"), "cls": H("cov_cls")}
     html = control_render.render_fetch(view)
     # the page as it is drawn now: these strings reach the slim boxes, not the old source boxes
-    assert "Data/Health · Universe and fills" in html and 'data-job="one"' not in html
+    assert "Settings · Universe and fills" in html and 'data-job="one"' not in html
     for tag in ("gw_cls", "gw_n", "gw_label", "gw_login", "file", "dataset", "filter", "kind", "detail", "key",
                 "checked", "result", "as_of", "note", "cov_text", "cov_cls"):
         assert f"onerror=__x(&#x27;{tag}T&#x27;)" in html, tag
@@ -123,7 +123,7 @@ def test_a_board_settings_field_is_two_columns_on_a_phone():
 def test_a_view_that_could_not_be_built_is_one_line():
     html = control_render.render_fetch({"error": "ops.sqlite is locked"})
     assert "Could not read" in html and "ops.sqlite is locked" in html
-    assert "Data/Health · Universe and fills" in html, "the line names the part that is left, not the old tab"
+    assert "Settings · Universe and fills" in html, "the line names the part that is left, not the old tab"
 
 
 def test_the_reference_parts_and_the_forms_sit_folded_under_database():

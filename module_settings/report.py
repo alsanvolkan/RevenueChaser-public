@@ -2147,8 +2147,6 @@ ND_CSS = ND_THEME_CSS + """
 #newdata .nd-msg{color:var(--muted);font-size:12.5px;min-height:1em}
 #newdata .nd-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
 #newdata .nd-list li{border-bottom:1px solid var(--border);padding:4px 0}
-#newdata .nd-watch-item{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px}
-#newdata .nd-watch-line{min-width:0;flex:1 1 12em}
 #newdata form.nd-actions input{flex:1 1 8em;min-width:0;max-width:16em;text-transform:uppercase}
 """
 
@@ -2550,49 +2548,7 @@ def _nd_retirement(rows: list[dict]) -> str:
             f'<div class="nd-rows">{body}</div></div>')
 
 
-ND_WATCH_TITLES = {"option": "Option watch list", "stock": "Stock watch list"}
 ND_OPTIONS_LATER = "the options build comes later (build-plan step 11)"
-ND_WATCH_SUBS = {
-    "option": "The names the options build covers besides SPX (D2). Add one here, or press <b>Opt</b> next "
-              "to a ticker on any board.",
-    "stock": "The names LEAPS pins and scans, and Earnings treats as watched. Add one here, or press <b>Stk</b> "
-             "next to a ticker on any board.",
-}
-
-
-def _nd_watch_card(kind: str, wl: dict, ob: dict) -> str:
-    """One watch list's card: its names (ticker, added on, by, note) with a Remove each; stacked rows, no table."""
-    rows = wl.get("rows") or []
-    items = "".join(
-        f'<li class="nd-watch-item" data-ticker="{esc(r.get("ticker"))}">'
-        f'<div class="nd-watch-line"><b>{_nd(r.get("ticker"))}</b>'
-        f' <span class="nd-k">added {_nd(r.get("added_on"))} by {_nd(r.get("added_by"))}</span>'
-        + (f' · {_nd(r.get("note"))}' if r.get("note") else "") + "</div>"
-        f'<button type="button" class="nd-btn" data-nd-act="watch-remove" data-list="{esc(kind)}" '
-        f'data-ticker="{esc(r.get("ticker"))}" aria-label="Remove {esc(r.get("ticker"))} from the '
-        f'{esc(ND_WATCH_TITLES[kind].lower())}">Remove</button></li>' for r in rows)
-    empty = '<li class="nd-k nd-watch-empty">No names yet.</li>'
-    queued = ""
-    if kind == "option":
-        names = ob.get("queued") or []
-        always = " + ".join(_nd(a) for a in ob.get("always") or [])
-        queued = _nd_row("Names queued for the next options build",
-                         f"<span data-nd-queued>{always} and {len(names)} name{'' if len(names) == 1 else 's'} "
-                         "from this list" + (f": {', '.join(_nd(n) for n in names)}" if names else "")
-                         + f" · {ND_OPTIONS_LATER}</span>")
-    return (f'<div class="nd-card nd-watch" id="nd-watch-{esc(kind)}" data-list="{esc(kind)}">'
-            f'<h3>{esc(ND_WATCH_TITLES[kind])} <span class="nd-chip" data-nd-watch-count="{esc(kind)}">'
-            f'{len(rows)}</span></h3>'
-            f'<div class="nd-sub">{ND_WATCH_SUBS[kind]}</div>'
-            + (f'<div class="nd-rows">{queued}</div>' if queued else "")
-            # Add never removes (the toggle would take off a name someone else just added)
-            + f'<form class="nd-actions" data-nd-add="{esc(kind)}"><input class="nd-date" name="t" maxlength="12" '
-              f'autocomplete="off" placeholder="Ticker" aria-label="A ticker to add to the '
-              f'{esc(ND_WATCH_TITLES[kind].lower())}"><button type="submit" class="nd-btn">Add</button></form>'
-            + f'<ul class="nd-list nd-watch-list">{items or empty}</ul>'
-            '<div class="nd-msg" aria-live="polite" data-nd-msg></div></div>')
-
-
 def _nd_filters(cards: list) -> str:
     """One link per status, carrying the filter in the address bar (S14), so "4 late" can be linked to.
 
@@ -2643,15 +2599,10 @@ def _newdata_section(nd: dict | None) -> str:
     cards = "".join(_nd_dataset_card(c, open_=(i == 0))
                     for i, c in enumerate(nd.get("datasets") or []))
     ret = nd.get("retention") or {}
-    wl = nd.get("watchlists") or {}
-    ob = nd.get("options_build") or {}
-    counts = " · ".join(f'{esc(k)} <span data-nd-watch-count="{esc(k)}">{_nd((wl.get(k) or {}).get("count", 0))}'
-                        f'</span>' for k in ND_WATCH_TITLES)
     return (
         '<section id="newdata" aria-labelledby="newdata-h">'
         '<h2 id="newdata-h">New data system</h2>'
         f'{verified_html}'
-        f'<div class="nd-sub" id="nd-watch-summary">Watch lists: {counts}</div>'
         '<div class="nd-sub">Read when this page was rendered. Fetch, Backfill and Pause / Resume only put a request '
         'in the queue; the builder runs it. Remove takes a name off a watch list. Nothing on this page writes market '
         f'data. {esc(ND_PAUSE_STOPS)}</div>'
@@ -2673,7 +2624,6 @@ def _newdata_section(nd: dict | None) -> str:
         + (_nd_row("Set by", _nd(ret.get("source"))) if ret.get("source") else "") + "</div></div>"
         f'{_nd_cross_check(nd.get("cross_check"))}'
         f'{_nd_retirement(nd.get("retirement") or [])}'
-        + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES)
         + "</section>")
 
 
@@ -2800,68 +2750,6 @@ function ndCadence(btn){
     ndSay(c, 'Schedule saved: ' + text + '. ' + rcEsc(ND.next_pass) + '.');
   });
 }
-function ndWatchRemove(btn){
-  var list = btn.getAttribute('data-list'), t = btn.getAttribute('data-ticker');
-  var card = btn.closest('.nd-watch'), say = function(html){ var m = card && card.querySelector('[data-nd-msg]');
-    if(m) m.innerHTML = html; };
-  if((list !== 'option' && list !== 'stock') || !new RegExp('^' + ND.ticker_pattern + '$').test(t || '')) return;
-  btn.disabled = true;
-  fetch('/api/watchlist/' + list + '/remove/' + encodeURIComponent(t), {method: 'POST',
-        headers: {'X-RC-Panel': 'settings'}}).then(function(r){
-    return r.json().then(function(d){ return {status: r.status, d: d || {}}; });
-  }).then(function(res){
-    if(!res.d.ok){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(res.d.error || ('HTTP ' + res.status)) +
-      '</span>'); return; }
-    var li = btn.closest('li');
-    if(li && li.parentNode) li.parentNode.removeChild(li);
-    ndWatchCount(card, list);
-    say(rcEsc(t) + (res.d.removed ? ' removed.' : ' was no longer on the list.'));
-  }).catch(function(e){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(String(e)) + '</span>'); });
-}
-// The card's count chips and the queued-names line, after a row came or went.
-function ndWatchCount(card, list){
-  var items = card ? card.querySelectorAll('li.nd-watch-item') : [], left = items.length;
-  document.querySelectorAll('[data-nd-watch-count="' + list + '"]').forEach(function(el){
-    el.textContent = String(left); });
-  var q = list === 'option' && card ? card.querySelector('[data-nd-queued]') : null;
-  if(q){
-    var names = Array.prototype.map.call(items, function(i){ return i.getAttribute('data-ticker'); });
-    q.textContent = (ND.options_always || []).join(' + ') + ' and ' + left + (left === 1 ? ' name' : ' names') +
-      ' from this list' + (left ? ': ' + names.join(', ') : '') + ' · ' + ND.options_later;
-  }
-}
-// The Add box (it came from the Activity page, 11 Nov 2026): POST .../add never removes a name.
-function ndWatchAdd(form){
-  var list = form.getAttribute('data-nd-add'), box = form.querySelector('input'), btn = form.querySelector('button');
-  var t = (box.value || '').trim().toUpperCase(), card = form.closest('.nd-watch');
-  var say = function(html){ var m = card && card.querySelector('[data-nd-msg]'); if(m) m.innerHTML = html; };
-  if(!t) return;
-  if(!new RegExp('^' + ND.ticker_pattern + '$').test(t)){ say('<span class="nd-bad">Not a ticker.</span>'); return; }
-  btn.disabled = true;
-  fetch('/api/watchlist/' + list + '/add/' + encodeURIComponent(t), {method: 'POST',
-        headers: {'X-RC-Panel': 'settings'}}).then(function(r){
-    return r.json().then(function(d){ return {status: r.status, d: d || {}}; });
-  }).then(function(res){
-    btn.disabled = false;
-    if(!res.d.ok){ say('<span class="nd-bad">' + rcEsc(res.d.error || ('HTTP ' + res.status)) + '</span>'); return; }
-    box.value = '';
-    if(!res.d.added){ say(rcEsc(t) + ' was already on the list.'); return; }
-    var ul = card.querySelector('.nd-watch-list'), none = ul.querySelector('.nd-watch-empty'), e = rcEsc(t);
-    if(none) ul.removeChild(none);
-    ul.insertAdjacentHTML('beforeend', '<li class="nd-watch-item" data-ticker="' + e + '"><div class="nd-watch-line"><b>' +
-      e + '</b> <span class="nd-k">added just now</span></div><button type="button" class="nd-btn" ' +
-      'data-nd-act="watch-remove" data-list="' + list + '" data-ticker="' + e + '" aria-label="Remove ' + e +
-      '">Remove</button></li>');
-    ndWatchCount(card, list);
-    say(e + ' added.');
-  }).catch(function(err){ btn.disabled = false; say('<span class="nd-bad">' + rcEsc(String(err)) + '</span>'); });
-}
-document.addEventListener('submit', function(ev){
-  var form = ev.target && ev.target.closest ? ev.target.closest('#newdata form[data-nd-add]') : null;
-  if(!form) return;
-  ev.preventDefault();
-  ndWatchAdd(form);
-});
 // A17-B: the cross-check press queues a run for the builder. The page sends one POST to its own dashboard and
 // calls no provider: the builder owns every provider call, and the queue is where a run is asked for.
 function ndCross(btn){
@@ -2882,7 +2770,6 @@ document.addEventListener('click', function(ev){
   else if(act === 'pause' || act === 'resume') ndSchedule(btn, act);
   else if(act === 'cadence') ndCadence(btn);
   else if(act === 'cross') ndCross(btn);
-  else if(act === 'watch-remove') ndWatchRemove(btn);
 });
 ndPageStale();
 // Checked when the page is read and again whenever the reader comes back to the tab, which is exactly when a page
@@ -2931,16 +2818,16 @@ def _collect_newdata() -> dict:
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
 
 
-#: The page's four tabs. #715 (avo, 12 Nov 2026): Database · Fetch/Health · Logs, and no tab holds another tab. The same
-#: day, 14:51 Amsterdam: "bu watchlistler settings/health panosunun icinde ayri bir sekmede yasamali, ilk sirada
-#: olsun", so Watch lists is a tab of its own, the first one and the one a first visit opens (``first``):
-#: the key a viewer's choice is remembered under, and each tab's panel id. ``ALIASES`` maps a choice remembered
-#: from an older page (Data, Fetch, Needs, Live) onto the tab that now holds it.
+#: The page's three tabs. #715 (avo, 12 Nov 2026): Database · Fetch/Health · Logs, and no tab holds another tab. The
+#: two watch lists the jobs read had a tab of their own here, first in the strip, for one day; on 13 Nov 2026 they
+#: moved to the Watch lists board ("Watchlist panosuna bunlari ekle ... ve buradan yine de kaldir",
+#: ``module_watchlists.board.JOB_LISTS``). ``first`` is the tab a first visit opens, ``key`` the one a viewer's
+#: choice is remembered under, ``tabs`` each tab's panel id. ``aliases`` maps a choice remembered from an older
+#: page (Data, Fetch, Needs, Live, Watch lists) onto the tab that now holds it.
 SETTINGS_TABS = {"key": "rc.settings.tab",
-                 "first": "watch",
-                 "tabs": {"watch": "panel-watch", "data": "panel-data", "health": "panel-health",
-                          "logs": "panel-logs"},
-                 "aliases": {"fetch": "data", "needs": "data", "live": "health"}}
+                 "first": "data",
+                 "tabs": {"data": "panel-data", "health": "panel-health", "logs": "panel-logs"},
+                 "aliases": {"fetch": "data", "needs": "data", "live": "health", "watch": "data"}}
 
 TABS_JS = """
 (function(){
@@ -3024,26 +2911,6 @@ DATA_HELP = help_html(
 )
 
 
-def _watch_section(nd: dict | None) -> str:
-    """The two watch lists with their Remove (PR 4), moved out of the old New data system section (#492). The
-    ``#newdata`` scope keeps their styles (``ND_CSS``) and their script (``ND_JS``)."""
-    if not nd or nd.get("error"):
-        return ""
-    wl = nd.get("watchlists") or {}
-    ob = nd.get("options_build") or {}
-    counts = " · ".join(f'{esc(k)} <span data-nd-watch-count="{esc(k)}">{_nd((wl.get(k) or {}).get("count", 0))}'
-                        f'</span>' for k in ND_WATCH_TITLES)
-    return ('<section id="newdata" class="ndwatch" aria-labelledby="newdata-h"><h2 id="newdata-h">Watch lists</h2>'
-            f'<div class="nd-sub" id="nd-watch-summary">Watch lists: {counts}</div>'
-            + "".join(_nd_watch_card(k, wl.get(k) or {}, ob) for k in ND_WATCH_TITLES) + "</section>")
-
-
-def _watch_panel(nd: dict | None) -> str:
-    """The Watch lists tab: the two lists and nothing else. A read that failed is one line, never an empty tab."""
-    body = _watch_section(nd) or '<p class="nd-sub">The watch lists could not be read.</p>'
-    return f'<div class="watchwrap">{body}</div>'
-
-
 def _hfold(words: str, body: str) -> str:
     """One part closed behind its own one-line summary; nothing when the part is empty."""
     return f'<details class="hfold"><summary>{words}</summary>{body}</details>' if body else ""
@@ -3074,10 +2941,8 @@ def _database_more(payload: dict) -> str:
 
 def _tab_strip() -> str:
     return ('<nav id="settings-tabs" aria-label="Settings tabs"><div class="tabs" role="tablist">'
-            '<button type="button" role="tab" id="tab-watch" data-tab="watch" aria-controls="panel-watch" '
-            'aria-selected="true" tabindex="0">Watch lists</button>'
             '<button type="button" role="tab" id="tab-data" data-tab="data" aria-controls="panel-data" '
-            'aria-selected="false" tabindex="-1">Database</button>'
+            'aria-selected="true" tabindex="0">Database</button>'
             '<button type="button" role="tab" id="tab-health" data-tab="health" aria-controls="panel-health" '
             'aria-selected="false" tabindex="-1">Fetch/Health</button>'
             '<button type="button" role="tab" id="tab-logs" data-tab="logs" aria-controls="panel-logs" '
@@ -3094,12 +2959,11 @@ def _tab_strip() -> str:
 LIVE_BOARDS = (("panel-health", "rc-health", "live-frame", "Fetch controls and data health (Grafana)"),
                ("panel-logs", "rc-logs", "logs-frame", "Job run logs (Grafana)"))
 LIVE_CSS = """
-.watchwrap{max-width:var(--page-max,1280px);margin:0 auto;padding:16px 12px 48px}
-.watchwrap .nd-sub{color:var(--muted);font-size:12.5px}
-.live-board .livebar{display:flex;flex-wrap:wrap;gap:8px;max-width:var(--page-max,1280px);margin:12px auto 8px;
-  padding:0 12px;min-height:44px}
-.live-board .livebar a{margin-left:auto;align-self:center;color:var(--mut,inherit);font-size:13px;min-height:44px;
-  display:inline-flex;align-items:center}
+/* avo, 12 Nov 2026: "Open in Grafana ... cok yer kapliyor": the link has no row of its own. It lies on the frame's
+   own first row, in the room left of Grafana's time and refresh pickers (they hug the right edge). */
+.live-board{position:relative}
+.live-board .livebar{position:absolute;top:11px;left:16px;z-index:1}
+.live-board .livebar a{color:var(--mut,inherit);font-size:13px;min-height:44px;display:inline-flex;align-items:center}
 .live-board iframe{display:block;width:100%;height:calc(100vh - 140px);min-height:560px;border:0;
   background:var(--bg,transparent)}
 """
@@ -3168,7 +3032,7 @@ def _ticker_drill(payload: dict) -> str:
 
 
 def render_settings_dashboard(payload: dict) -> str:
-    """The Data/Health page (#715): four tabs. Watch lists is ``_watch_panel``, first; Database is the control board
+    """The Settings page (#715): three tabs. Database is the control board
     (``control_render.render_data``) above ``_database_more``; Fetch/Health is the framed ``rc-health`` board above
     the few presses Grafana does not carry (``control_render.render_fetch``); Logs is the framed ``rc-logs`` board.
     The Ticker lookup heads Database (#715); the old Settings sections fold is gone."""
@@ -3190,7 +3054,7 @@ def render_settings_dashboard(payload: dict) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Data/Health</title>
+<title>Settings</title>
 <style>{THEME_CSS}{CSS}</style>
 <style>{ND_CSS}</style>
 <style>{_UCARDS_CSS}</style>
@@ -3203,10 +3067,7 @@ def render_settings_dashboard(payload: dict) -> str:
 <body>
 {provider_health_html(payload.get("provider_health"))}
 {_tab_strip()}
-<div id="panel-watch" role="tabpanel" aria-labelledby="tab-watch">
-{_watch_panel(nd)}
-</div>
-<div id="panel-data" role="tabpanel" aria-labelledby="tab-data" hidden>
+<div id="panel-data" role="tabpanel" aria-labelledby="tab-data">
 <div class="ctl helpband"><div class="wrap helpwrap" style="max-width:var(--page-max,1280px);margin:0 auto;padding:12px 12px 0">{DATA_HELP}</div></div>
 {control_html}
 {more_html}

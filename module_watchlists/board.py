@@ -107,9 +107,10 @@ def _series_numbers(series_ids: list[str]) -> dict[str, dict]:
     return out
 
 
-def _row(item: dict, equities: dict[str, dict], series: dict[str, dict], names: dict[str, str]) -> dict:
+def _row(item: dict, equities: dict[str, dict], series: dict[str, dict], names: dict[str, str], *,
+         job: bool = False) -> dict:
     """One stored symbol as the page's row (short keys: a list can hold hundreds)."""
-    parsed = symbols.parse(item["symbol"])
+    parsed = _parse(item["symbol"], job)
     row = {"sym": parsed.raw, "t": parsed.ticker, "ex": parsed.exchange, "cov": parsed.coverage,
            "nm": None, "last": None, "chg": None, "chgp": None, "vol": None, "avol": None, "cap": None,
            "unit": None, "note": item.get("note") or None}
@@ -131,32 +132,93 @@ def _row(item: dict, equities: dict[str, dict], series: dict[str, dict], names: 
     return row
 
 
+#: The two lists the jobs read (``ops.sqlite``, ``rcdata.read.watchlists``), shown here after avo's own lists
+#: (avo, 13 Nov 2026: "Watchlist panosuna bunlari ekle. Ne amacla kullandiklari da listenin isminde olsun"). They
+#: were edited on Settings' Watch lists tab until then. The name says what the list is fetched for; the
+#: description says who reads it. Not rows of ``wl_list``: the jobs still read ``ops.sqlite``, so this board reads
+#: and writes that same list and there is no second copy to keep in step. An id holds a dot, which
+#: ``store.derive_id`` never produces, so one of avo's lists cannot take it.
+JOB_LISTS = {
+    "jobs.option": {
+        "kind": "option", "name": "Option chains · fetched every day",
+        "description": ("The options build downloads the whole option chain of every name here, next to the "
+                        "index names it always takes. Add a name to get its chain from the next run."),
+    },
+    "jobs.stock": {
+        "kind": "stock", "name": "Stock picks · prices, LEAPS, Earnings",
+        "description": ("The prices build keeps every name here whatever the universe rule says, LEAPS pins "
+                        "it, and Earnings marks it as watched."),
+    },
+}
+
+
+def job_kind(list_id: str | None) -> str | None:
+    """``option`` or ``stock`` for one of the two job lists' ids, None for one of avo's own lists."""
+    found = JOB_LISTS.get(list_id or "")
+    return found["kind"] if found else None
+
+
+def _job_rows(kind: str) -> list[dict]:
+    """One job list's tickers as list items, by ticker (``rcdata.read.watchlists`` order)."""
+    return [{"symbol": r["ticker"], "note": r.get("note")} for r in read.watchlists().get(kind) or []]
+
+
+def _job_lists() -> list[dict]:
+    """The two job lists as rows of the list picker, each with its symbol count."""
+    both = read.watchlists()
+    return [{"list_id": list_id, "name": spec["name"], "symbols": len(both.get(spec["kind"]) or [])}
+            for list_id, spec in JOB_LISTS.items()]
+
+
+def _whole(list_id: str) -> dict | None:
+    """One list whole, whichever file holds it: avo's from ``store.read_list``, a job list as one unnamed
+    section of its tickers. None for an unknown id."""
+    spec = JOB_LISTS.get(list_id)
+    if spec is None:
+        return store.read_list(list_id)
+    return {"list_id": list_id, "name": spec["name"], "description": spec["description"],
+            "sections": [{"section_id": store.DEFAULT_SECTION, "name": "", "items": _job_rows(spec["kind"])}]}
+
+
+def _parse(symbol: str, job: bool) -> symbols.Symbol:
+    """A stored symbol as ``symbols.parse`` reads it. A job list holds bare tickers of US listings, which the
+    parser alone would call unsupported for want of an exchange prefix."""
+    parsed = symbols.parse(symbol)
+    if job and not parsed.exchange and parsed.coverage == "unsupported" and parsed.ticker:
+        return symbols.Symbol(parsed.raw, "", parsed.ticker, "us_equity")
+    return parsed
+
+
 def payload(list_id: str | None = None) -> dict | None:
     """Every list, and one of them whole with its Price numbers. None when no list has been made yet.
 
     ``list_id`` picks the list; an unknown one falls back to the first, so a stale link opens a board rather than
     an error. One prices read and one series read for the whole list, whatever its length.
     """
-    lists = store.lists()
-    if not lists:
+    own, jobs = store.lists(), _job_lists()
+    if not own and not any(r["symbols"] for r in jobs):   # nothing typed anywhere yet: the empty page
         return None
+    lists = own + jobs
     chosen = next((r for r in lists if r["list_id"] == list_id), lists[0])
-    whole = store.read_list(chosen["list_id"])
+    whole = _whole(chosen["list_id"])
     if whole is None:                                     # deleted between the two reads
         return None
+    job = job_kind(whole["list_id"])
     items = [i for section in whole["sections"] for i in section["items"]]
-    parsed = [symbols.parse(i["symbol"]) for i in items]
+    parsed = [_parse(i["symbol"], bool(job)) for i in items]
     equities = _equity_numbers(sorted({p.ticker for p in parsed if p.coverage == "us_equity"}))
     series = _series_numbers(sorted({p.series_id for p in parsed if p.series_id}))
     names = {r["ticker"]: r.get("name") for r in read.identity(sorted({p.ticker for p in parsed
                                                                       if p.coverage == "us_equity"}))}
     sections = [{"id": s["section_id"], "name": s["name"],
-                 "rows": [_row(i, equities, series, names) for i in s["items"]]}
+                 "rows": [_row(i, equities, series, names, job=bool(job)) for i in s["items"]]}
                 for s in whole["sections"]]
     sessions = sorted({v["session"] for v in equities.values() if v.get("session")})
     return {
-        "lists": [{"id": r["list_id"], "name": r["name"], "symbols": r.get("symbols") or 0} for r in lists],
-        "list": {"id": whole["list_id"], "name": whole["name"], "description": whole.get("description") or ""},
+        "lists": [{"id": r["list_id"], "name": r["name"], "symbols": r.get("symbols") or 0,
+                   "job": bool(job_kind(r["list_id"]))} for r in lists],
+        "list": {"id": whole["list_id"], "name": whole["name"], "description": whole.get("description") or "",
+                 "job": job or ""},
         "sections": sections,
         "counts": {"symbols": len(items), "sections": len(sections),
                    "unsupported": sum(1 for p in parsed if not p.is_supported)},
@@ -270,10 +332,11 @@ def columns(list_id: str, tab: str) -> dict | None:
     series, and a symbol with no source has nothing at all; both are left out and show "—" as on the Price tab.
     Beta is against ``MARKET_TICKER``, aligned by taking both series over the same window.
     """
-    if tab not in DERIVED_TABS or store.get_list(list_id) is None:
+    whole = _whole(list_id) if tab in DERIVED_TABS else None
+    if whole is None:
         return None
-    whole = store.read_list(list_id)
-    parsed = [symbols.parse(i["symbol"]) for s in whole["sections"] for i in s["items"]]
+    job = bool(job_kind(list_id))
+    parsed = [_parse(i["symbol"], job) for s in whole["sections"] for i in s["items"]]
     wanted = sorted({p.ticker for p in parsed if p.coverage == "us_equity"})
     if tab == "financials":
         return {"tab": tab, "values": _financials(parsed, wanted)}
@@ -393,6 +456,10 @@ _CSS = """
 .wl-menu button:hover{background:var(--hover-faint)}
 .wl-menu .sep{height:1px;background:var(--border);margin:4px 0}
 .wl-menu .danger{color:var(--neg)}
+.wl-menu .wl-cap{display:block;padding:6px 12px 2px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--muted)}
+/* A list the jobs read has no sections, no order of its own and no name to change: those controls are not drawn. */
+.wl-job .wl-own{display:none !important}
 
 /* the column tabs and the row density */
 .wl-bar{display:flex;align-items:center;gap:var(--sp-3);margin:var(--sp-3) 0 var(--sp-2)}
@@ -599,8 +666,15 @@ SOON = "Reading the numbers for this tab…"
 def render_html(data: dict) -> str:
     """The whole board for one list's ``payload``."""
     e = html.escape
-    options = "".join(f'<button type="button" data-list="{e(r["id"])}">{e(r["name"])}'
-                      f'<span class="ex">{r["symbols"]}</span></button>' for r in data["lists"])
+    def option(r: dict) -> str:
+        return (f'<button type="button" data-list="{e(r["id"])}">{e(r["name"])}'
+                f'<span class="ex">{r["symbols"]}</span></button>')
+    # avo's own lists first, then the two the jobs read under a heading of their own.
+    options = "".join(option(r) for r in data["lists"] if not r.get("job"))
+    fed = "".join(option(r) for r in data["lists"] if r.get("job"))
+    if fed:
+        options += f'<span class="sep"></span><span class="wl-cap">Read by the jobs</span>{fed}'
+    job = " wl-job" if data["list"].get("job") else ""
     tabs = "".join(f'<button class="wl-tab" type="button" role="tab" data-tab="{e(t["key"])}" '
                    f'aria-selected="{"true" if t["key"] == "price" else "false"}">{e(t["label"])}</button>'
                    for t in data["tabs"])
@@ -608,7 +682,7 @@ def render_html(data: dict) -> str:
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Watch lists</title><script>{THEME_JS}</script><style>{THEME_CSS}{_CSS}</style></head>
-<body><main class="wl">
+<body><main class="wl{job}">
 <div class="wl-head">
 <span class="wl-more" id="wl-lists"><button class="wl-pick" type="button" aria-haspopup="true"
  aria-expanded="false"><span id="wl-name"></span>{_CARET}</button>
@@ -616,13 +690,13 @@ def render_html(data: dict) -> str:
 <p class="wl-desc" id="wl-desc"></p>
 <div class="wl-tools">
 <span class="wl-desc" style="flex:0 0 auto">{stamp}</span>
-<button class="wl-ghost" type="button" id="wl-export">Export</button>
+<button class="wl-ghost wl-own" type="button" id="wl-export">Export</button>
 <span class="wl-more" id="wl-menu"><button class="wl-ghost" type="button" aria-label="List menu"
  aria-haspopup="true" aria-expanded="false">&#8943;</button>
-<span class="wl-menu"><button type="button" data-do="rename">Rename list</button>
-<button type="button" data-do="describe">Edit description</button>
+<span class="wl-menu"><button type="button" class="wl-own" data-do="rename">Rename list</button>
+<button type="button" class="wl-own" data-do="describe">Edit description</button>
 <button type="button" data-do="new">New list</button>
-<span class="sep"></span><button type="button" class="danger" data-do="delete">Delete list</button></span></span>
+<span class="sep wl-own"></span><button type="button" class="danger wl-own" data-do="delete">Delete list</button></span></span>
 </div></div>
 <div class="wl-bar"><div class="wl-tabs" role="tablist">{tabs}</div>
 <div class="wl-dens">Rows<span class="wl-seg" id="wl-dens">
@@ -638,7 +712,7 @@ def render_html(data: dict) -> str:
  placeholder="Add a symbol — type a ticker or a name">
 <span class="wl-sugg" id="wl-sugg" role="listbox"></span></span>
 <span class="wl-into">into <b id="wl-into"></b></span>
-<span class="right"><button class="wl-ghost" type="button" id="wl-newsec">
+<span class="right wl-own"><button class="wl-ghost" type="button" id="wl-newsec">
 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
 <path d="M12 5v14M5 12h14"/></svg>Section</button></span></div>
 <table><thead><tr id="wl-head"></tr></thead><tbody id="wl-body"></tbody></table>
@@ -733,6 +807,7 @@ _JS = r"""
     return out;
   }
   function grip(kind, id){
+    if(data.list.job) return '';           // a job list is kept by ticker: there is nothing to reorder
     return '<button class="wl-grip" type="button" draggable="true" data-drag="' + kind + '" data-id="' +
       rcEsc(id) + '" aria-label="Reorder">' + GRIP + '</button>';
   }
@@ -770,7 +845,7 @@ _JS = r"""
   function draw(){
     document.getElementById('wl-name').textContent = data.list.name;
     var counts = data.counts, desc = data.list.description;
-    var sub = counts.symbols + ' symbols · ' + counts.sections + ' sections';
+    var sub = counts.symbols + ' symbols' + (data.list.job ? '' : ' · ' + counts.sections + ' sections');
     if(counts.unsupported) sub += ' · ' + counts.unsupported + ' with no source yet';
     document.getElementById('wl-desc').textContent = desc ? desc + ' · ' + sub : sub;
     var current = data.sections.filter(function(s){ return s.id === into; })[0] || data.sections[0];

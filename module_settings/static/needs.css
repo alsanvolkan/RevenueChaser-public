@@ -140,3 +140,7 @@
 #needs .wrap{box-sizing:border-box;min-width:0}
 #needs table{max-width:100%}
 #settings-tabs .tabs{max-width:var(--page-max,1280px);margin-inline:auto;box-sizing:border-box}
+/* #715, avo 13 Nov 2026 (phone, "onlara ihtiyacımız yok"): the need catalog, the routes, the board inputs and the
+   automations are reference parts and forms for the desk; on a phone the Database tab ends after the files.
+   A read that failed is not one of them and stays in sight. */
+@media(max-width:640px){#needs details.hfold{display:none}}

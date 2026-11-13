@@ -1211,3 +1211,20 @@
 }
 .ctl table.bktbl code{overflow-wrap:anywhere;word-break:break-word}
 .ctl .pftab.on{border-color:var(--fh);background:var(--acc2)}
+/* #715: the board files block under the served files (avo, 13 Nov 2026) */
+.ctl .bfpanels{margin:34px 0 0}
+.ctl .bfpanels .bfph{margin:0 0 2px}
+.ctl .bfpanels details.tch>summary{min-height:28px;align-items:center}
+.ctl .bfpanels .tchs{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px;align-items:start}
+.ctl .bfpanels .bfwhere,.ctl .bfpanels .bfalso{margin:0 0 6px;font-size:12px;color:var(--mut)}
+@media(max-width:640px){.ctl .bfpanels{margin-top:22px}
+.ctl .bfpanels details.tch>summary{min-height:44px}}
+/* avo, 12 Nov 2026 (phone, the Fetch/Health leftovers): "biraz daha kompakt". A dataset box is its name, then its
+   coverage on one line (label, bar, share), with less air around and between the boxes. */
+@media(max-width:640px){
+.ctl .fgroup{padding:6px 8px 8px}
+.ctl .fgroup .sgrid{gap:6px;margin:6px 0}
+.ctl .fgroup .dset{margin-top:0;padding:6px 10px}
+.ctl .fgroup .sb3{margin:4px 0 2px}
+.ctl .fgroup .meter.cov{grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px}
+}

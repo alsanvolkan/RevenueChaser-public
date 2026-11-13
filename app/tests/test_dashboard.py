@@ -1257,7 +1257,7 @@ class TestSettingsDataHealthBoard:
         r = self._client().get("/view/module_settings")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
-        assert "Settings / Data health" in body
+        assert "Settings" in body
         assert "equity_universe" in body
 
     def test_refresh_rerenders_from_store_without_network(
@@ -1276,7 +1276,7 @@ class TestSettingsDataHealthBoard:
         r = self._client().get("/view/module_settings?refresh=1")
         assert r.status_code == 200
         body = r.get_data(as_text=True)
-        assert "Settings / Data health" in body
+        assert "Settings" in body
         assert "equity_universe" in body
         assert runners.SETTINGS_LATEST.exists()
 

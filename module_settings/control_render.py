@@ -87,7 +87,7 @@ WIAL = ("<p>This page is the control board for every dataset the system holds. I
 
 
 def _header(view: dict, title: str = "Database") -> str:
-    return (f'<h1>Data/Health · {esc(title)}</h1>'
+    return (f'<h1>Settings · {esc(title)}</h1>'
             f'<p class="sub"><b>Read {esc(view["read_at"])}</b> (Amsterdam) · source: <code>ops.sqlite</code> + the '
             f'serving files · after {STALE_MINUTES} minutes a strip on top says the numbers are old</p>'
             f'<div class="stalebar"{' id="ctl-stale"' if title == "Database" else ""} data-stale hidden><b>Stale</b> · this page was read at {esc(view["read_at"])} · '
@@ -363,7 +363,7 @@ def _phone_flow(f: dict, colour: str, own: dict) -> str:
         y += h + _PGAP
 
     fy = y + 16
-    fh = _PLH + 18
+    fh = 44   # the one press in the picture: a 44 px touch target (the picture is drawn 1:1 on a phone)
     fx = _PW / 2
     # The lines run in one trunk rather than a fan: a fan of seven curves across 358 px crosses its own chips.
     st, line = _PSX + _PSW + 10, f'" class="pe" style="stroke:{esc(colour)}"/>'
@@ -592,14 +592,21 @@ def _btree(f: dict) -> str:
 COL_PAD = 3
 
 
+#: Width of one source icon with its gap, in the phone's icon column of a build step.
+ICON_COL = 25
+
+
 def _meta_widths(f: dict) -> str:
-    """``--jw1..3`` for the journey's status / role / cadence columns: the widest value of this file plus a little,
+    """``--jw1..3`` for the journey's status / role / cadence columns (and ``--jw0`` for the icons on a phone): the widest value of this file plus a little,
     so the three sit in fixed columns and never drift with the title's length (#527)."""
     ds = f["datasets"] or [{}]
     status = max(len("hand-run" if d.get("attended") else "built" if d.get("checked_on") else "tested") for d in ds)
     role = max(len(str(d.get("role") or "")) for d in ds)
     cad = max(len("⏱ " + str(d.get("cadence") or "")) for d in ds)
-    return f"--jw1:{status + COL_PAD}ch;--jw2:{role + COL_PAD}ch;--jw3:{cad + COL_PAD}ch"
+    # --jw0: the source icons' column on a phone, as wide as the step with the most icons (three are drawn at most)
+    icons = max(min(3, len(d.get("providers") or ())) for d in ds)
+    return (f"--jw1:{status + COL_PAD}ch;--jw2:{role + COL_PAD}ch;--jw3:{cad + COL_PAD}ch;"
+            f"--jw0:{max(1, icons) * ICON_COL}px")
 
 
 def _journey(f: dict) -> str:
@@ -721,7 +728,7 @@ def client(view: dict) -> dict:
 
 def _err(view: dict, title: str = "Database") -> str:
     """The one line a panel is when the model could not be built."""
-    return (f'<section class="ctl"><div class="wrap"><h1>Data/Health · {esc(title)}</h1><div class="errbar"><b>Could not read</b> '
+    return (f'<section class="ctl"><div class="wrap"><h1>Settings · {esc(title)}</h1><div class="errbar"><b>Could not read</b> '
             f'· {esc(view["error"])}</div></div></section>')
 
 
@@ -750,6 +757,39 @@ def _panel(f: dict, view: dict, first: bool) -> str:
             f'<div class="fpbody">{_journey(f)}{_samples(f)}</div></details>')
 
 
+def _board_panel(c: dict) -> str:
+    """One board file's folded section: who writes it, who else reads it, where it is, and its tables with their
+    columns. No row count: the file is not opened (``control.board_file_cards``)."""
+    if c["bytes"] is None:
+        disk = "not on the disk yet"
+    else:
+        when = datetime.fromtimestamp(c["written_at"], timezone.utc).astimezone(control.LOCAL)
+        disk = f'{_size(c["bytes"])} · written {when.day} {when.strftime("%b %H:%M")}'
+    n = len(c["tables"])
+    words = (f'{"written by " + c["owner"] if c["owner"] else "written by a job, not a board"} · '
+             f'{n} table{"" if n == 1 else "s"} · {disk}')
+    tabs = "".join(
+        f'<details class="tch"><summary style="background:{esc(c["color"])}"><span>{esc(t["name"])}</span>'
+        f'<span class="tn">{len(t["columns"])}</span></summary><div class="tcols">'
+        + "".join(f'<span class="cn">{esc(col)}</span><span class="ct">{esc(ty.lower())}</span>'
+                  for col, ty in t["columns"]) + '</div></details>' for t in c["tables"])
+    also = (f'<p class="bfalso">Also read by: {esc(", ".join(c["readers"]))}</p>' if c["readers"] else "")
+    return (f'<details class="sec bfp fpanel" data-file="{esc(c["path"])}" style="--fh:{esc(c["color"])}">'
+            f'<summary><h2>🦆 {esc(c["name"])}</h2><span class="secs">{esc(words)}</span></summary>'
+            f'<div class="fpbody"><p class="bfwhere"><code class="p">.store/{esc(c["path"])}</code></p>{also}'
+            f'<div class="tchs">{tabs}</div></div></details>')
+
+
+def _board_panels(cards: list[dict]) -> str:
+    """The "Board files" block under the served files: one folded section a board's own DuckDB file."""
+    if not cards:
+        return ""
+    on_disk = sum(1 for c in cards if c["bytes"] is not None)
+    return ('<div class="bfpanels"><h2 class="bfph">Board files</h2><p class="sub">Each board\'s own DuckDB file, '
+            f'written only by that board · {len(cards)} files, {on_disk} on the disk · not opened here, so no row '
+            'counts</p>' + "".join(_board_panel(c) for c in cards) + '</div>')
+
+
 def render_data(view: dict, lookup_html: str = "") -> str:
     """The Data tab's panel (#331, #492): the header, the Ticker lookup (#715), Health right now, the flow diagram,
     then one folded section a served file in plan order (#715 step 3: no picker, no nested tabs).
@@ -761,9 +801,9 @@ def render_data(view: dict, lookup_html: str = "") -> str:
         return _err(view) + lookup_html
     view = _ready(view)
     panels = "".join(_panel(f, view, i == 0) for i, f in enumerate(view["files"]))
-    return ('<section id="ctl" class="ctl" aria-label="Data/Health · Data control board"><div class="wrap">'
+    return ('<section id="ctl" class="ctl" aria-label="Settings · Data control board"><div class="wrap">'
             f'{_header(view)}{lookup_html}{_flow(view)}'
-            f'<div class="fpanels">{panels}</div></div></section>')
+            f'<div class="fpanels">{panels}</div>{_board_panels(view.get("board_cards") or [])}</div></section>')
 
 
 def _fill_box(d: dict, view: dict) -> str:
@@ -814,7 +854,7 @@ def render_fetch(view: dict) -> str:
         return _err(view, "Universe and fills")
     view = _ready(view)
     groups = "".join(_fill_group(f, view) for f in view["files"])
-    return ('<section class="ctl" aria-label="Data/Health · Universe and fills"><div class="wrap">'
+    return ('<section class="ctl" aria-label="Settings · Universe and fills"><div class="wrap">'
             f'{_header(view, "Universe and fills")}'
             '<p class="sub">Everything else on this tab is the board above: the switches, each dataset&#39;s Fetch, '
             'Pause and schedule, the queue, the limits and the backups. What follows has no place there yet: the universe, '
